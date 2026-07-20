@@ -219,6 +219,27 @@ class ImplementationAttemptModel:
             return set()
 
     @staticmethod
+    def get_retry_implementation_count(ai_tool_id: int) -> int:
+        """返回已登记的不同备用实现方数量（首次尝试 attempt_number=1 不计）。"""
+        sql = """
+            SELECT COUNT(DISTINCT implementation) AS retry_count
+            FROM implementation_attempts
+            WHERE ai_tool_id = %s AND attempt_number >= 2
+        """
+        try:
+            result = execute_query(sql, (ai_tool_id,), fetch_one=True)
+            if not result or result.get('retry_count') is None:
+                return 0
+            return int(result['retry_count'])
+        except Exception as e:
+            logger.error(
+                "Failed to count retry implementations for ai_tool_id=%s: %s",
+                ai_tool_id,
+                e,
+            )
+            return 0
+
+    @staticmethod
     def get_stats(days: int = 7, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         获取各实现方的统计数据（从 implementation_attempts 表）

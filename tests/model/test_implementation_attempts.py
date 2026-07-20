@@ -279,6 +279,30 @@ class TestImplementationAttemptModelGetAttemptedImplementations(unittest.TestCas
         self.assertEqual(result, set())
 
 
+class TestImplementationAttemptModelGetRetryImplementationCount(unittest.TestCase):
+    """测试备用供应商尝试数量统计。"""
+
+    @patch('model.implementation_attempts.execute_query')
+    def test_counts_distinct_retry_implementations(self, mock_query):
+        mock_query.return_value = {'retry_count': 2}
+
+        result = ImplementationAttemptModel.get_retry_implementation_count(50)
+
+        self.assertEqual(result, 2)
+        sql = mock_query.call_args[0][0]
+        self.assertIn('COUNT(DISTINCT implementation)', sql)
+        self.assertIn('attempt_number >= 2', sql)
+
+    @patch('model.implementation_attempts.execute_query')
+    def test_empty_count_returns_zero(self, mock_query):
+        mock_query.return_value = {'retry_count': None}
+
+        self.assertEqual(
+            ImplementationAttemptModel.get_retry_implementation_count(999),
+            0,
+        )
+
+
 class TestImplementationAttemptModelGetStats(unittest.TestCase):
     """测试 ImplementationAttemptModel.get_stats()"""
 
