@@ -4166,7 +4166,11 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                           image_size: Optional[str] = None,
                           item_type: int = None, item_name: str = None,
                           force_update_exist_image: bool = False,
-                          is_grid: bool = False) -> Dict[str, Any]:
+                          is_grid: bool = False,
+                          grid_size: Optional[int] = None,
+                          grid_layout: Optional[str] = None,
+                          grid_item_names: Optional[List[str]] = None,
+                          target_entity_ids: Optional[List[int]] = None) -> Dict[str, Any]:
     """
     文本生成图片 - MCP工具函数（非阻塞版本，支持后台任务处理）
 
@@ -4400,7 +4404,11 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                         aspect_ratio=aspect_ratio,
                         image_size=request_data.get('image_size'),
                         is_grid=is_grid,
-                        max_retries=max_retries
+                        max_retries=max_retries,
+                        grid_size=grid_size,
+                        grid_layout=grid_layout,
+                        item_names=grid_item_names,
+                        target_entity_ids=target_entity_ids,
                     )
                 except ValueError as e:
                     # 任务冲突
@@ -4804,6 +4812,10 @@ def submit_grid_image_task(
 
     # ---------- 分支 A：纯文生图 ----------
     if mode == "text_to_image":
+        target_ids_for_db = [
+            target_id for target_id in (target_entity_ids or [])
+            if target_id is not None
+        ]
         result = generate_text_to_image(
             user_id=user_id,
             world_id=world_id,
@@ -4815,6 +4827,10 @@ def submit_grid_image_task(
             item_name=combined_item_name,
             force_update_exist_image=False,
             is_grid=True,
+            grid_size=grid_size,
+            grid_layout=grid_layout,
+            grid_item_names=item_names,
+            target_entity_ids=target_ids_for_db,
         )
         if result.get('success'):
             result['item_type_name'] = item_info['name_cn']
@@ -5194,7 +5210,8 @@ def generate_character_variant_image(user_id: str, world_id: str, auth_token: st
 
 
 def generate_4grid_location_images(user_id: str, world_id: str, auth_token: str,
-                                    location_names: List[str], prompts: List[str]) -> Dict[str, Any]:
+                                    location_names: List[str], prompts: List[str],
+                                    target_entity_ids: Optional[List[Optional[int]]] = None) -> Dict[str, Any]:
     """
     生成4宫格场景图像并自动切分更新到各个场景（向后兼容的包装函数）
 
@@ -5206,18 +5223,33 @@ def generate_4grid_location_images(user_id: str, world_id: str, auth_token: str,
         auth_token: 认证令牌（必填）
         location_names: 4个场景的名称列表（必须是4个）
         prompts: 4个场景的提示词列表（必须是4个）
+        target_entity_ids: 可选的场景数据库 ID 列表。提供时走统一 t2i 宫格入口，
+            使切图结果按 ID 回写 location.reference_image。
 
     Returns:
         dict: 操作结果，包含每个场景的更新状态、算力消耗等
     """
-    result = generate_4grid_images(
-        user_id=user_id,
-        world_id=world_id,
-        auth_token=auth_token,
-        item_names=location_names,
-        prompts=prompts,
-        item_type=5  # 场景四宫格类型
-    )
+    if target_entity_ids is not None:
+        result = submit_grid_image_task(
+            user_id=user_id,
+            world_id=world_id,
+            auth_token=auth_token,
+            item_names=location_names,
+            prompts=prompts,
+            item_type=ItemType.LOCATION_GRID,
+            grid_size=GridConfig.SIZE_2X2,
+            mode="text_to_image",
+            target_entity_ids=target_entity_ids,
+        )
+    else:
+        result = generate_4grid_images(
+            user_id=user_id,
+            world_id=world_id,
+            auth_token=auth_token,
+            item_names=location_names,
+            prompts=prompts,
+            item_type=ItemType.LOCATION_GRID,
+        )
 
     # 转换返回格式以保持向后兼容
     if result.get('success') and 'items' in result:

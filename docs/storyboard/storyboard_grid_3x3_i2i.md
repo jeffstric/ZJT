@@ -184,18 +184,20 @@ grid task 进入终态失败有四条路径，每条都必须调用 `_mark_story
 
 所有 grid 类型（4/5/6/8）在 `task/grid_image_task.py` 中都强制下载原图到本地再切图，不依赖 `image.enable_download`。E2E/mock 路径使用 `ItemType.is_grid()` 判断是否返回 grid mock 图片，避免新增 grid type 拿到单图 mock。
 
-## Phase 5：按父场景分批提交
+## Phase 5：顶层与子场景分层提交
 
 `StoryboardLocationBootstrapService.submit_subscene_grids(parsed_data, bootstrap_result, world_id, user_id, auth_token)`：
 
-1. 按父场景分组子场景。
-2. **补偿重跑友好（门禁）**：始终跳过「已有参考图」或「有运行中九宫格任务」的子场景，只提交「缺图且无运行中任务」的。`force_overwrite_subscene_grids` / `force_overwrite=True` 为兼容旧调用保留，但不再生效；已有子场景参考图一律不会被重新提交或覆盖。判定：
+1. 将缺图场景分为顶层场景（`parent_id=null`）与有父级的子场景。
+2. 缺图顶层场景按解析顺序每 4 个组成 2x2 文生图宫格，不足 4 个补 `placeholder`；调用 `generate_4grid_location_images(..., target_entity_ids=...)`，使后台切图按数据库 `location.id` 回写 `reference_image`。
+3. 按父场景分组子场景，继续走父图 3x3 i2i。
+4. **补偿重跑友好（门禁）**：始终跳过「已有参考图」或「有运行中宫格任务」的场景，只提交「缺图且无运行中任务」的。`force_overwrite_subscene_grids` / `force_overwrite=True` 为兼容旧调用保留，但不再生效；已有参考图一律不会被重新提交或覆盖。判定：
    - `_subscene_has_reference_image(db_id, loc)`：查 DB 行 `reference_image`，fallback parsed dict。
    - `_subscene_has_running_grid(db_id)`：`GridImageTasksModel.has_running_grid_for_entity`。
-3. 取父 `reference_image` / `reference_images[0].url`；**父无图 → 该批不提交**（标 `missing_parent_reference_image`），子场景后续走 t2i 降级。
-4. 不足 9 补 placeholder（不建 location、不回写）；超 9 拆多个 3x3 批。
-5. 每子场景 prompt 必含：父场景名/描述/参考图说明 + 子场景名/描述/氛围 + "保持父场景空间结构、色彩、材质、光照连续"。
-6. 调 `generate_9grid_location_images(reference_images=[{url, role_description}], target_entity_ids=<DB id 列表>)`。bootstrap 构造的 reference_images 含父场景图，role_description 为"父场景'{name}'的完整场景图，展示整体空间结构、色彩、材质、光照，各子场景需保持与其连续性"。
+5. 子场景批次取父 `reference_image` / `reference_images[0].url`；父图尚未就绪时标记 `missing_parent_reference_image`，等待后续预检重新推进。
+6. 子场景不足 9 个补 `placeholder`（不建 location、不回写）；超过 9 个拆成多个 3x3 批次。
+7. 每个子场景 prompt 必含：父场景名/描述/参考图说明 + 子场景名/描述/氛围 + "保持父场景空间结构、色彩、材质、光照连续"。
+8. 调 `generate_9grid_location_images(reference_images=[{url, role_description}], target_entity_ids=<DB id 列表>)`。bootstrap 构造的 reference_images 含父场景图，role_description 为"父场景'{name}'的完整场景图，展示整体空间结构、色彩、材质、光照，各子场景需保持与其连续性"。
 
 ### split 端点门禁
 Web（`api/storyboard.py`）与 CLI（`cli_service.py`）入口只需「有 auth_token」即尝试提交（内部精确跳过无需处理的子场景）。**不再用 `created_location_count > 0`** 作为门禁——那样会让「子场景已落库但缺图」的重跑无法补提交。

@@ -336,9 +336,10 @@ class StoryboardLocationBootstrapService:
         force_overwrite: bool = False,
     ) -> Dict[str, Any]:
         """
-        按父场景分组子场景，提交 3x3 九宫格 i2i 任务（父场景图作为输入）。
+        为缺图顶层场景提交 2x2 文生图宫格，并按父场景分组子场景提交 3x3 i2i 宫格。
 
         规则：
+          - 缺图顶层场景每 4 个一批走 2x2 文生图，不足 4 个补 placeholder。
           - 按父场景分组其子场景。
           - 父场景必须有 reference_image，否则该批不提交（标 missing_parent_reference_image），
             子场景后续首帧生图走 t2i 降级。
@@ -353,6 +354,8 @@ class StoryboardLocationBootstrapService:
 
         Returns:
             {
+                'submitted_root_batches': int,   # 已提交顶层场景 2x2 批次数
+                'submitted_root_location_count': int,  # 已提交顶层场景数
                 'submitted_batches': int,         # 已提交批次数
                 'submitted_subscene_count': int,  # 已提交子场景数
                 'skipped_no_parent_image': int,   # 因父图缺失跳过的子场景数
@@ -361,7 +364,10 @@ class StoryboardLocationBootstrapService:
             }
         """
         # 延迟导入避免循环依赖
-        from script_writer_core.mcp_tool import generate_9grid_location_images
+        from script_writer_core.mcp_tool import (
+            generate_4grid_location_images,
+            generate_9grid_location_images,
+        )
         from config.constant import GridConfig
 
         id_map = bootstrap_result.get("id_map") or {}
@@ -379,38 +385,87 @@ class StoryboardLocationBootstrapService:
         # 只提交「缺图且无运行中任务」的，避免重复提交 / 覆盖已生成结果。
         # force_overwrite 为兼容旧 API 保留，但不再允许覆盖已有参考图。
         del force_overwrite
+        root_locations: List[Dict[str, Any]] = []
         children_by_parent: Dict[str, List[Dict[str, Any]]] = {}
         skipped_already_has_image = 0
         skipped_running_grid = 0
         for loc in locations:
             if not isinstance(loc, dict):
                 continue
-            parent_key = loc.get("parent_id")
-            if not parent_key:
-                continue  # 顶层场景，不作为子场景处理
             sub_db_id = self._safe_int(loc.get("location_db_id"))
             if sub_db_id is None:
-                continue  # 入库失败的子场景，跳过
-            # 跳过已有参考图的子场景（重跑时不重复生成，也不允许旧 overwrite 参数覆盖）
+                continue  # 入库失败的场景，跳过
+            # 跳过已有参考图的场景（重跑时不重复生成，也不允许旧 overwrite 参数覆盖）
             if self._subscene_has_reference_image(sub_db_id, loc):
                 skipped_already_has_image += 1
                 continue
-            # 跳过有运行中九宫格任务的子场景，避免同一子场景并发回写互相覆盖。
+            # 跳过有运行中宫格任务的场景，避免并发回写互相覆盖。
             if self._subscene_has_running_grid(sub_db_id):
                 skipped_running_grid += 1
+                continue
+            parent_key = loc.get("parent_id")
+            if not parent_key:
+                root_locations.append(loc)
                 continue
             children_by_parent.setdefault(str(parent_key), []).append(loc)
 
         if skipped_already_has_image or skipped_running_grid:
             logger.info(
-                "[subscene-grids] 跳过已有图子场景=%s, 跳过运行中任务子场景=%s",
+                "[location-grids] 跳过已有图场景=%s, 跳过运行中任务场景=%s",
                 skipped_already_has_image, skipped_running_grid,
             )
 
+        submitted_root_batches = 0
+        submitted_root_location_count = 0
         submitted_batches = 0
         submitted_subscene_count = 0
         skipped_no_parent_image = 0
         batch_details = []
+
+        for batch_idx, batch in enumerate(
+            self._chunk_into_grid_batches(root_locations, GridConfig.SIZE_2X2)
+        ):
+            item_names, target_ids, prompts = self._build_root_grid_io(
+                batch, GridConfig.SIZE_2X2
+            )
+            try:
+                result = generate_4grid_location_images(
+                    user_id=str(user_id),
+                    world_id=str(world_id),
+                    auth_token=auth_token,
+                    location_names=item_names,
+                    prompts=prompts,
+                    target_entity_ids=target_ids,
+                )
+                ok = bool(result.get("success"))
+                submitted_root_batches += 1 if ok else 0
+                if ok:
+                    submitted_root_location_count += len(batch)
+                batch_details.append({
+                    "kind": "root_t2i",
+                    "batch_index": batch_idx,
+                    "status": "submitted" if ok else "failed",
+                    "location_count": len(batch),
+                    "location_db_ids": [
+                        self._safe_int(location.get("location_db_id"))
+                        for location in batch
+                    ],
+                    "result": result,
+                })
+                if not ok:
+                    msg = f"顶层场景批次 {batch_idx} 提交失败: {result.get('error')}"
+                    warnings.append(msg)
+                    logger.error("[root-location-grids] %s", msg)
+            except Exception as exc:
+                msg = f"顶层场景批次 {batch_idx} 提交异常: {exc}"
+                warnings.append(msg)
+                logger.error("[root-location-grids] %s", msg, exc_info=True)
+                batch_details.append({
+                    "kind": "root_t2i",
+                    "batch_index": batch_idx,
+                    "status": "exception",
+                    "location_count": len(batch),
+                })
 
         for parent_key, children in children_by_parent.items():
             parent_db_id = self._safe_int(id_map.get(parent_key))
@@ -486,11 +541,19 @@ class StoryboardLocationBootstrapService:
                     })
 
         logger.info(
-            "[subscene-grids] world_id=%s submitted_batches=%s subscenes=%s skipped_no_parent=%s",
-            world_id, submitted_batches, submitted_subscene_count, skipped_no_parent_image,
+            "[location-grids] world_id=%s root_batches=%s roots=%s "
+            "subscene_batches=%s subscenes=%s skipped_no_parent=%s",
+            world_id,
+            submitted_root_batches,
+            submitted_root_location_count,
+            submitted_batches,
+            submitted_subscene_count,
+            skipped_no_parent_image,
         )
 
         return {
+            "submitted_root_batches": submitted_root_batches,
+            "submitted_root_location_count": submitted_root_location_count,
             "submitted_batches": submitted_batches,
             "submitted_subscene_count": submitted_subscene_count,
             "skipped_no_parent_image": skipped_no_parent_image,
@@ -595,6 +658,46 @@ class StoryboardLocationBootstrapService:
             prompts.append("纯黑背景占位，无场景内容。")
 
         return item_names, target_ids, prompts
+
+    def _build_root_grid_io(
+        self,
+        batch: List[Dict[str, Any]],
+        grid_size: int,
+    ) -> tuple:
+        """构造顶层场景文生图宫格输入，不足 grid_size 时补黑色占位格。"""
+        item_names: List[str] = []
+        target_ids: List[Optional[int]] = []
+        prompts: List[str] = []
+        for location in batch:
+            item_names.append(self._clean_name(location.get("name")))
+            target_ids.append(self._safe_int(location.get("location_db_id")))
+            prompts.append(self._compose_root_location_prompt(location))
+        while len(item_names) < grid_size:
+            item_names.append("placeholder")
+            target_ids.append(None)
+            prompts.append("纯黑背景占位，无场景内容。")
+        return item_names, target_ids, prompts
+
+    @staticmethod
+    def _compose_root_location_prompt(location: Dict[str, Any]) -> str:
+        """构造无父参考图的顶层场景环境设计提示词。"""
+        name = str(location.get("name") or "").strip()
+        desc = str(location.get("description") or "").strip()
+        atmosphere = str(location.get("atmosphere") or "").strip()
+        env_sound = str(location.get("environment_sound") or "").strip()
+        loc_type = str(location.get("type") or "").strip()
+        parts = ["完整环境设计参考图，清晰展示整体空间结构、材质、色彩与光照。"]
+        if name:
+            parts.append(f"场景：{name}。")
+        if loc_type:
+            parts.append(f"类型：{loc_type}。")
+        if desc:
+            parts.append(f"场景描述：{desc}。")
+        if atmosphere:
+            parts.append(f"氛围/光线：{atmosphere}。")
+        if env_sound:
+            parts.append(f"环境声参考：{env_sound}。")
+        return " ".join(parts)
 
     @staticmethod
     def _compose_subscene_prompt(
