@@ -403,6 +403,23 @@ async def _submit_new_task(ai_tool):
             return False
 
         logger.info(f"Using driver: {driver.driver_name} for task {task_id}")
+
+        # 多密钥轮换：从槽位表反查本任务领用的密钥 index，注入到 driver
+        # （槽位在 generate_video_task 中获取时已写入 api_key_index；
+        #  这里通过 slot 反查而非对象属性传递，因 ai_tool 是重新查询的新对象）
+        from task import runninghub_key_pool
+        from model.runninghub_slots import RunningHubSlot
+        rh_key_index = runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX
+        if ai_tool_type in RUNNINGHUB_TASK_TYPES:
+            _task_row = TasksModel.get_by_task_id(task_id)
+            if _task_row:
+                rh_key_index = await runninghub_key_pool.get_key_index_for_slot_async(
+                    _task_row.id, RunningHubSlot.SOURCE_TASK
+                )
+            if rh_key_index != runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX:
+                rh_api_key = await runninghub_key_pool.get_key_by_index_async(rh_key_index)
+                if rh_api_key and hasattr(driver, '_apply_api_key'):
+                    driver._apply_api_key(rh_api_key)
         
         # 2. 调用驱动提交任务
         import inspect
@@ -425,6 +442,13 @@ async def _submit_new_task(ai_tool):
                                message=f"提交失败: {error}",
                                detail={'error': error, 'error_type': error_type,
                                        'error_detail': error_detail})
+
+            # 多密钥熔断反馈：非上游拥堵的失败计入密钥失败计数
+            is_upstream_congested = (
+                result.get("retry") and result.get("retry_reason") == "UPSTREAM_CONGESTED"
+            )
+            if not is_upstream_congested and ai_tool_type in RUNNINGHUB_TASK_TYPES:
+                await runninghub_key_pool.report_failure_async(rh_key_index, error)
             
             # 上游并发超限/限流（api queue limit reached / TASK_QUEUE_MAXED 等）：
             # 释放本地槽位、状态回 QUEUED、延迟重试，不消耗 try_count、不退算力、不切换实现方。
@@ -541,6 +565,8 @@ async def _submit_new_task(ai_tool):
             if task:
                 RunningHubSlotsModel.update_project_id(task.id, project_id, source=RunningHubSlot.SOURCE_TASK)
                 logger.info(f"Updated RunningHub slot project_id for task {task_id}")
+            # 多密钥熔断反馈：提交成功
+            await runninghub_key_pool.report_success_async(rh_key_index)
         
         logger.info(f"Task {task_id} submitted successfully with project_id: {project_id}")
         AIToolsLogModel.log(task_id, AIToolsLogEvent.SUBMITTED,
@@ -663,7 +689,22 @@ async def _check_task_status(ai_tool):
             return True  # 返回 True 表示任务已完成（失败）
         
         logger.info(f"Checking status for task {task_id} using driver: {driver.driver_name}")
-        
+
+        # 多密钥轮换：轮询前根据任务记录的密钥 index 切换 driver 密钥
+        # （错误密钥无法获取结果）
+        if ai_tool_type in RUNNINGHUB_TASK_TYPES:
+            from task import runninghub_key_pool
+            from model.runninghub_slots import RunningHubSlot
+            task_row = TasksModel.get_by_task_id(task_id)
+            if task_row:
+                idx = await runninghub_key_pool.get_key_index_for_slot_async(
+                    task_row.id, RunningHubSlot.SOURCE_TASK
+                )
+                if idx != runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX:
+                    rh_api_key = await runninghub_key_pool.get_key_by_index_async(idx)
+                    if rh_api_key and hasattr(driver, '_apply_api_key'):
+                        driver._apply_api_key(rh_api_key)
+
         # 2. 调用驱动检查状态
         result = driver.check_status(project_id)
 
@@ -1369,11 +1410,23 @@ def process_task_with_retry(task_type, process_func):
                 # 获取失败 → 延迟30秒后重试，不计入 try_count
                 # 非 RunningHub 任务（如火山引擎等同步/异步 API）不经过此逻辑
                 if is_runninghub and task.status == TASK_STATUS_QUEUED:
-                    # 尝试获取槽位
+                    # 多密钥轮换：先从密钥池领用密钥
+                    from task import runninghub_key_pool
+                    acquired = runninghub_key_pool.acquire_key()
+                    if acquired is not None:
+                        api_key_index, _api_key, _ = acquired
+                        slot_max_slots = 999999  # 单密钥上限已由 acquire_key 检查，跳过全局检查
+                    else:
+                        api_key_index = runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX
+                        slot_max_slots = None  # 用默认全局值
+
+                    # 尝试获取槽位（带上领用的密钥 index，_submit_new_task 通过 slot 反查注入 driver）
                     slot_acquired = RunningHubSlotsModel.try_acquire_slot(
                         task_id=task.id,
                         task_type=ai_tool.type,
-                        source=RunningHubSlot.SOURCE_TASK
+                        source=RunningHubSlot.SOURCE_TASK,
+                        api_key_index=api_key_index,
+                        max_slots=slot_max_slots
                     )
                     
                     if not slot_acquired:

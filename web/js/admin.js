@@ -674,6 +674,25 @@ const AdminApp = {
                 isSensitive: false,
                 loading: false
             },
+
+            // RunningHub 密钥池
+            runninghubKeyPool: {
+                list: [],
+                loading: false,
+                globalApiKeyConfigured: true
+            },
+
+            // RunningHub 密钥编辑弹窗
+            rhKeyEditModal: {
+                show: false,
+                index: null,
+                apiKey: '',
+                apiKeyMasked: '',
+                label: '',
+                maxSlots: 1,
+                enabled: true,
+                loading: false
+            },
             
             // 配置历史弹窗
             configHistoryModal: {
@@ -764,6 +783,7 @@ const AdminApp = {
             },
 
             isCommunityEdition: false,
+            runninghubKeyPoolAvailable: false,
 
             // 通知中心
             notifications: [],
@@ -1147,6 +1167,9 @@ const AdminApp = {
                     this.dashboard.loading = false;
 
                     this.isCommunityEdition = response.data.data.is_community_edition || false;
+                    this.runninghubKeyPoolAvailable = Boolean(
+                        response.data.data.features?.runninghub_key_pool
+                    );
 
                     // 默认加载用户列表
                     this.loadUsers();
@@ -1206,6 +1229,10 @@ const AdminApp = {
                 this.loadCheckinConfig();
             } else if (page === 'implementations') {
                 this.loadImplementations();
+            } else if (page === 'runninghubKeyPool') {
+                if (this.runninghubKeyPoolAvailable) {
+                    this.loadRunninghubKeyPool();
+                }
             } else if (page === 'marketingPublications') {
                 this.loadMarketingPublications();
             } else if (page === 'models') {
@@ -2525,6 +2552,145 @@ const AdminApp = {
                 return '********';
             }
             return value.substring(0, 4) + '****' + value.substring(value.length - 4);
+        },
+
+        // ==================== RunningHub 密钥池 ====================
+
+        // 加载密钥池聚合视图
+        async loadRunninghubKeyPool() {
+            this.runninghubKeyPool.loading = true;
+            try {
+                const response = await axios.get('/api/admin/runninghub-key-pool', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.runninghubKeyPool.list = response.data.data.pool || [];
+                    this.runninghubKeyPool.globalApiKeyConfigured = response.data.data.global_api_key_configured;
+                }
+            } catch (error) {
+                console.error('Load runninghub key pool failed:', error);
+                this.showToast(error?.response?.data?.detail || this.t('operation_failed'), 'error');
+            } finally {
+                this.runninghubKeyPool.loading = false;
+            }
+        },
+
+        // 熔断状态文案映射
+        circuitStatusText(status) {
+            // 1-正常 0-手动停(此处已单独处理) -1-熔断中 -2-半开探测
+            const map = {
+                1: this.t('rh_status_enabled'),
+                '-1': this.t('rh_status_circuit_open'),
+                '-2': this.t('rh_status_half_open')
+            };
+            return map[String(status)] || this.t('rh_status_enabled');
+        },
+
+        // 熔断状态样式映射
+        circuitStatusClass(status) {
+            const map = {
+                1: 'active',
+                '-1': 'failed',
+                '-2': 'pending'
+            };
+            return map[String(status)] || 'active';
+        },
+
+        // 查看密钥明文
+        async viewRunninghubKeyRaw(index) {
+            try {
+                const response = await axios.get(`/api/admin/runninghub-key-pool/${index}/raw`, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    alert(response.data.data.api_key);
+                }
+            } catch (error) {
+                this.showToast(error?.response?.data?.detail || this.t('operation_failed'), 'error');
+            }
+        },
+
+        // 打开密钥编辑弹窗
+        openRhKeyEditModal(item) {
+            this.rhKeyEditModal.index = item.index;
+            this.rhKeyEditModal.apiKey = ''; // 编辑时不回显明文，留空表示不修改
+            this.rhKeyEditModal.apiKeyMasked = item.api_key_masked;
+            this.rhKeyEditModal.label = item.label || '';
+            this.rhKeyEditModal.maxSlots = item.max_slots || 1;
+            this.rhKeyEditModal.enabled = item.enabled !== false;
+            this.rhKeyEditModal.show = true;
+        },
+
+        // 关闭密钥编辑弹窗
+        closeRhKeyEditModal() {
+            this.rhKeyEditModal.show = false;
+            this.rhKeyEditModal.index = null;
+        },
+
+        // 提交密钥编辑
+        async submitRhKeyEdit() {
+            if (!this.rhKeyEditModal.maxSlots || this.rhKeyEditModal.maxSlots < 1) {
+                this.showToast(this.t('rh_max_slots_invalid'), 'error');
+                return;
+            }
+            this.rhKeyEditModal.loading = true;
+            try {
+                // 仅传需要更新的字段；apiKey 留空则不修改
+                const payload = {
+                    max_slots: this.rhKeyEditModal.maxSlots,
+                    label: this.rhKeyEditModal.label,
+                    enabled: this.rhKeyEditModal.enabled
+                };
+                if (this.rhKeyEditModal.apiKey.trim()) {
+                    payload.api_key = this.rhKeyEditModal.apiKey.trim();
+                }
+                const response = await axios.put(
+                    `/api/admin/runninghub-key-pool/${this.rhKeyEditModal.index}`,
+                    payload,
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('operation_success'), 'success');
+                    this.closeRhKeyEditModal();
+                    this.loadRunninghubKeyPool();
+                }
+            } catch (error) {
+                this.showToast(error?.response?.data?.detail || this.t('operation_failed'), 'error');
+            } finally {
+                this.rhKeyEditModal.loading = false;
+            }
+        },
+
+        // 删除密钥槽位
+        async deleteRunninghubKey(index) {
+            if (!confirm(this.t('rh_confirm_delete'))) return;
+            try {
+                const response = await axios.delete(`/api/admin/runninghub-key-pool/${index}`, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.showToast(this.t('operation_success'), 'success');
+                    this.loadRunninghubKeyPool();
+                }
+            } catch (error) {
+                this.showToast(error?.response?.data?.detail || this.t('operation_failed'), 'error');
+            }
+        },
+
+        // 重置熔断状态
+        async resetRunninghubCircuit(index) {
+            try {
+                const response = await axios.post(
+                    `/api/admin/runninghub-key-pool/${index}/reset-circuit`, {},
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('operation_success'), 'success');
+                    this.loadRunninghubKeyPool();
+                }
+            } catch (error) {
+                this.showToast(error?.response?.data?.detail || this.t('operation_failed'), 'error');
+            }
         },
         
         // 弹框显示敏感配置值（从后端获取完整值）

@@ -367,6 +367,11 @@ def process_runninghub_async_tasks(app=None):
                                 status=AsyncTaskStatus.PROCESSING
                             )
 
+                        # 多密钥轮换：轮询前根据任务记录的密钥 index 切换 driver client 密钥
+                        # （错误密钥无法获取结果）
+                        if hasattr(driver, '_apply_api_key_for_task'):
+                            driver._apply_api_key_for_task(task)
+
                         status_result = loop.run_until_complete(driver.check_status(task.external_task_id))
 
                         if status_result.get('status') == 'SUCCESS':

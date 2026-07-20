@@ -61,7 +61,7 @@ class BaseVideoDriver(ABC):
     def __init__(self, driver_name: str, driver_type: int):
         """
         初始化视频驱动
-        
+
         Args:
             driver_name: 模型名称，如 "sora2", "ltx2", "wan22" 等
             driver_type: 模型类型，对应 ai_tools 表的 type 字段
@@ -69,6 +69,25 @@ class BaseVideoDriver(ABC):
         self.driver_name = driver_name
         self.driver_type = driver_type
         self.logger = logging.getLogger(f"{__name__}.{driver_name}")
+
+    def _apply_api_key(self, api_key: str):
+        """
+        运行时切换密钥（多密钥轮换时使用）。
+
+        覆盖 self._api_key 并同步更新 self._storage（RunningHubFileStorage），
+        使后续提交/查询/图床上传都使用同一密钥。
+        子类若持有 self._api_key 与 self._storage（RunningHub 驱动统一风格），本方法即可生效。
+
+        Args:
+            api_key: 密钥明文
+        """
+        if not api_key:
+            return
+        if hasattr(self, '_api_key'):
+            self._api_key = api_key
+        storage = getattr(self, '_storage', None)
+        if storage is not None and hasattr(storage, 'set_api_key'):
+            storage.set_api_key(api_key)
 
     def _build_upstream_congested_result(self) -> Dict[str, Any]:
         """

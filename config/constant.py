@@ -517,6 +517,25 @@ RUNNINGHUB_QUEUE_LIMIT_ERROR_CODE = '421'
 # 可通过动态配置 runninghub.upstream_congest_retry_delay 覆盖
 RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT = 30
 
+# ==================== RunningHub 密钥池 / 熔断 ====================
+# 密钥池相关常量说明：
+#   密钥配置与运行态全部复用 system_config 动态配置（config_key 前缀 runninghub.key.{N}.*）
+#   index 含义：0 = 全局兜底密钥(runninghub.api_key)，1~N = 密钥池第 N 个密钥
+RUNNINGHUB_KEY_POOL_MAX = 10  # 密钥池最多支持的密钥数量
+RUNNINGHUB_GLOBAL_KEY_INDEX = 0  # 全局兜底密钥的 index（对应 runninghub.api_key）
+
+# 密钥运行态 circuit_status 取值
+RUNNINGHUB_KEY_STATUS_ENABLED = 1       # 正常可用
+RUNNINGHUB_KEY_STATUS_DISABLED = 0      # 手动停用（enabled=false，不参与分配）
+RUNNINGHUB_KEY_STATUS_CIRCUIT_OPEN = -1  # 熔断中（连续失败达阈值，冷却期内不参与分配）
+RUNNINGHUB_KEY_STATUS_HALF_OPEN = -2    # 半开探测（冷却到期，允许少量探测请求验证恢复）
+
+# 熔断参数（均可在 default_configs.py 注册为可编辑配置后热更新）
+RUNNINGHUB_KEY_CIRCUIT_FAIL_THRESHOLD = 5       # 连续失败多少次触发熔断
+RUNNINGHUB_KEY_CIRCUIT_COOLDOWN_SECONDS = 300   # 熔断初始冷却（秒）
+RUNNINGHUB_KEY_CIRCUIT_MAX_COOLDOWN_SECONDS = 1800  # 冷却封顶（30 分钟，半开探测失败后指数退避）
+RUNNINGHUB_KEY_HALF_OPEN_PROBE_LIMIT = 1        # 半开状态下同时允许的探测请求数
+
 # 任务类型名称映射（已废弃）
 TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 

@@ -320,6 +320,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'editable': True,
         'is_sensitive': False
     },
+
     {
         'key': 'pipeline.seedance_face_mask_enabled',
         'value_type': 'bool',
@@ -902,10 +903,10 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
 def get_default_config_by_key(key: str) -> Dict[str, Any]:
     """
     根据 key 获取默认配置定义
-    
+
     Args:
         key: 配置键，如 'task_queue.max_retry_count'
-        
+
     Returns:
         配置定义字典，未找到返回 None
     """
@@ -913,6 +914,40 @@ def get_default_config_by_key(key: str) -> Dict[str, Any]:
         if config['key'] == key:
             return config
     return None
+
+
+def should_skip_history(config_key: str) -> bool:
+    """
+    判断某配置项是否应跳过 system_config_history 记录。
+
+    用于纯运行态配置（如密钥池的 fail_count/circuit_status/next_probe_at/last_used_at），
+    这些项更新频繁、无审计价值，写历史会污染审计日志。
+
+    判定规则：满足以下任一即跳过
+      1. default_configs 中该 key 定义了 'skip_history': True
+      2. key 匹配运行态前缀模式（如 runninghub.key.{N}.fail_count 等）
+         —— 兼容未在 default_configs 预注册的密钥槽位 (N=2~10)
+
+    Args:
+        config_key: 配置键，如 'runninghub.key.3.fail_count'
+
+    Returns:
+        True 表示跳过历史记录
+    """
+    # 规则1：default_configs 显式标记
+    config_def = get_default_config_by_key(config_key)
+    if config_def and config_def.get('skip_history', False):
+        return True
+
+    # 规则2：运行态前缀模式（兼容未预注册的密钥槽位）
+    # 匹配 runninghub.key.{N}.(fail_count|circuit_status|next_probe_at|last_used_at)
+    rt_suffixes = (
+        '.fail_count', '.circuit_status', '.next_probe_at', '.last_used_at'
+    )
+    if config_key.startswith('runninghub.key.') and config_key.endswith(rt_suffixes):
+        return True
+
+    return False
 
 
 def get_all_config_keys() -> List[str]:

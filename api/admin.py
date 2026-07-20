@@ -30,6 +30,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
+def _is_runninghub_key_pool_config(config_key: str) -> bool:
+    return bool(config_key) and (
+        config_key.startswith('runninghub.key.')
+        or config_key.startswith('runninghub.key_pool.')
+    )
+
+
+def _require_runninghub_key_pool_config_access(config_keys) -> None:
+    """阻止社区版从通用配置 API 旁路读写商业密钥池配置。"""
+    if not any(_is_runninghub_key_pool_config(key) for key in config_keys):
+        return
+    from task.runninghub_key_pool import is_available
+    if not is_available():
+        raise HTTPException(status_code=403, detail='此功能仅商业版本可用')
+
+
 async def require_admin(auth_token: str = Header(None, alias="Authorization")) -> User:
     """
     管理员权限校验中间件
@@ -71,12 +87,16 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
         total_users = UsersModel.get_total_count()
         active_workflows_3d = VideoWorkflowModel.count_active_recent_days(days=3)
         
+        from task.runninghub_key_pool import is_available as is_runninghub_key_pool_available
         return {
             "code": 0,
             "data": {
                 "total_users": total_users,
                 "active_workflows_3d": active_workflows_3d,
-                "is_community_edition": IS_COMMUNITY_EDITION
+                "is_community_edition": IS_COMMUNITY_EDITION,
+                "features": {
+                    "runninghub_key_pool": is_runninghub_key_pool_available(),
+                },
             }
         }
     except Exception as e:
@@ -678,6 +698,13 @@ async def admin_list_configs(
             page=page,
             page_size=page_size
         )
+
+        from task.runninghub_key_pool import is_available as is_key_pool_available
+        if not is_key_pool_available():
+            result['data'] = [
+                config for config in result['data']
+                if not _is_runninghub_key_pool_config(config.get('config_key', ''))
+            ]
         
         # 敏感配置在列表中脱敏显示
         for config in result['data']:
@@ -704,6 +731,7 @@ async def admin_get_config_raw_value(
     获取配置的完整值（不脱敏），用于查看敏感配置
     """
     admin = await require_admin(auth_token)
+    _require_runninghub_key_pool_config_access([key])
     env = get_current_env()
     
     try:
@@ -756,6 +784,7 @@ async def admin_get_config(
     获取单个配置详情（包含修改历史）
     """
     admin = await require_admin(auth_token)
+    _require_runninghub_key_pool_config_access([config_key])
     env = get_current_env()
     
     try:
@@ -809,6 +838,7 @@ async def admin_batch_update_configs(
         raise HTTPException(status_code=400, detail="配置列表不能为空")
 
     config_keys = [item.key for item in request.configs]
+    _require_runninghub_key_pool_config_access(config_keys)
     is_allowed, error_msg = EditionStrategy.check_aggregator_sites(config_keys)
     if not is_allowed:
         raise HTTPException(status_code=403, detail=error_msg)
@@ -904,6 +934,7 @@ async def admin_update_config(
     更新配置值
     """
     admin = await require_admin(auth_token)
+    _require_runninghub_key_pool_config_access([config_key])
     env = get_current_env()
     
     try:
@@ -1889,4 +1920,143 @@ async def admin_update_retry_global_enabled(
         }
     except Exception as e:
         logger.error(f"Failed to update retry global enabled: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== RunningHub 密钥池管理（商业版专属） ====================
+
+
+def _require_enterprise_for_key_pool():
+    """以企业 Provider 是否成功注册作为唯一能力判断。"""
+    from task.runninghub_key_pool import is_available
+    if not is_available():
+        raise HTTPException(status_code=403, detail="此功能仅商业版本可用")
+
+
+class RunningHubKeyRequest(BaseModel):
+    """新增/更新密钥池中某个槽位的配置"""
+    api_key: Optional[str] = None
+    max_slots: Optional[int] = None
+    label: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+@router.get("/runninghub-key-pool")
+async def admin_get_runninghub_key_pool(
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """获取 RunningHub 密钥池聚合视图（含配置 + 运行态 + 当前占用，api_key 脱敏）"""
+    await require_admin(auth_token)
+    _require_enterprise_for_key_pool()
+    try:
+        from task.runninghub_key_pool import get_pool_overview_async
+        from config.config_util import get_dynamic_config_value
+        overview = await get_pool_overview_async()
+        global_api_key = await asyncio.to_thread(
+            get_dynamic_config_value, 'runninghub', 'api_key', default=''
+        )
+        return {
+            "code": 0,
+            "data": {
+                "pool": overview,
+                "global_api_key_configured": bool(
+                    global_api_key
+                ),
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to get runninghub key pool: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/runninghub-key-pool/{index}/raw")
+async def admin_get_runninghub_key_raw(
+    index: int = Path(..., ge=1, le=20),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """查看某密钥明文（敏感，仅管理员）"""
+    await require_admin(auth_token)
+    _require_enterprise_for_key_pool()
+    try:
+        from task.runninghub_key_pool import get_key_raw_async
+        api_key = await get_key_raw_async(index)
+        return {"code": 0, "data": {"index": index, "api_key": api_key}}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=e.args[0])
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get runninghub key raw {index}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/runninghub-key-pool/{index}")
+async def admin_set_runninghub_key(
+    index: int = Path(..., ge=1, le=20),
+    request: RunningHubKeyRequest = None,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """新增/更新密钥池中某个槽位的配置（仅配置项，运行态由系统维护）"""
+    admin = await require_admin(auth_token)
+    _require_enterprise_for_key_pool()
+    try:
+        from task.runninghub_key_pool import set_key_async
+        updated = await set_key_async(
+            index,
+            api_key=request.api_key,
+            max_slots=request.max_slots,
+            label=request.label,
+            enabled=request.enabled,
+            updated_by=admin.id,
+        )
+
+        logger.info(f"Admin {admin.id} updated runninghub key pool slot {index}: {updated}")
+        return {"code": 0, "message": f"密钥槽位 {index} 已更新", "data": {"updated": updated}}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to set runninghub key pool slot {index}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/runninghub-key-pool/{index}")
+async def admin_delete_runninghub_key(
+    index: int = Path(..., ge=1, le=20),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """删除密钥池中某个槽位（清空所有配置与运行态）"""
+    await require_admin(auth_token)
+    _require_enterprise_for_key_pool()
+    try:
+        from task.runninghub_key_pool import delete_key_async
+        deleted = await delete_key_async(index)
+        logger.info(f"Deleted runninghub key pool slot {index} ({deleted} fields)")
+        return {"code": 0, "message": f"密钥槽位 {index} 已删除", "data": {"deleted": deleted}}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to delete runninghub key pool slot {index}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/runninghub-key-pool/{index}/reset-circuit")
+async def admin_reset_runninghub_circuit(
+    index: int = Path(..., ge=1, le=20),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """手动重置某密钥的熔断状态（fail_count 清零、恢复 ENABLED）"""
+    await require_admin(auth_token)
+    _require_enterprise_for_key_pool()
+    try:
+        from task.runninghub_key_pool import reset_circuit_async
+        ok = await reset_circuit_async(index)
+        if not ok:
+            raise HTTPException(status_code=400, detail="无法重置全局密钥(index=0)")
+        return {"code": 0, "message": f"密钥槽位 {index} 熔断状态已重置"}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to reset runninghub circuit {index}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

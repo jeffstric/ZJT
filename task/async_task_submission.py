@@ -93,10 +93,26 @@ async def _submit_task_with_retry(task: AsyncTasksModel) -> Dict[str, Any]:
 
     # 需要槽位
     if config.need_runninghub_slot:
+        # 多密钥轮换：先从密钥池领用密钥
+        from task import runninghub_key_pool
+        acquired = await runninghub_key_pool.acquire_key_async()
+        if acquired is not None:
+            api_key_index, api_key, _ = acquired
+            slot_max_slots = 999999  # 单密钥上限已由 acquire_key 检查，跳过全局检查
+        else:
+            api_key_index = runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX
+            api_key = None
+            slot_max_slots = None  # 用默认全局值
+        # 注入密钥到 driver（异步驱动通过基类 _apply_api_key_for_submit）
+        if hasattr(driver, '_apply_api_key_for_submit'):
+            driver._apply_api_key_for_submit(api_key, api_key_index)
+
         slot_acquired = RunningHubSlotsModel.try_acquire_slot(
             task_id=task.id,
             task_type=config.slot_task_type,
-            source=RunningHubSlot.SOURCE_ASYNC
+            source=RunningHubSlot.SOURCE_ASYNC,
+            api_key_index=api_key_index,
+            max_slots=slot_max_slots
         )
 
         if not slot_acquired:
@@ -121,6 +137,9 @@ async def _submit_task_with_retry(task: AsyncTasksModel) -> Dict[str, Any]:
 
             if not result.get('success'):
                 RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_ASYNC)
+                await runninghub_key_pool.report_failure_async(
+                    api_key_index, result.get('error', '')
+                )
                 AsyncTasksModel.update_status(
                     record_id=task.id,
                     status=AsyncTaskStatus.FAILED,
@@ -132,11 +151,13 @@ async def _submit_task_with_retry(task: AsyncTasksModel) -> Dict[str, Any]:
             project_id = result.get('project_id')
             AsyncTasksModel.update_external_task_id(task.id, project_id)
             RunningHubSlotsModel.update_project_id(task.id, project_id, source=RunningHubSlot.SOURCE_ASYNC)
+            await runninghub_key_pool.report_success_async(api_key_index)
             logger.info(f"任务 {task.id} 提交成功，project_id={project_id}")
             return result
 
         except Exception as e:
             RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_ASYNC)
+            await runninghub_key_pool.report_failure_async(api_key_index, str(e))
             logger.error(f"任务 {task.id} 提交异常: {e}", exc_info=True)
             AsyncTasksModel.update_status(
                 record_id=task.id,

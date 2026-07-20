@@ -369,11 +369,12 @@ def set_dynamic_config_value(
     
     from model.system_config import SystemConfigModel
     from model.system_config_history import SystemConfigHistoryModel
-    
+    from config.default_configs import should_skip_history
+
     # 获取旧值（用于记录历史）
     old_config = SystemConfigModel.get_by_key(env, config_key)
     old_value = old_config.config_value if old_config else None
-    
+
     # 插入或更新配置
     config_id = SystemConfigModel.upsert(
         env=env,
@@ -385,9 +386,9 @@ def set_dynamic_config_value(
         is_sensitive=is_sensitive,
         updated_by=updated_by
     )
-    
-    # 记录修改历史
-    if old_value != config_value:
+
+    # 记录修改历史（运行态配置跳过，避免污染审计日志）
+    if old_value != config_value and not should_skip_history(config_key):
         SystemConfigHistoryModel.create(
             config_id=config_id,
             env=env,

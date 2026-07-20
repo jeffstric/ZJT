@@ -36,6 +36,15 @@ def cleanup_runninghub_slots():
         else:
             logger.debug(f"[RunningHub Slots Cleanup] No stale slots to clean up")
 
+        # 多密钥熔断刷新：把冷却到期的 CIRCUIT_OPEN 转为 HALF_OPEN（等待被动探测）
+        try:
+            from task.runninghub_key_pool import refresh_circuits
+            flipped = refresh_circuits()
+            if flipped > 0:
+                logger.info(f"[RunningHub Slots Cleanup] {flipped} 个密钥冷却到期，转为半开探测")
+        except Exception as ce:
+            logger.warning(f"[RunningHub Slots Cleanup] Failed to refresh key circuits: {ce}")
+
         return cleaned_count
 
     except Exception as e:

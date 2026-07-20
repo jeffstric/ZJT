@@ -80,6 +80,14 @@
                     </a>
                 </li>
                 <li>
+                    <a href="#" :class="{ active: currentPage === 'runninghubKeyPool' }" @click.prevent="switchPage('runninghubKeyPool')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                        </svg>
+                        <span>{{ t('nav_runninghub_key_pool') }}</span>
+                    </a>
+                </li>
+                <li>
                     <a href="#" :class="{ active: currentPage === 'models' }" @click.prevent="switchPage('models')">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -140,6 +148,7 @@
                 <h2 v-else-if="currentPage === 'config'">{{ t('nav_config') }}</h2>
                 <h2 v-else-if="currentPage === 'checkin'">{{ t('nav_checkin') }}</h2>
                 <h2 v-else-if="currentPage === 'implementations'">{{ t('nav_implementations') }}</h2>
+                <h2 v-else-if="currentPage === 'runninghubKeyPool'">{{ t('nav_runninghub_key_pool') }}</h2>
                 <h2 v-else-if="currentPage === 'models'">{{ t('nav_models') }}</h2>
                 <h2 v-else-if="currentPage === 'notifications'">{{ t('nav_notifications') }}</h2>
                 <h2 v-else-if="currentPage === 'constants'">{{ t('nav_constants') }}</h2>
@@ -884,6 +893,83 @@
                 </div>
             </section>
 
+            <!-- RunningHub 密钥池管理页面（商业版专属） -->
+            <section v-if="currentPage === 'runninghubKeyPool'">
+                <!-- 社区版锁定提示 -->
+                <div v-if="!runninghubKeyPoolAvailable" class="table-container" style="max-width: 600px; margin: 60px auto; text-align: center;">
+                    <div style="padding: 60px 30px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" style="width: 64px; height: 64px; margin: 0 auto 20px; display: block; color: #f59e0b;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                        <h3 style="color: #1e293b; margin-bottom: 12px;">{{ t('rh_pool_locked_title') }}</h3>
+                        <p style="color: #64748b; font-size: 14px; line-height: 1.6;">{{ t('rh_pool_locked_desc') }}</p>
+                    </div>
+                </div>
+
+                <!-- 商业版：密钥池管理 -->
+                <div v-else class="table-container">
+                    <div class="table-header">
+                        <h3>{{ t('rh_pool_title') }}</h3>
+                        <div class="table-actions">
+                            <button class="action-btn primary" @click="loadRunninghubKeyPool">{{ t('btn_refresh') }}</button>
+                        </div>
+                    </div>
+                    <p class="form-hint" style="margin-bottom:12px;">{{ t('rh_pool_desc') }}</p>
+
+                    <div v-if="runninghubKeyPool.loading" class="loading">{{ t('loading') }}</div>
+                    <table v-else class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>{{ t('rh_col_label') }}</th>
+                                <th>{{ t('rh_col_api_key') }}</th>
+                                <th>{{ t('rh_col_slots') }}</th>
+                                <th>{{ t('rh_col_status') }}</th>
+                                <th>{{ t('rh_col_fail_count') }}</th>
+                                <th>{{ t('rh_col_last_used') }}</th>
+                                <th>{{ t('col_actions') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="runninghubKeyPool.list.length === 0">
+                                <td colspan="8" style="text-align:center;">{{ t('rh_pool_empty') }}</td>
+                            </tr>
+                            <tr v-for="item in runninghubKeyPool.list" :key="item.index"
+                                :style="{ opacity: item.api_key_configured ? 1 : 0.5 }">
+                                <td>{{ item.index }}</td>
+                                <td>{{ item.label || '-' }}</td>
+                                <td class="config-value">
+                                    <template v-if="item.api_key_configured">
+                                        <code>{{ item.api_key_masked }}</code>
+                                        <button class="action-btn" style="margin-left:4px;" @click="viewRunninghubKeyRaw(item.index)">👁️</button>
+                                    </template>
+                                    <span v-else style="color:#999;">—</span>
+                                </td>
+                                <td>
+                                    <span v-if="item.api_key_configured">{{ item.active }}/{{ item.max_slots }}</span>
+                                    <span v-else style="color:#999;">—</span>
+                                </td>
+                                <td>
+                                    <span v-if="!item.api_key_configured" style="color:#999;">—</span>
+                                    <span v-else-if="!item.enabled" class="status-badge">{{ t('rh_status_disabled') }}</span>
+                                    <span v-else :class="['status-badge', circuitStatusClass(item.circuit_status)]">
+                                        {{ circuitStatusText(item.circuit_status) }}
+                                    </span>
+                                </td>
+                                <td>{{ item.api_key_configured ? item.fail_count : '—' }}</td>
+                                <td>{{ item.last_used_at ? formatDate(item.last_used_at) : '—' }}</td>
+                                <td>
+                                    <button class="action-btn primary" @click="openRhKeyEditModal(item)">{{ t('edit_btn') }}</button>
+                                    <button v-if="item.api_key_configured" class="action-btn" @click="resetRunninghubCircuit(item.index)">{{ t('btn_reset_circuit') }}</button>
+                                    <button v-if="item.api_key_configured" class="action-btn" style="color:#e74c3c;" @click="deleteRunninghubKey(item.index)">{{ t('delete_btn') }}</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p v-if="!runninghubKeyPool.globalApiKeyConfigured" class="form-hint" style="margin-top:12px;color:#e67e22;">{{ t('rh_pool_no_global_key') }}</p>
+                </div>
+            </section>
+
             <!-- 模型管理页面 -->
             <section v-if="currentPage === 'models'">
                 <!-- 统计卡片 -->
@@ -1530,6 +1616,49 @@
                     <button class="modal-btn cancel" @click="closeConfigEditModal">{{ t('cancel_btn') }}</button>
                     <button class="modal-btn confirm" @click="submitConfigEdit" :disabled="configEditModal.loading">
                         {{ configEditModal.loading ? t('btn_save_loading') : t('save_btn') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- RunningHub 密钥编辑弹窗 -->
+        <div class="modal-overlay" v-if="rhKeyEditModal.show" @click.self="closeRhKeyEditModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>{{ t('rh_modal_title') }} #{{ rhKeyEditModal.index }}</h3>
+                    <button class="modal-close" @click="closeRhKeyEditModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>{{ t('rh_col_api_key') }}</label>
+                        <input type="text" v-model="rhKeyEditModal.apiKey"
+                               :placeholder="rhKeyEditModal.apiKeyMasked ? rhKeyEditModal.apiKeyMasked + ' (' + t('rh_leave_blank_keep') + ')' : t('rh_api_key_placeholder')">
+                        <p class="form-hint">{{ t('rh_api_key_hint') }}</p>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('rh_col_label') }}</label>
+                        <input type="text" v-model="rhKeyEditModal.label" :placeholder="t('rh_label_placeholder')">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('rh_col_max_slots') }} <span style="color: red;">*</span></label>
+                        <input type="number" v-model.number="rhKeyEditModal.maxSlots" min="1" step="1">
+                        <p class="form-hint">{{ t('rh_max_slots_hint') }}</p>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('rh_col_enabled') }}</label>
+                        <div class="switch-container">
+                            <label class="switch">
+                                <input type="checkbox" v-model="rhKeyEditModal.enabled">
+                                <span class="slider"></span>
+                            </label>
+                            <span>{{ rhKeyEditModal.enabled ? t('config_bool_enabled') : t('config_bool_disabled') }}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeRhKeyEditModal">{{ t('cancel_btn') }}</button>
+                    <button class="modal-btn confirm" @click="submitRhKeyEdit" :disabled="rhKeyEditModal.loading">
+                        {{ rhKeyEditModal.loading ? t('btn_save_loading') : t('save_btn') }}
                     </button>
                 </div>
             </div>
