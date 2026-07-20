@@ -8,6 +8,8 @@ import os
 import re
 import logging
 import httpx
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from script_writer_core.file_manager import FileManager
@@ -49,6 +51,7 @@ _get_text_to_image_model_id_func = None
 _get_image_preferences_func = None
 # 获取用户视频偏好的函数引用（由 script_writer_api.py 设置）
 _get_video_preferences_func = None
+_video_preferences_override = ContextVar("video_preferences_override", default=None)
 # 获取视频模型 task_id 的函数引用（由 script_writer_api.py 设置）
 _get_text_to_video_model_id_func = None
 _get_image_to_video_model_id_func = None
@@ -75,6 +78,18 @@ def set_video_preferences_getter(func):
     _get_video_preferences_func = func
 
 
+@contextmanager
+def scoped_video_preferences(preferences: Optional[Dict[str, Any]]):
+    """Temporarily override video preferences for the current task execution context."""
+    token = _video_preferences_override.set(
+        dict(preferences) if preferences is not None else None
+    )
+    try:
+        yield
+    finally:
+        _video_preferences_override.reset(token)
+
+
 def set_text_to_video_model_getter(func):
     """设置获取文生视频模型 task_id 的函数"""
     global _get_text_to_video_model_id_func
@@ -89,6 +104,9 @@ def set_image_to_video_model_getter(func):
 
 def _get_video_preferences(user_id: str, world_id: str) -> Dict[str, str]:
     """获取用户的视频偏好（比例、时长），默认返回空字典"""
+    scoped = _video_preferences_override.get()
+    if scoped is not None:
+        return dict(scoped)
     if _get_video_preferences_func:
         return _get_video_preferences_func(user_id, world_id)
     return {}

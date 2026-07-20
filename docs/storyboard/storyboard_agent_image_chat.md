@@ -128,6 +128,14 @@
 }
 ```
 
+普通视频画幅不信任 Agent 自行从文本推断。后端启动普通视频 Agent 前，直接读取当前故事板的
+`workflow_ratio`，并连同本轮已解析的 `duration`、`resolution`、`image_mode`
+组成任务级 `video_preferences` 快照。`StoryboardAgentVideoToolExecutor` 只在当前工具调用
+上下文中注入该快照，调用结束立即恢复，不写入 `user_id + world_id` 共享偏好，避免并发
+Agent 互相覆盖或污染后续非故事板任务。因此左上角选择 `9:16` 后，
+`generate_text_to_video` 和 `image_to_video` 都会以 `9:16` 提交，不会因工具缺省值回退为
+`16:9`。读取已有偏好通过 `asyncio.to_thread` 执行，不阻塞 FastAPI 事件循环。
+
 导出（后续实现）按 `clip_to_audio_duration` 决定是否把视频裁到 `scene.duration`；关闭则使用完整生成视频。
 
 ## 对话模型选择
