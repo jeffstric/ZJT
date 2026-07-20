@@ -137,9 +137,11 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 | 生图模型 | `storyboard_lastSelectedImageTaskId` | `events.js` 的 `data-config-select="image"` change 处理 | `state.js` `setModels` → `pickRememberedTaskId` |
 | 视频模型 | `storyboard_lastSelectedVideoTaskId` | `events.js` 的 `data-config-select="video"` change 处理 | `state.js` `setModels` → `pickRememberedTaskId` |
 
-**优先级链路**：`config_json`（当前故事板，主记忆）> `localStorage`（跨故事板兜底）> 模型列表第一个。
+**生图模型优先级链路**：`config_json`（当前故事板，主记忆）> `localStorage`（跨故事板兜底）> GPT Image 2（`short_key=gpt-image-2`）> 模型列表第一项。
 
-`pickRememberedTaskId(models, storageKey)` 在读取 localStorage 后会**校验该 task_id 仍存在于当前可用模型列表**，避免读到已下线模型的 task_id 造成空选中；若不存在则回退到列表第一个并同步回写 localStorage 以固化默认。该兜底对齐已有 LLM 模型的 `storyboard_lastSelectedLlmModel` / `storyboard_lastScriptSplitLlmModel` 设计。
+**视频模型优先级链路**：`config_json`（当前故事板，主记忆）> `localStorage`（跨故事板兜底）> 模型列表第一项。
+
+`pickRememberedTaskId(models, storageKey, preferredModelKey)` 在读取 localStorage 后会**校验该 task_id 仍存在于当前可用模型列表**，避免读到已下线模型的 task_id 造成空选中。有效历史选择（包括 nano-banana）会继续保留；只有没有有效历史选择时，生图模型才优先选择 GPT Image 2。若 GPT Image 2 不可用则回退到列表第一项，并同步回写 localStorage 以固化默认。该兜底对齐已有 LLM 模型的 `storyboard_lastSelectedLlmModel` / `storyboard_lastScriptSplitLlmModel` 设计。
 
 `GET /api/storyboard/models` 的列表按各任务 `UnifiedTaskConfig.sort_order` **升序**返回（越小越靠前）。无记忆时默认视频模型即为列表第一项；当前代码配置下 LTX2.3 的 `sort_order=30` 小于 Wan2.2 的 `32`，因此默认会是 LTX2.3。不在前端再硬编码某个模型 key。
 
