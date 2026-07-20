@@ -1,7 +1,7 @@
 """
 AsyncTaskSubmission 纯逻辑单元测试
 
-测试 _calculate_retry_delay 和 _get_driver_class 的纯逻辑行为。
+测试重试延迟、driver 查找和提交成功后的状态转换。
 
 只 mock model.database（不 mock model 包和 config.unified_config），
 避免跨测试污染。
@@ -9,7 +9,8 @@ AsyncTaskSubmission 纯逻辑单元测试
 import importlib
 import sys
 import unittest
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # 保存原始模块引用，防止污染后续测试
 _saved_model_database = sys.modules.get('model.database')
@@ -26,7 +27,12 @@ for _mod in [
     if _mod in sys.modules:
         importlib.reload(sys.modules[_mod])
 
-from task.async_task_submission import _calculate_retry_delay, _get_driver_class
+import task.async_task_submission as submission
+from task.async_task_submission import (
+    _calculate_retry_delay,
+    _get_driver_class,
+    _submit_task_with_retry,
+)
 
 # 恢复 model.database，防止污染后续测试
 if _saved_model_database is not None:
@@ -84,6 +90,46 @@ class TestGetDriverClass(unittest.TestCase):
         """0 作为 impl_id 返回 None（不在 DRIVER_MAP 中）"""
         result = _get_driver_class(0)
         self.assertIsNone(result)
+
+
+class TestSubmitTaskWithRetry(unittest.IsolatedAsyncioTestCase):
+    """测试后台提交成功后的状态转换。"""
+
+    async def test_success_marks_task_submitted_atomically(self):
+        """成功提交后不能只更新 external_task_id 而继续留在重试队列。"""
+        driver = SimpleNamespace(
+            submit_task=AsyncMock(
+                return_value={'success': True, 'project_id': 'rh-project-123'}
+            )
+        )
+        task = SimpleNamespace(
+            id=1578,
+            implementation=next(iter(submission.DRIVER_MAP)),
+            external_task_id=None,
+            retry_count=1,
+            get_params_dict=lambda: {'text': 'test'},
+        )
+
+        with patch.object(submission, '_get_driver_class', return_value=lambda: driver), \
+                patch.object(
+                    submission,
+                    'get_async_task_config',
+                    return_value=SimpleNamespace(need_runninghub_slot=False),
+                ), \
+                patch.object(
+                    submission.AsyncTasksModel,
+                    'mark_submitted',
+                    create=True,
+                ) as mark_submitted, \
+                patch.object(
+                    submission.AsyncTasksModel,
+                    'update_external_task_id',
+                ) as update_external_task_id:
+            result = await _submit_task_with_retry(task)
+
+        self.assertTrue(result['success'])
+        mark_submitted.assert_called_once_with(task.id, 'rh-project-123')
+        update_external_task_id.assert_not_called()
 
 
 if __name__ == '__main__':

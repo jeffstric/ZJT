@@ -59,7 +59,7 @@ CREATE TABLE `runninghub_slots` (
 当 `async_tasks` 记录创建时槽位已满，系统会自动安排重试：
 
 1. **立即安排重试**：槽位满时，不标记任务失败，而是调用 `AsyncTasksModel.schedule_retry()` 设置 `next_retry_at`
-2. **后台任务处理**：`process_pending_async_task_submissions()` 每30秒扫描可重试任务
+2. **后台任务处理**：`process_pending_async_task_submissions()` 每7秒扫描可重试任务
 3. **指数退避**：重试延迟遵循 30s → 60s → 120s → 300s → 300s 的指数退避策略
 4. **最大重试次数**：默认最多重试5次，超过后标记任务为 FAILED
 
@@ -81,18 +81,22 @@ retry_tasks = AsyncTasksModel.get_ready_to_retry_tasks(limit=50)
 #### 后台任务处理流程
 
 ```
-1. 定时任务每30秒执行 process_pending_async_task_submissions()
+1. 定时任务每7秒执行 process_pending_async_task_submissions()
    ↓
 2. 查询可重试任务: status=QUEUED, next_retry_at <= NOW, retry_count < max_retries
    ↓
 3. 对每个任务:
    - 获取槽位
    - 调用 driver.submit_task() 提交
-   - 成功: 更新 external_task_id
+   - 成功: 原子更新 external_task_id、将 status 改为 PROCESSING，并清空 next_retry_at
    - 失败: 释放槽位，安排下次重试
    ↓
 4. 轮询任务 (process_runninghub_async_tasks) 继续监控已提交任务的状态
 ```
+
+提交成功后的三个字段必须在同一次数据库更新中完成。若只更新
+`external_task_id`，任务仍满足 `status=QUEUED AND next_retry_at <= NOW()`，会被下一个
+7 秒调度周期再次提交，并覆盖上一次的外部任务 ID。
 
 ### 4. 队列处理机制
 
@@ -170,12 +174,12 @@ if is_runninghub and task.status == 0:
    - 成功 → 提交到 RunningHub → 更新 external_task_id
    - 失败 → 槽位满，安排重试 (schedule_retry) → 返回 503
    ↓
-5. 后台任务 process_pending_async_task_submissions() 每30秒扫描
+5. 后台任务 process_pending_async_task_submissions() 每7秒扫描
    ↓
 6. 对每个可重试任务（next_retry_at <= NOW）:
    - 获取槽位
    - 提交到 RunningHub
-   - 更新 external_task_id
+   - 原子更新 external_task_id、status=PROCESSING、next_retry_at=NULL
    ↓
 7. 轮询器 process_runninghub_async_tasks() 每10秒检查任务状态
    ↓
@@ -189,7 +193,7 @@ if is_runninghub and task.status == 0:
 1. submit_with_slot_management() 返回 {error_type: 'SLOT_FULL', retry: True}
 2. 调用 AsyncTasksModel.schedule_retry() 设置 next_retry_at
 3. 后台任务在 next_retry_at <= NOW 时重新尝试获取槽位
-4. 成功后提交任务并更新 external_task_id
+4. 成功后原子更新 external_task_id、status=PROCESSING、next_retry_at=NULL
 
 指数退避：
 - retry_count=0: 30秒

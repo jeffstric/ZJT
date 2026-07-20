@@ -147,9 +147,9 @@ async def _submit_task_with_retry(task: AsyncTasksModel) -> Dict[str, Any]:
                 )
                 return result
 
-            # 提交成功，更新 external_task_id
+            # 提交成功：原子记录 external_task_id、切换为 PROCESSING 并退出重试队列
             project_id = result.get('project_id')
-            AsyncTasksModel.update_external_task_id(task.id, project_id)
+            AsyncTasksModel.mark_submitted(task.id, project_id)
             RunningHubSlotsModel.update_project_id(task.id, project_id, source=RunningHubSlot.SOURCE_ASYNC)
             await runninghub_key_pool.report_success_async(api_key_index)
             logger.info(f"任务 {task.id} 提交成功，project_id={project_id}")
@@ -179,7 +179,7 @@ async def _submit_task_with_retry(task: AsyncTasksModel) -> Dict[str, Any]:
             return result
 
         project_id = result.get('project_id')
-        AsyncTasksModel.update_external_task_id(task.id, project_id)
+        AsyncTasksModel.mark_submitted(task.id, project_id)
         return result
 
 

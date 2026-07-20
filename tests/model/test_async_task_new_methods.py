@@ -6,6 +6,7 @@ AsyncTask 新增方法单元测试
 - schedule_retry: 安排任务重试（指数退避）
 - get_ready_to_retry_tasks: 获取可重试的任务
 - update_external_task_id: 更新外部任务 ID
+- mark_submitted: 原子记录提交成功状态并退出重试队列
 - update_status_with_retry: 更新状态并可选重置重试计数
 
 注意：因为 model.async_tasks 可能已被其他模块缓存，
@@ -163,6 +164,31 @@ class TestAsyncTaskUpdateExternalTaskId(unittest.TestCase):
         params = call_args[0][1]
         self.assertIn('external_task_id = %s', sql)
         self.assertEqual(params, ('ext-task-abc', 1))
+
+
+class TestAsyncTaskMarkSubmitted(unittest.TestCase):
+    """测试提交成功后的原子状态转换。"""
+
+    def setUp(self):
+        _async_tasks_module.execute_update.reset_mock()
+        _async_tasks_module.execute_update.return_value = 1
+
+    def test_marks_processing_and_clears_retry_schedule_atomically(self):
+        """一次 UPDATE 同时写入外部 ID、PROCESSING 状态并退出重试队列。"""
+        self.assertTrue(
+            hasattr(AsyncTasksModel, 'mark_submitted'),
+            'AsyncTasksModel.mark_submitted must atomically finalize submission',
+        )
+
+        result = AsyncTasksModel.mark_submitted(1, 'ext-task-abc')
+
+        self.assertEqual(result, 1)
+        _async_tasks_module.execute_update.assert_called_once()
+        sql, params = _async_tasks_module.execute_update.call_args.args
+        self.assertIn('external_task_id = %s', sql)
+        self.assertIn('status = %s', sql)
+        self.assertIn('next_retry_at = NULL', sql)
+        self.assertEqual(params, ('ext-task-abc', AsyncTaskStatus.PROCESSING, 1))
 
 
 class TestAsyncTaskUpdateStatusWithRetry(unittest.TestCase):

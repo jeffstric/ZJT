@@ -332,6 +332,26 @@ class AsyncTasksModel:
             raise
 
     @staticmethod
+    def mark_submitted(record_id: int, external_task_id: str) -> int:
+        """原子记录提交结果，并确保任务退出待提交重试队列。"""
+        sql = """
+            UPDATE async_tasks
+            SET external_task_id = %s,
+                status = %s,
+                next_retry_at = NULL
+            WHERE id = %s
+        """
+        params = (external_task_id, AsyncTaskStatus.PROCESSING, record_id)
+        try:
+            return execute_update(sql, params)
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to mark async task submitted for id={record_id}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to mark async task submitted for id={record_id} (unexpected): {e}")
+            raise
+
+    @staticmethod
     def schedule_retry(record_id: int, delay_seconds: int) -> int:
         """
         安排任务重试（指数退避）
