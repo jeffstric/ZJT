@@ -2,6 +2,7 @@
 from typing import Any, Dict, List, Optional, Sequence
 
 from config.config_util import get_current_env
+from config.constant import StoryboardAgentCommandConstants
 from services.storyboard_agent_cli_service import (
     StoryboardAgentCliService,
     StoryboardCliError,
@@ -37,7 +38,7 @@ def _to_required_int(value: Any, name: str) -> int:
 
 
 def _to_required_str(value: Any, name: str, hint: str = "") -> str:
-    """要求非空字符串。用于 split-from-script 的 model 等强制参数，
+    """要求非非空字符串。用于 split-from-script 的 model 等强制参数，
     避免回退到服务端默认模型（CLI 路径必须显式指定）。"""
     if value in (None, ""):
         msg = f"{name} is required"
@@ -45,6 +46,24 @@ def _to_required_str(value: Any, name: str, hint: str = "") -> str:
             msg = f"{msg} ({hint})"
         raise StoryboardCliError("missing_parameter", msg)
     return str(value).strip()
+
+
+def _to_int_in_range(
+    value: Any, name: str, default: int, min_value: int, max_value: int,
+) -> int:
+    """将参数转为 int 并强制范围校验。用于 max_group_duration 等需要约束范围的参数。"""
+    if value in (None, ""):
+        return default
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        raise StoryboardCliError("invalid_parameter", f"{name} must be an integer")
+    if result < min_value or result > max_value:
+        raise StoryboardCliError(
+            "invalid_parameter",
+            f"{name} must be between {min_value} and {max_value} (got {result})",
+        )
+    return result
 
 
 def _to_bool(value: Any) -> bool:
@@ -135,10 +154,11 @@ class StoryboardAgentCommandService:
                     "name": "create-storyboard-from-script",
                     "permission": "storyboard:create",
                     "params": [
-                        "script_id", "title", "workflow_id", "style",
-                        "workflow_ratio", "composition_preference",
+                        "script_id", "title", "workflow_id",
                         "model", "model_id", "vendor_id",
                     ],
+                    # style / style_reference_image / workflow_ratio / composition_preference
+                    # 已移除：画风与构图由世界表继承，禁止命令行差异化覆盖。
                 },
                 {
                     "name": "split-from-script",
@@ -388,15 +408,16 @@ class StoryboardAgentCommandService:
             )
 
         if command == "create-storyboard-from-script":
+            # ⚠️ style / style_reference_image / composition_preference / workflow_ratio
+            # 已从命令层移除：这四项属于世界/故事板级的画风一致性资产，必须由世界表
+            # 继承（StoryboardModel.create 内部 world.visual_style / composition_preference
+            # 自动回退），禁止 CLI/Agent 按方案差异化覆盖，否则同世界多集画风不一致。
+            # 调用方即使传入也会被忽略。
             return self.service.create_storyboard_from_script(
                 script_id=_to_required_int(data.get("script_id"), "script_id"),
                 user_id=_to_required_int(data.get("user_id"), "user_id"),
                 title=data.get("title"),
                 workflow_id=_to_int(data.get("workflow_id"), "workflow_id"),
-                style=data.get("style"),
-                style_reference_image=data.get("style_reference_image"),
-                workflow_ratio=data.get("workflow_ratio"),
-                composition_preference=data.get("composition_preference"),
                 version=_to_int(data.get("version"), "version", 1) or 1,
                 model=data.get("model"),
                 model_id=_to_int(data.get("model_id"), "model_id"),
@@ -418,7 +439,13 @@ class StoryboardAgentCommandService:
                 ),
                 model_id=_to_int(data.get("model_id"), "model_id"),
                 vendor_id=_to_int(data.get("vendor_id"), "vendor_id"),
-                max_group_duration=_to_int(data.get("max_group_duration"), "max_group_duration", 15) or 15,
+                max_group_duration=_to_int_in_range(
+                    data.get("max_group_duration"),
+                    "max_group_duration",
+                    StoryboardAgentCommandConstants.MAX_GROUP_DURATION_DEFAULT,
+                    StoryboardAgentCommandConstants.MAX_GROUP_DURATION_MIN,
+                    StoryboardAgentCommandConstants.MAX_GROUP_DURATION_MAX,
+                ),
                 force_medium_shot=_to_bool(data.get("force_medium_shot")),
                 no_bg_music=_to_bool(data.get("no_bg_music")),
                 split_multi_dialogue=_to_bool(data.get("split_multi_dialogue")),

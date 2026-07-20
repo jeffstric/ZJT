@@ -147,6 +147,12 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/create-storyboard-from-
 在该世界最近保存的拆分模型偏好；没有偏好时使用服务端默认模型。解析结果写入
 `storyboard.config_json.selectedScriptSplitLlmModel`，后续 `split-from-script` 无需重复传模型。
 
+**⚠️ 画风与构图不可通过本命令修改**：`style` / `style_reference_image` / `composition_preference`
+/ `workflow_ratio` 四个参数已从命令层移除（即使传入也会被忽略）。这四项属于**世界级一致性资产**，
+由世界表的 `visual_style` / `composition_preference` 自动继承到同世界的所有故事板，保证多集画风
+一致。若需调整画风/构图/画幅，请让用户在世界设置页修改，不要按分镜方案（如 A/B/C 版本）差异化
+覆盖——否则同世界不同集会出现画风不一致。
+
 Split linked script into storyboard scenes:
 
 ```bash

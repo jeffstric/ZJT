@@ -1009,6 +1009,12 @@ class StoryboardAgentCommandConstants:
     """Storyboard agent command fallback values."""
     DEFAULT_SCRIPT_SPLIT_MODEL = "gemini-3-flash-preview"
     SCRIPT_SPLIT_MODEL_PREFERENCE_TYPE = "script_split_llm_model"
+    # split-from-script 的 max_group_duration（每幕/段最长时长，秒）范围。
+    # 强制 10~15：镜头过短（<10）会让分段碎、画面增多，导致同世界画风一致性下降；
+    # 上限 15 与视频模型单段时长上限对齐。默认值 15（最大限度保留画风一致）。
+    MAX_GROUP_DURATION_DEFAULT = 15
+    MAX_GROUP_DURATION_MIN = 10
+    MAX_GROUP_DURATION_MAX = 15
 
 # 向后兼容别名 - Tasks 状态
 TASK_STATUS_QUEUED = TaskStatus.QUEUED

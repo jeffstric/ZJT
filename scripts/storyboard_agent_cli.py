@@ -115,10 +115,10 @@ def build_parser() -> argparse.ArgumentParser:
     create_storyboard.add_argument("--user-id", type=int, required=True)
     create_storyboard.add_argument("--title")
     create_storyboard.add_argument("--workflow-id", type=int)
-    create_storyboard.add_argument("--style")
-    create_storyboard.add_argument("--style-reference-image")
-    create_storyboard.add_argument("--workflow-ratio")
-    create_storyboard.add_argument("--composition-preference")
+    # 注：--style / --style-reference-image / --workflow-ratio / --composition-preference
+    # 已移除。画风与构图属于世界级一致性资产，必须从世界表继承
+    # （StoryboardModel.create 内部 world.visual_style / composition_preference 自动回退），
+    # 禁止按分镜方案差异化覆盖。同世界多集画风由世界设置统一管理。
     create_storyboard.add_argument("--version", type=int, default=1)
     create_storyboard.add_argument("--model")
     create_storyboard.add_argument("--model-id", type=int)
@@ -137,7 +137,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     split_script.add_argument("--model-id", type=int)
     split_script.add_argument("--vendor-id", type=int)
-    split_script.add_argument("--max-group-duration", type=int, default=15)
+    split_script.add_argument(
+        "--max-group-duration", type=int, default=15,
+        help="每幕最长时长（秒，仅接受 10~15，默认 15 以最大限度保留画风一致）",
+    )
     split_script.add_argument("--force-medium-shot", action="store_true")
     split_script.add_argument("--no-bg-music", action="store_true")
     split_script.add_argument("--split-multi-dialogue", action="store_true")

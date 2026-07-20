@@ -479,10 +479,6 @@ class StoryboardAgentCliService:
         *,
         title: Optional[str] = None,
         workflow_id: Optional[int] = None,
-        style: Optional[str] = None,
-        style_reference_image: Optional[str] = None,
-        workflow_ratio: Optional[str] = None,
-        composition_preference: Optional[str] = None,
         version: int = 1,
         model: Optional[Any] = None,
         model_id: Optional[int] = None,
@@ -562,13 +558,14 @@ class StoryboardAgentCliService:
                 model, model_id=model_id, vendor_id=vendor_id
             )
 
-        # 画幅：显式传入优先；否则继承同世界已有集（优先第 1 集），再兜底 16:9
-        effective_ratio = (str(workflow_ratio).strip() if workflow_ratio else "") or None
-        if not effective_ratio:
-            inherited = StoryboardModel.resolve_inherited_workflow_ratio(
-                int(user_id), int(world_id)
-            ) or {}
-            effective_ratio = (str(inherited.get("workflow_ratio") or "").strip() or None) or "16:9"
+        # 画幅：从同世界已有集继承（优先第 1 集），再兜底 16:9。
+        # ⚠️ style / style_reference_image / composition_preference / workflow_ratio
+        # 均不从命令入参获取——前两者由 StoryboardModel.create 内部从世界表
+        # 继承（world.visual_style / world.composition_preference），保证同世界画风一致。
+        inherited = StoryboardModel.resolve_inherited_workflow_ratio(
+            int(user_id), int(world_id)
+        ) or {}
+        effective_ratio = (str(inherited.get("workflow_ratio") or "").strip() or None) or "16:9"
 
         storyboard_id = StoryboardModel.create(
             user_id=int(user_id),
@@ -577,10 +574,7 @@ class StoryboardAgentCliService:
             workflow_id=workflow_id,
             script_id=int(script_id),
             title=title if title is not None else (_get_field(script, "title") or ""),
-            style=style,
-            style_reference_image=style_reference_image,
             workflow_ratio=effective_ratio,
-            composition_preference=composition_preference,
             version=version,
             config_json={"selectedScriptSplitLlmModel": selection},
         )
