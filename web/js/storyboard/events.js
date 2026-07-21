@@ -1464,18 +1464,25 @@ async function handleAction(action, target) {
         return;
     }
 
-    if (action === 'toggle-audio-embedded') {
-        // 分镜级「声音同出」开关：开启后导出完整视频时保留视频原声、跳过 TTS 混音。
+    if (action === 'set-scene-audio-source') {
+        // 分镜级音频来源：video=视频原声，tts=对话配音。
         const scene = getCurrentScene();
         if (!scene) return;
-        scene.audioEmbedded = nextCheckboxState(target, scene.audioEmbedded);
+        const source = String(target.dataset.audioSource || '');
+        if (!['video', 'tts'].includes(source)) return;
+        const previous = Boolean(scene.audioEmbedded);
+        const next = source === 'video';
+        if (previous === next) return;
+        stopPlayback();
+        scene.audioEmbedded = next;
         try {
             await api.updateScene(scene.id, { audio_embedded: scene.audioEmbedded ? 1 : 0 });
         } catch (e) {
-            // 回滚翻转，避免 UI 与后端不一致
-            scene.audioEmbedded = !scene.audioEmbedded;
+            scene.audioEmbedded = previous;
+            rerender([Region.LEFT_TAB_BODY]);
+            throw e;
         }
-        rerender([Region.LEFT_SIDEBAR]);
+        rerender([Region.LEFT_TAB_BODY]);
         return;
     }
 

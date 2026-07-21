@@ -889,13 +889,6 @@ function renderScenePanel(scene) {
                 </div>
             </div>
 
-            <div class="scene-toggle-bar">
-                <label class="scene-toggle" data-action="toggle-audio-embedded" data-scene-id="${scene.id}" title="开启后导出完整视频时保留视频原声，不再混入TTS配音（数字人分镜默认开启）">
-                    <input type="checkbox" data-scene-id="${scene.id}" ${scene.audioEmbedded ? 'checked' : ''}>
-                    <span>声音同出</span>
-                </label>
-            </div>
-
             <div class="info-card">
                 <div class="info-card-header">
                     <div class="info-card-title">${icon('image', 18)} 画面提示词</div>
@@ -916,6 +909,38 @@ function renderScenePanel(scene) {
                 </div>
             </div>
         </div>`;
+}
+
+function renderDialogueAudioSource(scene) {
+    const useVideoAudio = Boolean(scene.audioEmbedded);
+    const hasVideo = Boolean(String(scene.videoUrl || '').trim());
+    let hint = '视频保持静音，连续预览和完整视频导出按顺序使用下方对话配音。';
+    if (useVideoAudio && hasVideo) {
+        hint = '连续预览和完整视频导出使用视频自带音轨，不再播放下方对话配音。';
+    } else if (useVideoAudio) {
+        hint = '当前分镜暂无视频；生成视频前，连续预览和导出会暂用下方对话配音。';
+    }
+
+    return `
+        <section class="dialogue-audio-source" aria-labelledby="dialogue-audio-source-title">
+            <div class="dialogue-audio-source-header">
+                <strong id="dialogue-audio-source-title">音频来源</strong>
+                <small>视频原声与对话配音不会同时播放</small>
+            </div>
+            <div class="dialogue-audio-source-options" role="radiogroup" aria-label="音频来源">
+                <button type="button"
+                    class="dialogue-audio-source-option ${useVideoAudio ? '' : 'active'}"
+                    data-action="set-scene-audio-source" data-audio-source="tts"
+                    role="radio" aria-checked="${useVideoAudio ? 'false' : 'true'}">对话配音（TTS）</button>
+                <button type="button"
+                    class="dialogue-audio-source-option ${useVideoAudio ? 'active' : ''}"
+                    data-action="set-scene-audio-source" data-audio-source="video"
+                    role="radio" aria-checked="${useVideoAudio ? 'true' : 'false'}"
+                    title="${hasVideo ? '使用视频文件自带的音轨' : '当前分镜暂无视频'}"
+                    ${!hasVideo ? 'disabled' : ''}>视频原声</button>
+            </div>
+            <p class="dialogue-audio-source-hint">${escapeHtml(hint)}</p>
+        </section>`;
 }
 
 function renderDialoguePanel(scene) {
@@ -942,6 +967,7 @@ function renderDialoguePanel(scene) {
 
     return `
         <div class="tab-panel dialogue-panel">
+            ${renderDialogueAudioSource(scene)}
             ${rows || '<div class="empty-note">还没有对话，点击下方添加。</div>'}
             <button class="panel-button" data-action="add-dialogue">${icon('add', 16)} 添加对话</button>
         </div>`;

@@ -35,14 +35,14 @@
 与时间轴预览一致（`storyboard_timeline_playback.md`）：
 
 - 镜时长 = `scene.duration`（无效则 2s）
-- 画面：按上节规则选视频 / 图 / 黑场（视频默认静音，见下「声音同出」例外）
+- 画面：按上节规则选视频 / 图 / 黑场（默认使用对话配音时视频静音，见下「视频原声」例外）
 - 视频短于 span 定格补满，长于则截断
 - 配音串行，总长相对 span 截断/静音垫
 - 镜间直接 concat
 
-### 声音同出（audio_embedded）
+### 视频原声（audio_embedded）
 
-`storyboard_scene.audio_embedded`（TINYINT，中文「声音同出」）控制单镜音轨来源：
+`storyboard_scene.audio_embedded`（TINYINT，前端显示为「音频来源 → 视频原声」）控制单镜音轨来源：
 
 - **关闭（默认，普通分镜）**：视频画面用 `-an` 丢弃原音轨，再混入本镜 TTS 配音（`_build_scene_audio` + `_mux_segment`）；无配音则补静音轨，保证整片音轨连续。
 - **开启（数字人分镜默认）**：选中视频已内嵌对话声音（如 LTX2.3 口型产物），导出时**保留视频原音轨**、**跳过 TTS 混音**；音轨按 span 截断/静音补齐。
@@ -55,7 +55,7 @@
 
 - 字幕不受影响：`audio_embedded` 只控制音轨，字幕仍按对白 `text` 时间轴生成 ASS 硬烧。
 - 素材包导出（方式1）不受影响：素材包本就是视频与配音 wav 分开打包。
-- 前端：分镜面板「声音同出」开关，切换后即时持久化（`PUT /scene/{id}` 仅传 `audio_embedded`）。
+- 前端：左栏「对话」页签提供「音频来源：对话配音（TTS）/视频原声」互斥选择，切换后即时持久化（`PUT /scene/{id}` 仅传 `audio_embedded`）。时间轴连续预览遵循同一规则。
 
 ### 字幕硬烧（整片）
 

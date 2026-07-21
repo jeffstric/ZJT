@@ -61,7 +61,7 @@ Grid 卡片底部「编辑」按钮（`data-action="edit-scene"`）打开统一�
 - 保存中按钮显示「保存中…」并 `disabled`，防止重复提交；`sceneEditSaving` 守卫。
 - 保存成功后写回本地 `scene.*`，关闭弹框，刷新 `Region.CENTER`（grid 卡片网格）。
 - 点遮罩 / 取消 / 关闭按钮均关闭弹框（遮罩兜底在 events.js 全局点击里）。
-- 画面提示词、视频提示词、场景、声音同出、对话等**不进弹框**，保持左栏 inline 编辑。
+- 画面提示词、视频提示词、场景、对话等**不进弹框**，保持左栏 inline 编辑；「音频来源：对话配音（TTS）/视频原声」位于对话页签顶部。
 
 state 字段：`showSceneEditDialog` / `sceneEditTargetId` / `sceneEditSaving` / `sceneEditError`。
 

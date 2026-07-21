@@ -2,8 +2,9 @@
  * 故事板时间轴预览播放引擎（类剪影试看）
  *
  * 规则：
- * - 有 videoUrl 播视频（静音，对白走 dialogue 音频），否则定格 firstFrameUrl
- * - 分镜下 dialogues 有 audioUrl 的按 sortOrder 串行播放
+ * - 有 videoUrl 播视频，否则定格 firstFrameUrl
+ * - 音频来源为视频原声时保留视频音轨并跳过 TTS
+ * - 音频来源为对话配音时静音视频，dialogues 有 audioUrl 的按 sortOrder 串行播放
  * - 本镜占用时长 = scene.duration（配音齐后后端同步为对白时长和）；不用视频 duration
  * - 到点强制切下一镜；视频仅并行画面，不阻塞切镜（长于本镜则截断，短于则定格）
  * - 进入本镜后先预加载视频+全部配音，就绪后再开时钟与播放
@@ -14,6 +15,7 @@ import state from './state.js';
 import { formatDuration } from './adapters.js';
 import { icon } from './icons.js';
 import { showToast } from './utils.js';
+import { SCENE_AUDIO_MODE, resolveSceneAudioMode } from './playback_audio.js';
 
 const EMPTY_HOLD_FALLBACK = 2;
 const TICK_MS = 50;
@@ -126,6 +128,15 @@ export function buildScenePlan(scene) {
         ? durationHint
         : EMPTY_HOLD_FALLBACK;
 
+    const audioEmbedded = Boolean(scene?.audioEmbedded);
+    const audioMode = resolveSceneAudioMode({
+        visualType,
+        audioEmbedded,
+        audios,
+        // 预留素材级音轨探测字段；当前旧数据为 undefined 时信任用户的“视频原声”选择。
+        videoHasAudio: scene?.videoHasAudio,
+    });
+
     return {
         sceneId: scene?.id ?? null,
         title: scene?.title || '',
@@ -133,6 +144,8 @@ export function buildScenePlan(scene) {
         visualType,
         visualUrl,
         audios,
+        audioEmbedded,
+        audioMode,
         fallbackHold,
     };
 }
@@ -246,7 +259,10 @@ function createPreloadedAudio(item) {
  */
 async function preloadSceneMedia(plan, videoEl, imageEl, gen) {
     disposePreloadedAudios();
-    const audioEls = (plan.audios || []).map(item => createPreloadedAudio(item));
+    // 视频原声模式不创建、不下载 TTS，避免无用请求与双音轨。
+    const audioEls = plan.audioMode === SCENE_AUDIO_MODE.TTS
+        ? (plan.audios || []).map(item => createPreloadedAudio(item))
+        : [];
     preloadedAudioEls = audioEls;
 
     // 触发视频缓冲
@@ -503,7 +519,8 @@ function mountVisual(plan) {
         const video = document.createElement('video');
         video.className = 'preview-media is-playback loaded';
         video.src = plan.visualUrl;
-        video.muted = true;
+        // 与导出保持一致：视频原声模式保留音轨；TTS/静音模式丢弃视频原声。
+        video.muted = plan.audioMode !== SCENE_AUDIO_MODE.VIDEO;
         video.playsInline = true;
         video.setAttribute('playsinline', '');
         video.preload = 'auto';
@@ -549,14 +566,21 @@ function isVisualActive(gen, session) {
  * 并行播视频：不阻塞切镜。session 失效（切镜）或 gen 失效时退出。
  * 视频先于本镜结束则定格末帧，直到本镜 session 结束。
  */
-async function runVideoVisual(videoEl, gen, session) {
+async function runVideoVisual(videoEl, gen, session, options = {}) {
     if (!videoEl) return;
+    const audible = options.audible === true;
     try {
         videoEl.loop = false;
         videoEl.currentTime = 0;
         const playResult = videoEl.play();
         if (playResult && typeof playResult.then === 'function') {
-            await playResult.catch(() => {});
+            try {
+                await playResult;
+            } catch (error) {
+                if (audible) {
+                    showToast('浏览器阻止了视频原声播放，请允许此站点播放声音', 'info');
+                }
+            }
         }
         while (isVisualActive(gen, session) && !videoEl.ended) {
             await checkpoint(gen);
@@ -772,9 +796,14 @@ async function playOneScene(scene, index, gen) {
 
     const session = ++visualSession;
     if (plan.visualType === 'video' && videoEl) {
-        runVideoVisual(videoEl, gen, session).catch(() => {});
+        runVideoVisual(videoEl, gen, session, {
+            audible: plan.audioMode === SCENE_AUDIO_MODE.VIDEO,
+        }).catch(() => {});
     }
-    const audioTask = runAudioQueue(plan.audios, gen, audioEls).catch((err) => {
+    const audioTask = (plan.audioMode === SCENE_AUDIO_MODE.TTS
+        ? runAudioQueue(plan.audios, gen, audioEls)
+        : Promise.resolve()
+    ).catch((err) => {
         if (err?.name !== 'PlaybackAbortError') {
             console.warn('[storyboard playback] audio queue', err);
         }
