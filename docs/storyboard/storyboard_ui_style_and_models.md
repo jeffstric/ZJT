@@ -217,11 +217,12 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 
 浏览器实测 URL: http://localhost:9003/storyboard?world_id=98&episode_number=1&user_id=1 （登录 15088613226）
 
-### 画面/视频提示词的 / 角色下拉提示与可见性修复
-- 在「画面提示词」和「视频提示词」区域上方增加轻提示文案：「提示：输入 / 展示角色的下拉框」。
-- 角色选择下拉框（输入 / 触发）现在通过 `document.body` + `position:fixed` + `getBoundingClientRect` 挂载（复用 `positionDropdown` 辅助），并在空间不足时自动上翻，避免被 `.info-card` / `.sidebar-content`（固定高度+overflow:auto）裁剪。
+### 画面/视频提示词的 @ 角色/道具下拉提示与可见性修复
+- 在「画面提示词」和「视频提示词」区域上方增加轻提示文案：「提示：输入 @ 可插入角色或道具」。
+- 角色/道具选择下拉框（输入 `@` 或中文输入法全角 `＠` 触发）现在通过 `document.body` + `position:fixed` + `getBoundingClientRect` 挂载（复用 `positionDropdown` 辅助），并在空间不足时自动上翻，避免被 `.info-card` / `.sidebar-content`（固定高度+overflow:auto）裁剪。
 - 位置/尺寸计算允许下拉完整显示（min/max-width 适配），与资产场景/道具下拉统一策略。
-- 符合 video_workflow 分镜节点 `/` 触发 + 【【角色】】 插入约定。
+- 提示词进入编辑态时光标默认位于末尾；下拉样式仅作用于单个选项，避免整段提示词或整个列表被误选中。
+- 角色按 `【【角色】】`、道具按 `〖〖道具〗〗` 插入并持久化。
 
 ---
 

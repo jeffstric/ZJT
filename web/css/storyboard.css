@@ -3660,11 +3660,11 @@ button {
 
 .sb-dd-item:hover { background: #f0f8ff; }
 
-.asset-dropdown div {
+.asset-dropdown-item {
   padding: 4px 8px;
   cursor: pointer;
 }
-.asset-dropdown div:hover {
+.asset-dropdown-item:hover {
   background: #f0f8ff;
 }
 .asset-dropdown-item.selected {

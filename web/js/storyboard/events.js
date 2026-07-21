@@ -2423,7 +2423,8 @@ export function bindEvents() {
             promptDisplay.innerHTML = '';
             promptDisplay.appendChild(ta);
             ta.focus();
-            ta.select();
+            // 光标落在末尾，避免点击下拉项时仍保持整段提示词被选中。
+            ta.setSelectionRange(ta.value.length, ta.value.length);
 
             // 支持输入 @ 弹出角色/道具选择
             ta.addEventListener('keydown', (e) => {
@@ -2432,6 +2433,22 @@ export function bindEvents() {
                     showMentionDropdownForPrompt(ta, promptDisplay, type, scene);
                 }
             });
+
+            // 中文输入法提交 @ 时，keydown 的 key 可能是 Process，需从实际输入结果识别。
+            // 先移除触发字符，保持与上面的 preventDefault 行为一致，再复用现有下拉逻辑。
+            const handleMentionInput = () => {
+                const cursor = ta.selectionStart ?? ta.value.length;
+                if (cursor <= 0) return;
+                const trigger = ta.value.slice(cursor - 1, cursor);
+                if (trigger !== '@' && trigger !== '＠') return;
+                ta.value = ta.value.slice(0, cursor - 1) + ta.value.slice(cursor);
+                ta.setSelectionRange(cursor - 1, cursor - 1);
+                showMentionDropdownForPrompt(ta, promptDisplay, type, scene);
+            };
+            ta.addEventListener('input', (e) => {
+                if (!e.isComposing) handleMentionInput();
+            });
+            ta.addEventListener('compositionend', handleMentionInput);
 
             // Do not use {once: true}. Dropdown clicks cause an early blur that we intentionally ignore
             // (to keep editing UI). A later real blur (click away or Esc) must still be able to save + rerender.
