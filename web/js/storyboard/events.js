@@ -969,6 +969,13 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'toggle-script-language-options') {
+        if (state.isGeneratingFromScript) return;
+        state.scriptLanguageOptionsOpen = !state.scriptLanguageOptionsOpen;
+        rerenderModals();
+        return;
+    }
+
     if (action === 'generate-from-script-confirm') {
         if (state.isGeneratingFromScript || !state.storyboardId) return;
         const splitModel = resolveSelectedScriptSplitLlmModel();
@@ -997,6 +1004,8 @@ async function handleAction(action, target) {
                 force_medium_shot: state.forceMediumShot !== false,
                 no_bg_music: state.noBgMusic !== false,
                 split_multi_dialogue: state.splitMultiDialogue === true,
+                dialogue_language: state.scriptDialogueLanguage || '',
+                prompt_language: state.scriptPromptLanguage || '',
                 model: splitModel.model,
                 model_id: splitModel.model_id,
                 vendor_id: splitModel.vendor_id,
@@ -2020,6 +2029,10 @@ export function bindEvents() {
         const target = event.target;
         if (target.id === 'chat-textarea') {
             state.inputMessage = target.value;
+        } else if (target.dataset.scriptLanguageCustom === 'dialogue') {
+            state.scriptDialogueLanguage = target.value;
+        } else if (target.dataset.scriptLanguageCustom === 'prompt') {
+            state.scriptPromptLanguage = target.value;
         }
     });
 
@@ -2153,6 +2166,18 @@ export function bindEvents() {
             return;
         }
 
+        if (target.dataset.scriptLanguageCustom) {
+            if (target.dataset.scriptLanguageCustom === 'dialogue') {
+                state.scriptDialogueLanguage = target.value.trim();
+            } else if (target.dataset.scriptLanguageCustom === 'prompt') {
+                state.scriptPromptLanguage = target.value.trim();
+            }
+            if (state.storyboardId) {
+                persistUiConfig().catch(() => {});
+            }
+            return;
+        }
+
         // 工具栏的图片/视频模型 select 已移除，仅在弹框配置中选择（data-config-select）
         // 对话模型的 toolbar select 也已移除
 
@@ -2227,6 +2252,22 @@ export function bindEvents() {
             } else if (type === 'maxGroupDuration') {
                 const d = parseInt(val, 10);
                 if ([5, 8, 10, 15].includes(d)) state.maxGroupDuration = d;
+            } else if (type === 'scriptDialogueLanguage') {
+                const useCustom = val === '**custom**';
+                state.scriptDialogueLanguageCustom = useCustom;
+                if (!useCustom) {
+                    state.scriptDialogueLanguage = val;
+                } else if (['', 'English', 'Deutsch', 'Français', 'Русский'].includes(state.scriptDialogueLanguage)) {
+                    state.scriptDialogueLanguage = '';
+                }
+            } else if (type === 'scriptPromptLanguage') {
+                const useCustom = val === '**custom**';
+                state.scriptPromptLanguageCustom = useCustom;
+                if (!useCustom) {
+                    state.scriptPromptLanguage = val;
+                } else if (['', 'English', 'Deutsch', 'Français', 'Русский'].includes(state.scriptPromptLanguage)) {
+                    state.scriptPromptLanguage = '';
+                }
             }
 
             // 模型配置在弹层内：只刷 modal；视频相关可能影响助手槽位
@@ -2234,6 +2275,12 @@ export function bindEvents() {
                 rerender([Region.MODAL, Region.AGENT_PANEL]);
             } else {
                 rerenderModals();
+            }
+            if (val === '**custom**' && (type === 'scriptDialogueLanguage' || type === 'scriptPromptLanguage')) {
+                const customKind = type === 'scriptDialogueLanguage' ? 'dialogue' : 'prompt';
+                requestAnimationFrame(() => {
+                    document.querySelector(`[data-script-language-custom="${customKind}"]`)?.focus();
+                });
             }
             if (state.storyboardId) {
                 persistUiConfig().catch(() => {});

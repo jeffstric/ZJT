@@ -272,6 +272,12 @@ def test_storyboard_frontend_exposes_generate_from_script_flow():
     assert "resolveSelectedScriptSplitLlmModel" in events_js
     assert "model_id: splitModel.model_id" in events_js
     assert "vendor_id: splitModel.vendor_id" in events_js
+    assert "dialogue_language: state.scriptDialogueLanguage" in events_js
+    assert "prompt_language: state.scriptPromptLanguage" in events_js
+    assert 'data-config-select="scriptDialogueLanguage"' in render_js
+    assert 'data-config-select="scriptPromptLanguage"' in render_js
+    assert "scriptDialogueLanguage: state.scriptDialogueLanguage" in state_js
+    assert "scriptPromptLanguage: state.scriptPromptLanguage" in state_js
     assert "from './auto_missing_images.js';" in events_js
     assert "autoGenerateMissingFirstFrames" in events_js
     assert "resetAutoMissingImagesFlag" in events_js

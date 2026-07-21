@@ -3093,7 +3093,13 @@ button {
 .generate-from-script-dialog {
     width: min(760px, calc(100vw - 32px));
     max-height: calc(100vh - 64px);
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.generate-from-script-dialog > header,
+.generate-from-script-dialog > .empty-note {
+    flex: 0 0 auto;
 }
 .edit-dialog header,
 .edit-dialog footer,
@@ -3214,6 +3220,10 @@ button {
     justify-content: flex-end;
     gap: 10px;
     margin-top: 14px;
+    flex: 0 0 auto;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    background: #fff;
 }
 .generate-from-script-model {
     margin-top: 14px;
@@ -3235,6 +3245,7 @@ button {
 }
 .generate-from-script-dialog .config-select-wrapper select {
     width: 100%;
+    max-width: none;
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -3274,6 +3285,84 @@ button {
     opacity: 0.6;
     cursor: not-allowed;
 }
+/* 语言选项默认折叠，展开后双列紧凑展示；避免继续拉长拆分弹窗。 */
+.script-language-panel {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+}
+.script-language-toggle {
+    width: 100%;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 0;
+    background: #f8fafc;
+    color: var(--foreground);
+    cursor: pointer;
+    text-align: left;
+}
+.script-language-toggle-title {
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+.script-language-summary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 400;
+}
+.script-language-chevron {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 10px;
+    transition: transform .15s ease;
+}
+.script-language-panel.is-open .script-language-chevron {
+    transform: rotate(180deg);
+}
+.script-language-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 10px;
+    border-top: 1px solid var(--border);
+}
+.script-language-field {
+    min-width: 0;
+    display: grid;
+    gap: 5px;
+    color: var(--muted);
+    font-size: 12px;
+}
+.script-language-field select,
+.script-language-field input {
+    width: 100%;
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--foreground);
+    font-size: 12px;
+    outline: none;
+}
+.script-language-field select:focus,
+.script-language-field input:focus {
+    border-color: var(--primary);
+}
 .sequence-mode-intro {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3289,6 +3378,10 @@ button {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 0 20px;
     align-items: start;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
 }
 .generate-from-script-dialog .gfs-col {
     min-width: 0;
@@ -3304,6 +3397,11 @@ button {
 }
 @media (max-width: 640px) {
     .generate-from-script-dialog .gfs-body { grid-template-columns: 1fr; }
+    .generate-from-script-dialog {
+        width: min(760px, calc(100vw - 16px));
+        max-height: calc(100dvh - 16px);
+    }
+    .script-language-fields { grid-template-columns: 1fr; }
 }
 .generate-from-script-dialog .config-hint-inline {
     display: inline;

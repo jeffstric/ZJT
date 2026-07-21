@@ -1659,13 +1659,24 @@ function renderScriptSplitModelConfig(disabled = false) {
     return html;
 }
 
-// 渲染剧本拆分的高级选项：镜头组时长 + 3 个开关（与 video_workflow 剧本节点保持一致）
-function renderScriptSplitOptions(disabled = false) {
+function renderScriptSplitDuration(disabled = false) {
     const durations = [5, 8, 10, 15];
     const curDuration = durations.includes(Number(state.maxGroupDuration)) ? Number(state.maxGroupDuration) : 15;
     const durationOptions = durations.map(d =>
         `<option value="${d}" ${d === curDuration ? 'selected' : ''}>${d}秒</option>`
     ).join('');
+    return `
+        <div class="generate-from-script-model">
+            <label class="config-label">镜头组时长</label>
+            <div class="config-hint">每个分镜组的最大总时长，超时会在同一场景内自动拆分</div>
+            <div class="config-select-wrapper">
+                <select class="chat-mode-select" data-config-select="maxGroupDuration" ${disabled ? 'disabled' : ''}>${durationOptions}</select>
+            </div>
+        </div>`;
+}
+
+// 渲染剧本拆分的高级选项：语言 + 拆分开关（与 video_workflow 剧本节点保持一致）
+function renderScriptSplitOptions(disabled = false) {
     const toggleItem = (action, label, checked, hint = '') => `
         <label class="script-split-toggle-row">
             <input type="checkbox" data-action="${action}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
@@ -1677,13 +1688,47 @@ function renderScriptSplitOptions(disabled = false) {
     const qcRoundsOptions = [1, 2, 3, 4, 5].map(n =>
         `<option value="${n}" ${n === qcRounds ? 'selected' : ''}>${n} 次</option>`
     ).join('');
+    const languageOptions = (value, custom) => [
+        ['', '中文（默认）'],
+        ['English', 'English'],
+        ['Deutsch', 'Deutsch'],
+        ['Français', 'Français'],
+        ['Русский', 'Русский'],
+    ].map(([optionValue, label]) =>
+        `<option value="${escapeHtml(optionValue)}" ${!custom && value === optionValue ? 'selected' : ''}>${escapeHtml(label)}</option>`
+    ).join('') + `<option value="**custom**" ${custom ? 'selected' : ''}>自定义语言...</option>`;
+    const dialogueLanguage = state.scriptDialogueLanguage || '';
+    const promptLanguage = state.scriptPromptLanguage || '';
+    const dialogueCustom = state.scriptDialogueLanguageCustom === true;
+    const promptCustom = state.scriptPromptLanguageCustom === true;
+    const languageLabel = value => value || '中文（默认）';
     return `
         <div class="generate-from-script-model">
-            <label class="config-label">镜头组时长</label>
-            <div class="config-hint">每个分镜组的最大总时长，超时会在同一场景内自动拆分</div>
-            <div class="config-select-wrapper">
-                <select class="chat-mode-select" data-config-select="maxGroupDuration" ${disabled ? 'disabled' : ''}>${durationOptions}</select>
-            </div>
+            <section class="script-language-panel ${state.scriptLanguageOptionsOpen ? 'is-open' : ''}">
+                <button type="button" class="script-language-toggle" data-action="toggle-script-language-options"
+                        aria-expanded="${state.scriptLanguageOptionsOpen ? 'true' : 'false'}" ${disabled ? 'disabled' : ''}>
+                    <span class="script-language-toggle-title">
+                        <span>语言</span>
+                        <span class="script-language-summary">对话：${escapeHtml(languageLabel(dialogueLanguage))} · 提示词：${escapeHtml(languageLabel(promptLanguage))}</span>
+                    </span>
+                    <span class="script-language-chevron" aria-hidden="true">▼</span>
+                </button>
+                ${state.scriptLanguageOptionsOpen ? `
+                <div class="script-language-fields">
+                    <label class="script-language-field">
+                        <span>对话语言</span>
+                        <select data-config-select="scriptDialogueLanguage" ${disabled ? 'disabled' : ''}>${languageOptions(dialogueLanguage, dialogueCustom)}</select>
+                        <input type="text" data-script-language-custom="dialogue" value="${escapeHtml(dialogueLanguage)}"
+                               placeholder="自定义语言..." ${dialogueCustom ? '' : 'hidden'} ${disabled ? 'disabled' : ''}>
+                    </label>
+                    <label class="script-language-field">
+                        <span>提示词语言</span>
+                        <select data-config-select="scriptPromptLanguage" ${disabled ? 'disabled' : ''}>${languageOptions(promptLanguage, promptCustom)}</select>
+                        <input type="text" data-script-language-custom="prompt" value="${escapeHtml(promptLanguage)}"
+                               placeholder="自定义语言..." ${promptCustom ? '' : 'hidden'} ${disabled ? 'disabled' : ''}>
+                    </label>
+                </div>` : ''}
+            </section>
             <div class="config-label" style="margin-top:12px;">拆分选项</div>
             <div class="script-split-toggles">
                 ${toggleItem('toggle-force-medium-shot', '对话禁止全景（使用近景/中景）', state.forceMediumShot !== false)}
@@ -1713,6 +1758,7 @@ function renderGenerateFromScriptDialog() {
     const busy = state.isGeneratingFromScript;
     const splitModelConfig = renderScriptSplitModelConfig(busy);
     const imageModelConfig = renderImageModelConfig(busy);
+    const splitDurationConfig = renderScriptSplitDuration(busy);
     const splitOptionsConfig = renderScriptSplitOptions(busy);
     const isEnterprise = state.editionInfo?.mode === 'enterprise';
     const modeIntroCards = [
@@ -1770,6 +1816,7 @@ function renderGenerateFromScriptDialog() {
                         <div class="generate-from-script-model">
                             ${imageModelConfig}
                         </div>
+                        ${splitDurationConfig}
                     </div>
                     <div class="gfs-col">
                         ${splitOptionsConfig}
