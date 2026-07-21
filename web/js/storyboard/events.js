@@ -402,6 +402,7 @@ function mapSceneAssetCandidates(response, assetType) {
     return assets.map(asset => ({
         id: asset.id,
         url: getSceneAssetCandidateUrl(asset),
+        posterUrl: asset.poster_url || asset.thumbnail_url || '',
         status: asset.status ?? asset.ai_tool?.status ?? asset.tool?.status ?? null,
         selected: selectedId !== null && selectedId !== undefined && String(asset.id) === String(selectedId),
     }));
@@ -417,6 +418,184 @@ async function loadSceneCandidates(sceneId) {
         images: mapSceneAssetCandidates(imageRes, 'first_frame'),
         videos: mapSceneAssetCandidates(videoRes, 'video'),
     };
+}
+
+function setCandidateUploadState(sceneId, assetType, uploading) {
+    if (!state.candidateUploadsBySceneId) state.candidateUploadsBySceneId = {};
+    if (!state.candidateUploadsBySceneId[sceneId]) {
+        state.candidateUploadsBySceneId[sceneId] = {};
+    }
+    state.candidateUploadsBySceneId[sceneId][assetType] = { uploading };
+}
+
+function setCandidateDeleteState(sceneId, assetId, deleting) {
+    if (!state.candidateDeletesBySceneId) state.candidateDeletesBySceneId = {};
+    if (!state.candidateDeletesBySceneId[sceneId]) {
+        state.candidateDeletesBySceneId[sceneId] = {};
+    }
+    if (deleting) {
+        state.candidateDeletesBySceneId[sceneId][assetId] = true;
+    } else {
+        delete state.candidateDeletesBySceneId[sceneId][assetId];
+        if (!Object.keys(state.candidateDeletesBySceneId[sceneId]).length) {
+            delete state.candidateDeletesBySceneId[sceneId];
+        }
+    }
+}
+
+export function validateCandidateUploadFile(file, assetType) {
+    const filename = String(file?.name || '').toLowerCase();
+    const extension = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')) : '';
+    if (assetType === 'video') {
+        return ['.mp4', '.webm'].includes(extension)
+            ? ''
+            : '视频仅支持 MP4、WebM 格式';
+    }
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+    return imageExtensions.includes(extension) || String(file?.type || '').startsWith('image/')
+        ? ''
+        : '仅支持 JPG、PNG、GIF、WebP 图片';
+}
+
+function isSceneCandidateTaskRunning(status) {
+    return [0, 1, 3, 4, 5, 6, '0', '1', '3', '4', '5', '6',
+        'pending', 'queued', 'running', 'processing', 'downloading'].includes(status);
+}
+
+async function handleCandidateUploadFileChange(input) {
+    const file = input.files?.[0];
+    const sceneId = Number(input.dataset.sceneId);
+    const assetType = input.dataset.candidateUploadInput === 'video' ? 'video' : 'first_frame';
+    // 允许用户连续选择同一个文件；先捕获 File，再清空原生 input。
+    input.value = '';
+    if (!file || !Number.isFinite(sceneId)) return;
+    if (state.candidateUploadsBySceneId?.[sceneId]?.[assetType]?.uploading) return;
+
+    const validationError = validateCandidateUploadFile(file, assetType);
+    if (validationError) {
+        notify(validationError);
+        return;
+    }
+
+    setCandidateUploadState(sceneId, assetType, true);
+    if (String(state.currentSceneId) === String(sceneId)) {
+        rerender([Region.CANDIDATES]);
+    }
+
+    try {
+        const response = await api.uploadSceneAsset(sceneId, file, {
+            assetType,
+            setSelected: true,
+        });
+        await loadSceneCandidates(sceneId);
+
+        const listKey = assetType === 'video' ? 'videos' : 'images';
+        const candidates = state.sceneCandidates?.[sceneId]?.[listKey] || [];
+        let uploaded = candidates.find(item => String(item.id) === String(response.asset_id));
+        if (!uploaded) {
+            uploaded = {
+                id: response.asset_id,
+                url: response.result_url || '',
+                status: null,
+                selected: true,
+            };
+            candidates.unshift(uploaded);
+        }
+        candidates.forEach(item => {
+            item.selected = String(item.id) === String(response.asset_id);
+        });
+
+        const scene = state.scenes.find(item => String(item.id) === String(sceneId));
+        applySelectedCandidateToScene(
+            scene,
+            assetType,
+            response.asset_id,
+            uploaded.url || response.result_url || '',
+        );
+        if (scene && assetType === 'first_frame' && state.chatMode === 'video') {
+            refreshSceneFirstFrameSlot(scene);
+        }
+        if (String(state.currentSceneId) === String(sceneId)) {
+            rerender(
+                [Region.PREVIEW, Region.CANDIDATES, Region.AGENT_PANEL, Region.TIMELINE_LIST],
+                { forcePreview: true },
+            );
+        }
+        notify(assetType === 'video' ? '视频已上传并选中' : '分镜图已上传并选中');
+    } catch (error) {
+        notify(error.message || '上传失败，请重试');
+    } finally {
+        setCandidateUploadState(sceneId, assetType, false);
+        if (String(state.currentSceneId) === String(sceneId)) {
+            rerender([Region.CANDIDATES]);
+        }
+    }
+}
+
+async function handleDeleteSceneCandidate(target) {
+    const scene = getCurrentScene();
+    if (!scene) return;
+    const sceneId = Number(scene.id);
+    const assetId = Number(target.dataset.candidateDeleteId);
+    const assetType = target.dataset.candidateDeleteType === 'video' ? 'video' : 'first_frame';
+    if (!Number.isFinite(sceneId) || !Number.isFinite(assetId)) return;
+    if (state.candidateDeletesBySceneId?.[sceneId]?.[assetId]) return;
+
+    const listKey = assetType === 'video' ? 'videos' : 'images';
+    const candidates = state.sceneCandidates?.[sceneId]?.[listKey] || [];
+    const candidate = candidates.find(item => String(item.id) === String(assetId));
+    if (candidate && isSceneCandidateTaskRunning(candidate.status)) {
+        notify('候选仍在生成中，请完成后再删除');
+        return;
+    }
+
+    const mediaLabel = assetType === 'video' ? '视频候选' : '分镜图候选';
+    const selectedHint = candidate?.selected
+        ? '\n这是当前选中项，删除后会自动切换到其他可用候选。'
+        : '';
+    if (!window.confirm(`确定删除这个${mediaLabel}吗？${selectedHint}\n此操作不可撤销。`)) return;
+
+    if (assetType === 'video' && candidate?.selected) stopPlayback();
+    setCandidateDeleteState(sceneId, assetId, true);
+    rerender([Region.CANDIDATES]);
+
+    try {
+        await api.deleteSceneAsset(sceneId, assetId);
+        await loadSceneCandidates(sceneId);
+
+        const refreshedCandidates = state.sceneCandidates?.[sceneId]?.[listKey] || [];
+        const selected = refreshedCandidates.find(item => item.selected) || null;
+        if (assetType === 'video') {
+            scene.selectedVideoId = selected?.id ?? null;
+            scene.videoUrl = selected?.url || '';
+            if (!selected && scene.previewAssetType === 'video') {
+                scene.previewAssetType = 'first_frame';
+            }
+        } else {
+            scene.selectedFirstFrameId = selected?.id ?? null;
+            scene.firstFrameUrl = selected?.url || '';
+            if (!selected && scene.previewAssetType === 'first_frame' && scene.videoUrl) {
+                scene.previewAssetType = 'video';
+            }
+            if (state.chatMode === 'video') refreshSceneFirstFrameSlot(scene);
+        }
+
+        pollSceneTaskStatus(sceneId);
+        if (String(state.currentSceneId) === String(sceneId)) {
+            rerender(
+                [Region.PREVIEW, Region.CANDIDATES, Region.AGENT_PANEL, Region.TIMELINE_LIST],
+                { forcePreview: true },
+            );
+        }
+        notify(`${mediaLabel}已删除`);
+    } catch (error) {
+        notify(error.message || '删除候选失败，请重试');
+    } finally {
+        setCandidateDeleteState(sceneId, assetId, false);
+        if (String(state.currentSceneId) === String(sceneId)) {
+            rerender([Region.CANDIDATES]);
+        }
+    }
 }
 
 function applySelectedCandidateToScene(scene, assetType, assetId, url) {
@@ -2013,6 +2192,28 @@ export function bindEvents() {
             return;
         }
 
+        // 文件选择器必须在同步用户手势中触发，否则部分浏览器会拦截。
+        const candidateUploadTarget = event.target.closest('[data-action="upload-scene-candidate"]');
+        if (candidateUploadTarget) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (candidateUploadTarget.disabled) return;
+            const assetType = candidateUploadTarget.dataset.candidateUploadType;
+            const fileInput = candidateUploadTarget.closest('.candidate-section')
+                ?.querySelector(`[data-candidate-upload-input="${assetType}"]`);
+            fileInput?.click();
+            return;
+        }
+
+        const candidateDeleteTarget = event.target.closest('[data-action="delete-scene-candidate"]');
+        if (candidateDeleteTarget) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (candidateDeleteTarget.disabled) return;
+            await handleDeleteSceneCandidate(candidateDeleteTarget);
+            return;
+        }
+
         const routeTarget = event.target.closest('[data-route]');
         if (routeTarget) {
             handleRoute(routeTarget.dataset.route);
@@ -2266,6 +2467,10 @@ export function bindEvents() {
 
     document.addEventListener('change', async (event) => {
         const target = event.target;
+        if (target.dataset.candidateUploadInput) {
+            await handleCandidateUploadFileChange(target);
+            return;
+        }
         if (target.id === 'chat-mode-select') {
             state.chatMode = target.value;
             state.showVideoModePanel = false;

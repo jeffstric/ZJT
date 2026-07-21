@@ -2700,6 +2700,65 @@ button {
     pointer-events: none;
 }
 
+.candidate-delete-button {
+    position: absolute;
+    z-index: 5;
+    top: 4px;
+    right: 4px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 50%;
+    background: rgba(15, 23, 42, 0.72);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transform: scale(0.92);
+    transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+    pointer-events: auto;
+}
+
+.candidate-thumb:hover .candidate-delete-button,
+.candidate-delete-button:focus-visible,
+.candidate-delete-button.is-deleting {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.candidate-delete-button:hover:not(:disabled),
+.candidate-delete-button:focus-visible {
+    background: #dc2626;
+}
+
+.candidate-delete-button:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 1px;
+}
+
+.candidate-delete-button:disabled {
+    cursor: wait;
+}
+
+.candidate-delete-button .sb-spin {
+    animation: spin 1s linear infinite;
+}
+
+.candidate-thumb.is-deleting {
+    opacity: 0.62;
+    pointer-events: none;
+}
+
+@media (hover: none) {
+    .candidate-delete-button {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
 .candidate-label {
     position: absolute;
     left: 0;
@@ -2842,6 +2901,54 @@ button {
     font-size: 12px;
     text-align: center;
     border: 1px dashed var(--border);
+}
+
+.candidate-upload-button {
+    width: 100%;
+    min-height: 32px;
+    padding: 6px 5px;
+    border: 1px dashed #94a3b8;
+    border-radius: 6px;
+    background: #fff;
+    color: var(--foreground);
+    font: inherit;
+    font-size: 11px;
+    line-height: 1.2;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.candidate-upload-button:hover:not(:disabled),
+.candidate-upload-button:focus-visible {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: rgba(47, 109, 246, 0.05);
+}
+
+.candidate-upload-button:focus-visible {
+    outline: 2px solid rgba(47, 109, 246, 0.25);
+    outline-offset: 1px;
+}
+
+.candidate-upload-button:disabled {
+    cursor: wait;
+    opacity: 0.68;
+}
+
+.candidate-upload-button .sb-icon {
+    flex: 0 0 auto;
+}
+
+.candidate-upload-button .sb-spin {
+    animation: spin 1s linear infinite;
+}
+
+.candidate-upload-input {
+    display: none;
 }
 
 .storyboard-grid-header { display: flex; justify-content: space-between; align-items: center; font-weight: 700; }

@@ -1504,27 +1504,65 @@ function renderCandidatePlaceholder(status, kind = 'image') {
     </div>`;
 }
 
+function getCandidateVideoThumbnailUrl(url) {
+    const value = String(url || '').trim();
+    if (!value) return '';
+    // 媒体时间片段只影响浏览器预览，不会发送到服务端；取 0.1 秒可避开部分视频的空首帧。
+    return `${value.split('#')[0]}#t=0.1`;
+}
+
 function renderCandidateMedia(item, kind = 'image') {
     const url = isRenderableCandidateUrl(item?.url) ? String(item.url).trim() : '';
     if (url) {
         if (kind === 'video') {
             // 仅展示缩略帧 + 播放标识，不内嵌可操作播放器（避免候选区看不清、误操作）
-            // preload=metadata 让浏览器拉取首帧作为预览；poster 优先用分镜首帧（若有）
+            // poster 只能使用该视频自身的封面，绝不能回退到分镜首帧，否则会展示成另一张图。
             const poster = isRenderableCandidateUrl(item?.posterUrl)
                 ? String(item.posterUrl).trim()
-                : (isRenderableCandidateUrl(getCurrentScene()?.firstFrameUrl)
-                    ? String(getCurrentScene().firstFrameUrl).trim()
-                    : '');
+                : '';
             const posterAttr = poster ? ` poster="${escapeHtml(poster)}"` : '';
+            const thumbnailUrl = getCandidateVideoThumbnailUrl(url);
             return `
                 <div class="candidate-video-thumb">
-                    <video src="${escapeHtml(url)}"${posterAttr} muted playsinline preload="metadata" tabindex="-1" aria-hidden="true"></video>
+                    <video src="${escapeHtml(thumbnailUrl)}"${posterAttr} muted playsinline preload="metadata" tabindex="-1" aria-hidden="true"></video>
                     <button type="button" class="candidate-video-badge" data-candidate-play aria-label="播放此候选视频">${icon('play', 14)}</button>
                 </div>`;
         }
         return `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.label || '分镜图')}">`;
     }
     return renderCandidatePlaceholder(item?.status, kind);
+}
+
+function renderCandidateUploadControl(scene, assetType) {
+    const isVideo = assetType === 'video';
+    const uploadState = state.candidateUploadsBySceneId?.[scene?.id]?.[assetType];
+    const uploading = Boolean(uploadState?.uploading);
+    const label = isVideo ? '上传视频' : '上传分镜图';
+    const accept = isVideo ? 'video/mp4,video/webm,.mp4,.webm' : 'image/jpeg,image/png,image/gif,image/webp';
+    return `
+        <button type="button" class="candidate-upload-button${uploading ? ' is-uploading' : ''}"
+                data-action="upload-scene-candidate" data-candidate-upload-type="${assetType}"
+                ${uploading ? 'disabled aria-busy="true"' : ''}>
+            ${icon(uploading ? 'loading' : 'add', 14)}
+            <span>${uploading ? '上传中' : label}</span>
+        </button>
+        <input type="file" class="candidate-upload-input" data-candidate-upload-input="${assetType}"
+               data-scene-id="${escapeHtml(scene?.id)}" accept="${accept}">
+    `;
+}
+
+function renderCandidateDeleteButton(scene, item, assetType) {
+    const assetId = Number(item?.id);
+    if (!Number.isFinite(assetId) || assetId <= 0) return '';
+    const deleting = Boolean(state.candidateDeletesBySceneId?.[scene?.id]?.[assetId]);
+    const mediaLabel = assetType === 'video' ? '视频候选' : '分镜图候选';
+    return `
+        <button type="button" class="candidate-delete-button${deleting ? ' is-deleting' : ''}"
+                data-action="delete-scene-candidate" data-candidate-delete-id="${assetId}"
+                data-candidate-delete-type="${assetType}" title="删除${mediaLabel}"
+                aria-label="删除${mediaLabel}" ${deleting ? 'disabled aria-busy="true"' : ''}>
+            ${icon(deleting ? 'loading' : 'delete', 13)}
+        </button>`;
 }
 
 export function renderRightSidebar(scene) {
@@ -1555,8 +1593,9 @@ export function renderRightSidebar(scene) {
 
     const imageGrid = displayImages.length
         ? `<div class="candidate-grid">${displayImages.map(img => `
-            <div class="candidate-thumb ${img.selected ? 'selected' : ''}${!isRenderableCandidateUrl(img.url) ? ' is-loading' : ''}" data-candidate-id="${img.id}" data-candidate-type="image">
+            <div class="candidate-thumb ${img.selected ? 'selected' : ''}${!isRenderableCandidateUrl(img.url) ? ' is-loading' : ''}${state.candidateDeletesBySceneId?.[scene?.id]?.[img.id] ? ' is-deleting' : ''}" data-candidate-id="${img.id}" data-candidate-type="image">
                 ${renderCandidateMedia(img, 'image')}
+                ${renderCandidateDeleteButton(scene, img, 'first_frame')}
                 ${img.label ? `<span class="candidate-label">${escapeHtml(img.label)}</span>` : ''}
             </div>`).join('')}</div>`
         : (imageRunning
@@ -1565,9 +1604,10 @@ export function renderRightSidebar(scene) {
 
     const videoGrid = displayVideos.length
         ? `<div class="candidate-grid candidate-video-grid">${displayVideos.map(vid => `
-            <div class="candidate-thumb candidate-video-thumb-wrap ${vid.selected ? 'selected' : ''}${!isRenderableCandidateUrl(vid.url) ? ' is-loading' : ''}"
+            <div class="candidate-thumb candidate-video-thumb-wrap ${vid.selected ? 'selected' : ''}${!isRenderableCandidateUrl(vid.url) ? ' is-loading' : ''}${state.candidateDeletesBySceneId?.[scene?.id]?.[vid.id] ? ' is-deleting' : ''}"
                  data-candidate-id="${vid.id}" data-candidate-type="video" title="点击选中该视频">
                 ${renderCandidateMedia(vid, 'video')}
+                ${renderCandidateDeleteButton(scene, vid, 'video')}
                 ${vid.label ? `<span class="candidate-label">${escapeHtml(vid.label)}</span>` : ''}
             </div>`).join('')}</div>`
         : (videoRunning
@@ -1579,10 +1619,12 @@ export function renderRightSidebar(scene) {
             <div class="candidate-section">
                 <span class="section-title">分镜图候选</span>
                 ${imageGrid}
+                ${renderCandidateUploadControl(scene, 'first_frame')}
             </div>
             <div class="candidate-section">
                 <span class="section-title">视频候选</span>
                 ${videoGrid}
+                ${renderCandidateUploadControl(scene, 'video')}
             </div>
         </aside>`;
 }
@@ -2762,7 +2804,7 @@ export function patchCandidates() {
     tmp.innerHTML = renderRightSidebar(scene);
     const newAside = tmp.querySelector('.right-sidebar');
     if (!newAside) return false;
-    const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}`;
+    const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}|${JSON.stringify(state.candidateUploadsBySceneId?.[scene.id] || null)}|${JSON.stringify(state.candidateDeletesBySceneId?.[scene.id] || null)}`;
     if (rightSidebar.dataset.candidateSig === nextSig) return true;
     rightSidebar.innerHTML = newAside.innerHTML;
     rightSidebar.dataset.candidateSig = nextSig;
@@ -3259,7 +3301,7 @@ export function updateCurrentSceneDetail(scene) {
         const newAside = tmp.querySelector('.right-sidebar');
         if (newAside) {
             const nextHtml = newAside.innerHTML;
-            const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}`;
+            const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}|${JSON.stringify(state.candidateUploadsBySceneId?.[scene.id] || null)}|${JSON.stringify(state.candidateDeletesBySceneId?.[scene.id] || null)}`;
             if (rightSidebar.dataset.candidateSig !== nextSig) {
                 rightSidebar.innerHTML = nextHtml;
                 rightSidebar.dataset.candidateSig = nextSig;

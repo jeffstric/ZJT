@@ -226,9 +226,14 @@ export async function selectSceneAsset(sceneId, assetType, assetId) {
         method: 'POST', body: JSON.stringify({ asset_type: assetType, asset_id: assetId }),
     });
 }
+export async function deleteSceneAsset(sceneId, assetId) {
+    return request(`/scene/${encodeURIComponent(sceneId)}/asset/${encodeURIComponent(assetId)}`, {
+        method: 'DELETE',
+    });
+}
 
 /**
- * 上传图片并登记为分镜资产（涂色编辑等手工出图）。
+ * 上传图片或视频并登记为分镜资产（候选区手工上传、涂色编辑等）。
  * FormData 不可设 Content-Type，由浏览器自动填充 boundary。
  * @returns {Promise<{success:boolean, asset_id?:number, result_url?:string, asset_type?:string, selected?:boolean, error?:string}>}
  */

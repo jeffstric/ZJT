@@ -1195,6 +1195,13 @@ class MediaConstants:
     ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.webm', '.avi', '.mkv'}
     # 图片后缀白名单（tuple，适配 str.endswith）；含 webp/gif/bmp，避免下载图片时被兜底改名导致扩展名与内容错配
     ALLOWED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')
+    # 分镜候选区手工上传：首版采用浏览器兼容性稳定的图片与视频格式。
+    STORYBOARD_IMAGE_UPLOAD_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+    STORYBOARD_VIDEO_UPLOAD_EXTENSIONS = {'.mp4', '.webm'}
+    STORYBOARD_ASSET_UPLOAD_CHUNK_BYTES = 1024 * 1024
+    STORYBOARD_IMAGE_MAX_SIZE_MB_DEFAULT = 20
+    STORYBOARD_VIDEO_MAX_SIZE_MB_DEFAULT = 50
+    STORYBOARD_VIDEO_MAX_DURATION_SECONDS_DEFAULT = 15
     VIDEO_COMPRESS_TARGET_HEIGHT = 480  # 前端压缩目标分辨率（480p）
     VIDEO_COMPRESS_THRESHOLD_MB = 10    # 超过此大小的视频触发前端压缩
     VIDEO_REFERENCE_MIN_PIXEL_COUNT = 409600  # Seedance r2v 参考视频最低总像素数

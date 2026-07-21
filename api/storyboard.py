@@ -12,6 +12,7 @@ import os
 import re
 import uuid
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Request, Header, File, Form, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -32,6 +33,7 @@ from config.constant import (
     StoryboardDigitalHumanConstants,
     StoryboardAgentCommandConstants,
     SceneDifficulty,
+    MediaConstants,
 )
 from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import SceneVideoType, UnifiedConfigRegistry, TaskTypeId, TaskCategory
@@ -39,7 +41,9 @@ from utils.project_path import (
     get_upload_subdir,
     generate_upload_filename,
     build_upload_url,
+    resolve_upload_url_to_local_path,
 )
+from utils.video_compressor import get_video_info
 from model.storyboard import (
     StoryboardModel, StoryboardSceneModel,
     StoryboardDialogueModel, StoryboardDialogueAudioModel,
@@ -65,6 +69,12 @@ from services.storyboard_batch_operation_service import (
     StoryboardBatchOperationError,
     batch_delete_storyboard_scenes,
 )
+from services.storyboard_asset_service import (
+    StoryboardAssetDeleteError,
+    StoryboardAssetSelectError,
+    delete_storyboard_scene_asset,
+    select_storyboard_scene_asset,
+)
 from services.storyboard_voiceover_bootstrap_service import (
     StoryboardVoiceoverBootstrapService,
 )
@@ -85,6 +95,83 @@ ALLOWED_DIALOGUE_UPDATE_FIELDS = {
     'character_id', 'text', 'speed', 'volume',
 }
 VALID_ASSET_TYPES = ('first_frame', 'last_frame', 'video')
+
+
+class StoryboardAssetUploadTooLarge(ValueError):
+    """分镜资产上传超过配置的文件大小限制。"""
+
+
+def _store_storyboard_asset_file(
+    source_file,
+    asset_type: str,
+    extension: str,
+    max_bytes: int,
+) -> Dict[str, Any]:
+    """在线程中限额分块复制上传文件，返回落盘信息。"""
+    subdir_parts = ("storyboard", asset_type)
+    abs_dir = get_upload_subdir(*subdir_parts, ensure=True)
+    name_info = generate_upload_filename(prefix=f"sb_{asset_type}", extension=extension)
+    abs_path = os.path.join(abs_dir, name_info.filename)
+    total_bytes = 0
+
+    try:
+        source_file.seek(0)
+        with open(abs_path, "wb") as target_file:
+            while True:
+                chunk = source_file.read(MediaConstants.STORYBOARD_ASSET_UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > max_bytes:
+                    raise StoryboardAssetUploadTooLarge()
+                target_file.write(chunk)
+    except Exception:
+        try:
+            if os.path.exists(abs_path):
+                os.remove(abs_path)
+        except OSError:
+            logger.warning("清理未完成的分镜上传文件失败: %s", abs_path, exc_info=True)
+        raise
+
+    return {
+        "abs_path": abs_path,
+        "subdir_parts": subdir_parts,
+        "filename": name_info.filename,
+        "size_bytes": total_bytes,
+    }
+
+
+def _remove_file_if_exists(path: str) -> None:
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        logger.warning("清理分镜上传文件失败: %s", path, exc_info=True)
+
+
+def _remove_deleted_storyboard_asset_file(result_url: str, asset_type: str) -> bool:
+    """仅删除当前服务 storyboard 目录内的普通文件，拒绝外部 URL 与越界路径。"""
+    text = str(result_url or "").strip()
+    if not text:
+        return False
+    parsed = urlparse(text)
+    if parsed.scheme and parsed.hostname not in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+        return False
+    path = parsed.path or text.split("?", 1)[0]
+    if not path.startswith(f"/upload/storyboard/{asset_type}/"):
+        return False
+
+    abs_path = os.path.realpath(resolve_upload_url_to_local_path(path))
+    allowed_dir = os.path.realpath(get_upload_subdir("storyboard", asset_type, ensure=False))
+    try:
+        if os.path.commonpath([abs_path, allowed_dir]) != allowed_dir:
+            return False
+    except ValueError:
+        return False
+    if not os.path.isfile(abs_path):
+        return False
+    os.remove(abs_path)
+    return True
 
 
 # ==================== Helpers ====================
@@ -861,6 +948,7 @@ def _enrich_scene_asset_result_urls(assets: list) -> list:
         item = asset.to_dict() if hasattr(asset, 'to_dict') else dict(asset)
         ai_tool_id = item.get('ai_tool_id')
         if not ai_tool_id:
+            item['result_url'] = _normalize_storyboard_upload_browser_url(item.get('result_url'))
             enriched.append(item)
             continue
 
@@ -893,6 +981,21 @@ def _enrich_scene_asset_result_urls(assets: list) -> list:
 
         enriched.append(item)
     return enriched
+
+
+def _normalize_storyboard_upload_browser_url(url: Any) -> Any:
+    """把历史手工上传的本机绝对地址转换为浏览器可访问的同源地址。"""
+    text = str(url or '').strip()
+    if not text:
+        return url
+    parsed = urlparse(text)
+    if (
+        parsed.hostname in {'localhost', '127.0.0.1', '0.0.0.0', '::1'}
+        and parsed.path.startswith('/upload/storyboard/')
+    ):
+        suffix = f'?{parsed.query}' if parsed.query else ''
+        return f'{parsed.path}{suffix}'
+    return text
 
 
 async def _attach_dialogues(scenes: list) -> list:
@@ -3742,19 +3845,29 @@ async def select_scene_asset(
         return JSONResponse(status_code=400, content={'error': f'asset_type 必须为 {VALID_ASSET_TYPES}'})
     if not asset_id:
         return JSONResponse(status_code=400, content={'error': 'asset_id is required'})
+    try:
+        asset_id = int(asset_id)
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={'error': 'asset_id 必须为整数'})
 
-    # 校验 asset 属于该 scene
-    asset = await asyncio.to_thread(StoryboardSceneAssetModel.get_by_id, asset_id)
-    if not asset or asset.scene_id != scene_id:
-        return JSONResponse(status_code=400, content={'error': '资产不属于该分镜'})
-
-    await asyncio.to_thread(
-        StoryboardSceneAssetModel.set_selected, scene_id, asset_type, asset_id
-    )
-    await asyncio.to_thread(
-        StoryboardSceneModel.update, scene_id, last_modified_user_id=user_id
-    )
-    return JSONResponse({'success': True, 'asset_type': asset_type, 'asset_id': asset_id})
+    try:
+        result = await asyncio.to_thread(
+            select_storyboard_scene_asset,
+            scene_id,
+            asset_id,
+            asset_type,
+            user_id,
+        )
+    except StoryboardAssetSelectError as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                'success': False,
+                'error_code': exc.error_code,
+                'error': exc.message,
+            },
+        )
+    return JSONResponse(result)
 
 
 @router.post('/scene/{scene_id}/asset/upload')
@@ -3768,9 +3881,9 @@ async def upload_scene_asset(
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
     """
-    上传本地图片并登记为分镜资产（如涂色编辑结果）。
+    上传本地图片或视频并登记为分镜资产。
 
-    - 图片落盘到 upload/storyboard/{asset_type}/
+    - 文件落盘到 upload/storyboard/{asset_type}/
     - 创建 storyboard_scene_asset（无 ai_tool_id，result_url 直写）
     - 默认设为当前选中（set_selected=true）
     """
@@ -3779,89 +3892,218 @@ async def upload_scene_asset(
     if err:
         return err
 
-    asset_type = (asset_type or "first_frame").strip()
-    # 涂色/手工上传目前仅支持图片类资产
-    if asset_type not in ("first_frame", "last_frame"):
+    asset_type = (asset_type or "first_frame").strip().lower()
+    if asset_type not in VALID_ASSET_TYPES:
         return JSONResponse(
             status_code=400,
-            content={'success': False, 'error': 'asset_type 必须为 first_frame/last_frame'},
+            content={'success': False, 'error': 'asset_type 必须为 first_frame/last_frame/video'},
         )
 
     content_type = (file.content_type or "").lower()
-    filename = file.filename or "colored.png"
-    ext = os.path.splitext(filename)[1].lower() or ".png"
-    allowed_ext = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-    if ext not in allowed_ext and not content_type.startswith("image/"):
-        return JSONResponse(
-            status_code=400,
-            content={'success': False, 'error': '仅支持图片文件'},
-        )
-    if ext not in allowed_ext:
-        # content-type 是 image/* 但扩展名异常时统一为 png
-        ext = ".png"
+    is_video = asset_type == "video"
+    filename = file.filename or ("storyboard.mp4" if is_video else "storyboard.png")
+    ext = os.path.splitext(filename)[1].lower()
 
-    content = await file.read()
-    if not content:
-        return JSONResponse(
-            status_code=400,
-            content={'success': False, 'error': '文件内容为空'},
-        )
+    if is_video:
+        if ext not in MediaConstants.STORYBOARD_VIDEO_UPLOAD_EXTENSIONS:
+            return JSONResponse(
+                status_code=400,
+                content={'success': False, 'error': '视频仅支持 MP4、WebM 格式'},
+            )
+        size_config_key = 'max_video_size_mb'
+        max_size_default = MediaConstants.STORYBOARD_VIDEO_MAX_SIZE_MB_DEFAULT
+    else:
+        if ext not in MediaConstants.STORYBOARD_IMAGE_UPLOAD_EXTENSIONS:
+            if not content_type.startswith("image/"):
+                return JSONResponse(
+                    status_code=400,
+                    content={'success': False, 'error': '仅支持 JPG、PNG、GIF、WebP 图片'},
+                )
+            # 兼容浏览器上传 image/* 但文件名没有有效扩展名的 Blob。
+            ext = ".png"
+        size_config_key = 'max_image_size_mb'
+        max_size_default = MediaConstants.STORYBOARD_IMAGE_MAX_SIZE_MB_DEFAULT
 
-    max_size_mb = get_dynamic_config_value('upload', 'max_image_size_mb', default=20)
+    max_size_mb = await asyncio.to_thread(
+        get_dynamic_config_value,
+        'upload',
+        size_config_key,
+        default=max_size_default,
+    )
     try:
         max_size_mb = float(max_size_mb)
     except (TypeError, ValueError):
-        max_size_mb = 20
+        max_size_mb = max_size_default
     max_bytes = int(max_size_mb * 1024 * 1024)
-    if len(content) > max_bytes:
-        return JSONResponse(
-            status_code=400,
-            content={'success': False, 'error': f'图片大小不能超过 {max_size_mb}MB'},
-        )
-
     should_select = str(set_selected or "true").strip().lower() not in ("0", "false", "no")
 
-    def _save_and_create() -> Dict[str, Any]:
-        # 与宫格拆分单格目录一致：upload/storyboard/first_frame/
-        subdir_parts = ("storyboard", asset_type)
-        abs_dir = get_upload_subdir(*subdir_parts, ensure=True)
-        name_info = generate_upload_filename(prefix=f"sb_{asset_type}", extension=ext)
-        abs_path = os.path.join(abs_dir, name_info.filename)
-        with open(abs_path, "wb") as fh:
-            fh.write(content)
-
-        try:
-            host = (get_config().get("server") or {}).get("host") or ""
-        except Exception:
-            host = ""
-        result_url = build_upload_url(*subdir_parts, name_info.filename, host=host)
-
-        asset_id = StoryboardSceneAssetModel.create(
-            scene_id=scene_id,
-            asset_type=asset_type,
-            ai_tool_id=None,
-            result_url=result_url,
-        )
-        if should_select:
-            StoryboardSceneAssetModel.set_selected(scene_id, asset_type, asset_id)
-        StoryboardSceneModel.update(scene_id, last_modified_user_id=user_id)
-        return {
-            "asset_id": asset_id,
-            "result_url": result_url,
-            "asset_type": asset_type,
-            "selected": should_select,
-        }
-
     try:
-        payload = await asyncio.to_thread(_save_and_create)
+        stored = await asyncio.to_thread(
+            _store_storyboard_asset_file,
+            file.file,
+            asset_type,
+            ext,
+            max_bytes,
+        )
+    except StoryboardAssetUploadTooLarge:
+        media_label = "视频" if is_video else "图片"
+        return JSONResponse(
+            status_code=400,
+            content={'success': False, 'error': f'{media_label}大小不能超过 {max_size_mb:g}MB'},
+        )
     except Exception as exc:
-        logger.error(f"upload_scene_asset failed scene={scene_id}: {exc}", exc_info=True)
+        logger.error("保存分镜上传文件失败 scene=%s: %s", scene_id, exc, exc_info=True)
         return JSONResponse(
             status_code=500,
             content={'success': False, 'error': f'上传失败: {exc}'},
         )
 
+    abs_path = stored["abs_path"]
+    if stored["size_bytes"] <= 0:
+        await asyncio.to_thread(_remove_file_if_exists, abs_path)
+        return JSONResponse(
+            status_code=400,
+            content={'success': False, 'error': '文件内容为空'},
+        )
+
+    video_info = None
+    if is_video:
+        video_info = await get_video_info(abs_path)
+        if not video_info or not video_info.get("width") or not video_info.get("height"):
+            await asyncio.to_thread(_remove_file_if_exists, abs_path)
+            return JSONResponse(
+                status_code=400,
+                content={'success': False, 'error': '无法识别该视频，请上传有效的 MP4 或 WebM 文件'},
+            )
+
+        max_duration = await asyncio.to_thread(
+            get_dynamic_config_value,
+            'upload',
+            'max_video_duration_seconds',
+            default=MediaConstants.STORYBOARD_VIDEO_MAX_DURATION_SECONDS_DEFAULT,
+        )
+        try:
+            max_duration = float(max_duration)
+        except (TypeError, ValueError):
+            max_duration = MediaConstants.STORYBOARD_VIDEO_MAX_DURATION_SECONDS_DEFAULT
+        duration = float(video_info.get("duration") or 0)
+        if max_duration > 0 and duration > max_duration:
+            await asyncio.to_thread(_remove_file_if_exists, abs_path)
+            return JSONResponse(
+                status_code=400,
+                content={'success': False, 'error': f'视频时长不能超过 {max_duration:g} 秒'},
+            )
+
+    try:
+        # 手工上传文件由当前 Web 服务提供，必须使用同源相对 URL。
+        # 若拼接配置中的 server.host（常为 localhost），通过域名或反向代理访问时
+        # 浏览器会请求用户本机，导致数据库已有视频但候选区加载失败。
+        result_url = build_upload_url(
+            *stored["subdir_parts"],
+            stored["filename"],
+        )
+
+        def _create_asset() -> int:
+            asset_id = StoryboardSceneAssetModel.create(
+                scene_id=scene_id,
+                asset_type=asset_type,
+                ai_tool_id=None,
+                result_url=result_url,
+            )
+            if should_select:
+                StoryboardSceneAssetModel.set_selected(scene_id, asset_type, asset_id)
+            StoryboardSceneModel.update(scene_id, last_modified_user_id=user_id)
+            return asset_id
+
+        asset_id = await asyncio.to_thread(_create_asset)
+    except Exception as exc:
+        await asyncio.to_thread(_remove_file_if_exists, abs_path)
+        logger.error("登记分镜上传资产失败 scene=%s: %s", scene_id, exc, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'error': f'上传失败: {exc}'},
+        )
+
+    payload: Dict[str, Any] = {
+        "asset_id": asset_id,
+        "result_url": result_url,
+        "asset_type": asset_type,
+        "selected": should_select,
+        "size_bytes": stored["size_bytes"],
+    }
+    if video_info:
+        payload["video"] = {
+            "width": video_info.get("width"),
+            "height": video_info.get("height"),
+            "duration": video_info.get("duration"),
+        }
     return JSONResponse({'success': True, **payload})
+
+
+@router.delete('/scene/{scene_id}/asset/{asset_id}')
+@require_permission("storyboard:update")
+async def delete_scene_asset(
+    request: Request,
+    scene_id: int,
+    asset_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """删除分镜图片/视频候选，并原子维护该类型的选中指针。"""
+    user_id = get_user_id_from_header(user_id)
+    _, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
+    if err:
+        return err
+
+    try:
+        result = await asyncio.to_thread(
+            delete_storyboard_scene_asset,
+            scene_id,
+            asset_id,
+            user_id,
+        )
+    except StoryboardAssetDeleteError as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                'success': False,
+                'error_code': exc.error_code,
+                'error': exc.message,
+            },
+        )
+    except Exception as exc:
+        logger.error(
+            "删除分镜候选失败 scene=%s asset=%s: %s",
+            scene_id,
+            asset_id,
+            exc,
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'error': '删除候选失败，请稍后重试'},
+        )
+
+    file_removed = False
+    if result.get("should_remove_local_file"):
+        try:
+            file_removed = await asyncio.to_thread(
+                _remove_deleted_storyboard_asset_file,
+                result.get("result_url") or "",
+                result.get("asset_type") or "",
+            )
+        except Exception:
+            # 数据库删除已提交，文件清理只能 best-effort，不能把成功操作伪装成失败。
+            logger.warning(
+                "清理已删除分镜候选文件失败 scene=%s asset=%s",
+                scene_id,
+                asset_id,
+                exc_info=True,
+            )
+
+    result.pop("result_url", None)
+    result.pop("should_remove_local_file", None)
+    result["file_removed"] = file_removed
+    return JSONResponse(result)
 
 
 @router.post('/dialogue/{dialogue_id}/audio/select')
