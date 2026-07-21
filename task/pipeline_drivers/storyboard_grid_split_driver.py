@@ -10,6 +10,7 @@ from config.config_util import get_config
 from config.constant import GridConfig, StoryboardAutoGenerateConstants
 from model import AITool, PipelineStep
 from model.storyboard_image_batch import StoryboardImageBatchItemModel
+from model.storyboard_scene import StoryboardSceneModel
 from model.storyboard_scene_asset import StoryboardSceneAssetModel
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from utils.project_path import get_project_root, resolve_upload_url_to_local_path
@@ -79,7 +80,8 @@ class StoryboardGridSplitPipelineDriver(BasePipelineDriver):
                     ai_tool_id=ai_tool_id,
                     result_url=result_url,
                 )
-                StoryboardSceneAssetModel.set_selected(scene_id, "first_frame", asset_id)
+                if self._should_select_generated_asset(scene_id, batch_item):
+                    StoryboardSceneAssetModel.set_selected(scene_id, "first_frame", asset_id)
 
                 # 触发首帧单图 CDN 分发（auto_upload_to_cdn 开启时建 mapping + 异步上传）
                 _ensure_asset_media_mapping(ai_tool, asset_id, "first_frame", result_url)
@@ -154,6 +156,29 @@ class StoryboardGridSplitPipelineDriver(BasePipelineDriver):
                 "failed_cells": failed_cells,
             },
         }
+
+    def _should_select_generated_asset(
+        self,
+        scene_id: int,
+        batch_item: Optional[Dict[str, Any]],
+    ) -> bool:
+        if not batch_item:
+            return True
+        extra = batch_item.get("extra_json") if isinstance(batch_item.get("extra_json"), dict) else {}
+        if extra.get("plan_status") != "regenerate_pending":
+            return True
+        base_asset_id = self._safe_int(extra.get("base_asset_id"))
+        if not base_asset_id:
+            return True
+        scene = StoryboardSceneModel.get_by_id(int(scene_id))
+        if not scene:
+            return False
+        current_asset_id = (
+            scene.get("selected_first_frame_id")
+            if isinstance(scene, dict)
+            else getattr(scene, "selected_first_frame_id", None)
+        )
+        return str(current_asset_id) == str(base_asset_id)
 
     def _resolve_grid_path(self, value: Any) -> Optional[str]:
         if not value:

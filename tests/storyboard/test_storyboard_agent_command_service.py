@@ -137,6 +137,8 @@ def test_storyboard_agent_command_dispatches_auto_generate_missing_images():
             "limit": 3,
             "asset_type": "first_frame",
             "sequence_mode": "balanced",
+            "scene_ids": [11, 12],
+            "existing_policy": "regenerate",
         },
     )
 
@@ -147,6 +149,8 @@ def test_storyboard_agent_command_dispatches_auto_generate_missing_images():
     assert calls[0]["auth_token"] == "token"
     assert calls[0]["limit"] == 3
     assert calls[0]["sequence_mode"] == "balanced"
+    assert calls[0]["scene_ids"] == [11, 12]
+    assert calls[0]["existing_policy"] == "regenerate"
 
 
 def test_storyboard_agent_command_dispatches_image_batch_status():

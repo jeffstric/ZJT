@@ -34,6 +34,7 @@ from config.constant import (
     TASK_TYPE_GENERATE_AUDIO,
     TASK_STATUS_QUEUED,
     StoryboardAudioGenerateConstants,
+    StoryboardAutoGenerateConstants,
 )
 from model.ai_audio import AIAudioModel
 from model.character import CharacterModel
@@ -44,6 +45,7 @@ from model.database import (
 )
 from model.storyboard_dialogue import StoryboardDialogueModel
 from model.storyboard_dialogue_audio import StoryboardDialogueAudioModel
+from model.storyboard_scene import StoryboardSceneModel
 from model.tasks import TasksModel
 
 logger = logging.getLogger(__name__)
@@ -119,6 +121,133 @@ class StoryboardVoiceoverBootstrapService:
             int(dialogue_id), int(user_id), ref_path=ref_path, text=text,
             scene_id=scene_id,
         )
+
+    def ensure_for_scenes(
+        self,
+        storyboard_id: int,
+        scene_ids: List[int],
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """Queue missing dialogue voiceovers for an explicit storyboard selection.
+
+        The method only performs short database operations. Actual TTS work remains in
+        the audio scheduler. Existing selected audio and scenes configured to use the
+        generated video's own audio are never overwritten.
+        """
+        constants = StoryboardAudioGenerateConstants
+        normalized = []
+        seen = set()
+        for raw_id in scene_ids or []:
+            try:
+                scene_id = int(raw_id)
+            except (TypeError, ValueError):
+                raise ValueError("scene_ids must contain integers")
+            if scene_id <= 0:
+                raise ValueError("scene_ids must contain positive integers")
+            if scene_id not in seen:
+                seen.add(scene_id)
+                normalized.append(scene_id)
+        if not normalized:
+            raise ValueError("scene_ids must not be empty")
+        if len(normalized) > StoryboardAutoGenerateConstants.MAX_SELECTED_SCENE_COUNT:
+            raise ValueError("too many selected scenes")
+
+        scenes = StoryboardSceneModel.list_by_storyboard(int(storyboard_id)) or []
+        scenes_by_id = {int(scene.get("id") or 0): scene for scene in scenes}
+        invalid_ids = sorted(set(normalized) - set(scenes_by_id))
+        if invalid_ids:
+            raise ValueError(f"selected scenes do not belong to storyboard: {invalid_ids}")
+
+        summary: Dict[str, Any] = {
+            "success": True,
+            "storyboard_id": int(storyboard_id),
+            "requested_scene_count": len(normalized),
+            "eligible_dialogue_count": 0,
+            "submitted_count": 0,
+            "reused_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "items": [],
+        }
+
+        for scene_id in normalized:
+            scene = scenes_by_id[scene_id]
+            if bool(scene.get("audio_embedded")):
+                summary["skipped_count"] += 1
+                summary["items"].append({
+                    "scene_id": scene_id,
+                    "dialogue_id": None,
+                    "status": "skipped",
+                    "reason": constants.SKIP_REASON_USES_VIDEO_AUDIO,
+                    "message": "分镜已启用使用视频音频",
+                })
+                continue
+
+            dialogues = StoryboardDialogueModel.list_by_scene(scene_id) or []
+            if not dialogues:
+                summary["skipped_count"] += 1
+                summary["items"].append({
+                    "scene_id": scene_id,
+                    "dialogue_id": None,
+                    "status": "skipped",
+                    "reason": constants.SKIP_REASON_NO_DIALOGUE,
+                    "message": "分镜没有对话",
+                })
+                continue
+
+            for dialogue in dialogues:
+                dialogue_id = int(dialogue.get("id") or 0)
+                if dialogue.get("selected_audio_id"):
+                    summary["reused_count"] += 1
+                    summary["items"].append({
+                        "scene_id": scene_id,
+                        "dialogue_id": dialogue_id,
+                        "status": "reused",
+                        "reason": constants.SKIP_REASON_ALREADY_HAS_SELECTED_AUDIO,
+                        "message": "对话已有选中配音",
+                    })
+                    continue
+
+                summary["eligible_dialogue_count"] += 1
+                try:
+                    result = self.ensure_dialogue_voiceover(
+                        dialogue_id,
+                        int(user_id),
+                        config={"skip_existing": True},
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[voiceover-batch] storyboard=%s scene=%s dialogue=%s submit failed: %s",
+                        storyboard_id, scene_id, dialogue_id, exc, exc_info=True,
+                    )
+                    result = {
+                        "decision": "failed",
+                        "scene_id": scene_id,
+                        "dialogue_id": dialogue_id,
+                        "reason": constants.SKIP_REASON_SUBMIT_FAILED,
+                        "message": str(exc),
+                    }
+
+                decision = str(result.get("decision") or "failed")
+                if decision == "submitted":
+                    summary["submitted_count"] += 1
+                elif decision == "reused":
+                    summary["reused_count"] += 1
+                elif decision == "skipped":
+                    summary["skipped_count"] += 1
+                else:
+                    summary["failed_count"] += 1
+                summary["items"].append({
+                    "scene_id": scene_id,
+                    "dialogue_id": dialogue_id,
+                    "status": decision,
+                    "reason": result.get("reason") or "",
+                    "message": result.get("message") or "",
+                    "audio_id": result.get("audio_id"),
+                    "dialogue_audio_id": result.get("dialogue_audio_id"),
+                })
+
+        return summary
 
     @staticmethod
     def _is_eligible_dialogue(dialogue: Dict[str, Any]) -> bool:

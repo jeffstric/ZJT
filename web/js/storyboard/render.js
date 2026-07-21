@@ -24,6 +24,7 @@ import {
     getAutoCompleteSummary,
     getFirstFrameDisplayStatus,
     getFirstFrameStatusLabel,
+    isAutoImageBatchActive,
 } from './auto_missing_images_state.js';
 import {
     getAutoVideoCompleteButtonViewModel,
@@ -37,6 +38,11 @@ import {
 import { Region } from './ui_regions.js';
 import { choosePreviewMedia } from './candidate_selection_state.js';
 import { canSwitchToDigitalHuman } from './video_type_switch_state.js';
+import {
+    getSelectedSceneIds,
+    isBatchSelectionActive,
+    isSceneSelected,
+} from './batch_selection_state.js';
 
 export { Region } from './ui_regions.js';
 
@@ -241,8 +247,12 @@ function assetBadge(scene, kind, label) {
     if (kind === 'first_frame') {
         const status = getFirstFrameDisplayStatus(scene);
         if (status === 'ready') return `<span class="status ready">${label}已生成</span>`;
-        if (status === 'running' || status === 'pending') return `<span class="status running">${label}${getFirstFrameStatusLabel(status)}</span>`;
-        if (status === 'failed') return `<span class="status failed">${label}生成失败</span>`;
+        if (['running', 'pending', 'regenerating', 'regenerate_pending'].includes(status)) {
+            return `<span class="status running">${label}${getFirstFrameStatusLabel(status)}</span>`;
+        }
+        if (status === 'failed' || status === 'regenerate_failed') {
+            return `<span class="status failed">${label}${getFirstFrameStatusLabel(status)}</span>`;
+        }
         return `<span class="status idle">${label}待生成</span>`;
     }
     return hasAsset(scene, kind)
@@ -491,9 +501,12 @@ function renderStoryboardCardCell(scene, nextScene) {
     const actName = String(scene.actName || '').trim();
     // 幕号已在缩略图展示时，body 仅在 actName 与幕号不同时再显示长名称
     const showActName = actName && actName !== groupLabel;
+    const selecting = isBatchSelectionActive();
+    const selected = selecting && isSceneSelected(scene.id);
     return `
             <div class="storyboard-grid-cell" data-scene-id="${scene.id}">
-                <article class="storyboard-card ${state.currentSceneId === scene.id ? 'active' : ''}" data-scene="${scene.id}">
+                <article class="storyboard-card ${state.currentSceneId === scene.id ? 'active' : ''} ${selecting ? 'is-batch-selecting' : ''} ${selected ? 'is-batch-selected' : ''}" data-scene="${scene.id}">
+                    ${selecting ? `<input class="storyboard-batch-checkbox" type="checkbox" data-action="toggle-batch-scene" data-id="${scene.id}" aria-label="选择${escapeHtml(scene.title)}" ${selected ? 'checked' : ''} ${state.batchSelection?.submittingAction ? 'disabled' : ''}>` : ''}
                     ${renderGridThumb(scene)}
                     <div class="storyboard-card-body">
                         <div class="card-title-row">
@@ -505,14 +518,14 @@ function renderStoryboardCardCell(scene, nextScene) {
                         ${renderGridCharactersRow(scene)}
                         ${renderGridPerspective(scene)}
                         ${showActName ? `<div class="card-act-name">${actNameTag(scene)}</div>` : ''}
-                        <div class="storyboard-card-actions">
+                        ${selecting ? '' : `<div class="storyboard-card-actions">
                             <button data-action="edit-scene" data-id="${scene.id}">${icon('edit', 14)} 编辑</button>
                             <button data-action="duplicate-scene" data-id="${scene.id}">${icon('copy', 14)} 复制</button>
                             <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} 删除</button>
-                        </div>
+                        </div>`}
                     </div>
                 </article>
-                ${nextScene ? renderInsertSceneSlot(scene, nextScene, 'grid') : ''}
+                ${!selecting && nextScene ? renderInsertSceneSlot(scene, nextScene, 'grid') : ''}
             </div>`;
 }
 
@@ -563,7 +576,7 @@ function renderFirstFrameStatusMark(scene) {
     const status = getFirstFrameDisplayStatus(scene);
     if (status === 'ready') return '';
     const label = getFirstFrameStatusLabel(status);
-    const spinner = status === 'running' ? icon('loading', 12) : '';
+    const spinner = status === 'running' || status === 'regenerating' ? icon('loading', 12) : '';
     return `<span class="first-frame-status-mark ${status}">${spinner}${escapeHtml(label)}</span>`;
 }
 
@@ -618,6 +631,43 @@ function renderAutoVideoCompleteControl() {
 }
 
 function renderAutoCompleteHeader(title, actionsHtml = '') {
+    if (state.viewMode === 'grid' && isBatchSelectionActive()) {
+        const selectedCount = getSelectedSceneIds().length;
+        const totalCount = (state.scenes || []).length;
+        const submitting = Boolean(state.batchSelection?.submittingAction);
+        const disabled = selectedCount === 0 || submitting ? 'disabled' : '';
+        const selectedIds = new Set(getSelectedSceneIds().map(String));
+        const selectedScenes = (state.scenes || []).filter(scene => selectedIds.has(String(scene.id)));
+        const existingImageCount = selectedScenes.filter(scene => Boolean(String(scene.firstFrameUrl || '').trim())).length;
+        const isCommunity = String(state.editionInfo?.mode || '').toLowerCase() === 'community';
+        const imageVerb = existingImageCount === 0
+            ? '生成'
+            : (existingImageCount === selectedCount ? '重新生成' : '生成/重新生成');
+        const imageBatchActive = isAutoImageBatchActive();
+        const imageActionLabel = imageBatchActive
+            ? '分镜图生成中'
+            : `${isCommunity ? '批量' : '按幕'}${imageVerb}分镜图`;
+        const imageActionTitle = imageBatchActive
+            ? '当前已有分镜图生成任务进行中'
+            : `${isCommunity ? '当前社区版将逐镜生成首帧' : '按幕使用 2×2/3×3 宫格生成首帧'}；已有图片会保留为候选`;
+        const imageDisabled = selectedCount === 0 || submitting || imageBatchActive ? 'disabled' : '';
+        return `
+            <div class="auto-complete-header storyboard-batch-toolbar" data-auto-complete-header>
+                <span class="auto-complete-title">已选择 ${selectedCount} / ${totalCount}</span>
+                <div class="auto-complete-actions" aria-live="polite">
+                    <button class="btn-ghost" data-action="batch-select-all" ${submitting ? 'disabled' : ''}>全选</button>
+                    <button class="btn-ghost" data-action="batch-invert-selection" ${submitting ? 'disabled' : ''}>反选</button>
+                    <button class="btn-ghost" data-action="batch-clear-selection" ${submitting ? 'disabled' : ''}>清空</button>
+                    <span class="storyboard-batch-divider" aria-hidden="true"></span>
+                    <button data-action="batch-generate-voiceovers" ${disabled}>${icon('mic', 15)} 批量生成配音</button>
+                    <button data-action="batch-generate-videos" ${disabled}>${icon('video', 15)} 批量生成视频</button>
+                    <button data-action="batch-generate-images" title="${imageActionTitle}" ${imageDisabled}>${icon('wand', 15)} ${imageActionLabel}</button>
+                    <button class="storyboard-batch-delete" data-action="batch-delete-scenes" ${disabled}>${icon('delete', 15)} 删除分镜</button>
+                    <button class="btn-ghost" data-action="exit-batch-selection" ${submitting ? 'disabled' : ''}>完成</button>
+                    ${actionsHtml}
+                </div>
+            </div>`;
+    }
     const summary = getAutoCompleteSummary();
     const videoSummary = getAutoVideoCompleteSummary();
     const videoHint = videoSummary.missingCount > 0
@@ -1351,9 +1401,17 @@ function renderInsertSceneSlot(prevScene, nextScene, mode) {
 export function renderStoryboardGrid() {
     return `
         <main class="center-panel">
-            ${renderAutoCompleteHeader('故事板总览', `<button class="btn-ghost" data-action="toggle-view">${icon('list', 16)} 时间轴</button>`)}
+            ${renderAutoCompleteHeader('故事板总览', renderGridHeaderActions())}
             <div class="storyboard-grid" data-scenes-sig="${escapeHtml(scenesStructureSig())}">${renderGridInner()}</div>
         </main>`;
+}
+
+function renderGridHeaderActions() {
+    const batchButton = isBatchSelectionActive()
+        ? ''
+        : `<button class="btn-ghost" data-action="enter-batch-selection">${icon('success', 16)} 批量操作</button>`;
+    const timelineDisabled = state.batchSelection?.submittingAction ? 'disabled' : '';
+    return `${batchButton}<button class="btn-ghost" data-action="toggle-view" ${timelineDisabled}>${icon('list', 16)} 时间轴</button>`;
 }
 
 /** 时间轴 list 内部 HTML（playhead + 分镜条 + 添加），供结构 patch 复用 */
@@ -1383,7 +1441,10 @@ function renderGridInner() {
         const nextScene = state.scenes[index + 1];
         return renderStoryboardCardCell(scene, nextScene);
     }).join('');
-    return `${cards}<button class="add-board-card" data-action="add-scene">${icon('add', 24)} 添加分镜</button>`;
+    const addButton = isBatchSelectionActive()
+        ? ''
+        : `<button class="add-board-card" data-action="add-scene">${icon('add', 24)} 添加分镜</button>`;
+    return `${cards}${addButton}`;
 }
 
 function scenesStructureSig() {
@@ -3240,7 +3301,7 @@ export function updateAutoCompleteHeader() {
     let updated = false;
     const gridHeader = document.querySelector('.center-panel > .auto-complete-header');
     if (gridHeader && state.viewMode === 'grid') {
-        gridHeader.outerHTML = renderAutoCompleteHeader('故事板总览', `<button class="btn-ghost" data-action="toggle-view">${icon('list', 16)} 时间轴</button>`);
+        gridHeader.outerHTML = renderAutoCompleteHeader('故事板总览', renderGridHeaderActions());
         updated = true;
     }
     const timelineHeader = document.querySelector('.scene-timeline > .auto-complete-header');

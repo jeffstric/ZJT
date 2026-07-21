@@ -170,6 +170,12 @@ export async function updateScenePrompt(sceneId, promptJson) {
 export async function deleteScene(sceneId) {
     return request(`/scene/${sceneId}`, { method: 'DELETE' });
 }
+export async function batchDeleteScenes(storyboardId, sceneIds) {
+    return request(`/${storyboardId}/scenes/batch-delete`, {
+        method: 'POST',
+        body: JSON.stringify({ scene_ids: sceneIds }),
+    });
+}
 export async function duplicateScene(sceneId) {
     return request(`/scene/${sceneId}/duplicate`, { method: 'POST' });
 }
@@ -197,6 +203,12 @@ export async function reorderDialogue(sceneId, data) {
 }
 export async function generateDialogueVoiceover(dialogueId, config = {}) {
     return request(`/dialogue/${dialogueId}/generate-voiceover`, { method: 'POST', body: JSON.stringify(config) });
+}
+export async function batchGenerateMissingVoiceovers(storyboardId, sceneIds) {
+    return request(`/${storyboardId}/batch-generate-missing-voiceovers`, {
+        method: 'POST',
+        body: JSON.stringify({ scene_ids: sceneIds, skip_existing: true }),
+    });
 }
 export async function selectDialogueAudio(dialogueId, dialogueAudioId) {
     return request(`/dialogue/${dialogueId}/audio/select`, {

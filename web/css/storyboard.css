@@ -2124,6 +2124,29 @@ button {
     gap: 8px;
     flex: 0 0 auto;
 }
+.storyboard-batch-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    padding: 8px 10px;
+    border: 1px solid rgba(47, 109, 246, 0.2);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+    backdrop-filter: blur(8px);
+}
+.storyboard-batch-toolbar button {
+    min-height: 30px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+.storyboard-batch-toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
+.storyboard-batch-divider { width: 1px; height: 22px; background: var(--border); }
+.storyboard-batch-delete { color: var(--danger); background: #fef2f2; }
 .auto-location-reference-alert {
     min-width: 0;
     padding: 5px 8px;
@@ -2832,6 +2855,28 @@ button {
 .storyboard-grid-cell { position: relative; min-width: 0; }
 .storyboard-card { overflow: hidden; border-radius: 10px; background: #fff; border: 1px solid var(--border, #e2e8f0); }
 .storyboard-card.active { outline: 3px solid var(--primary); box-shadow: 0 0 0 3px rgba(47, 109, 246, 0.25); }
+.storyboard-card.is-batch-selecting { position: relative; cursor: pointer; user-select: none; }
+.storyboard-card.is-batch-selected {
+    border-color: var(--primary);
+    outline: 3px solid rgba(47, 109, 246, 0.34);
+    box-shadow: 0 8px 20px rgba(47, 109, 246, 0.16);
+}
+.storyboard-batch-checkbox {
+    position: absolute;
+    z-index: 12;
+    top: 8px;
+    left: 8px;
+    width: 21px;
+    height: 21px;
+    margin: 0;
+    accent-color: var(--primary);
+    cursor: pointer;
+    filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.28));
+}
+.storyboard-card.is-batch-selecting .grid-type-badge {
+    /* 左上角为选择框保留 21px + 11px 间距，避免与视频/图片类型标签重叠。 */
+    left: 40px;
+}
 .storyboard-thumb { height: 132px; background: #111827; display: grid; place-items: center; overflow: hidden; position: relative; }
 .storyboard-thumb .preview-media {
     /* 网格缩略图回归普通流，并与主预览区的淡入状态隔离 */

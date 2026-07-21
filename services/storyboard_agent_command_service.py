@@ -187,6 +187,8 @@ class StoryboardAgentCommandService:
                         "limit",
                         "task_type",
                         "sequence_mode",
+                        "scene_ids",
+                        "existing_policy",
                     ],
                 },
                 {
@@ -198,6 +200,8 @@ class StoryboardAgentCommandService:
                         "task_type",
                         "ratio",
                         "sequence_mode",
+                        "image_mode",
+                        "scene_ids",
                     ],
                 },
                 {
@@ -443,6 +447,8 @@ class StoryboardAgentCommandService:
                 stop_on_error=not _to_bool(data.get("continue_on_error")),
                 task_type=_to_int(data.get("task_type") or data.get("image_task_id"), "task_type"),
                 sequence_mode=data.get("sequence_mode") or data.get("batch_mode"),
+                scene_ids=data.get("scene_ids"),
+                existing_policy=data.get("existing_policy") or "skip",
             )
 
         if command == "auto-generate-missing-videos":
@@ -461,6 +467,8 @@ class StoryboardAgentCommandService:
                 ),
                 ratio=data.get("ratio"),
                 sequence_mode=data.get("sequence_mode") or data.get("batch_mode") or "speed",
+                image_mode=data.get("image_mode"),
+                scene_ids=data.get("scene_ids"),
             )
 
         if command == "generate-video":

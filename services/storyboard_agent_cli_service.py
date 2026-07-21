@@ -657,6 +657,7 @@ class StoryboardAgentCliService:
         count: int = 1,
         sequence_mode: Optional[str] = None,
         force_bypass: bool = False,
+        select_result: bool = True,
     ) -> Dict[str, Any]:
         if mode not in VALID_IMAGE_MODES:
             raise StoryboardCliError("invalid_mode", f"invalid image mode: {mode}")
@@ -714,6 +715,7 @@ class StoryboardAgentCliService:
             mode=mode,
             result=result,
             reference_images=reference_urls if mode == "image_edit" else [],
+            select_result=select_result,
         )
 
     def generate_video(
@@ -843,6 +845,7 @@ class StoryboardAgentCliService:
         user_id: Optional[int],
         asset_type: str,
         project_ids: Sequence[int],
+        select_result: bool = True,
     ) -> Dict[str, Any]:
         if asset_type not in VALID_ASSET_TYPES:
             raise StoryboardCliError("invalid_asset_type", f"invalid asset_type: {asset_type}")
@@ -859,7 +862,8 @@ class StoryboardAgentCliService:
             asset_ids.append(int(asset_id))
 
         selected_asset_id = asset_ids[0]
-        StoryboardSceneAssetModel.set_selected(int(scene_id), asset_type, selected_asset_id)
+        if select_result:
+            StoryboardSceneAssetModel.set_selected(int(scene_id), asset_type, selected_asset_id)
         if user_id is not None:
             StoryboardSceneModel.update(int(scene_id), last_modified_user_id=int(user_id))
 
@@ -1087,6 +1091,8 @@ class StoryboardAgentCliService:
         stop_on_error: bool = True,
         task_type: Optional[int] = None,
         sequence_mode: Optional[str] = None,
+        scene_ids: Optional[Sequence[int]] = None,
+        existing_policy: str = StoryboardAutoGenerateConstants.IMAGE_EXISTING_POLICY_SKIP,
     ) -> Dict[str, Any]:
         if not int(user_id or 0):
             raise StoryboardCliError("missing_user_id", "user_id is required")
@@ -1109,6 +1115,23 @@ class StoryboardAgentCliService:
         storyboard = StoryboardModel.get_by_id(int(storyboard_id))
         if not storyboard:
             raise StoryboardCliError("not_found", f"storyboard not found: {storyboard_id}")
+        requested_scene_ids = self._normalize_requested_scene_ids(
+            int(storyboard_id), scene_ids
+        )
+        existing_policy = str(existing_policy or "").strip().lower()
+        if existing_policy not in StoryboardAutoGenerateConstants.VALID_IMAGE_EXISTING_POLICIES:
+            raise StoryboardCliError(
+                "invalid_existing_policy",
+                f"invalid image existing_policy: {existing_policy}",
+            )
+        if (
+            existing_policy == StoryboardAutoGenerateConstants.IMAGE_EXISTING_POLICY_REGENERATE
+            and requested_scene_ids is None
+        ):
+            raise StoryboardCliError(
+                "scene_ids_required",
+                "scene_ids is required when existing_policy is regenerate",
+            )
 
         task_type = self._resolve_image_task_type(storyboard, task_type)
         self._sync_image_model_preference(user_id, storyboard, task_type)
@@ -1129,6 +1152,8 @@ class StoryboardAgentCliService:
             prompt=prompt,
             source_image=source_image,
             stop_on_error=bool(stop_on_error),
+            scene_ids=requested_scene_ids,
+            existing_policy=existing_policy,
         )
         idempotency_key = self._image_batch_idempotency_key(idempotency_payload)
         with _IMAGE_BATCH_CREATE_LOCK:
@@ -1145,6 +1170,8 @@ class StoryboardAgentCliService:
             asset_type=asset_type,
             sequence_mode=sequence_mode,
             limit=batch_limit,
+            scene_ids=requested_scene_ids,
+            existing_policy=existing_policy,
         )
         is_quality_first_frame = (
             sequence_mode == StoryboardAutoGenerateConstants.SEQUENCE_MODE_QUALITY
@@ -1174,6 +1201,8 @@ class StoryboardAgentCliService:
                 asset_type=asset_type,
                 sequence_mode=sequence_mode,
                 limit=batch_limit,
+                scene_ids=requested_scene_ids,
+                existing_policy=existing_policy,
             )
             if is_quality_first_frame:
                 # 真正建 batch 前在锁内只读复检；禁止在全局锁内提交外部宫格任务。
@@ -1205,6 +1234,8 @@ class StoryboardAgentCliService:
                     "task_type": task_type,
                     "idempotency_key": idempotency_key,
                     "idempotency_payload": idempotency_payload,
+                    "requested_scene_ids": requested_scene_ids,
+                    "existing_policy": existing_policy,
                 },
             )
         scene_to_item_id: Dict[int, int] = {}
@@ -1229,6 +1260,8 @@ class StoryboardAgentCliService:
                     "sort_order": item.get("sort_order"),
                     "plan_status": item.get("status"),
                     "dependency_scene_id": item.get("dependency_scene_id"),
+                    "existing_policy": existing_policy,
+                    "base_asset_id": item.get("base_asset_id"),
                 },
             )
             scene_to_item_id[item["scene_id"]] = item_id
@@ -1256,11 +1289,14 @@ class StoryboardAgentCliService:
             "user_id": int(user_id),
             "asset_type": asset_type,
             "sequence_mode": sequence_mode,
+            "existing_policy": existing_policy,
             "batch_id": job_id,
             "limit": batch_limit,
             "submitted_count": status.get("submitted_count", 0),
             "skipped_count": status.get("skipped_count", 0),
             "failed_count": status.get("failed_count", 0),
+            "regenerated_count": status.get("regenerated_count", 0),
+            "reused_count": status.get("reused_count", 0),
             "status": status.get("status"),
             "items": status.get("items", created_items),
         }
@@ -1313,6 +1349,7 @@ class StoryboardAgentCliService:
         ratio: Optional[str] = None,
         sequence_mode: Optional[str] = None,
         image_mode: Optional[str] = None,
+        scene_ids: Optional[Sequence[int]] = None,
     ) -> Dict[str, Any]:
         """批量提交缺失分镜视频：复用 image batch 编排表，asset_type=video。
 
@@ -1329,6 +1366,9 @@ class StoryboardAgentCliService:
         storyboard = StoryboardModel.get_by_id(int(storyboard_id))
         if not storyboard:
             raise StoryboardCliError("not_found", f"storyboard not found: {storyboard_id}")
+        requested_scene_ids = self._normalize_requested_scene_ids(
+            int(storyboard_id), scene_ids
+        )
 
         asset_type = "video"
         sequence_mode = self._normalize_sequence_mode(
@@ -1358,6 +1398,7 @@ class StoryboardAgentCliService:
             "stop_on_error": bool(stop_on_error),
             "image_mode": image_mode,
             "kind": "auto-video",
+            "scene_ids": requested_scene_ids,
         }
         idempotency_key = self._image_batch_idempotency_key(idempotency_payload)
         with _IMAGE_BATCH_CREATE_LOCK:
@@ -1372,6 +1413,7 @@ class StoryboardAgentCliService:
             planned_items = self._plan_video_batch_items(
                 storyboard_id=int(storyboard_id),
                 limit=batch_limit,
+                scene_ids=requested_scene_ids,
             )
             job_id = StoryboardImageBatchJobModel.create(
                 storyboard_id=int(storyboard_id),
@@ -1394,6 +1436,7 @@ class StoryboardAgentCliService:
                     "idempotency_key": idempotency_key,
                     "idempotency_payload": idempotency_payload,
                     "kind": "auto-video",
+                    "requested_scene_ids": requested_scene_ids,
                 },
             )
 
@@ -1444,6 +1487,7 @@ class StoryboardAgentCliService:
         *,
         storyboard_id: int,
         limit: int,
+        scene_ids: Optional[Sequence[int]] = None,
     ) -> List[Dict[str, Any]]:
         """规划缺失视频的分镜。
 
@@ -1454,6 +1498,7 @@ class StoryboardAgentCliService:
         from services.storyboard_digital_human_service import plan_digital_human_ready
 
         scenes = StoryboardSceneModel.list_by_storyboard(int(storyboard_id)) or []
+        requested = set(scene_ids) if scene_ids is not None else None
         items: List[Dict[str, Any]] = []
         missing_count = 0
         previous_group_key: Optional[str] = None
@@ -1462,6 +1507,8 @@ class StoryboardAgentCliService:
             scene_id = int(_get_field(scene, "id"))
             group_key = self._scene_group_key(scene, previous_group_key, storyboard_id)
             previous_group_key = group_key
+            if requested is not None and scene_id not in requested:
+                continue
             selected_video = self._selected_asset_for_scene(scene, "video")
             first_frame = self._selected_asset_for_scene(scene, "first_frame")
             has_first = bool(first_frame and first_frame.get("result_url"))
@@ -1482,6 +1529,10 @@ class StoryboardAgentCliService:
             elif selected_video and selected_video.get("status") in StoryboardAutoGenerateConstants.RUNNING_STATUSES:
                 status = "already_running"
                 batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+            elif not has_first:
+                status = "missing_first_frame"
+                batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED
+                skip_reason = "missing_first_frame"
             elif is_digital_human:
                 dh_status, dh_skip = plan_digital_human_ready(scene_id)
                 if dh_status != "ready":
@@ -1494,10 +1545,6 @@ class StoryboardAgentCliService:
                     skip_reason = "limit_reached"
                 else:
                     missing_count += 1
-            elif not has_first:
-                status = "missing_first_frame"
-                batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED
-                skip_reason = "missing_first_frame"
             elif int(limit) > 0 and missing_count >= int(limit):
                 status = "limit_reached"
                 batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED
@@ -1541,6 +1588,8 @@ class StoryboardAgentCliService:
         prompt: Optional[str],
         source_image: Optional[str],
         stop_on_error: bool,
+        scene_ids: Optional[Sequence[int]] = None,
+        existing_policy: str = StoryboardAutoGenerateConstants.IMAGE_EXISTING_POLICY_SKIP,
     ) -> Dict[str, Any]:
         return {
             "storyboard_id": int(storyboard_id),
@@ -1556,6 +1605,8 @@ class StoryboardAgentCliService:
             "prompt": str(prompt or ""),
             "source_image": str(source_image or ""),
             "stop_on_error": bool(stop_on_error),
+            "scene_ids": list(scene_ids) if scene_ids is not None else None,
+            "existing_policy": existing_policy,
         }
 
     def _image_batch_idempotency_key(self, payload: Dict[str, Any]) -> str:
@@ -1616,6 +1667,11 @@ class StoryboardAgentCliService:
             "user_id": int(job.get("user_id") or 0),
             "asset_type": job.get("asset_type"),
             "sequence_mode": job.get("sequence_mode"),
+            "existing_policy": (
+                job.get("extra_json", {}).get("existing_policy")
+                if isinstance(job.get("extra_json"), dict)
+                else StoryboardAutoGenerateConstants.IMAGE_EXISTING_POLICY_SKIP
+            ) or StoryboardAutoGenerateConstants.IMAGE_EXISTING_POLICY_SKIP,
             "status": self._batch_job_status_name(job.get("status")),
             "submitted_count": int(job.get("submitted_count") or 0),
             "completed_count": int(job.get("completed_count") or 0),
@@ -1632,6 +1688,18 @@ class StoryboardAgentCliService:
             "completed": counts["completed"],
             "failed": counts["failed"],
             "skipped": counts["skipped"],
+            "regenerated_count": sum(
+                1
+                for item in items
+                if isinstance(item.get("extra_json"), dict)
+                and item["extra_json"].get("plan_status") == "regenerate_pending"
+            ),
+            "reused_count": sum(
+                1
+                for item in items
+                if isinstance(item.get("extra_json"), dict)
+                and item["extra_json"].get("plan_status") == "already_ready"
+            ),
             "items": [self._batch_item_summary(item) for item in items],
         }
 
@@ -1700,7 +1768,30 @@ class StoryboardAgentCliService:
         StoryboardImageBatchItemModel.update(int(item["id"]), **update_kwargs)
         item.update(update_kwargs)
 
+    def _select_completed_regeneration_asset(self, item: Dict[str, Any]) -> None:
+        extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
+        if extra.get("plan_status") != "regenerate_pending":
+            return
+        base_asset_id = extra.get("base_asset_id")
+        generated_asset_id = item.get("asset_id")
+        if base_asset_id in (None, "") or generated_asset_id in (None, ""):
+            return
+        scene = StoryboardSceneModel.get_by_id(int(item["scene_id"]))
+        if not scene:
+            return
+        asset_type = item.get("asset_type") or StoryboardAutoGenerateConstants.DEFAULT_ASSET_TYPE
+        current_asset_id = _get_field(scene, _asset_selected_field(asset_type))
+        # 任务期间用户若切换到其它候选，完成回写不得覆盖用户选择。
+        if str(current_asset_id) != str(base_asset_id):
+            return
+        StoryboardSceneAssetModel.set_selected(
+            int(item["scene_id"]),
+            asset_type,
+            int(generated_asset_id),
+        )
+
     def _complete_image_batch_item(self, item: Dict[str, Any], *, result_url: str) -> None:
+        self._select_completed_regeneration_asset(item)
         StoryboardImageBatchItemModel.update(
             int(item["id"]),
             status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_COMPLETED,
@@ -1812,13 +1903,7 @@ class StoryboardAgentCliService:
                 continue
             asset = self._asset_info(item.get("asset_id")) if item.get("asset_id") else None
             if asset and asset.get("result_url"):
-                StoryboardImageBatchItemModel.update(
-                    int(item["id"]),
-                    status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_COMPLETED,
-                    result_url=asset.get("result_url"),
-                )
-                item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_COMPLETED
-                item["result_url"] = asset.get("result_url")
+                self._complete_image_batch_item(item, result_url=asset.get("result_url"))
             elif asset and asset.get("status") == -1:
                 StoryboardImageBatchItemModel.update(
                     int(item["id"]),
@@ -1831,6 +1916,8 @@ class StoryboardAgentCliService:
         for item in items:
             if int(item.get("status") or 0) != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING:
                 continue
+            item_extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
+            is_regeneration = item_extra.get("plan_status") == "regenerate_pending"
             dependency = by_id.get(int(item.get("dependency_item_id") or 0))
             reference_url = None
             reference_item_id = None
@@ -1893,6 +1980,7 @@ class StoryboardAgentCliService:
                     image_size=job.get("image_size"),
                     count=int(job.get("count") or 1),
                     sequence_mode=job.get("sequence_mode"),
+                    select_result=not is_regeneration,
                 )
             except StoryboardCliError as exc:
                 # 外部 location grid readiness check：保持 PENDING，不改状态，仅写诊断 extra_json，
@@ -1957,6 +2045,7 @@ class StoryboardAgentCliService:
                             count=int(job.get("count") or 1),
                             sequence_mode=job.get("sequence_mode"),
                             force_bypass=True,
+                            select_result=not is_regeneration,
                         )
                         degraded_project_ids = degraded_result.get("project_ids") or []
                         degraded_asset_ids = degraded_result.get("asset_ids") or []
@@ -1983,14 +2072,12 @@ class StoryboardAgentCliService:
                         item["reference_url"] = None
                         submitted_count += 1
                         continue
-                StoryboardImageBatchItemModel.update(
-                    int(item["id"]),
-                    status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
+                self._fail_image_batch_item(
+                    item,
                     error_code=exc.error_code,
                     error_message=exc.message,
                     extra_json={"payload": exc.payload},
                 )
-                item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
                 if int(job.get("stop_on_error") or 0):
                     break
                 continue
@@ -2006,13 +2093,14 @@ class StoryboardAgentCliService:
                 project_ids=project_ids,
                 reference_item_id=reference_item_id,
                 reference_url=reference_url,
-                extra_json={"submission": result},
+                extra_json={**item_extra, "submission": result},
             )
             item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
             item["project_ids"] = project_ids
             item["asset_id"] = selected_asset_id
             item["reference_item_id"] = reference_item_id
             item["reference_url"] = reference_url
+            item["extra_json"] = {**item_extra, "submission": result}
             submitted_count += 1
             if reference_url:
                 logger.info(
@@ -2215,9 +2303,12 @@ class StoryboardAgentCliService:
         asset_type: str,
         sequence_mode: str,
         limit: int,
+        scene_ids: Optional[Sequence[int]] = None,
+        existing_policy: str = StoryboardAutoGenerateConstants.IMAGE_EXISTING_POLICY_SKIP,
     ) -> List[Dict[str, Any]]:
         sequence_mode = self._normalize_sequence_mode(sequence_mode)
         scenes = StoryboardSceneModel.list_by_storyboard(int(storyboard_id)) or []
+        requested = set(scene_ids) if scene_ids is not None else None
         items: List[Dict[str, Any]] = []
         previous_group_key: Optional[str] = None
         previous_item: Optional[Dict[str, Any]] = None
@@ -2228,6 +2319,8 @@ class StoryboardAgentCliService:
             scene_id = int(_get_field(scene, "id"))
             group_key = self._scene_group_key(scene, previous_group_key, storyboard_id)
             previous_group_key = group_key
+            if requested is not None and scene_id not in requested:
+                continue
             selected_asset = self._selected_asset_for_scene(scene, asset_type)
             status = "pending"
             batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING
@@ -2235,12 +2328,22 @@ class StoryboardAgentCliService:
             asset_id = selected_asset.get("id") if selected_asset else None
             ai_tool_id = selected_asset.get("ai_tool_id") if selected_asset else None
             project_ids = [ai_tool_id] if ai_tool_id else []
+            base_asset_id = asset_id
 
-            if selected_asset and selected_asset.get("result_url"):
+            should_regenerate = bool(
+                selected_asset
+                and selected_asset.get("result_url")
+                and existing_policy == StoryboardAutoGenerateConstants.IMAGE_EXISTING_POLICY_REGENERATE
+            )
+            if selected_asset and selected_asset.get("result_url") and not should_regenerate:
                 status = "already_ready"
                 batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_COMPLETED
                 result_url = selected_asset.get("result_url")
-            elif selected_asset and selected_asset.get("status") in StoryboardAutoGenerateConstants.RUNNING_STATUSES:
+            elif (
+                not should_regenerate
+                and selected_asset
+                and selected_asset.get("status") in StoryboardAutoGenerateConstants.RUNNING_STATUSES
+            ):
                 status = "already_running"
                 batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
             elif int(limit) > 0 and missing_count >= int(limit):
@@ -2248,6 +2351,11 @@ class StoryboardAgentCliService:
                 batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED
             else:
                 missing_count += 1
+                if should_regenerate:
+                    status = "regenerate_pending"
+                    asset_id = None
+                    ai_tool_id = None
+                    project_ids = []
 
             dependency_scene_id = None
             if sequence_mode == StoryboardAutoGenerateConstants.SEQUENCE_MODE_BALANCED:
@@ -2270,6 +2378,7 @@ class StoryboardAgentCliService:
                 "ai_tool_id": ai_tool_id,
                 "project_ids": project_ids,
                 "result_url": result_url,
+                "base_asset_id": base_asset_id,
             }
             items.append(item)
             if batch_status != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED:
@@ -2289,6 +2398,51 @@ class StoryboardAgentCliService:
             storyboard_id, sequence_mode, len(items), "\n".join(plan_lines) or "  (empty)",
         )
         return items
+
+    def _normalize_requested_scene_ids(
+        self,
+        storyboard_id: int,
+        scene_ids: Optional[Sequence[int]],
+    ) -> Optional[List[int]]:
+        """Validate an optional selected-scene scope without changing legacy all-scene calls."""
+        if scene_ids is None:
+            return None
+        if isinstance(scene_ids, (str, bytes)) or not isinstance(scene_ids, Sequence):
+            raise StoryboardCliError("invalid_scene_ids", "scene_ids must be an array")
+
+        normalized: List[int] = []
+        seen = set()
+        for raw_id in scene_ids:
+            try:
+                scene_id = int(raw_id)
+            except (TypeError, ValueError):
+                raise StoryboardCliError("invalid_scene_ids", "scene_ids must contain integers")
+            if scene_id <= 0:
+                raise StoryboardCliError("invalid_scene_ids", "scene_ids must contain positive integers")
+            if scene_id not in seen:
+                seen.add(scene_id)
+                normalized.append(scene_id)
+
+        if not normalized:
+            raise StoryboardCliError("empty_scene_ids", "scene_ids must not be empty")
+        if len(normalized) > StoryboardAutoGenerateConstants.MAX_SELECTED_SCENE_COUNT:
+            raise StoryboardCliError(
+                "too_many_scene_ids",
+                f"scene_ids exceeds {StoryboardAutoGenerateConstants.MAX_SELECTED_SCENE_COUNT}",
+            )
+
+        storyboard_scene_ids = {
+            int(_get_field(scene, "id"))
+            for scene in (StoryboardSceneModel.list_by_storyboard(int(storyboard_id)) or [])
+        }
+        invalid_ids = sorted(set(normalized) - storyboard_scene_ids)
+        if invalid_ids:
+            raise StoryboardCliError(
+                "selection_stale",
+                "some selected scenes do not belong to this storyboard",
+                payload={"invalid_scene_ids": invalid_ids},
+            )
+        return sorted(normalized)
 
     def _scene_group_key(self, scene: Any, previous_group_key: Optional[str], storyboard_id: int) -> str:
         prompt_json = _parse_json(_get_field(scene, "prompt_json"), {}) or {}
@@ -2349,6 +2503,8 @@ class StoryboardAgentCliService:
             "dependency_scene_id": extra.get("dependency_scene_id"),
             "status": self._batch_item_status_name(item.get("status")),
             "plan_status": extra.get("plan_status"),
+            "existing_policy": extra.get("existing_policy") or StoryboardAutoGenerateConstants.IMAGE_EXISTING_POLICY_SKIP,
+            "base_asset_id": extra.get("base_asset_id"),
             "waiting": extra.get("waiting") or "",
             "project_ids": item.get("project_ids") or [],
             "asset_id": item.get("asset_id"),
@@ -2836,6 +2992,7 @@ class StoryboardAgentCliService:
         mode: str,
         result: Dict[str, Any],
         reference_images: Optional[Sequence[str]] = None,
+        select_result: bool = True,
     ) -> Dict[str, Any]:
         if not isinstance(result, dict):
             raise StoryboardCliError("submit_failed", "submitter returned invalid result")
@@ -2846,7 +3003,13 @@ class StoryboardAgentCliService:
         if not project_ids:
             raise StoryboardCliError("missing_project_ids", "generation submitted without project_ids", payload=result)
 
-        bind_result = self.bind_projects(scene_id, user_id, asset_type, project_ids)
+        bind_result = self.bind_projects(
+            scene_id,
+            user_id,
+            asset_type,
+            project_ids,
+            select_result=select_result,
+        )
         return {
             "success": True,
             "scene_id": int(scene_id),

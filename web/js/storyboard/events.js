@@ -78,6 +78,27 @@ import {
     restoreVideoCandidateSelection,
 } from './candidate_selection_state.js';
 import { openFirstFrameColoring } from './first_frame_coloring.js';
+import {
+    clearSceneSelection,
+    enterBatchSelection,
+    exitBatchSelection,
+    getSelectedSceneIds,
+    invertSceneSelection,
+    isBatchSelectionActive,
+    pruneSceneSelection,
+    selectAllScenes,
+    setBatchSubmittingAction,
+    setSceneSelected,
+    toggleSceneSelected,
+} from './batch_selection_state.js';
+import {
+    batchDeleteScenes,
+    batchGenerateFirstFrames,
+    batchGenerateVideos,
+    batchGenerateVoiceovers,
+    getBatchImageSelectionSummary,
+    generationResultMessage,
+} from './batch_operations.js';
 
 let generateProgressTimer = null;
 let isTimelineHovered = false;
@@ -790,6 +811,102 @@ function nextCheckboxState(target, currentEnabled) {
 async function handleAction(action, target) {
     const current = getCurrentScene();
 
+    if (action === 'enter-batch-selection') {
+        if (state.viewMode !== 'grid') return;
+        stopPlayback();
+        enterBatchSelection();
+        rerender([Region.CENTER], { forcePreview: true });
+        return;
+    }
+
+    if (action === 'exit-batch-selection') {
+        exitBatchSelection();
+        rerender([Region.CENTER], { forcePreview: true });
+        return;
+    }
+
+    if (action === 'toggle-batch-scene') {
+        const sceneId = Number(target.dataset.id);
+        if (!Number.isFinite(sceneId)) return;
+        setSceneSelected(sceneId, Boolean(target.checked));
+        rerender([Region.CENTER], { forcePreview: true });
+        return;
+    }
+
+    if (action === 'batch-select-all') {
+        selectAllScenes();
+        rerender([Region.CENTER], { forcePreview: true });
+        return;
+    }
+
+    if (action === 'batch-invert-selection') {
+        invertSceneSelection();
+        rerender([Region.CENTER], { forcePreview: true });
+        return;
+    }
+
+    if (action === 'batch-clear-selection') {
+        clearSceneSelection();
+        rerender([Region.CENTER], { forcePreview: true });
+        return;
+    }
+
+    if (action === 'batch-generate-voiceovers' || action === 'batch-generate-videos' || action === 'batch-generate-images') {
+        const sceneIds = getSelectedSceneIds();
+        if (!sceneIds.length || state.batchSelection?.submittingAction) return;
+        const actionLabel = action === 'batch-generate-voiceovers'
+            ? '配音'
+            : (action === 'batch-generate-videos' ? '视频' : '分镜图');
+        let confirmMessage = `确定为已选择的 ${sceneIds.length} 个分镜批量生成${actionLabel}吗？\n不符合条件的分镜会自动跳过。`;
+        if (action === 'batch-generate-images') {
+            const summary = getBatchImageSelectionSummary(sceneIds);
+            confirmMessage = `已选择 ${summary.selectedCount} 个分镜，其中 ${summary.existingCount} 个已有分镜图、${summary.missingCount} 个尚未生成。\n继续后会为全部已选分镜生成新的候选图；原图片会保留，生成成功后自动选中新图。`;
+        }
+        if (!window.confirm(confirmMessage)) return;
+        setBatchSubmittingAction(action);
+        rerender([Region.CENTER], { forcePreview: true });
+        try {
+            let result;
+            if (action === 'batch-generate-voiceovers') result = await batchGenerateVoiceovers(sceneIds);
+            else if (action === 'batch-generate-videos') result = await batchGenerateVideos(sceneIds);
+            else result = await batchGenerateFirstFrames(sceneIds);
+            notify(generationResultMessage(actionLabel, result));
+        } finally {
+            setBatchSubmittingAction('');
+            rerender([Region.CENTER], { forcePreview: true });
+        }
+        return;
+    }
+
+    if (action === 'batch-delete-scenes') {
+        const sceneIds = getSelectedSceneIds();
+        if (!sceneIds.length || state.batchSelection?.submittingAction) return;
+        if (!window.confirm(`确定删除已选择的 ${sceneIds.length} 个分镜吗？\n相关对话和素材也会被删除，此操作不可撤销。`)) return;
+        setBatchSubmittingAction(action);
+        rerender([Region.CENTER], { forcePreview: true });
+        try {
+            stopPlayback();
+            const result = await batchDeleteScenes(sceneIds);
+            for (const sceneId of result.deleted_scene_ids || sceneIds) {
+                removeSceneFromState(Number(sceneId));
+            }
+            pruneSceneSelection();
+            if (!state.scenes.length) {
+                exitBatchSelection();
+                state.showGenerateFromScriptDialog = true;
+                state.generateFromScriptError = '';
+                rerender([...REGIONS_ON_SCENE_STRUCT, Region.MODAL], { forcePreview: true });
+            } else {
+                rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
+            }
+            notify(`已删除 ${Number(result.deleted_count || sceneIds.length)} 个分镜`);
+        } finally {
+            setBatchSubmittingAction('');
+            if (state.scenes.length) rerender([Region.CENTER], { forcePreview: true });
+        }
+        return;
+    }
+
     if (action === 'request-video-type-switch' && current) {
         if (state.videoTypeSwitch.saving) return;
         const targetType = String(target.dataset.videoType || '');
@@ -1087,6 +1204,7 @@ async function handleAction(action, target) {
 
     if (action === 'toggle-view') {
         stopPlayback();
+        if (state.viewMode === 'grid') exitBatchSelection();
         state.viewMode = state.viewMode === 'grid' ? 'timeline' : 'grid';
         rerender([Region.CENTER], { forcePreview: true });
         // Grid 返回时间轴后，中栏刚重建，需等布局稳定再将当前选中分镜滚入可见区。
@@ -1922,6 +2040,12 @@ export function bindEvents() {
 
         if (sceneTarget && !actionTarget) {
             const sceneId = parseInt(sceneTarget.dataset.scene, 10);
+            if (isBatchSelectionActive()) {
+                if (state.batchSelection?.submittingAction) return;
+                toggleSceneSelected(sceneId);
+                rerender([Region.CENTER], { forcePreview: true });
+                return;
+            }
             stopPlayback();
             state.currentSceneId = sceneId;
             // 选中 = 播放起点：对齐时间轴偏移，并清除 ended，避免再点播放从片头重来
@@ -2170,6 +2294,11 @@ export function bindEvents() {
                     .then(() => notify('画面比例已更新'))
                     .catch(err => notify('比例更新失败: ' + (err.message || err)));
             }
+            return;
+        }
+        if (event.key === 'Escape' && isBatchSelectionActive() && !state.batchSelection?.submittingAction) {
+            exitBatchSelection();
+            rerender([Region.CENTER], { forcePreview: true });
             return;
         }
 

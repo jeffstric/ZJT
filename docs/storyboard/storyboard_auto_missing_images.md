@@ -1,5 +1,8 @@
 # Storyboard Auto Missing Images
 
+> 总览选中范围生成、批量配音/视频和事务删除的交互及接口说明见
+> `docs/storyboard/storyboard_batch_operations.md`。图片/视频接口的 `scene_ids` 为可选参数；省略时保持本文描述的全故事板补全行为。
+
 ## Goal
 
 When `web/storyboard.html` opens a storyboard, the page automatically submits generation jobs for scene nodes that do not have a first-frame image yet. The same batch capability is exposed to external agents through CLI and HTTP, so frontend and agents share one implementation path.
@@ -182,6 +185,7 @@ Polling rule of thumb: keep polling until `status` is terminal (`completed` / `f
 
 - `autoGenerateMissingFirstFrames()`: used on first page load and after script splitting. It first attempts to recover a stored active batch, then falls back to the existing first-open auto-submit behavior.
 - `autoCompleteMissingFirstFrames()`: used by the visible title-bar button. It submits only scenes that still do not have a first frame and are not already pending/running in the current batch.
+- Grid-view batch selection calls `autoCompleteMissingFirstFrames(sceneIds, { existingPolicy: 'regenerate' })`. This explicit mode regenerates selected ready frames while retaining the current image until the new candidate succeeds. The default remains `skip`, so automatic completion never overwrites ready frames.
 
 `web/js/storyboard/bootstrap.js` calls it after the storyboard is loaded and rendered. `web/js/storyboard/events.js` also calls it after `generate-from-script-confirm` succeeds and `loadStoryboardData(response)` has written the newly split scenes into state. Both paths use the browser user's normal API wrapper, so the request carries the current `Authorization` header and is handled as a user/cgi call.
 
@@ -224,6 +228,7 @@ api.autoGenerateMissingImages(storyboardId, {
   ratio: state.workflowRatio,
   task_type: state.selectedImageTaskId,
   sequence_mode: state.autoImageSequenceMode,
+  existing_policy: 'skip',
 });
 ```
 

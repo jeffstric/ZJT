@@ -61,6 +61,13 @@ from utils.resource_access import (
 )
 from services.storyboard_agent_cli_service import StoryboardCliError
 from services.storyboard_agent_command_service import StoryboardAgentCommandService
+from services.storyboard_batch_operation_service import (
+    StoryboardBatchOperationError,
+    batch_delete_storyboard_scenes,
+)
+from services.storyboard_voiceover_bootstrap_service import (
+    StoryboardVoiceoverBootstrapService,
+)
 from services.storyboard_reference_prompt_service import build_reference_legend, reference_urls
 from services.storyboard_spatial import build_spatial_prompt_context
 from task.audio_task import recalc_scene_duration_if_all_completed
@@ -2071,6 +2078,7 @@ async def auto_generate_missing_storyboard_images(
             "quality_parent_reference_missing": 409,
             "location_reference_generation_failed": 409,
             "waiting_location_references": 202,
+            "selection_stale": 409,
         }.get(exc.error_code, 400)
         return JSONResponse(status_code=status_code, content=exc.to_dict())
 
@@ -2107,9 +2115,50 @@ async def auto_generate_missing_storyboard_videos(
         status_code = {
             "enterprise_only": 403,
             "active_batch_exists": 409,
+            "selection_stale": 409,
         }.get(exc.error_code, 400)
         return JSONResponse(status_code=status_code, content=exc.to_dict())
 
+    return JSONResponse(result)
+
+
+@router.post('/{storyboard_id:int}/batch-generate-missing-voiceovers')
+@require_permission("storyboard:generate")
+async def batch_generate_missing_storyboard_voiceovers(
+    request: Request,
+    storyboard_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """Queue missing dialogue voiceovers for selected overview scenes."""
+    user_id = get_user_id_from_header(user_id)
+    storyboard = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
+    if not storyboard:
+        return JSONResponse(status_code=404, content={'success': False, 'error': '故事板不存在'})
+    ensure_resource_access(storyboard, user_id, Action.EDIT, "故事板")
+
+    data, body_err = await _read_json_object_body(request)
+    if body_err:
+        return body_err
+    scene_ids = data.get('scene_ids')
+    if not isinstance(scene_ids, list):
+        return JSONResponse(
+            status_code=400,
+            content={'success': False, 'error_code': 'invalid_scene_ids', 'error': 'scene_ids must be an array'},
+        )
+    try:
+        result = await asyncio.to_thread(
+            StoryboardVoiceoverBootstrapService().ensure_for_scenes,
+            storyboard_id,
+            scene_ids,
+            user_id,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        error_code = 'selection_stale' if 'do not belong' in message else 'invalid_scene_ids'
+        return JSONResponse(
+            status_code=409 if error_code == 'selection_stale' else 400,
+            content={'success': False, 'error_code': error_code, 'error': message},
+        )
     return JSONResponse(result)
 
 
@@ -2523,6 +2572,42 @@ async def delete_scene(
 
     affected = await asyncio.to_thread(StoryboardSceneModel.delete, scene_id)
     return JSONResponse({'success': True, 'affected': affected})
+
+
+@router.post('/{storyboard_id:int}/scenes/batch-delete')
+@require_permission("storyboard:update")
+async def batch_delete_scenes(
+    request: Request,
+    storyboard_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """Atomically delete selected overview scenes."""
+    user_id = get_user_id_from_header(user_id)
+    storyboard = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
+    if not storyboard:
+        return JSONResponse(status_code=404, content={'success': False, 'error': '故事板不存在'})
+    ensure_resource_access(storyboard, user_id, Action.EDIT, "故事板")
+
+    data, body_err = await _read_json_object_body(request)
+    if body_err:
+        return body_err
+    try:
+        result = await asyncio.to_thread(
+            batch_delete_storyboard_scenes,
+            storyboard_id,
+            data.get('scene_ids'),
+        )
+    except StoryboardBatchOperationError as exc:
+        return JSONResponse(
+            status_code=409 if exc.error_code == 'selection_stale' else 400,
+            content={
+                'success': False,
+                'error_code': exc.error_code,
+                'error': exc.message,
+                'payload': exc.payload,
+            },
+        )
+    return JSONResponse(result)
 
 
 @router.put('/{storyboard_id:int}/scene/reorder')

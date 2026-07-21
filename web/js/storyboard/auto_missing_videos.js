@@ -92,15 +92,20 @@ async function recoverBatch(batchId) {
     }
 }
 
-async function submitMissingVideoBatch({ manual = false } = {}) {
+async function submitMissingVideoBatch({ manual = false, sceneIds = null } = {}) {
     if (!state.storyboardId || !state.authToken || !state.scenes.length) return null;
     if (isAutoVideoBatchActive()) return null;
 
-    const missing = getMissingVideoScenes();
+    const requested = Array.isArray(sceneIds) ? new Set(sceneIds.map(String)) : null;
+    const missing = requested
+        ? state.scenes.filter(scene => requested.has(String(scene.id)))
+        : getMissingVideoScenes();
     if (!missing.length) {
-        resetAutoVideoBatchState();
-        updateAutoCompleteHeader();
-        if (manual) {
+        if (!requested) {
+            resetAutoVideoBatchState();
+            updateAutoCompleteHeader();
+        }
+        if (manual && !requested) {
             const noFrame = !(state.scenes || []).some(s => s.firstFrameUrl);
             throw new Error(noFrame ? '请先补全分镜首帧，再批量生成视频' : '当前没有待生成视频的分镜');
         }
@@ -117,6 +122,7 @@ async function submitMissingVideoBatch({ manual = false } = {}) {
             sequence_mode: 'speed',
             continue_on_error: true,
             image_mode: state.videoImageMode || 'first_last_frame',
+            ...(requested ? { scene_ids: sceneIds } : {}),
         });
         applyVideoBatchStatus(result);
         refreshBatchAffectedScenes(result);
@@ -166,6 +172,6 @@ export async function resumeAutoMissingVideos() {
     }
 }
 
-export async function autoCompleteMissingVideos() {
-    return submitMissingVideoBatch({ manual: true });
+export async function autoCompleteMissingVideos(sceneIds = null) {
+    return submitMissingVideoBatch({ manual: true, sceneIds });
 }

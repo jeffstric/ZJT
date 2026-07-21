@@ -43,6 +43,11 @@ const state = {
     currentSceneId: null,
     activeTab: 'scene',          // 'scene' | 'dialogue'（音乐 Tab 已移除）
     viewMode: 'timeline',
+    batchSelection: {
+        active: false,
+        selectedSceneIds: {},
+        submittingAction: '',
+    },
     chatMode: 'dialogue',
     inputMessage: '',
     // 视频生成模式图片输入模式：first_last_frame | multi_reference（对齐 marketing_agent）
@@ -486,6 +491,11 @@ export function loadStoryboardData(data) {
     state.workflowRatio = storyboard.workflow_ratio || '16:9';
     state.compositionPreference = storyboard.composition_preference || '';
     state.scenes = scenesFromApi(data.scenes || []);
+    state.batchSelection = {
+        active: false,
+        selectedSceneIds: {},
+        submittingAction: '',
+    };
     state.showGenerateFromScriptDialog = false;
     state.isGeneratingFromScript = false;
     state.generateFromScriptError = '';
