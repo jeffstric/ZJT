@@ -35,7 +35,8 @@
 ```python
 def submit_grid_image_task(user_id, world_id, auth_token, item_names, prompts,
                            item_type, grid_size, mode="text_to_image",
-                           target_entity_ids=None) -> Dict
+                           target_entity_ids=None,
+                           global_visual_guidance=None) -> Dict
 ```
 
 两个干净分支：
@@ -45,6 +46,29 @@ def submit_grid_image_task(user_id, world_id, auth_token, item_names, prompts,
 向后兼容：
 - `generate_4grid_images` → `submit_grid_image_task(grid_size=4, mode="text_to_image")`
 - `generate_9grid_location_images` → `submit_grid_image_task(grid_size=9, item_type=5, mode="image_edit", target_entity_ids=...)`
+
+### global_visual_guidance（宫格级视觉约束）
+
+分镜首帧宫格可传入一次性的根级视觉约束：
+
+```json
+{
+  "global_visual_guidance": {
+    "image_style": "皮克斯3D动画风格",
+    "composition_preference": "充满张力的动态平衡构图",
+    "application_rule": "适用于所有非空格；单格明确指定的机位、景别、主体位置与构图约束优先。"
+  },
+  "shots": [
+    {"prompt_text": "本格镜头内容，不重复全局画风和构图倾向"}
+  ]
+}
+```
+
+- `image_style` / `composition_preference` 只在 grid 根节点出现一次，减少 2x2/3x3 提示词重复。
+- `shots[].prompt_text` 只保留单格镜头、动作、空间位置、局部构图和参考图编号。
+- 单格明确构图是硬约束，优先于全局构图倾向；全局画风仍作用于所有非 placeholder 格。
+- 参数缺省时不输出该根字段，角色、场景、道具等既有宫格模板保持不变。
+- 宫格任务重试直接复用数据库保存的完整 `task.prompt`，根级约束无需新增表字段或迁移。
 
 ### target_entity_ids 贯穿（关键）
 `target_entity_ids`（与 `item_names` 等长，placeholder 位为 `None`）是九宫格回写的命脉：

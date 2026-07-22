@@ -382,15 +382,36 @@ def append_storyboard_visual_suffix(
     if not suffix_lines:
         return str(prompt or "").rstrip()
 
-    suffix_set = set(suffix_lines)
-    body_lines = [
-        line
-        for line in str(prompt or "").rstrip().splitlines()
-        if line.strip() not in suffix_set
-    ]
-    body = "\n".join(body_lines).rstrip()
+    body = remove_storyboard_visual_suffix(
+        prompt,
+        style=style_text,
+        composition_preference=composition_text,
+    )
     suffix = "\n".join(suffix_lines)
     return f"{body}\n\n{suffix}" if body else suffix
+
+
+def remove_storyboard_visual_suffix(
+    prompt: str,
+    *,
+    style: Any = "",
+    composition_preference: Any = "",
+) -> str:
+    """Remove exact storyboard-level visual lines from a cell prompt."""
+    suffix_lines = set()
+    style_text = _clean_name(style)
+    composition_text = _clean_name(composition_preference)
+    if style_text:
+        suffix_lines.add(f"图片风格：{style_text}")
+    if composition_text:
+        suffix_lines.add(f"构图倾向：{composition_text}")
+    if not suffix_lines:
+        return str(prompt or "").rstrip()
+    return "\n".join(
+        line
+        for line in str(prompt or "").rstrip().splitlines()
+        if line.strip() not in suffix_lines
+    ).rstrip()
 
 
 def reference_urls(items: List[Dict[str, str]]) -> List[str]:

@@ -191,9 +191,13 @@ def test_process_job_submits_ready_scenes_as_first_frame_grid(monkeypatch):
     assert submission["aspect_ratio"] == "9:16"
     assert submission["item_names"] == ["分镜1", "分镜2", "placeholder", "placeholder"]
     assert submission["target_entity_ids"] == [101, 102, None, None]
-    assert submission["prompts"][0].endswith(
-        "图片风格：电影写实\n构图倾向：三分法构图"
-    )
+    assert "图片风格：" not in submission["prompts"][0]
+    assert "构图倾向：" not in submission["prompts"][0]
+    assert submission["global_visual_guidance"] == {
+        "image_style": "电影写实",
+        "composition_preference": "三分法构图",
+        "application_rule": "适用于所有非空格；单格明确指定的机位、景别、主体位置与构图约束优先。",
+    }
     assert "驾驶室左侧" in submission["prompts"][0]
     assert updates[1]["status"] == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
     assert updates[1]["project_ids"] == ["pid-grid"]
@@ -202,6 +206,9 @@ def test_process_job_submits_ready_scenes_as_first_frame_grid(monkeypatch):
     assert updates[1]["extra_json"]["grid_prompt_cell_context"]["scene_id"] == 101
     assert updates[1]["extra_json"]["grid_prompt_cell_context"]["final_prompt_text"]
     assert updates[1]["extra_json"]["grid_prompt_group_context"]["grid_task_id"] == 77
+    assert updates[1]["extra_json"]["grid_prompt_group_context"]["global_visual_guidance"] == (
+        submission["global_visual_guidance"]
+    )
     assert len(updates[1]["extra_json"]["grid_prompt_group_context"]["cells"]) == 2
 
 
@@ -1239,6 +1246,10 @@ def test_llm_refiner_receives_hidden_continuity_but_returns_clean_prompt(monkeyp
         per_scene_indices={102: [1]},
         auth_token="token",
         rewriter_instruction="ENTERPRISE_VISUAL_CONSTRAINT;",
+        global_visual_guidance={
+            "image_style": "电影写实",
+            "composition_preference": "三分法构图",
+        },
     )
 
     assert "近景，聚焦驾驶座上的奶昔_Milkshake" in result[0]
@@ -1251,6 +1262,8 @@ def test_llm_refiner_receives_hidden_continuity_but_returns_clean_prompt(monkeyp
     assert "hidden_continuity_entities" in payload
     assert "奶酪_Cheese" in payload
     assert "offscreen_continuity" in payload
+    assert "global_visual_guidance" in payload
+    assert "电影写实" in payload
     system_prompt = calls[0]["messages"][0]["content"]
     assert "slot_integrity_rule" in system_prompt
     assert "camera_anchor_integrity_rule" in system_prompt

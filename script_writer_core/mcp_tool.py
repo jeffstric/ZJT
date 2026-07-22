@@ -4846,6 +4846,7 @@ def submit_grid_image_task(
     aspect_ratio: Optional[str] = None,
     image_size: Optional[str] = None,
     grid_cells: Optional[List[Dict[str, Any]]] = None,
+    global_visual_guidance: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     通用宫格图像提交入口（支持 2x2 四宫格 / 3x3 九宫格，支持 t2i / i2i 两种模式）。
@@ -4874,6 +4875,7 @@ def submit_grid_image_task(
         aspect_ratio: 宫格整体画幅，缺省回退 16:9。
         image_size: 可选图片尺寸，写入任务记录供重试复原。
         grid_cells: 可选的格子绑定元数据，分镜首帧宫格用来驱动后续拆图写回。
+        global_visual_guidance: 可选的宫格级画风、构图倾向及应用规则，仅在根节点出现一次。
 
     Returns:
         dict: 与 generate_4grid_images 结构一致的结果。
@@ -4934,6 +4936,14 @@ def submit_grid_image_task(
             for p in prompts
         ],
     }
+    if isinstance(global_visual_guidance, dict):
+        normalized_global_guidance = {
+            key: str(global_visual_guidance.get(key) or "").strip()
+            for key in ("image_style", "composition_preference", "application_rule")
+            if str(global_visual_guidance.get(key) or "").strip()
+        }
+        if normalized_global_guidance:
+            grid_prompt["global_visual_guidance"] = normalized_global_guidance
     if reference_images_legend:
         grid_prompt["reference_images_legend"] = reference_images_legend
     prompt_json_str = json.dumps(grid_prompt, ensure_ascii=False)

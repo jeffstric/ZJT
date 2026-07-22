@@ -3,6 +3,7 @@ from services.storyboard_reference_prompt_service import (
     append_storyboard_visual_suffix,
     build_reference_legend,
     build_storyboard_reference_items,
+    remove_storyboard_visual_suffix,
 )
 
 
@@ -22,6 +23,13 @@ def test_visual_suffix_is_appended_at_tail_without_duplication():
         composition_preference="三分法构图",
     )
     assert repeated == prompt
+
+    cleaned = remove_storyboard_visual_suffix(
+        repeated,
+        style="电影写实",
+        composition_preference="三分法构图",
+    )
+    assert cleaned == "镜头内容\n参考图说明：图1是场景。"
 
 
 def test_reference_items_only_use_prompt_mentions_not_character_desc():

@@ -455,6 +455,7 @@ class StoryboardFirstFrameGridService:
             for scene in real_scenes
         ]
         prompt_policy = get_storyboard_quality_prompt_policy()
+        global_visual_guidance = prompt_policy.global_visual_guidance(storyboard)
         prompts = prompt_policy.before_rewrite(prompts, storyboard)
         prompts = self._refine_prompts_with_llm(
             storyboard=storyboard,
@@ -465,6 +466,7 @@ class StoryboardFirstFrameGridService:
             auth_token=str(job.get("auth_token") or ""),
             previous_grid_prompt_context=(previous_reference or {}).get("grid_prompt_group_context"),
             rewriter_instruction=prompt_policy.rewriter_instruction(),
+            global_visual_guidance=global_visual_guidance,
         )
         prompts = prompt_policy.after_rewrite(prompts, storyboard)
         group_key = self._grid_group_key(scenes_by_id[int(chunk[0]["scene_id"])], chunk[0])
@@ -474,6 +476,7 @@ class StoryboardFirstFrameGridService:
             scenes=real_scenes,
             prompts=prompts,
             per_scene_indices=per_scene_indices,
+            global_visual_guidance=global_visual_guidance,
         )
         target_entity_ids: List[Optional[int]] = [int(scene["id"]) for scene in real_scenes]
         grid_cells: List[Dict[str, Any]] = [
@@ -516,6 +519,7 @@ class StoryboardFirstFrameGridService:
             aspect_ratio=ratio,
             image_size=GridConfig.GRID_SIZE_IMAGE_SIZE_MAP.get(grid_size),
             grid_cells=grid_cells,
+            global_visual_guidance=global_visual_guidance,
         )
         if not result.get("success"):
             for item in chunk:
@@ -892,6 +896,7 @@ class StoryboardFirstFrameGridService:
         scenes: Sequence[Dict[str, Any]],
         prompts: Sequence[str],
         per_scene_indices: Dict[int, List[int]],
+        global_visual_guidance: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         cells = [
             self._build_prompt_cell_context(
@@ -905,6 +910,7 @@ class StoryboardFirstFrameGridService:
         return {
             "grid_task_id": result_grid_task_id,
             "group_key": group_key,
+            "global_visual_guidance": dict(global_visual_guidance or {}),
             "cells": cells,
         }
 
@@ -938,6 +944,7 @@ class StoryboardFirstFrameGridService:
         auth_token: str,
         previous_grid_prompt_context: Optional[Dict[str, Any]] = None,
         rewriter_instruction: str = "",
+        global_visual_guidance: Optional[Dict[str, str]] = None,
     ) -> List[str]:
         if not self._enable_llm_refine:
             return prompts
@@ -952,6 +959,7 @@ class StoryboardFirstFrameGridService:
                 auth_token,
                 previous_grid_prompt_context,
                 rewriter_instruction,
+                global_visual_guidance,
             )
             return future.result(timeout=StoryboardTimeouts.FIRST_FRAME_GRID_LLM_PROMPT_TIMEOUT_SECONDS)
         except TimeoutError:
@@ -971,6 +979,7 @@ class StoryboardFirstFrameGridService:
         auth_token: str,
         previous_grid_prompt_context: Optional[Dict[str, Any]] = None,
         rewriter_instruction: str = "",
+        global_visual_guidance: Optional[Dict[str, str]] = None,
     ) -> List[str]:
         from llm.llm_client_factory import get_llm_client
 
@@ -1006,6 +1015,7 @@ class StoryboardFirstFrameGridService:
         user_payload = {
             "reference_manifest": list(manifest),
             "previous_grid_prompt_context": previous_grid_prompt_context or {},
+            "global_visual_guidance": dict(global_visual_guidance or {}),
             "shots": cells,
             "output_schema": {
                 "shots": [
