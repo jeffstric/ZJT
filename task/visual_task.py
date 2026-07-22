@@ -393,18 +393,11 @@ async def _submit_new_task(ai_tool):
             else:
                 error_message = f"不支持的任务类型: {ai_tool_type}"
                 logger.error(f"Unsupported driver type: {ai_tool_type}")
-            # 更新任务状态为失败
-            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=error_message, completed_time=datetime.now())
-            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
-            # 释放 RunningHub 槽位（如果是 RunningHub 任务且已获取槽位）
-            if ai_tool_type in RUNNINGHUB_TASK_TYPES:
-                task = TasksModel.get_by_task_id(task_id)
-                if task:
-                    RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_TASK)
-                    logger.info(f"Released RunningHub slot for failed driver creation, task {task_id}")
-            # 退还算力
-            _refund_computing_power(ai_tool, error_message)
-            return False
+            # 尝试通过 before_finish 切换备用实现方重试
+            return _handle_task_failure(
+                task_id=task_id, ai_tool_type=ai_tool_type,
+                reason=error_message, user_id=ai_tool.user_id
+            )
 
         logger.info(f"Using driver: {driver.driver_name} for task {task_id}")
 
@@ -590,14 +583,11 @@ async def _submit_new_task(ai_tool):
                            user_id=getattr(ai_tool, 'user_id', None),
                            message=f"提交流程异常: {str(e)}")
         
-        # 更新任务状态为失败
-        AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message="服务异常，请联系技术支持", completed_time=datetime.now())
-        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
-
-        # 退还算力
-        _refund_computing_power(ai_tool, "任务提交异常")
-
-        return False
+        # 尝试通过 before_finish 切换备用实现方重试
+        return _handle_task_failure(
+            task_id=task_id, ai_tool_type=ai_tool_type,
+            reason="服务异常，请联系技术支持", user_id=getattr(ai_tool, 'user_id', None)
+        )
 
 
 async def _check_task_status(ai_tool):
@@ -678,19 +668,11 @@ async def _check_task_status(ai_tool):
             else:
                 error_message = f"不支持的任务类型: {ai_tool_type}"
                 logger.error(f"Unsupported driver type: {ai_tool_type}")
-            # 更新任务状态为失败
-            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=error_message, completed_time=datetime.now())
-            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
-            # 释放 RunningHub 槽位（如果是 RunningHub 任务）
-            if ai_tool_type in RUNNINGHUB_TASK_TYPES:
-                if project_id:
-                    RunningHubSlotsModel.release_slot_by_project_id(project_id)
-                else:
-                    task = TasksModel.get_by_task_id(task_id)
-                    if task:
-                        RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_TASK)
-                logger.info(f"Released RunningHub slot for failed driver creation in check_status, task {task_id}")
-            return True  # 返回 True 表示任务已完成（失败）
+            # 尝试通过 before_finish 切换备用实现方重试
+            return _handle_task_failure(
+                task_id=task_id, ai_tool_type=ai_tool_type,
+                reason=error_message, user_id=ai_tool.user_id, project_id=project_id
+            )
         
         logger.info(f"Checking status for task {task_id} using driver: {driver.driver_name}")
 
@@ -773,8 +755,12 @@ async def _check_task_status(ai_tool):
                            user_id=getattr(ai_tool, 'user_id', None), project_id=project_id,
                            message=f"状态检查异常: {str(e)}")
 
-        # 不立即标记为失败，继续重试
-        return False
+        # 尝试通过 before_finish 切换备用实现方重试
+        return _handle_task_failure(
+            task_id=task_id, ai_tool_type=ai_tool_type,
+            reason=f"状态检查异常: {str(e)}", user_id=getattr(ai_tool, 'user_id', None),
+            project_id=project_id
+        )
 
 
 def _check_pipeline_stage(ai_tool, stage):

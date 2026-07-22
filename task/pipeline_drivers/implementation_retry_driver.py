@@ -7,6 +7,10 @@ from typing import Dict, Any
 
 from .base_pipeline_driver import BasePipelineDriver
 from model import PipelineStep, AITool, AIToolsModel, TasksModel
+from model.implementation_attempts import (
+    ImplementationAttemptModel,
+    ATTEMPT_STATUS_IN_PROGRESS,
+)
 from config.constant import AI_TOOL_STATUS_PENDING, TASK_STATUS_QUEUED
 from config.unified_config import get_implementation_id
 
@@ -61,32 +65,39 @@ class ImplementationRetryPipelineDriver(BasePipelineDriver):
             # 在更新前保存旧的 implementation 值（用于 result_data 记录）
             old_implementation = ai_tool.implementation
 
-            # 更新 ai_tools 实现方和状态
+            attempt_number = params.get('attempt_number')
+            if not isinstance(attempt_number, int) or attempt_number < 2:
+                attempt_number = step.step_order + 2  # 兼容升级前旧步骤
+
+            result_data = {
+                'old_implementation': old_implementation,
+                'new_implementation': target_impl_id,
+                'new_implementation_name': target_implementation,
+            }
+
+            # 先写入新实现方，再记录尝试；tasks 最后变为 QUEUED。
+            # generate_video 只抓取 QUEUED，因而不会在新实现方就绪前提交任务。
             AIToolsModel.update(
                 ai_tool.id,
                 implementation=target_impl_id,
                 status=AI_TOOL_STATUS_PENDING,
-                project_id=None,  # 清除旧的 project_id，让主流程重新提交
-                message=None  # 清除旧的错误信息
+                project_id=None,
+                message=None,
             )
 
-            # 同步更新 tasks 状态为 QUEUED，确保调度器能重新拾取
-            TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_QUEUED)
-
-            # 记录重试实现方尝试
+            from datetime import datetime as dt
             try:
-                from model.implementation_attempts import ImplementationAttemptModel
-                from datetime import datetime as dt
-                attempt_number = step.step_order + 2  # step_order 从 0 开始，首次是 1
                 ImplementationAttemptModel.create(
                     ai_tool_id=ai_tool.id,
                     implementation=target_impl_id,
                     attempt_number=attempt_number,
-                    status=0,
-                    started_at=dt.now()
+                    status=ATTEMPT_STATUS_IN_PROGRESS,
+                    started_at=dt.now(),
                 )
             except Exception as e:
                 self.logger.warning(f"Failed to record retry attempt for ai_tool {ai_tool.id}: {e}")
+
+            TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_QUEUED)
 
             self.logger.info(
                 f"Implementation retry: ai_tool_id={ai_tool.id}, "
@@ -95,11 +106,7 @@ class ImplementationRetryPipelineDriver(BasePipelineDriver):
 
             return {
                 'success': True,
-                'result_data': {
-                    'old_implementation': old_implementation,
-                    'new_implementation': target_impl_id,
-                    'new_implementation_name': target_implementation
-                }
+                'result_data': result_data,
             }
 
         except Exception as e:

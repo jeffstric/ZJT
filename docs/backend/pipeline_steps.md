@@ -139,11 +139,18 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 **处理流程**：
 1. 从 UnifiedConfigRegistry 获取同任务类型的可用实现方列表
-2. 排除已失败的实现方，选择替代实现方（最多 3 个）
-3. 每个替代实现方创建一个 `implementation_retry` 步骤
-4. 执行时更新 ai_tools.implementation 为目标实现方
-5. 将 ai_tools 状态设回 PENDING，主流程自动重新提交
-6. 如果槽位满，步骤会自动安排重试（由 PipelineProcessor 调度）
+2. 排除已经实际尝试过、已禁用或无法初始化的实现方，只选择优先级最高的 **1 个**替代实现方
+3. 为该实现方创建唯一一个 `implementation_retry` 步骤；不会提前为后续实现方创建候选步骤
+4. retry driver 先切换 `ai_tools.implementation` 并记录新的 implementation attempt，最后才把 `tasks.status` 改为 QUEUED
+5. 主调度器只抓取 QUEUED 任务，因此抓到时 implementation 和 attempt 已经是新的供应商
+6. 如果新供应商再次真实失败，再由失败入口按同样规则创建下一个唯一候选
+7. 初始供应商之外最多尝试 3 个不同的备用供应商，即最多形成 `A → B → C → D`；达到上限或没有可用实现方后进入终态失败
+
+步骤参数使用 `retry_mode=single_candidate_v1` 标识新模式，并记录 `retry_index`、`attempt_number`、`target_implementation` 与失败来源。升级前已经存在的多候选步骤仍兼容处理：只执行第一个，其余旧候选标记为 `legacy_multiple_candidates`，不会同时切换多个供应商。
+
+**无锁顺序交接**：失败处理先将当前 attempt 标记失败，再把 `ai_tools/tasks` 设为 `WAITING_BEFORE_FINISH`，最后才创建唯一 PENDING 步骤；retry driver 先写入新 implementation 和 attempt，最后才把 `tasks` 设为 QUEUED。标准启动方式只运行一个 scheduler，两个 Job 各自 `max_instances=1`，因此不增加事务封装、应用锁或分布式锁。
+
+**失败路径统一入口**：所有任务失败路径（driver 创建失败、提交失败、状态检查异常等）均通过 `_handle_task_failure()` 统一处理，由其调用 `handle_failure_with_retry()` 尝试切换供应商。无可用替代供应商时走终态失败 + 退费。
 
 ## 文件结构
 
@@ -162,7 +169,7 @@ task/
 
 ## 调度
 
-`scheduler.py` 中注册了 `process_pipeline_steps` 定时任务（每 10 秒），负责：
+`scheduler.py` 中注册了 `process_pipeline_steps` 定时任务（每 13 秒），负责：
 1. 查询所有 PROCESSING 状态的 pipeline steps
 2. 检查关联 async_task 的状态
 3. 推进步骤和 ai_tool 的状态

@@ -444,6 +444,7 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
 
         # 所有实现方都已尝试过
         MockAttemptModel.get_attempted_implementations.return_value = {1, 2}
+        MockAttemptModel.get_retry_implementation_count.return_value = 0
 
         with patch('task.pipeline_drivers.get_implementation_name', return_value='impl_a'):
             result = PipelineDriverFactory.create_before_finish_steps(
@@ -468,6 +469,7 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
 
         # 只尝试过 impl_a
         MockAttemptModel.get_attempted_implementations.return_value = {1}
+        MockAttemptModel.get_retry_implementation_count.return_value = 0
 
         # impl_b 的驱动可用
         MockRegistry.get_implementation.return_value = MagicMock(is_enabled=MagicMock(return_value=True))
@@ -488,6 +490,151 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
                     )
         # 应创建了至少一个重试步骤
         self.assertGreater(len(result), 0)
+
+    @patch('model.implementation_attempts.ImplementationAttemptModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    def test_creates_only_first_available_alternative(
+        self, MockStepModel, MockRegistry, MockAttemptModel
+    ):
+        """一次失败只发布优先级最高的一个备用供应商。"""
+        mock_config = MagicMock()
+        mock_config._get_implementations_info.return_value = [
+            {'name': 'impl_a', 'sort_order': 100},
+            {'name': 'impl_b', 'sort_order': 200},
+            {'name': 'impl_c', 'sort_order': 300},
+            {'name': 'impl_d', 'sort_order': 400},
+        ]
+        MockRegistry.get_by_id.return_value = mock_config
+        MockRegistry.get_implementation.return_value = MagicMock(
+            is_enabled=MagicMock(return_value=True)
+        )
+        MockAttemptModel.get_attempted_implementations.return_value = {1}
+        MockAttemptModel.get_retry_implementation_count.return_value = 0
+        MockStepModel.create.return_value = 42
+
+        mock_vdf = MagicMock()
+        mock_vdf.create_driver_by_implementation.return_value = MagicMock()
+        mock_visual = MagicMock(VideoDriverFactory=mock_vdf)
+        impl_names = {1: 'impl_a', 2: 'impl_b', 3: 'impl_c', 4: 'impl_d'}
+
+        with patch.dict('sys.modules', {'task.visual_drivers': mock_visual}):
+            with patch('task.pipeline_drivers.get_implementation_name', side_effect=impl_names.get):
+                result = PipelineDriverFactory.create_before_finish_steps(
+                    ai_tool_id=1, ai_tool_type=1,
+                    failed_implementation=1, failure_reason='error'
+                )
+
+        self.assertEqual(result, [42])
+        MockStepModel.create.assert_called_once()
+        params = MockStepModel.create.call_args.kwargs['params']
+        self.assertEqual(params['target_implementation'], 'impl_b')
+        self.assertEqual(params['retry_mode'], 'single_candidate_v1')
+        self.assertEqual(params['retry_index'], 1)
+        self.assertEqual(params['attempt_number'], 2)
+
+    @patch('model.implementation_attempts.ImplementationAttemptModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    def test_retry_budget_exhausted_creates_no_step(
+        self, MockStepModel, MockRegistry, MockAttemptModel
+    ):
+        """三个备用供应商额度耗尽后不得创建第四个重试步骤。"""
+        mock_config = MagicMock()
+        mock_config._get_implementations_info.return_value = [
+            {'name': 'impl_a'}, {'name': 'impl_b'},
+            {'name': 'impl_c'}, {'name': 'impl_d'}, {'name': 'impl_e'},
+        ]
+        MockRegistry.get_by_id.return_value = mock_config
+        MockAttemptModel.get_retry_implementation_count.return_value = 3
+
+        with patch('task.pipeline_drivers.get_implementation_name', return_value='impl_d'):
+            result = PipelineDriverFactory.create_before_finish_steps(
+                ai_tool_id=1, ai_tool_type=1,
+                failed_implementation=4, failure_reason='error'
+            )
+
+        self.assertEqual(result, [])
+        MockStepModel.create.assert_not_called()
+
+    @patch('model.implementation_attempts.ImplementationAttemptModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    def test_next_failure_selects_next_untried_candidate(
+        self, MockStepModel, MockRegistry, MockAttemptModel
+    ):
+        """A、B 已真实尝试后，下一轮只创建 C，编号递增。"""
+        mock_config = MagicMock()
+        mock_config._get_implementations_info.return_value = [
+            {'name': 'impl_a'}, {'name': 'impl_b'}, {'name': 'impl_c'},
+        ]
+        MockRegistry.get_by_id.return_value = mock_config
+        MockRegistry.get_implementation.return_value = MagicMock(
+            is_enabled=MagicMock(return_value=True)
+        )
+        MockAttemptModel.get_attempted_implementations.return_value = {1, 2}
+        MockAttemptModel.get_retry_implementation_count.return_value = 1
+        MockStepModel.create.return_value = 43
+
+        mock_vdf = MagicMock()
+        mock_vdf.create_driver_by_implementation.return_value = MagicMock()
+        mock_visual = MagicMock(VideoDriverFactory=mock_vdf)
+        impl_names = {1: 'impl_a', 2: 'impl_b', 3: 'impl_c'}
+
+        with patch.dict('sys.modules', {'task.visual_drivers': mock_visual}):
+            with patch('task.pipeline_drivers.get_implementation_name', side_effect=impl_names.get):
+                result = PipelineDriverFactory.create_before_finish_steps(
+                    ai_tool_id=1, ai_tool_type=1,
+                    failed_implementation=2, failure_reason='B failed'
+                )
+
+        self.assertEqual(result, [43])
+        params = MockStepModel.create.call_args.kwargs['params']
+        self.assertEqual(params['target_implementation'], 'impl_c')
+        self.assertEqual(params['retry_index'], 2)
+        self.assertEqual(params['attempt_number'], 3)
+        self.assertEqual(MockStepModel.create.call_args.kwargs['step_order'], 1)
+
+    @patch('model.implementation_attempts.ImplementationAttemptModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    def test_disabled_candidate_is_skipped_but_only_one_step_is_created(
+        self, MockStepModel, MockRegistry, MockAttemptModel
+    ):
+        """B 已禁用时跳过 B，但仍只为 C 创建一个步骤。"""
+        mock_config = MagicMock()
+        mock_config._get_implementations_info.return_value = [
+            {'name': 'impl_a'}, {'name': 'impl_b'}, {'name': 'impl_c'},
+        ]
+        MockRegistry.get_by_id.return_value = mock_config
+        disabled = MagicMock(is_enabled=MagicMock(return_value=False))
+        enabled = MagicMock(is_enabled=MagicMock(return_value=True))
+        MockRegistry.get_implementation.side_effect = lambda name: {
+            'impl_b': disabled,
+            'impl_c': enabled,
+        }.get(name)
+        MockAttemptModel.get_attempted_implementations.return_value = {1}
+        MockAttemptModel.get_retry_implementation_count.return_value = 0
+        MockStepModel.create.return_value = 44
+
+        mock_vdf = MagicMock()
+        mock_vdf.create_driver_by_implementation.return_value = MagicMock()
+        mock_visual = MagicMock(VideoDriverFactory=mock_vdf)
+        impl_names = {1: 'impl_a'}
+
+        with patch.dict('sys.modules', {'task.visual_drivers': mock_visual}):
+            with patch('task.pipeline_drivers.get_implementation_name', side_effect=impl_names.get):
+                result = PipelineDriverFactory.create_before_finish_steps(
+                    ai_tool_id=1, ai_tool_type=1,
+                    failed_implementation=1, failure_reason='A failed'
+                )
+
+        self.assertEqual(result, [44])
+        MockStepModel.create.assert_called_once()
+        self.assertEqual(
+            MockStepModel.create.call_args.kwargs['params']['target_implementation'],
+            'impl_c',
+        )
 
 
 # ==================== 新增：PipelineDriverFactory.is_seedance_face_mask_type 测试 ====================

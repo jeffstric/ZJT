@@ -42,12 +42,16 @@
 5. 上传成功后，音频 URL 会显示在输入框中并出现预览播放器
 6. 保存角色后，参考音频会关联到该角色
 
-**生成参考音频：**
+**生成参考音频（异步流程）：**
 
 1. 打开角色编辑界面，确保已填写角色名称
 2. 在"参考音频"区域点击"生成参考音频"按钮
-3. 系统根据角色信息自动生成参考音频
-4. 生成完成后，音频 URL 和预览播放器会自动更新
+3. 前端调用 `POST /api/script-writer/characters/reference-audio`，后端使用 LLM 分析角色信息生成音色提示词和样本文本，然后创建异步任务（`async_tasks` 表），立即返回 `task_id`
+4. 后台 scheduler 每 10 秒轮询 RunningHub 任务状态，完成后下载音频到本地并更新角色 `default_voice`
+5. 前端通过 `GET /api/script-writer/characters/reference-audio-status/{task_id}` 每 10 秒轮询任务状态（最长 30 分钟超时）
+6. 轮询到 `SUCCESS` 后，音频 URL 和预览播放器自动更新；轮询到 `FAILED`/`TIMEOUT` 则显示错误
+
+> **注意**：生成过程是异步的，按钮会显示"音频生成中..."，请耐心等待。后端需要正确传递 `character_id`/`character_name`/`world_id` 到异步任务 params，否则任务完成后无法自动更新角色 `default_voice`。
 
 **限制条件：**
 - 每个音频文件大小不超过 20MB
