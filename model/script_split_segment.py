@@ -447,6 +447,7 @@ class ScriptSplitSegmentModel:
             reset_error = dict(error)
             reset_error["_qc_round"] = 0
             reset_error["_call_failure_count"] = 0
+            reset_error["_character_hard_round"] = 0
             reset_error["_stale_recovery_count"] = 0
             errors.append(reset_error)
         execute_update(

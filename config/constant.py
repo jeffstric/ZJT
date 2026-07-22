@@ -784,6 +784,13 @@ class ScriptSplitConstants:
     PLAN_MAX_RETRIES = 3
     # 单段拆分失败的最大重试次数（同一边界重试当前段）
     SEGMENT_MAX_RETRIES = 3
+    # 角色名称/图片提示词/视频提示词硬契约失败后的当前段定向修复次数。
+    # 与可选 QC 独立；达到上限后必须暂停，禁止强制接纳非法候选。
+    CHARACTER_PROMPT_VALIDATION_MAX_RETRIES = 3
+    # 创建拆分任务时分页快照世界角色，避免只读取前 50 个角色。
+    CHARACTER_CONTRACT_PAGE_SIZE = 100
+    CHARACTER_CONTRACT_CONFIG_KEY = "_character_contract"
+    CHARACTER_CONTRACT_VERSION = 1
     # 效果模式按段并发生成的批次上限。单个批次仍受 worker watchdog 保护。
     QUALITY_SEGMENT_PARALLELISM = 3
     # 运行时 spatial handoff JSON 序列化字节上限（超出时压缩软描述字段，见设计文档 §9.3）
@@ -858,6 +865,7 @@ class ScriptSplitConstants:
     ERROR_SEGMENT_QC_FAILED = "segment_qc_failed"
     ERROR_SEGMENT_MAX_RETRIES = "segment_max_retries"
     ERROR_SEGMENT_REPEATEDLY_INTERRUPTED = "segment_repeatedly_interrupted"
+    ERROR_CHARACTER_PROMPT_CONTRACT_INVALID = "character_prompt_contract_invalid"
 
     # 不可恢复终态：进入后释放 active_key（置 NULL），允许同来源新建任务
     TERMINAL_STATUSES = (

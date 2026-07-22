@@ -1193,6 +1193,8 @@ async def parse_script_to_shots(
     # 分段拆分支持（见 docs/script/script_parser_incremental_split_design.md §7.2）
     # 不传时行为与原调用完全一致；传入后约束模型只为当前分段生成分镜。
     segment_context: Optional[Dict[str, Any]] = None,
+    # 拆分任务创建时由服务端生成的角色库不可变快照；传入后禁止在段内重新读库。
+    character_contract: Optional[Dict[str, Any]] = None,
     # strict_json=True 时禁用末尾补括号修复，解析失败直接交给调用方重试。
     # 默认 False 保留兼容能力，但补全成功后不再提前 return，会继续走完整后处理。
     strict_json: bool = False,
@@ -1247,7 +1249,11 @@ async def parse_script_to_shots(
             try:
                 from model.location import LocationModel
                 logger.info(f"Attempting to load locations for world_id: {world_id}")
-                db_locations = LocationModel.get_tree_by_world(world_id=world_id, limit=20)
+                db_locations = await asyncio.to_thread(
+                    LocationModel.get_tree_by_world,
+                    world_id,
+                    20,
+                )
                 logger.info(f"Loaded {len(db_locations) if db_locations else 0} top-level locations from database")
 
                 if db_locations:
@@ -1297,7 +1303,12 @@ async def parse_script_to_shots(
             try:
                 from model.props import PropsModel
                 logger.info(f"Attempting to load props for world_id: {world_id}")
-                props_result = PropsModel.list_by_world(world_id=world_id, page=1, page_size=50)
+                props_result = await asyncio.to_thread(
+                    PropsModel.list_by_world,
+                    world_id,
+                    1,
+                    50,
+                )
                 db_props = props_result.get('data', []) if props_result else []
                 logger.info(f"Loaded {len(db_props)} props from database")
 
@@ -1330,13 +1341,24 @@ async def parse_script_to_shots(
 
         # 获取数据库中的角色列表（如果提供了world_id）
         db_characters_text = ""
-        if world_id is not None:
+        if world_id is not None or character_contract is not None:
             try:
-                from model.character import CharacterModel
-                logger.info(f"Attempting to load characters for world_id: {world_id}")
-                characters_result = CharacterModel.list_by_world(world_id=world_id, page=1, page_size=50)
-                db_characters = characters_result.get('data', []) if characters_result else []
-                logger.info(f"Loaded {len(db_characters)} characters from database")
+                from services.script_split_character_contract import (
+                    build_character_contract_snapshot,
+                    contract_to_parser_characters,
+                )
+                effective_contract = character_contract
+                if effective_contract is None:
+                    effective_contract = await asyncio.to_thread(
+                        build_character_contract_snapshot,
+                        world_id,
+                    )
+                db_characters = contract_to_parser_characters(effective_contract)
+                logger.info(
+                    "Loaded %d characters from immutable character contract for world_id=%s",
+                    len(db_characters),
+                    world_id,
+                )
 
                 if db_characters:
                     # 将角色列表格式化为文本
@@ -1355,12 +1377,14 @@ async def parse_script_to_shots(
                     db_characters_text = f"""
 
 **【数据库已有角色列表】**
-以下是数据库中已存在的角色（最多50个），如果剧本中的角色与数据库中的角色相同或相似，请在返回的character对象中设置character_db_id字段为对应的数据库角色ID：
+以下是数据库中已存在的完整角色快照，如果剧本中的角色与数据库中的角色相同或相似，请在返回的character对象中设置character_db_id字段为对应的数据库角色ID：
 
 {chr(10).join(char_lines)}
 
 **【重要警告】关于character_db_id字段：**
 - 如果剧本中的角色与上述数据库角色匹配，请设置character_db_id为数据库角色的ID（必须是上面列表中实际存在的ID）
+- 匹配数据库角色后，character.name 必须逐字使用列表中的完整名称；禁止省略下划线后的外文名、使用简称、翻译或自行改名
+- 图片/视频提示词引用该角色时，必须逐字写成 `【【完整名称】】`；例如列表名称为 `奶昔_Milkshake`，只能写 `【【奶昔_Milkshake】】`，禁止写 `【【奶昔】】`
 - 如果剧本中的角色是新角色，不在数据库中，则character_db_id必须设置为null
 - 匹配时要考虑角色名称和描述的相似性，不需要完全一致
 - **严禁编造或随意填写不存在的character_db_id！如果不确定是否匹配，必须设置为null**

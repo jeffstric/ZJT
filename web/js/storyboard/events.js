@@ -194,7 +194,7 @@ function attachGenerateFromScriptPolling(taskId) {
         },
         onPaused: (statusData) => {
             markRunningGenerateStepsFailed();
-            state.generateProgressError = statusData.message || '任务暂停，请刷新页面后继续';
+            state.generateProgressError = statusData.error_message || statusData.message || '任务暂停，请刷新页面后继续';
             state.isGeneratingFromScript = false;
             // 最小化时不强制弹窗，仅在 Header 徽章显示「拆分待处理」
             if (!state.showGenerateProgressDialog) {

@@ -1201,7 +1201,7 @@
             },
             onPaused: (status) => {
               // paused / waiting_auth：显示继续按钮，不自动重启用
-              setStatusEl(statusEl, status.message || '任务暂停，等待处理', '#d97706');
+              setStatusEl(statusEl, status.error_message || status.message || '任务暂停，等待处理', '#d97706');
               splitBtn.disabled = false;
               splitGridBtn.disabled = false;
             },
@@ -1711,7 +1711,7 @@
             },
             onPaused: (status) => {
               gridStatusEl.style.color = '#d97706';
-              gridStatusEl.textContent = status.message || '任务暂停，等待处理';
+              gridStatusEl.textContent = status.error_message || status.message || '任务暂停，等待处理';
               splitGridBtn.disabled = false;
               splitBtn.disabled = false;
             },
