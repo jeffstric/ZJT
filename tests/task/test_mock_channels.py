@@ -218,7 +218,10 @@ class TestGridResubmit:
 
         task = MagicMock()
         task.task_key = "grid"
-        task.prompt = "{}"
+        task.prompt = (
+            '{"global_visual_guidance":{"image_style":"皮克斯3D动画"},'
+            '"shots":[{"prompt_text":"镜头内容"}]}'
+        )
         task.task_config_id = "7"
         task.comfyui_base_url = "http://inner"
         task.user_id = "u"
@@ -232,6 +235,7 @@ class TestGridResubmit:
         assert pid == "new_i2i_project"
         assert captured["url"] == "http://inner/api/image-edit"
         assert captured["data"]["ratio"] == "9:16"
+        assert captured["data"]["prompt"] == task.prompt
         assert captured["data"]["ref_image_urls"] == "http://public/a.png"
         assert "aspect_ratio" not in captured["data"]
 

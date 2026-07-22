@@ -672,7 +672,8 @@ class StoryboardTimeouts:
     """Storyboard timeout constants in seconds."""
     _CONSTANT_GROUP = True
 
-    FIRST_FRAME_GRID_LLM_PROMPT_TIMEOUT_SECONDS = 60
+    # 覆盖 QS 改写、二维空间复核及命中冲突时的一次定向返修。
+    FIRST_FRAME_GRID_LLM_PROMPT_TIMEOUT_SECONDS = 120
     # 故事板导出：单资源下载 / ffmpeg 单步 / 整片任务总超时
     EXPORT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS = 120
     EXPORT_FFMPEG_TIMEOUT_SECONDS = 300
@@ -791,6 +792,13 @@ class ScriptSplitConstants:
     PLAN_MAX_RETRIES = 3
     # 单段拆分失败的最大重试次数（同一边界重试当前段）
     SEGMENT_MAX_RETRIES = 3
+    # 角色名称/图片提示词/视频提示词硬契约失败后的当前段定向修复次数。
+    # 与可选 QC 独立；达到上限后必须暂停，禁止强制接纳非法候选。
+    CHARACTER_PROMPT_VALIDATION_MAX_RETRIES = 3
+    # 创建拆分任务时分页快照世界角色，避免只读取前 50 个角色。
+    CHARACTER_CONTRACT_PAGE_SIZE = 100
+    CHARACTER_CONTRACT_CONFIG_KEY = "_character_contract"
+    CHARACTER_CONTRACT_VERSION = 1
     # 效果模式按段并发生成的批次上限。单个批次仍受 worker watchdog 保护。
     QUALITY_SEGMENT_PARALLELISM = 3
     # 运行时 spatial handoff JSON 序列化字节上限（超出时压缩软描述字段，见设计文档 §9.3）
@@ -865,6 +873,7 @@ class ScriptSplitConstants:
     ERROR_SEGMENT_QC_FAILED = "segment_qc_failed"
     ERROR_SEGMENT_MAX_RETRIES = "segment_max_retries"
     ERROR_SEGMENT_REPEATEDLY_INTERRUPTED = "segment_repeatedly_interrupted"
+    ERROR_CHARACTER_PROMPT_CONTRACT_INVALID = "character_prompt_contract_invalid"
 
     # 不可恢复终态：进入后释放 active_key（置 NULL），允许同来源新建任务
     TERMINAL_STATUSES = (
@@ -1086,12 +1095,15 @@ class GridConfig:
         return bool(name) and str(name).strip().lower() in cls.PLACEHOLDER_NAMES
 
     # 宫格生图全局防文字指令：附加在 grid_prompt JSON 中，抑制生图模型在格子内/格子间输出文字、字幕、镜头编号
-    STYLE_GUIDANCE_NO_TEXT = (
+    GRID_OUTPUT_CONSTRAINTS_NO_TEXT = (
         "High-quality image grid. Strictly NO TEXT, NO CAPTIONS, NO SUBTITLES, "
         "NO SCRIPT NARRATION, NO NUMBERS, NO SHOT LABELS anywhere in the image "
         "(including below/under each cell). Clean visual composition only, pure "
         "grid of images with no text areas or blank caption bars."
     )
+
+    # 向后兼容：旧名称语义含混，新的宫格 prompt 不再输出 style_guidance 字段。
+    STYLE_GUIDANCE_NO_TEXT = GRID_OUTPUT_CONSTRAINTS_NO_TEXT
 
 
 # 向后兼容别名 - 宫格拆分

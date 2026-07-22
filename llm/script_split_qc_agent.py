@@ -222,7 +222,8 @@ def _character_name_index(
 ) -> Dict[str, str]:
     """合并任务级角色与当前段角色，建立全局 ID 到显示名称的映射。"""
     result: Dict[str, str] = {}
-    for character in list(known_characters or []) + list(parsed_data.get("characters") or []):
+    # 模型本轮返回先写入，任务级已接受角色后写入并覆盖；禁止错误短名称覆盖真值。
+    for character in list(parsed_data.get("characters") or []) + list(known_characters or []):
         if not isinstance(character, dict):
             continue
         character_id = str(character.get("id") or "").strip()

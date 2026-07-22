@@ -587,6 +587,14 @@ class TestSubsceneGridFixes:
             "顶层", "placeholder", "placeholder", "placeholder",
         ]
         assert generate.call_args.kwargs["target_entity_ids"] == [501]
+        import json
+
+        prompt_data = json.loads(generate.call_args.kwargs["prompt"])
+        assert prompt_data["grid_output_constraints"] == (
+            mcp.GridConfig.GRID_OUTPUT_CONSTRAINTS_NO_TEXT
+        )
+        assert "style_guidance" not in prompt_data
+        assert "global_visual_guidance" not in prompt_data
 
     def test_task_manager_persists_t2i_grid_database_bindings(self, monkeypatch):
         """t2i 后台任务创建时应把宫格名称与目标 DB id 原子写入记录。"""
@@ -669,6 +677,11 @@ class TestSubsceneGridFixes:
             reference_images=[{"url": "http://h/ref.png", "role_description": "场景参考图"}],
             target_entity_ids=[11, 12, None, None],
             aspect_ratio="9:16",
+            global_visual_guidance={
+                "image_style": "皮克斯3D动画",
+                "composition_preference": "动态平衡构图",
+                "application_rule": "适用于所有非空格；单格构图优先。",
+            },
         )
 
         assert result["success"] is True, result
@@ -678,8 +691,23 @@ class TestSubsceneGridFixes:
         assert captured["create"]["aspect_ratio"] == "9:16"
         assert captured["create"]["item_type"] == ItemType.STORYBOARD_FIRST_FRAME_GRID
         assert captured["create"]["target_entity_ids"] == [11, 12]
+        import json
+
         prompt_json = captured["create"]["prompt"]
-        assert '"grid_aspect_ratio": "9:16"' in prompt_json
+        prompt_data = json.loads(prompt_json)
+        assert prompt_data["grid_aspect_ratio"] == "9:16"
+        assert prompt_data["grid_output_constraints"] == (
+            mcp.GridConfig.GRID_OUTPUT_CONSTRAINTS_NO_TEXT
+        )
+        assert "style_guidance" not in prompt_data
+        assert prompt_data["global_visual_guidance"] == {
+            "image_style": "皮克斯3D动画",
+            "composition_preference": "动态平衡构图",
+            "application_rule": "适用于所有非空格；单格构图优先。",
+        }
+        assert all("图片风格：" not in shot["prompt_text"] for shot in prompt_data["shots"])
+        assert prompt_json.count("皮克斯3D动画") == 1
+        assert captured["request"]["prompt"] == prompt_json
 
     def test_i2i_create_failure_returns_failure(self, monkeypatch):
         """i2i 入库失败必须返回 success=False（否则上层误认为已提交）。"""

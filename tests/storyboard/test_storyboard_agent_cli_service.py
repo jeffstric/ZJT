@@ -633,6 +633,29 @@ def test_generate_image_text_to_image_binds_first_frame_asset(patched_storyboard
     assert patched_storyboard_cli.selected_assets[0] == (11, "first_frame", 900)
 
 
+def test_generate_image_deduplicates_multiline_visual_suffix(patched_storyboard_cli):
+    storyboard = patched_storyboard_cli.storyboard_model.get_by_id(22)
+    storyboard.style = "cinematic noir\r\nhigh-detail modeling"
+    storyboard.composition_preference = "rule of thirds\ndynamic balance"
+    service = patched_storyboard_cli.module.StoryboardAgentCliService(
+        submitter=patched_storyboard_cli.submitter
+    )
+
+    service.generate_image(
+        scene_id=11,
+        user_id=7,
+        auth_token="token",
+        mode="text_to_image",
+        asset_type="first_frame",
+    )
+
+    prompt = patched_storyboard_cli.submitter.calls[0][1]["prompt"]
+    assert prompt.count("图片风格：") == 1
+    assert prompt.count("构图倾向：") == 1
+    assert "图片风格：cinematic noir\nhigh-detail modeling" in prompt
+    assert "构图倾向：rule of thirds\ndynamic balance" in prompt
+
+
 def test_generate_image_auto_uses_scene_references_for_image_edit(patched_storyboard_cli):
     service = patched_storyboard_cli.module.StoryboardAgentCliService(
         submitter=patched_storyboard_cli.submitter

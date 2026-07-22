@@ -403,6 +403,14 @@ class ScriptSplitTaskModel:
         )
 
     @staticmethod
+    def clear_final_result(task_id: int) -> None:
+        """发布硬门禁回退到分段修复时清除不可再发布的合并结果。"""
+        execute_update(
+            "UPDATE script_split_task SET final_result_json = NULL WHERE id = %s",
+            (task_id,),
+        )
+
+    @staticmethod
     def increment_completed(task_id: int) -> None:
         execute_update(
             "UPDATE script_split_task SET completed_segment_count = completed_segment_count + 1 "

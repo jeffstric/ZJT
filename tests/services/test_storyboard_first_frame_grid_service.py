@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -191,9 +192,13 @@ def test_process_job_submits_ready_scenes_as_first_frame_grid(monkeypatch):
     assert submission["aspect_ratio"] == "9:16"
     assert submission["item_names"] == ["分镜1", "分镜2", "placeholder", "placeholder"]
     assert submission["target_entity_ids"] == [101, 102, None, None]
-    assert submission["prompts"][0].endswith(
-        "图片风格：电影写实\n构图倾向：三分法构图"
-    )
+    assert "图片风格：" not in submission["prompts"][0]
+    assert "构图倾向：" not in submission["prompts"][0]
+    assert submission["global_visual_guidance"] == {
+        "image_style": "电影写实",
+        "composition_preference": "三分法构图",
+        "application_rule": "适用于所有非空格；单格明确指定的机位、景别、主体位置与构图约束优先。",
+    }
     assert "驾驶室左侧" in submission["prompts"][0]
     assert updates[1]["status"] == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
     assert updates[1]["project_ids"] == ["pid-grid"]
@@ -202,6 +207,9 @@ def test_process_job_submits_ready_scenes_as_first_frame_grid(monkeypatch):
     assert updates[1]["extra_json"]["grid_prompt_cell_context"]["scene_id"] == 101
     assert updates[1]["extra_json"]["grid_prompt_cell_context"]["final_prompt_text"]
     assert updates[1]["extra_json"]["grid_prompt_group_context"]["grid_task_id"] == 77
+    assert updates[1]["extra_json"]["grid_prompt_group_context"]["global_visual_guidance"] == (
+        submission["global_visual_guidance"]
+    )
     assert len(updates[1]["extra_json"]["grid_prompt_group_context"]["cells"]) == 2
 
 
@@ -1239,6 +1247,10 @@ def test_llm_refiner_receives_hidden_continuity_but_returns_clean_prompt(monkeyp
         per_scene_indices={102: [1]},
         auth_token="token",
         rewriter_instruction="ENTERPRISE_VISUAL_CONSTRAINT;",
+        global_visual_guidance={
+            "image_style": "电影写实",
+            "composition_preference": "三分法构图",
+        },
     )
 
     assert "近景，聚焦驾驶座上的奶昔_Milkshake" in result[0]
@@ -1251,10 +1263,142 @@ def test_llm_refiner_receives_hidden_continuity_but_returns_clean_prompt(monkeyp
     assert "hidden_continuity_entities" in payload
     assert "奶酪_Cheese" in payload
     assert "offscreen_continuity" in payload
+    assert "global_visual_guidance" in payload
+    assert "电影写实" in payload
     system_prompt = calls[0]["messages"][0]["content"]
     assert "slot_integrity_rule" in system_prompt
     assert "camera_anchor_integrity_rule" in system_prompt
     assert "ENTERPRISE_VISUAL_CONSTRAINT;" in system_prompt
+    assert len(calls) == 1
+
+
+def test_qs_spatial_review_rejects_and_repairs_explicit_screen_side_conflict(monkeypatch):
+    from llm import llm_client_factory
+
+    calls = []
+    responses = iter([
+        {
+            "shots": [{
+                "scene_id": 171,
+                "grid_index": 0,
+                "prompt_text": "男孩在画面左侧，女孩在画面右侧。",
+                "reference_indices": [1, 2],
+            }],
+        },
+        {
+            "passed": False,
+            "issues": [{
+                "scene_id": 171,
+                "code": "screen_side_conflict",
+                "message": "女孩固定在 vehicle_left，当前轴线映射到 screen_left，候选却写在画面右侧。",
+            }],
+        },
+        {
+            "shots": [{
+                "scene_id": 171,
+                "grid_index": 0,
+                "prompt_text": "女孩保持在画面左侧驾驶座，男孩保持在画面右侧副驾驶座。",
+                "reference_indices": [1, 2],
+            }],
+        },
+    ])
+
+    class FakeMessage:
+        def __init__(self, content):
+            self.content = content
+
+    class FakeChoice:
+        def __init__(self, content):
+            self.message = FakeMessage(content)
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.choices = [FakeChoice(json.dumps(payload, ensure_ascii=False))]
+
+    class FakeClient:
+        def call_api(self, **kwargs):
+            calls.append(kwargs)
+            return FakeResponse(next(responses))
+
+    monkeypatch.setattr(
+        llm_client_factory,
+        "get_llm_client",
+        lambda model, vendor_id=None: FakeClient(),
+    )
+    scene = {
+        "id": 171,
+        "prompt_json": {
+            "scene_desc": "男孩在画面左侧，女孩在画面右侧。",
+            "spatial_layout": {
+                "camera_anchor": {
+                    "screen_axis_mapping": {
+                        "container_left": "screen_left",
+                        "container_right": "screen_right",
+                    },
+                    "screen_composition": "男孩在左，女孩在右",
+                },
+                "containers": [{
+                    "container_id": "container:car_front",
+                    "slots": [
+                        {
+                            "point_id": "point:driver",
+                            "position_2d": {"x": -0.55, "y": 0.45},
+                            "physical_position": {"side": "vehicle_left", "row": "front"},
+                            "screen_position": "画面右侧深处",
+                            "character_id": "char_girl",
+                            "name": "女孩",
+                            "visibility": "visible",
+                        },
+                        {
+                            "point_id": "point:passenger",
+                            "position_2d": {"x": 0.55, "y": 0.45},
+                            "physical_position": {"side": "vehicle_right", "row": "front"},
+                            "screen_position": "画面左部近景",
+                            "character_id": "char_boy",
+                            "name": "男孩",
+                            "visibility": "visible",
+                        },
+                    ],
+                }],
+            },
+        },
+    }
+
+    result = StoryboardFirstFrameGridService(enable_llm_refine=True)._refine_prompts_with_llm(
+        storyboard={"config_json": {"selectedScriptSplitLlmModel": "fake-model"}},
+        scenes=[scene],
+        prompts=["原始提示"],
+        manifest=[
+            {"index": 1, "role_description": "角色：女孩"},
+            {"index": 2, "role_description": "角色：男孩"},
+        ],
+        per_scene_indices={171: [1, 2]},
+        auth_token="token",
+        spatial_reviewer_instruction=(
+            "只核对固定点、物理侧、screen_axis_mapping 与原始屏幕描述的明确左右冲突。"
+        ),
+    )
+
+    assert result == ["女孩保持在画面左侧驾驶座，男孩保持在画面右侧副驾驶座。"]
+    assert [call["agent_scope"] for call in calls] == [
+        "storyboard_first_frame_grid",
+        "storyboard_first_frame_grid_spatial_review",
+        "storyboard_first_frame_grid_spatial_repair",
+    ]
+    review_payload = json.loads(calls[1]["messages"][1]["content"])
+    fixed_entities = review_payload["shots"][0]["fixed_entities"]
+    assert fixed_entities[0] == {
+        "character_id": "char_girl",
+        "name": "女孩",
+        "fixed_point_id": "point:driver",
+        "position_2d": {"x": -0.55, "y": 0.45},
+        "physical_side": "vehicle_left",
+        "raw_screen_position": "画面右侧深处",
+    }
+    assert review_payload["shots"][0]["candidate_prompt_text"] == "男孩在画面左侧，女孩在画面右侧。"
+    repair_payload = json.loads(calls[2]["messages"][1]["content"])
+    assert repair_payload["spatial_review_feedback"]["issues"][0]["scene_id"] == 171
+    assert repair_payload["previous_qs_output"]["shots"][0]["reference_indices"] == [1, 2]
 
 
 def test_clean_cell_prompt_excludes_offscreen_character_and_reference_index():

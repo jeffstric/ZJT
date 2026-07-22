@@ -455,6 +455,7 @@ class StoryboardFirstFrameGridService:
             for scene in real_scenes
         ]
         prompt_policy = get_storyboard_quality_prompt_policy()
+        global_visual_guidance = prompt_policy.global_visual_guidance(storyboard)
         prompts = prompt_policy.before_rewrite(prompts, storyboard)
         prompts = self._refine_prompts_with_llm(
             storyboard=storyboard,
@@ -465,6 +466,8 @@ class StoryboardFirstFrameGridService:
             auth_token=str(job.get("auth_token") or ""),
             previous_grid_prompt_context=(previous_reference or {}).get("grid_prompt_group_context"),
             rewriter_instruction=prompt_policy.rewriter_instruction(),
+            spatial_reviewer_instruction=prompt_policy.spatial_reviewer_instruction(),
+            global_visual_guidance=global_visual_guidance,
         )
         prompts = prompt_policy.after_rewrite(prompts, storyboard)
         group_key = self._grid_group_key(scenes_by_id[int(chunk[0]["scene_id"])], chunk[0])
@@ -474,6 +477,7 @@ class StoryboardFirstFrameGridService:
             scenes=real_scenes,
             prompts=prompts,
             per_scene_indices=per_scene_indices,
+            global_visual_guidance=global_visual_guidance,
         )
         target_entity_ids: List[Optional[int]] = [int(scene["id"]) for scene in real_scenes]
         grid_cells: List[Dict[str, Any]] = [
@@ -516,6 +520,7 @@ class StoryboardFirstFrameGridService:
             aspect_ratio=ratio,
             image_size=GridConfig.GRID_SIZE_IMAGE_SIZE_MAP.get(grid_size),
             grid_cells=grid_cells,
+            global_visual_guidance=global_visual_guidance,
         )
         if not result.get("success"):
             for item in chunk:
@@ -892,6 +897,7 @@ class StoryboardFirstFrameGridService:
         scenes: Sequence[Dict[str, Any]],
         prompts: Sequence[str],
         per_scene_indices: Dict[int, List[int]],
+        global_visual_guidance: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         cells = [
             self._build_prompt_cell_context(
@@ -905,6 +911,7 @@ class StoryboardFirstFrameGridService:
         return {
             "grid_task_id": result_grid_task_id,
             "group_key": group_key,
+            "global_visual_guidance": dict(global_visual_guidance or {}),
             "cells": cells,
         }
 
@@ -938,6 +945,8 @@ class StoryboardFirstFrameGridService:
         auth_token: str,
         previous_grid_prompt_context: Optional[Dict[str, Any]] = None,
         rewriter_instruction: str = "",
+        spatial_reviewer_instruction: str = "",
+        global_visual_guidance: Optional[Dict[str, str]] = None,
     ) -> List[str]:
         if not self._enable_llm_refine:
             return prompts
@@ -952,6 +961,8 @@ class StoryboardFirstFrameGridService:
                 auth_token,
                 previous_grid_prompt_context,
                 rewriter_instruction,
+                spatial_reviewer_instruction,
+                global_visual_guidance,
             )
             return future.result(timeout=StoryboardTimeouts.FIRST_FRAME_GRID_LLM_PROMPT_TIMEOUT_SECONDS)
         except TimeoutError:
@@ -971,6 +982,8 @@ class StoryboardFirstFrameGridService:
         auth_token: str,
         previous_grid_prompt_context: Optional[Dict[str, Any]] = None,
         rewriter_instruction: str = "",
+        spatial_reviewer_instruction: str = "",
+        global_visual_guidance: Optional[Dict[str, str]] = None,
     ) -> List[str]:
         from llm.llm_client_factory import get_llm_client
 
@@ -991,6 +1004,7 @@ class StoryboardFirstFrameGridService:
                 "spatial_layout": spatial_layout,
                 "visible_entities": visible_entities,
                 "hidden_continuity_entities": hidden_entities,
+                "original_screen_description": str(prompt.get("scene_desc") or "").strip(),
             })
         system_prompt = (
             "你是分镜首帧宫格提示词编辑器。只输出 JSON，不要 Markdown。"
@@ -1006,6 +1020,7 @@ class StoryboardFirstFrameGridService:
         user_payload = {
             "reference_manifest": list(manifest),
             "previous_grid_prompt_context": previous_grid_prompt_context or {},
+            "global_visual_guidance": dict(global_visual_guidance or {}),
             "shots": cells,
             "output_schema": {
                 "shots": [
@@ -1034,6 +1049,100 @@ class StoryboardFirstFrameGridService:
             agent_scope="storyboard_first_frame_grid",
         )
         content = response.choices[0].message.content if getattr(response, "choices", None) else ""
+        cleaned_prompts = self._prompts_from_llm_content(content, scenes)
+        review_shots = self._build_spatial_review_shots(cells, cleaned_prompts)
+        if not review_shots:
+            return cleaned_prompts
+
+        review_payload = {
+            "shots": review_shots,
+            "output_schema": {
+                "passed": "bool",
+                "issues": [{
+                    "scene_id": "int",
+                    "code": "screen_side_conflict",
+                    "message": "string",
+                }],
+            },
+        }
+        review_response = client.call_api(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是分镜首帧二维空间核对器，只输出 JSON，不要 Markdown。"
+                        + str(spatial_reviewer_instruction or "")
+                    ),
+                },
+                {"role": "user", "content": json.dumps(review_payload, ensure_ascii=False)},
+            ],
+            temperature=0.0,
+            max_tokens=2048,
+            auth_token=auth_token,
+            vendor_id=vendor_id,
+            model_id=model_id,
+            enable_thinking=False,
+            agent_scope="storyboard_first_frame_grid_spatial_review",
+        )
+        review_content = (
+            review_response.choices[0].message.content
+            if getattr(review_response, "choices", None)
+            else ""
+        )
+        review = self._parse_spatial_review(review_content, review_shots)
+        if review["passed"]:
+            return cleaned_prompts
+
+        repair_payload = dict(user_payload)
+        repair_payload["previous_qs_output"] = {
+            "shots": [
+                {
+                    "scene_id": int(scene["id"]),
+                    "grid_index": index,
+                    "prompt_text": cleaned_prompts[index],
+                    "reference_indices": per_scene_indices.get(int(scene["id"]), []),
+                }
+                for index, scene in enumerate(scenes)
+            ]
+        }
+        repair_payload["spatial_review_feedback"] = review
+        repair_response = client.call_api(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        system_prompt
+                        + "上一版 QS 输出未通过二维空间核对。只修复 spatial_review_feedback "
+                        "列出的明确左右冲突，并重新输出全部 shots。固定 point_id、position_2d、"
+                        "physical_position 与 screen_axis_mapping 的组合优先；若原始 "
+                        "screen_position 或 screen_composition 与其冲突，应在最终 prompt_text "
+                        "中纠正该错误描述。不得改动 reference_indices。"
+                    ),
+                },
+                {"role": "user", "content": json.dumps(repair_payload, ensure_ascii=False)},
+            ],
+            temperature=0.1,
+            max_tokens=4096,
+            auth_token=auth_token,
+            vendor_id=vendor_id,
+            model_id=model_id,
+            enable_thinking=False,
+            agent_scope="storyboard_first_frame_grid_spatial_repair",
+        )
+        repair_content = (
+            repair_response.choices[0].message.content
+            if getattr(repair_response, "choices", None)
+            else ""
+        )
+        return self._prompts_from_llm_content(repair_content, scenes)
+
+    def _prompts_from_llm_content(
+        self,
+        content: str,
+        scenes: Sequence[Dict[str, Any]],
+    ) -> List[str]:
         parsed = self._parse_llm_json(content)
         returned = parsed.get("shots") if isinstance(parsed, dict) else None
         if not isinstance(returned, list):
@@ -1069,6 +1178,114 @@ class StoryboardFirstFrameGridService:
                 )
             )
         return cleaned_prompts
+
+    def _build_spatial_review_shots(
+        self,
+        cells: Sequence[Dict[str, Any]],
+        candidate_prompts: Sequence[str],
+    ) -> List[Dict[str, Any]]:
+        review_shots: List[Dict[str, Any]] = []
+        for index, cell in enumerate(cells):
+            layout = cell.get("spatial_layout") or {}
+            anchor = layout.get("camera_anchor") or {}
+            mapping = anchor.get("screen_axis_mapping") or {}
+            if not isinstance(mapping, dict):
+                continue
+            has_left = mapping.get("container_left") or mapping.get("vehicle_left")
+            has_right = mapping.get("container_right") or mapping.get("vehicle_right")
+            if not has_left or not has_right:
+                continue
+            mapped_sides = f"{has_left} {has_right}".lower()
+            if not (
+                ("left" in mapped_sides or "左" in mapped_sides)
+                and ("right" in mapped_sides or "右" in mapped_sides)
+            ):
+                continue
+
+            entities: List[Dict[str, Any]] = []
+            positions = []
+            for container in layout.get("containers") or []:
+                if isinstance(container, dict):
+                    positions.extend(container.get("slots") or [])
+            positions.extend(layout.get("loose_positions") or [])
+            for position in positions:
+                if not isinstance(position, dict) or not position.get("point_id"):
+                    continue
+                if not position.get("character_id"):
+                    continue
+                if str(position.get("visibility") or "visible").lower() in {
+                    "offscreen", "occluded", "hidden",
+                }:
+                    continue
+                physical = position.get("physical_position") or {}
+                physical_side = physical.get("side") if isinstance(physical, dict) else None
+                raw_screen_position = str(position.get("screen_position") or "").strip()
+                if not physical_side or not raw_screen_position:
+                    continue
+                physical_side_text = str(physical_side).lower()
+                if not any(
+                    marker in physical_side_text
+                    for marker in ("left", "right", "左", "右")
+                ):
+                    continue
+                entities.append({
+                    "character_id": position.get("character_id"),
+                    "name": position.get("name") or position.get("character_name"),
+                    "fixed_point_id": position.get("point_id"),
+                    "position_2d": position.get("position_2d") or {},
+                    "physical_side": physical_side,
+                    "raw_screen_position": raw_screen_position,
+                })
+            if not entities:
+                continue
+            review_shots.append({
+                "scene_id": int(cell.get("scene_id") or 0),
+                "grid_index": int(cell.get("grid_index") or 0),
+                "screen_axis_mapping": dict(mapping),
+                "camera_screen_composition": str(anchor.get("screen_composition") or ""),
+                "original_screen_description": cell.get("original_screen_description") or "",
+                "fixed_entities": entities,
+                "candidate_prompt_text": (
+                    candidate_prompts[index] if index < len(candidate_prompts) else ""
+                ),
+            })
+        return review_shots
+
+    def _parse_spatial_review(
+        self,
+        content: str,
+        review_shots: Sequence[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        parsed = self._parse_llm_json(content)
+        issues = parsed.get("issues")
+        if not isinstance(issues, list):
+            raise ValueError("spatial review output missing issues array")
+        expected_scene_ids = {int(shot.get("scene_id") or 0) for shot in review_shots}
+        normalized = []
+        for issue in issues:
+            if not isinstance(issue, dict):
+                continue
+            scene_id = int(issue.get("scene_id") or 0)
+            message = str(issue.get("message") or "").strip()
+            code = str(issue.get("code") or "").strip()
+            if (
+                scene_id not in expected_scene_ids
+                or code != "screen_side_conflict"
+                or not message
+            ):
+                continue
+            normalized.append({
+                "scene_id": scene_id,
+                "code": code,
+                "message": message,
+            })
+        declared_passed = parsed.get("passed")
+        if not isinstance(declared_passed, bool):
+            raise ValueError("spatial review output missing boolean passed")
+        return {
+            "passed": not normalized,
+            "issues": normalized,
+        }
 
     def _llm_model_context(self, storyboard: Dict[str, Any]) -> Tuple[str, Optional[int], Optional[int]]:
         config = storyboard.get("config_json") or {}

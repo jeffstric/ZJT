@@ -709,6 +709,91 @@ def test_disabled_qc_skips_local_and_agent_checks(monkeypatch):
     assert saved[0][0][2] is parsed
 
 
+def test_character_prompt_hard_gate_runs_when_qc_disabled_and_never_completes(monkeypatch):
+    parsed = {
+        "characters": [{
+            "id": "char_001",
+            "character_db_id": 101,
+            "name": "奶昔",
+        }],
+        "locations": [],
+        "props": [],
+        "spatial_world": {"space_units": []},
+        "shot_groups": [{
+            "group_id": "grp_001",
+            "shots": [{
+                "shot_id": "shot_005",
+                "characters_present": ["char_001"],
+                "opening_frame_description": "近景：【【奶昔】】握住操作杆。",
+                "scene_detail": "车厢内蓝光增强。",
+                "description": "【【奶昔】】直视前方。",
+                "action": "【【奶昔】】握紧项链。",
+            }],
+        }],
+    }
+    contract = {
+        "version": 1,
+        "world_id": 823,
+        "characters": [{
+            "character_db_id": 101,
+            "canonical_name": "奶昔_Milkshake",
+        }],
+    }
+    segment = ScriptSplitSegment(
+        task_id=801,
+        segment_index=1,
+        segment_id="seg_0001",
+        source_content="短剧本",
+    )
+    task = ScriptSplitTask(
+        id=801,
+        request_config={
+            "enable_qc": False,
+            "_character_contract": contract,
+        },
+        accepted_registry_json={},
+        continuity_state_json={},
+        total_segment_count=1,
+    )
+    failures = []
+    successes = []
+
+    async def fake_parse(**kwargs):
+        assert kwargs["character_contract"] == contract
+        return parsed
+
+    def fake_save_failure(_task_id, _segment_index, errors, **kwargs):
+        failures.append(errors)
+        segment.attempt_count += 1
+        segment.validation_errors = errors
+        segment.parsed_result_json = kwargs.get("parsed_result")
+
+    monkeypatch.setattr(script_parser, "parse_script_to_shots", fake_parse)
+    _prepare_segment_generation_test(monkeypatch, task, segment)
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "save_failure",
+        fake_save_failure,
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "save_success",
+        lambda *args, **kwargs: successes.append((args, kwargs)),
+    )
+
+    asyncio.run(script_split_engine.step_generate_segment(task))
+    asyncio.run(script_split_engine.step_generate_segment(task))
+    with pytest.raises(script_split_engine.TaskPaused) as exc_info:
+        asyncio.run(script_split_engine.step_generate_segment(task))
+
+    assert exc_info.value.code == "character_prompt_contract_invalid"
+    assert len(failures) == 3
+    assert failures[-1][0]["_character_hard_round"] == 3
+    assert all(error["_hard_gate"] is True for error in failures[-1])
+    assert successes == []
+    assert not any(error.get("_forced_accept") for error in failures[-1])
+
+
 def test_enabled_qc_combines_local_and_agent_issues(monkeypatch):
     parsed_results = [
         {"characters": [], "locations": [], "props": [],
@@ -1516,3 +1601,142 @@ def test_step_merge_reopens_completed_segment_when_location_graph_is_illegal(mon
     assert reopened[0][0] == 15
     assert reopened[0][1][1][0]["location_id"] == "loc_001"
     assert not any("final_result_json" in fields for fields in saved)
+
+
+def _short_character_prompt_result():
+    return {
+        "characters": [{
+            "id": "char_001",
+            "character_db_id": 101,
+            "name": "奶昔_Milkshake",
+        }],
+        "shot_groups": [{
+            "group_id": "grp_001",
+            "shots": [{
+                "shot_id": "shot_005",
+                "duration": 5,
+                "characters_present": ["char_001"],
+                "opening_frame_description": "近景：【【奶昔】】握住操作杆。",
+                "description": "【【奶昔】】直视前方。",
+                "scene_detail": "车厢内蓝光增强。",
+                "action": "【【奶昔】】握紧项链。",
+            }],
+        }],
+    }
+
+
+def _character_contract_config(**extra):
+    config = {
+        "sequence_mode": "speed",
+        "_character_contract": {
+            "version": 1,
+            "world_id": 823,
+            "characters": [{
+                "character_db_id": 101,
+                "canonical_name": "奶昔_Milkshake",
+            }],
+        },
+    }
+    config.update(extra)
+    return config
+
+
+def test_step_merge_reopens_segment_when_character_prompt_uses_short_name(monkeypatch):
+    task = ScriptSplitTask(
+        id=16,
+        total_segment_count=1,
+        request_config=_character_contract_config(),
+    )
+    segment = ScriptSplitSegment(
+        task_id=16,
+        segment_index=1,
+        segment_id="seg_0001",
+        status="completed",
+        parsed_result_json=_short_character_prompt_result(),
+    )
+    reopened = []
+    saved = []
+
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "get_completed",
+        lambda _task_id: [segment],
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "reopen_completed_for_hard_errors",
+        lambda task_id, errors: reopened.append((task_id, errors)) or 1,
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "save_field",
+        lambda _task_id, **fields: saved.append(fields),
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "update_status",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(script_parser, "sanitize_parsed_prop_references", lambda parsed: parsed)
+    monkeypatch.setattr(
+        script_parser,
+        "sanitize_parsed_location_references",
+        lambda parsed, _db_locations=None: parsed,
+    )
+    monkeypatch.setattr(script_parser, "repair_spatial_layout_continuity", lambda parsed: parsed)
+    monkeypatch.setattr(script_parser, "reorganize_shot_groups", lambda parsed, _duration: parsed)
+    monkeypatch.setattr(script_split_engine, "renumber_global", lambda parsed: parsed)
+
+    with pytest.raises(script_split_engine.TaskPaused) as exc_info:
+        asyncio.run(script_split_engine.step_merge(task))
+
+    assert exc_info.value.code == ScriptSplitConstants.ERROR_CHARACTER_PROMPT_CONTRACT_INVALID
+    assert reopened[0][0] == 16
+    assert reopened[0][1][1][0]["_hard_gate_type"] == "character_prompt"
+    assert not any("final_result_json" in fields for fields in saved)
+
+
+def test_step_publish_clears_final_result_before_short_name_can_reach_storyboard(monkeypatch):
+    final_result = _short_character_prompt_result()
+    task = ScriptSplitTask(
+        id=17,
+        user_id=7,
+        total_segment_count=1,
+        request_config=_character_contract_config(
+            source="storyboard",
+            storyboard_id=99,
+        ),
+        final_result_json=final_result,
+    )
+    segment = ScriptSplitSegment(
+        task_id=17,
+        segment_index=1,
+        segment_id="seg_0001",
+        status="completed",
+        parsed_result_json=final_result,
+    )
+    reopened = []
+    cleared = []
+
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "get_completed",
+        lambda _task_id: [segment],
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "reopen_completed_for_hard_errors",
+        lambda task_id, errors: reopened.append((task_id, errors)) or 1,
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "clear_final_result",
+        lambda task_id: cleared.append(task_id),
+    )
+
+    with pytest.raises(script_split_engine.TaskPaused) as exc_info:
+        asyncio.run(script_split_engine.step_publish(task))
+
+    assert exc_info.value.code == ScriptSplitConstants.ERROR_CHARACTER_PROMPT_CONTRACT_INVALID
+    assert reopened and reopened[0][0] == 17
+    assert cleared == [17]

@@ -148,6 +148,7 @@
       userPreferences: {},
       availableImplementations: {},
       isCommunityEdition: false,
+      isEditionLoaded: false,
       zjtTokenEnabled: false, // 管理员是否开启了智剧通Token
       // API Token 数据
       apiTokenData: {
@@ -360,6 +361,9 @@
         this.showAgentConnectionModal = true;
         this.agentConnectionError = '';
         this.agentConnectionCopied = false;
+        if (!this.isEditionLoaded) {
+          this.fetchServerConfig();
+        }
       },
 
       closeAgentConnectionModal() {
@@ -898,6 +902,7 @@
             this.userPreferences = response.data.data.preferences || {};
             this.availableImplementations = response.data.data.available_implementations || {};
             this.isCommunityEdition = response.data.data.is_community_edition || false;
+            this.isEditionLoaded = true;
           } else {
             this.userSettingsError = response.data.message || '加载偏好设置失败';
           }
@@ -1845,6 +1850,10 @@
           const response = await axios.get('/api/system/server-config');
           if (response.data.code === 0) {
             this.isLocal = response.data.data.is_local || false;
+            if (typeof response.data.data.is_enterprise === 'boolean') {
+              this.isCommunityEdition = !response.data.data.is_enterprise;
+              this.isEditionLoaded = true;
+            }
             this.emailEnabled = response.data.data.email_enabled || false;
             this.captchaEnabled = response.data.data.captcha_enabled || false;
             this.captchaPrefix = response.data.data.captcha_prefix || '';

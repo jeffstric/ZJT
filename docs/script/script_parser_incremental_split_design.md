@@ -1069,3 +1069,37 @@ v3 不再要求分镜 LLM 重复生成规划期 `continuity_in/out` 和每镜完
 运行时由 enterprise 状态机确定性物化完整 `spatial_layout`，然后才执行场景结构、空间契约和 QC。`mode=inherit` 的初始状态只能来自上游已物化最后镜 handoff；`mode=none` 会清空历史尾镜和旧 continuity 上下文，避免独立段被前段污染。
 
 原始 intent、物化结果和 diagnostics 的日志路径及错误语义见 `script_split_quality_incremental_spatial_state_design.md` 第 18 节。
+
+## 28. 角色完整名称与图片/视频提示词硬契约
+
+### 28.1 问题与不变量
+
+模型可能把数据库角色 `奶昔_Milkshake` 缩写成 `奶昔`，并写入图片或视频提示词。普通 QC 可关闭且有耗尽强制接纳语义，不能承担此类数据完整性约束。
+
+系统新增如下不可绕过的不变量：数据库角色按 `character_db_id` 锁定完整名称；镜头中的角色引用必须使用精确的 `【【canonical_name】】`；每个在场角色必须同时覆盖图片提示词组合与视频提示词组合。任何违反都不得把 segment 标记为完成，也不得进入分镜落库。
+
+### 28.2 创建期不可变快照
+
+`api/script_split.py::create_split_task` 删除客户端传入的内部字段后，通过 `asyncio.to_thread` 分页读取 world 的全部角色，构建 `_character_contract` 并随任务保存。幂等键在注入快照前计算，因此数据库角色在任务运行期间变更不会造成同一活跃任务漂移；客户端伪造快照也不会影响幂等键或校验真值。
+
+`llm/script_parser.py` 使用任务快照生成角色上下文，不再同步查询固定前 50 个角色。场景和道具的同步模型查询也通过 `asyncio.to_thread` 执行，避免阻塞 Web 事件循环。
+
+### 28.3 校验器与编排
+
+`services/script_split_character_contract.py` 提供无数据库、无 LLM 的确定性校验器，输出带 `_hard_gate=true`、`_hard_gate_type=character_prompt` 的结构化错误。契约按以下顺序取真值：
+
+1. 数据库快照中的 `character_db_id -> canonical_name`；
+2. 跨段已接受角色注册表中的稳定 ID 与名称；
+3. 不与数据库受控短别名冲突的任务内新角色名称。
+
+当前不自动创建角色资产：模型返回 `character_db_id=null` 且名称未命中受控短别名时，只作为任务内新角色继续处理。普通文本和单层括号不参与数据库角色契约匹配；只有 `【【名称】】` 是可校验的角色引用。若后续开放自动创建角色，需要扩展相似名称冲突规则，防止已有角色被错误拆成新角色。
+
+校验分别执行于 segment 候选生成后、merge 全局重排后和 publish 落库前。segment 有独立的 3 轮修复预算（`ScriptSplitConstants.CHARACTER_PROMPT_VALIDATION_MAX_RETRIES`），与普通 QC 轮数和网络调用重试预算分离。预算耗尽后用 `character_prompt_contract_invalid` 暂停；merge/publish 发现遗漏时会重开来源段，publish 还会清空最终结果，保证恢复后重新经历合并。
+
+`llm/script_split_qc_agent.py` 的角色名称索引让数据库已知角色覆盖模型返回的同 ID 角色，避免短名称在普通 QC 层反向覆盖完整名称。普通 QC 的 `_forced_accept` 只接纳非角色硬门禁问题。
+
+### 28.4 可观测性与兼容性
+
+暂停状态接口只在 `character_prompt_contract_invalid` 时附带当前段的精简 `validation_errors`，字段包括错误码、镜头、提示词字段、实际名称和期望名称；前端优先显示具体错误消息。
+
+新任务始终保存完整角色快照。存量检查点没有快照时，仅依据任务已接受角色注册表继续校验，不在 worker 中读取当前角色库，以免历史任务因为库内容已删除或改名而引入不可重现的真值。

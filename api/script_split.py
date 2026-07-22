@@ -21,8 +21,19 @@ from config.constant import ScriptSplitConstants
 from model.location import LocationModel
 from model.script_split_segment import ScriptSplitSegmentModel
 from model.script_split_task import ScriptSplitTaskModel, _resume_hint
+from services.script_split_character_contract import (
+    CHARACTER_CONTRACT_CONFIG_KEY,
+    build_character_contract_snapshot,
+)
 
 logger = logging.getLogger(__name__)
+
+
+_PUBLIC_VALIDATION_ERROR_FIELDS = (
+    "code", "severity", "message", "shot_ref", "field", "segment_id",
+    "character_id", "character_db_id", "actual_name", "expected_name",
+    "expected_names", "_hard_gate", "_hard_gate_type",
+)
 
 
 class ScriptSplitPreconditionError(ValueError):
@@ -68,6 +79,35 @@ async def _validate_world_scene_precondition(world_id: Optional[int]) -> None:
         )
 
 router = APIRouter(prefix="/api/script-split", tags=["script-split"])
+
+
+async def _public_task_status(task) -> dict:
+    """构造轮询状态；暂停时附带精简的当前段校验详情。"""
+    data = task.to_public_status()
+    if (
+        task.status != ScriptSplitConstants.STATUS_PAUSED
+        or getattr(task, "last_error_code", None)
+        != ScriptSplitConstants.ERROR_CHARACTER_PROMPT_CONTRACT_INVALID
+    ):
+        return data
+    segment = await asyncio.to_thread(
+        ScriptSplitSegmentModel.get_first_uncompleted,
+        task.id,
+    )
+    if segment is None:
+        return data
+    public_errors = []
+    for error in segment.get_validation_errors()[:20]:
+        if not isinstance(error, dict):
+            continue
+        public_errors.append({
+            key: error.get(key)
+            for key in _PUBLIC_VALIDATION_ERROR_FIELDS
+            if error.get(key) is not None
+        })
+    if public_errors:
+        data["validation_errors"] = public_errors
+    return data
 
 
 def _get_user_id_from_header(user_id_header: Optional[str]) -> Optional[int]:
@@ -123,7 +163,7 @@ async def get_task_status(
         return JSONResponse(status_code=404, content={"code": -1, "message": "任务不存在"})
     if not _check_owner(task, uid):
         return JSONResponse(status_code=403, content={"code": -1, "message": "无权访问该任务"})
-    return {"code": 0, "data": task.to_public_status()}
+    return {"code": 0, "data": await _public_task_status(task)}
 
 
 @router.get('/tasks/{task_id}/result')
@@ -189,7 +229,7 @@ async def get_active_task(
         return {"code": 0, "data": None}
     if not _check_owner(task, uid):
         return {"code": 0, "data": None}
-    return {"code": 0, "data": task.to_public_status()}
+    return {"code": 0, "data": await _public_task_status(task)}
 
 
 def _resume_target_state(task) -> str:
@@ -304,7 +344,7 @@ async def resume_task(
         body = {}
     force = bool(isinstance(body, dict) and body.get("force"))
 
-    err = task.last_error_code
+    err = getattr(task, "last_error_code", None)
     hint = _resume_hint(task.status, err)
     if not force and err in ScriptSplitConstants.RESUME_BLOCKED_ERROR_CODES:
         return JSONResponse(
@@ -313,7 +353,7 @@ async def resume_task(
                 "code": -1,
                 "message": f"任务暂停根因是 {err}，根因在外部依赖/硬门禁，需排查后传 force:true 重试",
                 "error_code": err,
-                "error_message": task.last_error_message,
+                "error_message": getattr(task, "last_error_message", None),
                 "resume_hint": hint,
             },
         )
@@ -429,6 +469,8 @@ async def create_split_task(
     """
     import asyncio
     request_config = _normalize_request_config(request_config)
+    # 内部角色契约只允许服务端生成；在前置校验和幂等键计算前丢弃客户端同名字段。
+    request_config.pop(CHARACTER_CONTRACT_CONFIG_KEY, None)
     # 前置校验：world 必须有可用场景资产，否则不创建任务，直接提示用户补齐
     await _validate_world_scene_precondition(request_config.get("world_id"))
     script_sha256 = hashlib.sha256(
@@ -436,6 +478,12 @@ async def create_split_task(
     ).hexdigest()
     active_key = compute_active_key(
         user_id, source_type, source_id, source_node_key, script_sha256, request_config
+    )
+    # active_key 只描述用户请求参数；角色库快照是服务端真值。
+    # 先计算幂等键再注入快照，角色在任务运行期间改名也不会让同一活跃任务漂移。
+    request_config[CHARACTER_CONTRACT_CONFIG_KEY] = await asyncio.to_thread(
+        build_character_contract_snapshot,
+        request_config.get("world_id"),
     )
     task_id, is_new = await asyncio.to_thread(
         ScriptSplitTaskModel.create_or_get_active,

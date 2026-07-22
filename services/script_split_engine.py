@@ -36,6 +36,11 @@ from services.script_split_strategy import get_script_split_strategy
 from services.storyboard_quality_sequence import (
     get_storyboard_quality_sequence_strategy,
 )
+from services.script_split_character_contract import (
+    CHARACTER_CONTRACT_CONFIG_KEY,
+    first_character_contract_error_message,
+    validate_segment_character_contract,
+)
 from services.location_structure_guard import (
     bind_and_validate_planned_locations,
     validate_full_location_structure,
@@ -93,6 +98,42 @@ async def _load_current_db_locations(config: Dict[str, Any]) -> List[Dict[str, A
         int(world_id),
         None,
     ) or []
+
+
+async def _ensure_task_character_contract(
+    task: ScriptSplitTask,
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """返回任务级不可变角色快照，并为升级前活跃任务补齐一次。"""
+    existing = config.get(CHARACTER_CONTRACT_CONFIG_KEY)
+    if isinstance(existing, dict) and isinstance(existing.get("characters"), list):
+        return existing
+    # 新任务一定在 API 创建阶段持久化数据库快照。升级前活跃任务不能在 worker
+    # 中重新读一个随时间变化的角色库，只能用已接受注册表固化兼容快照。
+    registry_characters = (task.get_accepted_registry() or {}).get("characters") or []
+    contract_characters = []
+    for character in registry_characters:
+        if not isinstance(character, dict):
+            continue
+        db_id = character.get("character_db_id")
+        name = str(character.get("name") or "").strip()
+        if db_id in (None, "") or not name:
+            continue
+        contract_characters.append({
+            "character_db_id": db_id,
+            "canonical_name": name,
+        })
+    contract = {
+        "version": ScriptSplitConstants.CHARACTER_CONTRACT_VERSION,
+        "world_id": config.get("world_id"),
+        "characters": contract_characters,
+        "legacy_fallback": True,
+    }
+    config[CHARACTER_CONTRACT_CONFIG_KEY] = contract
+    # 兼容快照只存在当前内存任务中；新任务的数据库快照已由 API 创建阶段持久化。
+    # 不在 worker 中写回基于历史结果推导的弱真值，避免把它误当成数据库权威快照。
+    task.request_config = config
+    return contract
 
 
 async def _validate_segment_location_structure(
@@ -166,6 +207,13 @@ def _pause_for_hard_gate(errors: List[Dict[str, Any]]) -> None:
     raise TaskPaused(
         str(first.get("code") or "location_structure_invalid"),
         str(first.get("message") or "场景父级结构不合法，请修正后继续"),
+    )
+
+
+def _pause_for_character_contract(errors: List[Dict[str, Any]]) -> None:
+    raise TaskPaused(
+        ScriptSplitConstants.ERROR_CHARACTER_PROMPT_CONTRACT_INVALID,
+        first_character_contract_error_message(errors),
     )
 
 
@@ -419,6 +467,7 @@ async def step_generate_segment(
     cfg = task.get_request_config()
     strategy = get_script_split_strategy(cfg.get("sequence_mode", "speed"))
     plan = task.get_segment_plan() or {}
+    character_contract = await _ensure_task_character_contract(task, cfg)
     if strategy.parallel_enabled and not _parallel_child:
         await _step_generate_parallel_batch(task, strategy)
         return
@@ -479,11 +528,18 @@ async def step_generate_segment(
     qc_rounds = max(
         [int(e.get("_qc_round", 0) or 0) for e in last_errors] or [0]
     )
+    character_hard_rounds = max(
+        [int(e.get("_character_hard_round", 0) or 0) for e in last_errors] or [0]
+    )
     # 兼容升级前没有内部计数元数据的失败检查点。显式存在值为 0 的元数据
     # 表示用户已经开启新重试周期，不能再由全生命周期 attempt_count 覆盖。
     has_retry_metadata = any(
         isinstance(error, dict)
-        and ("_call_failure_count" in error or "_qc_round" in error)
+        and (
+            "_call_failure_count" in error
+            or "_qc_round" in error
+            or "_character_hard_round" in error
+        )
         for error in last_errors
     )
     if last_errors and not has_retry_metadata:
@@ -493,6 +549,7 @@ async def step_generate_segment(
         elif last_parsed_result is not None:
             qc_rounds = attempt_count
     checkpoint_hard_errors: List[Dict[str, Any]] = []
+    checkpoint_character_errors: List[Dict[str, Any]] = []
     if last_parsed_result is not None:
         # 恢复检查点时必须使用最新数据库重新执行硬门禁。用户补齐顶层场景后，
         # 保存的完整候选可以直接恢复；旧的 _forced_accept 标记不能绕过该检查。
@@ -505,6 +562,7 @@ async def step_generate_segment(
             error for error in last_errors
             if isinstance(error, dict)
             and error.get("_hard_gate")
+            and error.get("_hard_gate_type") != "character_prompt"
             and error.get("code") != "new_root_location_forbidden"
         ]
         if previous_full_hard_errors:
@@ -514,6 +572,12 @@ async def step_generate_segment(
                 last_parsed_result,
                 cfg,
             )
+        checkpoint_character_errors = validate_segment_character_contract(
+            last_parsed_result,
+            character_contract,
+            registry.to_context(),
+        )
+        checkpoint_hard_errors.extend(checkpoint_character_errors)
         if not checkpoint_hard_errors:
             last_errors = [
                 error for error in last_errors
@@ -531,9 +595,17 @@ async def step_generate_segment(
                     parallel_child=_parallel_child,
                 )
                 return
-    if checkpoint_hard_errors and not enable_qc:
+    if (
+        checkpoint_character_errors
+        and character_hard_rounds
+        >= ScriptSplitConstants.CHARACTER_PROMPT_VALIDATION_MAX_RETRIES
+    ):
+        _pause_for_character_contract(checkpoint_character_errors)
+    if checkpoint_hard_errors and not checkpoint_character_errors and not enable_qc:
         _pause_for_hard_gate(checkpoint_hard_errors)
     if call_failure_count >= ScriptSplitConstants.SEGMENT_MAX_RETRIES:
+        if checkpoint_character_errors:
+            _pause_for_character_contract(checkpoint_character_errors)
         if checkpoint_hard_errors:
             _pause_for_hard_gate(checkpoint_hard_errors)
         if last_parsed_result is not None:
@@ -544,6 +616,8 @@ async def step_generate_segment(
             return
         _handle_segment_exhausted(task, seg, registry)
     if enable_qc and qc_rounds >= qc_max_rounds and last_parsed_result is not None:
+        if checkpoint_character_errors:
+            _pause_for_character_contract(checkpoint_character_errors)
         if checkpoint_hard_errors:
             _pause_for_hard_gate(checkpoint_hard_errors)
         forced_errors = _mark_forced_accept_errors(last_errors)
@@ -592,6 +666,7 @@ async def step_generate_segment(
                 previous_parsed_result=last_parsed_result,
                 qc_feedback=qc_feedback,
                 segment_context=segment_context,
+                character_contract=character_contract,
                 strict_json=True,
             ),
             timeout=ScriptSplitConstants.LLM_CALL_TIMEOUT_SECONDS,
@@ -600,10 +675,13 @@ async def step_generate_segment(
         call_failure_count += 1
         errors = [{"code": "segment_timeout", "severity": "error",
                    "message": f"段 {seg.segment_index} 第 {generation_attempt} 次生成超时",
-                   "_call_failure_count": call_failure_count, "_qc_round": qc_rounds}]
+                   "_call_failure_count": call_failure_count, "_qc_round": qc_rounds,
+                   "_character_hard_round": character_hard_rounds}]
         ScriptSplitSegmentModel.save_failure(task.id, seg.segment_index, errors)
         logger.warning("task %s 段 %d 第 %d 次超时", task.id, seg.segment_index, generation_attempt)
         if call_failure_count >= ScriptSplitConstants.SEGMENT_MAX_RETRIES:
+            if checkpoint_character_errors:
+                _pause_for_character_contract(checkpoint_character_errors)
             if checkpoint_hard_errors:
                 _pause_for_hard_gate(checkpoint_hard_errors)
             if last_parsed_result is not None:
@@ -620,11 +698,14 @@ async def step_generate_segment(
             raise WaitingAuth()
         call_failure_count += 1
         errors = [{"code": "segment_call_failed", "severity": "error", "message": msg,
-                   "_call_failure_count": call_failure_count, "_qc_round": qc_rounds}]
+                   "_call_failure_count": call_failure_count, "_qc_round": qc_rounds,
+                   "_character_hard_round": character_hard_rounds}]
         ScriptSplitSegmentModel.save_failure(task.id, seg.segment_index, errors)
         logger.warning("task %s 段 %d 第 %d 次调用失败: %s",
                        task.id, seg.segment_index, generation_attempt, msg)
         if call_failure_count >= ScriptSplitConstants.SEGMENT_MAX_RETRIES:
+            if checkpoint_character_errors:
+                _pause_for_character_contract(checkpoint_character_errors)
             if checkpoint_hard_errors:
                 _pause_for_hard_gate(checkpoint_hard_errors)
             if last_parsed_result is not None:
@@ -670,6 +751,53 @@ async def step_generate_segment(
         errors.extend(
             strategy.validate_cross_segment(parsed, upstream_handoff, plan, seg.segment_id) or []
         )
+    character_hard_errors = validate_segment_character_contract(
+        parsed,
+        character_contract,
+        registry.to_context(),
+    )
+    if character_hard_errors:
+        current_character_hard_round = character_hard_rounds + 1
+        tagged_character_errors = [
+            dict(
+                error,
+                _character_hard_round=current_character_hard_round,
+                _qc_round=qc_rounds,
+                _call_failure_count=call_failure_count,
+            )
+            for error in character_hard_errors
+        ]
+        tagged_location_errors = [
+            dict(
+                error,
+                _hard_gate=True,
+                _hard_gate_type="location_structure",
+                _character_hard_round=current_character_hard_round,
+                _qc_round=qc_rounds,
+                _call_failure_count=call_failure_count,
+            )
+            for error in hard_structure_errors
+        ]
+        ScriptSplitSegmentModel.save_failure(
+            task.id,
+            seg.segment_index,
+            tagged_character_errors + tagged_location_errors,
+            parsed_result=parsed,
+        )
+        logger.warning(
+            "task %s 段 %d 角色提示词硬校验第 %d/%d 轮失败: %s",
+            task.id,
+            seg.segment_index,
+            current_character_hard_round,
+            ScriptSplitConstants.CHARACTER_PROMPT_VALIDATION_MAX_RETRIES,
+            [error.get("code") for error in tagged_character_errors],
+        )
+        if (
+            current_character_hard_round
+            >= ScriptSplitConstants.CHARACTER_PROMPT_VALIDATION_MAX_RETRIES
+        ):
+            _pause_for_character_contract(tagged_character_errors)
+        return
     if enable_qc:
         current_qc_round = qc_rounds + 1
         qc_errors = await _run_enabled_segment_qc(
@@ -687,6 +815,7 @@ async def step_generate_segment(
             dict(
                 error,
                 _hard_gate=True,
+                _hard_gate_type="location_structure",
                 _qc_round=current_qc_round,
                 _call_failure_count=call_failure_count,
             )
@@ -765,7 +894,16 @@ def _mark_forced_accept_errors(
     errors: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """保留最后一轮 QC 问题，并标记该段是达到上限后强制接纳。"""
-    if _first_hard_gate_error(errors):
+    character_hard_errors = [
+        error for error in errors
+        if isinstance(error, dict)
+        and error.get("_hard_gate")
+        and error.get("_hard_gate_type") == "character_prompt"
+    ]
+    if character_hard_errors:
+        _pause_for_character_contract(character_hard_errors)
+    hard_error = _first_hard_gate_error(errors)
+    if hard_error:
         _pause_for_hard_gate(errors)
     return [dict(error, _forced_accept=True) for error in errors]
 
@@ -999,6 +1137,43 @@ def _map_location_errors_to_segments(
     return mapped
 
 
+def _map_character_errors_to_segments(
+    completed_segments: List[Any],
+    errors: List[Dict[str, Any]],
+) -> Dict[int, List[Dict[str, Any]]]:
+    """按 shot._segment_id / character_id 把合并级角色错误回写到来源段。"""
+    by_segment_id: Dict[str, int] = {}
+    character_owners: Dict[str, set[int]] = {}
+    fallback_index = min(
+        (int(segment.segment_index) for segment in completed_segments),
+        default=1,
+    )
+    for segment in completed_segments:
+        segment_index = int(segment.segment_index)
+        by_segment_id[str(segment.segment_id or "")] = segment_index
+        parsed = segment.get_parsed_result() or {}
+        for character in parsed.get("characters") or []:
+            if not isinstance(character, dict):
+                continue
+            character_id = str(character.get("id") or character.get("character_id") or "")
+            if character_id:
+                character_owners.setdefault(character_id, set()).add(segment_index)
+
+    mapped: Dict[int, List[Dict[str, Any]]] = {}
+    for error in errors:
+        indexes: set[int] = set()
+        segment_id = str(error.get("segment_id") or "")
+        if segment_id in by_segment_id:
+            indexes.add(by_segment_id[segment_id])
+        character_id = str(error.get("character_id") or "")
+        indexes.update(character_owners.get(character_id) or set())
+        if not indexes:
+            indexes.add(fallback_index)
+        for segment_index in indexes:
+            mapped.setdefault(segment_index, []).append(dict(error, _hard_gate=True))
+    return mapped
+
+
 # ---- 单步：合并与全局校验 ----
 
 async def step_merge(task: ScriptSplitTask) -> None:
@@ -1020,6 +1195,7 @@ async def step_merge(task: ScriptSplitTask) -> None:
         reorganize_shot_groups,
     )
     cfg = task.get_request_config()
+    character_contract = await _ensure_task_character_contract(task, cfg)
     strategy = get_script_split_strategy(cfg.get("sequence_mode", "speed"))
     db_locations = None
     world_id = cfg.get("world_id")
@@ -1093,6 +1269,22 @@ async def step_merge(task: ScriptSplitTask) -> None:
         merged, cfg.get("max_group_duration", 15))
 
     merged = renumber_global(merged)
+    character_hard_errors = validate_segment_character_contract(
+        merged,
+        character_contract,
+        task.get_accepted_registry(),
+    )
+    if character_hard_errors:
+        errors_by_segment = _map_character_errors_to_segments(
+            completed,
+            character_hard_errors,
+        )
+        await asyncio.to_thread(
+            ScriptSplitSegmentModel.reopen_completed_for_hard_errors,
+            task.id,
+            errors_by_segment,
+        )
+        _pause_for_character_contract(character_hard_errors)
     ScriptSplitTaskModel.save_field(task.id, final_result_json=merged)
     ScriptSplitTaskModel.update_status(
         task.id, ScriptSplitConstants.STATUS_PUBLISHING,
@@ -1108,6 +1300,7 @@ async def step_publish(task: ScriptSplitTask) -> None:
     见设计文档 §15。视频工作流来源不经过发布（前端自行物化节点）。
     """
     cfg = task.get_request_config()
+    character_contract = await _ensure_task_character_contract(task, cfg)
     if cfg.get("source") != "storyboard":
         # 非故事板来源：直接标记完成
         ScriptSplitTaskModel.update_status(
@@ -1123,6 +1316,31 @@ async def step_publish(task: ScriptSplitTask) -> None:
     final_result = task.get_final_result()
     if not final_result:
         raise EngineError("no_final_result", "无最终结果可发布")
+
+    publish_character_errors = validate_segment_character_contract(
+        final_result,
+        character_contract,
+        task.get_accepted_registry(),
+    )
+    if publish_character_errors:
+        completed_segments = await asyncio.to_thread(
+            ScriptSplitSegmentModel.get_completed,
+            task.id,
+        )
+        errors_by_segment = _map_character_errors_to_segments(
+            completed_segments,
+            publish_character_errors,
+        )
+        await asyncio.to_thread(
+            ScriptSplitSegmentModel.reopen_completed_for_hard_errors,
+            task.id,
+            errors_by_segment,
+        )
+        await asyncio.to_thread(
+            ScriptSplitTaskModel.clear_final_result,
+            task.id,
+        )
+        _pause_for_character_contract(publish_character_errors)
 
     # 幂等恢复：检查是否已全部落库
     from model.storyboard import StoryboardModel, StoryboardSceneModel

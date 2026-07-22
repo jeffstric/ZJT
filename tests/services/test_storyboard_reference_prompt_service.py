@@ -3,6 +3,7 @@ from services.storyboard_reference_prompt_service import (
     append_storyboard_visual_suffix,
     build_reference_legend,
     build_storyboard_reference_items,
+    remove_storyboard_visual_suffix,
 )
 
 
@@ -22,6 +23,57 @@ def test_visual_suffix_is_appended_at_tail_without_duplication():
         composition_preference="三分法构图",
     )
     assert repeated == prompt
+
+    cleaned = remove_storyboard_visual_suffix(
+        repeated,
+        style="电影写实",
+        composition_preference="三分法构图",
+    )
+    assert cleaned == "镜头内容\n参考图说明：图1是场景。"
+
+
+def test_multiline_visual_suffix_is_idempotent_and_removable():
+    style = "皮克斯3D动画\r\n高品质建模\n柔和电影光照"
+    composition = "三分法构图\r动态平衡"
+
+    once = append_storyboard_visual_suffix(
+        "镜头内容\n参考图说明：图1是场景。",
+        style=style,
+        composition_preference=composition,
+    )
+    repeated = append_storyboard_visual_suffix(
+        once,
+        style=style,
+        composition_preference=composition,
+    )
+
+    assert repeated == once
+    assert repeated.count("图片风格：") == 1
+    assert repeated.count("构图倾向：") == 1
+    assert "图片风格：皮克斯3D动画\n高品质建模\n柔和电影光照" in repeated
+    assert "构图倾向：三分法构图\n动态平衡" in repeated
+    assert remove_storyboard_visual_suffix(
+        repeated,
+        style=style,
+        composition_preference=composition,
+    ) == "镜头内容\n参考图说明：图1是场景。"
+
+
+def test_multiline_visual_suffix_removal_keeps_similar_body_lines():
+    prompt = (
+        "镜头正文包含高品质建模，但不是后缀块。\n"
+        "高品质建模\n\n"
+        "图片风格：皮克斯3D动画\n高品质建模\n"
+        "构图倾向：三分法构图\n动态平衡"
+    )
+
+    cleaned = remove_storyboard_visual_suffix(
+        prompt,
+        style="皮克斯3D动画\n高品质建模",
+        composition_preference="三分法构图\n动态平衡",
+    )
+
+    assert cleaned == "镜头正文包含高品质建模，但不是后缀块。\n高品质建模"
 
 
 def test_reference_items_only_use_prompt_mentions_not_character_desc():

@@ -523,6 +523,22 @@ header {
   max-width: 640px;
 }
 
+.agent-connection-free-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  color: #d97706;
+  background: #fff7ed;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: 2px;
+}
+
 .agent-connection-content {
   display: flex;
   flex-direction: column;
