@@ -672,7 +672,8 @@ class StoryboardTimeouts:
     """Storyboard timeout constants in seconds."""
     _CONSTANT_GROUP = True
 
-    FIRST_FRAME_GRID_LLM_PROMPT_TIMEOUT_SECONDS = 60
+    # 覆盖 QS 改写、二维空间复核及命中冲突时的一次定向返修。
+    FIRST_FRAME_GRID_LLM_PROMPT_TIMEOUT_SECONDS = 120
     # 故事板导出：单资源下载 / ffmpeg 单步 / 整片任务总超时
     EXPORT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS = 120
     EXPORT_FFMPEG_TIMEOUT_SECONDS = 300
