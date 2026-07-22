@@ -521,14 +521,15 @@ Frontend UI Update → Show Final Output
 
 ## 📦 License
 
-This project uses a modified Apache License 2.0. See [LICENSE](LICENSE) for details.
+This project uses a modified Apache License 2.0. See [LICENSE](LICENSE) (Chinese reference: [LICENSE_ZH.md](LICENSE_ZH.md)).
 
 ### Key Terms
 - ✅ **Commercial use allowed**
 - ✅ **Modification and distribution allowed**
 - ✅ **Private deployment allowed**
 - ❌ **Multi-workspace SaaS requires authorization**
-- ❌ **Frontend LOGO and copyright must not be removed**
+- ❌ **Frontend LOGO and copyright must not be removed**; modifications/redistributions must prominently attribute 智剧通 (ZJT) branding and copyright
+- ❌ **Unauthorized use, reverse engineering, modification, or short-circuiting of Enterprise (`enterprise`) features and protections is prohibited**
 
 ---
 
