@@ -215,6 +215,8 @@
   "btn_view_manual": "查看使用手册",
   "btn_view_later": "稍后查看",
   "btn_enter_home": "进入主页",
+  "wx_group_guide_optional": "可选：扫码加入官方微信群，获取技术支持与产品动态",
+  "wx_group_qr_alt": "官方微信群二维码",
   "modal_edit_impl": "编辑实现方配置",
   "impl_name_label": "实现方名称",
   "impl_display_name_label": "显示名称",

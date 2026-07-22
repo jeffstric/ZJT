@@ -2058,6 +2058,106 @@ header {
   line-height: 1.6;
 }
 
+.wx-group-footer-link {
+  margin-left: 12px;
+  color: #86efac;
+  text-decoration: none;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.wx-group-footer-link:hover {
+  text-decoration: underline;
+  color: #bbf7d0;
+}
+
+/* 官方微信群：注册后右下角轻量浮层（无遮罩） */
+.wx-group-soft-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 88px;
+  width: min(300px, calc(100vw - 32px));
+  background: rgba(17, 24, 39, 0.98);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  border-radius: 12px;
+  padding: 16px 16px 12px;
+  color: var(--text);
+  z-index: 1001;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  animation: slideInRight 0.28s ease;
+}
+
+.wx-group-soft-close {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.wx-group-soft-close:hover {
+  color: var(--text);
+}
+
+.wx-group-soft-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #86efac;
+  margin-bottom: 6px;
+  padding-right: 20px;
+}
+
+.wx-group-soft-desc {
+  font-size: 13px;
+  color: #cbd5e1;
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.wx-group-soft-qr {
+  display: block;
+  width: 160px;
+  height: auto;
+  margin: 0 auto 10px;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.wx-group-soft-fallback {
+  font-size: 12px;
+  color: #94a3b8;
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.wx-group-soft-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.wx-group-soft-dont {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #94a3b8;
+  cursor: pointer;
+  user-select: none;
+}
+
+.wx-group-soft-dont input {
+  margin: 0;
+  cursor: pointer;
+}
+
 /* Mode Selection Styles */
 .mode-select-list {
   display: flex;

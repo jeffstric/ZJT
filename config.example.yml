@@ -211,6 +211,10 @@ tts:
 user_registration:
   require_admin_approval: false  # 注册后是否需要管理员审核才能登录
 
+# 官方微信群引导（注册成功后的轻量引导 + 常驻入口）
+wx_group_guide:
+  enabled: true  # 是否启用官方微信群引导（关闭后注册成功不再弹出/展示官方群入口）
+
 # Test mode configuration
 test_mode:
   enabled: false  # 是否启用测试模式

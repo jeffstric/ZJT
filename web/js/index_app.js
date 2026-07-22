@@ -49,6 +49,14 @@
       showRechargePowerModal: false,
       showFeedbackModal: false,
       showWechatChannelsModal: false,
+      // 官方微信群引导
+      wxGroupGuideEnabled: false,
+      wxGroupQrUrl: '',           // 配置中的原始地址（可能是远端 http）
+      wxGroupQrProxyPath: '/api/system/wx-group-qr',
+      showWxGroupSoftPanel: false,
+      showWxGroupModal: false,
+      wxGroupDontShowAgain: false,
+      _wxGroupSoftTimer: null,
       authMode: 'login', // 'login' or 'register'
       loginForm: {
         phone: '',
@@ -305,6 +313,14 @@
       },
       isLoggedIn() {
         return !!(this.authToken && (this.userPhone || this.userEmail));
+      },
+      /**
+       * 实际用于 <img src> 的二维码地址：
+       * - 页面为 HTTPS 且配置为 http:// 外链时，走后端同源代理，避免混合内容拦截
+       * - 同源相对路径 / http 页面下的 http 图：直接使用
+       */
+      wxGroupQrDisplayUrl() {
+        return this.resolveWxGroupQrDisplayUrl(this.wxGroupQrUrl);
       },
       maskedPhone() {
         // 邮箱用户显示掩码后的邮箱
@@ -584,6 +600,8 @@
               
               // 登录成功后留在首页，检查模式选择
               this.checkCreationMode();
+              // 注册后的官方微信群轻量引导（不阻塞主路径）
+              this.maybeShowWxGroupSoftGuide();
             }
             
             // 关闭模态框并清空表单
@@ -741,15 +759,27 @@
               this.showLoginModal = true;
               this.loginForm.phone = this.registerForm.phone || this.registerForm.email;
               this.registerForm = { phone: '', email: '', code: '', password: '', inviteCode: '', termsAgreed: false };
-              alert(response.data.message || '注册成功，请等待管理员审核通过后登录');
+              const pendingMsg = response.data.message || '注册成功，请等待管理员审核通过后登录';
+              // 功能开启时附带可点的社群提示（不自动弹窗）
+              if (this.wxGroupGuideEnabled) {
+                const joinTip = this.$t ? this.$t('wx_group_pending_tip') : '也可先加入官方微信群了解产品';
+                alert(`${pendingMsg}\n\n${joinTip}`);
+              } else {
+                alert(pendingMsg);
+              }
               return;
             }
 
             // 检查是否是首个管理员
             const isFirstAdmin = response.data.data && response.data.data.is_first_admin;
             if (isFirstAdmin) {
-              // 保存标记，登录后跳转到快速配置
+              // 保存标记，登录后跳转到快速配置（主路径优先，不挡后台）
               localStorage.setItem('redirect_after_login', '/admin?quick_config=1');
+              // 首管：配置完成后再在 admin 手册弹窗中展示微信群（展示时再校验开关）
+              sessionStorage.setItem('pending_wx_group_guide', 'admin_after_config');
+            } else {
+              // 普通用户：登录进首页后展示轻量浮层（展示时再校验开关）
+              sessionStorage.setItem('pending_wx_group_guide', 'home_soft');
             }
 
             // 注册成功后自动登录
@@ -1819,6 +1849,10 @@
             this.captchaEnabled = response.data.data.captcha_enabled || false;
             this.captchaPrefix = response.data.data.captcha_prefix || '';
             this.captchaSceneId = response.data.data.captcha_scene_id || '';
+            this.wxGroupGuideEnabled = !!response.data.data.wx_group_guide_enabled;
+            this.wxGroupQrUrl = response.data.data.wx_group_qr_url || '';
+            this.wxGroupQrProxyPath = response.data.data.wx_group_qr_proxy_path
+              || '/api/system/wx-group-qr';
             if (response.data.data.footer) {
               this.footerConfig = response.data.data.footer;
             }
@@ -1831,6 +1865,74 @@
         } catch (error) {
           console.error('Failed to fetch server config:', error);
         }
+      },
+
+      // ==================== 官方微信群引导 ====================
+
+      isWxGroupGuideDismissed() {
+        return localStorage.getItem('wx_group_guide_dismissed') === '1';
+      },
+
+      /**
+       * 解析二维码展示 URL。
+       * HTTPS 页面加载 HTTP 外链图会被浏览器拦截，改为同源后端代理。
+       */
+      resolveWxGroupQrDisplayUrl(url) {
+        if (!url) return '';
+        // 同源相对路径可直接用
+        if (url.startsWith('/')) return url;
+        try {
+          const isHttpsPage = typeof window !== 'undefined'
+            && window.location
+            && window.location.protocol === 'https:';
+          const isHttpRemote = /^http:\/\//i.test(url);
+          if (isHttpsPage && isHttpRemote) {
+            return this.wxGroupQrProxyPath || '/api/system/wx-group-qr';
+          }
+        } catch (e) {
+          // ignore
+        }
+        return url;
+      },
+
+      /** 注册成功且进入首页后，按 session 标记展示一次轻量浮层 */
+      maybeShowWxGroupSoftGuide() {
+        if (!this.wxGroupGuideEnabled || this.isWxGroupGuideDismissed()) {
+          sessionStorage.removeItem('pending_wx_group_guide');
+          return;
+        }
+        const pending = sessionStorage.getItem('pending_wx_group_guide');
+        if (pending !== 'home_soft') {
+          return;
+        }
+        sessionStorage.removeItem('pending_wx_group_guide');
+        if (this._wxGroupSoftTimer) {
+          clearTimeout(this._wxGroupSoftTimer);
+        }
+        // 稍晚出现，避免与登录框关闭动画抢焦点
+        this._wxGroupSoftTimer = setTimeout(() => {
+          this.showWxGroupSoftPanel = true;
+          this._wxGroupSoftTimer = null;
+        }, 600);
+      },
+
+      openWxGroupModal() {
+        if (!this.wxGroupGuideEnabled || !this.wxGroupQrDisplayUrl) {
+          return;
+        }
+        this.showWxGroupModal = true;
+      },
+
+      dismissWxGroupSoftPanel({ permanent = false } = {}) {
+        this.showWxGroupSoftPanel = false;
+        if (permanent || this.wxGroupDontShowAgain) {
+          localStorage.setItem('wx_group_guide_dismissed', '1');
+        }
+      },
+
+      dismissWxGroupSoftPanelPermanent() {
+        this.wxGroupDontShowAgain = true;
+        this.dismissWxGroupSoftPanel({ permanent: true });
       },
 
       // ==================== CAPTCHA 人机验证 ====================
@@ -2135,6 +2237,10 @@
       }
       if (this.checkinToastTimer) {
         clearTimeout(this.checkinToastTimer);
+      }
+      if (this._wxGroupSoftTimer) {
+        clearTimeout(this._wxGroupSoftTimer);
+        this._wxGroupSoftTimer = null;
       }
       // 移除语言切换事件监听
       if (window.ZJTi18n && this._localeChangedHandler) {

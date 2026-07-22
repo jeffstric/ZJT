@@ -134,6 +134,10 @@ test_mode:
     image_edit: ""
     text_to_image: ""
 
+# 官方微信群引导（注册成功后）：生产基线默认开启
+wx_group_guide:
+  enabled: true
+
 task_queue:
   max_retry_count: 30
   task_expire_days: 7

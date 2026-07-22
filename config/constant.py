@@ -1354,6 +1354,15 @@ GEMINI_URL_FORMATS = {
 class ExternalLinks:
     """外部链接常量"""
     USER_MANUAL_URL = 'https://bq3mlz1jiae.feishu.cn/wiki/W1h2wCK3mi1CgDk36LEcVqggnLe'  # 使用手册
+    # 官方微信群二维码（注册引导 / 常驻入口）
+    # 注意：该图床仅提供 HTTP，HTTPS 会连接失败（ERR_CONNECTION_REFUSED）
+    WX_GROUP_QR_URL = 'http://ailive.perseids.cn/upload/assert/wx_group.jpg'
+    # HTTPS 站点下由后端代理拉取，避免浏览器混合内容拦截
+    WX_GROUP_QR_PROXY_PATH = '/api/system/wx-group-qr'
+    WX_GROUP_QR_PROXY_CONNECT_TIMEOUT = 5   # 秒
+    WX_GROUP_QR_PROXY_READ_TIMEOUT = 15     # 秒
+    WX_GROUP_QR_PROXY_MAX_BYTES = 2 * 1024 * 1024  # 2MB
+    WX_GROUP_QR_PROXY_CACHE_TTL = 3600      # 内存缓存秒数
 
 
 # LLM 模型和供应商常量
