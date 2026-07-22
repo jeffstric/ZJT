@@ -1885,11 +1885,11 @@
         </div>
 
         <!-- 使用手册引导弹窗 -->
-        <div class="modal-overlay" v-if="guideModal.show" @click.self="guideModal.show = false">
+        <div class="modal-overlay" v-if="guideModal.show" @click.self="guideModal.show = false; guideModal.showWxGroup = false">
             <div class="modal">
                 <div class="modal-header">
                     <h3>🎉 {{ t('modal_config_complete') }}</h3>
-                    <button class="modal-close" @click="guideModal.show = false">&times;</button>
+                    <button class="modal-close" @click="guideModal.show = false; guideModal.showWxGroup = false">&times;</button>
                 </div>
                 <div class="modal-body" style="text-align: center; padding: 30px;">
                     <div style="font-size: 48px; margin-bottom: 20px;">📚</div>
@@ -1900,10 +1900,20 @@
                     <a :href="userManualUrl" target="_blank" class="modal-btn confirm" style="display: inline-block; text-decoration: none;">
                         📖 {{ t('btn_view_manual') }}
                     </a>
+                    <!-- 可选：官方微信群（不抢主 CTA，首管注册后配置完成时展示） -->
+                    <div v-if="guideModal.showWxGroup && wxGroupQrDisplayUrl" style="margin-top: 28px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+                        <p style="color: #64748b; font-size: 13px; margin-bottom: 12px;">{{ t('wx_group_guide_optional') }}</p>
+                        <img
+                            :src="wxGroupQrDisplayUrl"
+                            :alt="t('wx_group_qr_alt')"
+                            style="width: 140px; height: auto; border-radius: 8px; background: #fff;"
+                            @error="$event.target.style.display='none'"
+                        />
+                    </div>
                 </div>
                 <div class="modal-footer">
-                    <button class="modal-btn cancel" @click="guideModal.show = false">{{ t('btn_view_later') }}</button>
-                    <button class="modal-btn confirm" @click="guideModal.show = false; window.location.href = '/';">
+                    <button class="modal-btn cancel" @click="guideModal.show = false; guideModal.showWxGroup = false">{{ t('btn_view_later') }}</button>
+                    <button class="modal-btn confirm" @click="guideModal.show = false; guideModal.showWxGroup = false; window.location.href = '/';">
                         {{ t('btn_enter_home') }}
                     </button>
                 </div>

@@ -215,6 +215,8 @@
   "btn_view_manual": "View User Manual",
   "btn_view_later": "View Later",
   "btn_enter_home": "Go to Home",
+  "wx_group_guide_optional": "Optional: scan to join the official WeChat group for support and updates",
+  "wx_group_qr_alt": "Official WeChat group QR code",
   "modal_edit_impl": "Edit Provider Config",
   "impl_name_label": "Provider Name",
   "impl_display_name_label": "Display Name",

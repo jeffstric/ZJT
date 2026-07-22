@@ -101,6 +101,12 @@
         <span v-if="footerConfig.version" style="margin-left: 8px; color: #94a3b8;">v{{ footerConfig.version }}</span>
         <a v-if="footerConfig.icp_number" :href="footerConfig.icp_url" target="_blank" rel="noopener noreferrer" style="margin-left: 8px;">{{ footerConfig.icp_number }}</a>
         <a v-if="footerConfig.police_number" :href="footerConfig.police_url" target="_blank" rel="noopener noreferrer" style="margin-left: 8px;">{{ footerConfig.police_number }}</a>
+        <a
+          v-if="wxGroupGuideEnabled"
+          href="javascript:;"
+          class="wx-group-footer-link"
+          @click.prevent="openWxGroupModal"
+        >{{ $t('wx_group_entry') }}</a>
       </div>
       <!-- 本地环境开源及社交信息 -->
       <div class="footer-row local-footer" v-if="isLocal">
@@ -126,6 +132,15 @@
           <span title="视频号" class="social-icon" @click="showWechatChannelsModal = true" style="cursor: pointer;">
             <svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 2C6.48 2 2 5.9 2 10.8c0 2.3 1.2 4.4 3.1 5.9l-.6 2.3 2.8-1.4c1.1.3 2.3.5 3.5.5 5.52 0 10-3.9 10-8.8S17.52 2 12 2zm-2.5 6c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm5 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1z"/></svg>
           </span>
+          <span
+            v-if="wxGroupGuideEnabled"
+            :title="$t('wx_group_entry')"
+            class="social-icon"
+            @click="openWxGroupModal"
+            style="cursor: pointer;"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zM17.25 9.5c-4.016 0-7.25 2.766-7.25 6.17 0 3.405 3.234 6.17 7.25 6.17.81 0 1.59-.112 2.325-.317a.72.72 0 0 1 .598.082l1.587.928a.273.273 0 0 0 .14.046c.133 0 .242-.11.242-.246 0-.06-.024-.12-.04-.178l-.325-1.235a.492.492 0 0 1 .178-.554C23.02 19.07 24 17.48 24 15.67c0-3.404-3.234-6.17-6.75-6.17zm-2.59 3.555c.535 0 .968.44.968.983a.976.976 0 0 1-.968.983.976.976 0 0 1-.968-.983c0-.542.433-.983.968-.983zm5.18 0c.535 0 .968.44.968.983a.976.976 0 0 1-.968.983.976.976 0 0 1-.968-.983c0-.542.433-.983.968-.983z"/></svg>
+          </span>
           <a href="https://gitee.com/jeffstric/zjt" target="_blank" rel="noopener noreferrer" title="Gitee" class="social-icon">
             <svg viewBox="0 0 24 24" width="20" height="20"><path d="M11.984 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.016 0zm7.245 5.99c.532 0 .938.406.938.938v8.576a.938.938 0 0 1-.938.938H9.63c-.532 0-.938-.406-.938-.938V6.928c0-.532.406-.938.938-.938h9.6zM9.63 2.5a.469.469 0 0 0-.469.469v1.49h6.654c.532 0 .938.406.938.938v7.117h1.49a.469.469 0 0 0 .469-.469V2.97a.469.469 0 0 0-.469-.469H9.631zM5.99 9.631V17.7c0 .532.406.938.938.938h1.49V9.631a.469.469 0 0 0-.469-.469H6.459a.469.469 0 0 0-.469.469z"/></svg>
           </a>
@@ -137,6 +152,49 @@
     <button class="feedback-btn" @click="showFeedbackModal = true">
       💬 意见反馈
     </button>
+
+    <!-- 官方微信群：注册后轻量浮层（无全屏遮罩，不挡主操作） -->
+    <div class="wx-group-soft-panel" v-if="showWxGroupSoftPanel && wxGroupGuideEnabled" role="dialog" aria-label="官方微信群引导">
+      <button type="button" class="wx-group-soft-close" @click="dismissWxGroupSoftPanel()" :aria-label="$t('close')">×</button>
+      <div class="wx-group-soft-title">{{ $t('wx_group_soft_title') }}</div>
+      <div class="wx-group-soft-desc">{{ $t('wx_group_soft_desc') }}</div>
+      <img
+        v-if="wxGroupQrDisplayUrl"
+        :src="wxGroupQrDisplayUrl"
+        :alt="$t('wx_group_qr_alt')"
+        class="wx-group-soft-qr"
+        @error="$event.target.style.display='none'"
+      />
+      <div class="wx-group-soft-fallback" v-if="!wxGroupQrDisplayUrl">{{ $t('wx_group_qr_fallback') }}</div>
+      <div class="wx-group-soft-actions">
+        <button type="button" class="btn secondary" style="font-size: 12px; padding: 6px 12px;" @click="openWxGroupModal">{{ $t('wx_group_view_large') }}</button>
+        <button type="button" class="btn" style="font-size: 12px; padding: 6px 12px;" @click="dismissWxGroupSoftPanel()">{{ $t('wx_group_later') }}</button>
+      </div>
+      <label class="wx-group-soft-dont">
+        <input type="checkbox" v-model="wxGroupDontShowAgain" @change="wxGroupDontShowAgain && dismissWxGroupSoftPanelPermanent()" />
+        <span>{{ $t('wx_group_dont_show') }}</span>
+      </label>
+    </div>
+
+    <!-- 官方微信群二维码弹窗（常驻入口 / 浮层放大） -->
+    <div class="modal-overlay" v-if="showWxGroupModal" @click.self="showWxGroupModal = false">
+      <div class="modal" style="position: relative; max-width: 400px;">
+        <button class="modal-close" @click="showWxGroupModal = false">×</button>
+        <div class="modal-title">{{ $t('wx_group_modal_title') }}</div>
+        <div class="feedback-modal-content">
+          <p style="color: var(--muted); margin-bottom: 16px;">{{ $t('wx_group_modal_desc') }}</p>
+          <img
+            v-if="wxGroupQrDisplayUrl"
+            :src="wxGroupQrDisplayUrl"
+            :alt="$t('wx_group_qr_alt')"
+            class="feedback-qr-code"
+            @error="$event.target.style.display='none'"
+          />
+          <p class="feedback-tip" v-if="!wxGroupQrDisplayUrl">{{ $t('wx_group_qr_fallback') }}</p>
+          <p class="feedback-tip">{{ $t('wx_group_modal_tip') }}</p>
+        </div>
+      </div>
+    </div>
 
     <!-- 签到成功 Toast -->
     <div class="checkin-toast" v-if="checkinToast.show" @click="checkinToast.show = false">

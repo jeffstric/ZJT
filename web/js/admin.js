@@ -725,8 +725,14 @@ const AdminApp = {
             
             // 使用手册引导弹窗
             guideModal: {
-                show: false
+                show: false,
+                showWxGroup: false
             },
+
+            // 官方微信群引导（来自 server-config）
+            wxGroupGuideEnabled: false,
+            wxGroupQrUrl: '',
+            wxGroupQrProxyPath: '/api/system/wx-group-qr',
 
             // 实现方管理
             implementations: {
@@ -902,6 +908,24 @@ const AdminApp = {
             const month = String(today.getMonth() + 1).padStart(2, '0');
             const day = String(today.getDate()).padStart(2, '0');
             return `${year}-${month}-${day}`;
+        },
+
+        /**
+         * HTTPS 页面 + HTTP 外链图 → 走后端同源代理，避免混合内容拦截
+         */
+        wxGroupQrDisplayUrl() {
+            const url = this.wxGroupQrUrl;
+            if (!url) return '';
+            if (url.startsWith('/')) return url;
+            try {
+                const isHttpsPage = window.location && window.location.protocol === 'https:';
+                if (isHttpsPage && /^http:\/\//i.test(url)) {
+                    return this.wxGroupQrProxyPath || '/api/system/wx-group-qr';
+                }
+            } catch (e) {
+                // ignore
+            }
+            return url;
         },
 
         // ===== 快速配置相关计算属性 =====
@@ -1127,6 +1151,10 @@ const AdminApp = {
                 const response = await axios.get('/api/system/server-config');
                 if (response.data.code === 0) {
                     this.appVersion = response.data.data.version || '';
+                    this.wxGroupGuideEnabled = !!response.data.data.wx_group_guide_enabled;
+                    this.wxGroupQrUrl = response.data.data.wx_group_qr_url || '';
+                    this.wxGroupQrProxyPath = response.data.data.wx_group_qr_proxy_path
+                        || '/api/system/wx-group-qr';
                 }
             } catch (error) {
                 console.error('Failed to fetch server config:', error);
@@ -3059,7 +3087,15 @@ const AdminApp = {
                     this.closeQuickConfigModal();
                     this.loadConfigs();
 
-                    // 显示使用手册引导弹窗
+                    // 显示使用手册引导弹窗；首管注册后可附带官方微信群（次要区块）
+                    const pendingWx = sessionStorage.getItem('pending_wx_group_guide');
+                    const showWxGroup = this.wxGroupGuideEnabled
+                        && !!this.wxGroupQrDisplayUrl
+                        && pendingWx === 'admin_after_config';
+                    if (pendingWx === 'admin_after_config') {
+                        sessionStorage.removeItem('pending_wx_group_guide');
+                    }
+                    this.guideModal.showWxGroup = showWxGroup;
                     this.guideModal.show = true;
                 }
             } catch (error) {
