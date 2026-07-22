@@ -90,8 +90,11 @@ def _dispatch_storyboard_first_frame_grid_split(
         # 漂移为新 ai_tool_id，导致找不到预建 step 而 fallback 新建，原 step 沦为僵尸。
         step = PipelineStepModel.get_pending_grid_split_step_by_grid_task(int(task.id))
         if step:
-            # 校准预建 step 的 params（补充/更新重试后的宫格图数据），确保 driver 用到最新值。
-            PipelineStepModel.update_params(step.id, full_params)
+            # 校准预建 step：原子更新 params（重试后最新宫格图数据）+ ai_tool_id（校正漂移，
+            # 使 dispatch_step 加载到 result_url 指向最新宫格图的 ai_tool）。随后必须重新读取
+            # step 对象，否则内存里的 params/ai_tool_id 仍是旧值，driver 会拆到旧宫格图。
+            PipelineStepModel.update_params(step.id, full_params, ai_tool_id=ai_tool_id)
+            step = PipelineStepModel.get_by_id(step.id)
         else:
             step_id = PipelineStepModel.create(
                 ai_tool_id=ai_tool_id,
