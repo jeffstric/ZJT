@@ -692,6 +692,13 @@ class StoryboardExportConstants:
     DEFAULT_FALLBACK_SPAN_SECONDS = 2.0
     DEFAULT_VIDEO_WIDTH = 1080
     DEFAULT_VIDEO_HEIGHT = 1920
+    # 导出音频统一规格：所有 segment 强制对齐到该参数，避免 concat 拼接时各分镜
+    # 采样率/声道/编码不一致导致"滋滋"噪音。TTS 输出采样率由远程服务决定（通常
+    # 24000Hz/mono），音画同出视频原音轨可能为 48000Hz/任意声道，故必须在混流与
+    # 整片合成时统一。详见 services/storyboard_export_service.py。
+    EXPORT_AUDIO_SAMPLE_RATE = 44100          # Hz
+    EXPORT_AUDIO_CHANNELS = 2                 # stereo
+    EXPORT_AUDIO_BITRATE = "192k"             # aac 比特率
     # 分镜「声音同出」开关（storyboard_scene.audio_embedded）：
     # =1 时该镜选中视频已内嵌对话声音（如数字人 LTX2.3 产物），
     # 导出完整视频保留视频原音轨、跳过 TTS 混音。digital_human 默认 1。

@@ -57,6 +57,33 @@
 - 素材包导出（方式1）不受影响：素材包本就是视频与配音 wav 分开打包。
 - 前端：左栏「对话」页签提供「音频来源：对话配音（TTS）/视频原声」互斥选择，切换后即时持久化（`PUT /scene/{id}` 仅传 `audio_embedded`）。时间轴连续预览遵循同一规则。
 
+### 音频统一规格（防"滋滋"噪音）
+
+**背景**：当一个故事板里**既有音画同出分镜（`audio_embedded=1`，视频原音轨，可能 48000Hz/任意声道）又有普通 TTS 分镜（`audio_embedded=0`，TTS 输出通常 24000Hz/mono）**时，各分镜 segment 的音频参数不一致；而整片合成（`build_merged_video`）用 concat demuxer + `-c copy` 拼接，concat demuxer 对参数极度敏感，会用第一个流的参数去解读后续所有流的数据 → 采样率/声道/编码错位 → 播放出现"滋滋"噪音/变速。
+
+**根因链路**：
+1. `_mux_segment` 的三分支参数各异：TTS 混音 `aac 192k` 未指定 `-ar`；音画同出 `-c:a copy` 完全保留视频原始参数；无音轨补静音 `aac 128k / 44100`。
+2. `_ensure_wav` 对 `.wav` 直接 `shutil.copy2` 短路，TTS 的 wav 采样率不被标准化。
+3. TTS 端（`utils/index_tts_util.py`）请求体不传 `sample_rate`，输出采样率由远程服务决定，不可信。
+4. 整片 concat 用 `-c copy`，不重编码，参数冲突被直接放大。
+
+**方案**：在导出流水线内部统一对齐，而非依赖 TTS 端（TTS 远程服务是否支持采样率参数未知，且不可靠）。
+
+- 统一规格常量：`config/constant.py::StoryboardExportConstants`
+  - `EXPORT_AUDIO_SAMPLE_RATE = 44100`
+  - `EXPORT_AUDIO_CHANNELS = 2`（stereo）
+  - `EXPORT_AUDIO_BITRATE = "192k"`（aac）
+- 全链路强制对齐（`services/storyboard_export_service.py`）：
+  - `_ensure_wav`：取消 `.wav` copy 短路，统一重采样到规格。
+  - `_build_scene_audio`（concat / atrim+apad）：采样率/声道用常量。
+  - `_build_scene_visual`（keep_audio 分支）：显式 `-ar` / `-ac`，让视频原音轨也统一。
+  - `_mux_segment`（三分支）：采样率/声道/比特率全部统一；音画同出分支从 `-c:a copy` 改为 `-c:a aac` 重编码。
+  - 整片 concat：从 `-c copy` 改为 `-c:v copy -c:a aac`（视频仍 copy 保画质，音频强制重编码兜底）。
+- 诊断日志：`_probe_audio_params` 探测每个 segment 的 `(sample_rate, channels)` 并打 info 日志，后续再出问题可立即定位是哪个 segment 参数异常。
+- 不改动 TTS 端（`utils/index_tts_util.py`）和数字人 `_merge_audio_files`（`storyboard_digital_human_service.py`，其产物不直接进入导出 concat）。
+
+> 注：音画同出分镜的音轨从 copy 改为重编码会引入一次 aac 代际损失，但 192k 听感无差别，换取参数一致性是值得的。
+
 ### 字幕硬烧（整片）
 
 - 模块：`services/storyboard_subtitle.py`（独立于导出编排）
