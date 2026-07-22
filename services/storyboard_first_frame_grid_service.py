@@ -25,6 +25,7 @@ from services.storyboard_reference_prompt_service import (
     select_reference_variant_for_asset,
 )
 from services.storyboard_quality_sequence import (
+    get_storyboard_quality_prompt_policy,
     get_storyboard_quality_sequence_strategy,
 )
 from services.storyboard_spatial import build_spatial_prompt_context
@@ -453,6 +454,8 @@ class StoryboardFirstFrameGridService:
             self._build_cell_prompt(scene, per_scene_indices.get(int(scene["id"]), []), manifest)
             for scene in real_scenes
         ]
+        prompt_policy = get_storyboard_quality_prompt_policy()
+        prompts = prompt_policy.before_rewrite(prompts, storyboard)
         prompts = self._refine_prompts_with_llm(
             storyboard=storyboard,
             scenes=real_scenes,
@@ -461,7 +464,9 @@ class StoryboardFirstFrameGridService:
             per_scene_indices=per_scene_indices,
             auth_token=str(job.get("auth_token") or ""),
             previous_grid_prompt_context=(previous_reference or {}).get("grid_prompt_group_context"),
+            rewriter_instruction=prompt_policy.rewriter_instruction(),
         )
+        prompts = prompt_policy.after_rewrite(prompts, storyboard)
         group_key = self._grid_group_key(scenes_by_id[int(chunk[0]["scene_id"])], chunk[0])
         prompt_group_context = self._build_prompt_group_context(
             result_grid_task_id=None,
@@ -932,6 +937,7 @@ class StoryboardFirstFrameGridService:
         per_scene_indices: Dict[int, List[int]],
         auth_token: str,
         previous_grid_prompt_context: Optional[Dict[str, Any]] = None,
+        rewriter_instruction: str = "",
     ) -> List[str]:
         if not self._enable_llm_refine:
             return prompts
@@ -945,6 +951,7 @@ class StoryboardFirstFrameGridService:
                 per_scene_indices,
                 auth_token,
                 previous_grid_prompt_context,
+                rewriter_instruction,
             )
             return future.result(timeout=StoryboardTimeouts.FIRST_FRAME_GRID_LLM_PROMPT_TIMEOUT_SECONDS)
         except TimeoutError:
@@ -963,6 +970,7 @@ class StoryboardFirstFrameGridService:
         per_scene_indices: Dict[int, List[int]],
         auth_token: str,
         previous_grid_prompt_context: Optional[Dict[str, Any]] = None,
+        rewriter_instruction: str = "",
     ) -> List[str]:
         from llm.llm_client_factory import get_llm_client
 
@@ -993,6 +1001,7 @@ class StoryboardFirstFrameGridService:
             "slot_integrity_rule: preserve every physical seat/slot from spatial_layout exactly. Do not change front passenger/side-by-side/front-row seats into rear seats. Rear-seat wording is allowed only if spatial_layout already says rear seat or changed_positions declares a real seat move."
             "camera_anchor_integrity_rule: preserve camera_anchor camera_position, shooting_direction, and screen_composition; do not invent a different viewpoint while refining prompt_text."
             "previous_grid_prompt_context 仅作前一幕风格、环境、角色状态参考；当前 spatial_layout 始终优先，不要照抄上一幕 prompt。"
+            + str(rewriter_instruction or "")
         )
         user_payload = {
             "reference_manifest": list(manifest),

@@ -10,7 +10,13 @@ from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGri
 def test_process_job_submits_ready_scenes_as_first_frame_grid(monkeypatch):
     from services import storyboard_first_frame_grid_service as grid_service_module
 
-    storyboard = SimpleNamespace(id=22, world_id=99, workflow_ratio="9:16")
+    storyboard = SimpleNamespace(
+        id=22,
+        world_id=99,
+        workflow_ratio="9:16",
+        style="电影写实",
+        composition_preference="三分法构图",
+    )
     scenes = [
         {
             "id": 101,
@@ -185,6 +191,9 @@ def test_process_job_submits_ready_scenes_as_first_frame_grid(monkeypatch):
     assert submission["aspect_ratio"] == "9:16"
     assert submission["item_names"] == ["分镜1", "分镜2", "placeholder", "placeholder"]
     assert submission["target_entity_ids"] == [101, 102, None, None]
+    assert submission["prompts"][0].endswith(
+        "图片风格：电影写实\n构图倾向：三分法构图"
+    )
     assert "驾驶室左侧" in submission["prompts"][0]
     assert updates[1]["status"] == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
     assert updates[1]["project_ids"] == ["pid-grid"]
@@ -1229,6 +1238,7 @@ def test_llm_refiner_receives_hidden_continuity_but_returns_clean_prompt(monkeyp
         manifest=[{"index": 1, "role_description": "角色：奶昔"}, {"index": 2, "role_description": "角色：奶酪"}],
         per_scene_indices={102: [1]},
         auth_token="token",
+        rewriter_instruction="ENTERPRISE_VISUAL_CONSTRAINT;",
     )
 
     assert "近景，聚焦驾驶座上的奶昔_Milkshake" in result[0]
@@ -1244,6 +1254,7 @@ def test_llm_refiner_receives_hidden_continuity_but_returns_clean_prompt(monkeyp
     system_prompt = calls[0]["messages"][0]["content"]
     assert "slot_integrity_rule" in system_prompt
     assert "camera_anchor_integrity_rule" in system_prompt
+    assert "ENTERPRISE_VISUAL_CONSTRAINT;" in system_prompt
 
 
 def test_clean_cell_prompt_excludes_offscreen_character_and_reference_index():

@@ -33,6 +33,7 @@ from model.world import WorldModel
 from model.grid_image_tasks import GridImageTasksModel, GridImageTaskStatus
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
+    append_storyboard_visual_suffix,
     build_storyboard_reference_items,
     reference_urls,
 )
@@ -676,6 +677,11 @@ class StoryboardAgentCliService:
             mode = "image_edit" if reference_urls else "text_to_image"
 
         if mode == "text_to_image":
+            prompt_text = append_storyboard_visual_suffix(
+                prompt_text,
+                style=storyboard.get("style"),
+                composition_preference=storyboard.get("composition_preference"),
+            )
             result = self.submitter.text_to_image(
                 user_id=str(user_id),
                 world_id=world_id,
@@ -690,6 +696,11 @@ class StoryboardAgentCliService:
             prompt_text = self._append_reference_prompt_suffix(
                 prompt_text,
                 self._with_source_image_legend(reference_items, context, source_image),
+            )
+            prompt_text = append_storyboard_visual_suffix(
+                prompt_text,
+                style=storyboard.get("style"),
+                composition_preference=storyboard.get("composition_preference"),
             )
             result = self.submitter.image_edit(
                 user_id=str(user_id),
@@ -3361,8 +3372,6 @@ class StoryboardAgentCliService:
         # 也与「角色外貌交给角色库/参考图」的解析规则保持一致。
         del characters, location, props  # 保留签名以兼容调用方，仅不再用于拼接
         parts = [
-            _get_field(storyboard, "style"),
-            _get_field(storyboard, "composition_preference"),
             prompt_json.get("scene_desc"),
             prompt_json.get("perspective"),
             prompt_json.get("lighting"),
@@ -3370,7 +3379,12 @@ class StoryboardAgentCliService:
         title = _get_field(scene, "title")
         if title:
             parts.insert(0, title)
-        return "\n".join(str(part).strip() for part in parts if str(part or "").strip())
+        prompt_text = "\n".join(str(part).strip() for part in parts if str(part or "").strip())
+        return append_storyboard_visual_suffix(
+            prompt_text,
+            style=_get_field(storyboard, "style"),
+            composition_preference=_get_field(storyboard, "composition_preference"),
+        )
 
     def _collect_reference_images(
         self,

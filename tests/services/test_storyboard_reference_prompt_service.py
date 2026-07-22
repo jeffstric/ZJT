@@ -1,8 +1,27 @@
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
+    append_storyboard_visual_suffix,
     build_reference_legend,
     build_storyboard_reference_items,
 )
+
+
+def test_visual_suffix_is_appended_at_tail_without_duplication():
+    prompt = append_storyboard_visual_suffix(
+        "镜头内容\n图片风格：电影写实\n参考图说明：图1是场景。",
+        style="电影写实",
+        composition_preference="三分法构图",
+    )
+
+    assert prompt.endswith("图片风格：电影写实\n构图倾向：三分法构图")
+    assert prompt.count("图片风格：电影写实") == 1
+
+    repeated = append_storyboard_visual_suffix(
+        prompt,
+        style="电影写实",
+        composition_preference="三分法构图",
+    )
+    assert repeated == prompt
 
 
 def test_reference_items_only_use_prompt_mentions_not_character_desc():

@@ -649,6 +649,9 @@ def test_generate_image_auto_uses_scene_references_for_image_edit(patched_storyb
     method, kwargs = patched_storyboard_cli.submitter.calls[0]
     assert result["project_ids"] == [702]
     assert method == "image_edit"
+    assert kwargs["prompt"].endswith(
+        "图片风格：cinematic noir\n构图倾向：rule of thirds"
+    )
     assert "https://cdn.test/umbrella.png" in kwargs["image_url"]
     assert "https://cdn.test/alley.png" in kwargs["image_url"]
     assert "https://cdn.test/first.png" not in kwargs["image_url"]

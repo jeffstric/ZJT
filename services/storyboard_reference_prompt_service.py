@@ -361,5 +361,37 @@ def append_reference_legend(prompt: str, items: List[Dict[str, str]], start_inde
     return f"{prompt.rstrip()}\n\n{legend}"
 
 
+def append_storyboard_visual_suffix(
+    prompt: str,
+    *,
+    style: Any = "",
+    composition_preference: Any = "",
+) -> str:
+    """Append authoritative storyboard visual settings to the prompt tail.
+
+    Existing identical suffix lines are moved to the tail instead of duplicated.
+    This keeps the helper safe to call both before and after optional LLM rewriting.
+    """
+    suffix_lines = []
+    style_text = _clean_name(style)
+    composition_text = _clean_name(composition_preference)
+    if style_text:
+        suffix_lines.append(f"图片风格：{style_text}")
+    if composition_text:
+        suffix_lines.append(f"构图倾向：{composition_text}")
+    if not suffix_lines:
+        return str(prompt or "").rstrip()
+
+    suffix_set = set(suffix_lines)
+    body_lines = [
+        line
+        for line in str(prompt or "").rstrip().splitlines()
+        if line.strip() not in suffix_set
+    ]
+    body = "\n".join(body_lines).rstrip()
+    suffix = "\n".join(suffix_lines)
+    return f"{body}\n\n{suffix}" if body else suffix
+
+
 def reference_urls(items: List[Dict[str, str]]) -> List[str]:
     return [item["url"] for item in items if item.get("url")]
