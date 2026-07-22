@@ -70,6 +70,76 @@ def test_digital_human_scene_only_exposes_digital_human_video_tool():
     assert "get_user_computing_power" in allowed
 
 
+def test_storyboard_video_tool_uses_task_scoped_ratio_for_text_and_image_video(monkeypatch):
+    module = _load_video_tool_module()
+    assert module is not None
+
+    from script_writer_core import mcp_tool
+
+    monkeypatch.setattr(
+        mcp_tool,
+        "_get_video_preferences_func",
+        lambda user_id, world_id: {"ratio": "16:9", "duration": 10},
+    )
+    delegated_calls = []
+
+    class FakeDelegate:
+        def get_tool_definitions(self, allowed_tools):
+            return []
+
+        def execute_tool(self, tool_name, tool_args, user_id, world_id, auth_token, **kwargs):
+            delegated_calls.append({
+                "tool_name": tool_name,
+                "tool_args": dict(tool_args),
+                "preferences": mcp_tool._get_video_preferences(user_id, world_id),
+            })
+            return {"success": True}
+
+    scoped_preferences = {
+        "ratio": "9:16",
+        "duration": 5,
+        "resolution": "720P",
+        "image_mode": "first_last_frame",
+    }
+    executor = module.StoryboardAgentVideoToolExecutor(
+        FakeDelegate(),
+        scene_id=26,
+        video_preferences=scoped_preferences,
+    )
+
+    executor.execute_tool(
+        "generate_text_to_video",
+        {"prompt": "camera moves", "ratio": "16:9", "duration_seconds": 10},
+        user_id="7",
+        world_id="9",
+        auth_token="token",
+    )
+    executor.execute_tool(
+        "image_to_video",
+        {
+            "prompt": "camera moves",
+            "image_urls": "https://cdn.example.test/frame.png",
+            "ratio": "16:9",
+            "duration_seconds": 10,
+            "image_mode": "multi_reference",
+        },
+        user_id="7",
+        world_id="9",
+        auth_token="token",
+    )
+
+    assert [call["tool_name"] for call in delegated_calls] == [
+        "generate_text_to_video",
+        "image_to_video",
+    ]
+    for call in delegated_calls:
+        assert call["tool_args"]["ratio"] == "9:16"
+        assert call["tool_args"]["duration_seconds"] == 5
+        assert call["preferences"] == scoped_preferences
+    assert delegated_calls[1]["tool_args"]["image_mode"] == "first_last_frame"
+    assert mcp_tool._get_video_preferences("7", "9") == {"ratio": "16:9", "duration": 10}
+
+
 def test_scene_scoped_digital_human_tool_submits_and_marks_asset_as_already_bound(monkeypatch):
     module = _load_video_tool_module()
     assert module is not None

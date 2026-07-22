@@ -118,9 +118,9 @@ Quality grid details:
 
 - 企业版效果模式由 `enterprise.services.storyboard_quality_sequence` 决定幕级推进顺序。每个调度周期只允许最早未完成的一幕进入宫格生成；同一幕超过一个宫格时，也必须等待当前宫格完成并回写分镜首帧后才会提交下一宫格。
 - 下一幕只能引用前一幕最后一个分镜的已拆分首帧，不能引用完整宫格图，也不能在参考图缺失时降级无参考生成。前一幕失败会将所有后续未开始幕标记为 `previous_group_failed`；前一幕已经结束但首帧长期未回写时，下一幕以 `previous_group_reference_timeout` 失败。
-- 拆分发布阶段会调用企业版策略预提交第一层可生成的子场景九宫格，但不会因为父场景缺图而阻止分镜数据发布。
+- 拆分发布阶段会调用企业版策略预提交场景参考图：新建且缺图的顶层场景先按最多 4 个一批提交 2x2 t2i 宫格；父图就绪后，再为其子场景提交 3x3 i2i 宫格。两条路径都携带 `location.id`，切图结果按数据库 ID 回写。场景图生成不会阻止分镜数据发布。
 - `quality + first_frame` 在创建 `storyboard_image_batch_job` 前执行全批场景参考图预检。宫格运行中返回 HTTP 202 `waiting_location_references`，不创建 job/item，前端按 `retry_after_ms` 补偿轮询；顶层父场景缺图返回 HTTP 409 `quality_parent_reference_missing`，展示 `blockers` 和受影响分镜，同样不创建 batch。
-- 每次 202 复检都会从数据库恢复状态：父层参考图回写后提交下一层子场景宫格，直到所有目标分镜场景就绪才在全局创建锁内复检并创建首帧 batch。宫格失败返回 409 `location_reference_generation_failed`，禁止自动无限重提，也不回退到普通 t2i。
+- 每次 202 复检都会从数据库恢复状态：顶层 t2i 参考图回写后提交下一层子场景 i2i 宫格，直到所有目标分镜场景就绪才在全局创建锁内复检并创建首帧 batch。宫格失败返回 409 `location_reference_generation_failed`，禁止自动无限重提，也不回退到普通分镜 t2i。
 - `active_batch_exists` 仍按原语义恢复已有批次；202/409 的场景预检响应不是批次状态，前端不得传给 `applyImageBatchStatus()`。
 - **缺场景参考图的超时降级（balanced/speed 模式）**：`generate_image` 在 `_check_location_grid_readiness` 发现 scene 引用的 location 缺 `reference_image` 且有运行中九宫格任务时抛 `WAITING_GRID`。quality 模式严格失败（见上文）；**balanced/speed 模式保持 PENDING 等待，但累加 `extra_json.location_grid_wait_count`，超过 `BALANCED_LOCATION_REFERENCE_WAIT_MAX_TICKS`（默认 30，与 quality 对齐）后放弃等待，降级走 `text_to_image` 文生图**（`generate_image(mode="text_to_image", force_bypass=True)`），保证九宫格卡死时分镜仍能生成。降级后 `extra_json.degraded_from_location_reference=True` 供诊断，诊断日志 tag `[batch-loc] degraded to t2i after N ticks`。这是 balanced/speed 与 quality 的关键差异：前者宁可降级也不卡住，后者宁可失败也不降级。
 - 1-4 ready scenes use a 2x2 grid; 5-9 use a 3x3 grid; a single ready scene still uses 2x2 with placeholders to keep the quality-mode grid path uniform.

@@ -543,9 +543,13 @@ export function setAssets({ characters = [], locations = [], props = [] }) {
 }
 
 // 跨故事板 task_id 记忆兜底：读取 localStorage 中上一次的选择，校验仍存在于当前可用模型列表后才采用；
-// 否则回退到列表第一个（列表已由后端按 sort_order 排序），并把回退值同步写回 localStorage 以固化默认。
-function pickRememberedTaskId(models, storageKey) {
-    const fallback = models[0].task_id;
+// 否则优先采用指定模型，再回退到列表第一个，并把回退值同步写回 localStorage 以固化默认。
+function pickRememberedTaskId(models, storageKey, preferredModelKey = null) {
+    const preferredModel = preferredModelKey
+        ? models.find(m => m.short_key === preferredModelKey)
+            || models.find(m => m.key === preferredModelKey)
+        : null;
+    const fallback = preferredModel?.task_id ?? models[0].task_id;
     let remembered = null;
     try {
         remembered = localStorage.getItem(storageKey);
@@ -589,9 +593,13 @@ export function setModels({
     }
 
     // 默认选中逻辑（仅在首次且提供了对应列表时设置）
-    // 优先级：config_json（已在 restoreUiConfig 恢复）> localStorage 跨故事板兜底 > 列表第一个（后端 sort_order）
+    // 优先级：config_json（已在 restoreUiConfig 恢复）> localStorage 跨故事板兜底 > 指定默认模型 > 列表第一个
     if (state.selectedImageTaskId == null && image_models && image_models.length) {
-        state.selectedImageTaskId = pickRememberedTaskId(image_models, 'storyboard_lastSelectedImageTaskId');
+        state.selectedImageTaskId = pickRememberedTaskId(
+            image_models,
+            'storyboard_lastSelectedImageTaskId',
+            'gpt-image-2',
+        );
     }
     if (state.selectedVideoTaskId == null && video_models && video_models.length) {
         state.selectedVideoTaskId = pickRememberedTaskId(video_models, 'storyboard_lastSelectedVideoTaskId');

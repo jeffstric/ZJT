@@ -10,6 +10,7 @@ from config.unified_config import SceneVideoType
 
 
 DIGITAL_HUMAN_TOOL_NAME = "generate_digital_human"
+STANDARD_VIDEO_TOOL_NAMES = frozenset({"generate_text_to_video", "image_to_video"})
 _DIGITAL_HUMAN_SUPPORT_TOOLS = ("get_user_computing_power", "ask_user")
 
 _DIGITAL_HUMAN_TOOL_DEFINITION = {
@@ -77,11 +78,12 @@ def resolve_storyboard_agent_allowed_tools(
 
 
 class StoryboardAgentVideoToolExecutor:
-    """Intercept digital-human submission while delegating every other tool."""
+    """Inject scene-scoped video settings and route digital-human submission."""
 
-    def __init__(self, delegate, *, scene_id: int):
+    def __init__(self, delegate, *, scene_id: int, video_preferences=None):
         self._delegate = delegate
         self._scene_id = int(scene_id)
+        self._video_preferences = dict(video_preferences or {})
         self._already_bound_project_ids = set()
 
     def get_tool_definitions(self, allowed_tools: List[str]) -> List[Dict[str, Any]]:
@@ -102,6 +104,30 @@ class StoryboardAgentVideoToolExecutor:
         model: str = None,
         vendor_id: int = None,
     ) -> Dict[str, Any]:
+        if tool_name in STANDARD_VIDEO_TOOL_NAMES:
+            from script_writer_core.mcp_tool import scoped_video_preferences
+
+            args = dict(tool_args or {})
+            preferences = self._video_preferences
+            if preferences.get("ratio"):
+                args["ratio"] = preferences["ratio"]
+            if preferences.get("duration") is not None:
+                args["duration_seconds"] = int(preferences["duration"])
+            if tool_name == "image_to_video" and preferences.get("image_mode"):
+                args["image_mode"] = preferences["image_mode"]
+
+            with scoped_video_preferences(preferences):
+                return self._delegate.execute_tool(
+                    tool_name,
+                    args,
+                    user_id,
+                    world_id,
+                    auth_token,
+                    language=language,
+                    model=model,
+                    vendor_id=vendor_id,
+                )
+
         if tool_name != DIGITAL_HUMAN_TOOL_NAME:
             return self._delegate.execute_tool(
                 tool_name,

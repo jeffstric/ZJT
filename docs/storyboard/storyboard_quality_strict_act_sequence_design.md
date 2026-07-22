@@ -181,7 +181,7 @@ storyboard_scene.selected_first_frame_id
 1. 查询是否存在 `item_type=5` 且状态为 queued/processing 的场景宫格任务。
 2. 如果存在，当前幕严格等待。
 3. 如果不存在，调用 `StoryboardLocationBootstrapService.submit_subscene_grids()` 提交场景宫格。
-4. 如果是新建顶层场景且无法通过子场景宫格生成，需要走明确的顶层场景参考图生成入口。
+4. 新建顶层场景走 2x2 文生图宫格；有父级的子场景在父图就绪后走 3x3 图生图宫格。两者均按 `location.id` 回写参考图。
 5. 场景生成失败时停止当前批次，不允许设置 `degraded_location_grid_reference=true`。
 
 `submit_subscene_grids()` 的调用应接入发布或首帧批次启动阶段，不能只执行 `bootstrap()` 创建数据库行。

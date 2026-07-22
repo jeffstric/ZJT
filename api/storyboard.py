@@ -210,6 +210,44 @@ def normalize_storyboard_workflow_ratio(value: Any) -> Optional[str]:
     return ratio
 
 
+async def _build_storyboard_agent_video_preferences(
+    *,
+    user_id: int,
+    world_id: int,
+    storyboard,
+    image_mode: str,
+    duration_seconds: int,
+    video_resolution: Optional[str],
+) -> Dict[str, Any]:
+    """Build an immutable task snapshot without mutating shared user preferences."""
+    ratio = (
+        normalize_storyboard_workflow_ratio(getattr(storyboard, 'workflow_ratio', None))
+        or DEFAULT_STORYBOARD_WORKFLOW_RATIO
+    )
+    user_key = str(user_id)
+    world_key = str(world_id)
+
+    def _load() -> Dict[str, Any]:
+        from api.script_writer import get_video_preferences
+
+        return dict(get_video_preferences(user_key, world_key) or {})
+
+    try:
+        preferences = await asyncio.to_thread(_load)
+    except Exception as e:
+        logger.warning(f"Failed to load existing video preferences for storyboard agent: {e}")
+        preferences = {}
+
+    preferences.update({
+        'ratio': ratio,
+        'image_mode': image_mode,
+        'duration': int(duration_seconds),
+    })
+    if video_resolution:
+        preferences['resolution'] = str(video_resolution)
+    return preferences
+
+
 def resolve_storyboard_create_ratio(user_id: int, world_id: int, data: dict) -> str:
     """
     新建故事板时解析 workflow_ratio：
@@ -1371,12 +1409,14 @@ class StoryboardImageAgentRunner:
         conversation_history: Optional[List[Dict[str, Any]]] = None,
         generation_target: str = "image",
         video_type: str = SceneVideoType.VIDEO,
+        video_preferences: Optional[Dict[str, Any]] = None,
     ):
         self.scene_id = scene_id
         self.scene_context = scene_context
         self.conversation_history = conversation_history or []
         self.generation_target = generation_target if generation_target == "video" else "image"
         self.video_type = str(video_type or SceneVideoType.VIDEO)
+        self.video_preferences = dict(video_preferences or {})
 
     @staticmethod
     def _resolve_storyboard_agent_model(default_model: str, model_id: Optional[int]) -> str:
@@ -1414,10 +1454,11 @@ class StoryboardImageAgentRunner:
             video_type=self.video_type,
         )
         agent_tool_executor = tool_executor
-        if self.generation_target == "video" and self.video_type == SceneVideoType.DIGITAL_HUMAN:
+        if self.generation_target == "video":
             agent_tool_executor = StoryboardAgentVideoToolExecutor(
                 tool_executor,
                 scene_id=self.scene_id,
+                video_preferences=self.video_preferences,
             )
         model = self._resolve_storyboard_agent_model(
             config.get("model") or "gemini/gemini-3-flash-preview",
@@ -3063,6 +3104,7 @@ async def scene_ai_chat(
     video_duration_seconds = None
     video_resolution = None
     clip_to_audio_duration = None
+    video_preferences = None
     if generation_target == 'video':
         # 视频：image_to_video 只使用前端槽位有序图；角色/场景参考仅作文案说明
         video_input_urls = ordered_slot_urls
@@ -3128,6 +3170,18 @@ async def scene_ai_chat(
             )
         except Exception as e:
             logger.warning(f"Failed to persist scene video_config_json for scene {scene_id}: {e}")
+
+        # 生成参数按任务快照传给工具执行器，不写 user_id + world_id 共享偏好，
+        # 避免同一世界并发 Agent 互相覆盖比例或污染后续非故事板视频任务。
+        if str(scene.video_type or '') != SceneVideoType.DIGITAL_HUMAN:
+            video_preferences = await _build_storyboard_agent_video_preferences(
+                user_id=user_id,
+                world_id=sb.world_id if sb else scene.storyboard_id,
+                storyboard=sb,
+                image_mode=image_mode,
+                duration_seconds=video_duration_seconds,
+                video_resolution=video_resolution,
+            )
     else:
         # 图片：资产参考之后依次追加当前首帧、前后首帧和用户补充图，并保持 URL/说明严格对齐。
         reference_images_for_msg, reference_image_items_for_msg = (
@@ -3203,6 +3257,7 @@ async def scene_ai_chat(
         conversation_history=conversation_history,
         generation_target=generation_target,
         video_type=scene.video_type,
+        video_preferences=video_preferences,
     )
     task_manager.start_task(task, runner, {
         'user_id': str(user_id),

@@ -322,6 +322,181 @@ class TestBootstrap:
 class TestSubsceneGridFixes:
     """验证 P1-P4 修复：target_entity_ids 真正写入 DB 并贯穿到回写。"""
 
+    def test_submit_subscene_grids_generates_root_locations_with_2x2_t2i(self, monkeypatch):
+        """缺图顶层场景应补齐 2x2 宫格并走无参考图的场景文生图入口。"""
+        svc = StoryboardLocationBootstrapService()
+        parsed = {
+            "locations": [{
+                "id": "root_1",
+                "name": "现代卧室",
+                "location_db_id": 501,
+                "parent_id": None,
+                "description": "雨夜里的现代卧室",
+                "atmosphere": "冷蓝色",
+            }],
+        }
+        bootstrap = {"id_map": {"root_1": 501}, "warnings": []}
+        monkeypatch.setattr(svc, "_subscene_has_reference_image", lambda *_: False)
+        monkeypatch.setattr(svc, "_subscene_has_running_grid", lambda *_: False)
+        generate_root = MagicMock(return_value={"success": True, "project_ids": ["pid-root"]})
+        generate_subscene = MagicMock()
+        monkeypatch.setattr(
+            "script_writer_core.mcp_tool.generate_4grid_location_images",
+            generate_root,
+        )
+        monkeypatch.setattr(
+            "script_writer_core.mcp_tool.generate_9grid_location_images",
+            generate_subscene,
+        )
+
+        result = svc.submit_subscene_grids(
+            parsed,
+            bootstrap,
+            world_id=1,
+            user_id=2,
+            auth_token="token",
+        )
+
+        assert generate_root.call_args.kwargs["location_names"] == [
+            "现代卧室",
+            "placeholder",
+            "placeholder",
+            "placeholder",
+        ]
+        prompts = generate_root.call_args.kwargs["prompts"]
+        assert len(prompts) == 4
+        assert "雨夜里的现代卧室" in prompts[0]
+        assert "冷蓝色" in prompts[0]
+        assert generate_root.call_args.kwargs["user_id"] == "2"
+        assert generate_root.call_args.kwargs["world_id"] == "1"
+        assert generate_root.call_args.kwargs["target_entity_ids"] == [501, None, None, None]
+        generate_subscene.assert_not_called()
+        assert result["submitted_root_batches"] == 1
+        assert result["submitted_root_location_count"] == 1
+
+    def test_submit_subscene_grids_splits_five_root_locations_into_two_batches(self, monkeypatch):
+        """5 个缺图顶层场景应按 4+1 拆成两个 2x2 文生图批次。"""
+        svc = StoryboardLocationBootstrapService()
+        parsed = {
+            "locations": [
+                {"id": f"root_{index}", "name": f"顶层{index}", "location_db_id": 500 + index}
+                for index in range(1, 6)
+            ],
+        }
+        bootstrap = {
+            "id_map": {f"root_{index}": 500 + index for index in range(1, 6)},
+            "warnings": [],
+        }
+        monkeypatch.setattr(svc, "_subscene_has_reference_image", lambda *_: False)
+        monkeypatch.setattr(svc, "_subscene_has_running_grid", lambda *_: False)
+        generate_root = MagicMock(return_value={"success": True, "project_ids": ["pid"]})
+        monkeypatch.setattr(
+            "script_writer_core.mcp_tool.generate_4grid_location_images",
+            generate_root,
+        )
+        monkeypatch.setattr(
+            "script_writer_core.mcp_tool.generate_9grid_location_images",
+            MagicMock(),
+        )
+
+        result = svc.submit_subscene_grids(parsed, bootstrap, 1, 2, "token")
+
+        assert generate_root.call_count == 2
+        assert generate_root.call_args_list[0].kwargs["location_names"] == [
+            "顶层1", "顶层2", "顶层3", "顶层4",
+        ]
+        assert generate_root.call_args_list[1].kwargs["location_names"] == [
+            "顶层5", "placeholder", "placeholder", "placeholder",
+        ]
+        assert result["submitted_root_batches"] == 2
+        assert result["submitted_root_location_count"] == 5
+
+    def test_submit_subscene_grids_skips_root_locations_with_image_or_running_grid(self, monkeypatch):
+        """顶层场景已有图或已有运行中宫格任务时不得重复提交。"""
+        svc = StoryboardLocationBootstrapService()
+        parsed = {
+            "locations": [
+                {"id": "root_image", "name": "已有图", "location_db_id": 601},
+                {"id": "root_running", "name": "生成中", "location_db_id": 602},
+                {"id": "root_missing", "name": "待生成", "location_db_id": 603},
+            ],
+        }
+        bootstrap = {
+            "id_map": {"root_image": 601, "root_running": 602, "root_missing": 603},
+            "warnings": [],
+        }
+        monkeypatch.setattr(
+            svc,
+            "_subscene_has_reference_image",
+            lambda db_id, _loc: db_id == 601,
+        )
+        monkeypatch.setattr(svc, "_subscene_has_running_grid", lambda db_id: db_id == 602)
+        generate_root = MagicMock(return_value={"success": True, "project_ids": ["pid"]})
+        monkeypatch.setattr(
+            "script_writer_core.mcp_tool.generate_4grid_location_images",
+            generate_root,
+        )
+        monkeypatch.setattr(
+            "script_writer_core.mcp_tool.generate_9grid_location_images",
+            MagicMock(),
+        )
+
+        result = svc.submit_subscene_grids(parsed, bootstrap, 1, 2, "token")
+
+        assert generate_root.call_args.kwargs["location_names"] == [
+            "待生成", "placeholder", "placeholder", "placeholder",
+        ]
+        assert result["submitted_root_location_count"] == 1
+
+    def test_submit_subscene_grids_handles_root_and_subscene_paths_together(self, monkeypatch):
+        """顶层场景走 2x2 t2i 时，子场景仍应走父图 3x3 i2i。"""
+        svc = StoryboardLocationBootstrapService()
+        parsed = {
+            "locations": [
+                {"id": "new_root", "name": "新顶层", "location_db_id": 701},
+                {
+                    "id": "parent",
+                    "name": "已有父场景",
+                    "location_db_id": 702,
+                    "reference_image": "http://h/parent.png",
+                },
+                {
+                    "id": "child",
+                    "name": "新子场景",
+                    "parent_id": "parent",
+                    "location_db_id": 703,
+                },
+            ],
+        }
+        bootstrap = {
+            "id_map": {"new_root": 701, "parent": 702, "child": 703},
+            "warnings": [],
+        }
+        monkeypatch.setattr(
+            svc,
+            "_subscene_has_reference_image",
+            lambda db_id, _loc: db_id == 702,
+        )
+        monkeypatch.setattr(svc, "_subscene_has_running_grid", lambda *_: False)
+        generate_root = MagicMock(return_value={"success": True, "project_ids": ["root-pid"]})
+        generate_subscene = MagicMock(return_value={"success": True, "project_ids": ["child-pid"]})
+        monkeypatch.setattr(
+            "script_writer_core.mcp_tool.generate_4grid_location_images",
+            generate_root,
+        )
+        monkeypatch.setattr(
+            "script_writer_core.mcp_tool.generate_9grid_location_images",
+            generate_subscene,
+        )
+
+        result = svc.submit_subscene_grids(parsed, bootstrap, 1, 2, "token")
+
+        assert generate_root.call_count == 1
+        assert generate_subscene.call_count == 1
+        assert generate_subscene.call_args.kwargs["target_entity_ids"] == [703] + [None] * 8
+        assert result["submitted_root_location_count"] == 1
+        assert result["submitted_subscene_count"] == 1
+
     def test_submit_grid_image_task_passes_target_ids_to_create(self, monkeypatch):
         """generate_9grid_location_images 的 target_entity_ids 应贯穿到 GridImageTasksModel.create。"""
         import script_writer_core.mcp_tool as mcp
@@ -364,6 +539,94 @@ class TestSubsceneGridFixes:
         # item_names_json 含完整名
         assert captured['item_names'] == ['子1', '子2', 'placeholder'] + ['placeholder'] * 6
 
+    def test_generate_4grid_location_images_with_target_ids_uses_bound_t2i_grid(self, monkeypatch):
+        """顶层场景四宫格携带 DB id 时应走支持按 id 回写的统一 t2i 宫格入口。"""
+        import script_writer_core.mcp_tool as mcp
+
+        submit = MagicMock(return_value={"success": True, "task_id": "root-grid"})
+        monkeypatch.setattr(mcp, "submit_grid_image_task", submit)
+
+        result = mcp.generate_4grid_location_images(
+            user_id="2",
+            world_id="1",
+            auth_token="token",
+            location_names=["顶层", "placeholder", "placeholder", "placeholder"],
+            prompts=["场景提示", "黑图", "黑图", "黑图"],
+            target_entity_ids=[501, None, None, None],
+        )
+
+        assert result["success"] is True
+        assert submit.call_args.kwargs["mode"] == "text_to_image"
+        assert submit.call_args.kwargs["item_type"] == 5
+        assert submit.call_args.kwargs["grid_size"] == 4
+        assert submit.call_args.kwargs["target_entity_ids"] == [501, None, None, None]
+
+    def test_submit_t2i_grid_passes_database_bindings_to_task_creation(self, monkeypatch):
+        """统一 t2i 宫格必须把结构化名称与 DB id 原子写入后台任务。"""
+        import script_writer_core.mcp_tool as mcp
+
+        generate = MagicMock(return_value={"success": True, "task_id": "root-grid"})
+        monkeypatch.setattr(mcp, "generate_text_to_image", generate)
+
+        result = mcp.submit_grid_image_task(
+            user_id="2",
+            world_id="1",
+            auth_token="token",
+            item_names=["顶层", "placeholder", "placeholder", "placeholder"],
+            prompts=["场景提示", "黑图", "黑图", "黑图"],
+            item_type=5,
+            grid_size=4,
+            mode="text_to_image",
+            target_entity_ids=[501, None, None, None],
+        )
+
+        assert result["success"] is True
+        assert generate.call_args.kwargs["grid_size"] == 4
+        assert generate.call_args.kwargs["grid_layout"] == "2x2"
+        assert generate.call_args.kwargs["grid_item_names"] == [
+            "顶层", "placeholder", "placeholder", "placeholder",
+        ]
+        assert generate.call_args.kwargs["target_entity_ids"] == [501]
+
+    def test_task_manager_persists_t2i_grid_database_bindings(self, monkeypatch):
+        """t2i 后台任务创建时应把宫格名称与目标 DB id 原子写入记录。"""
+        import threading
+        from script_writer_core.cron_task_manager import TaskManager
+        from model.grid_image_tasks import GridImageTasksModel
+
+        manager = TaskManager.__new__(TaskManager)
+        manager.global_lock = threading.RLock()
+        manager.task_locks = {}
+        manager.active_tasks = {}
+        monkeypatch.setattr(manager, "_update_task_status_file", lambda *_: None)
+        monkeypatch.setattr(GridImageTasksModel, "get_by_task_key", lambda *_: None)
+        captured = {}
+        monkeypatch.setattr(
+            GridImageTasksModel,
+            "create",
+            lambda **kwargs: captured.update(kwargs) or 1,
+        )
+
+        manager.create_image_task(
+            project_id="pid-root",
+            item_type=5,
+            item_name="loc#501,#,#,#",
+            comfyui_base_url="http://h",
+            auth_token="token",
+            user_id="2",
+            world_id="1",
+            is_grid=True,
+            grid_size=4,
+            grid_layout="2x2",
+            item_names=["顶层", "placeholder", "placeholder", "placeholder"],
+            target_entity_ids=[501],
+        )
+
+        assert captured["grid_size"] == 4
+        assert captured["grid_layout"] == "2x2"
+        assert captured["item_names"] == ["顶层", "placeholder", "placeholder", "placeholder"]
+        assert captured["target_entity_ids"] == [501]
+
     def test_submit_first_frame_grid_accepts_item_type_8_and_uses_storyboard_ratio(self, monkeypatch):
         """分镜首帧宫格使用 item_type=8，且真实画幅要贯穿 prompt/request/任务记录。"""
         import script_writer_core.mcp_tool as mcp
@@ -375,7 +638,7 @@ class TestSubsceneGridFixes:
             captured["create"] = kwargs
             return 1
 
-        def fake_post(url, data, timeout, verify):
+        def fake_post(url, data, timeout, verify, trust_env=False):
             captured["request"] = data
             response = MagicMock()
             response.raise_for_status.return_value = None
