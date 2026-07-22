@@ -70,31 +70,35 @@ def _dispatch_storyboard_first_frame_grid_split(
         from task.pipeline_processor import PipelineProcessor
 
         AIToolsModel.update(ai_tool_id, result_url=local_image_url)
-        pending_steps = PipelineStepModel.get_pending_steps(ai_tool_id, PipelineStage.BEFORE_FINISH)
-        step = next(
-            (
-                item for item in pending_steps
-                if item.step_type == PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
-            ),
-            None,
-        )
-        if not step:
+
+        # 组装当前宫格的完整 params（fallback 新建与预建 step 校准共用）。
+        # 重试后 grid_image_path/grid_result_url/cells 可能已变化，必须用最新值覆盖。
+        full_params = {
+            "grid_task_id": int(task.id),
+            "grid_size": grid_size,
+            "grid_layout": getattr(task, "grid_layout", None) or ("2x2" if grid_size == GridConfig.SIZE_2X2 else "3x3"),
+            "asset_type": "first_frame",
+            "output_dir": "upload/storyboard/first_frame",
+            "output_url_path": "upload/storyboard/first_frame",
+            "grid_image_path": local_file_path,
+            "grid_result_url": local_image_url,
+            "cells": _build_storyboard_grid_cells(task, grid_size),
+        }
+
+        # 按 grid_image_tasks.id 主键查找预建 step（稳定，不受 project_id 漂移影响）。
+        # 旧逻辑用 get_pending_steps(task.project_id) 查找，但宫格重试会令 project_id
+        # 漂移为新 ai_tool_id，导致找不到预建 step 而 fallback 新建，原 step 沦为僵尸。
+        step = PipelineStepModel.get_pending_grid_split_step_by_grid_task(int(task.id))
+        if step:
+            # 校准预建 step 的 params（补充/更新重试后的宫格图数据），确保 driver 用到最新值。
+            PipelineStepModel.update_params(step.id, full_params)
+        else:
             step_id = PipelineStepModel.create(
                 ai_tool_id=ai_tool_id,
                 stage=PipelineStage.BEFORE_FINISH,
                 step_type=PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT,
                 step_order=0,
-                params={
-                    "grid_task_id": int(task.id),
-                    "grid_size": grid_size,
-                    "grid_layout": getattr(task, "grid_layout", None) or ("2x2" if grid_size == GridConfig.SIZE_2X2 else "3x3"),
-                    "asset_type": "first_frame",
-                    "output_dir": "upload/storyboard/first_frame",
-                    "output_url_path": "upload/storyboard/first_frame",
-                    "grid_image_path": local_file_path,
-                    "grid_result_url": local_image_url,
-                    "cells": _build_storyboard_grid_cells(task, grid_size),
-                },
+                params=full_params,
                 target=task.task_key,
             )
             step = PipelineStepModel.get_by_id(step_id)
@@ -167,22 +171,26 @@ def _fail_pending_grid_split_step_for_task(task: Any, error_message: str) -> Non
     """将 task 绑定的仍 PENDING 的 storyboard grid split pipeline step 标记为 FAILED。"""
     if task.item_type != ItemType.STORYBOARD_FIRST_FRAME_GRID:
         return
+    # 按 grid_image_tasks.id 主键回写（稳定，不受 project_id 漂移影响）。
+    # 旧逻辑用 task.project_id 查找，但宫格重试会令 project_id 漂移为新 ai_tool_id，
+    # 导致找不到预建 step 而回写失效，step 沦为僵尸。
+    grid_task_id = getattr(task, "id", None)
     try:
-        ai_tool_id = int(task.project_id)
+        grid_task_id = int(grid_task_id)
     except (TypeError, ValueError):
         logger.error(
-            "回写分镜首帧宫格 pipeline step 失败：缺少可用 ai_tool_id, task_key=%s project_id=%s",
-            getattr(task, "task_key", None), getattr(task, "project_id", None),
+            "回写分镜首帧宫格 pipeline step 失败：缺少可用 grid_task_id, task_key=%s id=%s",
+            getattr(task, "task_key", None), grid_task_id,
         )
         return
     try:
         from model.ai_tool_pipeline_steps import PipelineStepModel
 
-        PipelineStepModel.fail_pending_grid_split_step(ai_tool_id, error_message)
+        PipelineStepModel.fail_pending_grid_split_step_by_grid_task(grid_task_id, error_message)
     except Exception as exc:
         logger.error(
-            "回写分镜首帧宫格 pipeline step 失败: ai_tool_id=%s err=%s",
-            ai_tool_id, exc, exc_info=True,
+            "回写分镜首帧宫格 pipeline step 失败: grid_task_id=%s err=%s",
+            grid_task_id, exc, exc_info=True,
         )
 
 
@@ -734,10 +742,11 @@ def _cleanup_orphan_grid_split_steps() -> int:
     """
     清理孤立的 storyboard grid split pipeline step。
 
-    孤儿定义：step 仍 PENDING，但绑定的 grid_image_tasks 已进入失败终态
-    （FAILED / TIMEOUT / DOWNLOAD_FAILED / CANCELLED）。
+    孤儿定义：step 仍 PENDING，但绑定的 grid_image_tasks 已进入终态：
+    - 失败终态（FAILED / TIMEOUT / DOWNLOAD_FAILED / CANCELLED）：失败回写漏命中；
+    - 成功终态（COMPLETED）：宫格重试导致 project_id 漂移，预建 step 未被 dispatch、
+      被 fallback 新建的兄弟 step 替代，沦为僵尸。
 
-    这类 step 是旧版本（未做失败回写）遗留的，或因异常路径漏写导致。
     全局调度器（task.pipeline_processor）每 13s 会反复 skip 它们刷日志，
     在此每轮轻量清理，使其尽快终止、退出扫描范围。
 
@@ -751,16 +760,17 @@ def _cleanup_orphan_grid_split_steps() -> int:
         logger.error("加载孤儿 grid split step 清理依赖失败: %s", exc, exc_info=True)
         return 0
 
-    failed_statuses = (
+    terminal_statuses = (
         GridImageTaskStatus.FAILED,
         GridImageTaskStatus.TIMEOUT,
         GridImageTaskStatus.DOWNLOAD_FAILED,
         GridImageTaskStatus.CANCELLED,
+        GridImageTaskStatus.COMPLETED,
     )
     try:
         orphans = PipelineStepModel.get_orphan_grid_split_steps(
             limit=GridConfig.GRID_SPLIT_ORPHAN_CLEANUP_LIMIT,
-            grid_failed_statuses=failed_statuses,
+            grid_terminal_statuses=terminal_statuses,
         )
     except Exception as exc:
         logger.error("查询孤儿 grid split step 失败: %s", exc, exc_info=True)
@@ -773,7 +783,7 @@ def _cleanup_orphan_grid_split_steps() -> int:
     try:
         affected = PipelineStepModel.fail_steps_by_ids(
             step_ids,
-            error_message="宫格生图任务已进入失败终态，绑定 step 由孤儿清理标记为 FAILED",
+            error_message="宫格生图任务已进入终态，绑定 step 未被正常 dispatch/fail，由孤儿清理标记为 FAILED",
         )
         return affected
     except Exception as exc:

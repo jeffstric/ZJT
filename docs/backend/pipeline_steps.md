@@ -83,7 +83,7 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 | id | int | 主键 |
 | ai_tool_id | int | 关联 ai_tools.id |
 | stage | varchar(32) | 阶段：`param_prepare` / `before_finish` |
-| step_type | varchar(64) | 步骤类型：`face_mask` / `image_face_mask` / `implementation_retry` |
+| step_type | varchar(64) | 步骤类型：`face_mask` / `image_face_mask` / `implementation_retry` / `storyboard_first_frame_grid_split` |
 | step_order | int | 同阶段内执行顺序（0 起始） |
 | status | tinyint | 步骤状态 |
 | params | json | 步骤参数 |
@@ -152,6 +152,19 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 **失败路径统一入口**：所有任务失败路径（driver 创建失败、提交失败、状态检查异常等）均通过 `_handle_task_failure()` 统一处理，由其调用 `handle_failure_with_retry()` 尝试切换供应商。无可用替代供应商时走终态失败 + 退费。
 
+### storyboard_first_frame_grid_split（分镜首帧宫格拆分）
+
+用于 `before_finish` 阶段，将分镜首帧宫格图（grid image）拆分为各场景的独立首帧并落库。
+
+> **关联键说明**：该步骤类型通过 `params.grid_task_id`（= `grid_image_tasks.id` 主键）与宫格任务关联，**不依赖** `ai_tool_id == grid_image_tasks.project_id` 这一等式。原因是宫格图重试时 `_resubmit_image_request` 会新建一条 `ai_tools` 记录，`reset_for_retry` 把 `grid_image_tasks.project_id` 更新为新 `ai_tool_id`，导致 `project_id` 漂移；而 `grid_task_id` 主键在重试中保持稳定。因此 step 的查找（成功路径 dispatch）、失败回写、孤儿清理统一按 `params.grid_task_id` 关联。
+
+**生命周期**：
+1. 提交宫格 i2i 任务时（`mcp_tool.submit_grid_image_task`）**预建** PENDING 步骤，`params.grid_task_id` = 新建的 `grid_image_tasks.id`
+2. 宫格图成功后（`_dispatch_storyboard_first_frame_grid_split`）按 `grid_task_id` 找到预建步骤，校准 `params`（补充重试后的最新宫格图数据），再 dispatch
+3. 步骤被 `_is_grid_task_owned_step` 识别，**不**由全局 `process_pipeline_steps` 调度器执行，而由 `grid_image_task` 调度器主动 dispatch
+4. 宫格图失败时（`_fail_pending_grid_split_step_for_task`）按 `grid_task_id` 将仍 PENDING 的步骤标记 FAILED
+5. 孤儿兜底清理（`_cleanup_orphan_grid_split_steps`，每轮 grid 调度开头）按 `grid_task_id` JOIN `grid_image_tasks`，对已进入终态（含 COMPLETED 与各失败终态）但仍 PENDING 的孤儿步骤批量 FAILED
+
 ## 文件结构
 
 ```
@@ -165,6 +178,10 @@ task/
     face_mask_driver.py          # 人脸遮盖驱动
     image_face_mask_driver.py    # 图片人脸遮盖驱动
     implementation_retry_driver.py  # 供应商重试驱动
+    storyboard_grid_split_driver.py  # 分镜首帧宫格拆分驱动
+  grid_image_task.py             # 宫格任务调度（含 grid split step dispatch/fail/孤儿清理）
+scripts/
+  cleanup_stale_grid_split_steps.py  # 一次性清理僵尸 grid split step 的运维脚本
 ```
 
 ## 调度
@@ -206,6 +223,19 @@ WHERE status = 0
   AND next_retry_at <= NOW()
   AND retry_count < max_retries
 ORDER BY next_retry_at;
+
+-- 排查僵尸 storyboard grid split step（仍 PENDING 但宫格任务已进入终态）
+-- 此类 step 会被全局调度器每 13s 反复 skip 刷日志，可用 scripts/cleanup_stale_grid_split_steps.py 清理
+SELECT
+    s.id AS step_id, s.ai_tool_id, s.created_at,
+    CAST(JSON_UNQUOTE(JSON_EXTRACT(s.params, '$.grid_task_id')) AS UNSIGNED) AS grid_task_id,
+    g.status AS grid_status
+FROM ai_tool_pipeline_steps s
+LEFT JOIN grid_image_tasks g
+  ON g.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(s.params, '$.grid_task_id')) AS UNSIGNED)
+WHERE s.step_type = 'storyboard_first_frame_grid_split'
+  AND s.stage = 'before_finish'
+  AND s.status = 0;
 ```
 
 ## 相关文档
