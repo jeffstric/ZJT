@@ -64,6 +64,8 @@ def submit_grid_image_task(user_id, world_id, auth_token, item_names, prompts,
 }
 ```
 
+`global_visual_guidance` 只描述所有非空格共享的画风、构图倾向及应用规则。整张宫格画布的格式约束（禁止文字、字幕、编号、空白说明栏等）由根节点 `grid_output_constraints` 单独承载；新 prompt 不再使用容易与画风混淆的 `style_guidance` 字段。
+
 - `image_style` / `composition_preference` 只在 grid 根节点出现一次，减少 2x2/3x3 提示词重复。
 - `shots[].prompt_text` 只保留单格镜头、动作、空间位置、局部构图和参考图编号。
 - 单格明确构图是硬约束，优先于全局构图倾向；全局画风仍作用于所有非 placeholder 格。

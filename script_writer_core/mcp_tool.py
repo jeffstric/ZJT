@@ -4739,7 +4739,7 @@ def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
             "grid_layout": "2x2",
             "grid_aspect_ratio": "16:9",
             "global_watermark": "",
-            "style_guidance": GridConfig.STYLE_GUIDANCE_NO_TEXT,
+            "grid_output_constraints": GridConfig.GRID_OUTPUT_CONSTRAINTS_NO_TEXT,
             "shots": [
                 {"shot_number": "", "prompt_text": prompt}
                 for prompt in prompts
@@ -4930,7 +4930,7 @@ def submit_grid_image_task(
         "grid_layout": grid_layout,
         "grid_aspect_ratio": resolved_aspect_ratio,
         "global_watermark": "",
-        "style_guidance": GridConfig.STYLE_GUIDANCE_NO_TEXT,
+        "grid_output_constraints": GridConfig.GRID_OUTPUT_CONSTRAINTS_NO_TEXT,
         "shots": [
             {"shot_number": "", "prompt_text": p}
             for p in prompts

@@ -1079,12 +1079,15 @@ class GridConfig:
         return bool(name) and str(name).strip().lower() in cls.PLACEHOLDER_NAMES
 
     # 宫格生图全局防文字指令：附加在 grid_prompt JSON 中，抑制生图模型在格子内/格子间输出文字、字幕、镜头编号
-    STYLE_GUIDANCE_NO_TEXT = (
+    GRID_OUTPUT_CONSTRAINTS_NO_TEXT = (
         "High-quality image grid. Strictly NO TEXT, NO CAPTIONS, NO SUBTITLES, "
         "NO SCRIPT NARRATION, NO NUMBERS, NO SHOT LABELS anywhere in the image "
         "(including below/under each cell). Clean visual composition only, pure "
         "grid of images with no text areas or blank caption bars."
     )
+
+    # 向后兼容：旧名称语义含混，新的宫格 prompt 不再输出 style_guidance 字段。
+    STYLE_GUIDANCE_NO_TEXT = GRID_OUTPUT_CONSTRAINTS_NO_TEXT
 
 
 # 向后兼容别名 - 宫格拆分

@@ -369,17 +369,17 @@ def append_storyboard_visual_suffix(
 ) -> str:
     """Append authoritative storyboard visual settings to the prompt tail.
 
-    Existing identical suffix lines are moved to the tail instead of duplicated.
+    Existing identical suffix blocks are moved to the tail instead of duplicated.
     This keeps the helper safe to call both before and after optional LLM rewriting.
     """
-    suffix_lines = []
-    style_text = _clean_name(style)
-    composition_text = _clean_name(composition_preference)
+    suffix_blocks = []
+    style_text = _normalize_multiline_text(style)
+    composition_text = _normalize_multiline_text(composition_preference)
     if style_text:
-        suffix_lines.append(f"图片风格：{style_text}")
+        suffix_blocks.append(f"图片风格：{style_text}")
     if composition_text:
-        suffix_lines.append(f"构图倾向：{composition_text}")
-    if not suffix_lines:
+        suffix_blocks.append(f"构图倾向：{composition_text}")
+    if not suffix_blocks:
         return str(prompt or "").rstrip()
 
     body = remove_storyboard_visual_suffix(
@@ -387,7 +387,7 @@ def append_storyboard_visual_suffix(
         style=style_text,
         composition_preference=composition_text,
     )
-    suffix = "\n".join(suffix_lines)
+    suffix = "\n".join(suffix_blocks)
     return f"{body}\n\n{suffix}" if body else suffix
 
 
@@ -397,21 +397,49 @@ def remove_storyboard_visual_suffix(
     style: Any = "",
     composition_preference: Any = "",
 ) -> str:
-    """Remove exact storyboard-level visual lines from a cell prompt."""
-    suffix_lines = set()
-    style_text = _clean_name(style)
-    composition_text = _clean_name(composition_preference)
+    """Remove exact storyboard-level visual blocks from a cell prompt."""
+    suffix_blocks = []
+    style_text = _normalize_multiline_text(style)
+    composition_text = _normalize_multiline_text(composition_preference)
     if style_text:
-        suffix_lines.add(f"图片风格：{style_text}")
+        suffix_blocks.append(f"图片风格：{style_text}")
     if composition_text:
-        suffix_lines.add(f"构图倾向：{composition_text}")
-    if not suffix_lines:
+        suffix_blocks.append(f"构图倾向：{composition_text}")
+    if not suffix_blocks:
         return str(prompt or "").rstrip()
-    return "\n".join(
-        line
-        for line in str(prompt or "").rstrip().splitlines()
-        if line.strip() not in suffix_lines
-    ).rstrip()
+    return _remove_exact_line_blocks(prompt, suffix_blocks)
+
+
+def _normalize_multiline_text(value: Any) -> str:
+    """Normalize textarea line endings without flattening its visual instructions."""
+    return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _remove_exact_line_blocks(text: Any, blocks: Iterable[str]) -> str:
+    """Remove complete, line-aligned blocks while preserving unrelated prompt lines."""
+    lines = _normalize_multiline_text(text).split("\n")
+    block_lines = [
+        [line.strip() for line in block.split("\n")]
+        for block in blocks
+        if block
+    ]
+    kept_lines: List[str] = []
+    index = 0
+    while index < len(lines):
+        matched_length = next(
+            (
+                len(candidate)
+                for candidate in block_lines
+                if [line.strip() for line in lines[index:index + len(candidate)]] == candidate
+            ),
+            0,
+        )
+        if matched_length:
+            index += matched_length
+            continue
+        kept_lines.append(lines[index])
+        index += 1
+    return "\n".join(kept_lines).rstrip()
 
 
 def reference_urls(items: List[Dict[str, str]]) -> List[str]:

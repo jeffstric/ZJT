@@ -590,6 +590,10 @@ class TestSubsceneGridFixes:
         import json
 
         prompt_data = json.loads(generate.call_args.kwargs["prompt"])
+        assert prompt_data["grid_output_constraints"] == (
+            mcp.GridConfig.GRID_OUTPUT_CONSTRAINTS_NO_TEXT
+        )
+        assert "style_guidance" not in prompt_data
         assert "global_visual_guidance" not in prompt_data
 
     def test_task_manager_persists_t2i_grid_database_bindings(self, monkeypatch):
@@ -692,6 +696,10 @@ class TestSubsceneGridFixes:
         prompt_json = captured["create"]["prompt"]
         prompt_data = json.loads(prompt_json)
         assert prompt_data["grid_aspect_ratio"] == "9:16"
+        assert prompt_data["grid_output_constraints"] == (
+            mcp.GridConfig.GRID_OUTPUT_CONSTRAINTS_NO_TEXT
+        )
+        assert "style_guidance" not in prompt_data
         assert prompt_data["global_visual_guidance"] == {
             "image_style": "皮克斯3D动画",
             "composition_preference": "动态平衡构图",

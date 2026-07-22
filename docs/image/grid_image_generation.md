@@ -129,7 +129,7 @@
 
 系统会将分镜的图片提示词拼接成JSON格式：
 
-**说明**：`style_guidance` 字段由后端自动附加（`config/constant.py` 中 `GridConfig.STYLE_GUIDANCE_NO_TEXT`），用于抑制生图模型在格子内/格子间输出文字、字幕、镜头编号，调用方无需手动传入。`shot_number` 恒为空字符串 `""`，防止在格子角落出现 "SHOT X" 水印文字。
+**说明**：`grid_output_constraints` 字段由后端自动附加（`config/constant.py` 中 `GridConfig.GRID_OUTPUT_CONSTRAINTS_NO_TEXT`），用于约束整张宫格画布，抑制生图模型在格子内/格子间输出文字、字幕、镜头编号；它不负责描述画风，调用方无需手动传入。`shot_number` 恒为空字符串 `""`，防止在格子角落出现 "SHOT X" 水印文字。旧常量名 `GridConfig.STYLE_GUIDANCE_NO_TEXT` 仅作为兼容别名保留，新生成的 prompt 不再输出 `style_guidance` 字段。
 
 ### 4宫格示例
 ```json
@@ -137,7 +137,7 @@
   "grid_layout": "2x2",
   "grid_aspect_ratio": "16:9",
   "global_watermark": "",
-  "style_guidance": "High-quality image grid. Strictly NO TEXT, NO CAPTIONS, NO SUBTITLES, NO SCRIPT NARRATION, NO NUMBERS, NO SHOT LABELS anywhere in the image (including below/under each cell). Clean visual composition only, pure grid of images with no text areas or blank caption bars.",
+  "grid_output_constraints": "High-quality image grid. Strictly NO TEXT, NO CAPTIONS, NO SUBTITLES, NO SCRIPT NARRATION, NO NUMBERS, NO SHOT LABELS anywhere in the image (including below/under each cell). Clean visual composition only, pure grid of images with no text areas or blank caption bars.",
   "shots": [
     {"shot_number": "", "prompt_text": "清晨的城市街道，阳光洒在建筑物上"},
     {"shot_number": "", "prompt_text": "咖啡店内部，温暖的灯光"},
@@ -153,7 +153,7 @@
   "grid_layout": "3x3",
   "grid_aspect_ratio": "16:9",
   "global_watermark": "",
-  "style_guidance": "High-quality image grid. Strictly NO TEXT, NO CAPTIONS, NO SUBTITLES, NO SCRIPT NARRATION, NO NUMBERS, NO SHOT LABELS anywhere in the image (including below/under each cell). Clean visual composition only, pure grid of images with no text areas or blank caption bars.",
+  "grid_output_constraints": "High-quality image grid. Strictly NO TEXT, NO CAPTIONS, NO SUBTITLES, NO SCRIPT NARRATION, NO NUMBERS, NO SHOT LABELS anywhere in the image (including below/under each cell). Clean visual composition only, pure grid of images with no text areas or blank caption bars.",
   "shots": [
     {"shot_number": "", "prompt_text": "..."},
     {"shot_number": "", "prompt_text": "..."},
