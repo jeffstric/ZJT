@@ -21,7 +21,16 @@ def get_storyboard_quality_location_reference_coordinator():
     return module.QualityLocationReferenceCoordinator()
 
 
+def get_storyboard_quality_prompt_policy():
+    """延迟加载 Enterprise 首帧宫格提示词策略。"""
+    module = importlib.import_module(
+        "enterprise.services.storyboard_quality_sequence"
+    )
+    return module.QualityStoryboardPromptPolicy()
+
+
 __all__ = [
     "get_storyboard_quality_location_reference_coordinator",
+    "get_storyboard_quality_prompt_policy",
     "get_storyboard_quality_sequence_strategy",
 ]

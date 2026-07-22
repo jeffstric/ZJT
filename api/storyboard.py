@@ -1520,6 +1520,8 @@ class StoryboardImageAgentRunner:
         generation_target: str = "image",
         video_type: str = SceneVideoType.VIDEO,
         video_preferences: Optional[Dict[str, Any]] = None,
+        style: str = "",
+        composition_preference: str = "",
     ):
         self.scene_id = scene_id
         self.scene_context = scene_context
@@ -1527,6 +1529,8 @@ class StoryboardImageAgentRunner:
         self.generation_target = generation_target if generation_target == "video" else "image"
         self.video_type = str(video_type or SceneVideoType.VIDEO)
         self.video_preferences = dict(video_preferences or {})
+        self.style = style or ""
+        self.composition_preference = composition_preference or ""
 
     @staticmethod
     def _resolve_storyboard_agent_model(default_model: str, model_id: Optional[int]) -> str:
@@ -1544,6 +1548,7 @@ class StoryboardImageAgentRunner:
     def execute(self, task, session_data: Dict[str, Any]) -> Dict[str, Any]:
         from api.script_writer import file_manager, tool_executor, agents_config, task_manager
         from script_writer_core.agents.expert_agent import ExpertAgent
+        from services.storyboard_agent_image_tool import StoryboardAgentImageToolExecutor
         from services.storyboard_agent_video_tool import (
             StoryboardAgentVideoToolExecutor,
             resolve_storyboard_agent_allowed_tools,
@@ -1564,7 +1569,13 @@ class StoryboardImageAgentRunner:
             video_type=self.video_type,
         )
         agent_tool_executor = tool_executor
-        if self.generation_target == "video":
+        if self.generation_target == "image":
+            agent_tool_executor = StoryboardAgentImageToolExecutor(
+                tool_executor,
+                style=self.style,
+                composition_preference=self.composition_preference,
+            )
+        else:
             agent_tool_executor = StoryboardAgentVideoToolExecutor(
                 tool_executor,
                 scene_id=self.scene_id,
@@ -3446,6 +3457,8 @@ async def scene_ai_chat(
         generation_target=generation_target,
         video_type=scene.video_type,
         video_preferences=video_preferences,
+        style=getattr(sb, 'style', '') if sb else '',
+        composition_preference=getattr(sb, 'composition_preference', '') if sb else '',
     )
     task_manager.start_task(task, runner, {
         'user_id': str(user_id),

@@ -423,20 +423,23 @@ class TestGetOrphanGridSplitSteps(unittest.TestCase):
         ]
 
         result = PipelineStepModel.get_orphan_grid_split_steps(
-            limit=50, grid_failed_statuses=(-1, -2, -4),
+            limit=50, grid_terminal_statuses=(-1, -2, -4),
         )
 
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0].id, 72)
-        # SQL 应含 JOIN 与失败状态 IN
+        # SQL 应含按 grid_task_id 的 JOIN 与终态状态 IN
         sql = _steps_module.execute_query.call_args[0][0]
         self.assertIn('INNER JOIN grid_image_tasks', sql)
-        self.assertIn('g.project_id = CAST(s.ai_tool_id AS CHAR)', sql)
+        # JOIN 按 params.grid_task_id 主键关联（不再按 project_id == ai_tool_id）
+        self.assertIn("g.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(s.params", sql)
+        self.assertIn("grid_task_id", sql)
+        self.assertNotIn('g.project_id = CAST(s.ai_tool_id AS CHAR)', sql)
         self.assertIn('IN (%s,%s,%s)', sql)
 
     def test_empty_statuses_returns_empty(self):
-        """失败状态元组为空时直接返回空列表（不发 SQL）"""
-        result = PipelineStepModel.get_orphan_grid_split_steps(limit=50, grid_failed_statuses=())
+        """终态状态元组为空时直接返回空列表（不发 SQL）"""
+        result = PipelineStepModel.get_orphan_grid_split_steps(limit=50, grid_terminal_statuses=())
 
         self.assertEqual(result, [])
         _steps_module.execute_query.assert_not_called()
@@ -444,7 +447,7 @@ class TestGetOrphanGridSplitSteps(unittest.TestCase):
     def test_no_results_returns_empty(self):
         """查询无结果返回空列表"""
         _steps_module.execute_query.return_value = None
-        result = PipelineStepModel.get_orphan_grid_split_steps(limit=50, grid_failed_statuses=(-1,))
+        result = PipelineStepModel.get_orphan_grid_split_steps(limit=50, grid_terminal_statuses=(-1,))
 
         self.assertEqual(result, [])
 

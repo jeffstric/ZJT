@@ -34,6 +34,12 @@ python -m scripts.storyboard_agent_cli task-status --scene-id 123
   task_id，优先于用户偏好；传入无效（不存在/已禁用/类别不符）时自动降级到偏好/默认模型，不中断。
 - `bind-projects` 可把已有 `ai_tools` 记录绑定到分镜素材，便于外部 agent 已完成提交后回写分镜。
 
+### 生图画风兜底
+
+`generate-image` 在调用文生图或图片编辑工具前，会统一把 storyboard 的 `style` 和 `composition_preference` 作为“图片风格 / 构图倾向”后缀放到最终 prompt 末尾。即使 API、CLI 或智能体显式传入了 `prompt`，也不会覆盖掉项目级画风；重复调用不会产生重复后缀。
+
+商业版 `quality + first_frame` 使用独立的首帧宫格链路。画风注入、LLM 约束文案和润色后恢复由 `enterprise.services.storyboard_quality_sequence.QualityStoryboardPromptPolicy` 实现，公共层通过延迟加载门面调用；每格 prompt 在 LLM 润色前携带画风约束，润色后、提交宫格任务前再次兜底，避免 LLM 改写造成画风丢失。
+
 ## 复用关系
 
 生图链路复用 `script_writer_core.mcp_tool.generate_text_to_image` 和 `edit_image`，它们沿用首页

@@ -52,6 +52,16 @@ def test_storyboard_image_agent_uses_task_model_id_for_llm_model_name():
     assert "model = self._resolve_storyboard_agent_model(" in api_py
 
 
+def test_storyboard_image_agent_enforces_style_and_composition_at_tool_boundary():
+    api_py = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
+
+    assert "StoryboardAgentImageToolExecutor" in api_py
+    assert "style=getattr(sb, 'style', '') if sb else ''" in api_py
+    assert "composition_preference=getattr(sb, 'composition_preference', '') if sb else ''" in api_py
+    assert "style=self.style" in api_py
+    assert "composition_preference=self.composition_preference" in api_py
+
+
 def test_storyboard_agent_auth_token_is_normalized_before_task_storage():
     api_py = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
 

@@ -41,8 +41,11 @@
 
 如果恢复或新增 `/api/storyboard` 相关接口，构建分镜智能体上下文和最终工具提示词时应共用这组 helper。
 
+- `append_storyboard_visual_suffix(...)`：把项目级画风和构图倾向作为幂等后缀移动到最终生图提示词末尾，供普通生图、对话改图和商业版首帧宫格共用。
+
 ## 当前接入点
 
 - `services/storyboard_agent_cli_service.py` 的 `scene_context()` 使用 `build_storyboard_reference_items(...)` 生成 `reference_image_items`，不再从全局画风图、已有首帧或 `character_desc` 扩展参考图。
 - `generate_image()` 调用 `edit_image` 前使用 `append_reference_legend(...)` 把图号说明追加到最终生图提示词。
 - `/api/storyboard/scene/{scene_id}/ai-chat` 会把同一份 `reference_image_items` 和独立的【参考图说明】传给 `storyboard-image` 智能体，并要求智能体把该说明写入 `edit_image.prompt`。
+- 对话改图的 `StoryboardAgentImageToolExecutor` 会在 `generate_text_to_image` / `edit_image` 真正执行前，再次用 `append_storyboard_visual_suffix(...)` 兜底追加当前故事板画风与构图倾向，避免仅依赖智能体上下文导致漏传。

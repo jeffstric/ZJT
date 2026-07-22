@@ -373,6 +373,38 @@ class PipelineStepModel:
             raise
 
     @staticmethod
+    def update_params(record_id: int, params: Dict[str, Any]) -> int:
+        """
+        更新步骤的 params（JSON 字段整体覆盖）。
+
+        用于宫格图成功后校准预建 step 的 params（补充 grid_image_path/grid_result_url/cells 等，
+        尤其在宫格重试后图已更新的场景，确保 driver 用到最新数据）。
+
+        Args:
+            record_id: 记录 ID
+            params: 新的 params 字典（整体覆盖）
+
+        Returns:
+            影响的行数
+        """
+        sql = """
+            UPDATE ai_tool_pipeline_steps
+            SET params = %s
+            WHERE id = %s
+        """
+        try:
+            affected = execute_update(sql, (json.dumps(params), record_id))
+            if affected:
+                logger.info(f"Updated pipeline step {record_id} params")
+            return affected
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to update pipeline step {record_id} params: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to update pipeline step {record_id} params (unexpected): {e}")
+            raise
+
+    @staticmethod
     def update_status_with_retry(
         record_id: int,
         status: int,
@@ -586,32 +618,124 @@ class PipelineStepModel:
             raise
 
     @staticmethod
+    def get_pending_grid_split_step_by_grid_task(grid_task_id: int) -> Optional['PipelineStep']:
+        """
+        按 grid_image_tasks 主键(id)查找仍 PENDING 的 storyboard grid split 步骤。
+
+        grid_image_tasks.project_id 在宫格重试时会漂移为新 ai_tool_id（reset_for_retry），
+        而 params.grid_task_id 存的是 grid_image_tasks.id 主键，重试中保持稳定。
+        因此 grid split step 的查找应基于 grid_task_id，而非 ai_tool_id。
+
+        Args:
+            grid_task_id: grid_image_tasks.id
+
+        Returns:
+            PipelineStep 对象；未找到返回 None
+        """
+        sql = """
+            SELECT * FROM ai_tool_pipeline_steps
+            WHERE step_type = %s
+              AND stage = %s
+              AND status = %s
+              AND JSON_UNQUOTE(JSON_EXTRACT(params, '$.grid_task_id')) = %s
+            ORDER BY id ASC
+            LIMIT 1
+        """
+        try:
+            results = execute_query(sql, (
+                PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT,
+                PipelineStage.BEFORE_FINISH,
+                PipelineStepStatus.PENDING,
+                str(grid_task_id),
+            ), fetch_all=True)
+            return PipelineStep(**results[0]) if results else None
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to get pending grid split step by grid_task_id={grid_task_id}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to get pending grid split step by grid_task_id={grid_task_id} (unexpected): {e}")
+            raise
+
+    @staticmethod
+    def fail_pending_grid_split_step_by_grid_task(grid_task_id: int, error_message: str) -> int:
+        """
+        按 grid_image_tasks 主键(id)将仍 PENDING 的 storyboard grid split 步骤标记为 FAILED。
+
+        grid_image_task 进入失败终态时调用，避免对应 pipeline step 永久卡在 PENDING，
+        被全局调度器（task.pipeline_processor）每 13s 反复 skip 刷日志。
+        幂等：只更新 status=PENDING 的行。
+        基于 params.grid_task_id（稳定主键）关联，不受 project_id 漂移影响。
+
+        Args:
+            grid_task_id: grid_image_tasks.id
+            error_message: 失败原因（截断到 512 字符）
+
+        Returns:
+            影响的行数
+        """
+        sql = """
+            UPDATE ai_tool_pipeline_steps
+            SET status = %s, error_message = %s
+            WHERE step_type = %s
+              AND stage = %s
+              AND status = %s
+              AND JSON_UNQUOTE(JSON_EXTRACT(params, '$.grid_task_id')) = %s
+        """
+        truncated_msg = (error_message or "")[:512]
+        try:
+            affected = execute_update(sql, (
+                PipelineStepStatus.FAILED,
+                truncated_msg,
+                PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT,
+                PipelineStage.BEFORE_FINISH,
+                PipelineStepStatus.PENDING,
+                str(grid_task_id),
+            ))
+            if affected:
+                logger.info(
+                    "Failed %s pending storyboard grid split step(s) for grid_task_id=%s",
+                    affected, grid_task_id,
+                )
+            return affected
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to fail pending grid split step for grid_task_id={grid_task_id}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to fail pending grid split step for grid_task_id={grid_task_id} (unexpected): {e}")
+            raise
+
+    @staticmethod
     def get_orphan_grid_split_steps(
         limit: int,
-        grid_failed_statuses: tuple,
+        grid_terminal_statuses: tuple,
     ) -> List['PipelineStep']:
         """
-        查找孤儿 storyboard grid split 步骤：自身仍 PENDING，但绑定的 grid_image_tasks 已进入失败终态。
+        查找孤儿 storyboard grid split 步骤：自身仍 PENDING，但绑定的 grid_image_tasks 已进入终态。
 
-        通过 ai_tool_pipeline_steps.ai_tool_id = CAST(grid_image_tasks.project_id AS UNSIGNED) 关联。
-        grid_image_tasks.project_id 存储的是 ai_tools.id 的字符串形式。
+        通过 grid_image_tasks.id = ai_tool_pipeline_steps.params.grid_task_id 关联。
+        grid_task_id 是 grid_image_tasks 主键，宫格重试中保持稳定（project_id 会漂移，不能用作关联键）。
+
+        孤儿包含两类：
+        1. grid 已进入失败终态（FAILED/TIMEOUT/DOWNLOAD_FAILED/CANCELLED），step 未被失败回写命中；
+        2. grid 已 COMPLETED 但 step 仍未被 dispatch（宫格重试导致 project_id 漂移、
+           预建 step 找不到时被 fallback 新建的兄弟 step 替代），属于僵尸 step。
 
         Args:
             limit: 最大返回数量
-            grid_failed_statuses: grid_image_tasks 的失败终态状态值元组
-                                  （如 GridImageTaskStatus.FAILED/TIMEOUT/DOWNLOAD_FAILED/CANCELLED）
+            grid_terminal_statuses: 视为终态的 grid_image_tasks 状态值元组
+                                    （应包含 COMPLETED 以及各失败终态）
 
         Returns:
             孤儿 PipelineStep 对象列表
         """
-        if not grid_failed_statuses:
+        if not grid_terminal_statuses:
             return []
-        placeholders = ",".join(["%s"] * len(grid_failed_statuses))
+        placeholders = ",".join(["%s"] * len(grid_terminal_statuses))
         sql = f"""
-            SELECT s.*
+            SELECT s.*, g.status AS grid_status
             FROM ai_tool_pipeline_steps s
             INNER JOIN grid_image_tasks g
-              ON g.project_id = CAST(s.ai_tool_id AS CHAR)
+              ON g.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(s.params, '$.grid_task_id')) AS UNSIGNED)
             WHERE s.step_type = %s
               AND s.stage = %s
               AND s.status = %s
@@ -623,7 +747,7 @@ class PipelineStepModel:
             PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT,
             PipelineStage.BEFORE_FINISH,
             PipelineStepStatus.PENDING,
-            *grid_failed_statuses,
+            *grid_terminal_statuses,
             limit,
         )
         try:
