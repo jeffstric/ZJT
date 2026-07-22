@@ -134,13 +134,30 @@
 }
 ```
 
-普通视频画幅不信任 Agent 自行从文本推断。后端启动普通视频 Agent 前，直接读取当前故事板的
-`workflow_ratio`，并连同本轮已解析的 `duration`、`resolution`、`image_mode`
-组成任务级 `video_preferences` 快照。`StoryboardAgentVideoToolExecutor` 只在当前工具调用
-上下文中注入该快照，调用结束立即恢复，不写入 `user_id + world_id` 共享偏好，避免并发
-Agent 互相覆盖或污染后续非故事板任务。因此左上角选择 `9:16` 后，
-`generate_text_to_video` 和 `image_to_video` 都会以 `9:16` 提交，不会因工具缺省值回退为
-`16:9`。读取已有偏好通过 `asyncio.to_thread` 执行，不阻塞 FastAPI 事件循环。
+普通视频画幅与**视频模型**均不信任 Agent 自行推断或改选。后端启动普通视频 Agent 前：
+
+1. 前端每次发送带上当前齿轮的 `video_task_id`（`state.selectedVideoTaskId`）。
+2. 后端读取故事板 `workflow_ratio`，连同本轮已解析的 `duration`、`resolution`、
+   `image_mode`、**`task_id` / `model_name`** 组成任务级 `video_preferences` 快照
+   （对齐 `marketing_agent` 每条消息携带 `video_preferences.task_id` 的做法）。
+3. `StoryboardAgentVideoToolExecutor` 在当前工具调用上下文中注入该快照：
+   - 强制覆盖 `ratio` / `duration_seconds` / `image_mode`；
+   - **强制覆盖 `task_type`**（即齿轮选中的视频模型），即使 Agent 调用了
+     `list_video_models` 或自行传入了其它 `task_type`（例如误选 Seedance 2.0 Fast）
+     也以本次发送时的快照为准。
+4. 比例/时长/分辨率/模型快照不写入 `user_id + world_id` 共享偏好（仅额外同步
+   `image_to_video_model` / `text_to_video_model` 作为兼容兜底），调用结束立即恢复，
+   避免并发 Agent 互相覆盖或污染后续非故事板任务。
+
+因此：
+
+- 齿轮选 Grok（`task_id=27`）后，`ai_tools.type` 必须为 27，不会静默落到 Seedance 等默认/旧偏好。
+- **中途改模型**：用户在对话过程中改了齿轮视频模型，**下一次发送**使用新模型；
+  已在跑的 Agent 任务仍使用其发送时的任务快照，互不干扰（与 marketing 每条消息独立
+  `video_preferences` 语义一致）。
+- 左上角选择 `9:16` 后，`generate_text_to_video` 和 `image_to_video` 都会以 `9:16` 提交。
+
+读取已有偏好通过 `asyncio.to_thread` 执行，不阻塞 FastAPI 事件循环。
 
 导出（后续实现）按 `clip_to_audio_duration` 决定是否把视频裁到 `scene.duration`；关闭则使用完整生成视频。
 

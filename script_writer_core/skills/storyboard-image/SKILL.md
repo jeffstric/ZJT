@@ -29,6 +29,7 @@ allowed-tools: ["generate_text_to_image", "edit_image", "generate_text_to_video"
    - `image_mode` 必须与【视频图片模式】一致：`first_last_frame`（首尾帧：第1张首帧、第2张可选尾帧）或 `multi_reference`（全能参考：全部为参考图）。
    - `duration_seconds` **必须**使用【视频生成参数】中给出的数值，严禁擅自改时长。
    - 若上下文提供了 `resolution` 且工具支持，原样传入。
+   - 视频模型已由系统按用户齿轮选择注入，**禁止**调用 `list_video_models` 改选，**禁止**自行传入 `task_type`。
    - 没有任何【图生视频输入图】时才调用 `generate_text_to_video()`，同样必须使用给定 `duration_seconds`。
    - 不要调用图片工具。
 4. 如果任务目标是生成/编辑首帧图片，参考图清单非空时必须调用 `edit_image()`，并把清单中的真实 HTTP/HTTPS URL 按顺序用英文逗号拼接为 `image_url`。
