@@ -9,7 +9,7 @@
 
 ## 连接方式
 
-智能体一开始不知道协议、host、port 和 token。用户需要在 `web/index.html` 首页用户名旁点击 2x2 智能体图标按钮，复制连接信息给智能体。按钮使用 `web/assets/logos` 中本地化的 Codex/OpenAI、Claude Code、OpenClaw、WorkBuddy 图标快照，hover 显示“智能体连接”。
+智能体一开始不知道协议、host、port 和 token。用户需要在 `web/index.html` 首页用户名旁点击 2x2 智能体图标按钮，复制连接信息给智能体。按钮使用 `web/assets/logos` 中本地化的 Codex/OpenAI、Claude Code、OpenClaw、WorkBuddy 图标快照，hover 显示“智能体连接”。社区版的连接信息弹框会显示“限时免费”徽章，商业版不显示。
 
 连接信息包含：
 

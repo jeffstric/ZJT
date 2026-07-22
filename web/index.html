@@ -149,7 +149,10 @@
     <div class="modal-overlay" v-if="showAgentConnectionModal" @click.self="closeAgentConnectionModal">
       <div class="modal agent-connection-modal" style="position: relative;">
         <button class="modal-close" @click="closeAgentConnectionModal">×</button>
-        <div class="modal-title">智能体连接信息</div>
+        <div class="modal-title">
+          智能体连接信息
+          <span v-if="isCommunityEdition" class="agent-connection-free-badge">限时免费</span>
+        </div>
         <div class="agent-connection-content">
           <p class="agent-connection-desc">
             将下面连接包交给 Codex、Claude Code、OpenClaw 或腾讯 WorkBuddy 智能体。接口路径由 skill 按 api_version 固定拼接，智能体会先用 agent_token 换取 auth_token。
