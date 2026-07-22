@@ -165,8 +165,8 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
                 ai_tool = AIToolsModel.get_by_id(task_id)
                 result = asyncio.run(_submit_new_task(ai_tool))
 
-                # 验证任务失败（返回 False 让上层处理重试逻辑）
-                self.assertFalse(result, "异常时应该返回 False（重试）")
+                # 验证任务失败（返回 True 表示已处理：标记 FAILED + 退费）
+                self.assertTrue(result, "异常时应该返回 True（已处理失败+退费）")
 
                 updated_tool = AIToolsModel.get_by_id(task_id)
                 self.assertEqual(updated_tool.status, AI_TOOL_STATUS_FAILED)
