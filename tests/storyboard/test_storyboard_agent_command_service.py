@@ -270,12 +270,97 @@ def test_storyboard_agent_command_dispatches_split_force_overwrite_subscene_grid
             "storyboard_id": 44,
             "user_id": 7,
             "auth_token": "token",
+            "model": "deepseek-v4-pro",
             "force_overwrite_subscene_grids": True,
         },
     )
 
     assert result["success"] is True
     assert calls[0]["force_overwrite_subscene_grids"] is False
+    assert calls[0]["model"] == "deepseek-v4-pro"
+
+
+def test_split_from_script_requires_model():
+    """split-from-script 缺 model 时拒绝（CLI 路径强制，不再回退默认 gemini）。
+
+    _to_required_str 抛 StoryboardCliError，与 _to_required_int 同模式；
+    HTTP 路由层（api/storyboard.py）会捕获它转成 JSON 错误响应。
+    """
+    import pytest
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+    from services.storyboard_agent_cli_service import StoryboardCliError
+
+    class FakeStoryboardService:
+        def split_from_script(self, **kwargs):
+            raise AssertionError("缺 model 时不应进入 service")
+
+    with pytest.raises(StoryboardCliError) as exc_info:
+        StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
+            "split-from-script",
+            {"storyboard_id": 44, "user_id": 7, "auth_token": "token"},
+        )
+
+    assert exc_info.value.error_code == "missing_parameter"
+    assert "model" in exc_info.value.message
+
+
+def test_split_from_script_requires_auth_token():
+    """split-from-script 缺 auth_token 时拒绝。
+
+    worker 调 LLM 的 token 算力由 auth_token 解析出的 user_id 承担；漏传会导致
+    LLM 免费消耗（token_log 门禁 if auth_token 被跳过）。与数字人路径对齐。
+    """
+    import pytest
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+    from services.storyboard_agent_cli_service import StoryboardCliError
+
+    class FakeStoryboardService:
+        def split_from_script(self, **kwargs):
+            raise AssertionError("缺 auth_token 时不应进入 service")
+
+    with pytest.raises(StoryboardCliError) as exc_info:
+        StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
+            "split-from-script",
+            {"storyboard_id": 44, "user_id": 7, "model": "m"},  # 无 auth_token
+        )
+
+    assert exc_info.value.error_code == "missing_auth_token"
+    assert "auth_token" in exc_info.value.message
+
+
+def test_split_from_script_max_group_duration_range():
+    """max_group_duration 强制 10~15 范围：低于 10 或高于 15 都拒绝。
+    低于 10 会让分段碎、画面增多，导致同世界画风一致性下降。"""
+    import pytest
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+    from services.storyboard_agent_cli_service import StoryboardCliError
+
+    class FakeStoryboardService:
+        def split_from_script(self, **kwargs):
+            raise AssertionError("超范围时不应进入 service")
+
+    # 合法值应放行（这里 FakeService 会抛 AssertionError 表示已进入，用另一个 stub）
+    class OkService:
+        def split_from_script(self, **kwargs):
+            return {"success": True, "max_group_duration": kwargs["max_group_duration"]}
+
+    for ok in [10, 12, 15]:
+        result = StoryboardAgentCommandService(service=OkService()).execute(
+            "split-from-script",
+            {"storyboard_id": 44, "user_id": 7, "auth_token": "token", "model": "m", "max_group_duration": ok},
+        )
+        assert result["max_group_duration"] == ok, f"{ok} 应放行"
+
+    # 非法值应拒绝
+    for bad in [6, 8, 16, 20]:
+        with pytest.raises(StoryboardCliError) as exc_info:
+            StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
+                "split-from-script",
+                {"storyboard_id": 44, "user_id": 7, "auth_token": "token", "model": "m", "max_group_duration": bad},
+            )
+        assert exc_info.value.error_code == "invalid_parameter"
+        assert "max_group_duration" in exc_info.value.message
+        assert "10" in exc_info.value.message and "15" in exc_info.value.message
 
 
 def test_schema_lists_export_commands():

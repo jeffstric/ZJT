@@ -54,7 +54,12 @@ Fixed v1 endpoint paths:
 - `POST /api/storyboard/{storyboard_id}/auto-generate-missing-images`
 - `GET /api/storyboard/image-batches/{batch_id}/status`
 - `GET /api/storyboard/{storyboard_id}/task-status?asset_type=first_frame`
-- `GET /api/script-split/tasks/{task_id}`
+- `GET /api/script-split/tasks/{task_id}` — poll split task status
+- `GET /api/script-split/tasks/{task_id}/result` — fetch final result (409 unless completed)
+- `POST /api/script-split/tasks/{task_id}/resume` — resume a paused / waiting_auth task
+- `POST /api/script-split/tasks/{task_id}/cancel` — cooperatively cancel a running task
+
+All `status_url` / endpoint paths above are **relative** to `base_url`; prepend `base_url` when calling.
 
 ## Auth
 
@@ -142,6 +147,12 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/create-storyboard-from-
 在该世界最近保存的拆分模型偏好；没有偏好时使用服务端默认模型。解析结果写入
 `storyboard.config_json.selectedScriptSplitLlmModel`，后续 `split-from-script` 无需重复传模型。
 
+**⚠️ 画风与构图不可通过本命令修改**：`style` / `style_reference_image` / `composition_preference`
+/ `workflow_ratio` 四个参数已从命令层移除（即使传入也会被忽略）。这四项属于**世界级一致性资产**，
+由世界表的 `visual_style` / `composition_preference` 自动继承到同世界的所有故事板，保证多集画风
+一致。若需调整画风/构图/画幅，请让用户在世界设置页修改，不要按分镜方案（如 A/B/C 版本）差异化
+覆盖——否则同世界不同集会出现画风不一致。
+
 Split linked script into storyboard scenes:
 
 ```bash
@@ -150,11 +161,82 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/split-from-script" \
   -d '{"storyboard_id":10,"max_group_duration":15}'
 ```
 
-This is an **asynchronous** command. It creates a persistent split task and returns immediately with `task_id` and `status_url` (it does **not** block for the ~7-minute LLM parse). Poll the task until it reaches a terminal status, then list scenes:
+This is an **asynchronous** command. It creates a persistent split task and returns immediately with `task_id` and `status_url` (it does **not** block for the ~7-minute LLM parse).
+
+### Poll split tasks
+
+`status_url` is a **relative** path like `/api/script-split/tasks/215`; prepend `base_url` when polling. Note the two response envelopes differ: the `split-from-script` command returns `{success, task_id, status_url}` (agent-command envelope), while `GET /api/script-split/tasks/{id}` returns `{code:0, data:{...}}` (split-task envelope) — read `data` for the status object.
+
+The status object fields (in `data`):
+
+| field | meaning |
+|-------|---------|
+| `status` | task state machine value (see below) |
+| `phase` | sub-stage within a status (e.g. `planning`, `segment_generation`, `publishing`) |
+| `progress` | 0-100, monotonically increasing |
+| `message` | human-readable Chinese phase text (also surfaces to UI; not for programmatic decisions) |
+| `poll_after_ms` | suggested poll interval (default 3000) |
+| `error_code` | the `last_error_code` that caused paused/failed; `null` when none |
+| `error_message` | the detailed error text (e.g. `403 Client Error: Forbidden for url: ...`); `null` when none |
+| `resumable` | boolean — `true` only for `paused` / `waiting_auth` |
+| `resume_hint` | actionable hint keyed off `error_code` (e.g. `llm_gateway_error: ...`, `auth_expired: ...`); `null` when not resumable |
+
+**Task state machine — three groups:**
+
+1. **Terminal (stop polling):** `completed` / `failed` / `cancelled`. After `completed`, fetch results via `GET /tasks/{id}/result` or call `list-scenes`.
+2. **Resumable (stop polling, act first):** `paused` / `waiting_auth`. `resumable=true`. Read `error_code` + `resume_hint` to decide whether to `resume`, ask the user to fix the root cause, or `cancel`.
+3. **In-progress (keep polling):** `queued` / `planning` / `generating` / `merging` / `validating` / `publishing` / `cancelling`.
+
+**Critical:** do NOT loop forever on `paused`/`waiting_auth` — they are not terminal but they will not self-resolve. When you see `resumable=true`, stop polling and act on the error.
+
+Polling pseudocode:
+
+```
+loop:
+    resp = GET $BASE_URL/api/script-split/tasks/<task_id>      # {code:0, data:{...}}
+    st = resp.data
+    if st.resumable:                                            # paused / waiting_auth
+        decide_action(st.error_code, st.resume_hint)            # resume / ask user / cancel
+        break
+    if st.status in (completed, failed, cancelled):
+        break
+    sleep(st.poll_after_ms)
+```
+
+### Resume a paused / waiting_auth task
+
+`POST /api/script-split/tasks/{task_id}/resume`. The server gates resume by `error_code`:
+
+- **Blocked error codes** (`plan_call_failed`, `plan_timeout`, `step_watchdog_timeout`, `new_root_location_forbidden`, `location_parent_invalid`, `location_parent_conflict`): the root cause is an external dependency (LLM gateway / worker) or a hard gate (missing scene assets). A blind retry would loop back to `paused`, so the server **rejects** resume with HTTP 409 + `{error_code, resume_hint}`. After you confirm the root cause is fixed (e.g. LLM key restored, scene assets added), retry with `{"force": true}` in the body.
+- **`waiting_auth`**: resume requires a fresh `auth_token`. First `POST /api/agent-auth/exchange` to get a new token, then call resume with the `Authorization: Bearer <new_token>` header. Without a token, resume returns 409.
+- **Other codes** (`plan_failed`, `segment_qc_failed`, `segment_max_retries`, `segment_repeatedly_interrupted`, ...): content-validation failures — resume is allowed directly (no `force` needed).
+
+When resume returns 409, **do not retry it in a tight loop** — read `error_code`/`resume_hint`, surface the cause to the user, and only resume again once the cause is addressed.
+
+### Cancel a task
+
+`POST /api/script-split/tasks/{task_id}/cancel`. Cooperative cancel: sets `cancel_requested`, transitions to `cancelling`, and the worker finalizes to `cancelled` at the next checkpoint (the in-flight LLM call is not hard-killed). Use this to abandon a stuck task before re-splitting.
+
+### Reusing a storyboard with a stuck split task
+
+If `create-storyboard-from-script` returns an existing storyboard (`created:false`) whose split task is stuck in `paused`, do not hammer resume blindly. Either (a) `cancel` the stuck task then call `split-from-script` again (the active_key is released on terminal status, allowing a new task), or (b) inspect `error_code` first and resume with `force:true` only after the root cause is fixed.
+
+### error_code quick reference
+
+| error_code | group | Agent action |
+|------------|-------|--------------|
+| `plan_call_failed` | external | LLM gateway error (403/5xx). Ask user to check API key/quota/network, then `resume` with `force:true`. |
+| `plan_timeout` | external | LLM call timed out. Check model availability, then `resume` with `force:true`. |
+| `step_watchdog_timeout` | external | Worker step exceeded wall-clock budget. Check worker/LLM responsiveness, then `resume` with `force:true`. |
+| `waiting_auth` | auth | Token expired. `POST /api/agent-auth/exchange`, then `resume` with new `Authorization`. |
+| `new_root_location_forbidden` / `location_parent_*` | hard gate | Script references a top-level scene not modeled in DB. Ask user to add the scene in the script-authoring page, then `resume` with `force:true`. |
+| `plan_failed` | content | Plan validation failed (retryable). `resume` directly. |
+| `segment_qc_failed` / `segment_max_retries` / `segment_repeatedly_interrupted` | content | Segment-level validation failures (retryable). `resume` directly. |
+| `empty_script` / `invalid_*` | terminal | Already `failed`; will not appear in `paused`. Re-create the task after fixing the script. |
+
+Once the task reaches `completed`, list scenes:
 
 ```bash
-curl -s "$BASE_URL/api/script-split/tasks/<task_id>" -H "$AUTH"
-# poll until status is completed / failed / cancelled, then:
 curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/list-scenes" \
   -H "$AUTH" -H "Content-Type: application/json" -d '{"storyboard_id":10}'
 ```

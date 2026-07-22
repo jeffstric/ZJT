@@ -20,7 +20,7 @@ from api.auth_identity import (
 from config.constant import ScriptSplitConstants
 from model.location import LocationModel
 from model.script_split_segment import ScriptSplitSegmentModel
-from model.script_split_task import ScriptSplitTaskModel
+from model.script_split_task import ScriptSplitTaskModel, _resume_hint
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +275,11 @@ async def resume_task(
 
     - waiting_auth：用当前请求的新 token 更新后，从持久化检查点继续。
     - paused：发布阶段恢复 publishing，已有计划恢复 generating，否则恢复 queued。
+
+    拦截门：当 ``last_error_code`` 属于外部依赖/硬门禁类（RESUME_BLOCKED_ERROR_CODES）
+    时，盲目重跑必然再次 paused（根因未清除）。此时默认拒绝，要求调用方传 ``force:true``
+    确认根因已排除后再重试；waiting_auth 必须带新 Authorization（auth_token）。
+    拦截不改 DB 状态，任务仍停在 paused，Agent 可读 error_code/resume_hint 决策。
     """
     uid, normalized_token, auth_error = await _resolve_request_identity(auth_token, user_id)
     if auth_error:
@@ -290,6 +295,37 @@ async def resume_task(
         return JSONResponse(
             status_code=409,
             content={"code": -1, "message": f"任务当前状态 {task.status} 不可恢复"},
+        )
+
+    # 解析 body：允许空 body（兼容旧前端），force=true 时跳过拦截门
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    force = bool(isinstance(body, dict) and body.get("force"))
+
+    err = task.last_error_code
+    hint = _resume_hint(task.status, err)
+    if not force and err in ScriptSplitConstants.RESUME_BLOCKED_ERROR_CODES:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "code": -1,
+                "message": f"任务暂停根因是 {err}，根因在外部依赖/硬门禁，需排查后传 force:true 重试",
+                "error_code": err,
+                "error_message": task.last_error_message,
+                "resume_hint": hint,
+            },
+        )
+    if err in ScriptSplitConstants.RESUME_NEEDS_AUTH_ERROR_CODES and not normalized_token:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "code": -1,
+                "message": "鉴权失效，请在 /api/agent-auth/exchange 重新换取 auth_token 后带 Authorization 头调用本接口",
+                "error_code": err,
+                "resume_hint": hint,
+            },
         )
 
     target_status = await _resume_task_from_checkpoint(task, normalized_token)

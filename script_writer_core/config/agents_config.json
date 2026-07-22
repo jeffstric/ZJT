@@ -224,6 +224,7 @@
         "generate_text_to_video",
         "image_to_video",
         "list_video_models",
+        "list_llm_models",
         "check_image_status",
         "get_text_to_image_model_info",
         "get_user_computing_power",
