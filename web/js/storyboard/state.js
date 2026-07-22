@@ -24,6 +24,11 @@ const state = {
     title: '故事板',
     style: '',
     workflowRatio: '16:9',
+    /**
+     * 主预览逻辑分辨率档位（与视频生成 videoResolution 独立）。
+     * 短边像素：480p / 720p（默认）/ 1080p；与 workflowRatio 合成逻辑画布。
+     */
+    previewResolution: '720p',
     compositionPreference: '',
     computingPower: null,
 
@@ -1048,6 +1053,7 @@ export function serializeUiConfig() {
         videoImageMode: state.videoImageMode,
         videoDurationMode: state.videoDurationMode,
         videoResolution: state.videoResolution,
+        previewResolution: state.previewResolution || '720p',
         clipToAudioDuration: state.clipToAudioDuration,
         aiOptimize: state.aiOptimize,
         subtitleEnabled: state.subtitleEnabled,
@@ -1084,6 +1090,12 @@ export function restoreUiConfig(config = {}) {
     }
     if (config.videoResolution !== undefined) {
         state.videoResolution = config.videoResolution || null;
+    }
+    if (config.previewResolution !== undefined && config.previewResolution !== null) {
+        const pr = String(config.previewResolution).trim().toLowerCase();
+        if (['480p', '720p', '1080p'].includes(pr)) {
+            state.previewResolution = pr;
+        }
     }
     if (typeof config.clipToAudioDuration === 'boolean') {
         state.clipToAudioDuration = config.clipToAudioDuration;

@@ -11,8 +11,9 @@
     --warning: #d97706;
     --success: #16a34a;
     --shadow: 0 8px 24px rgba(24, 38, 62, 0.08);
-    --timeline-thumb-width: 180px;
-    --timeline-thumb-height: 101.25px;
+    /* 时间轴默认 16:9（高 96）；JS 按 workflowRatio 覆盖 */
+    --timeline-thumb-width: 171px;
+    --timeline-thumb-height: 96px;
     --timeline-card-bg: #000;
 }
 
@@ -247,7 +248,8 @@ button {
     line-height: 1.35;
 }
 
-.header-ratio-select {
+.header-ratio-select,
+.header-preview-res-select {
   font-size: 11px;
   color: var(--muted);
   background: transparent;
@@ -260,7 +262,9 @@ button {
   vertical-align: middle;
 }
 .header-ratio-select:hover,
-.header-ratio-select:focus {
+.header-ratio-select:focus,
+.header-preview-res-select:hover,
+.header-preview-res-select:focus {
   border-color: #64748b;
   outline: none;
 }
@@ -1913,23 +1917,40 @@ button {
     overflow: hidden;
 }
 
+/* 主预览：外层衬底 + 固定比例监视器（逻辑分辨率见 --logical-w/h） */
 .preview-wrapper {
     position: relative;
     flex: 1;
     min-height: 280px;
+    min-width: 0;
     overflow: hidden;
+    background: #0b0f17;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 逻辑画布在屏幕上的投影：宽高由 JS 按 min(1, panel/logical) 写入 */
+.preview-stage {
+    position: relative;
+    flex: 0 0 auto;
+    width: min(100%, calc(var(--logical-w, 1280) * 1px));
+    height: min(100%, calc(var(--logical-h, 720) * 1px));
+    max-width: 100%;
+    max-height: 100%;
+    aspect-ratio: var(--preview-ar, 16 / 9);
     background: #000;
-    display: block;
+    overflow: hidden;
 }
 
 .preview-media {
-    /* 绝对定位强制铺满容器，规避 grid place-items:center 对带固有宽高比的 img/video
-       解析不稳定（竖屏图撑不满高度）。object-fit:contain 保持比例，竖屏左右留黑边 */
+    /* 铺满 stage；scale-down = 仅当媒体大于画布时等比缩小（方案 A 只缩不放） */
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: scale-down;
+    object-position: center;
     /* 双缓冲淡入：默认透明，加载完成（或判定为同一张图）后加 .loaded 才显示，
        避免全量 innerHTML 重建时旧节点被销毁、新节点解码期间露出深色背景造成闪烁 */
     opacity: 0;
@@ -1965,22 +1986,28 @@ button {
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
 }
 
-/* 主预览：分镜图 + 涂色工具条 */
+/* 主预览：分镜图 + 涂色工具条（挂在 stage 内） */
 .preview-media-stack {
-    position: relative;
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: block;
     min-height: 0;
 }
 
 .preview-media-stack .preview-media {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: scale-down;
+    object-position: center;
     display: block;
+}
+
+.preview-stage .preview-subtitle {
+    z-index: 3;
 }
 
 .preview-image-toolbar {
@@ -2247,12 +2274,12 @@ button {
 .scene-timeline-playhead[hidden] {
     display: none !important;
 }
-/* 缩略图框尺寸跟随故事板 workflowRatio 自适应：统一以 96px 高度为基准，按比例反推宽度。
-   横屏(16:9→171px) / 方图(1:1→96px) / 竖屏(9:16→54px)，竖屏图不再被裁成一条 */
+/* 缩略图框尺寸跟随 workflowRatio：由 --timeline-thumb-* 变量控制（JS applyTimelineRatioVars）。
+   横屏固定高 96；竖屏固定宽 72；媒体 scale-down 与主预览一致 */
 .scene-timeline-item { flex: 0 0 auto; }
 .scene-timeline-thumb {
-    height: 96px;
-    aspect-ratio: 16 / 9;
+    width: var(--timeline-thumb-width);
+    height: var(--timeline-thumb-height);
     position: relative;
     overflow: hidden;
     border: 2px solid transparent;
@@ -2260,12 +2287,8 @@ button {
     background: #111827;
     color: #cbd5e1;
 }
-.scene-timeline-list[data-ratio="4:3"]  .scene-timeline-thumb { aspect-ratio: 4 / 3; }
-.scene-timeline-list[data-ratio="1:1"]  .scene-timeline-thumb { aspect-ratio: 1 / 1; }
-.scene-timeline-list[data-ratio="3:4"]  .scene-timeline-thumb { aspect-ratio: 3 / 4; }
-.scene-timeline-list[data-ratio="9:16"] .scene-timeline-thumb { aspect-ratio: 9 / 16; }
 .scene-timeline-thumb.active { border: 3px solid var(--primary); box-shadow: 0 0 0 3px rgba(47, 109, 246, 0.25); transform: scale(1.04); z-index: 1; }
-.scene-timeline-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scene-timeline-thumb img { width: 100%; height: 100%; object-fit: scale-down; display: block; background: #000; }
 .scene-timeline-thumb b { position: absolute; right: 5px; bottom: 5px; color: #fff; background: rgba(0,0,0,0.55); border-radius: 4px; font-size: 11px; padding: 2px 4px; }
 .scene-timeline-media-frame {
     position: absolute;
@@ -2336,12 +2359,16 @@ button {
 
 .scene-timeline-actions { justify-content: center; gap: 4px; margin-top: 4px; opacity: 0.8; }
 .scene-timeline-actions button { width: 24px; height: 24px; border-radius: 4px; background: var(--panel-soft); color: var(--muted); }
-/* 加号按钮跟随当前比例，与缩略图等高等比例对齐 */
-.add-scene-btn { height: 96px; aspect-ratio: 16 / 9; border: 1px dashed var(--border); border-radius: 8px; background: #fff; color: var(--primary); flex: 0 0 auto; }
-.scene-timeline-list[data-ratio="4:3"]  .add-scene-btn { aspect-ratio: 4 / 3; }
-.scene-timeline-list[data-ratio="1:1"]  .add-scene-btn { aspect-ratio: 1 / 1; }
-.scene-timeline-list[data-ratio="3:4"]  .add-scene-btn { aspect-ratio: 3 / 4; }
-.scene-timeline-list[data-ratio="9:16"] .add-scene-btn { aspect-ratio: 9 / 16; }
+/* 加号按钮与缩略图同尺寸（变量驱动） */
+.add-scene-btn {
+    width: var(--timeline-thumb-width);
+    height: var(--timeline-thumb-height);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--primary);
+    flex: 0 0 auto;
+}
 .scene-timeline-insert-slot,
 .grid-insert-slot {
     display: grid;
@@ -2354,7 +2381,7 @@ button {
 .scene-timeline-insert-slot {
     width: 22px;
     min-width: 22px;
-    height: 96px;
+    height: var(--timeline-thumb-height);
     align-self: flex-start;
     border-radius: 8px;
 }
@@ -2370,8 +2397,7 @@ button {
     outline-offset: 2px;
 }
 
-/* Storyboard timeline filmstrip cards.  The frame is always landscape; media uses contain
-   so portrait frames keep their full height instead of being cropped. */
+/* Storyboard timeline filmstrip：框尺寸跟 ratio（变量），媒体 scale-down 与主预览一致 */
 .scene-timeline-list {
     gap: 10px;
     padding: 2px 4px 8px;
@@ -2393,12 +2419,6 @@ button {
     border: 2px solid rgba(255, 255, 255, 0.14);
     background: var(--timeline-card-bg);
     isolation: isolate;
-}
-.scene-timeline-list[data-ratio="4:3"] .scene-timeline-thumb,
-.scene-timeline-list[data-ratio="1:1"] .scene-timeline-thumb,
-.scene-timeline-list[data-ratio="3:4"] .scene-timeline-thumb,
-.scene-timeline-list[data-ratio="9:16"] .scene-timeline-thumb {
-    aspect-ratio: auto;
 }
 .scene-timeline-thumb::after {
     content: "";
@@ -2431,14 +2451,16 @@ button {
 .scene-timeline-media-frame img {
     width: 100%;
     height: 100%;
-    object-fit: contain !important;
+    object-fit: scale-down !important;
+    object-position: center;
     display: block;
     background: #000;
 }
 .scene-timeline-thumb > img {
     width: 100%;
     height: 100%;
-    object-fit: contain !important;
+    object-fit: scale-down !important;
+    object-position: center;
     display: block;
     background: #000;
 }
@@ -2528,12 +2550,6 @@ button {
     aspect-ratio: auto;
     border: 1px dashed rgba(47, 109, 246, 0.45);
     background: rgba(47, 109, 246, 0.06);
-}
-.scene-timeline-list[data-ratio="4:3"] .add-scene-btn,
-.scene-timeline-list[data-ratio="1:1"] .add-scene-btn,
-.scene-timeline-list[data-ratio="3:4"] .add-scene-btn,
-.scene-timeline-list[data-ratio="9:16"] .add-scene-btn {
-    aspect-ratio: auto;
 }
 .scene-timeline-insert-slot {
     width: 24px;

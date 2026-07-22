@@ -43,6 +43,15 @@ import {
     isBatchSelectionActive,
     isSceneSelected,
 } from './batch_selection_state.js';
+import {
+    PREVIEW_RESOLUTION_OPTIONS,
+    normalizePreviewResolution,
+    resolveLogicalCanvas,
+    applyPreviewCanvas,
+    bindPreviewCanvasObserver,
+    ensurePreviewStage,
+    applyTimelineRatioVars,
+} from './preview_canvas.js';
 
 export { Region } from './ui_regions.js';
 
@@ -850,6 +859,15 @@ function renderHeader() {
                                 `<option value="${r}" ${state.workflowRatio === r ? 'selected' : ''}>${r}</option>`
                             ).join('')}
                         </select>
+                        <select class="header-preview-res-select" data-preview-resolution-select
+                            title="预览逻辑分辨率（与视频生成分辨率独立；默认 720p）">
+                            ${PREVIEW_RESOLUTION_OPTIONS.map((opt) => {
+                                const cur = normalizePreviewResolution(state.previewResolution);
+                                const canvas = resolveLogicalCanvas(state.workflowRatio || '16:9', opt.value);
+                                const dim = `${canvas.width}×${canvas.height}`;
+                                return `<option value="${opt.value}" ${cur === opt.value ? 'selected' : ''}>${opt.label} · ${dim}</option>`;
+                            }).join('')}
+                        </select>
                         <span class="header-style-info" data-action="edit-global-style" title="点击编辑全局画风和构图倾向">
                             画风：${escapeHtml(truncateText(state.style, 15))} 构图倾向：${escapeHtml(truncateText(state.compositionPreference, 15))}
                         </span>
@@ -1367,11 +1385,19 @@ function renderAgentMessages() {
 
 function renderCenter(scene) {
     if (state.viewMode === 'grid') return renderStoryboardGrid();
+    const ratio = state.workflowRatio || '16:9';
+    const previewRes = normalizePreviewResolution(state.previewResolution);
+    const canvas = resolveLogicalCanvas(ratio, previewRes);
     return `
         <main class="center-panel">
-            <section class="preview-wrapper">
-                ${mediaFrame(scene)}
-                ${previewSubtitleHtml()}
+            <section class="preview-wrapper"
+                data-ratio="${escapeHtml(ratio)}"
+                data-preview-resolution="${escapeHtml(previewRes)}"
+                style="--logical-w:${canvas.width};--logical-h:${canvas.height};--preview-ar:${canvas.width} / ${canvas.height};">
+                <div class="preview-stage">
+                    ${mediaFrame(scene)}
+                    ${previewSubtitleHtml()}
+                </div>
                 <div class="preview-caption">
                     <strong>${escapeHtml(scene ? scene.title : '未选择分镜')}</strong>
                     <span>${scene ? scene.durationLabel : '00:00'}</span>
@@ -2715,7 +2741,7 @@ export function patchTimelineListStructure() {
     const sig = scenesStructureSig();
     list.innerHTML = renderTimelineListInner();
     list.dataset.scenesSig = sig;
-    list.setAttribute('data-ratio', state.workflowRatio || '16:9');
+    applyTimelineRatioVars(list, state.workflowRatio || '16:9');
     list.scrollLeft = scrollLeft;
     // 写入各 thumb 的 mediaSig，避免下一轮 updateSceneThumb 误判重复刷
     (state.scenes || []).forEach((sc) => {
@@ -2786,9 +2812,13 @@ export function patchCenter() {
     if (next) {
         attachPreviewMediaTransition(next.querySelector('.preview-media'), oldKey);
         const list2 = next.querySelector('.scene-timeline-list');
-        if (list2) list2.scrollLeft = scrollLeft;
+        if (list2) {
+            list2.scrollLeft = scrollLeft;
+            applyTimelineRatioVars(list2, state.workflowRatio || '16:9');
+        }
         const grid2 = next.querySelector('.storyboard-grid');
         if (grid2) grid2.scrollTop = scrollTop;
+        bindPreviewCanvasObserver();
         updatePlayheadPosition({ followScroll: false });
     }
     return Boolean(next);
@@ -2814,6 +2844,7 @@ export function patchCandidates() {
 /**
  * 清掉预览区残留层：empty 状态字 / buffering 遮罩 / 多余 media。
  * 历史 bug：empty 不是 .preview-media，切到有图分镜时只 insert 不 remove → 中间残留「等待…」等文案。
+ * stage / caption / subtitle 外壳保留。
  */
 function clearPreviewMediaLayers(wrapper) {
     if (!wrapper) return;
@@ -2841,6 +2872,9 @@ export function patchPreview(scene, options = {}) {
     const { force = false } = options;
     const wrapper = document.querySelector('.preview-wrapper');
     if (!wrapper || !scene) return false;
+
+    const stage = ensurePreviewStage(wrapper);
+    const mount = stage || wrapper;
 
     const previewMedia = choosePreviewMedia(scene);
     const nextKey = previewMedia.kind === 'video'
@@ -2878,6 +2912,7 @@ export function patchPreview(scene, options = {}) {
 
     if (oldKey && nextKey && oldKey === nextKey && !force && !hasStaleOverlay) {
         setCaption();
+        applyPreviewCanvas(wrapper);
         return true;
     }
 
@@ -2892,6 +2927,7 @@ export function patchPreview(scene, options = {}) {
             try { media.load(); } catch { /* ignore */ }
         }
         setCaption();
+        applyPreviewCanvas(wrapper);
         return true;
     }
     if (
@@ -2901,29 +2937,28 @@ export function patchPreview(scene, options = {}) {
         const url = String(previewMedia.url).trim();
         if (media.getAttribute('src') !== url) media.src = url;
         setCaption();
+        applyPreviewCanvas(wrapper);
         return true;
     }
 
-    // 类型变化 / empty↔媒体 / 有残留层：整层替换媒体区，保留 subtitle + caption 兄弟
+    // 类型变化 / empty↔媒体 / 有残留层：整层替换媒体区，挂到 stage 内、subtitle 前
     clearPreviewMediaLayers(wrapper);
     const html = mediaFrame(scene);
     const tmp = document.createElement('div');
     tmp.innerHTML = html.trim();
     const newMedia = tmp.firstElementChild;
     if (!newMedia) return false;
-    const anchor = wrapper.querySelector('.preview-subtitle')
-        || wrapper.querySelector('.preview-caption')
-        || null;
-    if (anchor) {
-        wrapper.insertBefore(newMedia, anchor);
+    const subEl = mount.querySelector('.preview-subtitle');
+    if (subEl) {
+        mount.insertBefore(newMedia, subEl);
     } else {
-        wrapper.appendChild(newMedia);
+        mount.appendChild(newMedia);
     }
-    if (!wrapper.querySelector('.preview-subtitle')) {
+    if (!mount.querySelector('.preview-subtitle')) {
         const sub = document.createElement('div');
         sub.className = 'preview-subtitle';
         sub.hidden = true;
-        newMedia.after(sub);
+        mount.appendChild(sub);
     }
     if (!wrapper.querySelector('.preview-caption')) {
         const cap = document.createElement('div');
@@ -2933,6 +2968,7 @@ export function patchPreview(scene, options = {}) {
     }
     setCaption();
     attachPreviewMediaTransition(wrapper.querySelector('.preview-media'), oldKey);
+    applyPreviewCanvas(wrapper);
     return true;
 }
 
@@ -2992,6 +3028,7 @@ function patchTimelineListOrGrid() {
     if (list.dataset.scenesSig !== sig) {
         return patchTimelineListStructure();
     }
+    applyTimelineRatioVars(list, state.workflowRatio || '16:9');
     let n = 0;
     (state.scenes || []).forEach((sc) => {
         if (updateSceneThumb(sc)) n += 1;
@@ -3145,6 +3182,12 @@ function renderAppFull() {
         <div class="storyboard-modals" data-region="modals">${renderModalsHtml()}</div>`;
 
     attachPreviewMediaTransition(app.querySelector('.preview-media'), oldPreviewKey);
+    // 时间轴比例 + 主预览逻辑画布
+    applyTimelineRatioVars(
+        app.querySelector('.scene-timeline-list'),
+        state.workflowRatio || '16:9'
+    );
+    bindPreviewCanvasObserver();
 
     requestAnimationFrame(() => {
         savedScrolls.forEach(({ selector, prop, value }) => {
@@ -3156,6 +3199,7 @@ function renderAppFull() {
             agentLog.scrollTop = agentLog.scrollHeight;
         }
         updatePlayheadPosition({ followScroll: false });
+        applyPreviewCanvas();
     });
 }
 
@@ -3279,16 +3323,11 @@ export function updateCurrentSceneDetail(scene) {
         const nextCaption = `${scene.title || ''}|${scene.durationLabel || ''}`;
         // 主媒体与标题未变：跳过重建，避免轮询导致主预览反复闪烁
         if (oldKey && nextKey && oldKey === nextKey && oldCaption === nextCaption) {
+            applyPreviewCanvas(previewWrapper);
             updated = true;
         } else {
-            previewWrapper.innerHTML = `
-                ${mediaFrame(scene)}
-                ${previewSubtitleHtml()}
-                <div class="preview-caption">
-                    <strong>${escapeHtml(scene.title)}</strong>
-                    <span>${escapeHtml(scene.durationLabel)}</span>
-                </div>`;
-            attachPreviewMediaTransition(previewWrapper.querySelector('.preview-media'), oldKey);
+            // 走 patchPreview，保留 preview-stage 外壳与逻辑画布
+            patchPreview(scene, { force: true });
             updated = true;
         }
     }

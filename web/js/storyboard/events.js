@@ -874,6 +874,18 @@ async function sendStoryboardAgentMessage(current) {
         return;
     }
 
+    // 视频模式（界面）：必须已选页面齿轮视频模型，后端也会严格校验，不允许依赖 Agent 自选
+    if (state.chatMode === 'video') {
+        const isDh = String(current?.videoType || current?.video_type || '').toLowerCase() === 'digital_human';
+        if (!isDh && (state.selectedVideoTaskId == null || state.selectedVideoTaskId === '')) {
+            notify('请先在模型配置中选择视频模型');
+            state.showModelConfigModal = true;
+            state.currentConfigTab = 'video';
+            rerenderModals();
+            return;
+        }
+    }
+
     startSceneAgentRun(streamSceneId);
     pushAgentMessageForScene(streamSceneId, 'user', message);
     state.inputMessage = '';
@@ -2499,6 +2511,17 @@ export function bindEvents() {
                     .then(() => notify('画面比例已更新'))
                     .catch(err => notify('比例更新失败: ' + (err.message || err)));
             }
+            // header 文案 + 主预览 stage + 时间轴拇指尺寸（CENTER 在结构未变时会保留旧 preview，故显式 PREVIEW）
+            rerender([Region.HEADER, Region.PREVIEW, Region.TIMELINE_LIST], { forcePreview: true });
+            return;
+        }
+        if (target.dataset.previewResolutionSelect !== undefined) {
+            const next = String(target.value || '').trim().toLowerCase();
+            if (!['480p', '720p', '1080p'].includes(next)) return;
+            state.previewResolution = next;
+            // header 选项含逻辑尺寸文案；预览框随档位变
+            rerender([Region.HEADER, Region.PREVIEW], { forcePreview: true });
+            persistUiConfig().catch(() => {});
             return;
         }
         if (event.key === 'Escape' && isBatchSelectionActive() && !state.batchSelection?.submittingAction) {

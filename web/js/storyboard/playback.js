@@ -16,6 +16,11 @@ import { formatDuration } from './adapters.js';
 import { icon } from './icons.js';
 import { showToast } from './utils.js';
 import { SCENE_AUDIO_MODE, resolveSceneAudioMode } from './playback_audio.js';
+import {
+    ensurePreviewStage,
+    applyPreviewCanvas,
+    getPreviewMediaMountParent,
+} from './preview_canvas.js';
 
 const EMPTY_HOLD_FALLBACK = 2;
 const TICK_MS = 50;
@@ -193,6 +198,7 @@ function setPlaybackBuffering(on) {
     if (state.playback) state.playback.buffering = !!on;
     const wrapper = document.querySelector('.preview-wrapper');
     if (!wrapper) return;
+    const host = ensurePreviewStage(wrapper) || wrapper;
     let mask = wrapper.querySelector('.preview-buffering');
     if (on) {
         if (!mask) {
@@ -200,7 +206,9 @@ function setPlaybackBuffering(on) {
             mask.className = 'preview-buffering';
             mask.setAttribute('aria-live', 'polite');
             mask.innerHTML = '<span class="preview-buffering-text">加载中…</span>';
-            wrapper.appendChild(mask);
+            host.appendChild(mask);
+        } else if (mask.parentElement !== host) {
+            host.appendChild(mask);
         }
         mask.hidden = false;
     } else if (mask) {
@@ -489,11 +497,13 @@ function updatePreviewCaption(plan) {
 function ensurePreviewShell() {
     let wrapper = document.querySelector('.preview-wrapper');
     if (!wrapper) return null;
-    if (!wrapper.querySelector('.preview-subtitle')) {
+    const stage = ensurePreviewStage(wrapper);
+    const mount = stage || wrapper;
+    if (!mount.querySelector('.preview-subtitle')) {
         const sub = document.createElement('div');
         sub.className = 'preview-subtitle';
         sub.hidden = true;
-        wrapper.appendChild(sub);
+        mount.appendChild(sub);
     }
     if (!wrapper.querySelector('.preview-caption')) {
         const cap = document.createElement('div');
@@ -501,19 +511,30 @@ function ensurePreviewShell() {
         cap.innerHTML = '<strong></strong><span></span>';
         wrapper.appendChild(cap);
     }
+    applyPreviewCanvas(wrapper);
     return wrapper;
 }
 
 function clearPreviewMedia(wrapper) {
-    wrapper.querySelectorAll('.preview-media, .preview-empty').forEach(node => node.remove());
+    if (!wrapper) return;
+    wrapper.querySelectorAll(
+        '.preview-media-stack, .preview-media, .preview-empty, .preview-image-toolbar'
+    ).forEach((node) => node.remove());
 }
 
 function mountVisual(plan) {
     const wrapper = ensurePreviewShell();
     if (!wrapper) return { videoEl: null, imageEl: null };
 
+    const mount = getPreviewMediaMountParent(wrapper) || wrapper;
     clearPreviewMedia(wrapper);
     activeVideoEl = null;
+
+    const insertMedia = (node) => {
+        const sub = mount.querySelector('.preview-subtitle');
+        if (sub) mount.insertBefore(node, sub);
+        else mount.appendChild(node);
+    };
 
     if (plan.visualType === 'video' && plan.visualUrl) {
         const video = document.createElement('video');
@@ -525,7 +546,7 @@ function mountVisual(plan) {
         video.setAttribute('playsinline', '');
         video.preload = 'auto';
         video.disablePictureInPicture = true;
-        wrapper.insertBefore(video, wrapper.querySelector('.preview-subtitle') || wrapper.firstChild);
+        insertMedia(video);
         activeVideoEl = video;
         return { videoEl: video, imageEl: null };
     }
@@ -535,14 +556,14 @@ function mountVisual(plan) {
         img.className = 'preview-media is-playback loaded';
         img.src = plan.visualUrl;
         img.alt = plan.title || '';
-        wrapper.insertBefore(img, wrapper.querySelector('.preview-subtitle') || wrapper.firstChild);
+        insertMedia(img);
         return { videoEl: null, imageEl: img };
     }
 
     const empty = document.createElement('div');
     empty.className = 'preview-empty';
     empty.textContent = '当前分镜还没有画面';
-    wrapper.insertBefore(empty, wrapper.querySelector('.preview-subtitle') || wrapper.firstChild);
+    insertMedia(empty);
     return { videoEl: null, imageEl: null };
 }
 
