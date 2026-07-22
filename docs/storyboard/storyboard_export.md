@@ -17,8 +17,15 @@
 
 - 有选中视频（`selected_video_id`）：`分镜{i}.mp4`（**不再写分镜图**）
 - 无选中视频、有首帧：`分镜{i}.png|jpg|…`
-- 第 j 条选中配音：`分镜{i}_{j}.wav`
+- 第 j 条选中配音：`分镜{i}_{j}.wav`（与是否有画面无关；无首帧/视频时仍会单独导出 wav）
 - 另含 `manifest.json`
+
+### 配音纳入条件与失败策略
+
+- 来源：各镜 `storyboard_dialogue.selected_audio_id` → `storyboard_dialogue_audio.audio_url`（未选中/无 URL 的对白不导出）。
+- 与分镜图是否生成完毕无关：只要对白有选中配音，就会尝试写入 `分镜{i}_{j}.wav`。
+- 单条下载/转码失败：记入 `manifest.missing`（如 `audio_1` / `audio_convert_1`），其余继续。
+- **全部配音均失败**（或配置常量缺失如 `EXPORT_AUDIO_*`）：整次导出抛错，**禁止**静默返回只有画面、没有 wav 的 zip（避免运维未重启进程时用户拿到空音频包）。
 
 ## 画面选择规则（素材包 + 完整视频共用）
 

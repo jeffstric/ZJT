@@ -438,8 +438,16 @@ def _ensure_wav(src: str, dest_wav: str) -> None:
 
 
 def materialize_package_files(plan: ExportPlan, out_dir: str) -> ExportPlan:
-    """下载/转换媒体到 out_dir，更新 plan 中的 file 字段与 missing。"""
+    """下载/转换媒体到 out_dir，更新 plan 中的 file 字段与 missing。
+
+    注意：单条媒体失败可记入 missing 后继续；但若计划内全部配音均失败，
+    视为系统性错误（如常量未加载、ffmpeg 不可用），直接抛错，避免静默导出
+    只有画面、没有 wav 的「空音频」素材包。
+    """
     os.makedirs(out_dir, exist_ok=True)
+    planned_audios = sum(len(sc.audios) for sc in plan.scenes)
+    last_audio_error: Optional[BaseException] = None
+
     for sc in plan.scenes:
         if sc.visual_type != "none" and sc.visual_url:
             raw = os.path.join(out_dir, f"_raw_v_{sc.index}{ _ext_from_url_or_path(sc.visual_url, '.bin') }")
@@ -481,7 +489,16 @@ def materialize_package_files(plan: ExportPlan, out_dir: str) -> ExportPlan:
                 if a.duration is None or a.duration <= 0:
                     a.duration = _probe_duration(dest)
                 kept_audios.append(a)
+            except AttributeError as e:
+                # 配置/常量缺失属系统性错误（例如服务未重启导致 StoryboardExportConstants
+                # 缺少 EXPORT_AUDIO_*），禁止静默丢弃全部配音。
+                logger.error("audio convert config error scene=%s a=%s: %s", sc.index, a.index, e)
+                raise RuntimeError(
+                    f"导出音频转换配置错误（scene={sc.index} audio={a.index}）: {e}。"
+                    "请确认服务已加载最新 config.constant（通常需重启进程）。"
+                ) from e
             except Exception as e:
+                last_audio_error = e
                 logger.warning("audio convert fail scene=%s a=%s: %s", sc.index, a.index, e)
                 sc.missing.append(f"audio_convert_{a.index}")
             finally:
@@ -491,6 +508,14 @@ def materialize_package_files(plan: ExportPlan, out_dir: str) -> ExportPlan:
                     except OSError:
                         pass
         sc.audios = kept_audios
+
+    kept_audios_total = sum(len(sc.audios) for sc in plan.scenes)
+    if planned_audios > 0 and kept_audios_total == 0:
+        detail = f": {last_audio_error}" if last_audio_error else ""
+        raise RuntimeError(
+            f"素材包音频转换全部失败（共 {planned_audios} 条）{detail}。"
+            "请检查 ffmpeg/配音 URL 与服务端日志 audio convert fail。"
+        )
     return plan
 
 
