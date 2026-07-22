@@ -193,6 +193,37 @@ def _has_audio_stream(path: str) -> bool:
         return False
 
 
+def _probe_audio_params(path: str) -> Optional[Tuple[str, str]]:
+    """探测媒体文件音频流的采样率与声道数，返回 (sample_rate, channels) 或 None。
+
+    用于导出诊断：记录每个 segment 的实际音频参数，便于排查"滋滋"噪音等参数
+    不一致问题。
+    """
+    if not path or not os.path.isfile(path):
+        return None
+    cmd = [
+        _ffprobe_path(),
+        "-v", "quiet",
+        "-select_streams", "a",
+        "-show_entries", "stream=sample_rate,channels",
+        "-of", "csv=p=0",
+        path,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=StoryboardTimeouts.EXPORT_FFMPEG_TIMEOUT_SECONDS,
+            encoding="utf-8", errors="replace",
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            parts = proc.stdout.strip().split(",")
+            if len(parts) >= 2:
+                return parts[0].strip(), parts[1].strip()
+    except Exception as e:
+        logger.debug("ffprobe audio params failed %s: %s", path, e)
+    return None
+
+
 def _ext_from_url_or_path(url: str, default: str) -> str:
     path = urlparse(url).path if "://" in (url or "") else (url or "")
     ext = os.path.splitext(path)[1].lower()
@@ -393,14 +424,15 @@ def _ensure_video_mp4(src: str, dest_mp4: str) -> None:
 
 
 def _ensure_wav(src: str, dest_wav: str) -> None:
-    ext = os.path.splitext(src)[1].lower()
-    if ext == ".wav":
-        shutil.copy2(src, dest_wav)
-        return
+    # 不再对 .wav 短路 copy：TTS 输出采样率/声道由远程服务决定（通常 24000Hz/mono），
+    # 不可信；必须统一重采样到 EXPORT_AUDIO_SAMPLE_RATE / EXPORT_AUDIO_CHANNELS，
+    # 否则下游各 segment 参数不一致，整片 concat 时会产生"滋滋"噪音。
     timeout = StoryboardTimeouts.EXPORT_FFMPEG_TIMEOUT_SECONDS
     _run_cmd([
         _ffmpeg_path(), "-y", "-i", src,
-        "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+        "-acodec", "pcm_s16le",
+        "-ar", str(StoryboardExportConstants.EXPORT_AUDIO_SAMPLE_RATE),
+        "-ac", str(StoryboardExportConstants.EXPORT_AUDIO_CHANNELS),
         dest_wav,
     ], timeout=timeout)
 
@@ -538,7 +570,9 @@ def _build_scene_audio(sc: SceneExportItem, pack_dir: str, work_dir: str, span: 
         _run_cmd([
             _ffmpeg_path(), "-y", "-f", "concat", "-safe", "0",
             "-i", list_file,
-            "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+            "-acodec", "pcm_s16le",
+            "-ar", str(StoryboardExportConstants.EXPORT_AUDIO_SAMPLE_RATE),
+            "-ac", str(StoryboardExportConstants.EXPORT_AUDIO_CHANNELS),
             concat_out,
         ], timeout=timeout)
         src = concat_out
@@ -548,7 +582,9 @@ def _build_scene_audio(sc: SceneExportItem, pack_dir: str, work_dir: str, span: 
         _ffmpeg_path(), "-y", "-i", src,
         "-af", f"atrim=0:{span:.3f},apad=whole_dur={span:.3f}",
         "-t", f"{span:.3f}",
-        "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+        "-acodec", "pcm_s16le",
+        "-ar", str(StoryboardExportConstants.EXPORT_AUDIO_SAMPLE_RATE),
+        "-ac", str(StoryboardExportConstants.EXPORT_AUDIO_CHANNELS),
         out,
     ], timeout=timeout)
     return out if os.path.isfile(out) else None
@@ -602,6 +638,8 @@ def _build_scene_visual(
             # 此处信任传入值。无音轨时调用方不会传 keep_audio=True。
             if keep_audio:
                 # 保留视频原音轨：视频截断到 span，音轨 atrim+apad 对齐到 span。
+                # 显式指定采样率/声道，避免视频原音轨参数（可能 48000Hz/任意声道）
+                # 与其它 segment 不一致，整片 concat 时产生"滋滋"噪音。
                 af = f"atrim=0:{span:.3f},apad=whole_dur={span:.3f}"
                 try:
                     _run_cmd([
@@ -610,7 +648,9 @@ def _build_scene_visual(
                         "-vf", vf_full,
                         "-af", af,
                         "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                        "-c:a", "aac", "-b:a", "192k",
+                        "-c:a", "aac", "-b:a", StoryboardExportConstants.EXPORT_AUDIO_BITRATE,
+                        "-ar", str(StoryboardExportConstants.EXPORT_AUDIO_SAMPLE_RATE),
+                        "-ac", str(StoryboardExportConstants.EXPORT_AUDIO_CHANNELS),
                         out,
                     ], timeout=timeout)
                 except RuntimeError as e:
@@ -653,25 +693,35 @@ def _mux_segment(
 ) -> None:
     """混流单镜视频与音频。
 
+    三个分支均强制把音频统一到 EXPORT_AUDIO_SAMPLE_RATE / EXPORT_AUDIO_CHANNELS /
+    EXPORT_AUDIO_BITRATE（aac），确保所有 segment 的音频参数完全一致，避免整片
+    concat（-c copy）时各镜采样率/声道/编码错位产生"滋滋"噪音。
+
     keep_audio=True 表示 silent_video 已含原音轨（audio_embedded 分镜），此时不再
-    另行混入 TTS 或补静音，直接 copy 音视频并截断到 span。
+    另行混入 TTS 或补静音，但仍需对音轨重编码以统一参数。
     """
     timeout = StoryboardTimeouts.EXPORT_FFMPEG_TIMEOUT_SECONDS
+    ar = str(StoryboardExportConstants.EXPORT_AUDIO_SAMPLE_RATE)
+    ac = str(StoryboardExportConstants.EXPORT_AUDIO_CHANNELS)
+    ba = StoryboardExportConstants.EXPORT_AUDIO_BITRATE
     if audio_wav and os.path.isfile(audio_wav):
         _run_cmd([
             _ffmpeg_path(), "-y",
             "-i", silent_video, "-i", audio_wav,
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", ba,
+            "-ar", ar, "-ac", ac,
             "-t", f"{span:.3f}", "-shortest",
             "-movflags", "+faststart",
             out_mp4,
         ], timeout=timeout)
     elif keep_audio and _has_audio_stream(silent_video):
-        # 视频已自带音轨（audio_embedded），直接 copy，按 span 截断
+        # 视频已自带音轨（audio_embedded）：音轨重编码统一参数（原 copy 会保留
+        # 视频原始采样率/声道，与其它 segment 冲突）。视频仍 copy。
         _run_cmd([
             _ffmpeg_path(), "-y",
             "-i", silent_video,
-            "-c:v", "copy", "-c:a", "copy",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", ba,
+            "-ar", ar, "-ac", ac,
             "-t", f"{span:.3f}",
             "-movflags", "+faststart",
             out_mp4,
@@ -681,8 +731,11 @@ def _mux_segment(
         _run_cmd([
             _ffmpeg_path(), "-y",
             "-i", silent_video,
-            "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+            "-f", "lavfi",
+            "-i", f"anullsrc=r={StoryboardExportConstants.EXPORT_AUDIO_SAMPLE_RATE}"
+                  f":cl={'stereo' if StoryboardExportConstants.EXPORT_AUDIO_CHANNELS == 2 else 'mono'}",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", ba,
+            "-ar", ar, "-ac", ac,
             "-t", f"{span:.3f}", "-shortest",
             "-movflags", "+faststart",
             out_mp4,
@@ -720,6 +773,13 @@ def build_merged_video(
         audio = None if keep_audio else _build_scene_audio(sc, pack_dir, work_dir, span)
         seg = os.path.join(work_dir, f"segment_{sc.index:04d}.mp4")
         _mux_segment(silent, audio, seg, span, keep_audio=keep_audio)
+        # 诊断日志：记录每个 segment 的音频参数，便于排查"滋滋"噪音等参数不一致问题
+        seg_params = _probe_audio_params(seg)
+        logger.info(
+            "export segment scene=%s keep_audio=%s audio_src=%s params(sample_rate,channels)=%s",
+            sc.index, keep_audio, "embedded" if keep_audio else ("tts" if audio else "silent"),
+            seg_params,
+        )
         segments.append(seg)
 
     if not segments:
@@ -740,7 +800,14 @@ def build_merged_video(
                 f.write(f"file '{ap}'\n")
         _run_cmd([
             _ffmpeg_path(), "-y", "-f", "concat", "-safe", "0",
-            "-i", list_file, "-c", "copy",
+            "-i", list_file,
+            "-c:v", "copy",                       # 视频仍 copy 保画质
+            # 音频强制重编码统一参数：各 segment 虽已在 _mux_segment 对齐，
+            # 但 concat demuxer 对参数最敏感，这里兜底统一以彻底消除"滋滋"噪音。
+            "-c:a", "aac",
+            "-b:a", StoryboardExportConstants.EXPORT_AUDIO_BITRATE,
+            "-ar", str(StoryboardExportConstants.EXPORT_AUDIO_SAMPLE_RATE),
+            "-ac", str(StoryboardExportConstants.EXPORT_AUDIO_CHANNELS),
             "-movflags", "+faststart",
             raw_path,
         ], timeout=timeout)
