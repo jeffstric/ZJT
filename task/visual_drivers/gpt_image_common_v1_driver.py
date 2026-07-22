@@ -64,8 +64,8 @@ class GptImageCommonV1Driver(BaseVideoDriver):
     }
 
     # 默认模型
-    DEFAULT_MODEL = "gpt-image-2"
-    EDIT_MODEL = "gpt-image-2"
+    DEFAULT_MODEL = "gpt-image-2-c"
+    EDIT_MODEL = "gpt-image-2-c"
     DEFAULT_EDIT_COUNT = 1
     VALID_QUALITIES = {"low", "medium", "high", "auto"}
     VALID_BACKGROUNDS = {"opaque", "auto", "transparent"}
