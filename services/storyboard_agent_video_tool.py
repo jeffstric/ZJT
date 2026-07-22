@@ -116,6 +116,15 @@ class StoryboardAgentVideoToolExecutor:
             if tool_name == "image_to_video" and preferences.get("image_mode"):
                 args["image_mode"] = preferences["image_mode"]
 
+            # 与 marketing_agent 一致：任务快照里的 task_id 强制覆盖 Agent/LLM
+            # 传入的 task_type，避免 list_video_models 自选或中途改模型后落到旧偏好。
+            forced_task_type = preferences.get("task_id")
+            if forced_task_type is not None and str(forced_task_type).strip() != "":
+                try:
+                    args["task_type"] = int(forced_task_type)
+                except (TypeError, ValueError):
+                    pass
+
             with scoped_video_preferences(preferences):
                 return self._delegate.execute_tool(
                     tool_name,

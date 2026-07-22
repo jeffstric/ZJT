@@ -312,8 +312,16 @@ async def _build_storyboard_agent_video_preferences(
     image_mode: str,
     duration_seconds: int,
     video_resolution: Optional[str],
+    video_task_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Build an immutable task snapshot without mutating shared user preferences."""
+    """Build an immutable task snapshot without mutating shared user preferences.
+
+    对齐 marketing_agent：每次 Agent 请求把当前界面选中的视频模型
+    （task_id / model_name）打进任务级快照，工具层强制使用该 task_type，
+    从而：
+    1) 避免 Agent 经 list_video_models 自选模型覆盖齿轮选择；
+    2) 用户中途改模型后，下一次发送使用新模型；进行中任务仍用发送时快照。
+    """
     ratio = (
         normalize_storyboard_workflow_ratio(getattr(storyboard, 'workflow_ratio', None))
         or DEFAULT_STORYBOARD_WORKFLOW_RATIO
@@ -339,6 +347,23 @@ async def _build_storyboard_agent_video_preferences(
     })
     if video_resolution:
         preferences['resolution'] = str(video_resolution)
+
+    resolved_task_id = None
+    if video_task_id is not None and str(video_task_id).strip() != '':
+        try:
+            resolved_task_id = int(video_task_id)
+        except (TypeError, ValueError):
+            resolved_task_id = None
+    if resolved_task_id is not None:
+        preferences['task_id'] = resolved_task_id
+        try:
+            cfg = UnifiedConfigRegistry.get_by_id(resolved_task_id)
+            if cfg and getattr(cfg, 'name', None):
+                preferences['model_name'] = cfg.name
+        except Exception as e:
+            logger.warning(
+                f"Failed to resolve storyboard video model name for task_id={resolved_task_id}: {e}"
+            )
     return preferences
 
 
@@ -1375,6 +1400,8 @@ def _build_storyboard_agent_message(
     video_duration_seconds: Optional[int] = None,
     video_resolution: Optional[str] = None,
     clip_to_audio_duration: Optional[bool] = None,
+    video_model_name: Optional[str] = None,
+    video_task_id: Optional[int] = None,
     spatial_constraints: Optional[Dict[str, Any]] = None,
     neighbor_contexts: Optional[Dict[str, Any]] = None,
 ) -> str:
@@ -1440,11 +1467,15 @@ def _build_storyboard_agent_message(
                 "本次目标是生成视频。当前没有任何图生视频输入图，必须调用 generate_text_to_video。"
                 "不要调用 image_to_video 或图片生成工具。"
             )
+        model_display = (video_model_name or '').strip() or (
+            f"task_id={video_task_id}" if video_task_id is not None else "系统默认"
+        )
         video_mode_block = f"""
 【视频图片模式】
 {image_mode}
 
 【视频生成参数】
+- 视频模型（已由系统按用户当前齿轮选择注入，禁止自行更换或调用 list_video_models 改选）：{model_display}
 - duration_seconds（必须原样传给本次允许的视频工具）：{duration_line}
 - resolution：{resolution_line}
 - 裁剪至配音时长（仅导出使用，生成时不必处理）：{clip_line}
@@ -1456,6 +1487,7 @@ def _build_storyboard_agent_message(
             tool_instruction
             + f" 调用视频工具时 duration_seconds 必须为 {duration_line}，严禁擅自改时长。"
             + (f" 若工具支持 resolution 参数，传入 {resolution_line}。" if video_resolution else "")
+            + " 视频模型已由系统注入，禁止调用 list_video_models 改选，禁止自行传入 task_type。"
         )
     else:
         video_mode_block = ""
@@ -3239,16 +3271,41 @@ async def scene_ai_chat(
             )
         except Exception as e:
             logger.warning(f"Failed to sync storyboard image model preference: {e}")
-    video_task_id = data.get('video_task_id')
-    if video_task_id:
+    raw_video_task_id = data.get('video_task_id')
+    video_task_id = None
+    if raw_video_task_id is not None and str(raw_video_task_id).strip() != '':
         try:
-            from api.script_writer import set_image_to_video_model_id
-            await asyncio.to_thread(
-                set_image_to_video_model_id,
-                str(user_id),
-                str(sb.world_id if sb else scene.storyboard_id),
-                int(video_task_id),
-            )
+            video_task_id = int(raw_video_task_id)
+        except (TypeError, ValueError):
+            logger.warning(f"Invalid storyboard video_task_id: {raw_video_task_id!r}")
+            video_task_id = None
+    if video_task_id is not None:
+        # 对齐 marketing /api/video-model：每次请求按当前齿轮选择同步图生/文生视频偏好，
+        # 保证中途改模型后的下一次 Agent 提交能读到新模型（任务级快照仍是主路径）。
+        try:
+            from api.script_writer import set_image_to_video_model_id, set_text_to_video_model_id
+            from config.unified_config import TaskCategory as _TaskCategory
+
+            world_key = str(sb.world_id if sb else scene.storyboard_id)
+            v_cfg = UnifiedConfigRegistry.get_by_id(video_task_id)
+            categories = [getattr(v_cfg, 'category', None)] if v_cfg else []
+            if v_cfg and getattr(v_cfg, 'categories', None):
+                categories.extend(list(v_cfg.categories or []))
+            categories = [c for c in categories if c]
+            if not categories or _TaskCategory.IMAGE_TO_VIDEO in categories:
+                await asyncio.to_thread(
+                    set_image_to_video_model_id,
+                    str(user_id),
+                    world_key,
+                    video_task_id,
+                )
+            if _TaskCategory.TEXT_TO_VIDEO in categories:
+                await asyncio.to_thread(
+                    set_text_to_video_model_id,
+                    str(user_id),
+                    world_key,
+                    video_task_id,
+                )
         except Exception as e:
             logger.warning(f"Failed to sync storyboard video model preference: {e}")
 
@@ -3380,6 +3437,7 @@ async def scene_ai_chat(
                 image_mode=image_mode,
                 duration_seconds=video_duration_seconds,
                 video_resolution=video_resolution,
+                video_task_id=video_task_id,
             )
     else:
         # 图片：资产参考之后依次追加当前首帧、前后首帧和用户补充图，并保持 URL/说明严格对齐。
@@ -3396,6 +3454,9 @@ async def scene_ai_chat(
         video_input_urls = None
         task_image_urls = reference_images_for_msg or None
 
+    video_model_name_for_msg = None
+    if generation_target == 'video' and video_preferences:
+        video_model_name_for_msg = video_preferences.get('model_name')
     agent_message = _build_storyboard_agent_message(
         message,
         scene,
@@ -3409,6 +3470,8 @@ async def scene_ai_chat(
         video_duration_seconds=video_duration_seconds if generation_target == 'video' else None,
         video_resolution=video_resolution if generation_target == 'video' else None,
         clip_to_audio_duration=clip_to_audio_duration if generation_target == 'video' else None,
+        video_model_name=video_model_name_for_msg if generation_target == 'video' else None,
+        video_task_id=video_task_id if generation_target == 'video' else None,
         spatial_constraints=spatial_constraints,
         neighbor_contexts=neighbor_contexts,
     )

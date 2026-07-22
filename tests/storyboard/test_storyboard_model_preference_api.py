@@ -75,6 +75,7 @@ def test_sync_script_split_model_preference_reports_failure(monkeypatch):
 
 def test_storyboard_video_agent_builds_task_scoped_preferences_without_persisting(monkeypatch):
     from api import script_writer, storyboard
+    from config.unified_config import UnifiedConfigRegistry
 
     monkeypatch.setattr(
         script_writer,
@@ -91,6 +92,11 @@ def test_storyboard_video_agent_builds_task_scoped_preferences_without_persistin
             AssertionError("task-scoped storyboard settings must not be persisted")
         ),
     )
+    monkeypatch.setattr(
+        UnifiedConfigRegistry,
+        "get_by_id",
+        staticmethod(lambda task_id: SimpleNamespace(name="Grok") if int(task_id) == 27 else None),
+    )
 
     preferences = asyncio.run(
         storyboard._build_storyboard_agent_video_preferences(
@@ -100,6 +106,7 @@ def test_storyboard_video_agent_builds_task_scoped_preferences_without_persistin
             image_mode="first_last_frame",
             duration_seconds=5,
             video_resolution="720P",
+            video_task_id=27,
         )
     )
 
@@ -109,6 +116,8 @@ def test_storyboard_video_agent_builds_task_scoped_preferences_without_persistin
         "image_mode": "first_last_frame",
         "duration": 5,
         "resolution": "720P",
+        "task_id": 27,
+        "model_name": "Grok",
     }
 
     api_source = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
@@ -117,3 +126,4 @@ def test_storyboard_video_agent_builds_task_scoped_preferences_without_persistin
     route_source = api_source[route_start:route_end]
     assert "await _build_storyboard_agent_video_preferences(" in route_source
     assert "video_preferences=video_preferences" in route_source
+    assert "video_task_id=video_task_id" in route_source

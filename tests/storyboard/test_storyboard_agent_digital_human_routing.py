@@ -100,6 +100,8 @@ def test_storyboard_video_tool_uses_task_scoped_ratio_for_text_and_image_video(m
         "duration": 5,
         "resolution": "720P",
         "image_mode": "first_last_frame",
+        "task_id": 27,
+        "model_name": "Grok",
     }
     executor = module.StoryboardAgentVideoToolExecutor(
         FakeDelegate(),
@@ -109,7 +111,7 @@ def test_storyboard_video_tool_uses_task_scoped_ratio_for_text_and_image_video(m
 
     executor.execute_tool(
         "generate_text_to_video",
-        {"prompt": "camera moves", "ratio": "16:9", "duration_seconds": 10},
+        {"prompt": "camera moves", "ratio": "16:9", "duration_seconds": 10, "task_type": 22},
         user_id="7",
         world_id="9",
         auth_token="token",
@@ -122,6 +124,7 @@ def test_storyboard_video_tool_uses_task_scoped_ratio_for_text_and_image_video(m
             "ratio": "16:9",
             "duration_seconds": 10,
             "image_mode": "multi_reference",
+            "task_type": 22,  # Agent 自选 Seedance 2.0 Fast，必须被任务快照覆盖
         },
         user_id="7",
         world_id="9",
@@ -135,6 +138,7 @@ def test_storyboard_video_tool_uses_task_scoped_ratio_for_text_and_image_video(m
     for call in delegated_calls:
         assert call["tool_args"]["ratio"] == "9:16"
         assert call["tool_args"]["duration_seconds"] == 5
+        assert call["tool_args"]["task_type"] == 27
         assert call["preferences"] == scoped_preferences
     assert delegated_calls[1]["tool_args"]["image_mode"] == "first_last_frame"
     assert mcp_tool._get_video_preferences("7", "9") == {"ratio": "16:9", "duration": 10}
