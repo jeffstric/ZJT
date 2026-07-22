@@ -41,8 +41,19 @@ const state = {
 
     scenes: [],
     currentSceneId: null,
+    /** 按分镜缓存右侧图片/视频候选列表。 */
+    sceneCandidates: {},
+    /** 按分镜、资产类型隔离候选上传状态，避免切换分镜后串台。 */
+    candidateUploadsBySceneId: {},
+    /** 按分镜和 asset id 隔离候选删除状态。 */
+    candidateDeletesBySceneId: {},
     activeTab: 'scene',          // 'scene' | 'dialogue'（音乐 Tab 已移除）
     viewMode: 'timeline',
+    batchSelection: {
+        active: false,
+        selectedSceneIds: {},
+        submittingAction: '',
+    },
     chatMode: 'dialogue',
     inputMessage: '',
     // 视频生成模式图片输入模式：first_last_frame | multi_reference（对齐 marketing_agent）
@@ -160,6 +171,13 @@ const state = {
     forceMediumShot: true,
     noBgMusic: true,
     splitMultiDialogue: false,
+    /** 剧本拆分语言；空字符串表示中文（默认）。 */
+    scriptDialogueLanguage: '',
+    scriptPromptLanguage: '',
+    /** 自定义输入和折叠面板仅用于弹窗交互，实际值由上面两个字段持久化。 */
+    scriptDialogueLanguageCustom: false,
+    scriptPromptLanguageCustom: false,
+    scriptLanguageOptionsOpen: false,
     /** 是否开启拆分质检（开启后多轮拆分+质检，耗时与算力显著增加） */
     enableScriptSplitQc: false,
     /** 质检最大循环次数 1–5，超次强制用最后一轮结果 */
@@ -479,6 +497,14 @@ export function loadStoryboardData(data) {
     state.workflowRatio = storyboard.workflow_ratio || '16:9';
     state.compositionPreference = storyboard.composition_preference || '';
     state.scenes = scenesFromApi(data.scenes || []);
+    state.sceneCandidates = {};
+    state.candidateUploadsBySceneId = {};
+    state.candidateDeletesBySceneId = {};
+    state.batchSelection = {
+        active: false,
+        selectedSceneIds: {},
+        submittingAction: '',
+    };
     state.showGenerateFromScriptDialog = false;
     state.isGeneratingFromScript = false;
     state.generateFromScriptError = '';
@@ -505,6 +531,9 @@ export function replaceSceneInState(rawScene) {
 
 export function removeSceneFromState(sceneId) {
     state.scenes = state.scenes.filter(scene => scene.id !== sceneId);
+    delete state.sceneCandidates?.[sceneId];
+    delete state.candidateUploadsBySceneId?.[sceneId];
+    delete state.candidateDeletesBySceneId?.[sceneId];
     if (state.currentSceneId === sceneId) {
         state.currentSceneId = state.scenes[0] ? state.scenes[0].id : null;
     }
@@ -1034,6 +1063,8 @@ export function serializeUiConfig() {
         forceMediumShot: state.forceMediumShot,
         noBgMusic: state.noBgMusic,
         splitMultiDialogue: state.splitMultiDialogue,
+        scriptDialogueLanguage: state.scriptDialogueLanguage,
+        scriptPromptLanguage: state.scriptPromptLanguage,
         enableScriptSplitQc: state.enableScriptSplitQc === true,
         scriptSplitQcMaxRounds: state.scriptSplitQcMaxRounds,
     };
@@ -1089,6 +1120,16 @@ export function restoreUiConfig(config = {}) {
     }
     if (typeof config.splitMultiDialogue === 'boolean') {
         state.splitMultiDialogue = config.splitMultiDialogue;
+    }
+    if (typeof config.scriptDialogueLanguage === 'string') {
+        state.scriptDialogueLanguage = config.scriptDialogueLanguage;
+        state.scriptDialogueLanguageCustom = !['', 'English', 'Deutsch', 'Français', 'Русский']
+            .includes(config.scriptDialogueLanguage);
+    }
+    if (typeof config.scriptPromptLanguage === 'string') {
+        state.scriptPromptLanguage = config.scriptPromptLanguage;
+        state.scriptPromptLanguageCustom = !['', 'English', 'Deutsch', 'Français', 'Русский']
+            .includes(config.scriptPromptLanguage);
     }
     if (typeof config.enableScriptSplitQc === 'boolean') {
         state.enableScriptSplitQc = config.enableScriptSplitQc;

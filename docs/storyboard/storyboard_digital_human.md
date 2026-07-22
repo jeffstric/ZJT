@@ -10,7 +10,7 @@
 
 `video_type` 落在 `storyboard_scene.video_type`（`SceneVideoType`）。
 
-> **声音同出**：数字人分镜 `audio_embedded` 默认为 `1`（声音同出）。LTX2.3 产物已内嵌口型音轨，导出完整视频时保留视频原音轨、跳过 TTS 混音（见 `storyboard_export.md`）。该开关为分镜级、可手动切换。
+> **视频原声**：数字人分镜 `audio_embedded` 默认为 `1`（前端「音频来源 → 视频原声」）。LTX2.3 产物已内嵌口型音轨，时间轴连续预览和完整视频导出均保留视频原音轨、跳过 TTS（见 `storyboard_export.md`）。该设置为分镜级，可在「对话」页签手动切换。
 
 ## 拆分判定
 

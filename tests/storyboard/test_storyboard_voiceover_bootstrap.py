@@ -261,6 +261,52 @@ def test_submit_atomically_skips_missing_reference_audio(voiceover_service, monk
     assert len(calls["audio_create"]) == 0
 
 
+def test_ensure_for_scenes_skips_video_audio_and_existing_voiceover(monkeypatch):
+    service = StoryboardVoiceoverBootstrapService()
+    scenes = [
+        {"id": 201, "audio_embedded": True},
+        {"id": 202, "audio_embedded": False},
+        {"id": 203, "audio_embedded": False},
+    ]
+    dialogues = {
+        202: [],
+        203: [
+            {"id": 301, "selected_audio_id": 401},
+            {"id": 302, "selected_audio_id": None},
+        ],
+    }
+    monkeypatch.setattr(
+        "services.storyboard_voiceover_bootstrap_service.StoryboardSceneModel.list_by_storyboard",
+        lambda _id: scenes,
+    )
+    monkeypatch.setattr(
+        "services.storyboard_voiceover_bootstrap_service.StoryboardDialogueModel.list_by_scene",
+        lambda scene_id: dialogues.get(scene_id, []),
+    )
+    monkeypatch.setattr(
+        service,
+        "ensure_dialogue_voiceover",
+        lambda dialogue_id, user_id, config=None: {
+            "decision": "submitted",
+            "dialogue_id": dialogue_id,
+            "scene_id": 203,
+            "audio_id": 501,
+            "dialogue_audio_id": 601,
+        },
+    )
+
+    result = service.ensure_for_scenes(22, [201, 202, 203], 7)
+
+    assert result["requested_scene_count"] == 3
+    assert result["submitted_count"] == 1
+    assert result["reused_count"] == 1
+    assert result["skipped_count"] == 2
+    assert {item["reason"] for item in result["items"] if item["status"] == "skipped"} == {
+        StoryboardAudioGenerateConstants.SKIP_REASON_USES_VIDEO_AUDIO,
+        StoryboardAudioGenerateConstants.SKIP_REASON_NO_DIALOGUE,
+    }
+
+
 def test_submit_atomically_skips_narration_without_voice(voiceover_service, monkeypatch):
     """业务分类：旁白无 character_id 且无 ref_path → skipped(narration_without_voice)。"""
     svc, calls = voiceover_service

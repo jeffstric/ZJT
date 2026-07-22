@@ -253,6 +253,62 @@ LLM 继续输出现有镜头艺术字段：
 
 字段顺序固定，软描述按预算裁剪；禁止把完整上游 `shot_groups` 或完整嵌套 layout 重复塞给模型。这样同时降低输入和输出 token，而不是只降低输出。
 
+### 7.5 多局部二维空间与 segment point scope
+
+效果模式不使用一张覆盖整集的全局坐标图。阶段一按稳定物理空间创建多个
+`space_unit`，每个空间拥有独立的 `coordinate_frame_2d` 和少量可复用
+`points`。二维坐标是俯视物理位置，不是当前镜头的画面坐标：
+
+```json
+{
+  "space_unit_id": "space_unit:car_cabin",
+  "coordinate_frame_2d": {
+    "x_positive": "vehicle_right",
+    "y_positive": "vehicle_front"
+  },
+  "points": [
+    {
+      "point_id": "point:car_driver_seat",
+      "position_2d": {"x": -0.55, "y": 0.45},
+      "container_id": "container:driver_seat",
+      "slot_id": "seat",
+      "physical_position": {"side": "vehicle_left", "row": "front"}
+    }
+  ]
+}
+```
+
+只为驾驶座/副驾驶座、沙发左右位、柜台内外侧、道路入口/受困点/出口等
+稳定且容易混淆的位置建立 point。开放区域和临时构图继续使用普通
+container/slot 或 anchor，不强制补点。
+
+每个 segment 使用 `spatial_scope` 选择主空间、关联空间和允许点：
+
+```json
+{
+  "primary_space_unit_id": "space_unit:syrup_zone",
+  "related_space_unit_ids": ["space_unit:car_cabin"],
+  "allowed_point_ids": [
+    "point:syrup_entry",
+    "point:car_driver_seat",
+    "point:car_passenger_seat"
+  ]
+}
+```
+
+阶段二只选择 `point_id`，不得重新输出坐标。后端从规划期 `SpatialCatalog`
+解析 `position_2d`、container/slot 和物理左右；segment 即使提交相反坐标也
+会被规划值覆盖。scope 缺失或点超出建议范围只产生 warning，不触发整段重拆；
+只有引用完全不存在的 point/container/slot 才沿用现有错误处理。
+
+单镜头可以同时引用多个局部空间。例如车外镜头以道路为 primary、车内为
+related；车内镜头反之。不同 space_unit 不做坐标换算，车辆本体在外部空间的
+位置与乘员在车内空间的座位分别继承。
+
+首帧投影优先使用 `position_3d`；没有三维坐标时，将 `position_2d` 视为当前
+局部空间的 `z=0` 平面，并结合当前 `camera_pose` 派生画面左右。因此跨到车辆
+正面拍摄时允许画面左右自然反转，但人物的固定 point 不发生变化。
+
 ## 8. 规范空间状态
 
 ### 8.1 内部扁平状态

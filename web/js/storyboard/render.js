@@ -24,6 +24,7 @@ import {
     getAutoCompleteSummary,
     getFirstFrameDisplayStatus,
     getFirstFrameStatusLabel,
+    isAutoImageBatchActive,
 } from './auto_missing_images_state.js';
 import {
     getAutoVideoCompleteButtonViewModel,
@@ -37,6 +38,11 @@ import {
 import { Region } from './ui_regions.js';
 import { choosePreviewMedia } from './candidate_selection_state.js';
 import { canSwitchToDigitalHuman } from './video_type_switch_state.js';
+import {
+    getSelectedSceneIds,
+    isBatchSelectionActive,
+    isSceneSelected,
+} from './batch_selection_state.js';
 
 export { Region } from './ui_regions.js';
 
@@ -241,8 +247,12 @@ function assetBadge(scene, kind, label) {
     if (kind === 'first_frame') {
         const status = getFirstFrameDisplayStatus(scene);
         if (status === 'ready') return `<span class="status ready">${label}已生成</span>`;
-        if (status === 'running' || status === 'pending') return `<span class="status running">${label}${getFirstFrameStatusLabel(status)}</span>`;
-        if (status === 'failed') return `<span class="status failed">${label}生成失败</span>`;
+        if (['running', 'pending', 'regenerating', 'regenerate_pending'].includes(status)) {
+            return `<span class="status running">${label}${getFirstFrameStatusLabel(status)}</span>`;
+        }
+        if (status === 'failed' || status === 'regenerate_failed') {
+            return `<span class="status failed">${label}${getFirstFrameStatusLabel(status)}</span>`;
+        }
         return `<span class="status idle">${label}待生成</span>`;
     }
     return hasAsset(scene, kind)
@@ -491,9 +501,12 @@ function renderStoryboardCardCell(scene, nextScene) {
     const actName = String(scene.actName || '').trim();
     // 幕号已在缩略图展示时，body 仅在 actName 与幕号不同时再显示长名称
     const showActName = actName && actName !== groupLabel;
+    const selecting = isBatchSelectionActive();
+    const selected = selecting && isSceneSelected(scene.id);
     return `
             <div class="storyboard-grid-cell" data-scene-id="${scene.id}">
-                <article class="storyboard-card ${state.currentSceneId === scene.id ? 'active' : ''}" data-scene="${scene.id}">
+                <article class="storyboard-card ${state.currentSceneId === scene.id ? 'active' : ''} ${selecting ? 'is-batch-selecting' : ''} ${selected ? 'is-batch-selected' : ''}" data-scene="${scene.id}">
+                    ${selecting ? `<input class="storyboard-batch-checkbox" type="checkbox" data-action="toggle-batch-scene" data-id="${scene.id}" aria-label="选择${escapeHtml(scene.title)}" ${selected ? 'checked' : ''} ${state.batchSelection?.submittingAction ? 'disabled' : ''}>` : ''}
                     ${renderGridThumb(scene)}
                     <div class="storyboard-card-body">
                         <div class="card-title-row">
@@ -505,14 +518,14 @@ function renderStoryboardCardCell(scene, nextScene) {
                         ${renderGridCharactersRow(scene)}
                         ${renderGridPerspective(scene)}
                         ${showActName ? `<div class="card-act-name">${actNameTag(scene)}</div>` : ''}
-                        <div class="storyboard-card-actions">
+                        ${selecting ? '' : `<div class="storyboard-card-actions">
                             <button data-action="edit-scene" data-id="${scene.id}">${icon('edit', 14)} 编辑</button>
                             <button data-action="duplicate-scene" data-id="${scene.id}">${icon('copy', 14)} 复制</button>
                             <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} 删除</button>
-                        </div>
+                        </div>`}
                     </div>
                 </article>
-                ${nextScene ? renderInsertSceneSlot(scene, nextScene, 'grid') : ''}
+                ${!selecting && nextScene ? renderInsertSceneSlot(scene, nextScene, 'grid') : ''}
             </div>`;
 }
 
@@ -563,7 +576,7 @@ function renderFirstFrameStatusMark(scene) {
     const status = getFirstFrameDisplayStatus(scene);
     if (status === 'ready') return '';
     const label = getFirstFrameStatusLabel(status);
-    const spinner = status === 'running' ? icon('loading', 12) : '';
+    const spinner = status === 'running' || status === 'regenerating' ? icon('loading', 12) : '';
     return `<span class="first-frame-status-mark ${status}">${spinner}${escapeHtml(label)}</span>`;
 }
 
@@ -618,6 +631,43 @@ function renderAutoVideoCompleteControl() {
 }
 
 function renderAutoCompleteHeader(title, actionsHtml = '') {
+    if (state.viewMode === 'grid' && isBatchSelectionActive()) {
+        const selectedCount = getSelectedSceneIds().length;
+        const totalCount = (state.scenes || []).length;
+        const submitting = Boolean(state.batchSelection?.submittingAction);
+        const disabled = selectedCount === 0 || submitting ? 'disabled' : '';
+        const selectedIds = new Set(getSelectedSceneIds().map(String));
+        const selectedScenes = (state.scenes || []).filter(scene => selectedIds.has(String(scene.id)));
+        const existingImageCount = selectedScenes.filter(scene => Boolean(String(scene.firstFrameUrl || '').trim())).length;
+        const isCommunity = String(state.editionInfo?.mode || '').toLowerCase() === 'community';
+        const imageVerb = existingImageCount === 0
+            ? '生成'
+            : (existingImageCount === selectedCount ? '重新生成' : '生成/重新生成');
+        const imageBatchActive = isAutoImageBatchActive();
+        const imageActionLabel = imageBatchActive
+            ? '分镜图生成中'
+            : `${isCommunity ? '批量' : '按幕'}${imageVerb}分镜图`;
+        const imageActionTitle = imageBatchActive
+            ? '当前已有分镜图生成任务进行中'
+            : `${isCommunity ? '当前社区版将逐镜生成首帧' : '按幕使用 2×2/3×3 宫格生成首帧'}；已有图片会保留为候选`;
+        const imageDisabled = selectedCount === 0 || submitting || imageBatchActive ? 'disabled' : '';
+        return `
+            <div class="auto-complete-header storyboard-batch-toolbar" data-auto-complete-header>
+                <span class="auto-complete-title">已选择 ${selectedCount} / ${totalCount}</span>
+                <div class="auto-complete-actions" aria-live="polite">
+                    <button class="btn-ghost" data-action="batch-select-all" ${submitting ? 'disabled' : ''}>全选</button>
+                    <button class="btn-ghost" data-action="batch-invert-selection" ${submitting ? 'disabled' : ''}>反选</button>
+                    <button class="btn-ghost" data-action="batch-clear-selection" ${submitting ? 'disabled' : ''}>清空</button>
+                    <span class="storyboard-batch-divider" aria-hidden="true"></span>
+                    <button data-action="batch-generate-voiceovers" ${disabled}>${icon('mic', 15)} 批量生成配音</button>
+                    <button data-action="batch-generate-videos" ${disabled}>${icon('video', 15)} 批量生成视频</button>
+                    <button data-action="batch-generate-images" title="${imageActionTitle}" ${imageDisabled}>${icon('wand', 15)} ${imageActionLabel}</button>
+                    <button class="storyboard-batch-delete" data-action="batch-delete-scenes" ${disabled}>${icon('delete', 15)} 删除分镜</button>
+                    <button class="btn-ghost" data-action="exit-batch-selection" ${submitting ? 'disabled' : ''}>完成</button>
+                    ${actionsHtml}
+                </div>
+            </div>`;
+    }
     const summary = getAutoCompleteSummary();
     const videoSummary = getAutoVideoCompleteSummary();
     const videoHint = videoSummary.missingCount > 0
@@ -889,13 +939,6 @@ function renderScenePanel(scene) {
                 </div>
             </div>
 
-            <div class="scene-toggle-bar">
-                <label class="scene-toggle" data-action="toggle-audio-embedded" data-scene-id="${scene.id}" title="开启后导出完整视频时保留视频原声，不再混入TTS配音（数字人分镜默认开启）">
-                    <input type="checkbox" data-scene-id="${scene.id}" ${scene.audioEmbedded ? 'checked' : ''}>
-                    <span>声音同出</span>
-                </label>
-            </div>
-
             <div class="info-card">
                 <div class="info-card-header">
                     <div class="info-card-title">${icon('image', 18)} 画面提示词</div>
@@ -916,6 +959,38 @@ function renderScenePanel(scene) {
                 </div>
             </div>
         </div>`;
+}
+
+function renderDialogueAudioSource(scene) {
+    const useVideoAudio = Boolean(scene.audioEmbedded);
+    const hasVideo = Boolean(String(scene.videoUrl || '').trim());
+    let hint = '视频保持静音，连续预览和完整视频导出按顺序使用下方对话配音。';
+    if (useVideoAudio && hasVideo) {
+        hint = '连续预览和完整视频导出使用视频自带音轨，不再播放下方对话配音。';
+    } else if (useVideoAudio) {
+        hint = '当前分镜暂无视频；生成视频前，连续预览和导出会暂用下方对话配音。';
+    }
+
+    return `
+        <section class="dialogue-audio-source" aria-labelledby="dialogue-audio-source-title">
+            <div class="dialogue-audio-source-header">
+                <strong id="dialogue-audio-source-title">音频来源</strong>
+                <small>视频原声与对话配音不会同时播放</small>
+            </div>
+            <div class="dialogue-audio-source-options" role="radiogroup" aria-label="音频来源">
+                <button type="button"
+                    class="dialogue-audio-source-option ${useVideoAudio ? '' : 'active'}"
+                    data-action="set-scene-audio-source" data-audio-source="tts"
+                    role="radio" aria-checked="${useVideoAudio ? 'false' : 'true'}">对话配音（TTS）</button>
+                <button type="button"
+                    class="dialogue-audio-source-option ${useVideoAudio ? 'active' : ''}"
+                    data-action="set-scene-audio-source" data-audio-source="video"
+                    role="radio" aria-checked="${useVideoAudio ? 'true' : 'false'}"
+                    title="${hasVideo ? '使用视频文件自带的音轨' : '当前分镜暂无视频'}"
+                    ${!hasVideo ? 'disabled' : ''}>视频原声</button>
+            </div>
+            <p class="dialogue-audio-source-hint">${escapeHtml(hint)}</p>
+        </section>`;
 }
 
 function renderDialoguePanel(scene) {
@@ -942,6 +1017,7 @@ function renderDialoguePanel(scene) {
 
     return `
         <div class="tab-panel dialogue-panel">
+            ${renderDialogueAudioSource(scene)}
             ${rows || '<div class="empty-note">还没有对话，点击下方添加。</div>'}
             <button class="panel-button" data-action="add-dialogue">${icon('add', 16)} 添加对话</button>
         </div>`;
@@ -1325,9 +1401,17 @@ function renderInsertSceneSlot(prevScene, nextScene, mode) {
 export function renderStoryboardGrid() {
     return `
         <main class="center-panel">
-            ${renderAutoCompleteHeader('故事板总览', `<button class="btn-ghost" data-action="toggle-view">${icon('list', 16)} 时间轴</button>`)}
+            ${renderAutoCompleteHeader('故事板总览', renderGridHeaderActions())}
             <div class="storyboard-grid" data-scenes-sig="${escapeHtml(scenesStructureSig())}">${renderGridInner()}</div>
         </main>`;
+}
+
+function renderGridHeaderActions() {
+    const batchButton = isBatchSelectionActive()
+        ? ''
+        : `<button class="btn-ghost" data-action="enter-batch-selection">${icon('success', 16)} 批量操作</button>`;
+    const timelineDisabled = state.batchSelection?.submittingAction ? 'disabled' : '';
+    return `${batchButton}<button class="btn-ghost" data-action="toggle-view" ${timelineDisabled}>${icon('list', 16)} 时间轴</button>`;
 }
 
 /** 时间轴 list 内部 HTML（playhead + 分镜条 + 添加），供结构 patch 复用 */
@@ -1357,7 +1441,10 @@ function renderGridInner() {
         const nextScene = state.scenes[index + 1];
         return renderStoryboardCardCell(scene, nextScene);
     }).join('');
-    return `${cards}<button class="add-board-card" data-action="add-scene">${icon('add', 24)} 添加分镜</button>`;
+    const addButton = isBatchSelectionActive()
+        ? ''
+        : `<button class="add-board-card" data-action="add-scene">${icon('add', 24)} 添加分镜</button>`;
+    return `${cards}${addButton}`;
 }
 
 function scenesStructureSig() {
@@ -1417,27 +1504,65 @@ function renderCandidatePlaceholder(status, kind = 'image') {
     </div>`;
 }
 
+function getCandidateVideoThumbnailUrl(url) {
+    const value = String(url || '').trim();
+    if (!value) return '';
+    // 媒体时间片段只影响浏览器预览，不会发送到服务端；取 0.1 秒可避开部分视频的空首帧。
+    return `${value.split('#')[0]}#t=0.1`;
+}
+
 function renderCandidateMedia(item, kind = 'image') {
     const url = isRenderableCandidateUrl(item?.url) ? String(item.url).trim() : '';
     if (url) {
         if (kind === 'video') {
             // 仅展示缩略帧 + 播放标识，不内嵌可操作播放器（避免候选区看不清、误操作）
-            // preload=metadata 让浏览器拉取首帧作为预览；poster 优先用分镜首帧（若有）
+            // poster 只能使用该视频自身的封面，绝不能回退到分镜首帧，否则会展示成另一张图。
             const poster = isRenderableCandidateUrl(item?.posterUrl)
                 ? String(item.posterUrl).trim()
-                : (isRenderableCandidateUrl(getCurrentScene()?.firstFrameUrl)
-                    ? String(getCurrentScene().firstFrameUrl).trim()
-                    : '');
+                : '';
             const posterAttr = poster ? ` poster="${escapeHtml(poster)}"` : '';
+            const thumbnailUrl = getCandidateVideoThumbnailUrl(url);
             return `
                 <div class="candidate-video-thumb">
-                    <video src="${escapeHtml(url)}"${posterAttr} muted playsinline preload="metadata" tabindex="-1" aria-hidden="true"></video>
+                    <video src="${escapeHtml(thumbnailUrl)}"${posterAttr} muted playsinline preload="metadata" tabindex="-1" aria-hidden="true"></video>
                     <button type="button" class="candidate-video-badge" data-candidate-play aria-label="播放此候选视频">${icon('play', 14)}</button>
                 </div>`;
         }
         return `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.label || '分镜图')}">`;
     }
     return renderCandidatePlaceholder(item?.status, kind);
+}
+
+function renderCandidateUploadControl(scene, assetType) {
+    const isVideo = assetType === 'video';
+    const uploadState = state.candidateUploadsBySceneId?.[scene?.id]?.[assetType];
+    const uploading = Boolean(uploadState?.uploading);
+    const label = isVideo ? '上传视频' : '上传分镜图';
+    const accept = isVideo ? 'video/mp4,video/webm,.mp4,.webm' : 'image/jpeg,image/png,image/gif,image/webp';
+    return `
+        <button type="button" class="candidate-upload-button${uploading ? ' is-uploading' : ''}"
+                data-action="upload-scene-candidate" data-candidate-upload-type="${assetType}"
+                ${uploading ? 'disabled aria-busy="true"' : ''}>
+            ${icon(uploading ? 'loading' : 'add', 14)}
+            <span>${uploading ? '上传中' : label}</span>
+        </button>
+        <input type="file" class="candidate-upload-input" data-candidate-upload-input="${assetType}"
+               data-scene-id="${escapeHtml(scene?.id)}" accept="${accept}">
+    `;
+}
+
+function renderCandidateDeleteButton(scene, item, assetType) {
+    const assetId = Number(item?.id);
+    if (!Number.isFinite(assetId) || assetId <= 0) return '';
+    const deleting = Boolean(state.candidateDeletesBySceneId?.[scene?.id]?.[assetId]);
+    const mediaLabel = assetType === 'video' ? '视频候选' : '分镜图候选';
+    return `
+        <button type="button" class="candidate-delete-button${deleting ? ' is-deleting' : ''}"
+                data-action="delete-scene-candidate" data-candidate-delete-id="${assetId}"
+                data-candidate-delete-type="${assetType}" title="删除${mediaLabel}"
+                aria-label="删除${mediaLabel}" ${deleting ? 'disabled aria-busy="true"' : ''}>
+            ${icon(deleting ? 'loading' : 'delete', 13)}
+        </button>`;
 }
 
 export function renderRightSidebar(scene) {
@@ -1468,8 +1593,9 @@ export function renderRightSidebar(scene) {
 
     const imageGrid = displayImages.length
         ? `<div class="candidate-grid">${displayImages.map(img => `
-            <div class="candidate-thumb ${img.selected ? 'selected' : ''}${!isRenderableCandidateUrl(img.url) ? ' is-loading' : ''}" data-candidate-id="${img.id}" data-candidate-type="image">
+            <div class="candidate-thumb ${img.selected ? 'selected' : ''}${!isRenderableCandidateUrl(img.url) ? ' is-loading' : ''}${state.candidateDeletesBySceneId?.[scene?.id]?.[img.id] ? ' is-deleting' : ''}" data-candidate-id="${img.id}" data-candidate-type="image">
                 ${renderCandidateMedia(img, 'image')}
+                ${renderCandidateDeleteButton(scene, img, 'first_frame')}
                 ${img.label ? `<span class="candidate-label">${escapeHtml(img.label)}</span>` : ''}
             </div>`).join('')}</div>`
         : (imageRunning
@@ -1478,9 +1604,10 @@ export function renderRightSidebar(scene) {
 
     const videoGrid = displayVideos.length
         ? `<div class="candidate-grid candidate-video-grid">${displayVideos.map(vid => `
-            <div class="candidate-thumb candidate-video-thumb-wrap ${vid.selected ? 'selected' : ''}${!isRenderableCandidateUrl(vid.url) ? ' is-loading' : ''}"
+            <div class="candidate-thumb candidate-video-thumb-wrap ${vid.selected ? 'selected' : ''}${!isRenderableCandidateUrl(vid.url) ? ' is-loading' : ''}${state.candidateDeletesBySceneId?.[scene?.id]?.[vid.id] ? ' is-deleting' : ''}"
                  data-candidate-id="${vid.id}" data-candidate-type="video" title="点击选中该视频">
                 ${renderCandidateMedia(vid, 'video')}
+                ${renderCandidateDeleteButton(scene, vid, 'video')}
                 ${vid.label ? `<span class="candidate-label">${escapeHtml(vid.label)}</span>` : ''}
             </div>`).join('')}</div>`
         : (videoRunning
@@ -1492,10 +1619,12 @@ export function renderRightSidebar(scene) {
             <div class="candidate-section">
                 <span class="section-title">分镜图候选</span>
                 ${imageGrid}
+                ${renderCandidateUploadControl(scene, 'first_frame')}
             </div>
             <div class="candidate-section">
                 <span class="section-title">视频候选</span>
                 ${videoGrid}
+                ${renderCandidateUploadControl(scene, 'video')}
             </div>
         </aside>`;
 }
@@ -1659,13 +1788,24 @@ function renderScriptSplitModelConfig(disabled = false) {
     return html;
 }
 
-// 渲染剧本拆分的高级选项：镜头组时长 + 3 个开关（与 video_workflow 剧本节点保持一致）
-function renderScriptSplitOptions(disabled = false) {
+function renderScriptSplitDuration(disabled = false) {
     const durations = [5, 8, 10, 15];
     const curDuration = durations.includes(Number(state.maxGroupDuration)) ? Number(state.maxGroupDuration) : 15;
     const durationOptions = durations.map(d =>
         `<option value="${d}" ${d === curDuration ? 'selected' : ''}>${d}秒</option>`
     ).join('');
+    return `
+        <div class="generate-from-script-model">
+            <label class="config-label">镜头组时长</label>
+            <div class="config-hint">每个分镜组的最大总时长，超时会在同一场景内自动拆分</div>
+            <div class="config-select-wrapper">
+                <select class="chat-mode-select" data-config-select="maxGroupDuration" ${disabled ? 'disabled' : ''}>${durationOptions}</select>
+            </div>
+        </div>`;
+}
+
+// 渲染剧本拆分的高级选项：语言 + 拆分开关（与 video_workflow 剧本节点保持一致）
+function renderScriptSplitOptions(disabled = false) {
     const toggleItem = (action, label, checked, hint = '') => `
         <label class="script-split-toggle-row">
             <input type="checkbox" data-action="${action}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
@@ -1677,13 +1817,47 @@ function renderScriptSplitOptions(disabled = false) {
     const qcRoundsOptions = [1, 2, 3, 4, 5].map(n =>
         `<option value="${n}" ${n === qcRounds ? 'selected' : ''}>${n} 次</option>`
     ).join('');
+    const languageOptions = (value, custom) => [
+        ['', '中文（默认）'],
+        ['English', 'English'],
+        ['Deutsch', 'Deutsch'],
+        ['Français', 'Français'],
+        ['Русский', 'Русский'],
+    ].map(([optionValue, label]) =>
+        `<option value="${escapeHtml(optionValue)}" ${!custom && value === optionValue ? 'selected' : ''}>${escapeHtml(label)}</option>`
+    ).join('') + `<option value="**custom**" ${custom ? 'selected' : ''}>自定义语言...</option>`;
+    const dialogueLanguage = state.scriptDialogueLanguage || '';
+    const promptLanguage = state.scriptPromptLanguage || '';
+    const dialogueCustom = state.scriptDialogueLanguageCustom === true;
+    const promptCustom = state.scriptPromptLanguageCustom === true;
+    const languageLabel = value => value || '中文（默认）';
     return `
         <div class="generate-from-script-model">
-            <label class="config-label">镜头组时长</label>
-            <div class="config-hint">每个分镜组的最大总时长，超时会在同一场景内自动拆分</div>
-            <div class="config-select-wrapper">
-                <select class="chat-mode-select" data-config-select="maxGroupDuration" ${disabled ? 'disabled' : ''}>${durationOptions}</select>
-            </div>
+            <section class="script-language-panel ${state.scriptLanguageOptionsOpen ? 'is-open' : ''}">
+                <button type="button" class="script-language-toggle" data-action="toggle-script-language-options"
+                        aria-expanded="${state.scriptLanguageOptionsOpen ? 'true' : 'false'}" ${disabled ? 'disabled' : ''}>
+                    <span class="script-language-toggle-title">
+                        <span>语言</span>
+                        <span class="script-language-summary">对话：${escapeHtml(languageLabel(dialogueLanguage))} · 提示词：${escapeHtml(languageLabel(promptLanguage))}</span>
+                    </span>
+                    <span class="script-language-chevron" aria-hidden="true">▼</span>
+                </button>
+                ${state.scriptLanguageOptionsOpen ? `
+                <div class="script-language-fields">
+                    <label class="script-language-field">
+                        <span>对话语言</span>
+                        <select data-config-select="scriptDialogueLanguage" ${disabled ? 'disabled' : ''}>${languageOptions(dialogueLanguage, dialogueCustom)}</select>
+                        <input type="text" data-script-language-custom="dialogue" value="${escapeHtml(dialogueLanguage)}"
+                               placeholder="自定义语言..." ${dialogueCustom ? '' : 'hidden'} ${disabled ? 'disabled' : ''}>
+                    </label>
+                    <label class="script-language-field">
+                        <span>提示词语言</span>
+                        <select data-config-select="scriptPromptLanguage" ${disabled ? 'disabled' : ''}>${languageOptions(promptLanguage, promptCustom)}</select>
+                        <input type="text" data-script-language-custom="prompt" value="${escapeHtml(promptLanguage)}"
+                               placeholder="自定义语言..." ${promptCustom ? '' : 'hidden'} ${disabled ? 'disabled' : ''}>
+                    </label>
+                </div>` : ''}
+            </section>
             <div class="config-label" style="margin-top:12px;">拆分选项</div>
             <div class="script-split-toggles">
                 ${toggleItem('toggle-force-medium-shot', '对话禁止全景（使用近景/中景）', state.forceMediumShot !== false)}
@@ -1713,6 +1887,7 @@ function renderGenerateFromScriptDialog() {
     const busy = state.isGeneratingFromScript;
     const splitModelConfig = renderScriptSplitModelConfig(busy);
     const imageModelConfig = renderImageModelConfig(busy);
+    const splitDurationConfig = renderScriptSplitDuration(busy);
     const splitOptionsConfig = renderScriptSplitOptions(busy);
     const isEnterprise = state.editionInfo?.mode === 'enterprise';
     const modeIntroCards = [
@@ -1770,6 +1945,7 @@ function renderGenerateFromScriptDialog() {
                         <div class="generate-from-script-model">
                             ${imageModelConfig}
                         </div>
+                        ${splitDurationConfig}
                     </div>
                     <div class="gfs-col">
                         ${splitOptionsConfig}
@@ -2628,7 +2804,7 @@ export function patchCandidates() {
     tmp.innerHTML = renderRightSidebar(scene);
     const newAside = tmp.querySelector('.right-sidebar');
     if (!newAside) return false;
-    const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}`;
+    const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}|${JSON.stringify(state.candidateUploadsBySceneId?.[scene.id] || null)}|${JSON.stringify(state.candidateDeletesBySceneId?.[scene.id] || null)}`;
     if (rightSidebar.dataset.candidateSig === nextSig) return true;
     rightSidebar.innerHTML = newAside.innerHTML;
     rightSidebar.dataset.candidateSig = nextSig;
@@ -3125,7 +3301,7 @@ export function updateCurrentSceneDetail(scene) {
         const newAside = tmp.querySelector('.right-sidebar');
         if (newAside) {
             const nextHtml = newAside.innerHTML;
-            const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}`;
+            const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}|${JSON.stringify(state.candidateUploadsBySceneId?.[scene.id] || null)}|${JSON.stringify(state.candidateDeletesBySceneId?.[scene.id] || null)}`;
             if (rightSidebar.dataset.candidateSig !== nextSig) {
                 rightSidebar.innerHTML = nextHtml;
                 rightSidebar.dataset.candidateSig = nextSig;
@@ -3167,7 +3343,7 @@ export function updateAutoCompleteHeader() {
     let updated = false;
     const gridHeader = document.querySelector('.center-panel > .auto-complete-header');
     if (gridHeader && state.viewMode === 'grid') {
-        gridHeader.outerHTML = renderAutoCompleteHeader('故事板总览', `<button class="btn-ghost" data-action="toggle-view">${icon('list', 16)} 时间轴</button>`);
+        gridHeader.outerHTML = renderAutoCompleteHeader('故事板总览', renderGridHeaderActions());
         updated = true;
     }
     const timelineHeader = document.querySelector('.scene-timeline > .auto-complete-header');

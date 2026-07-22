@@ -183,3 +183,24 @@ def test_storyboard_grid_split_driver_updates_failed_batch_item_on_late_recovery
     assert kwargs["status"] == 2
     assert kwargs["ai_tool_id"] == 1123
     assert kwargs["asset_id"] == 9522
+
+
+def test_storyboard_grid_split_regeneration_respects_manual_candidate_selection(monkeypatch):
+    driver = StoryboardGridSplitPipelineDriver()
+    item = {
+        "id": 201,
+        "extra_json": {
+            "plan_status": "regenerate_pending",
+            "base_asset_id": 101,
+        },
+    }
+    scene = {"id": 11, "selected_first_frame_id": 101}
+    monkeypatch.setattr(
+        "task.pipeline_drivers.storyboard_grid_split_driver.StoryboardSceneModel.get_by_id",
+        lambda _id: scene,
+    )
+
+    assert driver._should_select_generated_asset(11, item) is True
+
+    scene["selected_first_frame_id"] = 103
+    assert driver._should_select_generated_asset(11, item) is False

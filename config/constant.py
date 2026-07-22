@@ -881,6 +881,9 @@ class ScriptSplitConstants:
 
 class StoryboardAutoGenerateConstants:
     """Storyboard auto frame generation limits."""
+    # 总览批量操作一次允许携带的最大分镜数。生成任务仍由调度器分 tick 推进，
+    # 该限制主要防止异常请求构造超大的 IN 条件和响应体。
+    MAX_SELECTED_SCENE_COUNT = 500
     DEFAULT_BATCH_LIMIT = 5
     MAX_BATCH_LIMIT = 20
     # limit=0（或调用方不传 limit）表示「无限制」：规划全部缺失场景，不硬截断。
@@ -897,6 +900,12 @@ class StoryboardAutoGenerateConstants:
         SEQUENCE_MODE_SPEED,
         SEQUENCE_MODE_BALANCED,
         SEQUENCE_MODE_QUALITY,
+    )
+    IMAGE_EXISTING_POLICY_SKIP = "skip"
+    IMAGE_EXISTING_POLICY_REGENERATE = "regenerate"
+    VALID_IMAGE_EXISTING_POLICIES = (
+        IMAGE_EXISTING_POLICY_SKIP,
+        IMAGE_EXISTING_POLICY_REGENERATE,
     )
     # quality 模式下，子场景缺图时阻止首帧生图的重试上限（tick 次数）。
     # 无运行中的场景九宫格且超过上限时严格失败，禁止降级无参考生图。
@@ -949,6 +958,8 @@ class StoryboardAudioGenerateConstants:
     SKIP_REASON_LIMIT_REACHED = "limit_reached"
     SKIP_REASON_SUBMIT_FAILED = "submit_failed"
     SKIP_REASON_NARRATION_WITHOUT_VOICE = "narration_without_voice"
+    SKIP_REASON_NO_DIALOGUE = "no_dialogue"
+    SKIP_REASON_USES_VIDEO_AUDIO = "uses_video_audio"
 
 
 class StoryboardDigitalHumanConstants:
@@ -1184,6 +1195,13 @@ class MediaConstants:
     ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.webm', '.avi', '.mkv'}
     # 图片后缀白名单（tuple，适配 str.endswith）；含 webp/gif/bmp，避免下载图片时被兜底改名导致扩展名与内容错配
     ALLOWED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')
+    # 分镜候选区手工上传：首版采用浏览器兼容性稳定的图片与视频格式。
+    STORYBOARD_IMAGE_UPLOAD_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+    STORYBOARD_VIDEO_UPLOAD_EXTENSIONS = {'.mp4', '.webm'}
+    STORYBOARD_ASSET_UPLOAD_CHUNK_BYTES = 1024 * 1024
+    STORYBOARD_IMAGE_MAX_SIZE_MB_DEFAULT = 20
+    STORYBOARD_VIDEO_MAX_SIZE_MB_DEFAULT = 50
+    STORYBOARD_VIDEO_MAX_DURATION_SECONDS_DEFAULT = 15
     VIDEO_COMPRESS_TARGET_HEIGHT = 480  # 前端压缩目标分辨率（480p）
     VIDEO_COMPRESS_THRESHOLD_MB = 10    # 超过此大小的视频触发前端压缩
     VIDEO_REFERENCE_MIN_PIXEL_COUNT = 409600  # Seedance r2v 参考视频最低总像素数

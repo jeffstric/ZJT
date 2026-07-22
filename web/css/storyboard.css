@@ -776,26 +776,68 @@ button {
   font-size: 12px;
 }
 
-/* 分镜级开关条（声音同出等） */
-.scene-toggle-bar {
-  margin-bottom: 8px;
-  padding: 6px 10px;
+/* 对话页签：分镜音频来源 */
+.dialogue-audio-source {
+  margin-bottom: 12px;
+  padding: 10px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
+}
+
+.dialogue-audio-source-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
   font-size: 12px;
 }
-.scene-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-  user-select: none;
-  color: var(--foreground);
+
+.dialogue-audio-source-header small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+  text-align: right;
 }
-.scene-toggle input[type="checkbox"] {
-  margin: 0;
+
+.dialogue-audio-source-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  background: var(--panel-soft);
+  border-radius: 7px;
+}
+
+.dialogue-audio-source-option {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
   cursor: pointer;
+  font-size: 12px;
+}
+
+.dialogue-audio-source-option.active {
+  border-color: var(--primary);
+  background: var(--panel);
+  color: var(--primary);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.dialogue-audio-source-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.dialogue-audio-source-hint {
+  margin: 7px 2px 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
 }
 .assets-row {
   display: flex;
@@ -2082,6 +2124,29 @@ button {
     gap: 8px;
     flex: 0 0 auto;
 }
+.storyboard-batch-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    padding: 8px 10px;
+    border: 1px solid rgba(47, 109, 246, 0.2);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+    backdrop-filter: blur(8px);
+}
+.storyboard-batch-toolbar button {
+    min-height: 30px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+.storyboard-batch-toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
+.storyboard-batch-divider { width: 1px; height: 22px; background: var(--border); }
+.storyboard-batch-delete { color: var(--danger); background: #fef2f2; }
 .auto-location-reference-alert {
     min-width: 0;
     padding: 5px 8px;
@@ -2635,6 +2700,65 @@ button {
     pointer-events: none;
 }
 
+.candidate-delete-button {
+    position: absolute;
+    z-index: 5;
+    top: 4px;
+    right: 4px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 50%;
+    background: rgba(15, 23, 42, 0.72);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transform: scale(0.92);
+    transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+    pointer-events: auto;
+}
+
+.candidate-thumb:hover .candidate-delete-button,
+.candidate-delete-button:focus-visible,
+.candidate-delete-button.is-deleting {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.candidate-delete-button:hover:not(:disabled),
+.candidate-delete-button:focus-visible {
+    background: #dc2626;
+}
+
+.candidate-delete-button:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 1px;
+}
+
+.candidate-delete-button:disabled {
+    cursor: wait;
+}
+
+.candidate-delete-button .sb-spin {
+    animation: spin 1s linear infinite;
+}
+
+.candidate-thumb.is-deleting {
+    opacity: 0.62;
+    pointer-events: none;
+}
+
+@media (hover: none) {
+    .candidate-delete-button {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
 .candidate-label {
     position: absolute;
     left: 0;
@@ -2779,6 +2903,54 @@ button {
     border: 1px dashed var(--border);
 }
 
+.candidate-upload-button {
+    width: 100%;
+    min-height: 32px;
+    padding: 6px 5px;
+    border: 1px dashed #94a3b8;
+    border-radius: 6px;
+    background: #fff;
+    color: var(--foreground);
+    font: inherit;
+    font-size: 11px;
+    line-height: 1.2;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.candidate-upload-button:hover:not(:disabled),
+.candidate-upload-button:focus-visible {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: rgba(47, 109, 246, 0.05);
+}
+
+.candidate-upload-button:focus-visible {
+    outline: 2px solid rgba(47, 109, 246, 0.25);
+    outline-offset: 1px;
+}
+
+.candidate-upload-button:disabled {
+    cursor: wait;
+    opacity: 0.68;
+}
+
+.candidate-upload-button .sb-icon {
+    flex: 0 0 auto;
+}
+
+.candidate-upload-button .sb-spin {
+    animation: spin 1s linear infinite;
+}
+
+.candidate-upload-input {
+    display: none;
+}
+
 .storyboard-grid-header { display: flex; justify-content: space-between; align-items: center; font-weight: 700; }
 .storyboard-grid {
     min-height: 0;
@@ -2790,6 +2962,28 @@ button {
 .storyboard-grid-cell { position: relative; min-width: 0; }
 .storyboard-card { overflow: hidden; border-radius: 10px; background: #fff; border: 1px solid var(--border, #e2e8f0); }
 .storyboard-card.active { outline: 3px solid var(--primary); box-shadow: 0 0 0 3px rgba(47, 109, 246, 0.25); }
+.storyboard-card.is-batch-selecting { position: relative; cursor: pointer; user-select: none; }
+.storyboard-card.is-batch-selected {
+    border-color: var(--primary);
+    outline: 3px solid rgba(47, 109, 246, 0.34);
+    box-shadow: 0 8px 20px rgba(47, 109, 246, 0.16);
+}
+.storyboard-batch-checkbox {
+    position: absolute;
+    z-index: 12;
+    top: 8px;
+    left: 8px;
+    width: 21px;
+    height: 21px;
+    margin: 0;
+    accent-color: var(--primary);
+    cursor: pointer;
+    filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.28));
+}
+.storyboard-card.is-batch-selecting .grid-type-badge {
+    /* 左上角为选择框保留 21px + 11px 间距，避免与视频/图片类型标签重叠。 */
+    left: 40px;
+}
 .storyboard-thumb { height: 132px; background: #111827; display: grid; place-items: center; overflow: hidden; position: relative; }
 .storyboard-thumb .preview-media {
     /* 网格缩略图回归普通流，并与主预览区的淡入状态隔离 */
@@ -3093,7 +3287,13 @@ button {
 .generate-from-script-dialog {
     width: min(760px, calc(100vw - 32px));
     max-height: calc(100vh - 64px);
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.generate-from-script-dialog > header,
+.generate-from-script-dialog > .empty-note {
+    flex: 0 0 auto;
 }
 .edit-dialog header,
 .edit-dialog footer,
@@ -3214,6 +3414,10 @@ button {
     justify-content: flex-end;
     gap: 10px;
     margin-top: 14px;
+    flex: 0 0 auto;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    background: #fff;
 }
 .generate-from-script-model {
     margin-top: 14px;
@@ -3235,6 +3439,7 @@ button {
 }
 .generate-from-script-dialog .config-select-wrapper select {
     width: 100%;
+    max-width: none;
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -3274,6 +3479,84 @@ button {
     opacity: 0.6;
     cursor: not-allowed;
 }
+/* 语言选项默认折叠，展开后双列紧凑展示；避免继续拉长拆分弹窗。 */
+.script-language-panel {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+}
+.script-language-toggle {
+    width: 100%;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 0;
+    background: #f8fafc;
+    color: var(--foreground);
+    cursor: pointer;
+    text-align: left;
+}
+.script-language-toggle-title {
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+.script-language-summary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 400;
+}
+.script-language-chevron {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 10px;
+    transition: transform .15s ease;
+}
+.script-language-panel.is-open .script-language-chevron {
+    transform: rotate(180deg);
+}
+.script-language-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 10px;
+    border-top: 1px solid var(--border);
+}
+.script-language-field {
+    min-width: 0;
+    display: grid;
+    gap: 5px;
+    color: var(--muted);
+    font-size: 12px;
+}
+.script-language-field select,
+.script-language-field input {
+    width: 100%;
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--foreground);
+    font-size: 12px;
+    outline: none;
+}
+.script-language-field select:focus,
+.script-language-field input:focus {
+    border-color: var(--primary);
+}
 .sequence-mode-intro {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3289,6 +3572,10 @@ button {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 0 20px;
     align-items: start;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
 }
 .generate-from-script-dialog .gfs-col {
     min-width: 0;
@@ -3304,6 +3591,11 @@ button {
 }
 @media (max-width: 640px) {
     .generate-from-script-dialog .gfs-body { grid-template-columns: 1fr; }
+    .generate-from-script-dialog {
+        width: min(760px, calc(100vw - 16px));
+        max-height: calc(100dvh - 16px);
+    }
+    .script-language-fields { grid-template-columns: 1fr; }
 }
 .generate-from-script-dialog .config-hint-inline {
     display: inline;
@@ -3520,11 +3812,11 @@ button {
 
 .sb-dd-item:hover { background: #f0f8ff; }
 
-.asset-dropdown div {
+.asset-dropdown-item {
   padding: 4px 8px;
   cursor: pointer;
 }
-.asset-dropdown div:hover {
+.asset-dropdown-item:hover {
   background: #f0f8ff;
 }
 .asset-dropdown-item.selected {

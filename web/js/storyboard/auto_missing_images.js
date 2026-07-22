@@ -27,19 +27,24 @@ const LOCATION_REFERENCE_GATE_CODES = new Set([
     'location_reference_generation_failed',
 ]);
 let locationReferenceRetryTimer = null;
+let locationReferenceRetryOptions = null;
 
 function cancelLocationReferenceRetry() {
     if (locationReferenceRetryTimer !== null) {
         clearTimeout(locationReferenceRetryTimer);
         locationReferenceRetryTimer = null;
     }
+    locationReferenceRetryOptions = null;
 }
 
-function scheduleLocationReferenceRetry(delay = 3000) {
-    cancelLocationReferenceRetry();
+function scheduleLocationReferenceRetry(delay = 3000, options = null) {
+    if (locationReferenceRetryTimer !== null) clearTimeout(locationReferenceRetryTimer);
+    locationReferenceRetryOptions = options;
     locationReferenceRetryTimer = setTimeout(() => {
         locationReferenceRetryTimer = null;
-        submitMissingFirstFrameBatch({ manual: false });
+        const retryOptions = locationReferenceRetryOptions || { manual: false };
+        locationReferenceRetryOptions = null;
+        submitMissingFirstFrameBatch(retryOptions);
     }, Math.max(1000, Number(delay || 3000)));
 }
 
@@ -61,14 +66,14 @@ function refreshLocationGateScenes(payload = {}) {
     updateAutoCompleteHeader();
 }
 
-function handleLocationReferencePreflight(payload = {}) {
+function handleLocationReferencePreflight(payload = {}, retryOptions = null) {
     setAutoImageBatchSubmitting(false);
     clearAutoImageBatchSession();
     applyLocationReferencePreflight(payload);
     refreshLocationGateScenes(payload);
     cancelLocationReferenceRetry();
     if ((payload.error_code || payload.code) === 'waiting_location_references') {
-        scheduleLocationReferenceRetry(payload.retry_after_ms);
+        scheduleLocationReferenceRetry(payload.retry_after_ms, retryOptions);
     }
 }
 
@@ -145,18 +150,34 @@ async function recoverBatch(batchId) {
     }
 }
 
-async function submitMissingFirstFrameBatch({ manual = false } = {}) {
+async function submitMissingFirstFrameBatch({
+    manual = false,
+    sceneIds = null,
+    sequenceMode = null,
+    existingPolicy = 'skip',
+} = {}) {
     if (!state.storyboardId || !state.authToken || !state.scenes.length) return null;
-    if (isAutoImageBatchActive()) return null;
+    if (isAutoImageBatchActive()) {
+        return manual ? {
+            success: false,
+            code: 'active_batch_exists',
+            active_batch_id: state.autoImageBatch?.batchId || null,
+        } : null;
+    }
 
-    const missing = getMissingFirstFrameScenes();
+    const requested = Array.isArray(sceneIds) ? new Set(sceneIds.map(String)) : null;
+    const missing = requested
+        ? state.scenes.filter(scene => requested.has(String(scene.id)))
+        : getMissingFirstFrameScenes();
     if (!missing.length) {
-        resetAutoImageBatchState();
-        updateAutoCompleteHeader();
+        if (!requested) {
+            resetAutoImageBatchState();
+            updateAutoCompleteHeader();
+        }
         return null;
     }
 
-    setAutoImageBatchSubmitting(true);
+    setAutoImageBatchSubmitting(true, existingPolicy);
     updateAutoCompleteHeader();
 
     try {
@@ -166,9 +187,17 @@ async function submitMissingFirstFrameBatch({ manual = false } = {}) {
             ratio: state.workflowRatio,
             task_type: state.selectedImageTaskId,
             sequence_mode: state.autoImageSequenceMode,
+            ...(requested ? { scene_ids: missing.map(scene => scene.id) } : {}),
+            ...(sequenceMode ? { sequence_mode: sequenceMode } : {}),
+            existing_policy: existingPolicy,
         });
         if (LOCATION_REFERENCE_GATE_CODES.has(result?.error_code || result?.code)) {
-            handleLocationReferencePreflight(result);
+            handleLocationReferencePreflight(result, {
+                manual: false,
+                sceneIds,
+                sequenceMode,
+                existingPolicy,
+            });
             return result;
         }
         cancelLocationReferenceRetry();
@@ -200,6 +229,11 @@ async function submitMissingFirstFrameBatch({ manual = false } = {}) {
             handleLocationReferencePreflight(error.payload || error.response || {
                 error_code: error.code,
                 error: error.message,
+            }, {
+                manual: false,
+                sceneIds,
+                sequenceMode,
+                existingPolicy,
             });
             return null;
         }
@@ -209,7 +243,10 @@ async function submitMissingFirstFrameBatch({ manual = false } = {}) {
         if (manual) throw error;
         // 场景宫格仍在生成时，单次网络/服务异常不应永久终止自动推进。
         if (state.autoImageLocationGate?.status === 'waiting') {
-            scheduleLocationReferenceRetry(state.autoImageLocationGate.retryAfterMs);
+            scheduleLocationReferenceRetry(
+                state.autoImageLocationGate.retryAfterMs,
+                { manual: false, sceneIds, sequenceMode, existingPolicy },
+            );
         }
         console.warn('auto generate missing storyboard images failed', error);
         return null;
@@ -240,6 +277,11 @@ export async function autoGenerateMissingFirstFrames() {
     await submitMissingFirstFrameBatch({ manual: false });
 }
 
-export async function autoCompleteMissingFirstFrames() {
-    return submitMissingFirstFrameBatch({ manual: true });
+export async function autoCompleteMissingFirstFrames(sceneIds = null, options = {}) {
+    return submitMissingFirstFrameBatch({
+        manual: true,
+        sceneIds,
+        sequenceMode: options.sequenceMode || null,
+        existingPolicy: options.existingPolicy || 'skip',
+    });
 }

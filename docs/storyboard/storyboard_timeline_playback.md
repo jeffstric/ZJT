@@ -2,7 +2,7 @@
 
 ## 概述
 
-`web/storyboard.html` 时间轴控制条上的播放按钮支持**类剪影的分镜连续预览**：按分镜顺序播放选中画面（视频优先，否则定格分镜图），并同步串行播放该分镜下各对话的选中配音。
+`web/storyboard.html` 时间轴控制条上的播放按钮支持**类剪影的分镜连续预览**：按分镜顺序播放选中画面（视频优先，否则定格分镜图），并按分镜「音频来源」播放视频原声或串行播放对话配音。音轨选择与完整视频导出保持一致，视频原声和 TTS 不会同时播放。
 
 实现模块：`web/js/storyboard/playback.js`。
 
@@ -10,10 +10,24 @@
 
 | 资源 | 字段 | 行为 |
 |------|------|------|
-| 视频 | `scene.videoUrl` | 优先播放；预览时 **muted**（对白走配音轨）；`loop=false` |
+| 视频 | `scene.videoUrl` | 优先播放；选择「视频原声」时保留音轨，选择「对话配音」时静音；`loop=false` |
 | 分镜图 | `scene.firstFrameUrl` | 无视频时定格展示 |
 | 配音 | `scene.dialogues[].audioUrl` | 按 `sortOrder` **串行**；音量用 `volume`（0–100 或 0–1） |
+| 音频来源 | `scene.audioEmbedded` | `true` 且有视频时播放视频原声并跳过 TTS；否则有 TTS 播 TTS，无 TTS 静音 |
 | 分镜时长 | `scene.duration` | **本镜占用与播放头分母**；配音全部完成后由后端同步为选中配音时长之和（见 `storyboard_auto_dialogue_audio.md`，前端 `polling` 读 `scene_duration`） |
+
+### 单镜音轨决策
+
+`playback_audio.js` 将每个分镜解析为互斥的三种模式：
+
+| 条件 | `audioMode` | 视频 | TTS |
+|------|-------------|------|-----|
+| 有视频且选择「视频原声」 | `video` | 有声 | 不创建、不预载、不播放 |
+| 未选择视频原声且有可用配音 | `tts` | 静音 | 按顺序播放 |
+| 无可用音源 | `silence` | 静音 | 不播放 |
+| 选择视频原声但当前没有视频 | `tts` / `silence` | 无 | 有配音则降级 TTS，否则静音 |
+
+前端 UI 位于左栏「对话」页签，以「音频来源：对话配音（TTS）/视频原声」呈现；后端持久化字段仍为 `storyboard_scene.audio_embedded`。
 
 ### 单镜占用时长（权威）
 
@@ -30,7 +44,7 @@ sceneSpan = scene.duration > 0 ? scene.duration : EMPTY_HOLD_FALLBACK(2s)
 进入本镜后、**开时钟之前**：
 
 1. 挂载 video / img  
-2. 并行预载：视频 `readyState >= HAVE_FUTURE_DATA`、图片 load、**全部**对白 `Audio` canplay  
+2. 并行预载：视频 `readyState >= HAVE_FUTURE_DATA`、图片 load；仅 `tts` 模式预载**全部**对白 `Audio` canplay
 3. 预览显示「加载中…」遮罩；`sceneLocalTime` 保持 0  
 4. 就绪（或单资源超时 20s best-effort）后：关遮罩 → `startClock` → 同步播视频 + 预载好的配音队列  
 
@@ -42,7 +56,8 @@ sceneSpan = scene.duration > 0 ? scene.duration : EMPTY_HOLD_FALLBACK(2s)
 
 | 情况 | 行为 |
 |------|------|
-| 有对白 + 视频 | 同时开始；对白串行；到 `sceneSpan` 截断音画并切下一镜 |
+| 视频原声 + 视频 | 只播放视频自身音轨；到 `sceneSpan` 截断音画并切下一镜 |
+| 对话配音 + 视频 | 视频静音、对白串行；到 `sceneSpan` 截断音画并切下一镜 |
 | 视频短于 `sceneSpan` | 视频 `ended` 后定格末帧，等到 span 结束再切镜 |
 | 视频长于 `sceneSpan` | **截断视频**，不卡在本镜等 `video.ended` |
 | 仅图 | 定格至 `sceneSpan` 结束 |
@@ -75,6 +90,7 @@ sceneSpan = scene.duration > 0 ? scene.duration : EMPTY_HOLD_FALLBACK(2s)
 | 文件 | 职责 |
 |------|------|
 | `web/js/storyboard/playback.js` | 播放状态机、音画编排、playhead |
+| `web/js/storyboard/playback_audio.js` | 单镜音轨来源纯函数（video / tts / silence） |
 | `web/js/storyboard/state.js` | `isPlaying` / `currentTime` / `playback.*` |
 | `web/js/storyboard/events.js` | `toggle-play`、选镜/切视图停播与时间对齐 |
 | `web/js/storyboard/render.js` | 字幕层、playhead DOM、`onDomWillRerender` |

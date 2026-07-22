@@ -99,7 +99,12 @@ def test_storyboard_auto_generate_missing_images_uses_authenticated_user(monkeyp
     response = client.post(
         "/api/storyboard/44/auto-generate-missing-images",
         headers={"Authorization": "Bearer short-lived-token"},
-        json={"user_id": 999, "limit": 2},
+        json={
+            "user_id": 999,
+            "limit": 2,
+            "scene_ids": [11, 12],
+            "existing_policy": "regenerate",
+        },
     )
 
     assert response.status_code == 200
@@ -110,6 +115,8 @@ def test_storyboard_auto_generate_missing_images_uses_authenticated_user(monkeyp
     assert calls[0][1]["storyboard_id"] == 44
     assert calls[0][1]["user_id"] == 7
     assert calls[0][1]["auth_token"] == "short-lived-token"
+    assert calls[0][1]["scene_ids"] == [11, 12]
+    assert calls[0][1]["existing_policy"] == "regenerate"
 
 
 def test_storyboard_auto_generate_missing_images_returns_403_for_enterprise_only(monkeypatch):

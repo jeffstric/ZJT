@@ -1074,6 +1074,137 @@ def test_auto_generate_missing_images_defaults_task_type_from_storyboard_config(
     assert generated == []
 
 
+def test_auto_generate_images_regenerates_selected_ready_frames(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    monkeypatch.setattr(
+        module.StoryboardSceneModel,
+        "list_by_storyboard",
+        lambda storyboard_id: [
+            {
+                "id": 11,
+                "storyboard_id": storyboard_id,
+                "title": "Opening",
+                "sort_order": 1,
+                "selected_first_frame_id": 101,
+            }
+        ],
+    )
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    result = service.auto_generate_missing_images(
+        storyboard_id=22,
+        user_id=7,
+        auth_token="token",
+        scene_ids=[11],
+        existing_policy="regenerate",
+    )
+
+    assert result["submitted_count"] == 1
+    assert result["regenerated_count"] == 1
+    assert result["reused_count"] == 0
+    assert result["existing_policy"] == "regenerate"
+    assert result["items"][0]["status"] == "pending"
+    assert result["items"][0]["plan_status"] == "regenerate_pending"
+    assert result["items"][0]["asset_id"] is None
+    assert result["items"][0]["base_asset_id"] == 101
+
+
+def test_auto_generate_images_requires_selection_for_regenerate(patched_storyboard_cli):
+    module = patched_storyboard_cli.module
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    with pytest.raises(module.StoryboardCliError) as exc:
+        service.auto_generate_missing_images(
+            storyboard_id=22,
+            user_id=7,
+            auth_token="token",
+            existing_policy="regenerate",
+        )
+
+    assert exc.value.error_code == "scene_ids_required"
+    assert patched_storyboard_cli.batch_jobs == {}
+
+
+def test_plan_image_batch_regenerate_keeps_running_and_requeues_ready(
+    patched_storyboard_cli, monkeypatch
+):
+    module = patched_storyboard_cli.module
+    scenes = [
+        {"id": 1, "storyboard_id": 22, "sort_order": 1, "selected_first_frame_id": 101},
+        {"id": 2, "storyboard_id": 22, "sort_order": 2, "selected_first_frame_id": None},
+        {"id": 3, "storyboard_id": 22, "sort_order": 3, "selected_first_frame_id": 103},
+    ]
+    monkeypatch.setattr(module.StoryboardSceneModel, "list_by_storyboard", lambda _id: scenes)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    def selected_asset(scene, _asset_type):
+        if scene["id"] == 1:
+            return {"id": 101, "ai_tool_id": 501, "status": 2, "result_url": "https://cdn.test/old.png"}
+        if scene["id"] == 3:
+            return {"id": 103, "ai_tool_id": 503, "status": 1, "result_url": None}
+        return None
+
+    monkeypatch.setattr(service, "_selected_asset_for_scene", selected_asset)
+    items = service._plan_image_batch_items(
+        storyboard_id=22,
+        asset_type="first_frame",
+        sequence_mode="speed",
+        limit=0,
+        scene_ids=[1, 2, 3],
+        existing_policy="regenerate",
+    )
+
+    assert [item["status"] for item in items] == ["regenerate_pending", "pending", "already_running"]
+    assert items[0]["base_asset_id"] == 101
+    assert items[0]["asset_id"] is None
+    assert items[1]["base_asset_id"] is None
+    assert items[2]["asset_id"] == 103
+
+
+def test_completed_regeneration_only_selects_new_asset_when_base_is_still_selected(
+    patched_storyboard_cli, monkeypatch
+):
+    module = patched_storyboard_cli.module
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    scene = {"id": 11, "selected_first_frame_id": 101}
+    monkeypatch.setattr(module.StoryboardSceneModel, "get_by_id", lambda _id: scene)
+    item = {
+        "id": 9001,
+        "scene_id": 11,
+        "asset_type": "first_frame",
+        "asset_id": 102,
+        "extra_json": {
+            "plan_status": "regenerate_pending",
+            "base_asset_id": 101,
+        },
+    }
+
+    service._select_completed_regeneration_asset(item)
+    assert patched_storyboard_cli.selected_assets[-1] == (11, "first_frame", 102)
+
+    selected_count = len(patched_storyboard_cli.selected_assets)
+    scene["selected_first_frame_id"] = 103
+    item["asset_id"] = 104
+    service._select_completed_regeneration_asset(item)
+    assert len(patched_storyboard_cli.selected_assets) == selected_count
+
+
+def test_bind_projects_can_create_candidate_without_selecting_it(patched_storyboard_cli):
+    module = patched_storyboard_cli.module
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    result = service.bind_projects(
+        scene_id=11,
+        user_id=7,
+        asset_type="first_frame",
+        project_ids=[701],
+        select_result=False,
+    )
+
+    assert result["selected_asset_id"] == result["asset_ids"][0]
+    assert patched_storyboard_cli.selected_assets == []
+
+
 def test_auto_generate_missing_images_reuses_active_identical_batch(patched_storyboard_cli, monkeypatch):
     module = patched_storyboard_cli.module
     monkeypatch.setattr(
@@ -2021,3 +2152,68 @@ def test_batch_status_aggregation_matches_items_after_progress(patched_storyboar
     assert status["progress"] == round(2 / 10, 4)
     # submitted_count 仍是计划数，不随进度变化（BUG #5）
     assert status["submitted_count"] == 5
+
+
+def test_plan_image_batch_only_contains_requested_scenes(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    scenes = [
+        {"id": 1, "storyboard_id": 22, "sort_order": 1, "title": "A", "prompt_json": {"source": {"group_id": "act-1"}}},
+        {"id": 2, "storyboard_id": 22, "sort_order": 2, "title": "B", "prompt_json": {"source": {"group_id": "act-1"}}},
+        {"id": 3, "storyboard_id": 22, "sort_order": 3, "title": "C", "prompt_json": {"source": {"group_id": "act-2"}}},
+    ]
+    monkeypatch.setattr(module.StoryboardSceneModel, "list_by_storyboard", lambda _id: scenes)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    monkeypatch.setattr(service, "_selected_asset_for_scene", lambda _scene, _type: None)
+
+    items = service._plan_image_batch_items(
+        storyboard_id=22,
+        asset_type="first_frame",
+        sequence_mode="quality",
+        limit=0,
+        scene_ids=[2, 3],
+    )
+
+    assert [item["scene_id"] for item in items] == [2, 3]
+    assert [item["group_key"] for item in items] == ["group:act-1", "group:act-2"]
+
+
+def test_requested_scene_ids_rejects_empty_and_foreign_selection(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    monkeypatch.setattr(
+        module.StoryboardSceneModel,
+        "list_by_storyboard",
+        lambda _id: [{"id": 1}, {"id": 2}],
+    )
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    with pytest.raises(module.StoryboardCliError) as empty_error:
+        service._normalize_requested_scene_ids(22, [])
+    assert empty_error.value.error_code == "empty_scene_ids"
+
+    with pytest.raises(module.StoryboardCliError) as stale_error:
+        service._normalize_requested_scene_ids(22, [1, 99])
+    assert stale_error.value.error_code == "selection_stale"
+
+
+def test_plan_video_batch_filters_selection_and_requires_first_frame(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    scenes = [
+        {"id": 1, "storyboard_id": 22, "sort_order": 1, "title": "A", "video_type": "video", "prompt_json": {}},
+        {"id": 2, "storyboard_id": 22, "sort_order": 2, "title": "B", "video_type": "video", "prompt_json": {}},
+        {"id": 3, "storyboard_id": 22, "sort_order": 3, "title": "C", "video_type": "video", "prompt_json": {}},
+    ]
+    monkeypatch.setattr(module.StoryboardSceneModel, "list_by_storyboard", lambda _id: scenes)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    def selected_asset(scene, asset_type):
+        if asset_type == "first_frame" and scene["id"] == 1:
+            return {"id": 101, "result_url": "https://cdn.test/a.png", "status": 2}
+        return None
+
+    monkeypatch.setattr(service, "_selected_asset_for_scene", selected_asset)
+    items = service._plan_video_batch_items(storyboard_id=22, limit=0, scene_ids=[1, 2])
+
+    assert [item["scene_id"] for item in items] == [1, 2]
+    assert items[0]["status"] == "pending"
+    assert items[1]["status"] == "missing_first_frame"
+    assert items[1]["skip_reason"] == "missing_first_frame"

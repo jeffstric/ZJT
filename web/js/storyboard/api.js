@@ -170,6 +170,12 @@ export async function updateScenePrompt(sceneId, promptJson) {
 export async function deleteScene(sceneId) {
     return request(`/scene/${sceneId}`, { method: 'DELETE' });
 }
+export async function batchDeleteScenes(storyboardId, sceneIds) {
+    return request(`/${storyboardId}/scenes/batch-delete`, {
+        method: 'POST',
+        body: JSON.stringify({ scene_ids: sceneIds }),
+    });
+}
 export async function duplicateScene(sceneId) {
     return request(`/scene/${sceneId}/duplicate`, { method: 'POST' });
 }
@@ -198,6 +204,12 @@ export async function reorderDialogue(sceneId, data) {
 export async function generateDialogueVoiceover(dialogueId, config = {}) {
     return request(`/dialogue/${dialogueId}/generate-voiceover`, { method: 'POST', body: JSON.stringify(config) });
 }
+export async function batchGenerateMissingVoiceovers(storyboardId, sceneIds) {
+    return request(`/${storyboardId}/batch-generate-missing-voiceovers`, {
+        method: 'POST',
+        body: JSON.stringify({ scene_ids: sceneIds, skip_existing: true }),
+    });
+}
 export async function selectDialogueAudio(dialogueId, dialogueAudioId) {
     return request(`/dialogue/${dialogueId}/audio/select`, {
         method: 'POST', body: JSON.stringify({ dialogue_audio_id: dialogueAudioId }),
@@ -214,9 +226,14 @@ export async function selectSceneAsset(sceneId, assetType, assetId) {
         method: 'POST', body: JSON.stringify({ asset_type: assetType, asset_id: assetId }),
     });
 }
+export async function deleteSceneAsset(sceneId, assetId) {
+    return request(`/scene/${encodeURIComponent(sceneId)}/asset/${encodeURIComponent(assetId)}`, {
+        method: 'DELETE',
+    });
+}
 
 /**
- * 上传图片并登记为分镜资产（涂色编辑等手工出图）。
+ * 上传图片或视频并登记为分镜资产（候选区手工上传、涂色编辑等）。
  * FormData 不可设 Content-Type，由浏览器自动填充 boundary。
  * @returns {Promise<{success:boolean, asset_id?:number, result_url?:string, asset_type?:string, selected?:boolean, error?:string}>}
  */

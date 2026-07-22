@@ -604,6 +604,8 @@ def _build_incremental_spatial_prompt(
 
 每个镜头必须输出 `spatial_intent.state_changes` 数组；没有移动时输出空数组。支持 enter、move、exit、pickup、put_down、transfer。实体和目标只能引用下方允许 ID；anchors 为空时省略 anchor_id，禁止自造 anchor_id。
 
+**二维固定点（优先使用）**：`points` 是完整剧本规划阶段生成的稳定物理点。发生入场或移动时，如果目标存在于 points，`to` 只需输出 `point_id`，不要重复生成或修改 `position_2d`。同一 `point_id` 在所有 segment 中代表同一物理位置；不得因构图变化交换驾驶座/副驾驶座、沙发左右位或柜台内外侧。`entity_points` 是上一段实体当前所在点。没有合适 point 时才使用允许的 container+slot/anchor；普通姿态调整不属于移动。
+
 **道具持有（极易错，必须遵守）**：
 - `pickup`：持有人写在 `to.holder_character_id`（推荐）；也可写 change 顶层 `holder_character_id`。不要只把 container/slot 写进 to 却漏 holder。
 - `put_down`：`from.holder_character_id` 必须是当前真实持有人；`to` 为放下后的物理落点（container+slot 或 anchor）。
@@ -619,7 +621,7 @@ def _build_incremental_spatial_prompt(
 ```json
 {previous_state}
 ```
-【允许的空间 ID】
+【当前 segment 空间作用域、允许 ID 与二维固定点】
 ```json
 {allowed_ids}
 ```

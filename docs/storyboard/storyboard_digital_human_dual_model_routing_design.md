@@ -314,7 +314,7 @@ Agent 的数字人工具不再要求模型生成 prompt、duration 或 aspect ra
 - `audio_input_role=speech_audio` 时，音频只写入 `ai_tools.audio_path`，`message=NULL`。
 - `extra_config.audio_input_role` 是字段语义说明，不能与实际落库字段相冲突。
 
-## 11. 声音同出和导出
+## 11. 视频原声和导出
 
 Wan2.2 和 LTX2.3 产物都包含数字人说话音轨，因此 `digital_human` 分镜继续默认 `audio_embedded=1`：
 

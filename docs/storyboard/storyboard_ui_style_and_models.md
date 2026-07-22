@@ -79,6 +79,15 @@ bootstrap 中实现优先级（仅首次无保存值时）：
 deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5-plus > 第一个。
 同时支持从 storyboard.config_json 恢复。
 
+### 3.4 空故事板拆分语言与小屏布局（2026-07-21）
+
+- “从剧本生成分镜”弹窗新增可折叠的“语言”面板，支持分别设置对话语言与提示词语言；选项与 `video_workflow.html` 剧本节点一致：中文（默认）、English、Deutsch、Français、Русский和自定义语言。
+- 面板默认折叠，摘要直接显示当前两项语言；展开后在宽屏双列、窄屏单列展示，避免常驻控件挤占拆分选项空间。
+- “镜头组时长”位于左栏生图模型下方，右栏集中展示语言和拆分开关，使两列信息密度更均衡。
+- 拆分模型、生图模型和镜头组时长选择框铺满所在栏位，不再受助手工具栏下拉框的 `max-width` 限制。
+- 弹窗改为“固定标题/说明 + 中部设置滚动 + 固定底部操作栏”。小屏幕即使展开语言或质检选项，“暂不生成”和“生成分镜”仍始终可见。
+- 选择结果写入故事板 `config_json`，刷新后恢复，并在提交拆分任务时分别透传为 `dialogue_language`、`prompt_language`；空值继续表示中文默认。
+
 ## 4. 技术实现要点
 
 ### 后端（api/storyboard.py）
@@ -208,11 +217,12 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 
 浏览器实测 URL: http://localhost:9003/storyboard?world_id=98&episode_number=1&user_id=1 （登录 15088613226）
 
-### 画面/视频提示词的 / 角色下拉提示与可见性修复
-- 在「画面提示词」和「视频提示词」区域上方增加轻提示文案：「提示：输入 / 展示角色的下拉框」。
-- 角色选择下拉框（输入 / 触发）现在通过 `document.body` + `position:fixed` + `getBoundingClientRect` 挂载（复用 `positionDropdown` 辅助），并在空间不足时自动上翻，避免被 `.info-card` / `.sidebar-content`（固定高度+overflow:auto）裁剪。
+### 画面/视频提示词的 @ 角色/道具下拉提示与可见性修复
+- 在「画面提示词」和「视频提示词」区域上方增加轻提示文案：「提示：输入 @ 可插入角色或道具」。
+- 角色/道具选择下拉框（输入 `@` 或中文输入法全角 `＠` 触发）现在通过 `document.body` + `position:fixed` + `getBoundingClientRect` 挂载（复用 `positionDropdown` 辅助），并在空间不足时自动上翻，避免被 `.info-card` / `.sidebar-content`（固定高度+overflow:auto）裁剪。
 - 位置/尺寸计算允许下拉完整显示（min/max-width 适配），与资产场景/道具下拉统一策略。
-- 符合 video_workflow 分镜节点 `/` 触发 + 【【角色】】 插入约定。
+- 提示词进入编辑态时光标默认位于末尾；下拉样式仅作用于单个选项，避免整段提示词或整个列表被误选中。
+- 角色按 `【【角色】】`、道具按 `〖〖道具〗〗` 插入并持久化。
 
 ---
 

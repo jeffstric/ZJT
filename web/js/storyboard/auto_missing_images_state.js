@@ -2,7 +2,7 @@ import state from './state.js';
 
 export const AUTO_IMAGE_BATCH_ACTIVE_STATUSES = new Set(['submitting', 'pending', 'running']);
 const AUTO_IMAGE_BATCH_TERMINAL_STATUSES = new Set(['completed', 'partial', 'failed']);
-const TARGET_PLAN_STATUSES = new Set(['pending', 'already_running']);
+const TARGET_PLAN_STATUSES = new Set(['pending', 'regenerate_pending', 'already_running']);
 const RUNNING_ITEM_STATUSES = new Set(['submitted', 'running']);
 const PENDING_ITEM_STATUSES = new Set(['pending']);
 
@@ -16,6 +16,7 @@ function emptyBatchState() {
         pendingCount: 0,
         failedCount: 0,
         skippedCount: 0,
+        existingPolicy: 'skip',
         itemsBySceneId: {},
         message: '',
         submitting: false,
@@ -50,6 +51,8 @@ function normalizeItem(item = {}) {
         sceneId,
         status: String(item.status || '').toLowerCase(),
         planStatus: String(item.plan_status || item.planStatus || extra.plan_status || '').toLowerCase(),
+        existingPolicy: String(item.existing_policy || item.existingPolicy || extra.existing_policy || 'skip').toLowerCase(),
+        baseAssetId: item.base_asset_id ?? item.baseAssetId ?? extra.base_asset_id ?? null,
         waiting: String(item.waiting || extra.waiting || '').toLowerCase(),
         assetId: item.asset_id ?? item.assetId ?? null,
         resultUrl: item.result_url || item.resultUrl || '',
@@ -108,13 +111,16 @@ export function applyLocationReferencePreflight(payload = {}) {
     return state.autoImageLocationGate;
 }
 
-export function setAutoImageBatchSubmitting(submitting) {
+export function setAutoImageBatchSubmitting(submitting, existingPolicy = 'skip') {
     state.autoImageBatch = {
         ...emptyBatchState(),
         ...state.autoImageBatch,
         status: submitting ? 'submitting' : 'idle',
         submitting: Boolean(submitting),
-        message: submitting ? '正在提交补全任务' : '',
+        existingPolicy,
+        message: submitting
+            ? (existingPolicy === 'regenerate' ? '正在提交重新生成任务' : '正在提交补全任务')
+            : '',
     };
 }
 
@@ -137,6 +143,12 @@ export function shouldApplyBatchFirstFrameToScene(scene, item = {}) {
     const hasSelection = !(curSel === null || curSel === undefined || curSel === '');
     const batchAssetId = item.assetId;
     const hasBatchAsset = !(batchAssetId === null || batchAssetId === undefined || batchAssetId === '');
+    const isRegeneration = item.planStatus === 'regenerate_pending';
+
+    // 重生成成功前保留旧选中；仅当用户仍停留在发起任务时的旧资产上，才允许新结果接管。
+    if (isRegeneration && item.baseAssetId != null && String(curSel) === String(item.baseAssetId)) {
+        return true;
+    }
 
     // 尚无选中：允许用 batch 结果补全缺失首帧
     if (!hasSelection) return true;
@@ -176,7 +188,10 @@ export function applyImageBatchStatus(batchStatus = {}) {
                 scene.firstFrameUrl = next;
             }
         }
-        if (item.assetId) scene.selectedFirstFrameId = item.assetId;
+        const isRegeneration = item.planStatus === 'regenerate_pending';
+        if (item.assetId && (!isRegeneration || item.status === 'completed')) {
+            scene.selectedFirstFrameId = item.assetId;
+        }
     }
 
     const completedCount = targetItems.filter(item => item.status === 'completed').length;
@@ -194,6 +209,12 @@ export function applyImageBatchStatus(batchStatus = {}) {
         pendingCount,
         failedCount,
         skippedCount,
+        existingPolicy: String(
+            batchStatus.existing_policy
+            || batchStatus.existingPolicy
+            || state.autoImageBatch?.existingPolicy
+            || 'skip',
+        ).toLowerCase(),
         itemsBySceneId,
         message: batchStatus.message || '',
         submitting: false,
@@ -202,6 +223,12 @@ export function applyImageBatchStatus(batchStatus = {}) {
 }
 
 export function getFirstFrameDisplayStatus(scene) {
+    const item = state.autoImageBatch?.itemsBySceneId?.[scene?.id];
+    if (item?.planStatus === 'regenerate_pending') {
+        if (RUNNING_ITEM_STATUSES.has(item.status)) return 'regenerating';
+        if (PENDING_ITEM_STATUSES.has(item.status)) return 'regenerate_pending';
+        if (item.status === 'failed') return 'regenerate_failed';
+    }
     if (scene?.firstFrameUrl) return 'ready';
     const gate = state.autoImageLocationGate || emptyLocationGateState();
     const affected = (gate.affectedSceneIds || []).some(
@@ -210,7 +237,6 @@ export function getFirstFrameDisplayStatus(scene) {
     if (affected) {
         return gate.status === 'waiting' ? 'waiting_location' : 'blocked_location';
     }
-    const item = state.autoImageBatch?.itemsBySceneId?.[scene?.id];
     if (item) {
         if (RUNNING_ITEM_STATUSES.has(item.status)) return 'running';
         if (item.status === 'failed') return 'failed';
@@ -250,9 +276,10 @@ export function getAutoCompleteButtonViewModel() {
     const summary = getAutoCompleteSummary();
     const batch = summary.batch;
     if (batch.submitting || batch.status === 'submitting') {
+        const regenerating = batch.existingPolicy === 'regenerate';
         return {
             icon: 'loading',
-            label: '正在提交补全任务',
+            label: regenerating ? '正在提交重新生成任务' : '正在提交补全任务',
             locked: true,
             disabled: false,
             busy: true,
@@ -260,9 +287,10 @@ export function getAutoCompleteButtonViewModel() {
         };
     }
     if (summary.active) {
+        const regenerating = batch.existingPolicy === 'regenerate';
         return {
             icon: 'loading',
-            label: `补全中 ${batch.completedCount}/${batch.totalCount || summary.missingCount}`,
+            label: `${regenerating ? '重新生成中' : '补全中'} ${batch.completedCount}/${batch.totalCount || summary.missingCount}`,
             locked: true,
             disabled: false,
             busy: true,
@@ -318,6 +346,9 @@ export function getFirstFrameStatusLabel(status) {
         blocked_location: '依赖场景缺图',
         waiting_prev: '等前置分镜',
         running: '生成中',
+        regenerating: '重新生成中',
+        regenerate_pending: '重新生成排队中',
+        regenerate_failed: '重新生成失败',
         failed: '生成失败',
         ready: '',
     }[status] || '待生成';
