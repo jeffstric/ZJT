@@ -373,27 +373,41 @@ class PipelineStepModel:
             raise
 
     @staticmethod
-    def update_params(record_id: int, params: Dict[str, Any]) -> int:
+    def update_params(record_id: int, params: Dict[str, Any], ai_tool_id: Optional[int] = None) -> int:
         """
-        更新步骤的 params（JSON 字段整体覆盖）。
+        更新步骤的 params（JSON 字段整体覆盖），可选同时更新 ai_tool_id（单条 UPDATE 原子完成）。
 
         用于宫格图成功后校准预建 step 的 params（补充 grid_image_path/grid_result_url/cells 等，
         尤其在宫格重试后图已更新的场景，确保 driver 用到最新数据）。
 
+        宫格重试会令 grid_image_tasks.project_id 漂移为新 ai_tool_id，预建 step 的 ai_tool_id
+        仍是旧值。调用方可传入 ai_tool_id 一并校正，使后续 dispatch_step 加载到正确的 ai_tool
+        （其 result_url 指向最新宫格图）。
+
         Args:
             record_id: 记录 ID
             params: 新的 params 字典（整体覆盖）
+            ai_tool_id: 可选，同时更新的 ai_tool_id（校正漂移）
 
         Returns:
             影响的行数
         """
-        sql = """
-            UPDATE ai_tool_pipeline_steps
-            SET params = %s
-            WHERE id = %s
-        """
+        if ai_tool_id is not None:
+            sql = """
+                UPDATE ai_tool_pipeline_steps
+                SET params = %s, ai_tool_id = %s
+                WHERE id = %s
+            """
+            sql_params = (json.dumps(params), ai_tool_id, record_id)
+        else:
+            sql = """
+                UPDATE ai_tool_pipeline_steps
+                SET params = %s
+                WHERE id = %s
+            """
+            sql_params = (json.dumps(params), record_id)
         try:
-            affected = execute_update(sql, (json.dumps(params), record_id))
+            affected = execute_update(sql, sql_params)
             if affected:
                 logger.info(f"Updated pipeline step {record_id} params")
             return affected
