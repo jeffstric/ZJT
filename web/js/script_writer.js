@@ -5791,15 +5791,44 @@
         }
 
         // 新建世界相关函数
+        // 「新建世界」弹窗行内错误：模态框会遮挡聊天区，showError 写入 #chat-messages 时用户看不到，
+        // 因此重名/失败等提示改为直接在弹窗内输入框下方展示，并标红聚焦。
+        function showNewWorldFormError(message) {
+            const nameInput = document.getElementById('new-world-name');
+            const errorEl = document.getElementById('new-world-error');
+            if (errorEl) {
+                errorEl.textContent = message || '创建失败';
+                errorEl.style.display = 'block';
+            }
+            if (nameInput) {
+                nameInput.style.borderColor = '#ef4444';
+                nameInput.focus();
+            }
+        }
+
+        function clearNewWorldFormError() {
+            const nameInput = document.getElementById('new-world-name');
+            const errorEl = document.getElementById('new-world-error');
+            if (errorEl && errorEl.style.display !== 'none') {
+                errorEl.style.display = 'none';
+                errorEl.textContent = '';
+            }
+            if (nameInput) {
+                nameInput.style.borderColor = '';
+            }
+        }
+
         function showNewWorldModal() {
             document.getElementById('new-world-name').value = '';
             document.getElementById('new-world-description').value = '';
             document.getElementById('new-world-story-type').value = 'dialogue';
+            clearNewWorldFormError();
             document.getElementById('new-world-modal').classList.add('show');
             document.getElementById('new-world-name').focus();
         }
 
         function closeNewWorldModal() {
+            clearNewWorldFormError();
             document.getElementById('new-world-modal').classList.remove('show');
         }
 
@@ -5807,17 +5836,22 @@
             const name = document.getElementById('new-world-name').value.trim();
             const description = document.getElementById('new-world-description').value.trim();
             const storyType = normalizeStoryType(document.getElementById('new-world-story-type').value);
-            
+
             if (!name) {
-                showError(window.t ? window.t('error_enter_world_name') : '请输入世界名称');
+                showNewWorldFormError(window.t ? window.t('error_enter_world_name') : '请输入世界名称');
                 return;
             }
-            
+
+            clearNewWorldFormError();
+            const createBtn = document.querySelector('#new-world-modal .btn-primary');
+            const originText = createBtn ? createBtn.textContent : '';
+            if (createBtn) { createBtn.disabled = true; createBtn.textContent = '创建中...'; }
+
             try {
                 updateStatus(window.t ? window.t('status_creating_world') : '正在创建世界...');
                 const response = await fetch('/api/worlds', {
                     method: 'POST',
-                    headers: { 
+                    headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${AUTH_TOKEN}`,
                         'X-User-Id': USER_ID
@@ -5828,27 +5862,37 @@
                         story_type: storyType
                     })
                 });
-                
-                const data = await response.json();
+
+                const data = await response.json().catch(() => ({}));
                 if (data.code === 0) {
                     showSuccess(window.t ? window.t('success_world_created_detail', {name: name}) : `✓ 世界 "${name}" 创建成功！`);
                     closeNewWorldModal();
                     await loadUserWorlds();
                     updateStatus(window.t ? window.t('status_world_created') : '世界创建完成');
-                    
+
                     // 自动选中新创建的世界
                     if (data.data && data.data.id) {
                         switchWorld(data.data.id);
                     }
                 } else {
-                    showError((window.t ? window.t('error_create_world_failed', {error: data.message || (window.t ? window.t('error_unknown') : '未知错误')}) : '创建世界失败: ' + (data.message || '未知错误')));
+                    // 后端业务错误（含重名「该世界已经存在，请选择其他名称」）原样透传，行内展示
+                    const fallback = window.t ? window.t('error_unknown') : '未知错误';
+                    showNewWorldFormError(data.message || fallback);
                     updateStatus(window.t ? window.t('status_create_failed') : '创建失败');
                 }
             } catch (error) {
-                showError((window.t ? window.t('error_create_world_failed', {error: error.message}) : '创建世界失败: ' + error.message));
+                showNewWorldFormError(error && error.message ? error.message : '网络异常，创建世界失败');
                 updateStatus(window.t ? window.t('status_create_failed') : '创建失败');
+            } finally {
+                if (createBtn) { createBtn.disabled = false; createBtn.textContent = originText || '创建世界'; }
             }
         }
+
+        // 用户修正名称后，及时清除行内错误（避免红框/红字残留）
+        (function bindNewWorldErrorClear() {
+            const nameInput = document.getElementById('new-world-name');
+            if (nameInput) nameInput.addEventListener('input', clearNewWorldFormError);
+        })();
 
         // 新建剧本相关函数
         let existingEpisodes = []; // 缓存已有集数
