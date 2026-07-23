@@ -33,6 +33,7 @@ import state, {
     setSceneAgentMessages,
     appendSceneAgentMessage,
     activateSceneAgentMessages,
+    getSelectedVideoTaskId,
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
@@ -904,8 +905,12 @@ async function sendStoryboardAgentMessage(current) {
             model_id: modelId,
             vendor_id: vendorId,
             generation_target: isVideo ? 'video' : 'image',
-            image_task_id: state.selectedImageTaskId,
-            video_task_id: state.selectedVideoTaskId,
+            // 图片模式由后端按最终参考图清单判定，并从对应 Storyboard 槽位锁定模型。
+            image_task_id: null,
+            video_task_id: getSelectedVideoTaskId({
+                hasInputs: referenceImageUrls.length > 0,
+                imageMode: state.videoImageMode,
+            }),
             language: localStorage.getItem('zjt_locale') || 'zh-CN',
             enable_thinking: thinking.enable_thinking,
             thinking_effort: thinking.thinking_effort,
@@ -2589,22 +2594,36 @@ export function bindEvents() {
                 if (Number.isFinite(n) && n >= 1 && n <= 5) {
                     state.scriptSplitQcMaxRounds = n;
                 }
-            } else if (type === 'image') {
-                state.selectedImageTaskId = parseInt(val, 10) || state.selectedImageTaskId;
-                // 跨故事板记忆兜底（与 LLM 模型写法一致），新故事板/首次进入弹框时回显
+            } else if (['textToImage', 'imageEdit', 'textToVideo', 'imageToVideo', 'referenceToVideo'].includes(type)) {
+                const [field, mediaType, mode, storageKey] = {
+                    textToImage: ['selectedTextToImageTaskId', 'image', 'text_to_image', 'storyboard_lastSelectedImageTaskId'],
+                    imageEdit: ['selectedImageEditTaskId', 'image', 'image_edit', 'storyboard_lastSelectedImageEditTaskId'],
+                    textToVideo: ['selectedTextToVideoTaskId', 'video', 'text_to_video', 'storyboard_lastSelectedTextToVideoTaskId'],
+                    imageToVideo: ['selectedImageToVideoTaskId', 'video', 'image_to_video', 'storyboard_lastSelectedVideoTaskId'],
+                    referenceToVideo: ['selectedReferenceToVideoTaskId', 'video', 'reference_to_video', 'storyboard_lastSelectedReferenceToVideoTaskId'],
+                }[type];
+                const taskId = parseInt(val, 10);
+                if (Number.isFinite(taskId)) state[field] = taskId;
+                state.selectedImageTaskId = state.selectedTextToImageTaskId;
+                state.selectedVideoTaskId = state.selectedImageToVideoTaskId;
                 try {
-                    localStorage.setItem('storyboard_lastSelectedImageTaskId', String(state.selectedImageTaskId));
+                    localStorage.setItem(storageKey, String(state[field]));
                 } catch {}
-            } else if (type === 'video') {
-                state.selectedVideoTaskId = parseInt(val, 10) || state.selectedVideoTaskId;
-                // 跨故事板记忆兜底，新故事板/首次进入弹框时回显
-                try {
-                    localStorage.setItem('storyboard_lastSelectedVideoTaskId', String(state.selectedVideoTaskId));
-                } catch {}
-                ensureVideoImageModeSupported();
-                ensureVideoGenerationPrefsSupported();
-                if (state.chatMode === 'video') {
-                    syncVideoMediaFromScene(getCurrentScene(), { resetUploads: false });
+                if (state.storyboardId) {
+                    try {
+                        await api.updateMediaPreference(
+                            state.storyboardId, mediaType, mode, { task_id: state[field] },
+                        );
+                    } catch (error) {
+                        notify('模型偏好保存失败: ' + (error.message || error));
+                    }
+                }
+                if (mediaType === 'video') {
+                    ensureVideoImageModeSupported();
+                    ensureVideoGenerationPrefsSupported();
+                    if (state.chatMode === 'video') {
+                        syncVideoMediaFromScene(getCurrentScene(), { resetUploads: false });
+                    }
                 }
             } else if (type === 'videoDuration') {
                 if (val === 'auto') {
@@ -2635,7 +2654,7 @@ export function bindEvents() {
             }
 
             // 模型配置在弹层内：只刷 modal；视频相关可能影响助手槽位
-            if (type === 'video' || type === 'videoDuration') {
+            if (['textToVideo', 'imageToVideo', 'referenceToVideo', 'videoDuration'].includes(type)) {
                 rerender([Region.MODAL, Region.AGENT_PANEL]);
             } else {
                 rerenderModals();
@@ -2646,7 +2665,7 @@ export function bindEvents() {
                     document.querySelector(`[data-script-language-custom="${customKind}"]`)?.focus();
                 });
             }
-            if (state.storyboardId) {
+            if (state.storyboardId && !['textToImage', 'imageEdit', 'textToVideo', 'imageToVideo', 'referenceToVideo'].includes(type)) {
                 persistUiConfig().catch(() => {});
             }
             return;

@@ -344,6 +344,22 @@ export async function fetchStoryboardModels() {
     return request('/models');
 }
 
+export async function fetchMediaPreferences(storyboardId) {
+    return request(`/media-preferences?storyboard_id=${encodeURIComponent(storyboardId)}`);
+}
+
+export async function updateMediaPreference(storyboardId, mediaType, mode, profile) {
+    return request('/media-preferences', {
+        method: 'PUT',
+        body: JSON.stringify({
+            storyboard_id: storyboardId,
+            media_type: mediaType,
+            mode,
+            profile,
+        }),
+    });
+}
+
 // ==================== 导出 ====================
 export async function exportFullVideo(storyboardId, options = {}) {
     const body = {

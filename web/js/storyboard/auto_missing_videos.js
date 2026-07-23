@@ -1,4 +1,4 @@
-import state from './state.js';
+import state, { getSelectedVideoTaskId } from './state.js';
 import * as api from './api.js';
 import {
     patchHeaderPower,
@@ -118,7 +118,7 @@ async function submitMissingVideoBatch({ manual = false, sceneIds = null } = {})
     try {
         const result = await api.autoGenerateMissingVideos(state.storyboardId, {
             ratio: state.workflowRatio,
-            task_type: state.selectedVideoTaskId,
+            task_type: getSelectedVideoTaskId({ hasInputs: true, imageMode: state.videoImageMode }),
             sequence_mode: 'speed',
             continue_on_error: true,
             image_mode: state.videoImageMode || 'first_last_frame',

@@ -147,7 +147,13 @@ class StoryboardImageBatchJobModel:
         for key, value in kwargs.items():
             if key not in allowed:
                 continue
-            fields.append(f"{key} = %s")
+            if key == "extra_json":
+                fields.append(
+                    "extra_json = JSON_MERGE_PATCH("
+                    "COALESCE(extra_json, JSON_OBJECT()), CAST(%s AS JSON))"
+                )
+            else:
+                fields.append(f"{key} = %s")
             params.append(_json_dumps(value) if key in StoryboardImageBatchJobModel._JSON_FIELDS else value)
         if not fields:
             return 0
@@ -278,7 +284,13 @@ class StoryboardImageBatchItemModel:
         for key, value in kwargs.items():
             if key not in allowed:
                 continue
-            fields.append(f"{key} = %s")
+            if key == "extra_json":
+                fields.append(
+                    "extra_json = JSON_MERGE_PATCH("
+                    "COALESCE(extra_json, JSON_OBJECT()), CAST(%s AS JSON))"
+                )
+            else:
+                fields.append(f"{key} = %s")
             params.append(_json_dumps(value) if key in StoryboardImageBatchItemModel._JSON_FIELDS else value)
         if not fields:
             return 0

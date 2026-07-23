@@ -35,6 +35,17 @@ class AgentTaskEntity:
         self.thinking_effort = kwargs.get('thinking_effort', 'medium')
         self.language = kwargs.get('language', 'zh-CN')
 
+        execution_context_json = kwargs.get('execution_context_json')
+        if isinstance(execution_context_json, str) and execution_context_json:
+            try:
+                self.execution_context_json = json.loads(execution_context_json)
+            except json.JSONDecodeError:
+                self.execution_context_json = None
+        elif isinstance(execution_context_json, dict):
+            self.execution_context_json = execution_context_json
+        else:
+            self.execution_context_json = None
+
         # Deserialize image_urls from JSON
         image_urls_json = kwargs.get('image_urls')
         if isinstance(image_urls_json, str) and image_urls_json:
@@ -105,6 +116,7 @@ class AgentTaskEntity:
             'enable_thinking': self.enable_thinking,
             'thinking_effort': self.thinking_effort,
             'language': self.language,
+            'execution_context_json': self.execution_context_json,
             'image_urls': self.image_urls,
             'video_urls': self.video_urls,
             'audio_urls': self.audio_urls,
@@ -138,7 +150,8 @@ class AgentTasksModel:
         video_urls: Optional[List[str]] = None,
         audio_urls: Optional[List[str]] = None,
         status: str = 'pending',
-        language: str = 'zh-CN'
+        language: str = 'zh-CN',
+        execution_context_json: Optional[Dict[str, Any]] = None,
     ) -> int:
         """
         Create a new agent task
@@ -150,8 +163,8 @@ class AgentTasksModel:
             INSERT INTO agent_tasks
             (task_id, session_id, user_id, world_id, user_message,
              auth_token, vendor_id, model_id, enable_thinking, thinking_effort,
-             image_urls, video_urls, audio_urls, status, language)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             image_urls, video_urls, audio_urls, status, language, execution_context_json)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         # enable_thinking: bool/str -> str（数据库存字符串，支持 true/false/auto）
         enable_thinking_str = str(enable_thinking).lower() if isinstance(enable_thinking, bool) else str(enable_thinking)
@@ -161,9 +174,15 @@ class AgentTasksModel:
         video_urls_json = json.dumps(video_urls, ensure_ascii=False) if video_urls else None
         # audio_urls: list -> JSON 字符串
         audio_urls_json = json.dumps(audio_urls, ensure_ascii=False) if audio_urls else None
+        execution_context_value = (
+            json.dumps(execution_context_json, ensure_ascii=False)
+            if execution_context_json is not None
+            else None
+        )
         params = (task_id, session_id, user_id, world_id, user_message,
                   auth_token, vendor_id, model_id, enable_thinking_str, thinking_effort,
-                  image_urls_json, video_urls_json, audio_urls_json, status, language)
+                  image_urls_json, video_urls_json, audio_urls_json, status, language,
+                  execution_context_value)
 
         try:
             record_id = execute_insert(sql, params)
@@ -375,6 +394,8 @@ CREATE TABLE IF NOT EXISTS `agent_tasks` (
   `image_urls` longtext COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '图片URL列表（JSON数组，HTTP URL格式）',
   `video_urls` longtext COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '视频URL列表（JSON数组，不传递给LLM）',
   `audio_urls` longtext COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '音频URL列表（JSON数组，不传递给LLM）',
+  `language` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'zh-CN' COMMENT 'Task language',
+  `execution_context_json` JSON DEFAULT NULL COMMENT '不可变任务执行上下文（含媒体模型快照）',
   `status` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending' COMMENT 'Task status: pending/running/waiting_human/completed/failed/cancelled',
   `progress` float NOT NULL DEFAULT '0' COMMENT 'Task progress 0-1',
   `current_step` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT '' COMMENT 'Current step description',

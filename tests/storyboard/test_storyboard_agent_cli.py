@@ -128,13 +128,13 @@ def test_generate_video_command_supports_image_to_video(monkeypatch, capsys):
     assert calls[0]["task_type"] == 20
 
 
-def test_generate_video_command_requires_task_type(monkeypatch, capsys):
-    """CLI generate-video 必须显式传入 --task-type，未传时拒绝提交。"""
+def test_generate_video_command_allows_cli_preference_when_task_type_omitted(monkeypatch, capsys):
     from scripts import storyboard_agent_cli
 
     class FakeService:
         def generate_video(self, **kwargs):
-            raise AssertionError("不应在缺 task_type 时调用 generate_video")
+            assert kwargs["task_type"] is None
+            return {"success": True, "project_ids": [3]}
 
     monkeypatch.setattr(storyboard_agent_cli, "StoryboardAgentCliService", lambda: FakeService())
 
@@ -151,10 +151,30 @@ def test_generate_video_command_requires_task_type(monkeypatch, capsys):
     )
     out = json.loads(capsys.readouterr().out)
 
-    # 缺 --task-type 应直接失败，不进入 service 层
-    assert code == 1
-    assert out["success"] is False
-    assert "task_type" in out.get("error", "")
+    assert code == 0
+    assert out["project_ids"] == [3]
+
+
+def test_nested_media_preference_command(monkeypatch, capsys):
+    from scripts import storyboard_agent_cli
+
+    class FakeService:
+        def set_media_preference(self, **kwargs):
+            return {"success": True, "slot": f'{kwargs["media_type"]}.{kwargs["mode"]}'}
+
+    monkeypatch.setattr(storyboard_agent_cli, "StoryboardAgentCliService", lambda: FakeService())
+    code = storyboard_agent_cli.main([
+        "preference", "media", "set",
+        "--user-id", "7",
+        "--world-id", "99",
+        "--media-type", "video",
+        "--mode", "reference_to_video",
+        "--task-id", "29",
+    ])
+    out = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert out["slot"] == "video.reference_to_video"
 
 
 def test_auto_generate_missing_images_command(monkeypatch, capsys):

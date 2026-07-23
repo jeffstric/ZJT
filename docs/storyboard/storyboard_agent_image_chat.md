@@ -166,7 +166,7 @@
 
 同名模型可能同时出现在多个供应商下，例如 `deepseek-v4-flash` 同时属于 `zjt_api` 和 `deepseek`。前端渲染选中态时必须优先匹配 `model_id + vendor_id`，不能只按模型名判断，否则弹框会出现多个 `selected`，真实发送的供应商也可能和用户看到的不一致。
 
-生图模型和视频模型也会写入 storyboard 的 `config_json`，字段为 `selectedImageTaskId`、`selectedVideoTaskId` 和 `selectedDigitalHumanTaskId`。刷新页面后前端先恢复这些选择，再加载模型列表，避免模型下拉框回到默认项。
+普通媒体模型按五个字段写入 storyboard 的 `config_json`：`selectedTextToImageTaskId`、`selectedImageEditTaskId`、`selectedTextToVideoTaskId`、`selectedImageToVideoTaskId`、`selectedReferenceToVideoTaskId`。数字人继续使用 `selectedDigitalHumanTaskId`。旧 `selectedImageTaskId`、`selectedVideoTaskId` 只用于兼容初始化；模型选择通过专用偏好接口字段级更新，不覆盖整份项目配置。
 
 分镜页会兼容读取剧本页保存的旧 LLM 偏好；剧本页历史字段使用 `vendorId`，分镜页标准字段使用 `vendor_id`。恢复配置时必须同时识别这两种字段，并统一写回 `{ model, model_id, vendor_id }`，否则同名模型会因为供应商缺失而按列表顺序误选到 `zjt_api`。
 
@@ -221,7 +221,7 @@
 
 ## 后端注意事项
 
-所有 Web API 中涉及同步数据库读取/写入的位置均通过 `asyncio.to_thread` 包装，避免阻塞 FastAPI 事件循环。该功能没有新增或修改数据库表结构。
+所有 Web API 中涉及同步数据库读取/写入的位置均通过 `asyncio.to_thread` 包装，避免阻塞 FastAPI 事件循环。媒体快照功能为 `agent_tasks` 新增 `execution_context_json` JSON 字段，并提供对应 Alembic 迁移。
 
 `storyboard_scene_asset` 可能只保存 `ai_tool_id`，尤其是分镜助手提交生成任务后立即绑定的候选图/视频。资产列表接口需要把同步的 `AIToolsModel.get_by_id` 放到 `asyncio.to_thread` 中执行，并用任务表中的 **`result_url`（产出）**、`status`、`message` 和 `project_id` 补全返回数据；**不得**用 `image_path` 兜底 `result_url`（`image_path` 是输入）。前端候选区：有合法单条 URL 才渲染 `<img>`/`<video>`，否则按 `status` 显示 loading 或失败占位。
 

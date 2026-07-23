@@ -215,6 +215,11 @@ const state = {
     digitalHumanModels: [],
     selectedImageTaskId: null,
     selectedVideoTaskId: null,
+    selectedTextToImageTaskId: null,
+    selectedImageEditTaskId: null,
+    selectedTextToVideoTaskId: null,
+    selectedImageToVideoTaskId: null,
+    selectedReferenceToVideoTaskId: null,
     selectedDigitalHumanTaskId: null,
 
     // 新增分类（后端已返回，第一版前端仅消费 text_to_image + image_to_video）
@@ -597,6 +602,14 @@ function pickRememberedTaskId(models, storageKey, preferredModelKey = null) {
     return fallback;
 }
 
+function resolveAvailableTaskId(current, models, storageKey, preferredModelKey = null) {
+    if (!Array.isArray(models) || !models.length) return null;
+    if (current != null && models.some(m => String(m.task_id) === String(current))) {
+        return Number(current);
+    }
+    return pickRememberedTaskId(models, storageKey, preferredModelKey);
+}
+
 export function setModels({
     image_models,
     video_models,
@@ -626,18 +639,47 @@ export function setModels({
         state.imageToVideoModels = video_models;
     }
 
-    // 默认选中逻辑（仅在首次且提供了对应列表时设置）
-    // 优先级：config_json（已在 restoreUiConfig 恢复）> localStorage 跨故事板兜底 > 指定默认模型 > 列表第一个
-    if (state.selectedImageTaskId == null && image_models && image_models.length) {
-        state.selectedImageTaskId = pickRememberedTaskId(
-            image_models,
+    // 五类模型分别校验；陈旧/隐藏 ID 不在服务端列表时立即清除并回退。
+    if (state.textToImageModels.length) {
+        state.selectedTextToImageTaskId = resolveAvailableTaskId(
+            state.selectedTextToImageTaskId ?? state.selectedImageTaskId,
+            state.textToImageModels,
             'storyboard_lastSelectedImageTaskId',
             'gpt-image-2',
         );
     }
-    if (state.selectedVideoTaskId == null && video_models && video_models.length) {
-        state.selectedVideoTaskId = pickRememberedTaskId(video_models, 'storyboard_lastSelectedVideoTaskId');
+    if (state.imageEditModels.length) {
+        state.selectedImageEditTaskId = resolveAvailableTaskId(
+            state.selectedImageEditTaskId ?? state.selectedImageTaskId,
+            state.imageEditModels,
+            'storyboard_lastSelectedImageEditTaskId',
+        );
     }
+    if (state.textToVideoModels.length) {
+        state.selectedTextToVideoTaskId = resolveAvailableTaskId(
+            state.selectedTextToVideoTaskId ?? state.selectedVideoTaskId,
+            state.textToVideoModels,
+            'storyboard_lastSelectedTextToVideoTaskId',
+        );
+    }
+    if (state.imageToVideoModels.length) {
+        state.selectedImageToVideoTaskId = resolveAvailableTaskId(
+            state.selectedImageToVideoTaskId ?? state.selectedVideoTaskId,
+            state.imageToVideoModels,
+            'storyboard_lastSelectedVideoTaskId',
+        );
+        const referenceModels = state.imageToVideoModels.filter(m => {
+            const modes = m.supported_image_modes || [];
+            return modes.includes('multi_reference') || m.supports_ref_audio_video === true;
+        });
+        state.selectedReferenceToVideoTaskId = resolveAvailableTaskId(
+            state.selectedReferenceToVideoTaskId ?? state.selectedVideoTaskId,
+            referenceModels,
+            'storyboard_lastSelectedReferenceToVideoTaskId',
+        );
+    }
+    state.selectedImageTaskId = state.selectedTextToImageTaskId;
+    state.selectedVideoTaskId = state.selectedImageToVideoTaskId;
     if (state.selectedDigitalHumanTaskId == null && digital_human_models && digital_human_models.length) {
         state.selectedDigitalHumanTaskId = digital_human_models[0].task_id;
     }
@@ -754,15 +796,53 @@ export function toAbsoluteMediaUrl(url) {
 }
 
 export function getSelectedVideoModel() {
-    const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
-    return models.find(m => String(m.task_id) === String(state.selectedVideoTaskId)) || models[0] || null;
+    const hasInputs = state.videoMediaItems?.some(item => item?.url);
+    const isReference = state.videoImageMode === 'multi_reference' || state.videoImageMode === 'first_last_with_ref';
+    const taskId = !hasInputs
+        ? state.selectedTextToVideoTaskId
+        : (isReference ? state.selectedReferenceToVideoTaskId : state.selectedImageToVideoTaskId);
+    const models = !hasInputs
+        ? state.textToVideoModels
+        : (state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels);
+    return models.find(m => String(m.task_id) === String(taskId)) || models[0] || null;
+}
+
+export function getSelectedImageTaskId(hasReferences = true) {
+    return hasReferences ? state.selectedImageEditTaskId : state.selectedTextToImageTaskId;
+}
+
+export function getSelectedVideoTaskId({ hasInputs = true, imageMode = state.videoImageMode } = {}) {
+    if (!hasInputs) return state.selectedTextToVideoTaskId;
+    if (imageMode === 'multi_reference' || imageMode === 'first_last_with_ref') {
+        return state.selectedReferenceToVideoTaskId;
+    }
+    return state.selectedImageToVideoTaskId;
+}
+
+export function applyMediaPreferenceProfiles(profiles = {}) {
+    const mapping = {
+        'image.text_to_image': 'selectedTextToImageTaskId',
+        'image.image_edit': 'selectedImageEditTaskId',
+        'video.text_to_video': 'selectedTextToVideoTaskId',
+        'video.image_to_video': 'selectedImageToVideoTaskId',
+        'video.reference_to_video': 'selectedReferenceToVideoTaskId',
+    };
+    Object.entries(mapping).forEach(([slot, field]) => {
+        const taskId = profiles?.[slot]?.task_id;
+        if (taskId != null) state[field] = Number(taskId);
+    });
+    setModels({});
 }
 
 export function getSupportedVideoImageModes(model = null) {
     const m = model || getSelectedVideoModel();
     const modes = m?.supported_image_modes || m?.supportedImageModes;
     if (Array.isArray(modes) && modes.length) {
-        return modes.map(String).filter(mode => mode === 'first_last_frame' || mode === 'multi_reference');
+        return modes.map(String).filter(mode => (
+            mode === 'first_last_frame'
+            || mode === 'multi_reference'
+            || mode === 'first_last_with_ref'
+        ));
     }
     return ['first_last_frame'];
 }
@@ -1059,6 +1139,11 @@ export function serializeUiConfig() {
         subtitleEnabled: state.subtitleEnabled,
         selectedImageTaskId: state.selectedImageTaskId,
         selectedVideoTaskId: state.selectedVideoTaskId,
+        selectedTextToImageTaskId: state.selectedTextToImageTaskId,
+        selectedImageEditTaskId: state.selectedImageEditTaskId,
+        selectedTextToVideoTaskId: state.selectedTextToVideoTaskId,
+        selectedImageToVideoTaskId: state.selectedImageToVideoTaskId,
+        selectedReferenceToVideoTaskId: state.selectedReferenceToVideoTaskId,
         selectedDigitalHumanTaskId: state.selectedDigitalHumanTaskId,
         autoImageSequenceMode: state.autoImageSequenceMode,
         // 第一版准备：对话模型记忆（画风/构图由后端 storyboard 主表承载）
@@ -1108,6 +1193,11 @@ export function restoreUiConfig(config = {}) {
     if (config.selectedVideoTaskId !== undefined && config.selectedVideoTaskId !== null) {
         state.selectedVideoTaskId = config.selectedVideoTaskId;
     }
+    state.selectedTextToImageTaskId = config.selectedTextToImageTaskId ?? state.selectedImageTaskId;
+    state.selectedImageEditTaskId = config.selectedImageEditTaskId ?? state.selectedImageTaskId;
+    state.selectedTextToVideoTaskId = config.selectedTextToVideoTaskId ?? state.selectedVideoTaskId;
+    state.selectedImageToVideoTaskId = config.selectedImageToVideoTaskId ?? state.selectedVideoTaskId;
+    state.selectedReferenceToVideoTaskId = config.selectedReferenceToVideoTaskId ?? state.selectedVideoTaskId;
     if (config.selectedDigitalHumanTaskId !== undefined && config.selectedDigitalHumanTaskId !== null) {
         state.selectedDigitalHumanTaskId = config.selectedDigitalHumanTaskId;
     }

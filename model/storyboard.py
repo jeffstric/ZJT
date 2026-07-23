@@ -340,6 +340,41 @@ class StoryboardModel:
             raise
 
     @staticmethod
+    def patch_config_json(record_id: int, updates: Dict[str, Any]) -> int:
+        """使用 JSON_SET 原子更新 config_json 的指定顶层字段。"""
+        if not updates:
+            return 0
+        allowed_fields = {
+            'selectedTextToImageTaskId',
+            'selectedImageEditTaskId',
+            'selectedTextToVideoTaskId',
+            'selectedImageToVideoTaskId',
+            'selectedReferenceToVideoTaskId',
+        }
+        invalid = sorted(set(updates) - allowed_fields)
+        if invalid:
+            raise ValueError(f"Unsupported storyboard config fields: {invalid}")
+        json_set_args = []
+        params: list = []
+        for field, value in updates.items():
+            json_set_args.append("%s, CAST(%s AS JSON)")
+            params.extend((f"$.{field}", json.dumps(value, ensure_ascii=False)))
+        params.append(int(record_id))
+        sql = (
+            "UPDATE storyboard SET config_json = JSON_SET("
+            "COALESCE(config_json, JSON_OBJECT()), "
+            + ", ".join(json_set_args)
+            + ") WHERE id = %s"
+        )
+        try:
+            affected = execute_update(sql, tuple(params))
+            logger.info("Patched storyboard %s config fields: %s", record_id, sorted(updates))
+            return affected
+        except Exception as e:
+            logger.error("Failed to patch storyboard %s config_json: %s", record_id, e)
+            raise
+
+    @staticmethod
     def delete(record_id: int) -> int:
         sql = "DELETE FROM storyboard WHERE id = %s"
         try:

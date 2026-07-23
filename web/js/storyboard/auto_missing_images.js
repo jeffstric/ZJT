@@ -1,4 +1,4 @@
-import state from './state.js';
+import state, { getSelectedImageTaskId } from './state.js';
 import * as api from './api.js';
 import {
     patchHeaderPower,
@@ -185,7 +185,7 @@ async function submitMissingFirstFrameBatch({
             asset_type: 'first_frame',
             mode: 'auto',
             ratio: state.workflowRatio,
-            task_type: state.selectedImageTaskId,
+            task_type: getSelectedImageTaskId(state.autoImageSequenceMode !== 'speed'),
             sequence_mode: state.autoImageSequenceMode,
             ...(requested ? { scene_ids: missing.map(scene => scene.id) } : {}),
             ...(sequenceMode ? { sequence_mode: sequenceMode } : {}),

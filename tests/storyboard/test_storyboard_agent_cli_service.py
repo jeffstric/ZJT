@@ -353,6 +353,23 @@ def patched_storyboard_cli(monkeypatch):
         "UserPreferencesModel",
         SimpleNamespace(get=lambda *args: None, upsert=lambda *args: 1),
     )
+    monkeypatch.setattr(
+        svc,
+        "_build_cli_generation_snapshots",
+        lambda user_id, world_id, *, media_type, modes, explicit_task_id=None, profile_values=None,
+        surface=svc.MediaGenerationSurface.STORYBOARD_CLI: {
+            svc.MediaGenerationPreferenceService.slot_key(media_type, mode): {
+                "schema_version": 1,
+                "surface": surface,
+                "media_type": media_type,
+                "mode": mode,
+                "task_id": int(explicit_task_id or (1 if media_type == "image" else 999)),
+                "model_key": "fixture-model",
+                "model_name": "Fixture Model",
+            }
+            for mode in modes
+        },
+    )
 
     return SimpleNamespace(
         module=svc,
@@ -1056,9 +1073,8 @@ def test_generate_video_supports_text_and_image_modes(patched_storyboard_cli):
     assert patched_storyboard_cli.created_assets[-1]["asset_type"] == "video"
 
 
-def test_auto_generate_missing_images_defaults_task_type_from_storyboard_config(patched_storyboard_cli, monkeypatch):
+def test_auto_generate_missing_images_uses_cli_snapshot_not_storyboard_config(patched_storyboard_cli, monkeypatch):
     module = patched_storyboard_cli.module
-    captured_task_types = []
     generated = []
 
     monkeypatch.setattr(
@@ -1077,11 +1093,6 @@ def test_auto_generate_missing_images_defaults_task_type_from_storyboard_config(
     service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
     monkeypatch.setattr(
         service,
-        "_sync_image_model_preference",
-        lambda user_id, storyboard, task_type: captured_task_types.append(task_type),
-    )
-    monkeypatch.setattr(
-        service,
         "generate_image",
         lambda **kwargs: generated.append(kwargs)
         or {"project_ids": [701], "asset_ids": [901], "selected_asset_id": 901},
@@ -1096,7 +1107,9 @@ def test_auto_generate_missing_images_defaults_task_type_from_storyboard_config(
     assert result["submitted_count"] == 1
     assert result["batch_id"]
     assert result["status"] == "running"
-    assert captured_task_types == [1]
+    assert not hasattr(service, "_sync_image_model_preference")
+    job = patched_storyboard_cli.batch_jobs[result["batch_id"]]
+    assert job["extra_json"]["generation_snapshots"]["image.text_to_image"]["surface"] == "storyboard_cli"
     assert generated == []
 
 
