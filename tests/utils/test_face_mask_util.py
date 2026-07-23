@@ -5,27 +5,16 @@ FaceMaskUtil 模块导入与基础功能单元测试
 本测试验证模块在 mock 环境下能正确导入，
 并测试 _log_ffmpeg_error 的基本行为。
 
-注意：overlay_face_mask 的完整逻辑需要集成测试覆盖。
+注意：
+- 不要在模块级长期替换 sys.modules['numpy']/['cv2']，会污染后续依赖真实 numpy 的测试
+  （例如 image_grid_validator）。
+- overlay_face_mask 的完整逻辑需要集成测试覆盖。
 """
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-# Mock 重量级依赖（import 前置）
-sys.modules['cv2'] = MagicMock()
-sys.modules['numpy'] = MagicMock()
-_saved_config_util = sys.modules.get('config.config_util')
-_saved_project_path = sys.modules.get('utils.project_path')
-sys.modules['config.config_util'] = MagicMock()
-sys.modules['utils.project_path'] = MagicMock()
-
 from utils.face_mask_util import _log_ffmpeg_error, overlay_face_mask
-
-# 恢复 config.config_util（overlay_face_mask 内部 lazy import project_path，需保持 mock 到测试结束）
-if _saved_config_util is not None:
-    sys.modules['config.config_util'] = _saved_config_util
-else:
-    sys.modules.pop('config.config_util', None)
 
 
 class TestFaceMaskUtilImport(unittest.TestCase):
@@ -105,23 +94,23 @@ class TestOverlayFaceMaskValidation(unittest.TestCase):
 
     def test_original_video_not_exists(self):
         """原始视频不存在时返回失败"""
-        with patch('os.path.exists', return_value=False):
-            success, output, error = overlay_face_mask(
-                original_video='/nonexistent/video.mp4',
-                mask_video='/nonexistent/mask.mp4',
-                output_video='/tmp/output.mp4',
-            )
-            self.assertFalse(success)
-            self.assertIsNone(output)
-            self.assertIn("原始视频不存在", error)
-
-
-def tearDownModule():
-    """测试全部结束后恢复 utils.project_path，防止污染后续测试模块"""
-    if _saved_project_path is not None:
-        sys.modules['utils.project_path'] = _saved_project_path
-    else:
-        sys.modules.pop('utils.project_path', None)
+        # overlay_face_mask 函数内会 import cv2/numpy；仅在本用例内临时 mock，用例结束后自动恢复
+        mock_modules = {
+            'cv2': MagicMock(),
+            'numpy': MagicMock(),
+        }
+        with patch.dict(sys.modules, mock_modules):
+            with patch('os.path.exists', return_value=False):
+                success, output, error = overlay_face_mask(
+                    original_video='/nonexistent/video.mp4',
+                    mask_video='/nonexistent/mask.mp4',
+                    output_video='/tmp/output.mp4',
+                    ffmpeg_path='ffmpeg',
+                    ffprobe_path='ffprobe',
+                )
+        self.assertFalse(success)
+        self.assertIsNone(output)
+        self.assertIn("原始视频不存在", error)
 
 
 if __name__ == '__main__':

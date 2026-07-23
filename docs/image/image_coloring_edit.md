@@ -2,89 +2,109 @@
 
 ## 功能概述
 
-图片涂色编辑功能允许用户在图片节点中直接对图片进行涂色修改，涂色后的图片将直接替换原图。适用于给黑白图上色、修改图片局部颜色、添加标记等场景。
+图片涂色编辑允许用户在原图上直接画笔涂色（非 AI 生图），适用于局部改色、标记、上色等场景。
+
+支持页面：
+
+| 页面 | 入口 | 结果落点 |
+|------|------|----------|
+| 视频工作流 `video_workflow.html` | 图片节点「涂色编辑」 | 上传后替换节点 `data.url` |
+| 故事板 `storyboard.html` | 主预览区「涂色编辑」（hover 显示） | 上传并新建 `first_frame` 资产候选并选中 |
 
 ## 使用方法
 
-1. 在图片节点中上传或生成图片
-2. 点击"涂色编辑"按钮打开涂色编辑器
-3. 使用画笔在图片上涂色
-   - 调整画笔大小（5-50px）
-   - 选择颜色（支持预设颜色快捷选择和自定义颜色选择器）
-   - 调整透明度（0-100%）
-4. 支持撤销和清空操作
-5. 点击"确认"按钮
-6. 涂色后的图片自动上传并替换节点中的原图
+### 视频工作流
+
+1. 图片节点中上传或生成图片（须等待上传完成）
+2. 点击「涂色编辑」
+3. 调整画笔大小 / 颜色 / 透明度后绘制
+4. 确认后上传并替换节点图片
+
+### 故事板分镜图
+
+1. 时间轴视图选中有首帧图的分镜（主预览为图，非视频）
+2. 鼠标悬停主预览，点击右上角「涂色编辑」
+3. 涂色确认后：
+   - 上传到 `upload/storyboard/first_frame/`
+   - 新建 `storyboard_scene_asset`（`asset_type=first_frame`，无 `ai_tool_id`）
+   - 设为当前选中；右侧候选列表顶部出现「涂色」条目
+4. 可在候选中切回旧图（涂色 = 新增版本，不原地覆盖）
+
+门禁：
+
+- 当前预览必须是首帧图（`choosePreviewMedia.kind === 'image'`）
+- 播放中会先停播再打开编辑器
+- 无合法单 URL 时禁用
 
 ## 技术实现
 
 ### 文件结构
 
-- `web/video_workflow.html` - 涂色编辑模态框HTML结构
-- `web/css/video_workflow.css` - 涂色编辑器样式
-- `web/js/image_coloring_editor.js` - 涂色编辑器核心模块
-- `web/js/nodes.js` - 图片节点集成
+| 文件 | 职责 |
+|------|------|
+| `web/js/image_coloring_editor.js` | 通用编辑器（自注入 modal，不绑业务） |
+| `web/css/image_coloring_editor.css` | 编辑器 + modal 共享样式 |
+| `web/js/image_node.js` | 工作流节点集成 |
+| `web/js/storyboard/first_frame_coloring.js` | 故事板适配（门禁 / 上传 / 刷 UI） |
+| `web/js/storyboard/api.js` | `uploadSceneAsset` |
+| `api/storyboard.py` | `POST /api/storyboard/scene/{id}/asset/upload` |
 
-### 工作流程
+### 编辑器 API
 
-1. **打开编辑器**：加载原始图片到Canvas，保存初始状态到历史记录
-2. **用户涂色**：在Canvas上直接绘制/修改颜色，画笔光标实时跟随鼠标显示预览圆圈
-3. **确认编辑**：将Canvas内容通过回调函数传递给调用方
-4. **替换原图**：调用方将涂色后的图片上传并替换节点中的原图
-5. **自动保存**：自动保存工作流
-
-### API接口
-
-使用 `/api/video-workflow/upload` 接口上传涂色后的图片：
-
+```js
+window.imageColoringEditor.init();
+window.imageColoringEditor.open(imageUrl, context, (result) => {
+  // result.coloredImage: dataURL
+  // result.context: 调用方传入的 context（节点 id 或 { type, sceneId, ... }）
+  // result.nodeId: 兼容旧签名
+});
+window.imageColoringEditor.close();
 ```
-POST /api/video-workflow/upload
+
+- 页面无需预埋 modal HTML：首次 `init/open` 会自注入 `#coloringEditorModal`
+- 通过 fetch→blob 加载远程图，避免 canvas 跨域污染
+
+### 故事板上传接口
+
+```http
+POST /api/storyboard/scene/{scene_id}/asset/upload
 Content-Type: multipart/form-data
-Headers:
-  Authorization: {auth_token}
-  X-User-Id: {user_id}
+Authorization: Bearer ...
+X-User-Id: ...
 
-参数：
-- file: 涂色后的图片文件（PNG格式）
+file: <image>
+asset_type: first_frame   # first_frame | last_frame
+set_selected: true
+```
 
-返回：
+成功响应：
+
+```json
 {
-  "code": 0,
-  "data": {
-    "url": "涂色后的图片URL"
-  },
-  "message": ""
+  "success": true,
+  "asset_id": 123,
+  "result_url": "https://host/upload/storyboard/first_frame/sb_first_frame_....png",
+  "asset_type": "first_frame",
+  "selected": true
 }
 ```
 
-### 核心功能
+### 工作流程（故事板）
 
-#### Canvas绘制
-- 支持鼠标和触摸事件（兼容移动端）
-- 可调节画笔大小、颜色、透明度
-- 预设颜色快捷选择（点击色块快速切换颜色）
-- 画笔光标预览（圆形光标跟随鼠标，显示当前画笔大小和颜色，使用 `mix-blend-mode: difference` 确保可见性）
-- 撤销功能（最多20步历史记录）
-- 清空画布功能（保留原始图片作为背景）
+1. `canColorFirstFrame` 门禁
+2. `imageColoringEditor.open(url, { type:'storyboard_scene', sceneId })`
+3. 确认 → `dataUrlToBlob` → `uploadSceneAsset`
+4. `applyColoredAssetToScene` 更新 `firstFrameUrl` / 候选
+5. 分区 `rerender([PREVIEW, CANDIDATES, TIMELINE_LIST, AGENT_PANEL])`
 
-#### 图片处理
-- 自动适配图片尺寸
-- 将Canvas转换为PNG格式
-- 上传到服务器获取URL
-- 直接替换节点中的图片
+## 测试
+
+- `web/tests/first_frame_coloring.test.js`：门禁、dataURL 转换、state 写入
+- 工作流侧上传门禁见 `web/tests/image_node_upload_gate.test.js`
 
 ## 注意事项
 
-1. 涂色编辑需要先有图片（上传或生成）
-2. 涂色编辑器使用模态框展示，通过 `window.imageColoringEditor.open()` 打开
-3. 涂色后的图片通过回调函数传递给调用方，由调用方负责上传和替换
-4. 编辑成功后自动保存工作流
-5. 涂色是在原图上直接绘制，不是AI生成新图
-6. 编辑器通过 IIFE 模块化封装，自动在 DOM 加载完成后初始化
-
-## 未来优化方向
-
-- 支持橡皮擦功能
-- 支持图层管理
-- 添加更多画笔样式（如喷枪、模糊等）
-- 支持导出涂色图
+1. 涂色不消耗生图算力，是本地 Canvas 绘制
+2. 故事板涂色结果进入资产候选体系，与 AI 出图一致可回退
+3. 编辑器与业务解耦：上传路径由宿主页面决定
+4. 大图上传中途不可编辑（工作流侧 `canEditImageNode` 门禁）

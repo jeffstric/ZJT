@@ -674,6 +674,25 @@ const AdminApp = {
                 isSensitive: false,
                 loading: false
             },
+
+            // RunningHub 密钥池
+            runninghubKeyPool: {
+                list: [],
+                loading: false,
+                globalApiKeyConfigured: true
+            },
+
+            // RunningHub 密钥编辑弹窗
+            rhKeyEditModal: {
+                show: false,
+                index: null,
+                apiKey: '',
+                apiKeyMasked: '',
+                label: '',
+                maxSlots: 1,
+                enabled: true,
+                loading: false
+            },
             
             // 配置历史弹窗
             configHistoryModal: {
@@ -706,8 +725,14 @@ const AdminApp = {
             
             // 使用手册引导弹窗
             guideModal: {
-                show: false
+                show: false,
+                showWxGroup: false
             },
+
+            // 官方微信群引导（来自 server-config）
+            wxGroupGuideEnabled: false,
+            wxGroupQrUrl: '',
+            wxGroupQrProxyPath: '/api/system/wx-group-qr',
 
             // 实现方管理
             implementations: {
@@ -764,6 +789,7 @@ const AdminApp = {
             },
 
             isCommunityEdition: false,
+            runninghubKeyPoolAvailable: false,
 
             // 通知中心
             notifications: [],
@@ -882,6 +908,24 @@ const AdminApp = {
             const month = String(today.getMonth() + 1).padStart(2, '0');
             const day = String(today.getDate()).padStart(2, '0');
             return `${year}-${month}-${day}`;
+        },
+
+        /**
+         * HTTPS 页面 + HTTP 外链图 → 走后端同源代理，避免混合内容拦截
+         */
+        wxGroupQrDisplayUrl() {
+            const url = this.wxGroupQrUrl;
+            if (!url) return '';
+            if (url.startsWith('/')) return url;
+            try {
+                const isHttpsPage = window.location && window.location.protocol === 'https:';
+                if (isHttpsPage && /^http:\/\//i.test(url)) {
+                    return this.wxGroupQrProxyPath || '/api/system/wx-group-qr';
+                }
+            } catch (e) {
+                // ignore
+            }
+            return url;
         },
 
         // ===== 快速配置相关计算属性 =====
@@ -1107,6 +1151,10 @@ const AdminApp = {
                 const response = await axios.get('/api/system/server-config');
                 if (response.data.code === 0) {
                     this.appVersion = response.data.data.version || '';
+                    this.wxGroupGuideEnabled = !!response.data.data.wx_group_guide_enabled;
+                    this.wxGroupQrUrl = response.data.data.wx_group_qr_url || '';
+                    this.wxGroupQrProxyPath = response.data.data.wx_group_qr_proxy_path
+                        || '/api/system/wx-group-qr';
                 }
             } catch (error) {
                 console.error('Failed to fetch server config:', error);
@@ -1147,6 +1195,9 @@ const AdminApp = {
                     this.dashboard.loading = false;
 
                     this.isCommunityEdition = response.data.data.is_community_edition || false;
+                    this.runninghubKeyPoolAvailable = Boolean(
+                        response.data.data.features?.runninghub_key_pool
+                    );
 
                     // 默认加载用户列表
                     this.loadUsers();
@@ -1206,6 +1257,10 @@ const AdminApp = {
                 this.loadCheckinConfig();
             } else if (page === 'implementations') {
                 this.loadImplementations();
+            } else if (page === 'runninghubKeyPool') {
+                if (this.runninghubKeyPoolAvailable) {
+                    this.loadRunninghubKeyPool();
+                }
             } else if (page === 'marketingPublications') {
                 this.loadMarketingPublications();
             } else if (page === 'models') {
@@ -1521,6 +1576,7 @@ const AdminApp = {
 
         sortedModelAnalysisModels() {
             return [...(this.dashboard.modelAnalysis.models || [])]
+                .filter(model => (model.total || 0) > 0)
                 .sort((a, b) => (b.total || 0) - (a.total || 0));
         },
 
@@ -2525,6 +2581,145 @@ const AdminApp = {
             }
             return value.substring(0, 4) + '****' + value.substring(value.length - 4);
         },
+
+        // ==================== RunningHub 密钥池 ====================
+
+        // 加载密钥池聚合视图
+        async loadRunninghubKeyPool() {
+            this.runninghubKeyPool.loading = true;
+            try {
+                const response = await axios.get('/api/admin/runninghub-key-pool', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.runninghubKeyPool.list = response.data.data.pool || [];
+                    this.runninghubKeyPool.globalApiKeyConfigured = response.data.data.global_api_key_configured;
+                }
+            } catch (error) {
+                console.error('Load runninghub key pool failed:', error);
+                this.showToast(error?.response?.data?.detail || this.t('operation_failed'), 'error');
+            } finally {
+                this.runninghubKeyPool.loading = false;
+            }
+        },
+
+        // 熔断状态文案映射
+        circuitStatusText(status) {
+            // 1-正常 0-手动停(此处已单独处理) -1-熔断中 -2-半开探测
+            const map = {
+                1: this.t('rh_status_enabled'),
+                '-1': this.t('rh_status_circuit_open'),
+                '-2': this.t('rh_status_half_open')
+            };
+            return map[String(status)] || this.t('rh_status_enabled');
+        },
+
+        // 熔断状态样式映射
+        circuitStatusClass(status) {
+            const map = {
+                1: 'active',
+                '-1': 'failed',
+                '-2': 'pending'
+            };
+            return map[String(status)] || 'active';
+        },
+
+        // 查看密钥明文
+        async viewRunninghubKeyRaw(index) {
+            try {
+                const response = await axios.get(`/api/admin/runninghub-key-pool/${index}/raw`, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    alert(response.data.data.api_key);
+                }
+            } catch (error) {
+                this.showToast(error?.response?.data?.detail || this.t('operation_failed'), 'error');
+            }
+        },
+
+        // 打开密钥编辑弹窗
+        openRhKeyEditModal(item) {
+            this.rhKeyEditModal.index = item.index;
+            this.rhKeyEditModal.apiKey = ''; // 编辑时不回显明文，留空表示不修改
+            this.rhKeyEditModal.apiKeyMasked = item.api_key_masked;
+            this.rhKeyEditModal.label = item.label || '';
+            this.rhKeyEditModal.maxSlots = item.max_slots || 1;
+            this.rhKeyEditModal.enabled = item.enabled !== false;
+            this.rhKeyEditModal.show = true;
+        },
+
+        // 关闭密钥编辑弹窗
+        closeRhKeyEditModal() {
+            this.rhKeyEditModal.show = false;
+            this.rhKeyEditModal.index = null;
+        },
+
+        // 提交密钥编辑
+        async submitRhKeyEdit() {
+            if (!this.rhKeyEditModal.maxSlots || this.rhKeyEditModal.maxSlots < 1) {
+                this.showToast(this.t('rh_max_slots_invalid'), 'error');
+                return;
+            }
+            this.rhKeyEditModal.loading = true;
+            try {
+                // 仅传需要更新的字段；apiKey 留空则不修改
+                const payload = {
+                    max_slots: this.rhKeyEditModal.maxSlots,
+                    label: this.rhKeyEditModal.label,
+                    enabled: this.rhKeyEditModal.enabled
+                };
+                if (this.rhKeyEditModal.apiKey.trim()) {
+                    payload.api_key = this.rhKeyEditModal.apiKey.trim();
+                }
+                const response = await axios.put(
+                    `/api/admin/runninghub-key-pool/${this.rhKeyEditModal.index}`,
+                    payload,
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('operation_success'), 'success');
+                    this.closeRhKeyEditModal();
+                    this.loadRunninghubKeyPool();
+                }
+            } catch (error) {
+                this.showToast(error?.response?.data?.detail || this.t('operation_failed'), 'error');
+            } finally {
+                this.rhKeyEditModal.loading = false;
+            }
+        },
+
+        // 删除密钥槽位
+        async deleteRunninghubKey(index) {
+            if (!confirm(this.t('rh_confirm_delete'))) return;
+            try {
+                const response = await axios.delete(`/api/admin/runninghub-key-pool/${index}`, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.showToast(this.t('operation_success'), 'success');
+                    this.loadRunninghubKeyPool();
+                }
+            } catch (error) {
+                this.showToast(error?.response?.data?.detail || this.t('operation_failed'), 'error');
+            }
+        },
+
+        // 重置熔断状态
+        async resetRunninghubCircuit(index) {
+            try {
+                const response = await axios.post(
+                    `/api/admin/runninghub-key-pool/${index}/reset-circuit`, {},
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('operation_success'), 'success');
+                    this.loadRunninghubKeyPool();
+                }
+            } catch (error) {
+                this.showToast(error?.response?.data?.detail || this.t('operation_failed'), 'error');
+            }
+        },
         
         // 弹框显示敏感配置值（从后端获取完整值）
         async showSensitiveValue(item) {
@@ -2892,7 +3087,15 @@ const AdminApp = {
                     this.closeQuickConfigModal();
                     this.loadConfigs();
 
-                    // 显示使用手册引导弹窗
+                    // 显示使用手册引导弹窗；首管注册后可附带官方微信群（次要区块）
+                    const pendingWx = sessionStorage.getItem('pending_wx_group_guide');
+                    const showWxGroup = this.wxGroupGuideEnabled
+                        && !!this.wxGroupQrDisplayUrl
+                        && pendingWx === 'admin_after_config';
+                    if (pendingWx === 'admin_after_config') {
+                        sessionStorage.removeItem('pending_wx_group_guide');
+                    }
+                    this.guideModal.showWxGroup = showWxGroup;
                     this.guideModal.show = true;
                 }
             } catch (error) {
@@ -3118,13 +3321,25 @@ const AdminApp = {
                 'kling_image_to_video': 'Kling 图生视频',
                 'gemini_image_edit': 'Gemini 图片编辑 (标准版)',
                 'gemini_image_edit_pro': 'Gemini 图片编辑 (Pro版)',
+                'gemini_3_1_flash_image_edit': 'Gemini 3.1 Flash 图片编辑',
                 'veo3_image_to_video': 'VEO3 图生视频',
                 'ltx2_image_to_video': 'LTX2 图生视频',
+                'ltx2_3_image_to_video': 'LTX2.3 图生视频',
                 'wan22_image_to_video': 'Wan22 图生视频',
                 'digital_human': '数字人',
+                'digital_human_ltx2_3_voice': '数字人 LTX2.3 With Voice',
                 'vidu_image_to_video': 'Vidu 图生视频',
                 'vidu_q2_image_to_video': 'Vidu Q2 图生视频',
-                'seedream_text_to_image': 'Seedream 文生图'
+                'seedream_text_to_image': 'Seedream 文生图',
+                'gpt_image_2': 'GPT Image 2',
+                'seedance_1_5_pro_image_to_video': 'Seedance 1.5 Pro 图生视频',
+                'seedance_2_0_fast_image_to_video': 'Seedance 2.0 Fast 图生视频',
+                'seedance_2_0_image_to_video': 'Seedance 2.0 图生视频',
+                'seedance_2_0_mini_image_to_video': 'Seedance 2.0 Mini 图生视频',
+                'grok_image_to_video': 'Grok 图生视频',
+                'happy_horse_image_to_video': 'Happy Horse 图生视频',
+                'happy_horse_reference_to_video': 'Happy Horse 参考生视频',
+                'qwen_multi_angle_image_edit': 'Qwen 多角度图片编辑'
             };
             return keyMap[driverKey] || driverKey;
         },

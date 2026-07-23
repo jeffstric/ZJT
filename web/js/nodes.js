@@ -1,15 +1,112 @@
     // ============ 驱动状态检查 ============
 
+    // 内容审核错误友好中文（与 utils/content_moderation_error.py / 设计文档 A 对齐；历史英文 reason 兜底）
+    function friendlyContentModerationMessage(errorMsg) {
+      if(!errorMsg) return null;
+      const msg = String(errorMsg);
+      if(msg.startsWith('内容审核未通过')) return msg;
+
+      const lower = msg.toLowerCase();
+      const isModeration = (
+        lower.includes('safety system') ||
+        lower.includes('safety policy') ||
+        lower.includes('moderation_blocked') ||
+        lower.includes('invalid_prompt') ||
+        lower.includes('sensitivecontent') ||
+        lower.includes('sensitive content') ||
+        lower.includes('sensitive information') ||
+        lower.includes('content policy') ||
+        lower.includes('content_filter') ||
+        lower.includes('safety_violations') ||
+        lower.includes('image generation blocked') ||
+        lower.includes('generation was stopped') ||
+        lower.includes('prohibited content') ||
+        lower.includes('prohibited material') ||
+        lower.includes('copyright') ||
+        lower.includes('trademark') ||
+        lower.includes('policy violation') ||
+        lower.includes('image_safety') ||
+        lower.includes('image_other') ||
+        msg.includes('内容审核') ||
+        msg.includes('敏感内容') ||
+        msg.includes('违禁')
+      );
+      if(!isModeration) return null;
+
+      if(/copyright|trademark|IMAGE_OTHER/i.test(msg)) {
+        return '内容审核未通过（版权/商标）：提示词或参考内容可能涉及受保护形象/标识，请修改后重试';
+      }
+
+      const map = {
+        violence: '暴力', sexual: '色情', self_harm: '自残', 'self-harm': '自残',
+        hate: '仇恨', harassment: '骚扰', illegal: '违法', drugs: '毒品',
+        weapon: '武器', weapons: '武器', child: '未成年人相关', political: '政治敏感',
+        safety: '安全策略', prohibited: '违禁内容', copyright: '版权/商标', trademark: '版权/商标'
+      };
+      const labels = [];
+      const violMatch = msg.match(/safety_violations\s*=\s*\[([^\]]*)\]/i);
+      if(violMatch) {
+        violMatch[1].split(',')
+          .map(s => s.trim().replace(/["']/g, '').toLowerCase())
+          .filter(Boolean)
+          .forEach(v => labels.push(map[v] || v));
+      }
+      const geminiMatch = msg.match(/image\s+generation\s+blocked\s*\[([^\]]+)\]/i);
+      if(geminiMatch) {
+        const reason = geminiMatch[1].toUpperCase();
+        if(reason.includes('SAFETY')) labels.push('安全策略');
+        else if(reason.includes('PROHIBITED')) labels.push('违禁内容');
+      }
+      const violationLabel = [...new Set(labels)].join('、');
+
+      let action;
+      if(
+        /invalid_prompt/i.test(msg) ||
+        /InputTextSensitive/i.test(msg) ||
+        /IMAGE_PROHIBITED|PROHIBITED_CONTENT/i.test(msg) ||
+        (/modify your prompt/i.test(msg) && !/generated image was blocked/i.test(msg))
+      ) {
+        action = '提示词包含敏感/违禁内容，请修改提示词后重试';
+      } else if(
+        /InputImageSensitive/i.test(msg) ||
+        /reference image/i.test(msg)
+      ) {
+        action = '参考图片包含敏感内容，请更换参考图后重试';
+      } else if(
+        /OutputImageSensitive|OutputVideoSensitive|IMAGE_SAFETY/i.test(msg) ||
+        /generated image was blocked|output image may contain/i.test(msg)
+      ) {
+        action = '生成结果可能包含敏感内容，请调整提示词或参考图后重试';
+      } else {
+        action = '请检查提示词和参考图后重试';
+      }
+
+      if(violationLabel) {
+        return `内容审核未通过（${violationLabel}）：${action}`;
+      }
+      return `内容审核未通过：${action}`;
+    }
+
     // 截断过长的错误信息，提取关键错误内容
     function truncateErrorMessage(errorMsg, maxLength = 120) {
       if(!errorMsg) return errorMsg;
       let msg = String(errorMsg);
+
+      const moderationMsg = friendlyContentModerationMessage(msg);
+      if(moderationMsg) {
+        return moderationMsg.length > maxLength
+          ? moderationMsg.substring(0, maxLength) + '...'
+          : moderationMsg;
+      }
+
       // 如果包含 JSON 错误响应，尝试提取关键错误信息
       if(msg.includes('"error"') || msg.includes('"message"')) {
         try {
           // 尝试提取 JSON 中的 message 或 failureReasons
           const messageMatch = msg.match(/"message"\s*:\s*"([^"]+)"/);
           if(messageMatch) {
+            const nestedModeration = friendlyContentModerationMessage(messageMatch[1]);
+            if(nestedModeration) return nestedModeration;
             const failureMatch = msg.match(/"failureReasons"\s*:\s*\[("[^"]+")\]/);
             if(failureMatch) {
               return `${messageMatch[1]} (${failureMatch[1].replace(/"/g, '')})`;

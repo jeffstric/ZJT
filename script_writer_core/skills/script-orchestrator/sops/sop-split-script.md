@@ -97,7 +97,7 @@ asset-readiness-checker（资产就绪检查）
      - 如果用户选择"需要修改信息"：用户会说明需要修改的内容，逐项补充后重新确认
      - 如果信息不完整（标题、时长、内容任一缺失），先用 `ask_user` 逐项收集：
        ```
-       ask_user(question: "请提供每集时长：", options: ["1分钟", "2分钟", "3分钟"])
+       ask_user(question: "请提供每集时长（不推荐超过2分钟）：", options: ["1分钟", "2分钟"])
        ```
 
 2. **调用 novel-episode-splitter**

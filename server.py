@@ -34,6 +34,7 @@ from model.character import CharacterModel
 from model.location import LocationModel
 from model.script import ScriptModel
 from model.props import PropsModel
+from model.computing_power import ComputingPowerModel
 import uuid
 from PIL import Image
 from task.scheduler import init_scheduler
@@ -67,33 +68,47 @@ from config.constant import (
     JIANYING_RATIO_RESOLUTION,
     JIANYING_DEFAULT_RATIO,
     IMAGE_MODE_EXTRA_CONFIG_KEY,
-    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
+    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
+    ASSET_LIST_MAX_PAGE_SIZE,
+    ASSET_LIST_DB_QUERY_TIMEOUT,
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
     get_upload_dir, get_upload_subdir, get_upload_temp_dir,
     generate_upload_filename, build_upload_url, resolve_upload_url_to_local_path,
 )
-from config.constant import Edition, Action
-from utils.image_grid_splitter import ImageGridSplitter
+from config.constant import Edition, Action, StoryType
+from script_writer_core.image_grid_splitter import ImageGridSplitter
 from utils.image_grid_merger import ImageGridMerger
 from utils.sentry_util import SentryUtil
 from utils import file_lock
 from utils.computing_power import build_context_from_task_record, get_implementation_for_user
 from utils.video_resolution import validate_video_resolution
+from utils.resource_access import (
+    get_user_id_from_header,
+    check_resource_permission,
+    ensure_resource_access,
+    ensure_world_access,
+)
+from services.media_generation_preference_service import (
+    MediaGenerationPreferenceError,
+    MediaGenerationPreferenceService,
+)
+from config.constant import MediaGenerationType, MediaGenerationMode
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
 
-def _get_user_id_from_header(user_id: Optional[int]) -> int:
-    if user_id is None:
-        raise HTTPException(status_code=400, detail="user_id is required")
-    if isinstance(user_id, str) and not user_id.strip():
-        raise HTTPException(status_code=400, detail="user_id is required")
-    try:
-        return int(user_id)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="invalid user_id")
+# 向后兼容别名（已有代码可直接使用 _前缀 名称）
+_get_user_id_from_header = get_user_id_from_header
+_check_resource_permission = check_resource_permission
+_ensure_resource_access = ensure_resource_access
+_ensure_world_access = ensure_world_access
+
+
+# _get_user_id_from_header / _check_resource_permission /
+# _ensure_resource_access / _ensure_world_access
+# 已迁移至 utils/resource_access.py，上方通过别名保持向后兼容
 
 
 
@@ -118,6 +133,98 @@ def _sync_write_file(file_path: str, content: bytes):
     """同步写入文件（需在线程池中调用）"""
     with open(file_path, 'wb') as f:
         f.write(content)
+
+
+def _json_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", ""}:
+            return False
+    return default
+
+
+def _generation_snapshot_extra_config(
+    raw_snapshot: Optional[str],
+    *,
+    task_id: int,
+    media_type: str,
+    mode: str,
+    extra_config: Optional[str] = None,
+    image_mode: Optional[str] = None,
+    has_reference_audio_video: bool = False,
+) -> str:
+    """校验快照与最终 task_id，并合并到 ai_tools.extra_config。"""
+    base: dict = {}
+    if extra_config:
+        try:
+            parsed_extra = json.loads(extra_config)
+            if isinstance(parsed_extra, dict):
+                base.update(parsed_extra)
+            else:
+                raise HTTPException(status_code=400, detail="extra_config 必须是 JSON 对象")
+        except (TypeError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="extra_config 必须是 JSON 对象")
+
+    snapshot = None
+    if raw_snapshot:
+        try:
+            snapshot = json.loads(raw_snapshot) if isinstance(raw_snapshot, str) else raw_snapshot
+        except (TypeError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="generation_snapshot 必须是 JSON 对象")
+        if not isinstance(snapshot, dict):
+            raise HTTPException(status_code=400, detail="generation_snapshot 必须是 JSON 对象")
+    try:
+        config = MediaGenerationPreferenceService.validate_model(
+            task_id,
+            media_type,
+            mode,
+            image_mode=image_mode,
+            has_reference_audio_video=has_reference_audio_video,
+            allow_hidden=bool(snapshot),
+            expected_model_key=(snapshot or {}).get('model_key'),
+        )
+    except MediaGenerationPreferenceError as exc:
+        raise HTTPException(status_code=400, detail=exc.to_dict())
+
+    snapshot_mismatch = False
+    if snapshot:
+        try:
+            snapshot_mismatch = int(snapshot.get('task_id', -1)) != int(task_id)
+        except (TypeError, ValueError):
+            snapshot_mismatch = True
+        snapshot_mismatch = snapshot_mismatch or (
+            snapshot.get('media_type') not in (None, media_type)
+            or snapshot.get('mode') not in (None, mode)
+        )
+    if snapshot_mismatch:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'code': 'SNAPSHOT_MISMATCH',
+                'message': '任务快照与最终生成参数不一致',
+            },
+        )
+    if snapshot is None:
+        snapshot = {
+            'schema_version': 1,
+            'surface': 'direct_api',
+            'media_type': media_type,
+            'mode': mode,
+            'model_source': 'request',
+            'task_id': int(task_id),
+            'model_key': config.key,
+            'model_name': config.name,
+        }
+    base['generation_snapshot'] = snapshot
+    return json.dumps(base, ensure_ascii=False)
 
 
 async def _validate_image_size(file: UploadFile, max_size_bytes: int = None) -> tuple[bool, str]:
@@ -150,56 +257,6 @@ async def _validate_image_size(file: UploadFile, max_size_bytes: int = None) -> 
     
     return True, ""
 
-
-def _check_resource_permission(resource, user_id: int, action: str) -> bool:
-    """
-    统一资源权限检查
-    
-    Args:
-        resource: 资源对象（world, workflow, character等）
-        user_id: 用户ID
-        action: 操作类型 'view' | 'edit' | 'delete'
-    
-    Returns:
-        bool: 是否有权限
-    """
-    if Edition.is_space_isolated():
-        return getattr(resource, 'user_id', None) == user_id
-    else:
-        if action == Action.DELETE:
-            return getattr(resource, 'user_id', None) == user_id
-        return True
-
-
-def _ensure_resource_access(resource, user_id: int, action: str, resource_name: str = "资源"):
-    """
-    确保用户有权限访问资源，无权限则抛出异常
-    
-    Args:
-        resource: 资源对象
-        user_id: 用户ID
-        action: 操作类型 'view' | 'edit' | 'delete'
-        resource_name: 资源名称（用于错误提示）
-    
-    Returns:
-        resource: 原资源对象
-    
-    Raises:
-        HTTPException: 无权限时抛出403异常
-    """
-    if not _check_resource_permission(resource, user_id, action):
-        if action == Action.DELETE:
-            raise HTTPException(status_code=403, detail=f"仅创建者可删除该{resource_name}")
-        raise HTTPException(status_code=403, detail=f"无权访问该{resource_name}")
-    return resource
-
-
-def _ensure_world_access(world_id: int, user_id: int, action: str = Action.VIEW):
-    """检查用户对世界的访问权限"""
-    world = WorldModel.get_by_id(world_id)
-    if not world:
-        raise HTTPException(status_code=404, detail="世界不存在")
-    return _ensure_resource_access(world, user_id, action, "世界")
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = get_upload_dir()
@@ -334,7 +391,18 @@ async def startup_event():
 from api.script_writer import router as script_writer_router
 app.include_router(script_writer_router)
 
+# 导入并注册故事板 API 路由
+from api.storyboard import router as storyboard_router
+app.include_router(storyboard_router)
+
+# 剧本分段拆分任务 API（见 docs/script/script_parser_incremental_split_design.md §13）
+from api.script_split import router as script_split_router
+app.include_router(script_split_router)
+
 # 导入并注册测试路由（临时测试，完成后移除）
+from api.agent_auth import router as agent_auth_router
+app.include_router(agent_auth_router)
+
 from api.test_ask_user import router as test_ask_user_router
 app.include_router(test_ask_user_router)
 
@@ -1281,7 +1349,8 @@ async def image_edit(
     auth_token: str = Form(None, description="Authentication token"),
     image_size: str = Form("1K", description="Image resolution: 1K, 2K, 4K"),
     ref_image_urls: str = Form(None, description="Reference image URLs, comma separated"),
-    extra_config: str = Form(None, description="Extra config JSON for multi-angle parameters")
+    extra_config: str = Form(None, description="Extra config JSON for multi-angle parameters"),
+    generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
 ):
     """
     Submit image editing task to RunningHub nanobanana service
@@ -1301,6 +1370,13 @@ async def image_edit(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是图片编辑任务")
         
         image_edit_type = task_id
+        audited_extra_config = _generation_snapshot_extra_config(
+            generation_snapshot,
+            task_id=task_id,
+            media_type=MediaGenerationType.IMAGE,
+            mode=MediaGenerationMode.IMAGE_EDIT,
+            extra_config=extra_config,
+        )
         # 根据 image_size 构建 context，用于算力修饰符计算
         context = {}
         if image_size:
@@ -1385,7 +1461,8 @@ async def image_edit(
                 try:
                     # Store multiple image URLs as comma-separated string
                     image_path_str = ','.join(image_urls) if isinstance(image_urls, list) else image_urls
-                    id = AIToolsModel.create(
+                    id = await asyncio.to_thread(
+                        AIToolsModel.create,
                         prompt=prompt,
                         user_id=user_id,
                         type=image_edit_type,  # 1-图片编辑
@@ -1394,9 +1471,10 @@ async def image_edit(
                         transaction_id=transaction_id,
                         status=AI_TOOL_STATUS_PENDING,
                         image_size=image_size,
-                        extra_config=extra_config
+                        extra_config=audited_extra_config,
                     )
-                    TasksModel.create(
+                    await asyncio.to_thread(
+                        TasksModel.create,
                         task_type=TASK_TYPE_GENERATE_VIDEO,
                         task_id=id,
                         status=TASK_STATUS_QUEUED
@@ -1404,7 +1482,9 @@ async def image_edit(
                     # 创建 param_prepare 流水线步骤（如人脸遮盖）
                     try:
                         from task.pipeline_processor import PipelineProcessor
-                        PipelineProcessor.create_param_prepare_steps(id, image_edit_type)
+                        await asyncio.to_thread(
+                            PipelineProcessor.create_param_prepare_steps, id, image_edit_type
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
                     project_ids.append(id)
@@ -1432,7 +1512,8 @@ async def text_to_image(
     image_size: str = Form(None, description="Image resolution: 1K, 2K, 4K"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
-    auth_token: str = Form(None, description="Authentication token")
+    auth_token: str = Form(None, description="Authentication token"),
+    generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
 ):
     """
     Submit text-to-image task
@@ -1447,6 +1528,12 @@ async def text_to_image(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是文生图任务")
         
         text_to_image_type = task_id
+        audited_extra_config = _generation_snapshot_extra_config(
+            generation_snapshot,
+            task_id=task_id,
+            media_type=MediaGenerationType.IMAGE,
+            mode=MediaGenerationMode.TEXT_TO_IMAGE,
+        )
         # 根据 image_size 构建 context，用于算力修饰符计算
         context = {}
         if image_size:
@@ -1509,16 +1596,19 @@ async def text_to_image(
             # Create database record (status=AI_TOOL_STATUS_PENDING, will be processed by scheduler)
             if user_id:
                 try:
-                    id = AIToolsModel.create(
+                    id = await asyncio.to_thread(
+                        AIToolsModel.create,
                         prompt=prompt,
                         user_id=user_id,
                         type=text_to_image_type,
                         ratio=aspect_ratio,
                         transaction_id=transaction_id,
                         status=AI_TOOL_STATUS_PENDING,
-                        image_size=image_size
+                        image_size=image_size,
+                        extra_config=audited_extra_config,
                     )
-                    TasksModel.create(
+                    await asyncio.to_thread(
+                        TasksModel.create,
                         task_type=TASK_TYPE_GENERATE_VIDEO,
                         task_id=id,
                         status=TASK_STATUS_QUEUED
@@ -1526,7 +1616,9 @@ async def text_to_image(
                     # 创建 param_prepare 流水线步骤
                     try:
                         from task.pipeline_processor import PipelineProcessor
-                        PipelineProcessor.create_param_prepare_steps(id, text_to_image_type)
+                        await asyncio.to_thread(
+                            PipelineProcessor.create_param_prepare_steps, id, text_to_image_type
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
                     project_ids.append(id)
@@ -1783,7 +1875,8 @@ async def ai_app_run(
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token"),
-    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）")
+    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）"),
+    generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
 ):
     """
     文生视频任务提交接口。
@@ -1802,6 +1895,16 @@ async def ai_app_run(
         from task.visual_drivers.driver_factory import VideoDriverFactory
         actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
         resolution = validate_video_resolution(resolution, actual_impl)
+        base_extra_config = {}
+        if resolution:
+            base_extra_config[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
+        audited_extra_config = _generation_snapshot_extra_config(
+            generation_snapshot,
+            task_id=task_id,
+            media_type=MediaGenerationType.VIDEO,
+            mode=MediaGenerationMode.TEXT_TO_VIDEO,
+            extra_config=json.dumps(base_extra_config, ensure_ascii=False),
+        )
         context = {}
         if resolution:
             context['resolution'] = resolution
@@ -1869,13 +1972,10 @@ async def ai_app_run(
             # Create database record for each project
             if user_id:
                 try:
-                    extra_config_data = {}
-                    if resolution:
-                        extra_config_data[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
-                    extra_config_json = json.dumps(extra_config_data) if extra_config_data else None
                     impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) if actual_impl else 0
 
-                    id = AIToolsModel.create(
+                    id = await asyncio.to_thread(
+                        AIToolsModel.create,
                         prompt=prompt,
                         user_id=user_id,
                         type=text_to_video_type,
@@ -1883,10 +1983,11 @@ async def ai_app_run(
                         transaction_id=transaction_id,
                         duration=duration_seconds,
                         status=AI_TOOL_STATUS_PENDING,
-                        extra_config=extra_config_json,
+                        extra_config=audited_extra_config,
                         implementation=impl_id
                     )
-                    TasksModel.create(
+                    await asyncio.to_thread(
+                        TasksModel.create,
                         task_type=TASK_TYPE_GENERATE_VIDEO,
                         task_id=id,
                         status=TASK_STATUS_QUEUED
@@ -1894,7 +1995,9 @@ async def ai_app_run(
                     # 创建 param_prepare 流水线步骤
                     try:
                         from task.pipeline_processor import PipelineProcessor
-                        PipelineProcessor.create_param_prepare_steps(id, text_to_video_type)
+                        await asyncio.to_thread(
+                            PipelineProcessor.create_param_prepare_steps, id, text_to_video_type
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
                     project_ids.append(id)
@@ -1935,7 +2038,8 @@ async def ai_app_run_image(
     video_urls: str = Form(None, description="Comma-separated reference video URLs (alternative to uploading video file)"),
     media_references: Optional[str] = Form(None, description="JSON array of media references for @ mention resolution"),
     resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）"),
-    enable_face_mask: bool = Form(False, description="是否启用人脸遮盖预处理（仅 Seedance 2.0 系列商业版生效，默认关闭）")
+    enable_face_mask: bool = Form(False, description="是否启用人脸遮盖预处理（仅 Seedance 2.0 系列商业版生效，默认关闭）"),
+    generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
 ):
     """
     Submit image to video task.
@@ -2073,6 +2177,27 @@ async def ai_app_run_image(
             video_path = await asyncio.to_thread(_save_uploaded_image, video)
             logger.info(f"Saved reference video: {video_path}")
 
+        generation_mode = MediaGenerationPreferenceService.determine_mode(
+            MediaGenerationType.VIDEO,
+            image_urls=main_image_list,
+            reference_image_urls=ref_image_list,
+            video_urls=video_path,
+            audio_urls=audio_path,
+            image_mode=image_mode,
+        )
+        base_extra_config = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
+        if resolution:
+            base_extra_config[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
+        audited_extra_config = _generation_snapshot_extra_config(
+            generation_snapshot,
+            task_id=task_id,
+            media_type=MediaGenerationType.VIDEO,
+            mode=generation_mode,
+            image_mode=image_mode,
+            has_reference_audio_video=bool(video_path or audio_path),
+            extra_config=json.dumps(base_extra_config, ensure_ascii=False),
+        )
+
         # 根据 image_mode 和图片数量构建 context，用于算力修饰符计算
         context = {}
         if image_mode == 'first_last_frame' and main_image_list and len(main_image_list) > 1:
@@ -2152,11 +2277,6 @@ async def ai_app_run_image(
                 # Create database record for each task
                 if user_id:
                     try:
-                        # 构建 extra_config，包含 image_mode 和视频分辨率
-                        extra_config_data = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
-                        if resolution:
-                            extra_config_data[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
-                        extra_config_json = json.dumps(extra_config_data)
                         impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) if actual_impl else 0
 
                         # 判断是否需要创建 pipeline steps（Seedance 2.0 系列 + RunningHub 配置）
@@ -2187,7 +2307,8 @@ async def ai_app_run_image(
 
                         if need_pipeline_steps:
                             # 在同一事务中创建 ai_tools 和 face_mask pipeline steps
-                            id = AIToolsModel.create_with_pipeline_steps(
+                            id = await asyncio.to_thread(
+                                AIToolsModel.create_with_pipeline_steps,
                                 prompt=prompt,
                                 user_id=user_id,
                                 type=image_to_video_type,
@@ -2196,7 +2317,7 @@ async def ai_app_run_image(
                                 duration=duration_seconds,
                                 transaction_id=transaction_id,
                                 status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
-                                extra_config=extra_config_json,
+                                extra_config=audited_extra_config,
                                 reference_images=reference_images_json,
                                 implementation=impl_id,
                                 audio_path=audio_path,
@@ -2204,7 +2325,8 @@ async def ai_app_run_image(
                             )
                         else:
                             # 普通创建（无 pipeline steps）
-                            id = AIToolsModel.create(
+                            id = await asyncio.to_thread(
+                                AIToolsModel.create,
                                 prompt=prompt,
                                 user_id=user_id,
                                 type=image_to_video_type,
@@ -2213,13 +2335,14 @@ async def ai_app_run_image(
                                 duration=duration_seconds,
                                 transaction_id=transaction_id,
                                 status=AI_TOOL_STATUS_PENDING,
-                                extra_config=extra_config_json,
+                                extra_config=audited_extra_config,
                                 reference_images=reference_images_json,
                                 implementation=impl_id,
                                 audio_path=audio_path,
                                 video_path=video_path
                             )
-                        TasksModel.create(
+                        await asyncio.to_thread(
+                            TasksModel.create,
                             task_type=TASK_TYPE_GENERATE_VIDEO,
                             task_id=id,
                             status=TASK_STATUS_QUEUED
@@ -2320,8 +2443,27 @@ async def get_computing_power(request: Request, auth_token: str = Header(None, a
                 }
             )
         else:
+            # 认证失败时，尝试使用 X-User-Id 兜底查询本地算力（故事板等内部页面可能携带过期 localStorage token）
+            if message and ('无效' in message or '认证' in message or 'token' in str(message).lower()):
+                x_user_id = request.headers.get('x-user-id') or request.headers.get('X-User-Id')
+                if x_user_id:
+                    try:
+                        uid = int(x_user_id)
+                        power = ComputingPowerModel.get_by_user_id(uid)
+                        cp = power.computing_power if power else 0
+                        return JSONResponse(
+                            content={
+                                'success': True,
+                                'message': '查询成功（本地兜底）',
+                                'data': {'computing_power': cp}
+                            }
+                        )
+                    except Exception:
+                        pass
+            # 非认证错误或无兜底时返回对应状态码
+            status_code = 401 if message and ('无效' in message or '认证' in message or 'token' in str(message).lower()) else 400
             return JSONResponse(
-                status_code=400,
+                status_code=status_code,
                 content={
                     'success': False,
                     'message': message or '查询算力失败'
@@ -5551,23 +5693,16 @@ async def get_grid_split_image(
             splitter = ImageGridSplitter()
             
             try:
-                if grid_size == GRID_SIZE_2X2:
-                    output_paths = await asyncio.to_thread(
-                        splitter.split_2x2_grid,
-                        grid_image_path=grid_image_path,
-                        output_dir=output_dir,
-                        output_names=[str(i) for i in range(1, GRID_SIZE_2X2 + 1)],
-                        output_format="png"
-                    )
-                else:  # grid_size == GRID_SIZE_3X3
-                    output_paths = await asyncio.to_thread(
-                        splitter.split_3x3_grid,
-                        grid_image_path=grid_image_path,
-                        output_dir=output_dir,
-                        output_names=[str(i) for i in range(1, GRID_SIZE_3X3 + 1)],
-                        output_format="png"
-                    )
-                logger.info(f"Grid split completed: {len(output_paths)} images")
+                # 通用 N×N 切分（grid_size ∈ VALID_SIZES 已在前面校验）
+                output_paths = await asyncio.to_thread(
+                    splitter.split_grid,
+                    grid_image_path=grid_image_path,
+                    output_dir=output_dir,
+                    grid_size=grid_size,
+                    output_names=[str(i) for i in range(1, grid_size + 1)],
+                    output_format="png"
+                )
+                logger.info(f"Grid split completed: {len(output_paths)} images (grid_size={grid_size})")
             except Exception as e:
                 logger.error(f"Failed to split grid image: {str(e)}")
                 logger.error(traceback.format_exc())
@@ -5608,6 +5743,7 @@ class MergeGridRequest(BaseModel):
 @app.post('/api/images/merge-grid')
 @require_permission("image:merge_grid")
 async def merge_grid_images(
+    http_request: Request,
     request: MergeGridRequest,
     x_user_id: Optional[int] = Header(None, alias="X-User-Id"),
     authorization: Optional[str] = Header(None)
@@ -5753,13 +5889,40 @@ async def parse_script(
         force_medium_shot = body.get('force_medium_shot', False)
         no_bg_music = body.get('no_bg_music', False)
         split_multi_dialogue = body.get('split_multi_dialogue', False)
-        narration_as_dialogue = body.get('narration_as_dialogue', False)
         language = body.get('language', '')  # 兼容旧版单一语言参数
         dialogue_language = body.get('dialogue_language', '') or language
         prompt_language = body.get('prompt_language', '') or language
         model = body.get('model', 'gemini-3-flash-preview')
         model_id = body.get('model_id', '')
         vendor_id = body.get('vendor_id', None)
+        enable_thinking = _json_bool(body.get('enable_thinking'), False)
+        thinking_effort = body.get('thinking_effort', 'medium')
+        # 与故事板 generate-from-script 对齐：分镜拆分模式 + 拆分质检
+        sequence_mode = str(body.get('sequence_mode') or 'balanced').strip().lower()
+        if sequence_mode not in {'speed', 'balanced', 'quality'}:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": f"不支持的分镜拆分模式: {sequence_mode}", "data": None},
+            )
+        if sequence_mode == 'quality' and Edition.is_community():
+            return JSONResponse(
+                status_code=403,
+                content={"code": -1, "message": "效果模式仅商业版支持", "data": None},
+            )
+        from config.constant import ScriptSplitQcConstants
+        enable_qc = _json_bool(body.get('enable_script_split_qc'), False)
+        try:
+            qc_max_rounds = int(
+                body.get('script_split_qc_max_rounds') or ScriptSplitQcConstants.DEFAULT_MAX_ROUNDS
+            )
+        except (TypeError, ValueError):
+            qc_max_rounds = ScriptSplitQcConstants.DEFAULT_MAX_ROUNDS
+        qc_max_rounds = max(
+            ScriptSplitQcConstants.MIN_MAX_ROUNDS,
+            min(ScriptSplitQcConstants.MAX_MAX_ROUNDS, qc_max_rounds),
+        )
+        if not enable_qc:
+            qc_max_rounds = 1
 
         if not script_content:
             return JSONResponse(
@@ -5798,7 +5961,6 @@ async def parse_script(
                 )
         
         # 导入剧本解析模块
-        from llm.script_parser import parse_script_to_shots
         from model.vendor_model import VendorModelModel
 
         # 获取真实的 vendor_id
@@ -5816,84 +5978,58 @@ async def parse_script(
             except Exception as e:
                 logger.warning(f"Failed to get vendor_id for model {model_id}: {e}")
 
-        # 调用LLM解析剧本
-        parsed_data = await parse_script_to_shots(
+        # 改为异步任务：创建持久化拆分任务后立即返回 202，前端轮询状态。
+        # 见 docs/script/script_parser_incremental_split_design.md §10 §13.1。
+        # 原 db_location/db_character 后处理在 worker 的 merge 阶段完成后，
+        # 由 GET /api/script-split/tasks/{id}/result 返回时补充（下一轮前端适配时对齐）。
+        from api.script_split import create_split_task, ScriptSplitPreconditionError
+        from config.constant import ScriptSplitConstants
+        request_config = {
+            "max_group_duration": max_group_duration,
+            "world_id": world_id,
+            "model": model,
+            "temperature": 0.5,
+            "force_medium_shot": force_medium_shot,
+            "no_bg_music": no_bg_music,
+            "split_multi_dialogue": split_multi_dialogue,
+            "language": language,
+            "dialogue_language": dialogue_language,
+            "prompt_language": prompt_language,
+            "vendor_id": real_vendor_id,
+            "model_id": int(model_id) if model_id else 1,
+            "enable_thinking": enable_thinking,
+            "thinking_effort": thinking_effort,
+            "sequence_mode": sequence_mode,
+            "enable_qc": enable_qc,
+            "qc_max_rounds": qc_max_rounds,
+        }
+        task_id, is_new = await create_split_task(
+            user_id=user_id,
+            source_type=ScriptSplitConstants.SOURCE_TYPE_VIDEO_WORKFLOW,
+            source_id=None,
+            source_node_key=None,
             script_content=script_content,
-            max_group_duration=max_group_duration,
-            world_id=world_id,
-            model=model,
-            temperature=0.5,
-            force_medium_shot=force_medium_shot,
-            no_bg_music=no_bg_music,
-            split_multi_dialogue=split_multi_dialogue,
-            narration_as_dialogue=narration_as_dialogue,
-            language=language,
-            dialogue_language=dialogue_language,
-            prompt_language=prompt_language,
+            request_config=request_config,
             auth_token=auth_token,
-            vendor_id=real_vendor_id,
-            model_id=int(model_id) if model_id else 1
         )
-        
-        if not parsed_data:
-            return JSONResponse(
-                status_code=500,
-                content={"code": -1, "message": "剧本解析失败"}
-            )
-        
-        # 为每个shot添加db_location_id、db_location_pic和location_name字段
-        locations = parsed_data.get('locations', [])
-        characters = parsed_data.get('characters', [])
-        shot_groups = parsed_data.get('shot_groups', [])
+        return JSONResponse(
+            status_code=202,
+            content={
+                "code": 0,
+                "message": "剧本拆分任务已创建" if is_new else "已有进行中的拆分任务",
+                "data": {
+                    "task_id": task_id,
+                    "status": "queued",
+                    "status_url": f"/api/script-split/tasks/{task_id}",
+                },
+            },
+        )
 
-        # 将LLM生成的角色名称替换为数据库中的实际名称
-        for char in characters:
-            db_id = char.get('character_db_id')
-            if db_id is not None:
-                try:
-                    from model.character import CharacterModel
-                    db_character = CharacterModel.get_by_id(db_id)
-                    if db_character:
-                        # 保存LLM生成的名称作为备用
-                        char['llm_name'] = char.get('name')
-                        # 替换为数据库中的实际名称
-                        char['name'] = db_character.name
-                except Exception as e:
-                    logger.warning(f"Failed to get character name for {db_id}: {e}")
-
-        for group in shot_groups:
-            shots = group.get('shots', [])
-            for shot in shots:
-                location_id = shot.get('location_id')
-                if location_id:
-                    db_location_id, db_location_pic, location_name = _match_location_to_db(location_id, locations, user_id)
-                    shot['db_location_id'] = db_location_id
-                    shot['db_location_pic'] = db_location_pic
-                    shot['location_name'] = location_name
-                else:
-                    shot['db_location_id'] = None
-                    shot['db_location_pic'] = None
-                    shot['location_name'] = None
-
-                # 为每个shot中的characters_present添加db_character信息
-                characters_present = shot.get('characters_present', [])
-                db_character_info = []
-                for char_id in characters_present:
-                    db_char_id, db_char_pic, db_char_name = _match_character_to_db(char_id, characters)
-                    db_character_info.append({
-                        'character_id': char_id,
-                        'db_character_id': db_char_id,
-                        'db_character_pic': db_char_pic,
-                        'db_character_name': db_char_name
-                    })
-                shot['db_character_info'] = db_character_info
-
-        return JSONResponse({
-            "code": 0,
-            "message": "解析成功",
-            "data": parsed_data
-        })
-        
+    except ScriptSplitPreconditionError as e:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": e.message, "error_code": e.code}
+        )
     except Exception as e:
         logger.error(f"Failed to parse script: {str(e)}")
         logger.error(traceback.format_exc())
@@ -5905,6 +6041,9 @@ async def parse_script(
 
 class ReduceViolationRequest(BaseModel):
     prompt: str
+    # 可选：上游/任务失败原因摘要，帮助模型针对性弱化敏感表述（方案 D）
+    failure_reason: Optional[str] = None
+    source: Optional[str] = None  # prompt | reference_image | output | copyright | general
 
 @app.post('/api/reduce-violation')
 async def reduce_violation(
@@ -5913,34 +6052,55 @@ async def reduce_violation(
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
-    降低提示词违规风险
+    降低提示词违规风险（用户主动调用，非任务失败自动路径）。
+
+    兼容仅传 prompt；可选 failure_reason / source 用于结合内容审核失败上下文改写。
+    设计见 docs/image/content_moderation_error_design.md 方案 D。
     """
     try:
         from llm.qwen import call_qwen_chat_async
-        
-        user_prompt = f"""以上提示词中触发了 sora的 This content may violate our content policies. 请你修改以上提示词，避免触发违禁
 
-原提示词：
-{request.prompt}
+        prompt_text = (request.prompt or "").strip()
+        if not prompt_text:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "提示词不能为空"}
+            )
 
-请直接输出修改后的提示词，不要添加任何解释。"""
-        
+        context_parts = []
+        if request.failure_reason:
+            context_parts.append(f"上游/任务失败原因：{request.failure_reason.strip()}")
+        if request.source:
+            context_parts.append(f"判定来源：{request.source.strip()}")
+        context_block = ("\n".join(context_parts) + "\n\n") if context_parts else ""
+
+        user_prompt = f"""你是内容安全提示词改写助手。下列提示词在调用生图/生视频模型时可能触发内容审核
+（safety / content policy / moderation / 敏感内容等，不限单一供应商）。
+
+请改写提示词：弱化或替换可能引发暴力、色情、仇恨、违法、版权商标争议等风险的表述，
+保留创作意图、场景与镜头信息，语言自然可用。
+
+{context_block}原提示词：
+{prompt_text}
+
+请直接输出修改后的提示词，不要添加任何解释、标题或引号包裹。"""
+
         messages = [
             {"role": "user", "content": user_prompt}
         ]
-        
+
         rewritten_prompt = await call_qwen_chat_async(
             messages=messages,
             temperature=0.7,
             max_tokens=2000
         )
-        
+
         return JSONResponse({
             "code": 0,
             "message": "改写成功",
             "data": {"prompt": rewritten_prompt.strip()}
         })
-        
+
     except Exception as e:
         logger.error(f"Failed to reduce violation: {str(e)}")
         logger.error(traceback.format_exc())
@@ -6231,11 +6391,13 @@ async def get_worlds(
 class CreateWorldRequest(BaseModel):
     name: str
     description: Optional[str] = None
+    story_type: Optional[str] = None
 
 
 class UpdateWorldRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    story_type: Optional[str] = None
 
 
 @app.post('/api/worlds')
@@ -6279,7 +6441,8 @@ async def create_world(
         world_id = WorldModel.create(
             name=request.name.strip(),
             user_id=user_id,
-            description=request.description
+            description=request.description,
+            story_type=StoryType.normalize(request.story_type)
         )
         
         world = WorldModel.get_by_id(world_id)
@@ -6345,6 +6508,9 @@ async def update_world(
 
         if request.description is not None:
             update_fields['description'] = request.description.strip() if request.description else None
+
+        if request.story_type is not None:
+            update_fields['story_type'] = StoryType.normalize(request.story_type)
 
         if not update_fields:
             return JSONResponse(
@@ -6491,7 +6657,7 @@ async def get_scripts(
 async def get_characters(
     world_id: int = Query(..., description="世界ID"),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(100, ge=1, le=ASSET_LIST_MAX_PAGE_SIZE, description="每页数量"),
     keyword: Optional[str] = Query(None, description="搜索关键词"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
@@ -6501,11 +6667,15 @@ async def get_characters(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        result = CharacterModel.list_by_world(
-            world_id=world_id,
-            page=page,
-            page_size=page_size,
-            keyword=keyword
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                CharacterModel.list_by_world,
+                world_id=world_id,
+                page=page,
+                page_size=page_size,
+                keyword=keyword
+            ),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT
         )
         return JSONResponse(
             status_code=200,
@@ -6980,7 +7150,7 @@ async def delete_character(
 async def get_locations(
     world_id: int = Query(..., description="世界ID"),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(100, ge=1, le=ASSET_LIST_MAX_PAGE_SIZE, description="每页数量"),
     keyword: Optional[str] = Query(None, description="搜索关键词"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
@@ -6990,11 +7160,15 @@ async def get_locations(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        result = LocationModel.list_by_world(
-            world_id=world_id,
-            page=page,
-            page_size=page_size,
-            keyword=keyword
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                LocationModel.list_by_world,
+                world_id=world_id,
+                page=page,
+                page_size=page_size,
+                keyword=keyword
+            ),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT
         )
         return JSONResponse(
             status_code=200,
@@ -7760,7 +7934,7 @@ async def delete_location_reference_image(
 async def get_props(
     world_id: int = Query(..., description="世界ID"),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(100, ge=1, le=ASSET_LIST_MAX_PAGE_SIZE, description="每页数量"),
     keyword: Optional[str] = Query(None, description="搜索关键词"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
@@ -7772,11 +7946,15 @@ async def get_props(
         user_id = _get_user_id_from_header(user_id)
         logger.info(f"Getting props list - world_id: {world_id}, page: {page}, page_size: {page_size}, keyword: {keyword}")
         
-        result = PropsModel.list_by_world(
-            world_id=world_id,
-            page=page,
-            page_size=page_size,
-            keyword=keyword
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                PropsModel.list_by_world,
+                world_id=world_id,
+                page=page,
+                page_size=page_size,
+                keyword=keyword
+            ),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT
         )
         
         logger.info(f"Props query result - total: {result.get('total', 0)}, data count: {len(result.get('data', []))}")
@@ -8742,6 +8920,21 @@ async def serve_marketing_inspiration():
         return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Marketing inspiration page not found")
 
+@app.get("/storyboard")
+async def serve_storyboard():
+    file_path = os.path.join(static_dir, "storyboard.html")
+    if os.path.isfile(file_path):
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Storyboard page not found")
+
+@app.get("/storyboard-list")
+async def serve_storyboard_list():
+    file_path = os.path.join(static_dir, "storyboard_list.html")
+    if os.path.isfile(file_path):
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Storyboard list page not found")
 
 @app.get(f"{MP_VERIFY_ROUTE}")
 async def get_mp_verify_file():
@@ -8787,7 +8980,6 @@ async def get_sitemap_xml():
         ("video-workflow-list", "0.9"),
         ("video-workflow", "0.9"),
         ("image-style-guide", "0.8"),
-        ("character_card.html", "0.8"),
     ]
     
     xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>

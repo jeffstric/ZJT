@@ -52,7 +52,7 @@ from config.constant import (
     RUNNINGHUB_TASK_TYPES,
     RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
 )
-from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage
+from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 
 logging.basicConfig(level=logging.INFO)
@@ -98,19 +98,35 @@ def _is_expire_check_enabled():
 
 
 def _normalize_failure_reason(reason):
-    """将外部驱动返回的失败原因转换成可写入数据库的字符串。"""
+    """将外部驱动返回的失败原因转换成可写入数据库的字符串。
+
+    内容审核/违禁类错误会改写为面向用户的中文提示（方案 A，见
+    docs/image/content_moderation_error_design.md）。
+    """
+    from utils.content_moderation_error import (
+        format_user_facing_moderation_error,
+        rewrite_failure_reason_if_moderation,
+    )
+
     if reason is None:
         return "任务失败"
     if isinstance(reason, str):
-        return reason
+        return rewrite_failure_reason_if_moderation(reason)
     if isinstance(reason, dict):
+        friendly = format_user_facing_moderation_error(
+            error_code=reason.get("code") or reason.get("error_code"),
+            error_message=reason.get("message") or reason.get("msg") or reason.get("error"),
+            error_type=reason.get("type"),
+        )
+        if friendly:
+            return friendly
         message = reason.get("message")
         if isinstance(message, str) and message:
-            return message
+            return rewrite_failure_reason_if_moderation(message)
     try:
-        return json.dumps(reason, ensure_ascii=False)
+        return rewrite_failure_reason_if_moderation(json.dumps(reason, ensure_ascii=False))
     except (TypeError, ValueError):
-        return str(reason)
+        return rewrite_failure_reason_if_moderation(str(reason))
 
 if _is_test_mode_enabled():
     logger.info("=" * 60)
@@ -307,11 +323,15 @@ async def _submit_new_task(ai_tool):
                                    message=f"选用实现方: {implementation_name}",
                                    detail={'impl_name': implementation_name, 'impl_id': implementation_id})
 
-                # 仅在首次提交时记录实现方尝试（attempt_number=1）
-                # 重试由 ImplementationRetryPipelineDriver 记录（attempt_number>=2）
-                if not ai_tool.implementation:
-                    try:
-                        from model.implementation_attempts import ImplementationAttemptModel
+                # 首次提交记录实现方尝试（attempt_number=1）。
+                # 不能用 ai_tool.implementation 是否为空判断：画布创建时会预写 implementation
+                # （用于分辨率/算力），预写后旧逻辑会漏写 attempt，导致仪表盘无统计。
+                # 重试由 ImplementationRetryPipelineDriver 先写 attempt>=2 再入队，
+                # 因此「已有任意 attempt」时跳过即可，避免重复 create。
+                try:
+                    from model.implementation_attempts import ImplementationAttemptModel
+                    attempted = ImplementationAttemptModel.get_attempted_implementations(task_id)
+                    if not attempted:
                         ImplementationAttemptModel.create(
                             ai_tool_id=task_id,
                             implementation=implementation_id,
@@ -319,8 +339,8 @@ async def _submit_new_task(ai_tool):
                             status=0,
                             started_at=datetime.now()
                         )
-                    except Exception as e:
-                        logger.warning(f"Failed to record implementation attempt for task {task_id}: {e}")
+                except Exception as e:
+                    logger.warning(f"Failed to record implementation attempt for task {task_id}: {e}")
             else:
                 logger.warning(f"Implementation name '{implementation_name}' not found in IMPLEMENTATION_TO_ID mapping for task {task_id}")
 
@@ -373,20 +393,30 @@ async def _submit_new_task(ai_tool):
             else:
                 error_message = f"不支持的任务类型: {ai_tool_type}"
                 logger.error(f"Unsupported driver type: {ai_tool_type}")
-            # 更新任务状态为失败
-            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=error_message, completed_time=datetime.now())
-            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
-            # 释放 RunningHub 槽位（如果是 RunningHub 任务且已获取槽位）
-            if ai_tool_type in RUNNINGHUB_TASK_TYPES:
-                task = TasksModel.get_by_task_id(task_id)
-                if task:
-                    RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_TASK)
-                    logger.info(f"Released RunningHub slot for failed driver creation, task {task_id}")
-            # 退还算力
-            _refund_computing_power(ai_tool, error_message)
-            return False
+            # 尝试通过 before_finish 切换备用实现方重试
+            return _handle_task_failure(
+                task_id=task_id, ai_tool_type=ai_tool_type,
+                reason=error_message, user_id=ai_tool.user_id
+            )
 
         logger.info(f"Using driver: {driver.driver_name} for task {task_id}")
+
+        # 多密钥轮换：从槽位表反查本任务领用的密钥 index，注入到 driver
+        # （槽位在 generate_video_task 中获取时已写入 api_key_index；
+        #  这里通过 slot 反查而非对象属性传递，因 ai_tool 是重新查询的新对象）
+        from task import runninghub_key_pool
+        from model.runninghub_slots import RunningHubSlot
+        rh_key_index = runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX
+        if ai_tool_type in RUNNINGHUB_TASK_TYPES:
+            _task_row = TasksModel.get_by_task_id(task_id)
+            if _task_row:
+                rh_key_index = await runninghub_key_pool.get_key_index_for_slot_async(
+                    _task_row.id, RunningHubSlot.SOURCE_TASK
+                )
+            if rh_key_index != runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX:
+                rh_api_key = await runninghub_key_pool.get_key_by_index_async(rh_key_index)
+                if rh_api_key and hasattr(driver, '_apply_api_key'):
+                    driver._apply_api_key(rh_api_key)
         
         # 2. 调用驱动提交任务
         import inspect
@@ -409,6 +439,13 @@ async def _submit_new_task(ai_tool):
                                message=f"提交失败: {error}",
                                detail={'error': error, 'error_type': error_type,
                                        'error_detail': error_detail})
+
+            # 多密钥熔断反馈：非上游拥堵的失败计入密钥失败计数
+            is_upstream_congested = (
+                result.get("retry") and result.get("retry_reason") == "UPSTREAM_CONGESTED"
+            )
+            if not is_upstream_congested and ai_tool_type in RUNNINGHUB_TASK_TYPES:
+                await runninghub_key_pool.report_failure_async(rh_key_index, error)
             
             # 上游并发超限/限流（api queue limit reached / TASK_QUEUE_MAXED 等）：
             # 释放本地槽位、状态回 QUEUED、延迟重试，不消耗 try_count、不退算力、不切换实现方。
@@ -525,6 +562,8 @@ async def _submit_new_task(ai_tool):
             if task:
                 RunningHubSlotsModel.update_project_id(task.id, project_id, source=RunningHubSlot.SOURCE_TASK)
                 logger.info(f"Updated RunningHub slot project_id for task {task_id}")
+            # 多密钥熔断反馈：提交成功
+            await runninghub_key_pool.report_success_async(rh_key_index)
         
         logger.info(f"Task {task_id} submitted successfully with project_id: {project_id}")
         AIToolsLogModel.log(task_id, AIToolsLogEvent.SUBMITTED,
@@ -544,14 +583,11 @@ async def _submit_new_task(ai_tool):
                            user_id=getattr(ai_tool, 'user_id', None),
                            message=f"提交流程异常: {str(e)}")
         
-        # 更新任务状态为失败
-        AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message="服务异常，请联系技术支持", completed_time=datetime.now())
-        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
-
-        # 退还算力
-        _refund_computing_power(ai_tool, "任务提交异常")
-
-        return False
+        # 尝试通过 before_finish 切换备用实现方重试
+        return _handle_task_failure(
+            task_id=task_id, ai_tool_type=ai_tool_type,
+            reason="服务异常，请联系技术支持", user_id=getattr(ai_tool, 'user_id', None)
+        )
 
 
 async def _check_task_status(ai_tool):
@@ -632,22 +668,29 @@ async def _check_task_status(ai_tool):
             else:
                 error_message = f"不支持的任务类型: {ai_tool_type}"
                 logger.error(f"Unsupported driver type: {ai_tool_type}")
-            # 更新任务状态为失败
-            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=error_message, completed_time=datetime.now())
-            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
-            # 释放 RunningHub 槽位（如果是 RunningHub 任务）
-            if ai_tool_type in RUNNINGHUB_TASK_TYPES:
-                if project_id:
-                    RunningHubSlotsModel.release_slot_by_project_id(project_id)
-                else:
-                    task = TasksModel.get_by_task_id(task_id)
-                    if task:
-                        RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_TASK)
-                logger.info(f"Released RunningHub slot for failed driver creation in check_status, task {task_id}")
-            return True  # 返回 True 表示任务已完成（失败）
+            # 尝试通过 before_finish 切换备用实现方重试
+            return _handle_task_failure(
+                task_id=task_id, ai_tool_type=ai_tool_type,
+                reason=error_message, user_id=ai_tool.user_id, project_id=project_id
+            )
         
         logger.info(f"Checking status for task {task_id} using driver: {driver.driver_name}")
-        
+
+        # 多密钥轮换：轮询前根据任务记录的密钥 index 切换 driver 密钥
+        # （错误密钥无法获取结果）
+        if ai_tool_type in RUNNINGHUB_TASK_TYPES:
+            from task import runninghub_key_pool
+            from model.runninghub_slots import RunningHubSlot
+            task_row = TasksModel.get_by_task_id(task_id)
+            if task_row:
+                idx = await runninghub_key_pool.get_key_index_for_slot_async(
+                    task_row.id, RunningHubSlot.SOURCE_TASK
+                )
+                if idx != runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX:
+                    rh_api_key = await runninghub_key_pool.get_key_by_index_async(idx)
+                    if rh_api_key and hasattr(driver, '_apply_api_key'):
+                        driver._apply_api_key(rh_api_key)
+
         # 2. 调用驱动检查状态
         result = driver.check_status(project_id)
 
@@ -712,8 +755,12 @@ async def _check_task_status(ai_tool):
                            user_id=getattr(ai_tool, 'user_id', None), project_id=project_id,
                            message=f"状态检查异常: {str(e)}")
 
-        # 不立即标记为失败，继续重试
-        return False
+        # 尝试通过 before_finish 切换备用实现方重试
+        return _handle_task_failure(
+            task_id=task_id, ai_tool_type=ai_tool_type,
+            reason=f"状态检查异常: {str(e)}", user_id=getattr(ai_tool, 'user_id', None),
+            project_id=project_id
+        )
 
 
 def _check_pipeline_stage(ai_tool, stage):
@@ -739,6 +786,11 @@ def _check_pipeline_stage(ai_tool, stage):
     from task.pipeline_processor import PipelineProcessor
 
     all_steps = PipelineProcessor.get_all_steps(ai_tool.id, stage)
+    if stage == PipelineStage.BEFORE_FINISH:
+        all_steps = [
+            step for step in all_steps
+            if step.step_type != PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+        ]
     if not all_steps:
         # 无步骤，直接回到主流程
         if stage == PipelineStage.PARAM_PREPARE:
@@ -769,7 +821,10 @@ def _check_pipeline_stage(ai_tool, stage):
             logger.info(f"Task {ai_tool.id} failed: param_prepare step failed")
         elif stage == PipelineStage.BEFORE_FINISH:
             # 检查是否还有待处理的重试步骤
-            remaining = PipelineProcessor.get_pending_steps(ai_tool.id, stage)
+            remaining = [
+                step for step in PipelineProcessor.get_pending_steps(ai_tool.id, stage)
+                if step.step_type != PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+            ]
             if remaining:
                 # 还有重试机会，继续等待
                 return False
@@ -1345,11 +1400,23 @@ def process_task_with_retry(task_type, process_func):
                 # 获取失败 → 延迟30秒后重试，不计入 try_count
                 # 非 RunningHub 任务（如火山引擎等同步/异步 API）不经过此逻辑
                 if is_runninghub and task.status == TASK_STATUS_QUEUED:
-                    # 尝试获取槽位
+                    # 多密钥轮换：先从密钥池领用密钥
+                    from task import runninghub_key_pool
+                    acquired = runninghub_key_pool.acquire_key()
+                    if acquired is not None:
+                        api_key_index, _api_key, _ = acquired
+                        slot_max_slots = 999999  # 单密钥上限已由 acquire_key 检查，跳过全局检查
+                    else:
+                        api_key_index = runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX
+                        slot_max_slots = None  # 用默认全局值
+
+                    # 尝试获取槽位（带上领用的密钥 index，_submit_new_task 通过 slot 反查注入 driver）
                     slot_acquired = RunningHubSlotsModel.try_acquire_slot(
                         task_id=task.id,
                         task_type=ai_tool.type,
-                        source=RunningHubSlot.SOURCE_TASK
+                        source=RunningHubSlot.SOURCE_TASK,
+                        api_key_index=api_key_index,
+                        max_slots=slot_max_slots
                     )
                     
                     if not slot_acquired:

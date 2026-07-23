@@ -151,6 +151,21 @@ class TaskProvider:
     LOCAL = 'local'
     ZJT = 'zjt'
 
+
+class SceneVideoType:
+    """分镜视频类型（分镜的呈现形式）"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'IMAGE': '图片分镜',
+        'VIDEO': '视频分镜',
+        'DIGITAL_HUMAN': '数字人分镜',
+    }
+    IMAGE = 'image'                  # 静态图片分镜（仅首帧，不生成视频）
+    VIDEO = 'video'                  # AI 视频分镜（首帧 → 图生视频）
+    DIGITAL_HUMAN = 'digital_human'  # 数字人分镜（人物形象图 + 配音 → 数字人视频）
+    ALL_TYPES = [IMAGE, VIDEO, DIGITAL_HUMAN]
+
+
 # ============ 异步任务实现 ID 常量 ============
 class AsyncTaskImplementationId:
     """异步任务实现ID"""
@@ -1966,18 +1981,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=51,
     ),
 
-    # ==================== 角色卡 ====================
-    UnifiedTaskConfig(
-        id=TaskTypeId.CHARACTER_CARD,
-        key='character_card',
-        short_key='character_card',
-        name='创建角色卡',
-        category=TaskCategory.OTHER,
-        provider=TaskProvider.LOCAL,
-        implementation='character_card',
-        sort_order=60,
-    ),
-
     # ==================== 音频 ====================
     UnifiedTaskConfig(
         id=TaskTypeId.AUDIO_GENERATE,
@@ -2649,14 +2652,6 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=10,
         enabled=True,
         description='本地视频增强'
-    ),
-    ImplementationConfig(
-        name='character_card',
-        display_name='本地处理',
-        driver_class='CharacterCardDriver',
-        default_computing_power=20,
-        enabled=True,
-        description='角色卡生成'
     ),
     ImplementationConfig(
         name='audio_generate',

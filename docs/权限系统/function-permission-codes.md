@@ -37,8 +37,6 @@
 - **创建角色** - `character:create`
 - **更新角色** - `character:update`
 - **删除角色** - `character:delete`
-- **创建角色卡** - `character:create_card`
-- **查询角色卡状态** - `character:view_status`
 
 ### 剧本管理
 - **查看剧本列表** - `script:list`

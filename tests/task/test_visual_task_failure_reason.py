@@ -14,6 +14,7 @@ _saved_modules = {
         'model',
         'model.runninghub_slots',
         'model.ai_tool_pipeline_steps',
+        'model.ai_tools_log',
         'config.constant',
         'config.config_util',
         'perseids_server.client',
@@ -34,7 +35,13 @@ sys.modules['model.runninghub_slots'] = runninghub_slots
 pipeline_steps = types.ModuleType('model.ai_tool_pipeline_steps')
 pipeline_steps.PipelineStepStatus = MagicMock()
 pipeline_steps.PipelineStage = MagicMock()
+pipeline_steps.PipelineStepType = MagicMock()
 sys.modules['model.ai_tool_pipeline_steps'] = pipeline_steps
+
+ai_tools_log = types.ModuleType('model.ai_tools_log')
+ai_tools_log.AIToolsLogModel = MagicMock()
+ai_tools_log.AIToolsLogEvent = MagicMock()
+sys.modules['model.ai_tools_log'] = ai_tools_log
 
 constant = types.ModuleType('config.constant')
 constant.TASK_COMPUTING_POWER = {}

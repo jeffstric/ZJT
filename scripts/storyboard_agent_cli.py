@@ -1,0 +1,330 @@
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from services.storyboard_agent_cli_service import (  # noqa: E402
+    StoryboardAgentCliService,
+    StoryboardCliError,
+)
+from services.storyboard_agent_command_service import StoryboardAgentCommandService  # noqa: E402
+
+
+def _print_json(payload: Dict[str, Any]) -> None:
+    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
+def _int_or_none(value: Optional[str]) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="storyboard-agent-cli",
+        description="Storyboard automation CLI for agents.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    preference = subparsers.add_parser("preference", help="Manage isolated CLI preferences.")
+    preference_scopes = preference.add_subparsers(dest="preference_scope", required=True)
+    preference_media = preference_scopes.add_parser("media", help="Manage media model preferences.")
+    preference_actions = preference_media.add_subparsers(dest="preference_action", required=True)
+    preference_get = preference_actions.add_parser("get", help="Read one or all five media slots.")
+    preference_get.set_defaults(command="preference-media-get")
+    preference_get.add_argument("--user-id", type=int, required=True)
+    preference_get.add_argument("--world-id", type=int, required=True)
+    preference_get.add_argument("--media-type", choices=["image", "video"])
+    preference_get.add_argument("--mode", choices=[
+        "text_to_image", "image_edit", "text_to_video", "image_to_video", "reference_to_video",
+    ])
+    preference_set = preference_actions.add_parser("set", help="Set one isolated media slot.")
+    preference_set.set_defaults(command="preference-media-set")
+    preference_set.add_argument("--user-id", type=int, required=True)
+    preference_set.add_argument("--world-id", type=int, required=True)
+    preference_set.add_argument("--media-type", choices=["image", "video"], required=True)
+    preference_set.add_argument("--mode", choices=[
+        "text_to_image", "image_edit", "text_to_video", "image_to_video", "reference_to_video",
+    ], required=True)
+    preference_set.add_argument("--task-id", type=int, required=True)
+
+    list_worlds = subparsers.add_parser("list-worlds", help="List worlds visible to a user.")
+    list_worlds.add_argument("--user-id", type=int, required=True)
+    list_worlds.add_argument("--page", type=int, default=1)
+    list_worlds.add_argument("--page-size", type=int, default=20)
+    list_worlds.add_argument("--keyword")
+    list_worlds.add_argument("--include-full-story-outline", action="store_true")
+
+    list_world_scripts = subparsers.add_parser("list-world-scripts", help="List scripts under a world.")
+    list_world_scripts.add_argument("--world-id", type=int, required=True)
+    list_world_scripts.add_argument("--user-id", type=int, required=True)
+    list_world_scripts.add_argument("--page", type=int, default=1)
+    list_world_scripts.add_argument("--page-size", type=int, default=20)
+    list_world_scripts.add_argument("--include-content", action="store_true")
+    list_world_scripts.add_argument("--include-full-story-outline", action="store_true")
+
+    get_script = subparsers.add_parser("get-script", help="Read one script with full content.")
+    get_script.add_argument("--script-id", type=int, required=True)
+    get_script.add_argument("--user-id", type=int, required=True)
+
+    list_world_characters = subparsers.add_parser("list-world-characters", help="List characters under a world.")
+    list_world_characters.add_argument("--world-id", type=int, required=True)
+    list_world_characters.add_argument("--user-id", type=int, required=True)
+    list_world_characters.add_argument("--page", type=int, default=1)
+    list_world_characters.add_argument("--page-size", type=int, default=20)
+    list_world_characters.add_argument("--keyword")
+    list_world_characters.add_argument("--include-full-story-outline", action="store_true")
+
+    list_world_locations = subparsers.add_parser("list-world-locations", help="List locations under a world.")
+    list_world_locations.add_argument("--world-id", type=int, required=True)
+    list_world_locations.add_argument("--user-id", type=int, required=True)
+    list_world_locations.add_argument("--page", type=int, default=1)
+    list_world_locations.add_argument("--page-size", type=int, default=20)
+    list_world_locations.add_argument("--keyword")
+    list_world_locations.add_argument("--include-full-story-outline", action="store_true")
+
+    list_world_props = subparsers.add_parser("list-world-props", help="List props under a world.")
+    list_world_props.add_argument("--world-id", type=int, required=True)
+    list_world_props.add_argument("--user-id", type=int, required=True)
+    list_world_props.add_argument("--page", type=int, default=1)
+    list_world_props.add_argument("--page-size", type=int, default=20)
+    list_world_props.add_argument("--keyword")
+    list_world_props.add_argument("--include-full-story-outline", action="store_true")
+
+    world_context = subparsers.add_parser("world-context", help="Read scripts, characters, locations, and props for a world.")
+    world_context.add_argument("--world-id", type=int, required=True)
+    world_context.add_argument("--user-id", type=int, required=True)
+    world_context.add_argument("--page-size", type=int, default=100)
+    world_context.add_argument("--include-script-content", action="store_true")
+    world_context.add_argument("--include-full-story-outline", action="store_true")
+
+    scene_context = subparsers.add_parser("scene-context", help="Read scene prompts and references.")
+    scene_context.add_argument("--scene-id", type=int, required=True)
+    scene_context.add_argument("--user-id", type=int)
+
+    list_scenes = subparsers.add_parser("list-scenes", help="List storyboard scenes with asset summaries.")
+    list_scenes.add_argument("--storyboard-id", type=int, required=True)
+    list_scenes.add_argument("--user-id", type=int)
+
+    insert_scene = subparsers.add_parser("insert-scene", help="Insert a storyboard scene after or before another scene.")
+    insert_scene.add_argument("--storyboard-id", type=int, required=True)
+    insert_scene.add_argument("--user-id", type=int, required=True)
+    insert_scene.add_argument("--after-scene-id", type=int)
+    insert_scene.add_argument("--before-scene-id", type=int)
+    insert_scene.add_argument("--prev-id", type=int)
+    insert_scene.add_argument("--next-id", type=int)
+    insert_scene.add_argument("--title", default="")
+    insert_scene.add_argument("--duration", type=float, default=5.0)
+    insert_scene.add_argument("--prompt-json")
+    insert_scene.add_argument("--video-prompt")
+    insert_scene.add_argument("--video-type", default="video")
+    insert_scene.add_argument("--video-config-json")
+    insert_scene.add_argument("--difficulty", choices=["易", "中", "难"], default="中",
+                              help="分镜难易程度（易/中/难），默认 中")
+    insert_scene.add_argument("--act-name", help="所属幕/分镜组名称")
+
+    create_storyboard = subparsers.add_parser(
+        "create-storyboard-from-script",
+        help="Create or reuse a blank storyboard linked to a script.",
+    )
+    create_storyboard.add_argument("--script-id", type=int, required=True)
+    create_storyboard.add_argument("--user-id", type=int, required=True)
+    create_storyboard.add_argument("--title")
+    create_storyboard.add_argument("--workflow-id", type=int)
+    # 注：--style / --style-reference-image / --workflow-ratio / --composition-preference
+    # 已移除。画风与构图属于世界级一致性资产，必须从世界表继承
+    # （StoryboardModel.create 内部 world.visual_style / composition_preference 自动回退），
+    # 禁止按分镜方案差异化覆盖。同世界多集画风由世界设置统一管理。
+    create_storyboard.add_argument("--version", type=int, default=1)
+    create_storyboard.add_argument("--model")
+    create_storyboard.add_argument("--model-id", type=int)
+    create_storyboard.add_argument("--vendor-id", type=int)
+
+    split_script = subparsers.add_parser(
+        "split-from-script",
+        help="Parse linked script into storyboard scenes (async: returns task_id, poll GET /api/script-split/tasks/{task_id}).",
+    )
+    split_script.add_argument("--storyboard-id", type=int, required=True)
+    split_script.add_argument("--user-id", type=int, required=True)
+    split_script.add_argument(
+        "--auth-token", default="",
+        help="用户 auth_token（必填，LLM token 算力由该 token 对应用户承担；先 exchange 换取）",
+    )
+    split_script.add_argument(
+        "--model", required=True,
+        help="LLM 模型名（必填，不再回退默认 gemini；先用 list_llm_models 查可用模型）",
+    )
+    split_script.add_argument("--model-id", type=int)
+    split_script.add_argument("--vendor-id", type=int)
+    split_script.add_argument(
+        "--max-group-duration", type=int, default=15,
+        help="每幕最长时长（秒，仅接受 10~15，默认 15 以最大限度保留画风一致）",
+    )
+    split_script.add_argument("--force-medium-shot", action="store_true")
+    split_script.add_argument("--no-bg-music", action="store_true")
+    split_script.add_argument("--split-multi-dialogue", action="store_true")
+    split_script.add_argument("--force-overwrite-subscene-grids", action="store_true")
+    split_script.add_argument("--language", default="")
+    split_script.add_argument("--dialogue-language", default="")
+    split_script.add_argument("--prompt-language", default="")
+
+    generate_image = subparsers.add_parser("generate-image", help="Generate a storyboard frame.")
+    generate_image.add_argument("--scene-id", type=int, required=True)
+    generate_image.add_argument("--user-id", type=int, required=True)
+    generate_image.add_argument("--auth-token", default="")
+    generate_image.add_argument("--mode", choices=["auto", "text_to_image", "image_edit"], default="auto")
+    generate_image.add_argument("--asset-type", choices=["first_frame", "last_frame"], default="first_frame")
+    generate_image.add_argument("--prompt")
+    generate_image.add_argument("--source-image")
+    generate_image.add_argument("--ratio")
+    generate_image.add_argument("--image-size")
+    generate_image.add_argument("--count", type=int, default=1)
+    generate_image.add_argument("--task-type", type=int, help="图片模型 task_id（优先于 CLI 独立偏好；无效直接拒绝）")
+
+    auto_generate = subparsers.add_parser(
+        "auto-generate-missing-images",
+        help="Generate missing storyboard frame images in a bounded batch.",
+    )
+    auto_generate.add_argument("--storyboard-id", type=int, required=True)
+    auto_generate.add_argument("--user-id", type=int, required=True)
+    auto_generate.add_argument("--auth-token", default="")
+    auto_generate.add_argument("--asset-type", choices=["first_frame", "last_frame"], default="first_frame")
+    auto_generate.add_argument("--mode", choices=["auto", "text_to_image", "image_edit"], default="auto")
+    auto_generate.add_argument("--prompt")
+    auto_generate.add_argument("--source-image")
+    auto_generate.add_argument("--ratio")
+    auto_generate.add_argument("--image-size")
+    auto_generate.add_argument("--count", type=int, default=1)
+    auto_generate.add_argument("--limit", type=int)
+    auto_generate.add_argument("--task-type", type=int)
+    auto_generate.add_argument(
+        "--sequence-mode",
+        choices=["speed", "balanced", "quality"],
+        default="balanced",
+        help="speed=no references, balanced=parallel by parsed group, quality=enterprise grid first-frame generation.",
+    )
+    auto_generate.add_argument("--continue-on-error", action="store_true")
+
+    generate_video = subparsers.add_parser("generate-video", help="Generate storyboard video.")
+    generate_video.add_argument("--scene-id", type=int, required=True)
+    generate_video.add_argument("--user-id", type=int, required=True)
+    generate_video.add_argument("--auth-token", default="")
+    generate_video.add_argument("--mode", choices=["text_to_video", "image_to_video"], default="image_to_video")
+    generate_video.add_argument(
+        "--image-mode",
+        choices=["first_last_frame", "multi_reference", "first_last_with_ref"],
+        default="first_last_frame",
+    )
+    generate_video.add_argument("--prompt")
+    generate_video.add_argument("--ratio")
+    generate_video.add_argument("--duration-seconds", type=int)
+    generate_video.add_argument("--count", type=int, default=1)
+    generate_video.add_argument("--image-urls")
+    generate_video.add_argument("--video-urls")
+    generate_video.add_argument("--audio-urls")
+    generate_video.add_argument("--task-type", type=int, help="视频模型 task_id（优先于 CLI 独立偏好；无效直接拒绝）")
+
+    task_status = subparsers.add_parser("task-status", help="Read selected task status for a scene.")
+    task_status.add_argument("--scene-id", type=int, required=True)
+    task_status.add_argument("--asset-type", choices=["first_frame", "last_frame", "video"])
+
+    storyboard_task_status = subparsers.add_parser(
+        "storyboard-task-status",
+        help="Read selected task status for all scenes in a storyboard.",
+    )
+    storyboard_task_status.add_argument("--storyboard-id", type=int, required=True)
+    storyboard_task_status.add_argument("--user-id", type=int)
+    storyboard_task_status.add_argument("--asset-type", choices=["first_frame", "last_frame", "video"], default="first_frame")
+
+    image_batch_status = subparsers.add_parser(
+        "storyboard-image-batch-status",
+        help="Read a storyboard image batch orchestration status.",
+    )
+    image_batch_status.add_argument("--batch-id", type=int, required=True)
+    image_batch_status.add_argument("--user-id", type=int)
+
+    bind_projects = subparsers.add_parser("bind-projects", help="Bind existing ai_tools ids to scene assets.")
+    bind_projects.add_argument("--scene-id", type=int, required=True)
+    bind_projects.add_argument("--user-id", type=int)
+    bind_projects.add_argument("--asset-type", choices=["first_frame", "last_frame", "video"], required=True)
+    bind_projects.add_argument("--project-ids", required=True, help="Comma separated ai_tools/project ids.")
+
+    update_scene = subparsers.add_parser("update-scene", help="Update editable fields of an existing storyboard scene.")
+    update_scene.add_argument("--scene-id", type=int, required=True)
+    update_scene.add_argument("--user-id", type=int)
+    update_scene.add_argument("--duration", type=float)
+    update_scene.add_argument("--title")
+    update_scene.add_argument("--prompt-json")
+    update_scene.add_argument("--video-prompt")
+    update_scene.add_argument("--video-type")
+    update_scene.add_argument("--video-config-json")
+    update_scene.add_argument("--difficulty", choices=["易", "中", "难"],
+                              help="分镜难易程度（易/中/难）")
+    update_scene.add_argument("--act-name", help="所属幕/分镜组名称")
+
+    export_check = subparsers.add_parser(
+        "export-check",
+        help="Check storyboard asset readiness before export.",
+    )
+    export_check.add_argument("--storyboard-id", type=int, required=True)
+    export_check.add_argument("--user-id", type=int)
+
+    export_full_video = subparsers.add_parser(
+        "export-full-video",
+        help="Compose all scenes into a full MP4, upload to CDN, return download_url.",
+    )
+    export_full_video.add_argument("--storyboard-id", type=int, required=True)
+    export_full_video.add_argument("--user-id", type=int, required=True)
+    export_full_video.add_argument(
+        "--include-subtitles",
+        action="store_true",
+        default=True,
+        help="Burn dialogue subtitles into video (default: true).",
+    )
+    export_full_video.add_argument(
+        "--no-subtitles",
+        action="store_false",
+        dest="include_subtitles",
+        help="Disable subtitle burning.",
+    )
+
+    export_package = subparsers.add_parser(
+        "export-package",
+        help="Pack all scene assets into a zip, upload to CDN, return download_url.",
+    )
+    export_package.add_argument("--storyboard-id", type=int, required=True)
+    export_package.add_argument("--user-id", type=int, required=True)
+
+    return parser
+
+
+def run_command(args: argparse.Namespace) -> Dict[str, Any]:
+    params = {key: value for key, value in vars(args).items() if key != "command"}
+    return StoryboardAgentCommandService(
+        service=StoryboardAgentCliService()
+    ).execute(args.command, params)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+        payload = run_command(args)
+        _print_json(payload)
+        return 0 if payload.get("success", True) is not False else 1
+    except StoryboardCliError as exc:
+        _print_json(exc.to_dict())
+        return 1
+    except Exception as exc:
+        _print_json({"success": False, "error_code": "unexpected_error", "error": str(exc)})
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

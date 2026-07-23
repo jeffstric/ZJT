@@ -58,8 +58,18 @@ class OpenAIBaseClient(BaseLLMClient):
         return model
 
     def _build_openai_client(self) -> OpenAI:
-        """构建并返回 openai.OpenAI 实例"""
-        return OpenAI(api_key=self.api_key, base_url=self.base_url)
+        """构建并返回 openai.OpenAI 实例。
+
+        必须设置 timeout，否则底层 HTTP 在 TCP 连接建立后等待响应体时会
+        永久挂起（曾导致剧本拆分 worker 单步卡死、max_instances=1 的调度
+        job 被独占 1 小时）。超时值取 ScriptSplitConstants.LLM_HTTP_TIMEOUT_SECONDS。
+        """
+        try:
+            from config.constant import ScriptSplitConstants
+            http_timeout = ScriptSplitConstants.LLM_HTTP_TIMEOUT_SECONDS
+        except Exception:
+            http_timeout = 300
+        return OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=http_timeout)
 
     def _apply_thinking_params(self, kwargs: Dict[str, Any], enable_thinking: bool, thinking_effort: str):
         """按供应商规则注入思考模式参数"""
@@ -108,7 +118,8 @@ class OpenAIBaseClient(BaseLLMClient):
         enable_thinking: bool = False,
         thinking_effort: str = "medium",
         agent_id: Optional[str] = None,
-        agent_scope: Optional[str] = None
+        agent_scope: Optional[str] = None,
+        request_timeout: Optional[float] = None,
     ) -> Any:
         """
         调用 OpenAI 兼容格式 API
@@ -121,6 +132,7 @@ class OpenAIBaseClient(BaseLLMClient):
             max_tokens: 最大输出 token 数
             enable_thinking: 是否开启思考模式
             thinking_effort: 思考强度（值：low/medium/high）
+            request_timeout: 单次请求 HTTP 超时（秒），None 时用 client 默认值
 
         Returns:
             Response 对象
@@ -140,6 +152,11 @@ class OpenAIBaseClient(BaseLLMClient):
 
             if max_tokens:
                 kwargs["max_tokens"] = max_tokens
+
+            # 单次请求超时：优先用调用方传入的 request_timeout，覆盖 client 默认值。
+            # 防止 TCP 连接建立后等待响应体永久挂起。
+            if request_timeout is not None:
+                kwargs["timeout"] = request_timeout
 
             self._apply_thinking_params(kwargs, enable_thinking, thinking_effort)
 
@@ -193,6 +210,7 @@ class OpenAIBaseClient(BaseLLMClient):
 
             choice = completion.choices[0]
             message = choice.message
+            finish_reason = getattr(choice, 'finish_reason', None)
 
             tool_calls = None
             if hasattr(message, 'tool_calls') and message.tool_calls:
@@ -233,7 +251,7 @@ class OpenAIBaseClient(BaseLLMClient):
             if auth_token and model_id:
                 self._log_token_usage(usage_info, auth_token, vendor_id, model_id)
 
-            return self._create_response(content, tool_calls, usage_info, reasoning_content)
+            return self._create_response(content, tool_calls, usage_info, reasoning_content, finish_reason)
 
         except Exception as e:
             logger.error(f"{self.vendor_name} API call failed: {e}")

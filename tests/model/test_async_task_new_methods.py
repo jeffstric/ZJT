@@ -6,6 +6,7 @@ AsyncTask 新增方法单元测试
 - schedule_retry: 安排任务重试（指数退避）
 - get_ready_to_retry_tasks: 获取可重试的任务
 - update_external_task_id: 更新外部任务 ID
+- mark_submitted: 原子记录提交成功状态并退出重试队列
 - update_status_with_retry: 更新状态并可选重置重试计数
 
 注意：因为 model.async_tasks 可能已被其他模块缓存，
@@ -146,6 +147,59 @@ class TestAsyncTaskGetReadyToRetryTasks(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class TestAsyncTaskGetPendingTasks(unittest.TestCase):
+    """测试 AsyncTasksModel.get_pending_tasks() 仅取已提交任务"""
+
+    def setUp(self):
+        _async_tasks_module.execute_query.reset_mock()
+
+    def test_requires_external_task_id(self):
+        """SQL 必须过滤 external_task_id，防止等槽位任务饿死轮询"""
+        _async_tasks_module.execute_query.return_value = []
+
+        AsyncTasksModel.get_pending_tasks(implementation=1, limit=50)
+
+        sql = _async_tasks_module.execute_query.call_args[0][0]
+        self.assertIn('external_task_id IS NOT NULL', sql)
+        self.assertIn("external_task_id != ''", sql)
+        self.assertIn('status IN', sql)
+
+    def test_returns_tasks(self):
+        """返回带 external_task_id 的任务"""
+        _async_tasks_module.execute_query.return_value = [
+            {'id': 1581, 'implementation': 1, 'external_task_id': '2079', 'user_id': 1,
+             'params': None, 'status': 1, 'try_count': 0, 'max_attempts': 25,
+             'error_message': None, 'result_url': None, 'result_data': None,
+             'created_at': None, 'updated_at': None, 'completed_at': None,
+             'failed_at': None, 'retry_count': 0, 'next_retry_at': None, 'max_retries': 5},
+        ]
+
+        result = AsyncTasksModel.get_pending_tasks(implementation=1)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].id, 1581)
+        self.assertEqual(result[0].external_task_id, '2079')
+
+
+class TestAsyncTaskFailExhaustedRetryTasks(unittest.TestCase):
+    """测试 AsyncTasksModel.fail_exhausted_retry_tasks()"""
+
+    def setUp(self):
+        _async_tasks_module.execute_update.reset_mock()
+        _async_tasks_module.execute_update.return_value = 3
+
+    def test_marks_exhausted_queued_tasks_failed(self):
+        """批量将 retry_count >= max_retries 的无 external_task_id QUEUED 标 FAILED"""
+        affected = AsyncTasksModel.fail_exhausted_retry_tasks(limit=200)
+
+        self.assertEqual(affected, 3)
+        sql, params = _async_tasks_module.execute_update.call_args.args
+        self.assertIn('retry_count >= max_retries', sql)
+        self.assertIn('external_task_id IS NULL', sql)
+        self.assertEqual(params[0], AsyncTaskStatus.FAILED)
+        self.assertEqual(params[2], AsyncTaskStatus.QUEUED)
+        self.assertEqual(params[3], 200)
+
+
 class TestAsyncTaskUpdateExternalTaskId(unittest.TestCase):
     """测试 AsyncTasksModel.update_external_task_id()"""
 
@@ -163,6 +217,31 @@ class TestAsyncTaskUpdateExternalTaskId(unittest.TestCase):
         params = call_args[0][1]
         self.assertIn('external_task_id = %s', sql)
         self.assertEqual(params, ('ext-task-abc', 1))
+
+
+class TestAsyncTaskMarkSubmitted(unittest.TestCase):
+    """测试提交成功后的原子状态转换。"""
+
+    def setUp(self):
+        _async_tasks_module.execute_update.reset_mock()
+        _async_tasks_module.execute_update.return_value = 1
+
+    def test_marks_processing_and_clears_retry_schedule_atomically(self):
+        """一次 UPDATE 同时写入外部 ID、PROCESSING 状态并退出重试队列。"""
+        self.assertTrue(
+            hasattr(AsyncTasksModel, 'mark_submitted'),
+            'AsyncTasksModel.mark_submitted must atomically finalize submission',
+        )
+
+        result = AsyncTasksModel.mark_submitted(1, 'ext-task-abc')
+
+        self.assertEqual(result, 1)
+        _async_tasks_module.execute_update.assert_called_once()
+        sql, params = _async_tasks_module.execute_update.call_args.args
+        self.assertIn('external_task_id = %s', sql)
+        self.assertIn('status = %s', sql)
+        self.assertIn('next_retry_at = NULL', sql)
+        self.assertEqual(params, ('ext-task-abc', AsyncTaskStatus.PROCESSING, 1))
 
 
 class TestAsyncTaskUpdateStatusWithRetry(unittest.TestCase):

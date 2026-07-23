@@ -43,7 +43,7 @@ class RunningHubClient:
     def __init__(self, config_path: str = None, api_key: str = None):
         """
         Initialize RunningHub API client
-        
+
         Args:
             config_path: Deprecated, ignored. Uses unified config system.
             api_key: Optional API key to override the one in config file
@@ -52,6 +52,15 @@ class RunningHubClient:
         self.host = get_dynamic_config_value("runninghub", "host", default="")
         self.api_key = api_key if api_key is not None else get_dynamic_config_value("runninghub", "api_key", default="")
         self.request_timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
+
+    def set_api_key(self, api_key: str):
+        """
+        运行时切换密钥（多密钥轮换时使用）。
+
+        设置后，后续本实例的所有请求（提交/查询）都会使用该密钥。
+        轮询场景：driver 复用同一个 client 实例，根据任务记录的密钥动态切换。
+        """
+        self.api_key = api_key
     
     def _make_request(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """

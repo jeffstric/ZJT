@@ -771,7 +771,7 @@
         <!-- History Modal -->
         <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
           <div class="modal" style="max-width: 900px; max-height: 80vh; overflow-y: auto; overflow-x: hidden;" @scroll="handleHistoryScroll">
-            <div style="position: relative;">
+            <div class="modal-sticky-header">
               <div style="display: flex; justify-content: space-between; align-items: flex-start; padding-right: 40px; margin-bottom: 12px;">
                 <div style="display: flex; align-items: flex-start; gap: 12px;">
                   <div class="modal-title">{{ $t('history_modal_title') }} ({{ $t('total_records') }} {{ historyTotal }})</div>

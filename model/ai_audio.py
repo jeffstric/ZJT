@@ -2,7 +2,7 @@
 AI Audio Model - Database operations for ai_audio table
 """
 from typing import List, Optional, Dict, Any
-from .database import execute_query, execute_update, execute_insert
+from .database import execute_query, execute_update, execute_insert, execute_insert_in_transaction
 from config.constant import (
     AI_AUDIO_STATUS_PENDING
 )
@@ -106,7 +106,47 @@ class AIAudioModel:
         except Exception as e:
             logger.error(f"Failed to create AI audio record: {e}")
             raise
-    
+
+    @staticmethod
+    def create_in_transaction(
+        conn,
+        text: str,
+        user_id: int,
+        ref_path: Optional[str] = None,
+        emo_ref_path: Optional[str] = None,
+        transaction_id: Optional[str] = None,
+        result_url: Optional[str] = None,
+        emo_text: Optional[str] = None,
+        emo_weight: Optional[float] = None,
+        emo_vec: Optional[str] = None,
+        emo_control_method: Optional[int] = None,
+        status: Optional[int] = AI_AUDIO_STATUS_PENDING,
+        message: Optional[str] = None
+    ) -> int:
+        """
+        ⚠️ 仅供事务型原子配音提交内部调用，禁止在此 conn 上执行网络/文件/TTS 等慢操作。
+
+        事务必须保持毫秒级短事务：conn 由调用方在 with transaction() 内持有，
+        本方法只做 INSERT ai_audio 后立即返回。禁止在本方法或其调用链中对 conn 做：
+        - HTTP 请求（requests / httpx / TTS API）
+        - 文件读写（open / Path.read_text）
+        - time.sleep / asyncio.sleep
+        - 任何可能超过 ~50ms 的操作
+        违反会导致行锁长期持有，阻塞 storyboard_dialogue 的并发更新。
+        见 docs/storyboard/storyboard_auto_voiceover_after_split_design.md §8.1。
+
+        SQL 与参数与 create() 完全一致，仅换 execute_insert_in_transaction。
+        """
+        sql = """
+            INSERT INTO ai_audio
+            (text, user_id, ref_path, emo_ref_path, transaction_id, result_url,
+             emo_text, emo_weight, emo_vec, emo_control_method, status, message)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        params = (text, user_id, ref_path, emo_ref_path, transaction_id, result_url,
+                  emo_text, emo_weight, emo_vec, emo_control_method, status, message)
+        return execute_insert_in_transaction(conn, sql, params)
+
     @staticmethod
     def get_by_id(record_id: int) -> Optional[AIAudio]:
         """

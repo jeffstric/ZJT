@@ -7,8 +7,27 @@
 a. Multi-workspace service: Unless explicitly authorized by 智剧通 in writing, you may not use the 智剧通 source code to operate a multi-workspace environment.
     - Workspace Definition: Within the context of 智剧通, one workspace corresponds to one isolated user space. The workspace provides a separated area for each user's data and configurations.
 
-b. LOGO and copyright information: In the process of using 智剧通's frontend, you may not remove or modify the LOGO or copyright information in the 智剧通 console or applications. This restriction is inapplicable to uses of 智剧通 that do not involve its frontend.
+b. LOGO and copyright information:
+    (i) Frontend retention: In the process of using 智剧通's frontend, you may not remove, obscure, or modify the LOGO or copyright information in the 智剧通 console or applications. This item is inapplicable to uses of 智剧通 that do not involve its frontend.
+    (ii) Modification and redistribution attribution: If you modify, redistribute, or otherwise provide derivative works, customized builds, secondary-development versions, or packaged distributions based on 智剧通 source code (including the Community Edition), you must retain or display, in a prominent place, the producer's designated branding and copyright information, including but not limited to the name "智剧通" (ZJT) and the corresponding LOGO. If the distribution includes a user-visible interface, such branding must be shown in the console, an about page, or an equivalently prominent location. If the distribution is primarily backend- or library-oriented, you must clearly state in documentation, a NOTICE file, or release notes that it is "Based on 智剧通 (ZJT)" (or an equivalent statement designated by the producer). You may not present the derivative work in a misleading manner as an independent original product unrelated to the producer, or falsely claim endorsement by the producer.
     - Frontend Definition: For the purposes of this license, the "frontend" of 智剧通 includes all components located in the `static/` directory when running 智剧通 from the raw source code.
+    - Clarification: Item (i) requires that branding not be stripped when using the original frontend; item (ii) requires that 智剧通 branding and copyright remain attributed when code is modified or redistributed. If you hold a written commercial authorization from the producer and the commercial agreement provides otherwise (for example, white-label rights), the commercial agreement prevails.
+
+c. Enterprise Edition protection: Unless you have obtained a valid commercial license or other written authorization from the producer, you may not:
+
+    (i) Access, use, distribute, or commercially exploit any Enterprise Materials (as defined below);
+
+    (ii) Reverse engineer, decompile, disassemble, decrypt, or otherwise attempt to derive the source code, structure, algorithms, or authorization mechanisms of any Enterprise Materials that are provided in obfuscated, encrypted, compiled, or similarly protected form;
+
+    (iii) Modify, patch, remove, disable, or interfere with any technical measures that control, verify, or enforce Enterprise Edition availability or commercial authorization — including but not limited to edition/mode checks, feature gates, license or key validation, and integrity or anti-tamper mechanisms;
+
+    (iv) Bypass, circumvent, spoof, short-circuit, or otherwise tamper with any such technical measures or their authorization results (for example, by forcing enterprise mode, falsifying license status, or short-circuiting community/enterprise checks) in order to obtain Enterprise features without authorization;
+
+    (v) Distribute modified builds that enable Enterprise features without authorization, or provide tools or services primarily designed to circumvent the restrictions in this Section 1(c).
+
+    Definition — Enterprise Materials: Collectively means (1) all code, modules, assets, and documentation under the `enterprise/` directory (or any successor path designated by the producer); (2) any commercial-only features, services, or capabilities that are gated as Enterprise / commercial edition; (3) license keys, authorization tokens, and related credentials issued for commercial/Enterprise use; and (4) any obfuscated, encrypted, or compiled components provided solely for commercial/Enterprise distribution.
+
+    This Section 1(c) does not restrict lawful use of the Community Edition under this License (including permitted modification of non-Enterprise open-source components). Authorized commercial licensees must additionally comply with their separate commercial agreement with the producer; with respect to Enterprise Materials, the commercial agreement prevails in case of conflict with this License.
 
 2. As a contributor, you should agree that:
 

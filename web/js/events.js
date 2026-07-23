@@ -2468,33 +2468,61 @@
     });
     
     // ========== 创建世界功能 ==========
-    
+
     let currentWorldSelectElement = null; // 记录当前是从哪个下拉框打开的创建世界
-    
+
+    // 在「创建世界」模态框名称输入框下方显示行内错误，并标红/聚焦输入框
+    function showWorldFormError(message) {
+      const nameInput = document.getElementById('createWorldNameInput');
+      const errorEl = document.getElementById('createWorldError');
+      if (errorEl) {
+        errorEl.textContent = message || '创建失败';
+        errorEl.style.display = 'block';
+      }
+      if (nameInput) {
+        nameInput.style.borderColor = '#ef4444';
+        nameInput.focus();
+      }
+    }
+
+    // 清除「创建世界」模态框的行内错误，并恢复输入框样式
+    function clearWorldFormError() {
+      const nameInput = document.getElementById('createWorldNameInput');
+      const errorEl = document.getElementById('createWorldError');
+      if (errorEl && errorEl.style.display !== 'none') {
+        errorEl.style.display = 'none';
+        errorEl.textContent = '';
+      }
+      if (nameInput) {
+        nameInput.style.borderColor = '';
+      }
+    }
+
     // 打开创建世界模态框
     function openCreateWorldModal(selectElement) {
       currentWorldSelectElement = selectElement;
       document.getElementById('createWorldNameInput').value = '';
       document.getElementById('createWorldDescInput').value = '';
+      clearWorldFormError();
       document.getElementById('createWorldModal').classList.add('show');
     }
-    
+
     // 创建世界
     async function createWorld() {
       const nameInput = document.getElementById('createWorldNameInput');
       const descInput = document.getElementById('createWorldDescInput');
       const saveBtn = document.getElementById('createWorldSaveBtn');
-      
+
       const name = nameInput.value.trim();
       if (!name) {
-        showToast('请输入世界名称', 'error');
-        nameInput.focus();
+        showWorldFormError('请输入世界名称');
         return;
       }
-      
+
+      clearWorldFormError();
       saveBtn.disabled = true;
       saveBtn.textContent = '创建中...';
-      
+
       try {
         const response = await fetch('/api/worlds', {
           method: 'POST',
@@ -2508,38 +2536,39 @@
             description: descInput.value.trim() || null
           })
         });
-        
-        const result = await response.json();
-        
+
+        const result = await response.json().catch(() => ({}));
+
         if (result.code === 0 && result.data) {
           showToast('世界创建成功', 'success');
-          
+
           // 关闭创建世界模态框
           const modalEl = document.getElementById('createWorldModal');
           modalEl.classList.remove('show');
           modalEl.dispatchEvent(new Event('worldCreateSuccess', { bubbles: true }));
-          
+
           // 重新加载世界列表
           if (currentWorldSelectElement) {
             await loadWorldsToSelect(currentWorldSelectElement);
             // 自动选中新创建的世界
             currentWorldSelectElement.value = result.data.id;
-            
+
             // 触发change事件以加载对应的角色或场景列表
             const event = new Event('change');
             currentWorldSelectElement.dispatchEvent(event);
           }
-          
+
           // 同时更新左上角的世界选择器（如果从左上角创建的）
           if (typeof onWorldCreated === 'function') {
             await onWorldCreated(result.data.id);
           }
         } else {
-          showToast(result.message || '创建失败', 'error');
+          // 后端业务错误（含重名）直接透传 message，并在输入框下方行内展示
+          showWorldFormError(result.message || '创建失败，请稍后重试');
         }
       } catch (error) {
         console.error('创建世界失败:', error);
-        showToast('创建世界失败', 'error');
+        showWorldFormError(error && error.message ? error.message : '网络异常，创建世界失败');
       } finally {
         saveBtn.disabled = false;
         saveBtn.textContent = '创建';
@@ -2584,6 +2613,11 @@
       if (e.key === 'Enter') {
         createWorld();
       }
+    });
+
+    // 用户修正输入后，及时清除之前的行内错误（避免红框/红字残留）
+    document.getElementById('createWorldNameInput').addEventListener('input', () => {
+      clearWorldFormError();
     });
     
     // ========== 创建角色功能 ==========
@@ -4140,8 +4174,9 @@
         await loadAndDisplayEditionInfo();
       }
       
-      // 初始化世界选择器
-      initWorldSelector();
+      // 初始化世界选择器（await 等待世界下拉框加载完成，确保后续 loadWorkflow
+      // 设置 default_world_id 时下拉选项已就绪）
+      await initWorldSelector();
       
       // 初始化视频提示词后缀
       if(typeof initVideoPromptSuffix === 'function'){

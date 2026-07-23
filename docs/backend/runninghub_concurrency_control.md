@@ -59,7 +59,7 @@ CREATE TABLE `runninghub_slots` (
 当 `async_tasks` 记录创建时槽位已满，系统会自动安排重试：
 
 1. **立即安排重试**：槽位满时，不标记任务失败，而是调用 `AsyncTasksModel.schedule_retry()` 设置 `next_retry_at`
-2. **后台任务处理**：`process_pending_async_task_submissions()` 每30秒扫描可重试任务
+2. **后台任务处理**：`process_pending_async_task_submissions()` 每7秒扫描可重试任务
 3. **指数退避**：重试延迟遵循 30s → 60s → 120s → 300s → 300s 的指数退避策略
 4. **最大重试次数**：默认最多重试5次，超过后标记任务为 FAILED
 
@@ -78,21 +78,42 @@ ALTER TABLE async_tasks ADD COLUMN max_retries INT NOT NULL DEFAULT 5 COMMENT '�
 retry_tasks = AsyncTasksModel.get_ready_to_retry_tasks(limit=50)
 ```
 
+#### 状态轮询查询（已提交任务）
+
+```python
+# 仅取 external_task_id 非空的 QUEUED/PROCESSING 任务，避免等槽位任务占满 LIMIT
+pending = AsyncTasksModel.get_pending_tasks(implementation=impl_id, limit=50)
+```
+
+**事故教训（2026-07-20）**：`get_pending_tasks` 若不过滤 `external_task_id`，
+大量 `status=QUEUED AND external_task_id IS NULL` 的等槽位任务会按 `created_at ASC LIMIT 50`
+占满轮询窗口，轮询循环再 `continue` 跳过它们，导致已提交（`status=PROCESSING`）的任务
+`try_count` 永不递增、永远不发起 `/openapi/v2/query`。
+
+另：`retry_count >= max_retries` 的任务不会被 `get_ready_to_retry_tasks` 拾取，
+需由 `fail_exhausted_retry_tasks()` 批量标记 FAILED，否则永久卡在 QUEUED。
+
 #### 后台任务处理流程
 
 ```
-1. 定时任务每30秒执行 process_pending_async_task_submissions()
+1. 定时任务每7秒执行 process_pending_async_task_submissions()
+   ↓
+1b. fail_exhausted_retry_tasks() 清理 retry_count >= max_retries 的僵尸 QUEUED
    ↓
 2. 查询可重试任务: status=QUEUED, next_retry_at <= NOW, retry_count < max_retries
    ↓
 3. 对每个任务:
    - 获取槽位
    - 调用 driver.submit_task() 提交
-   - 成功: 更新 external_task_id
+   - 成功: 原子更新 external_task_id、将 status 改为 PROCESSING，并清空 next_retry_at
    - 失败: 释放槽位，安排下次重试
    ↓
-4. 轮询任务 (process_runninghub_async_tasks) 继续监控已提交任务的状态
+4. 轮询任务 (process_runninghub_async_tasks) 每10秒仅检查 external_task_id 非空的任务
 ```
+
+提交成功后的三个字段必须在同一次数据库更新中完成。若只更新
+`external_task_id`，任务仍满足 `status=QUEUED AND next_retry_at <= NOW()`，会被下一个
+7 秒调度周期再次提交，并覆盖上一次的外部任务 ID。
 
 ### 4. 队列处理机制
 
@@ -170,12 +191,12 @@ if is_runninghub and task.status == 0:
    - 成功 → 提交到 RunningHub → 更新 external_task_id
    - 失败 → 槽位满，安排重试 (schedule_retry) → 返回 503
    ↓
-5. 后台任务 process_pending_async_task_submissions() 每30秒扫描
+5. 后台任务 process_pending_async_task_submissions() 每7秒扫描
    ↓
 6. 对每个可重试任务（next_retry_at <= NOW）:
    - 获取槽位
    - 提交到 RunningHub
-   - 更新 external_task_id
+   - 原子更新 external_task_id、status=PROCESSING、next_retry_at=NULL
    ↓
 7. 轮询器 process_runninghub_async_tasks() 每10秒检查任务状态
    ↓
@@ -189,7 +210,7 @@ if is_runninghub and task.status == 0:
 1. submit_with_slot_management() 返回 {error_type: 'SLOT_FULL', retry: True}
 2. 调用 AsyncTasksModel.schedule_retry() 设置 next_retry_at
 3. 后台任务在 next_retry_at <= NOW 时重新尝试获取槽位
-4. 成功后提交任务并更新 external_task_id
+4. 成功后原子更新 external_task_id、status=PROCESSING、next_retry_at=NULL
 
 指数退避：
 - retry_count=0: 30秒
@@ -453,3 +474,18 @@ print(f"Cleaned {cleaned_count} stale slots")
 3. **监控告警**：建议监控槽位使用率，如果长期满载可能需要优化或增加资源
 
 4. **日志查看**：关键日志包含 `RunningHub slot` 关键词，便于排查问题
+
+---
+
+## 多密钥轮换 + 熔断探测（密钥池）
+
+> **商业版专属功能**。社区版后台保留入口和功能介绍，但不加载多密钥配置，
+> 所有任务始终使用全局 `runninghub.api_key`。
+
+开源仓库中的 `task/runninghub_key_pool.py` 是公共门面和社区空实现。只有经过
+企业模块加载器成功注册的商业 Provider 才能开启管理 API 和运行时能力；修改
+`edition.mode`、创建空 `enterprise/` 目录或写入多密钥数据库配置均不会启用该功能。
+
+管理入口位于 admin 后台「RH密钥池」。社区版访问管理 API 返回 403。商业版的
+配置格式、选择策略、故障隔离和运维说明位于私有企业包文档中。
+

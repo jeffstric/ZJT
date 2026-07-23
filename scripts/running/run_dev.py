@@ -23,13 +23,15 @@ from config.config_util import get_config_path
 
 # 子进程列表
 processes = []
+# script split worker 子进程（独立列表，单 worker 崩溃不触发共存亡，但随 cleanup 一起清理）
+worker_processes = []
 
 
 def cleanup(signum=None, frame=None):
     """清理所有子进程"""
     print("\n[Manager] Shutting down all processes...")
-    for proc in processes:
-        if proc.poll() is None:
+    for proc in processes + worker_processes:
+        if proc is not None and proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=5)
@@ -90,10 +92,31 @@ def main():
         cwd=cwd
     )
     processes.append(scheduler_proc)
-    
+
     # 等待 scheduler 启动
     time.sleep(2)
-    
+
+    # 1.5 启动剧本分段拆分独立 worker 进程（分片消费 script_split_task）
+    #     worker_total>0 时由 N 个 worker 进程分片接管，主调度器会自动跳过该 job。
+    #     worker 单个崩溃不拖垮核心服务（监控循环仅对 processes 共存亡），
+    #     但随 cleanup 一起 terminate（重启服务自动清理，避免重复建进程）。
+    try:
+        from config.config_util import get_dynamic_config_value
+        worker_total = int(get_dynamic_config_value("script_split", "worker_total", default=0) or 0)
+    except Exception as e:
+        print(f"[Manager] Warning: Failed to read script_split.worker_total: {e}")
+        worker_total = 0
+    if worker_total > 0:
+        print(f"[Manager] Starting {worker_total} script split worker processes...")
+        for idx in range(worker_total):
+            wp = subprocess.Popen(
+                [sys.executable, "scripts/running/run_script_split_worker.py",
+                 str(idx), str(worker_total)],
+                cwd=cwd
+            )
+            worker_processes.append(wp)
+            time.sleep(0.5)  # 错开启动，避免瞬时 DB 连接尖峰
+
     # 2. 启动 Web 服务进程
     system = platform.system()
     
@@ -135,13 +158,19 @@ def main():
     print("[Manager] All processes started. Press Ctrl+C to stop.")
     print(f"[Manager] Dev server: http://localhost:{port}")
     
-    # 监控子进程
+    # 监控子进程：核心进程（scheduler/web）任一退出则 cleanup 全部；
+    # worker 进程单独监控，单个崩溃仅告警不拖垮核心服务。
     while True:
         for i, proc in enumerate(processes):
             if proc.poll() is not None:
                 name = "scheduler" if i == 0 else web_server_name
                 print(f"[Manager] {name} exited with code {proc.returncode}")
                 cleanup()
+        for i, wproc in enumerate(worker_processes):
+            if wproc is not None and wproc.poll() is not None:
+                print(f"[Manager] WARNING: script split worker[{i}] exited with code {wproc.returncode}, "
+                      f"core service keeps running")
+                worker_processes[i] = None  # 标记已退出，避免重复告警
         time.sleep(1)
 
 

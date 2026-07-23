@@ -34,13 +34,13 @@ async function loadWorlds() {
 async function populateWorldSelector() {
   const defaultWorldSelect = document.getElementById('defaultWorldSelect');
   if (!defaultWorldSelect) return;
-  
+
   const worlds = await loadWorlds();
-  
+
   // Clear existing options except the first one
   var defaultLabel = window.t ? window.t('select_world') : '选择世界...';
   defaultWorldSelect.innerHTML = '<option value="">' + escapeHtml(defaultLabel) + '</option>';
-  
+
   // Add world options
   worlds.forEach(world => {
     const option = document.createElement('option');
@@ -48,23 +48,140 @@ async function populateWorldSelector() {
     option.textContent = world.name;
     defaultWorldSelect.appendChild(option);
   });
-  
+
   // Restore saved world selection
   if (state.defaultWorldId) {
-    defaultWorldSelect.value = state.defaultWorldId;
+    defaultWorldSelect.value = String(state.defaultWorldId);
   }
-  
+
+  // 渲染自定义可搜索下拉
+  renderWorldSearchOptions(worlds);
+
   // Update visual state
   updateWorldSelectorState();
 }
 
+// 渲染自定义搜索下拉选项
+function renderWorldSearchOptions(worlds) {
+  const optionsContainer = document.getElementById('worldSearchOptions');
+  const triggerText = document.getElementById('worldSearchTriggerText');
+  const defaultWorldSelect = document.getElementById('defaultWorldSelect');
+  if (!optionsContainer) return;
+
+  optionsContainer.innerHTML = '';
+
+  if (worlds.length === 0) {
+    const emptyItem = document.createElement('div');
+    emptyItem.className = 'world-search-empty';
+    emptyItem.textContent = window.t ? window.t('no_worlds_found') : '未找到匹配的世界';
+    optionsContainer.appendChild(emptyItem);
+    return;
+  }
+
+  const selectedId = defaultWorldSelect ? defaultWorldSelect.value : '';
+
+  worlds.forEach(world => {
+    const optionItem = document.createElement('div');
+    optionItem.className = 'world-search-option' + (String(world.id) === selectedId ? ' selected' : '');
+    optionItem.setAttribute('role', 'option');
+    optionItem.setAttribute('data-world-id', world.id);
+    optionItem.textContent = world.name;
+    optionItem.title = world.description || world.name;
+
+    optionItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectWorldInSearchDropdown(world.id);
+    });
+
+    optionsContainer.appendChild(optionItem);
+  });
+}
+
+function selectWorldInSearchDropdown(worldId) {
+  const defaultWorldSelect = document.getElementById('defaultWorldSelect');
+  if (defaultWorldSelect) {
+    defaultWorldSelect.value = worldId;
+  }
+  handleWorldSelectionChange(worldId);
+  closeWorldSearchDropdown();
+}
+
+function openWorldSearchDropdown() {
+  const dropdown = document.getElementById('worldSearchDropdown');
+  const trigger = document.getElementById('worldSearchTrigger');
+  const searchInput = document.getElementById('worldSearchInput');
+  if (!dropdown) return;
+
+  dropdown.classList.add('open');
+  if (trigger) trigger.setAttribute('aria-expanded', 'true');
+  dropdown.setAttribute('aria-hidden', 'false');
+
+  // 高亮当前选中项并滚动到可视区域
+  const selectedId = state.defaultWorldId || '';
+  const optionsContainer = document.getElementById('worldSearchOptions');
+  if (optionsContainer) {
+    optionsContainer.querySelectorAll('.world-search-option').forEach(el => {
+      el.classList.toggle('selected', String(el.dataset.worldId) === String(selectedId));
+    });
+    const selectedEl = optionsContainer.querySelector('.world-search-option.selected');
+    if (selectedEl) {
+      selectedEl.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  if (searchInput) {
+    searchInput.value = '';
+    filterWorldSearchDropdown('');
+    setTimeout(() => searchInput.focus(), 10);
+  }
+}
+
+function closeWorldSearchDropdown() {
+  const dropdown = document.getElementById('worldSearchDropdown');
+  const trigger = document.getElementById('worldSearchTrigger');
+  const searchInput = document.getElementById('worldSearchInput');
+  if (!dropdown) return;
+
+  dropdown.classList.remove('open');
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  dropdown.setAttribute('aria-hidden', 'true');
+
+  if (searchInput) {
+    searchInput.value = '';
+    filterWorldSearchDropdown('');
+  }
+}
+
+function toggleWorldSearchDropdown() {
+  const dropdown = document.getElementById('worldSearchDropdown');
+  if (!dropdown) return;
+  if (dropdown.classList.contains('open')) {
+    closeWorldSearchDropdown();
+  } else {
+    openWorldSearchDropdown();
+  }
+}
+
+function filterWorldSearchDropdown(keyword) {
+  const normalized = (keyword || '').toLowerCase().trim();
+  const filtered = normalized
+    ? worldListCache.filter(world => {
+        const name = (world.name || '').toLowerCase();
+        const desc = (world.description || '').toLowerCase();
+        return name.includes(normalized) || desc.includes(normalized);
+      })
+    : worldListCache;
+  renderWorldSearchOptions(filtered);
+}
+
 function getCachedWorld(worldId) {
-  if (!worldId) return null;
+  if (!worldId && worldId !== 0) return null;
   const idNum = parseInt(worldId, 10);
   if (Number.isNaN(idNum)) {
     return null;
   }
-  return worldListCache.find(world => world.id === idNum) || null;
+  // 用 == 兼容后端返回 number / string 两种 id 类型
+  return worldListCache.find(world => world.id == idNum) || null;
 }
 
 // Handle world selection change
@@ -165,14 +282,34 @@ async function _saveWorldStyleToWorkflow(workflowId) {
 // Update world selector visual state (red if no world selected)
 function updateWorldSelectorState() {
   const defaultWorldSelect = document.getElementById('defaultWorldSelect');
-  if (!defaultWorldSelect) return;
-  
-  if (!defaultWorldSelect.value) {
-    defaultWorldSelect.classList.add('no-world-selected');
-    defaultWorldSelect.title = '请选择或创建世界';
-  } else {
-    defaultWorldSelect.classList.remove('no-world-selected');
-    defaultWorldSelect.title = '选择默认世界';
+  const trigger = document.getElementById('worldSearchTrigger');
+  const triggerText = document.getElementById('worldSearchTriggerText');
+
+  if (defaultWorldSelect) {
+    if (!defaultWorldSelect.value) {
+      defaultWorldSelect.classList.add('no-world-selected');
+      defaultWorldSelect.title = '请选择或创建世界';
+    } else {
+      defaultWorldSelect.classList.remove('no-world-selected');
+      defaultWorldSelect.title = '选择默认世界';
+    }
+  }
+
+  // 同步自定义搜索触发器显示
+  if (trigger) {
+    const worldId = defaultWorldSelect ? defaultWorldSelect.value : '';
+    if (!worldId) {
+      trigger.classList.add('no-world-selected');
+      if (triggerText) {
+        triggerText.textContent = window.t ? window.t('select_world') : '选择世界...';
+      }
+    } else {
+      trigger.classList.remove('no-world-selected');
+      const world = getCachedWorld(worldId);
+      if (triggerText) {
+        triggerText.textContent = world ? world.name : (window.t ? window.t('select_world') : '选择世界...');
+      }
+    }
   }
 }
 
@@ -342,48 +479,79 @@ async function onWorldCreated(worldId) {
 }
 
 // Initialize world selector
-function initWorldSelector() {
+async function initWorldSelector() {
   const defaultWorldSelect = document.getElementById('defaultWorldSelect');
-  const createWorldBtn = document.getElementById('createWorldBtn');
-  const editWorldBtn = document.getElementById('editWorldBtn');
-  const deleteWorldBtn = document.getElementById('deleteWorldBtn');
+  const createWorkflowBtn = document.getElementById('createWorkflowBtn');
   const editWorldModal = document.getElementById('editWorldModal');
   const editWorldSaveBtn = document.getElementById('editWorldSaveBtn');
   const editWorldCancelBtn = document.getElementById('editWorldCancelBtn');
   const editWorldModalClose = document.getElementById('editWorldModalClose');
-  
+  const worldSearchTrigger = document.getElementById('worldSearchTrigger');
+  const worldSearchInput = document.getElementById('worldSearchInput');
+  const worldSearchDropdown = document.getElementById('worldSearchDropdown');
+
   if (!defaultWorldSelect) return;
-  
-  // Load worlds
-  populateWorldSelector();
-  
+
+  // Load worlds（await 确保下拉框选项填充完成，避免 loadWorkflow 时
+  // defaultWorldSelect.value 设值失效）
+  await populateWorldSelector();
+
   // Handle selection change
   defaultWorldSelect.addEventListener('change', (e) => {
     handleWorldSelectionChange(e.target.value);
   });
-  
-  // Handle create world button (复用现有的createWorldModal)
-  if (createWorldBtn) {
-    createWorldBtn.addEventListener('click', (e) => {
+
+  // 自定义可搜索下拉事件
+  if (worldSearchTrigger) {
+    worldSearchTrigger.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      openWorldCreationModal();
+      toggleWorldSearchDropdown();
     });
   }
 
-  if (editWorldBtn) {
-    editWorldBtn.addEventListener('click', (e) => {
-      e.preventDefault();
+  if (worldSearchInput) {
+    worldSearchInput.addEventListener('input', (e) => {
       e.stopPropagation();
-      openEditWorldModal();
+      filterWorldSearchDropdown(e.target.value);
+    });
+
+    worldSearchInput.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        closeWorldSearchDropdown();
+      }
+    });
+
+    // 阻止输入框点击冒泡，避免误关闭下拉
+    worldSearchInput.addEventListener('click', (e) => {
+      e.stopPropagation();
     });
   }
 
-  if (deleteWorldBtn) {
-    deleteWorldBtn.addEventListener('click', (e) => {
+  if (worldSearchDropdown) {
+    worldSearchDropdown.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+  }
+
+  // 点击外部关闭下拉
+  document.addEventListener('click', () => {
+    closeWorldSearchDropdown();
+  });
+
+  // Handle create workflow button (新建画布)
+  if (createWorkflowBtn) {
+    createWorkflowBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      deleteCurrentWorld();
+      closeWorldSearchDropdown();
+      // create_workflow_modal.js 暴露的全局函数
+      if (typeof window.openCreateWorkflowModal === 'function') {
+        window.openCreateWorkflowModal();
+      } else {
+        console.error('[新建画布] create_workflow_modal.js 未加载，无法打开弹窗');
+      }
     });
   }
 

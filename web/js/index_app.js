@@ -6,7 +6,6 @@
     { path: '/image-to-video', name: 'image-to-video', component: ImageToVideo },
     { path: '/ai-script-gen', name: 'ai-script-gen', component: AIScriptGen },
     { path: '/video-enhance', name: 'video-enhance', component: VideoEnhance },
-    { path: '/video-remix', name: 'video-remix', component: VideoRemix },
     { path: '/audio-generate', name: 'audio-generate', component: AudioGenerate },
     { path: '/digital-human', name: 'digital-human', component: DigitalHuman },
     { path: '/skill-config', name: 'skill-config', component: SkillConfig }
@@ -50,6 +49,14 @@
       showRechargePowerModal: false,
       showFeedbackModal: false,
       showWechatChannelsModal: false,
+      // 官方微信群引导
+      wxGroupGuideEnabled: false,
+      wxGroupQrUrl: '',           // 配置中的原始地址（可能是远端 http）
+      wxGroupQrProxyPath: '/api/system/wx-group-qr',
+      showWxGroupSoftPanel: false,
+      showWxGroupModal: false,
+      wxGroupDontShowAgain: false,
+      _wxGroupSoftTimer: null,
       authMode: 'login', // 'login' or 'register'
       loginForm: {
         phone: '',
@@ -141,6 +148,7 @@
       userPreferences: {},
       availableImplementations: {},
       isCommunityEdition: false,
+      isEditionLoaded: false,
       zjtTokenEnabled: false, // 管理员是否开启了智剧通Token
       // API Token 数据
       apiTokenData: {
@@ -155,6 +163,88 @@
       checkinLoading: false,
       checkinToast: { show: false, reward: 0, streak_days: 0, nextRewardText: '' },
       checkinToastTimer: null,
+      showAgentConnectionModal: false,
+      agentConnectionTab: 'connection', // connection | cliMediaPref
+      agentConnectionLoading: false,
+      agentConnectionError: '',
+      agentConnectionCopied: false,
+      agentConnectionInfo: null,
+      agentConnectionText: '',
+      // CLI 媒体模型偏好（storyboard_cli surface）
+      cliMediaPrefLoading: false,
+      cliMediaPrefError: '',
+      cliMediaPrefSuccess: '',
+      cliMediaPrefWorlds: [],
+      cliMediaPrefWorldId: null,
+      cliMediaPrefProfiles: {},
+      cliMediaPrefSelected: {},
+      cliMediaPrefModels: {},
+      cliMediaPrefSaving: {},
+      cliMediaPrefSaved: {},
+      cliMediaPrefRowError: {},
+      cliMediaPrefModelsLoaded: false,
+      _cliMediaPrefModelsCache: null,
+      _cliMediaPrefSuccessTimer: null,
+      cliMediaPrefGroups: [
+        {
+          key: 'image',
+          title: '图片',
+          slots: [
+            {
+              key: 'image.text_to_image',
+              mediaType: 'image',
+              mode: 'text_to_image',
+              label: '文生图',
+              hint: '只根据文字生成图片',
+              modelListKey: 'text_to_image_models',
+              fallbackListKey: 'image_models',
+            },
+            {
+              key: 'image.image_edit',
+              mediaType: 'image',
+              mode: 'image_edit',
+              label: '图片编辑',
+              hint: '有参考图时改图、修图',
+              modelListKey: 'image_edit_models',
+              fallbackListKey: 'image_models',
+            },
+          ],
+        },
+        {
+          key: 'video',
+          title: '视频',
+          slots: [
+            {
+              key: 'video.text_to_video',
+              mediaType: 'video',
+              mode: 'text_to_video',
+              label: '文生视频',
+              hint: '只根据文字生成视频',
+              modelListKey: 'text_to_video_models',
+              fallbackListKey: 'video_models',
+            },
+            {
+              key: 'video.image_to_video',
+              mediaType: 'video',
+              mode: 'image_to_video',
+              label: '图生视频',
+              hint: '用首帧图片生成视频',
+              modelListKey: 'image_to_video_models',
+              fallbackListKey: 'video_models',
+            },
+            {
+              key: 'video.reference_to_video',
+              mediaType: 'video',
+              mode: 'reference_to_video',
+              label: '参考视频',
+              hint: '用多张参考图或音视频素材',
+              modelListKey: 'image_to_video_models',
+              fallbackListKey: 'video_models',
+              referenceOnly: true,
+            },
+          ],
+        },
+      ],
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -301,6 +391,14 @@
       isLoggedIn() {
         return !!(this.authToken && (this.userPhone || this.userEmail));
       },
+      /**
+       * 实际用于 <img src> 的二维码地址：
+       * - 页面为 HTTPS 且配置为 http:// 外链时，走后端同源代理，避免混合内容拦截
+       * - 同源相对路径 / http 页面下的 http 图：直接使用
+       */
+      wxGroupQrDisplayUrl() {
+        return this.resolveWxGroupQrDisplayUrl(this.wxGroupQrUrl);
+      },
       maskedPhone() {
         // 邮箱用户显示掩码后的邮箱
         if (!this.userPhone && this.userEmail) {
@@ -323,7 +421,11 @@
           return token;
         }
         return token.substring(0, 6) + '****' + token.substring(token.length - 4);
-      }
+      },
+      /** 扁平化五槽位，供简洁列表渲染（不展示分组标题 / mode 码） */
+      cliMediaPrefFlatSlots() {
+        return (this.cliMediaPrefGroups || []).flatMap((group) => group.slots || []);
+      },
     },
     watch: {
       showLoginModal(newVal) {
@@ -334,6 +436,402 @@
     },
     methods: {
       goHome(){ this.$router.push({name:'list'}); },
+
+      openAgentConnectionModal() {
+        // CLI / 智能体连接仅服务故事板（短剧模式），营销模式不提供入口
+        if (this.creationMode !== 'short_drama') {
+          return;
+        }
+        this.showAgentConnectionModal = true;
+        this.agentConnectionTab = 'connection';
+        this.agentConnectionError = '';
+        this.agentConnectionCopied = false;
+        this.cliMediaPrefError = '';
+        this.cliMediaPrefSuccess = '';
+        if (!this.isEditionLoaded) {
+          this.fetchServerConfig();
+        }
+      },
+
+      closeAgentConnectionModal() {
+        this.showAgentConnectionModal = false;
+        this.agentConnectionTab = 'connection';
+        this.agentConnectionError = '';
+        this.agentConnectionCopied = false;
+        this.cliMediaPrefError = '';
+        this.cliMediaPrefSuccess = '';
+        if (this._cliMediaPrefSuccessTimer) {
+          clearTimeout(this._cliMediaPrefSuccessTimer);
+          this._cliMediaPrefSuccessTimer = null;
+        }
+      },
+
+      switchAgentConnectionTab(tab) {
+        this.agentConnectionTab = tab;
+        if (tab === 'cliMediaPref') {
+          this.ensureCliMediaPreferencesLoaded();
+        }
+      },
+
+      buildAgentConnectionText(data) {
+        const payload = {
+          skill: 'storyboard-agent-api',
+          base_url: data.base_url,
+          agent_token: data.agent_token,
+          api_version: data.api_version,
+          app_version: data.app_version,
+          environment: data.environment,
+          token_type: data.token_type,
+          expires_at: data.expires_at,
+          note: 'Use the fixed v1 endpoints documented in the storyboard-agent-api skill. Exchange agent_token for auth_token first, then discover worlds, scripts, characters, locations, props, and storyboard scenes before creating, splitting, generating, or polling storyboard tasks. If using CLI fallback, set comfyui_env to the environment value before running commands.',
+        };
+        return [
+          '请使用 $storyboard-agent-api 协助处理我的智剧通分镜：可查看世界列表、世界下的剧本、主角/角色、场景、道具和分镜场次，并按需创建分镜、拆分剧本、生成分镜图/视频、查询任务状态。',
+          '连接信息如下，请不要把 token 放进 URL：',
+          '环境说明：请以 JSON 中的 environment 为准；如改用本地 CLI fallback，请先设置 comfyui_env 为该值。',
+          JSON.stringify(payload, null, 2),
+        ].join('\n');
+      },
+
+      async generateAgentConnection() {
+        if (!this.authToken) {
+          this.agentConnectionError = '请先登录后再生成智能体连接信息';
+          return;
+        }
+        this.agentConnectionLoading = true;
+        this.agentConnectionError = '';
+        this.agentConnectionCopied = false;
+        try {
+          const response = await axios.post('/api/agent-auth/storyboard-connection', {}, {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (!response.data || response.data.success === false) {
+            this.agentConnectionError = response.data?.error || response.data?.message || '生成连接信息失败';
+            return;
+          }
+          const info = {
+            ...response.data,
+            base_url: window.location.origin,
+          };
+          this.agentConnectionInfo = info;
+          this.agentConnectionText = this.buildAgentConnectionText(info);
+          await this.copyText(this.agentConnectionText);
+          this.agentConnectionCopied = true;
+          setTimeout(() => { this.agentConnectionCopied = false; }, 3000);
+        } catch (error) {
+          console.error('Generate agent connection error:', error);
+          this.agentConnectionError = error?.response?.data?.error || error?.response?.data?.detail || '生成连接信息失败，请稍后重试';
+        } finally {
+          this.agentConnectionLoading = false;
+        }
+      },
+
+      cliAuthHeaders() {
+        const headers = {
+          'Authorization': `Bearer ${this.authToken}`,
+        };
+        if (this.userId) {
+          headers['X-User-Id'] = String(this.userId);
+        }
+        return headers;
+      },
+
+      formatCliMediaModelLabel(model) {
+        if (!model) return '';
+        const name = model.name || model.key || '未命名模型';
+        const cp = Number(model.computing_power) || 0;
+        if (cp <= 0) return name;
+        if (model.computing_power_mode === 'by_duration') {
+          const range = model.computing_power_range;
+          if (Array.isArray(range) && range.length === 2 && range[0] !== range[1]) {
+            return `${name}（${range[0]}-${range[1]} 算力）`;
+          }
+          return `${name}（${cp}+ 算力）`;
+        }
+        return `${name}（${cp} 算力）`;
+      },
+
+      filterCliReferenceModels(models) {
+        return (models || []).filter((m) => {
+          const modes = m.supported_image_modes || [];
+          return modes.includes('multi_reference') || m.supports_ref_audio_video === true;
+        });
+      },
+
+      buildCliMediaPrefModelsMap(rawModels) {
+        const map = {};
+        for (const group of this.cliMediaPrefGroups) {
+          for (const slot of group.slots) {
+            let list = rawModels?.[slot.modelListKey] || rawModels?.[slot.fallbackListKey] || [];
+            if (slot.referenceOnly) {
+              list = this.filterCliReferenceModels(list);
+            }
+            map[slot.key] = list;
+          }
+        }
+        return map;
+      },
+
+      applyCliMediaPrefProfiles(profiles) {
+        const selected = {};
+        for (const group of this.cliMediaPrefGroups) {
+          for (const slot of group.slots) {
+            const profile = profiles?.[slot.key] || {};
+            const models = this.cliMediaPrefModels[slot.key] || [];
+            let taskId = profile.task_id;
+            if (taskId != null && taskId !== '') {
+              const exists = models.some((m) => String(m.task_id) === String(taskId));
+              if (!exists && models.length) {
+                taskId = models[0].task_id;
+              }
+            } else if (models.length) {
+              taskId = models[0].task_id;
+            } else {
+              taskId = '';
+            }
+            selected[slot.key] = taskId === '' || taskId == null ? '' : String(taskId);
+          }
+        }
+        this.cliMediaPrefProfiles = profiles || {};
+        this.cliMediaPrefSelected = selected;
+      },
+
+      async ensureCliMediaPreferencesLoaded() {
+        if (!this.authToken) {
+          this.cliMediaPrefError = '请先登录后再配置 CLI 模型偏好';
+          return;
+        }
+        if (this.cliMediaPrefLoading) return;
+        this.cliMediaPrefLoading = true;
+        this.cliMediaPrefError = '';
+        try {
+          await Promise.all([
+            this.loadCliMediaPrefWorlds(),
+            this.loadCliMediaPrefModels(),
+          ]);
+          if (this.cliMediaPrefWorldId) {
+            await this.loadCliMediaPreferences(this.cliMediaPrefWorldId);
+          }
+        } catch (error) {
+          console.error('Load CLI media preferences failed:', error);
+          this.cliMediaPrefError = error?.message || '加载 CLI 模型偏好失败';
+        } finally {
+          this.cliMediaPrefLoading = false;
+        }
+      },
+
+      async loadCliMediaPrefWorlds() {
+        const response = await axios.get('/api/worlds?page=1&page_size=100', {
+          headers: this.cliAuthHeaders(),
+        });
+        const payload = response.data || {};
+        let worlds = [];
+        if (payload.code === 0 && payload.data) {
+          worlds = payload.data.data || payload.data.items || payload.data || [];
+        } else if (Array.isArray(payload.data)) {
+          worlds = payload.data;
+        } else if (Array.isArray(payload.items)) {
+          worlds = payload.items;
+        }
+        if (!Array.isArray(worlds)) worlds = [];
+        this.cliMediaPrefWorlds = worlds;
+        const stored = localStorage.getItem('cli_media_pref_world_id');
+        const storedId = stored ? Number(stored) : null;
+        const hasStored = worlds.some((w) => Number(w.id) === storedId);
+        if (hasStored) {
+          this.cliMediaPrefWorldId = storedId;
+        } else if (worlds.length) {
+          this.cliMediaPrefWorldId = Number(worlds[0].id);
+        } else {
+          this.cliMediaPrefWorldId = null;
+        }
+      },
+
+      async loadCliMediaPrefModels() {
+        if (this.cliMediaPrefModelsLoaded && this._cliMediaPrefModelsCache) {
+          this.cliMediaPrefModels = this.buildCliMediaPrefModelsMap(this._cliMediaPrefModelsCache);
+          return;
+        }
+        const response = await axios.get('/api/storyboard/models', {
+          headers: this.cliAuthHeaders(),
+        });
+        if (!response.data || response.data.success === false) {
+          throw new Error(response.data?.error || '加载模型列表失败');
+        }
+        this._cliMediaPrefModelsCache = response.data;
+        this.cliMediaPrefModelsLoaded = true;
+        this.cliMediaPrefModels = this.buildCliMediaPrefModelsMap(response.data);
+      },
+
+      async loadCliMediaPreferences(worldId) {
+        if (!worldId) return;
+        const response = await axios.get(
+          `/api/storyboard/cli/media-preferences?world_id=${encodeURIComponent(worldId)}`,
+          { headers: this.cliAuthHeaders() }
+        );
+        if (!response.data || response.data.success === false) {
+          const err = response.data?.error;
+          throw new Error(
+            (err && (err.message || err.code)) || response.data?.message || '读取 CLI 偏好失败'
+          );
+        }
+        this.applyCliMediaPrefProfiles(response.data.profiles || {});
+        this.cliMediaPrefRowError = {};
+        this.cliMediaPrefSaved = {};
+      },
+
+      async onCliMediaPrefWorldChange(value) {
+        const worldId = value === '' || value == null ? null : Number(value);
+        this.cliMediaPrefWorldId = worldId;
+        this.cliMediaPrefError = '';
+        this.cliMediaPrefSuccess = '';
+        if (worldId != null) {
+          localStorage.setItem('cli_media_pref_world_id', String(worldId));
+        } else {
+          localStorage.removeItem('cli_media_pref_world_id');
+          this.cliMediaPrefProfiles = {};
+          this.cliMediaPrefSelected = {};
+          return;
+        }
+        this.cliMediaPrefLoading = true;
+        try {
+          await this.loadCliMediaPreferences(worldId);
+        } catch (error) {
+          console.error('Switch CLI media pref world failed:', error);
+          this.cliMediaPrefError = error?.response?.data?.error?.message
+            || error?.response?.data?.error
+            || error?.message
+            || '切换世界失败';
+        } finally {
+          this.cliMediaPrefLoading = false;
+        }
+      },
+
+      async onCliMediaPrefModelChange(slot, value) {
+        if (!slot || !this.cliMediaPrefWorldId) return;
+        const taskId = value === '' || value == null ? null : Number(value);
+        if (!taskId) return;
+        const previous = this.cliMediaPrefSelected[slot.key];
+        this.cliMediaPrefSelected = {
+          ...this.cliMediaPrefSelected,
+          [slot.key]: String(taskId),
+        };
+        this.cliMediaPrefSaving = { ...this.cliMediaPrefSaving, [slot.key]: true };
+        this.cliMediaPrefRowError = { ...this.cliMediaPrefRowError, [slot.key]: '' };
+        this.cliMediaPrefSaved = { ...this.cliMediaPrefSaved, [slot.key]: false };
+        try {
+          const response = await axios.put(
+            '/api/storyboard/cli/media-preferences',
+            {
+              world_id: this.cliMediaPrefWorldId,
+              media_type: slot.mediaType,
+              mode: slot.mode,
+              profile: { task_id: taskId },
+            },
+            { headers: this.cliAuthHeaders() }
+          );
+          if (!response.data || response.data.success === false) {
+            const err = response.data?.error;
+            throw new Error(
+              (typeof err === 'object' ? (err.message || err.code) : err)
+              || response.data?.message
+              || '保存失败'
+            );
+          }
+          const profile = response.data.profile || { task_id: taskId };
+          this.cliMediaPrefProfiles = {
+            ...this.cliMediaPrefProfiles,
+            [slot.key]: profile,
+          };
+          this.cliMediaPrefSelected = {
+            ...this.cliMediaPrefSelected,
+            [slot.key]: String(profile.task_id),
+          };
+          this.cliMediaPrefSaved = { ...this.cliMediaPrefSaved, [slot.key]: true };
+          setTimeout(() => {
+            if (this.cliMediaPrefSaved[slot.key]) {
+              this.cliMediaPrefSaved = { ...this.cliMediaPrefSaved, [slot.key]: false };
+            }
+          }, 2000);
+        } catch (error) {
+          console.error('Save CLI media preference failed:', error);
+          this.cliMediaPrefSelected = {
+            ...this.cliMediaPrefSelected,
+            [slot.key]: previous,
+          };
+          const msg = error?.response?.data?.error?.message
+            || error?.response?.data?.error
+            || error?.message
+            || '保存失败';
+          this.cliMediaPrefRowError = {
+            ...this.cliMediaPrefRowError,
+            [slot.key]: typeof msg === 'string' ? msg : JSON.stringify(msg),
+          };
+        } finally {
+          this.cliMediaPrefSaving = { ...this.cliMediaPrefSaving, [slot.key]: false };
+        }
+      },
+
+      buildCliMediaPrefCommands() {
+        const userId = this.userId || '<user_id>';
+        const worldId = this.cliMediaPrefWorldId || '<world_id>';
+        const lines = [];
+        for (const group of this.cliMediaPrefGroups) {
+          for (const slot of group.slots) {
+            const taskId = this.cliMediaPrefSelected[slot.key];
+            if (!taskId) continue;
+            lines.push(
+              `python scripts/storyboard_agent_cli.py preference media set --user-id ${userId} --world-id ${worldId} --media-type ${slot.mediaType} --mode ${slot.mode} --task-id ${taskId}`
+            );
+          }
+        }
+        return lines.join('\n');
+      },
+
+      async copyCliMediaPrefCommands() {
+        const text = this.buildCliMediaPrefCommands();
+        if (!text) {
+          this.cliMediaPrefError = '当前没有可复制的偏好配置';
+          return;
+        }
+        try {
+          await this.copyText(text);
+          this.cliMediaPrefError = '';
+          this.cliMediaPrefSuccess = '已复制 CLI 设置命令到剪贴板';
+          if (this._cliMediaPrefSuccessTimer) {
+            clearTimeout(this._cliMediaPrefSuccessTimer);
+          }
+          this._cliMediaPrefSuccessTimer = setTimeout(() => {
+            this.cliMediaPrefSuccess = '';
+            this._cliMediaPrefSuccessTimer = null;
+          }, 3000);
+        } catch (error) {
+          this.cliMediaPrefError = '复制失败，请手动选择文本';
+        }
+      },
+
+      async copyText(text) {
+        if (!text) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          try {
+            await navigator.clipboard.writeText(text);
+            return;
+          } catch (err) {
+            console.warn('Clipboard API failed, fallback copy will be used', err);
+          }
+        }
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand('copy');
+        } finally {
+          document.body.removeChild(textarea);
+        }
+      },
       
       maskEmail(email) {
         if (!email || !email.includes('@')) return email || '';
@@ -491,6 +989,8 @@
               
               // 登录成功后留在首页，检查模式选择
               this.checkCreationMode();
+              // 注册后的官方微信群轻量引导（不阻塞主路径）
+              this.maybeShowWxGroupSoftGuide();
             }
             
             // 关闭模态框并清空表单
@@ -648,15 +1148,27 @@
               this.showLoginModal = true;
               this.loginForm.phone = this.registerForm.phone || this.registerForm.email;
               this.registerForm = { phone: '', email: '', code: '', password: '', inviteCode: '', termsAgreed: false };
-              alert(response.data.message || '注册成功，请等待管理员审核通过后登录');
+              const pendingMsg = response.data.message || '注册成功，请等待管理员审核通过后登录';
+              // 功能开启时附带可点的社群提示（不自动弹窗）
+              if (this.wxGroupGuideEnabled) {
+                const joinTip = this.$t ? this.$t('wx_group_pending_tip') : '也可先加入官方微信群了解产品';
+                alert(`${pendingMsg}\n\n${joinTip}`);
+              } else {
+                alert(pendingMsg);
+              }
               return;
             }
 
             // 检查是否是首个管理员
             const isFirstAdmin = response.data.data && response.data.data.is_first_admin;
             if (isFirstAdmin) {
-              // 保存标记，登录后跳转到快速配置
+              // 保存标记，登录后跳转到快速配置（主路径优先，不挡后台）
               localStorage.setItem('redirect_after_login', '/admin?quick_config=1');
+              // 首管：配置完成后再在 admin 手册弹窗中展示微信群（展示时再校验开关）
+              sessionStorage.setItem('pending_wx_group_guide', 'admin_after_config');
+            } else {
+              // 普通用户：登录进首页后展示轻量浮层（展示时再校验开关）
+              sessionStorage.setItem('pending_wx_group_guide', 'home_soft');
             }
 
             // 注册成功后自动登录
@@ -775,6 +1287,7 @@
             this.userPreferences = response.data.data.preferences || {};
             this.availableImplementations = response.data.data.available_implementations || {};
             this.isCommunityEdition = response.data.data.is_community_edition || false;
+            this.isEditionLoaded = true;
           } else {
             this.userSettingsError = response.data.message || '加载偏好设置失败';
           }
@@ -1722,10 +2235,18 @@
           const response = await axios.get('/api/system/server-config');
           if (response.data.code === 0) {
             this.isLocal = response.data.data.is_local || false;
+            if (typeof response.data.data.is_enterprise === 'boolean') {
+              this.isCommunityEdition = !response.data.data.is_enterprise;
+              this.isEditionLoaded = true;
+            }
             this.emailEnabled = response.data.data.email_enabled || false;
             this.captchaEnabled = response.data.data.captcha_enabled || false;
             this.captchaPrefix = response.data.data.captcha_prefix || '';
             this.captchaSceneId = response.data.data.captcha_scene_id || '';
+            this.wxGroupGuideEnabled = !!response.data.data.wx_group_guide_enabled;
+            this.wxGroupQrUrl = response.data.data.wx_group_qr_url || '';
+            this.wxGroupQrProxyPath = response.data.data.wx_group_qr_proxy_path
+              || '/api/system/wx-group-qr';
             if (response.data.data.footer) {
               this.footerConfig = response.data.data.footer;
             }
@@ -1738,6 +2259,74 @@
         } catch (error) {
           console.error('Failed to fetch server config:', error);
         }
+      },
+
+      // ==================== 官方微信群引导 ====================
+
+      isWxGroupGuideDismissed() {
+        return localStorage.getItem('wx_group_guide_dismissed') === '1';
+      },
+
+      /**
+       * 解析二维码展示 URL。
+       * HTTPS 页面加载 HTTP 外链图会被浏览器拦截，改为同源后端代理。
+       */
+      resolveWxGroupQrDisplayUrl(url) {
+        if (!url) return '';
+        // 同源相对路径可直接用
+        if (url.startsWith('/')) return url;
+        try {
+          const isHttpsPage = typeof window !== 'undefined'
+            && window.location
+            && window.location.protocol === 'https:';
+          const isHttpRemote = /^http:\/\//i.test(url);
+          if (isHttpsPage && isHttpRemote) {
+            return this.wxGroupQrProxyPath || '/api/system/wx-group-qr';
+          }
+        } catch (e) {
+          // ignore
+        }
+        return url;
+      },
+
+      /** 注册成功且进入首页后，按 session 标记展示一次轻量浮层 */
+      maybeShowWxGroupSoftGuide() {
+        if (!this.wxGroupGuideEnabled || this.isWxGroupGuideDismissed()) {
+          sessionStorage.removeItem('pending_wx_group_guide');
+          return;
+        }
+        const pending = sessionStorage.getItem('pending_wx_group_guide');
+        if (pending !== 'home_soft') {
+          return;
+        }
+        sessionStorage.removeItem('pending_wx_group_guide');
+        if (this._wxGroupSoftTimer) {
+          clearTimeout(this._wxGroupSoftTimer);
+        }
+        // 稍晚出现，避免与登录框关闭动画抢焦点
+        this._wxGroupSoftTimer = setTimeout(() => {
+          this.showWxGroupSoftPanel = true;
+          this._wxGroupSoftTimer = null;
+        }, 600);
+      },
+
+      openWxGroupModal() {
+        if (!this.wxGroupGuideEnabled || !this.wxGroupQrDisplayUrl) {
+          return;
+        }
+        this.showWxGroupModal = true;
+      },
+
+      dismissWxGroupSoftPanel({ permanent = false } = {}) {
+        this.showWxGroupSoftPanel = false;
+        if (permanent || this.wxGroupDontShowAgain) {
+          localStorage.setItem('wx_group_guide_dismissed', '1');
+        }
+      },
+
+      dismissWxGroupSoftPanelPermanent() {
+        this.wxGroupDontShowAgain = true;
+        this.dismissWxGroupSoftPanel({ permanent: true });
       },
 
       // ==================== CAPTCHA 人机验证 ====================
@@ -2028,6 +2617,10 @@
         this.creationMode = mode;
         localStorage.setItem('creation_mode', mode);
         this.showModeSelectModal = false;
+        // 切换到营销模式时关闭智能体连接弹窗（CLI 仅支持故事板/短剧）
+        if (mode !== 'short_drama' && this.showAgentConnectionModal) {
+          this.closeAgentConnectionModal();
+        }
       },
       
     },
@@ -2042,6 +2635,10 @@
       }
       if (this.checkinToastTimer) {
         clearTimeout(this.checkinToastTimer);
+      }
+      if (this._wxGroupSoftTimer) {
+        clearTimeout(this._wxGroupSoftTimer);
+        this._wxGroupSoftTimer = null;
       }
       // 移除语言切换事件监听
       if (window.ZJTi18n && this._localeChangedHandler) {

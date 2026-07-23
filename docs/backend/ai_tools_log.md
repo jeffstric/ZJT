@@ -85,9 +85,9 @@ GET /api/admin/ai-tools/timeline?ai_tool_id=&project_id=
 
 ## 前端入口
 
-`web/index.html` 注册全局组件 `<timeline-modal>`（自管数据获取与渲染，毫秒级时间轴 + detail 可折叠）。以下 7 个历史页面均在历史项中加入"查看时间线"按钮：
+`web/index.html` 注册全局组件 `<timeline-modal>`（自管数据获取与渲染，毫秒级时间轴 + detail 可折叠）。以下 6 个历史页面均在历史项中加入"查看时间线"按钮：
 
-`DigitalHuman`、`VideoRemix`、`VideoEnhance`、`ImageEdit`、`TextToImage`、`ImageToVideo`、`AIVideoGen`。
+`DigitalHuman`、`VideoEnhance`、`ImageEdit`、`TextToImage`、`ImageToVideo`、`AIVideoGen`。
 
 i18n 键（`web/i18n/locales/{zh-CN,en}/index.json`）：`view_timeline` / `task_timeline` / `no_timeline_records` / `event` / `timeline_loading`。
 

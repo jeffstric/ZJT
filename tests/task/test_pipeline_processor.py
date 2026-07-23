@@ -7,6 +7,7 @@ PipelineProcessor 纯逻辑单元测试
 使用 @patch 装饰器模拟外部依赖。
 """
 import importlib
+import asyncio
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -85,6 +86,145 @@ class TestPipelineProcessorGetPendingSteps(unittest.TestCase):
 
         MockStepModel.get_pending_steps.assert_called_once_with(1, 'param_prepare')
         self.assertEqual(result, ['step1', 'step2'])
+
+
+class TestPipelineProcessorWaitingSteps(unittest.TestCase):
+    @patch('task.pipeline_processor.PipelineProcessor.dispatch_step')
+    @patch('task.pipeline_processor.PipelineStepModel')
+    def test_storyboard_grid_split_step_is_owned_by_grid_task_scheduler(self, MockStepModel, mock_dispatch):
+        """storyboard_first_frame_grid_split 不能被全局 before_finish 调度器提前执行。"""
+        from model import PipelineStage, PipelineStepType
+
+        step = MagicMock()
+        step.id = 52
+        step.ai_tool_id = 1075
+        step.stage = PipelineStage.BEFORE_FINISH
+        step.step_type = PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+
+        MockStepModel.get_all_waiting_steps.return_value = [step]
+        MockStepModel.get_processing_steps.return_value = []
+        MockStepModel.get_ready_to_retry_steps.return_value = []
+
+        asyncio.run(PipelineProcessor.process_all_pending_steps())
+
+        mock_dispatch.assert_not_called()
+        MockStepModel.update_status.assert_not_called()
+
+    @patch('task.pipeline_processor.PipelineProcessor.dispatch_step')
+    @patch('task.pipeline_processor.PipelineStepModel')
+    def test_completed_retry_does_not_skip_new_pending_retry(self, MockStepModel, mock_dispatch):
+        """B 的历史完成记录不能把 B 真实失败后创建的 C 跳过。"""
+        from model import PipelineStage, PipelineStepStatus, PipelineStepType
+
+        completed_b = MagicMock(
+            id=201,
+            stage=PipelineStage.BEFORE_FINISH,
+            step_type=PipelineStepType.IMPLEMENTATION_RETRY,
+            status=PipelineStepStatus.COMPLETED,
+        )
+        pending_c = MagicMock(
+            id=202,
+            stage=PipelineStage.BEFORE_FINISH,
+            step_type=PipelineStepType.IMPLEMENTATION_RETRY,
+            status=PipelineStepStatus.PENDING,
+        )
+        pending_c.get_params_dict.return_value = {
+            'retry_mode': 'single_candidate_v1',
+            'target_implementation': 'impl_c',
+        }
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [completed_b, pending_c]
+
+        asyncio.run(PipelineProcessor._check_ai_tool_stage_completion(10, PipelineStage.BEFORE_FINISH))
+
+        MockStepModel.update_status.assert_not_called()
+        mock_dispatch.assert_not_called()
+
+    @patch('task.pipeline_processor.PipelineStepModel')
+    def test_completed_and_processing_retry_waits_without_recursion(self, MockStepModel):
+        """COMPLETED + PROCESSING 只等待，不发生无状态变化递归。"""
+        from model import PipelineStage, PipelineStepStatus, PipelineStepType
+
+        completed = MagicMock(
+            id=211,
+            stage=PipelineStage.BEFORE_FINISH,
+            step_type=PipelineStepType.IMPLEMENTATION_RETRY,
+            status=PipelineStepStatus.COMPLETED,
+        )
+        processing = MagicMock(
+            id=212,
+            stage=PipelineStage.BEFORE_FINISH,
+            step_type=PipelineStepType.IMPLEMENTATION_RETRY,
+            status=PipelineStepStatus.PROCESSING,
+        )
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [completed, processing]
+
+        asyncio.run(PipelineProcessor._check_ai_tool_stage_completion(10, PipelineStage.BEFORE_FINISH))
+
+        MockStepModel.update_status.assert_not_called()
+
+    @patch('task.pipeline_processor.PipelineProcessor.dispatch_step')
+    @patch('task.pipeline_processor.PipelineStepModel')
+    def test_legacy_multiple_candidates_keep_first_and_skip_remaining(
+        self, MockStepModel, mock_dispatch
+    ):
+        """升级前多个候选只执行第一个，其余旧式候选做兼容性跳过。"""
+        from model import PipelineStage, PipelineStepStatus, PipelineStepType
+
+        legacy_b = MagicMock(
+            id=221, ai_tool_id=10, stage=PipelineStage.BEFORE_FINISH,
+            step_type=PipelineStepType.IMPLEMENTATION_RETRY,
+        )
+        legacy_b.get_params_dict.return_value = {'target_implementation': 'impl_b'}
+        legacy_c = MagicMock(
+            id=222, ai_tool_id=10, stage=PipelineStage.BEFORE_FINISH,
+            step_type=PipelineStepType.IMPLEMENTATION_RETRY,
+            status=PipelineStepStatus.PENDING,
+        )
+        legacy_c.get_params_dict.return_value = {'target_implementation': 'impl_c'}
+        legacy_d = MagicMock(
+            id=223, ai_tool_id=10, stage=PipelineStage.BEFORE_FINISH,
+            step_type=PipelineStepType.IMPLEMENTATION_RETRY,
+            status=PipelineStepStatus.PENDING,
+        )
+        legacy_d.get_params_dict.return_value = {'target_implementation': 'impl_d'}
+        MockStepModel.get_all_waiting_steps.return_value = [legacy_b, legacy_c, legacy_d]
+        MockStepModel.get_pending_steps.return_value = [legacy_c, legacy_d]
+        MockStepModel.get_processing_steps.return_value = []
+        MockStepModel.get_ready_to_retry_steps.return_value = []
+        mock_dispatch.return_value = True
+
+        asyncio.run(PipelineProcessor.process_all_pending_steps())
+
+        mock_dispatch.assert_called_once_with(legacy_b)
+        assert MockStepModel.update_status.call_count == 2
+        for call in MockStepModel.update_status.call_args_list:
+            assert call.kwargs['result_data']['reason'] == 'legacy_multiple_candidates'
+
+    @patch('task.pipeline_processor.PipelineProcessor.dispatch_step')
+    @patch('task.pipeline_processor.PipelineStepModel')
+    def test_stage_completion_does_not_dispatch_storyboard_grid_split_step(self, MockStepModel, mock_dispatch):
+        """implementation_retry 完成后，阶段推进也不能提前派发分镜宫格拆图。"""
+        from model import PipelineStage, PipelineStepStatus, PipelineStepType
+
+        retry_step = MagicMock()
+        retry_step.id = 119
+        retry_step.ai_tool_id = 1120
+        retry_step.stage = PipelineStage.BEFORE_FINISH
+        retry_step.step_type = PipelineStepType.IMPLEMENTATION_RETRY
+        retry_step.status = PipelineStepStatus.COMPLETED
+
+        split_step = MagicMock()
+        split_step.id = 118
+        split_step.ai_tool_id = 1120
+        split_step.stage = PipelineStage.BEFORE_FINISH
+        split_step.step_type = PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+        split_step.status = PipelineStepStatus.PENDING
+
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [retry_step, split_step]
+
+        asyncio.run(PipelineProcessor._check_ai_tool_stage_completion(1120, PipelineStage.BEFORE_FINISH))
+
+        mock_dispatch.assert_not_called()
 
 
 class TestPipelineProcessorHasSteps(unittest.TestCase):

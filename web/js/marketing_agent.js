@@ -42,6 +42,7 @@
             const showSettingsPanel = ref(false);
             const showVideoModePanel = ref(false);
             const showDurationPanel = ref(false);
+            const showMobileToolbar = ref(false);
             const autoMode = ref(false);
             const showModelSelect = ref(false);
             const mediaType = ref('image');
@@ -59,6 +60,7 @@
             // 图生视频模型偏好（页面加载时预取，上传图片后使用）
             const savedImg2VidModelKey = ref('');
             const savedImg2VidModelName = ref('');
+            const mediaPreferenceProfiles = ref({});
 
             // 上传图片状态
             const hasUploadedImage = ref(false);
@@ -326,20 +328,6 @@
                 return `<button class="publish-result-btn" onclick="event.stopPropagation(); window.publishGeneratedResult && window.publishGeneratedResult(${escapeHtmlAttr(JSON.stringify(String(aiToolId)))}, '${safeTitle}')">发布</button>`;
             }
 
-            function buildGeneratedMediaHtml(type, urls) {
-                if (type === 'image') {
-                    return urls.map(url =>
-                        `<div class="generated-image-wrapper" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(url)}';window.resetModalImageInfo && window.resetModalImageInfo()"><img src="${escapeHtmlAttr(url)}" class="generated-image" alt="${window.t('generated_result_alt')}"></div>`
-                    ).join('');
-                }
-                if (type === 'video') {
-                    return urls.map(url =>
-                        `<video src="${escapeHtmlAttr(url)}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video>`
-                    ).join('');
-                }
-                return '';
-            }
-
             function buildGeneratedMediaRowsHtml(type, rows) {
                 if (type === 'image') {
                     return rows.map(row => {
@@ -531,6 +519,7 @@
             // TaskConfig 动态模型数据
             const taskConfigReady = ref(false);
             const allImageModels = ref([]);
+            const allImageEditModels = ref([]);
             const allTextToVideoModels = ref([]);
             const allImageToVideoModels = ref([]);
             const videoModelConfigs = ref({});
@@ -579,7 +568,12 @@
                     }
                     return allTextToVideoModels.value;
                 }
-                return allImageModels.value;
+                const hasImageReferences = hasUploadedImage.value
+                    || agentImageFiles.value.length > 0
+                    || mediaItems.value.some(item => item.type === 'image');
+                return hasImageReferences && allImageEditModels.value.length
+                    ? allImageEditModels.value
+                    : allImageModels.value;
             });
 
             // 当前可选比例
@@ -1259,6 +1253,18 @@
                 return isVideoResultUrl(asset?.result_url || asset?.video_path || '');
             }
 
+            // 返回竖屏视频应使用的 aspect-ratio CSS 值（如 '9:16'）；非竖屏返回空串，沿用默认正方形容器
+            function verticalVideoAspectRatio(ratio) {
+                if (!ratio || typeof ratio !== 'string') return '';
+                const parts = ratio.split(':');
+                if (parts.length !== 2) return '';
+                const w = parseFloat(parts[0]);
+                const h = parseFloat(parts[1]);
+                if (!w || !h) return '';
+                // 竖屏：高 > 宽，用原始比例让卡片自适应高度，视频完整无裁切
+                return h > w ? ratio : '';
+            }
+
             function formatAssetType(asset) {
                 if (isAssetVideo(asset)) return window.t('video');
                 return window.t('image');
@@ -1423,16 +1429,38 @@
             function showImageModal(src, aiToolId, suggestedTitle) {
                 const modal = document.getElementById('imgModal');
                 const img = document.getElementById('imgModalImg');
+                const video = document.getElementById('imgModalVideo');
                 if (modal && img) {
+                    if (video) { video.style.display = 'none'; video.pause(); }
+                    img.style.display = '';
                     img.src = src;
                     modal.style.display = 'flex';
-                    // 设置弹框图片信息
                     if (aiToolId) {
                         setModalImageInfo(aiToolId, suggestedTitle);
                     } else {
                         resetModalImageInfo();
                     }
                 }
+            }
+
+            function previewMedia(src, mediaType) {
+                const modal = document.getElementById('imgModal');
+                const img = document.getElementById('imgModalImg');
+                const video = document.getElementById('imgModalVideo');
+                if (!modal || !img || !video) return;
+                if (mediaType === 'video') {
+                    img.style.display = 'none';
+                    video.style.display = '';
+                    video.src = src;
+                    video.load();
+                } else {
+                    video.style.display = 'none';
+                    video.pause();
+                    img.style.display = '';
+                    img.src = src;
+                }
+                modal.style.display = 'flex';
+                resetModalImageInfo();
             }
 
             /**
@@ -2810,6 +2838,11 @@
                         ratio: selectedRatio.value,
                         model_name: selectedImageModel.value
                     };
+                    const imageCategory = validImageUrls.length > 0 ? 'image_edit' : 'text_to_image';
+                    const imageTaskId = window.TaskConfig?.getTaskIdByKey
+                        ? window.TaskConfig.getTaskIdByKey(selectedImageModelKey.value, imageCategory)
+                        : undefined;
+                    if (imageTaskId) imagePreferences.task_id = imageTaskId;
                     if (selectedResolution.value && selectedResolution.value !== 'auto') {
                         const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
                         imagePreferences.resolution = sizeMap[selectedResolution.value] || selectedResolution.value;
@@ -4164,6 +4197,15 @@
                         value: opt.value
                     }));
 
+                    const editOpts = window.TaskConfig.getModelOptionsForCategory('image_edit');
+                    allImageEditModels.value = editOpts.map(opt => ({
+                        icon: '🖼️',
+                        name: opt.label.split(' (')[0],
+                        desc: opt.label,
+                        key: opt.key,
+                        value: opt.value
+                    }));
+
                     // 获取文生视频模型
                     const txtVidOpts = window.TaskConfig.getModelOptionsForCategory('text_to_video');
                     allTextToVideoModels.value = txtVidOpts.map((opt, idx) => ({
@@ -4187,13 +4229,18 @@
 
                     // 加载视频模型配置
                     videoModelConfigs.value = window.TaskConfig.getModelConfigs ? window.TaskConfig.getModelConfigs() : {};
+                    await loadMediaPreferenceProfiles();
 
                     // 恢复用户偏好或默认选中第一个模型
                     if (allImageModels.value.length > 0 && !selectedImageModel.value) {
                         const savedImageModel = localStorage.getItem('marketing_selected_image_model');
                         const savedImageModelKey = localStorage.getItem('marketing_selected_image_model_key');
+                        const preferredImageModel = modelForMediaSlot('image.text_to_image', allImageModels.value);
 
-                        if (savedImageModel && allImageModels.value.find(m => m.name === savedImageModel)) {
+                        if (preferredImageModel) {
+                            selectedImageModel.value = preferredImageModel.name;
+                            selectedImageModelKey.value = preferredImageModel.key || '';
+                        } else if (savedImageModel && allImageModels.value.find(m => m.name === savedImageModel)) {
                             // 恢复用户保存的模型
                             const m = allImageModels.value.find(m => m.name === savedImageModel);
                             selectedImageModel.value = m.name;
@@ -4214,9 +4261,9 @@
                     // 恢复用户保存的视频模型偏好（优先从服务端获取，回退到 localStorage）
                     // --- 文生视频模型偏好 ---
                     if (allTextToVideoModels.value.length > 0) {
-                        let restoredT2VModel = null;
+                        let restoredT2VModel = modelForMediaSlot('video.text_to_video', allTextToVideoModels.value);
                         try {
-                            if (userId.value && worldId.value) {
+                            if (!restoredT2VModel && userId.value && worldId.value) {
                                 const resp = await fetch(`/api/video-model?category=text_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
                                     headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
                                 });
@@ -4254,8 +4301,13 @@
                     }
                     // --- 图生视频模型偏好（预取，上传图片后使用） ---
                     if (allImageToVideoModels.value.length > 0) {
+                        const preferredI2VModel = modelForMediaSlot('video.image_to_video', allImageToVideoModels.value);
+                        if (preferredI2VModel) {
+                            savedImg2VidModelKey.value = preferredI2VModel.key;
+                            savedImg2VidModelName.value = preferredI2VModel.name;
+                        }
                         try {
-                            if (userId.value && worldId.value) {
+                            if (!preferredI2VModel && userId.value && worldId.value) {
                                 const resp = await fetch(`/api/video-model?category=image_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
                                     headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
                                 });
@@ -4390,6 +4442,7 @@
                     { icon: '🖼️', name: '可图 3.0', desc: window.t('desc_kling_image'), tag: '', key: 'kling_image', value: 'kling_image' },
                     { icon: '🖼️', name: '通义万相 3.0', desc: window.t('desc_wanxiang'), tag: '', key: 'wanxiang', value: 'wanxiang' }
                 ];
+                allImageEditModels.value = [...allImageModels.value];
                 allTextToVideoModels.value = [
                     { icon: '📹', name: '可灵 2.0', desc: window.t('desc_kling_text_video'), tag: '', key: 'kling_text_video', value: 'kling_text_video' }
                 ];
@@ -5872,11 +5925,16 @@
                 // 根据类型自动切换媒体类型并设置默认模型
                 if (type.key === 'image') {
                     mediaType.value = 'image';
-                    if (allImageModels.value.length > 0) {
+                    const imageList = hasUploadedImage.value && allImageEditModels.value.length
+                        ? allImageEditModels.value
+                        : allImageModels.value;
+                    if (imageList.length > 0) {
                         const saved = localStorage.getItem('marketing_selected_image_model');
-                        const m = allImageModels.value.find(item => item.key === selectedImageModelKey.value)
-                            || (saved && allImageModels.value.find(item => item.name === saved))
-                            || allImageModels.value[0];
+                        const slot = hasUploadedImage.value ? 'image.image_edit' : 'image.text_to_image';
+                        const m = modelForMediaSlot(slot, imageList)
+                            || imageList.find(item => item.key === selectedImageModelKey.value)
+                            || (saved && imageList.find(item => item.name === saved))
+                            || imageList[0];
                         selectedImageModel.value = m.name;
                         selectedImageModelKey.value = m.key || '';
                     }
@@ -5928,15 +5986,74 @@
             }
 
             // 同步图片模型配置到后端
+            async function loadMediaPreferenceProfiles() {
+                if (!userId.value || !worldId.value) return;
+                try {
+                    const resp = await fetch(`/api/marketing/media-preferences?user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
+                        headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    if (resp.ok && data.success) mediaPreferenceProfiles.value = data.profiles || {};
+                } catch (error) {
+                    console.warn('[媒体偏好] 加载五槽位失败:', error);
+                }
+            }
+
+            function modelForMediaSlot(slot, models) {
+                const taskId = mediaPreferenceProfiles.value?.[slot]?.task_id;
+                if (!taskId || !window.TaskConfig?.getTaskById) return null;
+                const task = window.TaskConfig.getTaskById(taskId);
+                return task?.key
+                    ? models.find(m => m.key === task.key || task.key.startsWith(m.key + '_')) || null
+                    : null;
+            }
+
+            async function syncMediaPreference(mediaType, mode, taskId, profile = {}) {
+                if (!taskId || !userId.value || !worldId.value) return;
+                const resp = await fetch('/api/marketing/media-preferences', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': authToken.value,
+                        'X-User-Id': userId.value
+                    },
+                    body: JSON.stringify({
+                        user_id: userId.value,
+                        world_id: worldId.value,
+                        media_type: mediaType,
+                        mode,
+                        profile: { ...profile, task_id: taskId }
+                    })
+                });
+                if (!checkAuthResponse(resp)) return;
+                const data = await resp.json();
+                if (!resp.ok || !data.success) throw new Error(data?.error?.message || data?.error || '保存失败');
+                mediaPreferenceProfiles.value = {
+                    ...mediaPreferenceProfiles.value,
+                    [`${mediaType}.${mode}`]: data.profile,
+                };
+            }
+
             async function syncImageModelToBackend(model) {
                 try {
+                    const hasImageReferences = hasUploadedImage.value
+                        || agentImageFiles.value.length > 0
+                        || mediaItems.value.some(item => item.type === 'image');
+                    const mode = hasImageReferences ? 'image_edit' : 'text_to_image';
+                    const category = mode;
                     const taskId = window.TaskConfig?.getTaskIdByKey
-                        ? window.TaskConfig.getTaskIdByKey(model.key, 'text_to_image') || window.TaskConfig.getTaskIdByKey(model.key, 'image_edit')
+                        ? window.TaskConfig.getTaskIdByKey(model.key, category)
                         : null;
                     if (!taskId || !userId.value || !worldId.value) return;
                     // 解析分辨率为后端格式（auto 不传）
                     const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
                     const resolvedResolution = selectedResolution.value === 'auto' ? null : (sizeMap[selectedResolution.value] || selectedResolution.value);
+                    await syncMediaPreference('image', mode, taskId, {
+                        ratio: selectedRatio.value,
+                        resolution: resolvedResolution,
+                    });
+                    if (mode !== 'text_to_image') return;
                     const resp = await fetch('/api/text-to-image-model', {
                         method: 'POST',
                         headers: {
@@ -5969,6 +6086,15 @@
                         ? window.TaskConfig.getTaskIdByKey(model.key, category)
                         : null;
                     if (!taskId || !userId.value || !worldId.value) return;
+                    const valid_image_urls = isImg2Vid && uploadedImageUrl.value ? [uploadedImageUrl.value] : [];
+                    const video_prefs = buildAgentVideoPreferences(valid_image_urls);
+                    const isReferenceMode = ['multi_reference', 'first_last_with_ref'].includes(video_prefs.image_mode)
+                        || agentVideoFiles.value.length > 0
+                        || agentAudioFiles.value.length > 0;
+                    const mode = !isImg2Vid
+                        ? 'text_to_video'
+                        : (isReferenceMode ? 'reference_to_video' : 'image_to_video');
+                    await syncMediaPreference('video', mode, taskId, video_prefs);
                     const resp = await fetch('/api/video-model', {
                         method: 'POST',
                         headers: {
@@ -5981,11 +6107,12 @@
                             world_id: worldId.value,
                             session_id: currentSessionId.value,
                             task_id: taskId,
-                            category: category
+                            category: category,
+                            video_preferences: video_prefs
                         })
                     });
                     if (!checkAuthResponse(resp)) return;
-                    console.log('[视频偏好] 已同步到后端:', model.name, 'task_id:', taskId, 'category:', category);
+                    console.log('[视频偏好] 已同步到后端:', model.name, 'task_id:', taskId, 'category:', category, 'prefs:', video_prefs);
                 } catch (e) {
                     console.warn('[视频模型] 同步失败:', e);
                 }
@@ -6031,7 +6158,29 @@
                 showModelPanel.value = false;
                 showRatioPanel.value = false;
                 showModelSelect.value = false;
+                showLLMModelSelect.value = false;
                 showDurationPanel.value = false;
+            }
+
+            // 自定义面板内：图片/视频模型列表与 LLM 列表互斥展开，避免同时撑高导致矮屏顶栏选项不可见
+            function toggleModelSelect() {
+                const next = !showModelSelect.value;
+                showModelSelect.value = next;
+                if (next) {
+                    showLLMModelSelect.value = false;
+                }
+            }
+
+            function toggleLLMModelSelect() {
+                const next = !showLLMModelSelect.value;
+                showLLMModelSelect.value = next;
+                if (next) {
+                    showModelSelect.value = false;
+                }
+            }
+
+            function toggleMobileToolbar() {
+                showMobileToolbar.value = !showMobileToolbar.value;
             }
 
             // 点击外部关闭下拉
@@ -6041,6 +6190,7 @@
                 showRatioPanel.value = false;
                 showSettingsPanel.value = false;
                 showModelSelect.value = false;
+                showLLMModelSelect.value = false;
                 showDurationPanel.value = false;
             }
 
@@ -6090,13 +6240,29 @@
             // 监听 hasUploadedImage 变化，在视频模式下自动切换文生/图生视频模型
             Vue.watch(hasUploadedImage, async (newVal, oldVal) => {
                 if (oldVal === newVal) return;
-                if (!isVideoMode.value) return;
+                if (!isVideoMode.value) {
+                    const slot = newVal ? 'image.image_edit' : 'image.text_to_image';
+                    const list = newVal && allImageEditModels.value.length
+                        ? allImageEditModels.value
+                        : allImageModels.value;
+                    const preferred = modelForMediaSlot(slot, list);
+                    const selected = preferred || list[0];
+                    if (selected) {
+                        selectedImageModel.value = selected.name;
+                        selectedImageModelKey.value = selected.key || '';
+                    }
+                    refreshModelSettings();
+                    return;
+                }
                 if (newVal) {
                     // 有图片了，切换到图生视频模型偏好（直接从 API 获取，更可靠）
                     const list = allImageToVideoModels.value;
-                    let m = null;
+                    const slot = ['multi_reference', 'first_last_with_ref'].includes(videoImageMode.value)
+                        ? 'video.reference_to_video'
+                        : 'video.image_to_video';
+                    let m = modelForMediaSlot(slot, list);
                     try {
-                        if (userId.value && worldId.value) {
+                        if (!m && userId.value && worldId.value) {
                             const resp = await fetch(`/api/video-model?category=image_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
                                 headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
                             });
@@ -6133,7 +6299,8 @@
                     // 没有图片了，切回文生视频模型偏好
                     const saved = localStorage.getItem('marketing_selected_t2v_model');
                     const list = allTextToVideoModels.value;
-                    const m = (saved && list.find(item => item.name === saved)) || list[0];
+                    const m = modelForMediaSlot('video.text_to_video', list)
+                        || (saved && list.find(item => item.name === saved)) || list[0];
                     if (m) {
                         selectedVideoModelName.value = m.name;
                         selectedVideoModelKey.value = m.key || '';
@@ -6145,6 +6312,16 @@
             // 监听视频生成方式变化，仅在切换时同步参考图状态，不再清空已上传图片
             Vue.watch(videoImageMode, (newMode, oldMode) => {
                 if (oldMode === newMode) return;
+                if (isVideoMode.value && hasUploadedImage.value) {
+                    const slot = ['multi_reference', 'first_last_with_ref'].includes(newMode)
+                        ? 'video.reference_to_video'
+                        : 'video.image_to_video';
+                    const preferred = modelForMediaSlot(slot, allImageToVideoModels.value);
+                    if (preferred) {
+                        selectedVideoModelName.value = preferred.name;
+                        selectedVideoModelKey.value = preferred.key || '';
+                    }
+                }
                 // 切换首尾帧/全能参考时，保留所有已上传媒体，不自动清空
                 // 若从全能参考切回首尾帧，可将多余的参考图移除，只保留主图
                 if (newMode === 'first_last_frame') {
@@ -6213,6 +6390,7 @@
                 assetsTotalPages,
                 loadAssets,
                 isAssetVideo,
+                verticalVideoAspectRatio,
                 formatAssetType,
                 formatAssetDate,
                 useAssetForVideo,
@@ -6233,6 +6411,7 @@
                 formatShortDate,
                 renderMarkdown,
                 showImageModal,
+                previewMedia,
                 autoResize,
                 handleSend,
                 sendContinue,
@@ -6267,6 +6446,10 @@
                 toggleModelPanel,
                 toggleRatioPanel,
                 toggleSettingsPanel,
+                toggleModelSelect,
+                toggleLLMModelSelect,
+                showMobileToolbar,
+                toggleMobileToolbar,
                 showSettingsPanel,
                 showVideoModePanel,
                 showDurationPanel,
@@ -6405,6 +6588,12 @@
         // 注册 Vue i18n 插件
         app.use(window.ZJTi18nVue);
         app.mount('#app');
+
+        // 移除挂载前静态 loading（#app 内 isInitializing 遮罩会接力展示）
+        const preMountLoader = document.getElementById('pre-mount-loader');
+        if (preMountLoader) {
+            preMountLoader.remove();
+        }
 
         // 扫描 DOM 中的 data-i18n 属性（如 <title>）
         if (window.ZJTi18nDOM) {

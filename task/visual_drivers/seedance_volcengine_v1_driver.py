@@ -174,7 +174,18 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             return False, f"响应不是字典类型，实际类型: {type(result)}"
 
         if "error" in result:
+            from utils.content_moderation_error import format_user_facing_moderation_error
+
             error_info = result.get("error", {})
+            if not isinstance(error_info, dict):
+                error_info = {"message": str(error_info)}
+            friendly = format_user_facing_moderation_error(
+                error_code=error_info.get("code"),
+                error_message=error_info.get("message"),
+                error_type=error_info.get("type"),
+            )
+            if friendly:
+                return False, friendly
             error_code = error_info.get("code", "Unknown")
             error_message = error_info.get("message", "未知错误")
             return False, f"API 错误 [{error_code}]: {error_message}"
@@ -521,7 +532,9 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             # 3. 验证响应格式
             is_valid, error_msg = self._validate_submit_response(result)
             if not is_valid:
-                if "API 错误" in error_msg:
+                from utils.content_moderation_error import is_content_moderation_user_message
+
+                if "API 错误" in error_msg or is_content_moderation_user_message(error_msg):
                     return {
                         "success": False,
                         "error": error_msg,

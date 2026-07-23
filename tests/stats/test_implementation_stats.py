@@ -20,6 +20,8 @@ class TestImplementationIdMapping(unittest.TestCase):
         self.assertEqual(get_implementation_id('veo3_duomi_v1'), 10)
         self.assertEqual(get_implementation_id('ltx2_runninghub_v1'), 11)
         self.assertEqual(get_implementation_id('wan22_runninghub_v1'), 12)
+        # LTX2.3 实现名含点号，映射必须正确，否则 attempt.implementation 为 0 被统计排除
+        self.assertEqual(get_implementation_id('ltx2.3_runninghub_v1'), 17)
 
     def test_implementation_id_to_name(self):
         """测试 implementation ID 转换为名称"""
@@ -32,6 +34,7 @@ class TestImplementationIdMapping(unittest.TestCase):
         self.assertEqual(get_implementation_name(10), 'veo3_duomi_v1')
         self.assertEqual(get_implementation_name(11), 'ltx2_runninghub_v1')
         self.assertEqual(get_implementation_name(12), 'wan22_runninghub_v1')
+        self.assertEqual(get_implementation_name(17), 'ltx2.3_runninghub_v1')
 
     def test_unknown_implementation_returns_default(self):
         """测试未知的 implementation 返回默认值"""

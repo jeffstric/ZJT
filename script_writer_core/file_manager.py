@@ -13,7 +13,12 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Set, Tuple
-from config.constant import FilePathConstants, UploadPathConstants
+from config.constant import (
+    FilePathConstants,
+    StoryType,
+    UploadPathConstants,
+    ENTITY_PROTECTED_META_FIELDS,
+)
 from utils.project_path import get_project_root
 
 logger = logging.getLogger(__name__)
@@ -70,7 +75,108 @@ class FileManager:
         if not script_problem_file.exists():
             default_data = {"verdict": True, "problem": ""}
             script_problem_file.write_text(json.dumps(default_data, ensure_ascii=False, indent=2), encoding='utf-8')
-    
+
+    # ==================== 实体文件安全写入工具函数 ====================
+
+    def _merge_entity_meta(self, old_data: Optional[dict], new_data: dict) -> dict:
+        """
+        合并实体 JSON：业务字段以 new_data 为准，受保护元数据字段缺失时从 old_data 补回。
+
+        - world_id/user_id/created_at/create_time：new 缺失则从 old 补；都没有则补 created_at=now
+        - updated_at/update_time：始终刷新为当前时间
+        """
+        merged = dict(new_data)
+        now_iso = datetime.now().isoformat()
+        for field in ENTITY_PROTECTED_META_FIELDS:
+            if field not in merged and isinstance(old_data, dict) and field in old_data:
+                merged[field] = old_data[field]
+        # 创建时间兜底
+        if not ('created_at' in merged or 'create_time' in merged):
+            merged['created_at'] = now_iso
+        # 更新时间始终刷新
+        if 'update_time' in merged:
+            merged['update_time'] = now_iso
+        elif 'updated_at' in merged:
+            merged['updated_at'] = now_iso
+        else:
+            merged['updated_at'] = now_iso
+        return merged
+
+    def _safe_write_entity_json(self, entity_dir: Path, file_prefix: str,
+                                name_arg: str, content: str,
+                                name_field: str = "name") -> bool:
+        """
+        安全写入实体 JSON 文件（character/location/prop 通用），保证文件名与内容 name 一致、
+        元数据字段不丢失。调用前需确保 entity_dir 已存在。
+
+        - 文件名以 content 内的 name 为准（由 name_field 指定字段名），保证"文件名 == 内容 name"；
+        - 调用方传入的 name_arg 与内容 name 不一致时，自动清理旧名文件（安全重命名）；
+        - 保留并补全 world_id/user_id/created_at/updated_at 等元数据字段；
+        - content 非 JSON 时退化为原样写入（兼容历史非 JSON 调用）。
+        """
+        # 1. 解析 content
+        #    - 看起来像 JSON（以 { 或 [ 开头）但解析失败 → 拒绝写入（避免坏 JSON 落盘成垃圾文件）
+        #    - 其它（纯文本/markdown 等非 JSON）→ 原样写入（兼容历史调用）
+        stripped = content.strip() if isinstance(content, str) else ''
+        data = None
+        if stripped[:1] in ('{', '['):
+            try:
+                data = json.loads(content)
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"实体内容JSON格式错误，拒绝写入 (prefix={file_prefix}, name={name_arg}): {e}")
+                return False
+
+        if not isinstance(data, dict):
+            # 非 JSON：原样写入，文件名沿用 name_arg（兼容历史调用，不做一致性/元数据保护）
+            file_path = entity_dir / f"{file_prefix}{name_arg}.json"
+            try:
+                file_path.write_text(content, encoding='utf-8')
+                logger.warning(f"非JSON内容按原样写入（未做一致性/元数据保护）: {file_path}")
+                return True
+            except Exception as e:
+                logger.error(f"写入实体文件失败 {file_path}: {e}")
+                return False
+
+        # 2. 取真实 name（以内容为准），保证文件名 == 内容 name
+        real_name = data.get(name_field)
+        if not isinstance(real_name, str) or not real_name.strip():
+            real_name = name_arg if isinstance(name_arg, str) else str(name_arg)
+        real_name = real_name.strip()
+        data[name_field] = real_name
+
+        file_path = entity_dir / f"{file_prefix}{real_name}.json"
+
+        # 3. 元数据合并/补全（读旧文件，若存在）
+        old_data = None
+        if file_path.exists():
+            try:
+                old_raw = file_path.read_text(encoding='utf-8')
+                old_parsed = json.loads(old_raw)
+                if isinstance(old_parsed, dict):
+                    old_data = old_parsed
+            except Exception:
+                old_data = None
+        data = self._merge_entity_meta(old_data, data)
+
+        # 4. 写入
+        try:
+            file_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception as e:
+            logger.error(f"写入实体文件失败 {file_path}: {e}")
+            return False
+
+        # 5. 重命名清理：name_arg 与 real_name 不一致时删除旧名文件
+        if name_arg and name_arg != real_name:
+            old_file = entity_dir / f"{file_prefix}{name_arg}.json"
+            if old_file.exists() and old_file != file_path:
+                try:
+                    old_file.unlink()
+                    logger.info(f"已清理旧名文件（重命名）: {old_file.name} -> {file_path.name}")
+                except Exception as e:
+                    logger.warning(f"清理旧名文件失败 {old_file}: {e}")
+
+        return True
+
     # ==================== 路径管理工具函数 ====================
     
     def get_content_dir_path(self, user_id: str, world_id: str, content_type: str) -> str:
@@ -255,6 +361,62 @@ class FileManager:
         
         return None
     
+    def resolve_character_file_path(
+        self, character_name: str, user_id: str = "0", world_id: str = "0"
+    ) -> Optional[Path]:
+        """
+        解析角色 JSON 文件真实路径。
+
+        查找顺序：
+        1. character_{name}.json
+        2. character_{sanitize(name)}.json（空格/特殊字符转下划线）
+        3. {name}.json
+        4. 扫描 characters/character_*.json，按 JSON 内 name 字段匹配
+        """
+        self._ensure_directories(user_id, world_id)
+        characters_dir = self._get_user_world_path(user_id, world_id) / "characters"
+        if not characters_dir.exists():
+            return None
+
+        name = (character_name or "").strip()
+        if not name:
+            return None
+
+        # 与 mcp_tool._sanitize_filename 对齐的轻量清理（避免循环导入）
+        safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+        safe_name = re.sub(r'\s+', '_', safe_name).strip('._')
+        if len(safe_name) > 50:
+            safe_name = safe_name[:50]
+
+        candidates = [
+            characters_dir / f"character_{name}.json",
+            characters_dir / f"character_{safe_name}.json",
+            characters_dir / f"{name}.json",
+        ]
+        # 去重但保序
+        seen = set()
+        unique_candidates = []
+        for p in candidates:
+            key = str(p)
+            if key not in seen:
+                seen.add(key)
+                unique_candidates.append(p)
+
+        for file_path in unique_candidates:
+            if file_path.exists():
+                return file_path
+
+        # 回退：扫描 JSON 内 name 字段（兼容拼音/临时文件名）
+        for file_path in characters_dir.glob("character_*.json"):
+            try:
+                char_data = json.loads(file_path.read_text(encoding='utf-8'))
+                if isinstance(char_data, dict) and (char_data.get('name') or '').strip() == name:
+                    return file_path
+            except Exception as e:
+                print(f"扫描角色卡失败 {file_path}: {e}")
+
+        return None
+
     def get_character_json(self, character_name: str, user_id: str = "0", world_id: str = "0") -> Optional[dict]:
         """
         获取指定角色卡的原始JSON数据（用于数据库操作）
@@ -267,25 +429,16 @@ class FileManager:
         Returns:
             角色卡JSON字典，如果不存在返回 None
         """
-        self._ensure_directories(user_id, world_id)
-        characters_dir = self._get_user_world_path(user_id, world_id) / "characters"
-        
-        # 尝试多种文件名格式
-        possible_files = [
-            characters_dir / f"character_{character_name}.json",
-            characters_dir / f"{character_name}.json"
-        ]
-        
-        for file_path in possible_files:
-            if file_path.exists():
-                try:
-                    json_content = file_path.read_text(encoding='utf-8')
-                    char_data = json.loads(json_content)
-                    return char_data  # 直接返回JSON字典
-                except Exception as e:
-                    print(f"读取角色卡JSON失败 {character_name}: {e}")
-        
-        return None
+        file_path = self.resolve_character_file_path(character_name, user_id, world_id)
+        if not file_path:
+            return None
+
+        try:
+            json_content = file_path.read_text(encoding='utf-8')
+            return json.loads(json_content)
+        except Exception as e:
+            print(f"读取角色卡JSON失败 {character_name} ({file_path}): {e}")
+            return None
     
     def save_character(self, character_name: str, content: str, user_id: str = "0", world_id: str = "0") -> bool:
         """
@@ -302,15 +455,7 @@ class FileManager:
         """
         self._ensure_directories(user_id, world_id)
         characters_dir = self._get_user_world_path(user_id, world_id) / "characters"
-        file_path = characters_dir / f"character_{character_name}.json"
-        
-        try:
-            file_path.write_text(content, encoding='utf-8')
-            print(f"✓ 角色卡已保存: {file_path}")
-            return True
-        except Exception as e:
-            print(f"✗ 保存角色卡失败 {character_name}: {e}")
-            return False
+        return self._safe_write_entity_json(characters_dir, "character_", character_name, content, "name")
     
     def delete_character(self, character_name: str, user_id: str = "0", world_id: str = "0") -> bool:
         """
@@ -477,14 +622,15 @@ class FileManager:
         self._ensure_directories(user_id, world_id)
         scripts_dir = self._get_user_world_path(user_id, world_id) / "scripts"
 
-        # 解析 content 获取 episode_number
+        # 解析 content 获取 episode_number / title
         episode_number = None
         title = script_name
+        content_data = None
         try:
             content_data = json.loads(content)
             episode_number = content_data.get('episode_number')
             title = content_data.get('title', script_name)
-        except (json.JSONDecodeError, AttributeError):
+        except (json.JSONDecodeError, AttributeError, TypeError):
             pass
 
         # 确定文件名：优先使用 episode_number
@@ -505,8 +651,23 @@ class FileManager:
                 except Exception as e:
                     print(f"⚠ 清理旧文件失败: {e}")
 
+        # 写入：JSON 内容做元数据合并/补全，避免 world_id/user_id/时间戳 等被覆盖丢失
+        if isinstance(content_data, dict):
+            old_data = None
+            if file_path.exists():
+                try:
+                    old_parsed = json.loads(file_path.read_text(encoding='utf-8'))
+                    if isinstance(old_parsed, dict):
+                        old_data = old_parsed
+                except Exception:
+                    old_data = None
+            merged = self._merge_entity_meta(old_data, content_data)
+            write_text = json.dumps(merged, ensure_ascii=False, indent=2)
+        else:
+            write_text = content
+
         try:
-            file_path.write_text(content, encoding='utf-8')
+            file_path.write_text(write_text, encoding='utf-8')
             print(f"✓ 剧本已保存: {file_path}")
             return True
         except Exception as e:
@@ -646,15 +807,7 @@ class FileManager:
         """保存场景"""
         self._ensure_directories(user_id, world_id)
         locations_dir = self._get_user_world_path(user_id, world_id) / "locations"
-        file_path = locations_dir / f"location_{location_name}.json"
-        
-        try:
-            file_path.write_text(content, encoding='utf-8')
-            print(f"✓ 场景已保存: {file_path}")
-            return True
-        except Exception as e:
-            print(f"✗ 保存场景失败 {location_name}: {e}")
-            return False
+        return self._safe_write_entity_json(locations_dir, "location_", location_name, content, "name")
     
     def delete_location(self, location_name: str, user_id: str = "0", world_id: str = "0") -> bool:
         """删除场景"""
@@ -694,6 +847,7 @@ class FileManager:
             try:
                 json_content = file_path.read_text(encoding='utf-8')
                 world_data = json.loads(json_content)
+                world_data['story_type'] = StoryType.normalize(world_data.get('story_type'))
                 return world_data
             except Exception as e:
                 print(f"读取世界JSON失败 world_id={world_id}: {e}")
@@ -717,6 +871,7 @@ class FileManager:
         file_path = worlds_dir / f"world_{world_id}.json"
         
         try:
+            world_data['story_type'] = StoryType.normalize(world_data.get('story_type'))
             world_json = json.dumps(world_data, ensure_ascii=False, indent=2)
             file_path.write_text(world_json, encoding='utf-8')
             print(f"✓ 世界信息已保存: {file_path}")
@@ -812,15 +967,7 @@ class FileManager:
         """保存道具"""
         self._ensure_directories(user_id, world_id)
         props_dir = self._get_user_world_path(user_id, world_id) / "props"
-        file_path = props_dir / f"prop_{prop_name}.json"
-        
-        try:
-            file_path.write_text(content, encoding='utf-8')
-            print(f"✓ 道具已保存: {file_path}")
-            return True
-        except Exception as e:
-            print(f"✗ 保存道具失败 {prop_name}: {e}")
-            return False
+        return self._safe_write_entity_json(props_dir, "prop_", prop_name, content, "name")
     
     def delete_prop(self, prop_name: str, user_id: str = "0", world_id: str = "0") -> bool:
         """删除道具"""
@@ -921,6 +1068,14 @@ class FileManager:
             context += f"## 世界信息\n\n"
             context += f"**世界名称**: {world_data.get('name', '未命名')}\n\n"
             
+            story_type = world_data.get('story_type') or 'dialogue'
+            story_type_labels = {
+                'dialogue': '对话剧情',
+                'narration': '旁白解说',
+                'music_mv': '音乐MV',
+            }
+            context += f"**故事类型**: {story_type_labels.get(story_type, '对话剧情')} ({story_type})\n\n"
+
             if world_data.get('story_outline'):
                 context += f"**故事大纲**:\n{world_data.get('story_outline')}\n\n"
             
@@ -1239,7 +1394,18 @@ class FileManager:
             raise FileNotFoundError(f"世界目录不存在: {base_path}")
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        zip_name = f"world_export_{world_id}_{timestamp}.zip"
+
+        # 优先使用世界名称作为导出文件名，便于用户识别
+        world_data = self.get_world_json(user_id, world_id)
+        world_name = (world_data.get('name') or '').strip() if world_data else ''
+        if world_name:
+            safe_name = re.sub(r'[<>:"/\\|?*]', '_', world_name)
+            safe_name = re.sub(r'\s+', '_', safe_name).strip('._')
+            if len(safe_name) > 50:
+                safe_name = safe_name[:50]
+            zip_name = f"{safe_name}_{timestamp}.zip" if safe_name else f"world_export_{world_id}_{timestamp}.zip"
+        else:
+            zip_name = f"world_export_{world_id}_{timestamp}.zip"
         zip_path = Path(tempfile.gettempdir()) / zip_name
 
         collected_images: Set[str] = set()

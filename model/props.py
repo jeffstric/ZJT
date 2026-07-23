@@ -333,9 +333,9 @@ class PropsModel:
         """
         
         try:
-            results = execute_query(sql, (world_id, name))
-            if results and len(results) > 0:
-                return Props(**results[0])
+            result = execute_query(sql, (world_id, name), fetch_one=True)
+            if result:
+                return Props(**result)
             return None
         except Exception as e:
             logger.error(f"Failed to get props by name '{name}' in world {world_id}: {e}")

@@ -484,7 +484,11 @@ async function generateShotFrameImage(nodeId, node){
         safeAutoSave()
       },
       (error) => {
-        showToast(`生成失败: ${error}`, 'error');
+        const displayError = (typeof truncateErrorMessage === 'function')
+          ? truncateErrorMessage(error)
+          : error;
+        showToast(`生成失败: ${displayError}`, 'error');
+        if(node) node.data.lastError = String(displayError || error || '');
         generateBtn.disabled = false;
         generateBtn.textContent = '生成分镜图';
       }
@@ -492,7 +496,12 @@ async function generateShotFrameImage(nodeId, node){
     
   } catch(error){
     console.error('生成分镜图失败:', error);
-    showToast(`生成失败: ${error.message || error}`, 'error');
+    const raw = error.message || error;
+    const displayError = (typeof truncateErrorMessage === 'function')
+      ? truncateErrorMessage(raw)
+      : raw;
+    showToast(`生成失败: ${displayError}`, 'error');
+    if(node) node.data.lastError = String(displayError || raw || '');
     generateBtn.disabled = false;
     generateBtn.textContent = '生成分镜图';
   }

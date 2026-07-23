@@ -27,6 +27,7 @@ class RunningHubSlot:
         self.task_id = kwargs.get('task_id')
         self.project_id = kwargs.get('project_id')
         self.task_type = kwargs.get('task_type')
+        self.api_key_index = kwargs.get('api_key_index', 0)
         self.source = kwargs.get('source', self.SOURCE_TASK)
         self.status = kwargs.get('status')
         self.acquired_at = kwargs.get('acquired_at')
@@ -41,6 +42,7 @@ class RunningHubSlot:
             'task_id': self.task_id,
             'project_id': self.project_id,
             'task_type': self.task_type,
+            'api_key_index': self.api_key_index,
             'source': self.source,
             'status': self.status,
             'acquired_at': self.acquired_at.isoformat() if self.acquired_at else None,
@@ -76,7 +78,34 @@ class RunningHubSlotsModel:
             return 0
 
     @staticmethod
-    def try_acquire_slot(task_id: int, task_type: int, source: str, max_slots: int = None) -> bool:
+    def count_active_slots_by_key(api_key_index: int) -> int:
+        """
+        统计某个密钥当前活跃（占用中）的槽位数量。
+
+        用于多密钥轮换时判断单个密钥是否达并发上限。
+
+        Args:
+            api_key_index: 密钥序号 (0=全局key, 1~10=密钥池)
+
+        Returns:
+            该密钥的活跃槽位数量
+        """
+        sql = """
+            SELECT COUNT(*) as count
+            FROM runninghub_slots
+            WHERE status = 1 AND api_key_index = %s
+        """
+        try:
+            result = execute_query(sql, (api_key_index,), fetch_one=True)
+            count = result['count'] if result else 0
+            logger.debug(f"Active RunningHub slots for api_key_index={api_key_index}: {count}")
+            return count
+        except Exception as e:
+            logger.error(f"Failed to count active slots by key {api_key_index}: {e}")
+            return 0
+
+    @staticmethod
+    def try_acquire_slot(task_id: int, task_type: int, source: str, max_slots: int = None, api_key_index: int = 0) -> bool:
         """
         尝试获取槽位（带并发检查，幂等操作）
 
@@ -85,6 +114,7 @@ class RunningHubSlotsModel:
             task_type: 任务类型 (10-LTX2.0, 11-Wan2.2, 1-异步音频, 2-异步人脸遮盖)
             source: 来源标识 (SOURCE_TASK 或 SOURCE_ASYNC)
             max_slots: 最大槽位数，默认从配置文件读取
+            api_key_index: 所用密钥序号 (0=全局key, 1~10=密钥池)，用于多密钥轮换时记录关联
 
         Returns:
             是否成功获取槽位
@@ -109,17 +139,18 @@ class RunningHubSlotsModel:
             # 解决任务重试时旧记录（status=2）仍存在导致唯一键冲突的问题
             sql = """
                 INSERT INTO runninghub_slots
-                (task_id, task_type, status, source, acquired_at)
-                VALUES (%s, %s, 1, %s, NOW())
+                (task_id, task_type, api_key_index, status, source, acquired_at)
+                VALUES (%s, %s, %s, 1, %s, NOW())
                 ON DUPLICATE KEY UPDATE
                     status = 1,
                     task_type = VALUES(task_type),
+                    api_key_index = VALUES(api_key_index),
                     acquired_at = NOW(),
                     released_at = NULL
             """
-            execute_insert(sql, (task_id, task_type, source))
+            execute_insert(sql, (task_id, task_type, api_key_index, source))
 
-            logger.info(f"Acquired RunningHub slot for {source} task {task_id}, slots: {current_count + 1}/{max_slots}")
+            logger.info(f"Acquired RunningHub slot for {source} task {task_id} (key_index={api_key_index}), slots: {current_count + 1}/{max_slots}")
             return True
 
         except Exception as e:
@@ -261,6 +292,7 @@ CREATE TABLE IF NOT EXISTS `runninghub_slots` (
   `task_id` int unsigned NOT NULL DEFAULT '0' COMMENT 'source=task 时存 tasks.id，source=async 时存 async_tasks.id',
   `project_id` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'RunningHub项目ID（提交后才有）',
   `task_type` tinyint NOT NULL COMMENT '任务类型(10-LTX2.0, 11-Wan2.2, 1-异步音频, 2-异步人脸遮盖)',
+  `api_key_index` int NOT NULL DEFAULT '0' COMMENT '所用密钥序号: 0=全局key(runninghub.api_key), 1~10=密钥池第N个',
   `source` varchar(10) NOT NULL DEFAULT 'task' COMMENT '来源: task-tasks表, async-async_tasks表',
   `status` tinyint NOT NULL DEFAULT '1' COMMENT '状态: 1-槽位占用中, 2-已释放',
   `acquired_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '槽位获取时间',
@@ -270,6 +302,7 @@ CREATE TABLE IF NOT EXISTS `runninghub_slots` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_task_id_source` (`task_id`, `source`),
   KEY `idx_status_task_type` (`status`,`task_type`),
-  KEY `idx_project_id` (`project_id`)
+  KEY `idx_project_id` (`project_id`),
+  KEY `idx_api_key_index` (`api_key_index`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='RunningHub并发槽位管理表';
 """

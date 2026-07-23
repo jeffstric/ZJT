@@ -6,6 +6,8 @@
 - 2026年6月9日：修复角色名称不一致问题（LLM名称 vs 数据库名称）
 - 2026年6月9日：优化分镜节点角色显示，将标签改为提示词区域的图片形式
 - 2026年6月9日：新增在线缩略图服务，优化角色头像加载性能
+- 2026年7月10日：强化分镜空间布局的物理座位连续性，避免机位变化导致驾驶座/副驾驶座等槽位左右混淆
+- 2026年7月10日：将空间投影/坐标连续性核心实现迁移到 `enterprise.services.storyboard_spatial`，社区版保留旧格式兼容读取
 
 ## 问题背景
 
@@ -123,6 +125,19 @@ for group in shot_groups:
             })
         shot['db_character_info'] = db_character_info
 ```
+
+## 空间布局连续性补充
+
+分镜解析会输出顶层 `spatial_world` 和每个 shot 的 `spatial_layout`，用于后续首帧宫格生成和角色位置连续性判断。`spatial_world` 是整集级空间注册表，不是单一大坐标系；一集里可以包含多个 `space_units`，例如载具驾驶室、森林道路、糖浆陷阱区域、城堡大厅等。每个分镜通过 `spatial_layout.space_unit_refs` 引用当前相关的空间单元。
+
+对于载具、房间、桌面等有固定槽位的容器，空间布局需要同时记录两类位置：
+
+- 稳定物理槽位：`space_unit_id`、`anchor_id`、`position_3d`、`slot_id`、`slot`、`physical_position`、`position_basis`，表示角色真实坐在哪个座位或位于哪个容器槽位。
+- 当前画面投影：`screen_position`，只表示当前机位下角色落在画面的左/右/中/画外等位置；当存在 `camera_pose` 和 `position_3d` 时，宫格首帧生成优先使用后端派生的 `derived_screen_position`。
+
+当镜头从车内后排切到车外正面、侧面或透过挡风玻璃观察时，`screen_position` 可以变化，但 `space_unit_id`、`anchor_id`、`position_3d`、`slot_id` 和 `physical_position` 不应变化。只有 `spatial_layout.continuity.changed_positions[]` 明确声明角色换座、离开容器或进入新区域时，才允许改变稳定物理槽位。
+
+企业版后处理 `repair_spatial_layout_continuity()` 会在相邻分镜的同一容器内，为未声明真实移动的同一角色补齐或纠正上一镜头的稳定槽位字段，但不会复制上一镜头的 `screen_position`，避免把旧机位的画面左右硬套到新机位。该核心实现位于 `enterprise.services.storyboard_spatial`，社区版的 `services.storyboard_spatial` 只是兼容门面：它可以读取旧版 `spatial_layout` 并给普通流程使用，但不会启用整集级空间注册表、三维投影或效果模式首帧宫格能力。
 
 ## 数据流
 
@@ -369,6 +384,75 @@ LLM 解析
     ↓
 返回: [{ id: "char_001", name: "阿方索戴维斯_AlphonsoDavies", llm_name: "布冯", character_db_id: 4649 }]
 ```
+
+## 角色完整出场约束（prompt 优化）
+
+### 问题描述
+
+多角色场景拆分后，画面提示词与视频提示词经常**遗漏角色**。典型表现：场景中有两个角色（如"奶酪"和"奶昔"），但
+- 画面提示词（来自 `opening_frame_description + scene_detail`）两个角色全无；
+- 视频提示词（来自 `description + scene_detail + action`）只剩其中一个（如只有奶酪，丢了奶昔）。
+
+### 根因
+
+全部位于 `llm/script_parser.py` 的 prompt 设计：
+
+1. **prompt 自相矛盾**：系统提示词旧第 4 条"严禁描写外貌/服装/发型/身材"与旧第 11 条/用户提示词第 6 条"opening_frame_description 必须含服装"直接冲突，导致 LLM 为求"安全"而在画面提示词里**完全不提角色**。
+2. **无"角色完整出场"硬性规则**：prompt 只要求"角色名用 `【【】】` 包裹"，从未要求镜头在场的每个角色都必须在画面/动作描写中出现，LLM 倾向于只挑显眼角色写。
+3. **给 LLM 的角色信息片面**：注入数据库角色列表时 `char.get('identity') or char.get('appearance') or ...` 用 `or` 只取一个字段，LLM 对角色理解不全，更易漏写次要角色。
+
+### 解决方案
+
+#### 1. 区分"固有档案"与"当前镜头动态"（系统提示词第 4 条）
+
+将"严禁描写外貌"细化为两类：
+- **【严禁】固有档案**（避免与角色库冲突）：发型、肤色、体型、固定的标志性服装/饰品——这些由角色库统一提供；
+- **【必须】当前镜头动态**：角色在画面中的位置、姿态、动作、表情、与其他角色/镜头的空间关系，并提及角色名称（`【【角色名】】`）。
+
+同步去掉 `opening_frame_description` 要求中与第 4 条冲突的"服装"措辞（系统提示词第 11 条、用户提示词第 6 条、JSON 示例字段说明均改为"所有在场角色的位置、姿态、表情/动作"）。
+
+#### 2. 角色完整出场硬性规则（系统提示词新增第 18 条、用户提示词新增 7.1 条）
+
+- `characters_present` 列出的**每个角色**都必须在 `opening_frame_description`（画面提示词）中点名，并写出位置/姿态/表情/动作；
+- `characters_present` 中的**每个角色**都至少在 `description` 或 `action`（视频提示词来源）中有可见动作或位置交代；
+- 即使某角色没有台词或处于静态（如操控载具、观察、等待），也必须写出其位置与姿态，不能因为"不显眼"漏写。
+
+正例（双角色场景）：
+```
+opening_frame_description: "【【奶酪】】趴在车窗边、手拍玻璃；【【奶昔】】坐在驾驶位、双手操控拉杆、神情严肃"
+```
+反例：
+```
+opening_frame_description 只写了【【奶酪】】，完全没提同场的【【奶昔】】 ✗
+opening_frame_description 只写"【【奶酪】】和【【奶昔】】在车上"，没有各自的位置/姿态/动作 ✗
+```
+
+#### 3. 角色信息注入更完整（`script_parser.py:712` 附近）
+
+把 `or` 单字段取值改为拼接 `身份 / 外貌 / 性格` 多维度信息（无值则跳过），让 LLM 对每个角色有更全面的认识：
+
+```python
+_parts = []
+for _key, _label in (('identity', '身份'), ('appearance', '外貌'), ('personality', '性格')):
+    _val = char.get(_key)
+    if _val:
+        _parts.append(f"{_label}: {_val}")
+char_desc = "；".join(_parts) if _parts else "无"
+```
+
+### 与多人对话拆分（split_multi_dialogue）的衔接
+
+"角色完整出场"规则与"多人对话拆分"规则本身逻辑自洽，但需注意措辞衔接，避免互相诱导：
+
+- **逻辑自洽**：`split_multi_dialogue=True` 会把多人对话镜头拆成多个单人焦点镜头。拆分后每个镜头的 `focus_character_ids` 只包含当前说话角色；`characters_present` 仍表示首帧中可见或局部可见的角色。如果非说话角色仍在同一车舱/房间/座位并且没有离开，近景或特写不能让其凭空消失。
+- **空间连续性角色**：非说话角色可作为 `secondary_continuity`、`background` 或 `offscreen_continuity` 保留在 `spatial_layout`。若首帧边缘/背景/局部可见，则也保留在 `characters_present`；若完全被近景裁切到画面外，则不放入 `characters_present`，但必须在原 slot 中标记 `visibility=offscreen`、`framing_role=offscreen_continuity`。
+- **确定性兜底**：`llm.script_parser.repair_spatial_layout_continuity()` 会在解析 JSON 后按相邻分镜修复空间布局。如果上一分镜同一容器（如同一辆车的驾驶室）里存在某个角色，而下一分镜漏掉该角色，且 LLM 没有在 `spatial_layout.continuity.changed_positions[]` 为该角色声明真实空间变化，系统会把该角色补回原 slot，并标记为 `visibility=offscreen`、`framing_role=offscreen_continuity`；这个角色不会被强行加入 `characters_present`，避免把镜头外角色当成可见角色。后处理不解析自然语言离开/下车等词语，中文、英文或其他语言的离开语义都必须由同一次 LLM 输出写成结构化 `changed_positions`。
+- **措辞陷阱（已修正）**：早期版本的"角色完整出场"正例使用了"双角色同框"描述（如"奶酪+奶昔同框"），而拆分规则又要求"严禁同时出现两个或多个角色"。两者并存时 LLM 可能为了凑同框而拒绝拆分，或为了单人近景把同一空间里的角色删除。现已改成"单人焦点 + 空间连续性角色"：严禁把非说话角色写成发言主体，但允许以弱化方式保留其空间位置。
+- **防漏拆要求**：在拆分规则末尾新增"防漏拆"约束——原镜头里有几个角色对话，就必须拆出几个对应的单人镜头；即使某角色台词很短（如"嗯""好的"），也要为其单独拆镜头，保证每个对话角色都有自己的画面出场。
+
+### 范围说明
+
+本次仅优化 `llm/script_parser.py` 的 prompt 与角色信息注入。组装层 `api/storyboard.py` 中 `character_desc` 只拼角色名、不带 `appearance` 的问题属独立次要项，不在本次范围内——本次通过让角色直接进入 `opening_frame_description/scene_detail/description/action` 文本本身来解决问题。
 
 ## 分镜节点角色显示优化
 

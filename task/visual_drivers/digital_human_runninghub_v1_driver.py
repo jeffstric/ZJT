@@ -172,7 +172,7 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
         Returns:
             Dict[str, Any]: 请求参数字典
         """
-        # 从 extra_config 中获取 audio_url
+        # 音色参考音频 URL（Wan2.2 模式：audio 写在 ai_tools.message）
         audio_url = ai_tool.message or ""
 
         # 处理音频路径：RunningHub 不能访问 localhost/内网/本地路径，必须先上传成 fileName。
@@ -196,10 +196,9 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
             else:
                 raise RuntimeError(f"图片上传到 RunningHub 失败: {result.error}")
 
-        # Map aspect_ratio to value
+        # Map aspect_ratio to value. 服务层已按 supported_ratios 校验，
+        # 此处不再对未知比例静默回退到 9:16，改为显式报错以避免绕过服务层时产生错误比例。
         ratio_map = {
-            "original": "original",
-            "custom": "custom",
             "1:1": "1:1",
             "3:2": "3:2",
             "4:3": "4:3",
@@ -208,7 +207,13 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
             "3:4": "3:4",
             "9:16": "9:16"
         }
-        ratio_value = ratio_map.get(ai_tool.ratio or "9:16", "9:16")
+        ratio_key = (ai_tool.ratio or "9:16").strip()
+        if ratio_key not in ratio_map:
+            raise RuntimeError(
+                f"Wan2.2 数字人不支持的比例: {ratio_key}，"
+                f"支持的值: {sorted(ratio_map.keys())}"
+            )
+        ratio_value = ratio_map[ratio_key]
 
         # Build node info list for digital human
         node_info_list = [

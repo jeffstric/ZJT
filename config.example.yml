@@ -10,6 +10,7 @@ runninghub:
   host: "https://www.runninghub.cn"
   api_key: ""
   max_concurrent_slots: 3    # 该值根据runninghub账号的 并发数决定，可以查看 https://www.runninghub.cn/vip-rights/2 查看并发数，注意，必须支持api调用的套餐才能使用 26年3月 基础版为1 专业版为3 专业Plus版为5 Max 为20
+  # 多密钥池由商业版 Provider 提供；社区版始终使用上面的全局单密钥。
 pipeline:
   seedance_face_mask_enabled: true  # 是否启用 Seedance 2.0 / 2.0 Fast 图片和视频输入的人脸遮盖前置处理
 # Server configuration
@@ -210,6 +211,10 @@ tts:
 user_registration:
   require_admin_approval: false  # 注册后是否需要管理员审核才能登录
 
+# 官方微信群引导（注册成功后的轻量引导 + 常驻入口）
+wx_group_guide:
+  enabled: true  # 是否启用官方微信群引导（关闭后注册成功不再弹出/展示官方群入口）
+
 # Test mode configuration
 test_mode:
   enabled: false  # 是否启用测试模式
@@ -257,7 +262,7 @@ alembic:
 
 # Edition configuration
 edition:
-  mode: "community"
+  mode: "community"  # 社区版最多支持 10 个注册用户（商业版由 enterprise 模块解除限制）
   shared_space: false  # 商业版是否使用共享空间模式（true=所有用户共享数据，false=按用户隔离，默认false）
 
 file_storage:
