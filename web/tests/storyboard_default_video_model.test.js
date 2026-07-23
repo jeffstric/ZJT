@@ -7,12 +7,21 @@ import state, { setModels } from '../js/storyboard/state.js';
 
 describe('storyboard default video model', () => {
     beforeEach(() => {
+        // 五槽位拆分后，legacy selectedVideoTaskId 与 image/text/reference 槽位都需清零，
+        // 否则 resolveAvailableTaskId 会优先沿用上一个用例残留的 current 值。
         state.selectedVideoTaskId = null;
+        state.selectedImageToVideoTaskId = null;
+        state.selectedTextToVideoTaskId = null;
+        state.selectedReferenceToVideoTaskId = null;
         state.selectedImageTaskId = null;
         state.selectedDigitalHumanTaskId = null;
         state.videoModels = [];
+        state.imageToVideoModels = [];
+        state.textToVideoModels = [];
         try {
             localStorage.removeItem('storyboard_lastSelectedVideoTaskId');
+            localStorage.removeItem('storyboard_lastSelectedTextToVideoTaskId');
+            localStorage.removeItem('storyboard_lastSelectedReferenceToVideoTaskId');
         } catch (_) { /* ignore */ }
     });
 

@@ -2337,6 +2337,94 @@ async def update_storyboard_media_preference(
         return JSONResponse(status_code=400, content={'success': False, 'error': error})
 
 
+def _cli_media_preferences_sync(user_id: int, world_id: int) -> Dict[str, Dict[str, Any]]:
+    """读取 storyboard_cli 五槽位偏好（不读写 UI/项目配置）。"""
+    profiles: Dict[str, Dict[str, Any]] = {}
+    for media_type, modes in (
+        (MediaGenerationType.IMAGE, MediaGenerationMode.IMAGE_MODES),
+        (MediaGenerationType.VIDEO, MediaGenerationMode.VIDEO_MODES),
+    ):
+        for mode in modes:
+            profile = MediaGenerationPreferenceService.get_profile(
+                user_id,
+                world_id,
+                MediaGenerationSurface.STORYBOARD_CLI,
+                media_type,
+                mode,
+            )
+            profiles[MediaGenerationPreferenceService.slot_key(media_type, mode)] = profile
+    return profiles
+
+
+@router.get('/cli/media-preferences')
+@require_permission("storyboard:view")
+async def get_cli_media_preferences(
+    request: Request,
+    world_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """Web 配置 Storyboard CLI 独立媒体模型偏好（surface 固定为 storyboard_cli）。"""
+    resolved_user_id = get_user_id_from_header(user_id)
+    await asyncio.to_thread(ensure_world_access, int(world_id), resolved_user_id, Action.VIEW)
+    try:
+        profiles = await asyncio.to_thread(
+            _cli_media_preferences_sync, int(resolved_user_id), int(world_id)
+        )
+        return JSONResponse({
+            'success': True,
+            'surface': MediaGenerationSurface.STORYBOARD_CLI,
+            'world_id': int(world_id),
+            'profiles': profiles,
+        })
+    except MediaGenerationPreferenceError as exc:
+        return JSONResponse(status_code=400, content={'success': False, 'error': exc.to_dict()})
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={'success': False, 'error': str(exc)})
+
+
+@router.put('/cli/media-preferences')
+@require_permission("storyboard:update")
+async def update_cli_media_preference(
+    request: Request,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """更新单个 storyboard_cli 槽位；一次 PUT 只写一个 mode。"""
+    resolved_user_id = get_user_id_from_header(user_id)
+    data = await request.json()
+    world_id = data.get('world_id')
+    if world_id in (None, ""):
+        return JSONResponse(status_code=400, content={'success': False, 'error': 'world_id 不能为空'})
+    await asyncio.to_thread(ensure_world_access, int(world_id), resolved_user_id, Action.EDIT)
+    media_type = data.get('media_type')
+    mode = data.get('mode')
+    profile = data.get('profile')
+    if not isinstance(profile, dict):
+        profile = {'task_id': data.get('task_id')} if data.get('task_id') not in (None, "") else {}
+
+    def _save():
+        return MediaGenerationPreferenceService.save_profile(
+            resolved_user_id,
+            int(world_id),
+            MediaGenerationSurface.STORYBOARD_CLI,
+            media_type,
+            mode,
+            profile,
+        )
+
+    try:
+        saved = await asyncio.to_thread(_save)
+        return JSONResponse({
+            'success': True,
+            'surface': MediaGenerationSurface.STORYBOARD_CLI,
+            'world_id': int(world_id),
+            'slot': MediaGenerationPreferenceService.slot_key(media_type, mode),
+            'profile': saved,
+        })
+    except (MediaGenerationPreferenceError, ValueError) as exc:
+        error = exc.to_dict() if isinstance(exc, MediaGenerationPreferenceError) else str(exc)
+        return JSONResponse(status_code=400, content={'success': False, 'error': error})
+
+
 @router.get('/agent/schema')
 async def get_storyboard_agent_schema(
     auth_token: Optional[str] = Header(None, alias="Authorization"),

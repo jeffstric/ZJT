@@ -145,9 +145,18 @@ Storyboard CLI：
 ```text
 GET/PUT /api/marketing/media-preferences
 GET/PUT /api/storyboard/media-preferences
+GET/PUT /api/storyboard/cli/media-preferences
 ```
 
-路由决定 surface，客户端不能任意指定。一次 PUT 只更新一个模式。Storyboard 请求通过 `storyboard_id` 解析并校验 world 访问权限。
+路由决定 surface，客户端不能任意指定。一次 PUT 只更新一个模式。Storyboard UI 请求通过 `storyboard_id` 解析并校验 world 访问权限。CLI 偏好 Web 接口：
+
+```text
+GET  /api/storyboard/cli/media-preferences?world_id=
+PUT  /api/storyboard/cli/media-preferences
+     body: { world_id, media_type, mode, profile: { task_id } }
+```
+
+`surface` 固定为 `storyboard_cli`，按 `user_id + world_id` 隔离，不读写 Storyboard 项目 `config_json`。首页「智能体连接信息」弹窗的「智能体模型偏好」Tab 使用该接口。
 
 统一错误码：
 
