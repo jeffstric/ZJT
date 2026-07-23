@@ -20,7 +20,11 @@ assert.match(
 );
 
 assert.match(renderSource, /data-audio-source="tts"[\s\S]*对话配音（TTS）/);
-assert.match(renderSource, /data-audio-source="video"[\s\S]*视频原声/);
+assert.match(renderSource, /data-audio-source="video"/);
+assert.match(renderSource, /resolveSceneAudioMode/);
+assert.match(renderSource, /autoVideoFallback/);
+assert.match(renderSource, /dialogue-audio-source-auto-badge/);
+assert.match(renderSource, /已自动使用视频原声/);
 assert.match(eventsSource, /action === 'set-scene-audio-source'/);
 assert.match(eventsSource, /audio_embedded:\s*scene\.audioEmbedded \? 1 : 0/);
 

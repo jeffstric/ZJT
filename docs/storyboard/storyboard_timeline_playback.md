@@ -13,21 +13,23 @@
 | 视频 | `scene.videoUrl` | 优先播放；选择「视频原声」时保留音轨，选择「对话配音」时静音；`loop=false` |
 | 分镜图 | `scene.firstFrameUrl` | 无视频时定格展示 |
 | 配音 | `scene.dialogues[].audioUrl` | 按 `sortOrder` **串行**；音量用 `volume`（0–100 或 0–1） |
-| 音频来源 | `scene.audioEmbedded` | `true` 且有视频时播放视频原声并跳过 TTS；否则有 TTS 播 TTS，无 TTS 静音 |
+| 音频来源偏好 | `scene.audioEmbedded` | 用户/数字人选择；与「是否有对话配音」一起解析为有效音源（见下） |
 | 分镜时长 | `scene.duration` | **本镜占用与播放头分母**；配音全部完成后由后端同步为选中配音时长之和（见 `storyboard_auto_dialogue_audio.md`，前端 `polling` 读 `scene_duration`） |
 
 ### 单镜音轨决策
 
-`playback_audio.js` 将每个分镜解析为互斥的三种模式：
+`playback_audio.js` 的 `resolveSceneAudioMode` 将每个分镜解析为互斥的三种模式（导出同语义）：
 
 | 条件 | `audioMode` | 视频 | TTS |
 |------|-------------|------|-----|
-| 有视频且选择「视频原声」 | `video` | 有声 | 不创建、不预载、不播放 |
-| 未选择视频原声且有可用配音 | `tts` | 静音 | 按顺序播放 |
+| 有视频且偏好「视频原声」 | `video` | 有声 | 不创建、不预载、不播放 |
+| 未选视频原声且有可用配音 | `tts` | 静音 | 按顺序播放 |
+| **未选视频原声、无可用配音、有视频** | **`video`** | **有声（自动）** | **不播放** |
 | 无可用音源 | `silence` | 静音 | 不播放 |
-| 选择视频原声但当前没有视频 | `tts` / `silence` | 无 | 有配音则降级 TTS，否则静音 |
+| 偏好视频原声但当前没有视频 | `tts` / `silence` | 无 | 有配音则降级 TTS，否则静音 |
 
-前端 UI 位于左栏「对话」页签，以「音频来源：对话配音（TTS）/视频原声」呈现；后端持久化字段仍为 `storyboard_scene.audio_embedded`。
+- 无对话配音时自动视频原声；**TTS 生成后**若偏好仍是「对话配音」，有效音源**自动回 TTS**。
+- 前端 UI 按**有效音源**高亮；自动兜底时「视频原声」旁显示「自动」标记。后端持久化字段仍为 `storyboard_scene.audio_embedded`。
 
 ### 单镜占用时长（权威）
 

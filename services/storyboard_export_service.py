@@ -169,6 +169,28 @@ def _probe_duration(path: str) -> Optional[float]:
     return None
 
 
+def resolve_scene_keep_video_audio(
+    *,
+    audio_embedded: bool,
+    has_tts: bool,
+    visual_type: str,
+    video_has_audio: bool,
+) -> bool:
+    """是否保留视频原音轨（与前端 resolveSceneAudioMode 对齐）。
+
+    - 显式 audio_embedded：有视频音轨则保留；
+    - 未显式但无 TTS 配音：默认保留视频原声，避免无对白时整段静音；
+    - 有 TTS 且未选视频原声：静音视频并混 TTS。
+    """
+    if visual_type != "video" or not video_has_audio:
+        return False
+    if audio_embedded:
+        return True
+    if not has_tts:
+        return True
+    return False
+
+
 def _has_audio_stream(path: str) -> bool:
     """探测媒体文件是否含音频流（用于 audio_embedded 兜底：视频文件可能无音轨）。"""
     if not path or not os.path.isfile(path):
@@ -787,13 +809,18 @@ def build_merged_video(
 
     for sc in plan.scenes:
         span = max(float(sc.duration or 0), StoryboardExportConstants.DEFAULT_FALLBACK_SPAN_SECONDS)
-        # 声音同出：视频已内嵌对话声音（如数字人 LTX2.3 产物），保留原音轨、跳过 TTS 混音。
-        # 仅当选中视频确实含音轨时才 keep_audio；无音轨（异常/损坏）降级走 TTS 混音，
-        # 保证数字人镜不会因视频异常而无声。
+        # 音轨：显式视频原声 / 无 TTS 时默认视频原声；有 TTS 且未选视频原声则混 TTS。
+        # 仅当选中视频确实含音轨时 keep_audio；无音轨降级 TTS/静音。
         keep_audio = False
-        if sc.audio_embedded and sc.visual_type == "video" and sc.visual_file:
+        if sc.visual_type == "video" and sc.visual_file:
             vid_path = os.path.join(pack_dir, sc.visual_file)
-            keep_audio = os.path.isfile(vid_path) and _has_audio_stream(vid_path)
+            video_has_audio = os.path.isfile(vid_path) and _has_audio_stream(vid_path)
+            keep_audio = resolve_scene_keep_video_audio(
+                audio_embedded=bool(sc.audio_embedded),
+                has_tts=bool(sc.audios),
+                visual_type=sc.visual_type,
+                video_has_audio=video_has_audio,
+            )
         silent = _build_scene_visual(sc, pack_dir, work_dir, span, width, height, keep_audio=keep_audio)
         audio = None if keep_audio else _build_scene_audio(sc, pack_dir, work_dir, span)
         seg = os.path.join(work_dir, f"segment_{sc.index:04d}.mp4")
