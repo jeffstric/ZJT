@@ -837,6 +837,20 @@ button {
   opacity: 0.45;
 }
 
+.dialogue-audio-source-auto-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+
 .dialogue-audio-source-hint {
   margin: 7px 2px 0;
   color: var(--muted);

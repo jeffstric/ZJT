@@ -35,6 +35,11 @@ import {
     updatePlayheadPosition,
     isPreviewMediaBusy,
 } from './playback.js';
+import {
+    SCENE_AUDIO_MODE,
+    resolveSceneAudioMode,
+    sceneHasDialogueAudio,
+} from './playback_audio.js';
 import { Region } from './ui_regions.js';
 import { choosePreviewMedia } from './candidate_selection_state.js';
 import { canSwitchToDigitalHuman } from './video_type_switch_state.js';
@@ -980,14 +985,35 @@ function renderScenePanel(scene) {
 }
 
 function renderDialogueAudioSource(scene) {
-    const useVideoAudio = Boolean(scene.audioEmbedded);
     const hasVideo = Boolean(String(scene.videoUrl || '').trim());
+    const hasTts = sceneHasDialogueAudio(scene.dialogues);
+    const preferredVideo = Boolean(scene.audioEmbedded);
+    // 有效音源与预览/导出一致：无配音时自动视频原声；配音就绪后 audio_embedded=0 自动回 TTS
+    const audioMode = resolveSceneAudioMode({
+        visualType: hasVideo ? 'video' : 'empty',
+        audioEmbedded: preferredVideo,
+        audios: hasTts ? [{}] : [],
+        videoHasAudio: scene.videoHasAudio,
+    });
+    const useVideoAudio = audioMode === SCENE_AUDIO_MODE.VIDEO;
+    const autoVideoFallback = useVideoAudio && !preferredVideo && hasVideo && !hasTts;
+
     let hint = '视频保持静音，连续预览和完整视频导出按顺序使用下方对话配音。';
-    if (useVideoAudio && hasVideo) {
+    if (autoVideoFallback) {
+        hint = '当前没有对话配音，已自动使用视频原声；生成配音后会自动改回对话配音。';
+    } else if (useVideoAudio && hasVideo) {
         hint = '连续预览和完整视频导出使用视频自带音轨，不再播放下方对话配音。';
-    } else if (useVideoAudio) {
-        hint = '当前分镜暂无视频；生成视频前，连续预览和导出会暂用下方对话配音。';
+    } else if (preferredVideo && !hasVideo) {
+        hint = hasTts
+            ? '当前分镜暂无视频；生成视频前，连续预览和导出会暂用下方对话配音。'
+            : '当前分镜暂无视频与对话配音，生成后再预览。';
+    } else if (!hasTts && !hasVideo) {
+        hint = '暂无视频与对话配音；生成视频或配音后再预览。';
     }
+
+    const videoLabel = autoVideoFallback
+        ? '视频原声<span class="dialogue-audio-source-auto-badge">自动</span>'
+        : '视频原声';
 
     return `
         <section class="dialogue-audio-source" aria-labelledby="dialogue-audio-source-title">
@@ -999,13 +1025,14 @@ function renderDialogueAudioSource(scene) {
                 <button type="button"
                     class="dialogue-audio-source-option ${useVideoAudio ? '' : 'active'}"
                     data-action="set-scene-audio-source" data-audio-source="tts"
-                    role="radio" aria-checked="${useVideoAudio ? 'false' : 'true'}">对话配音（TTS）</button>
+                    role="radio" aria-checked="${useVideoAudio ? 'false' : 'true'}"
+                    title="使用下方对话配音；无配音时会自动使用视频原声">对话配音（TTS）</button>
                 <button type="button"
                     class="dialogue-audio-source-option ${useVideoAudio ? 'active' : ''}"
                     data-action="set-scene-audio-source" data-audio-source="video"
                     role="radio" aria-checked="${useVideoAudio ? 'true' : 'false'}"
-                    title="${hasVideo ? '使用视频文件自带的音轨' : '当前分镜暂无视频'}"
-                    ${!hasVideo ? 'disabled' : ''}>视频原声</button>
+                    title="${hasVideo ? (autoVideoFallback ? '无对话配音，已自动使用视频原声' : '使用视频文件自带的音轨') : '当前分镜暂无视频'}"
+                    ${!hasVideo ? 'disabled' : ''}>${videoLabel}</button>
             </div>
             <p class="dialogue-audio-source-hint">${escapeHtml(hint)}</p>
         </section>`;
