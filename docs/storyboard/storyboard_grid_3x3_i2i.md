@@ -201,7 +201,7 @@ grid task 进入终态失败有四条路径，每条都必须调用 `_mark_story
 
 **3. 孤立 step 兜底清理**
 
-即便有了第 2 点的失败回写，仍可能残留历史孤儿（旧版本未回写、或异常路径漏写）：step 仍 PENDING，但绑定的 `grid_image_tasks` 行已进入失败终态。`process_grid_image_tasks`（每 10s）每轮在 `_recover_late_completed_terminal_tasks()` 之后调用 `_cleanup_orphan_grid_split_steps()`：JOIN `ai_tool_pipeline_steps`（PENDING grid split）与 `grid_image_tasks`（`ai_tool_id = CAST(project_id AS UNSIGNED)`），凡是 grid task 已 FAILED/TIMEOUT/DOWNLOAD_FAILED/CANCELLED 的 step，批量调 `PipelineStepModel.fail_steps_by_ids` 标记 FAILED。扫描上限 `GridConfig.GRID_SPLIT_ORPHAN_CLEANUP_LIMIT`（默认 50），异常被吞掉不影响主轮询。部署后存量孤儿会在几分钟内自动清完，日志停止。
+即便有了第 2 点的失败回写，仍可能残留历史孤儿（旧版本未回写、或异常路径漏写）：step 仍 PENDING，但绑定的 `grid_image_tasks` 行已进入失败终态。`process_grid_image_tasks`（每 10s）每轮调用 `_cleanup_orphan_grid_split_steps()`：JOIN `ai_tool_pipeline_steps`（PENDING grid split）与 `grid_image_tasks`（`ai_tool_id = CAST(project_id AS UNSIGNED)`），凡是 grid task 已 FAILED/TIMEOUT/DOWNLOAD_FAILED/CANCELLED 的 step，批量调 `PipelineStepModel.fail_steps_by_ids` 标记 FAILED。扫描上限 `GridConfig.GRID_SPLIT_ORPHAN_CLEANUP_LIMIT`（默认 50），异常被吞掉不影响主轮询。部署后存量孤儿会在几分钟内自动清完，日志停止。
 
 **4. dispatch_step 同步完成补阶段完成检查**
 

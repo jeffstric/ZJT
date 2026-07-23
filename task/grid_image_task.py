@@ -712,34 +712,6 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
         _fail_pending_grid_split_step_for_task(task, f"宫格生图下载/处理失败: {e}")
 
 
-def _recover_late_completed_terminal_tasks(limit: int = 20) -> int:
-    """Recover grid tasks that timed out before the bound ai_tools result arrived."""
-    try:
-        late_tasks = GridImageTasksModel.get_late_completed_terminal_tasks(limit=limit)
-    except AttributeError:
-        return 0
-    if not late_tasks:
-        return 0
-
-    recovered_count = 0
-    logger.info("发现 %s 个宫格晚到成功任务，准备恢复拆分/回写", len(late_tasks))
-    for task in late_tasks:
-        file_url = getattr(task, "ai_tool_result_url", None)
-        if not file_url:
-            continue
-        try:
-            _handle_task_success(task, {"status": "SUCCESS", "results": [{"file_url": file_url}]})
-            recovered_count += 1
-        except Exception as exc:
-            logger.error(
-                "恢复宫格晚到成功任务失败: task_key=%s project_id=%s err=%s",
-                getattr(task, "task_key", None),
-                getattr(task, "project_id", None),
-                exc,
-                exc_info=True,
-            )
-    return recovered_count
-
 
 def _cleanup_orphan_grid_split_steps() -> int:
     """
@@ -802,7 +774,6 @@ def process_grid_image_tasks(app=None):
         app: FastAPI应用实例（保持与其他任务处理函数签名一致）
     """
     try:
-        _recover_late_completed_terminal_tasks()
         _cleanup_orphan_grid_split_steps()
 
         # 获取待处理的任务
