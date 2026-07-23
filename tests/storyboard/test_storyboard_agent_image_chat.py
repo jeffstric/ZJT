@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -147,6 +148,53 @@ def test_storyboard_agent_video_mode_reaches_backend_prompt():
     assert "本次目标是生成视频" in api_py
     assert "generate_text_to_video" in skill_content
     assert "image_to_video" in skill_content
+
+
+def test_storyboard_video_preferences_do_not_read_marketing_preferences():
+    from api import storyboard as storyboard_api
+
+    preferences = asyncio.run(
+        storyboard_api._build_storyboard_agent_video_preferences(
+            user_id=7,
+            world_id=9,
+            storyboard=SimpleNamespace(workflow_ratio="9:16"),
+            image_mode="first_last_frame",
+            duration_seconds=8,
+            video_resolution="1080p",
+        )
+    )
+
+    assert preferences == {
+        "ratio": "9:16",
+        "image_mode": "first_last_frame",
+        "duration": 8,
+        "resolution": "1080p",
+    }
+
+
+def test_storyboard_agent_submission_does_not_write_legacy_marketing_model_preferences():
+    api_py = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
+    route_start = api_py.index("@router.post('/scene/{scene_id}/ai-chat')")
+    route_end = api_py.index("@router.get('/scene/{scene_id}/ai-chat/history')", route_start)
+    route_body = api_py[route_start:route_end]
+
+    assert "set_text_to_image_model_id" not in route_body
+    assert "set_text_to_video_model_id" not in route_body
+    assert "set_image_to_video_model_id" not in route_body
+
+
+def test_storyboard_direct_generation_uses_storyboard_preference_surface():
+    api_py = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
+    image_route_start = api_py.index("@router.post('/scene/{scene_id}/generate-image')")
+    image_route_end = api_py.index("@router.post('/scene/{scene_id}/generate-video')", image_route_start)
+    image_route = api_py[image_route_start:image_route_end]
+    video_route_end = api_py.index("@router.post('/dialogue/{dialogue_id}/generate-voiceover')", image_route_end)
+    video_route = api_py[image_route_end:video_route_end]
+
+    assert "preference_surface=MediaGenerationSurface.STORYBOARD_UI" in image_route
+    assert "set_text_to_image_model_id" not in image_route
+    assert "_resolve_storyboard_generation_snapshot_sync" in video_route
+    assert "'generation_snapshot': generation_snapshot" in video_route
 
 
 def test_storyboard_agent_prompt_includes_reference_legend_constraints():

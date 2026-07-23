@@ -682,3 +682,9 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 - 普通“生成视频”底部比例设置面板在视频模式下显示视频分辨率按钮组；图片模式仍显示图片分辨率。提交视频任务时使用 `selectedVideoResolution` 作为 `resolution` 参数。
 - Agent 视频对话任务会把同一分辨率写入 `video_preferences.resolution`，后端视频工具据此透传到实际 `/api/ai-app-run` 或 `/api/ai-app-run-image` 请求。
 - Seedance 2.0 Fast / Mini 展示 `480P`、`720P`；Seedance 2.0 标准版展示 `480P`、`720P`、`1080P`、`4K`，具体支持范围以 `config/unified_config.py` 的实现方配置为准。
+
+## 媒体模型偏好隔离
+
+营销页使用 `marketing_ui` 下五个独立槽位：文生图、图片编辑、文生视频、图生视频、参考视频。当前模型下拉框会按真实输入切换槽位；选择结果通过 `GET/PUT /api/marketing/media-preferences` 持久化，不再让文生/编辑或普通/参考视频共享一个运行时模型值。
+
+每次创建 Agent 任务时，五个槽位全部写入 `agent_tasks.execution_context_json.generation_snapshots`。工具按真实输入选槽位并强制覆盖 `task_type`，最终快照同时写入 `ai_tools.extra_config.generation_snapshot`。任务提交后再修改界面偏好不会影响运行中任务。

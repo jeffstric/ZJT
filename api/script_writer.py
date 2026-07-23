@@ -10,7 +10,6 @@ import time
 import logging
 import uuid
 import asyncio
-import threading
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from fastapi import APIRouter, Request, Query as QueryParam, Header, UploadFile, File, Form
@@ -18,7 +17,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from perseids_server.utils.permission import require_permission
 from config.config_util import get_dynamic_config_value, get_config
-from config.constant import StoryType
+from config.unified_config import TaskCategory, UnifiedConfigRegistry
+from config.constant import (
+    Action,
+    StoryType,
+    MediaGenerationMode,
+    MediaGenerationSurface,
+    MediaGenerationType,
+)
+from utils.resource_access import get_user_id_from_header, ensure_world_access
 from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
 from llm.llm_client_factory import get_llm_client
 
@@ -49,6 +56,10 @@ from model.props import PropsModel
 
 # 导入服务
 from perseids_server.client import async_make_perseids_request
+from services.media_generation_preference_service import (
+    MediaGenerationPreferenceError,
+    MediaGenerationPreferenceService,
+)
 
 # 导入智能体系统
 from script_writer_core.agents import TaskManager, TaskStatus, ToolExecutor
@@ -70,17 +81,8 @@ router = APIRouter(prefix="/api", tags=["script_writer"])
 from script_writer_core.session_storage import SessionStorage
 session_storage = SessionStorage(use_cache=True, cache_ttl=300)
 
-# 用户偏好存储（数据库持久化 + 本地缓存）
-# 本地缓存仅用于减少数据库查询，数据源为数据库
+# 用户偏好存储：数据库是唯一数据源，不使用永久进程内缓存。
 from model.user_preferences import UserPreferencesModel, PREF_TYPE_TEXT_TO_IMAGE_MODEL, PREF_TYPE_IMAGE_PREFERENCES, PREF_TYPE_VIDEO_PREFERENCES, PREF_TYPE_TEXT_TO_VIDEO_MODEL, PREF_TYPE_IMAGE_TO_VIDEO_MODEL
-# 本地缓存字典
-_text_to_image_model_cache: Dict[str, int] = {}
-_image_preferences_cache: Dict[str, Dict[str, str]] = {}
-_video_preferences_cache: Dict[str, Dict[str, str]] = {}
-_text_to_video_model_cache: Dict[str, int] = {}
-_image_to_video_model_cache: Dict[str, int] = {}
-PREFERENCES_LOCK = threading.RLock()
-
 # 默认生图模型 task_id (nano-banana-Pro)
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = 7
 
@@ -94,130 +96,78 @@ def _get_text_to_image_models_from_config():
 
 
 def get_text_to_image_model_id(user_id: str, world_id: str) -> int:
-    """获取用户在指定世界的生图模型 task_id（优先读缓存，回源数据库）"""
-    key = f"{user_id}_{world_id}"
-    with PREFERENCES_LOCK:
-        if key in _text_to_image_model_cache:
-            result = _text_to_image_model_cache[key]
-            logger.info(f"[生图模型配置] 缓存命中: key={key}, task_id={result}")
+    """读取兼容偏好；数据库是唯一数据源，不使用进程内永久缓存。"""
+    pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_TEXT_TO_IMAGE_MODEL)
+    if pref and pref.config_value is not None:
+        result = pref.get_value()
+        if isinstance(result, int):
             return result
-        # 回源数据库
-        pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_TEXT_TO_IMAGE_MODEL)
-        if pref and pref.config_value is not None:
-            result = pref.get_value()
-            if isinstance(result, int):
-                _text_to_image_model_cache[key] = result
-                logger.info(f"[生图模型配置] 数据库加载: key={key}, task_id={result}")
-                return result
-        logger.info(f"[生图模型配置] 使用默认值: key={key}, task_id={DEFAULT_TEXT_TO_IMAGE_TASK_ID}")
-        return DEFAULT_TEXT_TO_IMAGE_TASK_ID
+    return DEFAULT_TEXT_TO_IMAGE_TASK_ID
 
 
 def set_text_to_image_model_id(user_id: str, world_id: str, task_id: int):
     """设置用户在指定世界的生图模型 task_id（写入数据库 + 更新缓存）"""
-    key = f"{user_id}_{world_id}"
-    with PREFERENCES_LOCK:
-        UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_TEXT_TO_IMAGE_MODEL, task_id)
-        _text_to_image_model_cache[key] = task_id
-        logger.info(f"[生图模型配置] 已保存: key={key}, task_id={task_id}")
+    UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_TEXT_TO_IMAGE_MODEL, task_id)
 
 
 def get_image_preferences(user_id: str, world_id: str) -> Dict[str, str]:
     """获取用户在指定世界的图片偏好（比例、分辨率）"""
-    key = f"{user_id}_{world_id}"
-    with PREFERENCES_LOCK:
-        if key in _image_preferences_cache:
-            return _image_preferences_cache[key]
-        pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_IMAGE_PREFERENCES)
-        if pref and pref.config_value is not None:
-            result = pref.get_value()
-            if isinstance(result, dict):
-                _image_preferences_cache[key] = result
-                return result
-        return {}
+    pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_IMAGE_PREFERENCES)
+    if pref and pref.config_value is not None:
+        result = pref.get_value()
+        if isinstance(result, dict):
+            return result
+    return {}
 
 
 def set_image_preferences(user_id: str, world_id: str, prefs: Dict[str, str]):
     """设置用户在指定世界的图片偏好"""
-    key = f"{user_id}_{world_id}"
-    with PREFERENCES_LOCK:
-        UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_IMAGE_PREFERENCES, prefs)
-        _image_preferences_cache[key] = prefs
-        logger.info(f"[图片偏好配置] 已保存: key={key}, prefs={prefs}")
+    UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_IMAGE_PREFERENCES, prefs)
 
 
 def get_video_preferences(user_id: str, world_id: str) -> Dict[str, str]:
     """获取用户在指定世界的视频偏好（比例、时长）"""
-    key = f"{user_id}_{world_id}"
-    with PREFERENCES_LOCK:
-        if key in _video_preferences_cache:
-            return _video_preferences_cache[key]
-        pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_VIDEO_PREFERENCES)
-        if pref and pref.config_value is not None:
-            result = pref.get_value()
-            if isinstance(result, dict):
-                _video_preferences_cache[key] = result
-                return result
-        return {}
+    pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_VIDEO_PREFERENCES)
+    if pref and pref.config_value is not None:
+        result = pref.get_value()
+        if isinstance(result, dict):
+            return result
+    return {}
 
 
 def set_video_preferences(user_id: str, world_id: str, prefs: Dict[str, str]):
     """设置用户在指定世界的视频偏好"""
-    key = f"{user_id}_{world_id}"
-    with PREFERENCES_LOCK:
-        UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_VIDEO_PREFERENCES, prefs)
-        _video_preferences_cache[key] = prefs
-        logger.info(f"[视频偏好配置] 已保存: key={key}, prefs={prefs}")
+    UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_VIDEO_PREFERENCES, prefs)
 
 
 def get_text_to_video_model_id(user_id: str, world_id: str) -> Optional[int]:
     """获取用户在指定世界的文生视频模型 task_id"""
-    key = f"{user_id}_{world_id}"
-    with PREFERENCES_LOCK:
-        if key in _text_to_video_model_cache:
-            return _text_to_video_model_cache[key]
-        pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_TEXT_TO_VIDEO_MODEL)
-        if pref and pref.config_value is not None:
-            result = pref.get_value()
-            if isinstance(result, int):
-                _text_to_video_model_cache[key] = result
-                logger.info(f"[文生视频模型配置] 数据库加载: key={key}, task_id={result}")
-                return result
-        return None
+    pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_TEXT_TO_VIDEO_MODEL)
+    if pref and pref.config_value is not None:
+        result = pref.get_value()
+        if isinstance(result, int):
+            return result
+    return None
 
 
 def set_text_to_video_model_id(user_id: str, world_id: str, task_id: int):
     """设置用户在指定世界的文生视频模型 task_id"""
-    key = f"{user_id}_{world_id}"
-    with PREFERENCES_LOCK:
-        UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_TEXT_TO_VIDEO_MODEL, task_id)
-        _text_to_video_model_cache[key] = task_id
-        logger.info(f"[文生视频模型配置] 已保存: key={key}, task_id={task_id}")
+    UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_TEXT_TO_VIDEO_MODEL, task_id)
 
 
 def get_image_to_video_model_id(user_id: str, world_id: str) -> Optional[int]:
     """获取用户在指定世界的图生视频模型 task_id"""
-    key = f"{user_id}_{world_id}"
-    with PREFERENCES_LOCK:
-        if key in _image_to_video_model_cache:
-            return _image_to_video_model_cache[key]
-        pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_IMAGE_TO_VIDEO_MODEL)
-        if pref and pref.config_value is not None:
-            result = pref.get_value()
-            if isinstance(result, int):
-                _image_to_video_model_cache[key] = result
-                logger.info(f"[图生视频模型配置] 数据库加载: key={key}, task_id={result}")
-                return result
-        return None
+    pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_IMAGE_TO_VIDEO_MODEL)
+    if pref and pref.config_value is not None:
+        result = pref.get_value()
+        if isinstance(result, int):
+            return result
+    return None
 
 
 def set_image_to_video_model_id(user_id: str, world_id: str, task_id: int):
     """设置用户在指定世界的图生视频模型 task_id"""
-    key = f"{user_id}_{world_id}"
-    with PREFERENCES_LOCK:
-        UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_IMAGE_TO_VIDEO_MODEL, task_id)
-        _image_to_video_model_cache[key] = task_id
-        logger.info(f"[图生视频模型配置] 已保存: key={key}, task_id={task_id}")
+    UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_IMAGE_TO_VIDEO_MODEL, task_id)
 
 
 # 全局组件
@@ -1666,6 +1616,172 @@ async def set_session_model(request: Request, session_id: str, model_request: Mo
 
 # ==================== 生图模型配置 API ====================
 
+
+def _marketing_media_preferences_sync(user_id: str, world_id: str):
+    profiles = {}
+    for media_type, modes in (
+        (MediaGenerationType.IMAGE, MediaGenerationMode.IMAGE_MODES),
+        (MediaGenerationType.VIDEO, MediaGenerationMode.VIDEO_MODES),
+    ):
+        for mode in modes:
+            profile = MediaGenerationPreferenceService.get_profile(
+                user_id,
+                world_id,
+                MediaGenerationSurface.MARKETING_UI,
+                media_type,
+                mode,
+            )
+            profiles[MediaGenerationPreferenceService.slot_key(media_type, mode)] = profile
+    return profiles
+
+
+def _build_marketing_task_execution_context_sync(
+    user_id: str,
+    world_id: str,
+    task_request,
+) -> Dict[str, Any]:
+    profiles = _marketing_media_preferences_sync(user_id, world_id)
+    request_slots = set()
+
+    image_preferences = dict(task_request.image_preferences or {})
+    image_mode = MediaGenerationPreferenceService.determine_mode(
+        MediaGenerationType.IMAGE,
+        image_urls=task_request.image_urls,
+    )
+    explicit_image_task_id = image_preferences.get('task_id')
+    if explicit_image_task_id in (None, '') and image_preferences.get('model_name'):
+        model_name = str(image_preferences.get('model_name'))
+        required_category = (
+            TaskCategory.IMAGE_EDIT
+            if image_mode == MediaGenerationMode.IMAGE_EDIT
+            else TaskCategory.TEXT_TO_IMAGE
+        )
+        matched = next(
+            (
+                config for config in UnifiedConfigRegistry.get_all()
+                if (config.name == model_name or config.key == model_name)
+                and required_category in {config.category, *(config.categories or [])}
+            ),
+            None,
+        )
+        explicit_image_task_id = matched.id if matched else None
+    if explicit_image_task_id not in (None, ''):
+        image_profile = dict(image_preferences)
+        image_profile['task_id'] = int(explicit_image_task_id)
+        image_profile = MediaGenerationPreferenceService.save_profile(
+            user_id,
+            world_id,
+            MediaGenerationSurface.MARKETING_UI,
+            MediaGenerationType.IMAGE,
+            image_mode,
+            image_profile,
+        )
+        image_slot = MediaGenerationPreferenceService.slot_key(
+            MediaGenerationType.IMAGE, image_mode
+        )
+        profiles[image_slot] = image_profile
+        request_slots.add(image_slot)
+
+    video_preferences = dict(task_request.video_preferences or {})
+    explicit_video_task_id = video_preferences.get('task_id')
+    video_mode = MediaGenerationPreferenceService.determine_mode(
+        MediaGenerationType.VIDEO,
+        image_urls=task_request.image_urls,
+        video_urls=task_request.video_urls,
+        audio_urls=task_request.audio_urls,
+        image_mode=video_preferences.get('image_mode'),
+    )
+    if explicit_video_task_id not in (None, ''):
+        video_preferences['task_id'] = int(explicit_video_task_id)
+        video_profile = MediaGenerationPreferenceService.save_profile(
+            user_id,
+            world_id,
+            MediaGenerationSurface.MARKETING_UI,
+            MediaGenerationType.VIDEO,
+            video_mode,
+            video_preferences,
+        )
+        video_slot = MediaGenerationPreferenceService.slot_key(
+            MediaGenerationType.VIDEO, video_mode
+        )
+        profiles[video_slot] = video_profile
+        request_slots.add(video_slot)
+
+    snapshots = {}
+    for slot, profile in profiles.items():
+        media_type, mode = slot.split('.', 1)
+        snapshots[slot] = MediaGenerationPreferenceService.build_snapshot(
+            profile,
+            MediaGenerationSurface.MARKETING_UI,
+            media_type,
+            mode,
+            model_source='request' if slot in request_slots else 'preference',
+            has_reference_audio_video=(
+                mode == MediaGenerationMode.REFERENCE_TO_VIDEO
+                and bool(task_request.video_urls or task_request.audio_urls)
+            ),
+        )
+    return {
+        'schema_version': 1,
+        'surface': MediaGenerationSurface.MARKETING_UI,
+        'generation_snapshots': snapshots,
+    }
+
+
+@router.get('/marketing/media-preferences')
+@require_permission("world:view")
+async def get_marketing_media_preferences(
+    request: Request,
+    user_id: str = QueryParam(...),
+    world_id: str = QueryParam(...),
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    resolved_user_id = get_user_id_from_header(header_user_id)
+    if str(resolved_user_id) != str(user_id):
+        return JSONResponse(status_code=403, content={'success': False, 'error': 'user_id 与登录用户不一致'})
+    await asyncio.to_thread(ensure_world_access, int(world_id), resolved_user_id, Action.VIEW)
+    try:
+        profiles = await asyncio.to_thread(
+            _marketing_media_preferences_sync, str(resolved_user_id), str(world_id)
+        )
+        return JSONResponse({'success': True, 'profiles': profiles})
+    except MediaGenerationPreferenceError as exc:
+        return JSONResponse(status_code=400, content={'success': False, 'error': exc.to_dict()})
+
+
+@router.put('/marketing/media-preferences')
+@require_permission("world:update")
+async def update_marketing_media_preference(
+    request: Request,
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    data = await request.json()
+    resolved_user_id = get_user_id_from_header(header_user_id)
+    user_id = str(data.get('user_id') or '')
+    world_id = str(data.get('world_id') or '')
+    if not user_id or not world_id:
+        return JSONResponse(
+            status_code=400,
+            content={'success': False, 'error': 'user_id 和 world_id 不能为空'},
+        )
+    if str(resolved_user_id) != user_id:
+        return JSONResponse(status_code=403, content={'success': False, 'error': 'user_id 与登录用户不一致'})
+    await asyncio.to_thread(ensure_world_access, int(world_id), resolved_user_id, Action.EDIT)
+    try:
+        profile = await asyncio.to_thread(
+            MediaGenerationPreferenceService.save_profile,
+            str(resolved_user_id),
+            world_id,
+            MediaGenerationSurface.MARKETING_UI,
+            data.get('media_type'),
+            data.get('mode'),
+            data.get('profile'),
+        )
+        return JSONResponse({'success': True, 'profile': profile})
+    except (MediaGenerationPreferenceError, ValueError) as exc:
+        error = exc.to_dict() if isinstance(exc, MediaGenerationPreferenceError) else str(exc)
+        return JSONResponse(status_code=400, content={'success': False, 'error': error})
+
 @router.get('/text-to-image-models')
 async def get_text_to_image_models():
     """获取可用的生图模型列表（从统一配置读取）"""
@@ -2901,6 +3017,19 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 'success': False,
                 'error': '消息不能为空'
             }, status_code=400)
+
+        try:
+            execution_context_json = await asyncio.to_thread(
+                _build_marketing_task_execution_context_sync,
+                str(user_id),
+                str(world_id),
+                task_request,
+            )
+        except MediaGenerationPreferenceError as exc:
+            return JSONResponse(
+                {'success': False, 'error': exc.to_dict()},
+                status_code=400,
+            )
         
         # 如果有图片偏好，追加到用户消息中供 PM 和专家参考
         user_message = task_request.message
@@ -2913,16 +3042,22 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 models_config = _get_text_to_image_models_from_config()
                 for tid, info in models_config.items():
                     if info.get('name') == model_name:
-                        set_text_to_image_model_id(user_id, world_id, tid)
+                        await asyncio.to_thread(
+                            set_text_to_image_model_id, user_id, world_id, tid
+                        )
                         logger.info(f'[Agent任务] 已同步生图模型: user_id={user_id}, world_id={world_id}, model={model_name}, task_id={tid}')
                         break
 
-            pref_parts = sync_agent_image_preferences(user_id, world_id, prefs)
+            pref_parts = await asyncio.to_thread(
+                sync_agent_image_preferences, user_id, world_id, prefs
+            )
             if pref_parts:
                 user_message += f"\n\n[用户图片偏好] {', '.join(pref_parts)}"
 
         # 如果有视频偏好，保存到内存并追加到用户消息中；旧客户端未传时回退到历史偏好。
-        effective_video_preferences = task_request.video_preferences or get_video_preferences(user_id, world_id)
+        effective_video_preferences = task_request.video_preferences or await asyncio.to_thread(
+            get_video_preferences, user_id, world_id
+        )
         if effective_video_preferences:
             v_prefs = dict(effective_video_preferences)
 
@@ -2938,14 +3073,18 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                         if v_config.categories:
                             v_model_categories.extend(v_config.categories)
                         if TaskCategory.IMAGE_TO_VIDEO in v_model_categories:
-                            set_image_to_video_model_id(user_id, world_id, v_task_id)
+                            await asyncio.to_thread(
+                                set_image_to_video_model_id, user_id, world_id, v_task_id
+                            )
                         if TaskCategory.TEXT_TO_VIDEO in v_model_categories:
-                            set_text_to_video_model_id(user_id, world_id, v_task_id)
+                            await asyncio.to_thread(
+                                set_text_to_video_model_id, user_id, world_id, v_task_id
+                            )
                 except (TypeError, ValueError):
                     pass
 
             # 保存到内存供 MCP 视频工具函数读取
-            set_video_preferences(user_id, world_id, v_prefs)
+            await asyncio.to_thread(set_video_preferences, user_id, world_id, v_prefs)
             v_pref_parts = []
             if v_prefs.get('ratio'):
                 v_pref_parts.append(f"视频比例: {v_prefs['ratio']}")
@@ -2979,7 +3118,8 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
         # 创建任务（返回 task_id 字符串）
         task_language = task_request.language or 'zh-CN'
         logger.info(f'创建任务: language={task_language} (from request: {task_request.language})')
-        task_id = task_manager.create_task(
+        task_id = await asyncio.to_thread(
+            task_manager.create_task,
             session_id=session_id,
             user_message=user_message,
             user_id=user_id,
@@ -2993,11 +3133,12 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             video_urls=task_request.video_urls,
             audio_urls=task_request.audio_urls,
             thumbnail_urls=task_request.thumbnail_urls,
-            language=task_language
+            language=task_language,
+            execution_context_json=execution_context_json,
         )
         
         # 获取任务对象
-        task = task_manager.get_task(task_id)
+        task = await asyncio.to_thread(task_manager.get_task, task_id)
 
         logger.info(f'任务已创建: {task_id}, user_id: {user_id}, model_id: {model_id}')
 

@@ -10,6 +10,7 @@
 本文件验证 video_tools 这一环：读偏好、校验降级、透传请求体、算力 context。
 """
 import os
+import json
 
 import pytest
 
@@ -40,6 +41,8 @@ class _StubConfig:
 
     name = "TestVideoModel"
     supported_durations = [5, 10, 15]
+    supported_image_modes = ['first_last_frame']
+    supports_ref_audio_video = False
 
     def __init__(self):
         self.last_power_context = None
@@ -234,3 +237,37 @@ def test_image_to_video_forwards_resolution(patched_video_flow):
     assert captured['request_data']['resolution'] == '1080P'
     assert captured['api_url'].endswith('/api/ai-app-run-image')
     assert captured['stub_config'].last_power_context == {'resolution': '1080P'}
+
+
+def test_image_to_video_uses_reference_snapshot_for_more_than_two_images(patched_video_flow):
+    from enterprise.tools.video_tools import image_to_video
+    from script_writer_core.mcp_tool import scoped_media_generation_snapshots
+
+    captured = patched_video_flow
+    captured['stub_config'].supported_image_modes = ['first_last_frame', 'multi_reference']
+    snapshot = {
+        'schema_version': 1,
+        'surface': 'storyboard_ui',
+        'media_type': 'video',
+        'mode': 'reference_to_video',
+        'task_id': 999,
+        'model_key': 'test-video',
+        'model_name': 'TestVideoModel',
+    }
+
+    with scoped_media_generation_snapshots({'video.reference_to_video': snapshot}):
+        result = image_to_video(
+            user_id='u1',
+            world_id='w1',
+            auth_token='t',
+            prompt='run',
+            image_urls=(
+                'http://example.com/a.jpg,'
+                'http://example.com/b.jpg,'
+                'http://example.com/c.jpg'
+            ),
+            task_type=123,
+        )
+
+    assert result['success'] is True
+    assert json.loads(captured['request_data']['generation_snapshot'])['mode'] == 'reference_to_video'

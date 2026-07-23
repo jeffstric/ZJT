@@ -97,3 +97,26 @@ def test_tool_definitions_are_delegated_unchanged():
     assert executor.get_tool_definitions(["edit_image"]) == [
         {"function": {"name": "edit_image"}}
     ]
+
+
+def test_generation_snapshot_hard_overrides_llm_task_type():
+    delegate = FakeToolExecutor()
+    executor = StoryboardAgentImageToolExecutor(
+        delegate,
+        generation_snapshot={
+            "task_id": 27,
+            "model_key": "locked-model",
+            "media_type": "image",
+            "mode": "image_edit",
+        },
+    )
+
+    executor.execute_tool(
+        "edit_image",
+        {"prompt": "edit", "image_url": "https://example.com/a.png", "task_type": 999},
+        "1",
+        "2",
+        "token",
+    )
+
+    assert delegate.calls[0]["tool_args"]["task_type"] == 27

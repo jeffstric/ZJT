@@ -14,6 +14,7 @@ import state, {
     loadThinkingStateFromStorage,
     applyThinkingDefaultsForModel,
     applyGenerateProgressStatus,
+    applyMediaPreferenceProfiles,
 } from './state.js';
 import * as api from './api.js';
 import { handleAuthError } from './api.js';
@@ -224,6 +225,12 @@ export async function finishBootstrapAfterStoryboardReady(data) {
             }
         }).catch(() => {}),
     ]);
+
+    if (state.storyboardId) {
+        await api.fetchMediaPreferences(state.storyboardId)
+            .then((res) => applyMediaPreferenceProfiles(res?.profiles || {}))
+            .catch((error) => console.warn('load storyboard media preferences failed', error));
+    }
 
     // 设置对话模型（LLM）默认值，如果没有选中
     // 参考 script_writer 和 video_workflow 的默认选项逻辑：deepseek-v4-flash > qwen3.5-plus (zjt) > 其他 qwen > 第一个

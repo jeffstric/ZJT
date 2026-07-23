@@ -32,6 +32,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    preference = subparsers.add_parser("preference", help="Manage isolated CLI preferences.")
+    preference_scopes = preference.add_subparsers(dest="preference_scope", required=True)
+    preference_media = preference_scopes.add_parser("media", help="Manage media model preferences.")
+    preference_actions = preference_media.add_subparsers(dest="preference_action", required=True)
+    preference_get = preference_actions.add_parser("get", help="Read one or all five media slots.")
+    preference_get.set_defaults(command="preference-media-get")
+    preference_get.add_argument("--user-id", type=int, required=True)
+    preference_get.add_argument("--world-id", type=int, required=True)
+    preference_get.add_argument("--media-type", choices=["image", "video"])
+    preference_get.add_argument("--mode", choices=[
+        "text_to_image", "image_edit", "text_to_video", "image_to_video", "reference_to_video",
+    ])
+    preference_set = preference_actions.add_parser("set", help="Set one isolated media slot.")
+    preference_set.set_defaults(command="preference-media-set")
+    preference_set.add_argument("--user-id", type=int, required=True)
+    preference_set.add_argument("--world-id", type=int, required=True)
+    preference_set.add_argument("--media-type", choices=["image", "video"], required=True)
+    preference_set.add_argument("--mode", choices=[
+        "text_to_image", "image_edit", "text_to_video", "image_to_video", "reference_to_video",
+    ], required=True)
+    preference_set.add_argument("--task-id", type=int, required=True)
+
     list_worlds = subparsers.add_parser("list-worlds", help="List worlds visible to a user.")
     list_worlds.add_argument("--user-id", type=int, required=True)
     list_worlds.add_argument("--page", type=int, default=1)
@@ -163,6 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     generate_image.add_argument("--ratio")
     generate_image.add_argument("--image-size")
     generate_image.add_argument("--count", type=int, default=1)
+    generate_image.add_argument("--task-type", type=int, help="图片模型 task_id（优先于 CLI 独立偏好；无效直接拒绝）")
 
     auto_generate = subparsers.add_parser(
         "auto-generate-missing-images",
@@ -205,7 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
     generate_video.add_argument("--image-urls")
     generate_video.add_argument("--video-urls")
     generate_video.add_argument("--audio-urls")
-    generate_video.add_argument("--task-type", type=int, help="视频模型 task_id（图生视频时优先于用户偏好；无效自动降级）")
+    generate_video.add_argument("--task-type", type=int, help="视频模型 task_id（优先于 CLI 独立偏好；无效直接拒绝）")
 
     task_status = subparsers.add_parser("task-status", help="Read selected task status for a scene.")
     task_status.add_argument("--scene-id", type=int, required=True)

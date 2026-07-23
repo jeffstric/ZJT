@@ -2163,18 +2163,28 @@ function formatModelOptionLabel(m) {
     return extras.length ? `${m.name}（${extras.join('，')}）` : m.name;
 }
 
-function renderImageModelConfig(disabled = false) {
-    const models = state.textToImageModels.length ? state.textToImageModels : state.imageModels;
-    let html = '<label class="config-label">生图模型</label><div class="config-hint">用于对话改图与图片生成</div><div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="image"';
-    if (disabled) html += ' disabled';
-    html += '>';
+function renderMediaModelSelect(label, hint, type, models, selectedTaskId, disabled = false) {
+    let html = `<label class="config-label">${escapeHtml(label)}</label>`
+        + `<div class="config-hint">${escapeHtml(hint)}</div>`
+        + `<div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="${type}"${disabled ? ' disabled' : ''}>`;
     models.forEach(m => {
         const val = m.task_id;
-        const sel = String(state.selectedImageTaskId) === String(val) ? 'selected' : '';
+        const sel = String(selectedTaskId) === String(val) ? 'selected' : '';
         html += `<option value="${val}" ${sel}>${escapeHtml(formatModelOptionLabel(m))}</option>`;
     });
-    html += '</select></div>';
-    return html;
+    return html + '</select></div>';
+}
+
+function renderImageModelConfig(disabled = false) {
+    const textModels = state.textToImageModels.length ? state.textToImageModels : state.imageModels;
+    const editModels = state.imageEditModels.length ? state.imageEditModels : state.imageModels;
+    return renderMediaModelSelect(
+        '文生图模型', '无参考图时使用', 'textToImage', textModels,
+        state.selectedTextToImageTaskId, disabled,
+    ) + renderMediaModelSelect(
+        '图片编辑模型', '有参考图或执行改图时使用', 'imageEdit', editModels,
+        state.selectedImageEditTaskId, disabled,
+    );
 }
 
 function renderVideoModelConfig() {
@@ -2187,13 +2197,21 @@ function renderVideoModelConfig() {
     const sceneDur = Number(scene?.duration);
     const sceneDurLabel = Number.isFinite(sceneDur) ? sceneDur.toFixed(sceneDur % 1 ? 1 : 0) : '—';
 
-    let html = '<label class="config-label">视频模型</label><div class="config-hint">用于图片生成视频</div><div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="video">';
-    models.forEach(m => {
-        const val = m.task_id;
-        const sel = String(state.selectedVideoTaskId) === String(val) ? 'selected' : '';
-        html += `<option value="${val}" ${sel}>${escapeHtml(formatModelOptionLabel(m))}</option>`;
+    const textModels = state.textToVideoModels.length ? state.textToVideoModels : state.videoModels;
+    const referenceModels = models.filter(m => {
+        const modes = m.supported_image_modes || [];
+        return modes.includes('multi_reference') || m.supports_ref_audio_video === true;
     });
-    html += '</select></div>';
+    let html = renderMediaModelSelect(
+        '文生视频模型', '无图片输入时使用', 'textToVideo', textModels,
+        state.selectedTextToVideoTaskId,
+    ) + renderMediaModelSelect(
+        '图生视频模型', '首帧或首尾帧输入时使用', 'imageToVideo', models,
+        state.selectedImageToVideoTaskId,
+    ) + renderMediaModelSelect(
+        '参考视频模型', '多参考图、参考音视频或首尾帧加参考图时使用', 'referenceToVideo', referenceModels,
+        state.selectedReferenceToVideoTaskId,
+    );
 
     if (resOpts.length) {
         const curRes = state.videoResolution && resOpts.some(o => o.value === state.videoResolution)
