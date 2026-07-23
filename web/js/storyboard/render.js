@@ -1298,22 +1298,32 @@ function renderMediaStack(disabled) {
 function renderAiPanel() {
     const modes = [
         ['dialogue', '对话改图', '选择对话模型后，可让智能体基于当前画面提示词生成或调整首帧'],
-        ['video', '视频生成', '选择对话模型和视频模型后，可让智能体基于当前分镜生成视频'],
+        ['video', '视频生成', '基于当前分镜首帧直接生成视频（不走智能体）'],
+        ['aivideo', 'AI生视频', '由智能体基于当前分镜生成视频（商业版）'],
     ].map(([key, label, title]) => `<option value="${key}" ${state.chatMode === key ? 'selected' : ''} title="${title}">${label}</option>`).join('');
 
     const agentMessages = renderAgentMessages();
     const currentScene = getCurrentScene();
     const sceneAgentRunning = isSceneAgentRunning(currentScene?.id);
     const disabled = sceneAgentRunning ? 'disabled' : '';
-    const placeholder = state.chatMode === 'dialogue'
-        ? '和智能体描述要如何调整当前分镜画面'
-        : '和智能体描述要如何生成当前分镜视频';
+    // 两个视频模式（video 直连 / aivideo 智能体）共享视频槽、视频模式选择器
+    const isVideoMode = state.chatMode === 'video' || state.chatMode === 'aivideo';
+    // 社区版下 AI生视频（智能体）不可用：文本框禁用并提示商业版特权
+    const isCommunity = String(state.editionInfo?.mode || '').toLowerCase() === 'community';
+    const isAiVideoLocked = state.chatMode === 'aivideo' && isCommunity;
+    const placeholder = isAiVideoLocked
+        ? 'AI生视频为商业版特权，请切换到「视频生成」模式'
+        : (state.chatMode === 'dialogue'
+            ? '和智能体描述要如何调整当前分镜画面'
+            : (state.chatMode === 'video'
+                ? '描述视频的运动方式、镜头变化与角色动作（预填当前分镜视频提示词，可直接编辑）'
+                : '和智能体描述要如何生成当前分镜视频'));
 
-    const isVideo = state.chatMode === 'video';
+    const isVideo = isVideoMode;
     const isDhScene = isDigitalHumanScene(currentScene);
     // 对口型不展示图生视频的首尾帧/参考图模式切换，固定 LTX2.3 链路
-    const videoModeSelector = isVideo && !isDhScene ? renderVideoModeSelector(disabled) : '';
-    const dhAudioHint = isVideo && isDhScene ? digitalHumanAudioHint(currentScene) : null;
+    const videoModeSelector = isVideo && !isDhScene && !isAiVideoLocked ? renderVideoModeSelector(disabled) : '';
+    const dhAudioHint = isVideo && !isAiVideoLocked && isDhScene ? digitalHumanAudioHint(currentScene) : null;
     const dhHint = dhAudioHint
         ? `<div class="ai-dh-hint ${dhAudioHint.cssClass}" title="${escapeHtml(dhAudioHint.title)}">对口型 · LTX2.3 · ${escapeHtml(dhAudioHint.label)}</div>`
         : '';
@@ -1323,7 +1333,7 @@ function renderAiPanel() {
     const historyMeta = msgCount
         ? `<span class="ai-chat-header-meta">${msgCount} 条消息</span>`
         : '';
-    const mediaStack = isVideo && !isDhScene
+    const mediaStack = isVideo && !isDhScene && !isAiVideoLocked
         ? renderMediaStack(disabled)
         : `<input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple hidden>`;
     const fontSizes = getAgentChatFontSizes();
@@ -1344,6 +1354,9 @@ function renderAiPanel() {
         sceneAgentRunning ? 'is-agent-running' : '',
         logPinned ? 'is-chat-log-pinned' : '',
     ].filter(Boolean).join(' ');
+    // AI生视频锁定时，文本框与发送按钮均禁用
+    const effectiveDisabled = disabled || (isAiVideoLocked ? 'disabled' : '');
+    const sendDisabled = disabled || (isAiVideoLocked ? 'disabled' : '');
 
     return `
         <section class="${sectionClass}" style="--agent-chat-font-size:${fontSizes.bodyPx}px;--agent-chat-label-size:${fontSizes.labelPx}px;">
@@ -1362,14 +1375,14 @@ function renderAiPanel() {
                     ${dhHint}
                     <div class="chat-textarea-row">
                         ${mediaStack}
-                        <textarea id="chat-textarea" class="chat-textarea" placeholder="${isDhScene && isVideo ? '描述对口型表演/镜头（台词以配音为准，需先生成配音）' : placeholder}" ${disabled}>${escapeHtml(state.inputMessage)}</textarea>
+                        <textarea id="chat-textarea" class="chat-textarea" placeholder="${isDhScene && isVideo && !isAiVideoLocked ? '描述对口型表演/镜头（台词以配音为准，需先生成配音）' : placeholder}" ${effectiveDisabled}>${escapeHtml(state.inputMessage)}</textarea>
                     </div>
                     <div class="chat-toolbar">
                         <button class="tool-button" data-action="open-model-config" title="模型配置（对话模型按供应商分组，图片/视频模型按当前助手模式）">${icon('settings', 14)}</button>
                         <select id="chat-mode-select" class="chat-mode-select">${modes}</select>
                         ${videoModeSelector}
                         <button class="tool-button" data-action="mention">@</button>
-                        <button class="chat-send-btn" data-action="send-ai" ${disabled}>${icon('send', 16)}</button>
+                        <button class="chat-send-btn" data-action="send-ai" ${sendDisabled}>${icon('send', 16)}</button>
                     </div>
                 </div>
             </div>

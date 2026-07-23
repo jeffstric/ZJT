@@ -158,7 +158,7 @@ export async function openFirstFrameColoring(rerender) {
                 resultUrl,
                 assetType: 'first_frame',
             });
-            if (state.chatMode === 'video') {
+            if (state.chatMode === 'video' || state.chatMode === 'aivideo') {
                 refreshSceneFirstFrameSlot(target);
             }
 

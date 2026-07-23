@@ -1267,6 +1267,108 @@ def _build_storyboard_spatial_constraints(prompt_json: Any) -> Dict[str, Any]:
     }
 
 
+def _scene_character_positions(scene: Any) -> Dict[int, Dict[str, str]]:
+    """提取当前镜头可见角色的画面位置映射（供视频模式标注说话角色位置）。
+
+    仅从 prompt_json.spatial_layout 解析 visible_entities，构建
+    {character_db_id(int): {name, screen_position, slot}} 映射。
+    关联键为 entity["db_id"]（=character_db_id），与 storyboard_dialogue.character_id 对应。
+    解析失败或缺数据时返回空 dict，调用方按"静默降级"处理（只显示角色名）。
+    不渲染原空间约束大 JSON 段，仅做轻量位置提取。
+    """
+    prompt_json = _scene_prompt_dict(scene)
+    spatial = prompt_json.get("spatial_layout")
+    if not isinstance(spatial, dict):
+        return {}
+    spatial_world = prompt_json.get("spatial_world")
+    try:
+        spatial_context = build_spatial_prompt_context(
+            spatial,
+            spatial_world if isinstance(spatial_world, dict) else None,
+        )
+    except Exception:
+        return {}
+    position_map: Dict[int, Dict[str, str]] = {}
+    for entity in (spatial_context.get("visible_entities") or []):
+        if not isinstance(entity, dict):
+            continue
+        # 仅关注角色实体（occupant_type 缺省视为角色）
+        if str(entity.get("occupant_type") or "character").lower() not in ("character", ""):
+            continue
+        raw_db_id = entity.get("db_id") or entity.get("character_db_id")
+        try:
+            db_id = int(raw_db_id) if raw_db_id not in (None, "") else None
+        except (TypeError, ValueError):
+            db_id = None
+        if db_id is None:
+            continue
+        # 屏幕位置优先用投影后的精确位置，回退原始位置
+        screen_position = (
+            entity.get("derived_screen_position")
+            or entity.get("screen_position")
+            or ""
+        )
+        position_map[db_id] = {
+            "name": str(entity.get("name") or "").strip(),
+            "screen_position": str(screen_position or "").strip(),
+            "slot": str(entity.get("slot") or "").strip(),
+        }
+    return position_map
+
+
+def _format_scene_dialogues(
+    dialogues: Optional[List[Dict[str, Any]]],
+    characters: Optional[List[Dict[str, Any]]],
+    position_map: Optional[Dict[int, Dict[str, str]]] = None,
+) -> str:
+    """格式化分镜对话段落（供视频模式提示词）。
+
+    逐条列出台词，标注说话角色名与画面位置；位置命中 position_map 才标注，
+    未命中/缺数据静默省略（静默降级）。旁白（character_id NULL）单独处理。
+    无对话返回占位文本。
+    """
+    characters = characters or []
+    position_map = position_map or {}
+    # 角色 id -> name 映射
+    char_name_map: Dict[int, str] = {}
+    for ch in characters:
+        if not isinstance(ch, dict):
+            continue
+        ch_id = ch.get("id")
+        try:
+            ch_id_int = int(ch_id) if ch_id not in (None, "") else None
+        except (TypeError, ValueError):
+            ch_id_int = None
+        if ch_id_int is not None and ch.get("name"):
+            char_name_map[ch_id_int] = str(ch["name"]).strip()
+
+    dialogues = dialogues or []
+    if not dialogues:
+        return "（无对话）"
+
+    lines: List[str] = []
+    for idx, d in enumerate(dialogues, start=1):
+        if not isinstance(d, dict):
+            continue
+        text = (d.get("text") or "").strip()
+        raw_char_id = d.get("character_id")
+        try:
+            char_id = int(raw_char_id) if raw_char_id not in (None, "") else None
+        except (TypeError, ValueError):
+            char_id = None
+        if char_id is None:
+            speaker = "旁白"
+        else:
+            speaker = char_name_map.get(char_id) or f"角色{char_id}"
+            pos = position_map.get(char_id)
+            if pos and pos.get("screen_position"):
+                speaker = f"{speaker} · {pos['screen_position']}"
+        lines.append(f"{idx}. [{speaker}] {text}")
+    if not lines:
+        return "（无对话）"
+    return "\n".join(lines)
+
+
 def _storyboard_neighbor_summary(scene: Any, direction: str) -> Dict[str, Any]:
     prompt = _storyboard_value(scene, "prompt_json", {}) or {}
     if isinstance(prompt, str):
@@ -1511,16 +1613,20 @@ def _build_storyboard_agent_message(
     video_task_id: Optional[int] = None,
     spatial_constraints: Optional[Dict[str, Any]] = None,
     neighbor_contexts: Optional[Dict[str, Any]] = None,
+    dialogues: Optional[List[Dict[str, Any]]] = None,
+    characters: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
+    is_video = generation_target == "video"
     prompt = _scene_prompt_dict(scene)
-    prompt_json = json.dumps(prompt, ensure_ascii=False, indent=2)
     first_frame_line = first_frame_url or "无"
     reference_images = reference_images or []
     reference_image_items = reference_image_items or []
+    # 以下段落仅 image 模式渲染，video 模式精简掉，故 video 模式无需序列化
     spatial_constraints = spatial_constraints or _build_storyboard_spatial_constraints(prompt)
     neighbor_contexts = neighbor_contexts if isinstance(neighbor_contexts, dict) else {}
-    spatial_constraints_json = json.dumps(spatial_constraints, ensure_ascii=False, indent=2)
-    neighbor_contexts_json = json.dumps(neighbor_contexts, ensure_ascii=False, indent=2)
+    prompt_json = "" if is_video else json.dumps(prompt, ensure_ascii=False, indent=2)
+    spatial_constraints_json = "" if is_video else json.dumps(spatial_constraints, ensure_ascii=False, indent=2)
+    neighbor_contexts_json = "" if is_video else json.dumps(neighbor_contexts, ensure_ascii=False, indent=2)
     video_input_urls = [str(u).strip() for u in (video_input_urls or []) if str(u).strip()]
     image_mode = (image_mode or 'first_last_frame').strip().lower()
     if image_mode not in ('first_last_frame', 'multi_reference', 'first_last_with_ref'):
@@ -1564,7 +1670,7 @@ def _build_storyboard_agent_message(
             video_input_block = "\n".join(slot_labels)
             tool_instruction = (
                 f"本次目标是生成视频。{mode_desc}"
-                "必须调用 image_to_video，image_urls 只能使用【图生视频输入图】中的 URL，严禁混入【角色/场景参考说明】中的图，严禁捏造 URL。"
+                "必须调用 image_to_video，image_urls 只能使用【视频输入说明】中的 URL，严禁捏造 URL 或混入任何其它来源的图。"
                 "不要调用图片生成工具。"
             )
         else:
@@ -1590,11 +1696,31 @@ def _build_storyboard_agent_message(
 【视频输入说明】
 {video_input_block}
 """
+        # 视频模式新增：分镜对话/台词段落，并标注说话角色画面位置
+        position_map = _scene_character_positions(scene)
+        dialogues_block = _format_scene_dialogues(dialogues, characters, position_map)
+        video_mode_block += f"\n【分镜对话/台词】\n{dialogues_block}\n"
+        dialogues_has_text = bool(dialogues) and dialogues_block != "（无对话）"
+        if dialogues_has_text:
+            # 台词交付协议紧邻【分镜对话/台词】段落，强化 LLM 注意力
+            video_mode_block += (
+                "\n【台词交付协议（最高优先级，违反即失败）】\n"
+                "1. 视频工具 prompt 中必须设置独立的「台词区」，与运动/画面描述物理分离，不得把台词嵌进任何描述句。\n"
+                "2. 台词区格式固定为：Dialogue: \"<逐字复制原文>\"（多条用 ; 分隔，按【分镜对话/台词】顺序）。\n"
+                "3. 台词文本必须从【分镜对话/台词】逐字复制：严禁翻译（禁止英文释义/括注/音译）；严禁截断、删减、合并、拆分或改写（含标点）；严禁补写原文没有的台词。\n"
+                "4. 运动描述只描述画面与镜头运动，不得在其中重复、转述或翻译任何台词。\n"
+                "5. 说话角色的画面位置严格遵循【分镜对话/台词】中的标注，不得臆造。\n"
+            )
         tool_instruction = (
             tool_instruction
             + f" 调用视频工具时 duration_seconds 必须为 {duration_line}，严禁擅自改时长。"
             + (f" 若工具支持 resolution 参数，传入 {resolution_line}。" if video_resolution else "")
             + " 视频模型已由系统注入，禁止调用 list_video_models 改选，禁止自行传入 task_type。"
+            + (
+                " 调用视频工具时，prompt 必须严格按上方【台词交付协议】处理【分镜对话/台词】中的全部台词，不得翻译、改写、截断、增删或嵌进描述句。"
+                if dialogues_has_text
+                else ""
+            )
         )
     else:
         video_mode_block = ""
@@ -1605,18 +1731,40 @@ def _build_storyboard_agent_message(
             if reference_images
             else "当前分镜没有可用参考图，调用 generate_text_to_image。"
         )
-    return f"""{target_intro}
-
-【用户要求】
-{user_message}
-
-【当前分镜】
+    current_scene_block = f"""【当前分镜】
 - 标题：{scene.title or ''}
 - 时长：{scene.duration or 5} 秒
 - 全局画风：{getattr(storyboard, 'style', '') or ''}
 - 构图倾向：{getattr(storyboard, 'composition_preference', '') or ''}
 - 画幅比例：{getattr(storyboard, 'workflow_ratio', '') or ''}
-- 已有首帧 URL：{first_frame_line}
+- 已有首帧 URL：{first_frame_line}"""
+
+    if is_video:
+        # 视频模式：精简提示词，仅保留用户要求、当前分镜、视频参数与对话台词。
+        # 删除参考图清单/说明、空间硬约束、相邻分镜、prompt_json（画面提示词）等冗余段落。
+        # 视频模式额外去掉「标题」子项（视频模型不需要标题）。
+        video_scene_block = f"""【当前分镜】
+- 时长：{scene.duration or 5} 秒
+- 全局画风：{getattr(storyboard, 'style', '') or ''}
+- 构图倾向：{getattr(storyboard, 'composition_preference', '') or ''}
+- 画幅比例：{getattr(storyboard, 'workflow_ratio', '') or ''}
+- 已有首帧 URL：{first_frame_line}"""
+        return f"""{target_intro}
+
+【用户要求】
+{user_message}
+
+{video_scene_block}
+{video_mode_block}
+请严格围绕当前分镜创作，保留角色、场景、道具一致性，并结合全局画风、构图倾向和画幅比例。{tool_instruction} 提交成功后返回包含 project_ids 的工作总结。"""
+
+    # image 模式：保持原有全部段落与行为不变
+    return f"""{target_intro}
+
+【用户要求】
+{user_message}
+
+{current_scene_block}
 {video_mode_block}
 【参考图清单】
 {reference_block}
@@ -1741,8 +1889,11 @@ class StoryboardImageAgentRunner:
             config.get("model") or "gemini/gemini-3-flash-preview",
             task.model_id,
         )
+        # 视频模式使用独立的 storyboard-video skill（剔除图片专属的 edit_image/空间约束/邻镜等冗余规则），
+        # 图片模式继续使用 storyboard-image skill。
+        skill_name = "storyboard-video" if self.generation_target == "video" else "storyboard-image"
         expert = ExpertAgent(
-            skill_names=["storyboard-image"],
+            skill_names=[skill_name],
             model=model,
             allowed_tools=allowed_tools,
             context_from_pm=self.scene_context,
@@ -3289,9 +3440,17 @@ async def generate_scene_video(
     if not scene.selected_first_frame_id:
         return JSONResponse(status_code=400, content={'error': '请先生成并选中首帧图片'})
     ff = await asyncio.to_thread(StoryboardSceneAssetModel.get_by_id, scene.selected_first_frame_id)
-    if not ff or not ff.result_url:
+    if not ff:
         return JSONResponse(status_code=400, content={'error': '首帧图片尚未生成完成'})
+    # asset.result_url 是冗余字段，宫格拆分等场景下可能为 NULL；
+    # 与 assets 接口一致，用 ai_tool.result_url 兜底（前端显示首帧也靠此兜底）。
     image_path = ff.result_url
+    if not image_path and ff.ai_tool_id:
+        ff_tool = await asyncio.to_thread(AIToolsModel.get_by_id, ff.ai_tool_id)
+        if ff_tool and ff_tool.result_url:
+            image_path = ff_tool.result_url
+    if not image_path:
+        return JSONResponse(status_code=400, content={'error': '首帧图片尚未生成完成'})
 
     prompt = data.get('prompt') or scene.video_prompt or ''
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
@@ -3786,6 +3945,8 @@ async def scene_ai_chat(
         video_task_id=video_task_id if generation_target == 'video' else None,
         spatial_constraints=spatial_constraints,
         neighbor_contexts=neighbor_contexts,
+        dialogues=scene_generation_context.get("dialogues") or [],
+        characters=scene_generation_context.get("characters") or [],
     )
     conversation_history = await asyncio.to_thread(_list_storyboard_agent_messages, scene_id, True)
     await asyncio.to_thread(
