@@ -1008,51 +1008,71 @@ async function sendStoryboardAgentMessage(current) {
 async function sendDirectVideo(current) {
     const sceneId = current.id;
     if (!sceneId || isSceneAgentRunning(sceneId)) return;
-    // 必须有选中首帧（后端 generate-video 图生视频分支也强制校验）
+    // 必须有选中首帧（后端 generate-video 图生视频/对口型分支均强制校验）
     const firstFrameUrl = current.firstFrameUrl || current.first_frame_url;
     if (!firstFrameUrl) {
         notify('请先生成并选中首帧图片后再生成视频');
         return;
     }
-    // 视频提示词不能为空（文本框预填 scene.videoPrompt，用户可编辑）
-    const prompt = (state.inputMessage || '').trim();
-    if (!prompt) {
-        notify('请输入视频提示词');
-        return;
-    }
-    // 必须已选视频模型
-    const videoTaskId = getSelectedVideoTaskId({ hasInputs: true, imageMode: state.videoImageMode });
-    if (videoTaskId == null || videoTaskId === '') {
-        notify('请先在模型配置中选择视频模型');
-        state.showModelConfigModal = true;
-        state.currentConfigTab = 'video';
-        rerenderModals();
-        return;
+    // 对口型分镜：提示词/模型由服务端规划（台词或默认提示词、固定 LTX2.3 路由），
+    // 前端不校验提示词与图生视频模型，点发送即一键提交；但必须先有成片配音
+    const isDh = String(current?.videoType || current?.video_type || '').toLowerCase() === 'digital_human';
+    let prompt = '';
+    let videoTaskId = null;
+    if (isDh) {
+        const hasAudio = (current.dialogues || []).some(d => String(d.audioUrl || d.audio_url || '').trim());
+        if (!hasAudio) {
+            notify('对口型视频需先生成配音：请到「对话」Tab 生成角色配音后再试');
+            state.activeTab = 'dialogue';
+            rerender([Region.LEFT_SIDEBAR]);
+            return;
+        }
+    } else {
+        // 视频提示词不能为空（文本框预填 scene.videoPrompt，用户可编辑）
+        prompt = (state.inputMessage || '').trim();
+        if (!prompt) {
+            notify('请输入视频提示词');
+            return;
+        }
+        // 必须已选视频模型
+        videoTaskId = getSelectedVideoTaskId({ hasInputs: true, imageMode: state.videoImageMode });
+        if (videoTaskId == null || videoTaskId === '') {
+            notify('请先在模型配置中选择视频模型');
+            state.showModelConfigModal = true;
+            state.currentConfigTab = 'video';
+            rerenderModals();
+            return;
+        }
     }
 
     // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息
     startSceneAgentRun(sceneId);
-    notify('正在提交视频生成任务...');
-    // 编辑值仅本次使用：提交前先重置文本框回 scene.videoPrompt 基线
-    state.inputMessage = current?.videoPrompt || '';
+    notify(isDh ? '正在提交数字人视频任务...' : '正在提交视频生成任务...');
+    if (!isDh) {
+        // 编辑值仅本次使用：提交前先重置文本框回 scene.videoPrompt 基线
+        state.inputMessage = current?.videoPrompt || '';
+    }
     rerenderAgentPanel();
 
     try {
         const extras = buildVideoGenerationPayloadExtras(current);
         const config = {
-            task_type: videoTaskId,
             ratio: state.workflowRatio,
             duration: extras.duration,
             duration_mode: extras.duration_mode,
             resolution: extras.resolution,
             clip_to_audio_duration: extras.clip_to_audio_duration,
-            prompt,  // 用户编辑后的提示词（基于 scene.videoPrompt）；后端 data.get('prompt') 优先采用
         };
+        // 对口型：prompt/task_type 由服务端规划（固定 LTX2.3），前端不传
+        if (!isDh) {
+            config.task_type = videoTaskId;
+            config.prompt = prompt;  // 用户编辑后的提示词（基于 scene.videoPrompt）；后端 data.get('prompt') 优先采用
+        }
         const result = await api.generateSceneVideo(sceneId, config);
         if (result && result.success === false) {
             throw new Error(result.error || '提交失败');
         }
-        notify(`视频生成任务已提交（算力消耗 ${result.computing_power ?? '?'}），请稍候在右侧查看结果`);
+        notify(`${isDh ? '数字人视频任务已提交' : '视频生成任务已提交'}（算力消耗 ${result.computing_power ?? '?'}），请稍候在右侧查看结果`);
         // 后端已通过 set_selected 绑定资产，刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
@@ -2540,9 +2560,10 @@ export function bindEvents() {
             state.videoMediaItems = [];
             state.videoFirstFrameDismissedSceneId = null;
         }
-        // 直连「视频生成」模式：切分镜后文本框同步为新分镜的视频提示词
+        // 直连「视频生成」模式：切分镜后文本框同步为新分镜的视频提示词（对口型分镜无文本框，置空）
         if (state.chatMode === 'video') {
-            state.inputMessage = nextScene?.videoPrompt || '';
+            const nextIsDh = String(nextScene?.videoType || nextScene?.video_type || '').toLowerCase() === 'digital_human';
+            state.inputMessage = nextIsDh ? '' : (nextScene?.videoPrompt || '');
         }
         rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
 
@@ -2584,9 +2605,11 @@ export function bindEvents() {
                 state.videoFirstFrameDismissedSceneId = null;
                 state.referenceImages = [];
             }
-            // 直连「视频生成」模式：文本框预填当前分镜视频提示词；其它模式清空，避免残留
+            // 直连「视频生成」模式：文本框预填当前分镜视频提示词（对口型分镜无文本框，置空）；其它模式清空，避免残留
             if (state.chatMode === 'video') {
-                state.inputMessage = getCurrentScene()?.videoPrompt || '';
+                const modeScene = getCurrentScene();
+                const modeIsDh = String(modeScene?.videoType || modeScene?.video_type || '').toLowerCase() === 'digital_human';
+                state.inputMessage = modeIsDh ? '' : (modeScene?.videoPrompt || '');
             } else {
                 state.inputMessage = '';
             }

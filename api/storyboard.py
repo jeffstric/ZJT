@@ -3423,12 +3423,12 @@ async def generate_scene_video(
             result = await asyncio.to_thread(
                 submit_digital_human_plan,
                 plan,
-                scene_id,
-                user_id,
-                transaction_id,
-                computing_power,
-                clip_to_audio_duration,
-                data.get('resolution'),
+                scene_id=scene_id,
+                user_id=user_id,
+                transaction_id=transaction_id,
+                computing_power=computing_power,
+                clip_to_audio_duration=clip_to_audio_duration,
+                resolution=data.get('resolution'),
             )
         except StoryboardDigitalHumanError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())

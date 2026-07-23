@@ -1321,6 +1321,8 @@ function renderAiPanel() {
 
     const isVideo = isVideoMode;
     const isDhScene = isDigitalHumanScene(currentScene);
+    // 对口型 + 直连「视频生成」：提示词/模型由服务端规划（台词或默认提示词、固定 LTX2.3 路由），不渲染提示词文本框
+    const isDhDirectVideo = state.chatMode === 'video' && isDhScene;
     // 对口型不展示图生视频的首尾帧/参考图模式切换，固定 LTX2.3 链路
     const videoModeSelector = isVideo && !isDhScene && !isAiVideoLocked ? renderVideoModeSelector(disabled) : '';
     const dhAudioHint = isVideo && !isAiVideoLocked && isDhScene ? digitalHumanAudioHint(currentScene) : null;
@@ -1375,14 +1377,14 @@ function renderAiPanel() {
                     ${dhHint}
                     <div class="chat-textarea-row">
                         ${mediaStack}
-                        <textarea id="chat-textarea" class="chat-textarea" placeholder="${isDhScene && isVideo && !isAiVideoLocked ? '描述对口型表演/镜头（台词以配音为准，需先生成配音）' : placeholder}" ${effectiveDisabled}>${escapeHtml(state.inputMessage)}</textarea>
+                        ${isDhDirectVideo ? '' : `<textarea id="chat-textarea" class="chat-textarea" placeholder="${isDhScene && isVideo && !isAiVideoLocked ? '描述对口型表演/镜头（台词以配音为准，需先生成配音）' : placeholder}" ${effectiveDisabled}>${escapeHtml(state.inputMessage)}</textarea>`}
                     </div>
                     <div class="chat-toolbar">
                         <button class="tool-button" data-action="open-model-config" title="模型配置（对话模型按供应商分组，图片/视频模型按当前助手模式）">${icon('settings', 14)}</button>
                         <select id="chat-mode-select" class="chat-mode-select">${modes}</select>
                         ${videoModeSelector}
                         <button class="tool-button" data-action="mention">@</button>
-                        <button class="chat-send-btn" data-action="send-ai" ${sendDisabled}>${icon('send', 16)}</button>
+                        <button class="chat-send-btn" data-action="send-ai" title="${isDhDirectVideo ? '生成数字人对口型视频（台词/口型以配音为准）' : '发送'}" ${sendDisabled}>${icon('send', 16)}</button>
                     </div>
                 </div>
             </div>

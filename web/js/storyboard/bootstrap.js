@@ -291,9 +291,11 @@ export async function finishBootstrapAfterStoryboardReady(data) {
         ensureVideoGenerationPrefsSupported();
         syncVideoMediaFromScene(getCurrentScene(), { resetUploads: true });
     }
-    // 直连「视频生成」模式：文本框预填当前分镜视频提示词
+    // 直连「视频生成」模式：文本框预填当前分镜视频提示词（对口型分镜无文本框，置空）
     if (state.chatMode === 'video') {
-        state.inputMessage = getCurrentScene()?.videoPrompt || '';
+        const bootScene = getCurrentScene();
+        const bootIsDh = String(bootScene?.videoType || bootScene?.video_type || '').toLowerCase() === 'digital_human';
+        state.inputMessage = bootIsDh ? '' : (bootScene?.videoPrompt || '');
     }
     renderApp();
     loadSceneAgentMessages(state.currentSceneId).catch(() => {});
