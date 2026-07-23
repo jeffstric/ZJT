@@ -438,6 +438,10 @@
       goHome(){ this.$router.push({name:'list'}); },
 
       openAgentConnectionModal() {
+        // CLI / 智能体连接仅服务故事板（短剧模式），营销模式不提供入口
+        if (this.creationMode !== 'short_drama') {
+          return;
+        }
         this.showAgentConnectionModal = true;
         this.agentConnectionTab = 'connection';
         this.agentConnectionError = '';
@@ -2613,6 +2617,10 @@
         this.creationMode = mode;
         localStorage.setItem('creation_mode', mode);
         this.showModeSelectModal = false;
+        // 切换到营销模式时关闭智能体连接弹窗（CLI 仅支持故事板/短剧）
+        if (mode !== 'short_drama' && this.showAgentConnectionModal) {
+          this.closeAgentConnectionModal();
+        }
       },
       
     },

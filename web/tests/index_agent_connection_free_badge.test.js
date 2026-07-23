@@ -14,6 +14,11 @@ describe('index agent connection limited-free badge', () => {
         expect(htmlSource).toMatch(
             /v-if="isCommunityEdition"\s+class="agent-connection-free-badge">限时免费<\/span>/
         );
+        // CLI 仅服务故事板：营销模式下不展示智能体连接入口
+        expect(htmlSource).toMatch(
+            /v-if="isLoggedIn && creationMode === 'short_drama'"\s+class="agent-connect-btn"/
+        );
+        expect(appSource).toContain("if (this.creationMode !== 'short_drama')");
         expect(cssSource).toContain('.agent-connection-free-badge');
         expect(appSource).toContain('this.isCommunityEdition = !response.data.data.is_enterprise;');
     });

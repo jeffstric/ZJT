@@ -40,7 +40,7 @@
             <div class="title">{{ mainTitle }}</div>
             <div class="subtitle" v-if="route.name==='list'">{{ $t('subtitle') }}</div>
           </div>
-          <button v-if="isLoggedIn" class="agent-connect-btn" type="button" @click="openAgentConnectionModal" title="获取 Codex / Claude Code / OpenClaw / 腾讯 WorkBuddy 智能体连接信息" aria-label="获取 Codex / Claude Code / OpenClaw / 腾讯 WorkBuddy 智能体连接信息">
+          <button v-if="isLoggedIn && creationMode === 'short_drama'" class="agent-connect-btn" type="button" @click="openAgentConnectionModal" title="获取 Codex / Claude Code / OpenClaw / 腾讯 WorkBuddy 智能体连接信息" aria-label="获取 Codex / Claude Code / OpenClaw / 腾讯 WorkBuddy 智能体连接信息">
             <span class="agent-connect-icons" aria-hidden="true">
               <span class="agent-icon-badge codex">
                 <img src="/assets/logos/agent-codex.svg" alt="">
