@@ -943,6 +943,9 @@ class ScriptSplitConstants:
         "new_root_location_forbidden",     # 硬门禁：剧本含 DB 缺失的顶层场景
         "location_parent_invalid",         # 硬门禁：场景父级关系非法
         "location_parent_conflict",        # 硬门禁：场景父级冲突
+        # 合并阶段实体身份冲突：根治后正常不触发（renumber 自动归并）；
+        # 一旦触发说明规划真源级异常，盲目 resume 必然死循环，需 force 排查。
+        "quality_merge_invalid",
     )
     # waiting_auth 特殊：根因是 token 过期，resume 时带新 auth_token 即可解除；
     # 不带新 token 调 resume 会被拦截，要求先 /api/agent-auth/exchange 换取。
