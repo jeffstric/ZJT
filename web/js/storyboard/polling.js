@@ -113,7 +113,7 @@ function applyTaskStatus(scene, data, requestSelection) {
     if (firstFrameCurrent) upsertSceneCandidateFromTask(scene.id, 'first_frame', data.first_frame);
     if (videoCurrent) upsertSceneCandidateFromTask(scene.id, 'video', data.video);
     // 视频助手模式下，首帧生成完成后同步到输入区首帧槽
-    if (state.chatMode === 'video' && state.currentSceneId === scene.id) {
+    if ((state.chatMode === 'video' || state.chatMode === 'aivideo') && state.currentSceneId === scene.id) {
         refreshSceneFirstFrameSlot(scene);
     }
     (data.dialogues || []).forEach(d => {

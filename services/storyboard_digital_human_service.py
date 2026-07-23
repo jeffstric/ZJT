@@ -297,6 +297,11 @@ def _resolve_first_frame_path(scene) -> str:
     if first_frame_id:
         asset = StoryboardSceneAssetModel.get_by_id(int(first_frame_id))
         url = _get_field(asset, "result_url") if asset else None
+        # asset.result_url 是冗余字段，智能体/宫格生成的首帧常不回填（恒为 NULL）；
+        # 与 assets 接口、generate-video 路由一致，用 ai_tool.result_url 兜底。
+        if (not url or not str(url).strip()) and _get_field(asset, "ai_tool_id"):
+            tool = AIToolsModel.get_by_id(int(_get_field(asset, "ai_tool_id")))
+            url = _get_field(tool, "result_url") if tool else None
         if url and str(url).strip():
             return str(url).strip()
     raise StoryboardDigitalHumanError(

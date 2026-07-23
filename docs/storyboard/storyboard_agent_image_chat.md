@@ -1,6 +1,14 @@
 # 分镜助手对话生图
 
-`web/storyboard.html` 的左侧「分镜助手」支持「对话改图」和「视频生成」模式。用户选择对话模型、生图模型和视频模型后，可以直接描述当前分镜首帧或视频要如何生成/调整；发送内容统一交给智能体理解，不直接把用户输入当作最终生成提示词。
+`web/storyboard.html` 的左侧「分镜助手」支持三种模式：
+
+| 模式 | chatMode | 路径 | 社区版 |
+|------|----------|------|--------|
+| 对话改图 | `dialogue` | 智能体生图/改图 | ✅ |
+| 视频生成 | `video` | **直连** `/scene/{id}/generate-video`（首帧图 + `scene.video_prompt`，不走智能体） | ✅ |
+| AI生视频 | `aivideo` | 智能体生视频（`storyboard-video` skill） | ❌（禁用，商业版特权） |
+
+「视频生成」直连模式复用现成的社区版路由 `POST /scene/{id}/generate-video`，不经 `ToolExecutor`/企业版工具，社区版可用；「AI生视频」走智能体，社区版下视频工具未注册会报"未知工具"，故禁用并提示商业版特权。
 
 ## 左侧布局与防遮挡
 
@@ -161,6 +169,71 @@
 
 导出（后续实现）按 `clip_to_audio_duration` 决定是否把视频裁到 `scene.duration`；关闭则使用完整生成视频。
 
+## 视频生成模式：独立 skill + 提示词精简 + 对话台词
+
+> 本节描述「AI生视频」（智能体，`chatMode='aivideo'`，`generation_target=video`）路径。「视频生成」（直连，`chatMode='video'`）不经智能体，直接用首帧图 + `scene.video_prompt` 调 `/scene/{id}/generate-video`，无提示词构建。
+
+### 独立视频 skill
+
+视频目标使用独立的 `storyboard-video` skill（`script_writer_core/skills/storyboard-video/SKILL.md`），不复用 `storyboard-image`。后者把图片和视频混用一份 SKILL.md，含大量图片专属规则（空间连续性/相邻分镜/edit_image/参考图说明/prompt_json 用法），对视频生成冗余。`StoryboardImageAgentRunner.execute` 按 `generation_target` 动态选 skill：
+
+```python
+skill_name = "storyboard-video" if self.generation_target == "video" else "storyboard-image"
+```
+
+skill 加载机制：ExpertAgent 用 `SkillLoader()` 无参实例化，默认目录 `script_writer_core/skills/`（`agents/skills/` 未注册加载）。`storyboard-video` 只含视频工具（`generate_text_to_video`/`image_to_video`/`get_user_computing_power`/`ask_user`）和视频专属规则，约 1100 字符，相比 `storyboard-image` 的 2000+ 字符减少近一半 token。
+
+### PM 上下文提示词精简
+
+`_build_storyboard_agent_message` 在视频模式只渲染：
+
+- `【用户要求】`：用户在文本框输入的内容。
+- `【当前分镜】`：时长、全局画风、构图倾向、画幅比例、已有首帧 URL（**不含标题**，视频模型不需要）。
+- `【视频图片模式】` / `【视频生成参数】` / `【视频输入说明】`：模式、模型、`duration_seconds`、`resolution`、裁剪开关、首帧/尾帧/参考图 URL。
+- `【分镜对话/台词】` + `【台词交付协议】`：本分镜全部对话（见下）。
+
+**视频模式刻意不渲染**（图片目标仍保留）的段落：
+
+- `【参考图清单】` / `【参考图说明】`：视频不重新画图，参考图也不进 `image_to_video.image_urls`（仍由前端首帧/尾帧/全能参考槽位决定），对视频模型无用。
+- `【当前分镜空间硬约束】`：空间约束是为图生图一致性设计（物理锚点/容器槽位/可见实体判定），视频生成不重新画图，该段对运动设计无价值。
+- `【相邻分镜连续性上下文】`：视频模式不加载邻镜（恒为空），渲染出来是空 JSON + 长篇无用规则，纯浪费 token。
+- `【当前分镜 prompt_json】`：画面提示词（`scene_desc`/`character_desc`/`perspective`/`style`/`spatial_layout`）描述的是静态画面，视频生成的核心是「让画面动起来」，对视频模型无用且易误导其改写画面。
+
+### 分镜对话/台词段落
+
+视频模式必须把该分镜的对话（`storyboard_dialogue.text`，按 `sort_order` 排序）原样交给智能体，否则视频 prompt 中无法包含台词。段落由 `_format_scene_dialogues(dialogues, characters, position_map)` 渲染：
+
+```
+【分镜对话/台词】
+1. [布冯 · 画面左侧] 你怎么来了？
+2. [奶酪 · 画面右侧] 我来找你。
+3. [旁白] 夜色渐深。
+```
+
+- 角色名：`character_id` 为 NULL → `旁白`；非 NULL → 用 `scene_context.characters` 按 id 匹配 `name`，匹配不到降级为 `角色{id}`。
+- **说话角色画面位置**：调用 `_scene_character_positions(scene)` 从 `prompt_json.spatial_layout` 经 `build_spatial_prompt_context()` 提取 `visible_entities`，构建 `{character_db_id(int): {name, screen_position, slot}}` 映射；命中则在角色名后追加 `· {screen_position}`（如「画面左侧」），让视频模型知道具体哪个角色需要说话/对口型。
+  - **关联键是 `db_id`（= `character_db_id`），不是 `character_id`**：空间布局里的 `character_id` 是剧本本地字符串（如 `char_001`），与对话表的整型 `character_id` 类型不同，直接比较永远匹配不上。
+  - `screen_position` 优先用投影后的 `derived_screen_position`（企业版相机投影），回退原始 `screen_position`。
+  - **静默降级**：`character_db_id` 缺失 / 社区版无精确投影 / 匹配不上时，只显示角色名不标位置，不报错。
+  - 仅 `visible`/`partial` 实体参与位置标注（`offscreen`/`occluded` 在 `hidden_entities` 中，不进映射）。
+- 无对话时段落显示 `（无对话）`。
+
+### 台词交付协议（最高优先级）
+
+有台词时，紧随 `【分镜对话/台词】` 段落会渲染 `【台词交付协议（最高优先级，违反即失败）】`，要求 LLM 把台词作为**独立交付物**交给视频模型，避免被翻译/截断/嵌埋。协议要点：
+
+1. 视频工具 prompt 中必须设置独立的「台词区」，与运动/画面描述**物理分离**，不得嵌进描述句。
+2. 台词区格式固定为：`Dialogue: "<逐字复制原文>"`（多条用 `; ` 分隔，按顺序）。
+3. 台词必须逐字复制：严禁翻译（禁止英文释义/括注/音译）、严禁截断/删减/合并/拆分/改写（含标点）、严禁补写。
+4. 运动描述只描述画面与镜头运动，不得重复/转述/翻译台词。
+5. 说话角色画面位置遵循【分镜对话/台词】标注。
+
+`tool_instruction` 收尾再追加一句指向协议的硬约束。无对话（`（无对话）`）时协议与约束均不渲染。
+
+> 该协议解决 LLM 常见的三类违规：①台词嵌进描述句（如 `His mouth moves as he says: "..."`）；②加英文翻译括注（如 `"又是没有意大利的一次" (Another time without Italy)`）；③截断原文（如丢掉前半句"该死的世界杯"）。
+
+数据来源：`scene_generation_context["dialogues"]` 和 `["characters"]`（`StoryboardAgentCliService.scene_context` 已加载，路由直接复用，不重复查库）。
+
 ## 对话模型选择
 分镜助手的对话模型来自 `/api/models`，前端会把选中的模型标准化为 `{ model, model_id, vendor_id }`。这一步兼容旧配置中只保存模型字符串的情况，也兼容模型列表使用 `model_id` 而不是 `id` 作为主键的返回格式，避免用户已在齿轮弹框中选中模型后，发送时仍被误判为未选择对话模型。
 
@@ -182,8 +255,11 @@
 
 智能体技能定义位于：
 
-- `agents/skills/storyboard-image/SKILL.md`
-- `script_writer_core/skills/storyboard-image/SKILL.md`
+- `agents/skills/storyboard-image/SKILL.md`（图片模式，未实际加载，仅文档）
+- `script_writer_core/skills/storyboard-image/SKILL.md`（图片模式，实际加载）
+- `script_writer_core/skills/storyboard-video/SKILL.md`（视频模式，独立纯视频 skill）
+
+`StoryboardImageAgentRunner.execute` 按 `generation_target` 动态选 skill：图片目标 → `storyboard-image`，视频目标 → `storyboard-video`。两者不再混用。
 
 技能要求智能体严格围绕当前分镜提示词工作：
 
