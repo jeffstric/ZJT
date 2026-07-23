@@ -150,7 +150,7 @@ class AuthService:
     ) -> Dict[str, Any]:
         """
         用户注册（支持手机号或邮箱）
-        
+
         Args:
             phone: 手机号（与email二选一）
             password: 密码
@@ -159,7 +159,7 @@ class AuthService:
             ip_address: IP地址
             user_agent: 用户代理
             email: 邮箱（与phone二选一）
-            
+
         Returns:
             注册结果字典
         """
@@ -170,9 +170,10 @@ class AuthService:
             return {"success": False, "message": "请提供手机号或邮箱进行注册"}
 
         # 社区版注册人数限制（商业版由 enterprise 注入 Provider 放行，
-        # 见 services/registration_quota.py）
+        # 见 services/registration_quota.py）。
+        # 计数必须使用本模块的 UsersModel 引用（测试通过 patch 该引用注入 mock）。
         from services.registration_quota import check_allowed
-        _allowed, _quota_msg = check_allowed()
+        _allowed, _quota_msg = check_allowed(UsersModel.get_total_count())
         if not _allowed:
             logger.warning(f"注册被拒绝（配额限制）- 手机号: {phone}, 邮箱: {email}")
             return {"success": False, "message": _quota_msg}

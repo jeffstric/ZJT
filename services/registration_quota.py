@@ -4,6 +4,19 @@
 社区版默认限制注册用户总数上限（COMMUNITY_MAX_REGISTERED_USERS），
 不加载、不执行任何商业配额逻辑。商业版在启动时通过 ``register_provider``
 注入放行实现（见 enterprise/__init__.py）。
+
+并发说明（社区版）：
+本门面对注册人数为"软上限"——``check_allowed`` 仅做一次计数快照判断，
+不串行化"计数 + 落库"。并发注册时多个请求可能读到相同计数同时放行，
+导致实际人数略超上限。社区版**不**保证注册人数严格不超过上限
+（注册仅影响用户数计数，不涉及权限/支付，超限无安全风险）。如需严格
+上限，请购买商业版（Provider 注入后不再计数）。
+此前曾用 ``threading.Lock`` 做进程内串行化，但生产环境以 gunicorn
+多 worker（多进程）部署时进程间不互斥，进程锁形同虚设反而造成"已解决
+并发"的错觉，故已移除。
+
+计数来源由调用方传入（auth_service 使用其模块级 UsersModel 引用），
+本模块不直接访问数据库，便于测试 mock 与复用。
 """
 import logging
 from typing import Protocol, Tuple
@@ -18,7 +31,7 @@ class RegistrationQuotaProvider(Protocol):
 
     available: bool
 
-    def check_allowed(self) -> Tuple[bool, str]: ...
+    def check_allowed(self, total_count: int) -> Tuple[bool, str]: ...
 
 
 class CommunityRegistrationQuotaProvider:
@@ -26,11 +39,8 @@ class CommunityRegistrationQuotaProvider:
 
     available = False
 
-    def check_allowed(self) -> Tuple[bool, str]:
-        # 延迟导入，避免模块加载期循环依赖
-        from model.users import UsersModel
-
-        if UsersModel.get_total_count() >= COMMUNITY_MAX_REGISTERED_USERS:
+    def check_allowed(self, total_count: int) -> Tuple[bool, str]:
+        if total_count >= COMMUNITY_MAX_REGISTERED_USERS:
             return False, (
                 f"社区版最多支持 {COMMUNITY_MAX_REGISTERED_USERS} 个注册用户，"
                 "如需更多用户请购买商业版"
@@ -61,6 +71,10 @@ def is_available() -> bool:
     return bool(getattr(_provider, 'available', False))
 
 
-def check_allowed() -> Tuple[bool, str]:
-    """检查当前是否允许新用户注册，返回 (是否允许, 拒绝原因)。"""
-    return _provider.check_allowed()
+def check_allowed(total_count: int) -> Tuple[bool, str]:
+    """检查给定用户总数下是否允许新用户注册，返回 (是否允许, 拒绝原因)。
+
+    社区版为软上限：仅做计数快照判断，不串行化"计数 + 落库"，
+    并发注册下实际人数可能略超上限（见模块 docstring 的并发说明）。
+    """
+    return _provider.check_allowed(total_count)
