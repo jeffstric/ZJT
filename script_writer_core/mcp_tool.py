@@ -205,6 +205,64 @@ def _get_lowest_supported_image_size(config) -> Optional[str]:
     return getattr(config, 'default_size', None)
 
 
+def _non_auto_pref(value: Any) -> Optional[str]:
+    """返回非空且非 auto 的偏好字符串，否则 None。"""
+    if value in (None, ''):
+        return None
+    text = str(value).strip()
+    if not text or text.lower() == 'auto':
+        return None
+    return text
+
+
+def _resolve_image_ratio_and_size_from_prefs(
+    *,
+    user_id: str,
+    world_id: str,
+    aspect_ratio: str,
+    image_size: Optional[str],
+    generation_snapshot: Optional[Dict[str, Any]] = None,
+    apply_user_prefs: bool = True,
+) -> tuple:
+    """
+    解析图片宽高比与分辨率。
+
+    优先级（实现工具 schema「已由系统注入」语义）：
+    1. 任务级 generation_snapshot.ratio / resolution（故事板 workflow_ratio 等）
+    2. 世界级 image_preferences（营销页齿轮等）
+    3. 调用方传入的 aspect_ratio / image_size
+
+    返回 (aspect_ratio, image_size, image_size_source)。
+    image_size_source: argument | snapshot | preference | default
+    """
+    image_size_source = "argument" if image_size else "default"
+    snap = dict(generation_snapshot or {})
+    snap_ratio = _non_auto_pref(snap.get('ratio'))
+    snap_resolution = _non_auto_pref(snap.get('resolution'))
+
+    if snap_ratio:
+        aspect_ratio = snap_ratio
+    elif apply_user_prefs:
+        user_prefs = _get_image_preferences(user_id, world_id) or {}
+        pref_ratio = _non_auto_pref(user_prefs.get('ratio'))
+        if pref_ratio:
+            aspect_ratio = pref_ratio
+
+    if image_size:
+        pass  # 显式参数保留，source 已为 argument
+    elif snap_resolution:
+        image_size = snap_resolution
+        image_size_source = "snapshot"
+    elif apply_user_prefs:
+        user_prefs = _get_image_preferences(user_id, world_id) or {}
+        pref_resolution = _non_auto_pref(user_prefs.get('resolution'))
+        if pref_resolution:
+            image_size = pref_resolution
+            image_size_source = "preference"
+
+    return aspect_ratio, image_size, image_size_source
+
+
 def _resolve_image_size_for_model(config, image_size: Optional[str], image_size_source: str = "argument"):
     """
     解析图片输出分辨率。
@@ -1007,23 +1065,21 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
         if not comfyui_base_url:
             return {'success': False, 'error': '配置文件中未找到comfyui_base_url_inner或host配置'}
 
-        # 强制应用用户偏好（比例和分辨率由前端界面控制，LLM 不需要传入）
-        image_size_source = "argument" if image_size else "default"
-        user_prefs = _get_image_preferences(user_id, world_id)
-        if user_prefs:
-            pref_ratio = user_prefs.get('ratio')
-            if pref_ratio and pref_ratio != 'auto':
-                aspect_ratio = pref_ratio
-            pref_resolution = user_prefs.get('resolution')
-            if pref_resolution and pref_resolution != 'auto':
-                image_size = pref_resolution
-                image_size_source = "preference"
+        # 强制应用系统注入：任务 snapshot（故事板 workflow_ratio）> 世界偏好 > 参数默认
+        generation_snapshot = _image_generation_snapshot_override.get() or locked_snapshot
+        aspect_ratio, image_size, image_size_source = _resolve_image_ratio_and_size_from_prefs(
+            user_id=user_id,
+            world_id=world_id,
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
+            generation_snapshot=generation_snapshot,
+        )
 
         # 确定 image_size
         config = UnifiedConfigRegistry.get_by_id(text_to_image_task_id)
         if (
             image_size
-            and image_size_source == "preference"
+            and image_size_source in ("preference", "snapshot")
             and config
             and config.supported_sizes
             and image_size.lower() not in [s.lower() for s in config.supported_sizes]
@@ -1068,7 +1124,6 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
             'auth_token': auth_token,
             'ref_image_urls': ','.join(parsed_urls),
         }
-        generation_snapshot = _image_generation_snapshot_override.get() or locked_snapshot
         if generation_snapshot:
             request_data['generation_snapshot'] = json.dumps(
                 generation_snapshot, ensure_ascii=False
@@ -4546,18 +4601,19 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                 'error': '配置文件中未找到comfyui_base_url_inner或host配置'
             }
         
-        # 强制应用用户偏好（比例和分辨率由前端界面控制，LLM 不需要传入）
-        # 4宫格模式(is_grid=True)跳过用户偏好覆盖，因为4宫格布局必须使用16:9横屏比例和最大分辨率
-        image_size_source = "argument" if image_size else "default"
-        user_prefs = _get_image_preferences(user_id, world_id)
-        if user_prefs and not is_grid:
-            pref_ratio = user_prefs.get('ratio')
-            if pref_ratio and pref_ratio != 'auto':
-                aspect_ratio = pref_ratio
-            pref_resolution = user_prefs.get('resolution')
-            if pref_resolution and pref_resolution != 'auto':
-                image_size = pref_resolution
-                image_size_source = "preference"
+        # 强制应用系统注入：任务 snapshot（故事板 workflow_ratio）> 世界偏好 > 参数默认
+        # 4宫格模式(is_grid=True)跳过偏好覆盖，因为4宫格布局必须使用16:9横屏比例和最大分辨率
+        generation_snapshot = _image_generation_snapshot_override.get() or locked_snapshot
+        if not is_grid:
+            aspect_ratio, image_size, image_size_source = _resolve_image_ratio_and_size_from_prefs(
+                user_id=user_id,
+                world_id=world_id,
+                aspect_ratio=aspect_ratio,
+                image_size=image_size,
+                generation_snapshot=generation_snapshot,
+            )
+        else:
+            image_size_source = "argument" if image_size else "default"
 
         # 准备请求数据
         request_data = {
@@ -4568,7 +4624,6 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
             'user_id': user_id,
             'auth_token': auth_token
         }
-        generation_snapshot = _image_generation_snapshot_override.get() or locked_snapshot
         if generation_snapshot:
             request_data['generation_snapshot'] = json.dumps(
                 generation_snapshot, ensure_ascii=False
@@ -4578,7 +4633,15 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
         from config.unified_config import UnifiedConfigRegistry
         config = UnifiedConfigRegistry.get_by_id(text_to_image_task_id)
         if not is_grid:
-            image_size, image_size_error = _resolve_image_size_for_model(config, image_size, image_size_source)
+            # snapshot 与 preference 同等对待：不兼容时降级到模型最低档
+            resolve_source = (
+                "preference"
+                if image_size_source in ("preference", "snapshot")
+                else image_size_source
+            )
+            image_size, image_size_error = _resolve_image_size_for_model(
+                config, image_size, resolve_source
+            )
             if image_size_error:
                 return {'success': False, 'error': image_size_error}
         if is_grid:

@@ -41,6 +41,14 @@
 `图片风格` 与 `构图倾向`。追加逻辑是幂等的：智能体已经写入相同设置时会移动到末尾而不重复；
 非图片工具及视频目标不受影响。
 
+**画幅比例（硬注入，与视频路径对齐）**：工具 schema 对 `aspect_ratio` 标注
+「已由系统注入，无需传入」，Agent 因此常省略该参数。对话改图在启动任务时把
+`storyboard.workflow_ratio` 写入 `generation_snapshots[*].ratio`，并由
+`StoryboardAgentImageToolExecutor` 在工具边界强制写入 `args['aspect_ratio']` 与
+snapshot；`mcp_tool.edit_image` / `generate_text_to_image` 解析比例时 **任务
+snapshot.ratio 优先于世界级 image_preferences 与默认 16:9**。仅改 skill 文案
+无法修复漏传；必须以代码注入为准。
+
 ## 分镜会话隔离
 
 每个分镜视为一个独立的助手会话。前端禁止用页面级 `isAgentRunning` 控制所有分镜，否则上一分镜运行时会错误禁用新分镜的输入框。

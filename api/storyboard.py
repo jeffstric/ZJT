@@ -165,16 +165,27 @@ def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
 def _storyboard_generation_snapshots_sync(storyboard) -> Dict[str, Dict[str, Any]]:
     """在 Agent 提交时一次性冻结 Storyboard 的全部五个媒体槽位。"""
     profiles = _storyboard_media_preferences_sync(storyboard)
+    storyboard_ratio = (
+        normalize_storyboard_workflow_ratio(getattr(storyboard, 'workflow_ratio', None))
+        or str(getattr(storyboard, 'workflow_ratio', None) or '').strip()
+        or '16:9'
+    )
     snapshots: Dict[str, Dict[str, Any]] = {}
     for slot, profile in profiles.items():
         media_type, mode = slot.split('.', 1)
-        snapshots[slot] = MediaGenerationPreferenceService.build_snapshot(
+        snapshot = MediaGenerationPreferenceService.build_snapshot(
             profile,
             MediaGenerationSurface.STORYBOARD_UI,
             media_type,
             mode,
             model_source='storyboard_config',
         )
+        # 图片槽锁定故事板画幅，供 edit_image / generate_text_to_image 系统注入
+        if media_type == MediaGenerationType.IMAGE:
+            snapshot['ratio'] = storyboard_ratio
+        elif media_type == MediaGenerationType.VIDEO and not snapshot.get('ratio'):
+            snapshot['ratio'] = storyboard_ratio
+        snapshots[slot] = snapshot
     return snapshots
 
 
@@ -205,7 +216,16 @@ def _resolve_storyboard_generation_snapshot_sync(
         StoryboardModel.patch_config_json(int(storyboard.id), {field: profile['task_id']})
     else:
         profiles = _storyboard_media_preferences_sync(storyboard)
-        profile = profiles[MediaGenerationPreferenceService.slot_key(media_type, mode)]
+        profile = dict(
+            profiles[MediaGenerationPreferenceService.slot_key(media_type, mode)] or {}
+        )
+        # 合并本轮 profile_values（如 workflow_ratio），不覆盖已解析的 task_id
+        for key, value in dict(profile_values or {}).items():
+            if value in (None, ''):
+                continue
+            if key == 'task_id' and profile.get('task_id') not in (None, ''):
+                continue
+            profile[key] = value
     return MediaGenerationPreferenceService.build_snapshot(
         profile,
         MediaGenerationSurface.STORYBOARD_UI,
@@ -1870,11 +1890,13 @@ class StoryboardImageAgentRunner:
             )
         agent_tool_executor = tool_executor
         if self.generation_target == "image":
+            snapshot_ratio = (active_snapshot or {}).get('ratio') if active_snapshot else None
             agent_tool_executor = StoryboardAgentImageToolExecutor(
                 tool_executor,
                 style=self.style,
                 composition_preference=self.composition_preference,
                 generation_snapshot=active_snapshot,
+                workflow_ratio=str(snapshot_ratio or '').strip(),
             )
         else:
             effective_video_preferences = dict(self.video_preferences)
@@ -3907,6 +3929,12 @@ async def scene_ai_chat(
             MediaGenerationType.IMAGE,
             image_urls=task_image_urls,
         )
+        # 对话改图必须锁定故事板画幅；工具 schema 写「无需传入」时 Agent 会省略 aspect_ratio，
+        # 若 snapshot 无 ratio，mcp_tool 会落到默认 16:9。
+        storyboard_ratio = (
+            normalize_storyboard_workflow_ratio(getattr(sb, 'workflow_ratio', None))
+            if sb else None
+        ) or str(getattr(sb, 'workflow_ratio', None) or '').strip() or '16:9'
         try:
             image_snapshot = await asyncio.to_thread(
                 _resolve_storyboard_generation_snapshot_sync,
@@ -3915,11 +3943,12 @@ async def scene_ai_chat(
                 media_type=MediaGenerationType.IMAGE,
                 mode=image_mode_name,
                 explicit_task_id=(int(image_task_id) if image_task_id not in (None, '') else None),
-                profile_values={},
+                profile_values={'ratio': storyboard_ratio},
             )
         except (MediaGenerationPreferenceError, TypeError, ValueError) as exc:
             error = exc.to_dict() if isinstance(exc, MediaGenerationPreferenceError) else str(exc)
             return JSONResponse(status_code=400, content={'success': False, 'error': error})
+        image_snapshot['ratio'] = storyboard_ratio
         active_generation_slot = MediaGenerationPreferenceService.slot_key(
             MediaGenerationType.IMAGE, image_mode_name
         )

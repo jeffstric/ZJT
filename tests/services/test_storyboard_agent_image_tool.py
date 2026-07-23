@@ -120,3 +120,56 @@ def test_generation_snapshot_hard_overrides_llm_task_type():
     )
 
     assert delegate.calls[0]["tool_args"]["task_type"] == 27
+
+
+def test_generation_snapshot_hard_overrides_aspect_ratio_to_workflow_ratio():
+    """对话改图：即使 Agent 漏传 aspect_ratio，也必须注入 storyboard.workflow_ratio。"""
+    delegate = FakeToolExecutor()
+    executor = StoryboardAgentImageToolExecutor(
+        delegate,
+        generation_snapshot={
+            "task_id": 26,
+            "ratio": "9:16",
+            "media_type": "image",
+            "mode": "image_edit",
+        },
+        workflow_ratio="9:16",
+    )
+
+    executor.execute_tool(
+        "edit_image",
+        {
+            "prompt": "edit",
+            "image_url": "https://example.com/a.png",
+            # 故意不传 aspect_ratio，模拟工具 schema「无需传入」时 Agent 省略参数
+        },
+        "1",
+        "2",
+        "token",
+    )
+
+    assert delegate.calls[0]["tool_args"]["aspect_ratio"] == "9:16"
+
+
+def test_workflow_ratio_overrides_wrong_llm_aspect_ratio():
+    """Agent 传错 16:9 时，仍强制使用故事板 9:16。"""
+    delegate = FakeToolExecutor()
+    executor = StoryboardAgentImageToolExecutor(
+        delegate,
+        generation_snapshot={"task_id": 26, "ratio": "9:16"},
+        workflow_ratio="9:16",
+    )
+
+    executor.execute_tool(
+        "edit_image",
+        {
+            "prompt": "edit",
+            "image_url": "https://example.com/a.png",
+            "aspect_ratio": "16:9",
+        },
+        "1",
+        "2",
+        "token",
+    )
+
+    assert delegate.calls[0]["tool_args"]["aspect_ratio"] == "9:16"

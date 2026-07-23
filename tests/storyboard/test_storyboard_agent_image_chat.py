@@ -63,6 +63,25 @@ def test_storyboard_image_agent_enforces_style_and_composition_at_tool_boundary(
     assert "composition_preference=self.composition_preference" in api_py
 
 
+def test_storyboard_image_agent_locks_workflow_ratio_into_snapshot_and_tool():
+    """对话改图必须把 workflow_ratio 写入 snapshot 并由工具执行器强制 aspect_ratio。"""
+    api_py = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
+    tool_py = (
+        PROJECT_ROOT / "services" / "storyboard_agent_image_tool.py"
+    ).read_text(encoding="utf-8")
+    mcp_py = (
+        PROJECT_ROOT / "script_writer_core" / "mcp_tool.py"
+    ).read_text(encoding="utf-8")
+
+    assert "profile_values={'ratio': storyboard_ratio}" in api_py
+    assert "image_snapshot['ratio'] = storyboard_ratio" in api_py
+    assert "workflow_ratio=" in api_py
+    assert 'args["aspect_ratio"] = forced_ratio' in tool_py
+    assert "snapshot[\"ratio\"] = forced_ratio" in tool_py
+    assert "_resolve_image_ratio_and_size_from_prefs" in mcp_py
+    assert "generation_snapshot" in mcp_py
+
+
 def test_storyboard_agent_auth_token_is_normalized_before_task_storage():
     api_py = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
 
