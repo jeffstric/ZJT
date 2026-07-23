@@ -6158,7 +6158,25 @@
                 showModelPanel.value = false;
                 showRatioPanel.value = false;
                 showModelSelect.value = false;
+                showLLMModelSelect.value = false;
                 showDurationPanel.value = false;
+            }
+
+            // 自定义面板内：图片/视频模型列表与 LLM 列表互斥展开，避免同时撑高导致矮屏顶栏选项不可见
+            function toggleModelSelect() {
+                const next = !showModelSelect.value;
+                showModelSelect.value = next;
+                if (next) {
+                    showLLMModelSelect.value = false;
+                }
+            }
+
+            function toggleLLMModelSelect() {
+                const next = !showLLMModelSelect.value;
+                showLLMModelSelect.value = next;
+                if (next) {
+                    showModelSelect.value = false;
+                }
             }
 
             function toggleMobileToolbar() {
@@ -6172,6 +6190,7 @@
                 showRatioPanel.value = false;
                 showSettingsPanel.value = false;
                 showModelSelect.value = false;
+                showLLMModelSelect.value = false;
                 showDurationPanel.value = false;
             }
 
@@ -6427,6 +6446,8 @@
                 toggleModelPanel,
                 toggleRatioPanel,
                 toggleSettingsPanel,
+                toggleModelSelect,
+                toggleLLMModelSelect,
                 showMobileToolbar,
                 toggleMobileToolbar,
                 showSettingsPanel,
@@ -6567,6 +6588,12 @@
         // 注册 Vue i18n 插件
         app.use(window.ZJTi18nVue);
         app.mount('#app');
+
+        // 移除挂载前静态 loading（#app 内 isInitializing 遮罩会接力展示）
+        const preMountLoader = document.getElementById('pre-mount-loader');
+        if (preMountLoader) {
+            preMountLoader.remove();
+        }
 
         // 扫描 DOM 中的 data-i18n 属性（如 <title>）
         if (window.ZJTi18nDOM) {

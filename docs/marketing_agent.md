@@ -27,6 +27,14 @@
 - **视频压缩**：`video_compressor.js`（Canvas + MediaRecorder 方案，按参考视频最低像素要求转码）
 - **国际化**：`i18n-core.js` + `i18n-vue-plugin.js` + `i18n-dom.js`
 
+### 挂载前防闪烁（FOUC）
+
+Vue 挂载前（含 i18n 异步加载期间），模板中的 `v-if` 不会生效，页面里「联系我们 / 算力日志 / 算力充值」等弹窗会以原始 HTML 短暂露出，并显示未编译的 `{{ $t(...) }}` 文本。处理方式：
+
+1. `#app` 增加 `v-cloak`，CSS `[v-cloak] { display: none !important; }` 在挂载前隐藏整个应用根节点
+2. `#app` 外放置静态 `#pre-mount-loader` 加载遮罩，避免纯白屏；`app.mount('#app')` 后立即 `remove()`
+3. 挂载后由 Vue 内 `isInitializing` 加载遮罩接力，直至鉴权/会话初始化完成
+
 ### 三栏布局
 
 页面为 Vue 3 单页应用（SPA），采用三栏布局，整体高度 100vh：
@@ -55,6 +63,18 @@
 2. **消息流** (`.chat-messages`)：欢迎卡片、用户/AI 消息气泡、打字指示器、继续按钮
 3. **底部输入区** (`.input-area`)：文件上传按钮、文本输入框、媒体缩略图条、类型选择、模型选择、比例/分辨率选择、发送按钮
 4. **弹窗层**：联系反馈弹窗、算力日志弹窗（iframe）、算力充值弹窗、图片放大模态框
+
+#### 输入栏「自定义」设置面板（矮屏适配）
+
+Agent 模式下的「自定义」面板（`.marketing-settings-panel`）内容较多（生成偏好图片/视频、比例、时长、模型列表等）。原先仅用 `position: absolute; bottom: 100%` 向上弹出且无整体高度上限，在视口偏矮时展开模型列表会把顶部的「图片 / 视频」等选项顶出屏幕。
+
+处理策略：
+
+1. `.marketing-panel` 统一限制 `max-height` 并支持内部滚动
+2. 自定义面板拆成 sticky 标题栏 + 可滚动 `.marketing-panel-body`
+3. 面板内模型列表使用 `.marketing-model-list`（`max-height: min(200px, 32vh)`）
+4. 图片/视频模型列表与 LLM 列表互斥展开（`toggleModelSelect` / `toggleLLMModelSelect`）
+5. 视口高度 ≤760px 或宽度 ≤720px 时改为视口内 `fixed` 面板；宽度 ≤499px 时全屏抽屉
 5. **资产库视图** (`.asset-library`)：通过左侧导航切换 `activeView` 为 `assets` 显示，展示用户历史生成结果（图片/视频），每页 60 条，支持分页。图片资产支持"生成视频"操作（`useAssetForVideo`），会将图片带入生成页输入区并自动切换到视频模式。图片放大弹窗中的"生成视频"按钮（`imageToVideo`）同样会自动切换回生成视图。
 
 ## 核心功能详解
