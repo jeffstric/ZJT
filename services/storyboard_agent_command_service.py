@@ -125,6 +125,16 @@ class StoryboardAgentCommandService:
             "environment": get_current_env(),
             "commands": [
                 {
+                    "name": "preference-media-get",
+                    "permission": "world:view",
+                    "params": ["world_id", "media_type", "mode"],
+                },
+                {
+                    "name": "preference-media-set",
+                    "permission": "world:update",
+                    "params": ["world_id", "media_type", "mode", "task_id"],
+                },
+                {
                     "name": "list-worlds",
                     "permission": "world:view",
                     "params": ["page", "page_size", "keyword", "include_full_story_outline"],
@@ -333,6 +343,23 @@ class StoryboardAgentCommandService:
     def _execute_raw(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
         data = dict(params or {})
 
+        if command == "preference-media-get":
+            return self.service.get_media_preferences(
+                user_id=_to_required_int(data.get("user_id"), "user_id"),
+                world_id=_to_required_int(data.get("world_id"), "world_id"),
+                media_type=data.get("media_type"),
+                mode=data.get("mode"),
+            )
+
+        if command == "preference-media-set":
+            return self.service.set_media_preference(
+                user_id=_to_required_int(data.get("user_id"), "user_id"),
+                world_id=_to_required_int(data.get("world_id"), "world_id"),
+                media_type=_to_required_str(data.get("media_type"), "media_type"),
+                mode=_to_required_str(data.get("mode"), "mode"),
+                task_id=_to_required_int(data.get("task_id"), "task_id"),
+            )
+
         if command == "list-worlds":
             return self.service.list_worlds(
                 user_id=_to_int(data.get("user_id"), "user_id"),
@@ -491,6 +518,7 @@ class StoryboardAgentCommandService:
                 ratio=data.get("ratio"),
                 image_size=data.get("image_size"),
                 count=_to_int(data.get("count"), "count", 1) or 1,
+                task_type=_to_int(data.get("task_type") or data.get("image_task_id"), "task_type"),
             )
 
         if command == "auto-generate-missing-images":
@@ -524,7 +552,7 @@ class StoryboardAgentCommandService:
                 stop_on_error=not _to_bool(
                     True if data.get("continue_on_error") is None else data.get("continue_on_error")
                 ),
-                task_type=_to_required_int(
+                task_type=_to_int(
                     data.get("task_type") or data.get("video_task_id"), "task_type"
                 ),
                 ratio=data.get("ratio"),
@@ -534,7 +562,6 @@ class StoryboardAgentCommandService:
             )
 
         if command == "generate-video":
-            # CLI 单条视频强制要求显式 task_type（同上理由）。
             return self.service.generate_video(
                 scene_id=_to_required_int(data.get("scene_id"), "scene_id"),
                 user_id=_to_required_int(data.get("user_id"), "user_id"),
@@ -548,7 +575,7 @@ class StoryboardAgentCommandService:
                 image_urls=data.get("image_urls"),
                 video_urls=data.get("video_urls"),
                 audio_urls=data.get("audio_urls"),
-                task_type=_to_required_int(data.get("task_type"), "task_type"),
+                task_type=_to_int(data.get("task_type"), "task_type"),
             )
 
         if command == "task-status":

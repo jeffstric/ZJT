@@ -165,3 +165,32 @@ export comfyui_env="<environment>"
 ```
 
 CLI 和 HTTP command API 的 JSON 返回都会带 `environment`，方便智能体确认当前连接和本地命令使用的是同一套配置。
+
+## CLI 媒体模型偏好
+
+CLI 使用独立的 `storyboard_cli` 五槽位，绝不读取 Storyboard Web 或 Marketing 偏好。
+
+### Web 配置入口
+
+登录后打开首页右上角 **智能体连接信息** 弹窗 → Tab **智能体模型偏好**：
+
+1. 选择适用世界
+2. 分别为文生图 / 图片编辑 / 文生视频 / 图生视频 / 参考视频选择默认模型
+3. 选择后自动保存（只影响智能体 / CLI 自动化，不影响分镜页或营销页）
+
+界面以通俗说明为主，不展示 `surface` / mode 码 / CLI 命令等底层细节。对应 HTTP API（页面登录态）：
+
+```text
+GET  /api/storyboard/cli/media-preferences?world_id=
+PUT  /api/storyboard/cli/media-preferences
+     body: { world_id, media_type, mode, profile: { task_id } }
+```
+
+### CLI 查询与设置
+
+```bash
+python scripts/storyboard_agent_cli.py preference media get --user-id 1 --world-id 10
+python scripts/storyboard_agent_cli.py preference media set --user-id 1 --world-id 10 --media-type video --mode reference_to_video --task-id 29
+```
+
+`generate-image`、`generate-video` 和自动批次优先使用显式 `--task-type`；未传时只从对应 CLI 模式槽位解析。批次创建时快照复制到 job/item 的 `extra_json`，恢复、重试和最终提交均使用原快照；模型或输入能力不兼容时直接返回错误，不切换模型或降级 `image_mode`。

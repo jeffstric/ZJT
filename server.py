@@ -90,6 +90,11 @@ from utils.resource_access import (
     ensure_resource_access,
     ensure_world_access,
 )
+from services.media_generation_preference_service import (
+    MediaGenerationPreferenceError,
+    MediaGenerationPreferenceService,
+)
+from config.constant import MediaGenerationType, MediaGenerationMode
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
@@ -144,6 +149,82 @@ def _json_bool(value, default: bool = False) -> bool:
         if normalized in {"0", "false", "no", "n", "off", ""}:
             return False
     return default
+
+
+def _generation_snapshot_extra_config(
+    raw_snapshot: Optional[str],
+    *,
+    task_id: int,
+    media_type: str,
+    mode: str,
+    extra_config: Optional[str] = None,
+    image_mode: Optional[str] = None,
+    has_reference_audio_video: bool = False,
+) -> str:
+    """校验快照与最终 task_id，并合并到 ai_tools.extra_config。"""
+    base: dict = {}
+    if extra_config:
+        try:
+            parsed_extra = json.loads(extra_config)
+            if isinstance(parsed_extra, dict):
+                base.update(parsed_extra)
+            else:
+                raise HTTPException(status_code=400, detail="extra_config 必须是 JSON 对象")
+        except (TypeError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="extra_config 必须是 JSON 对象")
+
+    snapshot = None
+    if raw_snapshot:
+        try:
+            snapshot = json.loads(raw_snapshot) if isinstance(raw_snapshot, str) else raw_snapshot
+        except (TypeError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="generation_snapshot 必须是 JSON 对象")
+        if not isinstance(snapshot, dict):
+            raise HTTPException(status_code=400, detail="generation_snapshot 必须是 JSON 对象")
+    try:
+        config = MediaGenerationPreferenceService.validate_model(
+            task_id,
+            media_type,
+            mode,
+            image_mode=image_mode,
+            has_reference_audio_video=has_reference_audio_video,
+            allow_hidden=bool(snapshot),
+            expected_model_key=(snapshot or {}).get('model_key'),
+        )
+    except MediaGenerationPreferenceError as exc:
+        raise HTTPException(status_code=400, detail=exc.to_dict())
+
+    snapshot_mismatch = False
+    if snapshot:
+        try:
+            snapshot_mismatch = int(snapshot.get('task_id', -1)) != int(task_id)
+        except (TypeError, ValueError):
+            snapshot_mismatch = True
+        snapshot_mismatch = snapshot_mismatch or (
+            snapshot.get('media_type') not in (None, media_type)
+            or snapshot.get('mode') not in (None, mode)
+        )
+    if snapshot_mismatch:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'code': 'SNAPSHOT_MISMATCH',
+                'message': '任务快照与最终生成参数不一致',
+            },
+        )
+    if snapshot is None:
+        snapshot = {
+            'schema_version': 1,
+            'surface': 'direct_api',
+            'media_type': media_type,
+            'mode': mode,
+            'model_source': 'request',
+            'task_id': int(task_id),
+            'model_key': config.key,
+            'model_name': config.name,
+        }
+    base['generation_snapshot'] = snapshot
+    return json.dumps(base, ensure_ascii=False)
 
 
 async def _validate_image_size(file: UploadFile, max_size_bytes: int = None) -> tuple[bool, str]:
@@ -1268,7 +1349,8 @@ async def image_edit(
     auth_token: str = Form(None, description="Authentication token"),
     image_size: str = Form("1K", description="Image resolution: 1K, 2K, 4K"),
     ref_image_urls: str = Form(None, description="Reference image URLs, comma separated"),
-    extra_config: str = Form(None, description="Extra config JSON for multi-angle parameters")
+    extra_config: str = Form(None, description="Extra config JSON for multi-angle parameters"),
+    generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
 ):
     """
     Submit image editing task to RunningHub nanobanana service
@@ -1288,6 +1370,13 @@ async def image_edit(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是图片编辑任务")
         
         image_edit_type = task_id
+        audited_extra_config = _generation_snapshot_extra_config(
+            generation_snapshot,
+            task_id=task_id,
+            media_type=MediaGenerationType.IMAGE,
+            mode=MediaGenerationMode.IMAGE_EDIT,
+            extra_config=extra_config,
+        )
         # 根据 image_size 构建 context，用于算力修饰符计算
         context = {}
         if image_size:
@@ -1372,7 +1461,8 @@ async def image_edit(
                 try:
                     # Store multiple image URLs as comma-separated string
                     image_path_str = ','.join(image_urls) if isinstance(image_urls, list) else image_urls
-                    id = AIToolsModel.create(
+                    id = await asyncio.to_thread(
+                        AIToolsModel.create,
                         prompt=prompt,
                         user_id=user_id,
                         type=image_edit_type,  # 1-图片编辑
@@ -1381,9 +1471,10 @@ async def image_edit(
                         transaction_id=transaction_id,
                         status=AI_TOOL_STATUS_PENDING,
                         image_size=image_size,
-                        extra_config=extra_config
+                        extra_config=audited_extra_config,
                     )
-                    TasksModel.create(
+                    await asyncio.to_thread(
+                        TasksModel.create,
                         task_type=TASK_TYPE_GENERATE_VIDEO,
                         task_id=id,
                         status=TASK_STATUS_QUEUED
@@ -1391,7 +1482,9 @@ async def image_edit(
                     # 创建 param_prepare 流水线步骤（如人脸遮盖）
                     try:
                         from task.pipeline_processor import PipelineProcessor
-                        PipelineProcessor.create_param_prepare_steps(id, image_edit_type)
+                        await asyncio.to_thread(
+                            PipelineProcessor.create_param_prepare_steps, id, image_edit_type
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
                     project_ids.append(id)
@@ -1419,7 +1512,8 @@ async def text_to_image(
     image_size: str = Form(None, description="Image resolution: 1K, 2K, 4K"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
-    auth_token: str = Form(None, description="Authentication token")
+    auth_token: str = Form(None, description="Authentication token"),
+    generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
 ):
     """
     Submit text-to-image task
@@ -1434,6 +1528,12 @@ async def text_to_image(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是文生图任务")
         
         text_to_image_type = task_id
+        audited_extra_config = _generation_snapshot_extra_config(
+            generation_snapshot,
+            task_id=task_id,
+            media_type=MediaGenerationType.IMAGE,
+            mode=MediaGenerationMode.TEXT_TO_IMAGE,
+        )
         # 根据 image_size 构建 context，用于算力修饰符计算
         context = {}
         if image_size:
@@ -1496,16 +1596,19 @@ async def text_to_image(
             # Create database record (status=AI_TOOL_STATUS_PENDING, will be processed by scheduler)
             if user_id:
                 try:
-                    id = AIToolsModel.create(
+                    id = await asyncio.to_thread(
+                        AIToolsModel.create,
                         prompt=prompt,
                         user_id=user_id,
                         type=text_to_image_type,
                         ratio=aspect_ratio,
                         transaction_id=transaction_id,
                         status=AI_TOOL_STATUS_PENDING,
-                        image_size=image_size
+                        image_size=image_size,
+                        extra_config=audited_extra_config,
                     )
-                    TasksModel.create(
+                    await asyncio.to_thread(
+                        TasksModel.create,
                         task_type=TASK_TYPE_GENERATE_VIDEO,
                         task_id=id,
                         status=TASK_STATUS_QUEUED
@@ -1513,7 +1616,9 @@ async def text_to_image(
                     # 创建 param_prepare 流水线步骤
                     try:
                         from task.pipeline_processor import PipelineProcessor
-                        PipelineProcessor.create_param_prepare_steps(id, text_to_image_type)
+                        await asyncio.to_thread(
+                            PipelineProcessor.create_param_prepare_steps, id, text_to_image_type
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
                     project_ids.append(id)
@@ -1770,7 +1875,8 @@ async def ai_app_run(
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token"),
-    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）")
+    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）"),
+    generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
 ):
     """
     文生视频任务提交接口。
@@ -1789,6 +1895,16 @@ async def ai_app_run(
         from task.visual_drivers.driver_factory import VideoDriverFactory
         actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
         resolution = validate_video_resolution(resolution, actual_impl)
+        base_extra_config = {}
+        if resolution:
+            base_extra_config[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
+        audited_extra_config = _generation_snapshot_extra_config(
+            generation_snapshot,
+            task_id=task_id,
+            media_type=MediaGenerationType.VIDEO,
+            mode=MediaGenerationMode.TEXT_TO_VIDEO,
+            extra_config=json.dumps(base_extra_config, ensure_ascii=False),
+        )
         context = {}
         if resolution:
             context['resolution'] = resolution
@@ -1856,13 +1972,10 @@ async def ai_app_run(
             # Create database record for each project
             if user_id:
                 try:
-                    extra_config_data = {}
-                    if resolution:
-                        extra_config_data[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
-                    extra_config_json = json.dumps(extra_config_data) if extra_config_data else None
                     impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) if actual_impl else 0
 
-                    id = AIToolsModel.create(
+                    id = await asyncio.to_thread(
+                        AIToolsModel.create,
                         prompt=prompt,
                         user_id=user_id,
                         type=text_to_video_type,
@@ -1870,10 +1983,11 @@ async def ai_app_run(
                         transaction_id=transaction_id,
                         duration=duration_seconds,
                         status=AI_TOOL_STATUS_PENDING,
-                        extra_config=extra_config_json,
+                        extra_config=audited_extra_config,
                         implementation=impl_id
                     )
-                    TasksModel.create(
+                    await asyncio.to_thread(
+                        TasksModel.create,
                         task_type=TASK_TYPE_GENERATE_VIDEO,
                         task_id=id,
                         status=TASK_STATUS_QUEUED
@@ -1881,7 +1995,9 @@ async def ai_app_run(
                     # 创建 param_prepare 流水线步骤
                     try:
                         from task.pipeline_processor import PipelineProcessor
-                        PipelineProcessor.create_param_prepare_steps(id, text_to_video_type)
+                        await asyncio.to_thread(
+                            PipelineProcessor.create_param_prepare_steps, id, text_to_video_type
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
                     project_ids.append(id)
@@ -1922,7 +2038,8 @@ async def ai_app_run_image(
     video_urls: str = Form(None, description="Comma-separated reference video URLs (alternative to uploading video file)"),
     media_references: Optional[str] = Form(None, description="JSON array of media references for @ mention resolution"),
     resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）"),
-    enable_face_mask: bool = Form(False, description="是否启用人脸遮盖预处理（仅 Seedance 2.0 系列商业版生效，默认关闭）")
+    enable_face_mask: bool = Form(False, description="是否启用人脸遮盖预处理（仅 Seedance 2.0 系列商业版生效，默认关闭）"),
+    generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
 ):
     """
     Submit image to video task.
@@ -2060,6 +2177,27 @@ async def ai_app_run_image(
             video_path = await asyncio.to_thread(_save_uploaded_image, video)
             logger.info(f"Saved reference video: {video_path}")
 
+        generation_mode = MediaGenerationPreferenceService.determine_mode(
+            MediaGenerationType.VIDEO,
+            image_urls=main_image_list,
+            reference_image_urls=ref_image_list,
+            video_urls=video_path,
+            audio_urls=audio_path,
+            image_mode=image_mode,
+        )
+        base_extra_config = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
+        if resolution:
+            base_extra_config[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
+        audited_extra_config = _generation_snapshot_extra_config(
+            generation_snapshot,
+            task_id=task_id,
+            media_type=MediaGenerationType.VIDEO,
+            mode=generation_mode,
+            image_mode=image_mode,
+            has_reference_audio_video=bool(video_path or audio_path),
+            extra_config=json.dumps(base_extra_config, ensure_ascii=False),
+        )
+
         # 根据 image_mode 和图片数量构建 context，用于算力修饰符计算
         context = {}
         if image_mode == 'first_last_frame' and main_image_list and len(main_image_list) > 1:
@@ -2139,11 +2277,6 @@ async def ai_app_run_image(
                 # Create database record for each task
                 if user_id:
                     try:
-                        # 构建 extra_config，包含 image_mode 和视频分辨率
-                        extra_config_data = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
-                        if resolution:
-                            extra_config_data[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
-                        extra_config_json = json.dumps(extra_config_data)
                         impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) if actual_impl else 0
 
                         # 判断是否需要创建 pipeline steps（Seedance 2.0 系列 + RunningHub 配置）
@@ -2174,7 +2307,8 @@ async def ai_app_run_image(
 
                         if need_pipeline_steps:
                             # 在同一事务中创建 ai_tools 和 face_mask pipeline steps
-                            id = AIToolsModel.create_with_pipeline_steps(
+                            id = await asyncio.to_thread(
+                                AIToolsModel.create_with_pipeline_steps,
                                 prompt=prompt,
                                 user_id=user_id,
                                 type=image_to_video_type,
@@ -2183,7 +2317,7 @@ async def ai_app_run_image(
                                 duration=duration_seconds,
                                 transaction_id=transaction_id,
                                 status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
-                                extra_config=extra_config_json,
+                                extra_config=audited_extra_config,
                                 reference_images=reference_images_json,
                                 implementation=impl_id,
                                 audio_path=audio_path,
@@ -2191,7 +2325,8 @@ async def ai_app_run_image(
                             )
                         else:
                             # 普通创建（无 pipeline steps）
-                            id = AIToolsModel.create(
+                            id = await asyncio.to_thread(
+                                AIToolsModel.create,
                                 prompt=prompt,
                                 user_id=user_id,
                                 type=image_to_video_type,
@@ -2200,13 +2335,14 @@ async def ai_app_run_image(
                                 duration=duration_seconds,
                                 transaction_id=transaction_id,
                                 status=AI_TOOL_STATUS_PENDING,
-                                extra_config=extra_config_json,
+                                extra_config=audited_extra_config,
                                 reference_images=reference_images_json,
                                 implementation=impl_id,
                                 audio_path=audio_path,
                                 video_path=video_path
                             )
-                        TasksModel.create(
+                        await asyncio.to_thread(
+                            TasksModel.create,
                             task_type=TASK_TYPE_GENERATE_VIDEO,
                             task_id=id,
                             status=TASK_STATUS_QUEUED

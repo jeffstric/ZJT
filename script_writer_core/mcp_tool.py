@@ -52,6 +52,12 @@ _get_image_preferences_func = None
 # 获取用户视频偏好的函数引用（由 script_writer_api.py 设置）
 _get_video_preferences_func = None
 _video_preferences_override = ContextVar("video_preferences_override", default=None)
+_image_generation_snapshot_override = ContextVar(
+    "image_generation_snapshot_override", default=None
+)
+_media_generation_snapshots_override = ContextVar(
+    "media_generation_snapshots_override", default=None
+)
 # 获取视频模型 task_id 的函数引用（由 script_writer_api.py 设置）
 _get_text_to_video_model_id_func = None
 _get_image_to_video_model_id_func = None
@@ -90,6 +96,45 @@ def scoped_video_preferences(preferences: Optional[Dict[str, Any]]):
         _video_preferences_override.reset(token)
 
 
+@contextmanager
+def scoped_image_generation_snapshot(snapshot: Optional[Dict[str, Any]]):
+    """在当前工具调用及其内部子调用中锁定图片模型快照。"""
+    token = _image_generation_snapshot_override.set(
+        dict(snapshot) if snapshot is not None else None
+    )
+    try:
+        yield
+    finally:
+        _image_generation_snapshot_override.reset(token)
+
+
+@contextmanager
+def scoped_media_generation_snapshots(snapshots: Optional[Dict[str, Dict[str, Any]]]):
+    """为一个 Agent 任务锁定多个媒体模式的模型快照。"""
+    token = _media_generation_snapshots_override.set(
+        dict(snapshots) if snapshots is not None else None
+    )
+    try:
+        yield
+    finally:
+        _media_generation_snapshots_override.reset(token)
+
+
+def get_media_generation_snapshot(media_type: str, mode: str) -> Optional[Dict[str, Any]]:
+    snapshots = _media_generation_snapshots_override.get() or {}
+    snapshot = snapshots.get(f"{media_type}.{mode}")
+    return dict(snapshot) if isinstance(snapshot, dict) else None
+
+
+def get_media_generation_snapshots() -> Dict[str, Dict[str, Any]]:
+    snapshots = _media_generation_snapshots_override.get() or {}
+    return {
+        key: dict(value)
+        for key, value in snapshots.items()
+        if isinstance(value, dict)
+    }
+
+
 def set_text_to_video_model_getter(func):
     """设置获取文生视频模型 task_id 的函数"""
     global _get_text_to_video_model_id_func
@@ -114,6 +159,9 @@ def _get_video_preferences(user_id: str, world_id: str) -> Dict[str, str]:
 
 def _get_text_to_image_task_id(user_id: str, world_id: str) -> int:
     """获取生图模型的 task_id，默认返回 7 (nano-banana-Pro)"""
+    snapshot = _image_generation_snapshot_override.get()
+    if snapshot and snapshot.get('task_id') not in (None, ''):
+        return int(snapshot['task_id'])
     if _get_text_to_image_model_id_func:
         return _get_text_to_image_model_id_func(user_id, world_id)
     return DEFAULT_TEXT_TO_IMAGE_TASK_ID
@@ -235,7 +283,13 @@ def get_text_to_image_model_info(user_id: str, world_id: str, auth_token: str) -
         dict: 模型信息，包含 task_id、name、computing_power、supported_sizes、supports_grid_image 等
     """
     try:
-        task_id = _get_text_to_image_task_id(user_id, world_id)
+        locked_image_snapshots = {
+            key: value
+            for key, value in get_media_generation_snapshots().items()
+            if key.startswith('image.')
+        }
+        locked_default = locked_image_snapshots.get('image.text_to_image')
+        task_id = int(locked_default['task_id']) if locked_default else _get_text_to_image_task_id(user_id, world_id)
         from config.unified_config import UnifiedConfigRegistry
         config = UnifiedConfigRegistry.get_by_id(task_id)
         if not config:
@@ -275,6 +329,15 @@ def get_text_to_image_model_info(user_id: str, world_id: str, auth_token: str) -
         }
         if driver_hint:
             result['driver_hint'] = driver_hint
+        if locked_image_snapshots:
+            result['locked_models'] = {
+                key: {
+                    'task_id': value.get('task_id'),
+                    'model_name': value.get('model_name'),
+                    'mode': value.get('mode'),
+                }
+                for key, value in locked_image_snapshots.items()
+            }
 
         return result
     except Exception as e:
@@ -347,7 +410,29 @@ def list_video_models(user_id: str, world_id: str, auth_token: str,
             cat = TaskCategory.IMAGE_TO_VIDEO
             cat_label = "image_to_video"
 
-        configs = UnifiedConfigRegistry.get_by_category(cat)
+        locked_video_snapshots = {
+            key: value
+            for key, value in get_media_generation_snapshots().items()
+            if key.startswith('video.')
+            and (
+                (cat_label == 'text_to_video' and key == 'video.text_to_video')
+                or (cat_label == 'image_to_video' and key != 'video.text_to_video')
+            )
+        }
+        if locked_video_snapshots:
+            locked_ids = {
+                int(value['task_id'])
+                for value in locked_video_snapshots.values()
+                if value.get('task_id') not in (None, '')
+            }
+            configs = [
+                config
+                for task_id in locked_ids
+                for config in [UnifiedConfigRegistry.get_by_id(task_id)]
+                if config is not None
+            ]
+        else:
+            configs = UnifiedConfigRegistry.get_by_category(cat)
         # 与 /api/storyboard/models 同口径：sort_order 升序、过滤 disabled/hidden
         configs = sorted(
             configs,
@@ -359,7 +444,7 @@ def list_video_models(user_id: str, world_id: str, auth_token: str,
 
         models = []
         for c in configs:
-            if not c.enabled or c.hidden:
+            if not c.enabled or (c.hidden and not locked_video_snapshots):
                 continue
             item = {
                 'task_id': c.id,
@@ -390,8 +475,9 @@ def list_video_models(user_id: str, world_id: str, auth_token: str,
             'category': cat_label,
             'models': models,
             'message': (
-                f'共 {len(models)} 个可用 {cat_label} 模型。'
-                f'请在调用视频生成工具时，将所选模型的 task_id 作为 task_type 参数传入。'
+                f'当前任务已锁定 {len(models)} 个 {cat_label} 模式模型，执行器会强制使用对应快照。'
+                if locked_video_snapshots
+                else f'共 {len(models)} 个可用 {cat_label} 模型。'
             ),
         }
     except Exception as e:
@@ -779,7 +865,8 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                image_url: str, aspect_ratio: str = "16:9", count: int = 1,
                image_size: Optional[str] = None,
                item_type: Optional[int] = None, item_name: Optional[str] = None,
-               force_update_exist_image: bool = False) -> Dict[str, Any]:
+               force_update_exist_image: bool = False,
+               task_type: Optional[int] = None) -> Dict[str, Any]:
     """
     图片编辑（图生图）- MCP工具函数（非阻塞版本，支持后台任务处理）
 
@@ -805,24 +892,27 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
         dict: 操作结果，包含 success 状态、project_ids、task_id 等
     """
     # 获取用户配置的生图模型 task_id（图片编辑复用同一模型配置）
-    text_to_image_task_id = _get_text_to_image_task_id(user_id, world_id)
+    locked_snapshot = get_media_generation_snapshot('image', 'image_edit')
+    if locked_snapshot:
+        task_type = locked_snapshot.get('task_id')
+    text_to_image_task_id = (
+        int(task_type)
+        if task_type not in (None, '')
+        else _get_text_to_image_task_id(user_id, world_id)
+    )
 
     # 验证模型是否支持图片编辑
     from config.unified_config import UnifiedConfigRegistry, TaskCategory
     config = UnifiedConfigRegistry.get_by_id(text_to_image_task_id)
-    if config and config.category != TaskCategory.IMAGE_EDIT and TaskCategory.IMAGE_EDIT not in getattr(config, 'categories', []):
-        # 当前选中的模型不支持图片编辑，尝试查找默认的图片编辑模型
-        image_edit_models = UnifiedConfigRegistry.get_by_category(TaskCategory.IMAGE_EDIT)
-        if image_edit_models:
-            # 优先使用默认模型（id=7），否则使用第一个可用的图片编辑模型
-            fallback = next((m for m in image_edit_models if m.id == DEFAULT_TEXT_TO_IMAGE_TASK_ID), image_edit_models[0])
-            text_to_image_task_id = fallback.id
-            logger.warning(f"当前选中的模型不支持图片编辑，自动切换到: {fallback.name} (id={fallback.id})")
-        else:
-            return {
-                'success': False,
-                'error': f'当前选中的模型（id={text_to_image_task_id}）不支持图片编辑，且系统中没有可用的图片编辑模型'
-            }
+    if not config:
+        return {'success': False, 'error': f'图片编辑模型（id={text_to_image_task_id}）不存在'}
+    if not config.enabled or (config.hidden and not locked_snapshot):
+        return {'success': False, 'error': f'图片编辑模型 {config.name} 已禁用或不可用'}
+    if config.category != TaskCategory.IMAGE_EDIT and TaskCategory.IMAGE_EDIT not in getattr(config, 'categories', []):
+        return {
+            'success': False,
+            'error': f'当前选中的模型（id={text_to_image_task_id}）不支持图片编辑'
+        }
 
     model_name = _get_model_name_by_task_id(text_to_image_task_id)
 
@@ -978,6 +1068,11 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
             'auth_token': auth_token,
             'ref_image_urls': ','.join(parsed_urls),
         }
+        generation_snapshot = _image_generation_snapshot_override.get() or locked_snapshot
+        if generation_snapshot:
+            request_data['generation_snapshot'] = json.dumps(
+                generation_snapshot, ensure_ascii=False
+            )
         if image_size:
             request_data['image_size'] = image_size
 
@@ -4258,7 +4353,6 @@ def generate_digital_human(
             'user_id': str(user_id),
             'auth_token': auth_token
         }
-
         # 调用后端数字人生成API
         api_url = f"{base_url.rstrip('/')}/api/digital-human"
 
@@ -4303,7 +4397,7 @@ def generate_digital_human(
 
 
 def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt: str,
-                          aspect_ratio: str = "16:9", count: int = 1,
+                           aspect_ratio: str = "16:9", count: int = 1,
                           image_size: Optional[str] = None,
                           item_type: int = None, item_name: str = None,
                           force_update_exist_image: bool = False,
@@ -4311,7 +4405,8 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                           grid_size: Optional[int] = None,
                           grid_layout: Optional[str] = None,
                           grid_item_names: Optional[List[str]] = None,
-                          target_entity_ids: Optional[List[int]] = None) -> Dict[str, Any]:
+                           target_entity_ids: Optional[List[int]] = None,
+                           task_type: Optional[int] = None) -> Dict[str, Any]:
     """
     文本生成图片 - MCP工具函数（非阻塞版本，支持后台任务处理）
 
@@ -4338,7 +4433,26 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
         dict: 操作结果，包含success状态、project_ids、使用的模型信息、算力消耗等
     """
     # 获取用户配置的生图模型 task_id
-    text_to_image_task_id = _get_text_to_image_task_id(user_id, world_id)
+    locked_snapshot = get_media_generation_snapshot('image', 'text_to_image')
+    if locked_snapshot:
+        task_type = locked_snapshot.get('task_id')
+    text_to_image_task_id = (
+        int(task_type)
+        if task_type not in (None, '')
+        else _get_text_to_image_task_id(user_id, world_id)
+    )
+    from config.unified_config import UnifiedConfigRegistry, TaskCategory
+    selected_config = UnifiedConfigRegistry.get_by_id(text_to_image_task_id)
+    if not selected_config:
+        return {'success': False, 'error': f'文生图模型（id={text_to_image_task_id}）不存在'}
+    if not selected_config.enabled or (selected_config.hidden and not locked_snapshot):
+        return {'success': False, 'error': f'文生图模型 {selected_config.name} 已禁用或不可用'}
+    selected_categories = {selected_config.category, *(selected_config.categories or [])}
+    if TaskCategory.TEXT_TO_IMAGE not in selected_categories:
+        return {
+            'success': False,
+            'error': f'当前选中的模型（id={text_to_image_task_id}）不支持文生图'
+        }
     model_name = _get_model_name_by_task_id(text_to_image_task_id)
 
     try:
@@ -4454,6 +4568,11 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
             'user_id': user_id,
             'auth_token': auth_token
         }
+        generation_snapshot = _image_generation_snapshot_override.get() or locked_snapshot
+        if generation_snapshot:
+            request_data['generation_snapshot'] = json.dumps(
+                generation_snapshot, ensure_ascii=False
+            )
 
         # 确定 image_size
         from config.unified_config import UnifiedConfigRegistry
@@ -4785,33 +4904,29 @@ def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
         }
 
 
-def _resolve_image_edit_task_id(user_id: str, world_id: str) -> Optional[int]:
+def _resolve_image_edit_task_id(
+    user_id: str,
+    world_id: str,
+    task_type: Optional[int] = None,
+) -> Optional[int]:
     """
     解析图片编辑所需的 task_id（模型配置 id）。
 
-    复用 edit_image() 的模型选择逻辑：若用户当前选中的模型不支持 IMAGE_EDIT，
-    则 fallback 到默认 IMAGE_EDIT 模型（id=DEFAULT_TEXT_TO_IMAGE_TASK_ID）。
-    返回 None 表示无可用 IMAGE_EDIT 模型。
+    严格复用 edit_image() 的模型选择逻辑，不兼容时返回 None，禁止 fallback。
     """
     from config.unified_config import UnifiedConfigRegistry, TaskCategory
-    task_id = _get_text_to_image_task_id(user_id, world_id)
+    task_id = (
+        int(task_type)
+        if task_type not in (None, '')
+        else _get_text_to_image_task_id(user_id, world_id)
+    )
     config = UnifiedConfigRegistry.get_by_id(task_id)
     if config and (
         config.category == TaskCategory.IMAGE_EDIT
         or TaskCategory.IMAGE_EDIT in getattr(config, 'categories', [])
     ):
         return task_id
-    image_edit_models = UnifiedConfigRegistry.get_by_category(TaskCategory.IMAGE_EDIT)
-    if not image_edit_models:
-        return None
-    fallback = next(
-        (m for m in image_edit_models if m.id == DEFAULT_TEXT_TO_IMAGE_TASK_ID),
-        image_edit_models[0],
-    )
-    logger.warning(
-        f"宫格 i2i：当前模型不支持图片编辑，自动切换到 {fallback.name} (id={fallback.id})"
-    )
-    return fallback.id
+    return None
 
 
 def _to_public_http_url(url: str, comfyui_base_url: str) -> Optional[str]:
@@ -5035,9 +5150,17 @@ def submit_grid_image_task(
         'ratio': resolved_aspect_ratio,  # i2i 端点字段名是 ratio，不是 aspect_ratio
         'count': 1,
         'user_id': user_id,
-        'auth_token': auth_token,
+            'auth_token': auth_token,
         'ref_image_urls': ','.join(public_ref_urls),  # 逗号分隔的参考图 URL 列表
     }
+    generation_snapshot = (
+        _image_generation_snapshot_override.get()
+        or get_media_generation_snapshot('image', 'image_edit')
+    )
+    if generation_snapshot:
+        request_data['generation_snapshot'] = json.dumps(
+            generation_snapshot, ensure_ascii=False
+        )
     if resolved_image_size:
         request_data['image_size'] = resolved_image_size
     try:
@@ -5171,7 +5294,6 @@ def submit_grid_image_task(
             'task_key': task_key,
             'model_used': model_name,
         }
-
     return {
         'success': True,
         'project_ids': project_ids,

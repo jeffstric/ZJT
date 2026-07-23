@@ -34,6 +34,9 @@ from config.constant import (
     StoryboardAgentCommandConstants,
     SceneDifficulty,
     MediaConstants,
+    MediaGenerationMode,
+    MediaGenerationSurface,
+    MediaGenerationType,
 )
 from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import SceneVideoType, UnifiedConfigRegistry, TaskTypeId, TaskCategory
@@ -80,6 +83,10 @@ from services.storyboard_voiceover_bootstrap_service import (
 )
 from services.storyboard_reference_prompt_service import build_reference_legend, reference_urls
 from services.storyboard_spatial import build_spatial_prompt_context
+from services.media_generation_preference_service import (
+    MediaGenerationPreferenceError,
+    MediaGenerationPreferenceService,
+)
 from task.audio_task import recalc_scene_duration_if_all_completed
 
 logger = logging.getLogger(__name__)
@@ -95,6 +102,118 @@ ALLOWED_DIALOGUE_UPDATE_FIELDS = {
     'character_id', 'text', 'speed', 'volume',
 }
 VALID_ASSET_TYPES = ('first_frame', 'last_frame', 'video')
+
+
+def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
+    config_json = storyboard.to_dict().get('config_json') or {}
+    if not isinstance(config_json, dict):
+        config_json = {}
+    result: Dict[str, Dict[str, Any]] = {}
+    config_updates: Dict[str, int] = {}
+    for media_type, modes in (
+        (MediaGenerationType.IMAGE, MediaGenerationMode.IMAGE_MODES),
+        (MediaGenerationType.VIDEO, MediaGenerationMode.VIDEO_MODES),
+    ):
+        for mode in modes:
+            field = MediaGenerationPreferenceService.storyboard_config_field(media_type, mode)
+            raw_task_id = config_json.get(field)
+            is_new_field = raw_task_id not in (None, "")
+            if not is_new_field:
+                legacy_field = (
+                    'selectedImageTaskId'
+                    if media_type == MediaGenerationType.IMAGE
+                    else 'selectedVideoTaskId'
+                )
+                raw_task_id = config_json.get(legacy_field)
+
+            profile = None
+            if raw_task_id not in (None, ""):
+                try:
+                    task_config = MediaGenerationPreferenceService.validate_model(
+                        raw_task_id,
+                        media_type,
+                        mode,
+                        image_mode=(
+                            'multi_reference'
+                            if mode == MediaGenerationMode.REFERENCE_TO_VIDEO
+                            else None
+                        ),
+                    )
+                    profile = {
+                        'schema_version': 1,
+                        'task_id': int(task_config.id),
+                        'model_key': task_config.key,
+                        'model_name': task_config.name,
+                    }
+                except MediaGenerationPreferenceError:
+                    profile = None
+            if profile is None:
+                profile = MediaGenerationPreferenceService.get_profile(
+                    storyboard.user_id,
+                    storyboard.world_id,
+                    MediaGenerationSurface.STORYBOARD_UI,
+                    media_type,
+                    mode,
+                )
+            result[MediaGenerationPreferenceService.slot_key(media_type, mode)] = profile
+            config_updates[field] = int(profile['task_id'])
+    if config_updates:
+        StoryboardModel.patch_config_json(int(storyboard.id), config_updates)
+    return result
+
+
+def _storyboard_generation_snapshots_sync(storyboard) -> Dict[str, Dict[str, Any]]:
+    """在 Agent 提交时一次性冻结 Storyboard 的全部五个媒体槽位。"""
+    profiles = _storyboard_media_preferences_sync(storyboard)
+    snapshots: Dict[str, Dict[str, Any]] = {}
+    for slot, profile in profiles.items():
+        media_type, mode = slot.split('.', 1)
+        snapshots[slot] = MediaGenerationPreferenceService.build_snapshot(
+            profile,
+            MediaGenerationSurface.STORYBOARD_UI,
+            media_type,
+            mode,
+            model_source='storyboard_config',
+        )
+    return snapshots
+
+
+def _resolve_storyboard_generation_snapshot_sync(
+    storyboard,
+    *,
+    user_id: int,
+    media_type: str,
+    mode: str,
+    explicit_task_id: Optional[int],
+    profile_values: Optional[Dict[str, Any]] = None,
+    has_reference_audio_video: bool = False,
+) -> Dict[str, Any]:
+    source = 'storyboard_config'
+    if explicit_task_id not in (None, ''):
+        source = 'request'
+        profile = dict(profile_values or {})
+        profile['task_id'] = int(explicit_task_id)
+        profile = MediaGenerationPreferenceService.save_profile(
+            user_id,
+            storyboard.world_id,
+            MediaGenerationSurface.STORYBOARD_UI,
+            media_type,
+            mode,
+            profile,
+        )
+        field = MediaGenerationPreferenceService.storyboard_config_field(media_type, mode)
+        StoryboardModel.patch_config_json(int(storyboard.id), {field: profile['task_id']})
+    else:
+        profiles = _storyboard_media_preferences_sync(storyboard)
+        profile = profiles[MediaGenerationPreferenceService.slot_key(media_type, mode)]
+    return MediaGenerationPreferenceService.build_snapshot(
+        profile,
+        MediaGenerationSurface.STORYBOARD_UI,
+        media_type,
+        mode,
+        model_source=source,
+        has_reference_audio_video=has_reference_audio_video,
+    )
 
 
 class StoryboardAssetUploadTooLarge(ValueError):
@@ -326,25 +445,13 @@ async def _build_storyboard_agent_video_preferences(
         normalize_storyboard_workflow_ratio(getattr(storyboard, 'workflow_ratio', None))
         or DEFAULT_STORYBOARD_WORKFLOW_RATIO
     )
-    user_key = str(user_id)
-    world_key = str(world_id)
-
-    def _load() -> Dict[str, Any]:
-        from api.script_writer import get_video_preferences
-
-        return dict(get_video_preferences(user_key, world_key) or {})
-
-    try:
-        preferences = await asyncio.to_thread(_load)
-    except Exception as e:
-        logger.warning(f"Failed to load existing video preferences for storyboard agent: {e}")
-        preferences = {}
-
-    preferences.update({
+    # Storyboard 参数只来自当前 Storyboard 界面和任务快照，禁止读取 Marketing
+    # 的历史共享偏好，否则两个入口会在比例、分辨率等字段上发生串扰。
+    preferences = {
         'ratio': ratio,
         'image_mode': image_mode,
         'duration': int(duration_seconds),
-    })
+    }
     if video_resolution:
         preferences['resolution'] = str(video_resolution)
 
@@ -1416,7 +1523,7 @@ def _build_storyboard_agent_message(
     neighbor_contexts_json = json.dumps(neighbor_contexts, ensure_ascii=False, indent=2)
     video_input_urls = [str(u).strip() for u in (video_input_urls or []) if str(u).strip()]
     image_mode = (image_mode or 'first_last_frame').strip().lower()
-    if image_mode not in ('first_last_frame', 'multi_reference'):
+    if image_mode not in ('first_last_frame', 'multi_reference', 'first_last_with_ref'):
         image_mode = 'first_last_frame'
     reference_legend = build_reference_legend(reference_image_items)
     if reference_image_items:
@@ -1554,6 +1661,7 @@ class StoryboardImageAgentRunner:
         video_preferences: Optional[Dict[str, Any]] = None,
         style: str = "",
         composition_preference: str = "",
+        generation_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         self.scene_id = scene_id
         self.scene_context = scene_context
@@ -1563,6 +1671,7 @@ class StoryboardImageAgentRunner:
         self.video_preferences = dict(video_preferences or {})
         self.style = style or ""
         self.composition_preference = composition_preference or ""
+        self.generation_snapshots = dict(generation_snapshots or {})
 
     @staticmethod
     def _resolve_storyboard_agent_model(default_model: str, model_id: Optional[int]) -> str:
@@ -1600,18 +1709,33 @@ class StoryboardImageAgentRunner:
             generation_target=self.generation_target,
             video_type=self.video_type,
         )
+        persisted_context = getattr(task, 'execution_context_json', None) or {}
+        persisted_snapshots = persisted_context.get('generation_snapshots') or {}
+        generation_snapshots = dict(persisted_snapshots or self.generation_snapshots)
+        active_slot = persisted_context.get('active_generation_slot')
+        active_snapshot = generation_snapshots.get(active_slot) if active_slot else None
+        if not active_snapshot:
+            expected_type = 'video.' if self.generation_target == 'video' else 'image.'
+            active_snapshot = next(
+                (value for key, value in generation_snapshots.items() if key.startswith(expected_type)),
+                None,
+            )
         agent_tool_executor = tool_executor
         if self.generation_target == "image":
             agent_tool_executor = StoryboardAgentImageToolExecutor(
                 tool_executor,
                 style=self.style,
                 composition_preference=self.composition_preference,
+                generation_snapshot=active_snapshot,
             )
         else:
+            effective_video_preferences = dict(self.video_preferences)
+            if active_snapshot:
+                effective_video_preferences.update(active_snapshot)
             agent_tool_executor = StoryboardAgentVideoToolExecutor(
                 tool_executor,
                 scene_id=self.scene_id,
-                video_preferences=self.video_preferences,
+                video_preferences=effective_video_preferences,
             )
         model = self._resolve_storyboard_agent_model(
             config.get("model") or "gemini/gemini-3-flash-preview",
@@ -2134,6 +2258,9 @@ async def get_storyboard_models(
                 item['supported_image_modes'] = [str(m) for m in modes]
                 item['supports_last_frame'] = bool(getattr(c, 'supports_last_frame', True))
                 item['max_multi_ref_images'] = int(getattr(c, 'max_multi_ref_images', None) or 5)
+                item['supports_ref_audio_video'] = bool(
+                    getattr(c, 'supports_ref_audio_video', False)
+                )
             items.append(item)
         return items
 
@@ -2149,6 +2276,153 @@ async def get_storyboard_models(
         'text_to_video_models': _list(TaskCategory.TEXT_TO_VIDEO),
         'image_to_video_models': _list(TaskCategory.IMAGE_TO_VIDEO),
     })
+
+
+@router.get('/media-preferences')
+@require_permission("storyboard:view")
+async def get_storyboard_media_preferences(
+    request: Request,
+    storyboard_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    user_id = get_user_id_from_header(user_id)
+    storyboard = await asyncio.to_thread(StoryboardModel.get_by_id, int(storyboard_id))
+    if not storyboard:
+        return JSONResponse(status_code=404, content={'error': '故事板不存在'})
+    ensure_resource_access(storyboard, user_id, Action.VIEW, "故事板")
+    try:
+        profiles = await asyncio.to_thread(_storyboard_media_preferences_sync, storyboard)
+        return JSONResponse({'success': True, 'profiles': profiles})
+    except MediaGenerationPreferenceError as exc:
+        return JSONResponse(status_code=400, content={'success': False, 'error': exc.to_dict()})
+
+
+@router.put('/media-preferences')
+@require_permission("storyboard:update")
+async def update_storyboard_media_preference(
+    request: Request,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    user_id = get_user_id_from_header(user_id)
+    data = await request.json()
+    storyboard_id = data.get('storyboard_id')
+    if storyboard_id in (None, ""):
+        return JSONResponse(status_code=400, content={'success': False, 'error': 'storyboard_id 不能为空'})
+    storyboard = await asyncio.to_thread(StoryboardModel.get_by_id, int(storyboard_id))
+    if not storyboard:
+        return JSONResponse(status_code=404, content={'success': False, 'error': '故事板不存在'})
+    ensure_resource_access(storyboard, user_id, Action.EDIT, "故事板")
+    media_type = data.get('media_type')
+    mode = data.get('mode')
+    profile = data.get('profile')
+
+    def _save():
+        saved = MediaGenerationPreferenceService.save_profile(
+            user_id,
+            storyboard.world_id,
+            MediaGenerationSurface.STORYBOARD_UI,
+            media_type,
+            mode,
+            profile,
+        )
+        field = MediaGenerationPreferenceService.storyboard_config_field(media_type, mode)
+        StoryboardModel.patch_config_json(int(storyboard.id), {field: saved['task_id']})
+        return saved
+
+    try:
+        saved = await asyncio.to_thread(_save)
+        return JSONResponse({'success': True, 'profile': saved})
+    except (MediaGenerationPreferenceError, ValueError) as exc:
+        error = exc.to_dict() if isinstance(exc, MediaGenerationPreferenceError) else str(exc)
+        return JSONResponse(status_code=400, content={'success': False, 'error': error})
+
+
+def _cli_media_preferences_sync(user_id: int, world_id: int) -> Dict[str, Dict[str, Any]]:
+    """读取 storyboard_cli 五槽位偏好（不读写 UI/项目配置）。"""
+    profiles: Dict[str, Dict[str, Any]] = {}
+    for media_type, modes in (
+        (MediaGenerationType.IMAGE, MediaGenerationMode.IMAGE_MODES),
+        (MediaGenerationType.VIDEO, MediaGenerationMode.VIDEO_MODES),
+    ):
+        for mode in modes:
+            profile = MediaGenerationPreferenceService.get_profile(
+                user_id,
+                world_id,
+                MediaGenerationSurface.STORYBOARD_CLI,
+                media_type,
+                mode,
+            )
+            profiles[MediaGenerationPreferenceService.slot_key(media_type, mode)] = profile
+    return profiles
+
+
+@router.get('/cli/media-preferences')
+@require_permission("storyboard:view")
+async def get_cli_media_preferences(
+    request: Request,
+    world_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """Web 配置 Storyboard CLI 独立媒体模型偏好（surface 固定为 storyboard_cli）。"""
+    resolved_user_id = get_user_id_from_header(user_id)
+    await asyncio.to_thread(ensure_world_access, int(world_id), resolved_user_id, Action.VIEW)
+    try:
+        profiles = await asyncio.to_thread(
+            _cli_media_preferences_sync, int(resolved_user_id), int(world_id)
+        )
+        return JSONResponse({
+            'success': True,
+            'surface': MediaGenerationSurface.STORYBOARD_CLI,
+            'world_id': int(world_id),
+            'profiles': profiles,
+        })
+    except MediaGenerationPreferenceError as exc:
+        return JSONResponse(status_code=400, content={'success': False, 'error': exc.to_dict()})
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={'success': False, 'error': str(exc)})
+
+
+@router.put('/cli/media-preferences')
+@require_permission("storyboard:update")
+async def update_cli_media_preference(
+    request: Request,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """更新单个 storyboard_cli 槽位；一次 PUT 只写一个 mode。"""
+    resolved_user_id = get_user_id_from_header(user_id)
+    data = await request.json()
+    world_id = data.get('world_id')
+    if world_id in (None, ""):
+        return JSONResponse(status_code=400, content={'success': False, 'error': 'world_id 不能为空'})
+    await asyncio.to_thread(ensure_world_access, int(world_id), resolved_user_id, Action.EDIT)
+    media_type = data.get('media_type')
+    mode = data.get('mode')
+    profile = data.get('profile')
+    if not isinstance(profile, dict):
+        profile = {'task_id': data.get('task_id')} if data.get('task_id') not in (None, "") else {}
+
+    def _save():
+        return MediaGenerationPreferenceService.save_profile(
+            resolved_user_id,
+            int(world_id),
+            MediaGenerationSurface.STORYBOARD_CLI,
+            media_type,
+            mode,
+            profile,
+        )
+
+    try:
+        saved = await asyncio.to_thread(_save)
+        return JSONResponse({
+            'success': True,
+            'surface': MediaGenerationSurface.STORYBOARD_CLI,
+            'world_id': int(world_id),
+            'slot': MediaGenerationPreferenceService.slot_key(media_type, mode),
+            'profile': saved,
+        })
+    except (MediaGenerationPreferenceError, ValueError) as exc:
+        error = exc.to_dict() if isinstance(exc, MediaGenerationPreferenceError) else str(exc)
+        return JSONResponse(status_code=400, content={'success': False, 'error': error})
 
 
 @router.get('/agent/schema')
@@ -2879,17 +3153,6 @@ async def generate_scene_image(
 
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
     task_type = data.get('task_type')
-    if task_type:
-        try:
-            from api.script_writer import set_text_to_image_model_id
-            await asyncio.to_thread(
-                set_text_to_image_model_id,
-                str(user_id),
-                str(sb.world_id if sb else scene.storyboard_id),
-                int(task_type),
-            )
-        except Exception as e:
-            logger.warning(f"Failed to sync storyboard image model preference: {e}")
 
     try:
         from services.storyboard_agent_cli_service import StoryboardAgentCliService, StoryboardCliError
@@ -2906,8 +3169,12 @@ async def generate_scene_image(
             ratio=data.get('ratio') or (sb.workflow_ratio if sb else None),
             image_size=data.get('image_size') or None,
             count=_safe_int(data.get('count'), 1) or 1,
+            task_type=(int(task_type) if task_type not in (None, '') else None),
+            preference_surface=MediaGenerationSurface.STORYBOARD_UI,
         )
-    except StoryboardCliError as exc:
+    except (StoryboardCliError, TypeError, ValueError) as exc:
+        if not isinstance(exc, StoryboardCliError):
+            return JSONResponse(status_code=400, content={'success': False, 'error': 'task_type 必须为整数'})
         return JSONResponse(status_code=400, content=exc.to_dict())
 
     return JSONResponse(result)
@@ -3017,7 +3284,7 @@ async def generate_scene_video(
         return JSONResponse(result)
 
     # 图生视频：必须选中首帧
-    task_type = int(data.get('task_type') or TaskTypeId.SEEDANCE_2_0_IMAGE_TO_VIDEO)
+    requested_task_type = data.get('task_type')
     audio_path = None
     if not scene.selected_first_frame_id:
         return JSONResponse(status_code=400, content={'error': '请先生成并选中首帧图片'})
@@ -3030,6 +3297,27 @@ async def generate_scene_video(
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
     ratio = data.get('ratio') or (sb.workflow_ratio if sb else None)
 
+    try:
+        generation_snapshot = await asyncio.to_thread(
+            _resolve_storyboard_generation_snapshot_sync,
+            sb,
+            user_id=user_id,
+            media_type=MediaGenerationType.VIDEO,
+            mode=MediaGenerationMode.IMAGE_TO_VIDEO,
+            explicit_task_id=(
+                int(requested_task_type)
+                if requested_task_type not in (None, '')
+                else None
+            ),
+            profile_values={
+                'ratio': ratio,
+                'image_mode': 'first_last_frame',
+            },
+        )
+    except (MediaGenerationPreferenceError, TypeError, ValueError) as exc:
+        error = exc.to_dict() if isinstance(exc, MediaGenerationPreferenceError) else 'task_type 必须为整数'
+        return JSONResponse(status_code=400, content={'success': False, 'error': error})
+    task_type = int(generation_snapshot['task_id'])
     config = UnifiedConfigRegistry.get_by_id(task_type)
     supported_durations = list(getattr(config, 'supported_durations', None) or []) if config else []
     duration_mode = data.get('duration_mode', data.get('duration', 'auto'))
@@ -3048,6 +3336,12 @@ async def generate_scene_video(
         video_resolution = str(default_res)
     else:
         video_resolution = None
+    generation_snapshot.update({
+        'ratio': ratio,
+        'duration_seconds': video_duration,
+        'resolution': video_resolution,
+        'image_mode': 'first_last_frame',
+    })
     clip_to_audio_duration = bool(data.get('clip_to_audio_duration', True))
     try:
         audio_duration = float(scene.duration) if scene.duration is not None else None
@@ -3085,6 +3379,7 @@ async def generate_scene_video(
         'video_type': video_type,
         'source': 'storyboard',
         'clip_to_audio_duration': clip_to_audio_duration,
+        'generation_snapshot': generation_snapshot,
     }
     if video_resolution:
         extra_payload['resolution'] = video_resolution
@@ -3260,17 +3555,6 @@ async def scene_ai_chat(
     first_frame_url = (first_frame or {}).get('result_url')
 
     image_task_id = data.get('image_task_id')
-    if image_task_id:
-        try:
-            from api.script_writer import set_text_to_image_model_id
-            await asyncio.to_thread(
-                set_text_to_image_model_id,
-                str(user_id),
-                str(sb.world_id if sb else scene.storyboard_id),
-                int(image_task_id),
-            )
-        except Exception as e:
-            logger.warning(f"Failed to sync storyboard image model preference: {e}")
     raw_video_task_id = data.get('video_task_id')
     video_task_id = None
     if raw_video_task_id is not None and str(raw_video_task_id).strip() != '':
@@ -3279,36 +3563,6 @@ async def scene_ai_chat(
         except (TypeError, ValueError):
             logger.warning(f"Invalid storyboard video_task_id: {raw_video_task_id!r}")
             video_task_id = None
-    if video_task_id is not None:
-        # 对齐 marketing /api/video-model：每次请求按当前齿轮选择同步图生/文生视频偏好，
-        # 保证中途改模型后的下一次 Agent 提交能读到新模型（任务级快照仍是主路径）。
-        try:
-            from api.script_writer import set_image_to_video_model_id, set_text_to_video_model_id
-            from config.unified_config import TaskCategory as _TaskCategory
-
-            world_key = str(sb.world_id if sb else scene.storyboard_id)
-            v_cfg = UnifiedConfigRegistry.get_by_id(video_task_id)
-            categories = [getattr(v_cfg, 'category', None)] if v_cfg else []
-            if v_cfg and getattr(v_cfg, 'categories', None):
-                categories.extend(list(v_cfg.categories or []))
-            categories = [c for c in categories if c]
-            if not categories or _TaskCategory.IMAGE_TO_VIDEO in categories:
-                await asyncio.to_thread(
-                    set_image_to_video_model_id,
-                    str(user_id),
-                    world_key,
-                    video_task_id,
-                )
-            if _TaskCategory.TEXT_TO_VIDEO in categories:
-                await asyncio.to_thread(
-                    set_text_to_video_model_id,
-                    str(user_id),
-                    world_key,
-                    video_task_id,
-                )
-        except Exception as e:
-            logger.warning(f"Failed to sync storyboard video model preference: {e}")
-
     try:
         from services.storyboard_agent_cli_service import StoryboardAgentCliService
         scene_generation_context = await asyncio.to_thread(
@@ -3354,13 +3608,20 @@ async def scene_ai_chat(
         ordered_slot_urls.append(url)
 
     image_mode = str(data.get('image_mode') or 'first_last_frame').strip().lower()
-    if image_mode not in ('first_last_frame', 'multi_reference'):
+    if image_mode not in ('first_last_frame', 'multi_reference', 'first_last_with_ref'):
         image_mode = 'first_last_frame'
 
     video_duration_seconds = None
     video_resolution = None
     clip_to_audio_duration = None
     video_preferences = None
+    try:
+        generation_snapshots = await asyncio.to_thread(
+            _storyboard_generation_snapshots_sync, sb
+        )
+    except MediaGenerationPreferenceError as exc:
+        return JSONResponse(status_code=400, content={'success': False, 'error': exc.to_dict()})
+    active_generation_slot = None
     if generation_target == 'video':
         # 视频：image_to_video 只使用前端槽位有序图；角色/场景参考仅作文案说明
         video_input_urls = ordered_slot_urls
@@ -3439,6 +3700,36 @@ async def scene_ai_chat(
                 video_resolution=video_resolution,
                 video_task_id=video_task_id,
             )
+
+            video_mode = MediaGenerationPreferenceService.determine_mode(
+                MediaGenerationType.VIDEO,
+                image_urls=video_input_urls,
+                image_mode=image_mode,
+            )
+            try:
+                video_snapshot = await asyncio.to_thread(
+                    _resolve_storyboard_generation_snapshot_sync,
+                    sb,
+                    user_id=user_id,
+                    media_type=MediaGenerationType.VIDEO,
+                    mode=video_mode,
+                    explicit_task_id=video_task_id,
+                    profile_values={
+                        'ratio': video_preferences.get('ratio'),
+                        'resolution': video_resolution,
+                        'duration_seconds': video_duration_seconds,
+                        'image_mode': image_mode,
+                        'enable_face_mask': bool(video_preferences.get('enable_face_mask', False)),
+                    },
+                )
+            except MediaGenerationPreferenceError as exc:
+                return JSONResponse(status_code=400, content={'success': False, 'error': exc.to_dict()})
+            slot_key = MediaGenerationPreferenceService.slot_key(
+                MediaGenerationType.VIDEO, video_mode
+            )
+            generation_snapshots[slot_key] = video_snapshot
+            active_generation_slot = slot_key
+            video_preferences.update(video_snapshot)
     else:
         # 图片：资产参考之后依次追加当前首帧、前后首帧和用户补充图，并保持 URL/说明严格对齐。
         reference_images_for_msg, reference_image_items_for_msg = (
@@ -3453,6 +3744,27 @@ async def scene_ai_chat(
         )
         video_input_urls = None
         task_image_urls = reference_images_for_msg or None
+        image_mode_name = MediaGenerationPreferenceService.determine_mode(
+            MediaGenerationType.IMAGE,
+            image_urls=task_image_urls,
+        )
+        try:
+            image_snapshot = await asyncio.to_thread(
+                _resolve_storyboard_generation_snapshot_sync,
+                sb,
+                user_id=user_id,
+                media_type=MediaGenerationType.IMAGE,
+                mode=image_mode_name,
+                explicit_task_id=(int(image_task_id) if image_task_id not in (None, '') else None),
+                profile_values={},
+            )
+        except (MediaGenerationPreferenceError, TypeError, ValueError) as exc:
+            error = exc.to_dict() if isinstance(exc, MediaGenerationPreferenceError) else str(exc)
+            return JSONResponse(status_code=400, content={'success': False, 'error': error})
+        active_generation_slot = MediaGenerationPreferenceService.slot_key(
+            MediaGenerationType.IMAGE, image_mode_name
+        )
+        generation_snapshots[active_generation_slot] = image_snapshot
 
     video_model_name_for_msg = None
     if generation_target == 'video' and video_preferences:
@@ -3495,6 +3807,14 @@ async def scene_ai_chat(
         thinking_effort = 'medium'
 
     from api.script_writer import task_manager
+    execution_context_json = {
+        'schema_version': 1,
+        'surface': MediaGenerationSurface.STORYBOARD_UI,
+        'storyboard_id': int(scene.storyboard_id),
+        'scene_id': int(scene_id),
+        'active_generation_slot': active_generation_slot,
+        'generation_snapshots': generation_snapshots,
+    }
     task_id = await asyncio.to_thread(
         task_manager.create_task,
         session_id=session_id,
@@ -3508,6 +3828,7 @@ async def scene_ai_chat(
         thinking_effort=thinking_effort,
         image_urls=task_image_urls,
         language=data.get('language') or 'zh-CN',
+        execution_context_json=execution_context_json,
     )
     task = await asyncio.to_thread(task_manager.get_task, task_id)
     if not task:
@@ -3522,6 +3843,7 @@ async def scene_ai_chat(
         video_preferences=video_preferences,
         style=getattr(sb, 'style', '') if sb else '',
         composition_preference=getattr(sb, 'composition_preference', '') if sb else '',
+        generation_snapshots=generation_snapshots,
     )
     task_manager.start_task(task, runner, {
         'user_id': str(user_id),

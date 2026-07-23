@@ -158,6 +158,7 @@ class AgentTask:
     video_urls: Optional[List[str]] = None
     audio_urls: Optional[List[str]] = None
     thumbnail_urls: Optional[List[str]] = None
+    execution_context_json: Optional[Dict[str, Any]] = None
     language: str = "zh-CN"
     status: TaskStatus = TaskStatus.PENDING
     created_at: datetime = field(default_factory=datetime.now)
@@ -185,6 +186,7 @@ class AgentTask:
             "image_urls": self.image_urls,
             "video_urls": self.video_urls,
             "audio_urls": self.audio_urls,
+            "execution_context_json": self.execution_context_json,
             "status": self.status.value,
             "created_at": self.created_at.isoformat(),
             "started_at": self.started_at.isoformat() if self.started_at else None,
@@ -221,6 +223,7 @@ class TaskManager:
         audio_urls: Optional[List[str]] = None,
         thumbnail_urls: Optional[List[str]] = None,
         language: str = "zh-CN",
+        execution_context_json: Optional[Dict[str, Any]] = None,
     ) -> str:
         """创建新任务，返回 task_id"""
         # 处理长文本输入
@@ -257,6 +260,7 @@ class TaskManager:
             video_urls=video_urls,
             audio_urls=audio_urls,
             thumbnail_urls=thumbnail_urls,
+            execution_context_json=execution_context_json,
             language=language,
         )
         logger.info(f"AgentTask created, task.language='{task.language}'")
@@ -278,7 +282,8 @@ class TaskManager:
                 video_urls=video_urls,
                 audio_urls=audio_urls,
                 status='pending',
-                language=language
+                language=language,
+                execution_context_json=execution_context_json,
             )
         except Exception as e:
             logger.error(f"Failed to save task to database: {e}")
@@ -318,6 +323,7 @@ class TaskManager:
                     image_urls=getattr(db_task, 'image_urls', None),
                     video_urls=getattr(db_task, 'video_urls', None),
                     audio_urls=getattr(db_task, 'audio_urls', None),
+                    execution_context_json=getattr(db_task, 'execution_context_json', None),
                     language=getattr(db_task, 'language', 'zh-CN'),
                     status=TaskStatus(db_task.status),
                     progress=db_task.progress,
@@ -408,7 +414,12 @@ class TaskManager:
                 })
 
                 logger.warning(f"[DEBUG] 准备调用 pm_agent.execute()")
-                result = pm_agent.execute(task, session_data)
+                from script_writer_core.mcp_tool import scoped_media_generation_snapshots
+                execution_context = task.execution_context_json or {}
+                with scoped_media_generation_snapshots(
+                    execution_context.get('generation_snapshots') or {}
+                ):
+                    result = pm_agent.execute(task, session_data)
                 logger.warning(f"[DEBUG] pm_agent.execute() 执行完成")
 
                 task.status = TaskStatus.COMPLETED

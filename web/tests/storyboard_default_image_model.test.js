@@ -20,10 +20,18 @@ describe('storyboard default image model', () => {
     };
 
     beforeEach(() => {
+        // 五槽位拆分后，legacy selectedImageTaskId 与 selectedTextToImageTaskId 都需清零，
+        // 否则 resolveAvailableTaskId 会优先沿用上一个用例残留的 current 值。
         state.selectedImageTaskId = null;
+        state.selectedTextToImageTaskId = null;
+        state.selectedImageEditTaskId = null;
         state.imageModels = [];
         state.textToImageModels = [];
-        localStorage.removeItem('storyboard_lastSelectedImageTaskId');
+        state.imageEditModels = [];
+        try {
+            localStorage.removeItem('storyboard_lastSelectedImageTaskId');
+            localStorage.removeItem('storyboard_lastSelectedImageEditTaskId');
+        } catch (_) { /* ignore */ }
     });
 
     it('无历史选择时优先选择 GPT Image 2', () => {

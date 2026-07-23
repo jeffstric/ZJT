@@ -40,7 +40,7 @@
             <div class="title">{{ mainTitle }}</div>
             <div class="subtitle" v-if="route.name==='list'">{{ $t('subtitle') }}</div>
           </div>
-          <button v-if="isLoggedIn" class="agent-connect-btn" type="button" @click="openAgentConnectionModal" title="获取 Codex / Claude Code / OpenClaw / 腾讯 WorkBuddy 智能体连接信息" aria-label="获取 Codex / Claude Code / OpenClaw / 腾讯 WorkBuddy 智能体连接信息">
+          <button v-if="isLoggedIn && creationMode === 'short_drama'" class="agent-connect-btn" type="button" @click="openAgentConnectionModal" title="获取 Codex / Claude Code / OpenClaw / 腾讯 WorkBuddy 智能体连接信息" aria-label="获取 Codex / Claude Code / OpenClaw / 腾讯 WorkBuddy 智能体连接信息">
             <span class="agent-connect-icons" aria-hidden="true">
               <span class="agent-icon-badge codex">
                 <img src="/assets/logos/agent-codex.svg" alt="">
@@ -211,7 +211,23 @@
           智能体连接信息
           <span v-if="isCommunityEdition" class="agent-connection-free-badge">限时免费</span>
         </div>
-        <div class="agent-connection-content">
+        <div class="modal-tabs agent-connection-tabs">
+          <button
+            type="button"
+            class="modal-tab"
+            :class="{active: agentConnectionTab === 'connection'}"
+            @click="agentConnectionTab = 'connection'"
+          >连接信息</button>
+          <button
+            type="button"
+            class="modal-tab"
+            :class="{active: agentConnectionTab === 'cliMediaPref'}"
+            @click="switchAgentConnectionTab('cliMediaPref')"
+          >智能体模型偏好</button>
+        </div>
+
+        <!-- Tab: 连接信息 -->
+        <div class="agent-connection-content" v-if="agentConnectionTab === 'connection'">
           <p class="agent-connection-desc">
             将下面连接包交给 Codex、Claude Code、OpenClaw 或腾讯 WorkBuddy 智能体。接口路径由 skill 按 api_version 固定拼接，智能体会先用 agent_token 换取 auth_token。
           </p>
@@ -243,6 +259,79 @@
           ></textarea>
           <div class="agent-connection-warning">
             这段信息包含可操作账号的 agent_token，只交给你信任的智能体。agent_token 会被智能体换成短期 auth_token；重新登录只会影响页面登录态，不会自动撤销已生成的 agent_token。
+          </div>
+        </div>
+
+        <!-- Tab: 智能体模型偏好（CLI / Agent 默认模型） -->
+        <div class="agent-connection-content cli-media-pref-panel" v-else>
+          <div class="cli-media-pref-intro">
+            <p class="cli-media-pref-intro-title">给智能体选默认生图 / 生视频模型</p>
+            <p class="cli-media-pref-intro-desc">
+              当 Codex、Claude Code 等智能体帮你自动生成分镜图或视频时，会优先使用这里选好的模型。
+              这里的设置<strong>只影响智能体 / 命令行自动化</strong>，不会改动分镜页或营销页里的模型选择。
+              换模型后自动保存。
+            </p>
+          </div>
+          <div class="status danger" v-if="cliMediaPrefError">{{ cliMediaPrefError }}</div>
+          <div class="status success" v-if="cliMediaPrefSuccess">{{ cliMediaPrefSuccess }}</div>
+
+          <div class="cli-media-pref-world">
+            <label class="label" for="cli-media-pref-world-select">适用世界</label>
+            <select
+              id="cli-media-pref-world-select"
+              class="cli-media-pref-select"
+              :value="cliMediaPrefWorldId || ''"
+              :disabled="cliMediaPrefLoading || !cliMediaPrefWorlds.length"
+              @change="onCliMediaPrefWorldChange($event.target.value)"
+            >
+              <option v-if="!cliMediaPrefWorlds.length" value="">暂无可用世界</option>
+              <option v-for="w in cliMediaPrefWorlds" :key="w.id" :value="w.id">
+                {{ w.name || ('世界 #' + w.id) }}
+              </option>
+            </select>
+          </div>
+
+          <div v-if="cliMediaPrefLoading" class="cli-media-pref-loading">加载中...</div>
+          <template v-else-if="cliMediaPrefWorldId">
+            <div class="cli-media-pref-list">
+              <div class="cli-media-pref-row" v-for="slot in cliMediaPrefFlatSlots" :key="slot.key">
+                <div class="cli-media-pref-row-head">
+                  <div class="cli-media-pref-row-text">
+                    <label class="label">{{ slot.label }}</label>
+                    <span class="cli-media-pref-subhint">{{ slot.hint }}</span>
+                  </div>
+                  <span
+                    v-if="cliMediaPrefSaving[slot.key]"
+                    class="cli-media-pref-save-state saving"
+                  >保存中</span>
+                  <span
+                    v-else-if="cliMediaPrefSaved[slot.key]"
+                    class="cli-media-pref-save-state saved"
+                  >已保存</span>
+                </div>
+                <select
+                  class="cli-media-pref-select"
+                  :value="cliMediaPrefSelected[slot.key] || ''"
+                  :disabled="cliMediaPrefSaving[slot.key] || !(cliMediaPrefModels[slot.key] || []).length"
+                  @change="onCliMediaPrefModelChange(slot, $event.target.value)"
+                >
+                  <option v-if="!(cliMediaPrefModels[slot.key] || []).length" value="">暂无可用模型</option>
+                  <option
+                    v-for="m in (cliMediaPrefModels[slot.key] || [])"
+                    :key="m.task_id"
+                    :value="m.task_id"
+                  >
+                    {{ formatCliMediaModelLabel(m) }}
+                  </option>
+                </select>
+                <p v-if="cliMediaPrefRowError[slot.key]" class="cli-media-pref-row-error">
+                  {{ cliMediaPrefRowError[slot.key] }}
+                </p>
+              </div>
+            </div>
+          </template>
+          <div v-else class="cli-media-pref-empty">
+            请先创建一个世界，再为智能体配置默认模型。
           </div>
         </div>
       </div>

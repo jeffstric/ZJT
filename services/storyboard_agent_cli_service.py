@@ -16,6 +16,9 @@ from config.constant import (
     StoryboardAutoGenerateConstants,
     StoryboardFeatureFlags,
     SceneDifficulty,
+    MediaGenerationMode,
+    MediaGenerationSurface,
+    MediaGenerationType,
 )
 from config.unified_config import SceneVideoType, UnifiedConfigRegistry
 from model.ai_tools import AIToolsModel
@@ -41,18 +44,75 @@ from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGri
 from services.storyboard_quality_sequence import (
     get_storyboard_quality_location_reference_coordinator,
 )
+from services.media_generation_preference_service import (
+    MediaGenerationPreferenceError,
+    MediaGenerationPreferenceService,
+)
 
 
 VALID_IMAGE_MODES = {"auto", "text_to_image", "image_edit"}
 VALID_VIDEO_MODES = {"text_to_video", "image_to_video"}
 # 图生视频的图片输入模式：first_last_frame（首尾帧）/ multi_reference（全能参考）。
 # 对齐 marketing_agent 与驱动层 ImageMode，驱动支持的第三种 first_last_with_ref 仅手动对话用，批量不开放。
-VALID_VIDEO_IMAGE_MODES = {"first_last_frame", "multi_reference"}
+VALID_VIDEO_IMAGE_MODES = {"first_last_frame", "multi_reference", "first_last_with_ref"}
 VALID_ASSET_TYPES = {"first_frame", "last_frame", "video"}
 IMAGE_ASSET_TYPES = {"first_frame", "last_frame"}
 
 logger = logging.getLogger(__name__)
 _IMAGE_BATCH_CREATE_LOCK = threading.Lock()
+
+
+def _build_cli_generation_snapshots(
+    user_id: int,
+    world_id: int,
+    *,
+    media_type: str,
+    modes: Sequence[str],
+    explicit_task_id: Optional[int] = None,
+    profile_values: Optional[Dict[str, Any]] = None,
+    surface: str = MediaGenerationSurface.STORYBOARD_CLI,
+) -> Dict[str, Dict[str, Any]]:
+    snapshots: Dict[str, Dict[str, Any]] = {}
+    for mode in modes:
+        try:
+            if explicit_task_id not in (None, ''):
+                config = MediaGenerationPreferenceService.validate_model(
+                    explicit_task_id,
+                    media_type,
+                    mode,
+                    image_mode=(profile_values or {}).get('image_mode'),
+                )
+                profile = dict(profile_values or {})
+                profile.update({
+                    'schema_version': 1,
+                    'task_id': int(config.id),
+                    'model_key': config.key,
+                    'model_name': config.name,
+                })
+                source = 'request'
+            else:
+                profile = MediaGenerationPreferenceService.get_profile(
+                    user_id,
+                    world_id,
+                    surface,
+                    media_type,
+                    mode,
+                )
+                source = 'preference'
+            snapshot = MediaGenerationPreferenceService.build_snapshot(
+                profile,
+                surface,
+                media_type,
+                mode,
+                model_source=source,
+            )
+            snapshots[MediaGenerationPreferenceService.slot_key(media_type, mode)] = snapshot
+        except MediaGenerationPreferenceError:
+            if len(modes) == 1:
+                raise
+    if not snapshots:
+        raise StoryboardCliError('MODEL_REQUIRED', '没有可用于本批次的媒体模型快照')
+    return snapshots
 
 
 def _batch_status_name(code: Any) -> str:
@@ -279,6 +339,70 @@ class AiToolSubmissionService:
 class StoryboardAgentCliService:
     def __init__(self, submitter: Optional[AiToolSubmissionService] = None):
         self.submitter = submitter or AiToolSubmissionService()
+
+    def get_media_preferences(
+        self,
+        user_id: int,
+        world_id: int,
+        *,
+        media_type: Optional[str] = None,
+        mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        user_id = self._require_user_id(user_id)
+        self._ensure_world_for_user(world_id, user_id)
+        slots = []
+        for current_type, modes in (
+            (MediaGenerationType.IMAGE, MediaGenerationMode.IMAGE_MODES),
+            (MediaGenerationType.VIDEO, MediaGenerationMode.VIDEO_MODES),
+        ):
+            for current_mode in modes:
+                if media_type and current_type != media_type:
+                    continue
+                if mode and current_mode != mode:
+                    continue
+                slots.append((current_type, current_mode))
+        if not slots:
+            raise StoryboardCliError('invalid_parameter', 'media_type/mode 组合无效')
+        profiles = {}
+        for current_type, current_mode in slots:
+            profile = MediaGenerationPreferenceService.get_profile(
+                user_id,
+                world_id,
+                MediaGenerationSurface.STORYBOARD_CLI,
+                current_type,
+                current_mode,
+            )
+            profiles[MediaGenerationPreferenceService.slot_key(current_type, current_mode)] = profile
+        return {'success': True, 'profiles': profiles}
+
+    def set_media_preference(
+        self,
+        user_id: int,
+        world_id: int,
+        *,
+        media_type: str,
+        mode: str,
+        task_id: int,
+    ) -> Dict[str, Any]:
+        user_id = self._require_user_id(user_id)
+        self._ensure_world_for_user(world_id, user_id)
+        try:
+            profile = MediaGenerationPreferenceService.save_profile(
+                user_id,
+                world_id,
+                MediaGenerationSurface.STORYBOARD_CLI,
+                media_type,
+                mode,
+                {'task_id': task_id},
+            )
+        except (MediaGenerationPreferenceError, ValueError) as exc:
+            code = getattr(exc, 'code', 'invalid_parameter')
+            raise StoryboardCliError(code, str(exc))
+        return {
+            'success': True,
+            'slot': MediaGenerationPreferenceService.slot_key(media_type, mode),
+            'profile': profile,
+        }
 
     def list_worlds(
         self,
@@ -563,8 +687,11 @@ class StoryboardAgentCliService:
         # ⚠️ style / style_reference_image / composition_preference / workflow_ratio
         # 均不从命令入参获取——前两者由 StoryboardModel.create 内部从世界表
         # 继承（world.visual_style / world.composition_preference），保证同世界画风一致。
-        inherited = StoryboardModel.resolve_inherited_workflow_ratio(
-            int(user_id), int(world_id)
+        ratio_resolver = getattr(StoryboardModel, 'resolve_inherited_workflow_ratio', None)
+        inherited = (
+            ratio_resolver(int(user_id), int(world_id))
+            if callable(ratio_resolver)
+            else None
         ) or {}
         effective_ratio = (str(inherited.get("workflow_ratio") or "").strip() or None) or "16:9"
 
@@ -653,6 +780,9 @@ class StoryboardAgentCliService:
         sequence_mode: Optional[str] = None,
         force_bypass: bool = False,
         select_result: bool = True,
+        task_type: Optional[int] = None,
+        generation_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
+        preference_surface: str = MediaGenerationSurface.STORYBOARD_CLI,
     ) -> Dict[str, Any]:
         if mode not in VALID_IMAGE_MODES:
             raise StoryboardCliError("invalid_mode", f"invalid image mode: {mode}")
@@ -676,42 +806,68 @@ class StoryboardAgentCliService:
         if mode == "auto":
             mode = "image_edit" if reference_urls else "text_to_image"
 
-        if mode == "text_to_image":
-            prompt_text = append_storyboard_visual_suffix(
-                prompt_text,
-                style=storyboard.get("style"),
-                composition_preference=storyboard.get("composition_preference"),
+        if not generation_snapshots:
+            generation_snapshots = _build_cli_generation_snapshots(
+                int(user_id),
+                int(world_id),
+                media_type=MediaGenerationType.IMAGE,
+                modes=[mode],
+                explicit_task_id=task_type,
+                profile_values={'ratio': ratio_value},
+                surface=preference_surface,
             )
-            result = self.submitter.text_to_image(
-                user_id=str(user_id),
-                world_id=world_id,
-                auth_token=auth_token or "",
-                prompt=prompt_text,
-                aspect_ratio=ratio_value,
-                count=int(count or 1),
-                image_size=image_size,
+        generation_snapshot = None
+        if generation_snapshots:
+            slot_key = MediaGenerationPreferenceService.slot_key(
+                MediaGenerationType.IMAGE, mode
             )
-        else:
-            image_urls = self._resolve_image_edit_urls(context, source_image, reference_urls)
-            prompt_text = self._append_reference_prompt_suffix(
-                prompt_text,
-                self._with_source_image_legend(reference_items, context, source_image),
-            )
-            prompt_text = append_storyboard_visual_suffix(
-                prompt_text,
-                style=storyboard.get("style"),
-                composition_preference=storyboard.get("composition_preference"),
-            )
-            result = self.submitter.image_edit(
-                user_id=str(user_id),
-                world_id=world_id,
-                auth_token=auth_token or "",
-                prompt=prompt_text,
-                image_url=",".join(image_urls),
-                aspect_ratio=ratio_value,
-                count=int(count or 1),
-                image_size=image_size,
-            )
+            generation_snapshot = generation_snapshots.get(slot_key)
+            if not generation_snapshot:
+                raise StoryboardCliError(
+                    'MODEL_MODE_UNSUPPORTED',
+                    f'批次快照未锁定图片模式 {mode}',
+                )
+
+        from script_writer_core.mcp_tool import scoped_image_generation_snapshot
+        with scoped_image_generation_snapshot(generation_snapshot):
+            if mode == "text_to_image":
+                prompt_text = append_storyboard_visual_suffix(
+                    prompt_text,
+                    style=storyboard.get("style"),
+                    composition_preference=storyboard.get("composition_preference"),
+                )
+                result = self.submitter.text_to_image(
+                    user_id=str(user_id),
+                    world_id=world_id,
+                    auth_token=auth_token or "",
+                    prompt=prompt_text,
+                    aspect_ratio=ratio_value,
+                    count=int(count or 1),
+                    image_size=image_size,
+                    task_type=(generation_snapshot or {}).get('task_id'),
+                )
+            else:
+                image_urls = self._resolve_image_edit_urls(context, source_image, reference_urls)
+                prompt_text = self._append_reference_prompt_suffix(
+                    prompt_text,
+                    self._with_source_image_legend(reference_items, context, source_image),
+                )
+                prompt_text = append_storyboard_visual_suffix(
+                    prompt_text,
+                    style=storyboard.get("style"),
+                    composition_preference=storyboard.get("composition_preference"),
+                )
+                result = self.submitter.image_edit(
+                    user_id=str(user_id),
+                    world_id=world_id,
+                    auth_token=auth_token or "",
+                    prompt=prompt_text,
+                    image_url=",".join(image_urls),
+                    aspect_ratio=ratio_value,
+                    count=int(count or 1),
+                    image_size=image_size,
+                    task_type=(generation_snapshot or {}).get('task_id'),
+                )
 
         return self._finalize_submission(
             scene_id=scene_id,
@@ -739,6 +895,8 @@ class StoryboardAgentCliService:
         video_urls: Optional[str] = None,
         audio_urls: Optional[str] = None,
         task_type: Optional[int] = None,
+        generation_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
+        preference_surface: str = MediaGenerationSurface.STORYBOARD_CLI,
     ) -> Dict[str, Any]:
         if mode not in VALID_VIDEO_MODES:
             raise StoryboardCliError("invalid_mode", f"invalid video mode: {mode}")
@@ -808,33 +966,70 @@ class StoryboardAgentCliService:
         # 用 ceil 向上取整，确保视频时长不短于音频（避免丢帧/音画不同步）；下限 1 秒。
         duration_value = max(1, math.ceil(float(duration_seconds or scene.get("duration") or 5)))
 
-        if mode == "text_to_video":
-            result = self.submitter.text_to_video(
-                user_id=str(user_id),
-                world_id=world_id,
-                auth_token=auth_token or "",
-                prompt=prompt_text,
-                ratio=ratio_value,
-                duration_seconds=duration_value,
-                count=int(count or 1),
-                task_type=task_type,
+        actual_media_mode = MediaGenerationPreferenceService.determine_mode(
+            MediaGenerationType.VIDEO,
+            image_urls=(image_urls or self._resolve_video_image_urls(context, image_mode)) if mode != 'text_to_video' else None,
+            video_urls=video_urls,
+            audio_urls=audio_urls,
+            image_mode=image_mode if mode != 'text_to_video' else None,
+        )
+        if not generation_snapshots:
+            generation_snapshots = _build_cli_generation_snapshots(
+                int(user_id),
+                int(world_id),
+                media_type=MediaGenerationType.VIDEO,
+                modes=[actual_media_mode],
+                explicit_task_id=task_type,
+                profile_values={
+                    'ratio': ratio_value,
+                    'duration_seconds': duration_value,
+                    'image_mode': image_mode if mode != 'text_to_video' else None,
+                },
+                surface=preference_surface,
             )
-        else:
-            resolved_image_urls = image_urls or self._resolve_video_image_urls(context, image_mode)
-            result = self.submitter.image_to_video(
-                user_id=str(user_id),
-                world_id=world_id,
-                auth_token=auth_token or "",
-                prompt=prompt_text,
-                image_urls=resolved_image_urls,
-                ratio=ratio_value,
-                duration_seconds=duration_value,
-                count=int(count or 1),
-                image_mode=image_mode,
-                video_urls=video_urls,
-                audio_urls=audio_urls,
-                task_type=task_type,
+        generation_snapshot = None
+        if generation_snapshots:
+            generation_snapshot = generation_snapshots.get(
+                MediaGenerationPreferenceService.slot_key(
+                    MediaGenerationType.VIDEO, actual_media_mode
+                )
             )
+            if not generation_snapshot:
+                raise StoryboardCliError(
+                    'MODEL_MODE_UNSUPPORTED',
+                    f'批次快照未锁定视频模式 {actual_media_mode}',
+                )
+            task_type = int(generation_snapshot['task_id'])
+
+        from script_writer_core.mcp_tool import scoped_video_preferences
+        with scoped_video_preferences(generation_snapshot):
+            if mode == "text_to_video":
+                result = self.submitter.text_to_video(
+                    user_id=str(user_id),
+                    world_id=world_id,
+                    auth_token=auth_token or "",
+                    prompt=prompt_text,
+                    ratio=ratio_value,
+                    duration_seconds=duration_value,
+                    count=int(count or 1),
+                    task_type=task_type,
+                )
+            else:
+                resolved_image_urls = image_urls or self._resolve_video_image_urls(context, image_mode)
+                result = self.submitter.image_to_video(
+                    user_id=str(user_id),
+                    world_id=world_id,
+                    auth_token=auth_token or "",
+                    prompt=prompt_text,
+                    image_urls=resolved_image_urls,
+                    ratio=ratio_value,
+                    duration_seconds=duration_value,
+                    count=int(count or 1),
+                    image_mode=image_mode,
+                    video_urls=video_urls,
+                    audio_urls=audio_urls,
+                    task_type=task_type,
+                )
 
         return self._finalize_submission(
             scene_id=scene_id,
@@ -1139,10 +1334,22 @@ class StoryboardAgentCliService:
             )
 
         task_type = self._resolve_image_task_type(storyboard, task_type)
-        self._sync_image_model_preference(user_id, storyboard, task_type)
 
         batch_limit = self._normalize_batch_limit(limit)
         effective_ratio = ratio or _get_field(storyboard, "workflow_ratio")
+        requested_snapshot_modes = {
+            'text_to_image': [MediaGenerationMode.TEXT_TO_IMAGE],
+            'image_edit': [MediaGenerationMode.IMAGE_EDIT],
+            'auto': [MediaGenerationMode.TEXT_TO_IMAGE, MediaGenerationMode.IMAGE_EDIT],
+        }[mode]
+        generation_snapshots = _build_cli_generation_snapshots(
+            int(user_id),
+            int(_get_field(storyboard, 'world_id')),
+            media_type=MediaGenerationType.IMAGE,
+            modes=requested_snapshot_modes,
+            explicit_task_id=task_type,
+            profile_values={'ratio': effective_ratio, 'resolution': image_size},
+        )
         idempotency_payload = self._image_batch_idempotency_payload(
             storyboard_id=int(storyboard_id),
             user_id=int(user_id),
@@ -1237,6 +1444,7 @@ class StoryboardAgentCliService:
                 status=StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_PENDING,
                 extra_json={
                     "task_type": task_type,
+                    "generation_snapshots": generation_snapshots,
                     "idempotency_key": idempotency_key,
                     "idempotency_payload": idempotency_payload,
                     "requested_scene_ids": requested_scene_ids,
@@ -1267,6 +1475,7 @@ class StoryboardAgentCliService:
                     "dependency_scene_id": item.get("dependency_scene_id"),
                     "existing_policy": existing_policy,
                     "base_asset_id": item.get("base_asset_id"),
+                    "generation_snapshots": generation_snapshots,
                 },
             )
             scene_to_item_id[item["scene_id"]] = item_id
@@ -1382,15 +1591,28 @@ class StoryboardAgentCliService:
         image_mode = self._normalize_video_image_mode(image_mode)
         batch_limit = self._normalize_batch_limit(limit)
         effective_ratio = ratio or _get_field(storyboard, "workflow_ratio")
-        # 视频 task_type：优先入参，其次故事板 config_json.selectedVideoTaskId
+        # CLI 只使用显式 task_type 或 storyboard_cli 独立偏好，不读取项目/UI 配置。
         resolved_task_type = task_type
-        if resolved_task_type is None:
-            cfg = _parse_json(_get_field(storyboard, "config_json"), {}) or {}
-            raw = cfg.get("selectedVideoTaskId") or cfg.get("selected_video_task_id")
-            try:
-                resolved_task_type = int(raw) if raw is not None and str(raw).strip() != "" else None
-            except (TypeError, ValueError):
-                resolved_task_type = None
+        media_mode = (
+            MediaGenerationMode.REFERENCE_TO_VIDEO
+            if image_mode in ('multi_reference', 'first_last_with_ref')
+            else MediaGenerationMode.IMAGE_TO_VIDEO
+        )
+        generation_snapshots = _build_cli_generation_snapshots(
+            int(user_id),
+            int(_get_field(storyboard, 'world_id')),
+            media_type=MediaGenerationType.VIDEO,
+            modes=[media_mode],
+            explicit_task_id=resolved_task_type,
+            profile_values={
+                'ratio': effective_ratio,
+                'image_mode': image_mode,
+            },
+        )
+        locked_snapshot = generation_snapshots[
+            MediaGenerationPreferenceService.slot_key(MediaGenerationType.VIDEO, media_mode)
+        ]
+        resolved_task_type = int(locked_snapshot['task_id'])
 
         idempotency_payload = {
             "storyboard_id": int(storyboard_id),
@@ -1437,6 +1659,7 @@ class StoryboardAgentCliService:
                 status=StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_PENDING,
                 extra_json={
                     "task_type": resolved_task_type,
+                    "generation_snapshots": generation_snapshots,
                     "image_mode": image_mode,
                     "idempotency_key": idempotency_key,
                     "idempotency_payload": idempotency_payload,
@@ -1465,6 +1688,7 @@ class StoryboardAgentCliService:
                     "sort_order": item.get("sort_order"),
                     "plan_status": item.get("status"),
                     "skip_reason": item.get("skip_reason") or "",
+                    "generation_snapshots": generation_snapshots,
                 },
             )
             created_items.append({**item, "id": item_id})
@@ -1877,6 +2101,8 @@ class StoryboardAgentCliService:
 
     def _process_one_image_batch_job(self, job: Dict[str, Any]) -> Dict[str, Any]:
         job_id = int(job["id"])
+        job_extra = job.get("extra_json") if isinstance(job.get("extra_json"), dict) else {}
+        generation_snapshots = job_extra.get('generation_snapshots') or {}
         StoryboardImageBatchJobModel.update(job_id, status=StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_RUNNING)
         items = StoryboardImageBatchItemModel.list_by_job(job_id)
         self._reconcile_running_image_batch_items(job_id, items)
@@ -1986,6 +2212,7 @@ class StoryboardAgentCliService:
                     count=int(job.get("count") or 1),
                     sequence_mode=job.get("sequence_mode"),
                     select_result=not is_regeneration,
+                    generation_snapshots=generation_snapshots,
                 )
             except StoryboardCliError as exc:
                 # 外部 location grid readiness check：保持 PENDING，不改状态，仅写诊断 extra_json，
@@ -2129,21 +2356,32 @@ class StoryboardAgentCliService:
 
         # 从 job.extra_json 读取图生视频图片输入模式（兼容旧批次默认 first_last_frame）。
         job_extra = job.get("extra_json") if isinstance(job.get("extra_json"), dict) else {}
+        generation_snapshots = job_extra.get('generation_snapshots') or {}
         batch_image_mode = self._normalize_video_image_mode(job_extra.get("image_mode"))
-        # 防御配置漂移：若所选 task_type 的模型不支持该 image_mode，降级为 first_last_frame。
+        # 严格校验：所选 task_type 不支持 image_mode 时失败，禁止降级输入模式。
         task_type_raw = job_extra.get("task_type")
         if batch_image_mode != "first_last_frame" and task_type_raw is not None:
             try:
                 cfg = UnifiedConfigRegistry.get_by_id(int(task_type_raw))
                 supported = [str(m) for m in (getattr(cfg, "supported_image_modes", None) or [])]
-                if supported and batch_image_mode not in supported:
-                    logger.warning(
-                        "video batch job %s: task_type %s does not support image_mode=%s, fallback to first_last_frame",
-                        job_id, task_type_raw, batch_image_mode,
+                compatible = batch_image_mode in supported
+                if batch_image_mode == "first_last_with_ref":
+                    compatible = all(
+                        required in supported
+                        for required in ("first_last_frame", "multi_reference")
                     )
-                    batch_image_mode = "first_last_frame"
-            except Exception:
-                logger.warning("video batch job %s: failed to validate image_mode against task_type", job_id, exc_info=True)
+                if not compatible:
+                    raise StoryboardCliError(
+                        "MODEL_INPUT_UNSUPPORTED",
+                        f"task_type={task_type_raw} 不支持 image_mode={batch_image_mode}",
+                    )
+            except StoryboardCliError:
+                raise
+            except Exception as exc:
+                raise StoryboardCliError(
+                    "MODEL_INPUT_UNSUPPORTED",
+                    f"无法校验 task_type={task_type_raw}: {exc}",
+                )
 
         for item in items:
             if int(item.get("status") or 0) != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING:
@@ -2172,6 +2410,7 @@ class StoryboardAgentCliService:
                     ratio=job.get("ratio"),
                     image_mode=batch_image_mode,
                     task_type=task_type_raw,
+                    generation_snapshots=generation_snapshots,
                 )
             except StoryboardCliError as exc:
                 StoryboardImageBatchItemModel.update(
@@ -2215,6 +2454,7 @@ class StoryboardAgentCliService:
                 asset_id=selected_asset_id,
                 project_ids=project_ids,
                 extra_json={
+                    **(item.get('extra_json') if isinstance(item.get('extra_json'), dict) else {}),
                     "submission": result,
                     "video_type": result.get("video_type") or item.get("video_type"),
                 },
@@ -2827,13 +3067,8 @@ class StoryboardAgentCliService:
     def _resolve_image_task_type(self, storyboard: Any, task_type: Optional[int]) -> Optional[int]:
         if task_type not in (None, ""):
             return int(task_type)
-        configured = self._storyboard_config(storyboard).get("selectedImageTaskId")
-        if configured in (None, ""):
-            return None
-        try:
-            return int(configured)
-        except (TypeError, ValueError):
-            return None
+        # CLI 与 Storyboard Web 偏好严格隔离；未显式指定时由 CLI 五槽位偏好解析。
+        return None
 
     def _filter_page_by_user(self, result: Dict[str, Any], user_id: int) -> Dict[str, Any]:
         out = dict(result or {})
@@ -3304,20 +3539,6 @@ class StoryboardAgentCliService:
         if value <= 0:
             return unlimited
         return max(1, min(value, max_limit))
-
-    def _sync_image_model_preference(self, user_id: int, storyboard: Any, task_type: Optional[int]) -> None:
-        if task_type in (None, ""):
-            return
-        try:
-            from api.script_writer import set_text_to_image_model_id
-
-            set_text_to_image_model_id(
-                str(user_id),
-                str(_get_field(storyboard, "world_id") or ""),
-                int(task_type),
-            )
-        except Exception:
-            pass
 
     def _asset_info(self, asset_id: Any) -> Optional[Dict[str, Any]]:
         """读取 scene_asset；result_url 优先用 asset 自身，tool 仅作兜底。

@@ -118,6 +118,51 @@ IMAGE_MODE_EXTRA_CONFIG_KEY = "image_mode"
 VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"
 LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
 ASSET_LIST_MAX_PAGE_SIZE = 1000
+
+
+class MediaGenerationSurface:
+    """媒体生成模型偏好的调用入口。"""
+
+    MARKETING_UI = "marketing_ui"
+    STORYBOARD_UI = "storyboard_ui"
+    STORYBOARD_CLI = "storyboard_cli"
+    ALL = (MARKETING_UI, STORYBOARD_UI, STORYBOARD_CLI)
+
+
+class MediaGenerationType:
+    IMAGE = "image"
+    VIDEO = "video"
+    ALL = (IMAGE, VIDEO)
+
+
+class MediaGenerationMode:
+    TEXT_TO_IMAGE = "text_to_image"
+    IMAGE_EDIT = "image_edit"
+    TEXT_TO_VIDEO = "text_to_video"
+    IMAGE_TO_VIDEO = "image_to_video"
+    REFERENCE_TO_VIDEO = "reference_to_video"
+
+    IMAGE_MODES = (TEXT_TO_IMAGE, IMAGE_EDIT)
+    VIDEO_MODES = (TEXT_TO_VIDEO, IMAGE_TO_VIDEO, REFERENCE_TO_VIDEO)
+    ALL = IMAGE_MODES + VIDEO_MODES
+
+
+class MediaGenerationPreferenceConstants:
+    SCHEMA_VERSION = 1
+    PREF_TYPE_PREFIX = "media_pref"
+    SNAPSHOTS_KEY = "generation_snapshots"
+    SNAPSHOT_AUDIT_KEY = "generation_snapshot"
+    FIRST_LAST_WITH_REF = "first_last_with_ref"
+
+
+class MediaGenerationErrorCode:
+    MODEL_REQUIRED = "MODEL_REQUIRED"
+    MODEL_NOT_FOUND = "MODEL_NOT_FOUND"
+    MODEL_DISABLED = "MODEL_DISABLED"
+    MODEL_HIDDEN = "MODEL_HIDDEN"
+    MODEL_MODE_UNSUPPORTED = "MODEL_MODE_UNSUPPORTED"
+    MODEL_INPUT_UNSUPPORTED = "MODEL_INPUT_UNSUPPORTED"
+    SNAPSHOT_MISMATCH = "SNAPSHOT_MISMATCH"
 ASSET_LIST_DB_QUERY_TIMEOUT = 30
 
 # 音频时长探测（ffprobe）单次执行超时（秒）。用于分镜配音完成后探测时长并回写。
