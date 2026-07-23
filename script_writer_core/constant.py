@@ -23,10 +23,13 @@ class ItemType:
     # 变体类型 (7) = 角色造型变体图
     CHARACTER_VARIANT = 7  # 角色变体图（写入 reference_images 数组）
 
+    # 分镜首帧宫格 (8)
+    STORYBOARD_FIRST_FRAME_GRID = 8  # 分镜首帧宫格
+
     # 类型列表
     SINGLE_TYPES = [1, 2, 3, 7]
-    GRID_TYPES = [4, 5, 6]
-    ALL_TYPES = [0, 1, 2, 3, 4, 5, 6, 7]
+    GRID_TYPES = [4, 5, 6, 8]
+    ALL_TYPES = [0, 1, 2, 3, 4, 5, 6, 7, 8]
 
     # 完整映射表
     MAP = {
@@ -42,6 +45,7 @@ class ItemType:
         6: {'name': 'prop_grid', 'name_cn': '道具四宫格', 'is_grid': True, 'base_type': 3},
         # 变体
         7: {'name': 'character_variant', 'name_cn': '角色变体图', 'is_grid': False, 'base_type': 1},
+        8: {'name': 'storyboard_first_frame_grid', 'name_cn': '分镜首帧宫格', 'is_grid': True, 'base_type': None},
     }
 
     # 宫格专用映射
@@ -49,6 +53,7 @@ class ItemType:
         4: {'name': 'character_grid', 'name_cn': '角色四宫格', 'base_type': 1},
         5: {'name': 'location_grid', 'name_cn': '场景四宫格', 'base_type': 2},
         6: {'name': 'prop_grid', 'name_cn': '道具四宫格', 'base_type': 3},
+        8: {'name': 'storyboard_first_frame_grid', 'name_cn': '分镜首帧宫格', 'base_type': None},
     }
 
     @classmethod
@@ -62,10 +67,10 @@ class ItemType:
         return item_type in cls.SINGLE_TYPES
 
     @classmethod
-    def get_base_type(cls, grid_type: int) -> int:
+    def get_base_type(cls, grid_type: int):
         """从宫格类型获取基础单图类型 (4->1, 5->2, 6->3)"""
         if grid_type in cls.GRID_MAP:
-            return cls.GRID_MAP[grid_type]['base_type']
+            return cls.GRID_MAP[grid_type].get('base_type')
         return grid_type
 
     @classmethod

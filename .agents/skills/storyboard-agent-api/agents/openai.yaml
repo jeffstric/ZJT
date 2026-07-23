@@ -1,0 +1,7 @@
+interface:
+  display_name: "Storyboard Agent API"
+  short_description: "Operate storyboard automation APIs and CLI safely."
+  default_prompt: "Use $storyboard-agent-api to discover my ZhiJuTong worlds, scripts, characters, locations, props, and storyboard scenes; then create, split, insert, generate, or poll storyboard tasks as needed."
+
+policy:
+  allow_implicit_invocation: true

@@ -100,10 +100,29 @@ class BaseAsyncDriver(ABC):
 
         # 2. 如果需要槽位
         if config.need_runninghub_slot:
+            # 多密钥轮换：先从密钥池领用一个密钥
+            # 领用失败（池空/全满）时回退全局 key（index=0）
+            from task import runninghub_key_pool
+            acquired = await runninghub_key_pool.acquire_key_async()
+            if acquired is not None:
+                api_key_index, api_key, max_slots = acquired
+                # 密钥池密钥：单密钥并发上限已由 acquire_key 检查（按 index 维度），
+                # 此处跳过全局 max_concurrent_slots 检查（传大值），仅占用 slot 记录
+                slot_max_slots = 999999
+            else:
+                # 回退全局 key（保持向后兼容：单密钥场景），用全局 max_slots 检查
+                api_key_index = runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX
+                api_key = None  # None 表示 driver 用其默认（全局）key
+                slot_max_slots = None  # 用默认全局值
+            # 注入领用到的密钥到 driver 的 client（多密钥轮换必需）
+            self._apply_api_key_for_submit(api_key, api_key_index)
+
             slot_acquired = RunningHubSlotsModel.try_acquire_slot(
                 task_id=async_task_id,
                 task_type=config.slot_task_type,
-                source=RunningHubSlot.SOURCE_ASYNC
+                source=RunningHubSlot.SOURCE_ASYNC,
+                api_key_index=api_key_index,
+                max_slots=slot_max_slots
             )
 
             if not slot_acquired:
@@ -125,6 +144,10 @@ class BaseAsyncDriver(ABC):
 
                 if not result.get('success'):
                     RunningHubSlotsModel.release_slot(async_task_id, source=RunningHubSlot.SOURCE_ASYNC)
+                    # 反馈熔断：提交失败（非上游拥堵类）计入密钥失败
+                    await runninghub_key_pool.report_failure_async(
+                        api_key_index, result.get('error', '')
+                    )
                     # 上游并发超限/限流（api queue limit reached / TASK_QUEUE_MAXED 等）：
                     # 安排延迟重试，不标记 FAILED（复用异步侧指数退避，与本地槽位满处理一致）
                     if result.get('retry_reason') == 'UPSTREAM_CONGESTED' or \
@@ -144,10 +167,12 @@ class BaseAsyncDriver(ABC):
                 project_id = result.get('project_id')
                 AsyncTasksModel.update_external_task_id(async_task_id, project_id)
                 RunningHubSlotsModel.update_project_id(async_task_id, project_id, source=RunningHubSlot.SOURCE_ASYNC)
+                await runninghub_key_pool.report_success_async(api_key_index)
                 return {**result, 'async_task_id': async_task_id}
 
             except Exception as e:
                 RunningHubSlotsModel.release_slot(async_task_id, source=RunningHubSlot.SOURCE_ASYNC)
+                await runninghub_key_pool.report_failure_async(api_key_index, str(e))
                 AsyncTasksModel.update_status(
                     record_id=async_task_id,
                     status=AsyncTaskStatus.FAILED,
@@ -157,6 +182,47 @@ class BaseAsyncDriver(ABC):
 
         # 3. 不需要槽位：直接提交
         return await submit_fn()
+
+    def _apply_api_key_for_submit(self, api_key: Optional[str], api_key_index: int):
+        """
+        提交前注入领用到的密钥到 driver 的 client（多密钥轮换）。
+
+        子类若持有 self._client（RunningHubClient），则调用其 set_api_key。
+        api_key 为 None 时表示回退全局 key，无需切换（client 默认即用全局 key）。
+
+        Args:
+            api_key: 领用到的密钥明文，None 表示回退全局 key
+            api_key_index: 密钥序号（仅用于日志）
+        """
+        if api_key is None:
+            # 回退全局 key：client 构造时已默认加载全局 key，无需操作
+            return
+        client = getattr(self, '_client', None)
+        if client is not None and hasattr(client, 'set_api_key'):
+            client.set_api_key(api_key)
+            self.logger.debug(f"已注入密钥 index={api_key_index} 到 {self.driver_name} client")
+
+    def _apply_api_key_for_task(self, task) -> str:
+        """
+        轮询前根据任务记录的密钥 index 切换 client 密钥。
+
+        通过 runninghub_slots.api_key_index 反查任务提交时所用密钥，
+        确保用同一密钥查询结果（错误密钥无法获取结果）。
+
+        Args:
+            task: AsyncTask 对象
+
+        Returns:
+            实际生效的 api_key_index（0=全局兜底）
+        """
+        from task import runninghub_key_pool
+        from model.runninghub_slots import RunningHubSlot
+        idx = runninghub_key_pool.get_key_index_for_slot(task.id, RunningHubSlot.SOURCE_ASYNC)
+        api_key = runninghub_key_pool.get_key_by_index(idx)
+        client = getattr(self, '_client', None)
+        if client is not None and hasattr(client, 'set_api_key') and api_key:
+            client.set_api_key(api_key)
+        return idx
 
     @staticmethod
     def _calculate_retry_delay(retry_count: int) -> int:

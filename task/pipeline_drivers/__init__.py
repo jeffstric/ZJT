@@ -20,6 +20,7 @@ from .base_pipeline_driver import BasePipelineDriver
 from .face_mask_driver import FaceMaskPipelineDriver
 from .image_face_mask_driver import ImageFaceMaskPipelineDriver
 from .implementation_retry_driver import ImplementationRetryPipelineDriver
+from .storyboard_grid_split_driver import StoryboardGridSplitPipelineDriver
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ _DRIVER_MAP = {
     PipelineStepType.FACE_MASK: FaceMaskPipelineDriver,
     PipelineStepType.IMAGE_FACE_MASK: ImageFaceMaskPipelineDriver,
     PipelineStepType.IMPLEMENTATION_RETRY: ImplementationRetryPipelineDriver,
+    PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT: StoryboardGridSplitPipelineDriver,
 }
 
 
@@ -234,48 +236,47 @@ class PipelineDriverFactory:
     _MAX_RETRY_IMPLEMENTATIONS = 3
 
     @classmethod
-    def create_before_finish_steps(
+    def select_before_finish_retry_candidate(
         cls,
         ai_tool_id: int,
         ai_tool_type: int,
         failed_implementation: int,
         failure_reason: str
-    ) -> List[int]:
-        """
-        创建 before_finish 重试步骤（选择替代实现方）
-
-        Args:
-            ai_tool_id: ai_tools.id
-            ai_tool_type: ai_tools.type
-            failed_implementation: 刚失败的实现方 ID
-            failure_reason: 失败原因
-
-        Returns:
-            创建的步骤 ID 列表，无可用替代则返回空列表
-        """
+    ) -> Optional[Dict[str, Any]]:
+        """选择唯一备用实现方并返回步骤定义；不写数据库。"""
         task_config = UnifiedConfigRegistry.get_by_id(ai_tool_type)
         if not task_config or not task_config.implementations:
-            return []
+            return None
 
         failed_impl_name = get_implementation_name(failed_implementation)
 
         # 收集替代实现方：按 sort_order 优先级从头遍历，跳过已尝试过的（包括当前失败的）
         impl_list = [impl['name'] for impl in task_config._get_implementations_info()]
 
-        # 获取该 ai_tool 历史上已尝试过的所有实现方
+        # 获取该 ai_tool 历史上已尝试过的所有实现方及已消耗备用额度
         attempted_ids = set()
+        retry_count = 0
         try:
             from model.implementation_attempts import ImplementationAttemptModel
             attempted_ids = ImplementationAttemptModel.get_attempted_implementations(ai_tool_id)
+            retry_count = ImplementationAttemptModel.get_retry_implementation_count(ai_tool_id)
         except Exception as e:
             logger.warning(f"Failed to get attempted implementations for ai_tool {ai_tool_id}: {e}")
+
+        if retry_count >= cls._MAX_RETRY_IMPLEMENTATIONS:
+            logger.info(
+                f"Retry implementation budget exhausted for ai_tool {ai_tool_id}: "
+                f"used={retry_count}, max={cls._MAX_RETRY_IMPLEMENTATIONS}"
+            )
+            return None
 
         attempted_names = {get_implementation_name(i) for i in attempted_ids}
         attempted_names.discard(None)
         attempted_names.discard('unknown')
-        attempted_names.add(failed_impl_name)  # 确保当前失败的也被跳过
+        if failed_impl_name:
+            attempted_names.add(failed_impl_name)  # 确保当前失败的也被跳过
 
-        alternatives = []
+        selected_impl = None
         for impl_name in impl_list:
             if impl_name in attempted_names:
                 continue
@@ -296,35 +297,58 @@ class PipelineDriverFactory:
             except Exception as e:
                 logger.info(f"Skipping implementation {impl_name} for retry: validation error ({e})")
                 continue
-            alternatives.append(impl_name)
+            selected_impl = impl_name
+            break
 
-        if not alternatives:
-            logger.info(f"No alternative implementations for ai_tool {ai_tool_id}")
-            return []
-
-        # 限制重试数量
-        alternatives = alternatives[:cls._MAX_RETRY_IMPLEMENTATIONS]
-
-        # 创建重试步骤
-        step_ids = []
-        for idx, alt_impl_name in enumerate(alternatives):
-            step_id = PipelineStepModel.create(
-                ai_tool_id=ai_tool_id,
-                stage=PipelineStage.BEFORE_FINISH,
-                step_type=PipelineStepType.IMPLEMENTATION_RETRY,
-                step_order=idx,
-                params={
-                    'target_implementation': alt_impl_name,
-                    'original_failure': failure_reason,
-                    'failed_implementation': failed_impl_name
-                }
-            )
-            step_ids.append(step_id)
-
-        if step_ids:
+        if not selected_impl:
             logger.info(
-                f"Created {len(step_ids)} before_finish retry steps for ai_tool {ai_tool_id}: "
-                f"alternatives={[s for s in alternatives]}, failed={failed_impl_name}"
+                f"No alternative implementations for ai_tool {ai_tool_id}: "
+                f"all_candidates={impl_list}, attempted={list(attempted_names)}"
             )
+            return None
 
-        return step_ids
+        retry_index = retry_count + 1
+        attempt_number = retry_index + 1
+        return {
+            'step_order': retry_count,
+            'params': {
+                'retry_mode': 'single_candidate_v1',
+                'retry_index': retry_index,
+                'attempt_number': attempt_number,
+                'target_implementation': selected_impl,
+                'original_failure': failure_reason,
+                'failed_implementation': failed_impl_name,
+            },
+        }
+
+    @classmethod
+    def create_before_finish_steps(
+        cls,
+        ai_tool_id: int,
+        ai_tool_type: int,
+        failed_implementation: int,
+        failure_reason: str,
+    ) -> List[int]:
+        """选择并创建一个 before_finish 实现方重试步骤。"""
+        candidate = cls.select_before_finish_retry_candidate(
+            ai_tool_id,
+            ai_tool_type,
+            failed_implementation,
+            failure_reason,
+        )
+        if not candidate:
+            return []
+        step_id = PipelineStepModel.create(
+            ai_tool_id=ai_tool_id,
+            stage=PipelineStage.BEFORE_FINISH,
+            step_type=PipelineStepType.IMPLEMENTATION_RETRY,
+            step_order=candidate['step_order'],
+            params=candidate['params'],
+        )
+        logger.info(
+            f"Created single before_finish retry step for ai_tool {ai_tool_id}: "
+            f"step_id={step_id}, target={candidate['params']['target_implementation']}, "
+            f"failed={candidate['params']['failed_implementation']}, "
+            f"retry_index={candidate['params']['retry_index']}"
+        )
+        return [step_id]

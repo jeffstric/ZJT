@@ -74,20 +74,15 @@ stateDiagram-v2
 flowchart TD
     subgraph 创建
         A[任务失败] --> B{有替代供应商?}
-        B -->|是| C[create_before_finish_steps]
+        B -->|是| C[选择优先级最高的一个未尝试供应商]
         B -->|否| D["FAILED(-1) + 退算力"]
-        C --> E["创建 implementation_retry 步骤\nstatus=PENDING(0)"]
+        C --> E["顺序写入：当前 attempt=FAILED\nai_tools/tasks=WAITING_BEFORE_FINISH\n最后创建唯一 retry 步骤"]
     end
 
     subgraph 流水线调度器_13s
-        E --> F{before_finish 去重检查}
-        F -->|第一个步骤| G[dispatch_step]
-        F -->|后续步骤| H[标记 skipped]
+        E --> G[dispatch 唯一 retry 步骤]
         G --> I[retry driver.execute]
-        I --> J{有可用实现方?}
-        J -->|是| K["COMPLETED(2)\n\n1. ai_tools.implementation = 新供应商\n2. ai_tools.status = PENDING(0)\n3. tasks.status = QUEUED(0)"]
-        J -->|否| L["FAILED(-1)"]
-        K --> H
+        I --> K["顺序写入：\n1. ai_tools.implementation = 新供应商\n2. ai_tools.status = PENDING(0)\n3. 创建新 attempt\n4. tasks.status = QUEUED(0)\n5. retry step = COMPLETED(2)"]
     end
 
     subgraph 主调度器_5s_重新拾取
@@ -119,10 +114,13 @@ flowchart TD
 
 ### 关键逻辑
 
-- **只取后续供应商**：`create_before_finish_steps()` 只选择排序在失败实现方**之后**的供应商，到达队列末尾即停止，不会循环回开头
+- **不重复已尝试供应商**：候选选择按配置优先级遍历，并排除 `implementation_attempts` 中已经实际尝试过的所有供应商
 - **跳过不可用的供应商**：创建步骤时检查 `is_enabled()` 和 `create_driver_by_implementation()` 能否成功
-- **仅分发第一个步骤**：`process_all_pending_steps()` 对 `before_finish` 阶段只分发第一个 PENDING 步骤，剩余标记 `skipped`
-- **双表同步**：retry driver 执行时同时更新 `ai_tools.status` 和 `tasks.status`
+- **一次只创建一个候选**：每次供应商真实失败后，只创建优先级最高的一个备用供应商；该供应商也失败后才创建下一个
+- **备用次数上限**：按 implementation attempt 去重计数，初始供应商之外最多使用 3 个不同备用供应商（`A → B → C → D`）
+- **等待状态先于步骤发布**：先写当前 attempt 失败和 `ai_tools/tasks` 等待状态，最后创建唯一 retry step；Pipeline 抓到步骤时任务已经停止被主调度器处理
+- **QUEUED 最后开放**：retry driver 先切换 implementation、更新 `ai_tools` 并创建新 attempt，最后更新 `tasks.status=QUEUED`；主调度器不会用旧供应商提交
+- **旧数据兼容**：升级前遗留的多个 PENDING retry 步骤只执行第一个，其余标记 `legacy_multiple_candidates`
 
 ## 4. 完整任务处理流程（含同步/异步分流）
 
@@ -183,7 +181,7 @@ flowchart TD
 
     %% === 失败处理 ===
     FAIL_HANDLER --> ENTERPRISE{"enterprise retry handler"}
-    ENTERPRISE -->|有替代供应商| CREATE_STEPS["创建 before_finish 步骤\nai_tools=5, tasks=5\nWAITING_BEFORE_FINISH"]
+    ENTERPRISE -->|有替代供应商| CREATE_STEPS["先设置 WAITING，最后创建唯一 before_finish 步骤\nai_tools=5, tasks=5"]
     ENTERPRISE -->|无替代供应商| FAIL_FINAL2["ai_tools=-1, tasks=-1\nFAILED + 退算力"]
 
     CREATE_STEPS --> PIPE_SCHED{"流水线调度器 13s"}
@@ -235,12 +233,11 @@ sequenceDiagram
     Note over API,DB: ── 异步任务失败+重试流程 ──
     MAIN->>DB: check_status → FAILED
     MAIN->>DB: _handle_task_failure → enterprise handler
-    MAIN->>DB: 创建 pipeline_steps(status=0)
-    MAIN->>DB: ai_tools=5, tasks=5 (WAITING_BEFORE_FINISH)
+    MAIN->>DB: 顺序写入：attempt=FAILED → ai_tools/tasks=5 → 创建唯一 pipeline_step(status=0)
 
     PIPE->>DB: 查询 PENDING 步骤
-    PIPE->>DB: dispatch → retry driver 执行
-    PIPE->>DB: implementation=30, ai_tools=0, tasks=0
+    PIPE->>DB: dispatch 唯一步骤 → retry driver 执行
+    PIPE->>DB: 顺序写入：implementation=30，ai_tools=0，创建 attempt，最后 tasks=0，step=COMPLETED
 
     MAIN->>DB: 查询 tasks.status IN (0,1) → 拾取
     MAIN->>DB: 检测 ai_tool.implementation=30
@@ -266,8 +263,8 @@ sequenceDiagram
 | 流水线步骤调度器 | 13s | 分发 PENDING 步骤、检查 PROCESSING 步骤、推进 ai_tools 状态 | `PipelineProcessor.process_all_pending_steps` |
 | 同步任务结果检查器 | 5s | 检查同步进程池中已完成任务的结果 | `SyncTaskExecutor.check_results` |
 | 孤儿任务恢复 | 20min | 重置卡在 PROCESSING 的超时任务 | `_reset_orphan_processing_tasks` |
-| RunningHub 异步轮询 | 10s | 轮询 RunningHub 异步任务状态 | `process_runninghub_async_tasks` |
-| 异步任务提交重试 | 7s | 槽位满时重试提交 | `process_pending_async_task_submissions` |
+| RunningHub 异步轮询 | 10s | 轮询**已提交** RunningHub 异步任务状态（`external_task_id` 非空） | `process_runninghub_async_tasks` |
+| 异步任务提交重试 | 7s | 槽位满时重试提交；顺带清理耗尽重试的僵尸 QUEUED | `process_pending_async_task_submissions` |
 | RunningHub 槽位清理 | 30min | 清理超时槽位 | `cleanup_runninghub_slots` |
 
 ## 7. 各状态下调度器行为

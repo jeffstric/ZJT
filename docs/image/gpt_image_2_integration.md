@@ -190,6 +190,8 @@ moderation: "low"
 
 驱动会从 `ai_tool.extra_config` 读取 `quality`、`background`、`moderation`、`mask`、`n`、`model`，仅透传合法值；响应同时兼容 OpenAI 常见的 `data: [{ b64_json }]` 和 yunwu 示例中的 `data: { b64_json }`。
 
+图片编辑请求会在 `api_requests` 日志中额外记录诊断信息：`Context` 包含内部使用的 `ratio`、`image_size`、映射后的 `mapped_size` 和输入图片数量；`Form Data` 记录实际提交给 `/v1/images/edits` 的 multipart 普通字段（包含 `size`）；`Files` 只记录文件名、MIME 类型和字节数，不记录图片二进制内容。若上游响应中的 `size` 与本次请求的 `mapped_size` 不一致，驱动会输出 warning，便于区分“请求参数映射错误”和“上游按其他规则返回尺寸”。
+
 #### 比例映射
 
 | 前端比例 | OpenAI size |

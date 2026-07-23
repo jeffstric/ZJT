@@ -6,6 +6,7 @@ import traceback
 from PIL import Image
 from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
+from config.unified_config import TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.file_storage import RunningHubFileStorage
 from utils.image_upload_utils import resolve_url_to_local_file_sync
@@ -20,7 +21,7 @@ class Ltx2Dot3RunninghubV1Driver(BaseVideoDriver):
     """
 
     def __init__(self):
-        super().__init__(driver_name="ltx2.3_runninghub_v1", driver_type=10)
+        super().__init__(driver_name="ltx2.3_runninghub_v1", driver_type=TaskTypeId.LTX2_3_IMAGE_TO_VIDEO)
 
         # 加载配置
         self._api_key = get_dynamic_config_value("runninghub", "api_key", default="")

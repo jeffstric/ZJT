@@ -8,6 +8,7 @@ runninghub:
   host: "https://www.runninghub.cn"
   api_key: ""
   max_concurrent_slots: 3 # 该值根据runninghub账号的 并发数决定，可以查看 https://www.runninghub.cn/vip-rights/2 查看并发数，注意，必须支持api调用的套餐才能使用 26年3月 基础版为1 专业版为3 专业Plus版为5 Max 为20
+  # 多密钥池由商业版 Provider 提供；社区版始终使用上面的全局单密钥。
 
 pipeline:
   seedance_face_mask_enabled: true  # 是否启用 Seedance 2.0 / 2.0 Fast 图片和视频输入的人脸遮盖前置处理
@@ -133,6 +134,10 @@ test_mode:
     image_edit: ""
     text_to_image: ""
 
+# 官方微信群引导（注册成功后）：生产基线默认开启
+wx_group_guide:
+  enabled: true
+
 task_queue:
   max_retry_count: 30
   task_expire_days: 7
@@ -224,3 +229,8 @@ upgrade:
     - "https://github.com/jeffstric/ZJT.git"      # 备用 GitHub
   branch: "main"             # 跟踪分支
   timeout_seconds: 30        # git fetch/pull 超时（秒）
+
+# 剧本分段拆分多 worker 配置
+# 由 run_prod.py 读取，>0 时拉起 N 个独立 worker 进程，主调度器跳过此 job
+script_split:
+  worker_total: 0  # 0=主调度器单进程(兼容旧行为)；>0=由 N 个独立 worker 进程分片接管(id MOD N = index)

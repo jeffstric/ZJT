@@ -64,8 +64,8 @@ class GptImageCommonV1Driver(BaseVideoDriver):
     }
 
     # 默认模型
-    DEFAULT_MODEL = "gpt-image-2"
-    EDIT_MODEL = "gpt-image-2"
+    DEFAULT_MODEL = "gpt-image-2-c"
+    EDIT_MODEL = "gpt-image-2-c"
     DEFAULT_EDIT_COUNT = 1
     VALID_QUALITIES = {"low", "medium", "high", "auto"}
     VALID_BACKGROUNDS = {"opaque", "auto", "transparent"}
@@ -392,6 +392,17 @@ class GptImageCommonV1Driver(BaseVideoDriver):
 
         return files
 
+    def _warn_if_response_size_mismatch(self, request_params: Dict[str, Any], result: Dict[str, Any]) -> None:
+        expected_size = (request_params.get("request_context") or {}).get("mapped_size")
+        actual_size = result.get("size") if isinstance(result, dict) else None
+        if expected_size and actual_size and actual_size != expected_size:
+            self.logger.warning(
+                "GPT Image 2 返回尺寸与请求尺寸不一致: expected_size=%s, response_size=%s, context=%s",
+                expected_size,
+                actual_size,
+                request_params.get("request_context"),
+            )
+
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
         创建 GPT Image 任务的完整请求参数
@@ -425,7 +436,13 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                 "Content-Type": "application/json",
                 "Accept": "application/json",
                 "Authorization": f"Bearer {self._api_key}"
-            }
+            },
+            "request_context": {
+                "mode": "create",
+                "ratio": ratio,
+                "image_size": image_size,
+                "mapped_size": size,
+            },
         }
 
     def build_edit_request(self, ai_tool) -> Dict[str, Any]:
@@ -464,7 +481,14 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             "headers": {
                 "Accept": "application/json",
                 "Authorization": f"Bearer {self._api_key}"
-            }
+            },
+            "request_context": {
+                "mode": "edit",
+                "ratio": ratio,
+                "image_size": image_size,
+                "mapped_size": size,
+                "image_count": len(image_paths),
+            },
         }
 
     def build_check_query(self, project_id: str) -> Dict[str, Any]:
@@ -639,15 +663,19 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             # 截断 base64 数据后输出日志
             truncated_result = self._truncate_response_for_log(result)
             self.logger.info(f"GPT Image 2 API response: {truncated_result}")
+            self._warn_if_response_size_mismatch(request_params, result)
 
             # 检查是否有错误
             if "error" in result:
+                from utils.content_moderation_error import build_user_error_from_api_error
+
                 error_info = result.get("error", {})
-                error_msg = error_info.get("message", "未知错误")
-                self.logger.warning(f"GPT Image 2 API returned error: {error_msg}")
+                error_msg = error_info.get("message", "未知错误") if isinstance(error_info, dict) else str(error_info)
+                user_error = build_user_error_from_api_error(error_info, fallback_prefix="任务提交失败")
+                self.logger.warning(f"GPT Image 2 API returned error: {error_msg} -> {user_error}")
                 return {
                     "success": False,
-                    "error": f"任务提交失败: {error_msg}",
+                    "error": user_error,
                     "error_type": "USER",
                     "retry": False
                 }

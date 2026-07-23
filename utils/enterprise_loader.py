@@ -36,6 +36,11 @@ class EnterpriseLoader:
 
     def discover(self) -> bool:
         """检测 enterprise 模块是否存在且版本兼容"""
+        edition_mode = get_config_value('edition', 'mode', default='community')
+        if edition_mode != 'enterprise':
+            logger.info('Enterprise mode is disabled by configuration')
+            return False
+
         project_root = self._get_project_root()
         enterprise_path = os.path.join(project_root, ENTERPRISE_DIR)
 
@@ -102,6 +107,16 @@ class EnterpriseLoader:
             logger.info("Enterprise module loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load enterprise module: {e}")
+            try:
+                from task.runninghub_key_pool import reset_provider
+                reset_provider()
+            except Exception:
+                pass
+            try:
+                from services.registration_quota import reset_provider as reset_registration_quota
+                reset_registration_quota()
+            except Exception:
+                pass
 
 
 enterprise_loader = EnterpriseLoader()

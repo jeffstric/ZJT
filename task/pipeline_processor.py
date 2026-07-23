@@ -16,7 +16,7 @@ import pymysql
 
 from model import (
     PipelineStepModel, PipelineStep, PipelineStepStatus, PipelineStage,
-    AIToolsModel, AITool, AsyncTasksModel, AsyncTaskStatus
+    PipelineStepType, AIToolsModel, AITool, AsyncTasksModel, AsyncTaskStatus
 )
 from task.pipeline_drivers import PipelineDriverFactory
 
@@ -25,6 +25,18 @@ logger = logging.getLogger(__name__)
 
 class PipelineProcessor:
     """Pipeline 编排器"""
+
+    @staticmethod
+    def _is_grid_task_owned_step(step: PipelineStep) -> bool:
+        """Steps dispatched by their owning task scheduler, not by the global pipeline flow."""
+        return step.step_type == PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+
+    @staticmethod
+    def _is_single_candidate_retry_step(step: PipelineStep) -> bool:
+        """是否为逐轮创建的单候选实现方重试步骤。"""
+        if step.step_type != PipelineStepType.IMPLEMENTATION_RETRY:
+            return False
+        return step.get_params_dict().get('retry_mode') == 'single_candidate_v1'
 
     # ==================== 步骤创建（委托给 PipelineDriverFactory） ====================
 
@@ -122,7 +134,6 @@ class PipelineProcessor:
             )
             return False
 
-        # 更新步骤状态为 PROCESSING
         PipelineStepModel.update_status(step.id, PipelineStepStatus.PROCESSING)
 
         # 获取关联的 ai_tool
@@ -147,7 +158,7 @@ class PipelineProcessor:
                     PipelineStepModel.update_async_task_id(step.id, async_task_id)
                     logger.info(f"Step {step.id} dispatched, async_task_id={async_task_id}")
                 else:
-                    # 步骤直接完成（如 implementation_retry）
+                    # 步骤直接完成（如 implementation_retry / storyboard_grid_split）
                     result_data = result.get('result_data')
                     PipelineStepModel.update_status_with_retry(
                         step.id,
@@ -155,6 +166,12 @@ class PipelineProcessor:
                         result_data=result_data
                     )
                     logger.info(f"Step {step.id} completed directly")
+                    # 同步完成的步骤（如 storyboard_first_frame_grid_split）从不经过
+                    # PROCESSING 轮询分支，必须在此显式检查阶段完成，否则 before_finish
+                    # 阶段完成判定无法触发，父 ai_tool/tasks 状态将永久停滞。
+                    await PipelineProcessor._check_ai_tool_stage_completion(
+                        step.ai_tool_id, step.stage
+                    )
                 return True
             else:
                 # 处理失败
@@ -303,28 +320,53 @@ class PipelineProcessor:
         waiting_steps = PipelineStepModel.get_all_waiting_steps(limit=50)
         if waiting_steps:
             logger.info(f"Dispatching {len(waiting_steps)} waiting pipeline steps")
-            # ⚠️ before_finish 去重：同一 ai_tool 的多个 before_finish 步骤是候选实现方（按优先级排序）
-            # 只需执行第一个，成功后其余标记为 skipped。避免并发提交多个实现方导致资源浪费
+            # 旧版会一次预建多个 implementation_retry；同一轮只允许执行第一个。
             dispatched_before_finish = set()  # (ai_tool_id, stage) 去重
             for step in waiting_steps:
                 try:
+                    if PipelineProcessor._is_grid_task_owned_step(step):
+                        logger.info(
+                            "Skip storyboard grid split step %s in global pipeline scheduler; "
+                            "grid_image_task dispatches it after grid image is ready",
+                            step.id,
+                        )
+                        continue
                     key = (step.ai_tool_id, step.stage)
-                    if step.stage == PipelineStage.BEFORE_FINISH:
+                    is_implementation_retry = (
+                        step.stage == PipelineStage.BEFORE_FINISH
+                        and step.step_type == PipelineStepType.IMPLEMENTATION_RETRY
+                    )
+                    if is_implementation_retry:
                         if key in dispatched_before_finish:
                             continue
                         dispatched_before_finish.add(key)
 
                     success = await PipelineProcessor.dispatch_step(step)
 
-                    # 如果 before_finish 步骤已同步完成，将同组其余步骤标记为 skipped
-                    if success and step.stage == PipelineStage.BEFORE_FINISH:
-                        remaining = PipelineStepModel.get_pending_steps(step.ai_tool_id, step.stage)
+                    # 仅兼容升级前一次预建多个候选的旧步骤。新式单候选步骤的
+                    # 下一轮由真实供应商失败后创建，绝不能被历史完成记录跳过。
+                    if (
+                        success
+                        and is_implementation_retry
+                        and not PipelineProcessor._is_single_candidate_retry_step(step)
+                    ):
+                        remaining = [
+                            item
+                            for item in PipelineStepModel.get_pending_steps(step.ai_tool_id, step.stage)
+                            if (
+                                item.step_type == PipelineStepType.IMPLEMENTATION_RETRY
+                                and not PipelineProcessor._is_single_candidate_retry_step(item)
+                            )
+                        ]
                         for r in remaining:
                             PipelineStepModel.update_status(
                                 r.id, PipelineStepStatus.COMPLETED,
-                                result_data={'skipped': True, 'reason': 'earlier_retry_succeeded'}
+                                result_data={'skipped': True, 'reason': 'legacy_multiple_candidates'}
                             )
-                        logger.info(f"Skipped {len(remaining)} remaining before_finish steps for ai_tool {step.ai_tool_id}")
+                        logger.info(
+                            f"Skipped {len(remaining)} legacy before_finish candidates "
+                            f"for ai_tool {step.ai_tool_id}"
+                        )
                 except Exception as e:
                     logger.error(f"Error dispatching step {step.id}: {e}", exc_info=True)
 
@@ -357,6 +399,13 @@ class PipelineProcessor:
             logger.info(f"Processing {len(retry_steps)} retry pipeline steps")
             for step in retry_steps:
                 try:
+                    if PipelineProcessor._is_grid_task_owned_step(step):
+                        logger.info(
+                            "Skip retrying storyboard grid split step %s in global pipeline scheduler; "
+                            "grid_image_task owns this step",
+                            step.id,
+                        )
+                        continue
                     await PipelineProcessor.dispatch_step(step)
                 except Exception as e:
                     logger.error(f"Error retrying step {step.id}: {e}", exc_info=True)
@@ -433,24 +482,38 @@ class PipelineProcessor:
         steps = PipelineStepModel.get_by_ai_tool_and_stage(ai_tool_id, stage)
         if not steps:
             return
+        managed_steps = [
+            step for step in steps
+            if not (
+                stage == PipelineStage.BEFORE_FINISH
+                and PipelineProcessor._is_grid_task_owned_step(step)
+            )
+        ]
+        if not managed_steps:
+            return
 
-        pending = [s for s in steps if s.status in (PipelineStepStatus.PENDING, PipelineStepStatus.PROCESSING)]
-        failed = [s for s in steps if s.status in (PipelineStepStatus.FAILED, PipelineStepStatus.TIMEOUT)]
-        completed = [s for s in steps if s.status == PipelineStepStatus.COMPLETED]
+        pending = [s for s in managed_steps if s.status in (PipelineStepStatus.PENDING, PipelineStepStatus.PROCESSING)]
+        failed = [s for s in managed_steps if s.status in (PipelineStepStatus.FAILED, PipelineStepStatus.TIMEOUT)]
+        completed = [s for s in managed_steps if s.status == PipelineStepStatus.COMPLETED]
 
-        total = len(steps)
+        total = len(managed_steps)
         logger.info(
             f"Pipeline stage {stage} for ai_tool {ai_tool_id}: "
             f"total={total}, completed={len(completed)}, pending={len(pending)}, failed={len(failed)}"
         )
 
-        # 如果还有 PENDING/PROCESSING 步骤，分发下一个
+        # 如果还有 PENDING/PROCESSING 步骤
         if pending:
+            # implementation_retry 的下一轮必须由真实供应商失败后创建，并由全局
+            # scheduler 分发；阶段检查不得递归执行另一个候选或依据历史完成行跳过。
+            if (
+                stage == PipelineStage.BEFORE_FINISH
+                and any(s.step_type == PipelineStepType.IMPLEMENTATION_RETRY for s in pending)
+            ):
+                return
+
             if not any(s.status == PipelineStepStatus.PROCESSING for s in pending):
-                next_pending = next(
-                    (s for s in steps if s.status == PipelineStepStatus.PENDING),
-                    None
-                )
+                next_pending = next((s for s in managed_steps if s.status == PipelineStepStatus.PENDING), None)
                 if next_pending:
                     logger.info(f"Dispatching next pending step {next_pending.id} for ai_tool {ai_tool_id}")
                     await PipelineProcessor.dispatch_step(next_pending)

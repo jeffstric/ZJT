@@ -8,7 +8,7 @@ Tasks Model - ComfyUI 视频/图片生成任务调度队列
   - grid_image_tasks: 宫格生图专用轮询，有 CANCELLED/DOWNLOAD_FAILED 状态
 """
 from typing import List, Optional, Dict, Any
-from .database import execute_query, execute_update, execute_insert
+from .database import execute_query, execute_update, execute_insert, execute_insert_in_transaction
 from config.constant import (
     TASK_STATUS_QUEUED,
     TASK_STATUS_PROCESSING
@@ -82,7 +82,32 @@ class TasksModel:
         except Exception as e:
             logger.error(f"Failed to create task record: {e}")
             raise
-    
+
+    @staticmethod
+    def create_in_transaction(
+        conn,
+        task_type: str,
+        task_id: int,
+        try_count: int = 0,
+        status: int = TASK_STATUS_QUEUED
+    ) -> int:
+        """
+        ⚠️ 仅供事务型原子配音提交内部调用，禁止在此 conn 上执行网络/文件/TTS 等慢操作。
+
+        事务必须保持毫秒级短事务。禁止在持有 conn 期间做 HTTP/文件/IO/sleep 等
+        可能超过 ~50ms 的操作，否则行锁长期持有会阻塞并发更新。
+        见 docs/storyboard/storyboard_auto_voiceover_after_split_design.md §8.1。
+
+        SQL 与参数与 create() 完全一致，仅换 execute_insert_in_transaction。
+        """
+        sql = """
+            INSERT INTO tasks
+            (task_type, task_id, try_count, status)
+            VALUES (%s, %s, %s, %s)
+        """
+        params = (task_type, task_id, try_count, status)
+        return execute_insert_in_transaction(conn, sql, params)
+
     @staticmethod
     def get_by_id(record_id: int) -> Optional[Task]:
         """

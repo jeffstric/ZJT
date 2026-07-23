@@ -1,3 +1,54 @@
+    /**
+     * 图片节点是否允许发起编辑/涂色。
+     * 必须等到服务器上传完成（有 url）且不在 uploading 状态。
+     * 仅有本地 file / 本地预览不够，避免大图上传中途误点编辑。
+     *
+     * @param {object|null|undefined} data node.data
+     * @returns {{ allowed: boolean, reason: 'ok'|'no_image'|'uploading' }}
+     */
+    function canEditImageNode(data) {
+      if (!data) {
+        return { allowed: false, reason: 'no_image' };
+      }
+      if (data.uploading) {
+        return { allowed: false, reason: 'uploading' };
+      }
+      const url = typeof data.url === 'string' ? data.url.trim() : '';
+      if (url) {
+        return { allowed: true, reason: 'ok' };
+      }
+      return { allowed: false, reason: 'no_image' };
+    }
+
+    /**
+     * 解析编辑提交数据：始终优先使用服务器 URL，禁止上传中途用本地 File 绕过。
+     *
+     * @param {object|null|undefined} data node.data
+     * @returns {{ ok: boolean, reason?: string, submitData?: string }}
+     */
+    function resolveImageEditSubmitData(data) {
+      const gate = canEditImageNode(data);
+      if (!gate.allowed) {
+        return { ok: false, reason: gate.reason };
+      }
+      return { ok: true, submitData: String(data.url).trim() };
+    }
+
+    /**
+     * 上传/编辑门禁失败时的提示文案。
+     * @param {'no_image'|'uploading'|string} reason
+     * @param {(key: string, fallback: string) => string} [t]
+     */
+    function getImageUploadBlockMessage(reason, t) {
+      const translate = typeof t === 'function'
+        ? t
+        : (key, fallback) => (window.t ? (window.t(key) || fallback) : fallback);
+      if (reason === 'uploading') {
+        return translate('image_node_uploading_wait', '图片上传中，请稍候...');
+      }
+      return translate('upload_or_generate_image_first', '请先上传或生成图片');
+    }
+
     function createImageNode(opts){
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
@@ -40,6 +91,7 @@
           model: defaultImageModel,
           drawCount: 1,
           project_id: null,
+          uploading: false,
         }
       };
       state.nodes.push(node);
@@ -443,15 +495,26 @@
         }
       }
 
+      function setImageEditActionsDisabled(disabled) {
+        if (editBtn) editBtn.disabled = !!disabled;
+        if (coloringBtn) coloringBtn.disabled = !!disabled;
+      }
+
       // 涂色编辑按钮
       if(coloringBtn){
         coloringBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
-          if(!node.data.url && !node.data.preview){
-            showToast(window.t ? window.t('upload_or_generate_image_first') : '请先上传或生成图片', 'error');
+          const gate = canEditImageNode(node.data);
+          if(!gate.allowed){
+            const msg = getImageUploadBlockMessage(gate.reason);
+            showToast(msg, gate.reason === 'uploading' ? 'warning' : 'error');
+            if (statusEl) {
+              statusEl.style.display = 'block';
+              setStatusEl(statusEl, msg, gate.reason === 'uploading' ? '#d97706' : '#dc2626');
+            }
             return;
           }
-          const imageUrl = node.data.url || node.data.preview;
+          const imageUrl = node.data.url;
 
           if(window.imageColoringEditor && window.imageColoringEditor.open){
             // Use proxied URL to avoid cross-origin canvas taint
@@ -581,57 +644,105 @@
           imageFileEl.value = '';
           return;
         }
+
+        const previousUrl = node.data.url || '';
+        const previousPreview = node.data.preview || '';
+        const previousName = node.data.name || '';
+
         node.data.file = file;
+        node.data.uploading = true;
+        // 上传中清空 url，避免仍用旧图发起编辑
+        node.data.url = '';
+        setImageEditActionsDisabled(true);
+        if (statusEl) {
+          statusEl.style.display = 'block';
+          setStatusEl(
+            statusEl,
+            window.t ? window.t('uploading_image') : '正在上传图片...',
+            '#666'
+          );
+        }
 
-        const localPreview = await readFileAsDataUrl(file);
-        imagePreviewImg.src = localPreview;
-        imagePreviewRow.style.display = 'flex';
+        try {
+          const localPreview = await readFileAsDataUrl(file);
+          imagePreviewImg.src = localPreview;
+          imagePreviewRow.style.display = 'flex';
 
-        const previousUrl = node.data.url;
-        const uploadedUrl = await uploadFile(file);
-        if(uploadedUrl){
-          node.data.url = uploadedUrl;
-          node.data.name = file.name;
-          node.data.preview = uploadedUrl;
-          imagePreviewImg.src = proxyImageUrl(uploadedUrl);
+          const uploadedUrl = await uploadFile(file);
+          if(uploadedUrl){
+            node.data.url = uploadedUrl;
+            node.data.name = file.name;
+            node.data.preview = uploadedUrl;
+            // 成功后清掉本地 file，强制后续编辑走服务器 URL
+            node.data.file = null;
+            imagePreviewImg.src = proxyImageUrl(uploadedUrl);
 
-          // 通知所有连接到此图片节点的图生视频节点更新算力显示
-          const imageConnections = state.imageConnections.filter(c => c.from === id);
-          for(const conn of imageConnections){
-            const targetNode = state.nodes.find(n => n.id === conn.to);
-            if(targetNode && targetNode.type === 'image_to_video'){
-              const targetEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
-              if(targetEl){
-                // 更新目标节点的URL
-                if(conn.portType === 'start'){
-                  targetNode.data.startUrl = uploadedUrl;
-                } else if(conn.portType === 'end'){
-                  targetNode.data.endUrl = uploadedUrl;
-                } else if(conn.portType === 'ref-image'){
-                  // 更新 referenceUrls 中对应的URL
-                  if(!targetNode.data.referenceUrls) targetNode.data.referenceUrls = [];
-                  const idx = targetNode.data.referenceUrls.indexOf(previousUrl);
-                  if(idx >= 0){
-                    targetNode.data.referenceUrls[idx] = uploadedUrl;
+            // 通知所有连接到此图片节点的图生视频节点更新算力显示
+            const imageConnections = state.imageConnections.filter(c => c.from === id);
+            for(const conn of imageConnections){
+              const targetNode = state.nodes.find(n => n.id === conn.to);
+              if(targetNode && targetNode.type === 'image_to_video'){
+                const targetEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+                if(targetEl){
+                  // 更新目标节点的URL
+                  if(conn.portType === 'start'){
+                    targetNode.data.startUrl = uploadedUrl;
+                  } else if(conn.portType === 'end'){
+                    targetNode.data.endUrl = uploadedUrl;
+                  } else if(conn.portType === 'ref-image'){
+                    // 更新 referenceUrls 中对应的URL
+                    if(!targetNode.data.referenceUrls) targetNode.data.referenceUrls = [];
+                    const idx = targetNode.data.referenceUrls.indexOf(previousUrl);
+                    if(idx >= 0){
+                      targetNode.data.referenceUrls[idx] = uploadedUrl;
+                    }
                   }
-                }
 
-                // 触发目标节点的算力更新
-                const updateFn = targetEl._updateComputingPowerDisplay;
-                if(typeof updateFn === 'function') {
-                  updateFn();
+                  // 触发目标节点的算力更新
+                  const updateFn = targetEl._updateComputingPowerDisplay;
+                  if(typeof updateFn === 'function') {
+                    updateFn();
+                  }
                 }
               }
             }
-          }
 
-          showToast('图片上传成功', 'success');
-          safeAutoSave()
-        } else {
-          imagePreviewRow.style.display = 'none';
-          imagePreviewImg.removeAttribute('src');
+            if (statusEl) {
+              statusEl.style.display = 'none';
+              setStatusEl(statusEl, '', '#666');
+            }
+            showToast('图片上传成功', 'success');
+            safeAutoSave()
+          } else {
+            // 上传失败：清理本地 file；若有旧图则恢复，否则收起预览
+            node.data.file = null;
+            if (previousUrl) {
+              node.data.url = previousUrl;
+              node.data.preview = previousPreview || previousUrl;
+              node.data.name = previousName;
+              imagePreviewImg.src = proxyImageUrl(previousUrl);
+              imagePreviewRow.style.display = 'flex';
+            } else {
+              node.data.url = '';
+              node.data.preview = '';
+              node.data.name = '';
+              imagePreviewRow.style.display = 'none';
+              imagePreviewImg.removeAttribute('src');
+            }
+            if (statusEl) {
+              statusEl.style.display = 'block';
+              setStatusEl(
+                statusEl,
+                window.t ? window.t('image_node_upload_failed') : '图片上传失败',
+                '#dc2626'
+              );
+            }
+          }
+        } finally {
+          node.data.uploading = false;
+          setImageEditActionsDisabled(false);
+          imageFileEl.value = '';
         }
-        imageFileEl.value = '';
       });
 
       imageClearBtn.addEventListener('click', (e) => {
@@ -640,15 +751,22 @@
         node.data.url = '';
         node.data.name = '';
         node.data.preview = '';
+        node.data.uploading = false;
+        setImageEditActionsDisabled(false);
         imagePreviewRow.style.display = 'none';
         imagePreviewImg.removeAttribute('src');
       });
 
       editBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if(!node.data.url && !node.data.file){
+        const gate = canEditImageNode(node.data);
+        if(!gate.allowed){
           statusEl.style.display = 'block';
-          setStatusEl(statusEl, '请先上传图片', '#dc2626');
+          const msg = getImageUploadBlockMessage(gate.reason);
+          setStatusEl(statusEl, msg, gate.reason === 'uploading' ? '#d97706' : '#dc2626');
+          if (gate.reason === 'uploading') {
+            showToast(msg, 'warning');
+          }
           return;
         }
         
@@ -663,10 +781,15 @@
         setStatusEl(statusEl, '正在提交任务...');
 
         try{
-          let submitData = node.data.file;
-          if(!submitData && node.data.url){
-            submitData = node.data.url;
+          const resolved = resolveImageEditSubmitData(node.data);
+          if (!resolved.ok) {
+            const msg = getImageUploadBlockMessage(resolved.reason);
+            setStatusEl(statusEl, msg, '#dc2626');
+            showToast(msg, 'warning');
+            editBtn.disabled = false;
+            return;
           }
+          let submitData = resolved.submitData;
 
           let finalPrompt = node.data.prompt || '';
 
@@ -898,4 +1021,13 @@
       canvasEl.appendChild(el);
       setSelected(id);
       return id;
+    }
+
+    // ES Module exports（供 Vitest 测试使用，不影响浏览器全局变量）
+    if (typeof module !== 'undefined') {
+      module.exports = {
+        canEditImageNode,
+        resolveImageEditSubmitData,
+        getImageUploadBlockMessage,
+      };
     }

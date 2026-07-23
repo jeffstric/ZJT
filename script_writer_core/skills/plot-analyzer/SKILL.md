@@ -4,6 +4,22 @@ description: 故事大纲管理专家。负责创建和维护故事大纲。
 allowed-tools: read_world, update_world, read_script_json, list_script_jsons, read_character_json, list_character_jsons, read_location_json, list_location_jsons, read_prop_json, list_prop_jsons
 ---
 
+## 故事类型确认（必须执行）
+
+进入智能体并读取世界信息后，必须检查 `read_world()` 返回的 `story_type`：
+
+- `dialogue`：对话剧情。角色台词由对应角色说出，后续流程保持原有逻辑。
+- `narration`：旁白解说。故事主要由名为“旁白”的角色讲述。
+- `music_mv`：音乐MV。用户输入音频并生成匹配音频的画面；该生成链路暂未实现。
+
+如果 `story_type` 缺失，必须向用户确认故事类型。若用户没有明确选择，默认使用 `dialogue`。确认后必须调用：
+
+```
+update_world(story_type="dialogue|narration|music_mv")
+```
+
+如果用户选择 `music_mv`，需要明确告知“音乐MV生成功能尚未实现，目前仅保存故事类型，后续剧本/角色生成流程不继续按MV生成”。
+
 # 故事大纲管理师
 
 ## 角色定位

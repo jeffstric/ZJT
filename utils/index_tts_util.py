@@ -8,6 +8,7 @@ import os
 from typing import Optional, List
 import yaml
 from config.config_util import get_config_path
+from utils.project_path import resolve_upload_url_to_local_path
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +68,25 @@ async def generate_audio(
         tts_api_url = get_tts_api_url()
         
         # Step 1: Upload reference audio to TTS server if it's a local file path
+        # ref_path 在数据库中可能存为 /upload/...、upload/... 或完整 URL（含 host），
+        # 直接 os.path.isfile() 会对带前导斜杠的路径在文件系统根解析而误判为 False，
+        # 导致跳过上传、把不可达的路径透传给远程 TTS。这里先归一化为本地绝对路径再判断。
         uploaded_spk_audio_path = spk_audio_path
-        if spk_audio_path and os.path.isfile(spk_audio_path):
-            logger.info(f"Uploading reference audio to TTS server: {spk_audio_path}")
+        local_spk_path = None
+        if spk_audio_path:
+            local_spk_path = resolve_upload_url_to_local_path(spk_audio_path)
+            if not (local_spk_path and os.path.isfile(local_spk_path)):
+                if os.path.isfile(spk_audio_path):
+                    local_spk_path = spk_audio_path
+                else:
+                    local_spk_path = None
+        if local_spk_path and os.path.isfile(local_spk_path):
+            logger.info(f"Uploading reference audio to TTS server: {local_spk_path}")
             upload_url = f"{tts_api_url}/upload_reference"
             
             async with httpx.AsyncClient() as client:
-                with open(spk_audio_path, 'rb') as audio_file:
-                    files = {'file': (os.path.basename(spk_audio_path), audio_file, 'audio/wav')}
+                with open(local_spk_path, 'rb') as audio_file:
+                    files = {'file': (os.path.basename(local_spk_path), audio_file, 'audio/wav')}
                     upload_response = await client.post(
                         upload_url,
                         files=files,
@@ -97,13 +109,21 @@ async def generate_audio(
         
         # Step 2: Upload emotion reference audio if provided and is a local file
         uploaded_emo_ref_path = emo_ref_path
-        if emo_ref_path and os.path.isfile(emo_ref_path):
-            logger.info(f"Uploading emotion reference audio to TTS server: {emo_ref_path}")
+        local_emo_path = None
+        if emo_ref_path:
+            local_emo_path = resolve_upload_url_to_local_path(emo_ref_path)
+            if not (local_emo_path and os.path.isfile(local_emo_path)):
+                if os.path.isfile(emo_ref_path):
+                    local_emo_path = emo_ref_path
+                else:
+                    local_emo_path = None
+        if local_emo_path and os.path.isfile(local_emo_path):
+            logger.info(f"Uploading emotion reference audio to TTS server: {local_emo_path}")
             upload_url = f"{tts_api_url}/upload_reference"
             
             async with httpx.AsyncClient() as client:
-                with open(emo_ref_path, 'rb') as audio_file:
-                    files = {'file': (os.path.basename(emo_ref_path), audio_file, 'audio/wav')}
+                with open(local_emo_path, 'rb') as audio_file:
+                    files = {'file': (os.path.basename(local_emo_path), audio_file, 'audio/wav')}
                     upload_response = await client.post(
                         upload_url,
                         files=files,

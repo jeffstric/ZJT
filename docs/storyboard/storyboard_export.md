@@ -1,0 +1,153 @@
+# 故事板媒体导出
+
+## 概述
+
+支持两种导出，产物均上传图床（CDN），前端用 `download_url` 下载，不占用业务机带宽。对齐 `GET /api/export-world` 的交付方式。
+
+| 方式 | 接口 | 交付 |
+|------|------|------|
+| 素材包 | `POST /api/storyboard/{id}/export-all-scenes` | 同步：打包 zip → CDN → `{download_url,filename}` |
+| 完整视频 | `POST /api/storyboard/{id}/export-full-video` | 异步：`job_id` → 轮询 `GET /api/storyboard/export-job/{job_id}` → CDN |
+
+权限：`storyboard:export`。
+
+## 命名规则（素材包）
+
+按 `sort_order` 1-based 序号 `i`：
+
+- 有选中视频（`selected_video_id`）：`分镜{i}.mp4`（**不再写分镜图**）
+- 无选中视频、有首帧：`分镜{i}.png|jpg|…`
+- 第 j 条选中配音：`分镜{i}_{j}.wav`（与是否有画面无关；无首帧/视频时仍会单独导出 wav）
+- 另含 `manifest.json`
+
+### 配音纳入条件与失败策略
+
+- 来源：各镜 `storyboard_dialogue.selected_audio_id` → `storyboard_dialogue_audio.audio_url`（未选中/无 URL 的对白不导出）。
+- 与分镜图是否生成完毕无关：只要对白有选中配音，就会尝试写入 `分镜{i}_{j}.wav`。
+- 单条下载/转码失败：记入 `manifest.missing`（如 `audio_1` / `audio_convert_1`），其余继续。
+- **全部配音均失败**（或配置常量缺失如 `EXPORT_AUDIO_*`）：整次导出抛错，**禁止**静默返回只有画面、没有 wav 的 zip（避免运维未重启进程时用户拿到空音频包）。
+
+## 画面选择规则（素材包 + 完整视频共用）
+
+与时间轴预览一致：**已选视频则必须用视频**，不能用分镜首帧图顶替。
+
+1. 若 `selected_video_id` 有值，或 JOIN/`list` 已解析出 `video_url` → 按 **视频** 导出  
+2. 视频 URL 解析顺序：`storyboard_scene_asset.result_url` → 关联 `ai_tools.result_url` 兜底  
+   （生成完成后结果常只写在 `ai_tools`，asset 表可能为空）  
+3. **有选中视频但 URL 仍解析失败**：`visual_type=none`，manifest 记 `video_missing`；**禁止**回退 `first_frame_url`  
+4. **无选中视频**时，才用首帧图定格；下载/转码失败同样不改成另一种媒体  
+
+## 完整视频合成规则
+
+与时间轴预览一致（`storyboard_timeline_playback.md`）：
+
+- 镜时长 = `scene.duration`（无效则 2s）
+- 画面：按上节规则选视频 / 图 / 黑场（默认使用对话配音时视频静音，见下「视频原声」例外）
+- 视频短于 span 定格补满，长于则截断
+- 配音串行，总长相对 span 截断/静音垫
+- 镜间直接 concat
+
+### 视频原声（audio_embedded + 无配音兜底）
+
+`storyboard_scene.audio_embedded`（TINYINT，前端「音频来源」偏好）与「是否有可播放对话配音」共同决定单镜有效音轨（与时间轴预览 `resolveSceneAudioMode` / 导出 `resolve_scene_keep_video_audio` 一致）：
+
+| 条件 | 画面音轨 | TTS | 说明 |
+|------|----------|-----|------|
+| `audio_embedded=1` 且视频有音轨 | 保留 | 跳过 | 用户/数字人显式视频原声 |
+| `audio_embedded=0` 且有 TTS URL | 丢弃（`-an`） | 混入 | 标准对话配音模式 |
+| `audio_embedded=0` 且**无** TTS，视频有音轨 | **保留** | 无 | **自动兜底视频原声**，避免无对白时整段静音 |
+| 视频无音轨 / 无视频 | — | 有则 TTS，否则静音垫 | 与预览一致 |
+
+- 配音从无到有且偏好仍为「对话配音」时，有效音源**自动回到 TTS**，无需改库。
+- 用户显式选「视频原声」后，即使已有 TTS 也不自动改回。
+- 数字人分镜默认 `audio_embedded=1`。
+- 字幕不受影响：只控制音轨，字幕仍按对白 `text` 时间轴生成 ASS 硬烧。
+- 素材包导出（方式1）不受影响：视频与配音 wav 分开打包。
+- 前端：左栏「对话」页签互斥选择，切换后 `PUT /scene/{id}` 写 `audio_embedded`；无配音自动视频原声时 UI 显示「自动」标记。
+
+### 音频统一规格（防"滋滋"噪音）
+
+**背景**：当一个故事板里**既有音画同出分镜（`audio_embedded=1`，视频原音轨，可能 48000Hz/任意声道）又有普通 TTS 分镜（`audio_embedded=0`，TTS 输出通常 24000Hz/mono）**时，各分镜 segment 的音频参数不一致；而整片合成（`build_merged_video`）用 concat demuxer + `-c copy` 拼接，concat demuxer 对参数极度敏感，会用第一个流的参数去解读后续所有流的数据 → 采样率/声道/编码错位 → 播放出现"滋滋"噪音/变速。
+
+**根因链路**：
+1. `_mux_segment` 的三分支参数各异：TTS 混音 `aac 192k` 未指定 `-ar`；音画同出 `-c:a copy` 完全保留视频原始参数；无音轨补静音 `aac 128k / 44100`。
+2. `_ensure_wav` 对 `.wav` 直接 `shutil.copy2` 短路，TTS 的 wav 采样率不被标准化。
+3. TTS 端（`utils/index_tts_util.py`）请求体不传 `sample_rate`，输出采样率由远程服务决定，不可信。
+4. 整片 concat 用 `-c copy`，不重编码，参数冲突被直接放大。
+
+**方案**：在导出流水线内部统一对齐，而非依赖 TTS 端（TTS 远程服务是否支持采样率参数未知，且不可靠）。
+
+- 统一规格常量：`config/constant.py::StoryboardExportConstants`
+  - `EXPORT_AUDIO_SAMPLE_RATE = 44100`
+  - `EXPORT_AUDIO_CHANNELS = 2`（stereo）
+  - `EXPORT_AUDIO_BITRATE = "192k"`（aac）
+- 全链路强制对齐（`services/storyboard_export_service.py`）：
+  - `_ensure_wav`：取消 `.wav` copy 短路，统一重采样到规格。
+  - `_build_scene_audio`（concat / atrim+apad）：采样率/声道用常量。
+  - `_build_scene_visual`（keep_audio 分支）：显式 `-ar` / `-ac`，让视频原音轨也统一。
+  - `_mux_segment`（三分支）：采样率/声道/比特率全部统一；音画同出分支从 `-c:a copy` 改为 `-c:a aac` 重编码。
+  - 整片 concat：从 `-c copy` 改为 `-c:v copy -c:a aac`（视频仍 copy 保画质，音频强制重编码兜底）。
+- 诊断日志：`_probe_audio_params` 探测每个 segment 的 `(sample_rate, channels)` 并打 info 日志，后续再出问题可立即定位是哪个 segment 参数异常。
+- 不改动 TTS 端（`utils/index_tts_util.py`）和数字人 `_merge_audio_files`（`storyboard_digital_human_service.py`，其产物不直接进入导出 concat）。
+
+> 注：音画同出分镜的音轨从 copy 改为重编码会引入一次 aac 代际损失，但 192k 听感无差别，换取参数一致性是值得的。
+
+### 字幕硬烧（整片）
+
+- 模块：`services/storyboard_subtitle.py`（独立于导出编排）
+- Body：`include_subtitles`（固定 `true`，前端不再暴露开关）
+- 时间轴：与有选中配音的对白串行一致；`text` + `audio duration`（库字段或 ffprobe）
+- 版式：底部居中，最多 **3 行**，左右约 86% 宽，不占满屏
+- 超长：折行后按 3 行分页，在对白时间窗内 **字数加权轮播**；时长不够则末页 `…`
+- 技术：生成 ASS → ffmpeg `subtitles=` 硬烧（workdir 相对路径，兼容 Windows）
+
+#### 内置 CJK 字体（防"蚂蚁文/豆腐块"）
+
+**背景**：项目捆绑的 ffmpeg 是 gyan.dev `essentials_build`（启用 `--enable-fontconfig --enable-libass`，但不附带 `fonts.conf`）。若只把字体名写进 ASS Style 行、`-vf subtitles=` 不带 `fontsdir=`，Windows 下 fontconfig 经常无法把 `"Microsoft YaHei"` 解析到 `C:\Windows\Fonts\msyh.ttc`，libass 找不到字形 → 中文渲染成 `.notdef` 方块（蚂蚁文）。瘦客户机 / Docker / 未装中文字体的 Windows Server Core 同样会触发。
+
+**方案**：随项目内置思源黑体（Noto Sans SC，OFL 1.1），烧录时拷贝到 `work_dir/fonts/` 并传 `fontsdir=`，让 libass 直接从该目录加载，**彻底脱离宿主字体依赖**，全平台一致。
+
+- 字体目录：`files/fonts/`（非 web 公开目录，程序通过文件系统直接读取，避免被外部下载）
+  - `NotoSansSC-Regular.otf`（思源黑体 简中子集，~8MB）
+  - `LICENSE-OFL.txt`（SIL Open Font License 1.1 全文，满足 OFL 分发要求）
+  - `README.md`（字体来源与许可证说明）
+- 字体解析：`services/storyboard_subtitle.py::resolve_builtin_font()` 返回 `(family, 绝对路径)`；缺失时回退 `resolve_cjk_font_name()`（系统字体探测，仅作兜底）
+- 滤镜参数：`ffmpeg_subtitles_filter_arg(ass_name, fonts_subdir="fonts")` → `subtitles=subtitles.ass:fontsdir=fonts`
+- 拷贝时机：`build_merged_video()` 烧录分支内，写完 ASS 后、调用 ffmpeg 前，`shutil.copy2` 拷贝到 `work_dir/fonts/`
+- 路径策略：`fontsdir` 用 work_dir 下的相对子目录名 `fonts`，规避 Windows 绝对路径盘符冒号破坏 `subtitles=` 滤镜语法
+- 常量：`config/constant.py::StoryboardSubtitleConstants` 的 `BUILTIN_FONT_SUBDIR` / `BUILTIN_FONT_FILENAME` / `BUILTIN_FONT_FAMILY` / `WORK_FONT_SUBDIR`
+
+## 实现
+
+- `services/storyboard_export_service.py`：清单、打包、ffmpeg 合成、job 状态、调用字幕模块
+- `services/storyboard_subtitle.py`：折行 / 分页 / ASS / 滤镜参数
+- `api/storyboard.py`：导出路由
+- `config/constant.py`：`StoryboardTimeouts` / `StoryboardExportConstants` / `StoryboardSubtitleConstants`
+- 前端：`events.js` 导出回调 + `download.js` 附件下载（走 `/api/download` 代理，见下节）
+
+## 前端交互（导出按钮）
+
+header 右侧两个按钮，**无中间弹窗**，点击即触发：
+
+| 按钮 | action | 行为 |
+|------|--------|------|
+| 一键转视频 | `export-full` | 提交异步 job → 轮询 → 完成后附件下载 mp4（固定烧录字幕） |
+| 导出素材包 | `export-scenes` | 同步打包 → 完成后附件下载 zip |
+
+### 附件下载（防弹窗拦截 / 防破坏七牛签名）
+
+**问题背景**：早期实现用 `a.href=<CDN URL>; a.target='_blank'; a.click()`：
+- `target='_blank'` 跨域时被浏览器弹窗拦截器拦掉，用户必须手动"允许弹窗"才能下载，流失严重；
+- 直接给七牛私有桶已签名 URL 拼 `?attname=` 会破坏签名（七牛 401/400）。
+
+**方案**：`web/js/storyboard/download.js::downloadAsAttachment(url, filename)`
+- 构造同源 URL `/api/download?url=<已签名CDN>&filename=<name>`
+- 动态 `<a>` **不设 `target`** + `a.click()`：浏览器识别 `Content-Disposition: attachment` 后原地下载，不开新 tab、不触发弹窗拦截
+- 后端 `server.py:/api/download`（`server.py:548-563`）检测到 CDN 域名 → `CDNUtil.get_signed_download_url(url, attname)` 重新签名（attname 参与新签名）→ **302 重定向到七牛**，浏览器直连 CDN 拉流，**本站零带宽消耗**
+
+> 注：未采用 `web/js/pages/_utils.js::buildDownloadUrl`，因后者对 http URL 直接前端拼 `?attname=`，会破坏私有桶签名；storyboard 的 download_url 是带 `e`+`token` 的私有桶签名 URL（见 `services/storyboard_export_service.py::upload_local_file_to_cdn`），必须走后端重签名。
+
+## 依赖
+
+- 本机 `bin.ffmpeg` / `bin.ffprobe`
+- `file_storage.qiniu` 配置完整（与世界导出相同）

@@ -10,6 +10,7 @@
 本文件验证 video_tools 这一环：读偏好、校验降级、透传请求体、算力 context。
 """
 import os
+import json
 
 import pytest
 
@@ -40,6 +41,8 @@ class _StubConfig:
 
     name = "TestVideoModel"
     supported_durations = [5, 10, 15]
+    supported_image_modes = ['first_last_frame']
+    supports_ref_audio_video = False
 
     def __init__(self):
         self.last_power_context = None
@@ -179,7 +182,7 @@ def test_generate_text_to_video_forwards_user_resolution(patched_video_flow):
     captured = patched_video_flow
     captured['prefs'] = {'resolution': '480P'}
 
-    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat')
+    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat', task_type=999)
 
     assert result['success'] is True
     # 核心：用户选择的 480P 必须透传到 /api/ai-app-run 请求体
@@ -195,7 +198,7 @@ def test_generate_text_to_video_uses_impl_default_when_no_pref(patched_video_flo
     captured = patched_video_flow
     captured['prefs'] = {}
 
-    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat')
+    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat', task_type=999)
 
     assert result['success'] is True
     # 无偏好时下发 impl 默认 720P（与端点默认一致，保证算力估算与扣费对齐）
@@ -209,7 +212,7 @@ def test_generate_text_to_video_downgrades_invalid_resolution(patched_video_flow
     captured = patched_video_flow
     captured['prefs'] = {'resolution': '4K'}  # 模型不支持
 
-    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat')
+    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat', task_type=999)
 
     assert result['success'] is True
     assert captured['request_data']['resolution'] == '720P'
@@ -227,9 +230,44 @@ def test_image_to_video_forwards_resolution(patched_video_flow):
         auth_token='t',
         prompt='run',
         image_urls='http://example.com/a.jpg',
+        task_type=999,
     )
 
     assert result['success'] is True
     assert captured['request_data']['resolution'] == '1080P'
     assert captured['api_url'].endswith('/api/ai-app-run-image')
     assert captured['stub_config'].last_power_context == {'resolution': '1080P'}
+
+
+def test_image_to_video_uses_reference_snapshot_for_more_than_two_images(patched_video_flow):
+    from enterprise.tools.video_tools import image_to_video
+    from script_writer_core.mcp_tool import scoped_media_generation_snapshots
+
+    captured = patched_video_flow
+    captured['stub_config'].supported_image_modes = ['first_last_frame', 'multi_reference']
+    snapshot = {
+        'schema_version': 1,
+        'surface': 'storyboard_ui',
+        'media_type': 'video',
+        'mode': 'reference_to_video',
+        'task_id': 999,
+        'model_key': 'test-video',
+        'model_name': 'TestVideoModel',
+    }
+
+    with scoped_media_generation_snapshots({'video.reference_to_video': snapshot}):
+        result = image_to_video(
+            user_id='u1',
+            world_id='w1',
+            auth_token='t',
+            prompt='run',
+            image_urls=(
+                'http://example.com/a.jpg,'
+                'http://example.com/b.jpg,'
+                'http://example.com/c.jpg'
+            ),
+            task_type=123,
+        )
+
+    assert result['success'] is True
+    assert json.loads(captured['request_data']['generation_snapshot'])['mode'] == 'reference_to_video'

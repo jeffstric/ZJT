@@ -73,6 +73,21 @@ runninghub:
   host: "https://www.runninghub.cn"
   api_key: "unittest"
   max_concurrent_slots: 3
+  # 密钥池（多密钥轮换 + 熔断）。单元测试默认回退 api_key
+  key:
+    1:
+      api_key: ""
+      max_slots: 1
+      label: ""
+      enabled: true
+      fail_count: 0
+      circuit_status: 1
+      next_probe_at: ""
+      last_used_at: ""
+  key_pool:
+    fail_threshold: 5
+    cooldown_seconds: 300
+    max_cooldown_seconds: 1800
 
 google:
   api_key: ""

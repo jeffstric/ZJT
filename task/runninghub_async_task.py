@@ -293,9 +293,12 @@ def process_runninghub_async_tasks(app=None):
 
     流程：
     1. 遍历所有已注册的 RunningHub 实现（音频、人脸遮盖视频等）
-    2. 对每个实现，获取 QUEUED/PROCESSING 状态的任务
+    2. 对每个实现，获取已提交（external_task_id 非空）且 QUEUED/PROCESSING 的任务
     3. 调用对应 driver 的 check_status() 查询远程状态
     4. 根据结果更新数据库
+
+    注意：未提交任务（external_task_id IS NULL）由 process_pending_async_task_submissions
+    处理；get_pending_tasks 已在 SQL 层过滤，避免大量等槽位任务占满 LIMIT 饿死轮询。
     """
     import asyncio
 
@@ -318,7 +321,7 @@ def process_runninghub_async_tasks(app=None):
             try:
                 for task in pending_tasks:
                     try:
-                        # 跳过尚未提交到外部 API 的任务（由调度器的提交流程负责）
+                        # 防御：get_pending_tasks 已过滤，此处再跳过一次
                         if not task.external_task_id:
                             continue
 
@@ -366,6 +369,11 @@ def process_runninghub_async_tasks(app=None):
                                 record_id=task.id,
                                 status=AsyncTaskStatus.PROCESSING
                             )
+
+                        # 多密钥轮换：轮询前根据任务记录的密钥 index 切换 driver client 密钥
+                        # （错误密钥无法获取结果）
+                        if hasattr(driver, '_apply_api_key_for_task'):
+                            driver._apply_api_key_for_task(task)
 
                         status_result = loop.run_until_complete(driver.check_status(task.external_task_id))
 

@@ -38,12 +38,9 @@
 7. 剧本节点的"提示词语言"下拉框自动切换为"中文（默认）"
 8. 节点数据 `node.data.promptLanguage` 同步更新为 `""`
 
-### 解说模式规则
+### 解说模式规则（已移除）
 
-当剧本节点开启"解说剧（仅旁白说话）"模式时：
-- 每个分镜(shot)的 dialogue 数组中必须至少包含一条旁白台词
-- 如果 LLM 返回的某个分镜缺少旁白台词，后处理逻辑会自动根据画面描述生成兆底旁白
-
+剧本节点不再提供"解说剧（仅旁白说话）"模式。前端不再发送 `narration_as_dialogue`，后端也不再执行解说模式后处理。旁白解说能力改由世界级 `story_type=narration` 和脚本智能体流程管理。
 ### 向后兼容
 
 加载旧版工作流时，旧的 `node.data.language` 字段会自动迁移为 `dialogueLanguage` 和 `promptLanguage` 的默认值。
@@ -56,7 +53,7 @@
 |------|------|
 | `web/js/nodes.js` | 剧本节点定义，包含语言选择器和联动逻辑 |
 | `web/js/workflow.js` | 工作流加载恢复，包含语言数据迁移逻辑 |
-| `llm/script_parser.py` | 后端剧本解析，支持双语言 prompt 和解说模式后处理 |
+| `llm/script_parser.py` | 后端剧本解析，支持双语言 prompt |
 | `web/i18n/i18n-core.js` | i18n 核心模块，提供 `locale-changed` 事件 |
 | `web/i18n/i18n-switcher.js` | 语言切换器 UI 组件 |
 

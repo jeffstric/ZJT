@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>故事板列表</title>
+  <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon" />
+  <link rel="stylesheet" href="/css/storyboard_list.css?v=__VERSION__" />
+</head>
+<body>
+  <main class="storyboard-list-shell">
+    <header class="storyboard-list-header">
+      <a class="brand" href="/">
+        <img src="/files/logo.svg" alt="Logo" />
+        <span>智剧通</span>
+      </a>
+      <nav class="breadcrumb">
+        <a href="/">首页</a>
+        <span>/</span>
+        <span>故事板</span>
+      </nav>
+    </header>
+
+    <section class="list-toolbar">
+      <div>
+        <p class="eyebrow">Storyboard folders</p>
+        <h1>故事板文件夹</h1>
+        <p class="toolbar-desc">一个剧本对应一个故事板文件夹，进入后继续制作分镜、图片、视频和配音。</p>
+      </div>
+      <div class="toolbar-actions">
+        <input id="storyboardSearchInput" class="search-input" type="search" placeholder="搜索剧本或世界" />
+        <select id="storyboardStatusFilter" class="status-filter" aria-label="筛选状态">
+          <option value="">全部状态</option>
+          <option value="created">已创建</option>
+          <option value="not_created">未创建</option>
+          <option value="orphan">剧本缺失</option>
+        </select>
+      </div>
+    </section>
+
+    <section id="storyboardFolderContainer" class="folder-grid" aria-live="polite">
+      <div class="loading">
+        <span class="loading-ring"></span>
+        <span>加载故事板文件夹...</span>
+      </div>
+    </section>
+  </main>
+
+  <div id="storyboardToast" class="toast" role="status"></div>
+  <script type="module" src="/js/storyboard_list.js?v=__VERSION__"></script>
+</body>
+</html>

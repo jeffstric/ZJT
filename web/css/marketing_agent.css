@@ -38,6 +38,11 @@ body {
   overflow: hidden;
 }
 
+/* Prevent Vue template / v-if modal FOUC before mount (same pattern as index.css) */
+[v-cloak] {
+  display: none !important;
+}
+
 /* ========== 布局 ========== */
 .app-container {
   display: flex;
@@ -428,6 +433,16 @@ body {
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+@media (max-width: 499px) {
+  .top-bar-date {
+    display: inline-block;
+    width: 1em;
+    overflow: hidden;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
 }
 
 .top-bar-right {
@@ -1146,11 +1161,102 @@ body {
 /* 下拉菜单通用样式 */
 .marketing-dropdown-menu {
   animation: fadeInUp 0.15s ease;
+  max-height: min(50vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-/* 大面板弹窗 */
+/* 大面板弹窗：始终限制在视口内，避免矮屏/小窗时顶出屏幕导致顶部「图片/视频」等选项不可见 */
 .marketing-panel {
   animation: fadeInUp 0.15s ease;
+  box-sizing: border-box;
+  max-width: min(420px, calc(100vw - 32px));
+  max-height: min(72vh, calc(100vh - 96px));
+  max-height: min(72vh, calc(100dvh - 96px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Agent「自定义」综合设置面板：固定高度区域内部分区滚动，标题始终可见 */
+.marketing-settings-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0 !important;
+  min-width: min(360px, calc(100vw - 32px));
+}
+
+.marketing-panel-header {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border-light);
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.marketing-panel-header-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.marketing-panel-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: #999;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.marketing-panel-close:hover {
+  color: #666;
+}
+
+.marketing-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 20px 20px;
+}
+
+/* 面板内模型列表：限制高度，避免撑爆面板 */
+.marketing-model-list {
+  max-height: min(200px, 32vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 矮屏/中小宽度：改为视口内 fixed 面板，确保可完整滚动访问所有选项
+   不用 transform 居中，避免与 fadeInUp 的 translateY 动画互相覆盖 */
+@media (max-height: 760px), (max-width: 720px) {
+  .marketing-panel {
+    position: fixed !important;
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 12px !important;
+    top: auto !important;
+    margin: 0 auto !important;
+    width: min(420px, calc(100vw - 24px)) !important;
+    min-width: auto !important;
+    max-height: calc(100vh - 24px) !important;
+    max-height: calc(100dvh - 24px) !important;
+    z-index: 1100 !important;
+  }
 }
 
 /* 禁用按钮 tooltip */
@@ -1517,6 +1623,12 @@ body {
   background: #dc2626;
 }
 
+@media (max-width: 1389px) {
+  .feedback-fab-container {
+    display: none;
+  }
+}
+
 /* ========== 联系我们弹窗内容 ========== */
 .feedback-body {
   display: flex;
@@ -1631,12 +1743,18 @@ body {
 .asset-preview video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
   display: block;
 }
 
 .asset-preview img {
+  object-fit: cover;
   cursor: zoom-in;
+}
+
+.asset-preview video {
+  /* 视频用 contain 完整显示：竖屏视频容器已按比例自适应高度，contain 与 cover 效果一致；
+     横屏视频在默认 1:1 容器内会上下留白但画面完整，避免裁切 */
+  object-fit: contain;
 }
 
 .asset-card-body {
@@ -1734,4 +1852,48 @@ body {
   padding: 20px 0 4px;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+@media (max-width: 499px) {
+  .mobile-foldable {
+    display: none !important;
+  }
+
+  .toolbar-expanded .mobile-foldable {
+    display: flex !important;
+  }
+
+  /* 超小屏：全屏抽屉，避免 absolute 上弹被裁切 */
+  .marketing-panel {
+    position: fixed !important;
+    inset: 0 !important;
+    left: 0 !important;
+    transform: none !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    width: 100% !important;
+    min-width: auto !important;
+    max-width: none !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+    z-index: 1100 !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+  }
+
+  .marketing-settings-panel .marketing-panel-body,
+  .marketing-panel:not(.marketing-settings-panel) {
+    overflow-y: auto !important;
+  }
+
+  .marketing-panel:not(.marketing-settings-panel) {
+    padding: 16px !important;
+    overflow-y: auto !important;
+  }
+}
+
+@media (min-width: 500px) {
+  .mobile-settings-toggle {
+    display: none !important;
+  }
 }

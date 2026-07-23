@@ -1,0 +1,151 @@
+"""Enterprise spatial projection unit tests.
+
+Community CI does not ship the `enterprise` package (gitignored). Skip cleanly
+when the module is unavailable so services discovery still succeeds.
+"""
+import importlib.util
+import unittest
+
+_HAS_ENTERPRISE_SPATIAL = (
+    importlib.util.find_spec("enterprise") is not None
+    and importlib.util.find_spec("enterprise.services.storyboard_spatial") is not None
+)
+
+if _HAS_ENTERPRISE_SPATIAL:
+    from enterprise.services.storyboard_spatial import (
+        build_spatial_world_index,
+        derive_screen_projection,
+    )
+
+
+@unittest.skipUnless(
+    _HAS_ENTERPRISE_SPATIAL,
+    "enterprise.services.storyboard_spatial not available",
+)
+class TestStoryboardSpatialProjection(unittest.TestCase):
+    def test_build_spatial_world_index_keeps_multiple_space_units_separate(self):
+        payload = {
+            "spatial_world": {
+                "space_units": [
+                    {
+                        "space_unit_id": "space_prop_001_cabin",
+                        "coordinate_frame": {"frame_id": "frame_cabin", "locked": True},
+                        "anchors": [
+                            {
+                                "anchor_id": "front_driver_seat",
+                                "label": "驾驶座",
+                                "position_3d": {"x": 0.55, "y": 0.45, "z": 0.25},
+                            }
+                        ],
+                    },
+                    {
+                        "space_unit_id": "space_loc_002_syrup",
+                        "coordinate_frame": {"frame_id": "frame_syrup", "locked": True},
+                        "anchors": [
+                            {
+                                "anchor_id": "syrup_pool_center",
+                                "label": "糖浆池中心",
+                                "position_3d": {"x": 0, "y": 0, "z": 0},
+                            }
+                        ],
+                    },
+                ]
+            }
+        }
+
+        index = build_spatial_world_index(payload)
+
+        self.assertEqual(
+            set(index["space_units"]),
+            {"space_prop_001_cabin", "space_loc_002_syrup"},
+        )
+        self.assertEqual(
+            index["anchors"][("space_prop_001_cabin", "front_driver_seat")]["label"],
+            "驾驶座",
+        )
+        self.assertEqual(
+            index["anchors"][("space_loc_002_syrup", "syrup_pool_center")]["label"],
+            "糖浆池中心",
+        )
+
+    def test_derive_screen_projection_uses_camera_pose_instead_of_raw_screen_position(self):
+        world_index = build_spatial_world_index({
+            "spatial_world": {
+                "space_units": [
+                    {
+                        "space_unit_id": "space_prop_001_cabin",
+                        "anchors": [
+                            {
+                                "anchor_id": "front_driver_seat",
+                                "position_3d": {"x": 0.55, "y": 0.45, "z": 0.25},
+                            },
+                            {
+                                "anchor_id": "front_passenger_seat",
+                                "position_3d": {"x": -0.55, "y": 0.45, "z": 0.25},
+                            },
+                        ],
+                    }
+                ]
+            }
+        })
+        camera_pose = {
+            "space_unit_id": "space_prop_001_cabin",
+            "eye": {"x": 0.0, "y": -0.8, "z": 0.6},
+            "target": {"x": 0.0, "y": 0.45, "z": 0.25},
+            "up": {"x": 0, "y": 0, "z": 1},
+        }
+
+        driver = derive_screen_projection(
+            {
+                "space_unit_id": "space_prop_001_cabin",
+                "anchor_id": "front_driver_seat",
+                "screen_position": "画面左侧（错误的LLM输出）",
+            },
+            camera_pose,
+            world_index,
+        )
+        passenger = derive_screen_projection(
+            {
+                "space_unit_id": "space_prop_001_cabin",
+                "anchor_id": "front_passenger_seat",
+            },
+            camera_pose,
+            world_index,
+        )
+
+        self.assertEqual(driver["derived_screen_position"], "画面右侧")
+        self.assertEqual(passenger["derived_screen_position"], "画面左侧")
+
+    def test_derive_screen_projection_detects_entity_behind_camera(self):
+        world_index = build_spatial_world_index({
+            "spatial_world": {
+                "space_units": [
+                    {
+                        "space_unit_id": "space_room",
+                        "anchors": [
+                            {
+                                "anchor_id": "behind",
+                                "position_3d": {"x": 0, "y": -1, "z": 0},
+                            }
+                        ],
+                    }
+                ]
+            }
+        })
+
+        projection = derive_screen_projection(
+            {"space_unit_id": "space_room", "anchor_id": "behind"},
+            {
+                "space_unit_id": "space_room",
+                "eye": {"x": 0, "y": 0, "z": 0},
+                "target": {"x": 0, "y": 1, "z": 0},
+                "up": {"x": 0, "y": 0, "z": 1},
+            },
+            world_index,
+        )
+
+        self.assertEqual(projection["derived_screen_position"], "画面外（相机后方）")
+
+
+if __name__ == "__main__":
+    unittest.main()

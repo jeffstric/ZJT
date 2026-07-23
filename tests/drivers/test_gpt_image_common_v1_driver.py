@@ -50,6 +50,13 @@ def test_build_edit_request_uses_yunwu_gpt_image_2_form_fields():
         "Accept": "application/json",
         "Authorization": "Bearer test-key",
     }
+    assert request["request_context"] == {
+        "mode": "edit",
+        "ratio": "16:9",
+        "image_size": "4k",
+        "mapped_size": "3840x2160",
+        "image_count": 2,
+    }
 
 
 def test_extract_image_from_yunwu_object_data_response():
@@ -67,3 +74,28 @@ def test_extract_image_from_yunwu_object_data_response():
     })
 
     assert image == "data:image/png;base64,abc123"
+
+
+def test_build_edit_request_logs_portrait_size_context_without_rewriting_image():
+    driver = make_driver()
+    driver._prepare_image_file = lambda path: (b"image-bytes", "input.png", "image/png")
+
+    ai_tool = SimpleNamespace(
+        prompt="make this portrait",
+        image_path="input.png",
+        image_size="1K",
+        ratio="9:16",
+        extra_config={},
+    )
+
+    request = driver.build_edit_request(ai_tool)
+
+    assert request["data"]["size"] == "1024x1536"
+    assert request["request_context"] == {
+        "mode": "edit",
+        "ratio": "9:16",
+        "image_size": "1K",
+        "mapped_size": "1024x1536",
+        "image_count": 1,
+    }
+    assert request["files"] == [("image", ("input.png", b"image-bytes", "image/png"))]

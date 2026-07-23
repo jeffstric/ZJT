@@ -309,6 +309,7 @@ async function generateShotFrameVideo(nodeId, node){
         if(videoUrls.length === 0){
           const errorMsg = '视频生成失败，未获取到结果';
           showToast(errorMsg, 'error');
+          if(node) node.data.lastError = errorMsg;
           if(errorEl){
             errorEl.textContent = errorMsg;
             errorEl.style.display = 'block';
@@ -378,8 +379,12 @@ async function generateShotFrameVideo(nodeId, node){
         safeAutoSave()
       },
       (error) => {
-        const errorMsg = `生成失败: ${error}`;
+        const displayError = (typeof truncateErrorMessage === 'function')
+          ? truncateErrorMessage(error)
+          : error;
+        const errorMsg = `生成失败: ${displayError}`;
         showToast(errorMsg, 'error');
+        if(node) node.data.lastError = String(displayError || error || '');
         if(errorEl){
           errorEl.textContent = errorMsg;
           errorEl.style.display = 'block';
@@ -391,8 +396,13 @@ async function generateShotFrameVideo(nodeId, node){
     
   } catch(error){
     console.error('生成分镜视频失败:', error);
-    const errorMsg = `生成失败: ${error.message || error}`;
+    const raw = error.message || error;
+    const displayError = (typeof truncateErrorMessage === 'function')
+      ? truncateErrorMessage(raw)
+      : raw;
+    const errorMsg = `生成失败: ${displayError}`;
     showToast(errorMsg, 'error');
+    if(node) node.data.lastError = String(displayError || raw || '');
     if(errorEl){
       errorEl.textContent = errorMsg;
       errorEl.style.display = 'block';

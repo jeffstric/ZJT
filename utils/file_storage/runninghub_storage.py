@@ -47,6 +47,14 @@ class RunningHubFileStorage(BaseFileStorage):
         self._logger = logger
         self._executor = ThreadPoolExecutor(max_workers=4)
 
+    def set_api_key(self, api_key: str):
+        """
+        运行时切换密钥（多密钥轮换时使用）。
+
+        设置后，后续上传文件都会使用该密钥鉴权。
+        """
+        self._api_key = api_key
+
     def _log(self, level: str, message: str):
         """输出日志"""
         if self._logger:

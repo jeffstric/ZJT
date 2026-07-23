@@ -22,7 +22,12 @@
     <script src="/i18n/i18n-switcher.js?v=__VERSION__"></script>
 </head>
 <body>
-    <div id="app" class="app-container">
+    <!-- Vue 挂载前静态 loading，避免 #app 被 v-cloak 隐藏时出现白屏；挂载后由 JS 移除 -->
+    <div id="pre-mount-loader" class="loading-overlay" aria-busy="true" aria-label="loading">
+        <div class="loading-spinner"></div>
+    </div>
+    <!-- v-cloak：防止挂载前 v-if 弹窗/模板原始内容 FOUC 闪烁 -->
+    <div id="app" class="app-container" v-cloak>
         <!-- 第一列：左侧窄导航 -->
         <nav class="marketing-nav">
             <a href="/" class="marketing-nav-logo" :title="$t('back_to_home')">
@@ -260,8 +265,9 @@
                                      }">
                                     <div style="position: relative; width: 24px; height: 24px; flex-shrink: 0;">
                                         <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl"
-                                             style="width: 24px; height: 24px; border-radius: 4px; object-fit: cover;"
-                                             :style="{ opacity: item.uploading ? 0.5 : 1 }" />
+                                             style="width: 24px; height: 24px; border-radius: 4px; object-fit: cover; cursor: pointer;"
+                                             :style="{ opacity: item.uploading ? 0.5 : 1 }"
+                                             @click="previewMedia(item.serverUrl || item.previewUrl || item.thumbnailUrl, item.type)" />
                                         <span v-else style="font-size: 14px;">{{ item.type === 'video' ? '🎬' : '🎵' }}</span>
                                         <div v-if="item.uploading" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;">
                                             <svg width="14" height="14" viewBox="0 0 24 24">
@@ -310,7 +316,7 @@
                         </div>
                     </div>
                     <div class="marketing-input-bar">
-                        <div class="marketing-input-bar-left">
+                        <div class="marketing-input-bar-left" :class="{ 'toolbar-expanded': showMobileToolbar }">
                             <!-- 类型选择 -->
                             <div class="marketing-dropdown" style="position: relative;">
                                 <button class="marketing-bar-btn" @click.stop="toggleDropdown">
@@ -336,7 +342,7 @@
 
                             <!-- Agent 模式：自定义综合设置 -->
                             <template v-if="selectedType === 'agent'">
-                                <div class="marketing-dropdown" style="position: relative;">
+                                <div class="marketing-dropdown mobile-foldable" style="position: relative;">
                                     <button class="marketing-bar-btn" @click.stop="toggleSettingsPanel">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <circle cx="12" cy="12" r="3"/>
@@ -344,8 +350,13 @@
                                         </svg>
                                         <span>{{ $t('custom_settings') }}</span>
                                     </button>
-                                    <!-- 综合设置面板（向上弹出） -->
-                                    <div v-if="showSettingsPanel" class="marketing-panel" @click.stop style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #fff; border: 1px solid #e8e8e8; border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); padding: 20px; min-width: 360px; z-index: 100;">
+                                    <!-- 综合设置面板（向上弹出；矮屏自动限制高度并可滚动） -->
+                                    <div v-if="showSettingsPanel" class="marketing-panel marketing-settings-panel" @click.stop style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #fff; border: 1px solid #e8e8e8; border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); z-index: 100;">
+                                        <div class="marketing-panel-header">
+                                            <span class="marketing-panel-header-title">{{ $t('custom_settings') }}</span>
+                                            <button type="button" class="marketing-panel-close" @click.stop="showSettingsPanel = false" :aria-label="$t('close')">✕</button>
+                                        </div>
+                                        <div class="marketing-panel-body">
                                         <!-- 生成偏好 -->
                                         <div style="margin-bottom: 20px;">
                                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
@@ -417,7 +428,7 @@
                                             <span style="font-size: 14px; font-weight: 500; color: #1a1a1a; display: block; margin-bottom: 12px;">{{ $t('other_settings') }}</span>
                                             <div style="display: flex; gap: 12px;">
                                                 <div style="flex: 1;">
-                                                    <button @click.stop="showModelSelect = !showModelSelect" style="width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: #f5f5f5; border: none; border-radius: 10px; cursor: pointer; font-size: 13px; color: #1a1a1a;">
+                                                    <button type="button" @click.stop="toggleModelSelect" style="width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: #f5f5f5; border: none; border-radius: 10px; cursor: pointer; font-size: 13px; color: #1a1a1a;">
                                                         <span style="display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;">
                                                             <svg v-if="!isVideoMode" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                                                                 <rect x="3" y="5" width="18" height="14" rx="2"/>
@@ -437,7 +448,7 @@
 
                                             <!-- LLM 模型选择（Agent 模式） -->
                                             <div v-if="allLLMModels.length > 0" style="margin-top: 12px;">
-                                                <button @click.stop="showLLMModelSelect = !showLLMModelSelect" style="width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: #f5f5f5; border: none; border-radius: 10px; cursor: pointer; font-size: 13px; color: #1a1a1a;">
+                                                <button type="button" @click.stop="toggleLLMModelSelect" style="width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: #f5f5f5; border: none; border-radius: 10px; cursor: pointer; font-size: 13px; color: #1a1a1a;">
                                                     <span style="display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                                                         <span style="overflow: hidden; text-overflow: ellipsis;">{{ selectedLLMModel ? selectedLLMModel.name : $t('select_llm_model') }}</span>
@@ -446,7 +457,7 @@
                                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" :style="{ transform: showLLMModelSelect ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }"><path d="M6 9l6 6 6-6"/></svg>
                                                 </button>
                                                 <!-- LLM 模型选择列表 -->
-                                                <div v-if="showLLMModelSelect" style="background: #fafafa; border-radius: 12px; padding: 12px; margin-top: 8px; max-height: 200px; overflow-y: auto;">
+                                                <div v-if="showLLMModelSelect" class="marketing-model-list" style="background: #fafafa; border-radius: 12px; padding: 12px; margin-top: 8px;">
                                                     <div style="font-size: 12px; color: #999; margin-bottom: 10px;">{{ $t('select_llm_model_label') }}{{ selectedLLMModel ? selectedLLMModel.name : '' }}</div>
                                                     <div v-for="model in allLLMModels" :key="getLLMModelSelectionKey(model)" @click.stop="selectLLMModel(model)" style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; transition: background 0.2s; margin-bottom: 4px;" :style="{ background: selectedLLMModelKey === getLLMModelSelectionKey(model) ? '#fff' : 'transparent', border: selectedLLMModelKey === getLLMModelSelectionKey(model) ? '1px solid #e8e8e8' : '1px solid transparent', boxShadow: selectedLLMModelKey === getLLMModelSelectionKey(model) ? '0 1px 4px rgba(0,0,0,0.05)' : 'none' }">
                                                         <div style="width: 36px; height: 36px; background: #f0f0f0; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px;">🤖</div>
@@ -465,7 +476,7 @@
                                             <!-- 模型选择列表（内联展开） -->
                                             <div v-if="showModelSelect" style="background: #fafafa; border-radius: 12px; padding: 12px; margin-top: 8px;">
                                                 <div style="font-size: 12px; color: #999; margin-bottom: 10px;">{{ $t('select_model') }}{{ selectedModel }}</div>
-                                                <div style="max-height: 320px; overflow-y: auto;">
+                                                <div class="marketing-model-list">
                                                 <div v-for="model in currentModels" :key="model.name" @click.stop="selectModel(model)" style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; transition: background 0.2s; margin-bottom: 4px;" :style="{ background: selectedModel === model.name ? '#fff' : 'transparent', border: selectedModel === model.name ? '1px solid #e8e8e8' : '1px solid transparent', boxShadow: selectedModel === model.name ? '0 1px 4px rgba(0,0,0,0.05)' : 'none' }">
                                                     <div style="width: 36px; height: 36px; background: #f0f0f0; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
                                                         <!-- 图片模型 icon -->
@@ -499,6 +510,7 @@
                                                 <div v-if="!isEnterprise" style="margin-top: 4px; font-size: 11px; color: #d97706;">{{ $t('process_face_community_hint') }}</div>
                                             </div>
                                         </div>
+                                        </div>
                                     </div>
                                 </div>
                             </template>
@@ -520,9 +532,9 @@
                                         <span>{{ selectedModel }}</span>
                                     </button>
                                     <!-- 模型选择弹窗 -->
-                                    <div v-if="showModelPanel" class="marketing-panel" @click.stop style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #fff; border: 1px solid #e8e8e8; border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); padding: 16px; min-width: 360px; z-index: 100;">
+                                    <div v-if="showModelPanel" class="marketing-panel" @click.stop style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #fff; border: 1px solid #e8e8e8; border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); padding: 16px; min-width: min(360px, calc(100vw - 32px)); z-index: 100;">
                                         <div style="font-size: 12px; color: #999; margin-bottom: 12px;">{{ $t('select_model') }}{{ selectedModel }}</div>
-                                        <div style="max-height: 320px; overflow-y: auto;">
+                                        <div class="marketing-model-list">
                                         <div v-for="model in currentModels" :key="model.name" @click.stop="selectModel(model)" style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; transition: background 0.2s; margin-bottom: 4px;" :style="{ background: selectedModel === model.name ? '#fff' : 'transparent', border: selectedModel === model.name ? '1px solid #e8e8e8' : '1px solid transparent', boxShadow: selectedModel === model.name ? '0 1px 4px rgba(0,0,0,0.05)' : 'none' }">
                                             <div style="width: 36px; height: 36px; background: #f0f0f0; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
                                                 <!-- 图片模型 icon -->
@@ -559,7 +571,7 @@
                                         <span>{{ selectedRatio }} <template v-if="!isVideoMode">{{ selectedResolution }}</template><template v-else-if="selectedVideoResolution"> {{ selectedVideoResolution }}</template></span>
                                     </button>
                                     <!-- 比例选择弹窗 -->
-                                    <div v-if="showRatioPanel" class="marketing-panel" @click.stop style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #fff; border: 1px solid #e8e8e8; border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); padding: 20px; min-width: 380px; z-index: 100;">
+                                    <div v-if="showRatioPanel" class="marketing-panel" @click.stop style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #fff; border: 1px solid #e8e8e8; border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); padding: 20px; min-width: min(380px, calc(100vw - 32px)); z-index: 100;">
                                         <div style="margin-bottom: 16px;">
                                             <span style="font-size: 13px; color: #999; display: block; margin-bottom: 10px;">{{ $t('select_ratio') }}</span>
                                             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
@@ -596,7 +608,7 @@
                                 <span>{{ $t('use_skill') }}</span>
                             </button>
                             <!-- 视频时长选择（视频模式时显示） -->
-                            <div v-if="isVideoMode" class="marketing-dropdown" style="position: relative;">
+                            <div v-if="isVideoMode" class="marketing-dropdown mobile-foldable" style="position: relative;">
                                 <button class="marketing-bar-btn" @click.stop="showDurationPanel = !showDurationPanel">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="12" cy="12" r="10"/>
@@ -640,12 +652,18 @@
                             </div>
                             <input type="file" ref="referenceInputRef" style="display: none;" accept=".jpg,.jpeg,.png,.gif,.webp" multiple @change="handleReferenceFileChange">
                             <!-- @主体按钮（全能参考模式下可用） -->
-                            <button class="marketing-bar-btn" :style="showAddSubject ? '' : 'color: #ccc; cursor: not-allowed;'" :title="showAddSubject ? $t('add_subject_tip') : $t('mode_not_supported')" @mousedown.prevent @click="showAddSubject && triggerMention()">
+                            <button class="marketing-bar-btn mobile-foldable" :style="showAddSubject ? '' : 'color: #ccc; cursor: not-allowed;'" :title="showAddSubject ? $t('add_subject_tip') : $t('mode_not_supported')" @mousedown.prevent @click="showAddSubject && triggerMention()">
                                 <span :style="showAddSubject ? 'color: #00a8e6; font-weight: 600;' : 'color: #ccc; font-weight: 600;'">@</span>
                                 <span>{{ $t('add_subject') }}</span>
                             </button>
                         </div>
                         <div class="marketing-input-bar-right" style="display: flex; align-items: center; gap: 10px;">
+                            <button class="marketing-bar-btn mobile-settings-toggle" @click.stop="toggleMobileToolbar" :title="$t('more_settings')">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="3"/>
+                                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15 1.65 1.65 0 0 0 2.66 15V15a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1.51-1V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                                </svg>
+                            </button>
                             <div v-if="computingPower > 0" style="display: flex; align-items: center; gap: 4px; padding: 4px 10px; background: #f0f4f8; border-radius: 8px; font-size: 12px; color: #475569;">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="stroke: #00a8e6;">
                                     <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
@@ -686,7 +704,7 @@
                 </div>
                 <div v-else class="asset-grid">
                     <article v-for="asset in assetItems" :key="asset.id" class="asset-card">
-                        <div class="asset-preview">
+                        <div class="asset-preview" :style="verticalVideoAspectRatio(asset.ratio) ? { aspectRatio: verticalVideoAspectRatio(asset.ratio) } : null">
                             <video v-if="isAssetVideo(asset)" :src="asset.result_url" controls preload="metadata"></video>
                             <img v-else :src="asset.result_url" :alt="asset.prompt || $t('generated_result_alt')" loading="lazy" decoding="async" @click="showImageModal(asset.result_url, asset.id, asset.prompt)">
                         </div>
@@ -753,8 +771,9 @@
         </div>
 
         <!-- 图片放大模态框 -->
-        <div id="imgModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; flex-direction: column; cursor: zoom-out;" onclick="this.style.display='none'">
+        <div id="imgModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; flex-direction: column; cursor: zoom-out;" onclick="const v=document.getElementById('imgModalVideo'); if(v){v.pause();v.style.display='none';} document.getElementById('imgModalImg').style.display=''; this.style.display='none'">
             <img id="imgModalImg" style="max-width: 90%; max-height: 85%; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);" src="" :alt="$t('image_modal_alt')">
+            <video id="imgModalVideo" controls style="display: none; max-width: 90%; max-height: 85%; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);"></video>
             <div style="display: flex; gap: 12px; margin-top: 16px;">
                 <button style="padding: 8px 20px; background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 6px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.15)'" onclick="event.stopPropagation(); downloadModalImage()">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>

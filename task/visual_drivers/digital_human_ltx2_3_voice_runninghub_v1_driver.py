@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 import traceback
 from .base_video_driver import BaseVideoDriver
 from config.config_util import get_config, get_dynamic_config_value
+from config.unified_config import TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.file_storage import RunningHubFileStorage
 from utils.runninghub_error import is_upstream_congested_error
@@ -19,7 +20,7 @@ class Ltx23WithVoiceRunninghubV1Driver(BaseVideoDriver):
     """
 
     def __init__(self):
-        super().__init__(driver_name="ltx2_3_with_voice_runninghub_v1", driver_type=36)
+        super().__init__(driver_name="ltx2_3_with_voice_runninghub_v1", driver_type=TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE)
 
         # 加载配置
         self._api_key = get_dynamic_config_value("runninghub", "api_key", default="")

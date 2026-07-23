@@ -93,10 +93,26 @@ async def _submit_task_with_retry(task: AsyncTasksModel) -> Dict[str, Any]:
 
     # 需要槽位
     if config.need_runninghub_slot:
+        # 多密钥轮换：先从密钥池领用密钥
+        from task import runninghub_key_pool
+        acquired = await runninghub_key_pool.acquire_key_async()
+        if acquired is not None:
+            api_key_index, api_key, _ = acquired
+            slot_max_slots = 999999  # 单密钥上限已由 acquire_key 检查，跳过全局检查
+        else:
+            api_key_index = runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX
+            api_key = None
+            slot_max_slots = None  # 用默认全局值
+        # 注入密钥到 driver（异步驱动通过基类 _apply_api_key_for_submit）
+        if hasattr(driver, '_apply_api_key_for_submit'):
+            driver._apply_api_key_for_submit(api_key, api_key_index)
+
         slot_acquired = RunningHubSlotsModel.try_acquire_slot(
             task_id=task.id,
             task_type=config.slot_task_type,
-            source=RunningHubSlot.SOURCE_ASYNC
+            source=RunningHubSlot.SOURCE_ASYNC,
+            api_key_index=api_key_index,
+            max_slots=slot_max_slots
         )
 
         if not slot_acquired:
@@ -121,6 +137,9 @@ async def _submit_task_with_retry(task: AsyncTasksModel) -> Dict[str, Any]:
 
             if not result.get('success'):
                 RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_ASYNC)
+                await runninghub_key_pool.report_failure_async(
+                    api_key_index, result.get('error', '')
+                )
                 AsyncTasksModel.update_status(
                     record_id=task.id,
                     status=AsyncTaskStatus.FAILED,
@@ -128,15 +147,17 @@ async def _submit_task_with_retry(task: AsyncTasksModel) -> Dict[str, Any]:
                 )
                 return result
 
-            # 提交成功，更新 external_task_id
+            # 提交成功：原子记录 external_task_id、切换为 PROCESSING 并退出重试队列
             project_id = result.get('project_id')
-            AsyncTasksModel.update_external_task_id(task.id, project_id)
+            AsyncTasksModel.mark_submitted(task.id, project_id)
             RunningHubSlotsModel.update_project_id(task.id, project_id, source=RunningHubSlot.SOURCE_ASYNC)
+            await runninghub_key_pool.report_success_async(api_key_index)
             logger.info(f"任务 {task.id} 提交成功，project_id={project_id}")
             return result
 
         except Exception as e:
             RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_ASYNC)
+            await runninghub_key_pool.report_failure_async(api_key_index, str(e))
             logger.error(f"任务 {task.id} 提交异常: {e}", exc_info=True)
             AsyncTasksModel.update_status(
                 record_id=task.id,
@@ -158,7 +179,7 @@ async def _submit_task_with_retry(task: AsyncTasksModel) -> Dict[str, Any]:
             return result
 
         project_id = result.get('project_id')
-        AsyncTasksModel.update_external_task_id(task.id, project_id)
+        AsyncTasksModel.mark_submitted(task.id, project_id)
         return result
 
 
@@ -167,9 +188,15 @@ def process_pending_async_task_submissions():
     处理待提交的异步任务（调度器入口）
 
     扫描所有需要重试的 async_task（status=QUEUED, next_retry_at <= NOW, retry_count < max_retries），
-    逐个提交到外部 API。
+    逐个提交到外部 API。同时清理已耗尽重试次数却仍卡在 QUEUED 的历史任务。
     """
     try:
+        # 先清理耗尽重试的僵尸 QUEUED（retry_count >= max_retries 不会被 get_ready 拾取）
+        try:
+            AsyncTasksModel.fail_exhausted_retry_tasks(limit=200)
+        except Exception as e:
+            logger.error(f"清理耗尽重试异步任务失败: {e}", exc_info=True)
+
         retry_tasks = AsyncTasksModel.get_ready_to_retry_tasks(limit=50)
 
         if not retry_tasks:
@@ -180,7 +207,7 @@ def process_pending_async_task_submissions():
         loop = asyncio.new_event_loop()
         try:
             for task in retry_tasks:
-                # 检查是否超过最大重试次数
+                # 检查是否超过最大重试次数（防御：正常不应进入 get_ready 结果集）
                 if task.retry_count >= task.max_retries:
                     RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_ASYNC)
                     logger.warning(f"任务 {task.id} 超过最大重试次数 {task.max_retries}，标记为失败")

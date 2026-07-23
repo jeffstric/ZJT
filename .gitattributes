@@ -1,3 +1,8 @@
 # 确保 shell 脚本始终使用 LF 换行符（跨平台兼容）
 *.sh text eol=lf
 *.command text eol=lf
+
+# Windows 批处理文件必须使用 CRLF 换行符，否则 CMD 解析会错乱
+# （中文注释 UTF-8 字节错位产生乱码；if(...)括号块内 token 被截断当成命令执行）
+*.bat text eol=crlf
+*.cmd text eol=crlf

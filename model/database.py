@@ -174,3 +174,27 @@ def execute_update_in_transaction(conn, sql, params=None):
     """
     cursor = conn.cursor()
     return cursor.execute(sql, params or ())
+
+
+def execute_query_in_transaction(conn, sql, params=None, fetch_one=False):
+    """
+    在事务连接内执行 SELECT（如 FOR UPDATE 行锁）。
+
+    ⚠️ 仅供事务型原子操作内部调用，禁止用于在持有 conn 时执行会阻塞的操作。
+    与 execute_insert_in_transaction / execute_update_in_transaction 配套，
+    三者构成「事务内只做 DB 操作」的完整工具集。事务必须保持毫秒级短事务，
+    严禁在持有 conn 期间夹带 HTTP / 文件 IO / TTS / time.sleep 等慢操作，
+    否则行锁长期持有会阻塞并发更新。
+
+    Args:
+        conn: transaction() 上下文中的连接对象
+        sql: SQL query string（可含 FOR UPDATE）
+        params: Query parameters (tuple or dict)
+        fetch_one: True 返回单行，False 返回多行列表
+
+    Returns:
+        单行 dict（fetch_one=True）或 行列表（fetch_one=False）
+    """
+    cursor = conn.cursor()
+    cursor.execute(sql, params or ())
+    return cursor.fetchone() if fetch_one else cursor.fetchall()

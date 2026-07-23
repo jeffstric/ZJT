@@ -1136,10 +1136,6 @@
       getGenerationMode(item) {
         return getGenerationModeLabel(item);
       },
-      
-      goToCharacterCard(projectId) {
-        window.location.href = '/character_card.html?task_id=' + projectId;
-      },
     },
     
     beforeUnmount() {
@@ -1397,7 +1393,7 @@
         <!-- History Modal -->
         <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
           <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
-            <div style="position: relative;">
+            <div class="modal-sticky-header">
               <div style="display: flex; justify-content: space-between; align-items: flex-start; padding-right: 40px; margin-bottom: 12px;">
                 <div style="display: flex; align-items: flex-start; gap: 12px;">
                   <div class="modal-title">{{ $t('history') || '历史记录' }} ({{ $t('total_records') || '共' }} {{ historyTotal }} {{ $t('items') || '条' }})</div>
@@ -1465,7 +1461,6 @@
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">{{ $t('view_result') }}</a>
                   <button v-if="item.status == 2 && item.type == 3" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]" style="margin-left: 8px;">{{ enhancingVideos[item.id] ? ($t('enhanced_button') || '已修复') : ($t('generate_hd_video') || '生成高清视频') }}</button>
-                  <button v-if="item.status == 2 && item.project_id" class="btn" @click="goToCharacterCard(item.project_id)" style="margin-left: 8px;">{{ $t('create_character_card') || '创建角色卡' }}</button>
                 </div>
                 <div style="margin-top: 8px;">
                   <button class="btn secondary" @click="timelineAiToolId = item.id">{{ $t('view_timeline') }}</button>

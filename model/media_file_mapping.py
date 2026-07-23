@@ -16,8 +16,9 @@ class MediaFileEntity:
     AI_TOOLS = 1      # ai_tools 表
     CHARACTER = 2      # character 表
     LOCATION = 3      # location 表
-    PROPS = 4         # props 表
+    PROPS = 4          # props 表
     WORKFLOW = 5      # 工作流上传
+    STORYBOARD_SCENE_ASSET = 6  # storyboard_scene_asset 表（分镜首帧/尾帧/视频资产）
 
     @staticmethod
     def get_entity_name(value: int) -> str:
@@ -29,6 +30,7 @@ class MediaFileEntity:
             MediaFileEntity.LOCATION: 'location',
             MediaFileEntity.PROPS: 'props',
             MediaFileEntity.WORKFLOW: 'workflow',
+            MediaFileEntity.STORYBOARD_SCENE_ASSET: 'storyboard_scene_asset',
         }
         return mapping.get(value, 'unknown')
 
@@ -42,6 +44,7 @@ class MediaFileEntity:
             'location': MediaFileEntity.LOCATION,
             'props': MediaFileEntity.PROPS,
             'workflow': MediaFileEntity.WORKFLOW,
+            'storyboard_scene_asset': MediaFileEntity.STORYBOARD_SCENE_ASSET,
         }
         return mapping.get(name, 0)
 

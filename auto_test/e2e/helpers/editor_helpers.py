@@ -183,68 +183,99 @@ def click_split_button(page, node=None):
     """点击剧本分割按钮并自动确认弹窗（通过 JS 避免遮挡问题）。
 
     通过设置 state.defaultWorldId 绕过 showConfirmModal 确认弹窗，
-    并拦截 /api/parse-script 返回 mock 数据（因为外部 LLM API 不可用）。
+    并拦截剧本拆分相关 API 返回 mock 数据（外部 LLM 不可用）。
+
+    前端已迁移到增量拆分异步任务模式（见 web/js/script_split_task.js），
+    完整流程为三步，本 mock 全部覆盖：
+      1. POST /api/parse-script              → {code:0, data:{task_id}}
+      2. GET  /api/script-split/tasks/{id}   → {code:0, data:{status:'completed', ...}}
+      3. GET  /api/script-split/tasks/{id}/result → {code:0, data:{shot_groups:[...]}}
     """
     import json as _json
 
-    # 拦截 /api/parse-script 返回 mock 响应
+    # 任意稳定的 mock task_id（前端会带到后续两个端点的 URL 中）
+    mock_task_id = "9000001"
+
+    def _build_shot_groups(content):
+        # 按换行分割场景
+        lines = [l.strip() for l in content.split("\n") if l.strip()]
+        if not lines:
+            lines = [content or "场景一"]
+        shot_groups = []
+        for i, line in enumerate(lines):
+            shot_groups.append({
+                "group_name": f"分镜组{i+1}",
+                "group_index": i,
+                "shots": [{
+                    "shot_number": i + 1,
+                    "description": line,
+                    "duration": 5,
+                    "camera_movement": "固定",
+                    "prompt": line,
+                }]
+            })
+        return shot_groups
+
+    # 1) 拦截提交端点：返回 task_id，记录剧本内容供后续 result 使用
+    captured = {"content": ""}
+
     def handle_parse_script(route):
-        # 构造 mock 响应：根据请求中的 script_content 生成 shot_groups
         try:
             body = _json.loads(route.request.post_data or "{}")
-            content = body.get("script_content", "")
-            # 按换行分割场景
-            lines = [l.strip() for l in content.split("\n") if l.strip()]
-            if not lines:
-                lines = [content]
-            shot_groups = []
-            for i, line in enumerate(lines):
-                shot_groups.append({
-                    "group_name": f"分镜组{i+1}",
-                    "group_index": i,
-                    "shots": [{
-                        "shot_number": i + 1,
-                        "description": line,
-                        "duration": 5,
-                        "camera_movement": "固定",
-                        "prompt": line,
-                    }]
-                })
-            route.fulfill(
-                status=200,
-                content_type="application/json",
-                body=_json.dumps({
-                    "code": 0,
-                    "data": {
-                        "shot_groups": shot_groups,
-                        "max_group_duration": 15
-                    }
-                }),
-            )
+            captured["content"] = body.get("script_content", "")
         except Exception:
-            route.fulfill(
-                status=200,
-                content_type="application/json",
-                body=_json.dumps({
-                    "code": 0,
-                    "data": {
-                        "shot_groups": [{
-                            "group_name": "分镜组1",
-                            "group_index": 0,
-                            "shots": [{
-                                "shot_number": 1,
-                                "description": "场景一",
-                                "duration": 5,
-                                "camera_movement": "固定",
-                                "prompt": "场景一",
-                            }]
-                        }],
-                        "max_group_duration": 15
-                    }
-                }),
-            )
+            captured["content"] = ""
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=_json.dumps({
+                "code": 0,
+                "data": {
+                    "task_id": mock_task_id,
+                    "status": "queued",
+                    "status_url": f"/api/script-split/tasks/{mock_task_id}",
+                },
+            }),
+        )
+
+    # 2) 拦截轮询端点：直接返回 completed（前端收到即停止轮询并拉取 result）
+    def handle_task_status(route):
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=_json.dumps({
+                "code": 0,
+                "data": {
+                    "task_id": mock_task_id,
+                    "status": "completed",
+                    "phase": "done",
+                    "progress": 100,
+                    "message": "解析完成",
+                    "poll_after_ms": 500,
+                },
+            }),
+        )
+
+    # 3) 拦截结果端点：返回与剧本内容对应的 shot_groups（前端据此物化节点）
+    def handle_task_result(route):
+        shot_groups = _build_shot_groups(captured["content"])
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=_json.dumps({
+                "code": 0,
+                "data": {
+                    "shot_groups": shot_groups,
+                    "max_group_duration": 15,
+                },
+            }),
+        )
 
     page.route("**/api/parse-script", handle_parse_script)
+    page.route(f"**/api/script-split/tasks/{mock_task_id}", handle_task_status)
+    page.route(f"**/api/script-split/tasks/{mock_task_id}/result", handle_task_result)
+    # 兜底：若前端用其他 task_id 轮询（理论上不会），用通配也返回 completed
+    page.route("**/api/script-split/tasks/*/result", handle_task_result)
 
     # 设置 defaultWorldId 绕过 confirm modal（state 是全局 const 变量）
     page.evaluate("() => { if (typeof state !== 'undefined') state.defaultWorldId = 1; }")
@@ -256,8 +287,11 @@ def click_split_button(page, node=None):
         if (btn) btn.click();
     }""")
 
-    # 等待 API mock 响应和节点创建
+    # 等待 API mock 响应、轮询、结果物化完成
     page.wait_for_timeout(8000)
 
     # 取消路由拦截
     page.unroute("**/api/parse-script")
+    page.unroute(f"**/api/script-split/tasks/{mock_task_id}")
+    page.unroute(f"**/api/script-split/tasks/{mock_task_id}/result")
+    page.unroute("**/api/script-split/tasks/*/result")
