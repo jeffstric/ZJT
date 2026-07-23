@@ -165,9 +165,17 @@ class AuthService:
         """
         is_email_registration = bool(email and not phone)
         is_phone_registration = bool(phone and not email)
-        
+
         if not is_email_registration and not is_phone_registration:
             return {"success": False, "message": "请提供手机号或邮箱进行注册"}
+
+        # 社区版注册人数限制（商业版由 enterprise 注入 Provider 放行，
+        # 见 services/registration_quota.py）
+        from services.registration_quota import check_allowed
+        _allowed, _quota_msg = check_allowed()
+        if not _allowed:
+            logger.warning(f"注册被拒绝（配额限制）- 手机号: {phone}, 邮箱: {email}")
+            return {"success": False, "message": _quota_msg}
         
         # 邮箱注册流程
         if is_email_registration:

@@ -262,7 +262,7 @@ alembic:
 
 # Edition configuration
 edition:
-  mode: "community"
+  mode: "community"  # 社区版最多支持 10 个注册用户（商业版由 enterprise 模块解除限制）
   shared_space: false  # 商业版是否使用共享空间模式（true=所有用户共享数据，false=按用户隔离，默认false）
 
 file_storage:

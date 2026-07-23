@@ -112,6 +112,11 @@ class EnterpriseLoader:
                 reset_provider()
             except Exception:
                 pass
+            try:
+                from services.registration_quota import reset_provider as reset_registration_quota
+                reset_registration_quota()
+            except Exception:
+                pass
 
 
 enterprise_loader = EnterpriseLoader()
