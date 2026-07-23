@@ -132,7 +132,8 @@ def test_owner_isolation_query_task(api_client, user_id):
     """
     resp = api_client.get(
         f"{SPLIT_API}/tasks/1",  # 任意 id
-        headers={"X-User-Id": str(user_id + 100000)},  # 几乎不可能匹配的 user_id
+        # user_id fixture 为字符串，先转 int 再偏移，避免 str + int 报错
+        headers={"X-User-Id": str(int(user_id) + 100000)},  # 几乎不可能匹配的 user_id
     )
     # 不存在 → 404；存在但非 owner → 403；绝不应是 200 且带数据
     assert resp.status_code in (403, 404), f"期望 403/404，实际 {resp.status_code}: {resp.text}"
