@@ -4946,7 +4946,12 @@ def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
             item_type=item_type,  # 传递4宫格类型（4/5/6）
             item_name=combined_item_name,  # 传递组合的名称
             force_update_exist_image=False,
-            is_grid=True  # 关键：启用4k参数
+            is_grid=True,  # 关键：启用4k参数
+            # 修复 grid_size=NULL 报错：grid_size/grid_layout 列均为 NOT NULL，
+            # 漏传会导致 None 穿透到 INSERT，绕过 DB DEFAULT 与模型默认值（详见 _generate_grid_images_generic 写法）
+            grid_size=GridConfig.SIZE_2X2,  # 4=2x2 四宫格
+            grid_layout="2x2",              # 与 grid_layout NOT NULL DEFAULT '2x2' 列对齐
+            grid_item_names=item_names,     # 结构化名称，下游切图回写优先读 item_names_json
         )
         
         logger.info(f"[4GRID] generate_text_to_image 返回: success={result.get('success')}")
