@@ -5,7 +5,7 @@
 【启动文件】
 ----------------------------------------
 
-1. 点我启动.exe（推荐）
+1. 点我启动.exe/点我启动.bat（推荐）
    - 软件安装路径不能有中文
    - 不能用IE浏览器打开
    - 双击即可启动服务
@@ -24,7 +24,7 @@
 
 【启动流程】
 ----------------------------------------
-点我启动.exe / start_silent.vbs / start.bat
+点我启动.exe/点我启动.bat / start_silent.vbs / start.bat
     ↓
 scripts/launchers/start_windows.py（Windows 启动管理器）
     ↓
