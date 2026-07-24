@@ -1270,6 +1270,7 @@ class UploadPathConstants:
     DRAFT_DIR = "draft"         # 草稿目录
     CHARACTER_VOICE_DIR = "character/voice"
     FACE_MASK_DIR = "face_mask"     # 人脸遮盖视频结果目录
+    BRANDING_DIR = "branding"      # 品牌定制资源目录（Logo / Favicon / 用户手册，永久存放）
 
     # 文件名前缀
     MEDIA_PREFIX = "media"      # 媒体文件前缀（图生视频上传）
@@ -1296,6 +1297,56 @@ class MediaConstants:
     VIDEO_COMPRESS_TARGET_HEIGHT = 480  # 前端压缩目标分辨率（480p）
     VIDEO_COMPRESS_THRESHOLD_MB = 10    # 超过此大小的视频触发前端压缩
     VIDEO_REFERENCE_MIN_PIXEL_COUNT = 409600  # Seedance r2v 参考视频最低总像素数
+
+
+class BrandingConstants:
+    """
+    品牌定制相关常量（仅商业版可用）。
+
+    商业版管理员可在后台「品牌设置」修改系统名称、Logo、Favicon、用户手册，
+    配置写入 system_config 表（branding.* 键），由 server.py 的 _get_processed_html
+    在返回 HTML 时做 SSR 占位符替换（进缓存，改后重启服务生效）。
+    社区版或未配置时，全部回退到这里的默认值。
+    """
+
+    # 默认系统名称（社区版 / 商业版未配置时显示）
+    DEFAULT_SITE_NAME = "智剧通"
+
+    # 默认资源 URL（社区版 / 商业版未配置时使用，指向项目自带 files/ 目录）
+    DEFAULT_LOGO_URL = "/files/logo.svg"
+    DEFAULT_FAVICON_URL = "/files/logo.ico"
+
+    # 默认用户手册/服务条款 URL（中/英两份，由前端 loadTermsContent 拉取渲染）
+    DEFAULT_TERMS_URL_ZH = "/files/AI工具服务使用条款.txt"
+    DEFAULT_TERMS_URL_EN = "/files/AI Tool Service Terms.txt"
+
+    # 上传限制
+    LOGO_MAX_SIZE_MB = 2
+    FAVICON_MAX_SIZE_MB = 1
+    TERMS_MAX_SIZE_MB = 2
+    WX_GROUP_QR_MAX_SIZE_MB = 2
+
+    # 允许的文件扩展名（小写，tuple 适配 str.endswith）
+    LOGO_ALLOWED_EXTENSIONS = ('.svg', '.png')
+    FAVICON_ALLOWED_EXTENSIONS = ('.ico', '.png')
+    TERMS_ALLOWED_EXTENSIONS = ('.txt', '.md')
+    WX_GROUP_QR_ALLOWED_EXTENSIONS = ('.jpg', '.jpeg', '.png')
+
+    # system_config 中的配置键前缀
+    CONFIG_KEY_SITE_NAME = 'branding.site_name'
+    CONFIG_KEY_LOGO_URL = 'branding.logo_url'
+    CONFIG_KEY_FAVICON_URL = 'branding.favicon_url'
+    CONFIG_KEY_TERMS_URL_ZH = 'branding.terms_url_zh'
+    CONFIG_KEY_TERMS_URL_EN = 'branding.terms_url_en'
+    CONFIG_KEY_WX_GROUP_QR_URL = 'branding.wx_group_qr_url'
+
+    # 可上传的资产类型（用于 admin 接口 asset_type 参数校验）
+    ASSET_TYPE_LOGO = 'logo'
+    ASSET_TYPE_FAVICON = 'favicon'
+    ASSET_TYPE_TERMS_ZH = 'terms_zh'
+    ASSET_TYPE_TERMS_EN = 'terms_en'
+    ASSET_TYPE_WX_GROUP_QR = 'wx_group_qr'
+    VALID_ASSET_TYPES = (ASSET_TYPE_LOGO, ASSET_TYPE_FAVICON, ASSET_TYPE_TERMS_ZH, ASSET_TYPE_TERMS_EN, ASSET_TYPE_WX_GROUP_QR)
 
 
 class RunningHubImageFaceMaskConstants:

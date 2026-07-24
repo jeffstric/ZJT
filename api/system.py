@@ -26,6 +26,25 @@ _wx_group_qr_cache: Optional[Tuple[str, bytes, str, float]] = None
 
 
 def _get_wx_group_qr_url() -> str:
+    """
+    获取微信群二维码 URL。
+
+    优先级：
+    1. 商业版品牌定制（branding.wx_group_qr_url，由 enterprise Provider 注入）
+       —— 仅企业版生效，工作室版/社区版 Provider 返回空串
+    2. wx_group_guide.qr_url（YAML 配置，原有逻辑）
+    3. ExternalLinks.WX_GROUP_QR_URL（默认远程地址）
+    """
+    # 1. 优先检查商业版品牌定制（社区版/工作室版返回空串，自动跳过）
+    try:
+        from services.branding import get_branding_config
+        branding_url = get_branding_config().get('wx_group_qr_url', '')
+        if branding_url:
+            return branding_url
+    except Exception:
+        pass
+
+    # 2/3. 回退原有 YAML 配置逻辑
     return (
         get_config_value(
             'wx_group_guide',

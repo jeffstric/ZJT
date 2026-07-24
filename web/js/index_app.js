@@ -379,7 +379,7 @@
     computed: {
       route(){ return this.$route },
       mainTitle(){
-        if (this.route.name === 'list') return '智剧通';
+        if (this.route.name === 'list') return (window.__BRANDING_SITE_NAME__ || '智剧通');
         if (this.route.name === 'image-edit') return this.$t('page_title_image_edit');
         if (this.route.name === 'ai-video-gen') return this.$t('page_title_ai_video_gen');
         if (this.route.name === 'image-to-video') return this.$t('page_title_image_to_video');
@@ -2054,9 +2054,14 @@
       async loadTermsContent() {
         try {
           const locale = localStorage.getItem('zjt_locale') || 'zh-CN';
+          // 优先使用商业版后台上传的服务条款（由 server.py SSR 注入到 window.__BRANDING_TERMS__）
+          // 社区版或未配置时回退默认 files/*.txt
+          const defaultTermsZh = '/files/AI工具服务使用条款.txt';
+          const defaultTermsEn = '/files/AI Tool Service Terms.txt';
+          const brandingTerms = (window.__BRANDING_TERMS__ || {});
           const termsFile = locale === 'en'
-            ? '/files/AI Tool Service Terms.txt'
-            : '/files/AI工具服务使用条款.txt';
+            ? (brandingTerms.en || defaultTermsEn)
+            : (brandingTerms.zh || defaultTermsZh);
           const response = await axios.get(termsFile);
           // Convert markdown-like text to HTML
           // First escape HTML entities in raw text to prevent XSS, then apply markdown
@@ -2105,7 +2110,7 @@
         const path = window.location.pathname || '/';
         const base = origin + path;
         const url = base + (base.indexOf('?') >= 0 ? '&' : '?') + 'invite_code=' + encodeURIComponent(this.inviteCode);
-        return '邀请你加入智剧通，点击链接直接注册：' + url;
+        return '邀请你加入' + (window.__BRANDING_SITE_NAME__ || '智剧通') + '，点击链接直接注册：' + url;
       },
 
       copyInviteCode() {
