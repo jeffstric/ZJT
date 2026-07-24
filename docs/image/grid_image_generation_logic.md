@@ -157,7 +157,9 @@ cron_task_manager: item_type==7 分支
    }
    ```
 4. 将 4 个名称用逗号拼接为 `combined_item_name`
-5. 调用 `generate_text_to_image(is_grid=True)`
+5. 调用 `generate_text_to_image(is_grid=True, grid_size=GridConfig.SIZE_2X2, grid_layout="2x2", grid_item_names=item_names)`
+   - 注意：`grid_size` / `grid_layout` 为数据库 NOT NULL 列，必须显式传入；
+     漏传会导致 `None` 穿透到 INSERT，绕过 DB DEFAULT 与模型默认值，触发 `Column 'grid_size' cannot be null`。
 
 ### 3. generate_text_to_image（底层生图函数）
 
