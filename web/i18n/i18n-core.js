@@ -41,6 +41,10 @@ window.ZJTi18n = (() => {
       if (!state.loadedNamespaces.includes(namespace)) {
         state.loadedNamespaces.push(namespace);
       }
+      // 商业版品牌定制：用 window.__BRANDING_SITE_NAME__ 覆盖翻译中的品牌名，
+      // 防止 data-i18n 在语言切换时用 JSON 默认值（智剧通/ZJT）覆盖 SSR 注入的品牌名。
+      // 此处覆盖发生在翻译存入 state 之前，保证 t() 和 scanDOM 都返回正确品牌名。
+      _applyBranding(messages);
     } catch (error) {
       console.error(`Failed to load i18n ${locale}/${namespace}:`, error);
       state.messages[locale][namespace] = {};
@@ -48,6 +52,45 @@ window.ZJTi18n = (() => {
       if (!state.loadedNamespaces.includes(namespace)) {
         state.loadedNamespaces.push(namespace);
       }
+    }
+  }
+
+  /**
+   * 用商业版品牌名覆盖翻译中包含品牌名的键值。
+   *
+   * 策略：识别「品牌名相关」的键（app_title/page_title/brand_title/copyright/
+   * footer_text/wx_group_*），将其值中的默认品牌词（中文「智剧通」/英文「ZJT」）
+   * 替换为 window.__BRANDING_SITE_NAME__。这样保留原句结构，仅替换品牌词，
+   * 同时兼容中英文。社区版/未配置时 window.__BRANDING_SITE_NAME__ 不存在，
+   * 此函数不做任何改动（保持默认「智剧通」）。
+   */
+  function _applyBranding(messages) {
+    const siteName = window.__BRANDING_SITE_NAME__;
+    if (!siteName || typeof messages !== 'object') return;
+
+    // 含品牌名、需要做词汇替换的键（通配 wx_group_* 前缀）
+    const brandingKeyTest = (key) =>
+      key === 'app_title' ||
+      key === 'page_title' ||
+      key === 'brand_title' ||
+      key === 'copyright' ||
+      key === 'footer_text' ||
+      key === 'subtitle' ||
+      key.indexOf('wx_group_') === 0;
+
+    // 默认品牌词（中/英），替换为商业版品牌名
+    const defaultBrandWords = ['智剧通', 'ZJT'];
+
+    for (const key of Object.keys(messages)) {
+      if (!brandingKeyTest(key)) continue;
+      let val = messages[key];
+      if (typeof val !== 'string') continue;
+      for (const w of defaultBrandWords) {
+        if (val.indexOf(w) >= 0) {
+          val = val.split(w).join(siteName);
+        }
+      }
+      messages[key] = val;
     }
   }
 

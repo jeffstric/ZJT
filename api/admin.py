@@ -88,6 +88,7 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
         active_workflows_3d = VideoWorkflowModel.count_active_recent_days(days=3)
         
         from task.runninghub_key_pool import is_available as is_runninghub_key_pool_available
+        from services.branding import is_available as is_branding_available
         return {
             "code": 0,
             "data": {
@@ -96,6 +97,9 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
                 "is_community_edition": IS_COMMUNITY_EDITION,
                 "features": {
                     "runninghub_key_pool": is_runninghub_key_pool_available(),
+                    # 品牌定制：仅企业版可用。工作室版的 enterprise 不注入 branding provider，
+                    # is_available() 返回 False，前端据此隐藏品牌定制入口。
+                    "branding": is_branding_available(),
                 },
             }
         }
