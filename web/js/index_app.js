@@ -49,6 +49,10 @@
       showRechargePowerModal: false,
       showFeedbackModal: false,
       showWechatChannelsModal: false,
+      // 页脚社交图标 / 意见反馈（server-config；默认 true 保持社区版行为）
+      showSocialIcons: true,
+      showFeedbackQr: true,
+      feedbackQrUrl: '/files/二维码.jpg',
       // 官方微信群引导
       wxGroupGuideEnabled: false,
       wxGroupQrUrl: '',           // 配置中的原始地址（可能是远端 http）
@@ -2252,6 +2256,10 @@
             this.wxGroupQrUrl = response.data.data.wx_group_qr_url || '';
             this.wxGroupQrProxyPath = response.data.data.wx_group_qr_proxy_path
               || '/api/system/wx-group-qr';
+            // 缺字段回退 true / 默认图，避免旧后端或网络抖动导致社区入口消失
+            this.showSocialIcons = response.data.data.show_social_icons !== false;
+            this.showFeedbackQr = response.data.data.show_feedback_qr !== false;
+            this.feedbackQrUrl = response.data.data.feedback_qr_url || '/files/二维码.jpg';
             if (response.data.data.footer) {
               this.footerConfig = response.data.data.footer;
             }

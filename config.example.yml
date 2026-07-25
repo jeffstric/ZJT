@@ -250,6 +250,13 @@ frontend:
   # Vue 错误输出开关（开发调试用）
   # enabled: true 时，Vue 运行时错误会输出到浏览器控制台
   enable_vue_error_output: false
+  # 页脚社交平台图标（GitHub/Bilibili/抖音/…）。仅在 server.is_local=true 时有意义；默认 true
+  show_social_icons: true
+  # 右下角「意见反馈」浮动入口及个人微信二维码弹窗；默认 true
+  show_feedback_qr: true
+  # 意见反馈弹窗中的个人微信二维码地址（与官方微信群 wx_group_guide 无关）
+  # 默认 /files/二维码.jpg；可改为 /files/你的图.jpg 或可公网访问的图片 URL
+  feedback_qr_url: "/files/二维码.jpg"
 
 # Workflow configuration
 workflow:

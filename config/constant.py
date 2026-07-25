@@ -1479,6 +1479,9 @@ class ExternalLinks:
     WX_GROUP_QR_PROXY_READ_TIMEOUT = 15     # 秒
     WX_GROUP_QR_PROXY_MAX_BYTES = 2 * 1024 * 1024  # 2MB
     WX_GROUP_QR_PROXY_CACHE_TTL = 3600      # 内存缓存秒数
+    # 意见反馈个人微信二维码（右下角 FAB / 弹窗；与官方群二维码无关）
+    # 可通过 frontend.feedback_qr_url 覆盖；支持 /files/... 同源路径或可公网访问的图片 URL
+    FEEDBACK_QR_URL = '/files/二维码.jpg'
 
 
 # LLM 模型和供应商常量
