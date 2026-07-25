@@ -732,13 +732,13 @@
             </section>
         </main>
 
-        <!-- 浮动反馈按钮 -->
-        <div class="feedback-fab-container">
+        <!-- 浮动反馈按钮（frontend.show_feedback_qr） -->
+        <div class="feedback-fab-container" v-if="showFeedbackQr">
             <button class="feedback-fab" @click="openFeedbackModal" :title="$t('contact_us')">💡</button>
         </div>
 
-        <!-- 联系我们弹窗 -->
-        <div class="modal-overlay-container" v-if="showFeedbackModal" @click.self="closeFeedbackModal">
+        <!-- 联系我们弹窗（个人微信二维码，frontend.feedback_qr_url） -->
+        <div class="modal-overlay-container" v-if="showFeedbackModal && showFeedbackQr" @click.self="closeFeedbackModal">
             <div class="modal-dialog" style="max-width: 420px;">
                 <div class="modal-header">
                     <h3 class="modal-title">📣 {{ $t('contact_us') }}</h3>
@@ -751,7 +751,7 @@
                 <div class="modal-body feedback-body">
                     <p class="feedback-desc">{{ $t('feedback_desc') }}</p>
                     <div class="qr-wrapper">
-                        <img src="/files/二维码.jpg" :alt="$t('feedback_qr_alt')" class="qr-image">
+                        <img :src="feedbackQrUrl" :alt="$t('feedback_qr_alt')" class="qr-image">
                     </div>
                 </div>
                 <div class="modal-footer" style="padding: 12px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end;">

@@ -252,6 +252,9 @@
                 console.warn('[i18n] 初始化失败，使用中文:', e);
             }
 
+            // 意见反馈入口 / 二维码（不阻塞后续主流程）
+            applyFeedbackVisibilityFromServer().catch(() => {});
+
             // 检查是否缺少 user_id 参数
             if (!USER_ID || USER_ID === 'null' || USER_ID === '') {
                 alert('⚠️ ' + (window.t ? window.t('alert_missing_params') : '缺少关键参数\n\n请回到工作流列表后，再进入。'));
@@ -1912,6 +1915,39 @@
             if (fabContainer) {
                 fabContainer.style.display = 'none';
             }
+        }
+
+        /**
+         * 意见反馈：按 server-config 隐藏入口或替换二维码 URL。
+         * 与官方微信群引导无关；失败时默认保持开启。
+         */
+        async function applyFeedbackVisibilityFromServer() {
+            const fabContainer = document.getElementById('feedback-fab-container');
+            const modal = document.getElementById('feedback-modal');
+            const img = modal ? modal.querySelector('img.qr-image') : null;
+            let enabled = true;
+            let qrUrl = '/files/二维码.jpg';
+            try {
+                const res = await fetch('/api/system/server-config');
+                const data = await res.json();
+                if (data && data.code === 0 && data.data) {
+                    if (data.data.show_feedback_qr === false) enabled = false;
+                    if (data.data.feedback_qr_url) qrUrl = data.data.feedback_qr_url;
+                }
+            } catch (e) { /* 默认开启 */ }
+            if (!enabled) {
+                if (fabContainer) {
+                    fabContainer.style.display = 'none';
+                    fabContainer.setAttribute('hidden', 'true');
+                }
+                if (modal) {
+                    modal.classList.remove('show');
+                    modal.style.display = 'none';
+                    modal.setAttribute('hidden', 'true');
+                }
+                return;
+            }
+            if (img && qrUrl) img.setAttribute('src', qrUrl);
         }
 
         function showError(message) {

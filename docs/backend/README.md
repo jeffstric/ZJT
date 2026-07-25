@@ -15,3 +15,4 @@
 | [reasoning_content_passthrough.md](./reasoning_content_passthrough.md) | 推理模型 reasoning_content 回传机制 |
 | [pipeline_steps.md](./pipeline_steps.md) | AI Tools 流水线步骤机制（预处理、失败重试） |
 | [wx_group_guide.md](./wx_group_guide.md) | 注册后官方微信群引导（开关、触点、常驻入口） |
+| [frontend_ui_visibility.md](./frontend_ui_visibility.md) | 社交图标 / 意见反馈个人微信二维码可配置隐藏与换图 |

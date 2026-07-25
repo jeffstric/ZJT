@@ -59,6 +59,34 @@ def _is_wx_group_guide_enabled() -> bool:
     return bool(get_config_value('wx_group_guide', 'enabled', default=True))
 
 
+def _is_show_social_icons() -> bool:
+    """页脚社交平台图标整块开关（仅 is_local 时有意义；默认开启）。"""
+    return bool(get_config_value('frontend', 'show_social_icons', default=True))
+
+
+def _is_show_feedback_qr() -> bool:
+    """右下角意见反馈入口 + 个人微信二维码弹窗开关（默认开启）。"""
+    return bool(get_config_value('frontend', 'show_feedback_qr', default=True))
+
+
+def _get_feedback_qr_url() -> str:
+    """
+    意见反馈弹窗中的个人微信二维码 URL。
+
+    读取 frontend.feedback_qr_url；空值回退为默认本地静态图。
+    与 wx_group_guide / branding 官方群二维码无关。
+    """
+    raw = get_config_value(
+        'frontend',
+        'feedback_qr_url',
+        default=ExternalLinks.FEEDBACK_QR_URL,
+    )
+    if raw is None:
+        return ExternalLinks.FEEDBACK_QR_URL
+    url = str(raw).strip()
+    return url or ExternalLinks.FEEDBACK_QR_URL
+
+
 @router.get("/status")
 async def get_system_status():
     """
@@ -144,6 +172,11 @@ async def get_server_config():
         wx_group_guide_enabled = _is_wx_group_guide_enabled()
         wx_group_qr_url = _get_wx_group_qr_url()
 
+        # 前端社区触点（社交图标 / 意见反馈个人微信二维码）
+        show_social_icons = _is_show_social_icons()
+        show_feedback_qr = _is_show_feedback_qr()
+        feedback_qr_url = _get_feedback_qr_url()
+
         # CAPTCHA 配置（仅暴露前端需要的公开字段，不暴露 access_key_secret）
         captcha_enabled = get_dynamic_config_value('captcha', 'enabled', default=False)
         captcha_prefix = ''
@@ -173,6 +206,11 @@ async def get_server_config():
                 "wx_group_qr_url": wx_group_qr_url,
                 # HTTPS 页面下前端应改用该同源代理路径，避免 HTTP 图被混合内容拦截
                 "wx_group_qr_proxy_path": ExternalLinks.WX_GROUP_QR_PROXY_PATH,
+                # 页脚社交图标整块：前端还需 AND is_local
+                "show_social_icons": show_social_icons,
+                # 意见反馈 FAB / 弹窗（个人微信二维码，非官方群）
+                "show_feedback_qr": show_feedback_qr,
+                "feedback_qr_url": feedback_qr_url,
                 "footer": {
                     "copyright": footer.get('copyright', ''),
                     "icp_number": footer.get('icp_number', ''),
