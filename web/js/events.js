@@ -1,6 +1,9 @@
     const addBtn = document.getElementById('addBtn');
     const addMenu = document.getElementById('addMenu');
 
+    // 仅在 server-config 确认允许后为 true；加载中禁止打开反馈弹窗（避免误点绿色按钮弹出二维码）
+    let feedbackQrEnabled = false;
+
     function applyFeedbackBtnState(isMinimized) {
         const wrapper = document.getElementById('feedbackBtnWrapper');
         const feedbackBtn = document.getElementById('feedbackBtn');
@@ -19,6 +22,7 @@
 
     // 最小化意见反馈按钮：变成一个很小的“?”
     function minimizeFeedbackBtn() {
+        if (!feedbackQrEnabled) return;
         try {
             localStorage.setItem('feedbackBtnMinimized', 'true');
             localStorage.removeItem('feedbackBtnDeleted');
@@ -39,6 +43,8 @@
             e.stopPropagation();
             e.preventDefault();
         }
+        // 配置未就绪或已关闭时不弹窗（修复加载中点击绿色反馈钮仍出二维码）
+        if (!feedbackQrEnabled) return;
         const minimized = (function () {
             try {
                 return localStorage.getItem('feedbackBtnMinimized') === 'true';
@@ -50,7 +56,11 @@
             restoreFeedbackBtn();
         }
         const modal = document.getElementById('feedbackModal');
-        if (modal) modal.classList.add('active');
+        if (modal) {
+            modal.removeAttribute('hidden');
+            modal.classList.add('active');
+            modal.setAttribute('aria-hidden', 'false');
+        }
     }
 
     function initFeedbackBtn() {
@@ -67,11 +77,87 @@
         applyFeedbackBtnState(minimized);
     }
 
-    // 页面加载完成后初始化
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initFeedbackBtn);
-    } else {
+    function hideFeedbackUi() {
+        feedbackQrEnabled = false;
+        const wrapper = document.getElementById('feedbackBtnWrapper');
+        const modal = document.getElementById('feedbackModal');
+        if (wrapper) {
+            wrapper.classList.add('hidden');
+            wrapper.style.display = 'none';
+            wrapper.setAttribute('hidden', 'true');
+            wrapper.setAttribute('aria-hidden', 'true');
+        }
+        if (modal) {
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+            modal.setAttribute('hidden', 'true');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+    }
+
+    function showFeedbackUi() {
+        const wrapper = document.getElementById('feedbackBtnWrapper');
+        const modal = document.getElementById('feedbackModal');
+        if (wrapper) {
+            wrapper.classList.remove('hidden');
+            wrapper.style.display = '';
+            wrapper.removeAttribute('hidden');
+            wrapper.setAttribute('aria-hidden', 'false');
+        }
+        // 弹窗保持关闭，仅允许点击后再打开；去掉 hidden 以便 .active 时可见
+        if (modal) {
+            modal.style.display = '';
+            modal.removeAttribute('hidden');
+            modal.classList.remove('active');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+    }
+
+    function applyFeedbackQrImage(url) {
+        const img = document.querySelector('#feedbackModal img.feedback-qr-code');
+        if (img && url) {
+            img.setAttribute('src', url);
+        }
+    }
+
+    /**
+     * 从 server-config 应用意见反馈可见性与二维码 URL。
+     * - HTML 默认 hidden，避免加载中误点
+     * - show_feedback_qr === false 时保持隐藏
+     * - 失败/缺字段回退开启（社区版默认）
+     */
+    async function applyFeedbackVisibilityFromServer() {
+        let enabled = true;
+        let qrUrl = '/files/二维码.jpg';
+        try {
+            const res = await fetch('/api/system/server-config');
+            const data = await res.json();
+            if (data && data.code === 0 && data.data) {
+                if (data.data.show_feedback_qr === false) {
+                    enabled = false;
+                }
+                if (data.data.feedback_qr_url) {
+                    qrUrl = data.data.feedback_qr_url;
+                }
+            }
+        } catch (e) {
+            /* 默认开启 */
+        }
+        if (!enabled) {
+            hideFeedbackUi();
+            return;
+        }
+        applyFeedbackQrImage(qrUrl);
+        showFeedbackUi();
+        feedbackQrEnabled = true;
         initFeedbackBtn();
+    }
+
+    // 页面加载完成后：先拉配置，再显示/初始化反馈按钮
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applyFeedbackVisibilityFromServer);
+    } else {
+        applyFeedbackVisibilityFromServer();
     }
 
     // 上传配置

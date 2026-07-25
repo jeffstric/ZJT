@@ -773,6 +773,9 @@
             const showPowerLogsModal = ref(false);
             const showRechargeModal = ref(false);
             const showFeedbackModal = ref(false);
+            // 意见反馈（server-config；默认开启，与社区版一致）
+            const showFeedbackQr = ref(true);
+            const feedbackQrUrl = ref('/files/二维码.jpg');
             const rechargeState = ref('loading');
             const rechargePackages = ref([]);
             const rechargeError = ref('');
@@ -870,6 +873,7 @@
             }
 
             function openFeedbackModal() {
+                if (!showFeedbackQr.value) return;
                 showFeedbackModal.value = true;
             }
 
@@ -3927,7 +3931,7 @@
                 // 点击空白处关闭菜单
                 document.addEventListener('click', _closeMenuHandler);
 
-                // 获取服务器配置（图片大小限制等）
+                // 获取服务器配置（图片大小限制 / 意见反馈等）
                 try {
                     const resp = await fetch('/api/system/server-config');
                     const cfg = await resp.json();
@@ -3943,6 +3947,8 @@
                     if (cfg.data?.is_enterprise !== undefined) {
                         isEnterprise.value = cfg.data.is_enterprise;
                     }
+                    showFeedbackQr.value = cfg.data?.show_feedback_qr !== false;
+                    feedbackQrUrl.value = cfg.data?.feedback_qr_url || '/files/二维码.jpg';
                 } catch (e) { /* 使用默认值 */ }
 
                 // 获取用户信息
@@ -6474,6 +6480,8 @@
                 selectRechargePackage,
                 backToPackageList,
                 showFeedbackModal,
+                showFeedbackQr,
+                feedbackQrUrl,
                 openFeedbackModal,
                 closeFeedbackModal,
                 hasUploadedImage,

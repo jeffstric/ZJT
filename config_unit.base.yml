@@ -52,6 +52,9 @@ upload:
 # Frontend debug mode
 frontend:
   debug_password: "123"
+  show_social_icons: true
+  show_feedback_qr: true
+  feedback_qr_url: "/files/二维码.jpg"
 
 # Alembic database migration configuration
 alembic:
