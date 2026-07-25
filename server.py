@@ -71,6 +71,7 @@ from config.constant import (
     VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
     ASSET_LIST_MAX_PAGE_SIZE,
     ASSET_LIST_DB_QUERY_TIMEOUT,
+    BrandingConstants,
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
@@ -289,6 +290,35 @@ def _get_processed_html(file_path: str) -> bytes:
     # 会原样输出 "?v=__VERSION__" 这样的占位字符串
     if "__VERSION__" in content:
         content = content.replace("__VERSION__", STATIC_VERSION)
+
+    # ===== 品牌定制 SSR 注入（通过 services.branding 门面，与 __VERSION__ 同机制，进缓存）=====
+    # 安全说明：品牌配置读取走 Provider 门面。社区版 Provider 永远返回默认值（智剧通），
+    # **不读取任何 branding.* 配置**——即使有人直接写 system_config 表也无法生效，
+    # 因为社区版的读取链路根本不存在。商业版通过 enterprise 启动时注入的 Provider
+    # 才会读取 branding.* 配置覆盖默认值。
+    from services.branding import get_branding_config
+    branding_cfg = get_branding_config()
+    site_name = branding_cfg.get('site_name', BrandingConstants.DEFAULT_SITE_NAME)
+    logo_url = branding_cfg.get('logo_url', BrandingConstants.DEFAULT_LOGO_URL)
+    favicon_url = branding_cfg.get('favicon_url', BrandingConstants.DEFAULT_FAVICON_URL)
+    terms_url_zh = branding_cfg.get('terms_url_zh', BrandingConstants.DEFAULT_TERMS_URL_ZH)
+    terms_url_en = branding_cfg.get('terms_url_en', BrandingConstants.DEFAULT_TERMS_URL_EN)
+
+    # 占位符替换（HTML 模板里用 __BRANDING_*__ 标记的位置）
+    content = content.replace("__BRANDING_SITE_NAME__", site_name)
+    content = content.replace("__BRANDING_LOGO_URL__", logo_url)
+    content = content.replace("__BRANDING_FAVICON_URL__", favicon_url)
+
+    # 注入全局 JS 变量，供前端运行时读取（仿 window.__STATIC_VERSION 的注入方式）
+    # 仅在 </head> 首次出现前注入，避免重复；用 json.dumps 保证字符串安全转义
+    branding_inject = (
+        "<script>"
+        f"window.__BRANDING_SITE_NAME__={json.dumps(site_name)};"
+        f"window.__BRANDING_TERMS__={json.dumps({'zh': terms_url_zh, 'en': terms_url_en})};"
+        "</script>"
+    )
+    if "</head>" in content:
+        content = content.replace("</head>", branding_inject + "</head>", 1)
 
     # 检查是否启用了缓存失效功能
     if CACHE_BUST_ENABLED:

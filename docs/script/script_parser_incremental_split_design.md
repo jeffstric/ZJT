@@ -329,11 +329,12 @@ strict_json: bool = False
 1. 按 `accepted_registry` 汇总角色、场景、道具和 `spatial_world`。
 2. 验证所有镜头已经直接引用任务级稳定 ID，不在此阶段深层改写空间 ID。
 3. 按原文顺序拼接 `shot_groups`。
-4. 统一生成 `group_id`、`shot_id` 和 `shot_number`。
-5. 重新计算总时长和 metadata。
-6. 再执行一次资产清理、空间连续性修复和分组重排。
-7. 验证原始 `block_id` 完整覆盖。
-8. 执行现有拆分质检。
+4. **效果模式**：以 `compiled_registry` 为真源，调用 `renumber_entities_by_name()` 对角色/场景/道具按 name 先来后到统一重发号，并精确重写整棵树的 ID 引用（消除并发段 ID 不一致，详见 §24）。
+5. 统一生成 `group_id`、`shot_id` 和 `shot_number`。
+6. 重新计算总时长和 metadata。
+7. 再执行一次资产清理、空间连续性修复和分组重排。
+8. 验证原始 `block_id` 完整覆盖。
+9. 执行现有拆分质检。
 
 场景引用清理不能只依赖分段 JSON。进入合并阶段后，worker 必须根据任务的
 `world_id` 异步加载该世界的完整场景树，并把它传给
@@ -909,7 +910,16 @@ schema v2 的 canonical `entities` 是对象，固定包含 `characters`、`loca
 
 普通 `speed/balanced` 和历史 schema v1 任务保持原串行检查点流程。效果模式的提示词、契约编译、物理状态校验及合并修复均位于 `enterprise/services/script_split_quality/`；核心仓库只保留策略门面、通用并发调度和持久化逻辑。
 
-效果模式合并时以规划注册表为身份真源，并补充分段结果中规划遗漏的实体，不能用空的地点或道具集合覆盖有效结果。同一 ID 在分段结果中出现不同名称时，视为“酒店前台/酒店大堂”一类命名粒度差异：保留规划的 canonical ID、名称和 `entity_key`，同时吸收模型补充的描述、外观等非身份字段，镜头引用无需改写。同一名称对应不同 ID 仍以 `quality_merge_invalid` 明确失败，禁止静默生成歧义引用。
+效果模式合并时以规划注册表为身份真源，并补充分段结果中规划遗漏的实体，不能用空的地点或道具集合覆盖有效结果。效果模式分段是并发执行的（`_step_generate_parallel_batch` 用 `asyncio.gather`），并发段彼此看不到对方的实体登记，因此段级 ID 不可信任：同一实体可能被不同段分配不同 ID，甚至同一 ID 被复用指向不同实体。
+
+合并阶段由 `renumber_entities_by_name()` 统一重发号，原则：
+
+1. **规划真源保留**：命中 `compiled_registry`（按规范化 name 或 `*_db_id`）的实体强制使用真源 ID，段级 ID 不算数。
+2. **新实体按 name 先来后到发号**：规划表外的实体，段级 ID 一律丢弃，按规范化 name 登记，从真源占用号段的下一个起顺序发号（`{prefix}_NNN`），同 name 复用已发号。
+3. **整树精确重写**：收集 `id_map`（段旧 ID → 全局新 ID），经 `_resolve_id_map_chains` 解析替换链后，对整棵 parsed 树精确重写——覆盖 `props_present`、`characters_present`、`focus_character_ids`、`location_id`、`dialogue.character_id`、`spatial_layout` 内所有 `character_id`/`prop_id`/`location_id` 引用以及 `spatial_world.owner_id`/`location_ids` 等。
+4. **实体条目去重合并**：重发号后多个段条目可能落到同一最终 ID，按 ID 去重为单条，保留首条身份字段、合并后续条目的补充字段（描述/外观等）。
+
+该机制消除了并发段 ID 不一致导致的 `quality_merge_invalid` 死锁。speed 模式因串行推进 + 跨段累积的 `accepted_registry`，段间 ID 一致性已由 `rewrite_segment_entity_ids` 在段生成阶段保证，合并阶段无需重发号。
 
 ## 25. 多 worker 分片扩展（id MOD N = index）
 

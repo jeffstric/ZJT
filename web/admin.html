@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title data-i18n="admin_panel">管理后台 - 智剧通</title>
+    <title data-i18n="admin_panel">管理后台 - __BRANDING_SITE_NAME__</title>
     <link rel="stylesheet" href="/css/common.css">
     <link rel="stylesheet" href="/css/admin.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
@@ -136,6 +136,15 @@
                         <span>{{ t('nav_task_timeline') }}</span>
                     </a>
                 </li>
+                <!-- 品牌定制（仅企业版；工作室版 features.branding=false 自动隐藏） -->
+                <li v-if="brandingAvailable">
+                    <a href="#" :class="{ active: currentPage === 'branding' }" @click.prevent="switchPage('branding')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+                        </svg>
+                        <span>{{ t('nav_branding') }}</span>
+                    </a>
+                </li>
             </ul>
         </aside>
 
@@ -155,6 +164,7 @@
                 <h2 v-else-if="currentPage === 'marketingPublications'">{{ t('nav_marketing_publications') }}</h2>
                 <h2 v-else-if="currentPage === 'commission'">{{ t('nav_commission') }}</h2>
                 <h2 v-else-if="currentPage === 'taskTimeline'">{{ t('nav_task_timeline') }}</h2>
+                <h2 v-else-if="currentPage === 'branding'">{{ t('branding_title') }}</h2>
 
                 <div class="admin-user">
                     <span class="admin-user-name">{{ maskedPhone }}</span>
@@ -1412,6 +1422,141 @@
                             </template>
                         </tbody>
                     </table>
+                </div>
+            </section>
+
+            <!-- 品牌定制页面（仅商业版） -->
+            <section v-if="currentPage === 'branding'">
+                <div v-if="branding.loading" class="loading">
+                    <div class="loading-spinner"></div>
+                </div>
+                <div v-else>
+                    <!-- 重启生效提示 -->
+                    <div class="admin-info-banner" style="margin-bottom: 20px; padding: 12px 16px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; color: #92400e; font-size: 13px;">
+                        ⚠️ {{ t('branding_restart_hint') }}
+                    </div>
+
+                    <!-- 邮件/短信不支持声明 -->
+                    <div class="admin-info-banner" style="margin-bottom: 20px; padding: 12px 16px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; color: #1e40af; font-size: 13px;">
+                        ℹ️ {{ t('branding_excluded_hint') }}
+                    </div>
+
+                    <!-- 系统名称 -->
+                    <div class="admin-card" style="margin-bottom: 20px;">
+                        <h3 style="margin: 0 0 16px 0;">{{ t('branding_site_name') }}</h3>
+                        <div style="display: flex; gap: 12px; align-items: flex-end;">
+                            <div style="flex: 1;">
+                                <label style="display: block; margin-bottom: 6px; font-size: 13px; color: #6b7280;">{{ t('branding_site_name') }}</label>
+                                <input type="text" v-model="branding.form.siteName" :placeholder="t('branding_site_name_placeholder')" style="width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;" maxlength="50">
+                            </div>
+                            <button class="btn" @click="saveBranding" :disabled="branding.saving" style="padding: 8px 20px;">
+                                {{ branding.saving ? t('branding_saving') : t('save') }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Logo -->
+                    <div class="admin-card" style="margin-bottom: 20px;">
+                        <h3 style="margin: 0 0 16px 0;">{{ t('branding_logo') }}</h3>
+                        <div style="display: flex; gap: 20px; align-items: center;">
+                            <div style="text-align: center;">
+                                <div style="width: 96px; height: 96px; border: 1px dashed #d1d5db; border-radius: 8px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #f9fafb;">
+                                    <img :src="branding.form.logoUrl" alt="Logo" style="max-width: 80px; max-height: 80px;">
+                                </div>
+                                <div v-if="branding.isLogoCustom" style="margin-top: 6px; font-size: 12px; color: #10b981;">{{ t('branding_custom') }}</div>
+                            </div>
+                            <div style="flex: 1;">
+                                <input type="file" accept="image/svg+xml,image/png" ref="brandingLogoInput" style="display: none;" @change="uploadBrandingAsset('logo', $event)">
+                                <button class="btn" @click="$refs.brandingLogoInput.click()" :disabled="branding.uploadingLogo">
+                                    {{ branding.uploadingLogo ? t('branding_uploading') : t('branding_upload') }}
+                                </button>
+                                <p style="margin: 8px 0 0 0; font-size: 12px; color: #6b7280;">{{ t('branding_logo_tip') }}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Favicon -->
+                    <div class="admin-card" style="margin-bottom: 20px;">
+                        <h3 style="margin: 0 0 16px 0;">{{ t('branding_favicon') }}</h3>
+                        <div style="display: flex; gap: 20px; align-items: center;">
+                            <div style="text-align: center;">
+                                <div style="width: 96px; height: 96px; border: 1px dashed #d1d5db; border-radius: 8px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #f9fafb;">
+                                    <img :src="branding.form.faviconUrl" alt="Favicon" style="max-width: 64px; max-height: 64px;">
+                                </div>
+                                <div v-if="branding.isFaviconCustom" style="margin-top: 6px; font-size: 12px; color: #10b981;">{{ t('branding_custom') }}</div>
+                            </div>
+                            <div style="flex: 1;">
+                                <input type="file" accept="image/x-icon,image/png" ref="brandingFaviconInput" style="display: none;" @change="uploadBrandingAsset('favicon', $event)">
+                                <button class="btn" @click="$refs.brandingFaviconInput.click()" :disabled="branding.uploadingFavicon">
+                                    {{ branding.uploadingFavicon ? t('branding_uploading') : t('branding_upload') }}
+                                </button>
+                                <p style="margin: 8px 0 0 0; font-size: 12px; color: #6b7280;">{{ t('branding_favicon_tip') }}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 用户手册/服务条款 -->
+                    <div class="admin-card" style="margin-bottom: 20px;">
+                        <h3 style="margin: 0 0 16px 0;">{{ t('branding_terms') }}</h3>
+                        <p style="margin: 0 0 16px 0; font-size: 13px; color: #6b7280;">{{ t('branding_terms_desc') }}</p>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                            <!-- 中文手册 -->
+                            <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px;">
+                                <div style="font-weight: 600; margin-bottom: 8px;">{{ t('branding_terms_zh') }}</div>
+                                <div v-if="branding.isTermsZhCustom" style="font-size: 12px; color: #10b981; margin-bottom: 6px;">{{ t('branding_custom') }}</div>
+                                <div v-else style="font-size: 12px; color: #9ca3af; margin-bottom: 6px;">{{ t('branding_default') }}</div>
+                                <div style="display: flex; gap: 8px;">
+                                    <input type="file" accept=".txt,.md" ref="brandingTermsZhInput" style="display: none;" @change="uploadBrandingAsset('terms_zh', $event)">
+                                    <button class="btn btn-sm" @click="$refs.brandingTermsZhInput.click()" :disabled="branding.uploadingTermsZh">
+                                        {{ branding.uploadingTermsZh ? t('branding_uploading') : t('branding_upload') }}
+                                    </button>
+                                    <a v-if="branding.form.termsUrlZh" :href="branding.form.termsUrlZh" target="_blank" class="btn btn-sm" style="text-decoration: none;">{{ t('branding_preview') }}</a>
+                                </div>
+                            </div>
+                            <!-- 英文手册 -->
+                            <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px;">
+                                <div style="font-weight: 600; margin-bottom: 8px;">{{ t('branding_terms_en') }}</div>
+                                <div v-if="branding.isTermsEnCustom" style="font-size: 12px; color: #10b981; margin-bottom: 6px;">{{ t('branding_custom') }}</div>
+                                <div v-else style="font-size: 12px; color: #9ca3af; margin-bottom: 6px;">{{ t('branding_default') }}</div>
+                                <div style="display: flex; gap: 8px;">
+                                    <input type="file" accept=".txt,.md" ref="brandingTermsEnInput" style="display: none;" @change="uploadBrandingAsset('terms_en', $event)">
+                                    <button class="btn btn-sm" @click="$refs.brandingTermsEnInput.click()" :disabled="branding.uploadingTermsEn">
+                                        {{ branding.uploadingTermsEn ? t('branding_uploading') : t('branding_upload') }}
+                                    </button>
+                                    <a v-if="branding.form.termsUrlEn" :href="branding.form.termsUrlEn" target="_blank" class="btn btn-sm" style="text-decoration: none;">{{ t('branding_preview') }}</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 微信群二维码 -->
+                    <div class="admin-card" style="margin-bottom: 20px;">
+                        <h3 style="margin: 0 0 16px 0;">{{ t('branding_wx_group_qr') }}</h3>
+                        <p style="margin: 0 0 16px 0; font-size: 13px; color: #6b7280;">{{ t('branding_wx_group_qr_desc') }}</p>
+                        <div style="display: flex; gap: 20px; align-items: center;">
+                            <div style="text-align: center;">
+                                <div style="width: 96px; height: 96px; border: 1px dashed #d1d5db; border-radius: 8px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #f9fafb;">
+                                    <img v-if="branding.form.wxGroupQrUrl" :src="branding.form.wxGroupQrUrl" alt="QR" style="max-width: 84px; max-height: 84px;">
+                                    <span v-else style="font-size: 12px; color: #9ca3af;">{{ t('branding_default') }}</span>
+                                </div>
+                                <div v-if="branding.isWxGroupQrCustom" style="margin-top: 6px; font-size: 12px; color: #10b981;">{{ t('branding_custom') }}</div>
+                            </div>
+                            <div style="flex: 1;">
+                                <input type="file" accept="image/jpeg,image/png" ref="brandingWxGroupQrInput" style="display: none;" @change="uploadBrandingAsset('wx_group_qr', $event)">
+                                <button class="btn" @click="$refs.brandingWxGroupQrInput.click()" :disabled="branding.uploadingWxGroupQr">
+                                    {{ branding.uploadingWxGroupQr ? t('branding_uploading') : t('branding_upload') }}
+                                </button>
+                                <p style="margin: 8px 0 0 0; font-size: 12px; color: #6b7280;">{{ t('branding_wx_group_qr_tip') }}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 重置按钮 -->
+                    <div style="text-align: right;">
+                        <button class="btn" @click="resetBranding" :disabled="branding.resetting" style="background: #ef4444; color: white;">
+                            {{ branding.resetting ? t('branding_resetting') : t('branding_reset') }}
+                        </button>
+                    </div>
                 </div>
             </section>
         </main>

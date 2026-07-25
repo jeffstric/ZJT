@@ -631,6 +631,31 @@ const AdminApp = {
                 error: ''
             },
 
+            // 品牌定制（仅商业版）
+            branding: {
+                loading: false,
+                saving: false,
+                resetting: false,
+                uploadingLogo: false,
+                uploadingFavicon: false,
+                uploadingTermsZh: false,
+                uploadingTermsEn: false,
+                uploadingWxGroupQr: false,
+                isLogoCustom: false,
+                isFaviconCustom: false,
+                isTermsZhCustom: false,
+                isTermsEnCustom: false,
+                isWxGroupQrCustom: false,
+                form: {
+                    siteName: '',
+                    logoUrl: '',
+                    faviconUrl: '',
+                    termsUrlZh: '',
+                    termsUrlEn: '',
+                    wxGroupQrUrl: ''
+                }
+            },
+
             // 智剧通Token有效期调整弹窗
             zjtExpireModal: {
                 show: false,
@@ -790,6 +815,7 @@ const AdminApp = {
 
             isCommunityEdition: false,
             runninghubKeyPoolAvailable: false,
+            brandingAvailable: false,
 
             // 通知中心
             notifications: [],
@@ -1198,6 +1224,11 @@ const AdminApp = {
                     this.runninghubKeyPoolAvailable = Boolean(
                         response.data.data.features?.runninghub_key_pool
                     );
+                    // 品牌定制：仅企业版注入了 branding provider 时可用。
+                    // 工作室版的 features.branding 为 false，前端据此隐藏品牌Tab。
+                    this.brandingAvailable = Boolean(
+                        response.data.data.features?.branding
+                    );
 
                     // 默认加载用户列表
                     this.loadUsers();
@@ -1274,6 +1305,10 @@ const AdminApp = {
                 }
             } else if (page === 'taskTimeline') {
                 // 任务时间线：按需手动查询，不自动加载
+            } else if (page === 'branding') {
+                if (this.brandingAvailable) {
+                    this.loadBranding();
+                }
             }
         },
 
@@ -1333,6 +1368,120 @@ const AdminApp = {
                 max_retry_exceeded: '重试上限', task_completed: '任务完成', exception: '异常', pipeline_step: '流水线步骤'
             };
             return map[type] || type;
+        },
+
+        // ==================== 品牌定制（仅商业版） ====================
+
+        async loadBranding() {
+            this.branding.loading = true;
+            try {
+                const response = await axios.get('/api/admin/branding', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data && response.data.code === 0) {
+                    const d = response.data.data;
+                    this.branding.form.siteName = d.site_name || '';
+                    this.branding.form.logoUrl = d.logo_url || '';
+                    this.branding.form.faviconUrl = d.favicon_url || '';
+                    this.branding.form.termsUrlZh = d.terms_url_zh || '';
+                    this.branding.form.termsUrlEn = d.terms_url_en || '';
+                    this.branding.form.wxGroupQrUrl = d.wx_group_qr_url || '';
+                    this.branding.isLogoCustom = !!d.is_logo_custom;
+                    this.branding.isFaviconCustom = !!d.is_favicon_custom;
+                    this.branding.isTermsZhCustom = !!d.is_terms_zh_custom;
+                    this.branding.isTermsEnCustom = !!d.is_terms_en_custom;
+                    this.branding.isWxGroupQrCustom = !!d.is_wx_group_qr_custom;
+                }
+            } catch (err) {
+                const msg = (err && err.response && err.response.data && (err.response.data.detail || err.response.data.message)) || this.t('branding_load_failed');
+                this.showToast(msg, 'error');
+            } finally {
+                this.branding.loading = false;
+            }
+        },
+
+        async saveBranding() {
+            this.branding.saving = true;
+            try {
+                const response = await axios.put('/api/admin/branding', {
+                    site_name: this.branding.form.siteName
+                }, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data && response.data.code === 0) {
+                    this.showToast(response.data.message || this.t('branding_save_success'), 'success');
+                } else {
+                    this.showToast((response.data && response.data.message) || this.t('branding_save_failed'), 'error');
+                }
+            } catch (err) {
+                const msg = (err && err.response && err.response.data && (err.response.data.detail || err.response.data.message)) || this.t('branding_save_failed');
+                this.showToast(msg, 'error');
+            } finally {
+                this.branding.saving = false;
+            }
+        },
+
+        async uploadBrandingAsset(assetType, event) {
+            const file = event.target.files && event.target.files[0];
+            if (!file) return;
+            // 清空 input value 以便重复选择同一文件
+            event.target.value = '';
+
+            // 设置对应上传中状态
+            const uploadingKey = {
+                logo: 'uploadingLogo',
+                favicon: 'uploadingFavicon',
+                terms_zh: 'uploadingTermsZh',
+                terms_en: 'uploadingTermsEn',
+                wx_group_qr: 'uploadingWxGroupQr'
+            }[assetType];
+            if (uploadingKey) this.branding[uploadingKey] = true;
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('asset_type', assetType);
+
+            try {
+                const response = await axios.post('/api/admin/branding/upload', formData, {
+                    headers: {
+                        'Authorization': `Bearer ${this.authToken}`,
+                        'Content-Type': 'multipart/form-data'
+                    }
+                });
+                if (response.data && response.data.code === 0) {
+                    // 刷新全部配置（拿到新的 URL 和 is_*_custom 标志）
+                    await this.loadBranding();
+                    this.showToast(response.data.message || this.t('branding_upload_success'), 'success');
+                } else {
+                    this.showToast((response.data && response.data.message) || this.t('branding_upload_failed'), 'error');
+                }
+            } catch (err) {
+                const msg = (err && err.response && err.response.data && (err.response.data.detail || err.response.data.message)) || this.t('branding_upload_failed');
+                this.showToast(msg, 'error');
+            } finally {
+                if (uploadingKey) this.branding[uploadingKey] = false;
+            }
+        },
+
+        async resetBranding() {
+            if (!confirm(this.t('branding_reset_confirm'))) return;
+            this.branding.resetting = true;
+            try {
+                const response = await axios.post('/api/admin/branding/reset', {}, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data && response.data.code === 0) {
+                    await this.loadBranding();
+                    this.showToast(response.data.message || this.t('branding_reset_success'), 'success');
+                } else {
+                    this.showToast((response.data && response.data.message) || this.t('branding_reset_failed'), 'error');
+                }
+            } catch (err) {
+                const msg = (err && err.response && err.response.data && (err.response.data.detail || err.response.data.message)) || this.t('branding_reset_failed');
+                this.showToast(msg, 'error');
+            } finally {
+                this.branding.resetting = false;
+            }
         },
 
         async loadMarketingPublications(page = 1) {

@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from services.script_split_registry import (
     AcceptedRegistry,
     rewrite_segment_entity_ids,
+    renumber_entities_by_name,
     validate_segment_entities,
     validate_segment_spatial_references,
     renumber_global,
@@ -369,3 +370,137 @@ def test_renumber_global():
     assert [s["shot_number"] for s in shots] == [1, 2, 3]
     assert result["total_duration"] == 15
     assert result["metadata"]["total_shots"] == 3
+
+
+# ---- 合并阶段：按 name 登记先来后到重新发号 ----
+
+def _truth_props(n=2):
+    """构造 n 个规划真源 prop（prop_001..prop_00N）。"""
+    return [
+        {"id": f"prop_{i:03d}", "name": f"真源道具{i}", "props_db_id": 27000 + i}
+        for i in range(1, n + 1)
+    ]
+
+
+def test_renumber_merges_same_name_different_id_new_entities():
+    """任务33核心场景：段间新实体 name 相同但 ID 不同（都不在规划表）→ 按 name 归并。"""
+    parsed = {
+        "characters": [],
+        "locations": [],
+        "props": [
+            {"id": "prop_021", "name": "山货野菌干菜蜂蜜", "props_db_id": 27615, "description": "d1"},
+            {"id": "prop_022", "name": "山货野菌干菜蜂蜜", "props_db_id": 27615, "category": "c1"},
+        ],
+        "shot_groups": [{"group_id": "grp_001", "shots": [
+            {"shot_id": "s001", "props_present": ["prop_021"], "duration": 3},
+            {"shot_id": "s002", "props_present": ["prop_022"], "duration": 3},
+        ]}],
+    }
+    result = renumber_entities_by_name(
+        parsed, {"characters": [], "locations": [], "props": _truth_props(2)}
+    )
+    new_props = [p for p in result["props"] if not p["name"].startswith("真源")]
+    # 合并为单一实体
+    assert len(new_props) == 1
+    merged = new_props[0]
+    assert merged["name"] == "山货野菌干菜蜂蜜"
+    # 保留两条记录的补充字段
+    assert merged["description"] == "d1"
+    assert merged["category"] == "c1"
+    # shot 引用统一重写为合并后的 ID
+    final_id = merged["id"]
+    shots = result["shot_groups"][0]["shots"]
+    assert shots[0]["props_present"] == [final_id]
+    assert shots[1]["props_present"] == [final_id]
+
+
+def test_renumber_preserves_distinct_new_entities():
+    """不同 name 的新实体各自独立发号，互不影响。"""
+    parsed = {
+        "characters": [], "locations": [],
+        "props": [
+            {"id": "prop_021", "name": "山货", "props_db_id": 27615},
+            {"id": "prop_022", "name": "山货", "props_db_id": 27615},
+            {"id": "prop_018", "name": "账本", "props_db_id": None},
+        ],
+        "shot_groups": [{"group_id": "grp_001", "shots": [
+            {"shot_id": "s001", "props_present": ["prop_021"], "duration": 3},
+            {"shot_id": "s002", "props_present": ["prop_022"], "duration": 3},
+            {"shot_id": "s003", "props_present": ["prop_018"], "duration": 3},
+        ]}],
+    }
+    result = renumber_entities_by_name(
+        parsed, {"characters": [], "locations": [], "props": _truth_props(2)}
+    )
+    new_props = {p["name"]: p for p in result["props"] if not p["name"].startswith("真源")}
+    assert set(new_props) == {"山货", "账本"}
+    assert new_props["山货"]["id"] != new_props["账本"]["id"]
+    shots = {s["shot_id"]: s["props_present"][0] for s in result["shot_groups"][0]["shots"]}
+    # 山货两个 shot 指向同一 ID，账本 shot 指向账本 ID
+    assert shots["s001"] == new_props["山货"]["id"]
+    assert shots["s002"] == new_props["山货"]["id"]
+    assert shots["s003"] == new_props["账本"]["id"]
+
+
+def test_renumber_truth_match_uses_truth_id():
+    """段实体 name 命中规划真源 → 强制使用真源 ID（段的 ID 不算数）。"""
+    truth = [{"id": "prop_001", "name": "椅子", "props_db_id": 100}]
+    parsed = {
+        "characters": [], "locations": [],
+        "props": [{"id": "prop_005", "name": "椅子", "props_db_id": 100, "color": "红"}],
+        "shot_groups": [{"group_id": "grp_001", "shots": [
+            {"shot_id": "s001", "props_present": ["prop_005"], "duration": 3},
+        ]}],
+    }
+    result = renumber_entities_by_name(
+        parsed, {"characters": [], "locations": [], "props": truth}
+    )
+    chair = next(p for p in result["props"] if p["name"] == "椅子")
+    assert chair["id"] == "prop_001"
+    # 保留段补充字段
+    assert chair["color"] == "红"
+    # shot 引用从 prop_005 重写为 prop_001
+    assert result["shot_groups"][0]["shots"][0]["props_present"] == ["prop_001"]
+
+
+def test_renumber_no_truth_starts_from_001():
+    """无规划真源（speed 场景）→ 所有实体从 001 起按 name 先来后到发号。"""
+    parsed = {
+        "characters": [], "locations": [],
+        "props": [
+            {"id": "prop_005", "name": "花瓶"},
+            {"id": "prop_009", "name": "花瓶"},
+            {"id": "prop_003", "name": "桌子"},
+        ],
+        "shot_groups": [],
+    }
+    result = renumber_entities_by_name(parsed, None)
+    by_name = {p["name"]: p["id"] for p in result["props"]}
+    assert by_name["花瓶"] == "prop_001"
+    assert by_name["桌子"] == "prop_002"
+
+
+def test_renumber_rewrites_spatial_layout_references():
+    """shot 引用重写覆盖 spatial_layout 内部的实体 ID 引用（如 slots.character_id）。"""
+    parsed = {
+        "characters": [{"id": "char_005", "name": "苏晚"}],
+        "locations": [], "props": [],
+        "shot_groups": [{"group_id": "grp_001", "shots": [{
+            "shot_id": "s001", "duration": 3,
+            "characters_present": ["char_005"],
+            "spatial_layout": {
+                "containers": [{
+                    "container_id": "c1",
+                    "slots": [{"slot_id": "sl1", "character_id": "char_005"}],
+                }],
+            },
+        }]}],
+    }
+    result = renumber_entities_by_name(parsed, None)
+    char = result["characters"][0]
+    assert char["id"] == "char_001"
+    shot = result["shot_groups"][0]["shots"][0]
+    assert shot["characters_present"] == ["char_001"]
+    slot = shot["spatial_layout"]["containers"][0]["slots"][0]
+    assert slot["character_id"] == "char_001"
+

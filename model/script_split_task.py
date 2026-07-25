@@ -189,6 +189,8 @@ def _resume_hint(status: Optional[str], error_code: Optional[str]) -> Optional[s
             return "llm_timeout: LLM 调用超时，排查模型可用性/网络后调 resume(force=true) 重试"
         if error_code == "step_watchdog_timeout":
             return "worker_timeout: 单步超时，排查 worker 进程/LLM 响应后调 resume(force=true) 重试"
+        if error_code == "quality_merge_invalid":
+            return "quality_merge: 合并阶段实体身份冲突，根治后正常不触发；若仍出现说明规划真源异常，需排查后调 resume(force=true) 重试"
         # 硬门禁类（new_root_location_forbidden / location_parent_*）
         return "hard_gate: 剧本含未建模的顶层场景或父级关系非法，需先在剧本创作页补齐场景资产后调 resume(force=true)"
     if error_code in ScriptSplitConstants.RESUME_NEEDS_AUTH_ERROR_CODES:
