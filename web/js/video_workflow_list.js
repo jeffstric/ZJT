@@ -560,8 +560,42 @@ async function initI18n() {
   }
 }
 
+/**
+ * 意见反馈：按 server-config 隐藏入口或替换二维码 URL。
+ * 缺字段 / 请求失败时保持默认开启（与社区版一致）。
+ */
+async function applyFeedbackVisibilityFromServer() {
+  const btn = document.querySelector('button.feedback-btn');
+  const modal = document.getElementById('feedbackModal');
+  const img = modal ? modal.querySelector('img.feedback-qr-code') : null;
+  let enabled = true;
+  let qrUrl = '/files/二维码.jpg';
+  try {
+    const res = await fetch('/api/system/server-config');
+    const data = await res.json();
+    if (data && data.code === 0 && data.data) {
+      if (data.data.show_feedback_qr === false) enabled = false;
+      if (data.data.feedback_qr_url) qrUrl = data.data.feedback_qr_url;
+    }
+  } catch (e) { /* 默认开启 */ }
+  if (!enabled) {
+    if (btn) {
+      btn.style.display = 'none';
+      btn.setAttribute('hidden', 'true');
+    }
+    if (modal) {
+      modal.classList.remove('active');
+      modal.style.display = 'none';
+      modal.setAttribute('hidden', 'true');
+    }
+    return;
+  }
+  if (img && qrUrl) img.setAttribute('src', qrUrl);
+}
+
 // Initial load（仅在浏览器环境中执行，测试环境跳过）
 if (typeof document !== 'undefined' && document.getElementById('workflowContainer')) {
+  applyFeedbackVisibilityFromServer().catch(() => {});
   initI18n().then(() => {
     loadWorkflows();
   }).catch(err => {

@@ -92,6 +92,15 @@ GET /api/system/server-config
 | `pending_wx_group_guide` | sessionStorage | 本次注册后待展示触点：`home_soft` / `admin_after_config` |
 | `wx_group_guide_dismissed` | localStorage | 用户选择不再主动提示 |
 
+## 与「意见反馈个人微信」的区别
+
+| 能力 | 配置 | 说明 |
+|------|------|------|
+| **官方微信群**（本文） | `wx_group_guide.*` | 注册引导、页脚「官方微信群」、社交区微信群图标 |
+| **意见反馈个人号** | `frontend.show_feedback_qr` / `feedback_qr_url` | 右下角「意见反馈」FAB，默认图 `/files/二维码.jpg` |
+
+两套独立开关，互不影响。意见反馈配置详见 [frontend_ui_visibility.md](./frontend_ui_visibility.md)。
+
 ## 相关文件
 
 | 路径 | 说明 |

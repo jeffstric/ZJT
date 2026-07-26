@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title data-i18n="page_title">视频工作流</title>
-  <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
+  <link rel="icon" href="__BRANDING_FAVICON_URL__" type="image/vnd.microsoft.icon"/>
   <link rel="stylesheet" href="/css/common.css" />
   <link rel="stylesheet" href="/css/video_workflow.css" />
   <link rel="stylesheet" href="/css/image_coloring_editor.css" />
@@ -39,7 +39,7 @@
     <div class="canvas-container" id="canvasContainer">
       <div class="brand-floating">
         <a class="brand" href="/video-workflow-list" data-i18n="return_to_list:title">
-          <img src="/files/logo.svg" alt="logo" />
+          <img src="__BRANDING_LOGO_URL__" alt="logo" />
           <div class="brand-title" data-i18n="page_title">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;">
               <rect x="3" y="6" width="18" height="12" rx="2"/>
@@ -1056,24 +1056,24 @@
   <script src="/js/timeline.js"></script>
   <script src="/js/workflow.js"></script>
   <script src="/js/canvas.js"></script>
-  <!-- 意见反馈按钮 -->
-  <div class="feedback-btn-wrapper" id="feedbackBtnWrapper">
-    <button class="feedback-btn" id="feedbackBtn" type="button" onclick="handleFeedbackBtnClick(event)" data-i18n="feedback_modal"></button>
+  <!-- 意见反馈：默认 hidden，等 server-config 确认 show_feedback_qr 后再显示，避免加载中误点弹出二维码 -->
+  <div class="feedback-btn-wrapper hidden" id="feedbackBtnWrapper" hidden aria-hidden="true">
+    <button class="feedback-btn" id="feedbackBtn" type="button" onclick="handleFeedbackBtnClick(event)" data-i18n="feedback_modal">意见反馈</button>
     <button class="feedback-btn-delete" id="feedbackMinimizeBtn" type="button" onclick="minimizeFeedbackBtn(); event.stopPropagation(); event.preventDefault();" data-i18n="feedback_minimize_title:title">×</button>
   </div>
 
   <!-- 意见反馈弹窗 -->
-  <div class="modal-overlay" id="feedbackModal" aria-hidden="true" onclick="if(event.target === this){ this.classList.remove('active'); }">
+  <div class="modal-overlay" id="feedbackModal" aria-hidden="true" hidden onclick="if(event.target === this){ this.classList.remove('active'); }">
     <div class="feedback-modal-card" role="dialog" aria-modal="true" aria-labelledby="feedbackModalTitle">
       <button type="button" class="feedback-modal-close" data-i18n="close:aria-label" onclick="document.getElementById('feedbackModal').classList.remove('active')">×</button>
-      <h2 class="modal-title" id="feedbackModalTitle" data-i18n="feedback_modal"></h2>
+      <h2 class="modal-title" id="feedbackModalTitle" data-i18n="feedback_modal">意见反馈</h2>
       <div class="feedback-modal-content">
-        <p style="color: var(--muted); margin-bottom: 16px;" data-i18n="feedback_scan_tip"></p>
-        <img src="/files/二维码.jpg" class="feedback-qr-code" data-i18n="feedback_qr_code_alt:alt">
-        <p class="feedback-tip" data-i18n="feedback_message"></p>
+        <p style="color: var(--muted); margin-bottom: 16px;" data-i18n="feedback_scan_tip">扫描二维码添加微信，提交您的宝贵意见</p>
+        <img src="/files/二维码.jpg" class="feedback-qr-code" data-i18n="feedback_qr_code_alt:alt" alt="微信二维码">
+        <p class="feedback-tip" data-i18n="feedback_message">我们会认真听取每一条反馈，持续改进产品体验</p>
       </div>
       <div class="modal-actions">
-        <button type="button" class="btn" data-i18n="feedback_close_btn" onclick="document.getElementById('feedbackModal').classList.remove('active')"></button>
+        <button type="button" class="btn" data-i18n="feedback_close_btn" onclick="document.getElementById('feedbackModal').classList.remove('active')">关闭</button>
       </div>
     </div>
   </div>

@@ -3,23 +3,23 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title data-i18n="page_title">智剧通 AI短剧制作平台</title>
-  <meta name="description" content="智剧通是专业的AI短剧制作平台，提供图片编辑、AI文生图、AI视频生成、图片生成视频、数字人视频、音频生成等一站式AI创作工具。" />
+  <title data-i18n="page_title">__BRANDING_SITE_NAME__ AI短剧制作平台</title>
+  <meta name="description" content="__BRANDING_SITE_NAME__是专业的AI短剧制作平台，提供图片编辑、AI文生图、AI视频生成、图片生成视频、数字人视频、音频生成等一站式AI创作工具。" />
   <meta name="keywords" content="AI短剧,AI视频,AI图片,文生图,图生视频,数字人,音频生成,视频工作流" />
-  
+
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="智剧通 AI短剧制作平台" />
-  <meta property="og:description" content="智剧通是专业的AI短剧制作平台，提供图片编辑、AI文生图、AI视频生成、图片生成视频、数字人视频、音频生成等一站式AI创作工具。" />
-  <meta property="og:image" content="/files/logo.svg" />
-  
+  <meta property="og:title" content="__BRANDING_SITE_NAME__ AI短剧制作平台" />
+  <meta property="og:description" content="__BRANDING_SITE_NAME__是专业的AI短剧制作平台，提供图片编辑、AI文生图、AI视频生成、图片生成视频、数字人视频、音频生成等一站式AI创作工具。" />
+  <meta property="og:image" content="__BRANDING_LOGO_URL__" />
+
   <!-- Twitter -->
   <meta property="twitter:card" content="summary_large_image" />
-  <meta property="twitter:title" content="智剧通 AI短剧制作平台" />
-  <meta property="twitter:description" content="智剧通是专业的AI短剧制作平台，提供图片编辑、AI文生图、AI视频生成、图片生成视频、数字人视频、音频生成等一站式AI创作工具。" />
-  <meta property="twitter:image" content="/files/logo.svg" />
-  
-  <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
+  <meta property="twitter:title" content="__BRANDING_SITE_NAME__ AI短剧制作平台" />
+  <meta property="twitter:description" content="__BRANDING_SITE_NAME__是专业的AI短剧制作平台，提供图片编辑、AI文生图、AI视频生成、图片生成视频、数字人视频、音频生成等一站式AI创作工具。" />
+  <meta property="twitter:image" content="__BRANDING_LOGO_URL__" />
+
+  <link rel="icon" href="__BRANDING_FAVICON_URL__" type="image/vnd.microsoft.icon"/>
   <link rel="stylesheet" href="/css/common.css" />
   <link rel="stylesheet" href="/css/index.css" />
 
@@ -35,7 +35,7 @@
     <div class="card">
       <header>
         <div style="display: flex; align-items: center; gap: 12px;">
-          <img src="/files/logo.svg" alt="Logo" style="width: 48px; height: 48px;" />
+          <img src="__BRANDING_LOGO_URL__" alt="Logo" style="width: 48px; height: 48px;" />
           <div class="header-title-group">
             <div class="title">{{ mainTitle }}</div>
             <div class="subtitle" v-if="route.name==='list'">{{ $t('subtitle') }}</div>
@@ -108,8 +108,8 @@
           @click.prevent="openWxGroupModal"
         >{{ $t('wx_group_entry') }}</a>
       </div>
-      <!-- 本地环境开源及社交信息 -->
-      <div class="footer-row local-footer" v-if="isLocal">
+      <!-- 本地环境开源及社交信息（show_social_icons 可关；仍需 is_local） -->
+      <div class="footer-row local-footer" v-if="isLocal && showSocialIcons">
         <div class="local-footer-icons">
           <a href="https://github.com/jeffstric/ZJT" target="_blank" rel="noopener noreferrer" title="GitHub" class="social-icon">
             <svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.22 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
@@ -148,8 +148,8 @@
       </div>
     </footer>
 
-    <!-- 意见反馈按钮 -->
-    <button class="feedback-btn" @click="showFeedbackModal = true">
+    <!-- 意见反馈按钮（frontend.show_feedback_qr） -->
+    <button class="feedback-btn" v-if="showFeedbackQr" @click="showFeedbackModal = true">
       💬 意见反馈
     </button>
 
@@ -337,14 +337,14 @@
       </div>
     </div>
 
-    <!-- 意见反馈弹窗 -->
-    <div class="modal-overlay" v-if="showFeedbackModal" @click.self="showFeedbackModal = false">
+    <!-- 意见反馈弹窗（个人微信二维码，frontend.feedback_qr_url） -->
+    <div class="modal-overlay" v-if="showFeedbackModal && showFeedbackQr" @click.self="showFeedbackModal = false">
       <div class="modal" style="position: relative; max-width: 400px;">
         <button class="modal-close" @click="showFeedbackModal = false">×</button>
         <div class="modal-title">意见反馈</div>
         <div class="feedback-modal-content">
           <p style="color: var(--muted); margin-bottom: 16px;">扫描二维码添加微信，提交您的宝贵意见</p>
-          <img src="/files/二维码.jpg" alt="微信二维码" class="feedback-qr-code">
+          <img :src="feedbackQrUrl" alt="微信二维码" class="feedback-qr-code">
           <p class="feedback-tip">我们会认真听取每一条反馈，持续改进产品体验</p>
         </div>
       </div>
@@ -358,7 +358,7 @@
         <div class="feedback-modal-content">
           <p style="color: var(--muted); margin-bottom: 16px;">扫描二维码关注视频号</p>
           <img src="/files/WeChatChannels.jpg" alt="微信视频号" class="feedback-qr-code">
-          <p class="feedback-tip">感谢您对智剧通的支持</p>
+          <p class="feedback-tip">感谢您对__BRANDING_SITE_NAME__的支持</p>
         </div>
       </div>
     </div>
