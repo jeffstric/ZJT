@@ -1231,7 +1231,9 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                         aspect_ratio=aspect_ratio,
                         image_size=image_size,
                         is_grid=False,
-                        max_retries=max_retries
+                        max_retries=max_retries,
+                        grid_size=GridConfig.SIZE_2X2,
+                        grid_layout='2x2',
                     )
                     task_id = general_task_key
                     logger.info(f"创建图片编辑后台任务: {general_task_key}, project_id: {project_ids[0]}")
@@ -4728,8 +4730,8 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                         image_size=request_data.get('image_size'),
                         is_grid=is_grid,
                         max_retries=max_retries,
-                        grid_size=grid_size,
-                        grid_layout=grid_layout,
+                        grid_size=grid_size or GridConfig.SIZE_2X2,
+                        grid_layout=grid_layout or '2x2',
                         item_names=grid_item_names,
                         target_entity_ids=target_entity_ids,
                     )
@@ -4774,7 +4776,9 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                         aspect_ratio=aspect_ratio,
                         image_size=request_data.get('image_size'),
                         is_grid=is_grid,
-                        max_retries=max_retries
+                        max_retries=max_retries,
+                        grid_size=grid_size or GridConfig.SIZE_2X2,
+                        grid_layout=grid_layout or '2x2',
                     )
                     task_id = general_task_key
                     logger.info(f"创建通用生图后台任务: {general_task_key}, project_id: {project_ids[0]}")

@@ -24,6 +24,7 @@ import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from .database import execute_query, execute_update, execute_insert
+from config.constant import GridConfig
 import logging
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,14 @@ class GridImageTasksModel:
         Raises:
             Exception: 如果任务已存在（UNIQUE KEY冲突）
         """
+        # None 兜底：grid_size/grid_layout 为 NOT NULL 列，显式写入 NULL 会绕过 DB DEFAULT
+        # 触发 "Column 'grid_size' cannot be null"。上游普通单图/通用任务可能漏传或传 None，
+        # 在此统一归一化（与 DB DEFAULT 4/'2x2' 对齐，且对非宫格任务是历史既定值，无行为差异）。
+        if grid_size is None:
+            grid_size = GridConfig.SIZE_2X2
+        if grid_layout is None:
+            grid_layout = '2x2'
+
         item_names_json = json.dumps(item_names, ensure_ascii=False) if item_names else None
         target_entity_ids_json = json.dumps(target_entity_ids) if target_entity_ids else None
         reference_images_str = json.dumps(reference_images, ensure_ascii=False) if reference_images else None
