@@ -245,7 +245,8 @@ class TestResponseValidation(unittest.TestCase):
         from task.visual_drivers.seedance_kkidc_v1_driver import Seedance20KkidcV1Driver
         return _create_driver(Seedance20KkidcV1Driver)
 
-    def test_submit_valid(self):
+    def test_submit_valid_three_section(self):
+        """三段式响应：data.task_id 提取"""
         driver = self._driver()
         ok, err = driver._validate_submit_response({
             "code": "success", "message": "", "data": {"task_id": "cgt-xxx"}
@@ -253,17 +254,39 @@ class TestResponseValidation(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIsNone(err)
 
-    def test_submit_missing_data(self):
+    def test_submit_valid_flat(self):
+        """扁平式响应（真实线上结构）：顶层 task_id 提取"""
+        driver = self._driver()
+        ok, err = driver._validate_submit_response({
+            "id": "task_UW6P6dfBaottRjZehPx7xYzhuoWNW87N",
+            "task_id": "task_UW6P6dfBaottRjZehPx7xYzhuoWNW87N",
+            "object": "video", "model": "seed-2-mini",
+            "status": "queued", "progress": 0, "created_at": 1785170490
+        })
+        self.assertTrue(ok)
+        self.assertIsNone(err)
+
+    def test_submit_missing_task_id(self):
+        """既无 data.task_id 也无顶层 task_id/id：报缺少 task_id"""
         driver = self._driver()
         ok, err = driver._validate_submit_response({"code": "success"})
         self.assertFalse(ok)
-        self.assertIn("data", err)
-
-    def test_submit_missing_task_id(self):
-        driver = self._driver()
-        ok, err = driver._validate_submit_response({"data": {"foo": "bar"}})
-        self.assertFalse(ok)
         self.assertIn("task_id", err)
+
+    def test_extract_task_id_priority(self):
+        """三段式优先于扁平式"""
+        driver = self._driver()
+        # 三段式 data.task_id 优先
+        self.assertEqual(
+            driver._extract_task_id({"data": {"task_id": "inner"}, "task_id": "outer"}),
+            "inner"
+        )
+        # 无 data 时回退顶层
+        self.assertEqual(driver._extract_task_id({"task_id": "only_top"}), "only_top")
+        # 无 task_id 时回退 id
+        self.assertEqual(driver._extract_task_id({"id": "fallback_id"}), "fallback_id")
+        # 都没有
+        self.assertIsNone(driver._extract_task_id({"foo": "bar"}))
 
     def test_submit_error_body(self):
         """非审核类错误：返回 API 错误 [code]: message"""
@@ -331,6 +354,22 @@ class TestSubmitTask(unittest.TestCase):
 
         self.assertTrue(result['success'])
         self.assertEqual(result['project_id'], 'cgt-20260227150701-bwgfp')
+
+    def test_submit_success_flat_response(self):
+        """扁平式成功响应（线上真实结构）：顶层 task_id 提取"""
+        driver = self._driver()
+        ai_tool = _make_ai_tool(prompt='女人站起来笑', image_path=None)
+        # 复刻线上真实响应（无 data 包裹层）
+        with patch.object(driver, '_request', return_value={
+            "id": "task_UW6P6dfBaottRjZehPx7xYzhuoWNW87N",
+            "task_id": "task_UW6P6dfBaottRjZehPx7xYzhuoWNW87N",
+            "object": "video", "model": "seed-2-mini",
+            "status": "queued", "progress": 0, "created_at": 1785170490
+        }):
+            result = driver.submit_task(ai_tool)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['project_id'], "task_UW6P6dfBaottRjZehPx7xYzhuoWNW87N")
 
     def test_submit_http_400_content_moderation(self):
         """HTTP 400 内容审核错误：返回 USER 错误不重试"""
@@ -411,6 +450,20 @@ class TestCheckStatus(unittest.TestCase):
             }
         }):
             result = driver.check_status("cgt-x")
+        self.assertEqual(result['status'], 'SUCCESS')
+        self.assertEqual(result['result_url'], video_url)
+
+    def test_status_success_flat_response(self):
+        """扁平式成功响应（顶层 status + video_url）"""
+        driver = self._driver()
+        video_url = "https://cdn.example.com/flat.mp4"
+        with patch.object(driver, '_request', return_value={
+            "id": "task_x",
+            "task_id": "task_x",
+            "status": "succeeded",
+            "video_url": video_url
+        }):
+            result = driver.check_status("task_x")
         self.assertEqual(result['status'], 'SUCCESS')
         self.assertEqual(result['result_url'], video_url)
 

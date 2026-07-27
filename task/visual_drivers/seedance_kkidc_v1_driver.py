@@ -181,12 +181,29 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
 
     # ==================== 响应校验 ====================
 
+    @staticmethod
+    def _extract_task_id(result: Any) -> Optional[str]:
+        """
+        从创建任务响应中提取 task_id，兼容两种结构：
+        - 三段式：{ code, message, data: { task_id } }
+        - 扁平式：{ id, task_id, object, model, status, ... }（顶层即 task_id）
+        """
+        if not isinstance(result, dict):
+            return None
+        # 三段式优先
+        data = result.get("data")
+        if isinstance(data, dict) and data.get("task_id"):
+            return data.get("task_id")
+        # 扁平式回退（顶层 task_id 或 id）
+        return result.get("task_id") or result.get("id")
+
     def _validate_submit_response(self, result: Any) -> tuple[bool, Optional[str]]:
         """
         验证 submit_task API 响应格式
 
-        期望格式（三段式）:
-        { "code": "success", "message": "", "data": { "task_id": "cgt-xxxxx" } }
+        兼容两种结构：
+        - 三段式：{ code, message, data: { task_id } }
+        - 扁平式：{ id, task_id, object, model, status, progress, created_at }
         """
         if not isinstance(result, dict):
             return False, f"响应不是字典类型，实际类型: {type(result)}"
@@ -209,12 +226,10 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
             error_message = error_info.get("message", "未知错误")
             return False, f"API 错误 [{error_code}]: {error_message}"
 
-        # 正常响应：data.task_id 必须存在
-        data = result.get("data")
-        if not isinstance(data, dict):
-            return False, f"响应缺少 'data' 字段或类型错误，实际: {data}"
-        if "task_id" not in data:
-            return False, f"响应 data 缺少 'task_id' 字段，实际字段: {list(data.keys())}"
+        # 正常响应：能提取到 task_id 即视为有效
+        task_id = self._extract_task_id(result)
+        if not task_id:
+            return False, f"响应缺少 task_id（顶层与 data.task_id 均无），实际字段: {list(result.keys())}"
 
         return True, None
 
@@ -222,30 +237,54 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
         """
         验证 check_status API 响应格式
 
-        期望格式（三段式，data 内嵌 data）:
-        {
-            "code": "success",
-            "data": {
-                "task_id": "cgt-xxx",
-                "status": "SUCCESS"|"FAILURE"|...,
-                "data": { "status": "succeeded"|..., "content": { "video_url": "..." } }
-            }
-        }
+        兼容两种结构：
+        - 三段式：{ data: { task_id, status, data: { status, content: { video_url } } } }
+        - 扁平式：{ id, task_id, status, video_url, ... }
         """
         if not isinstance(result, dict):
             return False, f"响应不是字典类型，实际类型: {type(result)}"
 
-        data = result.get("data")
-        if not isinstance(data, dict):
-            return False, f"响应缺少 'data' 字段或类型错误，实际: {data}"
+        # 兼容三段式 { data: {...} } 与扁平式 { status, video_url, ... }
+        data = result.get("data") if isinstance(result.get("data"), dict) else result
 
-        if "task_id" not in data:
-            return False, f"响应 data 缺少 'task_id' 字段，实际字段: {list(data.keys())}"
+        if "task_id" not in data and "id" not in data:
+            return False, f"响应缺少 task_id/id，实际字段: {list(data.keys())}"
 
         if "status" not in data:
-            return False, f"响应 data 缺少 'status' 字段，实际字段: {list(data.keys())}"
+            return False, f"响应缺少 'status' 字段，实际字段: {list(data.keys())}"
 
         return True, None
+
+    @staticmethod
+    def _extract_status_data(result: Any) -> Dict[str, Any]:
+        """
+        从查询响应中提取状态数据块，兼容两种结构：
+        - 三段式：{ data: { status, data: { status, content: { video_url } } } }
+        - 扁平式：{ status, video_url, ... }（顶层即状态数据）
+
+        返回包含归一化状态、video_url、fail_reason 的扁平 dict。
+        status 取外层（三段式大写枚举或扁平式小写值），inner_status 取内层小写（三段式独有）。
+        """
+        if not isinstance(result, dict):
+            return {}
+        outer = result.get("data") if isinstance(result.get("data"), dict) else result
+        # 内层 data（三段式独有，承载 video_url / 上游小写 status）
+        inner = outer.get("data") if isinstance(outer.get("data"), dict) else {}
+
+        # 外层 status 原样保留（可能大写 SUCCESS 也可能小写 succeeded）
+        raw_status = str(outer.get("status", ""))
+        return {
+            "status": raw_status,
+            "status_upper": raw_status.upper(),
+            "inner_status": str(inner.get("status", "")).lower() if inner else "",
+            "fail_reason": outer.get("fail_reason") if isinstance(outer.get("fail_reason"), str) else None,
+            "video_url": (inner.get("content", {}) or {}).get("video_url") if isinstance(inner, dict) else None,
+        }
+
+    # 成功态集合（大小写均含，覆盖三段式大写枚举与扁平式/上游小写值）
+    _SUCCESS_STATES = {"SUCCESS", "SUCCEEDED"}
+    _FAILURE_STATES = {"FAILURE", "FAILED", "EXPIRED"}
+    _RUNNING_STATES = {"QUEUED", "RUNNING", "IN_PROGRESS", "NOT_START", "SUBMITTED", "PENDING", "UNKNOWN", ""}
 
     # ==================== 构建请求 ====================
 
@@ -614,8 +653,8 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
                     "retry": False
                 }
 
-            # 4. 提取任务 ID（三段式 data.task_id）
-            project_id = result.get("data", {}).get("task_id")
+            # 4. 提取任务 ID（兼容三段式 data.task_id 与扁平式顶层 task_id）
+            project_id = self._extract_task_id(result)
             if not project_id:
                 return {
                     "success": False,
@@ -727,14 +766,17 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
                     "error_detail": f"API响应格式错误: {validation_error}"
                 }
 
-            # 3. 状态映射（外层大写优先，内层小写回退）
-            data = result.get("data", {})
-            status = str(data.get("status", "")).upper()
-            inner_data = data.get("data") if isinstance(data.get("data"), dict) else {}
-            inner_status = str(inner_data.get("status", "")).lower() if inner_data else ""
+            # 3. 状态映射（外层状态 + 内层状态合并判断，大小写归一）
+            sd = self._extract_status_data(result)
+            # 外层与内层状态的并集（均转大写用于匹配）
+            status_set = {sd["status_upper"], sd["inner_status"].upper()}
 
-            if status == "SUCCESS" or inner_status == "succeeded":
-                video_url = inner_data.get("content", {}).get("video_url")
+            if status_set & self._SUCCESS_STATES:
+                # video_url: 优先内层 content.video_url，回退顶层 video_url
+                video_url = sd["video_url"]
+                if not video_url:
+                    outer = result.get("data") if isinstance(result.get("data"), dict) else result
+                    video_url = outer.get("video_url")
                 if not video_url:
                     self._send_alert(
                         alert_type="INVALID_RESPONSE_FORMAT",
@@ -751,10 +793,10 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
                     "result_url": video_url
                 }
 
-            if status == "FAILURE" or inner_status in ("failed", "expired"):
+            if status_set & self._FAILURE_STATES:
                 # 失败原因：优先 fail_reason，回退 inner data
-                fail_reason = data.get("fail_reason")
-                if not fail_reason or not isinstance(fail_reason, str):
+                fail_reason = sd["fail_reason"]
+                if not fail_reason:
                     fail_reason = "任务失败"
                 # 容错：文档示例中 fail_reason 曾误填为 video URL，过滤掉明显的 URL
                 if fail_reason.startswith(("http://", "https://")):
