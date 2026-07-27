@@ -3452,7 +3452,7 @@ MCP_TOOLS = [
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "文件名，格式为：HH:MM:SS.txt，例如：14:57:23.txt"
+                    "description": "长文本文件名。请使用用户消息中系统提示给出的文件名（形如 - 文件名：xxx.txt）。注意：不要凭空编造文件名，必须使用上下文中实际出现的文件名；若文件不存在，工具会返回可用文件列表供纠错。"
                 },
                 "limit": {
                     "type": "integer",
