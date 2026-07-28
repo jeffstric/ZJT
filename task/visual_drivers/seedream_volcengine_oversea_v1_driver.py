@@ -22,6 +22,7 @@ class Seedream5VolcengineOverseaV1Driver(Seedream5VolcengineV1Driver):
     MODEL_MAPPING = {
         TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "seedream-5-0-260128",
         TaskTypeId.SEEDREAM_4_5_IMAGE: "seedream-4-5-251128",
+        TaskTypeId.SEEDREAM_5_0_PRO: "seedream-5-0-pro-260628",
     }
 
     def __init__(self):
