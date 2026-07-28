@@ -4854,16 +4854,17 @@ async def delete_staging_file(
             with open(file_path, 'r', encoding='utf-8') as f:
                 file_data = json.load(f)
             
-            # 验证文件所属用户
+            # 验证文件所属用户（路径前缀已校验 user_id/world_id，此处额外校验文件内容中的 user_id）
             file_user_id = str(file_data.get('user_id', ''))
             request_user_id = str(user_id)
             
-            if file_user_id != request_user_id:
+            if file_user_id and file_user_id != request_user_id:
                 logger.warning(f'用户 {request_user_id} 尝试删除用户 {file_user_id} 的文件: {file_path}')
                 return JSONResponse({
                     'success': False,
                     'error': '无权限删除此文件：文件不属于当前用户'
                 }, status_code=403)
+            # file_user_id 为空时，信任路径前缀校验（兼容旧文件未写入 user_id 的情况）
         except json.JSONDecodeError:
             logger.error(f'文件格式错误，无法验证所属用户: {file_path}')
             return JSONResponse({

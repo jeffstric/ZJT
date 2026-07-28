@@ -104,7 +104,8 @@ class FileManager:
 
     def _safe_write_entity_json(self, entity_dir: Path, file_prefix: str,
                                 name_arg: str, content: str,
-                                name_field: str = "name") -> bool:
+                                name_field: str = "name",
+                                user_id: str = "0", world_id: str = "0") -> bool:
         """
         安全写入实体 JSON 文件（character/location/prop 通用），保证文件名与内容 name 一致、
         元数据字段不丢失。调用前需确保 entity_dir 已存在。
@@ -147,6 +148,8 @@ class FileManager:
         file_path = entity_dir / f"{file_prefix}{real_name}.json"
 
         # 3. 元数据合并/补全（读旧文件，若存在）
+        #    必须先 merge 再 setdefault：否则调用方传入的 str user_id/world_id
+        #    会抢先写入，导致旧文件中 int 类型的 world_id/user_id 等元数据被覆盖丢失。
         old_data = None
         if file_path.exists():
             try:
@@ -157,6 +160,9 @@ class FileManager:
             except Exception:
                 old_data = None
         data = self._merge_entity_meta(old_data, data)
+        # 注入 user_id/world_id（仅在内容与旧文件均缺失时补全，确保删除时权限校验能通过）
+        data.setdefault('user_id', user_id)
+        data.setdefault('world_id', world_id)
 
         # 4. 写入
         try:
@@ -455,7 +461,7 @@ class FileManager:
         """
         self._ensure_directories(user_id, world_id)
         characters_dir = self._get_user_world_path(user_id, world_id) / "characters"
-        return self._safe_write_entity_json(characters_dir, "character_", character_name, content, "name")
+        return self._safe_write_entity_json(characters_dir, "character_", character_name, content, "name", user_id, world_id)
     
     def delete_character(self, character_name: str, user_id: str = "0", world_id: str = "0") -> bool:
         """
@@ -661,7 +667,10 @@ class FileManager:
                         old_data = old_parsed
                 except Exception:
                     old_data = None
+            # 先 merge 再 setdefault，避免 str 形参覆盖旧文件中的 int 元数据
             merged = self._merge_entity_meta(old_data, content_data)
+            merged.setdefault('user_id', user_id)
+            merged.setdefault('world_id', world_id)
             write_text = json.dumps(merged, ensure_ascii=False, indent=2)
         else:
             write_text = content
@@ -807,7 +816,7 @@ class FileManager:
         """保存场景"""
         self._ensure_directories(user_id, world_id)
         locations_dir = self._get_user_world_path(user_id, world_id) / "locations"
-        return self._safe_write_entity_json(locations_dir, "location_", location_name, content, "name")
+        return self._safe_write_entity_json(locations_dir, "location_", location_name, content, "name", user_id, world_id)
     
     def delete_location(self, location_name: str, user_id: str = "0", world_id: str = "0") -> bool:
         """删除场景"""
@@ -967,7 +976,7 @@ class FileManager:
         """保存道具"""
         self._ensure_directories(user_id, world_id)
         props_dir = self._get_user_world_path(user_id, world_id) / "props"
-        return self._safe_write_entity_json(props_dir, "prop_", prop_name, content, "name")
+        return self._safe_write_entity_json(props_dir, "prop_", prop_name, content, "name", user_id, world_id)
     
     def delete_prop(self, prop_name: str, user_id: str = "0", world_id: str = "0") -> bool:
         """删除道具"""
