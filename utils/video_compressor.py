@@ -41,15 +41,37 @@ def _get_ffprobe_path() -> str:
     return resolve_bin_path(ffprobe, get_project_root())
 
 
+def _parse_frame_rate(avg_frame_rate: str) -> float:
+    """
+    解析 ffprobe 的 avg_frame_rate（形如 "120/1"、"30000/1001"、"0/0"）为 float。
+
+    分母为 0 或解析失败时返回 0.0。
+    """
+    if not avg_frame_rate or "/" not in avg_frame_rate:
+        try:
+            return float(avg_frame_rate) if avg_frame_rate else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+    try:
+        num, den = avg_frame_rate.split("/", 1)
+        num_f = float(num)
+        den_f = float(den)
+        if den_f == 0:
+            return 0.0
+        return num_f / den_f
+    except (TypeError, ValueError):
+        return 0.0
+
+
 async def get_video_info(video_path: str) -> Optional[dict]:
     """
-    使用 ffprobe 获取视频的分辨率和时长信息（非阻塞）
+    使用 ffprobe 获取视频的分辨率、时长和帧率信息（非阻塞）
 
     Args:
         video_path: 视频文件路径
 
     Returns:
-        dict: {"width": int, "height": int, "duration": float} 或 None
+        dict: {"width": int, "height": int, "duration": float, "fps": float} 或 None
     """
     ffprobe_path = _get_ffprobe_path()
     cmd = [
@@ -79,19 +101,20 @@ async def get_video_info(video_path: str) -> Optional[dict]:
             logger.error(f"ffprobe 执行失败: {stderr.decode(errors='replace')}")
             return None
 
-        data = json.loads(stdout.decode(errors="replace"))
+        data = json.loads(stdout.decode(errors='replace'))
 
         # 查找视频流
-        width, height = 0, 0
+        width, height, fps = 0, 0, 0.0
         for stream in data.get("streams", []):
             if stream.get("codec_type") == "video":
                 width = int(stream.get("width", 0))
                 height = int(stream.get("height", 0))
+                fps = _parse_frame_rate(stream.get("avg_frame_rate", "0/0"))
                 break
 
         duration = float(data.get("format", {}).get("duration", 0))
 
-        return {"width": width, "height": height, "duration": duration}
+        return {"width": width, "height": height, "duration": duration, "fps": fps}
 
     except Exception as e:
         logger.error(f"获取视频信息失败: {e}")
@@ -184,8 +207,15 @@ def transcode_reference_video_to_seedance_mp4(
     input_path: str,
     output_path: str,
     timeout: int = SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT,
+    max_fps: int = MediaConstants.VIDEO_REFERENCE_MAX_FPS,
 ) -> tuple[bool, Optional[str]]:
-    """将参考视频转成 Seedance 可稳定解析 duration 的 MP4。"""
+    """
+    将参考视频转成 Seedance 可稳定解析 duration 的 MP4。
+
+    通过 -fpsmax 限制输出最大帧率（只丢帧不补帧），避免高刷屏浏览器产出的
+    120fps 等超频视频触发下游 doubao-seedance 的 ≤60fps 上限校验。
+    需要 ffmpeg ≥4.3。
+    """
     if not os.path.exists(input_path):
         return False, f"输入参考视频不存在: {input_path}"
 
@@ -200,6 +230,7 @@ def transcode_reference_video_to_seedance_mp4(
         "-pix_fmt", "yuv420p",
         "-preset", "fast",
         "-crf", "23",
+        "-fpsmax", str(max_fps),  # 限制最大输出帧率：超频只丢帧，低帧率不补帧
         "-c:a", "aac",
         "-b:a", "128k",
         "-movflags", "+faststart",

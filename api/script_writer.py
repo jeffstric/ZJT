@@ -4510,6 +4510,20 @@ async def upload_agent_video(
                     )
                 }, status_code=400)
 
+            # 帧率校验：doubao-seedance r2v 要求参考视频帧率 ≤60fps，高刷屏浏览器
+            # 压缩可能产出 120fps 等超频视频，此处拦截避免下游 InvalidParameter。
+            fps = video_info.get('fps', 0) or 0
+            max_fps = MediaConstants.VIDEO_REFERENCE_MAX_FPS
+            if fps > max_fps:
+                os.remove(file_path)
+                return JSONResponse({
+                    'success': False,
+                    'error': (
+                        f'视频帧率 {fps:.1f}fps 超过限制 {max_fps}fps'
+                        '（建议使用 30fps 以内的视频）'
+                    )
+                }, status_code=400)
+
         # 根据 is_local 配置决定返回本地 URL 还是 CDN URL
         is_local = get_dynamic_config_value('server', 'is_local', default=False)
 
