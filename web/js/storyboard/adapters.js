@@ -28,10 +28,43 @@ export function normalizePagedList(response) {
 }
 
 export function formatDuration(value) {
-    const seconds = parseDurationSeconds(value);
+    // 仅用于「显示」。真实时长数据保留浮点（见 scene.duration / sceneFromApi），
+    // 这里只在渲染时格式化为 mm:ss[.t]。秒部分保留 1 位小数，以体现音频求和回写
+    // 后的毫秒级时长（避免「00:07」掩盖实际 7.4s 导致误判视频时长不够）。
+    // 注意：不依赖 parseDurationSeconds（它对 number 做 round 会丢小数），自行解析。
+    const seconds = _toDisplaySeconds(value);
     const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    const rem = seconds - mins * 60;
+    // 秒的整数部分始终两位补零（07）；带非零小数时追加 .t（07.4），四舍五入到 1 位。
+    const intSecs = Math.floor(rem);
+    const frac = Math.round((rem - intSecs) * 10);
+    const secsStr = frac > 0
+        ? `${String(intSecs).padStart(2, '0')}.${frac}`
+        : String(intSecs).padStart(2, '0');
+    return `${String(mins).padStart(2, '0')}:${secsStr}`;
+}
+
+/**
+ * 把任意时长输入归一为「带小数的秒」，仅供 formatDuration 显示用。
+ * - number：直接返回（保留小数）。
+ * - "MM:SS" / "MM:SS.t" 字符串：按冒号解析。
+ * - "SS" / "SS.t" 纯数字字符串：转 float。
+ * 与 parseDurationSeconds 的区别：不取整，保留小数位。
+ */
+function _toDisplaySeconds(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.max(0, value);
+    }
+    if (typeof value !== 'string') return 0;
+    const str = value.trim();
+    if (str.includes(':')) {
+        const parts = str.split(':').map(p => parseFloat(p));
+        if (parts.length === 2 && parts.every(Number.isFinite)) {
+            return Math.max(0, parts[0] * 60 + parts[1]);
+        }
+    }
+    const parsed = parseFloat(str);
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
 }
 
 export function parseDurationSeconds(value) {
