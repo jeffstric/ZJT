@@ -1381,8 +1381,10 @@ class ImageFaceGridConstants:
     MIN_FACE_HEIGHT = 4
     MIN_FACE_AREA = 16
     MIN_RECT_FILL_RATIO = 0.25
-    GRID_LINE_WIDTH_TIERS = ((5, 1), (10, 2))
-    GRID_MAX_LINE_WIDTH = 3
+    # 线宽按吞噬后的最终人脸矩形数量统一分档（与人脸数量相关）：
+    # 1–5 脸 → 3px，6–10 脸 → 4px，11+ 脸 → 5px。更粗线宽会抬高视频侧 fill ratio。
+    GRID_LINE_WIDTH_TIERS = ((5, 3), (10, 4))
+    GRID_MAX_LINE_WIDTH = 5
 
 
 class GeneratedVideoFaceGridTrimConstants:
@@ -1415,7 +1417,10 @@ class GeneratedVideoFaceGridTrimConstants:
     MIN_LINE_COUNT = 3
     MIN_LINE_LENGTH_RATIO = 0.6
     MIN_INTERSECTION_COUNT = 4
-    MAX_COMPONENT_FILL_RATIO = 0.4
+    # 稀疏细线网格 vs 实心红块的 fill 上限。480p/H.264 + 粗线宽(3–5px，随人脸数分档)
+    # + 8x8 高密度网格时，真实网格组件 fill 实测可达 ~0.46–0.60（ai_tool=12000），
+    # 0.4 会误杀；0.7 仍远低于实心色块 fill≈1.0。实心块仍由线/交点结构判据兜底拒绝。
+    MAX_COMPONENT_FILL_RATIO = 0.7
     MASK_ON_VALUE = 255
     CONNECTED_COMPONENT_CONNECTIVITY = 8
 
