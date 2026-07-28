@@ -388,6 +388,24 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== kkidc 网关配置 ====================
+    {
+        'key': 'kkidc.api_key',
+        'value_type': 'string',
+        'description': 'kkidc 网关 API Key（Seedance 系列视频）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'kkidc.base_url',
+        'value_type': 'string',
+        'description': 'kkidc API 基础 URL（默认 https://ai-api.kkidc.com/v1）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== API 聚合站配置（部分兼容comfly 等中转站）====================
     {
         'key': 'api_aggregator.site_0.api_key',

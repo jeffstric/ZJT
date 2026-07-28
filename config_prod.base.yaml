@@ -56,6 +56,10 @@ volcengine_oversea:
   base_url: "https://ark.ap-southeast.bytepluses.com"
   model_aliases: {}
 
+kkidc:
+  api_key: ""
+  base_url: "https://ai-api.kkidc.com/v1"
+
 # 适配云雾 comfly这类聚合站
 api_aggregator:
   site_0:

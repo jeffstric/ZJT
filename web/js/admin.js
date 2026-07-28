@@ -386,6 +386,24 @@ const PROVIDER_DEFINITIONS = [
         _sharedWith: 'huoshan_oversea'
     },
     {
+        id: 'kkidc_video',
+        nameKey: 'provider_kkidc_name',
+        descKey: 'provider_kkidc_video_desc',
+        category: 'video',
+        icon: '🔌',
+        docUrl: 'https://ai.kkidc.com',
+        lazyRecommended: false,
+        displayOrder: 6,
+        baseName: 'kkidc',
+        isOfficialAPI: false,
+        impactsKey: 'provider_kkidc_video_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
+        ],
+        configKeyMap: { api_key: 'kkidc.api_key' },
+        testEndpoint: null
+    },
+    {
         id: 'site_1_video',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 1 },

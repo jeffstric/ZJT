@@ -139,6 +139,33 @@ ALL_TASK_CONFIGS = [
 - `default_computing_power` - 算力配置，可以是固定值或按时长的字典
 - `required_config_keys` - 依赖的配置键，用于检查配置是否完整
 
+#### 1.5 同步实现方映射（DRIVER_IMPLEMENTATION_MAPPING）⚠️ 易漏
+
+**文件**：`config/constant.py`
+
+⚠️ **这是最容易遗漏的一步**：项目里有**两套独立的实现方映射**，必须同时改：
+
+| 配置 | 文件 | 作用 |
+|------|------|------|
+| `UnifiedTaskConfig.implementations` | `config/unified_config.py`（见 1.4） | **运行时**驱动选择（用户提交任务时决定用哪个实现） |
+| `DRIVER_IMPLEMENTATION_MAPPING` | `config/constant.py` | **admin「实现方管理」页面**的分组渲染 |
+
+在 `config/constant.py` 的 `DRIVER_IMPLEMENTATION_MAPPING` 字典中，把新实现方加入对应 `DriverKey` 的列表：
+
+```python
+DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO: [
+    DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,           # 火山引擎国内版
+    DriverImplementation.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
+    DriverImplementation.SEEDANCE_2_0_KKIDC_V1,                # kkidc 网关（新增）
+],
+```
+
+**只改 `unified_config.py` 而漏改 `constant.py` 的后果**：
+- ✅ 任务能正常运行、用户能切换实现
+- ❌ admin「实现方管理」页面**不显示**该实现方（后端按 DriverKey 分组时拿不到映射，实现方被跳过）
+
+> 1.5 仅适用于「新增实现方作为现有任务的备选」场景。如果是新建独立任务（新 DriverKey），也需在此为新 DriverKey 建立映射条目。
+
 ### 第二步：实现驱动类
 
 **文件**：`task/visual_drivers/{driver_name}_driver.py`
@@ -709,6 +736,7 @@ pytest tests/base/test_happy_horse_bailian_i2v_v1_driver.py -v
 - [ ] `config/unified_config.py` - 已在 `DriverImplementationId` 中添加对应 ID
 - [ ] `config/unified_config.py` - 已在 `ALL_TASK_CONFIGS` 中添加任务配置
 - [ ] `config/unified_config.py` - 已在 `TaskProvider` 中添加供应商常量（如需要）
+- [ ] `config/constant.py` - 已在 `DRIVER_IMPLEMENTATION_MAPPING` 中为新实现方加入对应 DriverKey（⚠️ 否则 admin「实现方管理」页面不显示）
 
 ### 第二步：驱动实现
 - [ ] `task/visual_drivers/{driver}_driver.py` - 已创建驱动文件
@@ -860,6 +888,15 @@ ImplementationConfig(
    driver = VideoDriverFactory.create_driver_by_type(30)
    assert driver is not None
    ```
+
+### Q7: 为什么新增实现方后，admin「实现方管理」页面不显示？
+
+**A**: 按顺序排查：
+
+1. **检查 `config/constant.py` 的 `DRIVER_IMPLEMENTATION_MAPPING`**（最常见原因）：是否已把新实现方加入对应 DriverKey 的列表？admin「实现方管理」页面按 DriverKey 分组，分组依据来自此字典。漏改会导致实现方被完全跳过、不显示。
+   - 注意：`config/unified_config.py` 的 `UnifiedTaskConfig.implementations` 列表**不能**替代此映射 —— 前者管运行时驱动选择，后者管页面分组渲染，两者必须同步。
+
+2. **检查 `required_config_keys` 配置是否已填写**：后端渲染实现方列表时会实例化驱动校验配置，若该实现的 `required_config_keys`（如 `kkidc.api_key`）在系统配置里为空，实例化抛 `DriverConfigError`，实现方会被过滤掉。先到后台填好对应的 API Key。
 
 ## 注意事项
 
