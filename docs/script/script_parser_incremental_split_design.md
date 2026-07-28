@@ -329,7 +329,7 @@ strict_json: bool = False
 1. 按 `accepted_registry` 汇总角色、场景、道具和 `spatial_world`。
 2. 验证所有镜头已经直接引用任务级稳定 ID，不在此阶段深层改写空间 ID。
 3. 按原文顺序拼接 `shot_groups`。
-4. **效果模式**：以 `compiled_registry` 为真源，调用 `renumber_entities_by_name()` 对角色/场景/道具按 name 先来后到统一重发号，并精确重写整棵树的 ID 引用（消除并发段 ID 不一致，详见 §24）。
+4. **效果模式**：以 `compiled_registry` 为真源，在 `_merge_entity_collection` 内对角色/场景/道具合并时，name 冲突按先来后到收敛为单一 canonical ID（不再抛致命错误），累积 `id_map` 后精确重写整棵树的 ID 引用（消除并发段 ID 不一致，详见 §24）。
 5. 统一生成 `group_id`、`shot_id` 和 `shot_number`。
 6. 重新计算总时长和 metadata。
 7. 再执行一次资产清理、空间连续性修复和分组重排。
@@ -912,14 +912,14 @@ schema v2 的 canonical `entities` 是对象，固定包含 `characters`、`loca
 
 效果模式合并时以规划注册表为身份真源，并补充分段结果中规划遗漏的实体，不能用空的地点或道具集合覆盖有效结果。效果模式分段是并发执行的（`_step_generate_parallel_batch` 用 `asyncio.gather`），并发段彼此看不到对方的实体登记，因此段级 ID 不可信任：同一实体可能被不同段分配不同 ID，甚至同一 ID 被复用指向不同实体。
 
-合并阶段由 `renumber_entities_by_name()` 统一重发号，原则：
+合并阶段由 `repair_merged_result` 内联收敛冲突 ID（实现在 `_merge_entity_collection`），原则：
 
-1. **规划真源保留**：命中 `compiled_registry`（按规范化 name 或 `*_db_id`）的实体强制使用真源 ID，段级 ID 不算数。
-2. **新实体按 name 先来后到发号**：规划表外的实体，段级 ID 一律丢弃，按规范化 name 登记，从真源占用号段的下一个起顺序发号（`{prefix}_NNN`），同 name 复用已发号。
-3. **整树精确重写**：收集 `id_map`（段旧 ID → 全局新 ID），经 `_resolve_id_map_chains` 解析替换链后，对整棵 parsed 树精确重写——覆盖 `props_present`、`characters_present`、`focus_character_ids`、`location_id`、`dialogue.character_id`、`spatial_layout` 内所有 `character_id`/`prop_id`/`location_id` 引用以及 `spatial_world.owner_id`/`location_ids` 等。
-4. **实体条目去重合并**：重发号后多个段条目可能落到同一最终 ID，按 ID 去重为单条，保留首条身份字段、合并后续条目的补充字段（描述/外观等）。
+1. **规划真源保留**：命中 `compiled_registry`（按 id）的实体强制回归真源身份（`id`/`name`/`entity_key` 以真源为准），同时保留段补充字段（描述/外观等）。典型如并发段把同一空间写成“酒店前台”/“酒店大堂”等不同粒度名称，ID 相同即统一为规划身份。
+2. **name 冲突按先来后到收敛**：未命中真源 `id`、但规范化 name 与已登记实体相同的条目（典型如“旁白”：规划真源未登记但每段都会冒出，被不同段登记成 `char_4838`/`char_016` 等不一致甚至畸形 ID），以**第一个登记**为 canonical 身份，后续同名条目的旧 ID 记入 `id_map`（`old_id → canonical_id`），补充字段并入 canonical，**不再抛 `entity name conflict`**。
+3. **真源外新实体保留段号**：既不命中真源 id、name 也不冲突的新实体，直接 append 并保留段自带的合法号（不漂移）。
+4. **整树精确重写**：三类实体集合合并累积的 `id_map`，经 `_resolve_id_map_chains` 解析替换链后，用 `_apply_id_map_inplace` 对整棵 parsed 树单趟精确重写——覆盖 `props_present`、`characters_present`、`focus_character_ids`、`location_id`、`dialogue.character_id`、`spatial_layout` 内所有 `character_id`/`prop_id`/`location_id` 引用以及 `spatial_world.owner_id`/`location_ids` 等，杜绝收敛后 shot 残留旧 ID 形成悬空引用。
 
-该机制消除了并发段 ID 不一致导致的 `quality_merge_invalid` 死锁。speed 模式因串行推进 + 跨段累积的 `accepted_registry`，段间 ID 一致性已由 `rewrite_segment_entity_ids` 在段生成阶段保证，合并阶段无需重发号。
+该机制消除了并发段 ID 不一致导致的 `quality_merge_invalid` 死锁（早期实现对 name 冲突直接抛致命错误，段数据已固化使 resume 必然复现，用户无法脱困）。`renumber_entities_by_name()`（同模块）是语义相邻的「激进全树重发号」工具，但对「ID 已对齐真源、仅 name 变体」与「段新实体自带合法号」两类场景会误重发号，故 quality 合并路径未采用它；speed 模式因串行推进 + 跨段累积的 `accepted_registry`，段间 ID 一致性已由 `rewrite_segment_entity_ids` 在段生成阶段保证，合并阶段无需收敛。
 
 ## 25. 多 worker 分片扩展（id MOD N = index）
 
