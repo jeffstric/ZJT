@@ -1402,6 +1402,9 @@ class GeneratedVideoFaceGridTrimConstants:
     # 门控、单飞锁、探测/解码、帧分析、转码、产物校验及少量文件 I/O 的总预算。
     # download_queue 的 batch 超时和租约约束必须覆盖该值。
     MAX_PROCESSING_SECONDS = 300.0
+    # ffprobe(PTS 显示序) 与 ffmpeg -t rawvideo(解码墙钟) 在窗口边界可能差 1~2 帧；
+    # 不一致时取公共前缀对齐，并由本开关控制是否打 warning（便于观察 B 帧/VFR 场景）。
+    FRAME_COUNT_MISMATCH_LOG_ENABLED = True
     HSV_RED_LOWER_1 = (0, 100, 100)
     HSV_RED_UPPER_1 = (10, 255, 255)
     HSV_RED_LOWER_2 = (170, 100, 100)

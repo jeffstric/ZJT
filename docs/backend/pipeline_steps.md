@@ -149,7 +149,7 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 **门控条件**：仅当结果媒体类型为 `video`，且当前 `ai_tool_id` 存在已完成的 `image_face_mask` 步骤时处理。开关 `GeneratedVideoFaceGridTrimConstants.ENABLED` 关闭、图片结果、未命中步骤或远程 URL fallback 都保持原 URL，不运行视频裁剪。
 
-**裁剪语义**：只扫描视频起始 `0.5` 秒；使用 FFprobe 的帧 PTS 找到最后一个网格帧，并从其后的精确下一帧时间戳开始裁剪，不使用固定帧率估算。未发现网格时原样返回；探测、解码、帧分析、转码、校验或路径映射异常均 fail-open，保留原 URL，不把普通后处理失败升级为生成任务失败。
+**裁剪语义**：只扫描视频起始 `0.5` 秒；使用 FFprobe 的帧 PTS 找到最后一个网格帧，并从其后的精确下一帧时间戳开始裁剪，不使用固定帧率估算。帧加载采用 **ffprobe + ffmpeg 双路**：ffprobe 以显示序 PTS 取时间戳（`read_intervals` 窗口），ffmpeg 以解码墙钟取 rawvideo 像素（`-t` 窗口）。两路在 H.264 B 帧 / PTS 漂移 / VFR 场景下，可能在窗口末尾差 1~2 帧；此时按**公共前缀对齐**（`min(probe_count, raw_count)`）截断，而非要求帧数严格相等。边界帧落在约 `0.5~1.0s`（look-ahead 窗口），而检测只消费前 `SCAN_SECONDS=0.5s`，丢弃末尾边界帧不影响裁剪点。不一致时默认打 `warning` 日志（`FRAME_COUNT_MISMATCH_LOG_ENABLED`）。未发现网格时原样返回；探测、解码、帧分析、转码、校验或路径映射异常均 fail-open，保留原 URL，不把普通后处理失败升级为生成任务失败。
 
 **完成路径**：
 
