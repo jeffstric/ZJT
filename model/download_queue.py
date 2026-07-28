@@ -152,8 +152,8 @@ class DownloadQueueModel:
 
         Args:
             limit: 最多认领行数
-            lease_seconds: 租约时长（⚠️必须 > 单次下载超时 DOWNLOAD_PER_ATTEMPT_TIMEOUT，否则
-                           正在跑的下载会被下个 tick 误回收导致重复处理，见 M3）
+            lease_seconds: 租约时长（⚠️必须 > 下载超时 + 视频后处理预算 + 完成余量，否则
+                           正在跑的完成路径会被下个 tick 误回收导致重复处理，见 M3）
             worker_id: 抢占标记（hostname-pid）
 
         Returns:

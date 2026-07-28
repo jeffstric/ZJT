@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from .base_agent import BaseAgent, InsufficientComputingPowerError, check_computing_power_sync
@@ -677,11 +678,28 @@ class PMAgent(BaseAgent, AskUserMixin):
         audio_urls_for_expert = task.audio_urls or []
         video_urls_for_expert = task.video_urls or []
 
+
+        # 长文本剧本文件名透传（修复：拆分智能体反馈"没有提供导入剧本"的根因）
+        # 当用户粘贴 >5000 字剧本时，完整内容已落盘为 user_long_input/<filename>.txt，
+        # 子智能体必须拿到文件名才能通过 get_long_user_input 读取完整内容。
+        long_input_filenames = self._extract_long_input_filenames()
+        long_input_hint = self._build_long_input_hint(long_input_filenames)
+        task_description_raw = tool_args.get("task_description", "执行任务")
+        if long_input_hint:
+            # 同时注入 task_description（确保 LLM 一定读到）和 conversation_history（双保险）
+            task_description_for_expert = f"{task_description_raw}\n\n{long_input_hint}"
+            merged_history = merged_history + [
+                {"role": "user", "content": long_input_hint}
+            ]
+            logger.info(f"{self.agent_id}: Injected long input filenames {long_input_filenames} into expert '{skill_name}'")
+        else:
+            task_description_for_expert = task_description_raw
+
         expert_task = {
             "session_id": task.task_id,
             "pm_session_id": task.session_id,
             "pm_task_id": task.task_id,
-            "description": tool_args.get("task_description", "执行任务"),
+            "description": task_description_for_expert,
             "pm_context": context,
             "conversation_history": merged_history,
             "image_urls": image_urls_for_expert,
@@ -868,6 +886,60 @@ class PMAgent(BaseAgent, AskUserMixin):
             logger.info(f"{self.agent_id}: Extracted {len(qa_pairs) // 2} ask_user Q&A pairs for expert")
 
         return qa_pairs
+
+    # 长文本文件名提取正则：匹配 process_long_input 生成的系统提示中的文件名
+    # 示例提示行："- 文件名：14:57:23.txt" 或 'get_long_user_input(name="14:57:23.txt")'
+    # 兼容新旧两种文件名格式（旧 HH:MM:SS.txt / 新 longinput_xxx.txt）
+    _LONG_INPUT_FILENAME_PATTERNS = [
+        re.compile(r'-\s*文件名[：:]\s*([^\s\n]+\.txt)'),
+        re.compile(r'get_long_user_input\(\s*name\s*=\s*["\']([^"\']+\.txt)["\']'),
+    ]
+
+    def _extract_long_input_filenames(self) -> List[str]:
+        """从 PM 的 conversation_history 中提取所有长文本输入的文件名。
+
+        当用户粘贴超过 5000 字的剧本时，task_manager.process_long_input 会把完整
+        内容落盘为 user_long_input/<filename>.txt，并向 PM 注入一条带"文件名"提示
+        的 user 消息。子智能体（如 novel-episode-splitter）需要这个文件名才能通过
+        get_long_user_input 工具读取完整剧本，否则会出现"没有提供导入剧本"。
+
+        本方法扫描历史中所有 user / assistant 消息，按出现顺序提取文件名并去重，
+        确保即便 PM 没有把文件名写进 task_description，子智能体也能拿到。
+        """
+        filenames: List[str] = []
+        seen = set()
+        history = self.conversation_history
+
+        for msg in history:
+            role = msg.get("role")
+            if role not in ("user", "assistant"):
+                continue
+            content = msg.get("content")
+            if not isinstance(content, str) or not content:
+                continue
+            for pattern in self._LONG_INPUT_FILENAME_PATTERNS:
+                for match in pattern.finditer(content):
+                    fname = match.group(1).strip()
+                    if fname and fname not in seen:
+                        seen.add(fname)
+                        filenames.append(fname)
+
+        if filenames:
+            logger.info(f"{self.agent_id}: Extracted long input filenames for expert: {filenames}")
+        return filenames
+
+    def _build_long_input_hint(self, filenames: List[str]) -> str:
+        """根据文件名列表构造给子智能体的长文本读取指令。"""
+        if not filenames:
+            return ""
+        lines = [
+            "【长文本剧本文件提示】",
+            "用户提供的剧本内容较长（超过5000字），完整内容已保存为文件，请务必读取后再处理：",
+        ]
+        for fname in filenames:
+            lines.append(f'- 请立即调用 get_long_user_input(name="{fname}") 读取完整剧本内容')
+        lines.append("注意：上面截断的内容只是预览，拆分/分析必须基于 get_long_user_input 读取到的完整内容。")
+        return "\n".join(lines)
 
     def _truncate_environment_context(self, env_context: str, user_id: str, world_id: str, max_chars: int) -> str:
         """截断环境上下文"""

@@ -1231,7 +1231,9 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                         aspect_ratio=aspect_ratio,
                         image_size=image_size,
                         is_grid=False,
-                        max_retries=max_retries
+                        max_retries=max_retries,
+                        grid_size=GridConfig.SIZE_2X2,
+                        grid_layout='2x2',
                     )
                     task_id = general_task_key
                     logger.info(f"创建图片编辑后台任务: {general_task_key}, project_id: {project_ids[0]}")
@@ -3452,7 +3454,7 @@ MCP_TOOLS = [
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "文件名，格式为：HH:MM:SS.txt，例如：14:57:23.txt"
+                    "description": "长文本文件名。请使用用户消息中系统提示给出的文件名（形如 - 文件名：xxx.txt）。注意：不要凭空编造文件名，必须使用上下文中实际出现的文件名；若文件不存在，工具会返回可用文件列表供纠错。"
                 },
                 "limit": {
                     "type": "integer",
@@ -4728,8 +4730,8 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                         image_size=request_data.get('image_size'),
                         is_grid=is_grid,
                         max_retries=max_retries,
-                        grid_size=grid_size,
-                        grid_layout=grid_layout,
+                        grid_size=grid_size or GridConfig.SIZE_2X2,
+                        grid_layout=grid_layout or '2x2',
                         item_names=grid_item_names,
                         target_entity_ids=target_entity_ids,
                     )
@@ -4774,7 +4776,9 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                         aspect_ratio=aspect_ratio,
                         image_size=request_data.get('image_size'),
                         is_grid=is_grid,
-                        max_retries=max_retries
+                        max_retries=max_retries,
+                        grid_size=grid_size or GridConfig.SIZE_2X2,
+                        grid_layout=grid_layout or '2x2',
                     )
                     task_id = general_task_key
                     logger.info(f"创建通用生图后台任务: {general_task_key}, project_id: {project_ids[0]}")

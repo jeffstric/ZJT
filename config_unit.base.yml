@@ -127,6 +127,10 @@ ai_tools:
 volcengine:
   api_key: "unittest"
 
+kkidc:
+  api_key: "unittest"
+  base_url: "https://ai-api.kkidc.com/v1"
+
 # API Aggregator configuration
 api_aggregator:
   site_0:

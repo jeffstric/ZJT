@@ -45,9 +45,11 @@ def process_long_input(user_id: str, world_id: str, user_message: str) -> Dict[s
     prefix = user_message[:4000]
     suffix = user_message[-1000:]
     
-    # 生成文件名：HH:mm:ss.txt
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    filename = f"{timestamp}.txt"
+    # 生成跨平台安全文件名（兼容 Windows/Linux/macOS，AGENTS.md 第6条）
+    # 旧格式 "HH:MM:SS.txt" 的冒号在 Windows 上为非法字符，且精度仅到秒易碰撞
+    # 新格式含 user_id/world_id 隔离 + 微秒时间戳 + uuid 防碰撞
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"longinput_{user_id}_{world_id}_{timestamp}_{uuid.uuid4().hex[:6]}.txt"
     
     # 保存完整内容到文件
     file_dir = os.path.join(FilePathConstants._SCRIPT_WRITER_USER_DATA_SUBDIR, str(user_id), str(world_id), "user_long_input")

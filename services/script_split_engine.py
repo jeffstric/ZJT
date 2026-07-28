@@ -43,6 +43,7 @@ from services.script_split_character_contract import (
 )
 from services.location_structure_guard import (
     bind_and_validate_planned_locations,
+    flatten_db_locations,
     validate_full_location_structure,
     validate_segment_location_structure_extended,
     validate_segment_new_roots,
@@ -1176,6 +1177,74 @@ def _map_character_errors_to_segments(
 
 # ---- 单步：合并与全局校验 ----
 
+def _safe_int_or_none(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _enrich_shot_location_fields(
+    merged: Dict[str, Any],
+    db_locations: Optional[List[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """回填 shot 级场景字段（db_location_id / location_name / db_location_pic）。
+
+    视频工作流来源不经过 storyboard 发布 bootstrap，前端只能读取 shot 级字段
+    匹配世界场景（见 nodes.js syncShotFramesToShots 的 shotLocationInfo 逻辑）。
+    这里按 shot.location_id → locations[].location_db_id 映射，未命中时沿
+    parent_id 向上递归（对齐旧 _match_location_to_db 行为）；名称/参考图直接
+    取合并阶段已加载的 DB 场景树，避免逐 shot 查库。
+    """
+    if not isinstance(merged, dict):
+        return merged
+    locations = [
+        location for location in (merged.get("locations") or [])
+        if isinstance(location, dict)
+    ]
+    if not locations:
+        return merged
+    location_map = {
+        str(location.get("id")): location
+        for location in locations
+        if location.get("id") not in (None, "")
+    }
+    db_by_id = {
+        _safe_int_or_none(location.get("id")): location
+        for location in flatten_db_locations(db_locations or [])
+        if _safe_int_or_none(location.get("id")) is not None
+    }
+
+    def _resolve_db_id(internal_id: Any, depth: int = 0) -> Optional[int]:
+        if depth > 10:
+            return None
+        location = location_map.get(str(internal_id or ""))
+        if not location:
+            return None
+        db_id = _safe_int_or_none(location.get("location_db_id"))
+        if db_id is not None:
+            return db_id
+        return _resolve_db_id(location.get("parent_id"), depth + 1)
+
+    for group in merged.get("shot_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        for shot in group.get("shots") or []:
+            if not isinstance(shot, dict) or not shot.get("location_id"):
+                continue
+            db_id = _resolve_db_id(shot.get("location_id"))
+            if db_id is None:
+                continue
+            db_row = db_by_id.get(db_id) or {}
+            fallback_name = str(
+                (location_map.get(str(shot.get("location_id"))) or {}).get("name") or ""
+            )
+            shot["db_location_id"] = db_id
+            shot["location_name"] = db_row.get("name") or fallback_name
+            shot["db_location_pic"] = db_row.get("reference_image") or ""
+    return merged
+
+
 async def step_merge(task: ScriptSplitTask) -> None:
     """合并全部分段，执行全局规范化与质检。"""
     completed = ScriptSplitSegmentModel.get_completed(task.id)
@@ -1198,9 +1267,11 @@ async def step_merge(task: ScriptSplitTask) -> None:
     character_contract = await _ensure_task_character_contract(task, cfg)
     strategy = get_script_split_strategy(cfg.get("sequence_mode", "speed"))
     db_locations = None
+    db_props: List[Dict[str, Any]] = []
     world_id = cfg.get("world_id")
     if world_id not in (None, ""):
         from model.location import LocationModel
+        from model.props import PropsModel
 
         # 合并阶段必须重新加载当前世界的完整场景树。分段解析结果中的
         # location_db_id 已经过单段校验；若这里不给 sanitizer 数据库视图，
@@ -1210,6 +1281,15 @@ async def step_merge(task: ScriptSplitTask) -> None:
             int(world_id),
             None,
         )
+        # 道具同理：必须给 sanitizer 数据库视图与剧本原文，
+        # 否则所有道具都会被误判成幻觉并清空 props/props_present。
+        props_result = await asyncio.to_thread(
+            PropsModel.list_by_world,
+            int(world_id),
+            1,
+            ScriptSplitConstants.MERGE_PROPS_PAGE_SIZE,
+        )
+        db_props = (props_result or {}).get("data") or []
     if strategy.parallel_enabled:
         try:
             merged = strategy.repair_merged_result(
@@ -1219,10 +1299,10 @@ async def step_merge(task: ScriptSplitTask) -> None:
         except ValueError as exc:
             raise EngineError("quality_merge_invalid", str(exc)) from exc
         # 先恢复规划阶段的全局注册表，再清理引用，避免并发段只返回实体子集时误删合法 ID。
-        merged = sanitize_parsed_prop_references(merged)
+        merged = sanitize_parsed_prop_references(merged, db_props, task.script_content or "")
         merged = sanitize_parsed_location_references(merged, db_locations)
     else:
-        merged = sanitize_parsed_prop_references(merged)
+        merged = sanitize_parsed_prop_references(merged, db_props, task.script_content or "")
         merged = sanitize_parsed_location_references(merged, db_locations)
         merged = repair_spatial_layout_continuity(merged)
 
@@ -1269,6 +1349,9 @@ async def step_merge(task: ScriptSplitTask) -> None:
         merged, cfg.get("max_group_duration", 15))
 
     merged = renumber_global(merged)
+    # 回填 shot 级场景字段（db_location_id/location_name/db_location_pic）。
+    # 视频工作流来源不经过发布 bootstrap，前端只能依赖这些字段匹配世界场景。
+    merged = _enrich_shot_location_fields(merged, db_locations)
     character_hard_errors = validate_segment_character_contract(
         merged,
         character_contract,

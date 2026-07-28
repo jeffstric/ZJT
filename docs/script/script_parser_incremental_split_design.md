@@ -329,7 +329,7 @@ strict_json: bool = False
 1. 按 `accepted_registry` 汇总角色、场景、道具和 `spatial_world`。
 2. 验证所有镜头已经直接引用任务级稳定 ID，不在此阶段深层改写空间 ID。
 3. 按原文顺序拼接 `shot_groups`。
-4. **效果模式**：以 `compiled_registry` 为真源，调用 `renumber_entities_by_name()` 对角色/场景/道具按 name 先来后到统一重发号，并精确重写整棵树的 ID 引用（消除并发段 ID 不一致，详见 §24）。
+4. **效果模式**：以 `compiled_registry` 为真源，在 `_merge_entity_collection` 内对角色/场景/道具合并时，name 冲突按先来后到收敛为单一 canonical ID（不再抛致命错误），累积 `id_map` 后精确重写整棵树的 ID 引用（消除并发段 ID 不一致，详见 §24）。
 5. 统一生成 `group_id`、`shot_id` 和 `shot_number`。
 6. 重新计算总时长和 metadata。
 7. 再执行一次资产清理、空间连续性修复和分组重排。
@@ -343,6 +343,23 @@ strict_json: bool = False
 的新场景继续保留，交给发布阶段的场景资产化逻辑创建；只有无法在当前世界中
 核实的非空数据库 ID 才按模型幻觉清除。同步数据库查询通过
 `asyncio.to_thread()` 执行，不能阻塞 Web 或调度器的事件循环。
+
+道具引用清理同理（2026-07-28 修复）：合并阶段必须同时加载世界道具列表
+（`PropsModel.list_by_world`，分页大小 `ScriptSplitConstants.MERGE_PROPS_PAGE_SIZE`）
+并把 `db_props` 与任务级 `script_content` 一起传给
+`sanitize_parsed_prop_references()`；否则 DB 匹配与剧本文本兜底都失效，
+所有道具会被误判成幻觉清空（`props=[]`、`props_present` 置空），
+视频工作流前端因 `scriptData.props` 为空无法匹配任何道具。
+
+合并重排（`renumber_global`）后统一回填 shot 级场景字段
+（`_enrich_shot_location_fields`）：按 `shot.location_id` →
+`locations[].location_db_id` 映射（未命中时沿 `parent_id` 向上递归，对齐旧
+`_match_location_to_db` 行为），把 `db_location_id` / `location_name` /
+`db_location_pic` 写到每个 shot 上。视频工作流来源不经过 §15 发布阶段的
+场景资产化 bootstrap（该阶段才回填 storyboard 用 shot 字段），前端
+`syncShotFramesToShots` 只能依赖这些 shot 级字段匹配世界场景，因此该回填
+必须在合并阶段对全部来源完成；故事板来源幂等无害。名称/参考图直接取合并
+阶段已加载的 DB 场景树，不做逐 shot 查库。
 
 每个内部镜头在最终发布前保留来源信息：
 
@@ -912,14 +929,14 @@ schema v2 的 canonical `entities` 是对象，固定包含 `characters`、`loca
 
 效果模式合并时以规划注册表为身份真源，并补充分段结果中规划遗漏的实体，不能用空的地点或道具集合覆盖有效结果。效果模式分段是并发执行的（`_step_generate_parallel_batch` 用 `asyncio.gather`），并发段彼此看不到对方的实体登记，因此段级 ID 不可信任：同一实体可能被不同段分配不同 ID，甚至同一 ID 被复用指向不同实体。
 
-合并阶段由 `renumber_entities_by_name()` 统一重发号，原则：
+合并阶段由 `repair_merged_result` 内联收敛冲突 ID（实现在 `_merge_entity_collection`），原则：
 
-1. **规划真源保留**：命中 `compiled_registry`（按规范化 name 或 `*_db_id`）的实体强制使用真源 ID，段级 ID 不算数。
-2. **新实体按 name 先来后到发号**：规划表外的实体，段级 ID 一律丢弃，按规范化 name 登记，从真源占用号段的下一个起顺序发号（`{prefix}_NNN`），同 name 复用已发号。
-3. **整树精确重写**：收集 `id_map`（段旧 ID → 全局新 ID），经 `_resolve_id_map_chains` 解析替换链后，对整棵 parsed 树精确重写——覆盖 `props_present`、`characters_present`、`focus_character_ids`、`location_id`、`dialogue.character_id`、`spatial_layout` 内所有 `character_id`/`prop_id`/`location_id` 引用以及 `spatial_world.owner_id`/`location_ids` 等。
-4. **实体条目去重合并**：重发号后多个段条目可能落到同一最终 ID，按 ID 去重为单条，保留首条身份字段、合并后续条目的补充字段（描述/外观等）。
+1. **规划真源保留**：命中 `compiled_registry`（按 id）的实体强制回归真源身份（`id`/`name`/`entity_key` 以真源为准），同时保留段补充字段（描述/外观等）。典型如并发段把同一空间写成“酒店前台”/“酒店大堂”等不同粒度名称，ID 相同即统一为规划身份。
+2. **name 冲突按先来后到收敛**：未命中真源 `id`、但规范化 name 与已登记实体相同的条目（典型如“旁白”：规划真源未登记但每段都会冒出，被不同段登记成 `char_4838`/`char_016` 等不一致甚至畸形 ID），以**第一个登记**为 canonical 身份，后续同名条目的旧 ID 记入 `id_map`（`old_id → canonical_id`），补充字段并入 canonical，**不再抛 `entity name conflict`**。
+3. **真源外新实体保留段号**：既不命中真源 id、name 也不冲突的新实体，直接 append 并保留段自带的合法号（不漂移）。
+4. **整树精确重写**：三类实体集合合并累积的 `id_map`，经 `_resolve_id_map_chains` 解析替换链后，用 `_apply_id_map_inplace` 对整棵 parsed 树单趟精确重写——覆盖 `props_present`、`characters_present`、`focus_character_ids`、`location_id`、`dialogue.character_id`、`spatial_layout` 内所有 `character_id`/`prop_id`/`location_id` 引用以及 `spatial_world.owner_id`/`location_ids` 等，杜绝收敛后 shot 残留旧 ID 形成悬空引用。
 
-该机制消除了并发段 ID 不一致导致的 `quality_merge_invalid` 死锁。speed 模式因串行推进 + 跨段累积的 `accepted_registry`，段间 ID 一致性已由 `rewrite_segment_entity_ids` 在段生成阶段保证，合并阶段无需重发号。
+该机制消除了并发段 ID 不一致导致的 `quality_merge_invalid` 死锁（早期实现对 name 冲突直接抛致命错误，段数据已固化使 resume 必然复现，用户无法脱困）。`renumber_entities_by_name()`（同模块）是语义相邻的「激进全树重发号」工具，但对「ID 已对齐真源、仅 name 变体」与「段新实体自带合法号」两类场景会误重发号，故 quality 合并路径未采用它；speed 模式因串行推进 + 跨段累积的 `accepted_registry`，段间 ID 一致性已由 `rewrite_segment_entity_ids` 在段生成阶段保证，合并阶段无需收敛。
 
 ## 25. 多 worker 分片扩展（id MOD N = index）
 
@@ -1105,6 +1122,8 @@ v3 不再要求分镜 LLM 重复生成规划期 `continuity_in/out` 和每镜完
 当前不自动创建角色资产：模型返回 `character_db_id=null` 且名称未命中受控短别名时，只作为任务内新角色继续处理。普通文本和单层括号不参与数据库角色契约匹配；只有 `【【名称】】` 是可校验的角色引用。若后续开放自动创建角色，需要扩展相似名称冲突规则，防止已有角色被错误拆成新角色。
 
 校验分别执行于 segment 候选生成后、merge 全局重排后和 publish 落库前。segment 有独立的 3 轮修复预算（`ScriptSplitConstants.CHARACTER_PROMPT_VALIDATION_MAX_RETRIES`），与普通 QC 轮数和网络调用重试预算分离。预算耗尽后用 `character_prompt_contract_invalid` 暂停；merge/publish 发现遗漏时会重开来源段，publish 还会清空最终结果，保证恢复后重新经历合并。
+
+`ScriptSplitConstants.CHARACTER_CONTRACT_STRICT_MODE` 控制校验严格性。默认 `False`（放行模式）：校验器复用同一套检查逻辑，但所有不匹配项（名称不一致、简称、未登记名称、缺标记等）仅逐条记录 warning 日志并返回空错误列表，segment/merge/publish 三个阶段均不再因此阻塞或暂停——LLM 使用纯中文简称（如"莫德里奇"对应库中"卢卡莫德里奇"）时拆分可正常完成。置为 `True` 恢复上述严格全等硬门禁行为。
 
 `llm/script_split_qc_agent.py` 的角色名称索引让数据库已知角色覆盖模型返回的同 ID 角色，避免短名称在普通 QC 层反向覆盖完整名称。普通 QC 的 `_forced_accept` 只接纳非角色硬门禁问题。
 
