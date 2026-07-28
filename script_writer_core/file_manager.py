@@ -148,6 +148,8 @@ class FileManager:
         file_path = entity_dir / f"{file_prefix}{real_name}.json"
 
         # 3. 元数据合并/补全（读旧文件，若存在）
+        #    必须先 merge 再 setdefault：否则调用方传入的 str user_id/world_id
+        #    会抢先写入，导致旧文件中 int 类型的 world_id/user_id 等元数据被覆盖丢失。
         old_data = None
         if file_path.exists():
             try:
@@ -157,10 +159,10 @@ class FileManager:
                     old_data = old_parsed
             except Exception:
                 old_data = None
-        # 注入 user_id/world_id（确保删除时权限校验能通过）
+        data = self._merge_entity_meta(old_data, data)
+        # 注入 user_id/world_id（仅在内容与旧文件均缺失时补全，确保删除时权限校验能通过）
         data.setdefault('user_id', user_id)
         data.setdefault('world_id', world_id)
-        data = self._merge_entity_meta(old_data, data)
 
         # 4. 写入
         try:
@@ -657,9 +659,6 @@ class FileManager:
 
         # 写入：JSON 内容做元数据合并/补全，避免 world_id/user_id/时间戳 等被覆盖丢失
         if isinstance(content_data, dict):
-            # 注入 user_id/world_id（调用方传入，确保删除时权限校验能通过）
-            content_data.setdefault('user_id', user_id)
-            content_data.setdefault('world_id', world_id)
             old_data = None
             if file_path.exists():
                 try:
@@ -668,7 +667,10 @@ class FileManager:
                         old_data = old_parsed
                 except Exception:
                     old_data = None
+            # 先 merge 再 setdefault，避免 str 形参覆盖旧文件中的 int 元数据
             merged = self._merge_entity_meta(old_data, content_data)
+            merged.setdefault('user_id', user_id)
+            merged.setdefault('world_id', world_id)
             write_text = json.dumps(merged, ensure_ascii=False, indent=2)
         else:
             write_text = content
