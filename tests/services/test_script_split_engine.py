@@ -710,6 +710,7 @@ def test_disabled_qc_skips_local_and_agent_checks(monkeypatch):
 
 
 def test_character_prompt_hard_gate_runs_when_qc_disabled_and_never_completes(monkeypatch):
+    monkeypatch.setattr(ScriptSplitConstants, "CHARACTER_CONTRACT_STRICT_MODE", True)
     parsed = {
         "characters": [{
             "id": "char_001",
@@ -1411,6 +1412,7 @@ def test_step_merge_rejects_incomplete_checkpoint_state(monkeypatch):
 
 def test_step_merge_preserves_existing_database_location_references(monkeypatch):
     """合并阶段必须用当前世界的场景树核实 DB id，不能把真实场景当成伪造 ID 删除。"""
+    monkeypatch.setattr(ScriptSplitConstants, "CHARACTER_CONTRACT_STRICT_MODE", True)
     task = ScriptSplitTask(
         id=13,
         total_segment_count=1,
@@ -1472,8 +1474,16 @@ def test_step_merge_preserves_existing_database_location_references(monkeypatch)
         return [{"id": 565, "name": "城南酒店大堂", "children": []}]
 
     monkeypatch.setattr(LocationModel, "get_tree_by_world", fake_get_tree_by_world)
+
+    from model.props import PropsModel
+
     monkeypatch.setattr(
-        script_parser, "sanitize_parsed_prop_references", lambda parsed: parsed
+        PropsModel,
+        "list_by_world",
+        lambda *_args, **_kwargs: {"data": []},
+    )
+    monkeypatch.setattr(
+        script_parser, "sanitize_parsed_prop_references", lambda parsed, *args: parsed
     )
     monkeypatch.setattr(
         script_parser, "repair_spatial_layout_continuity", lambda parsed: parsed
@@ -1489,6 +1499,181 @@ def test_step_merge_preserves_existing_database_location_references(monkeypatch)
     assert location_queries == [(6, None)]
     assert final_result["locations"][0]["location_db_id"] == 565
     assert final_result["shot_groups"][0]["shots"][0]["location_id"] == "loc_001"
+
+
+def _mock_merge_common(monkeypatch, task, segment, saved):
+    """step_merge 公共 mock：段检查点、任务落库、无变化的后处理。"""
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "get_completed",
+        lambda _task_id: [segment],
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "save_field",
+        lambda _task_id, **kwargs: saved.update(kwargs),
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "update_status",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        script_parser, "repair_spatial_layout_continuity", lambda parsed: parsed
+    )
+    monkeypatch.setattr(
+        script_parser, "reorganize_shot_groups", lambda parsed, _duration: parsed
+    )
+    monkeypatch.setattr(script_split_engine, "renumber_global", lambda parsed: parsed)
+
+
+def test_step_merge_preserves_and_binds_props_with_db_view(monkeypatch):
+    """合并阶段必须带 DB 道具视图与剧本原文清洗，否则道具被全部误判成幻觉丢弃。"""
+    task = ScriptSplitTask(
+        id=18,
+        total_segment_count=1,
+        script_content="裁判吹响哨子，球员把签名球衣递给球迷。",
+        request_config={
+            "sequence_mode": "speed",
+            "world_id": 6,
+            "max_group_duration": 15,
+        },
+    )
+    segment = ScriptSplitSegment(
+        task_id=18,
+        segment_index=1,
+        segment_id="seg_0001",
+        parsed_result_json={
+            "locations": [
+                {"id": "loc_001", "name": "城南酒店大堂", "location_db_id": 565}
+            ],
+            "props": [
+                {"id": "prop_001", "name": "裁判哨子", "props_db_id": None},
+                {"id": "prop_002", "name": "签名球衣", "props_db_id": None},
+                {"id": "prop_003", "name": "幻觉激光剑", "props_db_id": None},
+            ],
+            "shot_groups": [
+                {
+                    "group_id": "grp_001",
+                    "shots": [
+                        {
+                            "shot_id": "s001",
+                            "duration": 5,
+                            "location_id": "loc_001",
+                            "props_present": ["prop_001", "prop_002", "prop_003"],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    saved = {}
+    _mock_merge_common(monkeypatch, task, segment, saved)
+
+    from model.location import LocationModel
+    from model.props import PropsModel
+
+    monkeypatch.setattr(
+        LocationModel,
+        "get_tree_by_world",
+        lambda _world_id, _limit=None: [
+            {"id": 565, "name": "城南酒店大堂", "children": []}
+        ],
+    )
+    monkeypatch.setattr(
+        PropsModel,
+        "list_by_world",
+        lambda *_args, **_kwargs: {"data": [{"id": 900, "name": "裁判哨子"}]},
+    )
+
+    asyncio.run(script_split_engine.step_merge(task))
+
+    final_result = saved["final_result_json"]
+    # DB 命中：绑定真实 props_db_id；剧本文本命中：保留为 null；两者都无：丢弃
+    assert [p["name"] for p in final_result["props"]] == ["裁判哨子", "签名球衣"]
+    assert final_result["props"][0]["props_db_id"] == 900
+    assert final_result["props"][1]["props_db_id"] is None
+    shot = final_result["shot_groups"][0]["shots"][0]
+    assert shot["props_present"] == ["prop_001", "prop_002"]
+
+
+def test_step_merge_enriches_shot_location_fields_for_workflow_source(monkeypatch):
+    """视频工作流来源不经过发布 bootstrap，合并阶段必须回填 shot 级场景字段。
+
+    前端 syncShotFramesToShots 依赖 shot.db_location_id/location_name/db_location_pic
+    匹配世界场景；子场景未入库时沿 parent_id 向上递归（对齐旧 _match_location_to_db）。
+    """
+    task = ScriptSplitTask(
+        id=19,
+        total_segment_count=1,
+        script_content="INT. ROOM - DAY",
+        request_config={
+            "sequence_mode": "speed",
+            "world_id": 6,
+            "max_group_duration": 15,
+        },
+    )
+    segment = ScriptSplitSegment(
+        task_id=19,
+        segment_index=1,
+        segment_id="seg_0001",
+        parsed_result_json={
+            "locations": [
+                {"id": "loc_001", "name": "城南酒店大堂", "location_db_id": 565},
+                {
+                    "id": "loc_002",
+                    "name": "大堂角落",
+                    "location_db_id": None,
+                    "parent_id": "loc_001",
+                    "level": 1,
+                },
+            ],
+            "shot_groups": [
+                {
+                    "group_id": "grp_001",
+                    "shots": [
+                        {"shot_id": "s001", "duration": 5, "location_id": "loc_001"},
+                        {"shot_id": "s002", "duration": 5, "location_id": "loc_002"},
+                    ],
+                }
+            ],
+        },
+    )
+    saved = {}
+    _mock_merge_common(monkeypatch, task, segment, saved)
+
+    from model.location import LocationModel
+    from model.props import PropsModel
+
+    monkeypatch.setattr(
+        LocationModel,
+        "get_tree_by_world",
+        lambda _world_id, _limit=None: [
+            {
+                "id": 565,
+                "name": "城南酒店大堂",
+                "reference_image": "https://cdn.example.com/loc565.jpg",
+                "children": [],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        PropsModel,
+        "list_by_world",
+        lambda *_args, **_kwargs: {"data": []},
+    )
+
+    asyncio.run(script_split_engine.step_merge(task))
+
+    shots = saved["final_result_json"]["shot_groups"][0]["shots"]
+    # 直接命中 DB 场景
+    assert shots[0]["db_location_id"] == 565
+    assert shots[0]["location_name"] == "城南酒店大堂"
+    assert shots[0]["db_location_pic"] == "https://cdn.example.com/loc565.jpg"
+    # 子场景未入库：沿 parent_id 递归命中父级 DB 场景
+    assert shots[1]["db_location_id"] == 565
+    assert shots[1]["location_name"] == "城南酒店大堂"
+    assert shots[1]["db_location_pic"] == "https://cdn.example.com/loc565.jpg"
 
 
 def test_step_merge_converts_quality_strategy_error_to_engine_error(monkeypatch):
@@ -1524,7 +1709,7 @@ def test_step_merge_converts_quality_strategy_error_to_engine_error(monkeypatch)
     monkeypatch.setattr(
         script_parser,
         "sanitize_parsed_prop_references",
-        lambda parsed: parsed,
+        lambda parsed, *args: parsed,
     )
     monkeypatch.setattr(
         script_parser,
@@ -1584,7 +1769,7 @@ def test_step_merge_reopens_completed_segment_when_location_graph_is_illegal(mon
         "update_status",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr(script_parser, "sanitize_parsed_prop_references", lambda parsed: parsed)
+    monkeypatch.setattr(script_parser, "sanitize_parsed_prop_references", lambda parsed, *args: parsed)
     monkeypatch.setattr(
         script_parser,
         "sanitize_parsed_location_references",
@@ -1642,6 +1827,7 @@ def _character_contract_config(**extra):
 
 
 def test_step_merge_reopens_segment_when_character_prompt_uses_short_name(monkeypatch):
+    monkeypatch.setattr(ScriptSplitConstants, "CHARACTER_CONTRACT_STRICT_MODE", True)
     task = ScriptSplitTask(
         id=16,
         total_segment_count=1,
@@ -1677,7 +1863,7 @@ def test_step_merge_reopens_segment_when_character_prompt_uses_short_name(monkey
         "update_status",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr(script_parser, "sanitize_parsed_prop_references", lambda parsed: parsed)
+    monkeypatch.setattr(script_parser, "sanitize_parsed_prop_references", lambda parsed, *args: parsed)
     monkeypatch.setattr(
         script_parser,
         "sanitize_parsed_location_references",
@@ -1697,6 +1883,7 @@ def test_step_merge_reopens_segment_when_character_prompt_uses_short_name(monkey
 
 
 def test_step_publish_clears_final_result_before_short_name_can_reach_storyboard(monkeypatch):
+    monkeypatch.setattr(ScriptSplitConstants, "CHARACTER_CONTRACT_STRICT_MODE", True)
     final_result = _short_character_prompt_result()
     task = ScriptSplitTask(
         id=17,

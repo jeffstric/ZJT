@@ -344,6 +344,23 @@ strict_json: bool = False
 核实的非空数据库 ID 才按模型幻觉清除。同步数据库查询通过
 `asyncio.to_thread()` 执行，不能阻塞 Web 或调度器的事件循环。
 
+道具引用清理同理（2026-07-28 修复）：合并阶段必须同时加载世界道具列表
+（`PropsModel.list_by_world`，分页大小 `ScriptSplitConstants.MERGE_PROPS_PAGE_SIZE`）
+并把 `db_props` 与任务级 `script_content` 一起传给
+`sanitize_parsed_prop_references()`；否则 DB 匹配与剧本文本兜底都失效，
+所有道具会被误判成幻觉清空（`props=[]`、`props_present` 置空），
+视频工作流前端因 `scriptData.props` 为空无法匹配任何道具。
+
+合并重排（`renumber_global`）后统一回填 shot 级场景字段
+（`_enrich_shot_location_fields`）：按 `shot.location_id` →
+`locations[].location_db_id` 映射（未命中时沿 `parent_id` 向上递归，对齐旧
+`_match_location_to_db` 行为），把 `db_location_id` / `location_name` /
+`db_location_pic` 写到每个 shot 上。视频工作流来源不经过 §15 发布阶段的
+场景资产化 bootstrap（该阶段才回填 storyboard 用 shot 字段），前端
+`syncShotFramesToShots` 只能依赖这些 shot 级字段匹配世界场景，因此该回填
+必须在合并阶段对全部来源完成；故事板来源幂等无害。名称/参考图直接取合并
+阶段已加载的 DB 场景树，不做逐 shot 查库。
+
 每个内部镜头在最终发布前保留来源信息：
 
 ```json
@@ -1105,6 +1122,8 @@ v3 不再要求分镜 LLM 重复生成规划期 `continuity_in/out` 和每镜完
 当前不自动创建角色资产：模型返回 `character_db_id=null` 且名称未命中受控短别名时，只作为任务内新角色继续处理。普通文本和单层括号不参与数据库角色契约匹配；只有 `【【名称】】` 是可校验的角色引用。若后续开放自动创建角色，需要扩展相似名称冲突规则，防止已有角色被错误拆成新角色。
 
 校验分别执行于 segment 候选生成后、merge 全局重排后和 publish 落库前。segment 有独立的 3 轮修复预算（`ScriptSplitConstants.CHARACTER_PROMPT_VALIDATION_MAX_RETRIES`），与普通 QC 轮数和网络调用重试预算分离。预算耗尽后用 `character_prompt_contract_invalid` 暂停；merge/publish 发现遗漏时会重开来源段，publish 还会清空最终结果，保证恢复后重新经历合并。
+
+`ScriptSplitConstants.CHARACTER_CONTRACT_STRICT_MODE` 控制校验严格性。默认 `False`（放行模式）：校验器复用同一套检查逻辑，但所有不匹配项（名称不一致、简称、未登记名称、缺标记等）仅逐条记录 warning 日志并返回空错误列表，segment/merge/publish 三个阶段均不再因此阻塞或暂停——LLM 使用纯中文简称（如"莫德里奇"对应库中"卢卡莫德里奇"）时拆分可正常完成。置为 `True` 恢复上述严格全等硬门禁行为。
 
 `llm/script_split_qc_agent.py` 的角色名称索引让数据库已知角色覆盖模型返回的同 ID 角色，避免短名称在普通 QC 层反向覆盖完整名称。普通 QC 的 `_forced_accept` 只接纳非角色硬门禁问题。
 

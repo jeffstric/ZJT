@@ -3,15 +3,21 @@
 角色库快照是数据库角色名称的唯一真值。校验器不调用 LLM、不访问数据库，
 可在单段、合并和发布三个阶段复用。任何返回错误都带 ``_hard_gate``，调用方
 不得通过普通 QC 的 ``_forced_accept`` 路径接纳。
+
+默认（``CHARACTER_CONTRACT_STRICT_MODE = False``）为放行模式：所有不匹配项
+仅记录 warning 日志并返回空列表，不阻塞剧本拆分；strict 模式恢复硬门禁。
 """
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from config.constant import ScriptSplitConstants
 from model.character import CharacterModel
+
+logger = logging.getLogger(__name__)
 
 
 CHARACTER_CONTRACT_CONFIG_KEY = ScriptSplitConstants.CHARACTER_CONTRACT_CONFIG_KEY
@@ -160,16 +166,34 @@ def validate_segment_character_contract(
     parsed: Dict[str, Any],
     character_contract: Optional[Dict[str, Any]],
     accepted_registry: Optional[Dict[str, Any]] = None,
+    strict: Optional[bool] = None,
 ) -> List[Dict[str, Any]]:
     """验证角色实体名称及最终图片/视频提示词中的角色 token。
 
     数据库角色按 ``character_db_id`` 锁定名称；任务中新角色可首次登记，但若名称
     命中某个数据库角色的唯一受控短别名，则视为不完整名称并拒绝。
+
+    ``strict`` 为 None 时读取 ``ScriptSplitConstants.CHARACTER_CONTRACT_STRICT_MODE``。
+    非严格模式下所有不匹配项仅记录 warning 日志并返回空列表，不阻塞拆分。
     """
+    if strict is None:
+        strict = bool(ScriptSplitConstants.CHARACTER_CONTRACT_STRICT_MODE)
+
     if not isinstance(parsed, dict):
-        return [_hard_error("character_contract_payload_invalid", "拆分结果不是对象")]
+        payload_error = _hard_error("character_contract_payload_invalid", "拆分结果不是对象")
+        if strict:
+            return [payload_error]
+        logger.warning("角色契约校验放行: %s", payload_error)
+        return []
 
     errors: List[Dict[str, Any]] = []
+
+    def _emit(error: Dict[str, Any]) -> None:
+        if strict:
+            errors.append(error)
+        else:
+            logger.warning("角色契约校验放行: %s", error)
+
     by_db_id, aliases = _contract_indexes(character_contract)
     registry_entities = _entity_map((accepted_registry or {}).get("characters") or [])
     parsed_entities = _entity_map(parsed.get("characters") or [])
@@ -187,7 +211,7 @@ def validate_segment_character_contract(
         expected_name = by_db_id.get(db_id) if db_id else canonical_by_id.get(character_id)
 
         if db_id and not expected_name:
-            errors.append(_hard_error(
+            _emit(_hard_error(
                 "character_db_id_unknown",
                 f"角色 {character_id} 引用了角色契约中不存在的 character_db_id={db_id}",
                 field="characters.name",
@@ -201,7 +225,7 @@ def validate_segment_character_contract(
             alias_targets = aliases.get(actual_name) or []
             if len(alias_targets) == 1:
                 expected_name = alias_targets[0]
-                errors.append(_hard_error(
+                _emit(_hard_error(
                     "character_name_incomplete",
                     f"角色名称“{actual_name}”不完整，必须使用“{expected_name}”",
                     field="characters.name",
@@ -211,7 +235,7 @@ def validate_segment_character_contract(
                     expected_name=expected_name,
                 ))
             elif len(alias_targets) > 1:
-                errors.append(_hard_error(
+                _emit(_hard_error(
                     "character_name_alias_ambiguous",
                     f"角色短名称“{actual_name}”对应多个角色，无法确定完整名称",
                     field="characters.name",
@@ -223,7 +247,7 @@ def validate_segment_character_contract(
         if expected_name:
             canonical_by_id[character_id] = expected_name
             if actual_name != expected_name:
-                errors.append(_hard_error(
+                _emit(_hard_error(
                     "character_name_mismatch",
                     f"角色 {character_id} 名称必须为“{expected_name}”，实际为“{actual_name or '空'}”",
                     field="characters.name",
@@ -235,7 +259,7 @@ def validate_segment_character_contract(
         elif actual_name:
             canonical_by_id[character_id] = actual_name
         else:
-            errors.append(_hard_error(
+            _emit(_hard_error(
                 "character_name_missing",
                 f"角色 {character_id} 缺少名称",
                 field="characters.name",
@@ -258,7 +282,7 @@ def validate_segment_character_contract(
                 tokens, malformed = _extract_tokens(text)
                 field_tokens[field] = tokens
                 if malformed:
-                    errors.append(_hard_error(
+                    _emit(_hard_error(
                         "character_token_malformed",
                         f"{ref} 的 {field} 含未闭合或嵌套错误的角色标记",
                         shot_ref=ref,
@@ -267,7 +291,7 @@ def validate_segment_character_contract(
                     ))
                 for token in tokens:
                     if token != token.strip() or not token.strip():
-                        errors.append(_hard_error(
+                        _emit(_hard_error(
                             "character_token_malformed",
                             f"{ref} 的 {field} 含空名称或首尾空格角色标记",
                             shot_ref=ref,
@@ -285,7 +309,7 @@ def validate_segment_character_contract(
                             if expected else
                             f"{ref} 的 {field} 使用了未登记角色名“{token_name}”"
                         )
-                        errors.append(_hard_error(
+                        _emit(_hard_error(
                             "character_prompt_name_invalid",
                             message,
                             shot_ref=ref,
@@ -312,7 +336,7 @@ def validate_segment_character_contract(
                 ).strip()
                 expected_name = canonical_by_id.get(character_id)
                 if not expected_name:
-                    errors.append(_hard_error(
+                    _emit(_hard_error(
                         "character_present_unresolvable",
                         f"{ref} 的 characters_present 角色 {character_id or '空'} 无法解析完整名称",
                         shot_ref=ref,
@@ -322,7 +346,7 @@ def validate_segment_character_contract(
                     ))
                     continue
                 if expected_name not in image_tokens:
-                    errors.append(_hard_error(
+                    _emit(_hard_error(
                         "character_missing_from_image_prompt",
                         f"{ref} 图片提示词缺少完整角色标记【【{expected_name}】】",
                         shot_ref=ref,
@@ -332,7 +356,7 @@ def validate_segment_character_contract(
                         expected_name=expected_name,
                     ))
                 if expected_name not in video_tokens:
-                    errors.append(_hard_error(
+                    _emit(_hard_error(
                         "character_missing_from_video_prompt",
                         f"{ref} 视频提示词缺少完整角色标记【【{expected_name}】】",
                         shot_ref=ref,
@@ -341,6 +365,9 @@ def validate_segment_character_contract(
                         character_id=character_id,
                         expected_name=expected_name,
                     ))
+
+    if not strict:
+        return []
 
     # 同一根因常会同时触发实体和字段错误；按稳定关键字段去重，保留精确位置。
     deduped: List[Dict[str, Any]] = []

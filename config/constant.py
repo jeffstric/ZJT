@@ -856,8 +856,13 @@ class ScriptSplitConstants:
     CHARACTER_PROMPT_VALIDATION_MAX_RETRIES = 3
     # 创建拆分任务时分页快照世界角色，避免只读取前 50 个角色。
     CHARACTER_CONTRACT_PAGE_SIZE = 100
+    # 合并阶段快照世界道具的分页大小（同理，避免只读取前 50 个道具导致名称匹配失效）。
+    MERGE_PROPS_PAGE_SIZE = 200
     CHARACTER_CONTRACT_CONFIG_KEY = "_character_contract"
     CHARACTER_CONTRACT_VERSION = 1
+    # 角色契约校验严格模式。False（默认）：名称/提示词不匹配仅记录 warning 日志，
+    # 不阻塞拆分；True：恢复严格全等硬门禁，失败重试后暂停任务。
+    CHARACTER_CONTRACT_STRICT_MODE = False
     # 效果模式按段并发生成的批次上限。单个批次仍受 worker watchdog 保护。
     QUALITY_SEGMENT_PARALLELISM = 3
     # 运行时 spatial handoff JSON 序列化字节上限（超出时压缩软描述字段，见设计文档 §9.3）
