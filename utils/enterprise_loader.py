@@ -117,6 +117,13 @@ class EnterpriseLoader:
                 reset_registration_quota()
             except Exception:
                 pass
+            try:
+                from services.face_mask_provider import (
+                    reset_provider as reset_face_mask_provider,
+                )
+                reset_face_mask_provider()
+            except Exception:
+                pass
 
 
 enterprise_loader = EnterpriseLoader()

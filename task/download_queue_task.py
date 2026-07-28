@@ -11,7 +11,7 @@
 - 单次下载 wait_for(DOWNLOAD_PER_ATTEMPT_TIMEOUT) 兜底，避免协程卡死；内层 max_retries=1
   不再自重试，重试由本层 reschedule + 退避统一控制（避免与内层重试层次冲突）
 - 租约 lease_until：worker 崩溃的行会被下个 tick 的 claim 回收（P1），
-  因此 DOWNLOAD_LEASE_SECONDS 必须 > DOWNLOAD_PER_ATTEMPT_TIMEOUT（M3）
+  因此 DOWNLOAD_LEASE_SECONDS 必须 > 下载超时 + 视频后处理预算 + 完成余量（M3）
 - 用 get_cache_manager().download_and_cache（类方法），失败返回 None 可区分；
   不用模块级便捷函数（它失败时回退原 URL 会误判成功）
 """
@@ -29,11 +29,14 @@ from config.constant import (
     DOWNLOAD_LEASE_SECONDS,
     DOWNLOAD_MAX_TRY,
     DOWNLOAD_BACKOFF_SECONDS,
+    DOWNLOAD_COMPLETION_MARGIN_SECONDS,
     AI_TOOL_STATUS_COMPLETED,
+    GeneratedVideoFaceGridTrimConstants,
 )
 from model.download_queue import DownloadQueueModel
 from model.ai_tools import AIToolsModel
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
+from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
 from utils.media_cache import get_cache_manager
 
 logger = logging.getLogger(__name__)
@@ -102,13 +105,19 @@ async def _process_one(row: dict) -> None:
     if local_url:
         # 成功
         try:
+            postprocess = await maybe_trim_generated_face_grid_prefix(
+                ai_tool_id=ai_tool_id,
+                result_url=local_url,
+                media_type=media_type,
+            )
+            final_url = postprocess.result_url
             AIToolsModel.update_by_project_id_with_cdn_sync(
                 project_id=project_id,
-                result_url=local_url,
+                result_url=final_url,
                 status=AI_TOOL_STATUS_COMPLETED,
                 completed_time=datetime.now(),
             )
-            DownloadQueueModel.mark_success(row_id, local_url)
+            DownloadQueueModel.mark_success(row_id, final_url)
             # 标记当前实现方尝试成功（原 _handle_task_success 终态处理一并挪到 worker）
             try:
                 from model.implementation_attempts import ImplementationAttemptModel, ATTEMPT_STATUS_SUCCESS
@@ -117,11 +126,11 @@ async def _process_one(row: dict) -> None:
                 logger.warning(f"mark attempt success failed task={task_id}: {ae}")
             _log(task_id, AIToolsLogEvent.DOWNLOAD_COMPLETED, project_id=project_id,
                  message="下载/缓存完成", duration_ms=download_ms,
-                 detail={'source_url': remote_url, 'final_url': local_url, 'queue_wait_ms': queue_wait_ms})
+                 detail={'source_url': remote_url, 'final_url': final_url, 'queue_wait_ms': queue_wait_ms})
             _log(task_id, AIToolsLogEvent.TASK_COMPLETED, project_id=project_id,
                  status_to=AI_TOOL_STATUS_COMPLETED, message="任务完成（下载队列）",
-                 detail={'result_url': local_url})
-            logger.info(f"download_queue id={row_id} ai_tool={ai_tool_id} OK: {remote_url} -> {local_url} "
+                 detail={'result_url': final_url})
+            logger.info(f"download_queue id={row_id} ai_tool={ai_tool_id} OK: {remote_url} -> {final_url} "
                         f"({download_ms}ms, queue_wait={queue_wait_ms}ms)")
         except Exception as e:
             # 更新 ai_tools 失败：保留 status=processing，租约过期后由下个 tick 回收重试
@@ -194,7 +203,11 @@ async def process_download_queue() -> None:
         try:
             await asyncio.wait_for(
                 asyncio.gather(*[_process_one(r) for r in rows], return_exceptions=True),
-                timeout=DOWNLOAD_PER_ATTEMPT_TIMEOUT + 60,
+                timeout=(
+                    DOWNLOAD_PER_ATTEMPT_TIMEOUT
+                    + GeneratedVideoFaceGridTrimConstants.MAX_PROCESSING_SECONDS
+                    + DOWNLOAD_COMPLETION_MARGIN_SECONDS
+                ),
             )
         except asyncio.TimeoutError:
             logger.warning(f"download_queue worker={wid} batch={batch} gather timeout, "
