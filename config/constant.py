@@ -708,6 +708,12 @@ DOWNLOAD_BACKOFF_SECONDS = (20, 60, 180)      # 重试指数退避（秒），�
 DOWNLOAD_WRITE_CHUNK_TIMEOUT = 30             # 单次写盘 chunk 的 wait_for 超时（秒）
 DOWNLOAD_IO_POOL_MAX_WORKERS = 8              # 下载写盘线程池大小（模块级长寿 executor，禁止 with，CLAUDE.md 第10条）
 
+# download_queue 必须满足：
+# DOWNLOAD_LEASE_SECONDS > DOWNLOAD_PER_ATTEMPT_TIMEOUT
+#   + GeneratedVideoFaceGridTrimConstants.MAX_PROCESSING_SECONDS
+#   + DOWNLOAD_COMPLETION_MARGIN_SECONDS
+DOWNLOAD_COMPLETION_MARGIN_SECONDS = 60
+
 STORYBOARD_FIRST_FRAME_GRID_ITEM_TYPE = 8
 
 
@@ -1358,6 +1364,54 @@ class RunningHubImageFaceMaskConstants:
     IMAGE_NODE_ID = "3"
     IMAGE_FIELD_NAME = "image"
     FINAL_STATUSES = ("SUCCESS", "FAILED", "ERROR", "CANCELED", "CANCELLED")
+
+
+class ImageFaceGridConstants:
+    """图片人脸红色网格后处理常量"""
+
+    GRID_COLOR_BGR = (0, 0, 255)
+    GRID_SIZE_TIERS = ((80, 3), (160, 5), (320, 8))
+    GRID_MAX_DIVISIONS = 10
+    BLACK_PIXEL_THRESHOLD = 32
+    PIXEL_DIFF_THRESHOLD = 24
+    MIN_FACE_WIDTH = 4
+    MIN_FACE_HEIGHT = 4
+    MIN_FACE_AREA = 16
+    MIN_RECT_FILL_RATIO = 0.25
+    GRID_LINE_WIDTH_TIERS = ((5, 1), (10, 2))
+    GRID_MAX_LINE_WIDTH = 3
+
+
+class GeneratedVideoFaceGridTrimConstants:
+    """生成视频前缀中人脸红色网格检测的常量。"""
+
+    ENABLED = True
+    SCAN_SECONDS = 0.5
+    FRAME_LOOKAHEAD_SECONDS = 0.5
+    FFPROBE_TIMEOUT_SECONDS = 10.0
+    FFMPEG_DECODE_TIMEOUT_SECONDS = 20.0
+    FFMPEG_TRANSCODE_TIMEOUT_SECONDS = 60.0
+    FRAME_ANALYSIS_TIMEOUT_SECONDS = 10.0
+    GATE_QUERY_TIMEOUT_SECONDS = 10.0
+    GATE_QUERY_POOL_MAX_WORKERS = 2
+    SINGLEFLIGHT_LOCK_WAIT_SECONDS = 70.0
+    SINGLEFLIGHT_LOCK_POLL_SECONDS = 0.05
+    # 门控、单飞锁、探测/解码、帧分析、转码、产物校验及少量文件 I/O 的总预算。
+    # download_queue 的 batch 超时和租约约束必须覆盖该值。
+    MAX_PROCESSING_SECONDS = 300.0
+    HSV_RED_LOWER_1 = (0, 100, 100)
+    HSV_RED_UPPER_1 = (10, 255, 255)
+    HSV_RED_LOWER_2 = (170, 100, 100)
+    HSV_RED_UPPER_2 = (180, 255, 255)
+    # JPEG/H.264 压缩会显著降低单像素红线的亮度与通道差，保留可见网格。
+    MIN_RED_CHANNEL = 120
+    MIN_RED_CHANNEL_ADVANTAGE = 60
+    MIN_LINE_COUNT = 3
+    MIN_LINE_LENGTH_RATIO = 0.6
+    MIN_INTERSECTION_COUNT = 4
+    MAX_COMPONENT_FILL_RATIO = 0.4
+    MASK_ON_VALUE = 255
+    CONNECTED_COMPONENT_CONNECTIVITY = 8
 
 
 # ============ 剪映（CapCut）草稿导出常量 ============

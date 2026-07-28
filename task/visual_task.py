@@ -54,6 +54,7 @@ from config.constant import (
 )
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
+from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -486,6 +487,12 @@ async def _submit_new_task(ai_tool):
             # 同步 API 直接返回结果，无需轮询
             result_url = result.get("result_url")
 
+            media_type = "video"
+            if result_url:
+                ext = result_url.split('?')[0].split('.')[-1].lower()
+                if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+                    media_type = "image"
+
             # 判断是否已经是本地路径（以 /upload/ 开头）
             # 如果是，则跳过下载，直接使用
             is_local_path = result_url and result_url.startswith("/upload/")
@@ -497,13 +504,6 @@ async def _submit_new_task(ai_tool):
             else:
                 # 下载并缓存媒体文件
                 from utils.media_cache import download_and_cache
-
-                # 判断媒体类型（根据URL扩展名）
-                media_type = "video"  # 默认为视频
-                if result_url:
-                    ext = result_url.split('?')[0].split('.')[-1].lower()
-                    if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
-                        media_type = "image"
 
                 AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_STARTED,
                                    user_id=ai_tool.user_id,
@@ -522,6 +522,12 @@ async def _submit_new_task(ai_tool):
                                    duration_ms=download_ms,
                                    detail={'source_url': result_url, 'final_url': final_url})
 
+            postprocess = await maybe_trim_generated_face_grid_prefix(
+                ai_tool_id=task_id,
+                result_url=final_url,
+                media_type=media_type,
+            )
+            final_url = postprocess.result_url
             AIToolsModel.update_with_cdn_sync(task_id, result_url=final_url, status=AI_TOOL_STATUS_COMPLETED, completed_time=datetime.now())
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
 
@@ -905,7 +911,6 @@ async def _handle_task_success(project_id, task_id, media_url):
             from config.constant import AI_TOOL_STATUS_DOWNLOADING
             from model.download_queue import DownloadQueueModel
             AIToolsModel.update_by_project_id(project_id=project_id, status=AI_TOOL_STATUS_DOWNLOADING)
-            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
             AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_STARTED,
                                project_id=project_id,
                                message="上游成功，已派发到下载队列",
@@ -918,6 +923,7 @@ async def _handle_task_success(project_id, task_id, media_url):
                     media_type=media_type,
                     project_id=project_id,
                 )
+                TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
                 logger.info(f"Task {task_id} dispatched to download_queue (result={enqueue_result})，"
                             f"ai_tools -> DOWNLOADING，主循环立即返回")
                 return True
@@ -930,6 +936,12 @@ async def _handle_task_success(project_id, task_id, media_url):
                 final_url = cached_url if cached_url else media_url
                 download_ms = int((datetime.now() - download_start).total_seconds() * 1000)
 
+        postprocess = await maybe_trim_generated_face_grid_prefix(
+            ai_tool_id=task_id,
+            result_url=final_url,
+            media_type=media_type,
+        )
+        final_url = postprocess.result_url
         logger.info(f"Media cached: {media_url} -> {final_url}")
         AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_COMPLETED,
                            project_id=project_id,

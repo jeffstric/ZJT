@@ -115,21 +115,49 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 ### image_face_mask（图片人脸遮盖）
 
-用于 `param_prepare` 阶段，在 Seedance 2.0 / 2.0 Fast / 2.0 Mini 的图生视频任务提交前，对 `image_path` 和 `reference_images` 中的图片做人脸矩形黑块遮盖。
+用于 `param_prepare` 阶段，在 Seedance 2.0 / 2.0 Fast / 2.0 Mini 的图生视频任务提交前，对 `image_path` 和 `reference_images` 中的人脸绘制红色矩形网格。
 
 **触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini 任务类型 + 用户勾选 `enable_face_mask=true` + 商业版（非社区版）+ `pipeline.seedance_face_mask_enabled=true` + 有 `image_path` 或 `reference_images` 输入
 
 **配置开关**：`pipeline.seedance_face_mask_enabled`，默认 `true`，是 Seedance 人脸遮盖前置处理的**总开关**（管理员级），同时控制图片（`image_face_mask`）和视频（`face_mask`）两种遮盖步骤。关闭后图片和视频的遮盖步骤均不创建，任务走普通生成流程。其上还有两层用户/版本级门：用户级 `enable_face_mask`（前端「是否处理人脸」勾选，默认不勾选，**opt-in**）与版本级 `NOT Edition.is_community()`（社区版禁止），三者同时满足才会创建步骤（见上文「用户开关与版本门」）。
 
-**RunningHub 工作流**：调用 RunningHub AI App `2067560129192620033`，将输入图片上传后映射到节点 `3` 的 `image` 字段。工作流返回遮盖后的 png 结果，系统会先下载到本地 `upload/cache`，避免直接依赖 RunningHub 24 小时临时 URL。
+**处理语义**：调用 RunningHub AI App `2067560129192620033`，将输入图片上传后映射到节点 `3` 的 `image` 字段。RunningHub 返回的矩形黑块图只作为人脸检测中间结果；系统下载原图和黑块图，通过新增黑色区域提取每张脸的独立矩形框，再在原图副本上绘制红色网格。网格内部保留原始像素，不填充色块。
+
+图片差异提取、矩形吞噬和红色网格绘制属于商业实现，位于 `enterprise/services/face_mask/image_face_grid.py`。主仓库 `utils/image_face_grid_util.py` 只保留稳定调用门面，由 `enterprise.register()` 注册真实 Provider；社区版不包含该算法。
+
+网格行列数按人脸框短边像素分档：`<80px` 使用 3×3、`80–159px` 使用 5×5、`160–319px` 使用 8×8、`>=320px` 使用 10×10。小脸因此不会被过密线条覆盖，多脸图片中的每个矩形框分别绘制。
+
+网格线宽按吞噬后的最终矩形数量统一分档：1–5 个矩形使用 `1px`，6–10 个使用 `2px`，11 个及以上使用 `3px`。同一张图片中的所有网格使用相同线宽，并继续采用 OpenCV `LINE_8` 硬边绘制。
+
+矩形绘制前会删除被更大矩形 100% 完全包含的小矩形，避免大网格内部重复出现小网格；部分重叠、边缘接触和相邻矩形仍分别保留。线宽数量在该吞噬步骤之后计算，因此已删除的小矩形不会使线条增粗。
+
+**失败回退**：黑块图下载失败时任务后处理失败；原图下载、矩形提取或网格写入失败时回退到已经下载的 RunningHub 黑块图，不会回退到未经处理的原图。缓存便捷函数下载失败可能返回原远程 URL，处理器会显式拒绝该值，避免将无效 `/https://...` 路径写入任务结果。
 
 **处理流程**：
 1. ImageFaceMaskPipelineDriver 调用 RunningHubImageFaceMaskDriver.submit_with_slot_management()
 2. 创建 async_task 记录（implementation=RUNNINGHUB_IMAGE_FACE_MASK）
 3. 槽位满时自动安排重试（指数退避：30s → 60s → 120s → 300s）
 4. process_runninghub_async_tasks() 轮询 RunningHub v2 任务状态
-5. 完成后下载并缓存遮盖后的图片，将本地相对路径写入 step.result_data
-6. PipelineProcessor 根据 step.params 中的 `field` 和 `index` 回写 `ai_tools.image_path` 或 `ai_tools.reference_images`
+5. 完成后下载并缓存 RunningHub 黑块图，同时取得原始图片
+6. 从两图差异提取多个人脸矩形框，在原图副本上绘制自适应红色网格
+7. 网格转换失败时安全回退黑块图，将最终本地相对路径写入 `step.result_data`
+8. PipelineProcessor 根据 step.params 中的 `field` 和 `index` 回写 `ai_tools.image_path` 或 `ai_tools.reference_images`
+
+### 生成结果视频的人脸网格前缀裁剪
+
+`image_face_mask` 是输入图片预处理步骤，但它绘制的红色人脸网格可能短暂出现在生成视频开头。任务生成成功后，系统会在写入 `COMPLETED` 终态前调用 `services/generated_video_face_grid_service.py` 公共门面；实际检测、门控和裁剪位于 `enterprise/services/face_mask/`。
+
+**门控条件**：仅当结果媒体类型为 `video`，且当前 `ai_tool_id` 存在已完成的 `image_face_mask` 步骤时处理。开关 `GeneratedVideoFaceGridTrimConstants.ENABLED` 关闭、图片结果、未命中步骤或远程 URL fallback 都保持原 URL，不运行视频裁剪。
+
+**裁剪语义**：只扫描视频起始 `0.5` 秒；使用 FFprobe 的帧 PTS 找到最后一个网格帧，并从其后的精确下一帧时间戳开始裁剪，不使用固定帧率估算。未发现网格时原样返回；探测、解码、帧分析、转码、校验或路径映射异常均 fail-open，保留原 URL，不把普通后处理失败升级为生成任务失败。
+
+**完成路径**：
+
+1. `download_queue_task` 在远程结果下载成功后异步处理，并将同一个 `postprocess.result_url` 写入 `ai_tools`、`download_queue` 和完成日志。
+2. `visual_task` 的同步返回、本地结果及下载队列入队失败 fallback，在终态更新前 `await` 异步服务；成功入队时不重复处理，由 download worker 独占该步骤。
+3. `sync_task_executor` 只在实际任务工作进程内完成本地/缓存结果处理，再构造 `SyncTaskResult`；调度线程的 `_handle_task_result()` 仅持久化结果，不运行 FFmpeg。
+
+异步入口使用非阻塞子进程和有界门控查询线程池。download queue 的租约满足“下载超时 + 视频后处理总预算 + 完成落库余量”的硬约束，避免后处理期间被下一轮 worker 误回收。
 
 ### implementation_retry（实现方重试）
 
