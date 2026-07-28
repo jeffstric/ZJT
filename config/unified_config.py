@@ -1257,6 +1257,7 @@ class TaskTypeId:
         'GEMINI_3_1_FLASH_IMAGE': 'Gemini 3.1 Flash 图片编辑',
         'SEEDREAM_TEXT_TO_IMAGE': 'Seedream 5.0 文生图',
         'SEEDREAM_4_5_IMAGE': 'Seedream 4.5 图片编辑',
+        'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
         'GPT_IMAGE_2': 'GPT Image 2 文生图',
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
@@ -1290,6 +1291,7 @@ class TaskTypeId:
     GEMINI_3_1_FLASH_IMAGE = 17
     SEEDREAM_TEXT_TO_IMAGE = 16
     SEEDREAM_4_5_IMAGE = 18
+    SEEDREAM_5_0_PRO = 33
     QWEN_MULTI_ANGLE_IMAGE = 24
     GPT_IMAGE_2 = 25
     GPT_IMAGE_2_EDIT = 26
@@ -1458,6 +1460,28 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_size='2K',
         sort_order=14,
+        supports_grid_image=True,  # 支持宫格生图
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDREAM_5_0_PRO,
+        key='seedream-5.0-pro',
+        short_key='seedream-5.0-pro',
+        name='Seedream 5.0 Pro',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDREAM_TEXT_TO_IMAGE,
+        implementation=DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
+        implementations=[
+            DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
+            DriverImplementation.SEEDREAM5_VOLCENGINE_OVERSEA_V1,
+        ],
+        computing_power=20,  # 成本 8毛 ÷ 0.04 = 20 算力
+        supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
+        supported_sizes=['2K', '3K', '4K'],
+        default_ratio='9:16',
+        default_size='2K',
+        sort_order=15,
         supports_grid_image=True,  # 支持宫格生图
     ),
     UnifiedTaskConfig(

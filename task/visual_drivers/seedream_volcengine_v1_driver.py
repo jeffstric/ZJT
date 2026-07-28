@@ -27,6 +27,7 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
     MODEL_MAPPING = {
         TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "doubao-seedream-5-0-260128",
         TaskTypeId.SEEDREAM_4_5_IMAGE: "doubao-seedream-4-5-251128",
+        TaskTypeId.SEEDREAM_5_0_PRO: "doubao-seedream-5-0-pro-260628",
     }
 
     # 支持的图片尺寸
@@ -291,8 +292,8 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
             "watermark": False
         }
         
-        # Seedream 5.0 支持 output_format 参数，4.5 不支持
-        if task_type == TaskTypeId.SEEDREAM_TEXT_TO_IMAGE:
+        # Seedream 5.0 / 5.0 Pro 支持 output_format 参数，4.5 不支持
+        if task_type in (TaskTypeId.SEEDREAM_TEXT_TO_IMAGE, TaskTypeId.SEEDREAM_5_0_PRO):
             payload["output_format"] = "png"
 
         # 如果有图片路径，添加 image 参数（数组，支持多张图片）
