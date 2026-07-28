@@ -24,6 +24,7 @@ import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from .database import execute_query, execute_update, execute_insert
+from config.constant import GridConfig
 import logging
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,14 @@ class GridImageTasksModel:
         Raises:
             Exception: 如果任务已存在（UNIQUE KEY冲突）
         """
+        # None 兜底：grid_size/grid_layout 为 NOT NULL 列，显式写入 NULL 会绕过 DB DEFAULT
+        # 触发 "Column 'grid_size' cannot be null"。上游普通单图/通用任务可能漏传或传 None，
+        # 在此统一归一化（与 DB DEFAULT 4/'2x2' 对齐，且对非宫格任务是历史既定值，无行为差异）。
+        if grid_size is None:
+            grid_size = GridConfig.SIZE_2X2
+        if grid_layout is None:
+            grid_layout = '2x2'
+
         item_names_json = json.dumps(item_names, ensure_ascii=False) if item_names else None
         target_entity_ids_json = json.dumps(target_entity_ids) if target_entity_ids else None
         reference_images_str = json.dumps(reference_images, ensure_ascii=False) if reference_images else None
@@ -384,44 +393,6 @@ class GridImageTasksModel:
             logger.error(f"Failed to get pending grid image tasks: {e}")
             raise
 
-    @staticmethod
-    def get_late_completed_terminal_tasks(limit: int = 20) -> List[GridImageTask]:
-        """
-        获取已经被 grid 轮询标为终态，但绑定 ai_tools 后来成功的任务。
-
-        典型场景：同步图片实现方耗时超过 grid_image_tasks.max_attempts，grid 任务先
-        TIMEOUT 并停止轮询；几分钟后 ai_tools 成功写入 result_url。这里把这些
-        "晚到成功"捞回同一套下载/校验/拆图回写流程。
-        """
-        sql = """
-            SELECT g.*, a.result_url AS ai_tool_result_url
-            FROM grid_image_tasks g
-            JOIN ai_tools a ON a.id = CAST(g.project_id AS UNSIGNED)
-            WHERE g.status IN (%s, %s)
-              AND (g.result_url IS NULL OR g.result_url = '')
-              AND a.status = %s
-              AND a.result_url IS NOT NULL
-              AND a.result_url <> ''
-              AND g.item_type IN (1, 2, 3, 4, 5, 6, 7, 8)
-            ORDER BY g.updated_at ASC
-            LIMIT %s
-        """
-        try:
-            results = execute_query(
-                sql,
-                (
-                    GridImageTaskStatus.FAILED,
-                    GridImageTaskStatus.TIMEOUT,
-                    2,
-                    limit,
-                ),
-                fetch_all=True,
-            )
-            return [GridImageTask(**row) for row in results] if results else []
-        except Exception as e:
-            logger.error(f"Failed to get late completed terminal grid image tasks: {e}")
-            raise
-    
     @staticmethod
     def get_user_tasks(user_id: str, world_id: str = None, limit: int = 50) -> List[GridImageTask]:
         """

@@ -235,38 +235,144 @@ def _handle_face_mask_task_success(task: Any, result_url: str):
 def _handle_image_face_mask_task_success(task: Any, result_url: str):
     """
     处理图片人脸遮盖任务成功的情况：
-    1. 下载 RunningHub 返回的图片到本地缓存
-    2. 返回本地相对路径（供 pipeline_processor 写入 step.result_url）
+    1. 下载 RunningHub 返回的黑块图片到本地缓存
+    2. 获取原始图片并将黑块矩形转换为红色网格
+    3. 返回红色网格图片；转换失败时安全回退到黑块图片
 
     Args:
         task: AsyncTask 对象
         result_url: RunningHub 远程图片 URL
 
     Returns:
-        本地相对路径（无前导 /），失败返回 None
+        本地相对路径（无前导 /）；黑块图片下载失败时返回 None
     """
+    black_mask_rel_path = None
     try:
-        from utils.media_cache import download_and_cache
+        import os
 
+        from config.config_util import get_config
+        from utils.image_face_grid_util import (
+            convert_black_face_masks_to_red_grids,
+        )
+        from utils.image_upload_utils import try_map_url_to_local_file
+        from utils.media_cache import download_and_cache
+        from utils.project_path import (
+            get_project_root,
+            resolve_upload_url_to_local_path,
+        )
+
+        params = task.get_params_dict()
+        original_image = params.get("image_path")
         loop = asyncio.new_event_loop()
         try:
             local_url = loop.run_until_complete(
                 download_and_cache(result_url, task.id, "image")
             )
+            if not local_url or local_url.startswith(
+                ("http://", "https://")
+            ):
+                logger.error(f"下载图片人脸遮盖结果失败: {result_url}")
+                return None
+
+            black_mask_rel_path = local_url.lstrip("/")
+            project_root = get_project_root()
+            black_mask_abs_path = os.path.join(
+                project_root,
+                black_mask_rel_path.replace("/", os.sep),
+            )
+
+            if not original_image:
+                logger.warning(
+                    "图片人脸网格转换缺少 image_path，回退黑块图片: task_id=%s",
+                    task.id,
+                )
+                return black_mask_rel_path
+
+            if original_image.startswith(("http://", "https://")):
+                original_abs_path = try_map_url_to_local_file(
+                    original_image,
+                    get_config(),
+                    project_root,
+                )
+                if not original_abs_path or not os.path.exists(
+                    original_abs_path
+                ):
+                    original_local_url = loop.run_until_complete(
+                        download_and_cache(
+                            original_image,
+                            task.id,
+                            "image",
+                        )
+                    )
+                    if (
+                        not original_local_url
+                        or original_local_url.startswith(
+                            ("http://", "https://")
+                        )
+                    ):
+                        logger.warning(
+                            "下载原始图片失败，回退黑块图片: %s",
+                            original_image,
+                        )
+                        return black_mask_rel_path
+                    original_abs_path = os.path.join(
+                        project_root,
+                        original_local_url.lstrip("/").replace("/", os.sep),
+                    )
+            elif original_image.startswith(("/upload/", "upload/")):
+                original_abs_path = resolve_upload_url_to_local_path(
+                    original_image
+                )
+            elif os.path.isabs(original_image):
+                original_abs_path = original_image
+            else:
+                original_abs_path = resolve_upload_url_to_local_path(
+                    original_image
+                )
         finally:
             loop.close()
 
-        if not local_url:
-            logger.error(f"下载图片人脸遮盖结果失败: {result_url}")
-            return None
+        output_dir = os.path.join(
+            project_root,
+            "upload",
+            "cache",
+            datetime.now().strftime("%Y-%m-%d"),
+        )
+        output_filename = (
+            f"image_face_grid_{task.id}_"
+            f"{datetime.now().strftime('%Y%m%d%H%M%S%f')}.png"
+        )
+        output_path = os.path.join(output_dir, output_filename)
 
-        rel_path = local_url.lstrip("/")
-        logger.info(f"图片人脸遮盖结果缓存成功: /{rel_path}")
+        success, final_image, error = (
+            convert_black_face_masks_to_red_grids(
+                original_image_path=original_abs_path,
+                masked_image_path=black_mask_abs_path,
+                output_image_path=output_path,
+            )
+        )
+        if not success or not final_image:
+            logger.warning(
+                "图片人脸红色网格转换失败，回退黑块图片: task_id=%s, error=%s",
+                task.id,
+                error,
+            )
+            return black_mask_rel_path
+
+        rel_path = os.path.relpath(
+            final_image,
+            project_root,
+        ).replace("\\", "/")
+        logger.info(
+            "图片人脸红色网格转换成功: task_id=%s, output=/%s",
+            task.id,
+            rel_path,
+        )
         return rel_path
 
     except Exception as e:
         logger.error(f"处理图片人脸遮盖结果失败: {e}", exc_info=True)
-        return None
+        return black_mask_rel_path
 
 
 SUCCESS_HANDLER_MAP = {

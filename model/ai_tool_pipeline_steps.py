@@ -212,6 +212,30 @@ class PipelineStepModel:
             raise
 
     @staticmethod
+    def has_completed_step_type(ai_tool_id: int, step_type: str) -> bool:
+        """检查指定 AI 工具是否存在已完成的给定类型流水线步骤。"""
+        sql = """
+            SELECT COUNT(*) AS cnt
+            FROM ai_tool_pipeline_steps
+            WHERE ai_tool_id = %s
+              AND step_type = %s
+              AND status = %s
+        """
+        try:
+            result = execute_query(
+                sql,
+                (ai_tool_id, step_type, PipelineStepStatus.COMPLETED),
+                fetch_one=True,
+            )
+            return bool(result and result.get("cnt", 0))
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to check completed pipeline step: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to check completed pipeline step (unexpected): {e}")
+            raise
+
+    @staticmethod
     def get_by_ai_tool_and_stage(ai_tool_id: int, stage: str) -> List[PipelineStep]:
         """
         获取某 ai_tool 某阶段的所有步骤（按 step_order 排序）

@@ -56,6 +56,7 @@ def test_short_name_cannot_override_database_character_name():
         _parsed(character_name="奶昔", image_name="奶昔", video_name="奶昔"),
         CONTRACT,
         {},
+        strict=True,
     )
 
     assert "character_name_mismatch" in _codes(errors)
@@ -69,6 +70,7 @@ def test_correct_entity_name_but_short_image_prompt_is_rejected():
         _parsed(image_name="奶昔"),
         CONTRACT,
         {},
+        strict=True,
     )
 
     assert "character_prompt_name_invalid" in _codes(errors)
@@ -80,6 +82,7 @@ def test_correct_entity_name_but_short_video_prompt_is_rejected():
         _parsed(video_name="奶昔"),
         CONTRACT,
         {},
+        strict=True,
     )
 
     assert "character_prompt_name_invalid" in _codes(errors)
@@ -101,7 +104,7 @@ def test_short_background_character_token_is_rejected_even_when_not_in_present_l
         "乘客座方向隐约有【【奶酪】】的轮廓。"
     )
 
-    errors = validate_segment_character_contract(parsed, CONTRACT, {})
+    errors = validate_segment_character_contract(parsed, CONTRACT, {}, strict=True)
 
     assert any(
         error["code"] == "character_prompt_name_invalid"
@@ -116,7 +119,7 @@ def test_registry_name_has_priority_over_current_segment_name():
     parsed["characters"][0]["character_db_id"] = None
     registry = {"characters": [{"id": "char_001", "name": "奶昔_Milkshake"}]}
 
-    errors = validate_segment_character_contract(parsed, CONTRACT, registry)
+    errors = validate_segment_character_contract(parsed, CONTRACT, registry, strict=True)
 
     assert "character_name_mismatch" in _codes(errors)
     assert any(error.get("expected_name") == "奶昔_Milkshake" for error in errors)
@@ -126,7 +129,7 @@ def test_malformed_character_token_is_rejected():
     parsed = _parsed()
     parsed["shot_groups"][0]["shots"][0]["action"] = "【【奶昔_Milkshake】握紧项链"
 
-    errors = validate_segment_character_contract(parsed, CONTRACT, {})
+    errors = validate_segment_character_contract(parsed, CONTRACT, {}, strict=True)
 
     assert "character_token_malformed" in _codes(errors)
 
@@ -136,6 +139,46 @@ def test_new_character_without_database_collision_can_establish_task_name():
     parsed["characters"][0]["character_db_id"] = None
 
     assert validate_segment_character_contract(parsed, CONTRACT, {}) == []
+
+
+def test_lenient_mode_passes_short_chinese_name_without_blocking(caplog):
+    contract = {
+        "version": 1,
+        "world_id": 823,
+        "characters": [{"character_db_id": 101, "canonical_name": "卢卡莫德里奇"}],
+    }
+    parsed = _parsed(character_name="莫德里奇", image_name="莫德里奇", video_name="莫德里奇")
+
+    with caplog.at_level("WARNING", logger="services.script_split_character_contract"):
+        errors = validate_segment_character_contract(parsed, contract, {})
+
+    assert errors == []
+    assert "角色契约校验放行" in caplog.text
+
+
+def test_lenient_mode_passes_unknown_character_db_id(caplog):
+    parsed = _parsed()
+    parsed["characters"][0]["character_db_id"] = 999
+
+    with caplog.at_level("WARNING", logger="services.script_split_character_contract"):
+        errors = validate_segment_character_contract(parsed, CONTRACT, {})
+
+    assert errors == []
+    assert "角色契约校验放行" in caplog.text
+
+
+def test_lenient_mode_passes_missing_prompt_tokens():
+    parsed = _parsed()
+    shot = parsed["shot_groups"][0]["shots"][0]
+    shot["opening_frame_description"] = "近景：驾驶座区域。"
+    shot["description"] = "镜头缓缓推进。"
+    shot["action"] = "主角握紧项链。"
+
+    assert validate_segment_character_contract(parsed, CONTRACT, {}) == []
+
+
+def test_lenient_mode_passes_non_dict_payload():
+    assert validate_segment_character_contract(None, CONTRACT, {}) == []
 
 
 def test_character_snapshot_loads_all_pages(monkeypatch):

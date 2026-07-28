@@ -150,6 +150,10 @@ volcengine_oversea:
   base_url: "https://ark.ap-southeast.bytepluses.com"  # 火山引擎海外版 API 基础 URL
   model_aliases: {}  # 模型别名映射，如 {"doubao-seedance-2-0-260128": "doubao-seedance-2-0-260519"}
 
+kkidc:
+  api_key: ""  # kkidc 网关 API Key（用于 Seedance 系列视频）
+  base_url: "https://ai-api.kkidc.com/v1"  # kkidc API 基础 URL
+
 pay:
   wxpay:
       #公众账号ID

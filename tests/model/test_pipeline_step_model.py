@@ -47,6 +47,21 @@ else:
     sys.modules.pop('model.database', None)
 
 
+def test_has_completed_step_type_filters_id_type_and_completed_status():
+    """遗漏完成状态或步骤类型过滤时，不得把无关流水线步骤当作门控命中。"""
+    _steps_module.execute_query.reset_mock()
+    _steps_module.execute_query.return_value = {"cnt": 1}
+
+    result = PipelineStepModel.has_completed_step_type(77, "image_face_mask")
+
+    assert result is True
+    sql, params = _steps_module.execute_query.call_args.args[:2]
+    assert "ai_tool_id = %s" in sql
+    assert "step_type = %s" in sql
+    assert "status = %s" in sql
+    assert params == (77, "image_face_mask", PipelineStepStatus.COMPLETED)
+
+
 class TestPipelineStepModelCreate(unittest.TestCase):
     """测试 PipelineStepModel.create()"""
 

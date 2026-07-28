@@ -62,6 +62,8 @@ P0 以规则预检为主；LLM 语义质检可后续打开 `use_llm=True`。
 
 ## 角色提示词硬门禁
 
+> 默认放行：`ScriptSplitConstants.CHARACTER_CONTRACT_STRICT_MODE = False` 时，本节描述的所有校验不匹配项仅记录 warning 日志，不再阻塞或暂停拆分任务；置为 `True` 恢复严格硬门禁。
+
 ### 角色契约真值
 
 创建拆分任务时，服务端按 `world_id` 分页读取**完整角色列表**，生成角色契约快照并持久化到任务内部配置 `_character_contract`。快照至少包含 `character_db_id` 与 `canonical_name`；例如数据库名称是 `奶昔_Milkshake`，后续只能使用该完整名称。

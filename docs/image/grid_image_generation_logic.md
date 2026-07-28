@@ -161,6 +161,14 @@ cron_task_manager: item_type==7 分支
    - 注意：`grid_size` / `grid_layout` 为数据库 NOT NULL 列，必须显式传入；
      漏传会导致 `None` 穿透到 INSERT，绕过 DB DEFAULT 与模型默认值，触发 `Column 'grid_size' cannot be null`。
 
+> **兜底保障（2026-07 修复）**：`GridImageTasksModel.create`（`model/grid_image_tasks.py`）在构造 INSERT 前对
+> `grid_size`/`grid_layout` 做了 `None` 兜底（缺省归一化为 `GridConfig.SIZE_2X2` / `'2x2'`，与 DB DEFAULT 一致）。
+> 因此**所有上游路径**（普通单图 item_type=1/2/3、通用任务 item_type=0、宫格 item_type=4/5/6/8、图生图 edit_image）
+> 均不再可能写入 NULL，上述报错在底层被彻底拦截。上游调用方仍应显式传参以保持语义清晰，但底层兜底确保即使漏传也不会报错。
+> 安全性说明：对普通单图/通用任务兜底为 4 不影响行为——下游切图回写的权威开关是
+> `ItemType.is_grid(item_type)`（仅 item_type=4/5/6/8 为宫格），`grid_size` 在非宫格路径上是不参与判断的死值，
+> 且 4 本就是这些任务的历史既定值。
+
 ### 3. generate_text_to_image（底层生图函数）
 
 **位置**：`script_writer_core/mcp_tool.py:2491`

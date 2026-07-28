@@ -7,7 +7,11 @@
 const VIDEO_COMPRESSOR = {
     TARGET_SHORT_EDGE: 480,
     MIN_REFERENCE_VIDEO_PIXELS: 409600,
-    FPS: 24,
+    // 目标帧率：与后端 MediaConstants.VIDEO_REFERENCE_MAX_FPS 对齐。
+    // 注意：仅靠 canvas.captureStream(FPS) 无法可靠限频——在 120Hz/144Hz 高刷屏上，
+    // 浏览器会按屏幕刷新率采样，实际捕获帧率可能远超 FPS（如 120fps），导致下游
+    // 视频模型因帧率超限报错。真正的限频由 drawFrame 内的时间戳节流保证。
+    FPS: 30,
     VIDEO_BITRATE: 1_500_000,
     COMPRESSION_THRESHOLD_MB: 10,
     MAX_DURATION_SECONDS: 15,
@@ -155,6 +159,8 @@ const VIDEO_COMPRESSOR = {
                 canvas.height = outH;
                 const ctx = canvas.getContext('2d');
 
+                // captureStream 传 FPS 作为「上限提示」，但浏览器不保证严格按此值采样
+                // （高刷屏上会按屏幕刷新率），真正的限频由下方 drawFrame 的时间戳节流保证。
                 const videoTrack = canvas.captureStream(this.FPS).getVideoTracks()[0];
                 const combinedStream = new MediaStream([videoTrack]);
 
@@ -211,22 +217,35 @@ const VIDEO_COMPRESSOR = {
 
                 recorder.start(1000);
 
-                const drawFrame = () => {
+                // 帧率节流：requestAnimationFrame 的回调首个参数是 DOMHighResTimeStamp。
+                // 在高刷屏（120Hz/144Hz）上 rAF 会被高频调用，若不节流会产出超过 FPS
+                // 的超频帧（如 120fps），触发下游模型帧率上限报错。仅当距上一帧达到
+                // 间隔阈值时才真正 drawImage，从而把 canvas 实际重绘频率钉在 FPS 上。
+                const frameInterval = 1000 / this.FPS;
+                let lastDrawTime = -Infinity;
+
+                const drawFrame = (now) => {
                     if (stopped) return;
                     if (video.ended || video.paused || video.currentTime >= effectiveDuration) {
                         doStop();
                         return;
                     }
-                    ctx.drawImage(video, 0, 0, outW, outH);
 
+                    // 进度更新不受节流影响，保证 UI 流畅
                     if (effectiveDuration > 0) {
                         const progress = Math.min(99, Math.round((video.currentTime / effectiveDuration) * 100));
                         onProgress?.(progress);
                     }
 
+                    // 首帧或达到间隔才绘制；否则跳过本次，直接排下一帧
+                    if (now - lastDrawTime >= frameInterval) {
+                        lastDrawTime = now;
+                        ctx.drawImage(video, 0, 0, outW, outH);
+                    }
+
                     animationId = requestAnimationFrame(drawFrame);
                 };
-                drawFrame();
+                animationId = requestAnimationFrame(drawFrame);
             };
 
             video.onended = () => doStop();

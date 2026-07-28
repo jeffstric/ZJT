@@ -6010,8 +6010,8 @@ async def parse_script(
 
         # 改为异步任务：创建持久化拆分任务后立即返回 202，前端轮询状态。
         # 见 docs/script/script_parser_incremental_split_design.md §10 §13.1。
-        # 原 db_location/db_character 后处理在 worker 的 merge 阶段完成后，
-        # 由 GET /api/script-split/tasks/{id}/result 返回时补充（下一轮前端适配时对齐）。
+        # db_location/db_character 后处理在 worker 的 merge 阶段完成
+        #（_enrich_shot_location_fields 回填 shot 级场景字段，见设计文档 §9）。
         from api.script_split import create_split_task, ScriptSplitPreconditionError
         from config.constant import ScriptSplitConstants
         request_config = {

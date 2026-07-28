@@ -4510,6 +4510,20 @@ async def upload_agent_video(
                     )
                 }, status_code=400)
 
+            # 帧率校验：doubao-seedance r2v 要求参考视频帧率 ≤60fps，高刷屏浏览器
+            # 压缩可能产出 120fps 等超频视频，此处拦截避免下游 InvalidParameter。
+            fps = video_info.get('fps', 0) or 0
+            max_fps = MediaConstants.VIDEO_REFERENCE_MAX_FPS
+            if fps > max_fps:
+                os.remove(file_path)
+                return JSONResponse({
+                    'success': False,
+                    'error': (
+                        f'视频帧率 {fps:.1f}fps 超过限制 {max_fps}fps'
+                        '（建议使用 30fps 以内的视频）'
+                    )
+                }, status_code=400)
+
         # 根据 is_local 配置决定返回本地 URL 还是 CDN URL
         is_local = get_dynamic_config_value('server', 'is_local', default=False)
 
@@ -4854,16 +4868,17 @@ async def delete_staging_file(
             with open(file_path, 'r', encoding='utf-8') as f:
                 file_data = json.load(f)
             
-            # 验证文件所属用户
+            # 验证文件所属用户（路径前缀已校验 user_id/world_id，此处额外校验文件内容中的 user_id）
             file_user_id = str(file_data.get('user_id', ''))
             request_user_id = str(user_id)
             
-            if file_user_id != request_user_id:
+            if file_user_id and file_user_id != request_user_id:
                 logger.warning(f'用户 {request_user_id} 尝试删除用户 {file_user_id} 的文件: {file_path}')
                 return JSONResponse({
                     'success': False,
                     'error': '无权限删除此文件：文件不属于当前用户'
                 }, status_code=403)
+            # file_user_id 为空时，信任路径前缀校验（兼容旧文件未写入 user_id 的情况）
         except json.JSONDecodeError:
             logger.error(f'文件格式错误，无法验证所属用户: {file_path}')
             return JSONResponse({

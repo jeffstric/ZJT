@@ -154,6 +154,12 @@ def _execute_sync_task(task_id: int, ai_tool_type: int, worker_pids=None) -> Syn
         if result.get("sync_mode"):
             result_url = result.get("result_url")
 
+            media_type = "video"
+            if result_url:
+                ext = result_url.split('?')[0].split('.')[-1].lower()
+                if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+                    media_type = "image"
+
             # 判断是否已经是本地路径
             is_local_path = result_url and result_url.startswith("/upload/")
 
@@ -161,16 +167,19 @@ def _execute_sync_task(task_id: int, ai_tool_type: int, worker_pids=None) -> Syn
                 # 下载并缓存媒体文件
                 from utils.media_cache import download_and_cache
 
-                # 判断媒体类型
-                media_type = "video"
-                ext = result_url.split('?')[0].split('.')[-1].lower()
-                if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
-                    media_type = "image"
-
                 # 下载并缓存
                 cached_url = asyncio.run(download_and_cache(result_url, task_id, media_type))
                 result_url = cached_url if cached_url else result_url
 
+            from services.generated_video_face_grid_service import (
+                maybe_trim_generated_face_grid_prefix_sync,
+            )
+            postprocess = maybe_trim_generated_face_grid_prefix_sync(
+                ai_tool_id=task_id,
+                result_url=result_url,
+                media_type=media_type,
+            )
+            result_url = postprocess.result_url
             logger.info(f"[SyncTask] Task {task_id} completed with result: {result_url}")
             return SyncTaskResult(
                 task_id=task_id,

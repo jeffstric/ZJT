@@ -16,7 +16,7 @@ from typing import Dict, Any, List
 from apscheduler.schedulers.background import BackgroundScheduler
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from config.config_util import get_config
-from config.constant import FilePathConstants, MediaConstants
+from config.constant import FilePathConstants, MediaConstants, GridConfig
 from utils.network_utils import is_local_file_path
 from model import GridImageTasksModel, GridImageTaskStatus
 
@@ -213,7 +213,7 @@ class TaskManager:
                          aspect_ratio: str = None, image_size: str = None,
                          is_grid: bool = False, max_retries: int = 0,
                          reference_images: list = None,
-                         grid_size: int = None, grid_layout: str = None,
+                         grid_size: int = GridConfig.SIZE_2X2, grid_layout: str = '2x2',
                          item_names: list = None,
                          target_entity_ids: list = None) -> str:
         """创建图片生成后台任务（全局唯一性约束）

@@ -1001,6 +1001,11 @@ class DriverImplementation:
     SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1 = 'seedance_2_0_volcengine_oversea_v1'
     SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1 = 'seedance_2_0_mini_volcengine_oversea_v1'
 
+    # Seedance kkidc 网关（火山 Seedance 的二次封装，接口结构扁平化）
+    SEEDANCE_2_0_FAST_KKIDC_V1 = 'seedance_2_0_fast_kkidc_v1'
+    SEEDANCE_2_0_KKIDC_V1 = 'seedance_2_0_kkidc_v1'
+    SEEDANCE_2_0_MINI_KKIDC_V1 = 'seedance_2_0_mini_kkidc_v1'
+
     # GPT Image
     DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
     GPT_IMAGE_COMMON_SITE0_V1 = 'gpt_image_common_site0_v1'
@@ -1096,6 +1101,11 @@ class DriverImplementationId:
     SEEDANCE_2_0_MINI_VOLCENGINE_V1 = 56
     SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1 = 57
 
+    # Seedance kkidc 网关
+    SEEDANCE_2_0_FAST_KKIDC_V1 = 59
+    SEEDANCE_2_0_KKIDC_V1 = 60
+    SEEDANCE_2_0_MINI_KKIDC_V1 = 61
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1156,6 +1166,9 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_fast_volcengine_oversea_v1': DriverImplementationId.SEEDANCE_2_0_FAST_VOLCENGINE_OVERSEA_V1,
     'seedance_2_0_volcengine_oversea_v1': DriverImplementationId.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1,
     'seedance_2_0_mini_volcengine_oversea_v1': DriverImplementationId.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1,
+    'seedance_2_0_fast_kkidc_v1': DriverImplementationId.SEEDANCE_2_0_FAST_KKIDC_V1,
+    'seedance_2_0_kkidc_v1': DriverImplementationId.SEEDANCE_2_0_KKIDC_V1,
+    'seedance_2_0_mini_kkidc_v1': DriverImplementationId.SEEDANCE_2_0_MINI_KKIDC_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1257,6 +1270,7 @@ class TaskTypeId:
         'GEMINI_3_1_FLASH_IMAGE': 'Gemini 3.1 Flash 图片编辑',
         'SEEDREAM_TEXT_TO_IMAGE': 'Seedream 5.0 文生图',
         'SEEDREAM_4_5_IMAGE': 'Seedream 4.5 图片编辑',
+        'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
         'GPT_IMAGE_2': 'GPT Image 2 文生图',
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
@@ -1290,6 +1304,7 @@ class TaskTypeId:
     GEMINI_3_1_FLASH_IMAGE = 17
     SEEDREAM_TEXT_TO_IMAGE = 16
     SEEDREAM_4_5_IMAGE = 18
+    SEEDREAM_5_0_PRO = 33
     QWEN_MULTI_ANGLE_IMAGE = 24
     GPT_IMAGE_2 = 25
     GPT_IMAGE_2_EDIT = 26
@@ -1458,6 +1473,28 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_size='2K',
         sort_order=14,
+        supports_grid_image=True,  # 支持宫格生图
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDREAM_5_0_PRO,
+        key='seedream-5.0-pro',
+        short_key='seedream-5.0-pro',
+        name='Seedream 5.0 Pro',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDREAM_TEXT_TO_IMAGE,
+        implementation=DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
+        implementations=[
+            DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
+            DriverImplementation.SEEDREAM5_VOLCENGINE_OVERSEA_V1,
+        ],
+        computing_power=20,  # 成本 8毛 ÷ 0.04 = 20 算力
+        supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
+        supported_sizes=['2K', '3K', '4K'],
+        default_ratio='9:16',
+        default_size='2K',
+        sort_order=15,
         supports_grid_image=True,  # 支持宫格生图
     ),
     UnifiedTaskConfig(
@@ -1763,6 +1800,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementations=[
             DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_V1,
             DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_OVERSEA_V1,
+            DriverImplementation.SEEDANCE_2_0_FAST_KKIDC_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -1798,6 +1836,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementations=[
             DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,
             DriverImplementation.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1,
+            DriverImplementation.SEEDANCE_2_0_KKIDC_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -1835,6 +1874,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementations=[
             DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1,
             DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1,
+            DriverImplementation.SEEDANCE_2_0_MINI_KKIDC_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -2587,6 +2627,44 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='火山引擎海外版 Seedance 2.0 Mini 图生视频接口',
         sort_order=10680.0,
         required_config_keys=['volcengine_oversea.api_key'],
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+
+    # ==================== kkidc 网关供应商（Seedance 二次封装） ====================
+    ImplementationConfig(
+        name='seedance_2_0_fast_kkidc_v1',
+        display_name='kkidc',
+        driver_class='Seedance20FastKkidcV1Driver',
+        default_computing_power={5: 238, 6: 250, 7: 262, 8: 274, 9: 285, 10: 297, 11: 309, 12: 321, 13: 333, 14: 345, 15: 357},
+        enabled=True,
+        description='kkidc 网关 Seedance 2.0 Fast 图生视频接口',
+        sort_order=10910.0,
+        required_config_keys=['kkidc.api_key'],
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_0_kkidc_v1',
+        display_name='kkidc',
+        driver_class='Seedance20KkidcV1Driver',
+        default_computing_power={5: 303, 6: 318, 7: 333, 8: 348, 9: 363, 10: 378, 11: 393, 12: 409, 13: 424, 14: 439, 15: 454},
+        enabled=True,
+        description='kkidc 网关 Seedance 2.0 图生视频接口',
+        sort_order=10920.0,
+        required_config_keys=['kkidc.api_key'],
+        supported_video_resolutions=SEEDANCE_2_0_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_0_mini_kkidc_v1',
+        display_name='kkidc',
+        driver_class='Seedance20MiniKkidcV1Driver',
+        default_computing_power={5: 152, 6: 159, 7: 167, 8: 174, 9: 182, 10: 189, 11: 197, 12: 204, 13: 212, 14: 220, 15: 227},
+        enabled=True,
+        description='kkidc 网关 Seedance 2.0 Mini 图生视频接口',
+        sort_order=10930.0,
+        required_config_keys=['kkidc.api_key'],
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),

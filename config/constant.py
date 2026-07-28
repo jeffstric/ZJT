@@ -478,14 +478,17 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO: [
         DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
+        DriverImplementation.SEEDANCE_2_0_FAST_KKIDC_V1,                # kkidc 网关
     ],
     DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO: [
         DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
+        DriverImplementation.SEEDANCE_2_0_KKIDC_V1,                # kkidc 网关
     ],
     DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO: [
         DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
+        DriverImplementation.SEEDANCE_2_0_MINI_KKIDC_V1,                # kkidc 网关
     ],
 
     # GPT Image 相关驱动
@@ -708,6 +711,12 @@ DOWNLOAD_BACKOFF_SECONDS = (20, 60, 180)      # 重试指数退避（秒），�
 DOWNLOAD_WRITE_CHUNK_TIMEOUT = 30             # 单次写盘 chunk 的 wait_for 超时（秒）
 DOWNLOAD_IO_POOL_MAX_WORKERS = 8              # 下载写盘线程池大小（模块级长寿 executor，禁止 with，CLAUDE.md 第10条）
 
+# download_queue 必须满足：
+# DOWNLOAD_LEASE_SECONDS > DOWNLOAD_PER_ATTEMPT_TIMEOUT
+#   + GeneratedVideoFaceGridTrimConstants.MAX_PROCESSING_SECONDS
+#   + DOWNLOAD_COMPLETION_MARGIN_SECONDS
+DOWNLOAD_COMPLETION_MARGIN_SECONDS = 60
+
 STORYBOARD_FIRST_FRAME_GRID_ITEM_TYPE = 8
 
 
@@ -847,8 +856,13 @@ class ScriptSplitConstants:
     CHARACTER_PROMPT_VALIDATION_MAX_RETRIES = 3
     # 创建拆分任务时分页快照世界角色，避免只读取前 50 个角色。
     CHARACTER_CONTRACT_PAGE_SIZE = 100
+    # 合并阶段快照世界道具的分页大小（同理，避免只读取前 50 个道具导致名称匹配失效）。
+    MERGE_PROPS_PAGE_SIZE = 200
     CHARACTER_CONTRACT_CONFIG_KEY = "_character_contract"
     CHARACTER_CONTRACT_VERSION = 1
+    # 角色契约校验严格模式。False（默认）：名称/提示词不匹配仅记录 warning 日志，
+    # 不阻塞拆分；True：恢复严格全等硬门禁，失败重试后暂停任务。
+    CHARACTER_CONTRACT_STRICT_MODE = False
     # 效果模式按段并发生成的批次上限。单个批次仍受 worker watchdog 保护。
     QUALITY_SEGMENT_PARALLELISM = 3
     # 运行时 spatial handoff JSON 序列化字节上限（超出时压缩软描述字段，见设计文档 §9.3）
@@ -1300,6 +1314,10 @@ class MediaConstants:
     VIDEO_COMPRESS_TARGET_HEIGHT = 480  # 前端压缩目标分辨率（480p）
     VIDEO_COMPRESS_THRESHOLD_MB = 10    # 超过此大小的视频触发前端压缩
     VIDEO_REFERENCE_MIN_PIXEL_COUNT = 409600  # Seedance r2v 参考视频最低总像素数
+    # Seedance r2v 参考视频最大帧率。doubao-seedance 系列要求参考视频帧率 ≤60fps，
+    # 否则上游返回 InvalidParameter（如高刷屏上浏览器 Canvas+MediaRecorder 产出的
+    # 120fps 视频）。统一归一化至 30fps，留足安全余量。
+    VIDEO_REFERENCE_MAX_FPS = 30
 
 
 class BrandingConstants:
@@ -1358,6 +1376,62 @@ class RunningHubImageFaceMaskConstants:
     IMAGE_NODE_ID = "3"
     IMAGE_FIELD_NAME = "image"
     FINAL_STATUSES = ("SUCCESS", "FAILED", "ERROR", "CANCELED", "CANCELLED")
+
+
+class ImageFaceGridConstants:
+    """图片人脸红色网格后处理常量"""
+
+    GRID_COLOR_BGR = (0, 0, 255)
+    GRID_SIZE_TIERS = ((80, 3), (160, 5), (320, 8))
+    GRID_MAX_DIVISIONS = 10
+    BLACK_PIXEL_THRESHOLD = 32
+    PIXEL_DIFF_THRESHOLD = 24
+    MIN_FACE_WIDTH = 4
+    MIN_FACE_HEIGHT = 4
+    MIN_FACE_AREA = 16
+    MIN_RECT_FILL_RATIO = 0.25
+    # 线宽按吞噬后的最终人脸矩形数量统一分档（与人脸数量相关）：
+    # 1–5 脸 → 3px，6–10 脸 → 4px，11+ 脸 → 5px。更粗线宽会抬高视频侧 fill ratio。
+    GRID_LINE_WIDTH_TIERS = ((5, 3), (10, 4))
+    GRID_MAX_LINE_WIDTH = 5
+
+
+class GeneratedVideoFaceGridTrimConstants:
+    """生成视频前缀中人脸红色网格检测的常量。"""
+
+    ENABLED = True
+    SCAN_SECONDS = 0.5
+    FRAME_LOOKAHEAD_SECONDS = 0.5
+    FFPROBE_TIMEOUT_SECONDS = 10.0
+    FFMPEG_DECODE_TIMEOUT_SECONDS = 20.0
+    FFMPEG_TRANSCODE_TIMEOUT_SECONDS = 60.0
+    FRAME_ANALYSIS_TIMEOUT_SECONDS = 10.0
+    GATE_QUERY_TIMEOUT_SECONDS = 10.0
+    GATE_QUERY_POOL_MAX_WORKERS = 2
+    SINGLEFLIGHT_LOCK_WAIT_SECONDS = 70.0
+    SINGLEFLIGHT_LOCK_POLL_SECONDS = 0.05
+    # 门控、单飞锁、探测/解码、帧分析、转码、产物校验及少量文件 I/O 的总预算。
+    # download_queue 的 batch 超时和租约约束必须覆盖该值。
+    MAX_PROCESSING_SECONDS = 300.0
+    # ffprobe(PTS 显示序) 与 ffmpeg -t rawvideo(解码墙钟) 在窗口边界可能差 1~2 帧；
+    # 不一致时取公共前缀对齐，并由本开关控制是否打 warning（便于观察 B 帧/VFR 场景）。
+    FRAME_COUNT_MISMATCH_LOG_ENABLED = True
+    HSV_RED_LOWER_1 = (0, 100, 100)
+    HSV_RED_UPPER_1 = (10, 255, 255)
+    HSV_RED_LOWER_2 = (170, 100, 100)
+    HSV_RED_UPPER_2 = (180, 255, 255)
+    # JPEG/H.264 压缩会显著降低单像素红线的亮度与通道差，保留可见网格。
+    MIN_RED_CHANNEL = 120
+    MIN_RED_CHANNEL_ADVANTAGE = 60
+    MIN_LINE_COUNT = 3
+    MIN_LINE_LENGTH_RATIO = 0.6
+    MIN_INTERSECTION_COUNT = 4
+    # 稀疏细线网格 vs 实心红块的 fill 上限。480p/H.264 + 粗线宽(3–5px，随人脸数分档)
+    # + 8x8 高密度网格时，真实网格组件 fill 实测可达 ~0.46–0.60（ai_tool=12000），
+    # 0.4 会误杀；0.7 仍远低于实心色块 fill≈1.0。实心块仍由线/交点结构判据兜底拒绝。
+    MAX_COMPONENT_FILL_RATIO = 0.7
+    MASK_ON_VALUE = 255
+    CONNECTED_COMPONENT_CONNECTIVITY = 8
 
 
 # ============ 剪映（CapCut）草稿导出常量 ============
