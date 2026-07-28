@@ -13,7 +13,12 @@ from typing import Dict, Any, List
 from model import LocationMultiAngleTasksModel, LocationMultiAngleTask, LocationMultiAngleTaskStatus
 from model.ai_tools import AIToolsModel
 from config.config_util import get_config
-from config.constant import AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED, MediaConstants
+from config.constant import (
+    AI_TOOL_STATUS_COMPLETED,
+    AI_TOOL_STATUS_FAILED,
+    MediaConstants,
+    LOCATION_MULTI_ANGLE_SUBMIT_MAX_RETRY,
+)
 from utils.network_utils import is_local_file_path
 from utils.project_path import get_project_root
 
@@ -230,7 +235,8 @@ def _handle_submit_failure(task, task_key: str, label: str, current_index: int, 
     """
     处理角度提交失败的重试逻辑（公共函数）
 
-    递增 current_angle_retry_count，超过3次则跳过当前角度。
+    递增 current_angle_retry_count，达到 LOCATION_MULTI_ANGLE_SUBMIT_MAX_RETRY
+    次则跳过当前角度。
 
     Args:
         task: 任务对象
@@ -240,7 +246,7 @@ def _handle_submit_failure(task, task_key: str, label: str, current_index: int, 
         error_msg: 错误信息
     """
     retry_count = (task.current_angle_retry_count or 0) + 1
-    if retry_count >= 3:
+    if retry_count >= LOCATION_MULTI_ANGLE_SUBMIT_MAX_RETRY:
         logger.warning(f"角度 {label} 重试 {retry_count} 次失败，跳过")
         current_index += 1
         LocationMultiAngleTasksModel.update_status(
@@ -260,6 +266,47 @@ def _handle_submit_failure(task, task_key: str, label: str, current_index: int, 
             current_angle_retry_count=retry_count,
             error_message=f'角度 {label} 提交失败，第 {retry_count} 次重试: {error_msg}'
         )
+
+
+def _finalize_task(task_key: str, generated_images: List[Dict[str, Any]], total_angles: int) -> Dict[str, Any]:
+    """
+    所有角度处理完毕时的终态判定。
+
+    - 零产出（全部角度失败）：FAILED，前端可据此展示失败提示；
+    - 部分产出：COMPLETED，error_message 保留部分失败说明；
+    - 全部产出：COMPLETED。
+
+    Args:
+        task_key: 任务唯一键
+        generated_images: 已生成的图片列表
+        total_angles: 角度总数
+
+    Returns:
+        处理结果
+    """
+    if not generated_images:
+        error_message = f'所有角度生成失败，共完成 0/{total_angles} 个'
+        logger.error(f"任务 {task_key} 全部角度生成失败")
+        LocationMultiAngleTasksModel.update_status(
+            task_key,
+            LocationMultiAngleTaskStatus.FAILED,
+            generated_images=generated_images,
+            error_message=error_message
+        )
+        return {'success': False, 'completed': True, 'error': error_message, 'generated_images': []}
+
+    error_message = None
+    if len(generated_images) < total_angles:
+        error_message = f'部分角度生成失败，共完成 {len(generated_images)}/{total_angles} 个'
+
+    LocationMultiAngleTasksModel.update_status(
+        task_key,
+        LocationMultiAngleTaskStatus.COMPLETED,
+        generated_images=generated_images,
+        error_message=error_message
+    )
+    logger.info(f"任务 {task_key} 完成，共生成 {len(generated_images)}/{total_angles} 张图片")
+    return {'success': True, 'completed': True, 'generated_images': generated_images}
 
 
 def process_location_multi_angle_task(task_key: str) -> Dict[str, Any]:
@@ -294,16 +341,12 @@ def process_location_multi_angle_task(task_key: str) -> Dict[str, Any]:
         current_index = task.current_angle_index
         generated_images = task.get_generated_images_list()
 
-        # 检查是否已完成所有角度
+        # 检查是否已完成所有角度（零产出判定 FAILED，部分产出保留失败说明）
         if current_index >= len(angles):
-            if task.status != LocationMultiAngleTaskStatus.COMPLETED:
-                LocationMultiAngleTasksModel.update_status(
-                    task_key,
-                    LocationMultiAngleTaskStatus.COMPLETED,
-                    generated_images=generated_images
-                )
-            logger.info(f"任务 {task_key} 已完成所有角度")
-            return {'success': True, 'completed': True, 'generated_images': generated_images}
+            if task.status in (LocationMultiAngleTaskStatus.COMPLETED, LocationMultiAngleTaskStatus.FAILED):
+                logger.info(f"任务 {task_key} 已完成所有角度")
+                return {'success': True, 'completed': True, 'generated_images': generated_images}
+            return _finalize_task(task_key, generated_images, len(angles))
 
         # 标记为处理中
         if task.status == LocationMultiAngleTaskStatus.QUEUED:
@@ -369,13 +412,8 @@ def process_location_multi_angle_task(task_key: str) -> Dict[str, Any]:
 
                     # 检查是否全部完成
                     if current_index >= len(angles):
-                        LocationMultiAngleTasksModel.update_status(
-                            task_key,
-                            LocationMultiAngleTaskStatus.COMPLETED,
-                            generated_images=generated_images
-                        )
                         logger.info(f"场景 {task.location_name} 多角度生图任务全部完成，共 {len(generated_images)} 张图片")
-                        return {'success': True, 'completed': True, 'generated_images': generated_images}
+                        return _finalize_task(task_key, generated_images, len(angles))
 
                     # 继续提交下一个角度（不用 return，继续执行下面的代码）
                     task = LocationMultiAngleTasksModel.get_by_task_key(task_key)  # 重新获取更新后的任务
@@ -393,13 +431,7 @@ def process_location_multi_angle_task(task_key: str) -> Dict[str, Any]:
                     )
 
                     if current_index >= len(angles):
-                        LocationMultiAngleTasksModel.update_status(
-                            task_key,
-                            LocationMultiAngleTaskStatus.COMPLETED,
-                            generated_images=generated_images,
-                            error_message=f'部分角度生成失败，共完成 {len(generated_images)}/{len(angles)} 个'
-                        )
-                        return {'success': True, 'completed': True, 'generated_images': generated_images}
+                        return _finalize_task(task_key, generated_images, len(angles))
 
                     task = LocationMultiAngleTasksModel.get_by_task_key(task_key)
                 else:
@@ -419,7 +451,7 @@ def process_location_multi_angle_task(task_key: str) -> Dict[str, Any]:
         # 如果没有正在等待的任务，提交当前角度
         current_index = task.current_angle_index
         if current_index >= len(angles):
-            return {'success': True, 'completed': True, 'generated_images': generated_images}
+            return _finalize_task(task_key, task.get_generated_images_list(), len(angles))
 
         angle_info = angles[current_index]
         angle = angle_info.get('angle', 0)
@@ -472,28 +504,25 @@ def process_location_multi_angle_task(task_key: str) -> Dict[str, Any]:
             result = response.json()
 
             if result.get('status') == 'submitted' and result.get('project_ids'):
-                project_id = result['project_ids'][0] if result['project_ids'] else None
+                project_id = result['project_ids'][0]
+                logger.info(f"已提交 {label} 生成任务，project_id={project_id}")
+                # 记录 ai_tool_task_id，等待下次调度检查，重置重试计数
+                LocationMultiAngleTasksModel.update_status(
+                    task_key,
+                    LocationMultiAngleTaskStatus.PROCESSING,
+                    ai_tool_task_id=project_id,
+                    current_angle_retry_count=0
+                )
+                return {'success': True, 'submitted': True, 'project_id': project_id}
 
-                if project_id:
-                    logger.info(f"已提交 {label} 生成任务，project_id={project_id}")
-                    # 记录 ai_tool_task_id，等待下次调度检查，重置重试计数
-                    LocationMultiAngleTasksModel.update_status(
-                        task_key,
-                        LocationMultiAngleTaskStatus.PROCESSING,
-                        ai_tool_task_id=project_id,
-                        current_angle_retry_count=0
-                    )
-                    return {'success': True, 'submitted': True, 'project_id': project_id}
-                else:
-                    error_msg = '未返回 project_id'
-                    logger.error(f"生成 {label} 失败: {error_msg}")
-                    _handle_submit_failure(task, task_key, label, current_index, error_msg)
-                    return {'success': False, 'error': error_msg}
+            if result.get('status') == 'submitted':
+                # submitted 但 project_ids 为空
+                error_msg = '未返回 project_id'
             else:
                 error_msg = result.get('error') or result.get('detail') or '未知错误'
-                logger.error(f"生成 {label} 失败: {error_msg}")
-                _handle_submit_failure(task, task_key, label, current_index, error_msg)
-                return {'success': False, 'error': error_msg}
+            logger.error(f"生成 {label} 失败: {error_msg}")
+            _handle_submit_failure(task, task_key, label, current_index, error_msg)
+            return {'success': False, 'error': error_msg}
 
         except Exception as e:
             logger.error(f"提交角度 {angle} 时发生异常: {e}")
