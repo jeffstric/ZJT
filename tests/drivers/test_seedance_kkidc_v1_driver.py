@@ -19,16 +19,54 @@ import sys
 import unittest
 from unittest.mock import patch, MagicMock
 
+# 防御：某些 driver_integration 测试会在模块级 `sys.modules['requests'] = MagicMock()`
+# 全局污染 requests。本驱动的 submit_task/check_status 用 `except requests.exceptions.HTTPError`
+# 捕获异常，若 requests 被 mock 成 MagicMock，except 会抛 TypeError（mock 不能作异常类），
+# 导致异常掉进兜底分支返回 SYSTEM/FAILED。这里强制还原真实 requests，保证本测试可用。
+import importlib
+_req_mod = sys.modules.get('requests')
+if _req_mod is None or not hasattr(_req_mod, 'exceptions') or \
+        not isinstance(getattr(_req_mod.exceptions, 'HTTPError', None), type):
+    sys.modules.pop('requests', None)
+    importlib.import_module('requests')
+
 # Mock 外部依赖（必须在 import driver 之前）
-# 注意：utils.content_moderation_error 不 mock，它只依赖标准库，需用真实逻辑校验
+# 注意：
+# - utils.content_moderation_error 不 mock，它只依赖标准库，需用真实逻辑校验
+# - model.ai_tool_pipeline_steps 不 mock 全局（会污染其他真实依赖该模块的测试），
+#   改为真实导入常量 + 局部 patch PipelineStepModel（参考火山版 seedance 测试写法）
+# - utils.video_compressor 不 mock（火山版 seedance 测试真实依赖它，全局 mock 会污染）
 sys.modules['utils.sentry_util'] = MagicMock()
 sys.modules['utils.image_upload_utils'] = MagicMock()
-sys.modules['utils.video_compressor'] = MagicMock()
-sys.modules['model.ai_tool_pipeline_steps'] = MagicMock()
+
+
+def _ensure_real_requests():
+    """确保 requests 是真实模块（而非被其他测试 mock 成的 MagicMock）。
+
+    某些 driver_integration 测试会在模块级 `sys.modules['requests'] = MagicMock()`。
+    这会导致两个层面的污染：
+    1. sys.modules['requests'] 被替换
+    2. 若本驱动模块在污染后才被 import，驱动顶部的 `import requests` 会把 MagicMock
+       绑定到驱动模块的 requests 名字（模块加载只执行一次，后续还原 sys.modules 无效）
+
+    本函数每次创建驱动前调用，同时修复这两个层面：还原 sys.modules，并强制重绑
+    驱动模块的 requests 名字为真实模块，保证任意执行顺序下 except 都能正确捕获异常。
+    """
+    _req_mod = sys.modules.get('requests')
+    http_error = getattr(getattr(_req_mod, 'exceptions', None), 'HTTPError', None)
+    if not isinstance(http_error, type):
+        sys.modules.pop('requests', None)
+        sys.modules.pop('requests.exceptions', None)
+        real_requests = importlib.import_module('requests')
+        # 驱动模块若已加载，强制重绑其 requests 名字（修复模块加载时的污染绑定）
+        drv_mod = sys.modules.get('task.visual_drivers.seedance_kkidc_v1_driver')
+        if drv_mod is not None:
+            drv_mod.requests = real_requests
 
 
 def _create_driver(cls, api_key='test_kkidc_key'):
     """创建 kkidc 驱动实例（mock 所有外部依赖）"""
+    _ensure_real_requests()
     with patch('task.visual_drivers.seedance_kkidc_v1_driver.get_dynamic_config_value') as mock_config, \
          patch('task.visual_drivers.seedance_kkidc_v1_driver.get_config', return_value={}):
 
@@ -80,9 +118,17 @@ def _stub_image_upload_success():
 
 
 def _stub_pipeline_steps_empty():
-    """让 PipelineStepModel.get_by_ai_tool_and_stage 返回空列表（无 face_mask）"""
-    mod = sys.modules['model.ai_tool_pipeline_steps']
-    mod.PipelineStepModel.get_by_ai_tool_and_stage = MagicMock(return_value=[])
+    """返回一个 patcher，让驱动模块的 PipelineStepModel.get_by_ai_tool_and_stage 返回空列表。
+
+    用法：在 setUp 里 `self._step_patcher = _stub_pipeline_steps_empty()`，
+    tearDown 里 `self._step_patcher.stop()`。
+    局部 patch 驱动模块绑定，避免全局 mock model.ai_tool_pipeline_steps 污染其他测试。
+    """
+    from unittest.mock import patch as _patch
+    patcher = _patch('task.visual_drivers.seedance_kkidc_v1_driver.PipelineStepModel')
+    mock_model = patcher.start()
+    mock_model.get_by_ai_tool_and_stage.return_value = []
+    return patcher
 
 
 # ============================================================
@@ -141,7 +187,10 @@ class TestBuildCreateRequest(unittest.TestCase):
 
     def setUp(self):
         _stub_image_upload_success()
-        _stub_pipeline_steps_empty()
+        self._step_patcher = _stub_pipeline_steps_empty()
+
+    def tearDown(self):
+        self._step_patcher.stop()
 
     def _driver(self):
         from task.visual_drivers.seedance_kkidc_v1_driver import Seedance20KkidcV1Driver
@@ -336,7 +385,10 @@ class TestSubmitTask(unittest.TestCase):
 
     def setUp(self):
         _stub_image_upload_success()
-        _stub_pipeline_steps_empty()
+        self._step_patcher = _stub_pipeline_steps_empty()
+
+    def tearDown(self):
+        self._step_patcher.stop()
 
     def _driver(self):
         from task.visual_drivers.seedance_kkidc_v1_driver import Seedance20KkidcV1Driver

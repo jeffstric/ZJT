@@ -25,6 +25,16 @@ import uuid
 
 import requests
 
+# 防御：确保 requests 是真实模块（而非被测试 sys.modules 污染成的 MagicMock）。
+# 本驱动用 requests.exceptions.HTTPError 捕获 4xx/5xx，若 requests 被 mock，
+# except 会失效。模块加载时若发现 requests 异常，强制重载真实模块。
+if not hasattr(requests, 'exceptions') or not hasattr(requests.exceptions, 'HTTPError'):
+    import importlib
+    import sys as _sys
+    _sys.modules.pop('requests', None)
+    _sys.modules.pop('requests.exceptions', None)
+    requests = importlib.import_module('requests')
+
 from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
 from config.constant import LEGACY_RESOLUTION_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
@@ -524,7 +534,7 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
 
     # ==================== 提交任务 ====================
 
-    def _extract_http_error_body(self, http_error: requests.exceptions.HTTPError) -> Optional[dict]:
+    def _extract_http_error_body(self, http_error) -> Optional[dict]:
         """
         从 HTTPError 中提取响应体 JSON（kkidc 的 400/429 返回 {error:{message,type,code}}）
 
