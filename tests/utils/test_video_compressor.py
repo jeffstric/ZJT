@@ -117,5 +117,41 @@ class TestReferenceVideoPixelCount(unittest.TestCase):
         self.assertTrue(validator({"width": 846, "height": 486}))
 
 
+class TestParseFrameRate(unittest.TestCase):
+    """测试 _parse_frame_rate() 的 ffprobe avg_frame_rate 字符串解析"""
+
+    def test_high_refresh_rate_integer(self):
+        """高刷屏产出的 120fps（"120/1"）应解析为 120.0"""
+        self.assertAlmostEqual(video_compressor._parse_frame_rate("120/1"), 120.0)
+
+    def test_common_24fps(self):
+        """影视常见 24fps（"24/1"）应解析为 24.0"""
+        self.assertAlmostEqual(video_compressor._parse_frame_rate("24/1"), 24.0)
+
+    def test_ntsc_fractional(self):
+        """NTSC 29.97fps（"30000/1001"）应解析为约 29.97"""
+        self.assertAlmostEqual(video_compressor._parse_frame_rate("30000/1001"), 29.97, places=2)
+
+    def test_zero_denominator(self):
+        """分母为 0（"0/0"，常见于无固定帧率视频）应返回 0.0，不抛异常"""
+        self.assertEqual(video_compressor._parse_frame_rate("0/0"), 0.0)
+
+    def test_plain_number_string(self):
+        """纯数字字符串（无斜杠）应能解析"""
+        self.assertAlmostEqual(video_compressor._parse_frame_rate("30"), 30.0)
+
+    def test_empty_string(self):
+        """空字符串返回 0.0"""
+        self.assertEqual(video_compressor._parse_frame_rate(""), 0.0)
+
+    def test_none_input(self):
+        """None 输入返回 0.0，不抛异常"""
+        self.assertEqual(video_compressor._parse_frame_rate(None), 0.0)
+
+    def test_invalid_string(self):
+        """无法解析的字符串返回 0.0，不抛异常"""
+        self.assertEqual(video_compressor._parse_frame_rate("abc"), 0.0)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -150,3 +150,20 @@ kkidc 作为现有 4 个 Seedance 任务的**备选实现**，与火山国内版
 - **多参考图**：`metadata.reference_images` 列表
 - **参考音视频**：`metadata.reference_videos` / `metadata.reference_audios`（提交前上传 CDN）
 - **face_mask**：复用 image_face_mask / face_mask pipeline step，避免审核不通过
+
+## 参考视频帧率限制
+
+doubao-seedance r2v 模型要求参考视频帧率 **≤60fps**，否则上游返回 `InvalidParameter`。
+
+实际场景中，前端 `web/js/video_compressor.js` 用 Canvas + MediaRecorder 压缩参考视频时，
+`requestAnimationFrame` 在 **120Hz/144Hz 高刷屏** 上会按屏幕刷新率被高频调用，导致产出的
+WebM 实际帧率可达 120fps，触发上述上限报错。系统通过三道防线确保参考视频帧率合规：
+
+1. **前端采集（治本）**：`video_compressor.js` 在 `drawFrame` 内做时间戳节流，把 canvas 实际重绘
+   频率钉在 `FPS`（30），不依赖 `captureStream(FPS)` 的浏览器采样行为。
+2. **后端转码（核心防线）**：`utils/video_compressor.py` 的 `transcode_reference_video_to_seedance_mp4`
+   在 ffmpeg 命令中加入 `-fpsmax`（取自 `MediaConstants.VIDEO_REFERENCE_MAX_FPS`），超频只丢帧不补帧。
+3. **后端上传校验（拦截入口）**：`/api/upload-agent-video`（`api/script_writer.py`）在 ffprobe 校验中
+   读取 `avg_frame_rate`，帧率超限直接拒绝上传。
+
+目标帧率统一为 **30fps**（`MediaConstants.VIDEO_REFERENCE_MAX_FPS`），相对模型 60fps 上限留足安全余量。

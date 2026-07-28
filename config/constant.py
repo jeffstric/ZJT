@@ -1309,6 +1309,10 @@ class MediaConstants:
     VIDEO_COMPRESS_TARGET_HEIGHT = 480  # 前端压缩目标分辨率（480p）
     VIDEO_COMPRESS_THRESHOLD_MB = 10    # 超过此大小的视频触发前端压缩
     VIDEO_REFERENCE_MIN_PIXEL_COUNT = 409600  # Seedance r2v 参考视频最低总像素数
+    # Seedance r2v 参考视频最大帧率。doubao-seedance 系列要求参考视频帧率 ≤60fps，
+    # 否则上游返回 InvalidParameter（如高刷屏上浏览器 Canvas+MediaRecorder 产出的
+    # 120fps 视频）。统一归一化至 30fps，留足安全余量。
+    VIDEO_REFERENCE_MAX_FPS = 30
 
 
 class BrandingConstants:
