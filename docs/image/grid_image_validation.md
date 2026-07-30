@@ -28,7 +28,7 @@
 - 分割线证据是否连续贯穿图片，阈值为 `VALIDATION_MIN_LINE_COVERAGE`
 - 各 cell 的宽高是否均匀，阈值为 `VALIDATION_MIN_CELL_UNIFORMITY`
 
-分割线证据使用窄线采样，综合白/黑分隔线、亮/暗脊线和两侧对比。该方式对模型常见的白色细分割线较敏感，计算量低，不依赖大模型。
+分割线证据使用窄线采样，综合白/黑分隔线、亮/暗脊线和两侧对比。采样带内按列取极值（亮线取 max、暗线取 min）而非均值，避免 AI 生成的 1-2px 灰白细线在缩略图上被均值稀释到阈值以下导致误判。该方式对模型常见的白色细分割线较敏感，计算量低，不依赖大模型。
 
 ## 失败处理
 
@@ -50,6 +50,8 @@ ValueError: Invalid grid image: <reason>; confidence=<score>
 i2i 宫格重试会继续调用 `/api/image-edit`，并复用 `grid_image_tasks.reference_images`、`prompt`、`task_config_id` 和画幅；不会退化成 `/api/text-to-image`。
 
 ## 示例结果
+
+> 注：贯穿比例阈值 `VALIDATION_MIN_LINE_COVERAGE` 已从 `0.82` 下调至 `0.75`（配合细线友好的极值采样，真实宫格覆盖率普遍 ≥0.9；普通照片单条线可达 0.7，不宜再低，由 cell 均匀度兜底）。下表为调整前（阈值 0.82、均值采样）的历史结果。
 
 对 2026-07-08 的两张缓存图执行 `2x2` 校验：
 

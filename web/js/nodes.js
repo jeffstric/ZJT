@@ -3890,6 +3890,10 @@
           if(typeof appendVideoResolutionToForm === 'function') {
             appendVideoResolutionToForm(form, videoModel || 'wan22', shotGroupNode.data.videoResolution);
           }
+          // 是否处理人脸（仅 seedance2.0 商业版生效）
+          if(shotGroupNode.data.processFace === true) {
+            form.append('enable_face_mask', 'true');
+          }
           appendAuthToForm(form);
 
           res = await fetch('/api/ai-app-run', { method: 'POST', body: form });
@@ -3911,6 +3915,10 @@
           if(typeof appendVideoResolutionToForm === 'function') {
             appendVideoResolutionToForm(form, videoModel || 'wan22', shotGroupNode.data.videoResolution);
           }
+          // 是否处理人脸（仅 seedance2.0 商业版生效）
+          if(shotGroupNode.data.processFace === true) {
+            form.append('enable_face_mask', 'true');
+          }
           appendAuthToForm(form);
 
           res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
@@ -3930,6 +3938,10 @@
           form.append('task_id', taskId9);
           if(typeof appendVideoResolutionToForm === 'function') {
             appendVideoResolutionToForm(form, videoModel || 'wan22', shotGroupNode.data.videoResolution);
+          }
+          // 是否处理人脸（仅 seedance2.0 商业版生效）
+          if(shotGroupNode.data.processFace === true) {
+            form.append('enable_face_mask', 'true');
           }
           appendAuthToForm(form);
 
@@ -4154,6 +4166,9 @@
             if(effectiveMode !== 'multi_reference') {
               shotFrameNode.data.videoModel = shotGroupNode.data.videoModel || shotFrameNode.data.videoModel;
             }
+
+            // 把分镜组的人脸处理设置同步到子节点（复用分镜节点提交逻辑）
+            shotFrameNode.data.processFace = !!shotGroupNode.data.processFace;
 
             await generateShotFrameVideo(shotFrameNode.id, shotFrameNode);
             successCount++;

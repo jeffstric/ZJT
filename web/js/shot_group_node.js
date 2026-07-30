@@ -42,6 +42,7 @@
           videoDuration: pickFirstDefinedValue(shotGroupData.videoDuration, shotGroupData.video_duration) || 5,
           videoDrawCount: pickFirstDefinedValue(shotGroupData.videoDrawCount, shotGroupData.video_draw_count) || 1,
           videoGenMode: shotGroupData.videoGenMode || 'first_last_frame',
+          processFace: shotGroupData.processFace ?? false,  // 是否处理人脸（仅 seedance2.0 商业版生效）
           gridPreview: shotGroupData.gridPreview || {},
         }
       };
@@ -154,6 +155,13 @@
                   <option value="5" selected data-i18n="shot_group_video_duration_5s">${window.t ? window.t('shot_group_video_duration_5s') : '5秒'}</option>
                   <option value="10" data-i18n="shot_group_video_duration_10s">${window.t ? window.t('shot_group_video_duration_10s') : '10秒'}</option>
                 </select>
+              </div>
+              <div class="shot-group-process-face-field field field-always-visible" style="margin-top: 8px; display: none;">
+                <label class="shot-group-process-face-label" style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; cursor: pointer;">
+                  <input type="checkbox" class="shot-group-process-face-checkbox" style="cursor: pointer;" />
+                  <span data-i18n="process_face_label">${window.t ? window.t('process_face_label') : '是否处理人脸'}</span>
+                </label>
+                <div class="shot-group-process-face-hint" style="margin-top: 4px; font-size: 11px; color: #d97706; display: none;" data-i18n="process_face_community_hint">${window.t ? window.t('process_face_community_hint') : '此功能为商业版功能，请联系购买商业版本后使用'}</div>
               </div>
               <div class="field field-always-visible" style="margin-top: 10px;">
                 <div style="display: flex; flex-direction: column; gap: 8px;">
@@ -592,6 +600,7 @@
         updateShotGroupResolutionOptions(videoModelEl.value);
         updateVideoComputingPowerDisplay();
         updateMergeButtonVisibility(videoModelEl.value);
+        updateShotGroupProcessFaceVisibility();
       });
 
       if(resolutionSelect) {
@@ -607,6 +616,7 @@
           node.data.videoGenMode = videoGenModeEl.value;
           populateShotGroupVideoModelOptions();
           updateMergeButtonVisibility(videoModelEl.value);
+          updateShotGroupProcessFaceVisibility();
           try { autoSaveWorkflow(); } catch(e) {}
         });
       }
@@ -632,6 +642,30 @@
         }
       }
 
+      // 初始化「是否处理人脸」字段可见性（仅 seedance2.0 系列显示；社区版置灰提示）
+      function updateShotGroupProcessFaceVisibility() {
+        const faceField = el.querySelector('.shot-group-process-face-field');
+        if(!faceField) return;
+        const videoModel = videoModelEl ? videoModelEl.value : (node.data.videoModel || '');
+        const hintEl = el.querySelector('.shot-group-process-face-hint');
+        const checkboxEl = el.querySelector('.shot-group-process-face-checkbox');
+        if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+          const modelConfig = window.TaskConfig.getModelConfigs()[videoModel];
+          const needsFaceMask = modelConfig && modelConfig.needs_face_mask === true;
+          faceField.style.display = needsFaceMask ? 'block' : 'none';
+          if(needsFaceMask) {
+            const isEnterprise = window.TaskConfig.isEnterprise();
+            if(checkboxEl) {
+              checkboxEl.checked = !!node.data.processFace;
+              checkboxEl.disabled = !isEnterprise;
+            }
+            if(hintEl) hintEl.style.display = isEnterprise ? 'none' : 'block';
+          }
+        } else {
+          faceField.style.display = 'none';
+        }
+      }
+
       // 初始化合并按钮显示状态
       if(window.TaskConfig?.isLoaded()) {
         updateMergeButtonVisibility(node.data.videoModel || 'wan22');
@@ -642,11 +676,27 @@
         });
       }
 
+      // 初始化「是否处理人脸」字段显示状态
+      if(window.TaskConfig?.isLoaded()) {
+        updateShotGroupProcessFaceVisibility();
+      } else {
+        window.TaskConfig?.onLoaded(() => updateShotGroupProcessFaceVisibility());
+      }
+
       // 视频时长选择事件
       videoDurationEl.addEventListener('change', () => {
         node.data.videoDuration = Number(videoDurationEl.value);
         updateVideoComputingPowerDisplay();
       });
+
+      // 人脸处理复选框事件
+      const processFaceCheckbox = el.querySelector('.shot-group-process-face-checkbox');
+      if(processFaceCheckbox) {
+        processFaceCheckbox.addEventListener('change', (e) => {
+          node.data.processFace = !!e.target.checked;
+          try { autoSaveWorkflow(); } catch(e) {}
+        });
+      }
 
       // 视频抽卡次数选择
       videoCaret.addEventListener('click', (e) => {

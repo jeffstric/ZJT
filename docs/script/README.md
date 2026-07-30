@@ -14,6 +14,7 @@
 | [character_matching.md](./character_matching.md) | 剧本解析角色匹配功能 |
 | [script_language_sync.md](./script_language_sync.md) | 剧本节点语言联动功能 |
 | [script_writer_sse_disconnect.md](./script_writer_sse_disconnect.md) | script_writer SSE 断线恢复；ask_user 选项点击不误清输入框 |
+| [location_multi_angle_task.md](./location_multi_angle_task.md) | 场景多角度生图任务：状态机、提交失败重试与终态判定 |
 
 ## 剧本诊断日志开关
 

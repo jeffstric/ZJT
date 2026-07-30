@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-title ComfyUI Server Startup
+title zjt server
 color 0A
 
 REM 设置 UTF-8 编码，解决中文路径和文件编码问题
@@ -31,7 +31,7 @@ if "%comfyui_env%"=="" (
 
 echo.
 echo ========================================
-echo   ComfyUI Server Startup
+echo   zjt server Startup
 echo   Environment: %comfyui_env%
 echo ========================================
 echo.

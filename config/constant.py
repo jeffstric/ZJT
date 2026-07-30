@@ -719,6 +719,11 @@ DOWNLOAD_COMPLETION_MARGIN_SECONDS = 60
 
 STORYBOARD_FIRST_FRAME_GRID_ITEM_TYPE = 8
 
+# ===== 场景多角度生图任务（location_multi_angle_tasks）=====
+# 单个角度提交失败的最大重试次数，达到上限后跳过该角度继续下一个；
+# 全部角度零产出时任务终态置 FAILED（详见 docs/script/location_multi_angle_task.md）
+LOCATION_MULTI_ANGLE_SUBMIT_MAX_RETRY = 3
+
 
 class StoryboardFeatureFlags:
     """Storyboard feature flags."""
@@ -956,7 +961,8 @@ class ScriptSplitConstants:
         "step_watchdog_timeout",           # worker 单步 wall-clock 超时
         "new_root_location_forbidden",     # 硬门禁：剧本含 DB 缺失的顶层场景
         "location_parent_invalid",         # 硬门禁：场景父级关系非法
-        "location_parent_conflict",        # 硬门禁：场景父级冲突
+        # 注：location_parent_conflict 已降级为按数据库层级自动对齐（warning），
+        # 不再作为硬门禁产生，无需拦截 resume。
         # 合并阶段实体身份冲突：根治后正常不触发（renumber 自动归并）；
         # 一旦触发说明规划真源级异常，盲目 resume 必然死循环，需 force 排查。
         "quality_merge_invalid",
@@ -1137,7 +1143,7 @@ class GridConfig:
     VALIDATION_POSITION_TOLERANCE_RATIO = 0.05  # 分割线允许偏离理论位置的比例
     VALIDATION_SEPARATOR_HALF_WIDTH = 1    # 搜索分割线时取中心线两侧像素宽度
     VALIDATION_SEPARATOR_SIDE_WIDTH = 5    # 计算分割线两侧对比时的采样宽度
-    VALIDATION_MIN_LINE_COVERAGE = 0.82    # 分割线贯穿比例阈值
+    VALIDATION_MIN_LINE_COVERAGE = 0.75    # 分割线贯穿比例阈值（细线友好采样后真实宫格普遍≥0.9；普通照片单格可达0.7，不宜再低）
     VALIDATION_MIN_CELL_UNIFORMITY = 0.90  # 同方向 cell 尺寸最小/最大比例阈值
     STORYBOARD_FIRST_FRAME_VALIDATION_MAX_RETRIES = 2  # 分镜首帧宫格几何校验失败后的重试次数
 
