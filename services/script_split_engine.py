@@ -1805,11 +1805,6 @@ def _format_plan_errors(errors: List[Dict[str, Any]]) -> str:
     for e in errors:
         lines.append(f"- [{e.get('code')}] {e.get('message')}")
     joined = " ".join(str(e.get("message") or e.get("code") or "") for e in errors)
-    if "location_parent_conflict" in joined or "parent_conflict" in joined:
-        lines.append(
-            "- [hint] 复用世界已有场景时请删除 parent_location_key（省略/null），"
-            "勿按剧情猜测「走廊/阳台父=套房」等层级；数据库父子由后端接管。"
-        )
     if (
         "planned_space_unit_location_unbound" in joined
         or ("space_unit" in joined and "关联" in joined)

@@ -83,7 +83,8 @@ def test_existing_child_with_omitted_parent_reuses_database_hierarchy():
     assert validate_full_location_structure(parsed, db_locations) == []
 
 
-def test_existing_location_with_explicit_wrong_parent_reports_conflict():
+def test_existing_location_with_explicit_wrong_parent_auto_aligns_to_database():
+    """父级不一致不再报 location_parent_conflict，而是按数据库层级就地回写 parent_id。"""
     parsed = {
         "locations": [
             {"id": "loc_hotel_b", "name": "酒店B", "location_db_id": 11, "parent_id": None},
@@ -103,9 +104,32 @@ def test_existing_location_with_explicit_wrong_parent_reports_conflict():
 
     errors = validate_full_location_structure(parsed, db_locations)
 
-    assert _codes(errors) == ["location_parent_conflict"]
-    assert errors[0]["expected_parent_db_id"] == 10
-    assert errors[0]["actual_parent_db_id"] == 11
+    assert errors == []
+    # DB 真父“酒店A”不在 parsed 列表中 → parent_id 置 None（库内父子以 location_db_id 行为准）
+    balcony = next(item for item in parsed["locations"] if item["id"] == "loc_balcony")
+    assert balcony["parent_id"] is None
+
+
+def test_existing_location_wrong_parent_aligned_to_internal_id_when_db_parent_present():
+    """DB 真父也在 locations 列表中时，parent_id 回写为其内部 loc_xxx，无阻塞错误。"""
+    parsed = {
+        "locations": [
+            {"id": "loc_hotel_a", "name": "酒店A", "location_db_id": 10, "parent_id": None},
+            {"id": "loc_hotel_b", "name": "酒店B", "location_db_id": 11, "parent_id": None},
+            {"id": "loc_balcony", "name": "套房阳台", "location_db_id": 20, "parent_id": "loc_hotel_b"},
+        ]
+    }
+    db_locations = [
+        {"id": 10, "name": "酒店A", "parent_id": None, "children": []},
+        {"id": 11, "name": "酒店B", "parent_id": None, "children": []},
+        {"id": 20, "name": "套房阳台", "parent_id": 10, "children": []},
+    ]
+
+    errors = validate_full_location_structure(parsed, db_locations)
+
+    assert errors == []
+    balcony = next(item for item in parsed["locations"] if item["id"] == "loc_balcony")
+    assert balcony["parent_id"] == "loc_hotel_a"
 
 
 def test_full_validation_detects_missing_parent_and_cycle():

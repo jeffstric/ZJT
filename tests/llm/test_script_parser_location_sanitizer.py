@@ -69,7 +69,8 @@ def test_explicit_db_id_rewrites_parent_to_internal_id_matching_db_parent():
     assert validate_full_location_structure(result, db_locations) == []
 
 
-def test_name_fallback_with_explicit_wrong_parent_does_not_bind_database_id():
+def test_name_fallback_with_explicit_wrong_parent_binds_database_id_and_aligns_parent():
+    """同名异父不再拒绝绑定：降级按数据库同名场景绑定、父级按 DB 对齐，并记录警告。"""
     parsed = {
         "locations": [
             {"id": "loc_hotel_b", "name": "酒店B", "location_db_id": 11, "parent_id": None},
@@ -91,9 +92,49 @@ def test_name_fallback_with_explicit_wrong_parent_does_not_bind_database_id():
     result = sanitize_parsed_location_references(parsed, db_locations)
 
     balcony = next(item for item in result["locations"] if item["id"] == "loc_balcony")
-    assert balcony["location_db_id"] is None
-    assert balcony["parent_id"] == "loc_hotel_b"
+    assert balcony["location_db_id"] == 20
+    # DB 真父“酒店A”不在本批 locations 中 → parent_id 置 None
+    assert balcony["parent_id"] is None
     assert result["shot_groups"][0]["shots"][0]["location_id"] == "loc_balcony"
+    aligned = result["metadata"]["location_parent_auto_aligned"]
+    assert len(aligned) == 1
+    assert aligned[0]["location_db_id"] == 20
+    assert aligned[0]["expected_parent_db_id"] == 10
+    assert aligned[0]["actual_parent_db_id"] == 11
+    assert validate_full_location_structure(result, db_locations) == []
+
+
+def test_name_fallback_conflict_rewrites_parent_to_db_true_parent():
+    """“校长办公室”形态：同名 DB 子场景 + LLM 乱写父级 + DB 真父在列表中 → 回写真父内部 id。"""
+    parsed = {
+        "locations": [
+            {"id": "loc_teaching_building", "name": "教学楼", "location_db_id": 1, "parent_id": None},
+            {"id": "loc_playground", "name": "操场", "location_db_id": None, "parent_id": None},
+            {
+                "id": "loc_principal_office",
+                "name": "校长办公室",
+                "location_db_id": None,
+                "parent_id": "loc_playground",  # LLM 乱挂到操场下
+            },
+        ],
+        "shot_groups": [{"shots": [{"location_id": "loc_principal_office"}]}],
+    }
+    db_locations = [
+        {
+            "id": 1, "name": "教学楼", "parent_id": None,
+            "children": [{"id": 2, "name": "校长办公室", "parent_id": 1, "children": []}],
+        },
+    ]
+
+    result = sanitize_parsed_location_references(parsed, db_locations)
+
+    office = next(item for item in result["locations"] if item["id"] == "loc_principal_office")
+    assert office["location_db_id"] == 2
+    assert office["parent_id"] == "loc_teaching_building"
+    aligned = result["metadata"]["location_parent_auto_aligned"]
+    assert len(aligned) == 1
+    assert aligned[0]["location_id"] == "loc_principal_office"
+    assert validate_full_location_structure(result, db_locations) == []
 
 
 def test_name_fallback_without_explicit_parent_reuses_existing_child():

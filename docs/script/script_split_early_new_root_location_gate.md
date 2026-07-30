@@ -36,7 +36,7 @@
 
 `entities.locations[]` 可选 `parent_location_key`：
 
-- **能复用世界已有场景（name 匹配）时：不要写 parent_location_key**，数据库父子由后端接管；瞎猜父级会触发 `location_parent_conflict`。
+- **能复用世界已有场景（name 匹配）时：不要写 parent_location_key**，数据库父子由后端接管；瞎猜父级自 2026-07-30 起不再触发 `location_parent_conflict` 阻断，而是按数据库层级自动对齐并记警告。
 - 只有「未匹配 DB 的新地点」才填 parent，且父链最终可达已有 DB 场景。
 - 每个 `spatial_world.space_unit` 的 name/location_key 必须对应 `entities.locations` 已有项。
 
@@ -46,5 +46,5 @@
 
 - `services/location_structure_guard.py`：`bind_planned_locations` / `validate_segment_location_structure_extended` 等
 - `enterprise/.../contract.py`：`compile_quality_plan(..., db_locations=)` L0 硬门禁
-- `services/script_split_engine.py`：`step_plan` 注入 DB + 旧 plan 复检；段级扩展校验；合并漏检日志；规划失败 feedback 对 parent_conflict / space_unit unbound 追加 hint
+- `services/script_split_engine.py`：`step_plan` 注入 DB + 旧 plan 复检；段级扩展校验；合并漏检日志；规划失败 feedback 对 space_unit unbound 追加 hint（parent_conflict hint 已随冲突降级移除）
 - `enterprise/.../planner.py`：`parent_location_key` 规则（复用勿写 parent）+ space_unit 绑定提示

@@ -5,14 +5,17 @@
 校验层次：
 - L0 规划编译：bind + validate 规划 locations / space_units 对照 DB
 - L1 段级：locations + 本段 space_unit/镜头引用拉起的 registry 地点新顶层
-- L2/L3 合并与发布：全量父级图、冲突与环
+- L2/L3 合并与发布：全量父级图、可达性与环（父级冲突自动按 DB 对齐，不阻断）
 """
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -155,23 +158,42 @@ def match_location_with_parent(
     )
     actual_parent_db_id = _safe_int(db_match.get("parent_id"))
     if planned_parent_db_id != actual_parent_db_id:
+        # 父级不一致不再是硬门禁：仅作诊断警告返回，由调用方按数据库层级对齐。
         return LocationMatchResult(
             db_match,
             {
                 "code": "location_parent_conflict",
-                "severity": "error",
+                "severity": "warning",
                 "message": (
-                    f"场景 {_location_name(location) or _location_id(location)} 的规划父级与数据库父级不一致"
+                    f"场景 {_location_name(location) or _location_id(location)} 的规划父级与数据库父级不一致，"
+                    "已按数据库层级自动对齐"
                 ),
                 "location_id": _location_id(location),
                 "location_db_id": _safe_int(db_match.get("id")),
                 "expected_parent_db_id": actual_parent_db_id,
                 "actual_parent_db_id": planned_parent_db_id,
                 "parent_id": parent_key,
-                "_hard_gate": True,
             },
         )
     return LocationMatchResult(db_match)
+
+
+def _align_location_parent_to_db_row(
+    location: Dict[str, Any],
+    db_row: Dict[str, Any],
+    db_id_to_internal: Dict[int, str],
+) -> None:
+    """已绑定 DB 的场景：parent_id 以数据库层级为准，忽略 LLM 乱写的父级。"""
+    actual_parent_db_id = _safe_int(db_row.get("parent_id"))
+    if actual_parent_db_id is None:
+        location["parent_id"] = None
+        if location.get("level") is not None:
+            location["level"] = 0
+        return
+    parent_internal = db_id_to_internal.get(actual_parent_db_id)
+    # 父场景不在当前 locations 中时清空 parent；数据库侧父子关系仍以
+    # location_db_id 对应行的 parent_id 为准。
+    location["parent_id"] = parent_internal if parent_internal else None
 
 
 def validate_segment_new_roots(
@@ -190,8 +212,10 @@ def validate_segment_new_roots(
     提示词层引导 LLM 优先把新场景挂到已有顶层作子场景，只有找不到合适父场景
     才作顶层新建，以控制新顶层数量。
 
-    仍由其他函数保留的校验：location_parent_conflict（已有 DB 场景父级冲突）、
-    父链环 / missing / unreachable（见 validate_full_location_structure）。
+    仍由其他函数保留的校验：location_parent_invalid（父链环 / missing /
+    unreachable，见 validate_full_location_structure）。已有 DB 场景的父级冲突
+    （历史 location_parent_conflict）自 2026-07-30 起降级为按数据库层级自动对齐，
+    不再作为硬门禁。
     """
     return []
 
@@ -200,7 +224,15 @@ def validate_full_location_structure(
     parsed_data: Dict[str, Any],
     db_locations: Iterable[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """合并/发布硬校验：检查完整父级图、显式 DB 冲突、可达性与环。"""
+    """合并/发布硬校验：检查完整父级图、可达性与环。
+
+    匹配到 DB 的场景若规划父级与数据库不一致（历史 location_parent_conflict
+    硬门禁），不再返回错误阻断拆分，而是就地按数据库层级回写 parent_id 并记
+    warning（降级信数据库，不信 LLM 结果）。与
+    validate_segment_location_structure_extended 就地写 location_db_id 一样，
+    本函数会就地修复 parsed_data 中的 locations。
+    返回的 errors 只含 location_parent_invalid（环/父级缺失/不可达根）等硬门禁。
+    """
     locations = [item for item in (parsed_data.get("locations") or []) if isinstance(item, dict)]
     locations_by_key = {
         _location_id(item): item for item in locations if _location_id(item)
@@ -208,15 +240,30 @@ def validate_full_location_structure(
     db_flat = flatten_db_locations(db_locations)
     matches: Dict[str, Optional[Dict[str, Any]]] = {}
     errors: List[Dict[str, Any]] = []
+    conflicts: List[Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = []
 
     for location in locations:
         key = _location_id(location)
         result = match_location_with_parent(location, locations_by_key, db_flat)
         matches[key] = result.db_location
-        if result.conflict:
-            errors.append(result.conflict)
+        if result.conflict and result.db_location:
+            conflicts.append((location, result.db_location, result.conflict))
 
-    # 已有 DB 场景的显式父级冲突已完成；下面检查所有新场景的父链。
+    if conflicts:
+        db_id_to_internal: Dict[int, str] = {}
+        for internal_key, db_row in matches.items():
+            db_id = _safe_int((db_row or {}).get("id"))
+            if internal_key and db_id is not None:
+                db_id_to_internal[db_id] = internal_key
+        for location, db_row, conflict in conflicts:
+            _align_location_parent_to_db_row(location, db_row, db_id_to_internal)
+            logger.warning(
+                "场景 %s 的规划父级与数据库父级不一致，已按数据库层级自动对齐: %s",
+                _location_name(location) or _location_id(location),
+                conflict,
+            )
+
+    # 已有 DB 场景的父级已按数据库对齐；下面检查所有新场景的父链。
     reported: set[str] = set()
     reported_cycles: set[frozenset[str]] = set()
     for location in locations:

@@ -207,7 +207,7 @@ loop:
 
 `POST /api/script-split/tasks/{task_id}/resume`. The server gates resume by `error_code`:
 
-- **Blocked error codes** (`plan_call_failed`, `plan_timeout`, `step_watchdog_timeout`, `new_root_location_forbidden`, `location_parent_invalid`, `location_parent_conflict`): the root cause is an external dependency (LLM gateway / worker) or a hard gate (missing scene assets). A blind retry would loop back to `paused`, so the server **rejects** resume with HTTP 409 + `{error_code, resume_hint}`. After you confirm the root cause is fixed (e.g. LLM key restored, scene assets added), retry with `{"force": true}` in the body.
+- **Blocked error codes** (`plan_call_failed`, `plan_timeout`, `step_watchdog_timeout`, `new_root_location_forbidden`, `location_parent_invalid`): the root cause is an external dependency (LLM gateway / worker) or a hard gate (missing scene assets). A blind retry would loop back to `paused`, so the server **rejects** resume with HTTP 409 + `{error_code, resume_hint}`. After you confirm the root cause is fixed (e.g. LLM key restored, scene assets added), retry with `{"force": true}` in the body. (`location_parent_conflict` is no longer blocked: since 2026-07-30 a parent mismatch with a DB-matched scene is auto-aligned to the database hierarchy with a warning instead of pausing the task.)
 - **`waiting_auth`**: resume requires a fresh `auth_token`. First `POST /api/agent-auth/exchange` to get a new token, then call resume with the `Authorization: Bearer <new_token>` header. Without a token, resume returns 409.
 - **Other codes** (`plan_failed`, `segment_qc_failed`, `segment_max_retries`, `segment_repeatedly_interrupted`, ...): content-validation failures — resume is allowed directly (no `force` needed).
 
