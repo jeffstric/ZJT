@@ -171,6 +171,8 @@ bin\uv\uv.exe python install cpython-3.10-windows-x86_64-none
 
 涉及入口：`start.bat`、`launcher_me.bat` / `点我启动.bat`，以及 `scripts/launchers/start_windows.py`、`launcher.py`（子进程会继承该环境变量）。
 
+**发布打包**：`scripts/package.py` 会把 uv 托管的 CPython 3.10 一并打入包内 `bin/python`，新用户解压即用。物料来源优先级：NAS `bin/python-windows` → 开发机本地仓库 `bin/python` →（仅 Windows）打包时用 uv 现场安装；三者在 Windows 下都缺失会直接报错中止打包。macOS 已预留配置位（NAS 目录 `python-macos-x86` / `python-macos-arm`，需放 uv 托管布局的 `cpython-3.10.x-macos-*-none` 目录），物料未就绪时告警跳过、不影响打包。
+
 ## ❓ 常见问题
 
 ### 1. 提示找不到 Python / 镜像下载 Python 失败
