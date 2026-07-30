@@ -415,6 +415,7 @@ class SceneDifficulty:
 | 首个 | `0` | 0 |
 | 末尾追加 | `max(sort_order) + 1` | 1, 2, 3, … |
 | 在 A、B 之间插入 | `(A.sort_order + B.sort_order) / 2` | 1 与 2 之间 → 1.5；再在 1 与 1.5 之间 → 1.25 |
+| 复制 A（插入到 A 与其后继 B 之间） | `(A.sort_order + B.sort_order) / 2`；A 已是末尾时退化为末尾追加 | 复制 sort_order=2 的中间分镜（后继=3）→ 2.5；复制末尾分镜 → max+1 |
 
 **精度下限检测（关键）**：计算 `mid = (left + right) / 2` 后，若 `mid == left` 或 `mid == right`（IEEE-754 舍入导致无法区分相邻值），判定该处精度耗尽，**禁止中间插入**。处理流程：
 
@@ -770,7 +771,7 @@ async def create_storyboard(request: Request):
 | PUT | `/api/storyboard/scene/{scene_id}/video-type` | `storyboard:update` | 在普通视频/对口型之间切换；保留已有候选，运行中的旧模式任务完成后不自动替换当前视频 |
 | DELETE | `/api/storyboard/scene/{scene_id}` | `storyboard:update` | 删除分镜（CASCADE 删除其对话与资产） |
 | PUT | `/api/storyboard/{id}/scene/reorder` | `storyboard:update` | 移动单个分镜（浮点二分，Body: `{scene_id, prev_id, next_id}`） |
-| POST | `/api/storyboard/scene/{scene_id}/duplicate` | `storyboard:update` | 复制分镜（含对话，不含生成资产） |
+| POST | `/api/storyboard/scene/{scene_id}/duplicate` | `storyboard:update` | 复制分镜（含对话，不含生成资产）；新分镜插入到原分镜与其后继之间（浮点二分），原分镜为末尾时追加到末尾 |
 
 ### 3.5 分镜内容操作（生成 / 提示词 / 状态）
 
