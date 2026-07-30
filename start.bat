@@ -39,6 +39,11 @@ echo.
 set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
+REM uv 托管的 CPython 安装到项目目录（默认 bin\python），避免写入 %APPDATA%\uv\python
+REM 可通过环境变量 UV_PYTHON_INSTALL_DIR 覆盖；便于整包拷贝/离线分发
+if "%UV_PYTHON_INSTALL_DIR%"=="" set "UV_PYTHON_INSTALL_DIR=%SCRIPT_DIR%bin\python"
+if not exist "%UV_PYTHON_INSTALL_DIR%" mkdir "%UV_PYTHON_INSTALL_DIR%"
+
 echo [1/4] Checking uv package manager...
 set "UV_CMD=%SCRIPT_DIR%bin\uv\uv.exe"
 if not exist "!UV_CMD!" (
@@ -90,6 +95,7 @@ echo.
 
 REM === 预下载 Python，支持多镜像自动回退（默认 80 秒超时） ===
 echo [1.2/4] Ensuring Python 3.10 is available...
+echo   Install dir: %UV_PYTHON_INSTALL_DIR%
 set "PYTHON_READY=0"
 set "MIRROR_IDX=0"
 set "AUTO_RETRY=1"
@@ -177,9 +183,14 @@ echo.
 echo   Possible solutions:
 echo   1. Set UV_MIRROR=direct and use a VPN
 echo   2. Set UV_MIRROR=ghfast or UV_MIRROR=ghproxy to specify mirror
-echo   3. Manually download Python 3.10 and place it in the uv managed path
-echo      Download URL: https://github.com/astral-sh/python-build-standalone/releases
-echo   4. Check your network/firewall settings
+echo   3. On a machine with network, run:
+echo        bin\uv\uv.exe python install cpython-3.10-windows-x86_64-none
+echo      then copy the folder:
+echo        %UV_PYTHON_INSTALL_DIR%\cpython-3.10*
+echo      to the same path on this machine
+echo   4. Or download from:
+echo      https://github.com/astral-sh/python-build-standalone/releases
+echo   5. Check your network/firewall settings
 echo.
 pause
 exit /b 1

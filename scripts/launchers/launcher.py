@@ -546,6 +546,12 @@ def _relaunch_detached(project_dir):
     env = dict(os.environ)
     env[DETACHED_ENV_FLAG] = "1"
     env["PYTHONUTF8"] = "1"
+    # uv 托管 Python 默认落在项目 bin/python，避免写入 %APPDATA%\uv\python
+    python_install_dir = env.get("UV_PYTHON_INSTALL_DIR") or os.path.join(
+        project_dir, "bin", "python"
+    )
+    os.makedirs(python_install_dir, exist_ok=True)
+    env["UV_PYTHON_INSTALL_DIR"] = python_install_dir
     flags = 0
     for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
         flags |= getattr(subprocess, name, 0)

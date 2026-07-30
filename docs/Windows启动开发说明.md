@@ -149,13 +149,36 @@ start_windows.py（Windows 启动管理器）
 13. ✓ 监控服务状态，异常时自动重启
 ```
 
+## 🐍 uv 托管 Python 安装位置
+
+启动脚本会通过环境变量 `UV_PYTHON_INSTALL_DIR` 把 **uv 下载/管理的 CPython 3.10** 安装到**项目目录**，而不是用户目录下的 `%APPDATA%\uv\python`：
+
+| 项 | 默认值 |
+|----|--------|
+| 安装目录 | `<项目根>\bin\python` |
+| 典型路径 | `bin\python\cpython-3.10-windows-x86_64-none\python.exe` |
+| 覆盖方式 | 启动前设置 `set UV_PYTHON_INSTALL_DIR=D:\自定义路径` |
+
+**预装 / 离线拷贝示例**（在有网络的机器上）：
+
+```batch
+cd /d <项目根目录>
+set UV_PYTHON_INSTALL_DIR=%CD%\bin\python
+bin\uv\uv.exe python install cpython-3.10-windows-x86_64-none
+```
+
+然后把整个 `bin\python` 目录随项目一起拷贝到目标机；目标机再执行 `start.bat` 时会直接命中本地 Python，不再访问 GitHub 镜像下载解释器。
+
+涉及入口：`start.bat`、`launcher_me.bat` / `点我启动.bat`，以及 `scripts/launchers/start_windows.py`、`launcher.py`（子进程会继承该环境变量）。
+
 ## ❓ 常见问题
 
-### 1. 提示找不到 Python
+### 1. 提示找不到 Python / 镜像下载 Python 失败
 **解决方法**：
-- 安装 Python 3.10+
-- 确保安装时勾选了 "Add Python to PATH"
-- 或手动将 Python 添加到系统环境变量
+- 项目要求 **Python 3.10.x**（`requires-python = ==3.10.*`），由 uv 托管安装到 `bin\python`
+- 网络不通时：在有网机器预装后拷贝 `bin\python`（见上文）
+- 或设置 `set UV_MIRROR=direct` 后使用 VPN 再启动
+- 系统自带的 3.11/3.12 **不能**直接替代上述托管 3.10（除非改启动参数，不推荐）
 
 ### 2. MySQL 启动失败
 **可能原因**：

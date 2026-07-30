@@ -783,6 +783,12 @@ def start_app_service():
         # 设置环境变量
         subprocess_env = os.environ.copy()
         subprocess_env['PYTHONUTF8'] = '1'
+        # uv 托管 Python 默认落在项目 bin/python，避免写入用户目录
+        python_install_dir = subprocess_env.get('UV_PYTHON_INSTALL_DIR') or os.path.join(
+            current_dir, "bin", "python"
+        )
+        os.makedirs(python_install_dir, exist_ok=True)
+        subprocess_env['UV_PYTHON_INSTALL_DIR'] = python_install_dir
         # 根据网络环境检测结果设置镜像源
         mirror_mode = os.environ.get('COMFYUI_MIRROR_MODE', 'domestic')
         if mirror_mode in ('overseas', 'manual'):

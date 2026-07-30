@@ -24,6 +24,10 @@ REM The Chinese-named twin entry just forwards to this file,
 REM so CN users get a friendly name and overseas users get this one.
 REM ============================================================
 
+REM uv 托管 Python 安装到项目目录，避免写入 %APPDATA%\uv\python
+if "%UV_PYTHON_INSTALL_DIR%"=="" set "UV_PYTHON_INSTALL_DIR=%SCRIPT_DIR%bin\python"
+if not exist "%UV_PYTHON_INSTALL_DIR%" mkdir "%UV_PYTHON_INSTALL_DIR%"
+
 set "UV_CMD=%SCRIPT_DIR%bin\uv\uv.exe"
 if not exist "!UV_CMD!" (
     echo [ERROR] uv not found at !UV_CMD!

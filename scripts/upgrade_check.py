@@ -224,49 +224,67 @@ def compare_version(v1, v2):
     return 0
 
 
+def read_pyproject_version(project_dir):
+    """从 pyproject.toml 读取 version 字段，失败返回 None。"""
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return None
+    try:
+        content = pyproject.read_text(encoding="utf-8")
+        for line in content.split("\n"):
+            line = line.strip()
+            if line.startswith("version"):
+                parts = line.split("=", 1)
+                if len(parts) == 2:
+                    return parts[1].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return None
+
+
 def get_local_version(project_dir, git_cmd=None):
     """读取本地版本号
 
-    优先使用 git tag --points-at HEAD 检查当前 commit 是否有 tag。
-    其次尝试 git describe --tags --abbrev=0。
-    如果都失败（无 tag 或无 git），回退到读取 pyproject.toml。
+    同时收集以下候选，取版本号最高者（避免 describe 仍指向旧 tag、
+    而 pyproject/HEAD 已是新版本时误判，导致 start.bat 无限重启）：
+      1. git tag --points-at HEAD
+      2. git describe --tags --abbrev=0
+      3. pyproject.toml 的 version
     """
+    candidates = []
+
     if git_cmd:
-        # 优先: git tag --points-at HEAD（精确匹配当前 commit 的 tag）
+        # 1) 当前 commit 上的 tag
         rc, out, _ = run_git(
             git_cmd,
             ["tag", "--points-at", "HEAD"],
             project_dir, timeout=10
         )
         if rc == 0 and out.strip():
-            # 可能有多个 tag，取版本号最大的
-            tags = [t.strip() for t in out.strip().split("\n") if t.strip()]
-            tags.sort(key=parse_version, reverse=True)
-            return tags[0]
+            for t in out.strip().split("\n"):
+                t = t.strip()
+                if t:
+                    candidates.append(t)
 
-        # 其次: git describe --tags --abbrev=0
+        # 2) 最近祖先 tag（可能落后于当前代码里的 pyproject 版本）
         rc, out, _ = run_git(
             git_cmd,
             ["describe", "--tags", "--abbrev=0"],
             project_dir, timeout=10
         )
         if rc == 0 and out.strip():
-            return out.strip()
+            candidates.append(out.strip())
 
-    # 回退: 读取 pyproject.toml
-    pyproject = project_dir / "pyproject.toml"
-    if pyproject.exists():
-        try:
-            content = pyproject.read_text(encoding="utf-8")
-            for line in content.split("\n"):
-                line = line.strip()
-                if line.startswith("version"):
-                    parts = line.split("=", 1)
-                    if len(parts) == 2:
-                        return parts[1].strip().strip('"').strip("'")
-        except Exception:
-            pass
-    return "unknown"
+    # 3) 代码内声明的版本（reset 到含新 pyproject 的 commit 后应与远程一致）
+    py_ver = read_pyproject_version(project_dir)
+    if py_ver:
+        candidates.append(py_ver)
+
+    if not candidates:
+        return "unknown"
+
+    candidates.sort(key=parse_version, reverse=True)
+    return candidates[0]
 
 
 def get_git_env(git_cmd):
@@ -419,23 +437,36 @@ def init_git_repo(project_dir, git_cmd, repo_urls, branch, timeout):
 
 
 
-def perform_update(git_cmd, project_dir, branch, timeout):
+def perform_update(git_cmd, project_dir, branch, timeout, target_tag=None):
     """执行更新（强制覆盖本地代码）
 
-    使用 fetch + reset --hard 强制同步到远程最新版本。
+    使用 fetch + reset --hard 强制同步。
+    优先 reset 到目标版本 tag（与远程「最新 tag」比较逻辑一致），
+    tag 不可用时再回退到 origin/{branch}。
     不保留本地修改，确保升级过程无冲突，对小白用户透明。
     返回 (success, message)
     """
-    # fetch 最新代码
+    # fetch 分支 + tags（必须带 tags，否则本地 describe/checkout tag 会落后）
     rc, out, err = run_git(
-        git_cmd, ["fetch", "origin", branch],
+        git_cmd, ["fetch", "origin", branch, "--tags", "--force"],
         project_dir, timeout=timeout
     )
     if rc != 0:
         msg = err or out or "未知错误"
         return False, f"fetch 失败: {msg}"
 
-    # reset 到远程最新版本（强制覆盖，不保留本地修改，不会产生冲突）
+    # 优先对齐到版本 tag，使 tag --points-at HEAD 与远程最新 tag 一致
+    if target_tag:
+        rc, out, err = run_git(
+            git_cmd, ["reset", "--hard", target_tag],
+            project_dir, timeout=timeout
+        )
+        if rc == 0:
+            print(f"[upgrade] 代码更新成功（已对齐 tag {target_tag}）")
+            return True, ""
+        print(f"[upgrade] 无法 checkout tag {target_tag}，回退到 origin/{branch}: {err or out}")
+
+    # reset 到远程分支（强制覆盖）
     rc, out, err = run_git(
         git_cmd, ["reset", "--hard", f"origin/{branch}"],
         project_dir, timeout=timeout
@@ -650,8 +681,10 @@ def main():
         print("[upgrade] 使用当前版本继续启动...")
         return 0
 
-    # 8. 执行更新
-    success, message = perform_update(git_cmd, project_dir, branch, timeout)
+    # 8. 执行更新（优先对齐到远程最新 tag，避免只 reset 分支导致版本标记永远落后）
+    success, message = perform_update(
+        git_cmd, project_dir, branch, timeout, target_tag=latest_tag
+    )
     if not success:
         print(f"[upgrade] 更新失败: {message}")
         return 1
@@ -661,6 +694,16 @@ def main():
 
     # 9. 检查依赖变化
     check_requirements_changed(git_cmd, project_dir, timeout)
+
+    # 10. 防无限重启：更新后若版本比较仍认为落后，说明 tag/pyproject/分支不一致，
+    #     再返回 10 会让 start.bat 死循环（用户可见「不断重新启动」）
+    new_local = get_local_version(project_dir, git_cmd)
+    if compare_version(latest_tag, new_local) > 0:
+        print(
+            f"[upgrade] 警告: 更新后本地版本仍为 {new_local}（远程 {latest_tag}），"
+            f"为避免启动循环将继续启动当前代码"
+        )
+        return 0
 
     print("[upgrade] 更新完成，需要重新启动...")
     return 10  # 特殊码：代码已更新，需要重启 start.bat
