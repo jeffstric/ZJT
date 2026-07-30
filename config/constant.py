@@ -1143,7 +1143,7 @@ class GridConfig:
     VALIDATION_POSITION_TOLERANCE_RATIO = 0.05  # 分割线允许偏离理论位置的比例
     VALIDATION_SEPARATOR_HALF_WIDTH = 1    # 搜索分割线时取中心线两侧像素宽度
     VALIDATION_SEPARATOR_SIDE_WIDTH = 5    # 计算分割线两侧对比时的采样宽度
-    VALIDATION_MIN_LINE_COVERAGE = 0.82    # 分割线贯穿比例阈值
+    VALIDATION_MIN_LINE_COVERAGE = 0.75    # 分割线贯穿比例阈值（细线友好采样后真实宫格普遍≥0.9；普通照片单格可达0.7，不宜再低）
     VALIDATION_MIN_CELL_UNIFORMITY = 0.90  # 同方向 cell 尺寸最小/最大比例阈值
     STORYBOARD_FIRST_FRAME_VALIDATION_MAX_RETRIES = 2  # 分镜首帧宫格几何校验失败后的重试次数
 
