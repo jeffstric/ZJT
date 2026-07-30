@@ -961,7 +961,8 @@ class ScriptSplitConstants:
         "step_watchdog_timeout",           # worker 单步 wall-clock 超时
         "new_root_location_forbidden",     # 硬门禁：剧本含 DB 缺失的顶层场景
         "location_parent_invalid",         # 硬门禁：场景父级关系非法
-        "location_parent_conflict",        # 硬门禁：场景父级冲突
+        # 注：location_parent_conflict 已降级为按数据库层级自动对齐（warning），
+        # 不再作为硬门禁产生，无需拦截 resume。
         # 合并阶段实体身份冲突：根治后正常不触发（renumber 自动归并）；
         # 一旦触发说明规划真源级异常，盲目 resume 必然死循环，需 force 排查。
         "quality_merge_invalid",

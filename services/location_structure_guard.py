@@ -5,14 +5,17 @@
 校验层次：
 - L0 规划编译：bind + validate 规划 locations / space_units 对照 DB
 - L1 段级：locations + 本段 space_unit/镜头引用拉起的 registry 地点新顶层
-- L2/L3 合并与发布：全量父级图、冲突与环
+- L2/L3 合并与发布：全量父级图、可达性与环（父级冲突自动按 DB 对齐，不阻断）
 """
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -107,15 +110,37 @@ def _unique_name_match(name: Any, by_name: Dict[str, List[Dict[str, Any]]]) -> O
     return fuzzy[0] if len(fuzzy) == 1 else None
 
 
+def _candidate_db_match_with_kind(
+    location: Dict[str, Any],
+    by_id: Dict[int, Dict[str, Any]],
+    by_name: Dict[str, List[Dict[str, Any]]],
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """返回 (DB 匹配行, 匹配方式)。匹配方式：id / exact（规范化同名）/ fuzzy（后缀模糊）。"""
+    given_id = _safe_int(location.get("location_db_id"))
+    if given_id is not None:
+        return by_id.get(given_id), "id"
+    normalized = _normalize_name(_location_name(location))
+    if not normalized:
+        return None, None
+    exact = by_name.get(normalized) or []
+    if len(exact) == 1:
+        return exact[0], "exact"
+    fuzzy: List[Dict[str, Any]] = []
+    for db_name, matches in by_name.items():
+        if db_name.endswith(normalized) or normalized.endswith(db_name):
+            fuzzy.extend(matches)
+    if len(fuzzy) == 1:
+        return fuzzy[0], "fuzzy"
+    return None, None
+
+
 def _candidate_db_match(
     location: Dict[str, Any],
     by_id: Dict[int, Dict[str, Any]],
     by_name: Dict[str, List[Dict[str, Any]]],
 ) -> Optional[Dict[str, Any]]:
-    given_id = _safe_int(location.get("location_db_id"))
-    if given_id is not None:
-        return by_id.get(given_id)
-    return _unique_name_match(_location_name(location), by_name)
+    match, _kind = _candidate_db_match_with_kind(location, by_id, by_name)
+    return match
 
 
 def _resolve_planned_parent_db_id(
@@ -139,9 +164,14 @@ def match_location_with_parent(
     locations_by_key: Dict[str, Dict[str, Any]],
     db_locations: Iterable[Dict[str, Any]],
 ) -> LocationMatchResult:
-    """匹配已有场景，并在 LLM 显式声明父级时检查数据库层级。"""
+    """匹配已有场景，并在 LLM 显式声明父级时检查数据库层级。
+
+    父级不一致时返回 conflict 诊断（severity=warning），并带 match_kind
+    （id/exact/fuzzy）：调用方只对 id/exact 做按库对齐；fuzzy 匹配且父级
+    不同视为不同物理场景，不应绑定或对齐。
+    """
     by_id, by_name = _db_indexes(db_locations)
-    db_match = _candidate_db_match(location, by_id, by_name)
+    db_match, match_kind = _candidate_db_match_with_kind(location, by_id, by_name)
     if not db_match:
         return LocationMatchResult(None)
 
@@ -155,23 +185,43 @@ def match_location_with_parent(
     )
     actual_parent_db_id = _safe_int(db_match.get("parent_id"))
     if planned_parent_db_id != actual_parent_db_id:
+        # 父级不一致不再是硬门禁：仅作诊断警告返回，由调用方按 match_kind 决定
+        # 按数据库层级对齐（id/exact）或拒绝绑定（fuzzy）。
         return LocationMatchResult(
             db_match,
             {
                 "code": "location_parent_conflict",
-                "severity": "error",
+                "severity": "warning",
                 "message": (
                     f"场景 {_location_name(location) or _location_id(location)} 的规划父级与数据库父级不一致"
                 ),
                 "location_id": _location_id(location),
                 "location_db_id": _safe_int(db_match.get("id")),
+                "match_kind": match_kind,
                 "expected_parent_db_id": actual_parent_db_id,
                 "actual_parent_db_id": planned_parent_db_id,
                 "parent_id": parent_key,
-                "_hard_gate": True,
             },
         )
     return LocationMatchResult(db_match)
+
+
+def _align_location_parent_to_db_row(
+    location: Dict[str, Any],
+    db_row: Dict[str, Any],
+    db_id_to_internal: Dict[int, str],
+) -> None:
+    """已绑定 DB 的场景：parent_id 以数据库层级为准，忽略 LLM 乱写的父级。"""
+    actual_parent_db_id = _safe_int(db_row.get("parent_id"))
+    if actual_parent_db_id is None:
+        location["parent_id"] = None
+        if location.get("level") is not None:
+            location["level"] = 0
+        return
+    parent_internal = db_id_to_internal.get(actual_parent_db_id)
+    # 父场景不在当前 locations 中时清空 parent；数据库侧父子关系仍以
+    # location_db_id 对应行的 parent_id 为准。
+    location["parent_id"] = parent_internal if parent_internal else None
 
 
 def validate_segment_new_roots(
@@ -190,8 +240,10 @@ def validate_segment_new_roots(
     提示词层引导 LLM 优先把新场景挂到已有顶层作子场景，只有找不到合适父场景
     才作顶层新建，以控制新顶层数量。
 
-    仍由其他函数保留的校验：location_parent_conflict（已有 DB 场景父级冲突）、
-    父链环 / missing / unreachable（见 validate_full_location_structure）。
+    仍由其他函数保留的校验：location_parent_invalid（父链环 / missing /
+    unreachable，见 validate_full_location_structure）。已有 DB 场景的父级冲突
+    （历史 location_parent_conflict）自 2026-07-30 起降级为按数据库层级自动对齐，
+    不再作为硬门禁。
     """
     return []
 
@@ -200,7 +252,17 @@ def validate_full_location_structure(
     parsed_data: Dict[str, Any],
     db_locations: Iterable[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """合并/发布硬校验：检查完整父级图、显式 DB 冲突、可达性与环。"""
+    """合并/发布硬校验：检查完整父级图、可达性与环。
+
+    匹配到 DB 的场景若规划父级与数据库不一致（历史 location_parent_conflict
+    硬门禁），不再返回错误阻断拆分：显式 id / 规范化精确同名（exact）匹配
+    就地按数据库层级回写 parent_id 并记 warning（降级信数据库，不信 LLM 结果）。
+    后缀模糊匹配（fuzzy，如“阳台”撞上“酒店A阳台”）且父级不同的视为不同物理
+    场景：不信任该绑定、不做对齐，按未匹配新场景走父链校验。
+    与 validate_segment_location_structure_extended 就地写 location_db_id 一样，
+    本函数会就地修复 parsed_data 中的 locations。
+    返回的 errors 只含 location_parent_invalid（环/父级缺失/不可达根）等硬门禁。
+    """
     locations = [item for item in (parsed_data.get("locations") or []) if isinstance(item, dict)]
     locations_by_key = {
         _location_id(item): item for item in locations if _location_id(item)
@@ -208,15 +270,35 @@ def validate_full_location_structure(
     db_flat = flatten_db_locations(db_locations)
     matches: Dict[str, Optional[Dict[str, Any]]] = {}
     errors: List[Dict[str, Any]] = []
+    conflicts: List[Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]] = []
 
     for location in locations:
         key = _location_id(location)
         result = match_location_with_parent(location, locations_by_key, db_flat)
+        if result.conflict and result.conflict.get("match_kind") == "fuzzy":
+            # 模糊匹配且父级不同：视为不同场景，拒绝该 DB 绑定，
+            # 按未匹配新场景参与后续父链校验，不做父级对齐。
+            matches[key] = None
+            continue
         matches[key] = result.db_location
-        if result.conflict:
-            errors.append(result.conflict)
+        if result.conflict and result.db_location:
+            conflicts.append((location, result.db_location, result.conflict))
 
-    # 已有 DB 场景的显式父级冲突已完成；下面检查所有新场景的父链。
+    if conflicts:
+        db_id_to_internal: Dict[int, str] = {}
+        for internal_key, db_row in matches.items():
+            db_id = _safe_int((db_row or {}).get("id"))
+            if internal_key and db_id is not None:
+                db_id_to_internal[db_id] = internal_key
+        for location, db_row, conflict in conflicts:
+            _align_location_parent_to_db_row(location, db_row, db_id_to_internal)
+            logger.warning(
+                "场景 %s 的规划父级与数据库父级不一致，已按数据库层级自动对齐: %s",
+                _location_name(location) or _location_id(location),
+                conflict,
+            )
+
+    # 已有 DB 场景的父级已按数据库对齐；下面检查所有新场景的父链。
     reported: set[str] = set()
     reported_cycles: set[frozenset[str]] = set()
     for location in locations:
@@ -331,6 +413,7 @@ def bind_planned_locations(
     by_id, by_name = _db_indexes(db_locations)
     bound: List[Dict[str, Any]] = []
     key_to_internal: Dict[str, str] = {}
+    match_kinds: Dict[int, str] = {}  # id(location) → id/exact/fuzzy（绑定时的匹配方式）
 
     for raw in planned_locations or []:
         if not isinstance(raw, dict):
@@ -341,9 +424,10 @@ def bind_planned_locations(
         if given_db_id is not None and given_db_id not in by_id:
             location["location_db_id"] = None
 
-        db_match = _candidate_db_match(location, by_id, by_name)
+        db_match, match_kind = _candidate_db_match_with_kind(location, by_id, by_name)
         if db_match:
             location["location_db_id"] = _safe_int(db_match.get("id"))
+            match_kinds[id(location)] = match_kind
         else:
             location["location_db_id"] = None
 
@@ -372,6 +456,23 @@ def bind_planned_locations(
         if location.get("location_db_id") is not None and not parent_key:
             # 显式 parent_id 若存在，留给 full 校验做 conflict；不在此清空
             pass
+
+    # 第三遍：后缀模糊匹配（fuzzy，如“阳台”撞上“酒店A阳台”）且规划父级与
+    # DB 父级不同 → 视为不同物理场景，解除绑定保留为新场景，避免把镜头
+    # 引用到错误资产；精确同名 / 显式 id 的父级冲突由 full 校验按 DB 对齐。
+    # 注意匹配方式必须取第一遍记录的值：绑定后 location_db_id 已写入，
+    # 重新匹配只会得到 "id"，无法还原 fuzzy。
+    bound_by_id = {
+        _location_id(location): location
+        for location in bound
+        if _location_id(location)
+    }
+    for location in bound:
+        if match_kinds.get(id(location)) != "fuzzy":
+            continue
+        result = match_location_with_parent(location, bound_by_id, db_locations)
+        if result.conflict:
+            location["location_db_id"] = None
 
     return bound
 
