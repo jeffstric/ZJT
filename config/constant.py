@@ -719,6 +719,11 @@ DOWNLOAD_COMPLETION_MARGIN_SECONDS = 60
 
 STORYBOARD_FIRST_FRAME_GRID_ITEM_TYPE = 8
 
+# ===== 场景多角度生图任务（location_multi_angle_tasks）=====
+# 单个角度提交失败的最大重试次数，达到上限后跳过该角度继续下一个；
+# 全部角度零产出时任务终态置 FAILED（详见 docs/script/location_multi_angle_task.md）
+LOCATION_MULTI_ANGLE_SUBMIT_MAX_RETRY = 3
+
 
 class StoryboardFeatureFlags:
     """Storyboard feature flags."""
