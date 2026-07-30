@@ -170,23 +170,31 @@ def _separator_coverage(arr: np.ndarray, axis: str, pos: int) -> float:
         return 0.0
 
     if axis == "x":
-        strip = arr[:, pos - half:pos + half + 1, :].mean(axis=1)
+        strip = arr[:, pos - half:pos + half + 1, :]
         left = arr[:, pos - half - side_width:pos - half, :].mean(axis=1)
         right = arr[:, pos + half + 1:pos + half + 1 + side_width, :].mean(axis=1)
     else:
-        strip = arr[pos - half:pos + half + 1, :, :].mean(axis=0)
+        strip = arr[pos - half:pos + half + 1, :, :].transpose(1, 0, 2)
         left = arr[pos - half - side_width:pos - half, :, :].mean(axis=0)
         right = arr[pos + half + 1:pos + half + 1 + side_width, :, :].mean(axis=0)
 
-    strip_gray = strip.mean(axis=1)
+    # Thin-line friendly: AI-generated separators are often 1-2px off-white
+    # lines which get diluted below the brightness thresholds when averaged
+    # across the strip width on the downscaled scan image. Pool per column
+    # and take the extremes instead of the mean.
+    col_gray = strip.mean(axis=2)
+    col_chroma = strip.max(axis=2) - strip.min(axis=2)
+    neutral = col_chroma <= 70
+
+    bright_separator = ((col_gray >= 205) & neutral).any(axis=1)
+    dark_separator = ((col_gray <= 40) & neutral).any(axis=1)
+
+    strip_high = col_gray.max(axis=1)
+    strip_low = col_gray.min(axis=1)
     left_gray = left.mean(axis=1)
     right_gray = right.mean(axis=1)
-    strip_chroma = strip.max(axis=1) - strip.min(axis=1)
-
-    bright_separator = (strip_gray >= 205) & (strip_chroma <= 70)
-    dark_separator = (strip_gray <= 40) & (strip_chroma <= 70)
-    bright_ridge = ((strip_gray - left_gray) >= 35) & ((strip_gray - right_gray) >= 35)
-    dark_ridge = ((left_gray - strip_gray) >= 35) & ((right_gray - strip_gray) >= 35)
+    bright_ridge = ((strip_high - left_gray) >= 35) & ((strip_high - right_gray) >= 35)
+    dark_ridge = ((left_gray - strip_low) >= 35) & ((right_gray - strip_low) >= 35)
 
     mask = bright_separator | dark_separator | bright_ridge | dark_ridge
     mask = _close_small_gaps(mask, max_gap=max(2, len(mask) // 100))
