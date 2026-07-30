@@ -132,6 +132,60 @@ def test_existing_location_wrong_parent_aligned_to_internal_id_when_db_parent_pr
     assert balcony["parent_id"] == "loc_hotel_a"
 
 
+def test_fuzzy_name_match_with_different_parent_is_not_aligned():
+    """后缀模糊匹配（“阳台”撞“酒店A阳台”）且父级不同：视为不同场景，不绑定不对齐。"""
+    parsed = {
+        "locations": [
+            {"id": "loc_hotel_b", "name": "酒店B", "location_db_id": 11, "parent_id": None},
+            {"id": "loc_balcony", "name": "阳台", "location_db_id": None, "parent_id": "loc_hotel_b"},
+        ]
+    }
+    db_locations = [
+        {
+            "id": 10, "name": "酒店A", "parent_id": None,
+            "children": [{"id": 20, "name": "酒店A阳台", "parent_id": 10, "children": []}],
+        },
+        {"id": 11, "name": "酒店B", "parent_id": None, "children": []},
+    ]
+
+    errors = validate_full_location_structure(parsed, db_locations)
+
+    assert errors == []
+    balcony = next(item for item in parsed["locations"] if item["id"] == "loc_balcony")
+    # 保留规划父级与未入库身份，不按“酒店A阳台”对齐
+    assert balcony["parent_id"] == "loc_hotel_b"
+    assert balcony["location_db_id"] is None
+
+
+def test_bind_planned_locations_unbinds_fuzzy_match_with_different_parent():
+    """L0 绑定：模糊匹配且父级不同的规划场景解除 location_db_id，保留为新场景。"""
+    planned = [
+        {"id": "loc_001", "location_key": "location:hotel_b", "name": "酒店B"},
+        {
+            "id": "loc_002",
+            "location_key": "location:balcony",
+            "name": "阳台",
+            "parent_location_key": "location:hotel_b",
+        },
+    ]
+    db = [
+        {
+            "id": 10, "name": "酒店A", "parent_id": None,
+            "children": [{"id": 20, "name": "酒店A阳台", "parent_id": 10, "children": []}],
+        },
+        {"id": 11, "name": "酒店B", "parent_id": None, "children": []},
+    ]
+
+    bound, errors = bind_and_validate_planned_locations(planned, db)
+
+    assert errors == []
+    hotel_b = next(item for item in bound if item["id"] == "loc_001")
+    assert hotel_b["location_db_id"] == 11
+    balcony = next(item for item in bound if item["id"] == "loc_002")
+    assert balcony["location_db_id"] is None  # 拒绝模糊绑定，不作为“酒店A阳台”复用
+    assert balcony["parent_id"] == "loc_001"
+
+
 def test_full_validation_detects_missing_parent_and_cycle():
     missing_parent = {
         "locations": [

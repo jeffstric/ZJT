@@ -164,3 +164,36 @@ def test_name_fallback_without_explicit_parent_reuses_existing_child():
 
     assert result["locations"][0]["location_db_id"] == 20
     assert result["locations"][0]["parent_id"] is None
+
+
+def test_fuzzy_name_match_with_different_parent_stays_new_scene():
+    """“阳台”（酒店B下）撞上 DB“酒店A阳台”：模糊匹配且父级不同，拒绝绑定保留为新场景。"""
+    parsed = {
+        "locations": [
+            {"id": "loc_hotel_b", "name": "酒店B", "location_db_id": 11, "parent_id": None},
+            {
+                "id": "loc_balcony",
+                "name": "阳台",
+                "location_db_id": None,
+                "parent_id": "loc_hotel_b",
+            },
+        ],
+        "shot_groups": [{"shots": [{"location_id": "loc_balcony"}]}],
+    }
+    db_locations = [
+        {
+            "id": 10, "name": "酒店A", "parent_id": None,
+            "children": [{"id": 20, "name": "酒店A阳台", "parent_id": 10, "children": []}],
+        },
+        {"id": 11, "name": "酒店B", "parent_id": None, "children": []},
+    ]
+
+    result = sanitize_parsed_location_references(parsed, db_locations)
+
+    balcony = next(item for item in result["locations"] if item["id"] == "loc_balcony")
+    assert balcony["location_db_id"] is None  # 不绑定“酒店A阳台”
+    assert balcony["parent_id"] == "loc_hotel_b"  # 保留规划父级，等待 bootstrap 入库
+    assert result["shot_groups"][0]["shots"][0]["location_id"] == "loc_balcony"
+    assert "location_parent_auto_aligned" not in result["metadata"]
+    assert result["metadata"]["has_unpersisted_locations"] is True
+    assert validate_full_location_structure(result, db_locations) == []

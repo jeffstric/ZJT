@@ -402,11 +402,12 @@ def sanitize_parsed_location_references(
       3. 编造了假 location_db_id（非 null 但 DB 不存在）→ 丢弃，避免假场景穿透。
       4. shot.location_id 指向被丢弃 / 悬空的 location 时置为 null，
          避免假场景穿透到下游 storyboard_scene.prompt.location。
-      5. 凡是绑定到 DB 场景（显式 location_db_id 或名称兜底）的行，
+      5. 凡是绑定到 DB 场景（显式 location_db_id 或规范化精确同名）的行，
          父级一律按数据库记录对齐或清空，不信 LLM 乱写的 parent；
          同名异父不再触发 location_parent_conflict 阻断拆分，而是降级
          按数据库同名场景绑定，并在 metadata.location_parent_auto_aligned
-         记录警告。
+         记录警告。后缀模糊匹配（如“阳台”撞上“酒店A阳台”）且父级不同
+         视为不同物理场景，拒绝绑定、按第 2 条保留为新场景。
     """
     db_flat = _flatten_db_locations(db_locations or [])
     db_locations_by_id = {
@@ -438,18 +439,25 @@ def sanitize_parsed_location_references(
             pass
         else:
             match_result = match_location_with_parent(location, locations_by_key, db_flat)
-            # 同名异父也照常绑定数据库场景（降级信数据库，不信 LLM 写的父级），
-            # 父级由第二遍 _align_location_parent_to_database 按 DB 回写；
-            # 冲突仅记入 metadata 警告，不再触发 location_parent_conflict 阻断拆分。
-            db_match = match_result.db_location
-            if db_match and match_result.conflict:
-                parent_auto_aligned.append({
-                    "location_id": str(location.get("id") or ""),
-                    "name": str(db_match.get("name") or location.get("name") or ""),
-                    "location_db_id": _safe_int(db_match.get("id")),
-                    "expected_parent_db_id": match_result.conflict.get("expected_parent_db_id"),
-                    "actual_parent_db_id": match_result.conflict.get("actual_parent_db_id"),
-                })
+            conflict = match_result.conflict
+            if match_result.db_location and conflict and conflict.get("match_kind") == "fuzzy":
+                # 后缀模糊匹配（如“阳台”撞上“酒店A阳台”）且父级不同：视为不同
+                # 物理场景，拒绝绑定、保留为新场景，避免镜头引用错误资产。
+                db_match = None
+            else:
+                # 显式 id / 精确同名异父也照常绑定数据库场景（降级信数据库，
+                # 不信 LLM 写的父级），父级由第二遍 _align_location_parent_to_database
+                # 按 DB 回写；冲突仅记入 metadata 警告，不再触发
+                # location_parent_conflict 阻断拆分。
+                db_match = match_result.db_location
+                if db_match and conflict:
+                    parent_auto_aligned.append({
+                        "location_id": str(location.get("id") or ""),
+                        "name": str(db_match.get("name") or location.get("name") or ""),
+                        "location_db_id": _safe_int(db_match.get("id")),
+                        "expected_parent_db_id": conflict.get("expected_parent_db_id"),
+                        "actual_parent_db_id": conflict.get("actual_parent_db_id"),
+                    })
 
         if db_match:
             # 已匹配 DB 场景：写回真实 DB id 与名称

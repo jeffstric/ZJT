@@ -15,6 +15,7 @@ Script split engine - 两阶段编排、上下文构建、合并、局部重试�
 import logging
 import asyncio
 import functools
+from copy import deepcopy
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -153,22 +154,67 @@ async def _validate_segment_location_structure(
 def _planned_location_hard_errors(
     plan: Dict[str, Any],
     db_locations: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    """对已编译 plan 的 registry locations 做 L0 复检。"""
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """对已编译 plan 的 registry locations 做 L0 复检。
+
+    validate_full_location_structure 会把可修复的父级冲突就地按数据库层级
+    对齐在 bound 副本上；这里将修复后的 bound 回写 compiled_registry.locations，
+    并返回 (errors, locations_changed)。locations_changed 为 True 时调用方必须
+    持久化（见 _persist_realigned_plan_locations），否则 compiled_registry、
+    segment_plan_json 与 accepted_registry_json 会继续携带旧层级下发段生成。
+    """
     registry = plan.get("compiled_registry") or {}
     if not isinstance(registry, dict):
-        return []
+        return [], False
     locations = registry.get("locations") or []
     if not locations:
-        return []
-    _bound, errors = bind_and_validate_planned_locations(
+        return [], False
+    bound, errors = bind_and_validate_planned_locations(
         locations,
         db_locations,
         spatial_world=registry.get("spatial_world")
         if isinstance(registry.get("spatial_world"), dict)
         else plan.get("spatial_world"),
     )
-    return errors
+    changed = bound != locations
+    if changed:
+        registry["locations"] = bound
+    return errors, changed
+
+
+def _persist_realigned_plan_locations(task: ScriptSplitTask, plan: Dict[str, Any]) -> None:
+    """L0 复检按数据库层级修复规划 locations 后，持久化 plan 并同步 accepted registry。
+
+    accepted_registry 在生成期可能已接纳段级新实体，不能整体用 compiled_registry
+    覆盖；仅按内部 id 用修复后的规划 locations 更新对应条目。
+    """
+    registry = plan.get("compiled_registry") or {}
+    bound_locations = [
+        item for item in (registry.get("locations") or [])
+        if isinstance(item, dict)
+    ]
+    ScriptSplitTaskModel.save_field(task.id, segment_plan_json=plan)
+    accepted = task.get_accepted_registry()
+    if not isinstance(accepted, dict):
+        return
+    accepted_locations = accepted.get("locations")
+    if not isinstance(accepted_locations, list) or not accepted_locations:
+        return
+    bound_by_id = {
+        str(loc.get("id")): loc
+        for loc in bound_locations
+        if loc.get("id") not in (None, "")
+    }
+    updated = False
+    for index, loc in enumerate(accepted_locations):
+        if not isinstance(loc, dict):
+            continue
+        repaired = bound_by_id.get(str(loc.get("id") or ""))
+        if repaired is not None and repaired != loc:
+            accepted_locations[index] = deepcopy(repaired)
+            updated = True
+    if updated:
+        ScriptSplitTaskModel.save_field(task.id, accepted_registry_json=accepted)
 
 
 async def _revalidate_saved_full_location_graph(
@@ -301,8 +347,13 @@ async def step_plan(task: ScriptSplitTask) -> None:
     existing_plan = task.get_segment_plan()
     if existing_plan:
         db_locations = await _load_current_db_locations(cfg)
-        hard_errors = _planned_location_hard_errors(existing_plan, db_locations)
+        hard_errors, locations_realigned = _planned_location_hard_errors(
+            existing_plan, db_locations,
+        )
         if not hard_errors:
+            if locations_realigned:
+                # 父级冲突已按数据库自动对齐：回写持久化，避免旧层级继续下发
+                _persist_realigned_plan_locations(task, existing_plan)
             logger.info("task %s 已有分段计划，跳过规划", task.id)
             return
         logger.warning(
@@ -1309,7 +1360,12 @@ async def step_merge(task: ScriptSplitTask) -> None:
     # 合并前再检规划 registry（生成中途可能被用户删除世界场景）
     plan = task.get_segment_plan() or {}
     if plan.get("compiled_registry"):
-        plan_errors = _planned_location_hard_errors(plan, db_locations or [])
+        plan_errors, locations_realigned = _planned_location_hard_errors(
+            plan, db_locations or [],
+        )
+        if locations_realigned:
+            # 父级冲突已按数据库自动对齐：回写持久化 plan 与 accepted registry
+            _persist_realigned_plan_locations(task, plan)
         if plan_errors:
             logger.error(
                 "task %s 合并前规划 registry L0 复检失败（资产可能已变更）: %s",

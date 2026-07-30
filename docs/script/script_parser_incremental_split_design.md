@@ -139,7 +139,7 @@
 
 **已绑定 `location_db_id` 的场景（2026-07-17 起）**：段生成提示要求 LLM 禁止乱写 parent；`sanitize_parsed_location_references` 在确认 `location_db_id` 对应真实 DB 行后，会按数据库 `parent_id` 回写或清空规划 `parent_id`，使“库中顶层场景被模型写成子场景”不再触发 `location_parent_conflict`。
 
-**父级冲突降级（2026-07-30 起）**：`location_parent_conflict` 不再是硬门禁。名称兜底匹配到 DB 同名场景但父级不一致时，`sanitize_parsed_location_references` 照常绑定该 DB 场景并按数据库层级回写/清空 `parent_id`（不信 LLM 写的父级），冲突仅记入 `metadata.location_parent_auto_aligned` 警告；`validate_full_location_structure` 对任何入口残留的父级不一致也就地按数据库对齐并记 warning，不再返回错误阻断拆分。该码同时移出 `RESUME_BLOCKED_ERROR_CODES`。
+**父级冲突降级（2026-07-30 起）**：`location_parent_conflict` 不再是硬门禁。**显式 `location_db_id` 或规范化精确同名**匹配到 DB 场景但父级不一致时，`sanitize_parsed_location_references` 照常绑定该 DB 场景并按数据库层级回写/清空 `parent_id`（不信 LLM 写的父级），冲突仅记入 `metadata.location_parent_auto_aligned` 警告；`validate_full_location_structure` 对任何入口残留的父级不一致也就地按数据库对齐并记 warning，不再返回错误阻断拆分。该码同时移出 `RESUME_BLOCKED_ERROR_CODES`。**后缀模糊匹配（如“阳台”撞上“酒店A阳台”）且父级不同的除外**：视为不同物理场景，L0 `bind_planned_locations` 与 sanitizer 均拒绝绑定、保留为新场景等待 bootstrap，避免镜头引用错误资产。L0 复检（`_planned_location_hard_errors`）会把对齐后的 bound locations 回写 `compiled_registry` 并由调用方持久化 `segment_plan_json`、按 id 同步 `accepted_registry_json`，避免旧层级继续随规划下发段生成。
 
 **生成进度展示（2026-07-17 起）**：`progress` 在 `segment_generation` 阶段按段表实时 `count(completed)/total` 计算（`10 + 75 * completed/total`，上限 84），并对历史 progress **只增不减**，避免硬门禁重开段后 UI 从 80%+ 掉回 40%。轮询 `to_public_status` 同步用段表推导 `completed_segments` 与当前未完成段序号（`get_first_uncompleted`），避免出现「第 6/6 段但仅完成一半」的错位文案。
 

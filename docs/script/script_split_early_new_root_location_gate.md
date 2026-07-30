@@ -36,7 +36,7 @@
 
 `entities.locations[]` 可选 `parent_location_key`：
 
-- **能复用世界已有场景（name 匹配）时：不要写 parent_location_key**，数据库父子由后端接管；瞎猜父级自 2026-07-30 起不再触发 `location_parent_conflict` 阻断，而是按数据库层级自动对齐并记警告。
+- **能复用世界已有场景（name 匹配）时：不要写 parent_location_key**，数据库父子由后端接管；瞎猜父级自 2026-07-30 起不再触发 `location_parent_conflict` 阻断：精确同名/显式 id 按数据库层级自动对齐并记警告；后缀模糊匹配且父级不同的拒绝绑定、保留为新场景。
 - 只有「未匹配 DB 的新地点」才填 parent，且父链最终可达已有 DB 场景。
 - 每个 `spatial_world.space_unit` 的 name/location_key 必须对应 `entities.locations` 已有项。
 
