@@ -63,7 +63,11 @@
 
 3. **选择抽卡次数**：点击"生成视频"按钮右侧的下拉箭头，选择X1-X4
 
-4. **查看算力消耗**：系统会实时显示算力消耗（单个视频算力 × 抽卡次数）
+4. **（可选）是否处理人脸**：仅当所选视频模型为 Seedance 2.0 系列时显示该复选框。
+   - 商业版：可勾选，提交任务时附带 `enable_face_mask=true`，走人脸遮盖预处理
+   - 社区版：复选框置灰，显示「此功能为商业版功能，请联系购买商业版本后使用」
+
+5. **查看算力消耗**：系统会实时显示算力消耗（单个视频算力 × 抽卡次数）
 
 ### 3. 生成视频
 
@@ -116,6 +120,7 @@
 - `videoModel`：视频模型
 - `videoDuration`：视频时长
 - `videoDrawCount`：抽卡次数
+- `processFace`：是否处理人脸（布尔，默认 false；仅 Seedance 2.0 系列生效）
 
 重新加载工作流时，这些数据会自动恢复。
 
@@ -137,6 +142,7 @@
   videoModel: 'wan22',        // 视频模型
   videoDuration: 5,           // 视频时长（秒）
   videoDrawCount: 1,          // 抽卡次数
+  processFace: false,         // 是否处理人脸（仅 seedance2.0 商业版生效）
   // ... 其他字段
 }
 ```
@@ -158,6 +164,11 @@ POST /api/ai-app-run-image
 - `video_model`：视频模型
 - `user_id`：用户ID
 - `auth_token`：认证令牌
+- `enable_face_mask`：可选，仅当 `processFace` 勾选且为 Seedance 2.0 系列时附带（值为 `'true'`），走人脸遮盖预处理
+
+> 提交路径：分镜组有「合并生成视频」与「逐个生成视频」两条路径。
+> - **合并生成**（`generateShotGroupVideo`）：三个分支（文生视频降级 / 参考模式 / 首尾帧）构建 form 时，均会在 `processFace===true` 时追加 `enable_face_mask=true`。
+> - **逐个生成**（`generateAllShotFrameVideos`）：将分镜组的 `processFace` 同步到各子分镜节点后，复用分镜节点的提交逻辑（`shot_frame_video_generator.js`）追加 `enable_face_mask`。
 
 ## 与分镜节点视频生成的区别
 

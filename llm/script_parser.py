@@ -402,8 +402,12 @@ def sanitize_parsed_location_references(
       3. 编造了假 location_db_id（非 null 但 DB 不存在）→ 丢弃，避免假场景穿透。
       4. shot.location_id 指向被丢弃 / 悬空的 location 时置为 null，
          避免假场景穿透到下游 storyboard_scene.prompt.location。
-      5. 已给出有效 location_db_id 时，禁止因 LLM 乱写 parent 触发
-         location_parent_conflict：父级一律按数据库记录对齐或清空。
+      5. 凡是绑定到 DB 场景（显式 location_db_id 或规范化精确同名）的行，
+         父级一律按数据库记录对齐或清空，不信 LLM 乱写的 parent；
+         同名异父不再触发 location_parent_conflict 阻断拆分，而是降级
+         按数据库同名场景绑定，并在 metadata.location_parent_auto_aligned
+         记录警告。后缀模糊匹配（如“阳台”撞上“酒店A阳台”）且父级不同
+         视为不同物理场景，拒绝绑定、按第 2 条保留为新场景。
     """
     db_flat = _flatten_db_locations(db_locations or [])
     db_locations_by_id = {
@@ -426,6 +430,7 @@ def sanitize_parsed_location_references(
     valid_locations: List[Dict[str, Any]] = []
     valid_location_ids = set()  # 合法 location 的内部 loc_xxx
     unpersisted_count = 0
+    parent_auto_aligned: List[Dict[str, Any]] = []
     for location in source_locations:
         given_db_id = _safe_int(location.get("location_db_id"))
         db_match = db_locations_by_id.get(given_db_id)
@@ -434,9 +439,25 @@ def sanitize_parsed_location_references(
             pass
         else:
             match_result = match_location_with_parent(location, locations_by_key, db_flat)
-            # 名称兜底只有父级一致时才允许绑定。同名异父保留为未入库候选，
-            # 让合并级硬门禁给出 location_parent_conflict，而不是静默洗成复用。
-            db_match = None if match_result.conflict else match_result.db_location
+            conflict = match_result.conflict
+            if match_result.db_location and conflict and conflict.get("match_kind") == "fuzzy":
+                # 后缀模糊匹配（如“阳台”撞上“酒店A阳台”）且父级不同：视为不同
+                # 物理场景，拒绝绑定、保留为新场景，避免镜头引用错误资产。
+                db_match = None
+            else:
+                # 显式 id / 精确同名异父也照常绑定数据库场景（降级信数据库，
+                # 不信 LLM 写的父级），父级由第二遍 _align_location_parent_to_database
+                # 按 DB 回写；冲突仅记入 metadata 警告，不再触发
+                # location_parent_conflict 阻断拆分。
+                db_match = match_result.db_location
+                if db_match and conflict:
+                    parent_auto_aligned.append({
+                        "location_id": str(location.get("id") or ""),
+                        "name": str(db_match.get("name") or location.get("name") or ""),
+                        "location_db_id": _safe_int(db_match.get("id")),
+                        "expected_parent_db_id": conflict.get("expected_parent_db_id"),
+                        "actual_parent_db_id": conflict.get("actual_parent_db_id"),
+                    })
 
         if db_match:
             # 已匹配 DB 场景：写回真实 DB id 与名称
@@ -480,6 +501,8 @@ def sanitize_parsed_location_references(
         parsed_data["metadata"] = metadata
     metadata["has_unpersisted_locations"] = unpersisted_count > 0
     metadata["unpersisted_location_count"] = unpersisted_count
+    if parent_auto_aligned:
+        metadata["location_parent_auto_aligned"] = parent_auto_aligned
 
     # shot.location_id 悬空或指向被丢弃的 location → 置 null
     for group in parsed_data.get("shot_groups") or []:

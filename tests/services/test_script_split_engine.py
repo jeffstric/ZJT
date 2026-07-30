@@ -1927,3 +1927,72 @@ def test_step_publish_clears_final_result_before_short_name_can_reach_storyboard
     assert exc_info.value.code == ScriptSplitConstants.ERROR_CHARACTER_PROMPT_CONTRACT_INVALID
     assert reopened and reopened[0][0] == 17
     assert cleared == [17]
+
+
+def test_planned_location_hard_errors_writes_back_realigned_locations():
+    """P2：L0 复检把按 DB 对齐后的 locations 回写 compiled_registry，并报告 changed。"""
+    plan = {
+        "compiled_registry": {
+            "locations": [
+                {"id": "loc_001", "name": "酒店B", "location_db_id": 11, "parent_id": None},
+                {"id": "loc_002", "name": "套房阳台", "location_db_id": 20, "parent_id": "loc_001"},
+            ]
+        }
+    }
+    db_locations = [
+        {"id": 10, "name": "酒店A", "parent_id": None, "children": []},
+        {"id": 11, "name": "酒店B", "parent_id": None, "children": []},
+        {"id": 20, "name": "套房阳台", "parent_id": 10, "children": []},
+    ]
+
+    errors, changed = script_split_engine._planned_location_hard_errors(plan, db_locations)
+
+    assert errors == []
+    assert changed is True
+    balcony = plan["compiled_registry"]["locations"][1]
+    # DB 真父“酒店A”不在 registry 中 → parent_id 置 None
+    assert balcony["parent_id"] is None
+
+    # 再次复检：已按 DB 对齐，无变化（幂等，调用方不会重复持久化）
+    errors2, changed2 = script_split_engine._planned_location_hard_errors(plan, db_locations)
+    assert errors2 == []
+    assert changed2 is False
+
+
+def test_persist_realigned_plan_locations_updates_accepted_registry_by_id(monkeypatch):
+    """P2：持久化修复后的 plan，并按 id 同步 accepted registry（保留段级新实体）。"""
+    plan = {
+        "compiled_registry": {
+            "locations": [
+                {"id": "loc_001", "name": "酒店B", "location_db_id": 11, "parent_id": None},
+                {"id": "loc_002", "name": "套房阳台", "location_db_id": 20, "parent_id": None},
+            ]
+        }
+    }
+    accepted = {
+        "locations": [
+            {"id": "loc_002", "name": "套房阳台", "location_db_id": 20, "parent_id": "loc_001"},
+            {"id": "loc_900", "name": "段级新场景", "location_db_id": None, "parent_id": None},
+        ],
+        "characters": [{"id": "char_001", "name": "张三"}],
+    }
+    task = _planning_task(segment_plan_json=plan, accepted_registry_json=accepted)
+    saved = []
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "save_field",
+        lambda *args, **kwargs: saved.append(kwargs),
+    )
+
+    script_split_engine._persist_realigned_plan_locations(task, plan)
+
+    assert any(kwargs.get("segment_plan_json") is plan for kwargs in saved)
+    accepted_calls = [
+        kwargs["accepted_registry_json"] for kwargs in saved
+        if "accepted_registry_json" in kwargs
+    ]
+    assert len(accepted_calls) == 1
+    locations_by_id = {item["id"]: item for item in accepted_calls[0]["locations"]}
+    assert locations_by_id["loc_002"]["parent_id"] is None
+    assert "loc_900" in locations_by_id  # 段级新实体不被覆盖
+    assert accepted_calls[0]["characters"] == [{"id": "char_001", "name": "张三"}]
