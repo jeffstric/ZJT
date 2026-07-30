@@ -16,9 +16,23 @@ import time
 import socket
 import webbrowser
 import ctypes
+import json
+import urllib.request
 
 # 导入 PID 管理模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 非 PyInstaller（uv run 脚本方式）运行时 sys.path[0] 是 scripts/launchers，
+# 需补上项目根才能导入 config 包；frozen 构建从项目根打包时 PyInstaller 会静态收集 config.constant
+if not getattr(sys, 'frozen', False):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from config.constant import (
+    LAUNCHER_PORT_POLL_SECONDS,
+    LAUNCHER_STATUS_REFRESH_SECONDS,
+    LAUNCHER_SLOW_START_WARNING_SECONDS,
+    LAUNCHER_SERVICE_HARD_TIMEOUT_SECONDS,
+)
+
 from pid_manager import (
     add_pid,
     remove_pid,
@@ -81,6 +95,37 @@ def release_mutex():
         _mutex_handle = None
 
 
+def wait_for_service(health_check_fn, proc_poll_fn, should_stop_fn, on_tick=None,
+                     slow_warning=LAUNCHER_SLOW_START_WARNING_SECONDS,
+                     hard_timeout=LAUNCHER_SERVICE_HARD_TIMEOUT_SECONDS,
+                     poll_interval=LAUNCHER_PORT_POLL_SECONDS):
+    """等待服务就绪（模块级纯函数，便于单测）。
+
+    返回 "ready" | "exited" | "stopped" | "timeout"。
+    每轮先查子进程存活（已退出立即返回 "exited"，防止端口被其他程序占用造成假 ready），
+    再做服务健康检查。到达 slow_warning 仅通过 on_tick(elapsed, slow_fired=True)
+    提醒一次并继续等待；到达 hard_timeout 返回 "timeout"，由调用方终止进程树。
+    """
+    start_time = time.time()
+    slow_warned = False
+    while True:
+        if should_stop_fn():
+            return "stopped"
+        if proc_poll_fn() is not None:
+            return "exited"
+        if health_check_fn():
+            return "ready"
+        elapsed = time.time() - start_time
+        if elapsed >= hard_timeout:
+            return "timeout"
+        if on_tick:
+            fire_slow = elapsed >= slow_warning and not slow_warned
+            if fire_slow:
+                slow_warned = True
+            on_tick(elapsed, fire_slow)
+        time.sleep(poll_interval)
+
+
 # 检查托盘依赖是否可用
 HAS_TRAY_DEPS = True
 IMPORT_ERROR = None
@@ -119,6 +164,7 @@ class TrayLauncher:
         self.server_port = 9003
         self.server_url = f"http://localhost:{self.server_port}"
         self.should_stop = False
+        self.startup_log_path = None  # _start_service 中赋值为 logs/startup.log
         self.current_dir = self._get_current_dir()
 
         # 启动时清理残留的死亡进程 PID（只清理当前项目的）
@@ -222,16 +268,20 @@ class TrayLauncher:
         except:
             return False
     
-    def _wait_for_service(self, port, timeout=120):
-        """等待服务可用"""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            if self.should_stop:
-                return False
-            if self._check_port_available(port):
-                return True
-            time.sleep(1)
-        return False
+    def _check_service_identity(self, port, timeout=2):
+        """确认端口背后是智剧通服务（/api/system/health 固定标识）。
+
+        仅检查 TCP 端口会把占用同一端口的其他程序误判为服务已启动。
+        """
+        if not self._check_port_available(port, timeout=timeout):
+            return False
+        try:
+            url = f"http://127.0.0.1:{port}/api/system/health"
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            return data.get("data", {}).get("app") == "ZJT"
+        except Exception:
+            return False
     
     def _read_config_url(self):
         """从配置文件读取服务器 URL 和端口号"""
@@ -268,52 +318,80 @@ class TrayLauncher:
         try:
             self.server_url, self.server_port = self._read_config_url()
 
+            # 端口已被占用：验证身份，是智剧通则直接复用；否则明确报错
+            if self._check_port_available(self.server_port):
+                if self._check_service_identity(self.server_port):
+                    self.status = self.STATUS_READY
+                    self.status_message = "服务已在运行"
+                    self._update_icon()
+                    self._notify("智剧通", f"服务已在运行\n{self.server_url}")
+                    webbrowser.open(self.server_url)
+                else:
+                    self.status = self.STATUS_ERROR
+                    self.status_message = f"端口 {self.server_port} 被其他程序占用"
+                    self._update_icon()
+                    self._notify("启动失败", f"端口 {self.server_port} 被其他程序占用\n请关闭占用程序后重试")
+                return
+
             self.status_message = "正在启动服务..."
             self._notify("智剧通", "正在启动服务，请稍候...")
-            
+
             start_script = os.path.join(self.current_dir, "start.bat")
-            
+
             if not os.path.exists(start_script):
                 self.status = self.STATUS_ERROR
                 self.status_message = "找不到启动脚本"
                 self._update_icon()
                 self._notify("启动失败", f"找不到启动脚本:\n{start_script}")
                 return
-            
+
             # 启动进程（隐藏窗口）
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
-            
+
             # 设置环境变量告诉 start_windows.py 不要打开浏览器（由托盘启动器负责）
             env = os.environ.copy()
             env['TRAY_MODE'] = '1'
-            
-            self.process = subprocess.Popen(
-                ["cmd", "/c", start_script],
-                cwd=self.current_dir,
-                startupinfo=startupinfo,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                env=env
-            )
+
+            # start.bat 全程输出落盘：托盘链路无控制台，日志是唯一的排查依据
+            logs_dir = os.path.join(self.current_dir, "logs")
+            os.makedirs(logs_dir, exist_ok=True)
+            self.startup_log_path = os.path.join(logs_dir, "startup.log")
+            log_file = open(self.startup_log_path, "w", encoding="utf-8", errors="replace")
+            try:
+                self.process = subprocess.Popen(
+                    ["cmd", "/c", start_script],
+                    cwd=self.current_dir,
+                    startupinfo=startupinfo,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    env=env
+                )
+            finally:
+                # 子进程持有自己的句柄副本，父进程副本立即关闭（含 Popen 抛异常路径）
+                log_file.close()
 
             # 记录启动的进程 PID（带进程名和工作目录）
             if self.process and self.process.pid:
                 add_pid(self.process.pid, "cmd.exe", self.current_dir)
 
-            # 启动日志读取线程
-            log_thread = threading.Thread(target=self._read_process_output, daemon=True)
-            log_thread.start()
-            
             # 等待服务可用
             self.status_message = f"等待服务就绪 (端口 {self.server_port})..."
-            
-            if self._wait_for_service(self.server_port, timeout=180):
+
+            result = wait_for_service(
+                health_check_fn=lambda: self._check_service_identity(self.server_port),
+                proc_poll_fn=self.process.poll,
+                should_stop_fn=lambda: self.should_stop,
+                on_tick=self._on_start_wait_tick,
+            )
+
+            if result == "stopped":
+                # 用户主动退出： teardown 由 _stop_service 负责，这里安静返回
+                return
+
+            if result == "ready":
                 time.sleep(2)
 
                 self.status = self.STATUS_READY
@@ -322,27 +400,48 @@ class TrayLauncher:
                 self._notify("启动成功", f"服务已就绪\n{self.server_url}")
 
                 webbrowser.open(self.server_url)
-            else:
-                if not self.should_stop:
-                    self.status = self.STATUS_ERROR
-                    self.status_message = "服务启动超时"
-                    self._update_icon()
-                    self._notify("启动失败", "服务启动超时，请检查日志")
-            
+                return
+
+            if result == "exited":
+                # 启动脚本提前退出（镜像全挂/MySQL 缺失等）：立即报错，不干等
+                rc = self.process.returncode
+                self.status = self.STATUS_ERROR
+                self.status_message = f"启动脚本已退出（码 {rc}）"
+                self._update_icon()
+                self._notify("启动失败", f"启动脚本提前退出（退出码 {rc}）\n日志：{self.startup_log_path}")
+                return
+
+            # result == "timeout"：硬超时，精确终止启动进程树，避免状态分裂
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(self.process.pid)],
+                    capture_output=True,
+                    timeout=10
+                )
+            except Exception:
+                pass
+            self.status = self.STATUS_ERROR
+            self.status_message = "服务启动超时"
+            self._update_icon()
+            self._notify("启动失败", f"服务启动超时，已终止启动进程\n日志：{self.startup_log_path}")
+
         except Exception as e:
             self.status = self.STATUS_ERROR
             self.status_message = f"启动失败: {e}"
             self._update_icon()
             self._notify("启动失败", str(e))
-    
-    def _read_process_output(self):
-        """读取进程输出（用于日志）"""
-        if self.process and self.process.stdout:
-            try:
-                for line in self.process.stdout:
-                    pass
-            except Exception:
-                pass
+
+    def _on_start_wait_tick(self, elapsed, slow_warning_fired):
+        """等待服务期间的周期回调：刷新托盘状态；慢启动时提醒一次（不置失败）。"""
+        elapsed = int(elapsed)
+        if elapsed > 0 and elapsed % LAUNCHER_STATUS_REFRESH_SECONDS == 0:
+            self.status_message = f"等待服务就绪 (端口 {self.server_port}，已等待 {elapsed} 秒)..."
+            self._update_icon()
+        if slow_warning_fired:
+            self._notify(
+                "启动耗时较长",
+                f"服务启动已超过 {LAUNCHER_SLOW_START_WARNING_SECONDS // 60} 分钟，仍在继续\n日志：{self.startup_log_path}"
+            )
     
     def _open_browser(self, icon=None, item=None):
         """打开浏览器"""

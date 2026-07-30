@@ -93,14 +93,14 @@ set "COMFYUI_MIRROR_MODE=manual"
 :mirror_detect_done
 echo.
 
-REM === 预下载 Python，支持多镜像自动回退（默认 80 秒超时） ===
+REM === 预下载 Python，多镜像自动回退 ===
+REM 逻辑在 scripts\tools\install_python.ps1：按 PID 精确等待/终止下载进程。
+REM 不可用 tasklist/taskkill 按进程名判断——托盘链路存在常驻的外层 uv.exe，会被误杀；
+REM 也不可再用 timeout /t 计秒——无控制台（stdin 重定向）时它会立即报错退出。
 echo [1.2/4] Ensuring Python 3.10 is available...
 echo   Install dir: %UV_PYTHON_INSTALL_DIR%
-set "PYTHON_READY=0"
 set "MIRROR_IDX=0"
 set "AUTO_RETRY=1"
-set "SUCCESS_FLAG=%TEMP%\comfyui_python_ok.flag"
-set "MIRROR_TIMEOUT=80"
 
 REM 根据网络检测结果或用户手动配置设置镜像索引
 if not "!UV_MIRROR!"=="auto" (
@@ -113,73 +113,17 @@ if not "!UV_MIRROR!"=="auto" (
     if "%COMFYUI_MIRROR_MODE%"=="manual" set "AUTO_RETRY=0"
 )
 
-:try_mirror
-if "!MIRROR_IDX!"=="0" set "MIRROR_NAME=ghfast"
-if "!MIRROR_IDX!"=="0" set "MIRROR_URL=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download"
-if "!MIRROR_IDX!"=="0" set "MIRROR_TIMEOUT=80"
-if "!MIRROR_IDX!"=="1" set "MIRROR_NAME=ghproxy"
-if "!MIRROR_IDX!"=="1" set "MIRROR_URL=https://ghproxy.cn/https://github.com/astral-sh/python-build-standalone/releases/download"
-if "!MIRROR_IDX!"=="1" set "MIRROR_TIMEOUT=80"
-if "!MIRROR_IDX!"=="2" set "MIRROR_NAME=gh-proxy"
-if "!MIRROR_IDX!"=="2" set "MIRROR_URL=https://gh-proxy.com/https://github.com/astral-sh/python-build-standalone/releases/download"
-if "!MIRROR_IDX!"=="2" set "MIRROR_TIMEOUT=80"
-if "!MIRROR_IDX!"=="3" set "MIRROR_NAME=moeyy"
-if "!MIRROR_IDX!"=="3" set "MIRROR_URL=https://github.moeyy.xyz/https://github.com/astral-sh/python-build-standalone/releases/download"
-if "!MIRROR_IDX!"=="3" set "MIRROR_TIMEOUT=80"
-if "!MIRROR_IDX!"=="4" set "MIRROR_NAME=direct"
-if "!MIRROR_IDX!"=="4" set "MIRROR_URL="
-if "!MIRROR_IDX!"=="4" set "MIRROR_TIMEOUT=120"
-if "!MIRROR_IDX!"=="5" goto :mirror_all_failed
-
-del "!SUCCESS_FLAG!" 2>nul
-echo   Trying !MIRROR_NAME! mirror (!MIRROR_TIMEOUT!s timeout)...
-
-if not "!MIRROR_URL!"=="" goto :mirror_has_url
-start /B "" "!UV_CMD!" python install cpython-3.10-windows-x86_64-none >nul 2>&1
-goto :wait_for_completion
-
-:mirror_has_url
-start /B "" "!UV_CMD!" python install cpython-3.10-windows-x86_64-none --mirror "!MIRROR_URL!" >nul 2>&1
-
-:wait_for_completion
-set "TIMEOUT_COUNT=0"
-:wait_loop
-tasklist /FI "IMAGENAME eq uv.exe" 2>nul | find /I "uv.exe" >nul
-if errorlevel 1 (
-    REM uv 进程已结束，检查是否成功
-    "!UV_CMD!" python find cpython-3.10-windows-x86_64-none >nul 2>&1
-    if not errorlevel 1 (
-        echo 1 > "!SUCCESS_FLAG!"
-    )
-    goto :mirror_check
-)
-
-REM 进程还在运行，继续等待
-set /a "TIMEOUT_COUNT+=1"
-if !TIMEOUT_COUNT! GEQ !MIRROR_TIMEOUT! (
-    REM 超时，杀掉进程
-    taskkill /F /IM uv.exe >nul 2>&1
-    goto :mirror_check
-)
-timeout /t 1 /nobreak >nul
-goto :wait_loop
-
-:mirror_check
-if exist "!SUCCESS_FLAG!" (
-    set "PYTHON_READY=1"
-    del "!SUCCESS_FLAG!" 2>nul
-    echo   [OK] Python ready via !MIRROR_NAME!
-    goto :mirror_done
-)
-
-echo   [WARN] !MIRROR_NAME! failed, trying next...
-if "!AUTO_RETRY!"=="0" goto :mirror_all_failed
-set /a "MIRROR_IDX+=1"
-goto :try_mirror
+if not exist "%SCRIPT_DIR%logs" mkdir "%SCRIPT_DIR%logs"
+set "PS_NO_FALLBACK="
+if "!AUTO_RETRY!"=="0" set "PS_NO_FALLBACK=-NoFallback"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\tools\install_python.ps1" -UvCmd "!UV_CMD!" -LogFile "%SCRIPT_DIR%logs\startup_python_install.log" -StartMirrorIdx !MIRROR_IDX! !PS_NO_FALLBACK!
+if errorlevel 1 goto :mirror_all_failed
+goto :mirror_done
 
 :mirror_all_failed
 echo [ERROR] All mirrors failed to download Python 3.10
 echo.
+echo   Detail log: %SCRIPT_DIR%logs\startup_python_install.log
 echo   Possible solutions:
 echo   1. Set UV_MIRROR=direct and use a VPN
 echo   2. Set UV_MIRROR=ghfast or UV_MIRROR=ghproxy to specify mirror

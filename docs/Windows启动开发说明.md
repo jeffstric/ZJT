@@ -215,7 +215,23 @@ python -m pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple
 - 确认防火墙是否允许该端口
 - 浏览器访问：`http://localhost:端口号`
 
-### 6. 杀毒软件误报 点我启动.exe / 文件被隔离删除
+### 6. 托盘入口（点我启动.bat）启动失败排查
+
+托盘链路无控制台窗口，start.bat 全程输出写入日志文件，失败时托盘气泡会给出路径：
+
+| 日志 | 内容 |
+|------|------|
+| `logs/startup.log` | start.bat 全程输出（镜像下载、更新检查、依赖安装、MySQL、服务启动），每轮启动重建 |
+| `logs/startup_python_install.log` | Python 下载明细（每个镜像的开始时间/结果/退出码），每轮启动重建 |
+| `launcher_detached.log` | 托盘自身的 detached 进程 stderr |
+
+**常见结论**：
+- 托盘报「启动脚本已退出（码 N）」→ 看 `logs/startup.log` 末尾即为失败原因
+- 托盘报「端口 9003 被其他程序占用」→ 有非智剧通程序占用了端口（托盘通过 `/api/system/health` 校验服务身份），关闭占用程序或改 `server.port`
+- 托盘报「服务启动超时」（超过 60 分钟硬超时）→ 启动进程树已被自动终止，按日志排查后重试
+- 启动超过 30 分钟仍在继续 → 托盘会提醒「启动耗时较长」，属慢网络下的正常等待，可继续等或经托盘「退出」取消
+
+### 7. 杀毒软件误报 点我启动.exe / 文件被隔离删除
 
 **背景**：`点我启动.exe` 由 PyInstaller 打包，其自解压机制与全网共享的 bootloader 特征，容易被部分杀毒软件（如 Windows Defender）误报为病毒并自动隔离删除。
 

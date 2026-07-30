@@ -45,6 +45,7 @@ powershell -NoProfile -Command "if((Test-NetConnection -ComputerName ghfast.top 
 if errorlevel 1 goto overseas
 
 echo Domestic network detected, using China mirrors.
+set "LAUNCHER_SOURCE=domestic"
 set "UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/"
 set "UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download"
 set "UV_HTTP_TIMEOUT=120"
@@ -52,6 +53,7 @@ goto run_launcher
 
 :overseas
 echo Overseas network detected, using official sources.
+set "LAUNCHER_SOURCE=overseas"
 set "UV_INDEX_URL=https://pypi.org/simple/"
 set "UV_HTTP_TIMEOUT=120"
 
@@ -64,18 +66,33 @@ echo.
 REM The launcher hides this console once the tray is ready.
 REM On failure the window stays open so the exit code below is visible.
 "!UV_CMD!" run --python cpython-3.10-windows-x86_64-none --with-requirements requirements.txt scripts\launchers\launcher.py
+if not errorlevel 1 goto :launcher_done
 
-if errorlevel 1 (
-    echo.
-    echo ========================================
-    echo [ERROR] Launcher exited with code !errorlevel!
-    echo ========================================
-    echo.
-    pause
+REM 首次失败：切到对侧源重试一次（Python 多镜像回退在 start.bat 的 install_python.ps1，
+REM 此处只做一次 domestic/official 互换）
+if "!LAUNCHER_SOURCE!"=="domestic" (
+    echo [WARN] China mirrors failed, retrying with official sources...
+    set "UV_INDEX_URL=https://pypi.org/simple/"
+    set "UV_PYTHON_INSTALL_MIRROR="
 ) else (
-    REM Launcher exited normally (detached process spawned).
-    REM Brief pause to let user see output before window closes.
-    timeout /t 2 /nobreak >nul
+    echo [WARN] Official sources failed, retrying with China mirrors...
+    set "UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/"
+    set "UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download"
 )
+"!UV_CMD!" run --python cpython-3.10-windows-x86_64-none --with-requirements requirements.txt scripts\launchers\launcher.py
+if not errorlevel 1 goto :launcher_done
+
+echo.
+echo ========================================
+echo [ERROR] Launcher exited with code !errorlevel!
+echo ========================================
+echo.
+pause
+exit /b 1
+
+:launcher_done
+REM Launcher exited normally (detached process spawned).
+REM Brief pause to let user see output before window closes.
+timeout /t 2 /nobreak >nul
 
 endlocal
