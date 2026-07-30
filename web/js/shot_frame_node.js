@@ -1898,15 +1898,15 @@
       modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;';
       
       const modalContent = document.createElement('div');
-      modalContent.style.cssText = 'background: white; border-radius: 12px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow: auto;';
+      modalContent.className = 'script-select-modal-card';
       
       modalContent.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-          <h3 style="margin: 0; font-size: 18px; font-weight: 600;">选择剧本</h3>
-          <button class="modal-close-btn" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #666;">&times;</button>
+          <h3 class="script-select-modal-title">选择剧本</h3>
+          <button class="modal-close-btn script-select-modal-close" type="button" aria-label="关闭">&times;</button>
         </div>
         <div class="script-list-container" style="min-height: 200px;">
-          <div style="text-align: center; padding: 40px; color: #666;">加载中...</div>
+          <div class="script-list-loading">加载中...</div>
         </div>
       `;
       
@@ -1973,7 +1973,7 @@
 
         if (scripts.length === 0) {
           listContainer.innerHTML = `
-            <div style="text-align: center; padding: 40px; color: #666;">
+            <div class="script-list-empty">
               <p>当前世界下暂无保存的剧本</p>
             </div>
           `;
@@ -1981,32 +1981,23 @@
         }
 
         listContainer.innerHTML = scripts.map(script => `
-          <div class="script-item" data-script-id="${script.id}" style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 12px; cursor: pointer; transition: all 0.2s;">
+          <div class="script-item" data-script-id="${script.id}" style="padding: 16px; margin-bottom: 12px;">
             <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
-              <div style="font-weight: 600; font-size: 14px; color: #111827;">${escapeHtml(script.title || '无标题')}</div>
-              ${script.episode_number ? `<div style="background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 4px; font-size: 12px;">第${script.episode_number}集</div>` : ''}
+              <div class="asset-item-title" style="font-size: 14px;">${escapeHtml(script.title || '无标题')}</div>
+              ${script.episode_number ? `<div class="script-episode-badge">第${script.episode_number}集</div>` : ''}
             </div>
-            <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
+            <div class="asset-item-desc" style="font-size: 12px; margin-bottom: 8px;">
               创建时间: ${new Date(script.create_time).toLocaleString('zh-CN')}
             </div>
-            <div style="font-size: 13px; color: #374151; max-height: 60px; overflow: hidden; text-overflow: ellipsis;">
+            <div class="asset-item-desc" style="font-size: 13px; max-height: 60px; overflow: hidden; text-overflow: ellipsis;">
               ${escapeHtml((script.content || '').substring(0, 100))}${(script.content || '').length > 100 ? '...' : ''}
             </div>
           </div>
         `).join('');
 
+        // hover 由 CSS .script-item:hover 处理，兼容浅/暗色
         const scriptItems = listContainer.querySelectorAll('.script-item');
         scriptItems.forEach(item => {
-          item.addEventListener('mouseenter', () => {
-            item.style.background = '#f3f4f6';
-            item.style.borderColor = '#10b981';
-          });
-          
-          item.addEventListener('mouseleave', () => {
-            item.style.background = 'white';
-            item.style.borderColor = '#e5e7eb';
-          });
-
           item.addEventListener('click', () => {
             const scriptId = parseInt(item.dataset.scriptId);
             const script = scripts.find(s => s.id === scriptId);
@@ -2036,8 +2027,8 @@
       } catch (error) {
         console.error('加载剧本列表失败:', error);
         listContainer.innerHTML = `
-          <div style="text-align: center; padding: 40px; color: #ef4444;">
-            <p>加载失败: ${error.message}</p>
+          <div class="script-list-error">
+            <p>加载失败: ${escapeHtml(error.message || String(error))}</p>
           </div>
         `;
         showToast('加载剧本列表失败', 'error');

@@ -180,3 +180,58 @@
 .modal#coloringEditorModal.coloring-editor-modal {
   z-index: 10050;
 }
+
+/* 暗色模式：仅 html.theme-dark 时生效 */
+html.theme-dark .coloring-editor-modal .coloring-modal-card {
+  background: var(--surface, #161920);
+  color: var(--text, #e8eaed);
+  border-color: var(--border, #2a2f3a);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+html.theme-dark .coloring-editor-modal .coloring-modal-header {
+  background: var(--panel, #1a1d24);
+  border-bottom-color: var(--border, #2a2f3a);
+}
+html.theme-dark .coloring-editor-modal .coloring-modal-title {
+  color: var(--text, #e8eaed);
+}
+html.theme-dark .coloring-editor-modal .coloring-modal-close {
+  background: var(--surface-3, #252a33);
+  color: var(--text, #e8eaed);
+}
+html.theme-dark .coloring-editor-modal .coloring-modal-close:hover {
+  background: var(--panel-hover, #2f3540);
+}
+html.theme-dark .coloring-editor-modal .coloring-modal-body {
+  background: var(--surface, #161920);
+}
+html.theme-dark .coloring-editor-modal .coloring-modal-footer {
+  border-top-color: var(--border, #2a2f3a);
+}
+html.theme-dark .coloring-canvas-container {
+  border-color: var(--border, #2a2f3a);
+  background: var(--surface-2, #1c1f26);
+}
+html.theme-dark .coloring-tools .coloring-label {
+  color: var(--text, #e8eaed);
+}
+html.theme-dark .coloring-tools input[type="color"] {
+  border-color: var(--border-strong, #3a4150);
+  background: var(--input-bg, #1c1f26);
+}
+html.theme-dark .coloring-tools .coloring-value {
+  color: var(--muted, #9aa0a6);
+}
+html.theme-dark .coloring-btn {
+  border-color: var(--border, #2a2f3a);
+  background: var(--surface, #161920);
+  color: var(--text, #e8eaed);
+}
+html.theme-dark .coloring-btn:hover {
+  background: var(--panel, #1a1d24);
+}
+html.theme-dark .coloring-btn.primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}

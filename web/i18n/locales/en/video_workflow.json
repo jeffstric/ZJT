@@ -14,6 +14,8 @@
   "delete_world": "Delete Current World",
   "public_space": "Public Space",
   "workflow_tutorial": "Workflow Tutorial",
+  "theme_toggle_to_dark": "Switch to dark mode",
+  "theme_toggle_to_light": "Switch to light mode",
   "save": "Save",
   "save_workflow": "Save Workflow",
   "style_settings": "Style Settings",
