@@ -1964,7 +1964,7 @@
                                         <h4>{{ provider.icon }} {{ provider.name }}</h4>
                                         <p>{{ provider.description }}</p>
                                         <a v-if="provider.docUrl" :href="provider.docUrl" target="_blank" class="qc-register-link">
-                                            &#128279; {{ t('btn_register_guide') }}
+                                            &#128279; {{ provider.docUrlLabel || t('btn_register_guide') }}
                                         </a>
                                     </div>
                                     <span v-if="isProviderConfigured(provider.id)" class="qc-badge qc-badge-done">&#10003; {{ t('badge_configured') }}</span>
