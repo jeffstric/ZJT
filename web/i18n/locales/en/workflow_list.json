@@ -28,7 +28,7 @@
   "edit_modal_title": "Edit Workflow",
   "workflow_name_label": "Workflow Name *",
   "workflow_desc_label": "Description",
-  "expand_desc": "Expand Description",
+  "expand_desc": "Expand Description (optional)",
   "collapse_desc": "Collapse Description",
   "world_label": "World",
   "world_desc_hint": "World is a box containing characters, scenes, props, and scripts",

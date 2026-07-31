@@ -5858,9 +5858,32 @@
             document.getElementById('new-world-name').value = '';
             document.getElementById('new-world-description').value = '';
             document.getElementById('new-world-story-type').value = 'dialogue';
+            // 世界描述默认折叠，需用户点击后再编辑
+            const descSection = document.getElementById('new-world-desc-section');
+            const toggleBtn = document.getElementById('toggle-new-world-desc-btn');
+            if (descSection) descSection.style.display = 'none';
+            if (toggleBtn) {
+                toggleBtn.textContent = window.t ? window.t('expand_world_desc') : '展开填写世界描述（可选）';
+            }
             clearNewWorldFormError();
             document.getElementById('new-world-modal').classList.add('show');
             document.getElementById('new-world-name').focus();
+        }
+
+        function toggleNewWorldDescSection() {
+            const section = document.getElementById('new-world-desc-section');
+            const btn = document.getElementById('toggle-new-world-desc-btn');
+            if (!section || !btn) return;
+            const isHidden = section.style.display === 'none' || !section.style.display;
+            if (isHidden) {
+                section.style.display = 'block';
+                btn.textContent = window.t ? window.t('collapse_world_desc') : '收起世界描述';
+                const ta = document.getElementById('new-world-description');
+                if (ta) ta.focus();
+            } else {
+                section.style.display = 'none';
+                btn.textContent = window.t ? window.t('expand_world_desc') : '展开填写世界描述（可选）';
+            }
         }
 
         function closeNewWorldModal() {
