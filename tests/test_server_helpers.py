@@ -118,6 +118,31 @@ class TestStaticVersion(unittest.TestCase):
         self.assertNotEqual(hash1, hash2)
 
 
+class TestGenerationSnapshotExtraConfigContract(unittest.TestCase):
+    """直接生成 API 对 hidden 模型的契约（避免再回归 MODEL_HIDDEN）。"""
+
+    def test_direct_api_allows_hidden_with_explicit_task_id(self):
+        """
+        _generation_snapshot_extra_config 必须 allow_hidden=True。
+
+        直接 API 已强制请求带 task_id；hidden 仅约束偏好选择器，
+        不能再拦 qwen-multi-angle 等多角度新任务。
+        """
+        from pathlib import Path
+
+        server_path = Path(__file__).resolve().parents[1] / "server.py"
+        source = server_path.read_text(encoding="utf-8")
+        start = source.find("def _generation_snapshot_extra_config")
+        self.assertNotEqual(start, -1)
+        # 只检查该函数体，避免误匹配其它 validate_model 调用
+        end = source.find("\nasync def ", start)
+        if end == -1:
+            end = source.find("\ndef ", start + 1)
+        body = source[start:end if end != -1 else start + 2500]
+        self.assertIn("allow_hidden=True", body)
+        self.assertNotIn("allow_hidden=bool(snapshot)", body)
+
+
 class TestCacheBustPattern(unittest.TestCase):
     """测试静态资源缓存失效正则"""
 

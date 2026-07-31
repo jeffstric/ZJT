@@ -414,8 +414,10 @@ class UnifiedTaskConfig:
     supports_grid_merge: bool = False  # 是否支持宫格合并生成视频
     supports_grid_image: bool = False  # 是否支持宫格生图（一次生成多张图片）
     supports_last_frame: bool = True  # 是否支持尾帧（某些模型虽然支持首尾帧模式，但只使用首帧，忽略尾帧）
-    # hidden=True 的任务：前端模型选择器不显示，但仍可通过 API 调用
-    # 常见用途：功能下线但保留配置常量、仅内部使用、测试任务
+    # hidden=True 的任务：前端模型选择器 / 用户偏好槽位不显示，
+    # 但直接生成 API 在请求显式传入 task_id 时仍可调用（如多角度内部模型）。
+    # 常见用途：功能下线但保留配置常量、仅内部使用、测试任务。
+    # 注意：disabled 与 hidden 不同，disabled 会拒绝一切新任务与重试。
     hidden: bool = False
     power_modifiers: List[PowerModifier] = field(default_factory=list)  # 算力修饰符列表
     supports_ref_audio_video: bool = False  # 是否支持参考音频和视频
