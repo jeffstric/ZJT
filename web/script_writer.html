@@ -1136,8 +1136,11 @@
                         </select>
                     </div>
                     <div class="form-group full-width">
-                        <label class="form-label"><span data-i18n="label_world_desc">世界描述</span></label>
-                        <textarea id="new-world-description" class="form-textarea" rows="4" placeholder="描述这个世界的背景、设定等（可选）" maxlength="500"></textarea>
+                        <button type="button" class="btn btn-secondary btn-sm" id="toggle-new-world-desc-btn" onclick="toggleNewWorldDescSection()" style="width: 100%; justify-content: center;" data-i18n="expand_world_desc">展开填写世界描述（可选）</button>
+                        <div id="new-world-desc-section" style="display: none; margin-top: 12px;">
+                            <label class="form-label"><span data-i18n="label_world_desc">世界描述</span></label>
+                            <textarea id="new-world-description" class="form-textarea" rows="4" placeholder="描述这个世界的背景、设定等（可选）" data-i18n-placeholder="placeholder_world_desc" maxlength="500"></textarea>
+                        </div>
                     </div>
                 </div>
             </div>

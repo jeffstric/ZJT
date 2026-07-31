@@ -592,6 +592,8 @@
   "placeholder_world_name": "请输入世界名称",
   "label_world_desc": "世界描述",
   "placeholder_world_desc": "请输入世界描述",
+  "expand_world_desc": "展开填写世界描述（可选）",
+  "collapse_world_desc": "收起世界描述",
   "label_story_type": "故事类型",
   "story_type_dialogue": "对话剧情",
   "story_type_narration": "旁白解说",
