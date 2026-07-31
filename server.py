@@ -183,13 +183,17 @@ def _generation_snapshot_extra_config(
         if not isinstance(snapshot, dict):
             raise HTTPException(status_code=400, detail="generation_snapshot 必须是 JSON 对象")
     try:
+        # 直接生成 API 要求请求显式传入 task_id：允许内部/专用 hidden 模型
+        # （如 qwen-multi-angle 多角度编辑）。hidden 仅约束「用户偏好/默认模型」
+        # 选择器，不禁止带明确 task_id 的新任务。disabled 模型仍拒绝。
+        # 已持久化 snapshot 的重试路径同样走这里，expected_model_key 继续防漂移。
         config = MediaGenerationPreferenceService.validate_model(
             task_id,
             media_type,
             mode,
             image_mode=image_mode,
             has_reference_audio_video=has_reference_audio_video,
-            allow_hidden=bool(snapshot),
+            allow_hidden=True,
             expected_model_key=(snapshot or {}).get('model_key'),
         )
     except MediaGenerationPreferenceError as exc:

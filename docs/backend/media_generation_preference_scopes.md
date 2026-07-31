@@ -58,7 +58,16 @@ media_pref.<surface>.<media_type>.<mode>
 }
 ```
 
-`task_id` 是执行依据，`model_key` 用于配置漂移校验，`model_name` 仅用于展示。新请求不能选择 disabled 或 hidden 模型。偏好读取不使用永久进程内缓存，避免多 Worker 读取陈旧值。
+`task_id` 是执行依据，`model_key` 用于配置漂移校验，`model_name` 仅用于展示。偏好槽位与默认模型解析不能选择 disabled 或 hidden 模型。偏好读取不使用永久进程内缓存，避免多 Worker 读取陈旧值。
+
+`hidden` 语义分层：
+
+| 场景 | disabled | hidden |
+|------|----------|--------|
+| 用户偏好保存 / 默认模型回落 | 拒绝 | 拒绝 |
+| 模型选择器列表 | 不展示 | 不展示 |
+| 直接生成 API（`/api/image-edit` 等，请求已显式 `task_id`） | 拒绝 | **允许**（内部/专用模型，如多角度） |
+| 已提交任务的可信 `generation_snapshot` 重试 | 拒绝 | 允许 |
 
 ## 不可变任务快照
 
@@ -112,7 +121,7 @@ Storyboard CLI：
 显式 --task-type → storyboard_cli 模式偏好 → 首次兼容默认模型
 ```
 
-已配置模型不存在、禁用、隐藏或不兼容时，新请求直接失败或在偏好界面回落并写入第一个兼容模型；只有从未配置过或已失效的槽位可以按 `sort_order` 初始化。已提交任务的可信快照允许模型后来变为 `hidden=True` 后继续执行，但模型后来被 disabled 时仍拒绝。
+已配置模型不存在、禁用、隐藏或不兼容时，偏好解析路径直接失败或在偏好界面回落并写入第一个兼容模型；只有从未配置过或已失效的槽位可以按 `sort_order` 初始化。直接生成 API 在请求已显式传入 `task_id` 时允许 `hidden=True` 的内部模型（例如相机控制 / 场景多角度使用的 `qwen-multi-angle`），但仍拒绝 disabled。已提交任务的可信快照同样允许模型后来变为 `hidden=True` 后继续执行，disabled 仍拒绝。
 
 ## Storyboard 项目配置
 
