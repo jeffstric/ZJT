@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 """scripts/launchers/launcher.py 的等待状态机与服务身份验证测试"""
 import json
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -126,6 +130,47 @@ class TestCheckServiceIdentity(unittest.TestCase):
         port = sock.getsockname()[1]
         sock.close()
         self.assertFalse(self._tray()._check_service_identity(port))
+
+
+@unittest.skipUnless(sys.platform == "win32", "launcher 仅支持 Windows")
+class TestRelaunchDetached(unittest.TestCase):
+    """_relaunch_detached：直接用当前解释器重启、且不得使用 DETACHED_PROCESS。
+
+    默认终端为 Windows Terminal 的机器上，DETACHED_PROCESS 会反效果地给子进程
+    弹出可见控制台窗口（残留空窗口，关窗连带杀托盘）；CREATE_NO_WINDOW 才可靠。
+    """
+
+    def test_relaunch_flags_and_cmd(self):
+        from unittest import mock
+
+        project_dir = tempfile.mkdtemp(prefix="zjt_relaunch_test_")
+        self.addCleanup(shutil.rmtree, project_dir, True)
+
+        with mock.patch.object(launcher.subprocess, "Popen") as mock_popen:
+            launcher._relaunch_detached(project_dir)
+
+        self.assertTrue(mock_popen.called)
+        cmd = mock_popen.call_args[0][0]
+        kwargs = mock_popen.call_args[1]
+
+        # 直接用当前解释器重启自身（不再经 uv run 转手）
+        self.assertEqual(cmd[0], sys.executable)
+        self.assertEqual(cmd[-1], os.path.abspath(launcher.__file__))
+
+        flags = kwargs["creationflags"]
+        self.assertEqual(flags & subprocess.DETACHED_PROCESS, 0,
+                         "不得使用 DETACHED_PROCESS（WT 默认终端下会弹可见窗口）")
+        self.assertTrue(flags & subprocess.CREATE_NO_WINDOW)
+
+        env = kwargs["env"]
+        self.assertEqual(env["ZJT_LAUNCHER_DETACHED"], "1")
+        self.assertEqual(env["PYTHONUTF8"], "1")
+        self.assertTrue(env["UV_PYTHON_INSTALL_DIR"].endswith(os.path.join("bin", "python")))
+
+        # stderr 落 launcher_detached.log
+        stderr_target = kwargs["stderr"]
+        self.assertEqual(getattr(stderr_target, "name", None),
+                         os.path.join(project_dir, "launcher_detached.log"))
 
 
 if __name__ == "__main__":

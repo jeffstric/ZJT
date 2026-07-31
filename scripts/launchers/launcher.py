@@ -635,12 +635,17 @@ DETACHED_ENV_FLAG = "ZJT_LAUNCHER_DETACHED"
 
 
 def _relaunch_detached(project_dir):
-    """以独立后台进程重新启动自己（DETACHED_PROCESS），让当前 uv run 的 python 退出。
+    """以独立后台进程重新启动自己，让当前 uv run 的 python 退出。
 
-    这样 uv run 返回 -> cmd 退出 -> 命令行窗口自动关闭；托盘由 detached 副本作为
+    这样 uv run 返回 -> cmd 退出 -> 命令行窗口自动关闭；托盘由后台副本作为
     独立进程常驻，与启动它的控制台彻底解耦。
 
-    使用 uv run --with-requirements 确保 pystray/Pillow 等依赖在 detached 进程中可用。
+    直接用当前解释器 sys.executable 重启：stage-1 的 uv run 已完成依赖解析，
+    当前环境即包含 pystray/Pillow 等全部依赖，无需再经 uv 转手。
+
+    注意：flags 不可用 DETACHED_PROCESS——默认终端为 Windows Terminal 的机器上
+    它会反效果地给子进程弹出可见控制台窗口（残留空窗口，关窗还会连带杀托盘）；
+    CREATE_NO_WINDOW 才是可靠的无窗口方式（探针实测：子进程完全无控制台）。
     """
     env = dict(os.environ)
     env[DETACHED_ENV_FLAG] = "1"
@@ -652,24 +657,22 @@ def _relaunch_detached(project_dir):
     os.makedirs(python_install_dir, exist_ok=True)
     env["UV_PYTHON_INSTALL_DIR"] = python_install_dir
     flags = 0
-    for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
+    for name in ("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP"):
         flags |= getattr(subprocess, name, 0)
 
-    # 构建 uv run 命令，确保依赖可用
-    uv_exe = os.path.join(project_dir, "bin", "uv", "uv.exe")
-    requirements_file = os.path.join(project_dir, "requirements.txt")
     script_path = os.path.abspath(__file__)
-
-    if os.path.exists(uv_exe) and os.path.exists(requirements_file):
+    if sys.executable:
+        cmd = [sys.executable, "-X", "utf8", script_path]
+    else:
+        # 极端兜底（无解释器路径）：仍走 uv run 确保依赖可用
+        uv_exe = os.path.join(project_dir, "bin", "uv", "uv.exe")
+        requirements_file = os.path.join(project_dir, "requirements.txt")
         cmd = [
             uv_exe, "run",
             "--python", "cpython-3.10-windows-x86_64-none",
             "--with-requirements", requirements_file,
             script_path,
         ]
-    else:
-        # 回退：直接用当前 Python（可能缺依赖，但至少尝试）
-        cmd = [sys.executable, "-X", "utf8", script_path]
 
     # stderr 写入日志文件，便于排查 detached 进程崩溃
     log_file_path = os.path.join(project_dir, "launcher_detached.log")
