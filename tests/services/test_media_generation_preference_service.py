@@ -75,7 +75,8 @@ def test_determine_mode_uses_real_inputs(media_type, kwargs, expected):
     assert MediaGenerationPreferenceService.determine_mode(media_type, **kwargs) == expected
 
 
-def test_hidden_model_is_rejected_for_new_request(monkeypatch):
+def test_hidden_model_is_rejected_for_preference_selection(monkeypatch):
+    """偏好保存/默认模型路径：hidden 模型不可选。"""
     monkeypatch.setattr(
         "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_id",
         lambda task_id: _config(task_id, hidden=True),
@@ -89,18 +90,50 @@ def test_hidden_model_is_rejected_for_new_request(monkeypatch):
     assert exc_info.value.code == MediaGenerationErrorCode.MODEL_HIDDEN
 
 
-def test_persisted_snapshot_can_validate_hidden_model(monkeypatch):
+def test_allow_hidden_accepts_internal_or_snapshot_models(monkeypatch):
+    """直接 API 显式 task_id / 已持久化 snapshot：allow_hidden=True 可放行。"""
     monkeypatch.setattr(
         "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_id",
-        lambda task_id: _config(task_id, hidden=True),
+        lambda task_id: _config(
+            task_id,
+            category=TaskCategory.IMAGE_EDIT,
+            hidden=True,
+        ),
     )
     config = MediaGenerationPreferenceService.validate_model(
         11,
         MediaGenerationType.IMAGE,
-        MediaGenerationMode.TEXT_TO_IMAGE,
+        MediaGenerationMode.IMAGE_EDIT,
         allow_hidden=True,
     )
     assert config.id == 11
+
+
+def test_qwen_multi_angle_image_edit_allowed_with_allow_hidden():
+    """多角度内部模型：偏好不可选，直接 image-edit 校验可放行。"""
+    from config.unified_config import TaskTypeId, UnifiedConfigRegistry
+
+    config = UnifiedConfigRegistry.get_by_id(TaskTypeId.QWEN_MULTI_ANGLE_IMAGE)
+    assert config is not None
+    assert config.hidden is True
+    assert config.enabled is True
+
+    with pytest.raises(MediaGenerationPreferenceError) as exc_info:
+        MediaGenerationPreferenceService.validate_model(
+            config.id,
+            MediaGenerationType.IMAGE,
+            MediaGenerationMode.IMAGE_EDIT,
+        )
+    assert exc_info.value.code == MediaGenerationErrorCode.MODEL_HIDDEN
+
+    resolved = MediaGenerationPreferenceService.validate_model(
+        config.id,
+        MediaGenerationType.IMAGE,
+        MediaGenerationMode.IMAGE_EDIT,
+        allow_hidden=True,
+    )
+    assert resolved.id == config.id
+    assert resolved.key == "qwen-multi-angle"
 
 
 def test_first_last_with_ref_requires_reference_video_capability(monkeypatch):
