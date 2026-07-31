@@ -123,7 +123,7 @@ async def health_check():
         "code": 0,
         "data": {
             "app": "ZJT",
-            "service": "comfyui-server",
+            "service": "zjt_server",
             "status": "ok",
         }
     }
