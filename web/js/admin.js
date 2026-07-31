@@ -49,10 +49,12 @@ const PROVIDER_DEFINITIONS = [
         category: 'llm',
         icon: '☁️',
         docUrl: 'https://yw.perseids.cn/register?aff=hE0h',
-        lazyRecommended: true,
+        docUrlLabelKey: 'btn_legacy_user_login',
+        // 智剧通API 逐步下线，不再作为推荐供应商，也不再展示「ZJT官方API」徽章
+        lazyRecommended: false,
         displayOrder: 1,
         baseName: 'ywapi',
-        isOfficialAPI: true,
+        isOfficialAPI: false,
         showInCategories: ['llm', 'image', 'video'],
         impactsKey: 'provider_ywapi_impacts',
         fields: [
@@ -148,7 +150,8 @@ const PROVIDER_DEFINITIONS = [
         category: 'image',
         icon: '🎨',
         docUrl: 'https://duomiapi.com/user/register?cps=U4GgW1Fx',
-        lazyRecommended: false,
+        // 快速选择推荐方案：DeepSeek 大模型 + 多米（生图/生视频）
+        lazyRecommended: true,
         displayOrder: 4,
         baseName: 'duomi',
         isOfficialAPI: false,
@@ -540,6 +543,7 @@ function translateProvider(p, tFn) {
     translated.name = p.nameKey ? tFn(p.nameKey, p.nameKeyParams || {}) : (p.name || '');
     translated.description = p.descKey ? tFn(p.descKey, p.descKeyParams || {}) : (p.description || '');
     translated.impacts = p.impactsKey ? tFn(p.impactsKey).split(',').map(s => s.trim()) : (p.impacts || []);
+    translated.docUrlLabel = p.docUrlLabelKey ? tFn(p.docUrlLabelKey) : (p.docUrlLabel || '');
     translated.fields = p.fields.map(f => ({
         ...f,
         label: f.labelKey ? tFn(f.labelKey) : (f.label || ''),
@@ -1049,12 +1053,13 @@ const AdminApp = {
             return status;
         },
 
+        // 与右侧配置卡片一致：按 baseName 去重（多米生图+生视频、火山多分类等只算 1 个）
         selectedCount() {
-            return this.quickConfigModal.selectedProviderIds.length;
+            return this.selectedProvidersDetail.length;
         },
 
         configuredCount() {
-            return this.quickConfigModal.selectedProviderIds.filter(id => this.isProviderConfigured(id)).length;
+            return this.selectedProvidersDetail.filter(p => this.isProviderConfigured(p.id)).length;
         },
 
         configuredProgress() {
@@ -3039,29 +3044,49 @@ const AdminApp = {
             }
         },
 
-        // 快速设置：只选择智剧通API
+        // 快速设置：选择 DeepSeek 大模型 + 多米（生图/生视频共享 Token）
+        // 注意：duomi_video 需排在 duomi 前，使右侧合并卡片的 id 与 CONFIG_KEY 反向映射一致
         handleQuickSetup() {
             this.quickConfigModal.quickSelected = true;
-            this.quickConfigModal.selectedProviderIds = ['ywapi'];
+            const ids = ['deepseek', 'duomi_video', 'duomi'];
+            this.quickConfigModal.selectedProviderIds = [...ids];
             this.quickConfigModal.originalValues = this.quickConfigModal.originalValues || {};
-            if (!this.quickConfigModal.providerFormData['ywapi']) {
-                this.quickConfigModal.providerFormData['ywapi'] = {};
-            }
-            if (!this.quickConfigModal.originalValues['ywapi']) {
-                this.quickConfigModal.originalValues['ywapi'] = {};
-            }
-            this.showToast(this.t('toast_auto_selected_zjt'), 'success');
+            ids.forEach(id => {
+                if (!this.quickConfigModal.providerFormData[id]) {
+                    this.quickConfigModal.providerFormData[id] = {};
+                }
+                if (!this.quickConfigModal.originalValues[id]) {
+                    this.quickConfigModal.originalValues[id] = {};
+                }
+            });
+            this.quickConfigModal.activeCategory = 'llm';
+            this.showToast(this.t('toast_auto_selected_recommended'), 'success');
         },
 
-        // 移除已选服务商
+        // 移除已选服务商（同 baseName 的合并项一并取消，如 多米 生图/生视频）
         removeProvider(providerId) {
-            const idx = this.quickConfigModal.selectedProviderIds.indexOf(providerId);
-            if (idx >= 0) {
-                this.quickConfigModal.selectedProviderIds.splice(idx, 1);
-            }
+            const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
+            const base = provider ? (provider.baseName || provider.id) : providerId;
+            this.quickConfigModal.selectedProviderIds = this.quickConfigModal.selectedProviderIds.filter(id => {
+                const p = PROVIDER_DEFINITIONS.find(d => d.id === id);
+                return !p || (p.baseName || p.id) !== base;
+            });
         },
 
-        // 获取表单字段值
+        // 获取服务商 baseName（同 token/api_key 的生图/生视频等归为一组）
+        getProviderBaseName(providerId) {
+            const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
+            return provider ? (provider.baseName || provider.id) : providerId;
+        },
+
+        // 同 baseName 下所有 provider id（含未选中的兄弟项，便于读取已加载的配置）
+        getProviderIdsByBaseName(baseName) {
+            return PROVIDER_DEFINITIONS
+                .filter(p => (p.baseName || p.id) === baseName)
+                .map(p => p.id);
+        },
+
+        // 获取表单字段值（同 baseName 兄弟项共享，如多米 token 只填一份）
         getFormField(providerId, fieldId) {
             const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
             if (provider) {
@@ -3070,22 +3095,43 @@ const AdminApp = {
                     return field.defaultValue;
                 }
             }
-            return (this.quickConfigModal.providerFormData[providerId] || {})[fieldId] || '';
+            const direct = (this.quickConfigModal.providerFormData[providerId] || {})[fieldId];
+            if (direct) return direct;
+            const base = this.getProviderBaseName(providerId);
+            for (const id of this.getProviderIdsByBaseName(base)) {
+                if (id === providerId) continue;
+                const v = (this.quickConfigModal.providerFormData[id] || {})[fieldId];
+                if (v) return v;
+            }
+            return '';
         },
 
-        // 更新表单字段值
+        // 更新表单字段值（写入当前 id，并同步到同 baseName 的已选兄弟项，保证计数/保存一致）
         updateFormField(providerId, fieldId, value) {
             if (!this.quickConfigModal.providerFormData[providerId]) {
                 this.quickConfigModal.providerFormData[providerId] = {};
             }
             this.quickConfigModal.providerFormData[providerId][fieldId] = value;
+
+            const base = this.getProviderBaseName(providerId);
+            this.quickConfigModal.selectedProviderIds.forEach(id => {
+                if (id === providerId) return;
+                if (this.getProviderBaseName(id) !== base) return;
+                if (!this.quickConfigModal.providerFormData[id]) {
+                    this.quickConfigModal.providerFormData[id] = {};
+                }
+                this.quickConfigModal.providerFormData[id][fieldId] = value;
+            });
         },
 
-        // 判断服务商是否已配置（至少有一个字段有值）
+        // 判断服务商是否已配置：同 baseName 任一兄弟有值即算已配置
         isProviderConfigured(providerId) {
-            const formData = this.quickConfigModal.providerFormData[providerId];
-            if (!formData) return false;
-            return Object.values(formData).some(v => v && v.trim());
+            const base = this.getProviderBaseName(providerId);
+            return this.getProviderIdsByBaseName(base).some(id => {
+                const formData = this.quickConfigModal.providerFormData[id];
+                if (!formData) return false;
+                return Object.values(formData).some(v => v && String(v).trim());
+            });
         },
 
         // 保存单个服务商的配置
