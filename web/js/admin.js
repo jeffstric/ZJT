@@ -1053,12 +1053,13 @@ const AdminApp = {
             return status;
         },
 
+        // 与右侧配置卡片一致：按 baseName 去重（多米生图+生视频、火山多分类等只算 1 个）
         selectedCount() {
-            return this.quickConfigModal.selectedProviderIds.length;
+            return this.selectedProvidersDetail.length;
         },
 
         configuredCount() {
-            return this.quickConfigModal.selectedProviderIds.filter(id => this.isProviderConfigured(id)).length;
+            return this.selectedProvidersDetail.filter(p => this.isProviderConfigured(p.id)).length;
         },
 
         configuredProgress() {
@@ -3072,7 +3073,20 @@ const AdminApp = {
             });
         },
 
-        // 获取表单字段值
+        // 获取服务商 baseName（同 token/api_key 的生图/生视频等归为一组）
+        getProviderBaseName(providerId) {
+            const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
+            return provider ? (provider.baseName || provider.id) : providerId;
+        },
+
+        // 同 baseName 下所有 provider id（含未选中的兄弟项，便于读取已加载的配置）
+        getProviderIdsByBaseName(baseName) {
+            return PROVIDER_DEFINITIONS
+                .filter(p => (p.baseName || p.id) === baseName)
+                .map(p => p.id);
+        },
+
+        // 获取表单字段值（同 baseName 兄弟项共享，如多米 token 只填一份）
         getFormField(providerId, fieldId) {
             const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
             if (provider) {
@@ -3081,22 +3095,43 @@ const AdminApp = {
                     return field.defaultValue;
                 }
             }
-            return (this.quickConfigModal.providerFormData[providerId] || {})[fieldId] || '';
+            const direct = (this.quickConfigModal.providerFormData[providerId] || {})[fieldId];
+            if (direct) return direct;
+            const base = this.getProviderBaseName(providerId);
+            for (const id of this.getProviderIdsByBaseName(base)) {
+                if (id === providerId) continue;
+                const v = (this.quickConfigModal.providerFormData[id] || {})[fieldId];
+                if (v) return v;
+            }
+            return '';
         },
 
-        // 更新表单字段值
+        // 更新表单字段值（写入当前 id，并同步到同 baseName 的已选兄弟项，保证计数/保存一致）
         updateFormField(providerId, fieldId, value) {
             if (!this.quickConfigModal.providerFormData[providerId]) {
                 this.quickConfigModal.providerFormData[providerId] = {};
             }
             this.quickConfigModal.providerFormData[providerId][fieldId] = value;
+
+            const base = this.getProviderBaseName(providerId);
+            this.quickConfigModal.selectedProviderIds.forEach(id => {
+                if (id === providerId) return;
+                if (this.getProviderBaseName(id) !== base) return;
+                if (!this.quickConfigModal.providerFormData[id]) {
+                    this.quickConfigModal.providerFormData[id] = {};
+                }
+                this.quickConfigModal.providerFormData[id][fieldId] = value;
+            });
         },
 
-        // 判断服务商是否已配置（至少有一个字段有值）
+        // 判断服务商是否已配置：同 baseName 任一兄弟有值即算已配置
         isProviderConfigured(providerId) {
-            const formData = this.quickConfigModal.providerFormData[providerId];
-            if (!formData) return false;
-            return Object.values(formData).some(v => v && v.trim());
+            const base = this.getProviderBaseName(providerId);
+            return this.getProviderIdsByBaseName(base).some(id => {
+                const formData = this.quickConfigModal.providerFormData[id];
+                if (!formData) return false;
+                return Object.values(formData).some(v => v && String(v).trim());
+            });
         },
 
         // 保存单个服务商的配置
