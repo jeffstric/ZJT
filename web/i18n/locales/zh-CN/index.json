@@ -426,6 +426,7 @@
   "select_image_model": "选择生图模型",
   "current_power_balance": "当前算力余额（点击查看日志）",
   "submit_data": "提交",
+  "submitting_data": "提交中...",
   "auto_submit": "自动",
   "auto_submit_tip": "开启后每分钟自动提交",
   "compress_history": "压缩对话历史（保留关键信息，减少上下文长度）",

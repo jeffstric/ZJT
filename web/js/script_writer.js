@@ -830,6 +830,56 @@
 
         // 提交状态标志，防止重复提交
         let isSubmitting = false;
+        let submitSuccessTimer = null;
+
+        /**
+         * 控制右上角「提交」按钮环绕 loading 状态。
+         * loading=true 时显示环绕转圈，整次提交结束前不得提前关闭。
+         * success=true 时短暂展示绿色成功环。
+         */
+        function setSubmitButtonLoading(loading, { success = false } = {}) {
+            const submitBtn = document.getElementById('submit-to-db-btn')
+                || document.querySelector('.header-action-btn.primary');
+            if (!submitBtn) return submitBtn;
+
+            const textEl = submitBtn.querySelector('.btn-text');
+
+            if (submitSuccessTimer) {
+                clearTimeout(submitSuccessTimer);
+                submitSuccessTimer = null;
+            }
+
+            if (loading) {
+                submitBtn.classList.add('is-submitting');
+                submitBtn.classList.remove('submit-success', 'disabled');
+                submitBtn.disabled = true;
+                submitBtn.setAttribute('aria-busy', 'true');
+                if (textEl) {
+                    textEl.textContent = window.t
+                        ? (window.t('submitting_data') || window.t('status_submitting'))
+                        : '提交中...';
+                }
+            } else {
+                submitBtn.classList.remove('is-submitting', 'disabled');
+                submitBtn.disabled = false;
+                submitBtn.setAttribute('aria-busy', 'false');
+                if (textEl) {
+                    textEl.textContent = window.t ? window.t('submit_data') : '提交';
+                }
+                if (success) {
+                    submitBtn.classList.add('submit-success');
+                    submitSuccessTimer = setTimeout(() => {
+                        if (submitBtn.isConnected) {
+                            submitBtn.classList.remove('submit-success');
+                        }
+                        submitSuccessTimer = null;
+                    }, 500);
+                } else {
+                    submitBtn.classList.remove('submit-success');
+                }
+            }
+            return submitBtn;
+        }
 
         async function submitToDatabase() {
             // 防止重复提交
@@ -844,13 +894,10 @@
                 return;
             }
 
-            // 设置提交状态并禁用按钮
+            // 设置提交状态并开启按钮环绕 loading（贯穿整次请求）
             isSubmitting = true;
-            const submitBtn = document.querySelector('.header-action-btn.primary');
-            if (submitBtn) {
-                submitBtn.disabled = true;
-                submitBtn.classList.add('disabled');
-            }
+            setSubmitButtonLoading(true);
+            let submitOk = false;
 
             try {
                 updateStatus(window.t ? window.t('status_submitting_data') : '正在提交数据...');
@@ -862,6 +909,7 @@
 
                 const data = await response.json();
                 if (data.success) {
+                    submitOk = true;
                     showSuccess(window.t ? window.t('success_submit_detail', {total: data.total}) : `✓ 提交成功！共保存 ${data.total} 个文件到数据库`);
                     updateStatus(window.t ? window.t('status_data_submitted') : '数据已提交到数据库');
                 } else {
@@ -872,12 +920,9 @@
                 showError((window.t ? window.t('error_submit_failed', {error: error.message}) : '提交失败: ' + error.message));
                 updateStatus(window.t ? window.t('status_submit_failed') : '提交失败');
             } finally {
-                // 恢复提交状态并启用按钮
+                // 仅在整次提交结束后关闭 loading；成功时附加短暂成功反馈
                 isSubmitting = false;
-                if (submitBtn) {
-                    submitBtn.disabled = false;
-                    submitBtn.classList.remove('disabled');
-                }
+                setSubmitButtonLoading(false, { success: submitOk });
             }
         }
 

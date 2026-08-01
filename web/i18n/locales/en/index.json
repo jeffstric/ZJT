@@ -435,6 +435,7 @@
   "select_image_model": "Select Image Model",
   "current_power_balance": "Current Power Balance (Click to view logs)",
   "submit_data": "Submit",
+  "submitting_data": "Submitting...",
   "auto_submit": "Auto",
   "auto_submit_tip": "Auto-submit every minute when enabled",
   "compress_history": "Compress Chat History (Keep key information, reduce context length)",
