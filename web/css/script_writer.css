@@ -509,6 +509,8 @@ body {
 }
 
 .header-action-btn.primary {
+    position: relative;
+    overflow: visible;
     background: var(--primary-gradient);
     color: white;
     border-color: transparent;
@@ -517,6 +519,79 @@ body {
 .header-action-btn.primary:hover {
     opacity: 0.9;
     box-shadow: 0 4px 12px -2px rgba(139, 92, 246, 0.4);
+}
+
+/*
+ * 提交按钮 loading：亮点沿按钮自身 border 路径绕行
+ * 只旋转 conic-gradient 的起始角，按钮外形固定不动（不是整块环在转）
+ */
+@property --submit-border-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+}
+
+.header-action-btn.primary .submit-btn-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    box-sizing: border-box;
+    /* 仅露出约 2px 的边框路径 = 按钮的 border 轨迹 */
+    padding: 2px;
+    /* 底色为暗淡描边，一小段为高亮「亮点」 */
+    background: conic-gradient(
+        from var(--submit-border-angle),
+        rgba(255, 255, 255, 0.2) 0deg,
+        rgba(255, 255, 255, 0.2) 300deg,
+        rgba(255, 255, 255, 0.55) 330deg,
+        #ffffff 348deg,
+        rgba(255, 255, 255, 0.75) 355deg,
+        rgba(255, 255, 255, 0.2) 360deg
+    );
+    -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+}
+
+.header-action-btn.primary.is-submitting {
+    cursor: wait;
+    opacity: 0.95;
+    pointer-events: none;
+    /* 提交中用透明边框，避免与亮点 border 叠双线 */
+    border-color: transparent;
+}
+
+.header-action-btn.primary.is-submitting:hover {
+    opacity: 0.95;
+    box-shadow: 0 4px 12px -2px rgba(139, 92, 246, 0.35);
+}
+
+.header-action-btn.primary.is-submitting .submit-btn-ring {
+    opacity: 1;
+    animation: submit-border-highlight-spin 1.2s linear infinite;
+}
+
+/* 成功：整圈边框短暂变绿 */
+.header-action-btn.primary.submit-success .submit-btn-ring {
+    opacity: 1;
+    animation: none;
+    background: var(--success-color);
+}
+
+.header-action-btn.primary:disabled {
+    cursor: wait;
+}
+
+@keyframes submit-border-highlight-spin {
+    to { --submit-border-angle: 360deg; }
 }
 
 .header-action-btn.feedback-btn {

@@ -9,7 +9,7 @@
 | [script_auto_split_improvement.md](./script_auto_split_improvement.md) | 剧本节点自动拆分分镜功能改进 |
 | [script_parser_incremental_split_design.md](./script_parser_incremental_split_design.md) | 模型语义分段、逐段拆分、断点续传与异步轮询设计 |
 | [shot_frame_references.md](./shot_frame_references.md) | 分镜节点引用显示功能（场景/道具/角色） |
-| [auto_submit_feature.md](./auto_submit_feature.md) | 自动提交数据库功能（定时自动保存） |
+| [auto_submit_feature.md](./auto_submit_feature.md) | 自动提交数据库功能（定时自动保存）与提交按钮环绕 Loading |
 | [world_export_import.md](./world_export_import.md) | 世界导出与导入接口说明 |
 | [character_matching.md](./character_matching.md) | 剧本解析角色匹配功能 |
 | [script_language_sync.md](./script_language_sync.md) | 剧本节点语言联动功能 |

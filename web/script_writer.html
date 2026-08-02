@@ -330,7 +330,8 @@
                     <span class="power-icon">⚡</span>
                     <span class="power-value" id="power-value">--</span>
                 </div>
-                <button class="header-action-btn primary" onclick="submitToDatabase()" title="提交" data-i18n="submit_data:title">
+                <button id="submit-to-db-btn" class="header-action-btn primary" type="button" onclick="submitToDatabase()" title="提交" data-i18n="submit_data:title" aria-busy="false">
+                    <span class="submit-btn-ring" aria-hidden="true"></span>
                     <span class="btn-icon">💾</span>
                     <span class="btn-text" data-i18n="submit_data">提交</span>
                 </button>
