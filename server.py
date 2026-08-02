@@ -2211,26 +2211,61 @@ async def ai_app_run_image(
             video_path = await asyncio.to_thread(_save_uploaded_image, video)
             logger.info(f"Saved reference video: {video_path}")
 
-        generation_mode = MediaGenerationPreferenceService.determine_mode(
-            MediaGenerationType.VIDEO,
-            image_urls=main_image_list,
-            reference_image_urls=ref_image_list,
-            video_urls=video_path,
-            audio_urls=audio_path,
-            image_mode=image_mode,
-        )
+        # 数字人（DIGITAL_HUMAN）与图生视频/参考生视频是不同品类：
+        # 其 audio 是「对口型说话音频」必选输入，不是 reference_to_video 的参考素材。
+        # 若走 determine_mode，有 audio 会被判成 reference_to_video，进而被
+        # validate_model 以「模型不支持 reference_to_video」拒绝（MODEL_MODE_UNSUPPORTED）。
         base_extra_config = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
         if resolution:
             base_extra_config[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
-        audited_extra_config = _generation_snapshot_extra_config(
-            generation_snapshot,
-            task_id=task_id,
-            media_type=MediaGenerationType.VIDEO,
-            mode=generation_mode,
-            image_mode=image_mode,
-            has_reference_audio_video=bool(video_path or audio_path),
-            extra_config=json.dumps(base_extra_config, ensure_ascii=False),
-        )
+        if task_config.category == TaskCategory.DIGITAL_HUMAN:
+            if not audio_path:
+                raise HTTPException(status_code=400, detail="数字人任务需要提供说话音频（audio 或 audio_urls）")
+            if not main_image_list:
+                raise HTTPException(status_code=400, detail="数字人任务需要提供角色图片")
+            snapshot = None
+            if generation_snapshot:
+                try:
+                    snapshot = (
+                        json.loads(generation_snapshot)
+                        if isinstance(generation_snapshot, str)
+                        else generation_snapshot
+                    )
+                except (TypeError, json.JSONDecodeError):
+                    raise HTTPException(status_code=400, detail="generation_snapshot 必须是 JSON 对象")
+                if not isinstance(snapshot, dict):
+                    raise HTTPException(status_code=400, detail="generation_snapshot 必须是 JSON 对象")
+            if snapshot is None:
+                snapshot = {
+                    "schema_version": 1,
+                    "surface": "direct_api",
+                    "media_type": MediaGenerationType.VIDEO,
+                    "mode": TaskCategory.DIGITAL_HUMAN,
+                    "model_source": "request",
+                    "task_id": int(task_id),
+                    "model_key": task_config.key,
+                    "model_name": task_config.name,
+                }
+            base_extra_config["generation_snapshot"] = snapshot
+            audited_extra_config = json.dumps(base_extra_config, ensure_ascii=False)
+        else:
+            generation_mode = MediaGenerationPreferenceService.determine_mode(
+                MediaGenerationType.VIDEO,
+                image_urls=main_image_list,
+                reference_image_urls=ref_image_list,
+                video_urls=video_path,
+                audio_urls=audio_path,
+                image_mode=image_mode,
+            )
+            audited_extra_config = _generation_snapshot_extra_config(
+                generation_snapshot,
+                task_id=task_id,
+                media_type=MediaGenerationType.VIDEO,
+                mode=generation_mode,
+                image_mode=image_mode,
+                has_reference_audio_video=bool(video_path or audio_path),
+                extra_config=json.dumps(base_extra_config, ensure_ascii=False),
+            )
 
         # 根据 image_mode 和图片数量构建 context，用于算力修饰符计算
         context = {}
