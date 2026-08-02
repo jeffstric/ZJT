@@ -46,6 +46,7 @@ scripts/launchers/start_windows.py（Windows 启动管理器）
 - 安装路径不能有中文
 - 确保 bin/mysql 目录存在（MySQL 服务）
 - 确保 bin/ffmpeg 目录存在（视频处理）
+- uv 托管的 Python 3.10 默认安装到 bin/python（项目目录内），不写用户 AppData
 - 关闭窗口或按 Ctrl+C 停止服务
 
 ========================================

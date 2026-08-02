@@ -352,7 +352,9 @@ if __name__ == "__main__":
 
 | 设计点 | 处理 |
 |--------|------|
-| 本地版本检测 | 优先 `git describe --tags --abbrev=0`，回退读取 `pyproject.toml` |
+| 本地版本检测 | 收集 `tag --points-at HEAD` / `describe` / `pyproject.toml`，取版本最高者（避免 describe 落后导致启动死循环） |
+| 更新对齐目标 | 优先 `reset --hard <远程最新 tag>`，失败再回退 `origin/{branch}` |
+| 防无限重启 | 更新后若本地版本仍落后远程 tag，返回 0 继续启动，不再返回 10 |
 | git 二进制 | 仅使用项目内置 bin/git，不回退系统 PATH |
 | .git 不存在 | 自动 `git init` + `remote add` + `fetch --depth 1` + `reset --hard origin/{branch}` |
 | 网络不通 | timeout 30s，失败返回 1（跳过更新，继续启动） |

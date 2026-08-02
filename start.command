@@ -13,6 +13,10 @@ export PYTHONUTF8=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# uv 托管 Python 安装到项目目录，避免写入 ~/.local/share/uv/python
+export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$SCRIPT_DIR/bin/python}"
+mkdir -p "$UV_PYTHON_INSTALL_DIR"
+
 echo ""
 echo "========================================"
 echo "  ZJT Server Startup (macOS)"
@@ -46,6 +50,7 @@ if [ ! -f "$UV_CMD" ]; then
 fi
 
 echo "[OK] uv found"
+echo "[INFO] UV_PYTHON_INSTALL_DIR=$UV_PYTHON_INSTALL_DIR"
 
 # [1.5/4] 检查更新（在 uv 就绪后执行）
 echo ""

@@ -1677,6 +1677,14 @@ class UpgradeConstants:
     DEFAULT_REPO_URL = ""                   # 默认仓库地址（为空时跳过检查）
 
 
+# ===== 托盘启动器（scripts/launchers/launcher.py）=====
+
+LAUNCHER_PORT_POLL_SECONDS = 1                # 端口/进程轮询间隔（秒）
+LAUNCHER_STATUS_REFRESH_SECONDS = 15          # 托盘状态文案刷新周期（秒）
+LAUNCHER_SLOW_START_WARNING_SECONDS = 1800    # 慢启动提醒阈值：只提醒不失败，继续等待（秒）
+LAUNCHER_SERVICE_HARD_TIMEOUT_SECONDS = 3600  # 启动硬超时：精确终止启动进程树并报错（秒）
+
+
 # ============ 通知系统常量 ============
 
 class NotificationConstants:
