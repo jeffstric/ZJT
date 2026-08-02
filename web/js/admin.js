@@ -1118,14 +1118,16 @@ const AdminApp = {
     },
 
     methods: {
-        // 认证错误处理（清除本地存储并跳转登录）
+        // 认证错误处理（401 清除本地存储并跳转登录；403 为"已登录但非管理员"，保留登录态仅跳转）
         handleAuthError(status) {
-            if (status === 401 || status === 403) {
+            if (status === 401) {
                 localStorage.removeItem('auth_token');
                 localStorage.removeItem('phone');
                 localStorage.removeItem('email');
                 localStorage.removeItem('user_id');
                 localStorage.removeItem('invite_code');
+                window.location.href = '/index.html';
+            } else if (status === 403) {
                 window.location.href = '/index.html';
             }
         },

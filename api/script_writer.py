@@ -24,6 +24,10 @@ from config.constant import (
     MediaGenerationMode,
     MediaGenerationSurface,
     MediaGenerationType,
+    PERSEIDS_ERR_INVALID_AUTH_TOKEN,
+    PERSEIDS_ERR_NO_VALID_TOKEN,
+    ERROR_CODE_TOKEN_EXPIRED,
+    ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
 )
 from utils.resource_access import get_user_id_from_header, ensure_world_access
 from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
@@ -239,10 +243,22 @@ async def verify_auth_token(user_id: str, auth_token: str) -> tuple[bool, Option
         )
         
         if not success:
-            logger.warning(f"Token验证失败 - user_id: {user_id}, 错误: {message}")
+            # 依据源头 error_code 精确分类（不做 message 文案匹配）：
+            # NO_VALID_TOKEN = 该用户确证无有效 token（被顶号/登出/重置密码），按 token 失效处理；
+            # 其余失败（服务故障/DB 异常等）一律视为认证服务不可用，不得误报 token 失效。
+            if isinstance(auth_data, dict) and auth_data.get('error_code') == PERSEIDS_ERR_NO_VALID_TOKEN:
+                logger.warning(f"Token确证失效 - user_id: {user_id}, 错误: {message}")
+                return False, {
+                    'success': False,
+                    'error': '登录已过期，请重新登录',
+                    'error_code': ERROR_CODE_TOKEN_EXPIRED,
+                    'token_expired': True
+                }
+            logger.warning(f"Token验证服务故障 - user_id: {user_id}, 错误: {message}")
             return False, {
                 'success': False,
-                'error': 'Token验证失败',
+                'error': '认证服务暂时不可用，请稍后重试',
+                'error_code': ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
                 'message': message
             }
         
@@ -253,9 +269,16 @@ async def verify_auth_token(user_id: str, auth_token: str) -> tuple[bool, Option
         logger.error(f"Token验证异常 - user_id: {user_id}, 错误: {str(e)}")
         return False, {
             'success': False,
-            'error': 'Token验证异常',
+            'error': '认证服务暂时不可用，请稍后重试',
+            'error_code': ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
             'message': f'验证服务异常: {str(e)}'
         }
+
+def _auth_error_status_code(error_response: dict) -> int:
+    """按 error_code 分流：认证服务自身故障 → 502；token 确证失效 → 401。"""
+    if isinstance(error_response, dict) and error_response.get('error_code') == ERROR_CODE_AUTH_SERVICE_UNAVAILABLE:
+        return 502
+    return 401
 
 async def check_computing_power(auth_token: str) -> tuple[bool, int, Optional[str]]:
     """
@@ -279,8 +302,9 @@ async def check_computing_power(auth_token: str) -> tuple[bool, int, Optional[st
         )
         
         if not success:
-            # 检测 token 过期
-            if '无效或已过期' in message or 'token' in message.lower() or '认证' in message:
+            # 依据源头 error_code 判定 token 确证失效（不做 message 文案匹配，
+            # 避免算力不足/限额等含 "token"/"认证" 字样的错误被误判为登录失效）
+            if isinstance(response_data, dict) and response_data.get('error_code') == PERSEIDS_ERR_INVALID_AUTH_TOKEN:
                 return False, 0, f'TOKEN_EXPIRED: {message}'
             return False, 0, f'算力检查失败: {message}'
         
@@ -936,7 +960,7 @@ async def create_session(request: Request, session_request: SessionCreateRequest
         # 验证 auth_token
         is_valid, error_response = await verify_auth_token(session_request.user_id, session_request.auth_token)
         if not is_valid:
-            return JSONResponse(error_response, status_code=401)
+            return JSONResponse(error_response, status_code=_auth_error_status_code(error_response))
         
         # 从数据库同步数据到文件系统（不强制覆盖，有差异时跳过）
         sync_result = sync_database_to_files(session_request.user_id, session_request.world_id, session_request.auth_token, force_overwrite=False)
@@ -2948,7 +2972,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
         # 验证 auth_token
         is_valid, error_response = await verify_auth_token(user_id, auth_token)
         if not is_valid:
-            return JSONResponse(error_response, status_code=401)
+            return JSONResponse(error_response, status_code=_auth_error_status_code(error_response))
         
         # 检查 model_id - 优先使用请求中的 model_id（前端最新选择），其次使用会话中的
         model_id = task_request.model_id if task_request.model_id is not None else (session.model_id if hasattr(session, 'model_id') else None)
