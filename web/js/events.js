@@ -1422,19 +1422,19 @@
           }
           
           listEl.innerHTML = result.data.data.map(character => `
-            <div class="character-item" data-character-id="${escapeHtml(String(character.id))}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
+            <div class="character-item" data-character-id="${escapeHtml(String(character.id))}" style="padding: 12px; margin-bottom: 10px;">
               <div style="display: flex; gap: 12px; align-items: start;">
-                ${character.reference_image ? `<img src="${escapeHtml(character.reference_image)}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 60px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
+                ${character.reference_image ? `<img src="${escapeHtml(character.reference_image)}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border);" />` : '<div class="asset-item-placeholder" style="width: 60px; height: 60px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px;">无图片</div>'}
                 <div style="flex: 1;">
-                  <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">${escapeHtml(character.name)}</div>
-                  ${character.age ? `<div style="font-size: 12px; color: #666; margin-bottom: 2px;">年龄: ${escapeHtml(character.age)}</div>` : ''}
-                  ${character.identity ? `<div style="font-size: 12px; color: #666;">${escapeHtml(character.identity)}</div>` : ''}
+                  <div class="asset-item-title" style="font-size: 14px; margin-bottom: 4px;">${escapeHtml(character.name)}</div>
+                  ${character.age ? `<div class="asset-item-desc" style="font-size: 12px; margin-bottom: 2px;">年龄: ${escapeHtml(character.age)}</div>` : ''}
+                  ${character.identity ? `<div class="asset-item-desc" style="font-size: 12px;">${escapeHtml(character.identity)}</div>` : ''}
                 </div>
               </div>
             </div>
           `).join('');
           
-          // 添加点击事件
+          // 添加点击事件（hover 由 CSS .character-item:hover 处理，兼容暗色）
           listEl.querySelectorAll('.character-item').forEach(item => {
             item.addEventListener('click', () => {
               const characterId = item.dataset.characterId;
@@ -1445,16 +1445,6 @@
                 renderMinimap();
                 startNodePlacing(nodeId);
               }
-            });
-            
-            item.addEventListener('mouseenter', () => {
-              item.style.background = '#f8fafc';
-              item.style.borderColor = '#22c55e';
-            });
-            
-            item.addEventListener('mouseleave', () => {
-              item.style.background = '';
-              item.style.borderColor = '#e5e7eb';
             });
           });
         }
@@ -1505,18 +1495,18 @@
           }
           
           listEl.innerHTML = result.data.data.map(location => `
-            <div class="location-item" data-location-id="${escapeHtml(String(location.id))}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
+            <div class="location-item" data-location-id="${escapeHtml(String(location.id))}" style="padding: 12px; margin-bottom: 10px;">
               <div style="display: flex; gap: 12px; align-items: start;">
-                ${location.reference_image ? `<img src="${escapeHtml(location.reference_image)}" style="width: 80px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 80px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
+                ${location.reference_image ? `<img src="${escapeHtml(location.reference_image)}" style="width: 80px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border);" />` : '<div class="asset-item-placeholder" style="width: 80px; height: 60px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px;">无图片</div>'}
                 <div style="flex: 1;">
-                  <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">${escapeHtml(location.name)}</div>
-                  ${location.description ? `<div style="font-size: 12px; color: #666; line-height: 1.4;">${escapeHtml(location.description.slice(0, 100))}${location.description.length > 100 ? '...' : ''}</div>` : ''}
+                  <div class="asset-item-title" style="font-size: 14px; margin-bottom: 4px;">${escapeHtml(location.name)}</div>
+                  ${location.description ? `<div class="asset-item-desc" style="font-size: 12px; line-height: 1.4;">${escapeHtml(location.description.slice(0, 100))}${location.description.length > 100 ? '...' : ''}</div>` : ''}
                 </div>
               </div>
             </div>
           `).join('');
           
-          // 添加点击事件
+          // 添加点击事件（hover 由 CSS .location-item:hover 处理，兼容暗色）
           listEl.querySelectorAll('.location-item').forEach(item => {
             item.addEventListener('click', () => {
               const locationId = item.dataset.locationId;
@@ -1536,16 +1526,6 @@
                   startNodePlacing(nodeId);
                 }
               }
-            });
-            
-            item.addEventListener('mouseenter', () => {
-              item.style.background = '#f8fafc';
-              item.style.borderColor = '#22c55e';
-            });
-            
-            item.addEventListener('mouseleave', () => {
-              item.style.background = '';
-              item.style.borderColor = '#e5e7eb';
             });
           });
         }
@@ -1596,18 +1576,18 @@
           }
           
           listEl.innerHTML = result.data.data.map(props => `
-            <div class="props-item" data-props-id="${escapeHtml(String(props.id))}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
+            <div class="props-item" data-props-id="${escapeHtml(String(props.id))}" style="padding: 12px; margin-bottom: 10px;">
               <div style="display: flex; gap: 12px; align-items: start;">
-                ${props.reference_image ? `<img src="${escapeHtml(props.reference_image)}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 60px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
+                ${props.reference_image ? `<img src="${escapeHtml(props.reference_image)}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border);" />` : '<div class="asset-item-placeholder" style="width: 60px; height: 60px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px;">无图片</div>'}
                 <div style="flex: 1;">
-                  <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">${escapeHtml(props.name)}</div>
-                  ${props.content ? `<div style="font-size: 12px; color: #666; line-height: 1.4;">${escapeHtml(props.content.slice(0, 100))}${props.content.length > 100 ? '...' : ''}</div>` : ''}
+                  <div class="asset-item-title" style="font-size: 14px; margin-bottom: 4px;">${escapeHtml(props.name)}</div>
+                  ${props.content ? `<div class="asset-item-desc" style="font-size: 12px; line-height: 1.4;">${escapeHtml(props.content.slice(0, 100))}${props.content.length > 100 ? '...' : ''}</div>` : ''}
                 </div>
               </div>
             </div>
           `).join('');
           
-          // 添加点击事件
+          // 添加点击事件（hover 由 CSS .props-item:hover 处理，兼容暗色）
           listEl.querySelectorAll('.props-item').forEach(item => {
             item.addEventListener('click', () => {
               const propsId = item.dataset.propsId;
@@ -1627,16 +1607,6 @@
                   startNodePlacing(nodeId);
                 }
               }
-            });
-            
-            item.addEventListener('mouseenter', () => {
-              item.style.background = '#f8fafc';
-              item.style.borderColor = '#22c55e';
-            });
-            
-            item.addEventListener('mouseleave', () => {
-              item.style.background = '';
-              item.style.borderColor = '#e5e7eb';
             });
           });
         }
