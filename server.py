@@ -95,7 +95,7 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceError,
     MediaGenerationPreferenceService,
 )
-from config.constant import MediaGenerationType, MediaGenerationMode
+from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
@@ -2485,6 +2485,7 @@ async def get_computing_power(request: Request, auth_token: str = Header(None, a
                 status_code=401,
                 content={
                     'success': False,
+                    'error_code': 'missing_auth_token',
                     'message': '未提供认证信息'
                 }
             )
@@ -2512,8 +2513,11 @@ async def get_computing_power(request: Request, auth_token: str = Header(None, a
                 }
             )
         else:
+            # 依据源头 error_code 精确判定 token 确证失效（不做 message 文案匹配，
+            # 避免算力不足/限额等含 "token"/"认证" 字样的错误被误判为登录失效）
+            is_invalid_token = isinstance(response_data, dict) and response_data.get('error_code') == PERSEIDS_ERR_INVALID_AUTH_TOKEN
             # 认证失败时，尝试使用 X-User-Id 兜底查询本地算力（故事板等内部页面可能携带过期 localStorage token）
-            if message and ('无效' in message or '认证' in message or 'token' in str(message).lower()):
+            if is_invalid_token:
                 x_user_id = request.headers.get('x-user-id') or request.headers.get('X-User-Id')
                 if x_user_id:
                     try:
@@ -2529,14 +2533,17 @@ async def get_computing_power(request: Request, auth_token: str = Header(None, a
                         )
                     except Exception:
                         pass
-            # 非认证错误或无兜底时返回对应状态码
-            status_code = 401 if message and ('无效' in message or '认证' in message or 'token' in str(message).lower()) else 400
+            # 非认证错误或无兜底时返回对应状态码；401 响应带结构化 error_code 供前端精确识别
+            status_code = 401 if is_invalid_token else 400
+            content = {
+                'success': False,
+                'message': message or '查询算力失败'
+            }
+            if is_invalid_token:
+                content['error_code'] = 'invalid_auth_token'
             return JSONResponse(
                 status_code=status_code,
-                content={
-                    'success': False,
-                    'message': message or '查询算力失败'
-                }
+                content=content
             )
     
     except Exception as e:

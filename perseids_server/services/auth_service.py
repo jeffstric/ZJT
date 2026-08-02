@@ -11,6 +11,7 @@ from model.verify_codes import VerifyCodesModel
 from model.computing_power import ComputingPowerModel
 from model.computing_power_log import ComputingPowerLogModel
 from model.login_log import LoginLogModel
+from config.constant import PERSEIDS_ERR_NO_VALID_TOKEN
 
 from ..utils.token import generate_token, hash_password, verify_password, generate_secret_key
 from ..utils.validator import validate_phone, validate_password, validate_email
@@ -591,7 +592,8 @@ class AuthService:
         try:
             token = UserTokensModel.get_token_by_user_id(user_id)
             if not token:
-                return {"success": False, "message": "未找到有效的token"}
+                # error_code 供 client.py 透传给下游：查不到有效 token 属"确证失效"（单会话策略下为被顶号/登出/重置密码）
+                return {"success": False, "message": "未找到有效的token", "error_code": PERSEIDS_ERR_NO_VALID_TOKEN}
             
             return {
                 "success": True,

@@ -256,12 +256,9 @@
       
       // 优先处理 login=1 参数（通常表示认证过期需要重新登录）
       if (urlParams.get('login') === '1') {
-        // 清除可能已过期的本地认证信息
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('phone');
-        localStorage.removeItem('user_id');
-        localStorage.removeItem('invite_code');
-        
+        // 不再无条件清除本地认证信息：误报 401 也会跳到这里，token 可能仍然有效。
+        // 本地有 token 时在下方恢复逻辑后做一次主动校验（verifyAuthTokenOnLoginEntry），确证失效才清理。
+
         // 处理登录后跳转的目标路径（仅允许路径，不允许完整URL）
         const redirectUrl = urlParams.get('redirect_url');
         if (redirectUrl) {
@@ -306,6 +303,11 @@
         this.userId = localStorage.getItem('user_id') || '';
         // URL 带的邀请码优先，localStorage 仅兜底（避免未登录时被空值覆盖、丢失 URL 邀请码）
         this.inviteCode = this.inviteCode || localStorage.getItem('invite_code') || '';
+      }
+
+      // login=1 进入且本地仍有 token：主动校验一次（async，不阻塞 mounted），确证失效才清理登录态并弹登录框
+      if (urlParams.get('login') === '1' && this.authToken) {
+        this.verifyAuthTokenOnLoginEntry();
       }
 
       // URL/本地存储带有的邀请码，自动代入注册表单（支持 ?invite_code=xxx 打开即带入）
@@ -846,16 +848,46 @@
         return local.substring(0, 2) + '***@' + domain;
       },
       
+      // 统一清理本地登录态（各清除点的 key 集合保持一致）
+      clearLocalAuthInfo() {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('phone');
+        localStorage.removeItem('email');
+        localStorage.removeItem('user_id');
+        localStorage.removeItem('invite_code');
+      },
+
+      // login=1 进入时的主动 token 校验：确证失效才清登录态，误报/网络异常一律保留
+      async verifyAuthTokenOnLoginEntry() {
+        const token = localStorage.getItem('auth_token');
+        if (!token) return;
+        try {
+          // 只带 Authorization，不带 X-User-Id，避免触发服务端本地兜底掩盖 401
+          await axios.get('/api/user/computing_power', {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          // 2xx：token 有效，保持登录态（误报场景用户无感）
+        } catch (error) {
+          const status = error?.response?.status;
+          const code = error?.response?.data?.error_code;
+          if (status === 401 && (code === 'invalid_auth_token' || code === 'TOKEN_EXPIRED')) {
+            // 确证失效：清理登录态并弹出登录框
+            this.clearLocalAuthInfo();
+            this.authToken = '';
+            this.loginError = '登录已过期，请重新登录';
+            this.showLoginModal = true;
+            this.authMode = 'login';
+          }
+          // 其他情况（网络错/5xx/400）：保守保留登录态
+        }
+      },
+
       handleAuthError(error) {
         // 检查错误响应中是否包含认证过期信息
         const detail = error?.response?.data?.detail || '';
         if (detail.includes('无效或已过期的认证信息')) {
           // 清除本地存储的认证信息
-          localStorage.removeItem('auth_token');
-          localStorage.removeItem('phone');
-          localStorage.removeItem('email');
-          localStorage.removeItem('user_id');
-          localStorage.removeItem('invite_code');
+          this.clearLocalAuthInfo();
           
           // 清除当前状态
           this.authToken = '';

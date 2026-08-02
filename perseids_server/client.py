@@ -9,6 +9,7 @@ import asyncio
 from perseids_server.services.auth_service import AuthService
 from perseids_server.services.computing_power_service import ComputingPowerService
 from perseids_server.services.verify_code_service import VerifyCodeService
+from config.constant import PERSEIDS_ERR_INVALID_AUTH_TOKEN
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +43,14 @@ def make_perseids_request(endpoint=None, data=None, method='POST', headers=None)
         if endpoint == 'user/check_computing_power':
             user_id = AuthService.verify_token(token)
             if not user_id:
-                return False, '无效的认证信息', {}
+                return False, '无效的认证信息', {'error_code': PERSEIDS_ERR_INVALID_AUTH_TOKEN}
             result = ComputingPowerService.check_computing_power(user_id)
             return result.get('success', False), result.get('message', ''), result.get('data', {})
         
         elif endpoint == 'user/calculate_computing_power':
             user_id = AuthService.verify_token(token)
             if not user_id:
-                return False, '无效的认证信息', {}
+                return False, '无效的认证信息', {'error_code': PERSEIDS_ERR_INVALID_AUTH_TOKEN}
             result = ComputingPowerService.calculate_computing_power(
                 user_id=user_id,
                 computing_power=payload.get('computing_power', 0),
@@ -63,7 +64,7 @@ def make_perseids_request(endpoint=None, data=None, method='POST', headers=None)
         elif endpoint == 'user/computing_power_logs':
             user_id = AuthService.verify_token(token)
             if not user_id:
-                return False, '无效的认证信息', {}
+                return False, '无效的认证信息', {'error_code': PERSEIDS_ERR_INVALID_AUTH_TOKEN}
             result = ComputingPowerService.get_computing_power_logs(
                 user_id=user_id,
                 limit=payload.get('limit', 20),
@@ -75,7 +76,7 @@ def make_perseids_request(endpoint=None, data=None, method='POST', headers=None)
         elif endpoint == 'user/invitation_reward_stats':
             user_id = AuthService.verify_token(token)
             if not user_id:
-                return False, '无效的认证信息', {}
+                return False, '无效的认证信息', {'error_code': PERSEIDS_ERR_INVALID_AUTH_TOKEN}
             result = ComputingPowerService.get_invitation_reward_stats(user_id)
             return result.get('success', False), result.get('message', ''), result.get('data', {})
         
@@ -83,19 +84,19 @@ def make_perseids_request(endpoint=None, data=None, method='POST', headers=None)
             user_id = AuthService.verify_token(token)
             if user_id:
                 return True, '获取成功', {'user_id': user_id}
-            return False, '无效的认证信息', {}
+            return False, '无效的认证信息', {'error_code': PERSEIDS_ERR_INVALID_AUTH_TOKEN}
         
         elif endpoint == 'user/check_first_recharge':
             user_id = AuthService.verify_token(token)
             if not user_id:
-                return False, '无效的认证信息', {}
+                return False, '无效的认证信息', {'error_code': PERSEIDS_ERR_INVALID_AUTH_TOKEN}
             result = AuthService.check_first_recharge(user_id)
             return result.get('success', False), result.get('message', ''), result.get('data', {})
         
         elif endpoint == 'user/update_first_recharge':
             user_id = AuthService.verify_token(token)
             if not user_id:
-                return False, '无效的认证信息', {}
+                return False, '无效的认证信息', {'error_code': PERSEIDS_ERR_INVALID_AUTH_TOKEN}
             result = AuthService.update_first_recharge(user_id, payload.get('status', 1))
             return result.get('success', False), result.get('message', ''), result.get('data', {})
         
@@ -121,12 +122,16 @@ def make_perseids_request(endpoint=None, data=None, method='POST', headers=None)
             result = AuthService.get_auth_token_by_user_id(
                 user_id=payload.get('user_id')
             )
-            return result.get('success', False), result.get('message', ''), result.get('data', {})
+            data = result.get('data') or {}
+            # 透传 service 层产出的 error_code（如 NO_VALID_TOKEN），供下游精确区分"确证失效"与"服务故障"
+            if result.get('error_code'):
+                data = {**data, 'error_code': result['error_code']}
+            return result.get('success', False), result.get('message', ''), data
         
         elif endpoint == 'user/token_log':
             user_id = AuthService.verify_token(token)
             if not user_id:
-                return False, '无效的认证信息', {}
+                return False, '无效的认证信息', {'error_code': PERSEIDS_ERR_INVALID_AUTH_TOKEN}
             result = AuthService.create_token_log(
                 user_id=user_id,
                 input_token=payload.get('input_token'),
@@ -175,7 +180,7 @@ def make_perseids_request(endpoint=None, data=None, method='POST', headers=None)
                 return True, '社区版不抽佣', {'grants': full, 'rate': 0.0}
             user_id = AuthService.verify_token(token)
             if not user_id:
-                return False, '无效的认证信息', {}
+                return False, '无效的认证信息', {'error_code': PERSEIDS_ERR_INVALID_AUTH_TOKEN}
             result = CommissionService.get_recharge_grants(user_id)
             return result.get('success', False), result.get('message', ''), {
                 'grants': result.get('grants', {}),

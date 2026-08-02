@@ -194,6 +194,19 @@ class AgentAuthConstants:
     RAW_TOKEN_PREFIX = "zjt_agent_"
 
 
+# ===== 认证 error_code（perseids 内部调用 + 对前端响应）=====
+# perseids_server/client.py 是进程内本地路由，无 HTTP code 可用；
+# 在源头往返回 data 里放结构化 error_code，下游判定只查 error_code，不做 message 文案匹配。
+# token 校验失败（AuthService.verify_token 未通过），确证无效
+PERSEIDS_ERR_INVALID_AUTH_TOKEN = 'INVALID_AUTH_TOKEN'
+# 按 user_id 查不到有效 token，确证无效（单会话策略下意味着被顶号/登出/重置密码）
+PERSEIDS_ERR_NO_VALID_TOKEN = 'NO_VALID_TOKEN'
+# 对前端响应：token 确证失效（前端各页面识别此前缀做登出处理）
+ERROR_CODE_TOKEN_EXPIRED = 'TOKEN_EXPIRED'
+# 对前端响应：认证服务自身故障（非 token 问题，前端按普通服务异常处理，不清登录态）
+ERROR_CODE_AUTH_SERVICE_UNAVAILABLE = 'AUTH_SERVICE_UNAVAILABLE'
+
+
 # ============ 向后兼容：使用 UnifiedConfigRegistry 提供旧 API ============
 
 class TaskTypeRegistry:
