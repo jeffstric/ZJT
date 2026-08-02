@@ -403,10 +403,25 @@
               body: form
             });
 
-            var data = await res.json();
+            var data = {};
+            try {
+              data = await res.json();
+            } catch (parseErr) {
+              throw new Error('提交任务失败（HTTP ' + res.status + '）');
+            }
 
-            if (!data.project_ids || data.project_ids.length === 0) {
-              throw new Error(data.detail || data.message || '提交任务失败');
+            // FastAPI 的 detail 可能是字符串或 {code, message} 对象
+            function _formatApiDetail(detail) {
+              if (!detail) return '';
+              if (typeof detail === 'string') return detail;
+              if (typeof detail === 'object') {
+                return detail.message || detail.msg || detail.code || JSON.stringify(detail);
+              }
+              return String(detail);
+            }
+
+            if (!res.ok || !data.project_ids || data.project_ids.length === 0) {
+              throw new Error(_formatApiDetail(data.detail) || data.message || ('提交任务失败（HTTP ' + res.status + '）'));
             }
 
             var projectIds = data.project_ids;

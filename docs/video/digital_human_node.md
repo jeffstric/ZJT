@@ -29,7 +29,24 @@
 
 ## 支持的模型
 
-- ltx2_3_voice（默认）
+- `digital_human_ltx2_3_voice`（默认，LTX2.3 数字人）
+- `digital_human`（回退，wan2.2 数字人）
+
+二者均属 **`TaskCategory.DIGITAL_HUMAN` 独立品类**，不是图生视频里的 LTX2.3「参考生视频 / reference_to_video」模式。
+
+## 提交接口
+
+节点通过 `POST /api/ai-app-run-image` 提交，参数要点：
+
+| 字段 | 说明 |
+|------|------|
+| `task_id` | 数字人任务配置 ID（优先 LTX2.3 数字人） |
+| `image_urls` | 角色形象图 |
+| `audio_urls` | **对口型说话音频**（必选，不是参考素材） |
+| `prompt` | 动作/镜头提示词 |
+| `count` | 抽卡次数 1–4 |
+
+后端对 `category=digital_human` 会**跳过** `determine_mode → reference_to_video` 的媒体偏好校验；否则带 `audio_urls` 会被误判为参考生视频并返回 `MODEL_MODE_UNSUPPORTED`。
 
 ## 连接端口
 
