@@ -839,6 +839,25 @@ const AdminApp = {
             runninghubKeyPoolAvailable: false,
             brandingAvailable: false,
 
+            // 许可证状态轮询：仅用于改善前端显示及时性，不是安全边界。
+            // 真正的权限边界由品牌 Provider 和品牌 API 的后端 403 保证。
+            licensePollTimer: null,
+            licenseStatusInFlight: false,
+
+            // 许可证状态卡片（dashboard 顶部）：展示后端派生的 state/edition/revision，
+            // 让管理员能自助诊断"为什么企业版却看不到品牌入口"等问题。
+            licenseStatus: {
+                loading: false,
+                state: null,
+                reason: '',
+                enforcement_mode: '',
+                capabilities: null,
+                license: null,
+                credential_configured: false,
+            },
+            // 激活表单输入框（激活成功后清空，失败时保留方便重试）。
+            activateTokenInput: '',
+
             // 通知中心
             notifications: [],
             versionUpdate: null,
@@ -898,6 +917,15 @@ const AdminApp = {
     computed: {
         totalPages() {
             return Math.ceil(this.users.total / this.users.pageSize);
+        },
+
+        // 激活表单显示条件：未配置凭据，或状态属于需要重新激活的异常态。
+        // 已正常激活（credential_configured=true 且状态正常）时折叠隐藏。
+        showActivateForm() {
+            if (!this.licenseStatus.credential_configured) return true;
+            return ['auth_required', 'denied', 'uninitialized'].includes(
+                this.licenseStatus.state
+            );
         },
 
         configTotalPages() {
@@ -1106,12 +1134,16 @@ const AdminApp = {
             this.fetchServerConfig();
             this.pollNotifications();
             this.notificationsPollTimer = setInterval(() => this.pollNotifications(), 30000);
+            // 许可证状态轮询：管理员身份验证在 initAuth 内完成，
+            // 这里仅启动定时器；首次拉取在 initAuth 成功后触发。
+            this.licensePollTimer = setInterval(() => this.pollLicenseStatus(), 60000);
         });
     },
 
     unmounted() {
         window.removeEventListener('resize', this.resizeModelAnalysisCharts);
         if (this.notificationsPollTimer) clearInterval(this.notificationsPollTimer);
+        if (this.licensePollTimer) clearInterval(this.licensePollTimer);
         Object.values(this.dashboard.modelAnalysis.charts || {}).forEach(chart => {
             if (chart) chart.dispose();
         });
@@ -1249,11 +1281,8 @@ const AdminApp = {
                     this.runninghubKeyPoolAvailable = Boolean(
                         response.data.data.features?.runninghub_key_pool
                     );
-                    // 品牌定制：仅企业版注入了 branding provider 时可用。
-                    // 工作室版的 features.branding 为 false，前端据此隐藏品牌Tab。
-                    this.brandingAvailable = Boolean(
-                        response.data.data.features?.branding
-                    );
+                    // 品牌定制可用性由后端 features.branding 派生，前端不重复实现授权规则。
+                    this.applyBrandingAvailability(response.data.data.features?.branding);
 
                     // 默认加载用户列表
                     this.loadUsers();
@@ -1263,6 +1292,10 @@ const AdminApp = {
 
                     // 检查 URL 参数，是否需要自动打开快速配置
                     this.checkQuickConfigParam();
+
+                    // 首次拉取许可证状态（不等待第一个 60 秒），
+                    // 用于在管理员打开页面后立即同步最新的品牌权限。
+                    this.pollLicenseStatus();
                 }
             } catch (error) {
                 console.error('Admin verification failed:', error);
@@ -1282,7 +1315,180 @@ const AdminApp = {
                 }
             }
         },
-        
+
+        // 统一应用品牌定制可用性。dashboard 接口和许可证状态轮询都调用它，
+        // 避免在不同入口重复实现授权判断。当可用性从 true 变 false 且用户
+        // 正停留在品牌页时，自动切回仪表盘并提示。
+        applyBrandingAvailability(available) {
+            const wasAvailable = this.brandingAvailable;
+            this.brandingAvailable = Boolean(available);
+
+            if (
+                wasAvailable &&
+                !this.brandingAvailable &&
+                this.currentPage === 'branding'
+            ) {
+                this.currentPage = 'dashboard';
+                this.loadDashboard();
+                this.showToast(this.t('branding_permission_revoked'), 'warning');
+            }
+        },
+
+        // 统一把后端 status 响应应用到本地：同时刷新状态卡片和品牌可用性，
+        // 保证 dashboard 卡片、菜单可见性、轮询三者数据一致。
+        applyLicenseStatus(data) {
+            this.licenseStatus = {
+                loading: false,
+                state: data?.state || null,
+                reason: data?.reason || '',
+                enforcement_mode: data?.enforcement_mode || '',
+                capabilities: data?.capabilities || null,
+                license: data?.license || null,
+                credential_configured: Boolean(data?.credential_configured),
+            };
+            this.applyBrandingAvailability(data?.capabilities?.branding);
+        },
+
+        // 许可证状态卡片样式类（按 state 着色）：直接用 licenseStatus.state，
+        // 模板里 :class="licenseStatus.state || 'uninitialized'"，无需此方法。
+
+        // 显式加载一次许可证状态（用于切到 dashboard 时刷新卡片）。
+        async loadLicenseStatus() {
+            if (!this.authToken) return;
+            this.licenseStatus.loading = true;
+            try {
+                const response = await axios.get(
+                    '/api/admin/commercial-license/status',
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data?.code === 0) {
+                    this.applyLicenseStatus(response.data.data);
+                }
+            } catch (error) {
+                const status = error?.response?.status;
+                if (status === 401 || status === 403) {
+                    this.handleAuthError(status);
+                }
+            } finally {
+                this.licenseStatus.loading = false;
+            }
+        },
+
+        // 许可证状态轮询：读取后端派生的 capabilities.branding（单一数据源），
+        // 不在前端解析 edition/claims。临时网络错误保持上次结果；
+        // 401/403 走现有认证失效流程。
+        async pollLicenseStatus() {
+            if (this.licenseStatusInFlight) return;
+            if (!this.authToken) return;
+            this.licenseStatusInFlight = true;
+            try {
+                const response = await axios.get(
+                    '/api/admin/commercial-license/status',
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data?.code === 0) {
+                    this.applyLicenseStatus(response.data.data);
+                }
+            } catch (error) {
+                const status = error?.response?.status;
+                if (status === 401 || status === 403) {
+                    this.handleAuthError(status);
+                }
+                // 其它（网络/超时/5xx）保持上次结果，安全边界由品牌 API 403 兜底。
+            } finally {
+                this.licenseStatusInFlight = false;
+            }
+        },
+
+        // 立即刷新租约（不等后台 60s 轮询）。用于确认是否已取得新 revision。
+        async refreshLicense() {
+            await this._postLicenseAction('/api/admin/commercial-license/refresh', 'license_btn_refresh');
+        },
+
+        // 恢复许可证：清除本地注销标记并重新 lease。
+        // 这是解决"企业版却看不到品牌入口（因本地已注销）"问题的关键入口。
+        async reactivateLicense() {
+            await this._postLicenseAction('/api/admin/commercial-license/reactivate', 'license_btn_reactivate');
+        },
+
+        // 注销许可证：本地注销并停止后台刷新。会再次触发"看不到品牌入口"现象，
+        // 因此需要二次确认。
+        async confirmDeactivateLicense() {
+            if (!confirm(this.t('license_deactivate_confirm'))) return;
+            await this._postLicenseAction('/api/admin/commercial-license/deactivate', 'license_btn_deactivate');
+        },
+
+        // 三个操作的公共实现：POST 后用最新 status 覆盖本地状态并提示。
+        async _postLicenseAction(url, actionKey) {
+            if (!this.authToken || this.licenseStatusInFlight) return;
+            this.licenseStatusInFlight = true;
+            try {
+                const response = await axios.post(url, null, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` },
+                });
+                if (response.data?.code === 0) {
+                    this.applyLicenseStatus(response.data.data);
+                    this.showToast(this.t('license_action_done'), 'success');
+                }
+            } catch (error) {
+                const status = error?.response?.status;
+                if (status === 401 || status === 403) {
+                    this.handleAuthError(status);
+                } else {
+                    this.showToast(
+                        this.t('license_action_failed') + ': ' + (error?.response?.data?.detail || ''),
+                        'error'
+                    );
+                }
+            } finally {
+                this.licenseStatusInFlight = false;
+            }
+        },
+
+        // 用候选 Token 原子化激活许可证。后端会先试 lease+验签（不落盘），
+        // 成功后才落盘、清注销标记、刷新状态；失败时保留旧凭据、不清空输入框。
+        async activateLicense() {
+            const token = (this.activateTokenInput || '').trim();
+            if (!token) {
+                this.showToast(this.t('license_activate_empty'), 'warning');
+                return;
+            }
+            if (!this.authToken || this.licenseStatusInFlight) return;
+            this.licenseStatusInFlight = true;
+            try {
+                const response = await axios.post(
+                    '/api/admin/commercial-license/activate',
+                    { account_token: token },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data?.code === 0) {
+                    this.applyLicenseStatus(response.data.data);
+                    // 成功后清空输入框（敏感信息不应在前端残留）。
+                    this.activateTokenInput = '';
+                    // 按 edition 区分提示，避免 studio 用户以为激活失败。
+                    const edition = response.data.data?.license?.edition;
+                    if (edition === 'studio') {
+                        this.showToast(this.t('license_activate_success_studio'), 'warning');
+                    } else {
+                        this.showToast(this.t('license_activate_success_enterprise'), 'success');
+                    }
+                }
+            } catch (error) {
+                const status = error?.response?.status;
+                if (status === 401 || status === 403) {
+                    this.handleAuthError(status);
+                } else {
+                    // 失败不清空输入框，方便用户修改后重试；不改动本地状态。
+                    this.showToast(
+                        this.t('license_activate_failed') + ': ' + (error?.response?.data?.detail || ''),
+                        'error'
+                    );
+                }
+            } finally {
+                this.licenseStatusInFlight = false;
+            }
+        },
+
         // 检查 URL 参数是否需要打开快速配置
         checkQuickConfigParam() {
             const urlParams = new URLSearchParams(window.location.search);
@@ -1302,9 +1508,17 @@ const AdminApp = {
         
         // 切换页面
         switchPage(page) {
+            // 品牌页前置拒绝：避免缓存残留导致无权限用户进入品牌页。
+            // 真正的安全边界仍由品牌 API 的 403 保证。
+            if (page === 'branding' && !this.brandingAvailable) {
+                this.currentPage = 'dashboard';
+                return;
+            }
             this.currentPage = page;
             if (page === 'dashboard') {
                 this.loadDashboard();
+                // 切到仪表盘时刷新许可证状态卡片（商业版才有数据）。
+                this.loadLicenseStatus();
             } else if (page === 'users') {
                 this.loadUsers();
             } else if (page === 'config') {
@@ -1574,6 +1788,10 @@ const AdminApp = {
                 if (response.data.code === 0) {
                     this.dashboard.totalUsers = response.data.data.total_users;
                     this.dashboard.activeWorkflows3d = response.data.data.active_workflows_3d;
+                    // dashboard 的 features.branding 由后端动态派生，这里同步一次
+                    // 品牌可用性，避免在许可证状态轮询暂时失败时菜单停留在旧状态。
+                    // 安全边界仍由品牌 API 的后端 403 保证，此处仅为缩短前端陈旧窗口。
+                    this.applyBrandingAvailability(response.data.data.features?.branding);
                 }
             } catch (error) {
                 console.error('Load dashboard failed:', error);
