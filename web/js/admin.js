@@ -407,6 +407,24 @@ const PROVIDER_DEFINITIONS = [
         testEndpoint: null
     },
     {
+        id: 'huimengi_video',
+        nameKey: 'provider_huimengi_name',
+        descKey: 'provider_huimengi_video_desc',
+        category: 'video',
+        icon: '🔌',
+        docUrl: 'https://api.huimengi.com',
+        lazyRecommended: false,
+        displayOrder: 7,
+        baseName: 'huimengi',
+        isOfficialAPI: false,
+        impactsKey: 'provider_huimengi_video_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
+        ],
+        configKeyMap: { api_key: 'huimengi.api_key' },
+        testEndpoint: null
+    },
+    {
         id: 'site_1_video',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 1 },

@@ -131,6 +131,10 @@ kkidc:
   api_key: "unittest"
   base_url: "https://ai-api.kkidc.com/v1"
 
+huimengi:
+  api_key: "unittest"
+  base_url: "https://api.huimengi.com"
+
 # API Aggregator configuration
 api_aggregator:
   site_0:

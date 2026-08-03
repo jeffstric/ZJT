@@ -160,6 +160,10 @@ kkidc:
   api_key: ""  # kkidc 网关 API Key（用于 Seedance 系列视频）
   base_url: "https://ai-api.kkidc.com/v1"  # kkidc API 基础 URL
 
+huimengi:
+  api_key: ""  # huimengi 网关 API Key（用于 Seedance 2.0 系列视频）
+  base_url: "https://api.huimengi.com"  # huimengi API 基础 URL
+
 pay:
   wxpay:
       #公众账号ID
