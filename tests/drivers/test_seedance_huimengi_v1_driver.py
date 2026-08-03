@@ -625,5 +625,109 @@ class TestCheckStatus(unittest.TestCase):
         self.assertEqual(result['status'], 'RUNNING')
 
 
+# ============================================================
+# huimengi 自动处理人脸：遮盖素材恢复测试
+# ============================================================
+class TestResolvePathWithFaceMaskAutoFace(unittest.TestCase):
+    """测试 huimengi 驱动在重试场景下从遮盖 step 恢复原始素材。
+
+    huimengi 网关内置 human_review，始终应使用原始（未遮盖）素材。
+    当任务从不支持自动处理人脸的实现方（如 volcengine）重试到 huimengi 时，
+    遮盖预处理已执行，ai_tool.image_path 可能已被 apply_results 污染为网格图。
+    _resolve_*_path_with_face_mask 负责从遗留 step 的 target 字段恢复原图。
+    """
+
+    def _driver(self):
+        from task.visual_drivers.seedance_huimengi_v1_driver import Seedance20HuimengiV1Driver
+        return _create_driver(Seedance20HuimengiV1Driver)
+
+    def _make_step(self, step_type, target, result_url, status_completed=True):
+        """构造 mock pipeline step"""
+        from model.ai_tool_pipeline_steps import PipelineStepStatus
+        step = MagicMock()
+        step.step_type = step_type
+        step.target = target
+        step.result_url = result_url
+        step.status = PipelineStepStatus.COMPLETED if status_completed else PipelineStepStatus.FAILED
+        return step
+
+    def test_image_path_unpolluted_returns_target(self):
+        """image_path 等于 step.target（未被污染）：返回 target（原图）"""
+        from model.ai_tool_pipeline_steps import PipelineStepType, PipelineStage
+        driver = self._driver()
+        ai_tool = _make_ai_tool()
+        original = 'http://example.com/original.jpg'
+        masked = 'http://example.com/grid.jpg'
+        step = self._make_step(PipelineStepType.IMAGE_FACE_MASK, target=original, result_url=masked)
+        with patch('task.visual_drivers.seedance_huimengi_v1_driver.PipelineStepModel') as mock_model:
+            mock_model.get_by_ai_tool_and_stage.return_value = [step]
+            result = driver._resolve_image_path_with_face_mask(ai_tool, original)
+        self.assertEqual(result, original)
+
+    def test_image_path_polluted_restores_target(self):
+        """image_path 等于 step.result_url（已被 apply_results 污染为网格图）：恢复 target（原图）"""
+        from model.ai_tool_pipeline_steps import PipelineStepType
+        driver = self._driver()
+        ai_tool = _make_ai_tool()
+        original = 'http://example.com/original.jpg'
+        masked = 'http://example.com/grid.jpg'
+        step = self._make_step(PipelineStepType.IMAGE_FACE_MASK, target=original, result_url=masked)
+        with patch('task.visual_drivers.seedance_huimengi_v1_driver.PipelineStepModel') as mock_model:
+            mock_model.get_by_ai_tool_and_stage.return_value = [step]
+            # 当前路径是网格图（被污染），应恢复为原图
+            result = driver._resolve_image_path_with_face_mask(ai_tool, masked)
+        self.assertEqual(result, original)
+
+    def test_image_path_no_matching_step_unchanged(self):
+        """无匹配的遮盖 step（首次命中 huimengi）：路径不变"""
+        driver = self._driver()
+        ai_tool = _make_ai_tool()
+        original = 'http://example.com/original.jpg'
+        with patch('task.visual_drivers.seedance_huimengi_v1_driver.PipelineStepModel') as mock_model:
+            mock_model.get_by_ai_tool_and_stage.return_value = []
+            result = driver._resolve_image_path_with_face_mask(ai_tool, original)
+        self.assertEqual(result, original)
+
+    def test_image_path_empty_unchanged(self):
+        """空 image_path：直接返回"""
+        driver = self._driver()
+        ai_tool = _make_ai_tool()
+        result = driver._resolve_image_path_with_face_mask(ai_tool, '')
+        self.assertEqual(result, '')
+
+    def test_video_path_polluted_restores_target(self):
+        """video_path 等于 step.result_url（被污染）：恢复 target（原视频）"""
+        from model.ai_tool_pipeline_steps import PipelineStepType
+        driver = self._driver()
+        ai_tool = _make_ai_tool()
+        original = 'http://example.com/original.mp4'
+        masked = 'http://example.com/grid.mp4'
+        step = self._make_step(PipelineStepType.FACE_MASK, target=original, result_url=masked)
+        with patch('task.visual_drivers.seedance_huimengi_v1_driver.PipelineStepModel') as mock_model:
+            mock_model.get_by_ai_tool_and_stage.return_value = [step]
+            result = driver._resolve_video_path_with_face_mask(ai_tool, masked)
+        self.assertEqual(result, original)
+
+    def test_video_path_unpolluted_returns_target(self):
+        """video_path 等于 step.target（未被污染）：返回 target（原视频）"""
+        from model.ai_tool_pipeline_steps import PipelineStepType
+        driver = self._driver()
+        ai_tool = _make_ai_tool()
+        original = 'http://example.com/original.mp4'
+        masked = 'http://example.com/grid.mp4'
+        step = self._make_step(PipelineStepType.FACE_MASK, target=original, result_url=masked)
+        with patch('task.visual_drivers.seedance_huimengi_v1_driver.PipelineStepModel') as mock_model:
+            mock_model.get_by_ai_tool_and_stage.return_value = [step]
+            result = driver._resolve_video_path_with_face_mask(ai_tool, original)
+        self.assertEqual(result, original)
+
+    def test_video_path_empty_unchanged(self):
+        """空 video_path：直接返回"""
+        driver = self._driver()
+        ai_tool = _make_ai_tool()
+        result = driver._resolve_video_path_with_face_mask(ai_tool, '')
+        self.assertEqual(result, '')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -126,48 +126,51 @@ class SeedanceHuimengiV1Driver(BaseVideoDriver):
 
     def _resolve_video_path_with_face_mask(self, ai_tool, video_path: str) -> str:
         """
-        查找 face_mask pipeline step 的遮盖结果替换原始视频路径
+        huimengi 网关内置 human_review 自动处理人脸，无需本地遮盖，始终使用原始素材。
 
-        如果 ai_tool_pipeline_steps 中存在 target 匹配的已完成 face_mask 步骤，
-        使用其 result_url（人脸遮盖后的视频）替代原始路径，避免审核不通过。
+        但当任务从 volcengine 等不支持自动处理人脸的实现方重试到 huimengi 时，
+        遮盖预处理已执行（apply_results 已把 ai_tool.video_path 回填为遮盖后的网格视频）。
+        此时从遗留的 face_mask pipeline step 的 target 字段恢复原始视频路径。
+
+        匹配两种情况：
+        - step.target == video_path：video_path 仍是原始路径（未被污染），返回 target（即原图）
+        - step.result_url == video_path：video_path 已被 apply_results 污染为遮盖结果，返回 target 恢复原图
         """
+        if not video_path:
+            return video_path
         try:
             steps = PipelineStepModel.get_by_ai_tool_and_stage(ai_tool.id, PipelineStage.PARAM_PREPARE)
             for step in steps:
-                if (step.step_type == PipelineStepType.FACE_MASK
-                        and step.status == PipelineStepStatus.COMPLETED
-                        and step.target == video_path
-                        and step.result_url):
-                    result_url = step.result_url
-                    if result_url.startswith("/"):
-                        result_url = result_url.lstrip('/')
-                    if not os.path.exists(result_url):
-                        self.logger.warning(f"face_mask 结果文件不存在: {result_url}，使用原始路径")
-                        return video_path
-                    self.logger.info(f"使用 face_mask 结果替换视频: {video_path} -> {result_url}")
-                    return result_url
+                if (step.step_type != PipelineStepType.FACE_MASK
+                        or step.status != PipelineStepStatus.COMPLETED
+                        or not step.target):
+                    continue
+                if step.target == video_path or step.result_url == video_path:
+                    self.logger.info(f"huimengi 自动处理人脸，恢复原始视频: {video_path} -> {step.target}")
+                    return step.target
         except Exception as e:
             self.logger.warning(f"查询 face_mask pipeline step 失败，使用原始路径: {e}")
         return video_path
 
     def _resolve_image_path_with_face_mask(self, ai_tool, image_path: str) -> str:
         """
-        查找 image_face_mask pipeline step 的遮盖结果替换原始图片路径
+        huimengi 网关内置 human_review 自动处理人脸，无需本地遮盖，始终使用原始素材。
 
-        与 _resolve_video_path_with_face_mask 对称：若存在 target 匹配的已完成
-        image_face_mask 步骤，使用其 result_url 替代原始路径，避免审核不通过。
+        与 _resolve_video_path_with_face_mask 对称：当任务从其他实现方重试到 huimengi
+        且遮盖预处理已执行时，从遗留的 image_face_mask step 的 target 字段恢复原始图片。
         """
         if not image_path:
             return image_path
         try:
             steps = PipelineStepModel.get_by_ai_tool_and_stage(ai_tool.id, PipelineStage.PARAM_PREPARE)
             for step in steps:
-                if (step.step_type == PipelineStepType.IMAGE_FACE_MASK
-                        and step.status == PipelineStepStatus.COMPLETED
-                        and step.target == image_path
-                        and step.result_url):
-                    self.logger.info(f"使用 image_face_mask 结果替换图片: {image_path} -> {step.result_url}")
-                    return step.result_url
+                if (step.step_type != PipelineStepType.IMAGE_FACE_MASK
+                        or step.status != PipelineStepStatus.COMPLETED
+                        or not step.target):
+                    continue
+                if step.target == image_path or step.result_url == image_path:
+                    self.logger.info(f"huimengi 自动处理人脸，恢复原始图片: {image_path} -> {step.target}")
+                    return step.target
         except Exception as e:
             self.logger.warning(f"查询 image_face_mask pipeline step 失败，使用原始路径: {e}")
         return image_path
