@@ -241,6 +241,17 @@ upgrade:
   branch: "main"             # 跟踪分支
   timeout_seconds: 30        # git fetch/pull 超时（秒）
 
+# ===== 数据库连接池（8·1 端口耗尽事故修复，详见 docs/backend/incidents/2026-08-01-db-port-exhaustion.md）=====
+# 容量预算（MySQL 侧）= (1 scheduler + 4 gunicorn worker + N script_split worker) × maxcached
+# 需确认 MySQL max_connections ≥ 该值 + 其他客户端余量。事故文档证明服务端余量充足（高峰每秒
+# 数百次建连未触发 Too many connections）。
+# 注意：本段与用户文件 config_prod.yml 的 database:（含 host/password）深度合并，pool 子段由 base 兜底。
+database:
+  pool:
+    mincached: 2            # 启动时预热连接数
+    maxcached: 20           # 空闲池上限（每进程）。复用优先，超出归还时真关闭
+    maxconnections: 0       # 0=无硬上限。如需彻底封顶防端口耗尽，可设具体值（如 30），届时池满会阻塞等待复用
+
 # 剧本分段拆分多 worker 配置
 # 由 run_prod.py 读取，>0 时拉起 N 个独立 worker 进程，主调度器跳过此 job
 script_split:

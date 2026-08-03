@@ -37,6 +37,11 @@ QINIU_HTTP_CONNECTION_TIMEOUT = 30
 # 单请求 30s 超时会被穿透累积；给一个明确的上限，超过则视为失败上抛。
 QINIU_UPLOAD_HARD_TIMEOUT = 90
 
+# ===== 数据库连接池超时（红线：超时常量统一在此维护，AGENTS.md 第9条）=====
+# 新建底层 MySQL 连接的 connect_timeout（秒）：仅约束 TCP 握手阶段，
+# 10s 内连不上视为端口耗尽/网络故障，快速失败而非无限等待。
+DB_POOL_CONNECT_TIMEOUT = 10
+
 # ===== 七牛云前端直传（大世界文件上传）=====
 # 上传区域域名（按 bucket 所在区域选择；华东 https://upload.qiniup.com）。
 # 完整区域列表参考 https://developer.qiniu.com/kodo/1671/region-endpoint-fq
