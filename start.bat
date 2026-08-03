@@ -158,7 +158,7 @@ if %UPGRADE_RC% equ 2 (
     exit /b 1
 )
 if %UPGRADE_RC% equ 1 (
-    echo [WARN] 更新检查失败，继续使用本地版本
+    echo [INFO] 更新检查未完成（网络/源不可用），继续使用本地版本
 )
 if %UPGRADE_RC% equ 10 (
     echo [INFO] 代码已更新，正在重新启动...

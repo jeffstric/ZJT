@@ -68,12 +68,15 @@ find "$SCRIPT_DIR" -name "*.command" -type f -exec perl -pi -e 's/\r$//' {} \; 2
 echo "[OK] File encodings fixed"
 
 set -e
-if [ $UPGRADE_RC -ge 2 ]; then
+if [ $UPGRADE_RC -eq 2 ]; then
     echo "[ERROR] 更新检查遇到严重错误"
     read -p "按回车键继续..." _
     exit 1
-elif [ $UPGRADE_RC -ge 1 ]; then
-    echo "[WARN] 更新检查失败，继续使用本地版本"
+elif [ $UPGRADE_RC -eq 10 ]; then
+    echo "[INFO] 代码已更新，正在重新启动..."
+    exec "$0" "$@"
+elif [ $UPGRADE_RC -eq 1 ]; then
+    echo "[INFO] 更新检查未完成（网络/源不可用），继续使用本地版本"
 fi
 echo ""
 

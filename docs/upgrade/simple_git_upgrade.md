@@ -595,7 +595,8 @@ upgrade:
 | # | 问题 | 影响 | 解决方案 |
 |---|------|------|----------|
 | 1 | Linux 启动脚本直接用 `python3` 执行 `upgrade_check.py`，未使用 `uv run` | 如果系统未安装 `pyyaml` 模块，配置文件解析会失败，回退到默认值 | Linux 推荐使用 Docker 部署，Docker 内已包含依赖；或手动 `pip install pyyaml` |
-| 2 | 内置 MinGit 默认 `credential.helper = manager`，访问 Gitee 需鉴权/限流/本机脏凭据时会弹出 **Git Credential Manager** GUI | 部分用户启动卡在 `[1.5/4] Checking for updates`，小白不知如何处理 | **已修复**：`get_git_env()` 设置 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=false`、`GCM_GUI_PROMPT=false`，并本进程禁用 `credential.helper`；需要登录时直接失败并跳过更新，继续本地启动 |
+| 2 | 内置 MinGit 默认 `credential.helper = manager`，访问 Gitee 需鉴权/限流/本机脏凭据时会弹出 **Git Credential Manager** GUI | 部分用户启动卡在 `[1.5/4] Checking for updates`，小白不知如何处理 | **已修复**：`get_git_env()` 设置 `GIT_TERMINAL_PROMPT=0` / `GCM_*=false`；`run_git` 注入 `git -c credential.helper=`（**禁止**用空 `GIT_CONFIG_VALUE_*`，Windows 会报 `missing config value`）；需要登录时跳过更新继续本地启动 |
+| 3 | Gitee 对部分网络返回 401，触发 `could not read Username ... terminal prompts disabled`，旧逻辑只 fetch 一次就失败 | 客户看到「更新检查失败」告警，且不会尝试 GitHub 备用源 | **已修复**：`fetch_remote_with_fallback()` 按 `upgrade.repo_urls` 依次切换源重试；全部失败时提示「跳过更新，继续本地版本」（非致命） |
 
 ---
 
