@@ -292,6 +292,10 @@ def get_git_env(git_cmd):
 
     如果使用内置 git，设置 GIT_SSL_CAINFO 指向内置的证书文件，
     避免使用系统证书导致的 SSL 错误。
+
+    升级检查是无人值守流程：必须禁止 Git Credential Manager / askpass
+    弹出 GUI 凭据框（部分用户访问 Gitee 时会卡住 start.bat）。
+    需要登录时直接失败，由上层返回码 1 跳过更新、继续本地启动。
     """
     env = os.environ.copy()
     git_path = Path(git_cmd)
@@ -310,6 +314,29 @@ def get_git_env(git_cmd):
         if ca_bundle.exists():
             env["GIT_SSL_CAINFO"] = str(ca_bundle)
 
+    # --- 非交互凭据：禁止 GCM/终端弹窗 ---
+    # GIT_TERMINAL_PROMPT=0：git 自身不向终端要用户名密码
+    # GCM_INTERACTIVE / GCM_GUI_PROMPT：关闭 Git Credential Manager 的 GUI
+    # GIT_ASKPASS 置空：避免调用 askpass 弹窗程序
+    # credential.helper 置空：本进程不走 helper，避免本机脏凭据先发 401 再弹窗
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "false"
+    env["GCM_GUI_PROMPT"] = "false"
+    env["GIT_ASKPASS"] = ""
+    env["SSH_ASKPASS"] = ""
+    # 覆盖用户/系统环境中可能存在的 askpass 指向
+    env.pop("GCM_ASKPASS", None)
+
+    # 通过 GIT_CONFIG_* 仅对本进程禁用 credential.helper（不改用户 .gitconfig）
+    # 若环境中已有 GIT_CONFIG_COUNT，在其后追加
+    try:
+        cfg_count = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
+    except ValueError:
+        cfg_count = 0
+    env[f"GIT_CONFIG_KEY_{cfg_count}"] = "credential.helper"
+    env[f"GIT_CONFIG_VALUE_{cfg_count}"] = ""
+    env["GIT_CONFIG_COUNT"] = str(cfg_count + 1)
+
     return env
 
 
@@ -320,6 +347,11 @@ def run_git(git_cmd, args, cwd, timeout=30, capture=True):
     """
     cmd = [git_cmd] + args
     env = get_git_env(git_cmd)
+    # Windows：隐藏可能的子进程控制台窗口（GCM 等）；不影响已有控制台输出
+    popen_kwargs = {}
+    if sys.platform == "win32":
+        # CREATE_NO_WINDOW = 0x08000000，避免 credential helper 再开控制台
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     try:
         if capture:
             result = subprocess.run(
@@ -331,10 +363,13 @@ def run_git(git_cmd, args, cwd, timeout=30, capture=True):
                 errors="replace",
                 timeout=timeout,
                 env=env,
+                **popen_kwargs,
             )
             return result.returncode, result.stdout, result.stderr
         else:
-            result = subprocess.run(cmd, cwd=str(cwd), timeout=timeout, env=env)
+            result = subprocess.run(
+                cmd, cwd=str(cwd), timeout=timeout, env=env, **popen_kwargs
+            )
             return result.returncode, "", ""
     except subprocess.TimeoutExpired:
         return -1, "", "timeout"

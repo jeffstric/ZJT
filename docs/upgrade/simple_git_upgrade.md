@@ -520,6 +520,7 @@ upgrade:
 | 2 | 没有 .git + 无网络 | 跳过检查，正常启动（策略 A） |
 | 3 | fetch 超时 | 提示网络超时，跳过更新 |
 | 4 | fetch 失败（仓库不存在/权限不足） | 提示失败，跳过更新 |
+| 4b | Gitee/GitHub 要求登录或本机脏凭据 | **不弹 GCM 凭据框**；git 直接失败 → 返回码 1，跳过更新继续启动（见「已知问题 #2」） |
 | 5 | 用户拒绝更新 | 正常启动本地版本 |
 | 6 | 二进制依赖缺失 | 跳过更新，打印缺失清单及下载地址，正常启动本地版本 |
 | 7 | git pull 失败（非 fast-forward） | 提示失败，stash pop 恢复，启动本地版 |
@@ -594,6 +595,7 @@ upgrade:
 | # | 问题 | 影响 | 解决方案 |
 |---|------|------|----------|
 | 1 | Linux 启动脚本直接用 `python3` 执行 `upgrade_check.py`，未使用 `uv run` | 如果系统未安装 `pyyaml` 模块，配置文件解析会失败，回退到默认值 | Linux 推荐使用 Docker 部署，Docker 内已包含依赖；或手动 `pip install pyyaml` |
+| 2 | 内置 MinGit 默认 `credential.helper = manager`，访问 Gitee 需鉴权/限流/本机脏凭据时会弹出 **Git Credential Manager** GUI | 部分用户启动卡在 `[1.5/4] Checking for updates`，小白不知如何处理 | **已修复**：`get_git_env()` 设置 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=false`、`GCM_GUI_PROMPT=false`，并本进程禁用 `credential.helper`；需要登录时直接失败并跳过更新，继续本地启动 |
 
 ---
 
