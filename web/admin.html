@@ -174,6 +174,74 @@
 
             <!-- 仪表盘页面 -->
             <section v-if="currentPage === 'dashboard'">
+                <!-- 商业许可证状态卡片：用于诊断"为什么企业版却看不到品牌入口"等问题。
+                     仅商业版显示。state/reason/edition/revision 全部来自后端派生。 -->
+                <div v-if="!isCommunityEdition" class="license-status-card" :class="licenseStatus.state || 'uninitialized'">
+                    <div class="license-status-header">
+                        <h3>📋 {{ t('license_status_title') }}</h3>
+                        <span class="license-state-badge" :class="licenseStatus.state || 'uninitialized'">
+                            {{ t('license_state_' + (licenseStatus.state || 'uninitialized')) }}
+                        </span>
+                    </div>
+                    <div v-if="licenseStatus.loading" class="loading" style="padding: 12px 0;">
+                        <div class="loading-spinner"></div>
+                    </div>
+                    <template v-else>
+                        <div class="license-status-grid">
+                            <div class="license-status-item">
+                                <span class="license-status-label">{{ t('license_field_edition') }}</span>
+                                <span class="license-status-value">{{ licenseStatus.license?.edition || '-' }}</span>
+                            </div>
+                            <div class="license-status-item">
+                                <span class="license-status-label">{{ t('license_field_revision') }}</span>
+                                <span class="license-status-value">{{ licenseStatus.license?.license_revision ?? '-' }}</span>
+                            </div>
+                            <div class="license-status-item">
+                                <span class="license-status-label">{{ t('license_field_branding') }}</span>
+                                <span class="license-status-value">
+                                    {{ licenseStatus.capabilities?.branding ? t('license_branding_on') : t('license_branding_off') }}
+                                </span>
+                            </div>
+                            <div class="license-status-item">
+                                <span class="license-status-label">{{ t('license_field_enforcement') }}</span>
+                                <span class="license-status-value">{{ licenseStatus.enforcement_mode || '-' }}</span>
+                            </div>
+                        </div>
+                        <div v-if="licenseStatus.reason" class="license-status-reason">
+                            ℹ️ {{ licenseStatus.reason }}
+                        </div>
+                        <!-- 激活表单：未配置凭据，或状态为 auth_required/denied/uninitialized 时展示。
+                             已正常激活时折叠隐藏。 -->
+                        <div v-if="showActivateForm" class="license-activate-form">
+                            <div class="license-activate-row">
+                                <input
+                                    type="password"
+                                    class="filter-input"
+                                    v-model="activateTokenInput"
+                                    :placeholder="t('license_activate_placeholder')"
+                                    style="flex: 1; min-width: 200px;"
+                                    @keyup.enter="activateLicense"
+                                >
+                                <button class="action-btn primary" @click="activateLicense" :disabled="licenseStatusInFlight">
+                                    {{ licenseStatusInFlight ? t('querying') : t('license_btn_activate') }}
+                                </button>
+                            </div>
+                            <p class="license-activate-hint">{{ t('license_activate_hint') }}</p>
+                        </div>
+                        <div class="license-status-actions">
+                            <button class="action-btn primary" @click="refreshLicense" :disabled="licenseStatusInFlight">
+                                {{ licenseStatusInFlight ? t('querying') : t('license_btn_refresh') }}
+                            </button>
+                            <button class="action-btn success" @click="reactivateLicense" :disabled="licenseStatusInFlight">
+                                {{ t('license_btn_reactivate') }}
+                            </button>
+                            <button class="action-btn warning" @click="confirmDeactivateLicense" :disabled="licenseStatusInFlight">
+                                {{ t('license_btn_deactivate') }}
+                            </button>
+                        </div>
+                    </template>
+                </div>
+
                 <div v-if="dashboard.loading" class="loading">
                     <div class="loading-spinner"></div>
                     <p>{{ t('loading') }}</p>
@@ -1425,8 +1493,8 @@
                 </div>
             </section>
 
-            <!-- 品牌定制页面（仅商业版） -->
-            <section v-if="currentPage === 'branding'">
+            <!-- 品牌定制页面（仅企业版且 brandingAvailable 时显示） -->
+            <section v-if="currentPage === 'branding' && brandingAvailable">
                 <div v-if="branding.loading" class="loading">
                     <div class="loading-spinner"></div>
                 </div>

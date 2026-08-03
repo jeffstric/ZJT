@@ -82,6 +82,7 @@ from config.constant import Edition, Action, StoryType
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from utils.image_grid_merger import ImageGridMerger
 from utils.sentry_util import SentryUtil
+from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
 from utils.computing_power import build_context_from_task_record, get_implementation_for_user
 from utils.video_resolution import validate_video_resolution
@@ -3089,7 +3090,11 @@ async def register(request: RegisterRequest):
         password = request.password
         verify_code = request.code
         
-        logger.info(f"收到注册请求 - 手机号: {phone}, 邮箱: {email}")
+        logger.info(
+            "收到注册请求 - 手机号: %s, 邮箱: %s",
+            mask_phone(phone),
+            mask_email(email),
+        )
 
         # 验证至少提供一个标识
         if not phone and not email:
@@ -3143,7 +3148,10 @@ async def register(request: RegisterRequest):
             )
             
             if success:
-                logger.info(f"邮箱用户注册成功 - 邮箱: {email}")
+                logger.info(
+                    "邮箱用户注册成功 - 邮箱: %s",
+                    mask_email(email),
+                )
                 return JSONResponse(
                     content={
                         'success': True,
@@ -3180,7 +3188,7 @@ async def register(request: RegisterRequest):
         )
         
         if success:
-            logger.info(f"用户注册成功 - 手机号: {phone}")
+            logger.info("用户注册成功 - 手机号: %s", mask_phone(phone))
             return JSONResponse(
                 content={
                     'success': True,
@@ -3227,7 +3235,7 @@ async def login(request: LoginRequest):
         terms_agreed = request.terms_agreed
         
         identifier = email if email else phone
-        logger.info(f"收到登录请求 - 标识: {identifier}")
+        logger.info("收到登录请求 - 标识: %s", mask_identifier(identifier))
 
         # 验证必填字段
         if not identifier or not password:
@@ -3268,7 +3276,10 @@ async def login(request: LoginRequest):
         )
         
         if success:
-            logger.info(f"用户登录成功 - 手机号: {phone}")
+            logger.info(
+                "用户登录成功 - 标识: %s",
+                mask_identifier(identifier),
+            )
             return JSONResponse(
                 content={
                     'success': True,

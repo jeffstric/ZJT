@@ -7,6 +7,7 @@ import random
 import logging
 
 from model.verify_codes import VerifyCodesModel
+from utils.log_sanitizer import mask_email, mask_phone
 
 from ..utils.validator import validate_phone, validate_email
 from ..utils.sms_drivers import SmsDriverFactory
@@ -72,7 +73,11 @@ class VerifyCodeService:
                     "expire_minutes": VerifyCodeService.CODE_EXPIRE_MINUTES,
                 }
         
-        logger.info(f"验证码创建成功 - 手机号: {phone}, 类型: {code_type}")
+        logger.info(
+            "验证码创建成功 - 手机号: %s, 类型: %s",
+            mask_phone(phone),
+            code_type,
+        )
         
         return {
             "success": True,
@@ -112,7 +117,11 @@ class VerifyCodeService:
         # 标记验证码为已使用
         VerifyCodesModel.mark_used(phone, code, code_type)
         
-        logger.info(f"验证码验证成功 - 手机号: {phone}, 类型: {code_type}")
+        logger.info(
+            "验证码验证成功 - 手机号: %s, 类型: %s",
+            mask_phone(phone),
+            code_type,
+        )
         
         return {"success": True, "message": "验证成功"}
     
@@ -179,7 +188,11 @@ class VerifyCodeService:
                     "expire_minutes": VerifyCodeService.CODE_EXPIRE_MINUTES,
                 }
         
-        logger.info(f"邮箱验证码创建成功 - 邮箱: {email}, 类型: {code_type}")
+        logger.info(
+            "邮箱验证码创建成功 - 邮箱: %s, 类型: %s",
+            mask_email(email),
+            code_type,
+        )
         
         return {
             "success": True,
@@ -219,6 +232,10 @@ class VerifyCodeService:
         # 标记验证码为已使用
         VerifyCodesModel.mark_used_for_email(email, code, code_type)
         
-        logger.info(f"邮箱验证码验证成功 - 邮箱: {email}, 类型: {code_type}")
+        logger.info(
+            "邮箱验证码验证成功 - 邮箱: %s, 类型: %s",
+            mask_email(email),
+            code_type,
+        )
         
         return {"success": True, "message": "验证成功"}

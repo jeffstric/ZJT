@@ -10,6 +10,14 @@ import logging
 import os
 from datetime import datetime
 
+from utils.log_sanitizer import (
+    RedactingFormatter,
+    SensitiveDataFilter,
+    install_sensitive_log_redaction,
+)
+
+install_sensitive_log_redaction()
+
 # 获取项目根目录（utils 的父目录）
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 确保 logs 目录存在
@@ -41,6 +49,7 @@ class DailyFileHandler(logging.FileHandler):
         # 初始化时获取当前日期的文件路径
         filename = self._get_current_filename()
         super().__init__(filename, mode='a', encoding=encoding)
+        self.addFilter(SensitiveDataFilter())
     
     def _get_current_filename(self):
         """获取当前日期对应的文件名"""
@@ -87,7 +96,7 @@ def setup_logger(name=None, level=logging.INFO):
     logger.setLevel(level)
     
     # 创建格式化器
-    formatter = logging.Formatter(LOG_FORMAT, DATE_FORMAT)
+    formatter = RedactingFormatter(LOG_FORMAT, DATE_FORMAT)
     
     # 控制台处理器
     console_handler = logging.StreamHandler()
