@@ -832,6 +832,9 @@ class ScriptParserConstants:
     DIAGNOSTIC_LOGGING_ENABLED = False
     DIAGNOSTIC_LOG_DIR = "logs/script_parser"
 
+    # 系统提示词 skill 名称（script_writer_core/skills/<name>/SKILL.md，可用户级覆盖）
+    SKILL_NAME = "script-parser"
+
 
 class ScriptSplitQcConstants:
     """剧本拆分质检循环与阈值。"""

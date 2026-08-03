@@ -210,8 +210,18 @@ class SkillLoader:
 
 1. `alembic upgrade head` 建表
 2. 访问首页 → AI工具箱 → 点击"技能配置"卡片
-3. 看到 9 个 skill 列表，全部显示"默认配置"
+3. 看到 skill 列表（含剧本/营销等专家 skill，以及 `script-parser` 剧本解析 system prompt），未改的显示"默认配置"
 4. 点击某个 skill 的"编辑"，修改 prompt 保存
 5. 该 skill 显示"已自定义"标记
-6. 进入剧本创作页面发起新会话，验证使用了用户自定义的 prompt
+6. 进入剧本创作页面发起新会话，验证使用了用户自定义的 prompt；修改 `script-parser` 后发起分镜拆分，验证 system prompt 已生效
 7. 点击"重置"删除自定义，验证回退到默认 prompt
+
+## 补充：script-parser（非 Agent 专家 skill）
+
+| 项 | 说明 |
+|----|------|
+| 路径 | `script_writer_core/skills/script-parser/SKILL.md` |
+| 用途 | 仅承载 `parse_script_to_shots` 的 **system prompt**（纯静态规则） |
+| 消费方 | `llm/script_parser.get_script_parser_system_prompt(user_id)` |
+| 与专家 skill 差异 | 不走 MCP `skill` 工具加载；拆分链路直接读 skill 文本作为 LLM system 消息 |
+| 未纳入 | user prompt、条件块、QC/分段动态上下文仍由代码拼装 |
