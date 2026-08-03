@@ -2133,11 +2133,32 @@ async def set_text_to_image_model(request: Request):
 @router.get('/text-to-image-model')
 async def get_current_text_to_image_model(
     user_id: str = QueryParam(...),
-    world_id: str = QueryParam(...)
+    world_id: str = QueryParam(...),
+    session_id: Optional[str] = QueryParam(None)
 ):
-    """获取世界级默认生图模型配置（legacy text_to_image_model / 兼容 media_pref 回填源）。"""
+    """获取当前生效的生图模型配置。
+
+    读取优先级：会话草稿（session_id 对应的 chat_sessions.text_to_image_model_id）
+    > 世界默认 legacy 偏好（text_to_image_model / media_pref 回填源）。
+    显式传入 session_id 可让前端回显与用户在本对话内的切换保持一致，避免刷新后被世界默认覆盖。
+    """
     try:
-        task_id = await asyncio.to_thread(get_text_to_image_model_id, user_id, world_id)
+        # 优先读取会话草稿：用户在本对话内切换的生图模型
+        session_task_id = None
+        if session_id:
+            def _load_session_draft():
+                from model.chat_sessions import ChatSessionsModel
+                session = ChatSessionsModel.get_by_session_id(session_id)
+                return getattr(session, 'text_to_image_model_id', None) if session else None
+
+            session_task_id = await asyncio.to_thread(_load_session_draft)
+
+        # 会话草稿有效则采用，否则回退世界默认
+        if session_task_id is not None:
+            task_id = session_task_id
+        else:
+            task_id = await asyncio.to_thread(get_text_to_image_model_id, user_id, world_id)
+
         models_config = _get_text_to_image_models_from_config()
         model_info = models_config.get(task_id, models_config.get(DEFAULT_TEXT_TO_IMAGE_TASK_ID, {}))
 
@@ -2145,7 +2166,8 @@ async def get_current_text_to_image_model(
             'success': True,
             'task_id': task_id,
             'model_name': model_info.get("name", "unknown"),
-            'computing_power': model_info.get("computing_power", 0)
+            'computing_power': model_info.get("computing_power", 0),
+            'scope': 'session' if session_task_id is not None else 'world_default',
         })
     except Exception as e:
         logger.error(f'获取生图模型配置失败: {str(e)}')

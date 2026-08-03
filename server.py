@@ -6160,14 +6160,38 @@ async def _rewrite_with_llm(messages, request, auth_token):
     import asyncio
     from config.constant import LLMModel
     from llm.llm_client_factory import get_llm_client
+    from llm.ollama_client import OllamaClient
+
+    def _client_configured(c) -> bool:
+        """判断客户端是否已配置可用凭据。
+
+        Ollama 等本地部署 client 无需真实 api_key（无需联网鉴权），不应判为未配置；
+        云端供应商（gemini/claude/aliyun/deepseek/volcengine/zjt）必须配置非空 api_key。
+        """
+        if isinstance(c, OllamaClient):
+            return True
+        return bool(getattr(c, 'api_key', ''))
 
     model = request.model or LLMModel.REDUCE_VIOLATION_DEFAULT
     client = get_llm_client(model, vendor_id=request.vendor_id)
 
+    # 用于计费的 vendor_id / model_id：跟随实际调用的模型，默认回退到请求传入值
+    bill_vendor_id = request.vendor_id
+    bill_model_id = request.model_id
+
     # 所选拆分模型的供应商未配置 api_key 时，切兜底模型重试一次
-    if not getattr(client, 'api_key', ''):
+    if not _client_configured(client):
         model = LLMModel.REDUCE_VIOLATION_DEFAULT
         client = get_llm_client(model)
+        # 已切到默认模型：计费 ID 不再跟随原拆分模型，避免计费/用量记错账
+        bill_vendor_id = None
+        bill_model_id = None
+        # 兜底模型同样可能未配置（社区版/新装环境），二次校验后给出明确错误而非底层 500
+        if not _client_configured(client):
+            raise Exception(
+                "内容安全改写所需的模型均未配置（所选模型与默认兜底模型 REDUCE_VIOLATION_DEFAULT 均缺少 api_key），"
+                "请在管理后台配置对应供应商的 API Key。"
+            )
 
     # call_api 是同步方法，用 asyncio.to_thread 包成异步，避免阻塞事件循环
     response = await asyncio.to_thread(
@@ -6177,8 +6201,8 @@ async def _rewrite_with_llm(messages, request, auth_token):
         temperature=0.7,
         max_tokens=2000,
         auth_token=auth_token,
-        vendor_id=request.vendor_id,
-        model_id=request.model_id,
+        vendor_id=bill_vendor_id,
+        model_id=bill_model_id,
     )
     content = response.choices[0].message.content if response.choices else ''
     return (content or '').strip()

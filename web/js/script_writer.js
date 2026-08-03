@@ -599,8 +599,10 @@
                     
                     // 加载并显示历史消息
                     await loadAndDisplayHistory(sessionId);
-                    
-                    // 会话复用成功后，自动设置生图模型到后端
+
+                    // 会话复用后，按会话草稿恢复生图模型选择（读 chat_sessions.text_to_image_model_id），
+                    // 再决定是否需要把世界默认写入草稿（autoSetTextToImageModel 内部会判断草稿已存在则跳过）。
+                    await restoreSavedImageModel(sessionId);
                     await autoSetTextToImageModel();
                 } else {
                     // 没有活跃会话，创建新的
@@ -3139,27 +3141,10 @@
                 // 显示选择器
                 selector.style.display = '';
 
-                // 恢复后端已保存的生图模型（会话/世界草稿），避免列表默认 GPT Image 2 覆盖用户选择
-                if (USER_ID && WORLD_ID) {
-                    try {
-                        const currentResp = await fetch(
-                            `/api/text-to-image-model?user_id=${encodeURIComponent(USER_ID)}&world_id=${encodeURIComponent(WORLD_ID)}`,
-                            { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
-                        );
-                        const currentData = await currentResp.json();
-                        if (currentData.success && currentData.task_id != null) {
-                            const savedId = String(currentData.task_id);
-                            const matchOption = Array.from(selector.options).find(
-                                (opt) => opt.value === savedId && !opt.disabled
-                            );
-                            if (matchOption) {
-                                selector.value = savedId;
-                            }
-                        }
-                    } catch (restoreErr) {
-                        console.warn('[生图模型] 恢复已保存选择失败:', restoreErr);
-                    }
-                }
+                // 恢复后端已保存的生图模型选择。
+                // 初始化阶段 sessionId 可能尚未确定（会话恢复在后），这里先读世界默认；
+                // 会话复用/创建成功后会再调用 restoreSavedImageModel(sessionId) 读会话草稿覆盖。
+                await restoreSavedImageModel(null);
 
                 // 包装在 .model-select-wrapper 后，同步自定义显示层的文本
                 updateImageModelDisplay();
@@ -3175,10 +3160,78 @@
             }
         }
 
+        async function restoreSavedImageModel(targetSessionId) {
+            /** 从后端恢复生图模型选中状态。
+
+            读取优先级：会话草稿（targetSessionId 对应）> 世界默认。
+            返回 'session' 表示从会话草稿恢复（说明用户已在本对话设置过，无需 auto-set 覆盖），
+            返回 'world_default' 或 null 表示读取的是世界默认/未恢复。
+            */
+            const selector = document.getElementById('text-to-image-model-selector');
+            if (!selector || !USER_ID || !WORLD_ID) return null;
+            try {
+                const params = new URLSearchParams({
+                    user_id: USER_ID,
+                    world_id: WORLD_ID
+                });
+                if (targetSessionId) params.set('session_id', targetSessionId);
+                const currentResp = await fetch(
+                    `/api/text-to-image-model?${params.toString()}`,
+                    { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
+                );
+                const currentData = await currentResp.json();
+                if (currentData.success && currentData.task_id != null) {
+                    const savedId = String(currentData.task_id);
+                    const matchOption = Array.from(selector.options).find(
+                        (opt) => opt.value === savedId && !opt.disabled
+                    );
+                    if (matchOption) {
+                        selector.value = savedId;
+                        updateImageModelDisplay();
+                        updateImageModelIcon();
+                        return currentData.scope || 'world_default';
+                    }
+                }
+            } catch (restoreErr) {
+                console.warn('[生图模型] 恢复已保存选择失败:', restoreErr);
+            }
+            return null;
+        }
+
         async function autoSetTextToImageModel() {
             /** 会话创建后自动设置生图模型到后端 */
             const selector = document.getElementById('text-to-image-model-selector');
             if (!selector || !sessionId) return;
+
+            // 若该会话已存在草稿（用户此前在本对话切换过模型），不要用世界默认覆盖。
+            // restoreSavedImageModel 已把草稿回显到 selector，这里直接采用即可。
+            try {
+                const params = new URLSearchParams({
+                    user_id: USER_ID,
+                    world_id: WORLD_ID,
+                    session_id: sessionId
+                });
+                const resp = await fetch(
+                    `/api/text-to-image-model?${params.toString()}`,
+                    { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
+                );
+                const data = await resp.json();
+                if (data.success && data.scope === 'session' && data.task_id != null) {
+                    const savedId = String(data.task_id);
+                    const matchOption = Array.from(selector.options).find(
+                        (opt) => opt.value === savedId && !opt.disabled
+                    );
+                    if (matchOption) {
+                        selector.value = savedId;
+                        updateImageModelDisplay();
+                        updateImageModelIcon();
+                        console.log('[生图模型] 会话草稿已存在，跳过自动设置');
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn('[生图模型] 检查会话草稿失败，继续自动设置:', e);
+            }
 
             let selectedModel = selector.value;
 
@@ -3284,7 +3337,7 @@
             const selector = document.getElementById('model-selector');
             const opt = selector?.options?.[selector.selectedIndex];
             if (!selector?.value || !opt || opt.disabled) {
-                showError(window.t ? window.t('error_select_model') : '请先选择对话模型');
+                showError(window.t ? window.t('error_select_llm_model') : '请先选择一个 LLM 模型');
                 throw new Error('no llm selected');
             }
             if (!USER_ID || !WORLD_ID) {
