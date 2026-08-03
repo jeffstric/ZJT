@@ -460,6 +460,13 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
         from model.props import PropsModel
         from script_writer_core.mcp_tool import create_character_json, create_location_json, create_prop_json
         from pathlib import Path
+        from config.constant import Edition
+
+        # 空间隔离标志：仅独立空间模式（企业版且未开启 shared_space）才按 user_id 过滤记录。
+        # 社区版/共享空间下 world 是多人共享的，记录的 user_id 可能是任意协作者，
+        # 此处过滤会导致「删除暂存」时把别人创建的角色/场景/道具/剧本静默跳过、无法同步。
+        # 该约定与各 Model.list_by_user() 中 is_space_isolated() 的判断保持一致。
+        filter_by_user = Edition.is_space_isolated()
 
         base_path = file_manager._get_user_world_path(user_id, world_id)
 
@@ -516,7 +523,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
         characters_result = CharacterModel.list_by_world(int(world_id), page=1, page_size=1000)
         characters = characters_result.get('data', []) if isinstance(characters_result, dict) else []
         for char in characters:
-            if char.get('user_id') != int(user_id):
+            if filter_by_user and char.get('user_id') != int(user_id):
                 continue
                 
             try:
@@ -550,19 +557,20 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     other_info=sync_other_info,
                     reference_image=char.get('reference_image'),
                     default_voice=char.get('default_voice'),
-                    _temp_filename=temp_filename
+                    _temp_filename=temp_filename,
+                    _skip_image_validation=True
                 )
-                
+
                 if temp_result.get('success'):
                     temp_file = base_path / "characters" / temp_filename
                     if temp_file.exists():
                         try:
                             new_content = temp_file.read_text(encoding='utf-8')
                             existing_content = char_file.read_text(encoding='utf-8')
-                            
+
                             if not compare_json_content(new_content, existing_content, file_name):
                                 if force_overwrite:
-                                    create_character_json(
+                                    overwrite_result = create_character_json(
                                         user_id=user_id,
                                         world_id=world_id,
                                         auth_token=auth_token,
@@ -574,8 +582,11 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                                         behavior=char.get('behavior'),
                                         other_info=sync_other_info,
                                         reference_image=char.get('reference_image'),
-                                        default_voice=char.get('default_voice')
+                                        default_voice=char.get('default_voice'),
+                                        _skip_image_validation=True
                                     )
+                                    if not overwrite_result.get('success'):
+                                        logger.warning(f"同步覆盖角色失败 {char.get('name')}: {overwrite_result.get('error')}")
                                     result['diff_files'].append(file_name)
                                     result['overwritten_files'].append(file_name)
                                 else:
@@ -584,8 +595,10 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                         finally:
                             if temp_file.exists():
                                 temp_file.unlink()
+                else:
+                    logger.warning(f"同步生成角色临时文件失败 {char.get('name')}: {temp_result.get('error')}")
             else:
-                create_character_json(
+                create_result = create_character_json(
                     user_id=user_id,
                     world_id=world_id,
                     auth_token=auth_token,
@@ -597,14 +610,17 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     behavior=char.get('behavior'),
                     other_info=sync_other_info,
                     reference_image=char.get('reference_image'),
-                    default_voice=char.get('default_voice')
+                    default_voice=char.get('default_voice'),
+                    _skip_image_validation=True
                 )
+                if not create_result.get('success'):
+                    logger.warning(f"同步角色失败 {char.get('name')}: {create_result.get('error')}")
         
         # 2. 同步剧本
         scripts_result = ScriptModel.list_by_world(int(world_id), page=1, page_size=1000)
         scripts = scripts_result.get('data', []) if isinstance(scripts_result, dict) else []
         for script in scripts:
-            if script.get('user_id') != int(user_id) or not script.get('content'):
+            if (filter_by_user and script.get('user_id') != int(user_id)) or not script.get('content'):
                 continue
                 
             script_data = {
@@ -657,7 +673,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
             }
 
         for loc in locations:
-            if loc.get('user_id') != int(user_id):
+            if filter_by_user and loc.get('user_id') != int(user_id):
                 continue
 
             parent_fields = _location_parent_fields(loc)
@@ -676,6 +692,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     parent_id=parent_fields['parent_id'],
                     parent_name=parent_fields['parent_name'],
                     _temp_filename=temp_filename,
+                    _skip_image_validation=True,
                     **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                 )
 
@@ -688,7 +705,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
 
                             if not compare_json_content(new_content, existing_content, file_name):
                                 if force_overwrite:
-                                    create_location_json(
+                                    overwrite_result = create_location_json(
                                         user_id=user_id,
                                         world_id=world_id,
                                         auth_token=auth_token,
@@ -697,8 +714,11 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                                         reference_image=loc.get('reference_image'),
                                         parent_id=parent_fields['parent_id'],
                                         parent_name=parent_fields['parent_name'],
+                                        _skip_image_validation=True,
                                         **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                                     )
+                                    if not overwrite_result.get('success'):
+                                        logger.warning(f"同步覆盖场景失败 {loc.get('name')}: {overwrite_result.get('error')}")
                                     result['diff_files'].append(file_name)
                                     result['overwritten_files'].append(file_name)
                                 else:
@@ -707,8 +727,10 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                         finally:
                             if temp_file.exists():
                                 temp_file.unlink()
+                else:
+                    logger.warning(f"同步生成场景临时文件失败 {loc.get('name')}: {temp_result.get('error')}")
             else:
-                create_location_json(
+                create_result = create_location_json(
                     user_id=user_id,
                     world_id=world_id,
                     auth_token=auth_token,
@@ -717,14 +739,17 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     reference_image=loc.get('reference_image'),
                     parent_id=parent_fields['parent_id'],
                     parent_name=parent_fields['parent_name'],
+                    _skip_image_validation=True,
                     **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                 )
+                if not create_result.get('success'):
+                    logger.warning(f"同步场景失败 {loc.get('name')}: {create_result.get('error')}")
         
         # 4. 同步道具
         props_result = PropsModel.list_by_world(int(world_id), page=1, page_size=1000)
         props = props_result.get('data', []) if isinstance(props_result, dict) else []
         for prop in props:
-            if prop.get('user_id') != int(user_id):
+            if filter_by_user and prop.get('user_id') != int(user_id):
                 continue
                 
             prop_file = base_path / "props" / f"prop_{prop.get('name')}.json"
@@ -740,27 +765,31 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     prop_type=prop.get('type'),
                     description=prop.get('content'),
                     reference_image=prop.get('reference_image'),
-                    _temp_filename=temp_filename
+                    _temp_filename=temp_filename,
+                    _skip_image_validation=True
                 )
-                
+
                 if temp_result.get('success'):
                     temp_file = base_path / "props" / temp_filename
                     if temp_file.exists():
                         try:
                             new_content = temp_file.read_text(encoding='utf-8')
                             existing_content = prop_file.read_text(encoding='utf-8')
-                            
+
                             if not compare_json_content(new_content, existing_content, file_name):
                                 if force_overwrite:
-                                    create_prop_json(
+                                    overwrite_result = create_prop_json(
                                         user_id=user_id,
                                         world_id=world_id,
                                         auth_token=auth_token,
                                         name=prop.get('name'),
                                         prop_type=prop.get('type'),
                                         description=prop.get('content'),
-                                        reference_image=prop.get('reference_image')
+                                        reference_image=prop.get('reference_image'),
+                                        _skip_image_validation=True
                                     )
+                                    if not overwrite_result.get('success'):
+                                        logger.warning(f"同步覆盖道具失败 {prop.get('name')}: {overwrite_result.get('error')}")
                                     result['diff_files'].append(file_name)
                                     result['overwritten_files'].append(file_name)
                                 else:
@@ -769,16 +798,21 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                         finally:
                             if temp_file.exists():
                                 temp_file.unlink()
+                else:
+                    logger.warning(f"同步生成道具临时文件失败 {prop.get('name')}: {temp_result.get('error')}")
             else:
-                create_prop_json(
+                create_result = create_prop_json(
                     user_id=user_id,
                     world_id=world_id,
                     auth_token=auth_token,
                     name=prop.get('name'),
                     prop_type=prop.get('type'),
                     description=prop.get('content'),
-                    reference_image=prop.get('reference_image')
+                    reference_image=prop.get('reference_image'),
+                    _skip_image_validation=True
                 )
+                if not create_result.get('success'):
+                    logger.warning(f"同步道具失败 {prop.get('name')}: {create_result.get('error')}")
         
         logger.info(f"数据库同步完成: user_id={user_id}, world_id={world_id}, force_overwrite={force_overwrite}")
         if result['diff_files']:
