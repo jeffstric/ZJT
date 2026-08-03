@@ -172,9 +172,33 @@ Authorization: Bearer hm-xxxxxxxxxxxxxxxx
 - ✅ 首尾帧图生视频（`first_frame_image` + `last_frame_image`）
 - ✅ 多参考图（含参考音视频）
 - ✅ 真人审核模式（`human_review` 透传）
-- ✅ face_mask / image_face_mask pipeline 结果替换（避免真人审核不通过）
+- ✅ **自动处理人脸（`supports_auto_face`）**——详见下方专节
 - ✅ 参考视频规范化（帧率限制，复用 `prepare_seedance_reference_video_sync`）
 - ✅ 分辨率小写映射（480p / 720p / 1080p / 4k）
+
+## 自动处理人脸（supports_auto_face）
+
+huimengi 网关内置 `human_review` 真人审核能力，与其他 Seedance 2.0 网关
+（volcengine / kkidc）依赖 RunningHub 本地遮盖预处理不同。huimengi 的 3 个
+实现方均标识 `supports_auto_face=True`。
+
+### 工作流程
+
+用户在前端勾选「是否处理人脸」（`enable_face_mask`）后，后端 `server.py` 闸门
+会根据实际命中的实现方静默分流：
+
+| 命中实现方 | 行为 |
+|------------|------|
+| volcengine / kkidc（`supports_auto_face=False`） | 走 RunningHub 遮盖预处理：创建 face_mask/image_face_mask pipeline steps → 黑块转红色网格 → 替换原始素材 → 视频生成后裁剪网格前缀帧 |
+| huimengi（`supports_auto_face=True`） | **跳过整个 RunningHub 预处理**，直接用原始素材提交，并在 `extra_config` 注入 `human_review=true`，由 huimengi 网关服务端审核加白 |
+
+### 关键实现点
+
+1. **标识位置**：`ImplementationConfig.supports_auto_face`（代码静态字段，仿 `sync_mode`，不可后台修改）
+2. **分流闸门**：`server.py` 的 `/api/ai-app-run-image` 接口，`need_pipeline_steps` 判断增加 `not impl_supports_auto_face` 条件
+3. **参数注入**：用户勾选处理人脸 + 实现方支持自动处理 → `base_extra_config['human_review'] = True`（在 `audited_extra_config` 序列化前注入）
+4. **驱动透传**：huimengi 驱动 `build_create_request` 从 `extra_config.human_review` 读取并放入 `params.human_review`，无需改动
+5. **前端无感**：「是否处理人脸」选项不变（仍由任务级 `needs_face_mask` 控制显隐），用户无需感知后端用了哪个网关
 
 ## 参考视频帧率限制
 
