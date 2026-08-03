@@ -86,9 +86,20 @@ from script_writer_core.session_storage import SessionStorage
 session_storage = SessionStorage(use_cache=True, cache_ttl=300)
 
 # 用户偏好存储：数据库是唯一数据源，不使用永久进程内缓存。
-from model.user_preferences import UserPreferencesModel, PREF_TYPE_TEXT_TO_IMAGE_MODEL, PREF_TYPE_IMAGE_PREFERENCES, PREF_TYPE_VIDEO_PREFERENCES, PREF_TYPE_TEXT_TO_VIDEO_MODEL, PREF_TYPE_IMAGE_TO_VIDEO_MODEL
+from model.user_preferences import (
+    UserPreferencesModel,
+    PREF_TYPE_TEXT_TO_IMAGE_MODEL,
+    PREF_TYPE_IMAGE_PREFERENCES,
+    PREF_TYPE_VIDEO_PREFERENCES,
+    PREF_TYPE_TEXT_TO_VIDEO_MODEL,
+    PREF_TYPE_IMAGE_TO_VIDEO_MODEL,
+    PREF_TYPE_DEFAULT_LLM_MODEL,
+)
 # 默认生图模型 task_id (nano-banana-Pro)
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = 7
+# 生图模型设置范围：session=本对话草稿；world_default=世界默认（新会话种子）
+IMAGE_MODEL_SCOPE_SESSION = "session"
+IMAGE_MODEL_SCOPE_WORLD_DEFAULT = "world_default"
 
 
 def _get_text_to_image_models_from_config():
@@ -110,8 +121,68 @@ def get_text_to_image_model_id(user_id: str, world_id: str) -> int:
 
 
 def set_text_to_image_model_id(user_id: str, world_id: str, task_id: int):
-    """设置用户在指定世界的生图模型 task_id（写入数据库 + 更新缓存）"""
+    """设置用户在指定世界的生图模型 task_id（legacy 偏好）"""
     UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_TEXT_TO_IMAGE_MODEL, task_id)
+
+
+def _sync_image_model_to_media_pref_world_default(user_id: str, world_id: str, task_id: int) -> None:
+    """将生图模型写入 marketing_ui image 槽位（世界默认）。不兼容的模式跳过。"""
+    for mode in (MediaGenerationMode.TEXT_TO_IMAGE, MediaGenerationMode.IMAGE_EDIT):
+        try:
+            existing = MediaGenerationPreferenceService.get_profile(
+                user_id,
+                world_id,
+                MediaGenerationSurface.MARKETING_UI,
+                MediaGenerationType.IMAGE,
+                mode,
+                initialize=False,
+            ) or {}
+            profile = {
+                key: value
+                for key, value in existing.items()
+                if key in MediaGenerationPreferenceService.PROFILE_FIELDS and value is not None
+            }
+            profile['task_id'] = int(task_id)
+            MediaGenerationPreferenceService.save_profile(
+                user_id,
+                world_id,
+                MediaGenerationSurface.MARKETING_UI,
+                MediaGenerationType.IMAGE,
+                mode,
+                profile,
+            )
+        except (MediaGenerationPreferenceError, ValueError, TypeError) as mode_err:
+            logger.warning(
+                '写入世界默认生图 media_pref 跳过: user_id=%s world_id=%s mode=%s task_id=%s err=%s',
+                user_id, world_id, mode, task_id, mode_err,
+            )
+
+
+def get_default_llm_model(user_id: str, world_id: str) -> Optional[Dict[str, Any]]:
+    """读取世界级默认对话模型。"""
+    pref = UserPreferencesModel.get(str(user_id), str(world_id), PREF_TYPE_DEFAULT_LLM_MODEL)
+    if not pref or pref.config_value is None:
+        return None
+    value = pref.get_value()
+    if isinstance(value, dict) and value.get('model'):
+        return value
+    return None
+
+
+def set_default_llm_model(user_id: str, world_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """写入世界级默认对话模型。"""
+    normalized = {
+        'model': str(payload.get('model') or ''),
+        'model_id': int(payload['model_id']) if payload.get('model_id') not in (None, '') else None,
+        'vendor_id': int(payload['vendor_id']) if payload.get('vendor_id') not in (None, '') else None,
+        'name': payload.get('name') or payload.get('model') or '',
+    }
+    if not normalized['model']:
+        raise ValueError('model 不能为空')
+    UserPreferencesModel.upsert(
+        str(user_id), str(world_id), PREF_TYPE_DEFAULT_LLM_MODEL, normalized
+    )
+    return normalized
 
 
 def get_image_preferences(user_id: str, world_id: str) -> Dict[str, str]:
@@ -1693,6 +1764,95 @@ def _marketing_media_preferences_sync(user_id: str, world_id: str):
     return profiles
 
 
+def _resolve_explicit_image_task_id(image_preferences: Dict[str, Any], image_mode: str):
+    """从 image_preferences 解析显式生图 task_id（请求级，优先于世界默认偏好）。"""
+    explicit_image_task_id = image_preferences.get('task_id')
+    if explicit_image_task_id not in (None, ''):
+        try:
+            return int(explicit_image_task_id)
+        except (TypeError, ValueError):
+            return None
+    model_name = image_preferences.get('model_name')
+    if not model_name:
+        return None
+    required_category = (
+        TaskCategory.IMAGE_EDIT
+        if image_mode == MediaGenerationMode.IMAGE_EDIT
+        else TaskCategory.TEXT_TO_IMAGE
+    )
+    matched = next(
+        (
+            config for config in UnifiedConfigRegistry.get_all()
+            if (config.name == model_name or config.key == model_name)
+            and required_category in {config.category, *(config.categories or [])}
+        ),
+        None,
+    )
+    return matched.id if matched else None
+
+
+def _apply_image_task_id_to_execution_profiles(
+    user_id: str,
+    world_id: str,
+    profiles: Dict[str, Any],
+    request_slots: set,
+    image_preferences: Dict[str, Any],
+    explicit_image_task_id: int,
+    *,
+    persist_world_default: bool = True,
+) -> None:
+    """将显式生图模型写入本任务的 image 槽位快照来源。
+
+    - 同时尝试 text_to_image / image_edit（模型不兼容则跳过该槽）
+    - 默认仍写入 marketing_ui media_pref 作为「下次任务默认」；任务真相源是随后的 generation_snapshots
+    """
+    base_image_profile = dict(image_preferences)
+    base_image_profile['task_id'] = int(explicit_image_task_id)
+    for mode in (MediaGenerationMode.TEXT_TO_IMAGE, MediaGenerationMode.IMAGE_EDIT):
+        image_slot = MediaGenerationPreferenceService.slot_key(MediaGenerationType.IMAGE, mode)
+        existing = profiles.get(image_slot) or {}
+        mode_profile = {
+            key: value
+            for key, value in {**existing, **base_image_profile}.items()
+            if key in MediaGenerationPreferenceService.PROFILE_FIELDS or key == 'task_id'
+        }
+        mode_profile['task_id'] = int(explicit_image_task_id)
+        try:
+            if persist_world_default:
+                saved = MediaGenerationPreferenceService.save_profile(
+                    user_id,
+                    world_id,
+                    MediaGenerationSurface.MARKETING_UI,
+                    MediaGenerationType.IMAGE,
+                    mode,
+                    mode_profile,
+                )
+            else:
+                # 仅本任务内存覆盖：校验模型兼容性但不落库
+                config = MediaGenerationPreferenceService.validate_model(
+                    mode_profile.get('task_id'),
+                    MediaGenerationType.IMAGE,
+                    mode,
+                    image_mode=mode_profile.get('image_mode'),
+                )
+                saved = dict(mode_profile)
+                saved.update(
+                    {
+                        'schema_version': 1,
+                        'task_id': int(config.id),
+                        'model_key': config.key,
+                        'model_name': config.name,
+                    }
+                )
+            profiles[image_slot] = saved
+            request_slots.add(image_slot)
+        except (MediaGenerationPreferenceError, ValueError, TypeError) as mode_err:
+            logger.warning(
+                '任务创建时写入 image 槽位跳过: user_id=%s world_id=%s mode=%s task_id=%s err=%s',
+                user_id, world_id, mode, explicit_image_task_id, mode_err,
+            )
+
+
 def _build_marketing_task_execution_context_sync(
     user_id: str,
     world_id: str,
@@ -1706,39 +1866,17 @@ def _build_marketing_task_execution_context_sync(
         MediaGenerationType.IMAGE,
         image_urls=task_request.image_urls,
     )
-    explicit_image_task_id = image_preferences.get('task_id')
-    if explicit_image_task_id in (None, '') and image_preferences.get('model_name'):
-        model_name = str(image_preferences.get('model_name'))
-        required_category = (
-            TaskCategory.IMAGE_EDIT
-            if image_mode == MediaGenerationMode.IMAGE_EDIT
-            else TaskCategory.TEXT_TO_IMAGE
-        )
-        matched = next(
-            (
-                config for config in UnifiedConfigRegistry.get_all()
-                if (config.name == model_name or config.key == model_name)
-                and required_category in {config.category, *(config.categories or [])}
-            ),
-            None,
-        )
-        explicit_image_task_id = matched.id if matched else None
-    if explicit_image_task_id not in (None, ''):
-        image_profile = dict(image_preferences)
-        image_profile['task_id'] = int(explicit_image_task_id)
-        image_profile = MediaGenerationPreferenceService.save_profile(
+    explicit_image_task_id = _resolve_explicit_image_task_id(image_preferences, image_mode)
+    if explicit_image_task_id is not None:
+        _apply_image_task_id_to_execution_profiles(
             user_id,
             world_id,
-            MediaGenerationSurface.MARKETING_UI,
-            MediaGenerationType.IMAGE,
-            image_mode,
-            image_profile,
+            profiles,
+            request_slots,
+            image_preferences,
+            explicit_image_task_id,
+            persist_world_default=True,
         )
-        image_slot = MediaGenerationPreferenceService.slot_key(
-            MediaGenerationType.IMAGE, image_mode
-        )
-        profiles[image_slot] = image_profile
-        request_slots.add(image_slot)
 
     video_preferences = dict(task_request.video_preferences or {})
     explicit_video_task_id = video_preferences.get('task_id')
@@ -1869,12 +2007,23 @@ async def get_text_to_image_models():
 
 @router.post('/text-to-image-model')
 async def set_text_to_image_model(request: Request):
-    """设置当前会话的生图模型"""
+    """设置生图模型。
+
+    scope:
+      - session（默认）：本对话草稿 chat_sessions.text_to_image_model_id
+      - world_default：世界默认（legacy + media_pref），供新会话种子；不改当前会话草稿
+    """
     try:
         data = await request.json()
         user_id = str(data.get('user_id', ''))
         world_id = str(data.get('world_id', ''))
         session_id = data.get('session_id')
+        scope = str(data.get('scope') or IMAGE_MODEL_SCOPE_SESSION).strip().lower()
+        if scope not in (IMAGE_MODEL_SCOPE_SESSION, IMAGE_MODEL_SCOPE_WORLD_DEFAULT):
+            return JSONResponse({
+                'success': False,
+                'error': f'无效的 scope: {scope}，有效值为 session / world_default',
+            }, status_code=400)
         # 支持 model_id 和 task_id 两种参数名
         task_id = data.get('task_id') or data.get('model_id')
 
@@ -1920,42 +2069,58 @@ async def set_text_to_image_model(request: Request):
                 'error': f'无效的 task_id: {task_id}，有效值为: {list(models_config.keys())}'
             }, status_code=400)
 
-        set_text_to_image_model_id(user_id, world_id, task_id)
+        if scope == IMAGE_MODEL_SCOPE_WORLD_DEFAULT:
+            await asyncio.to_thread(set_text_to_image_model_id, user_id, world_id, task_id)
+            await asyncio.to_thread(
+                _sync_image_model_to_media_pref_world_default, user_id, world_id, task_id
+            )
+        else:
+            # 本对话：只更新会话草稿；兼容无 session_id 的旧调用则回退写 legacy
+            if session_id:
+                try:
+                    from model.chat_sessions import ChatSessionsModel
+                    await asyncio.to_thread(
+                        ChatSessionsModel.update_model,
+                        session_id=session_id,
+                        model=None,
+                        model_id=None,
+                        text_to_image_model_id=task_id,
+                    )
+                    logger.info(
+                        f'已更新会话生图草稿 - session_id: {session_id}, task_id: {task_id}'
+                    )
+                except Exception as db_error:
+                    logger.error(f'更新会话生图草稿失败: {db_error}')
+                    return JSONResponse({
+                        'success': False,
+                        'error': f'更新会话生图模型失败: {db_error}',
+                    }, status_code=500)
+            else:
+                await asyncio.to_thread(set_text_to_image_model_id, user_id, world_id, task_id)
 
-        # 同步保存比例和分辨率偏好
+        # 同步保存比例和分辨率偏好（世界级输出偏好，与 scope 无关）
         ratio = data.get('ratio')
         resolution = data.get('resolution')
         if ratio or resolution:
-            prefs = get_image_preferences(user_id, world_id)
+            prefs = await asyncio.to_thread(get_image_preferences, user_id, world_id)
             if ratio:
                 prefs['ratio'] = ratio
             if resolution:
                 prefs['resolution'] = resolution
-            set_image_preferences(user_id, world_id, prefs)
-
-        # 如果提供了 session_id，同时更新数据库中的 chat_sessions 表
-        if session_id:
-            try:
-                from model.chat_sessions import ChatSessionsModel
-                ChatSessionsModel.update_model(
-                    session_id=session_id,
-                    model=None,  # 不更新 LLM 模型
-                    model_id=None,  # 不更新 LLM 模型 ID
-                    text_to_image_model_id=task_id  # 只更新生图模型 ID
-                )
-                logger.info(f'已更新数据库中的生图模型 - session_id: {session_id}, task_id: {task_id}')
-            except Exception as db_error:
-                logger.error(f'更新数据库生图模型失败: {db_error}')
-                # 数据库更新失败不影响内存配置更新，继续执行
+            await asyncio.to_thread(set_image_preferences, user_id, world_id, prefs)
 
         model_info = models_config[task_id]
-        logger.info(f'生图模型设置成功 - user_id: {user_id}, world_id: {world_id}, task_id: {task_id}, model: {model_info["name"]}')
+        logger.info(
+            f'生图模型设置成功 - scope={scope}, user_id={user_id}, world_id={world_id}, '
+            f'task_id={task_id}, model={model_info["name"]}'
+        )
 
         return JSONResponse({
             'success': True,
             'message': '生图模型设置成功',
             'task_id': task_id,
-            'model_name': model_info["name"]
+            'model_name': model_info["name"],
+            'scope': scope,
         })
     except Exception as e:
         logger.error(f'设置生图模型失败: {str(e)}')
@@ -1970,9 +2135,9 @@ async def get_current_text_to_image_model(
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...)
 ):
-    """获取当前会话的生图模型配置"""
+    """获取世界级默认生图模型配置（legacy text_to_image_model / 兼容 media_pref 回填源）。"""
     try:
-        task_id = get_text_to_image_model_id(user_id, world_id)
+        task_id = await asyncio.to_thread(get_text_to_image_model_id, user_id, world_id)
         models_config = _get_text_to_image_models_from_config()
         model_info = models_config.get(task_id, models_config.get(DEFAULT_TEXT_TO_IMAGE_TASK_ID, {}))
 
@@ -1988,6 +2153,61 @@ async def get_current_text_to_image_model(
             'success': False,
             'error': str(e)
         }, status_code=500)
+
+
+@router.get('/world-defaults/llm')
+async def get_world_default_llm(
+    user_id: str = QueryParam(...),
+    world_id: str = QueryParam(...),
+):
+    """获取世界级默认对话模型。"""
+    try:
+        pref = await asyncio.to_thread(get_default_llm_model, user_id, world_id)
+        return JSONResponse({
+            'success': True,
+            'default': pref,
+        })
+    except Exception as e:
+        logger.error(f'获取默认对话模型失败: {str(e)}')
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+
+@router.put('/world-defaults/llm')
+async def put_world_default_llm(request: Request):
+    """设置世界级默认对话模型（新会话种子；不改当前会话）。"""
+    try:
+        data = await request.json()
+        user_id = str(data.get('user_id') or '')
+        world_id = str(data.get('world_id') or '')
+        if not user_id or not world_id:
+            return JSONResponse(
+                {'success': False, 'error': 'user_id 和 world_id 不能为空'},
+                status_code=400,
+            )
+        model = data.get('model')
+        if not model:
+            return JSONResponse({'success': False, 'error': 'model 不能为空'}, status_code=400)
+        try:
+            saved = await asyncio.to_thread(
+                set_default_llm_model,
+                user_id,
+                world_id,
+                {
+                    'model': model,
+                    'model_id': data.get('model_id'),
+                    'vendor_id': data.get('vendor_id'),
+                    'name': data.get('name') or model,
+                },
+            )
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({'success': False, 'error': str(exc)}, status_code=400)
+        logger.info(
+            f'默认对话模型已设置 user_id={user_id} world_id={world_id} model={saved.get("model")}'
+        )
+        return JSONResponse({'success': True, 'default': saved})
+    except Exception as e:
+        logger.error(f'设置默认对话模型失败: {str(e)}')
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
 
 
 @router.get('/video-model')
@@ -3076,6 +3296,36 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 'error': '消息不能为空'
             }, status_code=400)
 
+        # 对话级生图模型：请求显式 task_id > 会话草稿 chat_sessions.text_to_image_model_id
+        # > 世界默认 media_pref/legacy。保证 script_writer 改模型后「下一条消息」写入新 task 快照。
+        image_prefs = dict(task_request.image_preferences or {})
+        if image_prefs.get('task_id') in (None, ''):
+            session_image_model_id = getattr(session, 'text_to_image_model_id', None)
+            if session_image_model_id in (None, ''):
+                try:
+                    from model.chat_sessions import ChatSessionsModel
+                    session_entity = await asyncio.to_thread(
+                        ChatSessionsModel.get_by_session_id, session_id
+                    )
+                    if session_entity is not None:
+                        session_image_model_id = getattr(
+                            session_entity, 'text_to_image_model_id', None
+                        )
+                except Exception as session_err:
+                    logger.warning(
+                        f'读取会话生图模型草稿失败 session_id={session_id}: {session_err}'
+                    )
+            if session_image_model_id not in (None, ''):
+                try:
+                    image_prefs['task_id'] = int(session_image_model_id)
+                    task_request.image_preferences = image_prefs
+                    logger.info(
+                        f'[Agent任务] 使用会话草稿生图模型: session_id={session_id}, '
+                        f'task_id={image_prefs["task_id"]}'
+                    )
+                except (TypeError, ValueError):
+                    pass
+
         try:
             execution_context_json = await asyncio.to_thread(
                 _build_marketing_task_execution_context_sync,
@@ -3094,17 +3344,30 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
         if task_request.image_preferences:
             prefs = task_request.image_preferences
 
-            # 同步生图模型配置到内存（确保 Agent 实际使用的模型与前端选择一致）
-            model_name = prefs.get('model_name')
-            if model_name:
-                models_config = _get_text_to_image_models_from_config()
-                for tid, info in models_config.items():
-                    if info.get('name') == model_name:
-                        await asyncio.to_thread(
-                            set_text_to_image_model_id, user_id, world_id, tid
-                        )
-                        logger.info(f'[Agent任务] 已同步生图模型: user_id={user_id}, world_id={world_id}, model={model_name}, task_id={tid}')
-                        break
+            # 同步生图模型配置（优先 task_id，其次 model_name）到 legacy 偏好
+            synced_tid = None
+            explicit_tid = prefs.get('task_id')
+            if explicit_tid not in (None, ''):
+                try:
+                    synced_tid = int(explicit_tid)
+                except (TypeError, ValueError):
+                    synced_tid = None
+            if synced_tid is None:
+                model_name = prefs.get('model_name')
+                if model_name:
+                    models_config = _get_text_to_image_models_from_config()
+                    for tid, info in models_config.items():
+                        if info.get('name') == model_name:
+                            synced_tid = tid
+                            break
+            if synced_tid is not None:
+                await asyncio.to_thread(
+                    set_text_to_image_model_id, user_id, world_id, synced_tid
+                )
+                logger.info(
+                    f'[Agent任务] 已同步生图模型: user_id={user_id}, world_id={world_id}, '
+                    f'model={prefs.get("model_name")}, task_id={synced_tid}'
+                )
 
             pref_parts = await asyncio.to_thread(
                 sync_agent_image_preferences, user_id, world_id, prefs

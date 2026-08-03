@@ -103,11 +103,28 @@ snapshot.task_id == effective_task_id == ai_tools.type
 
 ## 模型解析优先级
 
-Marketing UI：
+Marketing UI / 剧本智能体（`script_writer.html` 与 marketing agent 共用 `marketing_ui` surface）：
 
 ```text
-本次请求 task_id → marketing_ui 模式偏好 → 首次兼容默认模型
+本次请求 image_preferences.task_id
+  → 会话草稿 chat_sessions.text_to_image_model_id
+  → marketing_ui 模式偏好 media_pref.*
+  → 首次兼容默认模型
 ```
+
+创建 `agent_tasks` 时上述结果写入不可变 `generation_snapshots`。工具执行只认该快照。
+
+### 对话中切换生图模型（script_writer）
+
+- 用户改选择器：`POST /api/text-to-image-model` + `scope=session` 更新会话草稿 `chat_sessions.text_to_image_model_id`（本对话）。
+- 下拉底部 **「设为默认生图模型」**：`scope=world_default` 写入 legacy `text_to_image_model` + `media_pref.marketing_ui.image.*`（世界默认，供新会话种子；不改当前会话草稿）。
+- 下拉底部 **「设为默认对话模型」**：`PUT /api/world-defaults/llm` 写入 `user_preferences.pref_type=default_llm_model`。
+- 首页 **用户设置 → 创作默认偏好**：查看/修改同一套世界默认（对话模型 + 生图模型）；与「智能体连接 → 智能体模型偏好」（`storyboard_cli`）隔离。
+- **当前已运行任务不变**；**下一条消息**新建 task 时：
+  1. 前端应携带 `image_preferences.task_id`（以 UI 当前值为准）；
+  2. 若未携带，后端回退读取 `chat_sessions.text_to_image_model_id`；
+  3. 再回退 `media_pref` / legacy。
+- 显式生图 `task_id` 会尽量同时写入本任务的 `image.text_to_image` 与 `image.image_edit` 快照（模型不兼容则跳过对应槽位）。
 
 Storyboard UI：
 
