@@ -2268,9 +2268,16 @@ export function bindEvents() {
             }
             if (action === 'confirm-create-ratio') {
                 if (state.isCreatingStoryboard) return;
+                // 通过 state 上注册的 handler 调用，避免动态 import('./bootstrap.js')
+                // 触发模块重复求值（HTML 入口带 ?v=，动态 import 解析为无版本号 URL）。
+                const continueFn = state.continueCreateWithRatio;
+                if (typeof continueFn !== 'function') {
+                    state.ratioConfirmError = '初始化未完成，请刷新页面后重试';
+                    rerender('all');
+                    return;
+                }
                 try {
-                    const { continueCreateWithRatio } = await import('./bootstrap.js');
-                    await continueCreateWithRatio(state.pendingCreateRatio || '16:9');
+                    await continueFn(state.pendingCreateRatio || '16:9');
                 } catch (err) {
                     state.ratioConfirmError = err.message || '创建故事板失败';
                     state.ratioGateActive = true;
