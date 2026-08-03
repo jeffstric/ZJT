@@ -2216,9 +2216,21 @@ async def ai_app_run_image(
         # 其 audio 是「对口型说话音频」必选输入，不是 reference_to_video 的参考素材。
         # 若走 determine_mode，有 audio 会被判成 reference_to_video，进而被
         # validate_model 以「模型不支持 reference_to_video」拒绝（MODEL_MODE_UNSUPPORTED）。
+
+        # 判断实际命中的实现方是否支持自动处理人脸（网关内置真人审核，如 huimengi human_review）。
+        # 支持 + 用户勾选处理人脸时：跳过 RunningHub 遮盖预处理，并注入 human_review=true
+        # 让网关自动处理，替代本地遮盖。此判断在 base_extra_config 构建前完成，以便注入参数。
+        _impl_config_for_face = UnifiedConfigRegistry.get_implementation(actual_impl) if actual_impl else None
+        impl_supports_auto_face = bool(_impl_config_for_face and _impl_config_for_face.supports_auto_face)
+        user_wants_face_process = bool(enable_face_mask) and impl_supports_auto_face
+
         base_extra_config = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
         if resolution:
             base_extra_config[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
+        # 支持自动处理人脸的网关：用户勾选处理人脸时注入 human_review=true，
+        # 驱动（huimengi）会透传给网关，由网关服务端审核加白，无需本地遮盖。
+        if user_wants_face_process:
+            base_extra_config['human_review'] = True
         if task_config.category == TaskCategory.DIGITAL_HUMAN:
             if not audio_path:
                 raise HTTPException(status_code=400, detail="数字人任务需要提供说话音频（audio 或 audio_urls）")
@@ -2362,6 +2374,7 @@ async def ai_app_run_image(
                         need_pipeline_steps = (
                             is_seedance_face_mask
                             and enable_face_mask
+                            and not impl_supports_auto_face
                             and not Edition.is_community()
                             and runninghub_api_key
                             and has_any_param_prepare_input
@@ -2370,6 +2383,7 @@ async def ai_app_run_image(
                             f"Pipeline steps condition check: image_to_video_type={image_to_video_type}, "
                             f"is_seedance_face_mask={is_seedance_face_mask}, "
                             f"enable_face_mask={enable_face_mask}, is_community={Edition.is_community()}, "
+                            f"impl_supports_auto_face={impl_supports_auto_face}, actual_impl={actual_impl}, "
                             f"has_api_key={bool(runninghub_api_key)}, has_video={bool(video_path)}, "
                             f"face_mask_enabled={bool(seedance_face_mask_enabled)}, "
                             f"has_image_input={has_image_input}, need_pipeline_steps={need_pipeline_steps}"

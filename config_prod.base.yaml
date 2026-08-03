@@ -60,6 +60,10 @@ kkidc:
   api_key: ""
   base_url: "https://ai-api.kkidc.com/v1"
 
+huimengi:
+  api_key: ""
+  base_url: "https://api.huimengi.com"
+
 # 适配云雾 comfly这类聚合站
 api_aggregator:
   site_0:

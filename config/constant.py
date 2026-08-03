@@ -497,16 +497,19 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
         DriverImplementation.SEEDANCE_2_0_FAST_KKIDC_V1,                # kkidc 网关
+        DriverImplementation.SEEDANCE_2_0_FAST_HUIMENGI_V1,             # huimengi 网关
     ],
     DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO: [
         DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
         DriverImplementation.SEEDANCE_2_0_KKIDC_V1,                # kkidc 网关
+        DriverImplementation.SEEDANCE_2_0_HUIMENGI_V1,             # huimengi 网关
     ],
     DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO: [
         DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
         DriverImplementation.SEEDANCE_2_0_MINI_KKIDC_V1,                # kkidc 网关
+        DriverImplementation.SEEDANCE_2_0_MINI_HUIMENGI_V1,             # huimengi 网关
     ],
 
     # GPT Image 相关驱动
