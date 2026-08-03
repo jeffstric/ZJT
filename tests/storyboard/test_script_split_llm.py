@@ -151,22 +151,32 @@ class TestValidateParsedScript:
 # ---------------- script_parser 系统 prompt 规则（源码断言） ----------------
 
 class TestScriptParserPromptRules:
-    """parse_script_to_shots 是重型 async，这里用源码断言验证提示词注入点存在。"""
+    """parse_script_to_shots 是重型 async，这里用源码/skill 断言验证提示词注入点存在。"""
 
     @property
     def _source(self):
         return (PROJECT_ROOT / "llm" / "script_parser.py").read_text(encoding="utf-8")
 
+    @property
+    def _system_skill(self):
+        return (
+            PROJECT_ROOT
+            / "script_writer_core"
+            / "skills"
+            / "script-parser"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
     def test_presentation_field_rule_exists(self):
-        """系统 prompt 第 19 条要求输出 presentation 字段。"""
-        src = self._source
+        """系统 prompt（skill）要求输出 presentation 字段。"""
+        src = self._system_skill
         assert "presentation" in src
         assert "digital_human" in src
         assert "video" in src
 
     def test_multi_speaker_must_be_video_rule(self):
         """dialogue 中 ≥2 说话角色时 presentation 必须为 video。"""
-        src = self._source
+        src = self._system_skill
         assert "2 个及以上" in src or "2个及以上" in src
 
     def test_strict_json_param_exists(self):

@@ -155,10 +155,10 @@
 
 保留 `parse_script_to_shots()` 作为核心拆分函数，不另写一套分镜字段定义。需要做的改造以参数化和函数提取为主：
 
-1. 继续使用 `SCRIPT_PARSER_SYSTEM_PROMPT`。
+1. 继续使用 system prompt：主源为 skill `script-parser`（`get_script_parser_system_prompt(user_id)`，支持用户级自定义），缺失时回退内置 FALLBACK。
 2. 继续使用现有数据库角色、场景和道具加载逻辑。
 3. 继续使用语言、模型、思考模式、多人对白拆分、强制中景、无背景音乐等参数。
-4. 继续使用现有 JSON 示例和业务规则。
+4. 继续使用现有 JSON 示例和业务规则（user prompt 仍在 `script_parser.py` 内拼装）。
 5. 继续使用 `sanitize_parsed_prop_references()`。
 6. 继续使用 `sanitize_parsed_location_references()`。
 7. 继续使用 `repair_spatial_layout_continuity()`。

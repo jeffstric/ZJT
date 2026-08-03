@@ -2,6 +2,18 @@
 
 本目录包含与剧本解析、分镜节点相关的功能文档。
 
+## 剧本解析系统提示词（skill）
+
+`llm/script_parser.py` 的 **system prompt** 已迁到技能文件，可在 AI 工具箱 → **技能配置** 中按用户自定义：
+
+| 项 | 说明 |
+|----|------|
+| 默认文件 | `script_writer_core/skills/script-parser/SKILL.md` |
+| skill 名 | `script-parser`（`ScriptParserConstants.SKILL_NAME`） |
+| 加载方式 | `get_script_parser_system_prompt(user_id)`：用户 DB 自定义 → 文件系统默认 → 内置极简 FALLBACK |
+| 调用透传 | 分段拆分引擎传入 `task.user_id`，使自定义对拆分生效 |
+| 未迁出部分 | user prompt、条件开关文案、QC/分段动态块仍在 `script_parser.py` 内拼装 |
+
 ## 文档列表
 
 | 文档 | 说明 |
