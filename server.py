@@ -2219,7 +2219,6 @@ async def ai_app_run_image(
         # 判断实际命中的实现方是否支持自动处理人脸（网关内置真人审核，如 huimengi human_review）。
         # 支持 + 用户勾选处理人脸时：跳过 RunningHub 遮盖预处理，并注入 human_review=true
         # 让网关自动处理，替代本地遮盖。此判断在 base_extra_config 构建前完成，以便注入参数。
-        from config.unified_config import UnifiedConfigRegistry
         _impl_config_for_face = UnifiedConfigRegistry.get_implementation(actual_impl) if actual_impl else None
         impl_supports_auto_face = bool(_impl_config_for_face and _impl_config_for_face.supports_auto_face)
         user_wants_face_process = bool(enable_face_mask) and impl_supports_auto_face
