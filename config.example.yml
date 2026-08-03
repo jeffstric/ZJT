@@ -97,9 +97,15 @@ database:
   host: "localhost"
   port: 3306
   user: "root"
-  password: "3bTgThWP2xeX"
+  password: "your_password_here"          # 替换为真实密码；example 不应含真实凭据
   database: "zjt"
   charset: "utf8mb4"
+  # 数据库连接池（可选；缺省时使用 model/database.py 内置默认值）
+  # 详见 docs/backend/database_connection_pool.md
+  pool:
+    mincached: 2          # 启动时预热连接数
+    maxcached: 20         # 空闲池上限（每进程）
+    maxconnections: 0     # 0=无硬上限
 
 
 duomi:

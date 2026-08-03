@@ -407,6 +407,7 @@ CREATE TABLE IF NOT EXISTS `agent_tasks` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_task_id` (`task_id`),
   KEY `idx_session_id` (`session_id`),
-  KEY `idx_user_world` (`user_id`,`world_id`)
+  KEY `idx_user_world` (`user_id`,`world_id`),
+  KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB
 """
