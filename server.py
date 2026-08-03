@@ -6120,6 +6120,44 @@ class ReduceViolationRequest(BaseModel):
     # 可选：上游/任务失败原因摘要，帮助模型针对性弱化敏感表述（方案 D）
     failure_reason: Optional[str] = None
     source: Optional[str] = None  # prompt | reference_image | output | copyright | general
+    # 可选：跟随剧本拆分模型改写（前端从分镜节点向上追溯到剧本节点传入）
+    model: Optional[str] = None        # 模型名，如 gemini-3-flash-preview
+    vendor_id: Optional[int] = None    # 供应商 ID（工厂优先按它路由）
+    model_id: Optional[int] = None     # 模型 ID（计费用）
+
+
+async def _rewrite_with_llm(messages, request, auth_token):
+    """内容安全提示词改写：优先用前端传入的拆分模型，缺失或供应商未配置则用默认模型兜底。
+
+    通过统一 LLM 工厂调用，自动路由到对应供应商并从数据库热配置 + YAML 兜底读取凭据，
+    避免遗留的 llm/qwen.py 静态配置（启动时读取、不查数据库）导致的凭据缺失问题。
+    """
+    import asyncio
+    from config.constant import LLMModel
+    from llm.llm_client_factory import get_llm_client
+
+    model = request.model or LLMModel.REDUCE_VIOLATION_DEFAULT
+    client = get_llm_client(model, vendor_id=request.vendor_id)
+
+    # 所选拆分模型的供应商未配置 api_key 时，切兜底模型重试一次
+    if not getattr(client, 'api_key', ''):
+        model = LLMModel.REDUCE_VIOLATION_DEFAULT
+        client = get_llm_client(model)
+
+    # call_api 是同步方法，用 asyncio.to_thread 包成异步，避免阻塞事件循环
+    response = await asyncio.to_thread(
+        client.call_api,
+        model=model,
+        messages=messages,
+        temperature=0.7,
+        max_tokens=2000,
+        auth_token=auth_token,
+        vendor_id=request.vendor_id,
+        model_id=request.model_id,
+    )
+    content = response.choices[0].message.content if response.choices else ''
+    return (content or '').strip()
+
 
 @app.post('/api/reduce-violation')
 async def reduce_violation(
@@ -6131,11 +6169,10 @@ async def reduce_violation(
     降低提示词违规风险（用户主动调用，非任务失败自动路径）。
 
     兼容仅传 prompt；可选 failure_reason / source 用于结合内容审核失败上下文改写。
+    model / vendor_id / model_id 可选，用于跟随剧本拆分模型改写。
     设计见 docs/image/content_moderation_error_design.md 方案 D。
     """
     try:
-        from llm.qwen import call_qwen_chat_async
-
         prompt_text = (request.prompt or "").strip()
         if not prompt_text:
             return JSONResponse(
@@ -6165,11 +6202,7 @@ async def reduce_violation(
             {"role": "user", "content": user_prompt}
         ]
 
-        rewritten_prompt = await call_qwen_chat_async(
-            messages=messages,
-            temperature=0.7,
-            max_tokens=2000
-        )
+        rewritten_prompt = await _rewrite_with_llm(messages, request, auth_token)
 
         return JSONResponse({
             "code": 0,

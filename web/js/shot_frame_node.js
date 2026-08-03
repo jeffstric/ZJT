@@ -1687,11 +1687,35 @@
       
       // 初始化按钮显示状态
       updateReduceViolationBtnVisibility();
-      
+
+      // 从分镜节点向上追溯剧本节点的拆分模型（分镜→分镜组→剧本）
+      // 用于让 reduce-violation 改写跟随剧本拆分时选用的模型
+      function resolveSplitModelFromScript(){
+        try {
+          // 第1跳：找到父分镜组
+          const groupConn = state.connections.find(c => c.to === id);
+          if(!groupConn) return {};
+          const groupNode = state.nodes.find(n => n.id === groupConn.from && n.type === 'shot_group');
+          if(!groupNode) return {};
+          // 第2跳：找到分镜组的父剧本
+          const scriptConn = state.connections.find(c => c.to === groupNode.id);
+          if(!scriptConn) return {};
+          const scriptNode = state.nodes.find(n => n.id === scriptConn.from && n.type === 'script');
+          if(!scriptNode) return {};
+          return {
+            model: scriptNode.data.splitModel || '',
+            vendor_id: scriptNode.data.splitModelVendorId || null,
+            model_id: scriptNode.data.splitModelId || null,
+          };
+        } catch(e) {
+          return {};
+        }
+      }
+
       if(reduceViolationBtn){
         reduceViolationBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
-          
+
           const currentPrompt = (node.data.videoPromptText || node.data.videoPrompt || '').trim();
           if(!currentPrompt){
             showToast('视频提示词为空', 'warning');
@@ -1702,14 +1726,19 @@
           if(lastError.includes('参考图片')){
             showToast('当前失败更可能与参考图有关，改写提示词可能无效，建议先更换参考图', 'warning');
           }
-          
+
           try {
             setBtnLoading(reduceViolationBtn, '改写提示词，修改违规内容...');
-            
+
             const body = { prompt: currentPrompt };
             if(lastError){
               body.failure_reason = lastError;
             }
+            // 附带剧本拆分模型，让后端用同一模型改写；取不到则不传（后端用默认模型兜底）
+            const splitModel = resolveSplitModelFromScript();
+            if(splitModel.model) body.model = splitModel.model;
+            if(splitModel.vendor_id != null) body.vendor_id = splitModel.vendor_id;
+            if(splitModel.model_id != null) body.model_id = splitModel.model_id;
 
             const response = await fetch('/api/reduce-violation', {
               method: 'POST',

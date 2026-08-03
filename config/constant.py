@@ -1615,6 +1615,7 @@ class LLMModel:
         'CLAUDE_HAIKU_4_5': 'Claude Haiku 4.5',
         'DEEPSEEK_V4_FLASH': 'DeepSeek V4 Flash',
         'DEEPSEEK_V4_PRO': 'DeepSeek V4 Pro',
+        'REDUCE_VIOLATION_DEFAULT': '内容安全提示词改写默认模型（reduce-violation 兜底）',
     }
     # Gemini 模型
     GEMINI_3_FLASH = 'gemini-3-flash-preview'
@@ -1639,6 +1640,10 @@ class LLMModel:
     # DeepSeek 模型
     DEEPSEEK_V4_FLASH = 'deepseek-v4-flash'
     DEEPSEEK_V4_PRO = 'deepseek-v4-pro'
+
+    # 内容安全提示词改写（reduce-violation）的默认兜底模型
+    # 前端未传/所选拆分模型供应商未配置时使用；复用剧本拆分默认模型，凭据走 JIEKOU 中转
+    REDUCE_VIOLATION_DEFAULT = 'gemini-3-flash-preview'
 
 
 # 供应商图标映射（前端显示用）
