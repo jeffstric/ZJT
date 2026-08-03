@@ -2558,6 +2558,45 @@ button {
     background: rgba(255, 255, 255, 0.18);
     transform: translateY(-1px);
 }
+/* 窄幅缩略图（竖屏/方形/4:3）：底部横向空间不足，
+   复制/删除改为右侧竖排图标列，避免与左下角的时长文本重叠 */
+.scene-timeline-list[data-ratio="9:16"] .scene-timeline-actions,
+.scene-timeline-list[data-ratio="3:4"] .scene-timeline-actions,
+.scene-timeline-list[data-ratio="1:1"] .scene-timeline-actions,
+.scene-timeline-list[data-ratio="4:3"] .scene-timeline-actions {
+    top: 50%;
+    right: 6px;
+    bottom: auto;
+    flex-direction: column;
+    gap: 4px;
+    transform: translateY(calc(-50% + 4px));
+}
+.scene-timeline-list[data-ratio="9:16"] .scene-timeline-actions button,
+.scene-timeline-list[data-ratio="3:4"] .scene-timeline-actions button,
+.scene-timeline-list[data-ratio="1:1"] .scene-timeline-actions button,
+.scene-timeline-list[data-ratio="4:3"] .scene-timeline-actions button {
+    width: 20px;
+    height: 20px;
+    background: rgba(15, 23, 42, 0.55);
+    backdrop-filter: blur(4px);
+}
+/* 窄幅缩略图：压缩时长文本字号，为右侧操作列让出底部空间 */
+.scene-timeline-list[data-ratio="9:16"] .scene-timeline-meta,
+.scene-timeline-list[data-ratio="3:4"] .scene-timeline-meta,
+.scene-timeline-list[data-ratio="1:1"] .scene-timeline-meta,
+.scene-timeline-list[data-ratio="4:3"] .scene-timeline-meta {
+    left: 8px;
+    bottom: 6px;
+    gap: 3px;
+    font-size: 12px;
+}
+.scene-timeline-list[data-ratio="9:16"] .scene-timeline-meta .sb-icon,
+.scene-timeline-list[data-ratio="3:4"] .scene-timeline-meta .sb-icon,
+.scene-timeline-list[data-ratio="1:1"] .scene-timeline-meta .sb-icon,
+.scene-timeline-list[data-ratio="4:3"] .scene-timeline-meta .sb-icon {
+    width: 12px !important;
+    height: 12px !important;
+}
 .add-scene-btn {
     width: var(--timeline-thumb-width);
     height: var(--timeline-thumb-height);
