@@ -354,6 +354,12 @@ export async function continueCreateWithRatio(ratio) {
 }
 
 async function main() {
+    // 将比例门禁的「确认创建」实现注册到 state，供 events.js 的 click handler 调用，
+    // 避免在 events.js 中 `import('./bootstrap.js')`：
+    // HTML 入口为 bootstrap.js?v=<ver>，而动态 import 解析为 bootstrap.js（无版本号），
+    // 浏览器会把它当作【另一个模块】重新求值，导致 main() 被二次执行、比例门禁被重置为默认 16:9，
+    // 表现为「选择尺寸后立刻又弹出一个默认值的弹框，随后消失」。
+    state.continueCreateWithRatio = continueCreateWithRatio;
     bindEvents();
     initStateFromUrl();
 
