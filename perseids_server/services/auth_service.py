@@ -12,6 +12,7 @@ from model.computing_power import ComputingPowerModel
 from model.computing_power_log import ComputingPowerLogModel
 from model.login_log import LoginLogModel
 from config.constant import PERSEIDS_ERR_NO_VALID_TOKEN
+from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 
 from ..utils.token import generate_token, hash_password, verify_password, generate_secret_key
 from ..utils.validator import validate_phone, validate_password, validate_email
@@ -122,7 +123,11 @@ class AuthService:
         # 记录登录日志
         LoginLogModel.create(user.id, ip_address, user_agent, 1)
         
-        logger.info(f"用户登录成功 - ID: {user.id}, 标识: {identifier}")
+        logger.info(
+            "用户登录成功 - ID: %s, 标识: %s",
+            user.id,
+            mask_identifier(identifier),
+        )
         
         return {
             "success": True,
@@ -176,7 +181,11 @@ class AuthService:
         from services.registration_quota import check_allowed
         _allowed, _quota_msg = check_allowed(UsersModel.get_total_count())
         if not _allowed:
-            logger.warning(f"注册被拒绝（配额限制）- 手机号: {phone}, 邮箱: {email}")
+            logger.warning(
+                "注册被拒绝（配额限制）- 手机号: %s, 邮箱: %s",
+                mask_phone(phone),
+                mask_email(email),
+            )
             return {"success": False, "message": _quota_msg}
         
         # 邮箱注册流程
@@ -253,7 +262,11 @@ class AuthService:
             # 记录注册日志
             LoginLogModel.create(user_id, ip_address, user_agent, 1)
             
-            logger.info(f"邮箱用户注册成功 - ID: {user_id}, 邮箱: {email}")
+            logger.info(
+                "邮箱用户注册成功 - ID: %s, 邮箱: %s",
+                user_id,
+                mask_email(email),
+            )
 
             result = {
                 "success": True,
@@ -346,7 +359,11 @@ class AuthService:
         # 记录注册日志
         LoginLogModel.create(user_id, ip_address, user_agent, 1)
         
-        logger.info(f"用户注册成功 - ID: {user_id}, 手机号: {phone}")
+        logger.info(
+            "用户注册成功 - ID: %s, 手机号: %s",
+            user_id,
+            mask_phone(phone),
+        )
 
         result = {
             "success": True,
@@ -463,7 +480,11 @@ class AuthService:
             # 删除所有token
             UserTokensModel.delete_by_user_id(user.id)
             
-            logger.info(f"邮箱用户密码重置成功 - ID: {user.id}, 邮箱: {email}")
+            logger.info(
+                "邮箱用户密码重置成功 - ID: %s, 邮箱: %s",
+                user.id,
+                mask_email(email),
+            )
             return {"success": True, "message": "密码重置成功"}
         
         # ===== 手机号重置密码流程 =====
@@ -495,7 +516,11 @@ class AuthService:
         # 删除所有token，强制重新登录
         UserTokensModel.delete_by_user_id(user.id)
         
-        logger.info(f"用户密码重置成功 - ID: {user.id}, 手机号: {phone}")
+        logger.info(
+            "用户密码重置成功 - ID: %s, 手机号: %s",
+            user.id,
+            mask_phone(phone),
+        )
         
         return {"success": True, "message": "密码重置成功"}
     

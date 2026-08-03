@@ -9,6 +9,8 @@ import random
 import string
 import json
 
+from utils.log_sanitizer import mask_email, mask_phone
+
 logger = logging.getLogger(__name__)
 
 
@@ -89,7 +91,11 @@ class UsersModel:
                 return User(**result)
             return None
         except Exception as e:
-            logger.error(f"Failed to get user by phone {phone}: {e}")
+            logger.error(
+                "Failed to get user by phone %s: %s",
+                mask_phone(phone),
+                e,
+            )
             raise
 
     @staticmethod
@@ -102,7 +108,11 @@ class UsersModel:
                 return User(**result)
             return None
         except Exception as e:
-            logger.error(f"Failed to get user by email {email}: {e}")
+            logger.error(
+                "Failed to get user by email %s: %s",
+                mask_email(email),
+                e,
+            )
             raise
 
     @staticmethod
@@ -127,7 +137,11 @@ class UsersModel:
         sql = "UPDATE users SET email = %s, updated_at = NOW() WHERE id = %s"
         try:
             affected = execute_update(sql, (email, user_id))
-            logger.info(f"Updated user {user_id} email to {email}")
+            logger.info(
+                "Updated user %s email to %s",
+                user_id,
+                mask_email(email),
+            )
             return affected
         except Exception as e:
             logger.error(f"Failed to update email for user {user_id}: {e}")

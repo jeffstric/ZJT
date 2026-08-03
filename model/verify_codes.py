@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from .database import execute_query, execute_update, execute_insert
 import logging
 
+from utils.log_sanitizer import mask_email, mask_phone
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,7 +61,11 @@ class VerifyCodesModel:
         """
         try:
             code_id = execute_insert(sql, (phone, code, code_type, expire_time))
-            logger.info(f"Created verify code for phone: {phone}, type: {code_type}")
+            logger.info(
+                "Created verify code for phone: %s, type: %s",
+                mask_phone(phone),
+                code_type,
+            )
             return code_id
         except Exception as e:
             logger.error(f"Failed to create verify code: {e}")
@@ -80,7 +86,11 @@ class VerifyCodesModel:
                 return VerifyCode(**result)
             return None
         except Exception as e:
-            logger.error(f"Failed to get verify code for phone {phone}: {e}")
+            logger.error(
+                "Failed to get verify code for phone %s: %s",
+                mask_phone(phone),
+                e,
+            )
             raise
     
     @staticmethod
@@ -97,7 +107,11 @@ class VerifyCodesModel:
             result = execute_query(sql, (phone, code, code_type), fetch_one=True)
             return result is not None
         except Exception as e:
-            logger.error(f"Failed to verify code for phone {phone}: {e}")
+            logger.error(
+                "Failed to verify code for phone %s: %s",
+                mask_phone(phone),
+                e,
+            )
             raise
     
     @staticmethod
@@ -117,7 +131,11 @@ class VerifyCodesModel:
         try:
             return execute_update(sql, (phone,))
         except Exception as e:
-            logger.error(f"Failed to delete verify codes for phone {phone}: {e}")
+            logger.error(
+                "Failed to delete verify codes for phone %s: %s",
+                mask_phone(phone),
+                e,
+            )
             raise
     
     @staticmethod
@@ -143,7 +161,11 @@ class VerifyCodesModel:
         """
         try:
             code_id = execute_insert(sql, ('', email, 'email', code, code_type, expire_time))
-            logger.info(f"Created verify code for email: {email}, type: {code_type}")
+            logger.info(
+                "Created verify code for email: %s, type: %s",
+                mask_email(email),
+                code_type,
+            )
             return code_id
         except Exception as e:
             logger.error(f"Failed to create verify code for email: {e}")
@@ -164,7 +186,11 @@ class VerifyCodesModel:
                 return VerifyCode(**result)
             return None
         except Exception as e:
-            logger.error(f"Failed to get verify code for email {email}: {e}")
+            logger.error(
+                "Failed to get verify code for email %s: %s",
+                mask_email(email),
+                e,
+            )
             raise
 
     @staticmethod
@@ -181,7 +207,11 @@ class VerifyCodesModel:
             result = execute_query(sql, (email, code, code_type), fetch_one=True)
             return result is not None
         except Exception as e:
-            logger.error(f"Failed to verify code for email {email}: {e}")
+            logger.error(
+                "Failed to verify code for email %s: %s",
+                mask_email(email),
+                e,
+            )
             raise
 
     @staticmethod
@@ -200,9 +230,16 @@ class VerifyCodesModel:
         sql = "DELETE FROM verify_codes WHERE email = %s"
         try:
             return execute_update(sql, (email,))
-            logger.info(f"Deleted verify codes for email: {email}")
+            logger.info(
+                "Deleted verify codes for email: %s",
+                mask_email(email),
+            )
         except Exception as e:
-            logger.error(f"Failed to delete verify codes for email {email}: {e}")
+            logger.error(
+                "Failed to delete verify codes for email %s: %s",
+                mask_email(email),
+                e,
+            )
             raise
 
 

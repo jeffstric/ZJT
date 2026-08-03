@@ -8,6 +8,7 @@ from email.mime.multipart import MIMEMultipart
 from typing import Dict
 
 from .base_email_driver import BaseEmailDriver
+from utils.log_sanitizer import mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ class SmtpEmailDriver(BaseEmailDriver):
             server.sendmail(self.smtp_from, [email], msg.as_string())
             server.quit()
             
-            logger.info(f"验证码邮件发送成功: {email}")
+            logger.info("验证码邮件发送成功: %s", mask_email(email))
             return {"success": True, "message": "验证码邮件发送成功"}
             
         except smtplib.SMTPAuthenticationError as e:

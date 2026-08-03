@@ -10,6 +10,7 @@ from perseids_server.services.auth_service import AuthService
 from perseids_server.services.computing_power_service import ComputingPowerService
 from perseids_server.services.verify_code_service import VerifyCodeService
 from config.constant import PERSEIDS_ERR_INVALID_AUTH_TOKEN
+from utils.log_sanitizer import mask_email, mask_phone
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +239,12 @@ def call_external_auth_server(phone, password, device_uuid=None, auth_type='logi
     """
     try:
         extra = extra_data or {}
-        logger.debug(f"内部认证调用: {auth_type}, phone: {phone}, email: {email}")
+        logger.debug(
+            "内部认证调用: %s, phone: %s, email: %s",
+            auth_type,
+            mask_phone(phone),
+            mask_email(email),
+        )
         
         if auth_type == 'login':
             result = AuthService.login(
