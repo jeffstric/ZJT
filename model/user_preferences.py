@@ -100,13 +100,15 @@ PREF_TYPE_IMAGE_PREFERENCES = "image_preferences"
 PREF_TYPE_VIDEO_PREFERENCES = "video_preferences"
 PREF_TYPE_TEXT_TO_VIDEO_MODEL = "text_to_video_model"
 PREF_TYPE_IMAGE_TO_VIDEO_MODEL = "image_to_video_model"
+# 世界级默认对话模型：{model, model_id, vendor_id, name?}
+PREF_TYPE_DEFAULT_LLM_MODEL = "default_llm_model"
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `user_preferences` (
   `id` int NOT NULL AUTO_INCREMENT,
   `user_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
   `world_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `pref_type` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'text_to_image_model|image_preferences|video_preferences|text_to_video_model|image_to_video_model',
+  `pref_type` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'text_to_image_model|image_preferences|video_preferences|text_to_video_model|image_to_video_model|default_llm_model|media_pref.*',
   `config_value` json NOT NULL,
   `create_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `update_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

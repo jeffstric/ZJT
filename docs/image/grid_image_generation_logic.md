@@ -589,7 +589,7 @@ grid_image_tasks 标记为终态 FAILED
 
 7. **Agent 算力感知**：Agent 在生图前应调用 `get_text_to_image_model_info` 和 `get_user_computing_power` 预估成本。生成成功后返回值包含 `computing_power_required` 和 `computing_power_total`；算力不足时返回结构化的 `shortage` 信息。
 
-8. **模型动态切换**：用户可在前端切换生图模型（如 GPT Image 2 → Seedream 5.0），不同模型的算力价格和支持尺寸不同。`generate_text_to_image` 通过 `_get_text_to_image_task_id` 动态读取用户选择。
+8. **模型动态切换**：用户可在前端切换生图模型（如 GPT Image 2 → Seedream 5.0），不同模型的算力价格和支持尺寸不同。Agent 对话中切换后 **下一条消息新建的 `agent_tasks`** 写入新的 `generation_snapshots`；工具执行优先读任务快照（`scoped_media_generation_snapshots`），而非运行中任务的 live 偏好。script_writer 发送任务时应携带 `image_preferences.task_id`，后端另以 `chat_sessions.text_to_image_model_id` 作会话草稿回退。
 
 ---
 
