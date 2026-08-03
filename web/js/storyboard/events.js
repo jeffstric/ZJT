@@ -1468,9 +1468,20 @@ async function handleAction(action, target) {
     }
 
     if (action === 'duplicate-scene') {
-        const response = await api.duplicateScene(parseInt(target.dataset.id, 10));
-        addSceneToState(response.scene);
+        const sceneId = parseInt(target.dataset.id, 10);
+        // in-flight 守卫：复制请求飞行中再次点击（连点/鼠标抖动）直接忽略，
+        // 避免后端无幂等保护下连点 N 次复制出 N 份重复分镜。
+        if (state.duplicatingSceneId === sceneId) return;
+        state.duplicatingSceneId = sceneId;
         rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
+        try {
+            const response = await api.duplicateScene(sceneId);
+            addSceneToState(response.scene);
+            rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
+        } finally {
+            state.duplicatingSceneId = null;
+            rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
+        }
         return;
     }
 

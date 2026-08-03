@@ -425,6 +425,8 @@ class SceneDifficulty:
 
 > **前端拖拽排序协议**：前端不直接传 sort_order 数值，而是传「目标位置的前后分镜/对话 id」（拖到最前/最后只传一侧），后端据此取左右 sort_order 计算中值，并统一做下限检测与重排。这样避免前端猜测数值，也保证并发安全——`batch_reorder` 不再是「批量写入指定值」，而是「相对位置插入 + 必要时重排」。
 
+> **分镜复制 in-flight 守卫**：复制分镜（`POST /scene/{id}/duplicate`）后端无幂等保护（复制本身允许内容重复，无法用唯一索引去重），因此前端按 `sceneId` 维度做提交中守卫——请求飞行中 `state.duplicatingSceneId` 记录该 id，复制按钮置 `disabled`、`handleAction` 重复进入直接 return，`try/finally` 释放。避免连点/鼠标抖动让一次操作发出多个 POST，导致复制出多份重复分镜。
+
 ### 2.4 新增表：`storyboard_dialogue`（分镜对话表）
 
 把原 scene 的配音台词拆成「一个分镜多句对话」，每句对话绑定说话角色（取其参考声音）、语速、音量。
