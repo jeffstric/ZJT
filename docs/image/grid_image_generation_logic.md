@@ -178,7 +178,7 @@ cron_task_manager: item_type==7 分支
 2. 校验 `auth_token`、`prompt`、`item_type`（必须是 1-6）
 3. 单图类型（1/2/3）且非宫格时，打印警告提示建议使用 4宫格函数
 4. 检查是否已有正在进行的任务（`is_item_generating`）
-5. 检查是否已存在参考图（除非 `force_update_exist_image=True`）
+5. 检查是否已存在参考图（除非 `force_update_exist_image=True`）。该参数已在 MCP 工具 `inputSchema` 中暴露（默认 `false`），Agent 在用户确认后可传 `true` 覆盖单图；**4宫格工具不暴露、不支持该能力**
 6. 获取 `comfyui_base_url_inner`（避免内网无法访问问题）
 7. **确定 `image_size`**：
    - `is_grid=True`：取模型 `supported_sizes[-1]`（最大尺寸，如 4K/3K/2K）
@@ -579,7 +579,7 @@ grid_image_tasks 标记为终态 FAILED
 
 2. **状态查询局限**：`get_task_status` 不支持 4宫格任务，Agent 无法通过现有工具查询 4宫格生成进度。
 
-3. **覆盖保护**：4宫格入口中 `force_update_exist_image` 固定为 `False`。若 4 个项目中任意一个已有 `reference_image`，整个请求会被拒绝，需人工确认后通过单图接口强制更新。
+3. **覆盖保护**：4宫格入口中 `force_update_exist_image` 固定为 `False`，**多宫格不支持强制覆盖**。若 4 个项目中任意一个已有 `reference_image`，整个请求会被拒绝。人工确认后须走单图接口 `generate_text_to_image(..., force_update_exist_image=true)` 逐个覆盖；该参数已暴露在 MCP `inputSchema` 中供 Agent 调用。
 
 4. **占位符跳过**：名称为 `placeholder` 或 `pure black background` 的项目在覆盖检查中被跳过，允许后续替换。
 
@@ -655,3 +655,4 @@ grid_image_tasks 标记为终态 FAILED
 - **2026-05-06**：新增算力感知工具（`get_text_to_image_model_info`、`get_user_computing_power`），更新 `generate_text_to_image` 支持 `image_size` 参数和算力返回，修正 "4k" 硬编码描述
 - **2026-06-04**：新增自动重试机制文档；grid image 跳过 pipeline before_finish 重试，由 `process_grid_image_tasks` 独立管理
 - **2026-06-08**：移除 grid image 跳过逻辑，宫格生图现在支持失败后自动切换实现方；增加两个调度器竞争处理说明
+- **2026-08-03**：`generate_text_to_image` 的 MCP schema 补齐 `force_update_exist_image`；明确多宫格不支持 force，覆盖已有主图只能单图 + 用户确认

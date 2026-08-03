@@ -3516,7 +3516,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_text_to_image",
-        "description": "文本生图（非阻塞）。发起图片生成请求，立即返回project_ids。返回结果包含 model_used、image_size_used、computing_power_required 等算力信息。注意：生图模型由用户在前端界面选择，不同模型算力价格不同，请先调用 get_text_to_image_model_info 了解当前模型。",
+        "description": "文本生图（非阻塞）。发起图片生成请求，立即返回project_ids。返回结果包含 model_used、image_size_used、computing_power_required 等算力信息。注意：生图模型由用户在前端界面选择，不同模型算力价格不同，请先调用 get_text_to_image_model_info 了解当前模型。覆盖已有 reference_image 时必须传 force_update_exist_image=true，且仅限本单图工具；4宫格工具不支持强制覆盖。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -3543,6 +3543,11 @@ MCP_TOOLS = [
                 "item_name": {
                     "type": "string",
                     "description": "物品名称（可选），当指定item_type时必填，会自动更新对应物品的reference_image字段"
+                },
+                "force_update_exist_image": {
+                    "type": "boolean",
+                    "description": "是否强制覆盖已有参考图像（默认：false）。仅本单图工具支持；4宫格工具不支持。false：若角色/场景/道具已有 reference_image 则跳过；true：覆盖现有图像。仅在用户明确确认覆盖后才能设为 true",
+                    "default": False
                 }
             },
             "required": ["prompt"]
