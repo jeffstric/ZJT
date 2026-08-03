@@ -69,8 +69,13 @@ def get_script_parser_system_prompt(user_id: Optional[int] = None) -> str:
     return _SCRIPT_PARSER_SYSTEM_PROMPT_FALLBACK
 
 
-# 向后兼容：测试/旧代码若直接导入该名，得到的是文件系统默认（无 user 覆盖）
-SCRIPT_PARSER_SYSTEM_PROMPT = get_script_parser_system_prompt(user_id=None)
+# 向后兼容：测试/旧代码若直接导入该名，得到的是文件系统默认（无 user 覆盖）。
+# 用模块级惰性加载（PEP 562）：import 时不执行 skill 目录扫描（同步 IO），
+# 避免在事件循环线程首次 import 本模块时阻塞循环。仅在实际访问该属性时才加载。
+def __getattr__(name: str):
+    if name == "SCRIPT_PARSER_SYSTEM_PROMPT":
+        return get_script_parser_system_prompt(user_id=None)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 STORY_WRITER_SCENE_MARKER_RE = re.compile(
     r"(\[场景[^\]\n]*\]|场景编号\s*[:：]\s*[A-Z]\d+|^\s*#*\s*场景\s*[:：])",

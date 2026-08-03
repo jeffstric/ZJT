@@ -1339,13 +1339,13 @@ body.tour-add-to-timeline-locked .node:has(.video-add-timeline) .field-collapsib
   border: 1px solid var(--border);
 }
 .mini-btn.gen-btn-white:hover{
-  background: #f5f5f5;
+  background: var(--surface-3);
   opacity: 1;
 }
 .mini-btn.gen-btn-white:disabled{
-  background: #f9f9f9;
-  color: #999;
-  border-color: #e5e5e5;
+  background: var(--surface-2);
+  color: var(--muted);
+  border-color: var(--border);
   cursor: not-allowed;
   opacity: 0.6;
 }
@@ -1379,7 +1379,7 @@ body.tour-add-to-timeline-locked .node:has(.video-add-timeline) .field-collapsib
   top: calc(100% + 6px);
   left: 0;
   min-width: 140px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   box-shadow: 0 6px 18px rgba(0,0,0,0.14);

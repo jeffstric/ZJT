@@ -370,6 +370,9 @@ else:
 - 请求：`{ "prompt": "...", "failure_reason"?: "...", "source"?: "prompt|reference_image|output|copyright|general", "model"?: "...", "vendor_id"?: <int>, "model_id"?: <int> }`
 - 实现：走统一 LLM 工厂 `get_llm_client(model, vendor_id)`（`_rewrite_with_llm` 辅助函数），**已废弃**旧的 `call_qwen_chat_async`（遗留 `llm/qwen.py`，静态读取 `llm.qwen.api_key` 且不查数据库，生产环境空 key 导致 500）
 - 改写模型来源：优先用前端传入的拆分模型（`model`/`vendor_id`）；前端未传或该供应商未配置 api_key 时，降级用 `LLMModel.REDUCE_VIOLATION_DEFAULT`（默认 `gemini-3-flash-preview`，走 JIEKOU 中转）
+  - **凭据可用性判断**：`_client_configured()` 对 Ollama 等本地部署 client（无需联网鉴权）直接视为已配置，避免被 `api_key` 为空的判断误伤而强制切兜底
+  - **兜底二次校验**：切到 `REDUCE_VIOLATION_DEFAULT` 后再次校验 api_key，若兜底模型同样未配置（社区版/新装环境），抛出明确错误（提示去管理后台配置），而非让底层 `call_api` 抛晦涩的 500
+  - **计费 ID 跟随实际模型**：切兜底后 `vendor_id`/`model_id` 置 None，避免兜底调用的 token 用量被记到原拆分模型账上
 - user prompt 已改为通用「内容安全 / 生图审核」表述，去掉写死 sora
 - 响应：`{ code: 0, data: { prompt: "改写后..." } }`
 - 前端：`web/js/shot_frame_node.js` 的「降低违规」按钮调用，点击时从分镜节点向上追溯（分镜→分镜组→剧本）取出剧本拆分模型随请求传入
