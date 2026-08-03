@@ -1354,6 +1354,8 @@ const AdminApp = {
 
         // 显式加载一次许可证状态（用于切到 dashboard 时刷新卡片）。
         async loadLicenseStatus() {
+            // 社区版/开源版没有许可证接口，跳过。
+            if (this.isCommunityEdition) return;
             if (!this.authToken) return;
             this.licenseStatus.loading = true;
             try {
@@ -1378,6 +1380,10 @@ const AdminApp = {
         // 不在前端解析 edition/claims。临时网络错误保持上次结果；
         // 401/403 走现有认证失效流程。
         async pollLicenseStatus() {
+            // 社区版/开源版没有许可证接口，跳过轮询避免每分钟打 404。
+            // isCommunityEdition 在 dashboard 数据返回后才为 true，放这里做单点守卫
+            // 可同时覆盖 60s 定时器和首次拉取两条路径。
+            if (this.isCommunityEdition) return;
             if (this.licenseStatusInFlight) return;
             if (!this.authToken) return;
             this.licenseStatusInFlight = true;
