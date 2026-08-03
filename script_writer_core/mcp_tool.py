@@ -1396,7 +1396,8 @@ def validate_image_url(url: str, field_name: str = "reference_image") -> Dict[st
 def create_character_json(user_id: str, world_id: str, auth_token: str, name: str, age: str = None, identity: str = None,
                          appearance: str = None, personality: str = None, behavior: str = None,
                          other_info: str = None, reference_image: str = None, default_voice: str = None,
-                         _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
+                         _temp_filename: str = None, language: str = "zh-CN",
+                         _skip_image_validation: bool = False, **additional_fields) -> Dict[str, Any]:
     """
     创建标准格式的角色JSON文件 - MCP工具函数
     ⚠️ _temp_filename 参数名以下划线开头，但它是公开参数（可由调用方传入）
@@ -1437,7 +1438,9 @@ def create_character_json(user_id: str, world_id: str, auth_token: str, name: st
         validated_name = validation_result['cleaned_name']
         
         # 验证reference_image（如果提供）
-        if reference_image is not None:
+        # _skip_image_validation=True 时跳过：用于数据库同步等系统内部场景，
+        # 此时 reference_image 是从自家 DB 读出的数据（可能是 /upload/... 相对路径），属于合法存储格式，无需校验。
+        if reference_image is not None and not _skip_image_validation:
             url_validation = validate_image_url(reference_image, "reference_image")
             if not url_validation['valid']:
                 return {
@@ -1864,9 +1867,10 @@ def update_world(
         }
 
 
-def create_location_json(user_id: str, world_id: str, auth_token: str, name: str, description: str = None, 
+def create_location_json(user_id: str, world_id: str, auth_token: str, name: str, description: str = None,
                         reference_image: str = None, parent_id=None, parent_name: str = None,
-                        _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
+                        _temp_filename: str = None, language: str = "zh-CN",
+                        _skip_image_validation: bool = False, **additional_fields) -> Dict[str, Any]:
     """
     创建标准格式的地点JSON文件 - MCP工具函数
     
@@ -1900,9 +1904,11 @@ def create_location_json(user_id: str, world_id: str, auth_token: str, name: str
                 'error': validation_result['error']
             }
         validated_name = validation_result['cleaned_name']
-        
+
         # 验证reference_image（如果提供）
-        if reference_image is not None:
+        # _skip_image_validation=True 时跳过：用于数据库同步等系统内部场景，
+        # 此时 reference_image 是从自家 DB 读出的数据（可能是 /upload/... 相对路径），属于合法存储格式，无需校验。
+        if reference_image is not None and not _skip_image_validation:
             url_validation = validate_image_url(reference_image, "reference_image")
             if not url_validation['valid']:
                 return {
@@ -1971,7 +1977,7 @@ def create_location_json(user_id: str, world_id: str, auth_token: str, name: str
         }
 
 
-def create_prop_json(user_id: str, world_id: str, auth_token: str, name: str, prop_type: str = None, description: str = None, reference_image: str = None, _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
+def create_prop_json(user_id: str, world_id: str, auth_token: str, name: str, prop_type: str = None, description: str = None, reference_image: str = None, _temp_filename: str = None, language: str = "zh-CN", _skip_image_validation: bool = False, **additional_fields) -> Dict[str, Any]:
     """
     创建标准格式的道具JSON文件 - MCP工具函数
     
@@ -2004,9 +2010,11 @@ def create_prop_json(user_id: str, world_id: str, auth_token: str, name: str, pr
                 'error': validation_result['error']
             }
         validated_name = validation_result['cleaned_name']
-        
+
         # 验证reference_image（如果提供）
-        if reference_image is not None:
+        # _skip_image_validation=True 时跳过：用于数据库同步等系统内部场景，
+        # 此时 reference_image 是从自家 DB 读出的数据（可能是 /upload/... 相对路径），属于合法存储格式，无需校验。
+        if reference_image is not None and not _skip_image_validation:
             url_validation = validate_image_url(reference_image, "reference_image")
             if not url_validation['valid']:
                 return {
