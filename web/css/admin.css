@@ -177,6 +177,7 @@ body {
 .license-status-card.expired,
 .license-status-card.security_error,
 .license-status-card.uninitialized { border-left-color: var(--admin-danger); }
+.license-status-card.registration_failed { border-left-color: var(--admin-danger); }
 .license-status-card.auth_required { border-left-color: var(--admin-warning); }
 
 .license-status-header {
@@ -198,6 +199,7 @@ body {
 .license-state-badge.denied,
 .license-state-badge.expired,
 .license-state-badge.security_error,
+.license-state-badge.registration_failed,
 .license-state-badge.uninitialized { background: var(--admin-danger); color: #fff; }
 .license-state-badge.refresh_due,
 .license-state-badge.grace,

@@ -259,6 +259,8 @@
   "license_state_denied": "已拒绝",
   "license_state_expired": "已过期",
   "license_state_security_error": "安全错误",
+  "license_state_registration_failed": "组件注册失败",
+  "license_registration_failed_hint": "Enterprise 商业包已识别，但组件注册未完成；许可证操作暂不可用，请检查服务日志并重启",
   "license_field_edition": "版本",
   "license_field_revision": "修订号",
   "license_field_branding": "品牌定制",

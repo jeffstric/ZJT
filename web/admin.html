@@ -174,20 +174,32 @@
 
             <!-- 仪表盘页面 -->
             <section v-if="currentPage === 'dashboard'">
-                <!-- 商业许可证状态卡片：用于诊断"为什么企业版却看不到品牌入口"等问题。
-                     仅商业版显示。state/reason/edition/revision 全部来自后端派生。 -->
-                <div v-if="!isCommunityEdition" class="license-status-card" :class="licenseStatus.state || 'uninitialized'">
+                <!-- 商业包成功导入后显示。注册失败时保留只读诊断，但不显示任何提交按钮。 -->
+                <div
+                    v-if="enterprisePackageAvailable"
+                    class="license-status-card"
+                    :class="licenseControlAvailable ? (licenseStatus.state || 'uninitialized') : 'registration_failed'"
+                >
                     <div class="license-status-header">
                         <h3>📋 {{ t('license_status_title') }}</h3>
-                        <span class="license-state-badge" :class="licenseStatus.state || 'uninitialized'">
-                            {{ t('license_state_' + (licenseStatus.state || 'uninitialized')) }}
+                        <span
+                            class="license-state-badge"
+                            :class="licenseControlAvailable ? (licenseStatus.state || 'uninitialized') : 'registration_failed'"
+                        >
+                            {{ licenseControlAvailable
+                                ? t('license_state_' + (licenseStatus.state || 'uninitialized'))
+                                : t('license_state_registration_failed') }}
                         </span>
                     </div>
-                    <div v-if="licenseStatus.loading" class="loading" style="padding: 12px 0;">
-                        <div class="loading-spinner"></div>
+                    <div v-if="!licenseControlAvailable" class="license-status-reason">
+                        ⚠️ {{ enterpriseStatus.failure_reason || t('license_registration_failed_hint') }}
                     </div>
                     <template v-else>
-                        <div class="license-status-grid">
+                        <div v-if="licenseStatus.loading" class="loading" style="padding: 12px 0;">
+                            <div class="loading-spinner"></div>
+                        </div>
+                        <template v-else>
+                            <div class="license-status-grid">
                             <div class="license-status-item">
                                 <span class="license-status-label">{{ t('license_field_edition') }}</span>
                                 <span class="license-status-value">{{ licenseStatus.license?.edition || '-' }}</span>
@@ -228,17 +240,18 @@
                             </div>
                             <p class="license-activate-hint">{{ t('license_activate_hint') }}</p>
                         </div>
-                        <div class="license-status-actions">
-                            <button class="action-btn primary" @click="refreshLicense" :disabled="licenseStatusInFlight">
-                                {{ licenseStatusInFlight ? t('querying') : t('license_btn_refresh') }}
-                            </button>
-                            <button class="action-btn success" @click="reactivateLicense" :disabled="licenseStatusInFlight">
-                                {{ t('license_btn_reactivate') }}
-                            </button>
-                            <button class="action-btn warning" @click="confirmDeactivateLicense" :disabled="licenseStatusInFlight">
-                                {{ t('license_btn_deactivate') }}
-                            </button>
-                        </div>
+                            <div class="license-status-actions">
+                                <button class="action-btn primary" @click="refreshLicense" :disabled="licenseStatusInFlight">
+                                    {{ licenseStatusInFlight ? t('querying') : t('license_btn_refresh') }}
+                                </button>
+                                <button class="action-btn success" @click="reactivateLicense" :disabled="licenseStatusInFlight">
+                                    {{ t('license_btn_reactivate') }}
+                                </button>
+                                <button class="action-btn warning" @click="confirmDeactivateLicense" :disabled="licenseStatusInFlight">
+                                    {{ t('license_btn_deactivate') }}
+                                </button>
+                            </div>
+                        </template>
                     </template>
                 </div>
 
