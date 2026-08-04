@@ -97,9 +97,15 @@ database:
   host: "localhost"
   port: 3306
   user: "root"
-  password: "3bTgThWP2xeX"
+  password: "your_password_here"          # 替换为真实密码；example 不应含真实凭据
   database: "zjt"
   charset: "utf8mb4"
+  # 数据库连接池（可选；缺省时使用 model/database.py 内置默认值）
+  # 详见 docs/backend/database_connection_pool.md
+  pool:
+    mincached: 2          # 启动时预热连接数
+    maxcached: 20         # 空闲池上限（每进程）
+    maxconnections: 0     # 0=无硬上限
 
 
 duomi:
@@ -154,6 +160,10 @@ kkidc:
   api_key: ""  # kkidc 网关 API Key（用于 Seedance 系列视频）
   base_url: "https://ai-api.kkidc.com/v1"  # kkidc API 基础 URL
 
+huimengi:
+  api_key: ""  # huimengi 网关 API Key（用于 Seedance 2.0 系列视频）
+  base_url: "https://api.huimengi.com"  # huimengi API 基础 URL
+
 pay:
   wxpay:
       #公众账号ID
@@ -174,6 +184,13 @@ bin:
   # 3. 使用系统 PATH 查找: "ffmpeg"
   ffmpeg: "bin/ffmpeg/ffmpeg"
   ffprobe: "bin/ffmpeg/ffprobe"
+  # 打包物料源目录（仅 scripts/package.py 使用）
+  # 存放各平台二进制物料（MySQL / FFmpeg / Git / uv / 托管 Python）的根目录，
+  # 脚本会在此目录下的 bin/ 子目录中查找物料。默认值见 scripts/package.py。
+  # 示例：
+  #   Windows: "H:\\智剧通"
+  #   macOS/Linux: "/Volumes/智剧通" 或 "/mnt/nas/智剧通"
+  package_source: "H:\\智剧通"
 
 
 llm:

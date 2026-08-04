@@ -726,6 +726,20 @@ def register_all_drivers():
     except ImportError as e:
         logger.warning(f"Failed to import Seedance kkidc drivers: {e}")
 
+    # Seedance huimengi 网关驱动注册（慧梦，Seedance 2.0 系列二次封装网关）
+    try:
+        from .seedance_huimengi_v1_driver import (
+            Seedance20FastHuimengiV1Driver,
+            Seedance20HuimengiV1Driver,
+            Seedance20MiniHuimengiV1Driver
+        )
+        # 注册 Seedance huimengi v1 版本（3 个模型：2.0 / 2.0 Fast / 2.0 Mini）
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_FAST_HUIMENGI_V1, Seedance20FastHuimengiV1Driver)
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_HUIMENGI_V1, Seedance20HuimengiV1Driver)
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_MINI_HUIMENGI_V1, Seedance20MiniHuimengiV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import Seedance huimengi drivers: {e}")
+
     try:
         from .qwen_multi_angle_runninghub_v1_driver import QwenMultiAngleRunninghubV1Driver
         # 注册 Qwen Multi-Angle RunningHub v1 版本

@@ -84,10 +84,23 @@ initStateFromUrl
 
 关键文件：
 
-- `web/js/storyboard/bootstrap.js`：探测、门禁、`continueCreateWithRatio`、`finishBootstrapAfterStoryboardReady`
+- `web/js/storyboard/bootstrap.js`：探测、门禁、`continueCreateWithRatio`、`finishBootstrapAfterStoryboardReady`；`main()` 启动时将 `continueCreateWithRatio` 注册到 `state` 上
 - `web/js/storyboard/render.js`：`renderRatioConfirmDialog` + 门禁态整页渲染
-- `web/js/storyboard/events.js`：门禁 action 白名单
+- `web/js/storyboard/events.js`：门禁 action 白名单；「确认创建」通过 `state.continueCreateWithRatio(...)` 调用，**不要**用 `await import('./bootstrap.js')`（见下方已知坑）
 - `web/css/storyboard.css`：`.sb-ratio-*` 样式（对齐工作流列表比例卡片）
+
+## 已知坑：禁止动态 import 入口模块
+
+`events.js` 处理「确认创建」时，**不能**用 `await import('./bootstrap.js')` 反向引用入口模块：
+
+- HTML 入口为 `bootstrap.js?v=<ver>`（带版本号，详见 [`docs/frontend_static_version.md`](../frontend_static_version.md)）；
+- 而 ES 模块内部的 `import './bootstrap.js'` 会被解析为**不带版本号**的 URL（`bootstrap.js`）；
+- 浏览器把两者视为**两个不同的模块**分别求值，导致 `bootstrap.js` 顶层副作用（`main()` 调用）被执行两次：
+  1. 第一次 `main()` 正常进入门禁、等待用户选择比例；
+  2. 用户点「确认创建」→ `import('./bootstrap.js')` 触发第二次求值 → 第二个 `main()` 又调用 `loadStoryboard()`，此时故事板可能尚未创建完成，于是再次进入门禁分支，把 `pendingCreateRatio` 重置为默认 `16:9` 并重新渲染弹窗；
+- 表现为「选择尺寸后立刻又弹出一个默认值（16:9）的弹框，随后消失，数据库保存的却是用户第一次的选择」。
+
+修复方式：`main()` 启动时把 `continueCreateWithRatio` 注册到共享的 `state` 对象，`events.js` 通过 `state.continueCreateWithRatio(...)` 调用，彻底避免动态 import 入口模块。
 
 ## 与 header 比例切换的关系
 

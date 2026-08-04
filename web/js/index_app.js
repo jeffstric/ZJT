@@ -147,13 +147,27 @@
       userSettingsLoading: false,
       userSettingsError: '',
       userSettingsSuccess: '',
-      userSettingsTab: 'preferences', // 'preferences' | 'apitoken'
+      userSettingsTab: 'preferences', // 'preferences' | 'creationDefaults' | 'apitoken'
       // 用户偏好数据
       userPreferences: {},
       availableImplementations: {},
       isCommunityEdition: false,
       isEditionLoaded: false,
       zjtTokenEnabled: false, // 管理员是否开启了智剧通Token
+      // 创作默认偏好（剧本/营销世界默认 LLM + 生图；与 CLI media_pref 隔离）
+      creationDefaultsLoading: false,
+      creationDefaultsError: '',
+      creationDefaultsSuccess: '',
+      creationDefaultsWorlds: [],
+      creationDefaultsWorldId: null,
+      creationDefaultsLlmOptions: [],
+      creationDefaultsImageOptions: [],
+      creationDefaultsLlmKey: '',
+      creationDefaultsImageTaskId: '',
+      creationDefaultsSaving: { llm: false, image: false },
+      creationDefaultsSaved: { llm: false, image: false },
+      _creationDefaultsSuccessTimer: null,
+      creationDefaultsModelsLoaded: false,
       // API Token 数据
       apiTokenData: {
         has_token: false,
@@ -256,12 +270,9 @@
       
       // 优先处理 login=1 参数（通常表示认证过期需要重新登录）
       if (urlParams.get('login') === '1') {
-        // 清除可能已过期的本地认证信息
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('phone');
-        localStorage.removeItem('user_id');
-        localStorage.removeItem('invite_code');
-        
+        // 不再无条件清除本地认证信息：误报 401 也会跳到这里，token 可能仍然有效。
+        // 本地有 token 时在下方恢复逻辑后做一次主动校验（verifyAuthTokenOnLoginEntry），确证失效才清理。
+
         // 处理登录后跳转的目标路径（仅允许路径，不允许完整URL）
         const redirectUrl = urlParams.get('redirect_url');
         if (redirectUrl) {
@@ -306,6 +317,11 @@
         this.userId = localStorage.getItem('user_id') || '';
         // URL 带的邀请码优先，localStorage 仅兜底（避免未登录时被空值覆盖、丢失 URL 邀请码）
         this.inviteCode = this.inviteCode || localStorage.getItem('invite_code') || '';
+      }
+
+      // login=1 进入且本地仍有 token：主动校验一次（async，不阻塞 mounted），确证失效才清理登录态并弹登录框
+      if (urlParams.get('login') === '1' && this.authToken) {
+        this.verifyAuthTokenOnLoginEntry();
       }
 
       // URL/本地存储带有的邀请码，自动代入注册表单（支持 ?invite_code=xxx 打开即带入）
@@ -846,16 +862,46 @@
         return local.substring(0, 2) + '***@' + domain;
       },
       
+      // 统一清理本地登录态（各清除点的 key 集合保持一致）
+      clearLocalAuthInfo() {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('phone');
+        localStorage.removeItem('email');
+        localStorage.removeItem('user_id');
+        localStorage.removeItem('invite_code');
+      },
+
+      // login=1 进入时的主动 token 校验：确证失效才清登录态，误报/网络异常一律保留
+      async verifyAuthTokenOnLoginEntry() {
+        const token = localStorage.getItem('auth_token');
+        if (!token) return;
+        try {
+          // 只带 Authorization，不带 X-User-Id，避免触发服务端本地兜底掩盖 401
+          await axios.get('/api/user/computing_power', {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          // 2xx：token 有效，保持登录态（误报场景用户无感）
+        } catch (error) {
+          const status = error?.response?.status;
+          const code = error?.response?.data?.error_code;
+          if (status === 401 && (code === 'invalid_auth_token' || code === 'TOKEN_EXPIRED')) {
+            // 确证失效：清理登录态并弹出登录框
+            this.clearLocalAuthInfo();
+            this.authToken = '';
+            this.loginError = '登录已过期，请重新登录';
+            this.showLoginModal = true;
+            this.authMode = 'login';
+          }
+          // 其他情况（网络错/5xx/400）：保守保留登录态
+        }
+      },
+
       handleAuthError(error) {
         // 检查错误响应中是否包含认证过期信息
         const detail = error?.response?.data?.detail || '';
         if (detail.includes('无效或已过期的认证信息')) {
           // 清除本地存储的认证信息
-          localStorage.removeItem('auth_token');
-          localStorage.removeItem('phone');
-          localStorage.removeItem('email');
-          localStorage.removeItem('user_id');
-          localStorage.removeItem('invite_code');
+          this.clearLocalAuthInfo();
           
           // 清除当前状态
           this.authToken = '';
@@ -1261,6 +1307,8 @@
         this.userSettingsTab = 'preferences';
         this.apiTokenNewToken = '';
         this.apiTokenError = '';
+        this.creationDefaultsError = '';
+        this.creationDefaultsSuccess = '';
         this.loadImplementationPreferences();
       },
 
@@ -1271,10 +1319,337 @@
         this.loadApiToken();
       },
 
+      switchToCreationDefaultsTab() {
+        this.userSettingsTab = 'creationDefaults';
+        this.creationDefaultsError = '';
+        this.creationDefaultsSuccess = '';
+        this.ensureCreationDefaultsLoaded();
+      },
+
       closeUserSettingsModal() {
         this.showUserSettingsModalFlag = false;
         this.userSettingsError = '';
         this.userSettingsSuccess = '';
+        this.creationDefaultsError = '';
+        this.creationDefaultsSuccess = '';
+        if (this._creationDefaultsSuccessTimer) {
+          clearTimeout(this._creationDefaultsSuccessTimer);
+          this._creationDefaultsSuccessTimer = null;
+        }
+      },
+
+      flashCreationDefaultsSuccess(message) {
+        this.creationDefaultsSuccess = message || '已保存';
+        if (this._creationDefaultsSuccessTimer) {
+          clearTimeout(this._creationDefaultsSuccessTimer);
+        }
+        this._creationDefaultsSuccessTimer = setTimeout(() => {
+          this.creationDefaultsSuccess = '';
+          this._creationDefaultsSuccessTimer = null;
+        }, 2500);
+      },
+
+      llmOptionKey(model, vendorId) {
+        return `${model || ''}::${vendorId == null ? '' : String(vendorId)}`;
+      },
+
+      async ensureCreationDefaultsLoaded() {
+        if (!this.authToken) {
+          this.creationDefaultsError = '请先登录后再配置创作默认偏好';
+          return;
+        }
+        if (this.creationDefaultsLoading) return;
+        this.creationDefaultsLoading = true;
+        this.creationDefaultsError = '';
+        try {
+          await Promise.all([
+            this.loadCreationDefaultsWorlds(),
+            this.loadCreationDefaultsModels(),
+          ]);
+          if (this.creationDefaultsWorldId) {
+            await this.loadCreationDefaultsForWorld(this.creationDefaultsWorldId);
+          }
+        } catch (error) {
+          console.error('Load creation defaults failed:', error);
+          this.creationDefaultsError = error?.message || '加载创作默认偏好失败';
+        } finally {
+          this.creationDefaultsLoading = false;
+        }
+      },
+
+      async loadCreationDefaultsWorlds() {
+        const response = await axios.get('/api/worlds?page=1&page_size=100', {
+          headers: this.cliAuthHeaders(),
+        });
+        const payload = response.data || {};
+        let worlds = [];
+        if (payload.code === 0 && payload.data) {
+          worlds = payload.data.data || payload.data.items || payload.data || [];
+        } else if (Array.isArray(payload.data)) {
+          worlds = payload.data;
+        } else if (Array.isArray(payload.items)) {
+          worlds = payload.items;
+        }
+        if (!Array.isArray(worlds)) worlds = [];
+        this.creationDefaultsWorlds = worlds;
+        const stored = localStorage.getItem('creation_defaults_world_id');
+        const storedId = stored ? Number(stored) : null;
+        const hasStored = worlds.some((w) => Number(w.id) === storedId);
+        if (hasStored) {
+          this.creationDefaultsWorldId = storedId;
+        } else if (worlds.length) {
+          this.creationDefaultsWorldId = Number(worlds[0].id);
+        } else {
+          this.creationDefaultsWorldId = null;
+        }
+      },
+
+      async loadCreationDefaultsModels() {
+        if (this.creationDefaultsModelsLoaded
+            && this.creationDefaultsLlmOptions.length
+            && this.creationDefaultsImageOptions.length) {
+          return;
+        }
+        const headers = this.cliAuthHeaders();
+        const [llmResp, imageResp] = await Promise.all([
+          axios.get('/api/models', { headers }),
+          axios.get('/api/text-to-image-models', { headers }),
+        ]);
+        const llmModels = llmResp.data?.models || [];
+        this.creationDefaultsLlmOptions = (Array.isArray(llmModels) ? llmModels : [])
+          .filter((m) => m && (m.model || m.model_name || m.name) && !m.disabled)
+          .map((m) => {
+            const model = m.model || m.model_name || m.name;
+            const vendorId = m.vendor_id;
+            const vendorName = String(m.vendor_name || '').trim();
+            const name = m.display_name || m.name || model;
+            return {
+              key: this.llmOptionKey(model, vendorId),
+              model,
+              model_id: m.model_id ?? m.id ?? null,
+              vendor_id: vendorId ?? null,
+              vendor_name: vendorName,
+              name,
+              label: vendorName ? `${name}（${vendorName}）` : name,
+            };
+          });
+        const imageModels = imageResp.data?.models || [];
+        this.creationDefaultsImageOptions = (Array.isArray(imageModels) ? imageModels : [])
+          .filter((m) => m && m.task_id != null)
+          .map((m) => ({
+            task_id: m.task_id,
+            name: m.name || String(m.task_id),
+            computing_power: m.computing_power,
+          }));
+        this.creationDefaultsModelsLoaded = true;
+      },
+
+      /**
+       * 无已存世界默认 LLM 时的展示回退：优先 deepseek 模型，供应商 deepseek / zjt_api。
+       * 不使用列表第一项（常为 Gemini）。
+       */
+      pickPreferredCreationDefaultLlmKey() {
+        const options = this.creationDefaultsLlmOptions || [];
+        if (!options.length) return '';
+
+        const vendorOf = (m) => String(m.vendor_name || '').toLowerCase();
+        const modelOf = (m) => String(m.model || m.name || '').toLowerCase();
+        const isPreferredVendor = (m) => {
+          const v = vendorOf(m);
+          return v === 'deepseek' || v === 'zjt_api';
+        };
+        const isDeepseekModel = (m) => modelOf(m).includes('deepseek');
+
+        // 1) deepseek 供应商 + deepseek-v4-flash
+        let hit = options.find(
+          (m) => vendorOf(m) === 'deepseek' && modelOf(m).includes('deepseek-v4-flash')
+        );
+        if (hit) return hit.key;
+
+        // 2) deepseek 供应商 + 任意 deepseek 模型
+        hit = options.find((m) => vendorOf(m) === 'deepseek' && isDeepseekModel(m));
+        if (hit) return hit.key;
+
+        // 3) zjt_api + deepseek-v4-flash
+        hit = options.find(
+          (m) => vendorOf(m) === 'zjt_api' && modelOf(m).includes('deepseek-v4-flash')
+        );
+        if (hit) return hit.key;
+
+        // 4) zjt_api + 任意 deepseek 模型
+        hit = options.find((m) => vendorOf(m) === 'zjt_api' && isDeepseekModel(m));
+        if (hit) return hit.key;
+
+        // 5) 任意 preferred 供应商上的 deepseek 模型
+        hit = options.find((m) => isPreferredVendor(m) && isDeepseekModel(m));
+        if (hit) return hit.key;
+
+        // 6) preferred 供应商上的任意模型（仍避免无脑选 Gemini 列表头）
+        hit = options.find((m) => isPreferredVendor(m));
+        if (hit) return hit.key;
+
+        // 7) 任意 deepseek 模型（其他供应商）
+        hit = options.find((m) => isDeepseekModel(m));
+        if (hit) return hit.key;
+
+        // 8) 最后才回退列表第一项
+        return options[0].key || '';
+      },
+
+      async loadCreationDefaultsForWorld(worldId) {
+        if (!worldId || !this.userId) return;
+        const headers = this.cliAuthHeaders();
+        const uid = String(this.userId);
+        const wid = String(worldId);
+        const [llmResp, imageResp] = await Promise.all([
+          axios.get('/api/world-defaults/llm', {
+            headers,
+            params: { user_id: uid, world_id: wid },
+          }),
+          axios.get('/api/text-to-image-model', {
+            headers,
+            params: { user_id: uid, world_id: wid },
+          }),
+        ]);
+        const llmDefault = llmResp.data?.success ? llmResp.data.default : null;
+        if (llmDefault && llmDefault.model) {
+          const key = this.llmOptionKey(llmDefault.model, llmDefault.vendor_id);
+          const exists = this.creationDefaultsLlmOptions.some((m) => m.key === key);
+          // 已存默认有效则用已存；无效时不要回落到 Gemini 列表头
+          this.creationDefaultsLlmKey = exists
+            ? key
+            : this.pickPreferredCreationDefaultLlmKey();
+        } else {
+          this.creationDefaultsLlmKey = this.pickPreferredCreationDefaultLlmKey();
+        }
+        const imageTaskId = imageResp.data?.success ? imageResp.data.task_id : null;
+        if (imageTaskId != null) {
+          const exists = this.creationDefaultsImageOptions.some(
+            (m) => String(m.task_id) === String(imageTaskId)
+          );
+          this.creationDefaultsImageTaskId = exists
+            ? String(imageTaskId)
+            : (this.creationDefaultsImageOptions[0]
+              ? String(this.creationDefaultsImageOptions[0].task_id)
+              : '');
+        } else {
+          this.creationDefaultsImageTaskId = this.creationDefaultsImageOptions[0]
+            ? String(this.creationDefaultsImageOptions[0].task_id)
+            : '';
+        }
+        this.creationDefaultsSaved = { llm: false, image: false };
+      },
+
+      async onCreationDefaultsWorldChange(value) {
+        const worldId = value === '' || value == null ? null : Number(value);
+        this.creationDefaultsWorldId = worldId;
+        this.creationDefaultsError = '';
+        this.creationDefaultsSuccess = '';
+        if (worldId != null) {
+          localStorage.setItem('creation_defaults_world_id', String(worldId));
+        } else {
+          localStorage.removeItem('creation_defaults_world_id');
+          this.creationDefaultsLlmKey = '';
+          this.creationDefaultsImageTaskId = '';
+          return;
+        }
+        this.creationDefaultsLoading = true;
+        try {
+          await this.loadCreationDefaultsForWorld(worldId);
+        } catch (error) {
+          console.error('Switch creation defaults world failed:', error);
+          this.creationDefaultsError = error?.response?.data?.error
+            || error?.message
+            || '切换世界失败';
+        } finally {
+          this.creationDefaultsLoading = false;
+        }
+      },
+
+      async onCreationDefaultLlmChange(value) {
+        if (!this.creationDefaultsWorldId || !this.userId || !value) return;
+        const option = this.creationDefaultsLlmOptions.find((m) => m.key === value);
+        if (!option) return;
+        const previous = this.creationDefaultsLlmKey;
+        this.creationDefaultsLlmKey = value;
+        this.creationDefaultsSaving = { ...this.creationDefaultsSaving, llm: true };
+        this.creationDefaultsSaved = { ...this.creationDefaultsSaved, llm: false };
+        this.creationDefaultsError = '';
+        try {
+          const response = await axios.put(
+            '/api/world-defaults/llm',
+            {
+              user_id: String(this.userId),
+              world_id: String(this.creationDefaultsWorldId),
+              model: option.model,
+              model_id: option.model_id,
+              vendor_id: option.vendor_id,
+              name: option.name,
+            },
+            { headers: this.cliAuthHeaders() }
+          );
+          if (!response.data?.success) {
+            throw new Error(response.data?.error || '保存默认对话模型失败');
+          }
+          this.creationDefaultsSaved = { ...this.creationDefaultsSaved, llm: true };
+          this.flashCreationDefaultsSuccess(`默认对话模型已保存：${option.name}`);
+          setTimeout(() => {
+            if (this.creationDefaultsSaved.llm) {
+              this.creationDefaultsSaved = { ...this.creationDefaultsSaved, llm: false };
+            }
+          }, 2000);
+        } catch (error) {
+          this.creationDefaultsLlmKey = previous;
+          this.creationDefaultsError = error?.response?.data?.error
+            || error?.message
+            || '保存默认对话模型失败';
+        } finally {
+          this.creationDefaultsSaving = { ...this.creationDefaultsSaving, llm: false };
+        }
+      },
+
+      async onCreationDefaultImageChange(value) {
+        if (!this.creationDefaultsWorldId || !this.userId || !value) return;
+        const taskId = Number(value);
+        if (!taskId) return;
+        const option = this.creationDefaultsImageOptions.find(
+          (m) => String(m.task_id) === String(taskId)
+        );
+        const previous = this.creationDefaultsImageTaskId;
+        this.creationDefaultsImageTaskId = String(taskId);
+        this.creationDefaultsSaving = { ...this.creationDefaultsSaving, image: true };
+        this.creationDefaultsSaved = { ...this.creationDefaultsSaved, image: false };
+        this.creationDefaultsError = '';
+        try {
+          const response = await axios.post(
+            '/api/text-to-image-model',
+            {
+              user_id: String(this.userId),
+              world_id: String(this.creationDefaultsWorldId),
+              model_id: taskId,
+              scope: 'world_default',
+            },
+            { headers: this.cliAuthHeaders() }
+          );
+          if (!response.data?.success) {
+            throw new Error(response.data?.error || '保存默认生图模型失败');
+          }
+          this.creationDefaultsSaved = { ...this.creationDefaultsSaved, image: true };
+          const name = response.data.model_name || option?.name || String(taskId);
+          this.flashCreationDefaultsSuccess(`默认生图模型已保存：${name}`);
+          setTimeout(() => {
+            if (this.creationDefaultsSaved.image) {
+              this.creationDefaultsSaved = { ...this.creationDefaultsSaved, image: false };
+            }
+          }, 2000);
+        } catch (error) {
+          this.creationDefaultsImageTaskId = previous;
+          this.creationDefaultsError = error?.response?.data?.error
+            || error?.message
+            || '保存默认生图模型失败';
+        } finally {
+          this.creationDefaultsSaving = { ...this.creationDefaultsSaving, image: false };
+        }
       },
 
       async loadImplementationPreferences() {

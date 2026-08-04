@@ -138,11 +138,13 @@ class SessionStorage:
             session_type=entity.session_type
         )
 
-        # 同步生图模型配置到内存（解决页面刷新/服务重启后配置丢失问题）
+        # 会话草稿 text_to_image_model_id 仅挂在 session 对象上，供创建 task 时回退。
+        # 不再写回世界级 user_preferences，避免「本对话模型」覆盖「世界默认」。
         if entity.text_to_image_model_id is not None:
-            from api.script_writer import set_text_to_image_model_id
-            set_text_to_image_model_id(entity.user_id, entity.world_id, entity.text_to_image_model_id)
-            logger.info(f"[Session Load] Synced text_to_image_model_id={entity.text_to_image_model_id} to memory config for user={entity.user_id}, world={entity.world_id}")
+            logger.info(
+                f"[Session Load] session text_to_image_model_id={entity.text_to_image_model_id} "
+                f"for user={entity.user_id}, world={entity.world_id} (session-scoped only)"
+            )
 
         # Restore conversation history
         # PM Agent 在初始化时会自动添加系统提示到 conversation_history

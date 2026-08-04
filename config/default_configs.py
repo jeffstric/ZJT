@@ -406,6 +406,24 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== huimengi 网关配置 ====================
+    {
+        'key': 'huimengi.api_key',
+        'value_type': 'string',
+        'description': 'huimengi 网关 API Key（Seedance 2.0 系列视频）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'huimengi.base_url',
+        'value_type': 'string',
+        'description': 'huimengi API 基础 URL（默认 https://api.huimengi.com）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== API 聚合站配置（部分兼容comfly 等中转站）====================
     {
         'key': 'api_aggregator.site_0.api_key',

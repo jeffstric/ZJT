@@ -82,6 +82,7 @@ from config.constant import Edition, Action, StoryType
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from utils.image_grid_merger import ImageGridMerger
 from utils.sentry_util import SentryUtil
+from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
 from utils.computing_power import build_context_from_task_record, get_implementation_for_user
 from utils.video_resolution import validate_video_resolution
@@ -95,7 +96,7 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceError,
     MediaGenerationPreferenceService,
 )
-from config.constant import MediaGenerationType, MediaGenerationMode
+from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
@@ -2211,26 +2212,73 @@ async def ai_app_run_image(
             video_path = await asyncio.to_thread(_save_uploaded_image, video)
             logger.info(f"Saved reference video: {video_path}")
 
-        generation_mode = MediaGenerationPreferenceService.determine_mode(
-            MediaGenerationType.VIDEO,
-            image_urls=main_image_list,
-            reference_image_urls=ref_image_list,
-            video_urls=video_path,
-            audio_urls=audio_path,
-            image_mode=image_mode,
-        )
+        # 数字人（DIGITAL_HUMAN）与图生视频/参考生视频是不同品类：
+        # 其 audio 是「对口型说话音频」必选输入，不是 reference_to_video 的参考素材。
+        # 若走 determine_mode，有 audio 会被判成 reference_to_video，进而被
+        # validate_model 以「模型不支持 reference_to_video」拒绝（MODEL_MODE_UNSUPPORTED）。
+
+        # 判断实际命中的实现方是否支持自动处理人脸（网关内置真人审核，如 huimengi human_review）。
+        # 支持 + 用户勾选处理人脸时：跳过 RunningHub 遮盖预处理，并注入 human_review=true
+        # 让网关自动处理，替代本地遮盖。此判断在 base_extra_config 构建前完成，以便注入参数。
+        _impl_config_for_face = UnifiedConfigRegistry.get_implementation(actual_impl) if actual_impl else None
+        impl_supports_auto_face = bool(_impl_config_for_face and _impl_config_for_face.supports_auto_face)
+        user_wants_face_process = bool(enable_face_mask) and impl_supports_auto_face
+
         base_extra_config = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
         if resolution:
             base_extra_config[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
-        audited_extra_config = _generation_snapshot_extra_config(
-            generation_snapshot,
-            task_id=task_id,
-            media_type=MediaGenerationType.VIDEO,
-            mode=generation_mode,
-            image_mode=image_mode,
-            has_reference_audio_video=bool(video_path or audio_path),
-            extra_config=json.dumps(base_extra_config, ensure_ascii=False),
-        )
+        # 支持自动处理人脸的网关：用户勾选处理人脸时注入 human_review=true，
+        # 驱动（huimengi）会透传给网关，由网关服务端审核加白，无需本地遮盖。
+        if user_wants_face_process:
+            base_extra_config['human_review'] = True
+        if task_config.category == TaskCategory.DIGITAL_HUMAN:
+            if not audio_path:
+                raise HTTPException(status_code=400, detail="数字人任务需要提供说话音频（audio 或 audio_urls）")
+            if not main_image_list:
+                raise HTTPException(status_code=400, detail="数字人任务需要提供角色图片")
+            snapshot = None
+            if generation_snapshot:
+                try:
+                    snapshot = (
+                        json.loads(generation_snapshot)
+                        if isinstance(generation_snapshot, str)
+                        else generation_snapshot
+                    )
+                except (TypeError, json.JSONDecodeError):
+                    raise HTTPException(status_code=400, detail="generation_snapshot 必须是 JSON 对象")
+                if not isinstance(snapshot, dict):
+                    raise HTTPException(status_code=400, detail="generation_snapshot 必须是 JSON 对象")
+            if snapshot is None:
+                snapshot = {
+                    "schema_version": 1,
+                    "surface": "direct_api",
+                    "media_type": MediaGenerationType.VIDEO,
+                    "mode": TaskCategory.DIGITAL_HUMAN,
+                    "model_source": "request",
+                    "task_id": int(task_id),
+                    "model_key": task_config.key,
+                    "model_name": task_config.name,
+                }
+            base_extra_config["generation_snapshot"] = snapshot
+            audited_extra_config = json.dumps(base_extra_config, ensure_ascii=False)
+        else:
+            generation_mode = MediaGenerationPreferenceService.determine_mode(
+                MediaGenerationType.VIDEO,
+                image_urls=main_image_list,
+                reference_image_urls=ref_image_list,
+                video_urls=video_path,
+                audio_urls=audio_path,
+                image_mode=image_mode,
+            )
+            audited_extra_config = _generation_snapshot_extra_config(
+                generation_snapshot,
+                task_id=task_id,
+                media_type=MediaGenerationType.VIDEO,
+                mode=generation_mode,
+                image_mode=image_mode,
+                has_reference_audio_video=bool(video_path or audio_path),
+                extra_config=json.dumps(base_extra_config, ensure_ascii=False),
+            )
 
         # 根据 image_mode 和图片数量构建 context，用于算力修饰符计算
         context = {}
@@ -2326,6 +2374,7 @@ async def ai_app_run_image(
                         need_pipeline_steps = (
                             is_seedance_face_mask
                             and enable_face_mask
+                            and not impl_supports_auto_face
                             and not Edition.is_community()
                             and runninghub_api_key
                             and has_any_param_prepare_input
@@ -2334,6 +2383,7 @@ async def ai_app_run_image(
                             f"Pipeline steps condition check: image_to_video_type={image_to_video_type}, "
                             f"is_seedance_face_mask={is_seedance_face_mask}, "
                             f"enable_face_mask={enable_face_mask}, is_community={Edition.is_community()}, "
+                            f"impl_supports_auto_face={impl_supports_auto_face}, actual_impl={actual_impl}, "
                             f"has_api_key={bool(runninghub_api_key)}, has_video={bool(video_path)}, "
                             f"face_mask_enabled={bool(seedance_face_mask_enabled)}, "
                             f"has_image_input={has_image_input}, need_pipeline_steps={need_pipeline_steps}"
@@ -2450,6 +2500,7 @@ async def get_computing_power(request: Request, auth_token: str = Header(None, a
                 status_code=401,
                 content={
                     'success': False,
+                    'error_code': 'missing_auth_token',
                     'message': '未提供认证信息'
                 }
             )
@@ -2477,8 +2528,11 @@ async def get_computing_power(request: Request, auth_token: str = Header(None, a
                 }
             )
         else:
+            # 依据源头 error_code 精确判定 token 确证失效（不做 message 文案匹配，
+            # 避免算力不足/限额等含 "token"/"认证" 字样的错误被误判为登录失效）
+            is_invalid_token = isinstance(response_data, dict) and response_data.get('error_code') == PERSEIDS_ERR_INVALID_AUTH_TOKEN
             # 认证失败时，尝试使用 X-User-Id 兜底查询本地算力（故事板等内部页面可能携带过期 localStorage token）
-            if message and ('无效' in message or '认证' in message or 'token' in str(message).lower()):
+            if is_invalid_token:
                 x_user_id = request.headers.get('x-user-id') or request.headers.get('X-User-Id')
                 if x_user_id:
                     try:
@@ -2494,14 +2548,17 @@ async def get_computing_power(request: Request, auth_token: str = Header(None, a
                         )
                     except Exception:
                         pass
-            # 非认证错误或无兜底时返回对应状态码
-            status_code = 401 if message and ('无效' in message or '认证' in message or 'token' in str(message).lower()) else 400
+            # 非认证错误或无兜底时返回对应状态码；401 响应带结构化 error_code 供前端精确识别
+            status_code = 401 if is_invalid_token else 400
+            content = {
+                'success': False,
+                'message': message or '查询算力失败'
+            }
+            if is_invalid_token:
+                content['error_code'] = 'invalid_auth_token'
             return JSONResponse(
                 status_code=status_code,
-                content={
-                    'success': False,
-                    'message': message or '查询算力失败'
-                }
+                content=content
             )
     
     except Exception as e:
@@ -3047,7 +3104,11 @@ async def register(request: RegisterRequest):
         password = request.password
         verify_code = request.code
         
-        logger.info(f"收到注册请求 - 手机号: {phone}, 邮箱: {email}")
+        logger.info(
+            "收到注册请求 - 手机号: %s, 邮箱: %s",
+            mask_phone(phone),
+            mask_email(email),
+        )
 
         # 验证至少提供一个标识
         if not phone and not email:
@@ -3101,7 +3162,10 @@ async def register(request: RegisterRequest):
             )
             
             if success:
-                logger.info(f"邮箱用户注册成功 - 邮箱: {email}")
+                logger.info(
+                    "邮箱用户注册成功 - 邮箱: %s",
+                    mask_email(email),
+                )
                 return JSONResponse(
                     content={
                         'success': True,
@@ -3138,7 +3202,7 @@ async def register(request: RegisterRequest):
         )
         
         if success:
-            logger.info(f"用户注册成功 - 手机号: {phone}")
+            logger.info("用户注册成功 - 手机号: %s", mask_phone(phone))
             return JSONResponse(
                 content={
                     'success': True,
@@ -3185,7 +3249,7 @@ async def login(request: LoginRequest):
         terms_agreed = request.terms_agreed
         
         identifier = email if email else phone
-        logger.info(f"收到登录请求 - 标识: {identifier}")
+        logger.info("收到登录请求 - 标识: %s", mask_identifier(identifier))
 
         # 验证必填字段
         if not identifier or not password:
@@ -3226,7 +3290,10 @@ async def login(request: LoginRequest):
         )
         
         if success:
-            logger.info(f"用户登录成功 - 手机号: {phone}")
+            logger.info(
+                "用户登录成功 - 标识: %s",
+                mask_identifier(identifier),
+            )
             return JSONResponse(
                 content={
                     'success': True,
@@ -6078,6 +6145,68 @@ class ReduceViolationRequest(BaseModel):
     # 可选：上游/任务失败原因摘要，帮助模型针对性弱化敏感表述（方案 D）
     failure_reason: Optional[str] = None
     source: Optional[str] = None  # prompt | reference_image | output | copyright | general
+    # 可选：跟随剧本拆分模型改写（前端从分镜节点向上追溯到剧本节点传入）
+    model: Optional[str] = None        # 模型名，如 gemini-3-flash-preview
+    vendor_id: Optional[int] = None    # 供应商 ID（工厂优先按它路由）
+    model_id: Optional[int] = None     # 模型 ID（计费用）
+
+
+async def _rewrite_with_llm(messages, request, auth_token):
+    """内容安全提示词改写：优先用前端传入的拆分模型，缺失或供应商未配置则用默认模型兜底。
+
+    通过统一 LLM 工厂调用，自动路由到对应供应商并从数据库热配置 + YAML 兜底读取凭据，
+    避免遗留的 llm/qwen.py 静态配置（启动时读取、不查数据库）导致的凭据缺失问题。
+    """
+    import asyncio
+    from config.constant import LLMModel
+    from llm.llm_client_factory import get_llm_client
+    from llm.ollama_client import OllamaClient
+
+    def _client_configured(c) -> bool:
+        """判断客户端是否已配置可用凭据。
+
+        Ollama 等本地部署 client 无需真实 api_key（无需联网鉴权），不应判为未配置；
+        云端供应商（gemini/claude/aliyun/deepseek/volcengine/zjt）必须配置非空 api_key。
+        """
+        if isinstance(c, OllamaClient):
+            return True
+        return bool(getattr(c, 'api_key', ''))
+
+    model = request.model or LLMModel.REDUCE_VIOLATION_DEFAULT
+    client = get_llm_client(model, vendor_id=request.vendor_id)
+
+    # 用于计费的 vendor_id / model_id：跟随实际调用的模型，默认回退到请求传入值
+    bill_vendor_id = request.vendor_id
+    bill_model_id = request.model_id
+
+    # 所选拆分模型的供应商未配置 api_key 时，切兜底模型重试一次
+    if not _client_configured(client):
+        model = LLMModel.REDUCE_VIOLATION_DEFAULT
+        client = get_llm_client(model)
+        # 已切到默认模型：计费 ID 不再跟随原拆分模型，避免计费/用量记错账
+        bill_vendor_id = None
+        bill_model_id = None
+        # 兜底模型同样可能未配置（社区版/新装环境），二次校验后给出明确错误而非底层 500
+        if not _client_configured(client):
+            raise Exception(
+                "内容安全改写所需的模型均未配置（所选模型与默认兜底模型 REDUCE_VIOLATION_DEFAULT 均缺少 api_key），"
+                "请在管理后台配置对应供应商的 API Key。"
+            )
+
+    # call_api 是同步方法，用 asyncio.to_thread 包成异步，避免阻塞事件循环
+    response = await asyncio.to_thread(
+        client.call_api,
+        model=model,
+        messages=messages,
+        temperature=0.7,
+        max_tokens=2000,
+        auth_token=auth_token,
+        vendor_id=bill_vendor_id,
+        model_id=bill_model_id,
+    )
+    content = response.choices[0].message.content if response.choices else ''
+    return (content or '').strip()
+
 
 @app.post('/api/reduce-violation')
 async def reduce_violation(
@@ -6089,11 +6218,10 @@ async def reduce_violation(
     降低提示词违规风险（用户主动调用，非任务失败自动路径）。
 
     兼容仅传 prompt；可选 failure_reason / source 用于结合内容审核失败上下文改写。
+    model / vendor_id / model_id 可选，用于跟随剧本拆分模型改写。
     设计见 docs/image/content_moderation_error_design.md 方案 D。
     """
     try:
-        from llm.qwen import call_qwen_chat_async
-
         prompt_text = (request.prompt or "").strip()
         if not prompt_text:
             return JSONResponse(
@@ -6123,11 +6251,7 @@ async def reduce_violation(
             {"role": "user", "content": user_prompt}
         ]
 
-        rewritten_prompt = await call_qwen_chat_async(
-            messages=messages,
-            temperature=0.7,
-            max_tokens=2000
-        )
+        rewritten_prompt = await _rewrite_with_llm(messages, request, auth_token)
 
         return JSONResponse({
             "code": 0,

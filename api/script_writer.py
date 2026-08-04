@@ -24,6 +24,10 @@ from config.constant import (
     MediaGenerationMode,
     MediaGenerationSurface,
     MediaGenerationType,
+    PERSEIDS_ERR_INVALID_AUTH_TOKEN,
+    PERSEIDS_ERR_NO_VALID_TOKEN,
+    ERROR_CODE_TOKEN_EXPIRED,
+    ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
 )
 from utils.resource_access import get_user_id_from_header, ensure_world_access
 from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
@@ -82,9 +86,20 @@ from script_writer_core.session_storage import SessionStorage
 session_storage = SessionStorage(use_cache=True, cache_ttl=300)
 
 # 用户偏好存储：数据库是唯一数据源，不使用永久进程内缓存。
-from model.user_preferences import UserPreferencesModel, PREF_TYPE_TEXT_TO_IMAGE_MODEL, PREF_TYPE_IMAGE_PREFERENCES, PREF_TYPE_VIDEO_PREFERENCES, PREF_TYPE_TEXT_TO_VIDEO_MODEL, PREF_TYPE_IMAGE_TO_VIDEO_MODEL
+from model.user_preferences import (
+    UserPreferencesModel,
+    PREF_TYPE_TEXT_TO_IMAGE_MODEL,
+    PREF_TYPE_IMAGE_PREFERENCES,
+    PREF_TYPE_VIDEO_PREFERENCES,
+    PREF_TYPE_TEXT_TO_VIDEO_MODEL,
+    PREF_TYPE_IMAGE_TO_VIDEO_MODEL,
+    PREF_TYPE_DEFAULT_LLM_MODEL,
+)
 # 默认生图模型 task_id (nano-banana-Pro)
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = 7
+# 生图模型设置范围：session=本对话草稿；world_default=世界默认（新会话种子）
+IMAGE_MODEL_SCOPE_SESSION = "session"
+IMAGE_MODEL_SCOPE_WORLD_DEFAULT = "world_default"
 
 
 def _get_text_to_image_models_from_config():
@@ -106,8 +121,68 @@ def get_text_to_image_model_id(user_id: str, world_id: str) -> int:
 
 
 def set_text_to_image_model_id(user_id: str, world_id: str, task_id: int):
-    """设置用户在指定世界的生图模型 task_id（写入数据库 + 更新缓存）"""
+    """设置用户在指定世界的生图模型 task_id（legacy 偏好）"""
     UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_TEXT_TO_IMAGE_MODEL, task_id)
+
+
+def _sync_image_model_to_media_pref_world_default(user_id: str, world_id: str, task_id: int) -> None:
+    """将生图模型写入 marketing_ui image 槽位（世界默认）。不兼容的模式跳过。"""
+    for mode in (MediaGenerationMode.TEXT_TO_IMAGE, MediaGenerationMode.IMAGE_EDIT):
+        try:
+            existing = MediaGenerationPreferenceService.get_profile(
+                user_id,
+                world_id,
+                MediaGenerationSurface.MARKETING_UI,
+                MediaGenerationType.IMAGE,
+                mode,
+                initialize=False,
+            ) or {}
+            profile = {
+                key: value
+                for key, value in existing.items()
+                if key in MediaGenerationPreferenceService.PROFILE_FIELDS and value is not None
+            }
+            profile['task_id'] = int(task_id)
+            MediaGenerationPreferenceService.save_profile(
+                user_id,
+                world_id,
+                MediaGenerationSurface.MARKETING_UI,
+                MediaGenerationType.IMAGE,
+                mode,
+                profile,
+            )
+        except (MediaGenerationPreferenceError, ValueError, TypeError) as mode_err:
+            logger.warning(
+                '写入世界默认生图 media_pref 跳过: user_id=%s world_id=%s mode=%s task_id=%s err=%s',
+                user_id, world_id, mode, task_id, mode_err,
+            )
+
+
+def get_default_llm_model(user_id: str, world_id: str) -> Optional[Dict[str, Any]]:
+    """读取世界级默认对话模型。"""
+    pref = UserPreferencesModel.get(str(user_id), str(world_id), PREF_TYPE_DEFAULT_LLM_MODEL)
+    if not pref or pref.config_value is None:
+        return None
+    value = pref.get_value()
+    if isinstance(value, dict) and value.get('model'):
+        return value
+    return None
+
+
+def set_default_llm_model(user_id: str, world_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """写入世界级默认对话模型。"""
+    normalized = {
+        'model': str(payload.get('model') or ''),
+        'model_id': int(payload['model_id']) if payload.get('model_id') not in (None, '') else None,
+        'vendor_id': int(payload['vendor_id']) if payload.get('vendor_id') not in (None, '') else None,
+        'name': payload.get('name') or payload.get('model') or '',
+    }
+    if not normalized['model']:
+        raise ValueError('model 不能为空')
+    UserPreferencesModel.upsert(
+        str(user_id), str(world_id), PREF_TYPE_DEFAULT_LLM_MODEL, normalized
+    )
+    return normalized
 
 
 def get_image_preferences(user_id: str, world_id: str) -> Dict[str, str]:
@@ -239,10 +314,22 @@ async def verify_auth_token(user_id: str, auth_token: str) -> tuple[bool, Option
         )
         
         if not success:
-            logger.warning(f"Token验证失败 - user_id: {user_id}, 错误: {message}")
+            # 依据源头 error_code 精确分类（不做 message 文案匹配）：
+            # NO_VALID_TOKEN = 该用户确证无有效 token（被顶号/登出/重置密码），按 token 失效处理；
+            # 其余失败（服务故障/DB 异常等）一律视为认证服务不可用，不得误报 token 失效。
+            if isinstance(auth_data, dict) and auth_data.get('error_code') == PERSEIDS_ERR_NO_VALID_TOKEN:
+                logger.warning(f"Token确证失效 - user_id: {user_id}, 错误: {message}")
+                return False, {
+                    'success': False,
+                    'error': '登录已过期，请重新登录',
+                    'error_code': ERROR_CODE_TOKEN_EXPIRED,
+                    'token_expired': True
+                }
+            logger.warning(f"Token验证服务故障 - user_id: {user_id}, 错误: {message}")
             return False, {
                 'success': False,
-                'error': 'Token验证失败',
+                'error': '认证服务暂时不可用，请稍后重试',
+                'error_code': ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
                 'message': message
             }
         
@@ -253,9 +340,16 @@ async def verify_auth_token(user_id: str, auth_token: str) -> tuple[bool, Option
         logger.error(f"Token验证异常 - user_id: {user_id}, 错误: {str(e)}")
         return False, {
             'success': False,
-            'error': 'Token验证异常',
+            'error': '认证服务暂时不可用，请稍后重试',
+            'error_code': ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
             'message': f'验证服务异常: {str(e)}'
         }
+
+def _auth_error_status_code(error_response: dict) -> int:
+    """按 error_code 分流：认证服务自身故障 → 502；token 确证失效 → 401。"""
+    if isinstance(error_response, dict) and error_response.get('error_code') == ERROR_CODE_AUTH_SERVICE_UNAVAILABLE:
+        return 502
+    return 401
 
 async def check_computing_power(auth_token: str) -> tuple[bool, int, Optional[str]]:
     """
@@ -279,8 +373,9 @@ async def check_computing_power(auth_token: str) -> tuple[bool, int, Optional[st
         )
         
         if not success:
-            # 检测 token 过期
-            if '无效或已过期' in message or 'token' in message.lower() or '认证' in message:
+            # 依据源头 error_code 判定 token 确证失效（不做 message 文案匹配，
+            # 避免算力不足/限额等含 "token"/"认证" 字样的错误被误判为登录失效）
+            if isinstance(response_data, dict) and response_data.get('error_code') == PERSEIDS_ERR_INVALID_AUTH_TOKEN:
                 return False, 0, f'TOKEN_EXPIRED: {message}'
             return False, 0, f'算力检查失败: {message}'
         
@@ -436,6 +531,13 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
         from model.props import PropsModel
         from script_writer_core.mcp_tool import create_character_json, create_location_json, create_prop_json
         from pathlib import Path
+        from config.constant import Edition
+
+        # 空间隔离标志：仅独立空间模式（企业版且未开启 shared_space）才按 user_id 过滤记录。
+        # 社区版/共享空间下 world 是多人共享的，记录的 user_id 可能是任意协作者，
+        # 此处过滤会导致「删除暂存」时把别人创建的角色/场景/道具/剧本静默跳过、无法同步。
+        # 该约定与各 Model.list_by_user() 中 is_space_isolated() 的判断保持一致。
+        filter_by_user = Edition.is_space_isolated()
 
         base_path = file_manager._get_user_world_path(user_id, world_id)
 
@@ -492,7 +594,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
         characters_result = CharacterModel.list_by_world(int(world_id), page=1, page_size=1000)
         characters = characters_result.get('data', []) if isinstance(characters_result, dict) else []
         for char in characters:
-            if char.get('user_id') != int(user_id):
+            if filter_by_user and char.get('user_id') != int(user_id):
                 continue
                 
             try:
@@ -526,19 +628,20 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     other_info=sync_other_info,
                     reference_image=char.get('reference_image'),
                     default_voice=char.get('default_voice'),
-                    _temp_filename=temp_filename
+                    _temp_filename=temp_filename,
+                    _skip_image_validation=True
                 )
-                
+
                 if temp_result.get('success'):
                     temp_file = base_path / "characters" / temp_filename
                     if temp_file.exists():
                         try:
                             new_content = temp_file.read_text(encoding='utf-8')
                             existing_content = char_file.read_text(encoding='utf-8')
-                            
+
                             if not compare_json_content(new_content, existing_content, file_name):
                                 if force_overwrite:
-                                    create_character_json(
+                                    overwrite_result = create_character_json(
                                         user_id=user_id,
                                         world_id=world_id,
                                         auth_token=auth_token,
@@ -550,8 +653,11 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                                         behavior=char.get('behavior'),
                                         other_info=sync_other_info,
                                         reference_image=char.get('reference_image'),
-                                        default_voice=char.get('default_voice')
+                                        default_voice=char.get('default_voice'),
+                                        _skip_image_validation=True
                                     )
+                                    if not overwrite_result.get('success'):
+                                        logger.warning(f"同步覆盖角色失败 {char.get('name')}: {overwrite_result.get('error')}")
                                     result['diff_files'].append(file_name)
                                     result['overwritten_files'].append(file_name)
                                 else:
@@ -560,8 +666,10 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                         finally:
                             if temp_file.exists():
                                 temp_file.unlink()
+                else:
+                    logger.warning(f"同步生成角色临时文件失败 {char.get('name')}: {temp_result.get('error')}")
             else:
-                create_character_json(
+                create_result = create_character_json(
                     user_id=user_id,
                     world_id=world_id,
                     auth_token=auth_token,
@@ -573,14 +681,17 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     behavior=char.get('behavior'),
                     other_info=sync_other_info,
                     reference_image=char.get('reference_image'),
-                    default_voice=char.get('default_voice')
+                    default_voice=char.get('default_voice'),
+                    _skip_image_validation=True
                 )
+                if not create_result.get('success'):
+                    logger.warning(f"同步角色失败 {char.get('name')}: {create_result.get('error')}")
         
         # 2. 同步剧本
         scripts_result = ScriptModel.list_by_world(int(world_id), page=1, page_size=1000)
         scripts = scripts_result.get('data', []) if isinstance(scripts_result, dict) else []
         for script in scripts:
-            if script.get('user_id') != int(user_id) or not script.get('content'):
+            if (filter_by_user and script.get('user_id') != int(user_id)) or not script.get('content'):
                 continue
                 
             script_data = {
@@ -633,7 +744,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
             }
 
         for loc in locations:
-            if loc.get('user_id') != int(user_id):
+            if filter_by_user and loc.get('user_id') != int(user_id):
                 continue
 
             parent_fields = _location_parent_fields(loc)
@@ -652,6 +763,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     parent_id=parent_fields['parent_id'],
                     parent_name=parent_fields['parent_name'],
                     _temp_filename=temp_filename,
+                    _skip_image_validation=True,
                     **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                 )
 
@@ -664,7 +776,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
 
                             if not compare_json_content(new_content, existing_content, file_name):
                                 if force_overwrite:
-                                    create_location_json(
+                                    overwrite_result = create_location_json(
                                         user_id=user_id,
                                         world_id=world_id,
                                         auth_token=auth_token,
@@ -673,8 +785,11 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                                         reference_image=loc.get('reference_image'),
                                         parent_id=parent_fields['parent_id'],
                                         parent_name=parent_fields['parent_name'],
+                                        _skip_image_validation=True,
                                         **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                                     )
+                                    if not overwrite_result.get('success'):
+                                        logger.warning(f"同步覆盖场景失败 {loc.get('name')}: {overwrite_result.get('error')}")
                                     result['diff_files'].append(file_name)
                                     result['overwritten_files'].append(file_name)
                                 else:
@@ -683,8 +798,10 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                         finally:
                             if temp_file.exists():
                                 temp_file.unlink()
+                else:
+                    logger.warning(f"同步生成场景临时文件失败 {loc.get('name')}: {temp_result.get('error')}")
             else:
-                create_location_json(
+                create_result = create_location_json(
                     user_id=user_id,
                     world_id=world_id,
                     auth_token=auth_token,
@@ -693,14 +810,17 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     reference_image=loc.get('reference_image'),
                     parent_id=parent_fields['parent_id'],
                     parent_name=parent_fields['parent_name'],
+                    _skip_image_validation=True,
                     **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                 )
+                if not create_result.get('success'):
+                    logger.warning(f"同步场景失败 {loc.get('name')}: {create_result.get('error')}")
         
         # 4. 同步道具
         props_result = PropsModel.list_by_world(int(world_id), page=1, page_size=1000)
         props = props_result.get('data', []) if isinstance(props_result, dict) else []
         for prop in props:
-            if prop.get('user_id') != int(user_id):
+            if filter_by_user and prop.get('user_id') != int(user_id):
                 continue
                 
             prop_file = base_path / "props" / f"prop_{prop.get('name')}.json"
@@ -716,27 +836,31 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     prop_type=prop.get('type'),
                     description=prop.get('content'),
                     reference_image=prop.get('reference_image'),
-                    _temp_filename=temp_filename
+                    _temp_filename=temp_filename,
+                    _skip_image_validation=True
                 )
-                
+
                 if temp_result.get('success'):
                     temp_file = base_path / "props" / temp_filename
                     if temp_file.exists():
                         try:
                             new_content = temp_file.read_text(encoding='utf-8')
                             existing_content = prop_file.read_text(encoding='utf-8')
-                            
+
                             if not compare_json_content(new_content, existing_content, file_name):
                                 if force_overwrite:
-                                    create_prop_json(
+                                    overwrite_result = create_prop_json(
                                         user_id=user_id,
                                         world_id=world_id,
                                         auth_token=auth_token,
                                         name=prop.get('name'),
                                         prop_type=prop.get('type'),
                                         description=prop.get('content'),
-                                        reference_image=prop.get('reference_image')
+                                        reference_image=prop.get('reference_image'),
+                                        _skip_image_validation=True
                                     )
+                                    if not overwrite_result.get('success'):
+                                        logger.warning(f"同步覆盖道具失败 {prop.get('name')}: {overwrite_result.get('error')}")
                                     result['diff_files'].append(file_name)
                                     result['overwritten_files'].append(file_name)
                                 else:
@@ -745,16 +869,21 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                         finally:
                             if temp_file.exists():
                                 temp_file.unlink()
+                else:
+                    logger.warning(f"同步生成道具临时文件失败 {prop.get('name')}: {temp_result.get('error')}")
             else:
-                create_prop_json(
+                create_result = create_prop_json(
                     user_id=user_id,
                     world_id=world_id,
                     auth_token=auth_token,
                     name=prop.get('name'),
                     prop_type=prop.get('type'),
                     description=prop.get('content'),
-                    reference_image=prop.get('reference_image')
+                    reference_image=prop.get('reference_image'),
+                    _skip_image_validation=True
                 )
+                if not create_result.get('success'):
+                    logger.warning(f"同步道具失败 {prop.get('name')}: {create_result.get('error')}")
         
         logger.info(f"数据库同步完成: user_id={user_id}, world_id={world_id}, force_overwrite={force_overwrite}")
         if result['diff_files']:
@@ -936,7 +1065,7 @@ async def create_session(request: Request, session_request: SessionCreateRequest
         # 验证 auth_token
         is_valid, error_response = await verify_auth_token(session_request.user_id, session_request.auth_token)
         if not is_valid:
-            return JSONResponse(error_response, status_code=401)
+            return JSONResponse(error_response, status_code=_auth_error_status_code(error_response))
         
         # 从数据库同步数据到文件系统（不强制覆盖，有差异时跳过）
         sync_result = sync_database_to_files(session_request.user_id, session_request.world_id, session_request.auth_token, force_overwrite=False)
@@ -1635,6 +1764,95 @@ def _marketing_media_preferences_sync(user_id: str, world_id: str):
     return profiles
 
 
+def _resolve_explicit_image_task_id(image_preferences: Dict[str, Any], image_mode: str):
+    """从 image_preferences 解析显式生图 task_id（请求级，优先于世界默认偏好）。"""
+    explicit_image_task_id = image_preferences.get('task_id')
+    if explicit_image_task_id not in (None, ''):
+        try:
+            return int(explicit_image_task_id)
+        except (TypeError, ValueError):
+            return None
+    model_name = image_preferences.get('model_name')
+    if not model_name:
+        return None
+    required_category = (
+        TaskCategory.IMAGE_EDIT
+        if image_mode == MediaGenerationMode.IMAGE_EDIT
+        else TaskCategory.TEXT_TO_IMAGE
+    )
+    matched = next(
+        (
+            config for config in UnifiedConfigRegistry.get_all()
+            if (config.name == model_name or config.key == model_name)
+            and required_category in {config.category, *(config.categories or [])}
+        ),
+        None,
+    )
+    return matched.id if matched else None
+
+
+def _apply_image_task_id_to_execution_profiles(
+    user_id: str,
+    world_id: str,
+    profiles: Dict[str, Any],
+    request_slots: set,
+    image_preferences: Dict[str, Any],
+    explicit_image_task_id: int,
+    *,
+    persist_world_default: bool = True,
+) -> None:
+    """将显式生图模型写入本任务的 image 槽位快照来源。
+
+    - 同时尝试 text_to_image / image_edit（模型不兼容则跳过该槽）
+    - 默认仍写入 marketing_ui media_pref 作为「下次任务默认」；任务真相源是随后的 generation_snapshots
+    """
+    base_image_profile = dict(image_preferences)
+    base_image_profile['task_id'] = int(explicit_image_task_id)
+    for mode in (MediaGenerationMode.TEXT_TO_IMAGE, MediaGenerationMode.IMAGE_EDIT):
+        image_slot = MediaGenerationPreferenceService.slot_key(MediaGenerationType.IMAGE, mode)
+        existing = profiles.get(image_slot) or {}
+        mode_profile = {
+            key: value
+            for key, value in {**existing, **base_image_profile}.items()
+            if key in MediaGenerationPreferenceService.PROFILE_FIELDS or key == 'task_id'
+        }
+        mode_profile['task_id'] = int(explicit_image_task_id)
+        try:
+            if persist_world_default:
+                saved = MediaGenerationPreferenceService.save_profile(
+                    user_id,
+                    world_id,
+                    MediaGenerationSurface.MARKETING_UI,
+                    MediaGenerationType.IMAGE,
+                    mode,
+                    mode_profile,
+                )
+            else:
+                # 仅本任务内存覆盖：校验模型兼容性但不落库
+                config = MediaGenerationPreferenceService.validate_model(
+                    mode_profile.get('task_id'),
+                    MediaGenerationType.IMAGE,
+                    mode,
+                    image_mode=mode_profile.get('image_mode'),
+                )
+                saved = dict(mode_profile)
+                saved.update(
+                    {
+                        'schema_version': 1,
+                        'task_id': int(config.id),
+                        'model_key': config.key,
+                        'model_name': config.name,
+                    }
+                )
+            profiles[image_slot] = saved
+            request_slots.add(image_slot)
+        except (MediaGenerationPreferenceError, ValueError, TypeError) as mode_err:
+            logger.warning(
+                '任务创建时写入 image 槽位跳过: user_id=%s world_id=%s mode=%s task_id=%s err=%s',
+                user_id, world_id, mode, explicit_image_task_id, mode_err,
+            )
+
+
 def _build_marketing_task_execution_context_sync(
     user_id: str,
     world_id: str,
@@ -1648,39 +1866,17 @@ def _build_marketing_task_execution_context_sync(
         MediaGenerationType.IMAGE,
         image_urls=task_request.image_urls,
     )
-    explicit_image_task_id = image_preferences.get('task_id')
-    if explicit_image_task_id in (None, '') and image_preferences.get('model_name'):
-        model_name = str(image_preferences.get('model_name'))
-        required_category = (
-            TaskCategory.IMAGE_EDIT
-            if image_mode == MediaGenerationMode.IMAGE_EDIT
-            else TaskCategory.TEXT_TO_IMAGE
-        )
-        matched = next(
-            (
-                config for config in UnifiedConfigRegistry.get_all()
-                if (config.name == model_name or config.key == model_name)
-                and required_category in {config.category, *(config.categories or [])}
-            ),
-            None,
-        )
-        explicit_image_task_id = matched.id if matched else None
-    if explicit_image_task_id not in (None, ''):
-        image_profile = dict(image_preferences)
-        image_profile['task_id'] = int(explicit_image_task_id)
-        image_profile = MediaGenerationPreferenceService.save_profile(
+    explicit_image_task_id = _resolve_explicit_image_task_id(image_preferences, image_mode)
+    if explicit_image_task_id is not None:
+        _apply_image_task_id_to_execution_profiles(
             user_id,
             world_id,
-            MediaGenerationSurface.MARKETING_UI,
-            MediaGenerationType.IMAGE,
-            image_mode,
-            image_profile,
+            profiles,
+            request_slots,
+            image_preferences,
+            explicit_image_task_id,
+            persist_world_default=True,
         )
-        image_slot = MediaGenerationPreferenceService.slot_key(
-            MediaGenerationType.IMAGE, image_mode
-        )
-        profiles[image_slot] = image_profile
-        request_slots.add(image_slot)
 
     video_preferences = dict(task_request.video_preferences or {})
     explicit_video_task_id = video_preferences.get('task_id')
@@ -1811,12 +2007,23 @@ async def get_text_to_image_models():
 
 @router.post('/text-to-image-model')
 async def set_text_to_image_model(request: Request):
-    """设置当前会话的生图模型"""
+    """设置生图模型。
+
+    scope:
+      - session（默认）：本对话草稿 chat_sessions.text_to_image_model_id
+      - world_default：世界默认（legacy + media_pref），供新会话种子；不改当前会话草稿
+    """
     try:
         data = await request.json()
         user_id = str(data.get('user_id', ''))
         world_id = str(data.get('world_id', ''))
         session_id = data.get('session_id')
+        scope = str(data.get('scope') or IMAGE_MODEL_SCOPE_SESSION).strip().lower()
+        if scope not in (IMAGE_MODEL_SCOPE_SESSION, IMAGE_MODEL_SCOPE_WORLD_DEFAULT):
+            return JSONResponse({
+                'success': False,
+                'error': f'无效的 scope: {scope}，有效值为 session / world_default',
+            }, status_code=400)
         # 支持 model_id 和 task_id 两种参数名
         task_id = data.get('task_id') or data.get('model_id')
 
@@ -1862,42 +2069,58 @@ async def set_text_to_image_model(request: Request):
                 'error': f'无效的 task_id: {task_id}，有效值为: {list(models_config.keys())}'
             }, status_code=400)
 
-        set_text_to_image_model_id(user_id, world_id, task_id)
+        if scope == IMAGE_MODEL_SCOPE_WORLD_DEFAULT:
+            await asyncio.to_thread(set_text_to_image_model_id, user_id, world_id, task_id)
+            await asyncio.to_thread(
+                _sync_image_model_to_media_pref_world_default, user_id, world_id, task_id
+            )
+        else:
+            # 本对话：只更新会话草稿；兼容无 session_id 的旧调用则回退写 legacy
+            if session_id:
+                try:
+                    from model.chat_sessions import ChatSessionsModel
+                    await asyncio.to_thread(
+                        ChatSessionsModel.update_model,
+                        session_id=session_id,
+                        model=None,
+                        model_id=None,
+                        text_to_image_model_id=task_id,
+                    )
+                    logger.info(
+                        f'已更新会话生图草稿 - session_id: {session_id}, task_id: {task_id}'
+                    )
+                except Exception as db_error:
+                    logger.error(f'更新会话生图草稿失败: {db_error}')
+                    return JSONResponse({
+                        'success': False,
+                        'error': f'更新会话生图模型失败: {db_error}',
+                    }, status_code=500)
+            else:
+                await asyncio.to_thread(set_text_to_image_model_id, user_id, world_id, task_id)
 
-        # 同步保存比例和分辨率偏好
+        # 同步保存比例和分辨率偏好（世界级输出偏好，与 scope 无关）
         ratio = data.get('ratio')
         resolution = data.get('resolution')
         if ratio or resolution:
-            prefs = get_image_preferences(user_id, world_id)
+            prefs = await asyncio.to_thread(get_image_preferences, user_id, world_id)
             if ratio:
                 prefs['ratio'] = ratio
             if resolution:
                 prefs['resolution'] = resolution
-            set_image_preferences(user_id, world_id, prefs)
-
-        # 如果提供了 session_id，同时更新数据库中的 chat_sessions 表
-        if session_id:
-            try:
-                from model.chat_sessions import ChatSessionsModel
-                ChatSessionsModel.update_model(
-                    session_id=session_id,
-                    model=None,  # 不更新 LLM 模型
-                    model_id=None,  # 不更新 LLM 模型 ID
-                    text_to_image_model_id=task_id  # 只更新生图模型 ID
-                )
-                logger.info(f'已更新数据库中的生图模型 - session_id: {session_id}, task_id: {task_id}')
-            except Exception as db_error:
-                logger.error(f'更新数据库生图模型失败: {db_error}')
-                # 数据库更新失败不影响内存配置更新，继续执行
+            await asyncio.to_thread(set_image_preferences, user_id, world_id, prefs)
 
         model_info = models_config[task_id]
-        logger.info(f'生图模型设置成功 - user_id: {user_id}, world_id: {world_id}, task_id: {task_id}, model: {model_info["name"]}')
+        logger.info(
+            f'生图模型设置成功 - scope={scope}, user_id={user_id}, world_id={world_id}, '
+            f'task_id={task_id}, model={model_info["name"]}'
+        )
 
         return JSONResponse({
             'success': True,
             'message': '生图模型设置成功',
             'task_id': task_id,
-            'model_name': model_info["name"]
+            'model_name': model_info["name"],
+            'scope': scope,
         })
     except Exception as e:
         logger.error(f'设置生图模型失败: {str(e)}')
@@ -1910,11 +2133,32 @@ async def set_text_to_image_model(request: Request):
 @router.get('/text-to-image-model')
 async def get_current_text_to_image_model(
     user_id: str = QueryParam(...),
-    world_id: str = QueryParam(...)
+    world_id: str = QueryParam(...),
+    session_id: Optional[str] = QueryParam(None)
 ):
-    """获取当前会话的生图模型配置"""
+    """获取当前生效的生图模型配置。
+
+    读取优先级：会话草稿（session_id 对应的 chat_sessions.text_to_image_model_id）
+    > 世界默认 legacy 偏好（text_to_image_model / media_pref 回填源）。
+    显式传入 session_id 可让前端回显与用户在本对话内的切换保持一致，避免刷新后被世界默认覆盖。
+    """
     try:
-        task_id = get_text_to_image_model_id(user_id, world_id)
+        # 优先读取会话草稿：用户在本对话内切换的生图模型
+        session_task_id = None
+        if session_id:
+            def _load_session_draft():
+                from model.chat_sessions import ChatSessionsModel
+                session = ChatSessionsModel.get_by_session_id(session_id)
+                return getattr(session, 'text_to_image_model_id', None) if session else None
+
+            session_task_id = await asyncio.to_thread(_load_session_draft)
+
+        # 会话草稿有效则采用，否则回退世界默认
+        if session_task_id is not None:
+            task_id = session_task_id
+        else:
+            task_id = await asyncio.to_thread(get_text_to_image_model_id, user_id, world_id)
+
         models_config = _get_text_to_image_models_from_config()
         model_info = models_config.get(task_id, models_config.get(DEFAULT_TEXT_TO_IMAGE_TASK_ID, {}))
 
@@ -1922,7 +2166,8 @@ async def get_current_text_to_image_model(
             'success': True,
             'task_id': task_id,
             'model_name': model_info.get("name", "unknown"),
-            'computing_power': model_info.get("computing_power", 0)
+            'computing_power': model_info.get("computing_power", 0),
+            'scope': 'session' if session_task_id is not None else 'world_default',
         })
     except Exception as e:
         logger.error(f'获取生图模型配置失败: {str(e)}')
@@ -1930,6 +2175,61 @@ async def get_current_text_to_image_model(
             'success': False,
             'error': str(e)
         }, status_code=500)
+
+
+@router.get('/world-defaults/llm')
+async def get_world_default_llm(
+    user_id: str = QueryParam(...),
+    world_id: str = QueryParam(...),
+):
+    """获取世界级默认对话模型。"""
+    try:
+        pref = await asyncio.to_thread(get_default_llm_model, user_id, world_id)
+        return JSONResponse({
+            'success': True,
+            'default': pref,
+        })
+    except Exception as e:
+        logger.error(f'获取默认对话模型失败: {str(e)}')
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+
+@router.put('/world-defaults/llm')
+async def put_world_default_llm(request: Request):
+    """设置世界级默认对话模型（新会话种子；不改当前会话）。"""
+    try:
+        data = await request.json()
+        user_id = str(data.get('user_id') or '')
+        world_id = str(data.get('world_id') or '')
+        if not user_id or not world_id:
+            return JSONResponse(
+                {'success': False, 'error': 'user_id 和 world_id 不能为空'},
+                status_code=400,
+            )
+        model = data.get('model')
+        if not model:
+            return JSONResponse({'success': False, 'error': 'model 不能为空'}, status_code=400)
+        try:
+            saved = await asyncio.to_thread(
+                set_default_llm_model,
+                user_id,
+                world_id,
+                {
+                    'model': model,
+                    'model_id': data.get('model_id'),
+                    'vendor_id': data.get('vendor_id'),
+                    'name': data.get('name') or model,
+                },
+            )
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({'success': False, 'error': str(exc)}, status_code=400)
+        logger.info(
+            f'默认对话模型已设置 user_id={user_id} world_id={world_id} model={saved.get("model")}'
+        )
+        return JSONResponse({'success': True, 'default': saved})
+    except Exception as e:
+        logger.error(f'设置默认对话模型失败: {str(e)}')
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
 
 
 @router.get('/video-model')
@@ -2948,7 +3248,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
         # 验证 auth_token
         is_valid, error_response = await verify_auth_token(user_id, auth_token)
         if not is_valid:
-            return JSONResponse(error_response, status_code=401)
+            return JSONResponse(error_response, status_code=_auth_error_status_code(error_response))
         
         # 检查 model_id - 优先使用请求中的 model_id（前端最新选择），其次使用会话中的
         model_id = task_request.model_id if task_request.model_id is not None else (session.model_id if hasattr(session, 'model_id') else None)
@@ -3018,6 +3318,36 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 'error': '消息不能为空'
             }, status_code=400)
 
+        # 对话级生图模型：请求显式 task_id > 会话草稿 chat_sessions.text_to_image_model_id
+        # > 世界默认 media_pref/legacy。保证 script_writer 改模型后「下一条消息」写入新 task 快照。
+        image_prefs = dict(task_request.image_preferences or {})
+        if image_prefs.get('task_id') in (None, ''):
+            session_image_model_id = getattr(session, 'text_to_image_model_id', None)
+            if session_image_model_id in (None, ''):
+                try:
+                    from model.chat_sessions import ChatSessionsModel
+                    session_entity = await asyncio.to_thread(
+                        ChatSessionsModel.get_by_session_id, session_id
+                    )
+                    if session_entity is not None:
+                        session_image_model_id = getattr(
+                            session_entity, 'text_to_image_model_id', None
+                        )
+                except Exception as session_err:
+                    logger.warning(
+                        f'读取会话生图模型草稿失败 session_id={session_id}: {session_err}'
+                    )
+            if session_image_model_id not in (None, ''):
+                try:
+                    image_prefs['task_id'] = int(session_image_model_id)
+                    task_request.image_preferences = image_prefs
+                    logger.info(
+                        f'[Agent任务] 使用会话草稿生图模型: session_id={session_id}, '
+                        f'task_id={image_prefs["task_id"]}'
+                    )
+                except (TypeError, ValueError):
+                    pass
+
         try:
             execution_context_json = await asyncio.to_thread(
                 _build_marketing_task_execution_context_sync,
@@ -3036,17 +3366,30 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
         if task_request.image_preferences:
             prefs = task_request.image_preferences
 
-            # 同步生图模型配置到内存（确保 Agent 实际使用的模型与前端选择一致）
-            model_name = prefs.get('model_name')
-            if model_name:
-                models_config = _get_text_to_image_models_from_config()
-                for tid, info in models_config.items():
-                    if info.get('name') == model_name:
-                        await asyncio.to_thread(
-                            set_text_to_image_model_id, user_id, world_id, tid
-                        )
-                        logger.info(f'[Agent任务] 已同步生图模型: user_id={user_id}, world_id={world_id}, model={model_name}, task_id={tid}')
-                        break
+            # 同步生图模型配置（优先 task_id，其次 model_name）到 legacy 偏好
+            synced_tid = None
+            explicit_tid = prefs.get('task_id')
+            if explicit_tid not in (None, ''):
+                try:
+                    synced_tid = int(explicit_tid)
+                except (TypeError, ValueError):
+                    synced_tid = None
+            if synced_tid is None:
+                model_name = prefs.get('model_name')
+                if model_name:
+                    models_config = _get_text_to_image_models_from_config()
+                    for tid, info in models_config.items():
+                        if info.get('name') == model_name:
+                            synced_tid = tid
+                            break
+            if synced_tid is not None:
+                await asyncio.to_thread(
+                    set_text_to_image_model_id, user_id, world_id, synced_tid
+                )
+                logger.info(
+                    f'[Agent任务] 已同步生图模型: user_id={user_id}, world_id={world_id}, '
+                    f'model={prefs.get("model_name")}, task_id={synced_tid}'
+                )
 
             pref_parts = await asyncio.to_thread(
                 sync_agent_image_preferences, user_id, world_id, prefs

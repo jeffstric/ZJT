@@ -534,7 +534,7 @@ function renderStoryboardCardCell(scene, nextScene) {
                         ${showActName ? `<div class="card-act-name">${actNameTag(scene)}</div>` : ''}
                         ${selecting ? '' : `<div class="storyboard-card-actions">
                             <button data-action="edit-scene" data-id="${scene.id}">${icon('edit', 14)} 编辑</button>
-                            <button data-action="duplicate-scene" data-id="${scene.id}">${icon('copy', 14)} 复制</button>
+                            <button data-action="duplicate-scene" data-id="${scene.id}"${state.duplicatingSceneId === scene.id ? ' disabled' : ''}>${icon('copy', 14)} 复制</button>
                             <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} 删除</button>
                         </div>`}
                     </div>
@@ -1492,7 +1492,7 @@ function renderTimelineListInner() {
                     ${renderTimelineThumbInner(scene)}
                 </button>
                 <div class="scene-timeline-actions">
-                    <button data-action="duplicate-scene" data-id="${scene.id}" title="复制">${icon('copy', 14)}</button>
+                    <button data-action="duplicate-scene" data-id="${scene.id}" title="复制"${state.duplicatingSceneId === scene.id ? ' disabled' : ''}>${icon('copy', 14)}</button>
                     <button data-action="delete-scene" data-id="${scene.id}" title="删除">${icon('delete', 14)}</button>
                 </div>
             </div>

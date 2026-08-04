@@ -2,6 +2,18 @@
 
 本目录包含与剧本解析、分镜节点相关的功能文档。
 
+## 剧本解析系统提示词（skill）
+
+`llm/script_parser.py` 的 **system prompt** 已迁到技能文件，可在 AI 工具箱 → **技能配置** 中按用户自定义：
+
+| 项 | 说明 |
+|----|------|
+| 默认文件 | `script_writer_core/skills/script-parser/SKILL.md` |
+| skill 名 | `script-parser`（`ScriptParserConstants.SKILL_NAME`） |
+| 加载方式 | `get_script_parser_system_prompt(user_id)`：用户 DB 自定义 → 文件系统默认 → 内置极简 FALLBACK |
+| 调用透传 | 分段拆分引擎传入 `task.user_id`，使自定义对拆分生效 |
+| 未迁出部分 | user prompt、条件开关文案、QC/分段动态块仍在 `script_parser.py` 内拼装 |
+
 ## 文档列表
 
 | 文档 | 说明 |
@@ -9,7 +21,7 @@
 | [script_auto_split_improvement.md](./script_auto_split_improvement.md) | 剧本节点自动拆分分镜功能改进 |
 | [script_parser_incremental_split_design.md](./script_parser_incremental_split_design.md) | 模型语义分段、逐段拆分、断点续传与异步轮询设计 |
 | [shot_frame_references.md](./shot_frame_references.md) | 分镜节点引用显示功能（场景/道具/角色） |
-| [auto_submit_feature.md](./auto_submit_feature.md) | 自动提交数据库功能（定时自动保存） |
+| [auto_submit_feature.md](./auto_submit_feature.md) | 自动提交数据库功能（定时自动保存）与提交按钮环绕 Loading |
 | [world_export_import.md](./world_export_import.md) | 世界导出与导入接口说明 |
 | [character_matching.md](./character_matching.md) | 剧本解析角色匹配功能 |
 | [script_language_sync.md](./script_language_sync.md) | 剧本节点语言联动功能 |

@@ -2707,9 +2707,13 @@
             }
 
             // 调用 API 发送消息
-            function buildAgentVideoPreferences(validImageUrls) {
-                const useImageToVideo = Array.isArray(validImageUrls) && validImageUrls.length > 0;
-                const category = validImageUrls.length > 0 ? 'image_to_video' : 'text_to_video';
+            function buildAgentVideoPreferences(validImageUrls, validVideoUrls = [], validAudioUrls = []) {
+                // 图生视频判定需同时考虑参考视频/音频（视频克隆场景只有 video_urls，无图片），
+                // 否则 enable_face_mask 会被错误地置为 false，导致人脸遮盖 pipeline step 不生成。
+                const useImageToVideo = (Array.isArray(validImageUrls) && validImageUrls.length > 0)
+                    || validVideoUrls.length > 0
+                    || validAudioUrls.length > 0;
+                const category = useImageToVideo ? 'image_to_video' : 'text_to_video';
                 const list = useImageToVideo ? allImageToVideoModels.value : allTextToVideoModels.value;
                 const savedModelName = localStorage.getItem(useImageToVideo ? 'marketing_selected_i2v_model' : 'marketing_selected_t2v_model');
                 const canUseModel = (model) => {
@@ -2867,7 +2871,7 @@
                             vendor_id: selectedLLMModel.value ? (selectedLLMModel.value.vendor_id || 1) : 1,
                             language: localStorage.getItem('zjt_locale') || 'zh-CN',
                             image_preferences: imagePreferences,
-                            video_preferences: isAgentMode ? buildAgentVideoPreferences(validImageUrls) : undefined
+                            video_preferences: isAgentMode ? buildAgentVideoPreferences(validImageUrls, validVideoUrls, validAudioUrls) : undefined
                         }),
                         signal: controller.signal
                     });
@@ -6093,7 +6097,7 @@
                         : null;
                     if (!taskId || !userId.value || !worldId.value) return;
                     const valid_image_urls = isImg2Vid && uploadedImageUrl.value ? [uploadedImageUrl.value] : [];
-                    const video_prefs = buildAgentVideoPreferences(valid_image_urls);
+                    const video_prefs = buildAgentVideoPreferences(valid_image_urls, agentVideoFiles.value, agentAudioFiles.value);
                     const isReferenceMode = ['multi_reference', 'first_last_with_ref'].includes(video_prefs.image_mode)
                         || agentVideoFiles.value.length > 0
                         || agentAudioFiles.value.length > 0;

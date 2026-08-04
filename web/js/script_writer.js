@@ -4,6 +4,11 @@
         let pendingVerificationData = null;
         let needsNewMessageDiv = false;
         let fullText = ''; // 全局变量，用于累积消息内容
+        // 世界级默认模型（新会话种子）；本对话选中与之独立
+        let worldDefaultModels = {
+            llm: null,   // { model, model_id, vendor_id, name }
+            image: null, // { task_id, name }
+        };
         const urlParams = new URLSearchParams(window.location.search);
         
         // 全局参数：从URL获取并存储，供所有接口使用
@@ -276,6 +281,7 @@
                 isCommunityEdition = true;
             }
             await loadVendors();
+            await loadWorldDefaultModels();
             await loadAvailableModels();
             await loadDriverStatus();
             await loadTextToImageModels();
@@ -593,8 +599,10 @@
                     
                     // 加载并显示历史消息
                     await loadAndDisplayHistory(sessionId);
-                    
-                    // 会话复用成功后，自动设置生图模型到后端
+
+                    // 会话复用后，按会话草稿恢复生图模型选择（读 chat_sessions.text_to_image_model_id），
+                    // 再决定是否需要把世界默认写入草稿（autoSetTextToImageModel 内部会判断草稿已存在则跳过）。
+                    await restoreSavedImageModel(sessionId);
                     await autoSetTextToImageModel();
                 } else {
                     // 没有活跃会话，创建新的
@@ -830,6 +838,56 @@
 
         // 提交状态标志，防止重复提交
         let isSubmitting = false;
+        let submitSuccessTimer = null;
+
+        /**
+         * 控制右上角「提交」按钮环绕 loading 状态。
+         * loading=true 时显示环绕转圈，整次提交结束前不得提前关闭。
+         * success=true 时短暂展示绿色成功环。
+         */
+        function setSubmitButtonLoading(loading, { success = false } = {}) {
+            const submitBtn = document.getElementById('submit-to-db-btn')
+                || document.querySelector('.header-action-btn.primary');
+            if (!submitBtn) return submitBtn;
+
+            const textEl = submitBtn.querySelector('.btn-text');
+
+            if (submitSuccessTimer) {
+                clearTimeout(submitSuccessTimer);
+                submitSuccessTimer = null;
+            }
+
+            if (loading) {
+                submitBtn.classList.add('is-submitting');
+                submitBtn.classList.remove('submit-success', 'disabled');
+                submitBtn.disabled = true;
+                submitBtn.setAttribute('aria-busy', 'true');
+                if (textEl) {
+                    textEl.textContent = window.t
+                        ? (window.t('submitting_data') || window.t('status_submitting'))
+                        : '提交中...';
+                }
+            } else {
+                submitBtn.classList.remove('is-submitting', 'disabled');
+                submitBtn.disabled = false;
+                submitBtn.setAttribute('aria-busy', 'false');
+                if (textEl) {
+                    textEl.textContent = window.t ? window.t('submit_data') : '提交';
+                }
+                if (success) {
+                    submitBtn.classList.add('submit-success');
+                    submitSuccessTimer = setTimeout(() => {
+                        if (submitBtn.isConnected) {
+                            submitBtn.classList.remove('submit-success');
+                        }
+                        submitSuccessTimer = null;
+                    }, 500);
+                } else {
+                    submitBtn.classList.remove('submit-success');
+                }
+            }
+            return submitBtn;
+        }
 
         async function submitToDatabase() {
             // 防止重复提交
@@ -844,13 +902,10 @@
                 return;
             }
 
-            // 设置提交状态并禁用按钮
+            // 设置提交状态并开启按钮环绕 loading（贯穿整次请求）
             isSubmitting = true;
-            const submitBtn = document.querySelector('.header-action-btn.primary');
-            if (submitBtn) {
-                submitBtn.disabled = true;
-                submitBtn.classList.add('disabled');
-            }
+            setSubmitButtonLoading(true);
+            let submitOk = false;
 
             try {
                 updateStatus(window.t ? window.t('status_submitting_data') : '正在提交数据...');
@@ -862,6 +917,7 @@
 
                 const data = await response.json();
                 if (data.success) {
+                    submitOk = true;
                     showSuccess(window.t ? window.t('success_submit_detail', {total: data.total}) : `✓ 提交成功！共保存 ${data.total} 个文件到数据库`);
                     updateStatus(window.t ? window.t('status_data_submitted') : '数据已提交到数据库');
                 } else {
@@ -872,12 +928,9 @@
                 showError((window.t ? window.t('error_submit_failed', {error: error.message}) : '提交失败: ' + error.message));
                 updateStatus(window.t ? window.t('status_submit_failed') : '提交失败');
             } finally {
-                // 恢复提交状态并启用按钮
+                // 仅在整次提交结束后关闭 loading；成功时附加短暂成功反馈
                 isSubmitting = false;
-                if (submitBtn) {
-                    submitBtn.disabled = false;
-                    submitBtn.classList.remove('disabled');
-                }
+                setSubmitButtonLoading(false, { success: submitOk });
             }
         }
 
@@ -1210,6 +1263,21 @@
                     return;
                 }
 
+                // 本轮对话选中的生图模型写入任务请求，创建 agent_tasks 快照时作为 request 级来源。
+                // 下一条消息生效；当前已运行任务不受影响。
+                const imageModelSelector = document.getElementById('text-to-image-model-selector');
+                const imageModelTaskId = imageModelSelector?.value
+                    ? parseInt(imageModelSelector.value, 10)
+                    : null;
+                const imageModelName = imageModelSelector?.options?.[imageModelSelector.selectedIndex]?.textContent || '';
+                const imagePreferences = {};
+                if (imageModelTaskId && !Number.isNaN(imageModelTaskId)) {
+                    imagePreferences.task_id = imageModelTaskId;
+                }
+                if (imageModelName) {
+                    imagePreferences.model_name = imageModelName;
+                }
+
                 const taskResponse = await fetch(`/api/session/${sessionId}/task`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1220,6 +1288,9 @@
                         model_id: modelId,
                         vendor_id: vendorId ? parseInt(vendorId) : 1,
                         language: localStorage.getItem('zjt_locale') || 'zh-CN',
+                        ...(Object.keys(imagePreferences).length > 0
+                            ? { image_preferences: imagePreferences }
+                            : {}),
                         ...getThinkingParams(),
                         intervention_level: getInterventionLevel()
                     }),
@@ -2228,45 +2299,61 @@
                     defaultModel.selected = true;
                 }
 
-                // 检查是否有上次选择的模型并自动选中
-                const savedModelRaw = localStorage.getItem('lastSelectedLlmModel');
-                if (savedModelRaw) {
-                    try {
-                        const saved = JSON.parse(savedModelRaw);
-                        const savedModelName = saved.model || saved;
-                        const savedVendorId = saved.vendorId || '';
-                        const options = selector.querySelectorAll('option');
-                        // 优先匹配模型名+供应商ID
-                        let matched = false;
-                        if (savedVendorId) {
-                            for (let i = 0; i < options.length; i++) {
-                                if (options[i].value === savedModelName && !options[i].disabled
-                                    && options[i].dataset.vendorId === String(savedVendorId)) {
-                                    selector.selectedIndex = i;
-                                    console.log(`[模型记忆] 自动选中上次模型: ${savedModelName} (vendor_id: ${savedVendorId})`);
-                                    matched = true;
-                                    break;
+                // 选中优先级：世界默认 LLM → localStorage 上次选择 → 系统推荐
+                let appliedPreferred = false;
+                const worldLlm = worldDefaultModels.llm;
+                if (worldLlm && worldLlm.model) {
+                    const options = selector.querySelectorAll('option');
+                    for (let i = 0; i < options.length; i++) {
+                        const opt = options[i];
+                        if (opt.disabled || opt.value !== worldLlm.model) continue;
+                        if (worldLlm.vendor_id != null && worldLlm.vendor_id !== '' && opt.dataset.vendorId
+                            && String(opt.dataset.vendorId) !== String(worldLlm.vendor_id)) {
+                            continue;
+                        }
+                        selector.selectedIndex = i;
+                        appliedPreferred = true;
+                        console.log('[模型选择] 使用世界默认对话模型:', worldLlm.model);
+                        break;
+                    }
+                }
+                if (!appliedPreferred) {
+                    const savedModelRaw = localStorage.getItem('lastSelectedLlmModel');
+                    if (savedModelRaw) {
+                        try {
+                            const saved = JSON.parse(savedModelRaw);
+                            const savedModelName = saved.model || saved;
+                            const savedVendorId = saved.vendorId || '';
+                            const options = selector.querySelectorAll('option');
+                            let matched = false;
+                            if (savedVendorId) {
+                                for (let i = 0; i < options.length; i++) {
+                                    if (options[i].value === savedModelName && !options[i].disabled
+                                        && options[i].dataset.vendorId === String(savedVendorId)) {
+                                        selector.selectedIndex = i;
+                                        console.log(`[模型记忆] 自动选中上次模型: ${savedModelName} (vendor_id: ${savedVendorId})`);
+                                        matched = true;
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                        // 回退：仅匹配模型名
-                        if (!matched) {
-                            for (let i = 0; i < options.length; i++) {
-                                if (options[i].value === savedModelName && !options[i].disabled) {
-                                    selector.selectedIndex = i;
-                                    console.log(`[模型记忆] 自动选中上次模型(回退匹配): ${savedModelName}`);
-                                    break;
+                            if (!matched) {
+                                for (let i = 0; i < options.length; i++) {
+                                    if (options[i].value === savedModelName && !options[i].disabled) {
+                                        selector.selectedIndex = i;
+                                        console.log(`[模型记忆] 自动选中上次模型(回退匹配): ${savedModelName}`);
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                    } catch (e) {
-                        // 兼容旧格式（纯字符串）
-                        const options = selector.querySelectorAll('option');
-                        for (let i = 0; i < options.length; i++) {
-                            if (options[i].value === savedModelRaw && !options[i].disabled) {
-                                selector.selectedIndex = i;
-                                console.log(`[模型记忆] 自动选中上次模型(旧格式): ${savedModelRaw}`);
-                                break;
+                        } catch (e) {
+                            const options = selector.querySelectorAll('option');
+                            for (let i = 0; i < options.length; i++) {
+                                if (options[i].value === savedModelRaw && !options[i].disabled) {
+                                    selector.selectedIndex = i;
+                                    console.log(`[模型记忆] 自动选中上次模型(旧格式): ${savedModelRaw}`);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -2350,15 +2437,80 @@
             activeCustomModelSelect = null;
         }
 
-        function appendCustomModelSelectOption(menu, selector, option, optionIndex) {
+        function getDefaultScopeForSelector(selector) {
+            if (!selector) return '';
+            if (selector.id === 'model-selector') return 'llm';
+            if (selector.id === 'text-to-image-model-selector') return 'image';
+            return selector.dataset.defaultScope || '';
+        }
+
+        function isOptionWorldDefault(selector, option) {
+            const scope = getDefaultScopeForSelector(selector);
+            if (!scope || !option) return false;
+            if (scope === 'llm') {
+                const d = worldDefaultModels.llm;
+                if (!d || !d.model) return false;
+                if (option.value !== d.model) return false;
+                if (d.vendor_id != null && d.vendor_id !== '' && option.dataset.vendorId) {
+                    return String(option.dataset.vendorId) === String(d.vendor_id);
+                }
+                return true;
+            }
+            if (scope === 'image') {
+                const d = worldDefaultModels.image;
+                return !!(d && d.task_id != null && String(option.value) === String(d.task_id));
+            }
+            return false;
+        }
+
+        function getWorldDefaultLabel(scope) {
+            if (scope === 'llm') {
+                const d = worldDefaultModels.llm;
+                return d ? (d.name || d.model || '') : '';
+            }
+            if (scope === 'image') {
+                const d = worldDefaultModels.image;
+                return d ? (d.name || String(d.task_id || '')) : '';
+            }
+            return '';
+        }
+
+        function isCurrentSelectionWorldDefault(selector) {
+            const opt = selector?.options?.[selector.selectedIndex];
+            return isOptionWorldDefault(selector, opt);
+        }
+
+        /** i18n 取值；缺 key 时用 fallback，避免直接露出 set_default_xxx 这类 key */
+        function tOr(key, fallback, params) {
+            if (!window.t) return fallback;
+            const translated = params ? window.t(key, params) : window.t(key);
+            if (translated == null || translated === '' || translated === key) {
+                if (params && typeof fallback === 'string') {
+                    return fallback.replace(/\{(\w+)\}/g, (_, k) => (
+                        params[k] != null ? String(params[k]) : ''
+                    ));
+                }
+                return fallback;
+            }
+            return translated;
+        }
+
+        function appendCustomModelSelectOption(list, selector, option, optionIndex) {
             const item = document.createElement('button');
             item.type = 'button';
             item.className = 'custom-model-select-option';
-            item.textContent = option.textContent || option.value;
-            item.title = option.textContent || option.value;
+            const baseText = option.textContent || option.value;
+            const isDefault = isOptionWorldDefault(selector, option);
+            item.textContent = isDefault
+                ? `${baseText}（${tOr('default_badge', '默认')}）`
+                : baseText;
+            item.title = baseText;
             item.disabled = option.disabled;
             if (option.selected) {
                 item.classList.add('selected');
+            }
+            if (isDefault) {
+                item.classList.add('is-world-default');
             }
             item.addEventListener('click', (event) => {
                 event.preventDefault();
@@ -2368,23 +2520,74 @@
                 closeCustomModelSelectMenu();
                 selector.dispatchEvent(new Event('change', { bubbles: true }));
             });
-            menu.appendChild(item);
+            list.appendChild(item);
         }
 
-        function appendCustomModelSelectOptions(menu, selector, children) {
+        function appendCustomModelSelectOptions(list, selector, children) {
             Array.from(children).forEach((child) => {
                 if (child.tagName === 'OPTGROUP') {
                     const label = document.createElement('div');
                     label.className = 'custom-model-select-group';
                     label.textContent = child.label;
-                    menu.appendChild(label);
-                    appendCustomModelSelectOptions(menu, selector, child.children);
+                    list.appendChild(label);
+                    appendCustomModelSelectOptions(list, selector, child.children);
                     return;
                 }
                 if (child.tagName !== 'OPTION') return;
                 const optionIndex = Array.prototype.indexOf.call(selector.options, child);
-                appendCustomModelSelectOption(menu, selector, child, optionIndex);
+                appendCustomModelSelectOption(list, selector, child, optionIndex);
             });
+        }
+
+        function appendSetDefaultFooter(menu, selector) {
+            const scope = getDefaultScopeForSelector(selector);
+            if (!scope) return;
+
+            const footer = document.createElement('div');
+            footer.className = 'custom-model-select-footer';
+
+            const hint = document.createElement('div');
+            hint.className = 'set-default-model-hint';
+            const defaultLabel = getWorldDefaultLabel(scope);
+            hint.textContent = defaultLabel
+                ? tOr('current_default_label', `当前默认：${defaultLabel}`, { name: defaultLabel })
+                : tOr('current_default_unset', '当前默认：未设置');
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'set-default-model-btn';
+            const already = isCurrentSelectionWorldDefault(selector);
+            const hasValue = !!(selector.value && !selector.options[selector.selectedIndex]?.disabled);
+            if (scope === 'llm') {
+                btn.textContent = already
+                    ? tOr('already_default', '✓ 已是默认')
+                    : tOr('set_default_llm', '☆ 设为默认对话模型');
+            } else {
+                btn.textContent = already
+                    ? tOr('already_default', '✓ 已是默认')
+                    : tOr('set_default_image_model', '☆ 设为默认生图模型');
+            }
+            btn.disabled = already || !hasValue || !USER_ID || !WORLD_ID;
+            btn.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (btn.disabled) return;
+                btn.disabled = true;
+                try {
+                    if (scope === 'llm') {
+                        await setWorldDefaultLlmFromSelector();
+                    } else if (scope === 'image') {
+                        await setWorldDefaultImageFromSelector();
+                    }
+                    closeCustomModelSelectMenu();
+                } catch (err) {
+                    btn.disabled = false;
+                }
+            });
+
+            footer.appendChild(btn);
+            footer.appendChild(hint);
+            menu.appendChild(footer);
         }
 
         function openCustomModelSelectMenu(selector) {
@@ -2401,9 +2604,15 @@
             menu.className = 'custom-model-select-menu';
             menu.style.top = `${rect.bottom + 6}px`;
             menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8))}px`;
-            menu.style.width = `${Math.max(rect.width, 240)}px`;
-            menu.style.maxHeight = `${Math.max(120, Math.min(400, window.innerHeight - rect.bottom - 18))}px`;
-            appendCustomModelSelectOptions(menu, selector, selector.children);
+            menu.style.width = `${Math.max(rect.width, 260)}px`;
+            menu.style.maxHeight = `${Math.max(160, Math.min(420, window.innerHeight - rect.bottom - 18))}px`;
+
+            const list = document.createElement('div');
+            list.className = 'custom-model-select-list';
+            appendCustomModelSelectOptions(list, selector, selector.children);
+            menu.appendChild(list);
+            appendSetDefaultFooter(menu, selector);
+
             document.body.appendChild(menu);
 
             wrapper.classList.add('custom-select-open');
@@ -2417,6 +2626,11 @@
                 const display = wrapper?.querySelector('.model-select-display');
                 if (!wrapper || !display || wrapper.dataset.customSelectReady === 'true') return;
                 wrapper.dataset.customSelectReady = 'true';
+                const scope = getDefaultScopeForSelector(selector);
+                if (scope) {
+                    wrapper.dataset.defaultScope = scope;
+                    selector.dataset.defaultScope = scope;
+                }
                 wrapper.tabIndex = 0;
                 wrapper.setAttribute('role', 'combobox');
                 wrapper.setAttribute('aria-haspopup', 'listbox');
@@ -2926,8 +3140,15 @@
 
                 // 显示选择器
                 selector.style.display = '';
+
+                // 恢复后端已保存的生图模型选择。
+                // 初始化阶段 sessionId 可能尚未确定（会话恢复在后），这里先读世界默认；
+                // 会话复用/创建成功后会再调用 restoreSavedImageModel(sessionId) 读会话草稿覆盖。
+                await restoreSavedImageModel(null);
+
                 // 包装在 .model-select-wrapper 后，同步自定义显示层的文本
                 updateImageModelDisplay();
+                updateImageModelIcon();
                 // 注意：自动设置模型逻辑已移至 createSession() 成功后执行
             } catch (error) {
                 console.error('加载生图模型列表失败:', error);
@@ -2939,10 +3160,78 @@
             }
         }
 
+        async function restoreSavedImageModel(targetSessionId) {
+            /** 从后端恢复生图模型选中状态。
+
+            读取优先级：会话草稿（targetSessionId 对应）> 世界默认。
+            返回 'session' 表示从会话草稿恢复（说明用户已在本对话设置过，无需 auto-set 覆盖），
+            返回 'world_default' 或 null 表示读取的是世界默认/未恢复。
+            */
+            const selector = document.getElementById('text-to-image-model-selector');
+            if (!selector || !USER_ID || !WORLD_ID) return null;
+            try {
+                const params = new URLSearchParams({
+                    user_id: USER_ID,
+                    world_id: WORLD_ID
+                });
+                if (targetSessionId) params.set('session_id', targetSessionId);
+                const currentResp = await fetch(
+                    `/api/text-to-image-model?${params.toString()}`,
+                    { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
+                );
+                const currentData = await currentResp.json();
+                if (currentData.success && currentData.task_id != null) {
+                    const savedId = String(currentData.task_id);
+                    const matchOption = Array.from(selector.options).find(
+                        (opt) => opt.value === savedId && !opt.disabled
+                    );
+                    if (matchOption) {
+                        selector.value = savedId;
+                        updateImageModelDisplay();
+                        updateImageModelIcon();
+                        return currentData.scope || 'world_default';
+                    }
+                }
+            } catch (restoreErr) {
+                console.warn('[生图模型] 恢复已保存选择失败:', restoreErr);
+            }
+            return null;
+        }
+
         async function autoSetTextToImageModel() {
             /** 会话创建后自动设置生图模型到后端 */
             const selector = document.getElementById('text-to-image-model-selector');
             if (!selector || !sessionId) return;
+
+            // 若该会话已存在草稿（用户此前在本对话切换过模型），不要用世界默认覆盖。
+            // restoreSavedImageModel 已把草稿回显到 selector，这里直接采用即可。
+            try {
+                const params = new URLSearchParams({
+                    user_id: USER_ID,
+                    world_id: WORLD_ID,
+                    session_id: sessionId
+                });
+                const resp = await fetch(
+                    `/api/text-to-image-model?${params.toString()}`,
+                    { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
+                );
+                const data = await resp.json();
+                if (data.success && data.scope === 'session' && data.task_id != null) {
+                    const savedId = String(data.task_id);
+                    const matchOption = Array.from(selector.options).find(
+                        (opt) => opt.value === savedId && !opt.disabled
+                    );
+                    if (matchOption) {
+                        selector.value = savedId;
+                        updateImageModelDisplay();
+                        updateImageModelIcon();
+                        console.log('[生图模型] 会话草稿已存在，跳过自动设置');
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn('[生图模型] 检查会话草稿失败，继续自动设置:', e);
+            }
 
             let selectedModel = selector.value;
 
@@ -2995,18 +3284,141 @@
                         world_id: WORLD_ID,
                         model_id: selectedModel,
                         auth_token: AUTH_TOKEN,
-                        session_id: sessionId
+                        session_id: sessionId,
+                        scope: 'session'
                     })
                 });
                 const data = await response.json();
                 console.log('[DEBUG] 设置生图模型响应:', data);
                 if (data.success) {
-                    console.log('[DEBUG] 生图模型已保存:', data.model_name);
+                    console.log('[DEBUG] 生图模型已保存(session):', data.model_name);
                 }
             } catch (err) {
                 console.error('[DEBUG] 设置生图模型异常:', err);
             }
             updateImageModelIcon();
+        }
+
+        async function loadWorldDefaultModels() {
+            if (!USER_ID || !WORLD_ID) return;
+            try {
+                const [llmResp, imageResp] = await Promise.all([
+                    fetch(
+                        `/api/world-defaults/llm?user_id=${encodeURIComponent(USER_ID)}&world_id=${encodeURIComponent(WORLD_ID)}`,
+                        { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
+                    ),
+                    fetch(
+                        `/api/text-to-image-model?user_id=${encodeURIComponent(USER_ID)}&world_id=${encodeURIComponent(WORLD_ID)}`,
+                        { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
+                    ),
+                ]);
+                const llmData = await llmResp.json().catch(() => ({}));
+                const imageData = await imageResp.json().catch(() => ({}));
+                if (llmData.success && llmData.default) {
+                    worldDefaultModels.llm = {
+                        model: llmData.default.model,
+                        model_id: llmData.default.model_id,
+                        vendor_id: llmData.default.vendor_id,
+                        name: llmData.default.name || llmData.default.model,
+                    };
+                }
+                if (imageData.success && imageData.task_id != null) {
+                    worldDefaultModels.image = {
+                        task_id: imageData.task_id,
+                        name: imageData.model_name || String(imageData.task_id),
+                    };
+                }
+            } catch (err) {
+                console.warn('[世界默认] 加载失败:', err);
+            }
+        }
+
+        async function setWorldDefaultLlmFromSelector() {
+            const selector = document.getElementById('model-selector');
+            const opt = selector?.options?.[selector.selectedIndex];
+            if (!selector?.value || !opt || opt.disabled) {
+                showError(window.t ? window.t('error_select_llm_model') : '请先选择一个 LLM 模型');
+                throw new Error('no llm selected');
+            }
+            if (!USER_ID || !WORLD_ID) {
+                showError(window.t ? window.t('error_missing_ids') : '缺少用户ID或世界ID');
+                throw new Error('missing ids');
+            }
+            const payload = {
+                user_id: USER_ID,
+                world_id: WORLD_ID,
+                model: selector.value,
+                model_id: opt.dataset.modelId ? parseInt(opt.dataset.modelId, 10) : null,
+                vendor_id: opt.dataset.vendorId ? parseInt(opt.dataset.vendorId, 10) : null,
+                name: opt.dataset.conciseName || opt.textContent || selector.value,
+            };
+            const resp = await fetch('/api/world-defaults/llm', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${AUTH_TOKEN}`,
+                    'X-User-Id': String(USER_ID),
+                },
+                body: JSON.stringify(payload),
+            });
+            const data = await resp.json();
+            if (!data.success) {
+                showError(data.error || '设置默认对话模型失败');
+                throw new Error(data.error || 'set default llm failed');
+            }
+            worldDefaultModels.llm = {
+                model: data.default?.model || payload.model,
+                model_id: data.default?.model_id ?? payload.model_id,
+                vendor_id: data.default?.vendor_id ?? payload.vendor_id,
+                name: data.default?.name || payload.name,
+            };
+            localStorage.setItem('lastSelectedLlmModel', JSON.stringify({
+                model: worldDefaultModels.llm.model,
+                vendorId: worldDefaultModels.llm.vendor_id || '',
+            }));
+            showSuccess(tOr(
+                'success_set_default_llm',
+                `已设为世界默认对话模型：${worldDefaultModels.llm.name}（新会话将使用；当前对话不受影响）`,
+                { name: worldDefaultModels.llm.name }
+            ));
+        }
+
+        async function setWorldDefaultImageFromSelector() {
+            const selector = document.getElementById('text-to-image-model-selector');
+            const opt = selector?.options?.[selector.selectedIndex];
+            if (!selector?.value || !opt || opt.disabled) {
+                showError(window.t ? window.t('error_select_image_model') : '请先选择生图模型');
+                throw new Error('no image model');
+            }
+            if (!USER_ID || !WORLD_ID) {
+                showError(window.t ? window.t('error_missing_ids') : '缺少用户ID或世界ID');
+                throw new Error('missing ids');
+            }
+            const resp = await fetch('/api/text-to-image-model', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: USER_ID,
+                    world_id: WORLD_ID,
+                    model_id: selector.value,
+                    auth_token: AUTH_TOKEN,
+                    scope: 'world_default',
+                }),
+            });
+            const data = await resp.json();
+            if (!data.success) {
+                showError(data.error || '设置默认生图模型失败');
+                throw new Error(data.error || 'set default image failed');
+            }
+            worldDefaultModels.image = {
+                task_id: data.task_id,
+                name: data.model_name || opt.textContent || String(data.task_id),
+            };
+            showSuccess(tOr(
+                'success_set_default_image',
+                `已设为世界默认生图模型：${worldDefaultModels.image.name}（新会话将使用；当前对话不受影响）`,
+                { name: worldDefaultModels.image.name }
+            ));
         }
 
         async function changeTextToImageModel() {
@@ -3042,12 +3454,18 @@
                         world_id: WORLD_ID,
                         model_id: model,
                         auth_token: AUTH_TOKEN,
-                        session_id: sessionId
+                        session_id: sessionId,
+                        scope: 'session'
                     })
                 });
                 const data = await response.json();
                 if (data.success) {
-                    showSuccess(window.t ? window.t('success_switched_to', {name: selector.options[selector.selectedIndex].text}) : `已切换到 ${selector.options[selector.selectedIndex].text}`);
+                    const name = selector.options[selector.selectedIndex].text;
+                    showSuccess(tOr(
+                        'success_switched_session_image',
+                        `本对话已切换到 ${name}（下一条消息生效）`,
+                        { name }
+                    ));
                 } else {
                     showError((window.t ? window.t('error_switch_image_model_failed', {error: data.error}) : '切换生图模型失败: ' + data.error));
                 }

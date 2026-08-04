@@ -451,6 +451,7 @@ CREATE TABLE IF NOT EXISTS `tasks` (
   `status` tinyint DEFAULT '0' COMMENT '状态（0-队列中，1-处理中，2-处理完成，-1-处理失败）',
   PRIMARY KEY (`id`),
   KEY `idx_tasks_task_id` (`task_id`),
-  KEY `idx_tasks_task_type` (`task_type`,`status`) USING BTREE
+  KEY `idx_tasks_task_type` (`task_type`,`status`) USING BTREE,
+  KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='任务表';
 """

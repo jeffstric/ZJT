@@ -4,6 +4,7 @@
 import logging
 from typing import Dict
 from .base_sms_driver import BaseSmsDriver
+from utils.log_sanitizer import mask_phone
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,10 @@ class LegacySmsDriver(BaseSmsDriver):
             response = client.send_sms_with_options(send_sms_request, runtime)
             
             if response.body.code == 'OK':
-                logger.info(f"短信发送成功: {phone} 验证码：{code}")
+                logger.info(
+                    "短信发送成功: %s 验证码：<redacted>",
+                    mask_phone(phone),
+                )
                 return {"success": True, "message": "验证码发送成功"}
             else:
                 error_msg = f"{response.body.code} - {response.body.message}"

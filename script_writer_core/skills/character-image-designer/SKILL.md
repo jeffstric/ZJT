@@ -510,19 +510,46 @@ Japanese anime style, Ancient Chinese setting, Warm earthy color palette. A char
   }
   ```
 
-**传统单个生成方式（仅当角色数量 = 1 时使用）：**
+**传统单个生成方式（角色数量 = 1，或需要覆盖已有主图时）：**
 - 调用 `generate_text_to_image()` 函数
 - 参数设置：
   - `prompt`: 单个角色的提示词
   - `item_type`: 1 (角色类型)
   - `item_name`: 角色名称
+  - `force_update_exist_image`: 默认 `false`；**仅当用户明确确认覆盖已有主图时设为 `true`**
 - **注意**：生图模型由用户在前端界面选择，大模型无需关心具体使用哪个模型。
+
+### 🔴 覆盖已有主参考图（force_update）规则
+
+**能力边界（强制）：**
+| 工具 | 能否覆盖已有 `reference_image` |
+|------|-------------------------------|
+| `generate_text_to_image` | ✅ 可以，需 `force_update_exist_image=true` |
+| `generate_4grid_character_images` | ❌ **不支持**，有图直接拒绝 |
+| `generate_character_variant_image` | 仅覆盖同标签变体（`force_update`），**不能换主图** |
+
+**覆盖流程（必须）：**
+1. 发现目标角色已有 `reference_image`，且用户要求重生成/改画风/覆盖
+2. 用 `ask_user` 明确告知「将覆盖现有形象」，得到用户确认
+3. **禁止**调用 4 宫格；改为对每个角色逐个调用：
+```python
+generate_text_to_image(
+    prompt=写实风格三视角提示词,
+    item_type=1,
+    item_name="角色名",
+    force_update_exist_image=True,  # 用户已确认后才可 true
+)
+```
+4. 未获用户确认时：`force_update_exist_image` 必须为 `false`，跳过该角色并在报告中说明
 
 **❌ 错误示例（禁止）：**
 ```python
 # 错误！未尝试4宫格就直接逐个生成：
 for character in ["角色1", "角色2"]:
     generate_text_to_image(item_name=character, item_type=1, ...)  # ❌ 错误！应该先尝试4宫格
+
+# 错误！用4宫格覆盖已有图（4宫格不支持 force）：
+generate_4grid_character_images(...)  # ❌ 已有 reference_image 时会失败
 ```
 
 **✅ 正确示例（必须这样做）：**
@@ -843,13 +870,16 @@ result = ask_user(
 | 配饰和道具 | 在正面或侧面描述中体现 |
 
 ## 注意事项
-1. **处理条件限制（最重要）** - 仅处理同时满足以下两个条件的角色：
+1. **处理条件限制（最重要）** - 默认仅处理同时满足以下两个条件的角色：
    - 没有参考图像（`reference_image` 字段为空、null或不存在）
    - 没有进行中的图像生成任务（状态不为 `processing`、`pending`、`in_progress`）
-2. **强制更新权限限制（关键）** - `force_update_exist_image`参数使用规则：
-   - **默认必须为false** - 保护现有图像不被意外覆盖
-   - **仅在用户明确确认时才能设为true** - 必须得到用户明确授权才能覆盖现有图像
+   - **例外**：用户明确要求覆盖已有形象时，走单图 + `force_update_exist_image=true`（见上文「覆盖已有主参考图」）
+2. **强制更新权限限制（关键）** - `force_update_exist_image` 参数使用规则：
+   - **仅 `generate_text_to_image` 支持**；`generate_4grid_character_images` **不支持**强制覆盖
+   - **默认必须为 false** - 保护现有图像不被意外覆盖
+   - **仅在用户明确确认时才能设为 true** - 必须得到用户明确授权才能覆盖现有图像
    - 如果角色已有图像且未获得用户授权，必须跳过该角色并在报告中说明
+   - 需要覆盖多个已有图角色时：逐个单图调用并带 `force_update_exist_image=true`，**禁止**用 4 宫格
 3. **🔴 画风严格遵循（极其重要）** - **必须严格遵循世界设定中的画风要求，不得出现画风不匹配的情况**：
    - 必须首先调用`read_world()`获取`visual_style`画风信息
    - 在提示词最开头用明确的英文描述画风（如：Photorealistic style / Japanese anime style）

@@ -446,7 +446,9 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 
 Agent 模式下，`image_preferences.ratio`、`image_preferences.resolution` 会在创建任务时同步写入后端图片偏好，后续专家调用 `generate_text_to_image` / `edit_image` 工具时会由工具层强制应用当前偏好。`ratio: "auto"` 也会被保存，表示本次任务不强制覆盖专家或模型默认比例。图片编辑场景中，`image_preferences.resolution` 只代表输出结果的目标分辨率；专家不应因为输入原图分辨率低于该值而中断任务或要求用户重传高清原图。如果没有有效的 `image_preferences.resolution`，也没有历史/本轮文本分辨率要求，专家应直接使用当前模型支持的最低输出分辨率，不触发 `ask_user`。
 
-Agent 对话模式即使当前自定义面板停留在“图片”，前端也会随 `/api/session/{session_id}/task` 携带 `video_preferences`，让 PM Agent 能看到用户历史生视频模型、比例、时长和图片模式偏好。前端按本轮真实上传图片 URL 判断模型类别：有图片 URL 时使用图生视频历史模型（`marketing_selected_i2v_model`），没有图片 URL 时使用文生视频历史模型（`marketing_selected_t2v_model`）。后端在旧客户端未传 `video_preferences` 时，会从 `get_video_preferences(user_id, world_id)` 读取历史视频偏好并追加 `[用户视频偏好]`。
+Agent 对话模式即使当前自定义面板停留在“图片”，前端也会随 `/api/session/{session_id}/task` 携带 `video_preferences`，让 PM Agent 能看到用户历史生视频模型、比例、时长和图片模式偏好。前端按本轮真实上传媒体判断模型类别：有图片 URL、参考视频或参考音频时使用图生视频历史模型（`marketing_selected_i2v_model`），都没有时使用文生视频历史模型（`marketing_selected_t2v_model`）。后端在旧客户端未传 `video_preferences` 时，会从 `get_video_preferences(user_id, world_id)` 读取历史视频偏好并追加 `[用户视频偏好]`。
+
+`video_preferences.enable_face_mask` 由「是否处理人脸」勾选状态（`processFace`）和上述图生视频判定共同决定：只传参考视频/音频（视频克隆场景，无图片）时同样视为图生视频，勾选后会携带 `enable_face_mask: true`，后端据此为 Seedance 2.0 系列创建 `face_mask` pipeline step（RUNNINGHUB_FACE_MASK 视频人脸遮盖预处理）。`syncVideoModelToBackend()` 切换视频模型同步偏好时采用同一判定口径。
 
 视频时长选择支持 `auto`。在前端偏好和 Agent 上下文中，`auto` 表示不把创作意图锁死为 5 秒；直连视频接口和企业版 `video_tools` 在真正提交任务时会把 `auto` 解析为当前模型支持的最长时长，避免底层接口收到非数字时长。本地生活营销视频如果选择 3/5/8 秒，但内容包含门店/产品/卖点/口播/BGM/音效/店招等完整信息，PM Agent 应提醒用户改为 `auto` 或模型最长时长；只有用户明确坚持短时长时，才压缩为单一核心镜头。
 

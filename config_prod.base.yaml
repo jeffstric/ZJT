@@ -60,6 +60,10 @@ kkidc:
   api_key: ""
   base_url: "https://ai-api.kkidc.com/v1"
 
+huimengi:
+  api_key: ""
+  base_url: "https://api.huimengi.com"
+
 # 适配云雾 comfly这类聚合站
 api_aggregator:
   site_0:
@@ -240,6 +244,18 @@ upgrade:
     - "https://github.com/jeffstric/ZJT.git"      # 备用 GitHub
   branch: "main"             # 跟踪分支
   timeout_seconds: 30        # git fetch/pull 超时（秒）
+
+# ===== 数据库连接池（8·1 端口耗尽事故修复，详见 docs/backend/incidents/2026-08-01-db-port-exhaustion.md）=====
+# 容量预算（MySQL 侧）= (1 scheduler + W gunicorn worker + max_workers sync_task 子进程 + N script_split worker) × maxcached
+# ⚠️ 必须计入 sync_task.max_workers 个 ProcessPool 子进程（每进程独立建池）！
+# 需确认 MySQL max_connections ≥ 该值 × 1.5 + 其他客户端余量。8·4 Too many connections 事故
+# 正是漏算 sync_task 进程池所致。详见 docs/backend/database_connection_pool.md
+# 注意：本段与用户文件 config_prod.yml 的 database:（含 host/password）深度合并，pool 子段由 base 兜底。
+database:
+  pool:
+    mincached: 2            # 启动时预热连接数
+    maxcached: 10           # 空闲池上限（每进程）。复用优先，超出归还时真关闭
+    maxconnections: 0       # 0=无硬上限。如需彻底封顶防端口耗尽，可设具体值（如 30），届时池满会阻塞等待复用
 
 # 剧本分段拆分多 worker 配置
 # 由 run_prod.py 读取，>0 时拉起 N 个独立 worker 进程，主调度器跳过此 job

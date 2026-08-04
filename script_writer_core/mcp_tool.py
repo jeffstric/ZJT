@@ -1396,7 +1396,8 @@ def validate_image_url(url: str, field_name: str = "reference_image") -> Dict[st
 def create_character_json(user_id: str, world_id: str, auth_token: str, name: str, age: str = None, identity: str = None,
                          appearance: str = None, personality: str = None, behavior: str = None,
                          other_info: str = None, reference_image: str = None, default_voice: str = None,
-                         _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
+                         _temp_filename: str = None, language: str = "zh-CN",
+                         _skip_image_validation: bool = False, **additional_fields) -> Dict[str, Any]:
     """
     创建标准格式的角色JSON文件 - MCP工具函数
     ⚠️ _temp_filename 参数名以下划线开头，但它是公开参数（可由调用方传入）
@@ -1437,7 +1438,9 @@ def create_character_json(user_id: str, world_id: str, auth_token: str, name: st
         validated_name = validation_result['cleaned_name']
         
         # 验证reference_image（如果提供）
-        if reference_image is not None:
+        # _skip_image_validation=True 时跳过：用于数据库同步等系统内部场景，
+        # 此时 reference_image 是从自家 DB 读出的数据（可能是 /upload/... 相对路径），属于合法存储格式，无需校验。
+        if reference_image is not None and not _skip_image_validation:
             url_validation = validate_image_url(reference_image, "reference_image")
             if not url_validation['valid']:
                 return {
@@ -1864,9 +1867,10 @@ def update_world(
         }
 
 
-def create_location_json(user_id: str, world_id: str, auth_token: str, name: str, description: str = None, 
+def create_location_json(user_id: str, world_id: str, auth_token: str, name: str, description: str = None,
                         reference_image: str = None, parent_id=None, parent_name: str = None,
-                        _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
+                        _temp_filename: str = None, language: str = "zh-CN",
+                        _skip_image_validation: bool = False, **additional_fields) -> Dict[str, Any]:
     """
     创建标准格式的地点JSON文件 - MCP工具函数
     
@@ -1900,9 +1904,11 @@ def create_location_json(user_id: str, world_id: str, auth_token: str, name: str
                 'error': validation_result['error']
             }
         validated_name = validation_result['cleaned_name']
-        
+
         # 验证reference_image（如果提供）
-        if reference_image is not None:
+        # _skip_image_validation=True 时跳过：用于数据库同步等系统内部场景，
+        # 此时 reference_image 是从自家 DB 读出的数据（可能是 /upload/... 相对路径），属于合法存储格式，无需校验。
+        if reference_image is not None and not _skip_image_validation:
             url_validation = validate_image_url(reference_image, "reference_image")
             if not url_validation['valid']:
                 return {
@@ -1971,7 +1977,7 @@ def create_location_json(user_id: str, world_id: str, auth_token: str, name: str
         }
 
 
-def create_prop_json(user_id: str, world_id: str, auth_token: str, name: str, prop_type: str = None, description: str = None, reference_image: str = None, _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
+def create_prop_json(user_id: str, world_id: str, auth_token: str, name: str, prop_type: str = None, description: str = None, reference_image: str = None, _temp_filename: str = None, language: str = "zh-CN", _skip_image_validation: bool = False, **additional_fields) -> Dict[str, Any]:
     """
     创建标准格式的道具JSON文件 - MCP工具函数
     
@@ -2004,9 +2010,11 @@ def create_prop_json(user_id: str, world_id: str, auth_token: str, name: str, pr
                 'error': validation_result['error']
             }
         validated_name = validation_result['cleaned_name']
-        
+
         # 验证reference_image（如果提供）
-        if reference_image is not None:
+        # _skip_image_validation=True 时跳过：用于数据库同步等系统内部场景，
+        # 此时 reference_image 是从自家 DB 读出的数据（可能是 /upload/... 相对路径），属于合法存储格式，无需校验。
+        if reference_image is not None and not _skip_image_validation:
             url_validation = validate_image_url(reference_image, "reference_image")
             if not url_validation['valid']:
                 return {
@@ -3508,7 +3516,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_text_to_image",
-        "description": "文本生图（非阻塞）。发起图片生成请求，立即返回project_ids。返回结果包含 model_used、image_size_used、computing_power_required 等算力信息。注意：生图模型由用户在前端界面选择，不同模型算力价格不同，请先调用 get_text_to_image_model_info 了解当前模型。",
+        "description": "文本生图（非阻塞）。发起图片生成请求，立即返回project_ids。返回结果包含 model_used、image_size_used、computing_power_required 等算力信息。注意：生图模型由用户在前端界面选择，不同模型算力价格不同，请先调用 get_text_to_image_model_info 了解当前模型。覆盖已有 reference_image 时必须传 force_update_exist_image=true，且仅限本单图工具；4宫格工具不支持强制覆盖。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -3535,6 +3543,11 @@ MCP_TOOLS = [
                 "item_name": {
                     "type": "string",
                     "description": "物品名称（可选），当指定item_type时必填，会自动更新对应物品的reference_image字段"
+                },
+                "force_update_exist_image": {
+                    "type": "boolean",
+                    "description": "是否强制覆盖已有参考图像（默认：false）。仅本单图工具支持；4宫格工具不支持。false：若角色/场景/道具已有 reference_image 则跳过；true：覆盖现有图像。仅在用户明确确认覆盖后才能设为 true",
+                    "default": False
                 }
             },
             "required": ["prompt"]

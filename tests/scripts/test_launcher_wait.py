@@ -1,0 +1,214 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""scripts/launchers/launcher.py 的等待状态机与服务身份验证测试"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+
+sys.path.insert(0, __import__("pathlib").Path(__file__).resolve().parents[2].as_posix())
+
+# launcher 顶层 import pystray/PIL/ctypes.windll，非 Windows 环境不可导入
+launcher = None
+if sys.platform == "win32":
+    from scripts.launchers import launcher as launcher_mod
+    launcher = launcher_mod
+
+
+@unittest.skipUnless(sys.platform == "win32", "launcher 仅支持 Windows")
+class TestWaitForService(unittest.TestCase):
+    """wait_for_service 四分支 + 慢启动提醒"""
+
+    def _run(self, health, poll, stop, on_tick=None, slow=0.05, hard=0.2, interval=0.01):
+        return launcher.wait_for_service(
+            health_check_fn=health,
+            proc_poll_fn=poll,
+            should_stop_fn=stop,
+            on_tick=on_tick,
+            slow_warning=slow,
+            hard_timeout=hard,
+            poll_interval=interval,
+        )
+
+    def test_ready(self):
+        result = self._run(lambda: True, lambda: None, lambda: False)
+        self.assertEqual(result, "ready")
+
+    def test_exited_takes_priority_over_health(self):
+        """进程已死时即使端口/健康检查"可达"也必须返回 exited（防端口占用造成假 ready）"""
+        result = self._run(lambda: True, lambda: 1, lambda: False)
+        self.assertEqual(result, "exited")
+
+    def test_stopped(self):
+        result = self._run(lambda: False, lambda: None, lambda: True)
+        self.assertEqual(result, "stopped")
+
+    def test_hard_timeout(self):
+        start = time.time()
+        result = self._run(lambda: False, lambda: None, lambda: False)
+        self.assertEqual(result, "timeout")
+        self.assertGreaterEqual(time.time() - start, 0.2)
+
+    def test_slow_warning_fires_once_and_keeps_waiting(self):
+        """到达慢启动阈值只提醒一次，且不置失败、继续等待直至 ready"""
+        slow_events = []
+
+        def on_tick(elapsed, slow_fired):
+            if slow_fired:
+                slow_events.append(elapsed)
+
+        state = {"checks": 0}
+
+        def health():
+            state["checks"] += 1
+            return state["checks"] >= 10  # 约 0.1s 后就绪，晚于 slow=0.05
+
+        result = self._run(health, lambda: None, lambda: False, on_tick=on_tick,
+                           slow=0.03, hard=5, interval=0.01)
+        self.assertEqual(result, "ready")
+        self.assertEqual(len(slow_events), 1)
+
+
+@unittest.skipUnless(sys.platform == "win32", "launcher 仅支持 Windows")
+class TestCheckServiceIdentity(unittest.TestCase):
+    """_check_service_identity：区分智剧通服务 / 其他程序 / 端口空闲"""
+
+    @classmethod
+    def setUpClass(cls):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps(self.server.payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        cls.Handler = Handler
+        cls.HTTPServer = HTTPServer
+        cls.servers = []
+
+    @classmethod
+    def tearDownClass(cls):
+        for srv in cls.servers:
+            srv.shutdown()
+            srv.server_close()
+
+    def _start_server(self, payload):
+        srv = self.HTTPServer(("127.0.0.1", 0), self.Handler)
+        srv.payload = payload
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.servers.append(srv)
+        return srv.server_address[1]
+
+    def _tray(self):
+        # __new__ 跳过 __init__ 的 PID 管理等副作用；方法只依赖 _check_port_available
+        return launcher.TrayLauncher.__new__(launcher.TrayLauncher)
+
+    def test_zjt_service_identified(self):
+        port = self._start_server({"code": 0, "data": {"app": "ZJT", "status": "ok"}})
+        self.assertTrue(self._tray()._check_service_identity(port))
+
+    def test_other_app_rejected(self):
+        port = self._start_server({"code": 0, "data": {"app": "something-else"}})
+        self.assertFalse(self._tray()._check_service_identity(port))
+
+    def test_closed_port_rejected(self):
+        import socket
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        self.assertFalse(self._tray()._check_service_identity(port))
+
+
+@unittest.skipUnless(sys.platform == "win32", "launcher 仅支持 Windows")
+class TestTrayStartupNotification(unittest.TestCase):
+    """托盘可见后才显示一次启动引导，再异步启动服务。"""
+
+    def test_notification_guides_user_to_visible_tray_icon_before_service_start(self):
+        events = []
+
+        class FakeIcon:
+            visible = False
+
+            def notify(self, message, title):
+                events.append(("notify", self.visible, title, message))
+
+            def update_menu(self):
+                pass
+
+        tray = launcher.TrayLauncher.__new__(launcher.TrayLauncher)
+        tray.icon = FakeIcon()
+        tray.status = launcher.TrayLauncher.STATUS_STARTING
+        tray.status_message = "正在初始化..."
+        tray.service_thread = None
+        tray._create_icon_image = lambda color: object()
+        tray._start_service = lambda: events.append(("service",))
+
+        tray._on_tray_ready(tray.icon)
+        tray.service_thread.join(timeout=2)
+
+        self.assertTrue(tray.icon.visible)
+        self.assertFalse(tray.service_thread.is_alive())
+        self.assertEqual(events[0][0], "notify")
+        self.assertTrue(events[0][1], "通知必须在托盘图标可见后发送")
+        self.assertEqual(events[0][2], "智剧通正在启动")
+        self.assertIn("任务栏右下角", events[0][3])
+        self.assertIn("^", events[0][3])
+        self.assertEqual(events[1], ("service",))
+
+
+@unittest.skipUnless(sys.platform == "win32", "launcher 仅支持 Windows")
+class TestRelaunchDetached(unittest.TestCase):
+    """_relaunch_detached：直接用当前解释器重启、且不得使用 DETACHED_PROCESS。
+
+    默认终端为 Windows Terminal 的机器上，DETACHED_PROCESS 会反效果地给子进程
+    弹出可见控制台窗口（残留空窗口，关窗连带杀托盘）；CREATE_NO_WINDOW 才可靠。
+    """
+
+    def test_relaunch_flags_and_cmd(self):
+        from unittest import mock
+
+        project_dir = tempfile.mkdtemp(prefix="zjt_relaunch_test_")
+        self.addCleanup(shutil.rmtree, project_dir, True)
+
+        with mock.patch.object(launcher.subprocess, "Popen") as mock_popen:
+            launcher._relaunch_detached(project_dir)
+
+        self.assertTrue(mock_popen.called)
+        cmd = mock_popen.call_args[0][0]
+        kwargs = mock_popen.call_args[1]
+
+        # 直接用当前解释器重启自身（不再经 uv run 转手）
+        self.assertEqual(cmd[0], sys.executable)
+        self.assertEqual(cmd[-1], os.path.abspath(launcher.__file__))
+
+        flags = kwargs["creationflags"]
+        self.assertEqual(flags & subprocess.DETACHED_PROCESS, 0,
+                         "不得使用 DETACHED_PROCESS（WT 默认终端下会弹可见窗口）")
+        self.assertTrue(flags & subprocess.CREATE_NO_WINDOW)
+
+        env = kwargs["env"]
+        self.assertEqual(env["ZJT_LAUNCHER_DETACHED"], "1")
+        self.assertEqual(env["PYTHONUTF8"], "1")
+        self.assertTrue(env["UV_PYTHON_INSTALL_DIR"].endswith(os.path.join("bin", "python")))
+
+        # stderr 落 launcher_detached.log
+        stderr_target = kwargs["stderr"]
+        self.assertEqual(getattr(stderr_target, "name", None),
+                         os.path.join(project_dir, "launcher_detached.log"))
+
+
+if __name__ == "__main__":
+    unittest.main()

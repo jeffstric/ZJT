@@ -59,6 +59,8 @@ const state = {
         selectedSceneIds: {},
         submittingAction: '',
     },
+    /** 正在复制的分镜 id（in-flight 守卫，防止连点产生重复副本） */
+    duplicatingSceneId: null,
     chatMode: 'dialogue',
     inputMessage: '',
     // 视频生成模式图片输入模式：first_last_frame | multi_reference（对齐 marketing_agent）

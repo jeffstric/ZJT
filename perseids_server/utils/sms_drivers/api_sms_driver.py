@@ -5,6 +5,7 @@ import logging
 import httpx
 from typing import Dict
 from .base_sms_driver import BaseSmsDriver
+from utils.log_sanitizer import mask_phone
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,10 @@ class ApiSmsDriver(BaseSmsDriver):
                 message = result.get('message', '验证码发送成功')
                 
                 if success:
-                    logger.info(f"短信发送成功: {phone} 验证码：{code}")
+                    logger.info(
+                        "短信发送成功: %s 验证码：<redacted>",
+                        mask_phone(phone),
+                    )
                     return {"success": True, "message": message}
                 else:
                     logger.error(f"短信发送失败: {message}")

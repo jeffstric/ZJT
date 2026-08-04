@@ -720,6 +720,7 @@ async def step_generate_segment(
                 segment_context=segment_context,
                 character_contract=character_contract,
                 strict_json=True,
+                user_id=task.user_id,
             ),
             timeout=ScriptSplitConstants.LLM_CALL_TIMEOUT_SECONDS,
         )

@@ -23,6 +23,9 @@ from scripts.upgrade_check import (
     update_remote_url_if_needed,
     check_binaries_for_version,
     run_git,
+    normalize_repo_url,
+    is_auth_or_prompt_error,
+    fetch_remote_with_fallback,
 )
 
 
@@ -95,30 +98,46 @@ class TestGetLocalVersion(unittest.TestCase):
 
     @patch('scripts.upgrade_check.run_git')
     def test_git_tag_points_at_head(self, mock_git):
-        """优先使用 git tag --points-at HEAD"""
+        """HEAD 上有 tag 时纳入候选（并可成为最高版本）"""
         mock_git.side_effect = [
             (0, "v1.5.1\n", ""),  # tag --points-at HEAD
+            (0, "v1.5.0\n", ""),  # describe
         ]
-        result = get_local_version(Path("/fake"), git_cmd="git")
+        with patch('scripts.upgrade_check.read_pyproject_version', return_value=None):
+            result = get_local_version(Path("/fake"), git_cmd="git")
         self.assertEqual(result, "v1.5.1")
 
     @patch('scripts.upgrade_check.run_git')
     def test_git_describe_fallback(self, mock_git):
-        """tag --points-at 无结果，回退到 git describe"""
+        """tag --points-at 无结果，回退到 git describe（无更高 pyproject）"""
         mock_git.side_effect = [
             (0, "", ""),          # tag --points-at HEAD: empty
             (0, "v1.4.0\n", ""),  # describe --tags --abbrev=0
         ]
-        result = get_local_version(Path("/fake"), git_cmd="git")
+        with patch('scripts.upgrade_check.read_pyproject_version', return_value=None):
+            result = get_local_version(Path("/fake"), git_cmd="git")
         self.assertEqual(result, "v1.4.0")
+
+    @patch('scripts.upgrade_check.run_git')
+    def test_pyproject_wins_when_newer_than_describe(self, mock_git):
+        """describe 停在旧 tag、pyproject 已是新版本时，取更高者（防启动死循环）"""
+        mock_git.side_effect = [
+            (0, "", ""),          # tag --points-at HEAD: empty
+            (0, "2.0.2\n", ""),   # describe 仍为旧 tag
+        ]
+        with patch('scripts.upgrade_check.read_pyproject_version', return_value="2.0.3"):
+            result = get_local_version(Path("/fake"), git_cmd="git")
+        self.assertEqual(result, "2.0.3")
 
     @patch('scripts.upgrade_check.run_git')
     def test_multiple_tags_picks_highest(self, mock_git):
         """多个 tag 在 HEAD 时选择最高的"""
         mock_git.side_effect = [
             (0, "v1.5.0\nv1.5.1\nv1.4.9\n", ""),  # multiple tags
+            (0, "v1.5.0\n", ""),                  # describe
         ]
-        result = get_local_version(Path("/fake"), git_cmd="git")
+        with patch('scripts.upgrade_check.read_pyproject_version', return_value=None):
+            result = get_local_version(Path("/fake"), git_cmd="git")
         self.assertEqual(result, "v1.5.1")
 
     @patch('scripts.upgrade_check.run_git')
@@ -128,11 +147,7 @@ class TestGetLocalVersion(unittest.TestCase):
             (1, "", "not a git repo"),
             (1, "", "not a git repo"),
         ]
-        pyproject = MagicMock()
-        pyproject.exists.return_value = True
-        pyproject.read_text.return_value = '[project]\nversion = "1.3.0"\n'
-
-        with patch.object(Path, '__truediv__', return_value=pyproject):
+        with patch('scripts.upgrade_check.read_pyproject_version', return_value="1.3.0"):
             result = get_local_version(Path("/fake"), git_cmd="git")
 
         self.assertEqual(result, "1.3.0")
@@ -199,12 +214,39 @@ class TestPerformUpdate(unittest.TestCase):
     @patch('scripts.upgrade_check.run_git')
     def test_success(self, mock_git):
         mock_git.side_effect = [
-            (0, "", ""),  # fetch
-            (0, "", ""),  # reset
+            (0, "", ""),  # fetch --tags
+            (0, "", ""),  # reset origin/branch
         ]
         success, message = perform_update("git", Path("/fake"), "main", 30)
         self.assertTrue(success)
         self.assertEqual(message, "")
+
+    @patch('scripts.upgrade_check.run_git')
+    def test_success_with_target_tag(self, mock_git):
+        mock_git.side_effect = [
+            (0, "", ""),  # fetch --tags
+            (0, "", ""),  # reset to tag
+        ]
+        success, message = perform_update(
+            "git", Path("/fake"), "main", 30, target_tag="2.0.3"
+        )
+        self.assertTrue(success)
+        self.assertEqual(message, "")
+        # 第二次调用应为 reset --hard 2.0.3
+        self.assertEqual(mock_git.call_args_list[1][0][1], ["reset", "--hard", "2.0.3"])
+
+    @patch('scripts.upgrade_check.run_git')
+    def test_target_tag_fallback_to_branch(self, mock_git):
+        mock_git.side_effect = [
+            (0, "", ""),       # fetch
+            (1, "", "not found"),  # reset tag fails
+            (0, "", ""),       # reset branch ok
+        ]
+        success, message = perform_update(
+            "git", Path("/fake"), "main", 30, target_tag="2.0.3"
+        )
+        self.assertTrue(success)
+        self.assertEqual(mock_git.call_args_list[2][0][1], ["reset", "--hard", "origin/main"])
 
     @patch('scripts.upgrade_check.run_git')
     def test_fetch_failure(self, mock_git):
@@ -401,6 +443,23 @@ class TestRunGit(unittest.TestCase):
         self.assertEqual(out, "output")
 
     @patch('scripts.upgrade_check.subprocess.run')
+    def test_injects_credential_helper_disable(self, mock_run):
+        """必须用 -c credential.helper=，禁止空 GIT_CONFIG_VALUE"""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+        mock_run.return_value = mock_result
+
+        run_git("git", ["fetch", "origin"], Path("/fake"))
+        cmd = mock_run.call_args[0][0]
+        self.assertEqual(cmd[:3], ["git", "-c", "credential.helper="])
+        self.assertEqual(cmd[3:], ["fetch", "origin"])
+        env = mock_run.call_args[1]["env"]
+        self.assertEqual(env.get("GIT_TERMINAL_PROMPT"), "0")
+        self.assertNotIn("GIT_CONFIG_COUNT", env)
+
+    @patch('scripts.upgrade_check.subprocess.run')
     def test_timeout(self, mock_run):
         import subprocess
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=30)
@@ -416,6 +475,96 @@ class TestRunGit(unittest.TestCase):
         rc, out, err = run_git("git", ["status"], Path("/fake"))
         self.assertEqual(rc, -1)
         self.assertIn("git not found", err)
+
+
+class TestNormalizeAndAuthError(unittest.TestCase):
+    def test_normalize_repo_url(self):
+        self.assertEqual(
+            normalize_repo_url("https://gitee.com/a/b.git/"),
+            "https://gitee.com/a/b",
+        )
+        self.assertEqual(normalize_repo_url(""), "")
+
+    def test_is_auth_or_prompt_error(self):
+        self.assertTrue(
+            is_auth_or_prompt_error(
+                "fatal: could not read Username for 'https://gitee.com': "
+                "terminal prompts disabled"
+            )
+        )
+        self.assertTrue(is_auth_or_prompt_error("Authentication failed"))
+        self.assertFalse(is_auth_or_prompt_error("timeout"))
+        self.assertFalse(is_auth_or_prompt_error(""))
+
+
+class TestFetchRemoteWithFallback(unittest.TestCase):
+    """测试多源 fetch 回退"""
+
+    @patch('scripts.upgrade_check.run_git')
+    def test_first_source_success(self, mock_git):
+        mock_git.side_effect = [
+            (0, "https://gitee.com/a/b.git\n", ""),  # get current
+            (0, "https://gitee.com/a/b.git\n", ""),  # get current in loop
+            (0, "", ""),  # fetch ok
+        ]
+        ok, err = fetch_remote_with_fallback(
+            "git", Path("/fake"),
+            ["https://gitee.com/a/b.git", "https://github.com/a/b.git"],
+            "main", 30,
+        )
+        self.assertTrue(ok)
+        self.assertEqual(err, "")
+
+    @patch('scripts.upgrade_check.run_git')
+    def test_fallback_to_second_source(self, mock_git):
+        """Gitee 鉴权失败后自动切 GitHub"""
+        auth_err = (
+            "fatal: could not read Username for 'https://gitee.com': "
+            "terminal prompts disabled"
+        )
+        mock_git.side_effect = [
+            (0, "https://gitee.com/a/b.git\n", ""),  # get current (outer)
+            (0, "https://gitee.com/a/b.git\n", ""),  # loop #1 get current
+            (1, "", auth_err),  # fetch gitee fails
+            (0, "https://gitee.com/a/b.git\n", ""),  # loop #2 get current
+            (0, "", ""),  # set-url github
+            (0, "", ""),  # fetch github ok
+        ]
+        ok, err = fetch_remote_with_fallback(
+            "git", Path("/fake"),
+            ["https://gitee.com/a/b.git", "https://github.com/a/b.git"],
+            "main", 30,
+        )
+        self.assertTrue(ok)
+        self.assertEqual(err, "")
+        # 确认 set-url 到 github
+        set_url_calls = [
+            c for c in mock_git.call_args_list
+            if c[0][1][:2] == ["remote", "set-url"]
+        ]
+        self.assertTrue(set_url_calls)
+        self.assertEqual(
+            set_url_calls[0][0][1],
+            ["remote", "set-url", "origin", "https://github.com/a/b.git"],
+        )
+
+    @patch('scripts.upgrade_check.run_git')
+    def test_all_sources_fail(self, mock_git):
+        mock_git.side_effect = [
+            (0, "https://gitee.com/a/b.git\n", ""),
+            (0, "https://gitee.com/a/b.git\n", ""),
+            (1, "", "network error"),
+            (0, "https://gitee.com/a/b.git\n", ""),
+            (0, "", ""),  # set-url
+            (1, "", "network error 2"),
+        ]
+        ok, err = fetch_remote_with_fallback(
+            "git", Path("/fake"),
+            ["https://gitee.com/a/b.git", "https://github.com/a/b.git"],
+            "main", 30,
+        )
+        self.assertFalse(ok)
+        self.assertIn("network error", err)
 
 
 if __name__ == '__main__':
