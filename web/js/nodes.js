@@ -1169,23 +1169,18 @@
           locations.forEach(location => {
             const locationCard = document.createElement('div');
             locationCard.className = 'location-card';
-            locationCard.style.cssText = 'display: flex; gap: 12px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: background 0.2s;';
+            locationCard.style.cssText = 'display: flex; gap: 12px; padding: 12px; margin-bottom: 8px;';
             
             locationCard.innerHTML = `
-              ${location.reference_image ? `<img src="${escapeHtml(location.reference_image)}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; flex-shrink: 0;" alt="${escapeHtml(location.name)}" />` : '<div style="width: 80px; height: 80px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px; flex-shrink: 0;">无图片</div>'}
+              ${location.reference_image ? `<img src="${escapeHtml(location.reference_image)}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; flex-shrink: 0;" alt="${escapeHtml(location.name)}" />` : '<div class="asset-item-placeholder" style="width: 80px; height: 80px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0;">无图片</div>'}
               <div style="flex: 1; min-width: 0;">
-                <div style="font-weight: 600; color: #111827; margin-bottom: 4px;">${escapeHtml(location.name)}</div>
-                <div style="font-size: 12px; color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(location.description || '暂无描述')}</div>
-                <div style="font-size: 11px; color: #9ca3af; margin-top: 4px;">ID: ${escapeHtml(String(location.id))}</div>
+                <div class="asset-item-title" style="font-weight: 600; margin-bottom: 4px;">${escapeHtml(location.name)}</div>
+                <div class="asset-item-desc" style="font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(location.description || '暂无描述')}</div>
+                <div class="asset-item-desc" style="font-size: 11px; margin-top: 4px;">ID: ${escapeHtml(String(location.id))}</div>
               </div>
             `;
 
-            locationCard.addEventListener('mouseenter', () => {
-              locationCard.style.background = '#f9fafb';
-            });
-            locationCard.addEventListener('mouseleave', () => {
-              locationCard.style.background = '';
-            });
+            // hover 由 CSS .location-card:hover 处理，兼容暗色
             locationCard.addEventListener('click', () => {
               selectLocation(location);
             });

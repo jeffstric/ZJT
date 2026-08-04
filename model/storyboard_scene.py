@@ -287,6 +287,28 @@ class StoryboardSceneModel:
         return mid
 
     @staticmethod
+    def _next_sort_after(storyboard_id: int,
+                         cur_sort: Optional[float]) -> Optional[float]:
+        """返回 storyboard 内 sort_order 严格大于 cur_sort 的第一个分镜的 sort_order；
+        不存在（cur_sort 已是末尾）时返回 None。用于复制分镜时确定插入的右边界。"""
+        if cur_sort is None:
+            cur_sort = 0.0
+        sql = (
+            "SELECT sort_order FROM storyboard_scene "
+            "WHERE storyboard_id = %s AND sort_order > %s "
+            "ORDER BY sort_order ASC, id ASC LIMIT 1"
+        )
+        try:
+            row = execute_query(sql, (storyboard_id, float(cur_sort)), fetch_one=True)
+            return float(row['sort_order']) if row else None
+        except Exception as e:
+            logger.error(
+                f"Failed to fetch next sort_order after {cur_sort} "
+                f"for storyboard {storyboard_id}: {e}"
+            )
+            raise
+
+    @staticmethod
     def duplicate(record_id: int) -> Optional[int]:
         """Duplicate a scene with dialogues, excluding generated assets."""
         scene = StoryboardSceneModel.get_by_id(record_id)
@@ -304,9 +326,18 @@ class StoryboardSceneModel:
         prompt = _loads(scene.prompt_json)
         video_config = _loads(scene.video_config_json)
 
+        # 新分镜插入到「原分镜」与「原分镜的下一个分镜」之间（浮点二分），
+        # 而非简单 +1.0——后者会在连续整数序列下与下一个分镜的 sort_order 碰撞，
+        # 经 ORDER BY sort_order, id 的 tie-break 后落到「下一个的下一个」。
+        cur_sort = float(scene.sort_order) if scene.sort_order is not None else 0.0
+        next_sort = StoryboardSceneModel._next_sort_after(scene.storyboard_id, cur_sort)
+        new_sort = StoryboardSceneModel.next_sort_order(
+            scene.storyboard_id, cur_sort, next_sort
+        )
+
         new_id = StoryboardSceneModel.create(
             storyboard_id=scene.storyboard_id,
-            sort_order=float(scene.sort_order) + 1.0 if scene.sort_order is not None else 0.0,
+            sort_order=new_sort,
             title=f"{scene.title}(副本)" if scene.title else '分镜(副本)',
             duration=scene.duration,
             prompt_json=prompt if isinstance(prompt, dict) else None,

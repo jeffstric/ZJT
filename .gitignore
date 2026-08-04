@@ -47,3 +47,10 @@ playwright.config.js
 
 auto_test/test_assets/*
 auto_test/samples/*
+
+# AI 编码助手临时产物（备份、密钥/许可证测试数据、会话缓存等），
+# 含 CommercialLicenseConstants 等企业源码副本，不得提交。
+.codex/
+.codex_*
+.zcode/
+.mcp.json

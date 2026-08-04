@@ -8,6 +8,27 @@
 
 位于页面顶部导航栏右侧，"提交数据"按钮旁边。
 
+## 提交按钮 Loading
+
+右上角「提交」按钮（`#submit-to-db-btn`）在**整次** `POST /api/submit-to-database` 进行期间会展示 loading：
+
+| 状态 | 表现 |
+|------|------|
+| 提交中 | **亮点沿按钮自身 border 路径连续绕行**（`.is-submitting` + `.submit-btn-ring` 的 conic-gradient 旋转），文案变为「提交中...」，`aria-busy="true"`，不可重复点击 |
+| 提交成功 | 关闭绕行亮点，短暂整圈绿色边框（`.submit-success` ~500ms），恢复「提交」 |
+| 提交失败 / 网络异常 | 关闭亮点，恢复可点，错误 toast；便于重试 |
+| 未选世界 | 不进入 loading，仅错误提示 |
+
+视觉说明：不是外侧单独转圈的 spinner 环，而是按钮描边上有一个高亮点在转；边框路径即运动轨迹。
+
+实现要点：
+
+- 状态由 `setSubmitButtonLoading(loading, { success })` 统一控制
+- `submitToDatabase()` 用 `isSubmitting` 防重入；`finally` 中才关闭 loading，保证请求未结束不会提前结束动效
+- **手动点击、自动提交、进入故事板/画布前的预提交** 均走同一函数，因此自动提交时同样会显示环绕 loading
+
+相关文件：`web/script_writer.html`、`web/css/script_writer.css`、`web/js/script_writer.js`
+
 ## 使用方式
 
 ### UI 控件

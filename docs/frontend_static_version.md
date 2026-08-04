@@ -63,3 +63,4 @@ HTML 由 [`server.py::_get_processed_html()`](../server.py) 统一处理后返�
 - `__VERSION__` 仅作为版本占位符使用，不要用于其它含义。
 - 新增前端静态资源引用时，本地资源（`/js/`、`/css/`、`/i18n/`）无需手写版本号；如需显式指定，使用 `?v=__VERSION__` 占位符，由后端统一替换。
 - 真实版本号统一通过 `config/version.py::get_app_version()` 获取，避免在多处重复解析 `pyproject.toml`。
+- ⚠️ **禁止用动态 `import('./xxx.js')` 引用入口模块**：HTML 入口（如 `bootstrap.js?v=2.0.0`）带版本号，而 ES 模块内部的 `import './xxx.js'` 会按 URL 规范解析为**不带版本号**的 URL（`xxx.js`）。两者被浏览器视为**两个不同的模块**，分别求值，导致模块顶层副作用（如 `main()` 调用）被执行两次，引发难以排查的状态重置类 BUG。若某模块需要被「入口」反向调用（存在循环依赖），应通过共享模块（如 `state.js`）注册回调的方式解耦，而不是动态 import 入口模块。参见 storyboard 比例门禁「选择尺寸后立即又弹出默认值弹框」BUG 的修复（`bootstrap.js` / `events.js`）。

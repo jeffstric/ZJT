@@ -19,6 +19,7 @@
 | [style_settings.md](./style_settings.md) | 画风设置 - 画风名称、参考图、构图倾向、世界同步 |
 | [video_ratio.md](./video_ratio.md) | 视频比例设置 - 9:16/3:4/1:1/4:3/16:9 |
 | [video_prompt_suffix.md](./video_prompt_suffix.md) | 视频提示词后缀 - 全局后缀设置 |
+| [dark_mode.md](./dark_mode.md) | 暗色模式 - 浅色/暗色切换、本地偏好、token 体系 |
 
 ## 节点文档
 

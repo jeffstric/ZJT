@@ -16,11 +16,13 @@ EXCLUDED_DIRS = {
     ".git",
     ".mypy_cache",
     ".pytest_cache",
+    ".pytest_tmp",
     ".ruff_cache",
     ".venv",
     "__pycache__",
     "alembic",
     "auto_test",
+    "bin",
     "node_modules",
     "tests",
     "venv",
@@ -125,22 +127,20 @@ class BlockingCallVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_With(self, node: ast.With) -> None:
-        has_thread_pool = any(
-            is_thread_pool_executor_call(item.context_expr) for item in node.items
-        )
-        if has_thread_pool:
-            for child in ast.walk(node):
-                if (
-                    isinstance(child, ast.Call)
-                    and is_result_call(child)
-                    and is_timeout_keyword(child)
-                ):
-                    self.add(
-                        "R6",
-                        "error",
-                        child,
-                        "ThreadPoolExecutor context manager with result(timeout=) still waits on shutdown(wait=True)",
-                    )
+        for item in node.items:
+            if not is_thread_pool_executor_call(item.context_expr):
+                continue
+            # AGENTS.md 红线第 10 条：禁止用 `with ThreadPoolExecutor()` 上下文管理器。
+            # with 退出会触发 shutdown(wait=True)，使后续 .result(timeout=) 假超时、
+            # 调用线程卡死；即便不显式调 result，submit(asyncio.run) 也应改用模块级长寿 executor。
+            # 因此只要 with 上下文是 ThreadPoolExecutor 即报 R6，不再要求块内必须出现 result(timeout=)。
+            self.add(
+                "R6",
+                "error",
+                item.context_expr,
+                "ThreadPoolExecutor must not be used as a `with` context manager "
+                "(exit triggers shutdown(wait=True)); use a module-level long-lived executor instead",
+            )
         self.generic_visit(node)
 
 

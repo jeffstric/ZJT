@@ -4,18 +4,36 @@ import { normalizePagedList } from './adapters.js';
 const API_BASE = '/api/storyboard';
 
 /**
- * 统一认证错误处理。
- * 检测到 401 或 TOKEN_EXPIRED 时清理本地凭证并跳转首页登录页，登录后可回到当前页面。
+ * 统一认证错误处理（分级）。
+ * - 确证 token 无效（token_expired / TOKEN_EXPIRED / invalid_auth_token）：清理本地凭证并跳转首页登录页；
+ * - 缺 token 或无可识别 code 的 401：本地仍有 token 时不清不跳（多标签页/误报场景保护），无 token 才跳登录。
  * @param {number} status HTTP 状态码
  * @param {object} data 响应体
  * @returns {boolean} 是否已按认证错误处理
  */
 export function handleAuthError(status, data = {}) {
-    const isAuthError = status === 401
-        || data.token_expired
-        || data.error_code === 'TOKEN_EXPIRED'
-        || (data.error && String(data.error).toUpperCase() === 'TOKEN_EXPIRED');
-    if (!isAuthError) return false;
+    const errorCode = data.error_code
+        || (data.error && String(data.error).toUpperCase() === 'TOKEN_EXPIRED' ? 'TOKEN_EXPIRED' : '');
+    // 确证 token 无效：服务端明确判定（源头 error_code 打标）
+    const isConfirmedInvalid = !!data.token_expired
+        || errorCode === 'TOKEN_EXPIRED'
+        || errorCode === 'invalid_auth_token';
+
+    if (!isConfirmedInvalid) {
+        // 缺 token / 无可识别 code 的 401：本地仍有 token 时不清不跳
+        // （可能是多标签页他处重登录、或误报），按普通错误交给调用方处理；
+        // 本地也没有 token 才跳登录（本来就没有可清的东西）。
+        if (status === 401) {
+            let hasLocalToken = false;
+            try { hasLocalToken = !!localStorage.getItem('auth_token'); } catch (_) { /* ignore */ }
+            if (!hasLocalToken) {
+                const target = window.location.pathname + window.location.search;
+                window.location.href = '/?login=1&redirect_url=' + encodeURIComponent(target);
+                return true;
+            }
+        }
+        return false;
+    }
 
     try {
         localStorage.removeItem('auth_token');
@@ -38,10 +56,15 @@ function authHeaders(json = true) {
     if (state.userId && typeof state.userId === 'number' && !isNaN(state.userId) && state.userId > 0) {
         headers['X-User-Id'] = state.userId;
     }
-    if (state.authToken) {
-        headers.Authorization = state.authToken.startsWith('Bearer ')
-            ? state.authToken
-            : `Bearer ${state.authToken}`;
+    // 每次请求现读 localStorage：state.authToken 是模块加载时的一次性捕获值，
+    // 多标签页场景（他处重新登录/登出）下必须用最新值，否则旧 token 轮询会触发 401 连锁
+    let token = null;
+    try { token = localStorage.getItem('auth_token'); } catch (_) { /* ignore */ }
+    token = token || state.authToken;
+    if (token) {
+        headers.Authorization = token.startsWith('Bearer ')
+            ? token
+            : `Bearer ${token}`;
     }
     return headers;
 }

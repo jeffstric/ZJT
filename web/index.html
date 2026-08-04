@@ -374,13 +374,106 @@
           <button class="modal-tab" :class="{active: userSettingsTab === 'preferences'}" @click="userSettingsTab = 'preferences'">
             服务商偏好
           </button>
+          <button class="modal-tab" :class="{active: userSettingsTab === 'creationDefaults'}" @click="switchToCreationDefaultsTab">
+            创作默认偏好
+          </button>
           <button class="modal-tab" :class="{active: userSettingsTab === 'apitoken'}" @click="switchToApiTokenTab" v-if="!isCommunityEdition && zjtTokenEnabled">
             智剧通token
           </button>
         </div>
 
-        <div v-if="userSettingsLoading" style="padding: 40px; text-align: center; color: var(--muted);">
+        <div v-if="userSettingsLoading && userSettingsTab !== 'creationDefaults'" style="padding: 40px; text-align: center; color: var(--muted);">
           加载中...
+        </div>
+
+        <!-- 创作默认偏好 Tab：剧本页/营销页新会话种子（与 CLI 智能体偏好隔离） -->
+        <div v-else-if="userSettingsTab === 'creationDefaults'" class="cli-media-pref-panel" style="padding: 16px;">
+          <div class="cli-media-pref-intro">
+            <p class="cli-media-pref-intro-title">剧本 / 营销创作默认模型</p>
+            <p class="cli-media-pref-intro-desc">
+              这里配置的是<strong>按世界</strong>的默认对话模型与生图模型，用于新开剧本智能体会话时的初始选择。
+              与「智能体连接 → 智能体模型偏好」中的 CLI 自动化默认<strong>相互独立</strong>。
+              对话页下拉里点「设为默认」会写入同一套配置。
+            </p>
+          </div>
+          <div class="status danger" v-if="creationDefaultsError" style="margin-bottom: 12px;">{{ creationDefaultsError }}</div>
+          <div class="status success" v-if="creationDefaultsSuccess" style="margin-bottom: 12px;">{{ creationDefaultsSuccess }}</div>
+
+          <div class="cli-media-pref-world">
+            <label class="label" for="creation-defaults-world-select">适用世界</label>
+            <select
+              id="creation-defaults-world-select"
+              class="cli-media-pref-select"
+              :value="creationDefaultsWorldId || ''"
+              :disabled="creationDefaultsLoading || !creationDefaultsWorlds.length"
+              @change="onCreationDefaultsWorldChange($event.target.value)"
+            >
+              <option v-if="!creationDefaultsWorlds.length" value="">暂无可用世界</option>
+              <option v-for="w in creationDefaultsWorlds" :key="w.id" :value="w.id">
+                {{ w.name || ('世界 #' + w.id) }}
+              </option>
+            </select>
+          </div>
+
+          <div v-if="creationDefaultsLoading" class="cli-media-pref-loading">加载中...</div>
+          <template v-else-if="creationDefaultsWorldId">
+            <div class="cli-media-pref-list">
+              <div class="cli-media-pref-row">
+                <div class="cli-media-pref-row-head">
+                  <div class="cli-media-pref-row-text">
+                    <label class="label">默认对话模型</label>
+                    <span class="cli-media-pref-subhint">新开剧本会话时的初始 AI 模型</span>
+                  </div>
+                  <span v-if="creationDefaultsSaving.llm" class="cli-media-pref-save-state saving">保存中</span>
+                  <span v-else-if="creationDefaultsSaved.llm" class="cli-media-pref-save-state saved">已保存</span>
+                </div>
+                <select
+                  class="cli-media-pref-select"
+                  :value="creationDefaultsLlmKey || ''"
+                  :disabled="creationDefaultsSaving.llm || !creationDefaultsLlmOptions.length"
+                  @change="onCreationDefaultLlmChange($event.target.value)"
+                >
+                  <option v-if="!creationDefaultsLlmOptions.length" value="">暂无可用模型</option>
+                  <option
+                    v-for="m in creationDefaultsLlmOptions"
+                    :key="m.key"
+                    :value="m.key"
+                  >
+                    {{ m.label }}
+                  </option>
+                </select>
+              </div>
+
+              <div class="cli-media-pref-row">
+                <div class="cli-media-pref-row-head">
+                  <div class="cli-media-pref-row-text">
+                    <label class="label">默认生图模型</label>
+                    <span class="cli-media-pref-subhint">新开会话的生图种子；对话中仍可临时切换</span>
+                  </div>
+                  <span v-if="creationDefaultsSaving.image" class="cli-media-pref-save-state saving">保存中</span>
+                  <span v-else-if="creationDefaultsSaved.image" class="cli-media-pref-save-state saved">已保存</span>
+                </div>
+                <select
+                  class="cli-media-pref-select"
+                  :value="creationDefaultsImageTaskId || ''"
+                  :disabled="creationDefaultsSaving.image || !creationDefaultsImageOptions.length"
+                  @change="onCreationDefaultImageChange($event.target.value)"
+                >
+                  <option v-if="!creationDefaultsImageOptions.length" value="">暂无可用模型</option>
+                  <option
+                    v-for="m in creationDefaultsImageOptions"
+                    :key="m.task_id"
+                    :value="m.task_id"
+                  >
+                    {{ m.name }}{{ m.computing_power != null ? (' · ' + m.computing_power + ' 算力') : '' }}
+                  </option>
+                </select>
+              </div>
+            </div>
+          </template>
+          <div v-else class="cli-media-pref-empty">
+            请先创建一个世界，再配置创作默认偏好。
+          </div>
         </div>
 
         <!-- 服务商偏好 Tab -->

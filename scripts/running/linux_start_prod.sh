@@ -9,7 +9,10 @@ if [ $UPGRADE_RC -eq 2 ]; then
     echo "[ERROR] 更新检查遇到严重错误"
     exit 1
 elif [ $UPGRADE_RC -eq 1 ]; then
-    echo "[WARN] 更新检查失败，继续使用本地版本"
+    echo "[INFO] 更新检查未完成（网络/源不可用），继续使用本地版本"
+elif [ $UPGRADE_RC -eq 10 ]; then
+    echo "[INFO] 代码已更新，正在重新启动..."
+    exec "$0" "$@"
 fi
 # ======================
 

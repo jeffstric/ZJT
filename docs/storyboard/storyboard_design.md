@@ -415,6 +415,7 @@ class SceneDifficulty:
 | 首个 | `0` | 0 |
 | 末尾追加 | `max(sort_order) + 1` | 1, 2, 3, … |
 | 在 A、B 之间插入 | `(A.sort_order + B.sort_order) / 2` | 1 与 2 之间 → 1.5；再在 1 与 1.5 之间 → 1.25 |
+| 复制 A（插入到 A 与其后继 B 之间） | `(A.sort_order + B.sort_order) / 2`；A 已是末尾时退化为末尾追加 | 复制 sort_order=2 的中间分镜（后继=3）→ 2.5；复制末尾分镜 → max+1 |
 
 **精度下限检测（关键）**：计算 `mid = (left + right) / 2` 后，若 `mid == left` 或 `mid == right`（IEEE-754 舍入导致无法区分相邻值），判定该处精度耗尽，**禁止中间插入**。处理流程：
 
@@ -423,6 +424,8 @@ class SceneDifficulty:
 3. 重排后重新计算插入位置并完成插入（对用户无感）。
 
 > **前端拖拽排序协议**：前端不直接传 sort_order 数值，而是传「目标位置的前后分镜/对话 id」（拖到最前/最后只传一侧），后端据此取左右 sort_order 计算中值，并统一做下限检测与重排。这样避免前端猜测数值，也保证并发安全——`batch_reorder` 不再是「批量写入指定值」，而是「相对位置插入 + 必要时重排」。
+
+> **分镜复制 in-flight 守卫**：复制分镜（`POST /scene/{id}/duplicate`）后端无幂等保护（复制本身允许内容重复，无法用唯一索引去重），因此前端按 `sceneId` 维度做提交中守卫——请求飞行中 `state.duplicatingSceneId` 记录该 id，复制按钮置 `disabled`、`handleAction` 重复进入直接 return，`try/finally` 释放。避免连点/鼠标抖动让一次操作发出多个 POST，导致复制出多份重复分镜。
 
 ### 2.4 新增表：`storyboard_dialogue`（分镜对话表）
 
@@ -770,7 +773,7 @@ async def create_storyboard(request: Request):
 | PUT | `/api/storyboard/scene/{scene_id}/video-type` | `storyboard:update` | 在普通视频/对口型之间切换；保留已有候选，运行中的旧模式任务完成后不自动替换当前视频 |
 | DELETE | `/api/storyboard/scene/{scene_id}` | `storyboard:update` | 删除分镜（CASCADE 删除其对话与资产） |
 | PUT | `/api/storyboard/{id}/scene/reorder` | `storyboard:update` | 移动单个分镜（浮点二分，Body: `{scene_id, prev_id, next_id}`） |
-| POST | `/api/storyboard/scene/{scene_id}/duplicate` | `storyboard:update` | 复制分镜（含对话，不含生成资产） |
+| POST | `/api/storyboard/scene/{scene_id}/duplicate` | `storyboard:update` | 复制分镜（含对话，不含生成资产）；新分镜插入到原分镜与其后继之间（浮点二分），原分镜为末尾时追加到末尾 |
 
 ### 3.5 分镜内容操作（生成 / 提示词 / 状态）
 

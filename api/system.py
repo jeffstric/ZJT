@@ -111,6 +111,24 @@ async def get_system_status():
         }
 
 
+@router.get("/health")
+async def health_check():
+    """
+    轻量健康检查
+
+    只返回固定标识，不访问数据库。
+    供启动器（托盘）确认端口背后是智剧通服务，避免端口被其他程序占用时误判为已启动。
+    """
+    return {
+        "code": 0,
+        "data": {
+            "app": "ZJT",
+            "service": "zjt_server",
+            "status": "ok",
+        }
+    }
+
+
 @router.get("/task-configs")
 async def get_task_configs(authorization: str = Header(None)):
     """

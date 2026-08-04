@@ -161,6 +161,104 @@ body {
     margin-bottom: 30px;
 }
 
+/* 商业许可证状态卡片 */
+.license-status-card {
+    background: var(--admin-card-bg);
+    border: 1px solid var(--admin-border);
+    border-left: 4px solid var(--admin-primary);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+}
+.license-status-card.valid { border-left-color: var(--admin-success); }
+.license-status-card.refresh_due,
+.license-status-card.grace { border-left-color: var(--admin-warning); }
+.license-status-card.denied,
+.license-status-card.expired,
+.license-status-card.security_error,
+.license-status-card.uninitialized { border-left-color: var(--admin-danger); }
+.license-status-card.registration_failed { border-left-color: var(--admin-danger); }
+.license-status-card.auth_required { border-left-color: var(--admin-warning); }
+
+.license-status-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+.license-status-header h3 { margin: 0; font-size: 16px; }
+.license-state-badge {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: var(--admin-border);
+    color: var(--admin-text);
+}
+.license-state-badge.valid { background: var(--admin-success); color: #fff; }
+.license-state-badge.denied,
+.license-state-badge.expired,
+.license-state-badge.security_error,
+.license-state-badge.registration_failed,
+.license-state-badge.uninitialized { background: var(--admin-danger); color: #fff; }
+.license-state-badge.refresh_due,
+.license-state-badge.grace,
+.license-state-badge.auth_required { background: var(--admin-warning); color: #fff; }
+
+.license-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.license-status-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.license-status-label {
+    color: var(--admin-text-muted);
+    font-size: 12px;
+}
+.license-status-value {
+    color: var(--admin-text);
+    font-size: 15px;
+    font-weight: 600;
+}
+.license-status-reason {
+    color: var(--admin-text-muted);
+    font-size: 13px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: var(--admin-bg);
+    border-radius: 6px;
+}
+.license-status-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* 激活表单 */
+.license-activate-form {
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--admin-bg);
+    border-radius: 6px;
+}
+.license-activate-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.license-activate-hint {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--admin-text-muted);
+    line-height: 1.5;
+}
+
 .stat-card {
     background: var(--admin-card-bg);
     border-radius: 12px;

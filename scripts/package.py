@@ -5,6 +5,7 @@ ZJT 打包脚本
 """
 
 import argparse
+import fnmatch
 import os
 import shutil
 import subprocess
@@ -13,17 +14,59 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 
 # ============================================
 # 配置
 # ============================================
 
-# NAS 盘路径（存放二进制文件）
-NAS_PATH = Path(r"H:\智剧通")
-
 # 当前脚本所在目录（代码目录）
 # 获取项目根目录（scripts 的父目录）
 CODE_PATH = Path(__file__).parent.parent.resolve()
+
+
+def _resolve_nas_path() -> Path:
+    """从配置文件读取打包物料源目录（智剧通\\bin 的父目录）。
+
+    读取顺序（命中即用，全部缺失则回退默认值）：
+      1. 打包机本地配置 config_dev.yml / config_prod.yml（不入发布包，仅构建机存在）
+      2. 模板配置 config.example.yml
+      3. 默认值 H:\\智剧通
+
+    通过环境变量 ZJT_PACKAGE_SOURCE 可强制覆盖，优先级最高。
+
+    package.py 是独立运行的构建脚本，不依赖项目运行时配置系统（config.config_util
+    会触发 model / unified_config 等重依赖），这里用 yaml 直接读取即可。
+    """
+    default_path = Path(r"H:\智剧通")
+    env_override = os.environ.get("ZJT_PACKAGE_SOURCE")
+    if env_override:
+        return Path(env_override).expanduser()
+
+    # 候选配置文件：打包机本地配置优先于模板
+    config_candidates = [
+        CODE_PATH / "config_dev.yml",
+        CODE_PATH / "config_prod.yml",
+        CODE_PATH / "config.example.yml",
+    ]
+    for config_file in config_candidates:
+        if not config_file.is_file():
+            continue
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except Exception:
+            continue
+        source = (data.get("bin") or {}).get("package_source")
+        if source:
+            return Path(str(source)).expanduser()
+    return default_path
+
+
+# NAS 盘路径（存放二进制文件）；可在配置文件 bin.package_source 中覆盖，
+# 保留为模块级变量以便测试通过 monkeypatch 注入。
+NAS_PATH = _resolve_nas_path()
 
 # 输出目录
 OUTPUT_PATH = CODE_PATH / "dist"
@@ -61,11 +104,21 @@ EXCLUDE_FILES = [
     "config_dev.yml",
     "package.py",
     "package.bat",
+    "build_enterprise.py",
+    ".launcher_lock",  # 启动器运行时文件锁（scripts/launchers/launcher_mac.py），不以 .lock 结尾需单列
 ]
 
 # 不需要打包的文件扩展名
 EXCLUDE_EXTENSIONS = [
     ".spec",
+    # 运行时文件锁（scheduler.lock、script_split_worker_*.lock、.launcher_lock 等），
+    # 内容为进程 PID，打入包内无意义；worker 持锁时复制会 PermissionError 导致打包失败
+    ".lock",
+]
+
+# 命中排除规则但仍需打包的文件白名单
+EXCLUDE_FILE_WHITELIST = [
+    "uv.lock",  # uv 依赖锁定文件，发行包安装依赖时必需
 ]
 
 
@@ -83,6 +136,9 @@ PLATFORMS = {
         "git_dst": "git",
         "uv_src": "uv.exe",
         "uv_dst": "uv.exe",
+        # uv 托管 Python：打入包内 bin/python，新用户解压即用、跳过 GitHub 下载
+        "python_request": "cpython-3.10.20-windows-x86_64-none",
+        "python_src": "python-windows",  # NAS 预留目录（uv 托管布局）
         "extra_files": ["start.bat"],
         "exclude_files": ["start.command", "create_mac_app.sh"],
     },
@@ -93,6 +149,8 @@ PLATFORMS = {
         "ffmpeg_dst": "ffmpeg",
         "uv_src": "mac_x86_uv",
         "uv_dst": "uv",
+        "python_request": "cpython-3.10-macos-x86_64-none",
+        "python_src": "python-macos-x86",  # NAS 物料待准备（x86 Mac 上 uv python install 后上传）
         "extra_files": ["start.command", "create_mac_app.sh"],
         "exclude_files": ["start.bat"],
     },
@@ -103,6 +161,8 @@ PLATFORMS = {
         "ffmpeg_dst": "ffmpeg",
         "uv_src": "mac_arm_uv",
         "uv_dst": "uv",
+        "python_request": "cpython-3.10-macos-aarch64-none",
+        "python_src": "python-macos-arm",  # NAS 物料待准备（ARM Mac 上 uv python install 后上传）
         "extra_files": ["start.command", "create_mac_app.sh"],
         "exclude_files": ["start.bat"],
     },
@@ -136,6 +196,9 @@ def should_exclude_dir(name: str) -> bool:
 
 def should_exclude_file(name: str, rel_path: str = "") -> bool:
     """判断文件是否应该被排除"""
+    # 白名单优先：命中排除规则但仍需打包的文件
+    if name in EXCLUDE_FILE_WHITELIST:
+        return False
     # Windows 特殊设备文件名（不区分大小写）
     windows_device_names = {"nul", "con", "prn", "aux"} | {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)}
     if name.lower() in windows_device_names:
@@ -220,7 +283,125 @@ def copy_source_files(src_dir: Path, dst_dir: Path, exclude_files: list):
     copy_recursive(src_dir, dst_dir)
 
 
-def copy_binaries(dst_dir: Path, platform_config: dict):
+# uv 托管 Python 可执行文件的候选相对位置（用于校验物料有效性）
+PYTHON_EXE_CANDIDATES = ("python.exe", "bin/python3", "bin/python3.10")
+
+
+def find_managed_python_dirs(src_dir: Path, python_request: str) -> list:
+    """在物料目录中查找符合请求的 uv 托管 Python 目录。
+
+    python_request 形如 cpython-3.10-windows-x86_64-none；
+    实际安装目录带完整版本号（cpython-3.10.20-windows-x86_64-none），按通配匹配。
+    通过 resolve() 去重，跳过指向同一真实目录的 junction/符号链接，避免重复打包。
+    """
+    if not src_dir.is_dir():
+        return []
+    impl, version, platform = python_request.split("-", 2)
+    pattern = f"{impl}-{version}*-{platform}"
+    found = {}
+    for item in sorted(src_dir.iterdir()):
+        if not item.is_dir() or not fnmatch.fnmatch(item.name, pattern):
+            continue
+        real = item.resolve()
+        if not any((real / exe).exists() for exe in PYTHON_EXE_CANDIDATES):
+            continue
+        found[str(real)] = real
+    return list(found.values())
+
+
+def copy_managed_python(bin_dir: Path, platform_config: dict, platform_name: str):
+    """把 uv 托管 Python 打进 bin/python：新用户解压即用，跳过 GitHub 下载解释器。
+
+    物料来源优先级：
+      1. NAS 上按 uv 托管布局准备的目录（platform_config["python_src"]）
+      2. 本仓库 bin/python（bin 不入 git，仅开发机本地有）
+      3. Windows：用刚打包的 uv 现场安装（有 uv 缓存时很快）
+
+    macOS 物料需在对应架构机器上 uv python install 准备后放入 NAS，未就绪时告警跳过。
+    """
+    python_request = platform_config.get("python_request")
+    if not python_request:
+        return
+    python_dst = bin_dir / "python"
+    is_windows = platform_name == "Windows"
+
+    def validate_windows_python():
+        if not is_windows:
+            return
+        python_executable = python_dst / python_request / "python.exe"
+        if not python_executable.is_file():
+            raise RuntimeError(f"uv 未生成预期的内置 Python：{python_executable}")
+        probe = subprocess.run(
+            [str(python_executable), "-I", "-c", "import encodings; print('bundled-python-ok')"],
+            cwd=bin_dir.parent,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        if probe.returncode != 0 or "bundled-python-ok" not in probe.stdout:
+            detail = (probe.stderr or probe.stdout or "Python probe failed").strip()
+            raise RuntimeError(f"内置 Python 完整性检查失败：{detail}")
+
+    sources = []
+    if platform_config.get("python_src"):
+        sources.append((f"NAS bin/{platform_config['python_src']}",
+                        NAS_PATH / "bin" / platform_config["python_src"]))
+    sources.append(("本地仓库 bin/python", CODE_PATH / "bin" / "python"))
+
+    for label, src in sources:
+        managed = find_managed_python_dirs(src, python_request)
+        if not managed:
+            continue
+        for real_dir in managed:
+            print(f"    - Python: {real_dir.name} ({label}) -> python/{real_dir.name}")
+            shutil.copytree(real_dir, python_dst / real_dir.name)
+        validate_windows_python()
+        return
+
+    # Windows：现场用 uv 安装（uv 有下载缓存，通常很快）
+    uv_exe = bin_dir / "uv" / platform_config["uv_dst"]
+    if is_windows and uv_exe.exists():
+        print(f"    - Python: 物料目录无可用托管 Python，改用 uv 现场安装 {python_request} ...")
+        env = dict(os.environ)
+        env["UV_PYTHON_INSTALL_DIR"] = str(python_dst)
+        env.pop("UV_PYTHON_DOWNLOADS", None)
+        try:
+            completed = subprocess.run(
+                [
+                    str(uv_exe), "python", "install",
+                    "--install-dir", str(python_dst),
+                    "--no-bin", "--no-registry",
+                    python_request,
+                ],
+                cwd=bin_dir.parent,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=900,
+                check=False,
+            )
+            if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout or "unknown uv error").strip()
+                print(f"    - Python: [WARN] uv 现场安装失败: {detail}")
+        except Exception as e:
+            print(f"    - Python: [WARN] uv 现场安装失败: {e}")
+        if find_managed_python_dirs(python_dst, python_request):
+            validate_windows_python()
+            return
+
+    msg = (f"未找到 {python_request} 的托管 Python 物料，"
+           f"包内 bin/python 为空，用户首启仍需联网下载")
+    if is_windows:
+        raise RuntimeError(f"{msg}（Windows 包必须内置 Python）")
+    print(f"    - Python: [WARN] {msg}，本次跳过")
+
+
+def copy_binaries(dst_dir: Path, platform_config: dict, platform_name: str = ""):
     """复制二进制文件"""
     bin_dir = dst_dir / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -251,6 +432,9 @@ def copy_binaries(dst_dir: Path, platform_config: dict):
     uv_dst = uv_dst_dir / platform_config["uv_dst"]
     print(f"    - UV: {platform_config['uv_src']} -> uv/{platform_config['uv_dst']}")
     shutil.copy2(uv_src, uv_dst)
+
+    # 复制 uv 托管 Python（需在 UV 之后，Windows 物料缺失时可用它现场安装）
+    copy_managed_python(bin_dir, platform_config, platform_name)
 
 
 def is_executable_file(file_path: Path, rel_path: Path) -> bool:
@@ -290,6 +474,11 @@ def is_executable_file(file_path: Path, rel_path: Path) -> bool:
         if subdir == "git" and filename in git_executables:
             return True
         if subdir == "uv" and filename in uv_executables:
+            return True
+        # uv 托管 Python（macOS/Linux）：cpython-*/bin/ 下的文件需要可执行权限
+        if (subdir == "python" and len(parts) >= bin_index + 4
+                and parts[bin_index + 2].startswith("cpython-")
+                and parts[bin_index + 3] == "bin"):
             return True
 
     # shell 脚本
@@ -371,7 +560,7 @@ def build_platform(name: str, config: dict, version: str):
 
     # 复制二进制文件
     print("  - Copying binaries...")
-    copy_binaries(package_dir, config)
+    copy_binaries(package_dir, config, name)
 
     # 复制额外的启动文件
     print("  - Copying startup files...")

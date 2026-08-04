@@ -1468,9 +1468,20 @@ async function handleAction(action, target) {
     }
 
     if (action === 'duplicate-scene') {
-        const response = await api.duplicateScene(parseInt(target.dataset.id, 10));
-        addSceneToState(response.scene);
+        const sceneId = parseInt(target.dataset.id, 10);
+        // in-flight 守卫：复制请求飞行中再次点击（连点/鼠标抖动）直接忽略，
+        // 避免后端无幂等保护下连点 N 次复制出 N 份重复分镜。
+        if (state.duplicatingSceneId === sceneId) return;
+        state.duplicatingSceneId = sceneId;
         rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
+        try {
+            const response = await api.duplicateScene(sceneId);
+            addSceneToState(response.scene);
+            rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
+        } finally {
+            state.duplicatingSceneId = null;
+            rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
+        }
         return;
     }
 
@@ -2268,9 +2279,16 @@ export function bindEvents() {
             }
             if (action === 'confirm-create-ratio') {
                 if (state.isCreatingStoryboard) return;
+                // 通过 state 上注册的 handler 调用，避免动态 import('./bootstrap.js')
+                // 触发模块重复求值（HTML 入口带 ?v=，动态 import 解析为无版本号 URL）。
+                const continueFn = state.continueCreateWithRatio;
+                if (typeof continueFn !== 'function') {
+                    state.ratioConfirmError = '初始化未完成，请刷新页面后重试';
+                    rerender('all');
+                    return;
+                }
                 try {
-                    const { continueCreateWithRatio } = await import('./bootstrap.js');
-                    await continueCreateWithRatio(state.pendingCreateRatio || '16:9');
+                    await continueFn(state.pendingCreateRatio || '16:9');
                 } catch (err) {
                     state.ratioConfirmError = err.message || '创建故事板失败';
                     state.ratioGateActive = true;

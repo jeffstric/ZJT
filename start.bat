@@ -8,10 +8,8 @@ REM 设置 UTF-8 编码，解决中文路径和文件编码问题
 set PYTHONUTF8=1
 chcp 65001 >nul 2>&1
 
-REM 镜像源配置
-REM   UV_MIRROR     - Python install mirror: auto/ghfast/ghproxy/direct
+REM PyPI 镜像配置。Python 已随程序包提供，用户侧禁止下载 Python。
 REM   UV_PIP_MIRROR - PyPI mirror: aliyun/tsinghua/tencent/official
-if "%UV_MIRROR%"=="" set UV_MIRROR=auto
 if "%UV_PIP_MIRROR%"=="" set UV_PIP_MIRROR=aliyun
 
 REM PyPI 镜像
@@ -39,6 +37,14 @@ echo.
 set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
+REM Use only the complete Python distribution bundled with this package.
+set "PYTHON_REQUEST=cpython-3.10.20-windows-x86_64-none"
+set "UV_PYTHON_INSTALL_DIR=%SCRIPT_DIR%bin\python"
+set "UV_PYTHON_DOWNLOADS=never"
+set "BUNDLED_PYTHON=%UV_PYTHON_INSTALL_DIR%\%PYTHON_REQUEST%\python.exe"
+if "%UV_CACHE_DIR%"=="" set "UV_CACHE_DIR=%SCRIPT_DIR%bin\uv-cache"
+if not exist "%UV_CACHE_DIR%" mkdir "%UV_CACHE_DIR%"
+
 echo [1/4] Checking uv package manager...
 set "UV_CMD=%SCRIPT_DIR%bin\uv\uv.exe"
 if not exist "!UV_CMD!" (
@@ -60,142 +66,50 @@ if not exist "!UV_CMD!" (
     echo [OK] uv found
 )
 
-REM === 网络环境检测（仅在 auto 模式下执行，PowerShell 3秒超时测试国内镜像可达性） ===
-if not "%UV_MIRROR%"=="auto" goto :mirror_manual_detect
+REM === 网络环境检测（只选择 PyPI 依赖源，不下载 Python） ===
 echo [1.1/4] Detecting network environment...
-set "COMFYUI_MIRROR_MODE=domestic"
-powershell -NoProfile -Command "if((Test-NetConnection -ComputerName ghfast.top -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue) -and $?) { exit 0 } else { exit 1 }" >nul 2>&1
+powershell -NoProfile -Command "if((Test-NetConnection -ComputerName mirrors.aliyun.com -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue) -and $?) { exit 0 } else { exit 1 }" >nul 2>&1
 if errorlevel 1 goto :mirror_overseas
 echo   [INFO] Domestic network detected, using China mirrors
-set "UV_MIRROR=ghfast"
 set "UV_PIP_MIRROR=aliyun"
-set "COMFYUI_MIRROR_MODE=domestic"
 set "UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/"
 goto :mirror_detect_done
 
 :mirror_overseas
 echo   [INFO] Overseas network detected, using direct mirrors
-set "UV_MIRROR=direct"
 set "UV_PIP_MIRROR=official"
-set "COMFYUI_MIRROR_MODE=overseas"
 set "UV_INDEX_URL=https://pypi.org/simple/"
 goto :mirror_detect_done
-
-:mirror_manual_detect
-echo [1.1/4] Using manually configured mirror: %UV_MIRROR%
-set "COMFYUI_MIRROR_MODE=manual"
 
 :mirror_detect_done
 echo.
 
-REM === 预下载 Python，支持多镜像自动回退（默认 80 秒超时） ===
-echo [1.2/4] Ensuring Python 3.10 is available...
-set "PYTHON_READY=0"
-set "MIRROR_IDX=0"
-set "AUTO_RETRY=1"
-set "SUCCESS_FLAG=%TEMP%\comfyui_python_ok.flag"
-set "MIRROR_TIMEOUT=80"
-
-REM 根据网络检测结果或用户手动配置设置镜像索引
-if not "!UV_MIRROR!"=="auto" (
-    if "%UV_MIRROR%"=="ghfast" set "MIRROR_IDX=0"
-    if "%UV_MIRROR%"=="ghproxy" set "MIRROR_IDX=1"
-    if "%UV_MIRROR%"=="gh-proxy" set "MIRROR_IDX=2"
-    if "%UV_MIRROR%"=="moeyy" set "MIRROR_IDX=3"
-    if "%UV_MIRROR%"=="direct" set "MIRROR_IDX=4"
-    REM 仅用户手动指定镜像时才禁止回退，auto检测结果允许回退
-    if "%COMFYUI_MIRROR_MODE%"=="manual" set "AUTO_RETRY=0"
+echo [1.2/4] Checking bundled Python 3.10...
+if exist "%UV_PYTHON_INSTALL_DIR%\pyvenv.cfg" (
+    echo [ERROR] bin\python is a non-portable virtual environment.
+    echo Please re-extract a complete package with bundled Python.
+    pause
+    exit /b 1
 )
-
-:try_mirror
-if "!MIRROR_IDX!"=="0" set "MIRROR_NAME=ghfast"
-if "!MIRROR_IDX!"=="0" set "MIRROR_URL=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download"
-if "!MIRROR_IDX!"=="0" set "MIRROR_TIMEOUT=80"
-if "!MIRROR_IDX!"=="1" set "MIRROR_NAME=ghproxy"
-if "!MIRROR_IDX!"=="1" set "MIRROR_URL=https://ghproxy.cn/https://github.com/astral-sh/python-build-standalone/releases/download"
-if "!MIRROR_IDX!"=="1" set "MIRROR_TIMEOUT=80"
-if "!MIRROR_IDX!"=="2" set "MIRROR_NAME=gh-proxy"
-if "!MIRROR_IDX!"=="2" set "MIRROR_URL=https://gh-proxy.com/https://github.com/astral-sh/python-build-standalone/releases/download"
-if "!MIRROR_IDX!"=="2" set "MIRROR_TIMEOUT=80"
-if "!MIRROR_IDX!"=="3" set "MIRROR_NAME=moeyy"
-if "!MIRROR_IDX!"=="3" set "MIRROR_URL=https://github.moeyy.xyz/https://github.com/astral-sh/python-build-standalone/releases/download"
-if "!MIRROR_IDX!"=="3" set "MIRROR_TIMEOUT=80"
-if "!MIRROR_IDX!"=="4" set "MIRROR_NAME=direct"
-if "!MIRROR_IDX!"=="4" set "MIRROR_URL="
-if "!MIRROR_IDX!"=="4" set "MIRROR_TIMEOUT=120"
-if "!MIRROR_IDX!"=="5" goto :mirror_all_failed
-
-del "!SUCCESS_FLAG!" 2>nul
-echo   Trying !MIRROR_NAME! mirror (!MIRROR_TIMEOUT!s timeout)...
-
-if not "!MIRROR_URL!"=="" goto :mirror_has_url
-start /B "" "!UV_CMD!" python install cpython-3.10-windows-x86_64-none >nul 2>&1
-goto :wait_for_completion
-
-:mirror_has_url
-start /B "" "!UV_CMD!" python install cpython-3.10-windows-x86_64-none --mirror "!MIRROR_URL!" >nul 2>&1
-
-:wait_for_completion
-set "TIMEOUT_COUNT=0"
-:wait_loop
-tasklist /FI "IMAGENAME eq uv.exe" 2>nul | find /I "uv.exe" >nul
+if not exist "!BUNDLED_PYTHON!" (
+    echo [ERROR] Bundled Python not found: !BUNDLED_PYTHON!
+    echo Please re-extract the complete application package.
+    pause
+    exit /b 1
+)
+"!BUNDLED_PYTHON!" -X utf8 -c "import sys; print('[OK] Bundled Python', sys.version.split()[0])"
 if errorlevel 1 (
-    REM uv 进程已结束，检查是否成功
-    "!UV_CMD!" python find cpython-3.10-windows-x86_64-none >nul 2>&1
-    if not errorlevel 1 (
-        echo 1 > "!SUCCESS_FLAG!"
-    )
-    goto :mirror_check
+    echo [ERROR] Bundled Python is damaged. Please re-extract the package.
+    pause
+    exit /b 1
 )
-
-REM 进程还在运行，继续等待
-set /a "TIMEOUT_COUNT+=1"
-if !TIMEOUT_COUNT! GEQ !MIRROR_TIMEOUT! (
-    REM 超时，杀掉进程
-    taskkill /F /IM uv.exe >nul 2>&1
-    goto :mirror_check
-)
-timeout /t 1 /nobreak >nul
-goto :wait_loop
-
-:mirror_check
-if exist "!SUCCESS_FLAG!" (
-    set "PYTHON_READY=1"
-    del "!SUCCESS_FLAG!" 2>nul
-    echo   [OK] Python ready via !MIRROR_NAME!
-    goto :mirror_done
-)
-
-echo   [WARN] !MIRROR_NAME! failed, trying next...
-if "!AUTO_RETRY!"=="0" goto :mirror_all_failed
-set /a "MIRROR_IDX+=1"
-goto :try_mirror
-
-:mirror_all_failed
-echo [ERROR] All mirrors failed to download Python 3.10
-echo.
-echo   Possible solutions:
-echo   1. Set UV_MIRROR=direct and use a VPN
-echo   2. Set UV_MIRROR=ghfast or UV_MIRROR=ghproxy to specify mirror
-echo   3. Manually download Python 3.10 and place it in the uv managed path
-echo      Download URL: https://github.com/astral-sh/python-build-standalone/releases
-echo   4. Check your network/firewall settings
-echo.
-pause
-exit /b 1
-
-:mirror_done
 echo.
 REM ==========================================
 
 REM === 启动前检查更新 ===
 echo [1.5/4] Checking for updates...
 
-REM 自愈：清理 litellm 的 uv 缓存（litellm>=1.92 引入 Rust 编译，普通用户机器无 MSVC linker 会构建失败）
-REM 客户机器上可能残留旧版 requirements.txt 解析决策导致 uv 仍选 1.92.0，每次启动前清一次确保走 1.91.x 纯 Python 路径
-"!UV_CMD!" cache clean litellm >nul 2>&1
-
-"!UV_CMD!" run --python cpython-3.10-windows-x86_64-none --with-requirements requirements.txt scripts\upgrade_check.py
+"!UV_CMD!" run --no-python-downloads --python "!BUNDLED_PYTHON!" --with-requirements requirements.txt scripts\upgrade_check.py
 set "UPGRADE_RC=%errorlevel%"
 if %UPGRADE_RC% equ 2 (
     echo [ERROR] 更新检查遇到严重错误
@@ -203,7 +117,7 @@ if %UPGRADE_RC% equ 2 (
     exit /b 1
 )
 if %UPGRADE_RC% equ 1 (
-    echo [WARN] 更新检查失败，继续使用本地版本
+    echo [INFO] 更新检查未完成（网络/源不可用），继续使用本地版本
 )
 if %UPGRADE_RC% equ 10 (
     echo [INFO] 代码已更新，正在重新启动...
@@ -237,7 +151,7 @@ echo [4/4] Starting services...
 echo ========================================
 echo.
 
-"!UV_CMD!" run --python cpython-3.10-windows-x86_64-none --with-requirements requirements.txt scripts\launchers\start_windows.py
+"!UV_CMD!" run --no-python-downloads --python "!BUNDLED_PYTHON!" --with-requirements requirements.txt scripts\launchers\start_windows.py
 
 if errorlevel 1 (
     echo.

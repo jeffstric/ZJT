@@ -29,6 +29,23 @@ SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT = 300
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_CONNECT_TIMEOUT = 10
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_READ_TIMEOUT = 120
 
+# ===== Windows uv 托盘启动器 =====
+# launcher bootstrap 运行在 Web 服务启动之前；所有外部进程仍必须有硬超时，
+# 防止首次安装或损坏的依赖环境让启动窗口永久卡住。
+UV_BUNDLED_PYTHON_REQUEST = "cpython-3.10.20-windows-x86_64-none"
+UV_LAUNCHER_ENV_SCHEMA_VERSION = 2
+UV_LAUNCHER_BOOTSTRAP_LOCK_TIMEOUT_SECONDS = 600
+UV_LAUNCHER_ENV_CREATE_TIMEOUT_SECONDS = 300
+UV_LAUNCHER_DEPENDENCY_SYNC_TIMEOUT_SECONDS = 900
+UV_LAUNCHER_IMPORT_PROBE_TIMEOUT_SECONDS = 30
+UV_LAUNCHER_PROCESS_PROBE_TIMEOUT_SECONDS = 3
+LAUNCHER_PORT_POLL_SECONDS = 1
+LAUNCHER_STATUS_REFRESH_SECONDS = 15
+LAUNCHER_SLOW_START_WARNING_SECONDS = 1800
+LAUNCHER_SERVICE_HARD_TIMEOUT_SECONDS = 3600
+LAUNCHER_STOP_SCRIPT_TIMEOUT_SECONDS = 30
+LAUNCHER_TASKKILL_TIMEOUT_SECONDS = 10
+
 # ===== 七牛云 SDK 网络超时 =====
 # qiniu SDK 内部 requests 单请求超时（秒）；SDK 默认 30。
 # 显式设置避免依赖 SDK 内部默认，且便于统一调优。
@@ -36,6 +53,11 @@ QINIU_HTTP_CONNECTION_TIMEOUT = 30
 # _sync_upload_file 单次调用硬看门狗（秒）：qiniu.put_file 内部可能重试/分片，
 # 单请求 30s 超时会被穿透累积；给一个明确的上限，超过则视为失败上抛。
 QINIU_UPLOAD_HARD_TIMEOUT = 90
+
+# ===== 数据库连接池超时（红线：超时常量统一在此维护，AGENTS.md 第9条）=====
+# 新建底层 MySQL 连接的 connect_timeout（秒）：仅约束 TCP 握手阶段，
+# 10s 内连不上视为端口耗尽/网络故障，快速失败而非无限等待。
+DB_POOL_CONNECT_TIMEOUT = 10
 
 # ===== 七牛云前端直传（大世界文件上传）=====
 # 上传区域域名（按 bucket 所在区域选择；华东 https://upload.qiniup.com）。
@@ -192,6 +214,19 @@ class AgentAuthConstants:
     STORYBOARD_AGENT_API_VERSION = "storyboard-agent-api/v1"
     DEFAULT_DEVICE_UUID = "agent-api"
     RAW_TOKEN_PREFIX = "zjt_agent_"
+
+
+# ===== 认证 error_code（perseids 内部调用 + 对前端响应）=====
+# perseids_server/client.py 是进程内本地路由，无 HTTP code 可用；
+# 在源头往返回 data 里放结构化 error_code，下游判定只查 error_code，不做 message 文案匹配。
+# token 校验失败（AuthService.verify_token 未通过），确证无效
+PERSEIDS_ERR_INVALID_AUTH_TOKEN = 'INVALID_AUTH_TOKEN'
+# 按 user_id 查不到有效 token，确证无效（单会话策略下意味着被顶号/登出/重置密码）
+PERSEIDS_ERR_NO_VALID_TOKEN = 'NO_VALID_TOKEN'
+# 对前端响应：token 确证失效（前端各页面识别此前缀做登出处理）
+ERROR_CODE_TOKEN_EXPIRED = 'TOKEN_EXPIRED'
+# 对前端响应：认证服务自身故障（非 token 问题，前端按普通服务异常处理，不清登录态）
+ERROR_CODE_AUTH_SERVICE_UNAVAILABLE = 'AUTH_SERVICE_UNAVAILABLE'
 
 
 # ============ 向后兼容：使用 UnifiedConfigRegistry 提供旧 API ============
@@ -479,16 +514,19 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
         DriverImplementation.SEEDANCE_2_0_FAST_KKIDC_V1,                # kkidc 网关
+        DriverImplementation.SEEDANCE_2_0_FAST_HUIMENGI_V1,             # huimengi 网关
     ],
     DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO: [
         DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
         DriverImplementation.SEEDANCE_2_0_KKIDC_V1,                # kkidc 网关
+        DriverImplementation.SEEDANCE_2_0_HUIMENGI_V1,             # huimengi 网关
     ],
     DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO: [
         DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
         DriverImplementation.SEEDANCE_2_0_MINI_KKIDC_V1,                # kkidc 网关
+        DriverImplementation.SEEDANCE_2_0_MINI_HUIMENGI_V1,             # huimengi 网关
     ],
 
     # GPT Image 相关驱动
@@ -813,6 +851,9 @@ class ScriptParserConstants:
     # 是否写入 script_parser 详细诊断文件（logs/script_parser/script_parser_*）
     DIAGNOSTIC_LOGGING_ENABLED = False
     DIAGNOSTIC_LOG_DIR = "logs/script_parser"
+
+    # 系统提示词 skill 名称（script_writer_core/skills/<name>/SKILL.md，可用户级覆盖）
+    SKILL_NAME = "script-parser"
 
 
 class ScriptSplitQcConstants:
@@ -1602,6 +1643,7 @@ class LLMModel:
         'CLAUDE_HAIKU_4_5': 'Claude Haiku 4.5',
         'DEEPSEEK_V4_FLASH': 'DeepSeek V4 Flash',
         'DEEPSEEK_V4_PRO': 'DeepSeek V4 Pro',
+        'REDUCE_VIOLATION_DEFAULT': '内容安全提示词改写默认模型（reduce-violation 兜底）',
     }
     # Gemini 模型
     GEMINI_3_FLASH = 'gemini-3-flash-preview'
@@ -1626,6 +1668,10 @@ class LLMModel:
     # DeepSeek 模型
     DEEPSEEK_V4_FLASH = 'deepseek-v4-flash'
     DEEPSEEK_V4_PRO = 'deepseek-v4-pro'
+
+    # 内容安全提示词改写（reduce-violation）的默认兜底模型
+    # 前端未传/所选拆分模型供应商未配置时使用；复用剧本拆分默认模型，凭据走 JIEKOU 中转
+    REDUCE_VIOLATION_DEFAULT = 'gemini-3-flash-preview'
 
 
 # 供应商图标映射（前端显示用）

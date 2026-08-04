@@ -9,8 +9,15 @@ CDN 工具类 - 统一处理 CDN 配置和 URL 获取逻辑
 """
 import logging
 from typing import Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
+
+# 模块级长寿线程池：CDN 上传为 fire-and-forget 后台任务，
+# 复用同一池避免每次调用都新建/销毁 executor。
+# 注意：禁止用 `with ThreadPoolExecutor()`（AGENTS.md 红线第 10 条），
+# with 退出会触发 shutdown(wait=True) 阻塞调用线程。
+_cdn_upload_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cdn-upload")
 
 
 class CDNStatus:
@@ -309,8 +316,6 @@ class CDNUtil:
             mapping_id: media_file_mapping 记录 ID
             local_path: 本地文件相对路径
         """
-        import concurrent.futures
-
         def _async_upload():
             from model.media_file_mapping import MediaFileMappingModel
             try:
@@ -355,6 +360,5 @@ class CDNUtil:
                 except:
                     pass
 
-        # 在线程池中执行
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            executor.submit(_async_upload)
+        # 在模块级长寿线程池中执行（fire-and-forget），避免 with 退出阻塞调用线程。
+        _cdn_upload_executor.submit(_async_upload)

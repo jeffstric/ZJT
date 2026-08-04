@@ -1,0 +1,6 @@
+# Exact launcher dependencies for Windows/Python 3.10.
+# Keep this file in the release package; the bootstrap hashes its contents.
+pillow==12.3.0
+pystray==0.19.5
+pyyaml==6.0.1
+six==1.17.0

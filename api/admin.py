@@ -22,6 +22,7 @@ from model.system_config import SystemConfigModel
 from model.system_config_history import SystemConfigHistoryModel
 from config.config_util import get_current_env, invalidate_dynamic_cache
 from config.default_configs import init_default_configs, get_default_config_by_key
+from utils.log_sanitizer import mask_phone
 from config.constant import GEMINI_URL_FORMATS, DRIVER_IMPLEMENTATION_MAPPING
 from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
 
@@ -44,6 +45,13 @@ def _require_runninghub_key_pool_config_access(config_keys) -> None:
     from task.runninghub_key_pool import is_available
     if not is_available():
         raise HTTPException(status_code=403, detail='此功能仅商业版本可用')
+
+
+def _get_enterprise_admin_status() -> dict[str, object]:
+    """读取 Enterprise 实际加载状态，避免仅按目录/config 误判。"""
+    from utils.enterprise_loader import enterprise_loader
+
+    return enterprise_loader.get_runtime_status()
 
 
 async def require_admin(auth_token: str = Header(None, alias="Authorization")) -> User:
@@ -89,16 +97,26 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
         
         from task.runninghub_key_pool import is_available as is_runninghub_key_pool_available
         from services.branding import is_available as is_branding_available
+        enterprise_status = _get_enterprise_admin_status()
         return {
             "code": 0,
             "data": {
                 "total_users": total_users,
                 "active_workflows_3d": active_workflows_3d,
-                "is_community_edition": IS_COMMUNITY_EDITION,
+                # UI 的运行模式必须以 Enterprise 是否完整注册为准；静态目录存在
+                # 不能代表 PyArmor 和注册流程可用。
+                "is_community_edition": not bool(
+                    enterprise_status["registration_ready"]
+                ),
+                "enterprise": enterprise_status,
                 "features": {
                     "runninghub_key_pool": is_runninghub_key_pool_available(),
-                    # 品牌定制：仅企业版可用。工作室版的 enterprise 不注入 branding provider，
-                    # is_available() 返回 False，前端据此隐藏品牌定制入口。
+                    "commercial_license_admin": bool(
+                        enterprise_status["license_control_available"]
+                    ),
+                    # 品牌定制：仅企业版可用。工作室版同样注入了 branding provider，
+                    # 但 is_available() 在 studio license 下经严格判断返回 False，
+                    # 前端据此隐藏品牌定制入口。
                     "branding": is_branding_available(),
                 },
             }
@@ -584,7 +602,12 @@ async def admin_set_user_zjt_token(
         UsersModel.set_zjt_token_enabled(user_id, request.enabled)
 
         message = "已启用智剧通Token" if request.enabled else "已禁用智剧通Token"
-        logger.info(f"Admin {admin.phone} set user {user_id} zjt_token_enabled to {request.enabled}")
+        logger.info(
+            "Admin %s set user %s zjt_token_enabled to %s",
+            mask_phone(admin.phone),
+            user_id,
+            request.enabled,
+        )
 
         return {
             "code": 0,
@@ -666,7 +689,12 @@ async def admin_set_user_zjt_token_expire(
                 raise HTTPException(status_code=400, detail="日期格式错误，请使用 YYYY-MM-DD 格式")
 
         UsersModel.set_zjt_token_expire_at(user_id, expire_at)
-        logger.info(f"Admin {admin.phone} set user {user_id} zjt_token_expire_at to {expire_at}")
+        logger.info(
+            "Admin %s set user %s zjt_token_expire_at to %s",
+            mask_phone(admin.phone),
+            user_id,
+            expire_at,
+        )
 
         return {
             "code": 0,

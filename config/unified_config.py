@@ -256,6 +256,7 @@ class ImplementationConfig:
     sort_order: float = 999999.0  # 默认排序到最后
     site_number: Optional[int] = None  # 仅聚合站点有值
     sync_mode: bool = False  # 是否为同步模式
+    supports_auto_face: bool = False  # 是否支持自动处理人脸（网关内置真人审核，开启后跳过 RunningHub 遮盖预处理）
     required_config_keys: List[str] = field(default_factory=list)  # 依赖的动态配置键，全部存在且有值时才算配置完整
     supported_video_resolutions: List[Dict[str, Any]] = field(default_factory=list)  # 视频分辨率选项
     default_video_resolution: str = ''  # 默认视频分辨率 value
@@ -357,6 +358,7 @@ class ImplementationConfig:
             'description': self.description,
             'driver_params': self.driver_params,
             'sync_mode': self.sync_mode,
+            'supports_auto_face': self.supports_auto_face,
             'supported_video_resolutions': self.supported_video_resolutions,
             'default_video_resolution': self.default_video_resolution,
         }
@@ -1008,6 +1010,11 @@ class DriverImplementation:
     SEEDANCE_2_0_KKIDC_V1 = 'seedance_2_0_kkidc_v1'
     SEEDANCE_2_0_MINI_KKIDC_V1 = 'seedance_2_0_mini_kkidc_v1'
 
+    # Seedance huimengi 网关（慧梦，Seedance 2.0 系列二次封装，扁平 {model, params{}} 结构）
+    SEEDANCE_2_0_FAST_HUIMENGI_V1 = 'seedance_2_0_fast_huimengi_v1'
+    SEEDANCE_2_0_HUIMENGI_V1 = 'seedance_2_0_huimengi_v1'
+    SEEDANCE_2_0_MINI_HUIMENGI_V1 = 'seedance_2_0_mini_huimengi_v1'
+
     # GPT Image
     DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
     GPT_IMAGE_COMMON_SITE0_V1 = 'gpt_image_common_site0_v1'
@@ -1108,6 +1115,11 @@ class DriverImplementationId:
     SEEDANCE_2_0_KKIDC_V1 = 60
     SEEDANCE_2_0_MINI_KKIDC_V1 = 61
 
+    # Seedance huimengi 网关
+    SEEDANCE_2_0_FAST_HUIMENGI_V1 = 62
+    SEEDANCE_2_0_HUIMENGI_V1 = 63
+    SEEDANCE_2_0_MINI_HUIMENGI_V1 = 64
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1171,6 +1183,9 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_fast_kkidc_v1': DriverImplementationId.SEEDANCE_2_0_FAST_KKIDC_V1,
     'seedance_2_0_kkidc_v1': DriverImplementationId.SEEDANCE_2_0_KKIDC_V1,
     'seedance_2_0_mini_kkidc_v1': DriverImplementationId.SEEDANCE_2_0_MINI_KKIDC_V1,
+    'seedance_2_0_fast_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_FAST_HUIMENGI_V1,
+    'seedance_2_0_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_HUIMENGI_V1,
+    'seedance_2_0_mini_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_MINI_HUIMENGI_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1803,6 +1818,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_V1,
             DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_OVERSEA_V1,
             DriverImplementation.SEEDANCE_2_0_FAST_KKIDC_V1,
+            DriverImplementation.SEEDANCE_2_0_FAST_HUIMENGI_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -1839,6 +1855,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,
             DriverImplementation.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1,
             DriverImplementation.SEEDANCE_2_0_KKIDC_V1,
+            DriverImplementation.SEEDANCE_2_0_HUIMENGI_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -1877,6 +1894,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1,
             DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1,
             DriverImplementation.SEEDANCE_2_0_MINI_KKIDC_V1,
+            DriverImplementation.SEEDANCE_2_0_MINI_HUIMENGI_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -2667,6 +2685,49 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='kkidc 网关 Seedance 2.0 Mini 图生视频接口',
         sort_order=10930.0,
         required_config_keys=['kkidc.api_key'],
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+
+    # ==================== huimengi 网关供应商（慧梦，Seedance 2.0 系列二次封装） ====================
+    # supports_auto_face=True：huimengi 网关内置 human_review 真人审核，用户勾选"处理人脸"
+    # 时由网关自动处理，跳过 RunningHub 遮盖预处理（server.py 闸门据此分流）
+    ImplementationConfig(
+        name='seedance_2_0_fast_huimengi_v1',
+        display_name='huimengi',
+        driver_class='Seedance20FastHuimengiV1Driver',
+        default_computing_power={5: 238, 6: 250, 7: 262, 8: 274, 9: 285, 10: 297, 11: 309, 12: 321, 13: 333, 14: 345, 15: 357},
+        enabled=True,
+        description='huimengi 网关 Seedance 2.0 Fast 图生视频接口',
+        sort_order=11010.0,
+        required_config_keys=['huimengi.api_key'],
+        supports_auto_face=True,
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_0_huimengi_v1',
+        display_name='huimengi',
+        driver_class='Seedance20HuimengiV1Driver',
+        default_computing_power={5: 303, 6: 318, 7: 333, 8: 348, 9: 363, 10: 378, 11: 393, 12: 409, 13: 424, 14: 439, 15: 454},
+        enabled=True,
+        description='huimengi 网关 Seedance 2.0 图生视频接口',
+        sort_order=11020.0,
+        required_config_keys=['huimengi.api_key'],
+        supports_auto_face=True,
+        supported_video_resolutions=SEEDANCE_2_0_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_0_mini_huimengi_v1',
+        display_name='huimengi',
+        driver_class='Seedance20MiniHuimengiV1Driver',
+        default_computing_power={5: 152, 6: 159, 7: 167, 8: 174, 9: 182, 10: 189, 11: 197, 12: 204, 13: 212, 14: 220, 15: 227},
+        enabled=True,
+        description='huimengi 网关 Seedance 2.0 Mini 图生视频接口',
+        sort_order=11030.0,
+        required_config_keys=['huimengi.api_key'],
+        supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),

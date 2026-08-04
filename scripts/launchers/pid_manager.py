@@ -14,6 +14,7 @@ import os
 import time
 import subprocess
 import json
+import shutil
 from datetime import datetime
 
 
@@ -30,6 +31,71 @@ def get_pid_file_path():
     return os.path.join(pid_dir, 'launcher_pids.json')
 
 
+def _process_info_from_executable(exe_path):
+    if not exe_path or not os.path.isfile(exe_path):
+        return None
+    return {
+        'name': os.path.basename(exe_path),
+        'exe': exe_path,
+        # Windows does not expose another process's cwd through CIM. Executables
+        # shipped inside the project are sufficient for the existing scoped-prefix
+        # safety check; processes outside the project remain ineligible for killing.
+        'cwd': os.path.dirname(exe_path),
+    }
+
+
+def _get_process_info_with_wmic(pid):
+    """Query legacy Windows installations where WMIC is still available."""
+    wmic = shutil.which('wmic')
+    if not wmic:
+        return None
+    result = subprocess.run(
+        [wmic, 'process', 'where', f'ProcessId={pid}', 'get', 'ExecutablePath', '/format:csv'],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        encoding='gbk',
+        errors='ignore',
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        data_line = line.strip()
+        if not data_line or data_line.lower().startswith('node,'):
+            continue
+        candidates = data_line.split(',') if ',' in data_line else [data_line]
+        for candidate in candidates:
+            info = _process_info_from_executable(candidate.strip())
+            if info:
+                return info
+    return None
+
+
+def _get_process_info_with_powershell(pid):
+    """Query modern Windows versions where WMIC is no longer installed."""
+    powershell = shutil.which('powershell') or shutil.which('powershell.exe')
+    if not powershell:
+        return None
+    command = (
+        "$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new();"
+        f"$p=Get-CimInstance Win32_Process -Filter \"ProcessId = {int(pid)}\";"
+        "if($p){$p.ExecutablePath}"
+    )
+    result = subprocess.run(
+        [powershell, '-NoProfile', '-NonInteractive', '-Command', command],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        encoding='utf-8',
+        errors='ignore',
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return _process_info_from_executable(result.stdout.strip())
+
+
 def get_process_info(pid):
     """
     获取进程信息（工作目录和可执行文件路径）
@@ -44,57 +110,7 @@ def get_process_info(pid):
         return None
 
     try:
-        # 使用 wmic 命令获取进程信息（注意：ProcessId 要大写 P）
-        result = subprocess.run(
-            'wmic process where ProcessId={} get ExecutablePath /format:csv'.format(pid),
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            encoding='gbk',
-            errors='ignore'
-        )
-
-        if result.returncode != 0:
-            return None
-
-        # 解析输出
-        # 格式: Node,ExecutablePath\nDESKTOP-xxx,C:\path\to\file.exe
-        lines = result.stdout.strip().split('\n')
-        if len(lines) < 2:
-            return None
-
-        # 第二行可能包含机器名，需要提取实际路径
-        data_line = lines[1].strip()
-
-        # 尝试找到最后一个包含 .exe 的部分（去掉机器名前缀）
-        exe_path = None
-        if ',' in data_line:
-            # 机器名和路径用逗号分隔，取路径部分
-            parts = data_line.split(',')
-            for part in parts:
-                cleaned = part.strip()
-                if cleaned.endswith('.exe'):
-                    exe_path = cleaned
-                    break
-        else:
-            exe_path = data_line
-
-        if not exe_path or not os.path.isfile(exe_path):
-            # 无法获取有效的可执行文件路径
-            return None
-
-        # 从可执行文件路径推断工作目录
-        cwd = os.path.dirname(exe_path)
-
-        # 获取进程名
-        name = os.path.basename(exe_path)
-
-        return {
-            'name': name,
-            'exe': exe_path,
-            'cwd': cwd
-        }
+        return _get_process_info_with_wmic(pid) or _get_process_info_with_powershell(pid)
 
     except subprocess.TimeoutExpired:
         return None

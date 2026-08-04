@@ -30,12 +30,21 @@ class EnterpriseLoader:
     def __init__(self):
         self.loaded = False
         self.enterprise_version = None
+        # package_available 只有在 enterprise 模块成功导入后才为 True。
+        # 仅发现目录/version.json 不足以证明 PyArmor 运行时和加密代码可用。
+        self.package_available = False
+        self.registration_failed = False
+        self.failure_reason = None
 
     def _get_project_root(self) -> str:
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     def discover(self) -> bool:
         """检测 enterprise 模块是否存在且版本兼容"""
+        self.enterprise_version = None
+        self.package_available = False
+        self.registration_failed = False
+        self.failure_reason = None
         edition_mode = get_config_value('edition', 'mode', default='community')
         if edition_mode != 'enterprise':
             logger.info('Enterprise mode is disabled by configuration')
@@ -95,6 +104,9 @@ class EnterpriseLoader:
         if self.loaded:
             return
 
+        self.package_available = False
+        self.registration_failed = False
+        self.failure_reason = None
         try:
             # 确保项目根目录在 sys.path 中，使 Python 能找到 enterprise 包
             project_root = self._get_project_root()
@@ -102,21 +114,37 @@ class EnterpriseLoader:
                 sys.path.insert(0, project_root)
 
             enterprise_module = importlib.import_module("enterprise")
+            # 能完成 import 才能证明 PyArmor 未过期且商业包当前可执行。
+            self.package_available = True
             enterprise_module.register(app)
             self.loaded = True
             logger.info("Enterprise module loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load enterprise module: {e}")
+            self.loaded = False
+            if self.package_available:
+                # 商业包可以正常导入，但后续路由/Provider 注册失败。
+                self.registration_failed = True
+                self.failure_reason = (
+                    "Enterprise 商业包已识别，但组件注册未完成；"
+                    "许可证操作暂不可用，请检查服务日志并重启"
+                )
+            else:
+                # 包无法导入（包含 PyArmor 过期、损坏、依赖缺失等情况）。
+                # 此时不能展示可提交凭据的许可证入口。
+                self.failure_reason = "Enterprise 商业包无法加载"
             try:
                 from task.runninghub_key_pool import reset_provider
                 reset_provider()
             except Exception:
                 pass
+
             try:
                 from services.registration_quota import reset_provider as reset_registration_quota
                 reset_registration_quota()
             except Exception:
                 pass
+
             try:
                 from services.face_mask_provider import (
                     reset_provider as reset_face_mask_provider,
@@ -124,6 +152,19 @@ class EnterpriseLoader:
                 reset_face_mask_provider()
             except Exception:
                 pass
+
+    def get_runtime_status(self) -> dict[str, object]:
+        """返回供管理界面使用的非敏感商业包状态快照。"""
+        return {
+            "package_available": self.package_available,
+            "registration_ready": self.loaded,
+            # 当前 Enterprise 注册是全有或全无；只有完整注册后许可证路由
+            # 和运行时才可安全接受 Token、刷新或注销请求。
+            "license_control_available": self.loaded,
+            "registration_failed": self.registration_failed,
+            "failure_reason": self.failure_reason if self.package_available else None,
+            "enterprise_version": self.enterprise_version,
+        }
 
 
 enterprise_loader = EnterpriseLoader()

@@ -14,6 +14,8 @@
   "delete_world": "删除当前世界",
   "public_space": "公共空间",
   "workflow_tutorial": "工作流教程",
+  "theme_toggle_to_dark": "切换到暗色模式",
+  "theme_toggle_to_light": "切换到浅色模式",
   "save": "保存",
   "save_workflow": "保存工作流",
   "style_settings": "画风设置",

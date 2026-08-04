@@ -224,49 +224,67 @@ def compare_version(v1, v2):
     return 0
 
 
+def read_pyproject_version(project_dir):
+    """从 pyproject.toml 读取 version 字段，失败返回 None。"""
+    pyproject = project_dir / "pyproject.toml"
+    if not pyproject.exists():
+        return None
+    try:
+        content = pyproject.read_text(encoding="utf-8")
+        for line in content.split("\n"):
+            line = line.strip()
+            if line.startswith("version"):
+                parts = line.split("=", 1)
+                if len(parts) == 2:
+                    return parts[1].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return None
+
+
 def get_local_version(project_dir, git_cmd=None):
     """读取本地版本号
 
-    优先使用 git tag --points-at HEAD 检查当前 commit 是否有 tag。
-    其次尝试 git describe --tags --abbrev=0。
-    如果都失败（无 tag 或无 git），回退到读取 pyproject.toml。
+    同时收集以下候选，取版本号最高者（避免 describe 仍指向旧 tag、
+    而 pyproject/HEAD 已是新版本时误判，导致 start.bat 无限重启）：
+      1. git tag --points-at HEAD
+      2. git describe --tags --abbrev=0
+      3. pyproject.toml 的 version
     """
+    candidates = []
+
     if git_cmd:
-        # 优先: git tag --points-at HEAD（精确匹配当前 commit 的 tag）
+        # 1) 当前 commit 上的 tag
         rc, out, _ = run_git(
             git_cmd,
             ["tag", "--points-at", "HEAD"],
             project_dir, timeout=10
         )
         if rc == 0 and out.strip():
-            # 可能有多个 tag，取版本号最大的
-            tags = [t.strip() for t in out.strip().split("\n") if t.strip()]
-            tags.sort(key=parse_version, reverse=True)
-            return tags[0]
+            for t in out.strip().split("\n"):
+                t = t.strip()
+                if t:
+                    candidates.append(t)
 
-        # 其次: git describe --tags --abbrev=0
+        # 2) 最近祖先 tag（可能落后于当前代码里的 pyproject 版本）
         rc, out, _ = run_git(
             git_cmd,
             ["describe", "--tags", "--abbrev=0"],
             project_dir, timeout=10
         )
         if rc == 0 and out.strip():
-            return out.strip()
+            candidates.append(out.strip())
 
-    # 回退: 读取 pyproject.toml
-    pyproject = project_dir / "pyproject.toml"
-    if pyproject.exists():
-        try:
-            content = pyproject.read_text(encoding="utf-8")
-            for line in content.split("\n"):
-                line = line.strip()
-                if line.startswith("version"):
-                    parts = line.split("=", 1)
-                    if len(parts) == 2:
-                        return parts[1].strip().strip('"').strip("'")
-        except Exception:
-            pass
-    return "unknown"
+    # 3) 代码内声明的版本（reset 到含新 pyproject 的 commit 后应与远程一致）
+    py_ver = read_pyproject_version(project_dir)
+    if py_ver:
+        candidates.append(py_ver)
+
+    if not candidates:
+        return "unknown"
+
+    candidates.sort(key=parse_version, reverse=True)
+    return candidates[0]
 
 
 def get_git_env(git_cmd):
@@ -274,6 +292,14 @@ def get_git_env(git_cmd):
 
     如果使用内置 git，设置 GIT_SSL_CAINFO 指向内置的证书文件，
     避免使用系统证书导致的 SSL 错误。
+
+    升级检查是无人值守流程：必须禁止 Git Credential Manager / askpass
+    弹出 GUI 凭据框（部分用户访问 Gitee 时会卡住 start.bat）。
+    需要登录时直接失败，由上层返回码 1 跳过更新、继续本地启动。
+
+    注意：禁用 credential.helper 必须用 ``git -c credential.helper=``（见 run_git），
+    不要用 ``GIT_CONFIG_VALUE_*=`` 空字符串——Windows/MinGit 会报
+    ``missing config value GIT_CONFIG_VALUE_N`` / ``unable to parse command-line config``。
     """
     env = os.environ.copy()
     git_path = Path(git_cmd)
@@ -292,6 +318,28 @@ def get_git_env(git_cmd):
         if ca_bundle.exists():
             env["GIT_SSL_CAINFO"] = str(ca_bundle)
 
+    # --- 非交互凭据：禁止 GCM/终端弹窗 ---
+    # GIT_TERMINAL_PROMPT=0：git 自身不向终端要用户名密码
+    # GCM_INTERACTIVE / GCM_GUI_PROMPT：关闭 Git Credential Manager 的 GUI
+    # GIT_ASKPASS 置空：避免调用 askpass 弹窗程序
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "false"
+    env["GCM_GUI_PROMPT"] = "false"
+    env["GIT_ASKPASS"] = ""
+    env["SSH_ASKPASS"] = ""
+    # 覆盖用户/系统环境中可能存在的 askpass 指向
+    env.pop("GCM_ASKPASS", None)
+
+    # 清除可能由父进程注入的 GIT_CONFIG_*，避免空 VALUE 导致 git 直接失败
+    try:
+        legacy_count = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
+    except ValueError:
+        legacy_count = 0
+    for i in range(max(legacy_count, 0) + 8):
+        env.pop(f"GIT_CONFIG_KEY_{i}", None)
+        env.pop(f"GIT_CONFIG_VALUE_{i}", None)
+    env.pop("GIT_CONFIG_COUNT", None)
+
     return env
 
 
@@ -299,9 +347,19 @@ def run_git(git_cmd, args, cwd, timeout=30, capture=True):
     """运行 git 命令
 
     返回 (returncode, stdout, stderr)
+
+    每条命令前注入 ``-c credential.helper=``，仅本进程禁用凭据助手
+    （不改用户 .gitconfig），避免脏凭据/GCM 弹窗；空 helper 用 -c 而不是
+    环境变量空串，兼容 Windows MinGit。
     """
-    cmd = [git_cmd] + args
+    # -c 必须紧跟 git 可执行文件之后
+    cmd = [git_cmd, "-c", "credential.helper="] + list(args)
     env = get_git_env(git_cmd)
+    # Windows：隐藏可能的子进程控制台窗口（GCM 等）；不影响已有控制台输出
+    popen_kwargs = {}
+    if sys.platform == "win32":
+        # CREATE_NO_WINDOW = 0x08000000，避免 credential helper 再开控制台
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
     try:
         if capture:
             result = subprocess.run(
@@ -313,15 +371,115 @@ def run_git(git_cmd, args, cwd, timeout=30, capture=True):
                 errors="replace",
                 timeout=timeout,
                 env=env,
+                **popen_kwargs,
             )
             return result.returncode, result.stdout, result.stderr
         else:
-            result = subprocess.run(cmd, cwd=str(cwd), timeout=timeout, env=env)
+            result = subprocess.run(
+                cmd, cwd=str(cwd), timeout=timeout, env=env, **popen_kwargs
+            )
             return result.returncode, "", ""
     except subprocess.TimeoutExpired:
         return -1, "", "timeout"
     except Exception as e:
         return -1, "", str(e)
+
+
+def normalize_repo_url(url):
+    """标准化仓库 URL，便于比较（去末尾 / 与 .git）"""
+    if not url:
+        return ""
+    url = url.strip().rstrip("/")
+    if url.endswith(".git"):
+        url = url[:-4]
+    return url
+
+
+def is_auth_or_prompt_error(message):
+    """判断是否为鉴权/交互凭据类错误（网络正常但无法匿名访问）"""
+    if not message:
+        return False
+    lower = message.lower()
+    needles = (
+        "could not read username",
+        "terminal prompts disabled",
+        "authentication failed",
+        "authentication required",
+        "support for password authentication was removed",
+        "invalid username or password",
+        "403",
+        "401",
+        "access denied",
+        "permission denied",
+        "repository not found",  # 私有仓常见伪装
+    )
+    return any(n in lower for n in needles)
+
+
+def fetch_remote_with_fallback(git_cmd, project_dir, repo_urls, branch, timeout):
+    """fetch 远程分支与 tags；失败时按 repo_urls 顺序切换源重试。
+
+    客户环境访问 Gitee 常因限流/鉴权挑战返回 401，若只 fetch 一次会误报失败。
+    按配置多源依次尝试，任一成功即停止。
+
+    返回 (success: bool, error_message: str)
+    """
+    urls_to_try = []
+    current = get_current_remote_url(git_cmd, project_dir, timeout)
+    if current:
+        urls_to_try.append(current)
+    for url in repo_urls or []:
+        if not url:
+            continue
+        if not any(normalize_repo_url(url) == normalize_repo_url(u) for u in urls_to_try):
+            urls_to_try.append(url)
+
+    if not urls_to_try:
+        return False, "未配置可用远程源"
+
+    last_err = ""
+    for idx, url in enumerate(urls_to_try):
+        current_now = get_current_remote_url(git_cmd, project_dir, timeout)
+        if normalize_repo_url(current_now or "") != normalize_repo_url(url):
+            rc, _, err = run_git(
+                git_cmd, ["remote", "set-url", "origin", url],
+                project_dir, timeout=timeout
+            )
+            if rc != 0:
+                # 无 origin 时 set-url 失败，尝试 add
+                rc2, _, err2 = run_git(
+                    git_cmd, ["remote", "add", "origin", url],
+                    project_dir, timeout=timeout
+                )
+                if rc2 != 0:
+                    last_err = err2 or err or "无法设置 origin"
+                    print(f"[upgrade] 切换源失败 ({url}): {last_err}")
+                    continue
+
+        label = url
+        if idx == 0 and len(urls_to_try) > 1:
+            print(f"[upgrade] fetch 远程: {label}")
+        elif len(urls_to_try) > 1:
+            print(f"[upgrade] 尝试备用源: {label}")
+        else:
+            print(f"[upgrade] fetch 远程: {label}")
+
+        rc, out, err = run_git(
+            git_cmd, ["fetch", "origin", branch, "--tags", "--force"],
+            project_dir, timeout=timeout
+        )
+        if rc == 0:
+            if idx > 0:
+                print(f"[upgrade] 已改用源: {url}")
+            return True, ""
+
+        last_err = (err or out or "未知错误").strip()
+        if is_auth_or_prompt_error(last_err):
+            print(f"[upgrade] 源需要登录或暂不可匿名访问，跳过: {url}")
+        else:
+            print(f"[upgrade] fetch 失败 ({url}): {last_err}")
+
+    return False, last_err
 
 
 def get_remote_latest_tag(git_cmd, project_dir, timeout):
@@ -419,23 +577,36 @@ def init_git_repo(project_dir, git_cmd, repo_urls, branch, timeout):
 
 
 
-def perform_update(git_cmd, project_dir, branch, timeout):
+def perform_update(git_cmd, project_dir, branch, timeout, target_tag=None):
     """执行更新（强制覆盖本地代码）
 
-    使用 fetch + reset --hard 强制同步到远程最新版本。
+    使用 fetch + reset --hard 强制同步。
+    优先 reset 到目标版本 tag（与远程「最新 tag」比较逻辑一致），
+    tag 不可用时再回退到 origin/{branch}。
     不保留本地修改，确保升级过程无冲突，对小白用户透明。
     返回 (success, message)
     """
-    # fetch 最新代码
+    # fetch 分支 + tags（必须带 tags，否则本地 describe/checkout tag 会落后）
     rc, out, err = run_git(
-        git_cmd, ["fetch", "origin", branch],
+        git_cmd, ["fetch", "origin", branch, "--tags", "--force"],
         project_dir, timeout=timeout
     )
     if rc != 0:
         msg = err or out or "未知错误"
         return False, f"fetch 失败: {msg}"
 
-    # reset 到远程最新版本（强制覆盖，不保留本地修改，不会产生冲突）
+    # 优先对齐到版本 tag，使 tag --points-at HEAD 与远程最新 tag 一致
+    if target_tag:
+        rc, out, err = run_git(
+            git_cmd, ["reset", "--hard", target_tag],
+            project_dir, timeout=timeout
+        )
+        if rc == 0:
+            print(f"[upgrade] 代码更新成功（已对齐 tag {target_tag}）")
+            return True, ""
+        print(f"[upgrade] 无法 checkout tag {target_tag}，回退到 origin/{branch}: {err or out}")
+
+    # reset 到远程分支（强制覆盖）
     rc, out, err = run_git(
         git_cmd, ["reset", "--hard", f"origin/{branch}"],
         project_dir, timeout=timeout
@@ -495,17 +666,12 @@ def update_remote_url_if_needed(git_cmd, project_dir, repo_urls, timeout):
             print(f"[upgrade] 添加 origin 失败: {err}")
         return False
 
-    # 标准化 URL（去掉末尾 .git 和 /）
-    def normalize_url(url):
-        url = url.rstrip("/")
-        if url.endswith(".git"):
-            url = url[:-4]
-        return url
+    current_normalized = normalize_repo_url(current_url)
+    first_url_normalized = normalize_repo_url(repo_urls[0]) if repo_urls else None
 
-    current_normalized = normalize_url(current_url)
-    first_url_normalized = normalize_url(repo_urls[0]) if repo_urls else None
-
-    # 当前已经是最高优先级源，无需切换
+    # 当前已经是最高优先级源：不在这里做连通性探测。
+    # 真正的 fetch 由 fetch_remote_with_fallback 负责多源回退，
+    # 避免「origin 已是 Gitee 但匿名 401」时在此直接判定成功、随后单点失败。
     if first_url_normalized and current_normalized == first_url_normalized:
         return True
 
@@ -534,7 +700,7 @@ def update_remote_url_if_needed(git_cmd, project_dir, repo_urls, timeout):
 
     # 检查当前 origin 是否在配置列表中（降级接受）
     for url in repo_urls:
-        if normalize_url(url) == current_normalized:
+        if normalize_repo_url(url) == current_normalized:
             return True
 
     # 当前 origin 不在配置中，按顺序找第一个可用的
@@ -606,15 +772,19 @@ def main():
     local_version = get_local_version(project_dir, git_cmd)
     print(f"[upgrade] 当前版本: {local_version}")
 
-    # 3. fetch 远程（包含 tag）
-    rc, _, err = run_git(
-        git_cmd, ["fetch", "origin", branch, "--tags", "--force"],
-        project_dir, timeout=timeout
+    # 3. fetch 远程（包含 tag）；Gitee 限流/鉴权失败时自动尝试备用源（如 GitHub）
+    ok, err = fetch_remote_with_fallback(
+        git_cmd, project_dir, repo_urls, branch, timeout
     )
-    if rc != 0:
-        print(f"[upgrade] fetch 远程信息失败: {err}")
+    if not ok:
+        if is_auth_or_prompt_error(err):
+            print(
+                "[upgrade] 远程仓库暂时无法匿名访问（可能限流或需登录），"
+                "跳过更新检查，继续使用本地版本"
+            )
+        else:
+            print(f"[upgrade] 所有远程源均不可用，跳过更新检查: {err}")
         return 1
-
 
     # 4. 获取远程最新 tag
     latest_tag = get_remote_latest_tag(git_cmd, project_dir, timeout)
@@ -650,8 +820,10 @@ def main():
         print("[upgrade] 使用当前版本继续启动...")
         return 0
 
-    # 8. 执行更新
-    success, message = perform_update(git_cmd, project_dir, branch, timeout)
+    # 8. 执行更新（优先对齐到远程最新 tag，避免只 reset 分支导致版本标记永远落后）
+    success, message = perform_update(
+        git_cmd, project_dir, branch, timeout, target_tag=latest_tag
+    )
     if not success:
         print(f"[upgrade] 更新失败: {message}")
         return 1
@@ -661,6 +833,16 @@ def main():
 
     # 9. 检查依赖变化
     check_requirements_changed(git_cmd, project_dir, timeout)
+
+    # 10. 防无限重启：更新后若版本比较仍认为落后，说明 tag/pyproject/分支不一致，
+    #     再返回 10 会让 start.bat 死循环（用户可见「不断重新启动」）
+    new_local = get_local_version(project_dir, git_cmd)
+    if compare_version(latest_tag, new_local) > 0:
+        print(
+            f"[upgrade] 警告: 更新后本地版本仍为 {new_local}（远程 {latest_tag}），"
+            f"为避免启动循环将继续启动当前代码"
+        )
+        return 0
 
     print("[upgrade] 更新完成，需要重新启动...")
     return 10  # 特殊码：代码已更新，需要重启 start.bat
