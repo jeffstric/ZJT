@@ -14,17 +14,59 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 
 # ============================================
 # 配置
 # ============================================
 
-# NAS 盘路径（存放二进制文件）
-NAS_PATH = Path(r"H:\智剧通")
-
 # 当前脚本所在目录（代码目录）
 # 获取项目根目录（scripts 的父目录）
 CODE_PATH = Path(__file__).parent.parent.resolve()
+
+
+def _resolve_nas_path() -> Path:
+    """从配置文件读取打包物料源目录（智剧通\\bin 的父目录）。
+
+    读取顺序（命中即用，全部缺失则回退默认值）：
+      1. 打包机本地配置 config_dev.yml / config_prod.yml（不入发布包，仅构建机存在）
+      2. 模板配置 config.example.yml
+      3. 默认值 H:\\智剧通
+
+    通过环境变量 ZJT_PACKAGE_SOURCE 可强制覆盖，优先级最高。
+
+    package.py 是独立运行的构建脚本，不依赖项目运行时配置系统（config.config_util
+    会触发 model / unified_config 等重依赖），这里用 yaml 直接读取即可。
+    """
+    default_path = Path(r"H:\智剧通")
+    env_override = os.environ.get("ZJT_PACKAGE_SOURCE")
+    if env_override:
+        return Path(env_override).expanduser()
+
+    # 候选配置文件：打包机本地配置优先于模板
+    config_candidates = [
+        CODE_PATH / "config_dev.yml",
+        CODE_PATH / "config_prod.yml",
+        CODE_PATH / "config.example.yml",
+    ]
+    for config_file in config_candidates:
+        if not config_file.is_file():
+            continue
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except Exception:
+            continue
+        source = (data.get("bin") or {}).get("package_source")
+        if source:
+            return Path(str(source)).expanduser()
+    return default_path
+
+
+# NAS 盘路径（存放二进制文件）；可在配置文件 bin.package_source 中覆盖，
+# 保留为模块级变量以便测试通过 monkeypatch 注入。
+NAS_PATH = _resolve_nas_path()
 
 # 输出目录
 OUTPUT_PATH = CODE_PATH / "dist"

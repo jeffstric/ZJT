@@ -227,6 +227,25 @@ bin\uv\uv.exe python install `
 
 **发布打包**：`scripts/package.py` 会把 uv 托管的 CPython 3.10 一并打入包内 `bin/python`，新用户解压即用。物料来源优先级：NAS `bin/python-windows` → 开发机本地仓库 `bin/python` →（仅 Windows）打包时用 uv 现场安装；三者在 Windows 下都缺失会直接报错中止打包。macOS 已预留配置位（NAS 目录 `python-macos-x86` / `python-macos-arm`，需放 uv 托管布局的 `cpython-3.10.x-macos-*-none` 目录），物料未就绪时告警跳过、不影响打包。
 
+> 物料源目录（`智剧通\bin` 的父目录）已改为从配置文件读取，不再硬编码。详见下文「打包物料源目录」。
+
+### 打包物料源目录
+
+`scripts/package.py` 需要从 NAS 读取各平台二进制物料（MySQL / FFmpeg / Git / uv / 托管 Python）。该路径通过配置项 `bin.package_source` 指定，读取顺序（命中即用）：
+
+1. 环境变量 `ZJT_PACKAGE_SOURCE`（优先级最高，适合 CI/临时覆盖）
+2. 打包机本地配置 `config_dev.yml` / `config_prod.yml` 中的 `bin.package_source`
+3. 模板配置 `config.example.yml` 中的 `bin.package_source`（默认 `H:\智剧通`）
+
+在 `config.example.yml` 中：
+
+```yaml
+bin:
+  package_source: "H:\\智剧通"
+```
+
+脚本会在该目录下的 `bin/` 子目录中查找各平台物料。
+
 ## ❓ 常见问题
 
 ### 1. 提示找不到内置 Python
