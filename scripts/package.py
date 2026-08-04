@@ -62,6 +62,7 @@ EXCLUDE_FILES = [
     "config_dev.yml",
     "package.py",
     "package.bat",
+    "build_enterprise.py",
 ]
 
 # 不需要打包的文件扩展名
