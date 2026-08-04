@@ -34,7 +34,7 @@
 #>
 param(
     [Parameter(Mandatory = $true)][string]$UvCmd,
-    [string]$Request = "cpython-3.10-windows-x86_64-none",
+    [string]$Request = "cpython-3.10.20-windows-x86_64-none",
     [int]$StartMirrorIdx = 0,
     [switch]$NoFallback,
     [string]$LogFile = "",
@@ -74,7 +74,7 @@ function Write-InstallLog([string]$Message) {
 }
 
 function Test-PythonReady {
-    & $UvCmd python find $Request *> $null
+    & $UvCmd python find --managed-python $Request *> $null
     return ($LASTEXITCODE -eq 0)
 }
 

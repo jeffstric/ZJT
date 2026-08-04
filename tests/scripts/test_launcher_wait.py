@@ -133,6 +133,43 @@ class TestCheckServiceIdentity(unittest.TestCase):
 
 
 @unittest.skipUnless(sys.platform == "win32", "launcher 仅支持 Windows")
+class TestTrayStartupNotification(unittest.TestCase):
+    """托盘可见后才显示一次启动引导，再异步启动服务。"""
+
+    def test_notification_guides_user_to_visible_tray_icon_before_service_start(self):
+        events = []
+
+        class FakeIcon:
+            visible = False
+
+            def notify(self, message, title):
+                events.append(("notify", self.visible, title, message))
+
+            def update_menu(self):
+                pass
+
+        tray = launcher.TrayLauncher.__new__(launcher.TrayLauncher)
+        tray.icon = FakeIcon()
+        tray.status = launcher.TrayLauncher.STATUS_STARTING
+        tray.status_message = "正在初始化..."
+        tray.service_thread = None
+        tray._create_icon_image = lambda color: object()
+        tray._start_service = lambda: events.append(("service",))
+
+        tray._on_tray_ready(tray.icon)
+        tray.service_thread.join(timeout=2)
+
+        self.assertTrue(tray.icon.visible)
+        self.assertFalse(tray.service_thread.is_alive())
+        self.assertEqual(events[0][0], "notify")
+        self.assertTrue(events[0][1], "通知必须在托盘图标可见后发送")
+        self.assertEqual(events[0][2], "智剧通正在启动")
+        self.assertIn("任务栏右下角", events[0][3])
+        self.assertIn("^", events[0][3])
+        self.assertEqual(events[1], ("service",))
+
+
+@unittest.skipUnless(sys.platform == "win32", "launcher 仅支持 Windows")
 class TestRelaunchDetached(unittest.TestCase):
     """_relaunch_detached：直接用当前解释器重启、且不得使用 DETACHED_PROCESS。
 

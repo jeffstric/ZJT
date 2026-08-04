@@ -4,10 +4,13 @@
 
 在启动项目之前，请确保已完成以下准备工作：
 
-### 1. 安装 Python
-- 版本要求：Python 3.10 或更高版本
-- 下载地址：https://www.python.org/downloads/
-- **重要**：安装时请勾选 "Add Python to PATH"
+### 1. Python 与 uv
+- Release 程序包必须包含 `bin/uv/uv.exe`，不要求用户安装系统 Python
+- Release 程序包必须同时包含完整、可搬迁的 `bin/python/cpython-3.10.20-windows-x86_64-none/python.exe`
+- `bin/python` 是 uv managed Python 的安装根目录，不能放普通虚拟环境；根目录出现 `pyvenv.cfg` 表示程序包制作错误
+- 用户启动时固定设置 `UV_PYTHON_DOWNLOADS=never`，不会下载 Python，也不会使用系统 Python
+- uv 下载缓存默认保存在项目内的 `bin/uv-cache`，不会依赖用户目录中的 uv 环境
+- 源码开发仍建议使用 Python 3.10 和项目 `.venv`
 
 ### 2. 配置 MySQL
 - 将 MySQL 解压到项目的 `bin/mysql` 目录
@@ -37,12 +40,61 @@
 - `点我启动.bat` —— 中文名，国内用户首选
 - `launcher_me.bat` —— 英文名，海外用户首选
 
-- ✅ 双击即可启动（通过项目自带的 uv 运行 `launcher.py`）
+- ✅ 双击即可启动（项目自带 uv 创建并维护持久化 launcher 环境）
 - ✅ 在系统托盘显示启动状态图标，体验与 `.exe` 完全一致
+- ✅ 托盘图标可见后弹出一次启动引导；若图标被 Windows 收起，可按提示点击任务栏右下角的 `^` 展开隐藏图标
 - ✅ **纯文本脚本 + 官方 python.exe，无 PyInstaller 打包特征，杀毒软件不会误报**
 - ✅ 即便 `点我启动.exe` 被杀毒删除，双击任一 `.bat` 仍可正常启动
 - ✅ **自动网络检测**：国内自动走阿里云镜像、海外自动走官方 PyPI，中外用户都快
-- 📝 首次启动需由 uv 准备 Python 环境与依赖（约 1~3 分钟），之后秒开
+- 📝 Python 已随包提供；首次启动只需由 uv 准备最小托盘依赖，之后复用 `bin/runtime/launcher-<hash>`
+
+#### uv 持久化 launcher 运行机制
+
+```text
+点我启动.bat / launcher_me.bat
+    ↓ 程序包内置 Python（bootstrap 仅使用标准库）
+scripts/launchers/bootstrap.py
+    ↓ 内置 uv + 内置 Python：uv venv --no-python-downloads + uv pip install
+bin/runtime/launcher-<requirements-hash>
+    ↓ pythonw.exe（不再由 uv 临时环境二次拉起）
+scripts/launchers/launcher.py
+    ↓
+系统托盘 + start.bat + MySQL/Web 服务
+```
+
+- `requirements-launcher.in` 仅用于开发时维护直接依赖；`requirements-launcher.txt` 是发布包使用的精确版本依赖清单，不会被发布流程的 `*.lock` 过滤规则排除。
+- bootstrap 只使用标准库；环境创建和依赖安装由 uv 完成，基础 Python 始终来自程序包的 `bin/python`。
+- 用户侧禁止 Python 下载；`bin/python` 缺失、损坏或是普通虚拟环境时立即报“程序包不完整”。
+- 依赖清单内容变化时会创建新的哈希环境；新环境验证失败不会覆盖已有可用环境。
+- 托盘常驻进程使用 uv 创建环境中的 `pythonw.exe`，不会引用 `uv run --with-requirements` 的 `.tmp*` 临时解释器。
+- 正常启动禁止执行 `uv cache clean`。LiteLLM 版本通过 `requirements.txt` 的 `<1.92` 约束控制，避免与正在运行的 uv 进程争用缓存锁。
+- bootstrap 日志：`logs/launcher_bootstrap.log`；托盘运行日志：`logs/launcher_runtime.log`；服务启动日志：`logs/startup.log`。
+- 托盘使用 `GET /api/system/health` 判断服务身份与就绪状态；该接口只返回内存常量，不访问数据库或外部网络。
+- `stop.bat` 同样通过内置 uv 运行 PID 停止器；现代 Windows 缺少 WMIC 时会自动改用 PowerShell CIM 查询，且只终止当前项目记录的进程树。
+
+#### 发布包如何生成内置 Python
+
+`scripts/package.py -p Windows` 在构建机上调用发布包内的 uv：
+
+```powershell
+bin\uv\uv.exe python install `
+  --install-dir bin\python `
+  --no-bin --no-registry `
+  cpython-3.10.20-windows-x86_64-none
+```
+
+打包脚本随后直接运行该解释器并导入 `encodings` 做完整性检查。下载只发生在构建机，最终用户不下载 Python。
+
+更新 launcher 依赖后必须重新生成精确版本依赖清单：
+
+```powershell
+bin\uv\uv.exe pip compile requirements-launcher.in `
+  --python-version 3.10 `
+  --python-platform windows `
+  --output-file requirements-launcher.txt
+```
+
+`requirements-launcher.in` 不属于用户运行时必需文件；最终发布包只需携带生成后的 `requirements-launcher.txt`，不依赖任何 `.lock` 文件。
 
 **使用场景**：
 - 日常使用（**首选**）
@@ -60,11 +112,11 @@
 
 - ✅ 双击即可启动（带应用图标，体验接近原生应用）
 - ✅ 在系统托盘显示启动状态图标
-- ✅ 启动过程中显示气泡提示（正在启动MySQL...等）
+- ✅ 启动过程中显示气泡提示，并引导用户在任务栏右下角查看“智剧通”托盘图标
 - ✅ 服务就绪后自动打开浏览器
 - ✅ 右键托盘图标可查看日志或退出
 - 📝 仍是未签名 exe，SmartScreen 首次可能提示「未知发布者」，点「仍要运行」即可（但不会被 AV 静态删除）
-- 📝 首次启动仍需 uv 准备 Python 环境（约 1~3 分钟）
+- 📝 Python 已包含在发布包中；首次启动仅准备依赖环境
 
 **托盘图标颜色含义**：
 - 🟠 橙色：启动中
@@ -130,7 +182,11 @@ set comfyui_env=unit
 启动脚本会自动完成以下步骤：
 
 ```
-点我启动.exe / start_silent.vbs / start.bat
+点我启动.exe / 点我启动.bat
+    ↓
+launcher_me.bat → bootstrap.py → 持久化 launcher pythonw.exe
+    ↓
+launcher.py（系统托盘）→ start.bat
     ↓
 start_windows.py（Windows 启动管理器）
     ↓
@@ -149,38 +205,59 @@ start_windows.py（Windows 启动管理器）
 13. ✓ 监控服务状态，异常时自动重启
 ```
 
-## 🐍 uv 托管 Python 安装位置
+## 🐍 发布包内置 Python
 
-启动脚本会通过环境变量 `UV_PYTHON_INSTALL_DIR` 把 **uv 下载/管理的 CPython 3.10** 安装到**项目目录**，而不是用户目录下的 `%APPDATA%\uv\python`：
+Windows 发布包在构建阶段通过 uv 准备完整的 CPython 3.10.20。用户启动时固定使用包内解释器，并设置 `UV_PYTHON_DOWNLOADS=never`：
 
 | 项 | 默认值 |
 |----|--------|
-| 安装目录 | `<项目根>\bin\python` |
-| 典型路径 | `bin\python\cpython-3.10-windows-x86_64-none\python.exe` |
-| 覆盖方式 | 启动前设置 `set UV_PYTHON_INSTALL_DIR=D:\自定义路径` |
+| 安装根目录 | `<项目根>\bin\python` |
+| 固定解释器 | `bin\python\cpython-3.10.20-windows-x86_64-none\python.exe` |
+| 用户侧策略 | 禁止下载 Python，不回退到系统 Python 或 `%APPDATA%\uv\python` |
 
 **预装 / 离线拷贝示例**（在有网络的机器上）：
 
 ```batch
 cd /d <项目根目录>
-set UV_PYTHON_INSTALL_DIR=%CD%\bin\python
-bin\uv\uv.exe python install cpython-3.10-windows-x86_64-none
+bin\uv\uv.exe python install `
+  --install-dir bin\python --no-bin --no-registry `
+  cpython-3.10.20-windows-x86_64-none
 ```
 
-然后把整个 `bin\python` 目录随项目一起拷贝到目标机；目标机再执行 `start.bat` 时会直接命中本地 Python，不再访问 GitHub 镜像下载解释器。
+然后把整个 `bin\python` 目录随项目一起拷贝到目标机；目标机执行 `start.bat` 时只使用该解释器。
 
 涉及入口：`start.bat`、`launcher_me.bat` / `点我启动.bat`，以及 `scripts/launchers/start_windows.py`、`launcher.py`（子进程会继承该环境变量）。
 
 **发布打包**：`scripts/package.py` 会把 uv 托管的 CPython 3.10 一并打入包内 `bin/python`，新用户解压即用。物料来源优先级：NAS `bin/python-windows` → 开发机本地仓库 `bin/python` →（仅 Windows）打包时用 uv 现场安装；三者在 Windows 下都缺失会直接报错中止打包。macOS 已预留配置位（NAS 目录 `python-macos-x86` / `python-macos-arm`，需放 uv 托管布局的 `cpython-3.10.x-macos-*-none` 目录），物料未就绪时告警跳过、不影响打包。
 
+> 物料源目录（`智剧通\bin` 的父目录）已改为从配置文件读取，不再硬编码。详见下文「打包物料源目录」。
+
+### 打包物料源目录
+
+`scripts/package.py` 需要从 NAS 读取各平台二进制物料（MySQL / FFmpeg / Git / uv / 托管 Python）。该路径通过配置项 `bin.package_source` 指定，读取顺序（命中即用）：
+
+1. 环境变量 `ZJT_PACKAGE_SOURCE`（优先级最高，适合 CI/临时覆盖）
+2. 打包机本地配置 `config_dev.yml` / `config_prod.yml` 中的 `bin.package_source`
+3. 模板配置 `config.example.yml` 中的 `bin.package_source`（默认 `H:\智剧通`）
+
+在 `config.example.yml` 中：
+
+```yaml
+bin:
+  package_source: "H:\\智剧通"
+```
+
+脚本会在该目录下的 `bin/` 子目录中查找各平台物料。
+
 ## ❓ 常见问题
 
-### 1. 提示找不到 Python / 镜像下载 Python 失败
+### 1. 提示找不到内置 Python
 **解决方法**：
-- 项目要求 **Python 3.10.x**（`requires-python = ==3.10.*`），由 uv 托管安装到 `bin\python`
-- 网络不通时：在有网机器预装后拷贝 `bin\python`（见上文）
-- 或设置 `set UV_MIRROR=direct` 后使用 VPN 再启动
-- 系统自带的 3.11/3.12 **不能**直接替代上述托管 3.10（除非改启动参数，不推荐）
+- 确认程序包同时包含 `bin/uv/uv.exe` 和 `bin/python/cpython-3.10.20-windows-x86_64-none/python.exe`
+- 确认 `bin/python` 根目录没有 `pyvenv.cfg`、`Lib`、`Scripts`；这些是误打包普通虚拟环境的特征
+- 重新下载并完整解压发布包；启动器不会临时下载 Python，也不会回退到系统 Python
+- 查看 `logs/launcher_bootstrap.log` 中的内置 Python 或 launcher 依赖错误
+- 系统自带的 3.11/3.12 不能替代上述内置 Python 3.10.20
 
 ### 2. MySQL 启动失败
 **可能原因**：
@@ -200,13 +277,9 @@ bin\uv\uv.exe python install cpython-3.10-windows-x86_64-none
 
 ### 4. uv 安装失败
 **解决方法**：
-```batch
-# 手动安装 uv
-python -m pip install uv
-
-# 或使用国内镜像
-python -m pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple
-```
+- Release 包不使用系统安装的 uv，请确认 `bin/uv/uv.exe` 未被删除或隔离。
+- 查看 `logs/launcher_bootstrap.log`，确认是内置 Python 损坏还是 launcher 依赖同步失败。
+- 不要在智剧通运行期间手动执行 `uv cache clean`；如需维护缓存，请先通过托盘退出。
 
 ### 5. 服务启动后无法访问
 **检查项**：
@@ -221,9 +294,9 @@ python -m pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 | 日志 | 内容 |
 |------|------|
-| `logs/startup.log` | start.bat 全程输出（镜像下载、更新检查、依赖安装、MySQL、服务启动），每轮启动重建 |
-| `logs/startup_python_install.log` | Python 下载明细（每个镜像的开始时间/结果/退出码），每轮启动重建 |
-| `launcher_detached.log` | 托盘自身的 detached 进程 stderr |
+| `logs/launcher_bootstrap.log` | 内置 Python 校验、uv launcher 环境创建和复用记录 |
+| `logs/launcher_runtime.log` | 持久化托盘进程自身输出 |
+| `logs/startup.log` | start.bat 全程输出（更新检查、依赖安装、MySQL、服务启动），每轮启动重建 |
 
 **常见结论**：
 - 托盘报「启动脚本已退出（码 N）」→ 看 `logs/startup.log` 末尾即为失败原因

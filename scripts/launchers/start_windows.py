@@ -28,9 +28,16 @@ import signal
 import shutil
 import yaml
 import webbrowser
+from pathlib import Path
 
 import mysql.connector
 from mysql.connector import Error as MysqlError
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from config.constant import UV_BUNDLED_PYTHON_REQUEST
 
 # 导入 PID 管理模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -772,7 +779,23 @@ def start_app_service():
         logger.info(f"使用 uv 启动: {run_script}")
         requirements_file = os.path.join(current_dir, "requirements.txt")
 
-        cmd = [uv_path, "run", "--python", "cpython-3.10-windows-x86_64-none"]
+        bundled_python = os.path.join(
+            current_dir,
+            "bin",
+            "python",
+            UV_BUNDLED_PYTHON_REQUEST,
+            "python.exe",
+        )
+        if not os.path.isfile(bundled_python):
+            return False, f"找不到程序包内置 Python：{bundled_python}"
+
+        cmd = [
+            uv_path,
+            "run",
+            "--no-python-downloads",
+            "--python",
+            bundled_python,
+        ]
         if os.path.exists(requirements_file):
             cmd.extend(["--with-requirements", requirements_file])
             logger.info(f"使用依赖文件: {requirements_file}")
@@ -783,23 +806,8 @@ def start_app_service():
         # 设置环境变量
         subprocess_env = os.environ.copy()
         subprocess_env['PYTHONUTF8'] = '1'
-        # uv 托管 Python 默认落在项目 bin/python，避免写入 %APPDATA%\uv\python
-        python_install_dir = subprocess_env.get('UV_PYTHON_INSTALL_DIR') or os.path.join(
-            current_dir, "bin", "python"
-        )
-        os.makedirs(python_install_dir, exist_ok=True)
-        subprocess_env['UV_PYTHON_INSTALL_DIR'] = python_install_dir
-        # 根据网络环境检测结果设置镜像源
-        mirror_mode = os.environ.get('COMFYUI_MIRROR_MODE', 'domestic')
-        if mirror_mode in ('overseas', 'manual'):
-            # 翻墙/手动模式：使用官方源，不设置 UV_PYTHON_INSTALL_MIRROR（使用直连）
-            subprocess_env['UV_INDEX_URL'] = 'https://pypi.org/simple/'
-            if 'UV_PYTHON_INSTALL_MIRROR' in subprocess_env:
-                del subprocess_env['UV_PYTHON_INSTALL_MIRROR']
-        else:
-            # 国内模式：使用国内镜像加速
-            subprocess_env['UV_PYTHON_INSTALL_MIRROR'] = 'https://ghfast.top/https://github.com/indygreg/python-build-standalone/releases/download'
-            subprocess_env['UV_INDEX_URL'] = 'https://mirrors.aliyun.com/pypi/simple/'
+        subprocess_env['UV_PYTHON_DOWNLOADS'] = 'never'
+        subprocess_env['UV_PYTHON_INSTALL_DIR'] = os.path.join(current_dir, "bin", "python")
 
         app_process = subprocess.Popen(
             cmd,
@@ -812,7 +820,8 @@ def start_app_service():
         # 记录应用进程 PID（带进程名和工作目录）
         if app_process.pid:
             current_dir = get_current_dir()
-            add_pid(app_process.pid, "python.exe", current_dir)
+            # Popen 的直接子进程是 uv.exe；真正的 Python 服务位于其进程树内。
+            add_pid(app_process.pid, "uv.exe", current_dir)
 
         time.sleep(3)
 

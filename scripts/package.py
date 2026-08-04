@@ -14,17 +14,59 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 
 # ============================================
 # 配置
 # ============================================
 
-# NAS 盘路径（存放二进制文件）
-NAS_PATH = Path(r"H:\智剧通")
-
 # 当前脚本所在目录（代码目录）
 # 获取项目根目录（scripts 的父目录）
 CODE_PATH = Path(__file__).parent.parent.resolve()
+
+
+def _resolve_nas_path() -> Path:
+    """从配置文件读取打包物料源目录（智剧通\\bin 的父目录）。
+
+    读取顺序（命中即用，全部缺失则回退默认值）：
+      1. 打包机本地配置 config_dev.yml / config_prod.yml（不入发布包，仅构建机存在）
+      2. 模板配置 config.example.yml
+      3. 默认值 H:\\智剧通
+
+    通过环境变量 ZJT_PACKAGE_SOURCE 可强制覆盖，优先级最高。
+
+    package.py 是独立运行的构建脚本，不依赖项目运行时配置系统（config.config_util
+    会触发 model / unified_config 等重依赖），这里用 yaml 直接读取即可。
+    """
+    default_path = Path(r"H:\智剧通")
+    env_override = os.environ.get("ZJT_PACKAGE_SOURCE")
+    if env_override:
+        return Path(env_override).expanduser()
+
+    # 候选配置文件：打包机本地配置优先于模板
+    config_candidates = [
+        CODE_PATH / "config_dev.yml",
+        CODE_PATH / "config_prod.yml",
+        CODE_PATH / "config.example.yml",
+    ]
+    for config_file in config_candidates:
+        if not config_file.is_file():
+            continue
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except Exception:
+            continue
+        source = (data.get("bin") or {}).get("package_source")
+        if source:
+            return Path(str(source)).expanduser()
+    return default_path
+
+
+# NAS 盘路径（存放二进制文件）；可在配置文件 bin.package_source 中覆盖，
+# 保留为模块级变量以便测试通过 monkeypatch 注入。
+NAS_PATH = _resolve_nas_path()
 
 # 输出目录
 OUTPUT_PATH = CODE_PATH / "dist"
@@ -95,7 +137,7 @@ PLATFORMS = {
         "uv_src": "uv.exe",
         "uv_dst": "uv.exe",
         # uv 托管 Python：打入包内 bin/python，新用户解压即用、跳过 GitHub 下载
-        "python_request": "cpython-3.10-windows-x86_64-none",
+        "python_request": "cpython-3.10.20-windows-x86_64-none",
         "python_src": "python-windows",  # NAS 预留目录（uv 托管布局）
         "extra_files": ["start.bat"],
         "exclude_files": ["start.command", "create_mac_app.sh"],
@@ -283,6 +325,26 @@ def copy_managed_python(bin_dir: Path, platform_config: dict, platform_name: str
     python_dst = bin_dir / "python"
     is_windows = platform_name == "Windows"
 
+    def validate_windows_python():
+        if not is_windows:
+            return
+        python_executable = python_dst / python_request / "python.exe"
+        if not python_executable.is_file():
+            raise RuntimeError(f"uv 未生成预期的内置 Python：{python_executable}")
+        probe = subprocess.run(
+            [str(python_executable), "-I", "-c", "import encodings; print('bundled-python-ok')"],
+            cwd=bin_dir.parent,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        if probe.returncode != 0 or "bundled-python-ok" not in probe.stdout:
+            detail = (probe.stderr or probe.stdout or "Python probe failed").strip()
+            raise RuntimeError(f"内置 Python 完整性检查失败：{detail}")
+
     sources = []
     if platform_config.get("python_src"):
         sources.append((f"NAS bin/{platform_config['python_src']}",
@@ -296,6 +358,7 @@ def copy_managed_python(bin_dir: Path, platform_config: dict, platform_name: str
         for real_dir in managed:
             print(f"    - Python: {real_dir.name} ({label}) -> python/{real_dir.name}")
             shutil.copytree(real_dir, python_dst / real_dir.name)
+        validate_windows_python()
         return
 
     # Windows：现场用 uv 安装（uv 有下载缓存，通常很快）
@@ -304,14 +367,31 @@ def copy_managed_python(bin_dir: Path, platform_config: dict, platform_name: str
         print(f"    - Python: 物料目录无可用托管 Python，改用 uv 现场安装 {python_request} ...")
         env = dict(os.environ)
         env["UV_PYTHON_INSTALL_DIR"] = str(python_dst)
+        env.pop("UV_PYTHON_DOWNLOADS", None)
         try:
-            subprocess.run(
-                [str(uv_exe), "python", "install", python_request],
-                env=env, timeout=600,
+            completed = subprocess.run(
+                [
+                    str(uv_exe), "python", "install",
+                    "--install-dir", str(python_dst),
+                    "--no-bin", "--no-registry",
+                    python_request,
+                ],
+                cwd=bin_dir.parent,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=900,
+                check=False,
             )
+            if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout or "unknown uv error").strip()
+                print(f"    - Python: [WARN] uv 现场安装失败: {detail}")
         except Exception as e:
             print(f"    - Python: [WARN] uv 现场安装失败: {e}")
         if find_managed_python_dirs(python_dst, python_request):
+            validate_windows_python()
             return
 
     msg = (f"未找到 {python_request} 的托管 Python 物料，"
