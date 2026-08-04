@@ -13,6 +13,8 @@
    - 启动过程中会显示气泡提示（正在启动MySQL...等）
    - 服务就绪后自动打开浏览器
    - 右键托盘图标可查看日志或退出
+   - 程序包已内置完整 Python 3.10，uv 负责隔离环境和依赖，不要求安装或下载 Python
+   - 首次启动创建 bin/runtime/launcher-<hash>，后续直接复用
 
 2. start_silent.vbs
    - VBS 脚本，静默启动（备用方案）
@@ -24,7 +26,17 @@
 
 【启动流程】
 ----------------------------------------
-点我启动.exe/点我启动.bat / start_silent.vbs / start.bat
+点我启动.exe/点我启动.bat
+    ↓
+launcher_me.bat
+    ↓
+scripts/launchers/bootstrap.py（uv 持久化环境引导器）
+    ↓
+bin/runtime/launcher-<hash>/Scripts/pythonw.exe
+    ↓
+scripts/launchers/launcher.py（系统托盘）
+    ↓
+start.bat
     ↓
 scripts/launchers/start_windows.py（Windows 启动管理器）
     ↓
@@ -46,8 +58,17 @@ scripts/launchers/start_windows.py（Windows 启动管理器）
 - 安装路径不能有中文
 - 确保 bin/mysql 目录存在（MySQL 服务）
 - 确保 bin/ffmpeg 目录存在（视频处理）
-- uv 托管的 Python 3.10 默认安装到 bin/python（项目目录内），不写用户 AppData
+- 确保 bin/uv/uv.exe 和 bin/python/cpython-3.10.20-windows-x86_64-none/python.exe 存在
+- bin/python 必须是完整 Python 的 uv managed 安装根目录，不能是带 pyvenv.cfg 的普通虚拟环境
+- 用户启动时禁止下载 Python，不使用系统 Python，也不写用户 AppData；缺失或损坏请重新完整解压程序包
+- 不要在程序运行期间执行 uv cache clean
 - 关闭窗口或按 Ctrl+C 停止服务
+
+【启动日志】
+----------------------------------------
+- logs/launcher_bootstrap.log：uv/Python/托盘环境准备
+- logs/launcher_runtime.log：托盘进程自身输出
+- logs/startup.log：start.bat、MySQL 和 Web 服务启动输出
 
 ========================================
 推荐使用"点我启动.exe"，简单方便！

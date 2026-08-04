@@ -28,6 +28,7 @@ enterprise/
 *.spec
 scripts/build_enterprise.py
 *.lock
+!requirements-launcher.lock
 
 # Node modules
 node_modules/

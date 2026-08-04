@@ -29,6 +29,23 @@ SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT = 300
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_CONNECT_TIMEOUT = 10
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_READ_TIMEOUT = 120
 
+# ===== Windows uv 托盘启动器 =====
+# launcher bootstrap 运行在 Web 服务启动之前；所有外部进程仍必须有硬超时，
+# 防止首次安装或损坏的依赖环境让启动窗口永久卡住。
+UV_BUNDLED_PYTHON_REQUEST = "cpython-3.10.20-windows-x86_64-none"
+UV_LAUNCHER_ENV_SCHEMA_VERSION = 2
+UV_LAUNCHER_BOOTSTRAP_LOCK_TIMEOUT_SECONDS = 600
+UV_LAUNCHER_ENV_CREATE_TIMEOUT_SECONDS = 300
+UV_LAUNCHER_DEPENDENCY_SYNC_TIMEOUT_SECONDS = 900
+UV_LAUNCHER_IMPORT_PROBE_TIMEOUT_SECONDS = 30
+UV_LAUNCHER_PROCESS_PROBE_TIMEOUT_SECONDS = 3
+LAUNCHER_PORT_POLL_SECONDS = 1
+LAUNCHER_STATUS_REFRESH_SECONDS = 15
+LAUNCHER_SLOW_START_WARNING_SECONDS = 1800
+LAUNCHER_SERVICE_HARD_TIMEOUT_SECONDS = 3600
+LAUNCHER_STOP_SCRIPT_TIMEOUT_SECONDS = 30
+LAUNCHER_TASKKILL_TIMEOUT_SECONDS = 10
+
 # ===== 七牛云 SDK 网络超时 =====
 # qiniu SDK 内部 requests 单请求超时（秒）；SDK 默认 30。
 # 显式设置避免依赖 SDK 内部默认，且便于统一调优。
@@ -1691,14 +1708,6 @@ class UpgradeConstants:
     BRANCH = "main"                         # 跟踪分支
     TIMEOUT_SECONDS = 30                    # git fetch/pull 超时（秒）
     DEFAULT_REPO_URL = ""                   # 默认仓库地址（为空时跳过检查）
-
-
-# ===== 托盘启动器（scripts/launchers/launcher.py）=====
-
-LAUNCHER_PORT_POLL_SECONDS = 1                # 端口/进程轮询间隔（秒）
-LAUNCHER_STATUS_REFRESH_SECONDS = 15          # 托盘状态文案刷新周期（秒）
-LAUNCHER_SLOW_START_WARNING_SECONDS = 1800    # 慢启动提醒阈值：只提醒不失败，继续等待（秒）
-LAUNCHER_SERVICE_HARD_TIMEOUT_SECONDS = 3600  # 启动硬超时：精确终止启动进程树并报错（秒）
 
 
 # ============ 通知系统常量 ============

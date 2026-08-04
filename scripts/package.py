@@ -95,7 +95,7 @@ PLATFORMS = {
         "uv_src": "uv.exe",
         "uv_dst": "uv.exe",
         # uv 托管 Python：打入包内 bin/python，新用户解压即用、跳过 GitHub 下载
-        "python_request": "cpython-3.10-windows-x86_64-none",
+        "python_request": "cpython-3.10.20-windows-x86_64-none",
         "python_src": "python-windows",  # NAS 预留目录（uv 托管布局）
         "extra_files": ["start.bat"],
         "exclude_files": ["start.command", "create_mac_app.sh"],
@@ -283,6 +283,26 @@ def copy_managed_python(bin_dir: Path, platform_config: dict, platform_name: str
     python_dst = bin_dir / "python"
     is_windows = platform_name == "Windows"
 
+    def validate_windows_python():
+        if not is_windows:
+            return
+        python_executable = python_dst / python_request / "python.exe"
+        if not python_executable.is_file():
+            raise RuntimeError(f"uv 未生成预期的内置 Python：{python_executable}")
+        probe = subprocess.run(
+            [str(python_executable), "-I", "-c", "import encodings; print('bundled-python-ok')"],
+            cwd=bin_dir.parent,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        if probe.returncode != 0 or "bundled-python-ok" not in probe.stdout:
+            detail = (probe.stderr or probe.stdout or "Python probe failed").strip()
+            raise RuntimeError(f"内置 Python 完整性检查失败：{detail}")
+
     sources = []
     if platform_config.get("python_src"):
         sources.append((f"NAS bin/{platform_config['python_src']}",
@@ -296,6 +316,7 @@ def copy_managed_python(bin_dir: Path, platform_config: dict, platform_name: str
         for real_dir in managed:
             print(f"    - Python: {real_dir.name} ({label}) -> python/{real_dir.name}")
             shutil.copytree(real_dir, python_dst / real_dir.name)
+        validate_windows_python()
         return
 
     # Windows：现场用 uv 安装（uv 有下载缓存，通常很快）
@@ -304,14 +325,31 @@ def copy_managed_python(bin_dir: Path, platform_config: dict, platform_name: str
         print(f"    - Python: 物料目录无可用托管 Python，改用 uv 现场安装 {python_request} ...")
         env = dict(os.environ)
         env["UV_PYTHON_INSTALL_DIR"] = str(python_dst)
+        env.pop("UV_PYTHON_DOWNLOADS", None)
         try:
-            subprocess.run(
-                [str(uv_exe), "python", "install", python_request],
-                env=env, timeout=600,
+            completed = subprocess.run(
+                [
+                    str(uv_exe), "python", "install",
+                    "--install-dir", str(python_dst),
+                    "--no-bin", "--no-registry",
+                    python_request,
+                ],
+                cwd=bin_dir.parent,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=900,
+                check=False,
             )
+            if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout or "unknown uv error").strip()
+                print(f"    - Python: [WARN] uv 现场安装失败: {detail}")
         except Exception as e:
             print(f"    - Python: [WARN] uv 现场安装失败: {e}")
         if find_managed_python_dirs(python_dst, python_request):
+            validate_windows_python()
             return
 
     msg = (f"未找到 {python_request} 的托管 Python 物料，"

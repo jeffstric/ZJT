@@ -11,10 +11,17 @@ echo ========================================
 echo.
 
 REM 使用 Python 脚本读取 PID 文件并停止相关进程
-set PYTHON_SCRIPT=%~dp0scripts\launchers\stop_by_pid.py
+set "SCRIPT_DIR=%~dp0"
+set "PYTHON_SCRIPT=%SCRIPT_DIR%scripts\launchers\stop_by_pid.py"
+set "UV_CMD=%SCRIPT_DIR%bin\uv\uv.exe"
+set "PYTHON_REQUEST=cpython-3.10.20-windows-x86_64-none"
+set "UV_PYTHON_INSTALL_DIR=%SCRIPT_DIR%bin\python"
+set "UV_PYTHON_DOWNLOADS=never"
+set "BUNDLED_PYTHON=%UV_PYTHON_INSTALL_DIR%\%PYTHON_REQUEST%\python.exe"
+if "%UV_CACHE_DIR%"=="" set "UV_CACHE_DIR=%SCRIPT_DIR%bin\uv-cache"
 
-if exist "%PYTHON_SCRIPT%" (
-    python "%PYTHON_SCRIPT%"
+if exist "%PYTHON_SCRIPT%" if exist "%UV_CMD%" if exist "%BUNDLED_PYTHON%" (
+    "%UV_CMD%" run --no-project --no-python-downloads --python "%BUNDLED_PYTHON%" "%PYTHON_SCRIPT%"
 ) else (
     echo [INFO] Using directory-based process management
 
@@ -85,6 +92,5 @@ echo [OK] All services stopped
 echo ========================================
 echo.
 
-timeout /t 3 >nul
-
 endlocal
+exit /b 0

@@ -36,8 +36,10 @@ C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /optimize
 
 ### 注意
 
-- `点我启动.exe` 本身不含业务逻辑，只调用 `launcher_me.bat`；托盘/服务逻辑全在
-  `launcher_me.bat` → `launcher.py`。首次启动仍需 uv 准备 Python 环境（约 1~3 分钟）。
+- `点我启动.exe` 本身不含业务逻辑，只调用 `launcher_me.bat`；完整链路为
+  `launcher_me.bat` → `bootstrap.py` → uv 持久化 launcher 环境 → `launcher.py`。
+  Windows 发布包通过 `scripts/package.py` 在构建阶段用 uv 写入完整的 `bin/python`；
+  用户首次启动不下载 Python，只准备依赖并在之后复用哈希环境。
 - 该 exe 仍**未代码签名**，SmartScreen 首次可能提示「未知发布者」，点「仍要运行」即可；
   但 AV 静态误报问题已消除（与 PyInstaller 版「被直接删除」有本质区别）。
 
