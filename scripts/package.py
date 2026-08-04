@@ -70,6 +70,15 @@ EXCLUDE_EXTENSIONS = [
     ".spec",
 ]
 
+# 不需要打包的文件名模式（fnmatch 通配符）
+# 运行时生成的文件锁，内容为进程 PID，打入包内无意义；且 worker 运行中持锁时
+# 复制该文件会触发 PermissionError 导致打包失败。注意 uv.lock 是依赖锁定文件，不能排除。
+EXCLUDE_FILE_PATTERNS = [
+    "scheduler.lock",               # 调度器文件锁（task/scheduler.py）
+    "script_split_worker_*.lock",   # 剧本拆分 worker 文件锁（scripts/running/run_script_split_worker.py）
+    ".launcher_lock",               # 启动器文件锁（scripts/launchers/launcher_mac.py）
+]
+
 
 # ============================================
 # 平台配置
@@ -151,6 +160,9 @@ def should_exclude_file(name: str, rel_path: str = "") -> bool:
         return True
     # 检查文件名匹配
     if name in EXCLUDE_FILES:
+        return True
+    # 检查文件名模式匹配（运行时文件锁等）
+    if any(fnmatch.fnmatch(name, pattern) for pattern in EXCLUDE_FILE_PATTERNS):
         return True
     # 检查文件扩展名匹配
     if any(name.endswith(ext) for ext in EXCLUDE_EXTENSIONS):
