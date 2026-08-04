@@ -63,11 +63,20 @@ EXCLUDE_FILES = [
     "package.py",
     "package.bat",
     "build_enterprise.py",
+    ".launcher_lock",  # 启动器运行时文件锁（scripts/launchers/launcher_mac.py），不以 .lock 结尾需单列
 ]
 
 # 不需要打包的文件扩展名
 EXCLUDE_EXTENSIONS = [
     ".spec",
+    # 运行时文件锁（scheduler.lock、script_split_worker_*.lock、.launcher_lock 等），
+    # 内容为进程 PID，打入包内无意义；worker 持锁时复制会 PermissionError 导致打包失败
+    ".lock",
+]
+
+# 命中排除规则但仍需打包的文件白名单
+EXCLUDE_FILE_WHITELIST = [
+    "uv.lock",  # uv 依赖锁定文件，发行包安装依赖时必需
 ]
 
 
@@ -145,6 +154,9 @@ def should_exclude_dir(name: str) -> bool:
 
 def should_exclude_file(name: str, rel_path: str = "") -> bool:
     """判断文件是否应该被排除"""
+    # 白名单优先：命中排除规则但仍需打包的文件
+    if name in EXCLUDE_FILE_WHITELIST:
+        return False
     # Windows 特殊设备文件名（不区分大小写）
     windows_device_names = {"nul", "con", "prn", "aux"} | {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)}
     if name.lower() in windows_device_names:
