@@ -19,9 +19,9 @@ def load_bootstrap_module():
     return module
 
 
-def test_launcher_environment_key_changes_with_lock_content(tmp_path):
+def test_launcher_environment_key_changes_with_requirements_content(tmp_path):
     bootstrap = load_bootstrap_module()
-    requirements = tmp_path / "requirements-launcher.lock"
+    requirements = tmp_path / "requirements-launcher.txt"
     requirements.write_text("pystray==0.19.5\n", encoding="utf-8")
     first = bootstrap.launcher_environment_key(requirements)
 
@@ -32,9 +32,23 @@ def test_launcher_environment_key_changes_with_lock_content(tmp_path):
     assert first != second
 
 
+def test_empty_launcher_requirements_are_rejected(tmp_path):
+    bootstrap = load_bootstrap_module()
+    requirements = tmp_path / "requirements-launcher.txt"
+    requirements.write_text("# comments only\n\n", encoding="utf-8")
+
+    with pytest.raises(bootstrap.BootstrapError, match="依赖清单为空"):
+        bootstrap.ensure_launcher_environment(
+            tmp_path,
+            tmp_path / "uv.exe",
+            requirements,
+            tmp_path / "python.exe",
+        )
+
+
 def test_existing_valid_environment_is_reused(tmp_path, monkeypatch):
     bootstrap = load_bootstrap_module()
-    requirements = tmp_path / "requirements-launcher.lock"
+    requirements = tmp_path / "requirements-launcher.txt"
     requirements.write_text("pystray==0.19.5\n", encoding="utf-8")
     target = bootstrap.launcher_environment_dir(tmp_path, requirements)
     target.mkdir(parents=True)
@@ -58,7 +72,7 @@ def test_existing_valid_environment_is_reused(tmp_path, monkeypatch):
 
 def test_environment_is_built_with_uv_and_atomically_published(tmp_path, monkeypatch):
     bootstrap = load_bootstrap_module()
-    requirements = tmp_path / "requirements-launcher.lock"
+    requirements = tmp_path / "requirements-launcher.txt"
     requirements.write_text("pystray==0.19.5\n", encoding="utf-8")
     uv_executable = tmp_path / "bin" / "uv" / "uv.exe"
     uv_executable.parent.mkdir(parents=True)

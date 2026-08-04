@@ -54,17 +54,17 @@
     ↓ 程序包内置 Python（bootstrap 仅使用标准库）
 scripts/launchers/bootstrap.py
     ↓ 内置 uv + 内置 Python：uv venv --no-python-downloads + uv pip install
-bin/runtime/launcher-<requirements-lock-hash>
+bin/runtime/launcher-<requirements-hash>
     ↓ pythonw.exe（不再由 uv 临时环境二次拉起）
 scripts/launchers/launcher.py
     ↓
 系统托盘 + start.bat + MySQL/Web 服务
 ```
 
-- `requirements-launcher.in` 是托盘直接依赖，`requirements-launcher.lock` 是 uv 生成的 Windows/Python 3.10 锁文件。
+- `requirements-launcher.in` 仅用于开发时维护直接依赖；`requirements-launcher.txt` 是发布包使用的精确版本依赖清单，不会被发布流程的 `*.lock` 过滤规则排除。
 - bootstrap 只使用标准库；环境创建和依赖安装由 uv 完成，基础 Python 始终来自程序包的 `bin/python`。
 - 用户侧禁止 Python 下载；`bin/python` 缺失、损坏或是普通虚拟环境时立即报“程序包不完整”。
-- 锁文件内容变化时会创建新的哈希环境；新环境验证失败不会覆盖已有可用环境。
+- 依赖清单内容变化时会创建新的哈希环境；新环境验证失败不会覆盖已有可用环境。
 - 托盘常驻进程使用 uv 创建环境中的 `pythonw.exe`，不会引用 `uv run --with-requirements` 的 `.tmp*` 临时解释器。
 - 正常启动禁止执行 `uv cache clean`。LiteLLM 版本通过 `requirements.txt` 的 `<1.92` 约束控制，避免与正在运行的 uv 进程争用缓存锁。
 - bootstrap 日志：`logs/launcher_bootstrap.log`；托盘运行日志：`logs/launcher_runtime.log`；服务启动日志：`logs/startup.log`。
@@ -84,14 +84,16 @@ bin\uv\uv.exe python install `
 
 打包脚本随后直接运行该解释器并导入 `encodings` 做完整性检查。下载只发生在构建机，最终用户不下载 Python。
 
-更新 launcher 依赖后必须重新生成锁文件：
+更新 launcher 依赖后必须重新生成精确版本依赖清单：
 
 ```powershell
 bin\uv\uv.exe pip compile requirements-launcher.in `
   --python-version 3.10 `
   --python-platform windows `
-  --output-file requirements-launcher.lock
+  --output-file requirements-launcher.txt
 ```
+
+`requirements-launcher.in` 不属于用户运行时必需文件；最终发布包只需携带生成后的 `requirements-launcher.txt`，不依赖任何 `.lock` 文件。
 
 **使用场景**：
 - 日常使用（**首选**）

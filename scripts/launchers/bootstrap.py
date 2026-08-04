@@ -232,7 +232,12 @@ def ensure_launcher_environment(
 ) -> Path:
     """Create and validate the hash-addressed launcher environment."""
     if not requirements_file.is_file():
-        raise BootstrapError(f"找不到启动器依赖锁文件：{requirements_file}")
+        raise BootstrapError(f"找不到启动器依赖清单：{requirements_file}")
+    if not any(
+        line.strip() and not line.lstrip().startswith("#")
+        for line in requirements_file.read_text(encoding="utf-8").splitlines()
+    ):
+        raise BootstrapError(f"启动器依赖清单为空：{requirements_file}")
 
     runtime_root = project_root / "bin" / "runtime"
     runtime_root.mkdir(parents=True, exist_ok=True)
@@ -381,7 +386,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         uv_executable = _uv_path(project_root)
         bundled_python = bundled_python_executable(project_root)
-        requirements_file = project_root / "requirements-launcher.lock"
+        requirements_file = project_root / "requirements-launcher.txt"
         environment_dir = ensure_launcher_environment(
             project_root,
             uv_executable,
