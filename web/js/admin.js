@@ -853,9 +853,21 @@ const AdminApp = {
                 loading: false
             },
 
-            isCommunityEdition: false,
+            // 默认按社区版处理，避免 dashboard 尚未返回时闪现商业入口。
+            isCommunityEdition: true,
             runninghubKeyPoolAvailable: false,
             brandingAvailable: false,
+
+            // 商业包状态与许可证状态分离：包成功导入决定是否展示卡片，
+            // 完整注册决定是否允许提交 Token、刷新、恢复或注销。
+            enterpriseStatus: {
+                package_available: false,
+                registration_ready: false,
+                license_control_available: false,
+                registration_failed: false,
+                failure_reason: '',
+                enterprise_version: null,
+            },
 
             // 许可证状态轮询：仅用于改善前端显示及时性，不是安全边界。
             // 真正的权限边界由品牌 Provider 和品牌 API 的后端 403 保证。
@@ -937,9 +949,18 @@ const AdminApp = {
             return Math.ceil(this.users.total / this.users.pageSize);
         },
 
+        enterprisePackageAvailable() {
+            return Boolean(this.enterpriseStatus.package_available);
+        },
+
+        licenseControlAvailable() {
+            return Boolean(this.enterpriseStatus.license_control_available);
+        },
+
         // 激活表单显示条件：未配置凭据，或状态属于需要重新激活的异常态。
         // 已正常激活（credential_configured=true 且状态正常）时折叠隐藏。
         showActivateForm() {
+            if (!this.licenseControlAvailable) return false;
             if (!this.licenseStatus.credential_configured) return true;
             return ['auth_required', 'denied', 'uninitialized'].includes(
                 this.licenseStatus.state
@@ -1295,7 +1316,10 @@ const AdminApp = {
                     this.dashboard.activeWorkflows3d = response.data.data.active_workflows_3d;
                     this.dashboard.loading = false;
 
-                    this.isCommunityEdition = response.data.data.is_community_edition || false;
+                    this.isCommunityEdition = Boolean(
+                        response.data.data.is_community_edition
+                    );
+                    this.applyEnterpriseStatus(response.data.data.enterprise);
                     this.runninghubKeyPoolAvailable = Boolean(
                         response.data.data.features?.runninghub_key_pool
                     );
@@ -1352,6 +1376,33 @@ const AdminApp = {
             }
         },
 
+        applyEnterpriseStatus(data) {
+            this.enterpriseStatus = {
+                package_available: Boolean(data?.package_available),
+                registration_ready: Boolean(data?.registration_ready),
+                license_control_available: Boolean(
+                    data?.license_control_available
+                ),
+                registration_failed: Boolean(data?.registration_failed),
+                failure_reason: data?.failure_reason || '',
+                enterprise_version: data?.enterprise_version || null,
+            };
+
+            // 控制面不可用时不得保留旧的许可证/品牌可用状态，也不得继续轮询。
+            if (!this.enterpriseStatus.license_control_available) {
+                this.licenseStatus = {
+                    loading: false,
+                    state: null,
+                    reason: '',
+                    enforcement_mode: '',
+                    capabilities: null,
+                    license: null,
+                    credential_configured: false,
+                };
+                this.applyBrandingAvailability(false);
+            }
+        },
+
         // 统一把后端 status 响应应用到本地：同时刷新状态卡片和品牌可用性，
         // 保证 dashboard 卡片、菜单可见性、轮询三者数据一致。
         applyLicenseStatus(data) {
@@ -1372,8 +1423,7 @@ const AdminApp = {
 
         // 显式加载一次许可证状态（用于切到 dashboard 时刷新卡片）。
         async loadLicenseStatus() {
-            // 社区版/开源版没有许可证接口，跳过。
-            if (this.isCommunityEdition) return;
+            if (!this.licenseControlAvailable) return;
             if (!this.authToken) return;
             this.licenseStatus.loading = true;
             try {
@@ -1398,10 +1448,8 @@ const AdminApp = {
         // 不在前端解析 edition/claims。临时网络错误保持上次结果；
         // 401/403 走现有认证失效流程。
         async pollLicenseStatus() {
-            // 社区版/开源版没有许可证接口，跳过轮询避免每分钟打 404。
-            // isCommunityEdition 在 dashboard 数据返回后才为 true，放这里做单点守卫
-            // 可同时覆盖 60s 定时器和首次拉取两条路径。
-            if (this.isCommunityEdition) return;
+            // 许可证控制面未完整注册时跳过，避免社区版和注册失败状态打 404。
+            if (!this.licenseControlAvailable) return;
             if (this.licenseStatusInFlight) return;
             if (!this.authToken) return;
             this.licenseStatusInFlight = true;
@@ -1444,6 +1492,7 @@ const AdminApp = {
 
         // 三个操作的公共实现：POST 后用最新 status 覆盖本地状态并提示。
         async _postLicenseAction(url, actionKey) {
+            if (!this.licenseControlAvailable) return;
             if (!this.authToken || this.licenseStatusInFlight) return;
             this.licenseStatusInFlight = true;
             try {
@@ -1472,6 +1521,7 @@ const AdminApp = {
         // 用候选 Token 原子化激活许可证。后端会先试 lease+验签（不落盘），
         // 成功后才落盘、清注销标记、刷新状态；失败时保留旧凭据、不清空输入框。
         async activateLicense() {
+            if (!this.licenseControlAvailable) return;
             const token = (this.activateTokenInput || '').trim();
             if (!token) {
                 this.showToast(this.t('license_activate_empty'), 'warning');
@@ -1810,6 +1860,10 @@ const AdminApp = {
                 });
 
                 if (response.data.code === 0) {
+                    this.isCommunityEdition = Boolean(
+                        response.data.data.is_community_edition
+                    );
+                    this.applyEnterpriseStatus(response.data.data.enterprise);
                     this.dashboard.totalUsers = response.data.data.total_users;
                     this.dashboard.activeWorkflows3d = response.data.data.active_workflows_3d;
                     // dashboard 的 features.branding 由后端动态派生，这里同步一次

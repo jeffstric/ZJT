@@ -47,6 +47,13 @@ def _require_runninghub_key_pool_config_access(config_keys) -> None:
         raise HTTPException(status_code=403, detail='此功能仅商业版本可用')
 
 
+def _get_enterprise_admin_status() -> dict[str, object]:
+    """读取 Enterprise 实际加载状态，避免仅按目录/config 误判。"""
+    from utils.enterprise_loader import enterprise_loader
+
+    return enterprise_loader.get_runtime_status()
+
+
 async def require_admin(auth_token: str = Header(None, alias="Authorization")) -> User:
     """
     管理员权限校验中间件
@@ -90,14 +97,23 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
         
         from task.runninghub_key_pool import is_available as is_runninghub_key_pool_available
         from services.branding import is_available as is_branding_available
+        enterprise_status = _get_enterprise_admin_status()
         return {
             "code": 0,
             "data": {
                 "total_users": total_users,
                 "active_workflows_3d": active_workflows_3d,
-                "is_community_edition": IS_COMMUNITY_EDITION,
+                # UI 的运行模式必须以 Enterprise 是否完整注册为准；静态目录存在
+                # 不能代表 PyArmor 和注册流程可用。
+                "is_community_edition": not bool(
+                    enterprise_status["registration_ready"]
+                ),
+                "enterprise": enterprise_status,
                 "features": {
                     "runninghub_key_pool": is_runninghub_key_pool_available(),
+                    "commercial_license_admin": bool(
+                        enterprise_status["license_control_available"]
+                    ),
                     # 品牌定制：仅企业版可用。工作室版同样注入了 branding provider，
                     # 但 is_available() 在 studio license 下经严格判断返回 False，
                     # 前端据此隐藏品牌定制入口。

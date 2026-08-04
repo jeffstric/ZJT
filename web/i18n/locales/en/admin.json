@@ -259,6 +259,8 @@
   "license_state_denied": "Denied",
   "license_state_expired": "Expired",
   "license_state_security_error": "Security Error",
+  "license_state_registration_failed": "Component Registration Failed",
+  "license_registration_failed_hint": "The Enterprise package was recognized, but component registration did not complete. License actions are temporarily unavailable; check the service log and restart.",
   "license_field_edition": "Edition",
   "license_field_revision": "Revision",
   "license_field_branding": "Branding",
