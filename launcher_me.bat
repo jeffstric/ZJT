@@ -24,11 +24,12 @@ if not exist "!UV_CMD!" (
     exit /b 1
 )
 
-REM The release package contains a complete relocatable Python distribution.
-REM End-user startup must never download or select a system Python.
+REM The release package normally contains a complete relocatable Python.
+REM If it is missing, bundled uv downloads the same build into bin\python.
+REM A system Python must never be selected.
 set "PYTHON_REQUEST=cpython-3.10.20-windows-x86_64-none"
 set "UV_PYTHON_INSTALL_DIR=%SCRIPT_DIR%bin\python"
-set "UV_PYTHON_DOWNLOADS=never"
+set "UV_PYTHON_DOWNLOADS=auto"
 set "BUNDLED_PYTHON=%UV_PYTHON_INSTALL_DIR%\%PYTHON_REQUEST%\python.exe"
 if "%UV_CACHE_DIR%"=="" set "UV_CACHE_DIR=%SCRIPT_DIR%bin\uv-cache"
 if not exist "%UV_CACHE_DIR%" mkdir "%UV_CACHE_DIR%"
@@ -40,11 +41,22 @@ if exist "%UV_PYTHON_INSTALL_DIR%\pyvenv.cfg" (
     exit /b 1
 )
 if not exist "!BUNDLED_PYTHON!" (
-    echo [ERROR] Bundled Python not found at:
-    echo !BUNDLED_PYTHON!
-    echo Please re-extract the complete application package.
-    pause
-    exit /b 1
+    echo [INFO] Bundled Python not found, downloading to bin\python ...
+    echo This only happens once. Please keep the network connected.
+    echo.
+    "!UV_CMD!" python install !PYTHON_REQUEST!
+    if errorlevel 1 (
+        echo [WARN] Official source failed, retrying with China mirror...
+        set "UV_PYTHON_INSTALL_MIRROR=https://registry.npmmirror.com/-/binary/python-build-standalone"
+        "!UV_CMD!" python install !PYTHON_REQUEST!
+    )
+    if not exist "!BUNDLED_PYTHON!" (
+        echo [ERROR] Failed to download Python automatically.
+        echo Please check your network, or re-extract the complete package.
+        pause
+        exit /b 1
+    )
+    echo [OK] Python downloaded to bin\python.
 )
 "!BUNDLED_PYTHON!" -I -c "import encodings" >nul 2>&1
 if errorlevel 1 (
