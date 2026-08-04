@@ -57,12 +57,16 @@ def get_db_connection():
 ```
 run_prod.py（父进程 manager）
 ├── run_scheduler.py              独立 Python 进程，APScheduler，独立建池
+│   └── SyncTaskExecutor 进程池   ⚠️ scheduler 内拉起 sync_task.max_workers 个
+│       └── _execute_sync_task × max_workers   每个 ProcessPool 子进程独立建池
 ├── run_script_split_worker × N   独立进程（N=script_split.worker_total），独立建池
 └── gunicorn master
-    └── UvicornWorker × 4         fork 出的子进程，各自 fork 后独立建池
+    └── UvicornWorker × W         fork 出的子进程，各自 fork 后独立建池（W=-w 参数）
 ```
 
-稳态约 5 个查库进程（scheduler + 4 gunicorn worker），worker_total>0 时再加 N 个 script_split worker。
+稳态查库进程数 = 1（scheduler）+ W（gunicorn worker，默认 4）+ max_workers（sync_task，默认 4）+ N（script_split worker，默认 0）。
+
+> ⚠️ **2026-08-04 `Too many connections` 事故根因**：原拓扑图**漏算了 sync_task 的 ProcessPool 子进程**（每个子进程 `import model` → `_get_pool()` pid 漂移 → 独立建池），导致容量预算公式严重低估。生产 `sync_task.max_workers=12` × `maxcached=20` = 240 条潜在连接，叠加 gunicorn 4 worker × 20 = 80，峰值远超 MySQL `max_connections`。详见事故复盘。
 
 ### 为什么 fork 安全（机制保证，非靠注释论证）
 
@@ -83,7 +87,7 @@ run_prod.py（父进程 manager）
 database:
   pool:
     mincached: 2            # 启动时预热连接数
-    maxcached: 20           # 空闲池上限（每进程）。复用优先，超出归还时真关闭
+    maxcached: 10           # 空闲池上限（每进程）。复用优先，超出归还时真关闭
     maxconnections: 0       # 0=无硬上限。如需彻底封顶防端口耗尽，可设具体值（如 30）
 ```
 
@@ -102,13 +106,15 @@ DB_POOL_CONNECT_TIMEOUT = 10   # 新建底层 MySQL 连接的 connect_timeout（
 ### MySQL 侧总连接预算
 
 ```
-总连接数 ≈ (1 scheduler + 4 gunicorn worker + N script_split worker) × maxcached
-        = 5 × 20 = 100（默认 worker_total=0）
+空闲池容量上限 ≈ (1 scheduler + W gunicorn worker + max_workers sync_task 子进程 + N script_split worker) × maxcached
+生产实例（-w 4, max_workers=12, worker_total=0, maxcached=10）：
+        = (1 + 4 + 12 + 0) × 10 = 170
 ```
 
-需确认 MySQL `max_connections ≥ 100 + 其他客户端余量`。8·1 事故证明服务端余量充足（高峰每秒数百次建连未触发 `Too many connections`）。
-
-**注意空闲常驻与瞬时连接的区别**：改造前是瞬时短连接（峰值数百条但快速释放），改造后是空闲常驻（≤100 条永不关闭）。性质不同，需确认 MySQL 侧能承受这部分常驻。
+⚠️ 注意：
+- `maxcached` 仅是**空闲池上限**，`maxconnections=0` 时**活跃连接无硬上限**，瞬时峰值可高于此值。
+- 上式**仅统计常驻空闲连接**。sync_task 子进程虽串行执行（稳态持连 ≈ 0~1），但每进程预热 `mincached=2` 即 12×2=24 条常驻；gunicorn 异步 worker 高峰并发持连可能逼近 maxcached。
+- 需确认 MySQL `max_connections ≥ 空闲池上限 × 1.5 + 其他客户端余量`。8·1 事故（端口耗尽）期间服务端余量充足；8·4 事故（`Too many connections`）正是因为此公式漏算 sync_task 进程池所致。
 
 ### 池满策略（当前：无硬上限）
 
@@ -121,7 +127,7 @@ DB_POOL_CONNECT_TIMEOUT = 10   # 新建底层 MySQL 连接的 connect_timeout（
 
 ### 无硬上限的边界（诚实标注）
 
-极端瞬时并发 > maxcached 时仍会临时新建超过 20 条连接，产生少量 TIME_WAIT。但相比改造前（每查询 connect/close）已是数量级改善——稳态复用使连接创建速率从"每查询一次"降为"≈0"。8·1 那种高峰场景（~277 错误/秒）不再复现。
+极端瞬时并发 > maxcached 时仍会临时新建超过 10 条连接，产生少量 TIME_WAIT。但相比改造前（每查询 connect/close）已是数量级改善——稳态复用使连接创建速率从"每查询一次"降为"≈0"。8·1 那种高峰场景（~277 错误/秒）不再复现。
 
 ## 6. read_timeout 不设的理由（彻底零破坏）
 
@@ -198,8 +204,8 @@ begin→rollback（异常透出）调用序列。
 - [ ] **异步驱动迁移（aiomysql/asyncmy）**：彻底消除同步 DB 在异步服务中的阻塞隐患，契合 FastAPI 特性。工作量大，作为独立迭代。
 
 ### 监控建议（上线后观察）
-- 服务启动日志应有 `[DBPool] 连接池已创建 pid=... mincached=2 maxcached=20`。
-- `SHOW PROCESSLIST` 观察常驻连接数稳定在 ≤100，不飙升。
+- 服务启动日志应有 `[DBPool] 连接池已创建 pid=... mincached=2 maxcached=10`。
+- `SHOW PROCESSLIST` 观察常驻连接数稳定在 ≤170（按生产实例预算），不飙升。
 - 观察是否再出现 `(2003) Errno 99`（预期归零）。
 - 观察是否出现新的 `(2013)` 报错（若 read_timeout 后续启用）。
 

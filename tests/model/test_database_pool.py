@@ -86,7 +86,8 @@ def test_pool_defaults_when_no_pool_config(db_module, monkeypatch):
 
     db_module._get_pool()
 
-    # 验证内置默认值生效（与 database.py / base yaml 一致）
+    # 验证内置默认值生效（与 database.py 代码兜底值一致；各环境实际值由 base yaml 覆盖：
+    # prod=10, dev=20）
     assert captured['mincached'] == 2
     assert captured['maxcached'] == 20
     assert captured['maxconnections'] == 0
