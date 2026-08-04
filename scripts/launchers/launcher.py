@@ -134,6 +134,12 @@ IMPORT_ERROR = None
 
 class TrayLauncher:
     """托盘启动器"""
+
+    STARTUP_NOTIFICATION_TITLE = "智剧通正在启动"
+    STARTUP_NOTIFICATION_MESSAGE = (
+        "程序正在后台启动，请稍候。\n"
+        "请查看任务栏右下角的“智剧通”图标；如未看到，请点击“^”展开隐藏图标。"
+    )
     
     # 状态常量
     STATUS_STARTING = "starting"
@@ -162,6 +168,7 @@ class TrayLauncher:
         self.status_message = "正在初始化..."
         self.icon = None
         self.process = None
+        self.service_thread = None
         self.server_port = 9003
         self.server_url = f"http://localhost:{self.server_port}"
         self.should_stop = False
@@ -335,7 +342,6 @@ class TrayLauncher:
                 return
 
             self.status_message = "正在启动服务..."
-            self._notify("智剧通", "正在启动服务，请稍候...")
 
             start_script = os.path.join(self.current_dir, "start.bat")
 
@@ -546,15 +552,29 @@ class TrayLauncher:
             "智剧通 - 启动中...",
             menu=self._create_menu()
         )
-        
-        service_thread = threading.Thread(target=self._start_service, daemon=True)
-        service_thread.start()
-        
+
         # bootstrap 使用持久化 uv 环境中的 pythonw.exe 启动本进程；
         # frozen/兼容入口下保留 hide_console 作为无副作用兜底。
         hide_console()
 
-        self.icon.run()
+        self.icon.run(setup=self._on_tray_ready)
+
+    def _on_tray_ready(self, icon):
+        """托盘注册完成后提示用户，并在后台启动服务。"""
+        icon.visible = True
+        self.status_message = "正在启动服务..."
+        self._update_icon()
+        self._notify(
+            self.STARTUP_NOTIFICATION_TITLE,
+            self.STARTUP_NOTIFICATION_MESSAGE,
+        )
+
+        self.service_thread = threading.Thread(
+            target=self._start_service,
+            name="zjt-service-startup",
+            daemon=True,
+        )
+        self.service_thread.start()
 
 
 def hide_console():
