@@ -1591,7 +1591,7 @@ class SessionHistoryConstants:
     MAX_HISTORY_MESSAGES = 100  # 最大历史消息数量（剧本创作需要较多上下文）
     MIN_HISTORY_MESSAGES = 10   # 最小保留的历史消息数量（确保上下文连续性）
     TRUNCATION_KEEP_SYSTEM = True  # 截断时保留系统提示
-    SESSION_EXPIRE_HOURS_SCRIPT = 24      # 剧本智能体过期时长（小时）
+    SESSION_EXPIRE_HOURS_SCRIPT = 72      # 剧本智能体过期时长（小时，3天）
     SESSION_EXPIRE_HOURS_MARKETING = 336  # 营销智能体过期时长（14天 = 336小时）
 
 

@@ -245,6 +245,21 @@ def set_image_to_video_model_id(user_id: str, world_id: str, task_id: int):
     UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_IMAGE_TO_VIDEO_MODEL, task_id)
 
 
+def _session_expire_hours(session_type: int) -> int:
+    """按会话类型返回过期时长（小时）"""
+    from config.constant import SessionHistoryConstants
+    return (SessionHistoryConstants.SESSION_EXPIRE_HOURS_MARKETING
+            if session_type == 2 else SessionHistoryConstants.SESSION_EXPIRE_HOURS_SCRIPT)
+
+
+def _extend_session_expiry(session_id: str, session_type: int):
+    """用户产生新消息活动时顺延会话过期时间（同步函数，需用 asyncio.to_thread 调用）"""
+    from datetime import timedelta
+    from model.chat_sessions import ChatSessionsModel
+    expires_at = datetime.now() + timedelta(hours=_session_expire_hours(session_type))
+    ChatSessionsModel.update_metadata(session_id=session_id, expires_at=expires_at)
+
+
 # 全局组件
 task_manager = TaskManager()
 # 指定项目根目录作为 base_dir，确保文件保存到正确位置
@@ -1484,6 +1499,14 @@ async def append_session_message(request: Request, session_id: str, message_requ
 
         # 清除缓存，确保下次加载时从数据库读取最新数据
         session_storage.invalidate_cache(session_id)
+
+        # 追加消息即视为会话活动，顺延过期时间
+        try:
+            await asyncio.to_thread(
+                _extend_session_expiry, session_id, getattr(session_entity, 'session_type', 1) or 1
+            )
+        except Exception as e:
+            logger.error(f'顺延会话过期时间失败（非致命）: {e}')
 
         return JSONResponse({
             'success': True,
@@ -3514,7 +3537,15 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             logger.info(f'User message written to chat_messages for task {task_id}')
         except Exception as e:
             logger.error(f'写入用户消息到 chat_messages 失败（非致命）: {e}')
-        
+
+        # 用户发消息即视为会话活动，顺延过期时间（覆盖任务失败不顺延的缺口）
+        try:
+            await asyncio.to_thread(
+                _extend_session_expiry, session_id, getattr(session, 'session_type', 1)
+            )
+        except Exception as e:
+            logger.error(f'顺延会话过期时间失败（非致命）: {e}')
+
         # 准备会话数据
         session_data = {
             'user_id': session.user_id,
@@ -3736,6 +3767,28 @@ async def submit_verification(request: Request, verification_id: str, verify_req
 
         # 将 verification 回答中的媒体合并到当前任务，确保等待中的 PM/专家能看到真实 URL
         db_verification = task_manager.get_verification(verification_id)
+
+        # 提交验证回答即视为会话活动，顺延过期时间
+        try:
+            if db_verification:
+                from model.agent_tasks import AgentTasksModel
+                from model.chat_sessions import ChatSessionsModel
+                _task_entity = await asyncio.to_thread(
+                    AgentTasksModel.get_by_task_id, db_verification.task_id
+                )
+                if _task_entity and _task_entity.session_id:
+                    _session_entity = await asyncio.to_thread(
+                        ChatSessionsModel.get_by_session_id, _task_entity.session_id
+                    )
+                    if _session_entity:
+                        await asyncio.to_thread(
+                            _extend_session_expiry,
+                            _task_entity.session_id,
+                            getattr(_session_entity, 'session_type', 1) or 1
+                        )
+        except Exception as e:
+            logger.error(f'顺延会话过期时间失败（非致命）: {e}')
+
         if db_verification and (verify_request.image_urls or verify_request.video_urls or verify_request.audio_urls):
             try:
                 from model.agent_tasks import AgentTasksModel
