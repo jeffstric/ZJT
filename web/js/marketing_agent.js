@@ -1635,7 +1635,7 @@
                         content: '已提交发布审核，通过后会出现在灵感页。',
                         timestamp: new Date().toISOString()
                     });
-                    scrollToBottom();
+                    scrollToBottom({ force: true });
                 } catch (e) {
                     showError(e.message || '发布失败');
                 }
@@ -1670,7 +1670,7 @@
                 switchView('generate');
                 const videoType = creationTypes.find(t => t.key === 'video');
                 if (videoType) selectType(videoType);
-                scrollToBottom();
+                scrollToBottom({ force: true });
             }
             window.imageToVideo = imageToVideo;
 
@@ -1700,7 +1700,7 @@
                 switchView('generate');
                 const videoType = creationTypes.find(t => t.key === 'video');
                 if (videoType) selectType(videoType);
-                scrollToBottom();
+                scrollToBottom({ force: true });
             }
 
             // 自动调整 textarea 高度
@@ -1714,13 +1714,28 @@
                 });
             }
 
-            // 滚动到底部
-            function scrollToBottom() {
+            // 聊天区贴底跟随：用户上滑阅读时不抢滚动条
+            const CHAT_NEAR_BOTTOM_PX = 100;
+
+            function isChatNearBottom() {
+                const el = chatMessages.value;
+                if (!el) return true;
+                return el.scrollHeight - el.scrollTop - el.clientHeight <= CHAT_NEAR_BOTTOM_PX;
+            }
+
+            /**
+             * 滚动消息列表到底部。
+             * @param {boolean|{force?: boolean}} [options] - true 或 {force:true} 时强制滚底（用户发送/切换会话等）；
+             *   默认仅在用户已接近底部时跟随，避免生成轮询/流式输出把用户从历史消息拽回底部。
+             * 是否贴底在 nextTick 之前采样：此时 DOM 尚未因本次消息更新增高，可正确判断“更新前是否在底部”。
+             */
+            function scrollToBottom(options) {
+                const force = options === true || (options && options.force === true);
+                const shouldStick = force || isChatNearBottom();
+                if (!shouldStick) return;
                 nextTick(() => {
                     const el = chatMessages.value;
-                    if (el) {
-                        el.scrollTop = el.scrollHeight;
-                    }
+                    if (el) el.scrollTop = el.scrollHeight;
                 });
             }
 
@@ -1906,7 +1921,7 @@
                     }
                     inputText.value = '';
                     autoResize();
-                    scrollToBottom();
+                    scrollToBottom({ force: true });
                     showContinue.value = false;
                     await sendImageRequest(text);
                     return;
@@ -1925,7 +1940,7 @@
                     }
                     inputText.value = '';
                     autoResize();
-                    scrollToBottom();
+                    scrollToBottom({ force: true });
                     showContinue.value = false;
                     await sendVideoRequest(text);
                     return;
@@ -1950,7 +1965,7 @@
                 }
                 inputText.value = '';
                 autoResize();
-                scrollToBottom();
+                scrollToBottom({ force: true });
                 showContinue.value = false;
 
                 // 发送请求
@@ -2309,8 +2324,12 @@
                                 await cleanPendingTasksFromHistory(pollSessionId, 'image_task_submitted', projectIds);
                             } else {
                                 const doneCount = tasks.filter(isGenerationSuccess).length;
-                                messages.value[msgIdx].content = window.t('image_generating_progress', { done: doneCount, total: tasks.length });
-                                scrollToBottom();
+                                const progressContent = window.t('image_generating_progress', { done: doneCount, total: tasks.length });
+                                // 进度文案未变化时跳过写入，避免无意义 re-render 与滚动抖动
+                                if (messages.value[msgIdx].content !== progressContent) {
+                                    messages.value[msgIdx].content = progressContent;
+                                    scrollToBottom();
+                                }
                             }
                         }
                     } catch (err) {
@@ -2431,8 +2450,12 @@
                                 await cleanPendingTasksFromHistory(pollSessionId, 'video_task_submitted', projectIds);
                             } else {
                                 const doneCount = tasks.filter(isGenerationSuccess).length;
-                                messages.value[msgIdx].content = window.t('video_generating_progress', { done: doneCount, total: tasks.length });
-                                scrollToBottom();
+                                const progressContent = window.t('video_generating_progress', { done: doneCount, total: tasks.length });
+                                // 进度文案未变化时跳过写入，避免无意义 re-render 与滚动抖动
+                                if (messages.value[msgIdx].content !== progressContent) {
+                                    messages.value[msgIdx].content = progressContent;
+                                    scrollToBottom();
+                                }
                             }
                         }
                     } catch (err) {
@@ -3350,7 +3373,7 @@
                 showContinue.value = false;
                 inputText.value = '';
                 autoResize();
-                scrollToBottom();
+                scrollToBottom({ force: true });
                 // 清空所有媒体状态
                 clearAllMedia();
                 if (fileInputRef.value) fileInputRef.value.value = '';
@@ -3757,7 +3780,7 @@
                     }
                 }
 
-                scrollToBottom();
+                scrollToBottom({ force: true });
             }
 
             // 加载本地历史
