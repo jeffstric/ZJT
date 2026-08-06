@@ -1891,12 +1891,40 @@ class StoryboardImageAgentRunner:
         agent_tool_executor = tool_executor
         if self.generation_target == "image":
             snapshot_ratio = (active_snapshot or {}).get('ratio') if active_snapshot else None
+            # task.image_urls / execution_context.reference_image_items 在 ai-chat 创建时填入；
+            # 工具层强制注入，避免 LLM 调用 edit_image 时漏传多角色参考 URL，并保持图例与 URL 对齐。
+            exec_ctx = getattr(task, 'execution_context_json', None) or {}
+            if isinstance(exec_ctx, str):
+                try:
+                    exec_ctx = json.loads(exec_ctx)
+                except Exception:
+                    exec_ctx = {}
+            if not isinstance(exec_ctx, dict):
+                exec_ctx = {}
+            forced_reference_items = [
+                dict(item)
+                for item in (exec_ctx.get('reference_image_items') or [])
+                if isinstance(item, dict) and str(item.get('url') or '').strip()
+            ]
+            forced_reference_urls = [
+                str(url).strip()
+                for url in (getattr(task, 'image_urls', None) or [])
+                if str(url or '').strip()
+            ]
+            if not forced_reference_urls and forced_reference_items:
+                forced_reference_urls = [
+                    str(item.get('url')).strip()
+                    for item in forced_reference_items
+                    if str(item.get('url') or '').strip()
+                ]
             agent_tool_executor = StoryboardAgentImageToolExecutor(
                 tool_executor,
                 style=self.style,
                 composition_preference=self.composition_preference,
                 generation_snapshot=active_snapshot,
                 workflow_ratio=str(snapshot_ratio or '').strip(),
+                forced_reference_urls=forced_reference_urls,
+                forced_reference_items=forced_reference_items,
             )
         else:
             effective_video_preferences = dict(self.video_preferences)
@@ -4005,6 +4033,20 @@ async def scene_ai_chat(
         'active_generation_slot': active_generation_slot,
         'generation_snapshots': generation_snapshots,
     }
+    # 图片模式：把参考图条目写入执行上下文，供工具层强制注入 URL + 对齐图例。
+    if generation_target == 'image' and reference_image_items_for_msg:
+        execution_context_json['reference_image_items'] = [
+            {
+                'url': item.get('url'),
+                'type': item.get('type'),
+                'name': item.get('name'),
+                'label': item.get('label'),
+                'variant_label': item.get('variant_label'),
+                'source_type': item.get('source_type'),
+            }
+            for item in reference_image_items_for_msg
+            if isinstance(item, dict) and item.get('url')
+        ]
     task_id = await asyncio.to_thread(
         task_manager.create_task,
         session_id=session_id,

@@ -38,6 +38,7 @@ from services.storyboard_reference_prompt_service import (
     append_reference_legend,
     append_storyboard_visual_suffix,
     build_storyboard_reference_items,
+    extract_storyboard_reference_names,
     reference_urls,
 )
 from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGridService
@@ -731,18 +732,28 @@ class StoryboardAgentCliService:
         dialogues = StoryboardDialogueModel.list_by_scene(int(scene_id)) or []
 
         world_id = _get_field(storyboard, "world_id")
+        video_prompt_raw = _get_field(scene, "video_prompt") or ""
+        # 角色参考以提示词【【名】】为真源：每个标记独立查世界库（含用户后加的新引用）。
+        # 对白角色仍合并进 characters 供上下文展示，但不单独扩展参考图。
         characters = self._merge_named_items(
             self._load_dialogue_characters(dialogues),
-            self._resolve_prompt_characters(prompt_json, world_id, scene=scene),
+            self._resolve_prompt_characters(
+                prompt_json, world_id, scene=scene, video_prompt=video_prompt_raw
+            ),
         )
         location = self._resolve_location(prompt_json)
         props = self._resolve_props(prompt_json, world_id, scene=scene)
         selected_assets = self._selected_assets(scene)
 
         image_prompt = self._compose_image_prompt(scene, storyboard, prompt_json, characters, location, props)
-        video_prompt = _get_field(scene, "video_prompt") or image_prompt
+        video_prompt = video_prompt_raw or image_prompt
         reference_image_items = self._collect_reference_image_items(
-            prompt_json, video_prompt, characters, location, props
+            prompt_json,
+            video_prompt,
+            characters,
+            location,
+            props,
+            world_id=world_id,
         )
         reference_images = reference_urls(reference_image_items)
 
@@ -3344,24 +3355,72 @@ class StoryboardAgentCliService:
             parts.append(str(video_prompt))
         return "\n".join(parts)
 
-    def _extract_character_names_from_prompt(self, prompt_json: Dict[str, Any], scene: Any = None) -> List[str]:
-        text = self._visual_prompt_text(prompt_json, scene=scene)
-        names: List[str] = []
-        for pattern in (r"【【([^】]+)】】", r"\[\[([^\]]+)\]\]"):
-            names.extend(match.strip() for match in re.findall(pattern, text) if match.strip())
+    def _extract_character_names_from_prompt(
+        self,
+        prompt_json: Dict[str, Any],
+        scene: Any = None,
+        video_prompt: str = "",
+    ) -> List[str]:
+        """Extract character tags for reference matching.
+
+        Align with build_storyboard_reference_items / video_workflow shot frame:
+        only `【【角色名】】` in image/video prompt fields count. Also keep legacy
+        `[[name]]` markers from the same visual text for backward compatibility.
+        """
+        prompt_video = video_prompt or (_get_field(scene, "video_prompt") if scene is not None else "") or ""
+        names = list(extract_storyboard_reference_names(prompt_json, prompt_video).get("characters") or [])
+        # Legacy ASCII markers in the same prompt fields used by reference matching.
+        text_parts = [
+            (prompt_json or {}).get("scene_desc") or "",
+            (prompt_json or {}).get("opening_frame_description") or "",
+            (prompt_json or {}).get("image_prompt") or "",
+            prompt_video or (prompt_json or {}).get("video_prompt") or "",
+        ]
+        text = "\n".join(str(part) for part in text_parts if part)
+        for match in re.findall(r"\[\[([^\]]+)\]\]", text):
+            name = match.strip()
+            if name:
+                names.append(name)
         return _dedupe(names)
 
-    def _resolve_prompt_characters(self, prompt_json: Dict[str, Any], world_id: Any, scene: Any = None) -> List[Dict[str, Any]]:
+    def _resolve_prompt_characters(
+        self,
+        prompt_json: Dict[str, Any],
+        world_id: Any,
+        scene: Any = None,
+        video_prompt: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Resolve each prompt-tagged character name from the world library.
+
+        Does not depend on script-split presence lists: a user-added
+        `【【新角色】】` is looked up the same way as original tags (mirrors
+        video_workflow collectShotFrameRefImages per-tag lookup).
+        """
         if not world_id:
             return []
         characters: List[Dict[str, Any]] = []
-        for name in self._extract_character_names_from_prompt(prompt_json, scene=scene):
+        for name in self._extract_character_names_from_prompt(
+            prompt_json, scene=scene, video_prompt=video_prompt
+        ):
             try:
                 character = CharacterModel.get_by_name(int(world_id), name)
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "[storyboard-ref] character lookup failed name=%r world_id=%s err=%s",
+                    name,
+                    world_id,
+                    exc,
+                )
                 character = None
             if character:
                 characters.append(_to_dict(character))
+            else:
+                logger.warning(
+                    "[storyboard-ref] tagged character not found in world library: "
+                    "name=%r world_id=%s",
+                    name,
+                    world_id,
+                )
         return characters
 
     def _extract_prop_names_from_prompt_text(self, prompt_text: str) -> List[str]:
@@ -3635,14 +3694,65 @@ class StoryboardAgentCliService:
         characters: Sequence[Dict[str, Any]],
         location: Optional[Dict[str, Any]],
         props: Sequence[Dict[str, Any]],
+        world_id: Any = None,
     ) -> List[Dict[str, Any]]:
+        """Build reference items from prompt tags; each tagged role is resolved independently.
+
+        Mirrors video_workflow shot-frame collection: user-added `【【角色】】` that were
+        not in the original split still resolve via world library lookup.
+        """
+        character_list = list(characters or [])
+        tagged_names = extract_storyboard_reference_names(prompt_json, video_prompt).get("characters") or []
+        by_name = {
+            str(item.get("name") or "").strip(): item
+            for item in character_list
+            if str(item.get("name") or "").strip()
+        }
+        if world_id not in (None, ""):
+            for name in tagged_names:
+                if name in by_name:
+                    continue
+                try:
+                    character = CharacterModel.get_by_name(int(world_id), name)
+                except Exception as exc:
+                    logger.warning(
+                        "[storyboard-ref] character lookup failed name=%r world_id=%s err=%s",
+                        name,
+                        world_id,
+                        exc,
+                    )
+                    character = None
+                if character:
+                    data = _to_dict(character)
+                    character_list.append(data)
+                    by_name[name] = data
+                else:
+                    logger.warning(
+                        "[storyboard-ref] tagged character not found in world library: "
+                        "name=%r world_id=%s",
+                        name,
+                        world_id,
+                    )
+
         raw_items = build_storyboard_reference_items(
             prompt_json=prompt_json,
             video_prompt=video_prompt,
-            characters=list(characters or []),
+            characters=character_list,
             props=list(props or []),
             location=location,
         )
+        role_names_with_url = {
+            str(item.get("name") or "").strip()
+            for item in raw_items
+            if item.get("type") == "角色" and item.get("url")
+        }
+        for name in tagged_names:
+            if name not in role_names_with_url:
+                logger.warning(
+                    "[storyboard-ref] tagged character has no usable reference image: name=%r",
+                    name,
+                )
+
         items: List[Dict[str, Any]] = []
         seen = set()
         source_type_map = {
