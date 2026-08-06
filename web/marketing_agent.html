@@ -850,11 +850,11 @@
                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                 <div>
                                     <div style="font-weight: 600; color: #0f172a;">{{ pkg.description }}</div>
-                                    <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">{{ pkg.computing_power }} {{ $t('computing_power') }}</div>
+                                    <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">{{ pkg.granted_computing_power || pkg.computing_power }} {{ $t('computing_power') }}</div>
                                 </div>
                                 <div style="text-align: right;">
                                     <div style="font-size: 20px; font-weight: 600; color: #ef4444;">&#165;{{ pkg.price }}</div>
-                                    <div style="font-size: 11px; color: #9ca3af;">{{ $t('price_per_hundred', { price: (pkg.price / pkg.computing_power * 100).toFixed(2) }) }}</div>
+                                    <div style="font-size: 11px; color: #9ca3af;">{{ $t('price_per_hundred', { price: (pkg.price / (pkg.granted_computing_power || pkg.computing_power) * 100).toFixed(2) }) }}</div>
                                 </div>
                             </div>
                         </div>
@@ -863,7 +863,7 @@
                     <!-- 二维码 -->
                     <div v-else-if="rechargeState === 'qrcode'" style="text-align: center;">
                         <div style="font-size: 16px; font-weight: 600; color: #0f172a;">{{ selectedPackage?.description }}</div>
-                        <div style="font-size: 14px; color: #6b7280; margin-top: 8px;">{{ selectedPackage?.computing_power }} {{ $t('computing_power') }} - &#165;{{ selectedPackage?.price }}</div>
+                        <div style="font-size: 14px; color: #6b7280; margin-top: 8px;">{{ selectedPackage?.granted_computing_power || selectedPackage?.computing_power }} {{ $t('computing_power') }} - &#165;{{ selectedPackage?.price }}</div>
                         <div style="margin-top: 20px;">
                             <div v-if="qrCodeUrl" style="background: #fff; padding: 12px; border-radius: 12px; display: inline-block;">
                                 <img :src="qrCodeUrl" :alt="$t('wechat_pay_qr_alt')" style="width: 200px; height: 200px;" />
