@@ -8,7 +8,7 @@ REM 设置 UTF-8 编码，解决中文路径和文件编码问题
 set PYTHONUTF8=1
 chcp 65001 >nul 2>&1
 
-REM PyPI 镜像配置。Python 已随程序包提供，用户侧禁止下载 Python。
+REM PyPI 镜像配置。Python 优先使用程序包内 bin\python；缺失时由 uv 自动下载同版本构建。
 REM   UV_PIP_MIRROR - PyPI mirror: aliyun/tsinghua/tencent/official
 if "%UV_PIP_MIRROR%"=="" set UV_PIP_MIRROR=aliyun
 
@@ -37,10 +37,12 @@ echo.
 set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
-REM Use only the complete Python distribution bundled with this package.
+REM Prefer the relocatable Python bundled with this package.
+REM If missing, bundled uv downloads the same build into bin\python.
+REM A system Python must never be selected.
 set "PYTHON_REQUEST=cpython-3.10.20-windows-x86_64-none"
 set "UV_PYTHON_INSTALL_DIR=%SCRIPT_DIR%bin\python"
-set "UV_PYTHON_DOWNLOADS=never"
+set "UV_PYTHON_DOWNLOADS=auto"
 set "BUNDLED_PYTHON=%UV_PYTHON_INSTALL_DIR%\%PYTHON_REQUEST%\python.exe"
 if "%UV_CACHE_DIR%"=="" set "UV_CACHE_DIR=%SCRIPT_DIR%bin\uv-cache"
 if not exist "%UV_CACHE_DIR%" mkdir "%UV_CACHE_DIR%"
@@ -66,7 +68,7 @@ if not exist "!UV_CMD!" (
     echo [OK] uv found
 )
 
-REM === 网络环境检测（只选择 PyPI 依赖源，不下载 Python） ===
+REM === 网络环境检测（选择 PyPI 依赖源） ===
 echo [1.1/4] Detecting network environment...
 powershell -NoProfile -Command "if((Test-NetConnection -ComputerName mirrors.aliyun.com -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue) -and $?) { exit 0 } else { exit 1 }" >nul 2>&1
 if errorlevel 1 goto :mirror_overseas
@@ -92,10 +94,22 @@ if exist "%UV_PYTHON_INSTALL_DIR%\pyvenv.cfg" (
     exit /b 1
 )
 if not exist "!BUNDLED_PYTHON!" (
-    echo [ERROR] Bundled Python not found: !BUNDLED_PYTHON!
-    echo Please re-extract the complete application package.
-    pause
-    exit /b 1
+    echo [INFO] Bundled Python not found, downloading to bin\python ...
+    echo This only happens once. Please keep the network connected.
+    echo.
+    "!UV_CMD!" python install !PYTHON_REQUEST!
+    if errorlevel 1 (
+        echo [WARN] Official source failed, retrying with China mirror...
+        set "UV_PYTHON_INSTALL_MIRROR=https://registry.npmmirror.com/-/binary/python-build-standalone"
+        "!UV_CMD!" python install !PYTHON_REQUEST!
+    )
+    if not exist "!BUNDLED_PYTHON!" (
+        echo [ERROR] Failed to download Python automatically.
+        echo Please check your network, or re-extract the complete package.
+        pause
+        exit /b 1
+    )
+    echo [OK] Python downloaded to bin\python.
 )
 "!BUNDLED_PYTHON!" -X utf8 -c "import sys; print('[OK] Bundled Python', sys.version.split()[0])"
 if errorlevel 1 (

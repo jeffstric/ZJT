@@ -163,14 +163,18 @@ def test_windows_batch_uses_bootstrap_without_temporary_dependency_overlay():
     )
 
     assert "scripts\\launchers\\bootstrap.py" in launcher_batch
-    assert "UV_PYTHON_DOWNLOADS=never" in launcher_batch
+    assert "UV_PYTHON_DOWNLOADS=auto" in launcher_batch
+    assert "python install !PYTHON_REQUEST!" in launcher_batch
+    assert "registry.npmmirror.com/-/binary/python-build-standalone" in launcher_batch
     assert "bin\\uv-python" not in launcher_batch
     assert "!BUNDLED_PYTHON!" in launcher_batch
     assert "--with-requirements requirements.txt scripts\\launchers\\launcher.py" not in launcher_batch
     assert "timeout /t" not in launcher_batch.lower()
     assert "cache clean litellm" not in start_batch.lower()
     assert "install_python.ps1" not in start_batch
-    assert "UV_PYTHON_DOWNLOADS=never" in start_batch
+    assert "UV_PYTHON_DOWNLOADS=auto" in start_batch
+    assert "python install !PYTHON_REQUEST!" in start_batch
+    assert "registry.npmmirror.com/-/binary/python-build-standalone" in start_batch
     assert "--no-python-downloads" in start_batch
     assert "bin\\uv-python" not in start_batch
     assert 'taskkill /f /im uv.exe' not in start_batch.lower()
