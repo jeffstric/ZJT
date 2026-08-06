@@ -1733,7 +1733,8 @@ function renderRechargeDialog() {
             body = `<div class="recharge-center"><p class="recharge-hint">暂无可用套餐</p></div>`;
         } else {
             body = `<div class="package-list">${packages.map((pkg) => {
-                const power = Number(pkg.computing_power) || 0;
+                // 优先展示扣邀请佣金后的实际到账算力（与 index.html / 后端 settle 口径一致）
+                const power = Number(pkg.granted_computing_power ?? pkg.computing_power) || 0;
                 const price = Number(pkg.price) || 0;
                 const unit = power > 0 ? (price / power * 100).toFixed(2) : '--';
                 return `
@@ -1757,10 +1758,11 @@ function renderRechargeDialog() {
     } else if (status === 'qrcode') {
         const pkg = state.selectedRechargePackage || {};
         const qr = state.rechargeQrCodeUrl || '';
+        const grantedPower = Number(pkg.granted_computing_power ?? pkg.computing_power) || 0;
         body = `
             <div class="recharge-center">
                 <div class="recharge-pkg-title">${escapeHtml(pkg.description || '算力套餐')}</div>
-                <div class="recharge-hint">${Number(pkg.computing_power) || 0} 算力 - ¥${Number(pkg.price) || 0}</div>
+                <div class="recharge-hint">${grantedPower} 算力 - ¥${Number(pkg.price) || 0}</div>
                 <div class="recharge-qr-wrap">
                     ${qr
                         ? `<div class="recharge-qr-box"><img src="${escapeHtml(qr)}" alt="微信支付二维码" width="200" height="200" /></div>`
