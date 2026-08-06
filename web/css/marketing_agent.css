@@ -1241,6 +1241,138 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
+/* ========== 视频时长选择（自定义面板） ==========
+   ≤3 数字档：compact 均分点选
+   ≥4 数字档：自动固定 + 横滚 chips + 数字输入 */
+.duration-picker {
+  margin-bottom: 20px;
+}
+
+.duration-picker-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1a1a1a;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.duration-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.duration-picker-compact {
+  width: 100%;
+}
+
+.duration-picker-compact .duration-chip {
+  flex: 1;
+  text-align: center;
+}
+
+.duration-picker-scroll {
+  width: 100%;
+  min-width: 0;
+}
+
+.duration-chip {
+  flex: 0 0 auto;
+  min-width: 48px;
+  padding: 10px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 14px;
+  line-height: 1.2;
+  border: 1px solid #e8e8e8;
+  background: #f5f5f5;
+  color: #1a1a1a;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+.duration-chip:hover {
+  border-color: #b3e5f7;
+}
+
+.duration-chip.active {
+  border: 2px solid #00a8e6;
+  background: #e6f7ff;
+  color: #00a8e6;
+  padding: 9px 7px; /* 保持选中时尺寸不跳变（border 2px vs 1px） */
+}
+
+.duration-chip-auto {
+  flex-shrink: 0;
+}
+
+.duration-chip-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  /* 左右淡出：提示可横滑 */
+  mask-image: linear-gradient(to right, transparent, #000 8px, #000 calc(100% - 8px), transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 8px, #000 calc(100% - 8px), transparent);
+  padding-bottom: 2px;
+}
+
+.duration-chip-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.duration-chip-scroll::-webkit-scrollbar-thumb {
+  background: #d0d0d0;
+  border-radius: 2px;
+}
+
+.duration-chip-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.duration-input-wrap {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.duration-input {
+  width: 56px;
+  padding: 8px 6px;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  background: #f5f5f5;
+  font-size: 14px;
+  color: #1a1a1a;
+  text-align: center;
+  box-sizing: border-box;
+  -moz-appearance: textfield;
+}
+
+.duration-input::-webkit-outer-spin-button,
+.duration-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.duration-input:focus {
+  outline: none;
+  border-color: #00a8e6;
+  background: #fff;
+}
+
+.duration-input-unit {
+  font-size: 13px;
+  color: #666;
+  flex-shrink: 0;
+}
+
 /* 矮屏/中小宽度：改为视口内 fixed 面板，确保可完整滚动访问所有选项
    不用 transform 居中，避免与 fadeInUp 的 translateY 动画互相覆盖 */
 @media (max-height: 760px), (max-width: 720px) {

@@ -58,9 +58,9 @@ scripts/launchers/start_windows.py（Windows 启动管理器）
 - 安装路径不能有中文
 - 确保 bin/mysql 目录存在（MySQL 服务）
 - 确保 bin/ffmpeg 目录存在（视频处理）
-- 确保 bin/uv/uv.exe 和 bin/python/cpython-3.10.20-windows-x86_64-none/python.exe 存在
+- 确保 bin/uv/uv.exe 存在；bin/python/cpython-3.10.20-windows-x86_64-none/python.exe 优先随包提供，缺失时 start.bat / launcher_me.bat 会自动下载一次
 - bin/python 必须是完整 Python 的 uv managed 安装根目录，不能是带 pyvenv.cfg 的普通虚拟环境
-- 用户启动时禁止下载 Python，不使用系统 Python，也不写用户 AppData；缺失或损坏请重新完整解压程序包
+- 不使用系统 Python，也不写用户 AppData；自动下载失败或解释器损坏时，请检查网络或重新完整解压程序包
 - 不要在程序运行期间执行 uv cache clean
 - 关闭窗口或按 Ctrl+C 停止服务
 
