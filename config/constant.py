@@ -1365,6 +1365,13 @@ class MediaConstants:
     # 否则上游返回 InvalidParameter（如高刷屏上浏览器 Canvas+MediaRecorder 产出的
     # 120fps 视频）。统一归一化至 30fps，留足安全余量。
     VIDEO_REFERENCE_MAX_FPS = 30
+    # 人脸遮罩叠加：原视频与遮罩视频统一重采样后的固定帧率（CFR）。
+    # 帧率元数据对 VFR webm 不可信（可能误报 1000fps 或看似合理的 60fps），
+    # 叠加前由 ffmpeg 按帧 PTS 重采样到该帧率，与 RunningHub 遮罩输出帧率一致。
+    FACE_MASK_CFR_FPS = 24
+    # 人脸遮罩上传 RunningHub 前的短边上限（像素）。仅上传侧生效，本地融合仍用原尺寸；
+    # 遮罩融合时 resize 回原尺寸。防止 1080p 等大视频在 RH 端全量加载时爆显存。
+    FACE_MASK_UPLOAD_MAX_SHORT_SIDE = 512
 
 
 class BrandingConstants:

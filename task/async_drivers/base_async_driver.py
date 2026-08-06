@@ -85,7 +85,8 @@ class BaseAsyncDriver(ABC):
         async_task_id = AsyncTasksModel.create(
             implementation=self.impl_id,
             user_id=user_id,
-            params=params
+            params=params,
+            max_attempts=config.max_attempts
         )
 
         # ===== E2E Mock 短路：跳过槽位与文件上传，直接写 mock external_task_id =====
