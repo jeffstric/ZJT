@@ -660,6 +660,9 @@
                 return selectedVideoResolution.value;
             }
 
+            // 数字时长选项 ≤ 此数量时用紧凑点选（无滚动、无输入）；≥4 用横滚+输入
+            const DURATION_COMPACT_MAX = 3;
+
             // 当前视频时长选项（根据选中模型动态计算，videoModelConfigs 使用简短 key）
             const currentDurationOptions = Vue.computed(() => {
                 if (!isVideoMode.value || !selectedModelKey.value) return ['auto', 3, 5, 8, 10, 15];
@@ -671,6 +674,84 @@
                 }
                 return ['auto', 3, 5, 8, 10, 15];
             });
+
+            const numericDurationOptions = Vue.computed(() => {
+                return currentDurationOptions.value.filter(d => typeof d === 'number');
+            });
+
+            const isDurationCompact = Vue.computed(() => {
+                return numericDurationOptions.value.length <= DURATION_COMPACT_MAX;
+            });
+
+            // 横滚+输入模式下输入框展示（auto 时为空，仅展示合法秒数）
+            const durationInputText = ref('');
+            const durationChipScroll = ref(null);
+
+            function syncDurationInputFromSelection() {
+                durationInputText.value = selectedDuration.value === 'auto'
+                    ? ''
+                    : String(selectedDuration.value);
+            }
+
+            function snapDuration(value) {
+                const options = numericDurationOptions.value;
+                if (!options.length) return null;
+                const n = Number(value);
+                if (!Number.isFinite(n)) return null;
+                if (options.includes(n)) return n;
+                let best = options[0];
+                let bestDist = Math.abs(options[0] - n);
+                for (let i = 1; i < options.length; i++) {
+                    const dist = Math.abs(options[i] - n);
+                    if (dist < bestDist) {
+                        best = options[i];
+                        bestDist = dist;
+                    }
+                }
+                return best;
+            }
+
+            function scrollActiveDurationChipIntoView() {
+                const root = durationChipScroll.value;
+                if (!root) return;
+                const active = root.querySelector('.duration-chip.active');
+                if (active && typeof active.scrollIntoView === 'function') {
+                    active.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+                }
+            }
+
+            function selectDuration(dur) {
+                selectedDuration.value = dur;
+                syncDurationInputFromSelection();
+                if (dur !== 'auto' && !isDurationCompact.value) {
+                    nextTick(() => scrollActiveDurationChipIntoView());
+                }
+            }
+
+            function onDurationInputCommit(event) {
+                const raw = String(event?.target?.value ?? durationInputText.value ?? '').trim();
+                if (raw === '') {
+                    syncDurationInputFromSelection();
+                    return;
+                }
+                const parsed = parseInt(raw, 10);
+                if (!Number.isFinite(parsed)) {
+                    syncDurationInputFromSelection();
+                    return;
+                }
+                const snapped = snapDuration(parsed);
+                if (snapped == null) {
+                    syncDurationInputFromSelection();
+                    return;
+                }
+                if (snapped !== parsed) {
+                    const msg = window.t
+                        ? window.t('duration_invalid_snapped', { dur: snapped })
+                        : `Adjusted to nearest supported ${snapped}s`;
+                    showError(msg);
+                }
+                selectDuration(snapped);
+            }
 
             function getCurrentVideoModelConfig() {
                 if (!selectedModelKey.value) return null;
@@ -695,6 +776,11 @@
                 if (duration === 'auto') return window.t ? window.t('duration_auto') : 'Auto';
                 return window.t ? window.t('duration_seconds', { dur: duration }) : `${duration}s`;
             }
+
+            // 选中时长变化时同步输入框（模型切换回退等路径）
+            Vue.watch(selectedDuration, () => {
+                syncDurationInputFromSelection();
+            }, { immediate: true });
 
             // 是否显示参考图上传（全能参考模式下）
             const showAddSubject = Vue.computed(() => {
@@ -6529,6 +6615,12 @@
                 videoResults,
                 selectedDuration,
                 formatDurationOption,
+                numericDurationOptions,
+                isDurationCompact,
+                durationInputText,
+                durationChipScroll,
+                selectDuration,
+                onDurationInputCommit,
                 sendVideoRequest,
                 processFace,
                 currentVideoModelNeedsFaceMask,
