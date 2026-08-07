@@ -140,6 +140,76 @@ class TestImageGridValidator(unittest.TestCase):
 
             self.assertFalse(output_dir.exists())
 
+    # ---------- 占位格友好旁路（模式 B 双轨 OR）----------
+    # 批量生图常凑不满 grid_size 个真实场景，缺位用纯黑占位格补齐。占位区没有分割线
+    # 特征（prompt 即要求纯黑占位），原严格校验会误判为不合格。旁路对占位区缺失的分割线
+    # 免于惩罚，改用理论位置兜底。
+
+    def _draw_grid_with_placeholders(
+        self, cells: int, content_cells: set, size: int = 900, line_width: int = 6,
+    ) -> Image.Image:
+        """绘制含纯黑占位格的宫格：content_cells 里的格子填彩色内容，其余纯黑占位。
+
+        content_cells: (row, col) 元组集合，标明哪些格子是真实内容。
+        """
+        image = Image.new("RGB", (size, size), "black")
+        draw = ImageDraw.Draw(image)
+        palette = [
+            "#bb3e03", "#0a9396", "#ae2012",
+            "#005f73", "#9b2226", "#ee9b00",
+            "#3a86ff", "#8338ec", "#ff006e",
+        ]
+        cell_size = size // cells
+        palette_idx = 0
+        for row in range(cells):
+            for col in range(cells):
+                if (row, col) not in content_cells:
+                    continue  # 纯黑占位，保持黑色
+                left = col * cell_size
+                top = row * cell_size
+                right = size if col == cells - 1 else (col + 1) * cell_size
+                bottom = size if row == cells - 1 else (row + 1) * cell_size
+                draw.rectangle((left, top, right, bottom), fill=palette[palette_idx % len(palette)])
+                palette_idx += 1
+        # 白色分割线贯穿（含占位区，模拟 AI 实际输出）
+        for step in range(1, cells):
+            pos = step * cell_size
+            half = line_width // 2
+            draw.rectangle((pos - half, 0, pos + half, size), fill="white")
+            draw.rectangle((0, pos - half, size, pos + half), fill="white")
+        return image
+
+    def test_accepts_3x3_with_mostly_placeholders(self):
+        # 回归：1 真实内容 + 8 黑色占位（如子场景参考图只生成 1 个子场景）
+        # 修复前 cell uniformity 0.82 < 0.90 误判失败；修复后旁路兜底通过
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img = self._draw_grid_with_placeholders(3, {(0, 0)})
+            path = self._save_image(img, tmpdir, "grid_3x3_placeholder.png")
+
+            result = validate_grid_image(path, GridConfig.SIZE_3X3)
+
+            self.assertTrue(result.is_valid, result.reason)
+
+    def test_accepts_2x2_with_placeholders(self):
+        # 1 真实内容 + 3 黑色占位（分镜首帧宫格只 1 个分镜时）
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img = self._draw_grid_with_placeholders(2, {(0, 0)})
+            path = self._save_image(img, tmpdir, "grid_2x2_placeholder.png")
+
+            result = validate_grid_image(path, GridConfig.SIZE_2X2)
+
+            self.assertTrue(result.is_valid, result.reason)
+
+    def test_accepts_3x3_partial_placeholders(self):
+        # 3 真实内容（第一行）+ 6 占位
+        with tempfile.TemporaryDirectory() as tmpdir:
+            img = self._draw_grid_with_placeholders(3, {(0, 0), (0, 1), (0, 2)})
+            path = self._save_image(img, tmpdir, "grid_3x3_partial.png")
+
+            result = validate_grid_image(path, GridConfig.SIZE_3X3)
+
+            self.assertTrue(result.is_valid, result.reason)
+
 
 if __name__ == "__main__":
     unittest.main()

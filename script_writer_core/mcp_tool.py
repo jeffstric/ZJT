@@ -5309,7 +5309,11 @@ def submit_grid_image_task(
             max_retries=(
                 GridConfig.STORYBOARD_FIRST_FRAME_VALIDATION_MAX_RETRIES
                 if item_type == ItemType.STORYBOARD_FIRST_FRAME_GRID
-                else 0
+                else (
+                    GridConfig.LOCATION_REFERENCE_VALIDATION_MAX_RETRIES
+                    if item_type == ItemType.LOCATION_GRID
+                    else 0
+                )
             ),
             grid_size=grid_size,
             grid_layout=grid_layout,
@@ -5437,6 +5441,49 @@ def generate_9grid_location_images(
         prompts=prompts,
         item_type=ItemType.LOCATION_GRID,
         grid_size=GridConfig.SIZE_3X3,
+        mode="image_edit",
+        reference_images=reference_images,
+        target_entity_ids=target_entity_ids,
+    )
+
+
+def generate_4grid_location_images_i2i(
+    user_id: str,
+    world_id: str,
+    auth_token: str,
+    sub_location_names: List[str],
+    prompts: List[str],
+    reference_images: Optional[List[Dict[str, str]]] = None,
+    target_entity_ids: Optional[List[Optional[int]]] = None,
+) -> Dict[str, Any]:
+    """
+    生成 2x2 四宫格子场景参考图（以参考图为输入，走图生图）。
+
+    与 generate_9grid_location_images 对称，区别仅在于 grid_size=4。用于子场景数量较少
+    （≤4）时避免凑大量黑色占位格：9 宫格只有 1 个真实子场景时要凑 8 个占位，占位占比
+    过高既浪费算力又易触发宫格几何校验误判。≤4 个子场景改走 2x2 更经济、校验更稳。
+
+    不足 4 个子场景时，调用方应补 placeholder 占位（不回写、不建 location）。
+
+    Args:
+        user_id / world_id / auth_token: 用户/世界/认证。
+        sub_location_names: 4 个子场景名称（含 placeholder 占位）。
+        prompts: 4 个子场景提示词。
+        reference_images: 参考图列表，每项 {"url": str, "role_description": str}。
+            通常含父场景图；与 9grid 版语义完全一致。
+        target_entity_ids: 4 个子场景对应的 location DB id（与名称对齐；placeholder 位传 None）。
+
+    Returns:
+        dict: submit_grid_image_task 的结果。
+    """
+    return submit_grid_image_task(
+        user_id=user_id,
+        world_id=world_id,
+        auth_token=auth_token,
+        item_names=sub_location_names,
+        prompts=prompts,
+        item_type=ItemType.LOCATION_GRID,
+        grid_size=GridConfig.SIZE_2X2,
         mode="image_edit",
         reference_images=reference_images,
         target_entity_ids=target_entity_ids,
