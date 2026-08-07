@@ -9,6 +9,7 @@ import fnmatch
 import os
 import shutil
 import subprocess
+import sys
 import time
 import zipfile
 from datetime import datetime
@@ -401,6 +402,28 @@ def copy_managed_python(bin_dir: Path, platform_config: dict, platform_name: str
     print(f"    - Python: [WARN] {msg}，本次跳过")
 
 
+def _patch_mysql_binlog_retention(mysql_dir: Path, label: str) -> None:
+    """确保一体包 MySQL 配置含 binlog_expire_logs_seconds（约 7 天）。仅写文件，无 SQL。"""
+    try:
+        launchers_dir = CODE_PATH / "scripts" / "launchers"
+        if str(launchers_dir) not in sys.path:
+            sys.path.insert(0, str(launchers_dir))
+        # package.py 不依赖运行时 config 系统；工具内有默认 604800 回退
+        if str(CODE_PATH) not in sys.path:
+            sys.path.insert(0, str(CODE_PATH))
+        from mysql_binlog_config import ensure_mysql_dir_binlog_retention
+
+        results = ensure_mysql_dir_binlog_retention(mysql_dir)
+        if not results:
+            print(f"    - MySQL binlog: [WARN] {label} 下未找到 my.ini/my.cnf 配置文件")
+            return
+        for path, ok, msg in results:
+            tag = "OK" if ok else "WARN"
+            print(f"    - MySQL binlog: [{tag}] {msg}")
+    except Exception as e:
+        print(f"    - MySQL binlog: [WARN] {label} 处理失败（忽略）: {e}")
+
+
 def copy_binaries(dst_dir: Path, platform_config: dict, platform_name: str = ""):
     """复制二进制文件"""
     bin_dir = dst_dir / "bin"
@@ -410,7 +433,12 @@ def copy_binaries(dst_dir: Path, platform_config: dict, platform_name: str = "")
     mysql_src = NAS_PATH / "bin" / platform_config["mysql_src"]
     mysql_dst = bin_dir / platform_config["mysql_dst"]
     print(f"    - MySQL: {platform_config['mysql_src']} -> {platform_config['mysql_dst']}")
+    # 先尽量修正 NAS 源物料，使后续打包天然带上 7 天策略
+    if mysql_src.is_dir():
+        _patch_mysql_binlog_retention(mysql_src, f"源 {mysql_src}")
     shutil.copytree(mysql_src, mysql_dst)
+    # 包内再 ensure 一次（源只读失败时仍保证发布包正确）
+    _patch_mysql_binlog_retention(mysql_dst, f"包内 {mysql_dst}")
 
     # 复制 FFmpeg
     ffmpeg_src = NAS_PATH / "bin" / platform_config["ffmpeg_src"]

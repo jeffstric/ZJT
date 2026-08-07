@@ -43,10 +43,20 @@ port=3306
 character-set-server=utf8mb4
 collation-server=utf8mb4_0900_ai_ci
 default-time-zone='+08:00'
+# 一体包 binlog 约保留 7 天（604800 秒），由 MySQL 自动清理过期日志
+binlog_expire_logs_seconds=604800
 
 [client]
 default-character-set=utf8mb4
 ```
+
+#### binlog 保留策略（一体包 Windows / macOS）
+
+- 配置项：`binlog_expire_logs_seconds=604800`（约 7 天）。
+- **新装**：`scripts/package.py` 打包时写入 NAS 源与包内 `my.ini` / `my.cnf`（及 template）。
+- **已部署**：`start_windows.py` / `start_mac.py` 启动写配置时会补写该项（仅改文件，无 `SET GLOBAL` / `PURGE`）；完整重启 mysqld 后生效，过期 binlog 由 MySQL 官方 auto_purge 清理。
+- **Linux / 外置 MySQL**：不由一体包启动器改写，运维自行维护。
+- 启动器侧补写为存量迁移逻辑，后续可删除（打包固化后）。
 
 ### 2. 应用配置文件 (`config_{env}.yml`)
 
