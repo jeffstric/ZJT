@@ -29,12 +29,12 @@
 每条分割线会计算：
 
 - 位置是否落在理论位置附近，容忍比例为 `VALIDATION_POSITION_TOLERANCE_RATIO`
-- 分割线证据是否连续贯穿图片，阈值按 grid_size 取 `VALIDATION_MIN_LINE_COVERAGE_BY_SIZE`（2x2=0.60，3x3=0.75）
-- 各 cell 的宽高是否均匀，阈值按 grid_size 取 `VALIDATION_MIN_CELL_UNIFORMITY_BY_SIZE`（2x2=0.80，3x3=0.90）
+- 分割线证据是否连续贯穿图片，阈值为固定标量 `VALIDATION_MIN_LINE_COVERAGE`（0.75）
+- 各 cell 的宽高是否均匀，阈值为固定标量 `VALIDATION_MIN_CELL_UNIFORMITY`（0.90）
 
 分割线证据使用窄线采样，综合白/黑分隔线、亮/暗脊线和两侧对比。采样带内按列取极值（亮线取 max、暗线取 min）而非均值，避免 AI 生成的 1-2px 灰白细线在缩略图上被均值稀释到阈值以下导致误判。
 
-阈值按 grid_size 区分的原因：2x2 宫格在批量生图时更常凑不满 4 格（含占位格概率高），容错更宽；3x3 维持严格。
+严格校验的阈值**绝不放宽**——它承担拦截"非宫格图"（模型未生成宫格分割线时输出的普通单图）的职责。普通照片的分割线 coverage 本就能达到 0.6~0.8，若降到 0.60 会误放行。占位格的容错只在轨道二（旁路）内体现，旁路用更宽松的 `VALIDATION_PLACEHOLDER_TOLERANT_MIN_COVERAGE`（0.60）/ `VALIDATION_PLACEHOLDER_TOLERANT_MIN_UNIFORMITY`（0.80），且仅对已确认含占位格的图生效，普通照片根本进不了旁路。
 
 ### 轨道二：占位格友好旁路（`_validate_with_placeholder_tolerance`）
 

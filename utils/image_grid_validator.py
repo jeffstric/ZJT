@@ -30,19 +30,19 @@ class GridValidationResult:
     horizontal_separators: Tuple[GridSeparatorDetection, ...] = ()
 
 
-def _validation_min_coverage(grid_size: int) -> float:
-    """按 grid_size 取分割线 coverage 阈值，缺失回退标量默认值。"""
-    by_size = getattr(GridConfig, "VALIDATION_MIN_LINE_COVERAGE_BY_SIZE", None)
-    if isinstance(by_size, dict) and grid_size in by_size:
-        return float(by_size[grid_size])
+def _validation_min_coverage() -> float:
+    """严格校验的分割线 coverage 阈值（固定标量，不按 grid_size 区分）。
+
+    严格校验用于拦截"非宫格图"（模型未生成宫格分割线时输出的普通单图），阈值不能放宽——
+    普通照片的分割线 coverage 本就能达到 0.6~0.8，降到 0.60 会误放行。占位格的容错只
+    在旁路 _validate_with_placeholder_tolerance 内体现（旁路用更宽松的阈值，且仅对已确认
+    含占位格的图生效，普通照片根本进不了旁路）。
+    """
     return float(GridConfig.VALIDATION_MIN_LINE_COVERAGE)
 
 
-def _validation_min_uniformity(grid_size: int) -> float:
-    """按 grid_size 取 cell uniformity 阈值，缺失回退标量默认值。"""
-    by_size = getattr(GridConfig, "VALIDATION_MIN_CELL_UNIFORMITY_BY_SIZE", None)
-    if isinstance(by_size, dict) and grid_size in by_size:
-        return float(by_size[grid_size])
+def _validation_min_uniformity() -> float:
+    """严格校验的 cell uniformity 阈值（固定标量）。"""
     return float(GridConfig.VALIDATION_MIN_CELL_UNIFORMITY)
 
 
@@ -97,11 +97,11 @@ def _strict_validate(
     width: int,
     height: int,
 ) -> GridValidationResult:
-    """原有严格校验逻辑（阈值按 grid_size 取）。行为与改造前等价。"""
+    """原有严格校验逻辑（固定阈值，不放宽）。用于拦截非宫格图，行为与改造前等价。"""
     vertical = tuple(_detect_expected_separators(arr, "x", cols))
     horizontal = tuple(_detect_expected_separators(arr, "y", rows))
 
-    min_coverage = _validation_min_coverage(grid_size)
+    min_coverage = _validation_min_coverage()
     for det in (*vertical, *horizontal):
         if det.coverage < min_coverage:
             return GridValidationResult(
@@ -119,7 +119,7 @@ def _strict_validate(
             )
 
     uniformity = _cell_uniformity(width, height, vertical, horizontal)
-    min_uniformity = _validation_min_uniformity(grid_size)
+    min_uniformity = _validation_min_uniformity()
     if uniformity < min_uniformity:
         return GridValidationResult(
             is_valid=False,
@@ -336,7 +336,9 @@ def _validate_with_placeholder_tolerance(
     vertical = tuple(_detect_separator_with_placeholders(arr, "x", cols, placeholder_mask))
     horizontal = tuple(_detect_separator_with_placeholders(arr, "y", rows, placeholder_mask))
 
-    min_coverage = _validation_min_coverage(grid_size)
+    # 旁路用专属宽松阈值（VALIDATION_PLACEHOLDER_TOLERANT_*），不复用严格校验的阈值。
+    # 旁路仅对已确认含占位格的图生效（普通非宫格照片进不了旁路），故放宽安全。
+    min_coverage = GridConfig.VALIDATION_PLACEHOLDER_TOLERANT_MIN_COVERAGE
     for det in (*vertical, *horizontal):
         if det.coverage < min_coverage:
             return GridValidationResult(
@@ -354,7 +356,7 @@ def _validate_with_placeholder_tolerance(
             )
 
     uniformity = _cell_uniformity(width, height, vertical, horizontal)
-    min_uniformity = _validation_min_uniformity(grid_size)
+    min_uniformity = GridConfig.VALIDATION_PLACEHOLDER_TOLERANT_MIN_UNIFORMITY
     if uniformity < min_uniformity:
         return GridValidationResult(
             is_valid=False,
