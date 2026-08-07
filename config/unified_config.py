@@ -1602,6 +1602,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=32,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
         supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+        enabled=False,  # 该功能已关闭
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SORA2_IMAGE_TO_VIDEO,
@@ -1640,6 +1641,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=33,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
         supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+        enabled=False,  # 该功能已关闭
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.LTX2_3_IMAGE_TO_VIDEO,

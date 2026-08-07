@@ -67,9 +67,9 @@
 | API Key | ✅ | RunningHub API 密钥 |
 
 **影响的服务：**
-- LTX2.0 视频生成
-- Wan2.2 视频生成
+- LTX2.3 视频生成
 - 数字人合成
+- （LTX2.0 / Wan2.2 图生视频已关闭，配置保留但不可新建任务）
 
 **获取方式：** 访问 [runninghub.cn](https://www.runninghub.cn) 注册账号获取 API Key
 
