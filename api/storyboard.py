@@ -28,6 +28,7 @@ from config.constant import (
     Edition, Action,
     TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO,
     TASK_STATUS_QUEUED, AI_TOOL_STATUS_PENDING, AI_AUDIO_STATUS_PENDING,
+    AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
     StoryboardAutoGenerateConstants,
     StoryboardAudioGenerateConstants,
     StoryboardDigitalHumanConstants,
@@ -39,7 +40,13 @@ from config.constant import (
     MediaGenerationType,
 )
 from config.config_util import get_config, get_dynamic_config_value
-from config.unified_config import SceneVideoType, UnifiedConfigRegistry, TaskTypeId, TaskCategory
+from config.unified_config import (
+    SceneVideoType,
+    UnifiedConfigRegistry,
+    TaskTypeId,
+    TaskCategory,
+    SEEDANCE_FACE_MASK_DRIVER_KEYS,
+)
 from utils.project_path import (
     get_upload_subdir,
     generate_upload_filename,
@@ -126,7 +133,15 @@ def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
                 )
                 raw_task_id = config_json.get(legacy_field)
 
-            profile = None
+            # 先读 media_pref（含 enable_face_mask 等扩展字段），再按 config_json 的 task_id 覆盖模型
+            pref_profile = MediaGenerationPreferenceService.get_profile(
+                storyboard.user_id,
+                storyboard.world_id,
+                MediaGenerationSurface.STORYBOARD_UI,
+                media_type,
+                mode,
+            )
+            profile = dict(pref_profile) if isinstance(pref_profile, dict) else None
             if raw_task_id not in (None, ""):
                 try:
                     task_config = MediaGenerationPreferenceService.validate_model(
@@ -139,14 +154,24 @@ def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
                             else None
                         ),
                     )
-                    profile = {
+                    if profile is None:
+                        profile = {}
+                    profile.update({
                         'schema_version': 1,
                         'task_id': int(task_config.id),
                         'model_key': task_config.key,
                         'model_name': task_config.name,
-                    }
+                    })
+                    # 非 Seedance 2.0 系列强制关闭人脸遮盖，避免脏字段回显
+                    if (
+                        media_type == MediaGenerationType.VIDEO
+                        and mode == MediaGenerationMode.IMAGE_TO_VIDEO
+                        and getattr(task_config, 'key', None) not in SEEDANCE_FACE_MASK_DRIVER_KEYS
+                    ):
+                        profile['enable_face_mask'] = False
                 except MediaGenerationPreferenceError:
-                    profile = None
+                    # config_json 中的 task_id 失效时回退 pref
+                    pass
             if profile is None:
                 profile = MediaGenerationPreferenceService.get_profile(
                     storyboard.user_id,
@@ -155,6 +180,15 @@ def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
                     media_type,
                     mode,
                 )
+            # config_json 级 enableFaceMask 兜底（偏好槽未写过时）
+            if (
+                media_type == MediaGenerationType.VIDEO
+                and mode == MediaGenerationMode.IMAGE_TO_VIDEO
+                and isinstance(profile, dict)
+                and 'enable_face_mask' not in profile
+                and isinstance(config_json.get('enableFaceMask'), bool)
+            ):
+                profile['enable_face_mask'] = bool(config_json.get('enableFaceMask'))
             result[MediaGenerationPreferenceService.slot_key(media_type, mode)] = profile
             config_updates[field] = int(profile['task_id'])
     if config_updates:
@@ -443,6 +477,61 @@ def normalize_storyboard_workflow_ratio(value: Any) -> Optional[str]:
     return ratio
 
 
+def _coerce_enable_face_mask(value: Any) -> bool:
+    """Normalize enable_face_mask from request body / config JSON."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return False
+
+
+def _storyboard_needs_face_mask_pipeline(
+    *,
+    task_type: int,
+    enable_face_mask: bool,
+    has_image_input: bool = True,
+    user_id: Optional[int] = None,
+) -> bool:
+    """Whether storyboard direct generate-video should create face_mask param_prepare steps.
+
+    Aligns with server.py image-to-video gate (Seedance 2.0 + enterprise + RunningHub).
+    """
+    if not enable_face_mask or not has_image_input or Edition.is_community():
+        return False
+    try:
+        from task.pipeline_processor import PipelineProcessor
+        if not PipelineProcessor.is_seedance_face_mask_type(int(task_type)):
+            return False
+    except Exception as e:
+        logger.warning(f"Failed to check seedance face mask type for task {task_type}: {e}")
+        return False
+
+    # 实现方若自带 human_review（如 huimengi），跳过 RunningHub 遮盖预处理
+    try:
+        from task.visual_drivers import VideoDriverFactory
+        actual_impl = VideoDriverFactory.get_implementation_for_user(
+            int(task_type), user_id
+        ) if user_id is not None else None
+        impl_config = (
+            UnifiedConfigRegistry.get_implementation(actual_impl) if actual_impl else None
+        )
+        if impl_config and getattr(impl_config, 'supports_auto_face', False):
+            return False
+    except Exception as e:
+        logger.warning(
+            f"Failed to resolve impl auto-face for storyboard face mask gate: {e}"
+        )
+
+    runninghub_api_key = get_dynamic_config_value("runninghub", "api_key", default=None)
+    seedance_face_mask_enabled = get_dynamic_config_value(
+        "pipeline", "seedance_face_mask_enabled", default=True
+    )
+    return bool(runninghub_api_key) and bool(seedance_face_mask_enabled)
+
+
 async def _build_storyboard_agent_video_preferences(
     *,
     user_id: int,
@@ -452,6 +541,7 @@ async def _build_storyboard_agent_video_preferences(
     duration_seconds: int,
     video_resolution: Optional[str],
     video_task_id: Optional[int] = None,
+    enable_face_mask: bool = False,
 ) -> Dict[str, Any]:
     """Build an immutable task snapshot without mutating shared user preferences.
 
@@ -460,6 +550,8 @@ async def _build_storyboard_agent_video_preferences(
     从而：
     1) 避免 Agent 经 list_video_models 自选模型覆盖齿轮选择；
     2) 用户中途改模型后，下一次发送使用新模型；进行中任务仍用发送时快照。
+
+    enable_face_mask 必须由 Storyboard 界面显式传入，禁止读取 Marketing 共享偏好。
     """
     ratio = (
         normalize_storyboard_workflow_ratio(getattr(storyboard, 'workflow_ratio', None))
@@ -467,10 +559,12 @@ async def _build_storyboard_agent_video_preferences(
     )
     # Storyboard 参数只来自当前 Storyboard 界面和任务快照，禁止读取 Marketing
     # 的历史共享偏好，否则两个入口会在比例、分辨率等字段上发生串扰。
+    effective_face_mask = bool(enable_face_mask) and not Edition.is_community()
     preferences = {
         'ratio': ratio,
         'image_mode': image_mode,
         'duration': int(duration_seconds),
+        'enable_face_mask': effective_face_mask,
     }
     if video_resolution:
         preferences['resolution'] = str(video_resolution)
@@ -487,6 +581,9 @@ async def _build_storyboard_agent_video_preferences(
             cfg = UnifiedConfigRegistry.get_by_id(resolved_task_id)
             if cfg and getattr(cfg, 'name', None):
                 preferences['model_name'] = cfg.name
+            # 非 Seedance 2.0 系列强制关闭，避免脏偏好进入快照
+            if cfg and getattr(cfg, 'key', None) not in SEEDANCE_FACE_MASK_DRIVER_KEYS:
+                preferences['enable_face_mask'] = False
         except Exception as e:
             logger.warning(
                 f"Failed to resolve storyboard video model name for task_id={resolved_task_id}: {e}"
@@ -2462,6 +2559,10 @@ async def get_storyboard_models(
                 item['supports_ref_audio_video'] = bool(
                     getattr(c, 'supports_ref_audio_video', False)
                 )
+                # Seedance 2.0 系列：前端据此显隐「是否处理人脸」
+                item['needs_face_mask'] = bool(
+                    getattr(c, 'key', None) in SEEDANCE_FACE_MASK_DRIVER_KEYS
+                )
             items.append(item)
         return items
 
@@ -3521,6 +3622,7 @@ async def generate_scene_video(
             profile_values={
                 'ratio': ratio,
                 'image_mode': 'first_last_frame',
+                'enable_face_mask': _coerce_enable_face_mask(data.get('enable_face_mask')),
             },
         )
     except (MediaGenerationPreferenceError, TypeError, ValueError) as exc:
@@ -3545,11 +3647,19 @@ async def generate_scene_video(
         video_resolution = str(default_res)
     else:
         video_resolution = None
+    # 有效人脸遮盖：商业版 + Seedance 2.0 系列 + 用户勾选
+    requested_face_mask = _coerce_enable_face_mask(data.get('enable_face_mask'))
+    effective_face_mask = bool(
+        requested_face_mask
+        and not Edition.is_community()
+        and getattr(config, 'key', None) in SEEDANCE_FACE_MASK_DRIVER_KEYS
+    )
     generation_snapshot.update({
         'ratio': ratio,
         'duration_seconds': video_duration,
         'resolution': video_resolution,
         'image_mode': 'first_last_frame',
+        'enable_face_mask': effective_face_mask,
     })
     clip_to_audio_duration = bool(data.get('clip_to_audio_duration', True))
     try:
@@ -3564,6 +3674,7 @@ async def generate_scene_video(
         'resolution': video_resolution,
         'clip_to_audio_duration': clip_to_audio_duration,
         'audio_duration': audio_duration,
+        'enable_face_mask': effective_face_mask,
         'updated_at': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
     }
     existing_vcfg = getattr(scene, 'video_config_json', None)
@@ -3584,23 +3695,69 @@ async def generate_scene_video(
     if not ok:
         return JSONResponse(status_code=400, content={'error': msg or '算力不足或扣费失败'})
 
+    # 支持 auto-face 的实现方：注入 human_review，不走 RunningHub pipeline
+    impl_id = 0
+    human_review = False
+    try:
+        from task.visual_drivers import VideoDriverFactory
+        from config.unified_config import IMPLEMENTATION_TO_ID
+        actual_impl = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
+        if actual_impl:
+            impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) or 0
+            impl_config = UnifiedConfigRegistry.get_implementation(actual_impl)
+            if (
+                effective_face_mask
+                and impl_config
+                and getattr(impl_config, 'supports_auto_face', False)
+            ):
+                human_review = True
+    except Exception as e:
+        logger.warning(f"Failed to resolve video implementation for face mask: {e}")
+
+    need_pipeline_steps = _storyboard_needs_face_mask_pipeline(
+        task_type=task_type,
+        enable_face_mask=effective_face_mask,
+        has_image_input=bool(image_path),
+        user_id=user_id,
+    )
+
     extra_payload = {
         'video_type': video_type,
         'source': 'storyboard',
         'clip_to_audio_duration': clip_to_audio_duration,
         'generation_snapshot': generation_snapshot,
+        'enable_face_mask': effective_face_mask,
     }
     if video_resolution:
         extra_payload['resolution'] = video_resolution
+    if human_review:
+        extra_payload['human_review'] = True
     extra_config = json.dumps(extra_payload, ensure_ascii=False)
-    ai_tool_id = await asyncio.to_thread(
-        AIToolsModel.create,
-        prompt=prompt, user_id=user_id, type=task_type,
-        image_path=image_path, audio_path=audio_path,
-        duration=video_duration, ratio=ratio,
-        transaction_id=transaction_id, status=AI_TOOL_STATUS_PENDING,
+
+    create_kwargs = dict(
+        prompt=prompt,
+        user_id=user_id,
+        type=task_type,
+        image_path=image_path,
+        audio_path=audio_path,
+        duration=video_duration,
+        ratio=ratio,
+        transaction_id=transaction_id,
         extra_config=extra_config,
+        implementation=impl_id,
     )
+    if need_pipeline_steps:
+        ai_tool_id = await asyncio.to_thread(
+            AIToolsModel.create_with_pipeline_steps,
+            status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+            **create_kwargs,
+        )
+    else:
+        ai_tool_id = await asyncio.to_thread(
+            AIToolsModel.create,
+            status=AI_TOOL_STATUS_PENDING,
+            **create_kwargs,
+        )
     await asyncio.to_thread(
         TasksModel.create,
         task_type=TASK_TYPE_GENERATE_VIDEO, task_id=ai_tool_id, status=TASK_STATUS_QUEUED,
@@ -3908,6 +4065,7 @@ async def scene_ai_chat(
                 duration_seconds=video_duration_seconds,
                 video_resolution=video_resolution,
                 video_task_id=video_task_id,
+                enable_face_mask=_coerce_enable_face_mask(data.get('enable_face_mask')),
             )
 
             video_mode = MediaGenerationPreferenceService.determine_mode(

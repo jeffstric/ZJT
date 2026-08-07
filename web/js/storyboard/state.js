@@ -74,6 +74,11 @@ const state = {
     videoDurationMode: 'auto', // 'auto' | number
     videoResolution: null,
     clipToAudioDuration: true,
+    /**
+     * 是否处理人脸（仅 Seedance 2.0 系列商业版生效；默认不勾选）。
+     * 提交时由 getEffectiveEnableFaceMask() 结合模型 needs_face_mask 与版本计算。
+     */
+    enableFaceMask: false,
     // 兼容旧字段：同步自 videoMediaItems 中 role=reference 的上传项
     referenceImages: [],
     agentMessages: [],
@@ -809,6 +814,32 @@ export function getSelectedVideoModel() {
     return models.find(m => String(m.task_id) === String(taskId)) || models[0] || null;
 }
 
+/** 默认图生视频模型（拆分弹窗 / 批量 / 有首帧路径） */
+export function getSelectedImageToVideoModel() {
+    const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
+    const taskId = state.selectedImageToVideoTaskId;
+    return models.find(m => String(m.task_id) === String(taskId)) || models[0] || null;
+}
+
+export function modelNeedsFaceMask(model = null) {
+    const m = model || getSelectedImageToVideoModel();
+    return !!(m && m.needs_face_mask === true);
+}
+
+export function isEnterpriseEdition() {
+    return String(state.editionInfo?.mode || '').toLowerCase() === 'enterprise';
+}
+
+/**
+ * 提交生视频时的有效 enable_face_mask：
+ * 商业版 + Seedance 2.0 系列 + 用户勾选 三者同时满足才为 true。
+ */
+export function getEffectiveEnableFaceMask(model = null) {
+    const m = model || getSelectedImageToVideoModel();
+    if (!modelNeedsFaceMask(m) || !isEnterpriseEdition()) return false;
+    return state.enableFaceMask === true;
+}
+
 export function getSelectedImageTaskId(hasReferences = true) {
     return hasReferences ? state.selectedImageEditTaskId : state.selectedTextToImageTaskId;
 }
@@ -833,6 +864,10 @@ export function applyMediaPreferenceProfiles(profiles = {}) {
         const taskId = profiles?.[slot]?.task_id;
         if (taskId != null) state[field] = Number(taskId);
     });
+    const i2vProfile = profiles?.['video.image_to_video'];
+    if (i2vProfile && typeof i2vProfile.enable_face_mask === 'boolean') {
+        state.enableFaceMask = i2vProfile.enable_face_mask === true;
+    }
     setModels({});
 }
 
@@ -1124,6 +1159,7 @@ export function buildVideoGenerationPayloadExtras(scene = null) {
         duration_mode: state.videoDurationMode === 'auto' ? 'auto' : Number(state.videoDurationMode),
         resolution: state.videoResolution || undefined,
         clip_to_audio_duration: state.clipToAudioDuration !== false,
+        enable_face_mask: getEffectiveEnableFaceMask(),
     };
 }
 
@@ -1137,6 +1173,7 @@ export function serializeUiConfig() {
         videoResolution: state.videoResolution,
         previewResolution: state.previewResolution || '720p',
         clipToAudioDuration: state.clipToAudioDuration,
+        enableFaceMask: state.enableFaceMask === true,
         aiOptimize: state.aiOptimize,
         subtitleEnabled: state.subtitleEnabled,
         selectedImageTaskId: state.selectedImageTaskId,
@@ -1186,6 +1223,15 @@ export function restoreUiConfig(config = {}) {
     }
     if (typeof config.clipToAudioDuration === 'boolean') {
         state.clipToAudioDuration = config.clipToAudioDuration;
+    }
+    if (typeof config.enableFaceMask === 'boolean') {
+        state.enableFaceMask = config.enableFaceMask;
+    } else {
+        // 跨故事板兜底（偏好 / config_json 均无时）
+        try {
+            const raw = localStorage.getItem('storyboard_lastEnableFaceMask');
+            if (raw === '1' || raw === 'true') state.enableFaceMask = true;
+        } catch {}
     }
     state.aiOptimize = config.aiOptimize !== false;
     state.subtitleEnabled = config.subtitleEnabled !== false;
