@@ -2120,6 +2120,47 @@ def _extract_json_object(text: str) -> dict:
         raise
 
 
+def _build_billing_ai_system_prompt(
+    model_id: int,
+    model_name: str,
+    current_json: str,
+) -> str:
+    """构造 AI 改档 system prompt：单位换算由模型完成，无法确定时必须拒绝。"""
+    return "\n".join([
+        "你是计费配置助手。根据用户自然语言指令，输出对 vendor_model 档位的变更方案。",
+        "",
+        "【计价单位】系统内部只认：元/百万 token（yuan per 1,000,000 tokens）。",
+        "1 点算力 = 0.04 元。",
+        "threshold = round(0.04 * 1e6 / 成本单价)；commission_rate 为 0~1；",
+        "用户价 = 成本价 * (1+commission_rate)。不要把抽成折进成本单价。",
+        "",
+        "【单位换算·必须算对，禁止编造】",
+        "- 元/千 tokens → 元/百万 tokens = 原价 × 1000",
+        "  例：0.0010 元/千tokens → 1.0 元/百万token",
+        "  例：0.0020 元/千tokens → 2.0 元/百万token",
+        "  例：0.00020 元/千tokens → 0.2 元/百万token",
+        "- 元/百万 tokens → 原样使用",
+        "- 「存储 / 元/千tokens/小时」与调用 token 计费无关，必须忽略，不要写入 cache",
+        "- 「命中/缓存命中」才是 cache_yuan_per_m",
+        "- 若同时出现两行「基础模型」价：第 1 行=输入，第 2 行=输出",
+        "",
+        "【无法确定时禁止瞎填——错误答案比不回答更糟】",
+        "若单位不清、数字对不上、目标档位/供应商无法确定、或你无法可靠完成换算，",
+        "不要输出任何 ops，只输出：",
+        '{"ok":false,"error":"简短说明原因，以及需要用户补充的信息"}',
+        "",
+        "成功时只输出一个 JSON 对象，不要 Markdown。格式：",
+        '{"ok":true,"summary":"...", "ops":[{"op":"create|update|delete","tier_id":null或数字,'
+        '"vendor_id":数字,"after":{"raw_token_threshold":数字或null,'
+        '"input_yuan_per_m":数字,"out_yuan_per_m":数字,"cache_yuan_per_m":数字,'
+        '"commission_rate":0~1}}]}',
+        "delete 时 after 可为 null；update 必须带已有 tier_id。",
+        "after 中的 *_yuan_per_m 一律是【供应商成本·元/百万token】。",
+        f"目标计费模型: id={model_id} name={model_name}",
+        f"当前档位 JSON:\n{current_json}",
+    ])
+
+
 @router.get("/models")
 async def admin_get_models(auth_token: str = Header(None, alias="Authorization")):
     """
@@ -2526,20 +2567,8 @@ async def admin_billing_ai_propose(
         llm_model_name = llm_model_row.model_name
 
         current_json = json.dumps(billing, ensure_ascii=False, default=str)
-        system_prompt = (
-            "你是计费配置助手。根据用户自然语言指令，输出对 vendor_model 档位的变更方案。\n"
-            "计价单位：元/百万 token。1 点算力 = 0.04 元。\n"
-            "threshold = round(0.04 * 1e6 / 成本单价)；抽成 commission_rate 为 0~1，"
-            "用户价 = 成本价 * (1+commission_rate)。\n"
-            "不要把抽成折进成本单价。\n"
-            "只输出一个 JSON 对象，不要 Markdown。格式：\n"
-            '{"summary":"...", "ops":[{"op":"create|update|delete","tier_id":null或数字,'
-            '"vendor_id":数字,"after":{"raw_token_threshold":数字或null,'
-            '"input_yuan_per_m":数字,"out_yuan_per_m":数字,"cache_yuan_per_m":数字,'
-            '"commission_rate":0~1}}]}\n'
-            "delete 时 after 可为 null；update 必须带已有 tier_id。\n"
-            f"目标计费模型: id={model_id} name={model.model_name}\n"
-            f"当前档位 JSON:\n{current_json}"
+        system_prompt = _build_billing_ai_system_prompt(
+            model_id, model.model_name, current_json
         )
         user_prompt = instruction
 
@@ -2586,6 +2615,27 @@ async def admin_billing_ai_propose(
         except Exception as e:
             logger.error(f"Billing AI JSON parse failed: {e}; content={content[:500]}")
             raise HTTPException(status_code=400, detail=f"AI 返回无法解析为 JSON: {e}")
+
+        # 大模型明确表示无法处理：直接 400 反馈，绝不生成可确认的错误方案
+        if parsed.get('ok') is False or (
+            not parsed.get('ops') and (parsed.get('error') or parsed.get('need_clarification'))
+        ):
+            err = (
+                parsed.get('error')
+                or parsed.get('need_clarification')
+                or parsed.get('summary')
+                or "无法可靠完成单位换算或生成方案"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"AI 无法处理：{err}"
+            )
+        # 兼容旧格式：有 ops 但未写 ok 字段时视为成功；ok=true 但无 ops 则拒绝
+        if parsed.get('ok') is True and not (parsed.get('ops') or []):
+            raise HTTPException(
+                status_code=400,
+                detail="AI 返回 ok=true 但未包含任何变更 ops，请换种描述重试"
+            )
 
         # 构建当前 tier 索引
         tier_index = {}
@@ -2683,7 +2733,11 @@ async def admin_billing_ai_propose(
             })
 
         if not ops_out:
-            raise HTTPException(status_code=400, detail="AI 未生成有效变更，请换种描述重试")
+            raise HTTPException(
+                status_code=400,
+                detail="AI 未生成有效变更。若信息不足，模型应返回无法处理；"
+                       "请用「元/百万 token」或明确写出「元/千 → 换算后」的输入/输出/缓存成本后重试。"
+            )
 
         proposal = {
             'model_id': model_id,
