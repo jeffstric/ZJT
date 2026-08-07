@@ -3998,6 +3998,76 @@ const AdminApp = {
             }
         },
 
+        /**
+         * 还原代码默认计费档位。
+         * @param {object} model
+         * @param {object|null} vendor 传入则只还原该供应商
+         */
+        async resetBillingDefaults(model, vendor = null) {
+            if (!model || !model.id) return;
+            const billing = this.models.billing[model.id];
+            const hasDefaults = billing && (
+                billing.has_defaults
+                || (billing.default_vendor_names && billing.default_vendor_names.length)
+                || (vendor && (vendor.has_defaults
+                    || (billing.default_vendor_names || []).includes(vendor.vendor_name)))
+            );
+            if (!hasDefaults && !vendor) {
+                this.showToast(this.t('models_billing_reset_no_defaults'), 'error');
+                return;
+            }
+            if (vendor) {
+                if (!confirm(this.t('models_billing_reset_vendor_confirm', {
+                    model: model.model_name,
+                    vendor: vendor.vendor_name,
+                }))) {
+                    return;
+                }
+            } else if (!confirm(this.t('models_billing_reset_confirm', {
+                model: model.model_name,
+            }))) {
+                return;
+            }
+
+            const updatingKey = vendor
+                ? `reset-${model.id}-${vendor.vendor_id}`
+                : `reset-${model.id}`;
+            this.models.updating = updatingKey;
+            try {
+                const params = {};
+                if (vendor && vendor.vendor_id != null) {
+                    params.vendor_id = vendor.vendor_id;
+                }
+                const response = await axios.post(
+                    `/api/admin/models/${model.id}/billing/reset-defaults`,
+                    null,
+                    {
+                        headers: { 'Authorization': `Bearer ${this.authToken}` },
+                        params,
+                    }
+                );
+                if (response.data.code === 0) {
+                    if (response.data.data && response.data.data.billing) {
+                        this.models.billing[model.id] = response.data.data.billing;
+                    } else {
+                        await this.loadModelBilling(model);
+                    }
+                    await this.loadModels();
+                    this.showToast(response.data.message || this.t('toast_billing_reset_ok'), 'success');
+                } else {
+                    this.showToast(response.data.message || this.t('toast_billing_reset_failed'), 'error');
+                }
+            } catch (error) {
+                console.error('还原默认档位失败:', error);
+                this.showToast(
+                    error?.response?.data?.detail || this.t('toast_billing_reset_failed'),
+                    'error'
+                );
+            } finally {
+                this.models.updating = null;
+            }
+        },
+
         // 构建 AI 负责模型下拉：供应商 + 模型（默认 deepseek / deepseek-v4-pro）
         refreshBillingAiLlmOptions() {
             const opts = [];

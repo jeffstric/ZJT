@@ -332,6 +332,18 @@ class VendorModelModel:
             logger.error(f"Failed to delete vendor model: {e}")
             raise
 
+    @staticmethod
+    def delete_by_vendor_and_model(vendor_id: int, model_id: int) -> int:
+        """删除指定供应商-模型下全部计费档位，返回删除行数。"""
+        sql = "DELETE FROM vendor_model WHERE vendor_id = %s AND model_id = %s"
+        try:
+            return int(execute_update(sql, (vendor_id, model_id)) or 0)
+        except Exception as e:
+            logger.error(
+                f"Failed to delete vendor_model by vendor={vendor_id} model={model_id}: {e}"
+            )
+            raise
+
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `vendor_model` (

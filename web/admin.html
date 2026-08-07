@@ -1087,6 +1087,7 @@
                         <li>{{ t('models_billing_hint_threshold') }}</li>
                         <li>{{ t('models_billing_hint_price_source') }}</li>
                         <li>{{ t('models_billing_hint_range') }}</li>
+                        <li>{{ t('models_billing_hint_reset') }}</li>
                         <li style="color: #dc2626;">⚠️ {{ t('models_billing_hint_warn') }}</li>
                     </ul>
                 </div>
@@ -1213,6 +1214,13 @@
                                                             @click="openBillingTierModal(model, null)">
                                                         {{ t('models_billing_add_tier') }}
                                                     </button>
+                                                    <button v-if="models.billing[model.id] && models.billing[model.id].has_defaults"
+                                                            class="action-btn small"
+                                                            style="margin-left: 8px;"
+                                                            :disabled="models.updating === 'reset-' + model.id"
+                                                            @click="resetBillingDefaults(model)">
+                                                        {{ t('models_billing_reset_defaults') }}
+                                                    </button>
                                                 </div>
                                                 <div v-else>
                                                     <!-- AI 自然语言改档（负责模型在页面顶部全局选择） -->
@@ -1231,6 +1239,13 @@
                                                                     {{ v.vendor_name }}
                                                                 </option>
                                                             </select>
+                                                            <button v-if="models.billing[model.id] && models.billing[model.id].has_defaults"
+                                                                    class="action-btn small"
+                                                                    :disabled="models.updating === 'reset-' + model.id"
+                                                                    :title="t('models_billing_hint_reset')"
+                                                                    @click="resetBillingDefaults(model)">
+                                                                {{ t('models_billing_reset_defaults') }}
+                                                            </button>
                                                         </div>
                                                         <textarea class="billing-ai-textarea"
                                                                   rows="2"
@@ -1252,6 +1267,13 @@
                                                             <button class="action-btn small"
                                                                     @click="openBillingTierModal(model, vendor)">
                                                                 {{ t('models_billing_add_tier') }}
+                                                            </button>
+                                                            <button v-if="vendor.has_defaults || (models.billing[model.id].default_vendor_names || []).includes(vendor.vendor_name)"
+                                                                    class="action-btn small"
+                                                                    :disabled="models.updating === 'reset-' + model.id + '-' + vendor.vendor_id"
+                                                                    :title="t('models_billing_hint_reset')"
+                                                                    @click="resetBillingDefaults(model, vendor)">
+                                                                {{ t('models_billing_reset_vendor_defaults') }}
                                                             </button>
                                                         </div>
                                                         <table class="admin-table billing-tier-table">

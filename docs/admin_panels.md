@@ -205,8 +205,9 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 #### 6.4 AI 改档
 
 ```
-POST /api/admin/models/{id}/billing/ai-propose   # 生成提案（不写库）
-POST /api/admin/models/{id}/billing/ai-apply     # 确认后批量应用
+POST /api/admin/models/{id}/billing/ai-propose       # 生成提案（不写库）
+POST /api/admin/models/{id}/billing/ai-apply         # 确认后批量应用
+POST /api/admin/models/{id}/billing/reset-defaults   # 还原代码默认档位（?vendor_id=）
 ```
 
 **行为约定**：
@@ -214,7 +215,21 @@ POST /api/admin/models/{id}/billing/ai-apply     # 确认后批量应用
 - 单价换算由大模型完成；系统内部统一为 **元/百万 token**
 - 提示词要求：`元/千 tokens × 1000 = 元/百万`（例：0.0010→1.0，0.0020→2.0，命中 0.00020→0.2）
 - 大模型若无法可靠换算/无法确定档位，必须返回 `{"ok":false,"error":"..."}`，接口以 **400** 展示原因，**不生成可确认的错误提案**
-- 成功方案仍需管理员在对比弹窗中点「确认应用」后才写库；**无一键还原到出厂默认档位**（档位存 DB，误改需手动改回或对照迁移/初始数据）
+- 成功方案仍需管理员在对比弹窗中点「确认应用」后才写库
+
+#### 6.5 还原默认档位
+
+代码默认目录：`config/default_vendor_model_billing.py`（按 `vendor_name` + `model_name` 登记）。
+
+```
+POST /api/admin/models/{id}/billing/reset-defaults?vendor_id=可选
+```
+
+- **作用**：删除目标供应商-模型下现有档位，再按代码默认重建（含抽成、分段）
+- **范围**：`vendor_id` 为空时还原该模型在目录中登记的**全部**默认供应商；传入则只还原该供应商
+- **限制**：未在目录中登记的模型/供应商会返回 400，无法还原
+- **UI**：模型计费展开区「还原默认档位」；各供应商旁「还原该供应商默认」
+- 新增模型或改官方价后，请同步维护默认目录
 
 ### 7. 通知中心
 
@@ -474,6 +489,7 @@ PUT    /api/admin/vendor-models/{tier_id}      # 更新计费档位
 DELETE /api/admin/vendor-models/{tier_id}      # 删除计费档位
 POST   /api/admin/models/{id}/billing/ai-propose
 POST   /api/admin/models/{id}/billing/ai-apply
+POST   /api/admin/models/{id}/billing/reset-defaults   # ?vendor_id= 可选
 ```
 
 新增档位（推荐元/百万）：

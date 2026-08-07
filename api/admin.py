@@ -1980,6 +1980,11 @@ def _format_token_range_label(raw_token_threshold: Optional[int], prev_threshold
 
 def _build_model_billing_payload(model_id: int, model_name: str) -> dict:
     """组装某模型的分段计费结构（按供应商分组）。"""
+    from config.default_vendor_model_billing import (
+        has_defaults_for_model,
+        list_default_vendor_names_for_model,
+    )
+
     rows = VendorModelModel.list_by_model_id(model_id)
     vendors_map: dict = {}
     for row in rows:
@@ -2002,12 +2007,16 @@ def _build_model_billing_payload(model_id: int, model_name: str) -> dict:
         _enrich_tier_dict(tier)
         vendors_map[vendor_id]['tiers'].append(tier)
 
+    default_vendor_names = list_default_vendor_names_for_model(model_name)
+    default_name_set = set(default_vendor_names)
+
     vendors = []
     for vendor in vendors_map.values():
         prev = None
         for tier in vendor['tiers']:
             tier['range_label'] = _format_token_range_label(tier['raw_token_threshold'], prev)
             prev = tier['raw_token_threshold']
+        vendor['has_defaults'] = vendor.get('vendor_name') in default_name_set
         vendors.append(vendor)
 
     return {
@@ -2015,7 +2024,46 @@ def _build_model_billing_payload(model_id: int, model_name: str) -> dict:
         'model_name': model_name,
         'vendors': vendors,
         'power_yuan': _power_yuan(),
+        'has_defaults': has_defaults_for_model(model_name),
+        'default_vendor_names': default_vendor_names,
     }
+
+
+def _resolve_default_tier_thresholds(tier_def: dict) -> tuple:
+    """
+    将默认档位定义解析为 (input_th, out_th, cache_th, raw_th, commission_rate)。
+    优先使用 *_token_threshold；否则用 *_yuan_per_m 换算。
+    """
+    if tier_def.get('input_token_threshold') is not None:
+        in_th = int(tier_def['input_token_threshold'])
+    elif tier_def.get('input_yuan_per_m') is not None:
+        in_th = _threshold_from_yuan_per_m(float(tier_def['input_yuan_per_m']))
+    else:
+        raise HTTPException(status_code=500, detail="默认档位缺少 input 单价或阈值")
+
+    if tier_def.get('out_token_threshold') is not None:
+        out_th = int(tier_def['out_token_threshold'])
+    elif tier_def.get('out_yuan_per_m') is not None:
+        out_th = _threshold_from_yuan_per_m(float(tier_def['out_yuan_per_m']))
+    else:
+        raise HTTPException(status_code=500, detail="默认档位缺少 output 单价或阈值")
+
+    if tier_def.get('cache_read_threshold') is not None:
+        cache_th = int(tier_def['cache_read_threshold'])
+    elif tier_def.get('cache_yuan_per_m') is not None:
+        cache_th = _threshold_from_yuan_per_m(float(tier_def['cache_yuan_per_m']))
+    else:
+        raise HTTPException(status_code=500, detail="默认档位缺少 cache 单价或阈值")
+
+    raw_th = tier_def.get('raw_token_threshold', None)
+    if raw_th is not None and raw_th != '':
+        raw_th = int(raw_th)
+    else:
+        raw_th = None
+
+    rate = _normalize_commission_rate(tier_def.get('commission_rate', 0))
+    _validate_tier_thresholds(in_th, out_th, cache_th, raw_th)
+    return in_th, out_th, cache_th, raw_th, rate
 
 
 def _validate_tier_thresholds(
@@ -2486,6 +2534,129 @@ async def admin_delete_vendor_model_tier(
         raise
     except Exception as e:
         logger.error(f"Failed to delete vendor model tier {tier_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/models/{model_id}/billing/reset-defaults")
+async def admin_reset_model_billing_defaults(
+    model_id: int = Path(...),
+    vendor_id: Optional[int] = Query(None, description="可选，仅还原该供应商；不传则还原全部默认供应商"),
+    auth_token: str = Header(None, alias="Authorization"),
+):
+    """
+    将模型计费档位还原为代码默认配置（config/default_vendor_model_billing.py）。
+
+    - 会删除目标供应商-模型下现有全部档位后按默认重建
+    - 仅支持目录中登记过的 (vendor, model)
+    - vendor_id 可选：只还原该供应商；不传则还原该模型全部默认供应商
+    """
+    admin = await require_admin(auth_token)
+
+    from config.default_vendor_model_billing import (
+        get_default_for_vendor_model,
+        list_defaults_for_model,
+    )
+
+    try:
+        model = await asyncio.to_thread(ModelModel.get_by_id, model_id)
+        if not model:
+            raise HTTPException(status_code=404, detail="模型不存在")
+
+        defaults = list_defaults_for_model(model.model_name)
+        if not defaults:
+            raise HTTPException(
+                status_code=400,
+                detail=f"模型 {model.model_name} 未在代码默认档位目录中登记，无法还原。"
+                       f"请手动配置，或在 config/default_vendor_model_billing.py 中补充默认值。",
+            )
+
+        if vendor_id is not None:
+            vendor = await asyncio.to_thread(VendorDAO.get_by_id, int(vendor_id))
+            if not vendor:
+                raise HTTPException(status_code=404, detail="供应商不存在")
+            one = get_default_for_vendor_model(vendor.vendor_name, model.model_name)
+            if not one:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"供应商 {vendor.vendor_name} / 模型 {model.model_name} "
+                           f"无代码默认档位，无法还原",
+                )
+            defaults = [one]
+
+        applied = []
+        skipped = []
+
+        def _apply_one(vendor_name: str, tiers: list):
+            vendor = VendorDAO.get_by_name(vendor_name)
+            if not vendor:
+                return None, f"数据库中不存在供应商 {vendor_name}"
+            deleted = VendorModelModel.delete_by_vendor_and_model(vendor.id, model_id)
+            created = []
+            for tier_def in tiers:
+                in_th, out_th, cache_th, raw_th, rate = _resolve_default_tier_thresholds(tier_def)
+                new_id = VendorModelModel.create(
+                    vendor.id,
+                    model_id,
+                    in_th,
+                    out_th,
+                    cache_th,
+                    raw_th,
+                    rate,
+                )
+                created.append({
+                    'id': new_id,
+                    'raw_token_threshold': raw_th,
+                    'input_token_threshold': in_th,
+                    'out_token_threshold': out_th,
+                    'cache_read_threshold': cache_th,
+                    'commission_rate': rate,
+                    'input_yuan_per_m': _yuan_per_m_from_threshold(in_th),
+                    'out_yuan_per_m': _yuan_per_m_from_threshold(out_th),
+                    'cache_yuan_per_m': _yuan_per_m_from_threshold(cache_th),
+                })
+            return {
+                'vendor_id': vendor.id,
+                'vendor_name': vendor_name,
+                'deleted_count': deleted,
+                'created_tiers': created,
+            }, None
+
+        for item in defaults:
+            result, err = await asyncio.to_thread(
+                _apply_one, item['vendor_name'], item.get('tiers') or []
+            )
+            if err:
+                skipped.append({'vendor_name': item['vendor_name'], 'reason': err})
+                continue
+            applied.append(result)
+
+        if not applied:
+            detail = "；".join(s['reason'] for s in skipped) if skipped else "未应用任何默认档位"
+            raise HTTPException(status_code=400, detail=detail)
+
+        billing = await asyncio.to_thread(
+            _build_model_billing_payload, model_id, model.model_name
+        )
+        logger.info(
+            f"Reset billing defaults model={model_id} name={model.model_name} "
+            f"applied={len(applied)} skipped={len(skipped)} "
+            f"by admin={getattr(admin, 'id', None)}"
+        )
+        return {
+            "code": 0,
+            "message": f"已还原默认档位（{len(applied)} 个供应商）",
+            "data": {
+                "model_id": model_id,
+                "model_name": model.model_name,
+                "applied": applied,
+                "skipped": skipped,
+                "billing": billing,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to reset billing defaults for model {model_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -93,6 +93,25 @@ class VendorDAO:
         )
 
     @staticmethod
+    def get_by_name(vendor_name: str) -> Optional[Vendor]:
+        """根据供应商名称获取（精确匹配 vendor_name）。"""
+        sql = """
+            SELECT id, vendor_name, created_at, note
+            FROM vendor
+            WHERE vendor_name = %s
+            LIMIT 1
+        """
+        row = execute_query(sql, (vendor_name,), fetch_one=True)
+        if not row:
+            return None
+        return Vendor(
+            id=row['id'],
+            vendor_name=row['vendor_name'],
+            created_at=row['created_at'],
+            note=row['note'],
+        )
+
+    @staticmethod
     def get_all() -> List[Vendor]:
         """
         获取所有供应商
