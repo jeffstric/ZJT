@@ -3520,6 +3520,41 @@ button {
 .generate-from-script-dialog .config-select-wrapper select:focus {
     border-color: var(--primary);
 }
+
+/* Seedance 2.0「是否处理人脸」（拆分弹窗 / 齿轮视频 Tab，对齐 index 生视频） */
+.process-face-row {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--surface-2, #f9fafb);
+    border: 1px solid var(--border);
+}
+.process-face-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--foreground);
+    cursor: pointer;
+    user-select: none;
+}
+.process-face-label input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.process-face-label input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+.process-face-hint {
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.4;
+    color: #d97706;
+}
+
 /* 剧本拆分开关组 */
 .script-split-toggles {
     display: flex;

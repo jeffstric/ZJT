@@ -1575,6 +1575,7 @@ class StoryboardAgentCliService:
         sequence_mode: Optional[str] = None,
         image_mode: Optional[str] = None,
         scene_ids: Optional[Sequence[int]] = None,
+        enable_face_mask: bool = False,
     ) -> Dict[str, Any]:
         """批量提交缺失分镜视频：复用 image batch 编排表，asset_type=video。
 
@@ -1582,6 +1583,7 @@ class StoryboardAgentCliService:
         sequence_mode 默认 speed（无串行依赖，可并行排队）。
         image_mode 默认 first_last_frame；支持 multi_reference（全能参考），后端自动用
         [选中首帧] + [角色/场景/道具参考图] + [全局画风参考图] 作为参考图集。
+        enable_face_mask：Seedance 2.0 系列「是否处理人脸」，写入 generation snapshot。
         """
         if not int(user_id or 0):
             raise StoryboardCliError("missing_user_id", "user_id is required")
@@ -1618,6 +1620,7 @@ class StoryboardAgentCliService:
             profile_values={
                 'ratio': effective_ratio,
                 'image_mode': image_mode,
+                'enable_face_mask': bool(enable_face_mask),
             },
         )
         locked_snapshot = generation_snapshots[
@@ -1635,6 +1638,7 @@ class StoryboardAgentCliService:
             "limit": batch_limit,
             "stop_on_error": bool(stop_on_error),
             "image_mode": image_mode,
+            "enable_face_mask": bool(locked_snapshot.get('enable_face_mask', False)),
             "kind": "auto-video",
             "scene_ids": requested_scene_ids,
         }

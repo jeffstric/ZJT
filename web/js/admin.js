@@ -887,6 +887,16 @@ const AdminApp = {
                 loading: false
             },
 
+            // 媒体缓存管理（缓存目录 media_cache.cache_dir 不开放给用户配置）
+            mediaCache: {
+                enabled: false,
+                maxDays: 30,
+                maxSizeGb: 10,
+                cleanupOnStartup: false,
+                cleanupIntervalHours: 24,
+                loading: false
+            },
+
             // 默认按社区版处理，避免 dashboard 尚未返回时闪现商业入口。
             isCommunityEdition: true,
             runninghubKeyPoolAvailable: false,
@@ -1640,6 +1650,8 @@ const AdminApp = {
                 this.loadConfigs();
             } else if (page === 'checkin') {
                 this.loadCheckinConfig();
+            } else if (page === 'mediaCache') {
+                this.loadMediaCacheConfig();
             } else if (page === 'implementations') {
                 this.loadImplementations();
             } else if (page === 'runninghubKeyPool') {
@@ -2937,6 +2949,68 @@ const AdminApp = {
                 this.showToast(detail, 'error');
             } finally {
                 this.checkin.loading = false;
+            }
+        },
+
+        // ==================== 媒体缓存管理方法 ====================
+
+        async loadMediaCacheConfig() {
+            this.mediaCache.loading = true;
+            try {
+                const response = await axios.get('/api/admin/config', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` },
+                    params: { keyword: 'media_cache.', page: 1, page_size: 50 }
+                });
+
+                if (response.data.code === 0) {
+                    const list = response.data.data.data || [];
+                    const map = {};
+                    list.forEach(item => { map[item.config_key] = item.config_value; });
+
+                    this.mediaCache.enabled = String(map['media_cache.enabled']).toLowerCase() === 'true';
+                    this.mediaCache.maxDays = parseInt(map['media_cache.max_days'] || '30', 10);
+                    this.mediaCache.maxSizeGb = parseInt(map['media_cache.max_size_gb'] || '10', 10);
+                    this.mediaCache.cleanupOnStartup = String(map['media_cache.cleanup_on_startup']).toLowerCase() === 'true';
+                    this.mediaCache.cleanupIntervalHours = parseInt(map['media_cache.cleanup_interval_hours'] || '24', 10);
+                }
+            } catch (error) {
+                console.error('Load media cache config failed:', error);
+                this.showToast(this.t('toast_load_media_cache_failed'), 'error');
+            } finally {
+                this.mediaCache.loading = false;
+            }
+        },
+
+        async saveMediaCacheConfig() {
+            const configs = [];
+            configs.push({ key: 'media_cache.enabled', value: this.mediaCache.enabled ? 'true' : 'false' });
+            // 故意不写入 media_cache.cache_dir：缓存目录不开放给用户配置
+            configs.push({ key: 'media_cache.max_days', value: String(this.mediaCache.maxDays || 0) });
+            configs.push({ key: 'media_cache.max_size_gb', value: String(this.mediaCache.maxSizeGb || 0) });
+            configs.push({ key: 'media_cache.cleanup_on_startup', value: this.mediaCache.cleanupOnStartup ? 'true' : 'false' });
+            configs.push({ key: 'media_cache.cleanup_interval_hours', value: String(this.mediaCache.cleanupIntervalHours || 24) });
+
+            this.mediaCache.loading = true;
+            try {
+                const response = await axios.put('/api/admin/config/batch',
+                    { configs },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+
+                if (response.data.code === 0) {
+                    const errors = response.data.data.errors || [];
+                    if (errors.length > 0) {
+                        this.showToast(this.t('toast_partial_save_failed') + `: ${errors.join(', ')}`, 'error');
+                    } else {
+                        this.showToast(this.t('toast_media_cache_saved'), 'success');
+                    }
+                }
+            } catch (error) {
+                console.error('Save media cache config failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_save_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.mediaCache.loading = false;
             }
         },
 

@@ -559,6 +559,7 @@ class StoryboardAgentCommandService:
                 sequence_mode=data.get("sequence_mode") or data.get("batch_mode") or "speed",
                 image_mode=data.get("image_mode"),
                 scene_ids=data.get("scene_ids"),
+                enable_face_mask=_to_bool(data.get("enable_face_mask")),
             )
 
         if command == "generate-video":

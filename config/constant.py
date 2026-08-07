@@ -1723,6 +1723,13 @@ class AdminBillingConstants:
     MAX_COMMISSION_RATE = 1.0
 
 
+# ============ 一体包 MySQL binlog 保留 ============
+
+class MysqlBinlogConstants:
+    """一体包内置 MySQL 的 binlog 保留策略（仅写配置文件，无运行时 SQL）"""
+    # 约 7 天；对应 my.ini/my.cnf 中 binlog_expire_logs_seconds
+    EXPIRE_LOGS_SECONDS = 7 * 24 * 3600  # 604800
+
 
 # ============ 自动升级相关常量 ============
 
