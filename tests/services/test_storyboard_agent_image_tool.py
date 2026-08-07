@@ -173,3 +173,118 @@ def test_workflow_ratio_overrides_wrong_llm_aspect_ratio():
     )
 
     assert delegate.calls[0]["tool_args"]["aspect_ratio"] == "9:16"
+
+
+def test_edit_image_merges_forced_reference_urls_when_llm_drops_characters():
+    """双角色参考清单存在时，LLM 只传 1 个 URL 也必须补齐。"""
+    from services.storyboard_agent_image_tool import merge_forced_reference_urls
+
+    forced = [
+        "https://cdn.test/role-a.png",
+        "https://cdn.test/role-b.png",
+        "https://cdn.test/location.png",
+    ]
+    assert merge_forced_reference_urls(forced, ["https://cdn.test/role-a.png"]) == forced
+
+    delegate = FakeToolExecutor()
+    executor = StoryboardAgentImageToolExecutor(
+        delegate,
+        forced_reference_urls=forced,
+    )
+    executor.execute_tool(
+        "edit_image",
+        {
+            "prompt": "两人同框",
+            "image_url": "https://cdn.test/role-a.png",
+        },
+        "1",
+        "2",
+        "token",
+    )
+    assert delegate.calls[0]["tool_name"] == "edit_image"
+    assert delegate.calls[0]["tool_args"]["image_url"] == ",".join(forced)
+
+
+def test_generate_text_to_image_converts_to_edit_image_when_forced_refs_exist():
+    """有场景参考图时禁止降级文生图，强制走 edit_image 并带全量 URL。"""
+    forced = [
+        "https://cdn.test/role-a.png",
+        "https://cdn.test/role-b.png",
+    ]
+    delegate = FakeToolExecutor()
+    executor = StoryboardAgentImageToolExecutor(
+        delegate,
+        forced_reference_urls=forced,
+        style="水墨",
+        composition_preference="三分法",
+    )
+    executor.execute_tool(
+        "generate_text_to_image",
+        {"prompt": "两人同框"},
+        "1",
+        "2",
+        "token",
+    )
+    assert delegate.calls[0]["tool_name"] == "edit_image"
+    assert delegate.calls[0]["tool_args"]["image_url"] == ",".join(forced)
+    assert "图片风格：水墨" in delegate.calls[0]["tool_args"]["prompt"]
+
+
+def test_forced_reference_urls_keep_extra_llm_urls_after_authoritative_list():
+    forced = ["https://cdn.test/role-a.png", "https://cdn.test/role-b.png"]
+    delegate = FakeToolExecutor()
+    executor = StoryboardAgentImageToolExecutor(
+        delegate,
+        forced_reference_urls=forced,
+    )
+    executor.execute_tool(
+        "edit_image",
+        {
+            "prompt": "edit",
+            "image_url": "https://cdn.test/role-a.png,https://cdn.test/user-extra.png",
+        },
+        "1",
+        "2",
+        "token",
+    )
+    assert delegate.calls[0]["tool_args"]["image_url"] == (
+        "https://cdn.test/role-a.png,"
+        "https://cdn.test/role-b.png,"
+        "https://cdn.test/user-extra.png"
+    )
+
+
+def test_edit_image_rebuilds_reference_legend_to_match_forced_urls():
+    """补齐 URL 后，prompt 末尾图例必须与最终 image_url 顺序一致。"""
+    forced = [
+        "https://cdn.test/role-a.png",
+        "https://cdn.test/role-b.png",
+        "https://cdn.test/location.png",
+    ]
+    items = [
+        {"type": "角色", "name": "德保罗", "url": "https://cdn.test/role-a.png"},
+        {"type": "角色", "name": "梅西", "url": "https://cdn.test/role-b.png"},
+        {"type": "场景", "name": "街道", "url": "https://cdn.test/location.png"},
+    ]
+    delegate = FakeToolExecutor()
+    executor = StoryboardAgentImageToolExecutor(
+        delegate,
+        forced_reference_urls=forced,
+        forced_reference_items=items,
+    )
+    executor.execute_tool(
+        "edit_image",
+        {
+            "prompt": "两人同框\n\n参考图说明：图1是角色：德保罗。",
+            "image_url": "https://cdn.test/role-a.png",
+        },
+        "1",
+        "2",
+        "token",
+    )
+    prompt = delegate.calls[0]["tool_args"]["prompt"]
+    assert delegate.calls[0]["tool_args"]["image_url"] == ",".join(forced)
+    assert prompt.count("参考图说明：") == 1
+    assert "图1是角色：德保罗" in prompt
+    assert "图2是角色：梅西" in prompt
+    assert "图3是场景：街道" in prompt

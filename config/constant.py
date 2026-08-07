@@ -1365,6 +1365,13 @@ class MediaConstants:
     # 否则上游返回 InvalidParameter（如高刷屏上浏览器 Canvas+MediaRecorder 产出的
     # 120fps 视频）。统一归一化至 30fps，留足安全余量。
     VIDEO_REFERENCE_MAX_FPS = 30
+    # 人脸遮罩叠加：原视频与遮罩视频统一重采样后的固定帧率（CFR）。
+    # 帧率元数据对 VFR webm 不可信（可能误报 1000fps 或看似合理的 60fps），
+    # 叠加前由 ffmpeg 按帧 PTS 重采样到该帧率，与 RunningHub 遮罩输出帧率一致。
+    FACE_MASK_CFR_FPS = 24
+    # 人脸遮罩上传 RunningHub 前的短边上限（像素）。仅上传侧生效，本地融合仍用原尺寸；
+    # 遮罩融合时 resize 回原尺寸。防止 1080p 等大视频在 RH 端全量加载时爆显存。
+    FACE_MASK_UPLOAD_MAX_SHORT_SIDE = 512
 
 
 class BrandingConstants:
@@ -1613,7 +1620,7 @@ class LLMVendor:
         'JIEKOU': '接口供应商（Gemini 模型）',
         'ALIYUN': '阿里云供应商（Qwen 模型）',
         'OLLAMA': '本地运行供应商（Ollama 模型）',
-        'VOLCENGINE': '火山引擎供应商（Doubao 模型）',
+        'VOLCENGINE': '火山引擎供应商（Doubao / DeepSeek-V4 模型）',
         'CLAUDE': 'Claude 供应商（Anthropic 模型）',
         'ZJT_API': 'ZJT API 供应商（Qwen3.5/3.6 模型）',
         'DEEPSEEK': 'DeepSeek 供应商（DeepSeek-V4 模型）',
@@ -1696,6 +1703,32 @@ MODEL_PREFIX_VENDOR_MAP = {
     'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
     'deepseek': LLMVendor.DEEPSEEK,  # DeepSeek 的 DeepSeek-V4 模型
 }
+
+
+# ============ 管理后台 · 大模型分段计费 ============
+
+class AdminBillingConstants:
+    """管理后台 LLM 分段计费 / AI 改档常量"""
+    _CONSTANT_GROUP = True
+    # 1 点算力 = 0.04 元
+    POWER_YUAN = 0.04
+    # 元/百万 token ↔ threshold 换算：threshold = POWER_YUAN * 1e6 / yuan_per_m
+    YUAN_PER_M_SCALE = 1_000_000
+    # AI 改档默认引擎：deepseek 供应商 + deepseek-v4-pro
+    AI_DEFAULT_VENDOR = LLMVendor.DEEPSEEK
+    AI_DEFAULT_MODEL = LLMModel.DEEPSEEK_V4_PRO
+    # LLM 调用超时（秒）
+    AI_TIMEOUT_SEC = 60
+    # 抽成上限 100%
+    MAX_COMMISSION_RATE = 1.0
+
+
+# ============ 一体包 MySQL binlog 保留 ============
+
+class MysqlBinlogConstants:
+    """一体包内置 MySQL 的 binlog 保留策略（仅写配置文件，无运行时 SQL）"""
+    # 约 7 天；对应 my.ini/my.cnf 中 binlog_expire_logs_seconds
+    EXPIRE_LOGS_SECONDS = 7 * 24 * 3600  # 604800
 
 
 # ============ 自动升级相关常量 ============

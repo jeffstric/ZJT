@@ -39,6 +39,35 @@ class SyncTaskResult:
     error_type: Optional[str] = None
 
 
+
+def _enterprise_sync_worker_init() -> None:
+    """ProcessPool 子进程 initializer：注入商业 Provider + 许可证 runtime。
+
+    子进程不继承父进程的 register_provider / _manager 等模块全局状态。
+    未初始化时 face_mask 会静默走社区 skip，多密钥池也会退化为单密钥。
+    """
+    try:
+        from config.constant import Edition
+        if Edition.is_community():
+            return
+        import enterprise
+
+        enterprise.bootstrap_background_process(
+            enable_background_refresh=False,
+            include_failure_retry=False,
+            include_marketing_tools=False,
+        )
+        logger.info(
+            "[SyncTaskExecutor] enterprise background bootstrap done (pid=%s)",
+            os.getpid(),
+        )
+    except Exception:
+        logger.exception(
+            "[SyncTaskExecutor] enterprise background bootstrap failed (pid=%s)",
+            os.getpid(),
+        )
+
+
 def _execute_sync_task(task_id: int, ai_tool_type: int, worker_pids=None) -> SyncTaskResult:
     """
     子进程入口函数 - 执行同步任务
@@ -297,7 +326,10 @@ class SyncTaskExecutor:
         try:
             self._manager = Manager()
             self._worker_pids = self._manager.dict()
-            self._executor = ProcessPoolExecutor(max_workers=self._max_workers)
+            self._executor = ProcessPoolExecutor(
+                max_workers=self._max_workers,
+                initializer=_enterprise_sync_worker_init,
+            )
             self._pool_broken = False
             self._running = True
             logger.info(f"[SyncTaskExecutor] Started with max_workers={self._max_workers}")
@@ -350,7 +382,10 @@ class SyncTaskExecutor:
             except Exception as exc:
                 logger.warning(f"[SyncTaskExecutor] Error shutting down broken pool: {exc}")
 
-        self._executor = ProcessPoolExecutor(max_workers=self._max_workers)
+        self._executor = ProcessPoolExecutor(
+            max_workers=self._max_workers,
+            initializer=_enterprise_sync_worker_init,
+        )
         self._pool_broken = False
         logger.warning("[SyncTaskExecutor] Process pool rebuilt")
 

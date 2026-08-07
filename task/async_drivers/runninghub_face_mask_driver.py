@@ -3,12 +3,15 @@ RunningHub 人脸遮盖视频生成驱动
 使用 RunningHub OpenAPI v2 异步生成人脸遮盖区域的视频
 """
 import logging
+import os
+import tempfile
 import traceback
 from typing import Dict, Any, Optional
 
 from .base_async_driver import BaseAsyncDriver
 from api.clients.runninghub_client import RunningHubClient
-from config.config_util import get_config, get_dynamic_config_value
+from config.config_util import get_config, get_config_value, get_dynamic_config_value, resolve_bin_path
+from config.constant import MediaConstants
 from utils.file_storage import RunningHubFileStorage
 
 logger = logging.getLogger(__name__)
@@ -16,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 class RunningHubFaceMaskConfig:
     """RunningHub 人脸遮盖视频生成配置常量"""
-    APP_ID = "2059109399586762753"
+    APP_ID = "2085225276274987010"
     VIDEO_NODE_ID = "3"
     VIDEO_FIELD_NAME = "video"
     FINAL_STATUSES = ("SUCCESS", "FAILED", "ERROR", "CANCELED", "CANCELLED")
@@ -54,8 +57,10 @@ class RunningHubFaceMaskDriver(BaseAsyncDriver):
         提交人脸遮盖视频生成任务到 RunningHub
 
         步骤：
-        1. 上传视频到 RunningHub 媒体服务器
-        2. 用返回的 fileName 构建 nodeInfoList 提交 AI App 任务
+        1. 本地视频先归一化为固定 CFR（VFR webm 的帧率元数据不可信，
+           RH 端解码帧数/时间轴会漂移，导致遮罩与人脸对不上）
+        2. 上传视频到 RunningHub 媒体服务器
+        3. 用返回的 fileName 构建 nodeInfoList 提交 AI App 任务
 
         Args:
             video_path: 本地文件路径或 URL
@@ -63,10 +68,16 @@ class RunningHubFaceMaskDriver(BaseAsyncDriver):
         Returns:
             {'success': True, 'project_id': taskId} 或 {'success': False, 'error': ...}
         """
+        normalized_path = None
         try:
+            upload_path = video_path
+            normalized_path = self._normalize_before_upload(video_path)
+            if normalized_path:
+                upload_path = normalized_path
+
             upload_result = await self._storage.upload_file(
                 key="",
-                file_path=video_path
+                file_path=upload_path
             )
             if not upload_result.success:
                 return {
@@ -98,6 +109,52 @@ class RunningHubFaceMaskDriver(BaseAsyncDriver):
 
         except (ConnectionError, TimeoutError, Exception) as e:
             return self._handle_submit_error(e)
+        finally:
+            if normalized_path:
+                try:
+                    os.remove(normalized_path)
+                except OSError:
+                    pass
+
+    def _normalize_before_upload(self, video_path: str) -> Optional[str]:
+        """
+        上传前将视频归一化为固定 CFR 临时文件，返回临时文件路径。
+
+        video_path 通常是本服务 URL，先映射为本地文件再归一化；
+        归一化失败时返回 None 并回退上传原视频
+        （融合侧 utils.face_mask_util 的 CFR 归一化 + 帧数比例对齐作为兜底）。
+        """
+        try:
+            local_path = self._storage.resolve_to_local_file(video_path)
+        except Exception as e:
+            logger.warning(f"上传路径映射本地文件异常: {video_path}, {e}")
+            local_path = None
+        if not local_path:
+            logger.warning(f"视频无法映射到本地文件，跳过 CFR 归一化: {video_path}")
+            return None
+        try:
+            from utils.face_mask_util import _normalize_video_to_cfr
+            from utils.project_path import get_project_root
+            ffmpeg_path = resolve_bin_path(
+                get_config_value("bin", "ffmpeg", default="ffmpeg"), get_project_root()
+            )
+            fd, temp_path = tempfile.mkstemp(prefix="face_mask_upload_", suffix=".cfr.mp4")
+            os.close(fd)
+            if _normalize_video_to_cfr(
+                ffmpeg_path, local_path, temp_path, MediaConstants.FACE_MASK_CFR_FPS,
+                max_short_side=MediaConstants.FACE_MASK_UPLOAD_MAX_SHORT_SIDE,
+            ):
+                logger.info(f"视频已归一化为 {MediaConstants.FACE_MASK_CFR_FPS}fps CFR 后上传: {local_path}")
+                return temp_path
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            logger.warning(f"CFR 归一化失败，回退上传原始视频: {local_path}")
+            return None
+        except Exception as e:
+            logger.warning(f"CFR 归一化异常，回退上传原始视频: {local_path}, {e}")
+            return None
 
     async def check_status(self, project_id: str) -> Dict[str, Any]:
         """

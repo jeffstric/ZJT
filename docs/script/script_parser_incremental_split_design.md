@@ -1013,6 +1013,7 @@ start.bat / linux_start_prod.sh
 - 接收命令行参数 `<index> <total>`，校验 `0 <= index < total`
 - **不调用 `init_scheduler`**，绕开全局 `scheduler.lock`；用 per-index 文件锁 `<root>/script_split_worker_<index>.lock` 防止同 index 重复启动（复用 `msvcrt`/`fcntl` + 残留死锁检测，强制 kill 后 OS 锁自动释放）
 - 启动时注入 `ScriptSplitConstants.WORKER_TOTAL/WORKER_INDEX`
+- **商业能力进程初始化**（非社区版）：独立 worker 不 import `server`、不跑 FastAPI lifespan，须在 tick 循环前调用 enterprise 的后台 bootstrap（与主调度器一致）；未初始化时 quality 等商业策略 fail-closed。实现见 `run_script_split_worker.py` / `run_scheduler.py`；细节仅在 enterprise 私有文档维护
 - 主循环：`while True: asyncio.run(process_script_split_tasks()); sleep(SCHEDULER_INTERVAL_SECONDS)`，复用既有单步推进 + 看门狗 + 租约逻辑，单次异常捕获防拖垮进程
 - 日志写入 `logs/app.YYYY-MM-DD.log`（import `utils.logger_config` 自动配置）
 

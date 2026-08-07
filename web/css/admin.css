@@ -2830,6 +2830,313 @@ body {
     opacity: 0.85;
 }
 
+.models-table tr.model-expanded {
+    background: #f8fafc;
+}
+
+.model-expand-btn {
+    min-width: 28px;
+    padding: 2px 6px;
+    font-size: 12px;
+    line-height: 1.2;
+}
+
+.billing-summary-tag {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #ecfdf5;
+    color: #047857;
+    border: 1px solid #a7f3d0;
+    white-space: nowrap;
+}
+
+.billing-summary-tag.empty {
+    background: #f8fafc;
+    color: #94a3b8;
+    border-color: #e2e8f0;
+}
+
+.model-billing-row > td {
+    padding: 0 !important;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.model-billing-panel {
+    padding: 14px 16px 16px 40px;
+}
+
+.billing-loading,
+.billing-empty {
+    color: #64748b;
+    font-size: 13px;
+    padding: 8px 0;
+}
+
+.billing-empty p {
+    margin: 0 0 10px;
+}
+
+.billing-vendor-block {
+    margin-bottom: 16px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.billing-vendor-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.billing-tier-table {
+    margin: 0;
+    font-size: 13px;
+}
+
+.billing-tier-table th {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 12px;
+}
+
+.billing-input {
+    width: 100px;
+    max-width: 120px;
+}
+
+.range-label {
+    display: inline-block;
+    background: #eff6ff;
+    color: #1d4ed8;
+    border: 1px solid #bfdbfe;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.raw-threshold {
+    font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+    font-size: 12px;
+    color: #475569;
+}
+
+.action-btn.small.danger {
+    color: #dc2626;
+    border-color: #fecaca;
+}
+
+.action-btn.small.danger:hover {
+    background: #fef2f2;
+}
+
+.price-unit {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-left: 2px;
+}
+
+.user-price-cell {
+    font-size: 12px;
+    line-height: 1.5;
+    min-width: 200px;
+}
+
+.user-price-cell .price-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: baseline;
+    margin-bottom: 3px;
+}
+
+.user-price-cell .price-row-label {
+    flex: 0 0 auto;
+    min-width: 2.5em;
+    font-weight: 600;
+    color: #475569;
+}
+
+.user-price-cell .price-user {
+    color: #0f172a;
+}
+
+.user-price-cell .price-user b {
+    color: #047857;
+    font-weight: 700;
+}
+
+.user-price-cell .price-cost {
+    color: #64748b;
+    font-size: 11px;
+}
+
+.user-price-cell .price-profit {
+    color: #c2410c;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.user-price-cell .price-profit-hint {
+    margin-top: 2px;
+    font-size: 11px;
+    color: #94a3b8;
+    white-space: normal;
+    line-height: 1.35;
+}
+
+.user-price-cell .muted,
+.muted {
+    color: #94a3b8;
+    font-size: 11px;
+}
+
+.billing-preview-box {
+    padding: 10px 12px;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.billing-ai-global-box {
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    border: 1px solid #f59e0b;
+    border-left: 4px solid #d97706;
+    border-radius: 8px;
+}
+
+.billing-ai-global-title {
+    color: #92400e;
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.billing-ai-global-desc {
+    margin: 0 0 12px;
+    color: #78350f;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.billing-ai-global-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.billing-ai-global-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #92400e;
+}
+
+.billing-ai-global-select {
+    min-width: 280px;
+    max-width: 420px;
+}
+
+.billing-ai-global-hint {
+    font-size: 12px;
+    color: #a16207;
+}
+
+.billing-ai-box {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 14px;
+}
+
+.billing-ai-using {
+    font-size: 13px;
+    color: #64748b;
+    margin-right: 8px;
+}
+
+.billing-ai-using strong {
+    color: #b45309;
+}
+
+.billing-ai-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+
+.billing-ai-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+    margin-bottom: 8px;
+    resize: vertical;
+}
+
+.billing-diff-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+    background: #fff;
+}
+
+.billing-diff-card.op-delete {
+    border-color: #fecaca;
+    background: #fef2f2;
+}
+
+.billing-diff-card.op-create {
+    border-color: #bbf7d0;
+    background: #f0fdf4;
+}
+
+.billing-diff-head {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.op-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #e0e7ff;
+    color: #3730a3;
+}
+
+.billing-diff-table td.diff-after {
+    color: #047857;
+}
+
+.billing-diff-delete {
+    font-size: 13px;
+    color: #991b1b;
+}
+
 .model-id {
     display: inline-block;
     background: #f1f5f9;

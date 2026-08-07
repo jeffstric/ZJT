@@ -74,16 +74,16 @@ def test_sync_script_split_model_preference_reports_failure(monkeypatch):
 
 
 def test_storyboard_video_agent_builds_task_scoped_preferences_without_persisting(monkeypatch):
+    """Storyboard Agent 视频偏好只认界面显式参数，不读写 Marketing 共享偏好。"""
     from api import script_writer, storyboard
-    from config.unified_config import UnifiedConfigRegistry
+    from config.unified_config import DriverKey, UnifiedConfigRegistry
 
     monkeypatch.setattr(
         script_writer,
         "get_video_preferences",
-        lambda user_id, world_id: {
-            "ratio": "16:9",
-            "enable_face_mask": True,
-        },
+        lambda user_id, world_id: (_ for _ in ()).throw(
+            AssertionError("storyboard must not read marketing video preferences")
+        ),
     )
     monkeypatch.setattr(
         script_writer,
@@ -92,12 +92,27 @@ def test_storyboard_video_agent_builds_task_scoped_preferences_without_persistin
             AssertionError("task-scoped storyboard settings must not be persisted")
         ),
     )
+
+    def _fake_get_by_id(task_id):
+        tid = int(task_id)
+        if tid == 27:
+            return SimpleNamespace(name="Grok", key="grok_image_to_video")
+        if tid == 23:
+            return SimpleNamespace(
+                name="Seedance 2.0",
+                key=DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO,
+            )
+        return None
+
     monkeypatch.setattr(
         UnifiedConfigRegistry,
         "get_by_id",
-        staticmethod(lambda task_id: SimpleNamespace(name="Grok") if int(task_id) == 27 else None),
+        staticmethod(_fake_get_by_id),
     )
+    # 强制非社区版，便于断言 enable_face_mask
+    monkeypatch.setattr(storyboard.Edition, "is_community", staticmethod(lambda: False))
 
+    # 非 Seedance：即使传入 enable_face_mask=True 也强制 false
     preferences = asyncio.run(
         storyboard._build_storyboard_agent_video_preferences(
             user_id=7,
@@ -107,18 +122,35 @@ def test_storyboard_video_agent_builds_task_scoped_preferences_without_persistin
             duration_seconds=5,
             video_resolution="720P",
             video_task_id=27,
+            enable_face_mask=True,
         )
     )
-
     assert preferences == {
         "ratio": "9:16",
-        "enable_face_mask": True,
+        "enable_face_mask": False,
         "image_mode": "first_last_frame",
         "duration": 5,
         "resolution": "720P",
         "task_id": 27,
         "model_name": "Grok",
     }
+
+    # Seedance 2.0 + 显式勾选：保留 true
+    seedance_prefs = asyncio.run(
+        storyboard._build_storyboard_agent_video_preferences(
+            user_id=7,
+            world_id=99,
+            storyboard=SimpleNamespace(workflow_ratio="9:16"),
+            image_mode="first_last_frame",
+            duration_seconds=5,
+            video_resolution="720P",
+            video_task_id=23,
+            enable_face_mask=True,
+        )
+    )
+    assert seedance_prefs["enable_face_mask"] is True
+    assert seedance_prefs["task_id"] == 23
+    assert seedance_prefs["model_name"] == "Seedance 2.0"
 
     api_source = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
     route_start = api_source.index("async def scene_ai_chat(")
@@ -127,3 +159,4 @@ def test_storyboard_video_agent_builds_task_scoped_preferences_without_persistin
     assert "await _build_storyboard_agent_video_preferences(" in route_source
     assert "video_preferences=video_preferences" in route_source
     assert "video_task_id=video_task_id" in route_source
+    assert "enable_face_mask=" in route_source

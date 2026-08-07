@@ -118,6 +118,53 @@ def test_reference_items_only_use_prompt_mentions_not_character_desc():
     ]
 
 
+def test_reference_items_include_user_added_second_character_tag():
+    """用户后在提示词新增【【角色】】时，只要库记录在 characters 列表中就会挂上参考图。"""
+    prompt_json = {
+        "scene_desc": "【【德保罗】】与【【梅西】】并肩站在镜头前。",
+        "character_desc": "德保罗",  # 拆分时可能只有一人；不应阻止第二人标记
+    }
+    characters = [
+        {"id": 1, "name": "德保罗", "reference_image": "/upload/character/depaul.png"},
+        {"id": 2, "name": "梅西", "reference_image": "/upload/character/messi.png"},
+    ]
+
+    items = build_storyboard_reference_items(
+        prompt_json=prompt_json,
+        characters=characters,
+        location=None,
+    )
+
+    assert [(item["type"], item["name"]) for item in items] == [
+        ("角色", "德保罗"),
+        ("角色", "梅西"),
+    ]
+    assert [item["url"] for item in items] == [
+        "/upload/character/depaul.png",
+        "/upload/character/messi.png",
+    ]
+
+
+def test_reference_items_ignore_dialogue_only_character_without_tag():
+    """仅对白/character_desc 有角色、提示词未【【】】标记时，不进参考图。"""
+    prompt_json = {
+        "scene_desc": "【【德保罗】】独自站在街角。",
+        "character_desc": "德保罗、梅西",
+    }
+    characters = [
+        {"id": 1, "name": "德保罗", "reference_image": "/upload/character/depaul.png"},
+        {"id": 2, "name": "梅西", "reference_image": "/upload/character/messi.png"},
+    ]
+
+    items = build_storyboard_reference_items(
+        prompt_json=prompt_json,
+        characters=characters,
+        location=None,
+    )
+
+    assert [(item["type"], item["name"]) for item in items] == [("角色", "德保罗")]
+
+
 def test_reference_items_include_prompt_matched_props_and_append_legend():
     prompt_json = {
         "scene_desc": "【【德保罗】】抓起〖〖公文包〗〗冲出房间。",

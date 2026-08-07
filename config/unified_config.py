@@ -189,6 +189,7 @@ class AsyncTaskConfig:
     name: str                         # 名称
     need_runninghub_slot: bool = False  # 是否需要 RunningHub 槽位
     slot_task_type: int = 0           # 槽位 task_type（对应 runninghub_slots.task_type）
+    max_attempts: int = 60            # 轮询最大尝试次数（约 10s/次，60 次 ≈ 10 分钟）
 
 
 # 异步任务配置表
@@ -200,7 +201,9 @@ ASYNC_TASK_CONFIGS: Dict[int, AsyncTaskConfig] = {
         impl_id=1, name="RunningHub音频", need_runninghub_slot=True, slot_task_type=1
     ),
     AsyncTaskImplementationId.RUNNINGHUB_FACE_MASK: AsyncTaskConfig(
-        impl_id=2, name="RunningHub人脸遮盖", need_runninghub_slot=True, slot_task_type=2
+        impl_id=2, name="RunningHub人脸遮盖", need_runninghub_slot=True, slot_task_type=2,
+        # 人脸遮盖工作流为逐帧检测，RH 侧实测耗时可超 10 分钟，放宽到约 20 分钟
+        max_attempts=120
     ),
     AsyncTaskImplementationId.RUNNINGHUB_IMAGE_FACE_MASK: AsyncTaskConfig(
         impl_id=3, name="RunningHub图片人脸遮盖", need_runninghub_slot=True, slot_task_type=3
@@ -1599,6 +1602,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=32,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
         supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+        enabled=False,  # 该功能已关闭
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SORA2_IMAGE_TO_VIDEO,
@@ -1637,6 +1641,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=33,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
         supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+        enabled=False,  # 该功能已关闭
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.LTX2_3_IMAGE_TO_VIDEO,
