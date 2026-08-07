@@ -139,7 +139,32 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 | 连续签到奖励 | 开关连续签到额外奖励 |
 | 奖励阶梯 | 配置连续签到天数与对应额外奖励 |
 
-### 5. 实现方管理
+### 5. 媒体缓存管理
+
+管理媒体文件本地缓存策略。入口：侧边栏「媒体缓存」。配置项写入 `system_config` 表（键前缀 `media_cache.`），运行时由 `utils/media_cache.py` 与 `task/scheduler.py` 读取消费。详见 [媒体文件缓存管理方案](媒体文件缓存管理方案.md)。
+
+本页面向用户开放的配置项：
+
+| 配置项 | 配置键 | 类型 | 说明 |
+|--------|--------|------|------|
+| 启用媒体缓存 | `media_cache.enabled` | bool | 媒体文件本地缓存总开关 |
+| 文件保留天数（保持时长） | `media_cache.max_days` | int | 超过该天数的缓存文件将被清理（0=不限制） |
+| 最大缓存容量（最大磁盘大小） | `media_cache.max_size_gb` | int | 缓存总大小超过该容量时按最旧优先清理，单位 GB（0=不限制） |
+| 启动时执行清理 | `media_cache.cleanup_on_startup` | bool | 服务启动时自动执行一次缓存清理 |
+| 定时清理间隔 | `media_cache.cleanup_interval_hours` | int | 周期性执行缓存清理的间隔（小时） |
+
+> 注：
+> - 保留天数为「天」、最大缓存容量为「GB」，二者均为整数；填 `0` 表示不限制。
+> - **缓存目录 `media_cache.cache_dir` 不开放给用户配置**（固定走 YAML/元数据默认值，如 `upload/cache`）；本页不展示、不读写该键。
+> - 修改保存后立即生效（配置缓存 TTL 30 秒内全节点感知），清理阈值在下次清理任务执行时按新值计算。
+
+#### 数据接口
+
+媒体缓存配置页复用通用配置接口，无新增后端接口：
+- 读取：`GET /api/admin/config?keyword=media_cache.`
+- 保存：`PUT /api/admin/config/batch`（批量更新本页开放的 `media_cache.*` 键，不含 `cache_dir`）
+
+### 6. 实现方管理
 
 管理AI服务实现方（服务商）的配置。
 
@@ -166,7 +191,7 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 - 无时长选项的实现方使用固定算力值
 - 可一键恢复为默认算力值
 
-### 6. 通知中心
+### 7. 通知中心
 
 展示系统通知和版本更新信息。
 
