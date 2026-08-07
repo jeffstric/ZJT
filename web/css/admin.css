@@ -2947,8 +2947,51 @@ body {
 
 .user-price-cell {
     font-size: 12px;
-    line-height: 1.45;
-    white-space: nowrap;
+    line-height: 1.5;
+    min-width: 200px;
+}
+
+.user-price-cell .price-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: baseline;
+    margin-bottom: 3px;
+}
+
+.user-price-cell .price-row-label {
+    flex: 0 0 auto;
+    min-width: 2.5em;
+    font-weight: 600;
+    color: #475569;
+}
+
+.user-price-cell .price-user {
+    color: #0f172a;
+}
+
+.user-price-cell .price-user b {
+    color: #047857;
+    font-weight: 700;
+}
+
+.user-price-cell .price-cost {
+    color: #64748b;
+    font-size: 11px;
+}
+
+.user-price-cell .price-profit {
+    color: #c2410c;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.user-price-cell .price-profit-hint {
+    margin-top: 2px;
+    font-size: 11px;
+    color: #94a3b8;
+    white-space: normal;
+    line-height: 1.35;
 }
 
 .user-price-cell .muted,

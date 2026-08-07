@@ -1308,9 +1308,27 @@
                                                                     </td>
                                                                     <td>
                                                                         <div class="user-price-cell" v-if="tier.money">
-                                                                            <div><strong>{{ formatYuan(tier.money.input?.user_yuan_per_m) }}</strong> / {{ t('models_billing_in_short') }}</div>
-                                                                            <div>{{ formatYuan(tier.money.output?.user_yuan_per_m) }} / {{ t('models_billing_out_short') }}</div>
-                                                                            <div class="muted">{{ t('models_billing_cost_short') }} {{ formatYuan(tier.money.input?.cost_yuan_per_m) }}</div>
+                                                                            <div class="price-row price-user">
+                                                                                <span class="price-row-label">{{ t('models_billing_user_short') }}</span>
+                                                                                <span><b>{{ formatYuan(tier.money.input?.user_yuan_per_m) }}</b>/{{ t('models_billing_in_short') }}</span>
+                                                                                <span><b>{{ formatYuan(tier.money.output?.user_yuan_per_m) }}</b>/{{ t('models_billing_out_short') }}</span>
+                                                                                <span><b>{{ formatYuan(tier.money.cache?.user_yuan_per_m) }}</b>/{{ t('models_billing_cache_short') }}</span>
+                                                                            </div>
+                                                                            <div class="price-row price-cost">
+                                                                                <span class="price-row-label">{{ t('models_billing_cost_short') }}</span>
+                                                                                <span>{{ formatYuan(tier.money.input?.cost_yuan_per_m) }}/{{ t('models_billing_in_short') }}</span>
+                                                                                <span>{{ formatYuan(tier.money.output?.cost_yuan_per_m) }}/{{ t('models_billing_out_short') }}</span>
+                                                                                <span>{{ formatYuan(tier.money.cache?.cost_yuan_per_m) }}/{{ t('models_billing_cache_short') }}</span>
+                                                                            </div>
+                                                                            <div class="price-row price-profit">
+                                                                                <span class="price-row-label">{{ t('models_billing_profit_short') }}</span>
+                                                                                <span>{{ formatYuan(tier.money.input?.profit_yuan_per_m) }}/{{ t('models_billing_in_short') }}</span>
+                                                                                <span>{{ formatYuan(tier.money.output?.profit_yuan_per_m) }}/{{ t('models_billing_out_short') }}</span>
+                                                                                <span>{{ formatYuan(tier.money.cache?.profit_yuan_per_m) }}/{{ t('models_billing_cache_short') }}</span>
+                                                                            </div>
+                                                                            <div class="price-row price-profit-hint muted">
+                                                                                {{ t('models_billing_profit_hint', { pct: Math.round((tier.commission_rate || 0) * 100) }) }}
+                                                                            </div>
                                                                         </div>
                                                                     </td>
                                                                     <td>
@@ -2531,6 +2549,21 @@
                                     <td>{{ t('models_billing_cost_output') }}</td>
                                     <td>{{ formatYuan(op.before?.money?.output?.cost_yuan_per_m) }}</td>
                                     <td>{{ formatYuan(op.after?.money?.output?.cost_yuan_per_m) }}</td>
+                                </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_profit_input') }}</td>
+                                    <td>{{ formatYuan(op.before?.money?.input?.profit_yuan_per_m) }}</td>
+                                    <td class="diff-after"><strong>{{ formatYuan(op.after?.money?.input?.profit_yuan_per_m) }}</strong></td>
+                                </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_profit_output') }}</td>
+                                    <td>{{ formatYuan(op.before?.money?.output?.profit_yuan_per_m) }}</td>
+                                    <td class="diff-after"><strong>{{ formatYuan(op.after?.money?.output?.profit_yuan_per_m) }}</strong></td>
+                                </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_profit_cache') }}</td>
+                                    <td>{{ formatYuan(op.before?.money?.cache?.profit_yuan_per_m) }}</td>
+                                    <td class="diff-after"><strong>{{ formatYuan(op.after?.money?.cache?.profit_yuan_per_m) }}</strong></td>
                                 </tr>
                                 <tr>
                                     <td>{{ t('models_billing_col_commission') }}</td>
