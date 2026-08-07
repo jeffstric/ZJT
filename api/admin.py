@@ -2123,20 +2123,23 @@ def _extract_json_object(text: str) -> dict:
 @router.get("/models")
 async def admin_get_models(auth_token: str = Header(None, alias="Authorization")):
     """
-    获取所有模型列表（含 enabled 状态与计费摘要）
+    获取所有模型列表（含 enabled 状态、计费摘要、关联供应商）
     """
     await require_admin(auth_token)
 
     try:
-        models, summaries = await asyncio.gather(
+        models, summaries, vendors_map = await asyncio.gather(
             asyncio.to_thread(ModelModel.get_all, 0),
             asyncio.to_thread(VendorModelModel.get_billing_summaries),
+            asyncio.to_thread(VendorModelModel.list_vendors_by_models),
         )
         data = []
         for m in models:
             item = m.to_dict()
             summary = summaries.get(m.id) or {'vendor_count': 0, 'tier_count': 0}
             item['billing_summary'] = summary
+            # 该模型在 vendor_model 中关联的全部供应商（AI 负责模型下拉用）
+            item['vendors'] = vendors_map.get(m.id) or []
             data.append(item)
         return {
             "code": 0,

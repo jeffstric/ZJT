@@ -3998,21 +3998,45 @@ const AdminApp = {
             }
         },
 
-        // 构建 AI 模型下拉（默认 deepseek-v4-pro）
+        // 构建 AI 负责模型下拉：供应商 + 模型（默认 deepseek / deepseek-v4-pro）
         refreshBillingAiLlmOptions() {
             const opts = [];
             let defaultKey = '';
             for (const m of this.models.list || []) {
                 if (!m.enabled) continue;
-                // 简化：用 model_id 作为选项，vendor 在选默认时从 billing 摘要不够，直接用 model name
-                // 实际 propose 时再解析 deepseek vendor
-                const key = String(m.id);
-                const label = m.model_name;
-                opts.push({ key, label, model_id: m.id, model_name: m.model_name });
-                if (m.model_name === 'deepseek-v4-pro') defaultKey = key;
+                const vendors = (m.vendors && m.vendors.length)
+                    ? m.vendors
+                    : [{ vendor_id: null, vendor_name: 'unknown' }];
+                for (const v of vendors) {
+                    if (v.vendor_id == null) continue;
+                    const key = `${v.vendor_id}:${m.id}`;
+                    const label = `${v.vendor_name} / ${m.model_name}`;
+                    opts.push({
+                        key,
+                        label,
+                        model_id: m.id,
+                        model_name: m.model_name,
+                        vendor_id: v.vendor_id,
+                        vendor_name: v.vendor_name,
+                    });
+                    // 默认：deepseek 供应商 + deepseek-v4-pro
+                    if (
+                        m.model_name === 'deepseek-v4-pro'
+                        && String(v.vendor_name || '').toLowerCase() === 'deepseek'
+                    ) {
+                        defaultKey = key;
+                    }
+                }
+            }
+            // 若无 deepseek 官方，回退任意 deepseek-v4-pro
+            if (!defaultKey) {
+                const pro = opts.find(o => o.model_name === 'deepseek-v4-pro');
+                if (pro) defaultKey = pro.key;
             }
             this.billingAi.llmOptions = opts;
-            if (!this.billingAi.llmKey) {
+            // 若当前选中已失效（模型禁用/无供应商），重置
+            const stillValid = opts.some(o => o.key === this.billingAi.llmKey);
+            if (!this.billingAi.llmKey || !stillValid) {
                 this.billingAi.llmKey = defaultKey || (opts[0] && opts[0].key) || '';
             }
         },
@@ -4028,14 +4052,17 @@ const AdminApp = {
             this.billingAi.targetModelId = model.id;
             try {
                 const selected = (this.billingAi.llmOptions || []).find(o => o.key === this.billingAi.llmKey);
+                if (!selected || !selected.model_id || !selected.vendor_id) {
+                    this.showToast(this.t('toast_billing_ai_need_llm'), 'error');
+                    return;
+                }
                 const payload = {
                     instruction,
+                    // 被改价目标模型的供应商筛选（与 AI 引擎供应商无关）
                     vendor_id: this.billingAi.filterVendorId || null,
+                    llm_model_id: selected.model_id,
+                    llm_vendor_id: selected.vendor_id,
                 };
-                if (selected) {
-                    payload.llm_model_id = selected.model_id;
-                    // vendor 由后端默认 deepseek；若用户选了其它模型名，后端会用 model_id
-                }
                 const response = await axios.post(
                     `/api/admin/models/${model.id}/billing/ai-propose`,
                     payload,

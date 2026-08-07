@@ -264,6 +264,34 @@ class VendorModelModel:
             raise
 
     @staticmethod
+    def list_vendors_by_models() -> dict:
+        """
+        批量查询每个 model 关联的供应商（去重）。
+
+        Returns:
+            { model_id: [ {vendor_id, vendor_name}, ... ] }
+        """
+        sql = """SELECT DISTINCT vm.model_id, vm.vendor_id, v.vendor_name
+                 FROM vendor_model vm
+                 LEFT JOIN vendor v ON v.id = vm.vendor_id
+                 ORDER BY vm.model_id ASC, v.vendor_name ASC, vm.vendor_id ASC"""
+        try:
+            rows = execute_query(sql, fetch_all=True)
+            result: dict = {}
+            for row in (rows or []):
+                mid = row['model_id']
+                if mid not in result:
+                    result[mid] = []
+                result[mid].append({
+                    'vendor_id': row['vendor_id'],
+                    'vendor_name': row.get('vendor_name') or f"vendor#{row['vendor_id']}",
+                })
+            return result
+        except Exception as e:
+            logger.error(f"Failed to list vendors by models: {e}")
+            raise
+
+    @staticmethod
     def exists_tier(
         vendor_id: int,
         model_id: int,

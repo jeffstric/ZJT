@@ -3045,8 +3045,8 @@ body {
 }
 
 .billing-ai-global-select {
-    min-width: 220px;
-    max-width: 320px;
+    min-width: 280px;
+    max-width: 420px;
 }
 
 .billing-ai-global-hint {
