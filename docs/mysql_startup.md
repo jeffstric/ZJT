@@ -43,7 +43,7 @@ port=3306
 character-set-server=utf8mb4
 collation-server=utf8mb4_0900_ai_ci
 default-time-zone='+08:00'
-# 一体包 binlog 约保留 7 天（604800 秒），由 MySQL 自动清理过期日志
+# Keep binary logs for ~7 days (604800s); MySQL auto_purge cleans expired logs
 binlog_expire_logs_seconds=604800
 
 [client]

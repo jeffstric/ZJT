@@ -18,6 +18,10 @@ from typing import Iterable, List, Optional, Tuple, Union
 DEFAULT_EXPIRE_LOGS_SECONDS = 7 * 24 * 3600  # 604800，约 7 天
 
 BINLOG_EXPIRE_KEY = "binlog_expire_logs_seconds"
+# Comment written above the key when inserting/updating (English only; my.ini path encoding safety)
+BINLOG_EXPIRE_COMMENT = (
+    "# Keep binary logs for ~7 days to limit disk usage (MySQL auto_purge)"
+)
 
 MYSQL_CONFIG_FILENAMES = (
     "my.ini",
@@ -70,6 +74,12 @@ def ensure_mysql_binlog_retention(
     seconds = _resolve_expire_seconds(expire_seconds)
     value_line = f"{BINLOG_EXPIRE_KEY}={seconds}"
 
+    def _append_expire_block(target: List[str]) -> None:
+        """Append English comment + expire key (avoid duplicate adjacent comment)."""
+        if not target or target[-1].strip() != BINLOG_EXPIRE_COMMENT:
+            target.append(BINLOG_EXPIRE_COMMENT)
+        target.append(value_line)
+
     try:
         original = path.read_text(encoding="utf-8")
     except OSError as e:
@@ -87,7 +97,7 @@ def ensure_mysql_binlog_retention(
         if _is_section_header(stripped):
             # 离开 [mysqld] 进入其它段时，若尚未写入则插在段前
             if in_mysqld and not found:
-                new_lines.append(value_line)
+                _append_expire_block(new_lines)
                 found = True
             in_mysqld = stripped.lower() == "[mysqld]"
             if in_mysqld:
@@ -95,9 +105,18 @@ def ensure_mysql_binlog_retention(
             new_lines.append(line)
             continue
 
+        # Drop legacy Chinese / alternate comments immediately before our key
+        if in_mysqld and stripped.startswith("#") and (
+            "binlog" in stripped.lower()
+            or "一体包" in stripped
+            or "binary log" in stripped.lower()
+        ):
+            # Skip; English comment is re-added with the key
+            continue
+
         if in_mysqld and _is_expire_key_line(stripped):
             if not found:
-                new_lines.append(value_line)
+                _append_expire_block(new_lines)
                 found = True
             # 丢弃重复的同名配置行
             continue
@@ -106,12 +125,12 @@ def ensure_mysql_binlog_retention(
 
     if not found:
         if saw_mysqld:
-            new_lines.append(value_line)
+            _append_expire_block(new_lines)
         else:
             if new_lines and new_lines[-1].strip() != "":
                 new_lines.append("")
             new_lines.append("[mysqld]")
-            new_lines.append(value_line)
+            _append_expire_block(new_lines)
 
     new_content = "\n".join(new_lines)
     if original.endswith("\n") or original.endswith("\r\n"):
