@@ -811,7 +811,41 @@ const AdminApp = {
             // 模型管理
             models: {
                 list: [],
-                loading: false
+                loading: false,
+                expanded: {},          // { modelId: true }
+                billing: {},           // { modelId: billingPayload }
+                billingLoading: {},    // { modelId: true }
+                vendors: [],           // 供应商列表（添加档位用）
+                updating: null         // 'tier-{id}'
+            },
+
+            // 大模型分段计费档位弹窗（主输入：元/百万）
+            billingTierModal: {
+                show: false,
+                loading: false,
+                modelId: null,
+                modelName: '',
+                tierId: null,
+                vendor_id: null,
+                unlimited: true,
+                raw_token_threshold: null,
+                input_yuan_per_m: 1,
+                out_yuan_per_m: 2,
+                cache_yuan_per_m: 0.2,
+                commission_percent: 0
+            },
+
+            // AI 改档
+            billingAi: {
+                instruction: '',
+                filterVendorId: null,
+                llmKey: '',
+                llmOptions: [],
+                loading: false,
+                applying: false,
+                confirmShow: false,
+                proposal: null,
+                targetModelId: null
             },
 
             // 实现方编辑弹窗
@@ -3648,6 +3682,15 @@ const AdminApp = {
 
                 if (response.data.code === 0) {
                     this.models.list = response.data.data;
+                    this.refreshBillingAiLlmOptions();
+                    // 刷新后若已展开，同步更新摘要；明细按需重新加载
+                    const expandedIds = Object.keys(this.models.expanded).filter(id => this.models.expanded[id]);
+                    for (const id of expandedIds) {
+                        const model = this.models.list.find(m => String(m.id) === String(id));
+                        if (model) {
+                            await this.loadModelBilling(model, true);
+                        }
+                    }
                 }
             } catch (error) {
                 console.error('加载模型列表失败:', error);
@@ -3658,6 +3701,380 @@ const AdminApp = {
                 }
             } finally {
                 this.models.loading = false;
+            }
+        },
+
+        // 格式化计费摘要
+        formatBillingSummary(summary) {
+            if (!summary || !summary.tier_count) {
+                return this.t('models_billing_not_configured');
+            }
+            return this.t('models_billing_summary', {
+                tiers: summary.tier_count,
+                vendors: summary.vendor_count || 0
+            });
+        },
+
+        // 展开/收起模型计费配置
+        async toggleModelBilling(model) {
+            const id = model.id;
+            if (this.models.expanded[id]) {
+                this.models.expanded[id] = false;
+                return;
+            }
+            this.models.expanded[id] = true;
+            await this.loadModelBilling(model);
+        },
+
+        // 加载模型计费明细
+        async loadModelBilling(model, silent = false) {
+            const id = model.id;
+            this.models.billingLoading[id] = true;
+            try {
+                const response = await axios.get(`/api/admin/models/${id}/billing`, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.models.billing[id] = response.data.data;
+                    // 同步列表摘要
+                    const tiers = (response.data.data.vendors || []).reduce(
+                        (sum, v) => sum + (v.tiers ? v.tiers.length : 0), 0
+                    );
+                    const vendors = (response.data.data.vendors || []).length;
+                    model.billing_summary = { tier_count: tiers, vendor_count: vendors };
+                }
+            } catch (error) {
+                console.error('加载模型计费配置失败:', error);
+                if (!silent) {
+                    if (error.response?.status === 401 || error.response?.status === 403) {
+                        this.handleAuthError(error.response.status);
+                    } else {
+                        this.showToast(this.t('toast_load_billing_failed'), 'error');
+                    }
+                }
+            } finally {
+                this.models.billingLoading[id] = false;
+            }
+        },
+
+        // 加载供应商列表（缓存）
+        async ensureVendorsLoaded() {
+            if (this.models.vendors && this.models.vendors.length > 0) return;
+            try {
+                const response = await axios.get('/api/admin/vendors', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.models.vendors = response.data.data || [];
+                }
+            } catch (error) {
+                console.error('加载供应商列表失败:', error);
+                this.showToast(this.t('toast_load_vendors_failed'), 'error');
+            }
+        },
+
+        formatYuan(v) {
+            if (v == null || v === '' || isNaN(Number(v))) return '—';
+            const n = Number(v);
+            if (n >= 1) return n.toFixed(2);
+            if (n >= 0.01) return n.toFixed(4);
+            return n.toFixed(6);
+        },
+
+        // 打开档位弹窗（主填元/百万）
+        async openBillingTierModal(model, vendor, tier = null) {
+            await this.ensureVendorsLoaded();
+            this.billingTierModal.show = true;
+            this.billingTierModal.modelId = model.id;
+            this.billingTierModal.modelName = model.model_name;
+            this.billingTierModal.tierId = tier ? tier.id : null;
+            this.billingTierModal.vendor_id = vendor ? vendor.vendor_id : null;
+            if (tier) {
+                if (!this.billingTierModal.vendor_id && this.models.billing[model.id]) {
+                    for (const v of this.models.billing[model.id].vendors || []) {
+                        if ((v.tiers || []).some(t => t.id === tier.id)) {
+                            this.billingTierModal.vendor_id = v.vendor_id;
+                            break;
+                        }
+                    }
+                }
+                this.billingTierModal.unlimited = tier.raw_token_threshold == null;
+                this.billingTierModal.raw_token_threshold = tier.raw_token_threshold;
+                this.billingTierModal.input_yuan_per_m = tier.input_yuan_per_m || tier.money?.input?.cost_yuan_per_m || 1;
+                this.billingTierModal.out_yuan_per_m = tier.out_yuan_per_m || tier.money?.output?.cost_yuan_per_m || 2;
+                this.billingTierModal.cache_yuan_per_m = tier.cache_yuan_per_m || tier.money?.cache?.cost_yuan_per_m || 0.2;
+                this.billingTierModal.commission_percent = Math.round((tier.commission_rate || 0) * 100);
+            } else {
+                this.billingTierModal.vendor_id = vendor ? vendor.vendor_id : null;
+                this.billingTierModal.unlimited = true;
+                this.billingTierModal.raw_token_threshold = null;
+                this.billingTierModal.input_yuan_per_m = 1;
+                this.billingTierModal.out_yuan_per_m = 2;
+                this.billingTierModal.cache_yuan_per_m = 0.2;
+                this.billingTierModal.commission_percent = 0;
+            }
+            this.billingTierModal.loading = false;
+        },
+
+        closeBillingTierModal() {
+            this.billingTierModal.show = false;
+            this.billingTierModal.loading = false;
+            this.billingTierModal.tierId = null;
+            this.billingTierModal.modelId = null;
+        },
+
+        async submitBillingTier() {
+            const modal = this.billingTierModal;
+            if (!modal.vendor_id) {
+                this.showToast(this.t('toast_select_vendor'), 'error');
+                return;
+            }
+            if (!modal.unlimited && (!modal.raw_token_threshold || modal.raw_token_threshold <= 0)) {
+                this.showToast(this.t('toast_invalid_raw_threshold'), 'error');
+                return;
+            }
+            for (const [key, labelKey] of [
+                ['input_yuan_per_m', 'models_billing_col_input_price'],
+                ['out_yuan_per_m', 'models_billing_col_output_price'],
+                ['cache_yuan_per_m', 'models_billing_col_cache_price']
+            ]) {
+                if (!modal[key] || modal[key] <= 0) {
+                    this.showToast(this.t('toast_invalid_price_field', { field: this.t(labelKey) }), 'error');
+                    return;
+                }
+            }
+            const commission_rate = Math.min(1, Math.max(0, (modal.commission_percent || 0) / 100));
+
+            modal.loading = true;
+            const modelId = modal.modelId;
+            const tierId = modal.tierId;
+            try {
+                const raw = modal.unlimited ? null : modal.raw_token_threshold;
+                const basePayload = {
+                    input_yuan_per_m: modal.input_yuan_per_m,
+                    out_yuan_per_m: modal.out_yuan_per_m,
+                    cache_yuan_per_m: modal.cache_yuan_per_m,
+                    commission_rate,
+                };
+                if (tierId) {
+                    const payload = {
+                        ...basePayload,
+                        clear_raw_token_threshold: !!modal.unlimited,
+                    };
+                    if (!modal.unlimited) payload.raw_token_threshold = raw;
+                    const response = await axios.put(`/api/admin/vendor-models/${tierId}`, payload, {
+                        headers: { 'Authorization': `Bearer ${this.authToken}` }
+                    });
+                    if (response.data.code === 0) {
+                        this.showToast(this.t('toast_billing_tier_saved'), 'success');
+                        this.closeBillingTierModal();
+                        this.models.expanded[modelId] = true;
+                        await this.loadModels();
+                    }
+                } else {
+                    const payload = {
+                        vendor_id: modal.vendor_id,
+                        model_id: modelId,
+                        raw_token_threshold: raw,
+                        ...basePayload,
+                    };
+                    const response = await axios.post('/api/admin/vendor-models', payload, {
+                        headers: { 'Authorization': `Bearer ${this.authToken}` }
+                    });
+                    if (response.data.code === 0) {
+                        this.showToast(this.t('toast_billing_tier_created'), 'success');
+                        this.closeBillingTierModal();
+                        this.models.expanded[modelId] = true;
+                        await this.loadModels();
+                    }
+                }
+            } catch (error) {
+                console.error('保存计费档位失败:', error);
+                const detail = error?.response?.data?.detail || this.t('error_update_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.billingTierModal.loading = false;
+            }
+        },
+
+        async updateBillingTierYuan(model, tier, field, value) {
+            const num = parseFloat(value);
+            if (isNaN(num) || num <= 0) {
+                this.showToast(this.t('toast_invalid_price'), 'error');
+                await this.loadModelBilling(model);
+                return;
+            }
+            if (this.models.updating === `tier-${tier.id}`) return;
+            this.models.updating = `tier-${tier.id}`;
+            try {
+                const response = await axios.put(`/api/admin/vendor-models/${tier.id}`, { [field]: num }, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    const d = response.data.data || {};
+                    Object.assign(tier, {
+                        input_token_threshold: d.input_token_threshold ?? tier.input_token_threshold,
+                        out_token_threshold: d.out_token_threshold ?? tier.out_token_threshold,
+                        cache_read_threshold: d.cache_read_threshold ?? tier.cache_read_threshold,
+                        input_yuan_per_m: d.input_yuan_per_m ?? tier.input_yuan_per_m,
+                        out_yuan_per_m: d.out_yuan_per_m ?? tier.out_yuan_per_m,
+                        cache_yuan_per_m: d.cache_yuan_per_m ?? tier.cache_yuan_per_m,
+                        money: d.money || tier.money,
+                        commission_rate: d.commission_rate ?? tier.commission_rate,
+                    });
+                    this.showToast(this.t('toast_billing_tier_saved'), 'success');
+                } else {
+                    await this.loadModelBilling(model);
+                }
+            } catch (error) {
+                console.error('更新单价失败:', error);
+                this.showToast(error?.response?.data?.detail || this.t('error_update_failed'), 'error');
+                await this.loadModelBilling(model);
+            } finally {
+                this.models.updating = null;
+            }
+        },
+
+        async updateBillingTierCommission(model, tier, percentVal) {
+            const p = parseFloat(percentVal);
+            if (isNaN(p) || p < 0 || p > 100) {
+                this.showToast(this.t('toast_invalid_commission'), 'error');
+                await this.loadModelBilling(model);
+                return;
+            }
+            if (this.models.updating === `tier-${tier.id}`) return;
+            this.models.updating = `tier-${tier.id}`;
+            try {
+                const rate = p / 100;
+                const response = await axios.put(`/api/admin/vendor-models/${tier.id}`, {
+                    commission_rate: rate
+                }, { headers: { 'Authorization': `Bearer ${this.authToken}` } });
+                if (response.data.code === 0) {
+                    const d = response.data.data || {};
+                    tier.commission_rate = d.commission_rate ?? rate;
+                    tier.money = d.money || tier.money;
+                    this.showToast(this.t('toast_billing_tier_saved'), 'success');
+                } else {
+                    await this.loadModelBilling(model);
+                }
+            } catch (error) {
+                this.showToast(error?.response?.data?.detail || this.t('error_update_failed'), 'error');
+                await this.loadModelBilling(model);
+            } finally {
+                this.models.updating = null;
+            }
+        },
+
+        async deleteBillingTier(model, tier) {
+            const range = tier.range_label || (tier.raw_token_threshold == null
+                ? this.t('models_billing_unlimited')
+                : String(tier.raw_token_threshold));
+            if (!confirm(this.t('confirm_delete_billing_tier', { range }))) {
+                return;
+            }
+            this.models.updating = `tier-${tier.id}`;
+            try {
+                const response = await axios.delete(`/api/admin/vendor-models/${tier.id}`, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_billing_tier_deleted'), 'success');
+                    await this.loadModelBilling(model);
+                    await this.loadModels();
+                }
+            } catch (error) {
+                console.error('删除计费档位失败:', error);
+                const detail = error?.response?.data?.detail || this.t('error_update_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.models.updating = null;
+            }
+        },
+
+        // 构建 AI 模型下拉（默认 deepseek-v4-pro）
+        refreshBillingAiLlmOptions() {
+            const opts = [];
+            let defaultKey = '';
+            for (const m of this.models.list || []) {
+                if (!m.enabled) continue;
+                // 简化：用 model_id 作为选项，vendor 在选默认时从 billing 摘要不够，直接用 model name
+                // 实际 propose 时再解析 deepseek vendor
+                const key = String(m.id);
+                const label = m.model_name;
+                opts.push({ key, label, model_id: m.id, model_name: m.model_name });
+                if (m.model_name === 'deepseek-v4-pro') defaultKey = key;
+            }
+            this.billingAi.llmOptions = opts;
+            if (!this.billingAi.llmKey) {
+                this.billingAi.llmKey = defaultKey || (opts[0] && opts[0].key) || '';
+            }
+        },
+
+        async runBillingAiPropose(model) {
+            const instruction = (this.billingAi.instruction || '').trim();
+            if (!instruction) {
+                this.showToast(this.t('toast_billing_ai_need_instruction'), 'error');
+                return;
+            }
+            this.refreshBillingAiLlmOptions();
+            this.billingAi.loading = true;
+            this.billingAi.targetModelId = model.id;
+            try {
+                const selected = (this.billingAi.llmOptions || []).find(o => o.key === this.billingAi.llmKey);
+                const payload = {
+                    instruction,
+                    vendor_id: this.billingAi.filterVendorId || null,
+                };
+                if (selected) {
+                    payload.llm_model_id = selected.model_id;
+                    // vendor 由后端默认 deepseek；若用户选了其它模型名，后端会用 model_id
+                }
+                const response = await axios.post(
+                    `/api/admin/models/${model.id}/billing/ai-propose`,
+                    payload,
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` }, timeout: 90000 }
+                );
+                if (response.data.code === 0) {
+                    this.billingAi.proposal = response.data.data;
+                    this.billingAi.confirmShow = true;
+                } else {
+                    this.showToast(response.data.message || this.t('error_update_failed'), 'error');
+                }
+            } catch (error) {
+                console.error('AI propose failed:', error);
+                this.showToast(error?.response?.data?.detail || this.t('toast_billing_ai_failed'), 'error');
+            } finally {
+                this.billingAi.loading = false;
+            }
+        },
+
+        async applyBillingAiProposal() {
+            const proposal = this.billingAi.proposal;
+            if (!proposal || !proposal.ops || !proposal.ops.length) return;
+            const hasDelete = proposal.ops.some(o => o.op === 'delete');
+            if (hasDelete && !confirm(this.t('confirm_billing_ai_apply_delete'))) {
+                return;
+            }
+            this.billingAi.applying = true;
+            try {
+                const response = await axios.post(
+                    `/api/admin/models/${proposal.model_id}/billing/ai-apply`,
+                    { ops: proposal.ops },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(response.data.message || this.t('toast_billing_ai_applied'), 'success');
+                    this.billingAi.confirmShow = false;
+                    this.billingAi.proposal = null;
+                    this.billingAi.instruction = '';
+                    this.models.expanded[proposal.model_id] = true;
+                    await this.loadModels();
+                }
+            } catch (error) {
+                console.error('AI apply failed:', error);
+                this.showToast(error?.response?.data?.detail || this.t('error_update_failed'), 'error');
+            } finally {
+                this.billingAi.applying = false;
             }
         },
 

@@ -1840,20 +1840,307 @@ async def admin_update_sort_orders(
 # ==================== 模型管理 API ====================
 
 from model.model import ModelModel
+from model.vendor_model import VendorModelModel
+from model.vendor import VendorDAO
+from config.constant import AdminBillingConstants, LLMVendor, LLMModel
+import json
+import re
+import math
+
+
+def _power_yuan() -> float:
+    return float(AdminBillingConstants.POWER_YUAN)
+
+
+def _threshold_from_yuan_per_m(yuan_per_m: float) -> int:
+    """元/百万 token → threshold（每 N token 扣 1 算力）"""
+    if yuan_per_m is None or float(yuan_per_m) <= 0:
+        raise HTTPException(status_code=400, detail="单价(元/百万token)必须大于 0")
+    th = int(round(_power_yuan() * AdminBillingConstants.YUAN_PER_M_SCALE / float(yuan_per_m)))
+    return max(1, th)
+
+
+def _yuan_per_m_from_threshold(threshold: Optional[int]) -> Optional[float]:
+    if not threshold or int(threshold) <= 0:
+        return None
+    return round(_power_yuan() * AdminBillingConstants.YUAN_PER_M_SCALE / float(threshold), 6)
+
+
+def _money_snapshot(input_th, out_th, cache_th, commission_rate: float = 0.0) -> dict:
+    """按阈值与抽成生成用户价/成本价（元/百万）。"""
+    rate = float(commission_rate or 0)
+    if rate < 0:
+        rate = 0.0
+    if rate > AdminBillingConstants.MAX_COMMISSION_RATE:
+        rate = AdminBillingConstants.MAX_COMMISSION_RATE
+
+    def one(th):
+        cost = _yuan_per_m_from_threshold(th)
+        if cost is None:
+            return {'cost_yuan_per_m': None, 'user_yuan_per_m': None, 'profit_yuan_per_m': None}
+        user = round(cost * (1.0 + rate), 6)
+        profit = round(cost * rate, 6)
+        return {
+            'cost_yuan_per_m': cost,
+            'user_yuan_per_m': user,
+            'profit_yuan_per_m': profit,
+        }
+
+    return {
+        'input': one(input_th),
+        'output': one(out_th),
+        'cache': one(cache_th),
+        'commission_rate': rate,
+    }
+
+
+def _normalize_commission_rate(rate: Optional[float]) -> float:
+    if rate is None:
+        return 0.0
+    r = float(rate)
+    if r < 0 or r > AdminBillingConstants.MAX_COMMISSION_RATE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"commission_rate 必须在 0~{AdminBillingConstants.MAX_COMMISSION_RATE} 之间（0~100%）"
+        )
+    return r
+
+
+def _resolve_thresholds_from_request(
+    input_token_threshold: Optional[int],
+    out_token_threshold: Optional[int],
+    cache_read_threshold: Optional[int],
+    input_yuan_per_m: Optional[float],
+    out_yuan_per_m: Optional[float],
+    cache_yuan_per_m: Optional[float],
+    existing=None,
+) -> tuple:
+    """优先元/百万，否则用 threshold；更新时缺省回落 existing。"""
+    if input_yuan_per_m is not None:
+        input_th = _threshold_from_yuan_per_m(input_yuan_per_m)
+    elif input_token_threshold is not None:
+        input_th = int(input_token_threshold)
+    elif existing is not None:
+        input_th = existing.input_token_threshold
+    else:
+        input_th = None
+
+    if out_yuan_per_m is not None:
+        out_th = _threshold_from_yuan_per_m(out_yuan_per_m)
+    elif out_token_threshold is not None:
+        out_th = int(out_token_threshold)
+    elif existing is not None:
+        out_th = existing.output_token_threshold
+    else:
+        out_th = None
+
+    if cache_yuan_per_m is not None:
+        cache_th = _threshold_from_yuan_per_m(cache_yuan_per_m)
+    elif cache_read_threshold is not None:
+        cache_th = int(cache_read_threshold)
+    elif existing is not None:
+        cache_th = existing.cache_read_threshold
+    else:
+        cache_th = None
+
+    return input_th, out_th, cache_th
+
+
+def _enrich_tier_dict(tier: dict) -> dict:
+    """为档位补充元/百万与 money 快照。"""
+    rate = float(tier.get('commission_rate') or 0)
+    in_th = tier.get('input_token_threshold')
+    out_th = tier.get('out_token_threshold') or tier.get('output_token_threshold')
+    cache_th = tier.get('cache_read_threshold')
+    tier['input_yuan_per_m'] = _yuan_per_m_from_threshold(in_th)
+    tier['out_yuan_per_m'] = _yuan_per_m_from_threshold(out_th)
+    tier['cache_yuan_per_m'] = _yuan_per_m_from_threshold(cache_th)
+    tier['commission_rate'] = rate
+    tier['money'] = _money_snapshot(in_th, out_th, cache_th, rate)
+    return tier
+
+
+def _format_token_range_label(raw_token_threshold: Optional[int], prev_threshold: Optional[int]) -> str:
+    """根据当前档上界与上一档上界生成区间文案。"""
+    def _fmt(n: int) -> str:
+        if n >= 1000 and n % 1000 == 0:
+            return f"{n // 1000}K"
+        if n >= 1000:
+            return f"{n / 1000:g}K"
+        return str(n)
+
+    if raw_token_threshold is None:
+        if prev_threshold is None:
+            return "全量（无分段）"
+        return f">{_fmt(prev_threshold)}"
+    if prev_threshold is None:
+        return f"0–{_fmt(raw_token_threshold)}"
+    return f"{_fmt(prev_threshold)}–{_fmt(raw_token_threshold)}"
+
+
+def _build_model_billing_payload(model_id: int, model_name: str) -> dict:
+    """组装某模型的分段计费结构（按供应商分组）。"""
+    rows = VendorModelModel.list_by_model_id(model_id)
+    vendors_map: dict = {}
+    for row in rows:
+        vendor_id = row['vendor_id']
+        if vendor_id not in vendors_map:
+            vendors_map[vendor_id] = {
+                'vendor_id': vendor_id,
+                'vendor_name': row.get('vendor_name') or f"vendor#{vendor_id}",
+                'tiers': []
+            }
+        tier = {
+            'id': row['id'],
+            'raw_token_threshold': row['raw_token_threshold'],
+            'input_token_threshold': row['input_token_threshold'],
+            'out_token_threshold': row['out_token_threshold'],
+            'cache_read_threshold': row['cache_read_threshold'],
+            'commission_rate': float(row.get('commission_rate') or 0),
+            'created_at': row['created_at'].isoformat() if row.get('created_at') else None,
+        }
+        _enrich_tier_dict(tier)
+        vendors_map[vendor_id]['tiers'].append(tier)
+
+    vendors = []
+    for vendor in vendors_map.values():
+        prev = None
+        for tier in vendor['tiers']:
+            tier['range_label'] = _format_token_range_label(tier['raw_token_threshold'], prev)
+            prev = tier['raw_token_threshold']
+        vendors.append(vendor)
+
+    return {
+        'model_id': model_id,
+        'model_name': model_name,
+        'vendors': vendors,
+        'power_yuan': _power_yuan(),
+    }
+
+
+def _validate_tier_thresholds(
+    input_token_threshold: Optional[int],
+    out_token_threshold: Optional[int],
+    cache_read_threshold: Optional[int],
+    raw_token_threshold: Optional[int],
+) -> None:
+    """校验阈值与分段上界合法性。"""
+    for name, value in (
+        ('input_token_threshold', input_token_threshold),
+        ('out_token_threshold', out_token_threshold),
+        ('cache_read_threshold', cache_read_threshold),
+    ):
+        if value is None or int(value) <= 0:
+            raise HTTPException(status_code=400, detail=f"{name} 必须为正整数（每 N 个 token 消耗 1 点算力）")
+    if raw_token_threshold is not None and int(raw_token_threshold) <= 0:
+        raise HTTPException(status_code=400, detail="raw_token_threshold 必须为正整数，或为空表示无上限")
+
+
+def _tier_fields_snapshot(vm) -> dict:
+    """从 VendorModel 实体或 dict 生成 before/after 快照。"""
+    if isinstance(vm, dict):
+        in_th = vm.get('input_token_threshold')
+        out_th = vm.get('out_token_threshold') or vm.get('output_token_threshold')
+        cache_th = vm.get('cache_read_threshold')
+        raw = vm.get('raw_token_threshold')
+        rate = float(vm.get('commission_rate') or 0)
+        tid = vm.get('id')
+        vendor_id = vm.get('vendor_id')
+    else:
+        in_th = vm.input_token_threshold
+        out_th = vm.output_token_threshold
+        cache_th = vm.cache_read_threshold
+        raw = vm.raw_token_threshold
+        rate = float(getattr(vm, 'commission_rate', 0) or 0)
+        tid = vm.id
+        vendor_id = vm.vendor_id
+    snap = {
+        'id': tid,
+        'vendor_id': vendor_id,
+        'raw_token_threshold': raw,
+        'input_token_threshold': in_th,
+        'out_token_threshold': out_th,
+        'cache_read_threshold': cache_th,
+        'commission_rate': rate,
+        'input_yuan_per_m': _yuan_per_m_from_threshold(in_th),
+        'out_yuan_per_m': _yuan_per_m_from_threshold(out_th),
+        'cache_yuan_per_m': _yuan_per_m_from_threshold(cache_th),
+        'money': _money_snapshot(in_th, out_th, cache_th, rate),
+    }
+    return snap
+
+
+def _resolve_default_billing_ai_llm() -> tuple:
+    """解析默认 AI 改档模型：deepseek + deepseek-v4-pro → (vendor_id, model_id, model_name)"""
+    from model.database import execute_query
+    row = execute_query(
+        """SELECT v.id AS vendor_id, m.id AS model_id, m.model_name
+           FROM vendor v
+           JOIN vendor_model vm ON vm.vendor_id = v.id
+           JOIN model m ON m.id = vm.model_id
+           WHERE v.vendor_name = %s AND m.model_name = %s
+           LIMIT 1""",
+        (AdminBillingConstants.AI_DEFAULT_VENDOR, AdminBillingConstants.AI_DEFAULT_MODEL),
+        fetch_one=True,
+    )
+    if not row:
+        # 回退：只按 model_name 找
+        mrow = execute_query(
+            "SELECT id, model_name FROM model WHERE model_name = %s LIMIT 1",
+            (AdminBillingConstants.AI_DEFAULT_MODEL,),
+            fetch_one=True,
+        )
+        vrow = execute_query(
+            "SELECT id FROM vendor WHERE vendor_name = %s LIMIT 1",
+            (AdminBillingConstants.AI_DEFAULT_VENDOR,),
+            fetch_one=True,
+        )
+        if not mrow or not vrow:
+            return None, None, AdminBillingConstants.AI_DEFAULT_MODEL
+        return vrow['id'], mrow['id'], mrow['model_name']
+    return row['vendor_id'], row['model_id'], row['model_name']
+
+
+def _extract_json_object(text: str) -> dict:
+    """从 LLM 响应中提取 JSON 对象。"""
+    if not text:
+        raise ValueError("空响应")
+    cleaned = text.strip()
+    # 去掉 markdown 代码块
+    fence = re.search(r'```(?:json)?\s*([\s\S]*?)```', cleaned)
+    if fence:
+        cleaned = fence.group(1).strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find('{')
+        end = cleaned.rfind('}')
+        if start >= 0 and end > start:
+            return json.loads(cleaned[start:end + 1])
+        raise
 
 
 @router.get("/models")
 async def admin_get_models(auth_token: str = Header(None, alias="Authorization")):
     """
-    获取所有模型列表（含 enabled 状态）
+    获取所有模型列表（含 enabled 状态与计费摘要）
     """
     await require_admin(auth_token)
 
     try:
-        models = ModelModel.get_all(limit=0)
+        models, summaries = await asyncio.gather(
+            asyncio.to_thread(ModelModel.get_all, 0),
+            asyncio.to_thread(VendorModelModel.get_billing_summaries),
+        )
+        data = []
+        for m in models:
+            item = m.to_dict()
+            summary = summaries.get(m.id) or {'vendor_count': 0, 'tier_count': 0}
+            item['billing_summary'] = summary
+            data.append(item)
         return {
             "code": 0,
-            "data": [m.to_dict() for m in models]
+            "data": data
         }
     except Exception as e:
         logger.error(f"Failed to get models: {e}")
@@ -1876,12 +2163,12 @@ async def admin_update_model_enabled(
     await require_admin(auth_token)
 
     try:
-        model = ModelModel.get_by_id(model_id)
+        model = await asyncio.to_thread(ModelModel.get_by_id, model_id)
         if not model:
             raise HTTPException(status_code=404, detail="模型不存在")
 
         enabled_val = 1 if request.enabled else 0
-        ModelModel.set_enabled(model_id, enabled_val)
+        await asyncio.to_thread(ModelModel.set_enabled, model_id, enabled_val)
         logger.info(f"Model {model_id} ({model.model_name}) enabled set to {enabled_val}")
 
         return {
@@ -1893,6 +2180,656 @@ async def admin_update_model_enabled(
         raise
     except Exception as e:
         logger.error(f"Failed to update model {model_id} enabled: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/models/{model_id}/billing")
+async def admin_get_model_billing(
+    model_id: int = Path(...),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """获取指定模型的供应商分段计费档位"""
+    await require_admin(auth_token)
+
+    try:
+        model = await asyncio.to_thread(ModelModel.get_by_id, model_id)
+        if not model:
+            raise HTTPException(status_code=404, detail="模型不存在")
+
+        payload = await asyncio.to_thread(
+            _build_model_billing_payload, model_id, model.model_name
+        )
+        return {"code": 0, "data": payload}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get model billing for {model_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vendors")
+async def admin_get_vendors(auth_token: str = Header(None, alias="Authorization")):
+    """获取供应商列表（用于添加计费档位）"""
+    await require_admin(auth_token)
+
+    try:
+        vendors = await asyncio.to_thread(VendorDAO.get_all)
+        return {
+            "code": 0,
+            "data": [v.to_dict() for v in vendors]
+        }
+    except Exception as e:
+        logger.error(f"Failed to get vendors: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class VendorModelTierRequest(BaseModel):
+    vendor_id: int
+    model_id: int
+    raw_token_threshold: Optional[int] = None
+    # 优先使用元/百万；未传时使用 threshold
+    input_yuan_per_m: Optional[float] = None
+    out_yuan_per_m: Optional[float] = None
+    cache_yuan_per_m: Optional[float] = None
+    input_token_threshold: Optional[int] = None
+    out_token_threshold: Optional[int] = None
+    cache_read_threshold: Optional[int] = None
+    commission_rate: float = 0.0
+
+
+class UpdateVendorModelTierRequest(BaseModel):
+    raw_token_threshold: Optional[int] = None
+    input_yuan_per_m: Optional[float] = None
+    out_yuan_per_m: Optional[float] = None
+    cache_yuan_per_m: Optional[float] = None
+    input_token_threshold: Optional[int] = None
+    out_token_threshold: Optional[int] = None
+    cache_read_threshold: Optional[int] = None
+    commission_rate: Optional[float] = None
+    clear_raw_token_threshold: bool = False
+
+
+@router.post("/vendor-models")
+async def admin_create_vendor_model_tier(
+    request: VendorModelTierRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """新增供应商模型计费档位（优先元/百万 token 录入）"""
+    await require_admin(auth_token)
+
+    try:
+        input_th, out_th, cache_th = _resolve_thresholds_from_request(
+            request.input_token_threshold,
+            request.out_token_threshold,
+            request.cache_read_threshold,
+            request.input_yuan_per_m,
+            request.out_yuan_per_m,
+            request.cache_yuan_per_m,
+        )
+        _validate_tier_thresholds(input_th, out_th, cache_th, request.raw_token_threshold)
+        commission_rate = _normalize_commission_rate(request.commission_rate)
+
+        model = await asyncio.to_thread(ModelModel.get_by_id, request.model_id)
+        if not model:
+            raise HTTPException(status_code=404, detail="模型不存在")
+
+        vendor = await asyncio.to_thread(VendorDAO.get_by_id, request.vendor_id)
+        if not vendor:
+            raise HTTPException(status_code=404, detail="供应商不存在")
+
+        exists = await asyncio.to_thread(
+            VendorModelModel.exists_tier,
+            request.vendor_id,
+            request.model_id,
+            request.raw_token_threshold,
+            None,
+        )
+        if exists:
+            label = "无上限" if request.raw_token_threshold is None else str(request.raw_token_threshold)
+            raise HTTPException(
+                status_code=400,
+                detail=f"该供应商-模型已存在 raw_token_threshold={label} 的档位"
+            )
+
+        new_id = await asyncio.to_thread(
+            VendorModelModel.create,
+            request.vendor_id,
+            request.model_id,
+            input_th,
+            out_th,
+            cache_th,
+            request.raw_token_threshold,
+            commission_rate,
+        )
+        logger.info(
+            f"Created vendor_model tier id={new_id} vendor={request.vendor_id} "
+            f"model={request.model_id} raw={request.raw_token_threshold} rate={commission_rate}"
+        )
+        data = {
+            "id": new_id,
+            "input_token_threshold": input_th,
+            "out_token_threshold": out_th,
+            "cache_read_threshold": cache_th,
+            "raw_token_threshold": request.raw_token_threshold,
+            "commission_rate": commission_rate,
+            "money": _money_snapshot(input_th, out_th, cache_th, commission_rate),
+        }
+        return {"code": 0, "message": "计费档位已创建", "data": data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create vendor model tier: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/vendor-models/{tier_id}")
+async def admin_update_vendor_model_tier(
+    tier_id: int = Path(...),
+    request: UpdateVendorModelTierRequest = ...,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """更新供应商模型计费档位"""
+    await require_admin(auth_token)
+
+    try:
+        existing = await asyncio.to_thread(VendorModelModel.get_by_id, tier_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="计费档位不存在")
+
+        input_th, out_th, cache_th = _resolve_thresholds_from_request(
+            request.input_token_threshold,
+            request.out_token_threshold,
+            request.cache_read_threshold,
+            request.input_yuan_per_m,
+            request.out_yuan_per_m,
+            request.cache_yuan_per_m,
+            existing=existing,
+        )
+
+        if request.clear_raw_token_threshold:
+            raw_th = None
+        elif request.raw_token_threshold is not None:
+            raw_th = request.raw_token_threshold
+        else:
+            raw_th = existing.raw_token_threshold
+
+        commission_rate = (
+            _normalize_commission_rate(request.commission_rate)
+            if request.commission_rate is not None
+            else float(existing.commission_rate or 0)
+        )
+
+        _validate_tier_thresholds(input_th, out_th, cache_th, raw_th)
+
+        exists = await asyncio.to_thread(
+            VendorModelModel.exists_tier,
+            existing.vendor_id,
+            existing.model_id,
+            raw_th,
+            tier_id,
+        )
+        if exists:
+            label = "无上限" if raw_th is None else str(raw_th)
+            raise HTTPException(
+                status_code=400,
+                detail=f"该供应商-模型已存在 raw_token_threshold={label} 的档位"
+            )
+
+        await asyncio.to_thread(
+            VendorModelModel.update_thresholds,
+            tier_id,
+            input_th,
+            out_th,
+            cache_th,
+            raw_th,
+            commission_rate,
+        )
+
+        logger.info(
+            f"Updated vendor_model tier id={tier_id} input={input_th} out={out_th} "
+            f"cache={cache_th} raw={raw_th} rate={commission_rate}"
+        )
+        return {
+            "code": 0,
+            "message": "计费档位已更新",
+            "data": {
+                "id": tier_id,
+                "input_token_threshold": input_th,
+                "out_token_threshold": out_th,
+                "cache_read_threshold": cache_th,
+                "raw_token_threshold": raw_th,
+                "commission_rate": commission_rate,
+                "input_yuan_per_m": _yuan_per_m_from_threshold(input_th),
+                "out_yuan_per_m": _yuan_per_m_from_threshold(out_th),
+                "cache_yuan_per_m": _yuan_per_m_from_threshold(cache_th),
+                "money": _money_snapshot(input_th, out_th, cache_th, commission_rate),
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update vendor model tier {tier_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/vendor-models/{tier_id}")
+async def admin_delete_vendor_model_tier(
+    tier_id: int = Path(...),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """删除供应商模型计费档位"""
+    await require_admin(auth_token)
+
+    try:
+        existing = await asyncio.to_thread(VendorModelModel.get_by_id, tier_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="计费档位不存在")
+
+        ok = await asyncio.to_thread(VendorModelModel.delete, tier_id)
+        if not ok:
+            raise HTTPException(status_code=500, detail="删除失败")
+
+        logger.info(
+            f"Deleted vendor_model tier id={tier_id} vendor={existing.vendor_id} "
+            f"model={existing.model_id}"
+        )
+        return {
+            "code": 0,
+            "message": "计费档位已删除",
+            "data": {"id": tier_id}
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete vendor model tier {tier_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class BillingAiProposeRequest(BaseModel):
+    instruction: str
+    vendor_id: Optional[int] = None
+    llm_model_id: Optional[int] = None
+    llm_vendor_id: Optional[int] = None
+
+
+class BillingAiApplyOp(BaseModel):
+    op: str
+    tier_id: Optional[int] = None
+    vendor_id: Optional[int] = None
+    before: Optional[dict] = None
+    after: Optional[dict] = None
+
+
+class BillingAiApplyRequest(BaseModel):
+    ops: List[BillingAiApplyOp]
+
+
+@router.post("/models/{model_id}/billing/ai-propose")
+async def admin_billing_ai_propose(
+    model_id: int = Path(...),
+    request: BillingAiProposeRequest = ...,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    用大模型根据自然语言生成计费档位变更提案（不写库）。
+    默认 LLM：deepseek / deepseek-v4-pro。
+    """
+    admin = await require_admin(auth_token)
+
+    instruction = (request.instruction or "").strip()
+    if not instruction:
+        raise HTTPException(status_code=400, detail="请输入调整说明")
+
+    try:
+        model = await asyncio.to_thread(ModelModel.get_by_id, model_id)
+        if not model:
+            raise HTTPException(status_code=404, detail="模型不存在")
+
+        billing = await asyncio.to_thread(
+            _build_model_billing_payload, model_id, model.model_name
+        )
+        if request.vendor_id is not None:
+            billing['vendors'] = [
+                v for v in billing['vendors'] if v['vendor_id'] == request.vendor_id
+            ]
+
+        # 解析 AI 模型（默认 deepseek + deepseek-v4-pro）
+        llm_vendor_id = request.llm_vendor_id
+        llm_model_id = request.llm_model_id
+        llm_model_name = None
+        if not llm_model_id or not llm_vendor_id:
+            def_v, def_m, def_name = await asyncio.to_thread(_resolve_default_billing_ai_llm)
+            llm_vendor_id = llm_vendor_id or def_v
+            llm_model_id = llm_model_id or def_m
+            llm_model_name = def_name
+        if llm_model_id and not llm_vendor_id:
+            # 仅传 model_id 时取该模型任一 vendor 关联
+            def _vendor_for_model(mid):
+                from model.database import execute_query
+                row = execute_query(
+                    "SELECT vendor_id FROM vendor_model WHERE model_id = %s LIMIT 1",
+                    (mid,), fetch_one=True
+                )
+                return row['vendor_id'] if row else None
+            llm_vendor_id = await asyncio.to_thread(_vendor_for_model, llm_model_id)
+        if not llm_model_id:
+            raise HTTPException(
+                status_code=400,
+                detail="未找到默认模型 deepseek-v4-pro，请配置 DeepSeek 或指定 llm_model_id/llm_vendor_id"
+            )
+        llm_model_row = await asyncio.to_thread(ModelModel.get_by_id, llm_model_id)
+        if not llm_model_row:
+            raise HTTPException(status_code=400, detail="指定的 LLM 模型不存在")
+        llm_model_name = llm_model_row.model_name
+
+        current_json = json.dumps(billing, ensure_ascii=False, default=str)
+        system_prompt = (
+            "你是计费配置助手。根据用户自然语言指令，输出对 vendor_model 档位的变更方案。\n"
+            "计价单位：元/百万 token。1 点算力 = 0.04 元。\n"
+            "threshold = round(0.04 * 1e6 / 成本单价)；抽成 commission_rate 为 0~1，"
+            "用户价 = 成本价 * (1+commission_rate)。\n"
+            "不要把抽成折进成本单价。\n"
+            "只输出一个 JSON 对象，不要 Markdown。格式：\n"
+            '{"summary":"...", "ops":[{"op":"create|update|delete","tier_id":null或数字,'
+            '"vendor_id":数字,"after":{"raw_token_threshold":数字或null,'
+            '"input_yuan_per_m":数字,"out_yuan_per_m":数字,"cache_yuan_per_m":数字,'
+            '"commission_rate":0~1}}]}\n'
+            "delete 时 after 可为 null；update 必须带已有 tier_id。\n"
+            f"目标计费模型: id={model_id} name={model.model_name}\n"
+            f"当前档位 JSON:\n{current_json}"
+        )
+        user_prompt = instruction
+
+        def _call_llm():
+            from llm.llm_client_factory import get_llm_client
+            client = get_llm_client(llm_model_name, vendor_id=llm_vendor_id)
+            # call_api 为同步阻塞，必须在线程中调用
+            return client.call_api(
+                model=llm_model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+                max_tokens=4096,
+                auth_token=None,
+                vendor_id=llm_vendor_id,
+                model_id=llm_model_id,
+                enable_thinking=False,
+            )
+
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(_call_llm),
+                timeout=float(AdminBillingConstants.AI_TIMEOUT_SEC),
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="AI 生成超时，请重试或换模型")
+        except Exception as e:
+            logger.error(f"Billing AI propose LLM failed: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"调用大模型失败，请确认 DeepSeek API 已配置或改选其它模型: {e}"
+            )
+
+        content = ""
+        try:
+            content = response.choices[0].message.content or ""
+        except Exception:
+            content = str(response)
+
+        try:
+            parsed = _extract_json_object(content)
+        except Exception as e:
+            logger.error(f"Billing AI JSON parse failed: {e}; content={content[:500]}")
+            raise HTTPException(status_code=400, detail=f"AI 返回无法解析为 JSON: {e}")
+
+        # 构建当前 tier 索引
+        tier_index = {}
+        vendor_names = {}
+        for v in (await asyncio.to_thread(VendorModelModel.list_by_model_id, model_id)):
+            tier_index[v['id']] = v
+            vendor_names[v['vendor_id']] = v.get('vendor_name')
+
+        raw_ops = parsed.get('ops') or []
+        ops_out = []
+        for raw in raw_ops:
+            op = (raw.get('op') or '').lower().strip()
+            if op not in ('create', 'update', 'delete'):
+                continue
+            vendor_id = raw.get('vendor_id')
+            tier_id = raw.get('tier_id')
+            after_raw = raw.get('after') or {}
+
+            if op == 'delete':
+                if not tier_id or int(tier_id) not in tier_index:
+                    continue
+                before = _tier_fields_snapshot(tier_index[int(tier_id)])
+                ops_out.append({
+                    'op': 'delete',
+                    'tier_id': int(tier_id),
+                    'vendor_id': before['vendor_id'],
+                    'vendor_name': vendor_names.get(before['vendor_id']),
+                    'before': before,
+                    'after': None,
+                })
+                continue
+
+            # create / update：解析 after 中的元/百万或 threshold
+            if op == 'update':
+                if not tier_id or int(tier_id) not in tier_index:
+                    continue
+                existing_row = tier_index[int(tier_id)]
+                vendor_id = existing_row['vendor_id']
+                before = _tier_fields_snapshot(existing_row)
+            else:
+                if not vendor_id:
+                    continue
+                before = None
+                vendor_id = int(vendor_id)
+
+            try:
+                in_th, out_th, cache_th = _resolve_thresholds_from_request(
+                    after_raw.get('input_token_threshold'),
+                    after_raw.get('out_token_threshold') or after_raw.get('output_token_threshold'),
+                    after_raw.get('cache_read_threshold'),
+                    after_raw.get('input_yuan_per_m'),
+                    after_raw.get('out_yuan_per_m'),
+                    after_raw.get('cache_yuan_per_m'),
+                    existing=None if op == 'create' else type('E', (), {
+                        'input_token_threshold': before['input_token_threshold'],
+                        'output_token_threshold': before['out_token_threshold'],
+                        'cache_read_threshold': before['cache_read_threshold'],
+                    })(),
+                )
+                raw_th = after_raw.get('raw_token_threshold', ... )
+                if raw_th is ...:
+                    raw_th = before['raw_token_threshold'] if before else None
+                elif raw_th == 'null' or raw_th == '':
+                    raw_th = None
+                rate = _normalize_commission_rate(
+                    after_raw.get('commission_rate', before['commission_rate'] if before else 0)
+                )
+                _validate_tier_thresholds(in_th, out_th, cache_th, raw_th)
+            except HTTPException:
+                continue
+
+            after = {
+                'raw_token_threshold': raw_th,
+                'input_token_threshold': in_th,
+                'out_token_threshold': out_th,
+                'cache_read_threshold': cache_th,
+                'commission_rate': rate,
+                'input_yuan_per_m': _yuan_per_m_from_threshold(in_th),
+                'out_yuan_per_m': _yuan_per_m_from_threshold(out_th),
+                'cache_yuan_per_m': _yuan_per_m_from_threshold(cache_th),
+                'money': _money_snapshot(in_th, out_th, cache_th, rate),
+            }
+            v_name = vendor_names.get(int(vendor_id))
+            if not v_name:
+                v_obj = await asyncio.to_thread(VendorDAO.get_by_id, int(vendor_id))
+                v_name = v_obj.vendor_name if v_obj else f"vendor#{vendor_id}"
+                vendor_names[int(vendor_id)] = v_name
+            ops_out.append({
+                'op': op,
+                'tier_id': int(tier_id) if op == 'update' else None,
+                'vendor_id': int(vendor_id),
+                'vendor_name': v_name,
+                'before': before,
+                'after': after,
+            })
+
+        if not ops_out:
+            raise HTTPException(status_code=400, detail="AI 未生成有效变更，请换种描述重试")
+
+        proposal = {
+            'model_id': model_id,
+            'model_name': model.model_name,
+            'summary': parsed.get('summary') or 'AI 生成的计费调整方案',
+            'ops': ops_out,
+            'llm': {
+                'vendor_id': llm_vendor_id,
+                'model_id': llm_model_id,
+                'model_name': llm_model_name,
+            },
+            'power_yuan': _power_yuan(),
+        }
+        logger.info(
+            f"Billing AI propose model={model_id} ops={len(ops_out)} "
+            f"by admin={getattr(admin, 'id', None)} llm={llm_model_name}"
+        )
+        return {"code": 0, "data": proposal}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed billing AI propose for model {model_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/models/{model_id}/billing/ai-apply")
+async def admin_billing_ai_apply(
+    model_id: int = Path(...),
+    request: BillingAiApplyRequest = ...,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """确认并应用 AI 计费档位变更提案。"""
+    await require_admin(auth_token)
+
+    if not request.ops:
+        raise HTTPException(status_code=400, detail="ops 不能为空")
+
+    try:
+        model = await asyncio.to_thread(ModelModel.get_by_id, model_id)
+        if not model:
+            raise HTTPException(status_code=404, detail="模型不存在")
+
+        applied = []
+        # 顺序：delete → update → create，减少 raw 冲突
+        ordered = sorted(
+            request.ops,
+            key=lambda o: {'delete': 0, 'update': 1, 'create': 2}.get((o.op or '').lower(), 9)
+        )
+
+        for item in ordered:
+            op = (item.op or '').lower()
+            if op == 'delete':
+                if not item.tier_id:
+                    raise HTTPException(status_code=400, detail="delete 需要 tier_id")
+                existing = await asyncio.to_thread(VendorModelModel.get_by_id, item.tier_id)
+                if not existing or existing.model_id != model_id:
+                    raise HTTPException(status_code=409, detail=f"档位 {item.tier_id} 不存在或不属于该模型")
+                if item.before:
+                    # 乐观锁：关键字段与 before 不一致则拒绝
+                    b = item.before
+                    if (
+                        existing.input_token_threshold != b.get('input_token_threshold')
+                        or existing.output_token_threshold != b.get('out_token_threshold')
+                        or existing.cache_read_threshold != b.get('cache_read_threshold')
+                        or existing.raw_token_threshold != b.get('raw_token_threshold')
+                    ):
+                        raise HTTPException(status_code=409, detail="档位已被修改，请重新生成方案")
+                await asyncio.to_thread(VendorModelModel.delete, item.tier_id)
+                applied.append({'op': 'delete', 'tier_id': item.tier_id})
+
+            elif op == 'update':
+                if not item.tier_id or not item.after:
+                    raise HTTPException(status_code=400, detail="update 需要 tier_id 与 after")
+                existing = await asyncio.to_thread(VendorModelModel.get_by_id, item.tier_id)
+                if not existing or existing.model_id != model_id:
+                    raise HTTPException(status_code=409, detail=f"档位 {item.tier_id} 不存在或不属于该模型")
+                if item.before:
+                    b = item.before
+                    if (
+                        existing.input_token_threshold != b.get('input_token_threshold')
+                        or existing.output_token_threshold != b.get('out_token_threshold')
+                        or existing.cache_read_threshold != b.get('cache_read_threshold')
+                        or existing.raw_token_threshold != b.get('raw_token_threshold')
+                    ):
+                        raise HTTPException(status_code=409, detail="档位已被修改，请重新生成方案")
+                a = item.after
+                in_th, out_th, cache_th = _resolve_thresholds_from_request(
+                    a.get('input_token_threshold'),
+                    a.get('out_token_threshold'),
+                    a.get('cache_read_threshold'),
+                    a.get('input_yuan_per_m'),
+                    a.get('out_yuan_per_m'),
+                    a.get('cache_yuan_per_m'),
+                    existing=existing,
+                )
+                raw_th = a.get('raw_token_threshold', existing.raw_token_threshold)
+                rate = _normalize_commission_rate(a.get('commission_rate', existing.commission_rate))
+                _validate_tier_thresholds(in_th, out_th, cache_th, raw_th)
+                exists = await asyncio.to_thread(
+                    VendorModelModel.exists_tier, existing.vendor_id, model_id, raw_th, item.tier_id
+                )
+                if exists:
+                    raise HTTPException(status_code=400, detail="分段上界与已有档位冲突")
+                await asyncio.to_thread(
+                    VendorModelModel.update_thresholds,
+                    item.tier_id, in_th, out_th, cache_th, raw_th, rate,
+                )
+                applied.append({'op': 'update', 'tier_id': item.tier_id})
+
+            elif op == 'create':
+                if not item.after or not item.vendor_id:
+                    raise HTTPException(status_code=400, detail="create 需要 vendor_id 与 after")
+                a = item.after
+                in_th, out_th, cache_th = _resolve_thresholds_from_request(
+                    a.get('input_token_threshold'),
+                    a.get('out_token_threshold'),
+                    a.get('cache_read_threshold'),
+                    a.get('input_yuan_per_m'),
+                    a.get('out_yuan_per_m'),
+                    a.get('cache_yuan_per_m'),
+                )
+                raw_th = a.get('raw_token_threshold')
+                rate = _normalize_commission_rate(a.get('commission_rate', 0))
+                _validate_tier_thresholds(in_th, out_th, cache_th, raw_th)
+                exists = await asyncio.to_thread(
+                    VendorModelModel.exists_tier, item.vendor_id, model_id, raw_th, None
+                )
+                if exists:
+                    raise HTTPException(status_code=400, detail="分段上界与已有档位冲突")
+                new_id = await asyncio.to_thread(
+                    VendorModelModel.create,
+                    item.vendor_id, model_id, in_th, out_th, cache_th, raw_th, rate,
+                )
+                applied.append({'op': 'create', 'tier_id': new_id})
+            else:
+                raise HTTPException(status_code=400, detail=f"未知 op: {item.op}")
+
+        payload = await asyncio.to_thread(
+            _build_model_billing_payload, model_id, model.model_name
+        )
+        return {
+            "code": 0,
+            "message": f"已应用 {len(applied)} 项变更",
+            "data": {"applied": applied, "billing": payload},
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed billing AI apply for model {model_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -1079,6 +1079,17 @@
                     </div>
                 </div>
 
+                <div class="info-box" style="margin-bottom: 16px; padding: 12px 16px; background: #f0f9ff; border-left: 4px solid #3b82f6; border-radius: 4px;">
+                    <p style="margin: 0; color: #1e40af; font-size: 13px;">
+                        <strong>⚡ {{ t('models_billing_hint_title') }}</strong>
+                    </p>
+                    <ul style="margin: 8px 0 0 16px; padding: 0; color: #64748b; font-size: 13px; line-height: 1.6;">
+                        <li>{{ t('models_billing_hint_threshold') }}</li>
+                        <li>{{ t('models_billing_hint_range') }}</li>
+                        <li style="color: #dc2626;">⚠️ {{ t('models_billing_hint_warn') }}</li>
+                    </ul>
+                </div>
+
                 <div class="table-container">
                     <div class="table-header">
                         <h3>{{ t('models_title') }}</h3>
@@ -1105,56 +1116,215 @@
                         <table v-else class="admin-table models-table">
                             <thead>
                                 <tr>
+                                    <th style="width: 40px;"></th>
                                     <th style="width: 50px;">ID</th>
                                     <th>{{ t('models_col_name') }}</th>
-                                    <th style="width: 120px;">{{ t('models_col_context') }}</th>
-                                    <th style="width: 100px;">{{ t('models_col_tools') }}</th>
-                                    <th style="width: 80px;">{{ t('models_col_vl') }}</th>
-                                    <th style="width: 100px;">{{ t('models_col_thinking') }}</th>
-                                    <th style="width: 100px;">{{ t('models_col_enabled') }}</th>
+                                    <th style="width: 100px;">{{ t('models_col_context') }}</th>
+                                    <th style="width: 80px;">{{ t('models_col_tools') }}</th>
+                                    <th style="width: 70px;">{{ t('models_col_vl') }}</th>
+                                    <th style="width: 80px;">{{ t('models_col_thinking') }}</th>
+                                    <th style="width: 90px;">{{ t('models_col_enabled') }}</th>
+                                    <th style="width: 140px;">{{ t('models_col_billing') }}</th>
                                     <th>{{ t('models_col_note') }}</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="model in models.list" :key="model.id" :class="{ 'model-disabled': !model.enabled }">
-                                    <td><span class="model-id">{{ model.id }}</span></td>
-                                    <td>
-                                        <div class="model-name-cell">
-                                            <code class="model-name-code">{{ model.model_name }}</code>
-                                            <span v-if="!model.enabled" class="model-status-tag disabled">{{ t('models_disabled') }}</span>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <span class="model-ctx">{{ model.context_window ? formatContextWindow(model.context_window) : '-' }}</span>
-                                    </td>
-                                    <td>
-                                        <span v-if="model.supports_tools" class="capability-badge yes">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-                                        </span>
-                                        <span v-else class="capability-badge no">—</span>
-                                    </td>
-                                    <td>
-                                        <span v-if="model.supports_vl" class="capability-badge yes">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-                                        </span>
-                                        <span v-else class="capability-badge no">—</span>
-                                    </td>
-                                    <td>
-                                        <span v-if="model.supports_thinking" class="capability-badge yes">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-                                        </span>
-                                        <span v-else class="capability-badge no">—</span>
-                                    </td>
-                                    <td>
-                                        <label class="switch">
-                                            <input type="checkbox"
-                                                :checked="model.enabled"
-                                                @change="toggleModelEnabled(model)">
-                                            <span class="slider"></span>
-                                        </label>
-                                    </td>
-                                    <td><span class="model-note">{{ model.note || '-' }}</span></td>
-                                </tr>
+                                <template v-for="model in models.list" :key="model.id">
+                                    <tr :class="{ 'model-disabled': !model.enabled, 'model-expanded': models.expanded[model.id] }">
+                                        <td>
+                                            <button class="action-btn small model-expand-btn"
+                                                    @click="toggleModelBilling(model)"
+                                                    :title="t('models_billing_expand')">
+                                                {{ models.expanded[model.id] ? '▾' : '▸' }}
+                                            </button>
+                                        </td>
+                                        <td><span class="model-id">{{ model.id }}</span></td>
+                                        <td>
+                                            <div class="model-name-cell">
+                                                <code class="model-name-code">{{ model.model_name }}</code>
+                                                <span v-if="!model.enabled" class="model-status-tag disabled">{{ t('models_disabled') }}</span>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <span class="model-ctx">{{ model.context_window ? formatContextWindow(model.context_window) : '-' }}</span>
+                                        </td>
+                                        <td>
+                                            <span v-if="model.supports_tools" class="capability-badge yes">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                                            </span>
+                                            <span v-else class="capability-badge no">—</span>
+                                        </td>
+                                        <td>
+                                            <span v-if="model.supports_vl" class="capability-badge yes">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                                            </span>
+                                            <span v-else class="capability-badge no">—</span>
+                                        </td>
+                                        <td>
+                                            <span v-if="model.supports_thinking" class="capability-badge yes">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                                            </span>
+                                            <span v-else class="capability-badge no">—</span>
+                                        </td>
+                                        <td>
+                                            <label class="switch">
+                                                <input type="checkbox"
+                                                    :checked="model.enabled"
+                                                    @change="toggleModelEnabled(model)">
+                                                <span class="slider"></span>
+                                            </label>
+                                        </td>
+                                        <td>
+                                            <span class="billing-summary-tag"
+                                                  :class="{ empty: !(model.billing_summary && model.billing_summary.tier_count) }">
+                                                {{ formatBillingSummary(model.billing_summary) }}
+                                            </span>
+                                        </td>
+                                        <td><span class="model-note">{{ model.note || '-' }}</span></td>
+                                    </tr>
+                                    <tr v-if="models.expanded[model.id]" class="model-billing-row">
+                                        <td colspan="10">
+                                            <div class="model-billing-panel">
+                                                <div v-if="models.billingLoading[model.id]" class="billing-loading">
+                                                    {{ t('loading') }}
+                                                </div>
+                                                <div v-else-if="!models.billing[model.id] || !models.billing[model.id].vendors || models.billing[model.id].vendors.length === 0"
+                                                     class="billing-empty">
+                                                    <p>{{ t('models_billing_empty') }}</p>
+                                                    <button class="action-btn primary small"
+                                                            @click="openBillingTierModal(model, null)">
+                                                        {{ t('models_billing_add_tier') }}
+                                                    </button>
+                                                </div>
+                                                <div v-else>
+                                                    <!-- AI 自然语言改档 -->
+                                                    <div class="billing-ai-box">
+                                                        <div class="billing-ai-row">
+                                                            <label>{{ t('models_billing_ai_llm') }}</label>
+                                                            <select class="filter-select" v-model="billingAi.llmKey"
+                                                                    style="max-width: 280px;">
+                                                                <option v-for="m in billingAi.llmOptions" :key="m.key" :value="m.key">
+                                                                    {{ m.label }}
+                                                                </option>
+                                                            </select>
+                                                            <label>{{ t('models_billing_vendor') }}</label>
+                                                            <select class="filter-select" v-model="billingAi.filterVendorId"
+                                                                    style="max-width: 160px;">
+                                                                <option :value="null">{{ t('models_billing_ai_all_vendors') }}</option>
+                                                                <option v-for="v in (models.billing[model.id].vendors || [])"
+                                                                        :key="'af-'+v.vendor_id" :value="v.vendor_id">
+                                                                    {{ v.vendor_name }}
+                                                                </option>
+                                                            </select>
+                                                        </div>
+                                                        <textarea class="billing-ai-textarea"
+                                                                  rows="2"
+                                                                  v-model="billingAi.instruction"
+                                                                  :placeholder="t('models_billing_ai_placeholder')"></textarea>
+                                                        <button class="action-btn primary small"
+                                                                :disabled="billingAi.loading"
+                                                                @click="runBillingAiPropose(model)">
+                                                            {{ billingAi.loading ? t('btn_save_loading') : t('models_billing_ai_generate') }}
+                                                        </button>
+                                                    </div>
+
+                                                    <div v-for="vendor in models.billing[model.id].vendors"
+                                                         :key="'v-' + vendor.vendor_id"
+                                                         class="billing-vendor-block">
+                                                        <div class="billing-vendor-header">
+                                                            <strong>{{ t('models_billing_vendor') }}: {{ vendor.vendor_name }}</strong>
+                                                            <span class="provider-impl-id">(ID:{{ vendor.vendor_id }})</span>
+                                                            <button class="action-btn small"
+                                                                    @click="openBillingTierModal(model, vendor)">
+                                                                {{ t('models_billing_add_tier') }}
+                                                            </button>
+                                                        </div>
+                                                        <table class="admin-table billing-tier-table">
+                                                            <thead>
+                                                                <tr>
+                                                                    <th>{{ t('models_billing_col_range') }}</th>
+                                                                    <th>{{ t('models_billing_col_input_price') }}</th>
+                                                                    <th>{{ t('models_billing_col_output_price') }}</th>
+                                                                    <th>{{ t('models_billing_col_cache_price') }}</th>
+                                                                    <th>{{ t('models_billing_col_commission') }}</th>
+                                                                    <th>{{ t('models_billing_col_user_price') }}</th>
+                                                                    <th style="width: 100px;">{{ t('models_billing_col_actions') }}</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                <tr v-for="tier in vendor.tiers" :key="'t-' + tier.id">
+                                                                    <td>
+                                                                        <span class="range-label">{{ tier.range_label }}</span>
+                                                                        <div class="raw-threshold" style="margin-top:4px;">
+                                                                            {{ tier.raw_token_threshold == null ? t('models_billing_unlimited') : ('≤'+tier.raw_token_threshold) }}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td>
+                                                                        <input type="number" step="0.0001" min="0.0001"
+                                                                               class="power-input billing-input"
+                                                                               v-model.number="tier.input_yuan_per_m"
+                                                                               :disabled="models.updating === 'tier-' + tier.id"
+                                                                               @change="updateBillingTierYuan(model, tier, 'input_yuan_per_m', tier.input_yuan_per_m)">
+                                                                        <span class="price-unit">{{ t('models_billing_yuan_unit') }}</span>
+                                                                    </td>
+                                                                    <td>
+                                                                        <input type="number" step="0.0001" min="0.0001"
+                                                                               class="power-input billing-input"
+                                                                               v-model.number="tier.out_yuan_per_m"
+                                                                               :disabled="models.updating === 'tier-' + tier.id"
+                                                                               @change="updateBillingTierYuan(model, tier, 'out_yuan_per_m', tier.out_yuan_per_m)">
+                                                                        <span class="price-unit">{{ t('models_billing_yuan_unit') }}</span>
+                                                                    </td>
+                                                                    <td>
+                                                                        <input type="number" step="0.0001" min="0.0001"
+                                                                               class="power-input billing-input"
+                                                                               v-model.number="tier.cache_yuan_per_m"
+                                                                               :disabled="models.updating === 'tier-' + tier.id"
+                                                                               @change="updateBillingTierYuan(model, tier, 'cache_yuan_per_m', tier.cache_yuan_per_m)">
+                                                                        <span class="price-unit">{{ t('models_billing_yuan_unit') }}</span>
+                                                                    </td>
+                                                                    <td>
+                                                                        <input type="number" step="1" min="0" max="100"
+                                                                               class="power-input billing-input"
+                                                                               :value="Math.round((tier.commission_rate || 0) * 100)"
+                                                                               :disabled="models.updating === 'tier-' + tier.id"
+                                                                               @change="updateBillingTierCommission(model, tier, $event.target.value)">
+                                                                        <span class="price-unit">%</span>
+                                                                    </td>
+                                                                    <td>
+                                                                        <div class="user-price-cell" v-if="tier.money">
+                                                                            <div><strong>{{ formatYuan(tier.money.input?.user_yuan_per_m) }}</strong> / {{ t('models_billing_in_short') }}</div>
+                                                                            <div>{{ formatYuan(tier.money.output?.user_yuan_per_m) }} / {{ t('models_billing_out_short') }}</div>
+                                                                            <div class="muted">{{ t('models_billing_cost_short') }} {{ formatYuan(tier.money.input?.cost_yuan_per_m) }}</div>
+                                                                        </div>
+                                                                    </td>
+                                                                    <td>
+                                                                        <button class="action-btn small"
+                                                                                @click="openBillingTierModal(model, vendor, tier)"
+                                                                                :disabled="models.updating === 'tier-' + tier.id">
+                                                                            {{ t('edit_btn') }}
+                                                                        </button>
+                                                                        <button class="action-btn small danger"
+                                                                                @click="deleteBillingTier(model, tier)"
+                                                                                :disabled="models.updating === 'tier-' + tier.id">
+                                                                            {{ t('delete_btn') }}
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                    <div style="margin-top: 12px;">
+                                                        <button class="action-btn primary small"
+                                                                @click="openBillingTierModal(model, null)">
+                                                            {{ t('models_billing_add_tier_other_vendor') }}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </template>
                             </tbody>
                         </table>
                     </div>
@@ -2214,6 +2384,162 @@
                     <button class="modal-btn cancel" @click="closeImplPowerModal">{{ t('cancel_btn') }}</button>
                     <button class="modal-btn confirm" @click="submitImplPower" :disabled="implPowerModal.loading">
                         {{ implPowerModal.loading ? t('btn_save_loading') : t('save_btn') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 大模型分段计费档位弹窗（主输入：元/百万 token） -->
+        <div class="modal-overlay" v-if="billingTierModal.show" @click.self="closeBillingTierModal">
+            <div class="modal" style="max-width: 520px;">
+                <div class="modal-header">
+                    <h3>
+                        {{ billingTierModal.tierId ? t('models_billing_edit_tier') : t('models_billing_add_tier') }}
+                        <span v-if="billingTierModal.modelName" style="font-weight: normal; color: var(--admin-text-muted);">
+                            — {{ billingTierModal.modelName }}
+                        </span>
+                    </h3>
+                    <button class="modal-close" @click="closeBillingTierModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>{{ t('models_billing_vendor') }} <span style="color: red;">*</span></label>
+                        <select class="filter-select" v-model.number="billingTierModal.vendor_id"
+                                :disabled="!!billingTierModal.tierId">
+                            <option :value="null" disabled>{{ t('models_billing_select_vendor') }}</option>
+                            <option v-for="v in models.vendors" :key="v.id" :value="v.id">
+                                {{ v.vendor_name }} (ID:{{ v.id }})
+                            </option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" v-model="billingTierModal.unlimited">
+                            {{ t('models_billing_unlimited_check') }}
+                        </label>
+                        <p class="form-hint">{{ t('models_billing_unlimited_hint') }}</p>
+                    </div>
+                    <div class="form-group" v-if="!billingTierModal.unlimited">
+                        <label>{{ t('models_billing_col_raw') }} <span style="color: red;">*</span></label>
+                        <input type="number" v-model.number="billingTierModal.raw_token_threshold" min="1" placeholder="128000">
+                        <p class="form-hint">{{ t('models_billing_raw_hint') }}</p>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('models_billing_col_input_price') }} <span style="color: red;">*</span></label>
+                        <input type="number" step="0.0001" min="0.0001" v-model.number="billingTierModal.input_yuan_per_m">
+                        <p class="form-hint">{{ t('models_billing_yuan_hint') }}</p>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('models_billing_col_output_price') }} <span style="color: red;">*</span></label>
+                        <input type="number" step="0.0001" min="0.0001" v-model.number="billingTierModal.out_yuan_per_m">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('models_billing_col_cache_price') }} <span style="color: red;">*</span></label>
+                        <input type="number" step="0.0001" min="0.0001" v-model.number="billingTierModal.cache_yuan_per_m">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('models_billing_col_commission') }} (%)</label>
+                        <input type="number" step="1" min="0" max="100" v-model.number="billingTierModal.commission_percent">
+                        <p class="form-hint">{{ t('models_billing_commission_hint') }}</p>
+                    </div>
+                    <div class="billing-preview-box" v-if="billingTierModal.input_yuan_per_m > 0">
+                        <div><strong>{{ t('models_billing_preview_user') }}</strong>
+                            {{ formatYuan(billingTierModal.input_yuan_per_m * (1 + (billingTierModal.commission_percent||0)/100)) }}
+                            / {{ formatYuan(billingTierModal.out_yuan_per_m * (1 + (billingTierModal.commission_percent||0)/100)) }}
+                            / {{ formatYuan(billingTierModal.cache_yuan_per_m * (1 + (billingTierModal.commission_percent||0)/100)) }}
+                            {{ t('models_billing_yuan_unit') }}
+                        </div>
+                        <div class="muted">{{ t('models_billing_preview_cost') }}
+                            {{ formatYuan(billingTierModal.input_yuan_per_m) }}
+                            / {{ formatYuan(billingTierModal.out_yuan_per_m) }}
+                            / {{ formatYuan(billingTierModal.cache_yuan_per_m) }}
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeBillingTierModal">{{ t('cancel_btn') }}</button>
+                    <button class="modal-btn confirm" @click="submitBillingTier" :disabled="billingTierModal.loading">
+                        {{ billingTierModal.loading ? t('btn_save_loading') : t('save_btn') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI 计费方案确认（金额对比） -->
+        <div class="modal-overlay" v-if="billingAi.confirmShow" @click.self="billingAi.confirmShow=false">
+            <div class="modal" style="max-width: 860px;">
+                <div class="modal-header">
+                    <h3>{{ t('models_billing_ai_confirm_title') }}
+                        <span style="font-weight:normal;color:var(--admin-text-muted);">— {{ billingAi.proposal?.model_name }}</span>
+                    </h3>
+                    <button class="modal-close" @click="billingAi.confirmShow=false">&times;</button>
+                </div>
+                <div class="modal-body" style="max-height: 70vh; overflow:auto;">
+                    <p style="margin:0 0 12px;"><strong>{{ billingAi.proposal?.summary }}</strong></p>
+                    <p class="form-hint">{{ t('models_billing_ai_confirm_hint') }}</p>
+                    <div v-for="(op, idx) in (billingAi.proposal?.ops || [])" :key="'op'+idx" class="billing-diff-card" :class="'op-'+op.op">
+                        <div class="billing-diff-head">
+                            <span class="op-badge">{{ op.op }}</span>
+                            <strong>{{ op.vendor_name }}</strong>
+                            <span v-if="op.tier_id" class="muted">#{{ op.tier_id }}</span>
+                        </div>
+                        <table class="admin-table billing-diff-table" v-if="op.op !== 'delete'">
+                            <thead>
+                                <tr>
+                                    <th></th>
+                                    <th>{{ t('models_billing_diff_before') }}</th>
+                                    <th>{{ t('models_billing_diff_after') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>{{ t('models_billing_user_input') }}</td>
+                                    <td>{{ formatYuan(op.before?.money?.input?.user_yuan_per_m) }}</td>
+                                    <td class="diff-after"><strong>{{ formatYuan(op.after?.money?.input?.user_yuan_per_m) }}</strong></td>
+                                </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_user_output') }}</td>
+                                    <td>{{ formatYuan(op.before?.money?.output?.user_yuan_per_m) }}</td>
+                                    <td class="diff-after"><strong>{{ formatYuan(op.after?.money?.output?.user_yuan_per_m) }}</strong></td>
+                                </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_user_cache') }}</td>
+                                    <td>{{ formatYuan(op.before?.money?.cache?.user_yuan_per_m) }}</td>
+                                    <td class="diff-after"><strong>{{ formatYuan(op.after?.money?.cache?.user_yuan_per_m) }}</strong></td>
+                                </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_cost_input') }}</td>
+                                    <td>{{ formatYuan(op.before?.money?.input?.cost_yuan_per_m) }}</td>
+                                    <td>{{ formatYuan(op.after?.money?.input?.cost_yuan_per_m) }}</td>
+                                </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_cost_output') }}</td>
+                                    <td>{{ formatYuan(op.before?.money?.output?.cost_yuan_per_m) }}</td>
+                                    <td>{{ formatYuan(op.after?.money?.output?.cost_yuan_per_m) }}</td>
+                                </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_col_commission') }}</td>
+                                    <td>{{ op.before ? Math.round((op.before.commission_rate||0)*100)+'%' : '—' }}</td>
+                                    <td>{{ Math.round((op.after?.commission_rate||0)*100) }}%</td>
+                                </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_col_raw') }}</td>
+                                    <td>{{ op.before?.raw_token_threshold == null ? t('models_billing_unlimited') : op.before?.raw_token_threshold }}</td>
+                                    <td>{{ op.after?.raw_token_threshold == null ? t('models_billing_unlimited') : op.after?.raw_token_threshold }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div v-else class="billing-diff-delete">
+                            <p>{{ t('models_billing_ai_delete_warn') }}</p>
+                            <p>{{ t('models_billing_user_input') }}: {{ formatYuan(op.before?.money?.input?.user_yuan_per_m) }}
+                               · {{ t('models_billing_cost_input') }}: {{ formatYuan(op.before?.money?.input?.cost_yuan_per_m) }}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="billingAi.confirmShow=false">{{ t('cancel_btn') }}</button>
+                    <button class="modal-btn confirm" @click="applyBillingAiProposal" :disabled="billingAi.applying">
+                        {{ billingAi.applying ? t('btn_save_loading') : t('models_billing_ai_apply') }}
                     </button>
                 </div>
             </div>

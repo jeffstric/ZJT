@@ -166,23 +166,64 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 - 无时长选项的实现方使用固定算力值
 - 可一键恢复为默认算力值
 
-### 6. 通知中心
+### 6. 模型管理（大模型分段计费）
+
+管理 LLM 模型的启用状态，以及「供应商 × 模型 × token 区间」的算力计费档位。
+
+#### 6.1 模型列表
+
+| 列 | 说明 |
+|------|------|
+| 展开 | 展开查看该模型的供应商分段计费配置 |
+| 启用状态 | 关闭后前端模型选择器不再展示该模型 |
+| 计费档位 | 摘要：`N档 · M供应商`；未配置显示「未配置」 |
+
+#### 6.2 分段计费说明
+
+数据表：`vendor_model`（同一供应商-模型可有多行档位）。
+
+| 字段 | 含义 |
+|------|------|
+| `raw_token_threshold` | 分段上界：当本次 `raw_input_token ≤` 此值时使用本档；`NULL` 表示无上限兜底档 |
+| `input/out/cache_token_threshold` | 每 N 个 token 消耗 1 点算力（由单价自动换算） |
+| `commission_rate` | 抽成 0~1；计费 `算力 = 阈值算力 × (1+抽成)` |
+
+- **1 点算力 = 0.04 元**
+- **录入方式**：界面主填 **元/百万 token（供应商成本）**，`threshold = 0.04 × 10⁶ / 单价`
+- **用户收费** = 成本价 × (1+抽成)；前后对比以「钱」展示
+- 删除全部档位后该模型调用无法扣费（算力记为 0），请至少保留一档
+
+#### 6.3 操作
+
+- **展开行**：按供应商展示档位；内联改成本单价与抽成
+- **添加/编辑档位**：供应商、分段上界、输入/输出/缓存成本（元/百万）、抽成%
+- **AI 生成方案**（默认 `deepseek` / `deepseek-v4-pro`，可切换）：自然语言 → 提案 → **金额前后对比确认** → 应用
+- **删除档位**：二次确认后立即生效
+
+#### 6.4 AI 改档
+
+```
+POST /api/admin/models/{id}/billing/ai-propose   # 生成提案（不写库）
+POST /api/admin/models/{id}/billing/ai-apply     # 确认后批量应用
+```
+
+### 7. 通知中心
 
 展示系统通知和版本更新信息。
 
-#### 6.1 版本升级提示
+#### 7.1 版本升级提示
 
 当检测到新版本时，显示升级横幅：
 - 最新版本号
 - 更新日志内容
 - 完整更新日志链接
 
-#### 6.2 二进制依赖提醒
+#### 7.2 二进制依赖提醒
 
 - **版本升级所需依赖**：新版本可能需要的二进制工具，提供下载链接
 - **本地缺失依赖**：检测当前环境缺失的二进制工具，显示工具名称、描述、下载地址和放置路径
 
-#### 6.3 通知列表
+#### 7.3 通知列表
 
 - **通知类型**：公告、维护、新功能、安全
 - **通知级别**：info、warning、error、success
@@ -411,6 +452,36 @@ POST /api/admin/implementation-power           # 设置实现方算力
 DELETE /api/admin/implementation-power         # 删除实现方算力配置
 POST /api/admin/implementation-configs/sort-order  # 批量更新排序
 ```
+
+### 模型管理 / 大模型分段计费
+
+```
+GET    /api/admin/models                       # 模型列表（含 billing_summary）
+PUT    /api/admin/models/{model_id}/enabled    # 启用/禁用模型
+GET    /api/admin/models/{model_id}/billing    # 档位明细（含 money 用户价/成本价）
+GET    /api/admin/vendors                      # 供应商列表
+POST   /api/admin/vendor-models                # 新增计费档位
+PUT    /api/admin/vendor-models/{tier_id}      # 更新计费档位
+DELETE /api/admin/vendor-models/{tier_id}      # 删除计费档位
+POST   /api/admin/models/{id}/billing/ai-propose
+POST   /api/admin/models/{id}/billing/ai-apply
+```
+
+新增档位（推荐元/百万）：
+
+```json
+{
+  "vendor_id": 5,
+  "model_id": 12,
+  "raw_token_threshold": 128000,
+  "input_yuan_per_m": 1.0,
+  "out_yuan_per_m": 2.0,
+  "cache_yuan_per_m": 0.1,
+  "commission_rate": 0.2
+}
+```
+
+`commission_rate` 为 0~1；`raw_token_threshold` 为 `null` 表示无上限。
 
 ### 通知管理
 

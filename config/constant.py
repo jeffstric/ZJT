@@ -1705,6 +1705,25 @@ MODEL_PREFIX_VENDOR_MAP = {
 }
 
 
+# ============ 管理后台 · 大模型分段计费 ============
+
+class AdminBillingConstants:
+    """管理后台 LLM 分段计费 / AI 改档常量"""
+    _CONSTANT_GROUP = True
+    # 1 点算力 = 0.04 元
+    POWER_YUAN = 0.04
+    # 元/百万 token ↔ threshold 换算：threshold = POWER_YUAN * 1e6 / yuan_per_m
+    YUAN_PER_M_SCALE = 1_000_000
+    # AI 改档默认引擎：deepseek 供应商 + deepseek-v4-pro
+    AI_DEFAULT_VENDOR = LLMVendor.DEEPSEEK
+    AI_DEFAULT_MODEL = LLMModel.DEEPSEEK_V4_PRO
+    # LLM 调用超时（秒）
+    AI_TIMEOUT_SEC = 60
+    # 抽成上限 100%
+    MAX_COMMISSION_RATE = 1.0
+
+
+
 # ============ 自动升级相关常量 ============
 
 class UpgradeConstants:
