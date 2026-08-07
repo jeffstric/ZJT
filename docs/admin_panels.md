@@ -168,12 +168,12 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 
 管理AI服务实现方（服务商）的配置。
 
-#### 5.1 使用说明
+#### 6.1 使用说明
 
 - **优先级**：同一类型有多个实现方时，按排序值从小到大依次尝试
 - **算力消耗**：不同实现方消耗的算力不同，修改前请确认
 
-#### 5.2 分组展示
+#### 6.2 分组展示
 
 实现方按 `driver_key` 分组展示（如图生视频、文生视频等），每组包含：
 
@@ -185,29 +185,94 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 | 算力配置 | 支持按时长配置不同算力值，可恢复默认值 |
 | 描述 | 实现方功能描述 |
 
-#### 5.3 算力配置
+#### 6.3 算力配置
 
 - 支持按视频时长分别配置算力消耗（如5s、10s等）
 - 无时长选项的实现方使用固定算力值
 - 可一键恢复为默认算力值
 
-### 7. 通知中心
+### 7. 模型管理（大模型分段计费）
+
+管理 LLM 模型的启用状态，以及「供应商 × 模型 × token 区间」的算力计费档位。
+
+#### 7.1 模型列表
+
+| 列 | 说明 |
+|------|------|
+| 展开 | 展开查看该模型的供应商分段计费配置 |
+| 启用状态 | 关闭后前端模型选择器不再展示该模型 |
+| 计费档位 | 摘要：`N档 · M供应商`；未配置显示「未配置」 |
+
+#### 7.2 分段计费说明
+
+数据表：`vendor_model`（同一供应商-模型可有多行档位）。
+
+| 字段 | 含义 |
+|------|------|
+| `raw_token_threshold` | 分段上界：当本次 `raw_input_token ≤` 此值时使用本档；`NULL` 表示无上限兜底档 |
+| `input/out/cache_token_threshold` | 每 N 个 token 消耗 1 点算力（由单价自动换算） |
+| `commission_rate` | 抽成 0~1；计费 `算力 = 阈值算力 × (1+抽成)` |
+
+- **1 点算力 = 0.04 元**
+- **录入方式**：界面主填 **元/百万 token（供应商成本）**，`threshold = 0.04 × 10⁶ / 单价`
+- **用户收费** = 成本价 × (1+抽成)；前后对比以「钱」展示
+- 删除全部档位后该模型调用无法扣费（算力记为 0），请至少保留一档
+
+#### 7.3 操作
+
+- **页面顶部「负责模型」**：全局选择用于 AI 自动配置价格的大模型，展示为 **供应商 / 模型名**（如 `deepseek / deepseek-v4-pro`）；同一模型挂多家供应商时分列多条。默认 `deepseek / deepseek-v4-pro`
+- **展开行**：按供应商展示档位；内联改成本单价与抽成
+- **添加/编辑档位**：供应商、分段上界、输入/输出/缓存成本（元/百万）、抽成%
+- **列表中的元/百万价格**：由系统按阈值公式反算展示，**不是**大模型实时计算
+- **AI 生成方案**：自然语言 → 提案 → **金额前后对比确认** → 应用
+- **删除档位**：二次确认后立即生效
+
+#### 7.4 AI 改档
+
+```
+POST /api/admin/models/{id}/billing/ai-propose       # 生成提案（不写库）
+POST /api/admin/models/{id}/billing/ai-apply         # 确认后批量应用
+POST /api/admin/models/{id}/billing/reset-defaults   # 还原代码默认档位（?vendor_id=）
+```
+
+**行为约定**：
+
+- 单价换算由大模型完成；系统内部统一为 **元/百万 token**
+- 提示词要求：`元/千 tokens × 1000 = 元/百万`（例：0.0010→1.0，0.0020→2.0，命中 0.00020→0.2）
+- 大模型若无法可靠换算/无法确定档位，必须返回 `{"ok":false,"error":"..."}`，接口以 **400** 展示原因，**不生成可确认的错误提案**
+- 成功方案仍需管理员在对比弹窗中点「确认应用」后才写库
+
+#### 7.5 还原默认档位
+
+代码默认目录：`config/default_vendor_model_billing.py`（按 `vendor_name` + `model_name` 登记）。
+
+```
+POST /api/admin/models/{id}/billing/reset-defaults?vendor_id=可选
+```
+
+- **作用**：删除目标供应商-模型下现有档位，再按代码默认重建（含抽成、分段）
+- **范围**：`vendor_id` 为空时还原该模型在目录中登记的**全部**默认供应商；传入则只还原该供应商
+- **限制**：未在目录中登记的模型/供应商会返回 400，无法还原
+- **UI**：模型计费展开区「还原默认档位」；各供应商旁「还原该供应商默认」
+- 新增模型或改官方价后，请同步维护默认目录
+
+### 8. 通知中心
 
 展示系统通知和版本更新信息。
 
-#### 6.1 版本升级提示
+#### 8.1 版本升级提示
 
 当检测到新版本时，显示升级横幅：
 - 最新版本号
 - 更新日志内容
 - 完整更新日志链接
 
-#### 6.2 二进制依赖提醒
+#### 8.2 二进制依赖提醒
 
 - **版本升级所需依赖**：新版本可能需要的二进制工具，提供下载链接
 - **本地缺失依赖**：检测当前环境缺失的二进制工具，显示工具名称、描述、下载地址和放置路径
 
-#### 6.3 通知列表
+#### 8.3 通知列表
 
 - **通知类型**：公告、维护、新功能、安全
 - **通知级别**：info、warning、error、success
@@ -436,6 +501,37 @@ POST /api/admin/implementation-power           # 设置实现方算力
 DELETE /api/admin/implementation-power         # 删除实现方算力配置
 POST /api/admin/implementation-configs/sort-order  # 批量更新排序
 ```
+
+### 模型管理 / 大模型分段计费
+
+```
+GET    /api/admin/models                       # 模型列表（含 billing_summary）
+PUT    /api/admin/models/{model_id}/enabled    # 启用/禁用模型
+GET    /api/admin/models/{model_id}/billing    # 档位明细（含 money 用户价/成本价）
+GET    /api/admin/vendors                      # 供应商列表
+POST   /api/admin/vendor-models                # 新增计费档位
+PUT    /api/admin/vendor-models/{tier_id}      # 更新计费档位
+DELETE /api/admin/vendor-models/{tier_id}      # 删除计费档位
+POST   /api/admin/models/{id}/billing/ai-propose
+POST   /api/admin/models/{id}/billing/ai-apply
+POST   /api/admin/models/{id}/billing/reset-defaults   # ?vendor_id= 可选
+```
+
+新增档位（推荐元/百万）：
+
+```json
+{
+  "vendor_id": 5,
+  "model_id": 12,
+  "raw_token_threshold": 128000,
+  "input_yuan_per_m": 1.0,
+  "out_yuan_per_m": 2.0,
+  "cache_yuan_per_m": 0.1,
+  "commission_rate": 0.2
+}
+```
+
+`commission_rate` 为 0~1；`raw_token_threshold` 为 `null` 表示无上限。
 
 ### 通知管理
 
