@@ -1085,9 +1085,27 @@
                     </p>
                     <ul style="margin: 8px 0 0 16px; padding: 0; color: #64748b; font-size: 13px; line-height: 1.6;">
                         <li>{{ t('models_billing_hint_threshold') }}</li>
+                        <li>{{ t('models_billing_hint_price_source') }}</li>
                         <li>{{ t('models_billing_hint_range') }}</li>
                         <li style="color: #dc2626;">⚠️ {{ t('models_billing_hint_warn') }}</li>
                     </ul>
+                </div>
+
+                <!-- 全局：负责自动配置模型价格的 LLM（放在模型列表上方） -->
+                <div class="billing-ai-global-box">
+                    <div class="billing-ai-global-title">
+                        <strong>🤖 {{ t('models_billing_ai_global_title') }}</strong>
+                    </div>
+                    <p class="billing-ai-global-desc">{{ t('models_billing_ai_global_desc') }}</p>
+                    <div class="billing-ai-global-row">
+                        <label class="billing-ai-global-label">{{ t('models_billing_ai_llm') }}</label>
+                        <select class="filter-select billing-ai-global-select" v-model="billingAi.llmKey">
+                            <option v-for="m in billingAi.llmOptions" :key="m.key" :value="m.key">
+                                {{ m.label }}
+                            </option>
+                        </select>
+                        <span class="billing-ai-global-hint">{{ t('models_billing_ai_llm_hint') }}</span>
+                    </div>
                 </div>
 
                 <div class="table-container">
@@ -1197,16 +1215,13 @@
                                                     </button>
                                                 </div>
                                                 <div v-else>
-                                                    <!-- AI 自然语言改档 -->
+                                                    <!-- AI 自然语言改档（负责模型在页面顶部全局选择） -->
                                                     <div class="billing-ai-box">
                                                         <div class="billing-ai-row">
-                                                            <label>{{ t('models_billing_ai_llm') }}</label>
-                                                            <select class="filter-select" v-model="billingAi.llmKey"
-                                                                    style="max-width: 280px;">
-                                                                <option v-for="m in billingAi.llmOptions" :key="m.key" :value="m.key">
-                                                                    {{ m.label }}
-                                                                </option>
-                                                            </select>
+                                                            <span class="billing-ai-using">
+                                                                {{ t('models_billing_ai_using') }}:
+                                                                <strong>{{ billingAiCurrentLabel }}</strong>
+                                                            </span>
                                                             <label>{{ t('models_billing_vendor') }}</label>
                                                             <select class="filter-select" v-model="billingAi.filterVendorId"
                                                                     style="max-width: 160px;">

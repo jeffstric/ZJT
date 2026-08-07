@@ -2966,12 +2966,67 @@ body {
     line-height: 1.5;
 }
 
+.billing-ai-global-box {
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    border: 1px solid #f59e0b;
+    border-left: 4px solid #d97706;
+    border-radius: 8px;
+}
+
+.billing-ai-global-title {
+    color: #92400e;
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.billing-ai-global-desc {
+    margin: 0 0 12px;
+    color: #78350f;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.billing-ai-global-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.billing-ai-global-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #92400e;
+}
+
+.billing-ai-global-select {
+    min-width: 220px;
+    max-width: 320px;
+}
+
+.billing-ai-global-hint {
+    font-size: 12px;
+    color: #a16207;
+}
+
 .billing-ai-box {
     background: #fffbeb;
     border: 1px solid #fde68a;
     border-radius: 8px;
     padding: 12px;
     margin-bottom: 14px;
+}
+
+.billing-ai-using {
+    font-size: 13px;
+    color: #64748b;
+    margin-right: 8px;
+}
+
+.billing-ai-using strong {
+    color: #b45309;
 }
 
 .billing-ai-row {

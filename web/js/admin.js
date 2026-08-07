@@ -1029,6 +1029,13 @@ const AdminApp = {
             return groups;
         },
 
+        // 顶部全局「负责模型」当前展示名
+        billingAiCurrentLabel() {
+            const opts = this.billingAi.llmOptions || [];
+            const cur = opts.find(o => o.key === this.billingAi.llmKey);
+            return cur ? cur.label : (this.billingAi.llmKey || 'deepseek-v4-pro');
+        },
+
         filteredConstantsClasses() {
             let allClasses = [];
             for (const group of this.constants.groups) {
