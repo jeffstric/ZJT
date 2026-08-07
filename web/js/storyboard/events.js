@@ -34,6 +34,10 @@ import state, {
     appendSceneAgentMessage,
     activateSceneAgentMessages,
     getSelectedVideoTaskId,
+    getSelectedImageToVideoModel,
+    modelNeedsFaceMask,
+    isEnterpriseEdition,
+    getEffectiveEnableFaceMask,
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
@@ -1881,6 +1885,37 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'toggle-enable-face-mask') {
+        // 社区版或非 Seedance 模型：不允许改
+        if (!isEnterpriseEdition() || !modelNeedsFaceMask()) return;
+        if (state.isGeneratingFromScript) return;
+        state.enableFaceMask = nextCheckboxState(target, state.enableFaceMask);
+        try {
+            localStorage.setItem(
+                'storyboard_lastEnableFaceMask',
+                state.enableFaceMask ? '1' : '0',
+            );
+        } catch {}
+        if (state.storyboardId && state.selectedImageToVideoTaskId != null) {
+            try {
+                await api.updateMediaPreference(
+                    state.storyboardId,
+                    'video',
+                    'image_to_video',
+                    {
+                        task_id: state.selectedImageToVideoTaskId,
+                        enable_face_mask: getEffectiveEnableFaceMask(),
+                    },
+                );
+            } catch (error) {
+                notify('人脸偏好保存失败: ' + (error.message || error));
+            }
+        }
+        await persistUiConfig().catch(() => {});
+        rerenderModals();
+        return;
+    }
+
     if (action === 'set-scene-audio-source') {
         // 分镜级音频来源：video=视频原声，tts=对话配音。
         const scene = getCurrentScene();
@@ -2743,11 +2778,22 @@ export function bindEvents() {
                 } catch {}
                 if (state.storyboardId) {
                     try {
+                        // 合并 enable_face_mask，避免 save_profile 全量覆盖丢弃人脸偏好
+                        const profile = { task_id: state[field] };
+                        if (type === 'imageToVideo') {
+                            profile.enable_face_mask = getEffectiveEnableFaceMask(
+                                getSelectedImageToVideoModel(),
+                            );
+                        }
                         await api.updateMediaPreference(
-                            state.storyboardId, mediaType, mode, { task_id: state[field] },
+                            state.storyboardId, mediaType, mode, profile,
                         );
                     } catch (error) {
                         notify('模型偏好保存失败: ' + (error.message || error));
+                    }
+                    // 同步 config_json 中的模型选择与 enableFaceMask
+                    if (type === 'imageToVideo') {
+                        persistUiConfig().catch(() => {});
                     }
                 }
                 if (mediaType === 'video') {

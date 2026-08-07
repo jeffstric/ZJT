@@ -27,9 +27,12 @@ Content-Type: application/json
   "task_type": 可选视频模型 task_id,
   "sequence_mode": "speed",
   "continue_on_error": true,
-  "image_mode": "first_last_frame"
+  "image_mode": "first_last_frame",
+  "enable_face_mask": false
 }
 ```
+
+`enable_face_mask`：是否启用人脸遮盖预处理（仅 Seedance 2.0 系列 + 商业版生效）。写入批次 `generation_snapshots`，经 `video_tools.image_to_video` 透传到 `/api/ai-app-run-image`。前端取自拆分弹窗/齿轮中的「是否处理人脸」有效值。
 
 `image_mode` 取值：
 
