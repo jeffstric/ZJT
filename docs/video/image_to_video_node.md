@@ -9,6 +9,7 @@
 | 模型 | 说明 |
 |------|------|
 | sora2 | OpenAI Sora 2（已下线隐藏） |
+| minimax_h3 | MiniMax H3（首尾帧图生视频） |
 | vidu | Vidu |
 | seedance | Seedance 火山引擎 |
 | ltx2_3 | LTX2.3 |
