@@ -1186,7 +1186,19 @@ class GridConfig:
     VALIDATION_SEPARATOR_SIDE_WIDTH = 5    # 计算分割线两侧对比时的采样宽度
     VALIDATION_MIN_LINE_COVERAGE = 0.75    # 分割线贯穿比例阈值（细线友好采样后真实宫格普遍≥0.9；普通照片单格可达0.7，不宜再低）
     VALIDATION_MIN_CELL_UNIFORMITY = 0.90  # 同方向 cell 尺寸最小/最大比例阈值
+    # 占位格识别阈值：用灰度中位数判定（不受占位格里穿过的白色分割线干扰——分割线像素
+    # 占比小，不影响中位数）。纯黑占位格 median≈0，纯白占位格 median≈255，真实场景内容
+    # median 普遍 >20（即便夜景/暗场也因有明暗对比而中位数偏中）。占位格友好旁路据此识别。
+    VALIDATION_PLACEHOLDER_DARK_MAX = 15.0    # median <= 此值 → 纯黑占位格
+    VALIDATION_PLACEHOLDER_BRIGHT_MIN = 240.0 # median >= 此值 → 纯白占位格
+    # 占位格友好旁路的宽松阈值（仅旁路使用，严格校验绝不用）：
+    # 旁路已确认图像含占位格，对占位区缺失的分割线用理论位置兜底后，仍需校验有内容段的
+    # 分割线质量。此处放宽以容忍占位格边缘对 coverage 的轻微影响，但不能低到让普通照片
+    # 蒙混（普通照片无占位格，根本进不了旁路，故此阈值不影响严格校验对普通照片的拦截）。
+    VALIDATION_PLACEHOLDER_TOLERANT_MIN_COVERAGE = 0.60
+    VALIDATION_PLACEHOLDER_TOLERANT_MIN_UNIFORMITY = 0.80
     STORYBOARD_FIRST_FRAME_VALIDATION_MAX_RETRIES = 2  # 分镜首帧宫格几何校验失败后的重试次数
+    LOCATION_REFERENCE_VALIDATION_MAX_RETRIES = 2      # 场景参考图宫格(item_type=5)几何校验失败后的重试次数（原 max_retries=0 零重试直接判死刑）
 
     # 孤立 grid split pipeline step 兜底清理：每轮扫描的上限。
     # 用于清理「grid_image_tasks 已进入失败终态，但绑定的 ai_tool_pipeline_steps 仍卡在 PENDING」的孤儿记录，

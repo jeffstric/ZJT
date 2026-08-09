@@ -366,6 +366,7 @@ class StoryboardLocationBootstrapService:
         # 延迟导入避免循环依赖
         from script_writer_core.mcp_tool import (
             generate_4grid_location_images,
+            generate_4grid_location_images_i2i,
             generate_9grid_location_images,
         )
         from config.constant import GridConfig
@@ -487,7 +488,14 @@ class StoryboardLocationBootstrapService:
                 })
                 continue
 
-            # 拆成多个 3x3 批次
+            # 按子场景数量选宫格规格：≤4 用 2x2（避免凑大量黑色占位格，既省算力又降低
+            # 几何校验误判概率），>4 才用 3x3。与分镜首帧宫格 _submit_chunk 的选规格逻辑一致。
+            sub_grid_size = GridConfig.SIZE_2X2 if len(children) <= GridConfig.SIZE_2X2 else GridConfig.SIZE_3X3
+            grid_submit_fn = (
+                generate_4grid_location_images_i2i
+                if sub_grid_size == GridConfig.SIZE_2X2
+                else generate_9grid_location_images
+            )
             # 构造参考图列表：父场景图 + 角色说明（拼进 prompt 全局说明区）
             parent_name = self._clean_name(parent_loc.get("name")) if isinstance(parent_loc, dict) else ""
             ref_images_for_grid = [{
@@ -497,12 +505,12 @@ class StoryboardLocationBootstrapService:
                     f"各子场景需保持与其连续性"
                 ),
             }]
-            for batch_idx, batch in enumerate(self._chunk_into_grid_batches(children, GridConfig.SIZE_3X3)):
+            for batch_idx, batch in enumerate(self._chunk_into_grid_batches(children, sub_grid_size)):
                 item_names, target_ids, prompts = self._build_batch_grid_io(
-                    batch, parent_loc, GridConfig.SIZE_3X3, id_map
+                    batch, parent_loc, sub_grid_size, id_map
                 )
                 try:
-                    result = generate_9grid_location_images(
+                    result = grid_submit_fn(
                         user_id=str(user_id),
                         world_id=str(world_id),
                         auth_token=auth_token,
@@ -519,6 +527,7 @@ class StoryboardLocationBootstrapService:
                         "parent_key": parent_key,
                         "parent_db_id": parent_db_id,
                         "batch_index": batch_idx,
+                        "grid_size": sub_grid_size,
                         "status": "submitted" if ok else "failed",
                         "subscene_count": len(batch),
                         "target_entity_ids": target_ids,

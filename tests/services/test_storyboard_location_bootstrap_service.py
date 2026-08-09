@@ -449,7 +449,7 @@ class TestSubsceneGridFixes:
         assert result["submitted_root_location_count"] == 1
 
     def test_submit_subscene_grids_handles_root_and_subscene_paths_together(self, monkeypatch):
-        """顶层场景走 2x2 t2i 时，子场景仍应走父图 3x3 i2i。"""
+        """顶层场景走 2x2 t2i 时，子场景按数量选规格：≤4 走 2x2 i2i，>4 走 3x3 i2i。"""
         svc = StoryboardLocationBootstrapService()
         parsed = {
             "locations": [
@@ -484,8 +484,9 @@ class TestSubsceneGridFixes:
             "script_writer_core.mcp_tool.generate_4grid_location_images",
             generate_root,
         )
+        # 1 个子场景 ≤4，走 2x2 i2i（generate_4grid_location_images_i2i）
         monkeypatch.setattr(
-            "script_writer_core.mcp_tool.generate_9grid_location_images",
+            "script_writer_core.mcp_tool.generate_4grid_location_images_i2i",
             generate_subscene,
         )
 
@@ -493,7 +494,8 @@ class TestSubsceneGridFixes:
 
         assert generate_root.call_count == 1
         assert generate_subscene.call_count == 1
-        assert generate_subscene.call_args.kwargs["target_entity_ids"] == [703] + [None] * 8
+        # 1 个子场景走 2x2，补 3 个占位
+        assert generate_subscene.call_args.kwargs["target_entity_ids"] == [703] + [None] * 3
         assert result["submitted_root_location_count"] == 1
         assert result["submitted_subscene_count"] == 1
 
@@ -758,15 +760,15 @@ class TestSubsceneGridFixes:
             return {'success': True, 'project_ids': ['pid']}
 
         monkeypatch.setattr(
-            'script_writer_core.mcp_tool.generate_9grid_location_images', MagicMock(side_effect=fake_gen)
+            'script_writer_core.mcp_tool.generate_4grid_location_images_i2i', MagicMock(side_effect=fake_gen)
         )
 
         result = svc.submit_subscene_grids(parsed, br, world_id=1, user_id=1, auth_token='t')
 
         # 只有 c3 进了批次
         assert len(captured_target_ids) == 1
-        # c3 的 id(203) 在首位，其余为 None（placeholder 补位）
-        assert captured_target_ids[0] == [203] + [None] * 8
+        # 1 个子场景走 2x2，c3 的 id(203) 在首位，其余 3 个为 None（placeholder 补位）
+        assert captured_target_ids[0] == [203] + [None] * 3
         assert result['submitted_subscene_count'] == 1
 
     def test_submit_subscene_grids_force_overwrite_still_skips_reference_images(self, monkeypatch):
@@ -793,14 +795,15 @@ class TestSubsceneGridFixes:
             return {'success': True, 'project_ids': ['pid']}
 
         monkeypatch.setattr(
-            'script_writer_core.mcp_tool.generate_9grid_location_images', MagicMock(side_effect=fake_gen)
+            'script_writer_core.mcp_tool.generate_4grid_location_images_i2i', MagicMock(side_effect=fake_gen)
         )
 
         result = svc.submit_subscene_grids(
             parsed, br, world_id=1, user_id=1, auth_token='t', force_overwrite=True
         )
 
-        assert captured_target_ids == [[203] + [None] * 8]
+        # 1 个子场景走 2x2，补 3 个占位
+        assert captured_target_ids == [[203] + [None] * 3]
         assert result['submitted_subscene_count'] == 1
 
     def test_location_grid_writeback_aligns_by_id(self, monkeypatch):
