@@ -50,9 +50,9 @@ const PROVIDER_DEFINITIONS = [
         icon: '☁️',
         docUrl: 'https://yw.perseids.cn/register?aff=hE0h',
         docUrlLabelKey: 'btn_legacy_user_login',
-        // 智剧通API 逐步下线，不再作为推荐供应商，也不再展示「ZJT官方API」徽章
+        // 智剧通API 逐步下线，不再作为推荐供应商，也不再展示「ZJT官方API」徽章；排序置于各分类末尾
         lazyRecommended: false,
-        displayOrder: 1,
+        displayOrder: 99,
         baseName: 'ywapi',
         isOfficialAPI: false,
         showInCategories: ['llm', 'image', 'video'],
