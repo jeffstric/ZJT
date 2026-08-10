@@ -141,6 +141,25 @@ const PROVIDER_DEFINITIONS = [
         configKeyMap: { api_key: 'llm.deepseek.api_key', base_url: 'llm.deepseek.base_url' },
         testEndpoint: null
     },
+    {
+        id: 'agnes',
+        nameKey: 'provider_agnes_name',
+        descKey: 'provider_agnes_desc',
+        category: 'llm',
+        icon: '✨',
+        docUrl: 'https://platform.agnes-ai.cn/login',
+        lazyRecommended: false,
+        displayOrder: 7,
+        baseName: 'agnes',
+        isOfficialAPI: false,
+        impactsKey: 'provider_agnes_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_agnes', required: true },
+            { id: 'base_url', labelKey: 'field_base_url_label_optional', type: 'url', placeholder: 'https://api.agnes-ai.cn/v1', required: false, helpTextKey: 'field_base_url_placeholder' }
+        ],
+        configKeyMap: { api_key: 'llm.agnes.api_key', base_url: 'llm.agnes.base_url' },
+        testEndpoint: null
+    },
 
     // ===== 生图服务商 =====
     {
