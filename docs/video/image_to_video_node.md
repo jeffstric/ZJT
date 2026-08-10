@@ -8,12 +8,14 @@
 
 | 模型 | 说明 |
 |------|------|
-| wan22 | 通义万相（默认） |
-| sora2 | OpenAI Sora 2 |
-| ltx2 | LTX Video 2 |
+| sora2 | OpenAI Sora 2（已下线隐藏） |
+| minimax_h3 | MiniMax H3（首尾帧图生视频） |
 | vidu | Vidu |
 | seedance | Seedance 火山引擎 |
+| ltx2_3 | LTX2.3 |
 | 其他 | 根据配置可能有更多模型 |
+
+> 说明：`wan22`（Wan2.2）、`ltx2`（LTX2.0）已关闭（`enabled=False`），前端不再展示，也无法新建任务。
 
 ## 三种输入模式
 

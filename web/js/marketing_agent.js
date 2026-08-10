@@ -660,6 +660,9 @@
                 return selectedVideoResolution.value;
             }
 
+            // 数字时长选项 ≤ 此数量时用紧凑点选（无滚动、无输入）；≥4 用横滚+输入
+            const DURATION_COMPACT_MAX = 3;
+
             // 当前视频时长选项（根据选中模型动态计算，videoModelConfigs 使用简短 key）
             const currentDurationOptions = Vue.computed(() => {
                 if (!isVideoMode.value || !selectedModelKey.value) return ['auto', 3, 5, 8, 10, 15];
@@ -671,6 +674,84 @@
                 }
                 return ['auto', 3, 5, 8, 10, 15];
             });
+
+            const numericDurationOptions = Vue.computed(() => {
+                return currentDurationOptions.value.filter(d => typeof d === 'number');
+            });
+
+            const isDurationCompact = Vue.computed(() => {
+                return numericDurationOptions.value.length <= DURATION_COMPACT_MAX;
+            });
+
+            // 横滚+输入模式下输入框展示（auto 时为空，仅展示合法秒数）
+            const durationInputText = ref('');
+            const durationChipScroll = ref(null);
+
+            function syncDurationInputFromSelection() {
+                durationInputText.value = selectedDuration.value === 'auto'
+                    ? ''
+                    : String(selectedDuration.value);
+            }
+
+            function snapDuration(value) {
+                const options = numericDurationOptions.value;
+                if (!options.length) return null;
+                const n = Number(value);
+                if (!Number.isFinite(n)) return null;
+                if (options.includes(n)) return n;
+                let best = options[0];
+                let bestDist = Math.abs(options[0] - n);
+                for (let i = 1; i < options.length; i++) {
+                    const dist = Math.abs(options[i] - n);
+                    if (dist < bestDist) {
+                        best = options[i];
+                        bestDist = dist;
+                    }
+                }
+                return best;
+            }
+
+            function scrollActiveDurationChipIntoView() {
+                const root = durationChipScroll.value;
+                if (!root) return;
+                const active = root.querySelector('.duration-chip.active');
+                if (active && typeof active.scrollIntoView === 'function') {
+                    active.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+                }
+            }
+
+            function selectDuration(dur) {
+                selectedDuration.value = dur;
+                syncDurationInputFromSelection();
+                if (dur !== 'auto' && !isDurationCompact.value) {
+                    nextTick(() => scrollActiveDurationChipIntoView());
+                }
+            }
+
+            function onDurationInputCommit(event) {
+                const raw = String(event?.target?.value ?? durationInputText.value ?? '').trim();
+                if (raw === '') {
+                    syncDurationInputFromSelection();
+                    return;
+                }
+                const parsed = parseInt(raw, 10);
+                if (!Number.isFinite(parsed)) {
+                    syncDurationInputFromSelection();
+                    return;
+                }
+                const snapped = snapDuration(parsed);
+                if (snapped == null) {
+                    syncDurationInputFromSelection();
+                    return;
+                }
+                if (snapped !== parsed) {
+                    const msg = window.t
+                        ? window.t('duration_invalid_snapped', { dur: snapped })
+                        : `Adjusted to nearest supported ${snapped}s`;
+                    showError(msg);
+                }
+                selectDuration(snapped);
+            }
 
             function getCurrentVideoModelConfig() {
                 if (!selectedModelKey.value) return null;
@@ -695,6 +776,11 @@
                 if (duration === 'auto') return window.t ? window.t('duration_auto') : 'Auto';
                 return window.t ? window.t('duration_seconds', { dur: duration }) : `${duration}s`;
             }
+
+            // 选中时长变化时同步输入框（模型切换回退等路径）
+            Vue.watch(selectedDuration, () => {
+                syncDurationInputFromSelection();
+            }, { immediate: true });
 
             // 是否显示参考图上传（全能参考模式下）
             const showAddSubject = Vue.computed(() => {
@@ -1635,7 +1721,7 @@
                         content: '已提交发布审核，通过后会出现在灵感页。',
                         timestamp: new Date().toISOString()
                     });
-                    scrollToBottom();
+                    scrollToBottom({ force: true });
                 } catch (e) {
                     showError(e.message || '发布失败');
                 }
@@ -1670,7 +1756,7 @@
                 switchView('generate');
                 const videoType = creationTypes.find(t => t.key === 'video');
                 if (videoType) selectType(videoType);
-                scrollToBottom();
+                scrollToBottom({ force: true });
             }
             window.imageToVideo = imageToVideo;
 
@@ -1700,7 +1786,7 @@
                 switchView('generate');
                 const videoType = creationTypes.find(t => t.key === 'video');
                 if (videoType) selectType(videoType);
-                scrollToBottom();
+                scrollToBottom({ force: true });
             }
 
             // 自动调整 textarea 高度
@@ -1714,13 +1800,28 @@
                 });
             }
 
-            // 滚动到底部
-            function scrollToBottom() {
+            // 聊天区贴底跟随：用户上滑阅读时不抢滚动条
+            const CHAT_NEAR_BOTTOM_PX = 100;
+
+            function isChatNearBottom() {
+                const el = chatMessages.value;
+                if (!el) return true;
+                return el.scrollHeight - el.scrollTop - el.clientHeight <= CHAT_NEAR_BOTTOM_PX;
+            }
+
+            /**
+             * 滚动消息列表到底部。
+             * @param {boolean|{force?: boolean}} [options] - true 或 {force:true} 时强制滚底（用户发送/切换会话等）；
+             *   默认仅在用户已接近底部时跟随，避免生成轮询/流式输出把用户从历史消息拽回底部。
+             * 是否贴底在 nextTick 之前采样：此时 DOM 尚未因本次消息更新增高，可正确判断“更新前是否在底部”。
+             */
+            function scrollToBottom(options) {
+                const force = options === true || (options && options.force === true);
+                const shouldStick = force || isChatNearBottom();
+                if (!shouldStick) return;
                 nextTick(() => {
                     const el = chatMessages.value;
-                    if (el) {
-                        el.scrollTop = el.scrollHeight;
-                    }
+                    if (el) el.scrollTop = el.scrollHeight;
                 });
             }
 
@@ -1906,7 +2007,7 @@
                     }
                     inputText.value = '';
                     autoResize();
-                    scrollToBottom();
+                    scrollToBottom({ force: true });
                     showContinue.value = false;
                     await sendImageRequest(text);
                     return;
@@ -1925,7 +2026,7 @@
                     }
                     inputText.value = '';
                     autoResize();
-                    scrollToBottom();
+                    scrollToBottom({ force: true });
                     showContinue.value = false;
                     await sendVideoRequest(text);
                     return;
@@ -1950,7 +2051,7 @@
                 }
                 inputText.value = '';
                 autoResize();
-                scrollToBottom();
+                scrollToBottom({ force: true });
                 showContinue.value = false;
 
                 // 发送请求
@@ -2309,8 +2410,12 @@
                                 await cleanPendingTasksFromHistory(pollSessionId, 'image_task_submitted', projectIds);
                             } else {
                                 const doneCount = tasks.filter(isGenerationSuccess).length;
-                                messages.value[msgIdx].content = window.t('image_generating_progress', { done: doneCount, total: tasks.length });
-                                scrollToBottom();
+                                const progressContent = window.t('image_generating_progress', { done: doneCount, total: tasks.length });
+                                // 进度文案未变化时跳过写入，避免无意义 re-render 与滚动抖动
+                                if (messages.value[msgIdx].content !== progressContent) {
+                                    messages.value[msgIdx].content = progressContent;
+                                    scrollToBottom();
+                                }
                             }
                         }
                     } catch (err) {
@@ -2431,8 +2536,12 @@
                                 await cleanPendingTasksFromHistory(pollSessionId, 'video_task_submitted', projectIds);
                             } else {
                                 const doneCount = tasks.filter(isGenerationSuccess).length;
-                                messages.value[msgIdx].content = window.t('video_generating_progress', { done: doneCount, total: tasks.length });
-                                scrollToBottom();
+                                const progressContent = window.t('video_generating_progress', { done: doneCount, total: tasks.length });
+                                // 进度文案未变化时跳过写入，避免无意义 re-render 与滚动抖动
+                                if (messages.value[msgIdx].content !== progressContent) {
+                                    messages.value[msgIdx].content = progressContent;
+                                    scrollToBottom();
+                                }
                             }
                         }
                     } catch (err) {
@@ -3350,7 +3459,7 @@
                 showContinue.value = false;
                 inputText.value = '';
                 autoResize();
-                scrollToBottom();
+                scrollToBottom({ force: true });
                 // 清空所有媒体状态
                 clearAllMedia();
                 if (fileInputRef.value) fileInputRef.value.value = '';
@@ -3757,7 +3866,7 @@
                     }
                 }
 
-                scrollToBottom();
+                scrollToBottom({ force: true });
             }
 
             // 加载本地历史
@@ -6529,6 +6638,12 @@
                 videoResults,
                 selectedDuration,
                 formatDurationOption,
+                numericDurationOptions,
+                isDurationCompact,
+                durationInputText,
+                durationChipScroll,
+                selectDuration,
+                onDurationInputCommit,
                 sendVideoRequest,
                 processFace,
                 currentVideoModelNeedsFaceMask,

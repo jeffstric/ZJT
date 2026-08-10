@@ -38,6 +38,27 @@ if __name__ == "__main__":
     
     print("[Scheduler] Starting scheduler...")
     print(f"[Scheduler] PID: {os.getpid()}")
+
+    # 商业许可证：import server 时已 enterprise.register（闩锁打开），
+    # 但本进程不跑 uvicorn，FastAPI startup 不会触发 start_runtime。
+    # 在此读盘 JWT / 复用 zjt.token 启动进程内 manager，供 quality 拆分等
+    # require_commercial_license 使用。不要求用户再输 token，不新建 installation。
+    try:
+        from config.constant import Edition
+        if not Edition.is_community():
+            from enterprise.services.license.runtime import (
+                bootstrap_commercial_license_runtime_sync,
+            )
+
+            # register 已 mark_registration_ready；仍传 True 以幂等打开闩锁。
+            # 关闭后台 refresh：本入口用短生命周期 loop，task 无法常驻。
+            bootstrap_commercial_license_runtime_sync(
+                open_registration_latch=True,
+                enable_background_refresh=False,
+            )
+            print("[Scheduler] Commercial license runtime bootstrapped")
+    except Exception as e:
+        print(f"[Scheduler] Warning: commercial license bootstrap failed: {e}")
     
     # init_scheduler 内部会检查文件锁
     init_scheduler(app)

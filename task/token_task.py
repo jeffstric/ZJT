@@ -69,11 +69,16 @@ def calculate_computing_power_from_tokens(
         return 0, ""
 
     # 计算本次 token_log 的算力成本（浮点）
-    cost_power = (
+    base_cost = (
         input_token / vendor_model.input_token_threshold
         + output_token / vendor_model.output_token_threshold
         + cache_read / vendor_model.cache_read_threshold
     )
+    # 抽成：最终算力 = 阈值算力 × (1 + commission_rate)
+    commission_rate = float(getattr(vendor_model, 'commission_rate', 0) or 0)
+    if commission_rate < 0:
+        commission_rate = 0.0
+    cost_power = base_cost * (1.0 + commission_rate)
     cost_hundredths = round(cost_power * 100)
 
     # 获取已有的未扣减算力
@@ -105,6 +110,7 @@ def calculate_computing_power_from_tokens(
         f"token(输入:{input_token}, 输出:{output_token}, 缓存读取:{cache_read}) | "
         f"阈值(输入:{vendor_model.input_token_threshold}, 输出:{vendor_model.output_token_threshold}, "
         f"缓存读取:{vendor_model.cache_read_threshold}) | "
+        f"抽成:{commission_rate:.2%} 倍率:{1.0 + commission_rate:.4f} 基础算力:{base_cost:.4f} | "
         f"本次算力成本:{cost_power:.4f}({cost_hundredths}百分位) | "
         f"已有累积:{existing_power}百分位 → 总计:{total}百分位 | "
         f"扣减:{deduct_count}算力, 剩余:{remainder}百分位"

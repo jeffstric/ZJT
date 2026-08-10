@@ -189,6 +189,32 @@ def main():
     ScriptSplitConstants.WORKER_TOTAL = WORKER_TOTAL
     ScriptSplitConstants.WORKER_INDEX = WORKER_INDEX
 
+    # 独立 worker 不 import server：无 enterprise.register / FastAPI lifespan。
+    # 注入进程级 Provider + 许可证 runtime，否则 quality 拆分会报
+    # 「许可证尚未启动」，且相关门面回落社区实现。
+    # 复用 Web 已落盘的 installation_id + JWT + zjt.token，不要求再输 token。
+    try:
+        from config.constant import Edition
+        if not Edition.is_community():
+            import enterprise
+
+            enterprise.bootstrap_background_process(
+                enable_background_refresh=False,
+                include_failure_retry=False,
+                include_marketing_tools=False,
+            )
+            logger.info(
+                "script split worker enterprise background bootstrap done "
+                "(index=%d)",
+                WORKER_INDEX,
+            )
+    except Exception:
+        logger.exception(
+            "script split worker enterprise bootstrap failed "
+            "(index=%d)；quality 模式拆分可能不可用",
+            WORKER_INDEX,
+        )
+
     # 延迟 import，确保分片常量先注入（process_script_split_tasks 内部 claim 时读取）
     from task.script_split_task import process_script_split_tasks
 

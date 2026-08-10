@@ -88,13 +88,33 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 - 弹窗改为“固定标题/说明 + 中部设置滚动 + 固定底部操作栏”。小屏幕即使展开语言或质检选项，“暂不生成”和“生成分镜”仍始终可见。
 - 选择结果写入故事板 `config_json`，刷新后恢复，并在提交拆分任务时分别透传为 `dialogue_language`、`prompt_language`；空值继续表示中文默认。
 
+### 3.5 拆分弹窗默认视频模型与人脸遮盖（2026-08）
+
+空故事板「从剧本生成分镜」弹窗左栏，在生图模型与镜头组时长之间新增：
+
+| 控件 | 说明 |
+|------|------|
+| **默认视频模型** | 仅 **图生视频** 列表（`image_to_video`）；**不展示文生视频**（当前故事板主路径均为有首帧后图生视频） |
+| **是否处理人脸** | 仅当所选模型 `needs_face_mask === true`（Seedance 2.0 / Fast / Mini）时显示；交互对齐 `index.html` 生视频界面 |
+
+行为约定：
+
+- 商业版可勾选，默认不勾选；社区版 checkbox 禁用并提示「此功能为商业版功能…」。
+- 写入 `selectedImageToVideoTaskId` + `enableFaceMask`（`config_json`），并同步 `media_pref.storyboard_ui.video.image_to_video`（含 `enable_face_mask`）。
+- 齿轮「视频模型」Tab 在图生视频选择器下挂同一人脸遮盖控件，共用 state。
+- 直连 `generate-video`、Agent 生视频、批量缺失视频均透传有效 `enable_face_mask`（`enterprise && needs_face_mask && 用户勾选`）。
+- `GET /api/storyboard/models` 图生视频项返回 `needs_face_mask`，前端不依赖 `TaskConfig`。
+
 ## 4. 技术实现要点
 
 ### 后端（api/storyboard.py）
-- 仅修改 `get_storyboard_models`：
-  - 返回新增 4 个分类列表。
-  - 保留 `image_models` / `video_models` 键以向前兼容现有前端逻辑。
-- **不修改** `generate_scene_image` 和 `generate_scene_video`。
+- `get_storyboard_models`：
+  - 返回 text_to_image / image_edit / text_to_video / image_to_video 分类列表。
+  - 保留 `image_models` / `video_models` 键以向前兼容。
+  - 图生视频项增加 `needs_face_mask`（`SEEDANCE_FACE_MASK_DRIVER_KEYS`）。
+- `generate_scene_video`：接受 `enable_face_mask`；满足闸门时 `create_with_pipeline_steps` + `WAITING_PARAM_PREPARE`。
+- Agent 视频偏好：`_build_storyboard_agent_video_preferences(..., enable_face_mask=)` 显式入参，不读 Marketing 共享偏好。
+- 批量缺失视频：body / snapshot 透传 `enable_face_mask`。
 
 ### 前端（web/js/storyboard/）
 - `state.js`：

@@ -118,6 +118,10 @@ def _grid_validation_max_retries(task: Any) -> int:
     max_retries = _safe_int(getattr(task, "max_retries", 0), default=0)
     if task.item_type == ItemType.STORYBOARD_FIRST_FRAME_GRID:
         return GridConfig.STORYBOARD_FIRST_FRAME_VALIDATION_MAX_RETRIES
+    # 场景参考图宫格(item_type=5)：DB 默认 max_retries=0 导致几何校验失败零重试直接判死刑，
+    # 这里兜底为常量阈值，与分镜首帧一致。
+    if task.item_type == ItemType.LOCATION_GRID:
+        return max(max_retries, GridConfig.LOCATION_REFERENCE_VALIDATION_MAX_RETRIES)
     return max_retries
 
 

@@ -55,12 +55,24 @@ def test_storyboard_image_agent_uses_task_model_id_for_llm_model_name():
 
 def test_storyboard_image_agent_enforces_style_and_composition_at_tool_boundary():
     api_py = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
+    tool_py = (
+        PROJECT_ROOT / "services" / "storyboard_agent_image_tool.py"
+    ).read_text(encoding="utf-8")
 
     assert "StoryboardAgentImageToolExecutor" in api_py
     assert "style=getattr(sb, 'style', '') if sb else ''" in api_py
     assert "composition_preference=getattr(sb, 'composition_preference', '') if sb else ''" in api_py
     assert "style=self.style" in api_py
     assert "composition_preference=self.composition_preference" in api_py
+    # 多角色参考图：任务 image_urls 强制注入 edit_image，避免 LLM 漏传；图例与 URL 对齐
+    assert "forced_reference_urls=" in api_py
+    assert "forced_reference_items=" in api_py
+    assert "reference_image_items" in api_py
+    assert "forced_reference_urls" in tool_py
+    assert "forced_reference_items" in tool_py
+    assert "merge_forced_reference_urls" in tool_py
+    assert "_apply_forced_reference_urls" in tool_py
+    assert "_align_prompt_legend" in tool_py
 
 
 def test_storyboard_image_agent_locks_workflow_ratio_into_snapshot_and_tool():

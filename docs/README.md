@@ -43,8 +43,8 @@ uv run scripts/launchers/start_windows.py
 或直接双击 `start.bat`（显示日志，适合调试）。
 
 终端用户推荐双击 `点我启动.bat` / `点我启动.exe`。该入口由项目内置 uv
-基于发布包内的完整 `bin/python` 创建可迁移的持久化托盘环境，再用环境中的
-`pythonw.exe` 常驻；用户侧禁止下载 Python，不依赖系统 Python，也不会把托盘进程
+基于 `bin/python`（包内预置；缺失时首次自动下载同版本）创建可迁移的持久化托盘环境，
+再用环境中的 `pythonw.exe` 常驻；不依赖系统 Python，也不会把托盘进程
 绑定到 uv 的临时 `--with-requirements` 环境。详见
 [Windows 启动说明](Windows启动开发说明.md#uv-持久化-launcher-运行机制)。
 

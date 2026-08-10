@@ -33,6 +33,10 @@ import platform
 import mysql.connector
 from mysql.connector import Error as MysqlError
 
+# 一体包 binlog 配置工具（与 start_windows 共用）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mysql_binlog_config import ensure_mysql_binlog_retention
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -373,6 +377,23 @@ def check_port_in_use(port):
         return False
 
 
+def _ensure_binlog_retention_on_cnf(mysql_cnf):
+    """
+    确保 my.cnf 含 binlog_expire_logs_seconds（约 7 天）。
+
+    TODO(deprecate): 存量一体包迁移用；打包固化后可删除此调用。
+    仅写配置文件，不执行 SQL。
+    """
+    try:
+        ok, msg = ensure_mysql_binlog_retention(mysql_cnf)
+        if ok:
+            logger.info(f"MySQL binlog 保留策略: {msg}")
+        else:
+            logger.warning(f"MySQL binlog 保留策略未写入: {msg}")
+    except Exception as e:
+        logger.warning(f"MySQL binlog 保留策略处理异常（忽略）: {e}")
+
+
 def update_mysql_cnf_paths(config=None):
     """
     更新 my.cnf 中的路径和端口为当前项目配置
@@ -421,6 +442,7 @@ def update_mysql_cnf_paths(config=None):
                 f.write(cnf_content)
 
             logger.info(f"MySQL配置文件已更新: basedir={basedir}, datadir={datadir}, port={port}")
+            _ensure_binlog_retention_on_cnf(mysql_cnf)
             return True, "MySQL配置文件路径更新成功"
 
         # 如果没有模板文件，直接修改现有的 my.cnf
@@ -460,6 +482,7 @@ def update_mysql_cnf_paths(config=None):
             f.writelines(updated_lines)
 
         logger.info(f"MySQL配置文件已更新: basedir={basedir}, datadir={datadir}, port={port}")
+        _ensure_binlog_retention_on_cnf(mysql_cnf)
         return True, "MySQL配置文件路径更新成功"
 
     except Exception as e:

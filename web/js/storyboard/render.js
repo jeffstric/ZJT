@@ -7,6 +7,9 @@ import state, {
     canAddVideoMedia,
     isRenderableMediaUrl,
     getSelectedVideoModel,
+    getSelectedImageToVideoModel,
+    modelNeedsFaceMask,
+    isEnterpriseEdition,
     getVideoSupportedDurations,
     resolveVideoDurationSeconds,
     getVideoResolutionOptions,
@@ -1733,7 +1736,8 @@ function renderRechargeDialog() {
             body = `<div class="recharge-center"><p class="recharge-hint">暂无可用套餐</p></div>`;
         } else {
             body = `<div class="package-list">${packages.map((pkg) => {
-                const power = Number(pkg.computing_power) || 0;
+                // 优先展示扣邀请佣金后的实际到账算力（与 index.html / 后端 settle 口径一致）
+                const power = Number(pkg.granted_computing_power ?? pkg.computing_power) || 0;
                 const price = Number(pkg.price) || 0;
                 const unit = power > 0 ? (price / power * 100).toFixed(2) : '--';
                 return `
@@ -1757,10 +1761,11 @@ function renderRechargeDialog() {
     } else if (status === 'qrcode') {
         const pkg = state.selectedRechargePackage || {};
         const qr = state.rechargeQrCodeUrl || '';
+        const grantedPower = Number(pkg.granted_computing_power ?? pkg.computing_power) || 0;
         body = `
             <div class="recharge-center">
                 <div class="recharge-pkg-title">${escapeHtml(pkg.description || '算力套餐')}</div>
-                <div class="recharge-hint">${Number(pkg.computing_power) || 0} 算力 - ¥${Number(pkg.price) || 0}</div>
+                <div class="recharge-hint">${grantedPower} 算力 - ¥${Number(pkg.price) || 0}</div>
                 <div class="recharge-qr-wrap">
                     ${qr
                         ? `<div class="recharge-qr-box"><img src="${escapeHtml(qr)}" alt="微信支付二维码" width="200" height="200" /></div>`
@@ -1955,6 +1960,7 @@ function renderGenerateFromScriptDialog() {
     const busy = state.isGeneratingFromScript;
     const splitModelConfig = renderScriptSplitModelConfig(busy);
     const imageModelConfig = renderImageModelConfig(busy);
+    const videoModelConfig = renderDefaultVideoModelConfig(busy);
     const splitDurationConfig = renderScriptSplitDuration(busy);
     const splitOptionsConfig = renderScriptSplitOptions(busy);
     const isEnterprise = state.editionInfo?.mode === 'enterprise';
@@ -2012,6 +2018,9 @@ function renderGenerateFromScriptDialog() {
                         </div>
                         <div class="generate-from-script-model">
                             ${imageModelConfig}
+                        </div>
+                        <div class="generate-from-script-model">
+                            ${videoModelConfig}
                         </div>
                         ${splitDurationConfig}
                     </div>
@@ -2255,6 +2264,43 @@ function renderImageModelConfig(disabled = false) {
     );
 }
 
+/**
+ * 是否处理人脸（Seedance 2.0 系列；对齐 index 生视频界面）。
+ * 社区版置灰 + 提示；商业版可勾选。
+ */
+function renderFaceMaskToggle(disabled = false) {
+    const model = getSelectedImageToVideoModel();
+    if (!modelNeedsFaceMask(model)) return '';
+    const isEnterprise = isEnterpriseEdition();
+    const checked = state.enableFaceMask === true ? 'checked' : '';
+    const inputDisabled = disabled || !isEnterprise ? 'disabled' : '';
+    const hint = isEnterprise
+        ? ''
+        : `<div class="process-face-hint">此功能为商业版功能，请联系购买商业版本后使用</div>`;
+    return `
+        <div class="process-face-row" data-face-mask-toggle>
+            <label class="process-face-label">
+                <input type="checkbox" data-action="toggle-enable-face-mask"
+                       ${checked} ${inputDisabled}>
+                <span>是否处理人脸</span>
+            </label>
+            ${hint}
+        </div>`;
+}
+
+/** 拆分弹窗：默认视频模型（仅图生视频）+ 条件人脸遮盖 */
+function renderDefaultVideoModelConfig(disabled = false) {
+    const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
+    return renderMediaModelSelect(
+        '默认视频模型',
+        '分镜有首帧时用于生成视频的默认模型',
+        'imageToVideo',
+        models,
+        state.selectedImageToVideoTaskId,
+        disabled,
+    ) + renderFaceMaskToggle(disabled);
+}
+
 function renderVideoModelConfig() {
     const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
     const model = getSelectedVideoModel();
@@ -2276,7 +2322,7 @@ function renderVideoModelConfig() {
     ) + renderMediaModelSelect(
         '图生视频模型', '首帧或首尾帧输入时使用', 'imageToVideo', models,
         state.selectedImageToVideoTaskId,
-    ) + renderMediaModelSelect(
+    ) + renderFaceMaskToggle() + renderMediaModelSelect(
         '参考视频模型', '多参考图、参考音视频或首尾帧加参考图时使用', 'referenceToVideo', referenceModels,
         state.selectedReferenceToVideoTaskId,
     );

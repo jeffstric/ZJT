@@ -495,6 +495,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     # RunningHub 相关驱动
     DriverKey.LTX2_IMAGE_TO_VIDEO: DriverImplementation.LTX2_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2 v1 版本
     DriverKey.LTX2_3_IMAGE_TO_VIDEO: DriverImplementation.LTX2_3_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 v1 版本
+    DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO: DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 v1 版本
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,  # 使用 RunningHub 的数字人 v1 版本
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本
@@ -1186,7 +1187,19 @@ class GridConfig:
     VALIDATION_SEPARATOR_SIDE_WIDTH = 5    # 计算分割线两侧对比时的采样宽度
     VALIDATION_MIN_LINE_COVERAGE = 0.75    # 分割线贯穿比例阈值（细线友好采样后真实宫格普遍≥0.9；普通照片单格可达0.7，不宜再低）
     VALIDATION_MIN_CELL_UNIFORMITY = 0.90  # 同方向 cell 尺寸最小/最大比例阈值
+    # 占位格识别阈值：用灰度中位数判定（不受占位格里穿过的白色分割线干扰——分割线像素
+    # 占比小，不影响中位数）。纯黑占位格 median≈0，纯白占位格 median≈255，真实场景内容
+    # median 普遍 >20（即便夜景/暗场也因有明暗对比而中位数偏中）。占位格友好旁路据此识别。
+    VALIDATION_PLACEHOLDER_DARK_MAX = 15.0    # median <= 此值 → 纯黑占位格
+    VALIDATION_PLACEHOLDER_BRIGHT_MIN = 240.0 # median >= 此值 → 纯白占位格
+    # 占位格友好旁路的宽松阈值（仅旁路使用，严格校验绝不用）：
+    # 旁路已确认图像含占位格，对占位区缺失的分割线用理论位置兜底后，仍需校验有内容段的
+    # 分割线质量。此处放宽以容忍占位格边缘对 coverage 的轻微影响，但不能低到让普通照片
+    # 蒙混（普通照片无占位格，根本进不了旁路，故此阈值不影响严格校验对普通照片的拦截）。
+    VALIDATION_PLACEHOLDER_TOLERANT_MIN_COVERAGE = 0.60
+    VALIDATION_PLACEHOLDER_TOLERANT_MIN_UNIFORMITY = 0.80
     STORYBOARD_FIRST_FRAME_VALIDATION_MAX_RETRIES = 2  # 分镜首帧宫格几何校验失败后的重试次数
+    LOCATION_REFERENCE_VALIDATION_MAX_RETRIES = 2      # 场景参考图宫格(item_type=5)几何校验失败后的重试次数（原 max_retries=0 零重试直接判死刑）
 
     # 孤立 grid split pipeline step 兜底清理：每轮扫描的上限。
     # 用于清理「grid_image_tasks 已进入失败终态，但绑定的 ai_tool_pipeline_steps 仍卡在 PENDING」的孤儿记录，
@@ -1365,6 +1378,13 @@ class MediaConstants:
     # 否则上游返回 InvalidParameter（如高刷屏上浏览器 Canvas+MediaRecorder 产出的
     # 120fps 视频）。统一归一化至 30fps，留足安全余量。
     VIDEO_REFERENCE_MAX_FPS = 30
+    # 人脸遮罩叠加：原视频与遮罩视频统一重采样后的固定帧率（CFR）。
+    # 帧率元数据对 VFR webm 不可信（可能误报 1000fps 或看似合理的 60fps），
+    # 叠加前由 ffmpeg 按帧 PTS 重采样到该帧率，与 RunningHub 遮罩输出帧率一致。
+    FACE_MASK_CFR_FPS = 24
+    # 人脸遮罩上传 RunningHub 前的短边上限（像素）。仅上传侧生效，本地融合仍用原尺寸；
+    # 遮罩融合时 resize 回原尺寸。防止 1080p 等大视频在 RH 端全量加载时爆显存。
+    FACE_MASK_UPLOAD_MAX_SHORT_SIDE = 512
 
 
 class BrandingConstants:
@@ -1613,10 +1633,11 @@ class LLMVendor:
         'JIEKOU': '接口供应商（Gemini 模型）',
         'ALIYUN': '阿里云供应商（Qwen 模型）',
         'OLLAMA': '本地运行供应商（Ollama 模型）',
-        'VOLCENGINE': '火山引擎供应商（Doubao 模型）',
+        'VOLCENGINE': '火山引擎供应商（Doubao / DeepSeek-V4 模型）',
         'CLAUDE': 'Claude 供应商（Anthropic 模型）',
         'ZJT_API': 'ZJT API 供应商（Qwen3.5/3.6 模型）',
         'DEEPSEEK': 'DeepSeek 供应商（DeepSeek-V4 模型）',
+        'AGNES': 'Agnes 供应商（Agnes 2.5 对话模型）',
     }
     JIEKOU = 'jiekou'
     ALIYUN = 'aliyun'
@@ -1625,6 +1646,7 @@ class LLMVendor:
     CLAUDE = 'claude'
     ZJT_API = 'zjt_api'
     DEEPSEEK = 'deepseek'
+    AGNES = 'agnes'
 
 
 class LLMModel:
@@ -1643,6 +1665,8 @@ class LLMModel:
         'CLAUDE_HAIKU_4_5': 'Claude Haiku 4.5',
         'DEEPSEEK_V4_FLASH': 'DeepSeek V4 Flash',
         'DEEPSEEK_V4_PRO': 'DeepSeek V4 Pro',
+        'AGNES_2_5_FLASH': 'Agnes 2.5 Flash',
+        'AGNES_2_5_PRO': 'Agnes 2.5 Pro',
         'REDUCE_VIOLATION_DEFAULT': '内容安全提示词改写默认模型（reduce-violation 兜底）',
     }
     # Gemini 模型
@@ -1669,6 +1693,10 @@ class LLMModel:
     DEEPSEEK_V4_FLASH = 'deepseek-v4-flash'
     DEEPSEEK_V4_PRO = 'deepseek-v4-pro'
 
+    # Agnes 模型
+    AGNES_2_5_FLASH = 'agnes-2.5-flash'
+    AGNES_2_5_PRO = 'agnes-2.5-pro'
+
     # 内容安全提示词改写（reduce-violation）的默认兜底模型
     # 前端未传/所选拆分模型供应商未配置时使用；复用剧本拆分默认模型，凭据走 JIEKOU 中转
     REDUCE_VIOLATION_DEFAULT = 'gemini-3-flash-preview'
@@ -1682,6 +1710,7 @@ VENDOR_ICONS = {
     'volcengine': '🌋',
     'zjt_api': '🚀',
     'deepseek': '🔍',
+    'agnes': '✨',
 }
 
 # 模型前缀 -> 供应商映射（用于 LLMClientFactory 路由）
@@ -1695,7 +1724,34 @@ MODEL_PREFIX_VENDOR_MAP = {
     'qwen3.5': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.5 Plus 模型
     'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
     'deepseek': LLMVendor.DEEPSEEK,  # DeepSeek 的 DeepSeek-V4 模型
+    'agnes': LLMVendor.AGNES,  # Agnes AI 对话模型
 }
+
+
+# ============ 管理后台 · 大模型分段计费 ============
+
+class AdminBillingConstants:
+    """管理后台 LLM 分段计费 / AI 改档常量"""
+    _CONSTANT_GROUP = True
+    # 1 点算力 = 0.04 元
+    POWER_YUAN = 0.04
+    # 元/百万 token ↔ threshold 换算：threshold = POWER_YUAN * 1e6 / yuan_per_m
+    YUAN_PER_M_SCALE = 1_000_000
+    # AI 改档默认引擎：deepseek 供应商 + deepseek-v4-pro
+    AI_DEFAULT_VENDOR = LLMVendor.DEEPSEEK
+    AI_DEFAULT_MODEL = LLMModel.DEEPSEEK_V4_PRO
+    # LLM 调用超时（秒）
+    AI_TIMEOUT_SEC = 60
+    # 抽成上限 100%
+    MAX_COMMISSION_RATE = 1.0
+
+
+# ============ 一体包 MySQL binlog 保留 ============
+
+class MysqlBinlogConstants:
+    """一体包内置 MySQL 的 binlog 保留策略（仅写配置文件，无运行时 SQL）"""
+    # 约 7 天；对应 my.ini/my.cnf 中 binlog_expire_logs_seconds
+    EXPIRE_LOGS_SECONDS = 7 * 24 * 3600  # 604800
 
 
 # ============ 自动升级相关常量 ============

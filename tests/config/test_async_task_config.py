@@ -45,11 +45,22 @@ class TestAsyncTaskConfigValues(unittest.TestCase):
         self.assertEqual(config.slot_task_type, 1)
 
     def test_runninghub_face_mask_config(self):
-        """RunningHub 人脸遮盖配置应为需要槽位且 slot_task_type=2"""
+        """RunningHub 人脸遮盖配置应为需要槽位、slot_task_type=2 且放宽超时"""
         config = get_async_task_config(AsyncTaskImplementationId.RUNNINGHUB_FACE_MASK)
 
         self.assertTrue(config.need_runninghub_slot)
         self.assertEqual(config.slot_task_type, 2)
+        # 逐帧检测工作流耗时可超 10 分钟，放宽到 120 次（约 20 分钟）
+        self.assertEqual(config.max_attempts, 120)
+
+    def test_default_max_attempts_is_60(self):
+        """其他异步任务类型保持默认 60 次（约 10 分钟）"""
+        for impl_id in (
+            AsyncTaskImplementationId.RUNNINGHUB_AUDIO,
+            AsyncTaskImplementationId.RUNNINGHUB_IMAGE_FACE_MASK,
+        ):
+            config = get_async_task_config(impl_id)
+            self.assertEqual(config.max_attempts, 60, impl_id)
 
     def test_runninghub_image_face_mask_config(self):
         """RunningHub 图片人脸遮盖配置应为需要槽位且 slot_task_type=3"""

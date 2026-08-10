@@ -1226,16 +1226,20 @@
         if (data.packages && data.packages.length > 0) {
           let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
           data.packages.forEach(pkg => {
+            // 优先展示扣邀请佣金后的实际到账算力（与 index.html / 后端 settle 口径一致）
+            const power = Number(pkg.granted_computing_power ?? pkg.computing_power) || 0;
+            const price = Number(pkg.price) || 0;
+            const unit = power > 0 ? (price / power * 100).toFixed(2) : '--';
             html += `
-              <div class="package-item" data-pkg-id="${pkg.package_id}" data-pkg-desc="${escapeHtml(pkg.description || '')}" data-pkg-power="${pkg.computing_power}" data-pkg-price="${pkg.price}" onclick="selectRechargePackage(Number(this.dataset.pkgId), this.dataset.pkgDesc, Number(this.dataset.pkgPower), Number(this.dataset.pkgPrice))" style="padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; cursor: pointer; transition: all 0.2s;">
+              <div class="package-item" data-pkg-id="${pkg.package_id}" data-pkg-desc="${escapeHtml(pkg.description || '')}" data-pkg-power="${power}" data-pkg-price="${price}" onclick="selectRechargePackage(Number(this.dataset.pkgId), this.dataset.pkgDesc, Number(this.dataset.pkgPower), Number(this.dataset.pkgPrice))" style="padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; cursor: pointer; transition: all 0.2s;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                   <div>
                     <div style="font-weight: 600; color: #0f172a;">${escapeHtml(pkg.description)}</div>
-                    <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">${pkg.computing_power} ${window.t ? window.t('computing_power') : '算力'}</div>
+                    <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">${power} ${window.t ? window.t('computing_power') : '算力'}</div>
                   </div>
                   <div style="text-align: right;">
-                    <div style="font-size: 20px; font-weight: 600; color: #ef4444;">¥${pkg.price}</div>
-                    <div style="font-size: 11px; color: #9ca3af;">${(pkg.price / pkg.computing_power * 100).toFixed(2)} ${window.t ? window.t('computing_power_per_hundred') : '元/百算力'}</div>
+                    <div style="font-size: 20px; font-weight: 600; color: #ef4444;">¥${price}</div>
+                    <div style="font-size: 11px; color: #9ca3af;">${unit} ${window.t ? window.t('computing_power_per_hundred') : '元/百算力'}</div>
                   </div>
                 </div>
               </div>
