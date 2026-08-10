@@ -1625,6 +1625,7 @@ class LLMVendor:
         'CLAUDE': 'Claude 供应商（Anthropic 模型）',
         'ZJT_API': 'ZJT API 供应商（Qwen3.5/3.6 模型）',
         'DEEPSEEK': 'DeepSeek 供应商（DeepSeek-V4 模型）',
+        'AGNES': 'Agnes 供应商（Agnes 2.5 对话模型）',
     }
     JIEKOU = 'jiekou'
     ALIYUN = 'aliyun'
@@ -1633,6 +1634,7 @@ class LLMVendor:
     CLAUDE = 'claude'
     ZJT_API = 'zjt_api'
     DEEPSEEK = 'deepseek'
+    AGNES = 'agnes'
 
 
 class LLMModel:
@@ -1651,6 +1653,8 @@ class LLMModel:
         'CLAUDE_HAIKU_4_5': 'Claude Haiku 4.5',
         'DEEPSEEK_V4_FLASH': 'DeepSeek V4 Flash',
         'DEEPSEEK_V4_PRO': 'DeepSeek V4 Pro',
+        'AGNES_2_5_FLASH': 'Agnes 2.5 Flash',
+        'AGNES_2_5_PRO': 'Agnes 2.5 Pro',
         'REDUCE_VIOLATION_DEFAULT': '内容安全提示词改写默认模型（reduce-violation 兜底）',
     }
     # Gemini 模型
@@ -1677,6 +1681,10 @@ class LLMModel:
     DEEPSEEK_V4_FLASH = 'deepseek-v4-flash'
     DEEPSEEK_V4_PRO = 'deepseek-v4-pro'
 
+    # Agnes 模型
+    AGNES_2_5_FLASH = 'agnes-2.5-flash'
+    AGNES_2_5_PRO = 'agnes-2.5-pro'
+
     # 内容安全提示词改写（reduce-violation）的默认兜底模型
     # 前端未传/所选拆分模型供应商未配置时使用；复用剧本拆分默认模型，凭据走 JIEKOU 中转
     REDUCE_VIOLATION_DEFAULT = 'gemini-3-flash-preview'
@@ -1690,6 +1698,7 @@ VENDOR_ICONS = {
     'volcengine': '🌋',
     'zjt_api': '🚀',
     'deepseek': '🔍',
+    'agnes': '✨',
 }
 
 # 模型前缀 -> 供应商映射（用于 LLMClientFactory 路由）
@@ -1703,6 +1712,7 @@ MODEL_PREFIX_VENDOR_MAP = {
     'qwen3.5': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.5 Plus 模型
     'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
     'deepseek': LLMVendor.DEEPSEEK,  # DeepSeek 的 DeepSeek-V4 模型
+    'agnes': LLMVendor.AGNES,  # Agnes AI 对话模型
 }
 
 
