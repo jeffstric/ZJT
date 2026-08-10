@@ -393,11 +393,44 @@
                                             </div>
                                         </div>
 
-                                        <!-- 视频时长选择（仅视频模式） -->
-                                        <div v-if="mediaType === 'video'" style="margin-bottom: 20px;">
-                                            <span style="font-size: 14px; font-weight: 500; color: #1a1a1a; display: block; margin-bottom: 12px;">{{ $t('video_duration') }}</span>
-                                            <div style="display: flex; gap: 8px;">
-                                                <div v-for="dur in currentDurationOptions" :key="dur" @click.stop="selectedDuration = dur" style="flex: 1; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: selectedDuration === dur ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: selectedDuration === dur ? '#e6f7ff' : '#f5f5f5', color: selectedDuration === dur ? '#00a8e6' : '#1a1a1a' }">{{ formatDurationOption(dur) }}</div>
+                                        <!-- 视频时长选择（仅视频模式）：≤3 档紧凑点选；≥4 档横滚+输入 -->
+                                        <div v-if="mediaType === 'video'" class="duration-picker">
+                                            <span class="duration-picker-label">{{ $t('video_duration') }}</span>
+                                            <!-- compact：自动 + 全部数字一排 -->
+                                            <div v-if="isDurationCompact" class="duration-picker-row duration-picker-compact">
+                                                <button type="button"
+                                                    v-for="dur in currentDurationOptions"
+                                                    :key="'c-' + String(dur)"
+                                                    class="duration-chip"
+                                                    :class="{ active: selectedDuration === dur }"
+                                                    @click.stop="selectDuration(dur)">{{ formatDurationOption(dur) }}</button>
+                                            </div>
+                                            <!-- scroll+input：自动固定 + 横滚 + 数字输入 -->
+                                            <div v-else class="duration-picker-row duration-picker-scroll">
+                                                <button type="button"
+                                                    class="duration-chip duration-chip-auto"
+                                                    :class="{ active: selectedDuration === 'auto' }"
+                                                    @click.stop="selectDuration('auto')">{{ $t('duration_auto') }}</button>
+                                                <div class="duration-chip-scroll" ref="durationChipScroll">
+                                                    <button type="button"
+                                                        v-for="dur in numericDurationOptions"
+                                                        :key="'s-' + dur"
+                                                        class="duration-chip"
+                                                        :class="{ active: selectedDuration === dur }"
+                                                        @click.stop="selectDuration(dur)">{{ formatDurationOption(dur) }}</button>
+                                                </div>
+                                                <div class="duration-input-wrap">
+                                                    <input type="number"
+                                                        class="duration-input"
+                                                        v-model="durationInputText"
+                                                        :min="numericDurationOptions[0]"
+                                                        :max="numericDurationOptions[numericDurationOptions.length - 1]"
+                                                        inputmode="numeric"
+                                                        @click.stop
+                                                        @change="onDurationInputCommit"
+                                                        @keydown.enter.prevent="onDurationInputCommit" />
+                                                    <span class="duration-input-unit">{{ $t('duration_unit') }}</span>
+                                                </div>
                                             </div>
                                         </div>
 
@@ -850,11 +883,11 @@
                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                 <div>
                                     <div style="font-weight: 600; color: #0f172a;">{{ pkg.description }}</div>
-                                    <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">{{ pkg.computing_power }} {{ $t('computing_power') }}</div>
+                                    <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">{{ pkg.granted_computing_power || pkg.computing_power }} {{ $t('computing_power') }}</div>
                                 </div>
                                 <div style="text-align: right;">
                                     <div style="font-size: 20px; font-weight: 600; color: #ef4444;">&#165;{{ pkg.price }}</div>
-                                    <div style="font-size: 11px; color: #9ca3af;">{{ $t('price_per_hundred', { price: (pkg.price / pkg.computing_power * 100).toFixed(2) }) }}</div>
+                                    <div style="font-size: 11px; color: #9ca3af;">{{ $t('price_per_hundred', { price: (pkg.price / (pkg.granted_computing_power || pkg.computing_power) * 100).toFixed(2) }) }}</div>
                                 </div>
                             </div>
                         </div>
@@ -863,7 +896,7 @@
                     <!-- 二维码 -->
                     <div v-else-if="rechargeState === 'qrcode'" style="text-align: center;">
                         <div style="font-size: 16px; font-weight: 600; color: #0f172a;">{{ selectedPackage?.description }}</div>
-                        <div style="font-size: 14px; color: #6b7280; margin-top: 8px;">{{ selectedPackage?.computing_power }} {{ $t('computing_power') }} - &#165;{{ selectedPackage?.price }}</div>
+                        <div style="font-size: 14px; color: #6b7280; margin-top: 8px;">{{ selectedPackage?.granted_computing_power || selectedPackage?.computing_power }} {{ $t('computing_power') }} - &#165;{{ selectedPackage?.price }}</div>
                         <div style="margin-top: 20px;">
                             <div v-if="qrCodeUrl" style="background: #fff; padding: 12px; border-radius: 12px; display: inline-block;">
                                 <img :src="qrCodeUrl" :alt="$t('wechat_pay_qr_alt')" style="width: 200px; height: 200px;" />

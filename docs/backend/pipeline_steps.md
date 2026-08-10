@@ -105,13 +105,19 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 **遮盖语义**：单帧 ComfyUI 工作流 `人脸识别_单帧.json` 不再在检测前 resize，YOLOv8 的 `BBOX Detector (combined)` 直接在原图上生成整图尺寸的 bbox 矩形 mask，再通过 `8x8` 黑色图像按 mask 拉伸合成回原图。遮盖区域以检测框 `x1/y1/x2/y2` 为基础，并使用 `dilation=128` 增加安全边距，补偿 YOLO face bbox 在侧脸、头发遮挡、扇子遮挡、局部置信度偏高时只框住人脸核心区域的问题；它不是 SEGS 裁剪图或人脸轮廓分割区域，避免出现纯黑背景里残留脸部裁剪图的结果。
 
 **处理流程**：
-1. FaceMaskPipelineDriver 调用 RunningHubFaceMaskDriver.submit_with_slot_management()
+1. FaceMaskPipelineDriver 调用 RunningHubFaceMaskDriver.submit_with_slot_management()；提交前先将本地视频用 ffmpeg 按帧 PTS 归一化为固定 CFR（`MediaConstants.FACE_MASK_CFR_FPS`，24fps），并按 `FACE_MASK_UPLOAD_MAX_SHORT_SIDE`（512px）等比缩短边后上传——VFR webm 的帧率元数据不可信，RH 端（ComfyUI `VHS_LoadVideo`）对 VFR 源的解码帧数/时间轴与本地不一致且逐次不同，直接上传会导致遮罩时间轴漂移；短边缩放用于防止 1080p 等大视频在 RH 端全量加载时爆显存（OOM_KILLED）
 2. 创建 async_task 记录（implementation=RUNNINGHUB_FACE_MASK）
 3. 槽位满时自动安排重试（指数退避：30s → 60s → 120s → 300s）
 4. 后台任务 process_pending_async_task_submissions() 负责重试提交
 5. process_runninghub_async_tasks() 轮询 async_task 状态
 6. 完成后将遮盖后的视频 URL 写入 step.result_data
 7. PipelineProcessor 将结果应用回 ai_tools.video_path
+
+**本地叠加融合（`utils/face_mask_util.py` 的 `overlay_face_mask`）**：帧率元数据对浏览器录制的 VFR webm 完全不可信（可能把时间基误报为 1000fps，也可能误报看似合理但与时长矛盾的 60fps），因此一律不信任元数据：融合前先用 ffmpeg 按每帧 PTS 时间戳把原视频和 RunningHub 遮罩视频统一重采样为固定 CFR（`MediaConstants.FACE_MASK_CFR_FPS`，24fps，与 RH 输出一致），时长保持不变。
+
+**遮罩逐帧对齐（关键）**：RH 工作流中的 `ImpactSEGSToMaskBatch` 对一帧的**每个检测框**各产出一个 mask（如人脸 + 画面内印刷照片误检），直接累积会让遮罩流比视频帧数多且错位（事故实证：268 帧视频产出 307 帧遮罩，错位集中在前段）。因此 RH 工作流（App `2085225276274987010`，工作流 JSON 在 RunningHub 侧维护、不上库）把每帧的检测批**用全黑 mask 补齐到固定 3 个后取 OR 并集**（ImageFromBatch 下标越界会报错，补齐是为了兼容检测数不足的帧；全部使用 MaskToImage/ImageFromBatch/ImageToMask/InvertMask/MaskComposite/easy batchAnything 等核心或已验证节点），保证每帧恰好输出 1 个 mask、与源视频严格 1:1，且同帧多个人脸（最多 3 个）都能遮盖；不做全帧 IMAGE 合成，显存占用与旧版相当。融合侧 `_split_mask_video` 兼容含全白分隔帧的历史格式；帧数比例映射（`_map_mask_frame_index`）兜底零星出入，越界冻结最后一帧，不回绕到第 0 帧。输出同为 24fps，保证与原视频时长、音频同步。严禁回到"按元数据帧率/裸检测框流直接配对"的做法，否则遮罩会随时间漂移、输出时长与音频错乱。
+
+**调试产物**：配置 `pipeline.face_mask_debug_keep`（默认 `true`）开启后，每次融合在 `upload/cache/face_mask_debug/task_<async_task_id>_<时间戳>/` 下保留各阶段产物：`source_input<ext>`（浏览器上传的原始视频，未经任何处理）、`original_cfr.mp4`（原视频 CFR 中间产物，等同于上传给 RH 的内容）、`mask_source.mp4`（RH 返回的遮罩源）、`mask_cfr.mp4`（遮罩 CFR 中间产物）。同时叠加日志会打印原视频元数据帧率（仅供参考，不参与决策）。
 
 ### image_face_mask（图片人脸遮盖）
 

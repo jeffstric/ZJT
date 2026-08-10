@@ -130,5 +130,7 @@
 - **佣金中心**（商业版；社区版 `/api/commission/*` 返回 403 时自动隐藏）：展示可提现/累计/冻结/已提现余额、全额提现申请按钮、抽佣比例滑块（0%~50%）+ 保存，以及**佣金明细列表**（显示被邀请人手机号脱敏 + 本单佣金 + 时间，回答"哪个用户充值、拿到多少佣金"）。
 - **邀请码弹窗样式**：弹窗结构保留在 `web/index.html`，视觉样式集中在 `web/css/index.css` 的 `Invite Code Styles` 段，避免继续在页面中堆叠大量内联 CSS。
 - **充值页算力显示**：套餐展示的算力为**扣邀请佣金后的实际到账算力**（`granted_computing_power`）。后端 `/api/recharge/packages` 针对当前用户（被邀请人）按其邀请人的佣金率计算（首充/社区版/无邀请人/比例 0 => 全额），**直接展示到账算力，不对被邀请人暴露任何佣金信息（静默抽佣）**。内部通过 `commission/recharge_grants` endpoint（`perseids_server/client.py`）由 `CommissionService.get_recharge_grants` 计算，与 `settle` 口径一致。
+  - 前端必须优先展示 `pkg.granted_computing_power ?? pkg.computing_power`（含单价「元/百算力」分母），不得只读标称 `computing_power`。
+  - 覆盖入口：`web/index.html`、`web/js/storyboard/render.js`、`web/js/script_writer.js`、`web/video_workflow.html`、`web/marketing_agent.html`。
 
 > 管理端提现审核台（`web/admin.html`）暂未在前端实现，目前可通过管理端 API 操作。

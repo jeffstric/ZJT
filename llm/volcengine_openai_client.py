@@ -1,6 +1,6 @@
 """
 火山引擎 / Doubao OpenAI 兼容格式 LLM 客户端
-支持 doubao 系列模型
+支持 doubao 系列模型，以及方舟上的 DeepSeek-V4 系列
 """
 import logging
 from .openai_base_client import OpenAIBaseClient
@@ -10,12 +10,16 @@ logger = logging.getLogger(__name__)
 
 
 class VolcengineOpenAIClient(OpenAIBaseClient):
-    """火山引擎（Doubao）OpenAI 兼容格式 LLM 客户端"""
+    """火山引擎（Doubao / DeepSeek）OpenAI 兼容格式 LLM 客户端"""
 
     # model 表友好名称 -> 实际 API endpoint model ID 映射
+    # DeepSeek 在方舟控制台展示为 DeepSeek-V4-flash / DeepSeek-V4-pro，
+    # 兼容 API 使用 deepseek-v4-flash / deepseek-v4-pro 模型名（可与接入点 ID 混用）。
     _MODEL_NAME_MAP = {
         'doubao-seed-2-0-pro': 'doubao-seed-2-0-pro-260215',
         'doubao-seed-2-0-lite': 'doubao-seed-2-0-lite-260215',
+        'deepseek-v4-flash': 'deepseek-v4-flash',
+        'deepseek-v4-pro': 'deepseek-v4-pro',
     }
 
     def _refresh_config(self):

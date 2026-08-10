@@ -34,9 +34,11 @@ duomi:
 - `runninghub.host`
 
 适用驱动：
-- `ltx2_runninghub_v1` - LTX2.0 图生视频（任务类型 10）
-- `wan22_runninghub_v1` - Wan2.2 图生视频（任务类型 11）
+- `ltx2_runninghub_v1` - LTX2.0 图生视频（任务类型 10，**已关闭**）
+- `wan22_runninghub_v1` - Wan2.2 图生视频（任务类型 11，**已关闭**）
+- `ltx2.3_runninghub_v1` - LTX2.3 图生视频
 - `digital_human_runninghub_v1` - 数字人生成（任务类型 13）
+- `minimax_h3_runninghub_v1` - MiniMax H3 首尾帧图生视频（任务类型 34）
 
 配置示例：
 ```yaml

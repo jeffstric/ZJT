@@ -5,8 +5,9 @@ RunningHubFaceMaskDriver 静态方法单元测试
 以及 RunningHubFaceMaskConfig 常量。
 """
 import sys
+import os
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Mock 外部依赖（在 import 之前）
 # 注意：不 mock httpx 和 utils.logger_config，让 base_async_driver 正常导入
@@ -184,6 +185,69 @@ class TestRunningHubFaceMaskConfig(unittest.TestCase):
         self.assertIn('FAILED', statuses)
         self.assertIn('ERROR', statuses)
         self.assertIsInstance(statuses, tuple)
+
+
+class TestNormalizeBeforeUpload(unittest.TestCase):
+    """测试 _normalize_before_upload：上传 RunningHub 前的 CFR 归一化"""
+
+    def _new_driver(self, local_path):
+        # 绕过 __init__（避免依赖配置/客户端初始化），仅测试该方法
+        driver = RunningHubFaceMaskDriver.__new__(RunningHubFaceMaskDriver)
+        driver._storage = MagicMock()
+        driver._storage.resolve_to_local_file.return_value = local_path
+        return driver
+
+    def test_returns_none_when_not_mappable(self):
+        """URL/路径无法映射到本地文件时返回 None"""
+        driver = self._new_driver(None)
+        self.assertIsNone(driver._normalize_before_upload('http://example.com/a.webm'))
+
+    @patch('utils.face_mask_util._normalize_video_to_cfr', return_value=True)
+    def test_returns_temp_file_on_success(self, mock_normalize):
+        """归一化成功时返回临时文件路径"""
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as f:
+            src = f.name
+        driver = self._new_driver(src)
+        try:
+            temp_path = driver._normalize_before_upload(src)
+            self.assertIsNotNone(temp_path)
+            self.assertTrue(os.path.exists(temp_path))
+            self.assertTrue(temp_path.endswith('.cfr.mp4'))
+            os.remove(temp_path)
+        finally:
+            os.remove(src)
+
+    @patch('utils.face_mask_util._normalize_video_to_cfr', return_value=False)
+    def test_returns_none_and_cleans_up_on_failure(self, mock_normalize):
+        """归一化失败时返回 None 且不留临时文件"""
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as f:
+            src = f.name
+        driver = self._new_driver(src)
+        try:
+            self.assertIsNone(driver._normalize_before_upload(src))
+        finally:
+            os.remove(src)
+
+    @patch('utils.face_mask_util._normalize_video_to_cfr', side_effect=Exception('boom'))
+    def test_returns_none_on_exception(self, mock_normalize):
+        """归一化异常时返回 None 而不抛出"""
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as f:
+            src = f.name
+        driver = self._new_driver(src)
+        try:
+            self.assertIsNone(driver._normalize_before_upload(src))
+        finally:
+            os.remove(src)
+
+    def test_returns_none_when_mapping_raises(self):
+        """路径映射异常时返回 None 而不抛出"""
+        driver = RunningHubFaceMaskDriver.__new__(RunningHubFaceMaskDriver)
+        driver._storage = MagicMock()
+        driver._storage.resolve_to_local_file.side_effect = Exception('boom')
+        self.assertIsNone(driver._normalize_before_upload('/any/path.webm'))
 
 
 if __name__ == '__main__':

@@ -18,6 +18,7 @@ from .volcengine_openai_client import VolcengineOpenAIClient, get_volcengine_ope
 from .claude_customer_client import ClaudeCustomerClient, get_claude_customer_client
 from .zjt_openai_client import ZJTOpenAIClient, get_zjt_openai_client
 from .openai_deepseek import DeepSeekOpenAIClient, get_deepseek_openai_client
+from .openai_agnes import AgnesOpenAIClient, get_agnes_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class LLMClientFactory:
         LLMVendor.CLAUDE: get_claude_customer_client,
         LLMVendor.ZJT_API: get_zjt_openai_client,
         LLMVendor.DEEPSEEK: get_deepseek_openai_client,
+        LLMVendor.AGNES: get_agnes_openai_client,
     }
 
     @classmethod
@@ -147,6 +149,7 @@ async def get_available_models() -> dict:
             'volcengine': ('volcengine', 'api_key'),
             'zjt_api': ('api_aggregator', 'site_0', 'api_key'),
             'deepseek': ('llm', 'deepseek', 'api_key'),
+            'agnes': ('llm', 'agnes', 'api_key'),
         }
         if vendor_name not in vendor_config_map:
             return True  # 未知 vendor 默认放行

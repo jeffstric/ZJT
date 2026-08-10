@@ -60,6 +60,15 @@ class RunningHubFileStorage(BaseFileStorage):
         if self._logger:
             getattr(self._logger, level, print)(message)
 
+    def resolve_to_local_file(self, file_path_or_url: str) -> Optional[str]:
+        """
+        将路径/URL解析为本地文件路径（仅做本地映射，不涉及网络下载）
+
+        Returns:
+            本地文件路径，无法映射时返回 None
+        """
+        return self._resolve_to_local_file(file_path_or_url)
+
     def _resolve_to_local_file(self, file_path_or_url: str) -> Optional[str]:
         """
         将路径/URL解析为本地文件路径（仅做本地映射，不涉及网络下载）

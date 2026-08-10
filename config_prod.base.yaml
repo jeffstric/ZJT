@@ -128,6 +128,9 @@ llm:
   deepseek:
     api_key: ""  # DeepSeek API Key
     base_url: "https://api.deepseek.com"
+  agnes:
+    api_key: ""  # Agnes AI API Key
+    base_url: "https://api.agnes-ai.cn/v1"
 
 tts:
   api_url: "http://47.98.190.124"

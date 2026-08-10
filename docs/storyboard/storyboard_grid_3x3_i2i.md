@@ -216,14 +216,14 @@ grid task 进入终态失败有四条路径，每条都必须调用 `_mark_story
 
 1. 将缺图场景分为顶层场景（`parent_id=null`）与有父级的子场景。
 2. 缺图顶层场景按解析顺序每 4 个组成 2x2 文生图宫格，不足 4 个补 `placeholder`；调用 `generate_4grid_location_images(..., target_entity_ids=...)`，使后台切图按数据库 `location.id` 回写 `reference_image`。
-3. 按父场景分组子场景，继续走父图 3x3 i2i。
+3. 按父场景分组子场景，**按子场景数量选宫格规格**：≤4 个走 2x2 i2i（`generate_4grid_location_images_i2i`），>4 个走 3x3 i2i（`generate_9grid_location_images`）。选择逻辑与分镜首帧宫格 `_submit_chunk` 一致。原实现写死 3x3，导致只有 1 个子场景时也要凑 8 个黑色占位格——既浪费算力，又因占位格占比过高触发宫格几何校验误判（详见 `docs/image/grid_image_validation.md` 占位格友好旁路）。
 4. **补偿重跑友好（门禁）**：始终跳过「已有参考图」或「有运行中宫格任务」的场景，只提交「缺图且无运行中任务」的。`force_overwrite_subscene_grids` / `force_overwrite=True` 为兼容旧调用保留，但不再生效；已有参考图一律不会被重新提交或覆盖。判定：
    - `_subscene_has_reference_image(db_id, loc)`：查 DB 行 `reference_image`，fallback parsed dict。
    - `_subscene_has_running_grid(db_id)`：`GridImageTasksModel.has_running_grid_for_entity`。
 5. 子场景批次取父 `reference_image` / `reference_images[0].url`；父图尚未就绪时标记 `missing_parent_reference_image`，等待后续预检重新推进。
-6. 子场景不足 9 个补 `placeholder`（不建 location、不回写）；超过 9 个拆成多个 3x3 批次。
+6. 子场景不足所选 grid_size 个补 `placeholder`（不建 location、不回写）；超过 grid_size 个拆成多个批次。
 7. 每个子场景 prompt 必含：父场景名/描述/参考图说明 + 子场景名/描述/氛围 + "保持父场景空间结构、色彩、材质、光照连续"。
-8. 调 `generate_9grid_location_images(reference_images=[{url, role_description}], target_entity_ids=<DB id 列表>)`。bootstrap 构造的 reference_images 含父场景图，role_description 为"父场景'{name}'的完整场景图，展示整体空间结构、色彩、材质、光照，各子场景需保持与其连续性"。
+8. 调对应规格的提交函数（`generate_4grid_location_images_i2i` 或 `generate_9grid_location_images`），传入 `reference_images=[{url, role_description}]`、`target_entity_ids=<DB id 列表>`。两者底层都调 `submit_grid_image_task(mode="image_edit")`，区别仅在 `grid_size`。
 
 ### split 端点门禁
 Web（`api/storyboard.py`）与 CLI（`cli_service.py`）入口只需「有 auth_token」即尝试提交（内部精确跳过无需处理的子场景）。**不再用 `created_location_count > 0`** 作为门禁——那样会让「子场景已落库但缺图」的重跑无法补提交。

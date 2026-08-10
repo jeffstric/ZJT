@@ -39,7 +39,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config.constant import UV_BUNDLED_PYTHON_REQUEST
 
-# 导入 PID 管理模块
+# 导入 PID 管理模块 / 一体包 binlog 配置工具
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pid_manager import (
     add_pid,
@@ -47,6 +47,7 @@ from pid_manager import (
     clear_pids,
     cleanup_dead_pids_on_startup
 )
+from mysql_binlog_config import ensure_mysql_binlog_retention
 
 logging.basicConfig(
     level=logging.INFO,
@@ -372,6 +373,23 @@ def check_port_in_use(port):
         return False
 
 
+def _ensure_binlog_retention_on_ini(mysql_ini):
+    """
+    确保 my.ini 含 binlog_expire_logs_seconds（约 7 天）。
+
+    TODO(deprecate): 存量一体包迁移用；打包固化后可删除此调用。
+    仅写配置文件，不执行 SQL。
+    """
+    try:
+        ok, msg = ensure_mysql_binlog_retention(mysql_ini)
+        if ok:
+            logger.info(f"MySQL binlog 保留策略: {msg}")
+        else:
+            logger.warning(f"MySQL binlog 保留策略未写入: {msg}")
+    except Exception as e:
+        logger.warning(f"MySQL binlog 保留策略处理异常（忽略）: {e}")
+
+
 def update_mysql_ini_paths(config=None):
     """
     更新 my.ini 中的路径和端口为当前项目配置
@@ -421,6 +439,7 @@ def update_mysql_ini_paths(config=None):
                 f.write(ini_content)
 
             logger.info(f"MySQL配置文件已更新: basedir={basedir}, datadir={datadir}, port={port}")
+            _ensure_binlog_retention_on_ini(mysql_ini)
             return True, "MySQL配置文件路径更新成功"
 
         # 如果没有模板文件，直接修改现有的 my.ini
@@ -460,6 +479,7 @@ def update_mysql_ini_paths(config=None):
             f.writelines(updated_lines)
 
         logger.info(f"MySQL配置文件已更新: basedir={basedir}, datadir={datadir}, port={port}")
+        _ensure_binlog_retention_on_ini(mysql_ini)
         return True, "MySQL配置文件路径更新成功"
 
     except Exception as e:

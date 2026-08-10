@@ -73,6 +73,8 @@
   "video_duration": "Video Duration",
   "duration_auto": "Auto",
   "duration_seconds": "{dur}s",
+  "duration_unit": "s",
+  "duration_invalid_snapped": "Adjusted to nearest supported {dur}s",
   "select_resolution": "Select Resolution",
   "resolution_auto_desc": "Auto-select best resolution based on model",
   "resolution_custom_desc": "Specify image generation resolution",

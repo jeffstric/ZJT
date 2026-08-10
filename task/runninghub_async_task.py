@@ -209,13 +209,22 @@ def _handle_face_mask_task_success(task: Any, result_url: str):
         output_video = os.path.join(output_dir, output_filename)
 
         # Step 3: 融合视频（原视频 + 遮罩 -> 最终视频）
+        # pipeline.face_mask_debug_keep 开启时保留各阶段产物（上传源/CFR 中间件/遮罩源），便于排查对齐问题
+        from config.config_util import get_dynamic_config_value
+        debug_dir = None
+        if get_dynamic_config_value("pipeline", "face_mask_debug_keep", default=True):
+            debug_dir = os.path.join(
+                project_root, "upload", "cache", "face_mask_debug",
+                f"task_{task.id}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            )
         success, final_video, error = overlay_face_mask(
             original_video=original_abs,
             mask_video=mask_video_abs,
             output_video=output_video,
             mask_color=(0, 0, 0),  # 黑色遮罩
             mask_alpha=1.0,
-            threshold=128
+            threshold=128,
+            debug_dir=debug_dir,
         )
 
         if not success or not final_video:

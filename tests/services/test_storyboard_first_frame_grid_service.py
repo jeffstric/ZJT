@@ -1677,6 +1677,45 @@ def test_scene_reference_items_fall_back_to_tagged_character_and_prop_names(monk
     ]
 
 
+def test_scene_reference_items_two_tagged_characters_without_spatial(monkeypatch):
+    """质量宫格：无 spatial 时，提示词两个【【】】应各挂一张角色参考图。"""
+    from services import storyboard_first_frame_grid_service as grid_service_module
+
+    class FakeCharacterModel:
+        @staticmethod
+        def get_by_name(world_id, name):
+            assert world_id == 9
+            mapping = {
+                "德保罗": SimpleNamespace(
+                    id=1, name="德保罗", reference_image="https://cdn.test/depaul.png"
+                ),
+                "梅西": SimpleNamespace(
+                    id=2, name="梅西", reference_image="https://cdn.test/messi.png"
+                ),
+            }
+            return mapping.get(name)
+
+        @staticmethod
+        def get_by_id(character_id):
+            raise AssertionError("no spatial ids expected")
+
+    monkeypatch.setattr(grid_service_module, "CharacterModel", FakeCharacterModel)
+
+    refs = StoryboardFirstFrameGridService(enable_llm_refine=False)._scene_reference_items(
+        {
+            "scene_desc": "【【德保罗】】与【【梅西】】站在街道中央。",
+            "spatial_layout": {},
+        },
+        world_id=9,
+    )
+
+    character_refs = [ref for ref in refs if ref["source_type"] == "character"]
+    assert [(ref["name"], ref["url"]) for ref in character_refs] == [
+        ("德保罗", "https://cdn.test/depaul.png"),
+        ("梅西", "https://cdn.test/messi.png"),
+    ]
+
+
 def test_scene_reference_items_do_not_restore_tagged_offscreen_character(monkeypatch):
     from services import storyboard_first_frame_grid_service as grid_service_module
 

@@ -73,6 +73,8 @@
   "video_duration": "视频时长",
   "duration_auto": "自动",
   "duration_seconds": "{dur}秒",
+  "duration_unit": "秒",
+  "duration_invalid_snapped": "已调整为最接近的支持时长 {dur} 秒",
   "select_resolution": "选择分辨率",
   "resolution_auto_desc": "自动根据模型选择最佳分辨率",
   "resolution_custom_desc": "指定图片生成分辨率",

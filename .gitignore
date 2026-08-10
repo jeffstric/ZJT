@@ -22,6 +22,7 @@ dist/*
 *.zip
 *.spec
 enterprise/
+enterprise/pyarmor_runtime_*/
 .claude/settings.local.json
 .claude/skills/lark*
 .agents/skills/lark*

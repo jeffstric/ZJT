@@ -6,9 +6,10 @@
 
 ### 1. Python 与 uv
 - Release 程序包必须包含 `bin/uv/uv.exe`，不要求用户安装系统 Python
-- Release 程序包必须同时包含完整、可搬迁的 `bin/python/cpython-3.10.20-windows-x86_64-none/python.exe`
+- Release 程序包应同时包含完整、可搬迁的 `bin/python/cpython-3.10.20-windows-x86_64-none/python.exe`
 - `bin/python` 是 uv managed Python 的安装根目录，不能放普通虚拟环境；根目录出现 `pyvenv.cfg` 表示程序包制作错误
-- 用户启动时固定设置 `UV_PYTHON_DOWNLOADS=never`，不会下载 Python，也不会使用系统 Python
+- 启动时优先使用包内 Python；若缺失，`start.bat` / `launcher_me.bat` 会设置 `UV_PYTHON_DOWNLOADS=auto`，由内置 uv 下载同版本构建到 `bin/python`（官方源失败时自动改用 npmmirror 镜像）
+- 下载完成后仍只使用 `bin/python` 下的解释器，不会回退到系统 Python 或 `%APPDATA%\uv\python`
 - uv 下载缓存默认保存在项目内的 `bin/uv-cache`，不会依赖用户目录中的 uv 环境
 - 源码开发仍建议使用 Python 3.10 和项目 `.venv`
 
@@ -46,7 +47,7 @@
 - ✅ **纯文本脚本 + 官方 python.exe，无 PyInstaller 打包特征，杀毒软件不会误报**
 - ✅ 即便 `点我启动.exe` 被杀毒删除，双击任一 `.bat` 仍可正常启动
 - ✅ **自动网络检测**：国内自动走阿里云镜像、海外自动走官方 PyPI，中外用户都快
-- 📝 Python 已随包提供；首次启动只需由 uv 准备最小托盘依赖，之后复用 `bin/runtime/launcher-<hash>`
+- 📝 Python 优先随包提供；缺失时首次启动由 uv 自动下载一次到 `bin/python`，之后复用；托盘依赖仍由 uv 准备到 `bin/runtime/launcher-<hash>`
 
 #### uv 持久化 launcher 运行机制
 
@@ -63,8 +64,8 @@ scripts/launchers/launcher.py
 ```
 
 - `requirements-launcher.in` 仅用于开发时维护直接依赖；`requirements-launcher.txt` 是发布包使用的精确版本依赖清单，不会被发布流程的 `*.lock` 过滤规则排除。
-- bootstrap 只使用标准库；环境创建和依赖安装由 uv 完成，基础 Python 始终来自程序包的 `bin/python`。
-- 用户侧禁止 Python 下载；`bin/python` 缺失、损坏或是普通虚拟环境时立即报“程序包不完整”。
+- bootstrap 只使用标准库；环境创建和依赖安装由 uv 完成，基础 Python 始终来自 `bin/python`（包内预置或首次自动下载）。
+- `bin/python` 缺失时由 `uv python install cpython-3.10.20-windows-x86_64-none` 自动补齐；损坏、或根目录是普通虚拟环境（含 `pyvenv.cfg`）时仍立即报“程序包不完整”。
 - 依赖清单内容变化时会创建新的哈希环境；新环境验证失败不会覆盖已有可用环境。
 - 托盘常驻进程使用 uv 创建环境中的 `pythonw.exe`，不会引用 `uv run --with-requirements` 的 `.tmp*` 临时解释器。
 - 正常启动禁止执行 `uv cache clean`。LiteLLM 版本通过 `requirements.txt` 的 `<1.92` 约束控制，避免与正在运行的 uv 进程争用缓存锁。
@@ -207,13 +208,14 @@ start_windows.py（Windows 启动管理器）
 
 ## 🐍 发布包内置 Python
 
-Windows 发布包在构建阶段通过 uv 准备完整的 CPython 3.10.20。用户启动时固定使用包内解释器，并设置 `UV_PYTHON_DOWNLOADS=never`：
+Windows 发布包在构建阶段通过 uv 准备完整的 CPython 3.10.20。用户启动时优先使用包内解释器；缺失时允许 `UV_PYTHON_DOWNLOADS=auto` 由内置 uv 补装到同一目录：
 
 | 项 | 默认值 |
 |----|--------|
 | 安装根目录 | `<项目根>\bin\python` |
 | 固定解释器 | `bin\python\cpython-3.10.20-windows-x86_64-none\python.exe` |
-| 用户侧策略 | 禁止下载 Python，不回退到系统 Python 或 `%APPDATA%\uv\python` |
+| 用户侧策略 | 优先包内 Python；缺失时自动下载到 `bin/python`，不回退到系统 Python 或 `%APPDATA%\uv\python` |
+| 下载回退镜像 | 官方源失败时使用 `https://registry.npmmirror.com/-/binary/python-build-standalone` |
 
 **预装 / 离线拷贝示例**（在有网络的机器上）：
 
@@ -224,9 +226,9 @@ bin\uv\uv.exe python install `
   cpython-3.10.20-windows-x86_64-none
 ```
 
-然后把整个 `bin\python` 目录随项目一起拷贝到目标机；目标机执行 `start.bat` 时只使用该解释器。
+然后把整个 `bin\python` 目录随项目一起拷贝到目标机；目标机执行 `start.bat` 时优先使用该解释器。若目标机也缺该目录且网络可用，启动脚本会自动下载一次。
 
-涉及入口：`start.bat`、`launcher_me.bat` / `点我启动.bat`，以及 `scripts/launchers/start_windows.py`、`launcher.py`（子进程会继承该环境变量）。
+涉及入口：`start.bat`、`launcher_me.bat` / `点我启动.bat`，以及 `scripts/launchers/start_windows.py`、`launcher.py`（子进程会继承相关环境变量；业务侧 `uv run` 仍带 `--no-python-downloads`，避免运行期再次拉解释器）。
 
 **发布打包**：`scripts/package.py` 会把 uv 托管的 CPython 3.10 一并打入包内 `bin/python`，新用户解压即用。物料来源优先级：NAS `bin/python-windows` → 开发机本地仓库 `bin/python` →（仅 Windows）打包时用 uv 现场安装；三者在 Windows 下都缺失会直接报错中止打包。macOS 已预留配置位（NAS 目录 `python-macos-x86` / `python-macos-arm`，需放 uv 托管布局的 `cpython-3.10.x-macos-*-none` 目录），物料未就绪时告警跳过、不影响打包。
 
@@ -251,11 +253,12 @@ bin:
 
 ## ❓ 常见问题
 
-### 1. 提示找不到内置 Python
+### 1. 提示找不到内置 Python / 自动下载失败
 **解决方法**：
-- 确认程序包同时包含 `bin/uv/uv.exe` 和 `bin/python/cpython-3.10.20-windows-x86_64-none/python.exe`
+- 确认程序包包含 `bin/uv/uv.exe`；`bin/python/cpython-3.10.20-windows-x86_64-none/python.exe` 缺失时，保持网络连通后重试 `start.bat` / `launcher_me.bat`，脚本会自动下载
+- 若自动下载失败：检查网络，或手动执行 `bin\uv\uv.exe python install cpython-3.10.20-windows-x86_64-none`（国内可先设 `UV_PYTHON_INSTALL_MIRROR=https://registry.npmmirror.com/-/binary/python-build-standalone`）
 - 确认 `bin/python` 根目录没有 `pyvenv.cfg`、`Lib`、`Scripts`；这些是误打包普通虚拟环境的特征
-- 重新下载并完整解压发布包；启动器不会临时下载 Python，也不会回退到系统 Python
+- 也可重新下载并完整解压发布包；启动器不会回退到系统 Python
 - 查看 `logs/launcher_bootstrap.log` 中的内置 Python 或 launcher 依赖错误
 - 系统自带的 3.11/3.12 不能替代上述内置 Python 3.10.20
 

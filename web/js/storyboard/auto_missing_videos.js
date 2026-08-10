@@ -1,4 +1,4 @@
-import state, { getSelectedVideoTaskId } from './state.js';
+import state, { getSelectedVideoTaskId, getEffectiveEnableFaceMask } from './state.js';
 import * as api from './api.js';
 import {
     patchHeaderPower,
@@ -122,6 +122,7 @@ async function submitMissingVideoBatch({ manual = false, sceneIds = null } = {})
             sequence_mode: 'speed',
             continue_on_error: true,
             image_mode: state.videoImageMode || 'first_last_frame',
+            enable_face_mask: getEffectiveEnableFaceMask(),
             ...(requested ? { scene_ids: sceneIds } : {}),
         });
         applyVideoBatchStatus(result);

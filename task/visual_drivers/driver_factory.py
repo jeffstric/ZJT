@@ -655,6 +655,13 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1, Ltx23WithVoiceRunninghubV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import Ltx23WithVoiceRunninghubV1Driver: {e}")
+
+    try:
+        from .minimax_h3_runninghub_v1_driver import MinimaxH3RunninghubV1Driver
+        # 注册 MiniMax H3 RunningHub v1 版本
+        VideoDriverFactory.register_driver(DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1, MinimaxH3RunninghubV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import MinimaxH3RunninghubV1Driver: {e}")
     
     try:
         from .vidu_default_driver import ViduDefaultDriver

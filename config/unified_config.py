@@ -62,11 +62,20 @@ class VideoResolution:
         P1080: P1080,
     }
 
+    # MiniMax H3 RunningHub 驱动下发值（megapixels：480P=0.4, 720P=0.9）
+    MINIMAX_H3_DRIVER_VALUES = {
+        P480: '0.4',
+        P720: '0.9',
+    }
+
 
 # Seedance 分辨率算力倍率（基价为 720P，其余档位为相对 720P 的价格比）
 SEEDANCE_480P_PRICE_MULTIPLIER = 200880 / 432000
 SEEDANCE_2_0_1080P_PRICE_MULTIPLIER = (972000 * 31) / (432000 * 28)
 SEEDANCE_2_0_4K_PRICE_MULTIPLIER = (3888000 * 16) / (432000 * 28)
+
+# MiniMax H3 分辨率算力倍率（基价为 720P，480P 约为 720P 的 42%）
+MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
 
 # Seedance 2.0 Fast / Mini 仅支持 480P / 720P（不支持 1080P）
 SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS = [
@@ -189,6 +198,7 @@ class AsyncTaskConfig:
     name: str                         # 名称
     need_runninghub_slot: bool = False  # 是否需要 RunningHub 槽位
     slot_task_type: int = 0           # 槽位 task_type（对应 runninghub_slots.task_type）
+    max_attempts: int = 60            # 轮询最大尝试次数（约 10s/次，60 次 ≈ 10 分钟）
 
 
 # 异步任务配置表
@@ -200,7 +210,9 @@ ASYNC_TASK_CONFIGS: Dict[int, AsyncTaskConfig] = {
         impl_id=1, name="RunningHub音频", need_runninghub_slot=True, slot_task_type=1
     ),
     AsyncTaskImplementationId.RUNNINGHUB_FACE_MASK: AsyncTaskConfig(
-        impl_id=2, name="RunningHub人脸遮盖", need_runninghub_slot=True, slot_task_type=2
+        impl_id=2, name="RunningHub人脸遮盖", need_runninghub_slot=True, slot_task_type=2,
+        # 人脸遮盖工作流为逐帧检测，RH 侧实测耗时可超 10 分钟，放宽到约 20 分钟
+        max_attempts=120
     ),
     AsyncTaskImplementationId.RUNNINGHUB_IMAGE_FACE_MASK: AsyncTaskConfig(
         impl_id=3, name="RunningHub图片人脸遮盖", need_runninghub_slot=True, slot_task_type=3
@@ -986,6 +998,9 @@ class DriverImplementation:
     # LTX2.3 With Voice
     LTX2_3_WITH_VOICE_RUNNINGHUB_V1 = 'ltx2_3_with_voice_runninghub_v1'
 
+    # MiniMax H3
+    MINIMAX_H3_RUNNINGHUB_V1 = 'minimax_h3_runninghub_v1'
+
     # Vidu
     VIDU_DEFAULT = 'vidu_default'
     VIDU_Q2 = 'vidu_q2'
@@ -1120,6 +1135,9 @@ class DriverImplementationId:
     SEEDANCE_2_0_HUIMENGI_V1 = 63
     SEEDANCE_2_0_MINI_HUIMENGI_V1 = 64
 
+    # MiniMax H3
+    MINIMAX_H3_RUNNINGHUB_V1 = 65
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1186,6 +1204,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_fast_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_FAST_HUIMENGI_V1,
     'seedance_2_0_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_HUIMENGI_V1,
     'seedance_2_0_mini_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_MINI_HUIMENGI_V1,
+    'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1224,6 +1243,9 @@ class DriverKey:
     # LTX2 相关
     LTX2_IMAGE_TO_VIDEO = 'ltx2_image_to_video'
     LTX2_3_IMAGE_TO_VIDEO = 'ltx2_3_image_to_video'
+
+    # MiniMax H3 相关
+    MINIMAX_H3_IMAGE_TO_VIDEO = 'minimax_h3_image_to_video'
 
     # Wan22 相关
     WAN22_IMAGE_TO_VIDEO = 'wan22_image_to_video'
@@ -1314,6 +1336,7 @@ class TaskTypeId:
         'AUDIO_GENERATE': '音频生成',
         'DIGITAL_HUMAN': '数字人生成',
         'DIGITAL_HUMAN_LTX2_3_VOICE': '数字人LTX2.3 With Voice',
+        'MINIMAX_H3_IMAGE_TO_VIDEO': 'MiniMax H3 图生视频',
     }
     # 图片编辑
     GEMINI_2_5_FLASH_IMAGE = 1
@@ -1346,6 +1369,7 @@ class TaskTypeId:
     HAPPY_HORSE_IMAGE_TO_VIDEO = 28
     HAPPY_HORSE_REFERENCE_TO_VIDEO = 29
     HAPPY_HORSE_TEXT_TO_VIDEO = 30
+    MINIMAX_H3_IMAGE_TO_VIDEO = 34
 
 
     # 图片/视频 增强
@@ -1599,6 +1623,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=32,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
         supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+        enabled=False,  # 该功能已关闭
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SORA2_IMAGE_TO_VIDEO,
@@ -1637,6 +1662,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=33,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
         supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+        enabled=False,  # 该功能已关闭
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.LTX2_3_IMAGE_TO_VIDEO,
@@ -1655,6 +1681,34 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=30,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
         supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO,
+        key='minimax_h3_image_to_video',
+        short_key='minimax_h3',
+        name='MiniMax H3',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,
+        computing_power=0,
+        supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4'],
+        supported_durations=[4, 5, 6, 7, 8, 9, 10],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=35,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
+        supports_last_frame=True,  # 支持尾帧
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: MINIMAX_H3_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                },
+                default=1.0
+            )
+        ],
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.KLING_IMAGE_TO_VIDEO,
@@ -2519,6 +2573,21 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='RunningHub LTX2.3 With Voice 接口（数字人）',
         sort_order=7001.0,
         required_config_keys=['runninghub.api_key']
+    ),
+    ImplementationConfig(
+        name='minimax_h3_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='MinimaxH3RunninghubV1Driver',
+        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},
+        enabled=True,
+        description='RunningHub MiniMax H3 首尾帧图生视频接口（FL2VA 音频修复版）',
+        sort_order=5200.0,
+        required_config_keys=['runninghub.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720
     ),
 
     # ==================== Vidu 供应商 ====================
