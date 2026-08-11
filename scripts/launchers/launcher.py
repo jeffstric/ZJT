@@ -18,6 +18,7 @@ import webbrowser
 import ctypes
 import json
 import urllib.request
+import hashlib
 
 # 导入 PID 管理模块
 LAUNCHER_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -48,7 +49,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 # 单实例检测（使用 Windows 命名互斥锁）
 # 注意：不使用 Global\ 前缀，避免需要管理员权限
-MUTEX_NAME = "Local\\ZhiJuTong_Launcher_Mutex_v2"
+_mutex_project_root = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else PROJECT_ROOT
+_mutex_scope = hashlib.sha256(
+    os.path.normcase(os.path.abspath(_mutex_project_root)).encode("utf-8")
+).hexdigest()[:16]
+MUTEX_NAME = f"Local\\ZhiJuTong_Launcher_Mutex_v3_{_mutex_scope}"
 _mutex_handle = None
 
 
@@ -502,9 +507,9 @@ class TrayLauncher:
         # 清理 PID 记录
         try:
             my_pid = os.getpid()
-            remove_pid(my_pid)
+            remove_pid(my_pid, project_dir=self.current_dir)
             if self.process and self.process.pid:
-                remove_pid(self.process.pid)
+                remove_pid(self.process.pid, project_dir=self.current_dir)
         except Exception:
             pass
 

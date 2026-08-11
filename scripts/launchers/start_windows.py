@@ -37,7 +37,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config.constant import UV_BUNDLED_PYTHON_REQUEST
+from config.constant import (
+    MYSQL_INITIALIZE_TIMEOUT_SECONDS,
+    MYSQL_STARTUP_LOCK_TIMEOUT_SECONDS,
+    RUNTIME_FILE_LOCK_POLL_SECONDS,
+    UV_BUNDLED_PYTHON_REQUEST,
+)
 
 # 导入 PID 管理模块 / 一体包 binlog 配置工具
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +53,7 @@ from pid_manager import (
     cleanup_dead_pids_on_startup
 )
 from mysql_binlog_config import ensure_mysql_binlog_retention
+from runtime_lock import InterProcessFileLock
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,6 +62,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 mysql_process = None
+mysql_process_owned = False
 app_process = None
 is_shutting_down = False
 _app_config = None  # 存储应用配置，供 signal_handler 使用
@@ -373,6 +380,36 @@ def check_port_in_use(port):
         return False
 
 
+def get_server_port(config=None):
+    """Return the actual web port used by run_prod.py."""
+    env_port = os.environ.get("PORT")
+    if env_port is not None:
+        try:
+            return int(env_port)
+        except (TypeError, ValueError):
+            logger.warning(f"PORT 环境变量无效: {env_port}")
+
+    server_config = config.get("server", {}) if isinstance(config, dict) else {}
+    try:
+        return int(server_config.get("port", 9003))
+    except (TypeError, ValueError):
+        return 9003
+
+
+def get_mysql_startup_lock(port):
+    """Serialize MySQL startup by TCP port across all local project copies."""
+    if os.name == "nt":
+        runtime_root = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+        lock_dir = os.path.join(runtime_root, "zjt", "locks")
+    else:
+        lock_dir = os.path.expanduser("~/.local/share/zjt/locks")
+    return InterProcessFileLock(
+        os.path.join(lock_dir, f"mysql-port-{int(port)}.lock"),
+        timeout=MYSQL_STARTUP_LOCK_TIMEOUT_SECONDS,
+        poll_interval=RUNTIME_FILE_LOCK_POLL_SECONDS,
+    )
+
+
 def _ensure_binlog_retention_on_ini(mysql_ini):
     """
     确保 my.ini 含 binlog_expire_logs_seconds（约 7 天）。
@@ -497,7 +534,9 @@ def start_mysql_service(config=None):
     Returns:
         tuple: (bool, str, bool) - (是否成功启动, 消息, 是否是首次初始化)
     """
-    global mysql_process
+    global mysql_process, mysql_process_owned
+
+    mysql_process_owned = False
 
     try:
         mysql_exists, mysql_paths = check_mysql_path()
@@ -518,65 +557,83 @@ def start_mysql_service(config=None):
         port = get_mysql_port(config)
         is_first_init = check_mysql_data_dir()
 
-        if check_port_in_use(port):
-            logger.info(f"MySQL服务已经在端口 {port} 运行")
-            return True, "MySQL服务已经在运行", False
+        with get_mysql_startup_lock(port):
+            # The check must happen while holding the machine-wide port lock.
+            # Never attach to an arbitrary listener: this launcher only manages
+            # a MySQL process that it created itself.
+            if check_port_in_use(port):
+                return False, f"MySQL端口 {port} 已被占用，请为当前实例配置独立的 database.port", False
 
-        if is_first_init:
-            logger.info("MySQL数据目录为空，正在初始化...")
-            cmd = [mysqld_exe, f'--defaults-file={mysql_ini}', '--initialize-insecure']
-            logger.info(f"正在执行初始化命令: {' '.join(cmd)}")
+            if is_first_init:
+                logger.info("MySQL数据目录为空，正在初始化...")
+                cmd = [mysqld_exe, f'--defaults-file={mysql_ini}', '--initialize-insecure']
+                logger.info(f"正在执行初始化命令: {' '.join(cmd)}")
 
-            process = subprocess.Popen(
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                try:
+                    stdout, stderr = process.communicate(timeout=MYSQL_INITIALIZE_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate(timeout=10)
+                    return False, "MySQL初始化超时", False
+                if process.returncode != 0:
+                    error_msg = stderr.decode('utf-8', errors='ignore')
+                    return False, f"MySQL初始化失败，错误信息：{error_msg}", False
+                logger.info("MySQL数据目录初始化成功")
+
+            cmd = [mysqld_exe, f"--defaults-file={mysql_ini}"]
+            logger.info(f"正在执行启动命令: {' '.join(cmd)}")
+
+            mysql_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
+            mysql_process_owned = True
 
-            stdout, stderr = process.communicate()
-            if process.returncode != 0:
-                error_msg = stderr.decode('utf-8', errors='ignore')
-                return False, f"MySQL初始化失败，错误信息：{error_msg}", False
-            logger.info("MySQL数据目录初始化成功")
+            if mysql_process.pid:
+                current_dir = get_current_dir()
+                add_pid(mysql_process.pid, "mysqld.exe", current_dir)
 
-        cmd = [mysqld_exe, f"--defaults-file={mysql_ini}"]
-        logger.info(f"正在执行启动命令: {' '.join(cmd)}")
+            retry_count = 0
+            max_retries = 60 if is_first_init else 30
 
-        mysql_process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
+            while retry_count < max_retries:
+                # Check the owned process before accepting a listener on the
+                # public port. This closes the old cross-instance race.
+                if mysql_process.poll() is not None:
+                    stdout, stderr = mysql_process.communicate(timeout=10)
+                    mysql_process_owned = False
+                    remove_pid(mysql_process.pid, project_dir=get_current_dir())
+                    error_msg = stderr.decode('utf-8', errors='ignore')
+                    return False, f"MySQL进程已退出，错误信息：{error_msg}", False
 
-        # 记录 MySQL 进程 PID（带进程名和工作目录）
-        if mysql_process.pid:
-            current_dir = get_current_dir()
-            add_pid(mysql_process.pid, "mysqld.exe", current_dir)
+                if check_port_in_use(port):
+                    logger.info(f"MySQL服务已启动，端口: {port}")
+                    return True, "MySQL服务启动成功", is_first_init
 
-        retry_count = 0
-        max_retries = 60 if is_first_init else 30
+                logger.info(f"等待MySQL启动... ({retry_count + 1}/{max_retries})")
+                time.sleep(1)
+                retry_count += 1
 
-        while retry_count < max_retries:
-            if check_port_in_use(port):
-                logger.info(f"MySQL服务已启动，端口: {port}")
-                return True, "MySQL服务启动成功", is_first_init
-
-            if mysql_process.poll() is not None:
-                stdout, stderr = mysql_process.communicate()
-                error_msg = stderr.decode('utf-8', errors='ignore')
-                return False, f"MySQL进程已退出，错误信息：{error_msg}", False
-
-            logger.info(f"等待MySQL启动... ({retry_count + 1}/{max_retries})")
-            time.sleep(1)
-            retry_count += 1
-
-        stdout, stderr = mysql_process.communicate()
-        error_msg = stderr.decode('utf-8', errors='ignore')
-        if error_msg:
-            return False, f"MySQL服务启动超时，错误信息：{error_msg}", False
-        return False, "MySQL服务启动超时，无错误信息", False
+            mysql_process.terminate()
+            try:
+                stdout, stderr = mysql_process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                mysql_process.kill()
+                stdout, stderr = mysql_process.communicate(timeout=10)
+            mysql_process_owned = False
+            remove_pid(mysql_process.pid, project_dir=get_current_dir())
+            error_msg = stderr.decode('utf-8', errors='ignore')
+            if error_msg:
+                return False, f"MySQL服务启动超时，错误信息：{error_msg}", False
+            return False, "MySQL服务启动超时，无错误信息", False
 
     except Exception as e:
         return False, f"启动MySQL服务时发生错误: {e}", False
@@ -774,7 +831,7 @@ def get_env():
     return os.getenv("comfyui_env", "prod")
 
 
-def start_app_service():
+def start_app_service(config=None):
     """
     通过 uv 启动 run_{env}.py
     Returns:
@@ -795,6 +852,10 @@ def start_app_service():
             uv_path = shutil.which("uv")
             if uv_path is None:
                 return False, "找不到 uv 可执行文件，请确保 bin\\uv\\uv.exe 存在或已安装 uv"
+
+        server_port = get_server_port(config)
+        if check_port_in_use(server_port):
+            return False, f"Web端口 {server_port} 已被占用，请为当前实例配置独立的 server.port 或 PORT"
 
         logger.info(f"使用 uv 启动: {run_script}")
         requirements_file = os.path.join(current_dir, "requirements.txt")
@@ -899,7 +960,7 @@ def monitor_services(config=None):
                     break
 
                 logger.warning(f"检测到应用服务异常，尝试重启... (第{app_restart_count}次)")
-                success, message = start_app_service()
+                success, message = start_app_service(config)
                 if success:
                     logger.info(f"应用服务重启成功: {message}")
                 else:
@@ -976,10 +1037,13 @@ def cleanup(config=None):
     Args:
         config: 应用配置字典（可选，传递给 stop_mysql_gracefully）
     """
-    global mysql_process, app_process, is_shutting_down
+    global mysql_process, mysql_process_owned, app_process, is_shutting_down
 
     is_shutting_down = True
     logger.info("正在停止所有服务...")
+
+    app_pid = app_process.pid if app_process is not None else None
+    mysql_pid = mysql_process.pid if mysql_process is not None else None
 
     if app_process is not None:
         try:
@@ -993,7 +1057,7 @@ def cleanup(config=None):
         except Exception as e:
             logger.error(f"停止应用服务时出错: {e}")
 
-    if mysql_process is not None:
+    if mysql_process_owned and mysql_process is not None and mysql_process.poll() is None:
         logger.info("正在停止MySQL服务...")
         if not stop_mysql_gracefully(config):
             try:
@@ -1006,17 +1070,23 @@ def cleanup(config=None):
                 mysql_process.kill()
             except Exception as e:
                 logger.error(f"停止MySQL服务时出错: {e}")
+    elif mysql_process is not None:
+        logger.info("跳过MySQL停止：当前启动器不拥有存活的MySQL进程")
 
     # 清理 PID 记录
     try:
         my_pid = os.getpid()
-        remove_pid(my_pid)
-        if app_process is not None and app_process.pid:
-            remove_pid(app_process.pid)
-        if mysql_process is not None and mysql_process.pid:
-            remove_pid(mysql_process.pid)
+        remove_pid(my_pid, project_dir=get_current_dir())
+        if app_pid:
+            remove_pid(app_pid, project_dir=get_current_dir())
+        if mysql_pid:
+            remove_pid(mysql_pid, project_dir=get_current_dir())
     except Exception as e:
         logger.error(f"清理 PID 记录时出错: {e}")
+
+    mysql_process_owned = False
+    mysql_process = None
+    app_process = None
 
 
 def signal_handler(signum, frame):
@@ -1038,6 +1108,10 @@ def main():
 
     # 获取当前项目目录（必须在 cleanup 之前，用于按项目过滤 PID）
     current_dir = get_current_dir()
+
+    # Record the supervising launcher itself. stop.bat terminates this exact
+    # process tree, preventing the monitor loop from restarting stopped children.
+    add_pid(os.getpid(), "python.exe", current_dir)
 
     # 启动时清理残留的死亡进程 PID（只清理当前项目的）
     cleanup_dead_pids_on_startup(project_dir=current_dir)
@@ -1093,15 +1167,14 @@ def main():
         sys.exit(1)
 
     logger.info("正在启动应用服务...")
-    success, message = start_app_service()
+    success, message = start_app_service(config)
     logger.info(message)
     if not success:
         logger.error("应用服务启动失败，退出")
         sys.exit(1)
 
     # 从配置文件读取服务器 URL 和端口号
-    server_config = config.get('server', {})
-    server_port = server_config.get('port', 9003)
+    server_port = get_server_port(config)
     # 使用 server.port 构建浏览器 URL，避免 server.host 中端口不一致
     url = f"http://localhost:{server_port}"
     
