@@ -1,13 +1,12 @@
 """
-Storyboard digital-human (lip-sync) generation — dual model routing (Wan2.2 / LTX2.3).
+Storyboard digital-human (lip-sync) generation — MiniMax H3 单模型。
 
-路由依据：分镜待说台词对应的 TTS 总时长。
-- TTS 总时长 <= WAN_MAX_SPEECH_DURATION_SECONDS  → Wan2.2 数字人（音色参考模式）
-- TTS 总时长 >  阈值，或时长无法识别              → LTX2.3 With Voice（实际说话音频）
+分镜对口型统一提交 MiniMax H3（task_type=35）：
+图片=选中首帧，音频=成片 TTS，提示词=动作描述，
+时长 clamp 到 4–10 秒，最长边由分辨率偏好映射。
 
 所有入口（直接 API / Agent / CLI / 批量补全）必须先调用
 ``orchestrate_digital_human_generation`` 生成统一计划，再扣费、再提交。
-详见 docs/storyboard/storyboard_digital_human_dual_model_routing_design.md。
 
 异步契约：本模块是同步领域服务；处于事件循环中的调用方必须用
 ``asyncio.to_thread(orchestrate_digital_human_generation, ...)`` 包装完整的
@@ -17,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import subprocess
 import urllib.request
@@ -29,7 +29,6 @@ from config.constant import (
     AI_TOOL_STATUS_PENDING,
     TASK_STATUS_QUEUED,
     TASK_TYPE_GENERATE_VIDEO,
-    WAN_MAX_SPEECH_DURATION_SECONDS,
     StoryboardDigitalHumanConstants as _DHC,
     StoryboardDigitalHumanConstants,
     StoryboardTimeouts,
@@ -84,18 +83,22 @@ class StoryboardDigitalHumanError(Exception):
 class DigitalHumanGenerationPlan:
     """不可变的数字人生成计划。所有入口先生成计划，再扣费、再建单。"""
 
-    model: str  # 'wan2.2' | 'ltx2.3'
-    task_type: int  # 13 | 32
+    model: str  # 'minimax_h3'
+    task_type: int  # TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3 = 35
     speaker_character_id: int
-    speech_text: str  # 按对白顺序拼接的完整讲话内容
+    speech_text: str  # 按对白顺序拼接的完整讲话内容（元数据）
     speech_duration: Optional[float]  # TTS 总时长；无法识别时为 None
     first_frame_path: str  # 当前分镜已选中的首帧图
-    ratio: str  # Wan2.2 实际输出比例；LTX2.3 仅作为任务元数据记录
-    billable_duration: float  # 传给 get_computing_power(duration=...) 的计费时长
-    prompt: str  # 根据所选模型生成的最终提示词
-    audio_input: str  # 最终传给驱动的音频
-    audio_input_role: str  # 'voice_reference' | 'speech_audio'
-    routing_reason: str  # 可观测的模型选择原因
+    ratio: str  # 工作流比例，仅元数据（MiniMax 无 aspect 节点）
+    billable_duration: float  # clamp 后的 4–10，用于计费与驱动 duration
+    prompt: str  # 动作描述提示词
+    audio_input: str  # 最终传给驱动的说话音频
+    audio_input_role: str  # 恒为 speech_audio
+    routing_reason: str  # 可观测原因（现为 minimax_h3_only）
+    resolution: str = _DHC.DEFAULT_RESOLUTION  # 480P/720P/1080P
+    max_edge: int = _DHC.DEFAULT_MAX_EDGE  # 720/1280/1920
+    start_second: int = _DHC.DEFAULT_START_SECOND
+    duration_clamp_reason: str = "none"  # none | floor_to_4 | ceil_to_10
 
 
 @dataclass(frozen=True)
@@ -310,30 +313,51 @@ def _resolve_first_frame_path(scene) -> str:
     )
 
 
-def _resolve_wan_ratio(scene, storyboard) -> str:
-    """
-    Wan2.2 比例解析：以 supported_ratios 为唯一能力契约。
-    - workflow_ratio 为空 → default_ratio
-    - 属于 supported_ratios → 原样
-    - 不属于 → 报 unsupported_ratio，不静默回退
-    """
-    config = UnifiedConfigRegistry.get_by_id(TaskTypeId.DIGITAL_HUMAN)
-    if not config:
-        raise StoryboardDigitalHumanError(
-            _DHC.ERROR_MODEL_UNAVAILABLE,
-            "数字人模型（Wan2.2）未配置",
-        )
-    supported = [str(r) for r in (getattr(config, "supported_ratios", None) or [])]
-    workflow_ratio = (_get_field(storyboard, "workflow_ratio") or "").strip() or None
-    if not workflow_ratio:
-        return str(getattr(config, "default_ratio", "9:16") or "9:16")
-    if workflow_ratio in supported:
-        return workflow_ratio
-    raise StoryboardDigitalHumanError(
-        _DHC.ERROR_UNSUPPORTED_RATIO,
-        f"当前分镜比例 {workflow_ratio} 不被 Wan2.2 数字人支持，请调整为支持的比例如 {', '.join(supported)}",
-        payload={"ratio": workflow_ratio, "supported_ratios": supported},
+def resolve_max_edge_from_resolution(resolution: Optional[str]) -> Tuple[str, int]:
+    """分辨率偏好 → (规范化 resolution 标签, max_edge)。"""
+    raw = (str(resolution).strip() if resolution is not None else "") or _DHC.DEFAULT_RESOLUTION
+    key = raw.upper().replace(" ", "")
+    # 480p / 720P / 1080P
+    if key.endswith("P") and key[:-1].isdigit():
+        pass
+    elif key.endswith("P"):
+        pass
+    edge = _DHC.RESOLUTION_TO_MAX_EDGE.get(raw)
+    if edge is None:
+        edge = _DHC.RESOLUTION_TO_MAX_EDGE.get(key)
+    if edge is None:
+        return _DHC.DEFAULT_RESOLUTION, int(_DHC.DEFAULT_MAX_EDGE)
+    normalized = key if key in ("480P", "720P", "1080P") else (
+        _DHC.DEFAULT_RESOLUTION if key not in _DHC.RESOLUTION_TO_MAX_EDGE else key
     )
+    if key in ("480P", "720P", "1080P"):
+        normalized = key
+    elif raw in ("480P", "720P", "1080P"):
+        normalized = raw
+    else:
+        # 从 edge 反推标准标签
+        reverse = {720: "480P", 1280: "720P", 1920: "1080P"}
+        normalized = reverse.get(int(edge), _DHC.DEFAULT_RESOLUTION)
+    return normalized, int(edge)
+
+
+def clamp_minimax_video_duration(raw_seconds: Optional[float]) -> Tuple[int, str]:
+    """
+    MiniMax 时长硬限制 4–10 秒。
+    返回 (duration, clamp_reason)，reason: none | floor_to_4 | ceil_to_10。
+    """
+    try:
+        value = float(raw_seconds) if raw_seconds is not None else float(_DHC.DEFAULT_VIDEO_DURATION)
+    except (TypeError, ValueError):
+        value = float(_DHC.DEFAULT_VIDEO_DURATION)
+    if value <= 0:
+        value = float(_DHC.DEFAULT_VIDEO_DURATION)
+    ceiled = int(math.ceil(value))
+    if ceiled < int(_DHC.MIN_VIDEO_DURATION):
+        return int(_DHC.MIN_VIDEO_DURATION), "floor_to_4"
+    if ceiled > int(_DHC.MAX_VIDEO_DURATION):
+        return int(_DHC.MAX_VIDEO_DURATION), "ceil_to_10"
+    return ceiled, "none"
 
 
 def build_digital_human_generation_plan(
@@ -342,75 +366,67 @@ def build_digital_human_generation_plan(
     speaker_id: int,
     dialogues: List[dict],
     segments: List[TtsSegment],
+    *,
+    resolution: Optional[str] = None,
 ) -> DigitalHumanGenerationPlan:
     """
-    根据统一阈值选择 Wan2.2 或 LTX2.3，生成模型对应的提示词、音频角色、比例及任务类型。
+    固定 MiniMax H3 计划：动作 prompt + 成片说话音频 + 时长 clamp + 分辨率→max_edge。
 
-    注意：此函数不做音频下载/合并 IO；``audio_input`` 在此处仅对 Wan2.2（选最长 TTS URL）
-    或 LTX2.3 单段（原始 URL）赋值，多段 LTX2.3 的合并由 prepare 阶段回填。
+    注意：此函数不做音频下载/合并 IO；多段合并由 prepare 阶段回填。
     """
+    config = UnifiedConfigRegistry.get_by_id(TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
+    if not config:
+        raise StoryboardDigitalHumanError(
+            _DHC.ERROR_MODEL_UNAVAILABLE,
+            "数字人模型（MiniMax H3）未配置",
+        )
+
     total_duration, any_unknown = _sum_tts_duration(segments)
     speech_text = "".join(
         str(d.get("text") or "").strip() for d in dialogues
     ).strip()
     first_frame_path = _resolve_first_frame_path(scene)
 
-    # ---- 路由决策 ----
-    use_wan = (
-        not any_unknown
-        and total_duration is not None
-        and total_duration <= float(WAN_MAX_SPEECH_DURATION_SECONDS)
-    )
+    # 提示词：优先分镜 video_prompt，否则默认动作句（台词已在音频里）
+    video_prompt = str(_get_field(scene, "video_prompt") or "").strip()
+    prompt = video_prompt or _DHC.DEFAULT_PROMPT
 
-    if use_wan:
-        model = _DHC.MODEL_WAN
-        task_type = TaskTypeId.DIGITAL_HUMAN
-        routing_reason = _DHC.ROUTING_REASON_LTE_1S
-        prompt = speech_text
-        audio_input_role = _DHC.AUDIO_ROLE_VOICE_REFERENCE
-        ratio = _resolve_wan_ratio(scene, storyboard)
-        # 选已知时长最长的 TTS 作为音色参考（不合并）
-        longest = max(segments, key=lambda s: (s.duration or 0.0))
-        audio_input = longest.audio_url
-        billable_duration = total_duration if total_duration is not None else 1.0
+    ratio = (_get_field(storyboard, "workflow_ratio") or "").strip() or "9:16"
+    audio_input = segments[0].audio_url if segments else ""
+
+    # 原始时长：TTS 总时长 → scene.duration → 默认
+    if total_duration is not None and not any_unknown:
+        raw_duration = total_duration
+        speech_duration_meta = total_duration
     else:
-        model = _DHC.MODEL_LTX
-        task_type = TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE
-        routing_reason = (
-            _DHC.ROUTING_REASON_UNKNOWN if any_unknown else _DHC.ROUTING_REASON_GT_1S
-        )
-        prompt = _DHC.DEFAULT_PROMPT
-        audio_input_role = _DHC.AUDIO_ROLE_SPEECH_AUDIO
-        ratio = (_get_field(storyboard, "workflow_ratio") or "").strip() or "9:16"
-        # 单段直接用原始 URL；多段由 prepare 阶段合并回填
-        audio_input = segments[0].audio_url if segments else ""
-        # 计费时长：已知用 TTS 总时长；未知回退 scene.duration → default
-        if total_duration is not None:
-            billable_duration = total_duration
-        else:
+        scene_dur = None
+        try:
+            scene_dur = float(_get_field(scene, "duration") or 0) or None
+        except (TypeError, ValueError):
             scene_dur = None
-            try:
-                scene_dur = float(_get_field(scene, "duration") or 0) or None
-            except (TypeError, ValueError):
-                scene_dur = None
-            billable_duration = scene_dur
+        raw_duration = scene_dur
+        speech_duration_meta = total_duration if not any_unknown else None
 
-    # 计费时长下限保护（不低于 1.0s，由 config 的档位处理）
-    billable_duration = max(1.0, float(billable_duration or 1.0))
+    video_duration, clamp_reason = clamp_minimax_video_duration(raw_duration)
+    resolved_resolution, max_edge = resolve_max_edge_from_resolution(resolution)
 
     return DigitalHumanGenerationPlan(
-        model=model,
-        task_type=task_type,
+        model=_DHC.MODEL_MINIMAX_H3,
+        task_type=TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
         speaker_character_id=int(speaker_id),
         speech_text=speech_text,
-        speech_duration=total_duration if not any_unknown else None,
+        speech_duration=speech_duration_meta,
         first_frame_path=first_frame_path,
         ratio=ratio,
-        billable_duration=billable_duration,
+        billable_duration=float(video_duration),
         prompt=prompt,
         audio_input=audio_input,
-        audio_input_role=audio_input_role,
-        routing_reason=routing_reason,
+        audio_input_role=_DHC.AUDIO_ROLE_SPEECH_AUDIO,
+        routing_reason=_DHC.ROUTING_REASON_MINIMAX,
+        resolution=resolved_resolution,
+        max_edge=int(max_edge),
+        start_second=int(_DHC.DEFAULT_START_SECOND),
+        duration_clamp_reason=clamp_reason,
     )
 
 
@@ -508,6 +524,28 @@ def _task_assets_dir(scene_id: int, ai_tool_id_hint: Optional[int] = None) -> st
     return upload_dir
 
 
+def _plan_with_audio(plan: DigitalHumanGenerationPlan, audio_input: str) -> DigitalHumanGenerationPlan:
+    """复制 plan 并替换 audio_input（frozen dataclass）。"""
+    return DigitalHumanGenerationPlan(
+        model=plan.model,
+        task_type=plan.task_type,
+        speaker_character_id=plan.speaker_character_id,
+        speech_text=plan.speech_text,
+        speech_duration=plan.speech_duration,
+        first_frame_path=plan.first_frame_path,
+        ratio=plan.ratio,
+        billable_duration=plan.billable_duration,
+        prompt=plan.prompt,
+        audio_input=audio_input,
+        audio_input_role=plan.audio_input_role,
+        routing_reason=plan.routing_reason,
+        resolution=plan.resolution,
+        max_edge=plan.max_edge,
+        start_second=plan.start_second,
+        duration_clamp_reason=plan.duration_clamp_reason,
+    )
+
+
 def prepare_digital_human_audio_input(
     plan: DigitalHumanGenerationPlan,
     segments: List[TtsSegment],
@@ -515,24 +553,17 @@ def prepare_digital_human_audio_input(
     scene_id: int,
 ) -> DigitalHumanGenerationPlan:
     """
-    Wan2.2 选择最长 TTS 作为音色参考（已在 plan 中设定 URL，无需下载）；
-    LTX2.3 在必要时下载并合并多段实际说话音频。所有下载和 ffmpeg IO 只发生在该阶段。
-
-    Wan2.2 直接使用远程 URL（驱动内部会上传），不下载。
-    LTX2.3 多段时合并为本地 WAV，回填 audio_input 为本地路径。
-    合并失败时抛 StoryboardDigitalHumanError（不得扣费）。
+    MiniMax H3 使用成片说话音频：单段直接用原始 URL；多段下载并合并为本地 WAV。
+    所有下载和 ffmpeg IO 只发生在该阶段。合并失败时抛错（不得扣费）。
     """
-    if plan.audio_input_role == _DHC.AUDIO_ROLE_VOICE_REFERENCE:
-        # Wan2.2：音色参考，直接用远程 URL，无需下载
+    if plan.audio_input_role != _DHC.AUDIO_ROLE_SPEECH_AUDIO:
         return plan
 
-    # LTX2.3：单段直接用原始 URL；多段需合并
     if len(segments) <= 1:
         return plan
 
     assets_dir = _task_assets_dir(scene_id)
     local_paths: List[str] = []
-    downloaded: List[str] = []
     try:
         for seg in segments:
             local = _download_audio(seg.audio_url, assets_dir)
@@ -542,7 +573,6 @@ def prepare_digital_human_audio_input(
                     "多段 TTS 音频下载失败，无法合并",
                 )
             local_paths.append(local)
-            downloaded.append(local)
 
         merged_path = os.path.join(assets_dir, f"{uuid.uuid4().hex}.wav")
         if not _merge_audio_files(local_paths, merged_path):
@@ -550,21 +580,7 @@ def prepare_digital_human_audio_input(
                 _DHC.ERROR_AUDIO_MERGE_FAILED,
                 "多段 TTS 音频合并失败，无法生成对口型视频",
             )
-        # 合并成功：回填 audio_input 为本地路径，合并文件由任务清理流程删除
-        return DigitalHumanGenerationPlan(
-            model=plan.model,
-            task_type=plan.task_type,
-            speaker_character_id=plan.speaker_character_id,
-            speech_text=plan.speech_text,
-            speech_duration=plan.speech_duration,
-            first_frame_path=plan.first_frame_path,
-            ratio=plan.ratio,
-            billable_duration=plan.billable_duration,
-            prompt=plan.prompt,
-            audio_input=merged_path,
-            audio_input_role=plan.audio_input_role,
-            routing_reason=plan.routing_reason,
-        )
+        return _plan_with_audio(plan, merged_path)
     except StoryboardDigitalHumanError:
         raise
     except Exception as e:
@@ -598,10 +614,12 @@ def submit_digital_human_plan(
             f"数字人模型（task_type={plan.task_type}）未配置",
         )
 
-    # 字段存储契约：voice_reference → message, speech_audio → audio_path
-    is_voice_ref = plan.audio_input_role == _DHC.AUDIO_ROLE_VOICE_REFERENCE
-    message_value = plan.audio_input if is_voice_ref else None
-    audio_path_value = plan.audio_input if not is_voice_ref else None
+    # MiniMax：说话音频写入 audio_path；分辨率映射为 max_edge 写入 extra_config
+    effective_resolution = resolution or plan.resolution
+    if resolution:
+        resolved_res, resolved_edge = resolve_max_edge_from_resolution(resolution)
+    else:
+        resolved_res, resolved_edge = plan.resolution, plan.max_edge
 
     extra_payload = {
         "video_type": SceneVideoType.DIGITAL_HUMAN,
@@ -610,21 +628,24 @@ def submit_digital_human_plan(
         "speaker_character_id": int(plan.speaker_character_id),
         "digital_human_model": plan.model,
         "speech_duration": plan.speech_duration,
+        "video_duration": int(plan.billable_duration),
+        "duration_clamp_reason": plan.duration_clamp_reason,
         "routing_reason": plan.routing_reason,
         "audio_input_role": plan.audio_input_role,
         "ratio": plan.ratio,
+        "resolution": resolved_res,
+        "max_edge": int(resolved_edge),
+        "start_second": int(plan.start_second),
     }
-    if resolution:
-        extra_payload["resolution"] = str(resolution)
 
     ai_tool_id = AIToolsModel.create(
         prompt=plan.prompt,
         user_id=int(user_id),
         type=plan.task_type,
         image_path=plan.first_frame_path,
-        message=message_value,
-        audio_path=audio_path_value,
-        duration=plan.billable_duration,
+        message=None,
+        audio_path=plan.audio_input,
+        duration=int(plan.billable_duration),
         ratio=plan.ratio,
         transaction_id=transaction_id,
         status=AI_TOOL_STATUS_PENDING,
@@ -649,8 +670,12 @@ def submit_digital_human_plan(
         "asset_id": asset_id,
         "video_type": SceneVideoType.DIGITAL_HUMAN,
         "task_type": plan.task_type,
-        "model_used": "Wan2.2" if plan.model == _DHC.MODEL_WAN else "LTX2.3",
+        "model_used": "MiniMax H3",
         "speech_duration": plan.speech_duration,
+        "video_duration": int(plan.billable_duration),
+        "duration_clamp_reason": plan.duration_clamp_reason,
+        "resolution": resolved_res,
+        "max_edge": int(resolved_edge),
         "routing_reason": plan.routing_reason,
         "audio_input_role": plan.audio_input_role,
         "computing_power": computing_power,
@@ -669,6 +694,7 @@ def orchestrate_digital_human_generation(
     *,
     character_id: Optional[int] = None,
     prepare_audio: bool = True,
+    resolution: Optional[str] = None,
 ) -> Tuple[DigitalHumanGenerationPlan, List[TtsSegment], Any, Any]:
     """
     执行「解析对白 → 加载 TTS 元数据 → 探测缺失时长 → 生成计划 → 准备音频输入」
@@ -680,6 +706,7 @@ def orchestrate_digital_human_generation(
     Args:
         prepare_audio: True 时执行 prepare_digital_human_audio_input（多段合并）。
             批量就绪判断(plan_digital_human_ready)传 False 只做规划。
+        resolution: 视频分辨率偏好（480P/720P/1080P），映射为 max_edge。
     """
     scene = StoryboardSceneModel.get_by_id(int(scene_id))
     if not scene:
@@ -705,7 +732,7 @@ def orchestrate_digital_human_generation(
 
     storyboard = StoryboardModel.get_by_id(int(_get_field(scene, "storyboard_id")))
     plan = build_digital_human_generation_plan(
-        scene, storyboard, speaker_id, dialogues, segments
+        scene, storyboard, speaker_id, dialogues, segments, resolution=resolution
     )
     if prepare_audio:
         plan = prepare_digital_human_audio_input(plan, segments, scene_id=int(scene_id))
@@ -716,12 +743,13 @@ def orchestrate_digital_human_generation(
 # 计费辅助
 # --------------------------------------------------------------------------- #
 def compute_digital_human_power(plan: DigitalHumanGenerationPlan) -> float:
-    """按实际选中模型配置计算算力。返回 0 表示无需扣费。"""
+    """按 MiniMax H3 配置与 clamp 后时长计算算力。返回 0 表示无需扣费。"""
     config = UnifiedConfigRegistry.get_by_id(plan.task_type)
     if not config:
         return 0.0
     try:
-        return float(config.get_computing_power(duration=plan.billable_duration) or 0)
+        duration = int(plan.billable_duration) if plan.billable_duration else None
+        return float(config.get_computing_power(duration=duration) or 0)
     except Exception:
         return 0.0
 
@@ -810,7 +838,10 @@ def submit_storyboard_digital_human_video(
     内部走统一流水线。扣费仍由调用方先完成（通过 transaction_id 传入）。
     """
     plan, _segments, _scene, _sb = orchestrate_digital_human_generation(
-        int(scene_id), character_id=character_id, prepare_audio=True
+        int(scene_id),
+        character_id=character_id,
+        prepare_audio=True,
+        resolution=resolution,
     )
     tx_id = transaction_id or str(uuid.uuid4())
     return submit_digital_human_plan(

@@ -138,7 +138,7 @@ export function getMissingVideoScenes() {
             return false;
         }
         if (isDigitalHumanScene(scene)) {
-            // LTX 对口型：必须先有 TTS 成片音频；形象图由服务端解析（角色图/首帧）
+            // MiniMax 对口型：必须先有 TTS 成片音频；形象图由服务端解析（选中首帧）
             return sceneHasReadyDialogueAudio(scene);
         }
         if (!scene.firstFrameUrl) return false;

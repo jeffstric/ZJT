@@ -815,7 +815,7 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                 'prompt': prompt_payload,
                 'video_prompt': video_prompt,
                 'video_type': resolved_video_type,
-                # 声音同出：数字人分镜 LTX2.3 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
+                # 声音同出：数字人分镜 MiniMax 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
                 'audio_embedded': resolved_video_type == SceneVideoType.DIGITAL_HUMAN,
                 # 发布幂等：用稳定 shot_id 做去重 key（见设计文档 §15）
                 'source_shot_key': shot.get('shot_id') or f'scene_{scene_index}',
@@ -1763,10 +1763,10 @@ def _build_storyboard_agent_message(
         resolution_line = video_resolution or '模型默认'
         clip_line = '开启（导出时裁到配音时长）' if clip_to_audio_duration else '关闭（导出使用完整视频）'
         if is_digital_human:
-            target_intro = "请基于当前分镜视频提示词与用户要求，生成该分镜的 LTX2.3 数字人对口型视频。"
+            target_intro = "请基于当前分镜视频提示词与用户要求，生成该分镜的 MiniMax H3 数字人对口型视频。"
             video_input_block = "系统会从当前分镜解析角色图和已完成的配音，无需也不得由模型传入 URL。"
             tool_instruction = (
-                "本次目标是生成数字人对口型视频，必须调用 generate_digital_human。"
+                "本次目标是生成数字人对口型视频（MiniMax H3），必须调用 generate_digital_human。"
                 "不得调用 image_to_video、generate_text_to_video 或任何图片生成工具。"
                 "系统会从当前分镜解析角色图和已完成的配音，严禁捏造或传入图片、音频 URL。"
             )
@@ -2546,8 +2546,12 @@ async def get_storyboard_models(
                 'default_duration': c.default_duration,
                 'supported_ratios': c.supported_ratios or [],
             }
-            # 图生视频 / 文生视频：分辨率 + 图模式能力
-            if category in (TaskCategory.IMAGE_TO_VIDEO, TaskCategory.TEXT_TO_VIDEO):
+            # 图生视频 / 文生视频 / 数字人：分辨率能力（数字人映射为 max_edge）
+            if category in (
+                TaskCategory.IMAGE_TO_VIDEO,
+                TaskCategory.TEXT_TO_VIDEO,
+                TaskCategory.DIGITAL_HUMAN,
+            ):
                 res_opts, default_res = _video_resolution_options_from_task(c)
                 item['supported_video_resolutions'] = res_opts
                 item['default_video_resolution'] = default_res
@@ -3489,14 +3493,15 @@ async def generate_scene_video(
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
     """
-    生成分镜视频（按 scene.video_type：图生视频 / 对口型 LTX2.3）。
+    生成分镜视频（按 scene.video_type：图生视频 / 对口型 MiniMax H3）。
 
     - 图生视频：需已选中首帧图片。
-    - 对口型（digital_human）：**必须先有成片配音**；仅提交 LTX2.3 数字人
-      （image=角色形象/首帧，audio=TTS 说话音频，prompt=动作描述）。
+    - 对口型（digital_human）：**必须先有成片配音**；固定 MiniMax H3 数字人
+      （image=选中首帧，audio=TTS 说话音频，prompt=动作描述，
+      duration clamp 4–10s，resolution→max_edge）。
 
     Body:
-        task_type: 可选；图生视频默认 SEEDANCE_2_0；对口型固定 LTX2.3（忽略其他）
+        task_type: 可选；图生视频用；对口型固定 MiniMax H3（忽略其他）
         prompt / duration / ratio / character_id / resolution / clip_to_audio_duration
     """
     user_id = get_user_id_from_header(user_id)
@@ -3527,18 +3532,20 @@ async def generate_scene_video(
             except (TypeError, ValueError):
                 character_id = None
 
-        # 统一编排：解析对白 → 加载 TTS → 探测时长 → 路由决策 → 准备音频。
-        # 忽略调用方传入的 prompt/duration/ratio（以服务端规划为准）。
+        resolution = data.get('resolution')
+        # 统一编排：解析对白 → 加载 TTS → 探测时长 → MiniMax 计划 → 准备音频。
+        # 忽略调用方传入的 prompt/duration/ratio（以服务端规划为准）；resolution 用于 max_edge。
         try:
             plan, _segments, _scene, _sb = await asyncio.to_thread(
                 orchestrate_digital_human_generation,
                 scene_id,
                 character_id=character_id,
+                resolution=resolution,
             )
         except StoryboardDigitalHumanError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
-        # 记录 video_config_json 快照（模型/比例由服务端规划决定）
+        # 记录 video_config_json 快照
         config = UnifiedConfigRegistry.get_by_id(plan.task_type)
         clip_to_audio_duration = bool(data.get('clip_to_audio_duration', True))
         snapshot = {
@@ -3547,7 +3554,11 @@ async def generate_scene_video(
             'digital_human_model': plan.model,
             'routing_reason': plan.routing_reason,
             'speech_duration': plan.speech_duration,
+            'video_duration': int(plan.billable_duration),
+            'duration_clamp_reason': plan.duration_clamp_reason,
             'ratio': plan.ratio,
+            'resolution': plan.resolution,
+            'max_edge': plan.max_edge,
             'clip_to_audio_duration': clip_to_audio_duration,
             'updated_at': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
         }
@@ -3563,7 +3574,7 @@ async def generate_scene_video(
         except Exception as e:
             logger.warning(f"Failed to persist video_config_json on generate-video scene {scene_id}: {e}")
 
-        # 先规划后扣费：按实际路由模型计算算力
+        # 先规划后扣费：按 MiniMax 时长档位计算算力
         computing_power = compute_digital_human_power(plan)
         transaction_id = str(uuid.uuid4())
         ok, msg = await _deduct_computing_power(request, computing_power, transaction_id)
@@ -3579,7 +3590,7 @@ async def generate_scene_video(
                 transaction_id=transaction_id,
                 computing_power=computing_power,
                 clip_to_audio_duration=clip_to_audio_duration,
-                resolution=data.get('resolution'),
+                resolution=resolution,
             )
         except StoryboardDigitalHumanError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())

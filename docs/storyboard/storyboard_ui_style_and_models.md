@@ -147,7 +147,9 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 - `formatVideoResolutions(m)`：从 `supported_video_resolutions` 拼成 `480P/720P/...`
 - `formatModelOptionLabel(m)`：组装 `Name（算力，分辨率）`；`renderImageModelConfig` / `renderVideoModelConfig` 的 option 文本改用此函数
 
-> 注：视频 tab 下方的分辨率 chip（`data-action="set-video-resolution"`）仍保留，用于**选定模型后切换**分辨率；option 内联的分辨率信息是**选模型时预览**，两者互补。仅 Seedance/Happy Horse 系列配置了 `supported_video_resolutions`，其他视频模型（Wan2.2/LTX/可灵等）无分辨率选项。
+> 注：齿轮「视频」tab 中，分辨率 chip（`data-action="set-video-resolution"`）绑定 **当前图生视频模型**（`getSelectedImageToVideoModel()`）的 `supported_video_resolutions`，不再跟 `getSelectedVideoModel()` 动态 slot（避免无输入图时落到文生视频导致分辨率空白）。  
+> option 内联的分辨率信息是**选模型时预览**，两者互补。  
+> Seedance / Happy Horse / MiniMax 等配置了 `supported_video_resolutions` 的模型会显示 chip；对口型 MiniMax 共用该分辨率偏好并映射为最长边。
 
 ### i18n & CSS
 - 在 `web/i18n/locales/zh-CN/storyboard.json`（及 en）补充画风、构图、待接入等文案。

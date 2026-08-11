@@ -110,7 +110,16 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         return duration
 
     def _resolve_max_edge(self, extra_config: Dict[str, Any]) -> int:
-        raw = extra_config.get("max_edge", DEFAULT_MAX_EDGE)
+        # 优先 max_edge；否则从 resolution（480P/720P/1080P）映射
+        raw = extra_config.get("max_edge")
+        if raw is None or raw == "":
+            resolution = str(
+                extra_config.get("resolution")
+                or extra_config.get("video_resolution")
+                or ""
+            ).strip().upper()
+            res_map = {"480P": 720, "720P": 1280, "1080P": 1920}
+            raw = res_map.get(resolution, DEFAULT_MAX_EDGE)
         try:
             max_edge = int(raw)
         except (TypeError, ValueError):

@@ -687,8 +687,22 @@ export function setModels({
     }
     state.selectedImageTaskId = state.selectedTextToImageTaskId;
     state.selectedVideoTaskId = state.selectedImageToVideoTaskId;
-    if (state.selectedDigitalHumanTaskId == null && digital_human_models && digital_human_models.length) {
-        state.selectedDigitalHumanTaskId = digital_human_models[0].task_id;
+    if (digital_human_models && digital_human_models.length) {
+        // 优先 MiniMax H3（task_id=35 / short_key 含 minimax）
+        const minimax = digital_human_models.find(
+            (m) => Number(m.task_id) === 35
+                || String(m.short_key || '').includes('minimax')
+                || String(m.key || '').includes('minimax'),
+        );
+        const preferred = minimax || digital_human_models[0];
+        if (state.selectedDigitalHumanTaskId == null) {
+            state.selectedDigitalHumanTaskId = preferred.task_id;
+        } else {
+            const stillValid = digital_human_models.some(
+                (m) => String(m.task_id) === String(state.selectedDigitalHumanTaskId),
+            );
+            if (!stillValid) state.selectedDigitalHumanTaskId = preferred.task_id;
+        }
     }
 
     if (llm_models !== undefined) {
@@ -1127,10 +1141,13 @@ export function getDefaultVideoResolution(model = null) {
     return opts[0]?.value || null;
 }
 
-/** 切换视频模型后校正时长模式与分辨率 */
+/** 切换视频模型后校正时长模式与分辨率。
+ *  分辨率以「图生视频模型」为准（齿轮配置与对口型共用），避免 getSelectedVideoModel
+ *  在无输入图时落到文生视频导致分辨率列表为空。
+ */
 export function ensureVideoGenerationPrefsSupported() {
-    const model = getSelectedVideoModel();
-    const durations = getVideoSupportedDurations(model);
+    const durationModel = getSelectedImageToVideoModel() || getSelectedVideoModel();
+    const durations = getVideoSupportedDurations(durationModel);
     if (state.videoDurationMode !== 'auto') {
         const n = Number(state.videoDurationMode);
         if (!Number.isFinite(n) || !durations.includes(Math.round(n))) {
@@ -1139,13 +1156,14 @@ export function ensureVideoGenerationPrefsSupported() {
             state.videoDurationMode = Math.round(n);
         }
     }
-    const resOpts = getVideoResolutionOptions(model);
+    const resModel = getSelectedImageToVideoModel() || getSelectedVideoModel();
+    const resOpts = getVideoResolutionOptions(resModel);
     if (!resOpts.length) {
         state.videoResolution = null;
     } else {
         const values = resOpts.map(o => o.value);
         if (!state.videoResolution || !values.includes(state.videoResolution)) {
-            state.videoResolution = getDefaultVideoResolution(model);
+            state.videoResolution = getDefaultVideoResolution(resModel);
         }
     }
 }

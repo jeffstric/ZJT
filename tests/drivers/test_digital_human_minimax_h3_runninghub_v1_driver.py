@@ -85,3 +85,12 @@ def test_build_create_request_invalid_duration_falls_back():
     request = asyncio.run(driver.build_create_request(make_ai_tool(duration=99)))
     nodes = node_map(request)
     assert nodes[("212", "value")] == "10"
+
+
+def test_build_create_request_resolution_maps_to_max_edge():
+    driver = make_driver()
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        extra_config='{"resolution": "480P"}',
+    )))
+    nodes = node_map(request)
+    assert nodes[("213", "value")] == "720"

@@ -862,7 +862,7 @@ async function sendStoryboardAgentMessage(current) {
         notify('AI生视频为商业版特权，请切换到「视频生成」模式（直连生成，社区版可用）');
         return;
     }
-    // 对口型分镜生成视频：必须先有成片配音（LTX 口型跟音频走）
+    // 对口型分镜生成视频：必须先有成片配音（MiniMax 口型跟音频走）
     const isDh = String(current?.videoType || current?.video_type || '').toLowerCase() === 'digital_human';
     if (state.chatMode === 'aivideo' && isDh) {
         const hasAudio = (current.dialogues || []).some(d => String(d.audioUrl || d.audio_url || '').trim());
@@ -1018,7 +1018,7 @@ async function sendDirectVideo(current) {
         notify('请先生成并选中首帧图片后再生成视频');
         return;
     }
-    // 对口型分镜：提示词/模型由服务端规划（台词或默认提示词、固定 LTX2.3 路由），
+    // 对口型分镜：提示词/模型由服务端规划（默认动作句、固定 MiniMax H3），
     // 前端不校验提示词与图生视频模型，点发送即一键提交；但必须先有成片配音
     const isDh = String(current?.videoType || current?.video_type || '').toLowerCase() === 'digital_human';
     let prompt = '';
@@ -1067,7 +1067,7 @@ async function sendDirectVideo(current) {
             resolution: extras.resolution,
             clip_to_audio_duration: extras.clip_to_audio_duration,
         };
-        // 对口型：prompt/task_type 由服务端规划（固定 LTX2.3），前端不传
+        // 对口型：prompt/task_type 由服务端规划（固定 MiniMax H3），前端传 resolution
         if (!isDh) {
             config.task_type = videoTaskId;
             config.prompt = prompt;  // 用户编辑后的提示词（基于 scene.videoPrompt）；后端 data.get('prompt') 优先采用

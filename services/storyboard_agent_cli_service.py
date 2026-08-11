@@ -917,7 +917,7 @@ class StoryboardAgentCliService:
         storyboard = context["storyboard"]
         video_type = str(scene.get("video_type") or SceneVideoType.VIDEO)
 
-        # 对口型：双模型路由（Wan2.2 / LTX2.3），统一编排 + 按实际模型扣费。
+        # 对口型：固定 MiniMax H3，统一编排 + 按 clamp 后时长扣费。
         # 忽略调用方传入的 prompt / duration / ratio（以服务端规划为准）。
         if video_type == SceneVideoType.DIGITAL_HUMAN:
             from services.storyboard_digital_human_service import (
@@ -935,7 +935,9 @@ class StoryboardAgentCliService:
                     "数字人生成需要 auth_token 以扣除算力，缺少计费身份时拒绝提交",
                 )
             try:
-                plan, _segments, _scene, _sb = orchestrate_digital_human_generation(int(scene_id))
+                plan, _segments, _scene, _sb = orchestrate_digital_human_generation(
+                    int(scene_id),
+                )
             except StoryboardDigitalHumanError as exc:
                 raise StoryboardCliError(exc.code, exc.message, payload=exc.payload) from exc
 
@@ -2365,7 +2367,7 @@ class StoryboardAgentCliService:
 
 
     def _process_one_video_batch_job(self, job: Dict[str, Any], items: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """推进视频批量任务。generate_video 内部按 scene.video_type 分流图生视频 / LTX 对口型。"""
+        """推进视频批量任务。generate_video 内部按 scene.video_type 分流图生视频 / MiniMax 对口型。"""
         job_id = int(job["id"])
         submitted_count = 0
 
@@ -4020,7 +4022,7 @@ class StoryboardAgentCliService:
                         f"叙事目的：{shot.get('narrative_purpose')}" if shot.get("narrative_purpose") else None,
                     ]),
                     "video_type": resolved_video_type,
-                    # 声音同出：数字人分镜 LTX2.3 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
+                    # 声音同出：数字人分镜 MiniMax 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
                     "audio_embedded": resolved_video_type == SceneVideoType.DIGITAL_HUMAN,
                     "video_config": {
                         "shot_type": shot_type,

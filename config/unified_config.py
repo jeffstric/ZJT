@@ -2621,7 +2621,14 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='RunningHub MiniMax H3 数字人接口（图片+音频+提示词）',
         sort_order=7002.0,
-        required_config_keys=['runninghub.api_key']
+        required_config_keys=['runninghub.api_key'],
+        # 分辨率经分镜偏好下发；驱动侧映射为 max_edge（480P→720, 720P→1280, 1080P→1920）
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720,
     ),
 
     # ==================== Vidu 供应商 ====================
