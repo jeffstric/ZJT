@@ -4336,6 +4336,148 @@ async def digital_human_v2_generate(
         raise HTTPException(status_code=500, detail=f"数字人v2生成失败: {str(e)}")
 
 
+@app.post("/api/digital-human-minimax-h3")
+@require_permission("digital_human:create")
+async def digital_human_minimax_h3_generate(
+    request: Request,
+    image: UploadFile = File(..., description="Input image for digital human"),
+    text: str = Form(..., description="Prompt text for digital human motion (max 1000 characters)"),
+    audio: UploadFile = File(..., description="Speaking audio file"),
+    duration: int = Form(10, description="Video duration in seconds (4-10)"),
+    max_edge: int = Form(1280, description="Video max edge length: 720, 1280, 1920"),
+    start_second: int = Form(0, description="Second when digital human starts speaking"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Generate MiniMax H3 digital human video (image + audio + prompt)
+    """
+    try:
+        if len(text) > 1000:
+            raise HTTPException(
+                status_code=400,
+                detail="文本内容不能超过1000个字"
+            )
+
+        allowed_durations = {4, 5, 6, 7, 8, 9, 10}
+        if duration not in allowed_durations:
+            raise HTTPException(
+                status_code=400,
+                detail=f"视频时长仅支持 {sorted(allowed_durations)} 秒"
+            )
+
+        allowed_max_edges = {720, 1280, 1920}
+        if max_edge not in allowed_max_edges:
+            raise HTTPException(
+                status_code=400,
+                detail=f"最长边仅支持 {sorted(allowed_max_edges)}"
+            )
+
+        if start_second < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="开始说话秒数不能为负数"
+            )
+
+        image_url = await asyncio.to_thread(_save_uploaded_image, image)
+        audio_url = await asyncio.to_thread(_save_uploaded_image, audio)
+
+        task_type = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
+        task_config = TaskTypeRegistry.get(task_type)
+        computing_power = task_config.get_computing_power(duration=duration) if task_config else 0
+
+        if CHECK_AUTH_TOKEN:
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            success, message, response_data = await async_make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400,
+                    detail=message
+                )
+
+            user_computing_power = response_data.get('computing_power', 0)
+            user_id_from_token = response_data.get('user_id')
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"您的算力不足，需要 {computing_power} 算力，当前仅有 {user_computing_power} 算力"
+                )
+            if user_id_from_token != user_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="用户ID不匹配"
+                )
+
+        transaction_id = str(uuid.uuid4())
+
+        if CHECK_AUTH_TOKEN:
+            success, message, response_data = await async_make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id
+                }
+            )
+            if not success:
+                logger.error(f"Computing power deduction failed: {message}")
+
+        if user_id:
+            try:
+                extra_config = json.dumps({
+                    "max_edge": max_edge,
+                    "start_second": start_second,
+                }, ensure_ascii=False)
+
+                id = AIToolsModel.create(
+                    prompt=text,
+                    user_id=user_id,
+                    type=task_type,
+                    image_path=image_url,
+                    audio_path=audio_url,
+                    duration=duration,
+                    extra_config=extra_config,
+                    transaction_id=transaction_id,
+                    status=AI_TOOL_STATUS_PENDING
+                )
+                TasksModel.create(
+                    task_type=TASK_TYPE_GENERATE_VIDEO,
+                    task_id=id,
+                    status=TASK_STATUS_QUEUED
+                )
+                try:
+                    from task.pipeline_processor import PipelineProcessor
+                    PipelineProcessor.create_param_prepare_steps(id, task_type)
+                except Exception as e:
+                    logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
+
+                return JSONResponse({
+                    "success": True,
+                    "project_id": id,
+                    "status": "submitted",
+                    "image_url": image_url,
+                    "audio_url": audio_url
+                })
+            except Exception as db_error:
+                logger.error(f"Failed to create database record: {db_error}")
+                raise HTTPException(status_code=500, detail=f"数据库错误: {str(db_error)}")
+        else:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Digital human MiniMax H3 generation failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"MiniMax H3 数字人生成失败: {str(e)}")
+
+
 @app.post("/api/audio-generate")
 @require_permission("audio:generate")
 async def audio_generate(
