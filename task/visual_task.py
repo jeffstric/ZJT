@@ -456,6 +456,9 @@ async def _submit_new_task(ai_tool):
                 rh_task = TasksModel.get_by_task_id(task_id)
                 if rh_task:
                     RunningHubSlotsModel.release_slot(rh_task.id, source=RunningHubSlot.SOURCE_TASK)
+                # 反馈拥堵冷却：让 acquire_key 在冷却期内跳过该密钥，避免坏密钥粘连死锁
+                # （与 report_failure 独立：421 是「账号忙」而非「key 坏」，不计入熔断 fail_count）
+                await runninghub_key_pool.report_congested_async(rh_key_index)
                 delay = get_dynamic_config_value(
                     "runninghub", "upstream_congest_retry_delay",
                     default=RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT

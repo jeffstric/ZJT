@@ -452,6 +452,11 @@ print(f"Cleaned {cleaned_count} stale slots")
    - 位置：`task/scheduler.py` 中的 `IntervalTrigger(seconds=11)`
    - 建议：不要设置太短，避免频繁查询数据库
 
+6. **密钥拥堵冷却时长**：默认90秒
+   - 动态配置项：`runninghub.key_pool.congest_cooldown_seconds`（秒，可热更新）
+   - 作用：某密钥遭遇上游 421 拥堵后，在此时长内被 `acquire_key` 跳过，避免坏密钥粘连死锁（详见下文「多密钥轮换 + 熔断探测」章节的「拥堵冷却」小节）
+   - 与熔断冷却相互独立：熔断（`cooldown_seconds` / `max_cooldown_seconds`）管「key 坏」，拥堵冷却管「账号忙」，互不干扰
+
 ## 优势
 
 1. **避免 TASK_QUEUE_MAXED 错误**：通过槽位控制，确保不超过并发限制
@@ -488,4 +493,79 @@ print(f"Cleaned {cleaned_count} stale slots")
 
 管理入口位于 admin 后台「RH密钥池」。社区版访问管理 API 返回 403。商业版的
 配置格式、选择策略、故障隔离和运维说明位于私有企业包文档中。
+
+### 拥堵冷却（Congestion Cooldown）
+
+#### 背景与问题
+
+`acquire_key` 候选A 的排序键为 `(active ASC, fail_count ASC, last_used_at ASC)`，
+主键 `active`（当前活跃槽位数）最小者优先。当某密钥账号持续 421 拥堵时：
+
+- 每次提交失败后槽位秒释放，`active` 恒为 0，在排序中永远排第一；
+- 421 是临时拥堵，**设计上不计入熔断**（`visual_task.py` 中 `is_upstream_congested`
+  会短路跳过 `report_failure`），所以 `fail_count` 恒为 0、`circuit_status` 恒为 ENABLED，
+  熔断状态机完全感知不到持续 421 的密钥；
+- 结果：所有流量锁死在持续 421 的坏密钥上，健康密钥永远轮不到（**坏密钥粘连死锁**）。
+
+#### 机制
+
+新增运行态字段 `last_congested_at`（最近一次拥堵时间），存储于 `system_config` 表
+（`config_key = runninghub.key.{N}.last_congested_at`，与 `fail_count`/`last_used_at`
+等同构，属于新增 key-value 数据行，**不改表结构**）。
+
+- `report_congested(key)`：写 `last_congested_at = now`
+- `acquire_key` 候选A：过滤掉 `now - last_congested_at < 冷却时长` 的密钥
+- `report_success(key)`：清空 `last_congested_at`（成功说明恢复）
+
+#### 与熔断的关系（完全独立，互不污染）
+
+| 机制 | 反馈函数 | 管理对象 | 字段 |
+|---|---|---|---|
+| 熔断 | `report_failure` / `report_success` | 「key 坏」（鉴权失败/参数错误） | `fail_count` / `circuit_status` / `next_probe_at` |
+| 拥堵冷却 | `report_congested` / `report_success` | 「账号忙」（421 并发满） | `last_congested_at` |
+
+`report_congested` 只写 `last_congested_at`，**绝不触碰** `fail_count` / `circuit_status`；
+`report_failure` 绝不触碰 `last_congested_at`。两套状态机互不污染。
+
+#### 状态流转
+
+```
+                       report_congested(421)
+  ENABLED ──────────────────────────────────────────► ENABLED + 冷却中(默认90s)
+  (正常可用)         写 last_congested_at=now            (acquire_key 硬过滤)
+     ▲                                                    │
+     │              冷却到期(>90s)                          │
+     │         自动重新进入候选A，被选中尝试                  │
+     │────────────────────────────────────────────────────┘
+     │ 提交成功 → report_success（清 last_congested_at）
+     │
+     │ 仍 421 → report_congested → 再冷却 90s（不影响其他密钥）
+
+注：fail_count / circuit_status 全程不变，熔断状态机零感知。
+冷却到期 = 天然探测：恢复则 report_success 清标记；仍 421 则 report_congested 刷新冷却。
+不需要 HALF_OPEN 那套探测链路。
+```
+
+#### 调用接入点
+
+421 拥堵反馈在三条提交路径均已接入 `report_congested`：
+
+| 路径 | 文件 | 说明 |
+|---|---|---|
+| 视频任务（tasks 表，如 H3 图生视频） | `task/visual_task.py` | 拥堵分支内调用 `report_congested_async`，与延迟重试配套 |
+| 异步任务首次提交（pipeline 后处理） | `task/async_drivers/base_async_driver.py` | 先判拥堵分流（走冷却通道），再处理普通失败（走熔断），避免 421 污染 `fail_count` |
+
+#### 边界处理
+
+| 场景 | 行为 |
+|---|---|
+| 所有密钥都拥堵 | 候选A 为空 → `acquire_key` 返回 None → 回退全局 key（`runninghub.api_key`） |
+| 健康密钥偶尔一次 421 | 进冷却 90s，其他密钥接管；到期恢复，无永久影响 |
+| 坏密钥持续 421 | 周期性冷却（90s 探测一次），不干扰其他密钥 |
+| 冷却时长调整 | 动态配置 `runninghub.key_pool.congest_cooldown_seconds` 热更新 |
+
+> **全局 key 兜底副作用提示**：当所有密钥拥堵时回退到全局 key，但全局 key
+> 可能就是密钥池中某个拥堵 key，或绑定同一账号，兜底**不能解决拥堵**。
+> 兜底路径（`visual_task.py`）用 `slot_max_slots = 999999` 绕过槽位上限，
+> 可能向已拥堵账号额外灌入任务。该兜底行为为既有设计，本期未改动。
 
