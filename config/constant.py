@@ -49,6 +49,16 @@ MYSQL_STARTUP_LOCK_TIMEOUT_SECONDS = 60
 MYSQL_INITIALIZE_TIMEOUT_SECONDS = 180
 RUNTIME_FILE_LOCK_POLL_SECONDS = 0.1
 
+# ===== 画风识别（上传图片 → vl 模型识别 → 写入 world.json）=====
+# 图片压缩转 base64 的同步包装超时（秒），PIL 为 CPU 密集。
+IMAGE_STYLE_COMPRESS_TIMEOUT = 30
+# 单次 LLM（如 doubao）画风识别调用超时（秒）：作为 transport 超时传入 call_api。
+IMAGE_STYLE_LLM_TIMEOUT = 120
+# 默认推荐模型：火山引擎（volcengine）的 doubao-seed-2-0-lite（须已配置密钥才会出现）。
+IMAGE_STYLE_PREFERRED_VENDOR = "volcengine"
+IMAGE_STYLE_PREFERRED_MODEL = "doubao-seed-2-0-lite"
+
+
 # ===== 七牛云 SDK 网络超时 =====
 # qiniu SDK 内部 requests 单请求超时（秒）；SDK 默认 30。
 # 显式设置避免依赖 SDK 内部默认，且便于统一调优。

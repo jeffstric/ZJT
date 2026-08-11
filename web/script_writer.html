@@ -534,6 +534,58 @@
                         <div class="file-empty" data-i18n="loading">加载中...</div>
                     </div>
                 </div>
+                <!-- 画风识别区块：仅在「世界」tab 显示；支持拖入/点击上传 -->
+                <div class="style-recognize-section" id="styleRecognizeSection" hidden>
+                    <div class="style-recognize-header">
+                        <div class="style-recognize-title-row">
+                            <div class="style-recognize-title-group">
+                                <div class="style-recognize-title" data-i18n="style_recognize_title">🎨 画风识别</div>
+                                <!-- 仅开源/社区版显示「限时免费」；商业版不展示 -->
+                                <span class="style-recognize-free-badge" id="styleRecognizeFreeBadge" hidden
+                                      data-i18n="style_recognize_free_badge"
+                                      aria-label="限时免费">限时免费</span>
+                            </div>
+                            <a class="style-recognize-more-link"
+                               href="https://jimeng.jianying.com/ai-tool/home/"
+                               target="_blank"
+                               rel="noopener noreferrer"
+                               data-i18n="style_recognize_more_styles">查看更多画风</a>
+                        </div>
+                        <div class="style-recognize-subtitle" data-i18n="style_recognize_subtitle">拖入参考图识别画风，写入世界设定</div>
+                    </div>
+                    <input type="hidden" id="style-image" value="">
+                    <input type="file" id="style-image-file" accept="image/*" style="display:none"
+                           onchange="handleImageUpload(event, 'style-image', 4)">
+                    <div class="style-drop-zone" id="styleDropZone"
+                         role="button" tabindex="0"
+                         onclick="onStyleDropZoneClick(event)"
+                         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();onStyleDropZoneClick(event);}">
+                        <div class="style-drop-empty" id="styleDropEmpty">
+                            <div class="style-drop-icon" aria-hidden="true">
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="3" width="18" height="18" rx="3"/>
+                                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                                    <path d="M21 15l-5-5L5 21"/>
+                                </svg>
+                            </div>
+                            <div class="style-drop-hint" data-i18n="style_recognize_drop_hint">拖入图片到此处，或点击上传</div>
+                            <div class="style-drop-formats" data-i18n="style_recognize_drop_formats">支持 JPG / PNG / WEBP / GIF · 最大 10MB</div>
+                        </div>
+                        <div id="style-image-preview" class="style-drop-preview image-preview-box" style="display:none">
+                            <img class="preview-thumbnail" alt="style preview">
+                            <button type="button" class="preview-remove-btn" onclick="event.stopPropagation();removeStyleImagePreview()" title="移除" data-i18n-title="clear">×</button>
+                        </div>
+                    </div>
+                    <div class="style-model-row">
+                        <div class="style-model-field">
+                            <label class="style-model-label" for="style-model-select" data-i18n="style_recognize_model_label">识别模型</label>
+                            <select id="style-model-select" class="style-model-select" title="">
+                                <option value="" data-i18n="style_recognize_loading_models">加载模型中…</option>
+                            </select>
+                        </div>
+                        <button type="button" class="btn btn-primary style-recognize-btn" id="recognizeStyleBtn" onclick="recognizeStyle()" disabled data-i18n="style_recognize_btn">识别画风</button>
+                    </div>
+                </div>
             </aside>
         </main>
     </div>
@@ -1184,6 +1236,32 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeNewScriptModal()" data-i18n="btn_cancel">取消</button>
                 <button class="btn btn-primary" id="create-script-btn" onclick="createNewScript()" data-i18n="btn_create_script">创建剧本</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 画风识别确认弹窗 -->
+    <div id="style-confirm-modal" class="modal">
+        <div class="modal-overlay" onclick="closeStyleConfirmModal()"></div>
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3 class="modal-title" data-i18n="style_confirm_title">🎨 确认画风识别结果</h3>
+                <button class="modal-close-btn" onclick="closeStyleConfirmModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label data-i18n="style_confirm_visual_style">画面风格 (visual_style)</label>
+                    <textarea id="confirm-visual-style" class="form-input" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label data-i18n="style_confirm_composition">构图倾向 (composition_preference)</label>
+                    <textarea id="confirm-composition" class="form-input" rows="3"></textarea>
+                </div>
+                <p class="modal-hint" data-i18n="style_confirm_hint">确认后将写入 world.json 并追加一条识别记录（world 设定已被修改）。</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeStyleConfirmModal()" data-i18n="cancel">取消</button>
+                <button class="btn btn-primary" onclick="applyRecognizedStyle()" data-i18n="style_confirm_apply">确认写入</button>
             </div>
         </div>
     </div>
