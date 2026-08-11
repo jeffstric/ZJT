@@ -631,6 +631,11 @@ RUNNINGHUB_KEY_CIRCUIT_COOLDOWN_SECONDS = 300   # 熔断初始冷却（秒）
 RUNNINGHUB_KEY_CIRCUIT_MAX_COOLDOWN_SECONDS = 1800  # 冷却封顶（30 分钟，半开探测失败后指数退避）
 RUNNINGHUB_KEY_HALF_OPEN_PROBE_LIMIT = 1        # 半开状态下同时允许的探测请求数
 
+# 拥堵冷却参数（421 上游并发超限）
+# 与熔断独立：熔断管「key 坏」（鉴权/参数错误），冷却管「账号忙」（421 并发满），互不干扰
+# 可通过动态配置 runninghub.key_pool.congest_cooldown_seconds 热更新
+RUNNINGHUB_KEY_CONGEST_COOLDOWN_SECONDS = 90    # 拥堵密钥冷却时长（秒）
+
 # 任务类型名称映射（已废弃）
 TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 

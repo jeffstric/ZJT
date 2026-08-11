@@ -994,9 +994,10 @@ def should_skip_history(config_key: str) -> bool:
         return True
 
     # 规则2：运行态前缀模式（兼容未预注册的密钥槽位）
-    # 匹配 runninghub.key.{N}.(fail_count|circuit_status|next_probe_at|last_used_at)
+    # 匹配 runninghub.key.{N}.(fail_count|circuit_status|next_probe_at|last_used_at|last_congested_at)
     rt_suffixes = (
-        '.fail_count', '.circuit_status', '.next_probe_at', '.last_used_at'
+        '.fail_count', '.circuit_status', '.next_probe_at',
+        '.last_used_at', '.last_congested_at',
     )
     if config_key.startswith('runninghub.key.') and config_key.endswith(rt_suffixes):
         return True
