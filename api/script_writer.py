@@ -3251,27 +3251,56 @@ async def list_style_models(request: Request):
 
     复用 ``llm_client_factory.get_available_models``：它已过滤掉未配置密钥的 vendor，
     且仅返回 enabled + supports_tools 的模型；此处再按 ``supports_vl==True`` 过滤，
-    天然满足「必须填了密钥的实施方」要求。
+    天然满足「必须填了密钥的实施方」要求（与上方 LLM 模型选择器同源过滤）。
+
+    排序：优先 ``volcengine / doubao-seed-2-0-lite``，再其余 volcengine，再其他供应商。
     """
     try:
         from llm.llm_client_factory import get_available_models as _get_available_models
-        from config.constant import IMAGE_STYLE_LLM_TIMEOUT
+        from config.constant import (
+            IMAGE_STYLE_LLM_TIMEOUT,
+            IMAGE_STYLE_PREFERRED_MODEL,
+            IMAGE_STYLE_PREFERRED_VENDOR,
+        )
 
         result = await _get_available_models()
-        vl_models = [
-            {
+        pref_vendor = (IMAGE_STYLE_PREFERRED_VENDOR or 'volcengine').lower()
+        pref_model = (IMAGE_STYLE_PREFERRED_MODEL or 'doubao-seed-2-0-lite').lower()
+
+        vl_models = []
+        for m in result.get('models', []):
+            if not m.get('supports_vl'):
+                continue
+            name = m.get('name') or ''
+            vendor_name = m.get('vendor_name') or ''
+            is_preferred = (
+                vendor_name.lower() == pref_vendor
+                and pref_model in name.lower()
+            )
+            vl_models.append({
                 'model_id': m.get('model_id'),
                 'vendor_id': m.get('vendor_id'),
-                'name': m.get('name'),
-                'vendor_name': m.get('vendor_name'),
-            }
-            for m in result.get('models', [])
-            if m.get('supports_vl')
-        ]
+                'name': name,
+                'vendor_name': vendor_name,
+                'recommended': is_preferred,
+                'input_token_threshold': m.get('input_token_threshold'),
+            })
+
+        def _sort_key(item: dict):
+            vendor = (item.get('vendor_name') or '').lower()
+            name = (item.get('name') or '').lower()
+            is_pref = 0 if item.get('recommended') else 1
+            is_volc = 0 if vendor == pref_vendor else 1
+            return (is_pref, is_volc, vendor, name)
+
+        vl_models.sort(key=_sort_key)
+
         return JSONResponse({
             'success': True,
             'models': vl_models,
             'llm_timeout': IMAGE_STYLE_LLM_TIMEOUT,
+            'preferred_vendor': IMAGE_STYLE_PREFERRED_VENDOR,
+            'preferred_model': IMAGE_STYLE_PREFERRED_MODEL,
         })
     except Exception as e:
         logger.error(f'获取画风识别模型列表失败: {str(e)}')
@@ -3372,14 +3401,39 @@ async def recognize_style(request: Request, body: RecognizeStyleRequest):
             return JSONResponse({'success': False, 'error': f'图片处理失败: {err}'}, status_code=400)
 
         # 3) 构造多模态消息，调用 vl 模型（同步 call_api → to_thread + wait_for）
+        # 字段语义对齐 plot-analyzer：visual_style=画风大类+具体风格关键词；
+        # composition_preference=镜头/构图；二者不得混入色彩，也不得互相矛盾。
         system_prompt = (
-            "你是一位资深的动画/影视美术指导，擅长分析画面画风与构图特征。"
+            "你是一位资深的动画/影视美术指导，负责为项目设定可直接用于生图/生视频的画风与构图。"
             "请只返回一个 JSON 对象，不要包含任何其它文字、解释或 Markdown。"
+            "\n\n"
+            "字段规则（极其重要）：\n"
+            "1) visual_style（画面风格）只回答「是什么风格？」——先判定画风大类，再写具体风格关键词。\n"
+            "   画风大类二选一：\n"
+            "   - 写实风格类：真实照片感、电影级写实、纪实摄影；关键词含写实/真实/照片/摄影/电影感。\n"
+            "   - 动漫/漫画风格类：日系动漫、美式漫画、卡通；关键词含动漫/二次元/漫画/卡通。\n"
+            "   两种大类有本质区别，不可混淆：写实绝不能含「动漫/漫画/二次元」；"
+            "动漫绝不能含「写实/照片/摄影」。\n"
+            "   visual_style 必须精简（约 8~20 字），只写风格关键词，"
+            "例如：「现代都市写实风格」「电影级写实风格」「日系新海诚动漫风格」"
+            "「美漫:漫威风」「迪士尼风格」「皮克斯风」。\n"
+            "   禁止：色调/饱和度/光泽、镜头角度/构图、剧情内容、角色身份、场景叙事、"
+            "「生活化」「带货」「居家」等内容描述。\n"
+            "2) composition_preference（构图倾向）只回答「怎么拍？」——"
+            "镜头角度、构图方式、镜头运动、景别。\n"
+            "   示例：「低角度镜头营造压迫感」「竖屏平视中近景，主体居中」"
+            "「多用仰拍和俯拍强调权力关系」。\n"
+            "   禁止：色调/饱和度、画风大类词汇堆砌、多宫格/分镜图/对比图/序列帧、"
+            "以及与 visual_style 画风大类矛盾的术语"
+            "（如写实时写「动漫分镜/漫画格子」，动漫时写「纪实摄影/新闻抓拍」）。\n"
+            "3) 两个字段都不得包含多宫格、分镜图、对比图、时间线、序列帧等会误导生图的内容。\n"
+            "4) 不要输出 color_language；色彩信息不要塞进 visual_style 或 composition_preference。"
         )
         user_text = (
-            "请分析这张图片的画面画风与构图倾向，仅返回如下 JSON：\n"
-            '{"visual_style":"画面风格描述（中文，80字内：画种/线条/色彩/造型/氛围，具体可复现）",'
-            '"composition_preference":"构图倾向描述（中文，80字内：镜头节奏/构图方式/透视/动势/分镜风格）"}'
+            "请分析这张参考图的画风与构图，仅返回如下 JSON（中文，精简）：\n"
+            '{"visual_style":"画风大类+具体风格关键词，如：现代都市写实风格 / 日系新海诚动漫风格",'
+            '"composition_preference":"镜头角度/构图方式/景别，如：低角度镜头营造压迫感"}\n'
+            "记住：visual_style 只写风格名，不要写色彩、镜头、剧情内容。"
         )
         messages = [
             {"role": "system", "content": system_prompt},

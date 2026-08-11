@@ -54,6 +54,9 @@ RUNTIME_FILE_LOCK_POLL_SECONDS = 0.1
 IMAGE_STYLE_COMPRESS_TIMEOUT = 30
 # 单次 LLM（如 doubao）画风识别调用超时（秒）：作为 transport 超时传入 call_api。
 IMAGE_STYLE_LLM_TIMEOUT = 120
+# 默认推荐模型：火山引擎（volcengine）的 doubao-seed-2-0-lite（须已配置密钥才会出现）。
+IMAGE_STYLE_PREFERRED_VENDOR = "volcengine"
+IMAGE_STYLE_PREFERRED_MODEL = "doubao-seed-2-0-lite"
 
 
 # ===== 七牛云 SDK 网络超时 =====
