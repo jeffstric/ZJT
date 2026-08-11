@@ -56,8 +56,9 @@ def get_port_from_config():
 
 
 def main():
-    # 设置生产环境标识
-    os.environ['comfyui_env'] = 'prod'
+    # Direct execution defaults to prod, while an explicit launcher-selected
+    # environment must be preserved for configuration isolation.
+    os.environ.setdefault('comfyui_env', 'prod')
     
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='生产环境统一启动器')
