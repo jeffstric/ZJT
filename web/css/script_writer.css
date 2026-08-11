@@ -4204,3 +4204,82 @@ body {
     cursor: default;
 }
 
+/* ===== 画风识别区块（暂存区「世界」tab 底部） ===== */
+.style-recognize-section {
+    flex-shrink: 0;
+    padding: 12px 16px 16px;
+    border-top: 1px solid var(--border-color, #e5e7eb);
+    background: var(--bg-secondary, #f9fafb);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.style-recognize-section[hidden] {
+    display: none;
+}
+
+.style-recognize-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary, #1f2937);
+}
+
+.style-recognize-section .image-upload-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.style-model-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.style-model-row .form-input {
+    flex: 1;
+    min-width: 0;
+}
+
+.style-model-row .btn-sm {
+    flex-shrink: 0;
+}
+
+#recognizeStyleBtn[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.style-recognize-section .image-preview-box {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+}
+
+#style-confirm-modal .modal-hint {
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--text-secondary, #6b7280);
+    line-height: 1.5;
+}
+
+#style-confirm-modal .form-group {
+    margin-bottom: 12px;
+}
+
+#style-confirm-modal .form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--text-primary, #1f2937);
+}
+
+#style-confirm-modal textarea.form-input {
+    width: 100%;
+    resize: vertical;
+    font-family: inherit;
+}
+
+

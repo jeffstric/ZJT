@@ -1061,5 +1061,19 @@
   "label_characters": "Characters",
   "label_locations": "Locations",
   "label_props": "Props",
-  "label_scripts": "Scripts"
+  "label_scripts": "Scripts",
+  "clear": "Clear",
+  "style_recognize_title": "🎨 Style Recognition",
+  "style_recognize_upload": "Upload Image",
+  "style_recognize_btn": "Recognize Style",
+  "style_recognize_loading": "Recognizing...",
+  "style_recognize_loading_models": "Loading models...",
+  "style_recognize_no_models": "No VL models available (api key required)",
+  "style_recognize_success": "✓ World visual style updated (visual_style, composition_preference). This recognition is recorded.",
+  "style_recognize_failed": "Style recognition failed: {error}",
+  "style_confirm_title": "🎨 Confirm Recognized Style",
+  "style_confirm_visual_style": "Visual style (visual_style)",
+  "style_confirm_composition": "Composition preference (composition_preference)",
+  "style_confirm_hint": "On confirm, this will be written to world.json and a recognition record will be appended (the world definition has been modified).",
+  "style_confirm_apply": "Confirm & Write"
 }

@@ -270,6 +270,8 @@
             }
 
             configureMarked();
+            // 画风识别：初始化模型下拉监听（区块仅「世界」tab 可见，首次切到时懒加载模型）
+            initStyleModelSelectListener();
             // 获取版本信息，用于社区版功能标注
             try {
                 const editionResp = await fetch('/api/edition');
@@ -3562,6 +3564,8 @@
                     }
                 }
             }
+            // 画风识别区块：仅在「世界」tab 显示
+            updateStyleRecognizeVisibility(fileType);
             loadFiles(fileType);
         }
 
@@ -5504,6 +5508,10 @@
                     // 更新输入框和预览
                     document.getElementById(inputId).value = data.url;
                     showImagePreview(inputId, data.url);
+                    // 画风识别图：上传成功后启用「识别画风」按钮
+                    if (inputId === 'style-image') {
+                        updateRecognizeStyleBtn();
+                    }
                     showSuccess(window.t ? window.t('success_image_uploaded') : '图片上传成功');
                 } else {
                     showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
@@ -5531,6 +5539,186 @@
 
         function clearImageInput(inputId) {
             removeImagePreview(inputId);
+            // 画风识别图：清空时同步禁用按钮
+            if (inputId === 'style-image') {
+                updateRecognizeStyleBtn();
+            }
+        }
+
+        // ===== 画风识别相关（暂存区「世界」tab 底部） =====
+
+        // 缓存上一次拉取到的 vl 模型列表，供确认写入时回填 vendor_id
+        let cachedStyleModels = [];
+
+        // 显隐画风识别区块：仅在「世界」tab 显示，并按需懒加载模型列表
+        function updateStyleRecognizeVisibility(fileType) {
+            const section = document.getElementById('styleRecognizeSection');
+            if (!section) return;
+            if (fileType === 'worlds') {
+                section.removeAttribute('hidden');
+                if (!cachedStyleModels.length) {
+                    loadStyleModels();
+                }
+            } else {
+                section.setAttribute('hidden', '');
+            }
+        }
+
+        // 拉取可用 vl 模型并填充下拉框
+        async function loadStyleModels() {
+            const select = document.getElementById('style-model-select');
+            if (!select) return;
+            select.innerHTML = `<option value="">${window.t ? window.t('style_recognize_loading_models') : '加载模型中…'}</option>`;
+            try {
+                const response = await fetch('/api/style-models', {
+                    headers: { 'Authorization': AUTH_TOKEN, 'X-User-Id': USER_ID }
+                });
+                const data = await response.json();
+                if (data.success && Array.isArray(data.models) && data.models.length) {
+                    cachedStyleModels = data.models;
+                    select.innerHTML = data.models.map(m =>
+                        `<option value="${m.name}" data-model-id="${m.model_id ?? ''}" data-vendor-id="${m.vendor_id ?? ''}">${m.name}（${m.vendor_name || ''}）</option>`
+                    ).join('');
+                } else {
+                    cachedStyleModels = [];
+                    select.innerHTML = `<option value="">${window.t ? window.t('style_recognize_no_models') : '无可用 vl 模型（需配置密钥）'}</option>`;
+                }
+            } catch (e) {
+                cachedStyleModels = [];
+                select.innerHTML = `<option value="">${window.t ? window.t('style_recognize_no_models') : '无可用 vl 模型（需配置密钥）'}</option>`;
+            }
+            updateRecognizeStyleBtn();
+        }
+
+        // 「识别画风」按钮可用性：需要已选模型 + 已上传图片
+        function updateRecognizeStyleBtn() {
+            const btn = document.getElementById('recognizeStyleBtn');
+            const select = document.getElementById('style-model-select');
+            const imgInput = document.getElementById('style-image');
+            if (!btn || !select || !imgInput) return;
+            const hasModel = !!select.value && !!cachedStyleModels.length;
+            const hasImage = !!(imgInput.value && imgInput.value.trim());
+            btn.disabled = !(hasModel && hasImage);
+        }
+
+        // 监听模型下拉变化，刷新按钮状态
+        function initStyleModelSelectListener() {
+            const select = document.getElementById('style-model-select');
+            if (!select) return;
+            select.addEventListener('change', updateRecognizeStyleBtn);
+        }
+
+        // 移除画风识别预览图（× 按钮）
+        function removeStyleImagePreview() {
+            removeImagePreview('style-image');
+            updateRecognizeStyleBtn();
+        }
+
+        // 调用 vl 模型识别画风
+        async function recognizeStyle() {
+            const select = document.getElementById('style-model-select');
+            const imgInput = document.getElementById('style-image');
+            const btn = document.getElementById('recognizeStyleBtn');
+            const model = select && select.value;
+            const imageUrl = imgInput && imgInput.value.trim();
+            if (!model) {
+                showError(window.t ? window.t('style_recognize_no_models') : '请先选择识别模型');
+                return;
+            }
+            if (!imageUrl) {
+                showError(window.t ? window.t('style_recognize_upload') : '请先上传画风参考图');
+                return;
+            }
+            const selectedOption = select.options[select.selectedIndex];
+            const payload = {
+                user_id: USER_ID, world_id: WORLD_ID, auth_token: AUTH_TOKEN,
+                image_url: imageUrl, model,
+                model_id: selectedOption ? (selectedOption.getAttribute('data-model-id') || null) : null,
+                vendor_id: selectedOption ? (selectedOption.getAttribute('data-vendor-id') || null) : null,
+            };
+            const prevText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = window.t ? window.t('style_recognize_loading') : '识别中…';
+            try {
+                const response = await fetch('/api/recognize-style', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID,
+                    },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showStyleConfirmModal(data);
+                } else {
+                    showError((window.t ? window.t('style_recognize_failed', {error: data.error}) : ('画风识别失败: ' + (data.error || ''))));
+                }
+            } catch (e) {
+                showError((window.t ? window.t('style_recognize_failed', {error: e.message}) : ('画风识别失败: ' + e.message)));
+            } finally {
+                btn.textContent = prevText;
+                updateRecognizeStyleBtn();
+            }
+        }
+
+        // 弹出确认框（识别结果可编辑）
+        function showStyleConfirmModal(data) {
+            const pending = {
+                model: data.model,
+                vendor_id: data.vendor_id,
+                image_url: (document.getElementById('style-image').value || '').trim(),
+            };
+            window.__pendingStyleRecognition = pending;
+            document.getElementById('confirm-visual-style').value = data.visual_style || '';
+            document.getElementById('confirm-composition').value = data.composition_preference || '';
+            document.getElementById('style-confirm-modal').classList.add('show');
+        }
+
+        function closeStyleConfirmModal() {
+            document.getElementById('style-confirm-modal').classList.remove('show');
+        }
+
+        // 确认写入 world.json
+        async function applyRecognizedStyle() {
+            const pending = window.__pendingStyleRecognition || {};
+            const visualStyle = (document.getElementById('confirm-visual-style').value || '').trim();
+            const composition = (document.getElementById('confirm-composition').value || '').trim();
+            if (!visualStyle && !composition) {
+                showError(window.t ? window.t('style_confirm_hint') : '画面风格与构图倾向均为空');
+                return;
+            }
+            const payload = {
+                user_id: USER_ID, world_id: WORLD_ID, auth_token: AUTH_TOKEN,
+                visual_style: visualStyle, composition_preference: composition,
+                image_url: pending.image_url || '',
+                model: pending.model || '', vendor_id: pending.vendor_id ?? null,
+            };
+            try {
+                const response = await fetch('/api/world-style', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID,
+                    },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    closeStyleConfirmModal();
+                    showSuccess(data.message || (window.t ? window.t('style_recognize_success') : '✓ 已更新世界画风设定，本次识别已记录'));
+                    // 刷新暂存区世界列表，让 world.json 文件变化可见
+                    if (typeof loadFiles === 'function' && currentFileType === 'worlds') {
+                        loadFiles('worlds');
+                    }
+                } else {
+                    showError(data.error || (window.t ? window.t('style_recognize_failed', {error: ''}) : '写入失败'));
+                }
+            } catch (e) {
+                showError((window.t ? window.t('style_recognize_failed', {error: e.message}) : ('写入失败: ' + e.message)));
+            }
         }
 
         async function playCharacterVoice(characterName) {

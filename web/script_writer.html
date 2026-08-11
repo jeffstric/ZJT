@@ -534,6 +534,29 @@
                         <div class="file-empty" data-i18n="loading">加载中...</div>
                     </div>
                 </div>
+                <!-- 画风识别区块：仅在「世界」tab 显示 -->
+                <div class="style-recognize-section" id="styleRecognizeSection" hidden>
+                    <div class="style-recognize-title" data-i18n="style_recognize_title">🎨 画风识别</div>
+                    <div class="image-upload-container">
+                        <input type="text" id="style-image" class="form-input" placeholder="上传画风参考图" readonly>
+                        <div class="image-upload-actions">
+                            <button type="button" onclick="clearImageInput('style-image')" data-i18n="clear">清空</button>
+                            <button type="button" onclick="triggerImageUpload('style-image', 4)" data-i18n="style_recognize_upload">上传图片</button>
+                        </div>
+                        <input type="file" id="style-image-file" accept="image/*" style="display:none"
+                               onchange="handleImageUpload(event, 'style-image', 4)">
+                    </div>
+                    <div id="style-image-preview" class="image-preview-box" style="display:none">
+                        <img class="preview-thumbnail" alt="preview">
+                        <button type="button" class="preview-remove-btn" onclick="removeStyleImagePreview()">×</button>
+                    </div>
+                    <div class="style-model-row">
+                        <select id="style-model-select" class="form-input" data-i18n="style_recognize_loading_models" title="">
+                            <option value="" data-i18n="style_recognize_loading_models">加载模型中…</option>
+                        </select>
+                        <button type="button" class="btn btn-primary btn-sm" id="recognizeStyleBtn" onclick="recognizeStyle()" disabled data-i18n="style_recognize_btn">识别画风</button>
+                    </div>
+                </div>
             </aside>
         </main>
     </div>
@@ -1184,6 +1207,32 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeNewScriptModal()" data-i18n="btn_cancel">取消</button>
                 <button class="btn btn-primary" id="create-script-btn" onclick="createNewScript()" data-i18n="btn_create_script">创建剧本</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 画风识别确认弹窗 -->
+    <div id="style-confirm-modal" class="modal">
+        <div class="modal-overlay" onclick="closeStyleConfirmModal()"></div>
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3 class="modal-title" data-i18n="style_confirm_title">🎨 确认画风识别结果</h3>
+                <button class="modal-close-btn" onclick="closeStyleConfirmModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label data-i18n="style_confirm_visual_style">画面风格 (visual_style)</label>
+                    <textarea id="confirm-visual-style" class="form-input" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label data-i18n="style_confirm_composition">构图倾向 (composition_preference)</label>
+                    <textarea id="confirm-composition" class="form-input" rows="3"></textarea>
+                </div>
+                <p class="modal-hint" data-i18n="style_confirm_hint">确认后将写入 world.json 并追加一条识别记录（world 设定已被修改）。</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeStyleConfirmModal()" data-i18n="cancel">取消</button>
+                <button class="btn btn-primary" onclick="applyRecognizedStyle()" data-i18n="style_confirm_apply">确认写入</button>
             </div>
         </div>
     </div>
