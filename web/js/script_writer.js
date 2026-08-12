@@ -5839,6 +5839,16 @@
             document.getElementById('style-confirm-modal').classList.remove('show');
         }
 
+        // 资产被用户侧修改后，通知剧本智能体重新读取（系统消息，会创建一轮任务）
+        async function notifyAgentAssetUpdated(message) {
+            if (!sessionId || !message) return;
+            try {
+                await sendMessage(message, true);
+            } catch (error) {
+                console.error('发送资产更新通知失败:', error);
+            }
+        }
+
         // 确认写入 world.json
         async function applyRecognizedStyle() {
             const pending = window.__pendingStyleRecognition || {};
@@ -5872,6 +5882,13 @@
                     if (typeof loadFiles === 'function' && currentFileType === 'worlds') {
                         loadFiles('worlds');
                     }
+                    // 通知剧本智能体：画风已更新（对齐角色/世界设定编辑后的系统通知）
+                    const notificationMessage = [
+                        '系统通知：世界画风已被用户通过「画风识别」更新，请重新读取世界设定最新内容。',
+                        visualStyle ? `画面风格(visual_style)：${visualStyle}` : '',
+                        composition ? `构图倾向(composition_preference)：${composition}` : '',
+                    ].filter(Boolean).join('\n');
+                    await notifyAgentAssetUpdated(notificationMessage);
                 } else {
                     showError(data.error || (window.t ? window.t('style_recognize_failed', {error: ''}) : '写入失败'));
                 }
@@ -6036,21 +6053,15 @@
                     closeEditModal();
                     await loadFiles(fileType);
                     
-                    if (sessionId) {
-                        try {
-                            const fileTypeMap = {
-                                'characters': '角色卡',
-                                'locations': '场景',
-                                'props': '道具',
-                                'scripts': '剧本',
-                                'worlds': '世界设定'
-                            };
-                            const notificationMessage = `系统通知：${fileTypeMap[fileType]} "${fileName}" 已被用户编辑更新，请重新读取最新内容。`;
-                            await sendMessage(notificationMessage, true);
-                        } catch (error) {
-                            console.error('发送编辑通知失败:', error);
-                        }
-                    }
+                    const fileTypeMap = {
+                        'characters': '角色卡',
+                        'locations': '场景',
+                        'props': '道具',
+                        'scripts': '剧本',
+                        'worlds': '世界设定'
+                    };
+                    const notificationMessage = `系统通知：${fileTypeMap[fileType]} "${fileName}" 已被用户编辑更新，请重新读取最新内容。`;
+                    await notifyAgentAssetUpdated(notificationMessage);
                 } else {
                     showError((window.t ? window.t('error_save_failed', {error: data.error || (window.t ? window.t('error_unknown') : '未知错误')}) : '保存失败: ' + (data.error || '未知错误')));
                 }
