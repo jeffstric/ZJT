@@ -635,6 +635,80 @@ def _compact_join(parts: List[Optional[str]], sep: str = "\n") -> str:
     return sep.join(str(part).strip() for part in parts if str(part or '').strip())
 
 
+def _normalize_dialogue_text_for_match(text: Any) -> str:
+    """规范化台词文本，用于判断视频提示词是否已包含该台词。"""
+    s = str(text or "")
+    # 去空白
+    s = re.sub(r"\s+", "", s)
+    # 统一常见引号/省略号变体
+    for src, dst in (
+        ("“", '"'),
+        ("”", '"'),
+        ("‘", "'"),
+        ("’", "'"),
+        ("「", '"'),
+        ("」", '"'),
+        ("『", '"'),
+        ("』", '"'),
+        ("…", "..."),
+        ("⋯", "..."),
+        ("——", "-"),
+        ("—", "-"),
+        ("－", "-"),
+    ):
+        s = s.replace(src, dst)
+    return s
+
+
+def _format_dialogues_for_video_prompt(
+    dialogues: Any,
+    *,
+    character_name_map: Optional[Dict[str, str]] = None,
+    existing_prompt: str = "",
+) -> str:
+    """将缺失的完整台词幂等追加为「对话：」块，供 video_prompt 使用。
+
+    - 已在 existing_prompt 中出现的台词不重复追加；
+    - 全部已包含则返回空字符串；
+    - 角色名优先用 dialogue.character_name，其次 character_name_map。
+    """
+    if isinstance(dialogues, dict):
+        dialogues = [dialogues]
+    if not isinstance(dialogues, list) or not dialogues:
+        return ""
+
+    name_map = character_name_map or {}
+    existing_norm = _normalize_dialogue_text_for_match(existing_prompt)
+    lines: List[str] = []
+
+    for item in dialogues:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        text_norm = _normalize_dialogue_text_for_match(text)
+        if not text_norm:
+            continue
+        if existing_norm and text_norm in existing_norm:
+            continue
+
+        raw_name = str(item.get("character_name") or "").strip()
+        raw_name = raw_name.strip("【】").strip()
+        if not raw_name:
+            cid = str(item.get("character_id") or "").strip()
+            raw_name = (name_map.get(cid) or "").strip("【】").strip()
+        if not raw_name:
+            speaker = "旁白"
+        else:
+            speaker = f"【【{raw_name}】】"
+        lines.append(f'{speaker}：「{text}」')
+
+    if not lines:
+        return ""
+    return "对话：\n" + "\n".join(lines)
+
+
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(float(value))
@@ -767,6 +841,14 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                 f"镜头运动：{shot.get('camera_movement')}" if shot.get('camera_movement') else None,
                 f"叙事目的：{shot.get('narrative_purpose')}" if shot.get('narrative_purpose') else None,
             ])
+            # 幂等拼入完整对白：LLM 已写入 description/action 时不重复；漏写时兜底补「对话：」块
+            dialogue_block = _format_dialogues_for_video_prompt(
+                shot.get('dialogue') or shot.get('dialogues'),
+                character_name_map=character_name_map,
+                existing_prompt=video_prompt,
+            )
+            if dialogue_block:
+                video_prompt = _compact_join([video_prompt, dialogue_block])
 
             dialogues = []
             for dialogue in shot.get('dialogue') or []:

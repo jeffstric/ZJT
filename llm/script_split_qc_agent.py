@@ -38,8 +38,16 @@ _PROMPT_FIELDS = (
     "narrative_purpose",
 )
 
+# 视频提示词组装源字段（与 api/storyboard.py 中 video_prompt 源一致，不含首帧）
+_VIDEO_PROMPT_SOURCE_FIELDS = (
+    "description",
+    "scene_detail",
+    "action",
+)
+
 _CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 @dataclass
@@ -214,6 +222,56 @@ def _shot_has_dialogue(shot: Dict[str, Any]) -> bool:
         if str(d.get("text") or "").strip():
             return True
     return False
+
+
+def _normalize_dialogue_text_for_match(text: Any) -> str:
+    """规范化台词，用于检查视频提示词是否包含完整对白。"""
+    s = str(text or "")
+    s = _WHITESPACE_RE.sub("", s)
+    for src, dst in (
+        ("“", '"'),
+        ("”", '"'),
+        ("‘", "'"),
+        ("’", "'"),
+        ("「", '"'),
+        ("」", '"'),
+        ("『", '"'),
+        ("』", '"'),
+        ("…", "..."),
+        ("⋯", "..."),
+        ("——", "-"),
+        ("—", "-"),
+        ("－", "-"),
+    ):
+        s = s.replace(src, dst)
+    return s
+
+
+def _shot_video_prompt_blob(shot: Dict[str, Any]) -> str:
+    """合成视频提示词源文本（description + scene_detail + action）。"""
+    parts: List[str] = []
+    for field in _VIDEO_PROMPT_SOURCE_FIELDS:
+        val = str(shot.get(field) or "").strip()
+        if val:
+            parts.append(val)
+    return "\n".join(parts)
+
+
+def _iter_shot_dialogue_texts(shot: Dict[str, Any]) -> List[tuple]:
+    """返回 [(index, text), ...]，仅含非空台词。"""
+    dlg = shot.get("dialogue") or shot.get("dialogues") or []
+    if isinstance(dlg, dict):
+        dlg = [dlg]
+    if not isinstance(dlg, list):
+        return []
+    result: List[tuple] = []
+    for di, d in enumerate(dlg):
+        if not isinstance(d, dict):
+            continue
+        text = str(d.get("text") or "").strip()
+        if text:
+            result.append((di, text))
+    return result
 
 
 def _character_name_index(
@@ -426,6 +484,25 @@ def run_rule_qc(
                         field=f"dialogue[{di}].text",
                         message="对话文本疑似未使用英文",
                         evidence=t[:100],
+                    ))
+
+        # 视频提示词必须包含完整对白（与组装源 description/scene_detail/action 对齐）
+        dialogue_texts = _iter_shot_dialogue_texts(shot)
+        if dialogue_texts:
+            video_blob = _shot_video_prompt_blob(shot)
+            video_norm = _normalize_dialogue_text_for_match(video_blob)
+            for di, text in dialogue_texts:
+                text_norm = _normalize_dialogue_text_for_match(text)
+                if not text_norm:
+                    continue
+                if not video_norm or text_norm not in video_norm:
+                    issues.append(QcIssue(
+                        code="DIALOGUE_NOT_IN_VIDEO_PROMPT",
+                        severity="error",
+                        shot_ref=ref,
+                        field=f"dialogue[{di}].text",
+                        message="视频提示词（description/scene_detail/action）缺少完整台词，禁止仅用「呵斥/说着话」等概括",
+                        evidence=text[:100],
                     ))
 
     aggregated_short_dialogue = " ".join(short_dialogue_texts).strip()
