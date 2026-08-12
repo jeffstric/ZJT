@@ -6415,28 +6415,53 @@
 
         // 缓存世界列表，用于侧边栏搜索
         let cachedWorlds = [];
+        // 侧栏列表模式：active=正常 | deleted=已伪删除
+        let worldListMode = 'active';
+
+        function updateWorldDeletedToggleUI() {
+            const btn = document.getElementById('world-deleted-toggle');
+            if (!btn) return;
+            const label = worldListMode === 'deleted'
+                ? (window.t ? window.t('back_to_world_list') : '返回世界列表')
+                : (window.t ? window.t('view_deleted_worlds') : '查看已删除的世界');
+            btn.innerHTML = `<span>${label}</span>`;
+            btn.classList.toggle('active-mode', worldListMode === 'deleted');
+        }
 
         function renderWorldList(worlds) {
             const worldList = document.getElementById('world-list');
             if (!worldList) return;
+            const isDeletedMode = worldListMode === 'deleted';
 
             if (worlds.length === 0) {
                 const searchInput = document.getElementById('world-search-input');
                 const hasKeyword = searchInput && searchInput.value.trim();
-                worldList.innerHTML = `<div class="world-empty">${hasKeyword
-                    ? (window.t ? window.t('no_worlds_found') : '未找到匹配的世界')
-                    : (window.t ? window.t('no_worlds') : '暂无世界')}</div>`;
+                let emptyText;
+                if (isDeletedMode) {
+                    emptyText = hasKeyword
+                        ? (window.t ? window.t('no_deleted_worlds_found') : '未找到匹配的已删除世界')
+                        : (window.t ? window.t('no_deleted_worlds') : '暂无已删除的世界');
+                } else {
+                    emptyText = hasKeyword
+                        ? (window.t ? window.t('no_worlds_found') : '未找到匹配的世界')
+                        : (window.t ? window.t('no_worlds') : '暂无世界');
+                }
+                worldList.innerHTML = `<div class="world-empty">${emptyText}</div>`;
                 return;
             }
 
             worldList.innerHTML = '';
             worlds.forEach(world => {
                 const worldItem = document.createElement('div');
-                worldItem.className = 'world-item' + (world.id == WORLD_ID ? ' active' : '');
+                worldItem.className = 'world-item'
+                    + (world.id == WORLD_ID && !isDeletedMode ? ' active' : '')
+                    + (isDeletedMode ? ' deleted' : '');
 
                 const worldInfo = document.createElement('div');
                 worldInfo.className = 'world-info';
-                worldInfo.onclick = () => switchWorld(world.id);
+                if (!isDeletedMode) {
+                    worldInfo.onclick = () => switchWorld(world.id);
+                }
 
                 const worldName = document.createElement('div');
                 worldName.className = 'world-name';
@@ -6453,21 +6478,56 @@
                 const worldActions = document.createElement('div');
                 worldActions.className = 'world-actions';
 
-                const editBtn = document.createElement('button');
-                editBtn.className = 'world-edit-btn';
-                editBtn.title = '编辑世界';
-                editBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    showEditWorldModal(world.id, world.name, world.description || '', world.story_type);
-                };
-                editBtn.innerHTML = `
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                    </svg>
-                `;
+                if (isDeletedMode) {
+                    const restoreBtn = document.createElement('button');
+                    restoreBtn.className = 'world-restore-btn';
+                    restoreBtn.title = window.t ? window.t('restore_world') : '恢复显示';
+                    restoreBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        restoreWorld(world.id, world.name);
+                    };
+                    restoreBtn.innerHTML = `
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="1 4 1 10 7 10"/>
+                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                        </svg>
+                    `;
+                    worldActions.appendChild(restoreBtn);
+                } else {
+                    const editBtn = document.createElement('button');
+                    editBtn.className = 'world-edit-btn';
+                    editBtn.title = '编辑世界';
+                    editBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        showEditWorldModal(world.id, world.name, world.description || '', world.story_type);
+                    };
+                    editBtn.innerHTML = `
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                    `;
 
-                worldActions.appendChild(editBtn);
+                    const hideBtn = document.createElement('button');
+                    hideBtn.className = 'world-hide-btn';
+                    hideBtn.title = window.t ? window.t('hide_world') : '隐藏世界';
+                    hideBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        hideWorld(world.id, world.name);
+                    };
+                    hideBtn.innerHTML = `
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                            <path d="M10 11v6M14 11v6"/>
+                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                        </svg>
+                    `;
+
+                    worldActions.appendChild(editBtn);
+                    worldActions.appendChild(hideBtn);
+                }
+
                 worldItem.appendChild(worldInfo);
                 worldItem.appendChild(worldActions);
                 worldList.appendChild(worldItem);
@@ -6508,16 +6568,21 @@
                     searchInput.focus();
                 });
             }
+            updateWorldDeletedToggleUI();
         }
 
         async function loadUserWorlds() {
             try {
-                const response = await fetch('/api/worlds?page=1&page_size=100', {
-                    headers: {
-                        'Authorization': AUTH_TOKEN,
-                        'X-User-Id': USER_ID
+                const visibility = worldListMode === 'deleted' ? 'deleted' : 'active';
+                const response = await fetch(
+                    `/api/worlds?page=1&page_size=100&visibility=${encodeURIComponent(visibility)}`,
+                    {
+                        headers: {
+                            'Authorization': AUTH_TOKEN,
+                            'X-User-Id': USER_ID
+                        }
                     }
-                });
+                );
                 const data = await response.json();
 
                 // 兼容后端返回格式: {code: 0, data: {data: [...]}}
@@ -6531,10 +6596,105 @@
                     cachedWorlds = [];
                     document.getElementById('world-list').innerHTML = '<div class="world-empty">加载失败</div>';
                 }
+                updateWorldDeletedToggleUI();
             } catch (error) {
                 console.error('加载世界列表失败:', error);
                 cachedWorlds = [];
                 document.getElementById('world-list').innerHTML = '<div class="world-empty">加载失败</div>';
+            }
+        }
+
+        async function toggleDeletedWorldsView() {
+            worldListMode = worldListMode === 'deleted' ? 'active' : 'deleted';
+            updateWorldDeletedToggleUI();
+            // 切换模式时清空搜索，避免两套列表关键字串味
+            const searchInput = document.getElementById('world-search-input');
+            const clearBtn = document.getElementById('world-search-clear');
+            if (searchInput) searchInput.value = '';
+            if (clearBtn) clearBtn.style.display = 'none';
+            await loadUserWorlds();
+        }
+
+        async function hideWorld(worldId, worldName) {
+            const confirmMsg = window.t
+                ? window.t('confirm_hide_world', { name: worldName || '' })
+                : `确定隐藏世界「${worldName || ''}」吗？隐藏后不会出现在列表中，可在「已删除的世界」中恢复。数据不会丢失。`;
+            if (!confirm(confirmMsg)) return;
+
+            try {
+                const response = await fetch(`/api/worlds/${worldId}/hide`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const data = await response.json();
+                if (data.code === 0 || data.success) {
+                    showSuccess(
+                        window.t
+                            ? window.t('success_world_hidden', { name: worldName || '' })
+                            : `✓ 世界「${worldName || ''}」已隐藏`
+                    );
+                    // 隐藏当前正在使用的世界 → 退出到未选世界状态
+                    if (String(worldId) === String(WORLD_ID)) {
+                        let newUrl = `${window.location.pathname}?user_id=${USER_ID}`;
+                        if (WORKFLOW_ID) {
+                            newUrl += `&workflow_id=${WORKFLOW_ID}`;
+                        }
+                        window.location.href = newUrl;
+                        return;
+                    }
+                    await loadUserWorlds();
+                } else {
+                    showError(
+                        window.t
+                            ? window.t('error_hide_world_failed', { error: data.message || data.error || '未知错误' })
+                            : `隐藏世界失败: ${data.message || data.error || '未知错误'}`
+                    );
+                }
+            } catch (error) {
+                console.error('隐藏世界失败:', error);
+                showError(
+                    window.t
+                        ? window.t('error_hide_world_failed', { error: error.message })
+                        : `隐藏世界失败: ${error.message}`
+                );
+            }
+        }
+
+        async function restoreWorld(worldId, worldName) {
+            try {
+                const response = await fetch(`/api/worlds/${worldId}/restore`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const data = await response.json();
+                if (data.code === 0 || data.success) {
+                    showSuccess(
+                        window.t
+                            ? window.t('success_world_restored', { name: worldName || '' })
+                            : `✓ 世界「${worldName || ''}」已恢复显示`
+                    );
+                    await loadUserWorlds();
+                } else {
+                    const msg = data.message || data.error || '未知错误';
+                    showError(
+                        window.t
+                            ? window.t('error_restore_world_failed', { error: msg })
+                            : `恢复世界失败: ${msg}`
+                    );
+                }
+            } catch (error) {
+                console.error('恢复世界失败:', error);
+                showError(
+                    window.t
+                        ? window.t('error_restore_world_failed', { error: error.message })
+                        : `恢复世界失败: ${error.message}`
+                );
             }
         }
 
@@ -6691,6 +6851,9 @@
                 if (data.code === 0) {
                     showSuccess(window.t ? window.t('success_world_created_detail', {name: name}) : `✓ 世界 "${name}" 创建成功！`);
                     closeNewWorldModal();
+                    // 新建世界一定出现在正常列表；若当前在「已删除」视图则切回
+                    worldListMode = 'active';
+                    updateWorldDeletedToggleUI();
                     await loadUserWorlds();
                     updateStatus(window.t ? window.t('status_world_created') : '世界创建完成');
 

@@ -909,7 +909,10 @@ def collect_storyboard_folder_data(user_id: int, world_id: Optional[int]) -> lis
     )
     scripts = scripts_result.get('data', [])
     storyboards = StoryboardModel.list_folders_by_user(user_id=user_id, world_id=world_id)
-    worlds_result = WorldModel.list_by_user(user_id=user_id, page=1, page_size=100)
+    # visibility=all：已伪删除世界若仍有故事板，文件夹展示名仍需能解析
+    worlds_result = WorldModel.list_by_user(
+        user_id=user_id, page=1, page_size=100, visibility='all'
+    )
     worlds = worlds_result.get('data', [])
     world_names = {world.get('id'): world.get('name') for world in worlds}
     return build_storyboard_folders(scripts, storyboards, world_names)

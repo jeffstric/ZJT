@@ -6655,18 +6655,30 @@ async def is_zjt():
 async def get_worlds(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    visibility: str = Query(
+        'active',
+        description="列表范围：active=未删除(默认) | deleted=已伪删除 | all=全部",
+    ),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
-    获取世界列表
+    获取世界列表。
+
+    默认仅返回未伪删除世界（visibility=active），全站世界选择器自动生效。
+    传入 visibility=deleted 可查看已隐藏世界（剧本策划侧栏「已删除」视图）。
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        result = WorldModel.list_by_user(
+        vis = (visibility or 'active').lower()
+        if vis not in ('active', 'deleted', 'all'):
+            vis = 'active'
+        result = await asyncio.to_thread(
+            WorldModel.list_by_user,
             user_id=user_id,
             page=page,
-            page_size=page_size
+            page_size=page_size,
+            visibility=vis,
         )
         return JSONResponse(
             status_code=200,
@@ -6847,6 +6859,99 @@ async def update_world(
         )
 
 
+@app.post('/api/worlds/{world_id}/hide')
+async def hide_world(
+    world_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    伪删除（隐藏）世界：仅标记 is_deleted=1，不删库、不删资产。
+    已隐藏时幂等成功。
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        world = await asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.DELETE)
+
+        await asyncio.to_thread(WorldModel.soft_delete, world_id)
+        updated = await asyncio.to_thread(WorldModel.get_by_id, world_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '已从列表隐藏',
+                'data': updated.to_dict() if updated else (world.to_dict() if world else None)
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to hide world {world_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.post('/api/worlds/{world_id}/restore')
+async def restore_world(
+    world_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    恢复伪删除世界：is_deleted=0，重新出现在正常列表。
+    若同用户下已有同名未删除世界，返回 400。
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        world = await asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.DELETE)
+
+        # 仅对仍标记为删除的世界做重名校验
+        if getattr(world, 'is_deleted', 0):
+            existing = await asyncio.to_thread(
+                WorldModel.get_by_name, user_id, world.name, False
+            )
+            if existing and getattr(existing, 'id', None) != world_id:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        'code': -1,
+                        'message': '存在同名世界，请先修改名称后再恢复',
+                        'data': None
+                    }
+                )
+
+        await asyncio.to_thread(WorldModel.restore, world_id)
+        updated = await asyncio.to_thread(WorldModel.get_by_id, world_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '已恢复显示',
+                'data': updated.to_dict() if updated else (world.to_dict() if world else None)
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to restore world {world_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
 @app.delete('/api/worlds/{world_id}')
 async def delete_world(
     world_id: int,
@@ -6854,7 +6959,8 @@ async def delete_world(
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
-    删除世界
+    硬删除世界（物理删除记录）。
+    伪删除请使用 POST /api/worlds/{world_id}/hide。
     """
     try:
         user_id = _get_user_id_from_header(user_id)
