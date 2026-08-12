@@ -20,6 +20,20 @@ const state = {
     userId: null,
     authToken: null,
     editionInfo: { mode: 'community', mode_label: '社区版' },
+    /** 系统 features 探查（如 dialogue_emotion_tts） */
+    serverFeatures: {},
+
+    /**
+     * 对白情感向量编辑弹窗
+     * @type {{ open: boolean, dialogueId: number|null, values: number[], saving: boolean, error: string }}
+     */
+    emoVecEditor: {
+        open: false,
+        dialogueId: null,
+        values: [0, 0, 0, 0, 0, 0, 0, 0],
+        saving: false,
+        error: '',
+    },
 
     title: '故事板',
     style: '',

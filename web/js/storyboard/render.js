@@ -22,7 +22,13 @@ import state, {
 } from './state.js';
 import { characterReferenceSelectionKey, formatDuration, mapAssetAvatar } from './adapters.js';
 import { icon } from './icons.js';
-import { t as i18nT } from './utils.js';
+import {
+    t as i18nT,
+    EMO_VEC_LABELS,
+    EMO_VEC_MAX_SUM,
+    formatEmoVecSummary,
+    parseEmoVec,
+} from './utils.js';
 import {
     getAutoCompleteButtonViewModel,
     getAutoCompleteSummary,
@@ -1042,6 +1048,17 @@ function renderDialogueAudioSource(scene) {
         </section>`;
 }
 
+function renderDialogueEmoSummary(d) {
+    const summary = formatEmoVecSummary(d.emoVec);
+    const has = summary !== '未设置';
+    return `
+        <button type="button" class="tool-button dialogue-emo-btn ${has ? 'has-emo' : ''}"
+            data-action="edit-dialogue-emo-vec" data-dialogue-id="${d.id}"
+            title="查看/编辑配音情感向量">
+            ${icon('music', 14)} 情感${has ? ` · ${escapeHtml(summary)}` : ''}
+        </button>`;
+}
+
 function renderDialoguePanel(scene) {
     const rows = (scene.dialogues || []).map(d => {
         const characterOptions = '<option value="">旁白</option>' + state.characters.map(c =>
@@ -1057,6 +1074,7 @@ function renderDialoguePanel(scene) {
                 </div>
                 ${d.audioUrl ? `<audio src="${escapeHtml(d.audioUrl)}" controls class="dialogue-audio"></audio>` : ''}
                 <div class="dialogue-actions">
+                    ${renderDialogueEmoSummary(d)}
                     <button class="tool-button" data-action="generate-voiceover" data-dialogue-id="${d.id}">${icon('mic', 14)} 生成配音</button>
                     <button class="tool-button" data-action="save-dialogue" data-dialogue-id="${d.id}">${icon('success', 14)} 保存</button>
                     <button class="tool-button" data-action="delete-dialogue" data-dialogue-id="${d.id}">${icon('delete', 14)}</button>
@@ -2616,6 +2634,7 @@ function renderModalsHtml() {
         renderGlobalStyleDialog(),
         renderSceneEditDialog(),
         renderVideoTypeSwitchDialog(),
+        renderEmoVecEditorDialog(),
     ].join('');
 }
 
@@ -3355,12 +3374,75 @@ function renderDialogueRowOuter(d) {
                 </div>
                 ${d.audioUrl ? `<audio src="${escapeHtml(d.audioUrl)}" controls class="dialogue-audio"></audio>` : ''}
                 <div class="dialogue-actions">
+                    ${renderDialogueEmoSummary(d)}
                     <button class="tool-button" data-action="generate-voiceover" data-dialogue-id="${d.id}">${icon('mic', 14)} 生成配音</button>
                     <button class="tool-button" data-action="save-dialogue" data-dialogue-id="${d.id}">${icon('success', 14)} 保存</button>
                     <button class="tool-button" data-action="delete-dialogue" data-dialogue-id="${d.id}">${icon('delete', 14)}</button>
                 </div>
             </div>`;
 }
+
+function renderEmoVecEditorDialog() {
+    const editor = state.emoVecEditor || {};
+    if (!editor.open) return '';
+    const values = Array.isArray(editor.values) ? editor.values : parseEmoVec(null);
+    const sum = values.reduce((a, b) => a + Number(b || 0), 0);
+    const valid = sum <= EMO_VEC_MAX_SUM + 1e-6;
+    const autoAiOn = Boolean(state.serverFeatures?.dialogue_emotion_tts);
+    const sliders = EMO_VEC_LABELS.map((label, idx) => {
+        const v = Number(values[idx] || 0);
+        return `
+            <div class="emo-vec-slider-row" data-emo-idx="${idx}">
+                <div class="emo-vec-slider-head">
+                    <span class="emo-vec-label">${escapeHtml(label)}</span>
+                    <span class="emo-vec-value" data-emo-value="${idx}">${v.toFixed(2)}</span>
+                </div>
+                <input type="range" min="0" max="1.5" step="0.01"
+                    value="${v}"
+                    data-emo-slider="${idx}"
+                    class="emo-vec-range" />
+            </div>`;
+    }).join('');
+    const errHtml = editor.error
+        ? `<div class="dialog-error">${escapeHtml(editor.error)}</div>`
+        : '';
+    const saveLabel = editor.saving ? '保存中…' : '保存';
+    return `
+        <div class="modal-overlay" data-modal="emo-vec-editor">
+            <div class="edit-dialog emo-vec-dialog" role="dialog" aria-modal="true" aria-labelledby="emo-vec-title">
+                <header>
+                    <h2 id="emo-vec-title">配音情感向量</h2>
+                    <button type="button" data-action="close-emo-vec-editor" title="关闭">${icon('close', 18)}</button>
+                </header>
+                <div class="emo-vec-body">
+                    <p class="emo-vec-hint">
+                        控制本句对白生成配音时的情感色彩（8 维，总和 ≤ ${EMO_VEC_MAX_SUM}）。
+                        保存后再次「生成配音」将按此向量提交（企业版生效）。
+                    </p>
+                    <div class="emo-vec-enterprise-note ${autoAiOn ? 'is-active' : ''}">
+                        ${autoAiOn
+                            ? '当前环境已启用企业版能力：剧本拆分时 AI 可自动为对白填写情感向量。'
+                            : '说明：所有用户均可查看与手动编辑。仅<strong>企业版</strong>支持在剧本拆分时由 AI 自动推断情感向量，并在自动配音中应用。'}
+                    </div>
+                    <div class="emo-vec-sliders">
+                        ${sliders}
+                    </div>
+                    <div class="emo-vec-sum ${valid ? 'ok' : 'bad'}">
+                        总和：<strong data-emo-sum>${sum.toFixed(2)}</strong> / ${EMO_VEC_MAX_SUM}
+                        ${valid ? '' : '<span class="emo-vec-warn"> 超出上限，请调低</span>'}
+                    </div>
+                    ${errHtml}
+                </div>
+                <footer class="dialog-footer">
+                    <button type="button" class="btn-ghost" data-action="reset-emo-vec-editor">清零</button>
+                    <button type="button" class="btn-ghost" data-action="close-emo-vec-editor">取消</button>
+                    <button type="button" class="btn-primary" data-action="save-emo-vec-editor"
+                        ${editor.saving || !valid ? 'disabled' : ''}>${saveLabel}</button>
+                </footer>
+            </div>
+        </div>`;
+}
+
 
 // ==================== 对外局部更新函数（polling 调用）====================
 

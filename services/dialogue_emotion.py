@@ -50,7 +50,10 @@ class DialogueEmotionProvider(Protocol):
 
 
 class CommunityDialogueEmotionProvider:
-    """社区/未注入时的 fail-closed 默认实现。"""
+    """社区/未注入时的 fail-closed 默认实现。
+
+    normalize 允许保存/展示用数值修复；TTS 与 parser 注入仍关闭。
+    """
 
     available = False
 
@@ -64,7 +67,9 @@ class CommunityDialogueEmotionProvider:
         return ""
 
     def normalize_emo_vec(self, raw: Any) -> Optional[str]:
-        return None
+        # 全版本可编辑入库：仅数值规范化，不表示 TTS 已启用
+        from utils.emotion_vector import normalize_emotion_vector
+        return normalize_emotion_vector(raw)
 
     def resolve_tts_emotion_kwargs(
         self,

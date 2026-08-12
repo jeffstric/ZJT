@@ -4518,13 +4518,14 @@ async def add_dialogue(
         max_sort = max([d['sort_order'] for d in existing], default=-1.0)
         sort_order = max_sort + 1.0
 
+    # 全版本允许写入 emo_vec（展示/手动编辑）；TTS 是否使用仍由企业门面决定
     emo_vec = None
-    try:
-        from services.dialogue_emotion import is_enabled as _emo_on, normalize_emo_vec as _norm_emo
-        if _emo_on() and data.get('emo_vec') is not None:
+    if data.get('emo_vec') is not None:
+        try:
+            from services.dialogue_emotion import normalize_emo_vec as _norm_emo
             emo_vec = _norm_emo(data.get('emo_vec'))
-    except Exception:
-        emo_vec = None
+        except Exception:
+            emo_vec = None
 
     dialogue_id = await asyncio.to_thread(
         StoryboardDialogueModel.create,
@@ -4557,14 +4558,17 @@ async def update_dialogue(
     data = await request.json()
     update_data = {k: v for k, v in data.items() if k in ALLOWED_DIALOGUE_UPDATE_FIELDS}
     if 'emo_vec' in update_data:
+        # 全版本可编辑；空串/非法 → 清空为 NULL
         try:
-            from services.dialogue_emotion import is_enabled as _emo_on, normalize_emo_vec as _norm_emo
-            if _emo_on():
-                update_data['emo_vec'] = _norm_emo(update_data.get('emo_vec'))
+            from services.dialogue_emotion import normalize_emo_vec as _norm_emo
+            raw = update_data.get('emo_vec')
+            if raw is None or raw == '' or (isinstance(raw, str) and not raw.strip()):
+                update_data['emo_vec'] = None
             else:
-                update_data.pop('emo_vec', None)
+                update_data['emo_vec'] = _norm_emo(raw)
         except Exception:
-            update_data.pop('emo_vec', None)
+            update_data['emo_vec'] = None
+
     update_data['last_modified_user_id'] = user_id
     affected = await asyncio.to_thread(
         StoryboardDialogueModel.update, dialogue_id, **update_data

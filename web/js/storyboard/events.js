@@ -689,11 +689,23 @@ function collectDialoguePayload(row) {
     const text = row.querySelector('[data-dialogue-field="text"]')?.value || '';
     const speed = parseFloat(row.querySelector('[data-dialogue-field="speed"]')?.value || 1.0);
     const volume = parseInt(row.querySelector('[data-dialogue-field="volume"]')?.value || 100, 10);
+    const dialogueId = parseInt(row?.dataset?.dialogueId, 10);
+    let emoVec = null;
+    if (dialogueId) {
+        for (const scene of state.scenes) {
+            const d = (scene.dialogues || []).find((item) => item.id === dialogueId);
+            if (d) {
+                emoVec = d.emoVec ?? null;
+                break;
+            }
+        }
+    }
     return {
         character_id: characterRaw ? parseInt(characterRaw, 10) : null,
         text,
         speed,
         volume,
+        emo_vec: emoVec,
     };
 }
 
@@ -707,6 +719,7 @@ async function saveDialogueFromRow(row, { silent = false } = {}) {
         text: payload.text,
         speed: payload.speed,
         volume: payload.volume,
+        emoVec: payload.emo_vec ?? null,
     });
     if (!silent) {
         notify('对话已保存');
@@ -1741,12 +1754,111 @@ async function handleAction(action, target) {
         const row = target.closest('[data-dialogue-row]');
         await saveDialogueFromRow(row, { silent: true });
         const dialogueId = parseInt(target.dataset.dialogueId, 10);
-        const response = await api.generateDialogueVoiceover(dialogueId);
+        let emoVec = null;
+        for (const scene of state.scenes) {
+            const d = (scene.dialogues || []).find((item) => item.id === dialogueId);
+            if (d) {
+                emoVec = d.emoVec || null;
+                break;
+            }
+        }
+        const voiceConfig = emoVec
+            ? { emo_control_method: 2, emo_vec: emoVec }
+            : {};
+        const response = await api.generateDialogueVoiceover(dialogueId, voiceConfig);
         if (response.success) {
             const ownerScene = state.scenes.find(s => (s.dialogues || []).some(d => d.id === dialogueId));
             if (ownerScene) pollSceneTaskStatus(ownerScene.id);
         }
         notify(response.error || '配音任务已提交');
+        return;
+    }
+
+    if (action === 'edit-dialogue-emo-vec') {
+        const dialogueId = parseInt(target.dataset.dialogueId, 10);
+        let dialogue = null;
+        for (const scene of state.scenes) {
+            dialogue = (scene.dialogues || []).find((item) => item.id === dialogueId) || null;
+            if (dialogue) break;
+        }
+        if (!dialogue) {
+            notify('对话不存在');
+            return;
+        }
+        const { parseEmoVec } = await import('./utils.js');
+        state.emoVecEditor = {
+            open: true,
+            dialogueId,
+            values: parseEmoVec(dialogue.emoVec),
+            saving: false,
+            error: '',
+        };
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'close-emo-vec-editor') {
+        state.emoVecEditor = {
+            open: false,
+            dialogueId: null,
+            values: [0, 0, 0, 0, 0, 0, 0, 0],
+            saving: false,
+            error: '',
+        };
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'reset-emo-vec-editor') {
+        if (!state.emoVecEditor?.open) return;
+        state.emoVecEditor = {
+            ...state.emoVecEditor,
+            values: [0, 0, 0, 0, 0, 0, 0, 0],
+            error: '',
+        };
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'save-emo-vec-editor') {
+        const editor = state.emoVecEditor || {};
+        const dialogueId = editor.dialogueId;
+        if (!dialogueId) return;
+        const { normalizeEmoVec, EMO_VEC_MAX_SUM } = await import('./utils.js');
+        const sum = (editor.values || []).reduce((a, b) => a + Number(b || 0), 0);
+        if (sum > EMO_VEC_MAX_SUM + 1e-6) {
+            state.emoVecEditor = {
+                ...editor,
+                error: `情感向量总和不能超过 ${EMO_VEC_MAX_SUM}`,
+            };
+            rerenderModals();
+            return;
+        }
+        const emoVec = normalizeEmoVec(editor.values);
+        state.emoVecEditor = { ...editor, saving: true, error: '' };
+        rerenderModals();
+        try {
+            await api.updateDialogue(dialogueId, { emo_vec: emoVec });
+            patchDialogueInState(dialogueId, { emoVec: emoVec || null });
+            state.emoVecEditor = {
+                open: false,
+                dialogueId: null,
+                values: [0, 0, 0, 0, 0, 0, 0, 0],
+                saving: false,
+                error: '',
+            };
+            rerenderModals();
+            refresh([Region.LEFT_TAB_BODY, Region.MODAL]);
+            notify(emoVec ? '情感向量已保存' : '情感向量已清空');
+        } catch (e) {
+            state.emoVecEditor = {
+                ...state.emoVecEditor,
+                saving: false,
+                error: e.message || '保存失败',
+            };
+            rerenderModals();
+            notify(e.message || '保存失败');
+        }
         return;
     }
 
@@ -2536,6 +2648,36 @@ export function bindEvents() {
             state.scriptDialogueLanguage = target.value;
         } else if (target.dataset.scriptLanguageCustom === 'prompt') {
             state.scriptPromptLanguage = target.value;
+        } else if (target.matches && target.matches('[data-emo-slider]')) {
+            // 情感向量滑块：只更新 state + 轻量 DOM，避免整弹窗重绘打断拖动
+            const idx = parseInt(target.getAttribute('data-emo-slider'), 10);
+            if (!Number.isFinite(idx) || !state.emoVecEditor?.open) return;
+            const val = Number(target.value) || 0;
+            const next = [...(state.emoVecEditor.values || [])];
+            next[idx] = val;
+            state.emoVecEditor = { ...state.emoVecEditor, values: next, error: '' };
+            const valueEl = document.querySelector(`[data-emo-value="${idx}"]`);
+            if (valueEl) valueEl.textContent = val.toFixed(2);
+            const sum = next.reduce((a, b) => a + Number(b || 0), 0);
+            const sumEl = document.querySelector('[data-emo-sum]');
+            if (sumEl) sumEl.textContent = sum.toFixed(2);
+            const sumWrap = sumEl?.closest('.emo-vec-sum');
+            if (sumWrap) {
+                const ok = sum <= 1.5 + 1e-6;
+                sumWrap.classList.toggle('ok', ok);
+                sumWrap.classList.toggle('bad', !ok);
+                let warn = sumWrap.querySelector('.emo-vec-warn');
+                if (!ok && !warn) {
+                    warn = document.createElement('span');
+                    warn.className = 'emo-vec-warn';
+                    warn.textContent = ' 超出上限，请调低';
+                    sumWrap.appendChild(warn);
+                } else if (ok && warn) {
+                    warn.remove();
+                }
+            }
+            const saveBtn = document.querySelector('[data-action="save-emo-vec-editor"]');
+            if (saveBtn) saveBtn.disabled = sum > 1.5 + 1e-6 || Boolean(state.emoVecEditor.saving);
         }
     });
 
