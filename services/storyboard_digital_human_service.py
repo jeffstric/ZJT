@@ -387,9 +387,8 @@ def build_digital_human_generation_plan(
     ).strip()
     first_frame_path = _resolve_first_frame_path(scene)
 
-    # 提示词：优先分镜 video_prompt，否则默认动作句（台词已在音频里）
-    video_prompt = str(_get_field(scene, "video_prompt") or "").strip()
-    prompt = video_prompt or _DHC.DEFAULT_PROMPT
+    # 提示词：数字人写死为产品固定文案（台词已在音频里，不读 video_prompt）
+    prompt = _DHC.DEFAULT_PROMPT
 
     ratio = (_get_field(storyboard, "workflow_ratio") or "").strip() or "9:16"
     audio_input = segments[0].audio_url if segments else ""

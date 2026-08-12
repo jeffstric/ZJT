@@ -1132,7 +1132,7 @@ class StoryboardDigitalHumanConstants:
     """Storyboard digital-human (lip-sync) — 统一 MiniMax H3。"""
     # 分镜对口型固定 MiniMax H3（task_type=35）；不再路由 Wan2.2 / LTX2.3。
     TASK_TYPE = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
-    DEFAULT_PROMPT = "角色面向镜头深情的说话，固定镜头。"
+    DEFAULT_PROMPT = "图片1中的角色在说话。"
     ERROR_AUDIO_REQUIRED = "audio_required"
     ERROR_AUDIO_PENDING = "audio_pending"
     ERROR_AUDIO_FAILED = "audio_failed"

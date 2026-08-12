@@ -172,7 +172,7 @@ def test_scene_scoped_digital_human_tool_submits_and_marks_asset_as_already_boun
         first_frame_path="https://example.com/ff.png",
         ratio="16:9",
         billable_duration=4.0,
-        prompt="角色面向镜头深情的说话，固定镜头。",
+        prompt="图片1中的角色在说话。",
         audio_input="https://example.com/a.wav",
         audio_input_role="speech_audio",
         routing_reason="minimax_h3_only",
