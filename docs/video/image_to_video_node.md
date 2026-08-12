@@ -10,6 +10,7 @@
 |------|------|
 | sora2 | OpenAI Sora 2（已下线隐藏） |
 | minimax_h3 | MiniMax H3（首尾帧图生视频） |
+| minimax_h3_r2v | MiniMax H3 参考生视频（多参考图，最多 9 张） |
 | vidu | Vidu |
 | seedance | Seedance 火山引擎 |
 | ltx2_3 | LTX2.3 |

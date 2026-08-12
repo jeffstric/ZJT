@@ -1006,6 +1006,7 @@ class DriverImplementation:
 
     # MiniMax H3
     MINIMAX_H3_RUNNINGHUB_V1 = 'minimax_h3_runninghub_v1'
+    MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 'minimax_h3_reference_runninghub_v1'
 
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 'digital_human_minimax_h3_runninghub_v1'
@@ -1147,6 +1148,7 @@ class DriverImplementationId:
 
     # MiniMax H3
     MINIMAX_H3_RUNNINGHUB_V1 = 65
+    MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 67
 
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 66
@@ -1222,6 +1224,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_mini_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_MINI_HUIMENGI_V1,
     'seedance_2_5_volcengine_v1': DriverImplementationId.SEEDANCE_2_5_VOLCENGINE_V1,
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
+    'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
 }
 
@@ -1264,6 +1267,7 @@ class DriverKey:
 
     # MiniMax H3 相关
     MINIMAX_H3_IMAGE_TO_VIDEO = 'minimax_h3_image_to_video'
+    MINIMAX_H3_REFERENCE_TO_VIDEO = 'minimax_h3_reference_to_video'
 
     # Wan22 相关
     WAN22_IMAGE_TO_VIDEO = 'wan22_image_to_video'
@@ -1360,6 +1364,7 @@ class TaskTypeId:
         'DIGITAL_HUMAN_LTX2_3_VOICE': '数字人LTX2.3 With Voice',
         'DIGITAL_HUMAN_MINIMAX_H3': '数字人 MiniMax H3',
         'MINIMAX_H3_IMAGE_TO_VIDEO': 'MiniMax H3 图生视频',
+        'MINIMAX_H3_REFERENCE_TO_VIDEO': 'MiniMax H3 参考生视频',
     }
     # 图片编辑
     GEMINI_2_5_FLASH_IMAGE = 1
@@ -1394,6 +1399,7 @@ class TaskTypeId:
     HAPPY_HORSE_REFERENCE_TO_VIDEO = 29
     HAPPY_HORSE_TEXT_TO_VIDEO = 30
     MINIMAX_H3_IMAGE_TO_VIDEO = 34
+    MINIMAX_H3_REFERENCE_TO_VIDEO = 36
 
 
     # 图片/视频 增强
@@ -1724,6 +1730,35 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=35,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
         supports_last_frame=True,  # 支持尾帧
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: MINIMAX_H3_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO,
+        key='minimax_h3_reference_to_video',
+        short_key='minimax_h3_r2v',
+        name='MiniMax H3 参考生视频',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+        implementation=DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
+        computing_power=0,
+        supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4', '2:3', '3:2', '21:9'],
+        supported_durations=[4, 5, 6, 7, 8, 9, 10],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=36,
+        supported_image_modes=[ImageMode.MULTI_REFERENCE],  # 多参考图模式
+        supports_last_frame=False,
+        max_multi_ref_images=9,  # 最多 9 张参考图
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
@@ -2655,6 +2690,21 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='RunningHub MiniMax H3 首尾帧图生视频接口（FL2VA 音频修复版）',
         sort_order=5200.0,
+        required_config_keys=['runninghub.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='minimax_h3_reference_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='MinimaxH3ReferenceRunninghubV1Driver',
+        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},  # 复用 H3 首尾帧版算力表
+        enabled=True,
+        description='RunningHub MiniMax H3 参考生视频接口（多参考图，最多9张）',
+        sort_order=5205.0,
         required_config_keys=['runninghub.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},
