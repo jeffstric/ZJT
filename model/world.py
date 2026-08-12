@@ -25,6 +25,9 @@ class World:
         self.user_id = kwargs.get('user_id')
         self.create_time = kwargs.get('create_time')
         self.update_time = kwargs.get('update_time')
+        # 伪删除：0=正常展示，1=从列表隐藏（数据与资产保留）
+        self.is_deleted = int(kwargs.get('is_deleted') or 0)
+        self.deleted_at = kwargs.get('deleted_at')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -40,7 +43,9 @@ class World:
             'composition_preference': self.composition_preference,
             'user_id': self.user_id,
             'create_time': self.create_time.isoformat() if self.create_time else None,
-            'update_time': self.update_time.isoformat() if self.update_time else None
+            'update_time': self.update_time.isoformat() if self.update_time else None,
+            'is_deleted': self.is_deleted,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None,
         }
 
 
@@ -130,7 +135,8 @@ class WorldModel:
         page_size: int = 10,
         order_by: str = 'create_time',
         order_direction: str = 'DESC',
-        keyword: Optional[str] = None
+        keyword: Optional[str] = None,
+        visibility: str = 'active',
     ) -> Dict[str, Any]:
         """
         Get world records list by user ID with pagination
@@ -142,6 +148,7 @@ class WorldModel:
             order_by: Order by field (create_time, update_time, id, name)
             order_direction: Order direction (ASC, DESC)
             keyword: Search keyword for name
+            visibility: 'active' (default, is_deleted=0) | 'deleted' (is_deleted=1) | 'all'
         
         Returns:
             Dictionary with 'total', 'page', 'page_size', 'data' keys
@@ -153,6 +160,10 @@ class WorldModel:
             order_by = 'create_time'
         if order_direction.upper() not in valid_directions:
             order_direction = 'DESC'
+
+        visibility = (visibility or 'active').lower()
+        if visibility not in ('active', 'deleted', 'all'):
+            visibility = 'active'
         
         where_conditions = []
         params = []
@@ -161,6 +172,11 @@ class WorldModel:
         if Edition.is_space_isolated():
             where_conditions.append("user_id = %s")
             params.append(user_id)
+
+        if visibility == 'active':
+            where_conditions.append("is_deleted = 0")
+        elif visibility == 'deleted':
+            where_conditions.append("is_deleted = 1")
         
         if keyword:
             where_conditions.append("name LIKE %s")
@@ -199,15 +215,27 @@ class WorldModel:
     @staticmethod
     def get_by_name(
         user_id: int,
-        name: str
+        name: str,
+        include_deleted: bool = False,
     ) -> Optional[World]:
         """
-        Get a world by user and name (exact match)
+        Get a world by user and name (exact match).
+
+        By default only matches non-deleted worlds (is_deleted=0) so that
+        soft-deleted names do not block creating a new world with the same name.
         """
-        sql = "SELECT * FROM world WHERE user_id = %s AND name = %s LIMIT 1"
+        if include_deleted:
+            sql = "SELECT * FROM world WHERE user_id = %s AND name = %s LIMIT 1"
+            params = (user_id, name)
+        else:
+            sql = (
+                "SELECT * FROM world WHERE user_id = %s AND name = %s "
+                "AND is_deleted = 0 LIMIT 1"
+            )
+            params = (user_id, name)
         
         try:
-            result = execute_query(sql, (user_id, name), fetch_one=True)
+            result = execute_query(sql, params, fetch_one=True)
             if result:
                 return World(**result)
             return None
@@ -265,11 +293,49 @@ class WorldModel:
         except Exception as e:
             logger.error(f"Failed to update world record {record_id}: {e}")
             raise
+
+    @staticmethod
+    def soft_delete(record_id: int) -> int:
+        """
+        Soft-delete (hide) a world: set is_deleted=1, deleted_at=NOW().
+        Idempotent if already deleted.
+        """
+        sql = """
+            UPDATE world
+            SET is_deleted = 1, deleted_at = NOW()
+            WHERE id = %s AND is_deleted = 0
+        """
+        try:
+            affected_rows = execute_update(sql, (record_id,))
+            logger.info(f"Soft-deleted world {record_id}, affected rows: {affected_rows}")
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to soft-delete world {record_id}: {e}")
+            raise
+
+    @staticmethod
+    def restore(record_id: int) -> int:
+        """
+        Restore a soft-deleted world: set is_deleted=0, deleted_at=NULL.
+        Idempotent if already active.
+        """
+        sql = """
+            UPDATE world
+            SET is_deleted = 0, deleted_at = NULL
+            WHERE id = %s AND is_deleted = 1
+        """
+        try:
+            affected_rows = execute_update(sql, (record_id,))
+            logger.info(f"Restored world {record_id}, affected rows: {affected_rows}")
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to restore world {record_id}: {e}")
+            raise
     
     @staticmethod
     def delete(record_id: int) -> int:
         """
-        Delete world record by ID
+        Delete world record by ID (hard delete)
 
         Args:
             record_id: Record ID
@@ -303,9 +369,12 @@ CREATE TABLE IF NOT EXISTS `world` (
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   `workspace_id` int DEFAULT NULL COMMENT '预留：所属工作空间ID',
+  `is_deleted` tinyint(1) NOT NULL DEFAULT 0 COMMENT '伪删除：0=正常展示，1=从列表隐藏',
+  `deleted_at` datetime NULL DEFAULT NULL COMMENT '伪删除时间；恢复时置空',
   PRIMARY KEY (`id`),
   KEY `idx_user_id` (`user_id`),
   KEY `idx_create_time` (`create_time`),
-  KEY `idx_workspace` (`workspace_id`)
+  KEY `idx_workspace` (`workspace_id`),
+  KEY `idx_user_deleted` (`user_id`, `is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='世界表';
 """

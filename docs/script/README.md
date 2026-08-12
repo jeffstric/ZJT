@@ -23,6 +23,7 @@
 | [shot_frame_references.md](./shot_frame_references.md) | 分镜节点引用显示功能（场景/道具/角色） |
 | [auto_submit_feature.md](./auto_submit_feature.md) | 自动提交数据库功能（定时自动保存）与提交按钮环绕 Loading |
 | [world_export_import.md](./world_export_import.md) | 世界导出与导入接口说明 |
+| [world_soft_delete.md](./world_soft_delete.md) | 世界伪删除（隐藏）/ 恢复显示 |
 | [character_matching.md](./character_matching.md) | 剧本解析角色匹配功能 |
 | [script_language_sync.md](./script_language_sync.md) | 剧本节点语言联动功能 |
 | [script_writer_sse_disconnect.md](./script_writer_sse_disconnect.md) | script_writer SSE 断线恢复；ask_user 选项点击不误清输入框 |
