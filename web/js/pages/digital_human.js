@@ -7,6 +7,9 @@
         audioFile: null,
         text: '角色面向镜头深情的说话，固定镜头。',
         aspectRatio: '9:16',
+        duration: 10,
+        maxEdge: 1280,
+        startSecond: 0,
         loading: false,
         error: '',
         results: [],
@@ -28,6 +31,9 @@
       this.fetchModelConfigs();
     },
     computed: {
+      isMinimax() {
+        return this.version === 'minimax';
+      },
       canSubmit() {
         return !!this.imageFile && !!this.audioFile && !!this.text.trim() && !this.loading && this.text.length <= 1000;
       },
@@ -40,10 +46,14 @@
         return '';
       },
       configKey() {
-        return this.version === 'v1' ? 'digital_human' : 'digital_human_ltx2_3_voice';
+        if (this.version === 'v1') return 'digital_human';
+        if (this.version === 'minimax') return 'digital_human_minimax_h3';
+        return 'digital_human_ltx2_3_voice';
       },
       historyType() {
-        return this.version === 'v1' ? 13 : 32;
+        if (this.version === 'v1') return 13;
+        if (this.version === 'minimax') return 35;
+        return 32;
       },
       aspectRatioOptions() {
         const config = this.modelConfigs[this.configKey];
@@ -68,7 +78,34 @@
           label: labelMap[ratio] || ratio
         }));
       },
+      durationOptions() {
+        const config = this.modelConfigs[this.configKey];
+        const durations = (config && config.durations && config.durations.length)
+          ? config.durations
+          : [4, 5, 6, 7, 8, 9, 10];
+        return durations.map(d => ({ value: d, label: d + 's' }));
+      },
+      maxEdgeOptions() {
+        return [
+          { value: 720, label: '720' },
+          { value: 1280, label: '1280' },
+          { value: 1920, label: '1920' }
+        ];
+      },
       computingPower() {
+        if (this.isMinimax) {
+          try {
+            if (typeof TaskConfig !== 'undefined' && TaskConfig.getComputingPower) {
+              const power = TaskConfig.getComputingPower(this.configKey, this.duration);
+              if (power != null && power > 0) return power;
+            }
+          } catch (e) {
+            console.warn('获取 MiniMax 数字人算力失败:', e);
+          }
+          // 兜底：与后端 default_computing_power 一致
+          const fallback = { 4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13 };
+          return fallback[this.duration] || 13;
+        }
         return 12;
       }
     },
@@ -77,13 +114,29 @@
         try {
           await TaskConfig.load();
           this.modelConfigs = TaskConfig.getModelConfigs();
-          const config = this.modelConfigs[this.configKey];
-          if (config && config.default_ratio) {
-            this.aspectRatio = config.default_ratio;
-          }
+          this.applyVersionDefaults();
         } catch (err) {
           console.error('获取模型配置失败:', err);
         }
+      },
+
+      applyVersionDefaults() {
+        const config = this.modelConfigs[this.configKey];
+        if (!config) return;
+        if (config.default_ratio) {
+          this.aspectRatio = config.default_ratio;
+        }
+        if (config.default_duration) {
+          this.duration = config.default_duration;
+        } else if (config.durations && config.durations.length) {
+          this.duration = config.durations[config.durations.length - 1];
+        }
+      },
+
+      defaultTextForVersion(v) {
+        if (v === 'v1') return '';
+        if (v === 'minimax') return '图片1中的角色在说话。';
+        return '角色面向镜头深情的说话，固定镜头。';
       },
 
       switchVersion(v) {
@@ -91,16 +144,16 @@
         this.version = v;
         this.imageFile = null;
         this.audioFile = null;
-        this.text = v === 'v2' ? '角色面向镜头深情的说话，固定镜头。' : '';
+        this.text = this.defaultTextForVersion(v);
+        this.duration = 10;
+        this.maxEdge = 1280;
+        this.startSecond = 0;
         this.error = '';
         this.results = [];
         this.projectId = '';
         this.status = '';
         this.clearStatusCheck();
-        const config = this.modelConfigs[this.configKey];
-        if (config && config.default_ratio) {
-          this.aspectRatio = config.default_ratio;
-        }
+        this.applyVersionDefaults();
       },
 
       onImageFile(e) {
@@ -133,16 +186,24 @@
           form.append('text', this.text);
           form.append('user_id', userId);
 
-          // v1 需要比例参数
           if (this.version === 'v1') {
             form.append('aspect_ratio', this.aspectRatio);
+          }
+
+          if (this.isMinimax) {
+            form.append('duration', String(this.duration));
+            form.append('max_edge', String(this.maxEdge));
+            form.append('start_second', String(this.startSecond || 0));
           }
 
           if (this.authToken) {
             form.append('auth_token', this.authToken);
           }
 
-          const api = this.version === 'v1' ? '/api/digital-human' : '/api/digital-human-v2';
+          let api = '/api/digital-human-v2';
+          if (this.version === 'v1') api = '/api/digital-human';
+          else if (this.isMinimax) api = '/api/digital-human-minimax-h3';
+
           const res = await axios.post(api, form, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
@@ -356,6 +417,12 @@
             :disabled="loading">
             LTX2.3 数字人
           </button>
+          <button type="button" class="dh-tab"
+            :class="{ active: version === 'minimax' }"
+            @click="switchVersion('minimax')"
+            :disabled="loading">
+            MiniMax H3 数字人
+          </button>
         </div>
         <div class="dh-tab-body">
         <div class="field">
@@ -365,8 +432,10 @@
         </div>
 
         <div class="field">
-          <label class="label">{{ version === 'v2' ? $t('prompt_text') : $t('speech_text') }} <span style="color: red;">*</span></label>
-          <textarea class="input" v-model="text" :placeholder="version === 'v2' ? $t('dh_video_prompt_placeholder') : $t('max_characters')" rows="5" :disabled="loading"></textarea>
+          <label class="label">{{ version === 'v1' ? $t('speech_text') : $t('prompt_text') }} <span style="color: red;">*</span></label>
+          <textarea class="input" v-model="text"
+            :placeholder="version === 'v1' ? $t('max_characters') : (isMinimax ? $t('dh_minimax_prompt_placeholder') : $t('dh_video_prompt_placeholder'))"
+            rows="5" :disabled="loading"></textarea>
           <div class="muted" style="margin-top: 4px;">
             {{ $t('current_characters') }}: {{ text.length }}/1000
             <span v-if="text.length > 1000" style="color: var(--danger); margin-left: 8px;">{{ $t('text_exceeded') }}</span>
@@ -374,9 +443,9 @@
         </div>
 
         <div class="field">
-          <label class="label">{{ version === 'v2' ? $t('speaking_audio') : $t('reference_audio') }} <span style="color: red;">*</span></label>
+          <label class="label">{{ version === 'v1' ? $t('reference_audio') : $t('speaking_audio') }} <span style="color: red;">*</span></label>
           <input class="input" type="file" accept="audio/*" @change="onAudioFile" :disabled="loading" />
-          <div class="muted" style="margin-top: 4px;">{{ version === 'v2' ? $t('speaking_audio_tip') : $t('audio_cloning_tip') }}</div>
+          <div class="muted" style="margin-top: 4px;">{{ version === 'v1' ? $t('audio_cloning_tip') : $t('speaking_audio_tip') }}</div>
         </div>
 
         <div v-if="version === 'v1'" class="field">
@@ -385,6 +454,30 @@
             <option v-for="opt in aspectRatioOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
           </select>
         </div>
+
+        <template v-if="isMinimax">
+          <div class="field">
+            <label class="label">{{ $t('video_duration') }} <span style="color: red;">*</span></label>
+            <select class="input" v-model.number="duration" :disabled="loading">
+              <option v-for="opt in durationOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+            <div class="muted" style="margin-top: 4px;">{{ $t('dh_minimax_duration_tip') }}</div>
+          </div>
+
+          <div class="field">
+            <label class="label">{{ $t('dh_max_edge') }} <span style="color: red;">*</span></label>
+            <select class="input" v-model.number="maxEdge" :disabled="loading">
+              <option v-for="opt in maxEdgeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+            <div class="muted" style="margin-top: 4px;">{{ $t('dh_max_edge_tip') }}</div>
+          </div>
+
+          <div class="field">
+            <label class="label">{{ $t('dh_start_second') }}</label>
+            <input class="input" type="number" min="0" step="1" v-model.number="startSecond" :disabled="loading" />
+            <div class="muted" style="margin-top: 4px;">{{ $t('dh_start_second_tip') }}</div>
+          </div>
+        </template>
 
         <div class="field" style="background: #1a1f2e; padding: 12px; border-radius: 8px; border: 1px solid var(--border);">
           <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -433,7 +526,10 @@
               <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
                 <div style="flex: 1;">
                   <div style="font-size: 14px; color: var(--text); margin-bottom: 4px;">{{ item.prompt }}</div>
-                  <div style="font-size: 12px; color: var(--muted);">{{ $t('ratio') }}: {{ item.ratio || '-' }}</div>
+                  <div style="font-size: 12px; color: var(--muted);">
+                    <span v-if="item.ratio">{{ $t('ratio') }}: {{ item.ratio }}</span>
+                    <span v-if="item.duration" style="margin-left: 8px;">{{ $t('video_duration') }}: {{ item.duration }}s</span>
+                  </div>
                 </div>
                 <span :style="{color: getHistoryStatusColor(item.status), fontSize: '12px', fontWeight: '600'}">
                   {{ getHistoryStatusText(item.status) }}

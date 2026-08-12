@@ -4453,6 +4453,7 @@ const AdminApp = {
                 'wan22_image_to_video': 'Wan22 图生视频',
                 'digital_human': '数字人',
                 'digital_human_ltx2_3_voice': '数字人 LTX2.3 With Voice',
+                'digital_human_minimax_h3': '数字人 MiniMax H3',
                 'vidu_image_to_video': 'Vidu 图生视频',
                 'vidu_q2_image_to_video': 'Vidu Q2 图生视频',
                 'seedream_text_to_image': 'Seedream 文生图',

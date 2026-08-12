@@ -1001,6 +1001,9 @@ class DriverImplementation:
     # MiniMax H3
     MINIMAX_H3_RUNNINGHUB_V1 = 'minimax_h3_runninghub_v1'
 
+    # MiniMax H3 数字人
+    DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 'digital_human_minimax_h3_runninghub_v1'
+
     # Vidu
     VIDU_DEFAULT = 'vidu_default'
     VIDU_Q2 = 'vidu_q2'
@@ -1138,6 +1141,9 @@ class DriverImplementationId:
     # MiniMax H3
     MINIMAX_H3_RUNNINGHUB_V1 = 65
 
+    # MiniMax H3 数字人
+    DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 66
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1205,6 +1211,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_HUIMENGI_V1,
     'seedance_2_0_mini_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_MINI_HUIMENGI_V1,
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
+    'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1257,6 +1264,7 @@ class DriverKey:
     # 数字人
     DIGITAL_HUMAN = 'digital_human'
     DIGITAL_HUMAN_LTX2_3_VOICE = 'digital_human_ltx2_3_voice'
+    DIGITAL_HUMAN_MINIMAX_H3 = 'digital_human_minimax_h3'
 
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_IMAGE_EDIT = 'qwen_multi_angle_image_edit'
@@ -1336,6 +1344,7 @@ class TaskTypeId:
         'AUDIO_GENERATE': '音频生成',
         'DIGITAL_HUMAN': '数字人生成',
         'DIGITAL_HUMAN_LTX2_3_VOICE': '数字人LTX2.3 With Voice',
+        'DIGITAL_HUMAN_MINIMAX_H3': '数字人 MiniMax H3',
         'MINIMAX_H3_IMAGE_TO_VIDEO': 'MiniMax H3 图生视频',
     }
     # 图片编辑
@@ -1385,6 +1394,7 @@ class TaskTypeId:
     # 数字人
     DIGITAL_HUMAN = 13
     DIGITAL_HUMAN_LTX2_3_VOICE = 32
+    DIGITAL_HUMAN_MINIMAX_H3 = 35
 
 
 
@@ -2072,6 +2082,20 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         sort_order=41,
     ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
+        key='digital_human_minimax_h3',
+        short_key='digital_human_minimax_h3',
+        name='MiniMax H3 数字人',
+        category=TaskCategory.DIGITAL_HUMAN,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.DIGITAL_HUMAN_MINIMAX_H3,
+        implementation=DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
+        computing_power=0,
+        supported_durations=[4, 5, 6, 7, 8, 9, 10],
+        default_duration=10,
+        sort_order=42,
+    ),
 
     # ==================== 图片/视频增强 ====================
     UnifiedTaskConfig(
@@ -2588,6 +2612,23 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
         ],
         default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='digital_human_minimax_h3_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='DigitalHumanMinimaxH3RunninghubV1Driver',
+        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},
+        enabled=True,
+        description='RunningHub MiniMax H3 数字人接口（图片+音频+提示词）',
+        sort_order=7002.0,
+        required_config_keys=['runninghub.api_key'],
+        # 分辨率经分镜偏好下发；驱动侧映射为 max_edge（480P→720, 720P→1280, 1080P→1920）
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720,
     ),
 
     # ==================== Vidu 供应商 ====================

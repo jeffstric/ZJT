@@ -208,8 +208,8 @@ CHARACTER_VOICE_MAX_DURATION = 20.0
 # 角色参考音频裁剪时 ffmpeg/ffprobe 单次执行超时（秒）
 CHARACTER_VOICE_TRIM_TIMEOUT = 30
 
-# 数字人双模型路由：分镜待说台词 TTS 总时长 <= 该阈值（秒）时选择 Wan2.2，> 则选择 LTX2.3。
-# 比较前统一按毫秒精度规整，避免浮点误差导致边界值被错误分配。
+# [已废弃] 原双模型路由阈值（Wan2.2 / LTX2.3）。分镜对口型已统一为 MiniMax H3，不再使用。
+# 保留常量以免外部引用硬崩；新代码请勿依赖。
 WAN_MAX_SPEECH_DURATION_SECONDS = 1.0
 
 
@@ -512,6 +512,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,  # 使用 RunningHub 的数字人 v1 版本
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本
+    DriverKey.DIGITAL_HUMAN_MINIMAX_H3: DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 数字人
     
     # Vidu 相关驱动
     DriverKey.VIDU_IMAGE_TO_VIDEO: DriverImplementation.VIDU_DEFAULT,         # 使用 Vidu 官方 API
@@ -1128,10 +1129,10 @@ class StoryboardAudioGenerateConstants:
 
 
 class StoryboardDigitalHumanConstants:
-    """Storyboard digital-human (lip-sync) generation — dual model routing (Wan2.2 / LTX2.3)."""
-    # LTX2.3 是默认/兜底模型；Wan2.2 仅在 TTS 总时长 <= WAN_MAX_SPEECH_DURATION_SECONDS 时使用。
-    TASK_TYPE = TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE
-    DEFAULT_PROMPT = "角色面向镜头深情的说话，固定镜头。"
+    """Storyboard digital-human (lip-sync) — 统一 MiniMax H3。"""
+    # 分镜对口型固定 MiniMax H3（task_type=35）；不再路由 Wan2.2 / LTX2.3。
+    TASK_TYPE = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
+    DEFAULT_PROMPT = "图片1中的角色在说话。"
     ERROR_AUDIO_REQUIRED = "audio_required"
     ERROR_AUDIO_PENDING = "audio_pending"
     ERROR_AUDIO_FAILED = "audio_failed"
@@ -1145,16 +1146,36 @@ class StoryboardDigitalHumanConstants:
     SKIP_REASON_AUDIO_PENDING = "audio_pending"
     SKIP_REASON_MISSING_IMAGE = "missing_image"
     SOURCE = "storyboard_digital_human"
-    # 路由原因（可观测）
+    # 可观测原因（历史兼容字段名 routing_reason）
+    ROUTING_REASON_MINIMAX = "minimax_h3_only"
+    # [已废弃] 原双模型路由原因，仅兼容旧 extra_config / 测试
     ROUTING_REASON_LTE_1S = "speech_duration_lte_1s"
     ROUTING_REASON_GT_1S = "speech_duration_gt_1s"
     ROUTING_REASON_UNKNOWN = "speech_duration_unknown"
     # 模型标识（plan.model / extra_config.digital_human_model）
+    MODEL_MINIMAX_H3 = "minimax_h3"
+    # [已废弃] 历史模型标识
     MODEL_WAN = "wan2.2"
     MODEL_LTX = "ltx2.3"
     # 音频输入角色（extra_config.audio_input_role）
-    AUDIO_ROLE_VOICE_REFERENCE = "voice_reference"
+    AUDIO_ROLE_VOICE_REFERENCE = "voice_reference"  # 已不用于 MiniMax
     AUDIO_ROLE_SPEECH_AUDIO = "speech_audio"
+    # MiniMax 视频时长（秒）
+    MIN_VIDEO_DURATION = 4
+    MAX_VIDEO_DURATION = 10
+    DEFAULT_VIDEO_DURATION = 10
+    # 分辨率 → 最长边（node 213）
+    DEFAULT_RESOLUTION = "720P"
+    DEFAULT_MAX_EDGE = 1280
+    DEFAULT_START_SECOND = 0
+    RESOLUTION_TO_MAX_EDGE = {
+        "480P": 720,
+        "480p": 720,
+        "720P": 1280,
+        "720p": 1280,
+        "1080P": 1920,
+        "1080p": 1920,
+    }
 
 
 class StoryboardAgentReadConstants:

@@ -13,6 +13,7 @@ import state, {
     getVideoSupportedDurations,
     resolveVideoDurationSeconds,
     getVideoResolutionOptions,
+    getDefaultVideoResolution,
     getAgentChatFontSizes,
     AGENT_CHAT_FONT_STEP_MIN,
     AGENT_CHAT_FONT_STEP_MAX,
@@ -409,7 +410,7 @@ function digitalHumanAudioHint(scene) {
         return {
             label: '配音已就绪',
             cssClass: 'ready',
-            title: '对口型分镜配音已完成，可以生成 LTX2.3 数字人视频',
+            title: '对口型分镜配音已完成，可以生成 MiniMax H3 数字人视频',
         };
     }
 
@@ -422,14 +423,14 @@ function digitalHumanAudioHint(scene) {
         return {
             label: '配音生成中',
             cssClass: 'running',
-            title: '对口型分镜的配音正在生成，完成后即可生成 LTX2.3 数字人视频',
+            title: '对口型分镜的配音正在生成，完成后即可生成 MiniMax H3 数字人视频',
         };
     }
 
     return {
         label: '需先配音',
         cssClass: 'missing',
-        title: '对口型分镜：请先在对话 Tab 生成配音，再生成 LTX2.3 数字人视频',
+        title: '对口型分镜：请先在对话 Tab 生成配音，再生成 MiniMax H3 数字人视频',
     };
 }
 
@@ -440,7 +441,7 @@ export function updateDigitalHumanAudioHint(scene) {
     const hint = digitalHumanAudioHint(scene);
     element.className = `ai-dh-hint ${hint.cssClass}`;
     element.title = hint.title;
-    element.textContent = `对口型 · LTX2.3 · ${hint.label}`;
+    element.textContent = `对口型 · MiniMax H3 · ${hint.label}`;
     return true;
 }
 
@@ -599,7 +600,7 @@ function renderFirstFrameStatusMark(scene) {
 
 function renderVideoTypeBadge(scene) {
     if (!isDigitalHumanScene(scene)) return '';
-    return `<span class="scene-video-type-badge digital-human" title="对口型（LTX2.3，需先配音）">对口型</span>`;
+    return `<span class="scene-video-type-badge digital-human" title="对口型（MiniMax H3，需先配音）">对口型</span>`;
 }
 
 function renderTimelineMediaFrame(scene) {
@@ -1324,13 +1325,13 @@ function renderAiPanel() {
 
     const isVideo = isVideoMode;
     const isDhScene = isDigitalHumanScene(currentScene);
-    // 对口型 + 直连「视频生成」：提示词/模型由服务端规划（台词或默认提示词、固定 LTX2.3 路由），不渲染提示词文本框
+    // 对口型 + 直连「视频生成」：提示词/模型由服务端规划（默认动作句、固定 MiniMax H3），不渲染提示词文本框
     const isDhDirectVideo = state.chatMode === 'video' && isDhScene;
-    // 对口型不展示图生视频的首尾帧/参考图模式切换，固定 LTX2.3 链路
+    // 对口型不展示图生视频的首尾帧/参考图模式切换，固定 MiniMax H3 链路
     const videoModeSelector = isVideo && !isDhScene && !isAiVideoLocked ? renderVideoModeSelector(disabled) : '';
     const dhAudioHint = isVideo && !isAiVideoLocked && isDhScene ? digitalHumanAudioHint(currentScene) : null;
     const dhHint = dhAudioHint
-        ? `<div class="ai-dh-hint ${dhAudioHint.cssClass}" title="${escapeHtml(dhAudioHint.title)}">对口型 · LTX2.3 · ${escapeHtml(dhAudioHint.label)}</div>`
+        ? `<div class="ai-dh-hint ${dhAudioHint.cssClass}" title="${escapeHtml(dhAudioHint.title)}">对口型 · MiniMax H3 · ${escapeHtml(dhAudioHint.label)}</div>`
         : '';
     const historyOpen = state.agentChatHistoryOpen !== false;
     const msgCount = (state.agentMessages || []).length;
@@ -2301,13 +2302,33 @@ function renderDefaultVideoModelConfig(disabled = false) {
     ) + renderFaceMaskToggle(disabled);
 }
 
-function renderVideoModelConfig() {
-    const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
-    const model = getSelectedVideoModel();
-    const scene = getCurrentScene();
-    const durations = getVideoSupportedDurations(model);
+function renderVideoResolutionChips(model, { label = '分辨率', hint = '' } = {}) {
     const resOpts = getVideoResolutionOptions(model);
-    const resolvedAuto = resolveVideoDurationSeconds(scene, model, 'auto');
+    if (!resOpts.length) return '';
+    const curRes = state.videoResolution && resOpts.some(o => o.value === state.videoResolution)
+        ? state.videoResolution
+        : (getDefaultVideoResolution(model) || resOpts[0]?.value || '');
+    let html = `<label class="config-label" style="margin-top:14px;">${escapeHtml(label)}</label>`;
+    if (hint) {
+        html += `<div class="config-hint">${escapeHtml(hint)}</div>`;
+    }
+    html += `<div class="config-chip-row">`;
+    resOpts.forEach(opt => {
+        const active = String(curRes) === String(opt.value) ? 'active' : '';
+        html += `<button type="button" class="config-chip ${active}" data-action="set-video-resolution" data-video-resolution="${escapeHtml(opt.value)}">${escapeHtml(opt.label || opt.value)}</button>`;
+    });
+    html += '</div>';
+    return html;
+}
+
+function renderVideoModelConfig() {
+    // 齿轮弹窗：分辨率绑定「图生视频模型」（分镜主路径 i2v / 对口型共用偏好），
+    // 不再用 getSelectedVideoModel()（会随输入图落到文生视频导致分辨率空白/跟错模型）。
+    const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
+    const i2vModel = getSelectedImageToVideoModel();
+    const scene = getCurrentScene();
+    const durations = getVideoSupportedDurations(i2vModel);
+    const resolvedAuto = resolveVideoDurationSeconds(scene, i2vModel, 'auto');
     const sceneDur = Number(scene?.duration);
     const sceneDurLabel = Number.isFinite(sceneDur) ? sceneDur.toFixed(sceneDur % 1 ? 1 : 0) : '—';
 
@@ -2320,29 +2341,18 @@ function renderVideoModelConfig() {
         '文生视频模型', '无图片输入时使用', 'textToVideo', textModels,
         state.selectedTextToVideoTaskId,
     ) + renderMediaModelSelect(
-        '图生视频模型', '首帧或首尾帧输入时使用', 'imageToVideo', models,
+        '图生视频模型', '首帧或首尾帧输入时使用；对口型数字人也使用此处分辨率偏好', 'imageToVideo', models,
         state.selectedImageToVideoTaskId,
-    ) + renderFaceMaskToggle() + renderMediaModelSelect(
+    ) + renderVideoResolutionChips(i2vModel, {
+        label: '分辨率',
+        hint: '随当前「图生视频模型」变化；对口型 MiniMax 将映射为最长边（480P→720 / 720P→1280 / 1080P→1920）',
+    }) + renderFaceMaskToggle() + renderMediaModelSelect(
         '参考视频模型', '多参考图、参考音视频或首尾帧加参考图时使用', 'referenceToVideo', referenceModels,
         state.selectedReferenceToVideoTaskId,
     );
 
-    if (resOpts.length) {
-        const curRes = state.videoResolution && resOpts.some(o => o.value === state.videoResolution)
-            ? state.videoResolution
-            : (resOpts[0]?.value || '');
-        html += `<label class="config-label" style="margin-top:14px;">分辨率</label>
-            <div class="config-hint">与 marketing 一致，随当前视频模型变化</div>
-            <div class="config-chip-row">`;
-        resOpts.forEach(opt => {
-            const active = String(curRes) === String(opt.value) ? 'active' : '';
-            html += `<button type="button" class="config-chip ${active}" data-action="set-video-resolution" data-video-resolution="${escapeHtml(opt.value)}">${escapeHtml(opt.label || opt.value)}</button>`;
-        });
-        html += '</div>';
-    }
-
     html += `<label class="config-label" style="margin-top:14px;">视频时长</label>
-        <div class="config-hint">Auto 会按当前分镜时长（含配音同步后）匹配「≥分镜时长且最接近」的模型档位</div>
+        <div class="config-hint">Auto 会按当前分镜时长（含配音同步后）匹配「≥分镜时长且最接近」的模型档位；对口型 MiniMax 另 clamp 到 4–10 秒</div>
         <div class="config-select-wrapper">
             <select class="chat-mode-select" data-config-select="videoDuration">`;
     const mode = state.videoDurationMode;

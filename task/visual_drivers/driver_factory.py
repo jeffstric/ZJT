@@ -662,6 +662,16 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1, MinimaxH3RunninghubV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import MinimaxH3RunninghubV1Driver: {e}")
+
+    try:
+        from .digital_human_minimax_h3_runninghub_v1_driver import DigitalHumanMinimaxH3RunninghubV1Driver
+        # 注册 MiniMax H3 数字人 RunningHub v1 版本
+        VideoDriverFactory.register_driver(
+            DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
+            DigitalHumanMinimaxH3RunninghubV1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import DigitalHumanMinimaxH3RunninghubV1Driver: {e}")
     
     try:
         from .vidu_default_driver import ViduDefaultDriver
