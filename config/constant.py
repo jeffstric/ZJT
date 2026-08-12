@@ -1128,6 +1128,21 @@ class StoryboardAudioGenerateConstants:
     SKIP_REASON_USES_VIDEO_AUDIO = "uses_video_audio"
 
 
+class EmotionVectorConstants:
+    """IndexTTS 情感向量维度约定（与 web/js/pages/audio_generate.js 对齐）。
+
+    算法与启用门禁在 enterprise 的 dialogue_emotion Provider 中；
+    此处仅公开标签/上限，供前端摘要与文档引用。
+    """
+    LABELS = ("喜", "怒", "哀", "惧", "厌恶", "低落", "惊喜", "平静")
+    DIM = 8
+    MAX_SUM = 1.5
+    MAX_EACH = 1.5
+    DEFAULT_VEC = (0.0,) * 8
+    CONTROL_METHOD_SAME_AS_REF = 0
+    CONTROL_METHOD_VECTOR = 2
+
+
 class StoryboardDigitalHumanConstants:
     """Storyboard digital-human (lip-sync) — 统一 MiniMax H3。"""
     # 分镜对口型固定 MiniMax H3（task_type=35）；不再路由 Wan2.2 / LTX2.3。

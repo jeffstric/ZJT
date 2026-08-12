@@ -106,7 +106,7 @@ ALLOWED_SCENE_UPDATE_FIELDS = {
     'audio_embedded', 'difficulty', 'act_name',
 }
 ALLOWED_DIALOGUE_UPDATE_FIELDS = {
-    'character_id', 'text', 'speed', 'volume',
+    'character_id', 'text', 'speed', 'volume', 'emo_vec',
 }
 VALID_ASSET_TYPES = ('first_frame', 'last_frame', 'video')
 
@@ -720,6 +720,10 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
     spatial_world = parsed_data.get('spatial_world') if isinstance(parsed_data.get('spatial_world'), dict) else None
     scenes: List[dict] = []
 
+    from services.dialogue_emotion import is_enabled as dialogue_emotion_enabled
+    from services.dialogue_emotion import normalize_emo_vec
+    emotion_on = dialogue_emotion_enabled()
+
     for group in parsed_data.get('shot_groups') or []:
         group_name = group.get('group_name') or ''
         group_type = group.get('group_type') or ''
@@ -769,11 +773,23 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                 text = str(dialogue.get('text') or '').strip()
                 if not text:
                     continue
+                emo_vec = normalize_emo_vec(dialogue.get('emo_vec')) if emotion_on else None
+                if emotion_on:
+                    logger.info(
+                        "[dialogue-emotion][build-scenes] shot=%s character_id=%s "
+                        "raw_emo=%r normalized_emo_vec=%r text_preview=%r",
+                        shot.get('shot_id') or shot.get('shot_number'),
+                        dialogue.get('character_id'),
+                        dialogue.get('emo_vec'),
+                        emo_vec,
+                        (text[:40] + "...") if len(text) > 40 else text,
+                    )
                 dialogues.append({
                     'character_id': _dialogue_character_id(dialogue, character_db_map),
                     'text': text,
                     'speed': 1.0,
                     'volume': 100,
+                    'emo_vec': emo_vec,
                 })
 
             from services.storyboard_scene_type import resolve_scene_video_type
@@ -1009,20 +1025,19 @@ def submit_storyboard_dialogue_voiceover(
     from services.storyboard_voiceover_bootstrap_service import (
         StoryboardVoiceoverBootstrapService,
     )
+    # 情感参数仅经企业版门面解析（社区/个人版忽略 body 中的 emo_*，防绕过）
+    from services.dialogue_emotion import resolve_tts_emotion_kwargs
+    emo_kwargs = resolve_tts_emotion_kwargs(dialogue=dialogue, config=config)
     transaction_id = str(uuid.uuid4())
+    extra_audio_kwargs = {'transaction_id': transaction_id}
+    extra_audio_kwargs.update(emo_kwargs)
     result = StoryboardVoiceoverBootstrapService()._submit_dialogue_voiceover_atomically(
         dialogue_id,
         user_id,
         ref_path=ref_path,
         text=text,
         scene_id=scene_id,
-        extra_audio_kwargs={
-            'transaction_id': transaction_id,
-            'emo_control_method': config.get('emo_control_method'),
-            'emo_weight': config.get('emo_weight'),
-            'emo_vec': config.get('emo_vec'),
-            'emo_text': config.get('emo_text'),
-        },
+        extra_audio_kwargs=extra_audio_kwargs,
     )
     if result.get('decision') != 'submitted':
         # 已选中有效配音（reused）或失败：保持与原返回结构兼容
@@ -4503,6 +4518,14 @@ async def add_dialogue(
         max_sort = max([d['sort_order'] for d in existing], default=-1.0)
         sort_order = max_sort + 1.0
 
+    emo_vec = None
+    try:
+        from services.dialogue_emotion import is_enabled as _emo_on, normalize_emo_vec as _norm_emo
+        if _emo_on() and data.get('emo_vec') is not None:
+            emo_vec = _norm_emo(data.get('emo_vec'))
+    except Exception:
+        emo_vec = None
+
     dialogue_id = await asyncio.to_thread(
         StoryboardDialogueModel.create,
         scene_id=scene_id,
@@ -4511,6 +4534,7 @@ async def add_dialogue(
         text=data.get('text'),
         speed=data.get('speed', 1.0),
         volume=data.get('volume', 100),
+        emo_vec=emo_vec,
         last_modified_user_id=user_id,
     )
     dialogue = await asyncio.to_thread(StoryboardDialogueModel.get_by_id, dialogue_id)
@@ -4524,7 +4548,7 @@ async def update_dialogue(
     dialogue_id: int,
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
-    """更新对话（角色/台词/语速/音量）"""
+    """更新对话（角色/台词/语速/音量/情感向量）"""
     user_id = get_user_id_from_header(user_id)
     dialogue, scene, err = await _ensure_dialogue_access(dialogue_id, user_id, Action.EDIT)
     if err:
@@ -4532,6 +4556,15 @@ async def update_dialogue(
 
     data = await request.json()
     update_data = {k: v for k, v in data.items() if k in ALLOWED_DIALOGUE_UPDATE_FIELDS}
+    if 'emo_vec' in update_data:
+        try:
+            from services.dialogue_emotion import is_enabled as _emo_on, normalize_emo_vec as _norm_emo
+            if _emo_on():
+                update_data['emo_vec'] = _norm_emo(update_data.get('emo_vec'))
+            else:
+                update_data.pop('emo_vec', None)
+        except Exception:
+            update_data.pop('emo_vec', None)
     update_data['last_modified_user_id'] = user_id
     affected = await asyncio.to_thread(
         StoryboardDialogueModel.update, dialogue_id, **update_data

@@ -239,7 +239,20 @@ async def _submit_new_task(ai_audio):
         audio_filename = f"audio_{timestamp}_{unique_id}.wav"
         result_path = os.path.join(UPLOAD_DIR, audio_filename)
         
-        logger.info(f"Task {task_id}: Calling generate_audio with text='{text[:50]}...', emo_control_method={emo_control_method}, result_path={result_path}")
+        logger.info(
+            f"Task {task_id}: Calling generate_audio with text='{text[:50]}...', "
+            f"emo_control_method={emo_control_method}, emo_vec={emo_vec!r}, "
+            f"emo_weight={emo_weight}, result_path={result_path}"
+        )
+        logger.info(
+            "[dialogue-emotion][audio-task] task_id=%s emo_control_method=%s emo_vec=%r "
+            "emo_text=%r text_preview=%r",
+            task_id,
+            emo_control_method,
+            emo_vec if emo_vec is not None else ai_audio.emo_vec,
+            emo_text,
+            (text[:40] + "...") if len(text) > 40 else text,
+        )
         
         # Call generate_audio utility
         success, audio_path_or_error = await generate_audio(
