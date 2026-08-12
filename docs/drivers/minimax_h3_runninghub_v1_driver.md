@@ -23,7 +23,7 @@ MiniMax H3 通过 RunningHub AI-App 接口调用**首尾帧图生视频**工作�
 | 时长 | 秒 | 5 | 4, 5, 6, 7, 8, 9, 10 |
 | 比例 | 视频比例 | 9:16 | 9:16, 16:9, 1:1, 4:3, 3:4 |
 | 分辨率 | 清晰度（影响算力，480P=720P×0.42） | 720P | 480P, 720P |
-| 提示词 | 文本 | "" | - |
+| 提示词 | 文本；提交前会经 `h3_prompt_optimize` 改写成 I2VA/FL2VA 规范，原文备份在 `extra_config.original_prompt` | "" | - |
 
 > **算力**：基准为 720P（1 算力 ≈ 13 R币），480P 为 720P 的 42%（通过分辨率倍率 `MINIMAX_H3_480P_PRICE_MULTIPLIER=0.42`）。
 > 工作流要求时长 4~15 秒（`RHMiniMaxH3FL2VATarget` 节点限制）。
@@ -41,6 +41,15 @@ MiniMax H3 通过 RunningHub AI-App 接口调用**首尾帧图生视频**工作�
 | 10 | 13 | 6 |
 
 > 计算公式：`final_power = ceil(default_computing_power[duration] × resolution_multiplier)`，480P 向上取整后低时长档位可能出现相邻档算力相同，属正常现象。
+
+## 提交前提示词优化
+
+type=34 创建后会挂 `param_prepare` 步骤 `h3_prompt_optimize`（见 `docs/backend/pipeline_steps.md`）：
+
+- 仅首帧走 I2VA，有尾帧走 FL2VA
+- 改写模板：`task/pipeline_drivers/prompts/minimax_h3_i2va_fl2va_base_en.txt`
+- 驱动读 `extra_config.h3_prompt_optimize.optimized_prompt`，否则读 `ai_tool.prompt`
+- 关闭开关或 LLM 失败时回退原文，仍提交 RunningHub
 
 ## 工作流节点映射
 

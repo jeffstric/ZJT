@@ -279,6 +279,37 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
 
     @patch('task.pipeline_processor.AIToolsModel')
     @patch('task.pipeline_processor.PipelineStepModel')
+    def test_h3_prompt_optimize_applies_prompt_and_keeps_original(self, MockStepModel, MockAITools):
+        from model import PipelineStepStatus, PipelineStepType
+        ai_tool = self._make_ai_tool(ai_tool_id=34)
+        ai_tool.prompt = 'old prompt'
+        ai_tool.extra_config = '{"resolution": "720P"}'
+        step = self._make_step(
+            status=PipelineStepStatus.COMPLETED,
+            step_type=PipelineStepType.H3_PROMPT_OPTIMIZE,
+        )
+        step.get_result_data_dict.return_value = {
+            'original_prompt': 'old prompt',
+            'optimized_prompt': 'optimized english prompt',
+            'variant': 'I2VA',
+            'fallback': False,
+        }
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [step]
+
+        PipelineProcessor.apply_results(ai_tool, 'param_prepare')
+
+        kwargs = MockAITools.update.call_args.kwargs or {}
+        if not kwargs:
+            args, kwargs = MockAITools.update.call_args
+            # update(id, prompt=..., extra_config=...)
+        self.assertEqual(MockAITools.update.call_args[0][0], 34)
+        called_kwargs = MockAITools.update.call_args[1]
+        self.assertEqual(called_kwargs['prompt'], 'optimized english prompt')
+        self.assertIn('old prompt', called_kwargs['extra_config'])
+        self.assertIn('optimized english prompt', called_kwargs['extra_config'])
+
+    @patch('task.pipeline_processor.AIToolsModel')
+    @patch('task.pipeline_processor.PipelineStepModel')
     def test_no_completed_steps_skips(self, MockStepModel, MockAITools):
         """没有已完成的步骤时，不调用 AIToolsModel.update"""
         ai_tool = self._make_ai_tool(ai_tool_id=10)

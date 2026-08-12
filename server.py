@@ -1518,7 +1518,7 @@ async def image_edit(
                     try:
                         from task.pipeline_processor import PipelineProcessor
                         await asyncio.to_thread(
-                            PipelineProcessor.create_param_prepare_steps, id, image_edit_type
+                            PipelineProcessor.attach_param_prepare_if_needed, id, image_edit_type
                         )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
@@ -1652,7 +1652,7 @@ async def text_to_image(
                     try:
                         from task.pipeline_processor import PipelineProcessor
                         await asyncio.to_thread(
-                            PipelineProcessor.create_param_prepare_steps, id, text_to_image_type
+                            PipelineProcessor.attach_param_prepare_if_needed, id, text_to_image_type
                         )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
@@ -2031,7 +2031,7 @@ async def ai_app_run(
                     try:
                         from task.pipeline_processor import PipelineProcessor
                         await asyncio.to_thread(
-                            PipelineProcessor.create_param_prepare_steps, id, text_to_video_type
+                            PipelineProcessor.attach_param_prepare_if_needed, id, text_to_video_type
                         )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
@@ -2426,7 +2426,7 @@ async def ai_app_run_image(
                                 ratio=ratio,
                                 duration=duration_seconds,
                                 transaction_id=transaction_id,
-                                status=AI_TOOL_STATUS_PENDING,
+                                status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
                                 extra_config=audited_extra_config,
                                 reference_images=reference_images_json,
                                 implementation=impl_id,
@@ -2439,6 +2439,25 @@ async def ai_app_run_image(
                             task_id=id,
                             status=TASK_STATUS_QUEUED
                         )
+                        if not need_pipeline_steps:
+                            try:
+                                from task.pipeline_processor import PipelineProcessor
+                                attached = await asyncio.to_thread(
+                                    PipelineProcessor.attach_param_prepare_if_needed,
+                                    id,
+                                    image_to_video_type,
+                                )
+                                if not attached:
+                                    await asyncio.to_thread(
+                                        AIToolsModel.update, id, status=AI_TOOL_STATUS_PENDING
+                                    )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to attach param_prepare steps for ai_tool {id}: {e}"
+                                )
+                                await asyncio.to_thread(
+                                    AIToolsModel.update, id, status=AI_TOOL_STATUS_PENDING
+                                )
                         project_ids.append(id)
                     except Exception as db_error:
                         logger.error(f"Failed to create database record for task {i+1}: {db_error}")
@@ -4197,7 +4216,7 @@ async def digital_human_generate(
                 # 创建 param_prepare 流水线步骤
                 try:
                     from task.pipeline_processor import PipelineProcessor
-                    PipelineProcessor.create_param_prepare_steps(id, task_type)
+                    PipelineProcessor.attach_param_prepare_if_needed(id, task_type)
                 except Exception as e:
                     logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
 
@@ -4319,7 +4338,7 @@ async def digital_human_v2_generate(
                 # 创建 param_prepare 流水线步骤
                 try:
                     from task.pipeline_processor import PipelineProcessor
-                    PipelineProcessor.create_param_prepare_steps(id, task_type)
+                    PipelineProcessor.attach_param_prepare_if_needed(id, task_type)
                 except Exception as e:
                     logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
 
@@ -4461,7 +4480,7 @@ async def digital_human_minimax_h3_generate(
                 )
                 try:
                     from task.pipeline_processor import PipelineProcessor
-                    PipelineProcessor.create_param_prepare_steps(id, task_type)
+                    PipelineProcessor.attach_param_prepare_if_needed(id, task_type)
                 except Exception as e:
                     logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
 

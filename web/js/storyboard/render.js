@@ -8,6 +8,8 @@ import state, {
     isRenderableMediaUrl,
     getSelectedVideoModel,
     getSelectedImageToVideoModel,
+    getImageToVideoSlotModels,
+    getReferenceToVideoSlotModels,
     modelNeedsFaceMask,
     isEnterpriseEdition,
     getVideoSupportedDurations,
@@ -830,26 +832,48 @@ function formatPowerDisplay(power) {
     return String(power);
 }
 
-// Header 常驻「拆分中」徽章：拆分任务活跃且进度弹窗已最小化时显示，点击重新打开弹窗
+function isEmptyStoryboard() {
+    return !Array.isArray(state.scenes) || state.scenes.length === 0;
+}
+
+function hasActiveScriptSplit() {
+    return Boolean(state.generateFromScriptTaskId || state.isGeneratingFromScript);
+}
+
+/** 空故事板且拆分弹窗已关、无进行中任务时，右上角显示「开始拆分」 */
+function canShowStartSplitEntry() {
+    return isEmptyStoryboard()
+        && !hasActiveScriptSplit()
+        && !state.showGenerateFromScriptDialog
+        && !state.ratioGateActive;
+}
+
+// Header 拆分入口：进行中显示进度徽章；空板且弹窗已关时显示「开始拆分」
 function renderHeaderSplitBadge() {
-    // 仅当有活跃拆分任务、且进度弹窗已关闭时显示
-    if (!state.generateFromScriptTaskId) return '';
-    if (state.showGenerateProgressDialog) return '';
-    const rawPct = Number(state.generateProgressPercent);
-    const pct = Number.isFinite(rawPct) ? Math.round(Math.max(0, Math.min(100, rawPct))) : 0;
-    const errored = Boolean(state.generateProgressError);
-    const iconHtml = errored
-        ? icon('stop', 14)
-        : `<span class="spinner mini">${icon('loading', 14)}</span>`;
-    const label = errored ? '拆分待处理' : `拆分中 ${pct}%`;
-    const title = errored
-        ? '剧本拆分已停止，点击查看详情'
-        : '剧本拆分进行中（后台运行），点击查看进度';
-    return `
+    if (state.generateFromScriptTaskId && !state.showGenerateProgressDialog) {
+        const rawPct = Number(state.generateProgressPercent);
+        const pct = Number.isFinite(rawPct) ? Math.round(Math.max(0, Math.min(100, rawPct))) : 0;
+        const errored = Boolean(state.generateProgressError);
+        const iconHtml = errored
+            ? icon('stop', 14)
+            : `<span class="spinner mini">${icon('loading', 14)}</span>`;
+        const label = errored ? '拆分待处理' : `拆分中 ${pct}%`;
+        const title = errored
+            ? '剧本拆分已停止，点击查看详情'
+            : '剧本拆分进行中（后台运行），点击查看进度';
+        return `
         <button type="button" class="header-split-badge ${errored ? 'is-errored' : ''}"
             data-action="reopen-generate-progress" title="${escapeHtml(title)}">
             ${iconHtml}
             <span class="header-split-badge-label">${escapeHtml(label)}</span>
+        </button>`;
+    }
+    if (!canShowStartSplitEntry()) return '';
+    return `
+        <button type="button" class="header-split-badge header-start-split"
+            data-action="open-generate-from-script" title="根据本集剧本拆分并生成分镜">
+            ${icon('wand', 14)}
+            <span class="header-split-badge-label">开始拆分</span>
         </button>`;
 }
 
@@ -1144,7 +1168,14 @@ function renderTabs(scene) {
                     <button type="button" class="btn-primary" data-action="reopen-generate-progress">查看拆分进度</button>
                 </div>`;
         }
-        return '<div class="empty-note">暂无分镜。可以从底部添加一个新分镜。</div>';
+        const startSplit = canShowStartSplitEntry()
+            ? `<button type="button" class="btn-primary" data-action="open-generate-from-script">开始拆分</button>`
+            : '';
+        return `
+            <div class="empty-note storyboard-start-split">
+                <p>暂无分镜。可以从底部添加一个新分镜，或根据本集剧本自动拆分。</p>
+                ${startSplit}
+            </div>`;
     }
     if (state.activeTab === 'dialogue') {
         return renderDialoguePanel(scene);
@@ -2018,7 +2049,7 @@ function renderGenerateFromScriptDialog() {
     if (!state.showGenerateFromScriptDialog) return '';
     const busy = state.isGeneratingFromScript;
     const splitModelConfig = renderScriptSplitModelConfig(busy);
-    const imageModelConfig = renderImageModelConfig(busy);
+    const imageModelConfig = renderImageModelConfig(busy, { collapseTextToImage: true });
     const videoModelConfig = renderDefaultVideoModelConfig(busy);
     const splitDurationConfig = renderScriptSplitDuration(busy);
     const splitOptionsConfig = renderScriptSplitOptions(busy);
@@ -2081,10 +2112,10 @@ function renderGenerateFromScriptDialog() {
                         <div class="generate-from-script-model">
                             ${videoModelConfig}
                         </div>
-                        ${splitDurationConfig}
                     </div>
                     <div class="gfs-col">
                         ${splitOptionsConfig}
+                        ${splitDurationConfig}
                     </div>
                     <div class="gfs-mode-section">
                         <div class="generate-from-script-model">
@@ -2311,16 +2342,36 @@ function renderMediaModelSelect(label, hint, type, models, selectedTaskId, disab
     return html + '</select></div>';
 }
 
-function renderImageModelConfig(disabled = false) {
+function renderImageModelConfig(disabled = false, { collapseTextToImage = false } = {}) {
     const textModels = state.textToImageModels.length ? state.textToImageModels : state.imageModels;
     const editModels = state.imageEditModels.length ? state.imageEditModels : state.imageModels;
-    return renderMediaModelSelect(
+    const textSelect = renderMediaModelSelect(
         '文生图模型', '无参考图时使用', 'textToImage', textModels,
         state.selectedTextToImageTaskId, disabled,
-    ) + renderMediaModelSelect(
+    );
+    const editSelect = renderMediaModelSelect(
         '图片编辑模型', '有参考图或执行改图时使用', 'imageEdit', editModels,
         state.selectedImageEditTaskId, disabled,
     );
+    if (!collapseTextToImage) return textSelect + editSelect;
+
+    const open = state.scriptSplitTextToImageOpen === true;
+    const selected = textModels.find(m => String(m.task_id) === String(state.selectedTextToImageTaskId))
+        || textModels[0];
+    const summary = selected ? formatModelOptionLabel(selected) : '未选择';
+    return `
+        <div class="gfs-t2i-panel ${open ? 'is-open' : ''}">
+            <button type="button" class="gfs-t2i-toggle" data-action="toggle-script-split-t2i"
+                    aria-expanded="${open ? 'true' : 'false'}" ${disabled ? 'disabled' : ''}>
+                <span class="script-language-toggle-title">
+                    <span>文生图模型</span>
+                    <span class="script-language-summary">${escapeHtml(summary)}</span>
+                </span>
+                <span class="script-language-chevron" aria-hidden="true">▼</span>
+            </button>
+            ${open ? `<div class="gfs-t2i-body">${textSelect}</div>` : ''}
+        </div>
+    ` + editSelect;
 }
 
 /**
@@ -2347,14 +2398,13 @@ function renderFaceMaskToggle(disabled = false) {
         </div>`;
 }
 
-/** 拆分弹窗：默认视频模型（仅图生视频）+ 条件人脸遮盖 */
+/** 拆分弹窗：默认视频模型（仅首帧/首尾帧图生视频）+ 条件人脸遮盖 */
 function renderDefaultVideoModelConfig(disabled = false) {
-    const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
     return renderMediaModelSelect(
         '默认视频模型',
-        '分镜有首帧时用于生成视频的默认模型',
+        '分镜有首帧时用于生成视频；仅列出支持首帧/首尾帧的模型。参考图专用模型请到齿轮「参考视频模型」中选择',
         'imageToVideo',
-        models,
+        getImageToVideoSlotModels(),
         state.selectedImageToVideoTaskId,
         disabled,
     ) + renderFaceMaskToggle(disabled);
@@ -2382,7 +2432,7 @@ function renderVideoResolutionChips(model, { label = '分辨率', hint = '' } = 
 function renderVideoModelConfig() {
     // 齿轮弹窗：分辨率绑定「图生视频模型」（分镜主路径 i2v / 对口型共用偏好），
     // 不再用 getSelectedVideoModel()（会随输入图落到文生视频导致分辨率空白/跟错模型）。
-    const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
+    const models = getImageToVideoSlotModels();
     const i2vModel = getSelectedImageToVideoModel();
     const scene = getCurrentScene();
     const durations = getVideoSupportedDurations(i2vModel);
@@ -2391,10 +2441,7 @@ function renderVideoModelConfig() {
     const sceneDurLabel = Number.isFinite(sceneDur) ? sceneDur.toFixed(sceneDur % 1 ? 1 : 0) : '—';
 
     const textModels = state.textToVideoModels.length ? state.textToVideoModels : state.videoModels;
-    const referenceModels = models.filter(m => {
-        const modes = m.supported_image_modes || [];
-        return modes.includes('multi_reference') || m.supports_ref_audio_video === true;
-    });
+    const referenceModels = getReferenceToVideoSlotModels();
     let html = renderMediaModelSelect(
         '文生视频模型', '无图片输入时使用', 'textToVideo', textModels,
         state.selectedTextToVideoTaskId,
@@ -3147,6 +3194,16 @@ export function patchPreview(scene, options = {}) {
     return true;
 }
 
+const MODAL_SCROLL_SELECTORS = ['.generate-from-script-dialog .gfs-body'];
+
+/** 拆分弹窗：只切换分镜图生成模式卡片的选中态，避免整窗重建把滚动拉回顶部。 */
+export function syncSequenceModeIntroCards(root = document) {
+    const selected = state.autoImageSequenceMode;
+    root.querySelectorAll('[data-action="set-auto-image-sequence-mode"]').forEach((card) => {
+        card.classList.toggle('active', card.dataset.autoImageSequenceMode === selected);
+    });
+}
+
 /** 弹层容器：不碰 app-shell */
 export function syncModals() {
     const app = document.getElementById('app');
@@ -3158,7 +3215,17 @@ export function syncModals() {
         host.className = 'storyboard-modals';
         app.appendChild(host);
     }
+    const savedScrolls = MODAL_SCROLL_SELECTORS.map((selector) => {
+        const el = host.querySelector(selector);
+        return el ? { selector, top: el.scrollTop, left: el.scrollLeft } : null;
+    }).filter(Boolean);
     host.innerHTML = renderModalsHtml();
+    savedScrolls.forEach(({ selector, top, left }) => {
+        const el = host.querySelector(selector);
+        if (!el) return;
+        el.scrollTop = top;
+        el.scrollLeft = left;
+    });
     return true;
 }
 

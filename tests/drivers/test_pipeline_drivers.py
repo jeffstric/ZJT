@@ -745,3 +745,70 @@ class TestCreateParamPrepareStepsMini(unittest.TestCase):
         self.assertEqual(first_call['step_type'], 'face_mask')
         self.assertEqual(first_call['params']['video_path'], 'input.mp4')
         self.assertEqual(first_call['target'], 'input.mp4')
+
+    @patch('task.pipeline_drivers.get_dynamic_config_value')
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    @patch('task.pipeline_drivers.AIToolsModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_h3_image_to_video_creates_prompt_optimize_step(
+        self, MockRegistry, MockAITools, MockStepModel, mock_config
+    ):
+        mock_task_config = MagicMock()
+        mock_task_config.key = 'minimax_h3_image_to_video'
+        MockRegistry.get_by_id.return_value = mock_task_config
+        mock_ai_tool = MagicMock()
+        mock_ai_tool.image_path = 'first.png'
+        mock_ai_tool.reference_images = None
+        mock_ai_tool.prompt = 'girl turns'
+        mock_ai_tool.duration = 6
+        MockAITools.get_by_id.return_value = mock_ai_tool
+        mock_config.side_effect = (
+            lambda section, key, default=None:
+            True if (section, key) == ('pipeline', 'h3_prompt_optimize_enabled') else default
+        )
+        MockStepModel.create.side_effect = [401]
+
+        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=34, ai_tool_type=34)
+
+        self.assertEqual(result, [401])
+        kwargs = MockStepModel.create.call_args_list[0].kwargs
+        self.assertEqual(kwargs['step_type'], 'h3_prompt_optimize')
+        self.assertEqual(kwargs['params']['variant'], 'I2VA')
+        self.assertEqual(kwargs['params']['original_prompt'], 'girl turns')
+
+    @patch('task.pipeline_drivers.get_dynamic_config_value')
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    @patch('task.pipeline_drivers.AIToolsModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_h3_prompt_optimize_disabled_creates_nothing(
+        self, MockRegistry, MockAITools, MockStepModel, mock_config
+    ):
+        mock_task_config = MagicMock()
+        mock_task_config.key = 'minimax_h3_image_to_video'
+        MockRegistry.get_by_id.return_value = mock_task_config
+        mock_ai_tool = MagicMock()
+        mock_ai_tool.image_path = 'first.png'
+        mock_ai_tool.reference_images = None
+        mock_ai_tool.prompt = 'girl turns'
+        MockAITools.get_by_id.return_value = mock_ai_tool
+        mock_config.return_value = False
+
+        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=34, ai_tool_type=34)
+
+        self.assertEqual(result, [])
+        MockStepModel.create.assert_not_called()
+
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    @patch('task.pipeline_drivers.AIToolsModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_h3_reference_to_video_skips_prompt_optimize(
+        self, MockRegistry, MockAITools, MockStepModel
+    ):
+        mock_task_config = MagicMock()
+        mock_task_config.key = 'minimax_h3_reference_to_video'
+        MockRegistry.get_by_id.return_value = mock_task_config
+
+        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=36, ai_tool_type=36)
+
+        self.assertEqual(result, [])
+        MockStepModel.create.assert_not_called()

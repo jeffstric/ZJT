@@ -83,7 +83,7 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 | id | int | 主键 |
 | ai_tool_id | int | 关联 ai_tools.id |
 | stage | varchar(32) | 阶段：`param_prepare` / `before_finish` |
-| step_type | varchar(64) | 步骤类型：`face_mask` / `image_face_mask` / `implementation_retry` / `storyboard_first_frame_grid_split` |
+| step_type | varchar(64) | 步骤类型：`face_mask` / `image_face_mask` / `implementation_retry` / `storyboard_first_frame_grid_split` / `h3_prompt_optimize` |
 | step_order | int | 同阶段内执行顺序（0 起始） |
 | status | tinyint | 步骤状态 |
 | params | json | 步骤参数 |
@@ -95,6 +95,23 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 | max_retries | int | 最大重试次数（默认5） |
 
 ## 步骤类型
+
+### h3_prompt_optimize（MiniMax H3 提示词优化）
+
+用于 `param_prepare` 阶段，在 `TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO`（34）正式提交 RunningHub 前，把用户原文改写成官方 I2VA / FL2VA 结构。
+
+**触发条件**：任务类型为 MiniMax H3 图生视频 + `pipeline.h3_prompt_optimize_enabled=true`（默认开）+ 至少有一张首帧。社区版同样执行。H3 参考生视频 / 数字人 H3 不走此步。
+
+**变体**：仅首帧 → I2VA；另有尾帧 → FL2VA。
+
+**处理流程**：
+1. `PipelineProcessor.attach_param_prepare_if_needed` 创建一步并置 `WAITING_PARAM_PREPARE`
+2. `H3PromptOptimizePipelineDriver` 用剪枝版官方规范 + 中文改写指令 + 原文调用聊天模型（`asyncio.to_thread` + 超时）
+3. 结构校验失败重试 1 次，仍失败则回退原文（`fallback=true`），**不把步骤标 FAILED**，避免整单退费
+4. 原文写入 `extra_config.original_prompt`（只写一次）和 `extra_config.h3_prompt_optimize`
+5. `ai_tool.prompt` 替换为优化结果，H3 驱动提交 RunningHub
+
+**配置**：`pipeline.h3_prompt_optimize_enabled` / `pipeline.h3_prompt_optimize_model` / `pipeline.h3_prompt_optimize_vendor_id`
 
 ### face_mask（人脸遮盖）
 

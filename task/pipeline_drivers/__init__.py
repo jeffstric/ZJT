@@ -21,6 +21,8 @@ from .face_mask_driver import FaceMaskPipelineDriver
 from .image_face_mask_driver import ImageFaceMaskPipelineDriver
 from .implementation_retry_driver import ImplementationRetryPipelineDriver
 from .storyboard_grid_split_driver import StoryboardGridSplitPipelineDriver
+from .h3_prompt_optimize_driver import H3PromptOptimizePipelineDriver
+from .h3_prompt_optimize_util import resolve_h3_prompt_variant
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,7 @@ _DRIVER_MAP = {
     PipelineStepType.IMAGE_FACE_MASK: ImageFaceMaskPipelineDriver,
     PipelineStepType.IMPLEMENTATION_RETRY: ImplementationRetryPipelineDriver,
     PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT: StoryboardGridSplitPipelineDriver,
+    PipelineStepType.H3_PROMPT_OPTIMIZE: H3PromptOptimizePipelineDriver,
 }
 
 
@@ -157,6 +160,31 @@ class PipelineDriverFactory:
         return step_configs
 
     @classmethod
+    def _build_h3_prompt_optimize_steps(cls, ai_tool) -> List[Dict[str, Any]]:
+        """MiniMax H3 图生视频提交前的 I2VA/FL2VA 提示词优化。"""
+        enabled = get_dynamic_config_value(
+            "pipeline",
+            "h3_prompt_optimize_enabled",
+            default=True,
+        )
+        if not enabled:
+            return []
+        variant = resolve_h3_prompt_variant(ai_tool)
+        if not variant:
+            return []
+        original = getattr(ai_tool, "prompt", None) or ""
+        duration = getattr(ai_tool, "duration", None) or 5
+        return [{
+            "step_type": PipelineStepType.H3_PROMPT_OPTIMIZE,
+            "params": {
+                "variant": variant,
+                "original_prompt": original,
+                "duration": duration,
+            },
+            "target": variant,
+        }]
+
+    @classmethod
     def is_seedance_face_mask_type(cls, ai_tool_type: int) -> bool:
         """判断某任务类型（TaskTypeId）是否属于走 param_prepare 人脸遮盖的 Seedance 模型。
 
@@ -187,7 +215,8 @@ class PipelineDriverFactory:
 
         rule = cls._PARAM_PREPARE_RULES.get(task_config.key)
         is_seedance_face_mask = task_config.key in cls._SEEDANCE_FACE_MASK_KEYS
-        if not rule and not is_seedance_face_mask:
+        is_h3_prompt_optimize = task_config.key == DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO
+        if not rule and not is_seedance_face_mask and not is_h3_prompt_optimize:
             return []
 
         # 获取 ai_tool 对象用于条件判断
@@ -197,6 +226,8 @@ class PipelineDriverFactory:
 
         if is_seedance_face_mask:
             step_configs = cls._build_seedance_param_prepare_steps(ai_tool)
+        elif is_h3_prompt_optimize:
+            step_configs = cls._build_h3_prompt_optimize_steps(ai_tool)
         elif rule and rule['condition'](ai_tool):
             step_configs = [
                 {

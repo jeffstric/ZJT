@@ -32,6 +32,8 @@ describe('index CLI media preferences UI', () => {
         expect(appSource).toContain('ensureCliMediaPreferencesLoaded');
         expect(appSource).toContain('onCliMediaPrefModelChange');
         expect(appSource).toContain('cliMediaPrefFlatSlots');
+        expect(appSource).toContain('firstLastFrameOnly: true');
+        expect(appSource).toContain('filterCliFirstLastFrameModels');
         // 下拉展示不含 task_id 技术字段
         expect(appSource).not.toContain('task_id=${model.task_id}');
     });

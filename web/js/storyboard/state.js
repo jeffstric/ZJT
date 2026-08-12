@@ -154,6 +154,8 @@ const state = {
     isSaving: false,
     error: '',
     showGenerateFromScriptDialog: false,
+    /** 拆分弹窗内「文生图模型」默认折叠，点开后本会话保持展开 */
+    scriptSplitTextToImageOpen: false,
     isGeneratingFromScript: false,
     generateFromScriptError: '',
     autoImageSequenceMode: 'balanced',
@@ -684,18 +686,15 @@ export function setModels({
         );
     }
     if (state.imageToVideoModels.length) {
+        // 图生视频槽位只接受首帧/首尾帧模型；Vidu-Q2 等仅参考图模型归参考槽位。
         state.selectedImageToVideoTaskId = resolveAvailableTaskId(
             state.selectedImageToVideoTaskId ?? state.selectedVideoTaskId,
-            state.imageToVideoModels,
+            getImageToVideoSlotModels(),
             'storyboard_lastSelectedVideoTaskId',
         );
-        const referenceModels = state.imageToVideoModels.filter(m => {
-            const modes = m.supported_image_modes || [];
-            return modes.includes('multi_reference') || m.supports_ref_audio_video === true;
-        });
         state.selectedReferenceToVideoTaskId = resolveAvailableTaskId(
             state.selectedReferenceToVideoTaskId ?? state.selectedVideoTaskId,
-            referenceModels,
+            getReferenceToVideoSlotModels(),
             'storyboard_lastSelectedReferenceToVideoTaskId',
         );
     }
@@ -838,13 +837,30 @@ export function getSelectedVideoModel() {
         : (isReference ? state.selectedReferenceToVideoTaskId : state.selectedImageToVideoTaskId);
     const models = !hasInputs
         ? state.textToVideoModels
-        : (state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels);
+        : (isReference ? getReferenceToVideoSlotModels() : getImageToVideoSlotModels());
     return models.find(m => String(m.task_id) === String(taskId)) || models[0] || null;
+}
+
+function allImageToVideoModels() {
+    return state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
+}
+
+/** 图生视频槽位：仅支持首帧/首尾帧的模型（缺省 supported_image_modes 视为首尾帧） */
+export function getImageToVideoSlotModels() {
+    return allImageToVideoModels().filter(m => getSupportedVideoImageModes(m).includes('first_last_frame'));
+}
+
+/** 参考视频槽位：多参考图或参考音视频模型（含仅参考图的 Vidu-Q2） */
+export function getReferenceToVideoSlotModels() {
+    return allImageToVideoModels().filter(m => {
+        const modes = m.supported_image_modes || m.supportedImageModes || [];
+        return modes.includes('multi_reference') || m.supports_ref_audio_video === true;
+    });
 }
 
 /** 默认图生视频模型（拆分弹窗 / 批量 / 有首帧路径） */
 export function getSelectedImageToVideoModel() {
-    const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
+    const models = getImageToVideoSlotModels();
     const taskId = state.selectedImageToVideoTaskId;
     return models.find(m => String(m.task_id) === String(taskId)) || models[0] || null;
 }

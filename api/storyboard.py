@@ -3881,9 +3881,25 @@ async def generate_scene_video(
     else:
         ai_tool_id = await asyncio.to_thread(
             AIToolsModel.create,
-            status=AI_TOOL_STATUS_PENDING,
+            status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
             **create_kwargs,
         )
+        try:
+            from task.pipeline_processor import PipelineProcessor
+            attached = await asyncio.to_thread(
+                PipelineProcessor.attach_param_prepare_if_needed,
+                ai_tool_id,
+                task_type,
+            )
+            if not attached:
+                await asyncio.to_thread(
+                    AIToolsModel.update, ai_tool_id, status=AI_TOOL_STATUS_PENDING
+                )
+        except Exception as e:
+            logger.warning(f"Failed to attach param_prepare steps for ai_tool {ai_tool_id}: {e}")
+            await asyncio.to_thread(
+                AIToolsModel.update, ai_tool_id, status=AI_TOOL_STATUS_PENDING
+            )
     await asyncio.to_thread(
         TasksModel.create,
         task_type=TASK_TYPE_GENERATE_VIDEO, task_id=ai_tool_id, status=TASK_STATUS_QUEUED,
