@@ -3378,6 +3378,79 @@ button {
 .edit-dialog textarea { min-height: 92px; }
 .edit-dialog footer { margin-top: 14px; justify-content: flex-end; }
 
+/* 对白情感向量编辑 */
+.dialogue-emo-btn {
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dialogue-emo-btn.has-emo {
+    border-color: #93c5fd;
+    color: #1d4ed8;
+    background: #eff6ff;
+}
+.emo-vec-dialog {
+    width: min(440px, calc(100vw - 32px));
+    max-height: calc(100vh - 64px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.emo-vec-body {
+    padding: 8px 16px 4px;
+    overflow-y: auto;
+    flex: 1 1 auto;
+}
+.emo-vec-hint {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--muted, #64748b);
+    line-height: 1.5;
+}
+.emo-vec-enterprise-note {
+    margin: 0 0 14px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+}
+.emo-vec-enterprise-note.is-active {
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+    color: #065f46;
+}
+.emo-vec-sliders {
+    display: grid;
+    gap: 10px;
+}
+.emo-vec-slider-row {
+    display: grid;
+    gap: 4px;
+}
+.emo-vec-slider-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+}
+.emo-vec-label { color: #334155; }
+.emo-vec-value { color: var(--primary, #2563eb); font-variant-numeric: tabular-nums; }
+.emo-vec-range {
+    width: 100%;
+    accent-color: var(--primary, #2563eb);
+}
+.emo-vec-sum {
+    margin-top: 12px;
+    font-size: 13px;
+    color: #475569;
+}
+.emo-vec-sum.ok strong { color: #059669; }
+.emo-vec-sum.bad strong,
+.emo-vec-warn { color: #dc2626; }
+
 /* 思考模式（对齐 script_writer：DeepSeek 开关 / Doubao 强度） */
 .sb-thinking-wrap {
     display: flex;

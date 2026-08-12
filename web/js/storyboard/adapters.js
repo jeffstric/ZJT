@@ -149,6 +149,8 @@ export function dialogueFromApi(raw = {}) {
         text: raw.text || '',
         speed: raw.speed ?? 1.0,
         volume: raw.volume ?? 100,
+        /** 情感向量：逗号分隔 8 维字符串，与 IndexTTS / audio_generate 一致 */
+        emoVec: raw.emo_vec ?? raw.emoVec ?? null,
         selectedAudioId: raw.selected_audio_id ?? null,
         audioUrl: raw.audio_url || '',
         raw,
@@ -281,6 +283,7 @@ export function dialogueToPayload(dialogue) {
         text: dialogue.text || '',
         speed: dialogue.speed ?? 1.0,
         volume: dialogue.volume ?? 100,
+        emo_vec: dialogue.emoVec ?? null,
     };
 }
 

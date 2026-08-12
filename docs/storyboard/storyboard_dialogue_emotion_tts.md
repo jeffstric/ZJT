@@ -9,9 +9,15 @@
 
 | 档位 | 行为 |
 |------|------|
-| 开源/社区版 | 门面 Community，不注入 parser 指令，配音不带向量 |
-| 个人版 Studio（许可证 `edition=studio`） | Provider 可注入，但 `is_enabled()=False` |
-| 企业版（许可证 `edition=enterprise`） | 全链路启用 |
+| 开源/社区版 | 可查看/手动编辑 `emo_vec`；不注入 parser 指令，自动/手动 TTS 不带向量 |
+| 个人版 Studio（许可证 `edition=studio`） | 同社区：可编辑入库；TTS 不应用向量 |
+| 企业版（许可证 `edition=enterprise`） | 拆分 AI 自动产向量 + 配音 method=2 |
+
+### 故事板前端
+
+- 对话行「情感」按钮（全用户可见）→ 弹窗 8 维滑块编辑。
+- 文案注明：**仅企业版支持拆分时 AI 自动推断**。
+- 保存走 `PUT /dialogue/{id}` 的 `emo_vec`；生成配音时 body 带 `emo_control_method=2`（企业门面才真正生效）。
 
 门面：`services/dialogue_emotion.py`  
 实现：`enterprise/services/dialogue_emotion/`  

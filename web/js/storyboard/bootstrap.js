@@ -369,6 +369,13 @@ async function main() {
 
     await initI18n();
     state.editionInfo = await api.getEditionInfo().catch(() => ({ mode: 'community', mode_label: '社区版' }));
+    // features.dialogue_emotion_tts：企业版拆分自动情感向量是否可用
+    try {
+        const serverCfg = await api.fetchServerConfig();
+        state.serverFeatures = (serverCfg && serverCfg.features) || {};
+    } catch {
+        state.serverFeatures = {};
+    }
 
     const data = await loadStoryboard();
 
