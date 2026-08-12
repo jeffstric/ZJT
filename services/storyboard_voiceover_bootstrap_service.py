@@ -116,10 +116,26 @@ class StoryboardVoiceoverBootstrapService:
                 constants.SKIP_REASON_MISSING_REFERENCE_AUDIO, "角色缺少参考音频",
             )
 
+        # 情感向量仅经企业版门面解析；社区/个人版恒为 {}
+        from services.dialogue_emotion import resolve_tts_emotion_kwargs
+        extra_audio_kwargs = resolve_tts_emotion_kwargs(
+            dialogue=dialogue, config=config,
+        ) or None
+        logger.info(
+            "[dialogue-emotion][voiceover-bootstrap] ensure dialogue_id=%s scene_id=%s "
+            "emo_control_method=%s emo_vec=%r text_preview=%r",
+            dialogue_id,
+            scene_id,
+            (extra_audio_kwargs or {}).get("emo_control_method"),
+            (extra_audio_kwargs or {}).get("emo_vec"),
+            (text[:40] + "...") if len(text) > 40 else text,
+        )
+
         # 进入原子提交（事务封闭在函数内）
         return self._submit_dialogue_voiceover_atomically(
             int(dialogue_id), int(user_id), ref_path=ref_path, text=text,
             scene_id=scene_id,
+            extra_audio_kwargs=extra_audio_kwargs,
         )
 
     def ensure_for_scenes(

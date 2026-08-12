@@ -1710,6 +1710,37 @@ async def parse_script_to_shots(
 ```
 """
 
+        # 企业版对白情感向量：条件注入指令与 schema 示例（社区/个人版为空）
+        emotion_requirements = ""
+        json_format_example = JSON_FORMAT_EXAMPLE
+        try:
+            from services.dialogue_emotion import (
+                parser_emotion_enabled,
+                build_parser_emotion_instructions,
+            )
+            if parser_emotion_enabled():
+                emotion_requirements = build_parser_emotion_instructions()
+                json_format_example = JSON_FORMAT_EXAMPLE.replace(
+                    '"text": "对话内容"\n            }',
+                    '"text": "对话内容",\n'
+                    '              "emo_vec": [0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.2],\n'
+                    '              "emotion_note": "略带惊喜的平静陈述"\n'
+                    '            }',
+                )
+                logger.info(
+                    "[dialogue-emotion][script-parser] emotion instructions enabled, "
+                    "instruction_chars=%s",
+                    len(emotion_requirements),
+                )
+            else:
+                logger.info(
+                    "[dialogue-emotion][script-parser] emotion instructions disabled"
+                )
+        except Exception:
+            logger.exception("dialogue emotion parser hook failed; skip emotion instructions")
+            emotion_requirements = ""
+            json_format_example = JSON_FORMAT_EXAMPLE
+
         # 构建用户提示词
         user_prompt = f"""请将以下剧本内容解析为结构化的JSON数据。
 {qc_retry_block}{segment_context_block}
@@ -1832,7 +1863,7 @@ async def parse_script_to_shots(
    - 错误示例：数据库和原始剧本都没有"扩音器"，却写"〖〖扩音器〗〗掉在地上" ❌ 严禁幻想道具
    - **【关键】角色名称必须用【【角色名】】格式包裹，道具名称必须用〖〖道具名〗〗格式包裹，不能混用**
 
-{special_requirements}9. **输出格式**：
+{special_requirements}{emotion_requirements}9. **输出格式**：
    - 必须严格按照以下JSON格式输出
    - 确保所有ID引用关系正确
    - 只输出纯JSON内容
@@ -1841,7 +1872,7 @@ async def parse_script_to_shots(
 
 JSON格式示例：
 ```
-{JSON_FORMAT_EXAMPLE}
+{json_format_example}
 ```
 下面请开始解析："""
 

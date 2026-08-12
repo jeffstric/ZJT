@@ -20,6 +20,7 @@ class StoryboardDialogue:
         self.text = kwargs.get('text')
         self.speed = kwargs.get('speed')
         self.volume = kwargs.get('volume')
+        self.emo_vec = kwargs.get('emo_vec')
         self.selected_audio_id = kwargs.get('selected_audio_id')
         self.last_modified_user_id = kwargs.get('last_modified_user_id')
         self.create_at = kwargs.get('create_at')
@@ -34,6 +35,7 @@ class StoryboardDialogue:
             'text': self.text,
             'speed': float(self.speed) if self.speed is not None else 1.0,
             'volume': self.volume if self.volume is not None else 100,
+            'emo_vec': self.emo_vec,
             'selected_audio_id': self.selected_audio_id,
             'last_modified_user_id': self.last_modified_user_id,
             'create_at': self.create_at.isoformat() if self.create_at else None,
@@ -52,14 +54,18 @@ class StoryboardDialogueModel:
         text: Optional[str] = None,
         speed: float = 1.0,
         volume: int = 100,
+        emo_vec: Optional[str] = None,
         last_modified_user_id: Optional[int] = None,
     ) -> int:
         sql = """
             INSERT INTO storyboard_dialogue
-            (scene_id, sort_order, character_id, text, speed, volume, last_modified_user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (scene_id, sort_order, character_id, text, speed, volume, emo_vec, last_modified_user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (scene_id, float(sort_order), character_id, text, float(speed), volume, last_modified_user_id)
+        params = (
+            scene_id, float(sort_order), character_id, text,
+            float(speed), volume, emo_vec, last_modified_user_id,
+        )
         try:
             record_id = execute_insert(sql, params)
             logger.info(f"Created storyboard_dialogue with ID: {record_id}")
@@ -110,7 +116,7 @@ class StoryboardDialogueModel:
     @staticmethod
     def update(record_id: int, **kwargs) -> int:
         allowed_fields = [
-            'sort_order', 'character_id', 'text', 'speed', 'volume',
+            'sort_order', 'character_id', 'text', 'speed', 'volume', 'emo_vec',
             'selected_audio_id', 'last_modified_user_id',
         ]
         update_fields = []
@@ -198,6 +204,7 @@ CREATE TABLE IF NOT EXISTS `storyboard_dialogue` (
     `text` TEXT DEFAULT NULL COMMENT '台词',
     `speed` DECIMAL(4,2) NOT NULL DEFAULT 1.00 COMMENT '语速',
     `volume` INT NOT NULL DEFAULT 100 COMMENT '音量 0-100',
+    `emo_vec` VARCHAR(255) DEFAULT NULL COMMENT '情感向量(逗号分隔8维，与ai_audio.emo_vec一致；仅企业版使用)',
     `selected_audio_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中配音 → storyboard_dialogue_audio.id',
     `last_modified_user_id` INT UNSIGNED DEFAULT NULL COMMENT '最后修改人',
     `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
