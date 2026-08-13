@@ -851,7 +851,8 @@ const AdminApp = {
                 input_yuan_per_m: 1,
                 out_yuan_per_m: 2,
                 cache_yuan_per_m: 0.2,
-                commission_percent: 0
+                commission_percent: 0,
+                time_period: 'normal'
             },
 
             // AI 改档
@@ -3881,6 +3882,14 @@ const AdminApp = {
             return n.toFixed(6);
         },
 
+        // 计费时段 → 本地化标签
+        periodLabel(period) {
+            const p = (period || 'normal');
+            if (p === 'peak') return this.t('models_billing_period_peak');
+            if (p === 'off_peak') return this.t('models_billing_period_off_peak');
+            return this.t('models_billing_period_normal');
+        },
+
         // 打开档位弹窗（主填元/百万）
         async openBillingTierModal(model, vendor, tier = null) {
             await this.ensureVendorsLoaded();
@@ -3904,6 +3913,7 @@ const AdminApp = {
                 this.billingTierModal.out_yuan_per_m = tier.out_yuan_per_m || tier.money?.output?.cost_yuan_per_m || 2;
                 this.billingTierModal.cache_yuan_per_m = tier.cache_yuan_per_m || tier.money?.cache?.cost_yuan_per_m || 0.2;
                 this.billingTierModal.commission_percent = Math.round((tier.commission_rate || 0) * 100);
+                this.billingTierModal.time_period = tier.time_period || 'normal';
             } else {
                 this.billingTierModal.vendor_id = vendor ? vendor.vendor_id : null;
                 this.billingTierModal.unlimited = true;
@@ -3912,6 +3922,7 @@ const AdminApp = {
                 this.billingTierModal.out_yuan_per_m = 2;
                 this.billingTierModal.cache_yuan_per_m = 0.2;
                 this.billingTierModal.commission_percent = 0;
+                this.billingTierModal.time_period = 'normal';
             }
             this.billingTierModal.loading = false;
         },
@@ -3955,6 +3966,7 @@ const AdminApp = {
                     out_yuan_per_m: modal.out_yuan_per_m,
                     cache_yuan_per_m: modal.cache_yuan_per_m,
                     commission_rate,
+                    time_period: modal.time_period || 'normal',
                 };
                 if (tierId) {
                     const payload = {
@@ -4021,6 +4033,7 @@ const AdminApp = {
                         cache_yuan_per_m: d.cache_yuan_per_m ?? tier.cache_yuan_per_m,
                         money: d.money || tier.money,
                         commission_rate: d.commission_rate ?? tier.commission_rate,
+                        time_period: d.time_period ?? tier.time_period,
                     });
                     this.showToast(this.t('toast_billing_tier_saved'), 'success');
                 } else {

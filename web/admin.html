@@ -1349,6 +1349,9 @@
                                                                 <tr v-for="tier in vendor.tiers" :key="'t-' + tier.id">
                                                                     <td>
                                                                         <span class="range-label">{{ tier.range_label }}</span>
+                                                                        <span class="period-badge" :class="'period-' + (tier.time_period || 'normal')" v-if="tier.time_period && tier.time_period !== 'normal'" style="margin-left:6px;">
+                                                                            {{ periodLabel(tier.time_period) }}
+                                                                        </span>
                                                                         <div class="raw-threshold" style="margin-top:4px;">
                                                                             {{ tier.raw_token_threshold == null ? t('models_billing_unlimited') : ('≤'+tier.raw_token_threshold) }}
                                                                         </div>
@@ -2523,6 +2526,15 @@
                                 {{ v.vendor_name }} (ID:{{ v.id }})
                             </option>
                         </select>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('models_billing_period_select') }}</label>
+                        <select class="filter-select" v-model="billingTierModal.time_period">
+                            <option value="normal">{{ t('models_billing_period_normal') }}</option>
+                            <option value="peak">{{ t('models_billing_period_peak') }}</option>
+                            <option value="off_peak">{{ t('models_billing_period_off_peak') }}</option>
+                        </select>
+                        <p class="form-hint">{{ t('models_billing_period_hint') }}</p>
                     </div>
                     <div class="form-group">
                         <label>
