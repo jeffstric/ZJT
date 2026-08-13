@@ -83,9 +83,12 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 
 - “从剧本生成分镜”弹窗新增可折叠的“语言”面板，支持分别设置对话语言与提示词语言；选项与 `video_workflow.html` 剧本节点一致：中文（默认）、English、Deutsch、Français、Русский和自定义语言。
 - 面板默认折叠，摘要直接显示当前两项语言；展开后在宽屏双列、窄屏单列展示，避免常驻控件挤占拆分选项空间。
-- “镜头组时长”位于左栏生图模型下方，右栏集中展示语言和拆分开关，使两列信息密度更均衡。
+- “镜头组时长”位于右栏拆分选项下方，缩短左右栏高度差；左栏保留拆分模型、生图模型和默认视频模型。
+- 拆分弹窗内「文生图模型」默认折叠，摘要显示当前模型名；点击后展开下拉。齿轮「图片」Tab 仍同时展示文生图与图片编辑。
+- 误关拆分弹窗后，空故事板右上角（与拆分进度徽章同一区域）出现「开始拆分」；左栏空态同步提供同一入口。有分镜、拆分进行中或弹窗已打开时不显示。
 - 拆分模型、生图模型和镜头组时长选择框铺满所在栏位，不再受助手工具栏下拉框的 `max-width` 限制。
 - 弹窗改为“固定标题/说明 + 中部设置滚动 + 固定底部操作栏”。小屏幕即使展开语言或质检选项，“暂不生成”和“生成分镜”仍始终可见。
+- 切换底部「分镜图生成模式」只更新卡片 `active` 类（`syncSequenceModeIntroCards`），不整窗 `innerHTML` 重建，避免 `.gfs-body` 滚动跳回顶部。其它仍走 `rerenderModals()` 的控件由 `syncModals()` 恢复 `.gfs-body` 滚动位置。
 - 选择结果写入故事板 `config_json`，刷新后恢复，并在提交拆分任务时分别透传为 `dialogue_language`、`prompt_language`；空值继续表示中文默认。
 
 ### 3.5 拆分弹窗默认视频模型与人脸遮盖（2026-08）
@@ -94,13 +97,15 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 
 | 控件 | 说明 |
 |------|------|
-| **默认视频模型** | 仅 **图生视频** 列表（`image_to_video`）；**不展示文生视频**（当前故事板主路径均为有首帧后图生视频） |
+| **默认视频模型** | 仅 **支持首帧/首尾帧** 的图生视频模型（`video.image_to_video`）；**不展示文生视频**，也不展示仅参考图模型（如 Vidu-Q2、MiniMax H3 参考、Happy Horse 多参考）。参考图专用模型请到齿轮「参考视频模型」选择 |
 | **是否处理人脸** | 仅当所选模型 `needs_face_mask === true`（Seedance 2.0 / Fast / Mini）时显示；交互对齐 `index.html` 生视频界面 |
 
 行为约定：
 
 - 商业版可勾选，默认不勾选；社区版 checkbox 禁用并提示「此功能为商业版功能…」。
 - 写入 `selectedImageToVideoTaskId` + `enableFaceMask`（`config_json`），并同步 `media_pref.storyboard_ui.video.image_to_video`（含 `enable_face_mask`）。
+- 前端用 `getImageToVideoSlotModels()` 过滤下拉：只保留 `supported_image_modes` 含 `first_last_frame` 的模型。缺省该字段视为支持首尾帧。Vidu-Q2 等仅 `multi_reference` 的模型出现在齿轮「参考视频模型」（`getReferenceToVideoSlotModels()`），避免 PUT `/api/storyboard/media-preferences` 触发 `MODEL_INPUT_UNSUPPORTED`。
+- 齿轮「视频模型」Tab 的「图生视频模型」使用同一过滤；「参考视频模型」仍展示多参考 / 参考音视频模型。
 - 齿轮「视频模型」Tab 在图生视频选择器下挂同一人脸遮盖控件，共用 state。
 - 直连 `generate-video`、Agent 生视频、批量缺失视频均透传有效 `enable_face_mask`（`enterprise && needs_face_mask && 用户勾选`）。
 - `GET /api/storyboard/models` 图生视频项返回 `needs_face_mask`，前端不依赖 `TaskConfig`。

@@ -1,16 +1,26 @@
 """
-MiniMax H3 RunningHub v1 版本驱动实现
+MiniMax H3 参考生视频 RunningHub v1 版本驱动实现
 
-支持首尾帧图生视频，通过 RunningHub AI-App 接口调用「支持音频的 H3 图生视频」工作流。
-webapp_id: 2086436470516174849
+支持多参考图（最多 9 张）+ 参考视频（最多 2 个）+ 参考音频（最多 2 个）生成视频，
+通过 RunningHub AI-App 接口调用「MiniMax H3 多参生视频」工作流。
+webapp_id: 2086470155902734337
+
+提示词优化：提交前由 param_prepare 的 h3_prompt_optimize 步骤按 Ref2VA 规范改写，
+驱动优先读取 extra_config.h3_prompt_optimize.optimized_prompt，回退 ai_tool.prompt。
 
 参数注入节点 nodeId：
-  - 提示词      → nodeId 143 fieldName=text         (CR Text)
-  - 首帧图片    → nodeId 114 fieldName=image        (LoadImage)
-  - 尾帧图片    → nodeId 145 fieldName=image        (LoadImage，始终传，空则留空)
-  - 分辨率      → nodeId 115 fieldName=megapixels   (ResolutionSelector，0.4/0.9)
-  - 比例        → nodeId 115 fieldName=aspect_ratio (ResolutionSelector，带括号完整文本)
-  - 时长(秒)    → nodeId 136 fieldName=value        (INTConstant)
+  - 参考图1~9   → nodeId 137/139/142/147/149/150/151/152/153 fieldName=image (LoadImage)
+                  顺序填入，未使用的节点 fieldValue 留空，避免 RunningHub 用节点默认值
+  - 参考音频1~2 → nodeId 155/163 fieldName=audio (LoadAudio)，独立参考音频，未用留空
+  - 参考视频1~2 → nodeId 158/164 fieldName=video (VHS_LoadVideo)，未用留空
+  - 音/视频开关 → nodeId 167/168(音频) 167 对应 155、168 对应 163；
+                  nodeId 165/166(视频) 165 对应 158、166 对应 164；
+                  fieldName=select (ImpactSwitch)，有文件=1 启用加载器，无文件=2 旁路
+                  （旁路时加载器懒加载不执行，空槽位不报错，H3 输入收到 None）
+  - 提示词      → nodeId 138 fieldName=value         (文本)
+  - 时长(秒)    → nodeId 132 fieldName=value         (INTConstant)
+  - 比例        → nodeId 115 fieldName=aspect_ratio  (ResolutionSelector，带括号完整文本，带 fieldData)
+  - 分辨率      → nodeId 115 fieldName=megapixels    (ResolutionSelector，0.4/0.9)
 """
 import json
 from typing import Dict, Any, Optional, Tuple
@@ -25,6 +35,30 @@ from utils.runninghub_error import is_upstream_congested_error
 from .exceptions import ImageExpiredError
 
 
+# 参考图固定 nodeId 列表（对应工作流中的图1~图9 LoadImage 节点，顺序敏感）
+REFERENCE_IMAGE_NODE_IDS = ["137", "139", "142", "147", "149", "150", "151", "152", "153"]
+
+# 最大参考图数量
+MAX_REFERENCE_IMAGES = 9
+
+# 参考音频固定 nodeId 列表（LoadAudio，独立参考音频，非参考视频音轨）
+REFERENCE_AUDIO_NODE_IDS = ["155", "163"]
+
+# 最大参考音频数量
+MAX_REFERENCE_AUDIOS = 2
+
+# 参考视频固定 nodeId 列表（VHS_LoadVideo）
+REFERENCE_VIDEO_NODE_IDS = ["158", "164"]
+
+# 最大参考视频数量
+MAX_REFERENCE_VIDEOS = 2
+
+# 音/视频加载器的旁路开关（ImpactSwitch select：1=启用对应加载器，2=旁路）。
+# 旁路时加载器懒加载不执行（空槽位不会报错），H3 对应输入收到 None。
+# 顺序与 REFERENCE_VIDEO_NODE_IDS / REFERENCE_AUDIO_NODE_IDS 一一对应。
+REFERENCE_VIDEO_SWITCH_NODE_IDS = ["165", "166"]
+REFERENCE_AUDIO_SWITCH_NODE_IDS = ["167", "168"]
+
 # 比例 → ResolutionSelector(nodeId=115) aspect_ratio COMBO 完整文本
 RATIO_TO_ASPECT_RATIO_VALUE = {
     '1:1': '1:1 (Square)',
@@ -32,12 +66,15 @@ RATIO_TO_ASPECT_RATIO_VALUE = {
     '9:16': '9:16 (Portrait Widescreen)',
     '4:3': '4:3 (Standard)',
     '3:4': '3:4 (Portrait Standard)',
+    '2:3': '2:3 (Portrait Photo)',
+    '3:2': '3:2 (Photo)',
+    '21:9': '21:9 (Ultrawide)',
 }
 
 # 默认分辨率（megapixels），对应 720P
 DEFAULT_MEGAPIXELS = VideoResolution.MINIMAX_H3_DRIVER_VALUES[VideoResolution.P720]
 
-# aspect_ratio 节点的 fieldData（COMBO 元数据，按加速版工作流定义原样传入）
+# aspect_ratio 节点的 fieldData（COMBO 元数据，按工作流定义原样传入）
 ASPECT_RATIO_FIELD_DATA = (
     '["COMBO", {"default": "1:1 (Square)", "options": '
     '["1:1 (Square)", "2:3 (Portrait Photo)", "3:2 (Photo)", '
@@ -47,21 +84,20 @@ ASPECT_RATIO_FIELD_DATA = (
 )
 
 
-class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
+class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
     """
-    MiniMax H3 RunningHub v1 版本驱动
-    支持首尾帧图生视频
+    MiniMax H3 参考生视频 RunningHub v1 版本驱动
+    支持多参考图（最多 9 张）生成视频
     """
 
     def __init__(self):
-        super().__init__(driver_name="minimax_h3_runninghub_v1", driver_type=TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO)
+        super().__init__(driver_name="minimax_h3_reference_runninghub_v1", driver_type=TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO)
 
         # 加载配置
         self._api_key = get_dynamic_config_value("runninghub", "api_key", default="")
         self._host = get_dynamic_config_value("runninghub", "host", default="")
-        # ⚠️ TODO: 此处需替换为「MiniMax H3 FL2VA开源版-图生视频-含尾帧.json」上传到 RunningHub 后的新 webapp_id
-        # 当前值 2086058220979834882 是旧加速开源版工作流（音频有 BUG），上线前必须更新。
-        self._webapp_id = "2086436470516174849"  # MiniMax H3 图生视频（支持音频）webapp ID
+        # MiniMax H3 多参生视频工作流 webapp ID（自有账号复制版应用，节点结构与原公共应用 2084224746308325377 一致）
+        self._webapp_id = "2086470155902734337"
         self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
 
         # 是否为本地环境
@@ -184,17 +220,54 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
         else:
             raise RuntimeError(f"{description}上传到 RunningHub 失败: {result.error}")
 
+    @staticmethod
+    def _split_reference_paths(raw) -> list:
+        """解析参考音频/视频路径（ai_tools 落库格式为逗号分隔 URL 字符串）。"""
+        if not raw:
+            return []
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+    async def _upload_reference_media(self, media_path: str, description: str) -> str:
+        """
+        上传参考音频/视频到 RunningHub 并返回 fileName（LoadAudio/VHS_LoadVideo 节点引用标识，
+        与数字人 H3 驱动的音频节点取值一致）
+
+        Args:
+            media_path: 音频/视频路径（本地路径或 URL）
+            description: 媒体描述（用于日志）
+
+        Returns:
+            str: 上传后的文件标识（fileName 优先，回退 download_url）
+
+        Raises:
+            RuntimeError: 上传失败时抛出
+        """
+        self.logger.info(f"准备上传{description}到 RunningHub: {media_path}")
+        result = await self._storage.upload_file("", media_path)
+        if result.success:
+            uploaded_path = result.key if result.key else result.url
+            self.logger.info(f"{description}上传完成，使用 fileName: {uploaded_path}")
+            return uploaded_path
+        else:
+            raise RuntimeError(f"{description}上传到 RunningHub 失败: {result.error}")
+
     async def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
-        构建创建 MiniMax H3 任务的完整请求参数
+        构建创建 MiniMax H3 参考生视频任务的完整请求参数
 
-        支持首尾帧模式（节点映射）：
-        - 提示词 → nodeId 143 (text，CR Text)
-        - 首帧图片（必需）→ nodeId 114 (image，LoadImage)
-        - 尾帧图片（可选）→ nodeId 145 (image，LoadImage，始终传，空则留空)
+        多参考资产模式（节点映射）：
+        - 参考图1~9 → nodeId 137/139/142/147/149/150/151/152/153 (image，LoadImage)
+                      顺序填入，未使用的节点 fieldValue 留空（避免 RunningHub 用节点默认值）
+        - 参考音频1~2 → nodeId 155/163 (audio，LoadAudio)，独立参考音频，未用留空
+        - 参考视频1~2 → nodeId 158/164 (video，VHS_LoadVideo)，未用留空
+        - 音/视频旁路开关 → nodeId 167/168(音频)、165/166(视频) (select，ImpactSwitch)
+                          有文件=1 启用加载器，无文件=2 旁路（加载器不执行，空槽位不报错）
+        - 提示词 → nodeId 138 (value，文本)
+        - 时长（秒）→ nodeId 132 (value，INTConstant)
+        - 比例 → nodeId 115 (aspect_ratio，带括号完整文本，带 fieldData)
         - 分辨率 → nodeId 115 (megapixels)
-        - 比例 → nodeId 115 (aspect_ratio，带括号完整文本)
-        - 时长（秒）→ nodeId 136 (value，INTConstant)
 
         Args:
             ai_tool: AITool 对象
@@ -202,47 +275,62 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
         Returns:
             Dict[str, Any]: 请求参数字典
         """
-        # 解析图片模式
+        # 解析图片模式：参考生视频走多参考图模式
         image_info = self.get_all_images_by_mode(ai_tool)
         img_mode = image_info['mode']
-        first_frame = image_info['first_frame']
-        last_frame = image_info['last_frame']
-        reference_images = image_info['reference_images']
+        reference_images = image_info.get('reference_images', [])
 
         self.logger.info(
-            f"MiniMax H3 驱动图片模式: {img_mode}, 首帧: {first_frame}, 尾帧: {last_frame}, 参考图: {len(reference_images)}张"
+            f"MiniMax H3 参考生视频驱动图片模式: {img_mode}, 参考图: {len(reference_images)}张"
         )
 
-        # 获取首帧图片
-        first_image_path = None
-        last_image_path = None
+        # 兼容：若误用了首尾帧模式，尝试从 image_path 补救
+        if not reference_images and img_mode in (ImageMode.FIRST_LAST_FRAME, ImageMode.FIRST_LAST_WITH_REF):
+            first_frame = image_info.get('first_frame')
+            last_frame = image_info.get('last_frame')
+            if first_frame:
+                reference_images = [first_frame]
+                if last_frame:
+                    reference_images.append(last_frame)
+                self.logger.warning(
+                    f"MiniMax H3 参考生视频收到 {img_mode} 模式，已将首尾帧作为参考图处理"
+                )
 
-        if img_mode == ImageMode.FIRST_LAST_FRAME:
-            first_image_path = first_frame
-            last_image_path = last_frame  # 可能为 None
-        elif img_mode == ImageMode.MULTI_REFERENCE:
-            if reference_images:
-                first_image_path = reference_images[0]
-                if len(reference_images) >= 2:
-                    last_image_path = reference_images[1]
-                if len(reference_images) > 2:
-                    self.logger.warning(f"MiniMax H3 最多支持首尾帧2张图，已忽略多余的参考图")
-        elif img_mode == ImageMode.FIRST_LAST_WITH_REF:
-            first_image_path = first_frame
-            last_image_path = last_frame
-            if reference_images:
-                self.logger.warning(f"MiniMax H3 不支持首尾帧+参考图模式，已忽略参考图")
+        if not reference_images:
+            raise ValueError("MiniMax H3 参考生视频任务需要至少1张参考图")
 
-        if not first_image_path:
-            raise ValueError("MiniMax H3 任务需要至少1张首帧图片")
+        # 超出最大数量截断
+        if len(reference_images) > MAX_REFERENCE_IMAGES:
+            self.logger.warning(
+                f"MiniMax H3 参考生视频最多支持{MAX_REFERENCE_IMAGES}张参考图，已忽略多余的图"
+            )
+            reference_images = reference_images[:MAX_REFERENCE_IMAGES]
 
-        # 上传首帧图片到 RunningHub 图床
-        first_frame_uploaded = await self._upload_image_to_runninghub(first_image_path, "首帧图片")
+        # 逐个上传参考图
+        uploaded_images = []
+        for idx, image_path in enumerate(reference_images):
+            uploaded = await self._upload_image_to_runninghub(image_path, f"参考图{idx + 1}")
+            uploaded_images.append(uploaded)
 
-        # 上传尾帧图片（如果有）
-        last_frame_uploaded = None
-        if last_image_path:
-            last_frame_uploaded = await self._upload_image_to_runninghub(last_image_path, "尾帧图片")
+        # 参考音频/参考视频（可选，独立映射 LoadAudio / VHS_LoadVideo 节点，超量截断）
+        reference_audios = self._split_reference_paths(getattr(ai_tool, "audio_path", None))
+        if len(reference_audios) > MAX_REFERENCE_AUDIOS:
+            self.logger.warning(
+                f"MiniMax H3 参考生视频最多支持{MAX_REFERENCE_AUDIOS}个参考音频，已忽略多余的音频"
+            )
+            reference_audios = reference_audios[:MAX_REFERENCE_AUDIOS]
+        reference_videos = self._split_reference_paths(getattr(ai_tool, "video_path", None))
+        if len(reference_videos) > MAX_REFERENCE_VIDEOS:
+            self.logger.warning(
+                f"MiniMax H3 参考生视频最多支持{MAX_REFERENCE_VIDEOS}个参考视频，已忽略多余的视频"
+            )
+            reference_videos = reference_videos[:MAX_REFERENCE_VIDEOS]
+        uploaded_audios = []
+        for idx, audio_path in enumerate(reference_audios):
+            uploaded_audios.append(await self._upload_reference_media(audio_path, f"参考音频{idx + 1}"))
+        uploaded_videos = []
+        for idx, video_path in enumerate(reference_videos):
+            uploaded_videos.append(await self._upload_reference_media(video_path, f"参考视频{idx + 1}"))
 
         # 获取时长
         duration = ai_tool.duration or 5
@@ -255,72 +343,96 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
         extra_config = self._parse_extra_config(ai_tool)
         megapixels_value = self._get_megapixels(extra_config)
 
-        # 构建提示词：优先使用 pipeline 优化结果，原文已备份在 extra_config.original_prompt
+        # 构建提示词：优先使用 pipeline 优化结果（Ref2VA 改写），原文已备份在 extra_config.original_prompt
         prompt_meta = extra_config.get("h3_prompt_optimize") if isinstance(extra_config, dict) else None
         if isinstance(prompt_meta, dict) and prompt_meta.get("optimized_prompt"):
             prompt_text = str(prompt_meta.get("optimized_prompt") or "")
         else:
             prompt_text = ai_tool.prompt or ""
-        original_prompt = ""
-        if isinstance(extra_config, dict):
-            original_prompt = extra_config.get("original_prompt") or (
-                prompt_meta.get("original_prompt") if isinstance(prompt_meta, dict) else ""
-            ) or ""
 
         # 构建 nodeInfoList
-        # - nodeId 143 text           提示词（CR Text）
-        # - nodeId 114 image          首帧 LoadImage
-        # - nodeId 145 image          尾帧 LoadImage（始终传，无尾帧时 fieldValue 留空，
-        #                              否则 RunningHub 会用节点默认值作为尾帧）
-        # - nodeId 115 megapixels     分辨率（0.4/0.9）
-        # - nodeId 115 aspect_ratio   比例（带括号完整文本，带 fieldData）
-        # - nodeId 136 value          时长（秒，INTConstant）
-        node_info_list = [
-            {
-                "nodeId": "143",
-                "fieldName": "text",
-                "fieldValue": prompt_text,
-                "description": "text"
-            },
-            {
-                "nodeId": "114",
+        # - nodeId 137/139/142/147/149/150/151/152/153 image  参考图1~9
+        #   顺序填入上传后的图标识，未使用的节点 fieldValue 留空（避免 RunningHub 用节点默认值）
+        # - nodeId 155/163 audio         参考音频1~2（LoadAudio，fileName，未用留空）
+        # - nodeId 158/164 video         参考视频1~2（VHS_LoadVideo，fileName，未用留空）
+        # - nodeId 167/168 select        音频旁路开关（ImpactSwitch，有=1 无=2）
+        # - nodeId 165/166 select        视频旁路开关（ImpactSwitch，有=1 无=2）
+        # - nodeId 138 value           提示词（文本）
+        # - nodeId 132 value           时长（秒，INTConstant）
+        # - nodeId 115 aspect_ratio    比例（带括号完整文本，带 fieldData）
+        # - nodeId 115 megapixels      分辨率（0.4/0.9）
+        node_info_list = []
+        for idx, node_id in enumerate(REFERENCE_IMAGE_NODE_IDS):
+            field_value = uploaded_images[idx] if idx < len(uploaded_images) else ""
+            node_info_list.append({
+                "nodeId": node_id,
                 "fieldName": "image",
-                "fieldValue": first_frame_uploaded,
-                "description": "image"
-            },
-            {
-                "nodeId": "145",
-                "fieldName": "image",
-                "fieldValue": last_frame_uploaded or "",
-                "description": "image"
-            },
-            {
-                "nodeId": "115",
-                "fieldName": "megapixels",
-                "fieldValue": megapixels_value,
-                "description": "megapixels"
-            },
-            {
-                "nodeId": "115",
-                "fieldName": "aspect_ratio",
-                "fieldData": ASPECT_RATIO_FIELD_DATA,
-                "fieldValue": aspect_ratio_value,
-                "description": "aspect_ratio"
-            },
-            {
-                "nodeId": "136",
-                "fieldName": "value",
-                "fieldValue": str(duration),
-                "description": "value"
-            }
-        ]
+                "fieldValue": field_value,
+                "description": f"图{idx + 1}"
+            })
+
+        for idx, node_id in enumerate(REFERENCE_AUDIO_NODE_IDS):
+            has_media = idx < len(uploaded_audios)
+            node_info_list.append({
+                "nodeId": node_id,
+                "fieldName": "audio",
+                "fieldValue": uploaded_audios[idx] if has_media else "",
+                "description": f"参考音频{idx + 1}"
+            })
+            # ImpactSwitch 旁路开关：有音频=1 启用加载器，无音频=2 旁路（加载器不执行）
+            node_info_list.append({
+                "nodeId": REFERENCE_AUDIO_SWITCH_NODE_IDS[idx],
+                "fieldName": "select",
+                "fieldValue": "1" if has_media else "2",
+                "description": f"参考音频{idx + 1}开关"
+            })
+
+        for idx, node_id in enumerate(REFERENCE_VIDEO_NODE_IDS):
+            has_media = idx < len(uploaded_videos)
+            node_info_list.append({
+                "nodeId": node_id,
+                "fieldName": "video",
+                "fieldValue": uploaded_videos[idx] if has_media else "",
+                "description": f"参考视频{idx + 1}"
+            })
+            # ImpactSwitch 旁路开关：有视频=1 启用加载器，无视频=2 旁路（加载器不执行）
+            node_info_list.append({
+                "nodeId": REFERENCE_VIDEO_SWITCH_NODE_IDS[idx],
+                "fieldName": "select",
+                "fieldValue": "1" if has_media else "2",
+                "description": f"参考视频{idx + 1}开关"
+            })
+
+        node_info_list.append({
+            "nodeId": "138",
+            "fieldName": "value",
+            "fieldValue": prompt_text,
+            "description": "提示词"
+        })
+        node_info_list.append({
+            "nodeId": "132",
+            "fieldName": "value",
+            "fieldValue": str(duration),
+            "description": "视频秒数"
+        })
+        node_info_list.append({
+            "nodeId": "115",
+            "fieldName": "aspect_ratio",
+            "fieldData": ASPECT_RATIO_FIELD_DATA,
+            "fieldValue": aspect_ratio_value,
+            "description": "长宽比"
+        })
+        node_info_list.append({
+            "nodeId": "115",
+            "fieldName": "megapixels",
+            "fieldValue": megapixels_value,
+            "description": "视频分辨率"
+        })
 
         self.logger.info(
-            f"MiniMax H3 请求参数: duration={duration}s, ratio={ratio}(aspect_ratio={aspect_ratio_value}), "
-            f"megapixels={megapixels_value}, has_last_frame={last_frame_uploaded is not None}, "
-            f"prompt_len={len(prompt_text)}, original_len={len(original_prompt or '')}, "
-            f"variant={(prompt_meta or {}).get('variant') if isinstance(prompt_meta, dict) else None}, "
-            f"fallback={(prompt_meta or {}).get('fallback') if isinstance(prompt_meta, dict) else None}"
+            f"MiniMax H3 参考生视频请求参数: duration={duration}s, ratio={ratio}(aspect_ratio={aspect_ratio_value}), "
+            f"megapixels={megapixels_value}, ref_images={len(uploaded_images)}张, "
+            f"ref_audios={len(uploaded_audios)}个, ref_videos={len(uploaded_videos)}个, prompt_len={len(prompt_text)}"
         )
 
         return {
@@ -339,7 +451,7 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
 
     def build_check_query(self, project_id: str) -> Dict[str, Any]:
         """
-        构建查询 MiniMax H3 任务状态的完整请求参数
+        构建查询 MiniMax H3 参考生视频任务状态的完整请求参数
 
         Args:
             project_id: 任务ID
@@ -362,12 +474,12 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
 
     async def submit_task(self, ai_tool) -> Dict[str, Any]:
         """
-        提交 MiniMax H3 视频生成任务
+        提交 MiniMax H3 参考生视频任务
 
         Args:
             ai_tool: AITool 对象
                 - prompt: 提示词
-                - image_path: 图片路径（首帧，逗号分隔时可含尾帧）
+                - reference_images: 参考图URL列表（JSON 数组字符串，最多 9 张）
                 - duration: 视频时长（秒）
                 - ratio: 视频比例
 
@@ -376,7 +488,7 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
         """
         try:
             self.logger.info(
-                f"Submitting MiniMax H3 task: prompt='{ai_tool.prompt[:50] if ai_tool.prompt else ''}...', "
+                f"Submitting MiniMax H3 参考生视频 task: prompt='{ai_tool.prompt[:50] if ai_tool.prompt else ''}...', "
                 f"duration={ai_tool.duration}"
             )
 
@@ -388,7 +500,7 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
                 result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
-                self.logger.warning(f"Network error during MiniMax H3 task submission: {str(network_error)}")
+                self.logger.warning(f"Network error during MiniMax H3 参考生视频 task submission: {str(network_error)}")
                 return {
                     "success": False,
                     "error": "网络连接异常，请稍后重试",
@@ -396,7 +508,7 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
                     "retry": True
                 }
 
-            self.logger.info(f"MiniMax H3 API response: {result}")
+            self.logger.info(f"MiniMax H3 参考生视频 API response: {result}")
 
             # 验证响应格式
             is_valid, validation_error = self._validate_submit_response(result)
@@ -404,9 +516,9 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
                 # 格式错误，发送报警，不重试
                 self._send_alert(
                     alert_type="INVALID_RESPONSE_FORMAT",
-                    message=f"MiniMax H3 submit_task 响应格式错误: {validation_error}",
+                    message=f"MiniMax H3 参考生视频 submit_task 响应格式错误: {validation_error}",
                     context={
-                        "api": "create_minimax_h3_image_to_video",
+                        "api": "create_minimax_h3_reference_to_video",
                         "response": result,
                         "ai_tool_id": ai_tool.id
                     }
@@ -426,12 +538,12 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
                 # 上游并发超限/限流：自动延迟重试
                 if is_upstream_congested_error(error_code):
                     self.logger.warning(
-                        f"MiniMax H3 upstream congested, will auto-retry: "
+                        f"MiniMax H3 参考生视频 upstream congested, will auto-retry: "
                         f"errorCode={error_code}, errorMessage={error_message}"
                     )
                     return self._build_upstream_congested_result()
                 self.logger.warning(
-                    f"MiniMax H3 API returned error: errorCode={error_code}, errorMessage={error_message}"
+                    f"MiniMax H3 参考生视频 API returned error: errorCode={error_code}, errorMessage={error_message}"
                 )
                 return {
                     "success": False,
@@ -446,7 +558,7 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
                     "success": False,
                     "error": "服务异常，请联系技术支持",
                     "error_type": "SYSTEM",
-                    "error_detail": "MiniMax H3 API未返回任务ID",
+                    "error_detail": "MiniMax H3 参考生视频 API未返回任务ID",
                     "retry": False
                 }
 
@@ -467,12 +579,12 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
 
         except Exception as e:
             # 非网络异常，发送报警，不重试
-            self.logger.error(f"Unexpected exception in MiniMax H3 submit_task: {str(e)}")
+            self.logger.error(f"Unexpected exception in MiniMax H3 参考生视频 submit_task: {str(e)}")
             self.logger.error(traceback.format_exc())
 
             self._send_alert(
                 alert_type="UNEXPECTED_EXCEPTION",
-                message=f"MiniMax H3 submit_task 发生未预期异常: {str(e)}",
+                message=f"MiniMax H3 参考生视频 submit_task 发生未预期异常: {str(e)}",
                 context={
                     "exception": str(e),
                     "traceback": traceback.format_exc(),
@@ -490,7 +602,7 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
 
     def check_status(self, project_id: str) -> Dict[str, Any]:
         """
-        检查 MiniMax H3 任务状态
+        检查 MiniMax H3 参考生视频任务状态
 
         Args:
             project_id: 任务ID
@@ -499,7 +611,7 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
             Dict[str, Any]: 状态检查结果
         """
         try:
-            self.logger.info(f"Checking MiniMax H3 task status: project_id={project_id}")
+            self.logger.info(f"Checking MiniMax H3 参考生视频 task status: project_id={project_id}")
 
             # 第一次调用：查询状态
             status_params = self.build_check_query(project_id)
@@ -508,7 +620,7 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
                 status_result = self._request(**status_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
-                self.logger.warning(f"Network error during MiniMax H3 status check: {str(network_error)}")
+                self.logger.warning(f"Network error during MiniMax H3 参考生视频 status check: {str(network_error)}")
                 return {
                     "status": "RUNNING",
                     "message": "网络连接异常，稍后将重试"
@@ -518,7 +630,7 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
             if not isinstance(status_result, dict) or "code" not in status_result:
                 self._send_alert(
                     alert_type="INVALID_RESPONSE_FORMAT",
-                    message="MiniMax H3 status API 响应格式异常",
+                    message="MiniMax H3 参考生视频 status API 响应格式异常",
                     context={
                         "api": "check_status",
                         "response": status_result,
@@ -599,12 +711,12 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
 
         except Exception as e:
             # 非网络异常，发送报警
-            self.logger.error(f"Unexpected exception in MiniMax H3 check_status: {str(e)}")
+            self.logger.error(f"Unexpected exception in MiniMax H3 参考生视频 check_status: {str(e)}")
             self.logger.error(traceback.format_exc())
 
             self._send_alert(
                 alert_type="UNEXPECTED_EXCEPTION",
-                message=f"MiniMax H3 check_status 发生未预期异常: {str(e)}",
+                message=f"MiniMax H3 参考生视频 check_status 发生未预期异常: {str(e)}",
                 context={
                     "exception": str(e),
                     "traceback": traceback.format_exc(),

@@ -249,6 +249,7 @@
               hint: '用首帧图片生成视频',
               modelListKey: 'image_to_video_models',
               fallbackListKey: 'video_models',
+              firstLastFrameOnly: true,
             },
             {
               key: 'video.reference_to_video',
@@ -578,6 +579,14 @@
         });
       },
 
+      filterCliFirstLastFrameModels(models) {
+        return (models || []).filter((m) => {
+          const modes = m.supported_image_modes || m.supportedImageModes;
+          if (!Array.isArray(modes) || !modes.length) return true;
+          return modes.includes('first_last_frame');
+        });
+      },
+
       buildCliMediaPrefModelsMap(rawModels) {
         const map = {};
         for (const group of this.cliMediaPrefGroups) {
@@ -585,6 +594,8 @@
             let list = rawModels?.[slot.modelListKey] || rawModels?.[slot.fallbackListKey] || [];
             if (slot.referenceOnly) {
               list = this.filterCliReferenceModels(list);
+            } else if (slot.firstLastFrameOnly) {
+              list = this.filterCliFirstLastFrameModels(list);
             }
             map[slot.key] = list;
           }

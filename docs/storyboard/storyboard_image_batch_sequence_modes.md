@@ -10,7 +10,7 @@
 
 ## Frontend Dialog Copy
 
-When `storyboard.html` opens a storyboard without any scenes, the "generate from script" dialog shows three user-facing modes. The dialog uses a two-column layout for model config and split options, followed by a full-width image generation mode section; it collapses to a single column on narrow screens. Each mode is a single clickable card that both explains and selects the mode (no separate button row). The currently selected mode card is visually highlighted. `quality` remains enterprise-only in the existing click handling.
+When `storyboard.html` opens a storyboard without any scenes, the "generate from script" dialog shows three user-facing modes. The dialog uses a two-column layout for model config and split options, followed by a full-width image generation mode section; it collapses to a single column on narrow screens. Each mode is a single clickable card that both explains and selects the mode (no separate button row). The currently selected mode card is visually highlighted. Switching a card only toggles the `active` class via `syncSequenceModeIntroCards()` and must not rebuild the modal, so `.gfs-body` keeps its scroll position. Other dialog controls that still call `rerenderModals()` restore `.gfs-body` scroll inside `syncModals()`. `quality` remains enterprise-only in the existing click handling.
 
 - 速度模式 (`speed`): 快速拆分剧本，适合草稿预览和方案试跑；标签：先出结果。
 - 均衡模式 (`balanced`): 兼顾生成速度与分镜质量，质量与效率折中；标签：质量和效率折中。

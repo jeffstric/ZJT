@@ -48,6 +48,7 @@ import {
     getThumbnailUrl,
     updateDialogueRow,
     Region,
+    syncSequenceModeIntroCards,
 } from './render.js';
 import {
     REGIONS_ON_SCENE_CHANGE,
@@ -1319,11 +1320,34 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'open-generate-from-script') {
+        if (state.scenes && state.scenes.length) return;
+        if (state.ratioGateActive) return;
+        if (state.generateFromScriptTaskId || state.isGeneratingFromScript) {
+            if (!reopenGenerateProgressDialog()) {
+                state.showGenerateFromScriptDialog = true;
+                rerender([Region.MODAL, Region.HEADER, Region.LEFT_TAB_BODY]);
+            }
+            return;
+        }
+        state.showGenerateFromScriptDialog = true;
+        state.generateFromScriptError = '';
+        rerender([Region.MODAL, Region.HEADER, Region.LEFT_TAB_BODY]);
+        return;
+    }
+
+    if (action === 'toggle-script-split-t2i') {
+        if (state.isGeneratingFromScript) return;
+        state.scriptSplitTextToImageOpen = !state.scriptSplitTextToImageOpen;
+        rerenderModals();
+        return;
+    }
+
     if (action === 'generate-from-script-cancel') {
         if (state.isGeneratingFromScript) return;
         state.showGenerateFromScriptDialog = false;
         state.generateFromScriptError = '';
-        rerenderModals();
+        rerender([Region.MODAL, Region.HEADER, Region.LEFT_TAB_BODY]);
         return;
     }
 
@@ -1399,7 +1423,7 @@ async function handleAction(action, target) {
             return;
         }
         state.autoImageSequenceMode = mode;
-        rerenderModals();
+        syncSequenceModeIntroCards();
         if (state.storyboardId) {
             persistUiConfig().catch(() => {});
         }
@@ -3056,7 +3080,7 @@ export function bindEvents() {
                 if (state.isGeneratingFromScript) return;
                 state.showGenerateFromScriptDialog = false;
                 state.generateFromScriptError = '';
-                rerenderModals();
+                rerender([Region.MODAL, Region.HEADER, Region.LEFT_TAB_BODY]);
                 return;
             }
 

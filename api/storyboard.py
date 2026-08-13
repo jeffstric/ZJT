@@ -3840,12 +3840,31 @@ async def generate_scene_video(
     except Exception as e:
         logger.warning(f"Failed to resolve video implementation for face mask: {e}")
 
+    needs_h3_optimize = False
+    try:
+        from task.pipeline_processor import PipelineProcessor
+        needs_h3_optimize = PipelineProcessor.needs_h3_atomic_param_prepare(task_type)
+    except Exception as e:
+        logger.warning(f"Failed to check h3 atomic param prepare for task {task_type}: {e}")
+
     need_pipeline_steps = _storyboard_needs_face_mask_pipeline(
         task_type=task_type,
         enable_face_mask=effective_face_mask,
         has_image_input=bool(image_path),
         user_id=user_id,
-    )
+    ) or needs_h3_optimize
+
+    # H3 图生视频：透传用户在该故事板选的对话模型，供提示词优化在 DeepSeek 未配置时回退。
+    h3_chat_model = None
+    h3_chat_vendor_id = None
+    if needs_h3_optimize and sb:
+        try:
+            from task.pipeline_drivers.h3_prompt_optimize_util import parse_storyboard_dialogue_model
+            _parsed_chat = parse_storyboard_dialogue_model(getattr(sb, 'config_json', None))
+            if _parsed_chat:
+                h3_chat_model, h3_chat_vendor_id = _parsed_chat
+        except Exception as e:
+            logger.warning(f"Failed to parse storyboard dialogue model for h3 optimize: {e}")
 
     extra_payload = {
         'video_type': video_type,
@@ -3876,9 +3895,12 @@ async def generate_scene_video(
         ai_tool_id = await asyncio.to_thread(
             AIToolsModel.create_with_pipeline_steps,
             status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+            h3_chat_model=h3_chat_model,
+            h3_chat_vendor_id=h3_chat_vendor_id,
             **create_kwargs,
         )
     else:
+        # 普通任务：直接 PENDING 立即入队，不进 WAITING_PARAM_PREPARE。
         ai_tool_id = await asyncio.to_thread(
             AIToolsModel.create,
             status=AI_TOOL_STATUS_PENDING,

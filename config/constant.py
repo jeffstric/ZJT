@@ -208,6 +208,17 @@ CHARACTER_VOICE_MAX_DURATION = 20.0
 # 角色参考音频裁剪时 ffmpeg/ffprobe 单次执行超时（秒）
 CHARACTER_VOICE_TRIM_TIMEOUT = 30
 
+# MiniMax H3 提交前提示词优化（param_prepare）
+# 单次 LLM 调用外层 wait_for 超时；_call_llm 会把同一值作为底层 request_timeout 传入，
+# 使 httpx 超时与外层对齐，避免超时后底层线程残留空跑到 LLM_HTTP_TIMEOUT_SECONDS。
+H3_PROMPT_OPTIMIZE_TIMEOUT = 90
+H3_PROMPT_OPTIMIZE_MAX_TOKENS = 4096
+H3_PROMPT_OPTIMIZE_TEMPERATURE = 0.3
+H3_PROMPT_OPTIMIZE_VARIANT_I2VA = "I2VA"
+H3_PROMPT_OPTIMIZE_VARIANT_FL2VA = "FL2VA"
+# 全参考（多参考图/参考视频/参考音频）生视频的提示词变体，对应官方 ref-en.txt 六段格式
+H3_PROMPT_OPTIMIZE_VARIANT_REF2VA = "Ref2VA"
+
 # [已废弃] 原双模型路由阈值（Wan2.2 / LTX2.3）。分镜对口型已统一为 MiniMax H3，不再使用。
 # 保留常量以免外部引用硬崩；新代码请勿依赖。
 WAN_MAX_SPEECH_DURATION_SECONDS = 1.0

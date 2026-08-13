@@ -34,6 +34,7 @@ class PipelineStepType:
     IMAGE_FACE_MASK = 'image_face_mask'            # 图片人脸遮盖
     IMPLEMENTATION_RETRY = 'implementation_retry'  # 实现方重试
     STORYBOARD_FIRST_FRAME_GRID_SPLIT = 'storyboard_first_frame_grid_split'
+    H3_PROMPT_OPTIMIZE = 'h3_prompt_optimize'              # MiniMax H3 I2VA/FL2VA 提示词优化
 
 
 class PipelineStep:
@@ -843,7 +844,7 @@ CREATE TABLE IF NOT EXISTS `ai_tool_pipeline_steps` (
   `id` int NOT NULL AUTO_INCREMENT,
   `ai_tool_id` int NOT NULL COMMENT '关联 ai_tools.id',
   `stage` varchar(32) NOT NULL COMMENT '阶段: param_prepare | before_finish',
-  `step_type` varchar(64) NOT NULL COMMENT '步骤类型: face_mask | image_face_mask | implementation_retry | storyboard_first_frame_grid_split',
+  `step_type` varchar(64) NOT NULL COMMENT '步骤类型: face_mask | image_face_mask | implementation_retry | storyboard_first_frame_grid_split | h3_prompt_optimize',
   `target` text DEFAULT NULL COMMENT '步骤目标（如对应的 video_path）',
   `step_order` int NOT NULL DEFAULT 0 COMMENT '同阶段内执行顺序（0 起始）',
   `status` tinyint NOT NULL DEFAULT 0 COMMENT '0=pending, 1=processing, 2=completed, -1=failed, -2=timeout',

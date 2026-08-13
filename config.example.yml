@@ -13,6 +13,9 @@ runninghub:
   # 多密钥池由商业版 Provider 提供；社区版始终使用上面的全局单密钥。
 pipeline:
   seedance_face_mask_enabled: true  # 是否启用 Seedance 2.0 / 2.0 Fast 图片和视频输入的人脸遮盖前置处理
+  h3_prompt_optimize_enabled: true  # MiniMax H3 图生视频提交前按 I2VA/FL2VA 规范优化提示词
+  h3_prompt_optimize_model: "deepseek-v4-flash"
+  h3_prompt_optimize_vendor_id: 0
 # Server configuration
 server:
   host: "http://localhost:9003"

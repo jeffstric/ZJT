@@ -298,6 +298,15 @@ button {
 }
 .header-split-badge .spinner.mini svg { display: block; }
 .header-split-badge-label { white-space: nowrap; }
+.header-start-split {
+    border-color: var(--primary);
+    background: var(--primary);
+    color: #fff;
+}
+.header-start-split:hover {
+    background: #2458d4;
+    border-color: #2458d4;
+}
 /* 错误/暂停态：红色提示，吸引点击处理 */
 .header-split-badge.is-errored {
     border-color: var(--danger);
@@ -3707,8 +3716,44 @@ button {
     font-size: 10px;
     transition: transform .15s ease;
 }
-.script-language-panel.is-open .script-language-chevron {
+.script-language-panel.is-open .script-language-chevron,
+.gfs-t2i-panel.is-open .script-language-chevron {
     transform: rotate(180deg);
+}
+.gfs-t2i-panel {
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+}
+.gfs-t2i-toggle {
+    width: 100%;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 0;
+    background: #f8fafc;
+    color: var(--foreground);
+    cursor: pointer;
+    text-align: left;
+}
+.gfs-t2i-toggle:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+}
+.gfs-t2i-body {
+    padding: 10px;
+    border-top: 1px solid var(--border);
+}
+.gfs-t2i-body .config-label {
+    margin-top: 0;
+}
+.storyboard-start-split .btn-primary {
+    margin-top: 10px;
 }
 .script-language-fields {
     display: grid;

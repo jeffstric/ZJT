@@ -27,8 +27,8 @@
 - 图片无输入图：`text_to_image`。
 - 图片包含原图或参考图：`image_edit`。
 - 视频无图片、视频和音频输入：`text_to_video`。
-- 视频只有普通首帧或首尾帧：`image_to_video`。
-- `multi_reference`、`first_last_with_ref`、多参考图、参考视频或参考音频：`reference_to_video`。
+- 视频只有普通首帧或首尾帧：`image_to_video`。该槽位保存时要求模型 `supported_image_modes` 含 `first_last_frame`；仅支持 `multi_reference` 的模型（如 Vidu-Q2）会返回 `MODEL_INPUT_UNSUPPORTED`。
+- `multi_reference`、`first_last_with_ref`、多参考图、参考视频或参考音频：`reference_to_video`。仅参考图模型应写入此槽位。
 
 `first_last_with_ref` 同时要求模型支持首尾帧和多参考图。参考视频或参考音频统一使用现有 `supports_ref_audio_video` 能力校验，本阶段不拆分音频和视频能力字段，也不扩展图片编辑的细粒度输入能力。
 
@@ -183,7 +183,7 @@ PUT  /api/storyboard/cli/media-preferences
      body: { world_id, media_type, mode, profile: { task_id } }
 ```
 
-`surface` 固定为 `storyboard_cli`，按 `user_id + world_id` 隔离，不读写 Storyboard 项目 `config_json`。首页「智能体连接信息」弹窗的「智能体模型偏好」Tab 使用该接口。
+`surface` 固定为 `storyboard_cli`，按 `user_id + world_id` 隔离，不读写 Storyboard 项目 `config_json`。首页「智能体连接信息」弹窗的「智能体模型偏好」Tab 使用该接口。图生视频下拉同样只列出支持 `first_last_frame` 的模型，仅参考图模型只出现在「参考视频」槽位。
 
 统一错误码：
 

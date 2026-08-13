@@ -23,7 +23,7 @@ MiniMax H3 通过 RunningHub AI-App 接口调用**首尾帧图生视频**工作�
 | 时长 | 秒 | 5 | 4, 5, 6, 7, 8, 9, 10 |
 | 比例 | 视频比例 | 9:16 | 9:16, 16:9, 1:1, 4:3, 3:4 |
 | 分辨率 | 清晰度（影响算力，480P=720P×0.42） | 720P | 480P, 720P |
-| 提示词 | 文本 | "" | - |
+| 提示词 | 文本；提交前会经 `h3_prompt_optimize` 改写成 I2VA/FL2VA 规范，原文备份在 `extra_config.original_prompt` | "" | - |
 
 > **算力**：基准为 720P（1 算力 ≈ 13 R币），480P 为 720P 的 42%（通过分辨率倍率 `MINIMAX_H3_480P_PRICE_MULTIPLIER=0.42`）。
 > 工作流要求时长 4~15 秒（`RHMiniMaxH3FL2VATarget` 节点限制）。
@@ -41,6 +41,30 @@ MiniMax H3 通过 RunningHub AI-App 接口调用**首尾帧图生视频**工作�
 | 10 | 13 | 6 |
 
 > 计算公式：`final_power = ceil(default_computing_power[duration] × resolution_multiplier)`，480P 向上取整后低时长档位可能出现相邻档算力相同，属正常现象。
+
+## 提交前提示词优化
+
+type=34 创建时会与 `ai_tool` 在**同一事务**内创建 `param_prepare` 步骤 `h3_prompt_optimize`（见 `docs/backend/pipeline_steps.md`），避免 ai_tool 已落库而步骤尚未创建的竞态。
+
+- 仅首帧走 I2VA，有尾帧走 FL2VA
+- 改写模板：`task/pipeline_drivers/prompts/minimax_h3_i2va_fl2va_base_en.txt`
+- 驱动读 `extra_config.h3_prompt_optimize.optimized_prompt`，否则读 `ai_tool.prompt`
+- 关闭开关或 LLM 失败时回退原文，仍提交 RunningHub
+
+### 大模型回退链
+
+优化所用聊天模型按优先级选取（每步校验 api_key 是否已配置，首个可用者胜出）：
+
+1. **故事板对话模型**：故事板入口生成视频时，把用户在该故事板选的对话模型写入步骤参数（`chat_model`/`chat_vendor_id`）
+2. **`pipeline.h3_prompt_optimize_model`**（默认 `deepseek-v4-flash`，走官方 DeepSeek `llm.deepseek.api_key`）
+3. **剧本拆分默认模型** `StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL`（`gemini-3-flash-preview`，走 JIEKOU/google key）
+
+独立图生视频入口（无故事板上下文）跳过第 1 步。全部候选均未配置密钥时直接回退原文，不发起必败的 LLM 调用。
+
+### 超时
+
+- 单次 LLM 调用：`H3_PROMPT_OPTIMIZE_TIMEOUT = 90s`，同时作为外层 `asyncio.wait_for` 与底层 `request_timeout`（对齐 httpx，避免超时后线程残留）
+- 失败重试 1 次（共 2 次调用），最坏约 180s 后回退原文
 
 ## 工作流节点映射
 

@@ -329,6 +329,30 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False,
         'quick_config': False
     },
+    {
+        'key': 'pipeline.h3_prompt_optimize_enabled',
+        'value_type': 'bool',
+        'description': '是否在 MiniMax H3 图生视频提交前按 I2VA/FL2VA 规范优化提示词',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': False
+    },
+    {
+        'key': 'pipeline.h3_prompt_optimize_model',
+        'value_type': 'string',
+        'description': 'H3 提示词优化使用的聊天模型名（默认 deepseek-v4-flash）。密钥未配置时依次回退：故事板对话模型 → 本项 → 剧本拆分默认模型(gemini-3-flash-preview)，全部未配置则回退原文',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': False
+    },
+    {
+        'key': 'pipeline.h3_prompt_optimize_vendor_id',
+        'value_type': 'int',
+        'description': 'H3 提示词优化使用的供应商 ID；0 或空则按模型名路由',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': False
+    },
     
     # ==================== Duomi 配置 ====================
     {
