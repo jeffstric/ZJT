@@ -35,6 +35,8 @@
           groupName: groupName,
           shots: shotGroupData.shots || [],
           scriptData: scriptData,
+          scriptNodeId: opts.scriptNodeId || '',  // 关联的剧本节点 ID
+          scriptContent: opts.scriptContent || '',  // 原始剧本内容
           model: shotGroupData.model || defaultImageModel,
           gridModel: normalizeGridImageModelValue(shotGroupData.gridModel || shotGroupData.grid_model),
           videoModel: resolvedVideoModel,
@@ -62,7 +64,7 @@
           <div style="padding: 8px; background: #f8f9fa; border-radius: 6px; margin-bottom: 6px; font-size: 12px;">
             <div style="font-weight: 700; margin-bottom: 4px;">${escapeHtml(shot.shot_id || `镜头${idx+1}`)} - ${escapeHtml(shot.description || '')}</div>
             <div style="color: #666; font-size: 11px;">时长: ${escapeHtml(duration)} | ${escapeHtml(shot.shot_type || '')} | ${escapeHtml(shot.camera_movement || '')}</div>
-            <div style="color: #666; font-size: 11px; margin-top: 2px;">起始画面: ${escapeHtml((shot.opening_frame_description || '').slice(0, 60))}...</div>
+            <div style="color: #666; font-size: 11px; margin-top: 2px;">图片提示词: ${escapeHtml((shot.opening_frame_description || '').slice(0, 60))}...</div>
           </div>
         `;
       }).join('');

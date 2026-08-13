@@ -573,6 +573,7 @@
     const shotGroupModalTitle = document.getElementById('shotGroupModalTitle');
     const shotGroupModalEditBtn = document.getElementById('shotGroupModalEditBtn');
     let currentShotGroupNodeId = null;
+    let shotGroupDetailHasNewShot = false;  // 查看详情弹窗内是否新建过分镜（关闭时提醒点击"生成分镜"）
     
     const shotDetailModal = document.getElementById('shotDetailModal');
     const shotDetailModalClose = document.getElementById('shotDetailModalClose');
@@ -582,6 +583,7 @@
 
     function openShotGroupModal(shotGroupData, nodeId){
       currentShotGroupNodeId = nodeId;
+      shotGroupDetailHasNewShot = false;
       shotGroupModalTitle.textContent = `幕详情 - ${shotGroupData.groupName || '未命名'}`;
       shotGroupModalContent.innerHTML = renderShotGroupTable(shotGroupData, nodeId);
       shotGroupModal.classList.add('show');
@@ -589,6 +591,21 @@
     }
 
     function closeShotGroupModal(){
+      // 新建过分镜时，提醒用户点击幕节点上的"生成分镜"按钮同步到画布（复用已有 flashing 特效）
+      // 注意：必须在置空 currentShotGroupNodeId 之前查询按钮
+      if(shotGroupDetailHasNewShot && currentShotGroupNodeId){
+        const detailCanvasEl = document.getElementById('canvas');
+        const genBtn = detailCanvasEl && detailCanvasEl.querySelector(`.node[data-node-id="${currentShotGroupNodeId}"] .shot-group-generate-btn`);
+        if(genBtn){
+          genBtn.classList.remove('flashing');
+          void genBtn.offsetWidth;  // 强制 reflow，重启动画
+          genBtn.classList.add('flashing');
+          genBtn.addEventListener('animationend', () => {
+            genBtn.classList.remove('flashing');
+          }, { once: true });
+        }
+      }
+      shotGroupDetailHasNewShot = false;
       shotGroupModal.classList.remove('show');
       shotGroupModal.setAttribute('aria-hidden', 'true');
       currentShotGroupNodeId = null;
@@ -754,8 +771,9 @@
 
       const insertBtnHtml = (insertIndex) => {
         return `
-          <div style="display:flex; justify-content:center; margin: 10px 0;">
-            <button class="mini-btn secondary insert-shot-btn" data-insert-index="${insertIndex}" type="button">在此处添加分镜</button>
+          <div style="display:flex; justify-content:center; align-items:center; gap: 8px; margin: 10px 0;">
+            <button class="mini-btn secondary insert-shot-btn" data-insert-index="${insertIndex}" type="button" title="快速插入（继承相邻分镜共性字段）">+ 插入分镜</button>
+            <button class="mini-btn primary insert-shot-smart-btn" data-insert-index="${insertIndex}" type="button" title="智能插入（AI 分析前后分镜自动填充）">✦ 智能插入</button>
           </div>
         `;
       };
@@ -825,11 +843,11 @@
               <input type="text" class="shot-field" data-field="camera_movement" value="${escapeHtml(shot.camera_movement || '')}" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
             </div>
             <div style="grid-column: 1 / -1;">
-              <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">描述</label>
+              <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">视频提示词</label>
               <textarea class="shot-field" data-field="description" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; min-height: 50px; resize: vertical;">${escapeHtml(shot.description || '')}</textarea>
             </div>
             <div style="grid-column: 1 / -1;">
-              <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">起始画面描述</label>
+              <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">图片提示词</label>
               <textarea class="shot-field" data-field="opening_frame_description" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; min-height: 60px; resize: vertical;">${escapeHtml(shot.opening_frame_description || '')}</textarea>
             </div>
             <div style="grid-column: 1 / -1;">
@@ -892,6 +910,16 @@
           e.stopPropagation();
           const idx = parseInt(btn.dataset.insertIndex);
           addNewShot(idx);
+        });
+      });
+
+      // 绑定智能插入按钮事件
+      const smartInsertBtns = shotGroupEditModalContent.querySelectorAll('.insert-shot-smart-btn');
+      smartInsertBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = parseInt(btn.dataset.insertIndex);
+          addNewShotSmart(idx);
         });
       });
 
@@ -1047,6 +1075,155 @@
       // 导致标题显示错误。新分镜的标题用 shot_id（N_x），LLM 分镜的标题用其原始 shot_number，数组顺序即显示顺序。
       shotGroupEditModalContent.innerHTML = renderShotGroupEditForm(node.data);
       bindShotEditEvents();
+    }
+
+    // 智能插入核心：调用后端 API，返回 AI 生成的分镜数据（失败时抛错）
+    async function requestSmartInsertShot(node, prevShot, nextShot){
+      const requestBody = {
+        prev_shot: prevShot,
+        next_shot: nextShot,
+        group_id: node.data.groupId || node.data.group_id || '',
+        script_data: node.data.scriptData || node.data.script_data || {},
+        script_content: node.data.scriptContent || '',  // 原始剧本内容
+        world_id: state.defaultWorldId || ''  // 从工作流状态获取世界 ID
+      };
+
+      const response = await fetch('/api/video-workflow/smart-insert-shot', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(window.getAuthHeaders ? window.getAuthHeaders() : {})
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      const result = await response.json();
+      if(result.success && result.shot) return result.shot;
+      throw new Error(result.error || '智能插入失败');
+    }
+
+    // 基于 AI 返回组装新分镜对象（生成唯一 shot_id、继承相邻分镜共性字段）
+    function buildSmartInsertNewShot(aiShot, shots, idx, prevShot, nextShot){
+      const prevShotForId = shots[idx - 1];
+      let base;
+      if(prevShotForId){
+        const prevId = String(prevShotForId.shot_id || '');
+        const insertMatch = prevId.match(/^(\d+)_\d+$/);
+        base = insertMatch ? insertMatch[1] : String(prevShotForId.shot_number || idx);
+      } else {
+        base = '0';
+      }
+      const idPrefix = base + '_';
+      let maxSub = 0;
+      shots.forEach(s => {
+        const sid = String(s.shot_id || '');
+        if(sid.startsWith(idPrefix)){
+          const tail = sid.slice(idPrefix.length);
+          if(/^\d+$/.test(tail)){
+            const x = parseInt(tail, 10);
+            if(x > maxSub) maxSub = x;
+          }
+        }
+      });
+      const newShotId = `${base}_smart_${maxSub + 1}`;
+
+      return {
+        ...aiShot,
+        shot_id: newShotId,
+        shot_number: aiShot.shot_number || (idx + 1),
+        // 保留相邻分镜的共性字段（如果 AI 未返回）
+        location_id: aiShot.location_id || prevShot?.location_id || nextShot?.location_id || '',
+        db_location_id: aiShot.db_location_id || prevShot?.db_location_id || nextShot?.db_location_id || '',
+        db_location_pic: aiShot.db_location_pic || prevShot?.db_location_pic || nextShot?.db_location_pic || '',
+        location_name: aiShot.location_name || prevShot?.location_name || nextShot?.location_name || '',
+        props: aiShot.props || []
+      };
+    }
+
+    // 智能插入分镜：调用后端 API 自动生成新分镜属性
+    async function addNewShotSmart(insertIndex){
+      const node = state.nodes.find(n => n.id === currentEditingNodeId);
+      if(!node) return;
+
+      if(!Array.isArray(node.data.shots)) node.data.shots = [];
+      const shots = node.data.shots;
+      const idx = Math.max(0, Math.min(insertIndex, shots.length));
+      const prevShot = shots[idx - 1] || null;
+      const nextShot = shots[idx] || null;
+
+      // 找到智能插入按钮并显示加载状态
+      const smartBtn = shotGroupEditModalContent.querySelector(`.insert-shot-smart-btn[data-insert-index="${insertIndex}"]`);
+      const originalText = smartBtn ? smartBtn.textContent : '';
+      if(smartBtn){
+        smartBtn.disabled = true;
+        smartBtn.textContent = '⏳ AI 生成中...';
+        smartBtn.style.opacity = '0.6';
+      }
+
+      try {
+        const aiShot = await requestSmartInsertShot(node, prevShot, nextShot);
+        const newShot = buildSmartInsertNewShot(aiShot, shots, idx, prevShot, nextShot);
+        shots.splice(idx, 0, newShot);
+        shotGroupEditModalContent.innerHTML = renderShotGroupEditForm(node.data);
+        bindShotEditEvents();
+        showToast(window.t ? window.t('smart_insert_success') : '智能插入成功', 'success');
+      } catch (e) {
+        console.error('智能插入失败:', e);
+        showToast((window.t ? window.t('smart_insert_failed') : '智能插入失败') + ': ' + e.message, 'error');
+        // 降级为普通插入
+        addNewShot(insertIndex);
+      } finally {
+        // 恢复按钮状态（如果按钮还在 DOM 中）
+        const currentSmartBtn = shotGroupEditModalContent.querySelector(`.insert-shot-smart-btn[data-insert-index="${insertIndex}"]`);
+        if(currentSmartBtn){
+          currentSmartBtn.disabled = false;
+          currentSmartBtn.textContent = originalText;
+          currentSmartBtn.style.opacity = '1';
+        }
+      }
+    }
+
+    // 表格快速创建分镜：在分镜组详情表格行间触发 AI 智能插入（与编辑弹窗共用 requestSmartInsertShot/buildSmartInsertNewShot）
+    async function addNewShotSmartInTable(insertIndex){
+      const nodeId = currentShotGroupNodeId;
+      const node = state.nodes.find(n => n.id === nodeId);
+      if(!node) return;
+
+      if(!Array.isArray(node.data.shots)) node.data.shots = [];
+      const shots = node.data.shots;
+      const idx = Math.max(0, Math.min(insertIndex, shots.length));
+      const prevShot = shots[idx - 1] || null;
+      const nextShot = shots[idx] || null;
+
+      const btn = shotGroupModalContent.querySelector(`.quick-insert-shot-btn[data-insert-index="${insertIndex}"]`);
+      const originalText = btn ? btn.textContent : '';
+      if(btn){
+        btn.disabled = true;
+        btn.textContent = '⏳ AI 生成中...';
+        btn.style.opacity = '0.6';
+      }
+
+      try {
+        const aiShot = await requestSmartInsertShot(node, prevShot, nextShot);
+        const newShot = buildSmartInsertNewShot(aiShot, shots, idx, prevShot, nextShot);
+        shots.splice(idx, 0, newShot);
+        shotGroupDetailHasNewShot = true;  // 标记新建过分镜，关闭弹窗时闪烁"生成分镜"按钮
+        // 刷新表格与幕节点卡片展示
+        shotGroupModalContent.innerHTML = renderShotGroupTable(node.data, nodeId);
+        updateShotGroupNodeDisplay(nodeId);
+        safeAutoSave();
+        showToast('智能创建分镜成功', 'success');
+      } catch (e) {
+        console.error('智能创建分镜失败:', e);
+        showToast('智能创建分镜失败: ' + e.message, 'error');
+        // 表格重新渲染前恢复按钮状态（按钮可能仍在 DOM 中）
+        const currentBtn = shotGroupModalContent.querySelector(`.quick-insert-shot-btn[data-insert-index="${insertIndex}"]`);
+        if(currentBtn){
+          currentBtn.disabled = false;
+          currentBtn.textContent = originalText;
+          currentBtn.style.opacity = '1';
+        }
+      }
     }
 
     function deleteShot(index){
@@ -1311,7 +1488,7 @@
           <div style="padding: 8px; background: #f8f9fa; border-radius: 6px; margin-bottom: 6px; font-size: 12px;">
             <div style="font-weight: 700; margin-bottom: 4px;">${escapeHtml(shot.shot_id || `镜头${idx+1}`)} - ${escapeHtml(shot.description || '')}</div>
             <div style="color: #666; font-size: 11px;">时长: ${escapeHtml(duration)} | ${escapeHtml(shot.shot_type || '')} | ${escapeHtml(shot.camera_movement || '')}</div>
-            <div style="color: #666; font-size: 11px; margin-top: 2px;">起始画面: ${escapeHtml((shot.opening_frame_description || '').slice(0, 60))}...</div>
+            <div style="color: #666; font-size: 11px; margin-top: 2px;">图片提示词: ${escapeHtml((shot.opening_frame_description || '').slice(0, 60))}...</div>
           </div>
         `;
       }).join('');
@@ -1713,11 +1890,20 @@
               <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">运镜</th>
               <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">参考场景</th>
               <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">道具</th>
-              <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">描述</th>
+              <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">视频提示词</th>
               <th style="padding: 10px; text-align: center; border: 1px solid #ddd; width: 100px;">操作</th>
             </tr>
           </thead>
           <tbody>
+      `;
+
+      // 行间快速创建分镜按钮（插入到当前行与下一行之间）
+      const insertRowHtml = (insertIndex) => `
+        <tr class="quick-insert-row">
+          <td colspan="10" style="padding: 2px 10px; border: none; text-align: center;">
+            <button class="mini-btn primary quick-insert-shot-btn" data-insert-index="${insertIndex}" type="button" title="AI 根据前后分镜上下文自动生成新分镜" style="padding: 2px 12px; font-size: 12px;">✦ 快速创建分镜</button>
+          </td>
+        </tr>
       `;
 
       shots.forEach((shot, index) => {
@@ -1778,6 +1964,10 @@
             </td>
           </tr>
         `;
+        // 在当前行与下一行之间插入快速创建分镜按钮
+        if(index < shots.length - 1){
+          html += insertRowHtml(index + 1);
+        }
       });
 
       html += `
@@ -1823,6 +2013,15 @@
             const shotIndex = parseInt(btn.dataset.shotIndex);
             const propsIndex = parseInt(btn.dataset.propsIndex);
             removePropsFromShotTable(currentShotGroupNodeId, shotIndex, propsIndex);
+          });
+        });
+
+        // 绑定行间快速创建分镜按钮事件（AI 智能插入）
+        document.querySelectorAll('.quick-insert-shot-btn').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const insertIndex = parseInt(btn.dataset.insertIndex);
+            await addNewShotSmartInTable(insertIndex);
           });
         });
       }, 0);
@@ -1910,8 +2109,8 @@
         'location_id': '场景ID',
         'shot_type': '镜头类型',
         'camera_movement': '运镜方式',
-        'description': '描述',
-        'opening_frame_description': '起始画面描述',
+        'description': '视频提示词',
+        'opening_frame_description': '图片提示词',
         'scene_detail': '场景细节',
         'characters_present': '出场角色',
         'dialogue': '对话',
@@ -3453,7 +3652,7 @@
             'video_prompt_scene': '场景：{value}',
             'video_prompt_shot_type': '镜头类型：{value}',
             'video_prompt_camera_movement': '运镜：{value}',
-            'video_prompt_description': '描述：{value}',
+            'video_prompt_description': '视频提示词：{value}',
             'video_prompt_scene_detail': '场景细节：{value}',
             'video_prompt_action': '动作：{value}',
             'video_prompt_mood': '情绪：{value}',

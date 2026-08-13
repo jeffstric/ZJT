@@ -3320,6 +3320,106 @@ async def add_scene(
     return JSONResponse({'success': True, 'scene': scene.to_dict()})
 
 
+@router.post('/{storyboard_id:int}/smart-insert-scene')
+@require_permission("storyboard:update")
+async def smart_insert_scene(
+    request: Request,
+    storyboard_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """
+    智能插入分镜：根据前后分镜内容，调用 LLM 自动生成新分镜的各个属性
+    供故事板 (storyboard) 使用
+    """
+    try:
+        user_id = get_user_id_from_header(user_id)
+        sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
+        if not sb:
+            return JSONResponse(status_code=404, content={'error': '故事板不存在'})
+
+        ensure_resource_access(sb, user_id, Action.EDIT, "故事板")
+
+        data = await request.json()
+        prev_scene_id = data.get('prev_scene_id')
+        next_scene_id = data.get('next_scene_id')
+        world_id = data.get('world_id') or sb.world_id or ''
+
+        # 获取前后分镜数据
+        prev_scene = None
+        next_scene = None
+        if prev_scene_id:
+            prev_scene_obj = await asyncio.to_thread(StoryboardSceneModel.get_by_id, prev_scene_id)
+            if prev_scene_obj:
+                prev_scene = _scene_to_shot_format(prev_scene_obj)
+        if next_scene_id:
+            next_scene_obj = await asyncio.to_thread(StoryboardSceneModel.get_by_id, next_scene_id)
+            if next_scene_obj:
+                next_scene = _scene_to_shot_format(next_scene_obj)
+
+        # 获取剧本内容（如果有 script_id）
+        script_content = ''
+        script_data = {}
+        if sb.script_id:
+            try:
+                from model.script import ScriptModel
+                script_obj = await asyncio.to_thread(ScriptModel.get_by_id, sb.script_id)
+                if script_obj:
+                    script_content = script_obj.content or ''
+                    script_data = {
+                        'title': script_obj.title,
+                        'genre': script_obj.genre if hasattr(script_obj, 'genre') else '',
+                        'synopsis': script_obj.synopsis if hasattr(script_obj, 'synopsis') else '',
+                    }
+            except Exception as e:
+                logger.warning(f"获取剧本内容失败: {e}")
+
+        # 调用公共服务
+        from services.smart_insert_service import smart_insert_shot as _smart_insert_shot
+        shot_data = await _smart_insert_shot(
+            user_id=user_id,
+            world_id=str(world_id),
+            prev_shot=prev_scene,
+            next_shot=next_scene,
+            script_data=script_data,
+            script_content=script_content
+        )
+
+        return JSONResponse({'success': True, 'shot': shot_data})
+
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={'success': False, 'error': '智能插入超时，请稍后重试'}
+        )
+    except Exception as e:
+        logger.error(f"故事板智能插入分镜失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'error': f'智能插入失败: {str(e)}'}
+        )
+
+
+def _scene_to_shot_format(scene) -> Dict:
+    """将故事板 scene 数据转换为智能插入服务所需的格式"""
+    prompt = scene.prompt_json if isinstance(scene.prompt_json, dict) else {}
+    return {
+        'shot_id': str(scene.id),
+        'description': prompt.get('scene_desc', '') or scene.title or '',
+        'opening_frame_description': prompt.get('scene_desc', ''),
+        'action': prompt.get('character_desc', ''),
+        'shot_type': prompt.get('shot_type', ''),
+        'camera_movement': prompt.get('camera_movement', ''),
+        'mood': prompt.get('mood', ''),
+        'characters_present': prompt.get('characters_present', []),
+        'dialogue': [],
+        'duration': float(scene.duration) if scene.duration else 5,
+        'scene_detail': prompt.get('scene_desc', ''),
+        'time_of_day': prompt.get('time_of_day', ''),
+        'weather': prompt.get('weather', ''),
+    }
+
+
 @router.put('/scene/{scene_id}')
 @require_permission("storyboard:update")
 async def update_scene(

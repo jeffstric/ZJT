@@ -1268,7 +1268,9 @@
             x: node.x + 800,
             y: node.y + cumulativeY,
             shotGroupData: shotGroup,
-            scriptData: parsedData
+            scriptData: parsedData,
+            scriptNodeId: id,  // 关联的剧本节点 ID
+            scriptContent: node.data.scriptContent || ''  // 原始剧本内容
           });
           const shotGroupEl = canvasEl.querySelector(`.node[data-node-id="${shotGroupNodeId}"]`);
           const actualHeight = shotGroupEl ? shotGroupEl.offsetHeight : 300;
@@ -1763,7 +1765,9 @@
                   x: node.x + offsetX,
                   y: node.y + cumulativeY,
                   shotGroupData: shotGroup,
-                  scriptData: parsedData
+                  scriptData: parsedData,
+                  scriptNodeId: id,  // 关联的剧本节点 ID
+                  scriptContent: node.data.scriptContent || ''  // 原始剧本内容
                 });
                 cumulativeY += shotCount * 700;
                 if (shotGroupNodeId) {

@@ -1487,14 +1487,71 @@ async function handleAction(action, target) {
     if (action === 'insert-scene') {
         const prevId = target.dataset.prevId ? parseInt(target.dataset.prevId, 10) : null;
         const nextId = target.dataset.nextId ? parseInt(target.dataset.nextId, 10) : null;
-        const response = await api.addScene(state.storyboardId, {
-            title: `分镜${state.scenes.length + 1}`,
-            duration: 5,
-            prompt_json: {},
-            prev_id: prevId,
-            next_id: nextId,
-        });
-        addSceneToState(response.scene);
+        
+        // 检查是否启用智能插入（默认启用，可通过配置关闭）
+        const useSmartInsert = state.useSmartInsert !== false;
+        
+        if (useSmartInsert && (prevId || nextId)) {
+            // 智能插入：调用 LLM 生成分镜内容
+            try {
+                // 显示加载状态
+                state.isSmartInserting = true;
+                rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
+                
+                const smartResponse = await api.smartInsertScene(state.storyboardId, {
+                    prev_scene_id: prevId,
+                    next_scene_id: nextId,
+                    world_id: state.worldId,
+                });
+                
+                if (smartResponse.success && smartResponse.shot) {
+                    const shot = smartResponse.shot;
+                    // 使用 LLM 生成的数据创建分镜
+                    const response = await api.addScene(state.storyboardId, {
+                        title: shot.description || `分镜${state.scenes.length + 1}`,
+                        duration: shot.duration || 5,
+                        prompt_json: {
+                            scene_desc: shot.opening_frame_description || '',
+                            character_desc: shot.action || '',
+                            shot_type: shot.shot_type || '',
+                            camera_movement: shot.camera_movement || '',
+                            mood: shot.mood || '',
+                            time_of_day: shot.time_of_day || '',
+                            weather: shot.weather || '',
+                        },
+                        video_prompt: shot.description || '',
+                        prev_id: prevId,
+                        next_id: nextId,
+                    });
+                    addSceneToState(response.scene);
+                } else {
+                    throw new Error(smartResponse.error || '智能插入失败');
+                }
+            } catch (error) {
+                console.error('智能插入失败:', error);
+                // 降级到普通插入
+                const response = await api.addScene(state.storyboardId, {
+                    title: `分镜${state.scenes.length + 1}`,
+                    duration: 5,
+                    prompt_json: {},
+                    prev_id: prevId,
+                    next_id: nextId,
+                });
+                addSceneToState(response.scene);
+            } finally {
+                state.isSmartInserting = false;
+            }
+        } else {
+            // 普通插入
+            const response = await api.addScene(state.storyboardId, {
+                title: `分镜${state.scenes.length + 1}`,
+                duration: 5,
+                prompt_json: {},
+                prev_id: prevId,
+                next_id: nextId,
+            });
+            addSceneToState(response.scene);
+        }
         rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
         return;
     }

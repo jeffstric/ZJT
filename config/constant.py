@@ -1852,6 +1852,19 @@ class NotificationConstants:
     LEVEL_SUCCESS = "success"
 
 
+# ============ 智能插入分镜 ============
+SMART_INSERT_SHOT_TIMEOUT = 30  # 智能体调用超时（秒）
+SMART_INSERT_SHOT_DEFAULT_MODEL = 'gemini/gemini-3-flash-preview'  # 降级默认模型
+
+# ============ 默认 LLM 模型选择策略 ============
+# 当数据库没有配置默认 LLM 模型时，使用以下优先级选择：
+# 1. 首选供应商 + 首选模型
+# 2. 首选供应商 + 任意模型
+# 3. 列表第一项
+DEFAULT_LLM_MODEL_PREFERRED_VENDORS = ['deepseek']  # 首选供应商列表（按优先级排序）
+DEFAULT_LLM_MODEL_PREFERRED_MODEL = 'deepseek-v4-flash'  # 首选模型名称
+
+
 # ============ 智能体语言指令常量 ============
 
 LANGUAGE_INSTRUCTIONS = {
