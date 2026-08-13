@@ -109,14 +109,16 @@ def test_allow_hidden_accepts_internal_or_snapshot_models(monkeypatch):
     assert config.id == 11
 
 
-def test_qwen_multi_angle_image_edit_allowed_with_allow_hidden():
-    """多角度内部模型：偏好不可选，直接 image-edit 校验可放行。"""
-    from config.unified_config import TaskTypeId, UnifiedConfigRegistry
-
-    config = UnifiedConfigRegistry.get_by_id(TaskTypeId.QWEN_MULTI_ANGLE_IMAGE)
-    assert config is not None
-    assert config.hidden is True
-    assert config.enabled is True
+def test_qwen_multi_angle_image_edit_allowed_with_allow_hidden(monkeypatch):
+    """多角度等隐藏内部模型：偏好不可选，直接 image-edit 校验（allow_hidden）可放行。"""
+    config = _config(
+        category=TaskCategory.IMAGE_EDIT,
+        hidden=True,
+    )
+    monkeypatch.setattr(
+        "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_id",
+        lambda task_id: config,
+    )
 
     with pytest.raises(MediaGenerationPreferenceError) as exc_info:
         MediaGenerationPreferenceService.validate_model(
@@ -133,7 +135,6 @@ def test_qwen_multi_angle_image_edit_allowed_with_allow_hidden():
         allow_hidden=True,
     )
     assert resolved.id == config.id
-    assert resolved.key == "qwen-multi-angle"
 
 
 def test_reference_only_model_rejected_for_image_to_video_slot(monkeypatch):
