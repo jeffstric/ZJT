@@ -26,7 +26,12 @@ import {
     t as i18nT,
     EMO_VEC_LABELS,
     EMO_VEC_MAX_SUM,
+    EMO_VEC_MAX_EACH,
+    EMO_VEC_COLORS,
     formatEmoVecSummary,
+    getEmoVecActiveDims,
+    isAudioRunningStatus,
+    isAudioFailedStatus,
     parseEmoVec,
 } from './utils.js';
 import {
@@ -1051,12 +1056,47 @@ function renderDialogueAudioSource(scene) {
 function renderDialogueEmoSummary(d) {
     const summary = formatEmoVecSummary(d.emoVec);
     const has = summary !== '未设置';
+    // 数字放 tooltip，按钮上只用彩色小条展示各维度强弱，避免截断
+    const bars = has ? getEmoVecActiveDims(d.emoVec).map(({ index, value }) => {
+        const h = Math.max(3, Math.round((value / EMO_VEC_MAX_EACH) * 12));
+        return `<span class="emo-bar" style="height:${h}px;background:${EMO_VEC_COLORS[index]}"></span>`;
+    }).join('') : '';
     return `
         <button type="button" class="tool-button dialogue-emo-btn ${has ? 'has-emo' : ''}"
             data-action="edit-dialogue-emo-vec" data-dialogue-id="${d.id}"
-            title="查看/编辑配音情感向量">
-            ${icon('music', 14)} 情感${has ? ` · ${escapeHtml(summary)}` : ''}
+            title="${has ? `配音情感向量：${escapeHtml(summary)}（点击编辑）` : '查看/编辑配音情感向量'}">
+            ${icon('music', 14)} 情感${has ? `<span class="emo-bars" aria-hidden="true">${bars}</span>` : ''}
         </button>`;
+}
+
+// 配音音频区：生成中显示不确定进度条；设置变更后标记旧配音；失败给出重试提示。
+// 需在 renderDialoguePanel 与 renderDialogueRowOuter 两处行模板中保持一致使用。
+function renderDialogueAudioBlock(d) {
+    const running = isAudioRunningStatus(d.audioStatus);
+    const failed = !running && isAudioFailedStatus(d.audioStatus);
+    const stale = !running && !failed && Boolean(d.audioStale && d.audioUrl);
+    const audioHtml = d.audioUrl
+        ? `<audio src="${escapeHtml(d.audioUrl)}" controls class="dialogue-audio ${running || stale ? 'is-stale' : ''}"></audio>`
+        : '';
+    let statusHtml = '';
+    if (running) {
+        statusHtml = `
+            <div class="dialogue-audio-progress">
+                <span class="dialogue-audio-progress-label">${d.audioUrl ? '正在生成新配音…（下方播放的仍是旧配音）' : '配音生成中…'}</span>
+                <span class="dialogue-audio-progress-track"><span class="dialogue-audio-progress-thumb"></span></span>
+            </div>`;
+    } else if (failed) {
+        statusHtml = `<div class="dialogue-audio-note failed">配音生成失败${d.audioError ? `：${escapeHtml(d.audioError)}` : ''}，请点击「生成配音」重试</div>`;
+    } else if (stale) {
+        statusHtml = `<div class="dialogue-audio-note stale">台词/情感已修改，当前播放的是旧配音；点击「生成配音」更新</div>`;
+    }
+    return `${statusHtml}${audioHtml}`;
+}
+
+// 生成配音按钮：任务进行中禁用并显示「生成中…」，由轮询更新行后恢复。
+function renderGenerateVoiceoverBtn(d) {
+    const running = isAudioRunningStatus(d.audioStatus);
+    return `<button class="tool-button" data-action="generate-voiceover" data-dialogue-id="${d.id}" ${running ? 'disabled' : ''}>${icon('mic', 14)} ${running ? '生成中…' : '生成配音'}</button>`;
 }
 
 function renderDialoguePanel(scene) {
@@ -1072,10 +1112,10 @@ function renderDialoguePanel(scene) {
                     <label class="meta-field">语速<input type="number" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
                     <label class="meta-field">音量<input type="number" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
                 </div>
-                ${d.audioUrl ? `<audio src="${escapeHtml(d.audioUrl)}" controls class="dialogue-audio"></audio>` : ''}
+                ${renderDialogueAudioBlock(d)}
                 <div class="dialogue-actions">
                     ${renderDialogueEmoSummary(d)}
-                    <button class="tool-button" data-action="generate-voiceover" data-dialogue-id="${d.id}">${icon('mic', 14)} 生成配音</button>
+                    ${renderGenerateVoiceoverBtn(d)}
                     <button class="tool-button" data-action="save-dialogue" data-dialogue-id="${d.id}">${icon('success', 14)} 保存</button>
                     <button class="tool-button" data-action="delete-dialogue" data-dialogue-id="${d.id}">${icon('delete', 14)}</button>
                 </div>
@@ -3372,10 +3412,10 @@ function renderDialogueRowOuter(d) {
                     <label class="meta-field">语速<input type="number" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
                     <label class="meta-field">音量<input type="number" step="0.1" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
                 </div>
-                ${d.audioUrl ? `<audio src="${escapeHtml(d.audioUrl)}" controls class="dialogue-audio"></audio>` : ''}
+                ${renderDialogueAudioBlock(d)}
                 <div class="dialogue-actions">
                     ${renderDialogueEmoSummary(d)}
-                    <button class="tool-button" data-action="generate-voiceover" data-dialogue-id="${d.id}">${icon('mic', 14)} 生成配音</button>
+                    ${renderGenerateVoiceoverBtn(d)}
                     <button class="tool-button" data-action="save-dialogue" data-dialogue-id="${d.id}">${icon('success', 14)} 保存</button>
                     <button class="tool-button" data-action="delete-dialogue" data-dialogue-id="${d.id}">${icon('delete', 14)}</button>
                 </div>

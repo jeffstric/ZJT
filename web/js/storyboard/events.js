@@ -46,6 +46,7 @@ import {
     refresh,
     renderPromptWithInlineRoles,
     getThumbnailUrl,
+    updateDialogueRow,
     Region,
 } from './render.js';
 import {
@@ -714,12 +715,26 @@ async function saveDialogueFromRow(row, { silent = false } = {}) {
     if (!dialogueId) return null;
     const payload = collectDialoguePayload(row);
     const response = await api.updateDialogue(dialogueId, payload);
+    // 台词/角色/语速/音量/情感任一变化且已有配音 → 标记旧配音，行内提示重新生成
+    let prev = null;
+    for (const scene of state.scenes) {
+        prev = (scene.dialogues || []).find((item) => item.id === dialogueId) || null;
+        if (prev) break;
+    }
+    const voiceChanged = prev && prev.audioUrl && (
+        prev.text !== payload.text
+        || (prev.characterId || null) !== payload.character_id
+        || Number(prev.speed ?? 1.0) !== payload.speed
+        || Number(prev.volume ?? 100) !== payload.volume
+        || (prev.emoVec || null) !== (payload.emo_vec ?? null)
+    );
     patchDialogueInState(dialogueId, {
         characterId: payload.character_id,
         text: payload.text,
         speed: payload.speed,
         volume: payload.volume,
         emoVec: payload.emo_vec ?? null,
+        ...(voiceChanged ? { audioStale: true } : {}),
     });
     if (!silent) {
         notify('对话已保存');
@@ -1762,13 +1777,19 @@ async function handleAction(action, target) {
                 break;
             }
         }
+        // force_regenerate：允许改情感后覆盖已有选中配音
         const voiceConfig = emoVec
-            ? { emo_control_method: 2, emo_vec: emoVec }
-            : {};
+            ? { emo_control_method: 2, emo_vec: emoVec, force_regenerate: true }
+            : { force_regenerate: true };
         const response = await api.generateDialogueVoiceover(dialogueId, voiceConfig);
         if (response.success) {
             const ownerScene = state.scenes.find(s => (s.dialogues || []).some(d => d.id === dialogueId));
-            if (ownerScene) pollSceneTaskStatus(ownerScene.id);
+            // 本地立即置为排队中并刷新单行（进度条 + 禁用按钮），不等首次轮询
+            patchDialogueInState(dialogueId, { audioStatus: 0, audioError: '' });
+            if (ownerScene) {
+                updateDialogueRow(ownerScene, dialogueId);
+                pollSceneTaskStatus(ownerScene.id);
+            }
         }
         notify(response.error || '配音任务已提交');
         return;
@@ -1839,7 +1860,17 @@ async function handleAction(action, target) {
         rerenderModals();
         try {
             await api.updateDialogue(dialogueId, { emo_vec: emoVec });
-            patchDialogueInState(dialogueId, { emoVec: emoVec || null });
+            // 情感变化且已有配音 → 标记旧配音，行内提示重新生成
+            let editing = null;
+            for (const scene of state.scenes) {
+                editing = (scene.dialogues || []).find((item) => item.id === dialogueId) || null;
+                if (editing) break;
+            }
+            const emoChanged = editing && editing.audioUrl && (editing.emoVec || null) !== (emoVec || null);
+            patchDialogueInState(dialogueId, {
+                emoVec: emoVec || null,
+                ...(emoChanged ? { audioStale: true } : {}),
+            });
             state.emoVecEditor = {
                 open: false,
                 dialogueId: null,
