@@ -461,7 +461,7 @@
   "shot_frame_generate_dialogue_audio_btn": "Generate Dialogue Audio",
   "shot_frame_prompt_edit_section": "Prompt Editing",
   "shot_frame_image_prompt_label": "Image Prompt",
-  "shot_frame_image_prompt_hint": "Click to edit | Press / to select character",
+  "shot_frame_image_prompt_hint": "Click to edit | Press / or @ to select character",
   "shot_frame_video_prompt_label": "Video Prompt",
   "shot_frame_video_generation_failed_btn": "Video generation failed, click this button",
   "shot_frame_model_generation_section": "Model and Generation",

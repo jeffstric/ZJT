@@ -1854,7 +1854,7 @@ class NotificationConstants:
 
 # ============ 智能插入分镜 ============
 SMART_INSERT_SHOT_TIMEOUT = 30  # 智能体调用超时（秒）
-SMART_INSERT_SHOT_DEFAULT_MODEL = 'gemini/gemini-3-flash-preview'  # 降级默认模型
+SMART_INSERT_SHOT_DEFAULT_MODEL = 'deepseek/deepseek-v4-flash'  # 降级默认模型
 
 # ============ 默认 LLM 模型选择策略 ============
 # 当数据库没有配置默认 LLM 模型时，使用以下优先级选择：

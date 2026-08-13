@@ -174,7 +174,7 @@ model = llm_config['model'] if llm_config else SMART_INSERT_SHOT_DEFAULT_MODEL
 ```python
 # config/constant.py
 SMART_INSERT_SHOT_TIMEOUT = 30  # 智能体调用超时（秒）
-SMART_INSERT_SHOT_DEFAULT_MODEL = 'gemini/gemini-3-flash-preview'  # 降级默认模型
+SMART_INSERT_SHOT_DEFAULT_MODEL = 'deepseek/deepseek-v4-flash'  # 降级默认模型
 ```
 
 ## 使用流程
@@ -186,6 +186,31 @@ SMART_INSERT_SHOT_DEFAULT_MODEL = 'gemini/gemini-3-flash-preview'  # 降级默�
 5. 后端调用 LLM 分析前后分镜上下文
 6. 生成成功后，新分镜自动插入到列表中
 7. 生成失败时，自动降级为快速插入模式
+
+## 故事板页面（storyboard.html）的智能插入
+
+故事板页面与工作流共用 `services/smart_insert_service.py` 公共服务（端点 `POST /api/storyboard/{storyboard_id}/smart-insert-scene`）。点击时间轴/宫格视图中两个分镜之间的插入按钮时，默认走智能插入，LLM 失败时降级为普通插入。
+
+### 字段完整性（与剧本解析生成分镜对齐）
+
+后端端点在 LLM 生成后**直接创建分镜行**（`_create_smart_insert_scene`），字段与 `build_storyboard_scenes_from_parsed_script` 保持一致，返回 `{success, scene}`：
+
+| 字段 | 来源 |
+|------|------|
+| 幕（group_id/group_name/act_name） | 继承相邻分镜（优先 prev，缺失回落 next），幕必然是插入位置前后两个分镜之一 |
+| perspective（如"平视 / 中景"） | LLM 输出的 camera_angle / shot_type（SKILL.md 已补充 camera_angle 字段，对齐 script_parser 九列分镜表） |
+| 场景 location / 道具 props / 画风 style | 从相邻分镜继承，避免新分镜卡片显示"未选场景" |
+| character_desc | LLM 输出的 characters_present（剔除【【】】包裹） |
+| video_config_json | {shot_type, camera_angle, camera_movement} |
+| difficulty / title / duration / video_prompt | 与剧本解析生成分镜同规则 |
+
+由于 LLM 生成耗时较长，为避免用户误以为无响应而重复点击，前端提供三重反馈：
+
+1. **in-flight 守卫**：`state.isSmartInserting` 为真时再次点击直接忽略（`web/js/storyboard/events.js`）
+2. **按钮加载态**：所有插入按钮变为禁用状态并显示旋转加载圈 + 呼吸动画（`renderInsertSceneSlot` + `.inserting` 样式）
+3. **Toast 提示**：显示"AI 正在生成新分镜，请稍候…"
+
+生成完成（成功或降级）后，`finally` 块复位 `state.isSmartInserting` 并重新渲染，插入按钮恢复正常。
 
 ## 注意事项
 

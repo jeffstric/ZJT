@@ -1516,6 +1516,16 @@ function renderInsertSceneSlot(prevScene, nextScene, mode) {
     const prevId = prevScene.id;
     const nextId = nextScene.id;
     const className = mode === 'grid' ? 'grid-insert-slot' : 'scene-timeline-insert-slot';
+    // 智能插入进行中：按钮转为加载态（旋转圈），配合 in-flight 守卫防止用户连点
+    if (state.isSmartInserting) {
+        return `
+        <button
+            class="${className} inserting"
+            disabled
+            title="AI 正在生成新分镜…"
+            aria-label="AI 正在生成新分镜"
+        ><span class="insert-spinner"></span></button>`;
+    }
     const label = '在此处添加分镜';
     return `
         <button

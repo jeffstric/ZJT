@@ -41,6 +41,7 @@ import state, {
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
+import { showToast } from './utils.js';
 import { downloadAsAttachment } from './download.js';
 import {
     refresh,
@@ -1485,6 +1486,9 @@ async function handleAction(action, target) {
     }
 
     if (action === 'insert-scene') {
+        // in-flight 守卫：智能插入请求飞行中再次点击直接忽略，
+        // 避免用户误以为无响应而连点，导致重复调用 LLM 生成多个分镜。
+        if (state.isSmartInserting) return;
         const prevId = target.dataset.prevId ? parseInt(target.dataset.prevId, 10) : null;
         const nextId = target.dataset.nextId ? parseInt(target.dataset.nextId, 10) : null;
         
@@ -1497,6 +1501,7 @@ async function handleAction(action, target) {
                 // 显示加载状态
                 state.isSmartInserting = true;
                 rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
+                showToast('AI 正在生成新分镜，请稍候…', 'info', 6000);
                 
                 const smartResponse = await api.smartInsertScene(state.storyboardId, {
                     prev_scene_id: prevId,
@@ -1504,26 +1509,9 @@ async function handleAction(action, target) {
                     world_id: state.worldId,
                 });
                 
-                if (smartResponse.success && smartResponse.shot) {
-                    const shot = smartResponse.shot;
-                    // 使用 LLM 生成的数据创建分镜
-                    const response = await api.addScene(state.storyboardId, {
-                        title: shot.description || `分镜${state.scenes.length + 1}`,
-                        duration: shot.duration || 5,
-                        prompt_json: {
-                            scene_desc: shot.opening_frame_description || '',
-                            character_desc: shot.action || '',
-                            shot_type: shot.shot_type || '',
-                            camera_movement: shot.camera_movement || '',
-                            mood: shot.mood || '',
-                            time_of_day: shot.time_of_day || '',
-                            weather: shot.weather || '',
-                        },
-                        video_prompt: shot.description || '',
-                        prev_id: prevId,
-                        next_id: nextId,
-                    });
-                    addSceneToState(response.scene);
+                if (smartResponse.success && smartResponse.scene) {
+                    // 后端已创建完整字段的分镜（幕/视角景别/场景/角色等从相邻分镜继承）
+                    addSceneToState(smartResponse.scene);
                 } else {
                     throw new Error(smartResponse.error || '智能插入失败');
                 }

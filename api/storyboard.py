@@ -3384,7 +3384,14 @@ async def smart_insert_scene(
             script_content=script_content
         )
 
-        return JSONResponse({'success': True, 'shot': shot_data})
+        # 直接创建完整字段的分镜（与 build_storyboard_scenes_from_parsed_script 对齐），
+        # 幕/场景/角色等信息从前后相邻分镜继承
+        scene = await _create_smart_insert_scene(
+            storyboard_id, user_id, shot_data,
+            prev_scene_obj, next_scene_obj,
+            prev_scene_id, next_scene_id,
+        )
+        return JSONResponse({'success': True, 'scene': scene.to_dict()})
 
     except asyncio.TimeoutError:
         return JSONResponse(
@@ -3400,18 +3407,154 @@ async def smart_insert_scene(
         )
 
 
+async def _create_smart_insert_scene(
+    storyboard_id: int,
+    user_id: int,
+    shot_data: Dict,
+    prev_scene_obj,
+    next_scene_obj,
+    prev_scene_id,
+    next_scene_id,
+):
+    """根据 LLM 生成的 shot_data 创建完整字段的分镜行
+
+    字段对齐 build_storyboard_scenes_from_parsed_script：
+    - 幕（group/act_name）必然继承自前后相邻分镜之一（优先 prev，缺失回落 next）
+    - perspective = camera_angle / shot_type（对应卡片上的"平视 / 中景"）
+    - 场景/道具/画风从相邻分镜继承，避免新分镜卡片显示"未选场景"
+    """
+    def _prompt_of(scene_obj) -> Dict:
+        if not scene_obj:
+            return {}
+        prompt = scene_obj.prompt_json
+        return prompt if isinstance(prompt, dict) else {}
+
+    prev_prompt = _prompt_of(prev_scene_obj)
+    next_prompt = _prompt_of(next_scene_obj)
+
+    # ---- 幕/分镜组：优先继承 prev，缺失回落 next（幕必然是相邻分镜之一） ----
+    def _source_of(prompt: Dict) -> Dict:
+        source = prompt.get('source')
+        return source if isinstance(source, dict) else {}
+
+    prev_source = _source_of(prev_prompt)
+    next_source = _source_of(next_prompt)
+    inherit_group_id = prev_source.get('group_id') or next_source.get('group_id') or ''
+    inherit_group_name = prev_source.get('group_name') or next_source.get('group_name') or ''
+    inherit_group_type = prev_source.get('group_type') or next_source.get('group_type') or ''
+    inherit_act_name = (
+        (getattr(prev_scene_obj, 'act_name', None) if prev_scene_obj else None)
+        or (getattr(next_scene_obj, 'act_name', None) if next_scene_obj else None)
+        or ''
+    )
+
+    # ---- 场景/道具/画风：从相邻分镜继承（新分镜通常延续前一场景） ----
+    prev_location = prev_prompt.get('location') if isinstance(prev_prompt.get('location'), dict) else {}
+    inherit_location = prev_location or (
+        next_prompt.get('location') if isinstance(next_prompt.get('location'), dict) else {}
+    ) or {}
+    inherit_props = prev_prompt.get('props') or next_prompt.get('props') or []
+    inherit_style = prev_prompt.get('style') or next_prompt.get('style') or ''
+
+    # ---- LLM 生成字段组装（与剧本解析生成分镜一致） ----
+    camera_angle = str(shot_data.get('camera_angle') or '').strip()
+    shot_type = str(shot_data.get('shot_type') or '').strip()
+    camera_movement = str(shot_data.get('camera_movement') or '').strip()
+    perspective = _compact_join([camera_angle, shot_type], ' / ')
+    scene_desc = _compact_join([
+        shot_data.get('opening_frame_description'),
+        shot_data.get('scene_detail'),
+    ])
+    # characters_present 可能带【【】】包裹，卡片展示用纯名字
+    character_names = []
+    for name in shot_data.get('characters_present') or []:
+        cleaned = str(name).replace('【', '').replace('】', '').strip()
+        if cleaned and cleaned not in character_names:
+            character_names.append(cleaned)
+    character_desc = '、'.join(character_names)
+
+    video_prompt = _compact_join([
+        shot_data.get('description'),
+        shot_data.get('scene_detail'),
+        shot_data.get('action'),
+        f"镜头运动：{camera_movement}" if camera_movement else None,
+    ])
+
+    prompt_payload = {
+        'perspective': perspective,
+        'style': inherit_style,
+        'scene_desc': scene_desc,
+        'character_desc': character_desc,
+        'location': inherit_location,
+        'props': inherit_props,
+        'mood': shot_data.get('mood') or '',
+        'time_of_day': shot_data.get('time_of_day') or '',
+        'weather': shot_data.get('weather') or '',
+        'source': {
+            'group_id': inherit_group_id,
+            'group_name': inherit_group_name,
+            'group_type': inherit_group_type,
+            'shot_id': shot_data.get('shot_id') or '',
+            'smart_insert': True,
+        },
+    }
+
+    # ---- 插入位置（浮点二分）与标题编号 ----
+    existing_scenes = await asyncio.to_thread(
+        StoryboardSceneModel.list_by_storyboard, storyboard_id
+    )
+    title = f"分镜{len(existing_scenes) + 1}"
+    if prev_scene_id is not None or next_scene_id is not None:
+        sort_order = await _compute_insert_sort(
+            StoryboardSceneModel.rebalance, storyboard_id,
+            StoryboardSceneModel.get_by_id, prev_scene_id, next_scene_id,
+        )
+    else:
+        max_sort = max([s['sort_order'] for s in existing_scenes], default=-1.0)
+        sort_order = max_sort + 1.0
+
+    scene_id = await asyncio.to_thread(
+        StoryboardSceneModel.create,
+        storyboard_id=storyboard_id,
+        sort_order=sort_order,
+        title=title,
+        duration=max(1, _safe_float(shot_data.get('duration'), 5.0)),
+        prompt_json=prompt_payload,
+        video_prompt=video_prompt,
+        video_type=SceneVideoType.VIDEO,
+        video_config_json={
+            'shot_type': shot_type,
+            'camera_angle': camera_angle,
+            'camera_movement': camera_movement,
+        },
+        difficulty=SceneDifficulty.normalize(shot_data.get('difficulty')),
+        act_name=inherit_act_name or None,
+        last_modified_user_id=user_id,
+    )
+    return await asyncio.to_thread(StoryboardSceneModel.get_by_id, scene_id)
+
+
 def _scene_to_shot_format(scene) -> Dict:
     """将故事板 scene 数据转换为智能插入服务所需的格式"""
     prompt = scene.prompt_json if isinstance(scene.prompt_json, dict) else {}
+    video_config = scene.video_config_json if isinstance(scene.video_config_json, dict) else {}
+    source = prompt.get('source') if isinstance(prompt.get('source'), dict) else {}
+    location = prompt.get('location') if isinstance(prompt.get('location'), dict) else {}
+    # characters_present：优先 source 中的角色名，其次从 character_desc 拆分
+    characters_present = source.get('characters_present') or []
+    if not characters_present and prompt.get('character_desc'):
+        characters_present = [n.strip() for n in str(prompt.get('character_desc')).split('、') if n.strip()]
     return {
         'shot_id': str(scene.id),
         'description': prompt.get('scene_desc', '') or scene.title or '',
         'opening_frame_description': prompt.get('scene_desc', ''),
         'action': prompt.get('character_desc', ''),
-        'shot_type': prompt.get('shot_type', ''),
-        'camera_movement': prompt.get('camera_movement', ''),
+        'camera_angle': video_config.get('camera_angle', ''),
+        'shot_type': video_config.get('shot_type', '') or prompt.get('shot_type', ''),
+        'camera_movement': video_config.get('camera_movement', '') or prompt.get('camera_movement', ''),
         'mood': prompt.get('mood', ''),
-        'characters_present': prompt.get('characters_present', []),
+        'characters_present': characters_present,
+        'location_name': location.get('name', ''),
         'dialogue': [],
         'duration': float(scene.duration) if scene.duration else 5,
         'scene_detail': prompt.get('scene_desc', ''),

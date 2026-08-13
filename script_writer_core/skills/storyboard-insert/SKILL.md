@@ -25,6 +25,7 @@ allowed-tools: []
 | opening_frame_description | string | 起始画面描述（用于AI生成首帧图像，必须详细描述镜头开始时的静态画面，包括：所有在场角色的位置/姿态/表情/动作、场景布局、光线、构图信息。**禁止使用过渡性词汇**，直接描述画面内容） |
 | scene_detail | string | 场景详细描述（描述整个镜头过程中的画面变化，涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式） |
 | action | string | 动作描述 |
+| camera_angle | string | 摄影角度（平视/俯拍/仰拍/微俯拍/荷兰角） |
 | shot_type | string | 镜头类型（特写/中景/全景/远景等） |
 | camera_movement | string | 运镜方式（推/拉/摇/移/跟/固定等） |
 | mood | string | 情绪氛围 |
@@ -57,6 +58,7 @@ allowed-tools: []
   "opening_frame_description": "...",
   "scene_detail": "...",
   "action": "...",
+  "camera_angle": "...",
   "shot_type": "...",
   "camera_movement": "...",
   "mood": "...",

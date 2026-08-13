@@ -3804,7 +3804,7 @@
           <button class="modal-close-btn" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #666;">&times;</button>
         </div>
         <textarea class="expand-textarea" placeholder="在此输入${escapeHtml(title)}" style="flex: 1; width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; resize: none; min-height: 400px;">${escapeHtml(currentContent)}</textarea>
-        ${opts && opts.enableCharacterDropdown ? '<div style="margin-top: 8px; font-size: 12px; color: #9ca3af;">💡 按 <kbd style="background: #f3f4f6; padding: 1px 6px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 11px;">/</kbd> 可选择角色插入到提示词中</div>' : ''}
+        ${opts && opts.enableCharacterDropdown ? '<div style="margin-top: 8px; font-size: 12px; color: #9ca3af;">💡 按 <kbd style="background: #f3f4f6; padding: 1px 6px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 11px;">/</kbd>、<kbd style="background: #f3f4f6; padding: 1px 6px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 11px;">@</kbd> 或 <kbd style="background: #f3f4f6; padding: 1px 6px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 11px;">、</kbd> 可选择角色插入到提示词中</div>' : ''}
         <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px;">
           <button class="modal-cancel-btn" style="padding: 8px 20px; border: 1px solid #ddd; border-radius: 6px; background: white; cursor: pointer; font-size: 14px;">取消</button>
           <button class="modal-confirm-btn" style="padding: 8px 20px; border: none; border-radius: 6px; background: #3b82f6; color: white; cursor: pointer; font-size: 14px;">确定</button>
@@ -3847,16 +3847,29 @@
         showToast(`${title}已更新`, 'success');
       });
 
-      // 支持 / 键触发角色列表（分镜节点提示词放大窗口）
+      // 支持触发键唤起角色列表（分镜节点提示词放大窗口）
+      // keydown 拦截：英文 '/'、英文 '@'、全角 '＠'（字符不入文本，直接弹下拉）；
+      // 中文输入法下按 / 键会组合输入顿号 '、'、Shift+2 可能输入全角 '＠'，
+      // 这类字符经 input 事件进入文本，检测后剔除触发符再弹下拉
       if(opts && opts.enableCharacterDropdown && opts.nodeId != null){
         const dropdownKey = opts.dropdownKey || 'imageprompt';
+        const imeTriggerChars = ['、', '＠'];
         expandTextarea.addEventListener('keydown', (e) => {
-          if(e.key === '/') {
+          if(e.key === '/' || e.key === '@' || e.key === '＠') {
             e.preventDefault();
             showCharacterDropdownForImagePrompt(opts.nodeId, expandTextarea, expandTextarea.selectionStart, dropdownKey);
           }
         });
-        expandTextarea.addEventListener('input', () => {
+        expandTextarea.addEventListener('input', (e) => {
+          // 中文输入法组合输入产生的触发符：剔除该字符后弹出下拉
+          if(e.data && imeTriggerChars.includes(e.data)){
+            const end = expandTextarea.selectionEnd;
+            const start = Math.max(0, end - e.data.length);
+            expandTextarea.value = expandTextarea.value.substring(0, start) + expandTextarea.value.substring(end);
+            expandTextarea.setSelectionRange(start, start);
+            showCharacterDropdownForImagePrompt(opts.nodeId, expandTextarea, start, dropdownKey);
+            return;
+          }
           hideCharacterDropdownForImagePrompt(opts.nodeId, dropdownKey);
         });
         expandTextarea.addEventListener('blur', () => {
@@ -4469,7 +4482,7 @@
       const end = textarea.selectionEnd;
       const value = textarea.value;
       
-      // / 已被 keydown 拦截不会出现在文本中，直接在光标位置插入
+      // 触发符（/ @ ＠ 、）已被 keydown/input 拦截剔除，不会出现在文本中，直接在光标位置插入
       const before = value.substring(0, start);
       const after = value.substring(end);
       const insertText = '【【' + charName + '】】';

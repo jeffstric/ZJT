@@ -75,6 +75,7 @@ def _format_shot_for_prompt(shot: Dict) -> str:
         'description': '描述',
         'opening_frame_description': '起始画面',
         'action': '动作',
+        'camera_angle': '摄影角度',
         'shot_type': '镜头类型',
         'camera_movement': '运镜方式',
         'mood': '情绪',

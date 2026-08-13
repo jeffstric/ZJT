@@ -461,7 +461,7 @@
   "shot_frame_generate_dialogue_audio_btn": "生成对话音频",
   "shot_frame_prompt_edit_section": "提示词编辑",
   "shot_frame_image_prompt_label": "图片提示词",
-  "shot_frame_image_prompt_hint": "点击编辑 | 按 / 选择角色",
+  "shot_frame_image_prompt_hint": "点击编辑 | 按 / 或 @ 选择角色",
   "shot_frame_video_prompt_label": "视频提示词",
   "shot_frame_video_generation_failed_btn": "视频生成失败，请点此按钮",
   "shot_frame_model_generation_section": "模型与生成",
