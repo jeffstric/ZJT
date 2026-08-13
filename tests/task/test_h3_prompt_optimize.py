@@ -1,14 +1,18 @@
 """MiniMax H3 提示词优化：变体判定、模板组装、结构校验与 extra_config 合并。"""
+import json
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from config.constant import (
     H3_PROMPT_OPTIMIZE_VARIANT_FL2VA,
     H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
 )
+from task.pipeline_drivers.h3_prompt_optimize_driver import H3PromptOptimizePipelineDriver
 from task.pipeline_drivers.h3_prompt_optimize_util import (
     build_h3_optimize_user_message,
     load_h3_prompt_template,
     merge_h3_prompt_extra_config,
+    parse_storyboard_dialogue_model,
     resolve_h3_prompt_variant,
     validate_h3_optimized_prompt,
 )
@@ -96,3 +100,57 @@ def test_merge_extra_config_keeps_first_original():
     assert data["h3_prompt_optimize"]["optimized_prompt"] == "newer"
     assert data["h3_prompt_optimize"]["fallback"] is True
     assert data["resolution"] == "720P"
+
+
+def test_parse_storyboard_dialogue_model_object():
+    cfg = json.dumps({'selectedLlmModel': {'model': 'qwen-plus', 'vendor_id': 5}})
+    assert parse_storyboard_dialogue_model(cfg) == ('qwen-plus', 5)
+
+
+def test_parse_storyboard_dialogue_model_string():
+    cfg = json.dumps({'selectedLlmModel': 'gemini-3-flash-preview'})
+    assert parse_storyboard_dialogue_model(cfg) == ('gemini-3-flash-preview', None)
+
+
+def test_parse_storyboard_dialogue_model_missing():
+    assert parse_storyboard_dialogue_model(None) is None
+    assert parse_storyboard_dialogue_model('{}') is None
+
+
+@patch('llm.llm_client_factory.is_llm_client_configured', return_value=True)
+@patch('llm.llm_client_factory.get_llm_client')
+@patch('config.config_util.get_dynamic_config_value')
+def test_resolve_prefers_chat_model(mock_config, mock_get_client, mock_configured):
+    """优先使用 step.params 的对话模型（storyboard 用户个性化选择）"""
+    mock_config.return_value = 'deepseek-v4-flash'
+    model, vendor_id = H3PromptOptimizePipelineDriver.resolve_h3_optimize_model(
+        {'chat_model': 'qwen-plus', 'chat_vendor_id': 5}
+    )
+    assert model == 'qwen-plus'
+    assert vendor_id == 5
+    mock_get_client.assert_called_once_with('qwen-plus', vendor_id=5)
+
+
+@patch('llm.llm_client_factory.is_llm_client_configured', side_effect=[False, True])
+@patch('llm.llm_client_factory.get_llm_client')
+@patch('config.config_util.get_dynamic_config_value')
+def test_resolve_falls_back_to_pipeline_config(mock_config, mock_get_client, mock_configured):
+    """对话模型未配置密钥 → 回退 pipeline 全局配置模型"""
+    mock_config.return_value = 'deepseek-v4-flash'
+    model, vendor_id = H3PromptOptimizePipelineDriver.resolve_h3_optimize_model(
+        {'chat_model': 'qwen-plus', 'chat_vendor_id': 5}
+    )
+    assert model == 'deepseek-v4-flash'
+
+
+@patch('llm.llm_client_factory.is_llm_client_configured', return_value=False)
+@patch('llm.llm_client_factory.get_llm_client')
+@patch('config.config_util.get_dynamic_config_value')
+def test_resolve_returns_none_when_all_unconfigured(mock_config, mock_get_client, mock_configured):
+    """所有候选模型均未配置密钥 → 返回 (None, None)，驱动将回退原文不做空跑"""
+    mock_config.return_value = 'deepseek-v4-flash'
+    model, vendor_id = H3PromptOptimizePipelineDriver.resolve_h3_optimize_model(
+        {'chat_model': 'qwen-plus', 'chat_vendor_id': 5}
+    )
+    assert model is None
+    assert vendor_id is None

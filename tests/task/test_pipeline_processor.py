@@ -444,5 +444,24 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
         )
 
 
+class TestNeedsH3AtomicParamPrepare(unittest.TestCase):
+    """测试 PipelineProcessor.needs_h3_atomic_param_prepare() 判定"""
+
+    @patch('task.pipeline_drivers.get_dynamic_config_value', return_value=True)
+    def test_returns_true_for_h3_type_when_enabled(self, mock_cfg):
+        from config.unified_config import TaskTypeId
+        self.assertTrue(PipelineProcessor.needs_h3_atomic_param_prepare(TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO))
+
+    @patch('task.pipeline_drivers.get_dynamic_config_value', return_value=False)
+    def test_returns_false_for_h3_type_when_disabled(self, mock_cfg):
+        from config.unified_config import TaskTypeId
+        self.assertFalse(PipelineProcessor.needs_h3_atomic_param_prepare(TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO))
+
+    @patch('task.pipeline_drivers.get_dynamic_config_value', return_value=True)
+    def test_returns_false_for_non_h3_type(self, mock_cfg):
+        # 非注册的任务类型 → is_h3_image_to_video_type 返回 False
+        self.assertFalse(PipelineProcessor.needs_h3_atomic_param_prepare(99999))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -7,7 +7,7 @@ MiniMax H3 提示词优化 Pipeline 驱动。
 from __future__ import annotations
 
 import asyncio
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from config.config_util import get_dynamic_config_value
 from config.constant import (
@@ -48,7 +48,7 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         except (TypeError, ValueError):
             duration = 5.0
 
-        optimized, fallback, error = await self._optimize(original, variant, duration)
+        optimized, fallback, error = await self._optimize(original, variant, duration, params)
         result_data = {
             "original_prompt": original,
             "optimized_prompt": optimized,
@@ -77,11 +77,11 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
             "result_data": result_data,
         }
 
-    async def _optimize(self, original: str, variant: str, duration: float) -> Tuple[str, bool, Optional[str]]:
+    async def _optimize(self, original: str, variant: str, duration: float, step_params: Dict[str, Any]) -> Tuple[str, bool, Optional[str]]:
         last_error = None
         for _ in range(2):
             try:
-                raw = await self._call_llm(original, variant, duration)
+                raw = await self._call_llm(original, variant, duration, step_params)
                 cleaned = strip_prompt_fences(raw)
                 if validate_h3_optimized_prompt(cleaned, variant):
                     return cleaned, False, None
@@ -92,30 +92,28 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         self.logger.warning("H3 prompt optimize fallback to original: %s", last_error)
         return original, True, last_error
 
-    async def _call_llm(self, original: str, variant: str, duration: float) -> str:
-        from llm.llm_client_factory import get_llm_client
+    async def _call_llm(self, original: str, variant: str, duration: float, step_params: Dict[str, Any]) -> str:
+        model, vendor_id = self.resolve_h3_optimize_model(step_params)
+        if not model:
+            # 所有候选模型均未配置 api_key：直接抛错，由 _optimize 回退原文，避免必败空跑。
+            raise RuntimeError("no llm configured for H3 prompt optimize (all candidates missing api_key)")
 
-        model = str(get_dynamic_config_value(
-            "pipeline", "h3_prompt_optimize_model", default=LLMModel.DEEPSEEK_V4_FLASH
-        ) or LLMModel.DEEPSEEK_V4_FLASH).strip()
-        vendor_raw = get_dynamic_config_value("pipeline", "h3_prompt_optimize_vendor_id", default=0)
-        try:
-            vendor_id = int(vendor_raw) if vendor_raw not in (None, "", 0, "0") else None
-        except (TypeError, ValueError):
-            vendor_id = None
+        from llm.llm_client_factory import get_llm_client
+        llm_client = get_llm_client(model, vendor_id=vendor_id)
 
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": build_h3_optimize_user_message(original, variant, duration)},
         ]
-        llm_client = get_llm_client(model, vendor_id=vendor_id)
 
         def _invoke():
+            # request_timeout 与外层 wait_for 对齐，避免超时后底层 httpx 线程残留空跑。
             return llm_client.call_api(
                 model=model,
                 messages=messages,
                 temperature=H3_PROMPT_OPTIMIZE_TEMPERATURE,
                 max_tokens=H3_PROMPT_OPTIMIZE_MAX_TOKENS,
+                request_timeout=H3_PROMPT_OPTIMIZE_TIMEOUT,
             )
 
         response = await asyncio.wait_for(
@@ -128,3 +126,55 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         if not content or not str(content).strip():
             raise RuntimeError("LLM returned empty content")
         return str(content)
+
+    @staticmethod
+    def resolve_h3_optimize_model(step_params: Optional[Dict[str, Any]]) -> Tuple[Optional[str], Optional[int]]:
+        """按优先级返回首个已配置密钥的 (model, vendor_id)，全未配置返回 (None, None)。
+
+        优先级：
+          1. step.params.chat_model + chat_vendor_id（storyboard 用户在该故事板选的对话模型）
+          2. pipeline.h3_prompt_optimize_model + h3_prompt_optimize_vendor_id（全局配置，默认 DeepSeek）
+          3. 剧本拆分默认模型 DEFAULT_SCRIPT_SPLIT_MODEL（gemini-3-flash-preview，走 JIEKOU/google key）
+
+        每步用 is_llm_client_configured 校验 api_key，避免对未配置供应商发起必败调用。
+        """
+        from llm.llm_client_factory import get_llm_client, is_llm_client_configured
+        from config.constant import StoryboardAgentCommandConstants
+
+        candidates: List[Tuple[Optional[str], Optional[int]]] = []
+
+        # 1. storyboard 用户个性化选择
+        chat_model = str((step_params or {}).get("chat_model") or "").strip()
+        if chat_model:
+            raw_vid = (step_params or {}).get("chat_vendor_id")
+            try:
+                chat_vid = int(raw_vid) if raw_vid not in (None, "", 0, "0") else None
+            except (TypeError, ValueError):
+                chat_vid = None
+            candidates.append((chat_model, chat_vid))
+
+        # 2. pipeline 全局配置
+        cfg_model = str(get_dynamic_config_value(
+            "pipeline", "h3_prompt_optimize_model", default=LLMModel.DEEPSEEK_V4_FLASH
+        ) or LLMModel.DEEPSEEK_V4_FLASH).strip()
+        cfg_vendor_raw = get_dynamic_config_value("pipeline", "h3_prompt_optimize_vendor_id", default=0)
+        try:
+            cfg_vendor_id = int(cfg_vendor_raw) if cfg_vendor_raw not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            cfg_vendor_id = None
+        candidates.append((cfg_model, cfg_vendor_id))
+
+        # 3. 剧本拆分默认模型兜底
+        candidates.append((str(StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL), None))
+
+        seen = set()
+        for cand_model, cand_vendor_id in candidates:
+            if not cand_model or cand_model in seen:
+                continue
+            seen.add(cand_model)
+            try:
+                if is_llm_client_configured(get_llm_client(cand_model, vendor_id=cand_vendor_id)):
+                    return cand_model, cand_vendor_id
+            except Exception:
+                continue
+        return None, None

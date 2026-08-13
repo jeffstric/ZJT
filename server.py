@@ -2379,17 +2379,22 @@ async def ai_app_run_image(
                         has_any_param_prepare_input = seedance_face_mask_enabled and (
                             bool(video_path) or has_image_input
                         )
+                        needs_h3_optimize = PipelineProcessor.needs_h3_atomic_param_prepare(image_to_video_type)
                         need_pipeline_steps = (
-                            is_seedance_face_mask
-                            and enable_face_mask
-                            and not impl_supports_auto_face
-                            and not Edition.is_community()
-                            and runninghub_api_key
-                            and has_any_param_prepare_input
+                            (
+                                is_seedance_face_mask
+                                and enable_face_mask
+                                and not impl_supports_auto_face
+                                and not Edition.is_community()
+                                and runninghub_api_key
+                                and has_any_param_prepare_input
+                            )
+                            or needs_h3_optimize
                         )
                         logger.info(
                             f"Pipeline steps condition check: image_to_video_type={image_to_video_type}, "
                             f"is_seedance_face_mask={is_seedance_face_mask}, "
+                            f"needs_h3_optimize={needs_h3_optimize}, "
                             f"enable_face_mask={enable_face_mask}, is_community={Edition.is_community()}, "
                             f"impl_supports_auto_face={impl_supports_auto_face}, actual_impl={actual_impl}, "
                             f"has_api_key={bool(runninghub_api_key)}, has_video={bool(video_path)}, "
@@ -2416,7 +2421,8 @@ async def ai_app_run_image(
                                 video_path=video_path
                             )
                         else:
-                            # 普通创建（无 pipeline steps）
+                            # 普通创建（无 pipeline steps）：直接 PENDING 立即入队，
+                            # 不进 WAITING_PARAM_PREPARE，避免多余的状态翻转与 DB 写。
                             id = await asyncio.to_thread(
                                 AIToolsModel.create,
                                 prompt=prompt,
@@ -2426,7 +2432,7 @@ async def ai_app_run_image(
                                 ratio=ratio,
                                 duration=duration_seconds,
                                 transaction_id=transaction_id,
-                                status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+                                status=AI_TOOL_STATUS_PENDING,
                                 extra_config=audited_extra_config,
                                 reference_images=reference_images_json,
                                 implementation=impl_id,
@@ -2439,25 +2445,6 @@ async def ai_app_run_image(
                             task_id=id,
                             status=TASK_STATUS_QUEUED
                         )
-                        if not need_pipeline_steps:
-                            try:
-                                from task.pipeline_processor import PipelineProcessor
-                                attached = await asyncio.to_thread(
-                                    PipelineProcessor.attach_param_prepare_if_needed,
-                                    id,
-                                    image_to_video_type,
-                                )
-                                if not attached:
-                                    await asyncio.to_thread(
-                                        AIToolsModel.update, id, status=AI_TOOL_STATUS_PENDING
-                                    )
-                            except Exception as e:
-                                logger.warning(
-                                    f"Failed to attach param_prepare steps for ai_tool {id}: {e}"
-                                )
-                                await asyncio.to_thread(
-                                    AIToolsModel.update, id, status=AI_TOOL_STATUS_PENDING
-                                )
                         project_ids.append(id)
                     except Exception as db_error:
                         logger.error(f"Failed to create database record for task {i+1}: {db_error}")
@@ -6328,18 +6315,7 @@ async def _rewrite_with_llm(messages, request, auth_token):
     """
     import asyncio
     from config.constant import LLMModel
-    from llm.llm_client_factory import get_llm_client
-    from llm.ollama_client import OllamaClient
-
-    def _client_configured(c) -> bool:
-        """判断客户端是否已配置可用凭据。
-
-        Ollama 等本地部署 client 无需真实 api_key（无需联网鉴权），不应判为未配置；
-        云端供应商（gemini/claude/aliyun/deepseek/volcengine/zjt）必须配置非空 api_key。
-        """
-        if isinstance(c, OllamaClient):
-            return True
-        return bool(getattr(c, 'api_key', ''))
+    from llm.llm_client_factory import get_llm_client, is_llm_client_configured
 
     model = request.model or LLMModel.REDUCE_VIOLATION_DEFAULT
     client = get_llm_client(model, vendor_id=request.vendor_id)
@@ -6349,14 +6325,14 @@ async def _rewrite_with_llm(messages, request, auth_token):
     bill_model_id = request.model_id
 
     # 所选拆分模型的供应商未配置 api_key 时，切兜底模型重试一次
-    if not _client_configured(client):
+    if not is_llm_client_configured(client):
         model = LLMModel.REDUCE_VIOLATION_DEFAULT
         client = get_llm_client(model)
         # 已切到默认模型：计费 ID 不再跟随原拆分模型，避免计费/用量记错账
         bill_vendor_id = None
         bill_model_id = None
         # 兜底模型同样可能未配置（社区版/新装环境），二次校验后给出明确错误而非底层 500
-        if not _client_configured(client):
+        if not is_llm_client_configured(client):
             raise Exception(
                 "内容安全改写所需的模型均未配置（所选模型与默认兜底模型 REDUCE_VIOLATION_DEFAULT 均缺少 api_key），"
                 "请在管理后台配置对应供应商的 API Key。"

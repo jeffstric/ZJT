@@ -160,27 +160,54 @@ class PipelineDriverFactory:
         return step_configs
 
     @classmethod
-    def _build_h3_prompt_optimize_steps(cls, ai_tool) -> List[Dict[str, Any]]:
-        """MiniMax H3 图生视频提交前的 I2VA/FL2VA 提示词优化。"""
-        enabled = get_dynamic_config_value(
+    def is_h3_image_to_video_type(cls, ai_tool_type: int) -> bool:
+        """任务类型是否为 MiniMax H3 图生视频（DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO）。"""
+        task_config = UnifiedConfigRegistry.get_by_id(ai_tool_type)
+        return bool(task_config and task_config.key == DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO)
+
+    @staticmethod
+    def is_h3_prompt_optimize_enabled() -> bool:
+        """H3 提示词优化总开关（pipeline.h3_prompt_optimize_enabled，默认 True）。"""
+        return bool(get_dynamic_config_value(
             "pipeline",
             "h3_prompt_optimize_enabled",
             default=True,
-        )
-        if not enabled:
+        ))
+
+    @classmethod
+    def build_h3_prompt_optimize_step_configs(
+        cls,
+        ai_tool,
+        chat_model: Optional[str] = None,
+        chat_vendor_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """MiniMax H3 图生视频提交前的 I2VA/FL2VA 提示词优化步骤配置。
+
+        纯函数式：只读 ai_tool 属性 + 查 config，不开数据库连接，可安全在事务内调用。
+        chat_model / chat_vendor_id 用于把调用方解析到的对话模型透传给驱动做密钥回退。
+        """
+        if not cls.is_h3_prompt_optimize_enabled():
             return []
         variant = resolve_h3_prompt_variant(ai_tool)
         if not variant:
             return []
         original = getattr(ai_tool, "prompt", None) or ""
         duration = getattr(ai_tool, "duration", None) or 5
+        params: Dict[str, Any] = {
+            "variant": variant,
+            "original_prompt": original,
+            "duration": duration,
+        }
+        if chat_model:
+            params["chat_model"] = str(chat_model)
+        if chat_vendor_id:
+            try:
+                params["chat_vendor_id"] = int(chat_vendor_id)
+            except (TypeError, ValueError):
+                pass
         return [{
             "step_type": PipelineStepType.H3_PROMPT_OPTIMIZE,
-            "params": {
-                "variant": variant,
-                "original_prompt": original,
-                "duration": duration,
-            },
+            "params": params,
             "target": variant,
         }]
 
@@ -227,7 +254,7 @@ class PipelineDriverFactory:
         if is_seedance_face_mask:
             step_configs = cls._build_seedance_param_prepare_steps(ai_tool)
         elif is_h3_prompt_optimize:
-            step_configs = cls._build_h3_prompt_optimize_steps(ai_tool)
+            step_configs = cls.build_h3_prompt_optimize_step_configs(ai_tool)
         elif rule and rule['condition'](ai_tool):
             step_configs = [
                 {

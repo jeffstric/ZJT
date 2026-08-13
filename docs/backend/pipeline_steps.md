@@ -104,12 +104,18 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 **变体**：仅首帧 → I2VA；另有尾帧 → FL2VA。
 
+**原子创建（无竞态）**：H3 图生视频入口（`server.py` / `api/storyboard.py`）判定 `needs_h3_atomic_param_prepare` 为真时，走 `AIToolsModel.create_with_pipeline_steps`，`ai_tool` 与 `h3_prompt_optimize` 步骤在同一事务内创建，避免调度器在两者之间抢先提交未优化任务。若事务内最终未产出任何步骤（如无首帧），则就地回退 `PENDING`。普通（非 H3 / 非 Seedance）图生视频直接以 `PENDING` 创建，不进流水线、零额外耗时。
+
 **处理流程**：
-1. `PipelineProcessor.attach_param_prepare_if_needed` 创建一步并置 `WAITING_PARAM_PREPARE`
-2. `H3PromptOptimizePipelineDriver` 用剪枝版官方规范 + 中文改写指令 + 原文调用聊天模型（`asyncio.to_thread` + 超时）
+1. `AIToolsModel.create_with_pipeline_steps` 在事务内创建 `h3_prompt_optimize` 步骤并置 `WAITING_PARAM_PREPARE`；故事板入口会把用户选的对话模型写入步骤参数（`chat_model`/`chat_vendor_id`）
+2. `H3PromptOptimizePipelineDriver` 用剪枝版官方规范 + 中文改写指令 + 原文调用聊天模型（`asyncio.to_thread` + `wait_for` 90s）
 3. 结构校验失败重试 1 次，仍失败则回退原文（`fallback=true`），**不把步骤标 FAILED**，避免整单退费
 4. 原文写入 `extra_config.original_prompt`（只写一次）和 `extra_config.h3_prompt_optimize`
 5. `ai_tool.prompt` 替换为优化结果，H3 驱动提交 RunningHub
+
+**模型回退链**：所用聊天模型按优先级选取，每步校验 api_key 是否已配置，首个可用者胜出：① 故事板步骤参数中的对话模型 → ② `pipeline.h3_prompt_optimize_model`（默认 `deepseek-v4-flash`）→ ③ 剧本拆分默认模型 `gemini-3-flash-preview`。独立图生视频入口无故事板上下文，跳过第 ① 步。全部未配置则直接回退原文，不发起必败调用。
+
+**超时**：`H3_PROMPT_OPTIMIZE_TIMEOUT=90s`，同时作为外层 `wait_for` 与底层 `request_timeout`（对齐 httpx，避免超时后线程残留）；重试 1 次，最坏约 180s 后回退原文。
 
 **配置**：`pipeline.h3_prompt_optimize_enabled` / `pipeline.h3_prompt_optimize_model` / `pipeline.h3_prompt_optimize_vendor_id`
 

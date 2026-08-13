@@ -83,6 +83,20 @@ class PipelineProcessor:
         return PipelineDriverFactory.is_seedance_face_mask_type(ai_tool_type)
 
     @staticmethod
+    def needs_h3_atomic_param_prepare(ai_tool_type: int) -> bool:
+        """H3 图生视频是否需要走 create_with_pipeline_steps 原子创建提示词优化步骤。
+
+        供 server.py / storyboard.py 单一来源判定，避免竞态：ai_tool 与 H3 step 必须
+        在同一事务创建，否则调度器可能在两者之间抢先提交未优化的任务。
+        仅 task type 命中且总开关开启时返回 True；variant 是否非空由
+        create_with_pipeline_steps 内部决定（无步骤时自动置 PENDING）。
+        """
+        return (
+            PipelineDriverFactory.is_h3_image_to_video_type(ai_tool_type)
+            and PipelineDriverFactory.is_h3_prompt_optimize_enabled()
+        )
+
+    @staticmethod
     def create_before_finish_steps(
         ai_tool_id: int,
         ai_tool_type: int,

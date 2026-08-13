@@ -144,3 +144,40 @@ def merge_h3_prompt_extra_config(
         "fallback": bool(fallback),
     }
     return json.dumps(data, ensure_ascii=False)
+
+
+def parse_storyboard_dialogue_model(config_json: Any) -> Optional[tuple]:
+    """从 storyboard.config_json 解析用户配置的对话模型（selectedLlmModel）。
+
+    config_json 可为 JSON 字符串、dict 或 None。selectedLlmModel 可为
+    {model, model_id, vendor_id} 对象或模型名字符串（前端 resolveLlmModelSelection 产物）。
+
+    纯解析，无数据库依赖。返回 (model, vendor_id) 或 None；vendor_id 为 None 表示按模型名路由。
+    """
+    if not config_json:
+        return None
+    data = config_json
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if not isinstance(data, dict):
+        return None
+    selection = data.get("selectedLlmModel")
+    if not selection:
+        return None
+    if isinstance(selection, str):
+        model = selection.strip()
+        return (model, None) if model else None
+    if isinstance(selection, dict):
+        model = str(selection.get("model") or selection.get("name") or "").strip()
+        if not model:
+            return None
+        raw_vendor_id = selection.get("vendor_id")
+        try:
+            vendor_id = int(raw_vendor_id) if raw_vendor_id not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            vendor_id = None
+        return (model, vendor_id)
+    return None

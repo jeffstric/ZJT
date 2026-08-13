@@ -340,7 +340,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'pipeline.h3_prompt_optimize_model',
         'value_type': 'string',
-        'description': 'H3 提示词优化使用的聊天模型名；空则回退 deepseek-v4-flash',
+        'description': 'H3 提示词优化使用的聊天模型名（默认 deepseek-v4-flash）。密钥未配置时依次回退：故事板对话模型 → 本项 → 剧本拆分默认模型(gemini-3-flash-preview)，全部未配置则回退原文',
         'editable': True,
         'is_sensitive': False,
         'quick_config': False

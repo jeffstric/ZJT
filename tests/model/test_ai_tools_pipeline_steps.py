@@ -125,6 +125,80 @@ class TestCreateWithPipelineSteps(unittest.TestCase):
         self.assertEqual(result, 123)
         mock_create_step.assert_not_called()
 
+    @patch('task.pipeline_drivers.PipelineDriverFactory.build_h3_prompt_optimize_step_configs')
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id')
+    @patch('config.config_util.get_dynamic_config_value')
+    @patch('config.constant.Edition.is_community', return_value=False)
+    @patch('model.ai_tool_pipeline_steps.PipelineStepModel.create_in_transaction')
+    @patch('model.database.execute_insert_in_transaction', return_value=456)
+    @patch('model.database.transaction', return_value=_FakeTransaction())
+    def test_creates_h3_prompt_optimize_step_with_chat_model(
+        self,
+        mock_transaction,
+        mock_insert,
+        mock_create_step,
+        mock_is_community,
+        mock_config,
+        mock_get_by_id,
+        mock_build,
+    ):
+        """H3 图生视频：原子创建 H3_PROMPT_OPTIMIZE 步骤并透传对话模型"""
+        from types import SimpleNamespace
+        mock_config.return_value = False  # Seedance 关闭，专注 H3 分支
+        mock_get_by_id.return_value = SimpleNamespace(key='minimax_h3_image_to_video')
+        mock_build.return_value = [{
+            'step_type': PipelineStepType.H3_PROMPT_OPTIMIZE,
+            'params': {'variant': 'I2VA', 'original_prompt': 'p', 'duration': 5,
+                       'chat_model': 'qwen-plus', 'chat_vendor_id': 3},
+            'target': 'I2VA',
+        }]
+
+        result = self._call_create(
+            type=34, image_path='a.png',
+            h3_chat_model='qwen-plus', h3_chat_vendor_id=3,
+        )
+
+        self.assertEqual(result, 456)
+        # build 收到 chat_model / chat_vendor_id
+        _, kwargs = mock_build.call_args
+        self.assertEqual(kwargs.get('chat_model'), 'qwen-plus')
+        self.assertEqual(kwargs.get('chat_vendor_id'), 3)
+        # 创建了 1 个 H3 步骤
+        self.assertEqual(mock_create_step.call_count, 1)
+        step_call = mock_create_step.call_args
+        self.assertEqual(step_call.kwargs['step_type'], PipelineStepType.H3_PROMPT_OPTIMIZE)
+        self.assertEqual(step_call.kwargs['params']['chat_model'], 'qwen-plus')
+
+    @patch('model.database.execute_update_in_transaction')
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id', return_value=None)
+    @patch('config.config_util.get_dynamic_config_value')
+    @patch('config.constant.Edition.is_community', return_value=False)
+    @patch('model.ai_tool_pipeline_steps.PipelineStepModel.create_in_transaction')
+    @patch('model.database.execute_insert_in_transaction', return_value=789)
+    @patch('model.database.transaction', return_value=_FakeTransaction())
+    def test_no_steps_resets_status_to_pending(
+        self,
+        mock_transaction,
+        mock_insert,
+        mock_create_step,
+        mock_is_community,
+        mock_config,
+        mock_get_by_id,
+        mock_update,
+    ):
+        """普通任务（无 param_prepare 步骤）：事务内回退 PENDING，避免卡在 WAITING_PARAM_PREPARE"""
+        from config.constant import AI_TOOL_STATUS_PENDING
+        mock_config.return_value = False  # Seedance 关闭；get_by_id 返回 None → 不进 H3 分支
+
+        result = self._call_create(type=100, status=4)  # 4 = WAITING_PARAM_PREPARE
+
+        self.assertEqual(result, 789)
+        mock_create_step.assert_not_called()
+        mock_update.assert_called_once()
+        sql_arg = mock_update.call_args.args[1]
+        self.assertIn('UPDATE ai_tools SET status', sql_arg)
+        self.assertEqual(mock_update.call_args.args[2][0], AI_TOOL_STATUS_PENDING)
+
 
 if __name__ == '__main__':
     unittest.main()

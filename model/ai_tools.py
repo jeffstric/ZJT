@@ -179,7 +179,9 @@ class AIToolsModel:
         reference_images: Optional[str] = None,
         implementation: Optional[int] = 0,
         audio_path: Optional[str] = None,
-        video_path: Optional[str] = None
+        video_path: Optional[str] = None,
+        h3_chat_model: Optional[str] = None,
+        h3_chat_vendor_id: Optional[int] = None
     ) -> int:
         """
         创建 AI tool 记录及关联的 pipeline steps（在同一事务内）
@@ -208,6 +210,8 @@ class AIToolsModel:
                 # 创建 ai_tools 记录
                 ai_tool_id = execute_insert_in_transaction(conn, sql, params)
                 logger.info(f"Created AI tool record with ID: {ai_tool_id}")
+
+                created_step_count = 0
 
                 # 创建 Seedance 2.0 前置处理步骤（仅商业版）
                 from config.constant import Edition
@@ -290,6 +294,49 @@ class AIToolsModel:
 
                         if created_image_steps:
                             logger.info(f"Created {created_image_steps} image_face_mask pipeline steps for ai_tool {ai_tool_id}")
+
+                    created_step_count = step_order
+
+                # 创建 MiniMax H3 图生视频提示词优化步骤（I2VA/FL2VA 改写）。
+                # build_h3_prompt_optimize_step_configs 为纯函数式（只读属性 + 查 config），
+                # 事务内不发起 HTTP/IO，符合 transaction() 短事务约束。
+                import types
+                from config.unified_config import UnifiedConfigRegistry, DriverKey
+                from task.pipeline_drivers import PipelineDriverFactory
+                _task_config = UnifiedConfigRegistry.get_by_id(type) if type else None
+                if _task_config and _task_config.key == DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO:
+                    _ns = types.SimpleNamespace(
+                        prompt=prompt, image_path=image_path,
+                        reference_images=reference_images, extra_config=extra_config,
+                        duration=duration,
+                    )
+                    _h3_configs = PipelineDriverFactory.build_h3_prompt_optimize_step_configs(
+                        _ns, chat_model=h3_chat_model, chat_vendor_id=h3_chat_vendor_id,
+                    )
+                    for _idx, _cfg in enumerate(_h3_configs):
+                        PipelineStepModel.create_in_transaction(
+                            conn,
+                            ai_tool_id=ai_tool_id,
+                            stage=PipelineStage.PARAM_PREPARE,
+                            step_type=_cfg['step_type'],
+                            step_order=created_step_count + _idx,
+                            params=_cfg.get('params'),
+                            target=_cfg.get('target'),
+                        )
+                    if _h3_configs:
+                        created_step_count += len(_h3_configs)
+                        logger.info(f"Created {len(_h3_configs)} h3_prompt_optimize step(s) for ai_tool {ai_tool_id}")
+
+                # 无任何 param_prepare 步骤（普通任务误入 / H3 但无首帧图）：
+                # 在事务内回退 PENDING，避免任务卡在 WAITING_PARAM_PREPARE。
+                # 调用方可统一传 WAITING_PARAM_PREPARE，状态由此处保证正确。
+                if created_step_count == 0:
+                    from .database import execute_update_in_transaction
+                    execute_update_in_transaction(
+                        conn,
+                        "UPDATE ai_tools SET status=%s WHERE id=%s",
+                        (AI_TOOL_STATUS_PENDING, ai_tool_id),
+                    )
 
                 committed_ai_tool_id = ai_tool_id
         except Exception as e:
