@@ -728,7 +728,8 @@ class TestBuildCreateRequestPayload(unittest.TestCase):
 
     @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
     def test_ratio_from_ai_tool(self, mock_compress):
-        """ratio 从 ai_tool.ratio 获取（如 9:16）"""
+        """首帧/首尾帧模式：即使 ai_tool.ratio 有值也不下发 ratio（输出比例跟随首帧图，
+        火山对显式 ratio 返回 400 InvalidParameter.TaskTypeConstraint）"""
         mock_compress.return_value = (True, 'https://cdn.example.com/first.jpg', None)
         ai_tool = _make_ai_tool(
             image_path='http://example.com/first.jpg',
@@ -737,7 +738,7 @@ class TestBuildCreateRequestPayload(unittest.TestCase):
         )
 
         result = self.driver.build_create_request(ai_tool)
-        self.assertEqual(result['json'].get('ratio'), '9:16')
+        self.assertNotIn('ratio', result['json'])
 
     @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
     def test_ratio_not_set(self, mock_compress):

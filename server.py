@@ -2166,6 +2166,14 @@ async def ai_app_run_image(
                 saved_url = await asyncio.to_thread(_save_uploaded_image, ref_img)
                 ref_image_list.append(saved_url)
         
+        # 纯音视频参考（无图片）：模型支持参考音视频时，自动改判为多参考模式放行
+        # 后续 multi_reference 分支已对 supports_ref_audio_video=True 放行空参考图，
+        # 驱动 MULTI_REFERENCE 分支会据此下发 reference_audio/reference_video。
+        has_ref_media = bool(audio_urls or audio or video_urls or video)
+        if (image_mode == 'first_last_frame' and not main_image_list
+                and has_ref_media and task_config.supports_ref_audio_video):
+            image_mode = 'multi_reference'
+
         # 根据模式处理图片
         if image_mode == 'first_last_frame':
             # 首尾帧模式：所有图片存入 image_path

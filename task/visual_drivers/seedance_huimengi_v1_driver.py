@@ -330,6 +330,13 @@ class SeedanceHuimengiV1Driver(BaseVideoDriver):
             and 'image_mode' not in extra_config
         )
 
+        # 纯音视频参考（无任何图片输入）：强制走多参考模式，确保音频/视频正确下发
+        # 适用 Seedance 2.0 系列及 2.5 的「仅音频/仅视频」输入场景（含 CLI、storyboard 等非 server 入口）
+        has_media_ref = bool(reference_video_raw or reference_audio_raw)
+        has_any_image = bool(first_frame or last_frame or reference_images)
+        if has_media_ref and not has_any_image and not is_text_to_video:
+            img_mode = ImageMode.MULTI_REFERENCE
+
         # 3. 构建 params 通用控制字段
         params: Dict[str, Any] = {"prompt": prompt}
 
