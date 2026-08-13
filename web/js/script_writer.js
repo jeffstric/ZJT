@@ -354,6 +354,10 @@
                 return; // 不继续初始化其他功能
             }
             
+            // 首次进入默认激活「世界」tab，需主动触发一次画风识别区块显隐
+            //（switchFileTab 仅在用户点击 tab 时触发，首屏直接调 loadFiles 会绕过它）
+            updateStyleRecognizeVisibility('worlds');
+
             // 核心初始化流程：加载世界名称、初始化会话、加载文件
             // 使用 try-catch 防止快速刷新时 fetch 被取消导致异常中断后续流程
             try {
