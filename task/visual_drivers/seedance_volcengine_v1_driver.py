@@ -461,8 +461,9 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
 
         ratio = extra_config.get('ratio') or ai_tool.ratio
         # 首帧/首尾帧模式（含未知模式降级为首尾帧）：输出比例跟随首帧图片，
-        # 火山禁止显式传 ratio（400 InvalidParameter.TaskTypeConstraint），必须省略
-        if img_mode in (ImageMode.FIRST_LAST_FRAME, ImageMode.FIRST_LAST_WITH_REF):
+        # 火山禁止显式传 ratio（400 InvalidParameter.TaskTypeConstraint），必须省略；
+        # 文生视频无首帧图，必须保留 ratio
+        if not is_text_to_video and img_mode in (ImageMode.FIRST_LAST_FRAME, ImageMode.FIRST_LAST_WITH_REF):
             ratio = None
         if ratio:
             payload["ratio"] = ratio
