@@ -444,27 +444,47 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
         )
 
 
+def _fake_get_by_id_for_h3(task_type):
+    """按 TaskTypeId 返回带 key 的假配置。
+
+    全量运行时，tests/config 等用例会清空 UnifiedConfigRegistry 且不恢复，
+    这里 patch get_by_id 使本组用例与全局注册表状态解耦。
+    """
+    from types import SimpleNamespace
+    from config.unified_config import DriverKey, TaskTypeId
+    key_map = {
+        TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO: DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO,
+        TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO: DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+    }
+    key = key_map.get(task_type)
+    return SimpleNamespace(key=key) if key else None
+
+
 class TestNeedsH3AtomicParamPrepare(unittest.TestCase):
     """测试 PipelineProcessor.needs_h3_atomic_param_prepare() 判定"""
 
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id', side_effect=_fake_get_by_id_for_h3)
     @patch('task.pipeline_drivers.get_dynamic_config_value', return_value=True)
-    def test_returns_true_for_h3_type_when_enabled(self, mock_cfg):
+    def test_returns_true_for_h3_type_when_enabled(self, mock_cfg, mock_get_by_id):
         from config.unified_config import TaskTypeId
         self.assertTrue(PipelineProcessor.needs_h3_atomic_param_prepare(TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO))
 
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id', side_effect=_fake_get_by_id_for_h3)
     @patch('task.pipeline_drivers.get_dynamic_config_value', return_value=True)
-    def test_returns_true_for_h3_reference_type_when_enabled(self, mock_cfg):
+    def test_returns_true_for_h3_reference_type_when_enabled(self, mock_cfg, mock_get_by_id):
         from config.unified_config import TaskTypeId
         self.assertTrue(PipelineProcessor.needs_h3_atomic_param_prepare(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
 
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id', side_effect=_fake_get_by_id_for_h3)
     @patch('task.pipeline_drivers.get_dynamic_config_value', return_value=False)
-    def test_returns_false_for_h3_type_when_disabled(self, mock_cfg):
+    def test_returns_false_for_h3_type_when_disabled(self, mock_cfg, mock_get_by_id):
         from config.unified_config import TaskTypeId
         self.assertFalse(PipelineProcessor.needs_h3_atomic_param_prepare(TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO))
         self.assertFalse(PipelineProcessor.needs_h3_atomic_param_prepare(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
 
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id', side_effect=_fake_get_by_id_for_h3)
     @patch('task.pipeline_drivers.get_dynamic_config_value', return_value=True)
-    def test_returns_false_for_non_h3_type(self, mock_cfg):
+    def test_returns_false_for_non_h3_type(self, mock_cfg, mock_get_by_id):
         # 非注册的任务类型 → is_h3_prompt_optimize_type 返回 False
         self.assertFalse(PipelineProcessor.needs_h3_atomic_param_prepare(99999))
 

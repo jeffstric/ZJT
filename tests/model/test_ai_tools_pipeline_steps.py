@@ -37,6 +37,7 @@ class TestCreateWithPipelineSteps(unittest.TestCase):
         params.update(overrides)
         return AIToolsModel.create_with_pipeline_steps(**params)
 
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id')
     @patch('config.config_util.get_dynamic_config_value')
     @patch('config.constant.Edition.is_community', return_value=False)
     @patch('model.ai_tool_pipeline_steps.PipelineStepModel.create_in_transaction')
@@ -49,9 +50,13 @@ class TestCreateWithPipelineSteps(unittest.TestCase):
         mock_create_step,
         mock_is_community,
         mock_config,
+        mock_get_by_id,
     ):
         """视频、首尾帧、参考图都会创建对应前置处理步骤"""
+        from types import SimpleNamespace
         mock_config.return_value = True
+        # 与全局注册表状态解耦（全量运行时其他用例会清空 UnifiedConfigRegistry）
+        mock_get_by_id.return_value = SimpleNamespace(key='seedance_2_0_image_to_video')
 
         result = self._call_create(
             type=23,  # seedance_2_0_image_to_video（人脸遮盖仅适配 Seedance 2.0 系列）
@@ -140,7 +145,7 @@ class TestCreateWithPipelineSteps(unittest.TestCase):
         mock_is_community,
         mock_config,
     ):
-        """回归：非 Seedance 任务类型（如 H3 参考生视频 36）即使开关开启也不创建遮盖步骤"""
+        """回归：非 Seedance 任务类型（如 H3 参考生视频 37）即使开关开启也不创建遮盖步骤"""
         mock_config.return_value = True  # 遮盖开关开
 
         result = self._call_create(

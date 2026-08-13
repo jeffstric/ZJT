@@ -155,11 +155,16 @@ def test_reference_only_model_rejected_for_image_to_video_slot(monkeypatch):
     assert exc_info.value.code == MediaGenerationErrorCode.MODEL_INPUT_UNSUPPORTED
 
 
-def test_vidu_q2_cannot_be_saved_as_image_to_video_preference():
-    from config.unified_config import TaskTypeId, UnifiedConfigRegistry
-
-    config = UnifiedConfigRegistry.get_by_id(TaskTypeId.VIDU_Q2_IMAGE_TO_VIDEO)
-    assert config is not None
+def test_vidu_q2_cannot_be_saved_as_image_to_video_preference(monkeypatch):
+    """仅 multi_reference 的模型（如 Vidu-Q2）：图生视频槽位拒绝，参考生视频放行。"""
+    config = _config(
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        supported_image_modes=[ImageMode.MULTI_REFERENCE],
+    )
+    monkeypatch.setattr(
+        "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_id",
+        lambda task_id: config,
+    )
     assert ImageMode.FIRST_LAST_FRAME not in (config.supported_image_modes or [])
     with pytest.raises(MediaGenerationPreferenceError) as exc_info:
         MediaGenerationPreferenceService.validate_model(
