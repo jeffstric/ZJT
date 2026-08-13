@@ -13,6 +13,10 @@ webapp_id: 2086470155902734337
                   顺序填入，未使用的节点 fieldValue 留空，避免 RunningHub 用节点默认值
   - 参考音频1~2 → nodeId 155/163 fieldName=audio (LoadAudio)，独立参考音频，未用留空
   - 参考视频1~2 → nodeId 158/164 fieldName=video (VHS_LoadVideo)，未用留空
+  - 音/视频开关 → nodeId 167/168(音频) 167 对应 155、168 对应 163；
+                  nodeId 165/166(视频) 165 对应 158、166 对应 164；
+                  fieldName=select (ImpactSwitch)，有文件=1 启用加载器，无文件=2 旁路
+                  （旁路时加载器懒加载不执行，空槽位不报错，H3 输入收到 None）
   - 提示词      → nodeId 138 fieldName=value         (文本)
   - 时长(秒)    → nodeId 132 fieldName=value         (INTConstant)
   - 比例        → nodeId 115 fieldName=aspect_ratio  (ResolutionSelector，带括号完整文本，带 fieldData)
@@ -48,6 +52,12 @@ REFERENCE_VIDEO_NODE_IDS = ["158", "164"]
 
 # 最大参考视频数量
 MAX_REFERENCE_VIDEOS = 2
+
+# 音/视频加载器的旁路开关（ImpactSwitch select：1=启用对应加载器，2=旁路）。
+# 旁路时加载器懒加载不执行（空槽位不会报错），H3 对应输入收到 None。
+# 顺序与 REFERENCE_VIDEO_NODE_IDS / REFERENCE_AUDIO_NODE_IDS 一一对应。
+REFERENCE_VIDEO_SWITCH_NODE_IDS = ["165", "166"]
+REFERENCE_AUDIO_SWITCH_NODE_IDS = ["167", "168"]
 
 # 比例 → ResolutionSelector(nodeId=115) aspect_ratio COMBO 完整文本
 RATIO_TO_ASPECT_RATIO_VALUE = {
@@ -252,6 +262,8 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
                       顺序填入，未使用的节点 fieldValue 留空（避免 RunningHub 用节点默认值）
         - 参考音频1~2 → nodeId 155/163 (audio，LoadAudio)，独立参考音频，未用留空
         - 参考视频1~2 → nodeId 158/164 (video，VHS_LoadVideo)，未用留空
+        - 音/视频旁路开关 → nodeId 167/168(音频)、165/166(视频) (select，ImpactSwitch)
+                          有文件=1 启用加载器，无文件=2 旁路（加载器不执行，空槽位不报错）
         - 提示词 → nodeId 138 (value，文本)
         - 时长（秒）→ nodeId 132 (value，INTConstant)
         - 比例 → nodeId 115 (aspect_ratio，带括号完整文本，带 fieldData)
@@ -343,6 +355,8 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
         #   顺序填入上传后的图标识，未使用的节点 fieldValue 留空（避免 RunningHub 用节点默认值）
         # - nodeId 155/163 audio         参考音频1~2（LoadAudio，fileName，未用留空）
         # - nodeId 158/164 video         参考视频1~2（VHS_LoadVideo，fileName，未用留空）
+        # - nodeId 167/168 select        音频旁路开关（ImpactSwitch，有=1 无=2）
+        # - nodeId 165/166 select        视频旁路开关（ImpactSwitch，有=1 无=2）
         # - nodeId 138 value           提示词（文本）
         # - nodeId 132 value           时长（秒，INTConstant）
         # - nodeId 115 aspect_ratio    比例（带括号完整文本，带 fieldData）
@@ -358,21 +372,35 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
             })
 
         for idx, node_id in enumerate(REFERENCE_AUDIO_NODE_IDS):
-            field_value = uploaded_audios[idx] if idx < len(uploaded_audios) else ""
+            has_media = idx < len(uploaded_audios)
             node_info_list.append({
                 "nodeId": node_id,
                 "fieldName": "audio",
-                "fieldValue": field_value,
+                "fieldValue": uploaded_audios[idx] if has_media else "",
                 "description": f"参考音频{idx + 1}"
+            })
+            # ImpactSwitch 旁路开关：有音频=1 启用加载器，无音频=2 旁路（加载器不执行）
+            node_info_list.append({
+                "nodeId": REFERENCE_AUDIO_SWITCH_NODE_IDS[idx],
+                "fieldName": "select",
+                "fieldValue": "1" if has_media else "2",
+                "description": f"参考音频{idx + 1}开关"
             })
 
         for idx, node_id in enumerate(REFERENCE_VIDEO_NODE_IDS):
-            field_value = uploaded_videos[idx] if idx < len(uploaded_videos) else ""
+            has_media = idx < len(uploaded_videos)
             node_info_list.append({
                 "nodeId": node_id,
                 "fieldName": "video",
-                "fieldValue": field_value,
+                "fieldValue": uploaded_videos[idx] if has_media else "",
                 "description": f"参考视频{idx + 1}"
+            })
+            # ImpactSwitch 旁路开关：有视频=1 启用加载器，无视频=2 旁路（加载器不执行）
+            node_info_list.append({
+                "nodeId": REFERENCE_VIDEO_SWITCH_NODE_IDS[idx],
+                "fieldName": "select",
+                "fieldValue": "1" if has_media else "2",
+                "description": f"参考视频{idx + 1}开关"
             })
 
         node_info_list.append({

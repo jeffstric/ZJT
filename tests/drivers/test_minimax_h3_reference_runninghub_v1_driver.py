@@ -36,7 +36,7 @@ def make_driver():
 def make_ai_tool(**overrides):
     base = {
         "id": 1,
-        "type": 36,
+        "type": 37,
         "image_path": None,
         "reference_images": '["img1.png", "img2.png"]',
         "audio_path": None,
@@ -71,11 +71,15 @@ def test_build_create_request_image_node_mapping():
     assert nodes[("139", "image")] == "https://rh.example/img2.png"
     for node_id in ("142", "147", "149", "150", "151", "152", "153"):
         assert nodes[(node_id, "image")] == ""
-    # 未传音频/视频时节点留空（覆盖应用默认值）
+    # 未传音频/视频时节点留空（覆盖应用默认值），旁路开关全为 2（加载器不执行）
     assert nodes[("155", "audio")] == ""
     assert nodes[("163", "audio")] == ""
     assert nodes[("158", "video")] == ""
     assert nodes[("164", "video")] == ""
+    assert nodes[("167", "select")] == "2"
+    assert nodes[("168", "select")] == "2"
+    assert nodes[("165", "select")] == "2"
+    assert nodes[("166", "select")] == "2"
     # 基础参数
     assert nodes[("138", "value")] == "两个人在跳舞"
     assert nodes[("132", "value")] == "8"
@@ -96,6 +100,11 @@ def test_build_create_request_audio_video_nodes_use_filename():
     assert nodes[("163", "audio")] == ""
     assert nodes[("158", "video")] == "openapi/clip1.mp4"
     assert nodes[("164", "video")] == "openapi/clip2.mp4"
+    # 旁路开关：有文件的槽位启用（1），无文件的旁路（2）
+    assert nodes[("167", "select")] == "1"
+    assert nodes[("168", "select")] == "2"
+    assert nodes[("165", "select")] == "1"
+    assert nodes[("166", "select") ] == "1"
 
 
 def test_build_create_request_truncates_extra_audio_video():
@@ -110,6 +119,11 @@ def test_build_create_request_truncates_extra_audio_video():
     assert nodes[("163", "audio")] == "openapi/a2.wav"
     assert nodes[("158", "video")] == "openapi/v1.mp4"
     assert nodes[("164", "video")] == "openapi/v2.mp4"
+    # 两个槽位都有文件，开关全启用
+    assert nodes[("167", "select")] == "1"
+    assert nodes[("168", "select")] == "1"
+    assert nodes[("165", "select")] == "1"
+    assert nodes[("166", "select")] == "1"
     # 超量的第 3 个音频/视频不上传
     assert "a3.wav" not in driver._storage.calls
     assert "v3.mp4" not in driver._storage.calls

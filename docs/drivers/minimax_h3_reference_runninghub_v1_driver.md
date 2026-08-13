@@ -5,7 +5,7 @@
 通过 RunningHub AI-App 接口调用「MiniMax H3 多参生视频」工作流，支持最多 9 张参考图 + 2 个参考视频 + 2 个参考音频生成视频。
 
 - **webapp_id**：`2086470155902734337`（自有账号复制版应用，复制自公共应用 `2084224746308325377`，并在其基础上新增了 4 个参考音视频 API 节点）
-- **任务类型**：TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO = 36
+- **任务类型**：TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO = 37
 - **DriverKey**：`minimax_h3_reference_to_video`
 - **实现方**：`minimax_h3_reference_runninghub_v1`（id=67）
 - **驱动类**：`MinimaxH3ReferenceRunninghubV1Driver`
@@ -58,6 +58,10 @@
 | 参考音频2 | 163 | audio | LoadAudio（fieldValue 取上传后的 fileName） |
 | 参考视频1 | 158 | video | VHS_LoadVideo（fieldValue 取上传后的 fileName） |
 | 参考视频2 | 164 | video | VHS_LoadVideo（fieldValue 取上传后的 fileName） |
+| 视频1开关 | 165 | select | ImpactSwitch（1=启用 158，2=旁路） |
+| 视频2开关 | 166 | select | ImpactSwitch（1=启用 164，2=旁路） |
+| 音频1开关 | 167 | select | ImpactSwitch（1=启用 155，2=旁路） |
+| 音频2开关 | 168 | select | ImpactSwitch（1=启用 163，2=旁路） |
 | 提示词 | 138 | value | 文本 |
 | 时长 | 132 | value | INTConstant（秒） |
 | 比例 | 115 | aspect_ratio | ResolutionSelector（带括号文本，带 fieldData） |
@@ -66,6 +70,7 @@
 > **参考图填充规则**：用户传 N 张图时，按顺序填入前 N 个节点（上传后的图标识），剩余 9-N 个节点 `fieldValue` 留空（避免 RunningHub 用节点默认值）。
 > 参考图固定 nodeId 列表（顺序敏感）：`["137","139","142","147","149","150","151","152","153"]`。
 > **参考音频/视频同理**：按顺序填入 155/163（音频）、158/164（视频），未传时 `fieldValue` 留空；音/视频为独立映射，`audio_path[i]`→第 i 个音频节点、`video_path[i]`→第 i 个视频节点，互不关联。
+> **旁路开关**：音/视频加载器经 ImpactSwitch（懒加载）接入 H3 节点——有文件时对应开关 `select=1`，无文件时 `select=2`；旁路时加载器不执行（空槽位不会报 `Please upload...` 错），H3 对应输入收到 None（等效未接线）。驱动对 4 个开关总是显式下发。
 
 ## 分辨率映射
 
@@ -127,6 +132,10 @@ subject_definitions / summary / retention_analysis / detailed_description / over
     {"nodeId": "163", "fieldName": "audio", "fieldValue": "", "description": "参考音频2"},
     {"nodeId": "158", "fieldName": "video", "fieldValue": "参考视频1 fileName", "description": "参考视频1"},
     {"nodeId": "164", "fieldName": "video", "fieldValue": "", "description": "参考视频2"},
+    {"nodeId": "165", "fieldName": "select", "fieldValue": "1", "description": "参考视频1开关"},
+    {"nodeId": "166", "fieldName": "select", "fieldValue": "2", "description": "参考视频2开关"},
+    {"nodeId": "167", "fieldName": "select", "fieldValue": "1", "description": "参考音频1开关"},
+    {"nodeId": "168", "fieldName": "select", "fieldValue": "2", "description": "参考音频2开关"},
     {"nodeId": "138", "fieldName": "value", "fieldValue": "提示词", "description": "提示词"},
     {"nodeId": "132", "fieldName": "value", "fieldValue": "5", "description": "视频秒数"},
     {"nodeId": "115", "fieldName": "aspect_ratio", "fieldData": "...", "fieldValue": "9:16 (Portrait Widescreen)", "description": "长宽比"},

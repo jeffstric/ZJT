@@ -823,7 +823,7 @@ class TestCreateParamPrepareStepsMini(unittest.TestCase):
         )
         MockStepModel.create.side_effect = [402]
 
-        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=36, ai_tool_type=36)
+        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=36, ai_tool_type=37)
 
         self.assertEqual(result, [402])
         kwargs = MockStepModel.create.call_args_list[0].kwargs
@@ -855,7 +855,7 @@ class TestCreateParamPrepareStepsMini(unittest.TestCase):
             True if (section, key) == ('pipeline', 'h3_prompt_optimize_enabled') else default
         )
 
-        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=36, ai_tool_type=36)
+        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=36, ai_tool_type=37)
 
         self.assertEqual(result, [])
         MockStepModel.create.assert_not_called()
