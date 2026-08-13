@@ -623,10 +623,13 @@ def list_llm_models(user_id: str, world_id: str, auth_token: str) -> Dict[str, A
                 continue
 
             # 查计费档位：补全三档 threshold（get_available_models 只返回 input）
+            # 按当前北京时间时段取价，配了峰谷则反映当前价
             in_th = out_th = cache_th = None
             try:
+                from utils.billing_period import get_billing_period
                 billing = VendorModelModel.get_by_vendor_model_for_billing(
                     vendor_id=vendor_id, model_id=model_id, raw_input_token=0,
+                    time_period=get_billing_period(None),
                 )
                 if billing:
                     in_th = billing.input_token_threshold

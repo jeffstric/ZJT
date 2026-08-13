@@ -1842,7 +1842,7 @@ async def admin_update_sort_orders(
 from model.model import ModelModel
 from model.vendor_model import VendorModelModel
 from model.vendor import VendorDAO
-from config.constant import AdminBillingConstants, LLMVendor, LLMModel
+from config.constant import AdminBillingConstants, LLMVendor, LLMModel, PeakValleyBillingConstants
 import json
 import re
 import math
@@ -1904,6 +1904,24 @@ def _normalize_commission_rate(rate: Optional[float]) -> float:
             detail=f"commission_rate 必须在 0~{AdminBillingConstants.MAX_COMMISSION_RATE} 之间（0~100%）"
         )
     return r
+
+
+def _normalize_time_period(period: Optional[str], *, strict: bool = False) -> str:
+    """规范化计费时段。
+
+    Args:
+        period: 输入时段值（normal/peak/off_peak）
+        strict: True 时非法值抛 400；False 时回退 normal
+    """
+    p = (period or PeakValleyBillingConstants.PERIOD_NORMAL).strip().lower()
+    if p in PeakValleyBillingConstants.ALL_PERIODS:
+        return p
+    if strict:
+        raise HTTPException(
+            status_code=400,
+            detail=f"time_period 必须是 {list(PeakValleyBillingConstants.ALL_PERIODS)} 之一"
+        )
+    return PeakValleyBillingConstants.PERIOD_NORMAL
 
 
 def _resolve_thresholds_from_request(
@@ -2002,6 +2020,7 @@ def _build_model_billing_payload(model_id: int, model_name: str) -> dict:
             'out_token_threshold': row['out_token_threshold'],
             'cache_read_threshold': row['cache_read_threshold'],
             'commission_rate': float(row.get('commission_rate') or 0),
+            'time_period': row.get('time_period') or 'normal',
             'created_at': row['created_at'].isoformat() if row.get('created_at') else None,
         }
         _enrich_tier_dict(tier)
@@ -2031,7 +2050,7 @@ def _build_model_billing_payload(model_id: int, model_name: str) -> dict:
 
 def _resolve_default_tier_thresholds(tier_def: dict) -> tuple:
     """
-    将默认档位定义解析为 (input_th, out_th, cache_th, raw_th, commission_rate)。
+    将默认档位定义解析为 (input_th, out_th, cache_th, raw_th, commission_rate, time_period)。
     优先使用 *_token_threshold；否则用 *_yuan_per_m 换算。
     """
     if tier_def.get('input_token_threshold') is not None:
@@ -2062,8 +2081,9 @@ def _resolve_default_tier_thresholds(tier_def: dict) -> tuple:
         raw_th = None
 
     rate = _normalize_commission_rate(tier_def.get('commission_rate', 0))
+    period = _normalize_time_period(tier_def.get('time_period'))
     _validate_tier_thresholds(in_th, out_th, cache_th, raw_th)
-    return in_th, out_th, cache_th, raw_th, rate
+    return in_th, out_th, cache_th, raw_th, rate, period
 
 
 def _validate_tier_thresholds(
@@ -2094,6 +2114,7 @@ def _tier_fields_snapshot(vm) -> dict:
         rate = float(vm.get('commission_rate') or 0)
         tid = vm.get('id')
         vendor_id = vm.get('vendor_id')
+        period = vm.get('time_period') or PeakValleyBillingConstants.PERIOD_NORMAL
     else:
         in_th = vm.input_token_threshold
         out_th = vm.output_token_threshold
@@ -2102,6 +2123,7 @@ def _tier_fields_snapshot(vm) -> dict:
         rate = float(getattr(vm, 'commission_rate', 0) or 0)
         tid = vm.id
         vendor_id = vm.vendor_id
+        period = getattr(vm, 'time_period', None) or PeakValleyBillingConstants.PERIOD_NORMAL
     snap = {
         'id': tid,
         'vendor_id': vendor_id,
@@ -2110,6 +2132,7 @@ def _tier_fields_snapshot(vm) -> dict:
         'out_token_threshold': out_th,
         'cache_read_threshold': cache_th,
         'commission_rate': rate,
+        'time_period': period,
         'input_yuan_per_m': _yuan_per_m_from_threshold(in_th),
         'out_yuan_per_m': _yuan_per_m_from_threshold(out_th),
         'cache_yuan_per_m': _yuan_per_m_from_threshold(cache_th),
@@ -2192,6 +2215,16 @@ def _build_billing_ai_system_prompt(
         "- 「命中/缓存命中」才是 cache_yuan_per_m",
         "- 若同时出现两行「基础模型」价：第 1 行=输入，第 2 行=输出",
         "",
+        "【峰谷计费 time_period】",
+        "- 每个档位可选计费时段：normal=通用(不分峰谷,默认) / peak=高峰 / off_peak=空闲。",
+        "- 高峰时段为北京时间 9:00-12:00、14:00-18:00，其余为空闲。同一(供应商,模型,区间)可分别配置 peak 与 off_peak 两档。",
+        "- 字段含义：input_yuan_per_m=输入(缓存未命中)、cache_yuan_per_m=输入(缓存命中)、out_yuan_per_m=输出。",
+        "- 若用户给出「高峰/空闲(或 peak/off_peak)」两组价格，应生成 time_period 分别为 peak 与 off_peak 的【两个】create；",
+        "  create 时 time_period 必填；同一区间下不同时段视为不同档位，不会冲突。",
+        "- 若用户只给一组价格且未提时段，time_period 用 normal。",
+        "- update 改价格但未提时段时，after 可不写 time_period（保留原时段，不要擅自改成 normal）。",
+        "- delete 峰谷档位时正常按 tier_id 删除即可。",
+        "",
         "【无法确定时禁止瞎填——错误答案比不回答更糟】",
         "若单位不清、数字对不上、目标档位/供应商无法确定、或你无法可靠完成换算，",
         "不要输出任何 ops，只输出：",
@@ -2200,9 +2233,10 @@ def _build_billing_ai_system_prompt(
         "成功时只输出一个 JSON 对象，不要 Markdown。格式：",
         '{"ok":true,"summary":"...", "ops":[{"op":"create|update|delete","tier_id":null或数字,'
         '"vendor_id":数字,"after":{"raw_token_threshold":数字或null,'
+        '"time_period":"normal|peak|off_peak",'
         '"input_yuan_per_m":数字,"out_yuan_per_m":数字,"cache_yuan_per_m":数字,'
         '"commission_rate":0~1}}]}',
-        "delete 时 after 可为 null；update 必须带已有 tier_id。",
+        "delete 时 after 可为 null；update 必须带已有 tier_id；create 必须带 time_period。",
         "after 中的 *_yuan_per_m 一律是【供应商成本·元/百万token】。",
         f"目标计费模型: id={model_id} name={model_name}",
         f"当前档位 JSON:\n{current_json}",
@@ -2327,6 +2361,8 @@ class VendorModelTierRequest(BaseModel):
     out_token_threshold: Optional[int] = None
     cache_read_threshold: Optional[int] = None
     commission_rate: float = 0.0
+    # 计费时段：normal=不分峰谷, peak=高峰, off_peak=空闲
+    time_period: str = PeakValleyBillingConstants.PERIOD_NORMAL
 
 
 class UpdateVendorModelTierRequest(BaseModel):
@@ -2339,6 +2375,7 @@ class UpdateVendorModelTierRequest(BaseModel):
     cache_read_threshold: Optional[int] = None
     commission_rate: Optional[float] = None
     clear_raw_token_threshold: bool = False
+    time_period: Optional[str] = None
 
 
 @router.post("/vendor-models")
@@ -2360,6 +2397,7 @@ async def admin_create_vendor_model_tier(
         )
         _validate_tier_thresholds(input_th, out_th, cache_th, request.raw_token_threshold)
         commission_rate = _normalize_commission_rate(request.commission_rate)
+        period = _normalize_time_period(request.time_period, strict=True)
 
         model = await asyncio.to_thread(ModelModel.get_by_id, request.model_id)
         if not model:
@@ -2375,12 +2413,13 @@ async def admin_create_vendor_model_tier(
             request.model_id,
             request.raw_token_threshold,
             None,
+            period,
         )
         if exists:
             label = "无上限" if request.raw_token_threshold is None else str(request.raw_token_threshold)
             raise HTTPException(
                 status_code=400,
-                detail=f"该供应商-模型已存在 raw_token_threshold={label} 的档位"
+                detail=f"该供应商-模型已存在 raw_token_threshold={label}（时段 {period}）的档位"
             )
 
         new_id = await asyncio.to_thread(
@@ -2392,10 +2431,12 @@ async def admin_create_vendor_model_tier(
             cache_th,
             request.raw_token_threshold,
             commission_rate,
+            period,
         )
         logger.info(
             f"Created vendor_model tier id={new_id} vendor={request.vendor_id} "
-            f"model={request.model_id} raw={request.raw_token_threshold} rate={commission_rate}"
+            f"model={request.model_id} raw={request.raw_token_threshold} "
+            f"rate={commission_rate} period={period}"
         )
         data = {
             "id": new_id,
@@ -2404,6 +2445,7 @@ async def admin_create_vendor_model_tier(
             "cache_read_threshold": cache_th,
             "raw_token_threshold": request.raw_token_threshold,
             "commission_rate": commission_rate,
+            "time_period": period,
             "money": _money_snapshot(input_th, out_th, cache_th, commission_rate),
         }
         return {"code": 0, "message": "计费档位已创建", "data": data}
@@ -2450,6 +2492,11 @@ async def admin_update_vendor_model_tier(
             if request.commission_rate is not None
             else float(existing.commission_rate or 0)
         )
+        period = (
+            _normalize_time_period(request.time_period, strict=True)
+            if request.time_period is not None
+            else (existing.time_period or PeakValleyBillingConstants.PERIOD_NORMAL)
+        )
 
         _validate_tier_thresholds(input_th, out_th, cache_th, raw_th)
 
@@ -2459,12 +2506,13 @@ async def admin_update_vendor_model_tier(
             existing.model_id,
             raw_th,
             tier_id,
+            period,
         )
         if exists:
             label = "无上限" if raw_th is None else str(raw_th)
             raise HTTPException(
                 status_code=400,
-                detail=f"该供应商-模型已存在 raw_token_threshold={label} 的档位"
+                detail=f"该供应商-模型已存在 raw_token_threshold={label}（时段 {period}）的档位"
             )
 
         await asyncio.to_thread(
@@ -2475,11 +2523,12 @@ async def admin_update_vendor_model_tier(
             cache_th,
             raw_th,
             commission_rate,
+            period,
         )
 
         logger.info(
             f"Updated vendor_model tier id={tier_id} input={input_th} out={out_th} "
-            f"cache={cache_th} raw={raw_th} rate={commission_rate}"
+            f"cache={cache_th} raw={raw_th} rate={commission_rate} period={period}"
         )
         return {
             "code": 0,
@@ -2491,6 +2540,7 @@ async def admin_update_vendor_model_tier(
                 "cache_read_threshold": cache_th,
                 "raw_token_threshold": raw_th,
                 "commission_rate": commission_rate,
+                "time_period": period,
                 "input_yuan_per_m": _yuan_per_m_from_threshold(input_th),
                 "out_yuan_per_m": _yuan_per_m_from_threshold(out_th),
                 "cache_yuan_per_m": _yuan_per_m_from_threshold(cache_th),
@@ -2593,7 +2643,7 @@ async def admin_reset_model_billing_defaults(
             deleted = VendorModelModel.delete_by_vendor_and_model(vendor.id, model_id)
             created = []
             for tier_def in tiers:
-                in_th, out_th, cache_th, raw_th, rate = _resolve_default_tier_thresholds(tier_def)
+                in_th, out_th, cache_th, raw_th, rate, period = _resolve_default_tier_thresholds(tier_def)
                 new_id = VendorModelModel.create(
                     vendor.id,
                     model_id,
@@ -2602,6 +2652,7 @@ async def admin_reset_model_billing_defaults(
                     cache_th,
                     raw_th,
                     rate,
+                    period,
                 )
                 created.append({
                     'id': new_id,
@@ -2610,6 +2661,7 @@ async def admin_reset_model_billing_defaults(
                     'out_token_threshold': out_th,
                     'cache_read_threshold': cache_th,
                     'commission_rate': rate,
+                    'time_period': period,
                     'input_yuan_per_m': _yuan_per_m_from_threshold(in_th),
                     'out_yuan_per_m': _yuan_per_m_from_threshold(out_th),
                     'cache_yuan_per_m': _yuan_per_m_from_threshold(cache_th),
@@ -2874,12 +2926,18 @@ async def admin_billing_ai_propose(
                 rate = _normalize_commission_rate(
                     after_raw.get('commission_rate', before['commission_rate'] if before else 0)
                 )
+                # 时段：update 未提则保留原时段（不擅自改 normal）；create 用 AI 给定值(默认 normal)
+                if op == 'update' and after_raw.get('time_period') is None:
+                    period = before['time_period']
+                else:
+                    period = _normalize_time_period(after_raw.get('time_period'))
                 _validate_tier_thresholds(in_th, out_th, cache_th, raw_th)
             except HTTPException:
                 continue
 
             after = {
                 'raw_token_threshold': raw_th,
+                'time_period': period,
                 'input_token_threshold': in_th,
                 'out_token_threshold': out_th,
                 'cache_read_threshold': cache_th,
@@ -3006,15 +3064,19 @@ async def admin_billing_ai_apply(
                 )
                 raw_th = a.get('raw_token_threshold', existing.raw_token_threshold)
                 rate = _normalize_commission_rate(a.get('commission_rate', existing.commission_rate))
+                period = _normalize_time_period(
+                    a.get('time_period') if a.get('time_period') is not None
+                    else (existing.time_period or PeakValleyBillingConstants.PERIOD_NORMAL)
+                )
                 _validate_tier_thresholds(in_th, out_th, cache_th, raw_th)
                 exists = await asyncio.to_thread(
-                    VendorModelModel.exists_tier, existing.vendor_id, model_id, raw_th, item.tier_id
+                    VendorModelModel.exists_tier, existing.vendor_id, model_id, raw_th, item.tier_id, period
                 )
                 if exists:
                     raise HTTPException(status_code=400, detail="分段上界与已有档位冲突")
                 await asyncio.to_thread(
                     VendorModelModel.update_thresholds,
-                    item.tier_id, in_th, out_th, cache_th, raw_th, rate,
+                    item.tier_id, in_th, out_th, cache_th, raw_th, rate, period,
                 )
                 applied.append({'op': 'update', 'tier_id': item.tier_id})
 
@@ -3032,15 +3094,16 @@ async def admin_billing_ai_apply(
                 )
                 raw_th = a.get('raw_token_threshold')
                 rate = _normalize_commission_rate(a.get('commission_rate', 0))
+                period = _normalize_time_period(a.get('time_period'))
                 _validate_tier_thresholds(in_th, out_th, cache_th, raw_th)
                 exists = await asyncio.to_thread(
-                    VendorModelModel.exists_tier, item.vendor_id, model_id, raw_th, None
+                    VendorModelModel.exists_tier, item.vendor_id, model_id, raw_th, None, period
                 )
                 if exists:
                     raise HTTPException(status_code=400, detail="分段上界与已有档位冲突")
                 new_id = await asyncio.to_thread(
                     VendorModelModel.create,
-                    item.vendor_id, model_id, in_th, out_th, cache_th, raw_th, rate,
+                    item.vendor_id, model_id, in_th, out_th, cache_th, raw_th, rate, period,
                 )
                 applied.append({'op': 'create', 'tier_id': new_id})
             else:

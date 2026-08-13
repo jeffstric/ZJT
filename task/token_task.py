@@ -3,12 +3,15 @@ Token log processing task - 处理token日志并扣除算力
 对应Go的handler/token_task.go
 """
 import logging
+from datetime import datetime
+from typing import Optional
 
 from model.computing_power import ComputingPowerModel
 from model.computing_power_log import ComputingPowerLogModel
 from model.token_log import TokenLogModel
 from model.uncalculated_power import UncalculatedPowerModel
 from model.vendor_model import VendorModelModel
+from utils.billing_period import get_billing_period
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +24,8 @@ def calculate_computing_power_from_tokens(
     user_id: int,
     vendor_id: int,
     model_id: int,
-    raw_input_token: int = 0
+    raw_input_token: int = 0,
+    created_at: Optional[datetime] = None,
 ) -> tuple:
     """
     根据token计算需要扣除的算力
@@ -38,20 +42,26 @@ def calculate_computing_power_from_tokens(
         vendor_id: 供应商ID
         model_id: 模型ID
         raw_input_token: 原始输入token数，用于分段计费选择
+        created_at: token_log 的调用发生时间，用于判断峰谷时段。
+                    为 None 时按当前北京时间兜底判断。扣费必须用调用时间，
+                    而非后台任务执行时间，否则跨时段边界会算错。
 
     Returns:
         (需要扣除的算力, 备注)
     """
-    # 获取供应商模型配置（支持分段计费）
+    # 判断本次调用所属计费时段（基于北京时间，用 created_at 而非当前时间）
+    period = get_billing_period(created_at)
+
+    # 获取供应商模型配置（支持分段 + 峰谷计费，按时段选档）
     vendor_model = None
     if vendor_id > 0 and model_id > 0:
         try:
-            # 使用 raw_input_token 选择合适的计费档位
+            # 使用 raw_input_token + time_period 选择合适的计费档位
             vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
-                vendor_id, model_id, raw_input_token
+                vendor_id, model_id, raw_input_token, time_period=period
             )
         except Exception as e:
-            logger.error(f"获取供应商模型配置失败(vendor:{vendor_id}, model:{model_id}, raw_input:{raw_input_token}): {e}")
+            logger.error(f"获取供应商模型配置失败(vendor:{vendor_id}, model:{model_id}, raw_input:{raw_input_token}, period:{period}): {e}")
 
     if not vendor_model:
         logger.warning(f"用户 {user_id} 缺少供应商模型配置，无法计算算力")
@@ -105,8 +115,10 @@ def calculate_computing_power_from_tokens(
     except Exception as e:
         logger.error(f"更新用户 {user_id} 未扣减算力失败: {e}")
 
-    # 构建详细note
+    # 构建详细note（含峰谷时段信息，便于审计）
+    hit_period = getattr(vendor_model, 'time_period', 'normal') or 'normal'
     note = (
+        f"时段(调用:{period}, 命中档:{hit_period}) | "
         f"token(输入:{input_token}, 输出:{output_token}, 缓存读取:{cache_read}) | "
         f"阈值(输入:{vendor_model.input_token_threshold}, 输出:{vendor_model.output_token_threshold}, "
         f"缓存读取:{vendor_model.cache_read_threshold}) | "
@@ -143,7 +155,7 @@ def process_token_logs():
     
     for token_log in logs:
         try:
-            # 计算需要扣除的算力
+            # 计算需要扣除的算力（用调用时间 created_at 判断峰谷时段）
             computing_power_to_deduct, note_detail = calculate_computing_power_from_tokens(
                 input_token=token_log.input_token or 0,
                 output_token=token_log.output_token or 0,
@@ -152,7 +164,8 @@ def process_token_logs():
                 user_id=token_log.user_id,
                 vendor_id=token_log.vendor_id or 0,
                 model_id=token_log.model_id or 0,
-                raw_input_token=token_log.raw_input_token or 0
+                raw_input_token=token_log.raw_input_token or 0,
+                created_at=token_log.created_at,
             )
 
             # 如果扣减为0，只标记为已处理，不生成算力日志

@@ -200,13 +200,15 @@ async def get_available_models() -> dict:
         if not local_model or not local_model.supports_tools or not local_model.enabled:
             continue
 
-        # 获取 billing 配置
+        # 获取 billing 配置（按当前北京时间时段取价，配了峰谷则反映当前价）
         input_token_threshold = None
         try:
+            from utils.billing_period import get_billing_period
             vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
                 vendor_id=vendor_id,
                 model_id=model_id,
-                raw_input_token=0
+                raw_input_token=0,
+                time_period=get_billing_period(None),
             )
             if vendor_model and vendor_model.input_token_threshold:
                 input_token_threshold = vendor_model.input_token_threshold

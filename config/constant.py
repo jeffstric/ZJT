@@ -1812,6 +1812,25 @@ class AdminBillingConstants:
     MAX_COMMISSION_RATE = 1.0
 
 
+class PeakValleyBillingConstants:
+    """大模型峰谷计费常量（北京时间，UTC+8）
+
+    DeepSeek 官方自 2026-08-17 起采用峰谷定价：高峰时段价格为空闲时段的 2 倍。
+    高峰时段为北京时间 9:00-12:00、14:00-18:00，其余为空闲时段。
+    其他模型默认 time_period='normal'，不参与峰谷，完全向后兼容。
+    """
+    _CONSTANT_GROUP = True
+    # 计费时段枚举
+    PERIOD_NORMAL = 'normal'        # 不分峰谷（向后兼容，现有模型默认值）
+    PERIOD_PEAK = 'peak'            # 高峰时段
+    PERIOD_OFF_PEAK = 'off_peak'    # 空闲时段
+    ALL_PERIODS = (PERIOD_NORMAL, PERIOD_PEAK, PERIOD_OFF_PEAK)
+
+    # 高峰时段（左闭右开 [start_hour, end_hour)），北京时间 UTC+8
+    # DeepSeek 官方：9:00-12:00、14:00-18:00；其余为空闲
+    PEAK_TIME_RANGES = ((9, 12), (14, 18))
+
+
 # ============ 一体包 MySQL binlog 保留 ============
 
 class MysqlBinlogConstants:

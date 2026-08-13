@@ -1349,6 +1349,9 @@
                                                                 <tr v-for="tier in vendor.tiers" :key="'t-' + tier.id">
                                                                     <td>
                                                                         <span class="range-label">{{ tier.range_label }}</span>
+                                                                        <span class="period-badge" :class="'period-' + (tier.time_period || 'normal')" v-if="tier.time_period && tier.time_period !== 'normal'" style="margin-left:6px;">
+                                                                            {{ periodLabel(tier.time_period) }}
+                                                                        </span>
                                                                         <div class="raw-threshold" style="margin-top:4px;">
                                                                             {{ tier.raw_token_threshold == null ? t('models_billing_unlimited') : ('≤'+tier.raw_token_threshold) }}
                                                                         </div>
@@ -2525,6 +2528,15 @@
                         </select>
                     </div>
                     <div class="form-group">
+                        <label>{{ t('models_billing_period_select') }}</label>
+                        <select class="filter-select" v-model="billingTierModal.time_period">
+                            <option value="normal">{{ t('models_billing_period_normal') }}</option>
+                            <option value="peak">{{ t('models_billing_period_peak') }}</option>
+                            <option value="off_peak">{{ t('models_billing_period_off_peak') }}</option>
+                        </select>
+                        <p class="form-hint">{{ t('models_billing_period_hint') }}</p>
+                    </div>
+                    <div class="form-group">
                         <label>
                             <input type="checkbox" v-model="billingTierModal.unlimited">
                             {{ t('models_billing_unlimited_check') }}
@@ -2653,6 +2665,11 @@
                                     <td>{{ t('models_billing_col_raw') }}</td>
                                     <td>{{ op.before?.raw_token_threshold == null ? t('models_billing_unlimited') : op.before?.raw_token_threshold }}</td>
                                     <td>{{ op.after?.raw_token_threshold == null ? t('models_billing_unlimited') : op.after?.raw_token_threshold }}</td>
+                                </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_col_period') }}</td>
+                                    <td>{{ op.before ? periodLabel(op.before.time_period) : '—' }}</td>
+                                    <td>{{ periodLabel(op.after?.time_period) }}</td>
                                 </tr>
                             </tbody>
                         </table>
