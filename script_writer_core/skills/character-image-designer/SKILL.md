@@ -103,19 +103,19 @@ ENDIF
   "shots": [
     {
       "shot_number": "",
-      "prompt_text": "角色1的三视角提示词"
+      "prompt_text": "角色1的面部特写+三视角提示词"
     },
     {
       "shot_number": "",
-      "prompt_text": "角色2的三视角提示词"
+      "prompt_text": "角色2的面部特写+三视角提示词"
     },
     {
       "shot_number": "",
-      "prompt_text": "角色3的三视角提示词"
+      "prompt_text": "角色3的面部特写+三视角提示词"
     },
     {
       "shot_number": "",
-      "prompt_text": "角色4的三视角提示词"
+      "prompt_text": "角色4的面部特写+三视角提示词"
     }
   ]
 }
@@ -136,7 +136,7 @@ ENDIF
 
 **⚠️ 重要说明：**
 - **AI无需手动调用切分工具** - 后端代码会自动处理4宫格图像的切分和保存
-- 每个格子中只包含单个角色的三视角图（正面、侧面、后面）
+- 每个格子中只包含单个角色的形象图（最左侧面部特写 + 正面、侧面、后面三视角）
 - 如果角色数量不是4的倍数，最后一批可以少于4个
 
 **⚠️ 重要说明：**
@@ -144,7 +144,7 @@ ENDIF
 - 如果角色数量不是4的倍数，最后一批可以少于4个
 - 同一批次的4个角色会保持一致的视觉风格
 - 切分后的图像会自动保存到角色的 `reference_image` 字段
-- 每个格子中只包含单个角色的三视角图（正面、侧面、后面）
+- 每个格子中只包含单个角色的形象图（最左侧面部特写 + 正面、侧面、后面三视角）
 
 ## 🔴 防止图片中出现文字（Seedream文字抑制规则 - 强制执行）
 
@@ -306,12 +306,12 @@ else:
 # 生成提示词后，必须进行以下验证
 if template_type == "REALISTIC_PHOTOGRAPHY":
     # 写实风格提示词必须包含的关键词
-    required_keywords = ["photography portfolio", "front angle", "side profile", "back view"]
+    required_keywords = ["photography portfolio", "close-up facial portrait", "front angle", "side profile", "back view"]
     forbidden_keywords = ["anime", "reference sheet", "grid paper", "borders"]
     
     # 检查是否包含必需关键词
-    if not all(keyword in prompt for keyword in ["front angle", "side profile", "back view"]):
-        raise Error("❌ 写实风格提示词缺少必需的三视角描述！")
+    if not all(keyword in prompt for keyword in ["close-up facial portrait", "front angle", "side profile", "back view"]):
+        raise Error("❌ 写实风格提示词缺少必需的面部特写或三视角描述！")
     
     # 检查是否包含禁止关键词
     if any(keyword in prompt for keyword in forbidden_keywords):
@@ -321,10 +321,10 @@ if template_type == "REALISTIC_PHOTOGRAPHY":
 
 elif template_type == "ANIME_REFERENCE":
     # 动漫风格提示词必须包含的关键词
-    required_keywords = ["reference sheet", "front view", "side profile", "back view"]
+    required_keywords = ["reference sheet", "close-up facial portrait", "front view", "side profile", "back view"]
     
-    if not all(keyword in prompt for keyword in ["front view", "side profile", "back view"]):
-        raise Error("❌ 动漫风格提示词缺少必需的三视角描述！")
+    if not all(keyword in prompt for keyword in ["close-up facial portrait", "front view", "side profile", "back view"]):
+        raise Error("❌ 动漫风格提示词缺少必需的面部特写或三视角描述！")
     
     print("✅ 动漫风格提示词验证通过")
 ```
@@ -363,7 +363,7 @@ else:
 ### 📷 写实风格模板（用于写实、照片、真实风格）
 
 ```
-[画风描述], [时代环境], [色彩基调]. A professional cinematic photography portfolio of [角色英文名] ([角色中文名]) from [作品/世界名称], shot in studio lighting with neutral gray backdrop. Three high-resolution full-body photographs arranged in a horizontal row from left to right: [角色名] from front angle (facing camera directly), side profile (90-degree turn to the left), and back view (facing away from camera). The subject is wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色] in all three shots with identical appearance. Physical characteristics: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Facial expression: [基于性格的默认表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
+[画风描述], [时代环境], [色彩基调]. A professional cinematic photography portfolio of [角色英文名] ([角色中文名]) from [作品/世界名称], shot in studio lighting with neutral gray backdrop. On the far left, a high-resolution close-up facial portrait of [角色名] (a head-and-shoulders shot highlighting detailed facial features, skin texture, eye color, hair framing the face and a clear facial expression), occupying approximately the left quarter of the image. To its right, three high-resolution full-body photographs arranged in a horizontal row from left to right: [角色名] from front angle (facing camera directly), side profile (90-degree turn to the left), and back view (facing away from camera). The subject is wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色] in all three shots with identical appearance. Physical characteristics: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Facial expression: [基于性格的默认表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 ---
@@ -371,7 +371,7 @@ else:
 ### 📸 动漫风格模板（用于动漫、二次元、卡通）
 
 ```
-[画风描述], [时代环境], [色彩基调]. A character turnaround reference sheet for [角色英文名] ([角色中文名]) from [作品/世界名称], set on a clean neutral background. Three full-body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character [角色名] wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色]. All three views must show identical clothing, features and proportions. Physical features: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Expression shows [基于性格的默认表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
+[画风描述], [时代环境], [色彩基调]. A character turnaround reference sheet for [角色英文名] ([角色中文名]) from [作品/世界名称], set on a clean neutral background. On the far left, a close-up facial portrait of [角色名] (a head-and-shoulders shot highlighting detailed facial features, eye color, hair and expression), occupying approximately the left quarter of the sheet. To its right, three full-body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character [角色名] wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色]. All four depictions (the close-up plus the three full-body views) must show identical facial features, clothing and proportions. Physical features: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Expression shows [基于性格的默认表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 #### 4.3 画风信息整合规则
@@ -435,7 +435,7 @@ else:
 **以下是动漫风格的样例（仅供参考）：**
 
 ```
-Japanese anime style, Ancient Chinese setting, Warm earthy color palette. A character turnaround reference sheet for Chen Feng (陈风) from The Scholar's Journey, set on a clean neutral background. Three full-body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character Chen Feng wearing traditional Chinese scholar robes in deep navy blue with intricate golden thread embroidery along the sleeves and collar, a black silk sash around the waist, dark brown leather boots, and a small jade pendant hanging from his belt. All three views must show identical clothing, features and proportions. Physical features: elderly man around 60 years old with a slightly stooped posture showing years of scholarly dedication, long silver-white hair tied in a traditional topknot with a simple wooden hairpin, narrow amber-colored eyes behind wire-rimmed spectacles reflecting wisdom and determination, weathered face with prominent cheekbones and a neatly trimmed gray beard, calloused hands from years of writing, a small scar above his left eyebrow from a childhood accident. Expression shows calm determination mixed with underlying worry. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
+Japanese anime style, Ancient Chinese setting, Warm earthy color palette. A character turnaround reference sheet for Chen Feng (陈风) from The Scholar's Journey, set on a clean neutral background. On the far left, a close-up facial portrait of Chen Feng (a head-and-shoulders shot highlighting his weathered face, narrow amber-colored eyes behind wire-rimmed spectacles, neatly trimmed gray beard and a small scar above his left eyebrow), occupying approximately the left quarter of the sheet. To its right, three full-body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character Chen Feng wearing traditional Chinese scholar robes in deep navy blue with intricate golden thread embroidery along the sleeves and collar, a black silk sash around the waist, dark brown leather boots, and a small jade pendant hanging from his belt. All four depictions (the close-up plus the three full-body views) must show identical facial features, clothing and proportions. Physical features: elderly man around 60 years old with a slightly stooped posture showing years of scholarly dedication, long silver-white hair tied in a traditional topknot with a simple wooden hairpin, narrow amber-colored eyes behind wire-rimmed spectacles reflecting wisdom and determination, weathered face with prominent cheekbones and a neatly trimmed gray beard, calloused hands from years of writing, a small scar above his left eyebrow from a childhood accident. Expression shows calm determination mixed with underlying worry. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 #### 4.5 图像生成调用
@@ -489,7 +489,7 @@ Japanese anime style, Ancient Chinese setting, Warm earthy color palette. A char
   - 自动构建4宫格JSON格式
   - 自动添加 `image_size="4k"` 参数生成高分辨率图像
   - 自动轮询等待图像生成完成（最多10分钟）
-  - 自动下载并切分4宫格图像为4个独立图像（每个图像包含角色的三视角图）
+  - 自动下载并切分4宫格图像为4个独立图像（每个图像包含角色的面部特写+三视角图）
   - 自动更新每个角色的 `reference_image` 字段
 - **返回结果**：
   ```json
@@ -599,7 +599,7 @@ if not result.get("success"):
 
 **⚠️ 重要：在完成所有角色的主参考图(reference_image)生成后，应根据剧情需要为角色生成服装/造型变体图，写入 reference_images 数组**
 
-变体图与主图格式完全相同——都是三视角参考图（正面、侧面、背面），只是服装/造型描述不同。变体图会追加到角色的 `reference_images` 数组中，标签(label)标识变体类型。
+变体图与主图格式完全相同——都是「面部特写+三视角」参考图（最左侧面部特写，以及正面、侧面、背面三视角），只是服装/造型描述不同。变体图会追加到角色的 `reference_images` 数组中，标签(label)标识变体类型。
 
 **🔴 强制规则：额外形象必须走图片编辑（图生图），禁止文生图**
 - **必须**调用 `generate_character_variant_image()` 生成额外形象/变体图
@@ -637,16 +637,16 @@ if not result.get("success"):
 
 #### 4.6.2 变体图提示词模板
 
-变体图走**图片编辑（基于主参考图）**，提示词必须明确要求保持参考图人物身份，仅改变服装/造型。三视角布局与主图一致。
+变体图走**图片编辑（基于主参考图）**，提示词必须明确要求保持参考图人物身份，仅改变服装/造型。布局与主图一致（最左侧面部特写 + 三视角全身图）。
 
 **写实风格变体模板**：
 ```
-Using the provided reference image of the same person, keep identical face, facial features, body proportions, hair silhouette identity and identity consistency. Only change the outfit/styling. [画风描述], [时代环境], [色彩基调]. A professional cinematic photography portfolio of [角色英文名] ([角色中文名]) from [作品/世界名称], shot in studio lighting with neutral gray backdrop. Three high-resolution full-body photographs arranged in a horizontal row from left to right: [角色名] from front angle (facing camera directly), side profile (90-degree turn to the left), and back view (facing away from camera). The subject is wearing [变体服装/造型详细描述: 上衣款式、下装、鞋子、材质、颜色、特殊装饰] in all three shots with identical appearance. Physical characteristics remain consistent with the reference image: [身高体型描述], [发型详细描述], [眼睛描述], [面部特征], [特殊标记]. Facial expression: [基于此变体的情绪/状态表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
+Using the provided reference image of the same person, keep identical face, facial features, body proportions, hair silhouette identity and identity consistency. Only change the outfit/styling. [画风描述], [时代环境], [色彩基调]. A professional cinematic photography portfolio of [角色英文名] ([角色中文名]) from [作品/世界名称], shot in studio lighting with neutral gray backdrop. On the far left, a high-resolution close-up facial portrait of [角色名] (a head-and-shoulders shot highlighting detailed facial features, skin texture, eye color, hair framing the face and a clear facial expression), occupying approximately the left quarter of the image. To its right, three high-resolution full-body photographs arranged in a horizontal row from left to right: [角色名] from front angle (facing camera directly), side profile (90-degree turn to the left), and back view (facing away from camera). The subject is wearing [变体服装/造型详细描述: 上衣款式、下装、鞋子、材质、颜色、特殊装饰] in all three shots with identical appearance. Physical characteristics remain consistent with the reference image: [身高体型描述], [发型详细描述], [眼睛描述], [面部特征], [特殊标记]. Facial expression: [基于此变体的情绪/状态表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 **动漫风格变体模板**：
 ```
-Using the provided reference image of the same character, keep identical face, facial features, body proportions and identity consistency. Only change the outfit/styling. [画风描述], [时代环境], [色彩基调]. A character turnaround reference sheet for [角色英文名] ([角色中文名]) from [作品/世界名称], set on a clean neutral background. Three full-body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character [角色名] wearing [变体服装/造型详细描述]. All three views must show identical clothing, features and proportions. Physical features remain consistent with the reference image: [身高体型描述], [发型详细描述], [眼睛描述], [面部特征], [特殊标记]. Expression shows [基于此变体的情绪/状态表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
+Using the provided reference image of the same character, keep identical face, facial features, body proportions and identity consistency. Only change the outfit/styling. [画风描述], [时代环境], [色彩基调]. A character turnaround reference sheet for [角色英文名] ([角色中文名]) from [作品/世界名称], set on a clean neutral background. On the far left, a close-up facial portrait of [角色名] (a head-and-shoulders shot highlighting detailed facial features, eye color, hair and expression), occupying approximately the left quarter of the sheet. To its right, three full-body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character [角色名] wearing [变体服装/造型详细描述]. All four depictions (the close-up plus the three full-body views) must show identical facial features, clothing and proportions. Physical features remain consistent with the reference image: [身高体型描述], [发型详细描述], [眼睛描述], [面部特征], [特殊标记]. Expression shows [基于此变体的情绪/状态表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 **⚠️ 变体图提示词关键要求：**
@@ -850,12 +850,22 @@ result = ask_user(
 
 ## 提示词模板说明
 
-### 只需生成三视角图
+### 面部特写 + 三视角图
 
-简化后的提示词只需要包含角色的三视角图（正面、侧面、后面），无需其他额外区域。
+每个角色形象图的标准布局：**最左侧约 1/4 为角色的面部特写（头肩近景）**，**右侧约 3/4 为三视角全身图（正面、侧面、后面）**，从左到右依次排列。
 
-| 视角 | 描述要点 |
+```
+┌──────────────┬──────────────────────────────────────────┐
+│              │    正面全身    │    侧面全身   │   背面全身   │
+│  面部特写     │               │              │             │
+│ （头肩近景）  │               │              │             │
+│   约 1/4     │               约 3/4                       │
+└──────────────┴──────────────────────────────────────────┘
+```
+
+| 区域 | 描述要点 |
 |-----|----------|
+| **面部特写**（最左侧，约 1/4 画面） | 头肩近景（head-and-shoulders shot），清晰展示五官细节、肤色、眼睛颜色、发型轮廓和面部表情 |
 | **正面** | 面向镜头，展示面部表情和服装正面 |
 | **侧面** | 90度侧身，展示侧脸轮廓和服装侧边 |
 | **后面** | 背对镜头，展示背部细节和服装背面 |
@@ -885,7 +895,7 @@ result = ask_user(
    - 在提示词最开头用明确的英文描述画风（如：Photorealistic style / Japanese anime style）
    - **绝对禁止**：要求写实却生成漫画风格，或要求漫画却生成写实风格
    - 所有角色必须使用完全相同的画风描述，确保整体视觉一致性
-4. **三视角完整性** - 每个提示词必须包含正面、侧面、背面三个视角的描述
+4. **面部特写 + 三视角完整性** - 每个提示词必须在最左侧包含一个角色的面部特写（头肩近景），并包含正面、侧面、背面三个全身视角的描述
 5. **描述详细度** - 三个视角的描述应详细，包含服装、外貌特征、特殊标记等
 6. **角色名称一致性** - 确保所有函数调用中的角色名称完全一致
 7. **任务冲突避免** - 必须检查任务状态，避免重复提交
