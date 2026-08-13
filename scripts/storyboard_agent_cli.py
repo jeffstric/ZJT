@@ -54,6 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
     ], required=True)
     preference_set.add_argument("--task-id", type=int, required=True)
 
+    list_llm_models = subparsers.add_parser(
+        "list-llm-models",
+        help="List available LLM models for split-from-script (with model_id / vendor_id / pricing).",
+    )
+    list_llm_models.add_argument("--user-id", type=int, required=True)
+    list_llm_models.add_argument("--world-id", type=int, default=None)
+
     list_worlds = subparsers.add_parser("list-worlds", help="List worlds visible to a user.")
     list_worlds.add_argument("--user-id", type=int, required=True)
     list_worlds.add_argument("--page", type=int, default=1)
@@ -158,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     split_script.add_argument(
         "--model", required=True,
-        help="LLM 模型名（必填，不再回退默认 gemini；先用 list_llm_models 查可用模型）",
+        help="LLM 模型名（必填，不再回退默认 gemini；先用 list-llm-models 查可用模型）",
     )
     split_script.add_argument("--model-id", type=int)
     split_script.add_argument("--vendor-id", type=int)
