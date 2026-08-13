@@ -9,8 +9,9 @@
 ```bash
 python -m scripts.storyboard_agent_cli create-storyboard-from-script --script-id 20 --user-id 1
 python -m scripts.storyboard_agent_cli create-storyboard-from-script --script-id 20 --user-id 1 --model deepseek-v4-pro --model-id 1008 --vendor-id 10
+python -m scripts.storyboard_agent_cli list-llm-models --user-id 1
 python -m scripts.storyboard_agent_cli scene-context --scene-id 123 --user-id 1
-python -m scripts.storyboard_agent_cli split-from-script --storyboard-id 10 --user-id 1
+python -m scripts.storyboard_agent_cli split-from-script --storyboard-id 10 --user-id 1 --auth-token "<auth_token>" --model deepseek-v4-flash --model-id 11 --vendor-id 4
 python -m scripts.storyboard_agent_cli list-scenes --storyboard-id 10 --user-id 1
 python -m scripts.storyboard_agent_cli generate-image --scene-id 123 --user-id 1
 python -m scripts.storyboard_agent_cli generate-image --scene-id 123 --user-id 1 --mode text_to_image
@@ -19,6 +20,19 @@ python -m scripts.storyboard_agent_cli generate-video --scene-id 123 --user-id 1
 python -m scripts.storyboard_agent_cli generate-video --scene-id 123 --user-id 1 --mode text_to_video
 python -m scripts.storyboard_agent_cli task-status --scene-id 123
 ```
+
+## 查询可用 LLM 模型
+
+`split-from-script` 在 CLI / 智能体命令路径上 **强制要求** `--model`（不再回退默认 gemini）。
+调用前先查可用模型及费用：
+
+```bash
+python -m scripts.storyboard_agent_cli list-llm-models --user-id 1
+```
+
+返回 `models[]`，每项含 `model_id` / `name` / `vendor_id` / `vendor_name` / `pricing`。
+拆分时把所选模型的 `name` 作为 `--model`，可选传 `--model-id` / `--vendor-id` 精确路由
+（同名模型多供应商时建议传）。HTTP 等价命令：`POST /api/storyboard/agent/commands/list-llm-models`。
 
 ## 能力
 
@@ -66,7 +80,7 @@ python -m scripts.storyboard_agent_cli list-scenes --storyboard-id <storyboard_i
 
 ## Agent 默认配置
 
-- `split-from-script` 未显式传 `model` 时，后端优先读取 `storyboard.config_json.selectedScriptSplitLlmModel`（支持字符串或 `{model,model_id,vendor_id}` 对象，对象会被解包并精确路由到对应 vendor/model），再回退到服务端默认模型。
+- `split-from-script` 在 **CLI / 智能体命令路径** 上 `model` 必填（不再回退默认 gemini）；先调 `list-llm-models` 查可用模型及费用。内部 worker（`POST /api/storyboard/{id}/generate-from-script` 及 resume 复用）在未显式传 model 时，仍读取 `storyboard.config_json.selectedScriptSplitLlmModel`（支持字符串或 `{model,model_id,vendor_id}` 对象，对象会被解包并精确路由到对应 vendor/model），该字段由 `create-storyboard-from-script` 写入。
 - `split-from-script` 是**异步命令**：它创建持久化拆分任务后立即返回 `task_id` + `status_url`，不再同步阻塞等待 LLM 解析（原同步路径会占用线程池约 7 分钟）。实际拆分、资产化、create_scenes、配音对账、子场景九宫格全部由 `task/script_split_task.py` worker 推进（与 `generate-from-script` 路由收敛到同一 worker）。调用方需轮询 `GET /api/script-split/tasks/{task_id}` 直到终态，再用 `list-scenes` 查询结果。
 - **配音自动提交**：拆分发布阶段（publishing）会自动为有台词且角色配置了 `default_voice` 的对白提交配音任务（`StoryboardVoiceoverBootstrapService.ensure_for_split_task`）。拆分任务只有在对账完成（所有合格对白已入 TTS 队列或有明确业务跳过）后才进入 `completed`，不会先于配音入队完成。缺少角色声音的对白会标 skip（`missing_reference_audio` / `narration_without_voice`）。TTS 实际生成由独立的 13 秒音频调度器异步执行，拆分不等待 TTS 完成。
 - `split-from-script --force-overwrite-subscene-grids` 已废弃：字段仍被接受但不再生效，子场景九宫格 i2i 只填充无参考图的子场景，永不覆盖已有参考图。

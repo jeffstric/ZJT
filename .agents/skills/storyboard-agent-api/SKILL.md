@@ -91,6 +91,43 @@ The shared command endpoint is:
 POST /api/storyboard/agent/commands/{command}
 ```
 
+## Discover Available LLM Models
+
+`split-from-script` **requires** an explicit `model` parameter (the CLI `--model` flag is also required). Before calling split, query the available LLM models and pick one — the response gives you the exact `name` / `model_id` / `vendor_id` triple to pass through, plus pricing for comparison:
+
+```bash
+curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/list-llm-models" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Each item in `models[]` looks like:
+
+```json
+{
+  "model_id": 11,
+  "name": "deepseek-v4-flash",
+  "vendor_id": 4,
+  "vendor_name": "volcengine",
+  "context_window": 128000,
+  "supports_thinking": true,
+  "supports_vl": false,
+  "pricing": {
+    "input_threshold": 40000,
+    "output_threshold": null,
+    "cache_read_threshold": null,
+    "input_price_per_million": 1.0,
+    "output_price_per_million": null,
+    "cache_read_price_per_million": null
+  }
+}
+```
+
+Notes:
+- Only vendors with a configured API key and `enabled=1` models are returned, so the list is already filtered down to models the server can actually route to. If a gateway is network-unreachable the split task will still pause with `plan_call_failed` — prefer vendors known to be reachable in the current environment (e.g. `volcengine`, `aliyun`, `zjt_api`, `ollama`).
+- Use the **name** as `model`, and optionally pass `model_id` + `vendor_id` to pin the exact route (recommended when the same model name is served by multiple vendors).
+- CLI equivalent: `python -m scripts.storyboard_agent_cli list-llm-models --user-id 1`.
+
 ## Discover Worlds And Scripts
 
 Before asking the user for IDs, discover available project context:
@@ -158,8 +195,10 @@ Split linked script into storyboard scenes:
 ```bash
 curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/split-from-script" \
   -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"storyboard_id":10,"max_group_duration":15}'
+  -d '{"storyboard_id":10,"model":"deepseek-v4-flash","model_id":11,"vendor_id":4,"max_group_duration":15}'
 ```
+
+`model` is **required** on the CLI/agent path (the server no longer falls back to a default model here). Call `list-llm-models` first to pick a reachable model, and pass `model_id` + `vendor_id` to pin the exact route when the same name is served by multiple vendors.
 
 This is an **asynchronous** command. It creates a persistent split task and returns immediately with `task_id` and `status_url` (it does **not** block for the ~7-minute LLM parse).
 
@@ -243,7 +282,9 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/list-scenes" \
 
 During the publishing phase the worker also **auto-submits dialogue voiceover tasks** for dialogues that have text and a valid character voice reference — the split task only reaches `completed` once all eligible dialogues have been queued for TTS (TTS itself runs asynchronously via the audio scheduler). You do **not** need to call a separate audio command after split; poll the per-scene `task-status` endpoint to follow TTS progress.
 
-When `model` is omitted, the server reads `storyboard.config_json.selectedScriptSplitLlmModel`, then falls back to the server default. `selectedScriptSplitLlmModel` may be either a string (`"deepseek-v4-pro"`) or an object (`{"model":"deepseek-v4-pro","model_id":1008,"vendor_id":10}`); the server unpacks the object and routes to the exact vendor/model — pass `model_id` + `vendor_id` explicitly only to override. The legacy `force_overwrite_subscene_grids` field is accepted for compatibility but no longer takes effect.
+On the **CLI / agent command path** (`POST /api/storyboard/agent/commands/split-from-script` and `python -m scripts.storyboard_agent_cli split-from-script`), `model` is **required** — the server will reject the call with `missing_parameter` if it is absent. Always call `list-llm-models` first to pick a reachable model.
+
+The internal worker (used by `POST /api/storyboard/{id}/generate-from-script` and resume) still reads `storyboard.config_json.selectedScriptSplitLlmModel` when no model is supplied; `create-storyboard-from-script` seeds that field. `selectedScriptSplitLlmModel` may be either a string (`"deepseek-v4-pro"`) or an object (`{"model":"deepseek-v4-pro","model_id":1008,"vendor_id":10}`); the server unpacks the object and routes to the exact vendor/model. The legacy `force_overwrite_subscene_grids` field is accepted for compatibility but no longer takes effect.
 
 List scenes after splitting:
 
