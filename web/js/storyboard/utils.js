@@ -144,12 +144,22 @@ export function showConfirm(message) {
 }
 
 /**
- * 格式化时长（秒 → mm:ss）
+ * 格式化时长（秒 → mm:ss[.t]）。秒部分保留 1 位小数，以体现音频求和回写后的
+ * 毫秒级时长；整数秒仍输出 mm:ss（不追加 .0）。与 adapters.formatDuration 行为一致。
+ * 注：当前无调用方，保留以备复用。
  */
 export function formatDuration(seconds) {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    const total = Number(seconds);
+    if (!Number.isFinite(total)) return '00:00';
+    const clamped = Math.max(0, total);
+    const m = Math.floor(clamped / 60);
+    const rem = clamped - m * 60;
+    const intSecs = Math.floor(rem);
+    const frac = Math.round((rem - intSecs) * 10);
+    const sStr = frac > 0
+        ? `${String(intSecs).padStart(2, '0')}.${frac}`
+        : String(intSecs).padStart(2, '0');
+    return `${String(m).padStart(2, '0')}:${sStr}`;
 }
 
 /**

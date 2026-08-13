@@ -3722,6 +3722,17 @@ async def generate_scene_video(
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
     ratio = data.get('ratio') or (sb.workflow_ratio if sb else None)
 
+    # 时长兜底刷新：TTS 完成回写 scene.duration 是 best-effort 联动，存在「音频已生成
+    # 但 duration 仍是剧本拆分阶段 LLM 估算的整数秒」的窗口。视频生成据此量化时长，
+    # 若拿到估算整数（如 5s）而真实音频更长（如 7.4s），会导致视频短于音频。
+    # 这里在量化前主动尝试用真实音频时长刷新：全部完成则覆盖，否则保持原值（best-effort）。
+    try:
+        refreshed = await recalc_scene_duration_if_all_completed(scene_id)
+        if refreshed is not None:
+            scene = await asyncio.to_thread(StoryboardSceneModel.get_by_id, scene_id)
+    except Exception as e:
+        logger.warning(f"generate_scene_video: scene={scene_id} 兜底刷新 duration 失败: {e}")
+
     try:
         generation_snapshot = await asyncio.to_thread(
             _resolve_storyboard_generation_snapshot_sync,
@@ -4104,6 +4115,15 @@ async def scene_ai_chat(
         return JSONResponse(status_code=400, content={'success': False, 'error': exc.to_dict()})
     active_generation_slot = None
     if generation_target == 'video':
+        # 时长兜底刷新：与 generate_scene_video 一致，避免拿到 LLM 估算整数时长
+        # 导致视频短于真实配音。全部完成则覆盖，否则保持原值（best-effort）。
+        try:
+            refreshed = await recalc_scene_duration_if_all_completed(scene_id)
+            if refreshed is not None:
+                scene = await asyncio.to_thread(StoryboardSceneModel.get_by_id, scene_id)
+        except Exception as e:
+            logger.warning(f"scene_ai_chat: scene={scene_id} 兜底刷新 duration 失败: {e}")
+
         # 视频：image_to_video 只使用前端槽位有序图；角色/场景参考仅作文案说明
         video_input_urls = ordered_slot_urls
         reference_images_for_msg = list(reference_images or ([first_frame_url_for_prompt] if first_frame_url_for_prompt else []))
