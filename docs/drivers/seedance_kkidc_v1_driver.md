@@ -149,6 +149,7 @@ kkidc 作为现有 4 个 Seedance 任务的**备选实现**，与火山国内版
 - **多帧支持**：首帧（顶层 `image`）/ 首尾帧（metadata 内嵌）
 - **多参考图**：`metadata.reference_images` 列表
 - **参考音视频**：`metadata.reference_videos` / `metadata.reference_audios`（提交前上传 CDN）
+- **纯音频输入**：无图片、仅有参考音频时，驱动兜底改判 multi_reference，下发 `metadata.reference_audios`（与火山版逻辑一致；网关侧是否接受「仅音频」请求以 kkidc API 约束为准）
 - **face_mask**：复用 image_face_mask / face_mask pipeline step，避免审核不通过
 
 ## 参考视频帧率限制

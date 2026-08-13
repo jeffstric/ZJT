@@ -139,6 +139,12 @@
         const config = this.modelConfigs[this.videoModel];
         return config?.supports_ref_audio_video === true;
       },
+      isPureMediaRef() {
+        // 纯音频/视频参考输入：多参考模式下无图片、但有参考音频/视频，且模型支持（如 Seedance 2.5 纯音频生视频）
+        return this.supportsRefAudioVideo
+          && this.imageMediaItems.length === 0
+          && (this.audioMediaItems.length > 0 || this.videoMediaItems.length > 0);
+      },
       canSubmit() {
         // 如果有媒体验证错误，不允许提交
         if (this.audioValidationError || this.videoValidationError) {
@@ -155,6 +161,10 @@
           const maxFiles = this.supportsLastFrame ? 2 : 1;
           return imgCount >= 1 && imgCount <= maxFiles && !!this.prompt.trim() && !this.loading;
         } else if (this.imageMode === 'multi_reference') {
+          // 纯音频/视频参考允许 0 张图（服务端按 multi_reference 受理）
+          if (this.isPureMediaRef) {
+            return !!this.prompt.trim() && !this.loading;
+          }
           return imgCount >= 1 && imgCount <= this.maxFilesForMode && !!this.prompt.trim() && !this.loading;
         } else if (this.imageMode === 'first_last_with_ref') {
           return imgCount >= 1 && imgCount <= 2 && this.referenceFiles.length <= 3 && !!this.prompt.trim() && !this.loading;
@@ -785,7 +795,7 @@
           alert(this.audioValidationError || this.videoValidationError);
           return;
         }
-        if (this.imageMediaItems.length === 0) {
+        if (this.imageMediaItems.length === 0 && !this.isPureMediaRef) {
           alert('请先上传至少一张图片');
           return;
         }

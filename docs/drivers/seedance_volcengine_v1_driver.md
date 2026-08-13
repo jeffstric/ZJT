@@ -12,8 +12,11 @@
 | 22 | doubao-seedance-2-0-fast-260128 | `Seedance20FastVolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
 | 23 | doubao-seedance-2-0-260128 | `Seedance20VolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
 | 31 | doubao-seedance-2-0-mini-260615 | `Seedance20MiniVolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
+| 36 | doubao-seedance-2-5-260628 | `Seedance25VolcengineV1Driver` | first_last_frame, multi_reference | 支持（含纯音频） |
 
 > **Seedance 2.0 Mini**：价格为 Seedance 2.0 的一半，功能与 Seedance 2.0 一致。
+>
+> **Seedance 2.5**：接口协议与 2.0 系列完全一致（content 数组结构、role 取值、状态轮询），仅 `model` 名不同。额外支持：纯音频输入（无图无视频）、最多 30 张参考图 / 10 个参考视频 / 10 段参考音频、视频时长 [4,30]s。仅支持分辨率 480P / 720P（不支持 1080P / 4K）。仅接火山引擎国内版。
 
 ## 720p 默认算力配置
 
@@ -33,6 +36,30 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 | 14 秒 | 439 | 345 | 220 |
 | 15 秒 | 454 | 357 | 227 |
 
+### Seedance 2.5 算力
+
+2.5 沿用与 2.0 相同的口径（720p、输入含视频且输入 15s 的最高成本），基于官方刊例价（单价 42 元/百万 token）推导：
+
+`tokens = 38880 × 输出秒 + 21600 × (15 − 4)`，`算力 = ceil(tokens × 42 ÷ 40000)`
+
+| 输出时长 | seedance-2.5 | | 输出时长 | seedance-2.5 |
+|---------:|-------------:|---|---------:|-------------:|
+| 5 秒 | 454 | | 18 秒 | 985 |
+| 6 秒 | 495 | | 19 秒 | 1026 |
+| 7 秒 | 536 | | 20 秒 | 1066 |
+| 8 秒 | 577 | | 21 秒 | 1107 |
+| 9 秒 | 617 | | 22 秒 | 1148 |
+| 10 秒 | 658 | | 23 秒 | 1189 |
+| 11 秒 | 699 | | 24 秒 | 1230 |
+| 12 秒 | 740 | | 25 秒 | 1271 |
+| 13 秒 | 781 | | 26 秒 | 1311 |
+| 14 秒 | 822 | | 27 秒 | 1352 |
+| 15 秒 | 862 | | 28 秒 | 1393 |
+| 16 秒 | 903 | | 29 秒 | 1434 |
+| 17 秒 | 944 | | 30 秒 | 1475 |
+
+> 2.5 仅支持 480P / 720P，480P 通过 `power_modifiers` 的 `SEEDANCE_480P_PRICE_MULTIPLIER` 自动换算（与 2.0 共用）。
+
 ## 特性
 
 - **文生视频**：支持纯文本生成视频（无任何图片/音视频输入时自动启用，content 仅含 `text`）
@@ -41,6 +68,7 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 - **多参考图**：支持 `multi_reference` 模式下多张参考图（role: reference_image）
 - **参考视频**：支持传入参考视频（role: reference_video）
 - **参考音频**：支持传入参考音频（role: reference_audio）
+- **纯音频输入**：无图片、无视频、仅参考音频时自动走多参考模式（详见下文「纯音频输入」），Seedance 2.0 系列与 2.5 均支持
 - **图片压缩上传**：本地图片自动压缩后上传至 CDN
 - **参考视频规范化**：提交前会将 WebM/MKV 参考视频转为 H.264/AAC MP4，避免浏览器 `MediaRecorder` 产物缺少 duration 元数据导致火山输入适配器失败
 - **图片人脸网格预处理**：Seedance 2.0 系列图片输入使用自适应红色矩形网格降低人脸敏感度
@@ -111,6 +139,31 @@ Seedance API 使用 content 数组传递输入：
 ```
 
 > 文生视频任务由文生视频接口 `/api/ai-app-run` 创建（不带 `image_mode`）。驱动在检测到无任何图片/音视频输入、且 `extra_config` 未声明 `image_mode` 时自动走文生视频分支；图生视频接口 `/api/ai-app-run-image` 因必带 `image_mode`，永远不会被误判。
+
+> `ratio` 只在文生视频、多参考（multi_reference）模式下下发。首帧/首尾帧模式（含未知模式降级为首尾帧）输出比例跟随首帧图片，火山会拒绝显式 `ratio`（400 `InvalidParameter.TaskTypeConstraint`），驱动构建 payload 时自动省略该字段。
+
+## 纯音频输入
+
+Seedance 2.0 系列与 2.5 支持「无图片、无视频、仅参考音频」的全模态参考输入（2.5 还支持单独传入音频）。涉及三层配合：
+
+0. **前端放行**（`/image-to-video` 页面）：多参考模式下，无图片但有参考音频/视频且模型 `supports_ref_audio_video=True` 时（`isPureMediaRef`），`canSubmit`/`handleSubmit` 允许 0 张图提交，不再弹「请先上传至少一张图片」。
+1. **server.py 放行**（`/api/ai-app-run-image`）：当前端默认 `image_mode=first_last_frame` 且无图片、仅有音频/视频、模型 `supports_ref_audio_video=True` 时，自动改判为 `multi_reference` 放行，避免被「首尾帧需要至少1张图片」拦截。
+2. **驱动兜底**（`build_create_request`）：检测到「有参考音频/视频、无任何图片、非文生视频」时，强制 `img_mode = multi_reference`，确保 `MULTI_REFERENCE` 分支下发 `reference_audio` / `reference_video`。覆盖 CLI、storyboard API 等不经过 server.py 重定向的入口。
+
+纯音频 content 示例（content 仅含 text + reference_audio，无任何 image_url）：
+
+```json
+{
+  "model": "doubao-seedance-2-5-260628",
+  "content": [
+    {"type": "text", "text": "用这段音频的节奏生成视频"},
+    {"type": "audio_url", "audio_url": {"url": "参考音频URL"}, "role": "reference_audio"}
+  ],
+  "duration": 5,
+  "ratio": "16:9",
+  "generate_audio": true
+}
+```
 
 ### 角色说明
 

@@ -171,6 +171,7 @@ Authorization: Bearer hm-xxxxxxxxxxxxxxxx
 - ✅ 首帧图生视频（`image_url`）
 - ✅ 首尾帧图生视频（`first_frame_image` + `last_frame_image`）
 - ✅ 多参考图（含参考音视频）
+- ✅ **纯音频输入**：无图片、仅有参考音频时，驱动兜底改判 multi_reference，下发 `params.reference_audios`（网关侧是否接受「仅音频」请求以 huimengi API 约束为准）
 - ✅ 真人审核模式（`human_review` 透传）
 - ✅ **自动处理人脸（`supports_auto_face`）**——详见下方专节
 - ✅ 参考视频规范化（帧率限制，复用 `prepare_seedance_reference_video_sync`）

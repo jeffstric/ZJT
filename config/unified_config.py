@@ -91,6 +91,12 @@ SEEDANCE_2_0_VIDEO_RESOLUTIONS = [
     {'value': VideoResolution.P4K, 'label': VideoResolution.P4K},
 ]
 
+# Seedance 2.5 仅支持 480P / 720P（不支持 1080P / 4K）
+SEEDANCE_2_5_VIDEO_RESOLUTIONS = [
+    {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+    {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+]
+
 
 class TaskCategory:
     """任务分类"""
@@ -1016,6 +1022,7 @@ class DriverImplementation:
     SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 'seedance_2_0_fast_volcengine_v1'
     SEEDANCE_2_0_VOLCENGINE_V1 = 'seedance_2_0_volcengine_v1'
     SEEDANCE_2_0_MINI_VOLCENGINE_V1 = 'seedance_2_0_mini_volcengine_v1'
+    SEEDANCE_2_5_VOLCENGINE_V1 = 'seedance_2_5_volcengine_v1'
 
     # Volcengine Oversea (火山引擎海外版)
     SEEDREAM5_VOLCENGINE_OVERSEA_V1 = 'seedream5_volcengine_oversea_v1'
@@ -1144,6 +1151,9 @@ class DriverImplementationId:
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 66
 
+    # Seedance 2.5 火山引擎国内版
+    SEEDANCE_2_5_VOLCENGINE_V1 = 67
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1210,6 +1220,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_fast_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_FAST_HUIMENGI_V1,
     'seedance_2_0_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_HUIMENGI_V1,
     'seedance_2_0_mini_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_MINI_HUIMENGI_V1,
+    'seedance_2_5_volcengine_v1': DriverImplementationId.SEEDANCE_2_5_VOLCENGINE_V1,
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
 }
@@ -1278,6 +1289,7 @@ class DriverKey:
     SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 'seedance_2_0_fast_image_to_video'
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 'seedance_2_0_image_to_video'
     SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO = 'seedance_2_0_mini_image_to_video'
+    SEEDANCE_2_5_IMAGE_TO_VIDEO = 'seedance_2_5_image_to_video'
 
     # Grok 图生视频
     GROK_IMAGE_TO_VIDEO = 'grok_image_to_video'
@@ -1299,6 +1311,7 @@ SEEDANCE_FACE_MASK_DRIVER_KEYS = frozenset({
     DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
 })
 
 
@@ -1334,6 +1347,7 @@ class TaskTypeId:
         'SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO': 'Seedance 2.0 Fast 图生视频',
         'SEEDANCE_2_0_IMAGE_TO_VIDEO': 'Seedance 2.0 图生视频',
         'SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO': 'Seedance 2.0 Mini 图生视频',
+        'SEEDANCE_2_5_IMAGE_TO_VIDEO': 'Seedance 2.5 图生视频',
         'GROK_IMAGE_TO_VIDEO': 'Grok 图生视频',
         'HAPPY_HORSE_IMAGE_TO_VIDEO': 'Happy Horse 图生视频',
         'HAPPY_HORSE_REFERENCE_TO_VIDEO': 'Happy Horse 参考生视频',
@@ -1374,6 +1388,7 @@ class TaskTypeId:
     SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 22
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 23
     SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO = 31
+    SEEDANCE_2_5_IMAGE_TO_VIDEO = 36
     GROK_IMAGE_TO_VIDEO = 27
     HAPPY_HORSE_IMAGE_TO_VIDEO = 28
     HAPPY_HORSE_REFERENCE_TO_VIDEO = 29
@@ -1969,6 +1984,40 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=True,  # 支持参考音频和视频
         max_multi_ref_images=9,
+        supports_grid_merge=True,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO,
+        key='seedance_2_5_image_to_video',
+        short_key='seedance_2_5',
+        name='Seedance 2.5',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
+        implementations=[
+            DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,  # 仅火山引擎国内版
+        ],
+        supported_ratios=['9:16', '16:9'],
+        supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=41,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
+        supports_last_frame=True,  # 支持首尾帧
+        supports_ref_audio_video=True,  # 支持参考音频和视频（含纯音频输入）
+        max_multi_ref_images=30,  # 2.5 支持最多 30 张参考图
         supports_grid_merge=True,
         power_modifiers=[
             PowerModifier(
@@ -2709,6 +2758,20 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10650.0,
         required_config_keys=['volcengine.api_key'],
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_5_volcengine_v1',
+        display_name='火山引擎',
+        driver_class='Seedance25VolcengineV1Driver',
+        # 算力基于官方刊例价（单价 42 元/百万 token）推导，口径沿用 2.0「720p + 输入含视频且输入 15s」最高成本。
+        # 公式：tokens = 38880×输出秒 + 21600×(15-4)；算力 = ceil(tokens×42÷40000) = ceil(40.824×N + 249.48)
+        default_computing_power={5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
+        enabled=True,
+        description='火山引擎 Seedance 2.5 图生视频接口',
+        sort_order=10800.0,
+        required_config_keys=['volcengine.api_key'],
+        supported_video_resolutions=SEEDANCE_2_5_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
 

@@ -292,6 +292,22 @@ class TestBuildCreateRequest(unittest.TestCase):
         self.assertEqual(len(params['reference_images']), 2)
         self.assertNotIn('first_frame_image', params)
 
+    def test_pure_audio_routes_to_multi_reference(self):
+        """纯音频（无图无视频）：驱动兜底改判 multi_reference，params 含 reference_audios，
+        不含 reference_images / image_url（覆盖 CLI、storyboard 等非 server 入口）"""
+        from task.visual_drivers import seedance_huimengi_v1_driver as drv_mod
+        driver = self._driver()
+        ai_tool = _make_ai_tool(prompt='纯音频测试', image_path=None, image_mode_declared=False,
+                                audio_path='http://example.com/a.mp3')
+        with patch.object(drv_mod, 'upload_media_to_cdn_sync',
+                          return_value=(True, 'http://cdn.example.com/a.mp3', None)):
+            req = driver.build_create_request(ai_tool)
+
+        params = req['json']['params']
+        self.assertEqual(params['reference_audios'], ['http://cdn.example.com/a.mp3'])
+        self.assertNotIn('reference_images', params)
+        self.assertNotIn('image_url', params)
+
     def test_human_review_passthrough(self):
         """human_review 从 extra_config 透传到 params.human_review"""
         driver = self._driver()
