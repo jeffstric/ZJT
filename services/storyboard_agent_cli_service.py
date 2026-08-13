@@ -977,12 +977,13 @@ class StoryboardAgentCliService:
         prompt_text = prompt or context["video_prompt"] or context["image_prompt"]
         ratio_value = ratio or storyboard.get("workflow_ratio") or "16:9"
         # 时长兜底刷新：TTS 完成回写 scene.duration 是 best-effort，存在「音频已生成但
-        # duration 仍是 LLM 估算整数秒」的窗口。CLI 批量路径在此同步刷新：全部完成则
-        # 用真实音频求和覆盖 scene dict 的 duration，否则保持原值。best-effort，失败不阻断。
+        # duration 仍是 LLM 估算整数秒」的窗口。CLI 批量路径在此同步刷新：有已完成配音
+        # 则用真实音频求和覆盖 scene dict 的 duration，否则保持原值。best-effort，失败不阻断。
+        # 下限 0.1s 与 recalc_scene_duration_if_all_completed / 播放器 resolveSceneSpan 对齐。
         try:
             refreshed = StoryboardDialogueAudioModel.sum_selected_durations_if_all_completed(int(scene_id))
             if refreshed is not None:
-                scene["duration"] = max(1.0, round(float(refreshed), 3))
+                scene["duration"] = max(0.1, round(float(refreshed), 3))
         except Exception as exc:
             logger.warning("generate_video: scene=%s 兜底刷新 duration 失败: %s", scene_id, exc)
         # scene.duration 现为 DECIMAL(10,3) 浮点（音频求和同步）。视频后端要求整数秒，
