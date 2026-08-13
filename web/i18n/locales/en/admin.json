@@ -517,7 +517,7 @@
   "models_billing_ai_using": "Will use",
   "toast_billing_ai_need_llm": "Please select a responsible model (vendor + model)",
   "models_billing_ai_all_vendors": "All vendors",
-  "models_billing_ai_placeholder": "e.g. Official price: input 1 CNY/1M, output 2, cache 0.1, markup 20%, tiers 128k/256k/unlimited",
+  "models_billing_ai_placeholder": "e.g.1 Official price: input 1 CNY/1M, output 2, cache 0.1, markup 20%, tiers 128k/256k/unlimited. e.g.2 (peak/off-peak): deepseek peak input 3/output 9/cache 0.1, off-peak input 1.5/output 4.5/cache 0.05, one unlimited tier each",
   "models_billing_ai_generate": "Generate with AI",
   "models_billing_ai_confirm_title": "Confirm AI billing plan",
   "models_billing_ai_confirm_hint": "Columns show user charge vs vendor cost (CNY per 1M tokens). Nothing is saved until you confirm.",

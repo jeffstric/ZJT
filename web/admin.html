@@ -2666,6 +2666,11 @@
                                     <td>{{ op.before?.raw_token_threshold == null ? t('models_billing_unlimited') : op.before?.raw_token_threshold }}</td>
                                     <td>{{ op.after?.raw_token_threshold == null ? t('models_billing_unlimited') : op.after?.raw_token_threshold }}</td>
                                 </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_col_period') }}</td>
+                                    <td>{{ op.before ? periodLabel(op.before.time_period) : '—' }}</td>
+                                    <td>{{ periodLabel(op.after?.time_period) }}</td>
+                                </tr>
                             </tbody>
                         </table>
                         <div v-else class="billing-diff-delete">

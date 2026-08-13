@@ -517,7 +517,7 @@
   "models_billing_ai_using": "将使用负责模型",
   "toast_billing_ai_need_llm": "请选择负责模型（供应商 + 模型）",
   "models_billing_ai_all_vendors": "全部供应商",
-  "models_billing_ai_placeholder": "例：按官方价输入1元/百万、输出2元、缓存0.1元，抽成20%，保留三档128k/256k/无上限",
+  "models_billing_ai_placeholder": "例1：按官方价输入1元/百万、输出2元、缓存0.1元，抽成20%，保留三档128k/256k/无上限。例2（峰谷）：deepseek 高峰输入3/输出9/缓存0.1，空闲输入1.5/输出4.5/缓存0.05，各一档无上限",
   "models_billing_ai_generate": "AI 生成方案",
   "models_billing_ai_confirm_title": "AI 计费方案确认",
   "models_billing_ai_confirm_hint": "对比列为用户收费与供应商成本（元/百万 token）。确认后才写入数据库。",

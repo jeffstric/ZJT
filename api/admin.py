@@ -2215,6 +2215,16 @@ def _build_billing_ai_system_prompt(
         "- 「命中/缓存命中」才是 cache_yuan_per_m",
         "- 若同时出现两行「基础模型」价：第 1 行=输入，第 2 行=输出",
         "",
+        "【峰谷计费 time_period】",
+        "- 每个档位可选计费时段：normal=通用(不分峰谷,默认) / peak=高峰 / off_peak=空闲。",
+        "- 高峰时段为北京时间 9:00-12:00、14:00-18:00，其余为空闲。同一(供应商,模型,区间)可分别配置 peak 与 off_peak 两档。",
+        "- 字段含义：input_yuan_per_m=输入(缓存未命中)、cache_yuan_per_m=输入(缓存命中)、out_yuan_per_m=输出。",
+        "- 若用户给出「高峰/空闲(或 peak/off_peak)」两组价格，应生成 time_period 分别为 peak 与 off_peak 的【两个】create；",
+        "  create 时 time_period 必填；同一区间下不同时段视为不同档位，不会冲突。",
+        "- 若用户只给一组价格且未提时段，time_period 用 normal。",
+        "- update 改价格但未提时段时，after 可不写 time_period（保留原时段，不要擅自改成 normal）。",
+        "- delete 峰谷档位时正常按 tier_id 删除即可。",
+        "",
         "【无法确定时禁止瞎填——错误答案比不回答更糟】",
         "若单位不清、数字对不上、目标档位/供应商无法确定、或你无法可靠完成换算，",
         "不要输出任何 ops，只输出：",
@@ -2223,9 +2233,10 @@ def _build_billing_ai_system_prompt(
         "成功时只输出一个 JSON 对象，不要 Markdown。格式：",
         '{"ok":true,"summary":"...", "ops":[{"op":"create|update|delete","tier_id":null或数字,'
         '"vendor_id":数字,"after":{"raw_token_threshold":数字或null,'
+        '"time_period":"normal|peak|off_peak",'
         '"input_yuan_per_m":数字,"out_yuan_per_m":数字,"cache_yuan_per_m":数字,'
         '"commission_rate":0~1}}]}',
-        "delete 时 after 可为 null；update 必须带已有 tier_id。",
+        "delete 时 after 可为 null；update 必须带已有 tier_id；create 必须带 time_period。",
         "after 中的 *_yuan_per_m 一律是【供应商成本·元/百万token】。",
         f"目标计费模型: id={model_id} name={model_name}",
         f"当前档位 JSON:\n{current_json}",
@@ -2915,12 +2926,18 @@ async def admin_billing_ai_propose(
                 rate = _normalize_commission_rate(
                     after_raw.get('commission_rate', before['commission_rate'] if before else 0)
                 )
+                # 时段：update 未提则保留原时段（不擅自改 normal）；create 用 AI 给定值(默认 normal)
+                if op == 'update' and after_raw.get('time_period') is None:
+                    period = before['time_period']
+                else:
+                    period = _normalize_time_period(after_raw.get('time_period'))
                 _validate_tier_thresholds(in_th, out_th, cache_th, raw_th)
             except HTTPException:
                 continue
 
             after = {
                 'raw_token_threshold': raw_th,
+                'time_period': period,
                 'input_token_threshold': in_th,
                 'out_token_threshold': out_th,
                 'cache_read_threshold': cache_th,
