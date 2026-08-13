@@ -1116,6 +1116,9 @@ def submit_storyboard_dialogue_voiceover(
     transaction_id = str(uuid.uuid4())
     extra_audio_kwargs = {'transaction_id': transaction_id}
     extra_audio_kwargs.update(emo_kwargs)
+    # 手动点「生成配音」默认强制重跑（改情感/改台词后可覆盖选中配音）；
+    # 自动补缺路径传 skip_existing=True，不会走到 force。
+    force_regenerate = bool(config.get('force_regenerate', not config.get('skip_existing')))
     result = StoryboardVoiceoverBootstrapService()._submit_dialogue_voiceover_atomically(
         dialogue_id,
         user_id,
@@ -1123,6 +1126,7 @@ def submit_storyboard_dialogue_voiceover(
         text=text,
         scene_id=scene_id,
         extra_audio_kwargs=extra_audio_kwargs,
+        force_regenerate=force_regenerate,
     )
     if result.get('decision') != 'submitted':
         # 已选中有效配音（reused）或失败：保持与原返回结构兼容

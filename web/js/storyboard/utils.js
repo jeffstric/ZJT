@@ -7,6 +7,8 @@ export const EMO_VEC_LABELS = ['喜', '怒', '哀', '惧', '厌恶', '低落', '
 export const EMO_VEC_DIM = 8;
 export const EMO_VEC_MAX_SUM = 1.5;
 export const EMO_VEC_MAX_EACH = 1.5;
+/** 各维度配色（对白情感摘要点阵使用，顺序与 EMO_VEC_LABELS 对应） */
+export const EMO_VEC_COLORS = ['#f59e0b', '#ef4444', '#3b82f6', '#8b5cf6', '#10b981', '#94a3b8', '#ec4899', '#14b8a6'];
 
 /** 解析 emo_vec 为 8 维 number[] */
 export function parseEmoVec(raw) {
@@ -43,6 +45,34 @@ export function normalizeEmoVec(values) {
         }
     }
     return list.map((v) => v.toFixed(4)).join(',');
+}
+
+/** 非零维度列表 [{ index, label, value }] */
+export function getEmoVecActiveDims(raw) {
+    const list = parseEmoVec(raw);
+    const dims = [];
+    list.forEach((v, i) => {
+        if (v > 0.001) dims.push({ index: i, label: EMO_VEC_LABELS[i], value: v });
+    });
+    return dims;
+}
+
+/** 配音任务是否进行中（对应后端 AIAudioStatus：0=PENDING 1=PROCESSING，兼容字符串态） */
+export function isAudioRunningStatus(status) {
+    if (status === 0 || status === 1) return true;
+    if (typeof status === 'string') {
+        return ['0', '1', 'pending', 'queued', 'running', 'processing'].includes(status.toLowerCase());
+    }
+    return false;
+}
+
+/** 配音任务是否失败（AIAudioStatus.FAILED = -1，兼容字符串态） */
+export function isAudioFailedStatus(status) {
+    if (status === -1) return true;
+    if (typeof status === 'string') {
+        return ['-1', 'failed', 'error'].includes(status.toLowerCase());
+    }
+    return false;
 }
 
 /** 摘要：非零维度「喜 0.40 · 怒 0.20」 */
