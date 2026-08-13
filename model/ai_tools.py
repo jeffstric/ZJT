@@ -213,9 +213,13 @@ class AIToolsModel:
 
                 created_step_count = 0
 
-                # 创建 Seedance 2.0 前置处理步骤（仅商业版）
+                # 创建 Seedance 2.0 前置处理步骤（仅商业版 + 仅 Seedance 2.0 系列任务类型）。
+                # 注意：H3 等模型会因提示词优化进入本事务，不能为其创建人脸遮盖步骤，
+                # 适配清单单一来源：config/unified_config.py::SEEDANCE_FACE_MASK_DRIVER_KEYS。
                 from config.constant import Edition
-                if not Edition.is_community():
+                from task.pipeline_drivers import PipelineDriverFactory
+                _is_seedance_face_mask = bool(type) and PipelineDriverFactory.is_seedance_face_mask_type(type)
+                if not Edition.is_community() and _is_seedance_face_mask:
                     step_order = 0
 
                     from config.config_util import get_dynamic_config_value

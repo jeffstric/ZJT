@@ -54,6 +54,7 @@ class TestCreateWithPipelineSteps(unittest.TestCase):
         mock_config.return_value = True
 
         result = self._call_create(
+            type=23,  # seedance_2_0_image_to_video（人脸遮盖仅适配 Seedance 2.0 系列）
             image_path='start.png,end.png',
             reference_images=json.dumps(['ref.png']),
             video_path='clip.mp4',
@@ -96,6 +97,7 @@ class TestCreateWithPipelineSteps(unittest.TestCase):
         mock_config.return_value = False
 
         result = self._call_create(
+            type=23,  # seedance_2_0_image_to_video
             image_path='start.png,end.png',
             reference_images=json.dumps(['ref.png']),
             video_path=None,
@@ -120,10 +122,39 @@ class TestCreateWithPipelineSteps(unittest.TestCase):
         """人脸遮罩总开关关闭时，视频输入也不创建 face_mask 步骤"""
         mock_config.return_value = False
 
-        result = self._call_create(video_path='clip.mp4')
+        result = self._call_create(type=23, video_path='clip.mp4')
 
         self.assertEqual(result, 123)
         mock_create_step.assert_not_called()
+
+    @patch('config.config_util.get_dynamic_config_value')
+    @patch('config.constant.Edition.is_community', return_value=False)
+    @patch('model.ai_tool_pipeline_steps.PipelineStepModel.create_in_transaction')
+    @patch('model.database.execute_insert_in_transaction', return_value=124)
+    @patch('model.database.transaction', return_value=_FakeTransaction())
+    def test_non_seedance_type_never_creates_face_mask_steps(
+        self,
+        mock_transaction,
+        mock_insert,
+        mock_create_step,
+        mock_is_community,
+        mock_config,
+    ):
+        """回归：非 Seedance 任务类型（如 H3 参考生视频 36）即使开关开启也不创建遮盖步骤"""
+        mock_config.return_value = True  # 遮盖开关开
+
+        result = self._call_create(
+            type=37,
+            image_path='start.png',
+            reference_images=json.dumps(['ref.png']),
+            video_path='clip.mp4',
+        )
+
+        self.assertEqual(result, 124)
+        # H3 步骤允许存在，但绝不能出现人脸遮盖步骤
+        step_types = [c.kwargs['step_type'] for c in mock_create_step.call_args_list]
+        self.assertNotIn(PipelineStepType.FACE_MASK, step_types)
+        self.assertNotIn(PipelineStepType.IMAGE_FACE_MASK, step_types)
 
     @patch('task.pipeline_drivers.PipelineDriverFactory.build_h3_prompt_optimize_step_configs')
     @patch('config.unified_config.UnifiedConfigRegistry.get_by_id')
@@ -198,7 +229,7 @@ class TestCreateWithPipelineSteps(unittest.TestCase):
         }]
 
         result = self._call_create(
-            type=36, duration=8,
+            type=37, duration=8,
             reference_images=json.dumps(['r1.png', 'r2.png']),
             video_path='v1.mp4', audio_path='a1.wav',
         )
