@@ -798,15 +798,62 @@ class TestCreateParamPrepareStepsMini(unittest.TestCase):
         self.assertEqual(result, [])
         MockStepModel.create.assert_not_called()
 
+    @patch('task.pipeline_drivers.get_dynamic_config_value')
     @patch('task.pipeline_drivers.PipelineStepModel')
     @patch('task.pipeline_drivers.AIToolsModel')
     @patch('task.pipeline_drivers.UnifiedConfigRegistry')
-    def test_h3_reference_to_video_skips_prompt_optimize(
-        self, MockRegistry, MockAITools, MockStepModel
+    def test_h3_reference_to_video_creates_prompt_optimize_step(
+        self, MockRegistry, MockAITools, MockStepModel, mock_config
     ):
+        """参考生视频（Ref2VA）：有参考资产时创建 h3_prompt_optimize 步骤并带资产计数"""
         mock_task_config = MagicMock()
         mock_task_config.key = 'minimax_h3_reference_to_video'
         MockRegistry.get_by_id.return_value = mock_task_config
+        mock_ai_tool = MagicMock()
+        mock_ai_tool.image_path = None
+        mock_ai_tool.reference_images = '["r1.png", "r2.png"]'
+        mock_ai_tool.video_path = 'clip1.mp4'
+        mock_ai_tool.audio_path = None
+        mock_ai_tool.prompt = '两个人在跳舞'
+        mock_ai_tool.duration = 8
+        MockAITools.get_by_id.return_value = mock_ai_tool
+        mock_config.side_effect = (
+            lambda section, key, default=None:
+            True if (section, key) == ('pipeline', 'h3_prompt_optimize_enabled') else default
+        )
+        MockStepModel.create.side_effect = [402]
+
+        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=36, ai_tool_type=36)
+
+        self.assertEqual(result, [402])
+        kwargs = MockStepModel.create.call_args_list[0].kwargs
+        self.assertEqual(kwargs['step_type'], 'h3_prompt_optimize')
+        self.assertEqual(kwargs['params']['variant'], 'Ref2VA')
+        self.assertEqual(kwargs['params']['original_prompt'], '两个人在跳舞')
+        self.assertEqual(kwargs['params']['ref_counts'], {'images': 2, 'videos': 1, 'audios': 0})
+
+    @patch('task.pipeline_drivers.get_dynamic_config_value')
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    @patch('task.pipeline_drivers.AIToolsModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_h3_reference_to_video_without_assets_creates_nothing(
+        self, MockRegistry, MockAITools, MockStepModel, mock_config
+    ):
+        """参考生视频（Ref2VA）：无任何参考资产时不建步骤（variant 为 None）"""
+        mock_task_config = MagicMock()
+        mock_task_config.key = 'minimax_h3_reference_to_video'
+        MockRegistry.get_by_id.return_value = mock_task_config
+        mock_ai_tool = MagicMock()
+        mock_ai_tool.image_path = None
+        mock_ai_tool.reference_images = None
+        mock_ai_tool.video_path = None
+        mock_ai_tool.audio_path = None
+        mock_ai_tool.prompt = '两个人在跳舞'
+        MockAITools.get_by_id.return_value = mock_ai_tool
+        mock_config.side_effect = (
+            lambda section, key, default=None:
+            True if (section, key) == ('pipeline', 'h3_prompt_optimize_enabled') else default
+        )
 
         result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=36, ai_tool_type=36)
 

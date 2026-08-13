@@ -1,0 +1,93 @@
+# MiniMax H3 Prompt Rewrite Guide (Ref2VA full-reference only)
+
+## 1. Task type
+
+- **Ref2VA**: full-reference video generation. The model receives reference assets — images, videos, audios — and a text prompt. The rewrite describes the target video and states exactly how each referenced asset is used.
+
+Do not invent I2VA/FL2VA keyframe-anchor structures; reference images here are generation guidance, not concrete first/last frames, unless the user explicitly says an image is the first or last frame.
+
+## 2. Final prompt structure
+
+The output consists of exactly these six sections in this order:
+
+```text
+subject_definitions: ...
+
+summary: ...
+
+retention_analysis: ...
+
+detailed_description: ...
+
+overall_soundscape: ...
+
+non_diegetic_music: ...
+```
+
+- `subject_definitions`: one line per referenced item, defining its reference label and main features to follow.
+- `summary`: one short paragraph starting with a square-bracketed task-type prefix, e.g. `[reference generation]`, `[reference generation + audio reference]`. Combine types with ` + `.
+- `retention_analysis`: one line per label, stating where it appears and how it is preserved (markers below).
+- `detailed_description`: the main body — visuals, actions, shots, sound, and dialogue in playback order, with reference labels inserted where they apply. Normally 350-500 English words.
+- `overall_soundscape`: ambience and physical sounds across the whole video. Dialogue and songs do not belong here. Use `N/A` only for complete silence.
+- `non_diegetic_music`: background music the characters cannot hear — instrumentation, tempo, dynamics. Use `N/A` when there is none.
+
+Write all sections in English. Preserve the original language only for dialogue, lyrics inside `<d>`, and visible scene text.
+
+## 3. Reference labels
+
+- `<subject_N>`: reusable visible content abstracted from reference assets — people, animals, objects, scenes, clothing, props, styles, actions, poses. One subject may combine several assets; state what each asset provides.
+- `<picture_N>`: a reference image used as a concrete frame anchor (first frame / last frame / keyframe / storyboard). Images that only define a character, scene, or style are cited inside the `<subject_N>` definition instead of getting their own picture line.
+- `<video_N>`: a reference video used as an editing source, a continuation starting point, or a whole-video structure reference (camera movement, cuts, rhythm). Visible content reused from a video still belongs under `<subject_N>`.
+- `<audio_N>`: a standalone audio asset or a reference video's audio track — copied signal, music style, voice timbre, dialogue or lyric content, beat, or continuity. When an `<audio_N>` is the voice-timbre reference for a target speaker, bind it to that speaker's global ID, e.g. `<audio_1> is the voice-timbre reference for <subject_3> (S1).`
+
+Once assigned, a label keeps the same meaning across all six sections. `<video_N>` and `<audio_N>` are numbered independently; different indices do not prevent them from coming from the same source asset.
+
+## 4. retention_analysis markers
+
+For `<subject_N>`, `<picture_N>`, `<video_N>`:
+
+- `fully_preserved`: the defined role of the referenced content is fully preserved
+- `partially_preserved`: still used, but some defined characteristics change or are only partially retained
+- `attribute_transfer`: referenced characteristics move to a different identifiable target subject
+- `weak_reference`: only broad similarity in style, category, composition, or atmosphere
+
+For `<audio_N>`:
+
+- `fully_copy`: the complete source audio is the target video's complete final audio track
+- `partially_copy`: only part of the timeline or selected layers are copied
+- `reference`: not copied; only timbre, rhythm, style, dialogue content, or texture is referenced
+- `weak_reference`: only broad similarity in category or atmosphere
+
+Format: `<subject_1> (appears in [Shot 1], [Shot 3]): fully_preserved - ...`
+
+## 5. Writing the detailed_description
+
+Establish the style in one or two English sentences before `[Shot 1]`. `[Shot 1]` has no timestamp; later shots use `[Shot N] At MM:SS.mmm, ...` with increasing cut times inside the requested duration.
+
+At the first clear appearance of an important `<subject_N>`, describe its referenced characteristics, position, and current action. Reuse the same label in later shots without redefining it.
+
+Camera motion is natural English: motion type + optional amplitude + optional speed. Examples: `Zoom In / Zoom Out`, `Push In / Pull Out`, `Pan Left / Pan Right`, `Truck Left / Truck Right`, `Tilt Up / Tilt Down`, `Arc Shot`, `Tracking Shot`, `Static Shot`, `POV`.
+
+Speakers who talk or sing get stable IDs `(S1)`, `(S2)` assigned in the order of actual vocal events. A referenced subject that speaks keeps both labels: `<subject_3> (S1)`. Put identity, ID, and delivery outside `<d>`; inside `<d>` keep only the language tag and the original spoken words — never translate them. Write `[unclear]` for unintelligible spans instead of guessing.
+
+```text
+<subject_3> (S1) turns toward the woman and says: <d>[English] Last summer, I went to my grandfather's house.</d>
+```
+
+Cite `<audio_N>` in the shot or phase where the audio relationship is active, and state whether the signal is copied or referenced. When only timbre, rhythm, emotion, or delivery is referenced, do not carry the original dialogue from the reference audio into the target video.
+
+## 6. Example
+
+```text
+subject_definitions: <subject_1> is the coffee-shop environment in <picture_1>, featuring an exposed brick wall, an orange tufted sofa with patterned pillows, a neon sign, and a wooden coffee table. <subject_2> is the fluffy white Samoyed in <picture_2>, with thick white fur, pointed ears, a dark nose, and a curved tail. <subject_3> is the young blonde woman in <picture_3>, with long blonde hair and a light-pink button-down shirt with rolled-up sleeves. <audio_1> is the voice-timbre reference for <subject_3> (S1), containing a spoken English vocal layer.
+
+summary: [reference generation + audio reference] The target video shows <subject_3> eating a cookie in <subject_1>. <subject_2> lunges toward the cookie, and <subject_3> reacts using <audio_1> as her voice-timbre reference.
+
+retention_analysis: <subject_1> (appears in [Shot 1], [Shot 2]): fully_preserved - the exposed brick wall, orange tufted sofa, patterned pillows, neon sign, and wooden coffee table are retained. <subject_2> (appears in [Shot 1], [Shot 2]): fully_preserved - the Samoyed's thick white fur, pointed ears, dark nose, and curved tail are retained. <subject_3> (appears in [Shot 1], [Shot 2]): fully_preserved - the blonde woman's identity, long hair, and light-pink shirt are retained. <audio_1>: reference - its vocal timbre guides the dialogue delivery of <subject_3> without copying the original signal.
+
+detailed_description: The target video uses a realistic multi-camera sitcom style with warm indoor lighting. [Shot 1] A medium shot establishes <subject_1>, the coffee shop with its exposed brick wall, orange tufted sofa, patterned pillows, neon sign, and wooden coffee table. <subject_3> (S1), the young woman with long blonde hair and a light-pink button-down shirt with rolled-up sleeves, sits on the sofa holding a chocolate-chip cookie. <subject_2>, the thick-furred white Samoyed with pointed ears, a dark nose, and a curved tail, enters from the left and lunges toward the cookie. <subject_3> (S1) jerks her hand back and, using the clear youthful voice timbre referenced from <audio_1>, exclaims with light annoyance: <d>[English] Hey! Watch your dog!</d> She closes her lips and guards the cookie. [Shot 2] At 00:03.000, the shot cuts to a close-up of <subject_3> (S1). Her annoyance softens as she looks toward the Samoyed. <subject_3> (S1) says in the same clear youthful voice referenced from <audio_1> with an amused cadence: <d>[English] Well, he has good taste at least.</d> She smiles and raises the cookie in a small toast-like gesture. A classic canned audience laugh begins immediately after the line and continues through the final frame.
+
+overall_soundscape: Soft indoor coffee-shop room tone continues throughout the scene.
+
+non_diegetic_music: N/A
+```

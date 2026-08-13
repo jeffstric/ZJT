@@ -169,6 +169,52 @@ class TestCreateWithPipelineSteps(unittest.TestCase):
         self.assertEqual(step_call.kwargs['step_type'], PipelineStepType.H3_PROMPT_OPTIMIZE)
         self.assertEqual(step_call.kwargs['params']['chat_model'], 'qwen-plus')
 
+    @patch('task.pipeline_drivers.PipelineDriverFactory.build_h3_prompt_optimize_step_configs')
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id')
+    @patch('config.config_util.get_dynamic_config_value')
+    @patch('config.constant.Edition.is_community', return_value=False)
+    @patch('model.ai_tool_pipeline_steps.PipelineStepModel.create_in_transaction')
+    @patch('model.database.execute_insert_in_transaction', return_value=457)
+    @patch('model.database.transaction', return_value=_FakeTransaction())
+    def test_creates_h3_prompt_optimize_step_for_reference_type(
+        self,
+        mock_transaction,
+        mock_insert,
+        mock_create_step,
+        mock_is_community,
+        mock_config,
+        mock_get_by_id,
+        mock_build,
+    ):
+        """H3 参考生视频：原子创建 H3_PROMPT_OPTIMIZE 步骤，透传 task_key 与音视频参考字段"""
+        from types import SimpleNamespace
+        mock_config.return_value = False  # Seedance 关闭，专注 H3 分支
+        mock_get_by_id.return_value = SimpleNamespace(key='minimax_h3_reference_to_video')
+        mock_build.return_value = [{
+            'step_type': PipelineStepType.H3_PROMPT_OPTIMIZE,
+            'params': {'variant': 'Ref2VA', 'original_prompt': 'p', 'duration': 8,
+                       'ref_counts': {'images': 2, 'videos': 1, 'audios': 1}},
+            'target': 'Ref2VA',
+        }]
+
+        result = self._call_create(
+            type=36, duration=8,
+            reference_images=json.dumps(['r1.png', 'r2.png']),
+            video_path='v1.mp4', audio_path='a1.wav',
+        )
+
+        self.assertEqual(result, 457)
+        # build 收到 task_key，命名空间带参考视频/音频（供 Ref2VA 资产计数）
+        args, kwargs = mock_build.call_args
+        self.assertEqual(kwargs.get('task_key'), 'minimax_h3_reference_to_video')
+        ns = args[0]
+        self.assertEqual(ns.video_path, 'v1.mp4')
+        self.assertEqual(ns.audio_path, 'a1.wav')
+        self.assertEqual(mock_create_step.call_count, 1)
+        step_call = mock_create_step.call_args
+        self.assertEqual(step_call.kwargs['step_type'], PipelineStepType.H3_PROMPT_OPTIMIZE)
+        self.assertEqual(step_call.kwargs['params']['variant'], 'Ref2VA')
+
     @patch('model.database.execute_update_in_transaction')
     @patch('config.unified_config.UnifiedConfigRegistry.get_by_id', return_value=None)
     @patch('config.config_util.get_dynamic_config_value')

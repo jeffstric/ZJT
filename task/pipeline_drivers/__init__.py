@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any
 
 from model import PipelineStepType, PipelineStepModel, PipelineStage, AIToolsModel
 from config.config_util import get_dynamic_config_value
+from config.constant import H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
 from config.unified_config import (
     UnifiedConfigRegistry,
     get_implementation_id,
@@ -22,7 +23,7 @@ from .image_face_mask_driver import ImageFaceMaskPipelineDriver
 from .implementation_retry_driver import ImplementationRetryPipelineDriver
 from .storyboard_grid_split_driver import StoryboardGridSplitPipelineDriver
 from .h3_prompt_optimize_driver import H3PromptOptimizePipelineDriver
-from .h3_prompt_optimize_util import resolve_h3_prompt_variant
+from .h3_prompt_optimize_util import resolve_h3_prompt_variant, resolve_h3_reference_asset_counts
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,13 @@ class PipelineDriverFactory:
 
     # 走人脸遮盖预处理的 Seedance 任务 DriverKey（单一来源：config/unified_config.py）
     _SEEDANCE_FACE_MASK_KEYS = SEEDANCE_FACE_MASK_DRIVER_KEYS
+
+    # 走 H3 提示词优化（param_prepare）的任务 DriverKey：
+    # 图生视频（I2VA/FL2VA）+ 参考生视频（Ref2VA）
+    _H3_PROMPT_OPTIMIZE_KEYS = {
+        DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO,
+        DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+    }
 
     @staticmethod
     def create_driver(step_type: str) -> Optional[BasePipelineDriver]:
@@ -160,10 +168,15 @@ class PipelineDriverFactory:
         return step_configs
 
     @classmethod
-    def is_h3_image_to_video_type(cls, ai_tool_type: int) -> bool:
-        """任务类型是否为 MiniMax H3 图生视频（DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO）。"""
+    def is_h3_prompt_optimize_key(cls, task_key: Optional[str]) -> bool:
+        """UnifiedTaskConfig.key 是否走 H3 提示词优化（图生视频 I2VA/FL2VA、参考生视频 Ref2VA）。"""
+        return bool(task_key) and task_key in cls._H3_PROMPT_OPTIMIZE_KEYS
+
+    @classmethod
+    def is_h3_prompt_optimize_type(cls, ai_tool_type: int) -> bool:
+        """任务类型是否走 MiniMax H3 提示词优化（图生视频 I2VA/FL2VA、参考生视频 Ref2VA）。"""
         task_config = UnifiedConfigRegistry.get_by_id(ai_tool_type)
-        return bool(task_config and task_config.key == DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO)
+        return bool(task_config and cls.is_h3_prompt_optimize_key(task_config.key))
 
     @staticmethod
     def is_h3_prompt_optimize_enabled() -> bool:
@@ -180,15 +193,17 @@ class PipelineDriverFactory:
         ai_tool,
         chat_model: Optional[str] = None,
         chat_vendor_id: Optional[int] = None,
+        task_key: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """MiniMax H3 图生视频提交前的 I2VA/FL2VA 提示词优化步骤配置。
+        """MiniMax H3 提交前的提示词优化步骤配置（图生视频 I2VA/FL2VA、参考生视频 Ref2VA）。
 
         纯函数式：只读 ai_tool 属性 + 查 config，不开数据库连接，可安全在事务内调用。
         chat_model / chat_vendor_id 用于把调用方解析到的对话模型透传给驱动做密钥回退。
+        task_key 为 UnifiedTaskConfig.key，参考生视频据此判定 Ref2VA 变体。
         """
         if not cls.is_h3_prompt_optimize_enabled():
             return []
-        variant = resolve_h3_prompt_variant(ai_tool)
+        variant = resolve_h3_prompt_variant(ai_tool, task_key=task_key)
         if not variant:
             return []
         original = getattr(ai_tool, "prompt", None) or ""
@@ -198,6 +213,9 @@ class PipelineDriverFactory:
             "original_prompt": original,
             "duration": duration,
         }
+        if variant == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA:
+            # 参考资产计数，供 Ref2VA 指令声明 <picture_N>/<video_N>/<audio_N> 对应关系
+            params["ref_counts"] = resolve_h3_reference_asset_counts(ai_tool)
         if chat_model:
             params["chat_model"] = str(chat_model)
         if chat_vendor_id:
@@ -242,7 +260,7 @@ class PipelineDriverFactory:
 
         rule = cls._PARAM_PREPARE_RULES.get(task_config.key)
         is_seedance_face_mask = task_config.key in cls._SEEDANCE_FACE_MASK_KEYS
-        is_h3_prompt_optimize = task_config.key == DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO
+        is_h3_prompt_optimize = task_config.key in cls._H3_PROMPT_OPTIMIZE_KEYS
         if not rule and not is_seedance_face_mask and not is_h3_prompt_optimize:
             return []
 
@@ -254,7 +272,7 @@ class PipelineDriverFactory:
         if is_seedance_face_mask:
             step_configs = cls._build_seedance_param_prepare_steps(ai_tool)
         elif is_h3_prompt_optimize:
-            step_configs = cls.build_h3_prompt_optimize_step_configs(ai_tool)
+            step_configs = cls.build_h3_prompt_optimize_step_configs(ai_tool, task_key=task_config.key)
         elif rule and rule['condition'](ai_tool):
             step_configs = [
                 {

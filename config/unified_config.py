@@ -1759,6 +1759,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.MULTI_REFERENCE],  # 多参考图模式
         supports_last_frame=False,
         max_multi_ref_images=9,  # 最多 9 张参考图
+        supports_ref_audio_video=True,  # 支持参考音频（≤2）和参考视频（≤2）
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',

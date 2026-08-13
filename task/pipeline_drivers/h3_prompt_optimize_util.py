@@ -1,4 +1,4 @@
-"""MiniMax H3 I2VA/FL2VA 提示词优化的纯函数（无数据库依赖）。"""
+"""MiniMax H3 I2VA/FL2VA/Ref2VA 提示词优化的纯函数（无数据库依赖）。"""
 from __future__ import annotations
 
 import json
@@ -9,9 +9,12 @@ from typing import Any, Dict, Optional
 from config.constant import (
     H3_PROMPT_OPTIMIZE_VARIANT_FL2VA,
     H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+    H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
 )
+from config.unified_config import DriverKey
 
 _TEMPLATE_PATH = Path(__file__).resolve().parent / "prompts" / "minimax_h3_i2va_fl2va_base_en.txt"
+_REF2VA_TEMPLATE_PATH = Path(__file__).resolve().parent / "prompts" / "minimax_h3_ref2va_ref_en.txt"
 _I2VA_INSTRUCTION = (
     "下面是原本视频的提示词，已知有一张输入图片作为首帧图，"
     "请你修改为符合以上规范的提示词"
@@ -52,8 +55,22 @@ def split_media_paths(value: Any) -> list:
     return []
 
 
-def resolve_h3_prompt_variant(ai_tool: Any) -> Optional[str]:
-    """仅首帧 → I2VA；有尾帧 → FL2VA；无首帧 → None。"""
+def resolve_h3_reference_asset_counts(ai_tool: Any) -> Dict[str, int]:
+    """统计参考生视频的参考资产数量（参考图/参考视频/参考音频）。"""
+    return {
+        "images": len(split_media_paths(getattr(ai_tool, "reference_images", None))),
+        "videos": len(split_media_paths(getattr(ai_tool, "video_path", None))),
+        "audios": len(split_media_paths(getattr(ai_tool, "audio_path", None))),
+    }
+
+
+def resolve_h3_prompt_variant(ai_tool: Any, task_key: Optional[str] = None) -> Optional[str]:
+    """参考生视频（多参考资产）→ Ref2VA；仅首帧 → I2VA；有尾帧 → FL2VA；无可用输入 → None。"""
+    if task_key == DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO:
+        counts = resolve_h3_reference_asset_counts(ai_tool)
+        if counts["images"] or counts["videos"] or counts["audios"]:
+            return H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
+        return None
     image_urls = split_media_paths(getattr(ai_tool, "image_path", None))
     first = image_urls[0] if image_urls else None
     last = image_urls[1] if len(image_urls) > 1 else None
@@ -74,8 +91,29 @@ def resolve_h3_prompt_variant(ai_tool: Any) -> Optional[str]:
     return H3_PROMPT_OPTIMIZE_VARIANT_I2VA
 
 
-def load_h3_prompt_template() -> str:
-    return _TEMPLATE_PATH.read_text(encoding="utf-8")
+def load_h3_prompt_template(variant: Optional[str] = None) -> str:
+    path = _REF2VA_TEMPLATE_PATH if variant == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA else _TEMPLATE_PATH
+    return path.read_text(encoding="utf-8")
+
+
+def _build_ref2va_instruction(ref_counts: Optional[Dict[str, int]], duration: float) -> str:
+    counts = ref_counts or {}
+    images = int(counts.get("images") or 0)
+    videos = int(counts.get("videos") or 0)
+    audios = int(counts.get("audios") or 0)
+    assets = []
+    if images:
+        assets.append(f"{images} 张输入参考图片（按顺序对应 <picture_1>~<picture_{images}>）")
+    if videos:
+        assets.append(f"{videos} 个输入参考视频（按顺序对应 <video_1>~<video_{videos}>）")
+    if audios:
+        assets.append(f"{audios} 个输入参考音频（按顺序对应 <audio_1>~<audio_{audios}>）")
+    asset_text = "、".join(assets) if assets else "若干输入参考资产"
+    return (
+        f"下面是原本视频的提示词，已知有{asset_text}，"
+        f"目标视频时长为 {float(duration or 5):.2f} 秒，请你修改为符合以上规范的提示词；"
+        "参考标签与输入资产按顺序一一对应"
+    )
 
 
 def build_h3_optimize_user_message(
@@ -83,9 +121,12 @@ def build_h3_optimize_user_message(
     variant: str,
     duration: float,
     template: Optional[str] = None,
+    ref_counts: Optional[Dict[str, int]] = None,
 ) -> str:
-    guide = template if template is not None else load_h3_prompt_template()
-    if variant == H3_PROMPT_OPTIMIZE_VARIANT_FL2VA:
+    guide = template if template is not None else load_h3_prompt_template(variant)
+    if variant == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA:
+        instruction = _build_ref2va_instruction(ref_counts, duration)
+    elif variant == H3_PROMPT_OPTIMIZE_VARIANT_FL2VA:
         instruction = _FL2VA_INSTRUCTION.format(duration=float(duration or 5))
     else:
         instruction = _I2VA_INSTRUCTION
@@ -105,6 +146,18 @@ def validate_h3_optimized_prompt(text: str, variant: str) -> bool:
     if not prompt:
         return False
     lowered = prompt.lower()
+    if variant == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA:
+        return all(
+            field in lowered
+            for field in (
+                "subject_definitions:",
+                "summary:",
+                "retention_analysis:",
+                "detailed_description:",
+                "overall_soundscape:",
+                "non_diegetic_music:",
+            )
+        )
     has_fields = (
         "integrated_multimodal_description:" in lowered
         and "overall_soundscape:" in lowered

@@ -6,7 +6,9 @@ from unittest.mock import patch
 from config.constant import (
     H3_PROMPT_OPTIMIZE_VARIANT_FL2VA,
     H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+    H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
 )
+from config.unified_config import DriverKey
 from task.pipeline_drivers.h3_prompt_optimize_driver import H3PromptOptimizePipelineDriver
 from task.pipeline_drivers.h3_prompt_optimize_util import (
     build_h3_optimize_user_message,
@@ -31,6 +33,71 @@ def test_first_and_last_frame_is_fl2va():
 def test_no_image_returns_none():
     tool = SimpleNamespace(image_path="", reference_images=None, extra_config=None)
     assert resolve_h3_prompt_variant(tool) is None
+
+
+def test_reference_task_key_is_ref2va():
+    """参考生视频：有任一参考资产（图/视频/音频）即为 Ref2VA"""
+    tool = SimpleNamespace(
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path="v1.mp4",
+        audio_path="a1.wav",
+        extra_config=None,
+    )
+    assert resolve_h3_prompt_variant(tool, task_key=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO) == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
+
+
+def test_reference_task_key_without_assets_returns_none():
+    """参考生视频：只认参考资产，image_path 首尾帧不触发 Ref2VA"""
+    tool = SimpleNamespace(
+        image_path="a.png",
+        reference_images=None,
+        video_path=None,
+        audio_path=None,
+        extra_config=None,
+    )
+    assert resolve_h3_prompt_variant(tool, task_key=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO) is None
+
+
+def test_ref2va_message_lists_assets_and_duration():
+    message = build_h3_optimize_user_message(
+        "两个人在房间里跳舞",
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        8,
+        template="GUIDE",
+        ref_counts={"images": 3, "videos": 1, "audios": 1},
+    )
+    assert "GUIDE" in message
+    assert "8.00" in message
+    assert "3 张输入参考图片" in message
+    assert "<picture_1>~<picture_3>" in message
+    assert "1 个输入参考视频" in message
+    assert "1 个输入参考音频" in message
+    assert "两个人在房间里跳舞" in message
+
+
+def test_ref2va_template_selected_by_variant():
+    template = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_REF2VA)
+    assert "subject_definitions" in template
+    assert "retention_analysis" in template
+    assert "Ref2VA" in template
+
+
+def test_validate_ref2va():
+    ref2va = (
+        "subject_definitions: <subject_1> is the woman in <picture_1>.\n\n"
+        "summary: [reference generation] The target video shows <subject_1> dancing.\n\n"
+        "retention_analysis: <subject_1> (appears in [Shot 1]): fully_preserved - kept.\n\n"
+        "detailed_description: [Shot 1] ...\n\n"
+        "overall_soundscape: quiet\n\n"
+        "non_diegetic_music: N/A"
+    )
+    assert validate_h3_optimized_prompt(ref2va, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA)
+    assert not validate_h3_optimized_prompt("just a shot", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA)
+    # 缺任一六段字段不通过
+    assert not validate_h3_optimized_prompt(
+        ref2va.replace("non_diegetic_music: N/A", ""), H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
+    )
 
 
 def test_user_message_keeps_original_and_guide():

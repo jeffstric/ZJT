@@ -1,7 +1,7 @@
 """
 MiniMax H3 提示词优化 Pipeline 驱动。
 
-在正式提交 RunningHub 前，把用户原文改写成 I2VA / FL2VA 规范。
+在正式提交 RunningHub 前，把用户原文改写成 I2VA / FL2VA / Ref2VA 规范。
 直接完成步骤，不创建 async_task；LLM 失败时回退原文，不阻断出片。
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ _SYSTEM_PROMPT = (
 
 
 class H3PromptOptimizePipelineDriver(BasePipelineDriver):
-    """MiniMax H3 I2VA/FL2VA 提示词优化。"""
+    """MiniMax H3 I2VA/FL2VA/Ref2VA 提示词优化。"""
 
     def __init__(self):
         super().__init__("h3_prompt_optimize")
@@ -42,7 +42,16 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
     async def execute(self, step: PipelineStep, ai_tool: AITool) -> Dict[str, Any]:
         params = step.get_params_dict()
         original = str(params.get("original_prompt") if params.get("original_prompt") is not None else (ai_tool.prompt or ""))
-        variant = params.get("variant") or resolve_h3_prompt_variant(ai_tool) or H3_PROMPT_OPTIMIZE_VARIANT_I2VA
+        variant = params.get("variant")
+        if not variant:
+            # 兼容无 variant 的旧步骤：按任务类型兜底判定（参考生视频 → Ref2VA）
+            task_key = None
+            ai_tool_type = getattr(ai_tool, "type", None)
+            if ai_tool_type:
+                from config.unified_config import UnifiedConfigRegistry
+                _cfg = UnifiedConfigRegistry.get_by_id(ai_tool_type)
+                task_key = _cfg.key if _cfg else None
+            variant = resolve_h3_prompt_variant(ai_tool, task_key=task_key) or H3_PROMPT_OPTIMIZE_VARIANT_I2VA
         try:
             duration = float(params.get("duration") if params.get("duration") is not None else (ai_tool.duration or 5))
         except (TypeError, ValueError):
@@ -103,7 +112,9 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
 
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": build_h3_optimize_user_message(original, variant, duration)},
+            {"role": "user", "content": build_h3_optimize_user_message(
+                original, variant, duration, ref_counts=step_params.get("ref_counts")
+            )},
         ]
 
         def _invoke():

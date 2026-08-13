@@ -216,6 +216,8 @@ H3_PROMPT_OPTIMIZE_MAX_TOKENS = 4096
 H3_PROMPT_OPTIMIZE_TEMPERATURE = 0.3
 H3_PROMPT_OPTIMIZE_VARIANT_I2VA = "I2VA"
 H3_PROMPT_OPTIMIZE_VARIANT_FL2VA = "FL2VA"
+# 全参考（多参考图/参考视频/参考音频）生视频的提示词变体，对应官方 ref-en.txt 六段格式
+H3_PROMPT_OPTIMIZE_VARIANT_REF2VA = "Ref2VA"
 
 # [已废弃] 原双模型路由阈值（Wan2.2 / LTX2.3）。分镜对口型已统一为 MiniMax H3，不再使用。
 # 保留常量以免外部引用硬崩；新代码请勿依赖。

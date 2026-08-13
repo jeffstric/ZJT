@@ -1,13 +1,18 @@
 """
 MiniMax H3 参考生视频 RunningHub v1 版本驱动实现
 
-支持多参考图（最多 9 张）生成视频，通过 RunningHub AI-App 接口调用
-「MiniMax H3 多参生视频」工作流。
-webapp_id: 2084224746308325377
+支持多参考图（最多 9 张）+ 参考视频（最多 2 个）+ 参考音频（最多 2 个）生成视频，
+通过 RunningHub AI-App 接口调用「MiniMax H3 多参生视频」工作流。
+webapp_id: 2086470155902734337
+
+提示词优化：提交前由 param_prepare 的 h3_prompt_optimize 步骤按 Ref2VA 规范改写，
+驱动优先读取 extra_config.h3_prompt_optimize.optimized_prompt，回退 ai_tool.prompt。
 
 参数注入节点 nodeId：
   - 参考图1~9   → nodeId 137/139/142/147/149/150/151/152/153 fieldName=image (LoadImage)
                   顺序填入，未使用的节点 fieldValue 留空，避免 RunningHub 用节点默认值
+  - 参考音频1~2 → nodeId 155/163 fieldName=audio (LoadAudio)，独立参考音频，未用留空
+  - 参考视频1~2 → nodeId 158/164 fieldName=video (VHS_LoadVideo)，未用留空
   - 提示词      → nodeId 138 fieldName=value         (文本)
   - 时长(秒)    → nodeId 132 fieldName=value         (INTConstant)
   - 比例        → nodeId 115 fieldName=aspect_ratio  (ResolutionSelector，带括号完整文本，带 fieldData)
@@ -31,6 +36,18 @@ REFERENCE_IMAGE_NODE_IDS = ["137", "139", "142", "147", "149", "150", "151", "15
 
 # 最大参考图数量
 MAX_REFERENCE_IMAGES = 9
+
+# 参考音频固定 nodeId 列表（LoadAudio，独立参考音频，非参考视频音轨）
+REFERENCE_AUDIO_NODE_IDS = ["155", "163"]
+
+# 最大参考音频数量
+MAX_REFERENCE_AUDIOS = 2
+
+# 参考视频固定 nodeId 列表（VHS_LoadVideo）
+REFERENCE_VIDEO_NODE_IDS = ["158", "164"]
+
+# 最大参考视频数量
+MAX_REFERENCE_VIDEOS = 2
 
 # 比例 → ResolutionSelector(nodeId=115) aspect_ratio COMBO 完整文本
 RATIO_TO_ASPECT_RATIO_VALUE = {
@@ -69,8 +86,8 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
         # 加载配置
         self._api_key = get_dynamic_config_value("runninghub", "api_key", default="")
         self._host = get_dynamic_config_value("runninghub", "host", default="")
-        # MiniMax H3 多参生视频工作流 webapp ID
-        self._webapp_id = "2084224746308325377"
+        # MiniMax H3 多参生视频工作流 webapp ID（自有账号复制版应用，节点结构与原公共应用 2084224746308325377 一致）
+        self._webapp_id = "2086470155902734337"
         self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
 
         # 是否为本地环境
@@ -193,13 +210,48 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
         else:
             raise RuntimeError(f"{description}上传到 RunningHub 失败: {result.error}")
 
+    @staticmethod
+    def _split_reference_paths(raw) -> list:
+        """解析参考音频/视频路径（ai_tools 落库格式为逗号分隔 URL 字符串）。"""
+        if not raw:
+            return []
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+    async def _upload_reference_media(self, media_path: str, description: str) -> str:
+        """
+        上传参考音频/视频到 RunningHub 并返回 fileName（LoadAudio/VHS_LoadVideo 节点引用标识，
+        与数字人 H3 驱动的音频节点取值一致）
+
+        Args:
+            media_path: 音频/视频路径（本地路径或 URL）
+            description: 媒体描述（用于日志）
+
+        Returns:
+            str: 上传后的文件标识（fileName 优先，回退 download_url）
+
+        Raises:
+            RuntimeError: 上传失败时抛出
+        """
+        self.logger.info(f"准备上传{description}到 RunningHub: {media_path}")
+        result = await self._storage.upload_file("", media_path)
+        if result.success:
+            uploaded_path = result.key if result.key else result.url
+            self.logger.info(f"{description}上传完成，使用 fileName: {uploaded_path}")
+            return uploaded_path
+        else:
+            raise RuntimeError(f"{description}上传到 RunningHub 失败: {result.error}")
+
     async def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
         构建创建 MiniMax H3 参考生视频任务的完整请求参数
 
-        多参考图模式（节点映射）：
+        多参考资产模式（节点映射）：
         - 参考图1~9 → nodeId 137/139/142/147/149/150/151/152/153 (image，LoadImage)
                       顺序填入，未使用的节点 fieldValue 留空（避免 RunningHub 用节点默认值）
+        - 参考音频1~2 → nodeId 155/163 (audio，LoadAudio)，独立参考音频，未用留空
+        - 参考视频1~2 → nodeId 158/164 (video，VHS_LoadVideo)，未用留空
         - 提示词 → nodeId 138 (value，文本)
         - 时长（秒）→ nodeId 132 (value，INTConstant)
         - 比例 → nodeId 115 (aspect_ratio，带括号完整文本，带 fieldData)
@@ -248,6 +300,26 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
             uploaded = await self._upload_image_to_runninghub(image_path, f"参考图{idx + 1}")
             uploaded_images.append(uploaded)
 
+        # 参考音频/参考视频（可选，独立映射 LoadAudio / VHS_LoadVideo 节点，超量截断）
+        reference_audios = self._split_reference_paths(getattr(ai_tool, "audio_path", None))
+        if len(reference_audios) > MAX_REFERENCE_AUDIOS:
+            self.logger.warning(
+                f"MiniMax H3 参考生视频最多支持{MAX_REFERENCE_AUDIOS}个参考音频，已忽略多余的音频"
+            )
+            reference_audios = reference_audios[:MAX_REFERENCE_AUDIOS]
+        reference_videos = self._split_reference_paths(getattr(ai_tool, "video_path", None))
+        if len(reference_videos) > MAX_REFERENCE_VIDEOS:
+            self.logger.warning(
+                f"MiniMax H3 参考生视频最多支持{MAX_REFERENCE_VIDEOS}个参考视频，已忽略多余的视频"
+            )
+            reference_videos = reference_videos[:MAX_REFERENCE_VIDEOS]
+        uploaded_audios = []
+        for idx, audio_path in enumerate(reference_audios):
+            uploaded_audios.append(await self._upload_reference_media(audio_path, f"参考音频{idx + 1}"))
+        uploaded_videos = []
+        for idx, video_path in enumerate(reference_videos):
+            uploaded_videos.append(await self._upload_reference_media(video_path, f"参考视频{idx + 1}"))
+
         # 获取时长
         duration = ai_tool.duration or 5
 
@@ -259,12 +331,18 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
         extra_config = self._parse_extra_config(ai_tool)
         megapixels_value = self._get_megapixels(extra_config)
 
-        # 构建提示词
-        prompt_text = ai_tool.prompt or ""
+        # 构建提示词：优先使用 pipeline 优化结果（Ref2VA 改写），原文已备份在 extra_config.original_prompt
+        prompt_meta = extra_config.get("h3_prompt_optimize") if isinstance(extra_config, dict) else None
+        if isinstance(prompt_meta, dict) and prompt_meta.get("optimized_prompt"):
+            prompt_text = str(prompt_meta.get("optimized_prompt") or "")
+        else:
+            prompt_text = ai_tool.prompt or ""
 
         # 构建 nodeInfoList
         # - nodeId 137/139/142/147/149/150/151/152/153 image  参考图1~9
         #   顺序填入上传后的图标识，未使用的节点 fieldValue 留空（避免 RunningHub 用节点默认值）
+        # - nodeId 155/163 audio         参考音频1~2（LoadAudio，fileName，未用留空）
+        # - nodeId 158/164 video         参考视频1~2（VHS_LoadVideo，fileName，未用留空）
         # - nodeId 138 value           提示词（文本）
         # - nodeId 132 value           时长（秒，INTConstant）
         # - nodeId 115 aspect_ratio    比例（带括号完整文本，带 fieldData）
@@ -277,6 +355,24 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
                 "fieldName": "image",
                 "fieldValue": field_value,
                 "description": f"图{idx + 1}"
+            })
+
+        for idx, node_id in enumerate(REFERENCE_AUDIO_NODE_IDS):
+            field_value = uploaded_audios[idx] if idx < len(uploaded_audios) else ""
+            node_info_list.append({
+                "nodeId": node_id,
+                "fieldName": "audio",
+                "fieldValue": field_value,
+                "description": f"参考音频{idx + 1}"
+            })
+
+        for idx, node_id in enumerate(REFERENCE_VIDEO_NODE_IDS):
+            field_value = uploaded_videos[idx] if idx < len(uploaded_videos) else ""
+            node_info_list.append({
+                "nodeId": node_id,
+                "fieldName": "video",
+                "fieldValue": field_value,
+                "description": f"参考视频{idx + 1}"
             })
 
         node_info_list.append({
@@ -307,7 +403,8 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
 
         self.logger.info(
             f"MiniMax H3 参考生视频请求参数: duration={duration}s, ratio={ratio}(aspect_ratio={aspect_ratio_value}), "
-            f"megapixels={megapixels_value}, ref_images={len(uploaded_images)}张, prompt_len={len(prompt_text)}"
+            f"megapixels={megapixels_value}, ref_images={len(uploaded_images)}张, "
+            f"ref_audios={len(uploaded_audios)}个, ref_videos={len(uploaded_videos)}个, prompt_len={len(prompt_text)}"
         )
 
         return {

@@ -2,14 +2,16 @@
 
 ## 概述
 
-通过 RunningHub AI-App 接口调用「MiniMax H3 多参生视频」工作流，支持最多 9 张参考图生成视频。
+通过 RunningHub AI-App 接口调用「MiniMax H3 多参生视频」工作流，支持最多 9 张参考图 + 2 个参考视频 + 2 个参考音频生成视频。
 
-- **webapp_id**：`2084224746308325377`
+- **webapp_id**：`2086470155902734337`（自有账号复制版应用，复制自公共应用 `2084224746308325377`，并在其基础上新增了 4 个参考音视频 API 节点）
 - **任务类型**：TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO = 36
 - **DriverKey**：`minimax_h3_reference_to_video`
 - **实现方**：`minimax_h3_reference_runninghub_v1`（id=67）
 - **驱动类**：`MinimaxH3ReferenceRunninghubV1Driver`
 - **图片模式**：多参考图模式（`multi_reference`），最多 9 张
+- **参考音频/视频**：各最多 2 个（`ai_tool.audio_path` / `ai_tool.video_path`，逗号分隔 URL；`supports_ref_audio_video=True`）
+- **提示词优化**：提交前经 `h3_prompt_optimize` 步骤按 Ref2VA 规范改写（见下文「提示词优化（Ref2VA）」）
 - **查询接口**：`/task/openapi/status` + `/task/openapi/outputs`（与首尾帧版一致）
 
 ## 支持的参数
@@ -17,6 +19,8 @@
 | 参数 | 说明 | 默认值 | 可选值 |
 |------|------|--------|--------|
 | 参考图 | 必填，1~9 张 | - | - |
+| 参考音频 | 可选，1~2 个，独立参考音频（非参考视频音轨） | - | wav/mp3 等 |
+| 参考视频 | 可选，1~2 个 | - | mp4 等 |
 | 时长 | 秒 | 5 | 4, 5, 6, 7, 8, 9, 10 |
 | 比例 | 视频比例 | 9:16 | 9:16, 16:9, 1:1, 4:3, 3:4, 2:3, 3:2, 21:9 |
 | 分辨率 | 清晰度（影响算力，480P=720P×0.42） | 720P | 480P, 720P |
@@ -50,6 +54,10 @@
 | 参考图7 | 151 | image | LoadImage |
 | 参考图8 | 152 | image | LoadImage |
 | 参考图9 | 153 | image | LoadImage |
+| 参考音频1 | 155 | audio | LoadAudio（fieldValue 取上传后的 fileName） |
+| 参考音频2 | 163 | audio | LoadAudio（fieldValue 取上传后的 fileName） |
+| 参考视频1 | 158 | video | VHS_LoadVideo（fieldValue 取上传后的 fileName） |
+| 参考视频2 | 164 | video | VHS_LoadVideo（fieldValue 取上传后的 fileName） |
 | 提示词 | 138 | value | 文本 |
 | 时长 | 132 | value | INTConstant（秒） |
 | 比例 | 115 | aspect_ratio | ResolutionSelector（带括号文本，带 fieldData） |
@@ -57,6 +65,7 @@
 
 > **参考图填充规则**：用户传 N 张图时，按顺序填入前 N 个节点（上传后的图标识），剩余 9-N 个节点 `fieldValue` 留空（避免 RunningHub 用节点默认值）。
 > 参考图固定 nodeId 列表（顺序敏感）：`["137","139","142","147","149","150","151","152","153"]`。
+> **参考音频/视频同理**：按顺序填入 155/163（音频）、158/164（视频），未传时 `fieldValue` 留空；音/视频为独立映射，`audio_path[i]`→第 i 个音频节点、`video_path[i]`→第 i 个视频节点，互不关联。
 
 ## 分辨率映射
 
@@ -82,13 +91,26 @@
 | 3:2 | 3:2 (Photo) |
 | 21:9 | 21:9 (Ultrawide) |
 
+## 提示词优化（Ref2VA）
+
+参考生视频任务创建时，经 param_prepare 的 `h3_prompt_optimize` 步骤把用户原文改写成 MiniMax 官方 Ref2VA（full-reference）六段结构（规范来源：[MiniMax-H3 h3-prompt-writing ref-en.txt](https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/ref-en.txt)，剪枝版模板：`task/pipeline_drivers/prompts/minimax_h3_ref2va_ref_en.txt`）：
+
+```text
+subject_definitions / summary / retention_analysis / detailed_description / overall_soundscape / non_diegetic_music
+```
+
+- **参考标签**：`<picture_N>` 对应第 N 张输入参考图，`<video_N>` 第 N 个参考视频，`<audio_N>` 第 N 个参考音频，`<subject_N>` 为从资产抽象的可复用内容；标签顺序与输入资产一一对应（步骤参数 `ref_counts` 携带图/视频/音频计数）。
+- **触发条件**：`pipeline.h3_prompt_optimize_enabled=true`（默认开）+ 至少一项参考资产；改写失败回退原文，不阻断出片。
+- **驱动消费**：提交时优先使用 `extra_config.h3_prompt_optimize.optimized_prompt`，否则用 `ai_tool.prompt`（原文备份在 `extra_config.original_prompt`）。
+- 机制详情（原子创建、模型回退链、超时）见 `docs/backend/pipeline_steps.md` 的 `h3_prompt_optimize` 章节。
+
 ## 接口调用
 
 ### 提交任务
 
-**POST** `/openapi/v2/run/ai-app/2084224746308325377`
+**POST** `/openapi/v2/run/ai-app/2086470155902734337`
 
-请求体（示例：3 张参考图）：
+请求体（示例：3 张参考图 + 1 参考音频 + 1 参考视频）：
 ```json
 {
   "nodeInfoList": [
@@ -101,6 +123,10 @@
     {"nodeId": "151", "fieldName": "image", "fieldValue": "", "description": "图7"},
     {"nodeId": "152", "fieldName": "image", "fieldValue": "", "description": "图8"},
     {"nodeId": "153", "fieldName": "image", "fieldValue": "", "description": "图9"},
+    {"nodeId": "155", "fieldName": "audio", "fieldValue": "参考音频1 fileName", "description": "参考音频1"},
+    {"nodeId": "163", "fieldName": "audio", "fieldValue": "", "description": "参考音频2"},
+    {"nodeId": "158", "fieldName": "video", "fieldValue": "参考视频1 fileName", "description": "参考视频1"},
+    {"nodeId": "164", "fieldName": "video", "fieldValue": "", "description": "参考视频2"},
     {"nodeId": "138", "fieldName": "value", "fieldValue": "提示词", "description": "提示词"},
     {"nodeId": "132", "fieldName": "value", "fieldValue": "5", "description": "视频秒数"},
     {"nodeId": "115", "fieldName": "aspect_ratio", "fieldData": "...", "fieldValue": "9:16 (Portrait Widescreen)", "description": "长宽比"},
@@ -120,10 +146,12 @@
 
 | 维度 | 首尾帧版 | 参考生视频版 |
 |------|---------|-------------|
-| webapp_id | 2086436470516174849 | 2084224746308325377 |
+| webapp_id | 2086436470516174849 | 2086470155902734337 |
 | 图片模式 | first_last_frame（首帧+尾帧） | multi_reference（1~9 张参考图） |
 | 图片节点 | 114 首帧 / 145 尾帧 | 137/139/142/147/149/150/151/152/153 |
+| 参考音频/视频节点 | 无 | 155/163（audio）、158/164（video），各最多 2 个 |
 | 提示词节点 | 143 text | 138 value |
+| 提示词优化变体 | I2VA / FL2VA | Ref2VA（六段结构 + 参考标签） |
 | 时长节点 | 136 value | 132 value |
 | 比例档位 | 5 档 | 8 档（多 2:3/3:2/21:9） |
 | 算力/分辨率/查询接口/上传逻辑 | — | 完全复用 |

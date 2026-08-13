@@ -84,7 +84,7 @@ class PipelineProcessor:
 
     @staticmethod
     def needs_h3_atomic_param_prepare(ai_tool_type: int) -> bool:
-        """H3 图生视频是否需要走 create_with_pipeline_steps 原子创建提示词优化步骤。
+        """H3 任务（图生视频/参考生视频）是否需要走 create_with_pipeline_steps 原子创建提示词优化步骤。
 
         供 server.py / storyboard.py 单一来源判定，避免竞态：ai_tool 与 H3 step 必须
         在同一事务创建，否则调度器可能在两者之间抢先提交未优化的任务。
@@ -92,7 +92,7 @@ class PipelineProcessor:
         create_with_pipeline_steps 内部决定（无步骤时自动置 PENDING）。
         """
         return (
-            PipelineDriverFactory.is_h3_image_to_video_type(ai_tool_type)
+            PipelineDriverFactory.is_h3_prompt_optimize_type(ai_tool_type)
             and PipelineDriverFactory.is_h3_prompt_optimize_enabled()
         )
 

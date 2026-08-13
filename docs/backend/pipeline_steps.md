@@ -98,13 +98,13 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 ### h3_prompt_optimize（MiniMax H3 提示词优化）
 
-用于 `param_prepare` 阶段，在 `TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO`（34）正式提交 RunningHub 前，把用户原文改写成官方 I2VA / FL2VA 结构。
+用于 `param_prepare` 阶段，在 `TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO`（34）/ `TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO`（36）正式提交 RunningHub 前，把用户原文改写成官方 I2VA / FL2VA / Ref2VA 结构。
 
-**触发条件**：任务类型为 MiniMax H3 图生视频 + `pipeline.h3_prompt_optimize_enabled=true`（默认开）+ 至少有一张首帧。社区版同样执行。H3 参考生视频 / 数字人 H3 不走此步。
+**触发条件**：任务类型为 MiniMax H3 图生视频（34）或参考生视频（36）+ `pipeline.h3_prompt_optimize_enabled=true`（默认开）+ 有可用输入（34 需至少一张首帧；36 需至少一项参考资产：参考图/参考视频/参考音频）。社区版同样执行。数字人 H3 不走此步。
 
-**变体**：仅首帧 → I2VA；另有尾帧 → FL2VA。
+**变体**：仅首帧 → I2VA；另有尾帧 → FL2VA；参考生视频（多参考资产）→ Ref2VA（官方 ref-en.txt 六段结构：`subject_definitions` / `summary` / `retention_analysis` / `detailed_description` / `overall_soundscape` / `non_diegetic_music`，步骤参数带 `ref_counts` 参考资产计数，供指令声明 `<picture_N>`/`<video_N>`/`<audio_N>` 与输入资产的顺序对应关系）。
 
-**原子创建（无竞态）**：H3 图生视频入口（`server.py` / `api/storyboard.py`）判定 `needs_h3_atomic_param_prepare` 为真时，走 `AIToolsModel.create_with_pipeline_steps`，`ai_tool` 与 `h3_prompt_optimize` 步骤在同一事务内创建，避免调度器在两者之间抢先提交未优化任务。若事务内最终未产出任何步骤（如无首帧），则就地回退 `PENDING`。普通（非 H3 / 非 Seedance）图生视频直接以 `PENDING` 创建，不进流水线、零额外耗时。
+**原子创建（无竞态）**：H3 入口（`server.py` / `api/storyboard.py`）判定 `needs_h3_atomic_param_prepare` 为真时，走 `AIToolsModel.create_with_pipeline_steps`，`ai_tool` 与 `h3_prompt_optimize` 步骤在同一事务内创建，避免调度器在两者之间抢先提交未优化任务。若事务内最终未产出任何步骤（如无首帧），则就地回退 `PENDING`。普通（非 H3 / 非 Seedance）图生视频直接以 `PENDING` 创建，不进流水线、零额外耗时。
 
 **处理流程**：
 1. `AIToolsModel.create_with_pipeline_steps` 在事务内创建 `h3_prompt_optimize` 步骤并置 `WAITING_PARAM_PREPARE`；故事板入口会把用户选的对话模型写入步骤参数（`chat_model`/`chat_vendor_id`）

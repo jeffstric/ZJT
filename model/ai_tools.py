@@ -297,21 +297,22 @@ class AIToolsModel:
 
                     created_step_count = step_order
 
-                # 创建 MiniMax H3 图生视频提示词优化步骤（I2VA/FL2VA 改写）。
+                # 创建 MiniMax H3 提示词优化步骤（图生视频 I2VA/FL2VA、参考生视频 Ref2VA）。
                 # build_h3_prompt_optimize_step_configs 为纯函数式（只读属性 + 查 config），
                 # 事务内不发起 HTTP/IO，符合 transaction() 短事务约束。
                 import types
-                from config.unified_config import UnifiedConfigRegistry, DriverKey
+                from config.unified_config import UnifiedConfigRegistry
                 from task.pipeline_drivers import PipelineDriverFactory
                 _task_config = UnifiedConfigRegistry.get_by_id(type) if type else None
-                if _task_config and _task_config.key == DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO:
+                if _task_config and PipelineDriverFactory.is_h3_prompt_optimize_key(_task_config.key):
                     _ns = types.SimpleNamespace(
                         prompt=prompt, image_path=image_path,
                         reference_images=reference_images, extra_config=extra_config,
-                        duration=duration,
+                        duration=duration, video_path=video_path, audio_path=audio_path,
                     )
                     _h3_configs = PipelineDriverFactory.build_h3_prompt_optimize_step_configs(
                         _ns, chat_model=h3_chat_model, chat_vendor_id=h3_chat_vendor_id,
+                        task_key=_task_config.key,
                     )
                     for _idx, _cfg in enumerate(_h3_configs):
                         PipelineStepModel.create_in_transaction(
