@@ -134,19 +134,15 @@ class TasksModel:
     def get_by_task_id(task_id: int) -> Optional[Task]:
         """
         Get task record by task ID
-
-        ⚠️ 注意：同一个 ai_tool（task_id）可能同时存在多条 task 记录
-        （如 generate_audio + generate_video），此方法返回其中不确定的一条。
-        需要精确匹配时请用 get_by_task_id_and_type。
-
+        
         Args:
             task_id: Task ID
-
+        
         Returns:
             Task object or None
         """
         sql = "SELECT * FROM tasks WHERE task_id = %s"
-
+        
         try:
             result = execute_query(sql, (task_id,), fetch_one=True)
             if result:
@@ -154,35 +150,6 @@ class TasksModel:
             return None
         except Exception as e:
             logger.error(f"Failed to get task record by task_id {task_id}: {e}")
-            raise
-
-    @staticmethod
-    def get_by_task_id_and_type(task_id: int, task_type: str) -> Optional[Task]:
-        """
-        Get task record by task ID AND task_type.
-
-        同一个 ai_tool（task_id）可能同时存在 generate_audio / generate_video
-        多条 task 记录（拆分阶段会自动提交 TTS）。get_by_task_id 在这种情况下
-        会返回不确定的一条，导致 RunningHub 槽位释放错位（槽位表 task_id 存的是
-        tasks.id，audio 与 video 的 tasks.id 不同）。本方法按 task_type 精确过滤，
-        用于槽位释放、project_id 反查等需要精确匹配的场景。
-
-        Args:
-            task_id: ai_tools.id（与 tasks.task_id 对应）
-            task_type: tasks.task_type（如 'generate_video'）
-
-        Returns:
-            Task object or None
-        """
-        sql = "SELECT * FROM tasks WHERE task_id = %s AND task_type = %s ORDER BY id DESC LIMIT 1"
-
-        try:
-            result = execute_query(sql, (task_id, task_type), fetch_one=True)
-            if result:
-                return Task(**result)
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get task record by task_id {task_id} and type {task_type}: {e}")
             raise
     
     @staticmethod

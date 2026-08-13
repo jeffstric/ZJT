@@ -49,12 +49,19 @@ UPLOAD_DIR = "/home/appuser/comfyui_upload/tts/result_audio/"
 
 async def recalc_scene_duration_if_all_completed(scene_id: int) -> Optional[float]:
     """
-    若该分镜下所有对话的"当前选中配音"均 COMPLETED 且 duration 齐全，则把
-    storyboard_scene.duration 同步为这些音频时长之和（毫秒级浮点，DECIMAL(10,3)），
+    把 storyboard_scene.duration 同步为「已完成选中配音」的时长之和（best-effort），
     并联动重算故事板总时长。
 
+    best-effort 语义（2026-08-13 修复）：
+    只要分镜下有一条已 COMPLETED 的选中配音，就把 duration 同步为这些已完成配音
+    的累计时长。缺配音 / 处理中 / 失败 / 时长缺失的对白被忽略（与前端 buildScenePlan
+    和导出 _build_scene_audio 只播放/拼接已有配音的口径一致）。
+    这样「部分对白缺配音」的分镜 duration 不再卡在 LLM 估算值（估算值常 < 已完成
+    配音时长，导致播放器提前切镜、音频/视频被掐断）。
+    一条已完成配音都没有时返回 None，保留 LLM 估算值兜底。
+
     Returns:
-        Optional[float]: 全部完成时返回写入的新 duration；未全部完成或异常返回 None。
+        Optional[float]: 有已完成配音时返回写入的新 duration；无 dialogue / 无已完成配音 / 异常返回 None。
         所有异常仅记日志，不向上抛出（best-effort 联动，不阻塞调用方）。
     """
     if not scene_id:
@@ -67,11 +74,12 @@ async def recalc_scene_duration_if_all_completed(scene_id: int) -> Optional[floa
         logger.warning(f"[scene-duration] scene={scene_id} 完成度查询失败: {e}")
         return None
     if total is None:
-        # 未全部完成（含空场景、有未生成/处理中/失败/时长缺失）
+        # 无 dialogue 或无任何已完成配音 → 保留 LLM 估算值
         return None
 
-    # DECIMAL(10,3) 保留毫秒精度；下限 1.0s 避免全零时长导致 0 秒分镜
-    new_duration = max(1.0, round(float(total), 3))
+    # DECIMAL(10,3) 保留毫秒精度；下限 0.1s 避免全零时长导致 0 秒分镜（播放器
+    # resolveSceneSpan 已有 0.1s 下限保护，此处与之对齐，不再人为抬到 1.0s）。
+    new_duration = max(0.1, round(float(total), 3))
     try:
         await asyncio.to_thread(StoryboardSceneModel.update, scene_id, duration=new_duration)
     except Exception as e:
@@ -88,7 +96,7 @@ async def recalc_scene_duration_if_all_completed(scene_id: int) -> Optional[floa
         logger.warning(f"[scene-duration] scene={scene_id} 联动重算故事板总时长失败: {e}")
 
     logger.info(
-        f"[scene-duration] scene={scene_id} 所有配音完成, duration={new_duration}s (音频累计 {total:.3f}s)"
+        f"[scene-duration] scene={scene_id} duration={new_duration}s (已完成配音累计 {total:.3f}s)"
     )
     return new_duration
 

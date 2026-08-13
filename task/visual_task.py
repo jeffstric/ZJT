@@ -479,22 +479,9 @@ async def _submit_new_task(ai_tool):
             # 提交失败：尝试通过 before_finish 切换备用实现方重试
             # 无论是 USER 错误还是 SYSTEM 错误，都尝试重试
             # 因为不同供应商的审核策略、网络状况、API 行为都不同
-            #
-            # 错误原因透传：USER 错误直接用驱动给出的 error；SYSTEM 错误历史上
-            # 被粗暴替换成「服务异常，请联系技术支持」，丢失了 error_detail 里的
-            # 可操作信息（如「图片上传到 RunningHub 失败: API Key不存在」），
-            # 导致运维和用户都无法定位。这里改为透传驱动原始 error（驱动在
-            # SYSTEM 路径已写成可读中文，如「服务异常，请联系技术支持」），
-            # 并在 error_detail 非空时拼上具体细节，便于排障。
-            if error_type == "USER":
-                failure_reason = error
-            elif error_detail:
-                failure_reason = f"{error}（{error_detail}）" if error and error != "未知错误" else (error_detail or error)
-            else:
-                failure_reason = error
             return _handle_task_failure(
                 task_id=task_id, ai_tool_type=ai_tool_type,
-                reason=failure_reason,
+                reason=error if error_type == "USER" else "服务异常，请联系技术支持",
                 user_id=ai_tool.user_id
             )
         
@@ -1063,20 +1050,10 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
             if project_id:
                 RunningHubSlotsModel.release_slot_by_project_id(project_id)
             else:
-                # 没有 project_id（提交阶段就失败）：通过 task_id 释放。
-                # ⚠️ 必须按 task_type='generate_video' 精确过滤——同一个 ai_tool
-                # 可能同时存在 generate_audio + generate_video 两条 task 记录
-                # （拆分阶段自动提交 TTS 导致），用 get_by_task_id 会返回不确定的
-                # 那条（通常 audio），其 tasks.id 与槽位表记录的 task_id 不一致，
-                # 导致 release_slot 释放不到真正的 video 槽位 → 槽位泄漏。
-                task = TasksModel.get_by_task_id_and_type(task_id, 'generate_video')
+                # 如果没有 project_id（提交失败），通过 task_id 释放
+                task = TasksModel.get_by_task_id(task_id)
                 if task:
                     RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_TASK)
-                else:
-                    # 回退：极少数情况（task_type 未写入），用旧逻辑兜底
-                    fallback_task = TasksModel.get_by_task_id(task_id)
-                    if fallback_task:
-                        RunningHubSlotsModel.release_slot(fallback_task.id, source=RunningHubSlot.SOURCE_TASK)
         
     except Exception as db_error:
         logger.error(f"Failed to update records for failed task {project_id}: {db_error}")
