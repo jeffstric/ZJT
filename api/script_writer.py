@@ -159,14 +159,71 @@ def _sync_image_model_to_media_pref_world_default(user_id: str, world_id: str, t
 
 
 def get_default_llm_model(user_id: str, world_id: str) -> Optional[Dict[str, Any]]:
-    """读取世界级默认对话模型。"""
+    """读取世界级默认对话模型。
+    
+    如果数据库没有配置，使用回退逻辑选择默认模型（与前端 pickPreferredCreationDefaultLlmKey 逻辑一致）：
+    1. 首选供应商 + 首选模型
+    2. 首选供应商 + 任意模型
+    3. 列表第一项
+    """
     pref = UserPreferencesModel.get(str(user_id), str(world_id), PREF_TYPE_DEFAULT_LLM_MODEL)
     if not pref or pref.config_value is None:
-        return None
+        # 数据库没有配置，使用回退逻辑
+        return _get_fallback_default_llm_model()
     value = pref.get_value()
     if isinstance(value, dict) and value.get('model'):
         return value
     return None
+
+
+def _get_fallback_default_llm_model() -> Optional[Dict[str, Any]]:
+    """回退逻辑：当数据库没有配置时，选择默认模型。
+    
+    使用 config/constant.py 中定义的 DEFAULT_LLM_MODEL_PREFERRED_VENDORS 和 DEFAULT_LLM_MODEL_PREFERRED_MODEL 常量。
+    
+    优先级：
+    1. 首选供应商 + 首选模型
+    2. 首选供应商 + 任意模型
+    3. 列表第一项
+    """
+    try:
+        from llm.llm_client_factory import get_available_models as _get_available_models
+        from config.constant import DEFAULT_LLM_MODEL_PREFERRED_VENDORS, DEFAULT_LLM_MODEL_PREFERRED_MODEL
+        import asyncio
+        
+        # 获取可用模型列表
+        result = asyncio.run(_get_available_models())
+        models = result.get('models', []) if isinstance(result, dict) else []
+        
+        if not models:
+            return None
+        
+        # 辅助函数
+        def vendor_of(m):
+            return (m.get('vendor_name') or '').lower()
+        
+        def model_of(m):
+            return (m.get('name') or m.get('model') or '').lower()
+        
+        # 1. 首选供应商 + 首选模型
+        for preferred_vendor in DEFAULT_LLM_MODEL_PREFERRED_VENDORS:
+            hit = next((m for m in models if vendor_of(m) == preferred_vendor and DEFAULT_LLM_MODEL_PREFERRED_MODEL in model_of(m)), None)
+            if hit:
+                return {'model': hit['name'], 'model_id': hit.get('id'), 'vendor_id': hit.get('vendor_id'), 'name': hit['name']}
+        
+        # 2. 首选供应商 + 任意模型
+        for preferred_vendor in DEFAULT_LLM_MODEL_PREFERRED_VENDORS:
+            hit = next((m for m in models if vendor_of(m) == preferred_vendor), None)
+            if hit:
+                return {'model': hit['name'], 'model_id': hit.get('id'), 'vendor_id': hit.get('vendor_id'), 'name': hit['name']}
+        
+        # 3. 列表第一项
+        first = models[0]
+        return {'model': first['name'], 'model_id': first.get('id'), 'vendor_id': first.get('vendor_id'), 'name': first['name']}
+        
+    except Exception as e:
+        logger.warning(f"回退选择默认 LLM 模型失败：{e}")
+        return None
 
 
 def set_default_llm_model(user_id: str, world_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:

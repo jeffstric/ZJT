@@ -1459,51 +1459,40 @@
        * 无已存世界默认 LLM 时的展示回退：优先 deepseek 模型，供应商 deepseek / zjt_api。
        * 不使用列表第一项（常为 Gemini）。
        */
+      /**
+       * 当数据库没有配置默认 LLM 模型时，使用回退逻辑选择默认模型。
+       * 
+       * 优先级（与后端 _get_fallback_default_llm_model 逻辑一致）：
+       * 1. 首选供应商 + 首选模型 (deepseek + deepseek-v4-flash)
+       * 2. 首选供应商 + 任意模型
+       * 3. 列表第一项
+       */
       pickPreferredCreationDefaultLlmKey() {
         const options = this.creationDefaultsLlmOptions || [];
         if (!options.length) return '';
 
+        // 首选供应商和首选模型（与后端 config/constant.py 中的 DEFAULT_LLM_MODEL_PREFERRED_VENDORS 和 DEFAULT_LLM_MODEL_PREFERRED_MODEL 保持一致）
+        const PREFERRED_VENDORS = ['deepseek'];
+        const PREFERRED_MODEL = 'deepseek-v4-flash';
+
         const vendorOf = (m) => String(m.vendor_name || '').toLowerCase();
         const modelOf = (m) => String(m.model || m.name || '').toLowerCase();
-        const isPreferredVendor = (m) => {
-          const v = vendorOf(m);
-          return v === 'deepseek' || v === 'zjt_api';
-        };
-        const isDeepseekModel = (m) => modelOf(m).includes('deepseek');
 
-        // 1) deepseek 供应商 + deepseek-v4-flash
-        let hit = options.find(
-          (m) => vendorOf(m) === 'deepseek' && modelOf(m).includes('deepseek-v4-flash')
-        );
-        if (hit) return hit.key;
+        // 1. 首选供应商 + 首选模型
+        for (const preferredVendor of PREFERRED_VENDORS) {
+          const hit = options.find(
+            (m) => vendorOf(m) === preferredVendor && modelOf(m).includes(PREFERRED_MODEL)
+          );
+          if (hit) return hit.key;
+        }
 
-        // 2) deepseek 供应商 + 任意 deepseek 模型
-        hit = options.find((m) => vendorOf(m) === 'deepseek' && isDeepseekModel(m));
-        if (hit) return hit.key;
+        // 2. 首选供应商 + 任意模型
+        for (const preferredVendor of PREFERRED_VENDORS) {
+          const hit = options.find((m) => vendorOf(m) === preferredVendor);
+          if (hit) return hit.key;
+        }
 
-        // 3) zjt_api + deepseek-v4-flash
-        hit = options.find(
-          (m) => vendorOf(m) === 'zjt_api' && modelOf(m).includes('deepseek-v4-flash')
-        );
-        if (hit) return hit.key;
-
-        // 4) zjt_api + 任意 deepseek 模型
-        hit = options.find((m) => vendorOf(m) === 'zjt_api' && isDeepseekModel(m));
-        if (hit) return hit.key;
-
-        // 5) 任意 preferred 供应商上的 deepseek 模型
-        hit = options.find((m) => isPreferredVendor(m) && isDeepseekModel(m));
-        if (hit) return hit.key;
-
-        // 6) preferred 供应商上的任意模型（仍避免无脑选 Gemini 列表头）
-        hit = options.find((m) => isPreferredVendor(m));
-        if (hit) return hit.key;
-
-        // 7) 任意 deepseek 模型（其他供应商）
-        hit = options.find((m) => isDeepseekModel(m));
-        if (hit) return hit.key;
-
-        // 8) 最后才回退列表第一项
+        // 3. 列表第一项
         return options[0].key || '';
       },
 

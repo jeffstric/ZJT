@@ -18,7 +18,7 @@ import tempfile
 import hashlib
 import re
 from datetime import datetime
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from urllib.parse import urlparse
 from pydantic import BaseModel
 from api.clients.runninghub_client import RunningHubClient, TaskStatus, run_ai_app_task
@@ -72,6 +72,8 @@ from config.constant import (
     ASSET_LIST_MAX_PAGE_SIZE,
     ASSET_LIST_DB_QUERY_TIMEOUT,
     BrandingConstants,
+    SMART_INSERT_SHOT_TIMEOUT,
+    SMART_INSERT_SHOT_DEFAULT_MODEL,
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
@@ -6579,6 +6581,54 @@ async def delete_video_workflow(
         return JSONResponse(
             status_code=500,
             content={"code": -1, "message": f"删除工作流失败: {str(e)}"}
+        )
+
+
+@app.post('/api/video-workflow/smart-insert-shot')
+@require_permission("video_workflow:update")
+async def smart_insert_shot(
+    request: Request,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """
+    智能插入分镜：根据前后分镜内容，调用 LLM 自动生成新分镜的各个属性
+    供工作流 (video-workflow) 使用
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        data = await request.json()
+
+        prev_shot = data.get('prev_shot')
+        next_shot = data.get('next_shot')
+        script_data = data.get('script_data', {})
+        script_content = data.get('script_content', '')  # 原始剧本内容
+        # 优先从请求体获取 world_id，其次从 script_data 获取
+        world_id = data.get('world_id') or script_data.get('world_id', '')
+
+        # 调用公共服务
+        from services.smart_insert_service import smart_insert_shot as _smart_insert_shot
+        shot_data = await _smart_insert_shot(
+            user_id=user_id,
+            world_id=world_id,
+            prev_shot=prev_shot,
+            next_shot=next_shot,
+            script_data=script_data,
+            script_content=script_content
+        )
+
+        return JSONResponse({'success': True, 'shot': shot_data})
+
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={'success': False, 'error': '智能插入超时，请稍后重试'}
+        )
+    except Exception as e:
+        logger.error(f"智能插入分镜失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'error': f'智能插入失败: {str(e)}'}
         )
 
 

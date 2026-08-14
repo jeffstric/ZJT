@@ -139,6 +139,17 @@ export async function generateFromScript(storyboardId, data = {}) {
     return request(`/${storyboardId}/generate-from-script`, { method: 'POST', body: JSON.stringify(data) });
 }
 
+/**
+ * 智能插入分镜：调用 LLM 根据前后分镜上下文自动生成分镜内容，
+ * 后端直接创建完整字段的分镜（幕/视角景别/场景/角色从相邻分镜继承）
+ * @param {number} storyboardId - 故事板 ID
+ * @param {object} data - 包含 prev_scene_id, next_scene_id, world_id
+ * @returns {Promise<{success: boolean, scene: object, error?: string}>}
+ */
+export async function smartInsertScene(storyboardId, data = {}) {
+    return request(`/${storyboardId}/smart-insert-scene`, { method: 'POST', body: JSON.stringify(data) });
+}
+
 // 剧本分段拆分任务接口（前缀 /api/script-split，与 storyboard 独立）
 async function requestSplit(path, options = {}) {
     const resp = await fetch(`/api/script-split${path}`, {

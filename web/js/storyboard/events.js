@@ -41,6 +41,7 @@ import state, {
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
+import { showToast } from './utils.js';
 import { downloadAsAttachment } from './download.js';
 import {
     refresh,
@@ -1509,16 +1510,60 @@ async function handleAction(action, target) {
     }
 
     if (action === 'insert-scene') {
+        // in-flight 守卫：智能插入请求飞行中再次点击直接忽略，
+        // 避免用户误以为无响应而连点，导致重复调用 LLM 生成多个分镜。
+        if (state.isSmartInserting) return;
         const prevId = target.dataset.prevId ? parseInt(target.dataset.prevId, 10) : null;
         const nextId = target.dataset.nextId ? parseInt(target.dataset.nextId, 10) : null;
-        const response = await api.addScene(state.storyboardId, {
-            title: `分镜${state.scenes.length + 1}`,
-            duration: 5,
-            prompt_json: {},
-            prev_id: prevId,
-            next_id: nextId,
-        });
-        addSceneToState(response.scene);
+        
+        // 检查是否启用智能插入（默认启用，可通过配置关闭）
+        const useSmartInsert = state.useSmartInsert !== false;
+        
+        if (useSmartInsert && (prevId || nextId)) {
+            // 智能插入：调用 LLM 生成分镜内容
+            try {
+                // 显示加载状态
+                state.isSmartInserting = true;
+                rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
+                showToast('AI 正在生成新分镜，请稍候…', 'info', 6000);
+                
+                const smartResponse = await api.smartInsertScene(state.storyboardId, {
+                    prev_scene_id: prevId,
+                    next_scene_id: nextId,
+                    world_id: state.worldId,
+                });
+                
+                if (smartResponse.success && smartResponse.scene) {
+                    // 后端已创建完整字段的分镜（幕/视角景别/场景/角色等从相邻分镜继承）
+                    addSceneToState(smartResponse.scene);
+                } else {
+                    throw new Error(smartResponse.error || '智能插入失败');
+                }
+            } catch (error) {
+                console.error('智能插入失败:', error);
+                // 降级到普通插入
+                const response = await api.addScene(state.storyboardId, {
+                    title: `分镜${state.scenes.length + 1}`,
+                    duration: 5,
+                    prompt_json: {},
+                    prev_id: prevId,
+                    next_id: nextId,
+                });
+                addSceneToState(response.scene);
+            } finally {
+                state.isSmartInserting = false;
+            }
+        } else {
+            // 普通插入
+            const response = await api.addScene(state.storyboardId, {
+                title: `分镜${state.scenes.length + 1}`,
+                duration: 5,
+                prompt_json: {},
+                prev_id: prevId,
+                next_id: nextId,
+            });
+            addSceneToState(response.scene);
+        }
         rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
         return;
     }
