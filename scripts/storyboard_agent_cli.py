@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -17,6 +18,17 @@ from services.storyboard_agent_command_service import StoryboardAgentCommandServ
 
 def _print_json(payload: Dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
+def _warn_if_comfyui_env_missing() -> None:
+    """comfyui_env 缺失时会静默回退到 dev 配置(config_dev.yml)；这里只在缺失时
+    向 stderr 打印一条警告，不改变回退行为。走 stderr 以免污染 stdout 的 JSON 输出。"""
+    if not os.getenv("comfyui_env"):
+        sys.stderr.write(
+            "⚠️ 未设置 comfyui_env 环境变量，将默认使用 dev 配置（config_dev.yml）。"
+            "生产环境请先 export comfyui_env=prod。\n"
+        )
+        sys.stderr.flush()
 
 
 def _int_or_none(value: Optional[str]) -> Optional[int]:
@@ -319,6 +331,7 @@ def run_command(args: argparse.Namespace) -> Dict[str, Any]:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    _warn_if_comfyui_env_missing()
     parser = build_parser()
     try:
         args = parser.parse_args(argv)

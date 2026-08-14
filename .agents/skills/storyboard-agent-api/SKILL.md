@@ -39,11 +39,13 @@ Do not guess protocol, host, or port. Use the `base_url` exactly as provided by 
 
 This skill supports `api_version = "storyboard-agent-api/v1"`.
 
+> ⚠️ `api_version` is a **version label, NOT a URL path prefix**. Never prepend `storyboard-agent-api/v1` to request paths. All endpoints below already start with `/api/` — call them relative to `base_url` as-is. Prepending the version string hits the SPA catch-all and returns a misleading `404`/`405` instead of the real API.
+
 Before making calls:
 
 1. Parse `base_url`, `agent_token`, `api_version`, and `environment` from the user's connection package.
 2. If `api_version` is missing or different from `storyboard-agent-api/v1`, tell the user this skill may not match the server API and ask for an updated skill or compatible connection package before running generation.
-3. For v1, use the fixed endpoint paths below relative to `base_url`; the connection package does not need to provide full endpoint URLs.
+3. For v1, use the fixed endpoint paths below relative to `base_url` (they already include the `/api/` prefix); the connection package does not need to provide full endpoint URLs. Do **not** prepend `api_version` to these paths.
 4. Treat `environment` as the backend configuration environment. HTTP calls do not need extra environment setup; CLI fallback must set `comfyui_env` to this value before running commands.
 
 Fixed v1 endpoint paths:
@@ -198,7 +200,7 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/split-from-script" \
   -d '{"storyboard_id":10,"model":"deepseek-v4-flash","model_id":11,"vendor_id":4,"max_group_duration":15}'
 ```
 
-`model` is **required** on the CLI/agent path (the server no longer falls back to a default model here). Call `list-llm-models` first to pick a reachable model, and pass `model_id` + `vendor_id` to pin the exact route when the same name is served by multiple vendors.
+`model` is **required** on the CLI/agent path (the server no longer falls back to a default model here). Call `list-llm-models` first to pick a reachable model, and pass `model_id` + `vendor_id` to pin the exact route when the same name is served by multiple vendors. If the storyboard already has scenes, the command returns `scenes_exist` (re-splitting an already-populated storyboard is not allowed) — create a new storyboard from the script, or clear existing scenes first.
 
 This is an **asynchronous** command. It creates a persistent split task and returns immediately with `task_id` and `status_url` (it does **not** block for the ~7-minute LLM parse).
 
@@ -218,7 +220,7 @@ The status object fields (in `data`):
 | `error_code` | the `last_error_code` that caused paused/failed; `null` when none |
 | `error_message` | the detailed error text (e.g. `403 Client Error: Forbidden for url: ...`); `null` when none |
 | `resumable` | boolean — `true` only for `paused` / `waiting_auth` |
-| `resume_hint` | actionable hint keyed off `error_code` (e.g. `llm_gateway_error: ...`, `auth_expired: ...`); `null` when not resumable |
+| `resume_hint` | actionable hint keyed off `error_code` (e.g. `llm_call_failed: ...`, `auth_expired: ...`); `null` when not resumable |
 
 **Task state machine — three groups:**
 
@@ -246,7 +248,7 @@ loop:
 
 `POST /api/script-split/tasks/{task_id}/resume`. The server gates resume by `error_code`:
 
-- **Blocked error codes** (`plan_call_failed`, `plan_timeout`, `step_watchdog_timeout`, `new_root_location_forbidden`, `location_parent_invalid`): the root cause is an external dependency (LLM gateway / worker) or a hard gate (missing scene assets). A blind retry would loop back to `paused`, so the server **rejects** resume with HTTP 409 + `{error_code, resume_hint}`. After you confirm the root cause is fixed (e.g. LLM key restored, scene assets added), retry with `{"force": true}` in the body. (`location_parent_conflict` is no longer blocked: since 2026-07-30 a parent mismatch on an explicit-id or exact-name DB match is auto-aligned to the database hierarchy with a warning instead of pausing the task; fuzzy name matches with a different parent stay unbound as new scenes.)
+- **Blocked error codes** (`plan_call_failed`, `plan_timeout`, `step_watchdog_timeout`, `new_root_location_forbidden`, `location_parent_invalid`): the root cause is an external dependency (LLM gateway / worker) or a hard gate (missing scene assets). A blind retry would loop back to `paused`, so the server **rejects** resume with HTTP 409 + `{error_code, resume_hint}`. After you confirm the root cause is fixed (e.g. LLM key restored, scene assets added), retry with `{"force": true}` in the body. For `plan_call_failed` specifically, network-unreachable gateways (`NewConnectionError` / "Network is unreachable") are classified here too, and the split path does **not** auto-failover to another model — if the gateway is fully down, re-split with a different vendor/gateway model as a new task instead of looping on resume. (`location_parent_conflict` is no longer blocked: since 2026-07-30 a parent mismatch on an explicit-id or exact-name DB match is auto-aligned to the database hierarchy with a warning instead of pausing the task; fuzzy name matches with a different parent stay unbound as new scenes.)
 - **`waiting_auth`**: resume requires a fresh `auth_token`. First `POST /api/agent-auth/exchange` to get a new token, then call resume with the `Authorization: Bearer <new_token>` header. Without a token, resume returns 409.
 - **Other codes** (`plan_failed`, `segment_qc_failed`, `segment_max_retries`, `segment_repeatedly_interrupted`, ...): content-validation failures — resume is allowed directly (no `force` needed).
 

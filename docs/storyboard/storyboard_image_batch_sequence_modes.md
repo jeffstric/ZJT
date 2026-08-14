@@ -5,7 +5,7 @@
 ## Modes
 
 - `speed`: submit all missing images up to `limit` without previous-frame references.
-- `balanced`: default. Submit the first ready scene in each parsed group concurrently. Later scenes in the same group wait for the previous scene result and submit through `image_edit` with that result as `source_image`.
+- `balanced`: default. **组间并发、组内串行依赖**：每个解析组内第一个就绪场景立即提交，同组后续场景必须等前一个场景出图后，把该结果作为 `source_image` 走 `image_edit` 提交；不同组之间互不等待、并发提交。注意这不是"全部并行提交"——同组内存在前后依赖链。
 - `quality`: enterprise-only for first-frame generation. When `StoryboardFeatureFlags.QUALITY_GRID_FIRST_FRAME_ENABLED` is enabled, ready scenes in the same parsed group (`storyboard_image_batch_item.group_key` / `prompt_json.source.group_id`) are submitted as 2x2 or 3x3 storyboard first-frame grids and then split back to each scene; `act_name` is display/fallback metadata and must not merge multiple parsed groups into one grid. The old global previous-frame chain is only the fallback path when this feature flag is disabled.
 
 ## Frontend Dialog Copy
@@ -34,6 +34,15 @@ Inserted scenes without parsed group metadata inherit the previous scene's group
 Existing completed scenes participate in dependencies. If A1 already has a first frame and A2 is missing, A2 references A1 without regenerating A1. Existing running scenes also participate; dependent scenes wait until the selected asset has a result URL.
 
 When a dependent scene uses the previous scene image, that previous image is appended after the scene's described reference images. This keeps prompt legends aligned: if the prompt says Image #1 is a character and Image #2 is a location, those images remain at the front of the image-edit queue, while the previous storyboard frame is an extra continuity reference at the tail. The previous-frame item is also described in the reference legend as `图N是前一分镜。` (no name after the colon), so the legend image numbers stay strictly aligned with the image-edit URL queue. If the previous-frame URL coincides with an existing role/prop/location reference, it is de-duplicated and not described twice.
+
+## Existing asset policy (`existing_policy`)
+
+`auto-generate-missing-images` 的 `existing_policy` 控制**已有生成结果的场景**如何处理。注意它只作用于补图阶段，与剧本拆分的 `scenes_exist`（故事板已有场景、拒绝重复拆分）无关：
+
+- `skip`（默认）：已有 `result_url` 的场景跳过、不重生；已在运行中的场景复用其任务，依赖它的下游场景继续等待其结果。
+- `regenerate`：清空旧资产重新生成。必须显式传 `scene_ids` 指定要重生的场景（未传会被拒绝），其余场景仍走 `skip` 逻辑。
+
+`existing_policy` 与 `sequence_mode` 正交：`sequence_mode` 控制新图之间的提交顺序与依赖，`existing_policy` 控制已有图是否参与重生。
 
 ## CLI
 
