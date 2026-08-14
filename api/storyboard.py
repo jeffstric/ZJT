@@ -355,15 +355,31 @@ async def _read_json_object_body(request: Request):
         return {}, None
     try:
         data = json.loads(raw_body)
-    except Exception:
+    except json.JSONDecodeError as e:
+        # 带上具体解析位置（行/列/字节偏移），便于定位 JSON 转义/格式错误
         return None, JSONResponse(
             status_code=400,
-            content={'success': False, 'error_code': 'invalid_body', 'error': 'JSON body is invalid'},
+            content={
+                'success': False,
+                'error_code': 'invalid_body',
+                'error': f"JSON body 解析失败（第 {e.lineno} 行第 {e.colno} 列）：{e.msg}",
+                'detail': {'msg': e.msg, 'lineno': e.lineno, 'colno': e.colno, 'pos': e.pos},
+            },
+        )
+    except Exception as e:
+        # 兜底：编码错误等非标准 JSON 解析异常
+        return None, JSONResponse(
+            status_code=400,
+            content={
+                'success': False,
+                'error_code': 'invalid_body',
+                'error': f"JSON body 解析失败：{type(e).__name__}: {e}",
+            },
         )
     if not isinstance(data, dict):
         return None, JSONResponse(
             status_code=400,
-            content={'success': False, 'error_code': 'invalid_body', 'error': 'JSON body must be an object'},
+            content={'success': False, 'error_code': 'invalid_body', 'error': 'JSON body must be a JSON object (array/scalar not allowed)'},
         )
     return data, None
 

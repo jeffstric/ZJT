@@ -527,6 +527,48 @@ async def cdn_redirect_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+# API 路径前缀守卫中间件：对拼错前缀的"疑似 API 请求"返回友好 JSON 提示，
+# 而非让它落到 SPA catch-all（GET 静默返回 HTML(200)、POST 返回 405 无提示）。
+#
+# 背景：连接包的 api_version="storyboard-agent-api/v1" 只是版本标签，
+# 不是 URL 前缀；真实接口都在 /api/ 下。Agent 误把 api_version 当前缀
+# 拼成 /storyboard-agent-api/v1/... 时，请求会落到 SPA catch-all：
+#   - GET  -> 返回 index.html(200)，调用方以为成功却拿到 HTML，静默失败；
+#   - POST -> Starlette 因只注册了 GET catch-all 而返回 405，无任何路由提示。
+# 本中间件对这类请求返回明确的 JSON 指引，避免对接时踩坑。
+_API_PATH_MARKERS = ("storyboard-agent-api", "/v1/", "script-split", "agent-auth")
+
+
+@app.middleware("http")
+async def api_path_prefix_guard_middleware(request: Request, call_next):
+    path = request.url.path
+    # /api/ 下的请求正常放行，交由对应 handler 处理（含合法的 404）
+    if path == "/api" or path.startswith("/api/"):
+        return await call_next(request)
+    method = request.method.upper()
+    # 疑似 API 请求判定：
+    #   1) POST/PUT/PATCH/DELETE 打到非 /api/ 路径 —— 前端 SPA 不会这样发，
+    #      必然是拼错前缀的 API 调用；
+    #   2) 或路径含明显的 API 标识（版本前缀 / 已知 API 名），即便 GET 也提示。
+    looks_like_api = method in ("POST", "PUT", "PATCH", "DELETE") or any(
+        marker in path for marker in _API_PATH_MARKERS
+    )
+    if looks_like_api:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "success": False,
+                "error_code": "api_path_prefix",
+                "error": (
+                    "未知的 API 路径：所有接口前缀均为 /api/。"
+                    "连接包里的 api_version 是版本标签，不是 URL 前缀。"
+                    "GET /api/storyboard/agent/schema 可查看可用命令"
+                ),
+            },
+        )
+    return await call_next(request)
+
+
 @app.get("/api/config/upload")
 @require_permission("config:view_upload")
 async def get_upload_config(request: Request):
