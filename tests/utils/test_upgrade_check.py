@@ -267,6 +267,28 @@ class TestPerformUpdate(unittest.TestCase):
         self.assertFalse(success)
         self.assertIn("reset 失败", message)
 
+    @patch('scripts.upgrade_check.quarantine_locked_native_binaries', return_value=[])
+    @patch('scripts.upgrade_check.run_git')
+    def test_windows_unlink_retry_then_success(self, mock_git, mock_quarantine):
+        """Windows 占用 .pyd 时：第一次 reset 失败，移走后重试成功。"""
+        unlink_err = (
+            "error: unable to unlink old "
+            "'enterprise/pyarmor_runtime_015284/pyarmor_runtime.pyd': Invalid argument"
+        )
+        mock_git.side_effect = [
+            (0, "", ""),          # fetch
+            (1, "", unlink_err),  # reset tag fail (unlink)
+            (0, "", ""),          # retry reset tag ok
+        ]
+        with patch('scripts.upgrade_check.sys.platform', 'win32'):
+            success, message = perform_update(
+                "git", Path("/fake"), "main", 30, target_tag="2.2.0"
+            )
+        self.assertTrue(success)
+        self.assertEqual(message, "")
+        # quarantine 至少被调用：预清理 + 失败后重试前
+        self.assertGreaterEqual(mock_quarantine.call_count, 2)
+
 
 class TestUpdateRemoteUrlIfNeeded(unittest.TestCase):
     """测试 update_remote_url_if_needed"""
