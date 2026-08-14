@@ -245,7 +245,6 @@ class TaskManager:
                     world_id=world_id,
                     comfyui_base_url=comfyui_base_url,
                     auth_token=auth_token,
-                    max_attempts=60,
                     prompt=prompt,
                     task_config_id=task_config_id,
                     aspect_ratio=aspect_ratio,

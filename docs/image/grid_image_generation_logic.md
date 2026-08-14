@@ -294,7 +294,7 @@ GET {comfyui_base_url}/api/get-status/{ai_tool_id}?auth_token={auth_token}
 | `comfyui_base_url` | varchar(500) | ComfyUI 服务地址 |
 | `auth_token` | varchar(500) | 认证令牌 |
 | `status` | tinyint | `0`=队列中, `1`=处理中, `2`=完成, `-1`=失败, `-2`=超时, `-3`=取消, `-4`=下载失败 |
-| `try_count` / `max_attempts` | int | 尝试次数 / 最大尝试次数（默认 60） |
+| `try_count` / `max_attempts` | int | 尝试次数 / 最大尝试次数（默认 120，见 `GridConfig.MAX_ATTEMPTS`） |
 | `result_url` | varchar(1000) | 结果图片 URL |
 | `local_file_path` | varchar(1000) | 本地文件路径 |
 | `update_success` | tinyint | 是否成功更新到 item |
@@ -361,7 +361,7 @@ scheduler.add_job(
 1. 从数据库获取 `status IN (0, 1)` 的待处理任务（上限 50）
 2. 对每个任务：
    - `try_count += 1`
-   - 若 `try_count > max_attempts`（默认 60，约 10 分钟），标记为 `TIMEOUT`
+   - 若 `try_count > max_attempts`（默认 120，约 20 分钟，见 `GridConfig.MAX_ATTEMPTS`），标记为 `TIMEOUT`
    - 第一次尝试时更新状态为 `PROCESSING`
    - 发送 HTTP GET 查询 `/api/get-status/{ai_tool_id}?auth_token={auth_token}`
    - **SUCCESS** → 调用 `_handle_task_success(task, comfyui_task_data)`

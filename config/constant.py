@@ -1247,6 +1247,7 @@ class GridConfig:
     DEFAULT_SIZE_BY_TYPE = {1: 4, 7: 9}   # AI工具类型 → 默认宫格大小
     LOCK_TIMEOUT_SECONDS = 120            # 文件锁超时（秒）
     IMAGE_DOWNLOAD_TIMEOUT = 60.0         # 下载原图超时（秒）
+    MAX_ATTEMPTS = 120                    # grid 生图轮询最大尝试次数：scheduler 每 10s 轮询一次，120 次 ≈ 20 分钟总超时
     VALIDATION_MAX_SCAN_SIZE = 1024       # 宫格几何校验时的最长边缩放上限
     VALIDATION_POSITION_TOLERANCE_RATIO = 0.05  # 分割线允许偏离理论位置的比例
     VALIDATION_SEPARATOR_HALF_WIDTH = 1    # 搜索分割线时取中心线两侧像素宽度
