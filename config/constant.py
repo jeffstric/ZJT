@@ -1826,6 +1826,13 @@ class PeakValleyBillingConstants:
     PERIOD_OFF_PEAK = 'off_peak'    # 空闲时段
     ALL_PERIODS = (PERIOD_NORMAL, PERIOD_PEAK, PERIOD_OFF_PEAK)
 
+    # AI 改档「目标计费模式」（UI 层概念，非数据库时段）
+    # normal=通用价格（一组价，不分时段）；peak_valley=高峰/低谷（两组价，按时段扣费）
+    # 两种模式互斥：选其一生成方案时，AI 会自动清理另一模式的冲突档位
+    TARGET_MODE_NORMAL = 'normal'
+    TARGET_MODE_PEAK_VALLEY = 'peak_valley'
+    ALL_TARGET_MODES = (TARGET_MODE_NORMAL, TARGET_MODE_PEAK_VALLEY)
+
     # 高峰时段（左闭右开 [start_hour, end_hour)），北京时间 UTC+8
     # DeepSeek 官方：9:00-12:00、14:00-18:00；其余为空闲
     PEAK_TIME_RANGES = ((9, 12), (14, 18))

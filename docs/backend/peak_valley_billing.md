@@ -43,6 +43,11 @@ class PeakValleyBillingConstants:
     PERIOD_OFF_PEAK = 'off_peak'
     ALL_PERIODS = (PERIOD_NORMAL, PERIOD_PEAK, PERIOD_OFF_PEAK)
     PEAK_TIME_RANGES = ((9, 12), (14, 18))   # 北京时间 [start, end)
+
+    # AI 改档「目标计费模式」（UI 层概念，非数据库时段；normal=通用一组价 / peak_valley=峰谷两组价）
+    TARGET_MODE_NORMAL = 'normal'
+    TARGET_MODE_PEAK_VALLEY = 'peak_valley'
+    ALL_TARGET_MODES = (TARGET_MODE_NORMAL, TARGET_MODE_PEAK_VALLEY)
 ```
 
 ### 2. 时段判断 — `utils/billing_period.py`
@@ -104,6 +109,24 @@ process_token_logs()
 | `POST /api/admin/vendor-models` | 创建档位，带 `time_period`（默认 normal） |
 | `PUT /api/admin/vendor-models/{id}` | 更新档位（可改时段） |
 | `POST /api/admin/models/{id}/billing/reset-defaults` | 还原默认（按 `default_vendor_model_billing` 重建，含时段） |
+| `POST /api/admin/models/{id}/billing/ai-propose` | 自然语言生成方案（不写库），支持 `target_mode`（normal/peak_valley） |
+| `POST /api/admin/models/{id}/billing/ai-apply` | 确认应用方案（按 delete→update→create 顺序写库） |
+
+## AI 改档模式选择器
+
+「AI 生成方案」区提供**目标计费模式**选项（通用价格 / 高峰低谷），前端把 `target_mode` 传入
+`ai-propose` 接口，后端 `_build_billing_ai_system_prompt(..., target_mode)` 据此给出明确指令，
+避免 AI 自行猜测模式（导致被「禁止瞎填」约束挡住）。两种模式**互斥**：
+
+- **`normal`（通用价格）**：只生成 `time_period=normal` 档位；用户给一组价；若当前存在 peak/off_peak 档，AI 自动 delete。
+- **`peak_valley`（高峰低谷）**：必须生成 peak + off_peak **两个** create；用户**必须分别给出高峰与空闲两组价**
+  （输入/输出/缓存）——**不自动算价**，若只给一组价则 AI 返回 `{"ok":false}` 提示补充；若当前存在 normal 档，AI 自动 delete。
+
+典型场景「全量转峰谷」：模型当前仅有 normal 全量档 → 选「高峰低谷」+ 写明高峰/空闲两组价
+→ AI 生成 `delete(normal) + create(peak) + create(off_peak)` → apply 后仅剩两档（delete 先执行清场，无冲突）。
+
+> 模式选择器**仅作用于 AI 生成方案**，不改变手动新增弹窗（仍可选三档时段）与数据库约束，
+> 也不影响扣费逻辑（三级优先级兜底保持向后兼容）。
 
 ## 默认档位 — `config/default_vendor_model_billing.py`
 
@@ -129,7 +152,10 @@ process_token_logs()
 
 - 计费档位弹窗新增「计费时段」下拉（通用/高峰/空闲）
 - 档位列表在区间旁显示高峰/空闲标签（仅非 normal 档）
-- i18n：`models_billing_period_*`（zh-CN / en）
+- 「AI 生成方案」区新增「目标计费模式」下拉（通用价格/高峰低谷）：`billingAi.targetMode`，
+  展开/加载计费后由 `autoSelectBillingAiTargetMode()` 依现有档位智能预选；输入框 placeholder 按模式动态切换
+- 移除了原每个模型 AI 改档区重复显示的「将使用负责模型: XXX」（负责模型仅在页面顶部全局选择区配置）
+- i18n：`models_billing_period_*`、`models_billing_ai_mode_*`、`models_billing_ai_placeholder_*`（zh-CN / en）
 
 ## 上线
 

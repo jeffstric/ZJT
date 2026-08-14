@@ -865,7 +865,9 @@ const AdminApp = {
                 applying: false,
                 confirmShow: false,
                 proposal: null,
-                targetModelId: null
+                targetModelId: null,
+                // AI 改档目标计费模式：normal=通用价格 / peak_valley=高峰低谷
+                targetMode: 'normal'
             },
 
             // 实现方编辑弹窗
@@ -3843,6 +3845,8 @@ const AdminApp = {
                     );
                     const vendors = (response.data.data.vendors || []).length;
                     model.billing_summary = { tier_count: tiers, vendor_count: vendors };
+                    // 根据已有档位智能预选目标计费模式
+                    this.autoSelectBillingAiTargetMode(model);
                 }
             } catch (error) {
                 console.error('加载模型计费配置失败:', error);
@@ -3888,6 +3892,31 @@ const AdminApp = {
             if (p === 'peak') return this.t('models_billing_period_peak');
             if (p === 'off_peak') return this.t('models_billing_period_off_peak');
             return this.t('models_billing_period_normal');
+        },
+
+        // AI 改档输入框 placeholder：按目标计费模式动态切换
+        billingAiPlaceholder() {
+            return this.billingAi.targetMode === 'peak_valley'
+                ? this.t('models_billing_ai_placeholder_peak')
+                : this.t('models_billing_ai_placeholder_normal');
+        },
+
+        // 根据模型已有档位智能预选目标计费模式（有峰谷档→峰谷，否则→通用）
+        autoSelectBillingAiTargetMode(model) {
+            const billing = this.models.billing[model.id];
+            if (!billing || !billing.vendors) {
+                this.billingAi.targetMode = 'normal';
+                return;
+            }
+            const hasPeakValley = billing.vendors.some(v =>
+                (v.tiers || []).some(t => t.time_period === 'peak' || t.time_period === 'off_peak')
+            );
+            this.billingAi.targetMode = hasPeakValley ? 'peak_valley' : 'normal';
+            // 默认选中第一个供应商（不再提供"全部供应商"，避免 filterVendorId 悬空）
+            const stillValid = billing.vendors.some(v => v.vendor_id === this.billingAi.filterVendorId);
+            if (!stillValid && billing.vendors[0]) {
+                this.billingAi.filterVendorId = billing.vendors[0].vendor_id;
+            }
         },
 
         // 打开档位弹窗（主填元/百万）
@@ -4223,6 +4252,10 @@ const AdminApp = {
                 this.showToast(this.t('toast_billing_ai_need_instruction'), 'error');
                 return;
             }
+            if (!this.billingAi.filterVendorId) {
+                this.showToast(this.t('toast_billing_ai_need_vendor'), 'error');
+                return;
+            }
             this.refreshBillingAiLlmOptions();
             this.billingAi.loading = true;
             this.billingAi.targetModelId = model.id;
@@ -4238,6 +4271,8 @@ const AdminApp = {
                     vendor_id: this.billingAi.filterVendorId || null,
                     llm_model_id: selected.model_id,
                     llm_vendor_id: selected.vendor_id,
+                    // 目标计费模式：决定 AI 生成「通用价格」还是「高峰低谷」档位
+                    target_mode: this.billingAi.targetMode || 'normal',
                 };
                 const response = await axios.post(
                     `/api/admin/models/${model.id}/billing/ai-propose`,

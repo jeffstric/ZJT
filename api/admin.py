@@ -1924,6 +1924,18 @@ def _normalize_time_period(period: Optional[str], *, strict: bool = False) -> st
     return PeakValleyBillingConstants.PERIOD_NORMAL
 
 
+def _normalize_target_mode(mode: Optional[str]) -> str:
+    """规范化 AI 改档目标计费模式（UI 层概念，非数据库时段）。
+
+    normal=通用价格（一组价）；peak_valley=高峰/低谷（两组价）。
+    非法值一律回退 normal。
+    """
+    m = (mode or PeakValleyBillingConstants.TARGET_MODE_NORMAL).strip().lower()
+    if m in PeakValleyBillingConstants.ALL_TARGET_MODES:
+        return m
+    return PeakValleyBillingConstants.TARGET_MODE_NORMAL
+
+
 def _resolve_thresholds_from_request(
     input_token_threshold: Optional[int],
     out_token_threshold: Optional[int],
@@ -2195,8 +2207,37 @@ def _build_billing_ai_system_prompt(
     model_id: int,
     model_name: str,
     current_json: str,
+    target_mode: str = PeakValleyBillingConstants.TARGET_MODE_NORMAL,
 ) -> str:
-    """构造 AI 改档 system prompt：单位换算由模型完成，无法确定时必须拒绝。"""
+    """构造 AI 改档 system prompt：单位换算由模型完成，无法确定时必须拒绝。
+
+    target_mode 决定本次生成「通用价格」还是「高峰低谷」档位，并据此给出明确指令，
+    避免 AI 自行猜测模式（导致被禁止瞎填约束挡住）。两种模式互斥：
+    选其一时，AI 应自动 delete 另一模式的现有档位。
+    """
+    target_mode = _normalize_target_mode(target_mode)
+
+    # 按目标计费模式分流：通用 vs 峰谷，二者互斥
+    if target_mode == PeakValleyBillingConstants.TARGET_MODE_PEAK_VALLEY:
+        period_rules = [
+            "【本次目标：峰谷计费 peak_valley】",
+            "- 必须生成 time_period 分别为 peak(高峰) 与 off_peak(空闲) 的【两个】create，缺一不可。",
+            "- 高峰时段为北京时间 9:00-12:00、14:00-18:00，其余为空闲。",
+            "- 用户【必须分别给出高峰与空闲两组价格】（各含 输入/输出/缓存）。若用户只给了一组价格而未分别给出高峰与空闲两组，严禁自行拆分或推算另一组价格，直接返回：",
+            '  {"ok":false,"error":"峰谷计费需分别给出高峰与空闲两组价格（输入/输出/缓存），请补充后再试"}',
+            "- create 时 time_period 必填(peak 或 off_peak)；同一区间下不同时段视为不同档位，不会冲突。",
+            "- update 改价格但未提时段时，after 可不写 time_period（保留原时段）。",
+            "- 【模式互斥】若当前存在 time_period=normal 的档位，应一并 delete（峰谷与通用不可共存）。",
+        ]
+    else:
+        period_rules = [
+            "【本次目标：通用计费 normal】",
+            "- 只生成 time_period=normal 的档位（不分峰谷）。",
+            "- 用户只需给一组价格（输入/输出/缓存）。",
+            "- create/update 时 time_period 用 normal；update 改价格未提时段时，after 可不写 time_period（保留原时段）。",
+            "- 【模式互斥】若当前存在 time_period 为 peak/off_peak 的档位，应一并 delete（通用与峰谷不可共存）。",
+        ]
+
     return "\n".join([
         "你是计费配置助手。根据用户自然语言指令，输出对 vendor_model 档位的变更方案。",
         "",
@@ -2214,16 +2255,9 @@ def _build_billing_ai_system_prompt(
         "- 「存储 / 元/千tokens/小时」与调用 token 计费无关，必须忽略，不要写入 cache",
         "- 「命中/缓存命中」才是 cache_yuan_per_m",
         "- 若同时出现两行「基础模型」价：第 1 行=输入，第 2 行=输出",
-        "",
-        "【峰谷计费 time_period】",
-        "- 每个档位可选计费时段：normal=通用(不分峰谷,默认) / peak=高峰 / off_peak=空闲。",
-        "- 高峰时段为北京时间 9:00-12:00、14:00-18:00，其余为空闲。同一(供应商,模型,区间)可分别配置 peak 与 off_peak 两档。",
         "- 字段含义：input_yuan_per_m=输入(缓存未命中)、cache_yuan_per_m=输入(缓存命中)、out_yuan_per_m=输出。",
-        "- 若用户给出「高峰/空闲(或 peak/off_peak)」两组价格，应生成 time_period 分别为 peak 与 off_peak 的【两个】create；",
-        "  create 时 time_period 必填；同一区间下不同时段视为不同档位，不会冲突。",
-        "- 若用户只给一组价格且未提时段，time_period 用 normal。",
-        "- update 改价格但未提时段时，after 可不写 time_period（保留原时段，不要擅自改成 normal）。",
-        "- delete 峰谷档位时正常按 tier_id 删除即可。",
+        "",
+        *period_rules,
         "",
         "【无法确定时禁止瞎填——错误答案比不回答更糟】",
         "若单位不清、数字对不上、目标档位/供应商无法确定、或你无法可靠完成换算，",
@@ -2717,6 +2751,8 @@ class BillingAiProposeRequest(BaseModel):
     vendor_id: Optional[int] = None
     llm_model_id: Optional[int] = None
     llm_vendor_id: Optional[int] = None
+    # 目标计费模式：normal=通用价格 / peak_valley=高峰低谷（决定 AI 生成哪种档位）
+    target_mode: Optional[str] = None
 
 
 class BillingAiApplyOp(BaseModel):
@@ -2790,8 +2826,9 @@ async def admin_billing_ai_propose(
         llm_model_name = llm_model_row.model_name
 
         current_json = json.dumps(billing, ensure_ascii=False, default=str)
+        target_mode = _normalize_target_mode(request.target_mode)
         system_prompt = _build_billing_ai_system_prompt(
-            model_id, model.model_name, current_json
+            model_id, model.model_name, current_json, target_mode
         )
         user_prompt = instruction
 

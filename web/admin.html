@@ -1283,14 +1283,15 @@
                                                     <!-- AI 自然语言改档（负责模型在页面顶部全局选择） -->
                                                     <div class="billing-ai-box">
                                                         <div class="billing-ai-row">
-                                                            <span class="billing-ai-using">
-                                                                {{ t('models_billing_ai_using') }}:
-                                                                <strong>{{ billingAiCurrentLabel }}</strong>
-                                                            </span>
+                                                            <label>{{ t('models_billing_ai_target_mode') }}</label>
+                                                            <select class="filter-select" v-model="billingAi.targetMode"
+                                                                    style="max-width: 150px;">
+                                                                <option value="normal">{{ t('models_billing_ai_mode_normal') }}</option>
+                                                                <option value="peak_valley">{{ t('models_billing_ai_mode_peak_valley') }}</option>
+                                                            </select>
                                                             <label>{{ t('models_billing_vendor') }}</label>
                                                             <select class="filter-select" v-model="billingAi.filterVendorId"
                                                                     style="max-width: 160px;">
-                                                                <option :value="null">{{ t('models_billing_ai_all_vendors') }}</option>
                                                                 <option v-for="v in (models.billing[model.id].vendors || [])"
                                                                         :key="'af-'+v.vendor_id" :value="v.vendor_id">
                                                                     {{ v.vendor_name }}
@@ -1307,7 +1308,7 @@
                                                         <textarea class="billing-ai-textarea"
                                                                   rows="2"
                                                                   v-model="billingAi.instruction"
-                                                                  :placeholder="t('models_billing_ai_placeholder')"></textarea>
+                                                                  :placeholder="billingAiPlaceholder()"></textarea>
                                                         <button class="action-btn primary small"
                                                                 :disabled="billingAi.loading"
                                                                 @click="runBillingAiPropose(model)">
