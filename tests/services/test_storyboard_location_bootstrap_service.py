@@ -513,7 +513,7 @@ class TestSubsceneGridFixes:
         monkeypatch.setattr(mcp.httpx, 'post', MagicMock())
         mcp.httpx.post.return_value.raise_for_status.return_value = None
         mcp.httpx.post.return_value.json.return_value = {'project_ids': ['pid123']}
-        monkeypatch.setattr(mcp, '_resolve_image_edit_task_id', lambda *a: 7)
+        monkeypatch.setattr(mcp, '_resolve_image_edit_task_id', lambda *a, **kw: 7)
         monkeypatch.setattr(mcp, '_get_model_name_by_task_id', lambda *a: 'edit')
         monkeypatch.setattr(mcp, '_to_public_http_url', lambda *a: 'http://h/p.png')
         monkeypatch.setattr(mcp, 'get_config', lambda: {'server': {'comfyui_base_url_inner': 'http://h'}})
@@ -657,7 +657,7 @@ class TestSubsceneGridFixes:
 
         monkeypatch.setattr(mcp, "httpx", MagicMock())
         monkeypatch.setattr(mcp.httpx, "post", fake_post)
-        monkeypatch.setattr(mcp, "_resolve_image_edit_task_id", lambda *a: 7)
+        monkeypatch.setattr(mcp, "_resolve_image_edit_task_id", lambda *a, **kw: 7)
         monkeypatch.setattr(mcp, "_get_model_name_by_task_id", lambda *a: "edit")
         monkeypatch.setattr(mcp, "_to_public_http_url", lambda *a: "http://h/ref.png")
         monkeypatch.setattr(mcp, "get_config", lambda: {"server": {"comfyui_base_url_inner": "http://h"}})
@@ -718,7 +718,7 @@ class TestSubsceneGridFixes:
         monkeypatch.setattr(mcp, 'httpx', MagicMock())
         mcp.httpx.post.return_value.raise_for_status.return_value = None
         mcp.httpx.post.return_value.json.return_value = {'project_ids': ['pid']}
-        monkeypatch.setattr(mcp, '_resolve_image_edit_task_id', lambda *a: 7)
+        monkeypatch.setattr(mcp, '_resolve_image_edit_task_id', lambda *a, **kw: 7)
         monkeypatch.setattr(mcp, '_get_model_name_by_task_id', lambda *a: 'edit')
         monkeypatch.setattr(mcp, '_to_public_http_url', lambda *a: 'http://h/p.png')
         monkeypatch.setattr(mcp, 'get_config', lambda: {'server': {'comfyui_base_url_inner': 'http://h'}})

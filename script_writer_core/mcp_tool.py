@@ -1248,6 +1248,8 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                 'status': 'submitted',
                 'comfyui_base_url': comfyui_base_url,
                 'model_used': model_name,
+                # 统一模型对账字段：调用方用它校验实际模型与批任务快照一致
+                'model_task_id': text_to_image_task_id,
                 'image_size_used': image_size,
                 'computing_power_required': computing_power_per_image,
                 'computing_power_total': computing_power_total,
@@ -5048,6 +5050,7 @@ def submit_grid_image_task(
     image_size: Optional[str] = None,
     grid_cells: Optional[List[Dict[str, Any]]] = None,
     global_visual_guidance: Optional[Dict[str, str]] = None,
+    task_type: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     通用宫格图像提交入口（支持 2x2 四宫格 / 3x3 九宫格，支持 t2i / i2i 两种模式）。
@@ -5077,6 +5080,9 @@ def submit_grid_image_task(
         image_size: 可选图片尺寸，写入任务记录供重试复原。
         grid_cells: 可选的格子绑定元数据，分镜首帧宫格用来驱动后续拆图写回。
         global_visual_guidance: 可选的宫格级画风、构图倾向及应用规则，仅在根节点出现一次。
+        task_type: 显式生图模型 task_id（统一配置 id）。来自上层批任务创建时锁定的
+            模型快照，传入后原样使用（类别不兼容时明确报错，禁止静默换模型）；
+            未传入时回退到用户偏好/默认模型解析，并打 warning 让隐式解析点在日志中现形。
 
     Returns:
         dict: 与 generate_4grid_images 结构一致的结果。
@@ -5183,11 +5189,14 @@ def submit_grid_image_task(
             grid_layout=grid_layout,
             grid_item_names=item_names,
             target_entity_ids=target_ids_for_db,
+            task_type=task_type,
         )
         if result.get('success'):
             result['item_type_name'] = item_info['name_cn']
             result['base_item_type'] = item_info.get('base_type')
             result['item_names'] = item_names
+            # 统一模型对账字段：调用方用它校验实际模型与批任务快照一致
+            result['model_task_id'] = result.get('text_to_image_task_id')
         return result
 
     # ---------- 分支 B：图生图（参考图作为输入）----------
@@ -5209,10 +5218,27 @@ def submit_grid_image_task(
     if not public_ref_urls:
         return {'success': False, 'error': 'reference_images 无法转为有效 http URL（全部为空或非法）'}
 
-    # 解析模型 task_id（IMAGE_EDIT 类别，含 fallback）
-    edit_task_id = _resolve_image_edit_task_id(user_id, world_id)
+    # 解析模型 task_id（IMAGE_EDIT 类别，含 fallback）。
+    # 显式 task_type 来自上层批任务创建时锁定的模型快照：必须原样使用，禁止静默换模型；
+    # 未显式指定时才回退到偏好/默认解析，并打 warning 让隐式解析点在日志中现形。
+    edit_task_id = _resolve_image_edit_task_id(user_id, world_id, task_type=task_type)
     if edit_task_id is None:
+        if task_type not in (None, ''):
+            requested_name = _get_model_name_by_task_id(int(task_type))
+            return {
+                'success': False,
+                'error': (
+                    f'所选生图模型（id={task_type}，{requested_name}）不支持图片编辑'
+                    f'（参考图模式），无法执行宫格 i2i；请更换为支持图片编辑的生图模型'
+                ),
+            }
         return {'success': False, 'error': '无可用图片编辑模型，无法执行宫格 i2i'}
+    if task_type in (None, ''):
+        _logger.warning(
+            "[GRID] submit_grid_image_task(mode=image_edit) 未显式指定生图模型 task_type，"
+            "回退到用户偏好/默认模型解析: user_id=%s world_id=%s item_type=%s resolved_task_id=%s",
+            user_id, world_id, item_type, edit_task_id,
+        )
     model_name = _get_model_name_by_task_id(edit_task_id)
 
     if not auth_token:
@@ -5396,6 +5422,8 @@ def submit_grid_image_task(
         'item_names': item_names,
         'target_entity_ids': target_ids_for_db,
         'model_used': model_name,
+        # 统一模型对账字段：调用方用它校验实际模型与批任务快照一致
+        'model_task_id': edit_task_id,
         'task_key': task_key,
         'message': f'宫格 i2i 请求已提交（父图作为输入），project_ids={project_ids}',
     }
