@@ -566,6 +566,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     ],
     DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO: [
         DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,  # 火山引擎国内版
+        DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,    # huimengi 网关
     ],
 
     # GPT Image 相关驱动

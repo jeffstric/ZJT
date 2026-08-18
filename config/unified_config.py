@@ -1047,6 +1047,7 @@ class DriverImplementation:
     SEEDANCE_2_0_FAST_HUIMENGI_V1 = 'seedance_2_0_fast_huimengi_v1'
     SEEDANCE_2_0_HUIMENGI_V1 = 'seedance_2_0_huimengi_v1'
     SEEDANCE_2_0_MINI_HUIMENGI_V1 = 'seedance_2_0_mini_huimengi_v1'
+    SEEDANCE_2_5_HUIMENGI_V1 = 'seedance_2_5_huimengi_v1'
 
     # GPT Image
     DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
@@ -1162,6 +1163,7 @@ class DriverImplementationId:
 
     # Seedance 2.5：不可与 MiniMax H3 参考生视频共用 67，否则落库后再反查会变成 H3 驱动
     SEEDANCE_2_5_VOLCENGINE_V1 = 68
+    SEEDANCE_2_5_HUIMENGI_V1 = 69
 
 
 # implementation 字符串到 ID 的映射
@@ -1230,6 +1232,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_HUIMENGI_V1,
     'seedance_2_0_mini_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_MINI_HUIMENGI_V1,
     'seedance_2_5_volcengine_v1': DriverImplementationId.SEEDANCE_2_5_VOLCENGINE_V1,
+    'seedance_2_5_huimengi_v1': DriverImplementationId.SEEDANCE_2_5_HUIMENGI_V1,
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
@@ -2137,6 +2140,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementation=DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
         implementations=[
             DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
+            DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
@@ -3046,6 +3050,19 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         required_config_keys=['huimengi.api_key'],
         supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_5_huimengi_v1',
+        display_name='huimengi',
+        driver_class='Seedance25HuimengiV1Driver',
+        default_computing_power={5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
+        enabled=True,
+        description='huimengi 网关 Seedance 2.5 图生视频接口',
+        sort_order=11040.0,
+        required_config_keys=['huimengi.api_key'],
+        supports_auto_face=True,
+        supported_video_resolutions=SEEDANCE_2_5_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(

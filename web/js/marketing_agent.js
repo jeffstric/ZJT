@@ -673,6 +673,13 @@
                 return config?.needs_face_mask === true;
             });
 
+            const isSeedance25FollowReferenceVideo = Vue.computed(() => {
+                if (!isVideoMode.value) return false;
+                const key = `${selectedVideoModelKey.value || ''} ${selectedModelKey.value || ''} ${selectedVideoModelName.value || ''}`;
+                const is25 = /seedance[_\s-]?2[._]?5/i.test(key);
+                return is25 && Array.isArray(agentVideoFiles.value) && agentVideoFiles.value.length > 0;
+            });
+
             const selectedModel = Vue.computed({
                 get() {
                     return isVideoMode.value ? selectedVideoModelName.value : selectedImageModel.value;
@@ -6967,6 +6974,7 @@
                 sendVideoRequest,
                 processFace,
                 currentVideoModelNeedsFaceMask,
+                isSeedance25FollowReferenceVideo,
                 isEnterprise,
                 startVideoStatusCheck,
                 clearVideoStatusCheck,

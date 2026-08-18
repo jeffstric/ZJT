@@ -291,6 +291,11 @@
         const config = this.modelConfigs && this.modelConfigs[this.videoModel];
         return !!(config && config.needs_face_mask === true);
       },
+      isSeedance25FollowReferenceVideo() {
+        const key = String(this.videoModel || '');
+        const is25 = /seedance[_\s-]?2[._]?5/i.test(key);
+        return is25 && Array.isArray(this.videoFiles) && this.videoFiles.length > 0;
+      },
       // 是否为商业版（社区版下「是否处理人脸」置灰提示）
       isEnterprise() {
         return !!(window.TaskConfig && window.TaskConfig.isEnterprise && window.TaskConfig.isEnterprise());
@@ -1377,6 +1382,9 @@
                 {{ opt.label }}
               </option>
             </select>
+            <div class="muted" v-if="isSeedance25FollowReferenceVideo" style="margin-top: 4px; font-size: 12px;">
+              Seedance 2.5 克隆时，输出比例和时长跟随参考视频（参考视频须 4–30 秒）
+            </div>
           </div>
 
           <div class="field">

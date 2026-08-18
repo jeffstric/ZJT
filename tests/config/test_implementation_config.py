@@ -57,6 +57,7 @@ class TestUnifiedConfigRegistryImplementations(unittest.TestCase):
         self.assertIn('sora2_duomi_v1', all_impls)
         self.assertIn('gemini_duomi_v1', all_impls)
         self.assertIn('seedream5_volcengine_v1', all_impls)
+        self.assertIn('seedance_2_5_huimengi_v1', all_impls)
 
     def test_get_enabled_implementations(self):
         """测试获取所有启用的实现方配置"""
@@ -496,6 +497,19 @@ class TestSupportsAutoFace(unittest.TestCase):
         self.assertIn('supports_auto_face', d)
         self.assertTrue(d['supports_auto_face'])
 
+    def test_seedance_2_5_huimengi_implementation(self):
+        """Seedance 2.5 慧梦实现方已注册，且支持自动处理人脸"""
+        from config.unified_config import UnifiedConfigRegistry, DriverImplementation
+
+        impl = UnifiedConfigRegistry.get_implementation(
+            DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1
+        )
+        self.assertIsNotNone(impl)
+        self.assertEqual(impl.display_name, 'huimengi')
+        self.assertEqual(impl.driver_class, 'Seedance25HuimengiV1Driver')
+        self.assertTrue(impl.supports_auto_face)
+        self.assertEqual(impl.required_config_keys, ['huimengi.api_key'])
+
 
 class TestDriverImplementationIdConstants(unittest.TestCase):
     """DriverImplementationId 常量测试"""
@@ -595,6 +609,8 @@ class TestDriverImplementationIdConstants(unittest.TestCase):
         self.assertEqual(get_implementation_name(67), 'minimax_h3_reference_runninghub_v1')
         self.assertEqual(get_implementation_id('seedance_2_5_volcengine_v1'), 68)
         self.assertEqual(get_implementation_name(68), 'seedance_2_5_volcengine_v1')
+        self.assertEqual(get_implementation_id('seedance_2_5_huimengi_v1'), 69)
+        self.assertEqual(get_implementation_name(69), 'seedance_2_5_huimengi_v1')
 
 
 # 需要先导入 ImplementationConfig

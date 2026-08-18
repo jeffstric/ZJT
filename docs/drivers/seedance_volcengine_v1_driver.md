@@ -16,7 +16,7 @@
 
 > **Seedance 2.0 Mini**：价格为 Seedance 2.0 的一半，功能与 Seedance 2.0 一致。
 >
-> **Seedance 2.5**：接口协议与 2.0 系列完全一致（content 数组结构、role 取值、状态轮询），仅 `model` 名不同。额外支持：纯音频输入（无图无视频）、最多 30 张参考图 / 10 个参考视频 / 10 段参考音频、视频时长 [4,30]s。仅支持分辨率 480P / 720P（不支持 1080P / 4K）。仅接火山引擎国内版。实现方 `seedance_2_5_volcengine_v1` 的数字 ID 为 **68**，不可复用 MiniMax H3 参考生视频的 67。
+> **Seedance 2.5**：接口协议与 2.0 系列完全一致（content 数组结构、role 取值、状态轮询），仅 `model` 名不同。额外支持：纯音频输入（无图无视频）、最多 30 张参考图 / 10 个参考视频 / 10 段参考音频、视频时长 [4,30]s。仅支持分辨率 480P / 720P（不支持 1080P / 4K）。火山国内版实现方 `seedance_2_5_volcengine_v1` 的数字 ID 为 **68**，huimengi 网关实现方 `seedance_2_5_huimengi_v1` 为 **69**，均不可复用 MiniMax H3 参考生视频的 67。
 
 ## 720p 默认算力配置
 
@@ -141,6 +141,8 @@ Seedance API 使用 content 数组传递输入：
 > 文生视频任务由文生视频接口 `/api/ai-app-run` 创建（不带 `image_mode`）。驱动在检测到无任何图片/音视频输入、且 `extra_config` 未声明 `image_mode` 时自动走文生视频分支；图生视频接口 `/api/ai-app-run-image` 因必带 `image_mode`，永远不会被误判。
 
 > `ratio` 只在文生视频、多参考（multi_reference）模式下下发。首帧/首尾帧模式（含未知模式降级为首尾帧）输出比例跟随首帧图片，火山会拒绝显式 `ratio`（400 `InvalidParameter.TaskTypeConstraint`），驱动构建 payload 时自动省略该字段。
+>
+> **Seedance 2.5 参考视频（视频克隆/编辑）**：火山会按提示词把任务判成 video editing，此时 `ratio` 必须为 `adaptive`、`duration` 必须为 `-1`，输出画幅和时长跟随参考视频（参考视频须 4–30 秒）。驱动在 `driver_type=36` 且带参考视频时自动改写这两个字段；普通文生/图生仍下发用户选择的比例和时长。算力仍按用户选择的时长计，不用 `-1`。
 
 ## 纯音频输入
 

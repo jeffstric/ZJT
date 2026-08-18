@@ -136,7 +136,7 @@ def _stub_pipeline_steps_empty():
 # 子类初始化测试
 # ============================================================
 class TestSeedanceHuimengiDriverInit(unittest.TestCase):
-    """测试 3 个子类初始化"""
+    """测试 4 个子类初始化"""
 
     def test_20_fast_init(self):
         from task.visual_drivers.seedance_huimengi_v1_driver import Seedance20FastHuimengiV1Driver
@@ -157,6 +157,15 @@ class TestSeedanceHuimengiDriverInit(unittest.TestCase):
         driver = _create_driver(Seedance20MiniHuimengiV1Driver)
         self.assertEqual(driver.driver_type, 31)
         self.assertEqual(driver._model, 'seedance-2.0-mini')
+
+    def test_25_init(self):
+        from task.visual_drivers.seedance_huimengi_v1_driver import Seedance25HuimengiV1Driver
+        from config.unified_config import TaskTypeId, DriverImplementation
+        driver = _create_driver(Seedance25HuimengiV1Driver)
+        self.assertEqual(driver.driver_type, TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO)
+        self.assertEqual(driver._model, 'seedance-2.5')
+        self.assertEqual(driver.driver_name, DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1)
+        self.assertEqual(driver._base_url, 'https://api.huimengi.com')
 
     def test_base_url_trailing_slash_stripped(self):
         """base_url 尾部斜杠应被去除"""
@@ -221,6 +230,55 @@ class TestBuildCreateRequest(unittest.TestCase):
         self.assertNotIn('first_frame_image', params)
         self.assertNotIn('reference_images', params)
         self.assertEqual(req['headers']['Authorization'], 'Bearer test_huimengi_key')
+
+    def test_25_text_to_video_uses_seedance_2_5_model(self):
+        """Seedance 2.5 文生视频：model 为 seedance-2.5，params 与官方 curl 对齐"""
+        from task.visual_drivers.seedance_huimengi_v1_driver import Seedance25HuimengiV1Driver
+        driver = _create_driver(Seedance25HuimengiV1Driver)
+        ai_tool = _make_ai_tool(
+            prompt='一只猫在海滩上漫步',
+            image_path=None,
+            extra_config={'generate_audio': True, 'video_resolution': '720P'}
+        )
+        req = driver.build_create_request(ai_tool)
+
+        self.assertEqual(req['method'], 'POST')
+        self.assertEqual(req['url'], 'https://api.huimengi.com/api/v1/tasks')
+        self.assertEqual(req['json']['model'], 'seedance-2.5')
+        params = req['json']['params']
+        self.assertEqual(params['prompt'], '一只猫在海滩上漫步')
+        self.assertEqual(params['duration'], 5)
+        self.assertEqual(params['resolution'], '720p')
+        self.assertEqual(params['generate_audio'], True)
+        self.assertNotIn('image_url', params)
+        self.assertNotIn('webhook_url', req['json'])
+
+    def test_25_reference_video_uses_adaptive_ratio_and_follow_duration(self):
+        """2.5 + 参考视频：与火山视频编辑约束对齐，ratio=adaptive、duration=-1"""
+        from task.visual_drivers.seedance_huimengi_v1_driver import Seedance25HuimengiV1Driver
+        from task.visual_drivers import seedance_huimengi_v1_driver as drv_mod
+        driver = _create_driver(Seedance25HuimengiV1Driver)
+        ai_tool = _make_ai_tool(
+            prompt='参考视频1的内容进行视频复刻',
+            extra_config={'image_mode': 'multi_reference', 'ratio': '9:16'},
+            duration=5,
+            video_path='http://example.com/ref.mp4',
+        )
+        with patch.object(driver, 'get_all_images_by_mode', return_value={
+            'mode': 'multi_reference',
+            'first_frame': None,
+            'last_frame': None,
+            'reference_images': [],
+        }), patch.object(drv_mod, 'prepare_seedance_reference_video_sync',
+                          return_value=(True, 'http://example.com/ref.mp4', None, [])), \
+             patch.object(drv_mod, 'upload_media_to_cdn_sync',
+                          return_value=(True, 'http://cdn.example.com/ref.mp4', None)):
+            req = driver.build_create_request(ai_tool)
+
+        params = req['json']['params']
+        self.assertEqual(req['json']['model'], 'seedance-2.5')
+        self.assertEqual(params['ratio'], 'adaptive')
+        self.assertEqual(params['duration'], -1)
 
     def test_text_to_video_empty_prompt_rejected(self):
         """文生视频空 prompt 应返回错误"""

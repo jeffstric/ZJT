@@ -600,6 +600,10 @@ class TestVideoCloneDriverKeys(unittest.TestCase):
         frontend = seedance_25.to_frontend_dict()
         self.assertTrue(frontend['needs_face_mask'])
         self.assertTrue(frontend['supports_video_clone'])
+        self.assertIn(
+            'seedance_2_5_huimengi_v1',
+            seedance_25.implementations,
+        )
 
     def test_minimax_h3_reference_supports_video_clone(self):
         from config.unified_config import UnifiedConfigRegistry

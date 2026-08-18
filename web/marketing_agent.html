@@ -417,6 +417,9 @@
                                             </div>
                                         </div>
 
+                                        <div v-if="mediaType === 'video' && isSeedance25FollowReferenceVideo" style="margin-top: 8px; font-size: 12px; color: #64748b;">
+                                            Seedance 2.5 克隆时，输出比例和时长跟随参考视频（参考视频须 4–30 秒）
+                                        </div>
                                         <!-- 视频时长选择（仅视频模式）：≤3 档紧凑点选；≥4 档横滚+输入 -->
                                         <div v-if="mediaType === 'video'" class="duration-picker">
                                             <span class="duration-picker-label">{{ $t('video_duration') }}</span>
