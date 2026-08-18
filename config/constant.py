@@ -20,6 +20,8 @@ from config.unified_config import (
     DriverImplementation,
     UnifiedConfigRegistry,
     UnifiedTaskConfig,
+    AGENT_POWER_CONFIRM_THRESHOLD,
+    AGENT_POWER_CONFIRM_HARD_THRESHOLD,
 )
 
 
@@ -153,6 +155,11 @@ IMAGE_MODE_EXTRA_CONFIG_KEY = "image_mode"
 VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"
 LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
 ASSET_LIST_MAX_PAGE_SIZE = 1000
+
+# Agent 算力确认：软阈值优先读 user_preferences.power_confirm，
+# 未设置时回退动态配置 agent.power_confirm_threshold，再回退 AGENT_POWER_CONFIRM_THRESHOLD。
+# AGENT_POWER_CONFIRM_THRESHOLD / AGENT_POWER_CONFIRM_HARD_THRESHOLD 从 unified_config 再导出。
+PREF_WORLD_ID_GLOBAL = "_global"  # 用户级（非世界级）偏好使用的 sentinel world_id
 
 
 class MediaGenerationSurface:

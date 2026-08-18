@@ -49,11 +49,17 @@ class AskUserMixin:
             return agent_id[len("expert_"):]
         return agent_id or "AI"
 
-    def _handle_ask_user(self, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+    def _handle_ask_user(
+        self,
+        tool_args: Dict[str, Any],
+        verification_type: str = "ask_user",
+    ) -> Dict[str, Any]:
         """处理 ask_user 工具调用 - 向用户提问并等待响应
 
         Args:
             tool_args: LLM 传入的工具参数，包含 question, options, context
+            verification_type: 写入 agent_verifications 的类型，默认 ask_user；
+                系统算力确认门传入 computing_power_confirm
 
         Returns:
             成功: {"success": True, "user_input": "...", "message": "用户已回答: ..."}
@@ -90,10 +96,11 @@ class AskUserMixin:
         try:
             # 创建验证请求
             agent_name = self._get_agent_display_name()
+            title = tool_args.get("title") or f"{agent_name} 向您提问"
             verification = self.task_manager.create_verification(
                 task_id=self.task_id,
-                verification_type="ask_user",
-                title=f"{agent_name} 向您提问",
+                verification_type=verification_type or "ask_user",
+                title=title,
                 description=question,
                 options=options,
                 context=context
@@ -106,10 +113,12 @@ class AskUserMixin:
                         session_id=self._session_id,
                         role="verification",
                         content={
-                            "title": f"{agent_name} 向您提问",
+                            "title": title,
                             "description": question,
                             "options": options,
-                            "verification_id": verification.verification_id
+                            "verification_id": verification.verification_id,
+                            "verification_type": verification_type or "ask_user",
+                            "context": context,
                         },
                         message_type="verification_request",
                         verification_id=verification.verification_id,

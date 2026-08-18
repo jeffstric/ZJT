@@ -132,6 +132,7 @@ invalidate_dynamic_cache()
 | 分类 | 配置键示例 | 敏感 |
 |------|-----------|------|
 | 任务队列 | `task_queue.max_retry_count` | 否 |
+| Agent 算力确认 | `agent.power_confirm_threshold`（用户未自定义时的软阈值，默认 35）、`agent.power_confirm_hard_threshold`（会话免打扰后的硬阈值，默认 200） | 否 |
 | 上传限制 | `upload.max_image_size_mb` | 否 |
 | 前端调试 | `frontend.debug_password` | 是 |
 | 工作流 | `workflow.poll_status_interval`（秒） | 否 |

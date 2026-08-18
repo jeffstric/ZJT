@@ -538,6 +538,12 @@
             const otherInputText = ref('');
             const activeOtherVerificationId = ref(null);
 
+            // 用户级算力自动确认上限
+            const powerConfirmThreshold = ref(35);
+            const powerConfirmThresholdInput = ref(35);
+            const powerConfirmDefault = ref(35);
+            const powerConfirmIsCustom = ref(false);
+
             const aspectRatioMap = {
                 'auto':  { label: window.t('ratio_smart'), value: 'auto', w: 20, h: 20 },
                 '21:9':  { label: '21:9', value: '21:9', w: 28, h: 12 },
@@ -3319,6 +3325,85 @@
                 return !!pendingVerificationId.value && msg?.verificationId === pendingVerificationId.value;
             }
 
+            function verificationOptionClass(msg, opt) {
+                if (msg?.verificationType !== 'computing_power_confirm') return '';
+                if (opt === '确认生成') return 'power-approve';
+                if (opt === '取消本次生成') return 'power-reject';
+                return '';
+            }
+
+            async function loadPowerConfirmSettings() {
+                try {
+                    const resp = await fetch('/api/user/power-confirm', {
+                        headers: { 'Authorization': `Bearer ${authToken.value}` }
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    const payload = data.data || {};
+                    const threshold = Number(payload.threshold);
+                    const fallback = Number(payload.default_threshold);
+                    powerConfirmDefault.value = Number.isFinite(fallback) ? fallback : 35;
+                    powerConfirmThreshold.value = Number.isFinite(threshold) ? threshold : powerConfirmDefault.value;
+                    powerConfirmThresholdInput.value = powerConfirmThreshold.value;
+                    powerConfirmIsCustom.value = !!payload.is_custom;
+                } catch (e) {
+                    console.warn('[算力确认] 加载设置失败:', e);
+                }
+            }
+
+            async function savePowerConfirmThreshold() {
+                const parsed = parseInt(powerConfirmThresholdInput.value, 10);
+                if (!Number.isFinite(parsed) || parsed < 0) {
+                    powerConfirmThresholdInput.value = powerConfirmThreshold.value;
+                    return;
+                }
+                try {
+                    const resp = await fetch('/api/user/power-confirm', {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${authToken.value}`
+                        },
+                        body: JSON.stringify({ threshold: parsed })
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    if (data.code !== 0) {
+                        throw new Error(data.message || data.detail || 'save failed');
+                    }
+                    const payload = data.data || {};
+                    powerConfirmThreshold.value = Number(payload.threshold);
+                    powerConfirmThresholdInput.value = powerConfirmThreshold.value;
+                    powerConfirmIsCustom.value = !!payload.is_custom;
+                    if (payload.default_threshold != null) {
+                        powerConfirmDefault.value = Number(payload.default_threshold);
+                    }
+                } catch (e) {
+                    console.warn('[算力确认] 保存失败:', e);
+                    powerConfirmThresholdInput.value = powerConfirmThreshold.value;
+                }
+            }
+
+            async function resetPowerConfirmThreshold() {
+                try {
+                    const resp = await fetch('/api/user/power-confirm', {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${authToken.value}` }
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    const payload = data.data || {};
+                    powerConfirmThreshold.value = Number(payload.threshold);
+                    powerConfirmThresholdInput.value = powerConfirmThreshold.value;
+                    powerConfirmIsCustom.value = !!payload.is_custom;
+                    if (payload.default_threshold != null) {
+                        powerConfirmDefault.value = Number(payload.default_threshold);
+                    }
+                } catch (e) {
+                    console.warn('[算力确认] 恢复默认失败:', e);
+                }
+            }
+
             function handleHumanVerification(verification) {
                 if (!verification) return;
 
@@ -3360,6 +3445,7 @@
                     timestamp: new Date().toISOString(),
                     verificationId: verification.verification_id,
                     verificationOptions: options,
+                    verificationType: verification.verification_type || '',
                     isVerification: true
                 });
                 scrollToBottom();
@@ -3522,6 +3608,7 @@
                             isVerification: true,
                             verificationOptions: vData.options || [],
                             verificationId: vData.verification_id || null,
+                            verificationType: vData.verification_type || '',
                             verificationStatus: vData.status || h.verification_status || null
                         };
                     }
@@ -4085,6 +4172,7 @@
                 // 加载算力余额并启动定时刷新
                 await loadComputingPower();
                 startComputingPowerRefresh();
+                await loadPowerConfirmSettings();
 
                 // 从后端加载会话列表
                 const backendSessions = await loadSessionsFromBackend();
@@ -6565,6 +6653,12 @@
                 toggleModelPanel,
                 toggleRatioPanel,
                 toggleSettingsPanel,
+                powerConfirmThresholdInput,
+                powerConfirmDefault,
+                powerConfirmIsCustom,
+                savePowerConfirmThreshold,
+                resetPowerConfirmThreshold,
+                verificationOptionClass,
                 toggleModelSelect,
                 toggleLLMModelSelect,
                 showMobileToolbar,
