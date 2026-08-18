@@ -154,6 +154,7 @@
             if(data.success && data.data && data.data.driver_status){
               driverStatusConfig = data.data.driver_status;
               console.log('[驱动状态] 已加载:', driverStatusConfig);
+              refreshVideoModelSelectsAfterDriverStatus();
             }
           }
           return;
@@ -177,6 +178,7 @@
             if(data.data.driver_status){
               driverStatusConfig = data.data.driver_status;
               console.log('[驱动状态] 已加载:', driverStatusConfig);
+              refreshVideoModelSelectsAfterDriverStatus();
             }
           }
         }
@@ -185,6 +187,25 @@
       }
     }
     
+    function refreshVideoModelSelectsAfterDriverStatus() {
+      if (typeof refreshShotGroupNodesModels === 'function') {
+        refreshShotGroupNodesModels();
+      }
+      if (typeof refreshShotFrameNodesModels === 'function') {
+        refreshShotFrameNodesModels();
+      }
+      if (typeof updateAllImageToVideoNodesSelects === 'function') {
+        updateAllImageToVideoNodesSelects();
+      }
+      if (state && state.nodes) {
+        state.nodes.forEach((node) => {
+          if (node.type === 'script' && typeof node.populateScriptVideoModelOptions === 'function') {
+            node.populateScriptVideoModelOptions();
+          }
+        });
+      }
+    }
+
     // 获取算力配置的函数（供节点使用）
     function getTaskComputingPowerConfig(){
       return taskComputingPowerConfig;

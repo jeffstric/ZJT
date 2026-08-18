@@ -319,10 +319,20 @@
           if(window.TaskConfig && window.TaskConfig.isLoaded()) {
             // 使用 getAllTasks 获取完整任务数据（含 provider 字段）
             const allTasks = window.TaskConfig.getAllTasks();
-            const tasks = allTasks.filter(t =>
+            let tasks = allTasks.filter(t =>
               !t.hidden &&
               (t.category === 'image_to_video' || t.categories?.includes('image_to_video'))
-            );
+            ).map(t => ({
+              ...t,
+              value: t.short_key || t.key,
+              taskType: t.id,
+            }));
+            if (typeof filterVideoOptionsByDriver === 'function') {
+              tasks = filterVideoOptionsByDriver(tasks);
+            } else if (window.TaskConfig.filterAvailableModelOptions) {
+              const driverStatus = typeof getDriverStatusConfig === 'function' ? getDriverStatusConfig() : {};
+              tasks = window.TaskConfig.filterAvailableModelOptions(tasks, driverStatus);
+            }
 
             // 从 providers 获取显示名称映射（动态来自后端，无硬编码）
             const providers = window.TaskConfig.getProviders() || {};
@@ -359,14 +369,19 @@
                 optGroup.appendChild(optEl);
               });
 
-              videoModelSelect.appendChild(optGroup);
+              if (optGroup.children.length) {
+                videoModelSelect.appendChild(optGroup);
+              }
             });
 
-            // 获取第一个可用值
-            if(providerOrder.length > 0 && providerGroups[providerOrder[0]].length > 0) {
-              const firstTask = providerGroups[providerOrder[0]][0];
-              const shortKey = firstTask.short_key || firstTask.key;
-              firstVideoModelValue = shortKey;
+            if (tasks.length > 0) {
+              firstVideoModelValue = tasks[0].value || tasks[0].short_key || tasks[0].key;
+            }
+            if (window.ModelCatalog) {
+              const valueHit = window.ModelCatalog.findTaskByTrack(tasks, 'video.image_to_video', null, 'value');
+              if (valueHit && (valueHit.value || valueHit.short_key)) {
+                firstVideoModelValue = valueHit.value || valueHit.short_key;
+              }
             }
           } else {
             // 回退：硬编码选项
@@ -397,6 +412,9 @@
             videoModelSelect.value = firstVideoModelValue;
             node.data.videoModel = firstVideoModelValue;
           }
+          if (typeof applyDriverStatusToSelect === 'function') {
+            applyDriverStatusToSelect(videoModelSelect, node.data.videoModel);
+          }
         }
 
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
@@ -414,6 +432,7 @@
 
       // 初始化视频模型
       populateScriptVideoModelOptions();
+      node.populateScriptVideoModelOptions = populateScriptVideoModelOptions;
       
       // 视频模型切换事件
       if(videoModelSelect) {
