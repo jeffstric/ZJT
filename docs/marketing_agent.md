@@ -87,7 +87,7 @@ Agent 模式下的「自定义」面板（`.marketing-settings-panel`）内容�
 3. 面板内模型列表使用 `.marketing-model-list`（`max-height: min(200px, 32vh)`）
 4. 图片/视频模型列表与 LLM 列表互斥展开（`toggleModelSelect` / `toggleLLMModelSelect`）
 5. 视口高度 ≤760px 或宽度 ≤720px 时改为视口内 `fixed` 面板；宽度 ≤499px 时全屏抽屉
-5. **资产库视图** (`.asset-library`)：通过左侧导航切换 `activeView` 为 `assets` 显示，展示用户历史生成结果（图片/视频），每页 60 条，支持分页。图片资产支持"生成视频"操作（`useAssetForVideo`），会将图片带入生成页输入区并自动切换到视频模式。图片放大弹窗中的"生成视频"按钮（`imageToVideo`）同样会自动切换回生成视图。
+5. **资产库视图** (`.asset-library`)：通过左侧导航切换 `activeView` 为 `assets` 显示，展示用户历史生成结果（图片/视频），每页 60 条，支持分页。视频预览用 `max-width/max-height: 100%` + `object-fit: contain`，竖屏不再按宽度 100% 撑开后裁掉上下；有 `9:16` 等竖屏比例时卡片按 `9 / 16` 增高，缺比例时用 `loadedmetadata` 的真实宽高兜底。图片资产支持"生成视频"操作（`useAssetForVideo`），会将图片带入生成页输入区并自动切换到视频模式。图片放大弹窗中的"生成视频"按钮（`imageToVideo`）同样会自动切换回生成视图。
 
 ## 核心功能详解
 
@@ -691,7 +691,7 @@ Agent 对话任务还会在 `/api/session/{session_id}/task` 入口同步本次�
 
 ## 灵感发布页（Inspiration）
 
-灵感页（`/marketing-inspiration`，由 `web/marketing_inspiration.html` + `web/js/marketing_inspiration.js` + `web/css/marketing_inspiration.css` 实现）展示已审核通过的公开作品（`marketing_publications` 表），支持瀑布流浏览、Lightbox 详情、"做同款/用作参考图"（携带参数跳转到生成页），以及上传参考图直接发起 Agent 创作。
+灵感页（`/marketing-inspiration`，由 `web/marketing_inspiration.html` + `web/js/marketing_inspiration.js` + `web/css/marketing_inspiration.css` 实现）展示已审核通过的公开作品（`marketing_publications` 表），支持瀑布流浏览、Lightbox 详情、"做同款/用作参考图"（携带参数跳转到生成页），以及上传参考图直接发起 Agent 创作。后台灵感审核（`web/admin.html` 营销审核表）视频缩略图用 `max-width/max-height: 100%` + `object-fit: contain`，竖屏用 `loadedmetadata` 把容器改成真实宽高比，避免固定 96×96 + `cover` 裁掉上下。
 
 > 首页（`web/index.html`）在营销模式下点击"开始创作"横幅（`handleStartCreation`）即跳转到本页（`/marketing-inspiration?user_id=...`），灵感页左侧导航再进入生成对话页 `/marketing-agent`。
 

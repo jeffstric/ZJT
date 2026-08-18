@@ -504,8 +504,10 @@
                             <tr v-for="item in marketingPublications.list" :key="item.id">
                                 <td>{{ item.id }}</td>
                                 <td>
-                                    <img v-if="item.media_type === 'image'" :src="item.cover_url || item.result_url" class="marketing-review-thumb" alt="">
-                                    <video v-else :src="item.result_url" class="marketing-review-thumb" controls muted></video>
+                                    <div class="marketing-review-thumb-wrap">
+                                        <img v-if="item.media_type === 'image'" :src="item.cover_url || item.result_url" alt="">
+                                        <video v-else :src="item.result_url" controls muted preload="metadata" @loadedmetadata="applyMarketingReviewVideoAspect"></video>
+                                    </div>
                                 </td>
                                 <td>
                                     <div style="font-weight:600;">{{ item.title }}</div>

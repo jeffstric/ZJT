@@ -1416,16 +1416,34 @@
                 return isVideoResultUrl(asset?.result_url || asset?.video_path || '');
             }
 
-            // 返回竖屏视频应使用的 aspect-ratio CSS 值（如 '9:16'）；非竖屏返回空串，沿用默认正方形容器
-            function verticalVideoAspectRatio(ratio) {
-                if (!ratio || typeof ratio !== 'string') return '';
-                const parts = ratio.split(':');
-                if (parts.length !== 2) return '';
+            // 竖屏视频卡片用 CSS aspect-ratio（必须是 `9 / 16`，不能写 `9:16`）
+            function parseAspectParts(ratio) {
+                if (!ratio || typeof ratio !== 'string') return null;
+                const normalized = ratio.trim().toLowerCase();
+                if (normalized === 'adaptive' || normalized === 'auto') return null;
+                const parts = normalized.split(/[:/x×]/);
+                if (parts.length !== 2) return null;
                 const w = parseFloat(parts[0]);
                 const h = parseFloat(parts[1]);
-                if (!w || !h) return '';
-                // 竖屏：高 > 宽，用原始比例让卡片自适应高度，视频完整无裁切
-                return h > w ? ratio : '';
+                if (!w || !h) return null;
+                return { w, h };
+            }
+
+            function assetPreviewStyle(asset) {
+                if (!isAssetVideo(asset)) return null;
+                const parts = parseAspectParts(asset?.ratio);
+                if (!parts || parts.h <= parts.w) return null;
+                return { aspectRatio: `${parts.w} / ${parts.h}` };
+            }
+
+            function applyAssetVideoAspect(event) {
+                const video = event && event.target;
+                if (!video || !video.videoWidth || !video.videoHeight) return;
+                if (video.videoHeight <= video.videoWidth) return;
+                const preview = video.closest('.asset-preview');
+                if (preview) {
+                    preview.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+                }
             }
 
             function formatAssetType(asset) {
@@ -6830,7 +6848,8 @@
                 assetsTotalPages,
                 loadAssets,
                 isAssetVideo,
-                verticalVideoAspectRatio,
+                assetPreviewStyle,
+                applyAssetVideoAspect,
                 formatAssetType,
                 formatAssetDate,
                 useAssetForVideo,

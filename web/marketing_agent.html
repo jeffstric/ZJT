@@ -768,8 +768,8 @@
                 </div>
                 <div v-else class="asset-grid">
                     <article v-for="asset in assetItems" :key="asset.id" class="asset-card">
-                        <div class="asset-preview" :style="verticalVideoAspectRatio(asset.ratio) ? { aspectRatio: verticalVideoAspectRatio(asset.ratio) } : null">
-                            <video v-if="isAssetVideo(asset)" :src="asset.result_url" controls preload="metadata"></video>
+                        <div class="asset-preview" :style="assetPreviewStyle(asset)">
+                            <video v-if="isAssetVideo(asset)" :src="asset.result_url" controls preload="metadata" @loadedmetadata="applyAssetVideoAspect"></video>
                             <img v-else :src="asset.result_url" :alt="asset.prompt || $t('generated_result_alt')" loading="lazy" decoding="async" @click="showImageModal(asset.result_url, asset.id, asset.prompt)">
                         </div>
                         <div class="asset-card-body">

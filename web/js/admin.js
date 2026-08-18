@@ -1915,6 +1915,17 @@ const AdminApp = {
             }
         },
 
+        applyMarketingReviewVideoAspect(event) {
+            const video = event && event.target;
+            if (!video || !video.videoWidth || !video.videoHeight) return;
+            if (video.videoHeight <= video.videoWidth) return;
+            const wrap = video.closest('.marketing-review-thumb-wrap');
+            if (wrap) {
+                wrap.style.height = 'auto';
+                wrap.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+            }
+        },
+
         getMarketingStatusText(status) {
             const map = {
                 pending: this.t('marketing_status_pending'),
