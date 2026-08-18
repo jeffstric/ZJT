@@ -281,8 +281,8 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 
 页面刷新或切换会话时，系统通过以下机制恢复未完成的任务：
 
-1. **`__PENDING_TASK__` 标记**：后端在 `chat_messages` 表中保存 `__PENDING_TASK__:{type}:{project_ids}` 标记（`message_type='pending_task'`）
-2. **`recoverPendingTasks()`**：加载历史消息后检测标记，轮询任务状态；完成时优先替换 pending 消息（通过 `PUT /session/{id}/message/{message_id}`），替换失败则 fallback 追加新消息
+1. **`__PENDING_TASK__` 标记**：后端在 `chat_messages` 表中保存 `__PENDING_TASK__:{type}:{project_ids}` 标记（`message_type='pending_task'`）。这是内部恢复用行，前端解析后标为 `_isPendingTask`，模板不渲染；切回会话时不会把 `__PENDING_TASK__` 交给 Markdown（否则两侧 `__` 会被收成加粗的 `PENDING_TASK`）
+2. **`recoverPendingTasks()`**：加载历史后先恢复 pending 轮询，再跑工作总结文本兜底，避免同一 `project_ids` 再插一条「生成中」。完成时优先替换 pending 消息（通过 `PUT /session/{id}/message/{message_id}`），替换失败则 fallback 追加新消息
 3. **`sessionActiveTaskId` 注册表**：记录每个 session 的活跃 Agent task_id，切换回来时检查任务状态并重连 SSE
 4. **`directGenerationTasks` / Agent 轮询注册表**：直接生成任务在内存中按任务实例跟踪 project_ids；Agent 图片/视频轮询按 `sessionId:type:project_ids` 去重，支持会话内恢复和并发任务隔离
 5. **并发安全**：`clean-pending-tasks` 支持按 `task_type` + `project_ids` 精确清理，并发任务互不影响。轮询和 `recoverPendingTasks(sessionId)` 的 fallback 追加也必须显式传入原始 sessionId，避免用户切换会话后把上一会话的图片/视频结果写入当前会话。

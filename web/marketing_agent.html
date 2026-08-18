@@ -167,8 +167,8 @@
                         </div>
                     </div>
 
-                    <!-- 消息 -->
-                    <div class="message" :class="msg.role">
+                    <!-- 消息：内部 pending 标记 / system 行不展示给用户 -->
+                    <div class="message" :class="msg.role" v-if="!msg._isPendingTask && msg.role !== 'system'">
                         <div class="message-avatar">{{ msg.role === 'user' ? '👤' : '🤖' }}</div>
                         <div class="message-content">
                             <!-- 多模态图片 -->

@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const html = fs.readFileSync(
-  path.join(__dirname, '../../web/marketing_agent.html'),
+  path.join(__dirname, '../../web/js/marketing_agent.js'),
   'utf8'
 );
 
@@ -81,9 +81,29 @@ assert.equal(
   'generated image cards should render through proxyImageUrl so expired CDN signatures refresh automatically'
 );
 assert.equal(
-  generatedRows.includes("document.getElementById('imgModalImg').src='${displayUrl}'"),
+  generatedRows.includes('proxyDownloadUrl(url)'),
+  true,
+  'generated video cards should render through proxyDownloadUrl so expired CDN signatures refresh automatically'
+);
+assert.equal(
+  generatedRows.includes("document.getElementById('imgModalImg').src='${escapeHtmlAttr(displayUrl)}'"),
   true,
   'generated image modal should open the proxied display URL'
+);
+
+const imageResultStart = html.indexOf('function hasGeneratedImageResult');
+const imageResultEnd = html.indexOf('function maybeRecoverVideoTaskFromAssistantText', imageResultStart);
+assert.notEqual(imageResultStart, -1, 'image result checker should exist');
+const imageResult = html.slice(imageResultStart, imageResultEnd);
+assert.equal(
+  imageResult.includes('if (urls.length > 0)'),
+  true,
+  'when result URLs are known, duplicate detection must match those URLs instead of loose path fragments'
+);
+assert.equal(
+  imageResult.includes("content.includes(`/${id}`)"),
+  false,
+  'image result checker must not treat date path fragments like /2026-08-18 as a matching project id'
 );
 
 const imagePollStart = html.indexOf('function pollAgentImageStatus');
@@ -127,6 +147,30 @@ assert.equal(
   pendingRecovery.includes("appendMessageToBackend('assistant', content, sessionId)"),
   true,
   'pending task recovery fallback should append completed results to the restored session'
+);
+
+const proxyRuntimeStart = html.indexOf('function proxyImageUrl');
+const proxyRuntimeEnd = html.indexOf('// 渲染 Markdown', proxyRuntimeStart);
+assert.notEqual(proxyRuntimeStart, -1, 'proxy helpers should exist for runtime check');
+const proxyRuntime = html.slice(proxyRuntimeStart, proxyRuntimeEnd);
+const runtimeWindow = { location: { origin: 'http://localhost:12000' } };
+const runtimeProxy = new Function('window', `${proxyRuntime}; return { proxyImageUrl, proxyDownloadUrl };`);
+const { proxyImageUrl, proxyDownloadUrl } = runtimeProxy(runtimeWindow);
+const expiredCdn = 'http://cdn.perseids.cn/upload/cache/2026-06-30/xxx.png?e=1&token=expired';
+assert.equal(
+  proxyImageUrl(expiredCdn).startsWith('/api/proxy-image?url='),
+  true,
+  'expired CDN image URLs must be wrapped by the refresh proxy'
+);
+assert.equal(
+  proxyDownloadUrl('http://cdn.perseids.cn/upload/cache/2026-06-30/xxx.mp4?e=1&token=expired').startsWith('/api/download?url='),
+  true,
+  'expired CDN video URLs must be wrapped by the download proxy'
+);
+assert.equal(
+  proxyImageUrl('/upload/cache/2026-08-13/67_demo.jpg'),
+  '/upload/cache/2026-08-13/67_demo.jpg',
+  'same-origin local cache paths should stay unchanged'
 );
 
 console.log('marketing agent image poll recovery tests passed');

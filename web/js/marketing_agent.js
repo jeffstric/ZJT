@@ -332,15 +332,17 @@
                 if (type === 'image') {
                     return rows.map(row => {
                         const url = row.result_url || '';
+                        const displayUrl = proxyImageUrl(url);
                         const aiToolId = row.ai_tool_id || '';
                         const safeTitle = escapeHtmlAttr(inputText.value || '');
-                        return `<div class="generated-image-wrapper generated-result-card" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(url)}';window.setModalImageInfo && window.setModalImageInfo('${aiToolId}', '${safeTitle}')"><img src="${escapeHtmlAttr(url)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
+                        return `<div class="generated-image-wrapper generated-result-card" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(displayUrl)}';window.setModalImageInfo && window.setModalImageInfo('${aiToolId}', '${safeTitle}')"><img src="${escapeHtmlAttr(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
                     }).join('');
                 }
                 if (type === 'video') {
                     return rows.map(row => {
                         const url = row.result_url || '';
-                        return `<div class="generated-result-card"><video src="${escapeHtmlAttr(url)}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video><div class="generated-result-actions">${buildPublishButton(row.ai_tool_id, inputText.value)}</div></div>`;
+                        const displayUrl = proxyDownloadUrl(url);
+                        return `<div class="generated-result-card"><video src="${escapeHtmlAttr(displayUrl)}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video><div class="generated-result-actions">${buildPublishButton(row.ai_tool_id, inputText.value)}</div></div>`;
                     }).join('');
                 }
                 return '';
@@ -415,14 +417,26 @@
                 });
             }
 
+            function contentHasGeneratedTaskId(content, id) {
+                if (!id) return false;
+                const sid = String(id);
+                return content.includes(`setModalImageInfo('${sid}'`)
+                    || content.includes(`setModalImageInfo("${sid}"`)
+                    || content.includes(`publishGeneratedResult("${sid}"`)
+                    || content.includes(`publishGeneratedResult(&quot;${sid}&quot;`)
+                    || content.includes(`/${sid}_`);
+            }
+
             function hasGeneratedImageResult(projectIds, imageUrls = []) {
                 const ids = Array.isArray(projectIds) ? projectIds.map(String) : [String(projectIds || '')];
                 const urls = Array.isArray(imageUrls) ? imageUrls.filter(Boolean) : [];
                 return messages.value.some(msg => {
                     const content = msg?.content || '';
                     if (msg?.role !== 'ai' || !content.includes('generated-image-wrapper')) return false;
-                    if (urls.some(url => content.includes(url))) return true;
-                    return ids.some(id => id && (content.includes(`${id}_`) || content.includes(`/${id}`)));
+                    if (urls.length > 0) {
+                        return urls.some(url => url && content.includes(url));
+                    }
+                    return ids.some(id => contentHasGeneratedTaskId(content, id));
                 });
             }
 
@@ -444,8 +458,10 @@
                 return messages.value.some(msg => {
                     const content = msg?.content || '';
                     if (msg?.role !== 'ai' || !content.includes('<video')) return false;
-                    if (urls.some(url => content.includes(url))) return true;
-                    return ids.some(id => id && (content.includes(`${id}_`) || content.includes(`/${id}`)));
+                    if (urls.length > 0) {
+                        return urls.some(url => url && content.includes(url));
+                    }
+                    return ids.some(id => contentHasGeneratedTaskId(content, id));
                 });
             }
 
@@ -1240,15 +1256,15 @@
                 counters[media.type] = (counters[media.type] || 0) + 1;
                 const label = getMediaPreviewLabel(media.type, counters[media.type]);
                 if (media.type === 'image') {
-                    const displayUrl = media.thumbnailUrl || media.url;  // 显示用缩略图
-                    const fullUrl = media.url;  // 点击查看原图
+                    const displayUrl = proxyImageUrl(media.thumbnailUrl || media.url);  // 显示用缩略图
+                    const fullUrl = proxyImageUrl(media.url);  // 点击查看原图
                     return `${label} <img src="${escapeHtmlAttr(displayUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(fullUrl)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${label}">`;
                 }
                 if (media.type === 'video') {
-                    return `${label} <video src="${escapeHtmlAttr(media.url)}" style="max-height:160px;border-radius:8px;" controls muted></video>`;
+                    return `${label} <video src="${escapeHtmlAttr(proxyDownloadUrl(media.url))}" style="max-height:160px;border-radius:8px;" controls muted></video>`;
                 }
                 if (media.type === 'audio') {
-                    return `${label} <audio src="${escapeHtmlAttr(media.url)}" controls style="width:100%;max-height:40px;border-radius:8px;"></audio>`;
+                    return `${label} <audio src="${escapeHtmlAttr(proxyDownloadUrl(media.url))}" controls style="width:100%;max-height:40px;border-radius:8px;"></audio>`;
                 }
                 return '';
             }
@@ -1466,19 +1482,54 @@
                 return `${d.getMonth() + 1}/${d.getDate()}`;
             }
 
-            // 图片/媒体 URL 代理辅助函数（幂等：已是同源 URL 则原样返回）
+            // 图片/媒体 URL 代理辅助函数（幂等：已是同源或已代理 URL 则原样返回）
+            // 外部图床签名 URL 走 /api/proxy-image，由后端重新签名或代理，避免过期后无法显示。
             function proxyImageUrl(url) {
                 if (!url) return url;
-                // 同源路径直接返回
-                if (url.startsWith('/') && !url.startsWith('//')) return url;
-                return url;
+                const rawUrl = String(url).trim();
+                if (!rawUrl) return rawUrl;
+                if (rawUrl.startsWith('/api/proxy-image')) return rawUrl;
+                if (rawUrl.startsWith('data:') || rawUrl.startsWith('blob:')) return rawUrl;
+                if (rawUrl.startsWith('/') && !rawUrl.startsWith('//')) return rawUrl;
+                try {
+                    const parsed = new URL(rawUrl, window.location.origin);
+                    if (parsed.origin === window.location.origin) {
+                        return parsed.pathname + parsed.search + parsed.hash;
+                    }
+                    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                        return `/api/proxy-image?url=${encodeURIComponent(parsed.href)}`;
+                    }
+                } catch (e) {
+                    if (/^https?:\/\//i.test(rawUrl)) {
+                        return `/api/proxy-image?url=${encodeURIComponent(rawUrl)}`;
+                    }
+                }
+                return rawUrl;
             }
 
-            function proxyDownloadUrl(url) {
+            function proxyDownloadUrl(url, filename) {
                 if (!url) return url;
-                // 同源路径直接返回
-                if (url.startsWith('/') && !url.startsWith('//')) return url;
-                return url;
+                const rawUrl = String(url).trim();
+                if (!rawUrl) return rawUrl;
+                if (rawUrl.startsWith('/api/download') || rawUrl.startsWith('/api/proxy-image')) return rawUrl;
+                if (rawUrl.startsWith('data:') || rawUrl.startsWith('blob:')) return rawUrl;
+                if (rawUrl.startsWith('/') && !rawUrl.startsWith('//')) return rawUrl;
+                try {
+                    const parsed = new URL(rawUrl, window.location.origin);
+                    if (parsed.origin === window.location.origin) {
+                        return parsed.pathname + parsed.search + parsed.hash;
+                    }
+                    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                        const fn = filename ? `&filename=${encodeURIComponent(filename)}` : '';
+                        return `/api/download?url=${encodeURIComponent(parsed.href)}${fn}`;
+                    }
+                } catch (e) {
+                    if (/^https?:\/\//i.test(rawUrl)) {
+                        const fn = filename ? `&filename=${encodeURIComponent(filename)}` : '';
+                        return `/api/download?url=${encodeURIComponent(rawUrl)}${fn}`;
+                    }
+                }
+                return rawUrl;
             }
 
             // 渲染 Markdown
@@ -1537,9 +1588,13 @@
                     // 提取 src 属性
                     const srcMatch = attrs.match(/src="([^"]*)"/);
                     const src = srcMatch ? srcMatch[1] : '';
+                    const displaySrc = proxyImageUrl(src);
+                    const proxiedAttrs = srcMatch
+                        ? attrs.replace(/src="[^"]*"/, `src="${displaySrc}"`)
+                        : attrs;
 
                     // 添加样式和点击事件
-                    return `<img${attrs} style="max-width:300px;max-height:200px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(src)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('image_alt')}">`;
+                    return `<img${proxiedAttrs} style="max-width:300px;max-height:200px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(displaySrc)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('image_alt')}">`;
                 });
 
 
@@ -1552,6 +1607,9 @@
                     const proxied = proxyImageUrl(u).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                     return `imgModalImg').src='${proxied}'`;
                 });
+                html = html.replace(/(<img\b(?=[^>]*\bgenerated-image\b)(?=[^>]*\ssrc="))([^>]*?)\ssrc="([^"]*)"/gi, (_m, prefix, attrs, src) =>
+                    `${prefix}${attrs} src="${proxyImageUrl(src)}"`
+                );
 
                 // 兜底重新签名：<video>/<audio>/<source> 的原始 src。
                 // 同因：commit 0bf53fe 之前生成的视频/音频以已渲染 HTML 入库，src 写死的是
@@ -3621,12 +3679,37 @@
                 return true;
             }
 
+            function unwrapHistoryText(content) {
+                if (content == null) return '';
+                if (typeof content === 'object') {
+                    return typeof content.text === 'string' ? content.text : '';
+                }
+                const raw = String(content);
+                const trimmed = raw.trim();
+                if (trimmed.startsWith('{')) {
+                    try {
+                        const parsed = JSON.parse(trimmed);
+                        if (parsed && typeof parsed.text === 'string') return parsed.text;
+                    } catch (e) { /* 普通文本 */ }
+                }
+                return raw;
+            }
+
             function parseHistoryMessage(h) {
                 // 检测 __PENDING_TASK__ 标记（后端保存的待处理任务）
-                // content 可能是字符串或 { text: "..." } 对象
-                const rawContent = typeof h.content === 'string' ? h.content : (h.content?.text || '');
-                const pendingMatch = rawContent.match(/^__PENDING_TASK__:(image_task_submitted|video_task_submitted):(.+)$/);
-                if (pendingMatch) {
+                // content 可能是纯文本、JSON 字符串或 { text: "..." } 对象
+                const rawContent = unwrapHistoryText(h.content);
+                const pendingMatch = rawContent.match(/__PENDING_TASK__:(image_task_submitted|video_task_submitted):(.+)$/);
+                if (pendingMatch || h.message_type === 'pending_task') {
+                    let projectIds = [];
+                    if (pendingMatch) {
+                        try { projectIds = JSON.parse(pendingMatch[2]); } catch (e) { projectIds = []; }
+                    } else {
+                        projectIds = extractProjectIdsFromText(rawContent);
+                    }
+                    const eventType = pendingMatch
+                        ? pendingMatch[1]
+                        : (/video_task_submitted/i.test(rawContent) ? 'video_task_submitted' : 'image_task_submitted');
                     return {
                         _uid: generateMsgUid(),
                         _dbMessageId: h.message_id || null,  // 保存数据库消息 ID，用于后续替换
@@ -3634,8 +3717,8 @@
                         content: rawContent,
                         timestamp: h.timestamp,
                         _isPendingTask: true,
-                        _taskType: pendingMatch[1] === 'image_task_submitted' ? 'image' : 'video',
-                        _projectIds: (function() { try { return JSON.parse(pendingMatch[2]); } catch(e) { return []; } })()
+                        _taskType: eventType === 'image_task_submitted' ? 'image' : 'video',
+                        _projectIds: Array.isArray(projectIds) ? projectIds : []
                     };
                 }
                 // 处理 verification 消息：还原为前端渲染格式
@@ -3698,7 +3781,7 @@
                     const vidMatches = [...finalContent.matchAll(vidTagRegex)];
                     finalContent = finalContent.replace(/\[视频\d+]（URL:[\s\S]*?）\n?/g, '');
                     for (const vm of vidMatches) {
-                        finalContent += `\n\n<video src="${escapeHtml(vm[1])}" style="max-height:160px;border-radius:8px;" controls preload="metadata"></video>`;
+                        finalContent += `\n\n<video src="${escapeHtml(proxyDownloadUrl(vm[1]))}" style="max-height:160px;border-radius:8px;" controls preload="metadata"></video>`;
                     }
 
                     // 提取音频标签 → <audio>
@@ -3706,7 +3789,7 @@
                     const audMatches = [...finalContent.matchAll(audTagRegex)];
                     finalContent = finalContent.replace(/\[音频\d+]（URL:[\s\S]*?）\n?/g, '');
                     for (const am of audMatches) {
-                        finalContent += `\n\n<audio src="${escapeHtml(am[1])}" controls preload="metadata" style="width:100%;max-height:40px;border-radius:8px;"></audio>`;
+                        finalContent += `\n\n<audio src="${escapeHtml(proxyDownloadUrl(am[1]))}" controls preload="metadata" style="width:100%;max-height:40px;border-radius:8px;"></audio>`;
                     }
 
                     // 清除多余空行
@@ -3714,8 +3797,8 @@
                     for (let imgIdx = 0; imgIdx < images.length; imgIdx++) {
                         const imgUrl = images[imgIdx];
                         // 优先使用原始 HTTP URL，避免传递 base64 data URL
-                        const fullUrl = originalUrlMap[imgUrl] || imgUrl;
-                        const displayUrl = thumbnailMap[imgIdx] || fullUrl;
+                        const fullUrl = proxyImageUrl(originalUrlMap[imgUrl] || imgUrl);
+                        const displayUrl = proxyImageUrl(thumbnailMap[imgIdx] || originalUrlMap[imgUrl] || imgUrl);
                         finalContent += `\n\n<img src="${escapeHtml(displayUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(fullUrl)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('reference_image_alt')}">`;
                     }
                     if (h.role === 'user' && window.AgentMessageDedupe?.formatAgentUserMessageForDisplay) {
@@ -3737,8 +3820,8 @@
                 if (imageUrlMatches.length > 0) {
                     renderedContent = renderedContent.replace(/\[图片\d+]（URL:[\s\S]*?）\n?/g, '');
                     for (const m of imageUrlMatches) {
-                        const fullUrl = m[1];
-                        const thumbUrl = m[2] || fullUrl;
+                        const fullUrl = proxyImageUrl(m[1]);
+                        const thumbUrl = proxyImageUrl(m[2] || m[1]);
                         renderedContent += `\n\n<img src="${escapeHtml(thumbUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(fullUrl)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('reference_image_alt')}">`;
                     }
                 }
@@ -3749,7 +3832,7 @@
                 if (videoUrlMatches.length > 0) {
                     renderedContent = renderedContent.replace(/\[视频\d+]（URL:[\s\S]*?）\n?/g, '');
                     for (const m of videoUrlMatches) {
-                        const videoUrl = m[1];
+                        const videoUrl = proxyDownloadUrl(m[1]);
                         renderedContent += `\n\n<video src="${escapeHtml(videoUrl)}" style="max-height:160px;border-radius:8px;" controls preload="metadata"></video>`;
                     }
                 }
@@ -3760,7 +3843,7 @@
                 if (audioUrlMatches.length > 0) {
                     renderedContent = renderedContent.replace(/\[音频\d+]（URL:[\s\S]*?）\n?/g, '');
                     for (const m of audioUrlMatches) {
-                        const audioUrl = m[1];
+                        const audioUrl = proxyDownloadUrl(m[1]);
                         renderedContent += `\n\n<audio src="${escapeHtml(audioUrl)}" controls preload="metadata" style="width:100%;max-height:40px;border-radius:8px;"></audio>`;
                     }
                 }
@@ -3958,10 +4041,9 @@
                 const history = await loadSessionHistory(sessionId);
                 messages.value = normalizeLoadedMessages(history.filter(filterHistoryMessage).map(parseHistoryMessage));
                 restorePendingVerificationFromHistory(history);
-                recoverVideoTasksFromAssistantMessages();
-
-                // 恢复活跃任务（从历史中的 __PENDING_TASK__ 标记恢复）
+                // 先按 pending 标记恢复轮询，避免工作总结兜底再插一条重复的「生成中」
                 await recoverPendingTasks(sessionId);
+                recoverVideoTasksFromAssistantMessages();
 
                 // 恢复活跃 Agent 任务流（AI 正在回复时切换对话的场景）
                 const activeTaskId = sessionActiveTaskId[sessionId];
@@ -4229,8 +4311,8 @@
                     if (history.length > 0) {
                         messages.value = normalizeLoadedMessages(history.filter(filterHistoryMessage).map(parseHistoryMessage));
                         restorePendingVerificationFromHistory(history);
-                        recoverVideoTasksFromAssistantMessages();
                         await recoverPendingTasks(latestSession.id);
+                        recoverVideoTasksFromAssistantMessages();
                     }
                 } else {
                     // 没有历史会话，自动新建一个
