@@ -72,33 +72,42 @@ allowed-tools: Read
 
 读取 `read_world()` 返回的 `visual_style`（画面风格）和 `composition_preference`（构图倾向）字段。
 
-**重要背景**：这两个字段的值会作为 suffix（后缀提示词）传入生图和生视频模型，直接影响生成效果。
+**重要背景**：这两个字段的值会作为 suffix（后缀提示词）传入生图和生视频模型，直接影响生成效果。`visual_style` 的判定标准必须与画风识别智能体（`/api/recognize-style`）以及 `plot-analyzer` 保持一致。
 
 **A. 精简性检查**：
 
-- 内容必须精简、凝练，建议控制在 **50字以内**
+- 内容必须精简、凝练：`visual_style` 建议 **8~20 字**，最多不超过 **50 字**；`composition_preference` 建议控制在 **50 字以内**
 - 只保留对生图模型有用的核心描述，去掉冗余解释性文字
+- `visual_style` 只回答「是什么风格？」——画风大类 + 具体风格关键词。**不得**混入色调/饱和度/光泽、镜头角度/构图/景别、剧情、角色身份、场景叙事
+- `composition_preference` 只回答「怎么拍？」——镜头角度、构图方式、镜头运动、景别。**不得**混入色调/饱和度或画风大类词汇
 - **禁止出现以下关键词**（这些词会误导生图模型生成多张图片而非单张）：
   - 多宫格、分镜图、多格、grid、collage、montage、拼图、拼贴、四格、九格、四宫格、九宫格
   - 分镜、故事板（当用于描述画面格式而非内容时）
+  - 对比图、时间线、序列帧
 - **禁止出现描述画面数量的词汇**：如"生成多张"、"每张"、"各一张"
 
 **B. 一致性检查**：
 
 - `visual_style` 和 `composition_preference` 在风格维度上不能互相矛盾
 - **矛盾示例**（必须标记为问题）：
-  - visual_style 写"写实风格、照片级真实"，但 composition_preference 写"动漫风格构图、二次元" → 矛盾
-  - visual_style 写"水彩画风格"，但 composition_preference 写"赛博朋克霓虹光效" → 矛盾
-  - visual_style 写"极简主义"，但 composition_preference 写"华丽巴洛克构图" → 矛盾
+  - visual_style 写"电影级写实风格"，但 composition_preference 写"动漫分镜、二次元格子" → 矛盾
+  - visual_style 写"日系新海诚动漫风格"，但 composition_preference 写"纪实摄影镜头、新闻抓拍" → 矛盾
+  - visual_style 写"极简主义写实风格"，但 composition_preference 写"华丽巴洛克构图" → 矛盾
 - **一致示例**（通过）：
-  - visual_style: "电影级写实风格"，composition_preference: "三分法构图，浅景深，自然光" → 一致
-  - visual_style: "日系动漫风格"，composition_preference: "中心构图，柔和色调，简约背景" → 一致
+  - visual_style: "电影级写实风格"，composition_preference: "三分法构图，浅景深" → 一致
+  - visual_style: "日系新海诚动漫风格"，composition_preference: "中心构图，平视中近景" → 一致
 
 **C. 有效性检查**：
 
 - `visual_style` 不为空，且是可被 AI 生图模型理解的描述
 - `composition_preference` 不为空，且是可被 AI 生图模型理解的描述
+- `visual_style` 必须能判定画风大类（二选一）：
+  - 写实风格类：关键词含写实/真实/照片/摄影/电影感
+  - 动漫/漫画风格类：关键词含动漫/二次元/漫画/卡通
+- 大类关键词不得交叉：写实不得含「动漫/漫画/二次元」；动漫不得含「写实/照片/摄影」
 - 两者不应过于笼统（如"好看的"、"合适的"），应包含具体风格描述
+- `visual_style` 正例：`现代都市写实风格`、`电影级写实风格`、`日系新海诚动漫风格`、`美漫:漫威风`
+- `visual_style` 反例：`现代都市写实风格，高饱和度，低角度镜头`（混入了色彩和构图）
 
 **如果发现问题**：
 - 明确列出问题类型（精简性/一致性/有效性）
