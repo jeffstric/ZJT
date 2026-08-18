@@ -73,6 +73,7 @@ class VideoResolution:
 SEEDANCE_480P_PRICE_MULTIPLIER = 200880 / 432000
 SEEDANCE_2_0_1080P_PRICE_MULTIPLIER = (972000 * 31) / (432000 * 28)
 SEEDANCE_2_0_4K_PRICE_MULTIPLIER = (3888000 * 16) / (432000 * 28)
+SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78
 
 # MiniMax H3 分辨率算力倍率（基价为 720P，480P 约为 720P 的 42%）
 MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
@@ -91,10 +92,11 @@ SEEDANCE_2_0_VIDEO_RESOLUTIONS = [
     {'value': VideoResolution.P4K, 'label': VideoResolution.P4K},
 ]
 
-# Seedance 2.5 仅支持 480P / 720P（不支持 1080P / 4K）
+# Seedance 2.5 支持 480P / 720P / 1080P（不支持 4K）
 SEEDANCE_2_5_VIDEO_RESOLUTIONS = [
     {'value': VideoResolution.P480, 'label': VideoResolution.P480},
     {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+    {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
 ]
 
 
@@ -544,9 +546,12 @@ class UnifiedTaskConfig:
         # 添加参考音频和视频支持标记
         result['supports_ref_audio_video'] = self.supports_ref_audio_video
 
-        # 是否走人脸遮盖预处理（seedance 2.0 系列），前端据此显隐「是否处理人脸」选项
+        # 是否走人脸遮盖预处理（seedance 2.0 / 2.5），前端据此显隐「是否处理人脸」选项
         # 单一事实来源：模块级 SEEDANCE_FACE_MASK_DRIVER_KEYS
         result['needs_face_mask'] = self.key in SEEDANCE_FACE_MASK_DRIVER_KEYS
+
+        # 是否允许营销视频克隆（单一事实来源：VIDEO_CLONE_DRIVER_KEYS）
+        result['supports_video_clone'] = self.key in VIDEO_CLONE_DRIVER_KEYS
 
         # 添加算力修饰符
         if self.power_modifiers:
@@ -1044,6 +1049,7 @@ class DriverImplementation:
     SEEDANCE_2_0_FAST_HUIMENGI_V1 = 'seedance_2_0_fast_huimengi_v1'
     SEEDANCE_2_0_HUIMENGI_V1 = 'seedance_2_0_huimengi_v1'
     SEEDANCE_2_0_MINI_HUIMENGI_V1 = 'seedance_2_0_mini_huimengi_v1'
+    SEEDANCE_2_5_HUIMENGI_V1 = 'seedance_2_5_huimengi_v1'
 
     # GPT Image
     DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
@@ -1157,8 +1163,9 @@ class DriverImplementationId:
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 66
 
-    # Seedance 2.5 火山引擎国内版
-    SEEDANCE_2_5_VOLCENGINE_V1 = 67
+    # Seedance 2.5：不可与 MiniMax H3 参考生视频共用 67，否则落库后再反查会变成 H3 驱动
+    SEEDANCE_2_5_VOLCENGINE_V1 = 68
+    SEEDANCE_2_5_HUIMENGI_V1 = 69
 
 
 # implementation 字符串到 ID 的映射
@@ -1227,6 +1234,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_HUIMENGI_V1,
     'seedance_2_0_mini_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_MINI_HUIMENGI_V1,
     'seedance_2_5_volcengine_v1': DriverImplementationId.SEEDANCE_2_5_VOLCENGINE_V1,
+    'seedance_2_5_huimengi_v1': DriverImplementationId.SEEDANCE_2_5_HUIMENGI_V1,
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
@@ -1321,6 +1329,89 @@ SEEDANCE_FACE_MASK_DRIVER_KEYS = frozenset({
     DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
 })
+
+
+# ============ 营销视频克隆允许的任务 DriverKey 集合 ============
+# 单一事实来源：前端 supports_video_clone、智能体 [用户视频偏好]、SOP 白名单均以此为准
+# 让某模型进入视频克隆白名单，只需在此追加对应 DriverKey
+VIDEO_CLONE_DRIVER_KEYS = frozenset({
+    DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
+    DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+})
+
+# 用户选了同系列但不支持参考视频的模型时，视频克隆落到可克隆型号
+VIDEO_CLONE_FAMILY_FALLBACK = {
+    DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO: DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+}
+
+
+def resolve_video_clone_task_config(task_id):
+    """将用户选择的视频模型解析为可做视频克隆/参考生视频的任务配置。
+
+    - 已在 VIDEO_CLONE_DRIVER_KEYS 中：原样返回
+    - 同系列有克隆型号（如 MiniMax H3 首尾帧 → MiniMax H3 参考生视频）：返回克隆型号
+    - 其他：返回原配置（调用方再做能力校验）
+    """
+    if task_id in (None, ''):
+        return None
+    try:
+        normalized_id = int(task_id)
+    except (TypeError, ValueError):
+        return None
+    config = UnifiedConfigRegistry.get_by_id(normalized_id)
+    if config is None:
+        return None
+    if config.key in VIDEO_CLONE_DRIVER_KEYS:
+        return config
+    fallback_key = VIDEO_CLONE_FAMILY_FALLBACK.get(config.key)
+    if fallback_key:
+        fallback = UnifiedConfigRegistry.get_by_key(fallback_key)
+        if fallback is not None:
+            return fallback
+    return config
+
+
+def pick_request_video_clone_snapshot(snapshots: Optional[Dict[str, Any]], determined_mode: str):
+    """从任务快照里选出本次应使用的视频模型。
+
+    参考生视频槽若只是页面初始化留下的默认值（model_source=preference），
+    而用户刚在界面选了可克隆模型（model_source=request），优先用后者。
+    """
+    if not snapshots:
+        return None
+    r2v = snapshots.get('video.reference_to_video')
+    i2v = snapshots.get('video.image_to_video')
+    t2v = snapshots.get('video.text_to_video')
+    if determined_mode == 'reference_to_video':
+        for snap in (r2v, i2v, t2v):
+            if not isinstance(snap, dict) or snap.get('model_source') != 'request':
+                continue
+            if snap.get('task_id') in (None, ''):
+                continue
+            resolved = resolve_video_clone_task_config(snap.get('task_id'))
+            if resolved is not None and resolved.key in VIDEO_CLONE_DRIVER_KEYS:
+                picked = dict(snap)
+                picked['task_id'] = int(resolved.id)
+                picked['model_key'] = resolved.key
+                picked['model_name'] = resolved.name
+                return picked
+        if isinstance(r2v, dict):
+            return dict(r2v)
+        if isinstance(i2v, dict):
+            return dict(i2v)
+        if isinstance(t2v, dict):
+            return dict(t2v)
+        return None
+    if determined_mode == 'text_to_video':
+        if isinstance(t2v, dict):
+            return dict(t2v)
+        return dict(i2v) if isinstance(i2v, dict) else None
+    if isinstance(i2v, dict):
+        return dict(i2v)
+    return dict(t2v) if isinstance(t2v, dict) else None
 
 
 # ============ Agent 相关常量 ============
@@ -2050,7 +2141,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         driver_name=DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
         implementations=[
-            DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,  # 仅火山引擎国内版
+            DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
+            DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
@@ -2068,6 +2160,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
                 values={
                     VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
                     VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: SEEDANCE_2_5_1080P_PRICE_MULTIPLIER,
                 },
                 default=1.0
             )
@@ -2960,6 +3053,19 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         required_config_keys=['huimengi.api_key'],
         supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_5_huimengi_v1',
+        display_name='huimengi',
+        driver_class='Seedance25HuimengiV1Driver',
+        default_computing_power={5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
+        enabled=True,
+        description='huimengi 网关 Seedance 2.5 图生视频接口',
+        sort_order=11040.0,
+        required_config_keys=['huimengi.api_key'],
+        supports_auto_face=True,
+        supported_video_resolutions=SEEDANCE_2_5_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(

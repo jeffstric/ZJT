@@ -564,7 +564,10 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.SEEDANCE_2_0_MINI_KKIDC_V1,                # kkidc 网关
         DriverImplementation.SEEDANCE_2_0_MINI_HUIMENGI_V1,             # huimengi 网关
     ],
-    DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO: DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,  # 仅火山引擎国内版
+    DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO: [
+        DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,  # 火山引擎国内版
+        DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,    # huimengi 网关
+    ],
 
     # GPT Image 相关驱动
     DriverKey.GPT_IMAGE_2: [

@@ -352,6 +352,8 @@
         supports_ref_audio_video: task.supports_ref_audio_video === true,
         // 是否走人脸遮盖预处理（seedance 2.0 系列），前端据此显隐「是否处理人脸」选项
         needs_face_mask: task.needs_face_mask === true,
+        // 是否允许营销视频克隆（单一事实来源：后端 VIDEO_CLONE_DRIVER_KEYS）
+        supports_video_clone: task.supports_video_clone === true,
         // 多参考图模式最大图片数量
         max_multi_ref_images: task.max_multi_ref_images || 5,
         // 视频分辨率配置

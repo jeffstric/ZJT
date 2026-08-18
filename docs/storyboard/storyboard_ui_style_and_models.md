@@ -99,7 +99,7 @@ bootstrap 中实现优先级（仅首次无保存值时）：
 | 控件 | 说明 |
 |------|------|
 | **默认视频模型** | 仅 **支持首帧/首尾帧** 的图生视频模型（`video.image_to_video`）；**不展示文生视频**，也不展示仅参考图模型（如 Vidu-Q2、MiniMax H3 参考、Happy Horse 多参考）。参考图专用模型请到齿轮「参考视频模型」选择 |
-| **是否处理人脸** | 仅当所选模型 `needs_face_mask === true`（Seedance 2.0 / Fast / Mini）时显示；交互对齐 `index.html` 生视频界面 |
+| **是否处理人脸** | 仅当所选模型 `needs_face_mask === true`（Seedance 2.0 / Fast / Mini / 2.5）时显示；交互对齐 `index.html` 生视频界面 |
 
 行为约定：
 

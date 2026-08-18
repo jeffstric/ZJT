@@ -164,6 +164,63 @@ class TestSeedance25BuildRequest(unittest.TestCase):
         self.assertEqual(audio_items[0].get('role'), 'reference_audio')
         self.assertEqual(len(image_items), 0)
 
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.prepare_seedance_reference_video_sync',
+           return_value=(True, 'http://example.com/video.mp4', None, []))
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_reference_video_uses_adaptive_ratio_and_follow_duration(
+        self, mock_compress, mock_upload_cdn, mock_prepare
+    ):
+        """2.5 + 参考视频：火山视频编辑约束，ratio=adaptive、duration=-1"""
+        mock_compress.return_value = (True, 'https://cdn.example.com/ref.jpg', None)
+        mock_upload_cdn.return_value = (True, 'https://cdn.example.com/video.mp4', None)
+        ai_tool = _make_ai_tool(
+            prompt='参考视频1的内容进行视频复刻，带货商品为图片1',
+            extra_config={'image_mode': 'multi_reference'},
+            reference_images=json.dumps(['http://example.com/product.jpg']),
+            video_path='http://example.com/ref.mp4',
+            ratio='9:16',
+            duration=5,
+        )
+
+        payload = self.driver.build_create_request(ai_tool)['json']
+        self.assertEqual(payload['ratio'], 'adaptive')
+        self.assertEqual(payload['duration'], -1)
+
+    def test_text_to_video_keeps_user_ratio_and_duration(self):
+        """2.5 文生视频仍下发用户比例和时长"""
+        ai_tool = _make_ai_tool(
+            prompt='一只猫在海滩上漫步',
+            image_path=None,
+            extra_config={'generate_audio': True},
+            ratio='9:16',
+            duration=5,
+        )
+        payload = self.driver.build_create_request(ai_tool)['json']
+        self.assertEqual(payload['ratio'], '9:16')
+        self.assertEqual(payload['duration'], 5)
+
+
+class TestSeedance20ReferenceVideoKeepsUserParams(unittest.TestCase):
+    """2.0 + 参考视频仍下发用户比例和时长，不被 2.5 编辑规则影响"""
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.prepare_seedance_reference_video_sync',
+           return_value=(True, 'http://example.com/video.mp4', None, []))
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
+    def test_20_reference_video_keeps_user_ratio_and_duration(self, mock_upload_cdn, mock_prepare):
+        mock_upload_cdn.return_value = (True, 'https://cdn.example.com/video.mp4', None)
+        driver = _create_volcengine_driver(driver_type=23, model_name='doubao-seedance-2-0-260128')
+        ai_tool = _make_ai_tool(
+            prompt='参考视频1的内容进行视频复刻',
+            extra_config={'image_mode': 'multi_reference'},
+            video_path='http://example.com/ref.mp4',
+            ratio='9:16',
+            duration=5,
+        )
+        payload = driver.build_create_request(ai_tool)['json']
+        self.assertEqual(payload['ratio'], '9:16')
+        self.assertEqual(payload['duration'], 5)
+
 
 class TestPureAudioRoutingVolcengine(unittest.TestCase):
     """纯音频路由兜底：无 image_mode 提示 / image_mode=first_last_frame 时，

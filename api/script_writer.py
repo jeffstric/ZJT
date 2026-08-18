@@ -1946,6 +1946,74 @@ def _apply_image_task_id_to_execution_profiles(
             )
 
 
+def _apply_video_task_id_to_execution_profiles(
+    user_id: str,
+    world_id: str,
+    profiles: Dict[str, Any],
+    request_slots: set,
+    video_preferences: Dict[str, Any],
+    explicit_video_task_id: int,
+    *,
+    persist_world_default: bool = True,
+) -> None:
+    """将界面选中的视频模型写入所有兼容的 video 槽位快照。
+
+    避免只写入 text_to_video / image_to_video，参考生视频槽仍停留在
+    MiniMax H3 参考生视频默认值，导致界面显示 Seedance 2.5、实际却跑 H3。
+    """
+    from config.unified_config import resolve_video_clone_task_config
+
+    base_video_profile = dict(video_preferences)
+    for mode in MediaGenerationMode.VIDEO_MODES:
+        mode_task_id = int(explicit_video_task_id)
+        if mode == MediaGenerationMode.REFERENCE_TO_VIDEO:
+            resolved = resolve_video_clone_task_config(mode_task_id)
+            if resolved is not None:
+                mode_task_id = int(resolved.id)
+        video_slot = MediaGenerationPreferenceService.slot_key(MediaGenerationType.VIDEO, mode)
+        existing = profiles.get(video_slot) or {}
+        mode_profile = {
+            key: value
+            for key, value in {**existing, **base_video_profile}.items()
+            if key in MediaGenerationPreferenceService.PROFILE_FIELDS or key == 'task_id'
+        }
+        mode_profile['task_id'] = mode_task_id
+        try:
+            if persist_world_default:
+                saved = MediaGenerationPreferenceService.save_profile(
+                    user_id,
+                    world_id,
+                    MediaGenerationSurface.MARKETING_UI,
+                    MediaGenerationType.VIDEO,
+                    mode,
+                    mode_profile,
+                )
+            else:
+                config = MediaGenerationPreferenceService.validate_model(
+                    mode_profile.get('task_id'),
+                    MediaGenerationType.VIDEO,
+                    mode,
+                    image_mode=mode_profile.get('image_mode'),
+                    has_reference_audio_video=(mode == MediaGenerationMode.REFERENCE_TO_VIDEO),
+                )
+                saved = dict(mode_profile)
+                saved.update(
+                    {
+                        'schema_version': 1,
+                        'task_id': int(config.id),
+                        'model_key': config.key,
+                        'model_name': config.name,
+                    }
+                )
+            profiles[video_slot] = saved
+            request_slots.add(video_slot)
+        except (MediaGenerationPreferenceError, ValueError, TypeError) as mode_err:
+            logger.warning(
+                '任务创建时写入 video 槽位跳过: user_id=%s world_id=%s mode=%s task_id=%s err=%s',
+                user_id, world_id, mode, mode_task_id, mode_err,
+            )
+
+
 def _build_marketing_task_execution_context_sync(
     user_id: str,
     world_id: str,
@@ -1973,28 +2041,33 @@ def _build_marketing_task_execution_context_sync(
 
     video_preferences = dict(task_request.video_preferences or {})
     explicit_video_task_id = video_preferences.get('task_id')
-    video_mode = MediaGenerationPreferenceService.determine_mode(
-        MediaGenerationType.VIDEO,
-        image_urls=task_request.image_urls,
-        video_urls=task_request.video_urls,
-        audio_urls=task_request.audio_urls,
-        image_mode=video_preferences.get('image_mode'),
-    )
+    if explicit_video_task_id in (None, '') and video_preferences.get('model_name'):
+        wanted = str(video_preferences.get('model_name') or '').strip()
+        if wanted:
+            matched = next(
+                (
+                    config for config in UnifiedConfigRegistry.get_all()
+                    if wanted in {
+                        config.name,
+                        config.key,
+                        getattr(config, 'short_key', None),
+                    }
+                    and TaskCategory.IMAGE_TO_VIDEO in {config.category, *(config.categories or [])}
+                ),
+                None,
+            )
+            if matched:
+                explicit_video_task_id = matched.id
     if explicit_video_task_id not in (None, ''):
-        video_preferences['task_id'] = int(explicit_video_task_id)
-        video_profile = MediaGenerationPreferenceService.save_profile(
+        _apply_video_task_id_to_execution_profiles(
             user_id,
             world_id,
-            MediaGenerationSurface.MARKETING_UI,
-            MediaGenerationType.VIDEO,
-            video_mode,
+            profiles,
+            request_slots,
             video_preferences,
+            int(explicit_video_task_id),
+            persist_world_default=True,
         )
-        video_slot = MediaGenerationPreferenceService.slot_key(
-            MediaGenerationType.VIDEO, video_mode
-        )
-        profiles[video_slot] = video_profile
-        request_slots.add(video_slot)
 
     snapshots = {}
     for slot, profile in profiles.items():
@@ -3829,6 +3902,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
 
             # 如果前端传递了 task_id（视频模型选择），同步到模型偏好
             v_task_id = v_prefs.get('task_id')
+            v_config = None
             if v_task_id:
                 try:
                     v_task_id = int(v_task_id)
@@ -3865,16 +3939,16 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 v_pref_parts.append(f"视频分辨率: {v_prefs['resolution']}")
             # 添加视频模型名称（优先从前端传入，其次从 task_id 解析）
             v_model_display = v_prefs.get('model_name')
-            if not v_model_display and v_task_id:
-                try:
-                    from config.unified_config import UnifiedConfigRegistry as _UCR
-                    _vcfg = _UCR.get_by_id(int(v_task_id))
-                    if _vcfg:
-                        v_model_display = _vcfg.name
-                except (TypeError, ValueError):
-                    pass
+            if not v_model_display and v_config:
+                v_model_display = v_config.name
             if v_model_display:
                 v_pref_parts.append(f"视频模型: {v_model_display}")
+            if v_config:
+                from config.unified_config import VIDEO_CLONE_DRIVER_KEYS
+                if v_config.key in VIDEO_CLONE_DRIVER_KEYS:
+                    v_pref_parts.append("视频克隆: 当前模型支持")
+                else:
+                    v_pref_parts.append("视频克隆: 当前模型不支持")
             # 人脸处理开关（让智能体感知：仅当开启时才在视频克隆提示词追加「黑框还原真人人脸」）
             if v_prefs.get('enable_face_mask'):
                 v_pref_parts.append("人脸处理: 已开启")

@@ -87,7 +87,7 @@ Agent 模式下的「自定义」面板（`.marketing-settings-panel`）内容�
 3. 面板内模型列表使用 `.marketing-model-list`（`max-height: min(200px, 32vh)`）
 4. 图片/视频模型列表与 LLM 列表互斥展开（`toggleModelSelect` / `toggleLLMModelSelect`）
 5. 视口高度 ≤760px 或宽度 ≤720px 时改为视口内 `fixed` 面板；宽度 ≤499px 时全屏抽屉
-5. **资产库视图** (`.asset-library`)：通过左侧导航切换 `activeView` 为 `assets` 显示，展示用户历史生成结果（图片/视频），每页 60 条，支持分页。图片资产支持"生成视频"操作（`useAssetForVideo`），会将图片带入生成页输入区并自动切换到视频模式。图片放大弹窗中的"生成视频"按钮（`imageToVideo`）同样会自动切换回生成视图。
+5. **资产库视图** (`.asset-library`)：通过左侧导航切换 `activeView` 为 `assets` 显示，展示用户历史生成结果（图片/视频），每页 60 条，支持分页。视频预览用 `max-width/max-height: 100%` + `object-fit: contain`，竖屏不再按宽度 100% 撑开后裁掉上下；有 `9:16` 等竖屏比例时卡片按 `9 / 16` 增高，缺比例时用 `loadedmetadata` 的真实宽高兜底。图片资产支持"生成视频"操作（`useAssetForVideo`），会将图片带入生成页输入区并自动切换到视频模式。图片放大弹窗中的"生成视频"按钮（`imageToVideo`）同样会自动切换回生成视图。
 
 ## 核心功能详解
 
@@ -497,7 +497,7 @@ Agent 模式下，`image_preferences.ratio`、`image_preferences.resolution` 会
 
 Agent 对话模式即使当前自定义面板停留在“图片”，前端也会随 `/api/session/{session_id}/task` 携带 `video_preferences`，让 PM Agent 能看到用户历史生视频模型、比例、时长和图片模式偏好。前端按本轮真实上传媒体判断模型类别：有图片 URL、参考视频或参考音频时使用图生视频历史模型（`marketing_selected_i2v_model`），都没有时使用文生视频历史模型（`marketing_selected_t2v_model`）。后端在旧客户端未传 `video_preferences` 时，会从 `get_video_preferences(user_id, world_id)` 读取历史视频偏好并追加 `[用户视频偏好]`。
 
-`video_preferences.enable_face_mask` 由「是否处理人脸」勾选状态（`processFace`）和上述图生视频判定共同决定：只传参考视频/音频（视频克隆场景，无图片）时同样视为图生视频，勾选后会携带 `enable_face_mask: true`，后端据此为 Seedance 2.0 系列创建 `face_mask` pipeline step（RUNNINGHUB_FACE_MASK 视频人脸遮盖预处理）。`syncVideoModelToBackend()` 切换视频模型同步偏好时采用同一判定口径。
+`video_preferences.enable_face_mask` 由「是否处理人脸」勾选状态（`processFace`）和上述图生视频判定共同决定：只传参考视频/音频（视频克隆场景，无图片）时同样视为图生视频，勾选后会携带 `enable_face_mask: true`，后端据此为 Seedance 2.0 / Fast / Mini / 2.5 创建 `face_mask` pipeline step（RUNNINGHUB_FACE_MASK 视频人脸遮盖预处理）。`syncVideoModelToBackend()` 切换视频模型同步偏好时采用同一判定口径。
 
 视频时长选择支持 `auto`。在前端偏好和 Agent 上下文中，`auto` 表示不把创作意图锁死为 5 秒；直连视频接口和企业版 `video_tools` 在真正提交任务时会把 `auto` 解析为当前模型支持的最长时长，避免底层接口收到非数字时长。本地生活营销视频如果选择 3/5/8 秒，但内容包含门店/产品/卖点/口播/BGM/音效/店招等完整信息，PM Agent 应提醒用户改为 `auto` 或模型最长时长；只有用户明确坚持短时长时，才压缩为单一核心镜头。
 
@@ -675,7 +675,7 @@ Agent 模式的消息通过 PM Agent（`pm_agent.py`）处理：
 - 专家通过 `script_writer_core/config/agents_config.json` 中的 `expert_type` 声明所属模式；剧本 PM 只允许 `script` 类型专家，营销 PM 只允许 `marketing` 类型专家
 - `call_agent.AgentName` 的工具枚举会按当前 PM 的 `allowed_expert_types` 动态过滤，`_handle_agent_call()` 也会做后端校验，避免营销模式误调用剧本专家或反向串线
 - 营销视频克隆必须走 `sop-video-clone` 并委托 `marketing-video`；数字人口播必须走 `sop-digital-human` 并委托 `digital-human-creator`，且数字人专家必须实际调用 `generate_digital_human` 并返回非空 `project_ids` 才算提交成功
-- 营销视频克隆当前支持 Seedance2.0、Seedance2.0 Fast 和 Seedance2.0 Mini（seedance2.0-mini）；专家提示词必须通过 `video_urls` 传入参考视频，并在视频克隆提示词末尾保留"将人脸位置的黑色方框修改为真人人脸。"这句人脸修正指令
+- 营销视频克隆当前支持 Seedance2.0、Seedance2.0 Fast、Seedance2.0 Mini（seedance2.0-mini）、Seedance 2.5（seedance2.5）和 MiniMax H3 参考生视频（MiniMax H3 / minimax_h3-r2v）；白名单单一事实来源为 `config/unified_config.py::VIDEO_CLONE_DRIVER_KEYS`。用户选择普通 MiniMax H3（首尾帧）做克隆时，由 `resolve_video_clone_task_config` 自动改用 MiniMax H3 参考生视频。创建营销任务时，界面选中的视频模型会写入全部兼容 video 槽位（含 `video.reference_to_video`），`image_to_video` 工具优先使用 `model_source=request` 的快照，避免参考槽里初始化留下的 MiniMax H3 覆盖界面上的 Seedance 2.5。专家提示词必须通过 `video_urls` 传入参考视频。人脸遮盖对 Seedance 2.0 / Fast / Mini / 2.5 显示「是否处理人脸」（`SEEDANCE_FACE_MASK_DRIVER_KEYS`，不含 MiniMax H3）；仅当偏好为「人脸处理: 已开启」时，才在克隆提示词末尾追加"将人脸位置的黑色方框修改为真人人脸。"Seedance 2.5 克隆（带参考视频）时驱动将 `ratio` 改为 `adaptive`、`duration` 改为 `-1`，输出跟随参考视频，避免火山 `TaskTypeConstraint`。
 - 本地生活营销视频（餐饮、酒旅、旅游、丽人、休闲娱乐、到店零售、生活服务等）仍走 `sop-video-generation` 并委托 `marketing-video`。此类视频推荐 10~15秒，且推荐使用 Seedance2.0、Seedance2.0 Fast、Seedance2.0 Mini（seedance2.0-mini），因为该系列更适合完整短视频叙事，并能更好表达 BGM、TTS 口播和音效
 - Seedance2.0 系列是普通本地生活视频的推荐模型，不是全局硬限制。若用户当前选择其他视频模型，PM Agent 可以提醒效果差异，但不能拒绝、不得拒绝继续调用当前模型；只有视频克隆等明确限制场景才按硬限制处理
 - 本地生活视频提示词由 `enterprise/skills/marketing-video/SKILL.md` 组织为画面提示词、口播旁白、BGM 与音效提示、店招/品牌文字要求；涉及中文店名、中文口播和招牌文字时可使用中文结构化提示词，避免翻译破坏品牌信息
@@ -691,7 +691,7 @@ Agent 对话任务还会在 `/api/session/{session_id}/task` 入口同步本次�
 
 ## 灵感发布页（Inspiration）
 
-灵感页（`/marketing-inspiration`，由 `web/marketing_inspiration.html` + `web/js/marketing_inspiration.js` + `web/css/marketing_inspiration.css` 实现）展示已审核通过的公开作品（`marketing_publications` 表），支持瀑布流浏览、Lightbox 详情、"做同款/用作参考图"（携带参数跳转到生成页），以及上传参考图直接发起 Agent 创作。
+灵感页（`/marketing-inspiration`，由 `web/marketing_inspiration.html` + `web/js/marketing_inspiration.js` + `web/css/marketing_inspiration.css` 实现）展示已审核通过的公开作品（`marketing_publications` 表），支持瀑布流浏览、Lightbox 详情、"做同款/用作参考图"（携带参数跳转到生成页），以及上传参考图直接发起 Agent 创作。后台灵感审核（`web/admin.html` 营销审核表）视频缩略图用 `max-width/max-height: 100%` + `object-fit: contain`，竖屏用 `loadedmetadata` 把容器改成真实宽高比，避免固定 96×96 + `cover` 裁掉上下。
 
 > 首页（`web/index.html`）在营销模式下点击"开始创作"横幅（`handleStartCreation`）即跳转到本页（`/marketing-inspiration?user_id=...`），灵感页左侧导航再进入生成对话页 `/marketing-agent`。
 

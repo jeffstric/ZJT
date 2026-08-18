@@ -465,11 +465,21 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
         # 文生视频无首帧图，必须保留 ratio
         if not is_text_to_video and img_mode in (ImageMode.FIRST_LAST_FRAME, ImageMode.FIRST_LAST_WITH_REF):
             ratio = None
-        if ratio:
-            payload["ratio"] = ratio
 
-        if ai_tool.duration:
-            payload["duration"] = ai_tool.duration
+        # Seedance 2.5 带参考视频会被判成视频编辑：ratio 必须 adaptive，duration 必须 -1
+        is_25_video_edit = (
+            self.driver_type == TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO
+            and bool(reference_video_raw)
+        )
+        if is_25_video_edit:
+            payload["ratio"] = "adaptive"
+            payload["duration"] = -1
+            self.logger.info("Seedance 2.5 参考视频编辑模式: ratio=adaptive duration=-1")
+        else:
+            if ratio:
+                payload["ratio"] = ratio
+            if ai_tool.duration:
+                payload["duration"] = ai_tool.duration
 
         self.logger.info(f"使用模型: {self._model}, driver_type: {self.driver_type}, 模式: {img_mode}, content 元素数: {len(content)}")
 
@@ -738,7 +748,7 @@ class Seedance25VolcengineV1Driver(SeedanceVolcengineV1Driver):
     - 纯音频输入（无图无视频，仅参考音频）
     - 最多 30 张参考图 / 10 个参考视频 / 10 段参考音频
     - 视频时长 [4, 30]s
-    仅支持分辨率 480P / 720P（不支持 1080P / 4K）。
+    支持分辨率 480P / 720P / 1080P（不支持 4K）。
     """
 
     def __init__(self):

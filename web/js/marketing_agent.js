@@ -673,6 +673,13 @@
                 return config?.needs_face_mask === true;
             });
 
+            const isSeedance25FollowReferenceVideo = Vue.computed(() => {
+                if (!isVideoMode.value) return false;
+                const key = `${selectedVideoModelKey.value || ''} ${selectedModelKey.value || ''} ${selectedVideoModelName.value || ''}`;
+                const is25 = /seedance[_\s-]?2[._]?5/i.test(key);
+                return is25 && Array.isArray(agentVideoFiles.value) && agentVideoFiles.value.length > 0;
+            });
+
             const selectedModel = Vue.computed({
                 get() {
                     return isVideoMode.value ? selectedVideoModelName.value : selectedImageModel.value;
@@ -1409,16 +1416,34 @@
                 return isVideoResultUrl(asset?.result_url || asset?.video_path || '');
             }
 
-            // 返回竖屏视频应使用的 aspect-ratio CSS 值（如 '9:16'）；非竖屏返回空串，沿用默认正方形容器
-            function verticalVideoAspectRatio(ratio) {
-                if (!ratio || typeof ratio !== 'string') return '';
-                const parts = ratio.split(':');
-                if (parts.length !== 2) return '';
+            // 竖屏视频卡片用 CSS aspect-ratio（必须是 `9 / 16`，不能写 `9:16`）
+            function parseAspectParts(ratio) {
+                if (!ratio || typeof ratio !== 'string') return null;
+                const normalized = ratio.trim().toLowerCase();
+                if (normalized === 'adaptive' || normalized === 'auto') return null;
+                const parts = normalized.split(/[:/x×]/);
+                if (parts.length !== 2) return null;
                 const w = parseFloat(parts[0]);
                 const h = parseFloat(parts[1]);
-                if (!w || !h) return '';
-                // 竖屏：高 > 宽，用原始比例让卡片自适应高度，视频完整无裁切
-                return h > w ? ratio : '';
+                if (!w || !h) return null;
+                return { w, h };
+            }
+
+            function assetPreviewStyle(asset) {
+                if (!isAssetVideo(asset)) return null;
+                const parts = parseAspectParts(asset?.ratio);
+                if (!parts || parts.h <= parts.w) return null;
+                return { aspectRatio: `${parts.w} / ${parts.h}` };
+            }
+
+            function applyAssetVideoAspect(event) {
+                const video = event && event.target;
+                if (!video || !video.videoWidth || !video.videoHeight) return;
+                if (video.videoHeight <= video.videoWidth) return;
+                const preview = video.closest('.asset-preview');
+                if (preview) {
+                    preview.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+                }
             }
 
             function formatAssetType(asset) {
@@ -2938,13 +2963,24 @@
                     if (!window.TaskConfig?.getTaskIdByKey) return true;
                     return !!window.TaskConfig.getTaskIdByKey(model.key, category);
                 };
-                const model = list.find(item => item.key === selectedVideoModelKey.value && canUseModel(item))
-                    || (savedModelName && list.find(item => item.name === savedModelName && canUseModel(item)))
+                // 必须先对齐界面当前选中的模型。禁止 key 对不上时静默落到 list[0]（常为 H3）。
+                const displayed = findVideoModelInList(list, selectedVideoModelKey.value)
+                    || findVideoModelInList(list, selectedVideoModelName.value)
+                    || findVideoModelInList(allImageToVideoModels.value, selectedVideoModelKey.value)
+                    || findVideoModelInList(allImageToVideoModels.value, selectedVideoModelName.value)
+                    || findVideoModelInList(allTextToVideoModels.value, selectedVideoModelKey.value)
+                    || findVideoModelInList(allTextToVideoModels.value, selectedVideoModelName.value);
+                const model = (displayed && canUseModel(displayed) ? displayed : null)
+                    || (displayed || null)
+                    || (savedModelName && findVideoModelInList(list, savedModelName))
                     || list.find(canUseModel)
                     || list[0];
-                const taskKey = model?.key || selectedVideoModelKey.value;
+                const taskKey = model?.key || model?.short_key || selectedVideoModelKey.value;
                 const taskId = window.TaskConfig?.getTaskIdByKey
-                    ? window.TaskConfig.getTaskIdByKey(taskKey, category)
+                    ? (window.TaskConfig.getTaskIdByKey(taskKey, category)
+                        || window.TaskConfig.getTaskIdByKey(taskKey)
+                        || window.TaskConfig.getTaskIdByKey(selectedVideoModelKey.value, category)
+                        || window.TaskConfig.getTaskIdByKey(selectedVideoModelName.value, category))
                     : undefined;
                 ensureSelectedVideoResolution();
 
@@ -6371,6 +6407,50 @@
                 return null;
             }
 
+            function findVideoModelInList(list, keyOrName) {
+                if (!keyOrName || !Array.isArray(list)) return null;
+                return list.find((item) =>
+                    item.key === keyOrName
+                    || item.short_key === keyOrName
+                    || item.value === keyOrName
+                    || item.name === keyOrName
+                ) || null;
+            }
+
+            function modelSupportsReferenceSlot(model) {
+                if (!model) return false;
+                const task = window.TaskConfig?.getTaskByKey
+                    ? window.TaskConfig.getTaskByKey(model.key || model.short_key || model.value)
+                    : null;
+                if (task?.supports_video_clone === true || task?.supports_ref_audio_video === true) {
+                    return true;
+                }
+                const modes = model.supportedImageModes || task?.supported_image_modes || [];
+                return Array.isArray(modes) && modes.includes('multi_reference');
+            }
+
+            function pickModelForVideoSlot(slot, list) {
+                const current = findVideoModelInList(list, selectedVideoModelKey.value)
+                    || findVideoModelInList(list, selectedVideoModelName.value);
+                if (slot === 'video.reference_to_video') {
+                    if (modelSupportsReferenceSlot(current)) return current;
+                    const currentTask = current && window.TaskConfig?.getTaskByKey
+                        ? window.TaskConfig.getTaskByKey(current.key || current.short_key || current.value)
+                        : null;
+                    const currentKey = currentTask?.key || current?.key || '';
+                    if (currentKey === 'minimax_h3_image_to_video' || current?.short_key === 'minimax_h3') {
+                        const h3r2v = list.find((item) =>
+                            item.key === 'minimax_h3_reference_to_video' || item.short_key === 'minimax_h3_r2v'
+                        );
+                        if (h3r2v) return h3r2v;
+                    }
+                } else if (current) {
+                    const modes = current.supportedImageModes || [];
+                    if (!modes.length || modes.includes('first_last_frame')) return current;
+                }
+                return modelForMediaSlot(slot, list);
+            }
+
             async function syncMediaPreference(mediaType, mode, taskId, profile = {}) {
                 if (!taskId || !userId.value || !worldId.value) return;
                 const resp = await fetch('/api/marketing/media-preferences', {
@@ -6445,7 +6525,9 @@
                     const isImg2Vid = hasUploadedImage.value;
                     const category = isImg2Vid ? 'image_to_video' : 'text_to_video';
                     const taskId = window.TaskConfig?.getTaskIdByKey
-                        ? window.TaskConfig.getTaskIdByKey(model.key, category)
+                        ? (window.TaskConfig.getTaskIdByKey(model.key, category)
+                            || window.TaskConfig.getTaskIdByKey(model.key)
+                            || window.TaskConfig.getTaskIdByKey(model.short_key || model.value, category))
                         : null;
                     if (!taskId || !userId.value || !worldId.value) return;
                     const valid_image_urls = isImg2Vid && uploadedImageUrl.value ? [uploadedImageUrl.value] : [];
@@ -6456,7 +6538,21 @@
                     const mode = !isImg2Vid
                         ? 'text_to_video'
                         : (isReferenceMode ? 'reference_to_video' : 'image_to_video');
-                    await syncMediaPreference('video', mode, taskId, video_prefs);
+                    // 界面只显示一个模型，偏好要同时写入兼容的参考生视频槽，避免克隆仍用默认 H3
+                    const task = window.TaskConfig?.getTaskById ? window.TaskConfig.getTaskById(taskId) : null;
+                    const modesToSync = new Set([mode]);
+                    if (task?.supports_video_clone || task?.supports_ref_audio_video || modelSupportsReferenceSlot(model)) {
+                        modesToSync.add('reference_to_video');
+                    }
+                    if ((task?.supported_image_modes || model.supportedImageModes || []).includes('first_last_frame')) {
+                        modesToSync.add('image_to_video');
+                    }
+                    if (task?.category === 'text_to_video' || (task?.categories || []).includes('text_to_video')) {
+                        modesToSync.add('text_to_video');
+                    }
+                    for (const syncMode of modesToSync) {
+                        await syncMediaPreference('video', syncMode, taskId, video_prefs);
+                    }
                     const resp = await fetch('/api/video-model', {
                         method: 'POST',
                         headers: {
@@ -6622,7 +6718,7 @@
                     const slot = ['multi_reference', 'first_last_with_ref'].includes(videoImageMode.value)
                         ? 'video.reference_to_video'
                         : 'video.image_to_video';
-                    let m = modelForMediaSlot(slot, list);
+                    let m = pickModelForVideoSlot(slot, list);
                     try {
                         if (!m && userId.value && worldId.value) {
                             const resp = await fetch(`/api/video-model?category=image_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
@@ -6678,7 +6774,7 @@
                     const slot = ['multi_reference', 'first_last_with_ref'].includes(newMode)
                         ? 'video.reference_to_video'
                         : 'video.image_to_video';
-                    const preferred = modelForMediaSlot(slot, allImageToVideoModels.value);
+                    const preferred = pickModelForVideoSlot(slot, allImageToVideoModels.value);
                     if (preferred) {
                         selectedVideoModelName.value = preferred.name;
                         selectedVideoModelKey.value = preferred.key || '';
@@ -6752,7 +6848,8 @@
                 assetsTotalPages,
                 loadAssets,
                 isAssetVideo,
-                verticalVideoAspectRatio,
+                assetPreviewStyle,
+                applyAssetVideoAspect,
                 formatAssetType,
                 formatAssetDate,
                 useAssetForVideo,
@@ -6896,6 +6993,7 @@
                 sendVideoRequest,
                 processFace,
                 currentVideoModelNeedsFaceMask,
+                isSeedance25FollowReferenceVideo,
                 isEnterprise,
                 startVideoStatusCheck,
                 clearVideoStatusCheck,
