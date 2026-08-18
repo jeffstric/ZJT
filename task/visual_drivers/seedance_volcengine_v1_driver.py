@@ -748,7 +748,7 @@ class Seedance25VolcengineV1Driver(SeedanceVolcengineV1Driver):
     - 纯音频输入（无图无视频，仅参考音频）
     - 最多 30 张参考图 / 10 个参考视频 / 10 段参考音频
     - 视频时长 [4, 30]s
-    仅支持分辨率 480P / 720P（不支持 1080P / 4K）。
+    支持分辨率 480P / 720P / 1080P（不支持 4K）。
     """
 
     def __init__(self):

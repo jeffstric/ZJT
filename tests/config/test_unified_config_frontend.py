@@ -605,6 +605,43 @@ class TestVideoCloneDriverKeys(unittest.TestCase):
             seedance_25.implementations,
         )
 
+    def test_seedance_2_5_supports_1080p(self):
+        from config.unified_config import (
+            UnifiedConfigRegistry,
+            VideoResolution,
+            DriverImplementation,
+            SEEDANCE_2_5_1080P_PRICE_MULTIPLIER,
+            SEEDANCE_2_5_VIDEO_RESOLUTIONS,
+        )
+
+        self.assertAlmostEqual(SEEDANCE_2_5_1080P_PRICE_MULTIPLIER, 1.78)
+        resolution_values = [item['value'] for item in SEEDANCE_2_5_VIDEO_RESOLUTIONS]
+        self.assertEqual(
+            resolution_values,
+            [VideoResolution.P480, VideoResolution.P720, VideoResolution.P1080],
+        )
+        self.assertNotIn(VideoResolution.P4K, resolution_values)
+
+        seedance_25 = UnifiedConfigRegistry.get_by_key('seedance_2_5_image_to_video')
+        self.assertIsNotNone(seedance_25)
+        modifier = next(
+            (m for m in seedance_25.power_modifiers if m.attribute == 'resolution'),
+            None,
+        )
+        self.assertIsNotNone(modifier)
+        self.assertAlmostEqual(modifier.values[VideoResolution.P1080], 1.78)
+
+        for impl_name in (
+            DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
+            DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,
+        ):
+            impl = UnifiedConfigRegistry.get_implementation(impl_name)
+            self.assertIsNotNone(impl)
+            self.assertIn(
+                VideoResolution.P1080,
+                [item['value'] for item in impl.supported_video_resolutions],
+            )
+
     def test_minimax_h3_reference_supports_video_clone(self):
         from config.unified_config import UnifiedConfigRegistry
 

@@ -16,7 +16,7 @@
 
 > **Seedance 2.0 Mini**：价格为 Seedance 2.0 的一半，功能与 Seedance 2.0 一致。
 >
-> **Seedance 2.5**：接口协议与 2.0 系列完全一致（content 数组结构、role 取值、状态轮询），仅 `model` 名不同。额外支持：纯音频输入（无图无视频）、最多 30 张参考图 / 10 个参考视频 / 10 段参考音频、视频时长 [4,30]s。仅支持分辨率 480P / 720P（不支持 1080P / 4K）。火山国内版实现方 `seedance_2_5_volcengine_v1` 的数字 ID 为 **68**，huimengi 网关实现方 `seedance_2_5_huimengi_v1` 为 **69**，均不可复用 MiniMax H3 参考生视频的 67。
+> **Seedance 2.5**：接口协议与 2.0 系列完全一致（content 数组结构、role 取值、状态轮询），仅 `model` 名不同。额外支持：纯音频输入（无图无视频）、最多 30 张参考图 / 10 个参考视频 / 10 段参考音频、视频时长 [4,30]s。支持分辨率 480P / 720P / 1080P（不支持 4K），1080P 算力为 720P 的 1.78 倍。火山国内版实现方 `seedance_2_5_volcengine_v1` 的数字 ID 为 **68**，huimengi 网关实现方 `seedance_2_5_huimengi_v1` 为 **69**，均不可复用 MiniMax H3 参考生视频的 67。
 
 ## 720p 默认算力配置
 
@@ -58,7 +58,7 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 | 16 秒 | 903 | | 29 秒 | 1434 |
 | 17 秒 | 944 | | 30 秒 | 1475 |
 
-> 2.5 仅支持 480P / 720P，480P 通过 `power_modifiers` 的 `SEEDANCE_480P_PRICE_MULTIPLIER` 自动换算（与 2.0 共用）。
+> 2.5 支持 480P / 720P / 1080P。480P 通过 `SEEDANCE_480P_PRICE_MULTIPLIER` 换算（与 2.0 共用）；1080P 通过 `SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78` 换算。
 
 ## 特性
 

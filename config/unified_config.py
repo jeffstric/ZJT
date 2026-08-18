@@ -73,6 +73,7 @@ class VideoResolution:
 SEEDANCE_480P_PRICE_MULTIPLIER = 200880 / 432000
 SEEDANCE_2_0_1080P_PRICE_MULTIPLIER = (972000 * 31) / (432000 * 28)
 SEEDANCE_2_0_4K_PRICE_MULTIPLIER = (3888000 * 16) / (432000 * 28)
+SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78
 
 # MiniMax H3 分辨率算力倍率（基价为 720P，480P 约为 720P 的 42%）
 MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
@@ -91,10 +92,11 @@ SEEDANCE_2_0_VIDEO_RESOLUTIONS = [
     {'value': VideoResolution.P4K, 'label': VideoResolution.P4K},
 ]
 
-# Seedance 2.5 仅支持 480P / 720P（不支持 1080P / 4K）
+# Seedance 2.5 支持 480P / 720P / 1080P（不支持 4K）
 SEEDANCE_2_5_VIDEO_RESOLUTIONS = [
     {'value': VideoResolution.P480, 'label': VideoResolution.P480},
     {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+    {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
 ]
 
 
@@ -2158,6 +2160,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
                 values={
                     VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
                     VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: SEEDANCE_2_5_1080P_PRICE_MULTIPLIER,
                 },
                 default=1.0
             )
