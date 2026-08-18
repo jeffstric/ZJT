@@ -3635,12 +3635,37 @@
                 return true;
             }
 
+            function unwrapHistoryText(content) {
+                if (content == null) return '';
+                if (typeof content === 'object') {
+                    return typeof content.text === 'string' ? content.text : '';
+                }
+                const raw = String(content);
+                const trimmed = raw.trim();
+                if (trimmed.startsWith('{')) {
+                    try {
+                        const parsed = JSON.parse(trimmed);
+                        if (parsed && typeof parsed.text === 'string') return parsed.text;
+                    } catch (e) { /* 普通文本 */ }
+                }
+                return raw;
+            }
+
             function parseHistoryMessage(h) {
                 // 检测 __PENDING_TASK__ 标记（后端保存的待处理任务）
-                // content 可能是字符串或 { text: "..." } 对象
-                const rawContent = typeof h.content === 'string' ? h.content : (h.content?.text || '');
-                const pendingMatch = rawContent.match(/^__PENDING_TASK__:(image_task_submitted|video_task_submitted):(.+)$/);
-                if (pendingMatch) {
+                // content 可能是纯文本、JSON 字符串或 { text: "..." } 对象
+                const rawContent = unwrapHistoryText(h.content);
+                const pendingMatch = rawContent.match(/__PENDING_TASK__:(image_task_submitted|video_task_submitted):(.+)$/);
+                if (pendingMatch || h.message_type === 'pending_task') {
+                    let projectIds = [];
+                    if (pendingMatch) {
+                        try { projectIds = JSON.parse(pendingMatch[2]); } catch (e) { projectIds = []; }
+                    } else {
+                        projectIds = extractProjectIdsFromText(rawContent);
+                    }
+                    const eventType = pendingMatch
+                        ? pendingMatch[1]
+                        : (/video_task_submitted/i.test(rawContent) ? 'video_task_submitted' : 'image_task_submitted');
                     return {
                         _uid: generateMsgUid(),
                         _dbMessageId: h.message_id || null,  // 保存数据库消息 ID，用于后续替换
@@ -3648,8 +3673,8 @@
                         content: rawContent,
                         timestamp: h.timestamp,
                         _isPendingTask: true,
-                        _taskType: pendingMatch[1] === 'image_task_submitted' ? 'image' : 'video',
-                        _projectIds: (function() { try { return JSON.parse(pendingMatch[2]); } catch(e) { return []; } })()
+                        _taskType: eventType === 'image_task_submitted' ? 'image' : 'video',
+                        _projectIds: Array.isArray(projectIds) ? projectIds : []
                     };
                 }
                 // 处理 verification 消息：还原为前端渲染格式
@@ -3972,10 +3997,9 @@
                 const history = await loadSessionHistory(sessionId);
                 messages.value = normalizeLoadedMessages(history.filter(filterHistoryMessage).map(parseHistoryMessage));
                 restorePendingVerificationFromHistory(history);
-                recoverVideoTasksFromAssistantMessages();
-
-                // 恢复活跃任务（从历史中的 __PENDING_TASK__ 标记恢复）
+                // 先按 pending 标记恢复轮询，避免工作总结兜底再插一条重复的「生成中」
                 await recoverPendingTasks(sessionId);
+                recoverVideoTasksFromAssistantMessages();
 
                 // 恢复活跃 Agent 任务流（AI 正在回复时切换对话的场景）
                 const activeTaskId = sessionActiveTaskId[sessionId];
@@ -4243,8 +4267,8 @@
                     if (history.length > 0) {
                         messages.value = normalizeLoadedMessages(history.filter(filterHistoryMessage).map(parseHistoryMessage));
                         restorePendingVerificationFromHistory(history);
-                        recoverVideoTasksFromAssistantMessages();
                         await recoverPendingTasks(latestSession.id);
+                        recoverVideoTasksFromAssistantMessages();
                     }
                 } else {
                     // 没有历史会话，自动新建一个
