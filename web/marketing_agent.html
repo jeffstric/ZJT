@@ -182,7 +182,8 @@
                                     <button v-for="opt in msg.verificationOptions" :key="opt"
                                         @click="selectVerificationOption(opt, msg.verificationId)"
                                         :disabled="!isActiveVerificationMessage(msg)"
-                                        style="padding: 6px 16px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; cursor: pointer; font-size: 14px; color: #344054; transition: all 0.2s;">
+                                        class="verification-option-btn"
+                                        :class="verificationOptionClass(msg, opt)">
                                         {{ opt }}
                                     </button>
                                     <!-- 前端硬性追加"其他"按钮，不依赖模型返回 -->
@@ -357,6 +358,27 @@
                                             <button type="button" class="marketing-panel-close" @click.stop="showSettingsPanel = false" :aria-label="$t('close')">✕</button>
                                         </div>
                                         <div class="marketing-panel-body">
+                                        <!-- 算力自动确认上限（用户级） -->
+                                        <div class="power-confirm-field">
+                                            <div class="power-confirm-field-head">
+                                                <span class="power-confirm-field-title">{{ $t('power_confirm_title') }}</span>
+                                                <button type="button"
+                                                    class="power-confirm-reset"
+                                                    v-if="powerConfirmIsCustom"
+                                                    @click.stop="resetPowerConfirmThreshold">{{ $t('power_confirm_reset') }}</button>
+                                            </div>
+                                            <div class="power-confirm-field-row">
+                                                <input type="number"
+                                                    class="power-confirm-input"
+                                                    min="0"
+                                                    step="1"
+                                                    v-model.number="powerConfirmThresholdInput"
+                                                    @click.stop
+                                                    @change="savePowerConfirmThreshold" />
+                                                <span class="power-confirm-unit">{{ $t('power_confirm_unit') }}</span>
+                                            </div>
+                                            <div class="power-confirm-hint">{{ $t('power_confirm_hint', { value: powerConfirmDefault }) }}</div>
+                                        </div>
                                         <!-- 生成偏好 -->
                                         <div style="margin-bottom: 20px;">
                                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">

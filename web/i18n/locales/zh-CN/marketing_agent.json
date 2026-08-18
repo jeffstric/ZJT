@@ -60,6 +60,12 @@
   "mode_video_desc": "多种模型自由选择",
 
   "custom_settings": "自定义",
+  "power_confirm_title": "自动确认上限",
+  "power_confirm_unit": "算力",
+  "power_confirm_hint": "不超过此值的生成不再询问。未设置时默认 {value}。",
+  "power_confirm_reset": "恢复默认",
+  "power_confirm_saved": "已保存自动确认上限",
+  "power_confirm_save_failed": "保存自动确认上限失败",
   "generation_preference": "生成偏好",
   "image": "图片",
   "video": "视频",

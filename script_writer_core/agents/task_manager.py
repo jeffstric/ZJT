@@ -207,6 +207,8 @@ class TaskManager:
         self.tasks: Dict[str, AgentTask] = {}
         self.task_threads: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
+        # session_id -> {skip: bool, unconfirmed_cost: int}
+        self._power_confirm_state: Dict[str, Dict[str, Any]] = {}
         logger.info("TaskManager initialized")
     
     def create_task(
@@ -484,6 +486,45 @@ class TaskManager:
         thread.start()
         logger.info(f"Task {task.task_id} thread started")
     
+    def get_power_confirm_state(self, session_id: Optional[str]) -> Dict[str, Any]:
+        """读取会话级算力确认状态（skip / 本轮未授权累计）。"""
+        if not session_id:
+            return {"skip": False, "unconfirmed_cost": 0}
+        with self._lock:
+            state = self._power_confirm_state.get(session_id) or {}
+            return {
+                "skip": bool(state.get("skip")),
+                "unconfirmed_cost": int(state.get("unconfirmed_cost") or 0),
+            }
+
+    def set_power_confirm_skip(self, session_id: Optional[str], skip: bool = True) -> None:
+        if not session_id:
+            return
+        with self._lock:
+            state = self._power_confirm_state.setdefault(
+                session_id, {"skip": False, "unconfirmed_cost": 0}
+            )
+            state["skip"] = bool(skip)
+
+    def add_unconfirmed_power_cost(self, session_id: Optional[str], cost: int) -> int:
+        if not session_id:
+            return 0
+        with self._lock:
+            state = self._power_confirm_state.setdefault(
+                session_id, {"skip": False, "unconfirmed_cost": 0}
+            )
+            state["unconfirmed_cost"] = int(state.get("unconfirmed_cost") or 0) + max(0, int(cost or 0))
+            return state["unconfirmed_cost"]
+
+    def clear_unconfirmed_power_cost(self, session_id: Optional[str]) -> None:
+        if not session_id:
+            return
+        with self._lock:
+            state = self._power_confirm_state.setdefault(
+                session_id, {"skip": False, "unconfirmed_cost": 0}
+            )
+            state["unconfirmed_cost"] = 0
+
     def create_verification(
         self,
         task_id: str,

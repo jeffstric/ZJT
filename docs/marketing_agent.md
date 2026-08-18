@@ -191,6 +191,34 @@ Agent 模式中的视频生成能力由 `enterprise/` 模块提供。企业版�
 
 如果用户切换会话期间 `ask_user` 已超时，后端会在历史接口中为该 verification 返回 `verification_status='cancelled'`。前端加载到非 `pending` 状态时不会恢复等待状态，因此输入框和发送按钮会恢复为普通对话模式；超时后的历史问题仍可展示，但不再阻塞用户继续输入。
 
+#### 高算力确认（系统硬门）
+
+Agent 模式提交文生图 / 图生图 / 文生视频 / 图生视频 / 数字人等计费工具前，后端会先按与扣费相同的规则预估算力，再决定是否打断用户：
+
+| 情况 | 行为 |
+|---|---|
+| 本次及本轮累计 ≤ 用户软阈值 | 直接提交，不弹确认 |
+| 超过用户软阈值 | 弹出「算力确认」卡片，选项：确认生成 / 取消本次生成 / 本次对话不再询问 |
+| 余额不足 | 不弹确认，直接告诉模型算力不足 |
+| 用户点「本次对话不再询问」 | 本会话后续低于平台硬阈值的生成不再问；超过硬阈值仍问 |
+| 底部「图片 / 视频」直出模式 | 不走此门（用户已主动点生成） |
+
+阈值分层：
+
+1. **用户软阈值**：每人可在自定义面板「自动确认上限」自行设置，存 `user_preferences.pref_type=power_confirm`（`world_id=_global`，换对话/换世界共用）。
+2. **平台默认软阈值**：用户未设置时使用 `agent.power_confirm_threshold`，默认 35。
+3. **平台硬阈值**：`agent.power_confirm_hard_threshold`，默认 200，只约束「本次对话不再询问」之后的放行。
+
+企业版走 `enterprise/routes/user.py` 注册同一组接口（社区版走 `api/user.py`）。商业版不会加载社区用户路由，因此两端都要挂上。
+
+读写接口（需登录，只能改自己的）：
+
+- `GET /api/user/power-confirm` → `{ threshold, is_custom, default_threshold, hard_threshold }`
+- `PUT /api/user/power-confirm` body `{ threshold }`
+- `DELETE /api/user/power-confirm` 回退平台默认
+
+确认不可被模型绕过：拦截点在 `ExpertAgent._execute_tool`，确认完成前不会调用 `generate_*`。模型也不应再自己用 `ask_user` 问算力。
+
 ### SSE 流式响应
 
 #### 连接建立
@@ -694,6 +722,7 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 | 文件路径 | 类型 | 说明 |
 |----------|------|------|
 | `web/marketing_agent.html` | 页面 | 营销智能体对话页面（Vue 3 SPA） |
+| `web/js/marketing_agent.js` | 脚本 | 对话页逻辑：轮询、媒体渲染、`proxyImageUrl`/`proxyDownloadUrl` 图床刷新 |
 | `web/css/marketing_agent.css` | 样式 | 对话页面样式（浅色主题，约 1460 行） |
 | `web/js/task_config.js` | 脚本 | 任务配置统一管理模块 |
 | `web/js/video_compressor.js` | 脚本 | 前端视频压缩模块（Canvas + MediaRecorder） |
@@ -712,9 +741,9 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 
 ### 图床图片签名刷新
 
-当 `server.auto_upload_to_cdn=true` 且 `server.is_local=false` 时，营销智能体页不会把图床图片的过期签名 URL 直接写死给 `<img>` 使用。`marketing_agent.html` 中的 `proxyImageUrl()` 会将外部 HTTP/HTTPS 图片包装为 `/api/proxy-image?url=...`；后端 `proxy_image` 接口识别 CDN 域名后重新生成签名并 302 到新鲜 URL，非 CDN 外链则使用异步 `httpx.AsyncClient` 代理读取，避免在 Web 接口中阻塞事件循环。
+当 `server.auto_upload_to_cdn=true` 且 `server.is_local=false` 时，营销智能体页不会把图床图片的过期签名 URL 直接写死给 `<img>` 使用。`web/js/marketing_agent.js` 中的 `proxyImageUrl()` 会将外部 HTTP/HTTPS 图片包装为 `/api/proxy-image?url=...`；后端 `proxy_image` 接口识别 CDN 域名后重新生成签名并 302 到新鲜 URL，非 CDN 外链则使用异步 `httpx.AsyncClient` 代理读取，避免在 Web 接口中阻塞事件循环。视频结果走 `proxyDownloadUrl()` → `/api/download`，同样由后端重签名后 302。
 
-生成结果卡片、历史 Markdown 图片、以及历史中已保存的 `generated-image` HTML 都会在渲染时经过 `proxyImageUrl()`。这样旧会话重新打开、图床签名超时或点击放大时，图片仍会自动走代理刷新并显示。
+生成结果卡片、历史 Markdown 图片/视频、以及历史中已保存的 `generated-image` HTML 都会在渲染时经过代理。这样旧会话重新打开、图床签名超时或点击放大时，媒体仍会自动走代理刷新并显示。轮询完成时若已拿到结果 URL，`hasGeneratedImageResult` / `hasGeneratedVideoResult` 只按 URL 去重，避免把日期路径里的 `/2026` 误判成已展示的任务 ID，从而把新结果从界面删掉。
 
 ## 视频分辨率选择
 

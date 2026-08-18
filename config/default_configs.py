@@ -145,6 +145,23 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False
     },
     
+    # ==================== Agent 算力确认 ====================
+    {
+        'key': 'agent.power_confirm_threshold',
+        'value_type': 'int',
+        'description': 'Agent 生成操作自动确认软阈值（算力）。用户未自定义时，单次或本轮累计超过此值需用户确认',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'agent.power_confirm_hard_threshold',
+        'value_type': 'int',
+        'description': 'Agent 生成操作硬阈值（算力）。用户选择「本次对话不再询问」后，单次或累计超过此值仍须确认',
+        'editable': True,
+        'is_sensitive': False
+    },
+
     # ==================== 测试模式配置 ====================
     {
         'key': 'test_mode.enabled',

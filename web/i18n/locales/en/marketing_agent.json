@@ -60,6 +60,12 @@
   "mode_video_desc": "Multiple models to choose from",
 
   "custom_settings": "Custom",
+  "power_confirm_title": "Auto-confirm limit",
+  "power_confirm_unit": "credits",
+  "power_confirm_hint": "Generations at or below this cost will not ask for confirmation. Default is {value} if unset.",
+  "power_confirm_reset": "Reset default",
+  "power_confirm_saved": "Auto-confirm limit saved",
+  "power_confirm_save_failed": "Failed to save auto-confirm limit",
   "generation_preference": "Generation Preference",
   "image": "Image",
   "video": "Video",

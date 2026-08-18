@@ -60,7 +60,7 @@ allowed-tools: ["generate_text_to_image", "edit_image", "generate_text_to_video"
 
 ## 高算力确认
 
-如果预估总算力消耗大于 35，必须使用 `ask_user` 向用户确认后再提交生成。用户明确说“直接生成”“无需确认”时可以跳过确认。
+系统会在提交生成前按用户配置的算力确认上限自动向用户确认。你不要自己用 `ask_user` 询问「是否消耗 X 算力」。把确认交给系统。
 
 ## 返回格式
 
