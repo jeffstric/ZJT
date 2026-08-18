@@ -2041,6 +2041,23 @@ def _build_marketing_task_execution_context_sync(
 
     video_preferences = dict(task_request.video_preferences or {})
     explicit_video_task_id = video_preferences.get('task_id')
+    if explicit_video_task_id in (None, '') and video_preferences.get('model_name'):
+        wanted = str(video_preferences.get('model_name') or '').strip()
+        if wanted:
+            matched = next(
+                (
+                    config for config in UnifiedConfigRegistry.get_all()
+                    if wanted in {
+                        config.name,
+                        config.key,
+                        getattr(config, 'short_key', None),
+                    }
+                    and TaskCategory.IMAGE_TO_VIDEO in {config.category, *(config.categories or [])}
+                ),
+                None,
+            )
+            if matched:
+                explicit_video_task_id = matched.id
     if explicit_video_task_id not in (None, ''):
         _apply_video_task_id_to_execution_profiles(
             user_id,

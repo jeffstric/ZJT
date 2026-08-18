@@ -2938,13 +2938,24 @@
                     if (!window.TaskConfig?.getTaskIdByKey) return true;
                     return !!window.TaskConfig.getTaskIdByKey(model.key, category);
                 };
-                const model = list.find(item => item.key === selectedVideoModelKey.value && canUseModel(item))
-                    || (savedModelName && list.find(item => item.name === savedModelName && canUseModel(item)))
+                // 必须先对齐界面当前选中的模型。禁止 key 对不上时静默落到 list[0]（常为 H3）。
+                const displayed = findVideoModelInList(list, selectedVideoModelKey.value)
+                    || findVideoModelInList(list, selectedVideoModelName.value)
+                    || findVideoModelInList(allImageToVideoModels.value, selectedVideoModelKey.value)
+                    || findVideoModelInList(allImageToVideoModels.value, selectedVideoModelName.value)
+                    || findVideoModelInList(allTextToVideoModels.value, selectedVideoModelKey.value)
+                    || findVideoModelInList(allTextToVideoModels.value, selectedVideoModelName.value);
+                const model = (displayed && canUseModel(displayed) ? displayed : null)
+                    || (displayed || null)
+                    || (savedModelName && findVideoModelInList(list, savedModelName))
                     || list.find(canUseModel)
                     || list[0];
-                const taskKey = model?.key || selectedVideoModelKey.value;
+                const taskKey = model?.key || model?.short_key || selectedVideoModelKey.value;
                 const taskId = window.TaskConfig?.getTaskIdByKey
-                    ? window.TaskConfig.getTaskIdByKey(taskKey, category)
+                    ? (window.TaskConfig.getTaskIdByKey(taskKey, category)
+                        || window.TaskConfig.getTaskIdByKey(taskKey)
+                        || window.TaskConfig.getTaskIdByKey(selectedVideoModelKey.value, category)
+                        || window.TaskConfig.getTaskIdByKey(selectedVideoModelName.value, category))
                     : undefined;
                 ensureSelectedVideoResolution();
 
@@ -6489,7 +6500,9 @@
                     const isImg2Vid = hasUploadedImage.value;
                     const category = isImg2Vid ? 'image_to_video' : 'text_to_video';
                     const taskId = window.TaskConfig?.getTaskIdByKey
-                        ? window.TaskConfig.getTaskIdByKey(model.key, category)
+                        ? (window.TaskConfig.getTaskIdByKey(model.key, category)
+                            || window.TaskConfig.getTaskIdByKey(model.key)
+                            || window.TaskConfig.getTaskIdByKey(model.short_key || model.value, category))
                         : null;
                     if (!taskId || !userId.value || !worldId.value) return;
                     const valid_image_urls = isImg2Vid && uploadedImageUrl.value ? [uploadedImageUrl.value] : [];
@@ -6500,7 +6513,21 @@
                     const mode = !isImg2Vid
                         ? 'text_to_video'
                         : (isReferenceMode ? 'reference_to_video' : 'image_to_video');
-                    await syncMediaPreference('video', mode, taskId, video_prefs);
+                    // 界面只显示一个模型，偏好要同时写入兼容的参考生视频槽，避免克隆仍用默认 H3
+                    const task = window.TaskConfig?.getTaskById ? window.TaskConfig.getTaskById(taskId) : null;
+                    const modesToSync = new Set([mode]);
+                    if (task?.supports_video_clone || task?.supports_ref_audio_video || modelSupportsReferenceSlot(model)) {
+                        modesToSync.add('reference_to_video');
+                    }
+                    if ((task?.supported_image_modes || model.supportedImageModes || []).includes('first_last_frame')) {
+                        modesToSync.add('image_to_video');
+                    }
+                    if (task?.category === 'text_to_video' || (task?.categories || []).includes('text_to_video')) {
+                        modesToSync.add('text_to_video');
+                    }
+                    for (const syncMode of modesToSync) {
+                        await syncMediaPreference('video', syncMode, taskId, video_prefs);
+                    }
                     const resp = await fetch('/api/video-model', {
                         method: 'POST',
                         headers: {
