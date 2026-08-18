@@ -253,7 +253,10 @@
 
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const category = currentMode === 'text_to_video' ? 'text_to_video' : 'image_to_video';
-          const options = window.TaskConfig.getModelOptionsForCategory(category);
+          let options = window.TaskConfig.getModelOptionsForCategory(category);
+          if (typeof filterVideoOptionsByDriver === 'function') {
+            options = filterVideoOptionsByDriver(options);
+          }
           let firstAvailable = null;
 
           options.forEach(opt => {
@@ -997,8 +1000,7 @@
       }
 
       videoModelSelect.value = node.data.videoModel;
-      // 应用驱动状态禁用未配置的选项
-      applyDriverStatusToSelect(videoModelSelect);
+      applyDriverStatusToSelect(videoModelSelect, node.data.videoModel);
       // 初始化时根据模型设置时长和比例选项
       updateDurationOptions(node.data.videoModel);
       updateRatioOptions(node.data.videoModel);

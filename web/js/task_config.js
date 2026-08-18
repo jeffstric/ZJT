@@ -459,6 +459,17 @@
     return options;
   }
 
+  function isDriverAvailable(taskType, driverStatus) {
+    if (!driverStatus || typeof driverStatus !== 'object') return true;
+    if (!Object.keys(driverStatus).length) return true;
+    const status = driverStatus[String(taskType)];
+    return !status || status.available !== false;
+  }
+
+  function filterAvailableModelOptions(options, driverStatus) {
+    return (options || []).filter((opt) => isDriverAvailable(opt.taskType, driverStatus));
+  }
+
   /**
    * 获取分类信息
    * @returns {Object} 分类名称映射
@@ -555,6 +566,8 @@
 
     // 动态渲染
     getModelOptionsForCategory,
+    isDriverAvailable,
+    filterAvailableModelOptions,
     getCategories,
     getProviders
   };

@@ -2637,6 +2637,13 @@ async def get_storyboard_models(
         except Exception:
             pass
 
+    from task.visual_drivers import VideoDriverFactory
+    driver_status: Dict[str, Any] = {}
+    try:
+        driver_status = VideoDriverFactory.get_driver_availability() or {}
+    except Exception:
+        logger.exception("storyboard models: 读取驱动可用性失败，列表不过滤")
+
     def _list(category):
         configs = UnifiedConfigRegistry.get_by_category(category)
         # 与管理端/工作流一致：按 sort_order 升序，保证默认取「列表第一项」时语义稳定
@@ -2650,6 +2657,8 @@ async def get_storyboard_models(
         items = []
         for c in configs:
             if not c.enabled or c.hidden:
+                continue
+            if not VideoDriverFactory.is_task_available(c.id, driver_status):
                 continue
             # 算力展示元信息（前端 option 内联用）：统一解析最终生效配置，
             # 覆盖「算力定义在实现方层」的模型（如 LTX2.3/可灵/Seedance 1.5 Pro）

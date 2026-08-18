@@ -372,7 +372,9 @@
         videoModelEl.innerHTML = '';
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const allOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
-          const options = allOptions.filter(opt => {
+          const options = (typeof filterVideoOptionsByDriver === 'function'
+            ? filterVideoOptionsByDriver(allOptions)
+            : allOptions).filter(opt => {
             const modes = opt.supportedImageModes || ['first_last_frame'];
             return modes.includes(shotGroupMode);
           });
@@ -427,7 +429,7 @@
       if(videoGenModeEl) videoGenModeEl.value = node.data.videoGenMode || 'first_last_frame';
 
       // 应用驱动状态禁用未配置的选项
-      if(videoModelEl) applyDriverStatusToSelect(videoModelEl);
+      if(videoModelEl) applyDriverStatusToSelect(videoModelEl, node.data.videoModel);
 
       function updateShotGroupResolutionOptions(videoModel) {
         if(!resolutionField || !resolutionSelect) return;
@@ -514,7 +516,9 @@
 
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const allOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
-          filteredOptions = allOptions.filter(opt => {
+          filteredOptions = (typeof filterVideoOptionsByDriver === 'function'
+            ? filterVideoOptionsByDriver(allOptions)
+            : allOptions).filter(opt => {
             const modes = opt.supportedImageModes || ['first_last_frame'];
             return modes.includes(mode);
           });
@@ -553,7 +557,7 @@
         }
         ensureSelectHasSavedOption(videoModelEl, node.data.videoModel);
         videoModelEl.value = node.data.videoModel || firstValue;
-        applyDriverStatusToSelect(videoModelEl);
+        applyDriverStatusToSelect(videoModelEl, node.data.videoModel);
         // 模型变更后联动更新时长选项和算力显示
         updateVideoDurationOptions(videoModelEl.value);
         updateShotGroupResolutionOptions(videoModelEl.value);

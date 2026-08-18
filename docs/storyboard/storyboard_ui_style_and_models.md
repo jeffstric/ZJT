@@ -110,6 +110,7 @@ bootstrap 中实现优先级（仅首次无保存值时）：
 - 齿轮「视频模型」Tab 在图生视频选择器下挂同一人脸遮盖控件，共用 state。
 - 直连 `generate-video`、Agent 生视频、批量缺失视频均透传有效 `enable_face_mask`（`enterprise && needs_face_mask && 用户勾选`）。
 - `GET /api/storyboard/models` 图生视频项返回 `needs_face_mask`，前端不依赖 `TaskConfig`。
+- `GET /api/storyboard/models` 只返回驱动可用的生图/视频/数字人任务（`VideoDriverFactory.get_driver_availability()` 为 false 的不出现）。对话模型仍走 `/api/models`，只含已配置供应商。已保存但已不可用的 task_id 由 `resolveAvailableTaskId` 回落到性价比档或列表第一项。
 
 ## 4. 技术实现要点
 

@@ -1004,7 +1004,10 @@
         if (videoModelEl && window.TaskConfig) {
           const allVideoOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
           const mode = node.data.videoGenMode || 'first_last_frame';
-          const videoOptions = allVideoOptions.filter(opt => {
+          const filteredByDriver = (window.TaskConfig.filterAvailableModelOptions
+            ? window.TaskConfig.filterAvailableModelOptions(allVideoOptions, getDriverStatusConfig())
+            : allVideoOptions);
+          const videoOptions = filteredByDriver.filter(opt => {
             const modes = opt.supportedImageModes || ['first_last_frame'];
             return modes.includes(mode);
           });
@@ -1017,10 +1020,17 @@
               if (opt.value === node.data.videoModel) optEl.selected = true;
               videoModelEl.appendChild(optEl);
             });
-            // 如果当前值不在选项中，更新为第一个选项
             if (!videoOptions.find(o => o.value === node.data.videoModel)) {
-              node.data.videoModel = videoOptions[0].value;
-              videoModelEl.value = node.data.videoModel;
+              if (node.data.videoModel && typeof ensureSelectHasSavedOption === 'function') {
+                ensureSelectHasSavedOption(videoModelEl, node.data.videoModel);
+                videoModelEl.value = node.data.videoModel;
+              } else {
+                node.data.videoModel = videoOptions[0].value;
+                videoModelEl.value = node.data.videoModel;
+              }
+            }
+            if (typeof applyDriverStatusToSelect === 'function') {
+              applyDriverStatusToSelect(videoModelEl, node.data.videoModel);
             }
           }
         }
@@ -1074,7 +1084,10 @@
         if (videoModelEl) {
           const allVideoOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
           const mode = node.data.videoMode || 'first_last_frame';
-          const videoOptions = allVideoOptions.filter(opt => {
+          const filteredByDriver = (window.TaskConfig.filterAvailableModelOptions
+            ? window.TaskConfig.filterAvailableModelOptions(allVideoOptions, getDriverStatusConfig())
+            : allVideoOptions);
+          const videoOptions = filteredByDriver.filter(opt => {
             const modes = opt.supportedImageModes || ['first_last_frame'];
             return modes.includes(mode);
           });
@@ -1088,10 +1101,17 @@
               if (opt.value === currentVideoModel) optEl.selected = true;
               videoModelEl.appendChild(optEl);
             });
-            // 如果当前值不在选项中，更新为第一个选项
             if (!videoOptions.find(o => o.value === currentVideoModel)) {
-              node.data.videoModel = videoOptions[0].value;
-              videoModelEl.value = node.data.videoModel;
+              if (currentVideoModel && typeof ensureSelectHasSavedOption === 'function') {
+                ensureSelectHasSavedOption(videoModelEl, currentVideoModel);
+                videoModelEl.value = currentVideoModel;
+              } else {
+                node.data.videoModel = videoOptions[0].value;
+                videoModelEl.value = node.data.videoModel;
+              }
+            }
+            if (typeof applyDriverStatusToSelect === 'function') {
+              applyDriverStatusToSelect(videoModelEl, node.data.videoModel);
             }
           }
         }

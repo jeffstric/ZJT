@@ -24,8 +24,8 @@
 - 自动从节点配置的角色、场景、道具中收集参考图
 - 调用 `/api/ai-app-run-image` 端点，`image_mode=multi_reference`
 - 若无任何参考图，自动回退到文生视频 API（`/api/ai-app-run`）
-- 视频模型列表：仅显示支持 multi_reference 的模型（如 MiniMax H3 参考生视频、seedance 2.0、vidu_q2、happy_horse_r2v）
-- 无已保存模型时默认性价比档 MiniMax H3 参考生视频（`minimax_h3_r2v`），效果档为 Seedance 2.0
+- 视频模型列表：仅显示支持 multi_reference 且驱动已配置的模型（如 MiniMax H3 参考生视频、seedance 2.0、vidu_q2、happy_horse_r2v）
+- 无已保存模型时默认性价比档 MiniMax H3 参考生视频（`minimax_h3_r2v`），效果档为 Seedance 2.0；未配置供应商的模型不出现在新下拉中
 - 参考图数量受 `max_multi_ref_images` 配置限制
 
 ## 参考图收集逻辑

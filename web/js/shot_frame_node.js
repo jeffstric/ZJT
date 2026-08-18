@@ -358,6 +358,9 @@
 
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           allOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+          if (typeof filterVideoOptionsByDriver === 'function') {
+            allOptions = filterVideoOptionsByDriver(allOptions);
+          }
           allOptions = allOptions.filter(opt => {
             const modes = opt.supportedImageModes || ['first_last_frame'];
             return modes.includes(mode);
@@ -410,7 +413,7 @@
         // 确保已保存的视频模型值在下拉框中可见
         ensureSelectHasSavedOption(videoModelEl, node.data.videoModel);
         videoModelEl.value = node.data.videoModel || firstVideoModelValue;
-        applyDriverStatusToSelect(videoModelEl);
+        applyDriverStatusToSelect(videoModelEl, node.data.videoModel);
       }
 
       // ============ 模式切换 UI 更新 ============
