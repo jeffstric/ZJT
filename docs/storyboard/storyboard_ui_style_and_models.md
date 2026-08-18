@@ -76,7 +76,8 @@
 ### 3.3 默认模型选择
 
 bootstrap 中实现优先级（仅首次无保存值时）：
-deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5-plus > 第一个。
+场景目录性价比档 `deepseek-v4-flash`（效果档为 `deepseek-v4-pro`） > 任意 qwen3.5-plus > 第一个。
+详见 `docs/backend/model_catalog_and_recommendations.md`。
 同时支持从 storyboard.config_json 恢复。
 
 ### 3.4 空故事板拆分语言与小屏布局（2026-07-21）
@@ -105,10 +106,11 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 - 商业版可勾选，默认不勾选；社区版 checkbox 禁用并提示「此功能为商业版功能…」。
 - 写入 `selectedImageToVideoTaskId` + `enableFaceMask`（`config_json`），并同步 `media_pref.storyboard_ui.video.image_to_video`（含 `enable_face_mask`）。
 - 前端用 `getImageToVideoSlotModels()` 过滤下拉：只保留 `supported_image_modes` 含 `first_last_frame` 的模型。缺省该字段视为支持首尾帧。Vidu-Q2 等仅 `multi_reference` 的模型出现在齿轮「参考视频模型」（`getReferenceToVideoSlotModels()`），避免 PUT `/api/storyboard/media-preferences` 触发 `MODEL_INPUT_UNSUPPORTED`。
-- 齿轮「视频模型」Tab 的「图生视频模型」使用同一过滤；「参考视频模型」仍展示多参考 / 参考音视频模型。
+- 齿轮「视频模型」Tab 的「图生视频模型」使用同一过滤；「参考视频模型」仍展示多参考 / 参考音视频模型。无历史选择时参考视频模型默认性价比档 MiniMax H3 参考生视频（`minimax_h3_r2v`），效果档为 Seedance 2.0。
 - 齿轮「视频模型」Tab 在图生视频选择器下挂同一人脸遮盖控件，共用 state。
 - 直连 `generate-video`、Agent 生视频、批量缺失视频均透传有效 `enable_face_mask`（`enterprise && needs_face_mask && 用户勾选`）。
 - `GET /api/storyboard/models` 图生视频项返回 `needs_face_mask`，前端不依赖 `TaskConfig`。
+- `GET /api/storyboard/models` 只返回驱动可用的生图/视频/数字人任务（`VideoDriverFactory.get_driver_availability()` 为 false 的不出现）。对话模型仍走 `/api/models`，只含已配置供应商。已保存但已不可用的 task_id 由 `resolveAvailableTaskId` 回落到性价比档或列表第一项。
 
 ## 4. 技术实现要点
 
@@ -159,6 +161,7 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 ### i18n & CSS
 - 在 `web/i18n/locales/zh-CN/storyboard.json`（及 en）补充画风、构图、待接入等文案。
 - CSS 复用现有 `.info-card`、`.chat-mode-select` 样式，新增少量 `.style-settings-card`。
+- 左下角工具栏模式切换仍限制宽度（`.chat-toolbar .chat-mode-select` 120px / 窄屏 92px）。齿轮「模型配置」与拆分弹窗的模型下拉取消该上限（`max-width: none`），弹窗宽 600px，避免「MiniMax H3 参考生视频（5算力）（性价比）」这类长 option 被截断。
 
 ## 5. 重新加载与状态持久化
 

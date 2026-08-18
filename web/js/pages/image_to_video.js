@@ -85,16 +85,24 @@
         const config = this.modelConfigs[this.videoModel];
         const supportedModes = config?.supported_image_modes || ['first_last_frame'];
         if (!supportedModes.includes(newMode)) {
-          // 当前模型不支持新模式，切换到支持该模式的第一个模型
+          // 当前模型不支持新模式，切到该模式的性价比档（多参考图走 MiniMax H3 参考生视频）
           const allOptions = TaskConfig.getModelOptionsForCategory('image_to_video');
-          for (const opt of allOptions) {
+          const supporting = allOptions.filter((opt) => {
             const optConfig = this.modelConfigs[opt.value];
             const optModes = optConfig?.supported_image_modes || ['first_last_frame'];
             const isAvailable = !this.driverStatus || !this.driverStatus[opt.taskType] || this.driverStatus[opt.taskType].available !== false;
-            if (optModes.includes(newMode) && isAvailable) {
-              this.videoModel = opt.value;
-              break;
-            }
+            return optModes.includes(newMode) && isAvailable;
+          });
+          const scene = (window.ModelCatalog && window.ModelCatalog.sceneForVideoImageMode)
+            ? window.ModelCatalog.sceneForVideoImageMode(newMode)
+            : 'video.image_to_video';
+          const hit = window.ModelCatalog
+            ? window.ModelCatalog.findTaskByTrack(supporting, scene, null, 'value')
+            : null;
+          if (hit) {
+            this.videoModel = hit.value;
+          } else if (supporting.length) {
+            this.videoModel = supporting[0].value;
           }
         }
         // 模式切换时清空文件
@@ -220,9 +228,20 @@
             value: opt.value,
             label: isAvailable ? opt.label : opt.label + ' (未配置)',
             disabled: !isAvailable || !supportsCurrentMode,
-            supportsMode: supportsCurrentMode
+            supportsMode: supportsCurrentMode,
+            track: opt.track || null,
           };
         });
+      },
+      videoScene() {
+        if (window.ModelCatalog && window.ModelCatalog.sceneForVideoImageMode) {
+          return window.ModelCatalog.sceneForVideoImageMode(this.imageMode);
+        }
+        return 'video.image_to_video';
+      },
+      videoTrack() {
+        if (!window.ModelCatalog) return 'custom';
+        return window.ModelCatalog.inferTrack(this.videoScene, this.videoModel, null);
       },
       modelOptions() {
         const config = this.modelConfigs[this.videoModel];
@@ -314,6 +333,16 @@
       }
     },
     methods: {
+      selectVideoTrack(track) {
+        if (!window.ModelCatalog) return;
+        const hit = window.ModelCatalog.findTaskByTrack(
+          this.videoModelOptions.filter((o) => o.supportsMode),
+          this.videoScene,
+          null,
+          track,
+        );
+        if (hit && !hit.disabled) this.videoModel = hit.value;
+      },
       parseReferenceImages(ref) {
         if (!ref) return [];
         if (Array.isArray(ref)) return ref;
@@ -350,6 +379,14 @@
           await TaskConfig.load();
           this.modelConfigs = TaskConfig.getModelConfigs();
           this.configLoaded = true;  // 标记配置已加载
+          const allOptions = TaskConfig.getModelOptionsForCategory('image_to_video');
+          const validValues = allOptions.map((opt) => opt.value);
+          const valueOpt = window.ModelCatalog
+            ? window.ModelCatalog.findTaskByTrack(allOptions, 'video.image_to_video', null, 'value')
+            : allOptions.find((opt) => opt.track === 'value');
+          if (!validValues.includes(this.videoModel) && (valueOpt || allOptions.length > 0)) {
+            this.videoModel = (valueOpt && valueOpt.value) || allOptions[0].value;
+          }
           // 设置初始默认值
           const config = this.modelConfigs[this.videoModel];
           if (config) {
@@ -1291,6 +1328,10 @@
 
           <div class="field">
             <label class="label">{{ $t('video_model_label') || '视频模型' }}</label>
+            <div class="model-track-toggle" v-if="videoModelOptions.length">
+              <button type="button" class="model-track-btn" :class="{ 'is-active': videoTrack === 'value' }" @click="selectVideoTrack('value')">性价比</button>
+              <button type="button" class="model-track-btn" :class="{ 'is-active': videoTrack === 'quality' }" @click="selectVideoTrack('quality')">效果</button>
+            </div>
             <select class="input" v-model="videoModel">
               <option v-for="opt in videoModelOptions" :key="opt.value" :value="opt.value" :disabled="opt.disabled">
                 {{ opt.label }}{{ !opt.supportsMode ? ' (' + ($t('unsupported_mode') || '不支持当前模式') + ')' : '' }}

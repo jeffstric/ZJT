@@ -327,8 +327,12 @@
             optEl.value = opt.value;
             optEl.textContent = opt.label;
             if(opt.value === node.data.model) optEl.selected = true;
+            optEl.dataset.shortKey = opt.value;
             modelEl.appendChild(optEl);
           });
+          if (window.ModelCatalog && modelEl.parentElement) {
+            window.ModelCatalog.bindSelectTrack(modelEl.parentElement, modelEl, 'image.image_edit', 'task');
+          }
         } else {
           modelEl.innerHTML = `
             <option value="gemini">标准版 (2算力)</option>
@@ -354,17 +358,31 @@
 
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           allOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+          if (typeof filterVideoOptionsByDriver === 'function') {
+            allOptions = filterVideoOptionsByDriver(allOptions);
+          }
           allOptions = allOptions.filter(opt => {
             const modes = opt.supportedImageModes || ['first_last_frame'];
             return modes.includes(mode);
           });
           if(allOptions.length > 0) firstVideoModelValue = allOptions[0].value;
+          const videoScene = (window.ModelCatalog && window.ModelCatalog.sceneForVideoImageMode)
+            ? window.ModelCatalog.sceneForVideoImageMode(mode)
+            : 'video.image_to_video';
+          if (window.ModelCatalog) {
+            const valueHit = window.ModelCatalog.findTaskByTrack(allOptions, videoScene, null, 'value');
+            if (valueHit && !valueHit.disabled) firstVideoModelValue = valueHit.value;
+          }
           allOptions.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
+            optEl.dataset.shortKey = opt.value;
             optEl.textContent = opt.label;
             videoModelEl.appendChild(optEl);
           });
+          if (window.ModelCatalog && videoModelEl.parentElement) {
+            window.ModelCatalog.bindSelectTrack(videoModelEl.parentElement, videoModelEl, videoScene, 'task');
+          }
         } else {
           // fallback
           if(mode === 'multi_reference') {
@@ -395,7 +413,7 @@
         // 确保已保存的视频模型值在下拉框中可见
         ensureSelectHasSavedOption(videoModelEl, node.data.videoModel);
         videoModelEl.value = node.data.videoModel || firstVideoModelValue;
-        applyDriverStatusToSelect(videoModelEl);
+        applyDriverStatusToSelect(videoModelEl, node.data.videoModel);
       }
 
       // ============ 模式切换 UI 更新 ============

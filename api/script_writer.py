@@ -24,6 +24,7 @@ from config.constant import (
     MediaGenerationMode,
     MediaGenerationSurface,
     MediaGenerationType,
+    DEFAULT_TEXT_TO_IMAGE_TASK_ID,
     PERSEIDS_ERR_INVALID_AUTH_TOKEN,
     PERSEIDS_ERR_NO_VALID_TOKEN,
     ERROR_CODE_TOKEN_EXPIRED,
@@ -95,8 +96,6 @@ from model.user_preferences import (
     PREF_TYPE_IMAGE_TO_VIDEO_MODEL,
     PREF_TYPE_DEFAULT_LLM_MODEL,
 )
-# 默认生图模型 task_id (nano-banana-Pro)
-DEFAULT_TEXT_TO_IMAGE_TASK_ID = 7
 # 生图模型设置范围：session=本对话草稿；world_default=世界默认（新会话种子）
 IMAGE_MODEL_SCOPE_SESSION = "session"
 IMAGE_MODEL_SCOPE_WORLD_DEFAULT = "world_default"
@@ -106,8 +105,16 @@ def _get_text_to_image_models_from_config():
     """从统一配置获取文生图模型列表"""
     from config.unified_config import UnifiedConfigRegistry, TaskCategory
     configs = UnifiedConfigRegistry.get_by_category(TaskCategory.TEXT_TO_IMAGE)
-    return {c.id: {"name": c.name, "computing_power": c.get_computing_power(), "supports_grid_image": c.supports_grid_image}
-            for c in configs if c.enabled}
+    return {
+        c.id: {
+            "name": c.name,
+            "computing_power": c.get_computing_power(),
+            "supports_grid_image": c.supports_grid_image,
+            "short_key": getattr(c, "short_key", None) or c.key,
+            "key": c.key,
+        }
+        for c in configs if c.enabled
+    }
 
 
 def get_text_to_image_model_id(user_id: str, world_id: str) -> int:
@@ -178,17 +185,14 @@ def get_default_llm_model(user_id: str, world_id: str) -> Optional[Dict[str, Any
 
 def _get_fallback_default_llm_model() -> Optional[Dict[str, Any]]:
     """回退逻辑：当数据库没有配置时，选择默认模型。
-    
-    使用 config/constant.py 中定义的 DEFAULT_LLM_MODEL_PREFERRED_VENDORS 和 DEFAULT_LLM_MODEL_PREFERRED_MODEL 常量。
-    
-    优先级：
-    1. 首选供应商 + 首选模型
-    2. 首选供应商 + 任意模型
-    3. 列表第一项
+
+    优先走场景目录的性价比档（llm.chat / deepseek-v4-flash），
+    再回退 DEFAULT_LLM_MODEL_*，最后列表第一项。
     """
     try:
         from llm.llm_client_factory import get_available_models as _get_available_models
         from config.constant import DEFAULT_LLM_MODEL_PREFERRED_VENDORS, DEFAULT_LLM_MODEL_PREFERRED_MODEL
+        from config.model_catalog import ModelScene, resolve_track_item
         import asyncio
         
         # 获取可用模型列表
@@ -197,6 +201,15 @@ def _get_fallback_default_llm_model() -> Optional[Dict[str, Any]]:
         
         if not models:
             return None
+
+        hit, _track = resolve_track_item(ModelScene.LLM_CHAT, models, kind="llm")
+        if hit:
+            return {
+                'model': hit.get('name'),
+                'model_id': hit.get('id') if hit.get('id') is not None else hit.get('model_id'),
+                'vendor_id': hit.get('vendor_id'),
+                'name': hit.get('name'),
+            }
         
         # 辅助函数
         def vendor_of(m):
@@ -207,15 +220,15 @@ def _get_fallback_default_llm_model() -> Optional[Dict[str, Any]]:
         
         # 1. 首选供应商 + 首选模型
         for preferred_vendor in DEFAULT_LLM_MODEL_PREFERRED_VENDORS:
-            hit = next((m for m in models if vendor_of(m) == preferred_vendor and DEFAULT_LLM_MODEL_PREFERRED_MODEL in model_of(m)), None)
-            if hit:
-                return {'model': hit['name'], 'model_id': hit.get('id'), 'vendor_id': hit.get('vendor_id'), 'name': hit['name']}
+            found = next((m for m in models if vendor_of(m) == preferred_vendor and DEFAULT_LLM_MODEL_PREFERRED_MODEL in model_of(m)), None)
+            if found:
+                return {'model': found['name'], 'model_id': found.get('id'), 'vendor_id': found.get('vendor_id'), 'name': found['name']}
         
         # 2. 首选供应商 + 任意模型
         for preferred_vendor in DEFAULT_LLM_MODEL_PREFERRED_VENDORS:
-            hit = next((m for m in models if vendor_of(m) == preferred_vendor), None)
-            if hit:
-                return {'model': hit['name'], 'model_id': hit.get('id'), 'vendor_id': hit.get('vendor_id'), 'name': hit['name']}
+            found = next((m for m in models if vendor_of(m) == preferred_vendor), None)
+            if found:
+                return {'model': found['name'], 'model_id': found.get('id'), 'vendor_id': found.get('vendor_id'), 'name': found['name']}
         
         # 3. 列表第一项
         first = models[0]
@@ -2059,23 +2072,38 @@ async def update_marketing_media_preference(
         return JSONResponse(status_code=400, content={'success': False, 'error': error})
 
 @router.get('/text-to-image-models')
-async def get_text_to_image_models():
+async def get_text_to_image_models(scene: Optional[str] = None):
     """获取可用的生图模型列表（从统一配置读取）"""
     try:
+        from config.model_catalog import (
+            ModelScene,
+            annotate_task_models,
+            build_tracks_payload,
+        )
         models_config = _get_text_to_image_models_from_config()
         models = [
             {
                 "task_id": task_id,
                 "name": info["name"],
                 "computing_power": info["computing_power"],
-                "supports_grid_image": info.get("supports_grid_image", False)
+                "supports_grid_image": info.get("supports_grid_image", False),
+                "short_key": info.get("short_key") or "",
+                "key": info.get("key") or "",
             }
             for task_id, info in models_config.items()
         ]
+        catalog_scene = scene or ModelScene.IMAGE_TEXT_TO_IMAGE
+        models = annotate_task_models(models, catalog_scene)
+        catalog = build_tracks_payload(catalog_scene, models, kind="task")
+        default_task_id = DEFAULT_TEXT_TO_IMAGE_TASK_ID
+        value_route = (catalog.get("tracks") or {}).get("value", {}).get("default_route") or {}
+        if value_route.get("task_id") is not None:
+            default_task_id = value_route["task_id"]
         return JSONResponse({
             "success": True,
             "models": models,
-            "default_task_id": DEFAULT_TEXT_TO_IMAGE_TASK_ID
+            "default_task_id": default_task_id,
+            "catalog": catalog,
         })
     except Exception as e:
         logger.error(f'获取生图模型列表失败: {str(e)}')
@@ -2597,15 +2625,27 @@ async def get_vendors():
 
 
 @router.get('/models')
-async def get_available_models():
-    """获取可用的 AI 模型列表，根据 vendor 表分组"""
+async def get_available_models(scene: Optional[str] = None):
+    """获取可用的 AI 模型列表，根据 vendor 表分组。
+
+    scene 可选，传入后附加性价比/效果双档 catalog，并为每条模型标注 track。
+    """
     try:
         from llm.llm_client_factory import get_available_models as _get_available_models
+        from config.model_catalog import (
+            ModelScene,
+            annotate_llm_models,
+            build_tracks_payload,
+        )
         result = await _get_available_models()
-
+        models = result.get('models') or []
+        catalog_scene = scene or ModelScene.LLM_CHAT
+        models = annotate_llm_models(models, catalog_scene)
+        catalog = build_tracks_payload(catalog_scene, models, kind="llm")
         return JSONResponse({
             'success': True,
-            'models': result['models']
+            'models': models,
+            'catalog': catalog,
         })
     except Exception as e:
         logger.error(f'获取模型列表失败: {str(e)}')
@@ -3352,12 +3392,21 @@ async def list_style_models(request: Request):
 
         vl_models.sort(key=_sort_key)
 
+        from config.model_catalog import (
+            ModelScene,
+            annotate_llm_models,
+            build_tracks_payload,
+        )
+        vl_models = annotate_llm_models(vl_models, ModelScene.LLM_STYLE_RECOGNIZE)
+        catalog = build_tracks_payload(ModelScene.LLM_STYLE_RECOGNIZE, vl_models, kind="llm")
+
         return JSONResponse({
             'success': True,
             'models': vl_models,
             'llm_timeout': IMAGE_STYLE_LLM_TIMEOUT,
             'preferred_vendor': IMAGE_STYLE_PREFERRED_VENDOR,
             'preferred_model': IMAGE_STYLE_PREFERRED_MODEL,
+            'catalog': catalog,
         })
     except Exception as e:
         logger.error(f'获取画风识别模型列表失败: {str(e)}')

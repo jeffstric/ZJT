@@ -7,6 +7,7 @@
     <link rel="icon" href="__BRANDING_FAVICON_URL__" type="image/vnd.microsoft.icon"/>
     <link rel="stylesheet" href="/css/common.css">
     <link rel="stylesheet" href="css/script_writer.css">
+    <link rel="stylesheet" href="/css/model_catalog.css">
     <!-- Markdown渲染支持 -->
     <script src="/js/vendor/marked.min.js"></script>
     <link rel="stylesheet" href="css/github.min.css">
@@ -15,6 +16,7 @@
     <script src="/js/vendor/axios.min.js"></script>
     <!-- 任务配置模块 -->
     <script src="/js/task_config.js"></script>
+    <script src="/js/model_catalog.js?v=catalog4"></script>
     <!-- i18n 多语言支持 -->
     <script src="/i18n/i18n-core.js"></script>
     <script src="/i18n/i18n-dom.js"></script>
@@ -276,7 +278,8 @@
                                 <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
                             </svg>
                         </div>
-                        <div class="model-select-wrapper">
+                        <div class="model-select-wrapper has-track-toggle">
+                            <div id="llm-track-host" class="model-track-host"></div>
                             <select id="model-selector" class="model-select" onchange="changeModel()" title="选择 AI 模型" data-i18n="select_ai_model:title">
                                 <option value="" data-i18n="loading">加载中...</option>
                             </select>
@@ -323,7 +326,8 @@
                                 <path d="M9 12c0 1.5 1 3 3 3s3-1.5 3-3"/>
                             </svg>
                         </div>
-                        <div class="model-select-wrapper">
+                        <div class="model-select-wrapper has-track-toggle">
+                            <div id="image-track-host" class="model-track-host"></div>
                             <select id="text-to-image-model-selector" class="model-select" onchange="changeTextToImageModel()" title="选择生图模型" style="display: none;" data-i18n="select_image_model:title">
                                 <option value="" data-i18n="loading">加载中...</option>
                             </select>

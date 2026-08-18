@@ -253,12 +253,16 @@
 
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const category = currentMode === 'text_to_video' ? 'text_to_video' : 'image_to_video';
-          const options = window.TaskConfig.getModelOptionsForCategory(category);
+          let options = window.TaskConfig.getModelOptionsForCategory(category);
+          if (typeof filterVideoOptionsByDriver === 'function') {
+            options = filterVideoOptionsByDriver(options);
+          }
           let firstAvailable = null;
 
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
+            optEl.dataset.shortKey = opt.value;
 
             if(currentMode === 'text_to_video') {
               // 文生视频模式：所有模型都可用
@@ -278,6 +282,20 @@
           });
 
           firstVideoModelValue = firstAvailable || options[0]?.value || 'wan22';
+          if (window.ModelCatalog && videoModelSelect.parentElement) {
+            const scene = window.ModelCatalog.sceneForVideoImageMode
+              ? window.ModelCatalog.sceneForVideoImageMode(currentMode)
+              : (currentMode === 'text_to_video' ? 'video.text_to_video' : 'video.image_to_video');
+            const modeOptions = options.filter((opt) => {
+              if (currentMode === 'text_to_video') return true;
+              const config = modelConfigs[opt.value];
+              const supportedModes = config?.supported_image_modes || ['first_last_frame'];
+              return supportedModes.includes(currentMode);
+            });
+            const valueHit = window.ModelCatalog.findTaskByTrack(modeOptions, scene, null, 'value');
+            if (valueHit && !valueHit.disabled) firstVideoModelValue = valueHit.value;
+            window.ModelCatalog.bindSelectTrack(videoModelSelect.parentElement, videoModelSelect, scene, 'task');
+          }
         } else {
           // 回退：硬编码选项
           const fallbackOptions = [
@@ -982,8 +1000,7 @@
       }
 
       videoModelSelect.value = node.data.videoModel;
-      // 应用驱动状态禁用未配置的选项
-      applyDriverStatusToSelect(videoModelSelect);
+      applyDriverStatusToSelect(videoModelSelect, node.data.videoModel);
       // 初始化时根据模型设置时长和比例选项
       updateDurationOptions(node.data.videoModel);
       updateRatioOptions(node.data.videoModel);

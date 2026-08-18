@@ -528,9 +528,53 @@
 
             // LLM 模型数据（用于 Agent 模式对话）
             const allLLMModels = ref([]);
+            const llmCatalog = ref(null);
             const selectedLLMModel = ref(null);
             const selectedLLMModelKey = Vue.computed(() => getLLMModelSelectionKey(selectedLLMModel.value));
             const showLLMModelSelect = ref(false);
+            const collapsedLLMModels = Vue.computed(() => {
+                if (!window.ModelCatalog) return allLLMModels.value;
+                return window.ModelCatalog.collapseLlmModels(
+                    allLLMModels.value.map((m) => ({
+                        ...m,
+                        vendor_name: m.vendor,
+                        model_id: m.id,
+                    })),
+                    'llm.marketing',
+                    llmCatalog.value,
+                );
+            });
+            const currentLLMTrack = Vue.computed(() => {
+                if (!window.ModelCatalog || !selectedLLMModel.value) return 'custom';
+                return window.ModelCatalog.inferTrack('llm.marketing', selectedLLMModel.value.name, llmCatalog.value);
+            });
+            const visibleLLMModels = Vue.computed(() => {
+                return collapsedLLMModels.value.map((item) => {
+                    const route = item.defaultRoute || item.routes[0] || {};
+                    return {
+                        id: route.model_id || route.id,
+                        name: item.name,
+                        vendor: route.vendor_name || route.vendor,
+                        vendor_id: route.vendor_id,
+                        supportsVl: route.supportsVl || route.supports_vl,
+                        supportsThinking: route.supportsThinking || route.supports_thinking,
+                        track: item.track,
+                    };
+                });
+            });
+
+            function selectLLMTrack(track) {
+                const hit = window.ModelCatalog
+                    ? window.ModelCatalog.findCollapsedByTrack(collapsedLLMModels.value, track)
+                    : null;
+                const route = hit?.defaultRoute;
+                if (!route) return;
+                const model = allLLMModels.value.find((m) => (
+                    m.name === (route.name || route.model)
+                    && String(m.vendor_id || '') === String(route.vendor_id || '')
+                ));
+                if (model) selectLLMModel(model);
+            }
 
             // Verification（ask_user 交互）状态
             const pendingVerificationId = ref(null);
@@ -4431,6 +4475,7 @@
                         desc: opt.label,
                         key: opt.key,
                         value: opt.value,
+                        short_key: opt.short_key || opt.value,
                         supportedImageModes: opt.supportedImageModes || ['first_last_frame']
                     }));
 
@@ -4593,16 +4638,19 @@
             // 加载 LLM 模型列表
             async function loadLLMModels() {
                 try {
-                    const response = await fetch('/api/models');
+                    const response = await fetch('/api/models?scene=llm.marketing');
                     const data = await response.json();
                     if (data.success && data.models) {
+                        llmCatalog.value = data.catalog || null;
                         allLLMModels.value = data.models.map(m => ({
                             id: m.model_id,
                             name: m.name,
                             vendor: m.vendor_name,
                             vendor_id: m.vendor_id,
                             supportsVl: m.supports_vl || false,
-                            supportsThinking: m.supports_thinking || false
+                            supportsThinking: m.supports_thinking || false,
+                            track: m.track || null,
+                            is_default_route: !!m.is_default_route,
                         }));
                         // 恢复用户保存的 LLM 模型偏好
                         const savedLLMModelId = localStorage.getItem('marketing_selected_llm_model_id');
@@ -4626,13 +4674,32 @@
                                 console.log('[初始化] 恢复用户偏好 LLM 模型:', savedModel.name);
                             }
                         }
-                        // 如果没有恢复成功，默认选中火山引擎的 doubao-seed-2-0-lite，如果没有则选第一个
                         if (!selectedLLMModel.value && allLLMModels.value.length > 0) {
-                            const doubaoModel = pickPreferredLLMModel(
-                                allLLMModels.value.filter(m => m.name === 'doubao-seed-2-0-lite')
-                            );
-                            // 最后选择第一个模型
-                            selectedLLMModel.value = doubaoModel || allLLMModels.value[0];
+                            let preferred = null;
+                            if (window.ModelCatalog) {
+                                const collapsed = window.ModelCatalog.collapseLlmModels(
+                                    allLLMModels.value.map((m) => ({
+                                        ...m,
+                                        vendor_name: m.vendor,
+                                        model_id: m.id,
+                                    })),
+                                    'llm.marketing',
+                                    llmCatalog.value,
+                                );
+                                const route = window.ModelCatalog.findCollapsedByTrack(collapsed, 'value')?.defaultRoute;
+                                if (route) {
+                                    preferred = allLLMModels.value.find((m) => (
+                                        m.name === (route.name || route.model)
+                                        && String(m.vendor_id || '') === String(route.vendor_id || '')
+                                    ));
+                                }
+                            }
+                            if (!preferred) {
+                                preferred = pickPreferredLLMModel(
+                                    allLLMModels.value.filter(m => m.name === 'doubao-seed-2-0-lite')
+                                );
+                            }
+                            selectedLLMModel.value = preferred || allLLMModels.value[0];
                         }
                         console.log('[LLM] 加载了', allLLMModels.value.length, '个 LLM 模型');
                     }
@@ -6209,11 +6276,17 @@
 
             function modelForMediaSlot(slot, models) {
                 const taskId = mediaPreferenceProfiles.value?.[slot]?.task_id;
-                if (!taskId || !window.TaskConfig?.getTaskById) return null;
-                const task = window.TaskConfig.getTaskById(taskId);
-                return task?.key
-                    ? models.find(m => m.key === task.key || task.key.startsWith(m.key + '_')) || null
-                    : null;
+                if (taskId && window.TaskConfig?.getTaskById) {
+                    const task = window.TaskConfig.getTaskById(taskId);
+                    const saved = task?.key
+                        ? models.find(m => m.key === task.key || task.key.startsWith(m.key + '_')) || null
+                        : null;
+                    if (saved) return saved;
+                }
+                if (window.ModelCatalog) {
+                    return window.ModelCatalog.findTaskByTrack(models, slot, null, 'value') || null;
+                }
+                return null;
             }
 
             async function syncMediaPreference(mediaType, mode, taskId, profile = {}) {
@@ -6770,10 +6843,13 @@
                 triggerMention,
                 // LLM 模型相关
                 allLLMModels,
+                visibleLLMModels,
+                currentLLMTrack,
                 selectedLLMModel,
                 selectedLLMModelKey,
                 showLLMModelSelect,
                 selectLLMModel,
+                selectLLMTrack,
                 getLLMModelSelectionKey,
                 loadLLMModels,
                 // Verification（ask_user 交互）

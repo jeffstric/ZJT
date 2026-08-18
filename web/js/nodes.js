@@ -128,22 +128,32 @@
       return msg;
     }
 
-    // 通用函数：根据 driver 状态禁用 select 选项
-    function applyDriverStatusToSelect(selectEl) {
+    // 通用函数：未配置供应商的模型从下拉移除；当前已保存值保留并标「未配置」
+    function applyDriverStatusToSelect(selectEl, savedValue) {
       if(!selectEl) return;
 
-      const driverStatus = getDriverStatusConfig();
+      const driverStatus = typeof getDriverStatusConfig === 'function' ? getDriverStatusConfig() : {};
 
       if(!driverStatus || Object.keys(driverStatus).length === 0) return;
 
+      const keepValue = savedValue != null && savedValue !== ''
+        ? String(savedValue)
+        : String(selectEl.value || '');
+
       selectEl.querySelectorAll('option').forEach(option => {
         const taskType = window.TaskConfig ? window.TaskConfig.getTaskIdByKey(option.value) : null;
-        if(taskType && driverStatus[taskType] && driverStatus[taskType].available === false) {
+        const available = window.TaskConfig && window.TaskConfig.isDriverAvailable
+          ? window.TaskConfig.isDriverAvailable(taskType, driverStatus)
+          : (!taskType || !driverStatus[taskType] || driverStatus[taskType].available !== false);
+        if (available) return;
+        if (String(option.value) === keepValue) {
           option.disabled = true;
           if(!option.textContent.includes('(未配置)')) {
             option.textContent += ' (未配置)';
           }
+          return;
         }
+        option.remove();
       });
     }
 
@@ -169,14 +179,23 @@
 
     // 检查指定模型是否可用
     function isModelAvailable(modelValue) {
-      const driverStatus = getDriverStatusConfig();
-
-      if(!driverStatus || Object.keys(driverStatus).length === 0) return true;
-
+      const driverStatus = typeof getDriverStatusConfig === 'function' ? getDriverStatusConfig() : {};
       const taskType = window.TaskConfig ? window.TaskConfig.getTaskIdByKey(modelValue) : null;
+      if (window.TaskConfig && window.TaskConfig.isDriverAvailable) {
+        return window.TaskConfig.isDriverAvailable(taskType, driverStatus);
+      }
+      if(!driverStatus || Object.keys(driverStatus).length === 0) return true;
       if(!taskType) return true;
-
       return driverStatus[taskType]?.available !== false;
+    }
+
+    function filterVideoOptionsByDriver(options) {
+      const list = options || [];
+      if (window.TaskConfig && window.TaskConfig.filterAvailableModelOptions) {
+        const driverStatus = typeof getDriverStatusConfig === 'function' ? getDriverStatusConfig() : {};
+        return window.TaskConfig.filterAvailableModelOptions(list, driverStatus);
+      }
+      return list.filter((opt) => isModelAvailable(opt.value));
     }
     
     // ============ 宫格提示词生成 ============
@@ -1679,7 +1698,9 @@
           const mode = node.data.videoGenMode || 'first_last_frame';
           if(window.TaskConfig && window.TaskConfig.isLoaded()) {
             const allOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
-            const options = allOptions.filter(opt => {
+            const options = (typeof filterVideoOptionsByDriver === 'function'
+              ? filterVideoOptionsByDriver(allOptions)
+              : allOptions).filter(opt => {
               const modes = opt.supportedImageModes || ['first_last_frame'];
               return modes.includes(mode);
             });
@@ -1704,7 +1725,7 @@
           // 确保已保存的视频模型值在下拉框中可见
           ensureSelectHasSavedOption(shotGroupVideoModelEl, node.data.videoModel);
           // 应用驱动状态禁用未配置的视频模型选项
-          applyDriverStatusToSelect(shotGroupVideoModelEl);
+          applyDriverStatusToSelect(shotGroupVideoModelEl, node.data.videoModel);
         }
 
         const shotGroupGridBtn = nodeBody.querySelector('.shot-group-grid-btn');

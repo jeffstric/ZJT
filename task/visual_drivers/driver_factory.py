@@ -479,6 +479,16 @@ class VideoDriverFactory:
 
         return result
 
+    @staticmethod
+    def is_task_available(task_id, driver_status) -> bool:
+        """无状态条目视为可用，与首页 `!status || available !== false` 一致。"""
+        if not driver_status:
+            return True
+        status = driver_status.get(str(task_id))
+        if not status:
+            return True
+        return status.get("available") is not False
+
 
 def register_all_drivers():
     """

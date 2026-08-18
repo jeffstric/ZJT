@@ -2637,6 +2637,13 @@ async def get_storyboard_models(
         except Exception:
             pass
 
+    from task.visual_drivers import VideoDriverFactory
+    driver_status: Dict[str, Any] = {}
+    try:
+        driver_status = VideoDriverFactory.get_driver_availability() or {}
+    except Exception:
+        logger.exception("storyboard models: 读取驱动可用性失败，列表不过滤")
+
     def _list(category):
         configs = UnifiedConfigRegistry.get_by_category(category)
         # 与管理端/工作流一致：按 sort_order 升序，保证默认取「列表第一项」时语义稳定
@@ -2650,6 +2657,8 @@ async def get_storyboard_models(
         items = []
         for c in configs:
             if not c.enabled or c.hidden:
+                continue
+            if not VideoDriverFactory.is_task_available(c.id, driver_status):
                 continue
             # 算力展示元信息（前端 option 内联用）：统一解析最终生效配置，
             # 覆盖「算力定义在实现方层」的模型（如 LTX2.3/可灵/Seedance 1.5 Pro）
@@ -2690,17 +2699,51 @@ async def get_storyboard_models(
             items.append(item)
         return items
 
+    from config.model_catalog import (
+        ModelScene,
+        annotate_task_models,
+        build_tracks_payload,
+        scene_catalog_map,
+    )
+
+    text_to_image = annotate_task_models(_list(TaskCategory.TEXT_TO_IMAGE), ModelScene.IMAGE_TEXT_TO_IMAGE)
+    image_edit = annotate_task_models(_list(TaskCategory.IMAGE_EDIT), ModelScene.IMAGE_IMAGE_EDIT)
+    text_to_video = annotate_task_models(_list(TaskCategory.TEXT_TO_VIDEO), ModelScene.VIDEO_TEXT_TO_VIDEO)
+    image_to_video = annotate_task_models(_list(TaskCategory.IMAGE_TO_VIDEO), ModelScene.VIDEO_IMAGE_TO_VIDEO)
+    digital_human = annotate_task_models(_list(TaskCategory.DIGITAL_HUMAN), ModelScene.VIDEO_DIGITAL_HUMAN)
+
     return JSONResponse({
         'success': True,
         # 旧字段保留向前兼容（当前 storyboard 前端主要使用）
-        'image_models': _list(TaskCategory.TEXT_TO_IMAGE),
-        'video_models': _list(TaskCategory.IMAGE_TO_VIDEO),
-        'digital_human_models': _list(TaskCategory.DIGITAL_HUMAN),
+        'image_models': text_to_image,
+        'video_models': image_to_video,
+        'digital_human_models': digital_human,
         # 新增分类字段（为未来 UI 动态文生/图生支持做准备，第一版前端暂不使用切换）
-        'text_to_image_models': _list(TaskCategory.TEXT_TO_IMAGE),
-        'image_edit_models': _list(TaskCategory.IMAGE_EDIT),
-        'text_to_video_models': _list(TaskCategory.TEXT_TO_VIDEO),
-        'image_to_video_models': _list(TaskCategory.IMAGE_TO_VIDEO),
+        'text_to_image_models': text_to_image,
+        'image_edit_models': image_edit,
+        'text_to_video_models': text_to_video,
+        'image_to_video_models': image_to_video,
+        'catalog': {
+            ModelScene.IMAGE_TEXT_TO_IMAGE: build_tracks_payload(
+                ModelScene.IMAGE_TEXT_TO_IMAGE, text_to_image, kind="task"
+            ),
+            ModelScene.IMAGE_IMAGE_EDIT: build_tracks_payload(
+                ModelScene.IMAGE_IMAGE_EDIT, image_edit, kind="task"
+            ),
+            ModelScene.VIDEO_TEXT_TO_VIDEO: build_tracks_payload(
+                ModelScene.VIDEO_TEXT_TO_VIDEO, text_to_video, kind="task"
+            ),
+            ModelScene.VIDEO_IMAGE_TO_VIDEO: build_tracks_payload(
+                ModelScene.VIDEO_IMAGE_TO_VIDEO, image_to_video, kind="task"
+            ),
+            ModelScene.VIDEO_REFERENCE_TO_VIDEO: build_tracks_payload(
+                ModelScene.VIDEO_REFERENCE_TO_VIDEO, image_to_video, kind="task"
+            ),
+            ModelScene.VIDEO_DIGITAL_HUMAN: build_tracks_payload(
+                ModelScene.VIDEO_DIGITAL_HUMAN, digital_human, kind="task"
+            ),
+            'scenes': scene_catalog_map(),
+        },
     })
 
 
