@@ -584,7 +584,7 @@ class TestVideoCloneDriverKeys(unittest.TestCase):
         self.assertIsNotNone(kling)
         self.assertFalse(kling.to_frontend_dict()['supports_video_clone'])
 
-    def test_seedance_2_5_does_not_need_face_mask(self):
+    def test_seedance_2_5_needs_face_mask(self):
         from config.unified_config import (
             VIDEO_CLONE_DRIVER_KEYS,
             SEEDANCE_FACE_MASK_DRIVER_KEYS,
@@ -592,13 +592,13 @@ class TestVideoCloneDriverKeys(unittest.TestCase):
             UnifiedConfigRegistry,
         )
 
-        self.assertNotIn(DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO, SEEDANCE_FACE_MASK_DRIVER_KEYS)
+        self.assertIn(DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO, SEEDANCE_FACE_MASK_DRIVER_KEYS)
         self.assertIn(DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
 
         seedance_25 = UnifiedConfigRegistry.get_by_key('seedance_2_5_image_to_video')
         self.assertIsNotNone(seedance_25)
         frontend = seedance_25.to_frontend_dict()
-        self.assertFalse(frontend['needs_face_mask'])
+        self.assertTrue(frontend['needs_face_mask'])
         self.assertTrue(frontend['supports_video_clone'])
 
     def test_minimax_h3_reference_supports_video_clone(self):

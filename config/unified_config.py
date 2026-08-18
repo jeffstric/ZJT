@@ -544,7 +544,7 @@ class UnifiedTaskConfig:
         # 添加参考音频和视频支持标记
         result['supports_ref_audio_video'] = self.supports_ref_audio_video
 
-        # 是否走人脸遮盖预处理（seedance 2.0 系列），前端据此显隐「是否处理人脸」选项
+        # 是否走人脸遮盖预处理（seedance 2.0 / 2.5），前端据此显隐「是否处理人脸」选项
         # 单一事实来源：模块级 SEEDANCE_FACE_MASK_DRIVER_KEYS
         result['needs_face_mask'] = self.key in SEEDANCE_FACE_MASK_DRIVER_KEYS
 
@@ -1322,7 +1322,7 @@ SEEDANCE_FACE_MASK_DRIVER_KEYS = frozenset({
     DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
-    # Seedance 2.5 不做人脸遮盖，不要加入此集合
+    DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
 })
 
 
