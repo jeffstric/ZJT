@@ -8,7 +8,7 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 - **param_prepare**（参数预处理）：在任务提交到外部 API 之前，对输入数据进行预处理（如 Seedance 2.0 / 2.0 Fast / 2.0 Mini 视频/图片人脸遮盖）
 - **before_finish**（结束前处理）：任务失败后，自动切换不同供应商重试
 
-> **适配模型清单（单一事实来源）**：param_prepare 人脸遮盖适用的 Seedance 模型统一维护在 `config/unified_config.py::SEEDANCE_FACE_MASK_DRIVER_KEYS`，`server.py` 闸门与 `PipelineDriverFactory` 均查询该集合，新增模型只需在此追加一项。
+> **适配模型清单（单一事实来源）**：param_prepare 人脸遮盖适用的 Seedance 模型统一维护在 `config/unified_config.py::SEEDANCE_FACE_MASK_DRIVER_KEYS`，`server.py` 闸门与 `PipelineDriverFactory` 均查询该集合，新增模型只需在此追加一项。当前包含 Seedance 2.0 / 2.0 Fast / 2.0 Mini；**Seedance 2.5 不加入此集合**，前端不显示「是否处理人脸」，后端也不创建遮盖步骤。
 
 > **用户开关与版本门（opt-in）**：人脸遮盖改为**用户显式勾选才生效（默认不勾选）**。`/api/ai-app-run-image` 新增表单参数 `enable_face_mask: bool = Form(False)`；`server.py` 的 `need_pipeline_steps` 闸门最终为 `is_seedance_face_mask AND enable_face_mask AND (NOT Edition.is_community()) AND runninghub_api_key AND has_any_param_prepare_input`。
 > - **未勾选 / 社区版**：闸门为假 → 走 `AIToolsModel.create`（普通生成，**不创建任何步骤**，避免卡在 `WAITING_PARAM_PREPARE`）。

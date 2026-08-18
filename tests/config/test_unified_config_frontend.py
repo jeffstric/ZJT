@@ -546,5 +546,59 @@ class TestGetFrontendConfigStructure(unittest.TestCase):
             self.assertIn(provider, config['providers'], f"Missing provider: {provider}")
 
 
+class TestVideoCloneDriverKeys(unittest.TestCase):
+    """营销视频克隆白名单 VIDEO_CLONE_DRIVER_KEYS"""
+
+    def setUp(self):
+        from config.unified_config import UnifiedConfigRegistry
+        UnifiedConfigRegistry._configs.clear()
+        UnifiedConfigRegistry._id_map.clear()
+        UnifiedConfigRegistry._implementations.clear()
+        from config.unified_config import init_unified_config
+        init_unified_config()
+
+    def tearDown(self):
+        from config.unified_config import UnifiedConfigRegistry
+        UnifiedConfigRegistry._configs.clear()
+        UnifiedConfigRegistry._id_map.clear()
+        UnifiedConfigRegistry._implementations.clear()
+
+    def test_seedance_2_5_is_in_video_clone_allowlist(self):
+        from config.unified_config import VIDEO_CLONE_DRIVER_KEYS, DriverKey
+
+        self.assertIn(DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        self.assertIn(DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        self.assertIn(DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        self.assertIn(DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+
+    def test_frontend_dict_supports_video_clone_flag(self):
+        from config.unified_config import UnifiedConfigRegistry
+
+        seedance_25 = UnifiedConfigRegistry.get_by_key('seedance_2_5_image_to_video')
+        self.assertIsNotNone(seedance_25)
+        self.assertTrue(seedance_25.to_frontend_dict()['supports_video_clone'])
+
+        kling = UnifiedConfigRegistry.get_by_key('kling_image_to_video')
+        self.assertIsNotNone(kling)
+        self.assertFalse(kling.to_frontend_dict()['supports_video_clone'])
+
+    def test_seedance_2_5_does_not_need_face_mask(self):
+        from config.unified_config import (
+            VIDEO_CLONE_DRIVER_KEYS,
+            SEEDANCE_FACE_MASK_DRIVER_KEYS,
+            DriverKey,
+            UnifiedConfigRegistry,
+        )
+
+        self.assertNotIn(DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO, SEEDANCE_FACE_MASK_DRIVER_KEYS)
+        self.assertIn(DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+
+        seedance_25 = UnifiedConfigRegistry.get_by_key('seedance_2_5_image_to_video')
+        self.assertIsNotNone(seedance_25)
+        frontend = seedance_25.to_frontend_dict()
+        self.assertFalse(frontend['needs_face_mask'])
+        self.assertTrue(frontend['supports_video_clone'])
+
+
 if __name__ == '__main__':
     unittest.main()

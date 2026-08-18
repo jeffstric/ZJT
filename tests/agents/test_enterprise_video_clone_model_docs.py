@@ -12,6 +12,7 @@ VIDEO_CLONE_DOCS = [
 OLD_SEEDANCE_ONLY_PHRASES = [
     "仅支持 Seedance2.0 和 Seedance2.0 Fast",
     "不是 Seedance2.0 或 Seedance2.0 Fast",
+    "仅支持 Seedance2.0、Seedance2.0 Fast 和 Seedance2.0 Mini（seedance2.0-mini）模型",
 ]
 
 
@@ -24,3 +25,11 @@ def test_enterprise_video_clone_docs_include_seedance_mini_model():
 
         for old_phrase in OLD_SEEDANCE_ONLY_PHRASES:
             assert old_phrase not in text, f"{path} still contains old model limit: {old_phrase}"
+
+
+def test_enterprise_video_clone_docs_include_seedance_2_5_model():
+    for path in VIDEO_CLONE_DOCS:
+        text = path.read_text(encoding="utf-8")
+
+        assert "seedance2.5" in text, f"{path} should mention seedance2.5"
+        assert "Seedance 2.5" in text, f"{path} should mention the display name"

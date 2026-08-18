@@ -548,6 +548,9 @@ class UnifiedTaskConfig:
         # 单一事实来源：模块级 SEEDANCE_FACE_MASK_DRIVER_KEYS
         result['needs_face_mask'] = self.key in SEEDANCE_FACE_MASK_DRIVER_KEYS
 
+        # 是否允许营销视频克隆（单一事实来源：VIDEO_CLONE_DRIVER_KEYS）
+        result['supports_video_clone'] = self.key in VIDEO_CLONE_DRIVER_KEYS
+
         # 添加算力修饰符
         if self.power_modifiers:
             result['power_modifiers'] = [
@@ -1316,6 +1319,17 @@ class DriverKey:
 # 单一事实来源：server.py 闸门与 PipelineDriverFactory 均通过此集合判断
 # 让某 Seedance 模型走人脸遮盖预处理，只需在此追加对应 DriverKey
 SEEDANCE_FACE_MASK_DRIVER_KEYS = frozenset({
+    DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
+    # Seedance 2.5 不做人脸遮盖，不要加入此集合
+})
+
+
+# ============ 营销视频克隆允许的任务 DriverKey 集合 ============
+# 单一事实来源：前端 supports_video_clone、智能体 [用户视频偏好]、SOP 白名单均以此为准
+# 让某模型进入视频克隆白名单，只需在此追加对应 DriverKey
+VIDEO_CLONE_DRIVER_KEYS = frozenset({
     DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,

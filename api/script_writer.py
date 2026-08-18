@@ -3829,6 +3829,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
 
             # 如果前端传递了 task_id（视频模型选择），同步到模型偏好
             v_task_id = v_prefs.get('task_id')
+            v_config = None
             if v_task_id:
                 try:
                     v_task_id = int(v_task_id)
@@ -3865,16 +3866,16 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 v_pref_parts.append(f"视频分辨率: {v_prefs['resolution']}")
             # 添加视频模型名称（优先从前端传入，其次从 task_id 解析）
             v_model_display = v_prefs.get('model_name')
-            if not v_model_display and v_task_id:
-                try:
-                    from config.unified_config import UnifiedConfigRegistry as _UCR
-                    _vcfg = _UCR.get_by_id(int(v_task_id))
-                    if _vcfg:
-                        v_model_display = _vcfg.name
-                except (TypeError, ValueError):
-                    pass
+            if not v_model_display and v_config:
+                v_model_display = v_config.name
             if v_model_display:
                 v_pref_parts.append(f"视频模型: {v_model_display}")
+            if v_config:
+                from config.unified_config import VIDEO_CLONE_DRIVER_KEYS
+                if v_config.key in VIDEO_CLONE_DRIVER_KEYS:
+                    v_pref_parts.append("视频克隆: 当前模型支持")
+                else:
+                    v_pref_parts.append("视频克隆: 当前模型不支持")
             # 人脸处理开关（让智能体感知：仅当开启时才在视频克隆提示词追加「黑框还原真人人脸」）
             if v_prefs.get('enable_face_mask'):
                 v_pref_parts.append("人脸处理: 已开启")
