@@ -5835,7 +5835,6 @@
             };
             window.__pendingStyleRecognition = pending;
             document.getElementById('confirm-visual-style').value = data.visual_style || '';
-            document.getElementById('confirm-composition').value = data.composition_preference || '';
             document.getElementById('style-confirm-modal').classList.add('show');
         }
 
@@ -5857,14 +5856,13 @@
         async function applyRecognizedStyle() {
             const pending = window.__pendingStyleRecognition || {};
             const visualStyle = (document.getElementById('confirm-visual-style').value || '').trim();
-            const composition = (document.getElementById('confirm-composition').value || '').trim();
-            if (!visualStyle && !composition) {
-                showError(window.t ? window.t('style_confirm_hint') : '画面风格与构图倾向均为空');
+            if (!visualStyle) {
+                showError(window.t ? window.t('style_confirm_empty') : '画面风格不能为空');
                 return;
             }
             const payload = {
                 user_id: USER_ID, world_id: WORLD_ID, auth_token: AUTH_TOKEN,
-                visual_style: visualStyle, composition_preference: composition,
+                visual_style: visualStyle,
                 image_url: pending.image_url || '',
                 model: pending.model || '', vendor_id: pending.vendor_id ?? null,
             };
@@ -5889,9 +5887,8 @@
                     // 通知剧本智能体：画风已更新（对齐角色/世界设定编辑后的系统通知）
                     const notificationMessage = [
                         '系统通知：世界画风已被用户通过「画风识别」更新，请重新读取世界设定最新内容。',
-                        visualStyle ? `画面风格(visual_style)：${visualStyle}` : '',
-                        composition ? `构图倾向(composition_preference)：${composition}` : '',
-                    ].filter(Boolean).join('\n');
+                        `画面风格(visual_style)：${visualStyle}`,
+                    ].join('\n');
                     await notifyAgentAssetUpdated(notificationMessage);
                 } else {
                     showError(data.error || (window.t ? window.t('style_recognize_failed', {error: ''}) : '写入失败'));

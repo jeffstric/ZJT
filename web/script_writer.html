@@ -1258,11 +1258,7 @@
                     <label data-i18n="style_confirm_visual_style">画面风格 (visual_style)</label>
                     <textarea id="confirm-visual-style" class="form-input" rows="3"></textarea>
                 </div>
-                <div class="form-group">
-                    <label data-i18n="style_confirm_composition">构图倾向 (composition_preference)</label>
-                    <textarea id="confirm-composition" class="form-input" rows="3"></textarea>
-                </div>
-                <p class="modal-hint" data-i18n="style_confirm_hint">确认后将写入 world.json 并追加一条识别记录（world 设定已被修改）。</p>
+                <p class="modal-hint" data-i18n="style_confirm_hint">确认后仅更新画面风格并追加一条识别记录，不会修改构图倾向。</p>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeStyleConfirmModal()" data-i18n="cancel">取消</button>

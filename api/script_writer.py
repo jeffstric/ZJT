@@ -3383,7 +3383,10 @@ _FIRST_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def _extract_style_json(content: str) -> Optional[dict]:
-    """从 LLM 文本回复中容错提取 visual_style / composition_preference JSON。"""
+    """从 LLM 文本回复中容错提取 visual_style JSON。
+
+    模型若仍回了 composition_preference，一律丢弃，识别链路只修画风。
+    """
     if not content:
         return None
     candidates = []
@@ -3398,12 +3401,10 @@ def _extract_style_json(content: str) -> Optional[dict]:
     for cand in candidates:
         try:
             obj = json.loads(cand)
-            if isinstance(obj, dict):
-                if 'visual_style' in obj or 'composition_preference' in obj:
-                    return {
-                        'visual_style': str(obj.get('visual_style', '')).strip(),
-                        'composition_preference': str(obj.get('composition_preference', '')).strip(),
-                    }
+            if isinstance(obj, dict) and 'visual_style' in obj:
+                visual_style = str(obj.get('visual_style', '')).strip()
+                if visual_style:
+                    return {'visual_style': visual_style}
         except Exception:
             continue
     return None
@@ -3412,7 +3413,7 @@ def _extract_style_json(content: str) -> Optional[dict]:
 @router.post('/recognize-style')
 @require_permission("world:view_files")
 async def recognize_style(request: Request, body: RecognizeStyleRequest):
-    """调用 vl 模型识别图片画风，返回画面风格 + 构图倾向（供前端确认后再写入）。"""
+    """调用 vl 模型识别图片画风，仅返回画面风格（供前端确认后再写入）。"""
     from config.constant import IMAGE_STYLE_LLM_TIMEOUT, IMAGE_STYLE_COMPRESS_TIMEOUT
     from utils.image_compressor import compress_local_image_to_base64
 
@@ -3458,39 +3459,38 @@ async def recognize_style(request: Request, body: RecognizeStyleRequest):
             return JSONResponse({'success': False, 'error': f'图片处理失败: {err}'}, status_code=400)
 
         # 3) 构造多模态消息，调用 vl 模型（同步 call_api → to_thread + wait_for）
-        # 字段语义对齐 plot-analyzer：visual_style=画风大类+具体风格关键词；
-        # composition_preference=镜头/构图；二者不得混入色彩，也不得互相矛盾。
+        # visual_style 规范与 asset-readiness-checker 画风审核条款一致，
+        # 字段语义对齐 plot-analyzer：只回答「是什么风格」，不产出构图/色彩。
         system_prompt = (
-            "你是一位资深的动画/影视美术指导，负责为项目设定可直接用于生图/生视频的画风与构图。"
+            "你是一位资深的动画/影视美术指导，负责为项目设定可直接用于生图/生视频的画风。"
+            "visual_style 会作为 suffix 拼接到生图/生视频模型的 prompt 后面，"
+            "只保留对模型有用的风格关键词。"
             "请只返回一个 JSON 对象，不要包含任何其它文字、解释或 Markdown。"
             "\n\n"
             "字段规则（极其重要）：\n"
-            "1) visual_style（画面风格）只回答「是什么风格？」——先判定画风大类，再写具体风格关键词。\n"
+            "1) 只输出 visual_style（画面风格），不要输出 composition_preference、"
+            "color_language 或其它字段。\n"
+            "2) visual_style 只回答「是什么风格？」——先判定画风大类，再写具体风格关键词。\n"
             "   画风大类二选一：\n"
             "   - 写实风格类：真实照片感、电影级写实、纪实摄影；关键词含写实/真实/照片/摄影/电影感。\n"
             "   - 动漫/漫画风格类：日系动漫、美式漫画、卡通；关键词含动漫/二次元/漫画/卡通。\n"
             "   两种大类有本质区别，不可混淆：写实绝不能含「动漫/漫画/二次元」；"
             "动漫绝不能含「写实/照片/摄影」。\n"
-            "   visual_style 必须精简（约 8~20 字），只写风格关键词，"
-            "例如：「现代都市写实风格」「电影级写实风格」「日系新海诚动漫风格」"
+            "3) 必须精简：建议 8~20 字，最多不超过 50 字，只写风格关键词。"
+            "正确示例：「现代都市写实风格」「电影级写实风格」「日系新海诚动漫风格」"
             "「美漫:漫威风」「迪士尼风格」「皮克斯风」。\n"
-            "   禁止：色调/饱和度/光泽、镜头角度/构图、剧情内容、角色身份、场景叙事、"
+            "4) 禁止混入：色调/饱和度/光泽、镜头角度/构图/景别、剧情内容、角色身份、场景叙事、"
             "「生活化」「带货」「居家」等内容描述。\n"
-            "2) composition_preference（构图倾向）只回答「怎么拍？」——"
-            "镜头角度、构图方式、镜头运动、景别。\n"
-            "   示例：「低角度镜头营造压迫感」「竖屏平视中近景，主体居中」"
-            "「多用仰拍和俯拍强调权力关系」。\n"
-            "   禁止：色调/饱和度、画风大类词汇堆砌、多宫格/分镜图/对比图/序列帧、"
-            "以及与 visual_style 画风大类矛盾的术语"
-            "（如写实时写「动漫分镜/漫画格子」，动漫时写「纪实摄影/新闻抓拍」）。\n"
-            "3) 两个字段都不得包含多宫格、分镜图、对比图、时间线、序列帧等会误导生图的内容。\n"
-            "4) 不要输出 color_language；色彩信息不要塞进 visual_style 或 composition_preference。"
+            "5) 禁止误导生图的词：多宫格、分镜图、多格、grid、collage、montage、拼图、拼贴、"
+            "四格、九格、四宫格、九宫格、分镜、故事板、对比图、时间线、序列帧、"
+            "「生成多张」「每张」「各一张」。\n"
+            "6) 禁止笼统：不要写「好看的」「合适的」等无法指导生图的词。\n"
+            "7) 不要输出 color_language；色彩信息不要塞进 visual_style。"
         )
         user_text = (
-            "请分析这张参考图的画风与构图，仅返回如下 JSON（中文，精简）：\n"
-            '{"visual_style":"画风大类+具体风格关键词，如：现代都市写实风格 / 日系新海诚动漫风格",'
-            '"composition_preference":"镜头角度/构图方式/景别，如：低角度镜头营造压迫感"}\n'
-            "记住：visual_style 只写风格名，不要写色彩、镜头、剧情内容。"
+            "请分析这张参考图的画风，仅返回如下 JSON（中文，精简）：\n"
+            '{"visual_style":"画风大类+具体风格关键词，如：现代都市写实风格 / 日系新海诚动漫风格"}\n'
+            "记住：只写 visual_style，不要写构图倾向、色彩、镜头、剧情内容。"
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -3508,7 +3508,7 @@ async def recognize_style(request: Request, body: RecognizeStyleRequest):
             model=body.model,
             messages=messages,
             temperature=0.4,
-            max_tokens=800,
+            max_tokens=400,
             auth_token=body.auth_token or None,
             vendor_id=body.vendor_id,
             model_id=body.model_id,
@@ -3526,7 +3526,7 @@ async def recognize_style(request: Request, body: RecognizeStyleRequest):
 
         content = response.choices[0].message.content if response and response.choices else ''
         parsed = _extract_style_json(content)
-        if not parsed or (not parsed['visual_style'] and not parsed['composition_preference']):
+        if not parsed or not parsed.get('visual_style'):
             return JSONResponse({
                 'success': False,
                 'error': '无法从模型回复中解析画风结果，请重试或更换模型',
@@ -3536,7 +3536,6 @@ async def recognize_style(request: Request, body: RecognizeStyleRequest):
         return JSONResponse({
             'success': True,
             'visual_style': parsed['visual_style'],
-            'composition_preference': parsed['composition_preference'],
             'model': body.model,
             'vendor_id': body.vendor_id,
         })
@@ -3550,7 +3549,7 @@ class ApplyWorldStyleRequest(BaseModel):
     world_id: str
     auth_token: str = ""
     visual_style: str
-    composition_preference: str
+    composition_preference: Optional[str] = ""  # 兼容旧请求体，忽略不写盘
     image_url: str
     model: str
     vendor_id: Optional[int] = None
@@ -3559,16 +3558,17 @@ class ApplyWorldStyleRequest(BaseModel):
 @router.post('/world-style')
 @require_permission("world:save_files")
 async def apply_world_style(request: Request, body: ApplyWorldStyleRequest):
-    """将（用户确认后的）画风识别结果写入 world.json，并在 style_history 追加一条记录。"""
+    """将（用户确认后的）画风识别结果写入 world.json，并在 style_history 追加一条记录。
+
+    仅更新 visual_style，不覆盖已有 composition_preference。
+    """
     try:
-        if not body.visual_style and not body.composition_preference:
-            return JSONResponse({'success': False, 'error': '画面风格与构图倾向均为空'}, status_code=400)
+        visual_style = (body.visual_style or '').strip()
+        if not visual_style:
+            return JSONResponse({'success': False, 'error': '画面风格不能为空'}, status_code=400)
 
         world_data = file_manager.get_world_json(str(body.user_id), str(body.world_id)) or {}
-        if body.visual_style:
-            world_data['visual_style'] = body.visual_style
-        if body.composition_preference:
-            world_data['composition_preference'] = body.composition_preference
+        world_data['visual_style'] = visual_style
 
         history = world_data.setdefault('style_history', [])
         history.append({
@@ -3576,8 +3576,8 @@ async def apply_world_style(request: Request, body: ApplyWorldStyleRequest):
             'model': body.model,
             'vendor_id': body.vendor_id,
             'image_url': body.image_url,
-            'visual_style': body.visual_style,
-            'composition_preference': body.composition_preference,
+            'visual_style': visual_style,
+            'composition_preference': '',
         })
 
         ok = file_manager.save_world(world_data, str(body.user_id), str(body.world_id))
@@ -3586,7 +3586,7 @@ async def apply_world_style(request: Request, body: ApplyWorldStyleRequest):
 
         return JSONResponse({
             'success': True,
-            'message': '世界画风已更新（画面风格、构图倾向），本次识别已记录到 style_history',
+            'message': '世界画风已更新（画面风格），本次识别已记录到 style_history',
         })
     except Exception as e:
         logger.error(f'应用画风到 world.json 失败: {str(e)}', exc_info=True)
