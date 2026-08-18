@@ -543,6 +543,59 @@ class TestDriverImplementationIdConstants(unittest.TestCase):
             self.assertEqual(get_implementation_id(impl_name), expected_id)
             self.assertEqual(get_implementation_name(expected_id), impl_name)
 
+    def test_implementation_ids_are_unique(self):
+        """IMPLEMENTATION_TO_ID / DriverImplementationId 数字 ID 必须全局唯一。
+
+        曾发生 Seedance 2.5 与 MiniMax H3 参考生视频共用 67：
+        IMPLEMENTATION_FROM_ID 后写覆盖，落库后再反查会变成 H3 驱动。
+        """
+        from config.unified_config import (
+            DriverImplementationId,
+            IMPLEMENTATION_TO_ID,
+            IMPLEMENTATION_FROM_ID,
+            get_implementation_id,
+            get_implementation_name,
+        )
+
+        seen_ids = {}
+        for impl_name, impl_id in IMPLEMENTATION_TO_ID.items():
+            self.assertIsInstance(impl_id, int)
+            self.assertGreater(impl_id, 0, f"{impl_name} 的 ID 必须为正整数，实际: {impl_id}")
+            previous = seen_ids.get(impl_id)
+            self.assertIsNone(
+                previous,
+                f"实现 ID {impl_id} 被重复占用: {previous} 与 {impl_name}",
+            )
+            seen_ids[impl_id] = impl_name
+
+        enum_ids = {}
+        for attr in dir(DriverImplementationId):
+            if attr.startswith('_'):
+                continue
+            value = getattr(DriverImplementationId, attr)
+            if not isinstance(value, int):
+                continue
+            if attr == 'UNKNOWN':
+                self.assertEqual(value, 0)
+                continue
+            previous = enum_ids.get(value)
+            self.assertIsNone(
+                previous,
+                f"DriverImplementationId.{attr}={value} 与 DriverImplementationId.{previous} 冲突",
+            )
+            enum_ids[value] = attr
+
+        self.assertEqual(len(IMPLEMENTATION_FROM_ID), len(IMPLEMENTATION_TO_ID))
+        for impl_name, impl_id in IMPLEMENTATION_TO_ID.items():
+            self.assertEqual(IMPLEMENTATION_FROM_ID[impl_id], impl_name)
+            self.assertEqual(get_implementation_name(impl_id), impl_name)
+            self.assertEqual(get_implementation_id(impl_name), impl_id)
+
+        self.assertEqual(get_implementation_id('minimax_h3_reference_runninghub_v1'), 67)
+        self.assertEqual(get_implementation_name(67), 'minimax_h3_reference_runninghub_v1')
+        self.assertEqual(get_implementation_id('seedance_2_5_volcengine_v1'), 68)
+        self.assertEqual(get_implementation_name(68), 'seedance_2_5_volcengine_v1')
+
 
 # 需要先导入 ImplementationConfig
 from config.unified_config import ImplementationConfig

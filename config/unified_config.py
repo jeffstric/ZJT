@@ -1160,8 +1160,8 @@ class DriverImplementationId:
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 66
 
-    # Seedance 2.5 火山引擎国内版
-    SEEDANCE_2_5_VOLCENGINE_V1 = 67
+    # Seedance 2.5：不可与 MiniMax H3 参考生视频共用 67，否则落库后再反查会变成 H3 驱动
+    SEEDANCE_2_5_VOLCENGINE_V1 = 68
 
 
 # implementation 字符串到 ID 的映射
@@ -2136,7 +2136,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         driver_name=DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
         implementations=[
-            DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,  # 仅火山引擎国内版
+            DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
