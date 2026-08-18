@@ -137,6 +137,8 @@
 
 场景父级结构是上述 forced-accept 的明确例外。`new_root_location_forbidden`、`location_parent_invalid` 带 `_hard_gate=true`，无论 `enable_qc`、修正轮数或调用重试是否耗尽都不得强制接纳。段级、合并级和发布前会分别重跑结构硬门禁；合并发现历史完成段非法时原子重开具体段并按数据库实际状态校准 `completed_segment_count`，发布前失败则禁止调用 location bootstrap 和创建分镜。
 
+**`unreachable_root` 已取消（2026-08-18）**：政策已允许新顶层落库后，父链链端是「待落库的新顶层」视为合法，不再报「父级链无法到达已有数据库场景」。`location_parent_invalid` 仍拦截真正的结构错误（`cycle` / `missing_parent`）。存量因旧 `unreachable_root` 暂停的任务 error code 仍是 `location_parent_invalid`，修复上线后需 force resume 一次。
+
 **已绑定 `location_db_id` 的场景（2026-07-17 起）**：段生成提示要求 LLM 禁止乱写 parent；`sanitize_parsed_location_references` 在确认 `location_db_id` 对应真实 DB 行后，会按数据库 `parent_id` 回写或清空规划 `parent_id`，使“库中顶层场景被模型写成子场景”不再触发 `location_parent_conflict`。
 
 **父级冲突降级（2026-07-30 起）**：`location_parent_conflict` 不再是硬门禁。**显式 `location_db_id` 或规范化精确同名**匹配到 DB 场景但父级不一致时，`sanitize_parsed_location_references` 照常绑定该 DB 场景并按数据库层级回写/清空 `parent_id`（不信 LLM 写的父级），冲突仅记入 `metadata.location_parent_auto_aligned` 警告；`validate_full_location_structure` 对任何入口残留的父级不一致也就地按数据库对齐并记 warning，不再返回错误阻断拆分。该码同时移出 `RESUME_BLOCKED_ERROR_CODES`。**后缀模糊匹配（如“阳台”撞上“酒店A阳台”）且父级不同的除外**：视为不同物理场景，L0 `bind_planned_locations` 与 sanitizer 均拒绝绑定、保留为新场景等待 bootstrap，避免镜头引用错误资产。L0 复检（`_planned_location_hard_errors`）会把对齐后的 bound locations 回写 `compiled_registry` 并由调用方持久化 `segment_plan_json`、按 id 同步 `accepted_registry_json`，避免旧层级继续随规划下发段生成。
