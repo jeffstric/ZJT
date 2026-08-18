@@ -282,8 +282,12 @@
             optEl.value = opt.value;
             optEl.textContent = opt.label;
             if(opt.value === node.data.model) optEl.selected = true;
+            optEl.dataset.shortKey = opt.value;
             shotGroupModelEl.appendChild(optEl);
           });
+          if (window.ModelCatalog && shotGroupModelEl.parentElement) {
+            window.ModelCatalog.bindSelectTrack(shotGroupModelEl.parentElement, shotGroupModelEl, 'image.image_edit', 'task');
+          }
         } else {
           shotGroupModelEl.innerHTML = `
             <option value="gemini" ${node.data.model === 'gemini' ? 'selected' : ''}>标准版</option>
@@ -373,13 +377,24 @@
             return modes.includes(shotGroupMode);
           });
           if(options.length > 0) firstShotGroupVideoModelValue = options[0].value;
+          const videoScene = (window.ModelCatalog && window.ModelCatalog.sceneForVideoImageMode)
+            ? window.ModelCatalog.sceneForVideoImageMode(shotGroupMode)
+            : 'video.image_to_video';
+          if (window.ModelCatalog) {
+            const valueHit = window.ModelCatalog.findTaskByTrack(options, videoScene, null, 'value');
+            if (valueHit && !valueHit.disabled) firstShotGroupVideoModelValue = valueHit.value;
+          }
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
             optEl.textContent = opt.label;
             if(opt.value === node.data.videoModel) optEl.selected = true;
+            optEl.dataset.shortKey = opt.value;
             videoModelEl.appendChild(optEl);
           });
+          if (window.ModelCatalog && videoModelEl.parentElement) {
+            window.ModelCatalog.bindSelectTrack(videoModelEl.parentElement, videoModelEl, videoScene, 'task');
+          }
         } else {
           if(shotGroupMode === 'multi_reference') {
             videoModelEl.innerHTML = `

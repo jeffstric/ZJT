@@ -58,6 +58,9 @@ IMAGE_STYLE_LLM_TIMEOUT = 120
 IMAGE_STYLE_PREFERRED_VENDOR = "volcengine"
 IMAGE_STYLE_PREFERRED_MODEL = "doubao-seed-2-0-lite"
 
+# 剧本创作等入口无偏好时的默认生图模型：GPT Image 2（short_key=gpt-image-2）
+DEFAULT_TEXT_TO_IMAGE_TASK_ID = TaskTypeId.GPT_IMAGE_2_EDIT
+
 
 # ===== 七牛云 SDK 网络超时 =====
 # qiniu SDK 内部 requests 单请求超时（秒）；SDK 默认 30。
@@ -1899,6 +1902,7 @@ SMART_INSERT_SHOT_DEFAULT_MODEL = 'deepseek/deepseek-v4-flash'  # 降级默认�
 # 1. 首选供应商 + 首选模型
 # 2. 首选供应商 + 任意模型
 # 3. 列表第一项
+# 场景级性价比/效果双档见 config/model_catalog.py，本常量仅作无目录时的回退。
 DEFAULT_LLM_MODEL_PREFERRED_VENDORS = ['deepseek']  # 首选供应商列表（按优先级排序）
 DEFAULT_LLM_MODEL_PREFERRED_MODEL = 'deepseek-v4-flash'  # 首选模型名称
 

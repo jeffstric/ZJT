@@ -17,7 +17,7 @@ from script_writer_core.skill_loader import SkillLoader
 from script_writer_core.cron_task_manager import get_task_manager
 from script_writer_core.constant import ItemType
 from config.config_util import get_config
-from config.constant import FilePathConstants, StoryType, GridConfig
+from config.constant import FilePathConstants, StoryType, GridConfig, DEFAULT_TEXT_TO_IMAGE_TASK_ID
 
 # 模块级日志
 logger = logging.getLogger(__name__)
@@ -61,10 +61,6 @@ _media_generation_snapshots_override = ContextVar(
 # 获取视频模型 task_id 的函数引用（由 script_writer_api.py 设置）
 _get_text_to_video_model_id_func = None
 _get_image_to_video_model_id_func = None
-
-# 默认生图模型 task_id (nano-banana-Pro)
-DEFAULT_TEXT_TO_IMAGE_TASK_ID = 7
-
 
 def set_text_to_image_model_getter(func):
     """设置获取生图模型 task_id 的函数"""
@@ -158,7 +154,7 @@ def _get_video_preferences(user_id: str, world_id: str) -> Dict[str, str]:
 
 
 def _get_text_to_image_task_id(user_id: str, world_id: str) -> int:
-    """获取生图模型的 task_id，默认返回 7 (nano-banana-Pro)"""
+    """获取生图模型的 task_id，默认返回 GPT Image 2。"""
     snapshot = _image_generation_snapshot_override.get()
     if snapshot and snapshot.get('task_id') not in (None, ''):
         return int(snapshot['task_id'])
@@ -528,14 +524,31 @@ def list_video_models(user_id: str, world_id: str, auth_token: str,
                 'models': [],
             }
 
+        from config.model_catalog import (
+            ModelScene,
+            annotate_task_models,
+            build_tracks_payload,
+            tracks_message,
+        )
+        scene = (
+            ModelScene.VIDEO_TEXT_TO_VIDEO
+            if cat_label == 'text_to_video'
+            else ModelScene.VIDEO_IMAGE_TO_VIDEO
+        )
+        for item in models:
+            item['short_key'] = item.get('short_key') or ''
+        catalog = build_tracks_payload(scene, models, kind="task")
+        models = annotate_task_models(models, scene)
+        extra = tracks_message(catalog)
         return {
             'success': True,
             'category': cat_label,
             'models': models,
+            'catalog': catalog,
             'message': (
                 f'当前任务已锁定 {len(models)} 个 {cat_label} 模式模型，执行器会强制使用对应快照。'
                 if locked_video_snapshots
-                else f'共 {len(models)} 个可用 {cat_label} 模型。'
+                else f'共 {len(models)} 个可用 {cat_label} 模型。{extra}'
             ),
         }
     except Exception as e:
@@ -664,13 +677,23 @@ def list_llm_models(user_id: str, world_id: str, auth_token: str) -> Dict[str, A
                 'models': [],
             }
 
+        from config.model_catalog import (
+            ModelScene,
+            annotate_llm_models,
+            build_tracks_payload,
+            tracks_message,
+        )
+        catalog = build_tracks_payload(ModelScene.LLM_SCRIPT_SPLIT, models, kind="llm")
+        models = annotate_llm_models(models, ModelScene.LLM_SCRIPT_SPLIT)
+        extra = tracks_message(catalog)
         return {
             'success': True,
             'models': models,
+            'catalog': catalog,
             'message': (
-                f'共 {len(models)} 个可用 LLM 模型。调用 split-from-script 时，'
-                f'请将所选模型的 name 作为 model、model_id 作为 model_id、'
-                f'vendor_id 作为 vendor_id 传入（pricing 用于对比费用）。'
+                f'共 {len(models)} 个可用 LLM 模型。{extra} '
+                f'调用 split-from-script 时，请将所选模型的 name 作为 model、'
+                f'model_id 作为 model_id、vendor_id 作为 vendor_id 传入（pricing 用于对比费用）。'
             ),
         }
     except Exception as e:
@@ -3496,7 +3519,7 @@ MCP_TOOLS = [
     },
     {
         "name": "list_video_models",
-        "description": "查询当前可用的视频模型列表（含 task_id、算力、支持的时长/比例/图模式）。视频生成工具（image_to_video / generate_text_to_video）要求显式传入 task_type 参数，因此在调用视频生成工具之前，必须先调用本工具获取可用模型的 task_id，再选取一个合适的模型将其 task_id 作为 task_type 传入。",
+        "description": "查询当前可用的视频模型列表（含 task_id、算力、支持的时长/比例/图模式，以及 catalog.tracks 性价比/效果双档）。未指定模型时用 tracks.value，用户要求效果/质量时用 tracks.quality。视频生成工具（image_to_video / generate_text_to_video）要求显式传入 task_type 参数；Storyboard 已锁定齿轮模型时不要改选。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -3511,7 +3534,7 @@ MCP_TOOLS = [
     },
     {
         "name": "list_llm_models",
-        "description": "查询当前可用的大语言模型（LLM）列表及费用（含 input/output/cache_read 三档算力阈值与换算单价）。调用 split-from-script / create-storyboard-from-script 等需要 LLM 的命令前，可先用本工具查询模型并对比费用，选取后将 name 作为 model、model_id 作为 model_id、vendor_id 作为 vendor_id 传入对应命令。",
+        "description": "查询当前可用的大语言模型（LLM）列表及费用（含 input/output/cache_read 三档算力阈值与换算单价），并返回 catalog.tracks 性价比/效果双档。剧本拆分默认性价比为 deepseek-v4-flash、效果为 deepseek-v4-pro。未指定时用 tracks.value；用户要求效果/质量时用 tracks.quality。不要在未列出的模型里猜测。选取后将 name 作为 model、model_id 作为 model_id、vendor_id 作为 vendor_id 传入对应命令。",
         "inputSchema": {
             "type": "object",
             "properties": {},

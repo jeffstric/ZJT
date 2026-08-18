@@ -613,10 +613,16 @@
             if (taskId != null && taskId !== '') {
               const exists = models.some((m) => String(m.task_id) === String(taskId));
               if (!exists && models.length) {
-                taskId = models[0].task_id;
+                const catalogHit = window.ModelCatalog
+                  ? window.ModelCatalog.findTaskByTrack(models, slot.key, null, 'value')
+                  : null;
+                taskId = catalogHit?.task_id ?? models[0].task_id;
               }
             } else if (models.length) {
-              taskId = models[0].task_id;
+              const catalogHit = window.ModelCatalog
+                ? window.ModelCatalog.findTaskByTrack(models, slot.key, null, 'value')
+                : null;
+              taskId = catalogHit?.task_id ?? models[0].task_id;
             } else {
               taskId = '';
             }

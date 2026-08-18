@@ -403,9 +403,13 @@
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
+            optEl.dataset.shortKey = opt.value;
             optEl.textContent = opt.label;
             modelEl.appendChild(optEl);
           });
+          if (window.ModelCatalog && modelEl.parentElement) {
+            window.ModelCatalog.bindSelectTrack(modelEl.parentElement, modelEl, 'image.image_edit', 'task');
+          }
         } else {
           // 回退：硬编码选项
           const fallbackOptions = [

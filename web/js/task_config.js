@@ -420,21 +420,43 @@
       t.category === category ||
       (t.categories && t.categories.includes(category))
     );
-    return categoryTasks.map(task => {
+    const options = categoryTasks.map(task => {
       const shortKey = task.short_key || task.key;
       const power = typeof task.computing_power === 'object'
         ? Object.values(task.computing_power)[0]
         : task.computing_power;
+      const scene = category === 'text_to_image' ? 'image.text_to_image'
+        : (category === 'image_edit' ? 'image.image_edit'
+          : (category === 'text_to_video' ? 'video.text_to_video'
+            : (category === 'image_to_video' ? 'video.image_to_video'
+              : (category === 'digital_human' ? 'video.digital_human' : ''))));
+      const catalog = taskConfigCache?.catalog || null;
+      const track = (window.ModelCatalog && scene)
+        ? window.ModelCatalog.inferTrack(scene, shortKey, catalog?.[scene] || catalog)
+        : (task.track || null);
+      const badge = track === 'value' ? '性价比' : (track === 'quality' ? '效果' : '');
       return {
         value: shortKey,
-        label: `${task.name} (${power}算力)`,
+        label: badge ? `${task.name}（${badge}，${power}算力）` : `${task.name} (${power}算力)`,
         taskType: task.id,
         computingPower: task.computing_power,
         key: task.key,
+        short_key: shortKey,
+        family: task.family || '',
+        track,
         supportsGridImage: task.supports_grid_image || false,
         supportedImageModes: task.supported_image_modes || ['first_last_frame']
       };
     });
+    if (window.ModelCatalog) {
+      const scene = category === 'text_to_image' ? 'image.text_to_image'
+        : (category === 'image_edit' ? 'image.image_edit'
+          : (category === 'text_to_video' ? 'video.text_to_video'
+            : (category === 'image_to_video' ? 'video.image_to_video'
+              : (category === 'digital_human' ? 'video.digital_human' : ''))));
+      return window.ModelCatalog.sortTaskOptions(options, scene, taskConfigCache?.catalog);
+    }
+    return options;
   }
 
   /**

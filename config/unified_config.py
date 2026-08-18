@@ -874,12 +874,16 @@ class UnifiedConfigRegistry:
         except Exception:
             pass
 
+        from config.model_catalog import annotate_task_models, scene_catalog_map
+
+        tasks = annotate_task_models(tasks, None)
         return {
             'tasks': tasks,
             'categories': categories,
             'providers': providers,
             'runninghub_configured': runninghub_configured,
             'is_enterprise': is_enterprise,
+            'catalog': scene_catalog_map(),
         }
 
     @classmethod
@@ -1719,6 +1723,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         short_key='minimax_h3',
         name='MiniMax H3',
         category=TaskCategory.IMAGE_TO_VIDEO,
+        categories=[TaskCategory.TEXT_TO_VIDEO],
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,

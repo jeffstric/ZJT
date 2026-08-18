@@ -1102,6 +1102,10 @@ button {
     background: var(--panel, #fff);
 }
 
+.export-dialog.model-config-dialog {
+    width: min(600px, calc(100vw - 32px));
+    max-width: 600px;
+}
 .model-config-dialog .model-config-tabs {
     display: flex;
     gap: 6px;
@@ -1191,6 +1195,7 @@ button {
 }
 .model-config-dialog .config-select-wrapper select {
     width: 100%;
+    max-width: none;
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -1405,13 +1410,15 @@ button {
 .chat-input-row { display: none; }
 .chat-mode-select {
     min-width: 0;
-    max-width: 120px;
     flex: 0 1 auto;
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 6px 8px;
     background: #fff;
     cursor: pointer;
+}
+.chat-toolbar .chat-mode-select {
+    max-width: 120px;
 }
 .chat-mode-select option { cursor: pointer; }
 .tool-button {
@@ -4221,7 +4228,7 @@ button {
     .right-sidebar { display: none; }
     .center-panel { min-height: calc(100vh - 128px); }
     .chat-toolbar { flex-wrap: nowrap; }
-    .chat-mode-select { max-width: 92px; font-size: 12px; padding: 5px 6px; }
+    .chat-toolbar .chat-mode-select { max-width: 92px; font-size: 12px; padding: 5px 6px; }
     .video-mode-dropdown .video-mode-btn span { display: none; }
     .video-mode-btn { width: 32px; height: 32px; justify-content: center; padding: 0; }
     .chat-send-btn { margin-left: auto; }

@@ -61,6 +61,8 @@
         const LLMVendor = {};
         // 供应商图标映射（从 /api/vendors 动态加载）
         const vendorIcons = {};
+        let llmModelCatalog = null;
+        let imageModelCatalog = null;
 
         // LLM 模型名称常量
         const LLMModel = {
@@ -2131,7 +2133,7 @@
 
         async function loadAvailableModels() {
             try {
-                const response = await fetch('/api/models', {
+                const response = await fetch('/api/models?scene=llm.chat', {
                     headers: {
                         'Authorization': `Bearer ${AUTH_TOKEN}`
                     }
@@ -2162,7 +2164,11 @@
                     return;
                 }
 
-                // 按 vendor_name 分组，vendor_id 排序
+                llmModelCatalog = data.catalog || null;
+                const catalogApi = window.ModelCatalog;
+                const collapsed = catalogApi
+                    ? catalogApi.collapseLlmModels(data.models, 'llm.chat', llmModelCatalog)
+                    : [];
                 const vendorGroups = {};
                 const vendorOrder = [];  // 保持 vendor 顺序
                 data.models.forEach(model => {
@@ -2239,65 +2245,93 @@
                     return option;
                 };
 
-                // 按 vendor 分组添加模型
-                vendorOrder.forEach(vendorId => {
-                    const group = vendorGroups[vendorId];
-                    if (group.models.length > 0) {
+                if (collapsed.length) {
+                    const recommendedGroup = document.createElement('optgroup');
+                    recommendedGroup.label = '推荐';
+                    collapsed.filter((item) => item.track === 'value' || item.track === 'quality').forEach((item) => {
+                        const option = createModelOption(item.defaultRoute || item.routes[0]);
+                        const badge = item.track === 'value' ? '性价比' : '效果';
+                        option.textContent = `${item.name}（${badge}）`;
+                        if (!option.disabled && !firstEnabledModel) firstEnabledModel = option;
+                        recommendedGroup.appendChild(option);
+                    });
+                    if (recommendedGroup.children.length) selector.appendChild(recommendedGroup);
+
+                    const familyGroups = {};
+                    collapsed.forEach((item) => {
+                        if (item.track === 'value' || item.track === 'quality') return;
+                        const family = item.family || '其它';
+                        if (!familyGroups[family]) familyGroups[family] = [];
+                        familyGroups[family].push(item);
+                    });
+                    Object.keys(familyGroups).forEach((family) => {
                         const optGroup = document.createElement('optgroup');
-                        const icon = vendorIcons[group.vendorName.toLowerCase()] || '📦';
-                        const isOllamaGroup = group.vendorName.toLowerCase() === 'ollama';
-                        const suffix = (isOllamaGroup && isCommunityEdition) ? '（限时免费）' : '';
-                        optGroup.label = `${icon} ${group.vendorName}${suffix}`;
-                        group.models.forEach(model => {
-                            const option = createModelOption(model);
-                            if (!option.disabled && !firstEnabledModel) {
-                                firstEnabledModel = option;
-                            }
+                        optGroup.label = family;
+                        familyGroups[family].forEach((item) => {
+                            const option = createModelOption(item.defaultRoute || item.routes[0]);
+                            if (!option.disabled && !firstEnabledModel) firstEnabledModel = option;
                             optGroup.appendChild(option);
                         });
                         selector.appendChild(optGroup);
-                    }
-                });
+                    });
 
-                // 设置默认选中模型：deepseek-v4-flash (deepseek) → qwen3.5-plus (zjt_api) → qwen3.5-plus (其他) → 第一个启用的模型
+                    const extraRoutes = [];
+                    collapsed.forEach((item) => {
+                        const def = item.defaultRoute;
+                        item.routes.forEach((route) => {
+                            if (!def) return;
+                            if (String(route.vendor_id) === String(def.vendor_id)
+                                && String(route.model_id || route.id) === String(def.model_id || def.id)) {
+                                return;
+                            }
+                            extraRoutes.push(route);
+                        });
+                    });
+                    if (extraRoutes.length) {
+                        const extraGroup = document.createElement('optgroup');
+                        extraGroup.label = '换供应商';
+                        extraRoutes.forEach((route) => {
+                            const option = createModelOption(route);
+                            option.textContent = `${route.name || route.model_name}（${route.vendor_name}）`;
+                            extraGroup.appendChild(option);
+                        });
+                        selector.appendChild(extraGroup);
+                    }
+                } else {
+                    vendorOrder.forEach(vendorId => {
+                        const group = vendorGroups[vendorId];
+                        if (group.models.length > 0) {
+                            const optGroup = document.createElement('optgroup');
+                            const icon = vendorIcons[group.vendorName.toLowerCase()] || '📦';
+                            const isOllamaGroup = group.vendorName.toLowerCase() === 'ollama';
+                            const suffix = (isOllamaGroup && isCommunityEdition) ? '（限时免费）' : '';
+                            optGroup.label = `${icon} ${group.vendorName}${suffix}`;
+                            group.models.forEach(model => {
+                                const option = createModelOption(model);
+                                if (!option.disabled && !firstEnabledModel) {
+                                    firstEnabledModel = option;
+                                }
+                                optGroup.appendChild(option);
+                            });
+                            selector.appendChild(optGroup);
+                        }
+                    });
+                }
+
                 let defaultModel = null;
-
-                const allOptions = selector.querySelectorAll('option');
-                // 第一轮：优先查找 deepseek 供应商下的 deepseek-v4-flash
-                for (let i = 0; i < allOptions.length; i++) {
-                    const option = allOptions[i];
-                    if (!option.disabled && option.value && option.value.includes('deepseek-v4-flash')
-                        && option.dataset.vendorName === LLMVendor.DEEPSEEK) {
-                        defaultModel = option;
-                        console.log('[模型选择] 选择默认模型: deepseek-v4-flash (deepseek)');
-                        break;
+                if (catalogApi && collapsed.length) {
+                    const valueItem = catalogApi.findCollapsedByTrack(collapsed, 'value');
+                    if (valueItem && valueItem.defaultRoute) {
+                        const wantedVendor = String(valueItem.defaultRoute.vendor_id || '');
+                        const wantedName = valueItem.canonical;
+                        defaultModel = Array.from(selector.querySelectorAll('option')).find((option) => (
+                            !option.disabled
+                            && option.value
+                            && option.value.includes(wantedName)
+                            && String(option.dataset.vendorId || '') === wantedVendor
+                        )) || null;
                     }
                 }
-                // 第二轮：查找 zjt_api 供应商下的 qwen3.5-plus
-                if (!defaultModel) {
-                    for (let i = 0; i < allOptions.length; i++) {
-                        const option = allOptions[i];
-                        if (!option.disabled && option.value && option.value.includes('qwen3.5-plus')
-                            && option.dataset.vendorName === LLMVendor.ZJT_API) {
-                            defaultModel = option;
-                            console.log('[模型选择] 选择默认模型: qwen3.5-plus (zjt_api)');
-                            break;
-                        }
-                    }
-                }
-                // 第三轮：查找其他供应商的 qwen3.5-plus
-                if (!defaultModel) {
-                    for (let i = 0; i < allOptions.length; i++) {
-                        const option = allOptions[i];
-                        if (!option.disabled && option.value && option.value.includes('qwen3.5-plus')) {
-                            defaultModel = option;
-                            console.log(`[模型选择] 未找到 zjt_api 的 qwen3.5-plus，选择其他供应商: ${option.dataset.vendorName}`);
-                            break;
-                        }
-                    }
-                }
-
-                // 最终回退：使用第一个启用的模型
                 if (!defaultModel && firstEnabledModel) {
                     defaultModel = firstEnabledModel;
                     console.log(`[模型选择] 未找到推荐模型，选择第一个启用的模型: ${firstEnabledModel.value}`);
@@ -2370,6 +2404,7 @@
                 updateModelSelectorDisplay();
                 updateModelTooltip();
                 updateThinkingModeUI();
+                bindLlmTrackToggle();
 
                 // 确保选中的模型可用，否则自动切换
                 ensureValidModelSelected();
@@ -2970,6 +3005,37 @@
         }
 
 
+        function currentLlmTrack() {
+            const selector = document.getElementById('model-selector');
+            const selected = selector?.options?.[selector.selectedIndex];
+            if (!selected || !window.ModelCatalog) return 'custom';
+            return window.ModelCatalog.inferTrack('llm.chat', selected.value, llmModelCatalog);
+        }
+
+        function bindLlmTrackToggle() {
+            const host = document.getElementById('llm-track-host');
+            if (!host || !window.ModelCatalog) return;
+            window.ModelCatalog.mountTrackToggle(host, {
+                track: currentLlmTrack(),
+                onSelect: (track) => {
+                    const selector = document.getElementById('model-selector');
+                    if (!selector) return;
+                    const tracks = window.ModelCatalog.tracksFromCatalog(llmModelCatalog, 'llm.chat');
+                    const target = track === 'quality' ? tracks.quality : tracks.value;
+                    const options = Array.from(selector.options);
+                    const hit = options.find((opt) => !opt.disabled && opt.value && window.ModelCatalog.matchCanonical(opt.value, target)
+                        && opt.closest('optgroup')?.label === '推荐')
+                        || options.find((opt) => !opt.disabled && opt.value && window.ModelCatalog.matchCanonical(opt.value, target));
+                    if (hit) {
+                        selector.value = hit.value;
+                        selector.selectedIndex = options.indexOf(hit);
+                        changeModel();
+                    }
+                    window.ModelCatalog.applyTrackButtons(host.querySelector('.model-track-toggle'), track);
+                }
+            });
+        }
+
         async function changeModel() {
             if (!sessionId) {
                 showError(window.t ? window.t('error_create_session_first') : '请先创建会话');
@@ -2987,6 +3053,7 @@
             updateModelTooltip();
             updateLlmModelIcon();
             updateThinkingModeUI();
+            bindLlmTrackToggle();
 
             // Ollama 模型检测和警告
             const vendorName = selectedOption?.dataset?.vendorName || '';
@@ -3053,7 +3120,7 @@
 
         async function loadTextToImageModels() {
             try {
-                const response = await fetch('/api/text-to-image-models', {
+                const response = await fetch('/api/text-to-image-models?scene=image.script_writer', {
                     headers: {
                         'Authorization': `Bearer ${AUTH_TOKEN}`
                     }
@@ -3085,63 +3152,38 @@
                     return;
                 }
 
-                // 按优先级分组模型：GPT IMAGE 2 优先，其次 Seedream 5.0，最后其他支持宫格生图的模型
-                const gptImage2Model = models.find(m => m.task_id === 26);  // GPT IMAGE 2 的 task_id 为 26
-                const seedreamModel = models.find(m => m.name === 'Seedream 5.0');
-                const otherModels = models.filter(m => m.task_id !== 26 && m.name !== 'Seedream 5.0' && m.supports_grid_image);
+                imageModelCatalog = data.catalog || null;
+                const catalogApi = window.ModelCatalog;
+                const ordered = catalogApi
+                    ? catalogApi.sortTaskOptions(models.map((m) => ({
+                        ...m,
+                        value: m.short_key || String(m.task_id),
+                        label: m.name,
+                    })), 'image.script_writer', imageModelCatalog)
+                    : models;
+                let defaultTaskId = data.default_task_id;
+                const valueTask = catalogApi
+                    ? catalogApi.findTaskByTrack(ordered, 'image.script_writer', imageModelCatalog, 'value')
+                    : null;
+                if (valueTask && valueTask.task_id != null) defaultTaskId = valueTask.task_id;
 
-                // 先添加 GPT IMAGE 2（如果可用）
-                if (gptImage2Model) {
-                    const option = document.createElement('option');
-                    option.value = gptImage2Model.task_id;
-                    // 检查模型可用性
-                    const taskTypeKey = String(gptImage2Model.task_id);
-                    const status = driverStatus[taskTypeKey];
-                    const isAvailable = !status || status.available !== false;
-                    if (!isAvailable) {
-                        option.textContent = `${gptImage2Model.name} (未配置)`;
-                        option.disabled = true;
-                    } else {
-                        option.textContent = gptImage2Model.name;
-                        option.selected = true;  // GPT IMAGE 2 默认选中（仅当可用时）
-                    }
-                    selector.appendChild(option);
-                }
-
-                // 再添加 Seedream 5.0
-                if (seedreamModel) {
-                    const option = document.createElement('option');
-                    option.value = seedreamModel.task_id;
-                    // 检查模型可用性
-                    const taskTypeKey = String(seedreamModel.task_id);
-                    const status = driverStatus[taskTypeKey];
-                    const isAvailable = !status || status.available !== false;
-                    if (!isAvailable) {
-                        option.textContent = `${seedreamModel.name} (未配置)`;
-                        option.disabled = true;
-                    } else {
-                        option.textContent = seedreamModel.name;
-                        // 如果 GPT IMAGE 2 不可用，Seedream 作为备选默认选中
-                        if (!gptImage2Model) {
-                            option.selected = true;
-                        }
-                    }
-                    selector.appendChild(option);
-                }
-
-                // 最后添加其他模型
-                otherModels.forEach(model => {
+                ordered.forEach((model) => {
                     const option = document.createElement('option');
                     option.value = model.task_id;
-                    // 检查模型可用性
+                    option.dataset.shortKey = model.short_key || model.canonical || '';
+                    option.dataset.track = model.track || '';
                     const taskTypeKey = String(model.task_id);
                     const status = driverStatus[taskTypeKey];
                     const isAvailable = !status || status.available !== false;
+                    const badge = model.track === 'value' ? '（性价比）' : (model.track === 'quality' ? '（效果）' : '');
                     if (!isAvailable) {
-                        option.textContent = `${model.name} (未配置)`;
+                        option.textContent = `${model.name}${badge} (未配置)`;
                         option.disabled = true;
                     } else {
-                        option.textContent = model.name;
+                        option.textContent = `${model.name}${badge}`;
+                        if (String(model.task_id) === String(defaultTaskId)) {
+                            option.selected = true;
+                        }
                     }
                     selector.appendChild(option);
                 });
@@ -3157,7 +3199,8 @@
                 // 包装在 .model-select-wrapper 后，同步自定义显示层的文本
                 updateImageModelDisplay();
                 updateImageModelIcon();
-                // 注意：自动设置模型逻辑已移至 createSession() 成功后执行
+                bindImageTrackToggle();
+                // 注意：自动设置模型逻辑已移至 createSession() 成功后执行。
             } catch (error) {
                 console.error('加载生图模型列表失败:', error);
                 const selector = document.getElementById('text-to-image-model-selector');
@@ -3429,6 +3472,41 @@
             ));
         }
 
+        function currentImageTrack() {
+            const selector = document.getElementById('text-to-image-model-selector');
+            const selected = selector?.options?.[selector.selectedIndex];
+            if (!selected || !window.ModelCatalog) return 'custom';
+            const canonical = selected.dataset.shortKey || selected.textContent || '';
+            return window.ModelCatalog.inferTrack('image.script_writer', canonical, imageModelCatalog);
+        }
+
+        function bindImageTrackToggle() {
+            const host = document.getElementById('image-track-host');
+            if (!host || !window.ModelCatalog) return;
+            window.ModelCatalog.mountTrackToggle(host, {
+                track: currentImageTrack(),
+                onSelect: (track) => {
+                    const selector = document.getElementById('text-to-image-model-selector');
+                    if (!selector) return;
+                    const options = Array.from(selector.options).map((opt) => ({
+                        task_id: opt.value,
+                        short_key: opt.dataset.shortKey || '',
+                        name: opt.textContent,
+                        label: opt.textContent,
+                        value: opt.dataset.shortKey || opt.value,
+                    }));
+                    const hit = window.ModelCatalog.findTaskByTrack(
+                        options, 'image.script_writer', imageModelCatalog, track
+                    );
+                    if (hit) {
+                        selector.value = String(hit.task_id);
+                        changeTextToImageModel();
+                    }
+                    bindImageTrackToggle();
+                }
+            });
+        }
+
         async function changeTextToImageModel() {
             if (!sessionId) {
                 showError(window.t ? window.t('error_create_session_first') : '请先创建会话');
@@ -3481,6 +3559,8 @@
                 showError((window.t ? window.t('error_switch_image_model_failed', {error: error.message}) : '切换生图模型失败: ' + error.message));
             }
             updateImageModelIcon();
+            updateImageModelDisplay();
+            bindImageTrackToggle();
         }
 
         function escapeHtml(text) {

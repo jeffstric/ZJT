@@ -252,10 +252,12 @@ const state = {
     imageEditModels: [],
     textToVideoModels: [],
     imageToVideoModels: [],
+    modelCatalog: null,
 
     // 对话模型（LLM），参考 script_writer，需要按供应商分组
     llmModels: [],
     llmVendors: [],
+    llmCatalog: null,
     selectedLlmModel: null,
     selectedScriptSplitLlmModel: null,
 
@@ -646,6 +648,8 @@ export function setModels({
     image_to_video_models,
     // LLM（可选）
     llm_models,
+    llm_catalog,
+    catalog,
 } = {}) {
     if (image_models !== undefined) state.imageModels = image_models;
     if (video_models !== undefined) state.videoModels = video_models;
@@ -698,6 +702,7 @@ export function setModels({
             state.selectedReferenceToVideoTaskId ?? state.selectedVideoTaskId,
             getReferenceToVideoSlotModels(),
             'storyboard_lastSelectedReferenceToVideoTaskId',
+            'minimax_h3_r2v',
         );
     }
     state.selectedImageTaskId = state.selectedTextToImageTaskId;
@@ -720,6 +725,8 @@ export function setModels({
         }
     }
 
+    if (catalog !== undefined) state.modelCatalog = catalog;
+    if (llm_catalog !== undefined) state.llmCatalog = llm_catalog;
     if (llm_models !== undefined) {
         state.llmModels = llm_models;
         if (state.selectedLlmModel) {

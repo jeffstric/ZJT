@@ -1337,6 +1337,64 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'set-media-track') {
+        const track = target?.dataset?.track;
+        const scene = target?.dataset?.scene || '';
+        const mediaTarget = target?.dataset?.target || '';
+        const typeMap = {
+            textToImage: ['textToImageModels', 'selectedTextToImageTaskId', 'storyboard_lastSelectedImageTaskId'],
+            imageEdit: ['imageEditModels', 'selectedImageEditTaskId', 'storyboard_lastSelectedImageEditTaskId'],
+            textToVideo: ['textToVideoModels', 'selectedTextToVideoTaskId', 'storyboard_lastSelectedTextToVideoTaskId'],
+            imageToVideo: ['imageToVideoModels', 'selectedImageToVideoTaskId', 'storyboard_lastSelectedVideoTaskId'],
+            referenceToVideo: ['imageToVideoModels', 'selectedReferenceToVideoTaskId', 'storyboard_lastSelectedReferenceToVideoTaskId'],
+        };
+        const spec = typeMap[mediaTarget];
+        if (!spec || !window.ModelCatalog) return;
+        const [listKey, field, storageKey] = spec;
+        const hit = window.ModelCatalog.findTaskByTrack(state[listKey] || [], scene, state.modelCatalog, track);
+        if (!hit || hit.task_id == null) return;
+        state[field] = hit.task_id;
+        state.selectedImageTaskId = state.selectedTextToImageTaskId;
+        state.selectedVideoTaskId = state.selectedImageToVideoTaskId;
+        try { localStorage.setItem(storageKey, String(hit.task_id)); } catch {}
+        if (state.storyboardId) persistUiConfig().catch(() => {});
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'set-model-track') {
+        const track = target?.dataset?.track;
+        const scene = target?.dataset?.scene || 'llm.chat';
+        const llmTarget = target?.dataset?.target || 'dialogue';
+        if (!window.ModelCatalog || !state.llmModels?.length) return;
+        const collapsed = window.ModelCatalog.collapseLlmModels(state.llmModels, scene, state.llmCatalog);
+        const hit = window.ModelCatalog.findCollapsedByTrack(collapsed, track);
+        const route = hit?.defaultRoute;
+        if (!route) return;
+        const payload = {
+            model: route.name || route.model,
+            model_id: route.model_id || route.id,
+            vendor_id: route.vendor_id || null,
+        };
+        if (llmTarget === 'scriptSplit') {
+            state.selectedScriptSplitLlmModel = payload;
+            resolveSelectedScriptSplitLlmModel();
+            try {
+                localStorage.setItem('storyboard_lastScriptSplitLlmModel', JSON.stringify(payload));
+            } catch {}
+        } else {
+            state.selectedLlmModel = payload;
+            resolveSelectedLlmModel();
+            try {
+                localStorage.setItem('storyboard_lastSelectedLlmModel', JSON.stringify(payload));
+            } catch {}
+        }
+        applyThinkingDefaultsForModel(state.selectedScriptSplitLlmModel || state.selectedLlmModel);
+        if (state.storyboardId) persistUiConfig().catch(() => {});
+        rerenderModals();
+        return;
+    }
+
     if (action === 'toggle-script-split-t2i') {
         if (state.isGeneratingFromScript) return;
         state.scriptSplitTextToImageOpen = !state.scriptSplitTextToImageOpen;

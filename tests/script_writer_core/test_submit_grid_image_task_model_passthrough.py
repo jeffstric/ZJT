@@ -19,9 +19,10 @@ from script_writer_core import mcp_tool
 from script_writer_core.constant import ItemType
 
 # 34 = MiniMax H3（视频模型），不属于 IMAGE_EDIT 类别，用于校验拒绝路径
+from config.constant import DEFAULT_TEXT_TO_IMAGE_TASK_ID
+
 _NON_IMAGE_EDIT_TASK_ID = 34
 _GPT_IMAGE_2_TASK_ID = 26
-_DEFAULT_TEXT_TO_IMAGE_TASK_ID = 7
 
 
 @pytest.fixture()
@@ -116,7 +117,8 @@ def test_missing_task_type_falls_back_with_warning(grid_submit_env, caplog):
         result = mcp_tool.submit_grid_image_task(**_base_kwargs())
 
     assert result["success"] is True
-    assert result["model_task_id"] == _DEFAULT_TEXT_TO_IMAGE_TASK_ID
+    assert result["model_task_id"] == DEFAULT_TEXT_TO_IMAGE_TASK_ID
+    assert result["model_task_id"] == _GPT_IMAGE_2_TASK_ID
     warnings = [
         rec for rec in caplog.records
         if "未显式指定生图模型" in rec.getMessage()

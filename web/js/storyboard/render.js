@@ -1898,21 +1898,80 @@ function renderRechargeDialog() {
         </div>`;
 }
 
+function renderLlmOptionsHtml(models, selected, isSelectedFn, scene) {
+    const catalogApi = window.ModelCatalog;
+    const collapsed = catalogApi
+        ? catalogApi.collapseLlmModels(models, scene, state.llmCatalog)
+        : [];
+    let html = '';
+    const writeOption = (model, labelOverride) => {
+        const val = model.model || model.name || model.id || '';
+        const label = labelOverride || model.name || model.model || val;
+        const modelId = model.model_id || model.id || '';
+        const vendorId = model.vendor_id || '';
+        const vendorName = model.vendor_name || '';
+        const supportsThinking = model.supports_thinking === true || model.supports_thinking === 1 || model.supports_thinking === 'true' ? 'true' : 'false';
+        const sel = isSelectedFn(model) ? 'selected' : '';
+        html += `<option value="${escapeHtml(val)}" data-model-id="${escapeHtml(String(modelId))}" data-vendor-id="${escapeHtml(String(vendorId))}" data-vendor-name="${escapeHtml(vendorName)}" data-supports-thinking="${supportsThinking}" ${sel}>${escapeHtml(label)}</option>`;
+    };
+    if (collapsed.length) {
+        const featured = collapsed.filter((item) => item.track === 'value' || item.track === 'quality');
+        if (featured.length) {
+            html += '<optgroup label="推荐">';
+            featured.forEach((item) => {
+                const badge = item.track === 'value' ? '性价比' : '效果';
+                writeOption(item.defaultRoute || item.routes[0], `${item.name}（${badge}）`);
+            });
+            html += '</optgroup>';
+        }
+        const families = {};
+        collapsed.forEach((item) => {
+            if (item.track === 'value' || item.track === 'quality') return;
+            const family = item.family || '其它';
+            if (!families[family]) families[family] = [];
+            families[family].push(item);
+        });
+        Object.keys(families).forEach((family) => {
+            html += `<optgroup label="${escapeHtml(family)}">`;
+            families[family].forEach((item) => writeOption(item.defaultRoute || item.routes[0]));
+            html += '</optgroup>';
+        });
+        const extras = [];
+        collapsed.forEach((item) => {
+            const def = item.defaultRoute;
+            (item.routes || []).forEach((route) => {
+                if (!def) return;
+                if (String(route.vendor_id) === String(def.vendor_id)
+                    && String(route.model_id || route.id) === String(def.model_id || def.id)) return;
+                extras.push(route);
+            });
+        });
+        if (extras.length) {
+            html += '<optgroup label="换供应商">';
+            extras.forEach((route) => writeOption(route, `${route.name || route.model}（${route.vendor_name}）`));
+            html += '</optgroup>';
+        }
+        return html;
+    }
+    models.forEach((m) => writeOption(m));
+    return html;
+}
+
+function renderTrackToggleHtml(scene, selectedModel, target) {
+    const catalogApi = window.ModelCatalog;
+    const name = selectedModel?.model || selectedModel?.name || '';
+    const track = catalogApi ? catalogApi.inferTrack(scene, name, state.llmCatalog) : 'custom';
+    return `
+        <div class="model-track-toggle" role="group" aria-label="模型档位">
+            <button type="button" class="model-track-btn ${track === 'value' ? 'is-active' : ''}"
+                data-action="set-model-track" data-track="value" data-scene="${escapeHtml(scene)}" data-target="${escapeHtml(target)}">性价比</button>
+            <button type="button" class="model-track-btn ${track === 'quality' ? 'is-active' : ''}"
+                data-action="set-model-track" data-track="quality" data-scene="${escapeHtml(scene)}" data-target="${escapeHtml(target)}">效果</button>
+        </div>`;
+}
+
 function renderScriptSplitModelConfig(disabled = false) {
-    const vendors = state.llmVendors || [];
     const models = state.llmModels || [];
-    const vendorMap = {};
-    vendors.forEach(v => {
-        vendorMap[v.id || v.vendor_name] = v;
-    });
-
-    const groups = {};
-    models.forEach(m => {
-        const vid = m.vendor_id || m.vendor_name || 'unknown';
-        if (!groups[vid]) groups[vid] = [];
-        groups[vid].push(m);
-    });
-
     const selected = state.selectedScriptSplitLlmModel || state.selectedLlmModel;
     const isSelectedScriptSplitModel = (model) => {
         if (!selected) return false;
@@ -1931,31 +1990,16 @@ function renderScriptSplitModelConfig(disabled = false) {
         return String(selected) === String(val);
     };
 
-    let html = '<label class="config-label">拆分剧本模型</label><div class="config-hint">用于把剧本拆成分镜、画面提示词和对话数据</div><div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="scriptSplit"';
+    let html = '<label class="config-label">拆分剧本模型</label><div class="config-hint">用于把剧本拆成分镜、画面提示词和对话数据</div>';
+    html += renderTrackToggleHtml('llm.script_split', selected, 'scriptSplit');
+    html += '<div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="scriptSplit"';
     if (disabled) html += ' disabled';
     html += '>';
-    const vendorKeys = Object.keys(groups);
-    if (vendorKeys.length === 0) {
+    if (!models.length) {
         html += '<option value="">暂无可用模型</option></select></div>';
         return html;
     }
-
-    vendorKeys.forEach(vid => {
-        const v = vendorMap[vid] || { vendor_name: vid };
-        const iconStr = v.icon || '🤖';
-        const vendorNameAttr = escapeHtml(v.vendor_name || vid);
-        html += `<optgroup label="${iconStr} ${vendorNameAttr}">`;
-        groups[vid].forEach(m => {
-            const val = m.model || m.name || m.id || '';
-            const label = m.name || m.model || val;
-            const modelId = m.model_id || m.id || '';
-            const vendorId = m.vendor_id || '';
-            const supportsThinking = m.supports_thinking === true || m.supports_thinking === 1 || m.supports_thinking === 'true' ? 'true' : 'false';
-            const sel = isSelectedScriptSplitModel(m) ? 'selected' : '';
-            html += `<option value="${escapeHtml(val)}" data-model-id="${escapeHtml(modelId)}" data-vendor-id="${escapeHtml(vendorId)}" data-vendor-name="${vendorNameAttr}" data-supports-thinking="${supportsThinking}" ${sel}>${escapeHtml(label)}</option>`;
-        });
-        html += '</optgroup>';
-    });
+    html += renderLlmOptionsHtml(models, selected, isSelectedScriptSplitModel, 'llm.script_split');
     html += '</select></div>';
     html += renderThinkingControls(state.selectedScriptSplitLlmModel || state.selectedLlmModel);
     return html;
@@ -2178,7 +2222,7 @@ function renderModelConfigModal() {
 
     return `
         <div class="modal-overlay">
-            <div class="export-dialog model-config-dialog" style="max-width: 520px;">
+            <div class="export-dialog model-config-dialog">
                 <header>
                     <h2>模型配置 - ${modeLabel}</h2>
                     <button type="button" class="model-config-close" data-action="close-model-config" aria-label="关闭模型配置" title="关闭">${icon('close', 18)}</button>
@@ -2201,25 +2245,13 @@ function renderModelConfigModal() {
 }
 
 function renderDialogueModelConfig() {
-    // 按 vendor 分组，复用 script_writer 逻辑 —— 一个 select 多个 optgroup
-    const vendors = state.llmVendors || [];
     const models = state.llmModels || [];
+    const selected = state.selectedLlmModel;
 
-    const vendorMap = {};
-    vendors.forEach(v => {
-        vendorMap[v.id || v.vendor_name] = v;
-    });
-
-    const groups = {};
-    models.forEach(m => {
-        const vid = m.vendor_id || m.vendor_name || 'unknown';
-        if (!groups[vid]) groups[vid] = [];
-        groups[vid].push(m);
-    });
-
-    let html = '<label class="config-label">对话模型</label><div class="config-hint">选择后用于对话改图等需要 LLM 的场景</div><div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="dialogue">';
-    const vendorKeys = Object.keys(groups);
-    if (vendorKeys.length === 0) {
+    let html = '<label class="config-label">对话模型</label><div class="config-hint">选择后用于对话改图等需要 LLM 的场景</div>';
+    html += renderTrackToggleHtml('llm.chat', selected, 'dialogue');
+    html += '<div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="dialogue">';
+    if (!models.length) {
         html += '<option value="">暂无对话模型</option>';
         html += '</select></div>';
         return html;
@@ -2243,22 +2275,7 @@ function renderDialogueModelConfig() {
         return String(selected) === String(val);
     };
 
-    vendorKeys.forEach(vid => {
-        const v = vendorMap[vid] || { vendor_name: vid };
-        const iconStr = v.icon || '🤖';
-        const vendorNameAttr = escapeHtml(v.vendor_name || vid);
-        html += `<optgroup label="${iconStr} ${vendorNameAttr}">`;
-        groups[vid].forEach(m => {
-            const val = m.model || m.name || m.id || '';
-            const label = m.name || m.model || val;
-            const modelId = m.model_id || m.id || '';
-            const vendorId = m.vendor_id || '';
-            const supportsThinking = m.supports_thinking === true || m.supports_thinking === 1 || m.supports_thinking === 'true' ? 'true' : 'false';
-            const sel = isSelectedDialogueModel(m) ? 'selected' : '';
-            html += `<option value="${escapeHtml(val)}" data-model-id="${escapeHtml(modelId)}" data-vendor-id="${escapeHtml(vendorId)}" data-vendor-name="${vendorNameAttr}" data-supports-thinking="${supportsThinking}" ${sel}>${escapeHtml(label)}</option>`;
-        });
-        html += `</optgroup>`;
-    });
+    html += renderLlmOptionsHtml(models, selected, isSelectedDialogueModel, 'llm.chat');
     html += `</select></div>`;
     html += renderThinkingControls(state.selectedLlmModel);
     return html;
@@ -2341,13 +2358,43 @@ function formatModelOptionLabel(m) {
 }
 
 function renderMediaModelSelect(label, hint, type, models, selectedTaskId, disabled = false) {
+    const sceneMap = {
+        textToImage: 'image.text_to_image',
+        imageEdit: 'image.image_edit',
+        textToVideo: 'video.text_to_video',
+        imageToVideo: 'video.image_to_video',
+        referenceToVideo: 'video.reference_to_video',
+    };
+    const scene = sceneMap[type] || '';
+    const selected = (models || []).find((m) => String(m.task_id) === String(selectedTaskId));
+    const catalogApi = window.ModelCatalog;
+    const track = (catalogApi && scene)
+        ? catalogApi.inferTrack(scene, selected?.short_key || selected?.canonical || selected?.name || '', state.modelCatalog || state.llmCatalog)
+        : 'custom';
     let html = `<label class="config-label">${escapeHtml(label)}</label>`
-        + `<div class="config-hint">${escapeHtml(hint)}</div>`
-        + `<div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="${type}"${disabled ? ' disabled' : ''}>`;
-    models.forEach(m => {
+        + `<div class="config-hint">${escapeHtml(hint)}</div>`;
+    if (scene) {
+        html += `
+        <div class="model-track-toggle" role="group" aria-label="模型档位">
+            <button type="button" class="model-track-btn ${track === 'value' ? 'is-active' : ''}"
+                data-action="set-media-track" data-track="value" data-scene="${scene}" data-target="${type}" ${disabled ? 'disabled' : ''}>性价比</button>
+            <button type="button" class="model-track-btn ${track === 'quality' ? 'is-active' : ''}"
+                data-action="set-media-track" data-track="quality" data-scene="${scene}" data-target="${type}" ${disabled ? 'disabled' : ''}>效果</button>
+        </div>`;
+    }
+    html += `<div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="${type}"${disabled ? ' disabled' : ''}>`;
+    const ordered = (catalogApi && scene)
+        ? catalogApi.sortTaskOptions(models || [], scene, state.modelCatalog)
+        : (models || []);
+    ordered.forEach(m => {
         const val = m.task_id;
         const sel = String(selectedTaskId) === String(val) ? 'selected' : '';
-        html += `<option value="${val}" ${sel}>${escapeHtml(formatModelOptionLabel(m))}</option>`;
+        const inferred = (catalogApi && scene)
+            ? catalogApi.inferTrack(scene, m.short_key || m.canonical || m.name || '', state.modelCatalog || state.llmCatalog)
+            : (m.track || 'custom');
+        const badge = inferred === 'value' ? '性价比' : (inferred === 'quality' ? '效果' : '');
+        const labelText = badge ? `${formatModelOptionLabel(m)}（${badge}）` : formatModelOptionLabel(m);
+        html += `<option value="${val}" ${sel}>${escapeHtml(labelText)}</option>`;
     });
     return html + '</select></div>';
 }

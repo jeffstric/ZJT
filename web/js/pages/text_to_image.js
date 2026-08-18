@@ -48,9 +48,14 @@
           return {
             value: opt.value,
             label: isAvailable ? opt.label : opt.label + ' (未配置)',
-            disabled: !isAvailable
+            disabled: !isAvailable,
+            track: opt.track || null,
           };
         });
+      },
+      imageTrack() {
+        if (!window.ModelCatalog) return 'custom';
+        return window.ModelCatalog.inferTrack('image.text_to_image', this.model, null);
       },
       aspectRatioOptions() {
         const config = this.modelConfigs[this.model];
@@ -145,6 +150,14 @@
         }
       },
 
+      selectImageTrack(track) {
+        if (!window.ModelCatalog) return;
+        const hit = window.ModelCatalog.findTaskByTrack(
+          this.modelOptions, 'image.text_to_image', null, track
+        );
+        if (hit && !hit.disabled) this.model = hit.value;
+      },
+
       async fetchModelConfigs() {
         try {
           await TaskConfig.load();
@@ -154,8 +167,9 @@
           // 检查当前 model 是否在可用选项中，如果不在则选择第一个
           const allOptions = TaskConfig.getModelOptionsForCategory('text_to_image');
           const validValues = allOptions.map(opt => opt.value);
-          if (!validValues.includes(this.model) && allOptions.length > 0) {
-            this.model = allOptions[0].value;
+          const valueOpt = allOptions.find((opt) => opt.track === 'value' && validValues.includes(opt.value));
+          if (!validValues.includes(this.model) && (valueOpt || allOptions.length > 0)) {
+            this.model = (valueOpt || allOptions[0]).value;
           }
           
           // 设置初始默认值
@@ -434,6 +448,10 @@
 
           <div class="field">
             <label class="label">{{ $t('model_selection') }}</label>
+            <div class="model-track-toggle" v-if="modelOptions.length">
+              <button type="button" class="model-track-btn" :class="{ 'is-active': imageTrack === 'value' }" @click="selectImageTrack('value')">性价比</button>
+              <button type="button" class="model-track-btn" :class="{ 'is-active': imageTrack === 'quality' }" @click="selectImageTrack('quality')">效果</button>
+            </div>
             <select class="input" v-model="model">
               <option v-for="opt in modelOptions" :key="opt.value" :value="opt.value" :disabled="opt.disabled">{{ opt.label }}</option>
             </select>

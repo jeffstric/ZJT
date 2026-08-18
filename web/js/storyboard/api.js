@@ -497,11 +497,11 @@ export async function createWechatPayOrder(payload = {}) {
 export async function fetchLlmModels() {
     // /api/models 不强制需要 Authorization（参考 script_writer），但尽量带上 X-User-Id / token
     try {
-        const resp = await fetch('/api/models', { headers: authHeaders(false) });
+        const resp = await fetch('/api/models?scene=llm.script_split', { headers: authHeaders(false) });
         if (!resp.ok) return { success: false, models: [] };
         const data = await resp.json().catch(() => ({}));
         if (data.success && Array.isArray(data.models)) {
-            return { success: true, models: data.models };
+            return { success: true, models: data.models, catalog: data.catalog || null };
         }
         return { success: false, models: [] };
     } catch {

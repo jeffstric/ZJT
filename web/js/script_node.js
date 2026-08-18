@@ -446,11 +446,12 @@
           }
           window._vendorIcons = vendorIcons;
 
-          const response = await fetch('/api/models', {
+          const response = await fetch('/api/models?scene=llm.script_split', {
             headers: getAuthHeaders()
           });
           const data = await response.json();
 
+          window._scriptSplitCatalog = data.catalog || null;
           if(!data.success || !data.models || data.models.length === 0) {
             // 加载失败时使用默认模型
             if(splitModelSelect) {
@@ -484,62 +485,82 @@
         }
       }
 
+      function appendSplitOption(parent, model, labelOverride) {
+        const option = document.createElement('option');
+        const modelName = model.model_name || model.name || '';
+        const modelDesc = model.note || model.description || '';
+        option.value = modelName;
+        option.textContent = labelOverride || (modelDesc ? `${modelName} - ${modelDesc}` : modelName);
+        const modelId = model.id ?? model.model_id ?? '';
+        if(modelId) option.dataset.modelId = modelId;
+        option.dataset.vendorId = model.vendor_id || 1;
+        option.dataset.vendorName = model.vendor_name || 'unknown';
+        option.dataset.supportsThinking = model.supports_thinking ? 'true' : 'false';
+        if(model.context_window) option.dataset.contextWindow = model.context_window;
+        parent.appendChild(option);
+        return option;
+      }
+
       function renderSplitModelOptions(models, vendorIcons = {}) {
         if(!splitModelSelect) return;
         splitModelSelect.innerHTML = '';
 
-        // 按供应商分组
-        const vendorGroups = {};
-        const vendorOrder = [];
-        models.forEach(model => {
-          const vendorId = model.vendor_id || 1;
-          const vendorName = model.vendor_name || 'unknown';
-          if (!vendorGroups[vendorId]) {
-            vendorGroups[vendorId] = {
-              vendorName: vendorName,
-              models: []
-            };
-            vendorOrder.push(vendorId);
-          }
-          vendorGroups[vendorId].models.push(model);
-        });
-
         let firstEnabled = null;
+        const catalogApi = window.ModelCatalog;
+        const collapsed = catalogApi
+          ? catalogApi.collapseLlmModels(models, 'llm.script_split', window._scriptSplitCatalog || null)
+          : [];
 
-        // 按供应商分组添加选项
-        vendorOrder.forEach(vendorId => {
-          const group = vendorGroups[vendorId];
-          const optGroup = document.createElement('optgroup');
-          const icon = vendorIcons[group.vendorName.toLowerCase()] || '📦';
-          optGroup.label = `${icon} ${group.vendorName}`;
+        if (collapsed.length) {
+          const recGroup = document.createElement('optgroup');
+          recGroup.label = '推荐';
+          collapsed.filter((item) => item.track === 'value' || item.track === 'quality').forEach((item) => {
+            const route = item.defaultRoute || item.routes[0];
+            const badge = item.track === 'value' ? '性价比' : '效果';
+            const opt = appendSplitOption(recGroup, route, `${item.name}（${badge}）`);
+            if (!firstEnabled) firstEnabled = opt;
+          });
+          if (recGroup.children.length) splitModelSelect.appendChild(recGroup);
 
-          group.models.forEach(model => {
-            const option = document.createElement('option');
-            const modelName = model.model_name || model.name || '';
-            const modelDesc = model.note || model.description || '';
-            option.value = modelName;
-            option.textContent = modelDesc ? `${modelName} - ${modelDesc}` : modelName;
-
-            // 保存模型和供应商信息到 dataset
-            const modelId = model.id ?? model.model_id ?? '';
-            if(modelId) {
-              option.dataset.modelId = modelId;
-            }
-            option.dataset.vendorId = model.vendor_id || 1;
-            option.dataset.vendorName = model.vendor_name || 'unknown';
-            option.dataset.supportsThinking = model.supports_thinking ? 'true' : 'false';
-            if(model.context_window) {
-              option.dataset.contextWindow = model.context_window;
-            }
-
-            if(!option.disabled && !firstEnabled) {
-              firstEnabled = option;
-            }
-            optGroup.appendChild(option);
+          const families = {};
+          collapsed.forEach((item) => {
+            if (item.track === 'value' || item.track === 'quality') return;
+            const family = item.family || '其它';
+            if (!families[family]) families[family] = [];
+            families[family].push(item);
+          });
+          Object.keys(families).forEach((family) => {
+            const g = document.createElement('optgroup');
+            g.label = family;
+            families[family].forEach((item) => {
+              const opt = appendSplitOption(g, item.defaultRoute || item.routes[0]);
+              if (!firstEnabled) firstEnabled = opt;
+            });
+            splitModelSelect.appendChild(g);
           });
 
-          splitModelSelect.appendChild(optGroup);
-        });
+          const extras = document.createElement('optgroup');
+          extras.label = '换供应商';
+          collapsed.forEach((item) => {
+            const def = item.defaultRoute;
+            (item.routes || []).forEach((route) => {
+              if (!def) return;
+              if (String(route.vendor_id) === String(def.vendor_id)
+                && String(route.model_id || route.id) === String(def.model_id || def.id)) return;
+              appendSplitOption(extras, route, `${route.name || route.model_name}（${route.vendor_name}）`);
+            });
+          });
+          if (extras.children.length) splitModelSelect.appendChild(extras);
+        } else {
+          models.forEach((model) => {
+            const opt = appendSplitOption(splitModelSelect, model);
+            if (!firstEnabled) firstEnabled = opt;
+          });
+        }
+
+        if (catalogApi && splitModelSelect.parentElement) {
+          catalogApi.bindSelectTrack(splitModelSelect.parentElement, splitModelSelect, 'llm.script_split', 'llm');
+        }
 
         // 恢复已保存的拆分模型选择，若无保存值则按优先级选择默认模型
         const savedSplitModel = node.data.splitModel;
@@ -555,47 +576,23 @@
           }
         }
         if(!restored) {
-          // 优先级：deepseek供应商的deepseek-v4-flash → zjt_api供应商的qwen3.5-plus → 第一个启用的模型
           const allOptions = splitModelSelect.querySelectorAll('option');
           let defaultOption = null;
-
-          // 第一轮：优先查找 deepseek 供应商下的 deepseek-v4-flash
-          for (let i = 0; i < allOptions.length; i++) {
-            const opt = allOptions[i];
-            if (!opt.disabled && opt.value && opt.value.includes('deepseek-v4-flash')
-                && opt.dataset.vendorName === 'deepseek') {
-              defaultOption = opt;
-              console.log('[剧本节点-拆分模型] 选择默认模型: deepseek-v4-flash (deepseek)');
-              break;
-            }
+          if (window.ModelCatalog) {
+            const tracks = window.ModelCatalog.tracksFromCatalog(null, 'llm.script_split');
+            defaultOption = Array.from(allOptions).find((opt) => (
+              !opt.disabled && opt.value && window.ModelCatalog.matchCanonical(opt.value, tracks.value)
+              && (opt.dataset.vendorName || '') === 'deepseek'
+            )) || Array.from(allOptions).find((opt) => (
+              !opt.disabled && opt.value && window.ModelCatalog.matchCanonical(opt.value, tracks.value)
+            )) || null;
           }
-
-          // 第二轮：查找 zjt_api 供应商下的 qwen3.5-plus
           if (!defaultOption) {
-            for (let i = 0; i < allOptions.length; i++) {
-              const opt = allOptions[i];
-              if (!opt.disabled && opt.value && opt.value.includes('qwen3.5-plus')
-                  && opt.dataset.vendorName === 'zjt_api') {
-                defaultOption = opt;
-                console.log('[剧本节点-拆分模型] 选择默认模型: qwen3.5-plus (zjt_api)');
-                break;
-              }
-            }
+            defaultOption = Array.from(allOptions).find((opt) => (
+              !opt.disabled && opt.value && opt.value.includes('deepseek-v4-flash')
+              && opt.dataset.vendorName === 'deepseek'
+            )) || null;
           }
-
-          // 第三轮：查找其他供应商的 qwen3.5-plus
-          if (!defaultOption) {
-            for (let i = 0; i < allOptions.length; i++) {
-              const opt = allOptions[i];
-              if (!opt.disabled && opt.value && opt.value.includes('qwen3.5-plus')) {
-                defaultOption = opt;
-                console.log(`[剧本节点-拆分模型] 未找到 zjt_api 的 qwen3.5-plus，选择其他供应商: ${opt.dataset.vendorName}`);
-                break;
-              }
-            }
-          }
-
-          // 最终回退：使用第一个启用的模型
           if (!defaultOption && firstEnabled) {
             defaultOption = firstEnabled;
             console.log(`[剧本节点-拆分模型] 未找到推荐模型，选择第一个启用的模型: ${firstEnabled.value}`);

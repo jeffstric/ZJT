@@ -259,6 +259,7 @@
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
+            optEl.dataset.shortKey = opt.value;
 
             if(currentMode === 'text_to_video') {
               // 文生视频模式：所有模型都可用
@@ -278,6 +279,20 @@
           });
 
           firstVideoModelValue = firstAvailable || options[0]?.value || 'wan22';
+          if (window.ModelCatalog && videoModelSelect.parentElement) {
+            const scene = window.ModelCatalog.sceneForVideoImageMode
+              ? window.ModelCatalog.sceneForVideoImageMode(currentMode)
+              : (currentMode === 'text_to_video' ? 'video.text_to_video' : 'video.image_to_video');
+            const modeOptions = options.filter((opt) => {
+              if (currentMode === 'text_to_video') return true;
+              const config = modelConfigs[opt.value];
+              const supportedModes = config?.supported_image_modes || ['first_last_frame'];
+              return supportedModes.includes(currentMode);
+            });
+            const valueHit = window.ModelCatalog.findTaskByTrack(modeOptions, scene, null, 'value');
+            if (valueHit && !valueHit.disabled) firstVideoModelValue = valueHit.value;
+            window.ModelCatalog.bindSelectTrack(videoModelSelect.parentElement, videoModelSelect, scene, 'task');
+          }
         } else {
           // 回退：硬编码选项
           const fallbackOptions = [
