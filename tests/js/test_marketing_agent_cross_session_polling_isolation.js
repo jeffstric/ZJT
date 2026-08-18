@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const html = fs.readFileSync(
-  path.join(__dirname, '../../web/marketing_agent.html'),
+  path.join(__dirname, '../../web/js/marketing_agent.js'),
   'utf8'
 );
 
