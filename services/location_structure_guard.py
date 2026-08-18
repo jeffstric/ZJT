@@ -5,7 +5,8 @@
 校验层次：
 - L0 规划编译：bind + validate 规划 locations / space_units 对照 DB
 - L1 段级：locations + 本段 space_unit/镜头引用拉起的 registry 地点新顶层
-- L2/L3 合并与发布：全量父级图、可达性与环（父级冲突自动按 DB 对齐，不阻断）
+- L2/L3 合并与发布：全量父级图与环（父级冲突自动按 DB 对齐，不阻断；
+  父链允许终止于待落库的新顶层）
 """
 
 from __future__ import annotations
@@ -240,10 +241,10 @@ def validate_segment_new_roots(
     提示词层引导 LLM 优先把新场景挂到已有顶层作子场景，只有找不到合适父场景
     才作顶层新建，以控制新顶层数量。
 
-    仍由其他函数保留的校验：location_parent_invalid（父链环 / missing /
-    unreachable，见 validate_full_location_structure）。已有 DB 场景的父级冲突
-    （历史 location_parent_conflict）自 2026-07-30 起降级为按数据库层级自动对齐，
-    不再作为硬门禁。
+    仍由其他函数保留的校验：location_parent_invalid（父链环 / missing，
+    见 validate_full_location_structure）。父链允许终止于待落库的新顶层。
+    已有 DB 场景的父级冲突（历史 location_parent_conflict）自 2026-07-30 起
+    降级为按数据库层级自动对齐，不再作为硬门禁。
     """
     return []
 
@@ -261,7 +262,9 @@ def validate_full_location_structure(
     场景：不信任该绑定、不做对齐，按未匹配新场景走父链校验。
     与 validate_segment_location_structure_extended 就地写 location_db_id 一样，
     本函数会就地修复 parsed_data 中的 locations。
-    返回的 errors 只含 location_parent_invalid（环/父级缺失/不可达根）等硬门禁。
+    返回的 errors 只含 location_parent_invalid（环/父级缺失）等硬门禁。
+    父链走到无 parent 的新顶层视为合法终止（政策允许新顶层落库），不再报
+    unreachable_root。
     """
     locations = [item for item in (parsed_data.get("locations") or []) if isinstance(item, dict)]
     locations_by_key = {
@@ -350,18 +353,7 @@ def validate_full_location_structure(
                 break
             next_parent = str(current.get("parent_id") or "")
             if not next_parent:
-                marker = f"unreachable:{key}:{current_key}"
-                if marker not in reported:
-                    reported.add(marker)
-                    errors.append({
-                        "code": "location_parent_invalid",
-                        "severity": "error",
-                        "reason": "unreachable_root",
-                        "message": f"场景 {key} 的父级链无法到达已有数据库场景",
-                        "location_id": key,
-                        "parent_id": current_key,
-                        "_hard_gate": True,
-                    })
+                # 链端是待落库的新顶层（政策允许），合法终止
                 break
             current_key = next_parent
 

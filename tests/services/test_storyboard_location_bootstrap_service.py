@@ -314,6 +314,68 @@ class TestBootstrap:
         sub_entry = next(item for item in creation_order if item[0] == "子")
         assert sub_entry[1] == 9000
 
+    def test_new_root_and_child_are_persisted_together(self):
+        """新根 + 新子均无 DB 匹配时，先建根再挂子，不再报 unreachable_root。"""
+        created = {}
+        seq = iter([8101, 8102])
+
+        def fake_create(world_id, name, user_id, parent_id=None, **kw):
+            new_id = next(seq)
+            created[name] = {"id": new_id, "parent_id": parent_id}
+            return new_id
+
+        parsed = {
+            "locations": [
+                {"id": "loc_001", "name": "别墅", "location_db_id": None, "parent_id": None},
+                {"id": "loc_002", "name": "客厅", "location_db_id": None, "parent_id": "loc_001"},
+            ],
+            "shot_groups": [],
+        }
+
+        with patch(_LM + ".create", side_effect=fake_create), \
+             patch(_LM + ".get_by_name", return_value=None):
+            result = StoryboardLocationBootstrapService().bootstrap(
+                parsed, WORLD_ID, USER_ID,
+            )
+
+        assert result["created_location_count"] == 2
+        assert created["别墅"]["parent_id"] is None
+        assert created["客厅"]["parent_id"] == created["别墅"]["id"]
+        assert parsed["locations"][1]["location_db_id"] == created["客厅"]["id"]
+
+    def test_topological_order_without_level_still_parents_first(self):
+        """子排在父前且全部缺失 level 时，仍按 parent_id 父先子后落库。"""
+        creation_order = []
+        seq = iter([8201, 8202, 8203])
+
+        def fake_create(world_id, name, user_id, parent_id=None, **kw):
+            new_id = next(seq)
+            creation_order.append((name, parent_id))
+            return new_id
+
+        parsed = {
+            "locations": [
+                {"id": "loc_003", "name": "走廊", "parent_id": "loc_002",
+                 "location_db_id": None},
+                {"id": "loc_002", "name": "客厅", "parent_id": "loc_001",
+                 "location_db_id": None},
+                {"id": "loc_001", "name": "别墅", "location_db_id": None,
+                 "parent_id": None},
+            ],
+            "shot_groups": [],
+        }
+
+        with patch(_LM + ".create", side_effect=fake_create), \
+             patch(_LM + ".get_by_name", return_value=None):
+            StoryboardLocationBootstrapService().bootstrap(parsed, WORLD_ID, USER_ID)
+
+        names = [n for n, _ in creation_order]
+        assert names == ["别墅", "客厅", "走廊"]
+        by_name = {n: p for n, p in creation_order}
+        assert by_name["别墅"] is None
+        assert by_name["客厅"] == 8201
+        assert by_name["走廊"] == 8202
+
 
 # ---------------------------------------------------------------------------
 # 修复验证：target_entity_ids 贯穿、短 key、入库失败、门禁重跑、按 id 回写
