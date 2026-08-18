@@ -570,6 +570,8 @@ class TestVideoCloneDriverKeys(unittest.TestCase):
         self.assertIn(DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
         self.assertIn(DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
         self.assertIn(DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        self.assertIn(DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        self.assertNotIn(DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
 
     def test_frontend_dict_supports_video_clone_flag(self):
         from config.unified_config import UnifiedConfigRegistry
@@ -599,6 +601,64 @@ class TestVideoCloneDriverKeys(unittest.TestCase):
         self.assertFalse(frontend['needs_face_mask'])
         self.assertTrue(frontend['supports_video_clone'])
 
+    def test_minimax_h3_reference_supports_video_clone(self):
+        from config.unified_config import UnifiedConfigRegistry
+
+        h3_r2v = UnifiedConfigRegistry.get_by_key('minimax_h3_reference_to_video')
+        self.assertIsNotNone(h3_r2v)
+        frontend = h3_r2v.to_frontend_dict()
+        self.assertTrue(frontend['supports_video_clone'])
+        self.assertFalse(frontend['needs_face_mask'])
+
+        h3 = UnifiedConfigRegistry.get_by_key('minimax_h3_image_to_video')
+        self.assertIsNotNone(h3)
+        self.assertFalse(h3.to_frontend_dict()['supports_video_clone'])
+
+    def test_resolve_video_clone_maps_minimax_h3_first_last_to_r2v(self):
+        from config.unified_config import (
+            UnifiedConfigRegistry,
+            resolve_video_clone_task_config,
+            TaskTypeId,
+        )
+
+        mapped = resolve_video_clone_task_config(TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO)
+        self.assertIsNotNone(mapped)
+        self.assertEqual(mapped.key, 'minimax_h3_reference_to_video')
+
+        seedance = UnifiedConfigRegistry.get_by_key('seedance_2_5_image_to_video')
+        kept = resolve_video_clone_task_config(seedance.id)
+        self.assertEqual(kept.id, seedance.id)
+
+    def test_pick_request_snapshot_prefers_seedance_over_default_h3(self):
+        from config.unified_config import (
+            UnifiedConfigRegistry,
+            pick_request_video_clone_snapshot,
+        )
+
+        seedance = UnifiedConfigRegistry.get_by_key('seedance_2_5_image_to_video')
+        h3_r2v = UnifiedConfigRegistry.get_by_key('minimax_h3_reference_to_video')
+        picked = pick_request_video_clone_snapshot(
+            {
+                'video.image_to_video': {
+                    'model_source': 'request',
+                    'task_id': seedance.id,
+                    'model_key': seedance.key,
+                    'model_name': seedance.name,
+                },
+                'video.reference_to_video': {
+                    'model_source': 'preference',
+                    'task_id': h3_r2v.id,
+                    'model_key': h3_r2v.key,
+                    'model_name': h3_r2v.name,
+                },
+            },
+            'reference_to_video',
+        )
+        self.assertIsNotNone(picked)
+        self.assertEqual(picked['task_id'], seedance.id)
+        self.assertEqual(picked['model_key'], seedance.key)
+
 
 if __name__ == '__main__':
     unittest.main()
+

@@ -1334,7 +1334,79 @@ VIDEO_CLONE_DRIVER_KEYS = frozenset({
     DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
+    DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
 })
+
+# 用户选了同系列但不支持参考视频的模型时，视频克隆落到可克隆型号
+VIDEO_CLONE_FAMILY_FALLBACK = {
+    DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO: DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+}
+
+
+def resolve_video_clone_task_config(task_id):
+    """将用户选择的视频模型解析为可做视频克隆/参考生视频的任务配置。
+
+    - 已在 VIDEO_CLONE_DRIVER_KEYS 中：原样返回
+    - 同系列有克隆型号（如 MiniMax H3 首尾帧 → MiniMax H3 参考生视频）：返回克隆型号
+    - 其他：返回原配置（调用方再做能力校验）
+    """
+    if task_id in (None, ''):
+        return None
+    try:
+        normalized_id = int(task_id)
+    except (TypeError, ValueError):
+        return None
+    config = UnifiedConfigRegistry.get_by_id(normalized_id)
+    if config is None:
+        return None
+    if config.key in VIDEO_CLONE_DRIVER_KEYS:
+        return config
+    fallback_key = VIDEO_CLONE_FAMILY_FALLBACK.get(config.key)
+    if fallback_key:
+        fallback = UnifiedConfigRegistry.get_by_key(fallback_key)
+        if fallback is not None:
+            return fallback
+    return config
+
+
+def pick_request_video_clone_snapshot(snapshots: Optional[Dict[str, Any]], determined_mode: str):
+    """从任务快照里选出本次应使用的视频模型。
+
+    参考生视频槽若只是页面初始化留下的默认值（model_source=preference），
+    而用户刚在界面选了可克隆模型（model_source=request），优先用后者。
+    """
+    if not snapshots:
+        return None
+    r2v = snapshots.get('video.reference_to_video')
+    i2v = snapshots.get('video.image_to_video')
+    t2v = snapshots.get('video.text_to_video')
+    if determined_mode == 'reference_to_video':
+        for snap in (r2v, i2v, t2v):
+            if not isinstance(snap, dict) or snap.get('model_source') != 'request':
+                continue
+            if snap.get('task_id') in (None, ''):
+                continue
+            resolved = resolve_video_clone_task_config(snap.get('task_id'))
+            if resolved is not None and resolved.key in VIDEO_CLONE_DRIVER_KEYS:
+                picked = dict(snap)
+                picked['task_id'] = int(resolved.id)
+                picked['model_key'] = resolved.key
+                picked['model_name'] = resolved.name
+                return picked
+        if isinstance(r2v, dict):
+            return dict(r2v)
+        if isinstance(i2v, dict):
+            return dict(i2v)
+        if isinstance(t2v, dict):
+            return dict(t2v)
+        return None
+    if determined_mode == 'text_to_video':
+        if isinstance(t2v, dict):
+            return dict(t2v)
+        return dict(i2v) if isinstance(i2v, dict) else None
+    if isinstance(i2v, dict):
+        return dict(i2v)
+    return dict(t2v) if isinstance(t2v, dict) else None
 
 
 # ============ Agent 相关常量 ============

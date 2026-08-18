@@ -271,3 +271,52 @@ def test_image_to_video_uses_reference_snapshot_for_more_than_two_images(patched
 
     assert result['success'] is True
     assert json.loads(captured['request_data']['generation_snapshot'])['mode'] == 'reference_to_video'
+
+
+def test_image_to_video_prefers_request_seedance_over_default_h3(patched_video_flow, monkeypatch):
+    from enterprise.tools import video_tools
+    from script_writer_core.mcp_tool import scoped_media_generation_snapshots
+
+    captured = patched_video_flow
+    seen = {}
+
+    def _capture_task_id(*args, **kwargs):
+        seen['preferred'] = kwargs.get('preferred_task_id', args[3] if len(args) > 3 else None)
+        return 36
+
+    monkeypatch.setattr(video_tools, '_get_video_task_id', _capture_task_id)
+    monkeypatch.setattr(
+        'config.unified_config.resolve_video_clone_task_config',
+        lambda task_id: type('C', (), {'id': 36, 'key': 'seedance_2_5_image_to_video', 'name': 'Seedance 2.5'})(),
+    )
+
+    snapshots = {
+        'video.image_to_video': {
+            'model_source': 'request',
+            'task_id': 36,
+            'model_key': 'seedance_2_5_image_to_video',
+            'model_name': 'Seedance 2.5',
+        },
+        'video.reference_to_video': {
+            'model_source': 'preference',
+            'task_id': 37,
+            'model_key': 'minimax_h3_reference_to_video',
+            'model_name': 'MiniMax H3 参考生视频',
+        },
+    }
+    with scoped_media_generation_snapshots(snapshots):
+        result = video_tools.image_to_video(
+            user_id='u1',
+            world_id='w1',
+            auth_token='t',
+            prompt='clone',
+            image_urls=None,
+            video_urls='http://example.com/ref.mp4',
+            image_mode='multi_reference',
+            task_type=37,
+        )
+
+    assert result['success'] is True
+    assert seen['preferred'] == 36
+    snap = json.loads(captured['request_data']['generation_snapshot'])
+    assert snap['task_id'] == 36

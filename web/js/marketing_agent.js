@@ -6371,6 +6371,50 @@
                 return null;
             }
 
+            function findVideoModelInList(list, keyOrName) {
+                if (!keyOrName || !Array.isArray(list)) return null;
+                return list.find((item) =>
+                    item.key === keyOrName
+                    || item.short_key === keyOrName
+                    || item.value === keyOrName
+                    || item.name === keyOrName
+                ) || null;
+            }
+
+            function modelSupportsReferenceSlot(model) {
+                if (!model) return false;
+                const task = window.TaskConfig?.getTaskByKey
+                    ? window.TaskConfig.getTaskByKey(model.key || model.short_key || model.value)
+                    : null;
+                if (task?.supports_video_clone === true || task?.supports_ref_audio_video === true) {
+                    return true;
+                }
+                const modes = model.supportedImageModes || task?.supported_image_modes || [];
+                return Array.isArray(modes) && modes.includes('multi_reference');
+            }
+
+            function pickModelForVideoSlot(slot, list) {
+                const current = findVideoModelInList(list, selectedVideoModelKey.value)
+                    || findVideoModelInList(list, selectedVideoModelName.value);
+                if (slot === 'video.reference_to_video') {
+                    if (modelSupportsReferenceSlot(current)) return current;
+                    const currentTask = current && window.TaskConfig?.getTaskByKey
+                        ? window.TaskConfig.getTaskByKey(current.key || current.short_key || current.value)
+                        : null;
+                    const currentKey = currentTask?.key || current?.key || '';
+                    if (currentKey === 'minimax_h3_image_to_video' || current?.short_key === 'minimax_h3') {
+                        const h3r2v = list.find((item) =>
+                            item.key === 'minimax_h3_reference_to_video' || item.short_key === 'minimax_h3_r2v'
+                        );
+                        if (h3r2v) return h3r2v;
+                    }
+                } else if (current) {
+                    const modes = current.supportedImageModes || [];
+                    if (!modes.length || modes.includes('first_last_frame')) return current;
+                }
+                return modelForMediaSlot(slot, list);
+            }
+
             async function syncMediaPreference(mediaType, mode, taskId, profile = {}) {
                 if (!taskId || !userId.value || !worldId.value) return;
                 const resp = await fetch('/api/marketing/media-preferences', {
@@ -6622,7 +6666,7 @@
                     const slot = ['multi_reference', 'first_last_with_ref'].includes(videoImageMode.value)
                         ? 'video.reference_to_video'
                         : 'video.image_to_video';
-                    let m = modelForMediaSlot(slot, list);
+                    let m = pickModelForVideoSlot(slot, list);
                     try {
                         if (!m && userId.value && worldId.value) {
                             const resp = await fetch(`/api/video-model?category=image_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
@@ -6678,7 +6722,7 @@
                     const slot = ['multi_reference', 'first_last_with_ref'].includes(newMode)
                         ? 'video.reference_to_video'
                         : 'video.image_to_video';
-                    const preferred = modelForMediaSlot(slot, allImageToVideoModels.value);
+                    const preferred = pickModelForVideoSlot(slot, allImageToVideoModels.value);
                     if (preferred) {
                         selectedVideoModelName.value = preferred.name;
                         selectedVideoModelKey.value = preferred.key || '';

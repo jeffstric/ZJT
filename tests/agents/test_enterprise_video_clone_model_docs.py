@@ -33,3 +33,13 @@ def test_enterprise_video_clone_docs_include_seedance_2_5_model():
 
         assert "seedance2.5" in text, f"{path} should mention seedance2.5"
         assert "Seedance 2.5" in text, f"{path} should mention the display name"
+
+
+def test_enterprise_video_clone_docs_include_minimax_h3_model():
+    for path in VIDEO_CLONE_DOCS:
+        text = path.read_text(encoding="utf-8")
+
+        assert "MiniMax H3" in text, f"{path} should mention MiniMax H3"
+        assert "minimax_h3" in text.lower() or "参考生视频" in text, (
+            f"{path} should mention MiniMax H3 reference-to-video"
+        )
