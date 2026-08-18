@@ -2345,6 +2345,9 @@ class StoryboardAgentCliService:
             project_ids = result.get("project_ids") or []
             asset_ids = result.get("asset_ids") or []
             selected_asset_id = result.get("selected_asset_id") or (asset_ids[0] if asset_ids else None)
+            self._audit_image_batch_model_consistency(
+                job, submit_mode, item, result,
+            )
             StoryboardImageBatchItemModel.update(
                 int(item["id"]),
                 status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING,
@@ -2375,6 +2378,42 @@ class StoryboardAgentCliService:
 
         self._update_image_batch_job_counts(job_id)
         return {"submitted_count": submitted_count}
+
+    def _audit_image_batch_model_consistency(
+        self,
+        job: Dict[str, Any],
+        submit_mode: str,
+        item: Dict[str, Any],
+        result: Dict[str, Any],
+    ) -> None:
+        """运行时对账：批任务提交的生图模型必须等于创建时锁定的快照模型。
+
+        防止未来新增链路绕过模型快照导致静默换模型（曾出现用户选 GPT Image 2
+        实际按默认 nano-banana-Pro 生成的线上事故）。不一致只记 error 供
+        日志/Sentry 告警，不改变已提交结果。
+        """
+        extra = job.get("extra_json") if isinstance(job.get("extra_json"), dict) else {}
+        snapshots = extra.get("generation_snapshots") or {}
+        # auto 模式无参考图走 t2i，与 generate_image 的模式归一一致
+        slot_mode = "text_to_image" if submit_mode in ("auto", "text_to_image") else "image_edit"
+        snapshot = snapshots.get(f"image.{slot_mode}") or {}
+        expected = snapshot.get("task_id") if isinstance(snapshot, dict) else None
+        submission = result.get("submission") if isinstance(result.get("submission"), dict) else {}
+        actual = submission.get("model_task_id") or result.get("model_task_id")
+        if expected in (None, "") or actual in (None, ""):
+            return
+        try:
+            expected_int = int(expected)
+            actual_int = int(actual)
+        except (TypeError, ValueError):
+            return
+        if expected_int != actual_int:
+            logger.error(
+                "[batch-model-audit] 批任务提交模型与快照不一致: job=%s item=#%s scene=%s "
+                "mode=%s expected_task_id=%s actual_task_id=%s project_ids=%s",
+                job.get("id"), item.get("id"), item.get("scene_id"),
+                submit_mode, expected_int, actual_int, result.get("project_ids"),
+            )
 
 
     def _process_one_video_batch_job(self, job: Dict[str, Any], items: List[Dict[str, Any]]) -> Dict[str, Any]:

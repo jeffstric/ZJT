@@ -1658,6 +1658,162 @@ def test_quality_first_frame_batch_uses_grid_service(patched_storyboard_cli, mon
     assert calls == [job]
 
 
+def test_image_batch_logs_error_when_model_mismatch(patched_storyboard_cli, monkeypatch, caplog):
+    """对账防线：非 quality 批任务提交模型与创建时快照不一致时必须打 error。
+
+    线上事故：用户选择 GPT Image 2（task_id=26），实际提交 nano-banana-Pro
+    （task_id=7）。此类不一致必须立即在日志/Sentry 暴露。
+    """
+    import logging
+
+    module = patched_storyboard_cli.module
+    jobs = {
+        88: {
+            "id": 88,
+            "storyboard_id": 22,
+            "user_id": 7,
+            "auth_token": "token",
+            "asset_type": "first_frame",
+            "sequence_mode": "balanced",
+            "mode": "auto",
+            "prompt": None,
+            "source_image": None,
+            "ratio": "16:9",
+            "count": 1,
+            "stop_on_error": 1,
+            "status": 1,
+            "extra_json": {
+                "task_type": 26,
+                "generation_snapshots": {
+                    "image.text_to_image": {"task_id": 26, "model_key": "gpt-image-2-edit"},
+                    "image.image_edit": {"task_id": 26, "model_key": "gpt-image-2-edit"},
+                },
+            },
+        }
+    }
+    items = {
+        2: {
+            "id": 2,
+            "job_id": 88,
+            "scene_id": 101,
+            "status": 0,
+            "order_index": 1,
+            "group_key": "group:A",
+        },
+    }
+
+    class FakeJobModel:
+        @staticmethod
+        def update(job_id, **kwargs):
+            jobs[job_id].update(kwargs)
+            return 1
+
+    class FakeItemModel:
+        @staticmethod
+        def list_by_job(job_id):
+            return [items[2]]
+
+        @staticmethod
+        def update(record_id, **kwargs):
+            items[record_id].update(kwargs)
+            return 1
+
+    monkeypatch.setattr(module, "StoryboardImageBatchJobModel", FakeJobModel)
+    monkeypatch.setattr(module, "StoryboardImageBatchItemModel", FakeItemModel)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    monkeypatch.setattr(
+        service,
+        "generate_image",
+        lambda **kwargs: {
+            "project_ids": [702],
+            "asset_ids": [902],
+            "selected_asset_id": 902,
+            "submission": {"model_task_id": 7, "model_used": "nano-banana-Pro"},
+        },
+    )
+
+    with caplog.at_level(logging.ERROR):
+        result = service._process_one_image_batch_job(jobs[88])
+
+    assert result["submitted_count"] == 1
+    mismatch_errors = [
+        rec for rec in caplog.records
+        if "批任务提交模型与快照不一致" in rec.getMessage()
+    ]
+    assert mismatch_errors, "模型不一致必须打 error 日志"
+    message = mismatch_errors[0].getMessage()
+    assert "expected_task_id=26" in message
+    assert "actual_task_id=7" in message
+
+
+def test_image_batch_no_error_log_when_model_matches(patched_storyboard_cli, monkeypatch, caplog):
+    """模型一致时对账静默通过，不产生误报。"""
+    import logging
+
+    module = patched_storyboard_cli.module
+    jobs = {
+        88: {
+            "id": 88,
+            "storyboard_id": 22,
+            "user_id": 7,
+            "auth_token": "token",
+            "asset_type": "first_frame",
+            "sequence_mode": "balanced",
+            "mode": "auto",
+            "count": 1,
+            "stop_on_error": 1,
+            "status": 1,
+            "extra_json": {
+                "task_type": 26,
+                "generation_snapshots": {
+                    "image.text_to_image": {"task_id": 26, "model_key": "gpt-image-2-edit"},
+                },
+            },
+        }
+    }
+    items = {
+        2: {"id": 2, "job_id": 88, "scene_id": 101, "status": 0, "order_index": 1},
+    }
+
+    class FakeJobModel:
+        @staticmethod
+        def update(job_id, **kwargs):
+            return 1
+
+    class FakeItemModel:
+        @staticmethod
+        def list_by_job(job_id):
+            return [items[2]]
+
+        @staticmethod
+        def update(record_id, **kwargs):
+            items[record_id].update(kwargs)
+            return 1
+
+    monkeypatch.setattr(module, "StoryboardImageBatchJobModel", FakeJobModel)
+    monkeypatch.setattr(module, "StoryboardImageBatchItemModel", FakeItemModel)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    monkeypatch.setattr(
+        service,
+        "generate_image",
+        lambda **kwargs: {
+            "project_ids": [702],
+            "asset_ids": [902],
+            "selected_asset_id": 902,
+            "submission": {"model_task_id": 26, "model_used": "GPT Image 2 图片编辑"},
+        },
+    )
+
+    with caplog.at_level(logging.ERROR):
+        result = service._process_one_image_batch_job(jobs[88])
+
+    assert result["submitted_count"] == 1
+    assert not [
+        rec for rec in caplog.records
+        if "批任务提交模型与快照不一致" in rec.getMessage()
+    ]
+
+
 def test_split_from_script_creates_async_task_and_returns_task_id(patched_storyboard_cli, monkeypatch):
     """BUG #2：split-from-script 改为异步路径，返回 task_id + status_url，不再同步阻塞跑 LLM。"""
     module = patched_storyboard_cli.module
