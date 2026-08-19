@@ -25,7 +25,7 @@ class AuthService:
     
     # 常量
     DEFAULT_COMPUTING_POWER = 50  # 默认算力
-    INVITE_BONUS_POWER = 75  # 邀请人奖励算力
+    INVITE_BONUS_POWER = 38  # 邀请人奖励算力
     INVITED_USER_POWER = 75  # 被邀请人算力
     FIRST_ADMIN_POWER = 100000  # 首个管理员算力
     TOKEN_EXPIRE_DAYS = 30  # Token过期天数
