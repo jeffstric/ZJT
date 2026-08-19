@@ -2769,8 +2769,10 @@ async def get_computing_power_logs(
                 for log in response_data['logs']:
                     from datetime import datetime
                     import re
-                    
-                    # 获取基础字段
+
+                    transaction_id = log.get('transaction_id')
+
+                    # 获取基础字段（transaction_id 供前端显示流水摘要 / 识别 refund- 失败返还）
                     processed_log = {
                         'id': log.get('id'),
                         'behavior': log.get('behavior'),
@@ -2778,7 +2780,8 @@ async def get_computing_power_logs(
                         'computing_power': log.get('computing_power'),
                         'from': log.get('from'),
                         'to': log.get('to'),
-                        'created_at': log.get('created_at')
+                        'created_at': log.get('created_at'),
+                        'transaction_id': transaction_id
                     }
                     
                     # 如果 message 有值，将其放到 note
@@ -2787,7 +2790,6 @@ async def get_computing_power_logs(
                         processed_log['note'] = message
                     
                     # 根据 transaction_id 查询任务类型
-                    transaction_id = log.get('transaction_id')
                     if transaction_id and transaction_id in tools_map:
                         tool = tools_map[transaction_id]
                         if tool.type:
