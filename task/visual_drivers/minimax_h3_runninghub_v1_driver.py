@@ -255,8 +255,17 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
         extra_config = self._parse_extra_config(ai_tool)
         megapixels_value = self._get_megapixels(extra_config)
 
-        # 构建提示词
-        prompt_text = ai_tool.prompt or ""
+        # 构建提示词：优先使用 pipeline 优化结果，原文已备份在 extra_config.original_prompt
+        prompt_meta = extra_config.get("h3_prompt_optimize") if isinstance(extra_config, dict) else None
+        if isinstance(prompt_meta, dict) and prompt_meta.get("optimized_prompt"):
+            prompt_text = str(prompt_meta.get("optimized_prompt") or "")
+        else:
+            prompt_text = ai_tool.prompt or ""
+        original_prompt = ""
+        if isinstance(extra_config, dict):
+            original_prompt = extra_config.get("original_prompt") or (
+                prompt_meta.get("original_prompt") if isinstance(prompt_meta, dict) else ""
+            ) or ""
 
         # 构建 nodeInfoList
         # - nodeId 143 text           提示词（CR Text）
@@ -309,7 +318,9 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
         self.logger.info(
             f"MiniMax H3 请求参数: duration={duration}s, ratio={ratio}(aspect_ratio={aspect_ratio_value}), "
             f"megapixels={megapixels_value}, has_last_frame={last_frame_uploaded is not None}, "
-            f"prompt_len={len(prompt_text)}"
+            f"prompt_len={len(prompt_text)}, original_len={len(original_prompt or '')}, "
+            f"variant={(prompt_meta or {}).get('variant') if isinstance(prompt_meta, dict) else None}, "
+            f"fallback={(prompt_meta or {}).get('fallback') if isinstance(prompt_meta, dict) else None}"
         )
 
         return {

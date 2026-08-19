@@ -145,6 +145,23 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False
     },
     
+    # ==================== Agent 算力确认 ====================
+    {
+        'key': 'agent.power_confirm_threshold',
+        'value_type': 'int',
+        'description': 'Agent 生成操作自动确认软阈值（算力）。用户未自定义时，单次或本轮累计超过此值需用户确认',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'agent.power_confirm_hard_threshold',
+        'value_type': 'int',
+        'description': 'Agent 生成操作硬阈值（算力）。用户选择「本次对话不再询问」后，单次或累计超过此值仍须确认',
+        'editable': True,
+        'is_sensitive': False
+    },
+
     # ==================== 测试模式配置 ====================
     {
         'key': 'test_mode.enabled',
@@ -324,7 +341,31 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'pipeline.seedance_face_mask_enabled',
         'value_type': 'bool',
-        'description': '是否启用 Seedance 2.0 / 2.0 Fast 图片和视频输入的人脸遮盖前置处理',
+        'description': '是否启用 Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5 图片和视频输入的人脸遮盖前置处理',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': False
+    },
+    {
+        'key': 'pipeline.h3_prompt_optimize_enabled',
+        'value_type': 'bool',
+        'description': '是否在 MiniMax H3 图生视频提交前按 I2VA/FL2VA 规范优化提示词',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': False
+    },
+    {
+        'key': 'pipeline.h3_prompt_optimize_model',
+        'value_type': 'string',
+        'description': 'H3 提示词优化使用的聊天模型名（默认 deepseek-v4-flash）。密钥未配置时依次回退：故事板对话模型 → 本项 → 剧本拆分默认模型(gemini-3-flash-preview)，全部未配置则回退原文',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': False
+    },
+    {
+        'key': 'pipeline.h3_prompt_optimize_vendor_id',
+        'value_type': 'int',
+        'description': 'H3 提示词优化使用的供应商 ID；0 或空则按模型名路由',
         'editable': True,
         'is_sensitive': False,
         'quick_config': False
@@ -410,7 +451,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'huimengi.api_key',
         'value_type': 'string',
-        'description': 'huimengi 网关 API Key（Seedance 2.0 系列视频）',
+        'description': 'huimengi 网关 API Key（Seedance 2.0 系列 / Grok 视频）',
         'editable': True,
         'is_sensitive': True,
         'quick_config': True
@@ -994,9 +1035,10 @@ def should_skip_history(config_key: str) -> bool:
         return True
 
     # 规则2：运行态前缀模式（兼容未预注册的密钥槽位）
-    # 匹配 runninghub.key.{N}.(fail_count|circuit_status|next_probe_at|last_used_at)
+    # 匹配 runninghub.key.{N}.(fail_count|circuit_status|next_probe_at|last_used_at|last_congested_at)
     rt_suffixes = (
-        '.fail_count', '.circuit_status', '.next_probe_at', '.last_used_at'
+        '.fail_count', '.circuit_status', '.next_probe_at',
+        '.last_used_at', '.last_congested_at',
     )
     if config_key.startswith('runninghub.key.') and config_key.endswith(rt_suffixes):
         return True

@@ -17,7 +17,7 @@ from script_writer_core.skill_loader import SkillLoader
 from script_writer_core.cron_task_manager import get_task_manager
 from script_writer_core.constant import ItemType
 from config.config_util import get_config
-from config.constant import FilePathConstants, StoryType, GridConfig
+from config.constant import FilePathConstants, StoryType, GridConfig, DEFAULT_TEXT_TO_IMAGE_TASK_ID
 
 # 模块级日志
 logger = logging.getLogger(__name__)
@@ -61,10 +61,6 @@ _media_generation_snapshots_override = ContextVar(
 # 获取视频模型 task_id 的函数引用（由 script_writer_api.py 设置）
 _get_text_to_video_model_id_func = None
 _get_image_to_video_model_id_func = None
-
-# 默认生图模型 task_id (nano-banana-Pro)
-DEFAULT_TEXT_TO_IMAGE_TASK_ID = 7
-
 
 def set_text_to_image_model_getter(func):
     """设置获取生图模型 task_id 的函数"""
@@ -158,7 +154,7 @@ def _get_video_preferences(user_id: str, world_id: str) -> Dict[str, str]:
 
 
 def _get_text_to_image_task_id(user_id: str, world_id: str) -> int:
-    """获取生图模型的 task_id，默认返回 7 (nano-banana-Pro)"""
+    """获取生图模型的 task_id，默认返回 GPT Image 2。"""
     snapshot = _image_generation_snapshot_override.get()
     if snapshot and snapshot.get('task_id') not in (None, ''):
         return int(snapshot['task_id'])
@@ -528,14 +524,31 @@ def list_video_models(user_id: str, world_id: str, auth_token: str,
                 'models': [],
             }
 
+        from config.model_catalog import (
+            ModelScene,
+            annotate_task_models,
+            build_tracks_payload,
+            tracks_message,
+        )
+        scene = (
+            ModelScene.VIDEO_TEXT_TO_VIDEO
+            if cat_label == 'text_to_video'
+            else ModelScene.VIDEO_IMAGE_TO_VIDEO
+        )
+        for item in models:
+            item['short_key'] = item.get('short_key') or ''
+        catalog = build_tracks_payload(scene, models, kind="task")
+        models = annotate_task_models(models, scene)
+        extra = tracks_message(catalog)
         return {
             'success': True,
             'category': cat_label,
             'models': models,
+            'catalog': catalog,
             'message': (
                 f'当前任务已锁定 {len(models)} 个 {cat_label} 模式模型，执行器会强制使用对应快照。'
                 if locked_video_snapshots
-                else f'共 {len(models)} 个可用 {cat_label} 模型。'
+                else f'共 {len(models)} 个可用 {cat_label} 模型。{extra}'
             ),
         }
     except Exception as e:
@@ -623,10 +636,13 @@ def list_llm_models(user_id: str, world_id: str, auth_token: str) -> Dict[str, A
                 continue
 
             # 查计费档位：补全三档 threshold（get_available_models 只返回 input）
+            # 按当前北京时间时段取价，配了峰谷则反映当前价
             in_th = out_th = cache_th = None
             try:
+                from utils.billing_period import get_billing_period
                 billing = VendorModelModel.get_by_vendor_model_for_billing(
                     vendor_id=vendor_id, model_id=model_id, raw_input_token=0,
+                    time_period=get_billing_period(None),
                 )
                 if billing:
                     in_th = billing.input_token_threshold
@@ -661,13 +677,23 @@ def list_llm_models(user_id: str, world_id: str, auth_token: str) -> Dict[str, A
                 'models': [],
             }
 
+        from config.model_catalog import (
+            ModelScene,
+            annotate_llm_models,
+            build_tracks_payload,
+            tracks_message,
+        )
+        catalog = build_tracks_payload(ModelScene.LLM_SCRIPT_SPLIT, models, kind="llm")
+        models = annotate_llm_models(models, ModelScene.LLM_SCRIPT_SPLIT)
+        extra = tracks_message(catalog)
         return {
             'success': True,
             'models': models,
+            'catalog': catalog,
             'message': (
-                f'共 {len(models)} 个可用 LLM 模型。调用 split-from-script 时，'
-                f'请将所选模型的 name 作为 model、model_id 作为 model_id、'
-                f'vendor_id 作为 vendor_id 传入（pricing 用于对比费用）。'
+                f'共 {len(models)} 个可用 LLM 模型。{extra} '
+                f'调用 split-from-script 时，请将所选模型的 name 作为 model、'
+                f'model_id 作为 model_id、vendor_id 作为 vendor_id 传入（pricing 用于对比费用）。'
             ),
         }
     except Exception as e:
@@ -1225,7 +1251,6 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                         world_id=world_id,
                         comfyui_base_url=comfyui_base_url,
                         auth_token=auth_token,
-                        max_attempts=60,
                         prompt=prompt,
                         task_config_id=text_to_image_task_id,
                         aspect_ratio=aspect_ratio,
@@ -1246,6 +1271,8 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                 'status': 'submitted',
                 'comfyui_base_url': comfyui_base_url,
                 'model_used': model_name,
+                # 统一模型对账字段：调用方用它校验实际模型与批任务快照一致
+                'model_task_id': text_to_image_task_id,
                 'image_size_used': image_size,
                 'computing_power_required': computing_power_per_image,
                 'computing_power_total': computing_power_total,
@@ -3492,7 +3519,7 @@ MCP_TOOLS = [
     },
     {
         "name": "list_video_models",
-        "description": "查询当前可用的视频模型列表（含 task_id、算力、支持的时长/比例/图模式）。视频生成工具（image_to_video / generate_text_to_video）要求显式传入 task_type 参数，因此在调用视频生成工具之前，必须先调用本工具获取可用模型的 task_id，再选取一个合适的模型将其 task_id 作为 task_type 传入。",
+        "description": "查询当前可用的视频模型列表（含 task_id、算力、支持的时长/比例/图模式，以及 catalog.tracks 性价比/效果双档）。未指定模型时用 tracks.value，用户要求效果/质量时用 tracks.quality。视频生成工具（image_to_video / generate_text_to_video）要求显式传入 task_type 参数；Storyboard 已锁定齿轮模型时不要改选。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -3507,7 +3534,7 @@ MCP_TOOLS = [
     },
     {
         "name": "list_llm_models",
-        "description": "查询当前可用的大语言模型（LLM）列表及费用（含 input/output/cache_read 三档算力阈值与换算单价）。调用 split-from-script / create-storyboard-from-script 等需要 LLM 的命令前，可先用本工具查询模型并对比费用，选取后将 name 作为 model、model_id 作为 model_id、vendor_id 作为 vendor_id 传入对应命令。",
+        "description": "查询当前可用的大语言模型（LLM）列表及费用（含 input/output/cache_read 三档算力阈值与换算单价），并返回 catalog.tracks 性价比/效果双档。剧本拆分默认性价比为 deepseek-v4-flash、效果为 deepseek-v4-pro。未指定时用 tracks.value；用户要求效果/质量时用 tracks.quality。不要在未列出的模型里猜测。选取后将 name 作为 model、model_id 作为 model_id、vendor_id 作为 vendor_id 传入对应命令。",
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -4783,7 +4810,6 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                         world_id=world_id,
                         comfyui_base_url=comfyui_base_url,
                         auth_token=auth_token,
-                        max_attempts=60,
                         prompt=prompt,
                         task_config_id=text_to_image_task_id,
                         aspect_ratio=aspect_ratio,
@@ -5047,6 +5073,7 @@ def submit_grid_image_task(
     image_size: Optional[str] = None,
     grid_cells: Optional[List[Dict[str, Any]]] = None,
     global_visual_guidance: Optional[Dict[str, str]] = None,
+    task_type: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     通用宫格图像提交入口（支持 2x2 四宫格 / 3x3 九宫格，支持 t2i / i2i 两种模式）。
@@ -5076,6 +5103,9 @@ def submit_grid_image_task(
         image_size: 可选图片尺寸，写入任务记录供重试复原。
         grid_cells: 可选的格子绑定元数据，分镜首帧宫格用来驱动后续拆图写回。
         global_visual_guidance: 可选的宫格级画风、构图倾向及应用规则，仅在根节点出现一次。
+        task_type: 显式生图模型 task_id（统一配置 id）。来自上层批任务创建时锁定的
+            模型快照，传入后原样使用（类别不兼容时明确报错，禁止静默换模型）；
+            未传入时回退到用户偏好/默认模型解析，并打 warning 让隐式解析点在日志中现形。
 
     Returns:
         dict: 与 generate_4grid_images 结构一致的结果。
@@ -5182,11 +5212,14 @@ def submit_grid_image_task(
             grid_layout=grid_layout,
             grid_item_names=item_names,
             target_entity_ids=target_ids_for_db,
+            task_type=task_type,
         )
         if result.get('success'):
             result['item_type_name'] = item_info['name_cn']
             result['base_item_type'] = item_info.get('base_type')
             result['item_names'] = item_names
+            # 统一模型对账字段：调用方用它校验实际模型与批任务快照一致
+            result['model_task_id'] = result.get('text_to_image_task_id')
         return result
 
     # ---------- 分支 B：图生图（参考图作为输入）----------
@@ -5208,10 +5241,27 @@ def submit_grid_image_task(
     if not public_ref_urls:
         return {'success': False, 'error': 'reference_images 无法转为有效 http URL（全部为空或非法）'}
 
-    # 解析模型 task_id（IMAGE_EDIT 类别，含 fallback）
-    edit_task_id = _resolve_image_edit_task_id(user_id, world_id)
+    # 解析模型 task_id（IMAGE_EDIT 类别，含 fallback）。
+    # 显式 task_type 来自上层批任务创建时锁定的模型快照：必须原样使用，禁止静默换模型；
+    # 未显式指定时才回退到偏好/默认解析，并打 warning 让隐式解析点在日志中现形。
+    edit_task_id = _resolve_image_edit_task_id(user_id, world_id, task_type=task_type)
     if edit_task_id is None:
+        if task_type not in (None, ''):
+            requested_name = _get_model_name_by_task_id(int(task_type))
+            return {
+                'success': False,
+                'error': (
+                    f'所选生图模型（id={task_type}，{requested_name}）不支持图片编辑'
+                    f'（参考图模式），无法执行宫格 i2i；请更换为支持图片编辑的生图模型'
+                ),
+            }
         return {'success': False, 'error': '无可用图片编辑模型，无法执行宫格 i2i'}
+    if task_type in (None, ''):
+        _logger.warning(
+            "[GRID] submit_grid_image_task(mode=image_edit) 未显式指定生图模型 task_type，"
+            "回退到用户偏好/默认模型解析: user_id=%s world_id=%s item_type=%s resolved_task_id=%s",
+            user_id, world_id, item_type, edit_task_id,
+        )
     model_name = _get_model_name_by_task_id(edit_task_id)
 
     if not auth_token:
@@ -5300,7 +5350,6 @@ def submit_grid_image_task(
             world_id=world_id,
             comfyui_base_url=comfyui_base_url,
             auth_token=auth_token,
-            max_attempts=60,
             prompt=prompt_json_str,
             task_config_id=str(edit_task_id),
             aspect_ratio=resolved_aspect_ratio,
@@ -5396,6 +5445,8 @@ def submit_grid_image_task(
         'item_names': item_names,
         'target_entity_ids': target_ids_for_db,
         'model_used': model_name,
+        # 统一模型对账字段：调用方用它校验实际模型与批任务快照一致
+        'model_task_id': edit_task_id,
         'task_key': task_key,
         'message': f'宫格 i2i 请求已提交（父图作为输入），project_ids={project_ids}',
     }

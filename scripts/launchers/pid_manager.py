@@ -18,15 +18,10 @@ import shutil
 from datetime import datetime
 
 
-def get_pid_file_path():
-    """获取 PID 文件路径"""
-    if hasattr(os, 'getuid'):
-        # Unix-like 系统
-        pid_dir = os.path.expanduser("~/.local/share/zjt")
-    else:
-        # Windows 系统
-        pid_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'zjt')
-
+def get_pid_file_path(project_dir=None):
+    """获取按项目目录隔离的 PID 文件路径。"""
+    project_root = os.path.abspath(project_dir or os.getcwd())
+    pid_dir = os.path.join(project_root, 'data', 'runtime')
     os.makedirs(pid_dir, exist_ok=True)
     return os.path.join(pid_dir, 'launcher_pids.json')
 
@@ -203,7 +198,7 @@ def cleanup_dead_pids_on_startup(project_dir=None):
     Returns:
         tuple: (清理的死亡 PID 数量, 保留的活跃 PID 数量)
     """
-    pid_file = get_pid_file_path()
+    pid_file = get_pid_file_path(project_dir)
 
     if not os.path.exists(pid_file):
         return 0, 0
@@ -277,7 +272,7 @@ def add_pid(pid, process_name=None, cwd=None):
     if pid is None or pid <= 0:
         return
 
-    pid_file = get_pid_file_path()
+    pid_file = get_pid_file_path(cwd)
 
     # 读取现有数据
     data = {'pids': []}
@@ -315,7 +310,7 @@ def add_pid(pid, process_name=None, cwd=None):
         print(f"写入 PID 文件失败: {e}")
 
 
-def remove_pid(pid):
+def remove_pid(pid, project_dir=None):
     """
     从文件移除 PID
 
@@ -325,7 +320,7 @@ def remove_pid(pid):
     if pid is None or pid <= 0:
         return
 
-    pid_file = get_pid_file_path()
+    pid_file = get_pid_file_path(project_dir)
 
     if not os.path.exists(pid_file):
         return
@@ -351,14 +346,14 @@ def remove_pid(pid):
         print(f"更新 PID 文件失败: {e}")
 
 
-def get_pids():
+def get_pids(project_dir=None):
     """
     获取所有记录的 PID（只返回存活的有效 PID）
 
     Returns:
         list: PID 列表（已过滤掉死亡或无效的 PID）
     """
-    pid_file = get_pid_file_path()
+    pid_file = get_pid_file_path(project_dir)
 
     if not os.path.exists(pid_file):
         return []
@@ -391,7 +386,7 @@ def get_pid_entries(project_dir=None):
     Returns:
         list: PID 条目列表，每个条目包含 pid, name, cwd, timestamp
     """
-    pid_file = get_pid_file_path()
+    pid_file = get_pid_file_path(project_dir)
 
     if not os.path.exists(pid_file):
         return []
@@ -426,7 +421,7 @@ def cleanup_dead_pids(project_dir=None):
     Returns:
         list: 存活的 PID 列表
     """
-    pid_file = get_pid_file_path()
+    pid_file = get_pid_file_path(project_dir)
 
     if not os.path.exists(pid_file):
         return []
@@ -458,7 +453,7 @@ def cleanup_dead_pids(project_dir=None):
             alive_pids.append(pid)
         else:
             dead_pids.append(pid)
-            remove_pid(pid)
+            remove_pid(pid, project_dir=project_dir or cwd)
 
     return alive_pids
 
@@ -471,7 +466,7 @@ def clear_pids(project_dir=None):
         project_dir: 项目目录，传入后只清除属于当前项目的 PID 条目，
                      不传入则清空整个 PID 文件（旧行为）
     """
-    pid_file = get_pid_file_path()
+    pid_file = get_pid_file_path(project_dir)
 
     if not os.path.exists(pid_file):
         return
@@ -533,7 +528,7 @@ def check_launcher_running(project_dir=None):
 
 if __name__ == "__main__":
     # 测试代码
-    print(f"PID 文件路径: {get_pid_file_path()}")
+    print(f"PID 文件路径: {get_pid_file_path(os.getcwd())}")
 
     # 使用当前工作目录作为项目目录进行过滤
     current_project = os.getcwd()

@@ -87,7 +87,7 @@ Agent 模式下的「自定义」面板（`.marketing-settings-panel`）内容�
 3. 面板内模型列表使用 `.marketing-model-list`（`max-height: min(200px, 32vh)`）
 4. 图片/视频模型列表与 LLM 列表互斥展开（`toggleModelSelect` / `toggleLLMModelSelect`）
 5. 视口高度 ≤760px 或宽度 ≤720px 时改为视口内 `fixed` 面板；宽度 ≤499px 时全屏抽屉
-5. **资产库视图** (`.asset-library`)：通过左侧导航切换 `activeView` 为 `assets` 显示，展示用户历史生成结果（图片/视频），每页 60 条，支持分页。图片资产支持"生成视频"操作（`useAssetForVideo`），会将图片带入生成页输入区并自动切换到视频模式。图片放大弹窗中的"生成视频"按钮（`imageToVideo`）同样会自动切换回生成视图。
+5. **资产库视图** (`.asset-library`)：通过左侧导航切换 `activeView` 为 `assets` 显示，展示用户历史生成结果（图片/视频），每页 60 条，支持分页。视频预览用 `max-width/max-height: 100%` + `object-fit: contain`，竖屏不再按宽度 100% 撑开后裁掉上下；有 `9:16` 等竖屏比例时卡片按 `9 / 16` 增高，缺比例时用 `loadedmetadata` 的真实宽高兜底。图片资产支持"生成视频"操作（`useAssetForVideo`），会将图片带入生成页输入区并自动切换到视频模式。图片放大弹窗中的"生成视频"按钮（`imageToVideo`）同样会自动切换回生成视图。
 
 ## 核心功能详解
 
@@ -191,6 +191,34 @@ Agent 模式中的视频生成能力由 `enterprise/` 模块提供。企业版�
 
 如果用户切换会话期间 `ask_user` 已超时，后端会在历史接口中为该 verification 返回 `verification_status='cancelled'`。前端加载到非 `pending` 状态时不会恢复等待状态，因此输入框和发送按钮会恢复为普通对话模式；超时后的历史问题仍可展示，但不再阻塞用户继续输入。
 
+#### 高算力确认（系统硬门）
+
+Agent 模式提交文生图 / 图生图 / 文生视频 / 图生视频 / 数字人等计费工具前，后端会先按与扣费相同的规则预估算力，再决定是否打断用户：
+
+| 情况 | 行为 |
+|---|---|
+| 本次及本轮累计 ≤ 用户软阈值 | 直接提交，不弹确认 |
+| 超过用户软阈值 | 弹出「算力确认」卡片，选项：确认生成 / 取消本次生成 / 本次对话不再询问 |
+| 余额不足 | 不弹确认，直接告诉模型算力不足 |
+| 用户点「本次对话不再询问」 | 本会话后续低于平台硬阈值的生成不再问；超过硬阈值仍问 |
+| 底部「图片 / 视频」直出模式 | 不走此门（用户已主动点生成） |
+
+阈值分层：
+
+1. **用户软阈值**：每人可在自定义面板「自动确认上限」自行设置，存 `user_preferences.pref_type=power_confirm`（`world_id=_global`，换对话/换世界共用）。
+2. **平台默认软阈值**：用户未设置时使用 `agent.power_confirm_threshold`，默认 35。
+3. **平台硬阈值**：`agent.power_confirm_hard_threshold`，默认 200，只约束「本次对话不再询问」之后的放行。
+
+企业版走 `enterprise/routes/user.py` 注册同一组接口（社区版走 `api/user.py`）。商业版不会加载社区用户路由，因此两端都要挂上。
+
+读写接口（需登录，只能改自己的）：
+
+- `GET /api/user/power-confirm` → `{ threshold, is_custom, default_threshold, hard_threshold }`
+- `PUT /api/user/power-confirm` body `{ threshold }`
+- `DELETE /api/user/power-confirm` 回退平台默认
+
+确认不可被模型绕过：拦截点在 `ExpertAgent._execute_tool`，确认完成前不会调用 `generate_*`。模型也不应再自己用 `ask_user` 问算力。
+
 ### SSE 流式响应
 
 #### 连接建立
@@ -253,8 +281,8 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 
 页面刷新或切换会话时，系统通过以下机制恢复未完成的任务：
 
-1. **`__PENDING_TASK__` 标记**：后端在 `chat_messages` 表中保存 `__PENDING_TASK__:{type}:{project_ids}` 标记（`message_type='pending_task'`）
-2. **`recoverPendingTasks()`**：加载历史消息后检测标记，轮询任务状态；完成时优先替换 pending 消息（通过 `PUT /session/{id}/message/{message_id}`），替换失败则 fallback 追加新消息
+1. **`__PENDING_TASK__` 标记**：后端在 `chat_messages` 表中保存 `__PENDING_TASK__:{type}:{project_ids}` 标记（`message_type='pending_task'`）。这是内部恢复用行，前端解析后标为 `_isPendingTask`，模板不渲染；切回会话时不会把 `__PENDING_TASK__` 交给 Markdown（否则两侧 `__` 会被收成加粗的 `PENDING_TASK`）
+2. **`recoverPendingTasks()`**：加载历史后先恢复 pending 轮询，再跑工作总结文本兜底，避免同一 `project_ids` 再插一条「生成中」。完成时优先替换 pending 消息（通过 `PUT /session/{id}/message/{message_id}`），替换失败则 fallback 追加新消息
 3. **`sessionActiveTaskId` 注册表**：记录每个 session 的活跃 Agent task_id，切换回来时检查任务状态并重连 SSE
 4. **`directGenerationTasks` / Agent 轮询注册表**：直接生成任务在内存中按任务实例跟踪 project_ids；Agent 图片/视频轮询按 `sessionId:type:project_ids` 去重，支持会话内恢复和并发任务隔离
 5. **并发安全**：`clean-pending-tasks` 支持按 `task_type` + `project_ids` 精确清理，并发任务互不影响。轮询和 `recoverPendingTasks(sessionId)` 的 fallback 追加也必须显式传入原始 sessionId，避免用户切换会话后把上一会话的图片/视频结果写入当前会话。
@@ -469,7 +497,7 @@ Agent 模式下，`image_preferences.ratio`、`image_preferences.resolution` 会
 
 Agent 对话模式即使当前自定义面板停留在“图片”，前端也会随 `/api/session/{session_id}/task` 携带 `video_preferences`，让 PM Agent 能看到用户历史生视频模型、比例、时长和图片模式偏好。前端按本轮真实上传媒体判断模型类别：有图片 URL、参考视频或参考音频时使用图生视频历史模型（`marketing_selected_i2v_model`），都没有时使用文生视频历史模型（`marketing_selected_t2v_model`）。后端在旧客户端未传 `video_preferences` 时，会从 `get_video_preferences(user_id, world_id)` 读取历史视频偏好并追加 `[用户视频偏好]`。
 
-`video_preferences.enable_face_mask` 由「是否处理人脸」勾选状态（`processFace`）和上述图生视频判定共同决定：只传参考视频/音频（视频克隆场景，无图片）时同样视为图生视频，勾选后会携带 `enable_face_mask: true`，后端据此为 Seedance 2.0 系列创建 `face_mask` pipeline step（RUNNINGHUB_FACE_MASK 视频人脸遮盖预处理）。`syncVideoModelToBackend()` 切换视频模型同步偏好时采用同一判定口径。
+`video_preferences.enable_face_mask` 由「是否处理人脸」勾选状态（`processFace`）和上述图生视频判定共同决定：只传参考视频/音频（视频克隆场景，无图片）时同样视为图生视频，勾选后会携带 `enable_face_mask: true`，后端据此为 Seedance 2.0 / Fast / Mini / 2.5 创建 `face_mask` pipeline step（RUNNINGHUB_FACE_MASK 视频人脸遮盖预处理）。`syncVideoModelToBackend()` 切换视频模型同步偏好时采用同一判定口径。
 
 视频时长选择支持 `auto`。在前端偏好和 Agent 上下文中，`auto` 表示不把创作意图锁死为 5 秒；直连视频接口和企业版 `video_tools` 在真正提交任务时会把 `auto` 解析为当前模型支持的最长时长，避免底层接口收到非数字时长。本地生活营销视频如果选择 3/5/8 秒，但内容包含门店/产品/卖点/口播/BGM/音效/店招等完整信息，PM Agent 应提醒用户改为 `auto` 或模型最长时长；只有用户明确坚持短时长时，才压缩为单一核心镜头。
 
@@ -647,7 +675,7 @@ Agent 模式的消息通过 PM Agent（`pm_agent.py`）处理：
 - 专家通过 `script_writer_core/config/agents_config.json` 中的 `expert_type` 声明所属模式；剧本 PM 只允许 `script` 类型专家，营销 PM 只允许 `marketing` 类型专家
 - `call_agent.AgentName` 的工具枚举会按当前 PM 的 `allowed_expert_types` 动态过滤，`_handle_agent_call()` 也会做后端校验，避免营销模式误调用剧本专家或反向串线
 - 营销视频克隆必须走 `sop-video-clone` 并委托 `marketing-video`；数字人口播必须走 `sop-digital-human` 并委托 `digital-human-creator`，且数字人专家必须实际调用 `generate_digital_human` 并返回非空 `project_ids` 才算提交成功
-- 营销视频克隆当前支持 Seedance2.0、Seedance2.0 Fast 和 Seedance2.0 Mini（seedance2.0-mini）；专家提示词必须通过 `video_urls` 传入参考视频，并在视频克隆提示词末尾保留"将人脸位置的黑色方框修改为真人人脸。"这句人脸修正指令
+- 营销视频克隆当前支持 Seedance2.0、Seedance2.0 Fast、Seedance2.0 Mini（seedance2.0-mini）、Seedance 2.5（seedance2.5）和 MiniMax H3 参考生视频（MiniMax H3 / minimax_h3-r2v）；白名单单一事实来源为 `config/unified_config.py::VIDEO_CLONE_DRIVER_KEYS`。用户选择普通 MiniMax H3（首尾帧）做克隆时，由 `resolve_video_clone_task_config` 自动改用 MiniMax H3 参考生视频。创建营销任务时，界面选中的视频模型会写入全部兼容 video 槽位（含 `video.reference_to_video`），`image_to_video` 工具优先使用 `model_source=request` 的快照，避免参考槽里初始化留下的 MiniMax H3 覆盖界面上的 Seedance 2.5。专家提示词必须通过 `video_urls` 传入参考视频。人脸遮盖对 Seedance 2.0 / Fast / Mini / 2.5 显示「是否处理人脸」（`SEEDANCE_FACE_MASK_DRIVER_KEYS`，不含 MiniMax H3）；克隆提示词基线**不含**「将人脸位置的黑色方框修改为真人人脸」句，该句由 seedance 系 driver 在执行时按 pipeline steps 的素材实际遮盖状态动态决定：volcengine / oversea / kkidc（消费遮盖结果，画面有黑框）自动追加，huimengi（网关 `human_review` 自动处理人脸，使用原始素材）自动移除，保证供应商轮换（跨实现方重试）下提示词与素材状态始终一致。公共逻辑位于 `task/visual_drivers/face_mask_prompt.py`，常量为 `config/constant.py::FaceMaskPromptConstants`。Seedance 2.5 克隆（带参考视频）时驱动将 `ratio` 改为 `adaptive`、`duration` 改为 `-1`，输出跟随参考视频，避免火山 `TaskTypeConstraint`。
 - 本地生活营销视频（餐饮、酒旅、旅游、丽人、休闲娱乐、到店零售、生活服务等）仍走 `sop-video-generation` 并委托 `marketing-video`。此类视频推荐 10~15秒，且推荐使用 Seedance2.0、Seedance2.0 Fast、Seedance2.0 Mini（seedance2.0-mini），因为该系列更适合完整短视频叙事，并能更好表达 BGM、TTS 口播和音效
 - Seedance2.0 系列是普通本地生活视频的推荐模型，不是全局硬限制。若用户当前选择其他视频模型，PM Agent 可以提醒效果差异，但不能拒绝、不得拒绝继续调用当前模型；只有视频克隆等明确限制场景才按硬限制处理
 - 本地生活视频提示词由 `enterprise/skills/marketing-video/SKILL.md` 组织为画面提示词、口播旁白、BGM 与音效提示、店招/品牌文字要求；涉及中文店名、中文口播和招牌文字时可使用中文结构化提示词，避免翻译破坏品牌信息
@@ -663,7 +691,7 @@ Agent 对话任务还会在 `/api/session/{session_id}/task` 入口同步本次�
 
 ## 灵感发布页（Inspiration）
 
-灵感页（`/marketing-inspiration`，由 `web/marketing_inspiration.html` + `web/js/marketing_inspiration.js` + `web/css/marketing_inspiration.css` 实现）展示已审核通过的公开作品（`marketing_publications` 表），支持瀑布流浏览、Lightbox 详情、"做同款/用作参考图"（携带参数跳转到生成页），以及上传参考图直接发起 Agent 创作。
+灵感页（`/marketing-inspiration`，由 `web/marketing_inspiration.html` + `web/js/marketing_inspiration.js` + `web/css/marketing_inspiration.css` 实现）展示已审核通过的公开作品（`marketing_publications` 表），支持瀑布流浏览、Lightbox 详情、"做同款/用作参考图"（携带参数跳转到生成页），以及上传参考图直接发起 Agent 创作。后台灵感审核（`web/admin.html` 营销审核表）视频缩略图用 `max-width/max-height: 100%` + `object-fit: contain`，竖屏用 `loadedmetadata` 把容器改成真实宽高比，避免固定 96×96 + `cover` 裁掉上下。
 
 > 首页（`web/index.html`）在营销模式下点击"开始创作"横幅（`handleStartCreation`）即跳转到本页（`/marketing-inspiration?user_id=...`），灵感页左侧导航再进入生成对话页 `/marketing-agent`。
 
@@ -694,6 +722,7 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 | 文件路径 | 类型 | 说明 |
 |----------|------|------|
 | `web/marketing_agent.html` | 页面 | 营销智能体对话页面（Vue 3 SPA） |
+| `web/js/marketing_agent.js` | 脚本 | 对话页逻辑：轮询、媒体渲染、`proxyImageUrl`/`proxyDownloadUrl` 图床刷新 |
 | `web/css/marketing_agent.css` | 样式 | 对话页面样式（浅色主题，约 1460 行） |
 | `web/js/task_config.js` | 脚本 | 任务配置统一管理模块 |
 | `web/js/video_compressor.js` | 脚本 | 前端视频压缩模块（Canvas + MediaRecorder） |
@@ -712,9 +741,9 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 
 ### 图床图片签名刷新
 
-当 `server.auto_upload_to_cdn=true` 且 `server.is_local=false` 时，营销智能体页不会把图床图片的过期签名 URL 直接写死给 `<img>` 使用。`marketing_agent.html` 中的 `proxyImageUrl()` 会将外部 HTTP/HTTPS 图片包装为 `/api/proxy-image?url=...`；后端 `proxy_image` 接口识别 CDN 域名后重新生成签名并 302 到新鲜 URL，非 CDN 外链则使用异步 `httpx.AsyncClient` 代理读取，避免在 Web 接口中阻塞事件循环。
+当 `server.auto_upload_to_cdn=true` 且 `server.is_local=false` 时，营销智能体页不会把图床图片的过期签名 URL 直接写死给 `<img>` 使用。`web/js/marketing_agent.js` 中的 `proxyImageUrl()` 会将外部 HTTP/HTTPS 图片包装为 `/api/proxy-image?url=...`；后端 `proxy_image` 接口识别 CDN 域名后重新生成签名并 302 到新鲜 URL，非 CDN 外链则使用异步 `httpx.AsyncClient` 代理读取，避免在 Web 接口中阻塞事件循环。视频结果走 `proxyDownloadUrl()` → `/api/download`，同样由后端重签名后 302。
 
-生成结果卡片、历史 Markdown 图片、以及历史中已保存的 `generated-image` HTML 都会在渲染时经过 `proxyImageUrl()`。这样旧会话重新打开、图床签名超时或点击放大时，图片仍会自动走代理刷新并显示。
+生成结果卡片、历史 Markdown 图片/视频、以及历史中已保存的 `generated-image` HTML 都会在渲染时经过代理。这样旧会话重新打开、图床签名超时或点击放大时，媒体仍会自动走代理刷新并显示。轮询完成时若已拿到结果 URL，`hasGeneratedImageResult` / `hasGeneratedVideoResult` 只按 URL 去重，避免把日期路径里的 `/2026` 误判成已展示的任务 ID，从而把新结果从界面删掉。
 
 ## 视频分辨率选择
 

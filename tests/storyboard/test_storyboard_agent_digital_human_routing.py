@@ -164,18 +164,22 @@ def test_scene_scoped_digital_human_tool_submits_and_marks_asset_as_already_boun
     orchestrate_calls = {}
 
     fake_plan = SimpleNamespace(
-        model="ltx2.3",
-        task_type=32,
+        model="minimax_h3",
+        task_type=35,
         speaker_character_id=1,
         speech_text="你好",
         speech_duration=2.5,
         first_frame_path="https://example.com/ff.png",
         ratio="16:9",
-        billable_duration=2.5,
-        prompt="角色面向镜头深情的说话，固定镜头。",
+        billable_duration=4.0,
+        prompt="图片1中的角色在说话。",
         audio_input="https://example.com/a.wav",
         audio_input_role="speech_audio",
-        routing_reason="speech_duration_gt_1s",
+        routing_reason="minimax_h3_only",
+        resolution="720P",
+        max_edge=1280,
+        start_second=0,
+        duration_clamp_reason="floor_to_4",
     )
 
     def fake_orchestrate(scene_id, **kwargs):
@@ -194,8 +198,8 @@ def test_scene_scoped_digital_human_tool_submits_and_marks_asset_as_already_boun
             "ai_tool_id": 321,
             "asset_id": 654,
             "video_type": "digital_human",
-            "task_type": 32,
-            "model_used": "LTX2.3",
+            "task_type": 35,
+            "model_used": "MiniMax H3",
         }
 
     from services import storyboard_digital_human_service

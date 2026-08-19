@@ -2,8 +2,8 @@
 
 ## 概述
 
-huimengi（慧梦）是 Seedance 2.0 系列的二次封装网关，与火山引擎国内版、海外版、kkidc
-网关并列，作为现有 Seedance 2.0 / 2.0 Fast / 2.0 Mini 三类图生视频任务的**第 4 个实现方**。
+huimengi（慧梦）是 Seedance 的二次封装网关，与火山引擎国内版、海外版、kkidc
+网关并列，作为 Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5 图生视频任务的备选实现方。
 
 huimengi 的接口结构与火山原生、kkidc 完全不同：
 
@@ -14,16 +14,16 @@ huimengi 的接口结构与火山原生、kkidc 完全不同：
 | 查询路径 | `/api/v3/contents/generations/tasks/{id}` | `/v1/video/generations/{id}` | `/api/v1/tasks/{id}` |
 | 提交响应 | 扁平 `{id, ...}` | 三段式 `{code,message,data{}}` | 扁平 `{task_id, status}` |
 | 查询响应 | 扁平 `{id, status, content.video_url}` | 三段式 + 嵌套 `data.data` | 扁平 `{id, status, result.video_url}` |
-| 模型名 | `doubao-seedance-*-26xxxx` | `seed-2` / `seed-2-fast` / `seed-2-mini` | `seedance-2.0` / `seedance-2.0-fast` / `seedance-2.0-mini` |
+| 模型名 | `doubao-seedance-*-26xxxx` | `seed-2` / `seed-2-fast` / `seed-2-mini` | `seedance-2.0` / `seedance-2.0-fast` / `seedance-2.0-mini` / `seedance-2.5` |
 
 接口结构差异显著，故独立实现驱动 `seedance_huimengi_v1_driver.py`，不复用 kkidc 驱动代码。
 
 ## 架构定位
 
-- **复用** `TaskTypeId`（22 = Fast / 23 = 2.0 / 31 = Mini）、`DriverKey`、`TaskProvider`
+- **复用** `TaskTypeId`（22 = Fast / 23 = 2.0 / 31 = Mini / 36 = 2.5）、`DriverKey`、`TaskProvider`
   （VOLCENGINE）、`power_modifiers`（分辨率倍率）
 - **无需数据库迁移**：huimengi 仅是现有 Seedance 任务的新实现方
-- `sort_order` 使用 11010 / 11020 / 11030（kkidc 为 10910 / 10920 / 10930）
+- `sort_order` 使用 11010 / 11020 / 11030 / 11040（kkidc 为 10910 / 10920 / 10930）
 - 当 `huimengi.api_key` 未配置时，实现方自动隐藏（由 `required_config_keys` 控制）
 
 ## 支持的模型
@@ -33,6 +33,7 @@ huimengi 的接口结构与火山原生、kkidc 完全不同：
 | 22 | seedance-2.0-fast | `Seedance20FastHuimengiV1Driver` | `seedance_2_0_fast_huimengi_v1` | 62 |
 | 23 | seedance-2.0 | `Seedance20HuimengiV1Driver` | `seedance_2_0_huimengi_v1` | 63 |
 | 31 | seedance-2.0-mini | `Seedance20MiniHuimengiV1Driver` | `seedance_2_0_mini_huimengi_v1` | 64 |
+| 36 | seedance-2.5 | `Seedance25HuimengiV1Driver` | `seedance_2_5_huimengi_v1` | 69 |
 
 ## 配置项
 
@@ -61,17 +62,17 @@ Authorization: Bearer hm-xxxxxxxxxxxxxxxx
 
 ```json
 {
-  "model": "seedance-2.0",
+  "model": "seedance-2.5",
   "params": {
     "prompt": "一只猫在海滩上漫步",
     "duration": 5,
-    "ratio": "16:9",
     "resolution": "720p",
-    "generate_audio": true,
-    "human_review": false
+    "generate_audio": true
   }
 }
 ```
+
+2.0 系列同样走 `POST /api/v1/tasks`，仅 `model` 换成 `seedance-2.0` / `seedance-2.0-fast` / `seedance-2.0-mini`，并可按模式附加 `ratio`、`human_review`、图片与参考媒体字段。`webhook_url` 为网关可选字段，本驱动不主动下发。
 
 不同模式的 params 字段差异：
 
@@ -138,9 +139,10 @@ Authorization: Bearer hm-xxxxxxxxxxxxxxxx
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `ratio` | string | 否 | 宽高比，默认 adaptive，可选 16:9 / 4:3 / 1:1 / 3:4 / 9:16 / 21:9 / adaptive |
+| `ratio` | string | 否 | 宽高比，默认 adaptive，可选 16:9 / 4:3 / 1:1 / 3:4 / 9:16 / 21:9 / adaptive。Seedance 2.5 带参考视频时驱动强制下发 `adaptive` |
+| `omni_reference_task_type` | string | 否 | Seedance 2.5 全模态参考任务类型引导。带参考视频时驱动显式下发 `edit`（与 `ratio=adaptive`、`duration=-1` 同时生效），依赖网关透传给火山；若网关未透传，行为退化为现状（不劣化）。判定入口与计价层共用 `utils/computing_power.py::is_video_edit_billing_task` |
 | `prompt` | string | 是 | 视频描述文本（建议 500 字以内） |
-| `duration` | integer | 否 | 视频时长（秒），取值 [4, 15]，默认 5 |
+| `duration` | integer | 否 | 视频时长（秒）。2.0 系列取值 [4, 15]，2.5 取值 [4, 30]，默认 5。Seedance 2.5 带参考视频时驱动强制下发 `-1`（跟随参考视频）。**计费时长**：视频编辑任务按参考视频总时长计（向上取整吸附 5–30 档，探测失败回退用户输入），统一入口 `utils/computing_power.py::resolve_video_edit_billing_duration`，与火山驱动计费口径一致 |
 | `image_url` | string | 否 | 首帧图片 URL（图生视频-首帧） |
 | `resolution` | string | 否 | 分辨率，默认 720p，可选 480p / 720p / 1080p / 4k |
 | `human_review` | boolean | 否 | 真人审核模式，默认 false |
@@ -171,6 +173,7 @@ Authorization: Bearer hm-xxxxxxxxxxxxxxxx
 - ✅ 首帧图生视频（`image_url`）
 - ✅ 首尾帧图生视频（`first_frame_image` + `last_frame_image`）
 - ✅ 多参考图（含参考音视频）
+- ✅ **纯音频输入**：无图片、仅有参考音频时，驱动兜底改判 multi_reference，下发 `params.reference_audios`（网关侧是否接受「仅音频」请求以 huimengi API 约束为准）
 - ✅ 真人审核模式（`human_review` 透传）
 - ✅ **自动处理人脸（`supports_auto_face`）**——详见下方专节
 - ✅ 参考视频规范化（帧率限制，复用 `prepare_seedance_reference_video_sync`）
@@ -178,8 +181,8 @@ Authorization: Bearer hm-xxxxxxxxxxxxxxxx
 
 ## 自动处理人脸（supports_auto_face）
 
-huimengi 网关内置 `human_review` 真人审核能力，与其他 Seedance 2.0 网关
-（volcengine / kkidc）依赖 RunningHub 本地遮盖预处理不同。huimengi 的 3 个
+huimengi 网关内置 `human_review` 真人审核能力，与其他 Seedance 网关
+（volcengine / kkidc）依赖 RunningHub 本地遮盖预处理不同。huimengi 的 4 个
 实现方均标识 `supports_auto_face=True`。
 
 ### 工作流程
@@ -199,6 +202,7 @@ huimengi 网关内置 `human_review` 真人审核能力，与其他 Seedance 2.0
 3. **参数注入**：用户勾选处理人脸 + 实现方支持自动处理 → `base_extra_config['human_review'] = True`（在 `audited_extra_config` 序列化前注入）
 4. **驱动透传**：huimengi 驱动 `build_create_request` 从 `extra_config.human_review` 读取并放入 `params.human_review`，无需改动
 5. **前端无感**：「是否处理人脸」选项不变（仍由任务级 `needs_face_mask` 控制显隐），用户无需感知后端用了哪个网关
+6. **提示词清洗**：huimengi 使用原始素材（画面无黑框），`build_create_request` 会通过 `strip_face_mask_hint`（`task/visual_drivers/face_mask_prompt.py`）按 `FaceMaskPromptConstants.RESTORE_HINT` 常量原文精确移除提示词中残留的还原句——还原句的唯一写入方是 volcengine/oversea/kkidc 侧的 `ensure_face_mask_hint`，跨实现方重试到 huimengi 时由本方法做逆变换恢复基线，避免模型凭空还原不存在的黑框导致生成异常
 
 ## 参考视频帧率限制
 

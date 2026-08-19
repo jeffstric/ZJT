@@ -10,6 +10,8 @@
 - 也可直接写 input/out/cache_token_threshold（每 N token 扣 1 算力）；与单价二选一，优先阈值
 - commission_rate：抽成 0~1，默认 0
 - raw_token_threshold：分段上界；None 表示无上限兜底档
+- time_period：计费时段 normal(默认)/peak/off_peak；同一(vendor,model,分段)可配多时段档
+  扣费时按 token_log.created_at 判断峰谷，命中对应时段档，无则回退 normal
 """
 from __future__ import annotations
 
@@ -21,18 +23,30 @@ from typing import Any, Dict, List, Optional, Tuple
 #   input_yuan_per_m / out_yuan_per_m / cache_yuan_per_m  或
 #   input_token_threshold / out_token_threshold / cache_read_threshold
 #   commission_rate: float = 0
+#   time_period: str = 'normal'  # normal / peak / off_peak
 DEFAULT_VENDOR_MODEL_BILLING: List[Dict[str, Any]] = [
-    # ---------- DeepSeek 官方 ----------
+    # ---------- DeepSeek 官方（峰谷计费，2026-08-17 生效）----------
+    # 高峰时段(北京时间 9-12,14-18)价格为空闲时段的 2 倍
+    # input=缓存未命中输入价, cache=缓存命中输入价, out=输出价
     {
         "vendor_name": "deepseek",
         "model_name": "deepseek-v4-flash",
-        "note": "DeepSeek 官方：输入1/输出2/缓存0.02 元/百万",
+        "note": "DeepSeek 官方峰谷计费：高峰 3/9/0.10，空闲 1.5/4.5/0.05 元/百万",
         "tiers": [
             {
                 "raw_token_threshold": None,
-                "input_yuan_per_m": 1.0,
-                "out_yuan_per_m": 2.0,
-                "cache_yuan_per_m": 0.02,
+                "time_period": "peak",
+                "input_yuan_per_m": 3.0,
+                "out_yuan_per_m": 9.0,
+                "cache_yuan_per_m": 0.10,
+                "commission_rate": 0.0,
+            },
+            {
+                "raw_token_threshold": None,
+                "time_period": "off_peak",
+                "input_yuan_per_m": 1.5,
+                "out_yuan_per_m": 4.5,
+                "cache_yuan_per_m": 0.05,
                 "commission_rate": 0.0,
             },
         ],
@@ -40,13 +54,22 @@ DEFAULT_VENDOR_MODEL_BILLING: List[Dict[str, Any]] = [
     {
         "vendor_name": "deepseek",
         "model_name": "deepseek-v4-pro",
-        "note": "DeepSeek 官方降价后：输入3/输出6/缓存0.025 元/百万",
+        "note": "DeepSeek 官方峰谷计费：高峰 9/27/0.30，空闲 4.5/13.5/0.15 元/百万",
         "tiers": [
             {
                 "raw_token_threshold": None,
-                "input_yuan_per_m": 3.0,
-                "out_yuan_per_m": 6.0,
-                "cache_yuan_per_m": 0.025,
+                "time_period": "peak",
+                "input_yuan_per_m": 9.0,
+                "out_yuan_per_m": 27.0,
+                "cache_yuan_per_m": 0.30,
+                "commission_rate": 0.0,
+            },
+            {
+                "raw_token_threshold": None,
+                "time_period": "off_peak",
+                "input_yuan_per_m": 4.5,
+                "out_yuan_per_m": 13.5,
+                "cache_yuan_per_m": 0.15,
                 "commission_rate": 0.0,
             },
         ],

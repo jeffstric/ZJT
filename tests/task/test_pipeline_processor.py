@@ -279,6 +279,37 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
 
     @patch('task.pipeline_processor.AIToolsModel')
     @patch('task.pipeline_processor.PipelineStepModel')
+    def test_h3_prompt_optimize_applies_prompt_and_keeps_original(self, MockStepModel, MockAITools):
+        from model import PipelineStepStatus, PipelineStepType
+        ai_tool = self._make_ai_tool(ai_tool_id=34)
+        ai_tool.prompt = 'old prompt'
+        ai_tool.extra_config = '{"resolution": "720P"}'
+        step = self._make_step(
+            status=PipelineStepStatus.COMPLETED,
+            step_type=PipelineStepType.H3_PROMPT_OPTIMIZE,
+        )
+        step.get_result_data_dict.return_value = {
+            'original_prompt': 'old prompt',
+            'optimized_prompt': 'optimized english prompt',
+            'variant': 'I2VA',
+            'fallback': False,
+        }
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [step]
+
+        PipelineProcessor.apply_results(ai_tool, 'param_prepare')
+
+        kwargs = MockAITools.update.call_args.kwargs or {}
+        if not kwargs:
+            args, kwargs = MockAITools.update.call_args
+            # update(id, prompt=..., extra_config=...)
+        self.assertEqual(MockAITools.update.call_args[0][0], 34)
+        called_kwargs = MockAITools.update.call_args[1]
+        self.assertEqual(called_kwargs['prompt'], 'optimized english prompt')
+        self.assertIn('old prompt', called_kwargs['extra_config'])
+        self.assertIn('optimized english prompt', called_kwargs['extra_config'])
+
+    @patch('task.pipeline_processor.AIToolsModel')
+    @patch('task.pipeline_processor.PipelineStepModel')
     def test_no_completed_steps_skips(self, MockStepModel, MockAITools):
         """没有已完成的步骤时，不调用 AIToolsModel.update"""
         ai_tool = self._make_ai_tool(ai_tool_id=10)
@@ -411,6 +442,51 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
         MockAITools.update.assert_called_once_with(
             10, reference_images='["ref1.png", "/upload/cache/masked_ref2.png"]'
         )
+
+
+def _fake_get_by_id_for_h3(task_type):
+    """按 TaskTypeId 返回带 key 的假配置。
+
+    全量运行时，tests/config 等用例会清空 UnifiedConfigRegistry 且不恢复，
+    这里 patch get_by_id 使本组用例与全局注册表状态解耦。
+    """
+    from types import SimpleNamespace
+    from config.unified_config import DriverKey, TaskTypeId
+    key_map = {
+        TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO: DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO,
+        TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO: DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+    }
+    key = key_map.get(task_type)
+    return SimpleNamespace(key=key) if key else None
+
+
+class TestNeedsH3AtomicParamPrepare(unittest.TestCase):
+    """测试 PipelineProcessor.needs_h3_atomic_param_prepare() 判定"""
+
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id', side_effect=_fake_get_by_id_for_h3)
+    @patch('task.pipeline_drivers.get_dynamic_config_value', return_value=True)
+    def test_returns_true_for_h3_type_when_enabled(self, mock_cfg, mock_get_by_id):
+        from config.unified_config import TaskTypeId
+        self.assertTrue(PipelineProcessor.needs_h3_atomic_param_prepare(TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO))
+
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id', side_effect=_fake_get_by_id_for_h3)
+    @patch('task.pipeline_drivers.get_dynamic_config_value', return_value=True)
+    def test_returns_true_for_h3_reference_type_when_enabled(self, mock_cfg, mock_get_by_id):
+        from config.unified_config import TaskTypeId
+        self.assertTrue(PipelineProcessor.needs_h3_atomic_param_prepare(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
+
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id', side_effect=_fake_get_by_id_for_h3)
+    @patch('task.pipeline_drivers.get_dynamic_config_value', return_value=False)
+    def test_returns_false_for_h3_type_when_disabled(self, mock_cfg, mock_get_by_id):
+        from config.unified_config import TaskTypeId
+        self.assertFalse(PipelineProcessor.needs_h3_atomic_param_prepare(TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO))
+        self.assertFalse(PipelineProcessor.needs_h3_atomic_param_prepare(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
+
+    @patch('config.unified_config.UnifiedConfigRegistry.get_by_id', side_effect=_fake_get_by_id_for_h3)
+    @patch('task.pipeline_drivers.get_dynamic_config_value', return_value=True)
+    def test_returns_false_for_non_h3_type(self, mock_cfg, mock_get_by_id):
+        # 非注册的任务类型 → is_h3_prompt_optimize_type 返回 False
+        self.assertFalse(PipelineProcessor.needs_h3_atomic_param_prepare(99999))
 
 
 if __name__ == '__main__':

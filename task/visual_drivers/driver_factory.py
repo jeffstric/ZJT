@@ -479,6 +479,16 @@ class VideoDriverFactory:
 
         return result
 
+    @staticmethod
+    def is_task_available(task_id, driver_status) -> bool:
+        """无状态条目视为可用，与首页 `!status || available !== false` 一致。"""
+        if not driver_status:
+            return True
+        status = driver_status.get(str(task_id))
+        if not status:
+            return True
+        return status.get("available") is not False
+
 
 def register_all_drivers():
     """
@@ -662,6 +672,23 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1, MinimaxH3RunninghubV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import MinimaxH3RunninghubV1Driver: {e}")
+
+    try:
+        from .minimax_h3_reference_runninghub_v1_driver import MinimaxH3ReferenceRunninghubV1Driver
+        # 注册 MiniMax H3 参考生视频 RunningHub v1 版本
+        VideoDriverFactory.register_driver(DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1, MinimaxH3ReferenceRunninghubV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import MinimaxH3ReferenceRunninghubV1Driver: {e}")
+
+    try:
+        from .digital_human_minimax_h3_runninghub_v1_driver import DigitalHumanMinimaxH3RunninghubV1Driver
+        # 注册 MiniMax H3 数字人 RunningHub v1 版本
+        VideoDriverFactory.register_driver(
+            DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
+            DigitalHumanMinimaxH3RunninghubV1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import DigitalHumanMinimaxH3RunninghubV1Driver: {e}")
     
     try:
         from .vidu_default_driver import ViduDefaultDriver
@@ -689,13 +716,15 @@ def register_all_drivers():
             Seedance15ProVolcengineV1Driver,
             Seedance20FastVolcengineV1Driver,
             Seedance20VolcengineV1Driver,
-            Seedance20MiniVolcengineV1Driver
+            Seedance20MiniVolcengineV1Driver,
+            Seedance25VolcengineV1Driver
         )
-        # 注册 Seedance 火山引擎 v1 版本（4 个模型）
+        # 注册 Seedance 火山引擎 v1 版本（5 个模型）
         VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_1_5_PRO_VOLCENGINE_V1, Seedance15ProVolcengineV1Driver)
         VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_V1, Seedance20FastVolcengineV1Driver)
         VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1, Seedance20VolcengineV1Driver)
         VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1, Seedance20MiniVolcengineV1Driver)
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1, Seedance25VolcengineV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import Seedance drivers: {e}")
 
@@ -733,17 +762,19 @@ def register_all_drivers():
     except ImportError as e:
         logger.warning(f"Failed to import Seedance kkidc drivers: {e}")
 
-    # Seedance huimengi 网关驱动注册（慧梦，Seedance 2.0 系列二次封装网关）
+    # Seedance huimengi 网关驱动注册（慧梦，Seedance 2.0 / 2.5 二次封装网关）
     try:
         from .seedance_huimengi_v1_driver import (
             Seedance20FastHuimengiV1Driver,
             Seedance20HuimengiV1Driver,
-            Seedance20MiniHuimengiV1Driver
+            Seedance20MiniHuimengiV1Driver,
+            Seedance25HuimengiV1Driver,
         )
-        # 注册 Seedance huimengi v1 版本（3 个模型：2.0 / 2.0 Fast / 2.0 Mini）
+        # 注册 Seedance huimengi v1 版本（4 个模型：2.0 / 2.0 Fast / 2.0 Mini / 2.5）
         VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_FAST_HUIMENGI_V1, Seedance20FastHuimengiV1Driver)
         VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_HUIMENGI_V1, Seedance20HuimengiV1Driver)
         VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_MINI_HUIMENGI_V1, Seedance20MiniHuimengiV1Driver)
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1, Seedance25HuimengiV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import Seedance huimengi drivers: {e}")
 
@@ -775,6 +806,13 @@ def register_all_drivers():
             VideoDriverFactory.register_driver(impl_name, driver_class)
     except ImportError as e:
         logger.warning(f"Failed to import GrokCommon site drivers: {e}")
+
+    # Grok huimengi 网关驱动注册（慧梦，grok-video-channel）
+    try:
+        from .grok_huimengi_v1_driver import GrokHuimengiV1Driver
+        VideoDriverFactory.register_driver(DriverImplementation.GROK_HUIMENGI_V1, GrokHuimengiV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import GrokHuimengiV1Driver: {e}")
 
     try:
         from .happy_horse_dashscope_v1_driver import HappyHorseDashscopeV1Driver

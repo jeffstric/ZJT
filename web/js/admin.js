@@ -50,9 +50,9 @@ const PROVIDER_DEFINITIONS = [
         icon: '☁️',
         docUrl: 'https://yw.perseids.cn/register?aff=hE0h',
         docUrlLabelKey: 'btn_legacy_user_login',
-        // 智剧通API 逐步下线，不再作为推荐供应商，也不再展示「ZJT官方API」徽章
+        // 智剧通API 逐步下线，不再作为推荐供应商，也不再展示「ZJT官方API」徽章；排序置于各分类末尾
         lazyRecommended: false,
-        displayOrder: 1,
+        displayOrder: 99,
         baseName: 'ywapi',
         isOfficialAPI: false,
         showInCategories: ['llm', 'image', 'video'],
@@ -851,7 +851,8 @@ const AdminApp = {
                 input_yuan_per_m: 1,
                 out_yuan_per_m: 2,
                 cache_yuan_per_m: 0.2,
-                commission_percent: 0
+                commission_percent: 0,
+                time_period: 'normal'
             },
 
             // AI 改档
@@ -864,7 +865,9 @@ const AdminApp = {
                 applying: false,
                 confirmShow: false,
                 proposal: null,
-                targetModelId: null
+                targetModelId: null,
+                // AI 改档目标计费模式：normal=通用价格 / peak_valley=高峰低谷
+                targetMode: 'normal'
             },
 
             // 实现方编辑弹窗
@@ -1909,6 +1912,17 @@ const AdminApp = {
                 }
             } catch (error) {
                 this.showToast(error.response?.data?.detail || this.t('operation_failed'), 'error');
+            }
+        },
+
+        applyMarketingReviewVideoAspect(event) {
+            const video = event && event.target;
+            if (!video || !video.videoWidth || !video.videoHeight) return;
+            if (video.videoHeight <= video.videoWidth) return;
+            const wrap = video.closest('.marketing-review-thumb-wrap');
+            if (wrap) {
+                wrap.style.height = 'auto';
+                wrap.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
             }
         },
 
@@ -3842,6 +3856,8 @@ const AdminApp = {
                     );
                     const vendors = (response.data.data.vendors || []).length;
                     model.billing_summary = { tier_count: tiers, vendor_count: vendors };
+                    // 根据已有档位智能预选目标计费模式
+                    this.autoSelectBillingAiTargetMode(model);
                 }
             } catch (error) {
                 console.error('加载模型计费配置失败:', error);
@@ -3881,6 +3897,39 @@ const AdminApp = {
             return n.toFixed(6);
         },
 
+        // 计费时段 → 本地化标签
+        periodLabel(period) {
+            const p = (period || 'normal');
+            if (p === 'peak') return this.t('models_billing_period_peak');
+            if (p === 'off_peak') return this.t('models_billing_period_off_peak');
+            return this.t('models_billing_period_normal');
+        },
+
+        // AI 改档输入框 placeholder：按目标计费模式动态切换
+        billingAiPlaceholder() {
+            return this.billingAi.targetMode === 'peak_valley'
+                ? this.t('models_billing_ai_placeholder_peak')
+                : this.t('models_billing_ai_placeholder_normal');
+        },
+
+        // 根据模型已有档位智能预选目标计费模式（有峰谷档→峰谷，否则→通用）
+        autoSelectBillingAiTargetMode(model) {
+            const billing = this.models.billing[model.id];
+            if (!billing || !billing.vendors) {
+                this.billingAi.targetMode = 'normal';
+                return;
+            }
+            const hasPeakValley = billing.vendors.some(v =>
+                (v.tiers || []).some(t => t.time_period === 'peak' || t.time_period === 'off_peak')
+            );
+            this.billingAi.targetMode = hasPeakValley ? 'peak_valley' : 'normal';
+            // 默认选中第一个供应商（不再提供"全部供应商"，避免 filterVendorId 悬空）
+            const stillValid = billing.vendors.some(v => v.vendor_id === this.billingAi.filterVendorId);
+            if (!stillValid && billing.vendors[0]) {
+                this.billingAi.filterVendorId = billing.vendors[0].vendor_id;
+            }
+        },
+
         // 打开档位弹窗（主填元/百万）
         async openBillingTierModal(model, vendor, tier = null) {
             await this.ensureVendorsLoaded();
@@ -3904,6 +3953,7 @@ const AdminApp = {
                 this.billingTierModal.out_yuan_per_m = tier.out_yuan_per_m || tier.money?.output?.cost_yuan_per_m || 2;
                 this.billingTierModal.cache_yuan_per_m = tier.cache_yuan_per_m || tier.money?.cache?.cost_yuan_per_m || 0.2;
                 this.billingTierModal.commission_percent = Math.round((tier.commission_rate || 0) * 100);
+                this.billingTierModal.time_period = tier.time_period || 'normal';
             } else {
                 this.billingTierModal.vendor_id = vendor ? vendor.vendor_id : null;
                 this.billingTierModal.unlimited = true;
@@ -3912,6 +3962,7 @@ const AdminApp = {
                 this.billingTierModal.out_yuan_per_m = 2;
                 this.billingTierModal.cache_yuan_per_m = 0.2;
                 this.billingTierModal.commission_percent = 0;
+                this.billingTierModal.time_period = 'normal';
             }
             this.billingTierModal.loading = false;
         },
@@ -3955,6 +4006,7 @@ const AdminApp = {
                     out_yuan_per_m: modal.out_yuan_per_m,
                     cache_yuan_per_m: modal.cache_yuan_per_m,
                     commission_rate,
+                    time_period: modal.time_period || 'normal',
                 };
                 if (tierId) {
                     const payload = {
@@ -4021,6 +4073,7 @@ const AdminApp = {
                         cache_yuan_per_m: d.cache_yuan_per_m ?? tier.cache_yuan_per_m,
                         money: d.money || tier.money,
                         commission_rate: d.commission_rate ?? tier.commission_rate,
+                        time_period: d.time_period ?? tier.time_period,
                     });
                     this.showToast(this.t('toast_billing_tier_saved'), 'success');
                 } else {
@@ -4210,6 +4263,10 @@ const AdminApp = {
                 this.showToast(this.t('toast_billing_ai_need_instruction'), 'error');
                 return;
             }
+            if (!this.billingAi.filterVendorId) {
+                this.showToast(this.t('toast_billing_ai_need_vendor'), 'error');
+                return;
+            }
             this.refreshBillingAiLlmOptions();
             this.billingAi.loading = true;
             this.billingAi.targetModelId = model.id;
@@ -4225,6 +4282,8 @@ const AdminApp = {
                     vendor_id: this.billingAi.filterVendorId || null,
                     llm_model_id: selected.model_id,
                     llm_vendor_id: selected.vendor_id,
+                    // 目标计费模式：决定 AI 生成「通用价格」还是「高峰低谷」档位
+                    target_mode: this.billingAi.targetMode || 'normal',
                 };
                 const response = await axios.post(
                     `/api/admin/models/${model.id}/billing/ai-propose`,
@@ -4453,6 +4512,7 @@ const AdminApp = {
                 'wan22_image_to_video': 'Wan22 图生视频',
                 'digital_human': '数字人',
                 'digital_human_ltx2_3_voice': '数字人 LTX2.3 With Voice',
+                'digital_human_minimax_h3': '数字人 MiniMax H3',
                 'vidu_image_to_video': 'Vidu 图生视频',
                 'vidu_q2_image_to_video': 'Vidu Q2 图生视频',
                 'seedream_text_to_image': 'Seedream 文生图',

@@ -167,37 +167,44 @@ class StoryboardDialogueAudioModel:
     @staticmethod
     def sum_selected_durations_if_all_completed(scene_id: int) -> Optional[float]:
         """
-        判断某分镜下所有对话的"当前选中音频"是否全部生成完毕，并返回累计时长。
+        累计分镜下「已完成且选中」的配音时长，用于同步 storyboard_scene.duration。
 
         判定逻辑（通过 storyboard_dialogue.selected_audio_id 关联当前选中配音）：
-        - 该分镜无任何 dialogue → 返回 None（不处理空场景）。
-        - 任一 dialogue 的 selected_audio_id 为 NULL → 返回 None（仍有未生成配音）。
-        - 任一选中配音对应的 ai_audio.status != COMPLETED → 返回 None（仍有处理中/失败的）。
-        - 任一选中配音 duration 为 NULL → 返回 None（时长尚未探测，待补全后再触发）。
-        - 全部满足 → 返回 SUM(duration)。
+        - 该分镜无任何 dialogue → 返回 None（不处理空场景，保留 LLM 估算值）。
+        - 该分镜无任何「已完成」选中配音 → 返回 None（一条都没生成完，保留 LLM 估算值）。
+        - 否则 → 返回所有「已完成」选中配音的 SUM(duration)。
+
+        ⚠️ best-effort 语义（2026-08-13 修复）：
+        旧逻辑要求「所有对白都有选中配音且全部 COMPLETED」才返回，任一对白缺配音就
+        返回 None，导致 duration 永远停在 LLM 估算值。但前端 buildScenePlan 和导出
+        _build_scene_audio 都只播放/拼接「已有配音」的部分——也就是说分镜实际播放时
+        长就是「已完成配音」的累计。旧逻辑让这部分分镜的 duration < 实际播放音频时长，
+        播放器 waitMs(duration) 提前切镜，把还在播的音频/视频掐断。
+        现改为：只要有一条已完成的选中配音，就返回它们的累计时长，让 duration 与
+        「实际会播出的音频」对齐。缺配音/未完成的对白被忽略（与前端/导出口径一致）。
 
         Returns:
-            Optional[float]: 全部完成时返回累计秒数；否则返回 None。
+            Optional[float]: 有已完成配音时返回累计秒数；无 dialogue 或无已完成配音返回 None。
         """
         sql = """
             SELECT
                 COUNT(d.id) AS dialogue_count,
                 SUM(
                     CASE
-                        WHEN d.selected_audio_id IS NULL THEN NULL
-                        WHEN aa.status <> %s THEN NULL
-                        WHEN da.duration IS NULL THEN NULL
+                        WHEN d.selected_audio_id IS NULL THEN 0
+                        WHEN aa.status <> %s THEN 0
+                        WHEN da.duration IS NULL THEN 0
                         ELSE da.duration
                     END
                 ) AS total_duration,
                 SUM(
                     CASE
-                        WHEN d.selected_audio_id IS NULL THEN 1
-                        WHEN aa.status <> %s THEN 1
-                        WHEN da.duration IS NULL THEN 1
-                        ELSE 0
+                        WHEN d.selected_audio_id IS NULL THEN 0
+                        WHEN aa.status <> %s THEN 0
+                        WHEN da.duration IS NULL THEN 0
+                        ELSE 1
                     END
-                ) AS unfinished_count
+                ) AS completed_audio_count
             FROM storyboard_dialogue d
             LEFT JOIN storyboard_dialogue_audio da ON da.id = d.selected_audio_id
             LEFT JOIN ai_audio aa ON aa.id = da.ai_audio_id
@@ -214,8 +221,9 @@ class StoryboardDialogueAudioModel:
             if not row.get('dialogue_count'):
                 # 无 dialogue 的空场景
                 return None
-            if row.get('unfinished_count'):
-                # 仍有未完成的对话
+            completed_count = row.get('completed_audio_count') or 0
+            if completed_count == 0:
+                # 一条已完成的选中配音都没有 → 保留 LLM 估算值
                 return None
             total = row.get('total_duration')
             return float(total) if total is not None else None

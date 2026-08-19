@@ -9,8 +9,14 @@
 from typing import Optional, Union, Dict, Any
 import logging
 import json
-from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig
-from config.constant import IMAGE_MODE_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
+import math
+from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig, get_implementation_name
+from config.constant import (
+    IMAGE_MODE_EXTRA_CONFIG_KEY,
+    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
+    TASK_COMPUTING_POWER,
+    VIDEO_EDIT_BILLING_TASK_TYPES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -231,3 +237,202 @@ def get_implementation_for_user(
         impl_name = config.implementation
 
     return impl_name
+
+
+# ==================== 视频编辑任务计费时长（Seedance 2.5 omni_reference_task_type=edit）====================
+# 视频编辑任务的输出时长由参考视频决定（驱动下发 duration=-1、ratio=adaptive、
+# omni_reference_task_type=edit），计费时长须按参考视频总时长吸附档位。
+# ⚠️ 判定唯一入口 is_video_edit_billing_task：驱动层（下发 edit）与计价层（计费时长）
+# 共用，调用方不得自写条件；新增任务类型改 config/constant.VIDEO_EDIT_BILLING_TASK_TYPES。
+
+# 计费时长来源标识：写入 extra_config.billing_duration_source 供审计追溯
+BILLING_DURATION_SOURCE_REFERENCE_VIDEO = "reference_video"
+BILLING_DURATION_SOURCE_USER_INPUT = "user_input"
+
+
+def is_video_edit_billing_task(task_type, video_path) -> bool:
+    """
+    判断任务是否为「按参考视频总时长计费」的视频编辑任务（唯一判定入口）。
+
+    驱动层据此下发 omni_reference_task_type=edit / ratio=adaptive / duration=-1，
+    计价层据此把计费时长从用户输入切换为参考视频总时长，两处判定必须同源，
+    否则会出现「API 按 edit 下发、算力按用户时长扣」的错位。
+
+    Args:
+        task_type: 任务类型 ID（TaskTypeId）
+        video_path: 参考视频路径/URL（逗号分隔多个），与 ai_tools.video_path 同格式
+    """
+    if not video_path or not str(video_path).strip():
+        return False
+    return task_type in VIDEO_EDIT_BILLING_TASK_TYPES
+
+
+def resolve_video_edit_billing_duration(
+    task_type,
+    video_path,
+    user_duration: Optional[int],
+) -> tuple[int, str]:
+    """
+    解析视频编辑任务的计费时长（计价唯一入口）。
+
+    命中视频编辑任务时探测参考视频总时长，向上取整到整数秒并 clamp 到任务
+    supported_durations 区间（档位表按整数秒建键，get_computing_power 匹配不到
+    档位会错取首档，必须吸附；不足 1 秒的零头按 1 秒计，保证平台不亏）；
+    未命中或探测失败时回退用户输入时长。
+
+    同步函数（外部 URL 下载 + ffprobe 子进程），异步上下文须 asyncio.to_thread 包装。
+    扣费与 ai_tools.duration 落库必须使用同一返回值，保证退费兜底重算同源。
+
+    Args:
+        task_type: 任务类型 ID（TaskTypeId）
+        video_path: 参考视频路径/URL（逗号分隔多个）
+        user_duration: 用户输入时长（秒），回退值
+
+    Returns:
+        (计费时长秒数, 来源标识)；来源 ∈ {BILLING_DURATION_SOURCE_REFERENCE_VIDEO,
+        BILLING_DURATION_SOURCE_USER_INPUT}
+    """
+    fallback = int(user_duration) if user_duration else 5
+    if not is_video_edit_billing_task(task_type, video_path):
+        return fallback, BILLING_DURATION_SOURCE_USER_INPUT
+
+    from utils.video_compressor import get_reference_videos_total_duration_sync
+
+    total = get_reference_videos_total_duration_sync(video_path)
+    if total is None:
+        logger.warning(
+            f"task_type={task_type} 参考视频时长探测失败，计费回退用户输入时长 {fallback}s"
+        )
+        return fallback, BILLING_DURATION_SOURCE_USER_INPUT
+
+    # 向上取整（不足 1 秒的零头按 1 秒计）；减 1µs 容器时钟容差，避免恰好整数秒的
+    # 视频因浮点噪声被多计 1 秒（如 10.000000 → 仍计 10）
+    billing = math.ceil(total - 1e-6)
+    config = UnifiedConfigRegistry.get_by_id(task_type)
+    if config and config.supported_durations:
+        durations = sorted(config.supported_durations)
+        billing = min(max(billing, durations[0]), durations[-1])
+
+    logger.info(
+        f"视频编辑计费时长: 参考视频总时长 {total:.1f}s → 计费 {billing}s（向上取整） "
+        f"(用户输入 {fallback}s, task_type={task_type})"
+    )
+    return billing, BILLING_DURATION_SOURCE_REFERENCE_VIDEO
+
+
+# ==================== 失败退费（扣返一致性保障） ====================
+# 背景：Grok 多供应商切换事故（2026-08-19）——任务按 A 供应商扣费后，重试切换
+# 到 B 供应商时 ai_tools.implementation 被改写，最终退费按 B 的价格重算，
+# 出现「扣16分退80分」。退费金额必须以实际扣减流水为准，而非重算。
+
+REFUND_TXN_PREFIX = 'refund-'
+
+
+def build_refund_transaction_id(ai_tool) -> Optional[str]:
+    """构造幂等退费流水号：refund-{原扣费流水号}
+
+    任务创建时扣费流水号与 ai_tools.transaction_id 1:1 绑定，
+    以此派生退费流水号可天然防止同一任务重复退费。
+
+    Returns:
+        幂等流水号；任务无扣费流水号时返回 None（调用方回退随机 uuid）
+    """
+    transaction_id = getattr(ai_tool, 'transaction_id', None)
+    if not transaction_id:
+        return None
+    return f"{REFUND_TXN_PREFIX}{transaction_id}"
+
+
+def is_already_refunded(ai_tool) -> bool:
+    """检查任务是否已退过费（幂等防重复退费）
+
+    依赖 perseids 服务将退费流水写入同一 computing_power_log 表；
+    check-then-post 存在极小竞态窗口，仅作防御性加固。
+    """
+    refund_txn = build_refund_transaction_id(ai_tool)
+    if not refund_txn:
+        return False
+    try:
+        from model.computing_power_log import ComputingPowerLogModel
+        return ComputingPowerLogModel.check_transaction_exists(refund_txn)
+    except Exception as e:
+        logger.warning(f"Failed to check refund idempotency for {refund_txn}: {e}")
+        return False
+
+
+def _recalculate_task_power(ai_tool, ai_tool_type: int, user_id: int) -> Optional[int]:
+    """按当前配置重算任务算力（退费回退路径，考虑实现方修饰符、分辨率等上下文）"""
+    context = build_context_from_task_record(ai_tool)
+    # 优先使用任务记录中的实现方，回退到用户当前偏好
+    impl_id = getattr(ai_tool, 'implementation', None)
+    impl_name = get_implementation_name(impl_id) if impl_id else None
+    implementation = impl_name if impl_name and impl_name != 'unknown' else get_implementation_for_user(ai_tool_type, user_id)
+
+    return get_computing_power_for_task(
+        task_type=ai_tool_type,
+        duration=getattr(ai_tool, 'duration', None) or 5,
+        user_id=user_id,
+        implementation=implementation,
+        context=context
+    )
+
+
+def _static_task_power(ai_tool, ai_tool_type: int) -> Optional[int]:
+    """静态 TASK_COMPUTING_POWER 兜底（不含修饰符，可能金额不准，仅最后回退）"""
+    computing_power_config = TASK_COMPUTING_POWER.get(ai_tool_type)
+    if isinstance(computing_power_config, dict):
+        duration = getattr(ai_tool, 'duration', None) or 5
+        computing_power = computing_power_config.get(duration)
+        if not computing_power:
+            computing_power = list(computing_power_config.values())[0]
+        return computing_power
+    return computing_power_config
+
+
+def resolve_refund_amount(ai_tool, task_type: Optional[int] = None) -> Optional[int]:
+    """解析失败任务的退费金额（扣返一致性保障）
+
+    ⚠️ 回退顺序（修改时必须保持）：
+      1. 按 ai_tools.transaction_id 关联 computing_power_log 扣费流水，
+         取实际扣减金额原额退还——精确，免疫供应商切换、价格热更新
+      2. get_computing_power_for_task 按当前配置重算——流水缺失时的兼容
+         回退（供应商切换场景下可能金额不准，仅兜底）
+      3. TASK_COMPUTING_POWER 静态配置——最旧数据兜底
+
+    Args:
+        ai_tool: AITool 对象（含 transaction_id / implementation / duration / extra_config）
+        task_type: 任务类型ID（缺省时取 ai_tool.type）
+
+    Returns:
+        退费金额；无法解析返回 None
+    """
+    ai_tool_type = task_type if task_type is not None else getattr(ai_tool, 'type', None)
+    user_id = getattr(ai_tool, 'user_id', None)
+    if ai_tool_type is None or not user_id:
+        return None
+
+    # 1. 实际扣减流水（原额退还）
+    transaction_id = getattr(ai_tool, 'transaction_id', None)
+    if transaction_id:
+        try:
+            from model.computing_power_log import ComputingPowerLogModel
+            deducted = ComputingPowerLogModel.get_deducted_power_by_transaction(user_id, transaction_id)
+            if deducted:
+                return deducted
+            logger.warning(
+                f"No deduct log found for transaction {transaction_id} "
+                f"(user {user_id}), falling back to recalculation"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to lookup deducted power by transaction {transaction_id}: {e}")
+
+    # 2. 按当前配置重算（考虑修饰符）
+    try:
+        computing_power = _recalculate_task_power(ai_tool, ai_tool_type, user_id)
+        if computing_power:
+            return computing_power
+    except Exception as e:
+        logger.warning(f"Modifier-aware refund recalculation failed, falling back: {e}")
+
+    # 3. 静态配置兜底
+    return _static_task_power(ai_tool, ai_tool_type)

@@ -560,10 +560,10 @@ def init_git_repo(project_dir, git_cmd, repo_urls, branch, timeout):
             print(f"[upgrade] fetch 失败: {err}")
             continue
 
-        # reset
-        rc, _, err = run_git(
-            git_cmd, ["reset", "--hard", f"origin/{branch}"],
-            project_dir, timeout=timeout
+        # reset（Windows 下需处理 enterprise/*.pyd 占用）
+        quarantine_locked_native_binaries(project_dir)
+        rc, _, err = _hard_reset_with_unlink_retry(
+            git_cmd, project_dir, f"origin/{branch}", timeout
         )
         if rc != 0:
             print(f"[upgrade] reset 失败: {err}")
@@ -575,6 +575,109 @@ def init_git_repo(project_dir, git_cmd, repo_urls, branch, timeout):
     print("[upgrade] 所有源都失败，无法初始化")
     return False
 
+
+
+def is_windows_unlink_error(message: str) -> bool:
+    """识别 Windows 下 git 无法删除被占用文件的典型错误。"""
+    if not message:
+        return False
+    lower = message.lower()
+    return (
+        "unable to unlink old" in lower
+        or "invalid argument" in lower
+        or "permission denied" in lower
+    )
+
+
+def quarantine_locked_native_binaries(project_dir: Path) -> list:
+    """在 git reset 前移走可能被占用的原生扩展（.pyd/.dll）。
+
+    Windows 会锁定已加载的 DLL/.pyd：即便主程序看似未启动，残留的
+    scheduler / python 进程或杀毒扫描也会导致::
+
+        error: unable to unlink old 'enterprise/.../pyarmor_runtime.pyd': Invalid argument
+
+    对占用中的文件，**重命名通常仍可成功**（删除会失败）。把旧文件挪开后，
+    git 即可在原路径写入新版本。quarantine 文件可在下次启动或手动清理。
+    """
+    import time
+
+    moved = []
+    if sys.platform != "win32":
+        return moved
+
+    project_dir = Path(project_dir).resolve()
+    skip_dir_names = {
+        ".git", ".venv", "venv", "bin", "node_modules", "__pycache__",
+        ".pytest_cache", "dist",
+    }
+    stamp = f"{os.getpid()}_{int(time.time())}"
+
+    candidates = []
+    # 优先 enterprise（PyArmor runtime），再扫其余目录中的 .pyd
+    search_roots = [project_dir / "enterprise", project_dir]
+    seen = set()
+    for root in search_roots:
+        if not root.is_dir():
+            continue
+        for pattern in ("*.pyd",):
+            for path in root.rglob(pattern):
+                try:
+                    rel_parts = path.relative_to(project_dir).parts
+                except ValueError:
+                    continue
+                if any(part in skip_dir_names for part in rel_parts):
+                    continue
+                if ".pending_unlink_" in path.name:
+                    continue
+                key = str(path.resolve()).lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append(path)
+
+    for path in candidates:
+        dest = path.with_name(f"{path.name}.pending_unlink_{stamp}")
+        try:
+            os.replace(str(path), str(dest))
+            rel = str(path.relative_to(project_dir))
+            moved.append(rel)
+        except OSError as e:
+            print(f"[upgrade] 无法移走可能被占用的文件 {path.name}: {e}")
+
+    if moved:
+        print(
+            f"[upgrade] 已临时移走 {len(moved)} 个原生库文件以便覆盖更新"
+            f"（常见于 Windows 下 pyarmor_runtime.pyd 仍被进程占用）"
+        )
+    return moved
+
+
+def _hard_reset_with_unlink_retry(git_cmd, project_dir, rev, timeout):
+    """执行 git reset --hard，Windows 占用失败时移走 .pyd 后重试一次。"""
+    rc, out, err = run_git(
+        git_cmd, ["reset", "--hard", rev],
+        project_dir, timeout=timeout
+    )
+    if rc == 0:
+        return rc, out, err
+
+    combined = f"{err or ''}\n{out or ''}"
+    if sys.platform == "win32" and is_windows_unlink_error(combined):
+        print(
+            "[upgrade] 检测到文件占用（多为 enterprise/.../pyarmor_runtime.pyd），"
+            "尝试移走后重试..."
+        )
+        print(
+            "[upgrade] 提示: 请确认已关闭所有本程序窗口/托盘进程后再升级；"
+            "若仍失败，可在任务管理器结束残留 python/pythonw 后重试"
+        )
+        quarantine_locked_native_binaries(project_dir)
+        rc, out, err = run_git(
+            git_cmd, ["reset", "--hard", rev],
+            project_dir, timeout=timeout
+        )
+    return rc, out, err
 
 
 def perform_update(git_cmd, project_dir, branch, timeout, target_tag=None):
@@ -595,11 +698,13 @@ def perform_update(git_cmd, project_dir, branch, timeout, target_tag=None):
         msg = err or out or "未知错误"
         return False, f"fetch 失败: {msg}"
 
+    # Windows：先主动移走可能被占用的 .pyd，降低 reset 失败概率
+    quarantine_locked_native_binaries(project_dir)
+
     # 优先对齐到版本 tag，使 tag --points-at HEAD 与远程最新 tag 一致
     if target_tag:
-        rc, out, err = run_git(
-            git_cmd, ["reset", "--hard", target_tag],
-            project_dir, timeout=timeout
+        rc, out, err = _hard_reset_with_unlink_retry(
+            git_cmd, project_dir, target_tag, timeout
         )
         if rc == 0:
             print(f"[upgrade] 代码更新成功（已对齐 tag {target_tag}）")
@@ -607,12 +712,18 @@ def perform_update(git_cmd, project_dir, branch, timeout, target_tag=None):
         print(f"[upgrade] 无法 checkout tag {target_tag}，回退到 origin/{branch}: {err or out}")
 
     # reset 到远程分支（强制覆盖）
-    rc, out, err = run_git(
-        git_cmd, ["reset", "--hard", f"origin/{branch}"],
-        project_dir, timeout=timeout
+    rc, out, err = _hard_reset_with_unlink_retry(
+        git_cmd, project_dir, f"origin/{branch}", timeout
     )
     if rc != 0:
         msg = err or out or "未知错误"
+        if is_windows_unlink_error(msg):
+            msg = (
+                f"{msg}\n"
+                "  原因: Windows 无法覆盖正在使用的 .pyd（如 pyarmor_runtime.pyd）。\n"
+                "  处理: 关闭所有本程序实例后重新运行 start.bat；"
+                "或在任务管理器结束 python.exe / pythonw.exe 后重试。"
+            )
         return False, f"reset 失败: {msg}"
 
     print("[upgrade] 代码更新成功")

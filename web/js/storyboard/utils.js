@@ -2,6 +2,89 @@
  * Storyboard Utility Functions
  */
 
+/** IndexTTS 情感向量维度标签（与 web/js/pages/audio_generate.js 一致） */
+export const EMO_VEC_LABELS = ['喜', '怒', '哀', '惧', '厌恶', '低落', '惊喜', '平静'];
+export const EMO_VEC_DIM = 8;
+export const EMO_VEC_MAX_SUM = 1.5;
+export const EMO_VEC_MAX_EACH = 1.5;
+/** 各维度配色（对白情感摘要点阵使用，顺序与 EMO_VEC_LABELS 对应） */
+export const EMO_VEC_COLORS = ['#f59e0b', '#ef4444', '#3b82f6', '#8b5cf6', '#10b981', '#94a3b8', '#ec4899', '#14b8a6'];
+
+/** 解析 emo_vec 为 8 维 number[] */
+export function parseEmoVec(raw) {
+    if (Array.isArray(raw) && raw.length === EMO_VEC_DIM) {
+        return raw.map((v) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? Math.max(0, Math.min(EMO_VEC_MAX_EACH, n)) : 0;
+        });
+    }
+    if (typeof raw === 'string' && raw.trim()) {
+        const parts = raw.split(',').map((s) => s.trim()).filter((s) => s !== '');
+        if (parts.length === EMO_VEC_DIM) {
+            return parts.map((p) => {
+                const n = Number(p);
+                return Number.isFinite(n) ? Math.max(0, Math.min(EMO_VEC_MAX_EACH, n)) : 0;
+            });
+        }
+    }
+    return Array(EMO_VEC_DIM).fill(0);
+}
+
+/** 规范化：单维钳制 + 总和>1.5 比例缩放；全 0 返回 null */
+export function normalizeEmoVec(values) {
+    const list = parseEmoVec(values);
+    let sum = list.reduce((a, b) => a + b, 0);
+    if (sum <= 0) return null;
+    if (sum > EMO_VEC_MAX_SUM) {
+        const scale = EMO_VEC_MAX_SUM / sum;
+        for (let i = 0; i < list.length; i += 1) list[i] = Math.round(list[i] * scale * 10000) / 10000;
+        sum = list.reduce((a, b) => a + b, 0);
+        if (sum > EMO_VEC_MAX_SUM && sum > 0) {
+            const scale2 = EMO_VEC_MAX_SUM / sum;
+            for (let i = 0; i < list.length; i += 1) list[i] = Math.round(list[i] * scale2 * 10000) / 10000;
+        }
+    }
+    return list.map((v) => v.toFixed(4)).join(',');
+}
+
+/** 非零维度列表 [{ index, label, value }] */
+export function getEmoVecActiveDims(raw) {
+    const list = parseEmoVec(raw);
+    const dims = [];
+    list.forEach((v, i) => {
+        if (v > 0.001) dims.push({ index: i, label: EMO_VEC_LABELS[i], value: v });
+    });
+    return dims;
+}
+
+/** 配音任务是否进行中（对应后端 AIAudioStatus：0=PENDING 1=PROCESSING，兼容字符串态） */
+export function isAudioRunningStatus(status) {
+    if (status === 0 || status === 1) return true;
+    if (typeof status === 'string') {
+        return ['0', '1', 'pending', 'queued', 'running', 'processing'].includes(status.toLowerCase());
+    }
+    return false;
+}
+
+/** 配音任务是否失败（AIAudioStatus.FAILED = -1，兼容字符串态） */
+export function isAudioFailedStatus(status) {
+    if (status === -1) return true;
+    if (typeof status === 'string') {
+        return ['-1', 'failed', 'error'].includes(status.toLowerCase());
+    }
+    return false;
+}
+
+/** 摘要：非零维度「喜 0.40 · 怒 0.20」 */
+export function formatEmoVecSummary(raw) {
+    const list = parseEmoVec(raw);
+    const parts = [];
+    list.forEach((v, i) => {
+        if (v > 0.001) parts.push(`${EMO_VEC_LABELS[i]} ${v.toFixed(2)}`);
+    });
+    return parts.length ? parts.join(' · ') : '未设置';
+}
+
 /**
  * 防抖函数
  */
@@ -61,12 +144,22 @@ export function showConfirm(message) {
 }
 
 /**
- * 格式化时长（秒 → mm:ss）
+ * 格式化时长（秒 → mm:ss[.t]）。秒部分保留 1 位小数，以体现音频求和回写后的
+ * 毫秒级时长；整数秒仍输出 mm:ss（不追加 .0）。与 adapters.formatDuration 行为一致。
+ * 注：当前无调用方，保留以备复用。
  */
 export function formatDuration(seconds) {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    const total = Number(seconds);
+    if (!Number.isFinite(total)) return '00:00';
+    const clamped = Math.max(0, total);
+    const m = Math.floor(clamped / 60);
+    const rem = clamped - m * 60;
+    const intSecs = Math.floor(rem);
+    const frac = Math.round((rem - intSecs) * 10);
+    const sStr = frac > 0
+        ? `${String(intSecs).padStart(2, '0')}.${frac}`
+        : String(intSecs).padStart(2, '0');
+    return `${String(m).padStart(2, '0')}:${sStr}`;
 }
 
 /**

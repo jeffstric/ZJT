@@ -106,7 +106,7 @@ ALLOWED_SCENE_UPDATE_FIELDS = {
     'audio_embedded', 'difficulty', 'act_name',
 }
 ALLOWED_DIALOGUE_UPDATE_FIELDS = {
-    'character_id', 'text', 'speed', 'volume',
+    'character_id', 'text', 'speed', 'volume', 'emo_vec',
 }
 VALID_ASSET_TYPES = ('first_frame', 'last_frame', 'video')
 
@@ -355,15 +355,31 @@ async def _read_json_object_body(request: Request):
         return {}, None
     try:
         data = json.loads(raw_body)
-    except Exception:
+    except json.JSONDecodeError as e:
+        # 带上具体解析位置（行/列/字节偏移），便于定位 JSON 转义/格式错误
         return None, JSONResponse(
             status_code=400,
-            content={'success': False, 'error_code': 'invalid_body', 'error': 'JSON body is invalid'},
+            content={
+                'success': False,
+                'error_code': 'invalid_body',
+                'error': f"JSON body 解析失败（第 {e.lineno} 行第 {e.colno} 列）：{e.msg}",
+                'detail': {'msg': e.msg, 'lineno': e.lineno, 'colno': e.colno, 'pos': e.pos},
+            },
+        )
+    except Exception as e:
+        # 兜底：编码错误等非标准 JSON 解析异常
+        return None, JSONResponse(
+            status_code=400,
+            content={
+                'success': False,
+                'error_code': 'invalid_body',
+                'error': f"JSON body 解析失败：{type(e).__name__}: {e}",
+            },
         )
     if not isinstance(data, dict):
         return None, JSONResponse(
             status_code=400,
-            content={'success': False, 'error_code': 'invalid_body', 'error': 'JSON body must be an object'},
+            content={'success': False, 'error_code': 'invalid_body', 'error': 'JSON body must be a JSON object (array/scalar not allowed)'},
         )
     return data, None
 
@@ -635,6 +651,80 @@ def _compact_join(parts: List[Optional[str]], sep: str = "\n") -> str:
     return sep.join(str(part).strip() for part in parts if str(part or '').strip())
 
 
+def _normalize_dialogue_text_for_match(text: Any) -> str:
+    """规范化台词文本，用于判断视频提示词是否已包含该台词。"""
+    s = str(text or "")
+    # 去空白
+    s = re.sub(r"\s+", "", s)
+    # 统一常见引号/省略号变体
+    for src, dst in (
+        ("“", '"'),
+        ("”", '"'),
+        ("‘", "'"),
+        ("’", "'"),
+        ("「", '"'),
+        ("」", '"'),
+        ("『", '"'),
+        ("』", '"'),
+        ("…", "..."),
+        ("⋯", "..."),
+        ("——", "-"),
+        ("—", "-"),
+        ("－", "-"),
+    ):
+        s = s.replace(src, dst)
+    return s
+
+
+def _format_dialogues_for_video_prompt(
+    dialogues: Any,
+    *,
+    character_name_map: Optional[Dict[str, str]] = None,
+    existing_prompt: str = "",
+) -> str:
+    """将缺失的完整台词幂等追加为「对话：」块，供 video_prompt 使用。
+
+    - 已在 existing_prompt 中出现的台词不重复追加；
+    - 全部已包含则返回空字符串；
+    - 角色名优先用 dialogue.character_name，其次 character_name_map。
+    """
+    if isinstance(dialogues, dict):
+        dialogues = [dialogues]
+    if not isinstance(dialogues, list) or not dialogues:
+        return ""
+
+    name_map = character_name_map or {}
+    existing_norm = _normalize_dialogue_text_for_match(existing_prompt)
+    lines: List[str] = []
+
+    for item in dialogues:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        text_norm = _normalize_dialogue_text_for_match(text)
+        if not text_norm:
+            continue
+        if existing_norm and text_norm in existing_norm:
+            continue
+
+        raw_name = str(item.get("character_name") or "").strip()
+        raw_name = raw_name.strip("【】").strip()
+        if not raw_name:
+            cid = str(item.get("character_id") or "").strip()
+            raw_name = (name_map.get(cid) or "").strip("【】").strip()
+        if not raw_name:
+            speaker = "旁白"
+        else:
+            speaker = f"【【{raw_name}】】"
+        lines.append(f'{speaker}：「{text}」')
+
+    if not lines:
+        return ""
+    return "对话：\n" + "\n".join(lines)
+
+
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(float(value))
@@ -720,6 +810,10 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
     spatial_world = parsed_data.get('spatial_world') if isinstance(parsed_data.get('spatial_world'), dict) else None
     scenes: List[dict] = []
 
+    from services.dialogue_emotion import is_enabled as dialogue_emotion_enabled
+    from services.dialogue_emotion import normalize_emo_vec
+    emotion_on = dialogue_emotion_enabled()
+
     for group in parsed_data.get('shot_groups') or []:
         group_name = group.get('group_name') or ''
         group_type = group.get('group_type') or ''
@@ -763,17 +857,37 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                 f"镜头运动：{shot.get('camera_movement')}" if shot.get('camera_movement') else None,
                 f"叙事目的：{shot.get('narrative_purpose')}" if shot.get('narrative_purpose') else None,
             ])
+            # 幂等拼入完整对白：LLM 已写入 description/action 时不重复；漏写时兜底补「对话：」块
+            dialogue_block = _format_dialogues_for_video_prompt(
+                shot.get('dialogue') or shot.get('dialogues'),
+                character_name_map=character_name_map,
+                existing_prompt=video_prompt,
+            )
+            if dialogue_block:
+                video_prompt = _compact_join([video_prompt, dialogue_block])
 
             dialogues = []
             for dialogue in shot.get('dialogue') or []:
                 text = str(dialogue.get('text') or '').strip()
                 if not text:
                     continue
+                emo_vec = normalize_emo_vec(dialogue.get('emo_vec')) if emotion_on else None
+                if emotion_on:
+                    logger.info(
+                        "[dialogue-emotion][build-scenes] shot=%s character_id=%s "
+                        "raw_emo=%r normalized_emo_vec=%r text_preview=%r",
+                        shot.get('shot_id') or shot.get('shot_number'),
+                        dialogue.get('character_id'),
+                        dialogue.get('emo_vec'),
+                        emo_vec,
+                        (text[:40] + "...") if len(text) > 40 else text,
+                    )
                 dialogues.append({
                     'character_id': _dialogue_character_id(dialogue, character_db_map),
                     'text': text,
                     'speed': 1.0,
                     'volume': 100,
+                    'emo_vec': emo_vec,
                 })
 
             from services.storyboard_scene_type import resolve_scene_video_type
@@ -815,7 +929,7 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                 'prompt': prompt_payload,
                 'video_prompt': video_prompt,
                 'video_type': resolved_video_type,
-                # 声音同出：数字人分镜 LTX2.3 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
+                # 声音同出：数字人分镜 MiniMax 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
                 'audio_embedded': resolved_video_type == SceneVideoType.DIGITAL_HUMAN,
                 # 发布幂等：用稳定 shot_id 做去重 key（见设计文档 §15）
                 'source_shot_key': shot.get('shot_id') or f'scene_{scene_index}',
@@ -909,7 +1023,10 @@ def collect_storyboard_folder_data(user_id: int, world_id: Optional[int]) -> lis
     )
     scripts = scripts_result.get('data', [])
     storyboards = StoryboardModel.list_folders_by_user(user_id=user_id, world_id=world_id)
-    worlds_result = WorldModel.list_by_user(user_id=user_id, page=1, page_size=100)
+    # visibility=all：已伪删除世界若仍有故事板，文件夹展示名仍需能解析
+    worlds_result = WorldModel.list_by_user(
+        user_id=user_id, page=1, page_size=100, visibility='all'
+    )
     worlds = worlds_result.get('data', [])
     world_names = {world.get('id'): world.get('name') for world in worlds}
     return build_storyboard_folders(scripts, storyboards, world_names)
@@ -1009,20 +1126,23 @@ def submit_storyboard_dialogue_voiceover(
     from services.storyboard_voiceover_bootstrap_service import (
         StoryboardVoiceoverBootstrapService,
     )
+    # 情感参数仅经企业版门面解析（社区/个人版忽略 body 中的 emo_*，防绕过）
+    from services.dialogue_emotion import resolve_tts_emotion_kwargs
+    emo_kwargs = resolve_tts_emotion_kwargs(dialogue=dialogue, config=config)
     transaction_id = str(uuid.uuid4())
+    extra_audio_kwargs = {'transaction_id': transaction_id}
+    extra_audio_kwargs.update(emo_kwargs)
+    # 手动点「生成配音」默认强制重跑（改情感/改台词后可覆盖选中配音）；
+    # 自动补缺路径传 skip_existing=True，不会走到 force。
+    force_regenerate = bool(config.get('force_regenerate', not config.get('skip_existing')))
     result = StoryboardVoiceoverBootstrapService()._submit_dialogue_voiceover_atomically(
         dialogue_id,
         user_id,
         ref_path=ref_path,
         text=text,
         scene_id=scene_id,
-        extra_audio_kwargs={
-            'transaction_id': transaction_id,
-            'emo_control_method': config.get('emo_control_method'),
-            'emo_weight': config.get('emo_weight'),
-            'emo_vec': config.get('emo_vec'),
-            'emo_text': config.get('emo_text'),
-        },
+        extra_audio_kwargs=extra_audio_kwargs,
+        force_regenerate=force_regenerate,
     )
     if result.get('decision') != 'submitted':
         # 已选中有效配音（reused）或失败：保持与原返回结构兼容
@@ -1763,10 +1883,10 @@ def _build_storyboard_agent_message(
         resolution_line = video_resolution or '模型默认'
         clip_line = '开启（导出时裁到配音时长）' if clip_to_audio_duration else '关闭（导出使用完整视频）'
         if is_digital_human:
-            target_intro = "请基于当前分镜视频提示词与用户要求，生成该分镜的 LTX2.3 数字人对口型视频。"
+            target_intro = "请基于当前分镜视频提示词与用户要求，生成该分镜的 MiniMax H3 数字人对口型视频。"
             video_input_block = "系统会从当前分镜解析角色图和已完成的配音，无需也不得由模型传入 URL。"
             tool_instruction = (
-                "本次目标是生成数字人对口型视频，必须调用 generate_digital_human。"
+                "本次目标是生成数字人对口型视频（MiniMax H3），必须调用 generate_digital_human。"
                 "不得调用 image_to_video、generate_text_to_video 或任何图片生成工具。"
                 "系统会从当前分镜解析角色图和已完成的配音，严禁捏造或传入图片、音频 URL。"
             )
@@ -2517,6 +2637,13 @@ async def get_storyboard_models(
         except Exception:
             pass
 
+    from task.visual_drivers import VideoDriverFactory
+    driver_status: Dict[str, Any] = {}
+    try:
+        driver_status = VideoDriverFactory.get_driver_availability() or {}
+    except Exception:
+        logger.exception("storyboard models: 读取驱动可用性失败，列表不过滤")
+
     def _list(category):
         configs = UnifiedConfigRegistry.get_by_category(category)
         # 与管理端/工作流一致：按 sort_order 升序，保证默认取「列表第一项」时语义稳定
@@ -2530,6 +2657,8 @@ async def get_storyboard_models(
         items = []
         for c in configs:
             if not c.enabled or c.hidden:
+                continue
+            if not VideoDriverFactory.is_task_available(c.id, driver_status):
                 continue
             # 算力展示元信息（前端 option 内联用）：统一解析最终生效配置，
             # 覆盖「算力定义在实现方层」的模型（如 LTX2.3/可灵/Seedance 1.5 Pro）
@@ -2546,8 +2675,12 @@ async def get_storyboard_models(
                 'default_duration': c.default_duration,
                 'supported_ratios': c.supported_ratios or [],
             }
-            # 图生视频 / 文生视频：分辨率 + 图模式能力
-            if category in (TaskCategory.IMAGE_TO_VIDEO, TaskCategory.TEXT_TO_VIDEO):
+            # 图生视频 / 文生视频 / 数字人：分辨率能力（数字人映射为 max_edge）
+            if category in (
+                TaskCategory.IMAGE_TO_VIDEO,
+                TaskCategory.TEXT_TO_VIDEO,
+                TaskCategory.DIGITAL_HUMAN,
+            ):
                 res_opts, default_res = _video_resolution_options_from_task(c)
                 item['supported_video_resolutions'] = res_opts
                 item['default_video_resolution'] = default_res
@@ -2566,17 +2699,51 @@ async def get_storyboard_models(
             items.append(item)
         return items
 
+    from config.model_catalog import (
+        ModelScene,
+        annotate_task_models,
+        build_tracks_payload,
+        scene_catalog_map,
+    )
+
+    text_to_image = annotate_task_models(_list(TaskCategory.TEXT_TO_IMAGE), ModelScene.IMAGE_TEXT_TO_IMAGE)
+    image_edit = annotate_task_models(_list(TaskCategory.IMAGE_EDIT), ModelScene.IMAGE_IMAGE_EDIT)
+    text_to_video = annotate_task_models(_list(TaskCategory.TEXT_TO_VIDEO), ModelScene.VIDEO_TEXT_TO_VIDEO)
+    image_to_video = annotate_task_models(_list(TaskCategory.IMAGE_TO_VIDEO), ModelScene.VIDEO_IMAGE_TO_VIDEO)
+    digital_human = annotate_task_models(_list(TaskCategory.DIGITAL_HUMAN), ModelScene.VIDEO_DIGITAL_HUMAN)
+
     return JSONResponse({
         'success': True,
         # 旧字段保留向前兼容（当前 storyboard 前端主要使用）
-        'image_models': _list(TaskCategory.TEXT_TO_IMAGE),
-        'video_models': _list(TaskCategory.IMAGE_TO_VIDEO),
-        'digital_human_models': _list(TaskCategory.DIGITAL_HUMAN),
+        'image_models': text_to_image,
+        'video_models': image_to_video,
+        'digital_human_models': digital_human,
         # 新增分类字段（为未来 UI 动态文生/图生支持做准备，第一版前端暂不使用切换）
-        'text_to_image_models': _list(TaskCategory.TEXT_TO_IMAGE),
-        'image_edit_models': _list(TaskCategory.IMAGE_EDIT),
-        'text_to_video_models': _list(TaskCategory.TEXT_TO_VIDEO),
-        'image_to_video_models': _list(TaskCategory.IMAGE_TO_VIDEO),
+        'text_to_image_models': text_to_image,
+        'image_edit_models': image_edit,
+        'text_to_video_models': text_to_video,
+        'image_to_video_models': image_to_video,
+        'catalog': {
+            ModelScene.IMAGE_TEXT_TO_IMAGE: build_tracks_payload(
+                ModelScene.IMAGE_TEXT_TO_IMAGE, text_to_image, kind="task"
+            ),
+            ModelScene.IMAGE_IMAGE_EDIT: build_tracks_payload(
+                ModelScene.IMAGE_IMAGE_EDIT, image_edit, kind="task"
+            ),
+            ModelScene.VIDEO_TEXT_TO_VIDEO: build_tracks_payload(
+                ModelScene.VIDEO_TEXT_TO_VIDEO, text_to_video, kind="task"
+            ),
+            ModelScene.VIDEO_IMAGE_TO_VIDEO: build_tracks_payload(
+                ModelScene.VIDEO_IMAGE_TO_VIDEO, image_to_video, kind="task"
+            ),
+            ModelScene.VIDEO_REFERENCE_TO_VIDEO: build_tracks_payload(
+                ModelScene.VIDEO_REFERENCE_TO_VIDEO, image_to_video, kind="task"
+            ),
+            ModelScene.VIDEO_DIGITAL_HUMAN: build_tracks_payload(
+                ModelScene.VIDEO_DIGITAL_HUMAN, digital_human, kind="task"
+            ),
+            'scenes': scene_catalog_map(),
+        },
     })
 
 
@@ -3212,6 +3379,249 @@ async def add_scene(
     return JSONResponse({'success': True, 'scene': scene.to_dict()})
 
 
+@router.post('/{storyboard_id:int}/smart-insert-scene')
+@require_permission("storyboard:update")
+async def smart_insert_scene(
+    request: Request,
+    storyboard_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """
+    智能插入分镜：根据前后分镜内容，调用 LLM 自动生成新分镜的各个属性
+    供故事板 (storyboard) 使用
+    """
+    try:
+        user_id = get_user_id_from_header(user_id)
+        sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
+        if not sb:
+            return JSONResponse(status_code=404, content={'error': '故事板不存在'})
+
+        ensure_resource_access(sb, user_id, Action.EDIT, "故事板")
+
+        data = await request.json()
+        prev_scene_id = data.get('prev_scene_id')
+        next_scene_id = data.get('next_scene_id')
+        world_id = data.get('world_id') or sb.world_id or ''
+
+        # 获取前后分镜数据
+        prev_scene = None
+        next_scene = None
+        if prev_scene_id:
+            prev_scene_obj = await asyncio.to_thread(StoryboardSceneModel.get_by_id, prev_scene_id)
+            if prev_scene_obj:
+                prev_scene = _scene_to_shot_format(prev_scene_obj)
+        if next_scene_id:
+            next_scene_obj = await asyncio.to_thread(StoryboardSceneModel.get_by_id, next_scene_id)
+            if next_scene_obj:
+                next_scene = _scene_to_shot_format(next_scene_obj)
+
+        # 获取剧本内容（如果有 script_id）
+        script_content = ''
+        script_data = {}
+        if sb.script_id:
+            try:
+                from model.script import ScriptModel
+                script_obj = await asyncio.to_thread(ScriptModel.get_by_id, sb.script_id)
+                if script_obj:
+                    script_content = script_obj.content or ''
+                    script_data = {
+                        'title': script_obj.title,
+                        'genre': script_obj.genre if hasattr(script_obj, 'genre') else '',
+                        'synopsis': script_obj.synopsis if hasattr(script_obj, 'synopsis') else '',
+                    }
+            except Exception as e:
+                logger.warning(f"获取剧本内容失败: {e}")
+
+        # 调用公共服务
+        from services.smart_insert_service import smart_insert_shot as _smart_insert_shot
+        shot_data = await _smart_insert_shot(
+            user_id=user_id,
+            world_id=str(world_id),
+            prev_shot=prev_scene,
+            next_shot=next_scene,
+            script_data=script_data,
+            script_content=script_content
+        )
+
+        # 直接创建完整字段的分镜（与 build_storyboard_scenes_from_parsed_script 对齐），
+        # 幕/场景/角色等信息从前后相邻分镜继承
+        scene = await _create_smart_insert_scene(
+            storyboard_id, user_id, shot_data,
+            prev_scene_obj, next_scene_obj,
+            prev_scene_id, next_scene_id,
+        )
+        return JSONResponse({'success': True, 'scene': scene.to_dict()})
+
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={'success': False, 'error': '智能插入超时，请稍后重试'}
+        )
+    except Exception as e:
+        logger.error(f"故事板智能插入分镜失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'error': f'智能插入失败: {str(e)}'}
+        )
+
+
+async def _create_smart_insert_scene(
+    storyboard_id: int,
+    user_id: int,
+    shot_data: Dict,
+    prev_scene_obj,
+    next_scene_obj,
+    prev_scene_id,
+    next_scene_id,
+):
+    """根据 LLM 生成的 shot_data 创建完整字段的分镜行
+
+    字段对齐 build_storyboard_scenes_from_parsed_script：
+    - 幕（group/act_name）必然继承自前后相邻分镜之一（优先 prev，缺失回落 next）
+    - perspective = camera_angle / shot_type（对应卡片上的"平视 / 中景"）
+    - 场景/道具/画风从相邻分镜继承，避免新分镜卡片显示"未选场景"
+    """
+    def _prompt_of(scene_obj) -> Dict:
+        if not scene_obj:
+            return {}
+        prompt = scene_obj.prompt_json
+        return prompt if isinstance(prompt, dict) else {}
+
+    prev_prompt = _prompt_of(prev_scene_obj)
+    next_prompt = _prompt_of(next_scene_obj)
+
+    # ---- 幕/分镜组：优先继承 prev，缺失回落 next（幕必然是相邻分镜之一） ----
+    def _source_of(prompt: Dict) -> Dict:
+        source = prompt.get('source')
+        return source if isinstance(source, dict) else {}
+
+    prev_source = _source_of(prev_prompt)
+    next_source = _source_of(next_prompt)
+    inherit_group_id = prev_source.get('group_id') or next_source.get('group_id') or ''
+    inherit_group_name = prev_source.get('group_name') or next_source.get('group_name') or ''
+    inherit_group_type = prev_source.get('group_type') or next_source.get('group_type') or ''
+    inherit_act_name = (
+        (getattr(prev_scene_obj, 'act_name', None) if prev_scene_obj else None)
+        or (getattr(next_scene_obj, 'act_name', None) if next_scene_obj else None)
+        or ''
+    )
+
+    # ---- 场景/道具/画风：从相邻分镜继承（新分镜通常延续前一场景） ----
+    prev_location = prev_prompt.get('location') if isinstance(prev_prompt.get('location'), dict) else {}
+    inherit_location = prev_location or (
+        next_prompt.get('location') if isinstance(next_prompt.get('location'), dict) else {}
+    ) or {}
+    inherit_props = prev_prompt.get('props') or next_prompt.get('props') or []
+    inherit_style = prev_prompt.get('style') or next_prompt.get('style') or ''
+
+    # ---- LLM 生成字段组装（与剧本解析生成分镜一致） ----
+    camera_angle = str(shot_data.get('camera_angle') or '').strip()
+    shot_type = str(shot_data.get('shot_type') or '').strip()
+    camera_movement = str(shot_data.get('camera_movement') or '').strip()
+    perspective = _compact_join([camera_angle, shot_type], ' / ')
+    scene_desc = _compact_join([
+        shot_data.get('opening_frame_description'),
+        shot_data.get('scene_detail'),
+    ])
+    # characters_present 可能带【【】】包裹，卡片展示用纯名字
+    character_names = []
+    for name in shot_data.get('characters_present') or []:
+        cleaned = str(name).replace('【', '').replace('】', '').strip()
+        if cleaned and cleaned not in character_names:
+            character_names.append(cleaned)
+    character_desc = '、'.join(character_names)
+
+    video_prompt = _compact_join([
+        shot_data.get('description'),
+        shot_data.get('scene_detail'),
+        shot_data.get('action'),
+        f"镜头运动：{camera_movement}" if camera_movement else None,
+    ])
+
+    prompt_payload = {
+        'perspective': perspective,
+        'style': inherit_style,
+        'scene_desc': scene_desc,
+        'character_desc': character_desc,
+        'location': inherit_location,
+        'props': inherit_props,
+        'mood': shot_data.get('mood') or '',
+        'time_of_day': shot_data.get('time_of_day') or '',
+        'weather': shot_data.get('weather') or '',
+        'source': {
+            'group_id': inherit_group_id,
+            'group_name': inherit_group_name,
+            'group_type': inherit_group_type,
+            'shot_id': shot_data.get('shot_id') or '',
+            'smart_insert': True,
+        },
+    }
+
+    # ---- 插入位置（浮点二分）与标题编号 ----
+    existing_scenes = await asyncio.to_thread(
+        StoryboardSceneModel.list_by_storyboard, storyboard_id
+    )
+    title = f"分镜{len(existing_scenes) + 1}"
+    if prev_scene_id is not None or next_scene_id is not None:
+        sort_order = await _compute_insert_sort(
+            StoryboardSceneModel.rebalance, storyboard_id,
+            StoryboardSceneModel.get_by_id, prev_scene_id, next_scene_id,
+        )
+    else:
+        max_sort = max([s['sort_order'] for s in existing_scenes], default=-1.0)
+        sort_order = max_sort + 1.0
+
+    scene_id = await asyncio.to_thread(
+        StoryboardSceneModel.create,
+        storyboard_id=storyboard_id,
+        sort_order=sort_order,
+        title=title,
+        duration=max(1, _safe_float(shot_data.get('duration'), 5.0)),
+        prompt_json=prompt_payload,
+        video_prompt=video_prompt,
+        video_type=SceneVideoType.VIDEO,
+        video_config_json={
+            'shot_type': shot_type,
+            'camera_angle': camera_angle,
+            'camera_movement': camera_movement,
+        },
+        difficulty=SceneDifficulty.normalize(shot_data.get('difficulty')),
+        act_name=inherit_act_name or None,
+        last_modified_user_id=user_id,
+    )
+    return await asyncio.to_thread(StoryboardSceneModel.get_by_id, scene_id)
+
+
+def _scene_to_shot_format(scene) -> Dict:
+    """将故事板 scene 数据转换为智能插入服务所需的格式"""
+    prompt = scene.prompt_json if isinstance(scene.prompt_json, dict) else {}
+    video_config = scene.video_config_json if isinstance(scene.video_config_json, dict) else {}
+    source = prompt.get('source') if isinstance(prompt.get('source'), dict) else {}
+    location = prompt.get('location') if isinstance(prompt.get('location'), dict) else {}
+    # characters_present：优先 source 中的角色名，其次从 character_desc 拆分
+    characters_present = source.get('characters_present') or []
+    if not characters_present and prompt.get('character_desc'):
+        characters_present = [n.strip() for n in str(prompt.get('character_desc')).split('、') if n.strip()]
+    return {
+        'shot_id': str(scene.id),
+        'description': prompt.get('scene_desc', '') or scene.title or '',
+        'opening_frame_description': prompt.get('scene_desc', ''),
+        'action': prompt.get('character_desc', ''),
+        'camera_angle': video_config.get('camera_angle', ''),
+        'shot_type': video_config.get('shot_type', '') or prompt.get('shot_type', ''),
+        'camera_movement': video_config.get('camera_movement', '') or prompt.get('camera_movement', ''),
+        'mood': prompt.get('mood', ''),
+        'characters_present': characters_present,
+        'location_name': location.get('name', ''),
+        'dialogue': [],
+        'duration': float(scene.duration) if scene.duration else 5,
+        'scene_detail': prompt.get('scene_desc', ''),
+        'time_of_day': prompt.get('time_of_day', ''),
+        'weather': prompt.get('weather', ''),
+    }
+
+
 @router.put('/scene/{scene_id}')
 @require_permission("storyboard:update")
 async def update_scene(
@@ -3489,14 +3899,15 @@ async def generate_scene_video(
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
     """
-    生成分镜视频（按 scene.video_type：图生视频 / 对口型 LTX2.3）。
+    生成分镜视频（按 scene.video_type：图生视频 / 对口型 MiniMax H3）。
 
     - 图生视频：需已选中首帧图片。
-    - 对口型（digital_human）：**必须先有成片配音**；仅提交 LTX2.3 数字人
-      （image=角色形象/首帧，audio=TTS 说话音频，prompt=动作描述）。
+    - 对口型（digital_human）：**必须先有成片配音**；固定 MiniMax H3 数字人
+      （image=选中首帧，audio=TTS 说话音频，prompt=动作描述，
+      duration clamp 4–10s，resolution→max_edge）。
 
     Body:
-        task_type: 可选；图生视频默认 SEEDANCE_2_0；对口型固定 LTX2.3（忽略其他）
+        task_type: 可选；图生视频用；对口型固定 MiniMax H3（忽略其他）
         prompt / duration / ratio / character_id / resolution / clip_to_audio_duration
     """
     user_id = get_user_id_from_header(user_id)
@@ -3527,18 +3938,20 @@ async def generate_scene_video(
             except (TypeError, ValueError):
                 character_id = None
 
-        # 统一编排：解析对白 → 加载 TTS → 探测时长 → 路由决策 → 准备音频。
-        # 忽略调用方传入的 prompt/duration/ratio（以服务端规划为准）。
+        resolution = data.get('resolution')
+        # 统一编排：解析对白 → 加载 TTS → 探测时长 → MiniMax 计划 → 准备音频。
+        # 忽略调用方传入的 prompt/duration/ratio（以服务端规划为准）；resolution 用于 max_edge。
         try:
             plan, _segments, _scene, _sb = await asyncio.to_thread(
                 orchestrate_digital_human_generation,
                 scene_id,
                 character_id=character_id,
+                resolution=resolution,
             )
         except StoryboardDigitalHumanError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
-        # 记录 video_config_json 快照（模型/比例由服务端规划决定）
+        # 记录 video_config_json 快照
         config = UnifiedConfigRegistry.get_by_id(plan.task_type)
         clip_to_audio_duration = bool(data.get('clip_to_audio_duration', True))
         snapshot = {
@@ -3547,7 +3960,11 @@ async def generate_scene_video(
             'digital_human_model': plan.model,
             'routing_reason': plan.routing_reason,
             'speech_duration': plan.speech_duration,
+            'video_duration': int(plan.billable_duration),
+            'duration_clamp_reason': plan.duration_clamp_reason,
             'ratio': plan.ratio,
+            'resolution': plan.resolution,
+            'max_edge': plan.max_edge,
             'clip_to_audio_duration': clip_to_audio_duration,
             'updated_at': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
         }
@@ -3563,7 +3980,7 @@ async def generate_scene_video(
         except Exception as e:
             logger.warning(f"Failed to persist video_config_json on generate-video scene {scene_id}: {e}")
 
-        # 先规划后扣费：按实际路由模型计算算力
+        # 先规划后扣费：按 MiniMax 时长档位计算算力
         computing_power = compute_digital_human_power(plan)
         transaction_id = str(uuid.uuid4())
         ok, msg = await _deduct_computing_power(request, computing_power, transaction_id)
@@ -3579,7 +3996,7 @@ async def generate_scene_video(
                 transaction_id=transaction_id,
                 computing_power=computing_power,
                 clip_to_audio_duration=clip_to_audio_duration,
-                resolution=data.get('resolution'),
+                resolution=resolution,
             )
         except StoryboardDigitalHumanError as exc:
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
@@ -3606,6 +4023,17 @@ async def generate_scene_video(
     prompt = data.get('prompt') or scene.video_prompt or ''
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
     ratio = data.get('ratio') or (sb.workflow_ratio if sb else None)
+
+    # 时长兜底刷新：TTS 完成回写 scene.duration 是 best-effort 联动，存在「音频已生成
+    # 但 duration 仍是剧本拆分阶段 LLM 估算的整数秒」的窗口。视频生成据此量化时长，
+    # 若拿到估算整数（如 5s）而真实音频更长（如 7.4s），会导致视频短于音频。
+    # 这里在量化前主动尝试用真实音频时长刷新：全部完成则覆盖，否则保持原值（best-effort）。
+    try:
+        refreshed = await recalc_scene_duration_if_all_completed(scene_id)
+        if refreshed is not None:
+            scene = await asyncio.to_thread(StoryboardSceneModel.get_by_id, scene_id)
+    except Exception as e:
+        logger.warning(f"generate_scene_video: scene={scene_id} 兜底刷新 duration 失败: {e}")
 
     try:
         generation_snapshot = await asyncio.to_thread(
@@ -3714,12 +4142,31 @@ async def generate_scene_video(
     except Exception as e:
         logger.warning(f"Failed to resolve video implementation for face mask: {e}")
 
+    needs_h3_optimize = False
+    try:
+        from task.pipeline_processor import PipelineProcessor
+        needs_h3_optimize = PipelineProcessor.needs_h3_atomic_param_prepare(task_type)
+    except Exception as e:
+        logger.warning(f"Failed to check h3 atomic param prepare for task {task_type}: {e}")
+
     need_pipeline_steps = _storyboard_needs_face_mask_pipeline(
         task_type=task_type,
         enable_face_mask=effective_face_mask,
         has_image_input=bool(image_path),
         user_id=user_id,
-    )
+    ) or needs_h3_optimize
+
+    # H3 图生视频：透传用户在该故事板选的对话模型，供提示词优化在 DeepSeek 未配置时回退。
+    h3_chat_model = None
+    h3_chat_vendor_id = None
+    if needs_h3_optimize and sb:
+        try:
+            from task.pipeline_drivers.h3_prompt_optimize_util import parse_storyboard_dialogue_model
+            _parsed_chat = parse_storyboard_dialogue_model(getattr(sb, 'config_json', None))
+            if _parsed_chat:
+                h3_chat_model, h3_chat_vendor_id = _parsed_chat
+        except Exception as e:
+            logger.warning(f"Failed to parse storyboard dialogue model for h3 optimize: {e}")
 
     extra_payload = {
         'video_type': video_type,
@@ -3750,9 +4197,12 @@ async def generate_scene_video(
         ai_tool_id = await asyncio.to_thread(
             AIToolsModel.create_with_pipeline_steps,
             status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+            h3_chat_model=h3_chat_model,
+            h3_chat_vendor_id=h3_chat_vendor_id,
             **create_kwargs,
         )
     else:
+        # 普通任务：直接 PENDING 立即入队，不进 WAITING_PARAM_PREPARE。
         ai_tool_id = await asyncio.to_thread(
             AIToolsModel.create,
             status=AI_TOOL_STATUS_PENDING,
@@ -3989,6 +4439,15 @@ async def scene_ai_chat(
         return JSONResponse(status_code=400, content={'success': False, 'error': exc.to_dict()})
     active_generation_slot = None
     if generation_target == 'video':
+        # 时长兜底刷新：与 generate_scene_video 一致，避免拿到 LLM 估算整数时长
+        # 导致视频短于真实配音。全部完成则覆盖，否则保持原值（best-effort）。
+        try:
+            refreshed = await recalc_scene_duration_if_all_completed(scene_id)
+            if refreshed is not None:
+                scene = await asyncio.to_thread(StoryboardSceneModel.get_by_id, scene_id)
+        except Exception as e:
+            logger.warning(f"scene_ai_chat: scene={scene_id} 兜底刷新 duration 失败: {e}")
+
         # 视频：image_to_video 只使用前端槽位有序图；角色/场景参考仅作文案说明
         video_input_urls = ordered_slot_urls
         reference_images_for_msg = list(reference_images or ([first_frame_url_for_prompt] if first_frame_url_for_prompt else []))
@@ -4492,6 +4951,15 @@ async def add_dialogue(
         max_sort = max([d['sort_order'] for d in existing], default=-1.0)
         sort_order = max_sort + 1.0
 
+    # 全版本允许写入 emo_vec（展示/手动编辑）；TTS 是否使用仍由企业门面决定
+    emo_vec = None
+    if data.get('emo_vec') is not None:
+        try:
+            from services.dialogue_emotion import normalize_emo_vec as _norm_emo
+            emo_vec = _norm_emo(data.get('emo_vec'))
+        except Exception:
+            emo_vec = None
+
     dialogue_id = await asyncio.to_thread(
         StoryboardDialogueModel.create,
         scene_id=scene_id,
@@ -4500,6 +4968,7 @@ async def add_dialogue(
         text=data.get('text'),
         speed=data.get('speed', 1.0),
         volume=data.get('volume', 100),
+        emo_vec=emo_vec,
         last_modified_user_id=user_id,
     )
     dialogue = await asyncio.to_thread(StoryboardDialogueModel.get_by_id, dialogue_id)
@@ -4513,7 +4982,7 @@ async def update_dialogue(
     dialogue_id: int,
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
-    """更新对话（角色/台词/语速/音量）"""
+    """更新对话（角色/台词/语速/音量/情感向量）"""
     user_id = get_user_id_from_header(user_id)
     dialogue, scene, err = await _ensure_dialogue_access(dialogue_id, user_id, Action.EDIT)
     if err:
@@ -4521,6 +4990,18 @@ async def update_dialogue(
 
     data = await request.json()
     update_data = {k: v for k, v in data.items() if k in ALLOWED_DIALOGUE_UPDATE_FIELDS}
+    if 'emo_vec' in update_data:
+        # 全版本可编辑；空串/非法 → 清空为 NULL
+        try:
+            from services.dialogue_emotion import normalize_emo_vec as _norm_emo
+            raw = update_data.get('emo_vec')
+            if raw is None or raw == '' or (isinstance(raw, str) and not raw.strip()):
+                update_data['emo_vec'] = None
+            else:
+                update_data['emo_vec'] = _norm_emo(raw)
+        except Exception:
+            update_data['emo_vec'] = None
+
     update_data['last_modified_user_id'] = user_id
     affected = await asyncio.to_thread(
         StoryboardDialogueModel.update, dialogue_id, **update_data

@@ -215,7 +215,7 @@ export async function finishBootstrapAfterStoryboardReady(data) {
         // 加载对话模型（LLM），第一版仅 UI 选择用
         api.fetchLlmModels().then((res) => {
             if (res && res.success) {
-                setModels({ llm_models: res.models });
+                setModels({ llm_models: res.models, llm_catalog: res.catalog || null });
             }
         }).catch(() => {}),
         // 加载 LLM 供应商，用于对话模型分组显示（复用 script_writer 逻辑）
@@ -232,20 +232,19 @@ export async function finishBootstrapAfterStoryboardReady(data) {
             .catch((error) => console.warn('load storyboard media preferences failed', error));
     }
 
-    // 设置对话模型（LLM）默认值，如果没有选中
-    // 参考 script_writer 和 video_workflow 的默认选项逻辑：deepseek-v4-flash > qwen3.5-plus (zjt) > 其他 qwen > 第一个
+    // 设置对话模型（LLM）默认值：场景目录性价比档（deepseek-v4-flash）
     if (!state.selectedLlmModel && state.llmModels && state.llmModels.length > 0) {
         const models = state.llmModels;
-        let defaultM = models.find(m => {
-            const name = (m.model || m.name || '').toLowerCase();
-            const vendor = (m.vendor_name || '').toLowerCase();
-            return name.includes('deepseek-v4-flash') && vendor.includes('deepseek');
-        });
+        let defaultM = null;
+        if (window.ModelCatalog) {
+            const collapsed = window.ModelCatalog.collapseLlmModels(models, 'llm.chat', state.llmCatalog);
+            defaultM = window.ModelCatalog.findCollapsedByTrack(collapsed, 'value')?.defaultRoute || null;
+        }
         if (!defaultM) {
             defaultM = models.find(m => {
                 const name = (m.model || m.name || '').toLowerCase();
                 const vendor = (m.vendor_name || '').toLowerCase();
-                return name.includes('qwen3.5-plus') && (vendor.includes('zjt') || vendor.includes('zjt_api'));
+                return name.includes('deepseek-v4-flash') && vendor.includes('deepseek');
             });
         }
         if (!defaultM) {
@@ -369,6 +368,13 @@ async function main() {
 
     await initI18n();
     state.editionInfo = await api.getEditionInfo().catch(() => ({ mode: 'community', mode_label: '社区版' }));
+    // features.dialogue_emotion_tts：企业版拆分自动情感向量是否可用
+    try {
+        const serverCfg = await api.fetchServerConfig();
+        state.serverFeatures = (serverCfg && serverCfg.features) || {};
+    } catch {
+        state.serverFeatures = {};
+    }
 
     const data = await loadStoryboard();
 

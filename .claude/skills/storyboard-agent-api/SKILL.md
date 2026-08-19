@@ -40,11 +40,13 @@ Do not guess protocol, host, or port. Use the `base_url` exactly as provided by 
 
 This skill supports `api_version = "storyboard-agent-api/v1"`.
 
+> ⚠️ `api_version` is a **version label, NOT a URL path prefix**. Never prepend `storyboard-agent-api/v1` to request paths. All endpoints below already start with `/api/` — call them relative to `base_url` as-is. Prepending the version string hits the SPA catch-all and returns a misleading `404`/`405` instead of the real API.
+
 Before making calls:
 
 1. Parse `base_url`, `agent_token`, `api_version`, and `environment` from the user's connection package.
 2. If `api_version` is missing or different from `storyboard-agent-api/v1`, tell the user this skill may not match the server API and ask for an updated skill or compatible connection package before running generation.
-3. For v1, use the fixed endpoint paths below relative to `base_url`; the connection package does not need to provide full endpoint URLs.
+3. For v1, use the fixed endpoint paths below relative to `base_url` (they already include the `/api/` prefix); the connection package does not need to provide full endpoint URLs. Do **not** prepend `api_version` to these paths.
 4. Treat `environment` as the backend configuration environment. HTTP calls do not need extra environment setup; CLI fallback must set `comfyui_env` to this value before running commands.
 
 Fixed v1 endpoint paths:
@@ -123,10 +125,10 @@ Split script into storyboard scenes:
 ```bash
 curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/split-from-script" \
   -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"storyboard_id":10,"max_group_duration":15}'
+  -d '{"storyboard_id":10,"model":"deepseek-v4-flash","model_id":11,"vendor_id":4,"max_group_duration":15}'
 ```
 
-When `model` is omitted, the server uses `storyboard.config_json.selectedScriptSplitLlmModel`, then falls back to the server default.
+`model` is **required** on the CLI/agent path — the server no longer falls back to a default model here. Call `list-llm-models` first to pick a reachable model, and pass `model_id` + `vendor_id` to pin the exact route when the same name is served by multiple vendors. If the storyboard already has scenes, it returns `scenes_exist`; create a new storyboard from the script or clear existing scenes first.
 
 List scenes after splitting:
 

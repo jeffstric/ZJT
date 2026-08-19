@@ -143,6 +143,8 @@ flowchart TD
     HAS_PREP -->|是| WAIT_PREP["ai_tools=4, tasks=4\nWAITING_PARAM_PREPARE"]
     HAS_PREP -->|否| GET_IMPL
 
+    %% MiniMax H3 图生视频(type=34) 创建时即 attach h3_prompt_optimize，先进入 WAITING_PARAM_PREPARE
+
     GET_IMPL["获取 implementation\n优先 retry 设置 → 用户偏好"]
     GET_IMPL --> SYNC_CHECK{"sync_mode?"}
 

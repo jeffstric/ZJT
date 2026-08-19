@@ -18,7 +18,7 @@ import tempfile
 import hashlib
 import re
 from datetime import datetime
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from urllib.parse import urlparse
 from pydantic import BaseModel
 from api.clients.runninghub_client import RunningHubClient, TaskStatus, run_ai_app_task
@@ -72,6 +72,8 @@ from config.constant import (
     ASSET_LIST_MAX_PAGE_SIZE,
     ASSET_LIST_DB_QUERY_TIMEOUT,
     BrandingConstants,
+    SMART_INSERT_SHOT_TIMEOUT,
+    SMART_INSERT_SHOT_DEFAULT_MODEL,
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
@@ -84,7 +86,12 @@ from utils.image_grid_merger import ImageGridMerger
 from utils.sentry_util import SentryUtil
 from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
-from utils.computing_power import build_context_from_task_record, get_implementation_for_user
+from utils.computing_power import (
+    build_context_from_task_record,
+    get_implementation_for_user,
+    resolve_video_edit_billing_duration,
+    BILLING_DURATION_SOURCE_REFERENCE_VIDEO,
+)
 from utils.video_resolution import validate_video_resolution
 from utils.resource_access import (
     get_user_id_from_header,
@@ -524,6 +531,48 @@ async def cdn_redirect_middleware(request: Request, call_next):
                         return RedirectResponse(url=cdn_url, status_code=302)
             except Exception as e:
                 logger.warning(f"CDN 重定向查找失败: {e}")
+    return await call_next(request)
+
+
+# API 路径前缀守卫中间件：对拼错前缀的"疑似 API 请求"返回友好 JSON 提示，
+# 而非让它落到 SPA catch-all（GET 静默返回 HTML(200)、POST 返回 405 无提示）。
+#
+# 背景：连接包的 api_version="storyboard-agent-api/v1" 只是版本标签，
+# 不是 URL 前缀；真实接口都在 /api/ 下。Agent 误把 api_version 当前缀
+# 拼成 /storyboard-agent-api/v1/... 时，请求会落到 SPA catch-all：
+#   - GET  -> 返回 index.html(200)，调用方以为成功却拿到 HTML，静默失败；
+#   - POST -> Starlette 因只注册了 GET catch-all 而返回 405，无任何路由提示。
+# 本中间件对这类请求返回明确的 JSON 指引，避免对接时踩坑。
+_API_PATH_MARKERS = ("storyboard-agent-api", "/v1/", "script-split", "agent-auth")
+
+
+@app.middleware("http")
+async def api_path_prefix_guard_middleware(request: Request, call_next):
+    path = request.url.path
+    # /api/ 下的请求正常放行，交由对应 handler 处理（含合法的 404）
+    if path == "/api" or path.startswith("/api/"):
+        return await call_next(request)
+    method = request.method.upper()
+    # 疑似 API 请求判定：
+    #   1) POST/PUT/PATCH/DELETE 打到非 /api/ 路径 —— 前端 SPA 不会这样发，
+    #      必然是拼错前缀的 API 调用；
+    #   2) 或路径含明显的 API 标识（版本前缀 / 已知 API 名），即便 GET 也提示。
+    looks_like_api = method in ("POST", "PUT", "PATCH", "DELETE") or any(
+        marker in path for marker in _API_PATH_MARKERS
+    )
+    if looks_like_api:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "success": False,
+                "error_code": "api_path_prefix",
+                "error": (
+                    "未知的 API 路径：所有接口前缀均为 /api/。"
+                    "连接包里的 api_version 是版本标签，不是 URL 前缀。"
+                    "GET /api/storyboard/agent/schema 可查看可用命令"
+                ),
+            },
+        )
     return await call_next(request)
 
 
@@ -1518,7 +1567,7 @@ async def image_edit(
                     try:
                         from task.pipeline_processor import PipelineProcessor
                         await asyncio.to_thread(
-                            PipelineProcessor.create_param_prepare_steps, id, image_edit_type
+                            PipelineProcessor.attach_param_prepare_if_needed, id, image_edit_type
                         )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
@@ -1652,7 +1701,7 @@ async def text_to_image(
                     try:
                         from task.pipeline_processor import PipelineProcessor
                         await asyncio.to_thread(
-                            PipelineProcessor.create_param_prepare_steps, id, text_to_image_type
+                            PipelineProcessor.attach_param_prepare_if_needed, id, text_to_image_type
                         )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
@@ -2031,7 +2080,7 @@ async def ai_app_run(
                     try:
                         from task.pipeline_processor import PipelineProcessor
                         await asyncio.to_thread(
-                            PipelineProcessor.create_param_prepare_steps, id, text_to_video_type
+                            PipelineProcessor.attach_param_prepare_if_needed, id, text_to_video_type
                         )
                     except Exception as e:
                         logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
@@ -2166,6 +2215,14 @@ async def ai_app_run_image(
                 saved_url = await asyncio.to_thread(_save_uploaded_image, ref_img)
                 ref_image_list.append(saved_url)
         
+        # 纯音视频参考（无图片）：模型支持参考音视频时，自动改判为多参考模式放行
+        # 后续 multi_reference 分支已对 supports_ref_audio_video=True 放行空参考图，
+        # 驱动 MULTI_REFERENCE 分支会据此下发 reference_audio/reference_video。
+        has_ref_media = bool(audio_urls or audio or video_urls or video)
+        if (image_mode == 'first_last_frame' and not main_image_list
+                and has_ref_media and task_config.supports_ref_audio_video):
+            image_mode = 'multi_reference'
+
         # 根据模式处理图片
         if image_mode == 'first_last_frame':
             # 首尾帧模式：所有图片存入 image_path
@@ -2231,6 +2288,20 @@ async def ai_app_run_image(
         # 驱动（huimengi）会透传给网关，由网关服务端审核加白，无需本地遮盖。
         if user_wants_face_process:
             base_extra_config['human_review'] = True
+        # 视频编辑任务（Seedance 2.5 + 参考视频）：计费时长改按参考视频总时长吸附档位。
+        # 输出时长由参考视频决定（驱动下发 duration=-1），用户输入时长不参与计费；
+        # 探测失败回退用户输入。同步探测（URL 下载 + ffprobe），to_thread 包装
+        # 避免阻塞事件循环（AGENTS.md 规则1）。
+        billing_duration, billing_duration_source = await asyncio.to_thread(
+            resolve_video_edit_billing_duration,
+            image_to_video_type,
+            video_path,
+            duration_seconds,
+        )
+        if billing_duration_source == BILLING_DURATION_SOURCE_REFERENCE_VIDEO:
+            # 审计字段随 extra_config 落库：追溯每笔计费时长的来源与用户原始输入
+            base_extra_config['user_duration_seconds'] = duration_seconds
+            base_extra_config['billing_duration_source'] = billing_duration_source
         if task_config.category == TaskCategory.DIGITAL_HUMAN:
             if not audio_path:
                 raise HTTPException(status_code=400, detail="数字人任务需要提供说话音频（audio 或 audio_urls）")
@@ -2291,8 +2362,9 @@ async def ai_app_run_image(
             context['resolution'] = resolution
 
         # 根据时长和 context 获取算力（优先任务配置，回退到实现方配置）
+        # 视频编辑任务 billing_duration 已按参考视频总时长吸附档位，其余任务等于用户输入
         computing_power = task_config.get_computing_power(
-            duration=duration_seconds,
+            duration=billing_duration,
             implementation=actual_impl,
             context=context
         )
@@ -2371,17 +2443,22 @@ async def ai_app_run_image(
                         has_any_param_prepare_input = seedance_face_mask_enabled and (
                             bool(video_path) or has_image_input
                         )
+                        needs_h3_optimize = PipelineProcessor.needs_h3_atomic_param_prepare(image_to_video_type)
                         need_pipeline_steps = (
-                            is_seedance_face_mask
-                            and enable_face_mask
-                            and not impl_supports_auto_face
-                            and not Edition.is_community()
-                            and runninghub_api_key
-                            and has_any_param_prepare_input
+                            (
+                                is_seedance_face_mask
+                                and enable_face_mask
+                                and not impl_supports_auto_face
+                                and not Edition.is_community()
+                                and runninghub_api_key
+                                and has_any_param_prepare_input
+                            )
+                            or needs_h3_optimize
                         )
                         logger.info(
                             f"Pipeline steps condition check: image_to_video_type={image_to_video_type}, "
                             f"is_seedance_face_mask={is_seedance_face_mask}, "
+                            f"needs_h3_optimize={needs_h3_optimize}, "
                             f"enable_face_mask={enable_face_mask}, is_community={Edition.is_community()}, "
                             f"impl_supports_auto_face={impl_supports_auto_face}, actual_impl={actual_impl}, "
                             f"has_api_key={bool(runninghub_api_key)}, has_video={bool(video_path)}, "
@@ -2398,7 +2475,7 @@ async def ai_app_run_image(
                                 type=image_to_video_type,
                                 image_path=image_path,
                                 ratio=ratio,
-                                duration=duration_seconds,
+                                duration=billing_duration,
                                 transaction_id=transaction_id,
                                 status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
                                 extra_config=audited_extra_config,
@@ -2408,7 +2485,8 @@ async def ai_app_run_image(
                                 video_path=video_path
                             )
                         else:
-                            # 普通创建（无 pipeline steps）
+                            # 普通创建（无 pipeline steps）：直接 PENDING 立即入队，
+                            # 不进 WAITING_PARAM_PREPARE，避免多余的状态翻转与 DB 写。
                             id = await asyncio.to_thread(
                                 AIToolsModel.create,
                                 prompt=prompt,
@@ -2416,7 +2494,7 @@ async def ai_app_run_image(
                                 type=image_to_video_type,
                                 image_path=image_path,
                                 ratio=ratio,
-                                duration=duration_seconds,
+                                duration=billing_duration,
                                 transaction_id=transaction_id,
                                 status=AI_TOOL_STATUS_PENDING,
                                 extra_config=audited_extra_config,
@@ -2711,8 +2789,10 @@ async def get_computing_power_logs(
                 for log in response_data['logs']:
                     from datetime import datetime
                     import re
-                    
-                    # 获取基础字段
+
+                    transaction_id = log.get('transaction_id')
+
+                    # 获取基础字段（transaction_id 供前端显示流水摘要 / 识别 refund- 失败返还）
                     processed_log = {
                         'id': log.get('id'),
                         'behavior': log.get('behavior'),
@@ -2720,7 +2800,8 @@ async def get_computing_power_logs(
                         'computing_power': log.get('computing_power'),
                         'from': log.get('from'),
                         'to': log.get('to'),
-                        'created_at': log.get('created_at')
+                        'created_at': log.get('created_at'),
+                        'transaction_id': transaction_id
                     }
                     
                     # 如果 message 有值，将其放到 note
@@ -2729,7 +2810,6 @@ async def get_computing_power_logs(
                         processed_log['note'] = message
                     
                     # 根据 transaction_id 查询任务类型
-                    transaction_id = log.get('transaction_id')
                     if transaction_id and transaction_id in tools_map:
                         tool = tools_map[transaction_id]
                         if tool.type:
@@ -4189,7 +4269,7 @@ async def digital_human_generate(
                 # 创建 param_prepare 流水线步骤
                 try:
                     from task.pipeline_processor import PipelineProcessor
-                    PipelineProcessor.create_param_prepare_steps(id, task_type)
+                    PipelineProcessor.attach_param_prepare_if_needed(id, task_type)
                 except Exception as e:
                     logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
 
@@ -4311,7 +4391,7 @@ async def digital_human_v2_generate(
                 # 创建 param_prepare 流水线步骤
                 try:
                     from task.pipeline_processor import PipelineProcessor
-                    PipelineProcessor.create_param_prepare_steps(id, task_type)
+                    PipelineProcessor.attach_param_prepare_if_needed(id, task_type)
                 except Exception as e:
                     logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
 
@@ -4334,6 +4414,148 @@ async def digital_human_v2_generate(
         logger.error(f"Digital human v2 generation failed: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"数字人v2生成失败: {str(e)}")
+
+
+@app.post("/api/digital-human-minimax-h3")
+@require_permission("digital_human:create")
+async def digital_human_minimax_h3_generate(
+    request: Request,
+    image: UploadFile = File(..., description="Input image for digital human"),
+    text: str = Form(..., description="Prompt text for digital human motion (max 1000 characters)"),
+    audio: UploadFile = File(..., description="Speaking audio file"),
+    duration: int = Form(10, description="Video duration in seconds (4-10)"),
+    max_edge: int = Form(1280, description="Video max edge length: 720, 1280, 1920"),
+    start_second: int = Form(0, description="Second when digital human starts speaking"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Generate MiniMax H3 digital human video (image + audio + prompt)
+    """
+    try:
+        if len(text) > 1000:
+            raise HTTPException(
+                status_code=400,
+                detail="文本内容不能超过1000个字"
+            )
+
+        allowed_durations = {4, 5, 6, 7, 8, 9, 10}
+        if duration not in allowed_durations:
+            raise HTTPException(
+                status_code=400,
+                detail=f"视频时长仅支持 {sorted(allowed_durations)} 秒"
+            )
+
+        allowed_max_edges = {720, 1280, 1920}
+        if max_edge not in allowed_max_edges:
+            raise HTTPException(
+                status_code=400,
+                detail=f"最长边仅支持 {sorted(allowed_max_edges)}"
+            )
+
+        if start_second < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="开始说话秒数不能为负数"
+            )
+
+        image_url = await asyncio.to_thread(_save_uploaded_image, image)
+        audio_url = await asyncio.to_thread(_save_uploaded_image, audio)
+
+        task_type = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
+        task_config = TaskTypeRegistry.get(task_type)
+        computing_power = task_config.get_computing_power(duration=duration) if task_config else 0
+
+        if CHECK_AUTH_TOKEN:
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            success, message, response_data = await async_make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400,
+                    detail=message
+                )
+
+            user_computing_power = response_data.get('computing_power', 0)
+            user_id_from_token = response_data.get('user_id')
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"您的算力不足，需要 {computing_power} 算力，当前仅有 {user_computing_power} 算力"
+                )
+            if user_id_from_token != user_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="用户ID不匹配"
+                )
+
+        transaction_id = str(uuid.uuid4())
+
+        if CHECK_AUTH_TOKEN:
+            success, message, response_data = await async_make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id
+                }
+            )
+            if not success:
+                logger.error(f"Computing power deduction failed: {message}")
+
+        if user_id:
+            try:
+                extra_config = json.dumps({
+                    "max_edge": max_edge,
+                    "start_second": start_second,
+                }, ensure_ascii=False)
+
+                id = AIToolsModel.create(
+                    prompt=text,
+                    user_id=user_id,
+                    type=task_type,
+                    image_path=image_url,
+                    audio_path=audio_url,
+                    duration=duration,
+                    extra_config=extra_config,
+                    transaction_id=transaction_id,
+                    status=AI_TOOL_STATUS_PENDING
+                )
+                TasksModel.create(
+                    task_type=TASK_TYPE_GENERATE_VIDEO,
+                    task_id=id,
+                    status=TASK_STATUS_QUEUED
+                )
+                try:
+                    from task.pipeline_processor import PipelineProcessor
+                    PipelineProcessor.attach_param_prepare_if_needed(id, task_type)
+                except Exception as e:
+                    logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
+
+                return JSONResponse({
+                    "success": True,
+                    "project_id": id,
+                    "status": "submitted",
+                    "image_url": image_url,
+                    "audio_url": audio_url
+                })
+            except Exception as db_error:
+                logger.error(f"Failed to create database record: {db_error}")
+                raise HTTPException(status_code=500, detail=f"数据库错误: {str(db_error)}")
+        else:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Digital human MiniMax H3 generation failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"MiniMax H3 数字人生成失败: {str(e)}")
 
 
 @app.post("/api/audio-generate")
@@ -6159,18 +6381,7 @@ async def _rewrite_with_llm(messages, request, auth_token):
     """
     import asyncio
     from config.constant import LLMModel
-    from llm.llm_client_factory import get_llm_client
-    from llm.ollama_client import OllamaClient
-
-    def _client_configured(c) -> bool:
-        """判断客户端是否已配置可用凭据。
-
-        Ollama 等本地部署 client 无需真实 api_key（无需联网鉴权），不应判为未配置；
-        云端供应商（gemini/claude/aliyun/deepseek/volcengine/zjt）必须配置非空 api_key。
-        """
-        if isinstance(c, OllamaClient):
-            return True
-        return bool(getattr(c, 'api_key', ''))
+    from llm.llm_client_factory import get_llm_client, is_llm_client_configured
 
     model = request.model or LLMModel.REDUCE_VIOLATION_DEFAULT
     client = get_llm_client(model, vendor_id=request.vendor_id)
@@ -6180,14 +6391,14 @@ async def _rewrite_with_llm(messages, request, auth_token):
     bill_model_id = request.model_id
 
     # 所选拆分模型的供应商未配置 api_key 时，切兜底模型重试一次
-    if not _client_configured(client):
+    if not is_llm_client_configured(client):
         model = LLMModel.REDUCE_VIOLATION_DEFAULT
         client = get_llm_client(model)
         # 已切到默认模型：计费 ID 不再跟随原拆分模型，避免计费/用量记错账
         bill_vendor_id = None
         bill_model_id = None
         # 兜底模型同样可能未配置（社区版/新装环境），二次校验后给出明确错误而非底层 500
-        if not _client_configured(client):
+        if not is_llm_client_configured(client):
             raise Exception(
                 "内容安全改写所需的模型均未配置（所选模型与默认兜底模型 REDUCE_VIOLATION_DEFAULT 均缺少 api_key），"
                 "请在管理后台配置对应供应商的 API Key。"
@@ -6437,6 +6648,54 @@ async def delete_video_workflow(
         )
 
 
+@app.post('/api/video-workflow/smart-insert-shot')
+@require_permission("video_workflow:update")
+async def smart_insert_shot(
+    request: Request,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """
+    智能插入分镜：根据前后分镜内容，调用 LLM 自动生成新分镜的各个属性
+    供工作流 (video-workflow) 使用
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        data = await request.json()
+
+        prev_shot = data.get('prev_shot')
+        next_shot = data.get('next_shot')
+        script_data = data.get('script_data', {})
+        script_content = data.get('script_content', '')  # 原始剧本内容
+        # 优先从请求体获取 world_id，其次从 script_data 获取
+        world_id = data.get('world_id') or script_data.get('world_id', '')
+
+        # 调用公共服务
+        from services.smart_insert_service import smart_insert_shot as _smart_insert_shot
+        shot_data = await _smart_insert_shot(
+            user_id=user_id,
+            world_id=world_id,
+            prev_shot=prev_shot,
+            next_shot=next_shot,
+            script_data=script_data,
+            script_content=script_content
+        )
+
+        return JSONResponse({'success': True, 'shot': shot_data})
+
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={'success': False, 'error': '智能插入超时，请稍后重试'}
+        )
+    except Exception as e:
+        logger.error(f"智能插入分镜失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'error': f'智能插入失败: {str(e)}'}
+        )
+
+
 # Serve upload directory for static file access
 upload_dir = os.path.join(APP_DIR, UploadPathConstants.UPLOAD_ROOT)
 if not os.path.exists(upload_dir):
@@ -6513,18 +6772,30 @@ async def is_zjt():
 async def get_worlds(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    visibility: str = Query(
+        'active',
+        description="列表范围：active=未删除(默认) | deleted=已伪删除 | all=全部",
+    ),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
-    获取世界列表
+    获取世界列表。
+
+    默认仅返回未伪删除世界（visibility=active），全站世界选择器自动生效。
+    传入 visibility=deleted 可查看已隐藏世界（剧本策划侧栏「已删除」视图）。
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        result = WorldModel.list_by_user(
+        vis = (visibility or 'active').lower()
+        if vis not in ('active', 'deleted', 'all'):
+            vis = 'active'
+        result = await asyncio.to_thread(
+            WorldModel.list_by_user,
             user_id=user_id,
             page=page,
-            page_size=page_size
+            page_size=page_size,
+            visibility=vis,
         )
         return JSONResponse(
             status_code=200,
@@ -6705,6 +6976,99 @@ async def update_world(
         )
 
 
+@app.post('/api/worlds/{world_id}/hide')
+async def hide_world(
+    world_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    伪删除（隐藏）世界：仅标记 is_deleted=1，不删库、不删资产。
+    已隐藏时幂等成功。
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        world = await asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.DELETE)
+
+        await asyncio.to_thread(WorldModel.soft_delete, world_id)
+        updated = await asyncio.to_thread(WorldModel.get_by_id, world_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '已从列表隐藏',
+                'data': updated.to_dict() if updated else (world.to_dict() if world else None)
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to hide world {world_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.post('/api/worlds/{world_id}/restore')
+async def restore_world(
+    world_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    恢复伪删除世界：is_deleted=0，重新出现在正常列表。
+    若同用户下已有同名未删除世界，返回 400。
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        world = await asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.DELETE)
+
+        # 仅对仍标记为删除的世界做重名校验
+        if getattr(world, 'is_deleted', 0):
+            existing = await asyncio.to_thread(
+                WorldModel.get_by_name, user_id, world.name, False
+            )
+            if existing and getattr(existing, 'id', None) != world_id:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        'code': -1,
+                        'message': '存在同名世界，请先修改名称后再恢复',
+                        'data': None
+                    }
+                )
+
+        await asyncio.to_thread(WorldModel.restore, world_id)
+        updated = await asyncio.to_thread(WorldModel.get_by_id, world_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '已恢复显示',
+                'data': updated.to_dict() if updated else (world.to_dict() if world else None)
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to restore world {world_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
 @app.delete('/api/worlds/{world_id}')
 async def delete_world(
     world_id: int,
@@ -6712,7 +7076,8 @@ async def delete_world(
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
-    删除世界
+    硬删除世界（物理删除记录）。
+    伪删除请使用 POST /api/worlds/{world_id}/hide。
     """
     try:
         user_id = _get_user_id_from_header(user_id)

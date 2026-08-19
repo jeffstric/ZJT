@@ -68,6 +68,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         self.skill_loader = SkillLoader(user_id=int(user_id) if user_id else None)
 
         self.language = language
+        self.user_id = user_id
         system_prompt = self._build_system_prompt(skill_names, context_from_pm)
         
         super().__init__(
@@ -80,7 +81,6 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         
         self.context = context_from_pm
         self.file_manager = file_manager
-        self.user_id = user_id
         self.world_id = world_id
         self.auth_token = auth_token
         self.tool_executor = tool_executor
@@ -112,6 +112,12 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         """构建系统提示"""
         # 构建基础提示
         skills_str = "、".join(skill_names)
+        try:
+            from .power_confirm import resolve_user_soft_threshold
+            power_threshold, _ = resolve_user_soft_threshold(getattr(self, "user_id", None))
+        except Exception:
+            from config.constant import AGENT_POWER_CONFIRM_THRESHOLD
+            power_threshold = AGENT_POWER_CONFIRM_THRESHOLD
         base_prompt = f"""你是一个专业的专家智能体，具备以下技能：{skills_str}
 
 **PM 提供的上下文**：
@@ -123,6 +129,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
 3. 遇到问题及时报告
 4. 完成后提供详细的执行总结
 5. 向用户提问时必须使用 ask_user 工具，禁止以纯文本方式提问（纯文本提问用户无法收到交互弹框）
+6. 系统会在提交生成前按用户的算力确认上限自动向用户确认。当前上限为 {power_threshold} 算力。不要自己用 ask_user 询问「是否消耗 X 算力」，把确认交给系统。提交前仍应查询模型与余额，并在工作总结里写清预估消耗。
 """
         
         # 加载所有技能内容
@@ -467,6 +474,115 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         if deferred_multimodal_content:
             self.add_to_history("user", deferred_multimodal_content)
     
+    def _power_confirm_session_key(self) -> Optional[str]:
+        return getattr(self, "_session_id", None) or getattr(self, "task_id", None)
+
+    def _gate_computing_power(self, tool_name: str, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        计费生成工具的算力确认门。
+        返回 None 表示放行；返回 dict 则作为工具错误结果，不执行生成。
+        """
+        from .power_confirm import (
+            BILLABLE_GENERATION_TOOLS,
+            OPTION_APPROVE,
+            POWER_CONFIRM_OPTIONS,
+            VERIFICATION_TYPE_POWER_CONFIRM,
+            ConfirmAnswer,
+            build_confirm_description,
+            estimate_tool_computing_power,
+            get_effective_thresholds,
+            parse_confirm_answer,
+            query_user_balance,
+            should_confirm,
+        )
+
+        if tool_name not in BILLABLE_GENERATION_TOOLS:
+            return None
+
+        if not getattr(self, "task_manager", None) or not getattr(self, "task_id", None):
+            logger.info(f"{self.agent_id}: 无交互通道，跳过算力确认 tool={tool_name}")
+            return None
+
+        estimate = estimate_tool_computing_power(
+            tool_name=tool_name,
+            tool_args=tool_args or {},
+            user_id=str(self.user_id or ""),
+            world_id=str(self.world_id or ""),
+            auth_token=self.auth_token or "",
+        )
+        balance = query_user_balance(self.auth_token)
+        if not estimate.unknown and balance is not None and estimate.cost > balance:
+            return {
+                "success": False,
+                "error": (
+                    f"算力不足：本次约需 {estimate.cost}，当前余额 {balance}。"
+                    f"请降低数量/时长/分辨率，或充值后再试。"
+                ),
+            }
+
+        session_key = self._power_confirm_session_key()
+        state = self.task_manager.get_power_confirm_state(session_key)
+        soft, hard, _is_custom = get_effective_thresholds(str(self.user_id or ""))
+        decision = should_confirm(
+            cost=estimate.cost,
+            unconfirmed_cost=state.get("unconfirmed_cost") or 0,
+            skip_session=bool(state.get("skip")),
+            soft_threshold=soft,
+            hard_threshold=hard,
+            unknown=estimate.unknown,
+        )
+        if not decision.need_confirm:
+            if not estimate.unknown:
+                self.task_manager.add_unconfirmed_power_cost(session_key, estimate.cost)
+            return None
+
+        question = build_confirm_description(
+            estimate=estimate,
+            balance=balance,
+            unconfirmed_cost=state.get("unconfirmed_cost") or 0,
+            soft_threshold=soft,
+        )
+        logger.info(
+            f"{self.agent_id}: 算力确认拦截 tool={tool_name} cost={estimate.cost} "
+            f"reason={decision.reason} soft={soft} hard={hard}"
+        )
+        result = self._handle_ask_user(
+            {
+                "question": question,
+                "title": "算力确认",
+                "options": list(POWER_CONFIRM_OPTIONS),
+                "context": {
+                    "type": VERIFICATION_TYPE_POWER_CONFIRM,
+                    "estimated_cost": estimate.cost,
+                    "unknown": estimate.unknown,
+                    "balance": balance,
+                    "tool_name": tool_name,
+                    "breakdown": estimate.breakdown,
+                    "soft_threshold": soft,
+                    "confirm_option": OPTION_APPROVE,
+                },
+            },
+            verification_type=VERIFICATION_TYPE_POWER_CONFIRM,
+        )
+        if not isinstance(result, dict) or not result.get("success"):
+            return {
+                "success": False,
+                "error": result.get("error") if isinstance(result, dict) else "算力确认失败",
+                "user_cancelled": True,
+            }
+
+        answer = parse_confirm_answer(result.get("user_input"))
+        if answer == ConfirmAnswer.REJECT:
+            return {
+                "success": False,
+                "error": "用户取消了本次生成。可以降低数量、时长或分辨率后重试，或等待用户新的指示。",
+                "user_cancelled": True,
+            }
+        if answer == ConfirmAnswer.SKIP_SESSION:
+            self.task_manager.set_power_confirm_skip(session_key, True)
+        self.task_manager.clear_unconfirmed_power_cost(session_key)
+        return None
+
     def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
         """执行工具调用"""
         # 特殊处理 ask_user 工具（但仍需检查权限）
@@ -481,6 +597,10 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             error_msg = f"工具 {tool_name} 不在允许列表中"
             logger.warning(f"{self.agent_id}: {error_msg}")
             return {"error": error_msg}
+
+        blocked = self._gate_computing_power(tool_name, tool_args or {})
+        if blocked is not None:
+            return blocked
         
         try:
             result = self.tool_executor.execute_tool(

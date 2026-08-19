@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 _SELECT_COLS = """id, vendor_id, model_id, created_at,
                input_token_threshold, out_token_threshold as output_token_threshold,
-               cache_read_threshold, raw_token_threshold, commission_rate"""
+               cache_read_threshold, raw_token_threshold, commission_rate, time_period"""
 
 
 def _to_float_rate(value) -> float:
@@ -35,6 +35,7 @@ def _row_to_vendor_model(row: dict) -> "VendorModel":
         cache_read_threshold=row.get('cache_read_threshold'),
         raw_token_threshold=row.get('raw_token_threshold'),
         commission_rate=_to_float_rate(row.get('commission_rate')),
+        time_period=row.get('time_period') or 'normal',
     )
 
 
@@ -52,6 +53,7 @@ class VendorModel:
         cache_read_threshold: Optional[int] = None,
         raw_token_threshold: Optional[int] = None,
         commission_rate: float = 0.0,
+        time_period: str = 'normal',
     ):
         self.id = id
         self.vendor_id = vendor_id
@@ -63,6 +65,8 @@ class VendorModel:
         self.cache_read_threshold = cache_read_threshold
         self.raw_token_threshold = raw_token_threshold
         self.commission_rate = float(commission_rate or 0.0)
+        # 计费时段：normal=不分峰谷(向后兼容), peak=高峰, off_peak=空闲
+        self.time_period = time_period or 'normal'
 
 
 class VendorModelModel:
@@ -77,17 +81,19 @@ class VendorModelModel:
         cache_read_threshold: Optional[int] = None,
         raw_token_threshold: Optional[int] = None,
         commission_rate: float = 0.0,
+        time_period: str = 'normal',
     ) -> int:
         """创建供应商模型配置"""
         sql = """INSERT INTO vendor_model
                (vendor_id, model_id, input_token_threshold, out_token_threshold,
-                cache_read_threshold, raw_token_threshold, commission_rate)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)"""
+                cache_read_threshold, raw_token_threshold, commission_rate, time_period)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"""
         try:
             rate = float(commission_rate or 0.0)
+            period = time_period or 'normal'
             return execute_insert(sql, (
                 vendor_id, model_id, input_threshold, output_threshold,
-                cache_read_threshold, raw_token_threshold, rate,
+                cache_read_threshold, raw_token_threshold, rate, period,
             ))
         except Exception as e:
             logger.error(f"Failed to create vendor model: {e}")
@@ -133,18 +139,20 @@ class VendorModelModel:
         cache_read_threshold: Optional[int] = None,
         raw_token_threshold: Optional[int] = None,
         commission_rate: Optional[float] = None,
+        time_period: str = 'normal',
     ) -> bool:
-        """更新阈值与抽成配置"""
+        """更新阈值、抽成与时段配置"""
         sql = """UPDATE vendor_model
                SET input_token_threshold = %s, out_token_threshold = %s,
                    cache_read_threshold = %s, raw_token_threshold = %s,
-                   commission_rate = %s
+                   commission_rate = %s, time_period = %s
                WHERE id = %s"""
         try:
             rate = 0.0 if commission_rate is None else float(commission_rate)
+            period = time_period or 'normal'
             rows = execute_update(sql, (
                 input_threshold, output_threshold, cache_read_threshold,
-                raw_token_threshold, rate, id,
+                raw_token_threshold, rate, period, id,
             ))
             return rows > 0
         except Exception as e:
@@ -155,28 +163,44 @@ class VendorModelModel:
     def get_by_vendor_model_for_billing(
         vendor_id: int,
         model_id: int,
-        raw_input_token: int
+        raw_input_token: int,
+        time_period: str = 'normal',
     ) -> Optional[VendorModel]:
         """
-        根据 raw_input_token 获取合适的计费配置（分段计费）
+        根据 raw_input_token + 计费时段 获取合适的计费配置（分段 + 峰谷计费）
 
         选择规则：
-        1. 优先选择 raw_token_threshold >= raw_input_token 的记录中 raw_token_threshold 最小的
-        2. 如果没有匹配，选择 raw_token_threshold 为 NULL 的记录（无上限档位）
+        1. 候选集：raw_token_threshold >= raw_input_token 的记录，或 raw_token_threshold 为 NULL 的兜底档
+        2. 时段优先级（三级兜底，确保总能选到档，绝不漏扣）：
+           a. 与传入 time_period 完全一致的档位（peak/off_peak 精确匹配）
+           b. time_period='normal' 的档位（不分峰谷，向后兼容）
+           c. 其余时段档位（最终兜底，避免配错时漏扣）
+        3. 同一时段优先级内，raw_token_threshold 升序，有界档优先于无上限(NULL)档
         """
+        period = time_period or 'normal'
         sql = f"""SELECT {_SELECT_COLS}
                FROM vendor_model
                WHERE vendor_id = %s AND model_id = %s
                  AND (raw_token_threshold >= %s OR raw_token_threshold IS NULL)
-               ORDER BY raw_token_threshold IS NULL, raw_token_threshold ASC
+               ORDER BY
+                 CASE time_period
+                   WHEN %s THEN 0      /* 传入时段最优先 */
+                   WHEN 'normal' THEN 1 /* normal 次之（向后兼容） */
+                   ELSE 2               /* 其余时段兜底 */
+                 END,
+                 raw_token_threshold IS NULL,
+                 raw_token_threshold ASC
                LIMIT 1"""
         try:
-            row = execute_query(sql, (vendor_id, model_id, raw_input_token), fetch_one=True)
+            row = execute_query(
+                sql, (vendor_id, model_id, raw_input_token, period), fetch_one=True
+            )
             return _row_to_vendor_model(row) if row else None
         except Exception as e:
             logger.error(
                 f"Failed to get vendor model for billing "
-                f"(vendor:{vendor_id}, model:{model_id}, raw_input:{raw_input_token}): {e}"
+                f"(vendor:{vendor_id}, model:{model_id}, raw_input:{raw_input_token}, "
+                f"period:{period}): {e}"
             )
             raise
 
@@ -219,15 +243,17 @@ class VendorModelModel:
         """
         按 model_id 列出所有计费档位（含供应商名称）。
 
-        排序：vendor_id ASC, raw_token_threshold ASC（NULL 最后）
+        排序：vendor_id ASC, time_period ASC(normal/off_peak/peak),
+             raw_token_threshold ASC（NULL 最后）
         """
         sql = """SELECT vm.id, vm.vendor_id, v.vendor_name, vm.model_id, vm.created_at,
                vm.input_token_threshold, vm.out_token_threshold, vm.cache_read_threshold,
-               vm.raw_token_threshold, vm.commission_rate
+               vm.raw_token_threshold, vm.commission_rate, vm.time_period
                FROM vendor_model vm
                LEFT JOIN vendor v ON v.id = vm.vendor_id
                WHERE vm.model_id = %s
                ORDER BY vm.vendor_id ASC,
+                        vm.time_period ASC,
                         (vm.raw_token_threshold IS NULL) ASC,
                         vm.raw_token_threshold ASC"""
         try:
@@ -236,6 +262,7 @@ class VendorModelModel:
             for row in (rows or []):
                 item = dict(row)
                 item['commission_rate'] = _to_float_rate(item.get('commission_rate'))
+                item['time_period'] = item.get('time_period') or 'normal'
                 result.append(item)
             return result
         except Exception as e:
@@ -296,17 +323,23 @@ class VendorModelModel:
         vendor_id: int,
         model_id: int,
         raw_token_threshold: Optional[int],
-        exclude_id: Optional[int] = None
+        exclude_id: Optional[int] = None,
+        time_period: str = 'normal',
     ) -> bool:
-        """检查同一 (vendor, model) 下是否已存在相同 raw_token_threshold 档位。"""
+        """检查同一 (vendor, model, raw_token_threshold, time_period) 下是否已存在档位。"""
+        period = time_period or 'normal'
         if raw_token_threshold is None:
             sql = """SELECT id FROM vendor_model
-                     WHERE vendor_id = %s AND model_id = %s AND raw_token_threshold IS NULL"""
-            params: list = [vendor_id, model_id]
+                     WHERE vendor_id = %s AND model_id = %s
+                       AND raw_token_threshold IS NULL
+                       AND time_period = %s"""
+            params: list = [vendor_id, model_id, period]
         else:
             sql = """SELECT id FROM vendor_model
-                     WHERE vendor_id = %s AND model_id = %s AND raw_token_threshold = %s"""
-            params = [vendor_id, model_id, raw_token_threshold]
+                     WHERE vendor_id = %s AND model_id = %s
+                       AND raw_token_threshold = %s
+                       AND time_period = %s"""
+            params = [vendor_id, model_id, raw_token_threshold, period]
         if exclude_id is not None:
             sql += " AND id <> %s"
             params.append(exclude_id)
@@ -317,7 +350,7 @@ class VendorModelModel:
         except Exception as e:
             logger.error(
                 f"Failed to check tier existence (vendor:{vendor_id}, model:{model_id}, "
-                f"raw:{raw_token_threshold}): {e}"
+                f"raw:{raw_token_threshold}, period:{period}): {e}"
             )
             raise
 
@@ -356,6 +389,7 @@ CREATE TABLE IF NOT EXISTS `vendor_model` (
   `cache_read_threshold` int DEFAULT NULL COMMENT '缓存读取计费率：多少个cache_read消耗1点算力', -- 1算力=0.04元
   `raw_token_threshold` int DEFAULT NULL COMMENT '分段边界：当raw_input_token<=此值时使用本档计费率，NULL表示无上限',
   `commission_rate` decimal(5,4) NOT NULL DEFAULT 0 COMMENT '抽成比例 0~1，计费时算力乘以 (1+commission_rate)',
+  `time_period` ENUM('normal','peak','off_peak') NOT NULL DEFAULT 'normal' COMMENT '计费时段：normal=不分峰谷, peak=高峰, off_peak=空闲',
   PRIMARY KEY (`id`) USING BTREE,
   KEY `vendor_id_model_id` (`vendor_id`,`model_id`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;

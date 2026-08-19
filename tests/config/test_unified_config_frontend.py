@@ -546,5 +546,160 @@ class TestGetFrontendConfigStructure(unittest.TestCase):
             self.assertIn(provider, config['providers'], f"Missing provider: {provider}")
 
 
+class TestVideoCloneDriverKeys(unittest.TestCase):
+    """营销视频克隆白名单 VIDEO_CLONE_DRIVER_KEYS"""
+
+    def setUp(self):
+        from config.unified_config import UnifiedConfigRegistry
+        UnifiedConfigRegistry._configs.clear()
+        UnifiedConfigRegistry._id_map.clear()
+        UnifiedConfigRegistry._implementations.clear()
+        from config.unified_config import init_unified_config
+        init_unified_config()
+
+    def tearDown(self):
+        from config.unified_config import UnifiedConfigRegistry
+        UnifiedConfigRegistry._configs.clear()
+        UnifiedConfigRegistry._id_map.clear()
+        UnifiedConfigRegistry._implementations.clear()
+
+    def test_seedance_2_5_is_in_video_clone_allowlist(self):
+        from config.unified_config import VIDEO_CLONE_DRIVER_KEYS, DriverKey
+
+        self.assertIn(DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        self.assertIn(DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        self.assertIn(DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        self.assertIn(DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        self.assertIn(DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        self.assertNotIn(DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+
+    def test_frontend_dict_supports_video_clone_flag(self):
+        from config.unified_config import UnifiedConfigRegistry
+
+        seedance_25 = UnifiedConfigRegistry.get_by_key('seedance_2_5_image_to_video')
+        self.assertIsNotNone(seedance_25)
+        self.assertTrue(seedance_25.to_frontend_dict()['supports_video_clone'])
+
+        kling = UnifiedConfigRegistry.get_by_key('kling_image_to_video')
+        self.assertIsNotNone(kling)
+        self.assertFalse(kling.to_frontend_dict()['supports_video_clone'])
+
+    def test_seedance_2_5_needs_face_mask(self):
+        from config.unified_config import (
+            VIDEO_CLONE_DRIVER_KEYS,
+            SEEDANCE_FACE_MASK_DRIVER_KEYS,
+            DriverKey,
+            UnifiedConfigRegistry,
+        )
+
+        self.assertIn(DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO, SEEDANCE_FACE_MASK_DRIVER_KEYS)
+        self.assertIn(DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+
+        seedance_25 = UnifiedConfigRegistry.get_by_key('seedance_2_5_image_to_video')
+        self.assertIsNotNone(seedance_25)
+        frontend = seedance_25.to_frontend_dict()
+        self.assertTrue(frontend['needs_face_mask'])
+        self.assertTrue(frontend['supports_video_clone'])
+        self.assertIn(
+            'seedance_2_5_huimengi_v1',
+            seedance_25.implementations,
+        )
+
+    def test_seedance_2_5_supports_1080p(self):
+        from config.unified_config import (
+            UnifiedConfigRegistry,
+            VideoResolution,
+            DriverImplementation,
+            SEEDANCE_2_5_1080P_PRICE_MULTIPLIER,
+            SEEDANCE_2_5_VIDEO_RESOLUTIONS,
+        )
+
+        self.assertAlmostEqual(SEEDANCE_2_5_1080P_PRICE_MULTIPLIER, 1.78)
+        resolution_values = [item['value'] for item in SEEDANCE_2_5_VIDEO_RESOLUTIONS]
+        self.assertEqual(
+            resolution_values,
+            [VideoResolution.P480, VideoResolution.P720, VideoResolution.P1080],
+        )
+        self.assertNotIn(VideoResolution.P4K, resolution_values)
+
+        seedance_25 = UnifiedConfigRegistry.get_by_key('seedance_2_5_image_to_video')
+        self.assertIsNotNone(seedance_25)
+        modifier = next(
+            (m for m in seedance_25.power_modifiers if m.attribute == 'resolution'),
+            None,
+        )
+        self.assertIsNotNone(modifier)
+        self.assertAlmostEqual(modifier.values[VideoResolution.P1080], 1.78)
+
+        for impl_name in (
+            DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
+            DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,
+        ):
+            impl = UnifiedConfigRegistry.get_implementation(impl_name)
+            self.assertIsNotNone(impl)
+            self.assertIn(
+                VideoResolution.P1080,
+                [item['value'] for item in impl.supported_video_resolutions],
+            )
+
+    def test_minimax_h3_reference_supports_video_clone(self):
+        from config.unified_config import UnifiedConfigRegistry
+
+        h3_r2v = UnifiedConfigRegistry.get_by_key('minimax_h3_reference_to_video')
+        self.assertIsNotNone(h3_r2v)
+        frontend = h3_r2v.to_frontend_dict()
+        self.assertTrue(frontend['supports_video_clone'])
+        self.assertFalse(frontend['needs_face_mask'])
+
+        h3 = UnifiedConfigRegistry.get_by_key('minimax_h3_image_to_video')
+        self.assertIsNotNone(h3)
+        self.assertFalse(h3.to_frontend_dict()['supports_video_clone'])
+
+    def test_resolve_video_clone_maps_minimax_h3_first_last_to_r2v(self):
+        from config.unified_config import (
+            UnifiedConfigRegistry,
+            resolve_video_clone_task_config,
+            TaskTypeId,
+        )
+
+        mapped = resolve_video_clone_task_config(TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO)
+        self.assertIsNotNone(mapped)
+        self.assertEqual(mapped.key, 'minimax_h3_reference_to_video')
+
+        seedance = UnifiedConfigRegistry.get_by_key('seedance_2_5_image_to_video')
+        kept = resolve_video_clone_task_config(seedance.id)
+        self.assertEqual(kept.id, seedance.id)
+
+    def test_pick_request_snapshot_prefers_seedance_over_default_h3(self):
+        from config.unified_config import (
+            UnifiedConfigRegistry,
+            pick_request_video_clone_snapshot,
+        )
+
+        seedance = UnifiedConfigRegistry.get_by_key('seedance_2_5_image_to_video')
+        h3_r2v = UnifiedConfigRegistry.get_by_key('minimax_h3_reference_to_video')
+        picked = pick_request_video_clone_snapshot(
+            {
+                'video.image_to_video': {
+                    'model_source': 'request',
+                    'task_id': seedance.id,
+                    'model_key': seedance.key,
+                    'model_name': seedance.name,
+                },
+                'video.reference_to_video': {
+                    'model_source': 'preference',
+                    'task_id': h3_r2v.id,
+                    'model_key': h3_r2v.key,
+                    'model_name': h3_r2v.name,
+                },
+            },
+            'reference_to_video',
+        )
+        self.assertIsNotNone(picked)
+        self.assertEqual(picked['task_id'], seedance.id)
+        self.assertEqual(picked['model_key'], seedance.key)
+
+
 if __name__ == '__main__':
     unittest.main()
+

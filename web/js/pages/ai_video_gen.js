@@ -55,6 +55,10 @@
         if (!this.configLoaded) return [];
         return TaskConfig.getModelOptionsForCategory('text_to_video');
       },
+      videoTrack() {
+        if (!window.ModelCatalog) return 'custom';
+        return window.ModelCatalog.inferTrack('video.text_to_video', this.videoModel, null);
+      },
       modelOptions() {
         if (!this.currentModel) return [
           { value: '9:16', label: '竖屏' },
@@ -140,6 +144,13 @@
     },
 
     methods: {
+      selectVideoTrack(track) {
+        if (!window.ModelCatalog) return;
+        const hit = window.ModelCatalog.findTaskByTrack(
+          this.videoModelOptions, 'video.text_to_video', null, track
+        );
+        if (hit) this.videoModel = hit.value;
+      },
       async fetchModelConfigs() {
         try {
           await TaskConfig.load();
@@ -155,7 +166,10 @@
           const videoModelOptions = TaskConfig.getModelOptionsForCategory('text_to_video');
           console.log('Available text_to_video models:', videoModelOptions);
           if (videoModelOptions.length > 0) {
-            this.videoModel = videoModelOptions[0].value;
+            const valueOpt = window.ModelCatalog
+              ? window.ModelCatalog.findTaskByTrack(videoModelOptions, 'video.text_to_video', null, 'value')
+              : null;
+            this.videoModel = (valueOpt && valueOpt.value) || videoModelOptions[0].value;
             console.log('Default video model set to:', this.videoModel);
 
             // Set default ratio and duration based on the first model
@@ -617,6 +631,10 @@
 
           <div class="field">
             <label class="label">{{ $t('model_selection') }}</label>
+            <div class="model-track-toggle" v-if="videoModelOptions.length">
+              <button type="button" class="model-track-btn" :class="{ 'is-active': videoTrack === 'value' }" @click="selectVideoTrack('value')">性价比</button>
+              <button type="button" class="model-track-btn" :class="{ 'is-active': videoTrack === 'quality' }" @click="selectVideoTrack('quality')">效果</button>
+            </div>
             <select class="input" v-model="videoModel">
               <option value="">-- {{ $t('model_selection') }} --</option>
               <option v-for="opt in videoModelOptions" :key="opt.value" :value="opt.value">

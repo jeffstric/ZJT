@@ -283,6 +283,22 @@ class TestBuildCreateRequest(unittest.TestCase):
         self.assertEqual(len(req['json']['metadata']['reference_images']), 2)
         self.assertNotIn('first_frame_image', req['json']['metadata'])
 
+    def test_pure_audio_routes_to_multi_reference(self):
+        """纯音频（无图无视频）：驱动兜底改判 multi_reference，metadata 含 reference_audios，
+        不含 reference_images / first_frame_image（覆盖 CLI、storyboard 等非 server 入口）"""
+        from task.visual_drivers import seedance_kkidc_v1_driver as drv_mod
+        driver = self._driver()
+        ai_tool = _make_ai_tool(prompt='纯音频测试', image_path=None, image_mode_declared=False,
+                                audio_path='http://example.com/a.mp3')
+        with patch.object(drv_mod, 'upload_media_to_cdn_sync',
+                          return_value=(True, 'http://cdn.example.com/a.mp3', None)):
+            req = driver.build_create_request(ai_tool)
+
+        metadata = req['json']['metadata']
+        self.assertEqual(metadata['reference_audios'], ['http://cdn.example.com/a.mp3'])
+        self.assertNotIn('reference_images', metadata)
+        self.assertNotIn('first_frame_image', metadata)
+
 
 # ============================================================
 # 响应校验测试

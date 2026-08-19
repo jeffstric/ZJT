@@ -685,5 +685,243 @@ class TestBuildContextFromTaskRecord(unittest.TestCase):
         self.assertEqual(context, {})
 
 
+class TestVideoEditBillingPredicate(unittest.TestCase):
+    """测试 is_video_edit_billing_task 谓词（驱动层与计价层共用的唯一判定入口）"""
+
+    def test_seedance_2_5_with_video_hits(self):
+        from utils.computing_power import is_video_edit_billing_task
+        from config.unified_config import TaskTypeId
+
+        self.assertTrue(
+            is_video_edit_billing_task(TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO, 'http://x/v.mp4')
+        )
+        self.assertTrue(
+            is_video_edit_billing_task(TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO, 'a.mp4,b.mp4')
+        )
+
+    def test_empty_video_path_misses(self):
+        from utils.computing_power import is_video_edit_billing_task
+        from config.unified_config import TaskTypeId
+
+        self.assertFalse(is_video_edit_billing_task(TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO, None))
+        self.assertFalse(is_video_edit_billing_task(TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO, ''))
+        self.assertFalse(is_video_edit_billing_task(TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO, '   '))
+
+    def test_other_task_types_miss(self):
+        """Seedance 2.0 等非视频编辑计费任务不命中，即使带参考视频"""
+        from utils.computing_power import is_video_edit_billing_task
+
+        self.assertFalse(is_video_edit_billing_task(23, 'http://x/v.mp4'))
+        self.assertFalse(is_video_edit_billing_task(31, 'http://x/v.mp4'))
+
+
+class TestResolveVideoEditBillingDuration(unittest.TestCase):
+    """测试 resolve_video_edit_billing_duration（计费时长唯一入口）"""
+
+    def setUp(self):
+        """注册 id=36 的测试任务（supported_durations=[5,10,30]）供 clamp 测试"""
+        from config.unified_config import (
+            UnifiedConfigRegistry,
+            UnifiedTaskConfig,
+            TaskCategory,
+            TaskProvider,
+        )
+
+        UnifiedConfigRegistry._configs.clear()
+        UnifiedConfigRegistry._id_map.clear()
+        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.register(
+            UnifiedTaskConfig(
+                id=36,
+                key='seedance_2_5_test',
+                name='Seedance 2.5 测试',
+                category=TaskCategory.IMAGE_TO_VIDEO,
+                provider=TaskProvider.VOLCENGINE,
+                driver_name='SEEDANCE_2_5_TEST_DRIVER',
+                supported_durations=[5, 10, 30],
+                default_duration=5,
+                sort_order=10,
+            )
+        )
+
+    def tearDown(self):
+        from config.unified_config import UnifiedConfigRegistry
+
+        UnifiedConfigRegistry._configs.clear()
+        UnifiedConfigRegistry._id_map.clear()
+        UnifiedConfigRegistry._implementations.clear()
+
+    @patch('utils.video_compressor.get_reference_videos_total_duration_sync')
+    def test_non_billing_task_returns_user_duration(self, mock_probe):
+        """非视频编辑任务（2.0）：原样返回用户时长，不触发探测"""
+        from utils.computing_power import (
+            resolve_video_edit_billing_duration,
+            BILLING_DURATION_SOURCE_USER_INPUT,
+        )
+
+        duration, source = resolve_video_edit_billing_duration(23, 'http://x/v.mp4', 8)
+
+        self.assertEqual((duration, source), (8, BILLING_DURATION_SOURCE_USER_INPUT))
+        mock_probe.assert_not_called()
+
+    @patch('utils.video_compressor.get_reference_videos_total_duration_sync')
+    def test_billing_task_without_video_returns_user_duration(self, mock_probe):
+        """视频编辑计费任务但无参考视频：原样返回用户时长"""
+        from utils.computing_power import (
+            resolve_video_edit_billing_duration,
+            BILLING_DURATION_SOURCE_USER_INPUT,
+        )
+
+        duration, source = resolve_video_edit_billing_duration(36, None, 8)
+
+        self.assertEqual((duration, source), (8, BILLING_DURATION_SOURCE_USER_INPUT))
+        mock_probe.assert_not_called()
+
+    @patch('utils.video_compressor.get_reference_videos_total_duration_sync', return_value=7.4)
+    def test_total_duration_ceiled_to_next_second(self, mock_probe):
+        """总时长 7.4s 向上取整到 8s（零头按 1 秒计）"""
+        from utils.computing_power import (
+            resolve_video_edit_billing_duration,
+            BILLING_DURATION_SOURCE_REFERENCE_VIDEO,
+        )
+
+        duration, source = resolve_video_edit_billing_duration(36, 'http://x/v.mp4', 5)
+
+        self.assertEqual((duration, source), (8, BILLING_DURATION_SOURCE_REFERENCE_VIDEO))
+
+    @patch('utils.video_compressor.get_reference_videos_total_duration_sync', return_value=10.05)
+    def test_fractional_second_ceiled(self, mock_probe):
+        """10.05s 向上取整到 11s"""
+        from utils.computing_power import resolve_video_edit_billing_duration
+
+        duration, _ = resolve_video_edit_billing_duration(36, 'http://x/v.mp4', 5)
+
+        self.assertEqual(duration, 11)
+
+    @patch('utils.video_compressor.get_reference_videos_total_duration_sync', return_value=10.5)
+    def test_exact_half_second_ceiled(self, mock_probe):
+        """恰好 10.5s 向上取整到 11s（不做银行家舍入）"""
+        from utils.computing_power import resolve_video_edit_billing_duration
+
+        duration, _ = resolve_video_edit_billing_duration(36, 'http://x/v.mp4', 5)
+
+        self.assertEqual(duration, 11)
+
+    @patch('utils.video_compressor.get_reference_videos_total_duration_sync', return_value=10.0)
+    def test_exact_integer_not_overcharged(self, mock_probe):
+        """恰好 10.0s 计 10s（1µs 容差防止浮点噪声多计 1 秒）"""
+        from utils.computing_power import resolve_video_edit_billing_duration
+
+        duration, _ = resolve_video_edit_billing_duration(36, 'http://x/v.mp4', 5)
+
+        self.assertEqual(duration, 10)
+
+    @patch('utils.video_compressor.get_reference_videos_total_duration_sync', return_value=12.6)
+    def test_total_duration_ceiled_beyond_half(self, mock_probe):
+        """总时长 12.6s 向上取整到 13s"""
+        from utils.computing_power import resolve_video_edit_billing_duration
+
+        duration, _ = resolve_video_edit_billing_duration(36, 'http://x/v.mp4', 5)
+
+        self.assertEqual(duration, 13)
+
+    @patch('utils.video_compressor.get_reference_videos_total_duration_sync', return_value=3.2)
+    def test_total_duration_clamped_to_min(self, mock_probe):
+        """总时长低于最小档位时 clamp 到 5s"""
+        from utils.computing_power import resolve_video_edit_billing_duration
+
+        duration, _ = resolve_video_edit_billing_duration(36, 'http://x/v.mp4', 5)
+
+        self.assertEqual(duration, 5)
+
+    @patch('utils.video_compressor.get_reference_videos_total_duration_sync', return_value=65.0)
+    def test_total_duration_clamped_to_max(self, mock_probe):
+        """总时长超过最大档位时 clamp 到 30s"""
+        from utils.computing_power import resolve_video_edit_billing_duration
+
+        duration, _ = resolve_video_edit_billing_duration(36, 'http://x/v.mp4', 5)
+
+        self.assertEqual(duration, 30)
+
+    @patch('utils.video_compressor.get_reference_videos_total_duration_sync', return_value=None)
+    def test_probe_failure_falls_back_to_user_duration(self, mock_probe):
+        """探测失败回退用户输入时长（计费链路永不阻塞）"""
+        from utils.computing_power import (
+            resolve_video_edit_billing_duration,
+            BILLING_DURATION_SOURCE_USER_INPUT,
+        )
+
+        duration, source = resolve_video_edit_billing_duration(36, 'http://x/v.mp4', 12)
+
+        self.assertEqual((duration, source), (12, BILLING_DURATION_SOURCE_USER_INPUT))
+
+    @patch('utils.video_compressor.get_reference_videos_total_duration_sync')
+    def test_none_user_duration_defaults_to_5(self, mock_probe):
+        """非命中任务且用户时长为 None 时兜底 5s"""
+        from utils.computing_power import resolve_video_edit_billing_duration
+
+        duration, source = resolve_video_edit_billing_duration(23, None, None)
+
+        self.assertEqual(duration, 5)
+
+
+class TestGetReferenceVideosTotalDuration(unittest.TestCase):
+    """测试 utils.video_compressor.get_reference_videos_total_duration_sync"""
+
+    @patch('utils.video_compressor._probe_video_duration_seconds_sync')
+    @patch('utils.video_compressor._resolve_local_video_path')
+    def test_multiple_videos_summed(self, mock_resolve, mock_probe):
+        from utils.video_compressor import get_reference_videos_total_duration_sync
+
+        mock_resolve.side_effect = lambda p, root: (f'C:/tmp/{p}', [], None)
+        mock_probe.side_effect = [7.5, 4.2]
+
+        total = get_reference_videos_total_duration_sync('a.mp4,b.mp4')
+
+        self.assertAlmostEqual(total, 11.7)
+        self.assertEqual(mock_probe.call_count, 2)
+
+    @patch('utils.video_compressor._probe_video_duration_seconds_sync')
+    @patch('utils.video_compressor._resolve_local_video_path')
+    def test_any_probe_failure_returns_none(self, mock_resolve, mock_probe):
+        """任一视频探测失败 → 返回 None（调用方回退用户时长）"""
+        from utils.video_compressor import get_reference_videos_total_duration_sync
+
+        mock_resolve.side_effect = lambda p, root: (f'C:/tmp/{p}', [], None)
+        mock_probe.side_effect = [7.5, None]
+
+        self.assertIsNone(get_reference_videos_total_duration_sync('a.mp4,b.mp4'))
+
+    @patch('utils.video_compressor._resolve_local_video_path')
+    def test_unresolvable_path_returns_none(self, mock_resolve):
+        from utils.video_compressor import get_reference_videos_total_duration_sync
+
+        mock_resolve.return_value = (None, [], '文件不存在')
+
+        self.assertIsNone(get_reference_videos_total_duration_sync('a.mp4'))
+
+    def test_empty_csv_returns_none(self):
+        from utils.video_compressor import get_reference_videos_total_duration_sync
+
+        self.assertIsNone(get_reference_videos_total_duration_sync(None))
+        self.assertIsNone(get_reference_videos_total_duration_sync(''))
+        self.assertIsNone(get_reference_videos_total_duration_sync(' , '))
+
+    @patch('utils.video_compressor.os.path.exists', return_value=True)
+    @patch('utils.video_compressor.os.remove')
+    @patch('utils.video_compressor._probe_video_duration_seconds_sync', return_value=6.0)
+    @patch('utils.video_compressor._resolve_local_video_path')
+    def test_downloaded_temp_files_cleaned(self, mock_resolve, mock_probe, mock_remove, mock_exists):
+        """外部 URL 下载的临时文件在探测后必须被清理"""
+        from utils.video_compressor import get_reference_videos_total_duration_sync
+
+        mock_resolve.return_value = ('C:/tmp/dl_x.mp4', ['C:/tmp/dl_x.mp4'], None)
+
+        total = get_reference_videos_total_duration_sync('http://example.com/v.mp4')
+
+        self.assertAlmostEqual(total, 6.0)
+        mock_remove.assert_called_once_with('C:/tmp/dl_x.mp4')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -12,8 +12,11 @@
 | 22 | doubao-seedance-2-0-fast-260128 | `Seedance20FastVolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
 | 23 | doubao-seedance-2-0-260128 | `Seedance20VolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
 | 31 | doubao-seedance-2-0-mini-260615 | `Seedance20MiniVolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
+| 36 | doubao-seedance-2-5-260628 | `Seedance25VolcengineV1Driver` | first_last_frame, multi_reference | 支持（含纯音频） |
 
 > **Seedance 2.0 Mini**：价格为 Seedance 2.0 的一半，功能与 Seedance 2.0 一致。
+>
+> **Seedance 2.5**：接口协议与 2.0 系列完全一致（content 数组结构、role 取值、状态轮询），仅 `model` 名不同。额外支持：纯音频输入（无图无视频）、最多 30 张参考图 / 10 个参考视频 / 10 段参考音频、视频时长 [4,30]s。支持分辨率 480P / 720P / 1080P（不支持 4K），1080P 算力为 720P 的 1.78 倍。火山国内版实现方 `seedance_2_5_volcengine_v1` 的数字 ID 为 **68**，huimengi 网关实现方 `seedance_2_5_huimengi_v1` 为 **69**，均不可复用 MiniMax H3 参考生视频的 67。
 
 ## 720p 默认算力配置
 
@@ -33,6 +36,32 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 | 14 秒 | 439 | 345 | 220 |
 | 15 秒 | 454 | 357 | 227 |
 
+### Seedance 2.5 算力
+
+2.5 沿用与 2.0 相同的口径（720p、输入含视频且输入 15s 的最高成本），基于官方刊例价（单价 42 元/百万 token）推导：
+
+`tokens = 38880 × 输出秒 + 21600 × (15 − 4)`，`算力 = ceil(tokens × 42 ÷ 40000)`
+
+| 输出时长 | seedance-2.5 | | 输出时长 | seedance-2.5 |
+|---------:|-------------:|---|---------:|-------------:|
+| 5 秒 | 454 | | 18 秒 | 985 |
+| 6 秒 | 495 | | 19 秒 | 1026 |
+| 7 秒 | 536 | | 20 秒 | 1066 |
+| 8 秒 | 577 | | 21 秒 | 1107 |
+| 9 秒 | 617 | | 22 秒 | 1148 |
+| 10 秒 | 658 | | 23 秒 | 1189 |
+| 11 秒 | 699 | | 24 秒 | 1230 |
+| 12 秒 | 740 | | 25 秒 | 1271 |
+| 13 秒 | 781 | | 26 秒 | 1311 |
+| 14 秒 | 822 | | 27 秒 | 1352 |
+| 15 秒 | 862 | | 28 秒 | 1393 |
+| 16 秒 | 903 | | 29 秒 | 1434 |
+| 17 秒 | 944 | | 30 秒 | 1475 |
+
+> 2.5 支持 480P / 720P / 1080P。480P 通过 `SEEDANCE_480P_PRICE_MULTIPLIER` 换算（与 2.0 共用）；1080P 通过 `SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78` 换算。
+>
+> **视频编辑（2.5 + 参考视频）计费时长**：输出时长由参考视频决定（API 下发 `duration=-1`），计费「输出秒」取**参考视频总时长**（多视频求和 → 向上取整 → clamp 5–30，零头按 1 秒计），而非用户输入时长；探测失败回退用户输入。统一入口 `utils/computing_power.py::resolve_video_edit_billing_duration`，见下文「计费口径」说明。
+
 ## 特性
 
 - **文生视频**：支持纯文本生成视频（无任何图片/音视频输入时自动启用，content 仅含 `text`）
@@ -41,6 +70,7 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 - **多参考图**：支持 `multi_reference` 模式下多张参考图（role: reference_image）
 - **参考视频**：支持传入参考视频（role: reference_video）
 - **参考音频**：支持传入参考音频（role: reference_audio）
+- **纯音频输入**：无图片、无视频、仅参考音频时自动走多参考模式（详见下文「纯音频输入」），Seedance 2.0 系列与 2.5 均支持
 - **图片压缩上传**：本地图片自动压缩后上传至 CDN
 - **参考视频规范化**：提交前会将 WebM/MKV 参考视频转为 H.264/AAC MP4，避免浏览器 `MediaRecorder` 产物缺少 duration 元数据导致火山输入适配器失败
 - **图片人脸网格预处理**：Seedance 2.0 系列图片输入使用自适应红色矩形网格降低人脸敏感度
@@ -58,6 +88,8 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 - **视频输入**：仍使用原有黑色遮罩处理，本次未修改。
 
 图片网格算法由 `enterprise/services/face_mask/` 提供，主仓库只保留 Pipeline、RunningHub 驱动和兼容调用门面。商业版启动时通过 `enterprise.register()` 注册 Provider；社区版不会创建该处理步骤。
+
+**黑框还原句自动追加**：提示词基线（智能体 / 用户生成）不写「将人脸位置的黑色方框修改为真人人脸」句；`build_create_request` 在遮盖 pipeline step 已完成（素材实际带黑框 / 网格）时，通过 `ensure_face_mask_hint`（`task/visual_drivers/face_mask_prompt.py`）自动在提示词末尾追加该句（幂等）。提示词与素材状态绑定而非与实现方绑定，供应商轮换（跨实现方重试）下始终一致；huimengi 实现方跳过本地遮盖，对应驱动反向执行 `strip_face_mask_hint` 移除该句。
 
 ## 生成视频的人脸网格前缀自动裁剪
 
@@ -111,6 +143,35 @@ Seedance API 使用 content 数组传递输入：
 ```
 
 > 文生视频任务由文生视频接口 `/api/ai-app-run` 创建（不带 `image_mode`）。驱动在检测到无任何图片/音视频输入、且 `extra_config` 未声明 `image_mode` 时自动走文生视频分支；图生视频接口 `/api/ai-app-run-image` 因必带 `image_mode`，永远不会被误判。
+
+> `ratio` 只在文生视频、多参考（multi_reference）模式下下发。首帧/首尾帧模式（含未知模式降级为首尾帧）输出比例跟随首帧图片，火山会拒绝显式 `ratio`（400 `InvalidParameter.TaskTypeConstraint`），驱动构建 payload 时自动省略该字段。
+>
+> **Seedance 2.5 参考视频（视频克隆/编辑）**：火山会按提示词把任务判成 video editing，此时 `ratio` 必须为 `adaptive`、`duration` 必须为 `-1`，输出画幅和时长跟随参考视频（参考视频须 4–30 秒）。驱动命中视频编辑判定时显式下发 `omni_reference_task_type: "edit"`（常量 `config/constant.py::OMNI_REFERENCE_TASK_TYPE_EDIT`）并自动改写 `ratio`/`duration`，接口提交时即提前校验参数限制，消除 auto 自动判定错型导致的异步报错（`InvalidParameter.TaskTypeConstraint` / `TaskTypeMismatch`）；普通文生/图生仍下发用户选择的比例和时长，且不下发 `omni_reference_task_type`。
+>
+> **计费口径（视频编辑）**：视频编辑任务的输出时长由参考视频决定，算力按**参考视频总时长**计，不再按用户输入时长。判定与解析的唯一入口为 `utils/computing_power.py::resolve_video_edit_billing_duration`（内部先调共享谓词 `is_video_edit_billing_task`，命中任务集合见 `config/constant.py::VIDEO_EDIT_BILLING_TASK_TYPES`，驱动层下发 edit 与计价层共用，禁止调用方自写条件）：ffprobe 探测参考视频总时长 → 向上取整到整数秒（不足 1 秒的零头按 1 秒计，含 1µs 浮点容差防整数秒误加）→ clamp 到任务 `supported_durations` 区间（2.5 为 5–30）；探测失败回退用户输入时长。扣费（`/api/ai-app-run-image`，探测经 `asyncio.to_thread` 包装）、`ai_tools.duration` 落库、企业工具估算（`enterprise/tools/video_tools.py`）、Agent 算力确认估算（`power_confirm.py`）均调用同一函数；`extra_config` 落库 `user_duration_seconds` 与 `billing_duration_source`（`reference_video`/`user_input`）供审计。已知局限：缺 duration 元数据的 WebM/MKV 探测失败，按用户输入时长计费。退费不受影响：第一优先级按扣费流水原额退还（免疫供应商切换/价格热更新），兜底重算用 `ai_tools.duration`（与扣费同源）。
+
+## 纯音频输入
+
+Seedance 2.0 系列与 2.5 支持「无图片、无视频、仅参考音频」的全模态参考输入（2.5 还支持单独传入音频）。涉及三层配合：
+
+0. **前端放行**（`/image-to-video` 页面）：多参考模式下，无图片但有参考音频/视频且模型 `supports_ref_audio_video=True` 时（`isPureMediaRef`），`canSubmit`/`handleSubmit` 允许 0 张图提交，不再弹「请先上传至少一张图片」。
+1. **server.py 放行**（`/api/ai-app-run-image`）：当前端默认 `image_mode=first_last_frame` 且无图片、仅有音频/视频、模型 `supports_ref_audio_video=True` 时，自动改判为 `multi_reference` 放行，避免被「首尾帧需要至少1张图片」拦截。
+2. **驱动兜底**（`build_create_request`）：检测到「有参考音频/视频、无任何图片、非文生视频」时，强制 `img_mode = multi_reference`，确保 `MULTI_REFERENCE` 分支下发 `reference_audio` / `reference_video`。覆盖 CLI、storyboard API 等不经过 server.py 重定向的入口。
+
+纯音频 content 示例（content 仅含 text + reference_audio，无任何 image_url）：
+
+```json
+{
+  "model": "doubao-seedance-2-5-260628",
+  "content": [
+    {"type": "text", "text": "用这段音频的节奏生成视频"},
+    {"type": "audio_url", "audio_url": {"url": "参考音频URL"}, "role": "reference_audio"}
+  ],
+  "duration": 5,
+  "ratio": "16:9",
+  "generate_audio": true
+}
+```
 
 ### 角色说明
 

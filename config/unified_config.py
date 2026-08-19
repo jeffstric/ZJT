@@ -73,6 +73,7 @@ class VideoResolution:
 SEEDANCE_480P_PRICE_MULTIPLIER = 200880 / 432000
 SEEDANCE_2_0_1080P_PRICE_MULTIPLIER = (972000 * 31) / (432000 * 28)
 SEEDANCE_2_0_4K_PRICE_MULTIPLIER = (3888000 * 16) / (432000 * 28)
+SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78
 
 # MiniMax H3 分辨率算力倍率（基价为 720P，480P 约为 720P 的 42%）
 MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
@@ -89,6 +90,13 @@ SEEDANCE_2_0_VIDEO_RESOLUTIONS = [
     {'value': VideoResolution.P720, 'label': VideoResolution.P720},
     {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
     {'value': VideoResolution.P4K, 'label': VideoResolution.P4K},
+]
+
+# Seedance 2.5 支持 480P / 720P / 1080P（不支持 4K）
+SEEDANCE_2_5_VIDEO_RESOLUTIONS = [
+    {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+    {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+    {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
 ]
 
 
@@ -538,9 +546,12 @@ class UnifiedTaskConfig:
         # 添加参考音频和视频支持标记
         result['supports_ref_audio_video'] = self.supports_ref_audio_video
 
-        # 是否走人脸遮盖预处理（seedance 2.0 系列），前端据此显隐「是否处理人脸」选项
+        # 是否走人脸遮盖预处理（seedance 2.0 / 2.5），前端据此显隐「是否处理人脸」选项
         # 单一事实来源：模块级 SEEDANCE_FACE_MASK_DRIVER_KEYS
         result['needs_face_mask'] = self.key in SEEDANCE_FACE_MASK_DRIVER_KEYS
+
+        # 是否允许营销视频克隆（单一事实来源：VIDEO_CLONE_DRIVER_KEYS）
+        result['supports_video_clone'] = self.key in VIDEO_CLONE_DRIVER_KEYS
 
         # 添加算力修饰符
         if self.power_modifiers:
@@ -868,12 +879,16 @@ class UnifiedConfigRegistry:
         except Exception:
             pass
 
+        from config.model_catalog import annotate_task_models, scene_catalog_map
+
+        tasks = annotate_task_models(tasks, None)
         return {
             'tasks': tasks,
             'categories': categories,
             'providers': providers,
             'runninghub_configured': runninghub_configured,
             'is_enterprise': is_enterprise,
+            'catalog': scene_catalog_map(),
         }
 
     @classmethod
@@ -1000,6 +1015,10 @@ class DriverImplementation:
 
     # MiniMax H3
     MINIMAX_H3_RUNNINGHUB_V1 = 'minimax_h3_runninghub_v1'
+    MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 'minimax_h3_reference_runninghub_v1'
+
+    # MiniMax H3 数字人
+    DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 'digital_human_minimax_h3_runninghub_v1'
 
     # Vidu
     VIDU_DEFAULT = 'vidu_default'
@@ -1013,6 +1032,7 @@ class DriverImplementation:
     SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 'seedance_2_0_fast_volcengine_v1'
     SEEDANCE_2_0_VOLCENGINE_V1 = 'seedance_2_0_volcengine_v1'
     SEEDANCE_2_0_MINI_VOLCENGINE_V1 = 'seedance_2_0_mini_volcengine_v1'
+    SEEDANCE_2_5_VOLCENGINE_V1 = 'seedance_2_5_volcengine_v1'
 
     # Volcengine Oversea (火山引擎海外版)
     SEEDREAM5_VOLCENGINE_OVERSEA_V1 = 'seedream5_volcengine_oversea_v1'
@@ -1029,6 +1049,7 @@ class DriverImplementation:
     SEEDANCE_2_0_FAST_HUIMENGI_V1 = 'seedance_2_0_fast_huimengi_v1'
     SEEDANCE_2_0_HUIMENGI_V1 = 'seedance_2_0_huimengi_v1'
     SEEDANCE_2_0_MINI_HUIMENGI_V1 = 'seedance_2_0_mini_huimengi_v1'
+    SEEDANCE_2_5_HUIMENGI_V1 = 'seedance_2_5_huimengi_v1'
 
     # GPT Image
     DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
@@ -1050,6 +1071,7 @@ class DriverImplementation:
     GROK_COMMON_SITE3_V1 = 'grok_common_site3_v1'
     GROK_COMMON_SITE4_V1 = 'grok_common_site4_v1'
     GROK_COMMON_SITE5_V1 = 'grok_common_site5_v1'
+    GROK_HUIMENGI_V1 = 'grok_huimengi_v1'
 
     # Happy Horse
     HAPPY_HORSE_DASHSCOPE_V1 = 'happy_horse_dashscope_v1'
@@ -1137,6 +1159,17 @@ class DriverImplementationId:
 
     # MiniMax H3
     MINIMAX_H3_RUNNINGHUB_V1 = 65
+    MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 67
+
+    # MiniMax H3 数字人
+    DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 66
+
+    # Seedance 2.5：不可与 MiniMax H3 参考生视频共用 67，否则落库后再反查会变成 H3 驱动
+    SEEDANCE_2_5_VOLCENGINE_V1 = 68
+    SEEDANCE_2_5_HUIMENGI_V1 = 69
+
+    # Grok huimengi 网关
+    GROK_HUIMENGI_V1 = 70
 
 
 # implementation 字符串到 ID 的映射
@@ -1191,6 +1224,7 @@ IMPLEMENTATION_TO_ID = {
     'grok_common_site4_v1': DriverImplementationId.GROK_COMMON_SITE4_V1,
     'grok_common_site5_v1': DriverImplementationId.GROK_COMMON_SITE5_V1,
     'grok_duomi_v1': DriverImplementationId.GROK_DUOMI_V1,
+    'grok_huimengi_v1': DriverImplementationId.GROK_HUIMENGI_V1,
     'happy_horse_dashscope_v1': DriverImplementationId.HAPPY_HORSE_DASHSCOPE_V1,
     'happy_horse_dashscope_r2v_v1': DriverImplementationId.HAPPY_HORSE_DASHSCOPE_R2V_V1,
     'happy_horse_dashscope_t2v_v1': DriverImplementationId.HAPPY_HORSE_DASHSCOPE_T2V_V1,
@@ -1204,7 +1238,11 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_fast_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_FAST_HUIMENGI_V1,
     'seedance_2_0_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_HUIMENGI_V1,
     'seedance_2_0_mini_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_MINI_HUIMENGI_V1,
+    'seedance_2_5_volcengine_v1': DriverImplementationId.SEEDANCE_2_5_VOLCENGINE_V1,
+    'seedance_2_5_huimengi_v1': DriverImplementationId.SEEDANCE_2_5_HUIMENGI_V1,
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
+    'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
+    'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1246,6 +1284,7 @@ class DriverKey:
 
     # MiniMax H3 相关
     MINIMAX_H3_IMAGE_TO_VIDEO = 'minimax_h3_image_to_video'
+    MINIMAX_H3_REFERENCE_TO_VIDEO = 'minimax_h3_reference_to_video'
 
     # Wan22 相关
     WAN22_IMAGE_TO_VIDEO = 'wan22_image_to_video'
@@ -1257,6 +1296,7 @@ class DriverKey:
     # 数字人
     DIGITAL_HUMAN = 'digital_human'
     DIGITAL_HUMAN_LTX2_3_VOICE = 'digital_human_ltx2_3_voice'
+    DIGITAL_HUMAN_MINIMAX_H3 = 'digital_human_minimax_h3'
 
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_IMAGE_EDIT = 'qwen_multi_angle_image_edit'
@@ -1270,6 +1310,7 @@ class DriverKey:
     SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 'seedance_2_0_fast_image_to_video'
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 'seedance_2_0_image_to_video'
     SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO = 'seedance_2_0_mini_image_to_video'
+    SEEDANCE_2_5_IMAGE_TO_VIDEO = 'seedance_2_5_image_to_video'
 
     # Grok 图生视频
     GROK_IMAGE_TO_VIDEO = 'grok_image_to_video'
@@ -1291,12 +1332,98 @@ SEEDANCE_FACE_MASK_DRIVER_KEYS = frozenset({
     DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
 })
+
+
+# ============ 营销视频克隆允许的任务 DriverKey 集合 ============
+# 单一事实来源：前端 supports_video_clone、智能体 [用户视频偏好]、SOP 白名单均以此为准
+# 让某模型进入视频克隆白名单，只需在此追加对应 DriverKey
+VIDEO_CLONE_DRIVER_KEYS = frozenset({
+    DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
+    DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+})
+
+# 用户选了同系列但不支持参考视频的模型时，视频克隆落到可克隆型号
+VIDEO_CLONE_FAMILY_FALLBACK = {
+    DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO: DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+}
+
+
+def resolve_video_clone_task_config(task_id):
+    """将用户选择的视频模型解析为可做视频克隆/参考生视频的任务配置。
+
+    - 已在 VIDEO_CLONE_DRIVER_KEYS 中：原样返回
+    - 同系列有克隆型号（如 MiniMax H3 首尾帧 → MiniMax H3 参考生视频）：返回克隆型号
+    - 其他：返回原配置（调用方再做能力校验）
+    """
+    if task_id in (None, ''):
+        return None
+    try:
+        normalized_id = int(task_id)
+    except (TypeError, ValueError):
+        return None
+    config = UnifiedConfigRegistry.get_by_id(normalized_id)
+    if config is None:
+        return None
+    if config.key in VIDEO_CLONE_DRIVER_KEYS:
+        return config
+    fallback_key = VIDEO_CLONE_FAMILY_FALLBACK.get(config.key)
+    if fallback_key:
+        fallback = UnifiedConfigRegistry.get_by_key(fallback_key)
+        if fallback is not None:
+            return fallback
+    return config
+
+
+def pick_request_video_clone_snapshot(snapshots: Optional[Dict[str, Any]], determined_mode: str):
+    """从任务快照里选出本次应使用的视频模型。
+
+    参考生视频槽若只是页面初始化留下的默认值（model_source=preference），
+    而用户刚在界面选了可克隆模型（model_source=request），优先用后者。
+    """
+    if not snapshots:
+        return None
+    r2v = snapshots.get('video.reference_to_video')
+    i2v = snapshots.get('video.image_to_video')
+    t2v = snapshots.get('video.text_to_video')
+    if determined_mode == 'reference_to_video':
+        for snap in (r2v, i2v, t2v):
+            if not isinstance(snap, dict) or snap.get('model_source') != 'request':
+                continue
+            if snap.get('task_id') in (None, ''):
+                continue
+            resolved = resolve_video_clone_task_config(snap.get('task_id'))
+            if resolved is not None and resolved.key in VIDEO_CLONE_DRIVER_KEYS:
+                picked = dict(snap)
+                picked['task_id'] = int(resolved.id)
+                picked['model_key'] = resolved.key
+                picked['model_name'] = resolved.name
+                return picked
+        if isinstance(r2v, dict):
+            return dict(r2v)
+        if isinstance(i2v, dict):
+            return dict(i2v)
+        if isinstance(t2v, dict):
+            return dict(t2v)
+        return None
+    if determined_mode == 'text_to_video':
+        if isinstance(t2v, dict):
+            return dict(t2v)
+        return dict(i2v) if isinstance(i2v, dict) else None
+    if isinstance(i2v, dict):
+        return dict(i2v)
+    return dict(t2v) if isinstance(t2v, dict) else None
 
 
 # ============ Agent 相关常量 ============
 ASK_USER_MAX_CONSECUTIVE_FAILS = 3  # ask_user 连续失败上限（不含超时），超过则终止任务
 COMPUTING_POWER_CHECK_THRESHOLD = 1  # Agent 循环算力检查阈值，低于此值停止任务
+AGENT_POWER_CONFIRM_THRESHOLD = 35  # 用户未自定义时的软阈值：本次/本轮累计超过才确认
+AGENT_POWER_CONFIRM_HARD_THRESHOLD = 200  # 「本次对话不再询问」后仍强制确认的硬阈值
 
 
 # ============ 任务类型 ID 常量 ============
@@ -1326,6 +1453,7 @@ class TaskTypeId:
         'SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO': 'Seedance 2.0 Fast 图生视频',
         'SEEDANCE_2_0_IMAGE_TO_VIDEO': 'Seedance 2.0 图生视频',
         'SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO': 'Seedance 2.0 Mini 图生视频',
+        'SEEDANCE_2_5_IMAGE_TO_VIDEO': 'Seedance 2.5 图生视频',
         'GROK_IMAGE_TO_VIDEO': 'Grok 图生视频',
         'HAPPY_HORSE_IMAGE_TO_VIDEO': 'Happy Horse 图生视频',
         'HAPPY_HORSE_REFERENCE_TO_VIDEO': 'Happy Horse 参考生视频',
@@ -1336,7 +1464,9 @@ class TaskTypeId:
         'AUDIO_GENERATE': '音频生成',
         'DIGITAL_HUMAN': '数字人生成',
         'DIGITAL_HUMAN_LTX2_3_VOICE': '数字人LTX2.3 With Voice',
+        'DIGITAL_HUMAN_MINIMAX_H3': '数字人 MiniMax H3',
         'MINIMAX_H3_IMAGE_TO_VIDEO': 'MiniMax H3 图生视频',
+        'MINIMAX_H3_REFERENCE_TO_VIDEO': 'MiniMax H3 参考生视频',
     }
     # 图片编辑
     GEMINI_2_5_FLASH_IMAGE = 1
@@ -1365,11 +1495,13 @@ class TaskTypeId:
     SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 22
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 23
     SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO = 31
+    SEEDANCE_2_5_IMAGE_TO_VIDEO = 36
     GROK_IMAGE_TO_VIDEO = 27
     HAPPY_HORSE_IMAGE_TO_VIDEO = 28
     HAPPY_HORSE_REFERENCE_TO_VIDEO = 29
     HAPPY_HORSE_TEXT_TO_VIDEO = 30
     MINIMAX_H3_IMAGE_TO_VIDEO = 34
+    MINIMAX_H3_REFERENCE_TO_VIDEO = 37
 
 
     # 图片/视频 增强
@@ -1385,6 +1517,7 @@ class TaskTypeId:
     # 数字人
     DIGITAL_HUMAN = 13
     DIGITAL_HUMAN_LTX2_3_VOICE = 32
+    DIGITAL_HUMAN_MINIMAX_H3 = 35
 
 
 
@@ -1688,6 +1821,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         short_key='minimax_h3',
         name='MiniMax H3',
         category=TaskCategory.IMAGE_TO_VIDEO,
+        categories=[TaskCategory.TEXT_TO_VIDEO],
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,
@@ -1699,6 +1833,36 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=35,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
         supports_last_frame=True,  # 支持尾帧
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: MINIMAX_H3_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO,
+        key='minimax_h3_reference_to_video',
+        short_key='minimax_h3_r2v',
+        name='MiniMax H3 参考生视频',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+        implementation=DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
+        computing_power=0,
+        supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4', '2:3', '3:2', '21:9'],
+        supported_durations=[4, 5, 6, 7, 8, 9, 10],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=36,
+        supported_image_modes=[ImageMode.MULTI_REFERENCE],  # 多参考图模式
+        supports_last_frame=False,
+        max_multi_ref_images=9,  # 最多 9 张参考图
+        supports_ref_audio_video=True,  # 支持参考音频（≤2）和参考视频（≤2）
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
@@ -1828,6 +1992,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.GROK_COMMON_SITE3_V1,
             DriverImplementation.GROK_COMMON_SITE4_V1,
             DriverImplementation.GROK_COMMON_SITE5_V1,
+            DriverImplementation.GROK_HUIMENGI_V1,
         ],
         supported_ratios=['9:16', '16:9', '1:1'],
         supported_durations=[6, 10, 15],
@@ -1972,6 +2137,42 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         ],
     ),
     UnifiedTaskConfig(
+        id=TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO,
+        key='seedance_2_5_image_to_video',
+        short_key='seedance_2_5',
+        name='Seedance 2.5',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
+        implementations=[
+            DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
+            DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,
+        ],
+        supported_ratios=['9:16', '16:9'],
+        supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=41,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
+        supports_last_frame=True,  # 支持首尾帧
+        supports_ref_audio_video=True,  # 支持参考音频和视频（含纯音频输入）
+        max_multi_ref_images=30,  # 2.5 支持最多 30 张参考图
+        supports_grid_merge=True,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: SEEDANCE_2_5_1080P_PRICE_MULTIPLIER,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
         id=TaskTypeId.HAPPY_HORSE_IMAGE_TO_VIDEO,
         key='happy_horse_image_to_video',
         short_key='happy_horse',
@@ -2071,6 +2272,20 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_ratios=['9:16', '16:9', '1:1', '3:2', '2:3', '3:4', '4:3'],
         default_ratio='9:16',
         sort_order=41,
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
+        key='digital_human_minimax_h3',
+        short_key='digital_human_minimax_h3',
+        name='MiniMax H3 数字人',
+        category=TaskCategory.DIGITAL_HUMAN,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.DIGITAL_HUMAN_MINIMAX_H3,
+        implementation=DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
+        computing_power=0,
+        supported_durations=[4, 5, 6, 7, 8, 9, 10],
+        default_duration=10,
+        sort_order=42,
     ),
 
     # ==================== 图片/视频增强 ====================
@@ -2512,6 +2727,18 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=4600.0,
         required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
+    # 慧梦网关 Grok：成本 0.05 元/秒，1 算力 = 0.04 元，按 5% 利润向上取整
+    # 6s: ceil(0.3/0.04*1.05)=8；10s: ceil(0.5/0.04*1.05)=14；15s: ceil(0.75/0.04*1.05)=20
+    ImplementationConfig(
+        name=DriverImplementation.GROK_HUIMENGI_V1,
+        display_name='huimengi',
+        driver_class='GrokHuimengiV1Driver',
+        default_computing_power={6: 8, 10: 14, 15: 20},
+        enabled=True,
+        description='慧梦网关 Grok 视频（grok-video-channel）',
+        sort_order=4610.0,
+        required_config_keys=['huimengi.api_key']
+    ),
 
     # ==================== RunningHub 供应商 ====================
     ImplementationConfig(
@@ -2588,6 +2815,38 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
         ],
         default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='minimax_h3_reference_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='MinimaxH3ReferenceRunninghubV1Driver',
+        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},  # 复用 H3 首尾帧版算力表
+        enabled=True,
+        description='RunningHub MiniMax H3 参考生视频接口（多参考图，最多9张）',
+        sort_order=5205.0,
+        required_config_keys=['runninghub.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='digital_human_minimax_h3_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='DigitalHumanMinimaxH3RunninghubV1Driver',
+        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},
+        enabled=True,
+        description='RunningHub MiniMax H3 数字人接口（图片+音频+提示词）',
+        sort_order=7002.0,
+        required_config_keys=['runninghub.api_key'],
+        # 分辨率经分镜偏好下发；驱动侧映射为 max_edge（480P→720, 720P→1280, 1080P→1920）
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720,
     ),
 
     # ==================== Vidu 供应商 ====================
@@ -2668,6 +2927,20 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10650.0,
         required_config_keys=['volcengine.api_key'],
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_5_volcengine_v1',
+        display_name='火山引擎',
+        driver_class='Seedance25VolcengineV1Driver',
+        # 算力基于官方刊例价（单价 42 元/百万 token）推导，口径沿用 2.0「720p + 输入含视频且输入 15s」最高成本。
+        # 公式：tokens = 38880×输出秒 + 21600×(15-4)；算力 = ceil(tokens×42÷40000) = ceil(40.824×N + 249.48)
+        default_computing_power={5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
+        enabled=True,
+        description='火山引擎 Seedance 2.5 图生视频接口',
+        sort_order=10800.0,
+        required_config_keys=['volcengine.api_key'],
+        supported_video_resolutions=SEEDANCE_2_5_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
 
@@ -2798,6 +3071,19 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         required_config_keys=['huimengi.api_key'],
         supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_5_huimengi_v1',
+        display_name='huimengi',
+        driver_class='Seedance25HuimengiV1Driver',
+        default_computing_power={5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
+        enabled=True,
+        description='huimengi 网关 Seedance 2.5 图生视频接口',
+        sort_order=11040.0,
+        required_config_keys=['huimengi.api_key'],
+        supports_auto_face=True,
+        supported_video_resolutions=SEEDANCE_2_5_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(

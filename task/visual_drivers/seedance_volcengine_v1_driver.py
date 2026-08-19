@@ -1,8 +1,8 @@
 """
 Seedance 火山引擎供应商 v1 版本驱动实现
 异步 API - 创建任务后轮询状态
-支持 Seedance 1.5 Pro / 2.0 Fast / 2.0 / 2.0 Mini 四个模型
-支持图生视频（首尾帧 / 多参考图）与文生视频（纯文本）
+支持 Seedance 1.5 Pro / 2.0 Fast / 2.0 / 2.0 Mini / 2.5 五个模型
+支持图生视频（首尾帧 / 多参考图）、文生视频（纯文本）与全模态参考（参考图/视频/音频/纯音频）
 
 基类 SeedanceVolcengineV1Driver 包含核心逻辑，
 子类通过 driver_type 和 model_name 区分不同模型。
@@ -14,12 +14,18 @@ import json
 import uuid
 from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
-from config.constant import LEGACY_RESOLUTION_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
-from config.unified_config import DriverImplementation, VideoResolution
+from config.constant import (
+    LEGACY_RESOLUTION_EXTRA_CONFIG_KEY,
+    OMNI_REFERENCE_TASK_TYPE_EDIT,
+    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
+)
+from config.unified_config import DriverImplementation, VideoResolution, TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
+from utils.computing_power import is_video_edit_billing_task
 from utils.image_upload_utils import compress_and_upload_image_sync, upload_media_to_cdn_sync
 from utils.video_compressor import prepare_seedance_reference_video_sync
 from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStepType, PipelineStage
+from .face_mask_prompt import ensure_face_mask_hint
 
 
 # 接口文档 https://www.volcengine.com/docs/82379/1520757?lang=zh
@@ -251,6 +257,10 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
         reference_images = all_images_info.get('reference_images', [])
 
         prompt = ai_tool.prompt or ""
+        # 素材被本地人脸遮盖（黑框）时自动在提示词末尾追加黑框还原句（幂等）。
+        # 提示词基线（智能体/用户生成）不写该句，由执行时按 pipeline steps 的
+        # 实际遮盖状态动态决定，保证供应商轮换下提示词与素材状态一致
+        prompt = ensure_face_mask_hint(prompt, ai_tool)
         content = []
 
         # 2. 根据输入分支构建 content
@@ -263,6 +273,13 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             and not reference_video_raw and not reference_audio_raw
             and 'image_mode' not in extra_config
         )
+
+        # 纯音视频参考（无任何图片输入）：强制走多参考模式，确保音频/视频正确下发
+        # 适用 Seedance 2.0 系列及 2.5 的「仅音频/仅视频」输入场景（含 CLI、storyboard 等非 server 入口）
+        has_media_ref = bool(reference_video_raw or reference_audio_raw)
+        has_any_image = bool(first_frame or last_frame or reference_images)
+        if has_media_ref and not has_any_image and not is_text_to_video:
+            img_mode = ImageMode.MULTI_REFERENCE
 
         if is_text_to_video:
             # ---- 文生视频模式（纯文本，无图片/音视频输入）----
@@ -410,6 +427,7 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
         else:
             # ---- 未知模式，降级为首尾帧 ----
             self.logger.warning(f"未知的 image_mode: {img_mode}，降级为首尾帧模式")
+            img_mode = ImageMode.FIRST_LAST_FRAME
             if not first_frame:
                 return {
                     "success": False,
@@ -452,11 +470,29 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             payload["resolution"] = resolution
 
         ratio = extra_config.get('ratio') or ai_tool.ratio
-        if ratio:
-            payload["ratio"] = ratio
+        # 首帧/首尾帧模式（含未知模式降级为首尾帧）：输出比例跟随首帧图片，
+        # 火山禁止显式传 ratio（400 InvalidParameter.TaskTypeConstraint），必须省略；
+        # 文生视频无首帧图，必须保留 ratio
+        if not is_text_to_video and img_mode in (ImageMode.FIRST_LAST_FRAME, ImageMode.FIRST_LAST_WITH_REF):
+            ratio = None
 
-        if ai_tool.duration:
-            payload["duration"] = ai_tool.duration
+        # Seedance 2.5 带参考视频为视频编辑任务：显式 omni_reference_task_type=edit
+        # 使接口提交时提前校验参数限制（ratio 必须 adaptive、duration 必须 -1），
+        # 消除 auto 自动判定错型导致的异步报错。判定入口与计价层共用同一函数。
+        is_25_video_edit = is_video_edit_billing_task(self.driver_type, reference_video_raw)
+        if is_25_video_edit:
+            payload["omni_reference_task_type"] = OMNI_REFERENCE_TASK_TYPE_EDIT
+            payload["ratio"] = "adaptive"
+            payload["duration"] = -1
+            self.logger.info(
+                f"视频编辑模式: omni_reference_task_type={OMNI_REFERENCE_TASK_TYPE_EDIT}, "
+                "ratio=adaptive duration=-1"
+            )
+        else:
+            if ratio:
+                payload["ratio"] = ratio
+            if ai_tool.duration:
+                payload["duration"] = ai_tool.duration
 
         self.logger.info(f"使用模型: {self._model}, driver_type: {self.driver_type}, 模式: {img_mode}, content 元素数: {len(content)}")
 
@@ -714,3 +750,23 @@ class Seedance20MiniVolcengineV1Driver(SeedanceVolcengineV1Driver):
 
     def __init__(self):
         super().__init__(driver_type=31, model_name="doubao-seedance-2-0-mini-260615", impl_name=DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1)
+
+
+class Seedance25VolcengineV1Driver(SeedanceVolcengineV1Driver):
+    """
+    Seedance 2.5 全模态视频驱动
+
+    接口与 2.0 系列完全兼容（content 数组结构、role 取值、状态轮询一致），
+    仅 model_name 不同。2.5 额外支持：
+    - 纯音频输入（无图无视频，仅参考音频）
+    - 最多 30 张参考图 / 10 个参考视频 / 10 段参考音频
+    - 视频时长 [4, 30]s
+    支持分辨率 480P / 720P / 1080P（不支持 4K）。
+    """
+
+    def __init__(self):
+        super().__init__(
+            driver_type=TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO,
+            model_name="doubao-seedance-2-5-260628",
+            impl_name=DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
+        )

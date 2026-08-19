@@ -29,7 +29,6 @@ import json
 from datetime import datetime, timedelta
 import uuid
 from perseids_server.client import make_perseids_request
-from config.constant import TASK_COMPUTING_POWER
 from config.config_util import get_dynamic_config_value
 from model import TasksModel, AIToolsModel, RunningHubSlotsModel
 from model.runninghub_slots import RunningHubSlot
@@ -155,9 +154,13 @@ def _refund_computing_power(ai_tool, reason: str):
     """
     退还算力 - 两层回退机制
 
-    ⚠️ 退费金额计算优先级：
-      1. get_computing_power_for_task() → 考虑实现方修饰符、分辨率等上下文（推荐）
-      2. TASK_COMPUTING_POWER[type] → 旧静态配置回退（不含修饰符，可能金额不准）
+    ⚠️ 退费金额计算优先级（resolve_refund_amount，修改时必须保持）：
+      1. ai_tools.transaction_id 关联扣费流水 → 实际扣减金额原额退还（推荐，
+         免疫供应商切换/价格热更新导致的扣返不一致）
+      2. get_computing_power_for_task() 重算 → 考虑实现方修饰符、分辨率等上下文
+      3. TASK_COMPUTING_POWER[type] → 旧静态配置回退（不含修饰符，可能金额不准）
+
+    退费流水号为 refund-{原扣费流水号}，天然幂等防重复退费。
 
     ⚠️ 此函数在异步上下文中被同步调用（_handle_task_failure 是同步函数），
     内部的 make_perseids_request 是同步 HTTP 请求，会短暂阻塞事件循环。
@@ -175,52 +178,23 @@ def _refund_computing_power(ai_tool, reason: str):
             logger.warning(f"Task {task_id} has no user_id, skipping refund")
             return
 
-        computing_power = None
+        from utils.computing_power import (
+            resolve_refund_amount,
+            build_refund_transaction_id,
+            is_already_refunded
+        )
 
-        # 优先使用新的算力计算工具（考虑修饰符）
-        try:
-            from utils.computing_power import (
-                build_context_from_task_record,
-                get_computing_power_for_task,
-                get_implementation_for_user
-            )
-            from config.unified_config import get_implementation_name
+        if is_already_refunded(ai_tool):
+            logger.info(f"Task {task_id} already refunded (idempotent transaction), skipping")
+            return
 
-            context = build_context_from_task_record(ai_tool)
-            # 优先使用任务创建时保存的实现方，回退到用户当前偏好
-            impl_id = getattr(ai_tool, 'implementation', None)
-            impl_name = get_implementation_name(impl_id) if impl_id else None
-            implementation = impl_name if impl_name and impl_name != 'unknown' else get_implementation_for_user(ai_tool_type, user_id)
-
-            computing_power = get_computing_power_for_task(
-                task_type=ai_tool_type,
-                duration=getattr(ai_tool, 'duration', 5),
-                user_id=user_id,
-                implementation=implementation,
-                context=context
-            )
-
-            if computing_power:
-                logger.info(f"Refund with modifiers: context={context}, implementation={implementation}")
-        except Exception as e:
-            logger.warning(f"Modifier-aware refund failed for task {task_id}, falling back: {e}")
-
-        # 回退：使用旧的 TASK_COMPUTING_POWER 配置
-        if not computing_power:
-            computing_power_config = TASK_COMPUTING_POWER.get(ai_tool_type)
-            if isinstance(computing_power_config, dict):
-                duration = getattr(ai_tool, 'duration', 5) or 5
-                computing_power = computing_power_config.get(duration)
-                if not computing_power:
-                    computing_power = list(computing_power_config.values())[0]
-            else:
-                computing_power = computing_power_config
+        computing_power = resolve_refund_amount(ai_tool, task_type=ai_tool_type)
 
         if not computing_power:
             logger.warning(f"Task {task_id} type {ai_tool_type} has no computing power config")
             return
 
-        transaction_id = str(uuid.uuid4())
+        transaction_id = build_refund_transaction_id(ai_tool) or str(uuid.uuid4())
         logger.info(f"Refunding {computing_power} computing power for user {user_id}, reason: {reason}")
 
         success, message, response_data = make_perseids_request(
@@ -456,6 +430,9 @@ async def _submit_new_task(ai_tool):
                 rh_task = TasksModel.get_by_task_id(task_id)
                 if rh_task:
                     RunningHubSlotsModel.release_slot(rh_task.id, source=RunningHubSlot.SOURCE_TASK)
+                # 反馈拥堵冷却：让 acquire_key 在冷却期内跳过该密钥，避免坏密钥粘连死锁
+                # （与 report_failure 独立：421 是「账号忙」而非「key 坏」，不计入熔断 fail_count）
+                await runninghub_key_pool.report_congested_async(rh_key_index)
                 delay = get_dynamic_config_value(
                     "runninghub", "upstream_congest_retry_delay",
                     default=RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
@@ -989,9 +966,11 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
          → 失败/异常则继续走社区版流程
       2. 社区版兜底：标记 FAILED + 退还算力 + 释放 RunningHub 槽位
 
-    ⚠️ 退费两层回退：
-      优先：get_computing_power_for_task()（考虑实现方修饰符、分辨率等上下文）
-      回退：TASK_COMPUTING_POWER[ai_tool_type]（旧静态配置，不含修饰符）
+    ⚠️ 退费三级回退（resolve_refund_amount）：
+      优先：ai_tools.transaction_id 关联扣费流水原额退还（免疫供应商切换/价格热更新）
+      回退1：get_computing_power_for_task() 重算（考虑实现方修饰符、分辨率等上下文）
+      回退2：TASK_COMPUTING_POWER[ai_tool_type]（旧静态配置，不含修饰符）
+    退费流水号为 refund-{原扣费流水号}，幂等防重复退费。
 
     Args:
         task_id: Task ID (ai_tools.id)
@@ -1064,49 +1043,21 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
             logger.error(f"AI tool {task_id} not found for refund")
             return False
 
-        computing_power = None
+        # 退费金额优先按扣费流水原额退还，回退重算/静态配置（见 resolve_refund_amount）
+        from utils.computing_power import (
+            resolve_refund_amount,
+            build_refund_transaction_id,
+            is_already_refunded
+        )
 
-        # 优先使用新的算力计算工具（考虑修饰符）
-        try:
-            from utils.computing_power import (
-                build_context_from_task_record,
-                get_computing_power_for_task,
-                get_implementation_for_user
-            )
-            from config.unified_config import get_implementation_name
+        if is_already_refunded(ai_tool):
+            logger.info(f"Task {task_id} already refunded (idempotent transaction), skipping")
+            return True
 
-            context = build_context_from_task_record(ai_tool)
-            # 优先使用任务创建时保存的实现方，回退到用户当前偏好
-            impl_id = getattr(ai_tool, 'implementation', None)
-            impl_name = get_implementation_name(impl_id) if impl_id else None
-            implementation = impl_name if impl_name and impl_name != 'unknown' else get_implementation_for_user(ai_tool_type, user_id)
-
-            computing_power = get_computing_power_for_task(
-                task_type=ai_tool_type,
-                duration=ai_tool.duration if ai_tool else 5,
-                user_id=user_id,
-                implementation=implementation,
-                context=context
-            )
-
-            if computing_power:
-                logger.info(f"Refund with modifiers: context={context}, implementation={implementation}")
-        except Exception as e:
-            logger.warning(f"Modifier-aware refund failed for task {task_id}, falling back: {e}")
-
-        # 回退：使用旧的 TASK_COMPUTING_POWER 配置
-        if not computing_power:
-            computing_power_config = TASK_COMPUTING_POWER.get(ai_tool_type)
-            if isinstance(computing_power_config, dict):
-                duration = ai_tool.duration if ai_tool else 5
-                computing_power = computing_power_config.get(duration)
-                if not computing_power:
-                    computing_power = list(computing_power_config.values())[0]
-            else:
-                computing_power = computing_power_config
+        computing_power = resolve_refund_amount(ai_tool, task_type=ai_tool_type)
 
         if computing_power:
-            transaction_id = str(uuid.uuid4())
+            transaction_id = build_refund_transaction_id(ai_tool) or str(uuid.uuid4())
             logger.info(f"Refunding computing power for user {user_id}")
 
             success, message, response_data = make_perseids_request(
@@ -1323,65 +1274,45 @@ def process_task_with_retry(task_type, process_func):
                     # 获取 AI 工具详情用于退还算力和释放槽位
                     ai_tool = AIToolsModel.get_by_id(task.task_id)
                     if ai_tool:
-                        # 退还算力（考虑修饰符，带回退机制）
+                        # 退还算力（优先按扣费流水原额退还，见 resolve_refund_amount）
                         try:
-                            computing_power = None
+                            from utils.computing_power import (
+                                resolve_refund_amount,
+                                build_refund_transaction_id,
+                                is_already_refunded
+                            )
 
-                            # 优先使用新的算力计算工具（考虑修饰符）
-                            try:
-                                from utils.computing_power import (
-                                    build_context_from_task_record,
-                                    get_computing_power_for_task,
-                                    get_implementation_for_user
-                                )
-                                from config.unified_config import get_implementation_name
+                            if is_already_refunded(ai_tool):
+                                logger.info(f"Task {task.task_id} already refunded (idempotent transaction), skipping")
+                            else:
+                                computing_power = resolve_refund_amount(ai_tool)
 
-                                context = build_context_from_task_record(ai_tool)
-                                # 优先使用任务创建时保存的实现方，回退到用户当前偏好
-                                impl_id = getattr(ai_tool, 'implementation', None)
-                                impl_name = get_implementation_name(impl_id) if impl_id else None
-                                implementation = impl_name if impl_name and impl_name != 'unknown' else get_implementation_for_user(ai_tool.type, ai_tool.user_id)
+                                if computing_power:
+                                    transaction_id = build_refund_transaction_id(ai_tool) or str(uuid.uuid4())
+                                    logger.info(f"Refunding computing power for user {ai_tool.user_id}")
 
-                                computing_power = get_computing_power_for_task(
-                                    task_type=ai_tool.type,
-                                    duration=ai_tool.duration if ai_tool else 5,
-                                    user_id=ai_tool.user_id,
-                                    implementation=implementation,
-                                    context=context
-                                )
-                            except Exception as e:
-                                logger.warning(f"Modifier-aware refund failed for task {task.task_id}, falling back: {e}")
-
-                            # 回退：使用旧的 TASK_COMPUTING_POWER 配置
-                            if not computing_power:
-                                computing_power = TASK_COMPUTING_POWER.get(ai_tool.type)
-
-                            if computing_power:
-                                transaction_id = str(uuid.uuid4())
-                                logger.info(f"Refunding computing power for user {ai_tool.user_id}")
-
-                                success, message, response_data = make_perseids_request(
-                                    endpoint='get_auth_token_by_user_id',
-                                    method='POST',
-                                    data={
-                                        "user_id": ai_tool.user_id
-                                    }
-                                )
-                                if success:
-                                    auth_token = response_data['token']
-                                    headers = {'Authorization': f'Bearer {auth_token}'}
                                     success, message, response_data = make_perseids_request(
-                                        endpoint='user/calculate_computing_power',
+                                        endpoint='get_auth_token_by_user_id',
                                         method='POST',
-                                        headers=headers,
                                         data={
-                                            "computing_power": computing_power,
-                                            "behavior": "increase",
-                                            "transaction_id": transaction_id
+                                            "user_id": ai_tool.user_id
                                         }
                                     )
                                     if success:
-                                        logger.info(f"Task {task.task_id} exceeded max retry, refunded {computing_power} computing power")
+                                        auth_token = response_data['token']
+                                        headers = {'Authorization': f'Bearer {auth_token}'}
+                                        success, message, response_data = make_perseids_request(
+                                            endpoint='user/calculate_computing_power',
+                                            method='POST',
+                                            headers=headers,
+                                            data={
+                                                "computing_power": computing_power,
+                                                "behavior": "increase",
+                                                "transaction_id": transaction_id
+                                            }
+                                        )
+                                        if success:
+                                            logger.info(f"Task {task.task_id} exceeded max retry, refunded {computing_power} computing power")
                         except Exception as e:
                             logger.error(f"Failed to refund computing power for task {task.task_id}: {e}")
                         

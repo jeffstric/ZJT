@@ -1,9 +1,11 @@
 """
 recalc_scene_duration_if_all_completed 单元测试
 
-覆盖：
-- 全部选中配音 COMPLETED + 有 duration → 返回求和浮点并更新 scene.duration（max(1.0, round(total,3))）。
-- 任一未完成/无 duration/空 scene_id → 返回 None，不更新 scene.duration，不重算 total。
+覆盖（best-effort 语义，2026-08-13 修复）：
+- 有已完成选中配音 → 返回已完成配音的累计时长并更新 scene.duration（max(0.1, round(total,3))）。
+  注意：best-effort 下 sum_selected_durations_if_all_completed 返回的是「已完成配音」的和，
+  不再要求「全部对白都有配音且完成」。部分对白缺配音时，只要有一条已完成配音就会同步 duration。
+- 无 dialogue / 无已完成配音 / 空 scene_id → 返回 None，不更新 scene.duration，不重算 total。
 - sum 抛异常 → 返回 None（best-effort，不向上抛）。
 
 测试通过 mock task/audio_task 的模型依赖来隔离真实 DB，沿用 test_audio_task_utils.py 的 mock 策略。
@@ -86,7 +88,7 @@ class TestRecalcSceneDurationIfAllCompleted(unittest.TestCase):
         return patch('task.audio_task.asyncio.to_thread', side_effect=_fake_to_thread)
 
     def test_all_completed_returns_sum_and_updates_scene(self):
-        """全部完成 → 返回 max(1.0, round(total,3)) 并更新 scene.duration 与 total_duration"""
+        """全部完成 → 返回 max(0.1, round(total,3)) 并更新 scene.duration 与 total_duration"""
         with self._patch_to_thread() as mock_to_thread:
             with patch('task.audio_task.StoryboardDialogueAudioModel') as MockDA, \
                  patch('task.audio_task.StoryboardSceneModel') as MockScene, \
@@ -98,13 +100,37 @@ class TestRecalcSceneDurationIfAllCompleted(unittest.TestCase):
 
                 result = _run_async(recalc_scene_duration_if_all_completed(7))
 
-                # 写入 scene.duration = max(1.0, round(5.2367, 3)) = 5.237
+                # 写入 scene.duration = max(0.1, round(5.2367, 3)) = 5.237
                 self.assertAlmostEqual(result, 5.237, places=3)
                 MockScene.update.assert_called_once_with(7, duration=5.237)
                 MockSB.recalc_total_duration.assert_called_once_with(42)
 
-    def test_zero_total_floored_to_one(self):
-        """全 0 duration 求和 → max(1.0, 0.0) = 1.0"""
+    def test_partial_completed_returns_sum_and_updates_scene(self):
+        """best-effort：部分对白缺配音，但有一条已完成 → 仍按已完成配音累计同步 duration。
+
+        复现场景：分镜有两条对白，一条已完成(6.13s)，一条无配音。
+        旧逻辑：返回 None，duration 卡在 LLM 估算值，播放时音频被掐断。
+        新逻辑：返回 6.13，duration 同步为 6.13s，音频能完整播完。
+        """
+        with self._patch_to_thread():
+            with patch('task.audio_task.StoryboardDialogueAudioModel') as MockDA, \
+                 patch('task.audio_task.StoryboardSceneModel') as MockScene, \
+                 patch('task.audio_task.StoryboardModel') as MockSB:
+                # model 层 best-effort：只返回已完成配音的和（缺配音的对白被忽略）
+                MockDA.sum_selected_durations_if_all_completed.return_value = 6.130
+                MockScene.update.return_value = 1
+                MockScene.get_by_id.return_value = MagicMock(storyboard_id=42)
+                MockSB.recalc_total_duration.return_value = 6.130
+
+                result = _run_async(recalc_scene_duration_if_all_completed(33))
+
+                # duration = max(0.1, round(6.130, 3)) = 6.13
+                self.assertAlmostEqual(result, 6.130, places=3)
+                MockScene.update.assert_called_once_with(33, duration=6.130)
+                MockSB.recalc_total_duration.assert_called_once_with(42)
+
+    def test_zero_total_floored_to_min(self):
+        """全 0 duration 求和 → max(0.1, 0.0) = 0.1（下限 0.1s，与播放器 resolveSceneSpan 对齐）"""
         with self._patch_to_thread():
             with patch('task.audio_task.StoryboardDialogueAudioModel') as MockDA, \
                  patch('task.audio_task.StoryboardSceneModel') as MockScene, \
@@ -115,12 +141,28 @@ class TestRecalcSceneDurationIfAllCompleted(unittest.TestCase):
 
                 result = _run_async(recalc_scene_duration_if_all_completed(7))
 
-                self.assertEqual(result, 1.0)
-                MockScene.update.assert_called_once_with(7, duration=1.0)
+                self.assertEqual(result, 0.1)
+                MockScene.update.assert_called_once_with(7, duration=0.1)
                 MockSB.recalc_total_duration.assert_called_once_with(42)
 
-    def test_not_all_completed_returns_none_no_update(self):
-        """sum 返回 None（未全部完成）→ 不更新 scene.duration，不重算 total"""
+    def test_short_audio_not_inflated(self):
+        """短对白（0.476s）不再被 max(1.0) 虚抬到 1.0s，保持真实时长"""
+        with self._patch_to_thread():
+            with patch('task.audio_task.StoryboardDialogueAudioModel') as MockDA, \
+                 patch('task.audio_task.StoryboardSceneModel') as MockScene, \
+                 patch('task.audio_task.StoryboardModel') as MockSB:
+                MockDA.sum_selected_durations_if_all_completed.return_value = 0.476
+                MockScene.update.return_value = 1
+                MockScene.get_by_id.return_value = MagicMock(storyboard_id=42)
+
+                result = _run_async(recalc_scene_duration_if_all_completed(13))
+
+                # duration = max(0.1, round(0.476, 3)) = 0.476（不再被抬到 1.0）
+                self.assertAlmostEqual(result, 0.476, places=3)
+                MockScene.update.assert_called_once_with(13, duration=0.476)
+
+    def test_no_completed_audio_returns_none_no_update(self):
+        """sum 返回 None（无 dialogue / 无已完成配音）→ 不更新 scene.duration，不重算 total"""
         with self._patch_to_thread() as mock_to_thread:
             with patch('task.audio_task.StoryboardDialogueAudioModel') as MockDA, \
                  patch('task.audio_task.StoryboardSceneModel') as MockScene, \

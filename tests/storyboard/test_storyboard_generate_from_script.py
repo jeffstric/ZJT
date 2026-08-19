@@ -163,10 +163,80 @@ def test_build_scenes_from_parsed_script_creates_scene_and_dialogue_payloads():
     assert scene["prompt"]["source"]["group_name"] == "场景编号：A1 客厅 夜晚"
     assert scene["prompt"]["source"]["location_db_id"] == 23
     assert "揭示：通过钥匙特写说明角色已回家" in scene["video_prompt"]
+    # 台词未写入 description/action 时，组装层兜底补入「对话：」块
+    assert "我回来了。" in scene["video_prompt"]
+    assert "夜色压低了房间里的声音。" in scene["video_prompt"]
+    assert "对话：" in scene["video_prompt"]
     assert scene["dialogues"] == [
-        {"character_id": 17, "text": "我回来了。", "speed": 1.0, "volume": 100},
-        {"character_id": None, "text": "夜色压低了房间里的声音。", "speed": 1.0, "volume": 100},
+        {"character_id": 17, "text": "我回来了。", "speed": 1.0, "volume": 100, "emo_vec": None},
+        {"character_id": None, "text": "夜色压低了房间里的声音。", "speed": 1.0, "volume": 100, "emo_vec": None},
     ]
+
+
+def test_video_prompt_appends_missing_dialogue_idempotently():
+    """description 已含完整台词时不重复追加；漏写时补「对话：」块。"""
+    parsed_missing = {
+        "characters": [{"id": "char_001", "name": "赵志高", "character_db_id": 1}],
+        "locations": [{"id": "loc_001", "name": "大堂", "location_db_id": 2}],
+        "shot_groups": [{
+            "group_id": "grp_001",
+            "group_name": "开场",
+            "shots": [{
+                "shot_id": "s001",
+                "shot_number": 1,
+                "duration": 5,
+                "location_id": "loc_001",
+                "camera_angle": "平视",
+                "shot_type": "中景",
+                "camera_movement": "固定",
+                "description": "【【赵志高】】叉腰大声呵斥。",
+                "opening_frame_description": "中景：【【赵志高】】站在大堂。",
+                "scene_detail": "阳光照亮微尘。",
+                "action": "【【赵志高】】手指着地。",
+                "narrative_purpose": "建立：职场压迫",
+                "dialogue": [{
+                    "character_id": "char_001",
+                    "character_name": "【【赵志高】】",
+                    "text": "你也没好到哪去！去，把仓库那堆杂物搬了！",
+                }],
+            }],
+        }],
+    }
+    scenes = storyboard_api.build_storyboard_scenes_from_parsed_script(parsed_missing)
+    vp = scenes[0]["video_prompt"]
+    assert "对话：" in vp
+    assert "你也没好到哪去！去，把仓库那堆杂物搬了！" in vp
+    assert vp.count("你也没好到哪去！去，把仓库那堆杂物搬了！") == 1
+
+    line = "你也没好到哪去！去，把仓库那堆杂物搬了！"
+    parsed_embedded = {
+        "characters": [{"id": "char_001", "name": "赵志高", "character_db_id": 1}],
+        "locations": [{"id": "loc_001", "name": "大堂", "location_db_id": 2}],
+        "shot_groups": [{
+            "group_id": "grp_001",
+            "group_name": "开场",
+            "shots": [{
+                "shot_id": "s001",
+                "shot_number": 1,
+                "duration": 5,
+                "location_id": "loc_001",
+                "camera_angle": "平视",
+                "shot_type": "中景",
+                "camera_movement": "固定",
+                "description": f'【【赵志高】】怒声说道："{line}"',
+                "opening_frame_description": "中景：【【赵志高】】站在大堂。",
+                "scene_detail": "阳光照亮微尘。",
+                "action": "【【赵志高】】手指着地。",
+                "narrative_purpose": "建立：职场压迫",
+                "dialogue": [{"character_id": "char_001", "text": line}],
+            }],
+        }],
+    }
+    scenes2 = storyboard_api.build_storyboard_scenes_from_parsed_script(parsed_embedded)
+    vp2 = scenes2[0]["video_prompt"]
+    assert line in vp2
+    assert "对话：" not in vp2  # 已嵌入则不追加兜底块
+    assert vp2.count(line) == 1
 
 
 def test_generate_from_script_strips_bearer_token_for_parser_and_subscene_grid(monkeypatch):

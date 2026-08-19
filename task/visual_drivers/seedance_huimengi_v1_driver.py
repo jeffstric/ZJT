@@ -11,11 +11,11 @@ kkidc 完全不同：
 - 提交响应：扁平 { task_id, status }
 - 查询响应：扁平 { id, model, status, result: { video_url, ... }, error_message, ... }
 
-支持模型：Seedance 2.0 Fast / 2.0 / 2.0 Mini（与火山国内版同质，作为备选实现）
+支持模型：Seedance 2.0 Fast / 2.0 / 2.0 Mini / 2.5（与火山国内版同质，作为备选实现）
 支持能力：文生视频、首帧/首尾帧图生视频、多参考图（含参考音视频）、真人审核模式
 
 注意：huimengi 网关使用官方模型名（seedance-2.0 / seedance-2.0-fast /
-seedance-2.0-mini），非火山原生 ARK 模型名（doubao-seedance-*-26xxxx），
+seedance-2.0-mini / seedance-2.5），非火山原生 ARK 模型名（doubao-seedance-*-26xxxx），
 也非 kkidc 别名（seed-2 / seed-2-fast / seed-2-mini）。
 
 基类 SeedanceHuimengiV1Driver 包含核心逻辑，
@@ -41,12 +41,18 @@ if not hasattr(requests, 'exceptions') or not hasattr(requests.exceptions, 'HTTP
 
 from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
-from config.constant import LEGACY_RESOLUTION_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
-from config.unified_config import DriverImplementation, VideoResolution
+from config.constant import (
+    LEGACY_RESOLUTION_EXTRA_CONFIG_KEY,
+    OMNI_REFERENCE_TASK_TYPE_EDIT,
+    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
+)
+from config.unified_config import DriverImplementation, TaskTypeId, VideoResolution
 from utils.sentry_util import SentryUtil, AlertLevel
+from utils.computing_power import is_video_edit_billing_task
 from utils.image_upload_utils import compress_and_upload_image_sync, upload_media_to_cdn_sync
 from utils.video_compressor import prepare_seedance_reference_video_sync
 from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStepType, PipelineStage
+from .face_mask_prompt import strip_face_mask_hint
 
 
 # huimengi 网关接口文档
@@ -320,6 +326,9 @@ class SeedanceHuimengiV1Driver(BaseVideoDriver):
         reference_images = all_images_info.get('reference_images', [])
 
         prompt = ai_tool.prompt or ""
+        # huimengi 使用原始素材（网关 human_review 自动处理人脸，画面无黑框），
+        # 移除提示词中可能残留的黑框还原句（覆盖存量任务与跨实现方重试场景）
+        prompt = strip_face_mask_hint(prompt)
 
         # 2. 文生视频判定：无任何图片/音视频输入，且 extra_config 未声明 image_mode
         reference_video_raw = self.get_video_path(ai_tool) or extra_config.get('reference_video')
@@ -329,6 +338,13 @@ class SeedanceHuimengiV1Driver(BaseVideoDriver):
             and not reference_video_raw and not reference_audio_raw
             and 'image_mode' not in extra_config
         )
+
+        # 纯音视频参考（无任何图片输入）：强制走多参考模式，确保音频/视频正确下发
+        # 适用 Seedance 2.0 系列及 2.5 的「仅音频/仅视频」输入场景（含 CLI、storyboard 等非 server 入口）
+        has_media_ref = bool(reference_video_raw or reference_audio_raw)
+        has_any_image = bool(first_frame or last_frame or reference_images)
+        if has_media_ref and not has_any_image and not is_text_to_video:
+            img_mode = ImageMode.MULTI_REFERENCE
 
         # 3. 构建 params 通用控制字段
         params: Dict[str, Any] = {"prompt": prompt}
@@ -342,11 +358,23 @@ class SeedanceHuimengiV1Driver(BaseVideoDriver):
             params["human_review"] = bool(extra_config['human_review'])
 
         ratio = extra_config.get('ratio') or ai_tool.ratio
-        if ratio:
-            params["ratio"] = ratio
-
-        if ai_tool.duration:
-            params["duration"] = ai_tool.duration
+        # Seedance 2.5 带参考视频为视频编辑任务：显式 omni_reference_task_type=edit
+        # 使接口提前校验参数限制（ratio 必须 adaptive、duration 必须 -1）。
+        # 判定入口与计价层共用同一函数；字段放 params 内，依赖 huimengi 网关透传。
+        is_25_video_edit = is_video_edit_billing_task(self.driver_type, reference_video_raw)
+        if is_25_video_edit:
+            params["omni_reference_task_type"] = OMNI_REFERENCE_TASK_TYPE_EDIT
+            params["ratio"] = "adaptive"
+            params["duration"] = -1
+            self.logger.info(
+                f"视频编辑模式: omni_reference_task_type={OMNI_REFERENCE_TASK_TYPE_EDIT}, "
+                "ratio=adaptive duration=-1"
+            )
+        else:
+            if ratio:
+                params["ratio"] = ratio
+            if ai_tool.duration:
+                params["duration"] = ai_tool.duration
 
         resolution = self._get_resolution_for_payload(extra_config)
         if resolution:
@@ -878,4 +906,23 @@ class Seedance20MiniHuimengiV1Driver(SeedanceHuimengiV1Driver):
             driver_type=31,
             model_name="seedance-2.0-mini",
             impl_name=DriverImplementation.SEEDANCE_2_0_MINI_HUIMENGI_V1
+        )
+
+
+class Seedance25HuimengiV1Driver(SeedanceHuimengiV1Driver):
+    """Seedance 2.5 全模态视频驱动（huimengi 网关）
+
+    接口与 2.0 系列完全兼容（扁平 {model, params}、状态轮询一致），
+    仅 model_name 为 seedance-2.5。2.5 额外支持：
+    - 纯音频输入（无图无视频，仅参考音频）
+    - 最多 30 张参考图 / 10 个参考视频 / 10 段参考音频
+    - 视频时长 [4, 30]s
+    支持分辨率 480P / 720P / 1080P（不支持 4K）。
+    """
+
+    def __init__(self):
+        super().__init__(
+            driver_type=TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO,
+            model_name="seedance-2.5",
+            impl_name=DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1
         )

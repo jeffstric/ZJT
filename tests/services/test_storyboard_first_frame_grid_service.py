@@ -1,4 +1,5 @@
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -6,6 +7,243 @@ import pytest
 from config.constant import StoryboardAutoGenerateConstants
 from script_writer_core.constant import ItemType
 from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGridService
+
+
+def _patch_single_ready_scene(monkeypatch, submit_result=None, submissions=None):
+    """最小可提交故事板：单场景 + location 参考图 + 单个 PENDING item。
+
+    返回 (item, job_base)，job_base 不含 extra_json，由各用例自行补充以覆盖
+    不同的模型锁定来源。
+    """
+    from services import storyboard_first_frame_grid_service as grid_service_module
+
+    # 本地无商业许可证：quality 策略/提示词策略构造时的 license 校验打桩放行
+    # （两者均为函数内延迟导入，patch runtime 模块属性即可生效）
+    import enterprise.services.license.runtime as license_runtime_module
+    monkeypatch.setattr(license_runtime_module, "require_commercial_license", lambda: None)
+
+    scene = {
+        "id": 301,
+        "storyboard_id": 30,
+        "sort_order": 1,
+        "title": "分镜1",
+        "act_name": "第一幕",
+        "prompt_json": {
+            "scene_desc": "糖浆陷阱区域的首帧。",
+            "location": {"id": 44, "name": "糖浆陷阱区域"},
+            "source": {"group_id": "grp_001"},
+        },
+    }
+    item = {
+        "id": 41,
+        "job_id": 96,
+        "scene_id": 301,
+        "status": StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING,
+        "order_index": 1,
+        "extra_json": {},
+    }
+
+    class FakeStoryboardModel:
+        @staticmethod
+        def get_by_id(record_id):
+            return SimpleNamespace(id=30, world_id=99, workflow_ratio="16:9")
+
+    class FakeSceneModel:
+        @staticmethod
+        def list_by_storyboard(storyboard_id):
+            return [scene]
+
+    class FakeItemModel:
+        @staticmethod
+        def list_by_job(job_id):
+            return [item]
+
+        @staticmethod
+        def update(record_id, **kwargs):
+            item.update(kwargs)
+            return 1
+
+    class FakeLocationModel:
+        @staticmethod
+        def get_by_id(record_id):
+            return SimpleNamespace(
+                id=44,
+                name="糖浆陷阱区域",
+                reference_image="https://cdn.test/location.png",
+                to_dict=lambda: {
+                    "id": 44,
+                    "name": "糖浆陷阱区域",
+                    "reference_image": "https://cdn.test/location.png",
+                },
+            )
+
+    monkeypatch.setattr(grid_service_module, "StoryboardModel", FakeStoryboardModel)
+    monkeypatch.setattr(grid_service_module, "StoryboardSceneModel", FakeSceneModel)
+    monkeypatch.setattr(grid_service_module, "StoryboardImageBatchItemModel", FakeItemModel)
+    monkeypatch.setattr(grid_service_module, "LocationModel", FakeLocationModel)
+
+    if submissions is not None:
+        def fake_submit(**kwargs):
+            submissions.append(kwargs)
+            return dict(submit_result or {
+                "success": True,
+                "project_ids": ["pid-grid"],
+                "task_key": "grid:test",
+                "grid_task_id": 961,
+                "model_task_id": kwargs.get("task_type"),
+            })
+
+        monkeypatch.setattr(grid_service_module, "submit_grid_image_task", fake_submit)
+
+    return item
+
+
+def test_submit_chunk_passes_locked_task_type_from_batch_snapshot(monkeypatch):
+    """防回归（线上事故）：quality 宫格必须使用批任务创建时锁定的模型快照。
+
+    用户在拆分界面选择 GPT Image 2（task_id=26）后，宫格提交不允许再回退到
+    偏好/默认模型（nano-banana-Pro, task_id=7）。
+    """
+    submissions = []
+    _patch_single_ready_scene(monkeypatch, submissions=submissions)
+
+    result = StoryboardFirstFrameGridService(enable_llm_refine=False).process_job({
+        "id": 96,
+        "storyboard_id": 30,
+        "user_id": 7,
+        "auth_token": "token",
+        "extra_json": {
+            "task_type": 26,
+            "generation_snapshots": {
+                "image.image_edit": {"task_id": 26, "model_key": "gpt-image-2-edit"},
+                "image.text_to_image": {"task_id": 26, "model_key": "gpt-image-2-edit"},
+            },
+        },
+    })
+
+    assert result["submitted_count"] == 1
+    assert submissions[0]["task_type"] == 26
+
+
+def test_submit_chunk_falls_back_to_job_task_type_without_snapshot(monkeypatch):
+    """旧批任务无 generation_snapshots 时回退 extra_json.task_type，同样必须透传。"""
+    submissions = []
+    _patch_single_ready_scene(monkeypatch, submissions=submissions)
+
+    result = StoryboardFirstFrameGridService(enable_llm_refine=False).process_job({
+        "id": 96,
+        "storyboard_id": 30,
+        "user_id": 7,
+        "auth_token": "token",
+        "extra_json": {"task_type": 26},
+    })
+
+    assert result["submitted_count"] == 1
+    assert submissions[0]["task_type"] == 26
+
+
+def test_submit_chunk_without_locked_model_passes_none(monkeypatch):
+    """无任何锁定信息（历史遗留数据）时透传 None，由底层走偏好/默认解析并打 warning。"""
+    submissions = []
+    _patch_single_ready_scene(monkeypatch, submissions=submissions)
+
+    result = StoryboardFirstFrameGridService(enable_llm_refine=False).process_job({
+        "id": 96,
+        "storyboard_id": 30,
+        "user_id": 7,
+        "auth_token": "token",
+    })
+
+    assert result["submitted_count"] == 1
+    assert submissions[0]["task_type"] is None
+
+
+def test_submit_chunk_accepts_json_string_extra(monkeypatch):
+    """extra_json 为 JSON 字符串（未 normalize 的 job dict）时也能解析锁定模型。"""
+    submissions = []
+    _patch_single_ready_scene(monkeypatch, submissions=submissions)
+
+    result = StoryboardFirstFrameGridService(enable_llm_refine=False).process_job({
+        "id": 96,
+        "storyboard_id": 30,
+        "user_id": 7,
+        "auth_token": "token",
+        "extra_json": json.dumps({
+            "task_type": 26,
+            "generation_snapshots": {
+                "image.image_edit": {"task_id": 26, "model_key": "gpt-image-2-edit"},
+            },
+        }),
+    })
+
+    assert result["submitted_count"] == 1
+    assert submissions[0]["task_type"] == 26
+
+
+def test_submit_chunk_logs_error_on_model_mismatch(monkeypatch, caplog):
+    """对账防线：实际提交模型与快照不一致时必须打 error 暴露，而非静默放过。"""
+    submissions = []
+    _patch_single_ready_scene(
+        monkeypatch,
+        submissions=submissions,
+        submit_result={
+            "success": True,
+            "project_ids": ["pid-grid"],
+            "task_key": "grid:test",
+            "grid_task_id": 962,
+            "model_task_id": 7,
+        },
+    )
+
+    with caplog.at_level(logging.ERROR):
+        result = StoryboardFirstFrameGridService(enable_llm_refine=False).process_job({
+            "id": 96,
+            "storyboard_id": 30,
+            "user_id": 7,
+            "auth_token": "token",
+            "extra_json": {
+                "task_type": 26,
+                "generation_snapshots": {
+                    "image.image_edit": {"task_id": 26, "model_key": "gpt-image-2-edit"},
+                },
+            },
+        })
+
+    assert result["submitted_count"] == 1
+    mismatch_errors = [
+        rec for rec in caplog.records
+        if "宫格提交模型与批任务快照不一致" in rec.getMessage()
+    ]
+    assert mismatch_errors, "模型不一致必须打 error 日志"
+    message = mismatch_errors[0].getMessage()
+    assert "expected_task_id=26" in message
+    assert "actual_task_id=7" in message
+
+
+def test_submit_chunk_no_error_log_when_model_matches(monkeypatch, caplog):
+    """模型一致时对账静默通过，不产生误报。"""
+    submissions = []
+    _patch_single_ready_scene(monkeypatch, submissions=submissions)
+
+    with caplog.at_level(logging.ERROR):
+        result = StoryboardFirstFrameGridService(enable_llm_refine=False).process_job({
+            "id": 96,
+            "storyboard_id": 30,
+            "user_id": 7,
+            "auth_token": "token",
+            "extra_json": {
+                "task_type": 26,
+                "generation_snapshots": {
+                    "image.image_edit": {"task_id": 26, "model_key": "gpt-image-2-edit"},
+                },
+            },
+        })
+
+    assert result["submitted_count"] == 1
+    assert not [
+        rec for rec in caplog.records
+        if "宫格提交模型与批任务快照不一致" in rec.getMessage()
+    ]
 
 
 def test_process_job_submits_ready_scenes_as_first_frame_grid(monkeypatch):

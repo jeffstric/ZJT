@@ -64,7 +64,10 @@
   "network_error_retry": "Network error, please try again later",
   "log_increase": "➕ Increase",
   "log_deduct": "➖ Deduct",
-
+  "txn_label": "Txn",
+  "txn_refund": "↩ Refund",
+  "txn_copied": "✓ Copied",
+  "txn_click_to_copy": "Click to copy full transaction ID",
   "nav_inspiration": "Inspiration",
   "nav_generate": "Generate",
   "nav_assets": "Assets",

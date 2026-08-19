@@ -29,6 +29,7 @@ from model.script import ScriptModel
 from model.storyboard import StoryboardModel
 from model.user_preferences import UserPreferencesModel
 from model.storyboard_dialogue import StoryboardDialogueModel
+from model.storyboard_dialogue_audio import StoryboardDialogueAudioModel
 from model.storyboard_image_batch import StoryboardImageBatchItemModel, StoryboardImageBatchJobModel
 from model.storyboard_scene import StoryboardSceneModel, compute_sort_between, is_precision_exhausted
 from model.storyboard_scene_asset import StoryboardSceneAssetModel
@@ -917,7 +918,7 @@ class StoryboardAgentCliService:
         storyboard = context["storyboard"]
         video_type = str(scene.get("video_type") or SceneVideoType.VIDEO)
 
-        # 对口型：双模型路由（Wan2.2 / LTX2.3），统一编排 + 按实际模型扣费。
+        # 对口型：固定 MiniMax H3，统一编排 + 按 clamp 后时长扣费。
         # 忽略调用方传入的 prompt / duration / ratio（以服务端规划为准）。
         if video_type == SceneVideoType.DIGITAL_HUMAN:
             from services.storyboard_digital_human_service import (
@@ -935,7 +936,9 @@ class StoryboardAgentCliService:
                     "数字人生成需要 auth_token 以扣除算力，缺少计费身份时拒绝提交",
                 )
             try:
-                plan, _segments, _scene, _sb = orchestrate_digital_human_generation(int(scene_id))
+                plan, _segments, _scene, _sb = orchestrate_digital_human_generation(
+                    int(scene_id),
+                )
             except StoryboardDigitalHumanError as exc:
                 raise StoryboardCliError(exc.code, exc.message, payload=exc.payload) from exc
 
@@ -973,6 +976,16 @@ class StoryboardAgentCliService:
         world_id = str(storyboard.get("world_id") or "")
         prompt_text = prompt or context["video_prompt"] or context["image_prompt"]
         ratio_value = ratio or storyboard.get("workflow_ratio") or "16:9"
+        # 时长兜底刷新：TTS 完成回写 scene.duration 是 best-effort，存在「音频已生成但
+        # duration 仍是 LLM 估算整数秒」的窗口。CLI 批量路径在此同步刷新：有已完成配音
+        # 则用真实音频求和覆盖 scene dict 的 duration，否则保持原值。best-effort，失败不阻断。
+        # 下限 0.1s 与 recalc_scene_duration_if_all_completed / 播放器 resolveSceneSpan 对齐。
+        try:
+            refreshed = StoryboardDialogueAudioModel.sum_selected_durations_if_all_completed(int(scene_id))
+            if refreshed is not None:
+                scene["duration"] = max(0.1, round(float(refreshed), 3))
+        except Exception as exc:
+            logger.warning("generate_video: scene=%s 兜底刷新 duration 失败: %s", scene_id, exc)
         # scene.duration 现为 DECIMAL(10,3) 浮点（音频求和同步）。视频后端要求整数秒，
         # 用 ceil 向上取整，确保视频时长不短于音频（避免丢帧/音画不同步）；下限 1 秒。
         duration_value = max(1, math.ceil(float(duration_seconds or scene.get("duration") or 5)))
@@ -2332,6 +2345,9 @@ class StoryboardAgentCliService:
             project_ids = result.get("project_ids") or []
             asset_ids = result.get("asset_ids") or []
             selected_asset_id = result.get("selected_asset_id") or (asset_ids[0] if asset_ids else None)
+            self._audit_image_batch_model_consistency(
+                job, submit_mode, item, result,
+            )
             StoryboardImageBatchItemModel.update(
                 int(item["id"]),
                 status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING,
@@ -2363,9 +2379,45 @@ class StoryboardAgentCliService:
         self._update_image_batch_job_counts(job_id)
         return {"submitted_count": submitted_count}
 
+    def _audit_image_batch_model_consistency(
+        self,
+        job: Dict[str, Any],
+        submit_mode: str,
+        item: Dict[str, Any],
+        result: Dict[str, Any],
+    ) -> None:
+        """运行时对账：批任务提交的生图模型必须等于创建时锁定的快照模型。
+
+        防止未来新增链路绕过模型快照导致静默换模型（曾出现用户选 GPT Image 2
+        实际按默认 nano-banana-Pro 生成的线上事故）。不一致只记 error 供
+        日志/Sentry 告警，不改变已提交结果。
+        """
+        extra = job.get("extra_json") if isinstance(job.get("extra_json"), dict) else {}
+        snapshots = extra.get("generation_snapshots") or {}
+        # auto 模式无参考图走 t2i，与 generate_image 的模式归一一致
+        slot_mode = "text_to_image" if submit_mode in ("auto", "text_to_image") else "image_edit"
+        snapshot = snapshots.get(f"image.{slot_mode}") or {}
+        expected = snapshot.get("task_id") if isinstance(snapshot, dict) else None
+        submission = result.get("submission") if isinstance(result.get("submission"), dict) else {}
+        actual = submission.get("model_task_id") or result.get("model_task_id")
+        if expected in (None, "") or actual in (None, ""):
+            return
+        try:
+            expected_int = int(expected)
+            actual_int = int(actual)
+        except (TypeError, ValueError):
+            return
+        if expected_int != actual_int:
+            logger.error(
+                "[batch-model-audit] 批任务提交模型与快照不一致: job=%s item=#%s scene=%s "
+                "mode=%s expected_task_id=%s actual_task_id=%s project_ids=%s",
+                job.get("id"), item.get("id"), item.get("scene_id"),
+                submit_mode, expected_int, actual_int, result.get("project_ids"),
+            )
+
 
     def _process_one_video_batch_job(self, job: Dict[str, Any], items: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """推进视频批量任务。generate_video 内部按 scene.video_type 分流图生视频 / LTX 对口型。"""
+        """推进视频批量任务。generate_video 内部按 scene.video_type 分流图生视频 / MiniMax 对口型。"""
         job_id = int(job["id"])
         submitted_count = 0
 
@@ -4020,7 +4072,7 @@ class StoryboardAgentCliService:
                         f"叙事目的：{shot.get('narrative_purpose')}" if shot.get("narrative_purpose") else None,
                     ]),
                     "video_type": resolved_video_type,
-                    # 声音同出：数字人分镜 LTX2.3 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
+                    # 声音同出：数字人分镜 MiniMax 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
                     "audio_embedded": resolved_video_type == SceneVideoType.DIGITAL_HUMAN,
                     "video_config": {
                         "shot_type": shot_type,
