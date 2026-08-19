@@ -909,6 +909,43 @@ class TestGetReferenceVideosTotalDuration(unittest.TestCase):
 
     @patch('utils.video_compressor.os.path.exists', return_value=True)
     @patch('utils.video_compressor.os.remove')
+    @patch('utils.video_compressor._probe_video_duration_seconds_sync')
+    @patch('utils.video_compressor._resolve_local_video_path')
+    def test_webm_without_duration_transcoded_then_probed(
+        self, mock_resolve, mock_probe, mock_remove, mock_exists
+    ):
+        """WebM 缺 duration 元数据：转码 MP4 后重探成功，计费不再回退用户输入"""
+        from utils.video_compressor import get_reference_videos_total_duration_sync
+
+        mock_resolve.return_value = ('C:/tmp/rec.webm', [], None)
+        # 第一次探测原始 webm 失败（无 duration 元数据），转码产物探测成功
+        mock_probe.side_effect = [None, 10.0]
+
+        with patch('utils.video_compressor.prepare_seedance_reference_video_sync',
+                   return_value=(True, 'C:/tmp/transcoded.mp4', None,
+                                 ['C:/tmp/transcoded.mp4'])) as mock_prep:
+            total = get_reference_videos_total_duration_sync(
+                'C:/uploads/record.webm'
+            )
+
+        self.assertAlmostEqual(total, 10.0)
+        mock_prep.assert_called_once()
+        mock_remove.assert_called_once_with('C:/tmp/transcoded.mp4')
+
+    @patch('utils.video_compressor.prepare_seedance_reference_video_sync')
+    @patch('utils.video_compressor._probe_video_duration_seconds_sync', return_value=None)
+    @patch('utils.video_compressor._resolve_local_video_path')
+    def test_mp4_probe_failure_does_not_transcode(self, mock_resolve, mock_probe, mock_prep):
+        """MP4 探测失败不触发转码（转码仅针对缺元数据的 WebM/MKV），返回 None 回退"""
+        from utils.video_compressor import get_reference_videos_total_duration_sync
+
+        mock_resolve.return_value = ('C:/tmp/broken.mp4', [], None)
+
+        self.assertIsNone(get_reference_videos_total_duration_sync('C:/uploads/broken.mp4'))
+        mock_prep.assert_not_called()
+
+    @patch('utils.video_compressor.os.path.exists', return_value=True)
+    @patch('utils.video_compressor.os.remove')
     @patch('utils.video_compressor._probe_video_duration_seconds_sync', return_value=6.0)
     @patch('utils.video_compressor._resolve_local_video_path')
     def test_downloaded_temp_files_cleaned(self, mock_resolve, mock_probe, mock_remove, mock_exists):
