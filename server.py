@@ -86,7 +86,12 @@ from utils.image_grid_merger import ImageGridMerger
 from utils.sentry_util import SentryUtil
 from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
-from utils.computing_power import build_context_from_task_record, get_implementation_for_user
+from utils.computing_power import (
+    build_context_from_task_record,
+    get_implementation_for_user,
+    resolve_video_edit_billing_duration,
+    BILLING_DURATION_SOURCE_REFERENCE_VIDEO,
+)
 from utils.video_resolution import validate_video_resolution
 from utils.resource_access import (
     get_user_id_from_header,
@@ -2283,6 +2288,20 @@ async def ai_app_run_image(
         # 驱动（huimengi）会透传给网关，由网关服务端审核加白，无需本地遮盖。
         if user_wants_face_process:
             base_extra_config['human_review'] = True
+        # 视频编辑任务（Seedance 2.5 + 参考视频）：计费时长改按参考视频总时长吸附档位。
+        # 输出时长由参考视频决定（驱动下发 duration=-1），用户输入时长不参与计费；
+        # 探测失败回退用户输入。同步探测（URL 下载 + ffprobe），to_thread 包装
+        # 避免阻塞事件循环（AGENTS.md 规则1）。
+        billing_duration, billing_duration_source = await asyncio.to_thread(
+            resolve_video_edit_billing_duration,
+            image_to_video_type,
+            video_path,
+            duration_seconds,
+        )
+        if billing_duration_source == BILLING_DURATION_SOURCE_REFERENCE_VIDEO:
+            # 审计字段随 extra_config 落库：追溯每笔计费时长的来源与用户原始输入
+            base_extra_config['user_duration_seconds'] = duration_seconds
+            base_extra_config['billing_duration_source'] = billing_duration_source
         if task_config.category == TaskCategory.DIGITAL_HUMAN:
             if not audio_path:
                 raise HTTPException(status_code=400, detail="数字人任务需要提供说话音频（audio 或 audio_urls）")
@@ -2343,8 +2362,9 @@ async def ai_app_run_image(
             context['resolution'] = resolution
 
         # 根据时长和 context 获取算力（优先任务配置，回退到实现方配置）
+        # 视频编辑任务 billing_duration 已按参考视频总时长吸附档位，其余任务等于用户输入
         computing_power = task_config.get_computing_power(
-            duration=duration_seconds,
+            duration=billing_duration,
             implementation=actual_impl,
             context=context
         )
@@ -2455,7 +2475,7 @@ async def ai_app_run_image(
                                 type=image_to_video_type,
                                 image_path=image_path,
                                 ratio=ratio,
-                                duration=duration_seconds,
+                                duration=billing_duration,
                                 transaction_id=transaction_id,
                                 status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
                                 extra_config=audited_extra_config,
@@ -2474,7 +2494,7 @@ async def ai_app_run_image(
                                 type=image_to_video_type,
                                 image_path=image_path,
                                 ratio=ratio,
-                                duration=duration_seconds,
+                                duration=billing_duration,
                                 transaction_id=transaction_id,
                                 status=AI_TOOL_STATUS_PENDING,
                                 extra_config=audited_extra_config,

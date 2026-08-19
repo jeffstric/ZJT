@@ -59,6 +59,8 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 | 17 秒 | 944 | | 30 秒 | 1475 |
 
 > 2.5 支持 480P / 720P / 1080P。480P 通过 `SEEDANCE_480P_PRICE_MULTIPLIER` 换算（与 2.0 共用）；1080P 通过 `SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78` 换算。
+>
+> **视频编辑（2.5 + 参考视频）计费时长**：输出时长由参考视频决定（API 下发 `duration=-1`），计费「输出秒」取**参考视频总时长**（多视频求和 → 向上取整 → clamp 5–30，零头按 1 秒计），而非用户输入时长；探测失败回退用户输入。统一入口 `utils/computing_power.py::resolve_video_edit_billing_duration`，见下文「计费口径」说明。
 
 ## 特性
 
@@ -142,7 +144,9 @@ Seedance API 使用 content 数组传递输入：
 
 > `ratio` 只在文生视频、多参考（multi_reference）模式下下发。首帧/首尾帧模式（含未知模式降级为首尾帧）输出比例跟随首帧图片，火山会拒绝显式 `ratio`（400 `InvalidParameter.TaskTypeConstraint`），驱动构建 payload 时自动省略该字段。
 >
-> **Seedance 2.5 参考视频（视频克隆/编辑）**：火山会按提示词把任务判成 video editing，此时 `ratio` 必须为 `adaptive`、`duration` 必须为 `-1`，输出画幅和时长跟随参考视频（参考视频须 4–30 秒）。驱动在 `driver_type=36` 且带参考视频时自动改写这两个字段；普通文生/图生仍下发用户选择的比例和时长。算力仍按用户选择的时长计，不用 `-1`。
+> **Seedance 2.5 参考视频（视频克隆/编辑）**：火山会按提示词把任务判成 video editing，此时 `ratio` 必须为 `adaptive`、`duration` 必须为 `-1`，输出画幅和时长跟随参考视频（参考视频须 4–30 秒）。驱动命中视频编辑判定时显式下发 `omni_reference_task_type: "edit"`（常量 `config/constant.py::OMNI_REFERENCE_TASK_TYPE_EDIT`）并自动改写 `ratio`/`duration`，接口提交时即提前校验参数限制，消除 auto 自动判定错型导致的异步报错（`InvalidParameter.TaskTypeConstraint` / `TaskTypeMismatch`）；普通文生/图生仍下发用户选择的比例和时长，且不下发 `omni_reference_task_type`。
+>
+> **计费口径（视频编辑）**：视频编辑任务的输出时长由参考视频决定，算力按**参考视频总时长**计，不再按用户输入时长。判定与解析的唯一入口为 `utils/computing_power.py::resolve_video_edit_billing_duration`（内部先调共享谓词 `is_video_edit_billing_task`，命中任务集合见 `config/constant.py::VIDEO_EDIT_BILLING_TASK_TYPES`，驱动层下发 edit 与计价层共用，禁止调用方自写条件）：ffprobe 探测参考视频总时长 → 向上取整到整数秒（不足 1 秒的零头按 1 秒计，含 1µs 浮点容差防整数秒误加）→ clamp 到任务 `supported_durations` 区间（2.5 为 5–30）；探测失败回退用户输入时长。扣费（`/api/ai-app-run-image`，探测经 `asyncio.to_thread` 包装）、`ai_tools.duration` 落库、企业工具估算（`enterprise/tools/video_tools.py`）、Agent 算力确认估算（`power_confirm.py`）均调用同一函数；`extra_config` 落库 `user_duration_seconds` 与 `billing_duration_source`（`reference_video`/`user_input`）供审计。已知局限：缺 duration 元数据的 WebM/MKV 探测失败，按用户输入时长计费。退费不受影响：第一优先级按扣费流水原额退还（免疫供应商切换/价格热更新），兜底重算用 `ai_tools.duration`（与扣费同源）。
 
 ## 纯音频输入
 

@@ -18,6 +18,7 @@ import requests
 
 from config.constant import (
     MediaConstants,
+    REFERENCE_VIDEO_DURATION_PROBE_TIMEOUT,
     SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_CONNECT_TIMEOUT,
     SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_READ_TIMEOUT,
     SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT,
@@ -295,6 +296,92 @@ def prepare_seedance_reference_video_sync(
     if not success:
         return False, None, transcode_error, cleanup_paths
     return True, output_path, None, cleanup_paths
+
+
+def _probe_video_duration_seconds_sync(
+    video_path: str,
+    timeout: int = REFERENCE_VIDEO_DURATION_PROBE_TIMEOUT,
+) -> Optional[float]:
+    """
+    同步 ffprobe 探测单个视频的容器时长（秒）。
+
+    MediaRecorder 产出的 WebM 可能缺容器 duration 元数据，探测结果为 0 时返回 None。
+    含子进程调用，异步上下文须 asyncio.to_thread 包装。
+    """
+    ffprobe_path = _get_ffprobe_path()
+    cmd = [
+        ffprobe_path,
+        "-v", "quiet",
+        "-print_format", "json",
+        "-show_format",
+        video_path,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        logger.warning(f"ffprobe 探测视频时长失败({video_path}): {e}")
+        return None
+
+    if proc.returncode != 0:
+        logger.warning(f"ffprobe 返回非零({video_path}): {(proc.stderr or '')[-200:]}")
+        return None
+
+    try:
+        data = json.loads(proc.stdout or "")
+        duration = float(data.get("format", {}).get("duration", 0) or 0)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        logger.warning(f"ffprobe 输出解析失败({video_path})")
+        return None
+    return duration if duration > 0 else None
+
+
+def get_reference_videos_total_duration_sync(video_path_csv: Optional[str]) -> Optional[float]:
+    """
+    探测参考视频总时长（秒），用于视频编辑任务的计费时长。
+
+    video_path_csv: 逗号分隔的本地路径/URL 列表（与 ai_tools.video_path 同格式）。
+    同步函数（外部 URL 会触发下载），异步上下文须 asyncio.to_thread 包装。
+
+    Returns:
+        总时长（秒）；路径为空、任一视频定位/探测失败时返回 None（调用方回退用户输入时长）。
+        已知局限：缺 duration 元数据的 WebM/MKV 返回 None，由调用方回退用户输入时长计费。
+    """
+    paths = [v.strip() for v in (video_path_csv or "").split(",") if v.strip()]
+    if not paths:
+        return None
+
+    root = get_project_root()
+    total = 0.0
+    cleanup_paths: list[str] = []
+    try:
+        for path in paths:
+            local_path, cleanup, error = _resolve_local_video_path(path, root)
+            cleanup_paths.extend(cleanup or [])
+            if not local_path:
+                logger.warning(f"参考视频无法定位，计费时长探测回退: {path} ({error})")
+                return None
+            duration = _probe_video_duration_seconds_sync(local_path)
+            if duration is None:
+                logger.warning(f"参考视频时长探测失败，计费时长探测回退: {path}")
+                return None
+            total += duration
+        return total
+    finally:
+        for path in cleanup_paths:
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
 
 
 async def compress_video(

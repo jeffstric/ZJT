@@ -31,6 +31,18 @@ SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT = 300
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_CONNECT_TIMEOUT = 10
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_READ_TIMEOUT = 120
 
+# ===== Seedance 2.5 视频编辑任务（omni_reference_task_type=edit）=====
+# 视频编辑任务的输出时长由参考视频决定（API 下发 duration=-1、ratio=adaptive），
+# 计费时长须按参考视频总时长吸附档位，而非用户输入时长。
+# 判定唯一入口：utils/computing_power.is_video_edit_billing_task（驱动层下发 edit
+# 与计价层计费时长共用），禁止调用方自写条件；新增任务类型只改此集合。
+VIDEO_EDIT_BILLING_TASK_TYPES = {TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO}
+# 火山 Seedance 2.5 全模态参考任务类型：显式 edit 使接口提交时提前校验参数限制，
+# 消除 auto 自动判定错型导致的异步报错（InvalidParameter.TaskTypeConstraint/Mismatch）
+OMNI_REFERENCE_TASK_TYPE_EDIT = "edit"
+# 计费前 ffprobe 探测单个参考视频时长的超时（秒）
+REFERENCE_VIDEO_DURATION_PROBE_TIMEOUT = 10
+
 # ===== Windows uv 托盘启动器 =====
 # launcher bootstrap 运行在 Web 服务启动之前；所有外部进程仍必须有硬超时，
 # 防止首次安装或损坏的依赖环境让启动窗口永久卡住。

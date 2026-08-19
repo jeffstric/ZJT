@@ -9,8 +9,14 @@
 from typing import Optional, Union, Dict, Any
 import logging
 import json
+import math
 from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig, get_implementation_name
-from config.constant import IMAGE_MODE_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY, TASK_COMPUTING_POWER
+from config.constant import (
+    IMAGE_MODE_EXTRA_CONFIG_KEY,
+    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
+    TASK_COMPUTING_POWER,
+    VIDEO_EDIT_BILLING_TASK_TYPES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +237,87 @@ def get_implementation_for_user(
         impl_name = config.implementation
 
     return impl_name
+
+
+# ==================== 视频编辑任务计费时长（Seedance 2.5 omni_reference_task_type=edit）====================
+# 视频编辑任务的输出时长由参考视频决定（驱动下发 duration=-1、ratio=adaptive、
+# omni_reference_task_type=edit），计费时长须按参考视频总时长吸附档位。
+# ⚠️ 判定唯一入口 is_video_edit_billing_task：驱动层（下发 edit）与计价层（计费时长）
+# 共用，调用方不得自写条件；新增任务类型改 config/constant.VIDEO_EDIT_BILLING_TASK_TYPES。
+
+# 计费时长来源标识：写入 extra_config.billing_duration_source 供审计追溯
+BILLING_DURATION_SOURCE_REFERENCE_VIDEO = "reference_video"
+BILLING_DURATION_SOURCE_USER_INPUT = "user_input"
+
+
+def is_video_edit_billing_task(task_type, video_path) -> bool:
+    """
+    判断任务是否为「按参考视频总时长计费」的视频编辑任务（唯一判定入口）。
+
+    驱动层据此下发 omni_reference_task_type=edit / ratio=adaptive / duration=-1，
+    计价层据此把计费时长从用户输入切换为参考视频总时长，两处判定必须同源，
+    否则会出现「API 按 edit 下发、算力按用户时长扣」的错位。
+
+    Args:
+        task_type: 任务类型 ID（TaskTypeId）
+        video_path: 参考视频路径/URL（逗号分隔多个），与 ai_tools.video_path 同格式
+    """
+    if not video_path or not str(video_path).strip():
+        return False
+    return task_type in VIDEO_EDIT_BILLING_TASK_TYPES
+
+
+def resolve_video_edit_billing_duration(
+    task_type,
+    video_path,
+    user_duration: Optional[int],
+) -> tuple[int, str]:
+    """
+    解析视频编辑任务的计费时长（计价唯一入口）。
+
+    命中视频编辑任务时探测参考视频总时长，向上取整到整数秒并 clamp 到任务
+    supported_durations 区间（档位表按整数秒建键，get_computing_power 匹配不到
+    档位会错取首档，必须吸附；不足 1 秒的零头按 1 秒计，保证平台不亏）；
+    未命中或探测失败时回退用户输入时长。
+
+    同步函数（外部 URL 下载 + ffprobe 子进程），异步上下文须 asyncio.to_thread 包装。
+    扣费与 ai_tools.duration 落库必须使用同一返回值，保证退费兜底重算同源。
+
+    Args:
+        task_type: 任务类型 ID（TaskTypeId）
+        video_path: 参考视频路径/URL（逗号分隔多个）
+        user_duration: 用户输入时长（秒），回退值
+
+    Returns:
+        (计费时长秒数, 来源标识)；来源 ∈ {BILLING_DURATION_SOURCE_REFERENCE_VIDEO,
+        BILLING_DURATION_SOURCE_USER_INPUT}
+    """
+    fallback = int(user_duration) if user_duration else 5
+    if not is_video_edit_billing_task(task_type, video_path):
+        return fallback, BILLING_DURATION_SOURCE_USER_INPUT
+
+    from utils.video_compressor import get_reference_videos_total_duration_sync
+
+    total = get_reference_videos_total_duration_sync(video_path)
+    if total is None:
+        logger.warning(
+            f"task_type={task_type} 参考视频时长探测失败，计费回退用户输入时长 {fallback}s"
+        )
+        return fallback, BILLING_DURATION_SOURCE_USER_INPUT
+
+    # 向上取整（不足 1 秒的零头按 1 秒计）；减 1µs 容器时钟容差，避免恰好整数秒的
+    # 视频因浮点噪声被多计 1 秒（如 10.000000 → 仍计 10）
+    billing = math.ceil(total - 1e-6)
+    config = UnifiedConfigRegistry.get_by_id(task_type)
+    if config and config.supported_durations:
+        durations = sorted(config.supported_durations)
+        billing = min(max(billing, durations[0]), durations[-1])
+
+    logger.info(
+        f"视频编辑计费时长: 参考视频总时长 {total:.1f}s → 计费 {billing}s（向上取整） "
+        f"(用户输入 {fallback}s, task_type={task_type})"
+    )
+    return billing, BILLING_DURATION_SOURCE_REFERENCE_VIDEO
 
 
 # ==================== 失败退费（扣返一致性保障） ====================
