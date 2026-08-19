@@ -589,6 +589,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.GROK_COMMON_SITE3_V1,  # 通用聚合站点 3
         DriverImplementation.GROK_COMMON_SITE4_V1,  # 通用聚合站点 4
         DriverImplementation.GROK_COMMON_SITE5_V1,  # 通用聚合站点 5
+        DriverImplementation.GROK_HUIMENGI_V1,      # 慧梦网关
     ],
 
     # Happy Horse 相关驱动

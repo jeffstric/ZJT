@@ -807,6 +807,13 @@ def register_all_drivers():
     except ImportError as e:
         logger.warning(f"Failed to import GrokCommon site drivers: {e}")
 
+    # Grok huimengi 网关驱动注册（慧梦，grok-video-channel）
+    try:
+        from .grok_huimengi_v1_driver import GrokHuimengiV1Driver
+        VideoDriverFactory.register_driver(DriverImplementation.GROK_HUIMENGI_V1, GrokHuimengiV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import GrokHuimengiV1Driver: {e}")
+
     try:
         from .happy_horse_dashscope_v1_driver import HappyHorseDashscopeV1Driver
         VideoDriverFactory.register_driver(

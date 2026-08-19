@@ -1071,6 +1071,7 @@ class DriverImplementation:
     GROK_COMMON_SITE3_V1 = 'grok_common_site3_v1'
     GROK_COMMON_SITE4_V1 = 'grok_common_site4_v1'
     GROK_COMMON_SITE5_V1 = 'grok_common_site5_v1'
+    GROK_HUIMENGI_V1 = 'grok_huimengi_v1'
 
     # Happy Horse
     HAPPY_HORSE_DASHSCOPE_V1 = 'happy_horse_dashscope_v1'
@@ -1167,6 +1168,9 @@ class DriverImplementationId:
     SEEDANCE_2_5_VOLCENGINE_V1 = 68
     SEEDANCE_2_5_HUIMENGI_V1 = 69
 
+    # Grok huimengi 网关
+    GROK_HUIMENGI_V1 = 70
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1220,6 +1224,7 @@ IMPLEMENTATION_TO_ID = {
     'grok_common_site4_v1': DriverImplementationId.GROK_COMMON_SITE4_V1,
     'grok_common_site5_v1': DriverImplementationId.GROK_COMMON_SITE5_V1,
     'grok_duomi_v1': DriverImplementationId.GROK_DUOMI_V1,
+    'grok_huimengi_v1': DriverImplementationId.GROK_HUIMENGI_V1,
     'happy_horse_dashscope_v1': DriverImplementationId.HAPPY_HORSE_DASHSCOPE_V1,
     'happy_horse_dashscope_r2v_v1': DriverImplementationId.HAPPY_HORSE_DASHSCOPE_R2V_V1,
     'happy_horse_dashscope_t2v_v1': DriverImplementationId.HAPPY_HORSE_DASHSCOPE_T2V_V1,
@@ -1987,6 +1992,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.GROK_COMMON_SITE3_V1,
             DriverImplementation.GROK_COMMON_SITE4_V1,
             DriverImplementation.GROK_COMMON_SITE5_V1,
+            DriverImplementation.GROK_HUIMENGI_V1,
         ],
         supported_ratios=['9:16', '16:9', '1:1'],
         supported_durations=[6, 10, 15],
@@ -2720,6 +2726,18 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='Grok 站点5',
         sort_order=4600.0,
         required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
+    ),
+    # 慧梦网关 Grok：成本 0.05 元/秒，1 算力 = 0.04 元，按 5% 利润向上取整
+    # 6s: ceil(0.3/0.04*1.05)=8；10s: ceil(0.5/0.04*1.05)=14；15s: ceil(0.75/0.04*1.05)=20
+    ImplementationConfig(
+        name=DriverImplementation.GROK_HUIMENGI_V1,
+        display_name='huimengi',
+        driver_class='GrokHuimengiV1Driver',
+        default_computing_power={6: 8, 10: 14, 15: 20},
+        enabled=True,
+        description='慧梦网关 Grok 视频（grok-video-channel）',
+        sort_order=4610.0,
+        required_config_keys=['huimengi.api_key']
     ),
 
     # ==================== RunningHub 供应商 ====================
