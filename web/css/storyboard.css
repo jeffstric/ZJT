@@ -298,6 +298,15 @@ button {
 }
 .header-split-badge .spinner.mini svg { display: block; }
 .header-split-badge-label { white-space: nowrap; }
+.header-start-split {
+    border-color: var(--primary);
+    background: var(--primary);
+    color: #fff;
+}
+.header-start-split:hover {
+    background: #2458d4;
+    border-color: #2458d4;
+}
 /* 错误/暂停态：红色提示，吸引点击处理 */
 .header-split-badge.is-errored {
     border-color: var(--danger);
@@ -1093,6 +1102,10 @@ button {
     background: var(--panel, #fff);
 }
 
+.export-dialog.model-config-dialog {
+    width: min(600px, calc(100vw - 32px));
+    max-width: 600px;
+}
 .model-config-dialog .model-config-tabs {
     display: flex;
     gap: 6px;
@@ -1182,6 +1195,7 @@ button {
 }
 .model-config-dialog .config-select-wrapper select {
     width: 100%;
+    max-width: none;
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -1396,13 +1410,15 @@ button {
 .chat-input-row { display: none; }
 .chat-mode-select {
     min-width: 0;
-    max-width: 120px;
     flex: 0 1 auto;
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 6px 8px;
     background: #fff;
     cursor: pointer;
+}
+.chat-toolbar .chat-mode-select {
+    max-width: 120px;
 }
 .chat-mode-select option { cursor: pointer; }
 .tool-button {
@@ -2411,6 +2427,32 @@ button {
     outline-offset: 2px;
 }
 
+/* 智能插入进行中：插入按钮转为加载态（旋转圈 + 呼吸动画），提醒用户 AI 正在生成 */
+.scene-timeline-insert-slot.inserting,
+.grid-insert-slot.inserting {
+    opacity: 1;
+    border-color: var(--border);
+    background: #fff;
+    color: var(--primary);
+    cursor: wait;
+    animation: insert-slot-pulse 1.4s ease-in-out infinite;
+}
+.insert-spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(16, 97, 245, 0.25);
+    border-top-color: var(--primary);
+    animation: insert-spin 0.8s linear infinite;
+}
+@keyframes insert-spin {
+    to { transform: rotate(360deg); }
+}
+@keyframes insert-slot-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(16, 97, 245, 0.28); }
+    50% { box-shadow: 0 0 0 5px rgba(16, 97, 245, 0); }
+}
+
 /* Storyboard timeline filmstrip：框尺寸跟 ratio（变量），媒体 scale-down 与主预览一致 */
 .scene-timeline-list {
     gap: 10px;
@@ -3378,6 +3420,85 @@ button {
 .edit-dialog textarea { min-height: 92px; }
 .edit-dialog footer { margin-top: 14px; justify-content: flex-end; }
 
+/* 对白情感向量编辑 */
+.dialogue-emo-btn .emo-bars {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 12px;
+    margin-left: 2px;
+}
+.dialogue-emo-btn .emo-bar {
+    display: inline-block;
+    width: 4px;
+    border-radius: 1px;
+}
+.dialogue-emo-btn.has-emo {
+    border-color: #93c5fd;
+    color: #1d4ed8;
+    background: #eff6ff;
+}
+.emo-vec-dialog {
+    width: min(440px, calc(100vw - 32px));
+    max-height: calc(100vh - 64px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.emo-vec-body {
+    padding: 8px 16px 4px;
+    overflow-y: auto;
+    flex: 1 1 auto;
+}
+.emo-vec-hint {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--muted, #64748b);
+    line-height: 1.5;
+}
+.emo-vec-enterprise-note {
+    margin: 0 0 14px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+}
+.emo-vec-enterprise-note.is-active {
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+    color: #065f46;
+}
+.emo-vec-sliders {
+    display: grid;
+    gap: 10px;
+}
+.emo-vec-slider-row {
+    display: grid;
+    gap: 4px;
+}
+.emo-vec-slider-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+}
+.emo-vec-label { color: #334155; }
+.emo-vec-value { color: var(--primary, #2563eb); font-variant-numeric: tabular-nums; }
+.emo-vec-range {
+    width: 100%;
+    accent-color: var(--primary, #2563eb);
+}
+.emo-vec-sum {
+    margin-top: 12px;
+    font-size: 13px;
+    color: #475569;
+}
+.emo-vec-sum.ok strong { color: #059669; }
+.emo-vec-sum.bad strong,
+.emo-vec-warn { color: #dc2626; }
+
 /* 思考模式（对齐 script_writer：DeepSeek 开关 / Doubao 强度） */
 .sb-thinking-wrap {
     display: flex;
@@ -3628,8 +3749,44 @@ button {
     font-size: 10px;
     transition: transform .15s ease;
 }
-.script-language-panel.is-open .script-language-chevron {
+.script-language-panel.is-open .script-language-chevron,
+.gfs-t2i-panel.is-open .script-language-chevron {
     transform: rotate(180deg);
+}
+.gfs-t2i-panel {
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+}
+.gfs-t2i-toggle {
+    width: 100%;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 0;
+    background: #f8fafc;
+    color: var(--foreground);
+    cursor: pointer;
+    text-align: left;
+}
+.gfs-t2i-toggle:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+}
+.gfs-t2i-body {
+    padding: 10px;
+    border-top: 1px solid var(--border);
+}
+.gfs-t2i-body .config-label {
+    margin-top: 0;
+}
+.storyboard-start-split .btn-primary {
+    margin-top: 10px;
 }
 .script-language-fields {
     display: grid;
@@ -4004,6 +4161,48 @@ button {
     border-radius: 6px;
 }
 
+/* 旧配音（生成中或设置已变更）：弱化显示，配合提示文案区分新旧 */
+.dialogue-audio.is-stale {
+    opacity: 0.55;
+}
+
+.dialogue-audio-note {
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 2px 0 4px;
+}
+.dialogue-audio-note.stale { color: #b45309; }
+.dialogue-audio-note.failed { color: #dc2626; }
+
+.dialogue-audio-progress {
+    margin: 2px 0 6px;
+    font-size: 12px;
+    color: var(--muted);
+}
+.dialogue-audio-progress-label {
+    display: inline-block;
+    margin-bottom: 4px;
+}
+.dialogue-audio-progress-track {
+    display: block;
+    height: 4px;
+    border-radius: 2px;
+    background: #e2e8f0;
+    overflow: hidden;
+}
+.dialogue-audio-progress-thumb {
+    display: block;
+    width: 40%;
+    height: 100%;
+    border-radius: 2px;
+    background: #3b82f6;
+    animation: dialogue-audio-indeterminate 1.2s ease-in-out infinite;
+}
+@keyframes dialogue-audio-indeterminate {
+    0% { margin-left: -40%; }
+    100% { margin-left: 100%; }
+}
+
 .dialogue-actions {
     display: flex;
     gap: 8px;
@@ -4029,7 +4228,7 @@ button {
     .right-sidebar { display: none; }
     .center-panel { min-height: calc(100vh - 128px); }
     .chat-toolbar { flex-wrap: nowrap; }
-    .chat-mode-select { max-width: 92px; font-size: 12px; padding: 5px 6px; }
+    .chat-toolbar .chat-mode-select { max-width: 92px; font-size: 12px; padding: 5px 6px; }
     .video-mode-dropdown .video-mode-btn span { display: none; }
     .video-mode-btn { width: 32px; height: 32px; justify-content: center; padding: 0; }
     .chat-send-btn { margin-left: auto; }

@@ -25,6 +25,15 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 _wx_group_qr_cache: Optional[Tuple[str, bytes, str, float]] = None
 
 
+def _dialogue_emotion_tts_enabled() -> bool:
+    """对白情感向量 TTS 是否对当前部署/许可证可用。"""
+    try:
+        from services.dialogue_emotion import is_enabled
+        return bool(is_enabled())
+    except Exception:
+        return False
+
+
 def _get_wx_group_qr_url() -> str:
     """
     获取微信群二维码 URL。
@@ -215,6 +224,10 @@ async def get_server_config():
                 "max_video_duration_seconds": max_video_duration_seconds,
                 "is_enterprise": not IS_COMMUNITY_EDITION,
                 "shared_space": not Edition.is_space_isolated(),
+                # 对白情感向量 TTS：仅企业版许可证 edition=enterprise 为 true
+                "features": {
+                    "dialogue_emotion_tts": _dialogue_emotion_tts_enabled(),
+                },
                 "enable_vue_error_output": enable_vue_error_output,
                 "email_enabled": email_enabled,
                 "captcha_enabled": captcha_enabled,

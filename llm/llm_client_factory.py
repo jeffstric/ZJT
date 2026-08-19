@@ -117,6 +117,19 @@ def get_llm_client(model: str, vendor_id: Optional[int] = None) -> BaseLLMClient
     return LLMClientFactory.get_client(model, vendor_id=vendor_id)
 
 
+def is_llm_client_configured(client: BaseLLMClient) -> bool:
+    """判断 LLM 客户端是否已配置可用凭据。
+
+    Ollama 等本地部署 client 无需真实 api_key（无需联网鉴权），不应判为未配置；
+    云端供应商（gemini/claude/aliyun/deepseek/volcengine/zjt/agnes）必须配置非空 api_key。
+
+    供 H3 提示词优化等场景做模型回退判定，避免对未配置密钥的供应商发起必败调用。
+    """
+    if isinstance(client, OllamaClient):
+        return True
+    return bool(getattr(client, 'api_key', ''))
+
+
 async def get_available_models() -> dict:
     """
     获取可用的 AI 模型列表，根据 vendor 表分组
@@ -187,13 +200,15 @@ async def get_available_models() -> dict:
         if not local_model or not local_model.supports_tools or not local_model.enabled:
             continue
 
-        # 获取 billing 配置
+        # 获取 billing 配置（按当前北京时间时段取价，配了峰谷则反映当前价）
         input_token_threshold = None
         try:
+            from utils.billing_period import get_billing_period
             vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
                 vendor_id=vendor_id,
                 model_id=model_id,
-                raw_input_token=0
+                raw_input_token=0,
+                time_period=get_billing_period(None),
             )
             if vendor_model and vendor_model.input_token_threshold:
                 input_token_threshold = vendor_model.input_token_threshold

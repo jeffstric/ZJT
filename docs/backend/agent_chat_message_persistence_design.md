@@ -686,6 +686,24 @@ context_state != 'deleted'
 
 `chat_sessions.conversation_history` 字段保留但废弃，新逻辑不读不写。
 
+## 会话过期与顺延策略
+
+会话是否被清理取决于 `chat_sessions.expires_at`：`task/session_cleanup.py` 定时任务（每 6 小时）硬删除 `expires_at <= now AND is_active = 1` 的会话行；前端随后因查不到活跃会话而新建空会话（旧 `chat_messages` 行成为孤儿数据，暂未清理）。
+
+过期时长常量见 `config/constant.py` 的 `SessionHistoryConstants`：
+
+- 剧本智能体（`session_type=1`）：`SESSION_EXPIRE_HOURS_SCRIPT = 72`（3 天）
+- 营销智能体（`session_type=2`）：`SESSION_EXPIRE_HOURS_MARKETING = 336`（14 天）
+
+`expires_at` 锚定为"最近一次消息活动时间"，以下入口都会顺延为 `now + 过期时长`（API 层统一经 `_extend_session_expiry()`，以 `asyncio.to_thread` 包装，失败仅记日志不影响主流程）：
+
+- 创建会话（`/session/create`）
+- 发送消息创建任务（`/session/{id}/task`，用户消息写入时即顺延，覆盖任务失败不顺延的缺口）
+- 追加消息（`/session/{id}/message`）
+- 提交验证回答（`/verification/{id}`）
+- 任务成功完成回调（`on_task_complete` → `save_session()`）
+- 切换会话模型（`/session/{id}/model`）
+
 ## 非阻塞要求
 
 当前数据库层使用 `pymysql` 同步函数。落地时必须遵守：

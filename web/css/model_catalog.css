@@ -1,0 +1,50 @@
+.model-track-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border-color, #d8dce3);
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--bg-primary, #fff);
+}
+
+.model-track-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary, #667085);
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.model-track-btn + .model-track-btn {
+  border-left: 1px solid var(--border-color, #d8dce3);
+}
+
+.model-track-btn.is-active {
+  background: var(--bg-tertiary, #eef2ff);
+  color: var(--text-primary, #1f2937);
+  font-weight: 600;
+}
+
+.model-track-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.model-select-wrapper.has-track-toggle,
+.model-track-host {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.model-catalog-reason {
+  font-size: 11px;
+  color: var(--text-secondary, #667085);
+  margin-top: 4px;
+}

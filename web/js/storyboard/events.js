@@ -41,12 +41,15 @@ import state, {
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
+import { showToast } from './utils.js';
 import { downloadAsAttachment } from './download.js';
 import {
     refresh,
     renderPromptWithInlineRoles,
     getThumbnailUrl,
+    updateDialogueRow,
     Region,
+    syncSequenceModeIntroCards,
 } from './render.js';
 import {
     REGIONS_ON_SCENE_CHANGE,
@@ -689,11 +692,23 @@ function collectDialoguePayload(row) {
     const text = row.querySelector('[data-dialogue-field="text"]')?.value || '';
     const speed = parseFloat(row.querySelector('[data-dialogue-field="speed"]')?.value || 1.0);
     const volume = parseInt(row.querySelector('[data-dialogue-field="volume"]')?.value || 100, 10);
+    const dialogueId = parseInt(row?.dataset?.dialogueId, 10);
+    let emoVec = null;
+    if (dialogueId) {
+        for (const scene of state.scenes) {
+            const d = (scene.dialogues || []).find((item) => item.id === dialogueId);
+            if (d) {
+                emoVec = d.emoVec ?? null;
+                break;
+            }
+        }
+    }
     return {
         character_id: characterRaw ? parseInt(characterRaw, 10) : null,
         text,
         speed,
         volume,
+        emo_vec: emoVec,
     };
 }
 
@@ -702,11 +717,26 @@ async function saveDialogueFromRow(row, { silent = false } = {}) {
     if (!dialogueId) return null;
     const payload = collectDialoguePayload(row);
     const response = await api.updateDialogue(dialogueId, payload);
+    // 台词/角色/语速/音量/情感任一变化且已有配音 → 标记旧配音，行内提示重新生成
+    let prev = null;
+    for (const scene of state.scenes) {
+        prev = (scene.dialogues || []).find((item) => item.id === dialogueId) || null;
+        if (prev) break;
+    }
+    const voiceChanged = prev && prev.audioUrl && (
+        prev.text !== payload.text
+        || (prev.characterId || null) !== payload.character_id
+        || Number(prev.speed ?? 1.0) !== payload.speed
+        || Number(prev.volume ?? 100) !== payload.volume
+        || (prev.emoVec || null) !== (payload.emo_vec ?? null)
+    );
     patchDialogueInState(dialogueId, {
         characterId: payload.character_id,
         text: payload.text,
         speed: payload.speed,
         volume: payload.volume,
+        emoVec: payload.emo_vec ?? null,
+        ...(voiceChanged ? { audioStale: true } : {}),
     });
     if (!silent) {
         notify('对话已保存');
@@ -862,7 +892,7 @@ async function sendStoryboardAgentMessage(current) {
         notify('AI生视频为商业版特权，请切换到「视频生成」模式（直连生成，社区版可用）');
         return;
     }
-    // 对口型分镜生成视频：必须先有成片配音（LTX 口型跟音频走）
+    // 对口型分镜生成视频：必须先有成片配音（MiniMax 口型跟音频走）
     const isDh = String(current?.videoType || current?.video_type || '').toLowerCase() === 'digital_human';
     if (state.chatMode === 'aivideo' && isDh) {
         const hasAudio = (current.dialogues || []).some(d => String(d.audioUrl || d.audio_url || '').trim());
@@ -1018,7 +1048,7 @@ async function sendDirectVideo(current) {
         notify('请先生成并选中首帧图片后再生成视频');
         return;
     }
-    // 对口型分镜：提示词/模型由服务端规划（台词或默认提示词、固定 LTX2.3 路由），
+    // 对口型分镜：提示词/模型由服务端规划（默认动作句、固定 MiniMax H3），
     // 前端不校验提示词与图生视频模型，点发送即一键提交；但必须先有成片配音
     const isDh = String(current?.videoType || current?.video_type || '').toLowerCase() === 'digital_human';
     let prompt = '';
@@ -1067,7 +1097,7 @@ async function sendDirectVideo(current) {
             resolution: extras.resolution,
             clip_to_audio_duration: extras.clip_to_audio_duration,
         };
-        // 对口型：prompt/task_type 由服务端规划（固定 LTX2.3），前端不传
+        // 对口型：prompt/task_type 由服务端规划（固定 MiniMax H3），前端传 resolution
         if (!isDh) {
             config.task_type = videoTaskId;
             config.prompt = prompt;  // 用户编辑后的提示词（基于 scene.videoPrompt）；后端 data.get('prompt') 优先采用
@@ -1291,11 +1321,92 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'open-generate-from-script') {
+        if (state.scenes && state.scenes.length) return;
+        if (state.ratioGateActive) return;
+        if (state.generateFromScriptTaskId || state.isGeneratingFromScript) {
+            if (!reopenGenerateProgressDialog()) {
+                state.showGenerateFromScriptDialog = true;
+                rerender([Region.MODAL, Region.HEADER, Region.LEFT_TAB_BODY]);
+            }
+            return;
+        }
+        state.showGenerateFromScriptDialog = true;
+        state.generateFromScriptError = '';
+        rerender([Region.MODAL, Region.HEADER, Region.LEFT_TAB_BODY]);
+        return;
+    }
+
+    if (action === 'set-media-track') {
+        const track = target?.dataset?.track;
+        const scene = target?.dataset?.scene || '';
+        const mediaTarget = target?.dataset?.target || '';
+        const typeMap = {
+            textToImage: ['textToImageModels', 'selectedTextToImageTaskId', 'storyboard_lastSelectedImageTaskId'],
+            imageEdit: ['imageEditModels', 'selectedImageEditTaskId', 'storyboard_lastSelectedImageEditTaskId'],
+            textToVideo: ['textToVideoModels', 'selectedTextToVideoTaskId', 'storyboard_lastSelectedTextToVideoTaskId'],
+            imageToVideo: ['imageToVideoModels', 'selectedImageToVideoTaskId', 'storyboard_lastSelectedVideoTaskId'],
+            referenceToVideo: ['imageToVideoModels', 'selectedReferenceToVideoTaskId', 'storyboard_lastSelectedReferenceToVideoTaskId'],
+        };
+        const spec = typeMap[mediaTarget];
+        if (!spec || !window.ModelCatalog) return;
+        const [listKey, field, storageKey] = spec;
+        const hit = window.ModelCatalog.findTaskByTrack(state[listKey] || [], scene, state.modelCatalog, track);
+        if (!hit || hit.task_id == null) return;
+        state[field] = hit.task_id;
+        state.selectedImageTaskId = state.selectedTextToImageTaskId;
+        state.selectedVideoTaskId = state.selectedImageToVideoTaskId;
+        try { localStorage.setItem(storageKey, String(hit.task_id)); } catch {}
+        if (state.storyboardId) persistUiConfig().catch(() => {});
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'set-model-track') {
+        const track = target?.dataset?.track;
+        const scene = target?.dataset?.scene || 'llm.chat';
+        const llmTarget = target?.dataset?.target || 'dialogue';
+        if (!window.ModelCatalog || !state.llmModels?.length) return;
+        const collapsed = window.ModelCatalog.collapseLlmModels(state.llmModels, scene, state.llmCatalog);
+        const hit = window.ModelCatalog.findCollapsedByTrack(collapsed, track);
+        const route = hit?.defaultRoute;
+        if (!route) return;
+        const payload = {
+            model: route.name || route.model,
+            model_id: route.model_id || route.id,
+            vendor_id: route.vendor_id || null,
+        };
+        if (llmTarget === 'scriptSplit') {
+            state.selectedScriptSplitLlmModel = payload;
+            resolveSelectedScriptSplitLlmModel();
+            try {
+                localStorage.setItem('storyboard_lastScriptSplitLlmModel', JSON.stringify(payload));
+            } catch {}
+        } else {
+            state.selectedLlmModel = payload;
+            resolveSelectedLlmModel();
+            try {
+                localStorage.setItem('storyboard_lastSelectedLlmModel', JSON.stringify(payload));
+            } catch {}
+        }
+        applyThinkingDefaultsForModel(state.selectedScriptSplitLlmModel || state.selectedLlmModel);
+        if (state.storyboardId) persistUiConfig().catch(() => {});
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'toggle-script-split-t2i') {
+        if (state.isGeneratingFromScript) return;
+        state.scriptSplitTextToImageOpen = !state.scriptSplitTextToImageOpen;
+        rerenderModals();
+        return;
+    }
+
     if (action === 'generate-from-script-cancel') {
         if (state.isGeneratingFromScript) return;
         state.showGenerateFromScriptDialog = false;
         state.generateFromScriptError = '';
-        rerenderModals();
+        rerender([Region.MODAL, Region.HEADER, Region.LEFT_TAB_BODY]);
         return;
     }
 
@@ -1371,7 +1482,7 @@ async function handleAction(action, target) {
             return;
         }
         state.autoImageSequenceMode = mode;
-        rerenderModals();
+        syncSequenceModeIntroCards();
         if (state.storyboardId) {
             persistUiConfig().catch(() => {});
         }
@@ -1457,16 +1568,60 @@ async function handleAction(action, target) {
     }
 
     if (action === 'insert-scene') {
+        // in-flight 守卫：智能插入请求飞行中再次点击直接忽略，
+        // 避免用户误以为无响应而连点，导致重复调用 LLM 生成多个分镜。
+        if (state.isSmartInserting) return;
         const prevId = target.dataset.prevId ? parseInt(target.dataset.prevId, 10) : null;
         const nextId = target.dataset.nextId ? parseInt(target.dataset.nextId, 10) : null;
-        const response = await api.addScene(state.storyboardId, {
-            title: `分镜${state.scenes.length + 1}`,
-            duration: 5,
-            prompt_json: {},
-            prev_id: prevId,
-            next_id: nextId,
-        });
-        addSceneToState(response.scene);
+        
+        // 检查是否启用智能插入（默认启用，可通过配置关闭）
+        const useSmartInsert = state.useSmartInsert !== false;
+        
+        if (useSmartInsert && (prevId || nextId)) {
+            // 智能插入：调用 LLM 生成分镜内容
+            try {
+                // 显示加载状态
+                state.isSmartInserting = true;
+                rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
+                showToast('AI 正在生成新分镜，请稍候…', 'info', 6000);
+                
+                const smartResponse = await api.smartInsertScene(state.storyboardId, {
+                    prev_scene_id: prevId,
+                    next_scene_id: nextId,
+                    world_id: state.worldId,
+                });
+                
+                if (smartResponse.success && smartResponse.scene) {
+                    // 后端已创建完整字段的分镜（幕/视角景别/场景/角色等从相邻分镜继承）
+                    addSceneToState(smartResponse.scene);
+                } else {
+                    throw new Error(smartResponse.error || '智能插入失败');
+                }
+            } catch (error) {
+                console.error('智能插入失败:', error);
+                // 降级到普通插入
+                const response = await api.addScene(state.storyboardId, {
+                    title: `分镜${state.scenes.length + 1}`,
+                    duration: 5,
+                    prompt_json: {},
+                    prev_id: prevId,
+                    next_id: nextId,
+                });
+                addSceneToState(response.scene);
+            } finally {
+                state.isSmartInserting = false;
+            }
+        } else {
+            // 普通插入
+            const response = await api.addScene(state.storyboardId, {
+                title: `分镜${state.scenes.length + 1}`,
+                duration: 5,
+                prompt_json: {},
+                prev_id: prevId,
+                next_id: nextId,
+            });
+            addSceneToState(response.scene);
+        }
         rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
         return;
     }
@@ -1741,12 +1896,127 @@ async function handleAction(action, target) {
         const row = target.closest('[data-dialogue-row]');
         await saveDialogueFromRow(row, { silent: true });
         const dialogueId = parseInt(target.dataset.dialogueId, 10);
-        const response = await api.generateDialogueVoiceover(dialogueId);
+        let emoVec = null;
+        for (const scene of state.scenes) {
+            const d = (scene.dialogues || []).find((item) => item.id === dialogueId);
+            if (d) {
+                emoVec = d.emoVec || null;
+                break;
+            }
+        }
+        // force_regenerate：允许改情感后覆盖已有选中配音
+        const voiceConfig = emoVec
+            ? { emo_control_method: 2, emo_vec: emoVec, force_regenerate: true }
+            : { force_regenerate: true };
+        const response = await api.generateDialogueVoiceover(dialogueId, voiceConfig);
         if (response.success) {
             const ownerScene = state.scenes.find(s => (s.dialogues || []).some(d => d.id === dialogueId));
-            if (ownerScene) pollSceneTaskStatus(ownerScene.id);
+            // 本地立即置为排队中并刷新单行（进度条 + 禁用按钮），不等首次轮询
+            patchDialogueInState(dialogueId, { audioStatus: 0, audioError: '' });
+            if (ownerScene) {
+                updateDialogueRow(ownerScene, dialogueId);
+                pollSceneTaskStatus(ownerScene.id);
+            }
         }
         notify(response.error || '配音任务已提交');
+        return;
+    }
+
+    if (action === 'edit-dialogue-emo-vec') {
+        const dialogueId = parseInt(target.dataset.dialogueId, 10);
+        let dialogue = null;
+        for (const scene of state.scenes) {
+            dialogue = (scene.dialogues || []).find((item) => item.id === dialogueId) || null;
+            if (dialogue) break;
+        }
+        if (!dialogue) {
+            notify('对话不存在');
+            return;
+        }
+        const { parseEmoVec } = await import('./utils.js');
+        state.emoVecEditor = {
+            open: true,
+            dialogueId,
+            values: parseEmoVec(dialogue.emoVec),
+            saving: false,
+            error: '',
+        };
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'close-emo-vec-editor') {
+        state.emoVecEditor = {
+            open: false,
+            dialogueId: null,
+            values: [0, 0, 0, 0, 0, 0, 0, 0],
+            saving: false,
+            error: '',
+        };
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'reset-emo-vec-editor') {
+        if (!state.emoVecEditor?.open) return;
+        state.emoVecEditor = {
+            ...state.emoVecEditor,
+            values: [0, 0, 0, 0, 0, 0, 0, 0],
+            error: '',
+        };
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'save-emo-vec-editor') {
+        const editor = state.emoVecEditor || {};
+        const dialogueId = editor.dialogueId;
+        if (!dialogueId) return;
+        const { normalizeEmoVec, EMO_VEC_MAX_SUM } = await import('./utils.js');
+        const sum = (editor.values || []).reduce((a, b) => a + Number(b || 0), 0);
+        if (sum > EMO_VEC_MAX_SUM + 1e-6) {
+            state.emoVecEditor = {
+                ...editor,
+                error: `情感向量总和不能超过 ${EMO_VEC_MAX_SUM}`,
+            };
+            rerenderModals();
+            return;
+        }
+        const emoVec = normalizeEmoVec(editor.values);
+        state.emoVecEditor = { ...editor, saving: true, error: '' };
+        rerenderModals();
+        try {
+            await api.updateDialogue(dialogueId, { emo_vec: emoVec });
+            // 情感变化且已有配音 → 标记旧配音，行内提示重新生成
+            let editing = null;
+            for (const scene of state.scenes) {
+                editing = (scene.dialogues || []).find((item) => item.id === dialogueId) || null;
+                if (editing) break;
+            }
+            const emoChanged = editing && editing.audioUrl && (editing.emoVec || null) !== (emoVec || null);
+            patchDialogueInState(dialogueId, {
+                emoVec: emoVec || null,
+                ...(emoChanged ? { audioStale: true } : {}),
+            });
+            state.emoVecEditor = {
+                open: false,
+                dialogueId: null,
+                values: [0, 0, 0, 0, 0, 0, 0, 0],
+                saving: false,
+                error: '',
+            };
+            rerenderModals();
+            refresh([Region.LEFT_TAB_BODY, Region.MODAL]);
+            notify(emoVec ? '情感向量已保存' : '情感向量已清空');
+        } catch (e) {
+            state.emoVecEditor = {
+                ...state.emoVecEditor,
+                saving: false,
+                error: e.message || '保存失败',
+            };
+            rerenderModals();
+            notify(e.message || '保存失败');
+        }
         return;
     }
 
@@ -2536,6 +2806,36 @@ export function bindEvents() {
             state.scriptDialogueLanguage = target.value;
         } else if (target.dataset.scriptLanguageCustom === 'prompt') {
             state.scriptPromptLanguage = target.value;
+        } else if (target.matches && target.matches('[data-emo-slider]')) {
+            // 情感向量滑块：只更新 state + 轻量 DOM，避免整弹窗重绘打断拖动
+            const idx = parseInt(target.getAttribute('data-emo-slider'), 10);
+            if (!Number.isFinite(idx) || !state.emoVecEditor?.open) return;
+            const val = Number(target.value) || 0;
+            const next = [...(state.emoVecEditor.values || [])];
+            next[idx] = val;
+            state.emoVecEditor = { ...state.emoVecEditor, values: next, error: '' };
+            const valueEl = document.querySelector(`[data-emo-value="${idx}"]`);
+            if (valueEl) valueEl.textContent = val.toFixed(2);
+            const sum = next.reduce((a, b) => a + Number(b || 0), 0);
+            const sumEl = document.querySelector('[data-emo-sum]');
+            if (sumEl) sumEl.textContent = sum.toFixed(2);
+            const sumWrap = sumEl?.closest('.emo-vec-sum');
+            if (sumWrap) {
+                const ok = sum <= 1.5 + 1e-6;
+                sumWrap.classList.toggle('ok', ok);
+                sumWrap.classList.toggle('bad', !ok);
+                let warn = sumWrap.querySelector('.emo-vec-warn');
+                if (!ok && !warn) {
+                    warn = document.createElement('span');
+                    warn.className = 'emo-vec-warn';
+                    warn.textContent = ' 超出上限，请调低';
+                    sumWrap.appendChild(warn);
+                } else if (ok && warn) {
+                    warn.remove();
+                }
+            }
+            const saveBtn = document.querySelector('[data-action="save-emo-vec-editor"]');
+            if (saveBtn) saveBtn.disabled = sum > 1.5 + 1e-6 || Boolean(state.emoVecEditor.saving);
         }
     });
 
@@ -2883,7 +3183,7 @@ export function bindEvents() {
                 if (state.isGeneratingFromScript) return;
                 state.showGenerateFromScriptDialog = false;
                 state.generateFromScriptError = '';
-                rerenderModals();
+                rerender([Region.MODAL, Region.HEADER, Region.LEFT_TAB_BODY]);
                 return;
             }
 

@@ -18,16 +18,17 @@ _DIGITAL_HUMAN_TOOL_DEFINITION = {
     "function": {
         "name": DIGITAL_HUMAN_TOOL_NAME,
         "description": (
-            "为当前故事板对口型分镜提交数字人视频。模型、提示词、比例、时长、首帧图、"
-            "对白与 TTS 均由系统按该分镜待说台词的 TTS 总时长自动路由与解析，"
-            "禁止传入或捏造图片、音频、提示词、比例、时长等任何参数。"
+            "为当前故事板对口型分镜提交 MiniMax H3 数字人视频。"
+            "模型固定 MiniMax H3；提示词、时长(4–10s clamp)、首帧图、对白与 TTS 均由系统解析，"
+            "禁止传入或捏造图片、音频、提示词、时长等参数。"
+            "可选 resolution（480P/720P/1080P）映射为视频最长边。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "resolution": {
                     "type": "string",
-                    "description": "可选分辨率。",
+                    "description": "可选分辨率：480P / 720P / 1080P，映射为最长边。",
                 },
                 "clip_to_audio_duration": {
                     "type": "boolean",
@@ -45,7 +46,7 @@ def deduct_storyboard_digital_human_computing_power(
     auth_token: str,
     plan,
 ) -> tuple:
-    """按实际路由模型配置扣除算力（Agent / CLI 同步入口）。返回 (transaction_id, computing_power)。"""
+    """按 MiniMax H3 时长档位扣除算力（Agent / CLI 同步入口）。返回 (transaction_id, computing_power)。"""
     from services.storyboard_digital_human_service import (
         deduct_computing_power_sync,
         compute_digital_human_power,
@@ -156,9 +157,15 @@ class StoryboardAgentVideoToolExecutor:
         )
 
         args = dict(tool_args or {})
-        # 统一编排：解析 → 路由 → 准备音频。忽略模型传入的 prompt/duration/ratio。
+        preferences = self._video_preferences
+        # 分辨率：工具参数优先，否则取齿轮/会话注入的视频偏好
+        resolution = args.get("resolution") or preferences.get("resolution")
+        # 统一编排：解析 → MiniMax 计划 → 准备音频。忽略模型传入的 prompt/duration/ratio。
         try:
-            plan, _segments, _scene, _sb = orchestrate_digital_human_generation(self._scene_id)
+            plan, _segments, _scene, _sb = orchestrate_digital_human_generation(
+                self._scene_id,
+                resolution=resolution,
+            )
         except StoryboardDigitalHumanError as exc:
             message_by_code = {
                 StoryboardDigitalHumanConstants.ERROR_MISSING_IMAGE: "当前对口型分镜缺少已生成完成的选中首帧，请先生成并选中首帧",
@@ -180,7 +187,7 @@ class StoryboardAgentVideoToolExecutor:
             transaction_id=transaction_id,
             computing_power=computing_power,
             clip_to_audio_duration=bool(args.get("clip_to_audio_duration", True)),
-            resolution=args.get("resolution"),
+            resolution=resolution,
         )
         project_id = result.get("ai_tool_id")
         if project_id is None:

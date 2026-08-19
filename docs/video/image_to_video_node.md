@@ -4,12 +4,15 @@
 
 图生视频节点是视频工作流的核心节点，用于将图片转换为视频。支持多种视频模型和输入模式。
 
+选择器顶部提供 **性价比 / 效果** 双档。首尾帧 / 文生视频默认 MiniMax H3 / Seedance 2.0；多参考图（参考生视频）默认 MiniMax H3 参考生视频（`minimax_h3_r2v`） / Seedance 2.0。详见 `docs/backend/model_catalog_and_recommendations.md`。已保存的节点模型在工作流重载后恢复，不被推荐覆盖。供应商未配置的模型不出现在新下拉中；重载时若节点仍保存该模型，保留这一条并标「未配置」。
+
 ## 支持的视频模型
 
 | 模型 | 说明 |
 |------|------|
 | sora2 | OpenAI Sora 2（已下线隐藏） |
 | minimax_h3 | MiniMax H3（首尾帧图生视频） |
+| minimax_h3_r2v | MiniMax H3 参考生视频（多参考图，最多 9 张） |
 | vidu | Vidu |
 | seedance | Seedance 火山引擎 |
 | ltx2_3 | LTX2.3 |

@@ -27,8 +27,8 @@
 - 图片无输入图：`text_to_image`。
 - 图片包含原图或参考图：`image_edit`。
 - 视频无图片、视频和音频输入：`text_to_video`。
-- 视频只有普通首帧或首尾帧：`image_to_video`。
-- `multi_reference`、`first_last_with_ref`、多参考图、参考视频或参考音频：`reference_to_video`。
+- 视频只有普通首帧或首尾帧：`image_to_video`。该槽位保存时要求模型 `supported_image_modes` 含 `first_last_frame`；仅支持 `multi_reference` 的模型（如 Vidu-Q2）会返回 `MODEL_INPUT_UNSUPPORTED`。
+- `multi_reference`、`first_last_with_ref`、多参考图、参考视频或参考音频：`reference_to_video`。仅参考图模型应写入此槽位。该槽位性价比档为 MiniMax H3 参考生视频（`minimax_h3_r2v`），效果档为 Seedance 2.0。
 
 `first_last_with_ref` 同时要求模型支持首尾帧和多参考图。参考视频或参考音频统一使用现有 `supports_ref_audio_video` 能力校验，本阶段不拆分音频和视频能力字段，也不扩展图片编辑的细粒度输入能力。
 
@@ -109,7 +109,7 @@ Marketing UI / 剧本智能体（`script_writer.html` 与 marketing agent 共用
 本次请求 image_preferences.task_id
   → 会话草稿 chat_sessions.text_to_image_model_id
   → marketing_ui 模式偏好 media_pref.*
-  → 首次兼容默认模型
+  → 首次兼容默认模型（剧本创作为 GPT Image 2 / DEFAULT_TEXT_TO_IMAGE_TASK_ID=26）
 ```
 
 创建 `agent_tasks` 时上述结果写入不可变 `generation_snapshots`。工具执行只认该快照。
@@ -139,7 +139,7 @@ Storyboard CLI：
 显式 --task-type → storyboard_cli 模式偏好 → 首次兼容默认模型
 ```
 
-已配置模型不存在、禁用、隐藏或不兼容时，偏好解析路径直接失败或在偏好界面回落并写入第一个兼容模型；只有从未配置过或已失效的槽位可以按 `sort_order` 初始化。直接生成 API 在请求已显式传入 `task_id` 时允许 `hidden=True` 的内部模型（例如相机控制 / 场景多角度使用的 `qwen-multi-angle`），但仍拒绝 disabled。已提交任务的可信快照同样允许模型后来变为 `hidden=True` 后继续执行，disabled 仍拒绝。
+已配置模型不存在、禁用、隐藏或不兼容时，偏好解析路径直接失败或在偏好界面回落并写入第一个兼容模型；只有从未配置过或已失效的槽位可以按场景目录性价比档（`config/model_catalog.py`）初始化，再回退 `sort_order`。直接生成 API 在请求已显式传入 `task_id` 时允许 `hidden=True` 的内部模型（例如相机控制 / 场景多角度使用的 `qwen-multi-angle`），但仍拒绝 disabled。已提交任务的可信快照同样允许模型后来变为 `hidden=True` 后继续执行，disabled 仍拒绝。
 
 ## Storyboard 项目配置
 
@@ -183,7 +183,7 @@ PUT  /api/storyboard/cli/media-preferences
      body: { world_id, media_type, mode, profile: { task_id } }
 ```
 
-`surface` 固定为 `storyboard_cli`，按 `user_id + world_id` 隔离，不读写 Storyboard 项目 `config_json`。首页「智能体连接信息」弹窗的「智能体模型偏好」Tab 使用该接口。
+`surface` 固定为 `storyboard_cli`，按 `user_id + world_id` 隔离，不读写 Storyboard 项目 `config_json`。首页「智能体连接信息」弹窗的「智能体模型偏好」Tab 使用该接口。图生视频下拉同样只列出支持 `first_last_frame` 的模型，仅参考图模型只出现在「参考视频」槽位。
 
 统一错误码：
 

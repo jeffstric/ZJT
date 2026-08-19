@@ -11,7 +11,8 @@ build_storyboard_scenes_from_parsed_script 写入的 prompt_json.source.location
   - LocationModel.create_or_update 的 ON DUPLICATE KEY 只按 (world_id, name) 匹配，
     同名不同 parent 的子场景会被误 upsert，故创建前先 get_by_name 校验 parent_id
     一致性，不一致则给新行名追加 " (子场景)" 后缀并记 warning。
-  - 新顶层、孤儿父级和父级环属于结构硬错误，任何数据库写入前直接拒绝。
+  - 孤儿父级和父级环属于结构硬错误，任何数据库写入前直接拒绝。
+    新顶层（parent_id 为空）允许落库；父链允许终止于待落库的新顶层。
   - 本服务为纯同步 DB 操作；web 接口调用时须用 asyncio.to_thread 包装。
 
 仅消费 location_db_id / name / parent_id（内部 loc_xxx）/ description 字段；
@@ -204,7 +205,7 @@ class StoryboardLocationBootstrapService:
         self,
         locations: List[Dict[str, Any]],
     ) -> None:
-        """写入前验证每个新场景的父链最终到达一个已有 DB 场景。"""
+        """写入前验证新场景的父链：环和缺失父级硬拒绝；链端新顶层放行。"""
         by_key = {
             str(location.get("id") or location.get("location_id")): location
             for location in locations
@@ -240,43 +241,72 @@ class StoryboardLocationBootstrapService:
                     break
                 next_parent = str(current.get("parent_id") or "")
                 if not next_parent:
-                    raise LocationBootstrapStructureError(
-                        "location_parent_invalid",
-                        f"场景 {key} 的父级链无法到达已有数据库场景",
-                    )
+                    # 链端是待落库的新顶层（政策允许），合法终止
+                    break
                 current_key = next_parent
 
     def _topological_order(
         self, locations: List[Dict[str, Any]], warnings: List[str]
     ) -> List[Dict[str, Any]]:
-        """
-        按 level 升序 + 父先于子排序。
+        """按 parent_id 做 DFS 拓扑排序，保证父先于子落库。
 
-        level 缺失时按 0 处理（顶层）；同 level 保持原顺序（稳定排序）。
-        检测到 parent_id 指向不存在的 loc_key 时记 warning（孤儿场景）。
+        不再使用 LLM 给的 level：level 缺失或错误时按 level 排会先建子。
+        原列表顺序作 tie-break；parent 不在列表中记 warning 并当根；
+        无 id 项按原序追加在有 id 项之后。环在写入前校验已拦截，此处
+        三态 visited 仅作防御。
         """
-        all_keys = {
-            str(loc.get("id")) for loc in locations if isinstance(loc, dict) and loc.get("id")
-        }
+        keyed: List[Dict[str, Any]] = []
+        no_id: List[Dict[str, Any]] = []
+        by_key: Dict[str, Dict[str, Any]] = {}
         for loc in locations:
-            parent = loc.get("parent_id") if isinstance(loc, dict) else None
+            if not isinstance(loc, dict):
+                continue
+            loc_id = loc.get("id")
+            if loc_id in (None, ""):
+                no_id.append(loc)
+                continue
+            key = str(loc_id)
+            if key not in by_key:
+                by_key[key] = loc
+            keyed.append(loc)
+
+        all_keys = set(by_key.keys())
+        for loc in keyed:
+            parent = loc.get("parent_id")
             if parent and str(parent) not in all_keys:
                 warnings.append(
                     f"loc_key={loc.get('id')} 的 parent_id={parent} 不在 locations 列表中"
                 )
 
-        def _level(loc: Dict[str, Any]) -> int:
-            lv = loc.get("level")
-            try:
-                return int(lv) if lv is not None else 0
-            except (TypeError, ValueError):
-                return 0
+        # 0=未访问 1=栈上 2=已完成
+        state: Dict[str, int] = {key: 0 for key in by_key}
+        ordered: List[Dict[str, Any]] = []
+        emitted: set[str] = set()
 
-        # 稳定排序：先按 level，同 level 内保留原始相对顺序（Python sort 稳定）
-        return sorted(
-            [loc for loc in locations if isinstance(loc, dict)],
-            key=_level,
-        )
+        def visit(key: str) -> None:
+            status = state.get(key)
+            if status == 2:
+                return
+            if status == 1:
+                return
+            loc = by_key.get(key)
+            if loc is None:
+                return
+            state[key] = 1
+            parent = loc.get("parent_id")
+            if parent:
+                parent_key = str(parent)
+                if parent_key in by_key:
+                    visit(parent_key)
+            state[key] = 2
+            if key not in emitted:
+                emitted.add(key)
+                ordered.append(loc)
+
+        for loc in keyed:
+            visit(str(loc.get("id")))
+
+        return ordered + no_id
 
     def _backfill_shots(
         self,

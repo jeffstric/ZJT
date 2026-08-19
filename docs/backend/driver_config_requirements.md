@@ -38,7 +38,10 @@ duomi:
 - `wan22_runninghub_v1` - Wan2.2 图生视频（任务类型 11，**已关闭**）
 - `ltx2.3_runninghub_v1` - LTX2.3 图生视频
 - `digital_human_runninghub_v1` - 数字人生成（任务类型 13）
+- `ltx2_3_with_voice_runninghub_v1` - LTX2.3 数字人（任务类型 32）
 - `minimax_h3_runninghub_v1` - MiniMax H3 首尾帧图生视频（任务类型 34）
+- `minimax_h3_reference_runninghub_v1` - MiniMax H3 参考生视频（任务类型 37，最多 9 张参考图）
+- `digital_human_minimax_h3_runninghub_v1` - MiniMax H3 数字人（任务类型 35）
 
 配置示例：
 ```yaml

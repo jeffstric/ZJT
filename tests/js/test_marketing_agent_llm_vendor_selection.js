@@ -6,9 +6,14 @@ const html = fs.readFileSync(
   path.join(__dirname, '../../web/marketing_agent.html'),
   'utf8'
 );
+const js = fs.readFileSync(
+  path.join(__dirname, '../../web/js/marketing_agent.js'),
+  'utf8'
+);
+const source = html + '\n' + js;
 
 assert.match(
-  html,
+  source,
   /function getLLMModelSelectionKey\(model\)/,
   'LLM selection should use a composite key helper'
 );
@@ -26,15 +31,31 @@ assert.match(
 );
 
 assert.match(
-  html,
+  source,
   /marketing_selected_llm_vendor_id/,
   'LLM preference persistence should include vendor_id'
 );
 
 assert.match(
-  html,
+  source,
   /vendorName === 'volcengine'[\s\S]*vendorName === 'zjt_api'/,
   'duplicate model names should prefer volcengine before zjt_api'
+);
+
+assert.match(
+  source,
+  /scene=llm\.marketing/,
+  'marketing LLM list should request marketing scene catalog'
+);
+assert.match(
+  html,
+  /selectLLMTrack\('value'\)/,
+  'marketing LLM picker should expose value track'
+);
+assert.match(
+  html,
+  /selectLLMTrack\('quality'\)/,
+  'marketing LLM picker should expose quality track'
 );
 
 console.log('marketing_agent LLM vendor selection tests passed');

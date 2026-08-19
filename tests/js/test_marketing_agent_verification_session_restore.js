@@ -2,10 +2,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const html = fs.readFileSync(
-  path.join(__dirname, '../../web/marketing_agent.html'),
-  'utf8'
-);
+const html = [
+  fs.readFileSync(path.join(__dirname, '../../web/marketing_agent.html'), 'utf8'),
+  fs.readFileSync(path.join(__dirname, '../../web/js/marketing_agent.js'), 'utf8'),
+].join('\n');
 
 assert.equal(
   html.includes('function restorePendingVerificationFromHistory'),

@@ -116,10 +116,26 @@ class StoryboardVoiceoverBootstrapService:
                 constants.SKIP_REASON_MISSING_REFERENCE_AUDIO, "角色缺少参考音频",
             )
 
+        # 情感向量仅经企业版门面解析；社区/个人版恒为 {}
+        from services.dialogue_emotion import resolve_tts_emotion_kwargs
+        extra_audio_kwargs = resolve_tts_emotion_kwargs(
+            dialogue=dialogue, config=config,
+        ) or None
+        logger.info(
+            "[dialogue-emotion][voiceover-bootstrap] ensure dialogue_id=%s scene_id=%s "
+            "emo_control_method=%s emo_vec=%r text_preview=%r",
+            dialogue_id,
+            scene_id,
+            (extra_audio_kwargs or {}).get("emo_control_method"),
+            (extra_audio_kwargs or {}).get("emo_vec"),
+            (text[:40] + "...") if len(text) > 40 else text,
+        )
+
         # 进入原子提交（事务封闭在函数内）
         return self._submit_dialogue_voiceover_atomically(
             int(dialogue_id), int(user_id), ref_path=ref_path, text=text,
             scene_id=scene_id,
+            extra_audio_kwargs=extra_audio_kwargs,
         )
 
     def ensure_for_scenes(
@@ -371,6 +387,7 @@ class StoryboardVoiceoverBootstrapService:
         text: str,
         scene_id: Optional[int] = None,
         extra_audio_kwargs: Optional[Dict[str, Any]] = None,
+        force_regenerate: bool = False,
     ) -> Dict[str, Any]:
         """单条对白配音任务的原子提交（方案 §8.1）。
 
@@ -385,6 +402,9 @@ class StoryboardVoiceoverBootstrapService:
         extra_audio_kwargs：透传给 AIAudioModel.create_in_transaction 的额外字段
         （如 emo_control_method / emo_weight / transaction_id），供手动入口使用；
         自动对账不传。
+
+        force_regenerate：为 True 时忽略已有 selected 配音，新建任务并切换选中
+        （用户点「生成配音」改情感后重跑）；自动对账必须保持 False。
         """
         with transaction() as conn:
             # 1. 行锁 + 读取当前选中状态（幂等判定的基础）
@@ -407,7 +427,8 @@ class StoryboardVoiceoverBootstrapService:
             selected_audio_id = row.get("selected_audio_id")
 
             # 2. 幂等判定（方案 §8.2）：已选中有效音频 → reused，绝不覆盖
-            if selected_audio_id:
+            # 用户显式 force_regenerate 时跳过，允许改情感后重新生成。
+            if selected_audio_id and not force_regenerate:
                 verdict = self._check_selected_audio(conn, int(selected_audio_id))
                 if verdict == "reused":
                     return {

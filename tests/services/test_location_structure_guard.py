@@ -345,3 +345,58 @@ def test_segment_extended_rejects_space_unit_registry_new_root():
     # 新顶层放行：space_unit 引用的规划新顶层不再报 new_root_location_forbidden
     assert "new_root_location_forbidden" not in _codes(errors)
 
+
+def test_full_validation_allows_two_level_new_hierarchy():
+    """新根 + 新子（均无 DB 匹配）父链终止于待落库顶层，不再报 unreachable_root。"""
+    parsed = {
+        "locations": [
+            {"id": "loc_001", "name": "别墅", "location_db_id": None, "parent_id": None},
+            {"id": "loc_002", "name": "客厅", "location_db_id": None, "parent_id": "loc_001"},
+        ]
+    }
+
+    assert validate_full_location_structure(parsed, []) == []
+
+
+def test_full_validation_allows_three_level_new_hierarchy():
+    """三级新层级（对应 loc_003 误杀现场）父链终止于新顶层，合法。"""
+    parsed = {
+        "locations": [
+            {"id": "loc_001", "name": "别墅", "location_db_id": None, "parent_id": None},
+            {"id": "loc_002", "name": "客厅", "location_db_id": None, "parent_id": "loc_001"},
+            {"id": "loc_003", "name": "走廊", "location_db_id": None, "parent_id": "loc_002"},
+        ]
+    }
+
+    assert validate_full_location_structure(parsed, []) == []
+
+
+def test_bind_planned_unmatched_new_hierarchy_keeps_parent_links():
+    """L0：全未匹配的新层级保留 parent 链接，且不报 unreachable_root。"""
+    planned = [
+        {"id": "loc_001", "location_key": "location:villa", "name": "别墅"},
+        {
+            "id": "loc_002",
+            "location_key": "location:living_room",
+            "name": "客厅",
+            "parent_location_key": "location:villa",
+        },
+        {
+            "id": "loc_003",
+            "location_key": "location:hallway",
+            "name": "走廊",
+            "parent_location_key": "location:living_room",
+        },
+    ]
+
+    bound, errors = bind_and_validate_planned_locations(planned, [])
+
+    assert errors == []
+    by_id = {item["id"]: item for item in bound}
+    assert by_id["loc_001"]["location_db_id"] is None
+    assert by_id["loc_001"].get("parent_id") in (None, "")
+    assert by_id["loc_002"]["parent_id"] == "loc_001"
+    assert by_id["loc_003"]["parent_id"] == "loc_002"
+    assert by_id["loc_002"]["location_db_id"] is None
+    assert by_id["loc_003"]["location_db_id"] is None
+

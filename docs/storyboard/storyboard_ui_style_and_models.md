@@ -76,16 +76,20 @@
 ### 3.3 默认模型选择
 
 bootstrap 中实现优先级（仅首次无保存值时）：
-deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5-plus > 第一个。
+场景目录性价比档 `deepseek-v4-flash`（效果档为 `deepseek-v4-pro`） > 任意 qwen3.5-plus > 第一个。
+详见 `docs/backend/model_catalog_and_recommendations.md`。
 同时支持从 storyboard.config_json 恢复。
 
 ### 3.4 空故事板拆分语言与小屏布局（2026-07-21）
 
 - “从剧本生成分镜”弹窗新增可折叠的“语言”面板，支持分别设置对话语言与提示词语言；选项与 `video_workflow.html` 剧本节点一致：中文（默认）、English、Deutsch、Français、Русский和自定义语言。
 - 面板默认折叠，摘要直接显示当前两项语言；展开后在宽屏双列、窄屏单列展示，避免常驻控件挤占拆分选项空间。
-- “镜头组时长”位于左栏生图模型下方，右栏集中展示语言和拆分开关，使两列信息密度更均衡。
+- “镜头组时长”位于右栏拆分选项下方，缩短左右栏高度差；左栏保留拆分模型、生图模型和默认视频模型。
+- 拆分弹窗内「文生图模型」默认折叠，摘要显示当前模型名；点击后展开下拉。齿轮「图片」Tab 仍同时展示文生图与图片编辑。
+- 误关拆分弹窗后，空故事板右上角（与拆分进度徽章同一区域）出现「开始拆分」；左栏空态同步提供同一入口。有分镜、拆分进行中或弹窗已打开时不显示。
 - 拆分模型、生图模型和镜头组时长选择框铺满所在栏位，不再受助手工具栏下拉框的 `max-width` 限制。
 - 弹窗改为“固定标题/说明 + 中部设置滚动 + 固定底部操作栏”。小屏幕即使展开语言或质检选项，“暂不生成”和“生成分镜”仍始终可见。
+- 切换底部「分镜图生成模式」只更新卡片 `active` 类（`syncSequenceModeIntroCards`），不整窗 `innerHTML` 重建，避免 `.gfs-body` 滚动跳回顶部。其它仍走 `rerenderModals()` 的控件由 `syncModals()` 恢复 `.gfs-body` 滚动位置。
 - 选择结果写入故事板 `config_json`，刷新后恢复，并在提交拆分任务时分别透传为 `dialogue_language`、`prompt_language`；空值继续表示中文默认。
 
 ### 3.5 拆分弹窗默认视频模型与人脸遮盖（2026-08）
@@ -94,16 +98,19 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 
 | 控件 | 说明 |
 |------|------|
-| **默认视频模型** | 仅 **图生视频** 列表（`image_to_video`）；**不展示文生视频**（当前故事板主路径均为有首帧后图生视频） |
-| **是否处理人脸** | 仅当所选模型 `needs_face_mask === true`（Seedance 2.0 / Fast / Mini）时显示；交互对齐 `index.html` 生视频界面 |
+| **默认视频模型** | 仅 **支持首帧/首尾帧** 的图生视频模型（`video.image_to_video`）；**不展示文生视频**，也不展示仅参考图模型（如 Vidu-Q2、MiniMax H3 参考、Happy Horse 多参考）。参考图专用模型请到齿轮「参考视频模型」选择 |
+| **是否处理人脸** | 仅当所选模型 `needs_face_mask === true`（Seedance 2.0 / Fast / Mini / 2.5）时显示；交互对齐 `index.html` 生视频界面 |
 
 行为约定：
 
 - 商业版可勾选，默认不勾选；社区版 checkbox 禁用并提示「此功能为商业版功能…」。
 - 写入 `selectedImageToVideoTaskId` + `enableFaceMask`（`config_json`），并同步 `media_pref.storyboard_ui.video.image_to_video`（含 `enable_face_mask`）。
+- 前端用 `getImageToVideoSlotModels()` 过滤下拉：只保留 `supported_image_modes` 含 `first_last_frame` 的模型。缺省该字段视为支持首尾帧。Vidu-Q2 等仅 `multi_reference` 的模型出现在齿轮「参考视频模型」（`getReferenceToVideoSlotModels()`），避免 PUT `/api/storyboard/media-preferences` 触发 `MODEL_INPUT_UNSUPPORTED`。
+- 齿轮「视频模型」Tab 的「图生视频模型」使用同一过滤；「参考视频模型」仍展示多参考 / 参考音视频模型。无历史选择时参考视频模型默认性价比档 MiniMax H3 参考生视频（`minimax_h3_r2v`），效果档为 Seedance 2.0。
 - 齿轮「视频模型」Tab 在图生视频选择器下挂同一人脸遮盖控件，共用 state。
 - 直连 `generate-video`、Agent 生视频、批量缺失视频均透传有效 `enable_face_mask`（`enterprise && needs_face_mask && 用户勾选`）。
 - `GET /api/storyboard/models` 图生视频项返回 `needs_face_mask`，前端不依赖 `TaskConfig`。
+- `GET /api/storyboard/models` 只返回驱动可用的生图/视频/数字人任务（`VideoDriverFactory.get_driver_availability()` 为 false 的不出现）。对话模型仍走 `/api/models`，只含已配置供应商。已保存但已不可用的 task_id 由 `resolveAvailableTaskId` 回落到性价比档或列表第一项。
 
 ## 4. 技术实现要点
 
@@ -147,11 +154,14 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 - `formatVideoResolutions(m)`：从 `supported_video_resolutions` 拼成 `480P/720P/...`
 - `formatModelOptionLabel(m)`：组装 `Name（算力，分辨率）`；`renderImageModelConfig` / `renderVideoModelConfig` 的 option 文本改用此函数
 
-> 注：视频 tab 下方的分辨率 chip（`data-action="set-video-resolution"`）仍保留，用于**选定模型后切换**分辨率；option 内联的分辨率信息是**选模型时预览**，两者互补。仅 Seedance/Happy Horse 系列配置了 `supported_video_resolutions`，其他视频模型（Wan2.2/LTX/可灵等）无分辨率选项。
+> 注：齿轮「视频」tab 中，分辨率 chip（`data-action="set-video-resolution"`）绑定 **当前图生视频模型**（`getSelectedImageToVideoModel()`）的 `supported_video_resolutions`，不再跟 `getSelectedVideoModel()` 动态 slot（避免无输入图时落到文生视频导致分辨率空白）。  
+> option 内联的分辨率信息是**选模型时预览**，两者互补。  
+> Seedance / Happy Horse / MiniMax 等配置了 `supported_video_resolutions` 的模型会显示 chip；对口型 MiniMax 共用该分辨率偏好并映射为最长边。
 
 ### i18n & CSS
 - 在 `web/i18n/locales/zh-CN/storyboard.json`（及 en）补充画风、构图、待接入等文案。
 - CSS 复用现有 `.info-card`、`.chat-mode-select` 样式，新增少量 `.style-settings-card`。
+- 左下角工具栏模式切换仍限制宽度（`.chat-toolbar .chat-mode-select` 120px / 窄屏 92px）。齿轮「模型配置」与拆分弹窗的模型下拉取消该上限（`max-width: none`），弹窗宽 600px，避免「MiniMax H3 参考生视频（5算力）（性价比）」这类长 option 被截断。
 
 ## 5. 重新加载与状态持久化
 

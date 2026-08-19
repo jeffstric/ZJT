@@ -135,6 +135,20 @@ class StoryboardAgentCommandService:
                     "params": ["world_id", "media_type", "mode", "task_id"],
                 },
                 {
+                    "name": "list-llm-models",
+                    "permission": "model:view",
+                    "params": [],
+                    "response": {
+                        "models": "List<object>",
+                        "model_shape": [
+                            "model_id", "name", "vendor_id", "vendor_name",
+                            "context_window", "supports_thinking", "supports_vl",
+                            "pricing",
+                        ],
+                        "note": "调用 split-from-script 前先查询；把所选模型的 name 作为 model、model_id 作为 model_id、vendor_id 作为 vendor_id 传入。",
+                    },
+                },
+                {
                     "name": "list-worlds",
                     "permission": "world:view",
                     "params": ["page", "page_size", "keyword", "include_full_story_outline"],
@@ -360,6 +374,18 @@ class StoryboardAgentCommandService:
                 task_id=_to_required_int(data.get("task_id"), "task_id"),
             )
 
+        if command == "list-llm-models":
+            # 列出可用 LLM 拆分模型（复用 script_writer_core.mcp_tool.list_llm_models 同步实现）。
+            # 路由层 asyncio.to_thread 已把本同步调用丢进线程池，无需 async 适配。
+            # 该函数对 world_id / auth_token 非空不强制（仅签名兼容），传空串安全。
+            from script_writer_core.mcp_tool import list_llm_models
+
+            return list_llm_models(
+                user_id=str(_to_required_int(data.get("user_id"), "user_id")),
+                world_id=str(_to_int(data.get("world_id"), "world_id") or ""),
+                auth_token=str(data.get("auth_token") or ""),
+            )
+
         if command == "list-worlds":
             return self.service.list_worlds(
                 user_id=_to_int(data.get("user_id"), "user_id"),
@@ -475,7 +501,7 @@ class StoryboardAgentCommandService:
             _legacy_force_overwrite_subscene_grids = _to_bool(data.get("force_overwrite_subscene_grids"))
             del _legacy_force_overwrite_subscene_grids
             # CLI 路径强制显式指定 LLM 模型，禁止回退到默认 gemini。
-            # 调用方可先用 list_llm_models 查询可用模型及费用。
+            # 调用方可先用 list-llm-models 命令查询可用模型及费用。
             # auth_token 强制非空：worker 调 LLM 的 token 算力由 auth_token 解析出的
             # user_id 承担；漏传会导致 LLM 免费消耗（token_log 门禁 if auth_token 被跳过）。
             # 与数字人路径（cli_service.py:749）的 missing_auth_token 策略对齐。
@@ -485,7 +511,7 @@ class StoryboardAgentCommandService:
                 auth_token=_to_required_auth_token(data.get("auth_token")),
                 model=_to_required_str(
                     data.get("model"), "model",
-                    hint="use --model; call list_llm_models to get available models",
+                    hint="use --model; call list-llm-models to get available models",
                 ),
                 model_id=_to_int(data.get("model_id"), "model_id"),
                 vendor_id=_to_int(data.get("vendor_id"), "vendor_id"),

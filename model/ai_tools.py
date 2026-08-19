@@ -179,7 +179,9 @@ class AIToolsModel:
         reference_images: Optional[str] = None,
         implementation: Optional[int] = 0,
         audio_path: Optional[str] = None,
-        video_path: Optional[str] = None
+        video_path: Optional[str] = None,
+        h3_chat_model: Optional[str] = None,
+        h3_chat_vendor_id: Optional[int] = None
     ) -> int:
         """
         创建 AI tool 记录及关联的 pipeline steps（在同一事务内）
@@ -209,9 +211,15 @@ class AIToolsModel:
                 ai_tool_id = execute_insert_in_transaction(conn, sql, params)
                 logger.info(f"Created AI tool record with ID: {ai_tool_id}")
 
-                # 创建 Seedance 2.0 前置处理步骤（仅商业版）
+                created_step_count = 0
+
+                # 创建 Seedance 2.0 前置处理步骤（仅商业版 + 仅 Seedance 2.0 系列任务类型）。
+                # 注意：H3 等模型会因提示词优化进入本事务，不能为其创建人脸遮盖步骤，
+                # 适配清单单一来源：config/unified_config.py::SEEDANCE_FACE_MASK_DRIVER_KEYS。
                 from config.constant import Edition
-                if not Edition.is_community():
+                from task.pipeline_drivers import PipelineDriverFactory
+                _is_seedance_face_mask = bool(type) and PipelineDriverFactory.is_seedance_face_mask_type(type)
+                if not Edition.is_community() and _is_seedance_face_mask:
                     step_order = 0
 
                     from config.config_util import get_dynamic_config_value
@@ -290,6 +298,50 @@ class AIToolsModel:
 
                         if created_image_steps:
                             logger.info(f"Created {created_image_steps} image_face_mask pipeline steps for ai_tool {ai_tool_id}")
+
+                    created_step_count = step_order
+
+                # 创建 MiniMax H3 提示词优化步骤（图生视频 I2VA/FL2VA、参考生视频 Ref2VA）。
+                # build_h3_prompt_optimize_step_configs 为纯函数式（只读属性 + 查 config），
+                # 事务内不发起 HTTP/IO，符合 transaction() 短事务约束。
+                import types
+                from config.unified_config import UnifiedConfigRegistry
+                from task.pipeline_drivers import PipelineDriverFactory
+                _task_config = UnifiedConfigRegistry.get_by_id(type) if type else None
+                if _task_config and PipelineDriverFactory.is_h3_prompt_optimize_key(_task_config.key):
+                    _ns = types.SimpleNamespace(
+                        prompt=prompt, image_path=image_path,
+                        reference_images=reference_images, extra_config=extra_config,
+                        duration=duration, video_path=video_path, audio_path=audio_path,
+                    )
+                    _h3_configs = PipelineDriverFactory.build_h3_prompt_optimize_step_configs(
+                        _ns, chat_model=h3_chat_model, chat_vendor_id=h3_chat_vendor_id,
+                        task_key=_task_config.key,
+                    )
+                    for _idx, _cfg in enumerate(_h3_configs):
+                        PipelineStepModel.create_in_transaction(
+                            conn,
+                            ai_tool_id=ai_tool_id,
+                            stage=PipelineStage.PARAM_PREPARE,
+                            step_type=_cfg['step_type'],
+                            step_order=created_step_count + _idx,
+                            params=_cfg.get('params'),
+                            target=_cfg.get('target'),
+                        )
+                    if _h3_configs:
+                        created_step_count += len(_h3_configs)
+                        logger.info(f"Created {len(_h3_configs)} h3_prompt_optimize step(s) for ai_tool {ai_tool_id}")
+
+                # 无任何 param_prepare 步骤（普通任务误入 / H3 但无首帧图）：
+                # 在事务内回退 PENDING，避免任务卡在 WAITING_PARAM_PREPARE。
+                # 调用方可统一传 WAITING_PARAM_PREPARE，状态由此处保证正确。
+                if created_step_count == 0:
+                    from .database import execute_update_in_transaction
+                    execute_update_in_transaction(
+                        conn,
+                        "UPDATE ai_tools SET status=%s WHERE id=%s",
+                        (AI_TOOL_STATUS_PENDING, ai_tool_id),
+                    )
 
                 committed_ai_tool_id = ai_tool_id
         except Exception as e:

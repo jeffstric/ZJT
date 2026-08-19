@@ -1,5 +1,8 @@
 # Storyboard 数字人双模型自动路由设计
 
+> **[已废弃 2026-08]** 分镜对口型已统一为 **MiniMax H3**（task_type=35）。  
+> 现行文档见 `storyboard_digital_human.md`。下文仅作历史设计归档。
+
 ## 1. 目标
 
 Storyboard 的 `digital_human` 分镜同时接入 Wan2.2 数字人和 LTX2.3 With Voice，根据该分镜待说台词对应的 TTS 总时长自动选择模型。

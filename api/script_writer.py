@@ -24,6 +24,7 @@ from config.constant import (
     MediaGenerationMode,
     MediaGenerationSurface,
     MediaGenerationType,
+    DEFAULT_TEXT_TO_IMAGE_TASK_ID,
     PERSEIDS_ERR_INVALID_AUTH_TOKEN,
     PERSEIDS_ERR_NO_VALID_TOKEN,
     ERROR_CODE_TOKEN_EXPIRED,
@@ -95,8 +96,6 @@ from model.user_preferences import (
     PREF_TYPE_IMAGE_TO_VIDEO_MODEL,
     PREF_TYPE_DEFAULT_LLM_MODEL,
 )
-# 默认生图模型 task_id (nano-banana-Pro)
-DEFAULT_TEXT_TO_IMAGE_TASK_ID = 7
 # 生图模型设置范围：session=本对话草稿；world_default=世界默认（新会话种子）
 IMAGE_MODEL_SCOPE_SESSION = "session"
 IMAGE_MODEL_SCOPE_WORLD_DEFAULT = "world_default"
@@ -106,8 +105,16 @@ def _get_text_to_image_models_from_config():
     """从统一配置获取文生图模型列表"""
     from config.unified_config import UnifiedConfigRegistry, TaskCategory
     configs = UnifiedConfigRegistry.get_by_category(TaskCategory.TEXT_TO_IMAGE)
-    return {c.id: {"name": c.name, "computing_power": c.get_computing_power(), "supports_grid_image": c.supports_grid_image}
-            for c in configs if c.enabled}
+    return {
+        c.id: {
+            "name": c.name,
+            "computing_power": c.get_computing_power(),
+            "supports_grid_image": c.supports_grid_image,
+            "short_key": getattr(c, "short_key", None) or c.key,
+            "key": c.key,
+        }
+        for c in configs if c.enabled
+    }
 
 
 def get_text_to_image_model_id(user_id: str, world_id: str) -> int:
@@ -159,14 +166,77 @@ def _sync_image_model_to_media_pref_world_default(user_id: str, world_id: str, t
 
 
 def get_default_llm_model(user_id: str, world_id: str) -> Optional[Dict[str, Any]]:
-    """读取世界级默认对话模型。"""
+    """读取世界级默认对话模型。
+    
+    如果数据库没有配置，使用回退逻辑选择默认模型（与前端 pickPreferredCreationDefaultLlmKey 逻辑一致）：
+    1. 首选供应商 + 首选模型
+    2. 首选供应商 + 任意模型
+    3. 列表第一项
+    """
     pref = UserPreferencesModel.get(str(user_id), str(world_id), PREF_TYPE_DEFAULT_LLM_MODEL)
     if not pref or pref.config_value is None:
-        return None
+        # 数据库没有配置，使用回退逻辑
+        return _get_fallback_default_llm_model()
     value = pref.get_value()
     if isinstance(value, dict) and value.get('model'):
         return value
     return None
+
+
+def _get_fallback_default_llm_model() -> Optional[Dict[str, Any]]:
+    """回退逻辑：当数据库没有配置时，选择默认模型。
+
+    优先走场景目录的性价比档（llm.chat / deepseek-v4-flash），
+    再回退 DEFAULT_LLM_MODEL_*，最后列表第一项。
+    """
+    try:
+        from llm.llm_client_factory import get_available_models as _get_available_models
+        from config.constant import DEFAULT_LLM_MODEL_PREFERRED_VENDORS, DEFAULT_LLM_MODEL_PREFERRED_MODEL
+        from config.model_catalog import ModelScene, resolve_track_item
+        import asyncio
+        
+        # 获取可用模型列表
+        result = asyncio.run(_get_available_models())
+        models = result.get('models', []) if isinstance(result, dict) else []
+        
+        if not models:
+            return None
+
+        hit, _track = resolve_track_item(ModelScene.LLM_CHAT, models, kind="llm")
+        if hit:
+            return {
+                'model': hit.get('name'),
+                'model_id': hit.get('id') if hit.get('id') is not None else hit.get('model_id'),
+                'vendor_id': hit.get('vendor_id'),
+                'name': hit.get('name'),
+            }
+        
+        # 辅助函数
+        def vendor_of(m):
+            return (m.get('vendor_name') or '').lower()
+        
+        def model_of(m):
+            return (m.get('name') or m.get('model') or '').lower()
+        
+        # 1. 首选供应商 + 首选模型
+        for preferred_vendor in DEFAULT_LLM_MODEL_PREFERRED_VENDORS:
+            found = next((m for m in models if vendor_of(m) == preferred_vendor and DEFAULT_LLM_MODEL_PREFERRED_MODEL in model_of(m)), None)
+            if found:
+                return {'model': found['name'], 'model_id': found.get('id'), 'vendor_id': found.get('vendor_id'), 'name': found['name']}
+        
+        # 2. 首选供应商 + 任意模型
+        for preferred_vendor in DEFAULT_LLM_MODEL_PREFERRED_VENDORS:
+            found = next((m for m in models if vendor_of(m) == preferred_vendor), None)
+            if found:
+                return {'model': found['name'], 'model_id': found.get('id'), 'vendor_id': found.get('vendor_id'), 'name': found['name']}
+        
+        # 3. 列表第一项
+        first = models[0]
+        return {'model': first['name'], 'model_id': first.get('id'), 'vendor_id': first.get('vendor_id'), 'name': first['name']}
+        
+    except Exception as e:
+        logger.warning(f"回退选择默认 LLM 模型失败：{e}")
+        return None
 
 
 def set_default_llm_model(user_id: str, world_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -243,6 +313,21 @@ def get_image_to_video_model_id(user_id: str, world_id: str) -> Optional[int]:
 def set_image_to_video_model_id(user_id: str, world_id: str, task_id: int):
     """设置用户在指定世界的图生视频模型 task_id"""
     UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_IMAGE_TO_VIDEO_MODEL, task_id)
+
+
+def _session_expire_hours(session_type: int) -> int:
+    """按会话类型返回过期时长（小时）"""
+    from config.constant import SessionHistoryConstants
+    return (SessionHistoryConstants.SESSION_EXPIRE_HOURS_MARKETING
+            if session_type == 2 else SessionHistoryConstants.SESSION_EXPIRE_HOURS_SCRIPT)
+
+
+def _extend_session_expiry(session_id: str, session_type: int):
+    """用户产生新消息活动时顺延会话过期时间（同步函数，需用 asyncio.to_thread 调用）"""
+    from datetime import timedelta
+    from model.chat_sessions import ChatSessionsModel
+    expires_at = datetime.now() + timedelta(hours=_session_expire_hours(session_type))
+    ChatSessionsModel.update_metadata(session_id=session_id, expires_at=expires_at)
 
 
 # 全局组件
@@ -1485,6 +1570,14 @@ async def append_session_message(request: Request, session_id: str, message_requ
         # 清除缓存，确保下次加载时从数据库读取最新数据
         session_storage.invalidate_cache(session_id)
 
+        # 追加消息即视为会话活动，顺延过期时间
+        try:
+            await asyncio.to_thread(
+                _extend_session_expiry, session_id, getattr(session_entity, 'session_type', 1) or 1
+            )
+        except Exception as e:
+            logger.error(f'顺延会话过期时间失败（非致命）: {e}')
+
         return JSONResponse({
             'success': True,
             'message': '消息已追加'
@@ -1853,6 +1946,74 @@ def _apply_image_task_id_to_execution_profiles(
             )
 
 
+def _apply_video_task_id_to_execution_profiles(
+    user_id: str,
+    world_id: str,
+    profiles: Dict[str, Any],
+    request_slots: set,
+    video_preferences: Dict[str, Any],
+    explicit_video_task_id: int,
+    *,
+    persist_world_default: bool = True,
+) -> None:
+    """将界面选中的视频模型写入所有兼容的 video 槽位快照。
+
+    避免只写入 text_to_video / image_to_video，参考生视频槽仍停留在
+    MiniMax H3 参考生视频默认值，导致界面显示 Seedance 2.5、实际却跑 H3。
+    """
+    from config.unified_config import resolve_video_clone_task_config
+
+    base_video_profile = dict(video_preferences)
+    for mode in MediaGenerationMode.VIDEO_MODES:
+        mode_task_id = int(explicit_video_task_id)
+        if mode == MediaGenerationMode.REFERENCE_TO_VIDEO:
+            resolved = resolve_video_clone_task_config(mode_task_id)
+            if resolved is not None:
+                mode_task_id = int(resolved.id)
+        video_slot = MediaGenerationPreferenceService.slot_key(MediaGenerationType.VIDEO, mode)
+        existing = profiles.get(video_slot) or {}
+        mode_profile = {
+            key: value
+            for key, value in {**existing, **base_video_profile}.items()
+            if key in MediaGenerationPreferenceService.PROFILE_FIELDS or key == 'task_id'
+        }
+        mode_profile['task_id'] = mode_task_id
+        try:
+            if persist_world_default:
+                saved = MediaGenerationPreferenceService.save_profile(
+                    user_id,
+                    world_id,
+                    MediaGenerationSurface.MARKETING_UI,
+                    MediaGenerationType.VIDEO,
+                    mode,
+                    mode_profile,
+                )
+            else:
+                config = MediaGenerationPreferenceService.validate_model(
+                    mode_profile.get('task_id'),
+                    MediaGenerationType.VIDEO,
+                    mode,
+                    image_mode=mode_profile.get('image_mode'),
+                    has_reference_audio_video=(mode == MediaGenerationMode.REFERENCE_TO_VIDEO),
+                )
+                saved = dict(mode_profile)
+                saved.update(
+                    {
+                        'schema_version': 1,
+                        'task_id': int(config.id),
+                        'model_key': config.key,
+                        'model_name': config.name,
+                    }
+                )
+            profiles[video_slot] = saved
+            request_slots.add(video_slot)
+        except (MediaGenerationPreferenceError, ValueError, TypeError) as mode_err:
+            logger.warning(
+                '任务创建时写入 video 槽位跳过: user_id=%s world_id=%s mode=%s task_id=%s err=%s',
+                user_id, world_id, mode, mode_task_id, mode_err,
+            )
+
+
 def _build_marketing_task_execution_context_sync(
     user_id: str,
     world_id: str,
@@ -1880,28 +2041,33 @@ def _build_marketing_task_execution_context_sync(
 
     video_preferences = dict(task_request.video_preferences or {})
     explicit_video_task_id = video_preferences.get('task_id')
-    video_mode = MediaGenerationPreferenceService.determine_mode(
-        MediaGenerationType.VIDEO,
-        image_urls=task_request.image_urls,
-        video_urls=task_request.video_urls,
-        audio_urls=task_request.audio_urls,
-        image_mode=video_preferences.get('image_mode'),
-    )
+    if explicit_video_task_id in (None, '') and video_preferences.get('model_name'):
+        wanted = str(video_preferences.get('model_name') or '').strip()
+        if wanted:
+            matched = next(
+                (
+                    config for config in UnifiedConfigRegistry.get_all()
+                    if wanted in {
+                        config.name,
+                        config.key,
+                        getattr(config, 'short_key', None),
+                    }
+                    and TaskCategory.IMAGE_TO_VIDEO in {config.category, *(config.categories or [])}
+                ),
+                None,
+            )
+            if matched:
+                explicit_video_task_id = matched.id
     if explicit_video_task_id not in (None, ''):
-        video_preferences['task_id'] = int(explicit_video_task_id)
-        video_profile = MediaGenerationPreferenceService.save_profile(
+        _apply_video_task_id_to_execution_profiles(
             user_id,
             world_id,
-            MediaGenerationSurface.MARKETING_UI,
-            MediaGenerationType.VIDEO,
-            video_mode,
+            profiles,
+            request_slots,
             video_preferences,
+            int(explicit_video_task_id),
+            persist_world_default=True,
         )
-        video_slot = MediaGenerationPreferenceService.slot_key(
-            MediaGenerationType.VIDEO, video_mode
-        )
-        profiles[video_slot] = video_profile
-        request_slots.add(video_slot)
 
     snapshots = {}
     for slot, profile in profiles.items():
@@ -1979,23 +2145,38 @@ async def update_marketing_media_preference(
         return JSONResponse(status_code=400, content={'success': False, 'error': error})
 
 @router.get('/text-to-image-models')
-async def get_text_to_image_models():
+async def get_text_to_image_models(scene: Optional[str] = None):
     """获取可用的生图模型列表（从统一配置读取）"""
     try:
+        from config.model_catalog import (
+            ModelScene,
+            annotate_task_models,
+            build_tracks_payload,
+        )
         models_config = _get_text_to_image_models_from_config()
         models = [
             {
                 "task_id": task_id,
                 "name": info["name"],
                 "computing_power": info["computing_power"],
-                "supports_grid_image": info.get("supports_grid_image", False)
+                "supports_grid_image": info.get("supports_grid_image", False),
+                "short_key": info.get("short_key") or "",
+                "key": info.get("key") or "",
             }
             for task_id, info in models_config.items()
         ]
+        catalog_scene = scene or ModelScene.IMAGE_TEXT_TO_IMAGE
+        models = annotate_task_models(models, catalog_scene)
+        catalog = build_tracks_payload(catalog_scene, models, kind="task")
+        default_task_id = DEFAULT_TEXT_TO_IMAGE_TASK_ID
+        value_route = (catalog.get("tracks") or {}).get("value", {}).get("default_route") or {}
+        if value_route.get("task_id") is not None:
+            default_task_id = value_route["task_id"]
         return JSONResponse({
             "success": True,
             "models": models,
-            "default_task_id": DEFAULT_TEXT_TO_IMAGE_TASK_ID
+            "default_task_id": default_task_id,
+            "catalog": catalog,
         })
     except Exception as e:
         logger.error(f'获取生图模型列表失败: {str(e)}')
@@ -2517,15 +2698,27 @@ async def get_vendors():
 
 
 @router.get('/models')
-async def get_available_models():
-    """获取可用的 AI 模型列表，根据 vendor 表分组"""
+async def get_available_models(scene: Optional[str] = None):
+    """获取可用的 AI 模型列表，根据 vendor 表分组。
+
+    scene 可选，传入后附加性价比/效果双档 catalog，并为每条模型标注 track。
+    """
     try:
         from llm.llm_client_factory import get_available_models as _get_available_models
+        from config.model_catalog import (
+            ModelScene,
+            annotate_llm_models,
+            build_tracks_payload,
+        )
         result = await _get_available_models()
-
+        models = result.get('models') or []
+        catalog_scene = scene or ModelScene.LLM_CHAT
+        models = annotate_llm_models(models, catalog_scene)
+        catalog = build_tracks_payload(catalog_scene, models, kind="llm")
         return JSONResponse({
             'success': True,
-            'models': result['models']
+            'models': models,
+            'catalog': catalog,
         })
     except Exception as e:
         logger.error(f'获取模型列表失败: {str(e)}')
@@ -3219,6 +3412,309 @@ async def save_world_file(
             'error': str(e)
         }, status_code=500)
 
+# ==================== 画风识别 API ====================
+
+@router.get('/style-models')
+@require_permission("world:view_files")
+async def list_style_models(request: Request):
+    """获取可用于画风识别的 vl 模型列表。
+
+    复用 ``llm_client_factory.get_available_models``：它已过滤掉未配置密钥的 vendor，
+    且仅返回 enabled + supports_tools 的模型；此处再按 ``supports_vl==True`` 过滤，
+    天然满足「必须填了密钥的实施方」要求（与上方 LLM 模型选择器同源过滤）。
+
+    排序：优先 ``volcengine / doubao-seed-2-0-lite``，再其余 volcengine，再其他供应商。
+    """
+    try:
+        from llm.llm_client_factory import get_available_models as _get_available_models
+        from config.constant import (
+            IMAGE_STYLE_LLM_TIMEOUT,
+            IMAGE_STYLE_PREFERRED_MODEL,
+            IMAGE_STYLE_PREFERRED_VENDOR,
+        )
+
+        result = await _get_available_models()
+        pref_vendor = (IMAGE_STYLE_PREFERRED_VENDOR or 'volcengine').lower()
+        pref_model = (IMAGE_STYLE_PREFERRED_MODEL or 'doubao-seed-2-0-lite').lower()
+
+        vl_models = []
+        for m in result.get('models', []):
+            if not m.get('supports_vl'):
+                continue
+            name = m.get('name') or ''
+            vendor_name = m.get('vendor_name') or ''
+            is_preferred = (
+                vendor_name.lower() == pref_vendor
+                and pref_model in name.lower()
+            )
+            vl_models.append({
+                'model_id': m.get('model_id'),
+                'vendor_id': m.get('vendor_id'),
+                'name': name,
+                'vendor_name': vendor_name,
+                'recommended': is_preferred,
+                'input_token_threshold': m.get('input_token_threshold'),
+            })
+
+        def _sort_key(item: dict):
+            vendor = (item.get('vendor_name') or '').lower()
+            name = (item.get('name') or '').lower()
+            is_pref = 0 if item.get('recommended') else 1
+            is_volc = 0 if vendor == pref_vendor else 1
+            return (is_pref, is_volc, vendor, name)
+
+        vl_models.sort(key=_sort_key)
+
+        from config.model_catalog import (
+            ModelScene,
+            annotate_llm_models,
+            build_tracks_payload,
+        )
+        vl_models = annotate_llm_models(vl_models, ModelScene.LLM_STYLE_RECOGNIZE)
+        catalog = build_tracks_payload(ModelScene.LLM_STYLE_RECOGNIZE, vl_models, kind="llm")
+
+        return JSONResponse({
+            'success': True,
+            'models': vl_models,
+            'llm_timeout': IMAGE_STYLE_LLM_TIMEOUT,
+            'preferred_vendor': IMAGE_STYLE_PREFERRED_VENDOR,
+            'preferred_model': IMAGE_STYLE_PREFERRED_MODEL,
+            'catalog': catalog,
+        })
+    except Exception as e:
+        logger.error(f'获取画风识别模型列表失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
+
+class RecognizeStyleRequest(BaseModel):
+    user_id: str
+    world_id: str
+    auth_token: str = ""
+    image_url: str            # /api/upload-image 返回的 url
+    model: str                # 如 doubao-seed-2-0-pro
+    model_id: Optional[int] = None
+    vendor_id: Optional[int] = None
+
+
+# 提取 LLM 返回中的 JSON 对象（容错：```json 代码块 / 首个 {...}）
+_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+_FIRST_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _extract_style_json(content: str) -> Optional[dict]:
+    """从 LLM 文本回复中容错提取 visual_style JSON。
+
+    模型若仍回了 composition_preference，一律丢弃，识别链路只修画风。
+    """
+    if not content:
+        return None
+    candidates = []
+    m = _JSON_BLOCK_RE.search(content)
+    if m:
+        candidates.append(m.group(1))
+    m = _FIRST_OBJ_RE.search(content)
+    if m:
+        candidates.append(m.group(0))
+    candidates.append(content.strip())
+
+    for cand in candidates:
+        try:
+            obj = json.loads(cand)
+            if isinstance(obj, dict) and 'visual_style' in obj:
+                visual_style = str(obj.get('visual_style', '')).strip()
+                if visual_style:
+                    return {'visual_style': visual_style}
+        except Exception:
+            continue
+    return None
+
+
+@router.post('/recognize-style')
+@require_permission("world:view_files")
+async def recognize_style(request: Request, body: RecognizeStyleRequest):
+    """调用 vl 模型识别图片画风，仅返回画面风格（供前端确认后再写入）。"""
+    from config.constant import IMAGE_STYLE_LLM_TIMEOUT, IMAGE_STYLE_COMPRESS_TIMEOUT
+    from utils.image_compressor import compress_local_image_to_base64
+
+    if not body.image_url:
+        return JSONResponse({'success': False, 'error': '缺少图片 url'}, status_code=400)
+    if not body.model:
+        return JSONResponse({'success': False, 'error': '未选择识别模型'}, status_code=400)
+
+    try:
+        # 1) 解析 image_url → 本地路径（仅允许本服务 upload 目录下的文件）
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        upload_root = os.path.join(app_dir, 'upload').replace('\\', '/')
+        image_url = body.image_url.strip()
+        # 取 URL path 部分，定位 upload/... 相对片段
+        rel = image_url
+        if '://' in rel:
+            from urllib.parse import urlparse
+            rel = urlparse(rel).path
+        rel = rel.lstrip('/').replace('\\', '/')
+        if '/upload/' in rel:
+            rel = rel[rel.index('/upload/') + len('/upload/'):]
+        elif rel.startswith('upload/'):
+            rel = rel[len('upload/'):]
+        local_path = os.path.normpath(os.path.join(upload_root, rel))
+        # 防目录穿越：最终路径必须在 upload_root 下
+        if not local_path.replace('\\', '/').startswith(upload_root):
+            return JSONResponse({'success': False, 'error': '非法的图片路径'}, status_code=400)
+        if not os.path.isfile(local_path):
+            return JSONResponse({'success': False, 'error': f'图片文件不存在: {rel}'}, status_code=404)
+
+        # 2) 压缩转 base64（同步 CPU 操作 → to_thread 包装 + wait_for 超时保护）
+        try:
+            ok, data_url, err = await asyncio.wait_for(
+                asyncio.to_thread(
+                    compress_local_image_to_base64,
+                    local_path, 2.0, 2_073_600
+                ),
+                timeout=IMAGE_STYLE_COMPRESS_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            return JSONResponse({'success': False, 'error': '图片压缩超时，请重试'}, status_code=504)
+        if not ok or not data_url:
+            return JSONResponse({'success': False, 'error': f'图片处理失败: {err}'}, status_code=400)
+
+        # 3) 构造多模态消息，调用 vl 模型（同步 call_api → to_thread + wait_for）
+        # visual_style 规范与 asset-readiness-checker 画风审核条款一致，
+        # 字段语义对齐 plot-analyzer：只回答「是什么风格」，不产出构图/色彩。
+        system_prompt = (
+            "你是一位资深的动画/影视美术指导，负责为项目设定可直接用于生图/生视频的画风。"
+            "visual_style 会作为 suffix 拼接到生图/生视频模型的 prompt 后面，"
+            "只保留对模型有用的风格关键词。"
+            "请只返回一个 JSON 对象，不要包含任何其它文字、解释或 Markdown。"
+            "\n\n"
+            "字段规则（极其重要）：\n"
+            "1) 只输出 visual_style（画面风格），不要输出 composition_preference、"
+            "color_language 或其它字段。\n"
+            "2) visual_style 只回答「是什么风格？」——先判定画风大类，再写具体风格关键词。\n"
+            "   画风大类二选一：\n"
+            "   - 写实风格类：真实照片感、电影级写实、纪实摄影；关键词含写实/真实/照片/摄影/电影感。\n"
+            "   - 动漫/漫画风格类：日系动漫、美式漫画、卡通；关键词含动漫/二次元/漫画/卡通。\n"
+            "   两种大类有本质区别，不可混淆：写实绝不能含「动漫/漫画/二次元」；"
+            "动漫绝不能含「写实/照片/摄影」。\n"
+            "3) 必须精简：建议 8~20 字，最多不超过 50 字，只写风格关键词。"
+            "正确示例：「现代都市写实风格」「电影级写实风格」「日系新海诚动漫风格」"
+            "「美漫:漫威风」「迪士尼风格」「皮克斯风」。\n"
+            "4) 禁止混入：色调/饱和度/光泽、镜头角度/构图/景别、剧情内容、角色身份、场景叙事、"
+            "「生活化」「带货」「居家」等内容描述。\n"
+            "5) 禁止误导生图的词：多宫格、分镜图、多格、grid、collage、montage、拼图、拼贴、"
+            "四格、九格、四宫格、九宫格、分镜、故事板、对比图、时间线、序列帧、"
+            "「生成多张」「每张」「各一张」。\n"
+            "6) 禁止笼统：不要写「好看的」「合适的」等无法指导生图的词。\n"
+            "7) 不要输出 color_language；色彩信息不要塞进 visual_style。"
+        )
+        user_text = (
+            "请分析这张参考图的画风，仅返回如下 JSON（中文，精简）：\n"
+            '{"visual_style":"画风大类+具体风格关键词，如：现代都市写实风格 / 日系新海诚动漫风格"}\n'
+            "记住：只写 visual_style，不要写构图倾向、色彩、镜头、剧情内容。"
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": [
+                {"type": "text", "text": user_text},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ]},
+        ]
+
+        client = get_llm_client(body.model, vendor_id=body.vendor_id)
+        # 仅 OpenAI 兼容系列（含 doubao）的 call_api 支持 request_timeout；
+        # Gemini 等原生 client 不支持该参数，传了会 TypeError。先探测再条件传入。
+        import inspect as _inspect
+        call_kwargs = dict(
+            model=body.model,
+            messages=messages,
+            temperature=0.4,
+            max_tokens=400,
+            auth_token=body.auth_token or None,
+            vendor_id=body.vendor_id,
+            model_id=body.model_id,
+        )
+        if 'request_timeout' in _inspect.signature(client.call_api).parameters:
+            call_kwargs['request_timeout'] = IMAGE_STYLE_LLM_TIMEOUT
+        try:
+            # 外层 wait_for 对所有 client 兜底超时，满足超时红线（R4/R5/R6）
+            response = await asyncio.wait_for(
+                asyncio.to_thread(client.call_api, **call_kwargs),
+                timeout=IMAGE_STYLE_LLM_TIMEOUT + 10,
+            )
+        except asyncio.TimeoutError:
+            return JSONResponse({'success': False, 'error': '模型识别超时，请重试或更换模型'}, status_code=504)
+
+        content = response.choices[0].message.content if response and response.choices else ''
+        parsed = _extract_style_json(content)
+        if not parsed or not parsed.get('visual_style'):
+            return JSONResponse({
+                'success': False,
+                'error': '无法从模型回复中解析画风结果，请重试或更换模型',
+                'raw': content,
+            }, status_code=422)
+
+        return JSONResponse({
+            'success': True,
+            'visual_style': parsed['visual_style'],
+            'model': body.model,
+            'vendor_id': body.vendor_id,
+        })
+    except Exception as e:
+        logger.error(f'画风识别失败: {str(e)}', exc_info=True)
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+
+class ApplyWorldStyleRequest(BaseModel):
+    user_id: str
+    world_id: str
+    auth_token: str = ""
+    visual_style: str
+    composition_preference: Optional[str] = ""  # 兼容旧请求体，忽略不写盘
+    image_url: str
+    model: str
+    vendor_id: Optional[int] = None
+
+
+@router.post('/world-style')
+@require_permission("world:save_files")
+async def apply_world_style(request: Request, body: ApplyWorldStyleRequest):
+    """将（用户确认后的）画风识别结果写入 world.json，并在 style_history 追加一条记录。
+
+    仅更新 visual_style，不覆盖已有 composition_preference。
+    """
+    try:
+        visual_style = (body.visual_style or '').strip()
+        if not visual_style:
+            return JSONResponse({'success': False, 'error': '画面风格不能为空'}, status_code=400)
+
+        world_data = file_manager.get_world_json(str(body.user_id), str(body.world_id)) or {}
+        world_data['visual_style'] = visual_style
+
+        history = world_data.setdefault('style_history', [])
+        history.append({
+            'time': datetime.now().isoformat(timespec='seconds'),
+            'model': body.model,
+            'vendor_id': body.vendor_id,
+            'image_url': body.image_url,
+            'visual_style': visual_style,
+            'composition_preference': '',
+        })
+
+        ok = file_manager.save_world(world_data, str(body.user_id), str(body.world_id))
+        if not ok:
+            return JSONResponse({'success': False, 'error': '世界文件保存失败'}, status_code=500)
+
+        return JSONResponse({
+            'success': True,
+            'message': '世界画风已更新（画面风格），本次识别已记录到 style_history',
+        })
+    except Exception as e:
+        logger.error(f'应用画风到 world.json 失败: {str(e)}', exc_info=True)
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+
 # ==================== 智能体任务 API ====================
 
 @router.post('/session/{session_id}/task')
@@ -3406,6 +3902,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
 
             # 如果前端传递了 task_id（视频模型选择），同步到模型偏好
             v_task_id = v_prefs.get('task_id')
+            v_config = None
             if v_task_id:
                 try:
                     v_task_id = int(v_task_id)
@@ -3442,17 +3939,19 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 v_pref_parts.append(f"视频分辨率: {v_prefs['resolution']}")
             # 添加视频模型名称（优先从前端传入，其次从 task_id 解析）
             v_model_display = v_prefs.get('model_name')
-            if not v_model_display and v_task_id:
-                try:
-                    from config.unified_config import UnifiedConfigRegistry as _UCR
-                    _vcfg = _UCR.get_by_id(int(v_task_id))
-                    if _vcfg:
-                        v_model_display = _vcfg.name
-                except (TypeError, ValueError):
-                    pass
+            if not v_model_display and v_config:
+                v_model_display = v_config.name
             if v_model_display:
                 v_pref_parts.append(f"视频模型: {v_model_display}")
-            # 人脸处理开关（让智能体感知：仅当开启时才在视频克隆提示词追加「黑框还原真人人脸」）
+            if v_config:
+                from config.unified_config import VIDEO_CLONE_DRIVER_KEYS
+                if v_config.key in VIDEO_CLONE_DRIVER_KEYS:
+                    v_pref_parts.append("视频克隆: 当前模型支持")
+                else:
+                    v_pref_parts.append("视频克隆: 当前模型不支持")
+            # 人脸处理开关（让智能体感知用户希望处理人脸，仅作背景信息；
+            # 「黑框还原」句不再由智能体写入提示词，改由 seedance 系 driver 在执行时
+            # 按素材实际遮盖状态动态追加/移除，见 task/visual_drivers/face_mask_prompt.py）
             if v_prefs.get('enable_face_mask'):
                 v_pref_parts.append("人脸处理: 已开启")
             if v_pref_parts:
@@ -3514,7 +4013,15 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             logger.info(f'User message written to chat_messages for task {task_id}')
         except Exception as e:
             logger.error(f'写入用户消息到 chat_messages 失败（非致命）: {e}')
-        
+
+        # 用户发消息即视为会话活动，顺延过期时间（覆盖任务失败不顺延的缺口）
+        try:
+            await asyncio.to_thread(
+                _extend_session_expiry, session_id, getattr(session, 'session_type', 1)
+            )
+        except Exception as e:
+            logger.error(f'顺延会话过期时间失败（非致命）: {e}')
+
         # 准备会话数据
         session_data = {
             'user_id': session.user_id,
@@ -3736,6 +4243,28 @@ async def submit_verification(request: Request, verification_id: str, verify_req
 
         # 将 verification 回答中的媒体合并到当前任务，确保等待中的 PM/专家能看到真实 URL
         db_verification = task_manager.get_verification(verification_id)
+
+        # 提交验证回答即视为会话活动，顺延过期时间
+        try:
+            if db_verification:
+                from model.agent_tasks import AgentTasksModel
+                from model.chat_sessions import ChatSessionsModel
+                _task_entity = await asyncio.to_thread(
+                    AgentTasksModel.get_by_task_id, db_verification.task_id
+                )
+                if _task_entity and _task_entity.session_id:
+                    _session_entity = await asyncio.to_thread(
+                        ChatSessionsModel.get_by_session_id, _task_entity.session_id
+                    )
+                    if _session_entity:
+                        await asyncio.to_thread(
+                            _extend_session_expiry,
+                            _task_entity.session_id,
+                            getattr(_session_entity, 'session_type', 1) or 1
+                        )
+        except Exception as e:
+            logger.error(f'顺延会话过期时间失败（非致命）: {e}')
+
         if db_verification and (verify_request.image_urls or verify_request.video_urls or verify_request.audio_urls):
             try:
                 from model.agent_tasks import AgentTasksModel
@@ -4597,7 +5126,7 @@ async def upload_reference_image(
         file: 图片文件
         user_id: 用户ID
         world_id: 世界ID
-        item_type: 项目类型 (1=character, 2=location, 3=props)
+        item_type: 项目类型 (1=character, 2=location, 3=props, 4=style 画风识别参考图)
         auth_token: 认证令牌
     
     Returns:
@@ -4633,6 +5162,8 @@ async def upload_reference_image(
             upload_dir = 'upload/location/pic'
         elif item_type == 3:  # props
             upload_dir = 'upload/props/pic'
+        elif item_type == 4:  # style 画风识别参考图
+            upload_dir = 'upload/style/pic'
         else:
             return JSONResponse({
                 'success': False,

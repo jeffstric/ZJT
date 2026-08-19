@@ -985,9 +985,9 @@ JSON_FORMAT_EXAMPLE = """{
           "camera_angle": "平视/俯拍/仰拍/微俯拍/荷兰角",
           "shot_type": "远景/中景/近景/特写",
           "camera_movement": "固定/推进/拉远/跟随/摇移/升降",
-          "description": "镜头简要描述（涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式）",
-          "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像,必须详细到能让AI准确还原画面,包括：画面中所有在场角色（用【【角色名】】格式）的位置、姿态、表情或动作（固有外貌如发型/体型/标志服装不要写，交给角色库）；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等。涉及道具时用〖〖道具名〗〗格式）",
-          "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化,涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式）",
+          "description": "镜头简要描述（涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式；若有对白须逐字写出完整台词，如【【角色】】说：\\"台词原文\\"）",
+          "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像,必须详细到能让AI准确还原画面,包括：画面中所有在场角色（用【【角色名】】格式）的位置、姿态、表情或动作（固有外貌如发型/体型/标志服装不要写，交给角色库）；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等。涉及道具时用〖〖道具名〗〗格式；首帧可不写台词）",
+          "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化,涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式；有对白时可在此或 description/action 中写出完整台词）",
           "characters_present": ["char_001"],
           "focus_character_ids": ["char_001"],
           "props_present": ["prop_001"],
@@ -995,10 +995,10 @@ JSON_FORMAT_EXAMPLE = """{
             {
               "character_id": "char_001",
               "character_name": "【【人物名称】】",
-              "text": "对话内容"
+              "text": "对话内容（完整原文，须与 description/action 中引用的台词一致）"
             }
           ],
-          "action": "动作描述（涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式）",
+          "action": "动作描述（涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式；若有对白须逐字写出完整台词）",
           "mood": "情绪氛围",
           "environment_sound": "环境音（场景中的自然声音，如脚步声、车辆声等）",
           "background_music": "背景音乐（配乐，如钢琴曲、爵士乐等）",
@@ -1419,21 +1419,21 @@ async def parse_script_to_shots(
       - dialogue: [{"character_id": "A", "text": "你好吗？"}]
       - focus_character_ids: ["char_001"]  // 只有A是说话焦点
       - characters_present: ["char_001"]  // 如果B被构图裁切到镜头外，则只放可见的A
-      - description: "【【A】】说话，视线看向镜头外的对座"  // 聚焦A，但保留对座空间关系
+      - description: "【【A】】视线看向镜头外的对座，微笑着说：\\"你好吗？\\""  // 聚焦A，且视频提示词含完整台词
       - opening_frame_description: "中景：【【A】】坐在咖啡厅的座位上，身体微微前倾，双手放在桌上，面带微笑，眼神看向画面右侧（镜头外），嘴唇微动正在说话；对座的B仍在原座位但被当前构图裁切到镜头外"  ✓ 正确！A是焦点，B以镜头外空间连续性保留
       - spatial_layout: A的slot标记primary_subject；B的原slot继续保留，visibility=offscreen，framing_role=offscreen_continuity
       - scene_detail: "【【A】】在咖啡厅中说话，表情友好，仍朝向对座回应"  ✓ 正确！只让A成为动作主体
-      - action: "【【A】】微笑着询问镜头外的对方"  ✓ 正确！只让A成为动作主体
+      - action: "【【A】】微笑着询问镜头外的对方：\\"你好吗？\\""  ✓ 正确！动作+完整台词
       
     - 镜头2：中景，B回应
       - dialogue: [{"character_id": "B", "text": "我很好，谢谢"}]
       - focus_character_ids: ["char_002"]  // 只有B是说话焦点
       - characters_present: ["char_002"]
-      - description: "【【B】】回应，视线看向镜头外的对座"
+      - description: "【【B】】视线看向镜头外的对座，点头回应：\\"我很好，谢谢\\""
       - opening_frame_description: "中景：【【B】】坐在咖啡厅的另一侧座位，身体放松靠在椅背上，双手交叉放在胸前，面带笑容，眼神看向画面左侧（镜头外），点头回应；对座的A仍在原座位但被当前构图裁切到镜头外"  ✓ 正确！B是焦点，A以镜头外空间连续性保留
       - spatial_layout: B的slot标记primary_subject；A的原slot继续保留，visibility=offscreen，framing_role=offscreen_continuity
       - scene_detail: "【【B】】在咖啡厅中回应，表情轻松愉快"
-      - action: "【【B】】点头微笑着回答"
+      - action: "【【B】】点头微笑着回答：\\"我很好，谢谢\\""
 
 - **【错误示例 - 严禁这样做】：**
   * ❌ 错误1：opening_frame_description: "中景：【【A】】和【【B】】坐在咖啡厅，【【A】】正在说话..."
@@ -1450,8 +1450,8 @@ async def parse_script_to_shots(
     - 只描述A，通过"看向镜头外"暗示对方存在
   * ✓ 正确2：scene_detail: "【【B】】在咖啡厅中回应，表情轻松"
     - 只描述B的状态
-  * ✓ 正确3：description: "【【A】】说话"
-    - 只提一个角色
+  * ✓ 正确3：description: "【【A】】说：\\"你好吗？\\""
+    - 只提一个说话焦点，且含完整台词（禁止只写"说话/回应"而无原文）
   * ✓ 正确4：focus_character_ids: ["char_001"]；characters_present 可包含首帧中可见/局部可见的空间连续性角色
     - 只有一个说话焦点；非说话角色如仍在画面边缘或背景中，可作为 secondary_continuity 保留
 
@@ -1710,6 +1710,37 @@ async def parse_script_to_shots(
 ```
 """
 
+        # 企业版对白情感向量：条件注入指令与 schema 示例（社区/个人版为空）
+        emotion_requirements = ""
+        json_format_example = JSON_FORMAT_EXAMPLE
+        try:
+            from services.dialogue_emotion import (
+                parser_emotion_enabled,
+                build_parser_emotion_instructions,
+            )
+            if parser_emotion_enabled():
+                emotion_requirements = build_parser_emotion_instructions()
+                json_format_example = JSON_FORMAT_EXAMPLE.replace(
+                    '"text": "对话内容"\n            }',
+                    '"text": "对话内容",\n'
+                    '              "emo_vec": [0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.2],\n'
+                    '              "emotion_note": "略带惊喜的平静陈述"\n'
+                    '            }',
+                )
+                logger.info(
+                    "[dialogue-emotion][script-parser] emotion instructions enabled, "
+                    "instruction_chars=%s",
+                    len(emotion_requirements),
+                )
+            else:
+                logger.info(
+                    "[dialogue-emotion][script-parser] emotion instructions disabled"
+                )
+        except Exception:
+            logger.exception("dialogue emotion parser hook failed; skip emotion instructions")
+            emotion_requirements = ""
+            json_format_example = JSON_FORMAT_EXAMPLE
+
         # 构建用户提示词
         user_prompt = f"""请将以下剧本内容解析为结构化的JSON数据。
 {qc_retry_block}{segment_context_block}
@@ -1821,6 +1852,17 @@ async def parse_script_to_shots(
    - 错误示例：characters_present 含某角色，但画面/动作描写中完全没有提到该角色 ✗
    - 错误示例（只点名无动态）：只写"【【A】】和【【B】】在场"，没有各自的位置/姿态/动作 ✗
 
+7.2 **【视频提示词必须含完整对白·硬性要求】**：
+   - 当 shot 的 `dialogue[]` 中存在非空 `text` 时，**必须**在视频提示词字段（`description` 和/或 `action`，可选 `scene_detail`）中**逐字**写出该台词的完整原文
+   - **禁止**只用「大声呵斥」「说着话」「训斥」「回应」等动作概括代替原文台词
+   - 推荐格式：`【【角色名】】说："完整台词原文"`（中英文引号均可）；旁白可用「旁白：…」
+   - `dialogue[].text` 仍须保留完整台词（供配音/对口型），且与视频提示词中引用的台词**一致**
+   - 首帧 `opening_frame_description` **不强制**写台词（静态画面）；台词属于视频侧
+   - 多人对话拆分后：每个单人镜头只写入**本镜头**那一句完整台词
+   - 正确示例：description 含 `【【赵志高】】叉腰手指着地，怒声说道："你也没好到哪去！去，把仓库那堆杂物搬了！"`，且 dialogue.text 为同一句 ✓
+   - 错误示例：description 只写 `【【赵志高】】嘴巴大张大声呵斥`，台词仅出现在 dialogue[] 中 ✗
+   - 错误示例：把台词改写成摘要（如原文很长，视频侧只写「指责对方去搬杂物」）✗
+
 8. **道具名称格式要求（极其重要 - 严禁违反）**：
    - **严禁在 opening_frame_description、scene_detail、description、action 等所有画面描述文本字段中使用 prop_001、prop_002 等道具ID来替代道具的实际名称**
    - 道具在画面描述中必须使用其真实名称（如"百元大钞"、"手机"、"钥匙"等），而不是其ID（如"prop_002"）
@@ -1832,7 +1874,7 @@ async def parse_script_to_shots(
    - 错误示例：数据库和原始剧本都没有"扩音器"，却写"〖〖扩音器〗〗掉在地上" ❌ 严禁幻想道具
    - **【关键】角色名称必须用【【角色名】】格式包裹，道具名称必须用〖〖道具名〗〗格式包裹，不能混用**
 
-{special_requirements}9. **输出格式**：
+{special_requirements}{emotion_requirements}9. **输出格式**：
    - 必须严格按照以下JSON格式输出
    - 确保所有ID引用关系正确
    - 只输出纯JSON内容
@@ -1841,7 +1883,7 @@ async def parse_script_to_shots(
 
 JSON格式示例：
 ```
-{JSON_FORMAT_EXAMPLE}
+{json_format_example}
 ```
 下面请开始解析："""
 

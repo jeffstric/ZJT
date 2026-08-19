@@ -57,6 +57,15 @@ description: 剧本解析/分镜拆分系统提示词。控制角色出场、空
     - 即使某角色在该镜头没有台词或处于静态（如操控载具、观察、等待），也必须写出其位置与姿态，不能因为"不显眼"就漏写
     - **【模式无关】本条以 characters_present 为准**：列出几个角色就写全几个。若启用了“多人对话拆分”规则，拆分后每个镜头只有一个 `focus_character_ids` 说话主体；但同一空间中仍可见或局部可见的非说话角色必须继续留在 characters_present，并在 spatial_layout 中标为 `secondary_continuity`。完全被裁切到画面外的非说话角色不放入 characters_present，但必须在 spatial_layout 中以 `offscreen_continuity` 保留位置。**严禁为了让多角色同框而拒绝拆分对话镜头，也严禁为了单人近景让角色凭空消失**
     - 错误示例：characters_present 含某角色，但 opening_frame_description/description/action 中完全没有提到该角色 ✗
+18.1 **【视频提示词必须含完整对白·硬性规则】**：
+    - 当 shot 的 `dialogue[]` 存在非空 `text` 时，必须在视频提示词字段（`description` 和/或 `action`，可选 `scene_detail`）中**逐字**写出完整台词原文
+    - **禁止**只用「大声呵斥」「说着话」「训斥」「回应」等动作概括代替原文台词
+    - 推荐格式：`【【角色名】】说："完整台词原文"`；旁白可用「旁白：…」
+    - `dialogue[].text` 仍须保留完整台词，且与视频提示词中引用的台词一致
+    - 首帧 `opening_frame_description` 不强制写台词；台词属于视频侧
+    - 多人对话拆分后，每个单人镜头只写入本镜头那一句完整台词
+    - 正确示例：description 含 `【【赵志高】】怒声说道："你也没好到哪去！去，把仓库那堆杂物搬了！"` ✓
+    - 错误示例：只写「【【赵志高】】嘴巴大张大声呵斥」，台词仅在 dialogue[] 中 ✗
 19. **【分镜呈现类型 presentation】** 每个 shot 必须输出 presentation 字段，取值仅限：
     - `"digital_human"`：对口型/数字人镜头——**本镜只有一个角色在说话**（dialogue 中说话角色唯一），内容以对白表演为主，适合近景/特写固定镜头下的口型视频。
     - `"video"`：普通 AI 视频镜头——无对白、多人交替说话、旁白、或虽有单人对白但核心是动作/追逐/打斗/复杂调度。

@@ -63,6 +63,7 @@ web/js/storyboard/
 **任务状态**（不再冗余在 scene，由各自任务表得出，经 `GET /scene/{id}/task-status` 聚合返回）：
 - 图片/视频状态：选中 asset 关联的 `ai_tools.status`（接口返回 `first_frame / last_frame / video` 各自的 `status / result_url / error`）
 - 配音状态：各对话选中配音关联的 `ai_audio.status`（接口返回 `dialogues` 各自的 `status / audio_url / error`）
+- 对话行配音区展示（`renderDialogueAudioBlock`，全量渲染与轮询局部更新共用）：进行中（status 0/1）显示不确定进度条并禁用「生成配音」按钮（提交任务后本地立即置 0，不等首次轮询）；设置变更（台词/角色/语速/音量/情感）后已有配音打 `audioStale` 标记，音频降级显示并提示「当前播放的是旧配音」；新 `audio_url` 落地时清除该标记；失败（status -1）显示错误与重试提示
 
 **缩略图/预览**：重构后 `storyboard_scene` 不再有 `thumbnail_url` / `preview_image_url` 字段；分镜画面直接取当前选中首帧的 `result_url`（后端 `list_by_storyboard` LEFT JOIN 提供），需要小图时由基础缩略图服务从该原图按需生成。
 

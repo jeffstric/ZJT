@@ -59,7 +59,7 @@ class GridImageTask:
         self.auth_token = kwargs.get('auth_token')
         self.status = kwargs.get('status', GridImageTaskStatus.QUEUED)
         self.try_count = kwargs.get('try_count', 0)
-        self.max_attempts = kwargs.get('max_attempts', 60)
+        self.max_attempts = kwargs.get('max_attempts', GridConfig.MAX_ATTEMPTS)
         self.error_message = kwargs.get('error_message')
         self.result_url = kwargs.get('result_url')
         self.local_file_path = kwargs.get('local_file_path')
@@ -158,7 +158,7 @@ class GridImageTasksModel:
         world_id: str,
         comfyui_base_url: str,
         auth_token: str,
-        max_attempts: int = 60,
+        max_attempts: int = GridConfig.MAX_ATTEMPTS,
         prompt: str = None,
         task_config_id: str = None,
         aspect_ratio: str = None,
@@ -620,7 +620,7 @@ CREATE TABLE IF NOT EXISTS `grid_image_tasks` (
   `auth_token` varchar(500) NOT NULL COMMENT '认证令牌',
   `status` tinyint DEFAULT '0' COMMENT '状态（0-队列中, 1-处理中, 2-完成, -1-失败, -2-超时, -3-取消, -4-下载失败）',
   `try_count` int DEFAULT '0' COMMENT '尝试次数',
-  `max_attempts` int DEFAULT '60' COMMENT '最大尝试次数',
+  `max_attempts` int DEFAULT '120' COMMENT '最大尝试次数（scheduler 每 10s 轮询一次，120 次 ≈ 20 分钟总超时）',
   `error_message` text COMMENT '错误信息',
   `result_url` varchar(1000) DEFAULT NULL COMMENT '结果图片URL',
   `local_file_path` varchar(1000) DEFAULT NULL COMMENT '本地文件路径',

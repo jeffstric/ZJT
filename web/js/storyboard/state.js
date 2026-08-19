@@ -20,6 +20,20 @@ const state = {
     userId: null,
     authToken: null,
     editionInfo: { mode: 'community', mode_label: '社区版' },
+    /** 系统 features 探查（如 dialogue_emotion_tts） */
+    serverFeatures: {},
+
+    /**
+     * 对白情感向量编辑弹窗
+     * @type {{ open: boolean, dialogueId: number|null, values: number[], saving: boolean, error: string }}
+     */
+    emoVecEditor: {
+        open: false,
+        dialogueId: null,
+        values: [0, 0, 0, 0, 0, 0, 0, 0],
+        saving: false,
+        error: '',
+    },
 
     title: '故事板',
     style: '',
@@ -61,6 +75,8 @@ const state = {
     },
     /** 正在复制的分镜 id（in-flight 守卫，防止连点产生重复副本） */
     duplicatingSceneId: null,
+    /** 智能插入分镜进行中（in-flight 守卫 + 插入位加载态展示） */
+    isSmartInserting: false,
     chatMode: 'dialogue',
     inputMessage: '',
     // 视频生成模式图片输入模式：first_last_frame | multi_reference（对齐 marketing_agent）
@@ -140,6 +156,8 @@ const state = {
     isSaving: false,
     error: '',
     showGenerateFromScriptDialog: false,
+    /** 拆分弹窗内「文生图模型」默认折叠，点开后本会话保持展开 */
+    scriptSplitTextToImageOpen: false,
     isGeneratingFromScript: false,
     generateFromScriptError: '',
     autoImageSequenceMode: 'balanced',
@@ -234,10 +252,12 @@ const state = {
     imageEditModels: [],
     textToVideoModels: [],
     imageToVideoModels: [],
+    modelCatalog: null,
 
     // 对话模型（LLM），参考 script_writer，需要按供应商分组
     llmModels: [],
     llmVendors: [],
+    llmCatalog: null,
     selectedLlmModel: null,
     selectedScriptSplitLlmModel: null,
 
@@ -628,6 +648,8 @@ export function setModels({
     image_to_video_models,
     // LLM（可选）
     llm_models,
+    llm_catalog,
+    catalog,
 } = {}) {
     if (image_models !== undefined) state.imageModels = image_models;
     if (video_models !== undefined) state.videoModels = video_models;
@@ -670,27 +692,41 @@ export function setModels({
         );
     }
     if (state.imageToVideoModels.length) {
+        // 图生视频槽位只接受首帧/首尾帧模型；Vidu-Q2 等仅参考图模型归参考槽位。
         state.selectedImageToVideoTaskId = resolveAvailableTaskId(
             state.selectedImageToVideoTaskId ?? state.selectedVideoTaskId,
-            state.imageToVideoModels,
+            getImageToVideoSlotModels(),
             'storyboard_lastSelectedVideoTaskId',
         );
-        const referenceModels = state.imageToVideoModels.filter(m => {
-            const modes = m.supported_image_modes || [];
-            return modes.includes('multi_reference') || m.supports_ref_audio_video === true;
-        });
         state.selectedReferenceToVideoTaskId = resolveAvailableTaskId(
             state.selectedReferenceToVideoTaskId ?? state.selectedVideoTaskId,
-            referenceModels,
+            getReferenceToVideoSlotModels(),
             'storyboard_lastSelectedReferenceToVideoTaskId',
+            'minimax_h3_r2v',
         );
     }
     state.selectedImageTaskId = state.selectedTextToImageTaskId;
     state.selectedVideoTaskId = state.selectedImageToVideoTaskId;
-    if (state.selectedDigitalHumanTaskId == null && digital_human_models && digital_human_models.length) {
-        state.selectedDigitalHumanTaskId = digital_human_models[0].task_id;
+    if (digital_human_models && digital_human_models.length) {
+        // 优先 MiniMax H3（task_id=35 / short_key 含 minimax）
+        const minimax = digital_human_models.find(
+            (m) => Number(m.task_id) === 35
+                || String(m.short_key || '').includes('minimax')
+                || String(m.key || '').includes('minimax'),
+        );
+        const preferred = minimax || digital_human_models[0];
+        if (state.selectedDigitalHumanTaskId == null) {
+            state.selectedDigitalHumanTaskId = preferred.task_id;
+        } else {
+            const stillValid = digital_human_models.some(
+                (m) => String(m.task_id) === String(state.selectedDigitalHumanTaskId),
+            );
+            if (!stillValid) state.selectedDigitalHumanTaskId = preferred.task_id;
+        }
     }
 
+    if (catalog !== undefined) state.modelCatalog = catalog;
+    if (llm_catalog !== undefined) state.llmCatalog = llm_catalog;
     if (llm_models !== undefined) {
         state.llmModels = llm_models;
         if (state.selectedLlmModel) {
@@ -810,13 +846,30 @@ export function getSelectedVideoModel() {
         : (isReference ? state.selectedReferenceToVideoTaskId : state.selectedImageToVideoTaskId);
     const models = !hasInputs
         ? state.textToVideoModels
-        : (state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels);
+        : (isReference ? getReferenceToVideoSlotModels() : getImageToVideoSlotModels());
     return models.find(m => String(m.task_id) === String(taskId)) || models[0] || null;
+}
+
+function allImageToVideoModels() {
+    return state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
+}
+
+/** 图生视频槽位：仅支持首帧/首尾帧的模型（缺省 supported_image_modes 视为首尾帧） */
+export function getImageToVideoSlotModels() {
+    return allImageToVideoModels().filter(m => getSupportedVideoImageModes(m).includes('first_last_frame'));
+}
+
+/** 参考视频槽位：多参考图或参考音视频模型（含仅参考图的 Vidu-Q2） */
+export function getReferenceToVideoSlotModels() {
+    return allImageToVideoModels().filter(m => {
+        const modes = m.supported_image_modes || m.supportedImageModes || [];
+        return modes.includes('multi_reference') || m.supports_ref_audio_video === true;
+    });
 }
 
 /** 默认图生视频模型（拆分弹窗 / 批量 / 有首帧路径） */
 export function getSelectedImageToVideoModel() {
-    const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
+    const models = getImageToVideoSlotModels();
     const taskId = state.selectedImageToVideoTaskId;
     return models.find(m => String(m.task_id) === String(taskId)) || models[0] || null;
 }
@@ -1127,10 +1180,13 @@ export function getDefaultVideoResolution(model = null) {
     return opts[0]?.value || null;
 }
 
-/** 切换视频模型后校正时长模式与分辨率 */
+/** 切换视频模型后校正时长模式与分辨率。
+ *  分辨率以「图生视频模型」为准（齿轮配置与对口型共用），避免 getSelectedVideoModel
+ *  在无输入图时落到文生视频导致分辨率列表为空。
+ */
 export function ensureVideoGenerationPrefsSupported() {
-    const model = getSelectedVideoModel();
-    const durations = getVideoSupportedDurations(model);
+    const durationModel = getSelectedImageToVideoModel() || getSelectedVideoModel();
+    const durations = getVideoSupportedDurations(durationModel);
     if (state.videoDurationMode !== 'auto') {
         const n = Number(state.videoDurationMode);
         if (!Number.isFinite(n) || !durations.includes(Math.round(n))) {
@@ -1139,13 +1195,14 @@ export function ensureVideoGenerationPrefsSupported() {
             state.videoDurationMode = Math.round(n);
         }
     }
-    const resOpts = getVideoResolutionOptions(model);
+    const resModel = getSelectedImageToVideoModel() || getSelectedVideoModel();
+    const resOpts = getVideoResolutionOptions(resModel);
     if (!resOpts.length) {
         state.videoResolution = null;
     } else {
         const values = resOpts.map(o => o.value);
         if (!state.videoResolution || !values.includes(state.videoResolution)) {
-            state.videoResolution = getDefaultVideoResolution(model);
+            state.videoResolution = getDefaultVideoResolution(resModel);
         }
     }
 }

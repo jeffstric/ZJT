@@ -61,6 +61,8 @@
         const LLMVendor = {};
         // 供应商图标映射（从 /api/vendors 动态加载）
         const vendorIcons = {};
+        let llmModelCatalog = null;
+        let imageModelCatalog = null;
 
         // LLM 模型名称常量
         const LLMModel = {
@@ -270,7 +272,10 @@
             }
 
             configureMarked();
-            // 获取版本信息，用于社区版功能标注
+            // 画风识别：初始化模型下拉监听 + 拖放区（区块仅「世界」tab 可见，首次切到时懒加载模型）
+            initStyleModelSelectListener();
+            initStyleDropZone();
+            // 获取版本信息，用于社区版功能标注（如 Ollama / 画风识别「限时免费」）
             try {
                 const editionResp = await fetch('/api/edition');
                 const editionResult = await editionResp.json();
@@ -280,6 +285,7 @@
             } catch (e) {
                 isCommunityEdition = true;
             }
+            updateStyleRecognizeEditionBadge();
             await loadVendors();
             await loadWorldDefaultModels();
             await loadAvailableModels();
@@ -350,6 +356,10 @@
                 return; // 不继续初始化其他功能
             }
             
+            // 首次进入默认激活「世界」tab，需主动触发一次画风识别区块显隐
+            //（switchFileTab 仅在用户点击 tab 时触发，首屏直接调 loadFiles 会绕过它）
+            updateStyleRecognizeVisibility('worlds');
+
             // 核心初始化流程：加载世界名称、初始化会话、加载文件
             // 使用 try-catch 防止快速刷新时 fetch 被取消导致异常中断后续流程
             try {
@@ -2123,7 +2133,7 @@
 
         async function loadAvailableModels() {
             try {
-                const response = await fetch('/api/models', {
+                const response = await fetch('/api/models?scene=llm.chat', {
                     headers: {
                         'Authorization': `Bearer ${AUTH_TOKEN}`
                     }
@@ -2154,7 +2164,11 @@
                     return;
                 }
 
-                // 按 vendor_name 分组，vendor_id 排序
+                llmModelCatalog = data.catalog || null;
+                const catalogApi = window.ModelCatalog;
+                const collapsed = catalogApi
+                    ? catalogApi.collapseLlmModels(data.models, 'llm.chat', llmModelCatalog)
+                    : [];
                 const vendorGroups = {};
                 const vendorOrder = [];  // 保持 vendor 顺序
                 data.models.forEach(model => {
@@ -2231,65 +2245,93 @@
                     return option;
                 };
 
-                // 按 vendor 分组添加模型
-                vendorOrder.forEach(vendorId => {
-                    const group = vendorGroups[vendorId];
-                    if (group.models.length > 0) {
+                if (collapsed.length) {
+                    const recommendedGroup = document.createElement('optgroup');
+                    recommendedGroup.label = '推荐';
+                    collapsed.filter((item) => item.track === 'value' || item.track === 'quality').forEach((item) => {
+                        const option = createModelOption(item.defaultRoute || item.routes[0]);
+                        const badge = item.track === 'value' ? '性价比' : '效果';
+                        option.textContent = `${item.name}（${badge}）`;
+                        if (!option.disabled && !firstEnabledModel) firstEnabledModel = option;
+                        recommendedGroup.appendChild(option);
+                    });
+                    if (recommendedGroup.children.length) selector.appendChild(recommendedGroup);
+
+                    const familyGroups = {};
+                    collapsed.forEach((item) => {
+                        if (item.track === 'value' || item.track === 'quality') return;
+                        const family = item.family || '其它';
+                        if (!familyGroups[family]) familyGroups[family] = [];
+                        familyGroups[family].push(item);
+                    });
+                    Object.keys(familyGroups).forEach((family) => {
                         const optGroup = document.createElement('optgroup');
-                        const icon = vendorIcons[group.vendorName.toLowerCase()] || '📦';
-                        const isOllamaGroup = group.vendorName.toLowerCase() === 'ollama';
-                        const suffix = (isOllamaGroup && isCommunityEdition) ? '（限时免费）' : '';
-                        optGroup.label = `${icon} ${group.vendorName}${suffix}`;
-                        group.models.forEach(model => {
-                            const option = createModelOption(model);
-                            if (!option.disabled && !firstEnabledModel) {
-                                firstEnabledModel = option;
-                            }
+                        optGroup.label = family;
+                        familyGroups[family].forEach((item) => {
+                            const option = createModelOption(item.defaultRoute || item.routes[0]);
+                            if (!option.disabled && !firstEnabledModel) firstEnabledModel = option;
                             optGroup.appendChild(option);
                         });
                         selector.appendChild(optGroup);
-                    }
-                });
+                    });
 
-                // 设置默认选中模型：deepseek-v4-flash (deepseek) → qwen3.5-plus (zjt_api) → qwen3.5-plus (其他) → 第一个启用的模型
+                    const extraRoutes = [];
+                    collapsed.forEach((item) => {
+                        const def = item.defaultRoute;
+                        item.routes.forEach((route) => {
+                            if (!def) return;
+                            if (String(route.vendor_id) === String(def.vendor_id)
+                                && String(route.model_id || route.id) === String(def.model_id || def.id)) {
+                                return;
+                            }
+                            extraRoutes.push(route);
+                        });
+                    });
+                    if (extraRoutes.length) {
+                        const extraGroup = document.createElement('optgroup');
+                        extraGroup.label = '换供应商';
+                        extraRoutes.forEach((route) => {
+                            const option = createModelOption(route);
+                            option.textContent = `${route.name || route.model_name}（${route.vendor_name}）`;
+                            extraGroup.appendChild(option);
+                        });
+                        selector.appendChild(extraGroup);
+                    }
+                } else {
+                    vendorOrder.forEach(vendorId => {
+                        const group = vendorGroups[vendorId];
+                        if (group.models.length > 0) {
+                            const optGroup = document.createElement('optgroup');
+                            const icon = vendorIcons[group.vendorName.toLowerCase()] || '📦';
+                            const isOllamaGroup = group.vendorName.toLowerCase() === 'ollama';
+                            const suffix = (isOllamaGroup && isCommunityEdition) ? '（限时免费）' : '';
+                            optGroup.label = `${icon} ${group.vendorName}${suffix}`;
+                            group.models.forEach(model => {
+                                const option = createModelOption(model);
+                                if (!option.disabled && !firstEnabledModel) {
+                                    firstEnabledModel = option;
+                                }
+                                optGroup.appendChild(option);
+                            });
+                            selector.appendChild(optGroup);
+                        }
+                    });
+                }
+
                 let defaultModel = null;
-
-                const allOptions = selector.querySelectorAll('option');
-                // 第一轮：优先查找 deepseek 供应商下的 deepseek-v4-flash
-                for (let i = 0; i < allOptions.length; i++) {
-                    const option = allOptions[i];
-                    if (!option.disabled && option.value && option.value.includes('deepseek-v4-flash')
-                        && option.dataset.vendorName === LLMVendor.DEEPSEEK) {
-                        defaultModel = option;
-                        console.log('[模型选择] 选择默认模型: deepseek-v4-flash (deepseek)');
-                        break;
+                if (catalogApi && collapsed.length) {
+                    const valueItem = catalogApi.findCollapsedByTrack(collapsed, 'value');
+                    if (valueItem && valueItem.defaultRoute) {
+                        const wantedVendor = String(valueItem.defaultRoute.vendor_id || '');
+                        const wantedName = valueItem.canonical;
+                        defaultModel = Array.from(selector.querySelectorAll('option')).find((option) => (
+                            !option.disabled
+                            && option.value
+                            && option.value.includes(wantedName)
+                            && String(option.dataset.vendorId || '') === wantedVendor
+                        )) || null;
                     }
                 }
-                // 第二轮：查找 zjt_api 供应商下的 qwen3.5-plus
-                if (!defaultModel) {
-                    for (let i = 0; i < allOptions.length; i++) {
-                        const option = allOptions[i];
-                        if (!option.disabled && option.value && option.value.includes('qwen3.5-plus')
-                            && option.dataset.vendorName === LLMVendor.ZJT_API) {
-                            defaultModel = option;
-                            console.log('[模型选择] 选择默认模型: qwen3.5-plus (zjt_api)');
-                            break;
-                        }
-                    }
-                }
-                // 第三轮：查找其他供应商的 qwen3.5-plus
-                if (!defaultModel) {
-                    for (let i = 0; i < allOptions.length; i++) {
-                        const option = allOptions[i];
-                        if (!option.disabled && option.value && option.value.includes('qwen3.5-plus')) {
-                            defaultModel = option;
-                            console.log(`[模型选择] 未找到 zjt_api 的 qwen3.5-plus，选择其他供应商: ${option.dataset.vendorName}`);
-                            break;
-                        }
-                    }
-                }
-
-                // 最终回退：使用第一个启用的模型
                 if (!defaultModel && firstEnabledModel) {
                     defaultModel = firstEnabledModel;
                     console.log(`[模型选择] 未找到推荐模型，选择第一个启用的模型: ${firstEnabledModel.value}`);
@@ -2362,6 +2404,7 @@
                 updateModelSelectorDisplay();
                 updateModelTooltip();
                 updateThinkingModeUI();
+                bindLlmTrackToggle();
 
                 // 确保选中的模型可用，否则自动切换
                 ensureValidModelSelected();
@@ -2962,6 +3005,37 @@
         }
 
 
+        function currentLlmTrack() {
+            const selector = document.getElementById('model-selector');
+            const selected = selector?.options?.[selector.selectedIndex];
+            if (!selected || !window.ModelCatalog) return 'custom';
+            return window.ModelCatalog.inferTrack('llm.chat', selected.value, llmModelCatalog);
+        }
+
+        function bindLlmTrackToggle() {
+            const host = document.getElementById('llm-track-host');
+            if (!host || !window.ModelCatalog) return;
+            window.ModelCatalog.mountTrackToggle(host, {
+                track: currentLlmTrack(),
+                onSelect: (track) => {
+                    const selector = document.getElementById('model-selector');
+                    if (!selector) return;
+                    const tracks = window.ModelCatalog.tracksFromCatalog(llmModelCatalog, 'llm.chat');
+                    const target = track === 'quality' ? tracks.quality : tracks.value;
+                    const options = Array.from(selector.options);
+                    const hit = options.find((opt) => !opt.disabled && opt.value && window.ModelCatalog.matchCanonical(opt.value, target)
+                        && opt.closest('optgroup')?.label === '推荐')
+                        || options.find((opt) => !opt.disabled && opt.value && window.ModelCatalog.matchCanonical(opt.value, target));
+                    if (hit) {
+                        selector.value = hit.value;
+                        selector.selectedIndex = options.indexOf(hit);
+                        changeModel();
+                    }
+                    window.ModelCatalog.applyTrackButtons(host.querySelector('.model-track-toggle'), track);
+                }
+            });
+        }
+
         async function changeModel() {
             if (!sessionId) {
                 showError(window.t ? window.t('error_create_session_first') : '请先创建会话');
@@ -2979,6 +3053,7 @@
             updateModelTooltip();
             updateLlmModelIcon();
             updateThinkingModeUI();
+            bindLlmTrackToggle();
 
             // Ollama 模型检测和警告
             const vendorName = selectedOption?.dataset?.vendorName || '';
@@ -3045,7 +3120,7 @@
 
         async function loadTextToImageModels() {
             try {
-                const response = await fetch('/api/text-to-image-models', {
+                const response = await fetch('/api/text-to-image-models?scene=image.script_writer', {
                     headers: {
                         'Authorization': `Bearer ${AUTH_TOKEN}`
                     }
@@ -3077,63 +3152,38 @@
                     return;
                 }
 
-                // 按优先级分组模型：GPT IMAGE 2 优先，其次 Seedream 5.0，最后其他支持宫格生图的模型
-                const gptImage2Model = models.find(m => m.task_id === 26);  // GPT IMAGE 2 的 task_id 为 26
-                const seedreamModel = models.find(m => m.name === 'Seedream 5.0');
-                const otherModels = models.filter(m => m.task_id !== 26 && m.name !== 'Seedream 5.0' && m.supports_grid_image);
+                imageModelCatalog = data.catalog || null;
+                const catalogApi = window.ModelCatalog;
+                const ordered = catalogApi
+                    ? catalogApi.sortTaskOptions(models.map((m) => ({
+                        ...m,
+                        value: m.short_key || String(m.task_id),
+                        label: m.name,
+                    })), 'image.script_writer', imageModelCatalog)
+                    : models;
+                let defaultTaskId = data.default_task_id;
+                const valueTask = catalogApi
+                    ? catalogApi.findTaskByTrack(ordered, 'image.script_writer', imageModelCatalog, 'value')
+                    : null;
+                if (valueTask && valueTask.task_id != null) defaultTaskId = valueTask.task_id;
 
-                // 先添加 GPT IMAGE 2（如果可用）
-                if (gptImage2Model) {
-                    const option = document.createElement('option');
-                    option.value = gptImage2Model.task_id;
-                    // 检查模型可用性
-                    const taskTypeKey = String(gptImage2Model.task_id);
-                    const status = driverStatus[taskTypeKey];
-                    const isAvailable = !status || status.available !== false;
-                    if (!isAvailable) {
-                        option.textContent = `${gptImage2Model.name} (未配置)`;
-                        option.disabled = true;
-                    } else {
-                        option.textContent = gptImage2Model.name;
-                        option.selected = true;  // GPT IMAGE 2 默认选中（仅当可用时）
-                    }
-                    selector.appendChild(option);
-                }
-
-                // 再添加 Seedream 5.0
-                if (seedreamModel) {
-                    const option = document.createElement('option');
-                    option.value = seedreamModel.task_id;
-                    // 检查模型可用性
-                    const taskTypeKey = String(seedreamModel.task_id);
-                    const status = driverStatus[taskTypeKey];
-                    const isAvailable = !status || status.available !== false;
-                    if (!isAvailable) {
-                        option.textContent = `${seedreamModel.name} (未配置)`;
-                        option.disabled = true;
-                    } else {
-                        option.textContent = seedreamModel.name;
-                        // 如果 GPT IMAGE 2 不可用，Seedream 作为备选默认选中
-                        if (!gptImage2Model) {
-                            option.selected = true;
-                        }
-                    }
-                    selector.appendChild(option);
-                }
-
-                // 最后添加其他模型
-                otherModels.forEach(model => {
+                ordered.forEach((model) => {
                     const option = document.createElement('option');
                     option.value = model.task_id;
-                    // 检查模型可用性
+                    option.dataset.shortKey = model.short_key || model.canonical || '';
+                    option.dataset.track = model.track || '';
                     const taskTypeKey = String(model.task_id);
                     const status = driverStatus[taskTypeKey];
                     const isAvailable = !status || status.available !== false;
+                    const badge = model.track === 'value' ? '（性价比）' : (model.track === 'quality' ? '（效果）' : '');
                     if (!isAvailable) {
-                        option.textContent = `${model.name} (未配置)`;
+                        option.textContent = `${model.name}${badge} (未配置)`;
                         option.disabled = true;
                     } else {
-                        option.textContent = model.name;
+                        option.textContent = `${model.name}${badge}`;
+                        if (String(model.task_id) === String(defaultTaskId)) {
+                            option.selected = true;
+                        }
                     }
                     selector.appendChild(option);
                 });
@@ -3149,7 +3199,8 @@
                 // 包装在 .model-select-wrapper 后，同步自定义显示层的文本
                 updateImageModelDisplay();
                 updateImageModelIcon();
-                // 注意：自动设置模型逻辑已移至 createSession() 成功后执行
+                bindImageTrackToggle();
+                // 注意：自动设置模型逻辑已移至 createSession() 成功后执行。
             } catch (error) {
                 console.error('加载生图模型列表失败:', error);
                 const selector = document.getElementById('text-to-image-model-selector');
@@ -3421,6 +3472,41 @@
             ));
         }
 
+        function currentImageTrack() {
+            const selector = document.getElementById('text-to-image-model-selector');
+            const selected = selector?.options?.[selector.selectedIndex];
+            if (!selected || !window.ModelCatalog) return 'custom';
+            const canonical = selected.dataset.shortKey || selected.textContent || '';
+            return window.ModelCatalog.inferTrack('image.script_writer', canonical, imageModelCatalog);
+        }
+
+        function bindImageTrackToggle() {
+            const host = document.getElementById('image-track-host');
+            if (!host || !window.ModelCatalog) return;
+            window.ModelCatalog.mountTrackToggle(host, {
+                track: currentImageTrack(),
+                onSelect: (track) => {
+                    const selector = document.getElementById('text-to-image-model-selector');
+                    if (!selector) return;
+                    const options = Array.from(selector.options).map((opt) => ({
+                        task_id: opt.value,
+                        short_key: opt.dataset.shortKey || '',
+                        name: opt.textContent,
+                        label: opt.textContent,
+                        value: opt.dataset.shortKey || opt.value,
+                    }));
+                    const hit = window.ModelCatalog.findTaskByTrack(
+                        options, 'image.script_writer', imageModelCatalog, track
+                    );
+                    if (hit) {
+                        selector.value = String(hit.task_id);
+                        changeTextToImageModel();
+                    }
+                    bindImageTrackToggle();
+                }
+            });
+        }
+
         async function changeTextToImageModel() {
             if (!sessionId) {
                 showError(window.t ? window.t('error_create_session_first') : '请先创建会话');
@@ -3473,6 +3559,8 @@
                 showError((window.t ? window.t('error_switch_image_model_failed', {error: error.message}) : '切换生图模型失败: ' + error.message));
             }
             updateImageModelIcon();
+            updateImageModelDisplay();
+            bindImageTrackToggle();
         }
 
         function escapeHtml(text) {
@@ -3562,6 +3650,8 @@
                     }
                 }
             }
+            // 画风识别区块：仅在「世界」tab 显示
+            updateStyleRecognizeVisibility(fileType);
             loadFiles(fileType);
         }
 
@@ -5456,39 +5546,34 @@
         function triggerImageUpload(inputId, itemType) {
             const fileInputId = inputId + '-file';
             const fileInput = document.getElementById(fileInputId);
+            if (!fileInput) return;
             fileInput.setAttribute('data-item-type', itemType);
             fileInput.click();
         }
 
-        async function handleImageUpload(event, inputId, itemType) {
-            const file = event.target.files[0];
-            if (!file) return;
-            
-            // 验证文件类型
-            if (!file.type.startsWith('image/')) {
+        // 统一图片上传（file input / 拖放 共用）
+        async function uploadImageFile(file, inputId, itemType) {
+            if (!file) return false;
+
+            if (!file.type || !file.type.startsWith('image/')) {
                 showError(window.t ? window.t('error_select_image_file') : '请选择图片文件');
-                event.target.value = '';
-                return;
+                return false;
             }
-            
-            // 验证文件大小 (10MB)
+
             if (file.size > 10 * 1024 * 1024) {
                 showError(window.t ? window.t('error_image_too_large') : '图片大小不能超过10MB');
-                event.target.value = '';
-                return;
+                return false;
             }
-            
-            // 显示上传进度
+
             showInfo('正在上传图片...');
-            
-            // 上传到服务器
+
             const formData = new FormData();
             formData.append('file', file);
             formData.append('user_id', USER_ID);
             formData.append('world_id', WORLD_ID);
             formData.append('item_type', itemType);
             formData.append('auth_token', AUTH_TOKEN);
-            
+
             try {
                 const response = await fetch('/api/upload-image', {
                     method: 'POST',
@@ -5498,39 +5583,399 @@
                     },
                     body: formData
                 });
-                
+
                 const data = await response.json();
                 if (data.success) {
-                    // 更新输入框和预览
-                    document.getElementById(inputId).value = data.url;
+                    const inputEl = document.getElementById(inputId);
+                    if (inputEl) inputEl.value = data.url;
                     showImagePreview(inputId, data.url);
-                    showSuccess(window.t ? window.t('success_image_uploaded') : '图片上传成功');
-                } else {
-                    showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                    if (inputId === 'style-image') {
+                        updateRecognizeStyleBtn();
+                        // 画风参考图：上传成功后自动识别并弹出确认框，无需再点「识别画风」
+                        await autoRecognizeStyleAfterUpload();
+                    } else {
+                        showSuccess(window.t ? window.t('success_image_uploaded') : '图片上传成功');
+                    }
+                    return true;
                 }
+                showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                return false;
             } catch (error) {
                 showError((window.t ? window.t('error_upload_failed', {error: error.message}) : '上传失败: ' + error.message));
+                return false;
             }
-            
-            // 清空file input
+        }
+
+        async function handleImageUpload(event, inputId, itemType) {
+            const file = event.target.files && event.target.files[0];
+            if (!file) return;
+            await uploadImageFile(file, inputId, itemType);
             event.target.value = '';
         }
 
         function showImagePreview(inputId, imageUrl) {
             const previewBox = document.getElementById(inputId + '-preview');
+            if (!previewBox) return;
             const img = previewBox.querySelector('.preview-thumbnail');
-            
-            img.src = imageUrl;
+            if (img) img.src = imageUrl;
             previewBox.style.display = 'block';
+            if (inputId === 'style-image') {
+                const zone = document.getElementById('styleDropZone');
+                if (zone) zone.classList.add('has-image');
+            }
         }
 
         function removeImagePreview(inputId) {
-            document.getElementById(inputId).value = '';
-            document.getElementById(inputId + '-preview').style.display = 'none';
+            const inputEl = document.getElementById(inputId);
+            if (inputEl) inputEl.value = '';
+            const previewBox = document.getElementById(inputId + '-preview');
+            if (previewBox) {
+                previewBox.style.display = 'none';
+                const img = previewBox.querySelector('.preview-thumbnail');
+                if (img) img.removeAttribute('src');
+            }
+            if (inputId === 'style-image') {
+                const zone = document.getElementById('styleDropZone');
+                if (zone) zone.classList.remove('has-image');
+            }
         }
 
         function clearImageInput(inputId) {
             removeImagePreview(inputId);
+            // 画风识别图：清空时同步禁用按钮
+            if (inputId === 'style-image') {
+                updateRecognizeStyleBtn();
+            }
+        }
+
+        // ===== 画风识别相关（暂存区「世界」tab 底部） =====
+
+        // 缓存上一次拉取到的 vl 模型列表，供确认写入时回填 vendor_id
+        let cachedStyleModels = [];
+        let styleModelsLoading = false;
+
+        // 显隐画风识别区块：仅在「世界」tab 显示，并按需懒加载模型列表
+        function updateStyleRecognizeVisibility(fileType) {
+            const section = document.getElementById('styleRecognizeSection');
+            if (!section) return;
+            if (fileType === 'worlds') {
+                section.removeAttribute('hidden');
+                updateStyleRecognizeEditionBadge();
+                if (!cachedStyleModels.length && !styleModelsLoading) {
+                    loadStyleModels();
+                }
+            } else {
+                section.setAttribute('hidden', '');
+            }
+        }
+
+        // 开源/社区版显示「限时免费」角标；商业版（enterprise 等）不显示
+        function updateStyleRecognizeEditionBadge() {
+            const badge = document.getElementById('styleRecognizeFreeBadge');
+            if (!badge) return;
+            if (isCommunityEdition) {
+                badge.removeAttribute('hidden');
+            } else {
+                badge.setAttribute('hidden', '');
+            }
+        }
+
+        // 拉取可用 vl 模型并填充下拉框（同源过滤：仅已配置密钥的 vendor；分组展示对齐上方 LLM 选择器）
+        async function loadStyleModels() {
+            const select = document.getElementById('style-model-select');
+            if (!select) return;
+            styleModelsLoading = true;
+            select.innerHTML = `<option value="">${window.t ? window.t('style_recognize_loading_models') : '加载模型中…'}</option>`;
+            try {
+                const response = await fetch('/api/style-models', {
+                    headers: { 'Authorization': AUTH_TOKEN, 'X-User-Id': USER_ID }
+                });
+                const data = await response.json();
+                if (data.success && Array.isArray(data.models) && data.models.length) {
+                    cachedStyleModels = data.models;
+                    select.innerHTML = '';
+
+                    // 按 vendor 分组（保持后端已排好的相对顺序）
+                    const vendorGroups = {};
+                    const vendorOrder = [];
+                    data.models.forEach(model => {
+                        const vendorId = model.vendor_id || 0;
+                        const vendorName = model.vendor_name || 'unknown';
+                        if (!vendorGroups[vendorId]) {
+                            vendorGroups[vendorId] = { vendorName, models: [] };
+                            vendorOrder.push(vendorId);
+                        }
+                        vendorGroups[vendorId].models.push(model);
+                    });
+
+                    let preferredOption = null;
+                    let firstOption = null;
+                    const prefVendor = (data.preferred_vendor || 'volcengine').toLowerCase();
+                    const prefModel = (data.preferred_model || 'doubao-seed-2-0-lite').toLowerCase();
+
+                    vendorOrder.forEach(vendorId => {
+                        const group = vendorGroups[vendorId];
+                        if (!group || !group.models.length) return;
+                        const optGroup = document.createElement('optgroup');
+                        const icon = (typeof vendorIcons !== 'undefined' && vendorIcons[group.vendorName.toLowerCase()])
+                            ? vendorIcons[group.vendorName.toLowerCase()]
+                            : '📦';
+                        optGroup.label = `${icon} ${group.vendorName}`;
+
+                        group.models.forEach(model => {
+                            const option = document.createElement('option');
+                            const name = model.name || '';
+                            option.value = name;
+                            option.dataset.modelId = model.model_id ?? '';
+                            option.dataset.vendorId = model.vendor_id ?? '';
+                            option.dataset.vendorName = model.vendor_name || '';
+                            option.dataset.recommended = model.recommended ? 'true' : 'false';
+                            option.textContent = model.recommended ? `${name} ⭐` : name;
+                            optGroup.appendChild(option);
+
+                            if (!firstOption) firstOption = option;
+                            const isPreferred = model.recommended
+                                || (
+                                    (model.vendor_name || '').toLowerCase() === prefVendor
+                                    && name.toLowerCase().includes(prefModel)
+                                );
+                            if (isPreferred && !preferredOption) {
+                                preferredOption = option;
+                            }
+                        });
+                        select.appendChild(optGroup);
+                    });
+
+                    // 默认选中：火山引擎 doubao-seed-2-0-lite → 第一个可用
+                    const defaultOpt = preferredOption || firstOption;
+                    if (defaultOpt) {
+                        defaultOpt.selected = true;
+                    }
+                } else {
+                    cachedStyleModels = [];
+                    select.innerHTML = `<option value="">${window.t ? window.t('style_recognize_no_models') : '无可用视觉模型（需配置密钥）'}</option>`;
+                }
+            } catch (e) {
+                cachedStyleModels = [];
+                select.innerHTML = `<option value="">${window.t ? window.t('style_recognize_no_models') : '无可用视觉模型（需配置密钥）'}</option>`;
+            } finally {
+                styleModelsLoading = false;
+            }
+            updateRecognizeStyleBtn();
+        }
+
+        // 「识别画风」按钮可用性：需要已选模型 + 已上传图片
+        function updateRecognizeStyleBtn() {
+            const btn = document.getElementById('recognizeStyleBtn');
+            const select = document.getElementById('style-model-select');
+            const imgInput = document.getElementById('style-image');
+            if (!btn || !select || !imgInput) return;
+            const hasModel = !!select.value && !!cachedStyleModels.length;
+            const hasImage = !!(imgInput.value && imgInput.value.trim());
+            btn.disabled = !(hasModel && hasImage);
+        }
+
+        // 监听模型下拉变化，刷新按钮状态
+        function initStyleModelSelectListener() {
+            const select = document.getElementById('style-model-select');
+            if (!select) return;
+            select.addEventListener('change', updateRecognizeStyleBtn);
+        }
+
+        // 拖放区：点击空白处上传；已有图时点击空白不重新弹窗（用 × 移除后再点）
+        function onStyleDropZoneClick(event) {
+            if (event && event.target && event.target.closest && event.target.closest('.preview-remove-btn')) {
+                return;
+            }
+            const imgInput = document.getElementById('style-image');
+            if (imgInput && imgInput.value && imgInput.value.trim()) {
+                // 已有预览图时，再次点击允许替换
+            }
+            triggerImageUpload('style-image', 4);
+        }
+
+        function initStyleDropZone() {
+            const zone = document.getElementById('styleDropZone');
+            if (!zone || zone.dataset.dropBound === '1') return;
+            zone.dataset.dropBound = '1';
+
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                zone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
+            });
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                zone.addEventListener(eventName, () => {
+                    zone.classList.add('drag-over');
+                });
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                zone.addEventListener(eventName, (e) => {
+                    if (eventName === 'dragleave' && zone.contains(e.relatedTarget)) {
+                        return;
+                    }
+                    zone.classList.remove('drag-over');
+                });
+            });
+
+            zone.addEventListener('drop', async (e) => {
+                const files = e.dataTransfer && e.dataTransfer.files;
+                if (!files || !files.length) return;
+                const file = files[0];
+                await uploadImageFile(file, 'style-image', 4);
+            });
+        }
+
+        // 移除画风识别预览图（× 按钮）
+        function removeStyleImagePreview() {
+            removeImagePreview('style-image');
+            updateRecognizeStyleBtn();
+        }
+
+        // 上传/拖入成功后：确保模型列表就绪，再自动识别并弹确认框
+        async function autoRecognizeStyleAfterUpload() {
+            if (!cachedStyleModels.length) {
+                await loadStyleModels();
+            }
+            updateRecognizeStyleBtn();
+            const select = document.getElementById('style-model-select');
+            if (!select || !select.value || !cachedStyleModels.length) {
+                showError(window.t ? window.t('style_recognize_no_models') : '无可用视觉模型（需配置密钥）');
+                return;
+            }
+            await recognizeStyle();
+        }
+
+        // 调用 vl 模型识别画风（上传后自动调用；也可换模型后手动再点「识别画风」）
+        async function recognizeStyle() {
+            const select = document.getElementById('style-model-select');
+            const imgInput = document.getElementById('style-image');
+            const btn = document.getElementById('recognizeStyleBtn');
+            const model = select && select.value;
+            const imageUrl = imgInput && imgInput.value.trim();
+            if (!model) {
+                showError(window.t ? window.t('style_recognize_no_models') : '请先选择识别模型');
+                return;
+            }
+            if (!imageUrl) {
+                showError(window.t ? window.t('style_recognize_upload') : '请先上传画风参考图');
+                return;
+            }
+            const selectedOption = select.options[select.selectedIndex];
+            const payload = {
+                user_id: USER_ID, world_id: WORLD_ID, auth_token: AUTH_TOKEN,
+                image_url: imageUrl, model,
+                model_id: selectedOption ? (selectedOption.getAttribute('data-model-id') || null) : null,
+                vendor_id: selectedOption ? (selectedOption.getAttribute('data-vendor-id') || null) : null,
+            };
+            // 防止连点 / 上传与手动识别并发
+            if (btn && btn.dataset.recognizing === '1') return;
+            const prevText = btn ? btn.textContent : '';
+            if (btn) {
+                btn.dataset.recognizing = '1';
+                btn.disabled = true;
+                btn.textContent = window.t ? window.t('style_recognize_loading') : '识别中…';
+            }
+            try {
+                const response = await fetch('/api/recognize-style', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID,
+                    },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showStyleConfirmModal(data);
+                } else {
+                    showError((window.t ? window.t('style_recognize_failed', {error: data.error}) : ('画风识别失败: ' + (data.error || ''))));
+                }
+            } catch (e) {
+                showError((window.t ? window.t('style_recognize_failed', {error: e.message}) : ('画风识别失败: ' + e.message)));
+            } finally {
+                if (btn) {
+                    btn.dataset.recognizing = '0';
+                    btn.textContent = prevText;
+                }
+                updateRecognizeStyleBtn();
+            }
+        }
+
+        // 弹出确认框（识别结果可编辑）
+        function showStyleConfirmModal(data) {
+            const pending = {
+                model: data.model,
+                vendor_id: data.vendor_id,
+                image_url: (document.getElementById('style-image').value || '').trim(),
+            };
+            window.__pendingStyleRecognition = pending;
+            document.getElementById('confirm-visual-style').value = data.visual_style || '';
+            document.getElementById('style-confirm-modal').classList.add('show');
+        }
+
+        function closeStyleConfirmModal() {
+            document.getElementById('style-confirm-modal').classList.remove('show');
+        }
+
+        // 资产被用户侧修改后，通知剧本智能体重新读取（系统消息，会创建一轮任务）
+        async function notifyAgentAssetUpdated(message) {
+            if (!sessionId || !message) return;
+            try {
+                await sendMessage(message, true);
+            } catch (error) {
+                console.error('发送资产更新通知失败:', error);
+            }
+        }
+
+        // 确认写入 world.json
+        async function applyRecognizedStyle() {
+            const pending = window.__pendingStyleRecognition || {};
+            const visualStyle = (document.getElementById('confirm-visual-style').value || '').trim();
+            if (!visualStyle) {
+                showError(window.t ? window.t('style_confirm_empty') : '画面风格不能为空');
+                return;
+            }
+            const payload = {
+                user_id: USER_ID, world_id: WORLD_ID, auth_token: AUTH_TOKEN,
+                visual_style: visualStyle,
+                image_url: pending.image_url || '',
+                model: pending.model || '', vendor_id: pending.vendor_id ?? null,
+            };
+            try {
+                const response = await fetch('/api/world-style', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID,
+                    },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    closeStyleConfirmModal();
+                    showSuccess(data.message || (window.t ? window.t('style_recognize_success') : '✓ 已更新世界画风设定，本次识别已记录'));
+                    // 刷新暂存区世界列表，让 world.json 文件变化可见
+                    if (typeof loadFiles === 'function' && currentFileType === 'worlds') {
+                        loadFiles('worlds');
+                    }
+                    // 通知剧本智能体：画风已更新（对齐角色/世界设定编辑后的系统通知）
+                    const notificationMessage = [
+                        '系统通知：世界画风已被用户通过「画风识别」更新，请重新读取世界设定最新内容。',
+                        `画面风格(visual_style)：${visualStyle}`,
+                    ].join('\n');
+                    await notifyAgentAssetUpdated(notificationMessage);
+                } else {
+                    showError(data.error || (window.t ? window.t('style_recognize_failed', {error: ''}) : '写入失败'));
+                }
+            } catch (e) {
+                showError((window.t ? window.t('style_recognize_failed', {error: e.message}) : ('写入失败: ' + e.message)));
+            }
         }
 
         async function playCharacterVoice(characterName) {
@@ -5689,21 +6134,15 @@
                     closeEditModal();
                     await loadFiles(fileType);
                     
-                    if (sessionId) {
-                        try {
-                            const fileTypeMap = {
-                                'characters': '角色卡',
-                                'locations': '场景',
-                                'props': '道具',
-                                'scripts': '剧本',
-                                'worlds': '世界设定'
-                            };
-                            const notificationMessage = `系统通知：${fileTypeMap[fileType]} "${fileName}" 已被用户编辑更新，请重新读取最新内容。`;
-                            await sendMessage(notificationMessage, true);
-                        } catch (error) {
-                            console.error('发送编辑通知失败:', error);
-                        }
-                    }
+                    const fileTypeMap = {
+                        'characters': '角色卡',
+                        'locations': '场景',
+                        'props': '道具',
+                        'scripts': '剧本',
+                        'worlds': '世界设定'
+                    };
+                    const notificationMessage = `系统通知：${fileTypeMap[fileType]} "${fileName}" 已被用户编辑更新，请重新读取最新内容。`;
+                    await notifyAgentAssetUpdated(notificationMessage);
                 } else {
                     showError((window.t ? window.t('error_save_failed', {error: data.error || (window.t ? window.t('error_unknown') : '未知错误')}) : '保存失败: ' + (data.error || '未知错误')));
                 }
@@ -6068,28 +6507,53 @@
 
         // 缓存世界列表，用于侧边栏搜索
         let cachedWorlds = [];
+        // 侧栏列表模式：active=正常 | deleted=已伪删除
+        let worldListMode = 'active';
+
+        function updateWorldDeletedToggleUI() {
+            const btn = document.getElementById('world-deleted-toggle');
+            if (!btn) return;
+            const label = worldListMode === 'deleted'
+                ? (window.t ? window.t('back_to_world_list') : '返回世界列表')
+                : (window.t ? window.t('view_deleted_worlds') : '查看已删除的世界');
+            btn.innerHTML = `<span>${label}</span>`;
+            btn.classList.toggle('active-mode', worldListMode === 'deleted');
+        }
 
         function renderWorldList(worlds) {
             const worldList = document.getElementById('world-list');
             if (!worldList) return;
+            const isDeletedMode = worldListMode === 'deleted';
 
             if (worlds.length === 0) {
                 const searchInput = document.getElementById('world-search-input');
                 const hasKeyword = searchInput && searchInput.value.trim();
-                worldList.innerHTML = `<div class="world-empty">${hasKeyword
-                    ? (window.t ? window.t('no_worlds_found') : '未找到匹配的世界')
-                    : (window.t ? window.t('no_worlds') : '暂无世界')}</div>`;
+                let emptyText;
+                if (isDeletedMode) {
+                    emptyText = hasKeyword
+                        ? (window.t ? window.t('no_deleted_worlds_found') : '未找到匹配的已删除世界')
+                        : (window.t ? window.t('no_deleted_worlds') : '暂无已删除的世界');
+                } else {
+                    emptyText = hasKeyword
+                        ? (window.t ? window.t('no_worlds_found') : '未找到匹配的世界')
+                        : (window.t ? window.t('no_worlds') : '暂无世界');
+                }
+                worldList.innerHTML = `<div class="world-empty">${emptyText}</div>`;
                 return;
             }
 
             worldList.innerHTML = '';
             worlds.forEach(world => {
                 const worldItem = document.createElement('div');
-                worldItem.className = 'world-item' + (world.id == WORLD_ID ? ' active' : '');
+                worldItem.className = 'world-item'
+                    + (world.id == WORLD_ID && !isDeletedMode ? ' active' : '')
+                    + (isDeletedMode ? ' deleted' : '');
 
                 const worldInfo = document.createElement('div');
                 worldInfo.className = 'world-info';
-                worldInfo.onclick = () => switchWorld(world.id);
+                if (!isDeletedMode) {
+                    worldInfo.onclick = () => switchWorld(world.id);
+                }
 
                 const worldName = document.createElement('div');
                 worldName.className = 'world-name';
@@ -6106,21 +6570,56 @@
                 const worldActions = document.createElement('div');
                 worldActions.className = 'world-actions';
 
-                const editBtn = document.createElement('button');
-                editBtn.className = 'world-edit-btn';
-                editBtn.title = '编辑世界';
-                editBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    showEditWorldModal(world.id, world.name, world.description || '', world.story_type);
-                };
-                editBtn.innerHTML = `
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                    </svg>
-                `;
+                if (isDeletedMode) {
+                    const restoreBtn = document.createElement('button');
+                    restoreBtn.className = 'world-restore-btn';
+                    restoreBtn.title = window.t ? window.t('restore_world') : '恢复显示';
+                    restoreBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        restoreWorld(world.id, world.name);
+                    };
+                    restoreBtn.innerHTML = `
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="1 4 1 10 7 10"/>
+                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                        </svg>
+                    `;
+                    worldActions.appendChild(restoreBtn);
+                } else {
+                    const editBtn = document.createElement('button');
+                    editBtn.className = 'world-edit-btn';
+                    editBtn.title = '编辑世界';
+                    editBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        showEditWorldModal(world.id, world.name, world.description || '', world.story_type);
+                    };
+                    editBtn.innerHTML = `
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                    `;
 
-                worldActions.appendChild(editBtn);
+                    const hideBtn = document.createElement('button');
+                    hideBtn.className = 'world-hide-btn';
+                    hideBtn.title = window.t ? window.t('hide_world') : '隐藏世界';
+                    hideBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        hideWorld(world.id, world.name);
+                    };
+                    hideBtn.innerHTML = `
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                            <path d="M10 11v6M14 11v6"/>
+                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                        </svg>
+                    `;
+
+                    worldActions.appendChild(editBtn);
+                    worldActions.appendChild(hideBtn);
+                }
+
                 worldItem.appendChild(worldInfo);
                 worldItem.appendChild(worldActions);
                 worldList.appendChild(worldItem);
@@ -6161,16 +6660,21 @@
                     searchInput.focus();
                 });
             }
+            updateWorldDeletedToggleUI();
         }
 
         async function loadUserWorlds() {
             try {
-                const response = await fetch('/api/worlds?page=1&page_size=100', {
-                    headers: {
-                        'Authorization': AUTH_TOKEN,
-                        'X-User-Id': USER_ID
+                const visibility = worldListMode === 'deleted' ? 'deleted' : 'active';
+                const response = await fetch(
+                    `/api/worlds?page=1&page_size=100&visibility=${encodeURIComponent(visibility)}`,
+                    {
+                        headers: {
+                            'Authorization': AUTH_TOKEN,
+                            'X-User-Id': USER_ID
+                        }
                     }
-                });
+                );
                 const data = await response.json();
 
                 // 兼容后端返回格式: {code: 0, data: {data: [...]}}
@@ -6184,10 +6688,105 @@
                     cachedWorlds = [];
                     document.getElementById('world-list').innerHTML = '<div class="world-empty">加载失败</div>';
                 }
+                updateWorldDeletedToggleUI();
             } catch (error) {
                 console.error('加载世界列表失败:', error);
                 cachedWorlds = [];
                 document.getElementById('world-list').innerHTML = '<div class="world-empty">加载失败</div>';
+            }
+        }
+
+        async function toggleDeletedWorldsView() {
+            worldListMode = worldListMode === 'deleted' ? 'active' : 'deleted';
+            updateWorldDeletedToggleUI();
+            // 切换模式时清空搜索，避免两套列表关键字串味
+            const searchInput = document.getElementById('world-search-input');
+            const clearBtn = document.getElementById('world-search-clear');
+            if (searchInput) searchInput.value = '';
+            if (clearBtn) clearBtn.style.display = 'none';
+            await loadUserWorlds();
+        }
+
+        async function hideWorld(worldId, worldName) {
+            const confirmMsg = window.t
+                ? window.t('confirm_hide_world', { name: worldName || '' })
+                : `确定隐藏世界「${worldName || ''}」吗？隐藏后不会出现在列表中，可在「已删除的世界」中恢复。数据不会丢失。`;
+            if (!confirm(confirmMsg)) return;
+
+            try {
+                const response = await fetch(`/api/worlds/${worldId}/hide`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const data = await response.json();
+                if (data.code === 0 || data.success) {
+                    showSuccess(
+                        window.t
+                            ? window.t('success_world_hidden', { name: worldName || '' })
+                            : `✓ 世界「${worldName || ''}」已隐藏`
+                    );
+                    // 隐藏当前正在使用的世界 → 退出到未选世界状态
+                    if (String(worldId) === String(WORLD_ID)) {
+                        let newUrl = `${window.location.pathname}?user_id=${USER_ID}`;
+                        if (WORKFLOW_ID) {
+                            newUrl += `&workflow_id=${WORKFLOW_ID}`;
+                        }
+                        window.location.href = newUrl;
+                        return;
+                    }
+                    await loadUserWorlds();
+                } else {
+                    showError(
+                        window.t
+                            ? window.t('error_hide_world_failed', { error: data.message || data.error || '未知错误' })
+                            : `隐藏世界失败: ${data.message || data.error || '未知错误'}`
+                    );
+                }
+            } catch (error) {
+                console.error('隐藏世界失败:', error);
+                showError(
+                    window.t
+                        ? window.t('error_hide_world_failed', { error: error.message })
+                        : `隐藏世界失败: ${error.message}`
+                );
+            }
+        }
+
+        async function restoreWorld(worldId, worldName) {
+            try {
+                const response = await fetch(`/api/worlds/${worldId}/restore`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const data = await response.json();
+                if (data.code === 0 || data.success) {
+                    showSuccess(
+                        window.t
+                            ? window.t('success_world_restored', { name: worldName || '' })
+                            : `✓ 世界「${worldName || ''}」已恢复显示`
+                    );
+                    await loadUserWorlds();
+                } else {
+                    const msg = data.message || data.error || '未知错误';
+                    showError(
+                        window.t
+                            ? window.t('error_restore_world_failed', { error: msg })
+                            : `恢复世界失败: ${msg}`
+                    );
+                }
+            } catch (error) {
+                console.error('恢复世界失败:', error);
+                showError(
+                    window.t
+                        ? window.t('error_restore_world_failed', { error: error.message })
+                        : `恢复世界失败: ${error.message}`
+                );
             }
         }
 
@@ -6344,6 +6943,9 @@
                 if (data.code === 0) {
                     showSuccess(window.t ? window.t('success_world_created_detail', {name: name}) : `✓ 世界 "${name}" 创建成功！`);
                     closeNewWorldModal();
+                    // 新建世界一定出现在正常列表；若当前在「已删除」视图则切回
+                    worldListMode = 'active';
+                    updateWorldDeletedToggleUI();
                     await loadUserWorlds();
                     updateStatus(window.t ? window.t('status_world_created') : '世界创建完成');
 

@@ -60,12 +60,41 @@ class PipelineProcessor:
         return PipelineDriverFactory.create_param_prepare_steps(ai_tool_id, ai_tool_type)
 
     @staticmethod
+    def attach_param_prepare_if_needed(ai_tool_id: int, ai_tool_type: int) -> bool:
+        """创建 param_prepare 步骤；若有步骤则把 ai_tool 置为 WAITING_PARAM_PREPARE。"""
+        step_ids = PipelineProcessor.create_param_prepare_steps(ai_tool_id, ai_tool_type)
+        if not step_ids:
+            return False
+        from config.constant import AI_TOOL_STATUS_WAITING_PARAM_PREPARE
+        AIToolsModel.update(ai_tool_id, status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE)
+        logger.info(
+            "Attached %s param_prepare step(s) for ai_tool %s, status -> WAITING_PARAM_PREPARE",
+            len(step_ids),
+            ai_tool_id,
+        )
+        return True
+
+    @staticmethod
     def is_seedance_face_mask_type(ai_tool_type: int) -> bool:
         """是否属于走 param_prepare 人脸遮盖的 Seedance 模型（委托 PipelineDriverFactory）。
 
         供 server.py 闸门查询，模型清单单一来源在 config/unified_config.py。
         """
         return PipelineDriverFactory.is_seedance_face_mask_type(ai_tool_type)
+
+    @staticmethod
+    def needs_h3_atomic_param_prepare(ai_tool_type: int) -> bool:
+        """H3 任务（图生视频/参考生视频）是否需要走 create_with_pipeline_steps 原子创建提示词优化步骤。
+
+        供 server.py / storyboard.py 单一来源判定，避免竞态：ai_tool 与 H3 step 必须
+        在同一事务创建，否则调度器可能在两者之间抢先提交未优化的任务。
+        仅 task type 命中且总开关开启时返回 True；variant 是否非空由
+        create_with_pipeline_steps 内部决定（无步骤时自动置 PENDING）。
+        """
+        return (
+            PipelineDriverFactory.is_h3_prompt_optimize_type(ai_tool_type)
+            and PipelineDriverFactory.is_h3_prompt_optimize_enabled()
+        )
 
     @staticmethod
     def create_before_finish_steps(
@@ -258,6 +287,29 @@ class PipelineProcessor:
                             f"Applied face_mask result to ai_tool {ai_tool.id}: "
                             f"video_path -> {masked_video_url}"
                         )
+                elif step.status == PipelineStepStatus.COMPLETED and step.step_type == PipelineStepType.H3_PROMPT_OPTIMIZE:
+                    result = step.get_result_data_dict()
+                    optimized = (result.get("optimized_prompt") or "").strip()
+                    original = result.get("original_prompt")
+                    if original is None:
+                        original = getattr(ai_tool, "prompt", None) or ""
+                    if not optimized:
+                        optimized = original
+                    from task.pipeline_drivers.h3_prompt_optimize_util import merge_h3_prompt_extra_config
+                    updates["prompt"] = optimized
+                    updates["extra_config"] = merge_h3_prompt_extra_config(
+                        getattr(ai_tool, "extra_config", None),
+                        original_prompt=original,
+                        optimized_prompt=optimized,
+                        variant=result.get("variant") or "",
+                        fallback=bool(result.get("fallback")),
+                    )
+                    logger.info(
+                        "Applied h3_prompt_optimize to ai_tool %s: fallback=%s variant=%s",
+                        ai_tool.id,
+                        result.get("fallback"),
+                        result.get("variant"),
+                    )
                 elif step.status == PipelineStepStatus.COMPLETED and step.step_type == 'image_face_mask':
                     masked_image_url = step.result_url
                     if not masked_image_url:
@@ -525,7 +577,10 @@ class PipelineProcessor:
             from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_FAILED
 
             if len(completed) == total:
-                # 全部完成：推进到 PENDING，等待 visual_task 正常处理
+                # 全部完成：先回写步骤结果，再推进到 PENDING，避免 visual_task 抢先提交旧参数
+                current = AIToolsModel.get_by_id(ai_tool_id)
+                if current:
+                    PipelineProcessor.apply_results(current, stage)
                 AIToolsModel.update(ai_tool_id, status=AI_TOOL_STATUS_PENDING)
                 logger.info(f"ai_tool {ai_tool_id} param_prepare all completed, status -> PENDING")
             elif failed:

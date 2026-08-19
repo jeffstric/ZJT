@@ -5,10 +5,10 @@
 Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，支持在任务提交前和执行结束后插入可异步处理的子步骤。
 
 两个核心阶段：
-- **param_prepare**（参数预处理）：在任务提交到外部 API 之前，对输入数据进行预处理（如 Seedance 2.0 / 2.0 Fast / 2.0 Mini 视频/图片人脸遮盖）
+- **param_prepare**（参数预处理）：在任务提交到外部 API 之前，对输入数据进行预处理（如 Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5 视频/图片人脸遮盖）
 - **before_finish**（结束前处理）：任务失败后，自动切换不同供应商重试
 
-> **适配模型清单（单一事实来源）**：param_prepare 人脸遮盖适用的 Seedance 模型统一维护在 `config/unified_config.py::SEEDANCE_FACE_MASK_DRIVER_KEYS`，`server.py` 闸门与 `PipelineDriverFactory` 均查询该集合，新增模型只需在此追加一项。
+> **适配模型清单（单一事实来源）**：param_prepare 人脸遮盖适用的 Seedance 模型统一维护在 `config/unified_config.py::SEEDANCE_FACE_MASK_DRIVER_KEYS`，`server.py` 闸门与 `PipelineDriverFactory` 均查询该集合，新增模型只需在此追加一项。当前包含 Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5。前端据此下发 `needs_face_mask` 显隐「是否处理人脸」；用户勾选后后端才创建遮盖步骤。
 
 > **用户开关与版本门（opt-in）**：人脸遮盖改为**用户显式勾选才生效（默认不勾选）**。`/api/ai-app-run-image` 新增表单参数 `enable_face_mask: bool = Form(False)`；`server.py` 的 `need_pipeline_steps` 闸门最终为 `is_seedance_face_mask AND enable_face_mask AND (NOT Edition.is_community()) AND runninghub_api_key AND has_any_param_prepare_input`。
 > - **未勾选 / 社区版**：闸门为假 → 走 `AIToolsModel.create`（普通生成，**不创建任何步骤**，避免卡在 `WAITING_PARAM_PREPARE`）。
@@ -83,7 +83,7 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 | id | int | 主键 |
 | ai_tool_id | int | 关联 ai_tools.id |
 | stage | varchar(32) | 阶段：`param_prepare` / `before_finish` |
-| step_type | varchar(64) | 步骤类型：`face_mask` / `image_face_mask` / `implementation_retry` / `storyboard_first_frame_grid_split` |
+| step_type | varchar(64) | 步骤类型：`face_mask` / `image_face_mask` / `implementation_retry` / `storyboard_first_frame_grid_split` / `h3_prompt_optimize` |
 | step_order | int | 同阶段内执行顺序（0 起始） |
 | status | tinyint | 步骤状态 |
 | params | json | 步骤参数 |
@@ -96,11 +96,34 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 ## 步骤类型
 
+### h3_prompt_optimize（MiniMax H3 提示词优化）
+
+用于 `param_prepare` 阶段，在 `TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO`（34）/ `TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO`（37）正式提交 RunningHub 前，把用户原文改写成官方 I2VA / FL2VA / Ref2VA 结构。
+
+**触发条件**：任务类型为 MiniMax H3 图生视频（34）或参考生视频（37）+ `pipeline.h3_prompt_optimize_enabled=true`（默认开）+ 有可用输入（34 需至少一张首帧；37 需至少一项参考资产：参考图/参考视频/参考音频）。社区版同样执行。数字人 H3 不走此步。
+
+**变体**：仅首帧 → I2VA；另有尾帧 → FL2VA；参考生视频（多参考资产）→ Ref2VA（官方 ref-en.txt 六段结构：`subject_definitions` / `summary` / `retention_analysis` / `detailed_description` / `overall_soundscape` / `non_diegetic_music`，步骤参数带 `ref_counts` 参考资产计数，供指令声明 `<picture_N>`/`<video_N>`/`<audio_N>` 与输入资产的顺序对应关系）。
+
+**原子创建（无竞态）**：H3 入口（`server.py` / `api/storyboard.py`）判定 `needs_h3_atomic_param_prepare` 为真时，走 `AIToolsModel.create_with_pipeline_steps`，`ai_tool` 与 `h3_prompt_optimize` 步骤在同一事务内创建，避免调度器在两者之间抢先提交未优化任务。若事务内最终未产出任何步骤（如无首帧），则就地回退 `PENDING`。普通（非 H3 / 非 Seedance）图生视频直接以 `PENDING` 创建，不进流水线、零额外耗时。
+
+**处理流程**：
+1. `AIToolsModel.create_with_pipeline_steps` 在事务内创建 `h3_prompt_optimize` 步骤并置 `WAITING_PARAM_PREPARE`；故事板入口会把用户选的对话模型写入步骤参数（`chat_model`/`chat_vendor_id`）
+2. `H3PromptOptimizePipelineDriver` 用剪枝版官方规范 + 中文改写指令 + 原文调用聊天模型（`asyncio.to_thread` + `wait_for` 90s）
+3. 结构校验失败重试 1 次，仍失败则回退原文（`fallback=true`），**不把步骤标 FAILED**，避免整单退费
+4. 原文写入 `extra_config.original_prompt`（只写一次）和 `extra_config.h3_prompt_optimize`
+5. `ai_tool.prompt` 替换为优化结果，H3 驱动提交 RunningHub
+
+**模型回退链**：所用聊天模型按优先级选取，每步校验 api_key 是否已配置，首个可用者胜出：① 故事板步骤参数中的对话模型 → ② `pipeline.h3_prompt_optimize_model`（默认 `deepseek-v4-flash`）→ ③ 剧本拆分默认模型 `gemini-3-flash-preview`。独立图生视频入口无故事板上下文，跳过第 ① 步。全部未配置则直接回退原文，不发起必败调用。
+
+**超时**：`H3_PROMPT_OPTIMIZE_TIMEOUT=90s`，同时作为外层 `wait_for` 与底层 `request_timeout`（对齐 httpx，避免超时后线程残留）；重试 1 次，最坏约 180s 后回退原文。
+
+**配置**：`pipeline.h3_prompt_optimize_enabled` / `pipeline.h3_prompt_optimize_model` / `pipeline.h3_prompt_optimize_vendor_id`
+
 ### face_mask（人脸遮盖）
 
 用于 `param_prepare` 阶段，在 Seedance 2.0 等需要处理含人脸视频的场景中，先将视频中的人脸遮盖掉。
 
-**触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini 任务类型 + 用户勾选 `enable_face_mask=true` + 商业版（非社区版）+ `pipeline.seedance_face_mask_enabled=true` + 有 video_path 输入
+**触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5 任务类型 + 用户勾选 `enable_face_mask=true` + 商业版（非社区版）+ `pipeline.seedance_face_mask_enabled=true` + 有 video_path 输入
 
 **遮盖语义**：单帧 ComfyUI 工作流 `人脸识别_单帧.json` 不再在检测前 resize，YOLOv8 的 `BBOX Detector (combined)` 直接在原图上生成整图尺寸的 bbox 矩形 mask，再通过 `8x8` 黑色图像按 mask 拉伸合成回原图。遮盖区域以检测框 `x1/y1/x2/y2` 为基础，并使用 `dilation=128` 增加安全边距，补偿 YOLO face bbox 在侧脸、头发遮挡、扇子遮挡、局部置信度偏高时只框住人脸核心区域的问题；它不是 SEGS 裁剪图或人脸轮廓分割区域，避免出现纯黑背景里残留脸部裁剪图的结果。
 
@@ -121,9 +144,9 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 ### image_face_mask（图片人脸遮盖）
 
-用于 `param_prepare` 阶段，在 Seedance 2.0 / 2.0 Fast / 2.0 Mini 的图生视频任务提交前，对 `image_path` 和 `reference_images` 中的人脸绘制红色矩形网格。
+用于 `param_prepare` 阶段，在 Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5 的图生视频任务提交前，对 `image_path` 和 `reference_images` 中的人脸绘制红色矩形网格。
 
-**触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini 任务类型 + 用户勾选 `enable_face_mask=true` + 商业版（非社区版）+ `pipeline.seedance_face_mask_enabled=true` + 有 `image_path` 或 `reference_images` 输入
+**触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5 任务类型 + 用户勾选 `enable_face_mask=true` + 商业版（非社区版）+ `pipeline.seedance_face_mask_enabled=true` + 有 `image_path` 或 `reference_images` 输入
 
 **配置开关**：`pipeline.seedance_face_mask_enabled`，默认 `true`，是 Seedance 人脸遮盖前置处理的**总开关**（管理员级），同时控制图片（`image_face_mask`）和视频（`face_mask`）两种遮盖步骤。关闭后图片和视频的遮盖步骤均不创建，任务走普通生成流程。其上还有两层用户/版本级门：用户级 `enable_face_mask`（前端「是否处理人脸」勾选，默认不勾选，**opt-in**）与版本级 `NOT Edition.is_community()`（社区版禁止），三者同时满足才会创建步骤（见上文「用户开关与版本门」）。
 

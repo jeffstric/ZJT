@@ -29,6 +29,7 @@ class RunningHubKeyPoolProvider(Protocol):
     def get_key_index_for_slot(self, task_id: int, source: str) -> int: ...
     def report_success(self, index: int) -> None: ...
     def report_failure(self, index: int, reason: str = '') -> None: ...
+    def report_congested(self, index: int) -> None: ...
     def refresh_circuits(self) -> int: ...
     def get_pool_overview(self) -> list[dict[str, Any]]: ...
     def get_key_raw(self, index: int) -> str: ...
@@ -58,6 +59,9 @@ class CommunityRunningHubKeyPoolProvider:
         return None
 
     def report_failure(self, index: int, reason: str = '') -> None:
+        return None
+
+    def report_congested(self, index: int) -> None:
         return None
 
     def refresh_circuits(self) -> int:
@@ -152,6 +156,15 @@ def report_failure(index: int, reason: str = '') -> None:
 async def report_failure_async(index: int, reason: str = '') -> None:
     if is_available():
         await asyncio.to_thread(_provider.report_failure, index, reason)
+
+
+def report_congested(index: int) -> None:
+    _provider.report_congested(index)
+
+
+async def report_congested_async(index: int) -> None:
+    if is_available():
+        await asyncio.to_thread(_provider.report_congested, index)
 
 
 def refresh_circuits() -> int:

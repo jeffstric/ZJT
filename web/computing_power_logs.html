@@ -146,6 +146,49 @@
       color: var(--muted);
     }
 
+    .refund-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border: 1px solid rgba(34, 197, 94, 0.5);
+      border-radius: 10px;
+      background: rgba(34, 197, 94, 0.12);
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .log-txn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(31, 41, 55, 0.6);
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--muted);
+      cursor: copy;
+      transition: all 0.2s;
+      user-select: none;
+    }
+
+    .log-txn:hover {
+      color: var(--text);
+      background: rgba(34, 197, 94, 0.1);
+    }
+
+    .log-txn .txn-label {
+      font-family: inherit;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .log-txn.copied {
+      color: var(--primary);
+      background: rgba(34, 197, 94, 0.15);
+    }
+
     .log-meta {
       display: flex;
       flex-direction: column;
@@ -277,7 +320,8 @@
       <div v-for="log in logs" :key="log.id" class="log-item">
         <div class="log-info">
           <div class="log-behavior" :class="log.behavior">
-            {{ log.behavior === 'increase' ? $t('log_increase') : $t('log_deduct') }}
+            <span v-if="isRefund(log)" class="refund-badge">{{ $t('txn_refund') || '↩ 失败返还' }}</span>
+            <template v-else>{{ log.behavior === 'increase' ? ($t('log_increase') || '➕ 增加') : ($t('log_deduct') || '➖ 扣除') }}</template>
           </div>
           <div v-if="log.from !== null && log.to !== null" class="log-change" style="font-size: 13px; color: var(--text); margin-bottom: 6px; padding: 4px 8px; background: rgba(34, 197, 94, 0.1); border-radius: 4px; display: inline-block; font-weight: 500;">
             <span style="color: var(--muted); font-size: 12px;">{{ $t('power_change') || '算力变化：' }}</span>
@@ -286,6 +330,11 @@
             <span style="color: var(--primary); font-weight: 600;">{{ log.to }}</span>
           </div>
           <div class="log-description">{{ log.note || $t('no_description') || '无描述' }}</div>
+          <div v-if="log.transaction_id" class="log-txn" :class="{ copied: log.__copied }"
+               :title="txnTitle(log)" @click="copyTxn(log)">
+            <span class="txn-label">{{ log.__copied ? ($t('txn_copied') || '✓ 已复制') : ($t('txn_label') || '单号') }}</span>
+            <span class="txn-value">{{ formatTxn(log.transaction_id) }}</span>
+          </div>
         </div>
         <div class="log-meta">
           <div class="log-amount" :class="log.behavior">
@@ -428,6 +477,51 @@
         formatTime(timestamp) {
           // 后端已经格式化好时间，直接返回
           return timestamp || '';
+        },
+
+        isRefund(log) {
+          // refund- 前缀是失败退费流水（与扣费流水 refund-{原扣费流水号} 一一对应）
+          return !!(log.transaction_id && String(log.transaction_id).startsWith('refund-'));
+        },
+
+        formatTxn(transactionId) {
+          // 流水摘要：refund- 去掉前缀（已有失败返还徽标标识），显示前8…后4
+          const txn = String(transactionId || '').replace(/^refund-/, '');
+          if (!txn) return '';
+          if (txn.length <= 14) return txn;
+          return txn.slice(0, 8) + '…' + txn.slice(-4);
+        },
+
+        txnTitle(log) {
+          return this.$t('txn_click_to_copy') || '点击复制完整单号：' + '\n' + log.transaction_id;
+        },
+
+        async copyTxn(log) {
+          const text = String(log.transaction_id || '');
+          if (!text) return;
+          let ok = false;
+          try {
+            if (navigator.clipboard && window.isSecureContext) {
+              await navigator.clipboard.writeText(text);
+              ok = true;
+            }
+          } catch (e) { /* 降级到 execCommand */ }
+          if (!ok) {
+            try {
+              const ta = document.createElement('textarea');
+              ta.value = text;
+              ta.style.position = 'fixed';
+              ta.style.opacity = '0';
+              document.body.appendChild(ta);
+              ta.select();
+              ok = document.execCommand('copy');
+              document.body.removeChild(ta);
+            } catch (e) { /* 复制失败忽略 */ }
+          }
+          if (ok) {
+            log.__copied = true;
+            setTimeout(() => { log.__copied = false; }, 1500);
+          }
         }
       }
     }).mount('#app');

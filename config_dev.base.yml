@@ -14,6 +14,12 @@ database:
     maxcached: 20           # 空闲池上限（每进程）。复用优先，超出归还时真关闭
     maxconnections: 0       # 0=无硬上限。如需彻底封顶防端口耗尽，可设具体值（如 30）
 
+pipeline:
+  seedance_face_mask_enabled: true  # 是否启用 Seedance 2.0 / 2.0 Fast 图片和视频输入的人脸遮盖前置处理
+  h3_prompt_optimize_enabled: true  # MiniMax H3 图生视频提交前按 I2VA/FL2VA 规范优化提示词
+  h3_prompt_optimize_model: "deepseek-v4-flash"
+  h3_prompt_optimize_vendor_id: 0
+
 # 剧本分段拆分多 worker 配置
 # 由 run_dev.py 读取，>0 时拉起 N 个独立 worker 进程，主调度器跳过此 job
 script_split:

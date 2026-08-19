@@ -504,8 +504,10 @@
                             <tr v-for="item in marketingPublications.list" :key="item.id">
                                 <td>{{ item.id }}</td>
                                 <td>
-                                    <img v-if="item.media_type === 'image'" :src="item.cover_url || item.result_url" class="marketing-review-thumb" alt="">
-                                    <video v-else :src="item.result_url" class="marketing-review-thumb" controls muted></video>
+                                    <div class="marketing-review-thumb-wrap">
+                                        <img v-if="item.media_type === 'image'" :src="item.cover_url || item.result_url" alt="">
+                                        <video v-else :src="item.result_url" controls muted preload="metadata" @loadedmetadata="applyMarketingReviewVideoAspect"></video>
+                                    </div>
                                 </td>
                                 <td>
                                     <div style="font-weight:600;">{{ item.title }}</div>
@@ -1283,14 +1285,15 @@
                                                     <!-- AI 自然语言改档（负责模型在页面顶部全局选择） -->
                                                     <div class="billing-ai-box">
                                                         <div class="billing-ai-row">
-                                                            <span class="billing-ai-using">
-                                                                {{ t('models_billing_ai_using') }}:
-                                                                <strong>{{ billingAiCurrentLabel }}</strong>
-                                                            </span>
+                                                            <label>{{ t('models_billing_ai_target_mode') }}</label>
+                                                            <select class="filter-select" v-model="billingAi.targetMode"
+                                                                    style="max-width: 150px;">
+                                                                <option value="normal">{{ t('models_billing_ai_mode_normal') }}</option>
+                                                                <option value="peak_valley">{{ t('models_billing_ai_mode_peak_valley') }}</option>
+                                                            </select>
                                                             <label>{{ t('models_billing_vendor') }}</label>
                                                             <select class="filter-select" v-model="billingAi.filterVendorId"
                                                                     style="max-width: 160px;">
-                                                                <option :value="null">{{ t('models_billing_ai_all_vendors') }}</option>
                                                                 <option v-for="v in (models.billing[model.id].vendors || [])"
                                                                         :key="'af-'+v.vendor_id" :value="v.vendor_id">
                                                                     {{ v.vendor_name }}
@@ -1307,7 +1310,7 @@
                                                         <textarea class="billing-ai-textarea"
                                                                   rows="2"
                                                                   v-model="billingAi.instruction"
-                                                                  :placeholder="t('models_billing_ai_placeholder')"></textarea>
+                                                                  :placeholder="billingAiPlaceholder()"></textarea>
                                                         <button class="action-btn primary small"
                                                                 :disabled="billingAi.loading"
                                                                 @click="runBillingAiPropose(model)">
@@ -1349,6 +1352,9 @@
                                                                 <tr v-for="tier in vendor.tiers" :key="'t-' + tier.id">
                                                                     <td>
                                                                         <span class="range-label">{{ tier.range_label }}</span>
+                                                                        <span class="period-badge" :class="'period-' + (tier.time_period || 'normal')" v-if="tier.time_period && tier.time_period !== 'normal'" style="margin-left:6px;">
+                                                                            {{ periodLabel(tier.time_period) }}
+                                                                        </span>
                                                                         <div class="raw-threshold" style="margin-top:4px;">
                                                                             {{ tier.raw_token_threshold == null ? t('models_billing_unlimited') : ('≤'+tier.raw_token_threshold) }}
                                                                         </div>
@@ -2525,6 +2531,15 @@
                         </select>
                     </div>
                     <div class="form-group">
+                        <label>{{ t('models_billing_period_select') }}</label>
+                        <select class="filter-select" v-model="billingTierModal.time_period">
+                            <option value="normal">{{ t('models_billing_period_normal') }}</option>
+                            <option value="peak">{{ t('models_billing_period_peak') }}</option>
+                            <option value="off_peak">{{ t('models_billing_period_off_peak') }}</option>
+                        </select>
+                        <p class="form-hint">{{ t('models_billing_period_hint') }}</p>
+                    </div>
+                    <div class="form-group">
                         <label>
                             <input type="checkbox" v-model="billingTierModal.unlimited">
                             {{ t('models_billing_unlimited_check') }}
@@ -2653,6 +2668,11 @@
                                     <td>{{ t('models_billing_col_raw') }}</td>
                                     <td>{{ op.before?.raw_token_threshold == null ? t('models_billing_unlimited') : op.before?.raw_token_threshold }}</td>
                                     <td>{{ op.after?.raw_token_threshold == null ? t('models_billing_unlimited') : op.after?.raw_token_threshold }}</td>
+                                </tr>
+                                <tr>
+                                    <td>{{ t('models_billing_col_period') }}</td>
+                                    <td>{{ op.before ? periodLabel(op.before.time_period) : '—' }}</td>
+                                    <td>{{ periodLabel(op.after?.time_period) }}</td>
                                 </tr>
                             </tbody>
                         </table>

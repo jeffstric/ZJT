@@ -35,6 +35,8 @@
           groupName: groupName,
           shots: shotGroupData.shots || [],
           scriptData: scriptData,
+          scriptNodeId: opts.scriptNodeId || '',  // 关联的剧本节点 ID
+          scriptContent: opts.scriptContent || '',  // 原始剧本内容
           model: shotGroupData.model || defaultImageModel,
           gridModel: normalizeGridImageModelValue(shotGroupData.gridModel || shotGroupData.grid_model),
           videoModel: resolvedVideoModel,
@@ -62,7 +64,7 @@
           <div style="padding: 8px; background: #f8f9fa; border-radius: 6px; margin-bottom: 6px; font-size: 12px;">
             <div style="font-weight: 700; margin-bottom: 4px;">${escapeHtml(shot.shot_id || `镜头${idx+1}`)} - ${escapeHtml(shot.description || '')}</div>
             <div style="color: #666; font-size: 11px;">时长: ${escapeHtml(duration)} | ${escapeHtml(shot.shot_type || '')} | ${escapeHtml(shot.camera_movement || '')}</div>
-            <div style="color: #666; font-size: 11px; margin-top: 2px;">起始画面: ${escapeHtml((shot.opening_frame_description || '').slice(0, 60))}...</div>
+            <div style="color: #666; font-size: 11px; margin-top: 2px;">图片提示词: ${escapeHtml((shot.opening_frame_description || '').slice(0, 60))}...</div>
           </div>
         `;
       }).join('');
@@ -280,8 +282,12 @@
             optEl.value = opt.value;
             optEl.textContent = opt.label;
             if(opt.value === node.data.model) optEl.selected = true;
+            optEl.dataset.shortKey = opt.value;
             shotGroupModelEl.appendChild(optEl);
           });
+          if (window.ModelCatalog && shotGroupModelEl.parentElement) {
+            window.ModelCatalog.bindSelectTrack(shotGroupModelEl.parentElement, shotGroupModelEl, 'image.image_edit', 'task');
+          }
         } else {
           shotGroupModelEl.innerHTML = `
             <option value="gemini" ${node.data.model === 'gemini' ? 'selected' : ''}>标准版</option>
@@ -366,18 +372,31 @@
         videoModelEl.innerHTML = '';
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const allOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
-          const options = allOptions.filter(opt => {
+          const options = (typeof filterVideoOptionsByDriver === 'function'
+            ? filterVideoOptionsByDriver(allOptions)
+            : allOptions).filter(opt => {
             const modes = opt.supportedImageModes || ['first_last_frame'];
             return modes.includes(shotGroupMode);
           });
           if(options.length > 0) firstShotGroupVideoModelValue = options[0].value;
+          const videoScene = (window.ModelCatalog && window.ModelCatalog.sceneForVideoImageMode)
+            ? window.ModelCatalog.sceneForVideoImageMode(shotGroupMode)
+            : 'video.image_to_video';
+          if (window.ModelCatalog) {
+            const valueHit = window.ModelCatalog.findTaskByTrack(options, videoScene, null, 'value');
+            if (valueHit && !valueHit.disabled) firstShotGroupVideoModelValue = valueHit.value;
+          }
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
             optEl.textContent = opt.label;
             if(opt.value === node.data.videoModel) optEl.selected = true;
+            optEl.dataset.shortKey = opt.value;
             videoModelEl.appendChild(optEl);
           });
+          if (window.ModelCatalog && videoModelEl.parentElement) {
+            window.ModelCatalog.bindSelectTrack(videoModelEl.parentElement, videoModelEl, videoScene, 'task');
+          }
         } else {
           if(shotGroupMode === 'multi_reference') {
             videoModelEl.innerHTML = `
@@ -410,7 +429,7 @@
       if(videoGenModeEl) videoGenModeEl.value = node.data.videoGenMode || 'first_last_frame';
 
       // 应用驱动状态禁用未配置的选项
-      if(videoModelEl) applyDriverStatusToSelect(videoModelEl);
+      if(videoModelEl) applyDriverStatusToSelect(videoModelEl, node.data.videoModel);
 
       function updateShotGroupResolutionOptions(videoModel) {
         if(!resolutionField || !resolutionSelect) return;
@@ -497,7 +516,9 @@
 
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const allOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
-          filteredOptions = allOptions.filter(opt => {
+          filteredOptions = (typeof filterVideoOptionsByDriver === 'function'
+            ? filterVideoOptionsByDriver(allOptions)
+            : allOptions).filter(opt => {
             const modes = opt.supportedImageModes || ['first_last_frame'];
             return modes.includes(mode);
           });
@@ -536,7 +557,7 @@
         }
         ensureSelectHasSavedOption(videoModelEl, node.data.videoModel);
         videoModelEl.value = node.data.videoModel || firstValue;
-        applyDriverStatusToSelect(videoModelEl);
+        applyDriverStatusToSelect(videoModelEl, node.data.videoModel);
         // 模型变更后联动更新时长选项和算力显示
         updateVideoDurationOptions(videoModelEl.value);
         updateShotGroupResolutionOptions(videoModelEl.value);

@@ -85,16 +85,24 @@
         const config = this.modelConfigs[this.videoModel];
         const supportedModes = config?.supported_image_modes || ['first_last_frame'];
         if (!supportedModes.includes(newMode)) {
-          // 当前模型不支持新模式，切换到支持该模式的第一个模型
+          // 当前模型不支持新模式，切到该模式的性价比档（多参考图走 MiniMax H3 参考生视频）
           const allOptions = TaskConfig.getModelOptionsForCategory('image_to_video');
-          for (const opt of allOptions) {
+          const supporting = allOptions.filter((opt) => {
             const optConfig = this.modelConfigs[opt.value];
             const optModes = optConfig?.supported_image_modes || ['first_last_frame'];
             const isAvailable = !this.driverStatus || !this.driverStatus[opt.taskType] || this.driverStatus[opt.taskType].available !== false;
-            if (optModes.includes(newMode) && isAvailable) {
-              this.videoModel = opt.value;
-              break;
-            }
+            return optModes.includes(newMode) && isAvailable;
+          });
+          const scene = (window.ModelCatalog && window.ModelCatalog.sceneForVideoImageMode)
+            ? window.ModelCatalog.sceneForVideoImageMode(newMode)
+            : 'video.image_to_video';
+          const hit = window.ModelCatalog
+            ? window.ModelCatalog.findTaskByTrack(supporting, scene, null, 'value')
+            : null;
+          if (hit) {
+            this.videoModel = hit.value;
+          } else if (supporting.length) {
+            this.videoModel = supporting[0].value;
           }
         }
         // 模式切换时清空文件
@@ -139,6 +147,12 @@
         const config = this.modelConfigs[this.videoModel];
         return config?.supports_ref_audio_video === true;
       },
+      isPureMediaRef() {
+        // 纯音频/视频参考输入：多参考模式下无图片、但有参考音频/视频，且模型支持（如 Seedance 2.5 纯音频生视频）
+        return this.supportsRefAudioVideo
+          && this.imageMediaItems.length === 0
+          && (this.audioMediaItems.length > 0 || this.videoMediaItems.length > 0);
+      },
       canSubmit() {
         // 如果有媒体验证错误，不允许提交
         if (this.audioValidationError || this.videoValidationError) {
@@ -155,6 +169,10 @@
           const maxFiles = this.supportsLastFrame ? 2 : 1;
           return imgCount >= 1 && imgCount <= maxFiles && !!this.prompt.trim() && !this.loading;
         } else if (this.imageMode === 'multi_reference') {
+          // 纯音频/视频参考允许 0 张图（服务端按 multi_reference 受理）
+          if (this.isPureMediaRef) {
+            return !!this.prompt.trim() && !this.loading;
+          }
           return imgCount >= 1 && imgCount <= this.maxFilesForMode && !!this.prompt.trim() && !this.loading;
         } else if (this.imageMode === 'first_last_with_ref') {
           return imgCount >= 1 && imgCount <= 2 && this.referenceFiles.length <= 3 && !!this.prompt.trim() && !this.loading;
@@ -210,9 +228,20 @@
             value: opt.value,
             label: isAvailable ? opt.label : opt.label + ' (未配置)',
             disabled: !isAvailable || !supportsCurrentMode,
-            supportsMode: supportsCurrentMode
+            supportsMode: supportsCurrentMode,
+            track: opt.track || null,
           };
         });
+      },
+      videoScene() {
+        if (window.ModelCatalog && window.ModelCatalog.sceneForVideoImageMode) {
+          return window.ModelCatalog.sceneForVideoImageMode(this.imageMode);
+        }
+        return 'video.image_to_video';
+      },
+      videoTrack() {
+        if (!window.ModelCatalog) return 'custom';
+        return window.ModelCatalog.inferTrack(this.videoScene, this.videoModel, null);
       },
       modelOptions() {
         const config = this.modelConfigs[this.videoModel];
@@ -262,6 +291,11 @@
         const config = this.modelConfigs && this.modelConfigs[this.videoModel];
         return !!(config && config.needs_face_mask === true);
       },
+      isSeedance25FollowReferenceVideo() {
+        const key = String(this.videoModel || '');
+        const is25 = /seedance[_\s-]?2[._]?5/i.test(key);
+        return is25 && Array.isArray(this.videoFiles) && this.videoFiles.length > 0;
+      },
       // 是否为商业版（社区版下「是否处理人脸」置灰提示）
       isEnterprise() {
         return !!(window.TaskConfig && window.TaskConfig.isEnterprise && window.TaskConfig.isEnterprise());
@@ -304,6 +338,16 @@
       }
     },
     methods: {
+      selectVideoTrack(track) {
+        if (!window.ModelCatalog) return;
+        const hit = window.ModelCatalog.findTaskByTrack(
+          this.videoModelOptions.filter((o) => o.supportsMode),
+          this.videoScene,
+          null,
+          track,
+        );
+        if (hit && !hit.disabled) this.videoModel = hit.value;
+      },
       parseReferenceImages(ref) {
         if (!ref) return [];
         if (Array.isArray(ref)) return ref;
@@ -340,6 +384,14 @@
           await TaskConfig.load();
           this.modelConfigs = TaskConfig.getModelConfigs();
           this.configLoaded = true;  // 标记配置已加载
+          const allOptions = TaskConfig.getModelOptionsForCategory('image_to_video');
+          const validValues = allOptions.map((opt) => opt.value);
+          const valueOpt = window.ModelCatalog
+            ? window.ModelCatalog.findTaskByTrack(allOptions, 'video.image_to_video', null, 'value')
+            : allOptions.find((opt) => opt.track === 'value');
+          if (!validValues.includes(this.videoModel) && (valueOpt || allOptions.length > 0)) {
+            this.videoModel = (valueOpt && valueOpt.value) || allOptions[0].value;
+          }
           // 设置初始默认值
           const config = this.modelConfigs[this.videoModel];
           if (config) {
@@ -785,7 +837,7 @@
           alert(this.audioValidationError || this.videoValidationError);
           return;
         }
-        if (this.imageMediaItems.length === 0) {
+        if (this.imageMediaItems.length === 0 && !this.isPureMediaRef) {
           alert('请先上传至少一张图片');
           return;
         }
@@ -1281,6 +1333,10 @@
 
           <div class="field">
             <label class="label">{{ $t('video_model_label') || '视频模型' }}</label>
+            <div class="model-track-toggle" v-if="videoModelOptions.length">
+              <button type="button" class="model-track-btn" :class="{ 'is-active': videoTrack === 'value' }" @click="selectVideoTrack('value')">性价比</button>
+              <button type="button" class="model-track-btn" :class="{ 'is-active': videoTrack === 'quality' }" @click="selectVideoTrack('quality')">效果</button>
+            </div>
             <select class="input" v-model="videoModel">
               <option v-for="opt in videoModelOptions" :key="opt.value" :value="opt.value" :disabled="opt.disabled">
                 {{ opt.label }}{{ !opt.supportsMode ? ' (' + ($t('unsupported_mode') || '不支持当前模式') + ')' : '' }}
@@ -1326,6 +1382,9 @@
                 {{ opt.label }}
               </option>
             </select>
+            <div class="muted" v-if="isSeedance25FollowReferenceVideo" style="margin-top: 4px; font-size: 12px;">
+              Seedance 2.5 克隆时，输出比例和时长跟随参考视频（参考视频须 4–30 秒）
+            </div>
           </div>
 
           <div class="field">

@@ -154,9 +154,11 @@ class RunningHubFileStorage(BaseFileStorage):
 
             result = response.json()
             if result.get("code") != 0:
+                # RunningHub 上传接口的错误文案在 "msg" 字段（如 "API Key不存在"），
+                # 兼容 "message" 以防其它实现复用本解析逻辑。
                 return UploadResult(
                     success=False,
-                    error=result.get("message", "上传失败")
+                    error=result.get("msg") or result.get("message") or "上传失败"
                 )
 
             data = result.get("data", {})

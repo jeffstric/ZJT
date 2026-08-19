@@ -184,7 +184,14 @@ def _resume_hint(status: Optional[str], error_code: Optional[str]) -> Optional[s
         return None
     if error_code in ScriptSplitConstants.RESUME_BLOCKED_ERROR_CODES:
         if error_code == "plan_call_failed":
-            return "llm_gateway_error: LLM 网关拒绝调用(如 403/5xx)，排查 api key/欠费/网络后调 resume(force=true) 重试"
+            # 注意：网络不可达/网关域名连不上(NewConnectionError/Network is unreachable)
+            # 与网关业务拒绝(403/5xx)都归此码。当前 script-split 不会自动降级/换模型，
+            # 网关全挂时最有效的恢复手段是换用不同 vendor/网关的模型重建任务。
+            return ("llm_call_failed: LLM 调用失败（网关拒绝 403/5xx、或网络不可达/网关域名连不上"
+                    "均归此码；当前不会自动降级/换模型）。建议：①确认网络与 api key；"
+                    "②换用不同 vendor/网关的模型（如 deepseek-v4-flash，先调 list-llm-models "
+                    "取可用模型与 model_id/vendor_id），换模型需新建拆分任务；"
+                    "若根因已排除可对该任务 resume(force=true) 重试")
         if error_code == "plan_timeout":
             return "llm_timeout: LLM 调用超时，排查模型可用性/网络后调 resume(force=true) 重试"
         if error_code == "step_watchdog_timeout":

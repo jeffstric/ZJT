@@ -1,0 +1,100 @@
+# MiniMax H3 Prompt Rewrite Guide (I2VA / FL2VA only)
+
+## 1. Task types
+
+- **I2VA**: first-frame image-to-video. Picture 1 is the real first frame at 0.00s and belongs to [Shot 1]. Start from that image and develop forward.
+- **FL2VA**: first-and-last-frame image-to-video. Picture 1 is the opening; Picture 2 is the ending. Describe a continuous path from the first frame to the last frame.
+
+Do not invent T2VA or last-frame-only (L2VA) structures.
+
+## 2. Final prompt structure
+
+Part one is the instruction. It must be the first line, then one blank line, then the three core fields.
+
+**I2VA** always starts with:
+
+```text
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+```
+
+**FL2VA** always starts with (S.SS is the video duration formatted to exactly two decimal places; N is the final shot index):
+
+```text
+How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot N) aligns with the S.SS-second mark of the target video.
+```
+
+Part two contains exactly these three fields:
+
+```text
+integrated_multimodal_description: [Shot 1] ...
+
+overall_soundscape: ...
+
+non_diegetic_music: ...
+```
+
+- `integrated_multimodal_description`: visuals, actions, shots, speakers, dialogue, singing, and diegetic audio along the timeline.
+- `overall_soundscape`: ambient sound, physical action sounds, and non-verbal human sounds for the whole video. Dialogue and songs do not belong here. Use `N/A` only if the user asked for complete silence.
+- `non_diegetic_music`: background music the characters cannot hear. Describe instrumentation, tempo, rhythm, and dynamics. No abstract mood words. Use `N/A` when there is none.
+
+## 3. How to use the keyframes
+
+**I2VA**: `<Picture 1>` is the first frame. First establish style, subjects, composition, and scene anchors from the image, then the next action. Keep identity, clothing, colors, key objects, and spatial relations consistent.
+
+Recommended path: first-frame anchor → action onset → continuous development → result or reaction.
+
+**FL2VA**: Picture 1 is the start, Picture 2 is the end. Prefer a single shot unless the user asked for cuts. The last frame must be reached by the final `[Shot N]` at the end.
+
+Recommended path: first-frame state → observable intermediate changes → narrowing differences → last-frame state.
+
+## 4. Writing the multimodal description
+
+At the start of `[Shot 1]`, state style and initial composition. Derive style from the first-frame image when possible (Cinematic, live-action, 2D-animated, 3D CG, claymation, watercolor, vintage film).
+
+```text
+[Shot 1] Live-action, cinematic, a medium-wide shot frames...
+```
+
+Do not timestamp the first shot. Later shots use increasing cut times inside the duration:
+
+```text
+[Shot 2] At 00:03.500, the camera cuts to...
+```
+
+Camera motion is a natural English action: motion type + optional amplitude + optional speed.
+
+Examples: `Zoom In / Zoom Out`, `Push In / Pull Out`, `Pan Left / Pan Right`, `Truck Left / Truck Right`, `Tilt Up / Tilt Down`, `Pedestal Up / Pedestal Down`, `Arc Shot`, `Tracking Shot`, `Static Shot`, `Shake Slightly / Shake Strongly`, `POV`, `Roll Clockwise / Roll Counterclockwise`. Amplitude: `with small amplitude` / `with large amplitude`. Speed: `at slow speed` / `at fast speed`.
+
+Speakers who talk or sing get stable IDs `(S1)`, `(S2)`. Put identity, ID, and delivery outside `<d>`. Inside `<d>` keep only the language tag and the original spoken words; never translate them.
+
+```text
+The young woman with a quiet, breathy voice (S1) says: <d>[English] I get off at the next station.</d>
+```
+
+On-screen text stays in English double quotes, untranslated.
+
+## 5. Examples
+
+### I2VA
+
+```text
+For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.
+
+integrated_multimodal_description: [Shot 1] Live-action, cinematic, the young woman shown in <Picture 1> remains beside the rain-covered train window, preserving her appearance, clothing, seat position, and the carriage layout. The camera trucks right with small amplitude at slow speed as she lifts her gaze from the folded letter toward the passing city lights. The quiet, breathy young woman (S1) says: <d>[English] I get off at the next station.</d> She folds the letter along its existing crease.
+
+overall_soundscape: The train wheels produce a steady metallic rhythm beneath a low ventilation hum. Rain ticks against the window while paper rustles softly in her hands.
+
+non_diegetic_music: Sustained cello notes at a slow tempo with widely spaced piano tones, gradually decreasing in volume.
+```
+
+### FL2VA (8.00s single shot)
+
+```text
+How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the 8.00-second mark of the target video.
+
+integrated_multimodal_description: [Shot 1] Live-action, cinematic, a rain-soaked cyclist begins in the position and framing established by Picture 1, holding a closed black umbrella beside a silver bicycle. The camera pulls out with small amplitude at slow speed as she releases the bicycle handle, raises the umbrella above her shoulder, and presses the runner upward until the canopy opens. She settles into the pose, spacing, and composition established by Picture 2 at the end of the shot.
+
+overall_soundscape: Rain falls steadily on the pavement, followed by the metallic click of the umbrella runner and the soft snap of the canopy opening.
+
+non_diegetic_music: N/A
+```

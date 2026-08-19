@@ -119,8 +119,13 @@ function applyTaskStatus(scene, data, requestSelection) {
     (data.dialogues || []).forEach(d => {
         const dialogue = (scene.dialogues || []).find(item => item.id === d.dialogue_id);
         if (dialogue) {
-            if (d.audio_url) dialogue.audioUrl = d.audio_url;
+            // 仅当新音频 URL 落地时才清除「旧配音」标记；单纯状态流转不清除
+            if (d.audio_url) {
+                if (d.audio_url !== dialogue.audioUrl) dialogue.audioStale = false;
+                dialogue.audioUrl = d.audio_url;
+            }
             dialogue.audioStatus = d.status;
+            dialogue.audioError = d.error || '';
         }
     });
     scene.taskStatus = {

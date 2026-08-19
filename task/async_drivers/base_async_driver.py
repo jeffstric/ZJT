@@ -145,18 +145,20 @@ class BaseAsyncDriver(ABC):
 
                 if not result.get('success'):
                     RunningHubSlotsModel.release_slot(async_task_id, source=RunningHubSlot.SOURCE_ASYNC)
-                    # 反馈熔断：提交失败（非上游拥堵类）计入密钥失败
-                    await runninghub_key_pool.report_failure_async(
-                        api_key_index, result.get('error', '')
-                    )
                     # 上游并发超限/限流（api queue limit reached / TASK_QUEUE_MAXED 等）：
-                    # 安排延迟重试，不标记 FAILED（复用异步侧指数退避，与本地槽位满处理一致）
+                    # 走拥堵冷却通道（与熔断独立），不计入 fail_count，安排延迟重试
+                    # 注意顺序：必须先判拥堵分流，再处理普通失败，避免 421 污染熔断状态机
                     if result.get('retry_reason') == 'UPSTREAM_CONGESTED' or \
                             is_upstream_congested_error(result.get('error_code', '')):
+                        await runninghub_key_pool.report_congested_async(api_key_index)
                         delay = self._calculate_retry_delay(0)
                         AsyncTasksModel.schedule_retry(async_task_id, delay)
                         logger.info(f"上游拥堵，异步任务 {async_task_id} 将在 {delay}s 后重试")
                         return {**result, 'async_task_id': async_task_id}
+                    # 非拥堵失败：计入熔断 fail_count 并标记 FAILED
+                    await runninghub_key_pool.report_failure_async(
+                        api_key_index, result.get('error', '')
+                    )
                     AsyncTasksModel.update_status(
                         record_id=async_task_id,
                         status=AsyncTaskStatus.FAILED,

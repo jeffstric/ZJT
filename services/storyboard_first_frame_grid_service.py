@@ -109,6 +109,35 @@ def _is_visible_spatial_item(item: Dict[str, Any]) -> bool:
     return _slot_visibility(item) in {"", "visible", "partial"}
 
 
+def _locked_image_edit_task_id(job: Dict[str, Any]) -> Optional[int]:
+    """从批任务创建时锁定的模型快照解析宫格 i2i 应使用的 task_id。
+
+    优先读 extra_json.generation_snapshots['image.image_edit']（与提交模式一致），
+    回退 extra_json.task_type。返回 None 表示批任务未锁定模型（旧数据），
+    此时由 submit_grid_image_task 走偏好/默认解析（会打 warning 现形）。
+    必须使用创建批任务时锁定的快照，禁止实时读用户偏好：
+    quality 模式跨幕串行执行时间长，中途偏好变化会导致前后分镜模型/画风不一致。
+    """
+    extra = job.get("extra_json")
+    if isinstance(extra, str):
+        extra = _as_prompt_json(extra)
+    if not isinstance(extra, dict):
+        return None
+    snapshots = extra.get("generation_snapshots")
+    if isinstance(snapshots, str):
+        snapshots = _as_prompt_json(snapshots)
+    snapshot = snapshots.get("image.image_edit") if isinstance(snapshots, dict) else None
+    task_id = snapshot.get("task_id") if isinstance(snapshot, dict) else None
+    if task_id in (None, ""):
+        task_id = extra.get("task_type")
+    if task_id in (None, ""):
+        return None
+    try:
+        return int(task_id)
+    except (TypeError, ValueError):
+        return None
+
+
 class StoryboardFirstFrameGridService:
     """Submit ready quality-mode first-frame batch items as 2x2/3x3 grid tasks."""
 
@@ -503,6 +532,7 @@ class StoryboardFirstFrameGridService:
             )
 
         ratio = _first_non_empty(job.get("ratio"), storyboard.get("workflow_ratio"), "16:9")
+        locked_task_id = _locked_image_edit_task_id(job)
         result = submit_grid_image_task(
             user_id=str(job.get("user_id") or ""),
             world_id=str(storyboard.get("world_id") or ""),
@@ -521,6 +551,7 @@ class StoryboardFirstFrameGridService:
             image_size=GridConfig.GRID_SIZE_IMAGE_SIZE_MAP.get(grid_size),
             grid_cells=grid_cells,
             global_visual_guidance=global_visual_guidance,
+            task_type=locked_task_id,
         )
         if not result.get("success"):
             for item in chunk:
@@ -531,6 +562,13 @@ class StoryboardFirstFrameGridService:
                     error_message=str(result.get("error") or "grid first-frame submission failed")[:512],
                 )
             return False
+
+        self._audit_grid_model_consistency(
+            job_id=int(job["id"]),
+            locked_task_id=locked_task_id,
+            chunk=chunk,
+            result=result,
+        )
 
         grid_task_id = result.get("grid_task_id")
         prompt_group_context["grid_task_id"] = grid_task_id
@@ -570,6 +608,38 @@ class StoryboardFirstFrameGridService:
                 },
             )
         return True
+
+    def _audit_grid_model_consistency(
+        self,
+        *,
+        job_id: int,
+        locked_task_id: Optional[int],
+        chunk: Sequence[Dict[str, Any]],
+        result: Dict[str, Any],
+    ) -> None:
+        """运行时对账：宫格实际提交的模型必须等于批任务创建时锁定的模型。
+
+        不一致说明某条链路绕过了模型快照（曾经导致用户选 GPT Image 2
+        实际用 nano-banana-Pro 的线上事故），只记录 error 不改写结果，
+        供日志/Sentry 立即暴露而非等用户投诉。
+        """
+        actual = result.get("model_task_id")
+        if locked_task_id is None or actual in (None, ""):
+            return
+        try:
+            actual_int = int(actual)
+        except (TypeError, ValueError):
+            return
+        if actual_int != int(locked_task_id):
+            logger.error(
+                "[quality-grid] 宫格提交模型与批任务快照不一致: job=%s expected_task_id=%s "
+                "actual_task_id=%s scene_ids=%s project_ids=%s",
+                job_id,
+                locked_task_id,
+                actual_int,
+                [int(item["scene_id"]) for item in chunk],
+                result.get("project_ids"),
+            )
 
     def _resolve_location(self, prompt_json: Dict[str, Any]) -> Dict[str, Any]:
         location_data = prompt_json.get("location") if isinstance(prompt_json.get("location"), dict) else {}

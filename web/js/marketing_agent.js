@@ -332,15 +332,17 @@
                 if (type === 'image') {
                     return rows.map(row => {
                         const url = row.result_url || '';
+                        const displayUrl = proxyImageUrl(url);
                         const aiToolId = row.ai_tool_id || '';
                         const safeTitle = escapeHtmlAttr(inputText.value || '');
-                        return `<div class="generated-image-wrapper generated-result-card" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(url)}';window.setModalImageInfo && window.setModalImageInfo('${aiToolId}', '${safeTitle}')"><img src="${escapeHtmlAttr(url)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
+                        return `<div class="generated-image-wrapper generated-result-card" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(displayUrl)}';window.setModalImageInfo && window.setModalImageInfo('${aiToolId}', '${safeTitle}')"><img src="${escapeHtmlAttr(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
                     }).join('');
                 }
                 if (type === 'video') {
                     return rows.map(row => {
                         const url = row.result_url || '';
-                        return `<div class="generated-result-card"><video src="${escapeHtmlAttr(url)}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video><div class="generated-result-actions">${buildPublishButton(row.ai_tool_id, inputText.value)}</div></div>`;
+                        const displayUrl = proxyDownloadUrl(url);
+                        return `<div class="generated-result-card"><video src="${escapeHtmlAttr(displayUrl)}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video><div class="generated-result-actions">${buildPublishButton(row.ai_tool_id, inputText.value)}</div></div>`;
                     }).join('');
                 }
                 return '';
@@ -415,14 +417,26 @@
                 });
             }
 
+            function contentHasGeneratedTaskId(content, id) {
+                if (!id) return false;
+                const sid = String(id);
+                return content.includes(`setModalImageInfo('${sid}'`)
+                    || content.includes(`setModalImageInfo("${sid}"`)
+                    || content.includes(`publishGeneratedResult("${sid}"`)
+                    || content.includes(`publishGeneratedResult(&quot;${sid}&quot;`)
+                    || content.includes(`/${sid}_`);
+            }
+
             function hasGeneratedImageResult(projectIds, imageUrls = []) {
                 const ids = Array.isArray(projectIds) ? projectIds.map(String) : [String(projectIds || '')];
                 const urls = Array.isArray(imageUrls) ? imageUrls.filter(Boolean) : [];
                 return messages.value.some(msg => {
                     const content = msg?.content || '';
                     if (msg?.role !== 'ai' || !content.includes('generated-image-wrapper')) return false;
-                    if (urls.some(url => content.includes(url))) return true;
-                    return ids.some(id => id && (content.includes(`${id}_`) || content.includes(`/${id}`)));
+                    if (urls.length > 0) {
+                        return urls.some(url => url && content.includes(url));
+                    }
+                    return ids.some(id => contentHasGeneratedTaskId(content, id));
                 });
             }
 
@@ -444,8 +458,10 @@
                 return messages.value.some(msg => {
                     const content = msg?.content || '';
                     if (msg?.role !== 'ai' || !content.includes('<video')) return false;
-                    if (urls.some(url => content.includes(url))) return true;
-                    return ids.some(id => id && (content.includes(`${id}_`) || content.includes(`/${id}`)));
+                    if (urls.length > 0) {
+                        return urls.some(url => url && content.includes(url));
+                    }
+                    return ids.some(id => contentHasGeneratedTaskId(content, id));
                 });
             }
 
@@ -528,15 +544,65 @@
 
             // LLM 模型数据（用于 Agent 模式对话）
             const allLLMModels = ref([]);
+            const llmCatalog = ref(null);
             const selectedLLMModel = ref(null);
             const selectedLLMModelKey = Vue.computed(() => getLLMModelSelectionKey(selectedLLMModel.value));
             const showLLMModelSelect = ref(false);
+            const collapsedLLMModels = Vue.computed(() => {
+                if (!window.ModelCatalog) return allLLMModels.value;
+                return window.ModelCatalog.collapseLlmModels(
+                    allLLMModels.value.map((m) => ({
+                        ...m,
+                        vendor_name: m.vendor,
+                        model_id: m.id,
+                    })),
+                    'llm.marketing',
+                    llmCatalog.value,
+                );
+            });
+            const currentLLMTrack = Vue.computed(() => {
+                if (!window.ModelCatalog || !selectedLLMModel.value) return 'custom';
+                return window.ModelCatalog.inferTrack('llm.marketing', selectedLLMModel.value.name, llmCatalog.value);
+            });
+            const visibleLLMModels = Vue.computed(() => {
+                return collapsedLLMModels.value.map((item) => {
+                    const route = item.defaultRoute || item.routes[0] || {};
+                    return {
+                        id: route.model_id || route.id,
+                        name: item.name,
+                        vendor: route.vendor_name || route.vendor,
+                        vendor_id: route.vendor_id,
+                        supportsVl: route.supportsVl || route.supports_vl,
+                        supportsThinking: route.supportsThinking || route.supports_thinking,
+                        track: item.track,
+                    };
+                });
+            });
+
+            function selectLLMTrack(track) {
+                const hit = window.ModelCatalog
+                    ? window.ModelCatalog.findCollapsedByTrack(collapsedLLMModels.value, track)
+                    : null;
+                const route = hit?.defaultRoute;
+                if (!route) return;
+                const model = allLLMModels.value.find((m) => (
+                    m.name === (route.name || route.model)
+                    && String(m.vendor_id || '') === String(route.vendor_id || '')
+                ));
+                if (model) selectLLMModel(model);
+            }
 
             // Verification（ask_user 交互）状态
             const pendingVerificationId = ref(null);
             const showOtherInput = ref(false);
             const otherInputText = ref('');
             const activeOtherVerificationId = ref(null);
+
+            // 用户级算力自动确认上限
+            const powerConfirmThreshold = ref(35);
+            const powerConfirmThresholdInput = ref(35);
+            const powerConfirmDefault = ref(35);
+            const powerConfirmIsCustom = ref(false);
 
             const aspectRatioMap = {
                 'auto':  { label: window.t('ratio_smart'), value: 'auto', w: 20, h: 20 },
@@ -605,6 +671,13 @@
                     : '';
                 const config = shortKey ? videoModelConfigs.value[shortKey] : null;
                 return config?.needs_face_mask === true;
+            });
+
+            const isSeedance25FollowReferenceVideo = Vue.computed(() => {
+                if (!isVideoMode.value) return false;
+                const key = `${selectedVideoModelKey.value || ''} ${selectedModelKey.value || ''} ${selectedVideoModelName.value || ''}`;
+                const is25 = /seedance[_\s-]?2[._]?5/i.test(key);
+                return is25 && Array.isArray(agentVideoFiles.value) && agentVideoFiles.value.length > 0;
             });
 
             const selectedModel = Vue.computed({
@@ -1190,15 +1263,15 @@
                 counters[media.type] = (counters[media.type] || 0) + 1;
                 const label = getMediaPreviewLabel(media.type, counters[media.type]);
                 if (media.type === 'image') {
-                    const displayUrl = media.thumbnailUrl || media.url;  // 显示用缩略图
-                    const fullUrl = media.url;  // 点击查看原图
+                    const displayUrl = proxyImageUrl(media.thumbnailUrl || media.url);  // 显示用缩略图
+                    const fullUrl = proxyImageUrl(media.url);  // 点击查看原图
                     return `${label} <img src="${escapeHtmlAttr(displayUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(fullUrl)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${label}">`;
                 }
                 if (media.type === 'video') {
-                    return `${label} <video src="${escapeHtmlAttr(media.url)}" style="max-height:160px;border-radius:8px;" controls muted></video>`;
+                    return `${label} <video src="${escapeHtmlAttr(proxyDownloadUrl(media.url))}" style="max-height:160px;border-radius:8px;" controls muted></video>`;
                 }
                 if (media.type === 'audio') {
-                    return `${label} <audio src="${escapeHtmlAttr(media.url)}" controls style="width:100%;max-height:40px;border-radius:8px;"></audio>`;
+                    return `${label} <audio src="${escapeHtmlAttr(proxyDownloadUrl(media.url))}" controls style="width:100%;max-height:40px;border-radius:8px;"></audio>`;
                 }
                 return '';
             }
@@ -1343,16 +1416,34 @@
                 return isVideoResultUrl(asset?.result_url || asset?.video_path || '');
             }
 
-            // 返回竖屏视频应使用的 aspect-ratio CSS 值（如 '9:16'）；非竖屏返回空串，沿用默认正方形容器
-            function verticalVideoAspectRatio(ratio) {
-                if (!ratio || typeof ratio !== 'string') return '';
-                const parts = ratio.split(':');
-                if (parts.length !== 2) return '';
+            // 竖屏视频卡片用 CSS aspect-ratio（必须是 `9 / 16`，不能写 `9:16`）
+            function parseAspectParts(ratio) {
+                if (!ratio || typeof ratio !== 'string') return null;
+                const normalized = ratio.trim().toLowerCase();
+                if (normalized === 'adaptive' || normalized === 'auto') return null;
+                const parts = normalized.split(/[:/x×]/);
+                if (parts.length !== 2) return null;
                 const w = parseFloat(parts[0]);
                 const h = parseFloat(parts[1]);
-                if (!w || !h) return '';
-                // 竖屏：高 > 宽，用原始比例让卡片自适应高度，视频完整无裁切
-                return h > w ? ratio : '';
+                if (!w || !h) return null;
+                return { w, h };
+            }
+
+            function assetPreviewStyle(asset) {
+                if (!isAssetVideo(asset)) return null;
+                const parts = parseAspectParts(asset?.ratio);
+                if (!parts || parts.h <= parts.w) return null;
+                return { aspectRatio: `${parts.w} / ${parts.h}` };
+            }
+
+            function applyAssetVideoAspect(event) {
+                const video = event && event.target;
+                if (!video || !video.videoWidth || !video.videoHeight) return;
+                if (video.videoHeight <= video.videoWidth) return;
+                const preview = video.closest('.asset-preview');
+                if (preview) {
+                    preview.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+                }
             }
 
             function formatAssetType(asset) {
@@ -1416,19 +1507,54 @@
                 return `${d.getMonth() + 1}/${d.getDate()}`;
             }
 
-            // 图片/媒体 URL 代理辅助函数（幂等：已是同源 URL 则原样返回）
+            // 图片/媒体 URL 代理辅助函数（幂等：已是同源或已代理 URL 则原样返回）
+            // 外部图床签名 URL 走 /api/proxy-image，由后端重新签名或代理，避免过期后无法显示。
             function proxyImageUrl(url) {
                 if (!url) return url;
-                // 同源路径直接返回
-                if (url.startsWith('/') && !url.startsWith('//')) return url;
-                return url;
+                const rawUrl = String(url).trim();
+                if (!rawUrl) return rawUrl;
+                if (rawUrl.startsWith('/api/proxy-image')) return rawUrl;
+                if (rawUrl.startsWith('data:') || rawUrl.startsWith('blob:')) return rawUrl;
+                if (rawUrl.startsWith('/') && !rawUrl.startsWith('//')) return rawUrl;
+                try {
+                    const parsed = new URL(rawUrl, window.location.origin);
+                    if (parsed.origin === window.location.origin) {
+                        return parsed.pathname + parsed.search + parsed.hash;
+                    }
+                    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                        return `/api/proxy-image?url=${encodeURIComponent(parsed.href)}`;
+                    }
+                } catch (e) {
+                    if (/^https?:\/\//i.test(rawUrl)) {
+                        return `/api/proxy-image?url=${encodeURIComponent(rawUrl)}`;
+                    }
+                }
+                return rawUrl;
             }
 
-            function proxyDownloadUrl(url) {
+            function proxyDownloadUrl(url, filename) {
                 if (!url) return url;
-                // 同源路径直接返回
-                if (url.startsWith('/') && !url.startsWith('//')) return url;
-                return url;
+                const rawUrl = String(url).trim();
+                if (!rawUrl) return rawUrl;
+                if (rawUrl.startsWith('/api/download') || rawUrl.startsWith('/api/proxy-image')) return rawUrl;
+                if (rawUrl.startsWith('data:') || rawUrl.startsWith('blob:')) return rawUrl;
+                if (rawUrl.startsWith('/') && !rawUrl.startsWith('//')) return rawUrl;
+                try {
+                    const parsed = new URL(rawUrl, window.location.origin);
+                    if (parsed.origin === window.location.origin) {
+                        return parsed.pathname + parsed.search + parsed.hash;
+                    }
+                    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                        const fn = filename ? `&filename=${encodeURIComponent(filename)}` : '';
+                        return `/api/download?url=${encodeURIComponent(parsed.href)}${fn}`;
+                    }
+                } catch (e) {
+                    if (/^https?:\/\//i.test(rawUrl)) {
+                        const fn = filename ? `&filename=${encodeURIComponent(filename)}` : '';
+                        return `/api/download?url=${encodeURIComponent(rawUrl)}${fn}`;
+                    }
+                }
+                return rawUrl;
             }
 
             // 渲染 Markdown
@@ -1487,9 +1613,13 @@
                     // 提取 src 属性
                     const srcMatch = attrs.match(/src="([^"]*)"/);
                     const src = srcMatch ? srcMatch[1] : '';
+                    const displaySrc = proxyImageUrl(src);
+                    const proxiedAttrs = srcMatch
+                        ? attrs.replace(/src="[^"]*"/, `src="${displaySrc}"`)
+                        : attrs;
 
                     // 添加样式和点击事件
-                    return `<img${attrs} style="max-width:300px;max-height:200px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(src)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('image_alt')}">`;
+                    return `<img${proxiedAttrs} style="max-width:300px;max-height:200px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(displaySrc)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('image_alt')}">`;
                 });
 
 
@@ -1502,6 +1632,9 @@
                     const proxied = proxyImageUrl(u).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                     return `imgModalImg').src='${proxied}'`;
                 });
+                html = html.replace(/(<img\b(?=[^>]*\bgenerated-image\b)(?=[^>]*\ssrc="))([^>]*?)\ssrc="([^"]*)"/gi, (_m, prefix, attrs, src) =>
+                    `${prefix}${attrs} src="${proxyImageUrl(src)}"`
+                );
 
                 // 兜底重新签名：<video>/<audio>/<source> 的原始 src。
                 // 同因：commit 0bf53fe 之前生成的视频/音频以已渲染 HTML 入库，src 写死的是
@@ -2830,13 +2963,24 @@
                     if (!window.TaskConfig?.getTaskIdByKey) return true;
                     return !!window.TaskConfig.getTaskIdByKey(model.key, category);
                 };
-                const model = list.find(item => item.key === selectedVideoModelKey.value && canUseModel(item))
-                    || (savedModelName && list.find(item => item.name === savedModelName && canUseModel(item)))
+                // 必须先对齐界面当前选中的模型。禁止 key 对不上时静默落到 list[0]（常为 H3）。
+                const displayed = findVideoModelInList(list, selectedVideoModelKey.value)
+                    || findVideoModelInList(list, selectedVideoModelName.value)
+                    || findVideoModelInList(allImageToVideoModels.value, selectedVideoModelKey.value)
+                    || findVideoModelInList(allImageToVideoModels.value, selectedVideoModelName.value)
+                    || findVideoModelInList(allTextToVideoModels.value, selectedVideoModelKey.value)
+                    || findVideoModelInList(allTextToVideoModels.value, selectedVideoModelName.value);
+                const model = (displayed && canUseModel(displayed) ? displayed : null)
+                    || (displayed || null)
+                    || (savedModelName && findVideoModelInList(list, savedModelName))
                     || list.find(canUseModel)
                     || list[0];
-                const taskKey = model?.key || selectedVideoModelKey.value;
+                const taskKey = model?.key || model?.short_key || selectedVideoModelKey.value;
                 const taskId = window.TaskConfig?.getTaskIdByKey
-                    ? window.TaskConfig.getTaskIdByKey(taskKey, category)
+                    ? (window.TaskConfig.getTaskIdByKey(taskKey, category)
+                        || window.TaskConfig.getTaskIdByKey(taskKey)
+                        || window.TaskConfig.getTaskIdByKey(selectedVideoModelKey.value, category)
+                        || window.TaskConfig.getTaskIdByKey(selectedVideoModelName.value, category))
                     : undefined;
                 ensureSelectedVideoResolution();
 
@@ -3319,6 +3463,85 @@
                 return !!pendingVerificationId.value && msg?.verificationId === pendingVerificationId.value;
             }
 
+            function verificationOptionClass(msg, opt) {
+                if (msg?.verificationType !== 'computing_power_confirm') return '';
+                if (opt === '确认生成') return 'power-approve';
+                if (opt === '取消本次生成') return 'power-reject';
+                return '';
+            }
+
+            async function loadPowerConfirmSettings() {
+                try {
+                    const resp = await fetch('/api/user/power-confirm', {
+                        headers: { 'Authorization': `Bearer ${authToken.value}` }
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    const payload = data.data || {};
+                    const threshold = Number(payload.threshold);
+                    const fallback = Number(payload.default_threshold);
+                    powerConfirmDefault.value = Number.isFinite(fallback) ? fallback : 35;
+                    powerConfirmThreshold.value = Number.isFinite(threshold) ? threshold : powerConfirmDefault.value;
+                    powerConfirmThresholdInput.value = powerConfirmThreshold.value;
+                    powerConfirmIsCustom.value = !!payload.is_custom;
+                } catch (e) {
+                    console.warn('[算力确认] 加载设置失败:', e);
+                }
+            }
+
+            async function savePowerConfirmThreshold() {
+                const parsed = parseInt(powerConfirmThresholdInput.value, 10);
+                if (!Number.isFinite(parsed) || parsed < 0) {
+                    powerConfirmThresholdInput.value = powerConfirmThreshold.value;
+                    return;
+                }
+                try {
+                    const resp = await fetch('/api/user/power-confirm', {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${authToken.value}`
+                        },
+                        body: JSON.stringify({ threshold: parsed })
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    if (data.code !== 0) {
+                        throw new Error(data.message || data.detail || 'save failed');
+                    }
+                    const payload = data.data || {};
+                    powerConfirmThreshold.value = Number(payload.threshold);
+                    powerConfirmThresholdInput.value = powerConfirmThreshold.value;
+                    powerConfirmIsCustom.value = !!payload.is_custom;
+                    if (payload.default_threshold != null) {
+                        powerConfirmDefault.value = Number(payload.default_threshold);
+                    }
+                } catch (e) {
+                    console.warn('[算力确认] 保存失败:', e);
+                    powerConfirmThresholdInput.value = powerConfirmThreshold.value;
+                }
+            }
+
+            async function resetPowerConfirmThreshold() {
+                try {
+                    const resp = await fetch('/api/user/power-confirm', {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${authToken.value}` }
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    const payload = data.data || {};
+                    powerConfirmThreshold.value = Number(payload.threshold);
+                    powerConfirmThresholdInput.value = powerConfirmThreshold.value;
+                    powerConfirmIsCustom.value = !!payload.is_custom;
+                    if (payload.default_threshold != null) {
+                        powerConfirmDefault.value = Number(payload.default_threshold);
+                    }
+                } catch (e) {
+                    console.warn('[算力确认] 恢复默认失败:', e);
+                }
+            }
+
             function handleHumanVerification(verification) {
                 if (!verification) return;
 
@@ -3360,6 +3583,7 @@
                     timestamp: new Date().toISOString(),
                     verificationId: verification.verification_id,
                     verificationOptions: options,
+                    verificationType: verification.verification_type || '',
                     isVerification: true
                 });
                 scrollToBottom();
@@ -3491,12 +3715,37 @@
                 return true;
             }
 
+            function unwrapHistoryText(content) {
+                if (content == null) return '';
+                if (typeof content === 'object') {
+                    return typeof content.text === 'string' ? content.text : '';
+                }
+                const raw = String(content);
+                const trimmed = raw.trim();
+                if (trimmed.startsWith('{')) {
+                    try {
+                        const parsed = JSON.parse(trimmed);
+                        if (parsed && typeof parsed.text === 'string') return parsed.text;
+                    } catch (e) { /* 普通文本 */ }
+                }
+                return raw;
+            }
+
             function parseHistoryMessage(h) {
                 // 检测 __PENDING_TASK__ 标记（后端保存的待处理任务）
-                // content 可能是字符串或 { text: "..." } 对象
-                const rawContent = typeof h.content === 'string' ? h.content : (h.content?.text || '');
-                const pendingMatch = rawContent.match(/^__PENDING_TASK__:(image_task_submitted|video_task_submitted):(.+)$/);
-                if (pendingMatch) {
+                // content 可能是纯文本、JSON 字符串或 { text: "..." } 对象
+                const rawContent = unwrapHistoryText(h.content);
+                const pendingMatch = rawContent.match(/__PENDING_TASK__:(image_task_submitted|video_task_submitted):(.+)$/);
+                if (pendingMatch || h.message_type === 'pending_task') {
+                    let projectIds = [];
+                    if (pendingMatch) {
+                        try { projectIds = JSON.parse(pendingMatch[2]); } catch (e) { projectIds = []; }
+                    } else {
+                        projectIds = extractProjectIdsFromText(rawContent);
+                    }
+                    const eventType = pendingMatch
+                        ? pendingMatch[1]
+                        : (/video_task_submitted/i.test(rawContent) ? 'video_task_submitted' : 'image_task_submitted');
                     return {
                         _uid: generateMsgUid(),
                         _dbMessageId: h.message_id || null,  // 保存数据库消息 ID，用于后续替换
@@ -3504,8 +3753,8 @@
                         content: rawContent,
                         timestamp: h.timestamp,
                         _isPendingTask: true,
-                        _taskType: pendingMatch[1] === 'image_task_submitted' ? 'image' : 'video',
-                        _projectIds: (function() { try { return JSON.parse(pendingMatch[2]); } catch(e) { return []; } })()
+                        _taskType: eventType === 'image_task_submitted' ? 'image' : 'video',
+                        _projectIds: Array.isArray(projectIds) ? projectIds : []
                     };
                 }
                 // 处理 verification 消息：还原为前端渲染格式
@@ -3522,6 +3771,7 @@
                             isVerification: true,
                             verificationOptions: vData.options || [],
                             verificationId: vData.verification_id || null,
+                            verificationType: vData.verification_type || '',
                             verificationStatus: vData.status || h.verification_status || null
                         };
                     }
@@ -3567,7 +3817,7 @@
                     const vidMatches = [...finalContent.matchAll(vidTagRegex)];
                     finalContent = finalContent.replace(/\[视频\d+]（URL:[\s\S]*?）\n?/g, '');
                     for (const vm of vidMatches) {
-                        finalContent += `\n\n<video src="${escapeHtml(vm[1])}" style="max-height:160px;border-radius:8px;" controls preload="metadata"></video>`;
+                        finalContent += `\n\n<video src="${escapeHtml(proxyDownloadUrl(vm[1]))}" style="max-height:160px;border-radius:8px;" controls preload="metadata"></video>`;
                     }
 
                     // 提取音频标签 → <audio>
@@ -3575,7 +3825,7 @@
                     const audMatches = [...finalContent.matchAll(audTagRegex)];
                     finalContent = finalContent.replace(/\[音频\d+]（URL:[\s\S]*?）\n?/g, '');
                     for (const am of audMatches) {
-                        finalContent += `\n\n<audio src="${escapeHtml(am[1])}" controls preload="metadata" style="width:100%;max-height:40px;border-radius:8px;"></audio>`;
+                        finalContent += `\n\n<audio src="${escapeHtml(proxyDownloadUrl(am[1]))}" controls preload="metadata" style="width:100%;max-height:40px;border-radius:8px;"></audio>`;
                     }
 
                     // 清除多余空行
@@ -3583,8 +3833,8 @@
                     for (let imgIdx = 0; imgIdx < images.length; imgIdx++) {
                         const imgUrl = images[imgIdx];
                         // 优先使用原始 HTTP URL，避免传递 base64 data URL
-                        const fullUrl = originalUrlMap[imgUrl] || imgUrl;
-                        const displayUrl = thumbnailMap[imgIdx] || fullUrl;
+                        const fullUrl = proxyImageUrl(originalUrlMap[imgUrl] || imgUrl);
+                        const displayUrl = proxyImageUrl(thumbnailMap[imgIdx] || originalUrlMap[imgUrl] || imgUrl);
                         finalContent += `\n\n<img src="${escapeHtml(displayUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(fullUrl)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('reference_image_alt')}">`;
                     }
                     if (h.role === 'user' && window.AgentMessageDedupe?.formatAgentUserMessageForDisplay) {
@@ -3606,8 +3856,8 @@
                 if (imageUrlMatches.length > 0) {
                     renderedContent = renderedContent.replace(/\[图片\d+]（URL:[\s\S]*?）\n?/g, '');
                     for (const m of imageUrlMatches) {
-                        const fullUrl = m[1];
-                        const thumbUrl = m[2] || fullUrl;
+                        const fullUrl = proxyImageUrl(m[1]);
+                        const thumbUrl = proxyImageUrl(m[2] || m[1]);
                         renderedContent += `\n\n<img src="${escapeHtml(thumbUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(fullUrl)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('reference_image_alt')}">`;
                     }
                 }
@@ -3618,7 +3868,7 @@
                 if (videoUrlMatches.length > 0) {
                     renderedContent = renderedContent.replace(/\[视频\d+]（URL:[\s\S]*?）\n?/g, '');
                     for (const m of videoUrlMatches) {
-                        const videoUrl = m[1];
+                        const videoUrl = proxyDownloadUrl(m[1]);
                         renderedContent += `\n\n<video src="${escapeHtml(videoUrl)}" style="max-height:160px;border-radius:8px;" controls preload="metadata"></video>`;
                     }
                 }
@@ -3629,7 +3879,7 @@
                 if (audioUrlMatches.length > 0) {
                     renderedContent = renderedContent.replace(/\[音频\d+]（URL:[\s\S]*?）\n?/g, '');
                     for (const m of audioUrlMatches) {
-                        const audioUrl = m[1];
+                        const audioUrl = proxyDownloadUrl(m[1]);
                         renderedContent += `\n\n<audio src="${escapeHtml(audioUrl)}" controls preload="metadata" style="width:100%;max-height:40px;border-radius:8px;"></audio>`;
                     }
                 }
@@ -3827,10 +4077,9 @@
                 const history = await loadSessionHistory(sessionId);
                 messages.value = normalizeLoadedMessages(history.filter(filterHistoryMessage).map(parseHistoryMessage));
                 restorePendingVerificationFromHistory(history);
-                recoverVideoTasksFromAssistantMessages();
-
-                // 恢复活跃任务（从历史中的 __PENDING_TASK__ 标记恢复）
+                // 先按 pending 标记恢复轮询，避免工作总结兜底再插一条重复的「生成中」
                 await recoverPendingTasks(sessionId);
+                recoverVideoTasksFromAssistantMessages();
 
                 // 恢复活跃 Agent 任务流（AI 正在回复时切换对话的场景）
                 const activeTaskId = sessionActiveTaskId[sessionId];
@@ -4085,6 +4334,7 @@
                 // 加载算力余额并启动定时刷新
                 await loadComputingPower();
                 startComputingPowerRefresh();
+                await loadPowerConfirmSettings();
 
                 // 从后端加载会话列表
                 const backendSessions = await loadSessionsFromBackend();
@@ -4097,8 +4347,8 @@
                     if (history.length > 0) {
                         messages.value = normalizeLoadedMessages(history.filter(filterHistoryMessage).map(parseHistoryMessage));
                         restorePendingVerificationFromHistory(history);
-                        recoverVideoTasksFromAssistantMessages();
                         await recoverPendingTasks(latestSession.id);
+                        recoverVideoTasksFromAssistantMessages();
                     }
                 } else {
                     // 没有历史会话，自动新建一个
@@ -4343,6 +4593,7 @@
                         desc: opt.label,
                         key: opt.key,
                         value: opt.value,
+                        short_key: opt.short_key || opt.value,
                         supportedImageModes: opt.supportedImageModes || ['first_last_frame']
                     }));
 
@@ -4505,16 +4756,19 @@
             // 加载 LLM 模型列表
             async function loadLLMModels() {
                 try {
-                    const response = await fetch('/api/models');
+                    const response = await fetch('/api/models?scene=llm.marketing');
                     const data = await response.json();
                     if (data.success && data.models) {
+                        llmCatalog.value = data.catalog || null;
                         allLLMModels.value = data.models.map(m => ({
                             id: m.model_id,
                             name: m.name,
                             vendor: m.vendor_name,
                             vendor_id: m.vendor_id,
                             supportsVl: m.supports_vl || false,
-                            supportsThinking: m.supports_thinking || false
+                            supportsThinking: m.supports_thinking || false,
+                            track: m.track || null,
+                            is_default_route: !!m.is_default_route,
                         }));
                         // 恢复用户保存的 LLM 模型偏好
                         const savedLLMModelId = localStorage.getItem('marketing_selected_llm_model_id');
@@ -4538,13 +4792,32 @@
                                 console.log('[初始化] 恢复用户偏好 LLM 模型:', savedModel.name);
                             }
                         }
-                        // 如果没有恢复成功，默认选中火山引擎的 doubao-seed-2-0-lite，如果没有则选第一个
                         if (!selectedLLMModel.value && allLLMModels.value.length > 0) {
-                            const doubaoModel = pickPreferredLLMModel(
-                                allLLMModels.value.filter(m => m.name === 'doubao-seed-2-0-lite')
-                            );
-                            // 最后选择第一个模型
-                            selectedLLMModel.value = doubaoModel || allLLMModels.value[0];
+                            let preferred = null;
+                            if (window.ModelCatalog) {
+                                const collapsed = window.ModelCatalog.collapseLlmModels(
+                                    allLLMModels.value.map((m) => ({
+                                        ...m,
+                                        vendor_name: m.vendor,
+                                        model_id: m.id,
+                                    })),
+                                    'llm.marketing',
+                                    llmCatalog.value,
+                                );
+                                const route = window.ModelCatalog.findCollapsedByTrack(collapsed, 'value')?.defaultRoute;
+                                if (route) {
+                                    preferred = allLLMModels.value.find((m) => (
+                                        m.name === (route.name || route.model)
+                                        && String(m.vendor_id || '') === String(route.vendor_id || '')
+                                    ));
+                                }
+                            }
+                            if (!preferred) {
+                                preferred = pickPreferredLLMModel(
+                                    allLLMModels.value.filter(m => m.name === 'doubao-seed-2-0-lite')
+                                );
+                            }
+                            selectedLLMModel.value = preferred || allLLMModels.value[0];
                         }
                         console.log('[LLM] 加载了', allLLMModels.value.length, '个 LLM 模型');
                     }
@@ -6121,11 +6394,61 @@
 
             function modelForMediaSlot(slot, models) {
                 const taskId = mediaPreferenceProfiles.value?.[slot]?.task_id;
-                if (!taskId || !window.TaskConfig?.getTaskById) return null;
-                const task = window.TaskConfig.getTaskById(taskId);
-                return task?.key
-                    ? models.find(m => m.key === task.key || task.key.startsWith(m.key + '_')) || null
+                if (taskId && window.TaskConfig?.getTaskById) {
+                    const task = window.TaskConfig.getTaskById(taskId);
+                    const saved = task?.key
+                        ? models.find(m => m.key === task.key || task.key.startsWith(m.key + '_')) || null
+                        : null;
+                    if (saved) return saved;
+                }
+                if (window.ModelCatalog) {
+                    return window.ModelCatalog.findTaskByTrack(models, slot, null, 'value') || null;
+                }
+                return null;
+            }
+
+            function findVideoModelInList(list, keyOrName) {
+                if (!keyOrName || !Array.isArray(list)) return null;
+                return list.find((item) =>
+                    item.key === keyOrName
+                    || item.short_key === keyOrName
+                    || item.value === keyOrName
+                    || item.name === keyOrName
+                ) || null;
+            }
+
+            function modelSupportsReferenceSlot(model) {
+                if (!model) return false;
+                const task = window.TaskConfig?.getTaskByKey
+                    ? window.TaskConfig.getTaskByKey(model.key || model.short_key || model.value)
                     : null;
+                if (task?.supports_video_clone === true || task?.supports_ref_audio_video === true) {
+                    return true;
+                }
+                const modes = model.supportedImageModes || task?.supported_image_modes || [];
+                return Array.isArray(modes) && modes.includes('multi_reference');
+            }
+
+            function pickModelForVideoSlot(slot, list) {
+                const current = findVideoModelInList(list, selectedVideoModelKey.value)
+                    || findVideoModelInList(list, selectedVideoModelName.value);
+                if (slot === 'video.reference_to_video') {
+                    if (modelSupportsReferenceSlot(current)) return current;
+                    const currentTask = current && window.TaskConfig?.getTaskByKey
+                        ? window.TaskConfig.getTaskByKey(current.key || current.short_key || current.value)
+                        : null;
+                    const currentKey = currentTask?.key || current?.key || '';
+                    if (currentKey === 'minimax_h3_image_to_video' || current?.short_key === 'minimax_h3') {
+                        const h3r2v = list.find((item) =>
+                            item.key === 'minimax_h3_reference_to_video' || item.short_key === 'minimax_h3_r2v'
+                        );
+                        if (h3r2v) return h3r2v;
+                    }
+                } else if (current) {
+                    const modes = current.supportedImageModes || [];
+                    if (!modes.length || modes.includes('first_last_frame')) return current;
+                }
+                return modelForMediaSlot(slot, list);
             }
 
             async function syncMediaPreference(mediaType, mode, taskId, profile = {}) {
@@ -6202,7 +6525,9 @@
                     const isImg2Vid = hasUploadedImage.value;
                     const category = isImg2Vid ? 'image_to_video' : 'text_to_video';
                     const taskId = window.TaskConfig?.getTaskIdByKey
-                        ? window.TaskConfig.getTaskIdByKey(model.key, category)
+                        ? (window.TaskConfig.getTaskIdByKey(model.key, category)
+                            || window.TaskConfig.getTaskIdByKey(model.key)
+                            || window.TaskConfig.getTaskIdByKey(model.short_key || model.value, category))
                         : null;
                     if (!taskId || !userId.value || !worldId.value) return;
                     const valid_image_urls = isImg2Vid && uploadedImageUrl.value ? [uploadedImageUrl.value] : [];
@@ -6213,7 +6538,21 @@
                     const mode = !isImg2Vid
                         ? 'text_to_video'
                         : (isReferenceMode ? 'reference_to_video' : 'image_to_video');
-                    await syncMediaPreference('video', mode, taskId, video_prefs);
+                    // 界面只显示一个模型，偏好要同时写入兼容的参考生视频槽，避免克隆仍用默认 H3
+                    const task = window.TaskConfig?.getTaskById ? window.TaskConfig.getTaskById(taskId) : null;
+                    const modesToSync = new Set([mode]);
+                    if (task?.supports_video_clone || task?.supports_ref_audio_video || modelSupportsReferenceSlot(model)) {
+                        modesToSync.add('reference_to_video');
+                    }
+                    if ((task?.supported_image_modes || model.supportedImageModes || []).includes('first_last_frame')) {
+                        modesToSync.add('image_to_video');
+                    }
+                    if (task?.category === 'text_to_video' || (task?.categories || []).includes('text_to_video')) {
+                        modesToSync.add('text_to_video');
+                    }
+                    for (const syncMode of modesToSync) {
+                        await syncMediaPreference('video', syncMode, taskId, video_prefs);
+                    }
                     const resp = await fetch('/api/video-model', {
                         method: 'POST',
                         headers: {
@@ -6379,7 +6718,7 @@
                     const slot = ['multi_reference', 'first_last_with_ref'].includes(videoImageMode.value)
                         ? 'video.reference_to_video'
                         : 'video.image_to_video';
-                    let m = modelForMediaSlot(slot, list);
+                    let m = pickModelForVideoSlot(slot, list);
                     try {
                         if (!m && userId.value && worldId.value) {
                             const resp = await fetch(`/api/video-model?category=image_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
@@ -6435,7 +6774,7 @@
                     const slot = ['multi_reference', 'first_last_with_ref'].includes(newMode)
                         ? 'video.reference_to_video'
                         : 'video.image_to_video';
-                    const preferred = modelForMediaSlot(slot, allImageToVideoModels.value);
+                    const preferred = pickModelForVideoSlot(slot, allImageToVideoModels.value);
                     if (preferred) {
                         selectedVideoModelName.value = preferred.name;
                         selectedVideoModelKey.value = preferred.key || '';
@@ -6509,7 +6848,8 @@
                 assetsTotalPages,
                 loadAssets,
                 isAssetVideo,
-                verticalVideoAspectRatio,
+                assetPreviewStyle,
+                applyAssetVideoAspect,
                 formatAssetType,
                 formatAssetDate,
                 useAssetForVideo,
@@ -6565,6 +6905,12 @@
                 toggleModelPanel,
                 toggleRatioPanel,
                 toggleSettingsPanel,
+                powerConfirmThresholdInput,
+                powerConfirmDefault,
+                powerConfirmIsCustom,
+                savePowerConfirmThreshold,
+                resetPowerConfirmThreshold,
+                verificationOptionClass,
                 toggleModelSelect,
                 toggleLLMModelSelect,
                 showMobileToolbar,
@@ -6647,6 +6993,7 @@
                 sendVideoRequest,
                 processFace,
                 currentVideoModelNeedsFaceMask,
+                isSeedance25FollowReferenceVideo,
                 isEnterprise,
                 startVideoStatusCheck,
                 clearVideoStatusCheck,
@@ -6676,10 +7023,13 @@
                 triggerMention,
                 // LLM 模型相关
                 allLLMModels,
+                visibleLLMModels,
+                currentLLMTrack,
                 selectedLLMModel,
                 selectedLLMModelKey,
                 showLLMModelSelect,
                 selectLLMModel,
+                selectLLMTrack,
                 getLLMModelSelectionKey,
                 loadLLMModels,
                 // Verification（ask_user 交互）

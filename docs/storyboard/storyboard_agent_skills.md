@@ -38,7 +38,9 @@ Authorization: Bearer <auth_token>
 
 ## 固定入口
 
-`storyboard-agent-api/v1` 的固定入口如下：
+> 注意：`api_version = storyboard-agent-api/v1` 是**版本标签，不是 URL 前缀**。所有接口路径都以 `/api/` 开头，请勿在路径前拼接 `storyboard-agent-api/v1`（拼接会得到误导性的 404/405，而非真实 API）。
+
+`storyboard-agent-api/v1` 的固定入口如下（均以 `/api/` 开头）：
 
 ```text
 POST /api/agent-auth/exchange

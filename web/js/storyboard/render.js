@@ -8,11 +8,14 @@ import state, {
     isRenderableMediaUrl,
     getSelectedVideoModel,
     getSelectedImageToVideoModel,
+    getImageToVideoSlotModels,
+    getReferenceToVideoSlotModels,
     modelNeedsFaceMask,
     isEnterpriseEdition,
     getVideoSupportedDurations,
     resolveVideoDurationSeconds,
     getVideoResolutionOptions,
+    getDefaultVideoResolution,
     getAgentChatFontSizes,
     AGENT_CHAT_FONT_STEP_MIN,
     AGENT_CHAT_FONT_STEP_MAX,
@@ -21,7 +24,18 @@ import state, {
 } from './state.js';
 import { characterReferenceSelectionKey, formatDuration, mapAssetAvatar } from './adapters.js';
 import { icon } from './icons.js';
-import { t as i18nT } from './utils.js';
+import {
+    t as i18nT,
+    EMO_VEC_LABELS,
+    EMO_VEC_MAX_SUM,
+    EMO_VEC_MAX_EACH,
+    EMO_VEC_COLORS,
+    formatEmoVecSummary,
+    getEmoVecActiveDims,
+    isAudioRunningStatus,
+    isAudioFailedStatus,
+    parseEmoVec,
+} from './utils.js';
 import {
     getAutoCompleteButtonViewModel,
     getAutoCompleteSummary,
@@ -409,7 +423,7 @@ function digitalHumanAudioHint(scene) {
         return {
             label: '配音已就绪',
             cssClass: 'ready',
-            title: '对口型分镜配音已完成，可以生成 LTX2.3 数字人视频',
+            title: '对口型分镜配音已完成，可以生成 MiniMax H3 数字人视频',
         };
     }
 
@@ -422,14 +436,14 @@ function digitalHumanAudioHint(scene) {
         return {
             label: '配音生成中',
             cssClass: 'running',
-            title: '对口型分镜的配音正在生成，完成后即可生成 LTX2.3 数字人视频',
+            title: '对口型分镜的配音正在生成，完成后即可生成 MiniMax H3 数字人视频',
         };
     }
 
     return {
         label: '需先配音',
         cssClass: 'missing',
-        title: '对口型分镜：请先在对话 Tab 生成配音，再生成 LTX2.3 数字人视频',
+        title: '对口型分镜：请先在对话 Tab 生成配音，再生成 MiniMax H3 数字人视频',
     };
 }
 
@@ -440,7 +454,7 @@ export function updateDigitalHumanAudioHint(scene) {
     const hint = digitalHumanAudioHint(scene);
     element.className = `ai-dh-hint ${hint.cssClass}`;
     element.title = hint.title;
-    element.textContent = `对口型 · LTX2.3 · ${hint.label}`;
+    element.textContent = `对口型 · MiniMax H3 · ${hint.label}`;
     return true;
 }
 
@@ -599,7 +613,7 @@ function renderFirstFrameStatusMark(scene) {
 
 function renderVideoTypeBadge(scene) {
     if (!isDigitalHumanScene(scene)) return '';
-    return `<span class="scene-video-type-badge digital-human" title="对口型（LTX2.3，需先配音）">对口型</span>`;
+    return `<span class="scene-video-type-badge digital-human" title="对口型（MiniMax H3，需先配音）">对口型</span>`;
 }
 
 function renderTimelineMediaFrame(scene) {
@@ -818,26 +832,48 @@ function formatPowerDisplay(power) {
     return String(power);
 }
 
-// Header 常驻「拆分中」徽章：拆分任务活跃且进度弹窗已最小化时显示，点击重新打开弹窗
+function isEmptyStoryboard() {
+    return !Array.isArray(state.scenes) || state.scenes.length === 0;
+}
+
+function hasActiveScriptSplit() {
+    return Boolean(state.generateFromScriptTaskId || state.isGeneratingFromScript);
+}
+
+/** 空故事板且拆分弹窗已关、无进行中任务时，右上角显示「开始拆分」 */
+function canShowStartSplitEntry() {
+    return isEmptyStoryboard()
+        && !hasActiveScriptSplit()
+        && !state.showGenerateFromScriptDialog
+        && !state.ratioGateActive;
+}
+
+// Header 拆分入口：进行中显示进度徽章；空板且弹窗已关时显示「开始拆分」
 function renderHeaderSplitBadge() {
-    // 仅当有活跃拆分任务、且进度弹窗已关闭时显示
-    if (!state.generateFromScriptTaskId) return '';
-    if (state.showGenerateProgressDialog) return '';
-    const rawPct = Number(state.generateProgressPercent);
-    const pct = Number.isFinite(rawPct) ? Math.round(Math.max(0, Math.min(100, rawPct))) : 0;
-    const errored = Boolean(state.generateProgressError);
-    const iconHtml = errored
-        ? icon('stop', 14)
-        : `<span class="spinner mini">${icon('loading', 14)}</span>`;
-    const label = errored ? '拆分待处理' : `拆分中 ${pct}%`;
-    const title = errored
-        ? '剧本拆分已停止，点击查看详情'
-        : '剧本拆分进行中（后台运行），点击查看进度';
-    return `
+    if (state.generateFromScriptTaskId && !state.showGenerateProgressDialog) {
+        const rawPct = Number(state.generateProgressPercent);
+        const pct = Number.isFinite(rawPct) ? Math.round(Math.max(0, Math.min(100, rawPct))) : 0;
+        const errored = Boolean(state.generateProgressError);
+        const iconHtml = errored
+            ? icon('stop', 14)
+            : `<span class="spinner mini">${icon('loading', 14)}</span>`;
+        const label = errored ? '拆分待处理' : `拆分中 ${pct}%`;
+        const title = errored
+            ? '剧本拆分已停止，点击查看详情'
+            : '剧本拆分进行中（后台运行），点击查看进度';
+        return `
         <button type="button" class="header-split-badge ${errored ? 'is-errored' : ''}"
             data-action="reopen-generate-progress" title="${escapeHtml(title)}">
             ${iconHtml}
             <span class="header-split-badge-label">${escapeHtml(label)}</span>
+        </button>`;
+    }
+    if (!canShowStartSplitEntry()) return '';
+    return `
+        <button type="button" class="header-split-badge header-start-split"
+            data-action="open-generate-from-script" title="根据本集剧本拆分并生成分镜">
+            ${icon('wand', 14)}
+            <span class="header-split-badge-label">开始拆分</span>
         </button>`;
 }
 
@@ -1041,6 +1077,52 @@ function renderDialogueAudioSource(scene) {
         </section>`;
 }
 
+function renderDialogueEmoSummary(d) {
+    const summary = formatEmoVecSummary(d.emoVec);
+    const has = summary !== '未设置';
+    // 数字放 tooltip，按钮上只用彩色小条展示各维度强弱，避免截断
+    const bars = has ? getEmoVecActiveDims(d.emoVec).map(({ index, value }) => {
+        const h = Math.max(3, Math.round((value / EMO_VEC_MAX_EACH) * 12));
+        return `<span class="emo-bar" style="height:${h}px;background:${EMO_VEC_COLORS[index]}"></span>`;
+    }).join('') : '';
+    return `
+        <button type="button" class="tool-button dialogue-emo-btn ${has ? 'has-emo' : ''}"
+            data-action="edit-dialogue-emo-vec" data-dialogue-id="${d.id}"
+            title="${has ? `配音情感向量：${escapeHtml(summary)}（点击编辑）` : '查看/编辑配音情感向量'}">
+            ${icon('music', 14)} 情感${has ? `<span class="emo-bars" aria-hidden="true">${bars}</span>` : ''}
+        </button>`;
+}
+
+// 配音音频区：生成中显示不确定进度条；设置变更后标记旧配音；失败给出重试提示。
+// 需在 renderDialoguePanel 与 renderDialogueRowOuter 两处行模板中保持一致使用。
+function renderDialogueAudioBlock(d) {
+    const running = isAudioRunningStatus(d.audioStatus);
+    const failed = !running && isAudioFailedStatus(d.audioStatus);
+    const stale = !running && !failed && Boolean(d.audioStale && d.audioUrl);
+    const audioHtml = d.audioUrl
+        ? `<audio src="${escapeHtml(d.audioUrl)}" controls class="dialogue-audio ${running || stale ? 'is-stale' : ''}"></audio>`
+        : '';
+    let statusHtml = '';
+    if (running) {
+        statusHtml = `
+            <div class="dialogue-audio-progress">
+                <span class="dialogue-audio-progress-label">${d.audioUrl ? '正在生成新配音…（下方播放的仍是旧配音）' : '配音生成中…'}</span>
+                <span class="dialogue-audio-progress-track"><span class="dialogue-audio-progress-thumb"></span></span>
+            </div>`;
+    } else if (failed) {
+        statusHtml = `<div class="dialogue-audio-note failed">配音生成失败${d.audioError ? `：${escapeHtml(d.audioError)}` : ''}，请点击「生成配音」重试</div>`;
+    } else if (stale) {
+        statusHtml = `<div class="dialogue-audio-note stale">台词/情感已修改，当前播放的是旧配音；点击「生成配音」更新</div>`;
+    }
+    return `${statusHtml}${audioHtml}`;
+}
+
+// 生成配音按钮：任务进行中禁用并显示「生成中…」，由轮询更新行后恢复。
+function renderGenerateVoiceoverBtn(d) {
+    const running = isAudioRunningStatus(d.audioStatus);
+    return `<button class="tool-button" data-action="generate-voiceover" data-dialogue-id="${d.id}" ${running ? 'disabled' : ''}>${icon('mic', 14)} ${running ? '生成中…' : '生成配音'}</button>`;
+}
+
 function renderDialoguePanel(scene) {
     const rows = (scene.dialogues || []).map(d => {
         const characterOptions = '<option value="">旁白</option>' + state.characters.map(c =>
@@ -1054,9 +1136,10 @@ function renderDialoguePanel(scene) {
                     <label class="meta-field">语速<input type="number" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
                     <label class="meta-field">音量<input type="number" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
                 </div>
-                ${d.audioUrl ? `<audio src="${escapeHtml(d.audioUrl)}" controls class="dialogue-audio"></audio>` : ''}
+                ${renderDialogueAudioBlock(d)}
                 <div class="dialogue-actions">
-                    <button class="tool-button" data-action="generate-voiceover" data-dialogue-id="${d.id}">${icon('mic', 14)} 生成配音</button>
+                    ${renderDialogueEmoSummary(d)}
+                    ${renderGenerateVoiceoverBtn(d)}
                     <button class="tool-button" data-action="save-dialogue" data-dialogue-id="${d.id}">${icon('success', 14)} 保存</button>
                     <button class="tool-button" data-action="delete-dialogue" data-dialogue-id="${d.id}">${icon('delete', 14)}</button>
                 </div>
@@ -1085,7 +1168,14 @@ function renderTabs(scene) {
                     <button type="button" class="btn-primary" data-action="reopen-generate-progress">查看拆分进度</button>
                 </div>`;
         }
-        return '<div class="empty-note">暂无分镜。可以从底部添加一个新分镜。</div>';
+        const startSplit = canShowStartSplitEntry()
+            ? `<button type="button" class="btn-primary" data-action="open-generate-from-script">开始拆分</button>`
+            : '';
+        return `
+            <div class="empty-note storyboard-start-split">
+                <p>暂无分镜。可以从底部添加一个新分镜，或根据本集剧本自动拆分。</p>
+                ${startSplit}
+            </div>`;
     }
     if (state.activeTab === 'dialogue') {
         return renderDialoguePanel(scene);
@@ -1324,13 +1414,13 @@ function renderAiPanel() {
 
     const isVideo = isVideoMode;
     const isDhScene = isDigitalHumanScene(currentScene);
-    // 对口型 + 直连「视频生成」：提示词/模型由服务端规划（台词或默认提示词、固定 LTX2.3 路由），不渲染提示词文本框
+    // 对口型 + 直连「视频生成」：提示词/模型由服务端规划（默认动作句、固定 MiniMax H3），不渲染提示词文本框
     const isDhDirectVideo = state.chatMode === 'video' && isDhScene;
-    // 对口型不展示图生视频的首尾帧/参考图模式切换，固定 LTX2.3 链路
+    // 对口型不展示图生视频的首尾帧/参考图模式切换，固定 MiniMax H3 链路
     const videoModeSelector = isVideo && !isDhScene && !isAiVideoLocked ? renderVideoModeSelector(disabled) : '';
     const dhAudioHint = isVideo && !isAiVideoLocked && isDhScene ? digitalHumanAudioHint(currentScene) : null;
     const dhHint = dhAudioHint
-        ? `<div class="ai-dh-hint ${dhAudioHint.cssClass}" title="${escapeHtml(dhAudioHint.title)}">对口型 · LTX2.3 · ${escapeHtml(dhAudioHint.label)}</div>`
+        ? `<div class="ai-dh-hint ${dhAudioHint.cssClass}" title="${escapeHtml(dhAudioHint.title)}">对口型 · MiniMax H3 · ${escapeHtml(dhAudioHint.label)}</div>`
         : '';
     const historyOpen = state.agentChatHistoryOpen !== false;
     const msgCount = (state.agentMessages || []).length;
@@ -1457,6 +1547,16 @@ function renderInsertSceneSlot(prevScene, nextScene, mode) {
     const prevId = prevScene.id;
     const nextId = nextScene.id;
     const className = mode === 'grid' ? 'grid-insert-slot' : 'scene-timeline-insert-slot';
+    // 智能插入进行中：按钮转为加载态（旋转圈），配合 in-flight 守卫防止用户连点
+    if (state.isSmartInserting) {
+        return `
+        <button
+            class="${className} inserting"
+            disabled
+            title="AI 正在生成新分镜…"
+            aria-label="AI 正在生成新分镜"
+        ><span class="insert-spinner"></span></button>`;
+    }
     const label = '在此处添加分镜';
     return `
         <button
@@ -1798,21 +1898,80 @@ function renderRechargeDialog() {
         </div>`;
 }
 
+function renderLlmOptionsHtml(models, selected, isSelectedFn, scene) {
+    const catalogApi = window.ModelCatalog;
+    const collapsed = catalogApi
+        ? catalogApi.collapseLlmModels(models, scene, state.llmCatalog)
+        : [];
+    let html = '';
+    const writeOption = (model, labelOverride) => {
+        const val = model.model || model.name || model.id || '';
+        const label = labelOverride || model.name || model.model || val;
+        const modelId = model.model_id || model.id || '';
+        const vendorId = model.vendor_id || '';
+        const vendorName = model.vendor_name || '';
+        const supportsThinking = model.supports_thinking === true || model.supports_thinking === 1 || model.supports_thinking === 'true' ? 'true' : 'false';
+        const sel = isSelectedFn(model) ? 'selected' : '';
+        html += `<option value="${escapeHtml(val)}" data-model-id="${escapeHtml(String(modelId))}" data-vendor-id="${escapeHtml(String(vendorId))}" data-vendor-name="${escapeHtml(vendorName)}" data-supports-thinking="${supportsThinking}" ${sel}>${escapeHtml(label)}</option>`;
+    };
+    if (collapsed.length) {
+        const featured = collapsed.filter((item) => item.track === 'value' || item.track === 'quality');
+        if (featured.length) {
+            html += '<optgroup label="推荐">';
+            featured.forEach((item) => {
+                const badge = item.track === 'value' ? '性价比' : '效果';
+                writeOption(item.defaultRoute || item.routes[0], `${item.name}（${badge}）`);
+            });
+            html += '</optgroup>';
+        }
+        const families = {};
+        collapsed.forEach((item) => {
+            if (item.track === 'value' || item.track === 'quality') return;
+            const family = item.family || '其它';
+            if (!families[family]) families[family] = [];
+            families[family].push(item);
+        });
+        Object.keys(families).forEach((family) => {
+            html += `<optgroup label="${escapeHtml(family)}">`;
+            families[family].forEach((item) => writeOption(item.defaultRoute || item.routes[0]));
+            html += '</optgroup>';
+        });
+        const extras = [];
+        collapsed.forEach((item) => {
+            const def = item.defaultRoute;
+            (item.routes || []).forEach((route) => {
+                if (!def) return;
+                if (String(route.vendor_id) === String(def.vendor_id)
+                    && String(route.model_id || route.id) === String(def.model_id || def.id)) return;
+                extras.push(route);
+            });
+        });
+        if (extras.length) {
+            html += '<optgroup label="换供应商">';
+            extras.forEach((route) => writeOption(route, `${route.name || route.model}（${route.vendor_name}）`));
+            html += '</optgroup>';
+        }
+        return html;
+    }
+    models.forEach((m) => writeOption(m));
+    return html;
+}
+
+function renderTrackToggleHtml(scene, selectedModel, target) {
+    const catalogApi = window.ModelCatalog;
+    const name = selectedModel?.model || selectedModel?.name || '';
+    const track = catalogApi ? catalogApi.inferTrack(scene, name, state.llmCatalog) : 'custom';
+    return `
+        <div class="model-track-toggle" role="group" aria-label="模型档位">
+            <button type="button" class="model-track-btn ${track === 'value' ? 'is-active' : ''}"
+                data-action="set-model-track" data-track="value" data-scene="${escapeHtml(scene)}" data-target="${escapeHtml(target)}">性价比</button>
+            <button type="button" class="model-track-btn ${track === 'quality' ? 'is-active' : ''}"
+                data-action="set-model-track" data-track="quality" data-scene="${escapeHtml(scene)}" data-target="${escapeHtml(target)}">效果</button>
+        </div>`;
+}
+
 function renderScriptSplitModelConfig(disabled = false) {
-    const vendors = state.llmVendors || [];
     const models = state.llmModels || [];
-    const vendorMap = {};
-    vendors.forEach(v => {
-        vendorMap[v.id || v.vendor_name] = v;
-    });
-
-    const groups = {};
-    models.forEach(m => {
-        const vid = m.vendor_id || m.vendor_name || 'unknown';
-        if (!groups[vid]) groups[vid] = [];
-        groups[vid].push(m);
-    });
-
     const selected = state.selectedScriptSplitLlmModel || state.selectedLlmModel;
     const isSelectedScriptSplitModel = (model) => {
         if (!selected) return false;
@@ -1831,31 +1990,16 @@ function renderScriptSplitModelConfig(disabled = false) {
         return String(selected) === String(val);
     };
 
-    let html = '<label class="config-label">拆分剧本模型</label><div class="config-hint">用于把剧本拆成分镜、画面提示词和对话数据</div><div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="scriptSplit"';
+    let html = '<label class="config-label">拆分剧本模型</label><div class="config-hint">用于把剧本拆成分镜、画面提示词和对话数据</div>';
+    html += renderTrackToggleHtml('llm.script_split', selected, 'scriptSplit');
+    html += '<div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="scriptSplit"';
     if (disabled) html += ' disabled';
     html += '>';
-    const vendorKeys = Object.keys(groups);
-    if (vendorKeys.length === 0) {
+    if (!models.length) {
         html += '<option value="">暂无可用模型</option></select></div>';
         return html;
     }
-
-    vendorKeys.forEach(vid => {
-        const v = vendorMap[vid] || { vendor_name: vid };
-        const iconStr = v.icon || '🤖';
-        const vendorNameAttr = escapeHtml(v.vendor_name || vid);
-        html += `<optgroup label="${iconStr} ${vendorNameAttr}">`;
-        groups[vid].forEach(m => {
-            const val = m.model || m.name || m.id || '';
-            const label = m.name || m.model || val;
-            const modelId = m.model_id || m.id || '';
-            const vendorId = m.vendor_id || '';
-            const supportsThinking = m.supports_thinking === true || m.supports_thinking === 1 || m.supports_thinking === 'true' ? 'true' : 'false';
-            const sel = isSelectedScriptSplitModel(m) ? 'selected' : '';
-            html += `<option value="${escapeHtml(val)}" data-model-id="${escapeHtml(modelId)}" data-vendor-id="${escapeHtml(vendorId)}" data-vendor-name="${vendorNameAttr}" data-supports-thinking="${supportsThinking}" ${sel}>${escapeHtml(label)}</option>`;
-        });
-        html += '</optgroup>';
-    });
+    html += renderLlmOptionsHtml(models, selected, isSelectedScriptSplitModel, 'llm.script_split');
     html += '</select></div>';
     html += renderThinkingControls(state.selectedScriptSplitLlmModel || state.selectedLlmModel);
     return html;
@@ -1959,7 +2103,7 @@ function renderGenerateFromScriptDialog() {
     if (!state.showGenerateFromScriptDialog) return '';
     const busy = state.isGeneratingFromScript;
     const splitModelConfig = renderScriptSplitModelConfig(busy);
-    const imageModelConfig = renderImageModelConfig(busy);
+    const imageModelConfig = renderImageModelConfig(busy, { collapseTextToImage: true });
     const videoModelConfig = renderDefaultVideoModelConfig(busy);
     const splitDurationConfig = renderScriptSplitDuration(busy);
     const splitOptionsConfig = renderScriptSplitOptions(busy);
@@ -2022,10 +2166,10 @@ function renderGenerateFromScriptDialog() {
                         <div class="generate-from-script-model">
                             ${videoModelConfig}
                         </div>
-                        ${splitDurationConfig}
                     </div>
                     <div class="gfs-col">
                         ${splitOptionsConfig}
+                        ${splitDurationConfig}
                     </div>
                     <div class="gfs-mode-section">
                         <div class="generate-from-script-model">
@@ -2078,7 +2222,7 @@ function renderModelConfigModal() {
 
     return `
         <div class="modal-overlay">
-            <div class="export-dialog model-config-dialog" style="max-width: 520px;">
+            <div class="export-dialog model-config-dialog">
                 <header>
                     <h2>模型配置 - ${modeLabel}</h2>
                     <button type="button" class="model-config-close" data-action="close-model-config" aria-label="关闭模型配置" title="关闭">${icon('close', 18)}</button>
@@ -2101,25 +2245,13 @@ function renderModelConfigModal() {
 }
 
 function renderDialogueModelConfig() {
-    // 按 vendor 分组，复用 script_writer 逻辑 —— 一个 select 多个 optgroup
-    const vendors = state.llmVendors || [];
     const models = state.llmModels || [];
+    const selected = state.selectedLlmModel;
 
-    const vendorMap = {};
-    vendors.forEach(v => {
-        vendorMap[v.id || v.vendor_name] = v;
-    });
-
-    const groups = {};
-    models.forEach(m => {
-        const vid = m.vendor_id || m.vendor_name || 'unknown';
-        if (!groups[vid]) groups[vid] = [];
-        groups[vid].push(m);
-    });
-
-    let html = '<label class="config-label">对话模型</label><div class="config-hint">选择后用于对话改图等需要 LLM 的场景</div><div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="dialogue">';
-    const vendorKeys = Object.keys(groups);
-    if (vendorKeys.length === 0) {
+    let html = '<label class="config-label">对话模型</label><div class="config-hint">选择后用于对话改图等需要 LLM 的场景</div>';
+    html += renderTrackToggleHtml('llm.chat', selected, 'dialogue');
+    html += '<div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="dialogue">';
+    if (!models.length) {
         html += '<option value="">暂无对话模型</option>';
         html += '</select></div>';
         return html;
@@ -2143,22 +2275,7 @@ function renderDialogueModelConfig() {
         return String(selected) === String(val);
     };
 
-    vendorKeys.forEach(vid => {
-        const v = vendorMap[vid] || { vendor_name: vid };
-        const iconStr = v.icon || '🤖';
-        const vendorNameAttr = escapeHtml(v.vendor_name || vid);
-        html += `<optgroup label="${iconStr} ${vendorNameAttr}">`;
-        groups[vid].forEach(m => {
-            const val = m.model || m.name || m.id || '';
-            const label = m.name || m.model || val;
-            const modelId = m.model_id || m.id || '';
-            const vendorId = m.vendor_id || '';
-            const supportsThinking = m.supports_thinking === true || m.supports_thinking === 1 || m.supports_thinking === 'true' ? 'true' : 'false';
-            const sel = isSelectedDialogueModel(m) ? 'selected' : '';
-            html += `<option value="${escapeHtml(val)}" data-model-id="${escapeHtml(modelId)}" data-vendor-id="${escapeHtml(vendorId)}" data-vendor-name="${vendorNameAttr}" data-supports-thinking="${supportsThinking}" ${sel}>${escapeHtml(label)}</option>`;
-        });
-        html += `</optgroup>`;
-    });
+    html += renderLlmOptionsHtml(models, selected, isSelectedDialogueModel, 'llm.chat');
     html += `</select></div>`;
     html += renderThinkingControls(state.selectedLlmModel);
     return html;
@@ -2241,27 +2358,77 @@ function formatModelOptionLabel(m) {
 }
 
 function renderMediaModelSelect(label, hint, type, models, selectedTaskId, disabled = false) {
+    const sceneMap = {
+        textToImage: 'image.text_to_image',
+        imageEdit: 'image.image_edit',
+        textToVideo: 'video.text_to_video',
+        imageToVideo: 'video.image_to_video',
+        referenceToVideo: 'video.reference_to_video',
+    };
+    const scene = sceneMap[type] || '';
+    const selected = (models || []).find((m) => String(m.task_id) === String(selectedTaskId));
+    const catalogApi = window.ModelCatalog;
+    const track = (catalogApi && scene)
+        ? catalogApi.inferTrack(scene, selected?.short_key || selected?.canonical || selected?.name || '', state.modelCatalog || state.llmCatalog)
+        : 'custom';
     let html = `<label class="config-label">${escapeHtml(label)}</label>`
-        + `<div class="config-hint">${escapeHtml(hint)}</div>`
-        + `<div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="${type}"${disabled ? ' disabled' : ''}>`;
-    models.forEach(m => {
+        + `<div class="config-hint">${escapeHtml(hint)}</div>`;
+    if (scene) {
+        html += `
+        <div class="model-track-toggle" role="group" aria-label="模型档位">
+            <button type="button" class="model-track-btn ${track === 'value' ? 'is-active' : ''}"
+                data-action="set-media-track" data-track="value" data-scene="${scene}" data-target="${type}" ${disabled ? 'disabled' : ''}>性价比</button>
+            <button type="button" class="model-track-btn ${track === 'quality' ? 'is-active' : ''}"
+                data-action="set-media-track" data-track="quality" data-scene="${scene}" data-target="${type}" ${disabled ? 'disabled' : ''}>效果</button>
+        </div>`;
+    }
+    html += `<div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="${type}"${disabled ? ' disabled' : ''}>`;
+    const ordered = (catalogApi && scene)
+        ? catalogApi.sortTaskOptions(models || [], scene, state.modelCatalog)
+        : (models || []);
+    ordered.forEach(m => {
         const val = m.task_id;
         const sel = String(selectedTaskId) === String(val) ? 'selected' : '';
-        html += `<option value="${val}" ${sel}>${escapeHtml(formatModelOptionLabel(m))}</option>`;
+        const inferred = (catalogApi && scene)
+            ? catalogApi.inferTrack(scene, m.short_key || m.canonical || m.name || '', state.modelCatalog || state.llmCatalog)
+            : (m.track || 'custom');
+        const badge = inferred === 'value' ? '性价比' : (inferred === 'quality' ? '效果' : '');
+        const labelText = badge ? `${formatModelOptionLabel(m)}（${badge}）` : formatModelOptionLabel(m);
+        html += `<option value="${val}" ${sel}>${escapeHtml(labelText)}</option>`;
     });
     return html + '</select></div>';
 }
 
-function renderImageModelConfig(disabled = false) {
+function renderImageModelConfig(disabled = false, { collapseTextToImage = false } = {}) {
     const textModels = state.textToImageModels.length ? state.textToImageModels : state.imageModels;
     const editModels = state.imageEditModels.length ? state.imageEditModels : state.imageModels;
-    return renderMediaModelSelect(
+    const textSelect = renderMediaModelSelect(
         '文生图模型', '无参考图时使用', 'textToImage', textModels,
         state.selectedTextToImageTaskId, disabled,
-    ) + renderMediaModelSelect(
+    );
+    const editSelect = renderMediaModelSelect(
         '图片编辑模型', '有参考图或执行改图时使用', 'imageEdit', editModels,
         state.selectedImageEditTaskId, disabled,
     );
+    if (!collapseTextToImage) return textSelect + editSelect;
+
+    const open = state.scriptSplitTextToImageOpen === true;
+    const selected = textModels.find(m => String(m.task_id) === String(state.selectedTextToImageTaskId))
+        || textModels[0];
+    const summary = selected ? formatModelOptionLabel(selected) : '未选择';
+    return `
+        <div class="gfs-t2i-panel ${open ? 'is-open' : ''}">
+            <button type="button" class="gfs-t2i-toggle" data-action="toggle-script-split-t2i"
+                    aria-expanded="${open ? 'true' : 'false'}" ${disabled ? 'disabled' : ''}>
+                <span class="script-language-toggle-title">
+                    <span>文生图模型</span>
+                    <span class="script-language-summary">${escapeHtml(summary)}</span>
+                </span>
+                <span class="script-language-chevron" aria-hidden="true">▼</span>
+            </button>
+            ${open ? `<div class="gfs-t2i-body">${textSelect}</div>` : ''}
+        </div>
+    ` + editSelect;
 }
 
 /**
@@ -2288,61 +2455,66 @@ function renderFaceMaskToggle(disabled = false) {
         </div>`;
 }
 
-/** 拆分弹窗：默认视频模型（仅图生视频）+ 条件人脸遮盖 */
+/** 拆分弹窗：默认视频模型（仅首帧/首尾帧图生视频）+ 条件人脸遮盖 */
 function renderDefaultVideoModelConfig(disabled = false) {
-    const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
     return renderMediaModelSelect(
         '默认视频模型',
-        '分镜有首帧时用于生成视频的默认模型',
+        '分镜有首帧时用于生成视频；仅列出支持首帧/首尾帧的模型。参考图专用模型请到齿轮「参考视频模型」中选择',
         'imageToVideo',
-        models,
+        getImageToVideoSlotModels(),
         state.selectedImageToVideoTaskId,
         disabled,
     ) + renderFaceMaskToggle(disabled);
 }
 
-function renderVideoModelConfig() {
-    const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
-    const model = getSelectedVideoModel();
-    const scene = getCurrentScene();
-    const durations = getVideoSupportedDurations(model);
+function renderVideoResolutionChips(model, { label = '分辨率', hint = '' } = {}) {
     const resOpts = getVideoResolutionOptions(model);
-    const resolvedAuto = resolveVideoDurationSeconds(scene, model, 'auto');
+    if (!resOpts.length) return '';
+    const curRes = state.videoResolution && resOpts.some(o => o.value === state.videoResolution)
+        ? state.videoResolution
+        : (getDefaultVideoResolution(model) || resOpts[0]?.value || '');
+    let html = `<label class="config-label" style="margin-top:14px;">${escapeHtml(label)}</label>`;
+    if (hint) {
+        html += `<div class="config-hint">${escapeHtml(hint)}</div>`;
+    }
+    html += `<div class="config-chip-row">`;
+    resOpts.forEach(opt => {
+        const active = String(curRes) === String(opt.value) ? 'active' : '';
+        html += `<button type="button" class="config-chip ${active}" data-action="set-video-resolution" data-video-resolution="${escapeHtml(opt.value)}">${escapeHtml(opt.label || opt.value)}</button>`;
+    });
+    html += '</div>';
+    return html;
+}
+
+function renderVideoModelConfig() {
+    // 齿轮弹窗：分辨率绑定「图生视频模型」（分镜主路径 i2v / 对口型共用偏好），
+    // 不再用 getSelectedVideoModel()（会随输入图落到文生视频导致分辨率空白/跟错模型）。
+    const models = getImageToVideoSlotModels();
+    const i2vModel = getSelectedImageToVideoModel();
+    const scene = getCurrentScene();
+    const durations = getVideoSupportedDurations(i2vModel);
+    const resolvedAuto = resolveVideoDurationSeconds(scene, i2vModel, 'auto');
     const sceneDur = Number(scene?.duration);
     const sceneDurLabel = Number.isFinite(sceneDur) ? sceneDur.toFixed(sceneDur % 1 ? 1 : 0) : '—';
 
     const textModels = state.textToVideoModels.length ? state.textToVideoModels : state.videoModels;
-    const referenceModels = models.filter(m => {
-        const modes = m.supported_image_modes || [];
-        return modes.includes('multi_reference') || m.supports_ref_audio_video === true;
-    });
+    const referenceModels = getReferenceToVideoSlotModels();
     let html = renderMediaModelSelect(
         '文生视频模型', '无图片输入时使用', 'textToVideo', textModels,
         state.selectedTextToVideoTaskId,
     ) + renderMediaModelSelect(
-        '图生视频模型', '首帧或首尾帧输入时使用', 'imageToVideo', models,
+        '图生视频模型', '首帧或首尾帧输入时使用；对口型数字人也使用此处分辨率偏好', 'imageToVideo', models,
         state.selectedImageToVideoTaskId,
-    ) + renderFaceMaskToggle() + renderMediaModelSelect(
+    ) + renderVideoResolutionChips(i2vModel, {
+        label: '分辨率',
+        hint: '随当前「图生视频模型」变化；对口型 MiniMax 将映射为最长边（480P→720 / 720P→1280 / 1080P→1920）',
+    }) + renderFaceMaskToggle() + renderMediaModelSelect(
         '参考视频模型', '多参考图、参考音视频或首尾帧加参考图时使用', 'referenceToVideo', referenceModels,
         state.selectedReferenceToVideoTaskId,
     );
 
-    if (resOpts.length) {
-        const curRes = state.videoResolution && resOpts.some(o => o.value === state.videoResolution)
-            ? state.videoResolution
-            : (resOpts[0]?.value || '');
-        html += `<label class="config-label" style="margin-top:14px;">分辨率</label>
-            <div class="config-hint">与 marketing 一致，随当前视频模型变化</div>
-            <div class="config-chip-row">`;
-        resOpts.forEach(opt => {
-            const active = String(curRes) === String(opt.value) ? 'active' : '';
-            html += `<button type="button" class="config-chip ${active}" data-action="set-video-resolution" data-video-resolution="${escapeHtml(opt.value)}">${escapeHtml(opt.label || opt.value)}</button>`;
-        });
-        html += '</div>';
-    }
-
     html += `<label class="config-label" style="margin-top:14px;">视频时长</label>
-        <div class="config-hint">Auto 会按当前分镜时长（含配音同步后）匹配「≥分镜时长且最接近」的模型档位</div>
+        <div class="config-hint">Auto 会按当前分镜时长（含配音同步后）匹配「≥分镜时长且最接近」的模型档位；对口型 MiniMax 另 clamp 到 4–10 秒</div>
         <div class="config-select-wrapper">
             <select class="chat-mode-select" data-config-select="videoDuration">`;
     const mode = state.videoDurationMode;
@@ -2606,6 +2778,7 @@ function renderModalsHtml() {
         renderGlobalStyleDialog(),
         renderSceneEditDialog(),
         renderVideoTypeSwitchDialog(),
+        renderEmoVecEditorDialog(),
     ].join('');
 }
 
@@ -3078,6 +3251,16 @@ export function patchPreview(scene, options = {}) {
     return true;
 }
 
+const MODAL_SCROLL_SELECTORS = ['.generate-from-script-dialog .gfs-body'];
+
+/** 拆分弹窗：只切换分镜图生成模式卡片的选中态，避免整窗重建把滚动拉回顶部。 */
+export function syncSequenceModeIntroCards(root = document) {
+    const selected = state.autoImageSequenceMode;
+    root.querySelectorAll('[data-action="set-auto-image-sequence-mode"]').forEach((card) => {
+        card.classList.toggle('active', card.dataset.autoImageSequenceMode === selected);
+    });
+}
+
 /** 弹层容器：不碰 app-shell */
 export function syncModals() {
     const app = document.getElementById('app');
@@ -3089,7 +3272,17 @@ export function syncModals() {
         host.className = 'storyboard-modals';
         app.appendChild(host);
     }
+    const savedScrolls = MODAL_SCROLL_SELECTORS.map((selector) => {
+        const el = host.querySelector(selector);
+        return el ? { selector, top: el.scrollTop, left: el.scrollLeft } : null;
+    }).filter(Boolean);
     host.innerHTML = renderModalsHtml();
+    savedScrolls.forEach(({ selector, top, left }) => {
+        const el = host.querySelector(selector);
+        if (!el) return;
+        el.scrollTop = top;
+        el.scrollLeft = left;
+    });
     return true;
 }
 
@@ -3343,14 +3536,77 @@ function renderDialogueRowOuter(d) {
                     <label class="meta-field">语速<input type="number" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
                     <label class="meta-field">音量<input type="number" step="0.1" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
                 </div>
-                ${d.audioUrl ? `<audio src="${escapeHtml(d.audioUrl)}" controls class="dialogue-audio"></audio>` : ''}
+                ${renderDialogueAudioBlock(d)}
                 <div class="dialogue-actions">
-                    <button class="tool-button" data-action="generate-voiceover" data-dialogue-id="${d.id}">${icon('mic', 14)} 生成配音</button>
+                    ${renderDialogueEmoSummary(d)}
+                    ${renderGenerateVoiceoverBtn(d)}
                     <button class="tool-button" data-action="save-dialogue" data-dialogue-id="${d.id}">${icon('success', 14)} 保存</button>
                     <button class="tool-button" data-action="delete-dialogue" data-dialogue-id="${d.id}">${icon('delete', 14)}</button>
                 </div>
             </div>`;
 }
+
+function renderEmoVecEditorDialog() {
+    const editor = state.emoVecEditor || {};
+    if (!editor.open) return '';
+    const values = Array.isArray(editor.values) ? editor.values : parseEmoVec(null);
+    const sum = values.reduce((a, b) => a + Number(b || 0), 0);
+    const valid = sum <= EMO_VEC_MAX_SUM + 1e-6;
+    const autoAiOn = Boolean(state.serverFeatures?.dialogue_emotion_tts);
+    const sliders = EMO_VEC_LABELS.map((label, idx) => {
+        const v = Number(values[idx] || 0);
+        return `
+            <div class="emo-vec-slider-row" data-emo-idx="${idx}">
+                <div class="emo-vec-slider-head">
+                    <span class="emo-vec-label">${escapeHtml(label)}</span>
+                    <span class="emo-vec-value" data-emo-value="${idx}">${v.toFixed(2)}</span>
+                </div>
+                <input type="range" min="0" max="1.5" step="0.01"
+                    value="${v}"
+                    data-emo-slider="${idx}"
+                    class="emo-vec-range" />
+            </div>`;
+    }).join('');
+    const errHtml = editor.error
+        ? `<div class="dialog-error">${escapeHtml(editor.error)}</div>`
+        : '';
+    const saveLabel = editor.saving ? '保存中…' : '保存';
+    return `
+        <div class="modal-overlay" data-modal="emo-vec-editor">
+            <div class="edit-dialog emo-vec-dialog" role="dialog" aria-modal="true" aria-labelledby="emo-vec-title">
+                <header>
+                    <h2 id="emo-vec-title">配音情感向量</h2>
+                    <button type="button" data-action="close-emo-vec-editor" title="关闭">${icon('close', 18)}</button>
+                </header>
+                <div class="emo-vec-body">
+                    <p class="emo-vec-hint">
+                        控制本句对白生成配音时的情感色彩（8 维，总和 ≤ ${EMO_VEC_MAX_SUM}）。
+                        保存后再次「生成配音」将按此向量提交（企业版生效）。
+                    </p>
+                    <div class="emo-vec-enterprise-note ${autoAiOn ? 'is-active' : ''}">
+                        ${autoAiOn
+                            ? '当前环境已启用企业版能力：剧本拆分时 AI 可自动为对白填写情感向量。'
+                            : '说明：所有用户均可查看与手动编辑。仅<strong>企业版</strong>支持在剧本拆分时由 AI 自动推断情感向量，并在自动配音中应用。'}
+                    </div>
+                    <div class="emo-vec-sliders">
+                        ${sliders}
+                    </div>
+                    <div class="emo-vec-sum ${valid ? 'ok' : 'bad'}">
+                        总和：<strong data-emo-sum>${sum.toFixed(2)}</strong> / ${EMO_VEC_MAX_SUM}
+                        ${valid ? '' : '<span class="emo-vec-warn"> 超出上限，请调低</span>'}
+                    </div>
+                    ${errHtml}
+                </div>
+                <footer class="dialog-footer">
+                    <button type="button" class="btn-ghost" data-action="reset-emo-vec-editor">清零</button>
+                    <button type="button" class="btn-ghost" data-action="close-emo-vec-editor">取消</button>
+                    <button type="button" class="btn-primary" data-action="save-emo-vec-editor"
+                        ${editor.saving || !valid ? 'disabled' : ''}>${saveLabel}</button>
+                </footer>
+            </div>
+        </div>`;
+}
+
 
 // ==================== 对外局部更新函数（polling 调用）====================
 

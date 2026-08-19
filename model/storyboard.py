@@ -409,7 +409,7 @@ class StoryboardModel:
                 'title': str, 'duration': float,
                 'prompt': {perspective, style, scene_desc, character_desc},
                 'video_prompt': str, 'video_type': str, 'video_config': dict,
-                'dialogues': [{'character_id': int|None, 'text': str, 'speed': float, 'volume': int}, ...]
+                'dialogues': [{'character_id': int|None, 'text': str, 'speed': float, 'volume': int, 'emo_vec': str|None}, ...]
             }
         """
         # 初始化画风和构图倾向：如果未提供，从 world 继承（参考 video_workflow 逻辑）
@@ -440,8 +440,8 @@ class StoryboardModel:
         """
         insert_dialogue_sql = """
             INSERT INTO storyboard_dialogue
-            (scene_id, sort_order, character_id, text, speed, volume, last_modified_user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (scene_id, sort_order, character_id, text, speed, volume, emo_vec, last_modified_user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
 
         sb_params = (int(version or 1), world_id, user_id, episode_number, workflow_id, script_id, title,
@@ -474,6 +474,7 @@ class StoryboardModel:
                         d.get('text'),
                         d.get('speed', 1.0),
                         d.get('volume', 100),
+                        d.get('emo_vec'),
                         user_id,
                     )
                     execute_insert_in_transaction(conn, insert_dialogue_sql, d_params)
@@ -502,8 +503,8 @@ class StoryboardModel:
         """
         insert_dialogue_sql = """
             INSERT INTO storyboard_dialogue
-            (scene_id, sort_order, character_id, text, speed, volume, last_modified_user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (scene_id, sort_order, character_id, text, speed, volume, emo_vec, last_modified_user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
         update_storyboard_sql = """
             UPDATE storyboard
@@ -553,6 +554,7 @@ class StoryboardModel:
                         d.get('text'),
                         d.get('speed', 1.0),
                         d.get('volume', 100),
+                        d.get('emo_vec'),
                         user_id,
                     )
                     execute_insert_in_transaction(conn, insert_dialogue_sql, d_params)

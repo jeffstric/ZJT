@@ -43,6 +43,7 @@ from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import compress_and_upload_image_sync, upload_media_to_cdn_sync
 from utils.video_compressor import prepare_seedance_reference_video_sync
 from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStepType, PipelineStage
+from .face_mask_prompt import ensure_face_mask_hint
 
 
 # kkidc 网关接口文档（内部）
@@ -318,6 +319,10 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
         reference_images = all_images_info.get('reference_images', [])
 
         prompt = ai_tool.prompt or ""
+        # 素材被本地人脸遮盖（黑框）时自动在提示词末尾追加黑框还原句（幂等）。
+        # 提示词基线（智能体/用户生成）不写该句，由执行时按 pipeline steps 的
+        # 实际遮盖状态动态决定，保证供应商轮换下提示词与素材状态一致
+        prompt = ensure_face_mask_hint(prompt, ai_tool)
 
         # 2. 文生视频判定：无任何图片/音视频输入，且 extra_config 未声明 image_mode
         reference_video_raw = self.get_video_path(ai_tool) or extra_config.get('reference_video')
@@ -327,6 +332,13 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
             and not reference_video_raw and not reference_audio_raw
             and 'image_mode' not in extra_config
         )
+
+        # 纯音视频参考（无任何图片输入）：强制走多参考模式，确保音频/视频正确下发
+        # 适用 Seedance 2.0 系列及 2.5 的「仅音频/仅视频」输入场景（含 CLI、storyboard 等非 server 入口）
+        has_media_ref = bool(reference_video_raw or reference_audio_raw)
+        has_any_image = bool(first_frame or last_frame or reference_images)
+        if has_media_ref and not has_any_image and not is_text_to_video:
+            img_mode = ImageMode.MULTI_REFERENCE
 
         # 3. 构建 metadata（所有模式通用字段）
         metadata: Dict[str, Any] = {}

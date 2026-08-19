@@ -20,6 +20,8 @@ from config.unified_config import (
     DriverImplementation,
     UnifiedConfigRegistry,
     UnifiedTaskConfig,
+    AGENT_POWER_CONFIRM_THRESHOLD,
+    AGENT_POWER_CONFIRM_HARD_THRESHOLD,
 )
 
 
@@ -28,6 +30,18 @@ IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT = 120
 SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT = 300
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_CONNECT_TIMEOUT = 10
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_READ_TIMEOUT = 120
+
+# ===== Seedance 2.5 视频编辑任务（omni_reference_task_type=edit）=====
+# 视频编辑任务的输出时长由参考视频决定（API 下发 duration=-1、ratio=adaptive），
+# 计费时长须按参考视频总时长吸附档位，而非用户输入时长。
+# 判定唯一入口：utils/computing_power.is_video_edit_billing_task（驱动层下发 edit
+# 与计价层计费时长共用），禁止调用方自写条件；新增任务类型只改此集合。
+VIDEO_EDIT_BILLING_TASK_TYPES = {TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO}
+# 火山 Seedance 2.5 全模态参考任务类型：显式 edit 使接口提交时提前校验参数限制，
+# 消除 auto 自动判定错型导致的异步报错（InvalidParameter.TaskTypeConstraint/Mismatch）
+OMNI_REFERENCE_TASK_TYPE_EDIT = "edit"
+# 计费前 ffprobe 探测单个参考视频时长的超时（秒）
+REFERENCE_VIDEO_DURATION_PROBE_TIMEOUT = 10
 
 # ===== Windows uv 托盘启动器 =====
 # launcher bootstrap 运行在 Web 服务启动之前；所有外部进程仍必须有硬超时，
@@ -45,6 +59,22 @@ LAUNCHER_SLOW_START_WARNING_SECONDS = 1800
 LAUNCHER_SERVICE_HARD_TIMEOUT_SECONDS = 3600
 LAUNCHER_STOP_SCRIPT_TIMEOUT_SECONDS = 30
 LAUNCHER_TASKKILL_TIMEOUT_SECONDS = 10
+MYSQL_STARTUP_LOCK_TIMEOUT_SECONDS = 60
+MYSQL_INITIALIZE_TIMEOUT_SECONDS = 180
+RUNTIME_FILE_LOCK_POLL_SECONDS = 0.1
+
+# ===== 画风识别（上传图片 → vl 模型识别 → 写入 world.json）=====
+# 图片压缩转 base64 的同步包装超时（秒），PIL 为 CPU 密集。
+IMAGE_STYLE_COMPRESS_TIMEOUT = 30
+# 单次 LLM（如 doubao）画风识别调用超时（秒）：作为 transport 超时传入 call_api。
+IMAGE_STYLE_LLM_TIMEOUT = 120
+# 默认推荐模型：火山引擎（volcengine）的 doubao-seed-2-0-lite（须已配置密钥才会出现）。
+IMAGE_STYLE_PREFERRED_VENDOR = "volcengine"
+IMAGE_STYLE_PREFERRED_MODEL = "doubao-seed-2-0-lite"
+
+# 剧本创作等入口无偏好时的默认生图模型：GPT Image 2（short_key=gpt-image-2）
+DEFAULT_TEXT_TO_IMAGE_TASK_ID = TaskTypeId.GPT_IMAGE_2_EDIT
+
 
 # ===== 七牛云 SDK 网络超时 =====
 # qiniu SDK 内部 requests 单请求超时（秒）；SDK 默认 30。
@@ -141,6 +171,11 @@ VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"
 LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
 ASSET_LIST_MAX_PAGE_SIZE = 1000
 
+# Agent 算力确认：软阈值优先读 user_preferences.power_confirm，
+# 未设置时回退动态配置 agent.power_confirm_threshold，再回退 AGENT_POWER_CONFIRM_THRESHOLD。
+# AGENT_POWER_CONFIRM_THRESHOLD / AGENT_POWER_CONFIRM_HARD_THRESHOLD 从 unified_config 再导出。
+PREF_WORLD_ID_GLOBAL = "_global"  # 用户级（非世界级）偏好使用的 sentinel world_id
+
 
 class MediaGenerationSurface:
     """媒体生成模型偏好的调用入口。"""
@@ -195,8 +230,19 @@ CHARACTER_VOICE_MAX_DURATION = 20.0
 # 角色参考音频裁剪时 ffmpeg/ffprobe 单次执行超时（秒）
 CHARACTER_VOICE_TRIM_TIMEOUT = 30
 
-# 数字人双模型路由：分镜待说台词 TTS 总时长 <= 该阈值（秒）时选择 Wan2.2，> 则选择 LTX2.3。
-# 比较前统一按毫秒精度规整，避免浮点误差导致边界值被错误分配。
+# MiniMax H3 提交前提示词优化（param_prepare）
+# 单次 LLM 调用外层 wait_for 超时；_call_llm 会把同一值作为底层 request_timeout 传入，
+# 使 httpx 超时与外层对齐，避免超时后底层线程残留空跑到 LLM_HTTP_TIMEOUT_SECONDS。
+H3_PROMPT_OPTIMIZE_TIMEOUT = 90
+H3_PROMPT_OPTIMIZE_MAX_TOKENS = 4096
+H3_PROMPT_OPTIMIZE_TEMPERATURE = 0.3
+H3_PROMPT_OPTIMIZE_VARIANT_I2VA = "I2VA"
+H3_PROMPT_OPTIMIZE_VARIANT_FL2VA = "FL2VA"
+# 全参考（多参考图/参考视频/参考音频）生视频的提示词变体，对应官方 ref-en.txt 六段格式
+H3_PROMPT_OPTIMIZE_VARIANT_REF2VA = "Ref2VA"
+
+# [已废弃] 原双模型路由阈值（Wan2.2 / LTX2.3）。分镜对口型已统一为 MiniMax H3，不再使用。
+# 保留常量以免外部引用硬崩；新代码请勿依赖。
 WAN_MAX_SPEECH_DURATION_SECONDS = 1.0
 
 
@@ -499,6 +545,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,  # 使用 RunningHub 的数字人 v1 版本
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本
+    DriverKey.DIGITAL_HUMAN_MINIMAX_H3: DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 数字人
     
     # Vidu 相关驱动
     DriverKey.VIDU_IMAGE_TO_VIDEO: DriverImplementation.VIDU_DEFAULT,         # 使用 Vidu 官方 API
@@ -529,6 +576,10 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.SEEDANCE_2_0_MINI_KKIDC_V1,                # kkidc 网关
         DriverImplementation.SEEDANCE_2_0_MINI_HUIMENGI_V1,             # huimengi 网关
     ],
+    DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO: [
+        DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,  # 火山引擎国内版
+        DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,    # huimengi 网关
+    ],
 
     # GPT Image 相关驱动
     DriverKey.GPT_IMAGE_2: [
@@ -550,6 +601,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.GROK_COMMON_SITE3_V1,  # 通用聚合站点 3
         DriverImplementation.GROK_COMMON_SITE4_V1,  # 通用聚合站点 4
         DriverImplementation.GROK_COMMON_SITE5_V1,  # 通用聚合站点 5
+        DriverImplementation.GROK_HUIMENGI_V1,      # 慧梦网关
     ],
 
     # Happy Horse 相关驱动
@@ -627,6 +679,11 @@ RUNNINGHUB_KEY_CIRCUIT_FAIL_THRESHOLD = 5       # 连续失败多少次触发熔
 RUNNINGHUB_KEY_CIRCUIT_COOLDOWN_SECONDS = 300   # 熔断初始冷却（秒）
 RUNNINGHUB_KEY_CIRCUIT_MAX_COOLDOWN_SECONDS = 1800  # 冷却封顶（30 分钟，半开探测失败后指数退避）
 RUNNINGHUB_KEY_HALF_OPEN_PROBE_LIMIT = 1        # 半开状态下同时允许的探测请求数
+
+# 拥堵冷却参数（421 上游并发超限）
+# 与熔断独立：熔断管「key 坏」（鉴权/参数错误），冷却管「账号忙」（421 并发满），互不干扰
+# 可通过动态配置 runninghub.key_pool.congest_cooldown_seconds 热更新
+RUNNINGHUB_KEY_CONGEST_COOLDOWN_SECONDS = 90    # 拥堵密钥冷却时长（秒）
 
 # 任务类型名称映射（已废弃）
 TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
@@ -1109,11 +1166,26 @@ class StoryboardAudioGenerateConstants:
     SKIP_REASON_USES_VIDEO_AUDIO = "uses_video_audio"
 
 
+class EmotionVectorConstants:
+    """IndexTTS 情感向量维度约定（与 web/js/pages/audio_generate.js 对齐）。
+
+    算法与启用门禁在 enterprise 的 dialogue_emotion Provider 中；
+    此处仅公开标签/上限，供前端摘要与文档引用。
+    """
+    LABELS = ("喜", "怒", "哀", "惧", "厌恶", "低落", "惊喜", "平静")
+    DIM = 8
+    MAX_SUM = 1.5
+    MAX_EACH = 1.5
+    DEFAULT_VEC = (0.0,) * 8
+    CONTROL_METHOD_SAME_AS_REF = 0
+    CONTROL_METHOD_VECTOR = 2
+
+
 class StoryboardDigitalHumanConstants:
-    """Storyboard digital-human (lip-sync) generation — dual model routing (Wan2.2 / LTX2.3)."""
-    # LTX2.3 是默认/兜底模型；Wan2.2 仅在 TTS 总时长 <= WAN_MAX_SPEECH_DURATION_SECONDS 时使用。
-    TASK_TYPE = TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE
-    DEFAULT_PROMPT = "角色面向镜头深情的说话，固定镜头。"
+    """Storyboard digital-human (lip-sync) — 统一 MiniMax H3。"""
+    # 分镜对口型固定 MiniMax H3（task_type=35）；不再路由 Wan2.2 / LTX2.3。
+    TASK_TYPE = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
+    DEFAULT_PROMPT = "图片1中的角色在说话。"
     ERROR_AUDIO_REQUIRED = "audio_required"
     ERROR_AUDIO_PENDING = "audio_pending"
     ERROR_AUDIO_FAILED = "audio_failed"
@@ -1127,16 +1199,36 @@ class StoryboardDigitalHumanConstants:
     SKIP_REASON_AUDIO_PENDING = "audio_pending"
     SKIP_REASON_MISSING_IMAGE = "missing_image"
     SOURCE = "storyboard_digital_human"
-    # 路由原因（可观测）
+    # 可观测原因（历史兼容字段名 routing_reason）
+    ROUTING_REASON_MINIMAX = "minimax_h3_only"
+    # [已废弃] 原双模型路由原因，仅兼容旧 extra_config / 测试
     ROUTING_REASON_LTE_1S = "speech_duration_lte_1s"
     ROUTING_REASON_GT_1S = "speech_duration_gt_1s"
     ROUTING_REASON_UNKNOWN = "speech_duration_unknown"
     # 模型标识（plan.model / extra_config.digital_human_model）
+    MODEL_MINIMAX_H3 = "minimax_h3"
+    # [已废弃] 历史模型标识
     MODEL_WAN = "wan2.2"
     MODEL_LTX = "ltx2.3"
     # 音频输入角色（extra_config.audio_input_role）
-    AUDIO_ROLE_VOICE_REFERENCE = "voice_reference"
+    AUDIO_ROLE_VOICE_REFERENCE = "voice_reference"  # 已不用于 MiniMax
     AUDIO_ROLE_SPEECH_AUDIO = "speech_audio"
+    # MiniMax 视频时长（秒）
+    MIN_VIDEO_DURATION = 4
+    MAX_VIDEO_DURATION = 10
+    DEFAULT_VIDEO_DURATION = 10
+    # 分辨率 → 最长边（node 213）
+    DEFAULT_RESOLUTION = "720P"
+    DEFAULT_MAX_EDGE = 1280
+    DEFAULT_START_SECOND = 0
+    RESOLUTION_TO_MAX_EDGE = {
+        "480P": 720,
+        "480p": 720,
+        "720P": 1280,
+        "720p": 1280,
+        "1080P": 1920,
+        "1080p": 1920,
+    }
 
 
 class StoryboardAgentReadConstants:
@@ -1181,6 +1273,7 @@ class GridConfig:
     DEFAULT_SIZE_BY_TYPE = {1: 4, 7: 9}   # AI工具类型 → 默认宫格大小
     LOCK_TIMEOUT_SECONDS = 120            # 文件锁超时（秒）
     IMAGE_DOWNLOAD_TIMEOUT = 60.0         # 下载原图超时（秒）
+    MAX_ATTEMPTS = 120                    # grid 生图轮询最大尝试次数：scheduler 每 10s 轮询一次，120 次 ≈ 20 分钟总超时
     VALIDATION_MAX_SCAN_SIZE = 1024       # 宫格几何校验时的最长边缩放上限
     VALIDATION_POSITION_TOLERANCE_RATIO = 0.05  # 分割线允许偏离理论位置的比例
     VALIDATION_SEPARATOR_HALF_WIDTH = 1    # 搜索分割线时取中心线两侧像素宽度
@@ -1437,6 +1530,27 @@ class BrandingConstants:
     VALID_ASSET_TYPES = (ASSET_TYPE_LOGO, ASSET_TYPE_FAVICON, ASSET_TYPE_TERMS_ZH, ASSET_TYPE_TERMS_EN, ASSET_TYPE_WX_GROUP_QR)
 
 
+class FaceMaskPromptConstants:
+    """
+    人脸遮盖「黑框还原句」提示词常量
+
+    提示词基线（智能体/用户生成）不含黑框还原句；还原句的唯一写入方是
+    task/visual_drivers/face_mask_prompt.py::ensure_face_mask_hint（素材被本地
+    遮盖时按 RESTORE_HINT 常量原文追加），huimengi 侧按同一常量原文精确移除。
+    追加/移除依据素材实际遮盖状态（pipeline steps 中已完成的
+    face_mask / image_face_mask 步骤），保证供应商轮换（跨实现方重试）下
+    「提示词内容」与「素材状态」始终一致。
+    """
+    # 黑框还原句：素材被本地遮盖（人脸位置为黑色方框）时，由消费遮盖结果的 driver
+    # （volcengine / oversea / kkidc）追加到提示词末尾，指示模型将黑框还原为真人人脸
+    RESTORE_HINT = "将人脸位置的黑色方框修改为真人人脸。"
+    # 与基线提示词的衔接符：基线末尾为非句终符时以逗号衔接（与历史提示词模板
+    # 「...视频复刻，将人脸位置的黑色方框...」的写法保持一致），否则直接拼接
+    HINT_JOINER = "，"
+    # 句终符与衔接符集合：基线末尾为其中任一字符时直接拼接还原句，否则加 HINT_JOINER
+    TERMINATORS_OR_JOINER = '。！？!?\n\r；;，,'
+
+
 class RunningHubImageFaceMaskConstants:
     """RunningHub 图片人脸遮盖工作流常量"""
     APP_ID = "2067560129192620033"
@@ -1591,7 +1705,7 @@ class SessionHistoryConstants:
     MAX_HISTORY_MESSAGES = 100  # 最大历史消息数量（剧本创作需要较多上下文）
     MIN_HISTORY_MESSAGES = 10   # 最小保留的历史消息数量（确保上下文连续性）
     TRUNCATION_KEEP_SYSTEM = True  # 截断时保留系统提示
-    SESSION_EXPIRE_HOURS_SCRIPT = 24      # 剧本智能体过期时长（小时）
+    SESSION_EXPIRE_HOURS_SCRIPT = 72      # 剧本智能体过期时长（小时，3天）
     SESSION_EXPIRE_HOURS_MARKETING = 336  # 营销智能体过期时长（14天 = 336小时）
 
 
@@ -1746,6 +1860,32 @@ class AdminBillingConstants:
     MAX_COMMISSION_RATE = 1.0
 
 
+class PeakValleyBillingConstants:
+    """大模型峰谷计费常量（北京时间，UTC+8）
+
+    DeepSeek 官方自 2026-08-17 起采用峰谷定价：高峰时段价格为空闲时段的 2 倍。
+    高峰时段为北京时间 9:00-12:00、14:00-18:00，其余为空闲时段。
+    其他模型默认 time_period='normal'，不参与峰谷，完全向后兼容。
+    """
+    _CONSTANT_GROUP = True
+    # 计费时段枚举
+    PERIOD_NORMAL = 'normal'        # 不分峰谷（向后兼容，现有模型默认值）
+    PERIOD_PEAK = 'peak'            # 高峰时段
+    PERIOD_OFF_PEAK = 'off_peak'    # 空闲时段
+    ALL_PERIODS = (PERIOD_NORMAL, PERIOD_PEAK, PERIOD_OFF_PEAK)
+
+    # AI 改档「目标计费模式」（UI 层概念，非数据库时段）
+    # normal=通用价格（一组价，不分时段）；peak_valley=高峰/低谷（两组价，按时段扣费）
+    # 两种模式互斥：选其一生成方案时，AI 会自动清理另一模式的冲突档位
+    TARGET_MODE_NORMAL = 'normal'
+    TARGET_MODE_PEAK_VALLEY = 'peak_valley'
+    ALL_TARGET_MODES = (TARGET_MODE_NORMAL, TARGET_MODE_PEAK_VALLEY)
+
+    # 高峰时段（左闭右开 [start_hour, end_hour)），北京时间 UTC+8
+    # DeepSeek 官方：9:00-12:00、14:00-18:00；其余为空闲
+    PEAK_TIME_RANGES = ((9, 12), (14, 18))
+
+
 # ============ 一体包 MySQL binlog 保留 ============
 
 class MysqlBinlogConstants:
@@ -1795,6 +1935,20 @@ class NotificationConstants:
     LEVEL_WARNING = "warning"
     LEVEL_ERROR = "error"
     LEVEL_SUCCESS = "success"
+
+
+# ============ 智能插入分镜 ============
+SMART_INSERT_SHOT_TIMEOUT = 30  # 智能体调用超时（秒）
+SMART_INSERT_SHOT_DEFAULT_MODEL = 'deepseek/deepseek-v4-flash'  # 降级默认模型
+
+# ============ 默认 LLM 模型选择策略 ============
+# 当数据库没有配置默认 LLM 模型时，使用以下优先级选择：
+# 1. 首选供应商 + 首选模型
+# 2. 首选供应商 + 任意模型
+# 3. 列表第一项
+# 场景级性价比/效果双档见 config/model_catalog.py，本常量仅作无目录时的回退。
+DEFAULT_LLM_MODEL_PREFERRED_VENDORS = ['deepseek']  # 首选供应商列表（按优先级排序）
+DEFAULT_LLM_MODEL_PREFERRED_MODEL = 'deepseek-v4-flash'  # 首选模型名称
 
 
 # ============ 智能体语言指令常量 ============

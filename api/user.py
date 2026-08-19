@@ -11,6 +11,8 @@ import logging
 
 from model.users import UsersModel
 from model.user_tokens import UserTokensModel
+from model.user_preferences import PREF_TYPE_POWER_CONFIRM, UserPreferencesModel
+from config.constant import PREF_WORLD_ID_GLOBAL
 from model.implementation_power import ImplementationPowerModel
 from model.implementation_stats_cache import ImplementationStatsCacheModel
 from config.unified_config import UnifiedConfigRegistry, TaskCategory, get_implementation_id
@@ -25,6 +27,21 @@ router = APIRouter(prefix="/api/user", tags=["user"])
 class ImplementationPreferenceRequest(BaseModel):
     task_key: str
     implementation_name: str
+
+
+class PowerConfirmRequest(BaseModel):
+    threshold: int
+
+
+def _require_user_id(auth_token: Optional[str]) -> int:
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="需要登录")
+    if auth_token.startswith("Bearer "):
+        auth_token = auth_token[7:]
+    user_id = UserTokensModel.get_user_id_by_token(auth_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
+    return user_id
 
 
 @router.get("/implementation-preferences")
@@ -280,3 +297,51 @@ async def delete_implementation_preference(
         "message": "演示模式：偏好未实际清除",
         "is_demo": True
     }
+
+
+def _power_confirm_payload(user_id: int) -> Dict:
+    from script_writer_core.agents.power_confirm import get_effective_thresholds, get_platform_thresholds
+    soft, hard, is_custom = get_effective_thresholds(str(user_id))
+    default_threshold, _ = get_platform_thresholds()
+    return {
+        "threshold": soft,
+        "is_custom": is_custom,
+        "default_threshold": default_threshold,
+        "hard_threshold": hard,
+    }
+
+
+@router.get("/power-confirm")
+async def get_power_confirm(auth_token: str = Header(None, alias="Authorization")):
+    """获取当前用户的算力自动确认上限。"""
+    user_id = _require_user_id(auth_token)
+    return {"code": 0, "data": _power_confirm_payload(user_id)}
+
+
+@router.put("/power-confirm")
+async def set_power_confirm(
+    request: PowerConfirmRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+):
+    """设置当前用户的算力自动确认上限。"""
+    from script_writer_core.agents.power_confirm import validate_threshold
+    user_id = _require_user_id(auth_token)
+    try:
+        threshold = validate_threshold(request.threshold)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    UserPreferencesModel.upsert(
+        str(user_id),
+        PREF_WORLD_ID_GLOBAL,
+        PREF_TYPE_POWER_CONFIRM,
+        {"threshold": threshold},
+    )
+    return {"code": 0, "data": _power_confirm_payload(user_id)}
+
+
+@router.delete("/power-confirm")
+async def delete_power_confirm(auth_token: str = Header(None, alias="Authorization")):
+    """删除用户自定义上限，回退平台默认。"""
+    user_id = _require_user_id(auth_token)
+    UserPreferencesModel.delete(str(user_id), PREF_WORLD_ID_GLOBAL, PREF_TYPE_POWER_CONFIRM)
+    return {"code": 0, "data": _power_confirm_payload(user_id)}

@@ -210,8 +210,9 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 | 字段 | 含义 |
 |------|------|
 | `raw_token_threshold` | 分段上界：当本次 `raw_input_token ≤` 此值时使用本档；`NULL` 表示无上限兜底档 |
-| `input/out/cache_token_threshold` | 每 N 个 token 消耗 1 点算力（由单价自动换算） |
+| `input/out/cache_token_threshold` | 每 N 个 token 消耗 1 点算力（由单价自动换算）。`input`=缓存未命中输入价、`cache`=缓存命中输入价、`out`=输出价 |
 | `commission_rate` | 抽成 0~1；计费 `算力 = 阈值算力 × (1+抽成)` |
+| `time_period` | 计费时段：`normal`=不分峰谷（默认，向后兼容）、`peak`=高峰、`off_peak`=空闲。详见 7.6 峰谷计费 |
 
 - **1 点算力 = 0.04 元**
 - **录入方式**：界面主填 **元/百万 token（供应商成本）**，`threshold = 0.04 × 10⁶ / 单价`
@@ -221,8 +222,8 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 #### 7.3 操作
 
 - **页面顶部「负责模型」**：全局选择用于 AI 自动配置价格的大模型，展示为 **供应商 / 模型名**（如 `deepseek / deepseek-v4-pro`）；同一模型挂多家供应商时分列多条。默认 `deepseek / deepseek-v4-pro`
-- **展开行**：按供应商展示档位；内联改成本单价与抽成
-- **添加/编辑档位**：供应商、分段上界、输入/输出/缓存成本（元/百万）、抽成%
+- **展开行**：按供应商展示档位；非 `normal` 档位在区间旁显示高峰/空闲标签；内联改成本单价与抽成
+- **添加/编辑档位**：供应商、计费时段（通用/高峰/空闲）、分段上界、输入/输出/缓存成本（元/百万）、抽成%
 - **列表中的元/百万价格**：由系统按阈值公式反算展示，**不是**大模型实时计算
 - **AI 生成方案**：自然语言 → 提案 → **金额前后对比确认** → 应用
 - **删除档位**：二次确认后立即生效
@@ -255,6 +256,21 @@ POST /api/admin/models/{id}/billing/reset-defaults?vendor_id=可选
 - **限制**：未在目录中登记的模型/供应商会返回 400，无法还原
 - **UI**：模型计费展开区「还原默认档位」；各供应商旁「还原该供应商默认」
 - 新增模型或改官方价后，请同步维护默认目录
+
+#### 7.6 峰谷计费（Peak / Off-peak）
+
+部分供应商（如 DeepSeek 官方自 2026-08-17）采用峰谷定价：高峰时段价格为空闲时段的倍数。
+
+- **高峰时段**（北京时间，左闭右开）：`9:00-12:00`、`14:00-18:00`；其余为空闲
+- **时段定义**：常量 `config/constant.py` → `PeakValleyBillingConstants.PEAK_TIME_RANGES`
+- **判断工具**：`utils/billing_period.py` → `get_billing_period(dt)`（固定 UTC+8，不依赖系统时区库）
+- **配置方式**：同一「供应商 × 模型 × token 区间」下分别配置 `peak` 与 `off_peak` 两档；`normal` 表示不分峰谷（旧模型默认值，完全向后兼容）
+- **扣费时机**：按 `token_log.created_at`（调用发生时间）判断时段，而非后台扣费任务执行时间，避免跨时段边界算错
+- **选档兜底**（三级，确保不漏扣）：① 当前时段精确档 → ② `normal` 档 → ③ 其余时段档。即未配峰谷的模型自动回退 `normal`，配错也不会漏扣
+- **扣费流水**：`computing_power_log.note` 记录 `时段(调用:peak, 命中档:peak)` 便于审计
+- **官方 DeepSeek**：迁移 `20260813_vendor_model_time_period` 已为其 `flash/pro` 初始化峰谷两档；其他中转商（zjt_api / 火山）是否峰谷需在界面按实际计费规则单独配置
+
+> DeepSeek 官方峰谷价（元/百万 token）：flash 高峰 3/9/0.10、空闲 1.5/4.5/0.05；pro 高峰 9/27/0.30、空闲 4.5/13.5/0.15。
 
 ### 8. 通知中心
 
