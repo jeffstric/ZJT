@@ -1530,6 +1530,27 @@ class BrandingConstants:
     VALID_ASSET_TYPES = (ASSET_TYPE_LOGO, ASSET_TYPE_FAVICON, ASSET_TYPE_TERMS_ZH, ASSET_TYPE_TERMS_EN, ASSET_TYPE_WX_GROUP_QR)
 
 
+class FaceMaskPromptConstants:
+    """
+    人脸遮盖「黑框还原句」提示词常量
+
+    提示词基线（智能体/用户生成）不含黑框还原句；还原句的唯一写入方是
+    task/visual_drivers/face_mask_prompt.py::ensure_face_mask_hint（素材被本地
+    遮盖时按 RESTORE_HINT 常量原文追加），huimengi 侧按同一常量原文精确移除。
+    追加/移除依据素材实际遮盖状态（pipeline steps 中已完成的
+    face_mask / image_face_mask 步骤），保证供应商轮换（跨实现方重试）下
+    「提示词内容」与「素材状态」始终一致。
+    """
+    # 黑框还原句：素材被本地遮盖（人脸位置为黑色方框）时，由消费遮盖结果的 driver
+    # （volcengine / oversea / kkidc）追加到提示词末尾，指示模型将黑框还原为真人人脸
+    RESTORE_HINT = "将人脸位置的黑色方框修改为真人人脸。"
+    # 与基线提示词的衔接符：基线末尾为非句终符时以逗号衔接（与历史提示词模板
+    # 「...视频复刻，将人脸位置的黑色方框...」的写法保持一致），否则直接拼接
+    HINT_JOINER = "，"
+    # 句终符与衔接符集合：基线末尾为其中任一字符时直接拼接还原句，否则加 HINT_JOINER
+    TERMINATORS_OR_JOINER = '。！？!?\n\r；;，,'
+
+
 class RunningHubImageFaceMaskConstants:
     """RunningHub 图片人脸遮盖工作流常量"""
     APP_ID = "2067560129192620033"

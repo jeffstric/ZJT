@@ -43,6 +43,7 @@ from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import compress_and_upload_image_sync, upload_media_to_cdn_sync
 from utils.video_compressor import prepare_seedance_reference_video_sync
 from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStepType, PipelineStage
+from .face_mask_prompt import ensure_face_mask_hint
 
 
 # kkidc 网关接口文档（内部）
@@ -318,6 +319,10 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
         reference_images = all_images_info.get('reference_images', [])
 
         prompt = ai_tool.prompt or ""
+        # 素材被本地人脸遮盖（黑框）时自动在提示词末尾追加黑框还原句（幂等）。
+        # 提示词基线（智能体/用户生成）不写该句，由执行时按 pipeline steps 的
+        # 实际遮盖状态动态决定，保证供应商轮换下提示词与素材状态一致
+        prompt = ensure_face_mask_hint(prompt, ai_tool)
 
         # 2. 文生视频判定：无任何图片/音视频输入，且 extra_config 未声明 image_mode
         reference_video_raw = self.get_video_path(ai_tool) or extra_config.get('reference_video')

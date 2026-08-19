@@ -89,6 +89,8 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 
 图片网格算法由 `enterprise/services/face_mask/` 提供，主仓库只保留 Pipeline、RunningHub 驱动和兼容调用门面。商业版启动时通过 `enterprise.register()` 注册 Provider；社区版不会创建该处理步骤。
 
+**黑框还原句自动追加**：提示词基线（智能体 / 用户生成）不写「将人脸位置的黑色方框修改为真人人脸」句；`build_create_request` 在遮盖 pipeline step 已完成（素材实际带黑框 / 网格）时，通过 `ensure_face_mask_hint`（`task/visual_drivers/face_mask_prompt.py`）自动在提示词末尾追加该句（幂等）。提示词与素材状态绑定而非与实现方绑定，供应商轮换（跨实现方重试）下始终一致；huimengi 实现方跳过本地遮盖，对应驱动反向执行 `strip_face_mask_hint` 移除该句。
+
 ## 生成视频的人脸网格前缀自动裁剪
 
 当 Seedance 图生视频任务启用了图片人脸网格预处理，并且 `image_face_mask` 流水线步骤已完成时，生成结果在落库为 `COMPLETED` 前会自动检查视频开头的红色网格。

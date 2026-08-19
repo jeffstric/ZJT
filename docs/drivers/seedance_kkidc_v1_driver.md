@@ -150,7 +150,7 @@ kkidc 作为现有 4 个 Seedance 任务的**备选实现**，与火山国内版
 - **多参考图**：`metadata.reference_images` 列表
 - **参考音视频**：`metadata.reference_videos` / `metadata.reference_audios`（提交前上传 CDN）
 - **纯音频输入**：无图片、仅有参考音频时，驱动兜底改判 multi_reference，下发 `metadata.reference_audios`（与火山版逻辑一致；网关侧是否接受「仅音频」请求以 kkidc API 约束为准）
-- **face_mask**：复用 image_face_mask / face_mask pipeline step，避免审核不通过
+- **face_mask**：复用 image_face_mask / face_mask pipeline step，避免审核不通过；遮盖执行后驱动通过 `ensure_face_mask_hint`（`task/visual_drivers/face_mask_prompt.py`）自动在提示词末尾追加「黑框还原」句（幂等），提示词基线不写该句
 
 ## 参考视频帧率限制
 
