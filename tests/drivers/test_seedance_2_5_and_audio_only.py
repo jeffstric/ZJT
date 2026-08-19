@@ -171,7 +171,7 @@ class TestSeedance25BuildRequest(unittest.TestCase):
     def test_reference_video_uses_adaptive_ratio_and_follow_duration(
         self, mock_compress, mock_upload_cdn, mock_prepare
     ):
-        """2.5 + 参考视频：火山视频编辑约束，ratio=adaptive、duration=-1"""
+        """2.5 + 参考视频：显式 omni_reference_task_type=edit，ratio=adaptive、duration=-1"""
         mock_compress.return_value = (True, 'https://cdn.example.com/ref.jpg', None)
         mock_upload_cdn.return_value = (True, 'https://cdn.example.com/video.mp4', None)
         ai_tool = _make_ai_tool(
@@ -184,11 +184,37 @@ class TestSeedance25BuildRequest(unittest.TestCase):
         )
 
         payload = self.driver.build_create_request(ai_tool)['json']
+        self.assertEqual(payload['omni_reference_task_type'], 'edit')
         self.assertEqual(payload['ratio'], 'adaptive')
         self.assertEqual(payload['duration'], -1)
 
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.prepare_seedance_reference_video_sync',
+           return_value=(True, 'http://example.com/video.mp4', None, []))
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.is_video_edit_billing_task')
+    def test_reference_video_edit_uses_shared_predicate(
+        self, mock_predicate, mock_upload_cdn, mock_prepare
+    ):
+        """驱动 edit 判定必须走共享谓词（与计价层同源），不得内联条件"""
+        mock_predicate.return_value = True
+        mock_upload_cdn.return_value = (True, 'https://cdn.example.com/video.mp4', None)
+        ai_tool = _make_ai_tool(
+            prompt='参考视频编辑',
+            extra_config={'image_mode': 'multi_reference'},
+            video_path='http://example.com/ref.mp4',
+            ratio='9:16',
+            duration=5,
+        )
+
+        payload = self.driver.build_create_request(ai_tool)['json']
+
+        mock_predicate.assert_called_once_with(
+            self.driver.driver_type, 'http://example.com/ref.mp4'
+        )
+        self.assertEqual(payload['omni_reference_task_type'], 'edit')
+
     def test_text_to_video_keeps_user_ratio_and_duration(self):
-        """2.5 文生视频仍下发用户比例和时长"""
+        """2.5 文生视频仍下发用户比例和时长，且不下发 omni_reference_task_type"""
         ai_tool = _make_ai_tool(
             prompt='一只猫在海滩上漫步',
             image_path=None,
@@ -199,6 +225,7 @@ class TestSeedance25BuildRequest(unittest.TestCase):
         payload = self.driver.build_create_request(ai_tool)['json']
         self.assertEqual(payload['ratio'], '9:16')
         self.assertEqual(payload['duration'], 5)
+        self.assertNotIn('omni_reference_task_type', payload)
 
 
 class TestSeedance20ReferenceVideoKeepsUserParams(unittest.TestCase):
@@ -220,6 +247,7 @@ class TestSeedance20ReferenceVideoKeepsUserParams(unittest.TestCase):
         payload = driver.build_create_request(ai_tool)['json']
         self.assertEqual(payload['ratio'], '9:16')
         self.assertEqual(payload['duration'], 5)
+        self.assertNotIn('omni_reference_task_type', payload)
 
 
 class TestPureAudioRoutingVolcengine(unittest.TestCase):

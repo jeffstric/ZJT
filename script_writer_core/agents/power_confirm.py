@@ -407,6 +407,13 @@ def _estimate_video(
         user_prefs = {}
 
     duration = _resolve_estimate_duration(args, locked, user_prefs, config)
+    # 视频编辑任务（Seedance 2.5 + 参考视频）：估算口径与服务端扣费一致，
+    # 按参考视频总时长吸附档位（探测失败回退用户输入时长）；未命中时原值返回
+    from utils.computing_power import resolve_video_edit_billing_duration
+
+    duration, _billing_source = resolve_video_edit_billing_duration(
+        task_id, args.get("video_urls"), duration
+    )
     resolution = (
         args.get("resolution")
         or locked.get("resolution")

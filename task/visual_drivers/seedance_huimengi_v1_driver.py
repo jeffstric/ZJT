@@ -41,9 +41,14 @@ if not hasattr(requests, 'exceptions') or not hasattr(requests.exceptions, 'HTTP
 
 from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
-from config.constant import LEGACY_RESOLUTION_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
+from config.constant import (
+    LEGACY_RESOLUTION_EXTRA_CONFIG_KEY,
+    OMNI_REFERENCE_TASK_TYPE_EDIT,
+    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
+)
 from config.unified_config import DriverImplementation, TaskTypeId, VideoResolution
 from utils.sentry_util import SentryUtil, AlertLevel
+from utils.computing_power import is_video_edit_billing_task
 from utils.image_upload_utils import compress_and_upload_image_sync, upload_media_to_cdn_sync
 from utils.video_compressor import prepare_seedance_reference_video_sync
 from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStepType, PipelineStage
@@ -349,14 +354,18 @@ class SeedanceHuimengiV1Driver(BaseVideoDriver):
             params["human_review"] = bool(extra_config['human_review'])
 
         ratio = extra_config.get('ratio') or ai_tool.ratio
-        is_25_video_edit = (
-            self.driver_type == TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO
-            and bool(reference_video_raw)
-        )
+        # Seedance 2.5 带参考视频为视频编辑任务：显式 omni_reference_task_type=edit
+        # 使接口提前校验参数限制（ratio 必须 adaptive、duration 必须 -1）。
+        # 判定入口与计价层共用同一函数；字段放 params 内，依赖 huimengi 网关透传。
+        is_25_video_edit = is_video_edit_billing_task(self.driver_type, reference_video_raw)
         if is_25_video_edit:
+            params["omni_reference_task_type"] = OMNI_REFERENCE_TASK_TYPE_EDIT
             params["ratio"] = "adaptive"
             params["duration"] = -1
-            self.logger.info("Seedance 2.5 参考视频编辑模式: ratio=adaptive duration=-1")
+            self.logger.info(
+                f"视频编辑模式: omni_reference_task_type={OMNI_REFERENCE_TASK_TYPE_EDIT}, "
+                "ratio=adaptive duration=-1"
+            )
         else:
             if ratio:
                 params["ratio"] = ratio

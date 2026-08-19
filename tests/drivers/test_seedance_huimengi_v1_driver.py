@@ -251,10 +251,11 @@ class TestBuildCreateRequest(unittest.TestCase):
         self.assertEqual(params['resolution'], '720p')
         self.assertEqual(params['generate_audio'], True)
         self.assertNotIn('image_url', params)
+        self.assertNotIn('omni_reference_task_type', params)
         self.assertNotIn('webhook_url', req['json'])
 
     def test_25_reference_video_uses_adaptive_ratio_and_follow_duration(self):
-        """2.5 + 参考视频：与火山视频编辑约束对齐，ratio=adaptive、duration=-1"""
+        """2.5 + 参考视频：显式 omni_reference_task_type=edit，ratio=adaptive、duration=-1"""
         from task.visual_drivers.seedance_huimengi_v1_driver import Seedance25HuimengiV1Driver
         from task.visual_drivers import seedance_huimengi_v1_driver as drv_mod
         driver = _create_driver(Seedance25HuimengiV1Driver)
@@ -277,8 +278,37 @@ class TestBuildCreateRequest(unittest.TestCase):
 
         params = req['json']['params']
         self.assertEqual(req['json']['model'], 'seedance-2.5')
+        self.assertEqual(params['omni_reference_task_type'], 'edit')
         self.assertEqual(params['ratio'], 'adaptive')
         self.assertEqual(params['duration'], -1)
+
+    def test_25_reference_video_edit_uses_shared_predicate(self):
+        """驱动 edit 判定必须走共享谓词（与计价层同源），不得内联条件"""
+        from task.visual_drivers.seedance_huimengi_v1_driver import Seedance25HuimengiV1Driver
+        from task.visual_drivers import seedance_huimengi_v1_driver as drv_mod
+        driver = _create_driver(Seedance25HuimengiV1Driver)
+        ai_tool = _make_ai_tool(
+            prompt='参考视频编辑',
+            extra_config={'image_mode': 'multi_reference', 'ratio': '9:16'},
+            duration=5,
+            video_path='http://example.com/ref.mp4',
+        )
+        with patch.object(driver, 'get_all_images_by_mode', return_value={
+            'mode': 'multi_reference',
+            'first_frame': None,
+            'last_frame': None,
+            'reference_images': [],
+        }), patch.object(drv_mod, 'is_video_edit_billing_task', return_value=True) as mock_predicate, \
+             patch.object(drv_mod, 'prepare_seedance_reference_video_sync',
+                          return_value=(True, 'http://example.com/ref.mp4', None, [])), \
+             patch.object(drv_mod, 'upload_media_to_cdn_sync',
+                          return_value=(True, 'http://cdn.example.com/ref.mp4', None)):
+            req = driver.build_create_request(ai_tool)
+
+        mock_predicate.assert_called_once_with(
+            driver.driver_type, 'http://example.com/ref.mp4'
+        )
+        self.assertEqual(req['json']['params']['omni_reference_task_type'], 'edit')
 
     def test_text_to_video_empty_prompt_rejected(self):
         """文生视频空 prompt 应返回错误"""

@@ -14,9 +14,14 @@ import json
 import uuid
 from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
-from config.constant import LEGACY_RESOLUTION_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
+from config.constant import (
+    LEGACY_RESOLUTION_EXTRA_CONFIG_KEY,
+    OMNI_REFERENCE_TASK_TYPE_EDIT,
+    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
+)
 from config.unified_config import DriverImplementation, VideoResolution, TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
+from utils.computing_power import is_video_edit_billing_task
 from utils.image_upload_utils import compress_and_upload_image_sync, upload_media_to_cdn_sync
 from utils.video_compressor import prepare_seedance_reference_video_sync
 from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStepType, PipelineStage
@@ -466,15 +471,18 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
         if not is_text_to_video and img_mode in (ImageMode.FIRST_LAST_FRAME, ImageMode.FIRST_LAST_WITH_REF):
             ratio = None
 
-        # Seedance 2.5 带参考视频会被判成视频编辑：ratio 必须 adaptive，duration 必须 -1
-        is_25_video_edit = (
-            self.driver_type == TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO
-            and bool(reference_video_raw)
-        )
+        # Seedance 2.5 带参考视频为视频编辑任务：显式 omni_reference_task_type=edit
+        # 使接口提交时提前校验参数限制（ratio 必须 adaptive、duration 必须 -1），
+        # 消除 auto 自动判定错型导致的异步报错。判定入口与计价层共用同一函数。
+        is_25_video_edit = is_video_edit_billing_task(self.driver_type, reference_video_raw)
         if is_25_video_edit:
+            payload["omni_reference_task_type"] = OMNI_REFERENCE_TASK_TYPE_EDIT
             payload["ratio"] = "adaptive"
             payload["duration"] = -1
-            self.logger.info("Seedance 2.5 参考视频编辑模式: ratio=adaptive duration=-1")
+            self.logger.info(
+                f"视频编辑模式: omni_reference_task_type={OMNI_REFERENCE_TASK_TYPE_EDIT}, "
+                "ratio=adaptive duration=-1"
+            )
         else:
             if ratio:
                 payload["ratio"] = ratio
