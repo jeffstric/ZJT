@@ -201,6 +201,7 @@ huimengi 网关内置 `human_review` 真人审核能力，与其他 Seedance 网
 3. **参数注入**：用户勾选处理人脸 + 实现方支持自动处理 → `base_extra_config['human_review'] = True`（在 `audited_extra_config` 序列化前注入）
 4. **驱动透传**：huimengi 驱动 `build_create_request` 从 `extra_config.human_review` 读取并放入 `params.human_review`，无需改动
 5. **前端无感**：「是否处理人脸」选项不变（仍由任务级 `needs_face_mask` 控制显隐），用户无需感知后端用了哪个网关
+6. **提示词清洗**：huimengi 使用原始素材（画面无黑框），`build_create_request` 会通过 `strip_face_mask_hint`（`task/visual_drivers/face_mask_prompt.py`）按 `FaceMaskPromptConstants.RESTORE_HINT` 常量原文精确移除提示词中残留的还原句——还原句的唯一写入方是 volcengine/oversea/kkidc 侧的 `ensure_face_mask_hint`，跨实现方重试到 huimengi 时由本方法做逆变换恢复基线，避免模型凭空还原不存在的黑框导致生成异常
 
 ## 参考视频帧率限制
 

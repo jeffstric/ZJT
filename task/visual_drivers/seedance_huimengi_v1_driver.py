@@ -47,6 +47,7 @@ from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import compress_and_upload_image_sync, upload_media_to_cdn_sync
 from utils.video_compressor import prepare_seedance_reference_video_sync
 from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStepType, PipelineStage
+from .face_mask_prompt import strip_face_mask_hint
 
 
 # huimengi 网关接口文档
@@ -320,6 +321,9 @@ class SeedanceHuimengiV1Driver(BaseVideoDriver):
         reference_images = all_images_info.get('reference_images', [])
 
         prompt = ai_tool.prompt or ""
+        # huimengi 使用原始素材（网关 human_review 自动处理人脸，画面无黑框），
+        # 移除提示词中可能残留的黑框还原句（覆盖存量任务与跨实现方重试场景）
+        prompt = strip_face_mask_hint(prompt)
 
         # 2. 文生视频判定：无任何图片/音视频输入，且 extra_config 未声明 image_mode
         reference_video_raw = self.get_video_path(ai_tool) or extra_config.get('reference_video')

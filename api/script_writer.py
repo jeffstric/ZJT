@@ -3949,7 +3949,9 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                     v_pref_parts.append("视频克隆: 当前模型支持")
                 else:
                     v_pref_parts.append("视频克隆: 当前模型不支持")
-            # 人脸处理开关（让智能体感知：仅当开启时才在视频克隆提示词追加「黑框还原真人人脸」）
+            # 人脸处理开关（让智能体感知用户希望处理人脸，仅作背景信息；
+            # 「黑框还原」句不再由智能体写入提示词，改由 seedance 系 driver 在执行时
+            # 按素材实际遮盖状态动态追加/移除，见 task/visual_drivers/face_mask_prompt.py）
             if v_prefs.get('enable_face_mask'):
                 v_pref_parts.append("人脸处理: 已开启")
             if v_pref_parts:
