@@ -183,6 +183,30 @@ class ComputingPowerLogModel:
             logger.error(f"Failed to check transaction exists: {e}")
             raise
 
+    @staticmethod
+    def get_deducted_power_by_transaction(user_id: int, transaction_id: str) -> Optional[int]:
+        """根据扣费流水ID查询实际扣减的算力（失败退费时原额退还）
+
+        任务创建时 server.py 将扣费流水号写入 ai_tools.transaction_id（与
+        computing_power_log.transaction_id 1:1 对应）。退费优先按此流水取
+        实际扣减金额，避免供应商切换/价格热更新导致的扣返不一致。
+        """
+        if not transaction_id:
+            return None
+        sql = """
+            SELECT computing_power FROM computing_power_log
+            WHERE transaction_id = %s AND user_id = %s AND behavior = 'deduct'
+            ORDER BY id DESC LIMIT 1
+        """
+        try:
+            result = execute_query(sql, (transaction_id, user_id), fetch_one=True)
+            if result and result.get('computing_power'):
+                return int(result['computing_power'])
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get deducted power for transaction {transaction_id}: {e}")
+            raise
+
 
     @staticmethod
     def count_monthly_active_users(year: int, month: int) -> int:
@@ -239,7 +263,8 @@ CREATE TABLE IF NOT EXISTS `computing_power_log` (
   PRIMARY KEY (`id`) USING BTREE,
   KEY `idx_user_created` (`user_id`,`created_at`) USING BTREE,
   KEY `idx_behavior_created` (`behavior`,`created_at`) USING BTREE,
-  KEY `idx_user_behavior_note` (`user_id`,`behavior`,`note`(100)) USING BTREE
+  KEY `idx_user_behavior_note` (`user_id`,`behavior`,`note`(100)) USING BTREE,
+  KEY `idx_transaction_id` (`transaction_id`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
 """
 

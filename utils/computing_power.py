@@ -9,8 +9,8 @@
 from typing import Optional, Union, Dict, Any
 import logging
 import json
-from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig
-from config.constant import IMAGE_MODE_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
+from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig, get_implementation_name
+from config.constant import IMAGE_MODE_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY, TASK_COMPUTING_POWER
 
 logger = logging.getLogger(__name__)
 
@@ -231,3 +231,121 @@ def get_implementation_for_user(
         impl_name = config.implementation
 
     return impl_name
+
+
+# ==================== 失败退费（扣返一致性保障） ====================
+# 背景：Grok 多供应商切换事故（2026-08-19）——任务按 A 供应商扣费后，重试切换
+# 到 B 供应商时 ai_tools.implementation 被改写，最终退费按 B 的价格重算，
+# 出现「扣16分退80分」。退费金额必须以实际扣减流水为准，而非重算。
+
+REFUND_TXN_PREFIX = 'refund-'
+
+
+def build_refund_transaction_id(ai_tool) -> Optional[str]:
+    """构造幂等退费流水号：refund-{原扣费流水号}
+
+    任务创建时扣费流水号与 ai_tools.transaction_id 1:1 绑定，
+    以此派生退费流水号可天然防止同一任务重复退费。
+
+    Returns:
+        幂等流水号；任务无扣费流水号时返回 None（调用方回退随机 uuid）
+    """
+    transaction_id = getattr(ai_tool, 'transaction_id', None)
+    if not transaction_id:
+        return None
+    return f"{REFUND_TXN_PREFIX}{transaction_id}"
+
+
+def is_already_refunded(ai_tool) -> bool:
+    """检查任务是否已退过费（幂等防重复退费）
+
+    依赖 perseids 服务将退费流水写入同一 computing_power_log 表；
+    check-then-post 存在极小竞态窗口，仅作防御性加固。
+    """
+    refund_txn = build_refund_transaction_id(ai_tool)
+    if not refund_txn:
+        return False
+    try:
+        from model.computing_power_log import ComputingPowerLogModel
+        return ComputingPowerLogModel.check_transaction_exists(refund_txn)
+    except Exception as e:
+        logger.warning(f"Failed to check refund idempotency for {refund_txn}: {e}")
+        return False
+
+
+def _recalculate_task_power(ai_tool, ai_tool_type: int, user_id: int) -> Optional[int]:
+    """按当前配置重算任务算力（退费回退路径，考虑实现方修饰符、分辨率等上下文）"""
+    context = build_context_from_task_record(ai_tool)
+    # 优先使用任务记录中的实现方，回退到用户当前偏好
+    impl_id = getattr(ai_tool, 'implementation', None)
+    impl_name = get_implementation_name(impl_id) if impl_id else None
+    implementation = impl_name if impl_name and impl_name != 'unknown' else get_implementation_for_user(ai_tool_type, user_id)
+
+    return get_computing_power_for_task(
+        task_type=ai_tool_type,
+        duration=getattr(ai_tool, 'duration', None) or 5,
+        user_id=user_id,
+        implementation=implementation,
+        context=context
+    )
+
+
+def _static_task_power(ai_tool, ai_tool_type: int) -> Optional[int]:
+    """静态 TASK_COMPUTING_POWER 兜底（不含修饰符，可能金额不准，仅最后回退）"""
+    computing_power_config = TASK_COMPUTING_POWER.get(ai_tool_type)
+    if isinstance(computing_power_config, dict):
+        duration = getattr(ai_tool, 'duration', None) or 5
+        computing_power = computing_power_config.get(duration)
+        if not computing_power:
+            computing_power = list(computing_power_config.values())[0]
+        return computing_power
+    return computing_power_config
+
+
+def resolve_refund_amount(ai_tool, task_type: Optional[int] = None) -> Optional[int]:
+    """解析失败任务的退费金额（扣返一致性保障）
+
+    ⚠️ 回退顺序（修改时必须保持）：
+      1. 按 ai_tools.transaction_id 关联 computing_power_log 扣费流水，
+         取实际扣减金额原额退还——精确，免疫供应商切换、价格热更新
+      2. get_computing_power_for_task 按当前配置重算——流水缺失时的兼容
+         回退（供应商切换场景下可能金额不准，仅兜底）
+      3. TASK_COMPUTING_POWER 静态配置——最旧数据兜底
+
+    Args:
+        ai_tool: AITool 对象（含 transaction_id / implementation / duration / extra_config）
+        task_type: 任务类型ID（缺省时取 ai_tool.type）
+
+    Returns:
+        退费金额；无法解析返回 None
+    """
+    ai_tool_type = task_type if task_type is not None else getattr(ai_tool, 'type', None)
+    user_id = getattr(ai_tool, 'user_id', None)
+    if ai_tool_type is None or not user_id:
+        return None
+
+    # 1. 实际扣减流水（原额退还）
+    transaction_id = getattr(ai_tool, 'transaction_id', None)
+    if transaction_id:
+        try:
+            from model.computing_power_log import ComputingPowerLogModel
+            deducted = ComputingPowerLogModel.get_deducted_power_by_transaction(user_id, transaction_id)
+            if deducted:
+                return deducted
+            logger.warning(
+                f"No deduct log found for transaction {transaction_id} "
+                f"(user {user_id}), falling back to recalculation"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to lookup deducted power by transaction {transaction_id}: {e}")
+
+    # 2. 按当前配置重算（考虑修饰符）
+    try:
+        computing_power = _recalculate_task_power(ai_tool, ai_tool_type, user_id)
+        if computing_power:
+            return computing_power
+    except Exception as e:
+        logger.warning(f"Modifier-aware refund recalculation failed, falling back: {e}")
+
+    # 3. 静态配置兜底
+    return _static_task_power(ai_tool, ai_tool_type)
