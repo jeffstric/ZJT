@@ -400,6 +400,15 @@ assert driver.driver_type == 14
 | 11 | wan22_image_to_video | wan22_runninghub_v1 | Wan22RunninghubV1Driver | 图生视频 |
 | 13 | digital_human | digital_human_runninghub_v1 | DigitalHumanRunninghubV1Driver | 数字人生成 |
 
+### 慧梦网关（huimengi）
+
+扁平 `{model, params}` 网关，提交 + 轮询模式，详见 `docs/drivers/` 下各驱动文档。
+
+| 类型 | 实现驱动 | 驱动类 | 功能 |
+|------|---------|--------|------|
+| 22/23/31/36 | seedance_*_huimengi_v1 | `Seedance2*HuimengiV1Driver` | Seedance 2.0 系列 / 2.5 图生视频 |
+| 27 | grok_huimengi_v1 | `GrokHuimengiV1Driver` | Grok 图生视频（grok-video-channel，复用 Seedance 慧梦基类） |
+
 ### 待实现
 
 | 类型 | 业务驱动 | 说明 |

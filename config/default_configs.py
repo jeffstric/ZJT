@@ -451,7 +451,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'huimengi.api_key',
         'value_type': 'string',
-        'description': 'huimengi 网关 API Key（Seedance 2.0 系列视频）',
+        'description': 'huimengi 网关 API Key（Seedance 2.0 系列 / Grok 视频）',
         'editable': True,
         'is_sensitive': True,
         'quick_config': True
