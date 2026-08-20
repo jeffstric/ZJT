@@ -184,6 +184,55 @@ class TestGetFrontendConfig(unittest.TestCase):
         self.assertEqual(updated_task.get('user_preferred_implementation'), 'grok_duomi_v1')
 
     @patch('model.implementation_power.ImplementationPowerModel')
+    def test_get_frontend_config_with_user_prefs_db_tiered_powers_keeps_dict(self, mock_impl_power_model):
+        """测试用户偏好的实现方在数据库有分档价格时，computing_power 保留完整分档 dict 而非首档 int
+
+        回归背景：grok 等按时长计费模型，偏好实现方经 implementation_power_config 热调价后，
+        旧逻辑 list(db_powers.values())[0] 把 {6:8, 10:14, 15:20} 扁平化成首档 int 8，
+        前端 getComputingPower 拿到 int 后切换时长算力不再变化。
+        """
+        from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig
+
+        # 注册假任务（grok 真实实现方列表受运行时供应商配置过滤，环境缺失时会全部被过滤掉）
+        task_key = 'tiered-power-test-task'
+        UnifiedConfigRegistry.register(UnifiedTaskConfig(
+            id=997,
+            key=task_key,
+            name='Tiered Power Test Task',
+            category='image_to_video',
+            provider='test',
+            driver_name='TIERED_POWER_TEST'
+        ))
+
+        # Mock 数据库返回按时长分档价格
+        mock_impl_power_model.get_all_powers_for_implementation.return_value = {6: 8, 10: 14, 15: 20}
+        mock_impl_power_model.get_config.return_value = {}
+
+        # 设置用户偏好
+        user_prefs = {
+            task_key: 'tiered_power_test_impl'
+        }
+
+        # 获取带偏好的配置
+        config_with_prefs = UnifiedConfigRegistry.get_frontend_config(
+            user_id=1,
+            user_prefs=user_prefs
+        )
+
+        # 找到注册的任务
+        updated_task = None
+        for task in config_with_prefs['tasks']:
+            if task['key'] == task_key:
+                updated_task = task
+                break
+
+        self.assertIsNotNone(updated_task)
+        # 数据库分档价格必须完整保留为 dict，供前端按 computing_power[duration] 取值
+        self.assertEqual(updated_task.get('computing_power'), {6: 8, 10: 14, 15: 20},
+            f"分档价格应保留完整 dict {{6: 8, 10: 14, 15: 20}}，实际为 {updated_task.get('computing_power')}")
+        self.assertEqual(updated_task.get('user_preferred_implementation'), 'tiered_power_test_impl')
+
+    @patch('model.implementation_power.ImplementationPowerModel')
     def test_get_frontend_config_with_user_prefs_get_power_returns_none(self, mock_impl_power_model):
         """测试用户偏好设置但算力获取返回空时，从 implementations 列表中获取算力"""
         from config.unified_config import UnifiedConfigRegistry
@@ -335,7 +384,7 @@ class TestApplyUserPreferencesToTasks(unittest.TestCase):
 
     @patch('model.implementation_power.ImplementationPowerModel')
     def test_apply_user_preferences_duration_based_power(self, mock_impl_power_model):
-        """测试按时长计费的偏好实现方返回字典时取第一个值作为显示算力"""
+        """测试按时长计费的偏好实现方返回分档 dict 时完整保留（否则前端切换时长算力不变）"""
         from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig
 
         # 注册对应配置，否则 _apply_user_preferences_to_tasks 会跳过
@@ -362,7 +411,7 @@ class TestApplyUserPreferencesToTasks(unittest.TestCase):
         result = UnifiedConfigRegistry._apply_user_preferences_to_tasks(tasks, user_prefs)
 
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['computing_power'], 46)
+        self.assertEqual(result[0]['computing_power'], {5: 46, 10: 94})
         mock_impl_power_model.get_all_powers_for_implementation.assert_called_once_with(
             'seedance_impl', 'SEEDANCE_TEST'
         )
