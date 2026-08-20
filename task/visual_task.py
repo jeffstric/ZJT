@@ -515,6 +515,14 @@ async def _submit_new_task(ai_tool):
             except Exception as e:
                 logger.warning(f"Failed to mark attempt as success for sync task {task_id}: {e}")
 
+            # 供应商切换差价结算（多扣退差/少扣补收，幂等；to_thread 避免阻塞事件循环）
+            try:
+                import asyncio
+                from utils.computing_power import settle_success_diff_for_task
+                await asyncio.to_thread(settle_success_diff_for_task, task_id)
+            except Exception as e:
+                logger.warning(f"Settle diff failed for sync task {task_id}: {e}")
+
             logger.info(f"Sync task {task_id} completed with result: {final_url}")
             AIToolsLogModel.log(task_id, AIToolsLogEvent.TASK_COMPLETED,
                                user_id=ai_tool.user_id, status_to=AI_TOOL_STATUS_COMPLETED,
@@ -940,6 +948,14 @@ async def _handle_task_success(project_id, task_id, media_url):
             ImplementationAttemptModel.mark_active_attempt_completed(task_id, ATTEMPT_STATUS_SUCCESS)
         except Exception as e:
             logger.warning(f"Failed to mark attempt as success for task {task_id}: {e}")
+
+        # 供应商切换差价结算（多扣退差/少扣补收，幂等；to_thread 避免阻塞事件循环）
+        try:
+            import asyncio
+            from utils.computing_power import settle_success_diff_for_task
+            await asyncio.to_thread(settle_success_diff_for_task, task_id)
+        except Exception as e:
+            logger.warning(f"Settle diff failed for task {task_id}: {e}")
 
         logger.info(f"Task {project_id} completed successfully")
         AIToolsLogModel.log(task_id, AIToolsLogEvent.TASK_COMPLETED,

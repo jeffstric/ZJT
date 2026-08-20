@@ -124,6 +124,13 @@ async def _process_one(row: dict) -> None:
                 ImplementationAttemptModel.mark_active_attempt_completed(task_id, ATTEMPT_STATUS_SUCCESS)
             except Exception as ae:
                 logger.warning(f"mark attempt success failed task={task_id}: {ae}")
+            # 供应商切换差价结算（多扣退差/少扣补收，幂等）
+            try:
+                import asyncio
+                from utils.computing_power import settle_success_diff_for_task
+                await asyncio.to_thread(settle_success_diff_for_task, task_id)
+            except Exception as ae:
+                logger.warning(f"settle diff failed task={task_id}: {ae}")
             _log(task_id, AIToolsLogEvent.DOWNLOAD_COMPLETED, project_id=project_id,
                  message="下载/缓存完成", duration_ms=download_ms,
                  detail={'source_url': remote_url, 'final_url': final_url, 'queue_wait_ms': queue_wait_ms})
@@ -162,6 +169,13 @@ async def _process_one(row: dict) -> None:
                     ImplementationAttemptModel.mark_active_attempt_completed(task_id, ATTEMPT_STATUS_SUCCESS)
                 except Exception as ae:
                     logger.warning(f"mark attempt success failed task={task_id}: {ae}")
+                # 供应商切换差价结算（多扣退差/少扣补收，幂等）
+                try:
+                    import asyncio
+                    from utils.computing_power import settle_success_diff_for_task
+                    await asyncio.to_thread(settle_success_diff_for_task, task_id)
+                except Exception as ae:
+                    logger.warning(f"settle diff failed task={task_id}: {ae}")
                 _log(task_id, AIToolsLogEvent.MAX_RETRY_EXCEEDED, project_id=project_id,
                      message=f"下载{max_try}次仍失败，使用原URL兜底",
                      detail={'source_url': remote_url, 'fallback_url': remote_url, 'error': err})
