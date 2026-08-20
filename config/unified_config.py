@@ -926,22 +926,25 @@ class UnifiedConfigRegistry:
                 try:
                     db_powers = ImplementationPowerModel.get_all_powers_for_implementation(user_pref_impl, driver_name)
                     if db_powers:
-                        if None in db_powers:
+                        # 与 _get_implementations_info 保持一致：分档价格必须保留完整 dict，
+                        # 扁平化为首档 int 会导致前端 computing_power[duration] 失效（时长切换算力不变）
+                        duration_powers = {k: v for k, v in db_powers.items() if k is not None}
+                        if duration_powers:
+                            impl_power = duration_powers
+                        elif None in db_powers:
                             impl_power = db_powers[None]
-                        else:
-                            impl_power = list(db_powers.values())[0]
                 except Exception as e:
                     logger.debug(f"Failed to get implementation power for {user_pref_impl}: {e}")
 
                 # 如果数据库中没有配置，从 implementations 列表中查找
-                if impl_power is None or impl_power == 0:
+                if not impl_power:
                     for impl in implementations:
                         if impl.get('name') == user_pref_impl:
                             impl_power = impl.get('computing_power')
                             break
 
-                # 更新算力
-                if impl_power is not None and impl_power != 0:
+                # 更新算力（int 或按时长 dict；空值/0 跳过）
+                if impl_power:
                     task['computing_power'] = impl_power
                     task['user_preferred_implementation'] = user_pref_impl
             elif implementations and (task.get('computing_power') == 0 or not task.get('computing_power')):

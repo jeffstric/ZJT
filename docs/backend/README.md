@@ -17,3 +17,4 @@
 | [wx_group_guide.md](./wx_group_guide.md) | 注册后官方微信群引导（开关、触点、常驻入口） |
 | [frontend_ui_visibility.md](./frontend_ui_visibility.md) | 社交图标 / 意见反馈个人微信二维码可配置隐藏与换图 |
 | [model_catalog_and_recommendations.md](./model_catalog_and_recommendations.md) | 场景模型目录：性价比/效果双档与供应商折叠 |
+| [implementation_power_frontend_dispatch.md](./implementation_power_frontend_dispatch.md) | 实现方算力前端下发机制与用户偏好分档价格扁平化修复 |
