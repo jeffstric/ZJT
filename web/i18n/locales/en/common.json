@@ -66,6 +66,8 @@
   "log_deduct": "➖ Deduct",
   "txn_label": "Txn",
   "txn_refund": "↩ Refund",
+  "txn_diff_refund": "⇄ Switch Refund",
+  "txn_diff_charge": "⇄ Switch Charge",
   "txn_copied": "✓ Copied",
   "txn_click_to_copy": "Click to copy full transaction ID",
   "nav_inspiration": "Inspiration",

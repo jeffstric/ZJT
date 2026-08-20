@@ -652,6 +652,13 @@ class SyncTaskExecutor:
             except Exception as e:
                 logger.warning(f"[SyncTaskExecutor] Failed to mark attempt as success for task {task_id}: {e}")
 
+            # 供应商切换差价结算（多扣退差/少扣补收，幂等；本回调运行于进程池 worker，直接同步调用）
+            try:
+                from utils.computing_power import settle_success_diff_for_task
+                settle_success_diff_for_task(task_id)
+            except Exception as e:
+                logger.warning(f"[SyncTaskExecutor] Settle diff failed for task {task_id}: {e}")
+
             logger.info(f"[SyncTaskExecutor] Task {task_id} completed successfully")
         else:
             # 任务失败

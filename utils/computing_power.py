@@ -16,6 +16,8 @@ from config.constant import (
     VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
     TASK_COMPUTING_POWER,
     VIDEO_EDIT_BILLING_TASK_TYPES,
+    DIFF_REFUND_TXN_PREFIX,
+    DIFF_CHARGE_TXN_PREFIX,
 )
 
 logger = logging.getLogger(__name__)
@@ -436,3 +438,126 @@ def resolve_refund_amount(ai_tool, task_type: Optional[int] = None) -> Optional[
 
     # 3. 静态配置兜底
     return _static_task_power(ai_tool, ai_tool_type)
+
+
+# ==================== 供应商切换差价结算（"贵扣便宜用"修复） ====================
+# 背景：任务按供应商A价格扣费（如 site1 10秒=55分），失败切换到供应商B后成功
+# （如慧梦 10秒=14分），旧机制不退差价导致用户多付。方案：任务成功时按实际
+# 完成供应商的价格双向结算——多扣退差、少扣补收（补收 best-effort 不追债）。
+
+def settle_task_success_diff(ai_tool, task_type: Optional[int] = None) -> Optional[int]:
+    """任务成功后按实际完成供应商双向结算差价
+
+    ⚠️ 结算前提（任一不满足则静默跳过，不抛异常、不阻断成功状态更新）：
+      1. 动态开关 billing.settle_diff_enabled 开启（默认开，可随时关闭）
+      2. 任务发生过供应商切换（implementation_attempts 存在 attempt>=2）
+      3. 实扣金额可查（ai_tools.transaction_id 对应扣费流水，与创建扣费同源）
+
+    幂等：diff-refund-{原扣费流水号} / diff-charge-{原扣费流水号}，任一已存在即跳过。
+    补收 best-effort：余额不足或 perseids 扣费失败仅记日志（本次让利），不重试不追债。
+
+    ⚠️ 调用时 ai_tools.implementation 必须已是最终完成供应商（切换驱动在提交前
+    已改写；无切换任务该字段即首供应商，会被前提2过滤）。
+
+    Args:
+        ai_tool: AITool 完整记录（含 transaction_id / implementation / duration / extra_config）
+        task_type: 任务类型ID（缺省时取 ai_tool.type）
+
+    Returns:
+        结算金额：正数=退差（用户多收），负数=补收（用户多付）；未结算返回 None
+    """
+    ai_tool_type = task_type if task_type is not None else getattr(ai_tool, 'type', None)
+    user_id = getattr(ai_tool, 'user_id', None)
+    task_id = getattr(ai_tool, 'id', None)
+    transaction_id = getattr(ai_tool, 'transaction_id', None)
+    if ai_tool_type is None or not user_id or not transaction_id:
+        return None
+
+    try:
+        # 0. 灰度开关（默认开）
+        from config.config_util import get_dynamic_config_value
+        if not get_dynamic_config_value('billing', 'settle_diff_enabled', default=True):
+            return None
+
+        # 1. 仅结算发生过供应商切换的任务（无切换：扣费价=完成供应商价，无差价）
+        from model.implementation_attempts import ImplementationAttemptModel
+        if ImplementationAttemptModel.get_retry_implementation_count(task_id) < 1:
+            return None
+
+        from model.computing_power_log import ComputingPowerLogModel
+
+        # 2. 幂等：任一方向已结算过即跳过
+        refund_txn = f"{DIFF_REFUND_TXN_PREFIX}{transaction_id}"
+        charge_txn = f"{DIFF_CHARGE_TXN_PREFIX}{transaction_id}"
+        if ComputingPowerLogModel.check_transaction_exists(refund_txn) \
+                or ComputingPowerLogModel.check_transaction_exists(charge_txn):
+            return None
+
+        # 3. 实扣金额（创建扣费流水原额）
+        deducted = ComputingPowerLogModel.get_deducted_power_by_transaction(user_id, transaction_id)
+        if not deducted:
+            logger.warning(f"[SettleDiff] task {task_id} no deduct log for {transaction_id}, skip")
+            return None
+
+        # 4. 实际完成供应商价格（最终 implementation + duration + context 修饰符）
+        actual = _recalculate_task_power(ai_tool, ai_tool_type, user_id)
+        if not actual:
+            logger.warning(f"[SettleDiff] task {task_id} cannot resolve actual price, skip")
+            return None
+
+        diff = deducted - actual
+        if diff == 0:
+            return None
+
+        # 5. 发起结算（与退费相同的两步 perseids 调用）
+        from perseids_server.client import make_perseids_request
+        success, message, response_data = make_perseids_request(
+            endpoint='get_auth_token_by_user_id', method='POST', data={"user_id": user_id}
+        )
+        if not success:
+            logger.error(f"[SettleDiff] task {task_id} get auth token failed: {message}")
+            return None
+        headers = {'Authorization': f"Bearer {response_data['token']}"}
+
+        if diff > 0:
+            txn, behavior, amount = refund_txn, 'increase', diff
+        else:
+            txn, behavior, amount = charge_txn, 'deduct', -diff
+
+        success, message, _ = make_perseids_request(
+            endpoint='user/calculate_computing_power', method='POST', headers=headers,
+            data={"computing_power": amount, "behavior": behavior, "transaction_id": txn}
+        )
+        if success:
+            logger.info(
+                f"[SettleDiff] task {task_id} settled: deducted={deducted}, "
+                f"actual={actual}, {'refund' if diff > 0 else 'charge'} {amount}"
+            )
+            return diff
+        # 补收失败（如余额不足）best-effort：仅告警，本次让利；退差失败则待审计脚本补偿
+        logger.error(f"[SettleDiff] task {task_id} settle {behavior} {amount} failed: {message}")
+        return None
+    except Exception as e:
+        logger.error(f"[SettleDiff] task {task_id} settle failed: {e}")
+        return None
+
+
+def settle_success_diff_for_task(task_id) -> Optional[int]:
+    """按任务ID取完整记录并结算差价（成功终态挂钩统一入口）
+
+    五个成功终态写入点（task/visual_task.py 同步API与异步完成、
+    task/download_queue_task.py 下载worker×2、task/sync_task_executor.py
+    同步执行器）在置 AI_TOOL_STATUS_COMPLETED 后调用本函数。
+    内部重新查询 ai_tools 以获取切换后的最终 implementation；
+    幂等且吞异常，可安全重复调用。新增成功终态点时必须同样挂钩。
+    """
+    try:
+        from model.ai_tools import AIToolsModel
+        ai_tool = AIToolsModel.get_by_id(task_id)
+        if not ai_tool:
+            logger.warning(f"[SettleDiff] task {task_id} not found, skip settle")
+            return None
+        return settle_task_success_diff(ai_tool)
+    except Exception as e:
+        logger.error(f"[SettleDiff] load task {task_id} failed: {e}")
+        return None

@@ -1987,3 +1987,12 @@ LANGUAGE_INSTRUCTIONS = {
           "- The user interface is in English, so ALL communication must be in English\n"
           "="*60,
 }
+
+
+# ============ 供应商切换差价结算（"贵扣便宜用"修复） ============
+# 任务按供应商A价格扣费、失败切换到供应商B后成功时，按B的实际价格双向结算差价：
+#   多扣 → 退差  diff-refund-{原扣费流水号}（behavior=increase）
+#   少扣 → 补收  diff-charge-{原扣费流水号}（behavior=deduct，best-effort 不追债）
+# 结算逻辑见 utils/computing_power.py: settle_task_success_diff
+DIFF_REFUND_TXN_PREFIX = 'diff-refund-'
+DIFF_CHARGE_TXN_PREFIX = 'diff-charge-'

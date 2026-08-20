@@ -66,6 +66,8 @@
   "log_deduct": "➖ 扣除",
   "txn_label": "单号",
   "txn_refund": "↩ 失败返还",
+  "txn_diff_refund": "⇄ 切换补差",
+  "txn_diff_charge": "⇄ 切换补收",
   "txn_copied": "✓ 已复制",
   "txn_click_to_copy": "点击复制完整单号",
   "nav_inspiration": "灵感",
