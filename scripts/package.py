@@ -90,6 +90,7 @@ EXCLUDE_DIRS = [
     ".venv",
     "build",
     "enterprise",
+    ".pyarmor",  # PyArmor 加密工具的本地缓存/运行时目录，不属于发布包
 ]
 
 # 不需要打包的目录（相对路径，只排除特定子目录）
