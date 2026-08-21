@@ -1284,6 +1284,41 @@ def process_task_with_retry(task_type, process_func):
                         else:
                             RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_TASK)
 
+                    # 过期任务退费（与超最大重试分支同模式：原额+幂等；
+                    # 此前该路径漏退费，卡死 7 天的任务用户被白扣）
+                    if ai_tool:
+                        try:
+                            from utils.computing_power import (
+                                resolve_refund_amount,
+                                build_refund_transaction_id,
+                                is_already_refunded
+                            )
+                            if not is_already_refunded(ai_tool):
+                                expired_refund = resolve_refund_amount(ai_tool)
+                                if expired_refund:
+                                    refund_txn = build_refund_transaction_id(ai_tool) or str(uuid.uuid4())
+                                    success, message, response_data = make_perseids_request(
+                                        endpoint='get_auth_token_by_user_id',
+                                        method='POST',
+                                        data={"user_id": ai_tool.user_id}
+                                    )
+                                    if success:
+                                        headers = {'Authorization': f"Bearer {response_data['token']}"}
+                                        success, message, _ = make_perseids_request(
+                                            endpoint='user/calculate_computing_power',
+                                            method='POST',
+                                            headers=headers,
+                                            data={
+                                                "computing_power": expired_refund,
+                                                "behavior": "increase",
+                                                "transaction_id": refund_txn
+                                            }
+                                        )
+                                        if success:
+                                            logger.info(f"Expired task {task.task_id} refunded {expired_refund} computing power")
+                        except Exception as e:
+                            logger.warning(f"Failed to refund expired task {task.task_id}: {e}")
+
                     expired_count += 1
                     logger.info(f"Task {task.task_id} marked as expired")
                     continue
