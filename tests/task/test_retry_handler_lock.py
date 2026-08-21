@@ -5,12 +5,22 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from config.constant import IMPLEMENTATION_LOCK_EXTRA_CONFIG_KEY
-from enterprise.task.retry_handler import (
-    handle_failure_with_retry,
-    is_implementation_locked_task,
-)
+
+# enterprise/ 被 .gitignore，社区 CI 镜像不会 COPY 该包。
+# 模块级 ImportError 会被 unittest 记为 ERROR 而非 skip，必须在导入处吞掉。
+try:
+    from enterprise.task.retry_handler import (
+        handle_failure_with_retry,
+        is_implementation_locked_task,
+    )
+except (ModuleNotFoundError, ImportError):
+    handle_failure_with_retry = None
+    is_implementation_locked_task = None
+
+_HAS_ENTERPRISE_RETRY = handle_failure_with_retry is not None
 
 
+@unittest.skipUnless(_HAS_ENTERPRISE_RETRY, "enterprise 模块未打包")
 class TestIsImplementationLockedTask(unittest.TestCase):
     def test_snapshot_true(self):
         ai_tool = SimpleNamespace(extra_config=json.dumps({IMPLEMENTATION_LOCK_EXTRA_CONFIG_KEY: True}))
@@ -30,6 +40,7 @@ class TestIsImplementationLockedTask(unittest.TestCase):
         mock_users.is_implementation_locked.assert_called_once_with(8, "grok_image_to_video")
 
 
+@unittest.skipUnless(_HAS_ENTERPRISE_RETRY, "enterprise 模块未打包")
 class TestHandleFailureWithRetryLock(unittest.TestCase):
     @patch("enterprise.task.retry_handler.PipelineDriverFactory")
     @patch("enterprise.task.retry_handler.AIToolsModel")
