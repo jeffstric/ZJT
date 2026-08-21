@@ -6,7 +6,8 @@ from datetime import datetime
 from .database import execute_query, execute_update, execute_insert
 from config.constant import (
     AI_TOOL_STATUS_PENDING,
-    AI_TOOL_STATUS_PROCESSING
+    AI_TOOL_STATUS_PROCESSING,
+    IMPLEMENTATION_LOCK_EXTRA_CONFIG_KEY,
 )
 from config.config_util import get_config
 import logging
@@ -14,6 +15,72 @@ import os
 import json
 
 logger = logging.getLogger(__name__)
+
+
+def parse_extra_config_dict(extra_config) -> Dict[str, Any]:
+    """Parse ai_tools.extra_config (None / str / dict) into a dict. Invalid input → {}."""
+    if not extra_config:
+        return {}
+    if isinstance(extra_config, dict):
+        return dict(extra_config)
+    if isinstance(extra_config, str):
+        try:
+            parsed = json.loads(extra_config)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def apply_implementation_lock_snapshot(extra_config, locked: bool):
+    """
+    把 implementation_lock 写入 extra_config JSON。
+    已有该 key 时不覆盖；仅在 locked=True 时写入。失败不抛。
+    """
+    parsed = parse_extra_config_dict(extra_config)
+    if IMPLEMENTATION_LOCK_EXTRA_CONFIG_KEY in parsed:
+        if isinstance(extra_config, str) or extra_config is None:
+            return extra_config
+        return json.dumps(parsed, ensure_ascii=False)
+    if not locked:
+        return extra_config
+    parsed[IMPLEMENTATION_LOCK_EXTRA_CONFIG_KEY] = True
+    return json.dumps(parsed, ensure_ascii=False)
+
+
+def merge_implementation_lock_into_extra_config(
+    extra_config,
+    user_id: Optional[int],
+    task_type: Optional[int],
+    implementation: Optional[int],
+):
+    """
+    若用户固定了当前实现方，将 extra_config.implementation_lock=true。
+    查找失败不影响建单。
+    """
+    try:
+        parsed = parse_extra_config_dict(extra_config)
+        if IMPLEMENTATION_LOCK_EXTRA_CONFIG_KEY in parsed:
+            return extra_config if isinstance(extra_config, str) or extra_config is None else json.dumps(
+                parsed, ensure_ascii=False
+            )
+        if not user_id or not task_type:
+            return extra_config
+        from config.unified_config import UnifiedConfigRegistry, get_implementation_name
+        from model.users import UsersModel
+        config = UnifiedConfigRegistry.get_by_id(task_type)
+        if not config:
+            return extra_config
+        if not UsersModel.is_implementation_locked(user_id, config.key):
+            return extra_config
+        pref = UsersModel.get_implementation_preference(user_id, config.key)
+        impl_name = get_implementation_name(implementation) if implementation else None
+        if not pref or pref != impl_name:
+            return extra_config
+        return apply_implementation_lock_snapshot(extra_config, locked=True)
+    except Exception as e:
+        logger.warning(f"Failed to merge implementation lock snapshot: {e}")
+        return extra_config
 
 
 def _log_event(ai_tool_id, event_type, **kwargs):
@@ -141,6 +208,9 @@ class AIToolsModel:
         Returns:
             Inserted record ID
         """
+        extra_config = merge_implementation_lock_into_extra_config(
+            extra_config, user_id, type, implementation
+        )
         sql = """
             INSERT INTO ai_tools
             (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config, reference_images, implementation, audio_path, video_path)
@@ -198,6 +268,9 @@ class AIToolsModel:
         from .database import transaction, execute_insert_in_transaction
         from .ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStepType, PipelineStage
 
+        extra_config = merge_implementation_lock_into_extra_config(
+            extra_config, user_id, type, implementation
+        )
         sql = """
             INSERT INTO ai_tools
             (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config, reference_images, implementation, audio_path, video_path)

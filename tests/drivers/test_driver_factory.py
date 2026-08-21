@@ -410,12 +410,14 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
 
     def setUp(self):
         VideoDriverFactory._registered_drivers.clear()
+        VideoDriverFactory._last_create_error = None
         self._original_configs = UnifiedConfigRegistry._configs.copy()
         self._original_id_map = UnifiedConfigRegistry._id_map.copy()
         self._original_implementations = UnifiedConfigRegistry._implementations.copy()
 
     def tearDown(self):
         VideoDriverFactory._registered_drivers.clear()
+        VideoDriverFactory._last_create_error = None
         UnifiedConfigRegistry._configs = self._original_configs
         UnifiedConfigRegistry._id_map = self._original_id_map
         UnifiedConfigRegistry._implementations = self._original_implementations
@@ -477,6 +479,7 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
         核心回归测试：恢复旧代码会使用不可用的用户偏好。
         """
         MockUsersModel.get_implementation_preference.return_value = "test_missing_pref"
+        MockUsersModel.is_implementation_locked.return_value = False
 
         config = self._register_test_task([
             ("test_missing_pref", MockConfigMissingDriver, 100),  # 用户偏好但不可用
@@ -489,6 +492,58 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
 
         # 用户偏好不可用，应降级选择可用的
         self.assertEqual(impl_name, "test_ok_fallback")
+
+    @patch('model.users.UsersModel')
+    def test_locked_preference_available_is_used(self, MockUsersModel):
+        MockUsersModel.get_implementation_preference.return_value = "test_ok_locked"
+        MockUsersModel.is_implementation_locked.return_value = True
+
+        config = self._register_test_task([
+            ("test_ok_locked", MockDriver, 200),
+            ("test_ok_other", MockDriver, 100),
+        ])
+
+        impl_name, _ = VideoDriverFactory._get_implementation_for_user(
+            self.TASK_TYPE_ID, user_id=1, config=config
+        )
+        self.assertEqual(impl_name, "test_ok_locked")
+
+    @patch('model.users.UsersModel')
+    def test_locked_preference_unavailable_does_not_fallback(self, MockUsersModel):
+        from config.constant import DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE
+
+        MockUsersModel.get_implementation_preference.return_value = "test_missing_locked"
+        MockUsersModel.is_implementation_locked.return_value = True
+
+        config = self._register_test_task([
+            ("test_missing_locked", MockConfigMissingDriver, 100),
+            ("test_ok_fallback", MockDriver, 200),
+        ])
+
+        impl_name, _ = VideoDriverFactory._get_implementation_for_user(
+            self.TASK_TYPE_ID, user_id=1, config=config
+        )
+        self.assertIsNone(impl_name)
+        error = VideoDriverFactory.get_last_create_error()
+        self.assertIsNotNone(error)
+        self.assertEqual(error["reason"], DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE)
+
+    @patch('model.users.UsersModel')
+    def test_create_driver_keeps_locked_unavailable_error(self, MockUsersModel):
+        from config.constant import DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE
+
+        MockUsersModel.get_implementation_preference.return_value = "test_missing_locked"
+        MockUsersModel.is_implementation_locked.return_value = True
+
+        self._register_test_task([
+            ("test_missing_locked", MockConfigMissingDriver, 100),
+            ("test_ok_fallback", MockDriver, 200),
+        ])
+
+        driver = VideoDriverFactory.create_driver_by_type(self.TASK_TYPE_ID, user_id=1)
+        self.assertIsNone(driver)
+        error = VideoDriverFactory.get_last_create_error()
+        self.assertEqual(error["reason"], DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE)
 
 
 if __name__ == "__main__":
