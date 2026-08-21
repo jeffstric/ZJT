@@ -6,7 +6,7 @@
   get_computing_power_for_task(task_type,...)       → 返回 int，实际扣费用的算力值
   get_computing_power_config_for_task(task_type,...) → 返回 dict，包含配置详情（source/implementation/is_user_preference）
 """
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict, Any, List
 import logging
 import json
 import math
@@ -328,6 +328,58 @@ def resolve_video_edit_billing_duration(
 # 出现「扣16分退80分」。退费金额必须以实际扣减流水为准，而非重算。
 
 REFUND_TXN_PREFIX = 'refund-'
+
+
+def collect_refund_txn_ids_for_deduct_logs(logs: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """从扣减日志收集待查询的失败退回流水号 refund-{原扣费流水号}。"""
+    collected = []
+    seen = set()
+    for log in logs or []:
+        if log.get('behavior') != 'deduct':
+            continue
+        tid = log.get('transaction_id')
+        if not tid:
+            continue
+        tid = str(tid)
+        if (
+            tid.startswith(REFUND_TXN_PREFIX)
+            or tid.startswith(DIFF_REFUND_TXN_PREFIX)
+            or tid.startswith(DIFF_CHARGE_TXN_PREFIX)
+        ):
+            continue
+        refund_tid = f"{REFUND_TXN_PREFIX}{tid}"
+        if refund_tid in seen:
+            continue
+        seen.add(refund_tid)
+        collected.append(refund_tid)
+    return collected
+
+
+def attach_refund_to_deduct_logs(
+    logs: Optional[List[Dict[str, Any]]],
+    refund_map: Optional[Dict[str, Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """给扣减日志挂上对应失败退回流水（refund_map key 为完整 refund- 流水号）。"""
+    logs = logs or []
+    if not refund_map:
+        return logs
+    for log in logs:
+        if log.get('behavior') != 'deduct':
+            continue
+        tid = log.get('transaction_id')
+        if not tid:
+            continue
+        tid = str(tid)
+        if tid.startswith(REFUND_TXN_PREFIX):
+            continue
+        refund = refund_map.get(f"{REFUND_TXN_PREFIX}{tid}")
+        if not refund:
+            continue
+        log['refund'] = {
+            'transaction_id': refund.get('transaction_id'),
+            'computing_power': refund.get('computing_power'),
+        }
+    return logs
 
 
 def build_refund_transaction_id(ai_tool) -> Optional[str]:

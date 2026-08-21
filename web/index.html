@@ -485,6 +485,7 @@
           <h4 style="margin-bottom: 16px; color: var(--text);">服务商偏好设置</h4>
           <p style="color: var(--muted); font-size: 13px; margin-bottom: 20px;">
             您可以为不同的任务类型选择不同的服务商。选择不同的服务商可能会影响处理速度、质量和算力消耗。
+            勾选「固定此供应商」后，该任务只会使用所选服务商；失败时不再自动切换其他服务商。
           </p>
 
           <div v-if="isCommunityEdition" class="status warning" style="margin-bottom: 16px;">
@@ -508,6 +509,18 @@
                     </option>
                   </select>
                   <div v-if="isCommunityEdition" style="font-size: 12px; color: var(--muted); margin-top: 4px;">仅商业版可选择</div>
+                  <label v-if="userPreferences[taskKey]" class="settings-lock">
+                    <input
+                      type="checkbox"
+                      :checked="!!userPreferenceLocks[taskKey]"
+                      :disabled="isCommunityEdition"
+                      @change="handleLockChange(taskKey, $event.target.checked)"
+                    >
+                    固定此供应商（失败后不自动切换）
+                  </label>
+                  <p v-if="userPreferences[taskKey]" class="settings-lock-hint">
+                    未勾选时为「首选」：该供应商失败后，系统仍可能换其他供应商重试。
+                  </p>
                   
                   <!-- 实现方统计数据 -->
                   <div v-if="taskConfig.implementations.length > 0" style="margin-top: 12px; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 6px;">
@@ -543,6 +556,18 @@
                     </option>
                   </select>
                   <div v-if="isCommunityEdition" style="font-size: 12px; color: var(--muted); margin-top: 4px;">仅商业版可选择</div>
+                  <label v-if="userPreferences[taskKey]" class="settings-lock">
+                    <input
+                      type="checkbox"
+                      :checked="!!userPreferenceLocks[taskKey]"
+                      :disabled="isCommunityEdition"
+                      @change="handleLockChange(taskKey, $event.target.checked)"
+                    >
+                    固定此供应商（失败后不自动切换）
+                  </label>
+                  <p v-if="userPreferences[taskKey]" class="settings-lock-hint">
+                    未勾选时为「首选」：该供应商失败后，系统仍可能换其他供应商重试。
+                  </p>
                   
                   <!-- 实现方统计数据 -->
                   <div v-if="taskConfig.implementations.length > 0" style="margin-top: 12px; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 6px;">

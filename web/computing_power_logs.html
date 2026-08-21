@@ -215,6 +215,24 @@
       color: var(--danger);
     }
 
+    .log-refunded {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .log-refunded.mismatch {
+      color: #f59e0b;
+    }
+
+    .log-refunded .log-txn {
+      margin-top: 0;
+    }
+
     .log-time {
       font-size: 12px;
       color: var(--muted);
@@ -347,6 +365,15 @@
         <div class="log-meta">
           <div class="log-amount" :class="log.behavior">
             {{ log.behavior === 'increase' ? '+' : '-' }}{{ Math.abs(log.computing_power) }}
+          </div>
+          <div v-if="log.refund" class="log-refunded" :class="{ mismatch: isRefundMismatch(log) }">
+            <span>{{ $t('txn_refunded_amount') || '已退回' }} +{{ Math.abs(log.refund.computing_power) }}</span>
+            <span class="log-txn" :class="{ copied: log.refund.__copied }"
+                  :title="txnTitle(log.refund)"
+                  @click.stop="copyTxn(log.refund)">
+              <span class="txn-label">{{ log.refund.__copied ? ($t('txn_copied') || '✓ 已复制') : ($t('txn_refund_id_label') || '退回单号') }}</span>
+              <span class="txn-value">{{ formatRefundTxn(log.refund.transaction_id) }}</span>
+            </span>
           </div>
           <div class="log-time">{{ log.created_at }}</div>
         </div>
@@ -509,6 +536,25 @@
           if (!txn) return '';
           if (txn.length <= 14) return txn;
           return txn.slice(0, 8) + '…' + txn.slice(-4);
+        },
+
+        formatRefundTxn(transactionId) {
+          // 扣减行上的退回单号保留 refund- 前缀，避免和原扣费单号撞样
+          const txn = String(transactionId || '');
+          if (!txn) return '';
+          const prefix = 'refund-';
+          if (txn.startsWith(prefix)) {
+            const rest = txn.slice(prefix.length);
+            if (rest.length <= 14) return prefix + rest;
+            return prefix + rest.slice(0, 8) + '…' + rest.slice(-4);
+          }
+          if (txn.length <= 14) return txn;
+          return txn.slice(0, 8) + '…' + txn.slice(-4);
+        },
+
+        isRefundMismatch(log) {
+          if (!log || !log.refund) return false;
+          return Math.abs(Number(log.computing_power) || 0) !== Math.abs(Number(log.refund.computing_power) || 0);
         },
 
         txnTitle(log) {

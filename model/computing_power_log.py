@@ -184,6 +184,43 @@ class ComputingPowerLogModel:
             raise
 
     @staticmethod
+    def get_increase_logs_by_transaction_ids(
+        user_id: int,
+        transaction_ids: List[str],
+    ) -> Dict[str, Dict[str, Any]]:
+        """按流水号批量查询当前用户的 increase 日志（用于给扣减行配对失败退回）。
+
+        Returns:
+            { transaction_id: { 'transaction_id', 'computing_power' } }；空入参返回 {}
+        """
+        if not user_id or not transaction_ids:
+            return {}
+        placeholders = ", ".join(["%s"] * len(transaction_ids))
+        sql = f"""
+            SELECT transaction_id, computing_power
+            FROM computing_power_log
+            WHERE user_id = %s
+              AND behavior = 'increase'
+              AND transaction_id IN ({placeholders})
+        """
+        try:
+            results = execute_query(sql, tuple([user_id] + list(transaction_ids)), fetch_all=True)
+            mapped = {}
+            for row in results or []:
+                txn = row.get('transaction_id')
+                if not txn:
+                    continue
+                power = row.get('computing_power')
+                mapped[txn] = {
+                    'transaction_id': txn,
+                    'computing_power': int(power) if power is not None else 0,
+                }
+            return mapped
+        except Exception as e:
+            logger.error(f"Failed to batch get increase logs by transaction_ids: {e}")
+            raise
+
+    @staticmethod
     def get_deducted_power_by_transaction(user_id: int, transaction_id: str) -> Optional[int]:
         """根据扣费流水ID查询实际扣减的算力（失败退费时原额退还）
 
