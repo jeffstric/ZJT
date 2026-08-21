@@ -506,6 +506,38 @@
                                                 </div>
                                             </div>
 
+                                            <!-- 模型选择列表（内联展开，紧跟模型按钮、位于对话模型选择上方） -->
+                                            <div v-if="showModelSelect" style="background: #fafafa; border-radius: 12px; padding: 12px; margin-top: 8px;">
+                                                <div v-if="isVideoMode" class="model-track-toggle" style="margin-bottom: 10px;">
+                                                    <button type="button" class="model-track-btn" :class="{ 'is-active': currentVideoTrack === 'value' }" @click.stop="selectVideoTrack('value')">性价比</button>
+                                                    <button type="button" class="model-track-btn" :class="{ 'is-active': currentVideoTrack === 'quality' }" @click.stop="selectVideoTrack('quality')">效果</button>
+                                                </div>
+                                                <div style="font-size: 12px; color: #999; margin-bottom: 10px;">{{ $t('select_model') }}{{ selectedModel }}</div>
+                                                <div class="marketing-model-list">
+                                                <div v-for="model in currentModels" :key="model.name" @click.stop="selectModel(model)" style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; transition: background 0.2s; margin-bottom: 4px;" :style="{ background: selectedModel === model.name ? '#fff' : 'transparent', border: selectedModel === model.name ? '1px solid #e8e8e8' : '1px solid transparent', boxShadow: selectedModel === model.name ? '0 1px 4px rgba(0,0,0,0.05)' : 'none' }">
+                                                    <div style="width: 36px; height: 36px; background: #f0f0f0; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                                        <!-- 图片模型 icon -->
+                                                        <svg v-if="!isVideoMode" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                                            <rect x="3" y="5" width="18" height="14" rx="2"/>
+                                                            <circle cx="8.5" cy="10" r="1.5"/>
+                                                            <path d="M21 15l-5-5L5 19"/>
+                                                        </svg>
+                                                        <!-- 视频模型 icon -->
+                                                        <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                                            <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                                            <path d="M10 9l5 3-5 3V9z"/>
+                                                        </svg>
+                                                    </div>
+                                                    <div style="flex: 1;">
+                                                        <div style="font-size: 14px; font-weight: 500; color: #1a1a1a; display: flex; align-items: center; gap: 6px;">
+                                                            {{ model.name }}
+                                                        </div>
+                                                        <div style="font-size: 12px; color: #999; margin-top: 2px;">{{ model.desc }}</div>
+                                                    </div>
+                                                    <span v-if="selectedModel === model.name" style="color: #1a1a1a; font-size: 18px;">✓</span>
+                                                </div>
+                                                </div>
+                                            </div>
                                             <!-- LLM 模型选择（Agent 模式） -->
                                             <div v-if="allLLMModels.length > 0" style="margin-top: 12px;">
                                                 <button type="button" @click.stop="toggleLLMModelSelect" style="width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: #f5f5f5; border: none; border-radius: 10px; cursor: pointer; font-size: 13px; color: #1a1a1a;">
@@ -535,34 +567,6 @@
                                                         </div>
                                                         <span v-if="selectedLLMModelKey === getLLMModelSelectionKey(model)" style="color: #1a1a1a; font-size: 18px;">✓</span>
                                                     </div>
-                                                </div>
-                                            </div>
-                                            <!-- 模型选择列表（内联展开） -->
-                                            <div v-if="showModelSelect" style="background: #fafafa; border-radius: 12px; padding: 12px; margin-top: 8px;">
-                                                <div style="font-size: 12px; color: #999; margin-bottom: 10px;">{{ $t('select_model') }}{{ selectedModel }}</div>
-                                                <div class="marketing-model-list">
-                                                <div v-for="model in currentModels" :key="model.name" @click.stop="selectModel(model)" style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; transition: background 0.2s; margin-bottom: 4px;" :style="{ background: selectedModel === model.name ? '#fff' : 'transparent', border: selectedModel === model.name ? '1px solid #e8e8e8' : '1px solid transparent', boxShadow: selectedModel === model.name ? '0 1px 4px rgba(0,0,0,0.05)' : 'none' }">
-                                                    <div style="width: 36px; height: 36px; background: #f0f0f0; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
-                                                        <!-- 图片模型 icon -->
-                                                        <svg v-if="!isVideoMode" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                                                            <rect x="3" y="5" width="18" height="14" rx="2"/>
-                                                            <circle cx="8.5" cy="10" r="1.5"/>
-                                                            <path d="M21 15l-5-5L5 19"/>
-                                                        </svg>
-                                                        <!-- 视频模型 icon -->
-                                                        <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                                                            <rect x="2" y="4" width="20" height="16" rx="2"/>
-                                                            <path d="M10 9l5 3-5 3V9z"/>
-                                                        </svg>
-                                                    </div>
-                                                    <div style="flex: 1;">
-                                                        <div style="font-size: 14px; font-weight: 500; color: #1a1a1a; display: flex; align-items: center; gap: 6px;">
-                                                            {{ model.name }}
-                                                        </div>
-                                                        <div style="font-size: 12px; color: #999; margin-top: 2px;">{{ model.desc }}</div>
-                                                    </div>
-                                                    <span v-if="selectedModel === model.name" style="color: #1a1a1a; font-size: 18px;">✓</span>
-                                                </div>
                                                 </div>
                                             </div>
                                             <!-- 是否处理人脸（仅 seedance2.0 系列显示；社区版置灰提示） -->
@@ -597,6 +601,10 @@
                                     </button>
                                     <!-- 模型选择弹窗 -->
                                     <div v-if="showModelPanel" class="marketing-panel" @click.stop style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #fff; border: 1px solid #e8e8e8; border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); padding: 16px; min-width: min(360px, calc(100vw - 32px)); z-index: 100;">
+                                        <div v-if="isVideoMode" class="model-track-toggle" style="margin-bottom: 10px;">
+                                            <button type="button" class="model-track-btn" :class="{ 'is-active': currentVideoTrack === 'value' }" @click.stop="selectVideoTrack('value')">性价比</button>
+                                            <button type="button" class="model-track-btn" :class="{ 'is-active': currentVideoTrack === 'quality' }" @click.stop="selectVideoTrack('quality')">效果</button>
+                                        </div>
                                         <div style="font-size: 12px; color: #999; margin-bottom: 12px;">{{ $t('select_model') }}{{ selectedModel }}</div>
                                         <div class="marketing-model-list">
                                         <div v-for="model in currentModels" :key="model.name" @click.stop="selectModel(model)" style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; transition: background 0.2s; margin-bottom: 4px;" :style="{ background: selectedModel === model.name ? '#fff' : 'transparent', border: selectedModel === model.name ? '1px solid #e8e8e8' : '1px solid transparent', boxShadow: selectedModel === model.name ? '0 1px 4px rgba(0,0,0,0.05)' : 'none' }">
