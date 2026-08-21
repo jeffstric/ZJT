@@ -14,6 +14,56 @@ from utils.log_sanitizer import mask_email, mask_phone
 logger = logging.getLogger(__name__)
 
 
+def parse_implementation_preferences(raw) -> dict:
+    """Parse users.implementation_preferences JSON into a dict. Invalid input → {}."""
+    if not raw:
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    return raw
+
+
+def get_active_preference_group_data(preferences: dict, active_group) -> dict:
+    groups = preferences.get('groups') if isinstance(preferences, dict) else None
+    if not isinstance(groups, dict):
+        return {}
+    group_key = str(active_group if active_group is not None else 1)
+    group = groups.get(group_key, {})
+    return group if isinstance(group, dict) else {}
+
+
+def get_group_preference_map(group: dict) -> dict:
+    prefs = group.get('preferences') if isinstance(group, dict) else None
+    return prefs if isinstance(prefs, dict) else {}
+
+
+def get_group_lock_map(group: dict) -> dict:
+    locks = group.get('locks') if isinstance(group, dict) else None
+    return locks if isinstance(locks, dict) else {}
+
+
+def is_task_implementation_locked(group: dict, task_key: str) -> bool:
+    """True only when the task has a preferred implementation AND locks[task_key] is True."""
+    if not task_key:
+        return False
+    prefs = get_group_preference_map(group)
+    if not prefs.get(task_key):
+        return False
+    locks = get_group_lock_map(group)
+    return locks.get(task_key) is True
+
+
+def collect_true_locks(group: dict) -> Dict[str, bool]:
+    prefs = get_group_preference_map(group)
+    locks = get_group_lock_map(group)
+    return {key: True for key, value in locks.items() if value is True and prefs.get(key)}
+
+
 class User:
     """User model class"""
 
@@ -445,6 +495,29 @@ class UsersModel:
     # ==================== 实现方偏好方法 ====================
 
     @staticmethod
+    def _load_preference_state(user_id: int) -> tuple:
+        """读取用户偏好 JSON 与当前激活组。用户不存在时返回 ({}, '1')。"""
+        sql = """
+            SELECT implementation_preferences, active_preference_group
+            FROM users WHERE id = %s
+        """
+        result = execute_query(sql, (user_id,), fetch_one=True)
+        if not result:
+            return {}, '1'
+        preferences = parse_implementation_preferences(result.get('implementation_preferences'))
+        active_group = result.get('active_preference_group', 1)
+        return preferences, str(active_group if active_group is not None else 1)
+
+    @staticmethod
+    def _save_preference_state(user_id: int, preferences: dict) -> int:
+        sql_update = """
+            UPDATE users
+            SET implementation_preferences = %s, updated_at = NOW()
+            WHERE id = %s
+        """
+        return execute_update(sql_update, (json.dumps(preferences, ensure_ascii=False), user_id))
+
+    @staticmethod
     def get_implementation_preference(user_id: int, task_key: str) -> Optional[str]:
         """
         获取用户对某任务的实现方偏好
@@ -456,33 +529,32 @@ class UsersModel:
         Returns:
             用户偏好的实现方名称，未设置或不存在返回 None
         """
-        sql = """
-            SELECT implementation_preferences, active_preference_group
-            FROM users WHERE id = %s
-        """
         try:
-            result = execute_query(sql, (user_id,), fetch_one=True)
-            if not result or not result.get('implementation_preferences'):
-                return None
-
-            preferences = result['implementation_preferences']
-            if isinstance(preferences, str):
-                preferences = json.loads(preferences)
-
-            active_group = str(result.get('active_preference_group', 1))
-
-            # 获取当前激活组的偏好
-            groups = preferences.get('groups', {})
-            active_group_prefs = groups.get(active_group, {})
-            group_preferences = active_group_prefs.get('preferences', {})
-
-            return group_preferences.get(task_key)
+            preferences, active_group = UsersModel._load_preference_state(user_id)
+            group = get_active_preference_group_data(preferences, active_group)
+            return get_group_preference_map(group).get(task_key)
         except Exception as e:
             logger.error(f"Failed to get implementation preference for user {user_id}: {e}")
             return None
 
     @staticmethod
-    def set_implementation_preference(user_id: int, task_key: str, implementation: str) -> int:
+    def is_implementation_locked(user_id: int, task_key: str) -> bool:
+        """当前激活组是否将该任务类型固定为指定实现方（失败不切换）。"""
+        try:
+            preferences, active_group = UsersModel._load_preference_state(user_id)
+            group = get_active_preference_group_data(preferences, active_group)
+            return is_task_implementation_locked(group, task_key)
+        except Exception as e:
+            logger.error(f"Failed to get implementation lock for user {user_id}: {e}")
+            return False
+
+    @staticmethod
+    def set_implementation_preference(
+        user_id: int,
+        task_key: str,
+        implementation: str,
+        locked: bool = False,
+    ) -> int:
         """
         设置用户实现方偏好（当前激活组）
 
@@ -490,46 +562,39 @@ class UsersModel:
             user_id: 用户ID
             task_key: 任务key（如 gemini-2.5-flash-image-preview）
             implementation: 实现方名称（如 gemini_duomi_v1）
+            locked: True 表示固定该实现方，失败后不切换其他供应商
 
         Returns:
             受影响的行数
         """
-        # 先获取当前配置
-        sql_get = """
-            SELECT implementation_preferences, active_preference_group
-            FROM users WHERE id = %s
-        """
         try:
-            result = execute_query(sql_get, (user_id,), fetch_one=True)
-            active_group = 1
+            preferences, active_group = UsersModel._load_preference_state(user_id)
+            groups = preferences.get('groups')
+            if not isinstance(groups, dict):
+                groups = {}
+                preferences['groups'] = groups
+            if active_group not in groups or not isinstance(groups.get(active_group), dict):
+                groups[active_group] = {'name': '默认配置' if active_group == '1' else f'组{active_group}', 'preferences': {}}
 
-            if result and result.get('implementation_preferences'):
-                preferences = result['implementation_preferences']
-                if isinstance(preferences, str):
-                    preferences = json.loads(preferences)
-                active_group = result.get('active_preference_group', 1)
+            group = groups[active_group]
+            prefs = get_group_preference_map(group)
+            prefs[task_key] = implementation
+            group['preferences'] = prefs
+
+            locks = get_group_lock_map(group)
+            if locked:
+                locks[task_key] = True
             else:
-                # 创建默认结构
-                preferences = {'groups': {'1': {'name': '默认配置', 'preferences': {}}}}
-
-            # 确保组存在
-            groups = preferences.get('groups', {})
-            active_group = str(active_group)
-            if active_group not in groups:
-                groups[active_group] = {'name': f'组{active_group}', 'preferences': {}}
-
-            # 设置偏好
-            groups[active_group]['preferences'][task_key] = implementation
+                locks.pop(task_key, None)
+            group['locks'] = locks
+            groups[active_group] = group
             preferences['groups'] = groups
 
-            # 更新数据库
-            sql_update = """
-                UPDATE users
-                SET implementation_preferences = %s, updated_at = NOW()
-                WHERE id = %s
-            """
-            affected = execute_update(sql_update, (json.dumps(preferences, ensure_ascii=False), user_id))
-            logger.info(f"Set implementation preference for user {user_id}: {task_key} -> {implementation}")
+            affected = UsersModel._save_preference_state(user_id, preferences)
+            logger.info(
+                f"Set implementation preference for user {user_id}: "
+                f"{task_key} -> {implementation}, locked={bool(locked)}"
+            )
             return affected
         except Exception as e:
             logger.error(f"Failed to set implementation preference for user {user_id}: {e}")
@@ -546,32 +611,29 @@ class UsersModel:
         Returns:
             Dict[task_key, implementation] 偏好字典
         """
-        sql = """
-            SELECT implementation_preferences, active_preference_group
-            FROM users WHERE id = %s
-        """
         try:
-            result = execute_query(sql, (user_id,), fetch_one=True)
-            if not result or not result.get('implementation_preferences'):
-                return {}
-
-            preferences = result['implementation_preferences']
-            if isinstance(preferences, str):
-                preferences = json.loads(preferences)
-
-            active_group = str(result.get('active_preference_group', 1))
-            groups = preferences.get('groups', {})
-            active_group_prefs = groups.get(active_group, {})
-
-            return active_group_prefs.get('preferences', {})
+            preferences, active_group = UsersModel._load_preference_state(user_id)
+            group = get_active_preference_group_data(preferences, active_group)
+            return dict(get_group_preference_map(group))
         except Exception as e:
             logger.error(f"Failed to get all preferences for user {user_id}: {e}")
             return {}
 
     @staticmethod
+    def get_all_locks(user_id: int) -> Dict[str, bool]:
+        """获取当前激活组中已固定（且仍有对应偏好）的任务类型。"""
+        try:
+            preferences, active_group = UsersModel._load_preference_state(user_id)
+            group = get_active_preference_group_data(preferences, active_group)
+            return collect_true_locks(group)
+        except Exception as e:
+            logger.error(f"Failed to get implementation locks for user {user_id}: {e}")
+            return {}
+
+    @staticmethod
     def clear_implementation_preference(user_id: int, task_key: str) -> int:
         """
-        清除用户对某任务的实现方偏好
+        清除用户对某任务的实现方偏好（同时清除固定标记）
 
         Args:
             user_id: 用户ID
@@ -580,35 +642,32 @@ class UsersModel:
         Returns:
             受影响的行数
         """
-        sql_get = """
-            SELECT implementation_preferences, active_preference_group
-            FROM users WHERE id = %s
-        """
         try:
-            result = execute_query(sql_get, (user_id,), fetch_one=True)
-            if not result or not result.get('implementation_preferences'):
+            preferences, active_group = UsersModel._load_preference_state(user_id)
+            groups = preferences.get('groups')
+            if not isinstance(groups, dict):
+                return 0
+            group = groups.get(active_group)
+            if not isinstance(group, dict):
                 return 0
 
-            preferences = result['implementation_preferences']
-            if isinstance(preferences, str):
-                preferences = json.loads(preferences)
+            prefs = get_group_preference_map(group)
+            locks = get_group_lock_map(group)
+            changed = False
+            if task_key in prefs:
+                del prefs[task_key]
+                group['preferences'] = prefs
+                changed = True
+            if task_key in locks:
+                del locks[task_key]
+                group['locks'] = locks
+                changed = True
+            if not changed:
+                return 0
 
-            active_group = str(result.get('active_preference_group', 1))
-            groups = preferences.get('groups', {})
-            active_group_prefs = groups.get(active_group, {})
-
-            # 删除偏好
-            if task_key in active_group_prefs.get('preferences', {}):
-                del active_group_prefs['preferences'][task_key]
-                preferences['groups'][active_group] = active_group_prefs
-
-                sql_update = """
-                    UPDATE users
-                    SET implementation_preferences = %s, updated_at = NOW()
-                    WHERE id = %s
-                """
-                return execute_update(sql_update, (json.dumps(preferences, ensure_ascii=False), user_id))
-            return 0
+            groups[active_group] = group
+            preferences['groups'] = groups
+            return UsersModel._save_preference_state(user_id, preferences)
         except Exception as e:
             logger.error(f"Failed to clear implementation preference for user {user_id}: {e}")
             raise
@@ -807,7 +866,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `inviter_id` int DEFAULT NULL COMMENT '邀请人id',
   `commission_rate` decimal(5,4) NOT NULL DEFAULT '0.0000' COMMENT '邀请人佣金比例(0~0.5；0=关闭抽佣)',
   `first_recharge` tinyint DEFAULT '0' COMMENT '是否首次充值',
-  `implementation_preferences` json DEFAULT NULL COMMENT '用户实现方偏好配置',
+  `implementation_preferences` json DEFAULT NULL COMMENT '用户实现方偏好配置（groups.preferences / groups.locks）',
   `active_preference_group` int DEFAULT NULL COMMENT '当前激活的偏好组',
   `api_token` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '用户API Token（智剧通接口授权）',
   `zjt_token_enabled` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否启用智剧通Token（0-未启用，1-已启用）',

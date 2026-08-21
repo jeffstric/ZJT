@@ -2838,6 +2838,26 @@ async def get_computing_power_logs(
                             processed_log['note'] = None
                     
                     processed_logs.append(processed_log)
+
+                def _attach_refunds():
+                    from utils.computing_power import (
+                        collect_refund_txn_ids_for_deduct_logs,
+                        attach_refund_to_deduct_logs,
+                    )
+                    from model.computing_power_log import ComputingPowerLogModel
+                    user_id = UserTokensModel.get_user_id_by_token(auth_token)
+                    if not user_id:
+                        return processed_logs
+                    refund_ids = collect_refund_txn_ids_for_deduct_logs(processed_logs)
+                    refund_map = ComputingPowerLogModel.get_increase_logs_by_transaction_ids(
+                        user_id, refund_ids
+                    )
+                    return attach_refund_to_deduct_logs(processed_logs, refund_map)
+
+                try:
+                    processed_logs = await asyncio.to_thread(_attach_refunds)
+                except Exception as e:
+                    logger.warning(f'配对失败退回流水失败: {e}')
                 
                 response_data['logs'] = processed_logs
             

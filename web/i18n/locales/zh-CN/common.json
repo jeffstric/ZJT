@@ -70,6 +70,8 @@
   "txn_diff_charge": "⇄ 切换补收",
   "txn_copied": "✓ 已复制",
   "txn_click_to_copy": "点击复制完整单号",
+  "txn_refunded_amount": "已退回",
+  "txn_refund_id_label": "退回单号",
   "nav_inspiration": "灵感",
   "nav_generate": "生成",
   "nav_assets": "资产",

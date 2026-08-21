@@ -96,11 +96,12 @@ class VideoDriverFactory:
         # 获取实现驱动名称（考虑用户偏好）和驱动参数
         implementation_driver_name, driver_params = cls._get_implementation_for_user(driver_type, user_id, config)
         if not implementation_driver_name:
-            logger.error(f"No implementation configured for business driver: {business_driver_name}")
-            cls._last_create_error = {
-                "reason": "NO_IMPLEMENTATION",
-                "message": f"驱动 {business_driver_name} 未配置实现方"
-            }
+            if not cls._last_create_error:
+                logger.error(f"No implementation configured for business driver: {business_driver_name}")
+                cls._last_create_error = {
+                    "reason": "NO_IMPLEMENTATION",
+                    "message": f"驱动 {business_driver_name} 未配置实现方"
+                }
             return None
 
         # 第三层：根据实现驱动名称获取驱动类
@@ -271,6 +272,7 @@ class VideoDriverFactory:
           2. 按 sort_order 排序的第一个可用实现方
           3. 配置文件中的默认实现方
         注意：用户偏好不能绕过 admin 禁用（_is_impl_enabled 检查）
+        若用户将该任务类型「固定」供应商，偏好不可用时不降级，并写入 _last_create_error。
 
         Args:
             task_type: 任务类型
@@ -283,11 +285,16 @@ class VideoDriverFactory:
             - driver_params: 创建驱动实例需要的额外参数，如 {'site_id': 'site_1'}
         """
         impl_name = None
+        locked_pref_failed = False
 
         # 1. 检查用户偏好
         if user_id:
             try:
                 from model.users import UsersModel
+                from config.constant import (
+                    DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE,
+                    FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE,
+                )
                 task_key = config.key
                 user_pref = UsersModel.get_implementation_preference(user_id, task_key)
                 if user_pref:
@@ -295,13 +302,27 @@ class VideoDriverFactory:
                     if cls._is_driver_available(user_pref) and cls._is_impl_enabled(user_pref, config.driver_name):
                         logger.debug(f"Using user preference for task {task_key}: {user_pref}")
                         impl_name = user_pref
+                    elif UsersModel.is_implementation_locked(user_id, task_key):
+                        display_name = cls._get_display_name_for_impl(user_pref)
+                        cls._last_create_error = {
+                            "reason": DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE,
+                            "message": FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE.format(
+                                display_name=display_name
+                            ),
+                            "implementation": user_pref,
+                        }
+                        locked_pref_failed = True
+                        logger.warning(
+                            f"User locked preference {user_pref} unavailable or disabled "
+                            f"for task {task_key}, skip auto-select"
+                        )
                     else:
                         logger.warning(f"User preference {user_pref} unavailable or disabled, will auto-select")
             except Exception as e:
                 logger.warning(f"Failed to get user preference: {e}")
 
-        # 2. 如果没有用户偏好或偏好不可用，根据排序选择排序最靠前的可用实现方
-        if not impl_name:
+        # 2. 如果没有用户偏好或偏好不可用（且未固定），根据排序选择排序最靠前的可用实现方
+        if not impl_name and not locked_pref_failed:
             available_impls = config._get_implementations_info()
             for impl in available_impls:
                 if cls._is_driver_available(impl['name']):

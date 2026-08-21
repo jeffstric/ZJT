@@ -150,6 +150,7 @@
       userSettingsTab: 'preferences', // 'preferences' | 'creationDefaults' | 'apitoken'
       // 用户偏好数据
       userPreferences: {},
+      userPreferenceLocks: {},
       availableImplementations: {},
       isCommunityEdition: false,
       isEditionLoaded: false,
@@ -1670,6 +1671,7 @@
           });
           if (response.data.code === 0) {
             this.userPreferences = response.data.data.preferences || {};
+            this.userPreferenceLocks = response.data.data.locks || {};
             this.availableImplementations = response.data.data.available_implementations || {};
             this.isCommunityEdition = response.data.data.is_community_edition || false;
             this.isEditionLoaded = true;
@@ -1710,10 +1712,11 @@
 
         try {
           if (implementation) {
-            // 设置偏好
+            const locked = !!this.userPreferenceLocks[taskKey];
             const response = await axios.put('/api/user/implementation-preference', {
               task_key: taskKey,
-              implementation_name: implementation
+              implementation_name: implementation,
+              locked
             }, {
               headers: {
                 'Authorization': `Bearer ${this.authToken}`
@@ -1727,7 +1730,6 @@
               this.userSettingsError = response.data.message || '保存失败';
             }
           } else {
-            // 清除偏好
             const response = await axios.delete('/api/user/implementation-preference', {
               params: { task_key: taskKey },
               headers: {
@@ -1736,6 +1738,9 @@
             });
 
             if (response.data.code === 0) {
+              const nextLocks = { ...this.userPreferenceLocks };
+              delete nextLocks[taskKey];
+              this.userPreferenceLocks = nextLocks;
               this.userSettingsSuccess = '已恢复默认设置';
               setTimeout(() => { this.userSettingsSuccess = ''; }, 2000);
             } else {
@@ -1744,6 +1749,39 @@
           }
         } catch (error) {
           console.error('Save implementation preference error:', error);
+          this.userSettingsError = error?.response?.data?.detail || '保存失败，请重试';
+        }
+      },
+
+      async handleLockChange(taskKey, locked) {
+        const implementation = this.userPreferences[taskKey];
+        if (!implementation) {
+          return;
+        }
+        const previous = !!this.userPreferenceLocks[taskKey];
+        this.userPreferenceLocks = { ...this.userPreferenceLocks, [taskKey]: !!locked };
+        this.userSettingsError = '';
+        this.userSettingsSuccess = '';
+        try {
+          const response = await axios.put('/api/user/implementation-preference', {
+            task_key: taskKey,
+            implementation_name: implementation,
+            locked: !!locked
+          }, {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+          if (response.data.code === 0) {
+            this.userSettingsSuccess = locked ? '已固定该供应商' : '已改为首选供应商';
+            setTimeout(() => { this.userSettingsSuccess = ''; }, 2000);
+          } else {
+            this.userPreferenceLocks = { ...this.userPreferenceLocks, [taskKey]: previous };
+            this.userSettingsError = response.data.message || '保存失败';
+          }
+        } catch (error) {
+          console.error('Save implementation lock error:', error);
+          this.userPreferenceLocks = { ...this.userPreferenceLocks, [taskKey]: previous };
           this.userSettingsError = error?.response?.data?.detail || '保存失败，请重试';
         }
       },

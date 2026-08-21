@@ -194,7 +194,9 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 用于 `before_finish` 阶段，任务失败后自动切换供应商重试。
 
-**触发条件**：主任务失败 + 存在替代实现方
+**触发条件**：主任务失败 + 存在替代实现方 + 任务未固定供应商（见 `docs/backend/implementation_lock.md`）
+
+用户在首页「服务商偏好」勾选「固定此供应商」后，创建 `ai_tools` 时写入 `extra_config.implementation_lock=true`。`handle_failure_with_retry()` 在选候选实现方之前读取该快照（无快照则回退用户当前 lock）；固定任务直接进入终态失败 + 原额退费，不创建 `implementation_retry` 步骤。管理端 `retry_settings.global_enabled` 仍是全站总开关。同实现方内部重试不受影响。
 
 **处理流程**：
 1. 从 UnifiedConfigRegistry 获取同任务类型的可用实现方列表
