@@ -169,7 +169,14 @@ def get_sync_task_stale_timeout(driver_name: str) -> Optional[int]:
 IMAGE_MODE_EXTRA_CONFIG_KEY = "image_mode"
 VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"
 LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
+IMPLEMENTATION_LOCK_EXTRA_CONFIG_KEY = "implementation_lock"
 ASSET_LIST_MAX_PAGE_SIZE = 1000
+
+# 用户固定供应商后，所选实现方不可用时的驱动错误
+DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE = "FIXED_IMPLEMENTATION_UNAVAILABLE"
+FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE = (
+    "已固定供应商「{display_name}」，但当前不可用（未配置或已禁用）。请更换供应商或取消固定。"
+)
 
 # Agent 算力确认：软阈值优先读 user_preferences.power_confirm，
 # 未设置时回退动态配置 agent.power_confirm_threshold，再回退 AGENT_POWER_CONFIRM_THRESHOLD。
@@ -1963,3 +1970,12 @@ LANGUAGE_INSTRUCTIONS = {
           "- The user interface is in English, so ALL communication must be in English\n"
           "="*60,
 }
+
+
+# ============ 供应商切换差价结算（"贵扣便宜用"修复） ============
+# 任务按供应商A价格扣费、失败切换到供应商B后成功时，按B的实际价格双向结算差价：
+#   多扣 → 退差  diff-refund-{原扣费流水号}（behavior=increase）
+#   少扣 → 补收  diff-charge-{原扣费流水号}（behavior=deduct，best-effort 不追债）
+# 结算逻辑见 utils/computing_power.py: settle_task_success_diff
+DIFF_REFUND_TXN_PREFIX = 'diff-refund-'
+DIFF_CHARGE_TXN_PREFIX = 'diff-charge-'

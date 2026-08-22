@@ -299,6 +299,7 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - **图生视频**：`TaskConfig.getModelOptionsForCategory('image_to_video')`，根据 `videoImageMode` 过滤支持的模型
 - 模型偏好从后端 `GET /api/video-model` 获取，回退到 `localStorage`
 - 用户在 Agent 模式下切换视频模型时，前端 `syncVideoModelToBackend()` 会调用 `POST /api/video-model` 并携带完整 `video_preferences`（含 `model_name`、`ratio`、`duration`、`resolution`、`image_mode`、`enable_face_mask`），后端合并更新 `_video_preferences_cache`，确保 MCP 视频工具执行时读取到最新偏好
+- **性价比 / 效果双轨切换**：视频模型列表（Agent 模式「其他设置」内联列表与非 Agent 模式底部弹窗两处）顶部提供与 LLM 模型一致的 `model-track-toggle` 按钮。Agent 模式下视频模型列表内联展开于模型选择按钮正下方、对话模型（LLM）选择之上。场景推导口径与模型列表过滤一致：无参考图 → `video.text_to_video`，首尾帧模式 → `video.image_to_video`，多参考模式 → `video.reference_to_video`（复用 `ModelCatalog.sceneForVideoImageMode`）。当前选中模型所处轨道由 `currentVideoTrack` 计算（优先读 `task_config` 下发的 `track` 字段，回退 `ModelCatalog.inferTrack`），点击按钮时 `selectVideoTrack()` 通过 `ModelCatalog.findTaskByTrack` 在当前列表中选中该轨道推荐模型（文生/图生视频：性价比 `minimax_h3`、效果 `seedance_2_0`；多参考：性价比 `minimax_h3_r2v`），并复用 `selectModel()` 完成偏好同步与持久化。选中 Grok、Happy Horse 等非推荐模型时两按钮均不高亮（custom）；若某轨道推荐模型不在当前过滤后的列表中，点击无动作。图片模式不显示该切换。
 
 #### 模型选择状态
 
@@ -375,6 +376,7 @@ Agent 模式下，如果用户没有在本轮偏好、历史对话或明确指�
 #### Agent 视频模式
 
 支持上传参考图（首尾帧/全能参考）、参考视频和参考音频。图片上传到 `/api/upload-agent-image`，通过 `image_urls` 字段传给后端。
+切换视频模型时已上传图片的保留规则按模式区分：仅首尾帧模式下切到 `supports_last_frame=false` 的模型才裁剪到 1 张主图；全能参考模式切模型不删除参考图（该模式下模型天然不使用尾帧，`supports_last_frame` 与参考图数量无关，上限由各模型 `max_multi_ref_images` 在上传时限制）。
 Agent 视频模式下，主图和后续参考图都会等待上传完成并转换为 HTTP URL；发送给后端时按输入区显示顺序去重收集到 `image_urls`，避免 blob 预览地址或未上传完成的参考图遗漏。
 当前页面即时渲染的用户气泡统一通过 `collectCurrentMessageMedia()` 收集媒体，再由 `buildUserMessageContent()` 渲染；图片、视频、音频模式和 Agent 模式不再分别拼接预览 HTML。Agent 发送给后端的 `image_urls`、`video_urls`、`audio_urls` 也复用同一媒体集合，确保即时显示、请求 payload 和后端保存的增强版用户消息尽量一致。
 纯视频参考文件上传到 `/api/upload-agent-video`，只进入 `video_urls` 流程，不会设置图片上传状态，也不会触发图片 HTTP URL 等待。

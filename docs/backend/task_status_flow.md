@@ -296,7 +296,7 @@ sequenceDiagram
 | 流水线编排 | `task/pipeline_processor.py` | `PipelineProcessor.process_all_pending_steps()` |
 | 步骤创建规则 | `task/pipeline_drivers/__init__.py` | `PipelineDriverFactory.create_before_finish_steps()` |
 | 供应商重试驱动 | `task/pipeline_drivers/implementation_retry_driver.py` | `ImplementationRetryPipelineDriver.execute()` |
-| 企业版失败处理 | `enterprise/task/retry_handler.py` | `handle_failure_with_retry()` |
+| 企业版失败处理 | `enterprise/task/retry_handler.py` | `handle_failure_with_retry()`；固定供应商任务跳过 `implementation_retry`（见 `docs/backend/implementation_lock.md`） |
 | 同步任务执行 | `task/sync_task_executor.py` | `_execute_sync_task()` / `SyncTaskExecutor.check_results()` |
 
 ## 9. 故障恢复机制
