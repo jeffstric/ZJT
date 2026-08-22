@@ -319,6 +319,18 @@ def init_scheduler(app):
         misfire_grace_time=30,
     )
 
+    logger.info('启用下载队列健康检查，每 5 分钟执行一次')
+    from task.download_queue_health import check_download_queue_health
+    scheduler.add_job(
+        func=check_download_queue_health,
+        trigger=IntervalTrigger(minutes=5),
+        id='download_queue_health_check',
+        name='Download queue health check every 5 minutes',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
     logger.info('启用音频生成任务')
     scheduler.add_job(
         func=task_with_app_audio,

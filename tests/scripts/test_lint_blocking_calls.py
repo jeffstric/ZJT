@@ -1,3 +1,4 @@
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -5,6 +6,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "lint_blocking_calls.py"
+
+
+def _load_lint_module():
+    spec = importlib.util.spec_from_file_location("lint_blocking_calls", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def run_lint(root: Path, allow_file: Path | None = None):
@@ -151,3 +160,81 @@ async def long_task():
     assert result.returncode == 0
     assert "::warning" in result.stdout
     assert "R5" in result.stdout
+
+
+def _lint_scratch():
+    root = REPO_ROOT / ".pytest_tmp" / "lint_blocking_calls"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def test_r7_reports_reference_before_in_function_import():
+    lint = _load_lint_module()
+    path = write_py(
+        _lint_scratch(),
+        "r7_before.py",
+        """
+async def process():
+    await asyncio.wait_for(work(), timeout=1)
+    import asyncio
+""",
+    )
+    findings = lint.scan_file(path)
+    r7 = [f for f in findings if f.rule == "R7"]
+    assert len(r7) == 1
+    assert "asyncio" in r7[0].message
+
+
+def test_r7_allows_reference_after_in_function_import():
+    lint = _load_lint_module()
+    path = write_py(
+        _lint_scratch(),
+        "r7_after.py",
+        """
+async def process():
+    import asyncio
+    await asyncio.wait_for(work(), timeout=1)
+""",
+    )
+    findings = lint.scan_file(path)
+    assert [f for f in findings if f.rule == "R7"] == []
+
+
+def test_r7_nested_function_scope_is_independent():
+    lint = _load_lint_module()
+    path = write_py(
+        _lint_scratch(),
+        "r7_nested.py",
+        """
+def outer():
+    import asyncio
+    async def inner():
+        await asyncio.sleep(0)
+        import asyncio
+    return inner
+""",
+    )
+    findings = lint.scan_file(path)
+    r7 = [f for f in findings if f.rule == "R7"]
+    assert len(r7) == 1
+    assert r7[0].line == 5
+
+
+def test_r7_except_clause_reference_before_import():
+    lint = _load_lint_module()
+    path = write_py(
+        _lint_scratch(),
+        "r7_except.py",
+        """
+async def process():
+    try:
+        await work()
+    except asyncio.TimeoutError:
+        return
+    import asyncio
+""",
+    )
+    findings = lint.scan_file(path)
+    r7 = [f for f in findings if f.rule == "R7"]
+    assert len(r7) == 1
+    assert "asyncio" in r7[0].message

@@ -38,8 +38,25 @@ from model.ai_tools import AIToolsModel
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
 from utils.media_cache import get_cache_manager
+from utils.sentry_util import SentryUtil
 
 logger = logging.getLogger(__name__)
+
+
+def _record_gather_exceptions(results, context: str) -> None:
+    """Log + Sentry each exception returned by gather(return_exceptions=True)."""
+    for item in results or ():
+        if isinstance(item, BaseException) and not isinstance(item, asyncio.CancelledError):
+            try:
+                logger.error(
+                    "%s gather exception: %s",
+                    context,
+                    item,
+                    exc_info=(type(item), item, item.__traceback__),
+                )
+                SentryUtil.capture_exception(item)
+            except Exception:
+                logger.exception("%s failed to record gather exception", context)
 
 
 def _worker_id() -> str:
@@ -214,7 +231,7 @@ async def process_download_queue() -> None:
         # 整体超时兜底（每个 _process_one 内下载已有 wait_for；此处仅防 gather 永不返回，
         # 真正卡死的行会被下个 tick 的租约回收 P1）
         try:
-            results = await asyncio.wait_for(
+            gather_results = await asyncio.wait_for(
                 asyncio.gather(*[_process_one(r) for r in rows], return_exceptions=True),
                 timeout=(
                     DOWNLOAD_PER_ATTEMPT_TIMEOUT
@@ -222,18 +239,10 @@ async def process_download_queue() -> None:
                     + DOWNLOAD_COMPLETION_MARGIN_SECONDS
                 ),
             )
-            for row, result in zip(rows, results):
-                if isinstance(result, BaseException):
-                    logger.error(
-                        "download_queue id=%s ai_tool=%s uncaught %s: %s",
-                        row.get("id"),
-                        row.get("ai_tool_id"),
-                        type(result).__name__,
-                        result,
-                    )
+            _record_gather_exceptions(gather_results, f"download_queue worker={wid} batch={batch}")
         except asyncio.TimeoutError:
             logger.warning(f"download_queue worker={wid} batch={batch} gather timeout, "
-                           f"stuck rows will be reclaimed by lease")
+                           "stuck rows will be reclaimed by lease")
         total += len(rows)
     if total:
         logger.info(f"download_queue worker={wid} tick done: {total} rows / {batch} batches")

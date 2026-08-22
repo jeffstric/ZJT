@@ -69,6 +69,36 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'editable': True,
         'is_sensitive': False
     },
+
+    # ==================== 下载队列健康检查 ====================
+    {
+        'key': 'download_queue_health.enabled',
+        'value_type': 'bool',
+        'description': '是否启用 download_queue 积压/零进展健康检查（默认开）',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'download_queue_health.stale_minutes',
+        'value_type': 'int',
+        'description': '处理中行创建超过该分钟数仍未完成则告警（积压停滞，默认 30）',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'download_queue_health.zero_progress_minutes',
+        'value_type': 'int',
+        'description': '存在待处理/处理中行但该分钟数内无成功完成则告警（零进展，默认 10）',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'download_queue_health.alert_interval_minutes',
+        'value_type': 'int',
+        'description': 'DOWNLOAD_QUEUE_STALLED 告警最小间隔分钟数（默认 30）',
+        'editable': True,
+        'is_sensitive': False
+    },
     
     # ==================== 上传配置 ====================
     {

@@ -9,3 +9,4 @@
 8. 数据库表名类似 user_token, 常见字段 create_at, update_at
 9. 【超时红线·进程池/线程池】所有 `concurrent.futures.Future.result()` 调用必须显式指定 `timeout=` 参数，禁止无超时等待；任何 `ProcessPoolExecutor` / `ThreadPoolExecutor` 提交后必须在 future 层包超时保护（超时常量统一在 `config/constant.py` 维护）。违例由 CI `scripts/lint_blocking_calls.py` R4 拦截。
 10. 【超时红线·同步包装异步】用 `ThreadPoolExecutor.submit(asyncio.run, coro)` 跨事件循环包装时，**禁止用 `with ThreadPoolExecutor()` 上下文管理器**（with 退出会触发 `shutdown(wait=True)`，使 `.result(timeout=)` 假超时；调用线程仍卡死）。必须用模块级长寿 executor。`asyncio.wait_for(coro, timeout=)` 包装时，被包装 coroutine 必须用 `try/finally` 清理临时文件/资源。违例由 CI R6 拦截。
+11. 【作用域红线·函数内 import】禁止在函数体内 `import` 该函数更早就会引用的名字（尤其 `asyncio`）。Python 会把该名字变成整个函数的局部变量，import 之前的引用触发 `UnboundLocalError`；若再写在 `except asyncio.Xxx:` 里，异常求值会遮蔽原始错误，被 `gather(return_exceptions=True)` 静默吞掉。import 一律放模块顶部。违例由 CI `scripts/lint_blocking_calls.py` R7 拦截。

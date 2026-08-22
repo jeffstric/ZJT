@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
-Static lint for blocking calls and missing timeout guards.
+Static lint for blocking calls, missing timeout guards, and UnboundLocalError risks.
+
+Rules:
+  R1  error    async function calls blocking requests API
+  R2  error    async function calls blocking time.sleep()
+  R3  error    async function calls blocking urllib.request.urlopen()
+  R4  error    Future.result() without explicit timeout=
+  R5  warning  awaited coroutine is not guarded by asyncio.wait_for()
+  R6  error    `with ThreadPoolExecutor()` (shutdown(wait=True) fake-timeout)
+  R7  error    function references a name before its in-function import
+               (UnboundLocalError: import binds the name for the whole function)
 """
 from __future__ import annotations
 
@@ -25,6 +35,7 @@ EXCLUDED_DIRS = {
     "bin",
     "node_modules",
     "tests",
+    "temp",
     "venv",
 }
 
@@ -74,6 +85,31 @@ def is_wait_for_call(node: ast.AST) -> bool:
     }
 
 
+_NESTED_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def _iter_own_scope(node: ast.AST):
+    """Yield AST nodes in this function body, without entering nested scopes."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, _NESTED_SCOPE_TYPES):
+            continue
+        yield child
+        yield from _iter_own_scope(child)
+
+
+def _import_bound_names(node: ast.AST) -> list[str]:
+    names: list[str] = []
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            names.append(alias.asname or alias.name.split(".")[0])
+    elif isinstance(node, ast.ImportFrom):
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            names.append(alias.asname or alias.name)
+    return names
+
+
 class BlockingCallVisitor(ast.NodeVisitor):
     def __init__(self, path: Path):
         self.path = path
@@ -100,6 +136,10 @@ class BlockingCallVisitor(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._check_r7(node)
+        self.generic_visit(node)
+
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         for child in ast.walk(node):
             if isinstance(child, ast.Call):
@@ -124,7 +164,36 @@ class BlockingCallVisitor(ast.NodeVisitor):
                     child,
                     "awaited coroutine is not guarded by asyncio.wait_for(); advisory only",
                 )
+        self._check_r7(node)
         self.generic_visit(node)
+
+    def _check_r7(self, node: ast.AST) -> None:
+        """R7: in-function import binds the name for the whole function.
+
+        A Load of that name on an earlier line is UnboundLocalError at runtime
+        (the 2026-08-21 download_queue silent stall). Nested functions are
+        their own scopes and are checked separately via visit_*FunctionDef.
+        """
+        import_lines: dict[str, int] = {}
+        load_nodes: dict[str, list[ast.AST]] = {}
+        for child in _iter_own_scope(node):
+            if isinstance(child, (ast.Import, ast.ImportFrom)):
+                for bound in _import_bound_names(child):
+                    import_lines.setdefault(bound, child.lineno)
+                continue
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
+                load_nodes.setdefault(child.id, []).append(child)
+
+        for name, import_lineno in import_lines.items():
+            for ref in load_nodes.get(name, []):
+                if getattr(ref, "lineno", 0) < import_lineno:
+                    self.add(
+                        "R7",
+                        "error",
+                        ref,
+                        f"function references '{name}' before its in-function import "
+                        "(UnboundLocalError risk)",
+                    )
 
     def visit_With(self, node: ast.With) -> None:
         for item in node.items:
