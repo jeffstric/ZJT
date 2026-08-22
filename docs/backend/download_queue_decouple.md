@@ -99,3 +99,38 @@ SELECT id, ai_tool_id, error_message, update_at FROM download_queue
 1. 执行迁移：`alembic upgrade head`（建 `download_queue` 表）
 2. 重启服务：scheduler 自动注册 `download_queue_worker` job
 3. 观察日志：`download_queue worker=... batch=... claimed N rows` / `tick done`
+
+## 事故记录（2026-08-23）：worker 静默瘫痪 UnboundLocalError
+
+**症状**：08-21 14:49 部署后，download_queue 全部任务卡死（453 行 status=1、0 成功 0 失败），
+worker 每 5s 正常 claim，但下载从未发生、无任何 OK/FAIL 日志，租约过期后无限循环重新认领。
+
+**根因**：d9390c4c（供应商切换差价结算）在 `_process_one` 成功分支/GIVEUP 分支内加了 `import asyncio`。
+Python 作用域规则：**函数内任何位置出现 `import asyncio`，整个函数的 `asyncio` 都变为局部变量**。
+下载代码（`asyncio.wait_for`）在 import 执行前引用 → `UnboundLocalError`；且
+`except asyncio.TimeoutError:` 子句求值时再次抛错，**原始异常被遮蔽**后逃逸，
+被 `asyncio.gather(..., return_exceptions=True)` 静默吞掉 → 无日志、行永久停留 status=1。
+
+**修复**：删除 `_process_one` 内两处 `import asyncio`（模块顶部已有）；`visual_task.py` 同模式 3 处
+（520/954/1448 行，当时因引用在 import 之后而无害）一并清理：顶部补 `import asyncio` + 删函数内 import。
+
+**教训**：禁止在函数内 `import asyncio`（及任何函数内将多次引用的标准库模块 import 放函数内）；
+函数内 import 会污染整个函数作用域，且 except 子句求值异常会遮蔽原始异常，此类故障无任何日志、
+极难定位。统一把 import 放模块顶部。可用以下脚本扫描同类隐患（函数内 import asyncio 且 import 前有引用）：
+
+```python
+import ast, os
+for dirpath, _, files in os.walk('task'):
+    for f in files:
+        if not f.endswith('.py'): continue
+        tree = ast.parse(open(os.path.join(dirpath, f)).read())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                imports = [n.lineno for n in ast.walk(node)
+                           if isinstance(n, ast.Import) and any(a.name == 'asyncio' for a in n.names)]
+                usages = [n.lineno for n in ast.walk(node)
+                          if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == 'asyncio']
+                if imports and any(u < min(imports) for u in usages):
+                    print(f'{dirpath}/{f}:{node.lineno} {node.name}')
+```
+

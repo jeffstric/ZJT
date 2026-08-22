@@ -26,6 +26,7 @@ Video generation task processing
 """
 import logging
 import json
+import asyncio
 from datetime import datetime, timedelta
 import uuid
 from perseids_server.client import make_perseids_request
@@ -518,7 +519,6 @@ async def _submit_new_task(ai_tool):
 
             # 供应商切换差价结算（多扣退差/少扣补收，幂等；to_thread 避免阻塞事件循环）
             try:
-                import asyncio
                 from utils.computing_power import settle_success_diff_for_task
                 await asyncio.to_thread(settle_success_diff_for_task, task_id)
             except Exception as e:
@@ -967,7 +967,6 @@ async def _handle_task_success(project_id, task_id, media_url):
 
         # 供应商切换差价结算（多扣退差/少扣补收，幂等；to_thread 避免阻塞事件循环）
         try:
-            import asyncio
             from utils.computing_power import settle_success_diff_for_task
             await asyncio.to_thread(settle_success_diff_for_task, task_id)
         except Exception as e:
@@ -1473,7 +1472,6 @@ def process_task_with_retry(task_type, process_func):
                 
                 # Call the specific processing function
                 # 检查是否为协程函数
-                import asyncio
                 import inspect
                 if inspect.iscoroutinefunction(process_func):
                     # 异步函数，使用 asyncio.run
