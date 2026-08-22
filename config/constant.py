@@ -1990,6 +1990,7 @@ class LLMModel:
         'QWEN_3_6_PLUS': 'Qwen 3.6 Plus',
         'QWEN_PLUS': 'Qwen Plus',
         'OLLAMA_QWEN_3_6_35B': 'Ollama Qwen 3.6 35B',
+        'OLLAMA_QWEN_3_8_27B': 'Ollama Qwen 3.8 27B',
         'DOUBAO_SEED_2_0_PRO': 'Doubao Seed 2.0 Pro',
         'DOUBAO_SEED_2_0_LITE': 'Doubao Seed 2.0 Lite',
         'CLAUDE_HAIKU_4_5': 'Claude Haiku 4.5',
@@ -2011,6 +2012,7 @@ class LLMModel:
 
     # Ollama 模型
     OLLAMA_QWEN_3_6_35B = 'qwen3.6:35b-a3b'
+    OLLAMA_QWEN_3_8_27B = 'qwen3.8:27b'
 
     # Doubao 模型
     DOUBAO_SEED_2_0_PRO = 'doubao-seed-2-0-pro'

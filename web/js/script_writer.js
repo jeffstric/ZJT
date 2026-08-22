@@ -71,7 +71,8 @@
             QWEN_3_5_PLUS: 'qwen3.5-plus',
             QWEN_3_6_PLUS: 'qwen3.6-plus',
             QWEN_PLUS: 'qwen-plus',
-            OLLAMA_QWEN_3_6_35B: 'qwen3.6:35b-a3b'
+            OLLAMA_QWEN_3_6_35B: 'qwen3.6:35b-a3b',
+            OLLAMA_QWEN_3_8_27B: 'qwen3.8:27b'
         };
         const STORY_TYPE_LABELS = {
             dialogue: '对话剧情',

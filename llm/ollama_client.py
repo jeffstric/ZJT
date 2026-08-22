@@ -37,7 +37,7 @@ class OllamaClient(BaseLLMClient):
         self.min_p = get_dynamic_config_value('llm', 'ollama', 'min_p', default=0.0)
         self.presence_penalty = get_dynamic_config_value('llm', 'ollama', 'presence_penalty', default=1.5)
         self.repetition_penalty = get_dynamic_config_value('llm', 'ollama', 'repetition_penalty', default=1.0)
-        self.enable_thinking = get_dynamic_config_value('llm', 'ollama', 'enable_thinking', default=False)
+        self.enable_thinking = get_dynamic_config_value('llm', 'ollama', 'enable_thinking', default=True)
 
         if self.enabled:
             logger.info(f"OllamaClient config loaded: base_url={self.base_url}, temp={self.temperature}, top_p={self.top_p}")

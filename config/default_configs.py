@@ -802,7 +802,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'llm.ollama.enable_thinking',
         'value_type': 'bool',
-        'description': 'Ollama 是否启用思维链（部分模型支持）',
+        'description': 'Ollama 是否启用思维链（默认开启，对齐 Qwen3.8 官方思考模式）',
         'editable': True,
         'is_sensitive': False,
         'quick_config': True
