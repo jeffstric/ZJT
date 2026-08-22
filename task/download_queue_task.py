@@ -126,7 +126,6 @@ async def _process_one(row: dict) -> None:
                 logger.warning(f"mark attempt success failed task={task_id}: {ae}")
             # 供应商切换差价结算（多扣退差/少扣补收，幂等）
             try:
-                import asyncio
                 from utils.computing_power import settle_success_diff_for_task
                 await asyncio.to_thread(settle_success_diff_for_task, task_id)
             except Exception as ae:
@@ -171,7 +170,6 @@ async def _process_one(row: dict) -> None:
                     logger.warning(f"mark attempt success failed task={task_id}: {ae}")
                 # 供应商切换差价结算（多扣退差/少扣补收，幂等）
                 try:
-                    import asyncio
                     from utils.computing_power import settle_success_diff_for_task
                     await asyncio.to_thread(settle_success_diff_for_task, task_id)
                 except Exception as ae:
