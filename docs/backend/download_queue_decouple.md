@@ -129,6 +129,8 @@ SELECT
 
 **盲区**：健康检查与 worker 同 scheduler；scheduler 进程整体死亡时两者都不跑。覆盖的是「进程活着、功能坏掉」。
 
+管理后台首页（`web/admin.html` 仪表盘）有「队列积压」看板，含 download_queue 待处理/处理中/停滞/近窗成功，15 秒刷新。接口 `GET /api/admin/dashboard/queues`，实现 `services/queue_backlog.py`。与本 job 互补：Sentry 告警是后台，看板是管理员打开后台立刻能看到。
+
 `asyncio.gather(..., return_exceptions=True)` 的返回值必须逐条检查：`BaseException` 记 `logger.error` + `SentryUtil.capture_exception`（`CancelledError` 除外）。禁止再丢弃 gather 结果。
 
 ## 上线步骤

@@ -987,6 +987,44 @@ DOWNLOAD_IO_POOL_MAX_WORKERS = 8              # 下载写盘线程池大小（�
 #   + DOWNLOAD_COMPLETION_MARGIN_SECONDS
 DOWNLOAD_COMPLETION_MARGIN_SECONDS = 60
 
+
+class QueueBacklogConstants:
+    """管理后台首页队列积压看板阈值。
+
+    后端 `services/queue_backlog.py` 用这些阈值给每张卡片打 ok/warn/danger。
+    停滞判定分钟数优先读动态配置 `download_queue_health.stale_minutes`。
+    """
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'STALE_MINUTES': '处理中超过该分钟数视为停滞',
+        'ZERO_PROGRESS_MINUTES': '下载队列近期成功窗口（分钟）',
+        'OVERDUE_GRACE_SECONDS': '排队任务超过 next_trigger 的宽限秒数',
+        'DOWNLOAD_WARN_OPEN': '下载队列积压告警条数',
+        'VIDEO_WARN_OPEN': '视频生成队列积压告警条数',
+        'AUDIO_WARN_OPEN': '音频生成队列积压告警条数',
+        'ASYNC_WARN_OPEN': '异步任务队列积压告警条数',
+        'GRID_WARN_OPEN': '宫格生图队列积压告警条数',
+        'SCRIPT_SPLIT_WARN_OPEN': '剧本拆分队列积压告警条数',
+        'PIPELINE_WARN_OPEN': '流水线步骤积压告警条数',
+        'AGENT_WARN_OPEN': 'Agent 对话任务积压告警条数',
+        'RUNNINGHUB_WARN_RATIO': 'RunningHub 槽位占用告警比例',
+        'POLL_INTERVAL_SECONDS': '管理后台看板轮询间隔（秒）',
+    }
+    STALE_MINUTES = 30
+    ZERO_PROGRESS_MINUTES = 10
+    OVERDUE_GRACE_SECONDS = 60
+    DOWNLOAD_WARN_OPEN = 20
+    VIDEO_WARN_OPEN = 50
+    AUDIO_WARN_OPEN = 30
+    ASYNC_WARN_OPEN = 30
+    GRID_WARN_OPEN = 30
+    SCRIPT_SPLIT_WARN_OPEN = 8
+    PIPELINE_WARN_OPEN = 50
+    AGENT_WARN_OPEN = 20
+    RUNNINGHUB_WARN_RATIO = 0.8
+    POLL_INTERVAL_SECONDS = 15
+
+
 STORYBOARD_FIRST_FRAME_GRID_ITEM_TYPE = 8
 
 # ===== 场景多角度生图任务（location_multi_angle_tasks）=====

@@ -307,6 +307,72 @@
                     </div>
                 </div>
 
+                <!-- 队列积压 -->
+                <div class="queue-backlog-section">
+                    <div class="queue-backlog-header">
+                        <h3>{{ t('queue_backlog_title') }}</h3>
+                        <div class="queue-backlog-meta">
+                            <span class="queue-level-badge" :class="dashboard.queues.overall">
+                                {{ t('queue_level_' + (dashboard.queues.overall || 'ok')) }}
+                            </span>
+                            <span v-if="dashboard.queues.generatedAt" class="queue-backlog-updated">
+                                {{ t('queue_backlog_updated') }} {{ dashboard.queues.generatedAt }}
+                            </span>
+                            <button
+                                class="action-btn primary"
+                                @click="loadQueueBacklog(true)"
+                                :disabled="dashboard.queues.loading"
+                                style="font-size: 12px; padding: 4px 12px;"
+                            >
+                                {{ dashboard.queues.loading ? t('querying') : t('queue_backlog_refresh') }}
+                            </button>
+                        </div>
+                    </div>
+                    <p class="queue-backlog-hint">{{ t('queue_backlog_desc') }}</p>
+                    <div v-if="dashboard.queues.loading && !dashboard.queues.list.length" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>{{ t('loading') }}</p>
+                    </div>
+                    <div v-else-if="dashboard.queues.error && !dashboard.queues.list.length" class="queue-backlog-error">
+                        {{ t('queue_backlog_load_failed') }}
+                    </div>
+                    <div v-else class="queue-backlog-grid">
+                        <div
+                            v-for="q in dashboard.queues.list"
+                            :key="q.id"
+                            class="queue-card"
+                            :class="q.level"
+                        >
+                            <div class="queue-card-header">
+                                <span class="queue-card-title">{{ t('queue_name_' + q.id) }}</span>
+                                <span class="queue-level-badge" :class="q.level">
+                                    {{ t('queue_level_' + (q.level || 'ok')) }}
+                                </span>
+                            </div>
+                            <div class="queue-card-value" :class="q.level">
+                                {{ q.headline == null ? '-' : q.headline }}
+                            </div>
+                            <div class="queue-card-headline-label">
+                                {{ t('queue_headline_' + (q.headline_key || 'open')) }}
+                            </div>
+                            <div class="queue-card-metrics">
+                                <div
+                                    v-for="m in q.metrics"
+                                    :key="m.key"
+                                    class="queue-metric"
+                                    :class="{ alert: m.alert }"
+                                >
+                                    <span class="queue-metric-label">{{ t('queue_metric_' + m.key) }}</span>
+                                    <span class="queue-metric-value">{{ m.value }}</span>
+                                </div>
+                            </div>
+                            <div v-if="q.hint" class="queue-card-hint">
+                                {{ t('queue_hint_' + q.hint) }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 模型分析 -->
                 <div class="model-analysis-section">
                     <div class="model-analysis-header">

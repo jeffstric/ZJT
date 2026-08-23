@@ -290,6 +290,170 @@ body {
     margin-top: 8px;
 }
 
+/* 队列积压看板 */
+.queue-backlog-section {
+    margin-bottom: 30px;
+}
+
+.queue-backlog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.queue-backlog-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--admin-text);
+}
+
+.queue-backlog-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.queue-backlog-updated {
+    font-size: 12px;
+    color: var(--admin-text-muted);
+}
+
+.queue-backlog-hint {
+    margin: 0 0 14px;
+    font-size: 12px;
+    color: var(--admin-text-muted);
+    line-height: 1.5;
+}
+
+.queue-backlog-error {
+    padding: 16px;
+    background: #fef2f2;
+    color: var(--admin-danger);
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.queue-backlog-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+}
+
+.queue-card {
+    background: var(--admin-card-bg);
+    border-radius: 12px;
+    padding: 16px 18px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border-left: 4px solid var(--admin-success);
+}
+
+.queue-card.warn {
+    border-left-color: var(--admin-warning);
+}
+
+.queue-card.danger {
+    border-left-color: var(--admin-danger);
+    background: #fef2f2;
+}
+
+.queue-card.unknown {
+    border-left-color: var(--admin-text-muted);
+}
+
+.queue-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.queue-card-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--admin-text);
+}
+
+.queue-level-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #d1fae5;
+    color: #065f46;
+    white-space: nowrap;
+}
+
+.queue-level-badge.warn {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.queue-level-badge.danger {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.queue-level-badge.unknown {
+    background: var(--admin-border);
+    color: var(--admin-text-muted);
+}
+
+.queue-card-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--admin-text);
+    line-height: 1.2;
+}
+
+.queue-card-value.warn {
+    color: var(--admin-warning);
+}
+
+.queue-card-value.danger {
+    color: var(--admin-danger);
+}
+
+.queue-card-headline-label {
+    font-size: 12px;
+    color: var(--admin-text-muted);
+    margin-bottom: 10px;
+}
+
+.queue-card-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 10px;
+}
+
+.queue-metric {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--admin-text-muted);
+}
+
+.queue-metric.alert {
+    color: var(--admin-danger);
+    font-weight: 600;
+}
+
+.queue-metric-value {
+    font-variant-numeric: tabular-nums;
+}
+
+.queue-card-hint {
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--admin-danger);
+}
+
 /* 模型分析区域 */
 .model-analysis-section {
     margin-top: 30px;
@@ -1313,7 +1477,8 @@ body {
         padding: 15px;
     }
     
-    .stats-grid {
+    .stats-grid,
+    .queue-backlog-grid {
         grid-template-columns: 1fr;
     }
     

@@ -30,6 +30,7 @@ from config.constant import (
 )
 from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
 from services.system_config_batch_service import batch_update_system_configs
+from services.queue_backlog import collect_queue_backlog
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,23 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
         }
     except Exception as e:
         logger.error(f"Failed to get admin dashboard data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dashboard/queues")
+async def admin_dashboard_queues(auth_token: str = Header(None, alias="Authorization")):
+    """
+    管理员仪表盘：各调度队列积压概况。
+
+    只读 COUNT，走 asyncio.to_thread，避免阻塞事件循环。
+    单表查询失败时该卡片返回 unknown，不影响其它队列。
+    """
+    await require_admin(auth_token)
+    try:
+        data = await asyncio.to_thread(collect_queue_backlog)
+        return {"code": 0, "data": data}
+    except Exception as e:
+        logger.error(f"Failed to get admin queue backlog: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

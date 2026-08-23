@@ -641,8 +641,16 @@ const AdminApp = {
                         stacked: null,
                         rose: null
                     }
+                },
+                queues: {
+                    loading: true,
+                    error: false,
+                    overall: 'ok',
+                    generatedAt: '',
+                    list: []
                 }
             },
+            queueBacklogTimer: null,
             
             // 用户列表
             users: {
@@ -1258,6 +1266,7 @@ const AdminApp = {
         window.removeEventListener('resize', this.resizeModelAnalysisCharts);
         if (this.notificationsPollTimer) clearInterval(this.notificationsPollTimer);
         if (this.licensePollTimer) clearInterval(this.licensePollTimer);
+        this.stopQueueBacklogPoll();
         Object.values(this.dashboard.modelAnalysis.charts || {}).forEach(chart => {
             if (chart) chart.dispose();
         });
@@ -1411,6 +1420,10 @@ const AdminApp = {
                     // 默认加载模型成功率分析
                     this.loadModelAnalysis();
 
+                    // 首页队列积压看板（15s 轮询，切走页面后停止）
+                    this.loadQueueBacklog(false);
+                    this.startQueueBacklogPoll();
+
                     // 检查 URL 参数，是否需要自动打开快速配置
                     this.checkQuickConfigParam();
 
@@ -1451,6 +1464,7 @@ const AdminApp = {
             ) {
                 this.currentPage = 'dashboard';
                 this.loadDashboard();
+                this.startQueueBacklogPoll();
                 this.showToast(this.t('branding_permission_revoked'), 'warning');
             }
         },
@@ -1665,6 +1679,8 @@ const AdminApp = {
             // 真正的安全边界仍由品牌 API 的 403 保证。
             if (page === 'branding' && !this.brandingAvailable) {
                 this.currentPage = 'dashboard';
+                this.loadDashboard();
+                this.startQueueBacklogPoll();
                 return;
             }
             this.currentPage = page;
@@ -1672,7 +1688,11 @@ const AdminApp = {
                 this.loadDashboard();
                 // 切到仪表盘时刷新许可证状态卡片（商业版才有数据）。
                 this.loadLicenseStatus();
-            } else if (page === 'users') {
+                this.startQueueBacklogPoll();
+            } else {
+                this.stopQueueBacklogPoll();
+            }
+            if (page === 'users') {
                 this.loadUsers();
             } else if (page === 'config') {
                 this.loadConfigs();
@@ -1975,8 +1995,55 @@ const AdminApp = {
                 this.dashboard.loading = false;
             }
 
-            // 同步加载模型成功率分析
+            // 同步加载模型成功率分析、队列积压
             this.loadModelAnalysis();
+            this.loadQueueBacklog(false);
+        },
+
+        startQueueBacklogPoll() {
+            this.stopQueueBacklogPoll();
+            this.queueBacklogTimer = setInterval(() => {
+                if (this.currentPage === 'dashboard') {
+                    this.loadQueueBacklog(false);
+                }
+            }, 15000);
+        },
+
+        stopQueueBacklogPoll() {
+            if (this.queueBacklogTimer) {
+                clearInterval(this.queueBacklogTimer);
+                this.queueBacklogTimer = null;
+            }
+        },
+
+        async loadQueueBacklog(manual) {
+            const firstLoad = !this.dashboard.queues.list.length;
+            if (manual || firstLoad) {
+                this.dashboard.queues.loading = true;
+            }
+            try {
+                const response = await axios.get('/api/admin/dashboard/queues', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    const data = response.data.data || {};
+                    this.dashboard.queues.overall = data.overall || 'ok';
+                    this.dashboard.queues.generatedAt = data.generated_at || '';
+                    this.dashboard.queues.list = Array.isArray(data.queues) ? data.queues : [];
+                    this.dashboard.queues.error = false;
+                }
+            } catch (error) {
+                console.error('Load queue backlog failed:', error);
+                this.dashboard.queues.error = true;
+                const status = error?.response?.status;
+                if (status === 401 || status === 403) {
+                    this.handleAuthError(status);
+                } else if (manual) {
+                    this.showToast(this.t('queue_backlog_load_failed'), 'error');
+                }
+            } finally {
+                this.dashboard.queues.loading = false;
+            }
         },
 
         // 加载月活跃用户
