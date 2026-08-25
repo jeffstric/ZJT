@@ -3,7 +3,7 @@
 """
 from fastapi import APIRouter, HTTPException, Header, Query, Path
 from pydantic import BaseModel
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Dict
 import logging
 import httpx
 import asyncio
@@ -17,14 +17,19 @@ from model.video_workflow import VideoWorkflowModel
 from model.ai_tools import AIToolsModel
 from model.ai_tools_log import AIToolsLogModel
 from model.implementation_attempts import ImplementationAttemptModel
-from config.unified_config import UnifiedConfigRegistry, IMPLEMENTATION_FROM_ID, TaskCategory
+from config.unified_config import UnifiedConfigRegistry, TaskCategory, get_implementation_name
 from model.system_config import SystemConfigModel
 from model.system_config_history import SystemConfigHistoryModel
 from config.config_util import get_current_env, invalidate_dynamic_cache
-from config.default_configs import init_default_configs, get_default_config_by_key
+from config.default_configs import init_default_configs
 from utils.log_sanitizer import mask_phone
-from config.constant import GEMINI_URL_FORMATS, DRIVER_IMPLEMENTATION_MAPPING
+from config.constant import (
+    ADMIN_CONFIG_BATCH_MAX_ITEMS,
+    DRIVER_IMPLEMENTATION_MAPPING,
+    GEMINI_URL_FORMATS,
+)
 from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
+from services.system_config_batch_service import batch_update_system_configs
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +123,9 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
                     # 但 is_available() 在 studio license 下经严格判断返回 False，
                     # 前端据此隐藏品牌定制入口。
                     "branding": is_branding_available(),
+                    # 用户模块（接口模块）：随 enterprise 包整体注册（路由 + Supervisor
+                    # + 绑定加载），社区版显示锁定卡片。
+                    "user_modules": bool(enterprise_status["registration_ready"]),
                 },
             }
         }
@@ -228,7 +236,9 @@ async def admin_model_analysis(
             providers = []
             for r in sorted(providers_raw, key=lambda x: -x['total_count']):
                 impl_id = r['implementation']
-                impl_name = IMPLEMENTATION_FROM_ID.get(impl_id, f'unknown_{impl_id}')
+                impl_name = get_implementation_name(impl_id)
+                if impl_name == 'unknown':
+                    impl_name = f'unknown_{impl_id}'
                 display_name = impl_name
                 impl_config = UnifiedConfigRegistry.get_implementation(impl_name)
                 if impl_config and impl_config.display_name:
@@ -868,6 +878,11 @@ async def admin_batch_update_configs(
     
     if not request.configs:
         raise HTTPException(status_code=400, detail="配置列表不能为空")
+    if len(request.configs) > ADMIN_CONFIG_BATCH_MAX_ITEMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"单次最多更新 {ADMIN_CONFIG_BATCH_MAX_ITEMS} 条配置",
+        )
 
     config_keys = [item.key for item in request.configs]
     _require_runninghub_key_pool_config_access(config_keys)
@@ -875,68 +890,24 @@ async def admin_batch_update_configs(
     if not is_allowed:
         raise HTTPException(status_code=403, detail=error_msg)
 
-    results = []
-    errors = []
-    
-    for item in request.configs:
-        try:
-            # 禁止通过管理后台修改 test_mode 配置（仅允许脚本修改，防止生产环境误开启挡板）
-            if item.key.startswith('test_mode'):
-                errors.append(f"{item.key}: test_mode 配置仅允许通过脚本修改，禁止在管理后台修改")
-                continue
+    try:
+        # to_thread 保证不阻塞 Web 事件循环；这里必须等待有限批次真实结束，
+        # 不能用 wait_for 制造“响应 504、线程却继续提交”的状态分裂。
+        batch_result = await asyncio.to_thread(
+            batch_update_system_configs,
+            env=env,
+            configs=[(item.key, item.value) for item in request.configs],
+            updated_by=admin.id,
+        )
+    except Exception as exc:
+        logger.error(
+            "Admin batch config database operation failed exception_type=%s",
+            type(exc).__name__,
+        )
+        raise HTTPException(status_code=500, detail="批量配置更新失败")
 
-            config = SystemConfigModel.get_by_key(env, item.key)
-
-            # 如果配置不存在，尝试从默认配置中获取定义并创建
-            if not config:
-                config_def = get_default_config_by_key(item.key)
-                if not config_def:
-                    errors.append(f"{item.key}: 配置不存在且无默认定义")
-                    continue
-
-                # 创建新配置
-                config_id = SystemConfigModel.create(
-                    env=env,
-                    config_key=item.key,
-                    config_value=item.value,
-                    value_type=config_def['value_type'],
-                    description=config_def['description'],
-                    editable=1 if config_def['editable'] else 0,
-                    is_sensitive=1 if config_def['is_sensitive'] else 0,
-                    updated_by=admin.id
-                )
-                results.append({
-                    "key": item.key,
-                    "status": "created"
-                })
-                logger.info(f"Auto-created config {item.key} with id {config_id}")
-                continue
-
-            if not config.editable:
-                errors.append(f"{item.key}: 该配置不允许修改")
-                continue
-
-            old_value = config.config_value
-            new_value = item.value
-
-            # 跳过未修改的配置
-            if old_value == new_value:
-                results.append({
-                    "key": item.key,
-                    "status": "unchanged"
-                })
-                continue
-
-            # 更新配置
-            SystemConfigModel.update_value(config.id, new_value, admin.id)
-
-            results.append({
-                "key": item.key,
-                "status": "updated"
-            })
-        except Exception as e:
-            logger.error(f"Failed to update config {item.key}: {e}")
-            errors.append(f"{item.key}: {str(e)}")
+    results = batch_result["results"]
+    errors = batch_result["errors"]
     
     updated_count = len([r for r in results if r['status'] == 'updated'])
     created_count = len([r for r in results if r['status'] == 'created'])
@@ -1449,6 +1420,117 @@ async def admin_set_implementation_power(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SetImplementationPowerModifiersRequest(BaseModel):
+    implementation_name: str
+    driver_key: str
+    attribute: str = "resolution"
+    values: Dict[str, float]
+    default: float = 1.0
+
+
+class DeleteImplementationPowerModifiersRequest(BaseModel):
+    implementation_name: str
+    driver_key: str
+    attribute: str = "resolution"
+
+
+@router.post("/implementation-power-modifiers")
+async def admin_set_implementation_power_modifiers(
+    request: SetImplementationPowerModifiersRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """按实现方覆盖分辨率等算力修饰符，立即生效。"""
+    from config.constant import (
+        POWER_MODIFIER_ATTRIBUTE_RESOLUTION,
+        POWER_MODIFIER_MAX,
+        POWER_MODIFIER_MIN,
+    )
+
+    admin = await require_admin(auth_token)
+    impl_config = UnifiedConfigRegistry.get_implementation(request.implementation_name)
+    if not impl_config:
+        raise HTTPException(status_code=404, detail=f"实现方不存在: {request.implementation_name}")
+    if request.attribute != POWER_MODIFIER_ATTRIBUTE_RESOLUTION:
+        raise HTTPException(status_code=400, detail="暂只支持 resolution 修饰符")
+    if not request.driver_key:
+        raise HTTPException(status_code=400, detail="driver_key 不能为空")
+    cleaned: Dict[str, float] = {}
+    for key, raw in (request.values or {}).items():
+        if str(key) == "_default":
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"倍率必须是数字: {key}")
+        if value < POWER_MODIFIER_MIN or value > POWER_MODIFIER_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=f"倍率须在 {POWER_MODIFIER_MIN}～{POWER_MODIFIER_MAX} 之间: {key}",
+            )
+        cleaned[str(key)] = value
+    try:
+        default_value = float(request.default)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="default 必须是数字")
+    if default_value < POWER_MODIFIER_MIN or default_value > POWER_MODIFIER_MAX:
+        raise HTTPException(status_code=400, detail="default 倍率超出范围")
+
+    try:
+        ImplementationPowerModel.set_modifiers(
+            implementation_name=request.implementation_name,
+            driver_key=request.driver_key,
+            attribute=request.attribute,
+            values=cleaned,
+            default=default_value,
+            updated_by=admin.id,
+        )
+        return {
+            "code": 0,
+            "message": "分辨率倍率已更新，立即生效",
+            "data": {
+                "implementation_name": request.implementation_name,
+                "driver_key": request.driver_key,
+                "attribute": request.attribute,
+                "values": cleaned,
+                "default": default_value,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Failed to set implementation power modifiers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/implementation-power-modifiers")
+async def admin_delete_implementation_power_modifiers(
+    request: DeleteImplementationPowerModifiersRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """删除实现方分辨率倍率覆盖，回退到任务代码默认。"""
+    from config.constant import POWER_MODIFIER_ATTRIBUTE_RESOLUTION
+
+    await require_admin(auth_token)
+    if request.attribute != POWER_MODIFIER_ATTRIBUTE_RESOLUTION:
+        raise HTTPException(status_code=400, detail="暂只支持 resolution 修饰符")
+    try:
+        ImplementationPowerModel.delete_modifiers(
+            implementation_name=request.implementation_name,
+            driver_key=request.driver_key,
+            attribute=request.attribute,
+        )
+        return {
+            "code": 0,
+            "message": "已恢复默认分辨率倍率",
+            "data": {
+                "implementation_name": request.implementation_name,
+                "driver_key": request.driver_key,
+                "attribute": request.attribute,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Failed to delete implementation power modifiers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class DeleteImplementationPowerRequest(BaseModel):
     implementation_name: str
     driver_key: str  # 必填，用于复合唯一键定位记录
@@ -1581,6 +1663,23 @@ async def admin_get_implementation_configs(
                     impl_to_driver_keys[impl_name] = []
                 impl_to_driver_keys[impl_name].append(driver_key)
 
+        # 静态映射未覆盖的实现方（如用户模块动态实现方）按挂载条目的
+        # driver_name 归组，使其出现在实现方管理页并可调整算力/排序/禁用。
+        for task_config in UnifiedConfigRegistry.get_all():
+            driver_name = task_config.driver_name
+            if not driver_name:
+                continue
+            if task_config.implementations and isinstance(task_config.implementations, list):
+                declared_impls = task_config.implementations
+            elif task_config.implementation:
+                declared_impls = [task_config.implementation]
+            else:
+                continue
+            for impl_name in declared_impls:
+                keys = impl_to_driver_keys.setdefault(impl_name, [])
+                if driver_name not in keys:
+                    keys.append(driver_name)
+
         # 获取所有实现方（包括动态注册的 API 聚合器实现方）
         all_implementations = UnifiedConfigRegistry.get_all_implementations()
 
@@ -1666,7 +1765,7 @@ async def admin_get_implementation_configs(
                 except Exception:
                     pass  # 导入失败时不过滤
 
-            # 确定该实现方属于哪些 DriverKey 组
+            # 确定该实现方属于哪些 DriverKey 组（用户模块跟挂载条目走同一 driver_name）
             driver_keys = impl_to_driver_keys.get(impl_name, [])
 
             # 对于 API 聚合器实现方，创建特殊的分组
@@ -1719,6 +1818,16 @@ async def admin_get_implementation_configs(
                     'supported_durations': supported_durations,
                     'duration_powers': duration_powers,
                 }
+                try:
+                    from utils.computing_power import effective_resolution_multipliers
+
+                    impl_data.update(
+                        effective_resolution_multipliers(driver_key, impl_name, impl_config)
+                    )
+                except Exception:
+                    impl_data["resolution_options"] = []
+                    impl_data["resolution_multipliers"] = {}
+                    impl_data["default_resolution_multipliers"] = {}
 
                 # 调试日志：输出实现方数据
                 logger.debug(f"Implementation data: {impl_name}, driver_key={driver_key}, enabled={impl_data['enabled']}, db_config={db_config}")

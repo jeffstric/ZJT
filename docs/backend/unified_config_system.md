@@ -109,6 +109,14 @@ const data = await response.json();
 | `enabled` | bool | ❌ | 是否启用，默认 True |
 | `sort_order` | int | ❌ | 排序顺序 |
 
+## 图片编辑任务（节选）
+
+| ID | key | 名称 | 说明 |
+|----|-----|------|------|
+| 38 | `qwen-image-edit` | Qwen Image Edit | 空壳任务，无实现方；无比例/分辨率选项（跟随原图缩到约 1MP） |
+
+完整列表见 `config/unified_config.py` 的 `ALL_TASK_CONFIGS`。
+
 ## 分类常量 (TaskCategory)
 
 ```python

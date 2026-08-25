@@ -74,6 +74,11 @@ download_queue_worker（每 DOWNLOAD_POLL_INTERVAL=5s，独立 job，max_instanc
 - 统计（`get_implementation_stats`，`status IN (2,-1)`）：DOWNLOADING 暂不计入成功/失败，下载完成前轻微拉低成功率（影响小）
 - `list_processing_by_user(status=1)`：无调用方，无影响
 
+`_process_one` 禁止函数内 `import asyncio`。Python 会把 `asyncio` 变成整个函数的局部变量，
+函数开头的 `await asyncio.wait_for(...)` 会立刻 `UnboundLocalError`；若 `gather(return_exceptions=True)`
+再把它吞掉，队列行会永远停在 `status=1`，界面一直「处理中」。`process_download_queue` 必须把
+gather 的异常结果打到日志。
+
 ## 运维 / 排查
 
 ```sql

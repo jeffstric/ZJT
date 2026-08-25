@@ -124,9 +124,9 @@ async def _process_one(row: dict) -> None:
                 ImplementationAttemptModel.mark_active_attempt_completed(task_id, ATTEMPT_STATUS_SUCCESS)
             except Exception as ae:
                 logger.warning(f"mark attempt success failed task={task_id}: {ae}")
-            # 供应商切换差价结算（多扣退差/少扣补收，幂等）
+            # 供应商切换差价结算（多扣退差/少扣补收，幂等）。
+            # 勿在本函数内再 import asyncio，否则会遮蔽模块导入，wait_for 处 UnboundLocalError。
             try:
-                import asyncio
                 from utils.computing_power import settle_success_diff_for_task
                 await asyncio.to_thread(settle_success_diff_for_task, task_id)
             except Exception as ae:
@@ -171,7 +171,6 @@ async def _process_one(row: dict) -> None:
                     logger.warning(f"mark attempt success failed task={task_id}: {ae}")
                 # 供应商切换差价结算（多扣退差/少扣补收，幂等）
                 try:
-                    import asyncio
                     from utils.computing_power import settle_success_diff_for_task
                     await asyncio.to_thread(settle_success_diff_for_task, task_id)
                 except Exception as ae:
@@ -215,7 +214,7 @@ async def process_download_queue() -> None:
         # 整体超时兜底（每个 _process_one 内下载已有 wait_for；此处仅防 gather 永不返回，
         # 真正卡死的行会被下个 tick 的租约回收 P1）
         try:
-            await asyncio.wait_for(
+            results = await asyncio.wait_for(
                 asyncio.gather(*[_process_one(r) for r in rows], return_exceptions=True),
                 timeout=(
                     DOWNLOAD_PER_ATTEMPT_TIMEOUT
@@ -223,6 +222,15 @@ async def process_download_queue() -> None:
                     + DOWNLOAD_COMPLETION_MARGIN_SECONDS
                 ),
             )
+            for row, result in zip(rows, results):
+                if isinstance(result, BaseException):
+                    logger.error(
+                        "download_queue id=%s ai_tool=%s uncaught %s: %s",
+                        row.get("id"),
+                        row.get("ai_tool_id"),
+                        type(result).__name__,
+                        result,
+                    )
         except asyncio.TimeoutError:
             logger.warning(f"download_queue worker={wid} batch={batch} gather timeout, "
                            f"stuck rows will be reclaimed by lease")

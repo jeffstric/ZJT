@@ -613,3 +613,106 @@ def settle_success_diff_for_task(task_id) -> Optional[int]:
     except Exception as e:
         logger.error(f"[SettleDiff] load task {task_id} failed: {e}")
         return None
+
+
+def sort_resolution_options(options: List[str]) -> List[str]:
+    """分辨率档位按 1K/2K/3K… 再 480P/720P… 排列，避免 1K 落到列表底部。"""
+
+    def rank(value: str):
+        text = str(value or "").strip()
+        compact = text.replace(" ", "")
+        if len(compact) >= 2 and compact[:-1].isdigit() and compact[-1] in "Kk":
+            return (0, int(compact[:-1]), text.lower())
+        if len(compact) >= 2 and compact[:-1].isdigit() and compact[-1] in "Pp":
+            return (1, int(compact[:-1]), text.lower())
+        return (2, 0, text.lower())
+
+    return sorted((str(item) for item in options if str(item or "").strip()), key=rank)
+
+
+def resolution_options_for_driver_key(driver_key: str, impl_config: Any = None) -> List[str]:
+    """该 DriverKey 下可配置的分辨率档位（任务修饰符 + supported_sizes + 实现方视频档位）。"""
+    options: List[str] = []
+    seen = set()
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip()
+        if not text or text == "_default" or text in seen:
+            return
+        seen.add(text)
+        options.append(text)
+
+    if not driver_key:
+        return options
+    for task in UnifiedConfigRegistry.get_all():
+        if getattr(task, "driver_name", None) != driver_key:
+            continue
+        for modifier in getattr(task, "power_modifiers", None) or []:
+            if getattr(modifier, "attribute", None) != "resolution":
+                continue
+            for key in getattr(modifier, "values", None) or {}:
+                add(key)
+        for size in getattr(task, "supported_sizes", None) or []:
+            add(size)
+    if impl_config is not None:
+        for item in getattr(impl_config, "supported_video_resolutions", None) or []:
+            if isinstance(item, dict):
+                add(item.get("value"))
+            else:
+                add(item)
+    return sort_resolution_options(options)
+
+
+def default_resolution_multipliers(driver_key: str, options: Optional[List[str]] = None) -> Dict[str, float]:
+    """任务代码中的分辨率默认倍率；未声明的档位为 1.0。"""
+    option_list = list(options or resolution_options_for_driver_key(driver_key))
+    defaults = {item: 1.0 for item in option_list}
+    if not driver_key:
+        return defaults
+    for task in UnifiedConfigRegistry.get_all():
+        if getattr(task, "driver_name", None) != driver_key:
+            continue
+        for modifier in getattr(task, "power_modifiers", None) or []:
+            if getattr(modifier, "attribute", None) != "resolution":
+                continue
+            for key, value in (getattr(modifier, "values", None) or {}).items():
+                try:
+                    defaults[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+    return defaults
+
+
+def effective_resolution_multipliers(
+    driver_key: str,
+    implementation_name: str,
+    impl_config: Any = None,
+) -> Dict[str, Any]:
+    """管理页用的档位、默认倍率、当前有效倍率。"""
+    options = resolution_options_for_driver_key(driver_key, impl_config)
+    defaults = default_resolution_multipliers(driver_key, options)
+    current = dict(defaults)
+    try:
+        from model.implementation_power import ImplementationPowerModel
+
+        db_modifiers = ImplementationPowerModel.get_modifiers(implementation_name, driver_key) or {}
+    except Exception:
+        db_modifiers = {}
+    spec = db_modifiers.get("resolution") if isinstance(db_modifiers, dict) else None
+    if isinstance(spec, dict):
+        for key, value in spec.items():
+            if key == "_default":
+                continue
+            try:
+                current[str(key)] = float(value)
+                if str(key) not in options:
+                    options.append(str(key))
+                    defaults.setdefault(str(key), 1.0)
+            except (TypeError, ValueError):
+                continue
+    options = sort_resolution_options(options)
+    return {
+        "resolution_options": options,
+        "resolution_multipliers": {key: current.get(key, 1.0) for key in options},
+        "default_resolution_multipliers": {key: defaults.get(key, 1.0) for key in options},
+    }
