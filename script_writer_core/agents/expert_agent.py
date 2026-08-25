@@ -611,6 +611,8 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                 auth_token=self.auth_token,
                 model=self.model,
                 vendor_id=self.vendor_id,
+                # 受信模型路由：仅声明 inject_trusted_model 的动态工具消费
+                model_id=self.model_id,
             )
             logger.info(f"{self.agent_id}: Tool {tool_name} executed successfully")
             return result

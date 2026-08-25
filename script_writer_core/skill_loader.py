@@ -38,6 +38,8 @@ class SkillLoader:
         """
         if skills_dir is None:
             skills_dir = os.path.join(os.path.dirname(__file__), 'skills')
+            project_skills = Path(__file__).resolve().parents[1] / 'agents' / 'skills'
+            self.add_skills_dir(str(project_skills))
 
         self.skills_dir = Path(skills_dir)
         self.user_id = user_id

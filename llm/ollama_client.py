@@ -57,7 +57,9 @@ class OllamaClient(BaseLLMClient):
         enable_thinking: bool = False,
         thinking_effort: str = "medium",
         agent_id: Optional[str] = None,
-        agent_scope: Optional[str] = None
+        agent_scope: Optional[str] = None,
+        request_timeout: Optional[float] = None,
+        suppress_payload_logging: bool = False,
     ) -> Any:
         """
         调用 Ollama 本地模型 API
@@ -85,9 +87,15 @@ class OllamaClient(BaseLLMClient):
 
         try:
             # 使用 Ollama 的 OpenAI 兼容端点
+            from config.constant import ScriptSplitConstants
             client = OpenAI(
                 api_key="ollama",  # Ollama 不需要真正的 API key，但 OpenAI 库需要一个值
                 base_url=f"{self.base_url}/v1",
+                timeout=(
+                    request_timeout
+                    if request_timeout is not None
+                    else ScriptSplitConstants.LLM_HTTP_TIMEOUT_SECONDS
+                ),  # 与 OpenAIBaseClient 对齐，避免本地假死时回退 SDK 默认 600s
             )
 
             # 使用配置的参数，调用方传入的 temperature 仅作为 fallback
@@ -135,7 +143,11 @@ class OllamaClient(BaseLLMClient):
             llm_logger.info("="*80)
             llm_logger.info(f"OLLAMA API REQUEST:")
             llm_logger.info(f"  Model: {actual_model}")
-            llm_logger.info(f"  Base URL: {self.base_url}")
+            llm_logger.info(
+                "  Base URL: configured"
+                if suppress_payload_logging
+                else f"  Base URL: {self.base_url}"
+            )
             llm_logger.info(f"  Messages count: {len(messages)}")
             self._log_request_context(llm_logger, agent_id, agent_scope)
             llm_logger.info(f"  Temperature: {actual_temperature}, top_p: {self.top_p}, top_k: {self.top_k}")
@@ -145,7 +157,7 @@ class OllamaClient(BaseLLMClient):
             if tools:
                 llm_logger.info(f"  Tools count: {len(tools)}")
 
-            if should_log_debug():
+            if should_log_debug() and not suppress_payload_logging:
                 payload_str = json.dumps(kwargs, ensure_ascii=False, indent=2, default=str)
                 llm_logger.debug(f"Ollama API request payload:\n{payload_str}")
 
@@ -191,27 +203,45 @@ class OllamaClient(BaseLLMClient):
             llm_logger.info("="*80)
             llm_logger.info("OLLAMA API RESPONSE:")
             llm_logger.info(f"  Content length: {len(content)} chars")
-            if content:
+            if content and not suppress_payload_logging:
                 llm_logger.info(f"  Content:\n{content}")
             if reasoning_content:
                 llm_logger.info(f"  Reasoning content length: {len(reasoning_content)} chars")
-                llm_logger.info(f"  Reasoning content:\n{truncate_log_content(reasoning_content)}")
+                if not suppress_payload_logging:
+                    llm_logger.info(f"  Reasoning content:\n{truncate_log_content(reasoning_content)}")
             if tool_calls:
                 llm_logger.info(f"  Tool calls count: {len(tool_calls)}")
-                for i, tc in enumerate(tool_calls):
-                    llm_logger.info(f"    Tool[{i}]: {tc.function.name}")
-                    llm_logger.info(f"      Args: {tc.function.arguments}")
+                if not suppress_payload_logging:
+                    for i, tc in enumerate(tool_calls):
+                        llm_logger.info(f"    Tool[{i}]: {tc.function.name}")
+                        llm_logger.info(f"      Args: {tc.function.arguments}")
             llm_logger.info(f"  Token usage: {usage_info}")
             llm_logger.info("-"*80)
 
             # 记录 token 使用情况（即使是本地模型，也记录统计数据用于分析）
             if auth_token and model_id:
-                self._log_token_usage(usage_info, auth_token, vendor_id, model_id)
+                self._log_token_usage(
+                    usage_info,
+                    auth_token,
+                    vendor_id,
+                    model_id,
+                    suppress_error_details=suppress_payload_logging,
+                )
 
             return self._create_response(content, tool_calls, usage_info, reasoning_content, finish_reason)
 
         except Exception as e:
-            logger.error(f"Ollama API call failed: {e}")
+            if suppress_payload_logging:
+                status_code = getattr(e, "status_code", None)
+                if status_code is None:
+                    status_code = getattr(getattr(e, "response", None), "status_code", None)
+                logger.error(
+                    "Ollama API call failed: error_type=%s, status=%s",
+                    type(e).__name__,
+                    status_code if status_code is not None else "unknown",
+                )
+            else:
+                logger.error(f"Ollama API call failed: {e}")
             raise
 
 

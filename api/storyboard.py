@@ -4128,10 +4128,10 @@ async def generate_scene_video(
     human_review = False
     try:
         from task.visual_drivers import VideoDriverFactory
-        from config.unified_config import IMPLEMENTATION_TO_ID
+        from config.unified_config import get_implementation_id
         actual_impl = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
         if actual_impl:
-            impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) or 0
+            impl_id = get_implementation_id(actual_impl) or 0
             impl_config = UnifiedConfigRegistry.get_implementation(actual_impl)
             if (
                 effective_face_mask

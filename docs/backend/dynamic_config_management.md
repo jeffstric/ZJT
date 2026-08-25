@@ -10,6 +10,10 @@
 - **环境隔离**: 支持 dev/prod/test 多环境独立配置
 - **修改历史**: 自动记录配置修改历史，便于审计和回溯
 - **敏感配置脱敏**: token/密钥等敏感配置在历史记录中自动脱敏
+- **模块密钥授权**（商业版消费）: `DEFAULT_CONFIGS` 中标记 `user_module_grantable=True` 的供应商密钥（解析与授权链路随用户模块位于 enterprise 仓；字段本身属于平台契约，社区版保留数据无消费者）
+  （admin 快速配置弹窗内的密钥/token，共 18 条，含 vidu.token）会自动生成「密钥规范名 → 配置键」映射
+  （如 `runninghub.api_key → RUNNINGHUB_API_KEY`），用户模块经发布审批后即可在运行时获得
+  注入；未标记的配置模块不可达
 - **降级策略**: 数据库读取失败时自动降级到 YAML 配置文件
 
 ## 数据库表
@@ -74,6 +78,20 @@ PUT /api/admin/config/{config_key}
 
 **参数**:
 - `value`: 新的配置值
+
+### 批量更新配置值
+
+```
+PUT /api/admin/config/batch
+```
+
+批量接口保留逐项结果：`created`、`updated`、`unchanged`，失败项进入
+`data.errors`。数据库批处理在线程中执行，不阻塞异步 Web 事件循环；每个配置项
+使用独立短事务，配置值与审计历史同时提交或同时回滚。成功新建或修改后会主动
+清除该键的动态配置缓存，不需要再调用 `/config/reload`。敏感配置的历史值只保存
+脱敏内容；明确标记为纯运行态的配置仍按 `skip_history` 策略不写审计历史。单次最多
+提交 100 项；接口会等待这个有限批次真实结束后再返回，避免页面先报超时、后台线程
+随后继续落库造成状态分裂，同时不会占用 Web 事件循环处理线程。
 
 ### 刷新配置缓存
 
@@ -140,6 +158,7 @@ invalidate_dynamic_cache()
 | 超时设置 | `timeout.request_timeout` | 否 |
 | 图片下载 | `image.enable_download` | 否 |
 | RunningHub | `runninghub.api_key` | 是 |
+| huimengi | `huimengi.api_key` | 是 |
 | Duomi | `duomi.token` | 是 |
 | Vidu | `vidu.token` | 是 |
 | 微信支付 | `pay.wxpay.api_key` | 是 |
@@ -160,6 +179,9 @@ invalidate_dynamic_cache()
 - 内存字典缓存 + 30 秒 TTL
 - 配置修改时主动清除对应缓存
 - 可通过 API 手动刷新缓存
+- 用户模块密钥解析（`user_module_grantable` 标记的配置，如 `huimengi.api_key`、
+  `runninghub.api_key`）会直接读取数据库中的最新密钥，不复用进程内 TTL 缓存，因而保存后
+  新启动的模块 Runner 可立即读取新值
 
 ## 管理页面
 

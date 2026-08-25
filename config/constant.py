@@ -22,7 +22,134 @@ from config.unified_config import (
     UnifiedTaskConfig,
     AGENT_POWER_CONFIRM_THRESHOLD,
     AGENT_POWER_CONFIRM_HARD_THRESHOLD,
+    USER_MODULE_RUNTIME_CONFIG,
 )
+
+
+# ===== 用户模块运行时 =====
+# 稳定协议与超时值由 unified_config 中的不可变配置统一维护；此处提供便于业务代码引用的别名。
+USER_MODULE_MANIFEST_SCHEMA_VERSION = USER_MODULE_RUNTIME_CONFIG.manifest_schema_version
+USER_MODULE_RPC_PROTOCOL_VERSION = USER_MODULE_RUNTIME_CONFIG.rpc_protocol_version
+USER_MODULE_MEDIA_DRIVER_PROTOCOL = USER_MODULE_RUNTIME_CONFIG.media_driver_protocol
+USER_MODULE_SDK_VERSION = USER_MODULE_RUNTIME_CONFIG.sdk_version
+USER_MODULE_ABI_FILE_RELATIVE = USER_MODULE_RUNTIME_CONFIG.abi_file_relative
+USER_MODULE_DEFAULT_ROOT_RELATIVE = USER_MODULE_RUNTIME_CONFIG.default_root_relative
+USER_MODULE_ROOT_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.root_env_name
+USER_MODULE_ENABLED_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.enabled_env_name
+USER_MODULE_CALLBACK_BASE_URL_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.callback_base_url_env_name
+USER_MODULE_SUPERVISOR_HOST = USER_MODULE_RUNTIME_CONFIG.supervisor_host
+USER_MODULE_SUPERVISOR_PORT_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.supervisor_port_env_name
+USER_MODULE_SUPERVISOR_URL_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.supervisor_url_env_name
+USER_MODULE_SUPERVISOR_TOKEN_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.supervisor_token_env_name
+USER_MODULE_MAX_MANIFEST_BYTES = USER_MODULE_RUNTIME_CONFIG.max_manifest_bytes
+USER_MODULE_MAX_RPC_MESSAGE_BYTES = USER_MODULE_RUNTIME_CONFIG.max_rpc_message_bytes
+USER_MODULE_RPC_CONNECT_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.rpc_connect_timeout_seconds
+USER_MODULE_RPC_REQUEST_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.rpc_request_timeout_seconds
+USER_MODULE_RUNNER_HEALTH_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.runner_health_timeout_seconds
+USER_MODULE_SUPERVISOR_STARTUP_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.supervisor_startup_timeout_seconds
+USER_MODULE_RUNNER_SHUTDOWN_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.runner_shutdown_timeout_seconds
+USER_MODULE_MAX_OPERATION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.max_operation_timeout_seconds
+USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.db_operation_timeout_seconds
+USER_MODULE_SCHEDULER_INTERVAL_SECONDS = USER_MODULE_RUNTIME_CONFIG.scheduler_interval_seconds
+USER_MODULE_SCHEDULER_BATCH_SIZE = USER_MODULE_RUNTIME_CONFIG.scheduler_batch_size
+USER_MODULE_MAX_PREFER_WAIT_SECONDS = USER_MODULE_RUNTIME_CONFIG.max_prefer_wait_seconds
+USER_MODULE_GENERATION_IO_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.generation_io_timeout_seconds
+USER_MODULE_GENERATION_REVISION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.generation_revision_timeout_seconds
+USER_MODULE_GENERATION_VALIDATION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.generation_validation_timeout_seconds
+USER_MODULE_GENERATION_LOCK_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.generation_lock_timeout_seconds
+USER_MODULE_GENERATION_MAX_FILE_BYTES = USER_MODULE_RUNTIME_CONFIG.generation_max_file_bytes
+USER_MODULE_GENERATION_MAX_TOTAL_BYTES = USER_MODULE_RUNTIME_CONFIG.generation_max_total_bytes
+USER_MODULE_GENERATION_MAX_SEARCH_RESULTS = USER_MODULE_RUNTIME_CONFIG.generation_max_search_results
+USER_MODULE_AGENT_TASK_RESULT_MAX_CHARS = USER_MODULE_RUNTIME_CONFIG.agent_task_result_max_chars
+USER_MODULE_AGENT_TASK_MAX_CONCURRENCY = USER_MODULE_RUNTIME_CONFIG.agent_task_max_concurrency
+USER_MODULE_AGENT_TASK_HEARTBEAT_INTERVAL_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_heartbeat_interval_seconds
+USER_MODULE_AGENT_TASK_STALE_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_stale_timeout_seconds
+USER_MODULE_AGENT_TASK_STATE_LOCK_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_state_lock_timeout_seconds
+USER_MODULE_AGENT_TASK_WALL_CLOCK_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_wall_clock_timeout_seconds
+USER_MODULE_AGENT_TASK_QUESTION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_question_timeout_seconds
+USER_MODULE_AGENT_TASK_MAX_QUESTIONS = USER_MODULE_RUNTIME_CONFIG.agent_task_max_questions
+USER_MODULE_AGENT_TASK_MAX_QUESTIONS_COMFYUI = (
+    USER_MODULE_RUNTIME_CONFIG.agent_task_max_questions_comfyui
+)
+USER_MODULE_COMFYUI_CONNECTOR = "local_comfyui"
+USER_MODULE_HTTP_CONNECTOR = "http"
+USER_MODULE_AGENT_TASK_QUESTION_POLL_INTERVAL_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_question_poll_interval_seconds
+USER_MODULE_AGENT_TASK_MAX_PROGRESS_EVENTS = USER_MODULE_RUNTIME_CONFIG.agent_task_max_progress_events
+USER_MODULE_AGENT_TASK_PROGRESS_CONTENT_MAX_CHARS = USER_MODULE_RUNTIME_CONFIG.agent_task_progress_content_max_chars
+USER_MODULE_SUPERVISOR_RESPAWN_ENABLED = USER_MODULE_RUNTIME_CONFIG.supervisor_respawn_enabled
+USER_MODULE_SUPERVISOR_MAX_RESPAWN_ATTEMPTS = USER_MODULE_RUNTIME_CONFIG.supervisor_max_respawn_attempts
+USER_MODULE_SUPERVISOR_RESPAWN_BACKOFF_SECONDS = USER_MODULE_RUNTIME_CONFIG.supervisor_respawn_backoff_seconds
+USER_MODULE_SUPERVISOR_RESPAWN_MAX_BACKOFF_SECONDS = USER_MODULE_RUNTIME_CONFIG.supervisor_respawn_max_backoff_seconds
+USER_MODULE_SUPERVISOR_HEALTHY_UPTIME_RESET_SECONDS = USER_MODULE_RUNTIME_CONFIG.supervisor_healthy_uptime_reset_seconds
+USER_MODULE_REVIEW_ENABLED = USER_MODULE_RUNTIME_CONFIG.review_enabled
+USER_MODULE_REVIEW_REQUIRED = USER_MODULE_RUNTIME_CONFIG.review_required
+USER_MODULE_REVIEW_MODEL = USER_MODULE_RUNTIME_CONFIG.review_model
+USER_MODULE_REVIEW_VENDOR_ID = USER_MODULE_RUNTIME_CONFIG.review_vendor_id
+USER_MODULE_REVIEW_MODEL_ID = USER_MODULE_RUNTIME_CONFIG.review_model_id
+USER_MODULE_REVIEW_TEMPERATURE = USER_MODULE_RUNTIME_CONFIG.review_temperature
+USER_MODULE_REVIEW_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.review_timeout_seconds
+USER_MODULE_REVIEW_MAX_CODE_CHARS = USER_MODULE_RUNTIME_CONFIG.review_max_code_chars
+USER_MODULE_REVIEW_MAX_OUTPUT_TOKENS = USER_MODULE_RUNTIME_CONFIG.review_max_output_tokens
+USER_MODULE_REVIEW_POLICY_VERSION = USER_MODULE_RUNTIME_CONFIG.review_policy_version
+USER_MODULE_REVIEW_MAX_CONCURRENCY = USER_MODULE_RUNTIME_CONFIG.review_max_concurrency
+USER_MODULE_REVIEW_OPERATION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.review_operation_timeout_seconds
+USER_MODULE_GENERATION_PREFERRED_MODEL = USER_MODULE_RUNTIME_CONFIG.generation_preferred_model
+USER_MODULE_GENERATION_PREFERRED_VENDOR = USER_MODULE_RUNTIME_CONFIG.generation_preferred_vendor
+# 模块密钥名与后台动态配置键的映射不再使用手工别名表，改由
+# config/default_configs.py 中 user_module_grantable=True 的配置项自动生成
+# （规范名 = config_key 大写并把 '.' 换成 '_'，如 runninghub.api_key →
+# RUNNINGHUB_API_KEY），见 module_runtime/secret_resolver.py。
+# 未列入可授权集合的密钥仍可通过同名 OS 环境变量（Supervisor 进程）提供，
+# 但不会读取任意动态配置项。
+# 候选 Release 校验错误只允许使用固定摘要。Driver health 的 message/details
+# 属于模块可控输入，禁止直接进入日志、HTTP 响应或持久化状态。
+USER_MODULE_RELEASE_VALIDATION_ERROR_MESSAGES = {
+    "RELEASE_HEALTH_UNHEALTHY": "候选 Release 的 Driver health 返回不健康",
+    "RELEASE_HEALTH_CALL_FAILED": "候选 Release 的 Driver health 调用失败",
+    "RELEASE_RUNTIME_VALIDATION_FAILED": "候选 Release 未通过运行时健康校验",
+    "RELEASE_VALIDATION_TIMEOUT": "候选 Release 运行时校验超时",
+    "RELEASE_VALIDATION_UNAVAILABLE": "候选 Release 运行时校验服务不可用",
+    "RELEASE_VALIDATION_INTERNAL_ERROR": "候选 Release 运行时校验发生内部错误",
+}
+USER_MODULE_HEALTH_SAFE_MISSING_SECRETS_MAX_ITEMS = 64
+USER_MODULE_HEALTH_SAFE_SECRET_NAME_MAX_CHARS = 128
+
+# ===== 用户模块接入核心模型链路（实现方绑定） =====
+# 动态实现方数字 ID 预留区间起点。核心实现方 ID 为小数字常量，二者不会冲突；
+# 按文档约定动态模块不得占用核心数字 implementation ID。
+USER_MODULE_IMPL_ID_BASE = 9000
+# 动态实现方名前缀，完整格式 user_module:<module_id>:<operation>
+USER_MODULE_IMPL_NAME_PREFIX = "user_module:"
+# 挂到 computing_power=0 的任务条目时，用户模块实现方的代码级默认算力。
+# 管理员仍可在「实现方管理」覆盖。
+USER_MODULE_DEFAULT_COMPUTING_POWER = 1
+# 支持绑定的 operation → 任务分类（TaskCategory）映射；
+# 值须与 config/unified_config.py 中 TaskCategory 的字符串保持一致。
+USER_MODULE_OPERATION_CATEGORIES = {
+    "text_to_video": "text_to_video",
+    "image_to_video": "image_to_video",
+    "text_to_image": "text_to_image",
+    "image_edit": "image_edit",
+}
+USER_MODULE_OPERATION_LABELS = {
+    "text_to_image": "文生图",
+    "image_edit": "图片编辑",
+    "text_to_video": "文生视频",
+    "image_to_video": "图生视频",
+}
+# operation → media_kind（module_runtime.protocol.MediaKind）
+USER_MODULE_OPERATION_MEDIA_KINDS = {
+    "text_to_video": "video",
+    "image_to_video": "video",
+    "text_to_image": "image",
+    "image_edit": "image",
+}
+# scheduler 周期性重载绑定注册的间隔：web 进程创建/删除绑定即时生效，
+# scheduler 等其他进程最长经过该间隔后感知。
+USER_MODULE_BINDING_RELOAD_INTERVAL_SECONDS = 60
+POWER_MODIFIER_ATTRIBUTE_RESOLUTION = "resolution"
+POWER_MODIFIER_MIN = 0.01
+POWER_MODIFIER_MAX = 100.0
 
 
 IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT = 180
@@ -88,6 +215,9 @@ QINIU_UPLOAD_HARD_TIMEOUT = 90
 # 新建底层 MySQL 连接的 connect_timeout（秒）：仅约束 TCP 握手阶段，
 # 10s 内连不上视为端口耗尽/网络故障，快速失败而非无限等待。
 DB_POOL_CONNECT_TIMEOUT = 10
+# 管理后台单次批量配置数量上限。数据库批处理在线程中执行，异步路由会等待
+# 该有限批次真实提交完成后再返回，避免“HTTP 已超时但后台线程仍继续落库”。
+ADMIN_CONFIG_BATCH_MAX_ITEMS = 100
 
 # ===== 七牛云前端直传（大世界文件上传）=====
 # 上传区域域名（按 bucket 所在区域选择；华东 https://upload.qiniup.com）。
@@ -200,6 +330,14 @@ ASSET_LIST_MAX_PAGE_SIZE = 1000
 DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE = "FIXED_IMPLEMENTATION_UNAVAILABLE"
 FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE = (
     "已固定供应商「{display_name}」，但当前不可用（未配置或已禁用）。请更换供应商或取消固定。"
+)
+
+# 候选实现方全部不可用、且默认实现方也被禁用/未注册时的驱动错误。
+# 管理员明确禁用的实现方绝不能被兜底逻辑静默放行，宁可让任务失败也要尊重禁用。
+DRIVER_ERROR_NO_IMPLEMENTATION_AVAILABLE = "NO_IMPLEMENTATION_AVAILABLE"
+NO_IMPLEMENTATION_AVAILABLE_MESSAGE = (
+    "模型 {task} 当前没有可用实现方（候选均未启用或未注册），"
+    "请在后台「实现方管理」检查各实现方的启用状态。"
 )
 
 # Agent 算力确认：软阈值优先读 user_preferences.power_confirm，
@@ -639,6 +777,9 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.HAPPY_HORSE_IMAGE_TO_VIDEO: DriverImplementation.HAPPY_HORSE_DASHSCOPE_V1,
     DriverKey.HAPPY_HORSE_REFERENCE_TO_VIDEO: DriverImplementation.HAPPY_HORSE_DASHSCOPE_R2V_V1,
     DriverKey.HAPPY_HORSE_TEXT_TO_VIDEO: DriverImplementation.HAPPY_HORSE_DASHSCOPE_T2V_V1,
+
+    # Qwen Image Edit（空壳任务，待接入实现方）
+    DriverKey.QWEN_IMAGE_EDIT: [],
 
 }
 

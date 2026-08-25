@@ -250,6 +250,15 @@ upgrade:
     - "https://github.com/jeffstric/ZJT.git"      # 备用 GitHub
   branch: "main"             # 跟踪分支
   timeout_seconds: 30        # git fetch/pull 超时（秒）
+  # 不兼容时阻止 reset --hard，确保当前核心与用户模块继续工作。
+  user_module_compatibility_policy: "block"
+
+# 用户生成模块持久目录；也可由 ZJT_USER_MODULES_DIR 覆盖。
+user_modules:
+  enabled: true
+  root: ""
+  # webhook 模块需要供应商可访问的公网地址，也可设置 ZJT_USER_MODULE_CALLBACK_BASE_URL。
+  callback_base_url: ""
 
 # ===== 数据库连接池（8·1 端口耗尽事故修复，详见 docs/backend/incidents/2026-08-01-db-port-exhaustion.md）=====
 # 容量预算（MySQL 侧）= (1 scheduler + W gunicorn worker + max_workers sync_task 子进程 + N script_split worker) × maxcached

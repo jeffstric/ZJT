@@ -9,6 +9,8 @@
 import os
 import subprocess
 import signal
+import secrets
+import socket
 import sys
 import time
 import yaml
@@ -21,18 +23,29 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 sys.path.insert(0, project_root)
 
 from config.config_util import get_config_path
+from config.constant import (
+    USER_MODULE_SUPERVISOR_RESPAWN_ENABLED,
+    USER_MODULE_SUPERVISOR_MAX_RESPAWN_ATTEMPTS,
+    USER_MODULE_SUPERVISOR_RESPAWN_BACKOFF_SECONDS,
+    USER_MODULE_SUPERVISOR_RESPAWN_MAX_BACKOFF_SECONDS,
+    USER_MODULE_SUPERVISOR_HEALTHY_UPTIME_RESET_SECONDS,
+)
 
 
 # 子进程列表
 processes = []
 # script split worker 子进程（独立列表，单 worker 崩溃不触发共存亡，但随 cleanup 一起清理）
 worker_processes = []
+# 用户模块 Supervisor 等可选基础设施；退出时不拖垮核心 Web/scheduler。
+auxiliary_processes = []
+# 与 auxiliary_processes 平行：每个进程的启动时间戳，用于存活达标后重置 respawn 计数。
+auxiliary_started_at = []
 
 
 def cleanup(signum=None, frame=None):
     """清理所有子进程"""
     print("\n[Manager] Shutting down all processes...")
-    for proc in processes + worker_processes:
+    for proc in processes + worker_processes + auxiliary_processes:
         if proc is not None and proc.poll() is None:
             proc.terminate()
             try:
@@ -53,6 +66,26 @@ def get_port_from_config():
     except Exception as e:
         print(f"[Manager] Warning: Failed to read port from config: {e}")
         return 8000
+
+
+def _find_free_local_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _start_module_supervisor(cwd):
+    """用户模块 Supervisor 由商业版 enterprise 包提供；社区版无此包时跳过。
+
+    每次调用重新分配端口和 token，保证重启后旧连接不会误连到新实例。
+    成功返回 Popen 进程对象；启动失败（超时/立即崩溃）返回 None。
+    （安全设计见 enterprise 仓 doc/user_modules_review.md S1）
+    """
+    try:
+        from enterprise.task.module_supervisor_launcher import start_module_supervisor
+    except ImportError:
+        return None
+    return start_module_supervisor(cwd, find_free_port=_find_free_local_port)
 
 
 def main():
@@ -100,6 +133,28 @@ def main():
     if port is None:
         port = get_port_from_config()
     port = str(port)
+
+    # 用户模块 Supervisor 必须由统一启动器只拉起一次，不能放到 FastAPI import/startup。
+    try:
+        from config.config_util import get_config_value
+        from config.constant import USER_MODULE_ENABLED_ENV_NAME
+
+        configured_enabled = bool(get_config_value("user_modules", "enabled", default=True))
+        env_enabled = os.environ.get(USER_MODULE_ENABLED_ENV_NAME)
+        if env_enabled is not None:
+            configured_enabled = env_enabled.strip().lower() not in {"0", "false", "no", "off"}
+        os.environ[USER_MODULE_ENABLED_ENV_NAME] = "1" if configured_enabled else "0"
+        if configured_enabled:
+            supervisor_proc = _start_module_supervisor(cwd)
+            if supervisor_proc is not None:
+                auxiliary_processes.append(supervisor_proc)
+                auxiliary_started_at.append(time.time())
+            else:
+                print("[Manager] WARNING: module supervisor unavailable; core will continue")
+        else:
+            print("[Manager] User module runtime is disabled")
+    except Exception as e:
+        print(f"[Manager] WARNING: failed to start module supervisor: {e}")
     
     # 1. 启动定时任务进程
     print("[Manager] Starting scheduler process...")
@@ -171,9 +226,15 @@ def main():
     processes.append(web_proc)
     
     print("[Manager] All processes started. Press Ctrl+C to stop.")
-    
+
     # 监控子进程：核心进程（scheduler/web）任一退出则 cleanup 全部；
     # worker 进程单独监控，单个崩溃仅告警不拖垮核心服务。
+    # 用户模块 Supervisor 异常退出后带退避地 respawn（见 review.md S1）。
+    # 每个 auxiliary 槽位独立的 respawn 状态。
+    auxiliary_respawn_attempts = [0] * len(auxiliary_processes)
+    auxiliary_respawn_next_time = [0.0] * len(auxiliary_processes)
+    auxiliary_given_up = [False] * len(auxiliary_processes)
+
     while True:
         for i, proc in enumerate(processes):
             if proc.poll() is not None:
@@ -185,6 +246,66 @@ def main():
                 print(f"[Manager] WARNING: script split worker[{i}] exited with code {wproc.returncode}, "
                       f"core service keeps running")
                 worker_processes[i] = None  # 标记已退出，避免重复告警
+
+        for i, auxiliary_proc in enumerate(auxiliary_processes):
+            # 1) 存活且运行超过健康阈值 → 重置该槽位的重试计数（偶发崩溃不应耗尽配额）
+            if auxiliary_proc is not None and auxiliary_proc.poll() is None:
+                if (
+                    auxiliary_started_at[i]
+                    and time.time() - auxiliary_started_at[i] >= USER_MODULE_SUPERVISOR_HEALTHY_UPTIME_RESET_SECONDS
+                    and auxiliary_respawn_attempts[i] > 0
+                ):
+                    auxiliary_respawn_attempts[i] = 0
+                    auxiliary_given_up[i] = False
+                    auxiliary_respawn_next_time[i] = 0.0
+                continue
+
+            # 2) 检测到进程退出（之前非 None，现已结束）→ 记录日志并清理槽位
+            if auxiliary_proc is not None:
+                exit_code = auxiliary_proc.returncode
+                print(
+                    f"[Manager] WARNING: auxiliary process[{i}] exited with code "
+                    f"{exit_code}; core service keeps running"
+                )
+                auxiliary_processes[i] = None
+                auxiliary_started_at[i] = None
+                # 正常退出（code 0）不重启
+                if exit_code == 0:
+                    print(f"[Manager] auxiliary[{i}] exited normally; not restarting")
+                    continue
+
+            # 3) 进程为 None（刚退出已清理，或 respawn 失败后）→ 判断是否 respawn
+            if not USER_MODULE_SUPERVISOR_RESPAWN_ENABLED:
+                continue
+            if auxiliary_respawn_attempts[i] >= USER_MODULE_SUPERVISOR_MAX_RESPAWN_ATTEMPTS:
+                if not auxiliary_given_up[i]:
+                    print(
+                        f"[Manager] ERROR: auxiliary[{i}] respawn attempts exhausted "
+                        f"({auxiliary_respawn_attempts[i]}); giving up, restart service to retry"
+                    )
+                    auxiliary_given_up[i] = True
+                continue
+            now = time.time()
+            if now < auxiliary_respawn_next_time[i]:
+                continue  # 退避期内，等下一 tick
+            # 无论成败都计数（确定性崩溃时避免无限重试），并设置退避
+            auxiliary_respawn_attempts[i] += 1
+            attempts = auxiliary_respawn_attempts[i]
+            backoff = min(
+                USER_MODULE_SUPERVISOR_RESPAWN_BACKOFF_SECONDS * (2 ** attempts),
+                USER_MODULE_SUPERVISOR_RESPAWN_MAX_BACKOFF_SECONDS,
+            )
+            auxiliary_respawn_next_time[i] = now + backoff
+            new_proc = _start_module_supervisor(cwd)
+            if new_proc is not None:
+                auxiliary_processes[i] = new_proc
+                auxiliary_started_at[i] = now
+                print(
+                    f"[Manager] auxiliary[{i}] restarted "
+                    f"(attempt {attempts}, backoff {backoff:.0f}s)"
+                )
+            else:
+                print(f"[Manager] WARNING: auxiliary[{i}] restart failed; retry in {backoff:.0f}s")
         time.sleep(1)
 
 

@@ -7,6 +7,9 @@ from typing import List, Dict, Any
 # 默认配置列表
 # 每个配置包含：key, value_type, description, editable, is_sensitive
 # 可选字段：quick_config - 标记是否为快速配置项（在快速配置弹窗中显示）
+# 可选字段：user_module_grantable - 是否允许经发布审批后注入用户模块
+#   （module_runtime/secret_resolver 自动生成密钥规范名映射，如 runninghub.api_key → RUNNINGHUB_API_KEY；
+#    模块 manifest secret_names 只能取这些规范名，未标记的配置模块不可访问）
 DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     # ==================== 版本空间配置 ====================
     {
@@ -321,7 +324,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'RunningHub API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'runninghub.max_concurrent_slots',
@@ -378,7 +382,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': '多米 API Token',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     
     # ==================== Vidu 配置 ====================
@@ -388,7 +393,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'Vidu API Token',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
 
     # ==================== 智剧通配置 ====================
@@ -408,7 +414,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': '火山引擎 API Key（Seedream 5.0 文生图）',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
 
     # ==================== 火山引擎海外版配置 ====================
@@ -418,7 +425,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': '火山引擎海外版 API Key（Seedream/Seedance 海外版）',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'volcengine_oversea.base_url',
@@ -436,7 +444,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'kkidc 网关 API Key（Seedance 系列视频）',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'kkidc.base_url',
@@ -454,7 +463,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'huimengi 网关 API Key（Seedance 2.0 系列 / Grok 视频）',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'huimengi.base_url',
@@ -472,7 +482,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'YWAPI 官方站点 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_1.base_url',
@@ -488,7 +499,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'API 聚合站站点1 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_1.name',
@@ -512,7 +524,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'API 聚合站站点2 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_2.name',
@@ -536,7 +549,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'API 聚合站站点3 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_3.name',
@@ -559,7 +573,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'API 聚合站站点4 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_4.name',
@@ -583,7 +598,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'API 聚合站站点5 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_5.name',
@@ -638,7 +654,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'Google Gemini API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'llm.google.gemini_base_url',
@@ -656,7 +673,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'Claude API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'llm.claude.base_url',
@@ -674,7 +692,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'Qwen API Key（阿里通义千问）',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'llm.qwen.base_url',
@@ -766,7 +785,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'DeepSeek API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'llm.deepseek.base_url',
@@ -784,7 +804,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'Agnes AI API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'llm.agnes.base_url',

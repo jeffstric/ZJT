@@ -50,7 +50,8 @@ from config.constant import (
     TASK_STATUS_WAITING_BEFORE_FINISH,
     RUNNINGHUB_TASK_TYPES,
     RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT,
-    get_sync_orphan_grace_seconds
+    get_sync_orphan_grace_seconds,
+    USER_MODULE_IMPL_NAME_PREFIX
 )
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
@@ -1405,6 +1406,14 @@ def process_task_with_retry(task_type, process_func):
                     continue
                 
                 is_runninghub = ai_tool.type in RUNNINGHUB_TASK_TYPES
+                if is_runninghub and ai_tool.implementation:
+                    # 槽位按任务类型判断，但同一任务条目可绑定非 RunningHub 的
+                    # 用户模块实现方；此类任务不占用也不受制于 RunningHub 槽位。
+                    from config.unified_config import get_implementation_name
+
+                    recorded_impl = get_implementation_name(ai_tool.implementation)
+                    if recorded_impl.startswith(USER_MODULE_IMPL_NAME_PREFIX):
+                        is_runninghub = False
 
                 # ⚠️ RunningHub 槽位控制：QUEUED 状态必须先获取槽位
                 # 获取失败 → 延迟30秒后重试，不计入 try_count

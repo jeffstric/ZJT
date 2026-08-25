@@ -219,9 +219,11 @@
    * 计算任务的算力消耗
    * @param {number|string} taskTypeIdOrModelKey 任务类型ID或模型key
    * @param {number} duration 时长（可选，用于按时长计费的任务）
+   * @param {object} context 修饰符上下文（如 { resolution: '2K' }）
+   * @param {string} implementation 实现方名称（可选，有则用该供应商的算力与倍率）
    * @returns {number} 算力消耗
    */
-  function getComputingPower(taskTypeIdOrModelKey, duration, context = {}) {
+  function getComputingPower(taskTypeIdOrModelKey, duration, context = {}, implementation) {
     let task;
     if (typeof taskTypeIdOrModelKey === 'number') {
       task = getTaskById(taskTypeIdOrModelKey);
@@ -231,7 +233,21 @@
 
     if (!task) return 0;
 
-    const power = task.computing_power;
+    const impls = Array.isArray(task.implementations) ? task.implementations : [];
+    const impl = implementation
+      ? impls.find((item) => item && item.name === implementation)
+      : null;
+    let power = task.computing_power;
+    let modifiers = task.power_modifiers;
+    if (impl) {
+      if (impl.computing_power !== undefined && impl.computing_power !== null) {
+        power = impl.computing_power;
+      }
+      if (impl.power_modifiers && impl.power_modifiers.length) {
+        modifiers = impl.power_modifiers;
+      }
+    }
+
     let basePower;
     if (typeof power === 'object' && power !== null) {
       // 按时长计费
@@ -241,9 +257,9 @@
     }
 
     // 应用修饰符（累积乘数，最后一次向上取整）
-    if (task.power_modifiers && context) {
+    if (modifiers && context) {
       let totalMultiplier = 1.0;
-      for (const modifier of task.power_modifiers) {
+      for (const modifier of modifiers) {
         const attrValue = context[modifier.attribute];
         const multiplier = attrValue && modifier.values && modifier.values[attrValue]
             ? modifier.values[attrValue]

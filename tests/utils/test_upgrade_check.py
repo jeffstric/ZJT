@@ -6,6 +6,7 @@
 """
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -26,6 +27,10 @@ from scripts.upgrade_check import (
     normalize_repo_url,
     is_auth_or_prompt_error,
     fetch_remote_with_fallback,
+    check_user_module_update_safety,
+    check_user_module_compatibility,
+    _parse_pyproject_version,
+    _version_satisfies,
 )
 
 
@@ -98,59 +103,44 @@ class TestGetLocalVersion(unittest.TestCase):
 
     @patch('scripts.upgrade_check.run_git')
     def test_git_tag_points_at_head(self, mock_git):
-        """HEAD 上有 tag 时纳入候选（并可成为最高版本）"""
-        mock_git.side_effect = [
-            (0, "v1.5.1\n", ""),  # tag --points-at HEAD
-            (0, "v1.5.0\n", ""),  # describe
-        ]
+        """Git tag 不再定义本地应用版本。"""
         with patch('scripts.upgrade_check.read_pyproject_version', return_value=None):
             result = get_local_version(Path("/fake"), git_cmd="git")
-        self.assertEqual(result, "v1.5.1")
+        self.assertEqual(result, "unknown")
+        mock_git.assert_not_called()
 
     @patch('scripts.upgrade_check.run_git')
     def test_git_describe_fallback(self, mock_git):
-        """tag --points-at 无结果，回退到 git describe（无更高 pyproject）"""
-        mock_git.side_effect = [
-            (0, "", ""),          # tag --points-at HEAD: empty
-            (0, "v1.4.0\n", ""),  # describe --tags --abbrev=0
-        ]
-        with patch('scripts.upgrade_check.read_pyproject_version', return_value=None):
+        """即使存在 describe tag，也只返回 pyproject 版本。"""
+        with patch('scripts.upgrade_check.read_pyproject_version', return_value="1.4.1"):
             result = get_local_version(Path("/fake"), git_cmd="git")
-        self.assertEqual(result, "v1.4.0")
+        self.assertEqual(result, "1.4.1")
+        mock_git.assert_not_called()
 
     @patch('scripts.upgrade_check.run_git')
     def test_pyproject_wins_when_newer_than_describe(self, mock_git):
-        """describe 停在旧 tag、pyproject 已是新版本时，取更高者（防启动死循环）"""
-        mock_git.side_effect = [
-            (0, "", ""),          # tag --points-at HEAD: empty
-            (0, "2.0.2\n", ""),   # describe 仍为旧 tag
-        ]
+        """pyproject 始终定义本地版本。"""
         with patch('scripts.upgrade_check.read_pyproject_version', return_value="2.0.3"):
             result = get_local_version(Path("/fake"), git_cmd="git")
         self.assertEqual(result, "2.0.3")
+        mock_git.assert_not_called()
 
     @patch('scripts.upgrade_check.run_git')
     def test_multiple_tags_picks_highest(self, mock_git):
-        """多个 tag 在 HEAD 时选择最高的"""
-        mock_git.side_effect = [
-            (0, "v1.5.0\nv1.5.1\nv1.4.9\n", ""),  # multiple tags
-            (0, "v1.5.0\n", ""),                  # describe
-        ]
-        with patch('scripts.upgrade_check.read_pyproject_version', return_value=None):
+        """异常高版本 tag 不能覆盖 pyproject。"""
+        with patch('scripts.upgrade_check.read_pyproject_version', return_value="1.5.0"):
             result = get_local_version(Path("/fake"), git_cmd="git")
-        self.assertEqual(result, "v1.5.1")
+        self.assertEqual(result, "1.5.0")
+        mock_git.assert_not_called()
 
     @patch('scripts.upgrade_check.run_git')
     def test_fallback_to_pyproject_toml(self, mock_git):
         """git 不可用时回退到 pyproject.toml"""
-        mock_git.side_effect = [
-            (1, "", "not a git repo"),
-            (1, "", "not a git repo"),
-        ]
         with patch('scripts.upgrade_check.read_pyproject_version', return_value="1.3.0"):
             result = get_local_version(Path("/fake"), git_cmd="git")
 
         self.assertEqual(result, "1.3.0")
+        mock_git.assert_not_called()
 
     def test_no_git_no_pyproject(self):
         """无 git 且无 pyproject.toml"""
@@ -161,6 +151,16 @@ class TestGetLocalVersion(unittest.TestCase):
             result = get_local_version(Path("/fake"), git_cmd=None)
 
         self.assertEqual(result, "unknown")
+
+
+class TestParsePyprojectVersion(unittest.TestCase):
+    def test_reads_only_project_table(self):
+        content = '[tool.demo]\nversion = "99.0.0"\n[project]\nversion = "2.1.5"\n'
+        self.assertEqual(_parse_pyproject_version(content), "2.1.5")
+
+    def test_rejects_missing_or_invalid_project_version(self):
+        self.assertIsNone(_parse_pyproject_version('[tool.demo]\nversion = "99.0.0"\n'))
+        self.assertIsNone(_parse_pyproject_version('[project\nversion = "2.1.5"'))
 
 
 class TestGetRemoteLatestTag(unittest.TestCase):
@@ -211,8 +211,9 @@ class TestGetRemoteLatestTag(unittest.TestCase):
 class TestPerformUpdate(unittest.TestCase):
     """测试 perform_update"""
 
+    @patch('scripts.upgrade_check.check_user_module_update_safety', return_value=(True, ""))
     @patch('scripts.upgrade_check.run_git')
-    def test_success(self, mock_git):
+    def test_success(self, mock_git, _mock_safety):
         mock_git.side_effect = [
             (0, "", ""),  # fetch --tags
             (0, "", ""),  # reset origin/branch
@@ -221,8 +222,9 @@ class TestPerformUpdate(unittest.TestCase):
         self.assertTrue(success)
         self.assertEqual(message, "")
 
+    @patch('scripts.upgrade_check.check_user_module_update_safety', return_value=(True, ""))
     @patch('scripts.upgrade_check.run_git')
-    def test_success_with_target_tag(self, mock_git):
+    def test_success_with_target_tag(self, mock_git, _mock_safety):
         mock_git.side_effect = [
             (0, "", ""),  # fetch --tags
             (0, "", ""),  # reset to tag
@@ -235,8 +237,9 @@ class TestPerformUpdate(unittest.TestCase):
         # 第二次调用应为 reset --hard 2.0.3
         self.assertEqual(mock_git.call_args_list[1][0][1], ["reset", "--hard", "2.0.3"])
 
+    @patch('scripts.upgrade_check.check_user_module_update_safety', return_value=(True, ""))
     @patch('scripts.upgrade_check.run_git')
-    def test_target_tag_fallback_to_branch(self, mock_git):
+    def test_target_tag_fallback_to_branch(self, mock_git, _mock_safety):
         mock_git.side_effect = [
             (0, "", ""),       # fetch
             (1, "", "not found"),  # reset tag fails
@@ -248,8 +251,9 @@ class TestPerformUpdate(unittest.TestCase):
         self.assertTrue(success)
         self.assertEqual(mock_git.call_args_list[2][0][1], ["reset", "--hard", "origin/main"])
 
+    @patch('scripts.upgrade_check.check_user_module_update_safety', return_value=(True, ""))
     @patch('scripts.upgrade_check.run_git')
-    def test_fetch_failure(self, mock_git):
+    def test_fetch_failure(self, mock_git, _mock_safety):
         mock_git.side_effect = [
             (1, "", "network error"),  # fetch fails
         ]
@@ -257,8 +261,9 @@ class TestPerformUpdate(unittest.TestCase):
         self.assertFalse(success)
         self.assertIn("fetch 失败", message)
 
+    @patch('scripts.upgrade_check.check_user_module_update_safety', return_value=(True, ""))
     @patch('scripts.upgrade_check.run_git')
-    def test_reset_failure(self, mock_git):
+    def test_reset_failure(self, mock_git, _mock_safety):
         mock_git.side_effect = [
             (0, "", ""),       # fetch ok
             (1, "", "conflict"),  # reset fails
@@ -288,6 +293,175 @@ class TestPerformUpdate(unittest.TestCase):
         self.assertEqual(message, "")
         # quarantine 至少被调用：预清理 + 失败后重试前
         self.assertGreaterEqual(mock_quarantine.call_count, 2)
+
+
+class TestUserModuleUpdateSafety(unittest.TestCase):
+    """用户模块目录不能被 reset 目标接管。"""
+
+    @patch("scripts.upgrade_check.get_user_module_root_for_upgrade")
+    @patch("scripts.upgrade_check.run_git")
+    def test_external_root_is_not_affected(self, mock_git, mock_root):
+        with tempfile.TemporaryDirectory() as project_dir, tempfile.TemporaryDirectory() as module_dir:
+            mock_root.return_value = Path(module_dir)
+            safe, message = check_user_module_update_safety(
+                "git", Path(project_dir), "v2.2.0", 30
+            )
+        self.assertTrue(safe)
+        self.assertEqual(message, "")
+        mock_git.assert_not_called()
+
+    @patch("scripts.upgrade_check.get_user_module_root_for_upgrade")
+    @patch("scripts.upgrade_check.run_git")
+    def test_internal_untracked_root_is_safe(self, mock_git, mock_root):
+        with tempfile.TemporaryDirectory() as project_dir:
+            module_dir = Path(project_dir) / "data" / "user_modules"
+            module_dir.mkdir(parents=True)
+            mock_root.return_value = module_dir
+            mock_git.side_effect = [(0, "", ""), (0, "", "")]
+            safe, message = check_user_module_update_safety(
+                "git", Path(project_dir), "v2.2.0", 30
+            )
+        self.assertTrue(safe)
+        self.assertEqual(message, "")
+
+    @patch("scripts.upgrade_check.get_user_module_root_for_upgrade")
+    @patch("scripts.upgrade_check.run_git")
+    def test_missing_internal_root_still_checks_target_collision(self, mock_git, mock_root):
+        with tempfile.TemporaryDirectory() as project_dir:
+            module_dir = Path(project_dir) / "data" / "user_modules"
+            mock_root.return_value = module_dir
+            mock_git.side_effect = [
+                (0, "", ""),
+                (0, "data/user_modules/owned-by-core.py", ""),
+            ]
+            safe, message = check_user_module_update_safety(
+                "git", Path(project_dir), "v2.2.0", 30
+            )
+        self.assertFalse(safe)
+        self.assertIn("目标版本", message)
+
+    @patch("scripts.upgrade_check.get_user_module_root_for_upgrade")
+    @patch("scripts.upgrade_check.run_git")
+    def test_current_tracked_root_is_rejected(self, mock_git, mock_root):
+        with tempfile.TemporaryDirectory() as project_dir:
+            module_dir = Path(project_dir) / "data" / "user_modules"
+            module_dir.mkdir(parents=True)
+            mock_root.return_value = module_dir
+            mock_git.return_value = (0, "data/user_modules/module.py", "")
+            safe, message = check_user_module_update_safety(
+                "git", Path(project_dir), "v2.2.0", 30
+            )
+        self.assertFalse(safe)
+        self.assertIn("已被 Git 跟踪", message)
+
+    @patch("scripts.upgrade_check.get_user_module_root_for_upgrade")
+    @patch("scripts.upgrade_check.run_git")
+    def test_target_path_collision_is_rejected(self, mock_git, mock_root):
+        with tempfile.TemporaryDirectory() as project_dir:
+            module_dir = Path(project_dir) / "data" / "user_modules"
+            module_dir.mkdir(parents=True)
+            mock_root.return_value = module_dir
+            mock_git.side_effect = [
+                (0, "", ""),
+                (0, "data/user_modules/owned-by-core.py", ""),
+            ]
+            safe, message = check_user_module_update_safety(
+                "git", Path(project_dir), "v2.2.0", 30
+            )
+        self.assertFalse(safe)
+        self.assertIn("拒绝自动更新", message)
+
+
+class TestUserModuleCompatibility(unittest.TestCase):
+    def test_version_constraints(self):
+        self.assertTrue(_version_satisfies("2.1.5", ">=2.1.5,<3.0"))
+        self.assertFalse(_version_satisfies("3.0.0", ">=2.1.5,<3.0"))
+
+    @patch("scripts.upgrade_check.run_git")
+    @patch("scripts.upgrade_check.get_user_module_root_for_upgrade")
+    def test_compatible_release_allows_update(self, mock_root, mock_git):
+        with tempfile.TemporaryDirectory() as module_dir:
+            root = Path(module_dir)
+            release = root / "modules" / "demo.echo" / "releases" / "1.0.0-test"
+            release.mkdir(parents=True)
+            (release / "manifest.json").write_text(
+                '{"manifest_schema_version":1,"module_id":"demo.echo","version":"1.0.0",'
+                '"rpc_protocol":"user-module-rpc/v1","driver_protocol":"media-driver/v1",'
+                '"sdk_version":"1.0.0","execution_model":"native_async",'
+                '"core_compat":">=2.1.5,<3.0","python_compat":">=3.10,<3.11",'
+                '"capabilities":[{"media_kind":"image"}]}',
+                encoding="utf-8",
+            )
+            mock_root.return_value = root
+            mock_git.return_value = (
+                0,
+                '{"abi_schema_version":1,"core_version":"0.0.1","python_version":"3.10.20",'
+                '"manifest_schema_versions":[1],"rpc_protocol_versions":["user-module-rpc/v1"],'
+                '"driver_protocol_versions":["media-driver/v1"],"sdk_versions":["1.0.0"],'
+                '"execution_models":["native_async"],"media_kinds":["image","video","audio"]}',
+                "",
+            )
+            mock_git.side_effect = [mock_git.return_value, (0, '[project]\nversion = "2.2.0"\n', "")]
+            safe, message = check_user_module_compatibility(
+                "git", Path("/fake"), "v2.2.0", 30
+            )
+            report = (root / "state" / "update-compatibility.json").read_text(encoding="utf-8")
+        self.assertTrue(safe)
+        self.assertEqual(message, "")
+        self.assertIn('"compatible": true', report)
+
+    @patch("scripts.upgrade_check.run_git")
+    @patch("scripts.upgrade_check.get_user_module_root_for_upgrade")
+    def test_incompatible_release_blocks_by_default(self, mock_root, mock_git):
+        with tempfile.TemporaryDirectory() as module_dir:
+            root = Path(module_dir)
+            release = root / "modules" / "demo.echo" / "releases" / "1.0.0-test"
+            release.mkdir(parents=True)
+            (release / "manifest.json").write_text(
+                '{"manifest_schema_version":1,"module_id":"demo.echo","version":"1.0.0",'
+                '"rpc_protocol":"user-module-rpc/v0","driver_protocol":"media-driver/v1",'
+                '"sdk_version":"1.0.0","execution_model":"native_async",'
+                '"capabilities":[{"media_kind":"image"}]}',
+                encoding="utf-8",
+            )
+            mock_root.return_value = root
+            mock_git.return_value = (
+                0,
+                '{"abi_schema_version":1,"core_version":"2.2.0","python_version":"3.10.20",'
+                '"manifest_schema_versions":[1],"rpc_protocol_versions":["user-module-rpc/v1"],'
+                '"driver_protocol_versions":["media-driver/v1"],"sdk_versions":["1.0.0"],'
+                '"execution_models":["native_async"],"media_kinds":["image"]}',
+                "",
+            )
+            mock_git.side_effect = [mock_git.return_value, (0, '[project]\nversion = "2.2.0"\n', "")]
+            safe, message = check_user_module_compatibility(
+                "git", Path("/fake"), "v2.2.0", 30
+            )
+        self.assertFalse(safe)
+        self.assertIn("已阻止自动更新", message)
+
+    @patch("scripts.upgrade_check.run_git")
+    @patch("scripts.upgrade_check.get_user_module_root_for_upgrade")
+    def test_quarantine_policy_records_but_allows_update(self, mock_root, mock_git):
+        with tempfile.TemporaryDirectory() as module_dir:
+            root = Path(module_dir)
+            release = root / "modules" / "demo.echo" / "releases" / "broken"
+            release.mkdir(parents=True)
+            (release / "manifest.json").write_text("{}", encoding="utf-8")
+            mock_root.return_value = root
+            mock_git.return_value = (
+                0,
+                '{"abi_schema_version":1,"core_version":"2.2.0","python_version":"3.10.20",'
+                '"manifest_schema_versions":[1],"rpc_protocol_versions":[],"driver_protocol_versions":[], '
+                '"sdk_versions":[],"execution_models":[],"media_kinds":[]}',
+                "",
+            )
+            mock_git.side_effect = [mock_git.return_value, (0, '[project]\nversion = "2.2.0"\n', "")]
+            safe, message = check_user_module_compatibility(
+                "git", Path("/fake"), "v2.2.0", 30, policy="quarantine"
+            )
+        self.assertTrue(safe)
+        self.assertTrue(message)
 
 
 class TestUpdateRemoteUrlIfNeeded(unittest.TestCase):

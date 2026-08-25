@@ -29,6 +29,7 @@ from config.constant import (
     PERSEIDS_ERR_NO_VALID_TOKEN,
     ERROR_CODE_TOKEN_EXPIRED,
     ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
+    USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
 )
 from utils.resource_access import get_user_id_from_header, ensure_world_access
 from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
@@ -2710,7 +2711,10 @@ async def get_available_models(scene: Optional[str] = None):
             annotate_llm_models,
             build_tracks_payload,
         )
-        result = await _get_available_models()
+        result = await asyncio.wait_for(
+            _get_available_models(),
+            timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+        )
         models = result.get('models') or []
         catalog_scene = scene or ModelScene.LLM_CHAT
         models = annotate_llm_models(models, catalog_scene)

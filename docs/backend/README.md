@@ -19,3 +19,8 @@
 | [frontend_ui_visibility.md](./frontend_ui_visibility.md) | 社交图标 / 意见反馈个人微信二维码可配置隐藏与换图 |
 | [model_catalog_and_recommendations.md](./model_catalog_and_recommendations.md) | 场景模型目录：性价比/效果双档与供应商折叠 |
 | [implementation_power_frontend_dispatch.md](./implementation_power_frontend_dispatch.md) | 实现方算力前端下发机制与用户偏好分档价格扁平化修复 |
+| 用户模块（接口模块） | 商业版能力：代码、测试与设计文档位于 enterprise 仓
+  `doc/user_modules*.md`（运行时 `enterprise/module_runtime/`，路由 `enterprise/routes/`，
+  服务 `enterprise/services/user_module_*`）。核心仅保留接缝：常量与 ABI 契约
+  （`config/constant.py`、`config/user_module_abi.json`）、alembic 迁移、
+  `dashboard features.user_modules` 开关与前端锁定卡片。 |

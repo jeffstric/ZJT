@@ -3018,6 +3018,22 @@ def set_script_problem(user_id: str, world_id: str, auth_token: str, verdict: bo
         }
 
 
+def register_dynamic_tools(tool_defs):
+    """运行时注入工具 schema（由 enterprise 包在注册时调用）。
+
+    工具本体（schema + 执行函数）随商业版 enterprise 包提供；注入后 LLM 即可看到
+    对应工具。执行函数经 ToolExecutor.register_enterprise_tool 注册。
+    """
+    if not isinstance(tool_defs, list):
+        raise ValueError("tool_defs 必须是工具 schema 列表")
+    for tool_def in tool_defs:
+        name = tool_def.get("name")
+        if not name or any(t.get("name") == name for t in MCP_TOOLS):
+            raise ValueError(f"动态工具名缺失或重复: {name!r}")
+    MCP_TOOLS.extend(tool_defs)
+    logger.info(f"已注入动态工具 schema: {[t['name'] for t in tool_defs]}")
+
+
 # MCP工具定义（供MCP服务器使用）
 MCP_TOOLS = [
     {

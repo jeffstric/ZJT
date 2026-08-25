@@ -1681,6 +1681,42 @@ body {
     font-size: 12px;
 }
 
+.resolution-multiplier-list {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--admin-border);
+}
+
+.resolution-multiplier-fields {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.resolution-multiplier-title {
+    color: var(--admin-text-muted);
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.resolution-multiplier-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.resolution-multiplier-reset {
+    flex-shrink: 0;
+    align-self: center;
+}
+
 .power-hint {
     color: var(--admin-text-muted);
     font-size: 12px;

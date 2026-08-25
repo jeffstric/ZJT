@@ -55,6 +55,28 @@ def setup_llm_logger():
 logger = logging.getLogger(__name__)
 llm_logger = setup_llm_logger()
 
+_SAFE_GEMINI_ROLES = {"assistant", "function", "model", "user"}
+_SAFE_GEMINI_FINISH_REASONS = {
+    "BLOCKLIST",
+    "IMAGE_SAFETY",
+    "LANGUAGE",
+    "MALFORMED_FUNCTION_CALL",
+    "MAX_TOKENS",
+    "OTHER",
+    "PROHIBITED_CONTENT",
+    "RECITATION",
+    "SAFETY",
+    "SPII",
+    "STOP",
+}
+
+
+def _safe_response_metadata(value: Any, allowed_values: set[str]) -> str:
+    """仅允许预定义的响应元数据值进入隐私日志。"""
+    normalized = str(value or "").strip().upper()
+    normalized_allowed = {item.upper() for item in allowed_values}
+    return normalized if normalized in normalized_allowed else "UNKNOWN"
+
 
 def _mask_api_key(api_key: str) -> str:
     """对 API 密钥进行掩码处理"""
@@ -95,7 +117,7 @@ class GeminiClient(BaseLLMClient):
         cls._url_format_cache.clear()
         logger.info("GeminiClient URL format cache cleared")
 
-    def _build_url(self, model: str) -> str:
+    def _build_url(self, model: str, *, suppress_payload_logging: bool = False) -> str:
         """构建 Gemini API URL，支持两种格式自动探测和缓存"""
         base_url = self.base_url.rstrip('/')
         if base_url.endswith('/openai'):
@@ -106,22 +128,37 @@ class GeminiClient(BaseLLMClient):
         if base_url in GeminiClient._url_format_cache:
             fmt = GeminiClient._url_format_cache[base_url]
             url = f"{base_url}{GEMINI_URL_FORMATS[fmt].format(model=model_name)}"
-            llm_logger.debug(f"Gemini URL using cached format '{fmt}': {url}")
+            if suppress_payload_logging:
+                llm_logger.debug("Gemini URL using cached format '%s'", fmt)
+            else:
+                llm_logger.debug(f"Gemini URL using cached format '{fmt}': {url}")
             return url
 
         for fmt_name, fmt_path in GEMINI_URL_FORMATS.items():
             url = f"{base_url}{fmt_path.format(model=model_name)}"
-            if self._probe_url_format(url):
+            if self._probe_url_format(
+                url,
+                suppress_payload_logging=suppress_payload_logging,
+            ):
                 GeminiClient._url_format_cache[base_url] = fmt_name
-                llm_logger.info(f"Gemini URL format detected: '{fmt_name}' for base_url: {base_url}")
+                if suppress_payload_logging:
+                    llm_logger.info("Gemini URL format detected: '%s'", fmt_name)
+                else:
+                    llm_logger.info(f"Gemini URL format detected: '{fmt_name}' for base_url: {base_url}")
                 return url
 
         default_fmt = "proxy"
         url = f"{base_url}{GEMINI_URL_FORMATS[default_fmt].format(model=model_name)}"
-        llm_logger.warning(f"Gemini URL format probe failed, using default '{default_fmt}': {url}")
+        if suppress_payload_logging:
+            llm_logger.warning(
+                "Gemini URL format probe failed, using default '%s'",
+                default_fmt,
+            )
+        else:
+            llm_logger.warning(f"Gemini URL format probe failed, using default '{default_fmt}': {url}")
         return url
 
-    def _probe_url_format(self, url: str) -> bool:
+    def _probe_url_format(self, url: str, *, suppress_payload_logging: bool = False) -> bool:
         """轻量级探测 URL 格式是否有效（不验证 API Key，仅验证 URL 路径格式）"""
         # 探测逻辑：404 = URL 路径错误 → False；401/403 = URL 正确但未授权 → True；200 = 验证响应结构
         headers = {
@@ -138,35 +175,67 @@ class GeminiClient(BaseLLMClient):
             response = requests.post(url, headers=headers, json=test_payload, timeout=10)
 
             if response.status_code == 404:
-                llm_logger.debug(f"URL format probe failed (404): {url}")
+                if suppress_payload_logging:
+                    llm_logger.debug("URL format probe failed: status=404")
+                else:
+                    llm_logger.debug(f"URL format probe failed (404): {url}")
                 return False
 
             if response.status_code in [401, 403]:
-                llm_logger.debug(f"URL format probe success (auth error): {url} -> {response.status_code}")
+                if suppress_payload_logging:
+                    llm_logger.debug(
+                        "URL format probe success (auth error): status=%s",
+                        response.status_code,
+                    )
+                else:
+                    llm_logger.debug(f"URL format probe success (auth error): {url} -> {response.status_code}")
                 return True
 
             if response.status_code == 200:
                 try:
                     resp_json = response.json()
                     if "candidates" in resp_json and resp_json["candidates"]:
-                        llm_logger.debug(f"URL format probe success (valid response): {url}")
+                        if suppress_payload_logging:
+                            llm_logger.debug("URL format probe success: status=200")
+                        else:
+                            llm_logger.debug(f"URL format probe success (valid response): {url}")
                         return True
                     else:
-                        error_msg = resp_json.get("error", {}).get("message", "unknown")
-                        llm_logger.debug(f"URL format probe failed (invalid response): {url} -> {error_msg}")
+                        if suppress_payload_logging:
+                            llm_logger.debug(
+                                "URL format probe failed (invalid response): status=200",
+                            )
+                        else:
+                            error_msg = resp_json.get("error", {}).get("message", "unknown")
+                            llm_logger.debug(f"URL format probe failed (invalid response): {url} -> {error_msg}")
                         return False
                 except Exception:
-                    llm_logger.debug(f"URL format probe failed (parse error): {url}")
+                    if suppress_payload_logging:
+                        llm_logger.debug("URL format probe failed: status=200, parse_error=true")
+                    else:
+                        llm_logger.debug(f"URL format probe failed (parse error): {url}")
                     return False
 
-            llm_logger.debug(f"URL format probe failed: {url} -> {response.status_code}")
+            if suppress_payload_logging:
+                llm_logger.debug("URL format probe failed: status=%s", response.status_code)
+            else:
+                llm_logger.debug(f"URL format probe failed: {url} -> {response.status_code}")
             return False
 
         except requests.exceptions.Timeout:
-            llm_logger.debug(f"URL format probe timeout: {url}")
+            if suppress_payload_logging:
+                llm_logger.debug("URL format probe timeout")
+            else:
+                llm_logger.debug(f"URL format probe timeout: {url}")
             return False
         except Exception as e:
-            llm_logger.debug(f"URL format probe error: {url} -> {e}")
+            if suppress_payload_logging:
+                llm_logger.debug(
+                    "URL format probe error: error_type=%s",
+                    type(e).__name__,
+                )
+            else:
+                llm_logger.debug(f"URL format probe error: {url} -> {e}")
             return False
 
     def _convert_to_gemini_format(self, messages, tools=None):
@@ -355,7 +424,9 @@ class GeminiClient(BaseLLMClient):
         enable_thinking: bool = False,
         thinking_effort: str = "medium",
         agent_id: Optional[str] = None,
-        agent_scope: Optional[str] = None
+        agent_scope: Optional[str] = None,
+        request_timeout: Optional[float] = None,
+        suppress_payload_logging: bool = False,
     ) -> Any:
         """
         调用 Gemini 原生 API
@@ -384,50 +455,72 @@ class GeminiClient(BaseLLMClient):
             "temperature": temperature
         }
 
-        url = self._build_url(model)
+        url = self._build_url(
+            model,
+            suppress_payload_logging=suppress_payload_logging,
+        )
         
         llm_logger.info("="*80)
         llm_logger.info("GEMINI API REQUEST:")
         llm_logger.info(f"  Model: {model}")
-        llm_logger.info(f"  URL: {url}")
-        llm_logger.info(f"  API Key: {_mask_api_key(self.api_key)}")
+        llm_logger.info(
+            "  URL: configured"
+            if suppress_payload_logging
+            else f"  URL: {url}"
+        )
+        llm_logger.info(
+            "  API Key: configured"
+            if suppress_payload_logging
+            else f"  API Key: {_mask_api_key(self.api_key)}"
+        )
         llm_logger.info(f"  Contents count: {len(gemini_payload.get('contents', []))}")
         self._log_request_context(llm_logger, agent_id, agent_scope)
         llm_logger.info(f"  Max tokens: {max_tokens}")
         if tools:
             llm_logger.info(f"  Tools count: {len(tools)}")
 
-        payload_str = json.dumps(gemini_payload, ensure_ascii=False, indent=2)
+        if not suppress_payload_logging:
+            payload_str = json.dumps(gemini_payload, ensure_ascii=False, indent=2)
 
-        if should_log_debug():
-            system_instruction = gemini_payload.get('systemInstruction', {})
-            system_parts = system_instruction.get('parts', [])
-            if system_parts:
-                system_prompt_text = system_parts[0].get('text', '')
-                llm_logger.info(f"="*80)
-                llm_logger.info(f"[DEV DEBUG] SYSTEM PROMPT (技能内容检查):")
-                llm_logger.info(f"="*80)
-                llm_logger.info(f"{system_prompt_text}")
-                llm_logger.info(f"="*80)
-                llm_logger.info(f"[DEV DEBUG] System prompt length: {len(system_prompt_text)} chars")
-                llm_logger.info(f"="*80)
-            print(f"[DEBUG] Gemini API request payload (first 500 chars):\n{payload_str[:500]}")
+            if should_log_debug():
+                system_instruction = gemini_payload.get('systemInstruction', {})
+                system_parts = system_instruction.get('parts', [])
+                if system_parts:
+                    system_prompt_text = system_parts[0].get('text', '')
+                    llm_logger.info(f"="*80)
+                    llm_logger.info(f"[DEV DEBUG] SYSTEM PROMPT (技能内容检查):")
+                    llm_logger.info(f"="*80)
+                    llm_logger.info(f"{system_prompt_text}")
+                    llm_logger.info(f"="*80)
+                    llm_logger.info(f"[DEV DEBUG] System prompt length: {len(system_prompt_text)} chars")
+                    llm_logger.info(f"="*80)
+                print(f"[DEBUG] Gemini API request payload (first 500 chars):\n{payload_str[:500]}")
 
-        llm_logger.debug(f"Gemini API request payload:\n{payload_str}")
+            llm_logger.debug(f"Gemini API request payload:\n{payload_str}")
 
         try:
             response = requests.post(
                 url,
                 headers=headers,
                 json=gemini_payload,
-                timeout=300
+                timeout=request_timeout if request_timeout is not None else 300,
             )
 
             llm_logger.info(f"Gemini API response status: {response.status_code}")
 
             if response.status_code != 200:
                 llm_logger.error(f"Gemini API error: {response.status_code}")
-                llm_logger.error(f"Gemini API error response: {response.text}")
+                if suppress_payload_logging:
+                    try:
+                        error_body_length = len(response.content or b"")
+                    except (TypeError, AttributeError):
+                        error_body_length = "unknown"
+                    llm_logger.error(
+                        "Gemini API error response omitted: body_length=%s",
+                        error_body_length,
+                    )
+                else:
+                    llm_logger.error(f"Gemini API error response: {response.text}")
                 response.raise_for_status()
 
             response_json = response.json()
@@ -444,21 +537,38 @@ class GeminiClient(BaseLLMClient):
                     llm_logger.info(f"Candidate[{i}]:")
                     content = candidate.get('content') or {}
                     parts = content.get('parts') or []
-                    llm_logger.info(f"  Role: {content.get('role', 'unknown')}")
+                    response_role = content.get('role', 'unknown')
+                    llm_logger.info(
+                        "  Role: %s",
+                        _safe_response_metadata(response_role, _SAFE_GEMINI_ROLES)
+                        if suppress_payload_logging
+                        else response_role,
+                    )
                     llm_logger.info(f"  Parts count: {len(parts)}")
 
                     for j, part in enumerate(parts):
                         if 'text' in part:
                             llm_logger.info(f"  Part[{j}] (text, {len(part['text'])} chars):")
-                            llm_logger.info(f"{part['text']}")
+                            if not suppress_payload_logging:
+                                llm_logger.info(f"{part['text']}")
                         elif 'functionCall' in part:
                             func_call = part['functionCall']
                             llm_logger.info(f"  Part[{j}] (functionCall):")
-                            llm_logger.info(f"    Name: {func_call.get('name', 'unknown')}")
-                            llm_logger.info(f"    Args: {json.dumps(func_call.get('args', {}), ensure_ascii=False, indent=6)}")
+                            if not suppress_payload_logging:
+                                llm_logger.info(f"    Name: {func_call.get('name', 'unknown')}")
+                                llm_logger.info(f"    Args: {json.dumps(func_call.get('args', {}), ensure_ascii=False, indent=6)}")
 
                     if 'finishReason' in candidate:
-                        llm_logger.info(f"  Finish reason: {candidate['finishReason']}")
+                        finish_reason = candidate['finishReason']
+                        llm_logger.info(
+                            "  Finish reason: %s",
+                            _safe_response_metadata(
+                                finish_reason,
+                                _SAFE_GEMINI_FINISH_REASONS,
+                            )
+                            if suppress_payload_logging
+                            else finish_reason,
+                        )
 
             llm_logger.info("-"*80)
 
@@ -466,7 +576,8 @@ class GeminiClient(BaseLLMClient):
                 response_json,
                 auth_token=auth_token,
                 vendor_id=vendor_id,
-                model_id=model_id
+                model_id=model_id,
+                suppress_payload_logging=suppress_payload_logging,
             )
 
             if converted_response.choices:
@@ -477,7 +588,17 @@ class GeminiClient(BaseLLMClient):
             return converted_response
 
         except Exception as e:
-            logger.error(f"Gemini API call failed: {e}")
+            if suppress_payload_logging:
+                status_code = getattr(e, "status_code", None)
+                if status_code is None:
+                    status_code = getattr(getattr(e, "response", None), "status_code", None)
+                logger.error(
+                    "Gemini API call failed: error_type=%s, status=%s",
+                    type(e).__name__,
+                    status_code if status_code is not None else "unknown",
+                )
+            else:
+                logger.error(f"Gemini API call failed: {e}")
             raise
 
     def _analyze_token_usage(self, usage_metadata: Dict) -> Dict[str, int]:
@@ -510,7 +631,8 @@ class GeminiClient(BaseLLMClient):
         data: Dict,
         auth_token: Optional[str] = None,
         vendor_id: Optional[int] = None,
-        model_id: Optional[int] = None
+        model_id: Optional[int] = None,
+        suppress_payload_logging: bool = False,
     ) -> Any:
         """将 Gemini 响应转换为标准格式"""
         usage_metadata = data.get("usageMetadata", {})
@@ -531,7 +653,16 @@ class GeminiClient(BaseLLMClient):
         parts = content.get("parts") or []
 
         if not parts and finish_reason:
-            logger.warning(f"Gemini response has no parts, finish_reason: {finish_reason}")
+            if suppress_payload_logging:
+                logger.warning(
+                    "Gemini response has no parts, finish_reason=%s",
+                    _safe_response_metadata(
+                        finish_reason,
+                        _SAFE_GEMINI_FINISH_REASONS,
+                    ),
+                )
+            else:
+                logger.warning(f"Gemini response has no parts, finish_reason: {finish_reason}")
 
         text_content = ""
         tool_calls = []
@@ -545,7 +676,7 @@ class GeminiClient(BaseLLMClient):
 
                 if "thoughtSignature" in part:
                     thought_signature = part["thoughtSignature"]
-                    if should_log_debug():
+                    if should_log_debug() and not suppress_payload_logging:
                         llm_logger.debug(f"Extracted thought_signature from response: {thought_signature[:100]}...")
 
                 tool_call = type('obj', (object,), {
@@ -568,7 +699,13 @@ class GeminiClient(BaseLLMClient):
         logger.info(f"Gemini metadata - auth_token={'***' if auth_token else None}, vendor_id={vendor_id}, model_id={model_id}")
 
         if auth_token and model_id:
-            self._log_token_usage(usage, auth_token, vendor_id, model_id)
+            self._log_token_usage(
+                usage,
+                auth_token,
+                vendor_id,
+                model_id,
+                suppress_error_details=suppress_payload_logging,
+            )
 
         return self.Response([self.Choice(message, finish_reason)], usage=usage)
 

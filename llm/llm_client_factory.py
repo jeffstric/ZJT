@@ -38,6 +38,10 @@ class LLMClientFactory:
         LLMVendor.AGNES: get_agnes_openai_client,
     }
 
+    # 历史数据中 Gemini 供应商（LLMVendor.JIEKOU）可能被命名为 google；
+    # 普通调用经模型前缀回退不受影响，精确路由（安全审核）需要别名兼容。
+    _EXACT_VENDOR_ALIASES = {"google": LLMVendor.JIEKOU}
+
     @classmethod
     def _get_vendor_by_model(cls, model: str) -> str:
         """根据模型名称获取对应的 vendor"""
@@ -87,6 +91,22 @@ class LLMClientFactory:
 
         logger.debug(f"模型 {model} (vendor={vendor}) -> {type(client).__name__}")
         return client
+
+    @classmethod
+    def get_client_for_exact_vendor(cls, vendor_name: str) -> BaseLLMClient:
+        """按明确的供应商名称取客户端，任何异常配置都不回退。
+
+        普通模型调用仍由 :meth:`get_client` 保持历史兼容行为；安全审核等
+        fail-closed 场景必须先自行校验数据库路由，再调用本方法。
+        """
+
+        if not isinstance(vendor_name, str) or not vendor_name:
+            raise ValueError("LLM 供应商名称为空")
+        resolved = cls._EXACT_VENDOR_ALIASES.get(vendor_name, vendor_name)
+        getter = cls._VENDOR_CLIENT_MAP.get(resolved)
+        if getter is None:
+            raise ValueError("LLM 供应商类型不受支持")
+        return getter()
 
     @classmethod
     def register_model_prefix(cls, prefix: str, vendor: str):

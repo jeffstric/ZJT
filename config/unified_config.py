@@ -25,6 +25,96 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass(frozen=True)
+class UserModuleRuntimeConfig:
+    """用户模块运行时的稳定协议与资源边界。"""
+
+    manifest_schema_version: int = 1
+    rpc_protocol_version: str = "user-module-rpc/v1"
+    media_driver_protocol: str = "media-driver/v1"
+    sdk_version: str = "1.0.0"
+    abi_file_relative: str = "config/user_module_abi.json"
+    default_root_relative: str = "data/user_modules"
+    root_env_name: str = "ZJT_USER_MODULES_DIR"
+    enabled_env_name: str = "ZJT_USER_MODULES_ENABLED"
+    callback_base_url_env_name: str = "ZJT_USER_MODULE_CALLBACK_BASE_URL"
+    supervisor_host: str = "127.0.0.1"
+    supervisor_port_env_name: str = "ZJT_MODULE_SUPERVISOR_PORT"
+    supervisor_url_env_name: str = "ZJT_MODULE_SUPERVISOR_URL"
+    supervisor_token_env_name: str = "ZJT_MODULE_SUPERVISOR_TOKEN"
+    max_manifest_bytes: int = 256 * 1024
+    max_rpc_message_bytes: int = 2 * 1024 * 1024
+    rpc_connect_timeout_seconds: float = 3.0
+    rpc_request_timeout_seconds: float = 120.0
+    runner_health_timeout_seconds: float = 5.0
+    supervisor_startup_timeout_seconds: float = 20.0
+    runner_shutdown_timeout_seconds: float = 10.0
+    max_operation_timeout_seconds: int = 1800
+    db_operation_timeout_seconds: float = 15.0
+    scheduler_interval_seconds: int = 3
+    scheduler_batch_size: int = 50
+    max_prefer_wait_seconds: int = 10
+    generation_io_timeout_seconds: float = 30.0
+    generation_revision_timeout_seconds: float = 5.0
+    generation_validation_timeout_seconds: float = 60.0
+    generation_lock_timeout_seconds: float = 10.0
+    generation_max_file_bytes: int = 512 * 1024
+    generation_max_total_bytes: int = 5 * 1024 * 1024
+    generation_max_search_results: int = 200
+    agent_task_result_max_chars: int = 100_000
+    agent_task_max_concurrency: int = 2
+    agent_task_heartbeat_interval_seconds: float = 5.0
+    agent_task_stale_timeout_seconds: float = 30.0
+    agent_task_state_lock_timeout_seconds: float = 5.0
+    # 单次 agent 任务的挂钟时间上限：LLM hang 时心跳仍会刷新，计数型限制无法兜底，
+    # 必须有挂钟 deadline 强制置失败释放执行槽（见 review.md M4）。
+    agent_task_wall_clock_timeout_seconds: int = 1800
+    # 后台生成任务 ask_user 单次提问等待上限。会话版 mixin 写死 300s 太短；
+    # 等待期间必须暂停墙钟，否则会与本字段打架。
+    agent_task_question_timeout_seconds: int = 1800
+    agent_task_max_questions: int = 3
+    # 本地 ComfyUI 工作流节点确认需要更多轮问答。
+    agent_task_max_questions_comfyui: int = 15
+    agent_task_question_poll_interval_seconds: float = 3.0
+    # 进度弹框里的 tool_call 等阶段事件上限，避免任务 JSON 无限膨胀。
+    agent_task_max_progress_events: int = 200
+    agent_task_progress_content_max_chars: int = 500
+    # Supervisor 崩溃自愈：异常退出后带退避地 respawn，避免用户模块运行时静默永久失效
+    # （见 review.md S1）。正常运行 supervisor_healthy_uptime_reset_seconds 后重置重试计数，
+    # 防止偶发崩溃耗尽配额。
+    supervisor_respawn_enabled: bool = True
+    supervisor_max_respawn_attempts: int = 5
+    supervisor_respawn_backoff_seconds: float = 2.0
+    supervisor_respawn_max_backoff_seconds: float = 30.0
+    supervisor_healthy_uptime_reset_seconds: int = 60
+    # 用户模块代码审核智能体（方案七，用 AI 防 AI）。review_model 为空时复用创建
+    # generation 的模型；显式配置后可改用独立审核模型，降低同模型盲区。
+    review_enabled: bool = True
+    # enabled 且 required 时，审核缺失、跳过或执行失败都会阻止批准发布。
+    review_required: bool = True
+    review_model: str = ""
+    review_vendor_id: int = 0
+    review_model_id: int = 0
+    review_temperature: float = 0.1
+    review_timeout_seconds: int = 120
+    review_max_code_chars: int = 60000
+    # 审核只输出结构化风险报告，限制输出规模以控制费用和线程占用。
+    review_max_output_tokens: int = 4096
+    # 修改审核 prompt、schema 或判定逻辑时必须递增；缓存与发布门都绑定此版本。
+    # v3：checklist 新增第 10 项（secret_names 与用途一致性，声明即授权）。
+    review_policy_version: str = "user-module-security-review/v3"
+    # 跨 Web Worker 的全局审核并发上限；同一 generation 另有单航班文件锁。
+    review_max_concurrency: int = 2
+    # 外层挂钟上限略大于底层 HTTP deadline，超时后底层线程仍持锁至真实退出。
+    review_operation_timeout_seconds: int = 130
+    # 接口模块生成弹窗默认推荐的 LLM（vendor 名为 deepseek）。
+    generation_preferred_model: str = "deepseek-v4-flash"
+    generation_preferred_vendor: str = "deepseek"
+
+
+USER_MODULE_RUNTIME_CONFIG = UserModuleRuntimeConfig()
+
 class VideoResolution:
     """视频分辨率标准值与各驱动参数值映射
 
@@ -476,19 +566,30 @@ class UnifiedTaskConfig:
             if not implementation:
                 implementation = self.implementation
 
-            if not implementation:
-                return 0  # 没有实现方配置，返回0
-
-            impl_config = UnifiedConfigRegistry.get_implementation(implementation)
+            impl_config = (
+                UnifiedConfigRegistry.get_implementation(implementation)
+                if implementation
+                else None
+            )
+            if impl_config is None:
+                # 占位 implementation（如 qwen_image_edit_pending）未注册时，
+                # 改用已绑定的第一个真实实现方（用户模块等）。
+                for name in self.implementations or []:
+                    candidate = UnifiedConfigRegistry.get_implementation(name)
+                    if candidate is not None:
+                        implementation = name
+                        impl_config = candidate
+                        break
             if not impl_config:
                 return 0
 
             base_power = impl_config.get_computing_power(duration, self.driver_name)
 
-        # 应用修饰符（累积乘数，最后一次向上取整）
-        if context and self.power_modifiers:
+        # 应用修饰符：任务默认 × 该供应商 DB 覆盖（累积乘数，最后一次向上取整）
+        effective_modifiers = self.effective_power_modifiers(implementation)
+        if context and effective_modifiers:
             multiplier = 1.0
-            for modifier in self.power_modifiers:
+            for modifier in effective_modifiers:
                 attr_value = context.get(modifier.attribute)
                 if attr_value and attr_value in modifier.values:
                     multiplier *= modifier.values[attr_value]
@@ -497,6 +598,52 @@ class UnifiedTaskConfig:
             base_power = math.ceil(base_power * multiplier)
 
         return int(base_power)
+
+    def effective_power_modifiers(self, implementation: Optional[str] = None) -> List["PowerModifier"]:
+        """任务级 power_modifiers 与实现方 DB 覆盖合并，DB 同 attribute 的 key 覆盖代码默认。"""
+        merged: Dict[str, PowerModifier] = {}
+        for modifier in self.power_modifiers or []:
+            merged[modifier.attribute] = PowerModifier(
+                attribute=modifier.attribute,
+                values=dict(modifier.values or {}),
+                default=float(modifier.default),
+            )
+        if not implementation or not self.driver_name:
+            return list(merged.values())
+        try:
+            from model.implementation_power import ImplementationPowerModel
+
+            db_modifiers = ImplementationPowerModel.get_modifiers(implementation, self.driver_name) or {}
+        except Exception:
+            db_modifiers = {}
+        for attribute, spec in db_modifiers.items():
+            if not isinstance(spec, dict):
+                continue
+            values: Dict[str, float] = {}
+            default = None
+            for key, raw in spec.items():
+                if key == "_default":
+                    try:
+                        default = float(raw)
+                    except (TypeError, ValueError):
+                        default = 1.0
+                    continue
+                try:
+                    values[str(key)] = float(raw)
+                except (TypeError, ValueError):
+                    continue
+            existing = merged.get(attribute)
+            if existing is None:
+                merged[attribute] = PowerModifier(
+                    attribute=str(attribute),
+                    values=values,
+                    default=1.0 if default is None else default,
+                )
+            else:
+                existing.values.update(values)
+                if default is not None:
+                    existing.default = default
+        return list(merged.values())
     
     def to_frontend_dict(self) -> Dict[str, Any]:
         """
@@ -521,9 +668,9 @@ class UnifiedTaskConfig:
             'computing_power': self.computing_power,  # 算力配置（可能是固定值或按时长映射）
         }
 
-        if self.supported_sizes:
-            result['supported_sizes'] = self.supported_sizes
-            result['default_size'] = self.default_size
+        # 始终下发，空列表表示该模型不支持选择分辨率（勿与缺省字段混淆）
+        result['supported_sizes'] = self.supported_sizes
+        result['default_size'] = self.default_size
 
         if self.supported_durations:
             result['supported_durations'] = self.supported_durations
@@ -625,6 +772,18 @@ class UnifiedTaskConfig:
                 except Exception:
                     computing_power = impl_config.default_computing_power
 
+                operation = None
+                params = getattr(impl_config, "driver_params", None)
+                if isinstance(params, dict):
+                    operation = params.get("operation")
+                frontend_modifiers = [
+                    {
+                        'attribute': modifier.attribute,
+                        'values': modifier.values,
+                        'default': modifier.default,
+                    }
+                    for modifier in self.effective_power_modifiers(impl_name)
+                ]
                 result.append({
                     'name': impl_name,
                     'display_name': impl_config.get_display_name(),
@@ -634,6 +793,8 @@ class UnifiedTaskConfig:
                     'sort_order': sort_order,
                     'supported_video_resolutions': impl_config.supported_video_resolutions,
                     'default_video_resolution': impl_config.default_video_resolution,
+                    'operation': operation,
+                    'power_modifiers': frontend_modifiers,
                 })
 
         # 按 sort_order 排序（排序值小的在前）
@@ -680,6 +841,11 @@ class UnifiedConfigRegistry:
         """批量注册实现方配置"""
         for impl in implementations:
             cls.register_implementation(impl)
+
+    @classmethod
+    def unregister_implementation(cls, name: str) -> None:
+        """注销实现方配置（仅用于用户模块动态实现方的重载卸载）"""
+        cls._implementations.pop(name, None)
 
     @classmethod
     def get_implementation(cls, name: str) -> Optional[ImplementationConfig]:
@@ -1253,13 +1419,40 @@ IMPLEMENTATION_FROM_ID = {v: k for k, v in IMPLEMENTATION_TO_ID.items()}
 
 
 def get_implementation_id(name: str) -> int:
-    """获取 implementation 的 ID，不存在返回 0"""
-    return IMPLEMENTATION_TO_ID.get(name, 0)
+    """获取 implementation 的 ID，不存在返回 0。
+
+    静态映射未命中时兜底查询用户模块动态实现方注册表（由绑定服务维护）。
+    """
+    impl_id = IMPLEMENTATION_TO_ID.get(name)
+    if impl_id:
+        return impl_id
+    try:
+        # 惰性导入避免 config -> services 顶层循环依赖；失败（如测试环境缺依赖）时按未知处理
+        from enterprise.services.user_module_binding_service import get_dynamic_impl_id
+        return get_dynamic_impl_id(name) or 0
+    except Exception:
+        return 0
 
 
 def get_implementation_name(id: int) -> str:
-    """根据 ID 获取 implementation 名称，不存在返回 'unknown'"""
-    return IMPLEMENTATION_FROM_ID.get(id, 'unknown')
+    """根据 ID 获取 implementation 名称，不存在返回 'unknown'。
+
+    静态映射未命中时兜底查询用户模块动态实现方注册表（由绑定服务维护）。
+    未知 ID 常见于动态绑定尚未在本进程重载（调度器 60 秒周期），打告警便于定位。
+    """
+    impl_name = IMPLEMENTATION_FROM_ID.get(id)
+    if impl_name:
+        return impl_name
+    try:
+        from enterprise.services.user_module_binding_service import get_dynamic_impl_name
+        impl_name = get_dynamic_impl_name(id)
+        if impl_name:
+            return impl_name
+    except Exception:
+        # 测试环境可能缺依赖，保持静默按未知处理
+        return 'unknown'
+    logger.warning("get_implementation_name: 未知实现方 ID %s（可能为动态绑定尚未在本进程重载）", id)
+    return 'unknown'
 
 
 # ============ 业务驱动名称常量 ============
@@ -1303,6 +1496,9 @@ class DriverKey:
 
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_IMAGE_EDIT = 'qwen_multi_angle_image_edit'
+
+    # Qwen Image Edit
+    QWEN_IMAGE_EDIT = 'qwen_image_edit'
 
     # 文生图
     SEEDREAM_TEXT_TO_IMAGE = 'seedream_text_to_image'
@@ -1441,6 +1637,7 @@ class TaskTypeId:
         'SEEDREAM_4_5_IMAGE': 'Seedream 4.5 图片编辑',
         'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
+        'QWEN_IMAGE_EDIT': 'Qwen Image Edit',
         'GPT_IMAGE_2': 'GPT Image 2 文生图',
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
         'SORA2_TEXT_TO_VIDEO': 'Sora2 文生视频',
@@ -1479,6 +1676,7 @@ class TaskTypeId:
     SEEDREAM_4_5_IMAGE = 18
     SEEDREAM_5_0_PRO = 33
     QWEN_MULTI_ANGLE_IMAGE = 24
+    QWEN_IMAGE_EDIT = 38
     GPT_IMAGE_2 = 25
     GPT_IMAGE_2_EDIT = 26
 
@@ -1690,6 +1888,27 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_size='1K',
         sort_order=15,
         hidden=True,  # 隐藏，前端不显示
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.QWEN_IMAGE_EDIT,
+        key='qwen-image-edit',
+        short_key='qwen-image-edit',
+        name='Qwen Image Edit',
+        category=TaskCategory.IMAGE_EDIT,
+        provider=TaskProvider.LOCAL,  # 占位，接入供应商后再改
+        driver_name=DriverKey.QWEN_IMAGE_EDIT,
+        implementation='qwen_image_edit_pending',  # 仅满足校验，未注册驱动
+        implementations=[],  # 绑定用户模块后动态追加
+        computing_power=1,  # 扣费不能为 0；本地 ComfyUI 默认 1 点
+        # 参考 ComfyUI 工作流 qwen_image_edit_api_0824：ImageScaleToTotalPixels(megapixels=1)
+        # 跟随原图比例缩到约 1MP，无独立比例/分辨率参数
+        supported_ratios=[],
+        supported_sizes=[],
+        default_ratio='',
+        default_size=None,
+        sort_order=16,
+        supports_grid_image=False,
+        max_multi_ref_images=3,  # 对齐官方 I2I 1–3 张参考图
     ),
 
     # ==================== 文生图/图片编辑 ====================
@@ -3204,8 +3423,8 @@ def validate_configs() -> List[str]:
         if config.driver_name and not config.implementation:
             errors.append(f"{config.key}: 配置了 driver_name 但缺少 implementation")
         
-        # 默认值必须在支持列表中
-        if config.default_ratio not in config.supported_ratios:
+        # 默认值必须在支持列表中；空列表表示该模型不提供该参数
+        if config.supported_ratios and config.default_ratio not in config.supported_ratios:
             errors.append(f"{config.key}: default_ratio '{config.default_ratio}' 不在 supported_ratios 中")
         
         if config.supported_sizes and config.default_size not in config.supported_sizes:

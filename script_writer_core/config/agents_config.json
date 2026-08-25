@@ -260,6 +260,23 @@
       ],
       "summary_only": true
     },
+    "generate-user-api-module": {
+      "expert_type": "admin",
+      "skills": ["generate-user-api-module"],
+      "model": "gemini/gemini-3-flash-preview",
+      "max_iterations": 80,
+      "allowed_tools": [
+        "user_module_generation_create",
+        "user_module_project_search",
+        "user_module_project_read",
+        "user_module_generation_get",
+        "user_module_generation_read",
+        "user_module_generation_write",
+        "user_module_generation_validate",
+        "ask_user"
+      ],
+      "summary_only": true
+    },
     "image-understanding": {
       "expert_type": "marketing",
       "skills": ["image-understanding"],

@@ -599,6 +599,7 @@ PROVIDER_DEFINITIONS.forEach(provider => {
 });
 
 const AdminApp = {
+    mixins: [window.UserModulesAdminMixin],
     data() {
         return {
             // 认证
@@ -922,6 +923,7 @@ const AdminApp = {
             // 默认按社区版处理，避免 dashboard 尚未返回时闪现商业入口。
             isCommunityEdition: true,
             runninghubKeyPoolAvailable: false,
+            userModulesAvailable: false,
             brandingAvailable: false,
 
             // 商业包状态与许可证状态分离：包成功导入决定是否展示卡片，
@@ -1396,6 +1398,10 @@ const AdminApp = {
                     this.runninghubKeyPoolAvailable = Boolean(
                         response.data.data.features?.runninghub_key_pool
                     );
+                    // 接口模块（用户模块）随商业版 enterprise 包提供，社区版显示锁定卡片
+                    this.userModulesAvailable = Boolean(
+                        response.data.data.features?.user_modules
+                    );
                     // 品牌定制可用性由后端 features.branding 派生，前端不重复实现授权规则。
                     this.applyBrandingAvailability(response.data.data.features?.branding);
 
@@ -1676,6 +1682,8 @@ const AdminApp = {
                 this.loadMediaCacheConfig();
             } else if (page === 'implementations') {
                 this.loadImplementations();
+            } else if (page === 'userModules') {
+                if (this.userModulesAvailable) this.loadUserModules();
             } else if (page === 'runninghubKeyPool') {
                 if (this.runninghubKeyPoolAvailable) {
                     this.loadRunninghubKeyPool();
@@ -1953,6 +1961,9 @@ const AdminApp = {
                     this.dashboard.totalUsers = response.data.data.total_users;
                     this.dashboard.activeWorkflows3d = response.data.data.active_workflows_3d;
                     // dashboard 的 features.branding 由后端动态派生，这里同步一次
+                    this.userModulesAvailable = Boolean(
+                        response.data.data.features?.user_modules
+                    );
                     // 品牌可用性，避免在许可证状态轮询暂时失败时菜单停留在旧状态。
                     // 安全边界仍由品牌 API 的后端 403 保证，此处仅为缩短前端陈旧窗口。
                     this.applyBrandingAvailability(response.data.data.features?.branding);
@@ -4736,6 +4747,90 @@ const AdminApp = {
                 this.showToast(detail, 'error');
                 // 出错时恢复原值
                 this.loadImplementations();
+            } finally {
+                this.implementations.updating = null;
+            }
+        },
+
+        sortedResolutionOptions(options) {
+            return [...(options || [])].sort((left, right) => {
+                const rank = (value) => {
+                    const compact = String(value || '').replace(/\s+/g, '');
+                    if (/^\d+[Kk]$/.test(compact)) return [0, parseInt(compact, 10)];
+                    if (/^\d+[Pp]$/.test(compact)) return [1, parseInt(compact, 10)];
+                    return [2, compact.toLowerCase()];
+                };
+                const leftRank = rank(left);
+                const rightRank = rank(right);
+                if (leftRank[0] !== rightRank[0]) return leftRank[0] - rightRank[0];
+                if (leftRank[1] < rightRank[1]) return -1;
+                if (leftRank[1] > rightRank[1]) return 1;
+                return 0;
+            });
+        },
+
+        async updateResolutionMultiplier(implementation, size, group) {
+            if (!implementation.resolution_multipliers) implementation.resolution_multipliers = {};
+            const raw = implementation.resolution_multipliers[size];
+            const multiplier = parseFloat(raw);
+            if (isNaN(multiplier) || multiplier <= 0 || multiplier > 100) {
+                this.showToast(this.t('toast_invalid_multiplier_value'), 'error');
+                this.loadImplementations();
+                return;
+            }
+            implementation.resolution_multipliers[size] = multiplier;
+            this.implementations.updating = `${implementation.name}-res`;
+            try {
+                const values = {};
+                (implementation.resolution_options || []).forEach((key) => {
+                    const current = parseFloat(implementation.resolution_multipliers[key]);
+                    values[key] = isNaN(current) ? 1 : current;
+                });
+                const response = await axios.post('/api/admin/implementation-power-modifiers', {
+                    implementation_name: implementation.name,
+                    driver_key: group.driver_key,
+                    attribute: 'resolution',
+                    values,
+                    default: 1,
+                }, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` },
+                });
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_multiplier_updated', { size, value: multiplier }), 'success');
+                } else {
+                    this.showToast(response.data.message || this.t('error_update_failed'), 'error');
+                    this.loadImplementations();
+                }
+            } catch (error) {
+                console.error('Update resolution multiplier failed:', error);
+                this.showToast(error?.response?.data?.detail || this.t('error_update_failed'), 'error');
+                this.loadImplementations();
+            } finally {
+                this.implementations.updating = null;
+            }
+        },
+
+        async resetResolutionMultipliers(implementation, group) {
+            if (!confirm(this.t('confirm_restore_multipliers', { name: implementation.display_name }))) {
+                return;
+            }
+            this.implementations.updating = `${implementation.name}-res`;
+            try {
+                await axios.delete('/api/admin/implementation-power-modifiers', {
+                    data: {
+                        implementation_name: implementation.name,
+                        driver_key: group.driver_key,
+                        attribute: 'resolution',
+                    },
+                    headers: { 'Authorization': `Bearer ${this.authToken}` },
+                });
+                implementation.resolution_multipliers = {
+                    ...(implementation.default_resolution_multipliers || {}),
+                };
+                this.showToast(this.t('toast_multiplier_restored'), 'success');
+            } catch (error) {
+                console.error('Reset resolution multipliers failed:', error);
+                this.showToast(error?.response?.data?.detail || this.t('error_restore_failed'), 'error');
             } finally {
                 this.implementations.updating = null;
             }

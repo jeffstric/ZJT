@@ -2182,14 +2182,20 @@
           // 根据模型动态更新比例选项
           if(ratioEl && node.data.model) {
             const config = modelConfigs[node.data.model];
+            const ratioField = el.querySelector('.image-ratio-field') || ratioEl.closest('.field');
             const labelMap = { '9:16': '竖屏 (9:16)', '16:9': '横屏 (16:9)', '1:1': '正方形 (1:1)', '3:4': '竖屏 (3:4)', '4:3': '横屏 (4:3)' };
-            if(config && config.ratios && config.ratios.length > 0) {
-              ratioEl.innerHTML = '';
-              config.ratios.forEach(ratio => {
-                ratioEl.innerHTML += `<option value="${ratio}">${labelMap[ratio] || ratio}</option>`;
-              });
-              if(!config.ratios.includes(node.data.ratio)) {
-                node.data.ratio = config.default_ratio || config.ratios[0];
+            if(config && Array.isArray(config.ratios) && config.ratios.length === 0) {
+              if(ratioField) ratioField.style.display = 'none';
+            } else {
+              if(ratioField) ratioField.style.display = '';
+              if(config && config.ratios && config.ratios.length > 0) {
+                ratioEl.innerHTML = '';
+                config.ratios.forEach(ratio => {
+                  ratioEl.innerHTML += `<option value="${ratio}">${labelMap[ratio] || ratio}</option>`;
+                });
+                if(!config.ratios.includes(node.data.ratio)) {
+                  node.data.ratio = config.default_ratio || config.ratios[0];
+                }
               }
             }
           }

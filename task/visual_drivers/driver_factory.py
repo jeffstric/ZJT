@@ -45,11 +45,15 @@ class VideoDriverFactory:
             driver_class: 驱动类（必须继承自 BaseVideoDriver）
         """
         if not issubclass(driver_class, BaseVideoDriver):
-            raise ValueError(f"Driver class {driver_class} must inherit from BaseVideoDriver")
-        
+            raise ValueError(f"Driver class {driver_class} must inherit from BaseVideoDriver")        
         cls._registered_drivers[driver_name] = driver_class
         logger.debug(f"Registered video driver: {driver_name} -> {driver_class.__name__}")
-    
+
+    @classmethod
+    def unregister_driver(cls, driver_name: str):
+        """注销驱动类（仅用于用户模块动态实现方的重载卸载）"""
+        cls._registered_drivers.pop(driver_name, None)
+
     # 存储最近一次创建驱动失败的原因（用于返回更友好的错误信息）
     _last_create_error: Optional[Dict[str, Any]] = None
 
@@ -330,10 +334,27 @@ class VideoDriverFactory:
                     logger.debug(f"Auto-selected implementation for task {config.key}: {impl_name}")
                     break
 
-            # 回退到默认实现方
+            # 回退到默认实现方；与偏好路径接受同样的校验（可实例化 + 未被 admin 禁用）。
+            # 管理员禁用的实现方绝不能被兜底静默放行，宁可任务失败也要尊重禁用。
             if not impl_name:
-                impl_name = config.implementation
-                logger.warning(f"All implementations unavailable for task {config.key}, falling back to default: {impl_name}")
+                from config.constant import (
+                    DRIVER_ERROR_NO_IMPLEMENTATION_AVAILABLE,
+                    NO_IMPLEMENTATION_AVAILABLE_MESSAGE,
+                )
+
+                default_impl = config.implementation
+                if default_impl and cls._is_driver_available(default_impl) and cls._is_impl_enabled(default_impl, config.driver_name):
+                    impl_name = default_impl
+                else:
+                    cls._last_create_error = {
+                        "reason": DRIVER_ERROR_NO_IMPLEMENTATION_AVAILABLE,
+                        "message": NO_IMPLEMENTATION_AVAILABLE_MESSAGE.format(task=config.key),
+                        "implementation": default_impl or None,
+                    }
+                    logger.error(
+                        f"No available implementation for task {config.key}; default "
+                        f"{default_impl!r} is disabled or unavailable"
+                    )
 
         # 3. 获取驱动参数
         driver_params = {}

@@ -505,6 +505,19 @@ def init_scheduler(app):
         coalesce=True
     )
 
+    # 用户模块（接口模块）任务提交/轮询与实现方绑定重载：商业版 enterprise 包提供
+    # 调度任务注册（路由受信模型注入等逻辑同侧维护），社区版无此包时跳过。
+    try:
+        from enterprise.task.user_module_scheduler import register_user_module_scheduler_jobs
+        register_user_module_scheduler_jobs(
+            scheduler,
+            run_async_task=lambda coro_fn: partial(_run_async_task, coro_fn),
+        )
+    except ImportError:
+        logger.info('用户模块调度任务未注册（社区版无 enterprise 包）')
+    except Exception:
+        logger.exception('用户模块调度任务注册失败')
+
     # Pipeline 步骤处理（param_prepare / before_finish 阶段）
     logger.info('启用Pipeline步骤处理，每13秒执行一次')
     from task.pipeline_processor import PipelineProcessor
