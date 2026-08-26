@@ -967,7 +967,11 @@ const AdminApp = {
         // ===== 快速配置相关计算属性 =====
 
         providersByCategory() {
-            const sortByOrder = (items) => [...items].sort((a, b) => (a.displayOrder || 999) - (b.displayOrder || 999));
+            // 推荐供应商（lazyRecommended，带 ★ 徽章）优先排在前面，同组内再按 displayOrder 排序
+            const sortByOrder = (items) => [...items].sort((a, b) => {
+                const recDiff = (b.lazyRecommended ? 1 : 0) - (a.lazyRecommended ? 1 : 0);
+                return recDiff !== 0 ? recDiff : (a.displayOrder || 999) - (b.displayOrder || 999);
+            });
             const result = {};
             Object.keys(CATEGORY_LABELS).forEach(cat => {
                 // 支持 showInCategories 属性，让一个 provider 可以在多个分类中显示
