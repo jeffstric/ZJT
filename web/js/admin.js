@@ -865,6 +865,13 @@ const AdminApp = {
             },
 
             // AI 改档
+            // 模型管理页：本地推理服务（Ollama / vLLM）聚合配置
+            localInference: {
+                loading: false,
+                saving: false,
+                ollama: { enabled: false, base_url: 'http://localhost:11434' },
+                vllm: { enabled: false, base_url: 'http://localhost:8001' },
+            },
             billingAi: {
                 instruction: '',
                 filterVendorId: null,
@@ -1712,6 +1719,7 @@ const AdminApp = {
                 this.loadMarketingPublications();
             } else if (page === 'models') {
                 this.loadModels();
+                this.loadLocalInferenceConfig();
             } else if (page === 'constants') {
                 this.loadConstants();
             } else if (page === 'commission') {
@@ -3865,6 +3873,64 @@ const AdminApp = {
         },
 
         // 加载模型列表
+        // ==================== 本地推理服务配置（模型管理页聚合） ====================
+        async loadLocalInferenceConfig() {
+            this.localInference.loading = true;
+            const entries = [
+                ['ollama', 'llm.ollama.enabled', 'enabled'],
+                ['ollama', 'llm.ollama.base_url', 'base_url'],
+                ['vllm', 'llm.vllm.enabled', 'enabled'],
+                ['vllm', 'llm.vllm.base_url', 'base_url'],
+            ];
+            try {
+                await Promise.allSettled(entries.map(async ([service, key, field]) => {
+                    const response = await axios.get(`/api/admin/config/${key}`, {
+                        headers: { 'Authorization': `Bearer ${this.authToken}` },
+                    });
+                    if (response.data.code !== 0) return;
+                    const raw = response.data.data.config_value;
+                    if (field === 'enabled') {
+                        this.localInference[service].enabled = raw === true || String(raw).toLowerCase() === 'true';
+                    } else {
+                        this.localInference[service].base_url = String(raw || this.localInference[service].base_url);
+                    }
+                }));
+            } catch (error) {
+                console.warn('加载本地推理服务配置失败（沿用默认值）:', error);
+            } finally {
+                this.localInference.loading = false;
+            }
+        },
+        async saveLocalInferenceConfig() {
+            this.localInference.saving = true;
+            try {
+                const li = this.localInference;
+                const configs = [
+                    { key: 'llm.ollama.enabled', value: li.ollama.enabled ? 'true' : 'false' },
+                    { key: 'llm.ollama.base_url', value: li.ollama.base_url.trim() },
+                    { key: 'llm.vllm.enabled', value: li.vllm.enabled ? 'true' : 'false' },
+                    { key: 'llm.vllm.base_url', value: li.vllm.base_url.trim() },
+                ];
+                const response = await axios.put('/api/admin/config/batch',
+                    { configs },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } },
+                );
+                if (response.data.code === 0) {
+                    const errors = response.data.data.errors || [];
+                    if (errors.length > 0) {
+                        this.showToast(`${this.t('models_local_inference_save_failed')}: ${errors.join(', ')}`, 'error');
+                    } else {
+                        this.showToast(this.t('models_local_inference_saved'), 'success');
+                    }
+                }
+            } catch (error) {
+                console.error('Save local inference config failed:', error);
+                this.showToast(this.t('models_local_inference_save_failed'), 'error');
+            } finally {
+                this.localInference.saving = false;
+            }
+        },
+
         async loadModels() {
             this.models.loading = true;
             try {

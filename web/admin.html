@@ -1397,6 +1397,44 @@
                     </div>
                 </div>
 
+                <!-- 本地推理服务（Ollama / vLLM）聚合配置：与模型管理同页，改完即时生效 -->
+                <div class="billing-ai-global-box">
+                    <div class="billing-ai-global-title">
+                        <strong>🖥️ {{ t('models_local_inference_title') }}</strong>
+                    </div>
+                    <p class="billing-ai-global-desc">{{ t('models_local_inference_desc') }}</p>
+                    <div class="billing-ai-global-row" v-if="localInference.loading">
+                        <span class="billing-ai-global-hint">{{ t('loading') }}</span>
+                    </div>
+                    <template v-else>
+                        <div class="billing-ai-global-row">
+                            <label class="billing-ai-global-label">Ollama</label>
+                            <label class="local-inference-switch">
+                                <input type="checkbox" v-model="localInference.ollama.enabled" />
+                                <span>{{ localInference.ollama.enabled ? t('models_local_inference_enabled') : t('models_local_inference_disabled') }}</span>
+                            </label>
+                            <input type="text" class="filter-select local-inference-url" v-model="localInference.ollama.base_url"
+                                placeholder="http://localhost:11434" />
+                        </div>
+                        <div class="billing-ai-global-row">
+                            <label class="billing-ai-global-label">vLLM</label>
+                            <label class="local-inference-switch">
+                                <input type="checkbox" v-model="localInference.vllm.enabled" />
+                                <span>{{ localInference.vllm.enabled ? t('models_local_inference_enabled') : t('models_local_inference_disabled') }}</span>
+                            </label>
+                            <input type="text" class="filter-select local-inference-url" v-model="localInference.vllm.base_url"
+                                placeholder="http://localhost:8001" />
+                        </div>
+                        <div class="billing-ai-global-row">
+                            <label class="billing-ai-global-label"></label>
+                            <button class="action-btn primary" @click="saveLocalInferenceConfig" :disabled="localInference.saving">
+                                {{ localInference.saving ? t('um_processing') : t('models_local_inference_save') }}
+                            </button>
+                            <span class="billing-ai-global-hint">{{ t('models_local_inference_hint') }}</span>
+                        </div>
+                    </template>
+                </div>
+
                 <div class="table-container">
                     <div class="table-header">
                         <h3>{{ t('models_title') }}</h3>

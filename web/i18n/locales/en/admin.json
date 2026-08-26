@@ -971,5 +971,13 @@
   "um_code_file_failed": "Failed to read file",
   "um_binding_inactive_hint": "Module is not activated yet: click \"Enable This Version\" in the version list above, then bind model entries here.",
   "um_locked_title": "API Modules are Enterprise-only",
-  "um_locked_desc": "AI-generated user API modules (generation, review, publishing and task binding) are part of the commercial edition. Upgrade to connect new image/video providers here."
+  "um_locked_desc": "AI-generated user API modules (generation, review, publishing and task binding) are part of the commercial edition. Upgrade to connect new image/video providers here.",
+  "models_local_inference_title": "Local Inference Services",
+  "models_local_inference_desc": "Enable and address Ollama / vLLM local models. Takes effect immediately after saving (llm.ollama / llm.vllm).",
+  "models_local_inference_enabled": "Enabled",
+  "models_local_inference_disabled": "Disabled",
+  "models_local_inference_save": "Save Local Inference Config",
+  "models_local_inference_saved": "Local inference config saved",
+  "models_local_inference_save_failed": "Failed to save local inference config",
+  "models_local_inference_hint": "Ensure the service is running locally before enabling; sampling params (temperature, etc.) live in System Config."
 }

@@ -3573,3 +3573,24 @@ body {
         grid-template-columns: 1fr;
     }
 }
+
+/* 模型管理页：本地推理服务（Ollama / vLLM）配置行 */
+.local-inference-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #92400e;
+    cursor: pointer;
+    min-width: 72px;
+}
+.local-inference-switch input[type='checkbox'] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+.local-inference-url {
+    min-width: 260px;
+    max-width: 360px;
+    text-align: left;
+}

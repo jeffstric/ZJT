@@ -971,5 +971,13 @@
   "um_code_file_failed": "读取文件失败",
   "um_binding_inactive_hint": "模块尚未激活：点击上方版本列表中的「启用此实现」后，即可在这里绑定模型条目。",
   "um_locked_title": "接口模块为商业版功能",
-  "um_locked_desc": "用户 API 模块的智能体生成、审批发布与任务接入由商业版提供。升级商业版后，可在此让 AI 自动对接新的图片、视频供应商接口。"
+  "um_locked_desc": "用户 API 模块的智能体生成、审批发布与任务接入由商业版提供。升级商业版后，可在此让 AI 自动对接新的图片、视频供应商接口。",
+  "models_local_inference_title": "本地推理服务",
+  "models_local_inference_desc": "Ollama / vLLM 本地模型的接入开关与服务地址，保存后即时生效（llm.ollama / llm.vllm）。",
+  "models_local_inference_enabled": "已启用",
+  "models_local_inference_disabled": "已停用",
+  "models_local_inference_save": "保存本地推理配置",
+  "models_local_inference_saved": "本地推理服务配置已保存",
+  "models_local_inference_save_failed": "保存本地推理配置失败",
+  "models_local_inference_hint": "启用前请确认服务已在本机运行；采样参数（temperature 等）在「系统配置」中调整。"
 }
