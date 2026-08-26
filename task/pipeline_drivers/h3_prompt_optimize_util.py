@@ -24,6 +24,11 @@ _FL2VA_INSTRUCTION = (
     "目标视频时长为 {duration:.2f} 秒，请你修改为符合以上规范的提示词"
 )
 _FENCE_RE = re.compile(r"^```(?:\w+)?\s*|\s*```$", re.MULTILINE)
+_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
+_KANA_RE = re.compile(r"[\u3040-\u30ff]")
+_HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
+# 书名号《》不参与：书名不是对话；英文直引号/中文弯引号/日式引号均为台词常见形态。
+_QUOTED_SPAN_RE = re.compile(r"[\"“「『]([^\"”」』]+)[\"”」』]")
 
 
 def parse_extra_config(ai_tool: Any) -> Dict[str, Any]:
@@ -116,6 +121,42 @@ def _build_ref2va_instruction(ref_counts: Optional[Dict[str, int]], duration: fl
     )
 
 
+def _extract_quoted_cjk_spans(text: str) -> list:
+    """提取引号包裹且含 CJK 字符(中日韩)的片段。
+
+    引号是台词/歌词/画面文字的常见形态信号,但强调、术语等描述性用法也会用引号,
+    因此仅用于生成提示信息,语义由 LLM 自行判断(见 _build_dialogue_fidelity_note)。
+    """
+    spans = []
+    for match in _QUOTED_SPAN_RE.finditer(text or ""):
+        span = match.group(1)
+        if _CJK_RE.search(span):
+            spans.append(span)
+    return spans
+
+
+def _detect_cjk_language(spans: list) -> str:
+    """按片段字符集判断语言标签建议:谚文→Korean,假名→Japanese,否则 Chinese。"""
+    text = "".join(spans)
+    if _HANGUL_RE.search(text):
+        return "Korean"
+    if _KANA_RE.search(text):
+        return "Japanese"
+    return "Chinese"
+
+
+def _build_dialogue_fidelity_note(quoted_spans: list) -> str:
+    """构造条件式对话保真提示:点名列出引号 CJK 片段,角色判断(台词还是描述)交给 LLM。"""
+    language = _detect_cjk_language(quoted_spans)
+    listed = "\n".join(f'- "{span}"' for span in quoted_spans)
+    return (
+        f"原始提示词中存在以下引号包裹的 {language} 片段:\n{listed}\n"
+        f"若它们是角色说出的台词、唱出的歌词或画面中的可见文字,"
+        f"必须逐字保留在 <d> 内(语言标签写 [{language}]),严禁翻译或改写;"
+        f"若它们只是动作、氛围、术语等描述性用法,则正常按英文规范转写。"
+    )
+
+
 def build_h3_optimize_user_message(
     original_prompt: str,
     variant: str,
@@ -130,6 +171,9 @@ def build_h3_optimize_user_message(
         instruction = _FL2VA_INSTRUCTION.format(duration=float(duration or 5))
     else:
         instruction = _I2VA_INSTRUCTION
+    quoted_spans = _extract_quoted_cjk_spans(original_prompt)
+    if quoted_spans:
+        instruction = f"{instruction}\n{_build_dialogue_fidelity_note(quoted_spans)}"
     body = (original_prompt or "").strip() or "(empty original prompt)"
     return f"{guide.rstrip()}\n\n{instruction}\n\n{body}\n"
 

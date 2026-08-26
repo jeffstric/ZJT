@@ -113,6 +113,8 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 4. 原文写入 `extra_config.original_prompt`（只写一次）和 `extra_config.h3_prompt_optimize`
 5. `ai_tool.prompt` 替换为优化结果，H3 驱动提交 RunningHub
 
+**对话保真（防中文台词被译成英文）**：描述性文字输出英文，但 `<d>` 内台词/歌词及画面可见文字必须逐字保留原语言，语言标签按实际语言写（`[Chinese]`/`[Japanese]`/`[Korean]` 等），严禁翻译。三层约束：① system prompt 明确豁免对话/歌词/屏幕文字；② 两个模板补中文对话正反例（正例 `<d>[Chinese] 原来是这样！</d>`，反例禁止译成 `<d>[English] So that's how it is!</d>`）；③ 原文存在"引号包裹的 CJK 片段"时，user message 追加条件式点名指令——点名列出片段，"若是台词/歌词/可见文字则逐字保留，若是动作/氛围/术语等描述性用法则正常转写"，语义判断交给 LLM，不做任何代码级校验拦截。纯英文/无引号/无 CJK 的原文不追加，行为不变。
+
 **模型回退链**：所用聊天模型按优先级选取，每步校验 api_key 是否已配置，首个可用者胜出：① 故事板步骤参数中的对话模型 → ② `pipeline.h3_prompt_optimize_model`（默认 `deepseek-v4-flash`）→ ③ 剧本拆分默认模型 `gemini-3-flash-preview`。独立图生视频入口无故事板上下文，跳过第 ① 步。全部未配置则直接回退原文，不发起必败调用。
 
 **超时**：`H3_PROMPT_OPTIMIZE_TIMEOUT=90s`，同时作为外层 `wait_for` 与底层 `request_timeout`（对齐 httpx，避免超时后线程残留）；重试 1 次，最坏约 180s 后回退原文。

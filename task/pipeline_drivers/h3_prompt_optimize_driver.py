@@ -28,8 +28,10 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
 )
 
 _SYSTEM_PROMPT = (
-    "You rewrite MiniMax H3 video prompts. Output only the final English prompt. "
-    "Do not add explanations or markdown fences."
+    "You rewrite MiniMax H3 video prompts. Write the final prompt in English, except "
+    "dialogue, lyrics inside <d>, and visible on-screen text: those must stay in their "
+    "original language verbatim with an accurate language tag (e.g. [Chinese]) — never "
+    "translate them. Do not add explanations or markdown fences."
 )
 
 
