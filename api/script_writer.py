@@ -1894,7 +1894,11 @@ def _resolve_explicit_image_task_id(image_preferences: Dict[str, Any], image_mod
     matched = next(
         (
             config for config in UnifiedConfigRegistry.get_all()
-            if (config.name == model_name or config.key == model_name)
+            if (
+                config.matches_identifier(model_name)
+                if callable(getattr(config, 'matches_identifier', None))
+                else config.name == model_name or config.key == model_name
+            )
             and required_category in {config.category, *(config.categories or [])}
         ),
         None,

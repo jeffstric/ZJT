@@ -123,6 +123,25 @@ def test_build_context_uses_request_image_task_id(monkeypatch):
     assert snaps["image.text_to_image"]["model_source"] == "request"
 
 
+def test_resolve_image_task_accepts_canonical_and_legacy_model_names(monkeypatch):
+    """统一模型名上线后，新请求和旧快照都必须能反查同一 task_id。"""
+    from api import script_writer as sw
+    from config.unified_config import ALL_TASK_CONFIGS, TaskTypeId
+
+    gpt_image = next(
+        config for config in ALL_TASK_CONFIGS
+        if config.id == TaskTypeId.GPT_IMAGE_2_EDIT
+    )
+    monkeypatch.setattr(sw.UnifiedConfigRegistry, "get_all", lambda: [gpt_image])
+
+    assert sw._resolve_explicit_image_task_id(
+        {"model_name": "GPT Image 2"}, MediaGenerationMode.IMAGE_EDIT
+    ) == TaskTypeId.GPT_IMAGE_2_EDIT
+    assert sw._resolve_explicit_image_task_id(
+        {"model_name": "GPT Image 2 图片编辑"}, MediaGenerationMode.IMAGE_EDIT
+    ) == TaskTypeId.GPT_IMAGE_2_EDIT
+
+
 def test_apply_video_task_id_overrides_all_compatible_video_slots(monkeypatch):
     from api import script_writer as sw
     from config.unified_config import UnifiedConfigRegistry, init_unified_config

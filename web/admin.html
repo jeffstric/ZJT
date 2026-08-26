@@ -3275,7 +3275,7 @@
                                     <div>
                                         <strong>{{ binding.display_name || binding.module_id }}</strong>
                                         <code>{{ userModuleCapabilityLabel(binding.operation) }}</code>
-                                        <span class="um-binding-task">{{ binding.task_name || binding.task_id }}</span>
+                                        <span class="um-binding-task">{{ binding.task_display_name || binding.task_model_name || binding.task_name || binding.task_id }}</span>
                                         <span class="um-status" :class="binding.module_effective ? 'active' : 'disabled'">{{ binding.module_effective ? t('um_binding_effective') : t('um_binding_inactive') }}</span>
                                     </div>
                                     <div class="um-release-actions">
@@ -3293,7 +3293,7 @@
                                     <span class="um-binding-cap">{{ userModuleCapabilityLabel(capability.operation) }}</span>
                                     <select v-model="userModuleBindings.form.taskByOperation[capability.operation]" class="form-control">
                                         <option value="">{{ t('um_binding_select_task') }}</option>
-                                        <option v-for="task in userModuleBindingTaskOptions(capability.operation)" :key="task.id" :value="String(task.id)">{{ task.name }}（{{ task.id }}）</option>
+                                        <option v-for="task in userModuleBindingTaskOptions(capability.operation)" :key="task.id" :value="String(task.id)">{{ task.display_name || task.model_name || task.name }}</option>
                                     </select>
                                     <button
                                         class="action-btn success"

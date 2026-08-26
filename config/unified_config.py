@@ -482,7 +482,10 @@ class UnifiedTaskConfig:
     Attributes:
         id: 任务类型ID（数据库中的 type 字段）
         key: 唯一标识符，用于代码引用（如 sora2_image_to_video）
-        name: 显示名称
+        name: 任务条目名称（兼容历史接口，新界面不应直接使用）
+        model_name: 统一的用户可见模型名，不包含任务 ID、供应商或“文生图/图片编辑”等能力后缀
+        variant_label: 同一模型在同一能力下有多个任务条目时的区分标签（如“首帧”“多参考”）
+        legacy_names: 历史名称别名，仅用于兼容旧请求/快照的名称反查
         category: 主分类，使用 TaskCategory 常量
         categories: 额外分类列表（可选），任务可同时属于多个分类
         provider: 供应商，使用 TaskProvider 常量
@@ -505,6 +508,9 @@ class UnifiedTaskConfig:
     name: str
     category: str
     provider: str
+    model_name: str = ''  # 纯模型名；绑定页和新接口优先使用
+    variant_label: str = ''  # 仅区分同能力下的同名任务条目
+    legacy_names: List[str] = field(default_factory=list)  # 兼容旧的用户可见名称
     driver_name: Optional[str] = None
     implementation: Optional[str] = None  # 默认实现方
     implementations: List[str] = field(default_factory=list)  # 可选实现方列表，注意，如果不配置，无法支持多实现方切换
@@ -534,6 +540,36 @@ class UnifiedTaskConfig:
     power_modifiers: List[PowerModifier] = field(default_factory=list)  # 算力修饰符列表
     supports_ref_audio_video: bool = False  # 是否支持参考音频和视频
     max_multi_ref_images: int = 5  # 多参考图模式最大图片数量
+
+    def get_model_name(self) -> str:
+        """获取统一的用户可见模型名。
+
+        ``name`` 仍作为历史兼容字段；未迁移的内部/测试任务
+        回退到 ``name``，避免破坏存量扩展。
+        """
+        return (self.model_name or self.name or '').strip()
+
+    def get_model_display_name(self, include_variant: bool = False) -> str:
+        """获取界面显示名；只在需要消除同名歧义时附加变体。"""
+        model_name = self.get_model_name()
+        if include_variant and self.variant_label:
+            return f"{model_name} · {self.variant_label}"
+        return model_name
+
+    def matches_identifier(self, value: Any) -> bool:
+        """兼容 key/新模型名/历史名的反查，不把显示名当唯一主键。"""
+        candidate = str(value or '').strip()
+        if not candidate:
+            return False
+        aliases = {
+            str(self.id),
+            self.key,
+            self.short_key,
+            self.name,
+            self.get_model_name(),
+            *(self.legacy_names or []),
+        }
+        return candidate in {str(alias).strip() for alias in aliases if alias not in (None, '')}
 
     def get_computing_power(self, duration: Optional[int] = None, implementation: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> int:
         """
@@ -655,6 +691,8 @@ class UnifiedTaskConfig:
             'key': self.key,
             'short_key': self.short_key or self.key,
             'name': self.name,
+            'model_name': self.get_model_name(),
+            'variant_label': self.variant_label,
             'category': self.category,
             'categories': all_categories,  # 包含主分类和额外分类
             'provider': self.provider,
@@ -1758,6 +1796,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='gemini-2.5-flash-image-preview',
         short_key='gemini-2.5-flash',
         name='nano-banana',
+        model_name='nano-banana',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
@@ -1785,6 +1824,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='gemini-3-pro-image-preview',
         short_key='gemini-3-pro',
         name='nano-banana-Pro',
+        model_name='nano-banana Pro',
+        legacy_names=['nano-banana-Pro'],
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
@@ -1812,6 +1853,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='gemini-3.1-flash-image-preview',
         short_key='gemini-3.1-flash',
         name='nano-banana-2',
+        model_name='nano-banana 2',
+        legacy_names=['nano-banana-2'],
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
@@ -1839,6 +1882,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedream-5.0',
         short_key='seedream-5.0',
         name='Seedream 5.0',
+        model_name='Seedream 5.0',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.VOLCENGINE,
@@ -1861,6 +1905,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedream-4.5',
         short_key='seedream-4.5',
         name='Seedream 4.5',
+        model_name='Seedream 4.5',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.VOLCENGINE,
@@ -1883,6 +1928,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedream-5.0-pro',
         short_key='seedream-5.0-pro',
         name='Seedream 5.0 Pro',
+        model_name='Seedream 5.0 Pro',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.VOLCENGINE,
@@ -1905,6 +1951,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='qwen-multi-angle',
         short_key='qwen-multi-angle',
         name='多角度图片编辑',
+        model_name='Qwen Multi-Angle',
+        variant_label='多角度',
         category=TaskCategory.IMAGE_EDIT,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.QWEN_MULTI_ANGLE_IMAGE_EDIT,
@@ -1922,6 +1970,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='qwen-image-edit',
         short_key='qwen-image-edit',
         name='Qwen Image Edit',
+        model_name='Qwen Image Edit',
         category=TaskCategory.IMAGE_EDIT,
         provider=TaskProvider.LOCAL,  # 占位，接入供应商后再改
         driver_name=DriverKey.QWEN_IMAGE_EDIT,
@@ -1945,6 +1994,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='gpt-image-2-edit',
         short_key='gpt-image-2',
         name='GPT Image 2 图片编辑',
+        model_name='GPT Image 2',
+        legacy_names=['GPT Image 2 图片编辑'],
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
@@ -1975,6 +2026,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='sora2_text_to_video',
         short_key='sora2-t2v',
         name='Sora2',
+        model_name='Sora2',
         category=TaskCategory.TEXT_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.SORA2_TEXT_TO_VIDEO,
@@ -1994,6 +2046,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='wan22_image_to_video',
         short_key='wan22',
         name='Wan2.2',
+        model_name='Wan2.2',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.WAN22_IMAGE_TO_VIDEO,
@@ -2013,6 +2066,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='sora2_image_to_video',
         short_key='sora2',
         name='Sora2',
+        model_name='Sora2',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.SORA2_IMAGE_TO_VIDEO,
@@ -2033,6 +2087,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='ltx2_image_to_video',
         short_key='ltx2',
         name='LTX2.0',
+        model_name='LTX2.0',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.LTX2_IMAGE_TO_VIDEO,
@@ -2052,6 +2107,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='ltx2_3_image_to_video',
         short_key='ltx2_3',
         name='LTX2.3',
+        model_name='LTX2.3',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.LTX2_3_IMAGE_TO_VIDEO,
@@ -2070,6 +2126,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='minimax_h3_image_to_video',
         short_key='minimax_h3',
         name='MiniMax H3',
+        model_name='MiniMax H3',
+        variant_label='首尾帧',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],
         provider=TaskProvider.RUNNINGHUB,
@@ -2103,6 +2161,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='minimax_h3_reference_to_video',
         short_key='minimax_h3_r2v',
         name='MiniMax H3 参考生视频',
+        model_name='MiniMax H3',
+        variant_label='多参考',
+        legacy_names=['MiniMax H3 参考生视频'],
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
@@ -2133,6 +2194,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='kling_image_to_video',
         short_key='kling',
         name='可灵v2.5-turbo',
+        model_name='可灵 v2.5 Turbo',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.KLING_IMAGE_TO_VIDEO,
@@ -2170,6 +2232,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='vidu_image_to_video',
         short_key='vidu',
         name='Vidu-q2-pro-fast',
+        model_name='Vidu Q2 Pro Fast',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.VIDU,
         driver_name=DriverKey.VIDU_IMAGE_TO_VIDEO,
@@ -2187,6 +2250,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='vidu_q2_image_to_video',
         short_key='vidu_q2',
         name='Vidu-Q2',
+        model_name='Vidu Q2',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.VIDU,
         driver_name=DriverKey.VIDU_Q2_IMAGE_TO_VIDEO,
@@ -2204,6 +2268,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='veo3_image_to_video',
         short_key='veo3',
         name='VEO3.1-fast',
+        model_name='VEO 3.1 Fast',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.DUOMI,
@@ -2233,6 +2298,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='grok_image_to_video',
         short_key='grok',
         name='Grok',
+        model_name='Grok',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.DUOMI,
@@ -2263,6 +2329,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedance_1_5_pro_image_to_video',
         short_key='seedance_1_5_pro',
         name='Seedance 1.5 Pro',
+        model_name='Seedance 1.5 Pro',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.VOLCENGINE,
@@ -2282,6 +2349,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedance_2_0_fast_image_to_video',
         short_key='seedance_2_0_fast',
         name='Seedance 2.0 Fast',
+        model_name='Seedance 2.0 Fast',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.VOLCENGINE,
@@ -2319,6 +2387,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedance_2_0_image_to_video',
         short_key='seedance_2_0',
         name='Seedance 2.0',
+        model_name='Seedance 2.0',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.VOLCENGINE,
@@ -2358,6 +2427,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedance_2_0_mini_image_to_video',
         short_key='seedance_2_0_mini',
         name='Seedance 2.0 Mini',
+        model_name='Seedance 2.0 Mini',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.VOLCENGINE,
@@ -2395,6 +2465,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedance_2_5_image_to_video',
         short_key='seedance_2_5',
         name='Seedance 2.5',
+        model_name='Seedance 2.5',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.VOLCENGINE,
@@ -2431,6 +2502,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='happy_horse_image_to_video',
         short_key='happy_horse',
         name='Happy Horse (首帧)',
+        model_name='Happy Horse',
+        variant_label='首帧',
+        legacy_names=['Happy Horse (首帧)'],
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.HAPPY_HORSE_IMAGE_TO_VIDEO,
@@ -2456,6 +2530,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='happy_horse_reference_to_video',
         short_key='happy_horse_r2v',
         name='Happy Horse (多参考)',
+        model_name='Happy Horse',
+        variant_label='多参考',
+        legacy_names=['Happy Horse (多参考)'],
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.HAPPY_HORSE_REFERENCE_TO_VIDEO,
@@ -2482,6 +2559,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='happy_horse_text_to_video',
         short_key='happy_horse_t2v',
         name='Happy Horse',
+        model_name='Happy Horse',
         category=TaskCategory.TEXT_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.HAPPY_HORSE_TEXT_TO_VIDEO,
@@ -2506,6 +2584,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='digital_human',
         short_key='digital_human',
         name='wan2.2 数字人',
+        model_name='Wan2.2',
+        variant_label='数字人',
         category=TaskCategory.DIGITAL_HUMAN,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.DIGITAL_HUMAN,
@@ -2519,6 +2599,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='digital_human_ltx2_3_voice',
         short_key='digital_human_ltx2_3_voice',
         name='LTX2.3 数字人',
+        model_name='LTX2.3',
+        variant_label='数字人',
         category=TaskCategory.DIGITAL_HUMAN,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE,
@@ -2532,6 +2614,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='digital_human_minimax_h3',
         short_key='digital_human_minimax_h3',
         name='MiniMax H3 数字人',
+        model_name='MiniMax H3',
+        variant_label='数字人',
         category=TaskCategory.DIGITAL_HUMAN,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.DIGITAL_HUMAN_MINIMAX_H3,
@@ -2548,6 +2632,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='image_enhance',
         short_key='image_enhance',
         name='图片高清放大',
+        model_name='图片高清放大',
         category=TaskCategory.VISUAL_ENHANCE,
         provider=TaskProvider.LOCAL,
         implementation='local_enhance',
@@ -2558,6 +2643,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='video_enhance',
         short_key='video_enhance',
         name='AI视频高清修复',
+        model_name='AI 视频高清修复',
         category=TaskCategory.VISUAL_ENHANCE,
         provider=TaskProvider.LOCAL,
         implementation='local_video_enhance',
@@ -2570,6 +2656,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='audio_generate',
         short_key='audio_generate',
         name='AI音频生成',
+        model_name='AI 音频生成',
         category=TaskCategory.AUDIO,
         provider=TaskProvider.LOCAL,
         computing_power=0,  # 音频生成不消耗算力
