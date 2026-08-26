@@ -785,7 +785,7 @@
   "um_starting": "正在启动...",
   "um_start_agent": "开始生成",
   "um_agent_title": "智能体正在生成模块",
-  "um_agent_progress_hint": "智能体会查询项目公开协议、写入隔离草稿并反复校验。HTTP 供应商最多提问 3 次，本地 ComfyUI 最多 15 次（确认节点映射）；请在卡片中及时回答。",
+  "um_agent_progress_hint": "智能体会查询项目公开协议、写入隔离草稿并反复校验。HTTP 供应商最多提问 15 次，本地 ComfyUI 最多 15 次（确认节点映射）；请在卡片中及时回答。",
   "um_agent_waiting": "正在等待第一条进度消息…",
   "um_run_in_background": "后台继续运行",
   "um_view_generated_draft": "查看生成草稿",

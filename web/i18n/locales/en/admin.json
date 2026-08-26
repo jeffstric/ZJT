@@ -785,7 +785,7 @@
   "um_starting": "Starting...",
   "um_start_agent": "Start Generation",
   "um_agent_title": "Agent Is Generating the Module",
-  "um_agent_progress_hint": "The agent queries public protocols, writes to isolated staging, and validates repeatedly. HTTP vendors may ask up to 3 questions; local ComfyUI may ask up to 15 (node mapping). Answer in the card promptly.",
+  "um_agent_progress_hint": "The agent queries public protocols, writes to isolated staging, and validates repeatedly. HTTP vendors may ask up to 15 questions; local ComfyUI may ask up to 15 (node mapping). Answer in the card promptly.",
   "um_agent_waiting": "Waiting for the first progress event…",
   "um_run_in_background": "Continue in Background",
   "um_view_generated_draft": "Review Generated Draft",
