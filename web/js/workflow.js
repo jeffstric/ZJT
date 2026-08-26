@@ -655,31 +655,76 @@
       saveBtn.disabled = true;
       saveBtnText.textContent = '保存中...';
 
+      // 手动保存是当前最新的用户意图：取消尚未触发的防抖保存，并在下方
+      // 中止旧在途自动保存，避免旧 payload 晚到覆盖手动保存。
+      if(typeof cancelPendingAutoSave === 'function') cancelPendingAutoSave();
+
+      let sentVersion = 0;
+      let recoveryMeta = null;
+
       try {
         const workflowData = serializeWorkflow();
-        
-        const response = await fetch(`/api/video-workflow/${workflowId}`, {
+        const body = JSON.stringify({
+          workflow_data: workflowData,
+          default_world_id: state.defaultWorldId,
+          workflow_ratio: state.ratio
+        });
+        const controller = new AbortController();
+
+        if(typeof autoSaveState !== 'undefined'){
+          autoSaveState.markDirty();
+          autoSaveState.abortInFlight();
+          sentVersion = autoSaveState.beginSend(controller, false);
+        }
+
+        if(typeof WorkflowRecovery !== 'undefined'){
+          recoveryMeta = {
+            version: sentVersion,
+            workflowId: workflowId,
+            userId: getUserId(),
+            ...WorkflowRecovery.createWriteIdentity()
+          };
+          // 用手动保存的最新 body 覆盖旧自动保存快照；否则下次打开
+          // 可能重放旧快照，把已手动保存的内容覆盖掉。
+          await WorkflowRecovery.saveSnapshot(body, recoveryMeta).catch(() => null);
+        }
+
+        const responsePromise = fetch(`/api/video-workflow/${workflowId}`, {
           method: 'PUT',
+          signal: controller.signal,
           headers: {
             'Content-Type': 'application/json',
             'Authorization': getAuthToken(),
             'X-User-Id': getUserId()
           },
-          body: JSON.stringify({
-            workflow_data: workflowData,
-            default_world_id: state.defaultWorldId,
-            workflow_ratio: state.ratio
-          })
+          body: body
         });
+        if(typeof autoSaveState !== 'undefined'){
+          autoSaveState.markRequestStarted(sentVersion);
+        }
+        const response = await responsePromise;
 
         const result = await response.json();
 
         if(result.code === 0){
+          let confirmed = true;
+          if(typeof autoSaveState !== 'undefined'){
+            confirmed = autoSaveState.endSend(sentVersion, true);
+          }
+          if(confirmed && recoveryMeta && typeof WorkflowRecovery !== 'undefined'){
+            await WorkflowRecovery.clearConfirmedSnapshot(recoveryMeta).catch(() => false);
+          }
           showToast('保存成功', 'success');
         } else {
+          if(typeof autoSaveState !== 'undefined'){
+            autoSaveState.endSend(sentVersion, false);
+          }
           showToast(result.message || '保存失败', 'error');
         }
       } catch(error){
+        if(typeof autoSaveState !== 'undefined'){
+          autoSaveState.endSend(sentVersion, false);
+        }
         console.error('Save error:', error);
         showToast('保存失败: ' + error.message, 'error');
       } finally {
@@ -709,49 +754,75 @@
       let sentVersion = 0;
 
       try {
-        const workflowData = serializeWorkflow();
-
-        const body = JSON.stringify({
-          workflow_data: workflowData,
-          default_world_id: state.defaultWorldId,
-          workflow_ratio: state.ratio
-        });
+        const body = typeof opts.serializedBody === 'string'
+          ? opts.serializedBody
+          : JSON.stringify({
+              workflow_data: serializeWorkflow(),
+              default_world_id: state.defaultWorldId,
+              workflow_ratio: state.ratio
+            });
         const keepalive = !!opts.keepalive;
+        const unload = opts.unload === true;
 
-        // 跟踪在途请求，并在发起新请求前中止旧的：不中止时若旧（过期）请求的
-        // 响应晚于新请求到达，服务端最终会保存旧 payload（旧数据覆盖新数据）
+        // 跟踪在途请求，并在发起新请求前中止本页旧请求，降低过期
+        // payload 晚到的概率。已到达服务端的请求不可撤回，严格乱序保护需后端 CAS。
         const controller = new AbortController();
         if(typeof autoSaveState !== 'undefined'){
           autoSaveState.abortInFlight();
           sentVersion = autoSaveState.beginSend(controller, keepalive);
         }
 
-        // 恢复记录在发送【前】写入且必须 await 完成（纯本地 IndexedDB 写，无网络）：
-        // 否则"发送前写入"名不副实（未 await 时 put 尚未真正发出）。防抖的 1.5s
-        // 余量保证正常卸载前已落盘。记录带 workflowId/userId，重放时只恢复到
-        // 同一工作流/同一用户，避免跨工作流覆盖。大工作流（>59KB）无法 keepalive
-        // 保证送达，靠下次加载重放此记录兜底
-        if(typeof WorkflowRecovery !== 'undefined'){
-          await WorkflowRecovery.saveSnapshot(body, {
-            version: sentVersion,
-            workflowId: workflowId,
-            userId: getUserId()
-          }).catch(() => {});
+        const recoveryMeta = (typeof WorkflowRecovery !== 'undefined') ? {
+          version: sentVersion,
+          workflowId: workflowId,
+          userId: getUserId(),
+          ...WorkflowRecovery.createWriteIdentity()
+        } : null;
+
+        const requestUrl = `/api/video-workflow/${workflowId}`;
+        const requestOptions = {
+            method: 'PUT',
+            // 页面卸载（beforeunload）触发的保存需要 keepalive，
+            // 否则请求会在页面销毁时被浏览器取消
+            keepalive: keepalive,
+            signal: controller.signal,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': getAuthToken(),
+              'X-User-Id': getUserId()
+            },
+            body: body
+          };
+
+        let responsePromise;
+        let recoveryWritePromise = Promise.resolve(null);
+        if(unload && recoveryMeta){
+          // beforeunload 的关键不变式：fetch 必须在本次同步调用栈、任何 await 之前启动。
+          // startUnloadSend 先同步尽力排队 IDB put，随后立即调用 sendRequest；若连接
+          // 尚未打开，再在 fetch 已启动后异步补写快照。
+          const started = WorkflowRecovery.startUnloadSend(
+            body,
+            recoveryMeta,
+            requestUrl,
+            requestOptions
+          );
+          responsePromise = started.sendPromise;
+          if(typeof autoSaveState !== 'undefined'){
+            autoSaveState.markRequestStarted(sentVersion);
+          }
+          recoveryWritePromise = started.snapshotPromise.catch(() => null);
+        } else {
+          // 常规自动保存先等待本地快照事务提交，再发网络请求。
+          if(recoveryMeta){
+            await WorkflowRecovery.saveSnapshot(body, recoveryMeta).catch(() => null);
+          }
+          responsePromise = fetch(requestUrl, requestOptions);
+          if(typeof autoSaveState !== 'undefined'){
+            autoSaveState.markRequestStarted(sentVersion);
+          }
         }
 
-        const response = await fetch(`/api/video-workflow/${workflowId}`, {
-          method: 'PUT',
-          // 页面卸载（beforeunload）触发的保存需要 keepalive，
-          // 否则请求会在页面销毁时被浏览器取消
-          keepalive: keepalive,
-          signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': getAuthToken(),
-            'X-User-Id': getUserId()
-          },
-          body: body
-        });
+        const response = await responsePromise;
 
         const result = await response.json();
 
@@ -762,8 +833,11 @@
           // 新请求随后失败时，兜底记录已被误清，数据丢失
           if(typeof autoSaveState !== 'undefined'){
             const confirmed = autoSaveState.endSend(sentVersion, true);
-            if(confirmed && typeof WorkflowRecovery !== 'undefined'){
-              WorkflowRecovery.clearSnapshot().catch(() => {});
+            if(confirmed && recoveryMeta && typeof WorkflowRecovery !== 'undefined'){
+              // unload 冷启动时可能在 fetch 之后异步补写快照；先等写入结束，再按
+              // snapshotId/version 条件删除，避免清理先发生后又写回陈旧记录。
+              await recoveryWritePromise;
+              await WorkflowRecovery.clearConfirmedSnapshot(recoveryMeta).catch(() => false);
             }
           }
         } else {
@@ -864,29 +938,28 @@
     /**
      * 重放上次的自动保存恢复记录（大工作流关页丢失的兜底）。
      *
-     * autoSaveWorkflow 在每次 PUT 发送前把 payload 写入 IndexedDB（WorkflowRecovery），
-     * 确认成功后清除。页面卸载导致请求丢失时记录仍在：此处把"最后一次已发送的
-     * payload"重放给服务器。幂等安全：若服务器其实已有该 payload（响应在页面销毁前
-     * 到达但清除没执行），重放的是同一份数据，无副作用；若更新的数据曾成功落库，
-     * 它对应的 PUT 会先覆盖/清除记录，故重放不会用旧数据覆盖新状态。
-     * 重放前先经 matchesReplayContext 门控：记录必须属于当前工作流 + 当前用户
-     * （'latest' 是全局单槽位，防止跨工作流/跨账号覆盖）。
-     * 重放成功后 reload 一次，让 UI 展示恢复后的状态（记录已清除 → 不会递归）。
+     * autoSaveWorkflow 在常规 PUT 发送前把 payload 写入 IndexedDB（WorkflowRecovery），
+     * 确认成功后按 snapshotId/version 条件清除。页面卸载导致请求丢失时记录仍在：
+     * 此处把当前用户 + 当前工作流独立 key 下的未确认 payload 重放给服务器。
+     * 重放前仍经 matchesReplayContext 做 fail-closed 二次校验。
+     * 重放成功后 reload 一次让 UI 展示恢复状态，且显式跳过二次恢复，
+     * 避免记录删除失败或被另一标签页替换时发生无界递归。
      */
     async function maybeRecoverPendingAutoSave(workflowId){
       if(typeof WorkflowRecovery === 'undefined' || !workflowId) return;
       let record = null;
       try {
-        record = await WorkflowRecovery.loadSnapshot();
+        record = await WorkflowRecovery.loadSnapshot({
+          workflowId: workflowId,
+          userId: getUserId()
+        });
       } catch(e) {
         return;
       }
       if(!record || !record.payload) return;
 
-      // 跨工作流/跨账号门控：'latest' 是全局单槽位——工作流 A 留下未确认快照后
-      // 打开 B，不能把 A 的内容重放进 B（覆盖 B 的数据）；账号切换同理。
-      // 不匹配时保留记录（对应工作流/用户下次进入时仍可恢复；槽位会被更新的
-      // 保存自然覆盖），只跳过本次重放
+      // 双重门控：loadSnapshot 已按 userId/workflowId 读取独立 key，此处再次校验
+      // 记录内容，损坏或缺少身份字段时 fail-closed，绝不跨工作流/账号重放。
       if(!WorkflowRecovery.matchesReplayContext(record, {
         workflowId: workflowId,
         userId: getUserId()
@@ -907,10 +980,15 @@
         });
         const result = await response.json();
         if(result.code === 0){
-          await WorkflowRecovery.clearSnapshot().catch(() => {});
+          const cleared = await WorkflowRecovery.clearSnapshot(record).catch(() => false);
           console.warn('[自动保存恢复] 未确认的自动保存已重放到服务器，重新加载工作流');
           showToast('已恢复上次未送达的自动保存', 'success');
-          await loadWorkflow(workflowId);
+          if(!cleared){
+            // 可能是另一标签页已写入更新快照，也可能是 IDB 删除失败。
+            // 本次只重新加载 UI，不再递归重放，避免 GET → PUT → reload 无界循环。
+            console.warn('[自动保存恢复] 恢复记录已变更或未能清除，保留供后续页面处理');
+          }
+          await loadWorkflow(workflowId, { skipAutoSaveRecovery: true });
         } else {
           console.warn('[自动保存恢复] 重放失败:', result.message);
           showToast('上次自动保存可能未送达，恢复失败，请手动保存', 'error');
@@ -921,8 +999,9 @@
       }
     }
 
-    async function loadWorkflow(workflowId){
+    async function loadWorkflow(workflowId, options){
       if(!workflowId) return false;
+      const loadOptions = options || {};
       let success = false;
 
       try {
@@ -1065,7 +1144,7 @@
       }
 
       // 加载成功后检查未确认的自动保存恢复记录（大工作流关页丢失的兜底）
-      if(success){
+      if(success && !loadOptions.skipAutoSaveRecovery){
         await maybeRecoverPendingAutoSave(workflowId);
       }
 

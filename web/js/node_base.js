@@ -461,6 +461,13 @@ function bindInputPortEvents(el, node, portCfg) {
  * 删除节点、页面卸载等需要立即落盘的场景调用 flushAutoSave()
  */
 let _autoSaveDebounceTimer = null;
+
+function cancelPendingAutoSave(){
+  if(_autoSaveDebounceTimer){
+    clearTimeout(_autoSaveDebounceTimer);
+    _autoSaveDebounceTimer = null;
+  }
+}
 const AUTO_SAVE_DEBOUNCE_MS = 1500;
 
 function safeAutoSave() {
@@ -483,10 +490,7 @@ function safeAutoSave() {
  * 删除节点等场景调用前状态已变更，先补一个历史快照保证撤销链完整
  */
 function flushAutoSave() {
-  if(_autoSaveDebounceTimer){
-    clearTimeout(_autoSaveDebounceTimer);
-    _autoSaveDebounceTimer = null;
-  }
+  cancelPendingAutoSave();
   try {
     if (typeof captureHistorySnapshot === 'function') captureHistorySnapshot();
     if(typeof autoSaveState !== 'undefined') autoSaveState.markDirty();
@@ -504,48 +508,37 @@ function flushAutoSave() {
 // - 可 keepalive 的 body（≤64KiB，KEEPALIVE_BODY_MAX_BYTES 留余量）用 keepalive，
 //   浏览器在卸载后继续发送（sendBeacon 无法携带 X-User-Id/Authorization 头，
 //   端点依赖 X-User-Id，故不用）。
-// - 大工作流超限无法 keepalive：best-effort 普通 fetch 尽力而为，真正的兜底是
-//   IndexedDB 恢复记录（autoSaveWorkflow 在每次 PUT 发送前写入，确认成功清除）——
-//   下次加载时 maybeRecoverPendingAutoSave 重放未确认记录，大工作流不丢修改。
-// - 关页路径额外先调 saveSnapshotSync 同步发出恢复记录：此分支的异步写入
-//   （autoSaveWorkflow 内的 await saveSnapshot）在页面销毁前不保证完成，同步
-//   put（连接已打开时）是唯一可靠的落盘时机。
+// - 大工作流超限无法 keepalive：best-effort 普通 fetch 尽力而为，同时由
+//   IndexedDB 恢复记录降低丢失风险（下次加载时重放未确认记录）。
+//   卸载时的同步 put 只表示事务入队，不能承诺已持久化。
+// - 关页路径必须在事件同步调用栈内启动 fetch，不能先 await IndexedDB；
+//   autoSaveWorkflow({ unload: true }) 会先尽力排队本地快照，随后在任何 await
+//   之前同步创建 fetch。IndexedDB 仅作 best-effort 恢复，不能替代 keepalive。
 //
 // body 按 UTF-8 实际字节数度量（new Blob.size）：中文每字符 3 字节。
+// 提前预热 IDB 连接，尽量使卸载时的同步 put 可以立即入队。
+if(typeof WorkflowRecovery !== 'undefined'){
+  WorkflowRecovery.prepare().catch(() => null);
+}
 window.addEventListener('beforeunload', () => {
   try {
-    if(typeof autoSaveState === 'undefined' || !autoSaveState.isDirty()) return;
-
-    const snapshot = serializeWorkflow();
-    const body = JSON.stringify({
-      workflow_data: snapshot,
-      default_world_id: state.defaultWorldId,
-      workflow_ratio: state.ratio
+    if(typeof WorkflowRecovery === 'undefined' || typeof autoSaveState === 'undefined') return;
+    WorkflowRecovery.dispatchBeforeUnloadSave({
+      saveState: autoSaveState,
+      serializeBody: () => JSON.stringify({
+        workflow_data: serializeWorkflow(),
+        default_world_id: state.defaultWorldId,
+        workflow_ratio: state.ratio
+      }),
+      measureBodyBytes: (body) => new Blob([body]).size,
+      cancelPending: cancelPendingAutoSave,
+      warnLargeBody: () => console.warn(
+        'beforeunload save: body exceeds keepalive 64KiB limit, best-effort fetch + IndexedDB recovery fallback'
+      ),
+      // dispatch 保证这个回调同步调用；autoSaveWorkflow 的 unload 分支
+      // 再由 startUnloadSend 直接同步调用 fetch。
+      send: (saveOptions) => autoSaveWorkflow(saveOptions)
     });
-    const bodyBytes = new Blob([body]).size;
-
-    // 三分支决策（详见 auto_save_state.planUnloadSend）：
-    // 在途已是最新（keepalive 请求或超限普通请求）→ 不补发；
-    // 在途过期 / 在途普通请求可升级 keepalive / 仅定时器待发 → (中止在途) 后重发
-    const plan = autoSaveState.planUnloadSend(bodyBytes);
-    if(plan.action !== 'send') return;
-    if(plan.abort) autoSaveState.abortInFlight();
-
-    // 先同步发出恢复记录（IndexedDB 连接已打开时 put 在此同步提交到 IDB 队列，
-    // 保证在页面销毁前已发出；后续 autoSaveWorkflow 的异步 saveSnapshot 以相同
-    // payload 覆写，无副作用）。防抖未触发就关页的场景下，这是唯一的落盘机会
-    if(typeof WorkflowRecovery !== 'undefined'){
-      WorkflowRecovery.saveSnapshotSync(body, {
-        version: autoSaveState.state.version,
-        workflowId: (typeof getWorkflowIdFromUrl === 'function') ? getWorkflowIdFromUrl() : null,
-        userId: (typeof getUserId === 'function') ? getUserId() : null
-      });
-    }
-
-    if(!plan.keepalive){
-      console.warn('beforeunload save: body exceeds keepalive 64KiB limit, best-effort fetch + IndexedDB recovery fallback');
-    }
-    autoSaveWorkflow({ skipHistory: true, keepalive: plan.keepalive });
   } catch(e) {}
 });
 

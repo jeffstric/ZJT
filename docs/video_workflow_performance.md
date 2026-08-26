@@ -1,6 +1,6 @@
 # video_workflow 节点编辑器性能优化方案
 
-> 背景：`web/video_workflow.html` 节点数量增多后浏览器崩溃。本文档记录根因分析与本次优化内容（2026-08，版本参数 `?v=perf3`）。
+> 背景：`web/video_workflow.html` 节点数量增多后浏览器崩溃。本文档记录根因分析与本次优化内容（2026-08，自动保存相关脚本版本参数 `?v=__VERSION__`（跟随版本发布））。
 
 ## 一、根因分析
 
@@ -38,17 +38,20 @@
 - `safeAutoSave` 拆分「快照」与「上传」两条时间线：历史快照（`captureHistorySnapshot`，内部有去重）在每次调用时**立即**捕获，保证 1.5s 内多次操作各有独立撤销点（防抖延迟快照会导致 Ctrl+Z 一次撤销多操作）；PUT 上传仍按 1500ms 防抖（`AUTO_SAVE_DEBOUNCE_MS`，`skipHistory: true`），高频调用点无需改动。
 - `flushAutoSave()`：取消挂起防抖并立即落盘（先补快照再 PUT），用于删除节点等需要立即持久化的场景（`canvas.js removeNode`）。
 - `beforeunload` 补发改为**基于保存状态机的三分支决策**（`auto_save_state.js` 的 `planUnloadSend`），不再只检查防抖定时器是否存在（定时器触发后为 null 但请求可能仍在途，只查定时器会漏发）：
-  - 状态机：`version`（每次 `markDirty` 自增）/ `confirmedVersion`（服务器已确认的最高版本）/ `inFlight`（当前在途 PUT）。只有"发送后无新修改"（`sentVersion === version`）的成功响应才推进 `confirmedVersion`；被新 `beginSend` 取代的旧请求的迟到 ack 因版本号不匹配自动失效。
+  - 状态机：`version`（每次 `markDirty` 自增）/ `confirmedVersion`（服务器已确认的最高版本）/ `inFlight`（当前保存，含 `requestStarted` 区分"等待 IDB" 与"网络 PUT 已启动"）。只有"发送后无新修改"（`sentVersion === version`）的成功响应才推进 `confirmedVersion`；被新 `beginSend` 取代的旧请求的迟到 ack 因版本号不匹配自动失效。
   - 分支 1（定时器待触发：dirty、无在途）→ 补发，body 可 keepalive 时用 `keepalive: true`。
   - 分支 2（请求正在发送）→ 在途即最新且为 keepalive 请求则无需补发（卸载后浏览器继续发送）；在途即最新但为普通 fetch 则中止并**升级 keepalive** 重发（严格更优）；在途已过期（发送后又修改）则中止并用最新 payload 重发；超限（>59KB）时无法升级，让原请求尽力发送。
-  - 分支 3（请求体超限）→ keepalive 有 64KiB 硬上限（MDN `RequestInit.keepalive`），超限时（`KEEPALIVE_BODY_MAX_BYTES`，按 `Blob.size` 实际 UTF-8 字节数判定）回退普通 fetch（best effort），由下述 IndexedDB 恢复记录兜底。
+  - 分支 3（请求体超限）→ keepalive 有 64KiB 硬上限（MDN `RequestInit.keepalive`），超限时（`KEEPALIVE_BODY_MAX_BYTES`，按 `Blob.size` 实际 UTF-8 字节数判定）回退普通 fetch（best effort），并由下述 IndexedDB 恢复记录提供 best-effort 恢复。
+  - 持久化阶段（`beginSend` 已登记、但 `requestStarted === false`）关页 → 不能当作网络请求在途；无论 body 大小都中止原 controller 并立即补发最新 payload。
   - keepalive 替代不了 sendBeacon 的原因不变：sendBeacon 无法带 `X-User-Id`/`Authorization` 头，端点依赖 `X-User-Id`，故不用。
-- **并发自动保存防乱序**：`autoSaveWorkflow` 发起新 PUT 前先 `abortInFlight()` 中止旧在途请求——不中止时若旧（过期）请求的响应晚于新请求到达，服务端最终会保存旧 payload（旧数据覆盖新数据）。双保险：`endSend` 返回布尔（仅"该请求是最新发送且成功"为 true），**清除恢复记录只在返回 true 时执行**——被新请求取代的旧请求的成功 ack 不会误清新请求的恢复快照。
+- **并发自动保存防乱序**：`autoSaveWorkflow` 发起新 PUT 前先 `abortInFlight()` 中止本页旧在途请求，降低过期 payload 晚到的概率。`endSend` 返回布尔（仅"该请求是最新发送且成功"为 true），**清除恢复记录只在返回 true 时执行**。注意：`AbortController` 无法撤回已到达服务端的 PUT，严格防止跨标签页/服务端乱序覆盖仍需后端 revision/CAS。
 - **dirty 跟踪覆盖所有保存入口**：`autoSaveWorkflow` 在守卫（workflowId/就绪检查）后统一 `markDirty()`，undo/redo、shot_group 模型切换/人脸选项等直接调用 `autoSaveWorkflow` 的路径（不经过 `safeAutoSave`）同样被关页补发逻辑捕获。
-- **大工作流（>59KB）IndexedDB 恢复兜底**：keepalive 超限回退普通 fetch 后请求不保证在卸载后送达，属"缓解"。补齐为闭环：`autoSaveWorkflow` 每次 PUT **发送前**先把 body 原文写入 IndexedDB 恢复记录（`WorkflowRecovery.saveSnapshot`，**await 完成后再发 fetch**，防抖 1.5s 余量保证页面卸载前已落盘），确认成功（`endSend` 返回 true）后清除（`clearSnapshot`）；下次打开页面 `loadWorkflow` 成功后 `maybeRecoverPendingAutoSave` 重放未确认记录（原样 re-PUT），成功则清记录 + toast 提示 + 重新加载工作流。
-  - **落盘时序**：关页（beforeunload）触发的保存，其异步写入在页面销毁前不保证完成 → 关页路径在调用 `autoSaveWorkflow` 前额外调 `WorkflowRecovery.saveSnapshotSync`（IndexedDB 连接已打开时**同步**发出 put，是唯一可靠的落盘时机；连接未打开时静默放弃）。
-  - **跨工作流/跨账号门控**：'latest' 是全局单槽位，记录携带 `{ payload, version, workflowId, userId }`；重放前经 `matchesReplayContext` 校验——工作流 A 留下未确认快照后打开 B，不会把 A 的内容恢复到 B（账号切换同理）。不匹配时保留记录（对应工作流下次进入仍可恢复），只跳过本次重放。
-  - 安全不变式：记录始终保存"最后一次已发送的 payload"（新 PUT 发送前覆盖、确认成功的 PUT 清除），因此加载时重放永远不会用旧数据覆盖更新的服务端状态。无 indexedDB 环境（老浏览器/隐私模式）静默降级为 no-op，关页 keepalive 路径不受影响。
+- **手动保存与恢复状态机统一**：手动保存会取消未触发的防抖任务、中止本页旧自动保存、用手动 body 覆盖恢复快照，并在服务器确认后条件清理，避免下次打开时重放旧自动保存覆盖手动结果。
+- **大工作流（>59KB）IndexedDB 恢复机制**：keepalive 超限回退普通 fetch 后请求不保证在卸载后送达。常规自动保存会在 PUT 发送前 `await WorkflowRecovery.saveSnapshot(...)`；服务器确认最新版本后再条件清理。下次打开页面时，`maybeRecoverPendingAutoSave` 重放当前用户/工作流的未确认记录（原样 re-PUT），成功后清记录、提示并重新加载工作流。
+  - **卸载时序**：页面初始化时预热 IDB 连接。`beforeunload` 只序列化一次 body，`startUnloadSend` 同步尝试 `saveSnapshotSync` 后直接调用 `fetch`，确保网络请求在任何 `await` 之前启动。若 IDB 连接尚未就绪，则在 fetch 已启动后异步补写。`saveSnapshotSync === true` **仅表示 put 已入队，不表示事务已持久化**。
+  - **分区与条件清理**：IndexedDB key 使用无碰撞的 `[userId, workflowId]` JSON 编码；身份或 `snapshotId` 缺失时 fail-closed，拒绝写入/读取/重放。每次写入带跨标签页唯一 `snapshotId`，以及页面级 `writerId + writerSequence`；`clearSnapshot` 在同一 readwrite 事务中 `get → 比对 snapshotId/version → delete`。新 PUT 已确认但本次快照写入临时失败时，`clearConfirmedSnapshot` 只可额外清理**同 writer 且序号严格更小**的残留记录。不同标签页不用时间戳比较先后，避免删除另一页较早创建但尚未送达的独立编辑。v1 的全局 `latest` 记录只在身份完整时迁移，否则删除。
+  - **恢复重载有界**：重放成功后只做一次跳过恢复检查的 UI reload。若条件删除返回 false（另一标签页已写入新 token 或 IDB 删除失败），保留记录供后续页面处理，不在当前调用链无限 `GET → PUT → reload`。
+  - 同一用户/工作流的多标签页共享一个 key（最后一次 IDB 写入胜出）；`snapshotId` 解决的是迟到确认误清问题，不是服务端 PUT 乱序冲突。无 IndexedDB 环境静默降级为 no-op，keepalive 路径不受影响。
 
 ### 4. 节点尺寸缓存（`node_base.js`、`canvas.js`、`workflow_layout.js`）
 
@@ -63,19 +66,19 @@
 
 ## 三、涉及文件
 
-`web/js/connection_base.js`、`events.js`、`canvas.js`、`nodes.js`、`workflow.js`、`node_base.js`、`state.js`、`workflow_layout.js`、`video_node.js`、`image_to_video_node.js`、`auto_save_state.js`；`web/video_workflow.html`（脚本版本参数 `?v=perf3`）。
+`web/js/connection_base.js`、`events.js`、`canvas.js`、`nodes.js`、`workflow.js`、`node_base.js`、`state.js`、`workflow_layout.js`、`video_node.js`、`image_to_video_node.js`、`auto_save_state.js`；`web/video_workflow.html`（自动保存相关脚本版本参数 `?v=__VERSION__`（跟随版本发布））。
 
 ## 四、验证情况
 
 - `node --check` 全部改动文件语法通过。
-- `npx vitest run`：31 个测试文件全部通过，含新增 `web/tests/auto_save_unload.test.js`（23 用例）：关页三分支（定时器待触发 / 请求正在发送 / 请求体超限）、确认规则与 endSend 返回契约（并发乱序）、恢复记录 IndexedDB 写入/读取/清除轮转（fake indexedDB，验证记录携带 workflowId/userId）、跨工作流/跨用户重放门控、无 indexedDB 静默降级。
-- 真实服务器手动 E2E（Playwright，9/9 通过）：页面加载全局就绪；定时器待触发关页 keepalive 补发落库；请求在途关页中止并升级 keepalive 重发落库；>59KB 大工作流 abort 全部 PUT 后关页 → 重开页面出现「已恢复上次未送达的自动保存」toast、数据落库、再次重开无 toast（记录已清除）；跨工作流门控（B 的未确认记录在打开 A 时不重放、A 数据不变，重开 B 正常恢复）；undo 直接保存路径关页补发（服务端最终为 undo 前状态）。
+- `npx vitest run`：31 个测试文件、291 个用例全部通过。其中 `web/tests/auto_save_unload.test.js` 34 个用例，覆盖关页三分支、IDB 持久化阶段的大 body 补发、dispatcher → unload → fetch 同步接线、用户/工作流分区、snapshotId/version/writer 条件清理、v1 `latest` 迁移、IDB blocked 后 fail-open/重试及无 IDB 降级。
+- 此前 `?v=perf3` 基线曾完成真实服务器手动 E2E（Playwright 9/9）：定时器待触发关页补发、在途请求升级 keepalive、>59KB 恢复重放、跨工作流门控及 undo 直接保存。该 9/9 仅作历史基线，本轮改动未重跑真实服务器 E2E，不计入上述当前验证结果。
   - Playwright 限制说明：其 CDP 网络拦截层在 `page.close()` 时随 renderer 销毁，keepalive 请求不保证放行（真实浏览器中 keepalive 为浏览器原生行为）。故 T1/T2 用页内 `dispatchEvent('beforeunload')` 触发同一 handler 验证状态机决策与真实落库，已用服务器访问日志核对 PUT 时序。
   - 节点重载（restore）只复原类型化字段，自定义 data 字段重载后丢失——跨页重载场景的断言须用真实字段。
 - 手动回归清单（建议在大工作流上执行）：
   - 拖拽（单个/批量框选）、平移、滚轮缩放：连线跟随、帧率
   - 拉线创建/删除连线（虚线预览、端口高亮、选中删除按钮位置）
-  - undo/redo（1.5s 内连续多次操作，逐次 Ctrl+Z 应每次只回退一步）；自动保存（快照即时、PUT 防抖 1.5s；手动保存按钮不受影响）；关页前最后 1.5s 内的修改能落盘
+  - undo/redo（1.5s 内连续多次操作，逐次 Ctrl+Z 应每次只回退一步）；自动保存（快照即时、PUT 防抖 1.5s；手动保存按钮不受影响）；关页前最后 1.5s 内的修改会在卸载同步调用栈内启动补发
   - 关页三分支：修改后立即关页（定时器未触发）/ 修改后等 PUT 在途时关页（DevTools 慢速网络观察）/ 大工作流（>59KB）关页——前两者应在 Network 面板看到 keepalive PUT；大工作流若本次未送达，下次打开页面应出现「已恢复上次未送达的自动保存」toast 且内容正确
   - 视频节点：生成完成后显示封面帧、悬停播放、播放按钮手动模式、上传本地视频
   - **工作流重载后节点与视频封面帧复原**
@@ -84,7 +87,7 @@
 
 ## 五、后续可选优化（本次未做）
 
-- **大工作流关页的残余缺口（有意保留）**：>59KB 的关页 PUT 无法 keepalive，只能 best-effort + IndexedDB 恢复。正常关页（刷新/关标签/关浏览器）下，发送前已写入（关页路径为同步 put，`saveSnapshotSync`）的恢复记录会在下次打开时重放，数据不丢；但**浏览器进程崩溃**（非正常卸载）时 fetch 必然丢失，恢复能否生效取决于 IndexedDB 事务是否已落盘。若未来需彻底消除，方向是增量 PATCH / 操作日志（按节点 diff 上报，天然小报文可 keepalive），本次未做。
+- **大工作流关页的残余缺口（有意保留）**：>59KB 的关页 PUT 无法 keepalive，只能普通 fetch + IndexedDB best-effort 恢复。卸载时 `saveSnapshotSync` 返回 true 只说明 put 已进入事务队列，页面/浏览器迅速销毁时仍不能承诺持久化成功。若未来需彻底消除，可在 dirty 阶段提前异步落盘，或改为增量 PATCH / 操作日志（按节点 diff 上报，天然小报文可 keepalive）。
 
 - **连线 DOM 复用**：`renderConnections` 仍为全删全建模式（已通过 rAF 合帧大幅降频）；可进一步改为 path 元素池 diff，端点不变时只更新 `d` 属性。
 - **视口外节点虚拟化**：`content-visibility` / IntersectionObserver 对视口外节点做渲染裁剪与媒体卸载，适合节点规模长期上几百个的场景。
