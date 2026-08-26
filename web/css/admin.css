@@ -2161,7 +2161,8 @@ body {
 
 .qc-tabs {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    /* 大模型 + 多媒体 两个分组 */
+    grid-template-columns: repeat(2, 1fr);
     gap: 2px;
     background: #e2e8f0;
     border-radius: 8px;

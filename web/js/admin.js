@@ -4,18 +4,10 @@
 
 // ==================== 服务商配置定义 ====================
 
+// 生图/生视频/其他合并为「多媒体」，共两类
 const CATEGORY_LABELS = {
     llm: '大模型',
-    image: '生图模型',
-    video: '生视频模型',
-    other: '其他服务'
-};
-
-const CATEGORY_DESCRIPTIONS = {
-    llm: '选择一个或多个大模型服务商',
-    image: '选择一个或多个生图服务商',
-    video: '选择一个或多个生视频服务商',
-    other: '选择其他推荐的 AI 服务'
+    multimedia: '多媒体'
 };
 
 /**
@@ -55,7 +47,7 @@ const PROVIDER_DEFINITIONS = [
         displayOrder: 99,
         baseName: 'ywapi',
         isOfficialAPI: false,
-        showInCategories: ['llm', 'image', 'video'],
+        showInCategories: ['llm', 'multimedia'],
         impactsKey: 'provider_ywapi_impacts',
         fields: [
             { id: 'name', labelKey: 'field_ywapi_name_label', type: 'text', placeholderKey: 'field_ywapi_name_placeholder', required: false, readOnly: true, defaultValue: '智剧通API' },
@@ -161,12 +153,14 @@ const PROVIDER_DEFINITIONS = [
         testEndpoint: null
     },
 
-    // ===== 生图服务商 =====
+    // ===== 生图/生视频共享键供应商 =====
+    // 多米、火山引擎（多媒体）、火山引擎海外版、聚合站 1-5 的生图与生视频共用同一配置键，
+    // 各仅保留一个条目，选中即同时覆盖生图与生视频实现方
     {
         id: 'duomi',
         nameKey: 'provider_duomi_name',
-        descKey: 'provider_duomi_image_desc',
-        category: 'image',
+        descKey: 'provider_duomi_desc',
+        category: 'multimedia',
         icon: '🎨',
         docUrl: 'https://duomiapi.com/user/register?cps=U4GgW1Fx',
         // 快速选择推荐方案：DeepSeek 大模型 + 多米（生图/生视频）
@@ -174,7 +168,7 @@ const PROVIDER_DEFINITIONS = [
         displayOrder: 4,
         baseName: 'duomi',
         isOfficialAPI: false,
-        impactsKey: 'provider_duomi_image_impacts',
+        impactsKey: 'provider_duomi_impacts',
         fields: [
             { id: 'token', label: 'Token', type: 'text', placeholderKey: 'field_token_placeholder_duomi', required: true, helpTextKey: 'field_token_help_quick_register' }
         ],
@@ -184,15 +178,15 @@ const PROVIDER_DEFINITIONS = [
     {
         id: 'huoshan_image',
         nameKey: 'provider_huoshan_name',
-        descKey: 'provider_huoshan_image_desc',
-        category: 'image',
+        descKey: 'provider_huoshan_media_desc',
+        category: 'multimedia',
         icon: '🔥',
         docUrl: 'https://console.volcengine.com/ark',
         lazyRecommended: true,
         displayOrder: 1,
         baseName: 'huoshan',
         isOfficialAPI: false,
-        impactsKey: 'provider_huoshan_image_impacts',
+        impactsKey: 'provider_huoshan_media_impacts',
         fields: [
             { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true, helpTextKey: 'field_api_key_help_volcengine' }
         ],
@@ -203,36 +197,35 @@ const PROVIDER_DEFINITIONS = [
     {
         id: 'huoshan_oversea_image',
         nameKey: 'provider_huoshan_oversea_name',
-        descKey: 'provider_huoshan_oversea_image_desc',
-        category: 'image',
+        descKey: 'provider_huoshan_oversea_desc',
+        category: 'multimedia',
         icon: '🌍',
         docUrl: 'https://console.volcengine.com/ark',
         lazyRecommended: false,
         displayOrder: 2,
         baseName: 'huoshan_oversea',
         isOfficialAPI: false,
-        impactsKey: 'provider_huoshan_oversea_image_impacts',
+        impactsKey: 'provider_huoshan_oversea_impacts',
         fields: [
             { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://ark.ap-southeast.bytepluses.com', required: false }
         ],
         configKeyMap: { api_key: 'volcengine_oversea.api_key', base_url: 'volcengine_oversea.base_url' },
-        testEndpoint: null,
-        _sharedWith: 'huoshan_oversea'
+        testEndpoint: null
     },
     {
         id: 'site_1_image',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 1 },
-        descKey: 'provider_site_image_desc',
+        descKey: 'provider_site_desc',
         descKeyParams: { n: 1 },
-        category: 'image',
+        category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
         displayOrder: 10,
         baseName: 'site_1',
         isOfficialAPI: false,
-        impactsKey: 'provider_site_image_impacts',
+        impactsKey: 'provider_site_impacts',
         fields: [
             { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 1 }, required: false, helpTextKey: 'field_site_name_help' },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
@@ -245,15 +238,15 @@ const PROVIDER_DEFINITIONS = [
         id: 'site_2_image',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 2 },
-        descKey: 'provider_site_image_desc',
+        descKey: 'provider_site_desc',
         descKeyParams: { n: 2 },
-        category: 'image',
+        category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
         displayOrder: 11,
         baseName: 'site_2',
         isOfficialAPI: false,
-        impactsKey: 'provider_site_image_impacts',
+        impactsKey: 'provider_site_impacts',
         fields: [
             { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 2 }, required: false, helpTextKey: 'field_site_name_help' },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
@@ -267,15 +260,15 @@ const PROVIDER_DEFINITIONS = [
         id: 'site_3_image',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 3 },
-        descKey: 'provider_site_image_desc',
+        descKey: 'provider_site_desc',
         descKeyParams: { n: 3 },
-        category: 'image',
+        category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
         displayOrder: 12,
         baseName: 'site_3',
         isOfficialAPI: false,
-        impactsKey: 'provider_site_image_impacts',
+        impactsKey: 'provider_site_impacts',
         fields: [
             { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 3 }, required: false, helpTextKey: 'field_site_name_help' },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
@@ -289,15 +282,15 @@ const PROVIDER_DEFINITIONS = [
         id: 'site_4_image',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 4 },
-        descKey: 'provider_site_image_desc',
+        descKey: 'provider_site_desc',
         descKeyParams: { n: 4 },
-        category: 'image',
+        category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
         displayOrder: 13,
         baseName: 'site_4',
         isOfficialAPI: false,
-        impactsKey: 'provider_site_image_impacts',
+        impactsKey: 'provider_site_impacts',
         fields: [
             { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 4 }, required: false, helpTextKey: 'field_site_name_help' },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
@@ -311,15 +304,15 @@ const PROVIDER_DEFINITIONS = [
         id: 'site_5_image',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 5 },
-        descKey: 'provider_site_image_desc',
+        descKey: 'provider_site_desc',
         descKeyParams: { n: 5 },
-        category: 'image',
+        category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
         displayOrder: 14,
         baseName: 'site_5',
         isOfficialAPI: false,
-        impactsKey: 'provider_site_image_impacts',
+        impactsKey: 'provider_site_impacts',
         fields: [
             { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 5 }, required: false, helpTextKey: 'field_site_name_help' },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
@@ -330,35 +323,17 @@ const PROVIDER_DEFINITIONS = [
         commercialOnly: true
     },
 
-    // ===== 生视频服务商 =====
-    {
-        id: 'duomi_video',
-        nameKey: 'provider_duomi_name',
-        descKey: 'provider_duomi_video_desc',
-        category: 'video',
-        icon: '🎨',
-        docUrl: 'https://duomiapi.com/user/register?cps=U4GgW1Fx',
-        lazyRecommended: true,
-        displayOrder: 1,
-        baseName: 'duomi',
-        isOfficialAPI: false,
-        impactsKey: 'provider_duomi_video_impacts',
-        fields: [
-            { id: 'token', label: 'Token', type: 'text', placeholderKey: 'field_token_placeholder_duomi', required: true }
-        ],
-        configKeyMap: { token: 'duomi.token' },
-        testEndpoint: null,
-        _sharedWith: 'duomi'
-    },
+    // ===== 纯生视频服务商 =====
+    // 多媒体分类统一编号：共享键供应商 1-14，纯视频 15-25，其他 26 起
     {
         id: 'runninghub',
         nameKey: 'provider_runninghub_name',
         descKey: 'provider_runninghub_desc',
-        category: 'video',
+        category: 'multimedia',
         icon: '🚀',
         docUrl: 'https://www.runninghub.cn/?inviteCode=quacwnzc',
         lazyRecommended: true,
-        displayOrder: 2,
+        displayOrder: 16,
         baseName: 'runninghub',
         isOfficialAPI: false,
         impactsKey: 'provider_runninghub_impacts',
@@ -369,53 +344,14 @@ const PROVIDER_DEFINITIONS = [
         testEndpoint: null
     },
     {
-        id: 'huoshan_video',
-        nameKey: 'provider_huoshan_name',
-        descKey: 'provider_huoshan_video_desc',
-        category: 'video',
-        icon: '🔥',
-        docUrl: 'https://console.volcengine.com/ark',
-        lazyRecommended: false,
-        displayOrder: 4,
-        baseName: 'huoshan',
-        isOfficialAPI: false,
-        impactsKey: 'provider_huoshan_video_impacts',
-        fields: [
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true, helpTextKey: 'field_api_key_help_volcengine' }
-        ],
-        configKeyMap: { api_key: 'volcengine.api_key' },
-        testEndpoint: null,
-        _sharedWith: 'huoshan'
-    },
-    {
-        id: 'huoshan_oversea_video',
-        nameKey: 'provider_huoshan_oversea_name',
-        descKey: 'provider_huoshan_oversea_video_desc',
-        category: 'video',
-        icon: '🌍',
-        docUrl: 'https://console.volcengine.com/ark',
-        lazyRecommended: false,
-        displayOrder: 5,
-        baseName: 'huoshan_oversea',
-        isOfficialAPI: false,
-        impactsKey: 'provider_huoshan_oversea_video_impacts',
-        fields: [
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://ark.ap-southeast.bytepluses.com', required: false }
-        ],
-        configKeyMap: { api_key: 'volcengine_oversea.api_key', base_url: 'volcengine_oversea.base_url' },
-        testEndpoint: null,
-        _sharedWith: 'huoshan_oversea'
-    },
-    {
         id: 'kkidc_video',
         nameKey: 'provider_kkidc_name',
         descKey: 'provider_kkidc_video_desc',
-        category: 'video',
+        category: 'multimedia',
         icon: '🔌',
         docUrl: 'https://ai.kkidc.com',
         lazyRecommended: false,
-        displayOrder: 6,
+        displayOrder: 19,
         baseName: 'kkidc',
         isOfficialAPI: false,
         impactsKey: 'provider_kkidc_video_impacts',
@@ -429,11 +365,11 @@ const PROVIDER_DEFINITIONS = [
         id: 'huimengi_video',
         nameKey: 'provider_huimengi_name',
         descKey: 'provider_huimengi_video_desc',
-        category: 'video',
+        category: 'multimedia',
         icon: '🔌',
         docUrl: 'https://api.huimengi.com',
         lazyRecommended: false,
-        displayOrder: 7,
+        displayOrder: 20,
         baseName: 'huimengi',
         isOfficialAPI: false,
         impactsKey: 'provider_huimengi_video_impacts',
@@ -443,126 +379,17 @@ const PROVIDER_DEFINITIONS = [
         configKeyMap: { api_key: 'huimengi.api_key' },
         testEndpoint: null
     },
-    {
-        id: 'site_1_video',
-        nameKey: 'provider_site_name',
-        nameKeyParams: { n: 1 },
-        descKey: 'provider_site_video_desc',
-        descKeyParams: { n: 1 },
-        category: 'video',
-        icon: '🔗',
-        lazyRecommended: false,
-        displayOrder: 10,
-        baseName: 'site_1',
-        isOfficialAPI: false,
-        impactsKey: 'provider_site_video_impacts',
-        fields: [
-            { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 1 }, required: false, helpTextKey: 'field_site_name_help' },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
-        ],
-        configKeyMap: { name: 'api_aggregator.site_1.name', base_url: 'api_aggregator.site_1.base_url', api_key: 'api_aggregator.site_1.api_key' },
-        testEndpoint: null
-    },
-    {
-        id: 'site_2_video',
-        nameKey: 'provider_site_name',
-        nameKeyParams: { n: 2 },
-        descKey: 'provider_site_video_desc',
-        descKeyParams: { n: 2 },
-        category: 'video',
-        icon: '🔗',
-        lazyRecommended: false,
-        displayOrder: 11,
-        baseName: 'site_2',
-        isOfficialAPI: false,
-        impactsKey: 'provider_site_video_impacts',
-        fields: [
-            { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 2 }, required: false, helpTextKey: 'field_site_name_help' },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
-        ],
-        configKeyMap: { name: 'api_aggregator.site_2.name', base_url: 'api_aggregator.site_2.base_url', api_key: 'api_aggregator.site_2.api_key' },
-        testEndpoint: null,
-        commercialOnly: true
-    },
-    {
-        id: 'site_3_video',
-        nameKey: 'provider_site_name',
-        nameKeyParams: { n: 3 },
-        descKey: 'provider_site_video_desc',
-        descKeyParams: { n: 3 },
-        category: 'video',
-        icon: '🔗',
-        lazyRecommended: false,
-        displayOrder: 12,
-        baseName: 'site_3',
-        isOfficialAPI: false,
-        impactsKey: 'provider_site_video_impacts',
-        fields: [
-            { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 3 }, required: false, helpTextKey: 'field_site_name_help' },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
-        ],
-        configKeyMap: { name: 'api_aggregator.site_3.name', base_url: 'api_aggregator.site_3.base_url', api_key: 'api_aggregator.site_3.api_key' },
-        testEndpoint: null,
-        commercialOnly: true
-    },
-    {
-        id: 'site_4_video',
-        nameKey: 'provider_site_name',
-        nameKeyParams: { n: 4 },
-        descKey: 'provider_site_video_desc',
-        descKeyParams: { n: 4 },
-        category: 'video',
-        icon: '🔗',
-        lazyRecommended: false,
-        displayOrder: 13,
-        baseName: 'site_4',
-        isOfficialAPI: false,
-        impactsKey: 'provider_site_video_impacts',
-        fields: [
-            { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 4 }, required: false, helpTextKey: 'field_site_name_help' },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
-        ],
-        configKeyMap: { name: 'api_aggregator.site_4.name', base_url: 'api_aggregator.site_4.base_url', api_key: 'api_aggregator.site_4.api_key' },
-        testEndpoint: null,
-        commercialOnly: true
-    },
-    {
-        id: 'site_5_video',
-        nameKey: 'provider_site_name',
-        nameKeyParams: { n: 5 },
-        descKey: 'provider_site_video_desc',
-        descKeyParams: { n: 5 },
-        category: 'video',
-        icon: '🔗',
-        lazyRecommended: false,
-        displayOrder: 14,
-        baseName: 'site_5',
-        isOfficialAPI: false,
-        impactsKey: 'provider_site_video_impacts',
-        fields: [
-            { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 5 }, required: false, helpTextKey: 'field_site_name_help' },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
-        ],
-        configKeyMap: { name: 'api_aggregator.site_5.name', base_url: 'api_aggregator.site_5.base_url', api_key: 'api_aggregator.site_5.api_key' },
-        testEndpoint: null,
-        commercialOnly: true
-    },
 
     // ===== 其他推荐服务 =====
     {
         id: 'vidu',
         nameKey: 'provider_vidu_name',
         descKey: 'provider_vidu_desc',
-        category: 'other',
+        category: 'multimedia',
         icon: '🎬',
         docUrl: 'https://platform.vidu.cn/api-keys',
         lazyRecommended: false,
-        displayOrder: 1,
+        displayOrder: 26,
         baseName: 'vidu',
         isOfficialAPI: false,
         impactsKey: 'provider_vidu_impacts',
@@ -591,8 +418,7 @@ function translateProvider(p, tFn) {
 }
 
 // 构建 configKey -> [{ providerId, fieldId }, ...] 的反向映射（一对多）
-// 同一配置键可被多个供应商共享（如 duomi.token 同时属于多米生图/生视频，
-// volcengine.api_key 属于火山大模型/生图/生视频），需全部映射
+// 同一配置键可被多个供应商共享（如 volcengine.api_key 属于火山大模型与多媒体两条目），需全部映射
 const CONFIG_KEY_TO_PROVIDER_FIELD = {};
 PROVIDER_DEFINITIONS.forEach(provider => {
     Object.entries(provider.configKeyMap).forEach(([fieldId, configKey]) => {
@@ -1201,21 +1027,18 @@ const AdminApp = {
             Object.keys(CATEGORY_LABELS).forEach(cat => { status[cat] = false; });
             this.quickConfigModal.selectedProviderIds.forEach(id => {
                 const provider = PROVIDER_DEFINITIONS.find(p => p.id === id);
-                if (provider) {
-                    // 支持 showInCategories 属性
-                    if (provider.showInCategories && provider.showInCategories.length > 0) {
-                        provider.showInCategories.forEach(cat => {
-                            if (cat !== 'other') status[cat] = true;
-                        });
-                    } else if (provider.category !== 'other') {
-                        status[provider.category] = true;
-                    }
+                if (!provider) return;
+                // 支持 showInCategories 属性
+                if (provider.showInCategories && provider.showInCategories.length > 0) {
+                    provider.showInCategories.forEach(cat => { status[cat] = true; });
+                } else if (provider.category) {
+                    status[provider.category] = true;
                 }
             });
             return status;
         },
 
-        // 与右侧配置卡片一致：按 baseName 去重（多米生图+生视频、火山多分类等只算 1 个）
+        // 与右侧配置卡片一致：按 baseName 去重（火山大模型/多媒体等跨分类共享键只算 1 个）
         selectedCount() {
             return this.selectedProvidersDetail.length;
         },
@@ -1240,18 +1063,14 @@ const AdminApp = {
             const _ = this.locale;
             return {
                 llm: this.t('category_llm'),
-                image: this.t('category_image'),
-                video: this.t('category_video'),
-                other: this.t('category_other')
+                multimedia: this.t('category_multimedia')
             };
         },
         categoryDescriptions() {
             const _ = this.locale;
             return {
                 llm: this.t('category_llm_desc'),
-                image: this.t('category_image_desc'),
-                video: this.t('category_video_desc'),
-                other: this.t('category_other_desc')
+                multimedia: this.t('category_multimedia_desc')
             };
         },
 
@@ -3597,11 +3416,10 @@ const AdminApp = {
             });
         },
 
-        // 快速设置：选择 DeepSeek 大模型 + 多米（生图/生视频共享 Token）
-        // 反向映射已改为一对多，duomi_video 的排序不再影响正确性，仅为保持合并卡片原有位置
+        // 快速设置：选择 DeepSeek 大模型 + 多米（单条目即覆盖生图/生视频，共享同一 Token）
         handleQuickSetup() {
             this.quickConfigModal.quickSelected = true;
-            const ids = ['deepseek', 'duomi_video', 'duomi'];
+            const ids = ['deepseek', 'duomi'];
             this.quickConfigModal.selectedProviderIds = [...ids];
             this.quickConfigModal.originalValues = this.quickConfigModal.originalValues || {};
             ids.forEach(id => {
@@ -3616,7 +3434,7 @@ const AdminApp = {
             this.showToast(this.t('toast_auto_selected_recommended'), 'success');
         },
 
-        // 移除已选服务商（同 baseName 的合并项一并取消，如 多米 生图/生视频）
+        // 移除已选服务商（同 baseName 的合并项一并取消，如火山大模型/多媒体条目）
         removeProvider(providerId) {
             const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
             const base = provider ? (provider.baseName || provider.id) : providerId;
@@ -3639,7 +3457,7 @@ const AdminApp = {
                 .map(p => p.id);
         },
 
-        // 获取表单字段值（同 baseName 兄弟项共享，如多米 token 只填一份）
+        // 获取表单字段值（同 baseName 兄弟项共享，如火山大模型与多媒体共用一份 api_key）
         getFormField(providerId, fieldId) {
             const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
             if (provider) {
@@ -3685,6 +3503,18 @@ const AdminApp = {
                 if (!formData) return false;
                 return Object.values(formData).some(v => v && String(v).trim());
             });
+        },
+
+        // 判断服务商"密钥"（api_key/token 必填字段）是否有值，
+        // 与 openQuickConfigModal 的自动选中规则互为正反：打开弹窗时必填字段有值才自动选中，
+        // 保存后密钥为空则撤销选中
+        isProviderKeyFilled(providerId) {
+            const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
+            if (!provider) return true;
+            const keyField = provider.fields.find(f => f.required && (f.id === 'api_key' || f.id === 'token'))
+                || provider.fields.find(f => f.required && !f.readOnly);
+            if (!keyField) return true;
+            return String(this.getFormField(providerId, keyField.id) || '').trim() !== '';
         },
 
         // 保存单个服务商的配置
@@ -3733,7 +3563,7 @@ const AdminApp = {
                     const data = response.data.data;
                     const updatedCount = data.results.filter(r => r.status === 'updated').length;
                     this.showToast(this.t('toast_config_saved') + ` (${updatedCount} 项更新)`, 'success');
-                    // 更新原始值（一对多：同步到所有共享该配置键的供应商，如多米生图/生视频）
+                    // 更新原始值（一对多：同步到所有共享该配置键的供应商，如火山大模型/多媒体条目）
                     configs.forEach(c => {
                         const mappings = CONFIG_KEY_TO_PROVIDER_FIELD[c.key] || [];
                         mappings.forEach(({ providerId, fieldId }) => {
@@ -3742,6 +3572,12 @@ const AdminApp = {
                             this.quickConfigModal.originalValues[providerId][fieldId] = c.value;
                         });
                     });
+                    // 密钥被清空时撤销左侧选中：仅处理同 baseName 整组（共享密钥的兄弟项），
+                    // 与 openQuickConfigModal 的自动选中规则互为正反
+                    const base = this.getProviderBaseName(providerId);
+                    this.quickConfigModal.selectedProviderIds = this.quickConfigModal.selectedProviderIds.filter(id =>
+                        this.getProviderBaseName(id) !== base || this.isProviderKeyFilled(id)
+                    );
                     this.loadConfigs();
                 }
             } catch (error) {
