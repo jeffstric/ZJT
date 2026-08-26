@@ -60,11 +60,13 @@ def _get_enterprise_admin_status() -> dict[str, object]:
 
 
 def _is_user_module_license_active() -> bool:
-    """用户模块功能的商业许可证检查（enterprise 包缺席时恒为 False）。"""
+    """用户模块功能的商业许可证检查（strict：须真实激活；enterprise 缺席恒 False）。"""
     try:
-        from enterprise.services.license.runtime import is_commercial_license_allowed
+        from enterprise.services.license.runtime import (
+            is_commercial_license_strictly_allowed,
+        )
 
-        return bool(is_commercial_license_allowed())
+        return bool(is_commercial_license_strictly_allowed())
     except Exception:
         return False
 
