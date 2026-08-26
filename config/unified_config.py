@@ -73,7 +73,7 @@ class UserModuleRuntimeConfig:
     # 后台生成任务 ask_user 单次提问等待上限。会话版 mixin 写死 300s 太短；
     # 等待期间必须暂停墙钟，否则会与本字段打架。
     agent_task_question_timeout_seconds: int = 1800
-    agent_task_max_questions: int = 3
+    agent_task_max_questions: int = 15  # HTTP 供应商提问上限，与本地 ComfyUI 统一
     # 本地 ComfyUI 工作流节点确认需要更多轮问答。
     agent_task_max_questions_comfyui: int = 15
     agent_task_question_poll_interval_seconds: float = 3.0
