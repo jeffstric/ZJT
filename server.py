@@ -6265,7 +6265,7 @@ async def parse_script(
         language = body.get('language', '')  # 兼容旧版单一语言参数
         dialogue_language = body.get('dialogue_language', '') or language
         prompt_language = body.get('prompt_language', '') or language
-        model = body.get('model', 'gemini-3-flash-preview')
+        model = body.get('model', 'deepseek-v4-flash')
         model_id = body.get('model_id', '')
         vendor_id = body.get('vendor_id', None)
         enable_thinking = _json_bool(body.get('enable_thinking'), False)
@@ -6434,7 +6434,8 @@ async def _rewrite_with_llm(messages, request, auth_token):
     from llm.llm_client_factory import get_llm_client, is_llm_client_configured
 
     model = request.model or LLMModel.REDUCE_VIOLATION_DEFAULT
-    client = get_llm_client(model, vendor_id=request.vendor_id)
+    # get_llm_client 内含同步查库（vendor_id 路由 / 动态配置），放线程池避免阻塞事件循环
+    client = await asyncio.to_thread(get_llm_client, model, request.vendor_id)
 
     # 用于计费的 vendor_id / model_id：跟随实际调用的模型，默认回退到请求传入值
     bill_vendor_id = request.vendor_id
@@ -6443,7 +6444,7 @@ async def _rewrite_with_llm(messages, request, auth_token):
     # 所选拆分模型的供应商未配置 api_key 时，切兜底模型重试一次
     if not is_llm_client_configured(client):
         model = LLMModel.REDUCE_VIOLATION_DEFAULT
-        client = get_llm_client(model)
+        client = await asyncio.to_thread(get_llm_client, model)
         # 已切到默认模型：计费 ID 不再跟随原拆分模型，避免计费/用量记错账
         bill_vendor_id = None
         bill_model_id = None

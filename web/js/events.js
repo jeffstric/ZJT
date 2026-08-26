@@ -509,7 +509,8 @@
             }
           }
         }
-        renderAllConnections();
+        // 性能优化：rAF 合帧渲染，同一帧内多次 mousemove 只重画一次
+        scheduleConnectionsRender({ skipSizeUpdate: true });
         return;
       }
       // 绘制选择框
@@ -544,11 +545,9 @@
         state.panX = Math.min(0, state.panning.origPanX + dx * zoom);
         state.panY = Math.min(0, state.panning.origPanY + dy * zoom);
         applyTransform();
-        renderAllConnections();
-        // 更新删除按钮位置（如果有选中的连接线）
-        if(state.selectedConnId !== null){
-          renderConnections();
-        }
+        // 性能优化：平移时连线随 canvasWorld 的 CSS transform 整体移动（世界坐标不变），无需重画；
+        // 仅需重新定位挂在屏幕坐标系上的删除按钮
+        updateSelectedConnDeleteBtnPos();
       }
       // 拖动节点（支持批量拖动）
       if(state.drag){
@@ -584,7 +583,8 @@
           }
         }
         state.drag.moved = true;
-        renderAllConnections();
+        // 性能优化：rAF 合帧渲染 + 拖拽期间跳过画布尺寸重算（mouseup 时统一补偿）
+        scheduleConnectionsRender({ skipSizeUpdate: true });
       }
       // 拖拽创建连接线时显示虚线预览
       if(state.connecting){
@@ -802,13 +802,14 @@
           targetY = nearestRefPort.y;
         }
         
-        renderConnections({
+        // 性能优化：拉线过程中节点未移动、连线端点不变，只有虚线预览需要更新；
+        // 用常驻 path 只改 d 属性，替代原先每帧全删全建连线的做法
+        updateTempConnLine({
           fromX: fromPos.x,
           fromY: fromPos.y,
           toX: targetX,
           toY: targetY
         });
-        renderAllConnections();
       }
     });
 
@@ -851,6 +852,8 @@
       if(state.drag){
         const moved = state.drag.moved;
         state.drag = null;
+        // 拖拽期间跳过了画布尺寸重算与即时渲染，这里同步补偿最终状态
+        flushConnectionsRender();
         renderMinimap();
         if(moved){
           captureHistorySnapshot();
@@ -1187,6 +1190,8 @@
         }
         
         state.connecting = null;
+        // 清理拖拽连线的虚线预览（常驻 path，需显式隐藏）
+        updateTempConnLine(null);
         renderAllConnections();
       }
     });

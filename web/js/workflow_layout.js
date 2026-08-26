@@ -32,13 +32,13 @@
   }
 
   function getNodeDimensions(nodeId){
-    const el = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
-    if(!el){
-      return { width: DEFAULT_NODE_WIDTH, height: DEFAULT_NODE_HEIGHT };
-    }
+    // 性能优化：走尺寸缓存，布局排序/碰撞检测循环中的高频读取不再触发强制布局
+    const node = state.nodes.find(n => n.id === nodeId);
+    if(!node) return { width: DEFAULT_NODE_WIDTH, height: DEFAULT_NODE_HEIGHT };
+    const size = getNodeSize(node);
     return {
-      width: Math.max(DEFAULT_NODE_WIDTH, el.offsetWidth || DEFAULT_NODE_WIDTH),
-      height: Math.max(DEFAULT_NODE_HEIGHT, el.offsetHeight || DEFAULT_NODE_HEIGHT)
+      width: Math.max(DEFAULT_NODE_WIDTH, size.w || DEFAULT_NODE_WIDTH),
+      height: Math.max(DEFAULT_NODE_HEIGHT, size.h || DEFAULT_NODE_HEIGHT)
     };
   }
 

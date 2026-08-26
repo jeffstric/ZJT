@@ -393,7 +393,7 @@ async def step_plan(task: ScriptSplitTask) -> None:
         try:
             raw_plan, finish_reason = await plan_segments(
                 anchors=anchors,
-                model=cfg.get("model") or "gemini-3-flash-preview",
+                model=cfg.get("model") or "deepseek-v4-flash",
                 auth_token=task.auth_token,
                 vendor_id=cfg.get("vendor_id"),
                 model_id=cfg.get("model_id"),

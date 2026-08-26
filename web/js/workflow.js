@@ -513,10 +513,50 @@
     }
 
     // 序列化工作流数据（用于保存）
+    // 性能优化：data:URL base64 大字符串剔除阈值（字节），超过则不进入快照/保存数据
+    const DATA_URL_STRIP_THRESHOLD = 4096;
+    // preview 类字段 -> 已上传 url 字段（注意 preview 为小写，不能用正则统一推导）
+    const PREVIEW_URL_KEY_MAP = {
+      preview: 'url',
+      startPreview: 'startUrl',
+      endPreview: 'endUrl'
+    };
+
+    /**
+     * 深度剔除 data:URL base64 大字符串（性能优化，不可变实现）
+     * 这些 base64 串会随快照进入 undo 历史（最多 historyLimit 份全量 JSON 字符串）
+     * 并随每次自动保存整体上传，是节点多时内存暴涨的主因。
+     * preview 类字段优先用对应的已上传 url 回填（preview→url、startPreview→startUrl），
+     * 未命中映射或无对应 url 时一律置空——绝不能把原始 base64 写回（否则优化失效）
+     * @param {*} value - 待处理的值
+     * @param {number} depth - 递归深度保护
+     * @returns {*} 处理后的新值
+     */
+    function stripLargeDataUrls(value, depth){
+      if(typeof value === 'string'){
+        return (value.startsWith('data:') && value.length > DATA_URL_STRIP_THRESHOLD) ? '' : value;
+      }
+      if(value === null || typeof value !== 'object' || depth > 6) return value;
+      if(Array.isArray(value)){
+        return value.map(v => stripLargeDataUrls(v, depth + 1));
+      }
+      const out = {};
+      for(const key in value){
+        const v = value[key];
+        if(typeof v === 'string' && v.startsWith('data:') && v.length > DATA_URL_STRIP_THRESHOLD){
+          const urlKey = PREVIEW_URL_KEY_MAP[key];
+          out[key] = (urlKey && value[urlKey]) ? value[urlKey] : '';
+        } else {
+          out[key] = stripLargeDataUrls(v, depth + 1);
+        }
+      }
+      return out;
+    }
+
     function serializeWorkflow(){
       // 只保存必要的数据，排除File对象和临时URL
       const serializableNodes = state.nodes.map(node => {
-        const nodeData = { ...node.data };
+        let nodeData = { ...node.data };
         // 移除File对象
         if(nodeData.file) delete nodeData.file;
         if(nodeData.startFile) delete nodeData.startFile;
@@ -528,9 +568,6 @@
         if(nodeData.startUrl && nodeData.startUrl.startsWith('blob:')) nodeData.startUrl = '';
         if(nodeData.endUrl && nodeData.endUrl.startsWith('blob:')) nodeData.endUrl = '';
         if(nodeData.videoUrl && nodeData.videoUrl.startsWith('blob:')) nodeData.videoUrl = '';  // 提取帧节点
-        if(nodeData.preview && nodeData.preview.startsWith('data:') && nodeData.url) nodeData.preview = nodeData.url;
-        if(nodeData.startPreview && nodeData.startPreview.startsWith('data:') && nodeData.startUrl) nodeData.startPreview = nodeData.startUrl;
-        if(nodeData.endPreview && nodeData.endPreview.startsWith('data:') && nodeData.endUrl) nodeData.endPreview = nodeData.endUrl;
 
         // 清理音频/视频列表中的blob URL
         if(Array.isArray(nodeData.audioUrls)){
@@ -545,6 +582,9 @@
             return item;
           });
         }
+
+        // 性能优化：剔除 data:URL base64 大字符串（含 preview 类字段的 url 回填）
+        nodeData = stripLargeDataUrls(nodeData, 0);
 
         return {
           id: node.id,
@@ -660,32 +700,83 @@
       // 工作流未就绪或没有节点，不自动保存
       if(!state.workflowReady || state.nodes.length === 0) return;
 
+      // 直接调用点（undo/redo、shot_group 模型切换/人脸选项等）不经过
+      // safeAutoSave 的 markDirty：发起 PUT 本身就是"有未确认修改"，统一在此
+      // 标记，保证关页时 isDirty() 能捕获并补发
+      if(typeof autoSaveState !== 'undefined') autoSaveState.markDirty();
+
+      // 声明在 try 外：catch 分支也需要用它收尾状态机
+      let sentVersion = 0;
+
       try {
         const workflowData = serializeWorkflow();
-        
+
+        const body = JSON.stringify({
+          workflow_data: workflowData,
+          default_world_id: state.defaultWorldId,
+          workflow_ratio: state.ratio
+        });
+        const keepalive = !!opts.keepalive;
+
+        // 跟踪在途请求，并在发起新请求前中止旧的：不中止时若旧（过期）请求的
+        // 响应晚于新请求到达，服务端最终会保存旧 payload（旧数据覆盖新数据）
+        const controller = new AbortController();
+        if(typeof autoSaveState !== 'undefined'){
+          autoSaveState.abortInFlight();
+          sentVersion = autoSaveState.beginSend(controller, keepalive);
+        }
+
+        // 恢复记录在发送【前】写入且必须 await 完成（纯本地 IndexedDB 写，无网络）：
+        // 否则"发送前写入"名不副实（未 await 时 put 尚未真正发出）。防抖的 1.5s
+        // 余量保证正常卸载前已落盘。记录带 workflowId/userId，重放时只恢复到
+        // 同一工作流/同一用户，避免跨工作流覆盖。大工作流（>59KB）无法 keepalive
+        // 保证送达，靠下次加载重放此记录兜底
+        if(typeof WorkflowRecovery !== 'undefined'){
+          await WorkflowRecovery.saveSnapshot(body, {
+            version: sentVersion,
+            workflowId: workflowId,
+            userId: getUserId()
+          }).catch(() => {});
+        }
+
         const response = await fetch(`/api/video-workflow/${workflowId}`, {
           method: 'PUT',
+          // 页面卸载（beforeunload）触发的保存需要 keepalive，
+          // 否则请求会在页面销毁时被浏览器取消
+          keepalive: keepalive,
+          signal: controller.signal,
           headers: {
             'Content-Type': 'application/json',
             'Authorization': getAuthToken(),
             'X-User-Id': getUserId()
           },
-          body: JSON.stringify({
-            workflow_data: workflowData,
-            default_world_id: state.defaultWorldId,
-            workflow_ratio: state.ratio
-          })
+          body: body
         });
 
         const result = await response.json();
-        
+
         if(result.code === 0){
           console.log('自动保存成功:', new Date().toLocaleTimeString(), 'defaultWorldId:', state.defaultWorldId);
+          // 仅当"该请求是最新发送且成功"才清除恢复记录：被新请求取代的旧请求
+          // 的成功 ack（endSend 返回 false）不得清掉新请求的恢复快照——否则
+          // 新请求随后失败时，兜底记录已被误清，数据丢失
+          if(typeof autoSaveState !== 'undefined'){
+            const confirmed = autoSaveState.endSend(sentVersion, true);
+            if(confirmed && typeof WorkflowRecovery !== 'undefined'){
+              WorkflowRecovery.clearSnapshot().catch(() => {});
+            }
+          }
         } else {
           console.warn('自动保存失败:', result.message);
+          if(typeof autoSaveState !== 'undefined'){
+            autoSaveState.endSend(sentVersion, false);
+          }
         }
       } catch(error){
         console.error('自动保存错误:', error);
+        if(typeof autoSaveState !== 'undefined'){
+          autoSaveState.endSend(sentVersion, false);
+        }
       }
     }
 
@@ -770,6 +861,66 @@
     }
 
     // 加载工作流
+    /**
+     * 重放上次的自动保存恢复记录（大工作流关页丢失的兜底）。
+     *
+     * autoSaveWorkflow 在每次 PUT 发送前把 payload 写入 IndexedDB（WorkflowRecovery），
+     * 确认成功后清除。页面卸载导致请求丢失时记录仍在：此处把"最后一次已发送的
+     * payload"重放给服务器。幂等安全：若服务器其实已有该 payload（响应在页面销毁前
+     * 到达但清除没执行），重放的是同一份数据，无副作用；若更新的数据曾成功落库，
+     * 它对应的 PUT 会先覆盖/清除记录，故重放不会用旧数据覆盖新状态。
+     * 重放前先经 matchesReplayContext 门控：记录必须属于当前工作流 + 当前用户
+     * （'latest' 是全局单槽位，防止跨工作流/跨账号覆盖）。
+     * 重放成功后 reload 一次，让 UI 展示恢复后的状态（记录已清除 → 不会递归）。
+     */
+    async function maybeRecoverPendingAutoSave(workflowId){
+      if(typeof WorkflowRecovery === 'undefined' || !workflowId) return;
+      let record = null;
+      try {
+        record = await WorkflowRecovery.loadSnapshot();
+      } catch(e) {
+        return;
+      }
+      if(!record || !record.payload) return;
+
+      // 跨工作流/跨账号门控：'latest' 是全局单槽位——工作流 A 留下未确认快照后
+      // 打开 B，不能把 A 的内容重放进 B（覆盖 B 的数据）；账号切换同理。
+      // 不匹配时保留记录（对应工作流/用户下次进入时仍可恢复；槽位会被更新的
+      // 保存自然覆盖），只跳过本次重放
+      if(!WorkflowRecovery.matchesReplayContext(record, {
+        workflowId: workflowId,
+        userId: getUserId()
+      })){
+        console.warn('[自动保存恢复] 恢复记录不属于当前工作流/用户，跳过重放以避免跨工作流覆盖');
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/video-workflow/${workflowId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': getAuthToken(),
+            'X-User-Id': getUserId()
+          },
+          body: record.payload
+        });
+        const result = await response.json();
+        if(result.code === 0){
+          await WorkflowRecovery.clearSnapshot().catch(() => {});
+          console.warn('[自动保存恢复] 未确认的自动保存已重放到服务器，重新加载工作流');
+          showToast('已恢复上次未送达的自动保存', 'success');
+          await loadWorkflow(workflowId);
+        } else {
+          console.warn('[自动保存恢复] 重放失败:', result.message);
+          showToast('上次自动保存可能未送达，恢复失败，请手动保存', 'error');
+        }
+      } catch(error){
+        console.error('[自动保存恢复] 重放异常:', error);
+        showToast('上次自动保存可能未送达，恢复失败，请手动保存', 'error');
+      }
+    }
+
     async function loadWorkflow(workflowId){
       if(!workflowId) return false;
       let success = false;
@@ -911,6 +1062,11 @@
       } catch(error){
         console.error('Load error:', error);
         showToast('加载工作流失败', 'error');
+      }
+
+      // 加载成功后检查未确认的自动保存恢复记录（大工作流关页丢失的兜底）
+      if(success){
+        await maybeRecoverPendingAutoSave(workflowId);
       }
 
       // ========== 自动创建剧本节点功能 ==========
@@ -2116,9 +2272,8 @@
             const thumbVideo = el.querySelector('.video-thumb');
             const nameEl = el.querySelector('.video-name');
             if(previewField && thumbVideo && nameEl){
-              thumbVideo.src = proxyDownloadUrl(node.data.url);
-              thumbVideo.muted = true;
-              thumbVideo.loop = true;
+              // 封面帧与悬停播放逻辑已内置于 setupVideoThumbnail（工作流重载后同样生效）
+              setupVideoThumbnail(thumbVideo, node.data.url);
               const name = node.data.name || '';
               const displayName = name.length > 10 ? name.substring(0, 10) + '...' : name;
               nameEl.textContent = displayName;
@@ -2545,14 +2700,21 @@
 
           // 刷新所有分镜节点的引用显示（角色、道具、场景）
           // 这样当世界数据加载完成后，节点中的引用标签会自动更新
-          state.nodes.forEach(node => {
-            if(node.updateReferences) {
-              node.updateReferences();
-            }
-          });
-
+          // 性能优化：世界数据指纹比对 + 无节点更新时跳过——原实现每 60s 轮询
+          // 都对所有分镜节点执行 3 组 innerHTML 重建，节点多时造成周期性卡顿
           const updatedNodes = result.data.updated_nodes || [];
-          
+          const worldFingerprint = JSON.stringify([
+            state.worldCharacters, state.worldProps, state.worldLocations
+          ]);
+          if(worldFingerprint !== state._lastWorldFingerprint || updatedNodes.length > 0){
+            state._lastWorldFingerprint = worldFingerprint;
+            state.nodes.forEach(node => {
+              if(node.updateReferences) {
+                node.updateReferences();
+              }
+            });
+          }
+
           if(updatedNodes.length > 0){
             updatedNodes.forEach(updatedNode => {
               const node = state.nodes.find(n => n.id === updatedNode.node_id);
@@ -2720,24 +2882,8 @@
         const nameEl = nodeEl.querySelector('.video-name');
         
         if(previewField && thumbVideo){
-          thumbVideo.src = proxyDownloadUrl(url);
-          thumbVideo.muted = true;
-          thumbVideo.loop = true;
-          thumbVideo.controls = false;
-          thumbVideo.preload = 'metadata';
-          thumbVideo.playsInline = true;
-          thumbVideo.onloadedmetadata = () => {
-            try{
-              if(isFinite(thumbVideo.duration) && thumbVideo.duration > 0){
-                thumbVideo.currentTime = Math.min(0.1, Math.max(0, thumbVideo.duration - 0.1));
-              }
-            } catch(e){}
-            try{
-              const p = thumbVideo.play();
-              if(p && typeof p.catch === 'function') p.catch(() => {});
-            } catch(e){}
-          };
-          try{ thumbVideo.load(); } catch(e){}
+          // 封面帧与悬停播放逻辑已内置于 setupVideoThumbnail（不再自动循环播放）
+          setupVideoThumbnail(thumbVideo, url);
           previewField.style.display = 'block';
           // 同时显示加入时间轴按钮区域
           if(previewActionsField){

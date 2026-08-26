@@ -437,6 +437,7 @@ class GeminiClient(BaseLLMClient):
             tools: 工具定义列表
             temperature: 温度参数
             max_tokens: 最大输出 token 数
+            request_timeout: 单次请求 HTTP 超时（秒），None 时用默认 300s
 
         Returns:
             Response 对象
@@ -499,6 +500,8 @@ class GeminiClient(BaseLLMClient):
             llm_logger.debug(f"Gemini API request payload:\n{payload_str}")
 
         try:
+            # 单次请求超时：优先用调用方传入的 request_timeout（如 H3 链路的 90s），
+            # None 时保持默认 300s
             response = requests.post(
                 url,
                 headers=headers,

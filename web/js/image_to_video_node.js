@@ -1361,19 +1361,8 @@
                     console.log(`[图生视频] 视频节点 ${videoNodeId} 绑定 project_id:`, videoNode.data.project_id, '来源:', node.data.projectIds, 'index:', idx);
                     
                     if(previewField && thumbVideo && nameEl){
+                      // 封面帧与悬停播放逻辑已内置于 setupVideoThumbnail
                       setupVideoThumbnail(thumbVideo, videoUrl);
-                      thumbVideo.onloadedmetadata = () => {
-                        try{
-                          if(isFinite(thumbVideo.duration) && thumbVideo.duration > 0){
-                            thumbVideo.currentTime = Math.min(0.1, Math.max(0, thumbVideo.duration - 0.1));
-                          }
-                        } catch(e){}
-                        try{
-                          const p = thumbVideo.play();
-                          if(p && typeof p.catch === 'function') p.catch(() => {});
-                        } catch(e){}
-                      };
-                      try{ thumbVideo.load(); } catch(e){}
                       const displayName = videoNode.data.name.length > 10 ? videoNode.data.name.substring(0, 10) + '...' : videoNode.data.name;
                       nameEl.textContent = displayName;
                       nameEl.title = videoNode.data.name;

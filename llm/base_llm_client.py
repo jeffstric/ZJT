@@ -85,7 +85,7 @@ class BaseLLMClient(ABC):
             model_id: 模型 ID
             enable_thinking: 是否开启思考模式
             thinking_effort: 思考强度（doubao 用，值：low/medium/high）
-            request_timeout: 本次底层 HTTP 调用超时（秒）
+            request_timeout: 单次请求 HTTP 超时（秒），None 时用各客户端默认值
             suppress_payload_logging: 是否禁止记录请求、响应和异常正文
 
         Returns:

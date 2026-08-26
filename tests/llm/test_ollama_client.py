@@ -136,7 +136,7 @@ class TestOllamaClient(unittest.TestCase):
     @patch('llm.ollama_client.get_dynamic_config_value')
     @patch('llm.ollama_client.OpenAI')
     def test_qwen38_uses_global_thinking_when_request_omits_it(self, mock_openai_class, mock_config):
-        """llm.ollama.enable_thinking=true 时，即使调用方未开思考也会开启"""
+        """llm.ollama.enable_thinking=true 且调用方未传 enable_thinking 时开启思考"""
         mock_config.side_effect = lambda *args, default=None: {
             ('llm', 'ollama', 'enabled'): True,
             ('llm', 'ollama', 'base_url'): 'http://localhost:11434',
@@ -165,10 +165,45 @@ class TestOllamaClient(unittest.TestCase):
         client.call_api(
             model="ollama:qwen3.8:27b",
             messages=[{"role": "user", "content": "Hello"}],
-            enable_thinking=False,
         )
         kwargs = mock_openai.chat.completions.create.call_args.kwargs
         self.assertTrue(kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"])
+
+    @patch('llm.ollama_client.get_dynamic_config_value')
+    @patch('llm.ollama_client.OpenAI')
+    def test_explicit_enable_thinking_false_overrides_global(self, mock_openai_class, mock_config):
+        """全局 enable_thinking=true 时，调用方显式传 False 应能关闭思考"""
+        mock_config.side_effect = lambda *args, default=None: {
+            ('llm', 'ollama', 'enabled'): True,
+            ('llm', 'ollama', 'base_url'): 'http://localhost:11434',
+            ('llm', 'ollama', 'temperature'): 0.7,
+            ('llm', 'ollama', 'top_p'): 0.8,
+            ('llm', 'ollama', 'top_k'): 20,
+            ('llm', 'ollama', 'min_p'): 0.0,
+            ('llm', 'ollama', 'presence_penalty'): 1.5,
+            ('llm', 'ollama', 'repetition_penalty'): 1.0,
+            ('llm', 'ollama', 'enable_thinking'): True,
+        }.get(args, default)
+
+        mock_openai = MagicMock()
+        mock_openai_class.return_value = mock_openai
+        mock_choice = MagicMock()
+        mock_choice.message.content = "ok"
+        mock_choice.message.tool_calls = None
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_openai.chat.completions.create.return_value = mock_response
+
+        from llm.ollama_client import OllamaClient
+        client = OllamaClient()
+
+        client.call_api(
+            model="ollama:qwen3.8:27b",
+            messages=[{"role": "user", "content": "Hello"}],
+            enable_thinking=False,
+        )
+        kwargs = mock_openai.chat.completions.create.call_args.kwargs
+        self.assertFalse(kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"])
 
     @patch('llm.ollama_client.get_dynamic_config_value')
     def test_refresh_config(self, mock_config):

@@ -94,9 +94,9 @@ WHERE v.vendor_name = 'ollama' AND m.model_name = 'qwen2.5:7b';
 | 思考模式（模型默认开启） | 1.0 | 0.95 | 20 | 0.0 | 0.0 | 1.0 |
 | Instruct / 非思考 | 0.7 | 0.80 | 20 | 0.0 | 1.5 | 1.0 |
 
-系统默认 `llm.ollama.enable_thinking: true`，Ollama 调用会开启思维链（`qwen3.8:27b` 官方默认即为思考模式）。开启思考时建议把 temperature / top_p / presence_penalty 改成上表思考模式参数；若要关闭思维链，在管理后台将 `llm.ollama.enable_thinking` 设为 `false`。
+系统默认 `llm.ollama.enable_thinking: true`，Ollama 调用会开启思维链（`qwen3.8:27b` 官方默认即为思考模式）。开启思考时建议把 temperature / top_p / presence_penalty 改成上表思考模式参数。思考开关以「调用方显式传入的 `enable_thinking`（True/False）优先，未传时回退全局配置」为准；若要全局关闭，在管理后台将 `llm.ollama.enable_thinking` 设为 `false`。
 
-思考深度可通过 `reasoning_effort`（`xhigh` / `medium` / `low`，官方默认 `xhigh`）调节；多轮对话默认保留历史思考块（`preserve_thinking`）。
+思考强度由任务的 `thinking_effort`（low/medium/high）映射为 chat template 的 `reasoning_effort`（low/medium/xhigh，Qwen 官方参数名，前端 "high" 映射为 "xhigh"）下发；多轮对话默认保留历史思考块（`preserve_thinking`）。
 
 ## 其他支持 Tool Calling 的模型
 

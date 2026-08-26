@@ -1039,7 +1039,7 @@
   "alert_login_expired": "登录已过期\n\n您的登录信息已过期，请重新登录。",
   "alert_missing_params": "缺少关键参数\n\n请回到工作流列表后，再进入。",
   "alert_insufficient_power": "算力不足\n\n您的算力不足，请充值后继续使用。",
-  "warn_ollama_local": "本地模型提示：Ollama 模型为本地运行，存在不稳定情况。推荐使用 {model} 模型以获得更好的体验。",
+  "warn_ollama_local": "本地模型提示：本地模型（Ollama/vLLM）为本地运行，存在不稳定情况。推荐使用 {model} 模型以获得更好的体验。",
   "warn_expensive_model": "该模型价格较贵，推荐使用 {model} 以获得更好的性价比。",
   "warn_weak_model": "该模型实际表现不够智能，可能无法胜任复杂任务，谨慎选择。推荐使用 {model} 以获得更好的效果。",
   "warn_no_images_generated": "任务完成，但未生成任何图片",

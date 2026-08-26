@@ -274,14 +274,130 @@ var CONNECTION_TYPES = {
 
 /**
  * 渲染所有连接类型（统一入口）
+ * @param {Object} [opts] - 渲染选项
+ * @param {boolean} [opts.skipSizeUpdate] - 跳过 updateCanvasSize（拖拽过程中调用方负责在结束时补偿）
  */
-function renderAllConnections() {
-  renderConnections();
+function renderAllConnections(opts) {
+  renderConnections(null, opts && opts.skipSizeUpdate);
   renderConnectionType(CONNECTION_TYPES.image);
   renderConnectionType(CONNECTION_TYPES.firstFrame);
   renderConnectionType(CONNECTION_TYPES.video);
   renderConnectionType(CONNECTION_TYPES.reference);
   renderConnectionType(CONNECTION_TYPES.audio);
+}
+
+// ============================
+// 连接渲染调度（性能优化）
+// 高频交互路径（拖拽/平移/缩放过程中的 mousemove、滚轮）通过 rAF 合帧，
+// 同一帧内多次请求只做一次全量渲染，避免主线程被打满导致页面卡死
+// ============================
+var _connRenderRafId = null;
+var _connRenderPendingOpts = null;
+
+/**
+ * 调度一次全量连接渲染（rAF 合帧，幂等）
+ * @param {Object} [opts] - 透传给 renderAllConnections 的选项
+ * @param {boolean} [opts.skipSizeUpdate] - 拖拽过程中跳过 updateCanvasSize，避免高频 layout 读取
+ */
+function scheduleConnectionsRender(opts) {
+  _connRenderPendingOpts = _connRenderPendingOpts || opts || {};
+  if (_connRenderRafId !== null) return;
+  _connRenderRafId = requestAnimationFrame(function() {
+    _connRenderRafId = null;
+    var pendingOpts = _connRenderPendingOpts;
+    _connRenderPendingOpts = null;
+    renderAllConnections(pendingOpts);
+  });
+}
+
+/**
+ * 取消挂起的调度并立即全量渲染
+ * 供拖拽结束、删除连线等需要同步拿到最终状态的场景调用
+ */
+function flushConnectionsRender() {
+  if (_connRenderRafId !== null) {
+    cancelAnimationFrame(_connRenderRafId);
+    _connRenderRafId = null;
+  }
+  _connRenderPendingOpts = null;
+  renderAllConnections();
+}
+
+/**
+ * 仅更新选中连线删除按钮的屏幕位置（不重画连线）
+ * 画布平移时连线随 canvasWorld 的 CSS transform 整体移动、世界坐标不变，重画是多余的；
+ * 但删除按钮挂在屏幕坐标系上，需要跟随平移重新定位
+ */
+function updateSelectedConnDeleteBtnPos() {
+  if (!connDeleteBtn || connDeleteBtn.style.display === 'none') return;
+  // 普通连接：删除按钮在直线中点
+  if (state.selectedConnId !== null) {
+    var conn = null;
+    for (var i = 0; i < state.connections.length; i++) {
+      if (state.connections[i].id === state.selectedConnId) { conn = state.connections[i]; break; }
+    }
+    if (conn) {
+      var from = getOutputPortPos(conn.from);
+      var to = getInputPortPos(conn.to);
+      var midX = ((from.x + to.x) / 2) * state.zoom + state.panX;
+      var midY = ((from.y + to.y) / 2) * state.zoom + state.panY;
+      connDeleteBtn.style.left = (midX - 12) + 'px';
+      connDeleteBtn.style.top = (midY - 12) + 'px';
+    }
+    return;
+  }
+  // 类型连接（图片/首帧/视频/参考/音频）：删除按钮在贝塞尔中点
+  var typeKeys = Object.keys(CONNECTION_TYPES);
+  for (var t = 0; t < typeKeys.length; t++) {
+    var cfg = CONNECTION_TYPES[typeKeys[t]];
+    var selId = state[cfg.selectedKey];
+    if (selId === null) continue;
+    var conns = cfg.connections();
+    var selConn = null;
+    for (var j = 0; j < conns.length; j++) {
+      if (conns[j].id === selId) { selConn = conns[j]; break; }
+    }
+    if (!selConn) continue;
+    var fromEl = canvasEl.querySelector('.node[data-node-id="' + selConn.from + '"]');
+    var toEl = canvasEl.querySelector('.node[data-node-id="' + selConn.to + '"]');
+    if (!fromEl || !toEl) continue;
+    var outputPort = fromEl.querySelector('.port.output');
+    var toSelector = typeof cfg.toPortSelector === 'function' ? cfg.toPortSelector(selConn) : cfg.toPortSelector;
+    var inputPort = toEl.querySelector(toSelector);
+    if (!outputPort || !inputPort) continue;
+    var bezier = calcBezierPath(outputPort, inputPort);
+    showConnDeleteBtnAtMidpoint(bezier.fromX, bezier.fromY, bezier.toX, bezier.toY, bezier.dx);
+    return;
+  }
+}
+
+// ============================
+// 拖拽连线虚线预览（性能优化）
+// 独立的常驻 path 元素，mousemove 时只更新 d 属性，
+// 替代原先每帧全删全建普通连线的 renderConnections(tempLine) 方案
+// ============================
+var _tempConnLineEl = null;
+
+/**
+ * 更新拖拽连线时的虚线预览
+ * @param {{fromX: number, fromY: number, toX: number, toY: number}} [line] - 起点/终点世界坐标；传 null 或 undefined 隐藏
+ */
+function updateTempConnLine(line) {
+  if (!_tempConnLineEl) {
+    _tempConnLineEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    _tempConnLineEl.setAttribute('class', 'temp');
+    _tempConnLineEl.style.fill = 'none';
+  }
+  if (!line) {
+    if (_tempConnLineEl.parentNode) _tempConnLineEl.remove();
+    return;
+  }
+  var dx = Math.abs(line.toX - line.fromX) * 0.5;
+  _tempConnLineEl.setAttribute('d', 'M' + line.fromX + ',' + line.fromY +
+    ' C' + (line.fromX + dx) + ',' + line.fromY +
+    ' ' + (line.toX - dx) + ',' + line.toY +
+    ' ' + line.toX + ',' + line.toY);
+  if (!_tempConnLineEl.parentNode) connectionsSvg.appendChild(_tempConnLineEl);
 }
 
 /**

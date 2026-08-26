@@ -1457,7 +1457,8 @@ class StoryboardAgentReadConstants:
 
 class StoryboardAgentCommandConstants:
     """Storyboard agent command fallback values."""
-    DEFAULT_SCRIPT_SPLIT_MODEL = "gemini-3-flash-preview"
+    # 2026-08：gemini-3-flash-preview 已下线（20260825_disable_gem3flash 迁移），默认切 deepseek-v4-flash
+    DEFAULT_SCRIPT_SPLIT_MODEL = "deepseek-v4-flash"
     SCRIPT_SPLIT_MODEL_PREFERENCE_TYPE = "script_split_llm_model"
     # split-from-script 的 max_group_duration（每幕/段最长时长，秒）范围。
     # 强制 10~15：镜头过短（<10）会让分段碎、画面增多，导致同世界画风一致性下降；
@@ -1968,6 +1969,7 @@ class LLMVendor:
         'ZJT_API': 'ZJT API 供应商（Qwen3.5/3.6 模型）',
         'DEEPSEEK': 'DeepSeek 供应商（DeepSeek-V4 模型）',
         'AGNES': 'Agnes 供应商（Agnes 2.5 对话模型）',
+        'VLLM': '本地推理供应商（vLLM 模型）',
     }
     JIEKOU = 'jiekou'
     ALIYUN = 'aliyun'
@@ -1977,6 +1979,7 @@ class LLMVendor:
     ZJT_API = 'zjt_api'
     DEEPSEEK = 'deepseek'
     AGNES = 'agnes'
+    VLLM = 'vllm'
 
 
 class LLMModel:
@@ -1991,6 +1994,7 @@ class LLMModel:
         'QWEN_PLUS': 'Qwen Plus',
         'OLLAMA_QWEN_3_6_35B': 'Ollama Qwen 3.6 35B',
         'OLLAMA_QWEN_3_8_27B': 'Ollama Qwen 3.8 27B',
+        'VLLM_QWEN_3_8_27B': 'vLLM Qwen 3.8 27B',
         'DOUBAO_SEED_2_0_PRO': 'Doubao Seed 2.0 Pro',
         'DOUBAO_SEED_2_0_LITE': 'Doubao Seed 2.0 Lite',
         'CLAUDE_HAIKU_4_5': 'Claude Haiku 4.5',
@@ -2014,6 +2018,9 @@ class LLMModel:
     OLLAMA_QWEN_3_6_35B = 'qwen3.6:35b-a3b'
     OLLAMA_QWEN_3_8_27B = 'qwen3.8:27b'
 
+    # vLLM 模型（本地 vLLM 推理服务，复用同一 model 记录，按 vendor 区分）
+    VLLM_QWEN_3_8_27B = 'qwen3.8:27b'
+
     # Doubao 模型
     DOUBAO_SEED_2_0_PRO = 'doubao-seed-2-0-pro'
     DOUBAO_SEED_2_0_LITE = 'doubao-seed-2-0-lite'
@@ -2030,8 +2037,20 @@ class LLMModel:
     AGNES_2_5_PRO = 'agnes-2.5-pro'
 
     # 内容安全提示词改写（reduce-violation）的默认兜底模型
-    # 前端未传/所选拆分模型供应商未配置时使用；复用剧本拆分默认模型，凭据走 JIEKOU 中转
-    REDUCE_VIOLATION_DEFAULT = 'gemini-3-flash-preview'
+    # 前端未传/所选拆分模型供应商未配置时使用；复用剧本拆分默认模型，走 DEEPSEEK 供应商独立 key
+    # （2026-08：原默认 gemini-3-flash-preview 已下线）
+    REDUCE_VIOLATION_DEFAULT = 'deepseek-v4-flash'
+
+    # Qwen3.8 思考强度映射：前端 thinking_effort 值 -> chat template 的 reasoning_effort
+    # （Qwen 官方模型卡 / vLLM 官方部署配方使用的参数名）。
+    # Qwen3.8 官方支持 low/medium/xhigh（无 "high"），前端沿用 low/medium/high 三档，
+    # 故 "high" 需映射为 "xhigh"。
+    QWEN_REASONING_EFFORT_MAP = {
+        'low': 'low',
+        'medium': 'medium',
+        'high': 'xhigh',
+        'xhigh': 'xhigh',
+    }
 
 
 # 供应商图标映射（前端显示用）
@@ -2043,6 +2062,7 @@ VENDOR_ICONS = {
     'zjt_api': '🚀',
     'deepseek': '🔍',
     'agnes': '✨',
+    'vllm': '⚡',
 }
 
 # 模型前缀 -> 供应商映射（用于 LLMClientFactory 路由）
@@ -2052,6 +2072,7 @@ MODEL_PREFIX_VENDOR_MAP = {
     'gpt': LLMVendor.ALIYUN,
     'claude': LLMVendor.CLAUDE,
     'ollama': LLMVendor.OLLAMA,
+    'vllm': LLMVendor.VLLM,  # 本地 vLLM 推理服务
     'doubao': LLMVendor.VOLCENGINE,
     'qwen3.5': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.5 Plus 模型
     'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
@@ -2157,7 +2178,9 @@ class NotificationConstants:
 
 # ============ 智能插入分镜 ============
 SMART_INSERT_SHOT_TIMEOUT = 30  # 智能体调用超时（秒）
-SMART_INSERT_SHOT_DEFAULT_MODEL = 'deepseek/deepseek-v4-flash'  # 降级默认模型
+# 无斜杠形式：DeepSeek 客户端不剥离 'deepseek/' 前缀（_resolve_model_name 为纯字典映射），
+# 斜杠形式会原样透传给 API 导致 404；工厂按 MODEL_PREFIX_VENDOR_MAP['deepseek'] 前缀路由
+SMART_INSERT_SHOT_DEFAULT_MODEL = 'deepseek-v4-flash'  # 降级默认模型
 
 # ============ 默认 LLM 模型选择策略 ============
 # 当数据库没有配置默认 LLM 模型时，使用以下优先级选择：

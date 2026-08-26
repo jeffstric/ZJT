@@ -98,7 +98,7 @@ llm_config = get_default_llm_model(user_id, world_id)
 model = llm_config['model'] if llm_config else SMART_INSERT_SHOT_DEFAULT_MODEL
 ```
 
-未配置时降级为默认模型 `gemini/gemini-3-flash-preview`。
+未配置时降级为默认模型 `deepseek-v4-flash`（`SMART_INSERT_SHOT_DEFAULT_MODEL`，无斜杠形式——DeepSeek 客户端不剥离 `deepseek/` 前缀）。
 
 ### 提示词管理
 
@@ -174,7 +174,7 @@ model = llm_config['model'] if llm_config else SMART_INSERT_SHOT_DEFAULT_MODEL
 ```python
 # config/constant.py
 SMART_INSERT_SHOT_TIMEOUT = 30  # 智能体调用超时（秒）
-SMART_INSERT_SHOT_DEFAULT_MODEL = 'deepseek/deepseek-v4-flash'  # 降级默认模型
+SMART_INSERT_SHOT_DEFAULT_MODEL = 'deepseek-v4-flash'  # 降级默认模型（无斜杠，见上文说明）
 ```
 
 ## 使用流程

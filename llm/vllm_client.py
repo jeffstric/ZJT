@@ -1,6 +1,15 @@
 """
-Ollama 本地模型 LLM 客户端
-使用 Ollama 的 OpenAI 兼容端点 /v1/chat/completions
+vLLM 本地推理服务 LLM 客户端
+使用 vLLM 的 OpenAI 兼容端点 /v1/chat/completions
+
+vLLM 服务由部署侧外部拉起（docker / systemd / vllm serve），本客户端仅负责调用。
+部署侧必须通过 --served-model-name 使 API 模型名与数据库 model_name 一致（如 qwen3.8:27b），
+完整部署说明见 docs/backend/vllm_local_model.md。
+
+默认采样参数对齐 Qwen3.8 官方思考模式推荐值
+（https://huggingface.co/Qwen/Qwen3.8-27B）：
+temperature=1.0, top_p=0.95, top_k=20, min_p=0,
+presence_penalty=0, repetition_penalty=1, enable_thinking=true
 """
 import json
 import logging
@@ -19,30 +28,31 @@ def _get_llm_logger():
     return llm_logger
 
 
-class OllamaClient(BaseLLMClient):
-    """Ollama 本地模型 LLM 客户端"""
+class VLLMClient(BaseLLMClient):
+    """vLLM 本地推理服务 LLM 客户端（OpenAI 兼容）"""
 
     def __init__(self):
-        """初始化 Ollama 客户端"""
+        """初始化 vLLM 客户端"""
         self._refresh_config()
 
     def _refresh_config(self):
         """刷新配置（从数据库动态读取）"""
-        self.enabled = get_dynamic_config_value('llm', 'ollama', 'enabled', default=False)
-        self.base_url = get_dynamic_config_value('llm', 'ollama', 'base_url', default='http://localhost:11434')
-        # 模型参数配置
-        self.temperature = get_dynamic_config_value('llm', 'ollama', 'temperature', default=0.7)
-        self.top_p = get_dynamic_config_value('llm', 'ollama', 'top_p', default=0.8)
-        self.top_k = get_dynamic_config_value('llm', 'ollama', 'top_k', default=20)
-        self.min_p = get_dynamic_config_value('llm', 'ollama', 'min_p', default=0.0)
-        self.presence_penalty = get_dynamic_config_value('llm', 'ollama', 'presence_penalty', default=1.5)
-        self.repetition_penalty = get_dynamic_config_value('llm', 'ollama', 'repetition_penalty', default=1.0)
-        self.enable_thinking = get_dynamic_config_value('llm', 'ollama', 'enable_thinking', default=True)
+        self.enabled = get_dynamic_config_value('llm', 'vllm', 'enabled', default=False)
+        # 主服务默认端口为 8000（server.port），vLLM 默认也用 8000，故默认错开到 8001
+        self.base_url = get_dynamic_config_value('llm', 'vllm', 'base_url', default='http://localhost:8001')
+        # 模型参数配置（默认值对齐 Qwen3.8 官方思考模式推荐）
+        self.temperature = get_dynamic_config_value('llm', 'vllm', 'temperature', default=1.0)
+        self.top_p = get_dynamic_config_value('llm', 'vllm', 'top_p', default=0.95)
+        self.top_k = get_dynamic_config_value('llm', 'vllm', 'top_k', default=20)
+        self.min_p = get_dynamic_config_value('llm', 'vllm', 'min_p', default=0.0)
+        self.presence_penalty = get_dynamic_config_value('llm', 'vllm', 'presence_penalty', default=0.0)
+        self.repetition_penalty = get_dynamic_config_value('llm', 'vllm', 'repetition_penalty', default=1.0)
+        self.enable_thinking = get_dynamic_config_value('llm', 'vllm', 'enable_thinking', default=True)
 
         if self.enabled:
-            logger.info(f"OllamaClient config loaded: base_url={self.base_url}, temp={self.temperature}, top_p={self.top_p}")
+            logger.info(f"VLLMClient config loaded: base_url={self.base_url}, temp={self.temperature}, top_p={self.top_p}")
         else:
-            logger.debug("Ollama is disabled")
+            logger.debug("vLLM is disabled")
 
     def call_api(
         self,
@@ -59,21 +69,20 @@ class OllamaClient(BaseLLMClient):
         agent_id: Optional[str] = None,
         agent_scope: Optional[str] = None,
         request_timeout: Optional[float] = None,
-        suppress_payload_logging: bool = False,
     ) -> Any:
         """
-        调用 Ollama 本地模型 API
+        调用 vLLM 本地推理服务 API
 
         Args:
-            model: 模型名称（如 ollama:qwen2.5:7b）
+            model: 模型名称（如 vllm:qwen3.8:27b）
             messages: OpenAI 格式的消息列表
             tools: 工具定义列表（OpenAI function calling 格式）
-            temperature: 温度参数
+            temperature: 温度参数（配置缺失时的 fallback）
             max_tokens: 最大输出 token 数
-            auth_token: 认证 token（本地模型不需要）
+            auth_token: 认证 token（本地模型无鉴权，仅用于记录用量）
             vendor_id: 供应商 ID
             model_id: 模型 ID
-            enable_thinking: 是否开启思考模式；None 时回退到全局配置 llm.ollama.enable_thinking，
+            enable_thinking: 是否开启思考模式；None 时回退到全局配置 llm.vllm.enable_thinking，
                 显式传入 True/False 则覆盖全局配置
             thinking_effort: 思考强度（low/medium/high/xhigh，high 映射为 Qwen3.8 的 xhigh）
             request_timeout: 单次请求 HTTP 超时（秒），None 时用 client 默认值
@@ -82,12 +91,12 @@ class OllamaClient(BaseLLMClient):
             Response 对象
         """
         if not self.enabled:
-            raise Exception("Ollama 未启用，请在配置中设置 llm.ollama.enabled = true")
+            raise Exception("vLLM 未启用，请在配置中设置 llm.vllm.enabled = true")
 
-        # 处理模型名称：移除 "ollama:" 前缀
+        # 处理模型名称：移除 "vllm:" 前缀
         actual_model = model
-        if model.lower().startswith("ollama:"):
-            actual_model = model[7:]  # 移除 "ollama:" 前缀
+        if model.lower().startswith("vllm:"):
+            actual_model = model[5:]  # 移除 "vllm:" 前缀
 
         try:
             # 统一底层 HTTP 超时（与 openai_base_client 一致）：
@@ -97,14 +106,10 @@ class OllamaClient(BaseLLMClient):
                 http_timeout = ScriptSplitConstants.LLM_HTTP_TIMEOUT_SECONDS
             except Exception:
                 http_timeout = 300
-            if request_timeout is not None:
-                http_timeout = request_timeout
-            # 使用 Ollama 的 OpenAI 兼容端点
+            # vLLM 不需要真正的 API key，但 OpenAI 库需要一个值
             client = OpenAI(
-                api_key="ollama",  # Ollama 不需要真正的 API key，但 OpenAI 库需要一个值
+                api_key="vllm",
                 base_url=f"{self.base_url}/v1",
-                # 与 OpenAIBaseClient 对齐，避免本地假死时回退 SDK 默认 600s；
-                # 调用方 request_timeout 优先，其次全局 LLM_HTTP_TIMEOUT_SECONDS
                 timeout=http_timeout,
             )
 
@@ -117,21 +122,22 @@ class OllamaClient(BaseLLMClient):
                 "temperature": actual_temperature,
                 "top_p": self.top_p,
                 "presence_penalty": self.presence_penalty,
-                "frequency_penalty": self.repetition_penalty,  # OpenAI API 使用 frequency_penalty
             }
 
             # 单次请求超时：优先用调用方传入的 request_timeout，覆盖 client 默认值
             if request_timeout is not None:
                 kwargs["timeout"] = request_timeout
 
-            # Ollama 特有参数通过 extra_body 传递
+            # vLLM 特有采样参数 + Qwen3 思考开关通过 extra_body 传递
             extra_body = {}
             if self.top_k is not None and self.top_k > 0:
                 extra_body["top_k"] = self.top_k
             if self.min_p is not None and self.min_p > 0:
                 extra_body["min_p"] = self.min_p
+            if self.repetition_penalty is not None and self.repetition_penalty > 0:
+                extra_body["repetition_penalty"] = self.repetition_penalty
             # 思维链配置：显式传入 enable_thinking（True/False）时覆盖全局配置，
-            # None 时回退到全局配置 llm.ollama.enable_thinking
+            # None 时回退到全局配置 llm.vllm.enable_thinking
             actual_thinking = bool(self.enable_thinking if enable_thinking is None else enable_thinking)
             chat_template_kwargs = {"enable_thinking": actual_thinking}
             if actual_thinking:
@@ -141,8 +147,7 @@ class OllamaClient(BaseLLMClient):
                 chat_template_kwargs["reasoning_effort"] = LLMModel.QWEN_REASONING_EFFORT_MAP.get(
                     thinking_effort, 'medium')
             extra_body["chat_template_kwargs"] = chat_template_kwargs
-            if extra_body:
-                kwargs["extra_body"] = extra_body
+            kwargs["extra_body"] = extra_body
 
             if max_tokens:
                 kwargs["max_tokens"] = max_tokens
@@ -163,27 +168,23 @@ class OllamaClient(BaseLLMClient):
 
             llm_logger = _get_llm_logger()
             llm_logger.info("="*80)
-            llm_logger.info(f"OLLAMA API REQUEST:")
+            llm_logger.info(f"VLLM API REQUEST:")
             llm_logger.info(f"  Model: {actual_model}")
-            llm_logger.info(
-                "  Base URL: configured"
-                if suppress_payload_logging
-                else f"  Base URL: {self.base_url}"
-            )
+            llm_logger.info(f"  Base URL: {self.base_url}")
             llm_logger.info(f"  Messages count: {len(messages)}")
             self._log_request_context(llm_logger, agent_id, agent_scope)
-            llm_logger.info(f"  Temperature: {actual_temperature}, top_p: {self.top_p}, top_k: {self.top_k}")
-            llm_logger.info(f"  presence_penalty: {self.presence_penalty}, repetition_penalty: {self.repetition_penalty}")
-            llm_logger.info(f"  enable_thinking: {self.enable_thinking}")
+            llm_logger.info(f"  Temperature: {actual_temperature}, top_p={self.top_p}, top_k={self.top_k}")
+            llm_logger.info(f"  presence_penalty: {self.presence_penalty}, repetition_penalty={self.repetition_penalty}")
+            llm_logger.info(f"  enable_thinking: {actual_thinking}")
             llm_logger.info(f"  Max tokens: {max_tokens}")
             if tools:
                 llm_logger.info(f"  Tools count: {len(tools)}")
 
-            if should_log_debug() and not suppress_payload_logging:
+            if should_log_debug():
                 payload_str = json.dumps(kwargs, ensure_ascii=False, indent=2, default=str)
-                llm_logger.debug(f"Ollama API request payload:\n{payload_str}")
+                llm_logger.debug(f"vLLM API request payload:\n{payload_str}")
 
-            logger.info(f"Ollama API request: model={actual_model}, messages_count={len(messages)}")
+            logger.info(f"vLLM API request: model={actual_model}, messages_count={len(messages)}")
 
             completion = client.chat.completions.create(**kwargs)
 
@@ -210,72 +211,58 @@ class OllamaClient(BaseLLMClient):
             content = message.content or ""
             reasoning_content = getattr(message, 'reasoning_content', None)
 
-            # 提取 token 使用量（Ollama 可能不返回完整的 usage 信息）
-            usage_info = {}
+            # 提取 token 使用量（vLLM 返回标准 OpenAI usage；
+            # 开启 prefix caching 时 cached tokens 位于 prompt_tokens_details.cached_tokens）
+            usage_info = {"input_token": 0, "output_token": 0, "total_token": 0, "cache_read_token": 0}
             if hasattr(completion, 'usage') and completion.usage:
                 usage_info = {
                     "input_token": getattr(completion.usage, 'prompt_tokens', 0) or 0,
                     "output_token": getattr(completion.usage, 'completion_tokens', 0) or 0,
                     "total_token": getattr(completion.usage, 'total_tokens', 0) or 0,
-                    "cache_read_token": 0
+                    "cache_read_token": 0,
                 }
+                prompt_details = getattr(completion.usage, 'prompt_tokens_details', None)
+                if prompt_details is not None:
+                    usage_info["cache_read_token"] = getattr(prompt_details, 'cached_tokens', 0) or 0
 
-            logger.info(f"Ollama API response: content_length={len(content)}, tool_calls={len(tool_calls) if tool_calls else 0}")
+            logger.info(f"vLLM API response: content_length={len(content)}, tool_calls={len(tool_calls) if tool_calls else 0}")
 
             llm_logger.info("="*80)
-            llm_logger.info("OLLAMA API RESPONSE:")
+            llm_logger.info("VLLM API RESPONSE:")
             llm_logger.info(f"  Content length: {len(content)} chars")
-            if content and not suppress_payload_logging:
+            if content:
                 llm_logger.info(f"  Content:\n{content}")
             if reasoning_content:
                 llm_logger.info(f"  Reasoning content length: {len(reasoning_content)} chars")
-                if not suppress_payload_logging:
-                    llm_logger.info(f"  Reasoning content:\n{truncate_log_content(reasoning_content)}")
+                llm_logger.info(f"  Reasoning content:\n{truncate_log_content(reasoning_content)}")
             if tool_calls:
                 llm_logger.info(f"  Tool calls count: {len(tool_calls)}")
-                if not suppress_payload_logging:
-                    for i, tc in enumerate(tool_calls):
-                        llm_logger.info(f"    Tool[{i}]: {tc.function.name}")
-                        llm_logger.info(f"      Args: {tc.function.arguments}")
+                for i, tc in enumerate(tool_calls):
+                    llm_logger.info(f"    Tool[{i}]: {tc.function.name}")
+                    llm_logger.info(f"      Args: {tc.function.arguments}")
             llm_logger.info(f"  Token usage: {usage_info}")
             llm_logger.info("-"*80)
 
-            # 记录 token 使用情况（即使是本地模型，也记录统计数据用于分析）
+            # 记录 token 使用情况（本地模型也记录统计数据用于算力扣减）
             if auth_token and model_id:
-                self._log_token_usage(
-                    usage_info,
-                    auth_token,
-                    vendor_id,
-                    model_id,
-                    suppress_error_details=suppress_payload_logging,
-                )
+                self._log_token_usage(usage_info, auth_token, vendor_id, model_id)
 
             return self._create_response(content, tool_calls, usage_info, reasoning_content, finish_reason)
 
         except Exception as e:
-            if suppress_payload_logging:
-                status_code = getattr(e, "status_code", None)
-                if status_code is None:
-                    status_code = getattr(getattr(e, "response", None), "status_code", None)
-                logger.error(
-                    "Ollama API call failed: error_type=%s, status=%s",
-                    type(e).__name__,
-                    status_code if status_code is not None else "unknown",
-                )
-            else:
-                logger.error(f"Ollama API call failed: {e}")
+            logger.error(f"vLLM API call failed: {e}")
             raise
 
 
 # 全局单例
-_ollama_client = None
+_vllm_client = None
 
 
-def get_ollama_client() -> OllamaClient:
-    """获取 Ollama 客户端单例（每次调用时刷新配置）"""
-    global _ollama_client
-    if _ollama_client is None:
-        _ollama_client = OllamaClient()
+def get_vllm_client() -> VLLMClient:
+    """获取 vLLM 客户端单例（每次调用时刷新配置）"""
+    global _vllm_client
+    if _vllm_client is None:
+        _vllm_client = VLLMClient()
     else:
-        _ollama_client._refresh_config()
-    return _ollama_client
+        _vllm_client._refresh_config()
+    return _vllm_client

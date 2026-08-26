@@ -1923,14 +1923,16 @@ JSON格式示例：
         ]
         
         # 调用LLM API（增加max_tokens以避免输出被截断）
-        logger.info(f"调用Gemini API，temperature={temperature}")
-        
+        logger.info(f"调用 LLM API，temperature={temperature}")
+
+        # 使用默认模型或指定模型（必须先填充默认值再创建客户端：
+        # model 为空时 get_llm_client 会按前缀路由到 JIEKOU/gemini 客户端，
+        # 之后才填 deepseek 默认模型会导致客户端与模型名不匹配、调用必败）
+        if not model:
+            model = "deepseek-v4-flash"
+
         # 获取 LLM 客户端（传入 vendor_id 确保正确路由）
         llm_client = get_llm_client(model, vendor_id=vendor_id)
-
-        # 使用默认模型或指定模型
-        if not model:
-            model = "gemini-3-flash-preview"
 
         # 使用 asyncio.to_thread 包装同步调用
         response = await asyncio.to_thread(

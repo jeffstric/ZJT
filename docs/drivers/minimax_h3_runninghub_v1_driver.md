@@ -62,7 +62,7 @@ type=34 创建时会与 `ai_tool` 在**同一事务**内创建 `param_prepare` �
 
 1. **故事板对话模型**：故事板入口生成视频时，把用户在该故事板选的对话模型写入步骤参数（`chat_model`/`chat_vendor_id`）
 2. **`pipeline.h3_prompt_optimize_model`**（默认 `deepseek-v4-flash`，走官方 DeepSeek `llm.deepseek.api_key`）
-3. **剧本拆分默认模型** `StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL`（`gemini-3-flash-preview`，走 JIEKOU/google key）
+3. **JIEKOU 在线模型** `LLMModel.GEMINI_3_5_FLASH`（`gemini-3.5-flash`，走 JIEKOU/google key；2026-08 原第三级"剧本拆分默认模型"随默认值切 `deepseek-v4-flash` 后与第 2 级重复、被去重失效，故改为独立在线模型）
 
 独立图生视频入口（无故事板上下文）跳过第 1 步。全部候选均未配置密钥时直接回退原文，不发起必败的 LLM 调用。
 

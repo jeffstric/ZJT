@@ -64,3 +64,4 @@ auto_test/samples/*
 .codex_*
 .zcode/
 .mcp.json
+data/runtime/

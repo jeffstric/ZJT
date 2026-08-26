@@ -472,14 +472,67 @@ async def check_computing_power(auth_token: str) -> tuple[bool, int, Optional[st
         logger.error(f"算力检查异常: {str(e)}")
         return False, 0, f'算力检查异常: {str(e)}'
 
+def _get_extra_valid_models_sync() -> tuple[List[str], List[str]]:
+    """同步查询 aliyun 与本地服务（Ollama/vLLM）的可用模型（在 asyncio.to_thread 线程池中调用，
+    避免 async 接口内同步查库阻塞 Event Loop）。返回 (aliyun_models, local_models)。"""
+    aliyun_models: List[str] = []
+    local_models: List[str] = []
+
+    # 阿里云 Qwen 模型（如果配置了 API Key）
+    try:
+        from config.config_util import get_dynamic_config_value
+        from model.model import ModelModel
+        from model.vendor_model import VendorModelModel
+        from model.vendor import VendorDAO
+        qwen_api_key = get_dynamic_config_value('llm', 'qwen', 'api_key', default='')
+        if qwen_api_key:
+            all_vendor_models = VendorModelModel.get_all()
+            # 动态查询 aliyun vendor_id，避免硬编码
+            aliyun_vendor = next((v for v in VendorDAO.get_all() if v.vendor_name == 'aliyun'), None)
+            aliyun_vendor_id = aliyun_vendor.id if aliyun_vendor else 2
+            qwen_model_ids = list(set([vm.model_id for vm in all_vendor_models if vm.vendor_id == aliyun_vendor_id]))
+            for mid in qwen_model_ids:
+                local_model = ModelModel.get_by_id(mid)
+                if local_model and local_model.supports_tools:
+                    aliyun_models.append(local_model.model_name)
+    except Exception as e:
+        logger.warning(f"获取阿里云 Qwen 模型列表失败: {e}")
+
+    # 本地服务模型（Ollama / vLLM，如果启用）
+    try:
+        from config.config_util import get_dynamic_config_value
+        from model.model import ModelModel
+        from model.vendor_model import VendorModelModel
+        from model.vendor import VendorDAO
+        all_vendor_models = VendorModelModel.get_all()
+        all_vendors = VendorDAO.get_all()
+        for local_vendor_name in ('ollama', 'vllm'):
+            if not get_dynamic_config_value('llm', local_vendor_name, 'enabled', default=False):
+                continue
+            # 动态查询 vendor_id，避免硬编码
+            local_vendor = next((v for v in all_vendors if v.vendor_name == local_vendor_name), None)
+            if not local_vendor:
+                continue
+            local_model_ids = [vm.model_id for vm in all_vendor_models if vm.vendor_id == local_vendor.id]
+            for mid in local_model_ids:
+                local_model = ModelModel.get_by_id(mid)
+                if local_model and local_model.supports_tools:
+                    # 本地服务模型使用 "vendor:模型名" 前缀（供 LLMClientFactory 路由）
+                    local_models.append(f"{local_vendor_name}:{local_model.model_name}")
+    except Exception as e:
+        logger.warning(f"获取本地服务模型列表失败: {e}")
+
+    return aliyun_models, local_models
+
+
 async def validate_model(model: str, auth_token: str) -> tuple[bool, List[str], Optional[str]]:
     """
     验证模型是否有效
-    
+
     Args:
         model: 模型名称
         auth_token: 认证令牌
-        
+
     Returns:
         tuple: (is_valid: bool, valid_models: list, error_message: str or None)
     """
@@ -504,46 +557,10 @@ async def validate_model(model: str, auth_token: str) -> tuple[bool, List[str], 
         for model_info in remote_models:
             valid_models.append(model_info.get('model_name'))
 
-        # 添加阿里云 Qwen 模型（如果配置了 API Key）
-        try:
-            from config.config_util import get_dynamic_config_value
-            from model.model import ModelModel
-            from model.vendor_model import VendorModelModel
-            from model.vendor import VendorDAO
-            qwen_api_key = get_dynamic_config_value('llm', 'qwen', 'api_key', default='')
-            if qwen_api_key:
-                all_vendor_models = VendorModelModel.get_all()
-                # 动态查询 aliyun vendor_id，避免硬编码
-                aliyun_vendor = next((v for v in VendorDAO.get_all() if v.vendor_name == 'aliyun'), None)
-                aliyun_vendor_id = aliyun_vendor.id if aliyun_vendor else 2
-                qwen_model_ids = list(set([vm.model_id for vm in all_vendor_models if vm.vendor_id == aliyun_vendor_id]))
-                for mid in qwen_model_ids:
-                    local_model = ModelModel.get_by_id(mid)
-                    if local_model and local_model.supports_tools:
-                        valid_models.append(local_model.model_name)
-        except Exception as e:
-            logger.warning(f"获取阿里云 Qwen 模型列表失败: {e}")
-
-        # 添加 Ollama 本地模型（如果启用）
-        try:
-            from config.config_util import get_dynamic_config_value
-            from model.model import ModelModel
-            from model.vendor_model import VendorModelModel
-            from model.vendor import VendorDAO
-            ollama_enabled = get_dynamic_config_value('llm', 'ollama', 'enabled', default=False)
-            if ollama_enabled:
-                ollama_vendor_models = VendorModelModel.get_all()
-                # 动态查询 ollama vendor_id，避免硬编码
-                ollama_vendor = next((v for v in VendorDAO.get_all() if v.vendor_name == 'ollama'), None)
-                ollama_vendor_id = ollama_vendor.id if ollama_vendor else 3
-                ollama_model_ids = [vm.model_id for vm in ollama_vendor_models if vm.vendor_id == ollama_vendor_id]
-                for mid in ollama_model_ids:
-                    local_model = ModelModel.get_by_id(mid)
-                    if local_model and local_model.supports_tools:
-                        # Ollama 模型使用 ollama: 前缀
-                        valid_models.append(f"ollama:{local_model.model_name}")
-        except Exception as e:
-            logger.warning(f"获取 Ollama 模型列表失败: {e}")
+        # 添加 aliyun 与本地服务（Ollama/vLLM）模型：同步查库放线程池，避免阻塞 Event Loop
+        aliyun_models, local_models = await asyncio.to_thread(_get_extra_valid_models_sync)
+        valid_models.extend(aliyun_models)
+        valid_models.extend(local_models)
 
         # 验证用户选择的模型是否在有效列表中
         if model not in valid_models:

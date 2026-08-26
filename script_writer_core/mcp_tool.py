@@ -597,6 +597,7 @@ def list_llm_models(user_id: str, world_id: str, auth_token: str) -> Dict[str, A
                 'claude': ('llm', 'claude', 'api_key'),
                 'aliyun': ('llm', 'qwen', 'api_key'),
                 'ollama': ('llm', 'ollama', 'enabled'),
+                'vllm': ('llm', 'vllm', 'enabled'),
                 'volcengine': ('volcengine', 'api_key'),
                 'zjt_api': ('api_aggregator', 'site_0', 'api_key'),
                 'deepseek': ('llm', 'deepseek', 'api_key'),

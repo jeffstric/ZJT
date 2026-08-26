@@ -391,7 +391,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'pipeline.h3_prompt_optimize_model',
         'value_type': 'string',
-        'description': 'H3 提示词优化使用的聊天模型名（默认 deepseek-v4-flash）。密钥未配置时依次回退：故事板对话模型 → 本项 → 剧本拆分默认模型(gemini-3-flash-preview)，全部未配置则回退原文',
+        'description': 'H3 提示词优化使用的聊天模型名（默认 deepseek-v4-flash）。密钥未配置时依次回退：故事板对话模型 → 本项 → JIEKOU 在线模型 gemini-3.5-flash，全部未配置则回退原文',
         'editable': True,
         'is_sensitive': False,
         'quick_config': False
@@ -803,6 +803,80 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'key': 'llm.ollama.enable_thinking',
         'value_type': 'bool',
         'description': 'Ollama 是否启用思维链（默认开启，对齐 Qwen3.8 官方思考模式）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
+    # ==================== vLLM 配置 ====================
+    {
+        'key': 'llm.vllm.enabled',
+        'value_type': 'bool',
+        'description': '是否启用 vLLM 本地推理服务',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.base_url',
+        'value_type': 'string',
+        'description': 'vLLM 服务地址（默认 http://localhost:8001，8000 为主服务端口）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.temperature',
+        'value_type': 'float',
+        'description': 'vLLM 温度参数 (0.0-2.0，默认 1.0 对齐 Qwen3.8 思考模式)',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.top_p',
+        'value_type': 'float',
+        'description': 'vLLM 核采样概率 (0.0-1.0，默认 0.95)',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.top_k',
+        'value_type': 'int',
+        'description': 'vLLM Top-K 采样（默认 20）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.min_p',
+        'value_type': 'float',
+        'description': 'vLLM 最小概率阈值（默认 0.0）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.presence_penalty',
+        'value_type': 'float',
+        'description': 'vLLM 存在惩罚（默认 0.0）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.repetition_penalty',
+        'value_type': 'float',
+        'description': 'vLLM 重复惩罚（默认 1.0）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.enable_thinking',
+        'value_type': 'bool',
+        'description': 'vLLM 是否启用思维链（默认开启，对齐 Qwen3.8 官方思考模式）',
         'editable': True,
         'is_sensitive': False,
         'quick_config': True

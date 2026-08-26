@@ -197,6 +197,21 @@ DEFAULT_VENDOR_MODEL_BILLING: List[Dict[str, Any]] = [
             },
         ],
     },
+    # ---------- vLLM 本地推理（复用 qwen3.8:27b，阈值与 ollama 同名模型对齐）----------
+    {
+        "vendor_name": "vllm",
+        "model_name": "qwen3.8:27b",
+        "note": "vLLM 本地 Qwen3.8-27B，阈值对齐既有 ollama 同名模型",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "input_token_threshold": 200000,
+                "out_token_threshold": 10000,
+                "cache_read_threshold": 100000,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
 ]
 
 

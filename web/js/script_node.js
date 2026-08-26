@@ -474,7 +474,7 @@
           if(!data.success || !data.models || data.models.length === 0) {
             // 加载失败时使用默认模型
             if(splitModelSelect) {
-              splitModelSelect.innerHTML = '<option value="gemini-3-flash-preview">Gemini 3 Flash (默认)</option>';
+              splitModelSelect.innerHTML = '<option value="deepseek-v4-flash">DeepSeek V4 Flash (默认)</option>';
             }
             return;
           }
@@ -499,7 +499,7 @@
         } catch (error) {
           console.error('加载拆分模型列表失败:', error);
           if(splitModelSelect) {
-            splitModelSelect.innerHTML = '<option value="gemini-3-flash-preview">Gemini 3 Flash (默认)</option>';
+            splitModelSelect.innerHTML = '<option value="deepseek-v4-flash">DeepSeek V4 Flash (默认)</option>';
           }
         }
       }
