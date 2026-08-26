@@ -440,9 +440,12 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
 
         self.assertEqual(impl_name, "test_ok_alt")
 
-    def test_all_unavailable_falls_back_to_default(self):
+    def test_all_unavailable_returns_none(self):
         """
-        所有实现方都不可用 → 回退到默认实现方（至少有值）
+        所有实现方都不可用 → 显式失败（不再静默回退被禁用/缺配置的默认实现方）。
+
+        旧行为会回退到 implementation 字段指向的不可用实现方，任务提交后才
+        失败；新行为直接返回 None 并记录 NO_IMPLEMENTATION_AVAILABLE。
         """
         config = self._register_test_task([
             ("test_all_missing_a", MockConfigMissingDriver, 100),
@@ -453,8 +456,11 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
             self.TASK_TYPE_ID, user_id=None, config=config
         )
 
-        # 回退到 implementation 字段（第一个）
-        self.assertEqual(impl_name, "test_all_missing_a")
+        self.assertIsNone(impl_name)
+        self.assertEqual(
+            VideoDriverFactory._last_create_error.get("reason"),
+            "NO_IMPLEMENTATION_AVAILABLE",
+        )
 
     def test_default_available_selected_directly(self):
         """

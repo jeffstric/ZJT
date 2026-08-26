@@ -15,9 +15,8 @@ class TestUnifiedConfigRegistryImplementations(unittest.TestCase):
         from config.unified_config import UnifiedConfigRegistry, ALL_IMPLEMENTATIONS, init_unified_config
 
         # 重新初始化配置（确保干净状态）
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()
 
         # 初始化基础配置
         init_unified_config()
@@ -25,9 +24,7 @@ class TestUnifiedConfigRegistryImplementations(unittest.TestCase):
     def tearDown(self):
         """测试后清理"""
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
     def test_get_implementation_existing(self):
         """测试获取已存在的实现方配置"""
@@ -216,9 +213,7 @@ class TestImplementationConfig(unittest.TestCase):
         """Seedance 2.0 系列实现方应暴露可选视频分辨率"""
         from config.unified_config import UnifiedConfigRegistry, init_unified_config
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore()
         init_unified_config()
 
         expected = {
@@ -334,16 +329,13 @@ class TestUnifiedTaskConfigComputingPower(unittest.TestCase):
     def setUp(self):
         """测试前准备"""
         from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()
 
     def tearDown(self):
         """测试后清理"""
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
     def test_get_computing_power_from_task_config(self):
         """测试从任务配置获取算力（任务配置有权值时）"""
@@ -435,16 +427,13 @@ class TestSupportsAutoFace(unittest.TestCase):
     def setUp(self):
         """初始化完整配置（确保 huimengi 等实现方已注册）"""
         from config.unified_config import UnifiedConfigRegistry, init_unified_config
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()
         init_unified_config()
 
     def tearDown(self):
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
     def test_huimengi_implementations_support_auto_face(self):
         """huimengi 3 个实现方应标识 supports_auto_face=True"""

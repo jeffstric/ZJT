@@ -819,6 +819,31 @@ class UnifiedConfigRegistry:
     _implementations: Dict[str, ImplementationConfig] = {}  # 实现方配置
 
     @classmethod
+    def snapshot(cls) -> dict:
+        """测试辅助：快照当前注册表（三个映射的浅拷贝）。
+
+        需要"清空注册表再注册测试数据"的测试必须在 setUp 快照、tearDown
+        restore——清空不恢复会让同进程后续测试查不到任何真实任务
+        （曾导致 CI 全量跑时 qwen_image_edit 等任务注册用例连锁失败）。
+        """
+        return {
+            "configs": dict(cls._configs),
+            "id_map": dict(cls._id_map),
+            "implementations": dict(cls._implementations),
+        }
+
+    @classmethod
+    def restore(cls, snapshot: Optional[dict] = None) -> None:
+        """测试辅助：整体恢复快照（未传快照时仅清空）。"""
+        cls._configs.clear()
+        cls._id_map.clear()
+        cls._implementations.clear()
+        if snapshot:
+            cls._configs.update(snapshot["configs"])
+            cls._id_map.update(snapshot["id_map"])
+            cls._implementations.update(snapshot["implementations"])
+
+    @classmethod
     def register(cls, config: UnifiedTaskConfig) -> None:
         """注册任务配置"""
         if config.key in cls._configs:

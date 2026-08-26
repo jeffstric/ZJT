@@ -280,17 +280,26 @@ class TestPerformUpdate(unittest.TestCase):
             "error: unable to unlink old "
             "'enterprise/pyarmor_runtime_015284/pyarmor_runtime.pyd': Invalid argument"
         )
-        mock_git.side_effect = [
-            (0, "", ""),          # fetch
-            (1, "", unlink_err),  # reset tag fail (unlink)
-            (0, "", ""),          # retry reset tag ok
-        ]
+        # 按参数分派的 mock：reset 第一次失败（.pyd 占用）、重试成功；
+        # 其余 git 调用（fetch / 用户模块目录 ls-files、ls-tree 安全检查）一律成功。
+        reset_calls = {"count": 0}
+
+        def dispatch_run_git(git_cmd, args, cwd, timeout=30, capture=True):
+            if args[:2] == ["reset", "--hard"]:
+                reset_calls["count"] += 1
+                if reset_calls["count"] == 1:
+                    return (1, "", unlink_err)
+                return (0, "", "")
+            return (0, "", "")
+
+        mock_git.side_effect = dispatch_run_git
         with patch('scripts.upgrade_check.sys.platform', 'win32'):
             success, message = perform_update(
                 "git", Path("/fake"), "main", 30, target_tag="2.2.0"
             )
         self.assertTrue(success)
         self.assertEqual(message, "")
+        self.assertGreaterEqual(reset_calls["count"], 2)
         # quarantine 至少被调用：预清理 + 失败后重试前
         self.assertGreaterEqual(mock_quarantine.call_count, 2)
 

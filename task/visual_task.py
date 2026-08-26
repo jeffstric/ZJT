@@ -50,8 +50,7 @@ from config.constant import (
     TASK_STATUS_WAITING_BEFORE_FINISH,
     RUNNINGHUB_TASK_TYPES,
     RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT,
-    get_sync_orphan_grace_seconds,
-    USER_MODULE_IMPL_NAME_PREFIX
+    get_sync_orphan_grace_seconds
 )
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
@@ -1412,6 +1411,10 @@ def process_task_with_retry(task_type, process_func):
                     from config.unified_config import get_implementation_name
 
                     recorded_impl = get_implementation_name(ai_tool.implementation)
+                    # 用户模块实现方前缀常量惰性导入：主仓核心模块级 import 不依赖
+                    # 用户模块契约常量，避免测试 stub 的常量清单被迫同步维护
+                    from config.constant import USER_MODULE_IMPL_NAME_PREFIX
+
                     if recorded_impl.startswith(USER_MODULE_IMPL_NAME_PREFIX):
                         is_runninghub = False
 
