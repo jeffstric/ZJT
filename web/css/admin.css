@@ -3574,13 +3574,55 @@ body {
     }
 }
 
+/* 模型管理页：本地推理服务（Ollama / vLLM）配置框（独立于计费 AI 框的靛蓝系） */
+.local-inference-box {
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+    border: 1px solid #6366f1;
+    border-left: 4px solid #4f46e5;
+    border-radius: 8px;
+}
+
+.local-inference-title {
+    color: #3730a3;
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.local-inference-desc {
+    margin: 0 0 12px;
+    color: #312e81;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.local-inference-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.local-inference-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #3730a3;
+    min-width: 56px;
+}
+
+.local-inference-hint {
+    font-size: 12px;
+    color: #6366f1;
+}
+
 /* 模型管理页：本地推理服务（Ollama / vLLM）配置行 */
 .local-inference-switch {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     font-size: 13px;
-    color: #92400e;
+    color: #3730a3;
     cursor: pointer;
     min-width: 72px;
 }
