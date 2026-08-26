@@ -270,6 +270,7 @@
   "btn_quick_select": "Quick Select",
   "quick_config_empty_title": "Please select a provider from the left to configure",
   "quick_config_empty_hint": "Or click \"Quick Select\" to auto-select recommended providers",
+  "quick_config_locate_hint": "Selected — click to locate its config card on the right; use the ✕ on the card to remove",
   "btn_register_guide": "Registration Guide",
   "btn_legacy_user_login": "Legacy User Login",
   "badge_configured": "Configured",

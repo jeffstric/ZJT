@@ -2428,6 +2428,25 @@ body {
     overflow: hidden;
 }
 
+/* 左侧点击已选供应商时，右侧定位卡片的短暂高亮 */
+.qc-config-card-highlight {
+    animation: qc-card-highlight 1.6s ease-out;
+}
+
+@keyframes qc-card-highlight {
+    0% {
+        box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.55);
+        border-color: #3b82f6;
+    }
+    60% {
+        box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.25);
+    }
+    100% {
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+        border-color: var(--admin-border);
+    }
+}
+
 .qc-config-header {
     display: flex;
     justify-content: space-between;

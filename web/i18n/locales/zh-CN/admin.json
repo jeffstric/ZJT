@@ -270,6 +270,7 @@
   "btn_quick_select": "快速选择",
   "quick_config_empty_title": "请从左侧选择服务商进行配置",
   "quick_config_empty_hint": "或点击 \"快速选择\" 按钮自动选择推荐服务商",
+  "quick_config_locate_hint": "已选择，点击定位右侧配置卡片；移除请在右侧卡片点 ✕",
   "btn_register_guide": "注册引导",
   "btn_legacy_user_login": "老用户登录",
   "badge_configured": "已配置",

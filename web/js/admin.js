@@ -590,11 +590,16 @@ function translateProvider(p, tFn) {
     return translated;
 }
 
-// 构建 configKey -> { providerId, fieldId } 的反向映射
+// 构建 configKey -> [{ providerId, fieldId }, ...] 的反向映射（一对多）
+// 同一配置键可被多个供应商共享（如 duomi.token 同时属于多米生图/生视频，
+// volcengine.api_key 属于火山大模型/生图/生视频），需全部映射
 const CONFIG_KEY_TO_PROVIDER_FIELD = {};
 PROVIDER_DEFINITIONS.forEach(provider => {
     Object.entries(provider.configKeyMap).forEach(([fieldId, configKey]) => {
-        CONFIG_KEY_TO_PROVIDER_FIELD[configKey] = { providerId: provider.id, fieldId };
+        if (!CONFIG_KEY_TO_PROVIDER_FIELD[configKey]) {
+            CONFIG_KEY_TO_PROVIDER_FIELD[configKey] = [];
+        }
+        CONFIG_KEY_TO_PROVIDER_FIELD[configKey].push({ providerId: provider.id, fieldId });
     });
 });
 
@@ -3494,10 +3499,9 @@ const AdminApp = {
 
                             if (response.data.code === 0) {
                                 const value = response.data.data.config_value || '';
-                                // 通过反向映射找到对应的 provider 和 field
-                                const mapping = CONFIG_KEY_TO_PROVIDER_FIELD[config.key];
-                                if (mapping) {
-                                    const { providerId, fieldId } = mapping;
+                                // 通过反向映射找到对应的 provider 和 field（一对多：共享键映射到多个供应商）
+                                const mappings = CONFIG_KEY_TO_PROVIDER_FIELD[config.key] || [];
+                                mappings.forEach(({ providerId, fieldId }) => {
                                     // 初始化 provider 的 form data
                                     if (!this.quickConfigModal.providerFormData[providerId]) {
                                         this.quickConfigModal.providerFormData[providerId] = {};
@@ -3517,7 +3521,7 @@ const AdminApp = {
                                             this.quickConfigModal.selectedProviderIds.push(providerId);
                                         }
                                     }
-                                }
+                                });
                             }
                         } catch (e) {
                             console.log(`Config ${config.key} not found, will create on save`);
@@ -3553,18 +3557,16 @@ const AdminApp = {
             this.quickConfigModal.saveLoading = {};
         },
 
-        // 切换服务商选中状态
-        toggleProviderSelection(providerId) {
+        // 点击左侧服务商卡片：未选中则选中并定位；已选中则不再取消选中
+        // （取消入口收敛为右侧配置卡片右上角 ✕），而是联动右侧滚动定位到该服务商的配置卡片
+        handleProviderCardClick(providerId) {
             const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
             if (provider && provider.commercialOnly && this.isCommunityEdition) {
                 this.showToast(this.t('toast_commercial_only_use'), 'error');
                 return;
             }
 
-            const idx = this.quickConfigModal.selectedProviderIds.indexOf(providerId);
-            if (idx >= 0) {
-                this.quickConfigModal.selectedProviderIds.splice(idx, 1);
-            } else {
+            if (!this.quickConfigModal.selectedProviderIds.includes(providerId)) {
                 this.quickConfigModal.selectedProviderIds.push(providerId);
                 // 初始化 form data
                 if (!this.quickConfigModal.providerFormData[providerId]) {
@@ -3574,10 +3576,29 @@ const AdminApp = {
                     this.quickConfigModal.originalValues[providerId] = {};
                 }
             }
+            this.scrollToProviderCard(providerId);
+        },
+
+        // 右侧面板滚动定位到指定服务商的配置卡片（同 baseName 合并为同一张卡）并高亮闪烁
+        scrollToProviderCard(providerId) {
+            const base = this.getProviderBaseName(providerId);
+            this.$nextTick(() => {
+                const el = document.getElementById(`qc-config-card-${base}`);
+                if (!el) return;
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                el.classList.remove('qc-config-card-highlight');
+                // 强制重绘以重启动画，连续点击时能再次高亮
+                void el.offsetWidth;
+                el.classList.add('qc-config-card-highlight');
+                clearTimeout(this._qcHighlightTimer);
+                this._qcHighlightTimer = setTimeout(() => {
+                    el.classList.remove('qc-config-card-highlight');
+                }, 1600);
+            });
         },
 
         // 快速设置：选择 DeepSeek 大模型 + 多米（生图/生视频共享 Token）
-        // 注意：duomi_video 需排在 duomi 前，使右侧合并卡片的 id 与 CONFIG_KEY 反向映射一致
+        // 反向映射已改为一对多，duomi_video 的排序不再影响正确性，仅为保持合并卡片原有位置
         handleQuickSetup() {
             this.quickConfigModal.quickSelected = true;
             const ids = ['deepseek', 'duomi_video', 'duomi'];
@@ -3712,15 +3733,14 @@ const AdminApp = {
                     const data = response.data.data;
                     const updatedCount = data.results.filter(r => r.status === 'updated').length;
                     this.showToast(this.t('toast_config_saved') + ` (${updatedCount} 项更新)`, 'success');
-                    // 更新原始值
+                    // 更新原始值（一对多：同步到所有共享该配置键的供应商，如多米生图/生视频）
                     configs.forEach(c => {
-                        const mapping = CONFIG_KEY_TO_PROVIDER_FIELD[c.key];
-                        if (mapping && mapping.providerId === providerId) {
-                            if (!this.quickConfigModal.originalValues[providerId]) {
-                                this.quickConfigModal.originalValues[providerId] = {};
-                            }
-                            this.quickConfigModal.originalValues[providerId][mapping.fieldId] = c.value;
-                        }
+                        const mappings = CONFIG_KEY_TO_PROVIDER_FIELD[c.key] || [];
+                        mappings.forEach(({ providerId, fieldId }) => {
+                            // 只更新已初始化的供应商，避免为未选中的项创建空数据
+                            if (!this.quickConfigModal.originalValues[providerId]) return;
+                            this.quickConfigModal.originalValues[providerId][fieldId] = c.value;
+                        });
                     });
                     this.loadConfigs();
                 }
@@ -3781,7 +3801,8 @@ const AdminApp = {
 
         // 批量保存所有已选服务商的配置
         async submitQuickConfig() {
-            const configs = [];
+            // 按 configKey 去重（同 baseName 的多个供应商会产出相同的共享键，后值覆盖）
+            const configMap = new Map();
 
             this.quickConfigModal.selectedProviderIds.forEach(providerId => {
                 const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
@@ -3797,10 +3818,12 @@ const AdminApp = {
                     const currentValue = (formData[field.id] || '').trim();
                     const originalValue = (origData[field.id] || '').trim();
                     if (currentValue !== originalValue) {
-                        configs.push({ key: configKey, value: currentValue });
+                        configMap.set(configKey, currentValue);
                     }
                 });
             });
+
+            const configs = [...configMap.entries()].map(([key, value]) => ({ key, value }));
 
             if (configs.length === 0) {
                 this.showToast(this.t('toast_config_unchanged'), 'success');

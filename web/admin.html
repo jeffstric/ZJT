@@ -2553,7 +2553,8 @@
                                         selected: quickConfigModal.selectedProviderIds.includes(provider.id),
                                         disabled: isCommunityEdition && provider.commercialOnly
                                     }]"
-                                    @click="toggleProviderSelection(provider.id)">
+                                    :title="quickConfigModal.selectedProviderIds.includes(provider.id) ? t('quick_config_locate_hint') : ''"
+                                    @click="handleProviderCardClick(provider.id)">
                                 <div class="qc-card-main">
                                     <span class="qc-card-icon">{{ provider.icon }}</span>
                                     <div class="qc-card-info">
@@ -2594,7 +2595,7 @@
 
                         <!-- 服务商配置表单 -->
                         <template v-for="provider in selectedProvidersDetail" :key="provider.id">
-                            <div class="qc-config-card">
+                            <div :id="'qc-config-card-' + (provider.baseName || provider.id)" class="qc-config-card">
                                 <div class="qc-config-header">
                                     <div>
                                         <h4>{{ provider.icon }} {{ provider.name }}</h4>
