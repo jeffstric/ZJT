@@ -1209,6 +1209,7 @@ class DriverImplementation:
 
     # MiniMax H3
     MINIMAX_H3_RUNNINGHUB_V1 = 'minimax_h3_runninghub_v1'
+    MINIMAX_H3_TURBO_RUNNINGHUB_V1 = 'minimax_h3_turbo_runninghub_v1'
     MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 'minimax_h3_reference_runninghub_v1'
 
     # MiniMax H3 数字人
@@ -1353,6 +1354,7 @@ class DriverImplementationId:
 
     # MiniMax H3
     MINIMAX_H3_RUNNINGHUB_V1 = 65
+    MINIMAX_H3_TURBO_RUNNINGHUB_V1 = 71
     MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 67
 
     # MiniMax H3 数字人
@@ -1435,6 +1437,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_5_volcengine_v1': DriverImplementationId.SEEDANCE_2_5_VOLCENGINE_V1,
     'seedance_2_5_huimengi_v1': DriverImplementationId.SEEDANCE_2_5_HUIMENGI_V1,
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
+    'minimax_h3_turbo_runninghub_v1': DriverImplementationId.MINIMAX_H3_TURBO_RUNNINGHUB_V1,
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
 }
@@ -2072,6 +2075,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,
+        implementations=[
+            DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,          # 标准版（默认）
+            DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,    # 加速版
+        ],
         computing_power=0,
         supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4'],
         supported_durations=[4, 5, 6, 7, 8, 9, 10],
@@ -3056,6 +3063,21 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='RunningHub MiniMax H3 首尾帧图生视频接口（FL2VA 音频修复版）',
         sort_order=5200.0,
+        required_config_keys=['runninghub.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='minimax_h3_turbo_runninghub_v1',
+        display_name='RunningHub（加速版）',
+        driver_class='MinimaxH3TurboRunninghubV1Driver',
+        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},  # 复用 H3 首尾帧版算力表
+        enabled=True,
+        description='RunningHub MiniMax H3 图生视频加速版接口（webapp 2092199541612306434，支持首尾帧）',
+        sort_order=5202.0,
         required_config_keys=['runninghub.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},

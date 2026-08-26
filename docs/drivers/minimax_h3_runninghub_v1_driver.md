@@ -14,6 +14,10 @@ MiniMax H3 通过 RunningHub AI-App 接口调用**首尾帧图生视频**工作�
 - **实现驱动**: `DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1 = 'minimax_h3_runninghub_v1'`
 - **驱动文件**: `task/visual_drivers/minimax_h3_runninghub_v1_driver.py`
 
+> **多实现方**：本任务含两个实现方可切换（默认标准版）：
+> - 标准版 `minimax_h3_runninghub_v1`（ID 65，webapp `2086436470516174849`，尾帧节点 145）
+> - 加速版 `minimax_h3_turbo_runninghub_v1`（ID 71，webapp `2092199541612306434`，尾帧节点 146），详见 [minimax_h3_turbo_runninghub_v1_driver.md](minimax_h3_turbo_runninghub_v1_driver.md)
+
 ## 支持的参数
 
 | 参数 | 说明 | 默认值 | 可选值 |
