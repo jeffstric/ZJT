@@ -59,6 +59,16 @@ def _get_enterprise_admin_status() -> dict[str, object]:
     return enterprise_loader.get_runtime_status()
 
 
+def _is_user_module_license_active() -> bool:
+    """用户模块功能的商业许可证检查（enterprise 包缺席时恒为 False）。"""
+    try:
+        from enterprise.services.license.runtime import is_commercial_license_allowed
+
+        return bool(is_commercial_license_allowed())
+    except Exception:
+        return False
+
+
 async def require_admin(auth_token: str = Header(None, alias="Authorization")) -> User:
     """
     管理员权限校验中间件
@@ -123,9 +133,9 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
                     # 但 is_available() 在 studio license 下经严格判断返回 False，
                     # 前端据此隐藏品牌定制入口。
                     "branding": is_branding_available(),
-                    # 用户模块（接口模块）：随 enterprise 包整体注册（路由 + Supervisor
-                    # + 绑定加载），社区版显示锁定卡片。
-                    "user_modules": bool(enterprise_status["registration_ready"]),
+                    # 用户模块（接口模块）：enterprise 包完整注册且商业许可证已激活
+                    # 才对前端开放完整界面；未激活显示与社区版相同的锁定卡片。
+                    "user_modules": bool(enterprise_status["registration_ready"]) and _is_user_module_license_active(),
                 },
             }
         }
