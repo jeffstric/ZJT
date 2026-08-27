@@ -15,9 +15,14 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 sys.path.insert(0, project_root)
 
+from tests.base.test_isolation import module_stub, stub_modules
+
 # 在模块级 mock 缺失的第三方模块，避免导入 PMAgent 时失败。
 # 注意：*不* mock pymysql，防止污染数据库测试。
-_MISSING_MODULES = [
+# 仅 stub 进程里尚未加载的名字；离开 with 后 sys.modules 与父包属性整体恢复，
+# 不会像裸赋值那样把 MagicMock 永久留在 sys.modules（曾污染后续测试）。
+_conditional_stubs = {}
+for _mod in [
     'openai',
     'google', 'google.genai',
     'aiofiles',
@@ -27,49 +32,33 @@ _MISSING_MODULES = [
     'apscheduler.triggers', 'apscheduler.triggers.cron',
     'redis',
     'PIL', 'PIL.Image',
-]
-for _mod in _MISSING_MODULES:
+]:
     if _mod not in sys.modules:
-        sys.modules[_mod] = MagicMock()
+        _conditional_stubs[_mod] = MagicMock()
 
 # aiohttp 需要做成真正的 package mock，否则 litellm 的子模块导入会失败
-# 临时 mock aiohttp / pymysql 以完成 PMAgent 导入，导入后立刻恢复，避免污染其他测试
-_aiohttp_existed = 'aiohttp' in sys.modules
-if not _aiohttp_existed:
-    aiohttp_pkg = types.ModuleType('aiohttp')
-    aiohttp_pkg.__path__ = []
-    sys.modules['aiohttp'] = aiohttp_pkg
-    sys.modules['aiohttp.client_exceptions'] = types.ModuleType('aiohttp.client_exceptions')
+if 'aiohttp' not in sys.modules:
+    _aiohttp_pkg = types.ModuleType('aiohttp')
+    _aiohttp_pkg.__path__ = []
+    _conditional_stubs['aiohttp'] = _aiohttp_pkg
+    _conditional_stubs['aiohttp.client_exceptions'] = types.ModuleType('aiohttp.client_exceptions')
 
-_pymysql_existed = 'pymysql' in sys.modules
-if not _pymysql_existed:
-    sys.modules['pymysql'] = MagicMock()
-    sys.modules['pymysql.cursors'] = MagicMock()
+if 'pymysql' not in sys.modules:
+    _conditional_stubs['pymysql'] = MagicMock()
+    _conditional_stubs['pymysql.cursors'] = MagicMock()
 
 # agents 包在测试环境中可能无法直接导入，需要 mock
-_agents_existed = 'agents' in sys.modules
-if not _agents_existed:
-    agents_pkg = types.ModuleType('agents')
-    agents_pkg.__path__ = []
-    sys.modules['agents'] = agents_pkg
-    agents_skill_loader = types.ModuleType('agents.skill_loader')
-    agents_skill_loader.SopLoader = MagicMock()
-    sys.modules['agents.skill_loader'] = agents_skill_loader
+if 'agents' not in sys.modules:
+    _agents_pkg = types.ModuleType('agents')
+    _agents_pkg.__path__ = []
+    _conditional_stubs['agents'] = _agents_pkg
+    _conditional_stubs['agents.skill_loader'] = module_stub(
+        'agents.skill_loader', SopLoader=MagicMock()
+    )
 
-from script_writer_core.agents.pm_agent import PMAgent
-from script_writer_core.agents.task_manager import AgentTask
-
-if not _aiohttp_existed:
-    del sys.modules['aiohttp']
-    sys.modules.pop('aiohttp.client_exceptions', None)
-
-if not _pymysql_existed:
-    del sys.modules['pymysql']
-    sys.modules.pop('pymysql.cursors', None)
-
-if not _agents_existed:
-    del sys.modules['agents']
-    sys.modules.pop('agents.skill_loader', None)
+with stub_modules(_conditional_stubs):
+    from script_writer_core.agents.pm_agent import PMAgent
+    from script_writer_core.agents.task_manager import AgentTask
 
 
 class TestPMAgentMessageQueueRegression(unittest.TestCase):

@@ -105,6 +105,7 @@ subject_definitions / summary / retention_analysis / detailed_description / over
 ```
 
 - **参考标签**：`<picture_N>` 对应第 N 张输入参考图，`<video_N>` 第 N 个参考视频，`<audio_N>` 第 N 个参考音频，`<subject_N>` 为从资产抽象的可复用内容；标签顺序与输入资产一一对应（步骤参数 `ref_counts` 携带图/视频/音频计数）。
+- **对话保真**：六段结构描述文字输出英文，但 `<d>` 内台词/歌词及画面可见文字必须逐字保留原语言（标签按实际语言写，如 `[Chinese]`），严禁翻译；模板含中文对话正反例，原文含"引号包裹的 CJK 片段"时 user message 追加条件式点名指令，语义判断交给 LLM。
 - **触发条件**：`pipeline.h3_prompt_optimize_enabled=true`（默认开）+ 至少一项参考资产；改写失败回退原文，不阻断出片。
 - **驱动消费**：提交时优先使用 `extra_config.h3_prompt_optimize.optimized_prompt`，否则用 `ai_tool.prompt`（原文备份在 `extra_config.original_prompt`）。
 - 机制详情（原子创建、模型回退链、超时）见 `docs/backend/pipeline_steps.md` 的 `h3_prompt_optimize` 章节。

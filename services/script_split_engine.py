@@ -50,6 +50,7 @@ from services.location_structure_guard import (
     validate_segment_new_roots,
 )
 from model.script_split_task import ScriptSplitTaskModel, ScriptSplitTask
+from utils.sentry_util import SentryUtil
 from model.script_split_segment import (
     ScriptSplitSegmentModel,
     SEGMENT_STATUS_COMPLETED,
@@ -392,7 +393,7 @@ async def step_plan(task: ScriptSplitTask) -> None:
         try:
             raw_plan, finish_reason = await plan_segments(
                 anchors=anchors,
-                model=cfg.get("model") or "gemini-3-flash-preview",
+                model=cfg.get("model") or "deepseek-v4-flash",
                 auth_token=task.auth_token,
                 vendor_id=cfg.get("vendor_id"),
                 model_id=cfg.get("model_id"),
@@ -1133,6 +1134,15 @@ async def _step_generate_parallel_batch(task: ScriptSplitTask, strategy) -> None
                 raise result
     for result in results:
         if isinstance(result, BaseException):
+            try:
+                logger.error(
+                    "script_split parallel gather exception: %s",
+                    result,
+                    exc_info=(type(result), result, result.__traceback__),
+                )
+                SentryUtil.capture_exception(result)
+            except Exception:
+                logger.exception("script_split failed to record gather exception")
             raise EngineError("parallel_segment_failed", str(result))
 
     if completed == total:

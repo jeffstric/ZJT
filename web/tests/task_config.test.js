@@ -68,6 +68,17 @@ const mockConfigData = {
       category: 'image_to_video',
       computing_power: 60,
       hidden: false
+    },
+    {
+      id: 38,
+      key: 'qwen-image-edit',
+      short_key: 'qwen-image-edit',
+      name: 'Qwen Image Edit',
+      category: 'image_edit',
+      supported_ratios: [],
+      supported_sizes: [],
+      computing_power: 0,
+      hidden: false
     }
   ],
   categories: {
@@ -114,7 +125,7 @@ describe('TaskConfig - 基础查询', () => {
 
   test('getAllTasks 返回所有任务', () => {
     const tasks = TaskConfig.getAllTasks();
-    expect(tasks.length).toBe(6);
+    expect(tasks.length).toBe(7);
   });
 
   test('getTaskById 返回正确任务', () => {
@@ -207,6 +218,13 @@ describe('TaskConfig - 选项查询', () => {
 
   test('getSizeOptions 不存在的模型返回默认值', () => {
     expect(TaskConfig.getSizeOptions('nonexistent')).toEqual(['1K', '2K']);
+  });
+
+  test('空比例/分辨率列表表示该模型不提供选项', () => {
+    expect(TaskConfig.getRatioOptions('qwen-image-edit')).toEqual([]);
+    expect(TaskConfig.getSizeOptions('qwen-image-edit')).toEqual([]);
+    expect(TaskConfig.getModelConfigs()['qwen-image-edit'].ratios).toEqual([]);
+    expect(TaskConfig.getModelConfigs()['qwen-image-edit'].image_sizes).toEqual([]);
   });
 });
 

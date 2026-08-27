@@ -67,7 +67,9 @@ class BaseLLMClient(ABC):
         enable_thinking: bool = False,
         thinking_effort: str = "medium",
         agent_id: Optional[str] = None,
-        agent_scope: Optional[str] = None
+        agent_scope: Optional[str] = None,
+        request_timeout: Optional[float] = None,
+        suppress_payload_logging: bool = False,
     ) -> Any:
         """
         调用 LLM API
@@ -83,6 +85,8 @@ class BaseLLMClient(ABC):
             model_id: 模型 ID
             enable_thinking: 是否开启思考模式
             thinking_effort: 思考强度（doubao 用，值：low/medium/high）
+            request_timeout: 单次请求 HTTP 超时（秒），None 时用各客户端默认值
+            suppress_payload_logging: 是否禁止记录请求、响应和异常正文
 
         Returns:
             Response 对象（包含 choices 和 usage）
@@ -101,7 +105,15 @@ class BaseLLMClient(ABC):
         message = self.Message(content, tool_calls, reasoning_content=reasoning_content)
         return self.Response([self.Choice(message, finish_reason)], usage)
 
-    def _log_token_usage(self, usage: Dict, auth_token: str, vendor_id: int, model_id: int):
+    def _log_token_usage(
+        self,
+        usage: Dict,
+        auth_token: str,
+        vendor_id: int,
+        model_id: int,
+        *,
+        suppress_error_details: bool = False,
+    ):
         """记录 token 使用量到 perseids"""
         try:
             input_token = usage.get("input_token", 0)
@@ -128,6 +140,15 @@ class BaseLLMClient(ABC):
             )
 
             if not success:
-                logger.info(f"增加 token 日志失败: {log_message}")
+                if suppress_error_details:
+                    logger.info("增加 token 日志失败")
+                else:
+                    logger.info(f"增加 token 日志失败: {log_message}")
         except Exception as e:
-            logger.warning(f"记录 token 使用量失败: {e}")
+            if suppress_error_details:
+                logger.warning(
+                    "记录 token 使用量失败: error_type=%s",
+                    type(e).__name__,
+                )
+            else:
+                logger.warning(f"记录 token 使用量失败: {e}")

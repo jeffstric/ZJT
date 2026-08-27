@@ -71,7 +71,9 @@
             QWEN_3_5_PLUS: 'qwen3.5-plus',
             QWEN_3_6_PLUS: 'qwen3.6-plus',
             QWEN_PLUS: 'qwen-plus',
-            OLLAMA_QWEN_3_6_35B: 'qwen3.6:35b-a3b'
+            OLLAMA_QWEN_3_6_35B: 'qwen3.6:35b-a3b',
+            OLLAMA_QWEN_3_8_27B: 'qwen3.8:27b',
+            VLLM_QWEN_3_8_27B: 'qwen3.8:27b'
         };
         const STORY_TYPE_LABELS = {
             dialogue: '对话剧情',
@@ -2210,10 +2212,12 @@
                     const option = document.createElement('option');
                     const modelName = model.model_name || model.name || '';
                     const modelDesc = model.note || model.description || '';
-                    // 判断是否为 Ollama 模型：vendor_name=ollama 或 id 包含 "ollama:" 前缀
-                    const isOllama = model.vendor_name === LLMVendor.OLLAMA || String(model.id || '').startsWith('ollama:');
-                    // Ollama 模型使用带前缀的模型名，其他模型使用 model_name
-                    option.value = isOllama ? `ollama:${modelName}` : modelName;
+                    // 判断是否为本地服务模型（Ollama / vLLM）：vendor_name 命中或 id 带 "vendor:" 前缀
+                    const localVendors = ['ollama', 'vllm'];
+                    const isLocalService = localVendors.includes(model.vendor_name) ||
+                        localVendors.some(v => String(model.id || '').startsWith(v + ':'));
+                    // 本地服务模型使用 "vendor:模型名" 前缀（供后端路由），其他模型使用 model_name
+                    option.value = isLocalService ? `${model.vendor_name}:${modelName}` : modelName;
                     option.dataset.conciseName = modelName;
 
                     let displayName = modelName;
@@ -3055,12 +3059,12 @@
             updateThinkingModeUI();
             bindLlmTrackToggle();
 
-            // Ollama 模型检测和警告
+            // 本地模型（Ollama / vLLM）检测和警告
             const vendorName = selectedOption?.dataset?.vendorName || '';
-            const isOllama = vendorName === LLMVendor.OLLAMA;
+            const isLocalModel = ['ollama', 'vllm'].includes(vendorName);
 
-            if (isOllama) {
-                showWarning('⚠️ ' + (window.t ? window.t('warn_ollama_local', {model: LLMModel.QWEN_3_5_PLUS}) : '本地模型提示：Ollama 模型为本地运行，存在不稳定情况。推荐使用 ' + LLMModel.QWEN_3_5_PLUS + ' 模型以获得更好的体验。'));
+            if (isLocalModel) {
+                showWarning('⚠️ ' + (window.t ? window.t('warn_ollama_local', {model: LLMModel.QWEN_3_5_PLUS}) : '本地模型提示：本地模型（Ollama/vLLM）为本地运行，存在不稳定情况。推荐使用 ' + LLMModel.QWEN_3_5_PLUS + ' 模型以获得更好的体验。'));
             }
 
             // 其他模型不推荐提示

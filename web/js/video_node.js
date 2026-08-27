@@ -140,16 +140,14 @@
         node.data.name = file ? file.name : '';
         node.data.url = file ? URL.createObjectURL(file) : '';
         if(node.data.url){
-          thumbVideo.src = node.data.url;
-          thumbVideo.muted = true;
-          thumbVideo.loop = true;
-          thumbVideo.controls = false;
+          // 封面帧与悬停播放逻辑已内置于 setupVideoThumbnail（blob: URL 原样透传）
+          setupVideoThumbnail(thumbVideo, node.data.url);
           const displayName = node.data.name.length > 10 ? node.data.name.substring(0, 10) + '...' : node.data.name;
           nameEl.textContent = displayName;
           nameEl.title = node.data.name;
           previewField.style.display = 'block';
           previewActionsField.style.display = 'block';
-          
+
           // 获取视频时长
           thumbVideo.addEventListener('loadedmetadata', () => {
             if(thumbVideo.duration && isFinite(thumbVideo.duration)){
@@ -177,9 +175,9 @@
           showToast(window.t ? window.t('uploading_video') : '正在上传视频...', 'info');
           const permanentUrl = await uploadFile(file);
           if(permanentUrl){
-            // 更新为服务器URL
+            // 更新为服务器URL（保持封面帧+悬停播放行为）
             node.data.url = permanentUrl;
-            thumbVideo.src = proxyDownloadUrl(permanentUrl);
+            setupVideoThumbnail(thumbVideo, permanentUrl);
             showToast(window.t ? window.t('video_upload_success') : '视频上传成功', 'success');
 
             // 自动保存工作流
@@ -198,9 +196,12 @@
           const p = thumbVideo.play();
           if(p && typeof p.catch === 'function') p.catch(() => {});
           playBtn.textContent = '❚❚';
+          // 标记手动播放：悬停移开时不强制暂停
+          thumbVideo.dataset.manualPlay = '1';
         } else {
           thumbVideo.pause();
           playBtn.textContent = '▶';
+          delete thumbVideo.dataset.manualPlay;
         }
       });
 
@@ -219,6 +220,7 @@
         e.stopPropagation();
         try{ thumbVideo.pause(); } catch(err){}
         playBtn.textContent = '▶';
+        delete thumbVideo.dataset.manualPlay;
         setVideoFromFile(null);
       });
 

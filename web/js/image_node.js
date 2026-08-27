@@ -141,7 +141,7 @@
             <div class="label" data-i18n="image_node_model_label">${window.t ? window.t('image_node_model_label') : '模型'}</div>
             <select class="image-model"></select>
           </div>
-          <div class="field field-collapsible">
+          <div class="field field-collapsible image-ratio-field">
             <div class="label" data-i18n="image_node_ratio_label">${window.t ? window.t('image_node_ratio_label') : '图片比例'}</div>
             <select class="image-ratio">
               <option value="9:16" data-i18n="image_ratio_portrait_9_16">${window.t ? window.t('image_ratio_portrait_9_16') : '竖屏 (9:16)'}</option>
@@ -442,7 +442,8 @@
         const currentRatio = ratioEl.value;
         const modelConfigs = getModelConfigs();
         const config = modelConfigs[model];
-        
+        const ratioField = el.querySelector('.image-ratio-field') || ratioEl.closest('.field');
+
         const labelMap = {
           '9:16': '竖屏 (9:16)',
           '16:9': '横屏 (16:9)',
@@ -452,7 +453,13 @@
           '2:3': '竖屏 (2:3)',
           '3:2': '横屏 (3:2)'
         };
-        
+
+        if(config && Array.isArray(config.ratios) && config.ratios.length === 0) {
+          if(ratioField) ratioField.style.display = 'none';
+          return;
+        }
+        if(ratioField) ratioField.style.display = '';
+
         if(config && config.ratios && config.ratios.length > 0) {
           ratioEl.innerHTML = '';
           config.ratios.forEach(ratio => {

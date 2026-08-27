@@ -28,8 +28,10 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
 )
 
 _SYSTEM_PROMPT = (
-    "You rewrite MiniMax H3 video prompts. Output only the final English prompt. "
-    "Do not add explanations or markdown fences."
+    "You rewrite MiniMax H3 video prompts. Write the final prompt in English, except "
+    "dialogue, lyrics inside <d>, and visible on-screen text: those must stay in their "
+    "original language verbatim with an accurate language tag (e.g. [Chinese]) — never "
+    "translate them. Do not add explanations or markdown fences."
 )
 
 
@@ -66,18 +68,21 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
             "error": error,
         }
         # 直接写回，避免阶段完成先把任务打回 PENDING、apply_results 尚未执行就提交。
+        # 同步写库放线程池执行，避免阻塞事件循环
         try:
             from model import AIToolsModel
-            AIToolsModel.update(
+            extra = merge_h3_prompt_extra_config(
+                getattr(ai_tool, "extra_config", None),
+                original_prompt=original,
+                optimized_prompt=optimized,
+                variant=variant,
+                fallback=fallback,
+            )
+            await asyncio.to_thread(
+                AIToolsModel.update,
                 ai_tool.id,
                 prompt=optimized,
-                extra_config=merge_h3_prompt_extra_config(
-                    getattr(ai_tool, "extra_config", None),
-                    original_prompt=original,
-                    optimized_prompt=optimized,
-                    variant=variant,
-                    fallback=fallback,
-                ),
+                extra_config=extra,
             )
         except Exception as exc:
             self.logger.warning("Failed to persist H3 optimized prompt on ai_tool %s: %s", ai_tool.id, exc)
@@ -102,13 +107,12 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         return original, True, last_error
 
     async def _call_llm(self, original: str, variant: str, duration: float, step_params: Dict[str, Any]) -> str:
-        model, vendor_id = self.resolve_h3_optimize_model(step_params)
+        # 模型解析内部有同步查库（get_dynamic_config_value / VendorDAO.get_by_id），
+        # 放线程池执行，避免阻塞事件循环
+        model, vendor_id = await asyncio.to_thread(self.resolve_h3_optimize_model, step_params)
         if not model:
             # 所有候选模型均未配置 api_key：直接抛错，由 _optimize 回退原文，避免必败空跑。
             raise RuntimeError("no llm configured for H3 prompt optimize (all candidates missing api_key)")
-
-        from llm.llm_client_factory import get_llm_client
-        llm_client = get_llm_client(model, vendor_id=vendor_id)
 
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -118,6 +122,9 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         ]
 
         def _invoke():
+            # get_llm_client 内含同步查库（vendor_id 路由），与 LLM 调用同在 worker 线程执行
+            from llm.llm_client_factory import get_llm_client
+            llm_client = get_llm_client(model, vendor_id=vendor_id)
             # request_timeout 与外层 wait_for 对齐，避免超时后底层 httpx 线程残留空跑。
             return llm_client.call_api(
                 model=model,
@@ -145,12 +152,13 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         优先级：
           1. step.params.chat_model + chat_vendor_id（storyboard 用户在该故事板选的对话模型）
           2. pipeline.h3_prompt_optimize_model + h3_prompt_optimize_vendor_id（全局配置，默认 DeepSeek）
-          3. 剧本拆分默认模型 DEFAULT_SCRIPT_SPLIT_MODEL（gemini-3-flash-preview，走 JIEKOU/google key）
+          3. JIEKOU 在线模型 gemini-3.5-flash（最终兜底，走 JIEKOU/google key；
+             原第三级为剧本拆分默认模型，2026-08 该默认切 deepseek-v4-flash 后与第 2 级重复、
+             会被 seen 去重失效，故改独立在线模型保留"deepseek 未配置时仍有可用 LLM"的兜底能力）
 
         每步用 is_llm_client_configured 校验 api_key，避免对未配置供应商发起必败调用。
         """
         from llm.llm_client_factory import get_llm_client, is_llm_client_configured
-        from config.constant import StoryboardAgentCommandConstants
 
         candidates: List[Tuple[Optional[str], Optional[int]]] = []
 
@@ -175,8 +183,8 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
             cfg_vendor_id = None
         candidates.append((cfg_model, cfg_vendor_id))
 
-        # 3. 剧本拆分默认模型兜底
-        candidates.append((str(StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL), None))
+        # 3. JIEKOU 在线模型最终兜底（见 docstring：不能复用剧本拆分默认模型，会与第 2 级去重）
+        candidates.append((LLMModel.GEMINI_3_5_FLASH, None))
 
         seen = set()
         for cand_model, cand_vendor_id in candidates:

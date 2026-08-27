@@ -421,8 +421,9 @@ def test_create_storyboard_from_script_creates_blank_storyboard(patched_storyboa
     assert patched_storyboard_cli.storyboard_model.created[0]["episode_number"] == 2
     assert patched_storyboard_cli.storyboard_model.created[0]["script_id"] == 123
     assert patched_storyboard_cli.storyboard_model.created[0]["title"] == "Case Script"
+    # 默认拆分模型：2026-08 gemini-3-flash-preview 下线后系统默认切 deepseek-v4-flash
     assert patched_storyboard_cli.storyboard_model.created[0]["config_json"] == {
-        "selectedScriptSplitLlmModel": "gemini-3-flash-preview"
+        "selectedScriptSplitLlmModel": "deepseek-v4-flash"
     }
 
 

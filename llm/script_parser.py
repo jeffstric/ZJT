@@ -985,6 +985,8 @@ JSON_FORMAT_EXAMPLE = """{
           "camera_angle": "平视/俯拍/仰拍/微俯拍/荷兰角",
           "shot_type": "远景/中景/近景/特写",
           "camera_movement": "固定/推进/拉远/跟随/摇移/升降",
+          "presentation": "video/digital_human（只有画面恰好一个人物、该人物是唯一说话者时才可为digital_human）",
+          "presentation_reason": "呈现类型判定原因",
           "description": "镜头简要描述（涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式；若有对白须逐字写出完整台词，如【【角色】】说：\\"台词原文\\"）",
           "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像,必须详细到能让AI准确还原画面,包括：画面中所有在场角色（用【【角色名】】格式）的位置、姿态、表情或动作（固有外貌如发型/体型/标志服装不要写，交给角色库）；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等。涉及道具时用〖〖道具名〗〗格式；首帧可不写台词）",
           "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化,涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式；有对白时可在此或 description/action 中写出完整台词）",
@@ -1923,14 +1925,16 @@ JSON格式示例：
         ]
         
         # 调用LLM API（增加max_tokens以避免输出被截断）
-        logger.info(f"调用Gemini API，temperature={temperature}")
-        
+        logger.info(f"调用 LLM API，temperature={temperature}")
+
+        # 使用默认模型或指定模型（必须先填充默认值再创建客户端：
+        # model 为空时 get_llm_client 会按前缀路由到 JIEKOU/gemini 客户端，
+        # 之后才填 deepseek 默认模型会导致客户端与模型名不匹配、调用必败）
+        if not model:
+            model = "deepseek-v4-flash"
+
         # 获取 LLM 客户端（传入 vendor_id 确保正确路由）
         llm_client = get_llm_client(model, vendor_id=vendor_id)
-
-        # 使用默认模型或指定模型
-        if not model:
-            model = "gemini-3-flash-preview"
 
         # 使用 asyncio.to_thread 包装同步调用
         response = await asyncio.to_thread(

@@ -1,87 +1,74 @@
 """
 visual_task 失败原因归一化单元测试
+
+依赖 stub 全部通过 tests/base/test_isolation.py 官方工具安装：
+- with 块内即使 import 中断，离开时也必然恢复 sys.modules 与父包属性；
+- purged_modules 保证 stub 绑定版 task.visual_task 不会驻留，
+  后续测试重新 import 时按真实依赖加载。
 """
-import importlib
-import sys
-import types
 import unittest
 from unittest.mock import MagicMock
 
+from tests.base.test_isolation import module_stub, purged_modules, stub_modules
 
-_saved_modules = {
-    name: sys.modules.get(name)
-    for name in [
+_runninghub_slot_mock = MagicMock()
+_runninghub_slot_mock.SOURCE_TASK = 'task'
+
+with purged_modules('task.visual_task'), stub_modules({
+    'model': module_stub(
         'model',
+        TasksModel=MagicMock(),
+        AIToolsModel=MagicMock(),
+        RunningHubSlotsModel=MagicMock(),
+    ),
+    'model.runninghub_slots': module_stub(
         'model.runninghub_slots',
+        RunningHubSlot=_runninghub_slot_mock,
+    ),
+    'model.ai_tool_pipeline_steps': module_stub(
         'model.ai_tool_pipeline_steps',
+        PipelineStepStatus=MagicMock(),
+        PipelineStage=MagicMock(),
+        PipelineStepType=MagicMock(),
+    ),
+    'model.ai_tools_log': module_stub(
         'model.ai_tools_log',
+        AIToolsLogModel=MagicMock(),
+        AIToolsLogEvent=MagicMock(),
+    ),
+    'config.constant': module_stub(
         'config.constant',
+        TASK_COMPUTING_POWER={},
+        TASK_TYPE_GENERATE_VIDEO='generate_video',
+        AI_TOOL_STATUS_PENDING=0,
+        AI_TOOL_STATUS_PROCESSING=1,
+        AI_TOOL_STATUS_COMPLETED=2,
+        AI_TOOL_STATUS_FAILED=-1,
+        AI_TOOL_STATUS_SYNC_QUEUED=3,
+        AI_TOOL_STATUS_WAITING_PARAM_PREPARE=4,
+        AI_TOOL_STATUS_WAITING_BEFORE_FINISH=5,
+        TASK_STATUS_QUEUED=0,
+        TASK_STATUS_PROCESSING=1,
+        TASK_STATUS_COMPLETED=2,
+        TASK_STATUS_FAILED=-1,
+        TASK_STATUS_SYNC_QUEUED=3,
+        TASK_STATUS_WAITING_PARAM_PREPARE=4,
+        TASK_STATUS_WAITING_BEFORE_FINISH=5,
+        RUNNINGHUB_TASK_TYPES=[],
+        RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT=30,
+        # f668 孤儿宽限：0 = 禁用（本测试只关注失败原因归一化，不涉及孤儿恢复）
+        get_sync_orphan_grace_seconds=MagicMock(return_value=0),
+    ),
+    'config.config_util': module_stub(
         'config.config_util',
+        get_dynamic_config_value=MagicMock(return_value=False),
+    ),
+    'perseids_server.client': module_stub(
         'perseids_server.client',
-    ]
-}
-
-model_pkg = types.ModuleType('model')
-model_pkg.TasksModel = MagicMock()
-model_pkg.AIToolsModel = MagicMock()
-model_pkg.RunningHubSlotsModel = MagicMock()
-sys.modules['model'] = model_pkg
-
-runninghub_slots = types.ModuleType('model.runninghub_slots')
-runninghub_slots.RunningHubSlot = MagicMock()
-runninghub_slots.RunningHubSlot.SOURCE_TASK = 'task'
-sys.modules['model.runninghub_slots'] = runninghub_slots
-
-pipeline_steps = types.ModuleType('model.ai_tool_pipeline_steps')
-pipeline_steps.PipelineStepStatus = MagicMock()
-pipeline_steps.PipelineStage = MagicMock()
-pipeline_steps.PipelineStepType = MagicMock()
-sys.modules['model.ai_tool_pipeline_steps'] = pipeline_steps
-
-ai_tools_log = types.ModuleType('model.ai_tools_log')
-ai_tools_log.AIToolsLogModel = MagicMock()
-ai_tools_log.AIToolsLogEvent = MagicMock()
-sys.modules['model.ai_tools_log'] = ai_tools_log
-
-constant = types.ModuleType('config.constant')
-constant.TASK_COMPUTING_POWER = {}
-constant.TASK_TYPE_GENERATE_VIDEO = 'generate_video'
-constant.AI_TOOL_STATUS_PENDING = 0
-constant.AI_TOOL_STATUS_PROCESSING = 1
-constant.AI_TOOL_STATUS_COMPLETED = 2
-constant.AI_TOOL_STATUS_FAILED = -1
-constant.AI_TOOL_STATUS_SYNC_QUEUED = 3
-constant.AI_TOOL_STATUS_WAITING_PARAM_PREPARE = 4
-constant.AI_TOOL_STATUS_WAITING_BEFORE_FINISH = 5
-constant.TASK_STATUS_QUEUED = 0
-constant.TASK_STATUS_PROCESSING = 1
-constant.TASK_STATUS_COMPLETED = 2
-constant.TASK_STATUS_FAILED = -1
-constant.TASK_STATUS_SYNC_QUEUED = 3
-constant.TASK_STATUS_WAITING_PARAM_PREPARE = 4
-constant.TASK_STATUS_WAITING_BEFORE_FINISH = 5
-constant.RUNNINGHUB_TASK_TYPES = []
-constant.RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT = 30
-sys.modules['config.constant'] = constant
-
-config_util = types.ModuleType('config.config_util')
-config_util.get_dynamic_config_value = MagicMock(return_value=False)
-sys.modules['config.config_util'] = config_util
-
-perseids_client = types.ModuleType('perseids_server.client')
-perseids_client.make_perseids_request = MagicMock()
-sys.modules['perseids_server.client'] = perseids_client
-
-if 'task.visual_task' in sys.modules:
-    importlib.reload(sys.modules['task.visual_task'])
-
-from task.visual_task import _normalize_failure_reason
-
-for _name, _saved in _saved_modules.items():
-    if _saved is not None:
-        sys.modules[_name] = _saved
-    else:
-        sys.modules.pop(_name, None)
+        make_perseids_request=MagicMock(),
+    ),
+}):
+    from task.visual_task import _normalize_failure_reason
 
 
 class TestNormalizeFailureReason(unittest.TestCase):

@@ -12,9 +12,8 @@ class TestGetFrontendConfig(unittest.TestCase):
     def setUp(self):
         """测试前准备"""
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()  # 清空后由 init 重新注册测试基线
 
         # 初始化配置
         from config.unified_config import init_unified_config
@@ -23,9 +22,7 @@ class TestGetFrontendConfig(unittest.TestCase):
     def tearDown(self):
         """测试后清理"""
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(self._registry_snapshot)
 
     def test_get_frontend_config_without_user_prefs(self):
         """测试不带用户偏好时返回默认配置"""
@@ -293,9 +290,8 @@ class TestApplyUserPreferencesToTasks(unittest.TestCase):
     def setUp(self):
         """测试前准备"""
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()  # 清空后由 init 重新注册测试基线
 
         from config.unified_config import init_unified_config
         init_unified_config()
@@ -303,9 +299,7 @@ class TestApplyUserPreferencesToTasks(unittest.TestCase):
     def tearDown(self):
         """测试后清理"""
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(self._registry_snapshot)
 
     def test_apply_user_preferences_empty_prefs_uses_first_impl_power(self):
         """测试空偏好列表时，使用 implementations 中排序第一位的算力"""
@@ -538,9 +532,8 @@ class TestGetFrontendConfigStructure(unittest.TestCase):
     def setUp(self):
         """测试前准备"""
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()  # 清空后由 init 重新注册测试基线
 
         from config.unified_config import init_unified_config
         init_unified_config()
@@ -548,9 +541,7 @@ class TestGetFrontendConfigStructure(unittest.TestCase):
     def tearDown(self):
         """测试后清理"""
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(self._registry_snapshot)
 
     def test_tasks_have_required_fields(self):
         """测试任务配置包含必需字段"""
@@ -600,17 +591,14 @@ class TestVideoCloneDriverKeys(unittest.TestCase):
 
     def setUp(self):
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()  # 清空后由 init 重新注册测试基线
         from config.unified_config import init_unified_config
         init_unified_config()
 
     def tearDown(self):
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(self._registry_snapshot)
 
     def test_seedance_2_5_is_in_video_clone_allowlist(self):
         from config.unified_config import VIDEO_CLONE_DRIVER_KEYS, DriverKey

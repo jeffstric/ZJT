@@ -179,6 +179,14 @@ class TestScriptParserPromptRules:
         src = self._system_skill
         assert "2 个及以上" in src or "2个及以上" in src
 
+    def test_digital_human_requires_one_visible_speaker(self):
+        """对口型必须是唯一说话者单人出镜；无人/多人/画外音均为 video。"""
+        src = self._system_skill
+        assert "characters_present" in src
+        assert "恰好只有 1 个" in src
+        assert "画外音" in src
+        assert "蚊子" in src
+
     def test_strict_json_param_exists(self):
         """parse_script_to_shots 支持 strict_json 参数。"""
         src = self._source

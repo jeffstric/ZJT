@@ -8,6 +8,7 @@ class TestValidateVideoResolution(unittest.TestCase):
     def setUp(self):
         from config.unified_config import ImplementationConfig, UnifiedConfigRegistry
 
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
         UnifiedConfigRegistry._implementations.clear()
         UnifiedConfigRegistry.register_implementation(
             ImplementationConfig(
@@ -32,7 +33,8 @@ class TestValidateVideoResolution(unittest.TestCase):
     def tearDown(self):
         from config.unified_config import UnifiedConfigRegistry
 
-        UnifiedConfigRegistry._implementations.clear()
+        # 恢复注册表快照，避免测试实现方残留污染同进程后续测试
+        UnifiedConfigRegistry.restore(self._registry_snapshot)
 
     def test_missing_resolution_uses_implementation_default(self):
         from utils.video_resolution import validate_video_resolution

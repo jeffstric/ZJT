@@ -11,18 +11,15 @@ class TestShortKeyUniqueness(unittest.TestCase):
 
     def setUp(self):
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()
 
         from config.unified_config import init_unified_config
         init_unified_config()
 
     def tearDown(self):
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
     def test_all_short_keys_are_unique(self):
         """所有 short_key 必须全局唯一"""

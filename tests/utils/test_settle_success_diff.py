@@ -46,16 +46,13 @@ class TestSettleTaskSuccessDiff(unittest.TestCase):
 
     def setUp(self):
         from config.unified_config import UnifiedConfigRegistry, init_unified_config
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()
         init_unified_config()
 
     def tearDown(self):
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
     def _patches(self, retry_count=1, deducted=55, settled_exists=False):
         """通用 patch 集：开关开、切换过、实扣55、未结算"""

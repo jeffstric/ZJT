@@ -3,7 +3,14 @@ System Config Model - Database operations for system_config table
 系统配置表，支持动态配置热更新
 """
 from typing import Optional, Dict, Any, List
-from .database import execute_query, execute_update, execute_insert
+from .database import (
+    execute_insert,
+    execute_insert_in_transaction,
+    execute_query,
+    execute_query_in_transaction,
+    execute_update,
+    execute_update_in_transaction,
+)
 from config.constant import CONFIG_KEY_MAX_LENGTH
 import logging
 import json
@@ -120,6 +127,35 @@ class SystemConfigModel:
         except Exception as e:
             logger.error(f"Failed to create system_config: {e}")
             raise
+
+    @staticmethod
+    def create_in_transaction(
+        conn,
+        env: str,
+        config_key: str,
+        config_value: str,
+        value_type: str = 'string',
+        description: str = None,
+        editable: int = 1,
+        is_sensitive: int = 0,
+        updated_by: int = None,
+    ) -> int:
+        """在调用方事务内创建配置项，不自行提交。"""
+        if len(config_key) > CONFIG_KEY_MAX_LENGTH:
+            raise ValueError(
+                f"config_key 长度超过限制: {len(config_key)} > {CONFIG_KEY_MAX_LENGTH}, "
+                f"key: {config_key}"
+            )
+
+        sql = """
+            INSERT INTO system_config
+            (env, config_key, config_value, value_type, description, editable, is_sensitive, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        return execute_insert_in_transaction(conn, sql, (
+            env, config_key, config_value, value_type,
+            description, editable, is_sensitive, updated_by,
+        ))
     
     @staticmethod
     def get_by_id(config_id: int) -> Optional[SystemConfig]:
@@ -154,6 +190,30 @@ class SystemConfigModel:
         except Exception as e:
             logger.error(f"Failed to get system_config by key {env}:{config_key}: {e}")
             raise
+
+    @staticmethod
+    def get_by_key_in_transaction(
+        conn,
+        env: str,
+        config_key: str,
+        *,
+        for_update: bool = False,
+    ) -> Optional[SystemConfig]:
+        """在调用方事务内读取配置，可选行锁以保护读改写与审计旧值。"""
+        sql = """
+            SELECT id, env, config_key, config_value, value_type, description,
+                   editable, is_sensitive, created_at, updated_at, updated_by
+            FROM system_config WHERE env = %s AND config_key = %s
+        """
+        if for_update:
+            sql += " FOR UPDATE"
+        result = execute_query_in_transaction(
+            conn,
+            sql,
+            (env, config_key),
+            fetch_one=True,
+        )
+        return SystemConfig(**result) if result else None
     
     @staticmethod
     def get_all_by_env(env: str, editable_only: bool = False) -> List[SystemConfig]:
@@ -190,6 +250,21 @@ class SystemConfigModel:
         except Exception as e:
             logger.error(f"Failed to update system_config {config_id}: {e}")
             raise
+
+    @staticmethod
+    def update_value_in_transaction(
+        conn,
+        config_id: int,
+        config_value: str,
+        updated_by: int = None,
+    ) -> int:
+        """在调用方事务内更新配置值，不自行提交。"""
+        sql = "UPDATE system_config SET config_value = %s, updated_by = %s WHERE id = %s"
+        return execute_update_in_transaction(
+            conn,
+            sql,
+            (config_value, updated_by, config_id),
+        )
     
     @staticmethod
     def upsert(

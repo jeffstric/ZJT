@@ -4,3 +4,59 @@
 #   path/to/file.py:line:RULE
 #
 # Keep this file as small as possible. New violations should fail CI.
+
+# ---- R8 存量豁免（tests/ 模块级 sys.modules stub 裸赋值）----
+# 历史存量：这些文件的模块级 stub 注入在进程隔离执行器
+# (run_unit_tests.py --isolate) 下已无法跨模块污染，暂保留原样；
+# 后续新代码禁止裸赋值，存量文件应逐步迁移到
+# tests/base/test_isolation.py 的 stub_modules 并从本清单移除。
+tests/config/test_constants_registry.py:R8
+tests/driver_integration/test_digital_human_driver_with_db.py:R8
+tests/driver_integration/test_gemini_driver_with_db.py:R8
+tests/driver_integration/test_gemini_image_preview_common_driver.py:R8
+tests/driver_integration/test_kling_driver_with_db.py:R8
+tests/driver_integration/test_ltx2_3_driver_with_db.py:R8
+tests/driver_integration/test_ltx2_driver_with_db.py:R8
+tests/driver_integration/test_runninghub_audio_driver.py:R8
+tests/driver_integration/test_runninghub_slot_release.py:R8
+tests/driver_integration/test_seedream_computing_power_refund.py:R8
+tests/driver_integration/test_seedream_driver_with_db.py:R8
+tests/driver_integration/test_sora2_driver_with_db.py:R8
+tests/driver_integration/test_veo3_driver_with_db.py:R8
+tests/driver_integration/test_vidu_driver_with_db.py:R8
+tests/driver_integration/test_vidu_q2_driver_with_db.py:R8
+tests/driver_integration/test_wan22_driver_with_db.py:R8
+tests/drivers/test_driver_factory.py:R8
+tests/drivers/test_grok_huimengi_v1_driver.py:R8
+tests/drivers/test_happy_horse_dashscope_v1_driver.py:R8
+tests/drivers/test_kling_duomi_v1_driver.py:R8
+tests/drivers/test_pipeline_drivers.py:R8
+tests/drivers/test_qwen_multi_angle_driver.py:R8
+tests/drivers/test_seedance_2_5_and_audio_only.py:R8
+tests/drivers/test_seedance_huimengi_v1_driver.py:R8
+tests/drivers/test_seedance_kkidc_v1_driver.py:R8
+tests/drivers/test_seedance_volcengine_v1_driver.py:R8
+tests/drivers/test_veo3_common_driver.py:R8
+tests/drivers/test_veo3_duomi_v1_driver.py:R8
+tests/model/test_async_task_new_methods.py:R8
+tests/model/test_grid_image_tasks_none_fallback.py:R8
+tests/model/test_implementation_attempts.py:R8
+tests/model/test_pipeline_step.py:R8
+tests/model/test_pipeline_step_model.py:R8
+tests/script_writer_core/test_power_confirm.py:R8
+tests/services/test_captcha_service.py:R8
+tests/services/test_email_drivers.py:R8
+tests/services/test_verify_code_service.py:R8
+tests/storyboard/test_asset_task_info_result_url.py:R8
+tests/task/test_async_task_submission.py:R8
+tests/task/test_base_async_driver.py:R8
+tests/task/test_grid_image_task_batch_failure.py:R8
+tests/task/test_location_multi_angle_task.py:R8
+tests/task/test_pipeline_processor.py:R8
+tests/task/test_storyboard_grid_split_pipeline_driver.py:R8
+tests/utils/test_audio_duration_util.py:R8
+tests/utils/test_cdn_util.py:R8
+tests/utils/test_image_upload_utils.py:R8
+tests/utils/test_media_cache_temp.py:R8
+tests/utils/test_media_mapping_util.py:R8
+tests/utils/test_video_compressor.py:R8

@@ -439,12 +439,16 @@ class SyncTaskExecutor:
             )
             return None
 
-        self._cleanup_task_metadata(task_id)
         if terminated:
             self._pool_broken = True
 
         if not refund:
+            # 无失败结果可写终态，直接清理避免元数据泄漏
+            self._cleanup_task_metadata(task_id)
             return None
+        # refund=True：清理时机由调用方在终态落库后执行
+        # （check_results/force_release_task → _handle_result_then_cleanup），
+        # 避免「内存已删 + DB 仍 PROCESSING」的孤儿误判窗口
         return SyncTaskResult(
             task_id=task_id,
             ai_tool_type=ai_tool_type or 0,
@@ -462,10 +466,12 @@ class SyncTaskExecutor:
             submitted_at = self._submit_times.get(task_id)
             elapsed = time.time() - submitted_at if submitted_at else -1
             result = self._kill_stale_worker(task_id, driver, elapsed, refund=refund)
-            released = task_id not in self._futures
-        if result:
-            self._safe_handle_task_result(result)
-        return released
+        if result is None:
+            with self._state_lock:
+                return task_id not in self._futures
+        # 先写终态再清理（顺序约束见 _handle_result_then_cleanup）
+        self._handle_result_then_cleanup(result)
+        return True
 
     def submit(self, task_id: int, ai_tool_type: int, implementation_name: str = None) -> bool:
         """
@@ -521,7 +527,6 @@ class SyncTaskExecutor:
             if not self._futures:
                 return
 
-            completed_task_ids = []
             now = time.time()
             stale_detection_enabled = self._is_stale_detection_enabled()
 
@@ -539,7 +544,6 @@ class SyncTaskExecutor:
                             failure_results.append(result)
                     continue
 
-                completed_task_ids.append(task_id)
                 try:
                     result = future.result(timeout=0)
                     failure_results.append(result)
@@ -566,12 +570,26 @@ class SyncTaskExecutor:
                     failure_results.append(result)
                     continue
 
-            # 清理已完成的future
-            for task_id in completed_task_ids:
-                self._cleanup_task_metadata(task_id)
-
+        # ⚠️ 终态落库后才允许清理 _futures（见 _handle_result_then_cleanup 注释），
+        # 此处禁止在锁内批量 pop：那会重新打开孤儿误判窗口。
         for result in failure_results:
+            self._handle_result_then_cleanup(result)
+
+    def _handle_result_then_cleanup(self, result: SyncTaskResult) -> None:
+        """
+        先写任务终态（_safe_handle_task_result 落库 COMPLETED/FAILED），
+        再清理 _futures 等内存元数据。
+
+        ⚠️ 顺序不可颠倒：终态落库前 task_id 必须保留在 _futures 中（is_task_running()
+        返回 True），否则调度器（visual_task._check_task_status 的孤儿恢复）会在
+        「内存已删 + DB 仍 PROCESSING」的窗口内把刚完成的任务误判为子进程崩溃，
+        重置 PENDING 重新提交，造成同供应商重复计费调用。
+        """
+        try:
             self._safe_handle_task_result(result)
+        finally:
+            with self._state_lock:
+                self._cleanup_task_metadata(result.task_id)
 
     def _safe_handle_task_result(self, result: SyncTaskResult) -> None:
         handling_error = None

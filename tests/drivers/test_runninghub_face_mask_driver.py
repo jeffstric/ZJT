@@ -3,33 +3,28 @@ RunningHubFaceMaskDriver 静态方法单元测试
 
 测试 _parse_submit_response、_handle_submit_error、_extract_result_url 三个静态方法，
 以及 RunningHubFaceMaskConfig 常量。
+依赖 stub 通过 tests/base/test_isolation.py 官方工具安装并恢复。
 """
-import sys
 import os
 import unittest
 from unittest.mock import MagicMock, patch
 
+from tests.base.test_isolation import stub_modules
+
 # Mock 外部依赖（在 import 之前）
 # 注意：不 mock httpx 和 utils.logger_config，让 base_async_driver 正常导入
 # 只 mock 需要外部连接的依赖
-sys.modules['api.clients.runninghub_client'] = MagicMock()
-_saved_config_util = sys.modules.get('config.config_util')
-sys.modules['config.config_util'] = MagicMock()
-sys.modules['utils.file_storage'] = MagicMock()
-
 # 注意：不能 mock task.async_drivers.base_async_driver，
 # 否则 RunningHubFaceMaskDriver 会变成 Mock 对象，静态方法丢失
-
-from task.async_drivers.runninghub_face_mask_driver import (
-    RunningHubFaceMaskDriver,
-    RunningHubFaceMaskConfig,
-)
-
-# 恢复 config.config_util，防止污染后续测试
-if _saved_config_util is not None:
-    sys.modules['config.config_util'] = _saved_config_util
-else:
-    sys.modules.pop('config.config_util', None)
+with stub_modules({
+    'api.clients.runninghub_client': MagicMock(),
+    'config.config_util': MagicMock(),
+    'utils.file_storage': MagicMock(),
+}):
+    from task.async_drivers.runninghub_face_mask_driver import (
+        RunningHubFaceMaskDriver,
+        RunningHubFaceMaskConfig,
+    )
 
 
 class TestParseSubmitResponse(unittest.TestCase):

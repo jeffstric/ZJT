@@ -220,7 +220,18 @@ llm:
     min_p: 0.0  # 最小概率阈值
     presence_penalty: 1.5  # 存在惩罚
     repetition_penalty: 1.0  # 重复惩罚
-    enable_thinking: false  # 是否启用思维链（部分模型支持）
+    enable_thinking: true  # 是否启用思维链（默认开启，对齐 Qwen3.8 官方思考模式）
+  vllm:
+    enabled: false  # 是否启用 vLLM 本地推理服务
+    base_url: "http://localhost:8001"  # vLLM 服务地址（8000 为主服务默认端口，错开到 8001）
+    # 模型参数配置（默认值对齐 Qwen3.8 官方思考模式推荐值）
+    temperature: 1.0  # 温度参数 (0.0-2.0)
+    top_p: 0.95  # 核采样概率 (0.0-1.0)
+    top_k: 20  # Top-K 采样
+    min_p: 0.0  # 最小概率阈值
+    presence_penalty: 0.0  # 存在惩罚
+    repetition_penalty: 1.0  # 重复惩罚
+    enable_thinking: true  # 是否启用思维链（默认开启，对齐 Qwen3.8 官方思考模式）
   deepseek:
     api_key: ""  # DeepSeek API Key
     base_url: "https://api.deepseek.com"
@@ -372,4 +383,14 @@ upgrade:
     - "https://github.com/jeffstric/ZJT.git"      # 备用 GitHub
   branch: "main"             # 跟踪分支
   timeout_seconds: 30        # git fetch/pull 超时（秒）
+  # 不兼容时阻止 reset --hard，确保当前核心与用户模块继续工作。
+  user_module_compatibility_policy: "block"
+
+# 用户生成模块持久目录。留空时使用 data/user_modules；生产环境推荐通过
+# ZJT_USER_MODULES_DIR 指向项目仓库之外的绝对路径。
+user_modules:
+  enabled: true
+  root: ""
+  # webhook 模块需要供应商可访问的公网地址，也可设置 ZJT_USER_MODULE_CALLBACK_BASE_URL。
+  callback_base_url: ""
 

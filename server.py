@@ -21,6 +21,8 @@ from datetime import datetime
 from typing import List, Optional, Any, Dict
 from urllib.parse import urlparse
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 from api.clients.runninghub_client import RunningHubClient, TaskStatus, run_ai_app_task
 from config.config_util import resolve_bin_path
 from config.version import get_app_version
@@ -39,7 +41,7 @@ import uuid
 from PIL import Image
 from task.scheduler import init_scheduler
 from model.migration import run_migrations, get_alembic_config
-from config.unified_config import UnifiedConfigRegistry, IMPLEMENTATION_TO_ID, get_implementation_name
+from config.unified_config import UnifiedConfigRegistry, get_implementation_id, get_implementation_name
 from config.constant import (
     TaskTypeRegistry,
     TaskCategory,
@@ -465,6 +467,9 @@ app.include_router(marketing_publications_router)
 from api.notifications import router as notifications_router
 app.include_router(notifications_router)
 
+# 用户模块（接口模块）属商业版能力：路由挂载、Supervisor 启动验证与实现方绑定加载
+# 由 enterprise.register(app) 注入（见 enterprise 仓），社区版核心不引用。
+
 # 尝试加载 enterprise 模块，未加载时注册主仓库的用户路由（演示模式）
 try:
     from utils.enterprise_loader import enterprise_loader
@@ -484,7 +489,6 @@ except Exception as e:
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Initialize Sentry for error monitoring and alerting
 SentryUtil.init_from_env()
@@ -494,6 +498,8 @@ from task.visual_drivers import register_all_drivers
 from task.visual_drivers.driver_factory import VideoDriverFactory
 register_all_drivers()
 logger.info("Video drivers registered successfully")
+
+# 用户模块实现方绑定加载由 enterprise.register 注入（商业版）。
 
 # Allow CORS for local dev if needed
 app.add_middleware(
@@ -1465,7 +1471,17 @@ async def image_edit(
         context = {}
         if image_size:
             context['resolution'] = image_size
-        computing_power = task_config.get_computing_power(context=context) if task_config else 0
+        from task.visual_drivers.driver_factory import VideoDriverFactory
+        actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
+        computing_power = task_config.get_computing_power(
+            implementation=actual_impl,
+            context=context,
+        ) if task_config else 0
+        if CHECK_AUTH_TOKEN and computing_power <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="该模型尚未配置算力，请在后台「实现方管理」中设置大于 0 的算力",
+            )
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             #发起请求，检查算力是否充足
@@ -1545,6 +1561,7 @@ async def image_edit(
                 try:
                     # Store multiple image URLs as comma-separated string
                     image_path_str = ','.join(image_urls) if isinstance(image_urls, list) else image_urls
+                    impl_id = get_implementation_id(actual_impl) if actual_impl else 0
                     id = await asyncio.to_thread(
                         AIToolsModel.create,
                         prompt=prompt,
@@ -1556,6 +1573,7 @@ async def image_edit(
                         status=AI_TOOL_STATUS_PENDING,
                         image_size=image_size,
                         extra_config=audited_extra_config,
+                        implementation=impl_id,
                     )
                     await asyncio.to_thread(
                         TasksModel.create,
@@ -1622,7 +1640,17 @@ async def text_to_image(
         context = {}
         if image_size:
             context['resolution'] = image_size
-        computing_power = task_config.get_computing_power(context=context) if task_config else 0
+        from task.visual_drivers.driver_factory import VideoDriverFactory
+        actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
+        computing_power = task_config.get_computing_power(
+            implementation=actual_impl,
+            context=context,
+        ) if task_config else 0
+        if CHECK_AUTH_TOKEN and computing_power <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="该模型尚未配置算力，请在后台「实现方管理」中设置大于 0 的算力",
+            )
 
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -1680,6 +1708,7 @@ async def text_to_image(
             # Create database record (status=AI_TOOL_STATUS_PENDING, will be processed by scheduler)
             if user_id:
                 try:
+                    impl_id = get_implementation_id(actual_impl) if actual_impl else 0
                     id = await asyncio.to_thread(
                         AIToolsModel.create,
                         prompt=prompt,
@@ -1690,6 +1719,7 @@ async def text_to_image(
                         status=AI_TOOL_STATUS_PENDING,
                         image_size=image_size,
                         extra_config=audited_extra_config,
+                        implementation=impl_id,
                     )
                     await asyncio.to_thread(
                         TasksModel.create,
@@ -2056,7 +2086,7 @@ async def ai_app_run(
             # Create database record for each project
             if user_id:
                 try:
-                    impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) if actual_impl else 0
+                    impl_id = get_implementation_id(actual_impl) if actual_impl else 0
 
                     id = await asyncio.to_thread(
                         AIToolsModel.create,
@@ -2431,7 +2461,7 @@ async def ai_app_run_image(
                 # Create database record for each task
                 if user_id:
                     try:
-                        impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) if actual_impl else 0
+                        impl_id = get_implementation_id(actual_impl) if actual_impl else 0
 
                         # 判断是否需要创建 pipeline steps（Seedance 2.0 系列 + RunningHub 配置）
                         # 适配模型清单为单一来源：config/unified_config.py::SEEDANCE_FACE_MASK_DRIVER_KEYS
@@ -6235,7 +6265,7 @@ async def parse_script(
         language = body.get('language', '')  # 兼容旧版单一语言参数
         dialogue_language = body.get('dialogue_language', '') or language
         prompt_language = body.get('prompt_language', '') or language
-        model = body.get('model', 'gemini-3-flash-preview')
+        model = body.get('model', 'deepseek-v4-flash')
         model_id = body.get('model_id', '')
         vendor_id = body.get('vendor_id', None)
         enable_thinking = _json_bool(body.get('enable_thinking'), False)
@@ -6404,7 +6434,8 @@ async def _rewrite_with_llm(messages, request, auth_token):
     from llm.llm_client_factory import get_llm_client, is_llm_client_configured
 
     model = request.model or LLMModel.REDUCE_VIOLATION_DEFAULT
-    client = get_llm_client(model, vendor_id=request.vendor_id)
+    # get_llm_client 内含同步查库（vendor_id 路由 / 动态配置），放线程池避免阻塞事件循环
+    client = await asyncio.to_thread(get_llm_client, model, request.vendor_id)
 
     # 用于计费的 vendor_id / model_id：跟随实际调用的模型，默认回退到请求传入值
     bill_vendor_id = request.vendor_id
@@ -6413,7 +6444,7 @@ async def _rewrite_with_llm(messages, request, auth_token):
     # 所选拆分模型的供应商未配置 api_key 时，切兜底模型重试一次
     if not is_llm_client_configured(client):
         model = LLMModel.REDUCE_VIOLATION_DEFAULT
-        client = get_llm_client(model)
+        client = await asyncio.to_thread(get_llm_client, model)
         # 已切到默认模型：计费 ID 不再跟随原拆分模型，避免计费/用量记错账
         bill_vendor_id = None
         bill_model_id = None

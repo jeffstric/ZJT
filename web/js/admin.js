@@ -4,18 +4,10 @@
 
 // ==================== 服务商配置定义 ====================
 
+// 生图/生视频/其他合并为「多媒体」，共两类
 const CATEGORY_LABELS = {
     llm: '大模型',
-    image: '生图模型',
-    video: '生视频模型',
-    other: '其他服务'
-};
-
-const CATEGORY_DESCRIPTIONS = {
-    llm: '选择一个或多个大模型服务商',
-    image: '选择一个或多个生图服务商',
-    video: '选择一个或多个生视频服务商',
-    other: '选择其他推荐的 AI 服务'
+    multimedia: '多媒体'
 };
 
 /**
@@ -55,7 +47,7 @@ const PROVIDER_DEFINITIONS = [
         displayOrder: 99,
         baseName: 'ywapi',
         isOfficialAPI: false,
-        showInCategories: ['llm', 'image', 'video'],
+        showInCategories: ['llm', 'multimedia'],
         impactsKey: 'provider_ywapi_impacts',
         fields: [
             { id: 'name', labelKey: 'field_ywapi_name_label', type: 'text', placeholderKey: 'field_ywapi_name_placeholder', required: false, readOnly: true, defaultValue: '智剧通API' },
@@ -161,12 +153,14 @@ const PROVIDER_DEFINITIONS = [
         testEndpoint: null
     },
 
-    // ===== 生图服务商 =====
+    // ===== 生图/生视频共享键供应商 =====
+    // 多米、火山引擎（多媒体）、火山引擎海外版、聚合站 1-5 的生图与生视频共用同一配置键，
+    // 各仅保留一个条目，选中即同时覆盖生图与生视频实现方
     {
         id: 'duomi',
         nameKey: 'provider_duomi_name',
-        descKey: 'provider_duomi_image_desc',
-        category: 'image',
+        descKey: 'provider_duomi_desc',
+        category: 'multimedia',
         icon: '🎨',
         docUrl: 'https://duomiapi.com/user/register?cps=U4GgW1Fx',
         // 快速选择推荐方案：DeepSeek 大模型 + 多米（生图/生视频）
@@ -174,7 +168,7 @@ const PROVIDER_DEFINITIONS = [
         displayOrder: 4,
         baseName: 'duomi',
         isOfficialAPI: false,
-        impactsKey: 'provider_duomi_image_impacts',
+        impactsKey: 'provider_duomi_impacts',
         fields: [
             { id: 'token', label: 'Token', type: 'text', placeholderKey: 'field_token_placeholder_duomi', required: true, helpTextKey: 'field_token_help_quick_register' }
         ],
@@ -184,15 +178,15 @@ const PROVIDER_DEFINITIONS = [
     {
         id: 'huoshan_image',
         nameKey: 'provider_huoshan_name',
-        descKey: 'provider_huoshan_image_desc',
-        category: 'image',
+        descKey: 'provider_huoshan_media_desc',
+        category: 'multimedia',
         icon: '🔥',
         docUrl: 'https://console.volcengine.com/ark',
         lazyRecommended: true,
         displayOrder: 1,
         baseName: 'huoshan',
         isOfficialAPI: false,
-        impactsKey: 'provider_huoshan_image_impacts',
+        impactsKey: 'provider_huoshan_media_impacts',
         fields: [
             { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true, helpTextKey: 'field_api_key_help_volcengine' }
         ],
@@ -203,36 +197,35 @@ const PROVIDER_DEFINITIONS = [
     {
         id: 'huoshan_oversea_image',
         nameKey: 'provider_huoshan_oversea_name',
-        descKey: 'provider_huoshan_oversea_image_desc',
-        category: 'image',
+        descKey: 'provider_huoshan_oversea_desc',
+        category: 'multimedia',
         icon: '🌍',
         docUrl: 'https://console.volcengine.com/ark',
         lazyRecommended: false,
         displayOrder: 2,
         baseName: 'huoshan_oversea',
         isOfficialAPI: false,
-        impactsKey: 'provider_huoshan_oversea_image_impacts',
+        impactsKey: 'provider_huoshan_oversea_impacts',
         fields: [
             { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://ark.ap-southeast.bytepluses.com', required: false }
         ],
         configKeyMap: { api_key: 'volcengine_oversea.api_key', base_url: 'volcengine_oversea.base_url' },
-        testEndpoint: null,
-        _sharedWith: 'huoshan_oversea'
+        testEndpoint: null
     },
     {
         id: 'site_1_image',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 1 },
-        descKey: 'provider_site_image_desc',
+        descKey: 'provider_site_desc',
         descKeyParams: { n: 1 },
-        category: 'image',
+        category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
         displayOrder: 10,
         baseName: 'site_1',
         isOfficialAPI: false,
-        impactsKey: 'provider_site_image_impacts',
+        impactsKey: 'provider_site_impacts',
         fields: [
             { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 1 }, required: false, helpTextKey: 'field_site_name_help' },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
@@ -245,15 +238,15 @@ const PROVIDER_DEFINITIONS = [
         id: 'site_2_image',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 2 },
-        descKey: 'provider_site_image_desc',
+        descKey: 'provider_site_desc',
         descKeyParams: { n: 2 },
-        category: 'image',
+        category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
         displayOrder: 11,
         baseName: 'site_2',
         isOfficialAPI: false,
-        impactsKey: 'provider_site_image_impacts',
+        impactsKey: 'provider_site_impacts',
         fields: [
             { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 2 }, required: false, helpTextKey: 'field_site_name_help' },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
@@ -267,15 +260,15 @@ const PROVIDER_DEFINITIONS = [
         id: 'site_3_image',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 3 },
-        descKey: 'provider_site_image_desc',
+        descKey: 'provider_site_desc',
         descKeyParams: { n: 3 },
-        category: 'image',
+        category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
         displayOrder: 12,
         baseName: 'site_3',
         isOfficialAPI: false,
-        impactsKey: 'provider_site_image_impacts',
+        impactsKey: 'provider_site_impacts',
         fields: [
             { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 3 }, required: false, helpTextKey: 'field_site_name_help' },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
@@ -289,15 +282,15 @@ const PROVIDER_DEFINITIONS = [
         id: 'site_4_image',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 4 },
-        descKey: 'provider_site_image_desc',
+        descKey: 'provider_site_desc',
         descKeyParams: { n: 4 },
-        category: 'image',
+        category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
         displayOrder: 13,
         baseName: 'site_4',
         isOfficialAPI: false,
-        impactsKey: 'provider_site_image_impacts',
+        impactsKey: 'provider_site_impacts',
         fields: [
             { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 4 }, required: false, helpTextKey: 'field_site_name_help' },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
@@ -311,15 +304,15 @@ const PROVIDER_DEFINITIONS = [
         id: 'site_5_image',
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 5 },
-        descKey: 'provider_site_image_desc',
+        descKey: 'provider_site_desc',
         descKeyParams: { n: 5 },
-        category: 'image',
+        category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
         displayOrder: 14,
         baseName: 'site_5',
         isOfficialAPI: false,
-        impactsKey: 'provider_site_image_impacts',
+        impactsKey: 'provider_site_impacts',
         fields: [
             { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 5 }, required: false, helpTextKey: 'field_site_name_help' },
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
@@ -330,35 +323,17 @@ const PROVIDER_DEFINITIONS = [
         commercialOnly: true
     },
 
-    // ===== 生视频服务商 =====
-    {
-        id: 'duomi_video',
-        nameKey: 'provider_duomi_name',
-        descKey: 'provider_duomi_video_desc',
-        category: 'video',
-        icon: '🎨',
-        docUrl: 'https://duomiapi.com/user/register?cps=U4GgW1Fx',
-        lazyRecommended: true,
-        displayOrder: 1,
-        baseName: 'duomi',
-        isOfficialAPI: false,
-        impactsKey: 'provider_duomi_video_impacts',
-        fields: [
-            { id: 'token', label: 'Token', type: 'text', placeholderKey: 'field_token_placeholder_duomi', required: true }
-        ],
-        configKeyMap: { token: 'duomi.token' },
-        testEndpoint: null,
-        _sharedWith: 'duomi'
-    },
+    // ===== 纯生视频服务商 =====
+    // 多媒体分类统一编号：共享键供应商 1-14，纯视频 15-25，其他 26 起
     {
         id: 'runninghub',
         nameKey: 'provider_runninghub_name',
         descKey: 'provider_runninghub_desc',
-        category: 'video',
+        category: 'multimedia',
         icon: '🚀',
         docUrl: 'https://www.runninghub.cn/?inviteCode=quacwnzc',
         lazyRecommended: true,
-        displayOrder: 2,
+        displayOrder: 16,
         baseName: 'runninghub',
         isOfficialAPI: false,
         impactsKey: 'provider_runninghub_impacts',
@@ -369,53 +344,14 @@ const PROVIDER_DEFINITIONS = [
         testEndpoint: null
     },
     {
-        id: 'huoshan_video',
-        nameKey: 'provider_huoshan_name',
-        descKey: 'provider_huoshan_video_desc',
-        category: 'video',
-        icon: '🔥',
-        docUrl: 'https://console.volcengine.com/ark',
-        lazyRecommended: false,
-        displayOrder: 4,
-        baseName: 'huoshan',
-        isOfficialAPI: false,
-        impactsKey: 'provider_huoshan_video_impacts',
-        fields: [
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true, helpTextKey: 'field_api_key_help_volcengine' }
-        ],
-        configKeyMap: { api_key: 'volcengine.api_key' },
-        testEndpoint: null,
-        _sharedWith: 'huoshan'
-    },
-    {
-        id: 'huoshan_oversea_video',
-        nameKey: 'provider_huoshan_oversea_name',
-        descKey: 'provider_huoshan_oversea_video_desc',
-        category: 'video',
-        icon: '🌍',
-        docUrl: 'https://console.volcengine.com/ark',
-        lazyRecommended: false,
-        displayOrder: 5,
-        baseName: 'huoshan_oversea',
-        isOfficialAPI: false,
-        impactsKey: 'provider_huoshan_oversea_video_impacts',
-        fields: [
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://ark.ap-southeast.bytepluses.com', required: false }
-        ],
-        configKeyMap: { api_key: 'volcengine_oversea.api_key', base_url: 'volcengine_oversea.base_url' },
-        testEndpoint: null,
-        _sharedWith: 'huoshan_oversea'
-    },
-    {
         id: 'kkidc_video',
         nameKey: 'provider_kkidc_name',
         descKey: 'provider_kkidc_video_desc',
-        category: 'video',
+        category: 'multimedia',
         icon: '🔌',
         docUrl: 'https://ai.kkidc.com',
         lazyRecommended: false,
-        displayOrder: 6,
+        displayOrder: 19,
         baseName: 'kkidc',
         isOfficialAPI: false,
         impactsKey: 'provider_kkidc_video_impacts',
@@ -429,11 +365,11 @@ const PROVIDER_DEFINITIONS = [
         id: 'huimengi_video',
         nameKey: 'provider_huimengi_name',
         descKey: 'provider_huimengi_video_desc',
-        category: 'video',
+        category: 'multimedia',
         icon: '🔌',
         docUrl: 'https://api.huimengi.com',
         lazyRecommended: false,
-        displayOrder: 7,
+        displayOrder: 20,
         baseName: 'huimengi',
         isOfficialAPI: false,
         impactsKey: 'provider_huimengi_video_impacts',
@@ -443,126 +379,17 @@ const PROVIDER_DEFINITIONS = [
         configKeyMap: { api_key: 'huimengi.api_key' },
         testEndpoint: null
     },
-    {
-        id: 'site_1_video',
-        nameKey: 'provider_site_name',
-        nameKeyParams: { n: 1 },
-        descKey: 'provider_site_video_desc',
-        descKeyParams: { n: 1 },
-        category: 'video',
-        icon: '🔗',
-        lazyRecommended: false,
-        displayOrder: 10,
-        baseName: 'site_1',
-        isOfficialAPI: false,
-        impactsKey: 'provider_site_video_impacts',
-        fields: [
-            { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 1 }, required: false, helpTextKey: 'field_site_name_help' },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
-        ],
-        configKeyMap: { name: 'api_aggregator.site_1.name', base_url: 'api_aggregator.site_1.base_url', api_key: 'api_aggregator.site_1.api_key' },
-        testEndpoint: null
-    },
-    {
-        id: 'site_2_video',
-        nameKey: 'provider_site_name',
-        nameKeyParams: { n: 2 },
-        descKey: 'provider_site_video_desc',
-        descKeyParams: { n: 2 },
-        category: 'video',
-        icon: '🔗',
-        lazyRecommended: false,
-        displayOrder: 11,
-        baseName: 'site_2',
-        isOfficialAPI: false,
-        impactsKey: 'provider_site_video_impacts',
-        fields: [
-            { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 2 }, required: false, helpTextKey: 'field_site_name_help' },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
-        ],
-        configKeyMap: { name: 'api_aggregator.site_2.name', base_url: 'api_aggregator.site_2.base_url', api_key: 'api_aggregator.site_2.api_key' },
-        testEndpoint: null,
-        commercialOnly: true
-    },
-    {
-        id: 'site_3_video',
-        nameKey: 'provider_site_name',
-        nameKeyParams: { n: 3 },
-        descKey: 'provider_site_video_desc',
-        descKeyParams: { n: 3 },
-        category: 'video',
-        icon: '🔗',
-        lazyRecommended: false,
-        displayOrder: 12,
-        baseName: 'site_3',
-        isOfficialAPI: false,
-        impactsKey: 'provider_site_video_impacts',
-        fields: [
-            { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 3 }, required: false, helpTextKey: 'field_site_name_help' },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
-        ],
-        configKeyMap: { name: 'api_aggregator.site_3.name', base_url: 'api_aggregator.site_3.base_url', api_key: 'api_aggregator.site_3.api_key' },
-        testEndpoint: null,
-        commercialOnly: true
-    },
-    {
-        id: 'site_4_video',
-        nameKey: 'provider_site_name',
-        nameKeyParams: { n: 4 },
-        descKey: 'provider_site_video_desc',
-        descKeyParams: { n: 4 },
-        category: 'video',
-        icon: '🔗',
-        lazyRecommended: false,
-        displayOrder: 13,
-        baseName: 'site_4',
-        isOfficialAPI: false,
-        impactsKey: 'provider_site_video_impacts',
-        fields: [
-            { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 4 }, required: false, helpTextKey: 'field_site_name_help' },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
-        ],
-        configKeyMap: { name: 'api_aggregator.site_4.name', base_url: 'api_aggregator.site_4.base_url', api_key: 'api_aggregator.site_4.api_key' },
-        testEndpoint: null,
-        commercialOnly: true
-    },
-    {
-        id: 'site_5_video',
-        nameKey: 'provider_site_name',
-        nameKeyParams: { n: 5 },
-        descKey: 'provider_site_video_desc',
-        descKeyParams: { n: 5 },
-        category: 'video',
-        icon: '🔗',
-        lazyRecommended: false,
-        displayOrder: 14,
-        baseName: 'site_5',
-        isOfficialAPI: false,
-        impactsKey: 'provider_site_video_impacts',
-        fields: [
-            { id: 'name', labelKey: 'field_site_name_label', type: 'text', placeholderKey: 'field_site_name_placeholder', placeholderParams: { n: 5 }, required: false, helpTextKey: 'field_site_name_help' },
-            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
-        ],
-        configKeyMap: { name: 'api_aggregator.site_5.name', base_url: 'api_aggregator.site_5.base_url', api_key: 'api_aggregator.site_5.api_key' },
-        testEndpoint: null,
-        commercialOnly: true
-    },
 
     // ===== 其他推荐服务 =====
     {
         id: 'vidu',
         nameKey: 'provider_vidu_name',
         descKey: 'provider_vidu_desc',
-        category: 'other',
+        category: 'multimedia',
         icon: '🎬',
         docUrl: 'https://platform.vidu.cn/api-keys',
         lazyRecommended: false,
-        displayOrder: 1,
+        displayOrder: 26,
         baseName: 'vidu',
         isOfficialAPI: false,
         impactsKey: 'provider_vidu_impacts',
@@ -590,15 +417,20 @@ function translateProvider(p, tFn) {
     return translated;
 }
 
-// 构建 configKey -> { providerId, fieldId } 的反向映射
+// 构建 configKey -> [{ providerId, fieldId }, ...] 的反向映射（一对多）
+// 同一配置键可被多个供应商共享（如 volcengine.api_key 属于火山大模型与多媒体两条目），需全部映射
 const CONFIG_KEY_TO_PROVIDER_FIELD = {};
 PROVIDER_DEFINITIONS.forEach(provider => {
     Object.entries(provider.configKeyMap).forEach(([fieldId, configKey]) => {
-        CONFIG_KEY_TO_PROVIDER_FIELD[configKey] = { providerId: provider.id, fieldId };
+        if (!CONFIG_KEY_TO_PROVIDER_FIELD[configKey]) {
+            CONFIG_KEY_TO_PROVIDER_FIELD[configKey] = [];
+        }
+        CONFIG_KEY_TO_PROVIDER_FIELD[configKey].push({ providerId: provider.id, fieldId });
     });
 });
 
 const AdminApp = {
+    mixins: [window.UserModulesAdminMixin],
     data() {
         return {
             // 认证
@@ -640,8 +472,16 @@ const AdminApp = {
                         stacked: null,
                         rose: null
                     }
+                },
+                queues: {
+                    loading: true,
+                    error: false,
+                    overall: 'ok',
+                    generatedAt: '',
+                    list: []
                 }
             },
+            queueBacklogTimer: null,
             
             // 用户列表
             users: {
@@ -856,6 +696,13 @@ const AdminApp = {
             },
 
             // AI 改档
+            // 模型管理页：本地推理服务（Ollama / vLLM）聚合配置
+            localInference: {
+                loading: false,
+                saving: false,
+                ollama: { enabled: false, base_url: 'http://localhost:11434' },
+                vllm: { enabled: false, base_url: 'http://localhost:8001' },
+            },
             billingAi: {
                 instruction: '',
                 filterVendorId: null,
@@ -922,6 +769,7 @@ const AdminApp = {
             // 默认按社区版处理，避免 dashboard 尚未返回时闪现商业入口。
             isCommunityEdition: true,
             runninghubKeyPoolAvailable: false,
+            userModulesAvailable: false,
             brandingAvailable: false,
 
             // 商业包状态与许可证状态分离：包成功导入决定是否展示卡片，
@@ -1119,7 +967,11 @@ const AdminApp = {
         // ===== 快速配置相关计算属性 =====
 
         providersByCategory() {
-            const sortByOrder = (items) => [...items].sort((a, b) => (a.displayOrder || 999) - (b.displayOrder || 999));
+            // 推荐供应商（lazyRecommended，带 ★ 徽章）优先排在前面，同组内再按 displayOrder 排序
+            const sortByOrder = (items) => [...items].sort((a, b) => {
+                const recDiff = (b.lazyRecommended ? 1 : 0) - (a.lazyRecommended ? 1 : 0);
+                return recDiff !== 0 ? recDiff : (a.displayOrder || 999) - (b.displayOrder || 999);
+            });
             const result = {};
             Object.keys(CATEGORY_LABELS).forEach(cat => {
                 // 支持 showInCategories 属性，让一个 provider 可以在多个分类中显示
@@ -1179,21 +1031,18 @@ const AdminApp = {
             Object.keys(CATEGORY_LABELS).forEach(cat => { status[cat] = false; });
             this.quickConfigModal.selectedProviderIds.forEach(id => {
                 const provider = PROVIDER_DEFINITIONS.find(p => p.id === id);
-                if (provider) {
-                    // 支持 showInCategories 属性
-                    if (provider.showInCategories && provider.showInCategories.length > 0) {
-                        provider.showInCategories.forEach(cat => {
-                            if (cat !== 'other') status[cat] = true;
-                        });
-                    } else if (provider.category !== 'other') {
-                        status[provider.category] = true;
-                    }
+                if (!provider) return;
+                // 支持 showInCategories 属性
+                if (provider.showInCategories && provider.showInCategories.length > 0) {
+                    provider.showInCategories.forEach(cat => { status[cat] = true; });
+                } else if (provider.category) {
+                    status[provider.category] = true;
                 }
             });
             return status;
         },
 
-        // 与右侧配置卡片一致：按 baseName 去重（多米生图+生视频、火山多分类等只算 1 个）
+        // 与右侧配置卡片一致：按 baseName 去重（火山大模型/多媒体等跨分类共享键只算 1 个）
         selectedCount() {
             return this.selectedProvidersDetail.length;
         },
@@ -1218,18 +1067,14 @@ const AdminApp = {
             const _ = this.locale;
             return {
                 llm: this.t('category_llm'),
-                image: this.t('category_image'),
-                video: this.t('category_video'),
-                other: this.t('category_other')
+                multimedia: this.t('category_multimedia')
             };
         },
         categoryDescriptions() {
             const _ = this.locale;
             return {
                 llm: this.t('category_llm_desc'),
-                image: this.t('category_image_desc'),
-                video: this.t('category_video_desc'),
-                other: this.t('category_other_desc')
+                multimedia: this.t('category_multimedia_desc')
             };
         },
 
@@ -1256,6 +1101,7 @@ const AdminApp = {
         window.removeEventListener('resize', this.resizeModelAnalysisCharts);
         if (this.notificationsPollTimer) clearInterval(this.notificationsPollTimer);
         if (this.licensePollTimer) clearInterval(this.licensePollTimer);
+        this.stopQueueBacklogPoll();
         Object.values(this.dashboard.modelAnalysis.charts || {}).forEach(chart => {
             if (chart) chart.dispose();
         });
@@ -1396,6 +1242,10 @@ const AdminApp = {
                     this.runninghubKeyPoolAvailable = Boolean(
                         response.data.data.features?.runninghub_key_pool
                     );
+                    // 接口模块（用户模块）随商业版 enterprise 包提供，社区版显示锁定卡片
+                    this.userModulesAvailable = Boolean(
+                        response.data.data.features?.user_modules
+                    );
                     // 品牌定制可用性由后端 features.branding 派生，前端不重复实现授权规则。
                     this.applyBrandingAvailability(response.data.data.features?.branding);
 
@@ -1404,6 +1254,10 @@ const AdminApp = {
 
                     // 默认加载模型成功率分析
                     this.loadModelAnalysis();
+
+                    // 首页队列积压看板（15s 轮询，切走页面后停止）
+                    this.loadQueueBacklog(false);
+                    this.startQueueBacklogPoll();
 
                     // 检查 URL 参数，是否需要自动打开快速配置
                     this.checkQuickConfigParam();
@@ -1445,6 +1299,7 @@ const AdminApp = {
             ) {
                 this.currentPage = 'dashboard';
                 this.loadDashboard();
+                this.startQueueBacklogPoll();
                 this.showToast(this.t('branding_permission_revoked'), 'warning');
             }
         },
@@ -1659,6 +1514,8 @@ const AdminApp = {
             // 真正的安全边界仍由品牌 API 的 403 保证。
             if (page === 'branding' && !this.brandingAvailable) {
                 this.currentPage = 'dashboard';
+                this.loadDashboard();
+                this.startQueueBacklogPoll();
                 return;
             }
             this.currentPage = page;
@@ -1666,7 +1523,11 @@ const AdminApp = {
                 this.loadDashboard();
                 // 切到仪表盘时刷新许可证状态卡片（商业版才有数据）。
                 this.loadLicenseStatus();
-            } else if (page === 'users') {
+                this.startQueueBacklogPoll();
+            } else {
+                this.stopQueueBacklogPoll();
+            }
+            if (page === 'users') {
                 this.loadUsers();
             } else if (page === 'config') {
                 this.loadConfigs();
@@ -1676,6 +1537,8 @@ const AdminApp = {
                 this.loadMediaCacheConfig();
             } else if (page === 'implementations') {
                 this.loadImplementations();
+            } else if (page === 'userModules') {
+                if (this.userModulesAvailable) this.loadUserModules();
             } else if (page === 'runninghubKeyPool') {
                 if (this.runninghubKeyPoolAvailable) {
                     this.loadRunninghubKeyPool();
@@ -1684,6 +1547,7 @@ const AdminApp = {
                 this.loadMarketingPublications();
             } else if (page === 'models') {
                 this.loadModels();
+                this.loadLocalInferenceConfig();
             } else if (page === 'constants') {
                 this.loadConstants();
             } else if (page === 'commission') {
@@ -1953,6 +1817,9 @@ const AdminApp = {
                     this.dashboard.totalUsers = response.data.data.total_users;
                     this.dashboard.activeWorkflows3d = response.data.data.active_workflows_3d;
                     // dashboard 的 features.branding 由后端动态派生，这里同步一次
+                    this.userModulesAvailable = Boolean(
+                        response.data.data.features?.user_modules
+                    );
                     // 品牌可用性，避免在许可证状态轮询暂时失败时菜单停留在旧状态。
                     // 安全边界仍由品牌 API 的后端 403 保证，此处仅为缩短前端陈旧窗口。
                     this.applyBrandingAvailability(response.data.data.features?.branding);
@@ -1964,8 +1831,55 @@ const AdminApp = {
                 this.dashboard.loading = false;
             }
 
-            // 同步加载模型成功率分析
+            // 同步加载模型成功率分析、队列积压
             this.loadModelAnalysis();
+            this.loadQueueBacklog(false);
+        },
+
+        startQueueBacklogPoll() {
+            this.stopQueueBacklogPoll();
+            this.queueBacklogTimer = setInterval(() => {
+                if (this.currentPage === 'dashboard') {
+                    this.loadQueueBacklog(false);
+                }
+            }, 15000);
+        },
+
+        stopQueueBacklogPoll() {
+            if (this.queueBacklogTimer) {
+                clearInterval(this.queueBacklogTimer);
+                this.queueBacklogTimer = null;
+            }
+        },
+
+        async loadQueueBacklog(manual) {
+            const firstLoad = !this.dashboard.queues.list.length;
+            if (manual || firstLoad) {
+                this.dashboard.queues.loading = true;
+            }
+            try {
+                const response = await axios.get('/api/admin/dashboard/queues', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    const data = response.data.data || {};
+                    this.dashboard.queues.overall = data.overall || 'ok';
+                    this.dashboard.queues.generatedAt = data.generated_at || '';
+                    this.dashboard.queues.list = Array.isArray(data.queues) ? data.queues : [];
+                    this.dashboard.queues.error = false;
+                }
+            } catch (error) {
+                console.error('Load queue backlog failed:', error);
+                this.dashboard.queues.error = true;
+                const status = error?.response?.status;
+                if (status === 401 || status === 403) {
+                    this.handleAuthError(status);
+                } else if (manual) {
+                    this.showToast(this.t('queue_backlog_load_failed'), 'error');
+                }
+            } finally {
+                this.dashboard.queues.loading = false;
+            }
         },
 
         // 加载月活跃用户
@@ -3408,10 +3322,9 @@ const AdminApp = {
 
                             if (response.data.code === 0) {
                                 const value = response.data.data.config_value || '';
-                                // 通过反向映射找到对应的 provider 和 field
-                                const mapping = CONFIG_KEY_TO_PROVIDER_FIELD[config.key];
-                                if (mapping) {
-                                    const { providerId, fieldId } = mapping;
+                                // 通过反向映射找到对应的 provider 和 field（一对多：共享键映射到多个供应商）
+                                const mappings = CONFIG_KEY_TO_PROVIDER_FIELD[config.key] || [];
+                                mappings.forEach(({ providerId, fieldId }) => {
                                     // 初始化 provider 的 form data
                                     if (!this.quickConfigModal.providerFormData[providerId]) {
                                         this.quickConfigModal.providerFormData[providerId] = {};
@@ -3431,7 +3344,7 @@ const AdminApp = {
                                             this.quickConfigModal.selectedProviderIds.push(providerId);
                                         }
                                     }
-                                }
+                                });
                             }
                         } catch (e) {
                             console.log(`Config ${config.key} not found, will create on save`);
@@ -3467,18 +3380,16 @@ const AdminApp = {
             this.quickConfigModal.saveLoading = {};
         },
 
-        // 切换服务商选中状态
-        toggleProviderSelection(providerId) {
+        // 点击左侧服务商卡片：未选中则选中并定位；已选中则不再取消选中
+        // （取消入口收敛为右侧配置卡片右上角 ✕），而是联动右侧滚动定位到该服务商的配置卡片
+        handleProviderCardClick(providerId) {
             const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
             if (provider && provider.commercialOnly && this.isCommunityEdition) {
                 this.showToast(this.t('toast_commercial_only_use'), 'error');
                 return;
             }
 
-            const idx = this.quickConfigModal.selectedProviderIds.indexOf(providerId);
-            if (idx >= 0) {
-                this.quickConfigModal.selectedProviderIds.splice(idx, 1);
-            } else {
+            if (!this.quickConfigModal.selectedProviderIds.includes(providerId)) {
                 this.quickConfigModal.selectedProviderIds.push(providerId);
                 // 初始化 form data
                 if (!this.quickConfigModal.providerFormData[providerId]) {
@@ -3488,13 +3399,31 @@ const AdminApp = {
                     this.quickConfigModal.originalValues[providerId] = {};
                 }
             }
+            this.scrollToProviderCard(providerId);
         },
 
-        // 快速设置：选择 DeepSeek 大模型 + 多米（生图/生视频共享 Token）
-        // 注意：duomi_video 需排在 duomi 前，使右侧合并卡片的 id 与 CONFIG_KEY 反向映射一致
+        // 右侧面板滚动定位到指定服务商的配置卡片（同 baseName 合并为同一张卡）并高亮闪烁
+        scrollToProviderCard(providerId) {
+            const base = this.getProviderBaseName(providerId);
+            this.$nextTick(() => {
+                const el = document.getElementById(`qc-config-card-${base}`);
+                if (!el) return;
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                el.classList.remove('qc-config-card-highlight');
+                // 强制重绘以重启动画，连续点击时能再次高亮
+                void el.offsetWidth;
+                el.classList.add('qc-config-card-highlight');
+                clearTimeout(this._qcHighlightTimer);
+                this._qcHighlightTimer = setTimeout(() => {
+                    el.classList.remove('qc-config-card-highlight');
+                }, 1600);
+            });
+        },
+
+        // 快速设置：选择 DeepSeek 大模型 + 多米（单条目即覆盖生图/生视频，共享同一 Token）
         handleQuickSetup() {
             this.quickConfigModal.quickSelected = true;
-            const ids = ['deepseek', 'duomi_video', 'duomi'];
+            const ids = ['deepseek', 'duomi'];
             this.quickConfigModal.selectedProviderIds = [...ids];
             this.quickConfigModal.originalValues = this.quickConfigModal.originalValues || {};
             ids.forEach(id => {
@@ -3509,7 +3438,7 @@ const AdminApp = {
             this.showToast(this.t('toast_auto_selected_recommended'), 'success');
         },
 
-        // 移除已选服务商（同 baseName 的合并项一并取消，如 多米 生图/生视频）
+        // 移除已选服务商（同 baseName 的合并项一并取消，如火山大模型/多媒体条目）
         removeProvider(providerId) {
             const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
             const base = provider ? (provider.baseName || provider.id) : providerId;
@@ -3532,7 +3461,7 @@ const AdminApp = {
                 .map(p => p.id);
         },
 
-        // 获取表单字段值（同 baseName 兄弟项共享，如多米 token 只填一份）
+        // 获取表单字段值（同 baseName 兄弟项共享，如火山大模型与多媒体共用一份 api_key）
         getFormField(providerId, fieldId) {
             const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
             if (provider) {
@@ -3578,6 +3507,18 @@ const AdminApp = {
                 if (!formData) return false;
                 return Object.values(formData).some(v => v && String(v).trim());
             });
+        },
+
+        // 判断服务商"密钥"（api_key/token 必填字段）是否有值，
+        // 与 openQuickConfigModal 的自动选中规则互为正反：打开弹窗时必填字段有值才自动选中，
+        // 保存后密钥为空则撤销选中
+        isProviderKeyFilled(providerId) {
+            const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
+            if (!provider) return true;
+            const keyField = provider.fields.find(f => f.required && (f.id === 'api_key' || f.id === 'token'))
+                || provider.fields.find(f => f.required && !f.readOnly);
+            if (!keyField) return true;
+            return String(this.getFormField(providerId, keyField.id) || '').trim() !== '';
         },
 
         // 保存单个服务商的配置
@@ -3626,16 +3567,21 @@ const AdminApp = {
                     const data = response.data.data;
                     const updatedCount = data.results.filter(r => r.status === 'updated').length;
                     this.showToast(this.t('toast_config_saved') + ` (${updatedCount} 项更新)`, 'success');
-                    // 更新原始值
+                    // 更新原始值（一对多：同步到所有共享该配置键的供应商，如火山大模型/多媒体条目）
                     configs.forEach(c => {
-                        const mapping = CONFIG_KEY_TO_PROVIDER_FIELD[c.key];
-                        if (mapping && mapping.providerId === providerId) {
-                            if (!this.quickConfigModal.originalValues[providerId]) {
-                                this.quickConfigModal.originalValues[providerId] = {};
-                            }
-                            this.quickConfigModal.originalValues[providerId][mapping.fieldId] = c.value;
-                        }
+                        const mappings = CONFIG_KEY_TO_PROVIDER_FIELD[c.key] || [];
+                        mappings.forEach(({ providerId, fieldId }) => {
+                            // 只更新已初始化的供应商，避免为未选中的项创建空数据
+                            if (!this.quickConfigModal.originalValues[providerId]) return;
+                            this.quickConfigModal.originalValues[providerId][fieldId] = c.value;
+                        });
                     });
+                    // 密钥被清空时撤销左侧选中：仅处理同 baseName 整组（共享密钥的兄弟项），
+                    // 与 openQuickConfigModal 的自动选中规则互为正反
+                    const base = this.getProviderBaseName(providerId);
+                    this.quickConfigModal.selectedProviderIds = this.quickConfigModal.selectedProviderIds.filter(id =>
+                        this.getProviderBaseName(id) !== base || this.isProviderKeyFilled(id)
+                    );
                     this.loadConfigs();
                 }
             } catch (error) {
@@ -3695,7 +3641,8 @@ const AdminApp = {
 
         // 批量保存所有已选服务商的配置
         async submitQuickConfig() {
-            const configs = [];
+            // 按 configKey 去重（同 baseName 的多个供应商会产出相同的共享键，后值覆盖）
+            const configMap = new Map();
 
             this.quickConfigModal.selectedProviderIds.forEach(providerId => {
                 const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
@@ -3711,10 +3658,12 @@ const AdminApp = {
                     const currentValue = (formData[field.id] || '').trim();
                     const originalValue = (origData[field.id] || '').trim();
                     if (currentValue !== originalValue) {
-                        configs.push({ key: configKey, value: currentValue });
+                        configMap.set(configKey, currentValue);
                     }
                 });
             });
+
+            const configs = [...configMap.entries()].map(([key, value]) => ({ key, value }));
 
             if (configs.length === 0) {
                 this.showToast(this.t('toast_config_unchanged'), 'success');
@@ -3787,6 +3736,64 @@ const AdminApp = {
         },
 
         // 加载模型列表
+        // ==================== 本地推理服务配置（模型管理页聚合） ====================
+        async loadLocalInferenceConfig() {
+            this.localInference.loading = true;
+            const entries = [
+                ['ollama', 'llm.ollama.enabled', 'enabled'],
+                ['ollama', 'llm.ollama.base_url', 'base_url'],
+                ['vllm', 'llm.vllm.enabled', 'enabled'],
+                ['vllm', 'llm.vllm.base_url', 'base_url'],
+            ];
+            try {
+                await Promise.allSettled(entries.map(async ([service, key, field]) => {
+                    const response = await axios.get(`/api/admin/config/${key}`, {
+                        headers: { 'Authorization': `Bearer ${this.authToken}` },
+                    });
+                    if (response.data.code !== 0) return;
+                    const raw = response.data.data.config_value;
+                    if (field === 'enabled') {
+                        this.localInference[service].enabled = raw === true || String(raw).toLowerCase() === 'true';
+                    } else {
+                        this.localInference[service].base_url = String(raw || this.localInference[service].base_url);
+                    }
+                }));
+            } catch (error) {
+                console.warn('加载本地推理服务配置失败（沿用默认值）:', error);
+            } finally {
+                this.localInference.loading = false;
+            }
+        },
+        async saveLocalInferenceConfig() {
+            this.localInference.saving = true;
+            try {
+                const li = this.localInference;
+                const configs = [
+                    { key: 'llm.ollama.enabled', value: li.ollama.enabled ? 'true' : 'false' },
+                    { key: 'llm.ollama.base_url', value: li.ollama.base_url.trim() },
+                    { key: 'llm.vllm.enabled', value: li.vllm.enabled ? 'true' : 'false' },
+                    { key: 'llm.vllm.base_url', value: li.vllm.base_url.trim() },
+                ];
+                const response = await axios.put('/api/admin/config/batch',
+                    { configs },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } },
+                );
+                if (response.data.code === 0) {
+                    const errors = response.data.data.errors || [];
+                    if (errors.length > 0) {
+                        this.showToast(`${this.t('models_local_inference_save_failed')}: ${errors.join(', ')}`, 'error');
+                    } else {
+                        this.showToast(this.t('models_local_inference_saved'), 'success');
+                    }
+                }
+            } catch (error) {
+                console.error('Save local inference config failed:', error);
+                this.showToast(this.t('models_local_inference_save_failed'), 'error');
+            } finally {
+                this.localInference.saving = false;
+            }
+        },
+
         async loadModels() {
             this.models.loading = true;
             try {
@@ -4736,6 +4743,90 @@ const AdminApp = {
                 this.showToast(detail, 'error');
                 // 出错时恢复原值
                 this.loadImplementations();
+            } finally {
+                this.implementations.updating = null;
+            }
+        },
+
+        sortedResolutionOptions(options) {
+            return [...(options || [])].sort((left, right) => {
+                const rank = (value) => {
+                    const compact = String(value || '').replace(/\s+/g, '');
+                    if (/^\d+[Kk]$/.test(compact)) return [0, parseInt(compact, 10)];
+                    if (/^\d+[Pp]$/.test(compact)) return [1, parseInt(compact, 10)];
+                    return [2, compact.toLowerCase()];
+                };
+                const leftRank = rank(left);
+                const rightRank = rank(right);
+                if (leftRank[0] !== rightRank[0]) return leftRank[0] - rightRank[0];
+                if (leftRank[1] < rightRank[1]) return -1;
+                if (leftRank[1] > rightRank[1]) return 1;
+                return 0;
+            });
+        },
+
+        async updateResolutionMultiplier(implementation, size, group) {
+            if (!implementation.resolution_multipliers) implementation.resolution_multipliers = {};
+            const raw = implementation.resolution_multipliers[size];
+            const multiplier = parseFloat(raw);
+            if (isNaN(multiplier) || multiplier <= 0 || multiplier > 100) {
+                this.showToast(this.t('toast_invalid_multiplier_value'), 'error');
+                this.loadImplementations();
+                return;
+            }
+            implementation.resolution_multipliers[size] = multiplier;
+            this.implementations.updating = `${implementation.name}-res`;
+            try {
+                const values = {};
+                (implementation.resolution_options || []).forEach((key) => {
+                    const current = parseFloat(implementation.resolution_multipliers[key]);
+                    values[key] = isNaN(current) ? 1 : current;
+                });
+                const response = await axios.post('/api/admin/implementation-power-modifiers', {
+                    implementation_name: implementation.name,
+                    driver_key: group.driver_key,
+                    attribute: 'resolution',
+                    values,
+                    default: 1,
+                }, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` },
+                });
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_multiplier_updated', { size, value: multiplier }), 'success');
+                } else {
+                    this.showToast(response.data.message || this.t('error_update_failed'), 'error');
+                    this.loadImplementations();
+                }
+            } catch (error) {
+                console.error('Update resolution multiplier failed:', error);
+                this.showToast(error?.response?.data?.detail || this.t('error_update_failed'), 'error');
+                this.loadImplementations();
+            } finally {
+                this.implementations.updating = null;
+            }
+        },
+
+        async resetResolutionMultipliers(implementation, group) {
+            if (!confirm(this.t('confirm_restore_multipliers', { name: implementation.display_name }))) {
+                return;
+            }
+            this.implementations.updating = `${implementation.name}-res`;
+            try {
+                await axios.delete('/api/admin/implementation-power-modifiers', {
+                    data: {
+                        implementation_name: implementation.name,
+                        driver_key: group.driver_key,
+                        attribute: 'resolution',
+                    },
+                    headers: { 'Authorization': `Bearer ${this.authToken}` },
+                });
+                implementation.resolution_multipliers = {
+                    ...(implementation.default_resolution_multipliers || {}),
+                };
+                this.showToast(this.t('toast_multiplier_restored'), 'success');
+            } catch (error) {
+                console.error('Reset resolution multipliers failed:', error);
+                this.showToast(error?.response?.data?.detail || this.t('error_restore_failed'), 'error');
             } finally {
                 this.implementations.updating = null;
             }

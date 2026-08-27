@@ -14,6 +14,10 @@ MiniMax H3 通过 RunningHub AI-App 接口调用**首尾帧图生视频**工作�
 - **实现驱动**: `DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1 = 'minimax_h3_runninghub_v1'`
 - **驱动文件**: `task/visual_drivers/minimax_h3_runninghub_v1_driver.py`
 
+> **多实现方**：本任务含两个实现方可切换（默认标准版）：
+> - 标准版 `minimax_h3_runninghub_v1`（ID 65，webapp `2086436470516174849`，尾帧节点 145）
+> - 加速版 `minimax_h3_turbo_runninghub_v1`（ID 71，webapp `2092199541612306434`，尾帧节点 146），详见 [minimax_h3_turbo_runninghub_v1_driver.md](minimax_h3_turbo_runninghub_v1_driver.md)
+
 ## 支持的参数
 
 | 参数 | 说明 | 默认值 | 可选值 |
@@ -50,6 +54,7 @@ type=34 创建时会与 `ai_tool` 在**同一事务**内创建 `param_prepare` �
 - 改写模板：`task/pipeline_drivers/prompts/minimax_h3_i2va_fl2va_base_en.txt`
 - 驱动读 `extra_config.h3_prompt_optimize.optimized_prompt`，否则读 `ai_tool.prompt`
 - 关闭开关或 LLM 失败时回退原文，仍提交 RunningHub
+- **对话保真**：描述性文字输出英文，但 `<d>` 内台词/歌词及画面可见文字必须逐字保留原语言（标签按实际语言写，如 `[Chinese]`），严禁翻译；原文含"引号包裹的 CJK 片段"时 user message 追加条件式点名指令，语义判断交给 LLM（详见 `docs/backend/pipeline_steps.md` 的对话保真小节）
 
 ### 大模型回退链
 
@@ -57,7 +62,7 @@ type=34 创建时会与 `ai_tool` 在**同一事务**内创建 `param_prepare` �
 
 1. **故事板对话模型**：故事板入口生成视频时，把用户在该故事板选的对话模型写入步骤参数（`chat_model`/`chat_vendor_id`）
 2. **`pipeline.h3_prompt_optimize_model`**（默认 `deepseek-v4-flash`，走官方 DeepSeek `llm.deepseek.api_key`）
-3. **剧本拆分默认模型** `StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL`（`gemini-3-flash-preview`，走 JIEKOU/google key）
+3. **JIEKOU 在线模型** `LLMModel.GEMINI_3_5_FLASH`（`gemini-3.5-flash`，走 JIEKOU/google key；2026-08 原第三级"剧本拆分默认模型"随默认值切 `deepseek-v4-flash` 后与第 2 级重复、被去重失效，故改为独立在线模型）
 
 独立图生视频入口（无故事板上下文）跳过第 1 步。全部候选均未配置密钥时直接回退原文，不发起必败的 LLM 调用。
 

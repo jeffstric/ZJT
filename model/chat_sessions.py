@@ -22,7 +22,7 @@ class ChatSessionEntity:
         self.session_type = kwargs.get('session_type', 1)
         self.title = kwargs.get('title', None)
         self.auth_token = kwargs.get('auth_token', '')
-        self.model = kwargs.get('model', 'gemini-3-flash-preview')
+        self.model = kwargs.get('model', 'deepseek-v4-flash')
         self.model_id = kwargs.get('model_id')
         self.text_to_image_model_id = kwargs.get('text_to_image_model_id')
 
@@ -81,7 +81,7 @@ class ChatSessionsModel:
         user_id: str,
         world_id: str,
         auth_token: str = '',
-        model: str = 'gemini-3-flash-preview',
+        model: str = 'deepseek-v4-flash',
         model_id: Optional[int] = None,
         text_to_image_model_id: Optional[int] = None,
         conversation_history: list = None,
@@ -737,7 +737,7 @@ CREATE TABLE IF NOT EXISTS `chat_sessions` (
   `world_id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'World ID',
   `session_type` tinyint NOT NULL DEFAULT '1' COMMENT '会话类型: 1=剧本智能体, 2=营销智能体',
   `auth_token` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Authentication token',
-  `model` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'gemini-3-flash-preview' COMMENT 'AI model name',
+  `model` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'deepseek-v4-flash' COMMENT 'AI model name',
   `model_id` int DEFAULT NULL COMMENT 'Model ID from vendor',
   `text_to_image_model_id` int DEFAULT NULL COMMENT 'Text-to-image model task ID',
   `conversation_history` longtext COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Serialized conversation history (JSON array)',

@@ -21,6 +21,8 @@ class TestGetComputingPowerForTask(unittest.TestCase):
             TaskProvider,
         )
 
+        # 快照真实注册表，tearDown 恢复（清空不恢复会污染后续测试）
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
         UnifiedConfigRegistry._configs.clear()
         UnifiedConfigRegistry._id_map.clear()
         UnifiedConfigRegistry._implementations.clear()
@@ -137,13 +139,10 @@ class TestGetComputingPowerForTask(unittest.TestCase):
         )
 
     def tearDown(self):
-        """测试后清理"""
+        """测试后恢复真实注册表"""
         from config.unified_config import UnifiedConfigRegistry
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
-
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
     @patch('model.implementation_power.ImplementationPowerModel')
     def test_duration_based_uses_db_override_not_default(self, mock_model):
         """
@@ -276,6 +275,8 @@ class TestGetComputingPowerConfigForTask(unittest.TestCase):
             TaskProvider,
         )
 
+        # 快照真实注册表，tearDown 恢复（清空不恢复会污染后续测试）
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
         UnifiedConfigRegistry._configs.clear()
         UnifiedConfigRegistry._id_map.clear()
         UnifiedConfigRegistry._implementations.clear()
@@ -309,12 +310,10 @@ class TestGetComputingPowerConfigForTask(unittest.TestCase):
         )
 
     def tearDown(self):
+        """测试后恢复真实注册表"""
         from config.unified_config import UnifiedConfigRegistry
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
-
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
     @patch('model.implementation_power.ImplementationPowerModel')
     def test_config_info_returns_database_source_for_db_override(self, mock_model):
         """数据库有配置时应返回 source='database'"""
@@ -375,6 +374,8 @@ class TestPowerModifiers(unittest.TestCase):
             ImplementationConfig,
         )
 
+        # 快照真实注册表，tearDown 恢复（清空不恢复会污染后续测试）
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
         UnifiedConfigRegistry._configs.clear()
         UnifiedConfigRegistry._id_map.clear()
         UnifiedConfigRegistry._implementations.clear()
@@ -450,13 +451,10 @@ class TestPowerModifiers(unittest.TestCase):
         )
 
     def tearDown(self):
-        """测试后清理"""
+        """测试后恢复真实注册表"""
         from config.unified_config import UnifiedConfigRegistry
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
-
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
     def test_modifier_not_applied_without_context(self):
         """未提供 context 时，修饰符不应被应用"""
         from utils.computing_power import get_computing_power_for_task
@@ -727,6 +725,8 @@ class TestResolveVideoEditBillingDuration(unittest.TestCase):
             TaskProvider,
         )
 
+        # 快照真实注册表，tearDown 恢复（清空不恢复会污染后续测试）
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
         UnifiedConfigRegistry._configs.clear()
         UnifiedConfigRegistry._id_map.clear()
         UnifiedConfigRegistry._implementations.clear()
@@ -745,12 +745,10 @@ class TestResolveVideoEditBillingDuration(unittest.TestCase):
         )
 
     def tearDown(self):
+        """测试后恢复真实注册表"""
         from config.unified_config import UnifiedConfigRegistry
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
-
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
     @patch('utils.video_compressor.get_reference_videos_total_duration_sync')
     def test_non_billing_task_returns_user_duration(self, mock_probe):
         """非视频编辑任务（2.0）：原样返回用户时长，不触发探测"""

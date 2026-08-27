@@ -40,16 +40,13 @@ class TestResolveRefundAmount(unittest.TestCase):
 
     def setUp(self):
         from config.unified_config import UnifiedConfigRegistry, init_unified_config
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()
         init_unified_config()
 
     def tearDown(self):
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
     @patch('model.computing_power_log.ComputingPowerLogModel.get_deducted_power_by_transaction')
     def test_provider_switch_refunds_actual_deducted_amount(self, mock_get_deducted):
@@ -141,16 +138,13 @@ class TestRefundComputingPowerIntegration(unittest.TestCase):
 
     def setUp(self):
         from config.unified_config import UnifiedConfigRegistry, init_unified_config
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()
         init_unified_config()
 
     def tearDown(self):
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
     def _mock_perseids(self):
         """mock perseids 请求：取 token + 退费两个调用"""

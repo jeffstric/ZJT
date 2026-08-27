@@ -33,7 +33,7 @@
             split_multi_dialogue: scriptNodeData.splitMultiDialogue || false,
             dialogue_language: scriptNodeData.dialogueLanguage || '',
             prompt_language: scriptNodeData.promptLanguage || '',
-            model: scriptNodeData.splitModel || 'gemini-3-flash-preview',
+            model: scriptNodeData.splitModel || 'deepseek-v4-flash',
             model_id: scriptNodeData.splitModelId || '',
             vendor_id: scriptNodeData.splitModelVendorId || '',
             enable_thinking: scriptNodeData.enableThinking === true,

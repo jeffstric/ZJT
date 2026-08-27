@@ -132,6 +132,8 @@ MODEL_FAMILIES: Dict[str, str] = {
     "doubao-seed-2-0-pro": "Doubao",
     "qwen3.5-plus": "Qwen",
     "qwen3.6-plus": "Qwen",
+    "qwen-image-edit": "Qwen",
+    "qwen3.8:27b": "Qwen",
     "gemini-2.5-flash": "nano-banana",
     "gemini-3-pro": "nano-banana",
     "gemini-3.1-flash": "nano-banana",

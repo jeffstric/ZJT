@@ -3,7 +3,7 @@ Storyboard scene video_type resolution for script split.
 
 Rules (phase 1):
 - No dialogue / narration-only / multi-speaker dialogues → video
-- Exactly one speaking character → digital_human candidate
+- Only one visible character, who is also the sole speaker → digital_human candidate
   (LLM presentation=digital_human or pure-dialogue heuristic)
 """
 from __future__ import annotations
@@ -79,6 +79,51 @@ def count_speaking_characters(dialogues: Sequence[dict]) -> Tuple[int, Optional[
     return len(speakers), None
 
 
+def _character_ref(value: Any) -> str:
+    """Normalize a character reference from ``characters_present``."""
+    if isinstance(value, dict):
+        value = value.get("character_id") or value.get("id")
+    return _norm_text(value)
+
+
+def _visible_character_ids(shot: dict) -> List[str]:
+    """Return distinct, non-empty character IDs that are visible in the shot."""
+    raw_characters = shot.get("characters_present") or []
+    if not isinstance(raw_characters, (list, tuple)):
+        return []
+
+    result: List[str] = []
+    seen = set()
+    for raw_character in raw_characters:
+        character_id = _character_ref(raw_character)
+        if not character_id or character_id in seen:
+            continue
+        seen.add(character_id)
+        result.append(character_id)
+    return result
+
+
+def _source_speaking_character_ids(shot: dict) -> List[str]:
+    """Read speaking IDs before DB-ID mapping so visibility can be compared safely."""
+    raw_dialogues = shot.get("dialogue") or shot.get("dialogues") or []
+    if isinstance(raw_dialogues, dict):
+        raw_dialogues = [raw_dialogues]
+    if not isinstance(raw_dialogues, (list, tuple)):
+        return []
+
+    result: List[str] = []
+    seen = set()
+    for dialogue in raw_dialogues:
+        if not isinstance(dialogue, dict) or not _norm_text(dialogue.get("text")):
+            continue
+        character_id = _character_ref(dialogue.get("character_id"))
+        if not character_id or character_id in seen:
+            continue
+        seen.add(character_id)
+        result.append(character_id)
+    return result
+
+
 def _llm_presentation(shot: dict) -> Optional[str]:
     raw = shot.get("presentation") or shot.get("video_type")
     if raw is None:
@@ -128,9 +173,12 @@ def resolve_scene_video_type(
     """
     shot = shot or {}
     speaker_count, sole_speaker = count_speaking_characters(dialogues)
+    visible_character_ids = _visible_character_ids(shot)
+    source_speaker_ids = _source_speaking_character_ids(shot)
     meta: Dict[str, Any] = {
         "speaker_count": speaker_count,
         "speaker_character_id": sole_speaker,
+        "visible_character_count": len(visible_character_ids),
         "presentation_source": "rule",
     }
 
@@ -139,6 +187,30 @@ def resolve_scene_video_type(
         meta["presentation_reason"] = (
             "no_single_speaker" if speaker_count == 0 else "multi_speaker"
         )
+        return SceneVideoType.VIDEO, meta
+
+    # Lip-sync consumes one face image: the frame must contain exactly one
+    # visible character, and that same character must be the sole speaker.
+    # This rejects object/animal inserts with off-screen narration as well as
+    # one-speaker dialogue shots that still show listeners or other people.
+    if len(visible_character_ids) != 1:
+        meta["presentation_reason"] = (
+            "no_visible_character"
+            if not visible_character_ids
+            else "multi_character_frame"
+        )
+        return SceneVideoType.VIDEO, meta
+
+    if len(source_speaker_ids) != 1:
+        meta["presentation_reason"] = (
+            "speaker_visibility_unknown"
+            if not source_speaker_ids
+            else "multi_speaker"
+        )
+        return SceneVideoType.VIDEO, meta
+
+    if source_speaker_ids[0] != visible_character_ids[0]:
+        meta["presentation_reason"] = "speaker_not_visible"
         return SceneVideoType.VIDEO, meta
 
     if _has_strong_action(shot):

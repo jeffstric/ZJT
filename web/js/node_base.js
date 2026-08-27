@@ -3,6 +3,61 @@
 // 封装所有节点的公共创建、事件绑定、端口生成逻辑
 // ============================
 
+// ─── 节点尺寸缓存（性能优化） ──────────────────
+// updateCanvasSize / renderMinimap / 自动布局等路径原本每次遍历全部节点读取
+// offsetWidth/offsetHeight（强制同步布局），节点多时是主要卡顿源之一。
+// 这里用单一 ResizeObserver 维护脏标记，读取走缓存；
+// 节点增删由 MutationObserver 自动纳入观察，覆盖所有节点创建路径
+var _nodeSizeObserver = null;
+var _nodeSizeObserverInit = false;
+var _observedNodeEls = new WeakSet();
+
+function _observeNodeSizeEl(el) {
+  if(_nodeSizeObserver && !_observedNodeEls.has(el)) {
+    _observedNodeEls.add(el);
+    _nodeSizeObserver.observe(el);
+  }
+}
+
+function _ensureNodeSizeObserver() {
+  if(_nodeSizeObserverInit) return;
+  _nodeSizeObserverInit = true;
+  if(typeof ResizeObserver === 'undefined' || typeof MutationObserver === 'undefined') return;
+  _nodeSizeObserver = new ResizeObserver(function(entries) {
+    // 尺寸变化只标脏，数值延迟到 getNodeSize 时读取（offsetWidth 含边框，与原实现口径一致）
+    for(const entry of entries) entry.target._sizeDirty = true;
+  });
+  // 观察已存在的节点（工作流加载时序下调用也安全）
+  for(const el of canvasEl.querySelectorAll('.node')) _observeNodeSizeEl(el);
+  // 画布上新挂载的节点自动纳入观察
+  const mo = new MutationObserver(function(mutations) {
+    if(!_nodeSizeObserver) return;
+    for(const m of mutations) {
+      for(const n of m.addedNodes) {
+        if(n.nodeType === 1 && n.classList && n.classList.contains('node')) _observeNodeSizeEl(n);
+      }
+    }
+  });
+  mo.observe(canvasEl, { childList: true });
+}
+
+/**
+ * 读取节点尺寸（带缓存；不支持 ResizeObserver 时降级为直读）
+ * @param {Object} node - 节点数据对象
+ * @returns {{w: number, h: number}}
+ */
+function getNodeSize(node) {
+  _ensureNodeSizeObserver();
+  const el = canvasEl.querySelector('.node[data-node-id="' + node.id + '"]');
+  if(!el) return { w: 300, h: 200 };
+  if(!_nodeSizeObserver) return { w: el.offsetWidth, h: el.offsetHeight };
+  if(el._sizeDirty || !el._cachedSize) {
+    el._cachedSize = { w: el.offsetWidth, h: el.offsetHeight };
+    el._sizeDirty = false;
+  }
+  return el._cachedSize;
+}
+
 // ─── 输入端口注册表 ───────────────────────────────
 // 全局注册表：nodeType → inputPortConfig[]
 // 供 events.js 的连接系统自动发现所有可连接端口，无需硬编码节点类型
@@ -398,10 +453,94 @@ function bindInputPortEvents(el, node, portCfg) {
  */
 /**
  * 安全调用 autoSaveWorkflow，吞掉异常避免影响调用方
+ * 性能优化：防抖合并高频调用——PUT 上传（全量序列化 + 上传）节点多时成本很高，
+ * 全页面有 100+ 处调用点，必须防抖合并。
+ * 撤销语义：历史快照在每次调用时【立即】捕获（captureHistorySnapshot 内部有
+ * 去重，无变化时开销小），防抖仅作用于 PUT 上传。否则 1.5s 内多次操作会被
+ * 合并成一份快照，Ctrl+Z 一次撤销多个操作。
+ * 删除节点、页面卸载等需要立即落盘的场景调用 flushAutoSave()
  */
-function safeAutoSave() {
-  try { autoSaveWorkflow(); } catch(e) {}
+let _autoSaveDebounceTimer = null;
+
+function cancelPendingAutoSave(){
+  if(_autoSaveDebounceTimer){
+    clearTimeout(_autoSaveDebounceTimer);
+    _autoSaveDebounceTimer = null;
+  }
 }
+const AUTO_SAVE_DEBOUNCE_MS = 1500;
+
+function safeAutoSave() {
+  // 历史快照立即捕获（去重后无变化几乎零成本），保证每个操作都有独立撤销点
+  try {
+    if (typeof captureHistorySnapshot === 'function') captureHistorySnapshot();
+  } catch(e) {}
+  // 记录待确认版本：关页逻辑据此区分"全部已确认"与"有未确认修改
+  // （定时器待发 / 请求在途 / 响应未达）"，而不是只看定时器是否存在
+  if(typeof autoSaveState !== 'undefined') autoSaveState.markDirty();
+  if(_autoSaveDebounceTimer) clearTimeout(_autoSaveDebounceTimer);
+  _autoSaveDebounceTimer = setTimeout(() => {
+    _autoSaveDebounceTimer = null;
+    try { autoSaveWorkflow({ skipHistory: true }); } catch(e) {}
+  }, AUTO_SAVE_DEBOUNCE_MS);
+}
+
+/**
+ * 取消挂起的防抖并立即执行一次自动保存
+ * 删除节点等场景调用前状态已变更，先补一个历史快照保证撤销链完整
+ */
+function flushAutoSave() {
+  cancelPendingAutoSave();
+  try {
+    if (typeof captureHistorySnapshot === 'function') captureHistorySnapshot();
+    if(typeof autoSaveState !== 'undefined') autoSaveState.markDirty();
+    autoSaveWorkflow({ skipHistory: true });
+  } catch(e) {}
+}
+
+// 页面卸载时补发未确认的自动保存。
+//
+// 只检查防抖定时器是不够的：定时器触发后 / flushAutoSave 已启动普通 fetch 时，
+// 定时器为 null 而请求仍在途（或响应未达），普通 fetch 在卸载时可能被取消 →
+// 丢最后一次修改。因此按 autoSaveState（version/confirmedVersion/inFlight）判断
+// "是否有未确认修改"，而不是"定时器是否存在"。
+//
+// - 可 keepalive 的 body（≤64KiB，KEEPALIVE_BODY_MAX_BYTES 留余量）用 keepalive，
+//   浏览器在卸载后继续发送（sendBeacon 无法携带 X-User-Id/Authorization 头，
+//   端点依赖 X-User-Id，故不用）。
+// - 大工作流超限无法 keepalive：best-effort 普通 fetch 尽力而为，同时由
+//   IndexedDB 恢复记录降低丢失风险（下次加载时重放未确认记录）。
+//   卸载时的同步 put 只表示事务入队，不能承诺已持久化。
+// - 关页路径必须在事件同步调用栈内启动 fetch，不能先 await IndexedDB；
+//   autoSaveWorkflow({ unload: true }) 会先尽力排队本地快照，随后在任何 await
+//   之前同步创建 fetch。IndexedDB 仅作 best-effort 恢复，不能替代 keepalive。
+//
+// body 按 UTF-8 实际字节数度量（new Blob.size）：中文每字符 3 字节。
+// 提前预热 IDB 连接，尽量使卸载时的同步 put 可以立即入队。
+if(typeof WorkflowRecovery !== 'undefined'){
+  WorkflowRecovery.prepare().catch(() => null);
+}
+window.addEventListener('beforeunload', () => {
+  try {
+    if(typeof WorkflowRecovery === 'undefined' || typeof autoSaveState === 'undefined') return;
+    WorkflowRecovery.dispatchBeforeUnloadSave({
+      saveState: autoSaveState,
+      serializeBody: () => JSON.stringify({
+        workflow_data: serializeWorkflow(),
+        default_world_id: state.defaultWorldId,
+        workflow_ratio: state.ratio
+      }),
+      measureBodyBytes: (body) => new Blob([body]).size,
+      cancelPending: cancelPendingAutoSave,
+      warnLargeBody: () => console.warn(
+        'beforeunload save: body exceeds keepalive 64KiB limit, best-effort fetch + IndexedDB recovery fallback'
+      ),
+      // dispatch 保证这个回调同步调用；autoSaveWorkflow 的 unload 分支
+      // 再由 startUnloadSend 直接同步调用 fetch。
+      send: (saveOptions) => autoSaveWorkflow(saveOptions)
+    });
+  } catch(e) {}
+});
 
 /**
  * 设置按钮为加载状态
@@ -424,18 +563,57 @@ function setBtnReady(btn, readyText) {
 }
 
 /**
- * 设置视频缩略图的通用属性
+ * 设置视频缩略图的通用属性（封面帧 + 悬停播放）
+ * 性能优化：不再 loop 常驻解码——N 个视频节点同时循环播放会耗尽内存导致浏览器崩溃，
+ * 改为加载 metadata 后 seek 到第一帧作为封面，鼠标悬停节点时才播放
  * @param {HTMLVideoElement} thumbVideo - 视频元素
  * @param {string} url - 视频URL
  */
 function setupVideoThumbnail(thumbVideo, url) {
   thumbVideo.src = proxyDownloadUrl(url);
   thumbVideo.muted = true;
-  thumbVideo.loop = true;
   thumbVideo.controls = false;
   thumbVideo.preload = 'metadata';
   thumbVideo.playsInline = true;
+  thumbVideo.loop = false;
+  // metadata 就绪后 seek 到第一帧显示封面
+  thumbVideo.onloadedmetadata = function() {
+    try{
+      if(isFinite(thumbVideo.duration) && thumbVideo.duration > 0){
+        thumbVideo.currentTime = Math.min(0.1, Math.max(0, thumbVideo.duration - 0.1));
+      }
+    } catch(e){}
+  };
   try { thumbVideo.load(); } catch(e) {}
+  attachVideoHoverPreview(thumbVideo);
+}
+
+/**
+ * 绑定"悬停节点播放、移开暂停并回到封面帧"的视频预览交互
+ * 手动播放状态（thumbVideo.dataset.manualPlay === '1'，由节点播放按钮维护）不受移开暂停影响
+ * @param {HTMLVideoElement} thumbVideo - 节点内的视频缩略元素
+ */
+function attachVideoHoverPreview(thumbVideo) {
+  if(!thumbVideo || thumbVideo._hoverPreviewBound) return;
+  const nodeEl = thumbVideo.closest('.node');
+  if(!nodeEl) return;
+  thumbVideo._hoverPreviewBound = true;
+  nodeEl.addEventListener('mouseenter', () => {
+    if(!thumbVideo.src || thumbVideo.dataset.manualPlay === '1') return;
+    try{
+      const p = thumbVideo.play();
+      if(p && typeof p.catch === 'function') p.catch(() => {});
+    } catch(e){}
+  });
+  nodeEl.addEventListener('mouseleave', () => {
+    if(thumbVideo.dataset.manualPlay === '1') return;
+    try{
+      thumbVideo.pause();
+      if(isFinite(thumbVideo.duration) && thumbVideo.duration > 0){
+        thumbVideo.currentTime = Math.min(0.1, Math.max(0, thumbVideo.duration - 0.1));
+      }
+    } catch(e){}
+  });
 }
 
 /**

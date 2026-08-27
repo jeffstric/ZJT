@@ -8,6 +8,15 @@ auto_test/test_todo_list.json
 logs/*
 scheduler.lock
 data/mysql
+# 用户生成模块属于持久数据，不参与核心代码同步更新。
+/data/user_modules/
+# 运行时数据（mysql/user_modules/runtime 日志等）与本地临时产物不入库
+/data/
+.tmp_pytest/
+.tmp_e2e/
+workflows/
+# 根目录调试截图（web/ 等目录下的静态图片不受影响）
+/*.png
 *.exe
 *.dll
 script_writer_core/logs
@@ -55,3 +64,4 @@ auto_test/samples/*
 .codex_*
 .zcode/
 .mcp.json
+data/runtime/

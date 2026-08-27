@@ -123,53 +123,72 @@ def test_build_context_uses_request_image_task_id(monkeypatch):
     assert snaps["image.text_to_image"]["model_source"] == "request"
 
 
+def test_resolve_image_task_accepts_canonical_and_legacy_model_names(monkeypatch):
+    """统一模型名上线后，新请求和旧快照都必须能反查同一 task_id。"""
+    from api import script_writer as sw
+    from config.unified_config import ALL_TASK_CONFIGS, TaskTypeId
+
+    gpt_image = next(
+        config for config in ALL_TASK_CONFIGS
+        if config.id == TaskTypeId.GPT_IMAGE_2_EDIT
+    )
+    monkeypatch.setattr(sw.UnifiedConfigRegistry, "get_all", lambda: [gpt_image])
+
+    assert sw._resolve_explicit_image_task_id(
+        {"model_name": "GPT Image 2"}, MediaGenerationMode.IMAGE_EDIT
+    ) == TaskTypeId.GPT_IMAGE_2_EDIT
+    assert sw._resolve_explicit_image_task_id(
+        {"model_name": "GPT Image 2 图片编辑"}, MediaGenerationMode.IMAGE_EDIT
+    ) == TaskTypeId.GPT_IMAGE_2_EDIT
+
+
 def test_apply_video_task_id_overrides_all_compatible_video_slots(monkeypatch):
     from api import script_writer as sw
     from config.unified_config import UnifiedConfigRegistry, init_unified_config
+    from tests.base.test_isolation import unified_registry_guard
 
-    UnifiedConfigRegistry._configs.clear()
-    UnifiedConfigRegistry._id_map.clear()
-    UnifiedConfigRegistry._implementations.clear()
-    init_unified_config()
+    with unified_registry_guard():
+        UnifiedConfigRegistry._configs.clear()
+        UnifiedConfigRegistry._id_map.clear()
+        UnifiedConfigRegistry._implementations.clear()
+        init_unified_config()
 
-    saved = []
+        saved = []
 
-    def _save(user_id, world_id, surface, media_type, mode, profile):
-        saved.append((mode, int(profile["task_id"])))
-        cfg = UnifiedConfigRegistry.get_by_id(int(profile["task_id"]))
-        return {
-            "schema_version": 1,
-            "task_id": int(cfg.id),
-            "model_key": cfg.key,
-            "model_name": cfg.name,
+        def _save(user_id, world_id, surface, media_type, mode, profile):
+            saved.append((mode, int(profile["task_id"])))
+            cfg = UnifiedConfigRegistry.get_by_id(int(profile["task_id"]))
+            return {
+                "schema_version": 1,
+                "task_id": int(cfg.id),
+                "model_key": cfg.key,
+                "model_name": cfg.name,
+            }
+
+        monkeypatch.setattr(sw.MediaGenerationPreferenceService, "save_profile", _save)
+
+        seedance = UnifiedConfigRegistry.get_by_key("seedance_2_5_image_to_video")
+        h3_r2v = UnifiedConfigRegistry.get_by_key("minimax_h3_reference_to_video")
+        profiles = {
+            "video.text_to_video": {"task_id": h3_r2v.id, "model_key": h3_r2v.key},
+            "video.image_to_video": {"task_id": h3_r2v.id, "model_key": h3_r2v.key},
+            "video.reference_to_video": {"task_id": h3_r2v.id, "model_key": h3_r2v.key},
         }
+        request_slots = set()
+        sw._apply_video_task_id_to_execution_profiles(
+            "1",
+            "101",
+            profiles,
+            request_slots,
+            {"task_id": seedance.id},
+            seedance.id,
+            persist_world_default=True,
+        )
+        saved_modes = {mode for mode, _ in saved}
+        assert MediaGenerationMode.TEXT_TO_VIDEO in saved_modes
+        assert MediaGenerationMode.IMAGE_TO_VIDEO in saved_modes
+        assert MediaGenerationMode.REFERENCE_TO_VIDEO in saved_modes
+        assert profiles["video.reference_to_video"]["task_id"] == seedance.id
+        assert profiles["video.image_to_video"]["task_id"] == seedance.id
 
-    monkeypatch.setattr(sw.MediaGenerationPreferenceService, "save_profile", _save)
-
-    seedance = UnifiedConfigRegistry.get_by_key("seedance_2_5_image_to_video")
-    h3_r2v = UnifiedConfigRegistry.get_by_key("minimax_h3_reference_to_video")
-    profiles = {
-        "video.text_to_video": {"task_id": h3_r2v.id, "model_key": h3_r2v.key},
-        "video.image_to_video": {"task_id": h3_r2v.id, "model_key": h3_r2v.key},
-        "video.reference_to_video": {"task_id": h3_r2v.id, "model_key": h3_r2v.key},
-    }
-    request_slots = set()
-    sw._apply_video_task_id_to_execution_profiles(
-        "1",
-        "101",
-        profiles,
-        request_slots,
-        {"task_id": seedance.id},
-        seedance.id,
-        persist_world_default=True,
-    )
-    saved_modes = {mode for mode, _ in saved}
-    assert MediaGenerationMode.TEXT_TO_VIDEO in saved_modes
-    assert MediaGenerationMode.IMAGE_TO_VIDEO in saved_modes
-    assert MediaGenerationMode.REFERENCE_TO_VIDEO in saved_modes
-    assert profiles["video.reference_to_video"]["task_id"] == seedance.id
-    assert profiles["video.image_to_video"]["task_id"] == seedance.id
-    UnifiedConfigRegistry._configs.clear()
-    UnifiedConfigRegistry._id_map.clear()
-    UnifiedConfigRegistry._implementations.clear()
 

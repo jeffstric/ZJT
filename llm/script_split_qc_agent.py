@@ -373,7 +373,7 @@ def run_rule_qc(
                 message=f"difficulty 应为 易/中/难，当前为 {diff!r}",
             ))
 
-        # presentation vs multi speaker
+        # presentation must be a single visible speaking character
         presentation = str(shot.get("presentation") or "").strip().lower()
         dlg = shot.get("dialogue") or shot.get("dialogues") or []
         if isinstance(dlg, dict):
@@ -403,6 +403,48 @@ def run_rule_qc(
                 shot_ref=ref,
                 field="dialogue",
                 message="digital_human 镜头缺少有效对白",
+            ))
+
+        visible_character_ids = set()
+        raw_visible_characters = shot.get("characters_present") or []
+        if isinstance(raw_visible_characters, list):
+            for character in raw_visible_characters:
+                if isinstance(character, dict):
+                    character = character.get("character_id") or character.get("id")
+                character_id = str(character or "").strip()
+                if character_id:
+                    visible_character_ids.add(character_id)
+
+        if presentation == "digital_human" and len(visible_character_ids) != 1:
+            issue_code = (
+                "DH_WITHOUT_VISIBLE_CHARACTER"
+                if not visible_character_ids
+                else "MULTI_CHARACTER_DH"
+            )
+            issues.append(QcIssue(
+                code=issue_code,
+                severity="error",
+                shot_ref=ref,
+                field="characters_present",
+                message=(
+                    "digital_human 镜头必须恰好只有一个画内人物，当前无人出镜"
+                    if not visible_character_ids
+                    else "多人同框镜头不支持 digital_human，应改为 video"
+                ),
+            ))
+
+        if (
+            presentation == "digital_human"
+            and len(speakers) == 1
+            and len(visible_character_ids) == 1
+            and speakers.isdisjoint(visible_character_ids)
+        ):
+            issues.append(QcIssue(
+                code="DH_SPEAKER_NOT_VISIBLE",
+                severity="error",
+                shot_ref=ref,
+                field="presentation",
+                message="digital_human 的唯一说话角色必须是唯一画内人物；画外音镜头应改为 video",
             ))
 
         # characters_present in opening frame

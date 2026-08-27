@@ -27,11 +27,19 @@ const mockConfig = {
         implementations: [
           {
             name: 'happy_horse_dashscope_v1',
+            computing_power: { 5: 115 },
             supported_video_resolutions: [
               { value: '720P', label: '720P' },
               { value: '1080P', label: '1080P' },
             ],
             default_video_resolution: '720P',
+            power_modifiers: [
+              {
+                attribute: 'resolution',
+                values: { '720P': 1.0, '1080P': 2.0 },
+                default: 1.0,
+              },
+            ],
           },
         ],
       },
@@ -77,6 +85,16 @@ function plain(value) {
     context.TaskConfig.getComputingPower('happy_horse', 5, { resolution: '1080P' }),
     173,
     '1080P should apply resolution power modifier'
+  );
+  assert.equal(
+    context.TaskConfig.getComputingPower(
+      'happy_horse',
+      5,
+      { resolution: '1080P' },
+      'happy_horse_dashscope_v1'
+    ),
+    230,
+    'implementation-specific 1080P multiplier should override task default'
   );
 
   const modelConfigs = context.TaskConfig.getModelConfigs();

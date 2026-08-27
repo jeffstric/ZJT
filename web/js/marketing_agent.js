@@ -4892,38 +4892,40 @@
                 if (!modelKey) return;
                 selectedModelKey.value = modelKey;
 
-                // 获取比例选项
+                // 获取比例选项；空列表表示该模型不提供比例选择，不要回落到默认档
                 const ratios = window.TaskConfig.getRatioOptions(modelKey);
-                availableRatios.value = ratios.length > 0 ? ratios : ['auto', '1:1', '16:9', '9:16', '4:3', '3:4'];
-                const defaultRatio = window.TaskConfig.getDefaultRatio
-                    ? window.TaskConfig.getDefaultRatio(modelKey)
-                    : availableRatios.value[0];
-                const preferredDefaultRatio = availableRatios.value.includes(defaultRatio)
-                    ? defaultRatio
-                    : availableRatios.value[0];
-                if (!hasUserSelectedRatio.value && preferredDefaultRatio) {
-                    selectedRatio.value = preferredDefaultRatio;
-                } else if (!availableRatios.value.includes(selectedRatio.value)) {
-                    selectedRatio.value = preferredDefaultRatio;
+                availableRatios.value = Array.isArray(ratios) ? ratios.slice() : [];
+                if (availableRatios.value.length) {
+                    const defaultRatio = window.TaskConfig.getDefaultRatio
+                        ? window.TaskConfig.getDefaultRatio(modelKey)
+                        : availableRatios.value[0];
+                    const preferredDefaultRatio = availableRatios.value.includes(defaultRatio)
+                        ? defaultRatio
+                        : availableRatios.value[0];
+                    if (!hasUserSelectedRatio.value && preferredDefaultRatio) {
+                        selectedRatio.value = preferredDefaultRatio;
+                    } else if (!availableRatios.value.includes(selectedRatio.value)) {
+                        selectedRatio.value = preferredDefaultRatio;
+                    }
                 }
 
                 if (isVideoMode.value) {
                     ensureSelectedVideoResolution();
                 } else {
-                    // 获取图片分辨率选项
-                    const sizes = window.TaskConfig.getSizeOptions(modelKey);
-                    const mappedSizes = sizes.map(s => {
-                        if (s === '1K') return '1K';
-                        if (s === '2K') return window.t('resolution_2k');
-                        if (s === '4K') return window.t('resolution_4k');
-                        return s;
-                    });
-                    // 在最前面添加 auto 选项
-                    availableResolutions.value = ['auto', ...mappedSizes];
-                    if (availableResolutions.value.length === 1) {
-                        availableResolutions.value = ['auto', '1K', window.t('resolution_2k')];
+                    // 获取图片分辨率选项；空列表表示该模型不提供分辨率选择
+                    const sizes = window.TaskConfig.getSizeOptions(modelKey) || [];
+                    if (sizes.length === 0) {
+                        availableResolutions.value = [];
+                    } else {
+                        const mappedSizes = sizes.map(s => {
+                            if (s === '1K') return '1K';
+                            if (s === '2K') return window.t('resolution_2k');
+                            if (s === '4K') return window.t('resolution_4k');
+                            return s;
+                        });
+                        availableResolutions.value = ['auto', ...mappedSizes];
                     }
-                    if (!availableResolutions.value.includes(selectedResolution.value)) {
+                    if (availableResolutions.value.length && !availableResolutions.value.includes(selectedResolution.value)) {
                         selectedResolution.value = 'auto';
                     }
                 }

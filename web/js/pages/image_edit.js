@@ -693,7 +693,7 @@
             </select>
           </div>
 
-          <div class="field">
+          <div class="field" v-if="ratioOptions.length > 0">
             <label class="label">{{ $t('aspect_ratio') }}</label>
             <select class="input" v-model="ratio">
               <option v-for="opt in ratioOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>

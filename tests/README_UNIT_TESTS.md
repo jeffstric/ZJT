@@ -1021,24 +1021,42 @@ exit $exit_code
 ### 9.3 使用方式
 
 ```bash
-# 一键执行所有测试
-python run_unit_tests.py
+# 一键执行所有测试（默认进程隔离：每个测试模块一个子进程，
+# 模块级 sys.modules/注册表污染不再跨模块连锁，单模块超时 600s 保护）
+python scripts/testing/run_unit_tests.py
 
 # 或
-./run_tests.sh
+./scripts/testing/run_tests.sh
 
 # 只执行 CRUD 测试
-python run_unit_tests.py --crud-only
+python scripts/testing/run_unit_tests.py --crud-only
 
 # 只执行驱动测试（含 Mock）
-python run_unit_tests.py --driver-only
+python scripts/testing/run_unit_tests.py --driver-only
 
 # 详细输出 + 失败立即停止
-python run_unit_tests.py --verbose --failfast
+python scripts/testing/run_unit_tests.py --verbose --failfast
 
 # 生成覆盖率报告
-python run_unit_tests.py --coverage
+python scripts/testing/run_unit_tests.py --coverage
+
+# 同进程快速模式（本地增量调试用；存在全局状态串扰风险）
+python scripts/testing/run_unit_tests.py --no-isolate
+
+# 临时调整单模块子进程超时（默认 600s，常量 UNIT_TEST_MODULE_TIMEOUT_SECONDS）
+python scripts/testing/run_unit_tests.py --module-timeout 600
 ```
+
+### 9.3.1 测试隔离规范（CI 红线）
+
+- 测试中安装模块 stub **必须**用 `tests/base/test_isolation.py` 的
+  `stub_modules()` / `module_stub()`——try/finally 恢复 sys.modules 条目**与父包属性**，
+  即使 import 中断也必然恢复；禁止模块级 `sys.modules['xxx'] = ...` 裸赋值
+  （CI 由 `scripts/lint_blocking_calls.py` R8 拦截，存量在 allowlist 挂账逐步清零）；
+- 需要清空 `UnifiedConfigRegistry` 的测试必须 setUp `snapshot()`、tearDown `restore(snapshot)`；
+- reload 型测试结束后用 `purged_modules()` 弹出 stub 绑定版模块，避免驻留。
+
+设计文档见 `docs/backend/unit_test_process_isolation.md`。
 
 ### 9.4 执行流程图
 

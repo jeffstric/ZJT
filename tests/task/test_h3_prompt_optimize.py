@@ -127,6 +127,76 @@ def test_fl2va_message_includes_duration():
     assert "尾帧图" in message
 
 
+def test_user_message_includes_fidelity_note_for_quoted_chinese_dialogue():
+    """引号内中文对话：点名片段 + 条件式保真指令（线上案例：说：“原来是这样！”）"""
+    message = build_h3_optimize_user_message(
+        "镜头拉进，女主思考过程中，突然顿悟，说：“原来是这样！”",
+        H3_PROMPT_OPTIMIZE_VARIANT_FL2VA,
+        5,
+        template="GUIDE",
+    )
+    assert "引号包裹的 Chinese 片段" in message
+    assert '- "原来是这样！"' in message
+    assert "[Chinese]" in message
+    assert "严禁翻译或改写" in message
+    # 条件式措辞：角色判断交给 LLM，而非断言引号内容必为对话
+    assert "若它们是角色说出的台词" in message
+    assert "描述性用法" in message
+
+
+def test_user_message_fidelity_note_covers_emphasis_quotes():
+    """引号表强调/术语（非对话）同样出现指令，但措辞为条件式，由 LLM 判断"""
+    message = build_h3_optimize_user_message(
+        "女主做出“思考”的动作",
+        H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+        5,
+        template="GUIDE",
+    )
+    assert '- "思考"' in message
+    assert "描述性用法" in message
+
+
+def test_user_message_no_fidelity_note_for_plain_prompts():
+    """纯英文、无引号中文、空 prompt 均不追加指令，行为与现状一致"""
+    for original in ("walk forward, she smiles", "镜头缓推，女主转头微笑", ""):
+        message = build_h3_optimize_user_message(
+            original,
+            H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+            5,
+            template="GUIDE",
+        )
+        assert "引号包裹的" not in message
+
+
+def test_fidelity_note_language_tag_japanese_and_korean():
+    """假名→[Japanese]，谚文→[Korean]，标签按片段字符集自适应"""
+    japanese = build_h3_optimize_user_message(
+        "彼は「そうだったのか！」と叫んだ",
+        H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+        5,
+        template="GUIDE",
+    )
+    assert "[Japanese]" in japanese
+    assert '- "そうだったのか！"' in japanese
+
+    korean = build_h3_optimize_user_message(
+        "그녀는 “안녕!”라고 말했다",
+        H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+        5,
+        template="GUIDE",
+    )
+    assert "[Korean]" in korean
+    assert '- "안녕!"' in korean
+
+
+def test_system_prompt_requires_dialogue_fidelity():
+    """system prompt 不再要求整段全英文：对话/歌词/屏幕文字保留原语言"""
+    from task.pipeline_drivers.h3_prompt_optimize_driver import _SYSTEM_PROMPT
+    assert "never" in _SYSTEM_PROMPT and "translate" in _SYSTEM_PROMPT
+    assert "[Chinese]" in _SYSTEM_PROMPT
+    assert "Output only the final English prompt" not in _SYSTEM_PROMPT
+
+
 def test_validate_i2va_and_fl2va():
     i2va = (
         "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\n"

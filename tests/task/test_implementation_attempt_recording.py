@@ -95,6 +95,8 @@ def _install_module_stubs():
     constant.TASK_STATUS_WAITING_BEFORE_FINISH = 5
     constant.RUNNINGHUB_TASK_TYPES = []
     constant.RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT = 30
+    # f668 孤儿宽限：0 = 禁用（本测试只关注 attempt 写入，不涉及孤儿恢复）
+    constant.get_sync_orphan_grace_seconds = MagicMock(return_value=0)
     sys.modules['config.constant'] = constant
 
     config_util = types.ModuleType('config.config_util')

@@ -2152,8 +2152,10 @@ class StoryboardImageAgentRunner:
                 scene_id=self.scene_id,
                 video_preferences=effective_video_preferences,
             )
+        # 无斜杠形式：DeepSeek 客户端不剥离 'deepseek/' 前缀（_resolve_model_name 为纯字典映射），
+        # 工厂按 MODEL_PREFIX_VENDOR_MAP['deepseek'] 前缀路由到 DEEPSEEK 供应商
         model = self._resolve_storyboard_agent_model(
-            config.get("model") or "gemini/gemini-3-flash-preview",
+            config.get("model") or "deepseek-v4-flash",
             task.model_id,
         )
         # 视频模式使用独立的 storyboard-video skill（剔除图片专属的 edit_image/空间约束/邻镜等冗余规则），
@@ -3251,7 +3253,7 @@ async def generate_storyboard_from_script(
     request_config = {
         'max_group_duration': max_group_duration,
         'world_id': sb.world_id,
-        'model': data.get('model') or 'gemini-3-flash-preview',
+        'model': data.get('model') or 'deepseek-v4-flash',
         'temperature': 0.5,
         'force_medium_shot': _json_bool(data.get('force_medium_shot'), True),
         'no_bg_music': _json_bool(data.get('no_bg_music'), True),
@@ -4128,10 +4130,10 @@ async def generate_scene_video(
     human_review = False
     try:
         from task.visual_drivers import VideoDriverFactory
-        from config.unified_config import IMPLEMENTATION_TO_ID
+        from config.unified_config import get_implementation_id
         actual_impl = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
         if actual_impl:
-            impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) or 0
+            impl_id = get_implementation_id(actual_impl) or 0
             impl_config = UnifiedConfigRegistry.get_implementation(actual_impl)
             if (
                 effective_face_mask

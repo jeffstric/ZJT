@@ -50,7 +50,8 @@ from config.constant import (
     TASK_STATUS_WAITING_PARAM_PREPARE,
     TASK_STATUS_WAITING_BEFORE_FINISH,
     RUNNINGHUB_TASK_TYPES,
-    RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
+    RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT,
+    get_sync_orphan_grace_seconds
 )
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
@@ -616,6 +617,21 @@ async def _check_task_status(ai_tool):
         # 常见原因：同步执行器子进程崩溃/超时，结果未写回数据库
         # 处理：重置为 PENDING/QUEUED，try_count 清零，让调度器重新提交
         # 注意：不清零 try_count 可能导致快速触发 max_retry 失败
+        #
+        # 宽限保护：update_time 距今不足阈值时跳过重置。该状态组合也可能是
+        # 「任务刚完成、终态正在落库」的时序窗口（check_results 先清理内存再写库），
+        # 误判会导致同供应商重复提交/重复计费。宽限期内返回 True（本轮无需重试计数），
+        # 宽限到期（真孤儿：update_time 长期停滞）后仍走原重置逻辑。
+        grace_seconds = get_sync_orphan_grace_seconds()
+        last_active = getattr(ai_tool, 'update_time', None)
+        if grace_seconds > 0 and last_active:
+            active_seconds = (datetime.now() - last_active).total_seconds()
+            if active_seconds < grace_seconds:
+                logger.debug(
+                    f"AI tool {task_id} PROCESSING without project_id but active "
+                    f"{active_seconds:.0f}s ago (<{grace_seconds}s grace), skip orphan reset"
+                )
+                return True
         logger.warning(f"AI tool {task_id} has no project_id while status=PROCESSING and not in sync executor, resetting to PENDING")
         AIToolsModel.update(task_id, status=AI_TOOL_STATUS_PENDING)
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_QUEUED, try_count=0, next_trigger=datetime.now())
@@ -1388,6 +1404,18 @@ def process_task_with_retry(task_type, process_func):
                     continue
                 
                 is_runninghub = ai_tool.type in RUNNINGHUB_TASK_TYPES
+                if is_runninghub and ai_tool.implementation:
+                    # 槽位按任务类型判断，但同一任务条目可绑定非 RunningHub 的
+                    # 用户模块实现方；此类任务不占用也不受制于 RunningHub 槽位。
+                    from config.unified_config import get_implementation_name
+
+                    recorded_impl = get_implementation_name(ai_tool.implementation)
+                    # 用户模块实现方前缀常量惰性导入：主仓核心模块级 import 不依赖
+                    # 用户模块契约常量，避免测试 stub 的常量清单被迫同步维护
+                    from config.constant import USER_MODULE_IMPL_NAME_PREFIX
+
+                    if recorded_impl.startswith(USER_MODULE_IMPL_NAME_PREFIX):
+                        is_runninghub = False
 
                 # ⚠️ RunningHub 槽位控制：QUEUED 状态必须先获取槽位
                 # 获取失败 → 延迟30秒后重试，不计入 try_count

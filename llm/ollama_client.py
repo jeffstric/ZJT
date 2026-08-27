@@ -37,7 +37,7 @@ class OllamaClient(BaseLLMClient):
         self.min_p = get_dynamic_config_value('llm', 'ollama', 'min_p', default=0.0)
         self.presence_penalty = get_dynamic_config_value('llm', 'ollama', 'presence_penalty', default=1.5)
         self.repetition_penalty = get_dynamic_config_value('llm', 'ollama', 'repetition_penalty', default=1.0)
-        self.enable_thinking = get_dynamic_config_value('llm', 'ollama', 'enable_thinking', default=False)
+        self.enable_thinking = get_dynamic_config_value('llm', 'ollama', 'enable_thinking', default=True)
 
         if self.enabled:
             logger.info(f"OllamaClient config loaded: base_url={self.base_url}, temp={self.temperature}, top_p={self.top_p}")
@@ -54,10 +54,12 @@ class OllamaClient(BaseLLMClient):
         auth_token: str = None,
         vendor_id: int = None,
         model_id: int = None,
-        enable_thinking: bool = False,
+        enable_thinking: Optional[bool] = None,
         thinking_effort: str = "medium",
         agent_id: Optional[str] = None,
-        agent_scope: Optional[str] = None
+        agent_scope: Optional[str] = None,
+        request_timeout: Optional[float] = None,
+        suppress_payload_logging: bool = False,
     ) -> Any:
         """
         调用 Ollama 本地模型 API
@@ -71,6 +73,10 @@ class OllamaClient(BaseLLMClient):
             auth_token: 认证 token（本地模型不需要）
             vendor_id: 供应商 ID
             model_id: 模型 ID
+            enable_thinking: 是否开启思考模式；None 时回退到全局配置 llm.ollama.enable_thinking，
+                显式传入 True/False 则覆盖全局配置
+            thinking_effort: 思考强度（low/medium/high/xhigh，high 映射为 Qwen3.8 的 xhigh）
+            request_timeout: 单次请求 HTTP 超时（秒），None 时用 client 默认值
 
         Returns:
             Response 对象
@@ -84,10 +90,22 @@ class OllamaClient(BaseLLMClient):
             actual_model = model[7:]  # 移除 "ollama:" 前缀
 
         try:
+            # 统一底层 HTTP 超时（与 openai_base_client 一致）：
+            # 否则 TCP 连接建立后等待响应体时会永久挂起
+            try:
+                from config.constant import ScriptSplitConstants
+                http_timeout = ScriptSplitConstants.LLM_HTTP_TIMEOUT_SECONDS
+            except Exception:
+                http_timeout = 300
+            if request_timeout is not None:
+                http_timeout = request_timeout
             # 使用 Ollama 的 OpenAI 兼容端点
             client = OpenAI(
                 api_key="ollama",  # Ollama 不需要真正的 API key，但 OpenAI 库需要一个值
                 base_url=f"{self.base_url}/v1",
+                # 与 OpenAIBaseClient 对齐，避免本地假死时回退 SDK 默认 600s；
+                # 调用方 request_timeout 优先，其次全局 LLM_HTTP_TIMEOUT_SECONDS
+                timeout=http_timeout,
             )
 
             # 使用配置的参数，调用方传入的 temperature 仅作为 fallback
@@ -102,15 +120,27 @@ class OllamaClient(BaseLLMClient):
                 "frequency_penalty": self.repetition_penalty,  # OpenAI API 使用 frequency_penalty
             }
 
+            # 单次请求超时：优先用调用方传入的 request_timeout，覆盖 client 默认值
+            if request_timeout is not None:
+                kwargs["timeout"] = request_timeout
+
             # Ollama 特有参数通过 extra_body 传递
             extra_body = {}
             if self.top_k is not None and self.top_k > 0:
                 extra_body["top_k"] = self.top_k
             if self.min_p is not None and self.min_p > 0:
                 extra_body["min_p"] = self.min_p
-            # 思维链配置：优先使用外部传入的参数，否则使用全局配置
-            actual_thinking = enable_thinking or self.enable_thinking
-            extra_body["chat_template_kwargs"] = {"enable_thinking": actual_thinking}
+            # 思维链配置：显式传入 enable_thinking（True/False）时覆盖全局配置，
+            # None 时回退到全局配置 llm.ollama.enable_thinking
+            actual_thinking = bool(self.enable_thinking if enable_thinking is None else enable_thinking)
+            chat_template_kwargs = {"enable_thinking": actual_thinking}
+            if actual_thinking:
+                # Qwen3.8 支持 reasoning_effort（low/medium/xhigh）；
+                # 前端 "high" 映射为 "xhigh"（见 LLMModel.QWEN_REASONING_EFFORT_MAP）
+                from config.constant import LLMModel
+                chat_template_kwargs["reasoning_effort"] = LLMModel.QWEN_REASONING_EFFORT_MAP.get(
+                    thinking_effort, 'medium')
+            extra_body["chat_template_kwargs"] = chat_template_kwargs
             if extra_body:
                 kwargs["extra_body"] = extra_body
 
@@ -135,7 +165,11 @@ class OllamaClient(BaseLLMClient):
             llm_logger.info("="*80)
             llm_logger.info(f"OLLAMA API REQUEST:")
             llm_logger.info(f"  Model: {actual_model}")
-            llm_logger.info(f"  Base URL: {self.base_url}")
+            llm_logger.info(
+                "  Base URL: configured"
+                if suppress_payload_logging
+                else f"  Base URL: {self.base_url}"
+            )
             llm_logger.info(f"  Messages count: {len(messages)}")
             self._log_request_context(llm_logger, agent_id, agent_scope)
             llm_logger.info(f"  Temperature: {actual_temperature}, top_p: {self.top_p}, top_k: {self.top_k}")
@@ -145,7 +179,7 @@ class OllamaClient(BaseLLMClient):
             if tools:
                 llm_logger.info(f"  Tools count: {len(tools)}")
 
-            if should_log_debug():
+            if should_log_debug() and not suppress_payload_logging:
                 payload_str = json.dumps(kwargs, ensure_ascii=False, indent=2, default=str)
                 llm_logger.debug(f"Ollama API request payload:\n{payload_str}")
 
@@ -191,27 +225,45 @@ class OllamaClient(BaseLLMClient):
             llm_logger.info("="*80)
             llm_logger.info("OLLAMA API RESPONSE:")
             llm_logger.info(f"  Content length: {len(content)} chars")
-            if content:
+            if content and not suppress_payload_logging:
                 llm_logger.info(f"  Content:\n{content}")
             if reasoning_content:
                 llm_logger.info(f"  Reasoning content length: {len(reasoning_content)} chars")
-                llm_logger.info(f"  Reasoning content:\n{truncate_log_content(reasoning_content)}")
+                if not suppress_payload_logging:
+                    llm_logger.info(f"  Reasoning content:\n{truncate_log_content(reasoning_content)}")
             if tool_calls:
                 llm_logger.info(f"  Tool calls count: {len(tool_calls)}")
-                for i, tc in enumerate(tool_calls):
-                    llm_logger.info(f"    Tool[{i}]: {tc.function.name}")
-                    llm_logger.info(f"      Args: {tc.function.arguments}")
+                if not suppress_payload_logging:
+                    for i, tc in enumerate(tool_calls):
+                        llm_logger.info(f"    Tool[{i}]: {tc.function.name}")
+                        llm_logger.info(f"      Args: {tc.function.arguments}")
             llm_logger.info(f"  Token usage: {usage_info}")
             llm_logger.info("-"*80)
 
             # 记录 token 使用情况（即使是本地模型，也记录统计数据用于分析）
             if auth_token and model_id:
-                self._log_token_usage(usage_info, auth_token, vendor_id, model_id)
+                self._log_token_usage(
+                    usage_info,
+                    auth_token,
+                    vendor_id,
+                    model_id,
+                    suppress_error_details=suppress_payload_logging,
+                )
 
             return self._create_response(content, tool_calls, usage_info, reasoning_content, finish_reason)
 
         except Exception as e:
-            logger.error(f"Ollama API call failed: {e}")
+            if suppress_payload_logging:
+                status_code = getattr(e, "status_code", None)
+                if status_code is None:
+                    status_code = getattr(getattr(e, "response", None), "status_code", None)
+                logger.error(
+                    "Ollama API call failed: error_type=%s, status=%s",
+                    type(e).__name__,
+                    status_code if status_code is not None else "unknown",
+                )
+            else:
+                logger.error(f"Ollama API call failed: {e}")
             raise
 
 
