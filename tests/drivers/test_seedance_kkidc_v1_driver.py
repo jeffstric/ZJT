@@ -467,14 +467,15 @@ class TestSubmitTask(unittest.TestCase):
         driver = self._driver()
         ai_tool = _make_ai_tool(prompt='文生视频测试', image_path=None)
 
-        sys.modules['utils.content_moderation_error'].is_content_moderation_user_message = MagicMock(return_value=False)
-
         fake_resp = MagicMock()
         fake_resp.status_code = 429
         fake_resp.json.return_value = {"error": {"message": "rate limited", "code": "RATE_LIMIT"}}
         http_error = __import__('requests.exceptions', fromlist=['HTTPError']).HTTPError(response=fake_resp)
 
-        with patch.object(driver, '_request', side_effect=http_error):
+        # patch 自动恢复；此前对 sys.modules 条目属性裸赋值不恢复，会污染后续测试
+        with patch('utils.content_moderation_error.is_content_moderation_user_message',
+                   return_value=False), \
+             patch.object(driver, '_request', side_effect=http_error):
             result = driver.submit_task(ai_tool)
 
         self.assertFalse(result['success'])

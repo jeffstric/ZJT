@@ -6,16 +6,15 @@ AsyncTask 数据模型单元测试
 - get_result_data_dict: 解析 result_data 字段
 - to_dict: 序列化为字典
 """
-import os
-import sys
 import unittest
 from datetime import datetime
 from unittest.mock import MagicMock
 
-# Mock 数据库依赖（AsyncTask 本身不需要，但模块级 import 会触发）
-sys.modules['model.database'] = MagicMock()
+from tests.base.test_isolation import stub_modules
 
-from model.async_tasks import AsyncTask, AsyncTaskStatus
+# Mock 数据库依赖（AsyncTask 本身不需要，但模块级 import 会触发）
+with stub_modules({'model.database': MagicMock()}):
+    from model.async_tasks import AsyncTask, AsyncTaskStatus
 
 
 class TestAsyncTaskGetParamsDict(unittest.TestCase):

@@ -2,25 +2,22 @@
 RunningHubImageFaceMaskDriver 单元测试
 
 测试图片人脸遮盖 RunningHub App 的配置、提交响应解析和结果 URL 提取。
+依赖 stub 通过 tests/base/test_isolation.py 官方工具安装并恢复。
 """
-import sys
 import unittest
 from unittest.mock import MagicMock
 
-sys.modules['api.clients.runninghub_client'] = MagicMock()
-_saved_config_util = sys.modules.get('config.config_util')
-sys.modules['config.config_util'] = MagicMock()
-sys.modules['utils.file_storage'] = MagicMock()
+from tests.base.test_isolation import stub_modules
 
-from task.async_drivers.runninghub_image_face_mask_driver import (
-    RunningHubImageFaceMaskDriver,
-    RunningHubImageFaceMaskConfig,
-)
-
-if _saved_config_util is not None:
-    sys.modules['config.config_util'] = _saved_config_util
-else:
-    sys.modules.pop('config.config_util', None)
+with stub_modules({
+    'api.clients.runninghub_client': MagicMock(),
+    'config.config_util': MagicMock(),
+    'utils.file_storage': MagicMock(),
+}):
+    from task.async_drivers.runninghub_image_face_mask_driver import (
+        RunningHubImageFaceMaskDriver,
+        RunningHubImageFaceMaskConfig,
+    )
 
 
 class TestRunningHubImageFaceMaskConfig(unittest.TestCase):

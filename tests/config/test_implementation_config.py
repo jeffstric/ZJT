@@ -128,6 +128,7 @@ class TestImplementationConfig(unittest.TestCase):
     def setUp(self):
         """测试前准备"""
         from config.unified_config import UnifiedConfigRegistry
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
         UnifiedConfigRegistry._implementations.clear()
         UnifiedConfigRegistry.register_all_implementations([
             ImplementationConfig(
@@ -157,7 +158,8 @@ class TestImplementationConfig(unittest.TestCase):
     def tearDown(self):
         """测试后清理"""
         from config.unified_config import UnifiedConfigRegistry
-        UnifiedConfigRegistry._implementations.clear()
+        # 恢复注册表快照，避免清空状态泄漏到同进程后续测试
+        UnifiedConfigRegistry.restore(self._registry_snapshot)
 
     def test_get_computing_power_simple(self):
         """测试固定算力获取"""

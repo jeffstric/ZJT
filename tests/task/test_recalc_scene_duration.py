@@ -9,69 +9,62 @@ recalc_scene_duration_if_all_completed 单元测试
 - sum 抛异常 → 返回 None（best-effort，不向上抛）。
 
 测试通过 mock task/audio_task 的模型依赖来隔离真实 DB，沿用 test_audio_task_utils.py 的 mock 策略。
+依赖 stub 通过 tests/base/test_isolation.py 官方工具安装，
+import 中断也会在离开 with 时恢复 sys.modules 与父包属性。
 """
 import asyncio
-import sys
-import types
 import unittest
 from unittest.mock import MagicMock, patch, AsyncMock
 
+from tests.base.test_isolation import module_stub, stub_modules
+
 # ---------- mock task/audio_task 重依赖（导入前） ----------
-_saved = {key: sys.modules.get(key) for key in [
-    'model', 'model.storyboard', 'model.storyboard_dialogue',
-    'model.storyboard_dialogue_audio', 'utils.audio_duration_util',
-    'config.constant', 'config.config_util',
-    'task.async_drivers.runninghub_audio_driver', 'utils.index_tts_util',
-]}
-
-model_pkg = types.ModuleType('model')
-model_pkg.TasksModel = MagicMock()
-model_pkg.AIAudioModel = MagicMock()
-model_pkg.StoryboardModel = MagicMock()
-model_pkg.StoryboardSceneModel = MagicMock()
-model_pkg.StoryboardDialogueModel = MagicMock()
-sys.modules['model'] = model_pkg
-
-_sb_mod = types.ModuleType('model.storyboard')
-_sb_mod.StoryboardModel = MagicMock()
-_sb_mod.StoryboardSceneModel = MagicMock()
-sys.modules['model.storyboard'] = _sb_mod
-_sd_mod = types.ModuleType('model.storyboard_dialogue')
-_sd_mod.StoryboardDialogueModel = MagicMock()
-sys.modules['model.storyboard_dialogue'] = _sd_mod
-_sda_mod = types.ModuleType('model.storyboard_dialogue_audio')
-_sda_mod.StoryboardDialogueAudioModel = MagicMock()
-sys.modules['model.storyboard_dialogue_audio'] = _sda_mod
-_adu_mod = types.ModuleType('utils.audio_duration_util')
-_adu_mod.probe_audio_duration = MagicMock()
-sys.modules['utils.audio_duration_util'] = _adu_mod
-
-config_constant = types.ModuleType('config.constant')
-config_constant.TASK_TYPE_GENERATE_AUDIO = 10
-config_constant.AI_AUDIO_STATUS_PENDING = 0
-config_constant.AI_AUDIO_STATUS_PROCESSING = 1
-config_constant.AI_AUDIO_STATUS_COMPLETED = 2
-config_constant.AI_AUDIO_STATUS_FAILED = -1
-config_constant.TASK_STATUS_QUEUED = 0
-config_constant.TASK_STATUS_PROCESSING = 1
-config_constant.TASK_STATUS_COMPLETED = 2
-config_constant.TASK_STATUS_FAILED = -1
-sys.modules['config.constant'] = config_constant
-
-rh_config = types.ModuleType('task.async_drivers.runninghub_audio_driver')
-rh_config.RunningHubAudioConfig = MagicMock()
-sys.modules['task.async_drivers.runninghub_audio_driver'] = rh_config
-sys.modules['utils.index_tts_util'] = MagicMock()
-sys.modules['config.config_util'] = MagicMock()
-
-from task.audio_task import recalc_scene_duration_if_all_completed  # noqa: E402
-
-# ---------- 恢复 sys.modules ----------
-for key, saved in _saved.items():
-    if saved is not None:
-        sys.modules[key] = saved
-    else:
-        sys.modules.pop(key, None)
+with stub_modules({
+    'model': module_stub(
+        'model',
+        TasksModel=MagicMock(),
+        AIAudioModel=MagicMock(),
+        StoryboardModel=MagicMock(),
+        StoryboardSceneModel=MagicMock(),
+        StoryboardDialogueModel=MagicMock(),
+    ),
+    'model.storyboard': module_stub(
+        'model.storyboard',
+        StoryboardModel=MagicMock(),
+        StoryboardSceneModel=MagicMock(),
+    ),
+    'model.storyboard_dialogue': module_stub(
+        'model.storyboard_dialogue',
+        StoryboardDialogueModel=MagicMock(),
+    ),
+    'model.storyboard_dialogue_audio': module_stub(
+        'model.storyboard_dialogue_audio',
+        StoryboardDialogueAudioModel=MagicMock(),
+    ),
+    'utils.audio_duration_util': module_stub(
+        'utils.audio_duration_util',
+        probe_audio_duration=MagicMock(),
+    ),
+    'config.constant': module_stub(
+        'config.constant',
+        TASK_TYPE_GENERATE_AUDIO=10,
+        AI_AUDIO_STATUS_PENDING=0,
+        AI_AUDIO_STATUS_PROCESSING=1,
+        AI_AUDIO_STATUS_COMPLETED=2,
+        AI_AUDIO_STATUS_FAILED=-1,
+        TASK_STATUS_QUEUED=0,
+        TASK_STATUS_PROCESSING=1,
+        TASK_STATUS_COMPLETED=2,
+        TASK_STATUS_FAILED=-1,
+    ),
+    'task.async_drivers.runninghub_audio_driver': module_stub(
+        'task.async_drivers.runninghub_audio_driver',
+        RunningHubAudioConfig=MagicMock(),
+    ),
+    'utils.index_tts_util': MagicMock(),
+    'config.config_util': MagicMock(),
+}):
+    from task.audio_task import recalc_scene_duration_if_all_completed  # noqa: E402
 
 
 def _run_async(coro):

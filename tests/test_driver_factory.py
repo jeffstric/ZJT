@@ -3,15 +3,16 @@ VideoDriverFactory 单元测试
 重点覆盖 create_driver_by_implementation 方法，
 确保状态查询时可以使用任务提交时记录的 implementation 创建正确的驱动实例。
 """
-import sys
 from unittest.mock import patch, MagicMock
 import unittest
 
-# Mock 可能不存在的外部依赖
-sys.modules['utils.sentry_util'] = MagicMock()
+from tests.base.test_isolation import stub_modules
 
-from task.visual_drivers.driver_factory import VideoDriverFactory
-from task.visual_drivers.base_video_driver import BaseVideoDriver
+# Mock 可能不存在的外部依赖（离开 with 后恢复，避免污染后续测试）
+with stub_modules({'utils.sentry_util': MagicMock()}):
+    from task.visual_drivers.driver_factory import VideoDriverFactory
+    from task.visual_drivers.base_video_driver import BaseVideoDriver
+
 from config.unified_config import (
     DriverImplementation,
     DriverImplementationId,
@@ -64,13 +65,15 @@ class TestCreateDriverByImplementation(unittest.TestCase):
     """测试 create_driver_by_implementation 方法"""
 
     def setUp(self):
-        """每个测试前清理已注册驱动"""
+        """每个测试前清理已注册驱动（保存快照，tearDown 恢复，不污染其他测试）"""
+        self._saved_drivers = dict(VideoDriverFactory._registered_drivers)
         VideoDriverFactory._registered_drivers.clear()
         VideoDriverFactory._last_create_error = None
 
     def tearDown(self):
-        """每个测试后清理"""
+        """每个测试后恢复原始注册表"""
         VideoDriverFactory._registered_drivers.clear()
+        VideoDriverFactory._registered_drivers.update(self._saved_drivers)
         VideoDriverFactory._last_create_error = None
 
     def test_create_driver_by_implementation_success(self):
@@ -144,10 +147,12 @@ class TestStatusCheckUsesRecordedImplementation(unittest.TestCase):
     """
 
     def setUp(self):
+        self._saved_drivers = dict(VideoDriverFactory._registered_drivers)
         VideoDriverFactory._registered_drivers.clear()
 
     def tearDown(self):
         VideoDriverFactory._registered_drivers.clear()
+        VideoDriverFactory._registered_drivers.update(self._saved_drivers)
 
     def _create_mock_ai_tool(self, implementation_id=0):
         """创建模拟的 ai_tool 对象"""
@@ -219,14 +224,19 @@ class TestDriverSelectionConsistency(unittest.TestCase):
         测试：create_driver_by_type 和 create_driver_by_implementation
         在相同条件下应返回相同类型的驱动实例。
         """
-        VideoDriverFactory._registered_drivers.clear()
-        VideoDriverFactory.register_driver("grok_duomi_v1", MockDriver)
+        saved_drivers = dict(VideoDriverFactory._registered_drivers)
+        try:
+            VideoDriverFactory._registered_drivers.clear()
+            VideoDriverFactory.register_driver("grok_duomi_v1", MockDriver)
 
-        # 通过 implementation 名称创建
-        driver_by_impl = VideoDriverFactory.create_driver_by_implementation("grok_duomi_v1")
+            # 通过 implementation 名称创建
+            driver_by_impl = VideoDriverFactory.create_driver_by_implementation("grok_duomi_v1")
 
-        self.assertIsNotNone(driver_by_impl)
-        self.assertEqual(driver_by_impl.driver_name, "mock_driver")
+            self.assertIsNotNone(driver_by_impl)
+            self.assertEqual(driver_by_impl.driver_name, "mock_driver")
+        finally:
+            VideoDriverFactory._registered_drivers.clear()
+            VideoDriverFactory._registered_drivers.update(saved_drivers)
 
 
 if __name__ == "__main__":
