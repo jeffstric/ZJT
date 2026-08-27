@@ -923,6 +923,8 @@
                     this.showToast(this.t('um_binding_created'), 'success');
                     this.userModuleBindings.form.taskByOperation[operation] = '';
                     await this.loadUserModuleBindings(module.module_id);
+                    // 新增绑定后刷新配置缓存，使新实现方尽快可见
+                    await this.reloadConfigs();
                 } catch (error) {
                     this.userModuleBindings.error = this.handleUserModuleError(error, 'um_binding_create_failed');
                 } finally {
