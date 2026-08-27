@@ -483,6 +483,10 @@
       // 删除节点
       state.nodes = state.nodes.filter(n => n.id !== id);
       state.connections = state.connections.filter(c => c.from !== id && c.to !== id);
+      // 节点自定义资源清理钩子（如全景查看器的 WebGL 上下文销毁）
+      if(node && typeof node.onDestroy === 'function'){
+        try{ node.onDestroy(); }catch(e){ console.warn('节点 onDestroy 钩子执行失败:', e); }
+      }
       const el = canvasEl.querySelector(`.node[data-node-id="${id}"]`);
       if(el) el.remove();
       if(state.selectedNodeId === id) state.selectedNodeId = null;

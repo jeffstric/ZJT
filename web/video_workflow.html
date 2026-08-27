@@ -22,6 +22,7 @@
   <link rel="stylesheet" href="/css/video_workflow.css" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
   <link rel="stylesheet" href="/css/image_coloring_editor.css" />
+  <link rel="stylesheet" href="/css/pannellum.css" />
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
   <script src="/i18n/i18n-dom.js?v=__VERSION__"></script>
@@ -183,6 +184,13 @@
                 <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
               </svg>
               <span class="add-menu-text" data-i18n="camera_control">相机控制</span>
+            </div>
+            <div class="add-menu-item" id="menuAddPanorama">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+                <path d="M3 12h18M12 3c2.5 2.6 3.6 5.6 3.6 9s-1.1 6.4-3.6 9c-2.5-2.6-3.6-5.6-3.6-9s1.1-6.4 3.6-9z" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              <span class="add-menu-text" data-i18n="panorama">360全景图</span>
             </div>
             <div class="add-menu-item" id="menuAddScript">
               <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -1351,6 +1359,8 @@
   <script src="/js/dialogue_group_node.js"></script>
   <script src="/js/camera_3d_preview.js"></script>
   <script src="/js/camera_control_node.js"></script>
+  <script src="/js/vendor/pannellum.min.js"></script>
+  <script src="/js/panorama_node.js"></script>
   <script src="/js/shot_frame_generator.js"></script>
   <script src="/js/video_prompt_suffix.js"></script>
   <script src="/js/shot_frame_video_generator.js"></script>
