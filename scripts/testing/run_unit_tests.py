@@ -22,7 +22,10 @@
 """
 import sys
 import os
+import re
 import argparse
+import subprocess
+import time
 import unittest
 
 # 添加项目根目录到 Python 路径
@@ -34,6 +37,98 @@ APP_DIR = project_root
 
 from tests.base.db_test_config import get_test_db_config
 from scripts.testing.test_discovery import discover_tests_by_category, get_all_categories, get_category_display_name
+from config.constant import UNIT_TEST_MODULE_TIMEOUT_SECONDS
+
+
+# ---------------- unittest -v 输出解析（进程隔离模式） ----------------
+# 兼容 Python 3.10（单行 `test_x (class) ... ok`）与 3.11+（docstring 换行版式）。
+_UNITTEST_STATUS_TAIL_RE = re.compile(
+    r"\.\.\.\s+(ok|FAIL|ERROR|skipped\b[^\n]*|expected failure|unexpected success)\s*$"
+)
+# Python 3.11+ 无 docstring 用例输出为独立裸状态行（如单独一行 "ok"）
+_UNITTEST_STATUS_BARE_RE = re.compile(
+    r"^(ok|FAIL|ERROR|skipped\b.*|expected failure|unexpected success)\s*$"
+)
+_UNITTEST_TESTLINE_RE = re.compile(r"^(test\S*)\s+\(([^)]+)\)\s*$")
+_UNITTEST_INLINE_TEST_RE = re.compile(r"^(test\S*)\s+\(([^)]+)\)")
+_UNITTEST_TB_HEAD_RE = re.compile(r"^(FAIL|ERROR):\s+(\S+?)(?:\s+\(([^)]+)\))?\s*$")
+_UNITTEST_SEPARATOR_RE = re.compile(r"^(?:=+|-+)$")
+
+# 用例状态归一化：skipped/expected failure 计入通过（与同进程模式 testsRun 口径一致）
+_STATUS_PASSED = {"ok", "skipped", "expected failure"}
+_STATUS_FAILED = {"FAIL", "unexpected success"}
+
+
+def _normalize_status(raw_status: str) -> str:
+    status = raw_status.split()[0] if raw_status.startswith("skipped") else raw_status
+    if status in _STATUS_PASSED:
+        return "passed"
+    if status in _STATUS_FAILED:
+        return "failed"
+    return "error"
+
+
+def parse_unittest_verbose_output(output: str):
+    """解析 `python -m unittest -v` 的合并输出。
+
+    Returns:
+        (cases, tracebacks) 二元组：
+        - cases: dict，键为 `test_name (classname)`（与 unittest 的 str(test) 一致），
+          值为 passed/failed/error；
+        - tracebacks: dict，键与 cases 相同（模块导入失败等无类名场景键为测试名），
+          值为对应的 FAIL/ERROR 报告块文本。
+    """
+    lines = output.splitlines()
+    cases: dict = {}
+    tracebacks: dict = {}
+    last_test_key = None
+
+    for line in lines:
+        test_match = _UNITTEST_TESTLINE_RE.match(line)
+        if test_match:
+            last_test_key = f"{test_match.group(1)} ({test_match.group(2)})"
+            continue
+        status_match = _UNITTEST_STATUS_TAIL_RE.search(line)
+        if not status_match:
+            stripped = line.strip()
+            if _UNITTEST_STATUS_BARE_RE.match(stripped):
+                status_match = _UNITTEST_STATUS_BARE_RE.match(stripped)
+        if status_match:
+            inline_match = _UNITTEST_INLINE_TEST_RE.match(line)
+            key = (
+                f"{inline_match.group(1)} ({inline_match.group(2)})"
+                if inline_match
+                else last_test_key
+            )
+            if key:
+                cases[key] = _normalize_status(status_match.group(1))
+
+    # 按分隔线（===== / -----）切块，块首形如 `FAIL: test_x (class)` 的即报告块
+    blocks: list = []
+    current_block: list = []
+    for line in lines:
+        if _UNITTEST_SEPARATOR_RE.match(line.strip()):
+            if current_block:
+                blocks.append(current_block)
+                current_block = []
+        else:
+            current_block.append(line)
+    if current_block:
+        blocks.append(current_block)
+
+    for block in blocks:
+        if not block:
+            continue
+        head_match = _UNITTEST_TB_HEAD_RE.match(block[0])
+        if not head_match:
+            continue
+        if head_match.group(3):
+            key = f"{head_match.group(2)} ({head_match.group(3)})"
+        else:
+            key = head_match.group(2)
+        tracebacks[key] = "\n".join(block).rstrip()
+
+    return cases, tracebacks
 
 
 class TestRunner:
@@ -64,6 +159,8 @@ class TestRunner:
         }
         # 收集所有失败测试的详细信息
         self.failed_tests = []
+        # 当前正在执行的分类（供进程隔离模式的失败归因使用）
+        self._current_category = 'unknown'
     
     def check_environment(self):
         """检查测试环境"""
@@ -157,6 +254,7 @@ class TestRunner:
             (passed, failed, errors) 元组
         """
         test_modules = discover_tests_by_category(category)
+        self._current_category = category
 
         passed = failed = errors = 0
         for test_module in test_modules:
@@ -169,33 +267,15 @@ class TestRunner:
                     continue
 
                 print(f"\n执行: {test_module}")
-                suite = unittest.TestLoader().loadTestsFromName(test_module)
-                runner = unittest.TextTestRunner(verbosity=1)
-                result = runner.run(suite)
+                if getattr(self.args, 'no_isolate', False):
+                    module_passed, module_failed, module_errors = self._run_module_inprocess(test_module)
+                else:
+                    module_passed, module_failed, module_errors = self._run_module_isolated(test_module)
+                passed += module_passed
+                failed += module_failed
+                errors += module_errors
 
-                passed += result.testsRun - len(result.failures) - len(result.errors)
-                failed += len(result.failures)
-                errors += len(result.errors)
-
-                # 收集失败信息
-                for test, traceback_str in result.failures:
-                    self.failed_tests.append({
-                        'category': category,
-                        'module': test_module,
-                        'test': str(test),
-                        'type': 'failure',
-                        'traceback': traceback_str
-                    })
-                for test, traceback_str in result.errors:
-                    self.failed_tests.append({
-                        'category': category,
-                        'module': test_module,
-                        'test': str(test),
-                        'type': 'error',
-                        'traceback': traceback_str
-                    })
-
-                if not result.wasSuccessful() and self.args.failfast:
+                if (module_failed > 0 or module_errors > 0) and self.args.failfast:
                     break
 
             except Exception as e:
@@ -203,6 +283,112 @@ class TestRunner:
                 errors += 1
 
         return passed, failed, errors
+
+    def _record_module_failures(self, category: str, test_module: str, entries: list) -> None:
+        """收集失败测试的详细信息到 self.failed_tests"""
+        for entry in entries:
+            entry_with_meta = dict(entry)
+            entry_with_meta['category'] = category
+            entry_with_meta['module'] = test_module
+            self.failed_tests.append(entry_with_meta)
+
+    def _run_module_inprocess(self, test_module: str):
+        """同进程执行单个测试模块（--no-isolate 快速模式，历史默认行为）。"""
+        suite = unittest.TestLoader().loadTestsFromName(test_module)
+        runner = unittest.TextTestRunner(verbosity=1)
+        result = runner.run(suite)
+
+        entries = []
+        for test, traceback_str in result.failures:
+            entries.append({'test': str(test), 'type': 'failure', 'traceback': traceback_str})
+        for test, traceback_str in result.errors:
+            entries.append({'test': str(test), 'type': 'error', 'traceback': traceback_str})
+        self._record_module_failures(self._current_category, test_module, entries)
+
+        return (
+            result.testsRun - len(result.failures) - len(result.errors),
+            len(result.failures),
+            len(result.errors),
+        )
+
+    def _run_module_isolated(self, test_module: str):
+        """独立子进程执行单个测试模块（默认隔离模式）。
+
+        每个模块一个全新解释器：模块级 sys.modules 注入、注册表清空、
+        importlib.reload 漂移等全局状态污染被物理限制在本模块内，
+        不再向后连锁（曾导致 CI 全量跑 25 项连锁失败，见 d01ec49e）。
+        子进程超时由 UNIT_TEST_MODULE_TIMEOUT_SECONDS 保护，防止挂死拖垮整轮 CI。
+        """
+        timeout = getattr(self.args, 'module_timeout', None) or UNIT_TEST_MODULE_TIMEOUT_SECONDS
+        env = os.environ.copy()
+        # Windows 默认 GBK 管道编码会打乱中文 docstring/traceback，强制 UTF-8
+        env.setdefault('PYTHONIOENCODING', 'utf-8')
+        env.setdefault('PYTHONUTF8', '1')
+        cmd = [sys.executable, '-m', 'unittest', '-v', test_module]
+        started = time.time()
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=APP_DIR,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+            )
+            output = proc.stdout or ''
+            returncode = proc.returncode
+        except subprocess.TimeoutExpired as exc:
+            partial = exc.stdout or ''
+            if isinstance(partial, bytes):
+                partial = partial.decode('utf-8', errors='replace')
+            print(f"[TIMEOUT] {test_module} 超过 {timeout}s 被强制终止")
+            entry = {
+                'test': f'{test_module} (module-run)',
+                'type': 'error',
+                'traceback': (
+                    f'ModuleTimeoutError: 测试模块 {test_module} 执行超过 {timeout}s 被强制终止。\n'
+                    f'已捕获的部分输出:\n{partial[-4000:]}'
+                ),
+            }
+            self._record_module_failures(self._current_category, test_module, [entry])
+            return 0, 0, 1
+
+        elapsed = time.time() - started
+        cases, tracebacks = parse_unittest_verbose_output(output)
+        passed = sum(1 for status in cases.values() if status == 'passed')
+        failed_count = sum(1 for status in cases.values() if status == 'failed')
+        error_count = sum(1 for status in cases.values() if status == 'error')
+
+        entries = []
+        for key, status in cases.items():
+            if status == 'passed':
+                continue
+            entries.append({
+                'test': key,
+                'type': 'failure' if status == 'failed' else 'error',
+                'traceback': tracebacks.get(key, output[-4000:]),
+            })
+
+        # 解析不到任何用例（如模块导入失败时 unittest 输出 _FailedTest，
+        # 或崩溃在打印结果之前）但退出码非 0：整模块记 1 条 error
+        if not cases and returncode != 0:
+            error_count = 1
+            entries.append({
+                'test': f'{test_module} (module-run)',
+                'type': 'error',
+                'traceback': output[-8000:] or f'exit code={returncode}, 无输出',
+            })
+
+        self._record_module_failures(self._current_category, test_module, entries)
+        status_flag = 'OK' if (failed_count == 0 and error_count == 0) else 'FAILED'
+        print(f"[{status_flag}] {test_module}: passed={passed} failed={failed_count} "
+              f"errors={error_count} ({elapsed:.1f}s)", flush=True)
+
+        return passed, failed_count, error_count
     
     def run_crud_tests(self):
         """执行 CRUD 测试"""
@@ -770,6 +956,11 @@ def main():
     parser.add_argument('--verbose', '-v', action='store_true', help='显示详细输出')
     parser.add_argument('--failfast', '-x', action='store_true', help='遇到失败立即停止')
     parser.add_argument('--coverage', action='store_true', help='生成覆盖率报告')
+    parser.add_argument('--no-isolate', action='store_true',
+                        help='关闭进程隔离：所有测试模块在同一进程顺序执行（快速但存在全局状态串扰风险）')
+    parser.add_argument('--module-timeout', type=int, default=None,
+                        help=f'进程隔离模式下单个测试模块的子进程超时秒数'
+                             f'（默认 {UNIT_TEST_MODULE_TIMEOUT_SECONDS}s，见 config/constant.py）')
     
     args = parser.parse_args()
     

@@ -2216,3 +2216,13 @@ LANGUAGE_INSTRUCTIONS = {
 # 结算逻辑见 utils/computing_power.py: settle_task_success_diff
 DIFF_REFUND_TXN_PREFIX = 'diff-refund-'
 DIFF_CHARGE_TXN_PREFIX = 'diff-charge-'
+
+
+# ============ 单元测试基础设施 ============
+# 隔离执行模式下单个测试模块的子进程超时（秒）：
+# 防止个别测试模块挂死拖垮整轮 CI（scripts/testing/run_unit_tests.py --isolate）。
+# 600s 的依据：本地无 MySQL 时部分驱动测试每用例要等 ~4s 连接拒绝，
+# 大模块（如 test_seedance_volcengine_v1_driver 82 用例 ≈ 330s）需要余量；
+# DB 集成类模块（crud/driver_integration）含 alembic 迁移与建表，耗时更长，
+# 如仍遇合理超时可用 --module-timeout 覆盖。
+UNIT_TEST_MODULE_TIMEOUT_SECONDS = 600
