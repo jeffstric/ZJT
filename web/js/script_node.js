@@ -88,9 +88,9 @@
               <div class="field field-always-visible">
                 <div class="label" data-i18n="script_sequence_mode_label">${st('script_sequence_mode_label', '分镜拆分模式')}</div>
                 <select class="script-sequence-mode" title="${st('script_sequence_mode_hint', '均衡：质量与效率折中；速度：先出结果；效果：影院级一致性（商业版）')}" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-                  <option value="balanced" data-i18n="script_sequence_mode_balanced">${st('script_sequence_mode_balanced', '均衡模式（推荐）')}</option>
+                  <option value="balanced">${st('script_sequence_mode_balanced', '均衡模式')}</option>
                   <option value="speed" data-i18n="script_sequence_mode_speed">${st('script_sequence_mode_speed', '速度模式')}</option>
-                  <option value="quality" data-i18n="script_sequence_mode_quality">${st('script_sequence_mode_quality', '效果模式（商业版）')}</option>
+                  <option value="quality">${st('script_sequence_mode_quality', '效果模式')}</option>
                 </select>
               </div>
               <div class="field field-always-visible">
@@ -856,8 +856,22 @@
         qcRoundsFieldEl.style.display = enableSplitQcEl.checked ? 'block' : 'none';
       }
 
+      // 按版本动态渲染拆分模式选项文案：社区版「推荐」→均衡；商业版「推荐」→效果。
+      // balanced/quality 选项已移除 data-i18n，改由此处纯 JS 管理，避免 i18n DOM 重扫冲掉「推荐」标签。
+      function applySequenceModeLabels() {
+        if(!sequenceModeSelectEl) return;
+        const ent = isEnterpriseEdition();
+        const recommended = st('script_sequence_mode_recommended', '（推荐）');
+        const commercial = st('script_sequence_mode_commercial', '（商业版）');
+        const balancedOpt = sequenceModeSelectEl.querySelector('option[value="balanced"]');
+        const qualityOpt = sequenceModeSelectEl.querySelector('option[value="quality"]');
+        if(balancedOpt) balancedOpt.textContent = st('script_sequence_mode_balanced', '均衡模式') + (ent ? '' : recommended);
+        if(qualityOpt) qualityOpt.textContent = st('script_sequence_mode_quality', '效果模式') + (ent ? recommended : commercial);
+      }
+
       function syncSequenceModeUi() {
         if(!sequenceModeSelectEl) return;
+        applySequenceModeLabels();
         // 社区版禁止选中效果模式
         if(node.data.sequenceMode === 'quality' && !isEnterpriseEdition()) {
           node.data.sequenceMode = 'balanced';
@@ -1076,6 +1090,15 @@
         window.ZJTi18n.on('locale-changed', _localeChangedHandler);
         if (el._cleanupHandlers) {
           el._cleanupHandlers.push(function() { window.ZJTi18n.off('locale-changed', _localeChangedHandler); });
+        }
+      }
+
+      // 监听语言切换：balanced/quality 选项已脱离 data-i18n，需按当前版本重新渲染「推荐」标签
+      if(window.ZJTi18n && sequenceModeSelectEl) {
+        const _seqLocaleHandler = () => { applySequenceModeLabels(); };
+        window.ZJTi18n.on('locale-changed', _seqLocaleHandler);
+        if (el._cleanupHandlers) {
+          el._cleanupHandlers.push(function() { window.ZJTi18n.off('locale-changed', _seqLocaleHandler); });
         }
       }
 
