@@ -238,3 +238,71 @@ async def process():
     r7 = [f for f in findings if f.rule == "R7"]
     assert len(r7) == 1
     assert "asyncio" in r7[0].message
+
+
+def test_r8_flags_module_level_sys_modules_stub_in_tests():
+    lint = _load_lint_module()
+    path = write_py(
+        _lint_scratch(),
+        "tests/r8_module_level_stub.py",
+        """
+import sys
+from unittest.mock import MagicMock
+
+sys.modules['config.constant'] = MagicMock()
+""",
+    )
+    findings = lint.scan_file(path, include_main_rules=False, r8=True)
+    r8 = [f for f in findings if f.rule == "R8"]
+    assert len(r8) == 1
+    assert "stub_modules" in r8[0].message
+
+
+def test_r8_allows_stub_inside_function_scope():
+    lint = _load_lint_module()
+    path = write_py(
+        _lint_scratch(),
+        "tests/r8_function_scope_stub.py",
+        """
+import sys
+from unittest.mock import MagicMock
+
+
+def setUp(self):
+    sys.modules['config.constant'] = MagicMock()
+""",
+    )
+    findings = lint.scan_file(path, include_main_rules=False, r8=True)
+    assert not [f for f in findings if f.rule == "R8"]
+
+
+def test_r8_allows_dynamic_module_key():
+    lint = _load_lint_module()
+    path = write_py(
+        _lint_scratch(),
+        "tests/r8_dynamic_key.py",
+        """
+import sys
+sys.modules[spec.name] = module
+""",
+    )
+    findings = lint.scan_file(path, include_main_rules=False, r8=True)
+    assert not [f for f in findings if f.rule == "R8"]
+
+
+def test_r8_directory_gate_is_in_file_enumeration():
+    """R8 的目录门槛在文件枚举层：iter_test_python_files 只枚举 tests/ 下文件。"""
+    lint = _load_lint_module()
+    inside = write_py(
+        _lint_scratch(),
+        "tests/r8_inside.py",
+        "import sys\n",
+    )
+    outside = write_py(
+        _lint_scratch(),
+        "r8_outside.py",
+        "import sys\n",
+    )
+    listed = list(lint.iter_test_python_files(_lint_scratch()))
+    assert inside in listed
+    assert outside not in listed

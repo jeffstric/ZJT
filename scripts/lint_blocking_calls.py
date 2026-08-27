@@ -11,6 +11,9 @@ Rules:
   R6  error    `with ThreadPoolExecutor()` (shutdown(wait=True) fake-timeout)
   R7  error    function references a name before its in-function import
                (UnboundLocalError: import binds the name for the whole function)
+  R8  error    tests/: module-level `sys.modules['name'] = ...` stub assignment
+               (use tests/base/test_isolation.py stub_modules instead; restores
+               sys.modules entry AND parent package attribute even on ImportError)
 """
 from __future__ import annotations
 
@@ -213,11 +216,92 @@ class BlockingCallVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+class TestSysModulesStubVisitor(ast.NodeVisitor):
+    """R8: tests/ 内模块级 `sys.modules['name'] = ...` 裸 stub 赋值。
+
+    历史上多次 CI 全量跑连锁失败的根因：模块级注入未恢复，或
+    "尾部恢复"因 import 中断未执行（d01ec49e）。官方替代是
+    tests/base/test_isolation.py 的 stub_modules（try/finally 恢复，
+    同时还原父包属性）。函数/类/with 块内的赋值（时序可控）不拦截；
+    动态键（sys.modules[spec.name]）不拦截。
+    """
+
+    _SCOPE_TYPES = (
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+        ast.With,
+        ast.AsyncWith,
+        ast.Lambda,
+    )
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.findings: list[Finding] = []
+
+    def add(self, rule: str, severity: str, node: ast.AST, message: str) -> None:
+        self.findings.append(
+            Finding(
+                rule=rule,
+                severity=severity,
+                path=self.path,
+                line=getattr(node, "lineno", 1),
+                message=message,
+            )
+        )
+
+    def visit_Module(self, node: ast.Module) -> None:
+        self._walk_stmts(node.body)
+
+    def _walk_stmts(self, stmts) -> None:
+        for stmt in stmts:
+            if isinstance(stmt, self._SCOPE_TYPES):
+                continue
+            if isinstance(stmt, ast.Assign):
+                self._check_assign(stmt)
+            for field in ("body", "orelse", "finalbody"):
+                sub = getattr(stmt, field, None)
+                if isinstance(sub, list):
+                    self._walk_stmts(sub)
+
+    def _check_assign(self, stmt: ast.Assign) -> None:
+        for target in stmt.targets:
+            if not (
+                isinstance(target, ast.Subscript)
+                and dotted_name(target.value) == "sys.modules"
+            ):
+                continue
+            slice_node = target.slice
+            if isinstance(slice_node, ast.Constant) and isinstance(slice_node.value, str):
+                self.add(
+                    "R8",
+                    "error",
+                    stmt,
+                    f"module-level sys.modules[{slice_node.value!r}] stub assignment; "
+                    "use tests/base/test_isolation.py stub_modules() instead "
+                    "(restores sys.modules entry and parent package attribute)",
+                )
+
+
 def iter_python_files(root: Path) -> Iterable[Path]:
     for path in root.rglob("*.py"):
         parts = set(path.relative_to(root).parts[:-1])
         if parts.intersection(EXCLUDED_DIRS):
             continue
+        yield path
+
+
+def iter_test_python_files(root: Path) -> Iterable[Path]:
+    """tests/ 目录（主规则集排除它，R8 专用）。"""
+    tests_root = root / "tests"
+    if not tests_root.is_dir():
+        return
+    for path in tests_root.rglob("*.py"):
+        parts = set(path.relative_to(root).parts[:-1])
+        if parts.intersection({"__pycache__"}):
+            continue
+        if path.name == "test_isolation.py" and "base" in parts:
+            continue  # 官方隔离工具自身
         yield path
 
 
@@ -241,15 +325,22 @@ def is_allowed(finding: Finding, root: Path, allowlist: set[str]) -> bool:
     )
 
 
-def scan_file(path: Path) -> list[Finding]:
+def scan_file(path: Path, *, include_main_rules: bool = True, r8: bool = False) -> list[Finding]:
     try:
         source = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
         source = path.read_text(encoding="utf-8-sig", errors="ignore")
     tree = ast.parse(source, filename=str(path))
-    visitor = BlockingCallVisitor(path)
-    visitor.visit(tree)
-    return visitor.findings
+    findings: list[Finding] = []
+    if include_main_rules:
+        visitor = BlockingCallVisitor(path)
+        visitor.visit(tree)
+        findings.extend(visitor.findings)
+    if r8:
+        r8_visitor = TestSysModulesStubVisitor(path)
+        r8_visitor.visit(tree)
+        findings.extend(r8_visitor.findings)
+    return findings
 
 
 def emit(finding: Finding, root: Path) -> None:
@@ -279,6 +370,24 @@ def main() -> int:
     for path in iter_python_files(root):
         try:
             findings = scan_file(path)
+        except SyntaxError as exc:
+            finding = Finding("PY", "error", path, exc.lineno or 1, f"syntax error: {exc.msg}")
+            if not is_allowed(finding, root, allowlist):
+                emit(finding, root)
+                error_count += 1
+            continue
+
+        for finding in findings:
+            if is_allowed(finding, root, allowlist):
+                continue
+            emit(finding, root)
+            if finding.severity == "error":
+                error_count += 1
+
+    # R8：tests/ 目录的模块级 sys.modules stub 赋值（主规则集不扫 tests）
+    for path in iter_test_python_files(root):
+        try:
+            findings = scan_file(path, include_main_rules=False, r8=True)
         except SyntaxError as exc:
             finding = Finding("PY", "error", path, exc.lineno or 1, f"syntax error: {exc.msg}")
             if not is_allowed(finding, root, allowlist):
