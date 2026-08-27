@@ -165,6 +165,30 @@ def get_sync_task_stale_timeout(driver_name: str) -> Optional[int]:
     return _parse_optional_timeout(value)
 
 
+# 同步任务孤儿恢复宽限（秒）：ai_tools.update_time 距今超过该值，才允许把
+# 「PROCESSING + 无 project_id + 不在同步执行器」的任务判定为孤儿（子进程崩溃）。
+# 目的：防御终态落库与内存元数据清理之间的时序窗口被孤儿恢复误判，
+# 导致同供应商重复提交/重复计费。driver 侧 HTTP 超时由 timeout.sync_request_timeout*2
+# 兜底，孤儿恢复延迟数分钟不影响正确性；服务重启场景由启动时 _reset_orphan_sync_tasks
+# 处理，不受本宽限影响。0 表示禁用宽限（恢复旧行为）。
+SYNC_ORPHAN_GRACE_SECONDS_DEFAULT = 300
+
+
+def get_sync_orphan_grace_seconds() -> int:
+    """读取孤儿恢复宽限阈值，支持动态配置 sync_task.orphan_grace_seconds 覆盖。"""
+    try:
+        from config.config_util import get_dynamic_config_value
+
+        value = get_dynamic_config_value(
+            "sync_task",
+            "orphan_grace_seconds",
+            default=SYNC_ORPHAN_GRACE_SECONDS_DEFAULT,
+        )
+        return max(int(value), 0)
+    except Exception:
+        return SYNC_ORPHAN_GRACE_SECONDS_DEFAULT
+
+
 # extra_config 字段名
 IMAGE_MODE_EXTRA_CONFIG_KEY = "image_mode"
 VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"

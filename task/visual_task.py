@@ -49,7 +49,8 @@ from config.constant import (
     TASK_STATUS_WAITING_PARAM_PREPARE,
     TASK_STATUS_WAITING_BEFORE_FINISH,
     RUNNINGHUB_TASK_TYPES,
-    RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
+    RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT,
+    get_sync_orphan_grace_seconds
 )
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
@@ -608,6 +609,21 @@ async def _check_task_status(ai_tool):
         # 常见原因：同步执行器子进程崩溃/超时，结果未写回数据库
         # 处理：重置为 PENDING/QUEUED，try_count 清零，让调度器重新提交
         # 注意：不清零 try_count 可能导致快速触发 max_retry 失败
+        #
+        # 宽限保护：update_time 距今不足阈值时跳过重置。该状态组合也可能是
+        # 「任务刚完成、终态正在落库」的时序窗口（check_results 先清理内存再写库），
+        # 误判会导致同供应商重复提交/重复计费。宽限期内返回 True（本轮无需重试计数），
+        # 宽限到期（真孤儿：update_time 长期停滞）后仍走原重置逻辑。
+        grace_seconds = get_sync_orphan_grace_seconds()
+        last_active = getattr(ai_tool, 'update_time', None)
+        if grace_seconds > 0 and last_active:
+            active_seconds = (datetime.now() - last_active).total_seconds()
+            if active_seconds < grace_seconds:
+                logger.debug(
+                    f"AI tool {task_id} PROCESSING without project_id but active "
+                    f"{active_seconds:.0f}s ago (<{grace_seconds}s grace), skip orphan reset"
+                )
+                return True
         logger.warning(f"AI tool {task_id} has no project_id while status=PROCESSING and not in sync executor, resetting to PENDING")
         AIToolsModel.update(task_id, status=AI_TOOL_STATUS_PENDING)
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_QUEUED, try_count=0, next_trigger=datetime.now())
