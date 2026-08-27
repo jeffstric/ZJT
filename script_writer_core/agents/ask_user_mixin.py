@@ -76,9 +76,14 @@ class AskUserMixin:
 
         # 检查必要依赖
         if not getattr(self, 'task_manager', None) or not getattr(self, 'task_id', None):
-            error_msg = "ask_user 工具未配置 task_manager 或 task_id"
-            logger.error(f"{self.agent_id}: {error_msg}")
-            return {"error": error_msg}
+            error_msg = (
+                "ask_user 在当前环境不可用：后台任务（如接口模块生成）没有会话界面，"
+                "无法向用户提问，重试也不会成功。请立即停止提问尝试；若存在必须由管理员"
+                "确认的事项（如能力覆盖范围、参数规格），把它们整理进任务结束总结并如实"
+                "报告\"任务未完成，待管理员补充需求后重新发起\"。"
+            )
+            logger.warning(f"{self.agent_id}: {error_msg}")
+            return {"error": error_msg, "user_input": None, "ask_disabled": True}
 
         # 提取参数
         question = tool_args.get("question", "")

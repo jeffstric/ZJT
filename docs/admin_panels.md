@@ -46,6 +46,27 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 | 用户总数 | 系统注册用户总数 |
 | 3天活跃工作流 | 最近3天有更新的工作流数量 |
 | 月活用户 | 当月活跃用户数量（需手动点击查询） |
+| 队列积压 | 各调度队列待处理/处理中/停滞数量，15 秒自动刷新 |
+
+#### 1.0 队列积压看板
+
+位于统计卡片和模型成功率分析之间。接口 `GET /api/admin/dashboard/queues` 只读聚合下列队列，单表失败不影响其它卡片：
+
+| 卡片 | 数据源 | 停滞（红） | 积压（黄） |
+|------|--------|------------|------------|
+| 媒体下载 | `download_queue`（附 `ai_tools.status=6`） | 处理中创建过久，或有积压但近窗口无成功 | 待处理+处理中 ≥ 20，或租约过期 |
+| 视频生成 | `tasks` `task_type=generate_video` | 处理中/等待态 `updated_at` 过久 | 未完成 ≥ 50，或排队已过 `next_trigger` |
+| 音频生成 | `tasks` `task_type=generate_audio` | 同上 | 未完成 ≥ 30，或逾期未调度 |
+| 异步任务 | `async_tasks` | 排队/处理中更新过久 | 未完成 ≥ 30 |
+| 宫格生图 | `grid_image_tasks` | 同上 | 未完成 ≥ 30 |
+| 剧本拆分 | `script_split_task` | 执行中且租约过期 | 排队+执行中 ≥ 8 |
+| 流水线步骤 | `ai_tool_pipeline_steps` | `status=1` 且 `updated_at` 过久 | 待处理+处理中 ≥ 50 |
+| RunningHub 槽位 | `runninghub_slots` | 占用 ≥ 上限 | 占用 ≥ 上限的 80% |
+| Agent 对话 | `agent_tasks` | `running` 过久 | pending+running ≥ 20 |
+
+卡片颜色：绿=正常，黄=积压，红=停滞。停滞分钟数读动态配置 `download_queue_health.stale_minutes`（默认 30）。阈值常量见 `config/constant.py` `QueueBacklogConstants`。停留在仪表盘时每 15 秒轮询一次，切走页面即停止。
+
+实现：`services/queue_backlog.py`，API 经 `asyncio.to_thread` 调用，不阻塞事件循环。
 
 #### 1.1 模型成功率分析
 
@@ -106,7 +127,7 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 
 | 操作 | 说明 |
 |------|------|
-| 快速配置 | 引导式配置向导，支持按分类（大模型/生图/生视频/其他）选择服务商并填写API密钥 |
+| 快速配置 | 引导式配置向导，支持按分类（大模型/多媒体，多媒体合并生图+生视频+其他）选择服务商并填写API密钥 |
 | 初始化配置 | 初始化系统默认配置 |
 | 刷新缓存 | 刷新配置缓存使修改生效 |
 | 编辑 | 修改配置值（支持字符串、数字、布尔、JSON类型） |
@@ -115,10 +136,12 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 #### 3.3 快速配置弹窗
 
 快速配置采用两栏模式：
-- **左侧面板**：按分类标签（大模型、生图模型、生视频模型、其他服务）展示服务商卡片
+- **左侧面板**：按分类标签（大模型、多媒体）展示服务商卡片；每个分类内推荐供应商（带 ★ 徽章）优先排在最前，其余按内部编号排列。「多媒体」合并了生图/生视频/其他三类。生图与生视频共用同一配置键的服务商（多米、火山引擎、火山引擎海外版、聚合站 1-5）在多媒体分类中各只有**一个条目**，选中即同时覆盖生图与生视频。点击未选中的卡片即选中；点击已选中的卡片**不会取消选中**，而是联动右侧面板滚动定位到该服务商的配置卡片（短暂高亮）。取消选中请使用右侧配置卡片右上角的 ✕（按 `baseName` 整组移除，如火山大模型/多媒体条目一起取消）
 - **右侧面板**：选中服务商的配置表单，支持保存、测试连接、移除操作
-- **进度指示**：显示已选择和已配置的服务商数量及进度条。共享同一凭证的服务商（如多米生图+生视频、火山多分类）按 `baseName` 合并计数，填一份 Token/Key 即计为「已配置 1」
-- **一键选择（快速选择）**：自动选中当前推荐方案——**DeepSeek 大模型** + **多米**（生图/生视频共享 Token）。智剧通 API 正在逐步下线，不再带「推荐」标签，也不再作为快速选择默认项
+- **自动勾选**：打开弹窗时读取已有配置，必填字段（如 api_key/token）已有值的服务商自动选中。共享同一配置键的条目会**同时勾选**（如 `volcengine.api_key` 对应的火山大模型与多媒体条目），即配置一份 Key 后多媒体标签打勾（大模型标签也打勾）
+- **自动取消选中**：保存某服务商配置后，若其密钥（api_key/token）为空，左侧选中自动撤销、右侧配置卡片随之移除；共享同一密钥的 `baseName` 整组一并撤销（与「自动勾选」规则互为正反）。重新点击左侧卡片即可再次选中并填写
+- **进度指示**：显示已选择和已配置的服务商数量及进度条。跨分类共享同一凭证的服务商（如火山大模型/多媒体）按 `baseName` 合并计数，填一份 Token/Key 即计为「已配置 1」
+- **一键选择（快速选择）**：自动选中当前推荐方案——**DeepSeek 大模型** + **多米**（单条目即覆盖生图/生视频，共享同一 Token）。智剧通 API 正在逐步下线，不再带「推荐」标签，也不再作为快速选择默认项
 - **社区版限制**：社区版用户无法选择标记为"商业版专属"的服务商
 
 #### 3.4 敏感配置
@@ -349,6 +372,39 @@ GET /api/admin/dashboard/model-analysis?days=7&start_date=2026-06-03&end_date=20
 返回数据包含模型汇总 `models` 和每日聚合 `daily`。前端使用 `daily[].models` 渲染每日趋势折线图、每日堆积柱状图，并使用 `models` 渲染调用量玫瑰图和明细表格。
 
 `models` 会返回所有启用的图生视频、文生视频、数字人类任务类型（数据为 0 的模型也包含在内），新增模型后无需前端维护映射；页面渲染时会过滤掉调用量为 0 的模型，仅展示有数据的模型。统计仅计入 `implementation_attempts.status IN (2, -1)` 的终态尝试；任务创建时预写的 `ai_tools.implementation` 不会阻止 attempt 记录。
+
+### 队列积压
+
+```
+GET /api/admin/dashboard/queues
+```
+
+响应示例：
+```json
+{
+    "code": 0,
+    "data": {
+        "generated_at": "2026-08-23 12:00:00",
+        "stale_minutes": 30,
+        "overall": "ok",
+        "queues": [
+            {
+                "id": "download_queue",
+                "level": "ok",
+                "headline": 0,
+                "headline_key": "open",
+                "metrics": [
+                    {"key": "pending", "value": 0, "alert": false},
+                    {"key": "processing", "value": 0, "alert": false}
+                ],
+                "hint": null
+            }
+        ]
+    }
+}
+```
+
+`overall` / `level` 取值：`ok` / `warn` / `danger` / `unknown`。`unknown` 表示该表查询失败（例如尚未执行迁移）。前端用 `id` / `metrics[].key` / `hint` 走 i18n，不直接展示后端中文。
 
 ### 用户列表
 
@@ -600,7 +656,8 @@ model/
 └── notifications.py     # 通知数据模型
 
 services/
-└── notification_service.py  # 通知拉取服务
+├── notification_service.py  # 通知拉取服务
+└── queue_backlog.py         # 仪表盘队列积压聚合
 
 config/
 ├── constant.py          # NotificationConstants 等常量定义
@@ -613,7 +670,6 @@ alembic/versions/        # 数据库迁移脚本
 
 以下功能暂未实现，可根据需要后续添加：
 
-- 任务监控
 - 订单管理
 - 音色库管理
 - 操作日志（商业版功能）

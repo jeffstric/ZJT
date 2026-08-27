@@ -65,7 +65,8 @@ class ChatSession:
             raw_skill_prompt = marketing_skill_loader.get_skill_prompt('marketing-pm')
             pm_base_prompt = sop_loader.load_skill_with_index(raw_skill_prompt) if raw_skill_prompt else None
 
-            pm_model = model if model else 'gemini/gemini-3-flash-preview'
+            # 无斜杠形式：DeepSeek 客户端不剥离 'deepseek/' 前缀，工厂按前缀路由到 DEEPSEEK 供应商。
+            pm_model = model if model else 'deepseek-v4-flash'
             pm_allowed_tools = ['call_agent', 'ask_user', 'load_sop']
             pm_skill_names = []  # 提示词已通过 base_prompt 注入，不再由 PMAgent 重复加载
             skip_env_context = True
@@ -141,31 +142,35 @@ class ChatSession:
                 skip_env_context=skip_env_context
             )
         logger.info(f"[ChatSession] PM Agent 初始化完成: {self.pm_agent.agent_id}")
-        
+
         # 配置 LiteLLM
         self._setup_litellm()
-        
-        # 设置模型（默认使用 Gemini 3 Flash Preview）
-        self.model = model or "gemini-3-flash-preview"
+
+        # 设置模型（默认使用 DeepSeek V4 Flash；原 Gemini 3 Flash Preview 已下线）。
+        self.model = model or "deepseek-v4-flash"
         self.model_id = model_id  # 存储模型ID
-        
+
         self.created_at = datetime.now()
         self.updated_at = datetime.now()
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.total_cache_creation_tokens = 0
         self.total_cache_read_tokens = 0
-    
+
     def _setup_litellm(self):
         """配置 LiteLLM"""
         # 获取 Anthropic 配置
         anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
         anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL")
-        
+
         # 获取 Jiekou.ai Gemini 配置
-        jiekou_api_key = os.environ.get("JIEKOU_API_KEY") or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        jiekou_api_key = (
+            os.environ.get("JIEKOU_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+            or os.environ.get("GEMINI_API_KEY")
+        )
         jiekou_base_url = os.environ.get("JIEKOU_BASE_URL") or os.environ.get("GOOGLE_GEMINI_BASE_URL")
-        
+
         # 设置 LiteLLM 环境变量
         if anthropic_api_key:
             os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
@@ -178,44 +183,44 @@ class ChatSession:
         if jiekou_base_url:
             os.environ["JIEKOU_BASE_URL"] = jiekou_base_url
             os.environ["GOOGLE_GEMINI_BASE_URL"] = jiekou_base_url
-            
+
         # 配置 LiteLLM 设置
         litellm.set_verbose = False  # 关闭详细日志
-        litellm.drop_params = True   # 自动删除不支持的参数
+        litellm.drop_params = True  # 自动删除不支持的参数
 
     def get_history(self):
         """获取对话历史"""
         if self.pm_agent:
             return self.pm_agent.conversation_history
         return []
-    
+
     def clear_history(self):
         """清空对话历史"""
         if self.pm_agent:
             self.pm_agent.clear_history()
             self.pm_agent._ask_fail_count = 0  # 重置 ask_user 连续失败计数
         self.updated_at = datetime.now()
-    
+
     def set_model(self, model: str, model_id: Optional[int] = None) -> bool:
         """
         切换 AI 模型
-        
+
         Args:
             model: 模型名称
             model_id: 模型ID（可选）
-        
+
         Returns:
             bool: 切换是否成功
         """
         self.model = model
         if model_id is not None:
             self.model_id = model_id
-        
+
         # 同时更新 pm_agent 的模型，确保 API 调用使用正确的模型
-        if hasattr(self, 'pm_agent') and self.pm_agent:
+        if hasattr(self, "pm_agent") and self.pm_agent:
             self.pm_agent.model = model
             logger.info(f"Session {self.session_id}: 已更新 PM Agent 模型为 {model}")
-        
+
         self.updated_at = datetime.now()
         return True
 

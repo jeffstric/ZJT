@@ -48,3 +48,24 @@ def test_script_pm_call_agent_schema_only_includes_script_experts():
     enum_values = call_agent["function"]["parameters"]["properties"]["AgentName"]["enum"]
 
     assert enum_values == ["story-writer"]
+
+
+def test_admin_expert_is_hidden_from_non_admin_and_visible_to_admin():
+    agent = _create_script_pm_agent()
+    agent.allowed_expert_types = ["script", "admin"]
+    agent.agents_config["expert_agents"]["generate-user-api-module"] = {
+        "expert_type": "admin",
+        "skills": ["generate-user-api-module"],
+        "allowed_tools": ["user_module_generation_create"],
+        "model": "test-model",
+    }
+    agent._admin_user_cache = False
+    assert agent._get_allowed_expert_names() == ["story-writer"]
+    assert agent._is_expert_allowed("generate-user-api-module") is False
+
+    agent._admin_user_cache = True
+    assert agent._get_allowed_expert_names() == [
+        "generate-user-api-module",
+        "story-writer",
+    ]
+    assert agent._is_expert_allowed("generate-user-api-module") is True

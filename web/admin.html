@@ -6,6 +6,7 @@
     <title data-i18n="admin_panel">管理后台 - __BRANDING_SITE_NAME__</title>
     <link rel="stylesheet" href="/css/common.css">
     <link rel="stylesheet" href="/css/admin.css">
+    <link rel="stylesheet" href="/css/admin_user_modules.css?v=__VERSION__">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
     <!-- i18n 支持 -->
     <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
@@ -88,6 +89,14 @@
                     </a>
                 </li>
                 <li>
+                    <a href="#" :class="{ active: currentPage === 'userModules' }" @click.prevent="switchPage('userModules')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 5h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" />
+                        </svg>
+                        <span>{{ t('nav_user_modules') }}</span>
+                    </a>
+                </li>
+                <li>
                     <a href="#" :class="{ active: currentPage === 'runninghubKeyPool' }" @click.prevent="switchPage('runninghubKeyPool')">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
@@ -165,6 +174,7 @@
                 <h2 v-else-if="currentPage === 'config'">{{ t('nav_config') }}</h2>
                 <h2 v-else-if="currentPage === 'checkin'">{{ t('nav_checkin') }}</h2>
                 <h2 v-else-if="currentPage === 'implementations'">{{ t('nav_implementations') }}</h2>
+                <h2 v-else-if="currentPage === 'userModules'">{{ t('nav_user_modules') }}</h2>
                 <h2 v-else-if="currentPage === 'runninghubKeyPool'">{{ t('nav_runninghub_key_pool') }}</h2>
                 <h2 v-else-if="currentPage === 'models'">{{ t('nav_models') }}</h2>
                 <h2 v-else-if="currentPage === 'notifications'">{{ t('nav_notifications') }}</h2>
@@ -293,6 +303,72 @@
                             <span v-if="dashboard.monthlyActiveUsers?.year && dashboard.monthlyActiveUsers?.month" style="font-size: 11px; color: #64748b; margin-left: 8px;">
                                 ({{ dashboard.monthlyActiveUsers.year }}-{{ dashboard.monthlyActiveUsers.month }})
                             </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 队列积压 -->
+                <div class="queue-backlog-section">
+                    <div class="queue-backlog-header">
+                        <h3>{{ t('queue_backlog_title') }}</h3>
+                        <div class="queue-backlog-meta">
+                            <span class="queue-level-badge" :class="dashboard.queues.overall">
+                                {{ t('queue_level_' + (dashboard.queues.overall || 'ok')) }}
+                            </span>
+                            <span v-if="dashboard.queues.generatedAt" class="queue-backlog-updated">
+                                {{ t('queue_backlog_updated') }} {{ dashboard.queues.generatedAt }}
+                            </span>
+                            <button
+                                class="action-btn primary"
+                                @click="loadQueueBacklog(true)"
+                                :disabled="dashboard.queues.loading"
+                                style="font-size: 12px; padding: 4px 12px;"
+                            >
+                                {{ dashboard.queues.loading ? t('querying') : t('queue_backlog_refresh') }}
+                            </button>
+                        </div>
+                    </div>
+                    <p class="queue-backlog-hint">{{ t('queue_backlog_desc') }}</p>
+                    <div v-if="dashboard.queues.loading && !dashboard.queues.list.length" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>{{ t('loading') }}</p>
+                    </div>
+                    <div v-else-if="dashboard.queues.error && !dashboard.queues.list.length" class="queue-backlog-error">
+                        {{ t('queue_backlog_load_failed') }}
+                    </div>
+                    <div v-else class="queue-backlog-grid">
+                        <div
+                            v-for="q in dashboard.queues.list"
+                            :key="q.id"
+                            class="queue-card"
+                            :class="q.level"
+                        >
+                            <div class="queue-card-header">
+                                <span class="queue-card-title">{{ t('queue_name_' + q.id) }}</span>
+                                <span class="queue-level-badge" :class="q.level">
+                                    {{ t('queue_level_' + (q.level || 'ok')) }}
+                                </span>
+                            </div>
+                            <div class="queue-card-value" :class="q.level">
+                                {{ q.headline == null ? '-' : q.headline }}
+                            </div>
+                            <div class="queue-card-headline-label">
+                                {{ t('queue_headline_' + (q.headline_key || 'open')) }}
+                            </div>
+                            <div class="queue-card-metrics">
+                                <div
+                                    v-for="m in q.metrics"
+                                    :key="m.key"
+                                    class="queue-metric"
+                                    :class="{ alert: m.alert }"
+                                >
+                                    <span class="queue-metric-label">{{ t('queue_metric_' + m.key) }}</span>
+                                    <span class="queue-metric-value">{{ m.value }}</span>
+                                </div>
+                            </div>
+                            <div v-if="q.hint" class="queue-card-hint">
+                                {{ t('queue_hint_' + q.hint) }}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1033,6 +1109,40 @@
                                                 </button>
                                                 <span class="power-hint">{{ t('impl_default_suffix') }}</span>
                                             </div>
+                                            <div
+                                                v-if="item.resolution_options && item.resolution_options.length"
+                                                class="resolution-multiplier-list"
+                                            >
+                                                <div class="resolution-multiplier-fields">
+                                                    <div class="resolution-multiplier-title">{{ t('impl_resolution_multiplier') }}</div>
+                                                    <div
+                                                        v-for="size in sortedResolutionOptions(item.resolution_options)"
+                                                        :key="size"
+                                                        class="resolution-multiplier-item"
+                                                    >
+                                                        <span class="duration-label">{{ size }}:</span>
+                                                        <input
+                                                            type="number"
+                                                            class="power-input"
+                                                            step="0.01"
+                                                            min="0.01"
+                                                            max="100"
+                                                            v-model.number="item.resolution_multipliers[size]"
+                                                            @change="updateResolutionMultiplier(item, size, group)"
+                                                            :disabled="implementations.updating === `${item.name}-res`"
+                                                        >
+                                                        <span class="power-unit">{{ t('impl_multiplier_unit') }}</span>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    class="action-btn small resolution-multiplier-reset"
+                                                    @click="resetResolutionMultipliers(item, group)"
+                                                    :disabled="implementations.updating"
+                                                    :title="t('impl_reset_multiplier_hint')"
+                                                >
+                                                    {{ t('impl_reset_default') }}
+                                                </button>
+                                            </div>
                                         </td>
                                         <td>{{ item.description || '-' }}</td>
                                     </tr>
@@ -1040,6 +1150,125 @@
                             </table>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- 用户接口模块：数据与操作由独立 mixin 维护，避免继续扩大 admin.js。 -->
+            <section v-show="currentPage === 'userModules'" class="user-modules-host">
+                <!-- 社区版锁定提示（接口模块为商业版能力） -->
+                <div v-if="!userModulesAvailable" class="table-container" style="max-width: 600px; margin: 60px auto; text-align: center;">
+                    <div style="padding: 60px 30px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" style="width: 64px; height: 64px; margin: 0 auto 20px; display: block; color: #f59e0b;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                        <h3 style="color: #1e293b; margin-bottom: 12px;">{{ t('um_locked_title') }}</h3>
+                        <p style="color: #64748b; font-size: 14px; line-height: 1.6;">{{ t('um_locked_desc') }}</p>
+                    </div>
+                </div>
+
+                <!-- 商业版：接口模块管理 -->
+                <div v-else class="um-page">
+                    <div class="um-hero">
+                        <div>
+                            <p class="um-eyebrow">{{ t('um_eyebrow') }}</p>
+                            <h3>{{ t('um_title') }}</h3>
+                            <p>{{ t('um_description') }}</p>
+                        </div>
+                        <div class="um-hero-actions">
+                            <button class="action-btn" @click="loadUserModules" :disabled="userModules.loading">
+                                {{ userModules.loading ? t('um_refreshing') : t('btn_refresh') }}
+                            </button>
+                            <button class="action-btn primary" @click="openUserModuleCreateModal">
+                                {{ t('um_create') }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="um-safety-note">
+                        <span class="um-safety-icon">&#128737;</span>
+                        <div>
+                            <strong>{{ t('um_safety_title') }}</strong>
+                            <p>{{ t('um_safety_desc') }}</p>
+                        </div>
+                    </div>
+
+                    <button
+                        v-if="hasPendingUserModuleQuestion && !userModuleAgentModal.show"
+                        type="button"
+                        class="um-alert um-alert-warning um-pending-banner"
+                        @click="userModuleAgentModal.show = true"
+                    >{{ t('um_agent_pending_banner') }}</button>
+
+                    <div class="um-stats">
+                        <div class="um-stat"><span>{{ t('um_stat_modules') }}</span><strong>{{ userModules.modules.length }}</strong></div>
+                        <div class="um-stat"><span>{{ t('um_stat_active') }}</span><strong>{{ userModuleActiveCount }}</strong></div>
+                        <div class="um-stat"><span>{{ t('um_stat_drafts') }}</span><strong>{{ userModules.generations.length }}</strong></div>
+                        <div class="um-stat"><span>{{ t('um_stat_runners') }}</span><strong>{{ userModuleRuntimeCount }}</strong></div>
+                    </div>
+
+                    <div v-if="userModules.error" class="um-alert um-alert-error">{{ userModules.error }}</div>
+                    <div v-if="userModules.loading && !userModules.loaded" class="loading">
+                        <div class="loading-spinner"></div><p>{{ t('loading') }}</p>
+                    </div>
+
+                    <template v-else>
+                        <div class="um-panel">
+                            <div class="um-panel-header">
+                                <div><h3>{{ t('um_modules_title') }}</h3><p>{{ t('um_modules_desc') }}</p></div>
+                                <input class="filter-input" v-model.trim="userModules.keyword" :placeholder="t('um_search_placeholder')">
+                            </div>
+                            <div class="um-table-scroll" v-if="filteredUserModules.length">
+                                <table class="admin-table um-table">
+                                    <thead><tr>
+                                        <th>{{ t('um_col_module') }}</th><th>{{ t('um_col_capabilities') }}</th>
+                                        <th>{{ t('um_col_release') }}</th><th>{{ t('um_col_runtime') }}</th><th>{{ t('um_col_actions') }}</th>
+                                    </tr></thead>
+                                    <tbody>
+                                        <tr v-for="module in filteredUserModules" :key="module.module_id">
+                                            <td><strong>{{ module.name || module.module_id }}</strong><code>{{ module.module_id }}</code></td>
+                                            <td><div class="um-chip-list"><span class="um-chip" v-for="capability in moduleCapabilities(module)" :key="capability.operation || capability">{{ capability.operation || capability }}</span><span v-if="!moduleCapabilities(module).length">-</span></div></td>
+                                            <td><span class="um-status" :class="userModuleStatusClass(module.status || (module.enabled ? 'active' : 'disabled'))">{{ userModuleStatusText(module.status || (module.enabled ? 'active' : 'disabled')) }}</span><small>{{ module.active_version || module.version || '-' }}</small></td>
+                                            <td><span class="um-runtime-dot" :class="moduleRuntimeOnline(module.module_id) ? 'online' : 'offline'"></span>{{ moduleRuntimeOnline(module.module_id) ? t('um_runtime_online') : t('um_runtime_offline') }}</td>
+                                            <td class="um-actions">
+                                                <button class="action-btn primary" @click="openUserModuleDetail(module)">{{ t('um_view_releases') }}</button>
+                                                <button class="action-btn danger" v-if="module.enabled || module.status === 'active'" @click="disableUserModule(module)" :disabled="userModules.busy">{{ t('um_disable') }}</button>
+                                                <template v-else>
+                                                    <button class="action-btn success" v-if="module.active_release_id" @click="enableUserModule(module)" :disabled="userModules.busy">{{ t('um_enable_module') }}</button>
+                                                    <button class="action-btn danger" @click="deleteUserModule(module)" :disabled="userModules.busy">{{ t('um_delete') }}</button>
+                                                </template>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div v-else class="empty-state"><p>{{ t('um_no_modules') }}</p><button class="action-btn primary" @click="openUserModuleCreateModal">{{ t('um_create_first') }}</button></div>
+                        </div>
+
+                        <div class="um-panel" v-if="userModuleAgentTasks.length">
+                            <div class="um-panel-header"><div><h3>{{ t('um_agent_tasks_title') }}</h3><p>{{ t('um_agent_tasks_desc') }}</p></div></div>
+                            <div class="um-task-list">
+                                <div v-for="task in userModuleAgentTasks" :key="task.task_id" class="um-task-item">
+                                    <span class="um-status" :class="userModuleStatusClass(task.status)">{{ userModuleStatusText(task.status) }}</span>
+                                    <strong>{{ task.module_id }}</strong>
+                                    <small>{{ formatUserModuleDate(task.updated_at || task.created_at) }}</small>
+                                    <button class="action-btn" @click="reopenUserModuleAgentTask(task)">{{ t('um_agent_task_view') }}</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="um-panel">
+                            <div class="um-panel-header"><div><h3>{{ t('um_drafts_title') }}</h3><p>{{ t('um_drafts_desc') }}</p></div></div>
+                            <div v-if="userModules.generations.length" class="um-generation-grid">
+                                <button v-for="generation in userModules.generations" :key="generation.generation_id" class="um-generation-card" @click="openUserModuleGeneration(generation)">
+                                    <span class="um-status" :class="userModuleStatusClass(generation.status)">{{ userModuleStatusText(generation.status) }}</span>
+                                    <strong>{{ generation.module_id }}</strong>
+                                    <p>{{ userModuleGenerationSummary(generation.requirement) }}</p>
+                                    <small>{{ formatUserModuleDate(generation.update_at || generation.created_at) }}</small>
+                                </button>
+                            </div>
+                            <div v-else class="empty-state"><p>{{ t('um_no_drafts') }}</p></div>
+                        </div>
+                    </template>
                 </div>
             </section>
 
@@ -1136,6 +1365,44 @@
                         <div class="stat-card-label">{{ t('models_disabled') }}</div>
                         <div class="stat-card-value" style="color: var(--admin-danger);">{{ models.list.filter(m => !m.enabled).length }}</div>
                     </div>
+                </div>
+
+                <!-- 本地推理服务（Ollama / vLLM）聚合配置：与模型管理同页，改完即时生效 -->
+                <div class="local-inference-box">
+                    <div class="local-inference-title">
+                        <strong>🖥️ {{ t('models_local_inference_title') }}</strong>
+                    </div>
+                    <p class="local-inference-desc">{{ t('models_local_inference_desc') }}</p>
+                    <div class="local-inference-row" v-if="localInference.loading">
+                        <span class="local-inference-hint">{{ t('loading') }}</span>
+                    </div>
+                    <template v-else>
+                        <div class="local-inference-row">
+                            <label class="local-inference-label">Ollama</label>
+                            <label class="local-inference-switch">
+                                <input type="checkbox" v-model="localInference.ollama.enabled" />
+                                <span>{{ localInference.ollama.enabled ? t('models_local_inference_enabled') : t('models_local_inference_disabled') }}</span>
+                            </label>
+                            <input type="text" class="filter-select local-inference-url" v-model="localInference.ollama.base_url"
+                                placeholder="http://localhost:11434" />
+                        </div>
+                        <div class="local-inference-row">
+                            <label class="local-inference-label">vLLM</label>
+                            <label class="local-inference-switch">
+                                <input type="checkbox" v-model="localInference.vllm.enabled" />
+                                <span>{{ localInference.vllm.enabled ? t('models_local_inference_enabled') : t('models_local_inference_disabled') }}</span>
+                            </label>
+                            <input type="text" class="filter-select local-inference-url" v-model="localInference.vllm.base_url"
+                                placeholder="http://localhost:8001" />
+                        </div>
+                        <div class="local-inference-row">
+                            <label class="local-inference-label"></label>
+                            <button class="action-btn primary" @click="saveLocalInferenceConfig" :disabled="localInference.saving">
+                                {{ localInference.saving ? t('um_processing') : t('models_local_inference_save') }}
+                            </button>
+                            <span class="local-inference-hint">{{ t('models_local_inference_hint') }}</span>
+                        </div>
+                    </template>
                 </div>
 
                 <div class="info-box" style="margin-bottom: 16px; padding: 12px 16px; background: #f0f9ff; border-left: 4px solid #3b82f6; border-radius: 4px;">
@@ -2286,7 +2553,8 @@
                                         selected: quickConfigModal.selectedProviderIds.includes(provider.id),
                                         disabled: isCommunityEdition && provider.commercialOnly
                                     }]"
-                                    @click="toggleProviderSelection(provider.id)">
+                                    :title="quickConfigModal.selectedProviderIds.includes(provider.id) ? t('quick_config_locate_hint') : ''"
+                                    @click="handleProviderCardClick(provider.id)">
                                 <div class="qc-card-main">
                                     <span class="qc-card-icon">{{ provider.icon }}</span>
                                     <div class="qc-card-info">
@@ -2327,7 +2595,7 @@
 
                         <!-- 服务商配置表单 -->
                         <template v-for="provider in selectedProvidersDetail" :key="provider.id">
-                            <div class="qc-config-card">
+                            <div :id="'qc-config-card-' + (provider.baseName || provider.id)" class="qc-config-card">
                                 <div class="qc-config-header">
                                     <div>
                                         <h4>{{ provider.icon }} {{ provider.name }}</h4>
@@ -2776,12 +3044,309 @@
             </div>
         </div>
 
+        <!-- 创建接口模块：智能体只负责生成草稿与校验。 -->
+        <div class="modal-overlay" v-if="userModuleCreateModal.show" @click.self="closeUserModuleCreateModal">
+            <div class="modal modal-wide um-create-modal">
+                <div class="modal-header">
+                    <div><h3>{{ t('um_create_title') }}</h3><p class="um-modal-subtitle">{{ t('um_create_desc') }}</p></div>
+                    <button class="modal-close" @click="closeUserModuleCreateModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>{{ t('um_module_id') }} <span class="um-required">*</span></label>
+                        <input v-model.trim="userModuleCreateModal.moduleId" :placeholder="t('um_module_id_placeholder')" autocomplete="off">
+                        <p class="form-hint">{{ t('um_module_id_hint') }}</p>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('um_model') }} <span class="um-required">*</span></label>
+                        <select v-model="userModuleCreateModal.modelId">
+                            <option value="">{{ userModuleCreateModal.modelsLoading ? t('um_models_loading') : t('um_model_placeholder') }}</option>
+                            <option v-for="model in userModuleCreateModal.models" :key="`${model.model_id || model.id}-${model.vendor_id || ''}`" :value="userModuleModelOptionValue(model)">{{ userModuleModelLabel(model) }}</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('um_connector') }} <span class="um-required">*</span></label>
+                        <div class="um-radio-row">
+                            <label class="um-radio"><input type="radio" value="http" v-model="userModuleCreateModal.connector"><span>{{ t('um_connector_http') }}</span></label>
+                            <label class="um-radio"><input type="radio" value="local_comfyui" v-model="userModuleCreateModal.connector"><span>{{ t('um_connector_comfyui') }}</span></label>
+                        </div>
+                    </div>
+                    <div class="form-group" v-if="userModuleCreateModal.connector === 'local_comfyui'">
+                        <label>{{ t('um_comfyui_base_url') }} <span class="um-required">*</span></label>
+                        <input v-model.trim="userModuleCreateModal.comfyuiBaseUrl" :placeholder="t('um_comfyui_base_url_placeholder')" autocomplete="off">
+                        <p class="form-hint">{{ t('um_comfyui_base_url_hint') }}</p>
+                    </div>
+                    <div class="form-group" v-if="userModuleCreateModal.connector === 'local_comfyui'">
+                        <label>{{ t('um_comfyui_workflow') }} <span class="um-required">*</span></label>
+                        <input type="file" accept="application/json,.json" @change="onUserModuleWorkflowFile">
+                        <p class="form-hint">{{ t('um_comfyui_workflow_hint') }}</p>
+                        <p class="form-hint" v-if="userModuleCreateModal.workflowFileName">{{ userModuleCreateModal.workflowFileName }}</p>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ userModuleCreateModal.connector === 'local_comfyui' ? t('um_requirement_optional') : t('um_requirement') }} <span class="um-required" v-if="userModuleCreateModal.connector !== 'local_comfyui'">*</span></label>
+                        <textarea v-model="userModuleCreateModal.requirement" rows="10" :placeholder="t('um_requirement_placeholder')"></textarea>
+                        <div class="um-field-meta"><span>{{ userModuleCreateModal.connector === 'local_comfyui' ? t('um_requirement_comfyui_hint') : t('um_requirement_hint') }}</span><span>{{ userModuleCreateModal.requirement.length }}/20000</span></div>
+                    </div>
+                    <label class="um-checkbox"><input type="checkbox" v-model="userModuleCreateModal.confirmed"><span>{{ t('um_generation_ack') }}</span></label>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeUserModuleCreateModal">{{ t('cancel_btn') }}</button>
+                    <button class="modal-btn confirm" @click="startUserModuleAgent" :disabled="!canStartUserModuleAgent || userModuleCreateModal.loading">
+                        {{ userModuleCreateModal.loading ? t('um_starting') : t('um_start_agent') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 智能体运行进度。管理员可关闭窗口，后台任务继续执行。 -->
+        <div class="modal-overlay" v-if="userModuleAgentModal.show" @click.self="closeUserModuleAgentModal">
+            <div class="modal modal-wide um-agent-modal">
+                <div class="modal-header">
+                    <div><h3>{{ t('um_agent_title') }}</h3><p class="um-modal-subtitle"><code>{{ userModuleAgentModal.taskId }}</code></p></div>
+                    <button class="modal-close" @click="closeUserModuleAgentModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="um-agent-state">
+                        <span class="um-status" :class="userModuleStatusClass(userModuleAgentDisplayStatus)">{{ userModuleStatusText(userModuleAgentDisplayStatus) }}</span>
+                        <span>{{ t('um_agent_progress_hint') }}</span>
+                    </div>
+                    <div class="um-agent-feed" ref="userModuleAgentFeed">
+                        <div v-if="!userModuleAgentModal.messages.length" class="um-agent-empty">{{ t('um_agent_waiting') }}</div>
+                        <div
+                            class="um-agent-event"
+                            v-for="message in userModuleAgentModal.messages"
+                            :key="message.id || message._localId"
+                            :class="['type-' + (message.type || 'message'), { 'is-pending': isPendingUserModuleQuestion(message) }]"
+                        >
+                            <span>{{ userModuleAgentMessageLabel(message) }}</span>
+                            <div v-if="message.type === 'question'" class="um-question-card">
+                                <h4>{{ message.title || t('um_agent_event_question') }}</h4>
+                                <p>{{ message.question || message.content }}</p>
+                                <div class="um-question-options">
+                                    <button
+                                        type="button"
+                                        v-for="option in userModuleQuestionOptions(message)"
+                                        :key="option.value"
+                                        class="um-question-option"
+                                        :class="{ active: userModuleQuestionDraft(message).selected === option.value }"
+                                        :disabled="isUserModuleQuestionLocked(message)"
+                                        @click="selectUserModuleQuestionOption(message, option.value)"
+                                    >{{ option.label }}</button>
+                                </div>
+                                <textarea
+                                    v-if="message.allow_free_text !== false"
+                                    class="um-question-text"
+                                    rows="4"
+                                    v-model="userModuleQuestionDraft(message).freeText"
+                                    :disabled="isUserModuleQuestionLocked(message)"
+                                    :placeholder="t('um_agent_question_free_text_placeholder')"
+                                ></textarea>
+                                <button
+                                    type="button"
+                                    class="modal-btn confirm um-question-submit"
+                                    v-if="!isUserModuleQuestionLocked(message)"
+                                    :disabled="userModuleQuestionDraft(message).submitting"
+                                    @click="submitUserModuleQuestionAnswer(message)"
+                                >{{ userModuleQuestionDraft(message).submitting ? t('um_processing') : t('um_agent_question_submit') }}</button>
+                                <p v-else class="um-question-resolved">{{ userModuleQuestionOutcome(message) === 'timeout' ? t('um_agent_event_question_timeout') : t('um_agent_question_answered') }}</p>
+                            </div>
+                            <pre v-else>{{ userModuleAgentMessageContent(message) }}</pre>
+                        </div>
+                    </div>
+                    <div v-if="userModuleAgentModal.error" class="um-alert um-alert-error">{{ userModuleAgentModal.error }}</div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeUserModuleAgentModal">{{ t('um_run_in_background') }}</button>
+                    <button class="modal-btn confirm" v-if="userModuleAgentTerminal" @click="finishUserModuleAgent">{{ t('um_view_generated_draft') }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 草稿详情与人工审批。 -->
+        <div class="modal-overlay" v-if="userModuleGenerationModal.show" @click.self="closeUserModuleGenerationModal">
+            <div class="modal um-review-modal">
+                <div class="modal-header">
+                    <div><h3>{{ t('um_review_title') }}</h3><p class="um-modal-subtitle"><code>{{ userModuleGenerationModal.generation?.module_id }}</code></p></div>
+                    <button class="modal-close" @click="closeUserModuleGenerationModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div v-if="userModuleGenerationModal.loading" class="loading"><div class="loading-spinner"></div><p>{{ t('loading') }}</p></div>
+                    <div v-else class="um-review-layout">
+                        <aside class="um-file-sidebar">
+                            <div class="um-review-summary">
+                                <span class="um-status" :class="userModuleStatusClass(userModuleGenerationModal.generation?.status)">{{ userModuleStatusText(userModuleGenerationModal.generation?.status) }}</span>
+                                <p>{{ userModuleGenerationModal.generation?.requirement }}</p>
+                            </div>
+                            <button v-for="file in userModuleGenerationModal.files" :key="file.path" @click="selectUserModuleFile(file)" :class="{active: userModuleGenerationModal.selectedPath === file.path}">
+                                <span>{{ userModuleFileIcon(file.path) }}</span><span>{{ file.path }}</span><small>{{ formatUserModuleBytes(file.size) }}</small>
+                            </button>
+                        </aside>
+                        <main class="um-code-panel">
+                            <div class="um-code-toolbar"><code>{{ userModuleGenerationModal.selectedPath || t('um_select_file') }}</code><span>{{ formatUserModuleBytes(userModuleGenerationModal.fileSize) }}</span></div>
+                            <div v-if="userModuleGenerationModal.fileLoading" class="loading"><div class="loading-spinner"></div></div>
+                            <pre v-else class="um-code"><code>{{ userModuleGenerationModal.content || t('um_select_file') }}</code></pre>
+                        </main>
+                        <aside class="um-validation-panel">
+                            <h4>{{ t('um_validation_title') }}</h4>
+                            <div v-if="!userModuleGenerationModal.validation" class="um-validation-empty">{{ t('um_not_validated') }}</div>
+                            <template v-else>
+                                <div class="um-validation-result" :class="userModuleGenerationModal.validation.ok ? 'passed' : 'failed'">
+                                    <strong>{{ userModuleGenerationModal.validation.ok ? t('um_validation_passed') : t('um_validation_failed') }}</strong>
+                                </div>
+                                <div class="um-validation-list">
+                                    <p v-for="(item, index) in (userModuleGenerationModal.validation.findings || [])" :key="`${item.code || 'finding'}-${index}`" :class="item.level === 'warning' ? 'warnings' : 'errors'">
+                                        {{ item.message || JSON.stringify(item) }}<small v-if="item.path">{{ item.path }}<template v-if="item.line">:{{ item.line }}</template></small>
+                                    </p>
+                                </div>
+                            </template>
+                            <!-- AI 安全审核报告（方案七：用 AI 防 AI） -->
+                            <div v-if="userModuleGenerationModal.review" class="um-ai-review">
+                                <h4>{{ t('um_ai_review_title') }}</h4>
+                                <div class="um-validation-result" :class="userModuleReviewRiskClass(userModuleGenerationModal.review)">
+                                    <strong>{{ userModuleReviewVerdict(userModuleGenerationModal.review) }}</strong>
+                                </div>
+                                <p class="um-ai-review-summary">{{ userModuleGenerationModal.review.summary }}</p>
+                                <p v-if="userModuleGenerationModal.review.model" class="um-ai-review-model">{{ userModuleReviewModelText(userModuleGenerationModal.review) }}</p>
+                                <div v-if="(userModuleGenerationModal.review.findings || []).length" class="um-validation-list">
+                                    <p v-for="(item, index) in userModuleGenerationModal.review.findings" :key="`aireview-${index}`" :class="item.severity === 'high' ? 'errors' : 'warnings'">
+                                        {{ item.issue }}<small v-if="item.location">{{ item.location }}</small>
+                                        <span class="um-review-explain" v-if="item.explanation">{{ item.explanation }}</span>
+                                    </p>
+                                </div>
+                            </div>
+                            <button class="action-btn primary um-full-button" @click="validateUserModuleGeneration" :disabled="userModuleGenerationModal.actionLoading">{{ t('um_validate') }}</button>
+                            <!-- 审批即授权：发布前显式展示模块将获得的密钥（仅名称/描述/配置状态，不含值）。 -->
+                            <div class="um-secret-list">
+                                <h4>{{ t('um_secret_grant_title') }}</h4>
+                                <template v-if="(userModuleGenerationModal.secretNames || []).length">
+                                    <div v-for="name in userModuleGenerationModal.secretNames" :key="name" class="um-secret-item">
+                                        <code>{{ name }}</code>
+                                        <span v-if="userModuleSecretInfo(name)" class="um-secret-desc">{{ userModuleSecretInfo(name).description }}（{{ userModuleSecretInfo(name).config_key }}）</span>
+                                        <span v-else class="um-secret-desc um-secret-unknown">{{ t('um_secret_not_in_catalog') }}</span>
+                                        <span v-if="userModuleSecretInfo(name)" class="um-status" :class="userModuleSecretInfo(name).configured ? 'success' : 'warning'">
+                                            {{ userModuleSecretInfo(name).configured ? t('um_secret_configured') : t('um_secret_not_configured') }}
+                                        </span>
+                                    </div>
+                                    <p class="um-secret-note">{{ t('um_secret_grant_note') }}</p>
+                                </template>
+                                <p v-else class="um-secret-note">{{ t('um_secret_none') }}</p>
+                            </div>
+                            <div class="um-approval-warning"><strong>{{ t('um_approval_warning_title') }}</strong><p>{{ t('um_approval_warning_desc') }}</p></div>
+                        </aside>
+                    </div>
+                    <div v-if="userModuleGenerationModal.error" class="um-alert um-alert-error">{{ userModuleGenerationModal.error }}</div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeUserModuleGenerationModal">{{ t('close_btn') }}</button>
+                    <button class="modal-btn confirm" @click="approveUserModuleGeneration" :disabled="!canApproveUserModuleGeneration || userModuleGenerationModal.actionLoading">
+                        {{ userModuleGenerationModal.actionLoading ? t('um_processing') : t('um_approve_publish') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 模块发布历史、启用与回滚。 -->
+        <div class="modal-overlay" v-if="userModuleDetailModal.show" @click.self="closeUserModuleDetailModal">
+            <div class="modal modal-wide um-release-modal">
+                <div class="modal-header"><div><h3>{{ t('um_releases_title') }}</h3><p class="um-modal-subtitle"><code>{{ userModuleDetailModal.module?.module_id }}</code></p></div><button class="modal-close" @click="closeUserModuleDetailModal">&times;</button></div>
+                <div class="modal-body">
+                    <div v-if="userModuleDetailModal.loading" class="loading"><div class="loading-spinner"></div></div>
+                    <template v-else>
+                        <h4 class="um-section-title">{{ t('um_releases_section') }}</h4>
+                        <div v-if="!userModuleDetailModal.releases.length" class="empty-state">{{ t('um_no_releases') }}</div>
+                        <div v-else class="um-release-list">
+                            <article v-for="release in userModuleDetailModal.releases" :key="release.id" class="um-release-item" :class="{current: isCurrentUserModuleRelease(release)}">
+                                <div><span class="um-status" :class="userModuleStatusClass(release.status)">{{ userModuleStatusText(release.status) }}</span><h4>v{{ release.version }}</h4><code>{{ release.code_digest }}</code><p v-if="release.last_error" class="um-release-error">{{ release.last_error }}</p></div>
+                                <div class="um-release-actions">
+                                    <span v-if="isCurrentUserModuleRelease(release)" class="um-current-label">{{ t('um_current_release') }}</span>
+                                    <button v-else class="action-btn success" @click="activateUserModuleRelease(release)" :disabled="userModuleDetailModal.actionLoading">{{ isUserModuleEnabled(userModuleDetailModal.module) && userModuleDetailModal.module?.active_release_id ? t('um_rollback_to') : t('um_enable_release') }}</button>
+                                    <button class="um-code-view-btn" @click="openUserModuleReleaseCode(userModuleDetailModal.module, release)" :title="t('um_code_view')">&lt;/&gt; {{ t('um_code_view') }}</button>
+                                </div>
+                            </article>
+                        </div>
+                        <!-- 模型接入：把模块能力绑定为任务条目的实现方 -->
+                        <h4 class="um-section-title">{{ t('um_bindings_title') }}</h4>
+                        <div v-if="userModuleBindings.loading" class="loading"><div class="loading-spinner"></div></div>
+                        <template v-else>
+                            <div v-if="userModuleBindings.inactiveHint" class="um-binding-inactive-hint">{{ t('um_binding_inactive_hint') }}</div>
+                            <div v-if="!userModuleBindings.bindings.length" class="empty-state">{{ t('um_no_bindings') }}</div>
+                            <div v-else class="um-binding-list">
+                                <article v-for="binding in userModuleBindings.bindings" :key="binding.id" class="um-binding-item" :class="{inactive: !binding.module_effective}">
+                                    <div>
+                                        <strong>{{ binding.display_name || binding.module_id }}</strong>
+                                        <code>{{ userModuleCapabilityLabel(binding.operation) }}</code>
+                                        <span class="um-binding-task">{{ binding.task_display_name || binding.task_model_name || binding.task_name || binding.task_id }}</span>
+                                        <span class="um-status" :class="binding.module_effective ? 'active' : 'disabled'">{{ binding.module_effective ? t('um_binding_effective') : t('um_binding_inactive') }}</span>
+                                    </div>
+                                    <div class="um-release-actions">
+                                        <button class="action-btn danger" @click="deleteUserModuleBinding(binding)" :disabled="userModuleBindings.actionLoading">{{ t('um_binding_delete') }}</button>
+                                    </div>
+                                </article>
+                            </div>
+                            <div v-if="(userModuleBindings.targets?.capabilities || []).length" class="um-binding-forms">
+                                <p class="um-binding-hint">{{ t('um_binding_multi_hint') }}</p>
+                                <div
+                                    v-for="capability in userModuleBindings.targets.capabilities"
+                                    :key="capability.operation"
+                                    class="um-binding-form"
+                                >
+                                    <span class="um-binding-cap">{{ userModuleCapabilityLabel(capability.operation) }}</span>
+                                    <select v-model="userModuleBindings.form.taskByOperation[capability.operation]" class="form-control">
+                                        <option value="">{{ t('um_binding_select_task') }}</option>
+                                        <option v-for="task in userModuleBindingTaskOptions(capability.operation)" :key="task.id" :value="String(task.id)">{{ task.display_name || task.model_name || task.name }}</option>
+                                    </select>
+                                    <button
+                                        class="action-btn success"
+                                        @click="createUserModuleBinding(capability.operation)"
+                                        :disabled="userModuleBindings.actionLoading || !userModuleBindings.form.taskByOperation[capability.operation]"
+                                    >{{ t('um_binding_add') }}</button>
+                                </div>
+                            </div>
+                            <p v-else class="um-binding-hint">{{ t('um_bindings_need_active') }}</p>
+                            <div v-if="userModuleBindings.error" class="um-alert um-alert-error">{{ userModuleBindings.error }}</div>
+                        </template>
+                    </template>
+                    <div v-if="userModuleDetailModal.error" class="um-alert um-alert-error">{{ userModuleDetailModal.error }}</div>
+                </div>
+                <div class="modal-footer"><button class="modal-btn cancel" @click="closeUserModuleDetailModal">{{ t('close_btn') }}</button></div>
+            </div>
+        </div>
+
+        <!-- 已发布 Release 的只读代码查看弹窗（复用草稿审阅弹窗的布局样式）。 -->
+        <div class="modal-overlay" v-if="userModuleCodeModal.show" @click.self="closeUserModuleCodeModal">
+            <div class="modal um-review-modal">
+                <div class="modal-header">
+                    <div><h3>{{ t('um_code_title') }}</h3><p class="um-modal-subtitle"><code>{{ userModuleCodeModal.moduleId }}</code> · v{{ userModuleCodeModal.version }}</p></div>
+                    <button class="modal-close" @click="closeUserModuleCodeModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div v-if="userModuleCodeModal.loading" class="loading"><div class="loading-spinner"></div><p>{{ t('loading') }}</p></div>
+                    <div v-else-if="userModuleCodeModal.files.length" class="um-review-layout um-code-modal-layout">
+                        <aside class="um-file-sidebar">
+                            <button v-for="file in userModuleCodeModal.files" :key="file.path" @click="selectUserModuleCodeFile(file)" :class="{active: userModuleCodeModal.selectedPath === file.path}">
+                                <span>{{ userModuleFileIcon(file.path) }}</span><span>{{ file.path }}</span><small>{{ formatUserModuleBytes(file.size) }}</small>
+                            </button>
+                        </aside>
+                        <main class="um-code-panel">
+                            <div class="um-code-toolbar"><code>{{ userModuleCodeModal.selectedPath || t('um_select_file') }}</code><span>{{ formatUserModuleBytes(userModuleCodeModal.fileSize) }}</span></div>
+                            <div v-if="userModuleCodeModal.fileLoading" class="loading"><div class="loading-spinner"></div></div>
+                            <pre v-else class="um-code"><code>{{ userModuleCodeModal.content || t('um_select_file') }}</code></pre>
+                        </main>
+                    </div>
+                    <div v-else class="empty-state"><p>{{ t('um_code_empty') }}</p></div>
+                    <div v-if="userModuleCodeModal.error" class="um-alert um-alert-error">{{ userModuleCodeModal.error }}</div>
+                </div>
+                <div class="modal-footer"><button class="modal-btn cancel" @click="closeUserModuleCodeModal">{{ t('close_btn') }}</button></div>
+            </div>
+        </div>
+
         <!-- Toast消息 -->
         <div class="toast" :class="toast.type" v-if="toast.show">
             {{ toast.message }}
         </div>
     </div>
 
+    <script src="/js/admin/user_modules.js?v=__VERSION__"></script>
     <script src="/js/admin.js"></script>
 </body>
 </html>

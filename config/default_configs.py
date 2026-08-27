@@ -7,6 +7,9 @@ from typing import List, Dict, Any
 # 默认配置列表
 # 每个配置包含：key, value_type, description, editable, is_sensitive
 # 可选字段：quick_config - 标记是否为快速配置项（在快速配置弹窗中显示）
+# 可选字段：user_module_grantable - 是否允许经发布审批后注入用户模块
+#   （module_runtime/secret_resolver 自动生成密钥规范名映射，如 runninghub.api_key → RUNNINGHUB_API_KEY；
+#    模块 manifest secret_names 只能取这些规范名，未标记的配置模块不可访问）
 DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     # ==================== 版本空间配置 ====================
     {
@@ -63,6 +66,36 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'key': 'task_queue.enable_expire_check',
         'value_type': 'bool',
         'description': '是否启用任务过期检查',
+        'editable': True,
+        'is_sensitive': False
+    },
+
+    # ==================== 下载队列健康检查 ====================
+    {
+        'key': 'download_queue_health.enabled',
+        'value_type': 'bool',
+        'description': '是否启用 download_queue 积压/零进展健康检查（默认开）',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'download_queue_health.stale_minutes',
+        'value_type': 'int',
+        'description': '处理中行创建超过该分钟数仍未完成则告警（积压停滞，默认 30）',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'download_queue_health.zero_progress_minutes',
+        'value_type': 'int',
+        'description': '存在待处理/处理中行但该分钟数内无成功完成则告警（零进展，默认 10）',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'download_queue_health.alert_interval_minutes',
+        'value_type': 'int',
+        'description': 'DOWNLOAD_QUEUE_STALLED 告警最小间隔分钟数（默认 30）',
         'editable': True,
         'is_sensitive': False
     },
@@ -321,7 +354,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'RunningHub API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'runninghub.max_concurrent_slots',
@@ -357,7 +391,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'pipeline.h3_prompt_optimize_model',
         'value_type': 'string',
-        'description': 'H3 提示词优化使用的聊天模型名（默认 deepseek-v4-flash）。密钥未配置时依次回退：故事板对话模型 → 本项 → 剧本拆分默认模型(gemini-3-flash-preview)，全部未配置则回退原文',
+        'description': 'H3 提示词优化使用的聊天模型名（默认 deepseek-v4-flash）。密钥未配置时依次回退：故事板对话模型 → 本项 → JIEKOU 在线模型 gemini-3.5-flash，全部未配置则回退原文',
         'editable': True,
         'is_sensitive': False,
         'quick_config': False
@@ -378,7 +412,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': '多米 API Token',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     
     # ==================== Vidu 配置 ====================
@@ -388,7 +423,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'Vidu API Token',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
 
     # ==================== 智剧通配置 ====================
@@ -408,7 +444,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': '火山引擎 API Key（Seedream 5.0 文生图）',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
 
     # ==================== 火山引擎海外版配置 ====================
@@ -418,7 +455,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': '火山引擎海外版 API Key（Seedream/Seedance 海外版）',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'volcengine_oversea.base_url',
@@ -436,7 +474,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'kkidc 网关 API Key（Seedance 系列视频）',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'kkidc.base_url',
@@ -454,7 +493,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'huimengi 网关 API Key（Seedance 2.0 系列 / Grok 视频）',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'huimengi.base_url',
@@ -472,7 +512,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'YWAPI 官方站点 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_1.base_url',
@@ -488,7 +529,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'API 聚合站站点1 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_1.name',
@@ -512,7 +554,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'API 聚合站站点2 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_2.name',
@@ -536,7 +579,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'API 聚合站站点3 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_3.name',
@@ -559,7 +603,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'API 聚合站站点4 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_4.name',
@@ -583,7 +628,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'API 聚合站站点5 API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'api_aggregator.site_5.name',
@@ -638,7 +684,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'Google Gemini API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'llm.google.gemini_base_url',
@@ -656,7 +703,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'Claude API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'llm.claude.base_url',
@@ -674,7 +722,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'Qwen API Key（阿里通义千问）',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'llm.qwen.base_url',
@@ -753,7 +802,81 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'llm.ollama.enable_thinking',
         'value_type': 'bool',
-        'description': 'Ollama 是否启用思维链（部分模型支持）',
+        'description': 'Ollama 是否启用思维链（默认开启，对齐 Qwen3.8 官方思考模式）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
+    # ==================== vLLM 配置 ====================
+    {
+        'key': 'llm.vllm.enabled',
+        'value_type': 'bool',
+        'description': '是否启用 vLLM 本地推理服务',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.base_url',
+        'value_type': 'string',
+        'description': 'vLLM 服务地址（默认 http://localhost:8001，8000 为主服务端口）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.temperature',
+        'value_type': 'float',
+        'description': 'vLLM 温度参数 (0.0-2.0，默认 1.0 对齐 Qwen3.8 思考模式)',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.top_p',
+        'value_type': 'float',
+        'description': 'vLLM 核采样概率 (0.0-1.0，默认 0.95)',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.top_k',
+        'value_type': 'int',
+        'description': 'vLLM Top-K 采样（默认 20）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.min_p',
+        'value_type': 'float',
+        'description': 'vLLM 最小概率阈值（默认 0.0）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.presence_penalty',
+        'value_type': 'float',
+        'description': 'vLLM 存在惩罚（默认 0.0）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.repetition_penalty',
+        'value_type': 'float',
+        'description': 'vLLM 重复惩罚（默认 1.0）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.vllm.enable_thinking',
+        'value_type': 'bool',
+        'description': 'vLLM 是否启用思维链（默认开启，对齐 Qwen3.8 官方思考模式）',
         'editable': True,
         'is_sensitive': False,
         'quick_config': True
@@ -766,7 +889,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'DeepSeek API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'llm.deepseek.base_url',
@@ -784,7 +908,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'Agnes AI API Key',
         'editable': True,
         'is_sensitive': True,
-        'quick_config': True
+        'quick_config': True,
+        'user_module_grantable': True
     },
     {
         'key': 'llm.agnes.base_url',

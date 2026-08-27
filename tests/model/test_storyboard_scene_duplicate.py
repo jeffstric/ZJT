@@ -25,8 +25,9 @@ def _patch_no_dialogue(monkeypatch):
     import model.storyboard_dialogue as dialogue_module
     monkeypatch.setattr(dialogue_module, "StoryboardDialogueModel", _FakeDialogueModel, raising=False)
     # duplicate 内部是局部 import：`from .storyboard_dialogue import StoryboardDialogueModel`
-    # 故还需在 storyboard_scene 模块已加载的 sys.modules 中替换。
-    sys.modules["model.storyboard_dialogue"].StoryboardDialogueModel = _FakeDialogueModel
+    # 局部 import 经 sys.modules 取回的是同一个模块对象，上面的 monkeypatch 已覆盖，
+    # 且测试结束自动恢复；此前这里曾对 sys.modules 条目裸赋值且不恢复，会污染后续测试。
+    assert sys.modules["model.storyboard_dialogue"] is dialogue_module
 
 
 def test_duplicate_middle_scene_uses_midpoint(monkeypatch):

@@ -16,5 +16,6 @@
 """
 from .base_video_driver import BaseVideoDriver
 from .driver_factory import VideoDriverFactory, register_all_drivers
+# UserModuleMediaDriver 由商业版 enterprise 包动态注册。
 
 __all__ = ['BaseVideoDriver', 'VideoDriverFactory', 'register_all_drivers']

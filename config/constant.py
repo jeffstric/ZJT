@@ -22,7 +22,139 @@ from config.unified_config import (
     UnifiedTaskConfig,
     AGENT_POWER_CONFIRM_THRESHOLD,
     AGENT_POWER_CONFIRM_HARD_THRESHOLD,
+    USER_MODULE_RUNTIME_CONFIG,
 )
+
+
+# ===== 用户模块运行时 =====
+# 稳定协议与超时值由 unified_config 中的不可变配置统一维护；此处提供便于业务代码引用的别名。
+USER_MODULE_MANIFEST_SCHEMA_VERSION = USER_MODULE_RUNTIME_CONFIG.manifest_schema_version
+USER_MODULE_RPC_PROTOCOL_VERSION = USER_MODULE_RUNTIME_CONFIG.rpc_protocol_version
+USER_MODULE_MEDIA_DRIVER_PROTOCOL = USER_MODULE_RUNTIME_CONFIG.media_driver_protocol
+USER_MODULE_SDK_VERSION = USER_MODULE_RUNTIME_CONFIG.sdk_version
+USER_MODULE_ABI_FILE_RELATIVE = USER_MODULE_RUNTIME_CONFIG.abi_file_relative
+USER_MODULE_DEFAULT_ROOT_RELATIVE = USER_MODULE_RUNTIME_CONFIG.default_root_relative
+USER_MODULE_ROOT_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.root_env_name
+USER_MODULE_ENABLED_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.enabled_env_name
+USER_MODULE_CALLBACK_BASE_URL_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.callback_base_url_env_name
+USER_MODULE_SUPERVISOR_HOST = USER_MODULE_RUNTIME_CONFIG.supervisor_host
+USER_MODULE_SUPERVISOR_PORT_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.supervisor_port_env_name
+USER_MODULE_SUPERVISOR_URL_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.supervisor_url_env_name
+USER_MODULE_SUPERVISOR_TOKEN_ENV_NAME = USER_MODULE_RUNTIME_CONFIG.supervisor_token_env_name
+USER_MODULE_MAX_MANIFEST_BYTES = USER_MODULE_RUNTIME_CONFIG.max_manifest_bytes
+USER_MODULE_MAX_RPC_MESSAGE_BYTES = USER_MODULE_RUNTIME_CONFIG.max_rpc_message_bytes
+# Runner 端协议校验失败的固定错误码（消息只含 pydantic 字段路径/类型概要）
+MODULE_PROTOCOL_VIOLATION = "MODULE_PROTOCOL_VIOLATION"
+# 商业许可证未激活时用户模块（接口模块）的统一拒绝错误码；HTTP 守卫与
+# 执行链检查点（路由/驱动/服务/Supervisor RPC）共用，保证各层报错一致
+COMMERCIAL_LICENSE_REQUIRED = "COMMERCIAL_LICENSE_REQUIRED"
+USER_MODULE_RPC_CONNECT_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.rpc_connect_timeout_seconds
+USER_MODULE_RPC_REQUEST_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.rpc_request_timeout_seconds
+USER_MODULE_RUNNER_HEALTH_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.runner_health_timeout_seconds
+USER_MODULE_SUPERVISOR_STARTUP_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.supervisor_startup_timeout_seconds
+USER_MODULE_RUNNER_SHUTDOWN_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.runner_shutdown_timeout_seconds
+USER_MODULE_MAX_OPERATION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.max_operation_timeout_seconds
+USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.db_operation_timeout_seconds
+USER_MODULE_SCHEDULER_INTERVAL_SECONDS = USER_MODULE_RUNTIME_CONFIG.scheduler_interval_seconds
+USER_MODULE_SCHEDULER_BATCH_SIZE = USER_MODULE_RUNTIME_CONFIG.scheduler_batch_size
+USER_MODULE_MAX_PREFER_WAIT_SECONDS = USER_MODULE_RUNTIME_CONFIG.max_prefer_wait_seconds
+USER_MODULE_GENERATION_IO_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.generation_io_timeout_seconds
+USER_MODULE_GENERATION_REVISION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.generation_revision_timeout_seconds
+USER_MODULE_GENERATION_VALIDATION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.generation_validation_timeout_seconds
+USER_MODULE_GENERATION_LOCK_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.generation_lock_timeout_seconds
+USER_MODULE_GENERATION_MAX_FILE_BYTES = USER_MODULE_RUNTIME_CONFIG.generation_max_file_bytes
+USER_MODULE_GENERATION_MAX_TOTAL_BYTES = USER_MODULE_RUNTIME_CONFIG.generation_max_total_bytes
+USER_MODULE_GENERATION_MAX_SEARCH_RESULTS = USER_MODULE_RUNTIME_CONFIG.generation_max_search_results
+USER_MODULE_AGENT_TASK_RESULT_MAX_CHARS = USER_MODULE_RUNTIME_CONFIG.agent_task_result_max_chars
+USER_MODULE_AGENT_TASK_MAX_CONCURRENCY = USER_MODULE_RUNTIME_CONFIG.agent_task_max_concurrency
+USER_MODULE_AGENT_TASK_HEARTBEAT_INTERVAL_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_heartbeat_interval_seconds
+USER_MODULE_AGENT_TASK_STALE_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_stale_timeout_seconds
+USER_MODULE_AGENT_TASK_STATE_LOCK_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_state_lock_timeout_seconds
+USER_MODULE_AGENT_TASK_WALL_CLOCK_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_wall_clock_timeout_seconds
+USER_MODULE_AGENT_TASK_QUESTION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_question_timeout_seconds
+USER_MODULE_AGENT_TASK_MAX_QUESTIONS = USER_MODULE_RUNTIME_CONFIG.agent_task_max_questions
+USER_MODULE_AGENT_TASK_MAX_QUESTIONS_COMFYUI = (
+    USER_MODULE_RUNTIME_CONFIG.agent_task_max_questions_comfyui
+)
+USER_MODULE_COMFYUI_CONNECTOR = "local_comfyui"
+USER_MODULE_HTTP_CONNECTOR = "http"
+USER_MODULE_AGENT_TASK_QUESTION_POLL_INTERVAL_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_question_poll_interval_seconds
+USER_MODULE_AGENT_TASK_MAX_PROGRESS_EVENTS = USER_MODULE_RUNTIME_CONFIG.agent_task_max_progress_events
+USER_MODULE_AGENT_TASK_PROGRESS_CONTENT_MAX_CHARS = USER_MODULE_RUNTIME_CONFIG.agent_task_progress_content_max_chars
+USER_MODULE_SUPERVISOR_RESPAWN_ENABLED = USER_MODULE_RUNTIME_CONFIG.supervisor_respawn_enabled
+USER_MODULE_SUPERVISOR_MAX_RESPAWN_ATTEMPTS = USER_MODULE_RUNTIME_CONFIG.supervisor_max_respawn_attempts
+USER_MODULE_SUPERVISOR_RESPAWN_BACKOFF_SECONDS = USER_MODULE_RUNTIME_CONFIG.supervisor_respawn_backoff_seconds
+USER_MODULE_SUPERVISOR_RESPAWN_MAX_BACKOFF_SECONDS = USER_MODULE_RUNTIME_CONFIG.supervisor_respawn_max_backoff_seconds
+USER_MODULE_SUPERVISOR_HEALTHY_UPTIME_RESET_SECONDS = USER_MODULE_RUNTIME_CONFIG.supervisor_healthy_uptime_reset_seconds
+USER_MODULE_REVIEW_ENABLED = USER_MODULE_RUNTIME_CONFIG.review_enabled
+USER_MODULE_REVIEW_REQUIRED = USER_MODULE_RUNTIME_CONFIG.review_required
+USER_MODULE_REVIEW_MODEL = USER_MODULE_RUNTIME_CONFIG.review_model
+USER_MODULE_REVIEW_VENDOR_ID = USER_MODULE_RUNTIME_CONFIG.review_vendor_id
+USER_MODULE_REVIEW_MODEL_ID = USER_MODULE_RUNTIME_CONFIG.review_model_id
+USER_MODULE_REVIEW_TEMPERATURE = USER_MODULE_RUNTIME_CONFIG.review_temperature
+USER_MODULE_REVIEW_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.review_timeout_seconds
+USER_MODULE_REVIEW_MAX_CODE_CHARS = USER_MODULE_RUNTIME_CONFIG.review_max_code_chars
+USER_MODULE_REVIEW_MAX_OUTPUT_TOKENS = USER_MODULE_RUNTIME_CONFIG.review_max_output_tokens
+USER_MODULE_REVIEW_POLICY_VERSION = USER_MODULE_RUNTIME_CONFIG.review_policy_version
+USER_MODULE_REVIEW_MAX_CONCURRENCY = USER_MODULE_RUNTIME_CONFIG.review_max_concurrency
+USER_MODULE_REVIEW_OPERATION_TIMEOUT_SECONDS = USER_MODULE_RUNTIME_CONFIG.review_operation_timeout_seconds
+USER_MODULE_GENERATION_PREFERRED_MODEL = USER_MODULE_RUNTIME_CONFIG.generation_preferred_model
+USER_MODULE_GENERATION_PREFERRED_VENDOR = USER_MODULE_RUNTIME_CONFIG.generation_preferred_vendor
+# 模块密钥名与后台动态配置键的映射不再使用手工别名表，改由
+# config/default_configs.py 中 user_module_grantable=True 的配置项自动生成
+# （规范名 = config_key 大写并把 '.' 换成 '_'，如 runninghub.api_key →
+# RUNNINGHUB_API_KEY），见 module_runtime/secret_resolver.py。
+# 未列入可授权集合的密钥仍可通过同名 OS 环境变量（Supervisor 进程）提供，
+# 但不会读取任意动态配置项。
+# 候选 Release 校验错误只允许使用固定摘要。Driver health 的 message/details
+# 属于模块可控输入，禁止直接进入日志、HTTP 响应或持久化状态。
+USER_MODULE_RELEASE_VALIDATION_ERROR_MESSAGES = {
+    "RELEASE_HEALTH_UNHEALTHY": "候选 Release 的 Driver health 返回不健康",
+    "RELEASE_HEALTH_CALL_FAILED": "候选 Release 的 Driver health 调用失败",
+    "RELEASE_RUNTIME_VALIDATION_FAILED": "候选 Release 未通过运行时健康校验",
+    "RELEASE_VALIDATION_TIMEOUT": "候选 Release 运行时校验超时",
+    "RELEASE_VALIDATION_UNAVAILABLE": "候选 Release 运行时校验服务不可用",
+    "RELEASE_VALIDATION_INTERNAL_ERROR": "候选 Release 运行时校验发生内部错误",
+}
+USER_MODULE_HEALTH_SAFE_MISSING_SECRETS_MAX_ITEMS = 64
+USER_MODULE_HEALTH_SAFE_SECRET_NAME_MAX_CHARS = 128
+
+# ===== 用户模块接入核心模型链路（实现方绑定） =====
+# 动态实现方数字 ID 预留区间起点。核心实现方 ID 为小数字常量，二者不会冲突；
+# 按文档约定动态模块不得占用核心数字 implementation ID。
+USER_MODULE_IMPL_ID_BASE = 9000
+# 动态实现方名前缀，完整格式 user_module:<module_id>:<operation>
+USER_MODULE_IMPL_NAME_PREFIX = "user_module:"
+# 挂到 computing_power=0 的任务条目时，用户模块实现方的代码级默认算力。
+# 管理员仍可在「实现方管理」覆盖。
+USER_MODULE_DEFAULT_COMPUTING_POWER = 1
+# 支持绑定的 operation → 任务分类（TaskCategory）映射；
+# 值须与 config/unified_config.py 中 TaskCategory 的字符串保持一致。
+USER_MODULE_OPERATION_CATEGORIES = {
+    "text_to_video": "text_to_video",
+    "image_to_video": "image_to_video",
+    "text_to_image": "text_to_image",
+    "image_edit": "image_edit",
+}
+USER_MODULE_OPERATION_LABELS = {
+    "text_to_image": "文生图",
+    "image_edit": "图片编辑",
+    "text_to_video": "文生视频",
+    "image_to_video": "图生视频",
+}
+# operation → media_kind（module_runtime.protocol.MediaKind）
+USER_MODULE_OPERATION_MEDIA_KINDS = {
+    "text_to_video": "video",
+    "image_to_video": "video",
+    "text_to_image": "image",
+    "image_edit": "image",
+}
+# scheduler 周期性重载绑定注册的间隔：web 进程创建/删除绑定即时生效，
+# scheduler 等其他进程最长经过该间隔后感知。
+USER_MODULE_BINDING_RELOAD_INTERVAL_SECONDS = 60
+POWER_MODIFIER_ATTRIBUTE_RESOLUTION = "resolution"
+POWER_MODIFIER_MIN = 0.01
+POWER_MODIFIER_MAX = 100.0
 
 
 IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT = 180
@@ -88,6 +220,9 @@ QINIU_UPLOAD_HARD_TIMEOUT = 90
 # 新建底层 MySQL 连接的 connect_timeout（秒）：仅约束 TCP 握手阶段，
 # 10s 内连不上视为端口耗尽/网络故障，快速失败而非无限等待。
 DB_POOL_CONNECT_TIMEOUT = 10
+# 管理后台单次批量配置数量上限。数据库批处理在线程中执行，异步路由会等待
+# 该有限批次真实提交完成后再返回，避免“HTTP 已超时但后台线程仍继续落库”。
+ADMIN_CONFIG_BATCH_MAX_ITEMS = 100
 
 # ===== 七牛云前端直传（大世界文件上传）=====
 # 上传区域域名（按 bucket 所在区域选择；华东 https://upload.qiniup.com）。
@@ -193,7 +328,22 @@ def get_sync_orphan_grace_seconds() -> int:
 IMAGE_MODE_EXTRA_CONFIG_KEY = "image_mode"
 VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"
 LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
+IMPLEMENTATION_LOCK_EXTRA_CONFIG_KEY = "implementation_lock"
 ASSET_LIST_MAX_PAGE_SIZE = 1000
+
+# 用户固定供应商后，所选实现方不可用时的驱动错误
+DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE = "FIXED_IMPLEMENTATION_UNAVAILABLE"
+FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE = (
+    "已固定供应商「{display_name}」，但当前不可用（未配置或已禁用）。请更换供应商或取消固定。"
+)
+
+# 候选实现方全部不可用、且默认实现方也被禁用/未注册时的驱动错误。
+# 管理员明确禁用的实现方绝不能被兜底逻辑静默放行，宁可让任务失败也要尊重禁用。
+DRIVER_ERROR_NO_IMPLEMENTATION_AVAILABLE = "NO_IMPLEMENTATION_AVAILABLE"
+NO_IMPLEMENTATION_AVAILABLE_MESSAGE = (
+    "模型 {task} 当前没有可用实现方（候选均未启用或未注册），"
+    "请在后台「实现方管理」检查各实现方的启用状态。"
+)
 
 # Agent 算力确认：软阈值优先读 user_preferences.power_confirm，
 # 未设置时回退动态配置 agent.power_confirm_threshold，再回退 AGENT_POWER_CONFIRM_THRESHOLD。
@@ -565,7 +715,11 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     # RunningHub 相关驱动
     DriverKey.LTX2_IMAGE_TO_VIDEO: DriverImplementation.LTX2_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2 v1 版本
     DriverKey.LTX2_3_IMAGE_TO_VIDEO: DriverImplementation.LTX2_3_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 v1 版本
-    DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO: DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 v1 版本
+    # 使用 RunningHub 的 MiniMax H3（标准版 / 加速版可切换）
+    DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO: [
+        DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,       # 标准版（默认）
+        DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,  # 加速版
+    ],
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,  # 使用 RunningHub 的数字人 v1 版本
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本
@@ -632,6 +786,9 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.HAPPY_HORSE_IMAGE_TO_VIDEO: DriverImplementation.HAPPY_HORSE_DASHSCOPE_V1,
     DriverKey.HAPPY_HORSE_REFERENCE_TO_VIDEO: DriverImplementation.HAPPY_HORSE_DASHSCOPE_R2V_V1,
     DriverKey.HAPPY_HORSE_TEXT_TO_VIDEO: DriverImplementation.HAPPY_HORSE_DASHSCOPE_T2V_V1,
+
+    # Qwen Image Edit（空壳任务，待接入实现方）
+    DriverKey.QWEN_IMAGE_EDIT: [],
 
 }
 
@@ -836,6 +993,44 @@ DOWNLOAD_IO_POOL_MAX_WORKERS = 8              # 下载写盘线程池大小（�
 #   + GeneratedVideoFaceGridTrimConstants.MAX_PROCESSING_SECONDS
 #   + DOWNLOAD_COMPLETION_MARGIN_SECONDS
 DOWNLOAD_COMPLETION_MARGIN_SECONDS = 60
+
+
+class QueueBacklogConstants:
+    """管理后台首页队列积压看板阈值。
+
+    后端 `services/queue_backlog.py` 用这些阈值给每张卡片打 ok/warn/danger。
+    停滞判定分钟数优先读动态配置 `download_queue_health.stale_minutes`。
+    """
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'STALE_MINUTES': '处理中超过该分钟数视为停滞',
+        'ZERO_PROGRESS_MINUTES': '下载队列近期成功窗口（分钟）',
+        'OVERDUE_GRACE_SECONDS': '排队任务超过 next_trigger 的宽限秒数',
+        'DOWNLOAD_WARN_OPEN': '下载队列积压告警条数',
+        'VIDEO_WARN_OPEN': '视频生成队列积压告警条数',
+        'AUDIO_WARN_OPEN': '音频生成队列积压告警条数',
+        'ASYNC_WARN_OPEN': '异步任务队列积压告警条数',
+        'GRID_WARN_OPEN': '宫格生图队列积压告警条数',
+        'SCRIPT_SPLIT_WARN_OPEN': '剧本拆分队列积压告警条数',
+        'PIPELINE_WARN_OPEN': '流水线步骤积压告警条数',
+        'AGENT_WARN_OPEN': 'Agent 对话任务积压告警条数',
+        'RUNNINGHUB_WARN_RATIO': 'RunningHub 槽位占用告警比例',
+        'POLL_INTERVAL_SECONDS': '管理后台看板轮询间隔（秒）',
+    }
+    STALE_MINUTES = 30
+    ZERO_PROGRESS_MINUTES = 10
+    OVERDUE_GRACE_SECONDS = 60
+    DOWNLOAD_WARN_OPEN = 20
+    VIDEO_WARN_OPEN = 50
+    AUDIO_WARN_OPEN = 30
+    ASYNC_WARN_OPEN = 30
+    GRID_WARN_OPEN = 30
+    SCRIPT_SPLIT_WARN_OPEN = 8
+    PIPELINE_WARN_OPEN = 50
+    AGENT_WARN_OPEN = 20
+    RUNNINGHUB_WARN_RATIO = 0.8
+    POLL_INTERVAL_SECONDS = 15
+
 
 STORYBOARD_FIRST_FRAME_GRID_ITEM_TYPE = 8
 
@@ -1265,7 +1460,8 @@ class StoryboardAgentReadConstants:
 
 class StoryboardAgentCommandConstants:
     """Storyboard agent command fallback values."""
-    DEFAULT_SCRIPT_SPLIT_MODEL = "gemini-3-flash-preview"
+    # 2026-08：gemini-3-flash-preview 已下线（20260825_disable_gem3flash 迁移），默认切 deepseek-v4-flash
+    DEFAULT_SCRIPT_SPLIT_MODEL = "deepseek-v4-flash"
     SCRIPT_SPLIT_MODEL_PREFERENCE_TYPE = "script_split_llm_model"
     # split-from-script 的 max_group_duration（每幕/段最长时长，秒）范围。
     # 强制 10~15：镜头过短（<10）会让分段碎、画面增多，导致同世界画风一致性下降；
@@ -1776,6 +1972,7 @@ class LLMVendor:
         'ZJT_API': 'ZJT API 供应商（Qwen3.5/3.6 模型）',
         'DEEPSEEK': 'DeepSeek 供应商（DeepSeek-V4 模型）',
         'AGNES': 'Agnes 供应商（Agnes 2.5 对话模型）',
+        'VLLM': '本地推理供应商（vLLM 模型）',
     }
     JIEKOU = 'jiekou'
     ALIYUN = 'aliyun'
@@ -1785,6 +1982,7 @@ class LLMVendor:
     ZJT_API = 'zjt_api'
     DEEPSEEK = 'deepseek'
     AGNES = 'agnes'
+    VLLM = 'vllm'
 
 
 class LLMModel:
@@ -1798,6 +1996,8 @@ class LLMModel:
         'QWEN_3_6_PLUS': 'Qwen 3.6 Plus',
         'QWEN_PLUS': 'Qwen Plus',
         'OLLAMA_QWEN_3_6_35B': 'Ollama Qwen 3.6 35B',
+        'OLLAMA_QWEN_3_8_27B': 'Ollama Qwen 3.8 27B',
+        'VLLM_QWEN_3_8_27B': 'vLLM Qwen 3.8 27B',
         'DOUBAO_SEED_2_0_PRO': 'Doubao Seed 2.0 Pro',
         'DOUBAO_SEED_2_0_LITE': 'Doubao Seed 2.0 Lite',
         'CLAUDE_HAIKU_4_5': 'Claude Haiku 4.5',
@@ -1819,6 +2019,10 @@ class LLMModel:
 
     # Ollama 模型
     OLLAMA_QWEN_3_6_35B = 'qwen3.6:35b-a3b'
+    OLLAMA_QWEN_3_8_27B = 'qwen3.8:27b'
+
+    # vLLM 模型（本地 vLLM 推理服务，复用同一 model 记录，按 vendor 区分）
+    VLLM_QWEN_3_8_27B = 'qwen3.8:27b'
 
     # Doubao 模型
     DOUBAO_SEED_2_0_PRO = 'doubao-seed-2-0-pro'
@@ -1836,8 +2040,20 @@ class LLMModel:
     AGNES_2_5_PRO = 'agnes-2.5-pro'
 
     # 内容安全提示词改写（reduce-violation）的默认兜底模型
-    # 前端未传/所选拆分模型供应商未配置时使用；复用剧本拆分默认模型，凭据走 JIEKOU 中转
-    REDUCE_VIOLATION_DEFAULT = 'gemini-3-flash-preview'
+    # 前端未传/所选拆分模型供应商未配置时使用；复用剧本拆分默认模型，走 DEEPSEEK 供应商独立 key
+    # （2026-08：原默认 gemini-3-flash-preview 已下线）
+    REDUCE_VIOLATION_DEFAULT = 'deepseek-v4-flash'
+
+    # Qwen3.8 思考强度映射：前端 thinking_effort 值 -> chat template 的 reasoning_effort
+    # （Qwen 官方模型卡 / vLLM 官方部署配方使用的参数名）。
+    # Qwen3.8 官方支持 low/medium/xhigh（无 "high"），前端沿用 low/medium/high 三档，
+    # 故 "high" 需映射为 "xhigh"。
+    QWEN_REASONING_EFFORT_MAP = {
+        'low': 'low',
+        'medium': 'medium',
+        'high': 'xhigh',
+        'xhigh': 'xhigh',
+    }
 
 
 # 供应商图标映射（前端显示用）
@@ -1849,6 +2065,7 @@ VENDOR_ICONS = {
     'zjt_api': '🚀',
     'deepseek': '🔍',
     'agnes': '✨',
+    'vllm': '⚡',
 }
 
 # 模型前缀 -> 供应商映射（用于 LLMClientFactory 路由）
@@ -1858,6 +2075,7 @@ MODEL_PREFIX_VENDOR_MAP = {
     'gpt': LLMVendor.ALIYUN,
     'claude': LLMVendor.CLAUDE,
     'ollama': LLMVendor.OLLAMA,
+    'vllm': LLMVendor.VLLM,  # 本地 vLLM 推理服务
     'doubao': LLMVendor.VOLCENGINE,
     'qwen3.5': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.5 Plus 模型
     'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
@@ -1963,7 +2181,9 @@ class NotificationConstants:
 
 # ============ 智能插入分镜 ============
 SMART_INSERT_SHOT_TIMEOUT = 30  # 智能体调用超时（秒）
-SMART_INSERT_SHOT_DEFAULT_MODEL = 'deepseek/deepseek-v4-flash'  # 降级默认模型
+# 无斜杠形式：DeepSeek 客户端不剥离 'deepseek/' 前缀（_resolve_model_name 为纯字典映射），
+# 斜杠形式会原样透传给 API 导致 404；工厂按 MODEL_PREFIX_VENDOR_MAP['deepseek'] 前缀路由
+SMART_INSERT_SHOT_DEFAULT_MODEL = 'deepseek-v4-flash'  # 降级默认模型
 
 # ============ 默认 LLM 模型选择策略 ============
 # 当数据库没有配置默认 LLM 模型时，使用以下优先级选择：
@@ -1987,3 +2207,22 @@ LANGUAGE_INSTRUCTIONS = {
           "- The user interface is in English, so ALL communication must be in English\n"
           "="*60,
 }
+
+
+# ============ 供应商切换差价结算（"贵扣便宜用"修复） ============
+# 任务按供应商A价格扣费、失败切换到供应商B后成功时，按B的实际价格双向结算差价：
+#   多扣 → 退差  diff-refund-{原扣费流水号}（behavior=increase）
+#   少扣 → 补收  diff-charge-{原扣费流水号}（behavior=deduct，best-effort 不追债）
+# 结算逻辑见 utils/computing_power.py: settle_task_success_diff
+DIFF_REFUND_TXN_PREFIX = 'diff-refund-'
+DIFF_CHARGE_TXN_PREFIX = 'diff-charge-'
+
+
+# ============ 单元测试基础设施 ============
+# 隔离执行模式下单个测试模块的子进程超时（秒）：
+# 防止个别测试模块挂死拖垮整轮 CI（scripts/testing/run_unit_tests.py --isolate）。
+# 600s 的依据：本地无 MySQL 时部分驱动测试每用例要等 ~4s 连接拒绝，
+# 大模块（如 test_seedance_volcengine_v1_driver 82 用例 ≈ 330s）需要余量；
+# DB 集成类模块（crud/driver_integration）含 alembic 迁移与建表，耗时更长，
+# 如仍遇合理超时可用 --module-timeout 覆盖。
+UNIT_TEST_MODULE_TIMEOUT_SECONDS = 600

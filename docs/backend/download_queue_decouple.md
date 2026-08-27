@@ -74,6 +74,11 @@ download_queue_worker（每 DOWNLOAD_POLL_INTERVAL=5s，独立 job，max_instanc
 - 统计（`get_implementation_stats`，`status IN (2,-1)`）：DOWNLOADING 暂不计入成功/失败，下载完成前轻微拉低成功率（影响小）
 - `list_processing_by_user(status=1)`：无调用方，无影响
 
+`_process_one` 禁止函数内 `import asyncio`。Python 会把 `asyncio` 变成整个函数的局部变量，
+函数开头的 `await asyncio.wait_for(...)` 会立刻 `UnboundLocalError`；若 `gather(return_exceptions=True)`
+再把它吞掉，队列行会永远停在 `status=1`，界面一直「处理中」。`process_download_queue` 必须把
+gather 的异常结果打到日志。
+
 ## 运维 / 排查
 
 ```sql
@@ -89,8 +94,82 @@ SELECT id, ai_tool_id, error_message, update_at FROM download_queue
 
 **回滚**：将 `_handle_task_success` 的 else 分支恢复为同步 `await download_and_cache(...)` 即可。`download_queue` 表保留无害，worker job 可单独停（删 `download_queue_worker` job）。
 
+### 健康检查 job（`download_queue_health_check`）
+
+scheduler 每 5 分钟跑 `task/download_queue_health.py::check_download_queue_health`（`max_instances=1`, `coalesce=True`）。只读，不改数据。
+
+| 检查 | 条件 | 含义 |
+|---|---|---|
+| A 积压停滞 | `status=1 AND create_at < NOW()-stale_minutes` 计数 > 0 | 处理中行创建过久仍未完成 |
+| B 零进展 | 存在 `status IN (0,1)` 但最近 `zero_progress_minutes` 内 `status=2` 成功数 = 0 | worker 活着但不产出（本次事故类型） |
+
+告警：`SentryUtil.send_alert("DOWNLOAD_QUEUE_STALLED", ..., level=ERROR)`，限频默认 30 分钟一条。
+
+动态配置（`get_dynamic_config_value`，可线上热调）：
+
+| key | 默认 | 说明 |
+|---|---|---|
+| `download_queue_health.enabled` | true | 总开关 |
+| `download_queue_health.stale_minutes` | 30 | 检查 A |
+| `download_queue_health.zero_progress_minutes` | 10 | 检查 B |
+| `download_queue_health.alert_interval_minutes` | 30 | 告警间隔 |
+
+监控 SQL：
+
+```sql
+-- 检查 A：处理中且创建过久
+SELECT COUNT(*) FROM download_queue
+ WHERE status=1 AND create_at < NOW() - INTERVAL 30 MINUTE;
+-- 检查 B：有积压但近期无成功
+SELECT
+  (SELECT COUNT(*) FROM download_queue WHERE status IN (0,1)) AS open_rows,
+  (SELECT COUNT(*) FROM download_queue
+    WHERE status=2 AND update_at >= NOW() - INTERVAL 10 MINUTE) AS recent_ok;
+```
+
+**盲区**：健康检查与 worker 同 scheduler；scheduler 进程整体死亡时两者都不跑。覆盖的是「进程活着、功能坏掉」。
+
+管理后台首页（`web/admin.html` 仪表盘）有「队列积压」看板，含 download_queue 待处理/处理中/停滞/近窗成功，15 秒刷新。接口 `GET /api/admin/dashboard/queues`，实现 `services/queue_backlog.py`。与本 job 互补：Sentry 告警是后台，看板是管理员打开后台立刻能看到。
+
+`asyncio.gather(..., return_exceptions=True)` 的返回值必须逐条检查：`BaseException` 记 `logger.error` + `SentryUtil.capture_exception`（`CancelledError` 除外）。禁止再丢弃 gather 结果。
+
 ## 上线步骤
 
 1. 执行迁移：`alembic upgrade head`（建 `download_queue` 表）
-2. 重启服务：scheduler 自动注册 `download_queue_worker` job
-3. 观察日志：`download_queue worker=... batch=... claimed N rows` / `tick done`
+2. 重启服务：scheduler 自动注册 `download_queue_worker` 与 `download_queue_health_check` job
+3. 观察日志：`download_queue worker=... batch=... claimed N rows` / `tick done`；健康检查告警搜 `DOWNLOAD_QUEUE_STALLED`
+
+## 事故记录（2026-08-23）：worker 静默瘫痪 UnboundLocalError
+
+**症状**：08-21 14:49 部署后，download_queue 全部任务卡死（453 行 status=1、0 成功 0 失败），
+worker 每 5s 正常 claim，但下载从未发生、无任何 OK/FAIL 日志，租约过期后无限循环重新认领。
+
+**根因**：d9390c4c（供应商切换差价结算）在 `_process_one` 成功分支/GIVEUP 分支内加了 `import asyncio`。
+Python 作用域规则：**函数内任何位置出现 `import asyncio`，整个函数的 `asyncio` 都变为局部变量**。
+下载代码（`asyncio.wait_for`）在 import 执行前引用 → `UnboundLocalError`；且
+`except asyncio.TimeoutError:` 子句求值时再次抛错，**原始异常被遮蔽**后逃逸，
+被 `asyncio.gather(..., return_exceptions=True)` 静默吞掉 → 无日志、行永久停留 status=1。
+
+**修复**：删除 `_process_one` 内两处 `import asyncio`（模块顶部已有）；`visual_task.py` 同模式 3 处
+（520/954/1448 行，当时因引用在 import 之后而无害）一并清理：顶部补 `import asyncio` + 删函数内 import。
+
+**教训**：禁止在函数内 `import asyncio`（及任何函数内将多次引用的标准库模块 import 放函数内）；
+函数内 import 会污染整个函数作用域，且 except 子句求值异常会遮蔽原始异常，此类故障无任何日志、
+极难定位。统一把 import 放模块顶部。可用以下脚本扫描同类隐患（函数内 import asyncio 且 import 前有引用）：
+
+```python
+import ast, os
+for dirpath, _, files in os.walk('task'):
+    for f in files:
+        if not f.endswith('.py'): continue
+        tree = ast.parse(open(os.path.join(dirpath, f)).read())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                imports = [n.lineno for n in ast.walk(node)
+                           if isinstance(n, ast.Import) and any(a.name == 'asyncio' for a in n.names)]
+                usages = [n.lineno for n in ast.walk(node)
+                          if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == 'asyncio']
+                if imports and any(u < min(imports) for u in usages):
+                    print(f'{dirpath}/{f}:{node.lineno} {node.name}')
+```
+

@@ -17,9 +17,8 @@ class TestRefundWithModifiers(unittest.TestCase):
         )
 
         # 清空注册表
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()
 
         # 初始化完整配置
         init_unified_config()
@@ -28,9 +27,7 @@ class TestRefundWithModifiers(unittest.TestCase):
         """测试后清理"""
         from config.unified_config import UnifiedConfigRegistry
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
     def test_kling_refund_with_tail_includes_multiplier(self):
         """测试 Kling 首尾帧失败后退算力包含 1.66x 倍数"""

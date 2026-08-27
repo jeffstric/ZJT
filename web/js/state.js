@@ -59,7 +59,9 @@
       topZIndex: 21,
       history: [],
       historyPointer: -1,
-      historyLimit: 50,
+      // 性能优化：历史快照为全量 JSON 字符串，节点多时单份可达数 MB，
+      // 由 50 降为 20 以约束 undo 深度换内存（快照内容已剔除 data:URL 大字符串）
+      historyLimit: 20,
       isRestoringHistory: false,
       debugMode: false,
       workflowReady: false

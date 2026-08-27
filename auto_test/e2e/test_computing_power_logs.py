@@ -213,6 +213,61 @@ def test_power_logs_empty_state(browser, auth_token, user_id, base_url):
     context.close()
 
 
+@pytest.mark.p0
+@pytest.mark.computing_power
+def test_power_logs_deduct_shows_refund_hint(browser, auth_token, user_id, base_url):
+    """cpl_009 - 已退回的扣减行显示退回金额和退回单号摘要。"""
+    mock_data = {
+        "success": True,
+        "data": {
+            "logs": [
+                {
+                    "id": 10,
+                    "behavior": "deduct",
+                    "note": "视频生成扣费",
+                    "computing_power": 105,
+                    "from": 200,
+                    "to": 95,
+                    "created_at": "2026-08-21 11:00:00",
+                    "transaction_id": "a1b2c3d4-e5f6-7890-abcd-ef1234569f0e",
+                    "refund": {
+                        "transaction_id": "refund-a1b2c3d4-e5f6-7890-abcd-ef1234569f0e",
+                        "computing_power": 105,
+                    },
+                },
+                {
+                    "id": 11,
+                    "behavior": "deduct",
+                    "note": "未退回扣费",
+                    "computing_power": 8,
+                    "from": 95,
+                    "to": 87,
+                    "created_at": "2026-08-21 12:00:00",
+                    "transaction_id": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+                },
+            ],
+            "total": 2,
+            "limit": 20,
+            "offset": 0,
+        },
+    }
+    p, context = _setup_logs_page(browser, auth_token, user_id, base_url, mock_data)
+    p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
+    p.wait_for_timeout(3000)
+
+    body_text = p.locator("body").text_content() or ""
+    assert "已退回" in body_text, "扣减行应显示已退回"
+    assert "+105" in body_text, "应显示退回算力值"
+    assert "refund-a1b2c3d4" in body_text, "退回单号摘要应保留 refund- 前缀"
+    assert "9f0e" in body_text, "退回单号摘要应包含尾部字符"
+
+    refund_hints = p.locator(".log-refunded")
+    assert refund_hints.count() == 1, "仅已退回的扣减行应出现退回提示"
+
+    p.close()
+    context.close()
+
+
 # ═══════════════════════════════════════════════════════════════
 # 分页后端验证（真实 API，不 mock）
 # ═══════════════════════════════════════════════════════════════

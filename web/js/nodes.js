@@ -2521,8 +2521,10 @@
       }
     }
 
-    function renderConnections(tempLine){
-      updateCanvasSize();
+    function renderConnections(tempLine, skipSizeUpdate){
+      // 拖拽等高频路径通过 skipSizeUpdate 跳过画布尺寸重算（内部会遍历全部节点读取 offsetWidth），
+      // 由调用方在交互结束时（mouseup / flushConnectionsRender）补偿一次
+      if(!skipSizeUpdate) updateCanvasSize();
 
       // 只清除普通连接线，保留其他类型的连接线（视频、音频、参考图等）
       const oldNormalLines = connectionsSvg.querySelectorAll('path.hitbox, path.line, path.temp');
@@ -4283,11 +4285,10 @@
                   const thumbVideo = videoNodeEl.querySelector('.video-thumb');
                   const nameEl = videoNodeEl.querySelector('.video-name');
                   if(previewField && thumbVideo){
-                    thumbVideo.src = proxyDownloadUrl(videoUrls[index]);
-                    thumbVideo.muted = true;
-                    thumbVideo.loop = true;
+                    // 封面帧与悬停播放逻辑已内置于 setupVideoThumbnail（不再 loop 常驻解码）
+                    setupVideoThumbnail(thumbVideo, videoUrls[index]);
                     if(nameEl){
-                      const displayName = (videoNode.data.name || '').length > 10 ? videoNode.data.name.substring(0, 10) + '...' : (videoNode.data.name || '');
+                      const displayName = (videoNode.data.name || '').length > 10 ? (videoNode.data.name || '').substring(0, 10) + '...' : (videoNode.data.name || '');
                       nameEl.textContent = displayName;
                     }
                     previewField.style.display = 'block';

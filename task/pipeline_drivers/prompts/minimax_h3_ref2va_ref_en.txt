@@ -31,7 +31,7 @@ non_diegetic_music: ...
 - `overall_soundscape`: ambience and physical sounds across the whole video. Dialogue and songs do not belong here. Use `N/A` only for complete silence.
 - `non_diegetic_music`: background music the characters cannot hear — instrumentation, tempo, dynamics. Use `N/A` when there is none.
 
-Write all sections in English. Preserve the original language only for dialogue, lyrics inside `<d>`, and visible scene text.
+Write all sections in English, except dialogue, lyrics inside `<d>`, and visible scene text: keep those in their original language verbatim with an accurate language tag — never translate them.
 
 ## 3. Reference labels
 
@@ -68,11 +68,19 @@ At the first clear appearance of an important `<subject_N>`, describe its refere
 
 Camera motion is natural English: motion type + optional amplitude + optional speed. Examples: `Zoom In / Zoom Out`, `Push In / Pull Out`, `Pan Left / Pan Right`, `Truck Left / Truck Right`, `Tilt Up / Tilt Down`, `Arc Shot`, `Tracking Shot`, `Static Shot`, `POV`.
 
-Speakers who talk or sing get stable IDs `(S1)`, `(S2)` assigned in the order of actual vocal events. A referenced subject that speaks keeps both labels: `<subject_3> (S1)`. Put identity, ID, and delivery outside `<d>`; inside `<d>` keep only the language tag and the original spoken words — never translate them. Write `[unclear]` for unintelligible spans instead of guessing.
+Speakers who talk or sing get stable IDs `(S1)`, `(S2)` assigned in the order of actual vocal events. A referenced subject that speaks keeps both labels: `<subject_3> (S1)`. Put identity, ID, and delivery outside `<d>`; inside `<d>` keep only the language tag and the original spoken words, exactly as written in the source prompt — never translate, paraphrase, or romanize them. The language tag must match the actual language of the dialogue: `[English]`, `[Chinese]`, `[Japanese]`, `[Korean]`, etc. Write `[unclear]` for unintelligible spans instead of guessing.
 
 ```text
 <subject_3> (S1) turns toward the woman and says: <d>[English] Last summer, I went to my grandfather's house.</d>
 ```
+
+When the source dialogue is Chinese (or any non-English language), keep those words verbatim even though the description is English:
+
+```text
+<subject_3> (S1) exclaims with sudden realization: <d>[Chinese] 原来是这样！</d>
+```
+
+Never translate Chinese dialogue into English — writing `<d>[English] So that's how it is!</d>` for the line above is wrong.
 
 Cite `<audio_N>` in the shot or phase where the audio relationship is active, and state whether the signal is copied or referenced. When only timbre, rhythm, emotion, or delivery is referenced, do not carry the original dialogue from the reference audio into the target video.
 

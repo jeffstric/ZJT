@@ -298,6 +298,8 @@ strict_json: bool = False
 
 规则质检中的角色首帧检查以 `characters_present` 的全局 ID 为输入，但不直接在描述文本中搜索 `char_NNN`。执行时先合并任务级 `accepted_registry.characters` 与当前候选段的 `characters`，建立 ID 到角色名称的映射，再严格检查 `opening_frame_description` 是否包含 `【【角色名】】`。这样既保持镜头引用使用稳定 ID，也支持后续分段引用此前已经接受、当前段不再重复声明的角色。
 
+`presentation=digital_human` 采用严格的单人画内门禁：`characters_present` 必须恰好包含一个人物，`dialogue` 必须恰好只有一个说话角色，且两者 ID 必须一致。无人画面（例如蚊子微距特写叠加人物画外音）、多人同框但仅一人发言、多人轮流对话都强制归类为 `video`。提示词负责在拆分阶段给出正确分类，规则 QC 会拒绝违规结果；发布场景时 `services/storyboard_scene_type.py` 再执行同样的确定性兜底，避免错误结果进入对口型生成链路。
+
 无对白镜头占比只保留为 QC 诊断统计，不作为质检失败条件，也不再推断原剧本是否含对白。这样不会误伤压抑氛围、默剧或纯视觉叙事。质检问题进入重拆提示时必须保留原始 `severity`、`shot_ref` 和 `field`，便于模型只修复准确镜头与字段。
 
 持久化任务使用 `strict_json=True`，不接受通过“查找最后一个 `]` 再补 `}`”得到的部分结果。语法错误和截断都必须重试当前段，防止把不完整分镜误判为成功。

@@ -53,9 +53,8 @@ class TestTaskConfigWithModifiers(unittest.TestCase):
             TaskProvider,
         )
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()
 
         # 注册 Kling 图生视频任务（带修饰符）
         UnifiedConfigRegistry.register(
@@ -86,9 +85,7 @@ class TestTaskConfigWithModifiers(unittest.TestCase):
         """测试后清理"""
         from config.unified_config import UnifiedConfigRegistry
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
     def test_task_has_power_modifiers_field(self):
         """验证任务配置包含 power_modifiers 字段"""
@@ -153,9 +150,8 @@ class TestTaskConfigToFrontendWithModifiers(unittest.TestCase):
             init_unified_config,
         )
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()
 
         # 初始化完整配置
         init_unified_config()
@@ -164,9 +160,7 @@ class TestTaskConfigToFrontendWithModifiers(unittest.TestCase):
         """测试后清理"""
         from config.unified_config import UnifiedConfigRegistry
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
     def test_frontend_config_includes_power_modifiers_for_kling(self):
         """验证前端配置包含 Kling 的修饰符信息"""
@@ -282,9 +276,8 @@ class TestModifierCeilingBehavior(unittest.TestCase):
             TaskProvider,
         )
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        self._registry_snapshot = UnifiedConfigRegistry.snapshot()
+        UnifiedConfigRegistry.restore()
 
         # 注册多个测试任务，用于测试不同的取整情况
         UnifiedConfigRegistry.register(
@@ -329,9 +322,7 @@ class TestModifierCeilingBehavior(unittest.TestCase):
         """测试后清理"""
         from config.unified_config import UnifiedConfigRegistry
 
-        UnifiedConfigRegistry._configs.clear()
-        UnifiedConfigRegistry._id_map.clear()
-        UnifiedConfigRegistry._implementations.clear()
+        UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
     def test_ceiling_101_percent(self):
         """测试 100 × 1.01 = 101（向上取整）"""

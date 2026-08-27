@@ -649,7 +649,6 @@ class TaskManager:
                     file_manager = mcp_tool.get_file_manager()
                     char_data = file_manager.get_character_json(char_name, user_id, world_id)
                     if char_data:
-                        import uuid
                         existing_variants = char_data.get('reference_images', [])
                         # 如果 force_update 且已有同标签变体，先删除旧的
                         new_variant = {'id': str(uuid.uuid4()), 'label': variant_label, 'url': local_image_url}

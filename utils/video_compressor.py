@@ -351,9 +351,12 @@ def get_reference_videos_total_duration_sync(video_path_csv: Optional[str]) -> O
     video_path_csv: 逗号分隔的本地路径/URL 列表（与 ai_tools.video_path 同格式）。
     同步函数（外部 URL 会触发下载），异步上下文须 asyncio.to_thread 包装。
 
+    WebM/MKV 缺容器 duration 元数据时（浏览器 MediaRecorder 录制产物的典型特征，
+    ffprobe 输出无 duration 字段），先转码为 MP4 再探测，避免计费静默回退用户输入
+    时长（曾导致 10s 视频只扣 5s 档算力的线上问题）。
+
     Returns:
         总时长（秒）；路径为空、任一视频定位/探测失败时返回 None（调用方回退用户输入时长）。
-        已知局限：缺 duration 元数据的 WebM/MKV 返回 None，由调用方回退用户输入时长计费。
     """
     paths = [v.strip() for v in (video_path_csv or "").split(",") if v.strip()]
     if not paths:
@@ -369,7 +372,20 @@ def get_reference_videos_total_duration_sync(video_path_csv: Optional[str]) -> O
             if not local_path:
                 logger.warning(f"参考视频无法定位，计费时长探测回退: {path} ({error})")
                 return None
+
             duration = _probe_video_duration_seconds_sync(local_path)
+
+            # WebM/MKV 可能缺 duration 元数据：转码 MP4 后重探（转码会重建容器元数据）
+            if duration is None and _get_url_or_path_extension(path) in {".webm", ".mkv"}:
+                prep_ok, prepared, prep_error, prep_cleanup = prepare_seedance_reference_video_sync(
+                    path, project_root=root
+                )
+                cleanup_paths.extend(prep_cleanup or [])
+                if prep_ok and prepared:
+                    duration = _probe_video_duration_seconds_sync(prepared)
+                else:
+                    logger.warning(f"WebM/MKV 转码失败，计费时长探测回退: {path} ({prep_error})")
+
             if duration is None:
                 logger.warning(f"参考视频时长探测失败，计费时长探测回退: {path}")
                 return None

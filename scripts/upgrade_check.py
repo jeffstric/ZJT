@@ -5,7 +5,7 @@
 由 start.bat / start.command / linux_start_prod.sh 在主程序启动前调用
 
 通过监控远程 git tag 变化判断是否需要升级。
-升级时执行 git stash -> git pull --ff-only -> git stash pop。
+升级时执行 git fetch -> git reset --hard；用户模块目录由独立的路径契约保护。
 
 返回值：
   0 - 正常（已更新 / 无需更新 / 跳过），继续启动
@@ -13,9 +13,13 @@
   2 - 严重错误，应暂停并提示用户
 """
 
+import json
 import os
 import subprocess
 import sys
+import tempfile
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -27,6 +31,265 @@ if str(_project_dir) not in sys.path:
 def get_project_dir() -> Path:
     """获取项目根目录"""
     return Path(__file__).parent.parent.resolve()
+
+
+def get_user_module_root_for_upgrade(project_dir: Path) -> Path:
+    """在应用依赖尚未完全启动时解析用户模块根目录。"""
+
+    default_root = "data/user_modules"
+    root_env_name = "ZJT_USER_MODULES_DIR"
+    configured = os.environ.get(root_env_name, "").strip()
+    if not configured:
+        try:
+            from config.config_util import get_config_value
+
+            configured = str(get_config_value("user_modules", "root", default="") or "").strip()
+        except Exception:
+            configured = ""
+    root = Path(configured) if configured else Path(default_root)
+    if not root.is_absolute():
+        root = project_dir / root
+    return root.resolve(strict=False)
+
+
+USER_MODULE_ABI_FILE = "config/user_module_abi.json"
+PYPROJECT_FILE = "pyproject.toml"
+
+
+def _parse_pyproject_version(content):
+    section = ""
+    for raw_line in str(content or "").splitlines():
+        line = raw_line.strip()
+        section_match = re.fullmatch(r"\[([^]]+)]", line)
+        if section_match:
+            section = section_match.group(1).strip()
+            continue
+        if section != "project" or not line.startswith("version") or "=" not in line:
+            continue
+        value = line.split("=", 1)[1].split("#", 1)[0].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1].strip()
+            if value:
+                return value
+    return None
+
+
+def _version_satisfies(version, constraint):
+    """无第三方依赖解析 Manifest 使用的简单逗号分隔版本约束。"""
+
+    if not constraint:
+        return True
+    for expression in str(constraint).split(","):
+        expression = expression.strip()
+        operator = next(
+            (candidate for candidate in (">=", "<=", "==", ">", "<") if expression.startswith(candidate)),
+            None,
+        )
+        if operator is None:
+            return False
+        expected = expression[len(operator) :].strip()
+        comparison = compare_version(version, expected)
+        if not {
+            ">=": comparison >= 0,
+            "<=": comparison <= 0,
+            "==": comparison == 0,
+            ">": comparison > 0,
+            "<": comparison < 0,
+        }[operator]:
+            return False
+    return True
+
+
+def _installed_release_manifests(module_root):
+    releases_root = Path(module_root) / "modules"
+    if not releases_root.exists():
+        return []
+    return sorted(releases_root.glob("*/releases/*/manifest.json"))
+
+
+def _write_module_compatibility_report(module_root, report):
+    state_dir = Path(module_root) / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    destination = state_dir / "update-compatibility.json"
+    temp_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=str(state_dir),
+            prefix=".update-compatibility.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            json.dump(report, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temp_name = handle.name
+        os.replace(temp_name, destination)
+    finally:
+        if temp_name and os.path.exists(temp_name):
+            os.unlink(temp_name)
+
+
+def check_user_module_compatibility(git_cmd, project_dir, target_ref, timeout, policy="block"):
+    """只读目标 Git 对象中的 ABI，绝不导入或执行用户模块。"""
+
+    module_root = get_user_module_root_for_upgrade(Path(project_dir))
+    manifest_paths = _installed_release_manifests(module_root)
+    if not manifest_paths:
+        return True, ""
+    rc, out, err = run_git(
+        git_cmd,
+        ["show", f"{target_ref}:{USER_MODULE_ABI_FILE}"],
+        project_dir,
+        timeout=timeout,
+    )
+    incompatible = []
+    target_abi = None
+    if rc != 0:
+        incompatible.append({
+            "module_id": "*",
+            "version": "*",
+            "reason": f"目标版本缺少可读取的 {USER_MODULE_ABI_FILE}: {err or out}",
+        })
+    else:
+        try:
+            target_abi = json.loads(out)
+            if target_abi.get("abi_schema_version") != 1:
+                raise ValueError("abi_schema_version 不受支持")
+            # 目标智剧通版本同样只认目标提交中的 pyproject.toml；ABI JSON
+            # 是协议能力声明，不是版本号的第二真源。
+            pyproject_rc, pyproject_out, pyproject_err = run_git(
+                git_cmd,
+                ["show", f"{target_ref}:{PYPROJECT_FILE}"],
+                project_dir,
+                timeout=timeout,
+            )
+            target_core_version = (
+                _parse_pyproject_version(pyproject_out) if pyproject_rc == 0 else None
+            )
+            if not target_core_version:
+                raise ValueError(
+                    f"目标版本缺少可读取的 {PYPROJECT_FILE}: "
+                    f"{pyproject_err or pyproject_out}"
+                )
+            target_abi["core_version"] = target_core_version
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            incompatible.append({"module_id": "*", "version": "*", "reason": f"目标 ABI 无效: {exc}"})
+
+    if target_abi:
+        checks = (
+            ("manifest_schema_version", "manifest_schema_versions"),
+            ("rpc_protocol", "rpc_protocol_versions"),
+            ("driver_protocol", "driver_protocol_versions"),
+            ("sdk_version", "sdk_versions"),
+            ("execution_model", "execution_models"),
+        )
+        for manifest_path in manifest_paths:
+            try:
+                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+                identity = {
+                    "module_id": payload.get("module_id", "unknown"),
+                    "version": payload.get("version", "unknown"),
+                    "path": str(manifest_path),
+                }
+                reasons = []
+                for manifest_key, abi_key in checks:
+                    if payload.get(manifest_key) not in target_abi.get(abi_key, []):
+                        reasons.append(f"{manifest_key}={payload.get(manifest_key)!r} 不受目标核心支持")
+                if not _version_satisfies(target_abi.get("core_version", "0.0.0"), payload.get("core_compat", ">=0")):
+                    reasons.append("core_compat 不包含目标核心版本")
+                if not _version_satisfies(target_abi.get("python_version", "0.0.0"), payload.get("python_compat", ">=0")):
+                    reasons.append("python_compat 不包含目标 Python 版本")
+                supported_media = set(target_abi.get("media_kinds", []))
+                unsupported_media = sorted({
+                    item.get("media_kind")
+                    for item in payload.get("capabilities", [])
+                    if item.get("media_kind") not in supported_media
+                })
+                if unsupported_media:
+                    reasons.append(f"媒体类型不受支持: {', '.join(unsupported_media)}")
+                if reasons:
+                    incompatible.append({**identity, "reason": "; ".join(reasons)})
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError) as exc:
+                incompatible.append({
+                    "module_id": "unknown",
+                    "version": "unknown",
+                    "path": str(manifest_path),
+                    "reason": f"Manifest 无法解析: {exc}",
+                })
+
+    report = {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "target_ref": target_ref,
+        "target_abi": target_abi,
+        "policy": policy,
+        "checked_release_count": len(manifest_paths),
+        "compatible": not incompatible,
+        "incompatible_releases": incompatible,
+    }
+    _write_module_compatibility_report(module_root, report)
+    if not incompatible:
+        return True, ""
+    summary = "；".join(
+        f"{item['module_id']}@{item['version']}: {item['reason']}" for item in incompatible[:5]
+    )
+    if policy == "quarantine":
+        print(f"[upgrade] 用户模块兼容警告，将按配置在更新后隔离: {summary}")
+        return True, summary
+    return False, f"用户模块与目标版本不兼容，已阻止自动更新: {summary}"
+
+
+def check_user_module_update_safety(
+    git_cmd,
+    project_dir,
+    target_ref,
+    timeout,
+    compatibility_policy="block",
+):
+    """确保 reset 目标不会跟踪或覆盖已经存在的用户模块目录。"""
+
+    project = Path(project_dir).resolve()
+    module_root = Path(get_user_module_root_for_upgrade(project)).resolve(strict=False)
+    try:
+        relative_root = module_root.relative_to(project)
+    except ValueError:
+        # 仓库外目录不受 git reset 影响，但仍必须通过目标 ABI 兼容性检查。
+        return check_user_module_compatibility(
+            git_cmd, project, target_ref, timeout, compatibility_policy
+        )
+    if not relative_root.parts:
+        return False, "用户模块根目录不能指向项目根目录"
+
+    relative_text = relative_root.as_posix()
+    rc, out, err = run_git(
+        git_cmd,
+        ["ls-files", "--", relative_text],
+        project,
+        timeout=timeout,
+    )
+    if rc != 0:
+        return False, f"无法检查当前用户模块目录是否被 Git 跟踪: {err or out}"
+    if out.strip():
+        return False, f"用户模块目录已被 Git 跟踪，拒绝自动更新: {relative_text}"
+
+    rc, out, err = run_git(
+        git_cmd,
+        ["ls-tree", "-r", "--name-only", target_ref, "--", relative_text],
+        project,
+        timeout=timeout,
+    )
+    if rc != 0:
+        return False, f"无法检查目标版本的用户模块路径冲突: {err or out}"
+    if out.strip():
+        return False, (
+            f"目标版本 {target_ref} 将写入用户模块目录 {relative_text}，"
+            "为避免覆盖用户代码已拒绝自动更新"
+        )
+    return check_user_module_compatibility(
+        git_cmd, project, target_ref, timeout, compatibility_policy
+    )
 
 
 def find_git_binary():
@@ -74,6 +337,7 @@ def get_upgrade_config():
         "repo_urls": [],       # 多源配置，按顺序尝试
         "branch": "main",
         "timeout_seconds": 30,
+        "user_module_compatibility_policy": "block",
     }
 
     try:
@@ -230,61 +494,17 @@ def read_pyproject_version(project_dir):
     if not pyproject.exists():
         return None
     try:
-        content = pyproject.read_text(encoding="utf-8")
-        for line in content.split("\n"):
-            line = line.strip()
-            if line.startswith("version"):
-                parts = line.split("=", 1)
-                if len(parts) == 2:
-                    return parts[1].strip().strip('"').strip("'")
+        return _parse_pyproject_version(pyproject.read_text(encoding="utf-8"))
     except Exception:
         pass
     return None
 
 
 def get_local_version(project_dir, git_cmd=None):
-    """读取本地版本号
+    """读取本地智剧通版本；唯一真源是 ``[project].version``。"""
 
-    同时收集以下候选，取版本号最高者（避免 describe 仍指向旧 tag、
-    而 pyproject/HEAD 已是新版本时误判，导致 start.bat 无限重启）：
-      1. git tag --points-at HEAD
-      2. git describe --tags --abbrev=0
-      3. pyproject.toml 的 version
-    """
-    candidates = []
-
-    if git_cmd:
-        # 1) 当前 commit 上的 tag
-        rc, out, _ = run_git(
-            git_cmd,
-            ["tag", "--points-at", "HEAD"],
-            project_dir, timeout=10
-        )
-        if rc == 0 and out.strip():
-            for t in out.strip().split("\n"):
-                t = t.strip()
-                if t:
-                    candidates.append(t)
-
-        # 2) 最近祖先 tag（可能落后于当前代码里的 pyproject 版本）
-        rc, out, _ = run_git(
-            git_cmd,
-            ["describe", "--tags", "--abbrev=0"],
-            project_dir, timeout=10
-        )
-        if rc == 0 and out.strip():
-            candidates.append(out.strip())
-
-    # 3) 代码内声明的版本（reset 到含新 pyproject 的 commit 后应与远程一致）
-    py_ver = read_pyproject_version(project_dir)
-    if py_ver:
-        candidates.append(py_ver)
-
-    if not candidates:
-        return "unknown"
-
-    candidates.sort(key=parse_version, reverse=True)
-    return candidates[0]
+    del git_cmd  # 兼容旧调用签名；Git tag 只用于发现远程版本，不定义本地版本。
+    return read_pyproject_version(project_dir) or "unknown"
 
 
 def get_git_env(git_cmd):
@@ -522,7 +742,14 @@ def get_remote_latest_tag(git_cmd, project_dir, timeout):
     return tags[0]
 
 
-def init_git_repo(project_dir, git_cmd, repo_urls, branch, timeout):
+def init_git_repo(
+    project_dir,
+    git_cmd,
+    repo_urls,
+    branch,
+    timeout,
+    user_module_compatibility_policy="block",
+):
     """首次启动：.git 不存在，自动初始化
 
     支持多源 fallback，按顺序尝试每个源。
@@ -558,6 +785,18 @@ def init_git_repo(project_dir, git_cmd, repo_urls, branch, timeout):
         )
         if rc != 0:
             print(f"[upgrade] fetch 失败: {err}")
+            continue
+
+        # 用户模块升级安全检查（不兼容时拒绝覆盖）
+        safe, safety_message = check_user_module_update_safety(
+            git_cmd,
+            project_dir,
+            f"origin/{branch}",
+            timeout,
+            user_module_compatibility_policy,
+        )
+        if not safe:
+            print(f"[upgrade] {safety_message}")
             continue
 
         # reset（Windows 下需处理 enterprise/*.pyd 占用）
@@ -680,7 +919,14 @@ def _hard_reset_with_unlink_retry(git_cmd, project_dir, rev, timeout):
     return rc, out, err
 
 
-def perform_update(git_cmd, project_dir, branch, timeout, target_tag=None):
+def perform_update(
+    git_cmd,
+    project_dir,
+    branch,
+    timeout,
+    target_tag=None,
+    user_module_compatibility_policy="block",
+):
     """执行更新（强制覆盖本地代码）
 
     使用 fetch + reset --hard 强制同步。
@@ -703,6 +949,11 @@ def perform_update(git_cmd, project_dir, branch, timeout, target_tag=None):
 
     # 优先对齐到版本 tag，使 tag --points-at HEAD 与远程最新 tag 一致
     if target_tag:
+        safe, safety_message = check_user_module_update_safety(
+            git_cmd, project_dir, target_tag, timeout, user_module_compatibility_policy
+        )
+        if not safe:
+            return False, safety_message
         rc, out, err = _hard_reset_with_unlink_retry(
             git_cmd, project_dir, target_tag, timeout
         )
@@ -712,6 +963,15 @@ def perform_update(git_cmd, project_dir, branch, timeout, target_tag=None):
         print(f"[upgrade] 无法 checkout tag {target_tag}，回退到 origin/{branch}: {err or out}")
 
     # reset 到远程分支（强制覆盖）
+    safe, safety_message = check_user_module_update_safety(
+        git_cmd,
+        project_dir,
+        f"origin/{branch}",
+        timeout,
+        user_module_compatibility_policy,
+    )
+    if not safe:
+        return False, safety_message
     rc, out, err = _hard_reset_with_unlink_retry(
         git_cmd, project_dir, f"origin/{branch}", timeout
     )
@@ -863,7 +1123,14 @@ def main():
             print("[upgrade] 提示：如需自动更新，请在配置中设置 upgrade.repo_urls")
             return 0
 
-        if not init_git_repo(project_dir, git_cmd, repo_urls, branch, timeout):
+        if not init_git_repo(
+            project_dir,
+            git_cmd,
+            repo_urls,
+            branch,
+            timeout,
+            cfg.get("user_module_compatibility_policy", "block"),
+        ):
             print("[upgrade] 初始化失败，使用本地版本")
             return 1
 
@@ -933,7 +1200,12 @@ def main():
 
     # 8. 执行更新（优先对齐到远程最新 tag，避免只 reset 分支导致版本标记永远落后）
     success, message = perform_update(
-        git_cmd, project_dir, branch, timeout, target_tag=latest_tag
+        git_cmd,
+        project_dir,
+        branch,
+        timeout,
+        target_tag=latest_tag,
+        user_module_compatibility_policy=cfg.get("user_module_compatibility_policy", "block"),
     )
     if not success:
         print(f"[upgrade] 更新失败: {message}")

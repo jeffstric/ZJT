@@ -157,6 +157,12 @@
       font-weight: 600;
     }
 
+    .refund-badge.diff-badge {
+      border-color: rgba(56, 189, 248, 0.5);
+      background: rgba(56, 189, 248, 0.12);
+      color: #38bdf8;
+    }
+
     .log-txn {
       display: inline-flex;
       align-items: center;
@@ -207,6 +213,24 @@
 
     .log-amount.deduct {
       color: var(--danger);
+    }
+
+    .log-refunded {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .log-refunded.mismatch {
+      color: #f59e0b;
+    }
+
+    .log-refunded .log-txn {
+      margin-top: 0;
     }
 
     .log-time {
@@ -321,6 +345,8 @@
         <div class="log-info">
           <div class="log-behavior" :class="log.behavior">
             <span v-if="isRefund(log)" class="refund-badge">{{ $t('txn_refund') || '↩ 失败返还' }}</span>
+            <span v-else-if="txnKind(log) === 'diff-refund'" class="refund-badge diff-badge">{{ $t('txn_diff_refund') || '⇄ 切换补差' }}</span>
+            <span v-else-if="txnKind(log) === 'diff-charge'" class="refund-badge diff-badge">{{ $t('txn_diff_charge') || '⇄ 切换补收' }}</span>
             <template v-else>{{ log.behavior === 'increase' ? ($t('log_increase') || '➕ 增加') : ($t('log_deduct') || '➖ 扣除') }}</template>
           </div>
           <div v-if="log.from !== null && log.to !== null" class="log-change" style="font-size: 13px; color: var(--text); margin-bottom: 6px; padding: 4px 8px; background: rgba(34, 197, 94, 0.1); border-radius: 4px; display: inline-block; font-weight: 500;">
@@ -339,6 +365,15 @@
         <div class="log-meta">
           <div class="log-amount" :class="log.behavior">
             {{ log.behavior === 'increase' ? '+' : '-' }}{{ Math.abs(log.computing_power) }}
+          </div>
+          <div v-if="log.refund" class="log-refunded" :class="{ mismatch: isRefundMismatch(log) }">
+            <span>{{ $t('txn_refunded_amount') || '已退回' }} +{{ Math.abs(log.refund.computing_power) }}</span>
+            <span class="log-txn" :class="{ copied: log.refund.__copied }"
+                  :title="txnTitle(log.refund)"
+                  @click.stop="copyTxn(log.refund)">
+              <span class="txn-label">{{ log.refund.__copied ? ($t('txn_copied') || '✓ 已复制') : ($t('txn_refund_id_label') || '退回单号') }}</span>
+              <span class="txn-value">{{ formatRefundTxn(log.refund.transaction_id) }}</span>
+            </span>
           </div>
           <div class="log-time">{{ log.created_at }}</div>
         </div>
@@ -484,12 +519,42 @@
           return !!(log.transaction_id && String(log.transaction_id).startsWith('refund-'));
         },
 
+        txnKind(log) {
+          // 差价结算流水：任务按供应商A扣费、切换供应商B后成功时双向结算
+          const txn = String(log.transaction_id || '');
+          if (txn.startsWith('diff-refund-')) return 'diff-refund';   // 多扣退差（increase）
+          if (txn.startsWith('diff-charge-')) return 'diff-charge';   // 少扣补收（deduct）
+          return null;
+        },
+
         formatTxn(transactionId) {
-          // 流水摘要：refund- 去掉前缀（已有失败返还徽标标识），显示前8…后4
-          const txn = String(transactionId || '').replace(/^refund-/, '');
+          // 流水摘要：类型前缀去掉（徽标已标识），显示前8…后4
+          const txn = String(transactionId || '')
+            .replace(/^diff-refund-/, '')
+            .replace(/^diff-charge-/, '')
+            .replace(/^refund-/, '');
           if (!txn) return '';
           if (txn.length <= 14) return txn;
           return txn.slice(0, 8) + '…' + txn.slice(-4);
+        },
+
+        formatRefundTxn(transactionId) {
+          // 扣减行上的退回单号保留 refund- 前缀，避免和原扣费单号撞样
+          const txn = String(transactionId || '');
+          if (!txn) return '';
+          const prefix = 'refund-';
+          if (txn.startsWith(prefix)) {
+            const rest = txn.slice(prefix.length);
+            if (rest.length <= 14) return prefix + rest;
+            return prefix + rest.slice(0, 8) + '…' + rest.slice(-4);
+          }
+          if (txn.length <= 14) return txn;
+          return txn.slice(0, 8) + '…' + txn.slice(-4);
+        },
+
+        isRefundMismatch(log) {
+          if (!log || !log.refund) return false;
+          return Math.abs(Number(log.computing_power) || 0) !== Math.abs(Number(log.refund.computing_power) || 0);
         },
 
         txnTitle(log) {

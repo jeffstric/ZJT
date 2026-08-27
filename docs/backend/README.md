@@ -14,6 +14,13 @@
 | [task_queue_management.md](./task_queue_management.md) | 任务队列管理机制（重试、过期处理） |
 | [reasoning_content_passthrough.md](./reasoning_content_passthrough.md) | 推理模型 reasoning_content 回传机制 |
 | [pipeline_steps.md](./pipeline_steps.md) | AI Tools 流水线步骤机制（预处理、失败重试） |
+| [implementation_lock.md](./implementation_lock.md) | 用户固定供应商：失败不切换实现方 |
 | [wx_group_guide.md](./wx_group_guide.md) | 注册后官方微信群引导（开关、触点、常驻入口） |
 | [frontend_ui_visibility.md](./frontend_ui_visibility.md) | 社交图标 / 意见反馈个人微信二维码可配置隐藏与换图 |
 | [model_catalog_and_recommendations.md](./model_catalog_and_recommendations.md) | 场景模型目录：性价比/效果双档与供应商折叠 |
+| [implementation_power_frontend_dispatch.md](./implementation_power_frontend_dispatch.md) | 实现方算力前端下发机制与用户偏好分档价格扁平化修复 |
+| 用户模块（接口模块） | 商业版能力：代码、测试与设计文档位于 enterprise 仓
+  `doc/user_modules*.md`（运行时 `enterprise/module_runtime/`，路由 `enterprise/routes/`，
+  服务 `enterprise/services/user_module_*`）。核心仅保留接缝：常量与 ABI 契约
+  （`config/constant.py`、`config/user_module_abi.json`）、alembic 迁移、
+  `dashboard features.user_modules` 开关与前端锁定卡片。 |

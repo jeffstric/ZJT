@@ -2,94 +2,68 @@
 audio_task 纯函数单元测试
 
 测试 build_character_audio_text 和 calculate_next_retry_delay。
+依赖 stub 通过 tests/base/test_isolation.py 官方工具安装，
+import 中断也会在离开 with 时恢复 sys.modules 与父包属性。
 """
 import asyncio
-import os
-import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-# Mock 所有 task/audio_task.py 的重依赖
-_saved_model = sys.modules.get('model')
-_saved_config_constant = sys.modules.get('config.constant')
-_saved_config_util = sys.modules.get('config.config_util')
-_saved_rh_config = sys.modules.get('task.async_drivers.runninghub_audio_driver')
-_saved_index_tts = sys.modules.get('utils.index_tts_util')
+from tests.base.test_isolation import module_stub, stub_modules
 
-sys.modules['model'] = MagicMock()
-sys.modules['model'].__dict__.update({
-    'TasksModel': MagicMock(),
-    'AIAudioModel': MagicMock(),
-})
-# 需要在 model 包存在后再 mock 子模块
-import types
-model_pkg = types.ModuleType('model')
-model_pkg.TasksModel = MagicMock()
-model_pkg.AIAudioModel = MagicMock()
-model_pkg.StoryboardModel = MagicMock()
-model_pkg.StoryboardSceneModel = MagicMock()
-model_pkg.StoryboardDialogueModel = MagicMock()
-sys.modules['model'] = model_pkg
+_running_hub_cfg = MagicMock()
+_running_hub_cfg.AUDIO_STYLE_DEFAULT_PROMPT = '声音自然清晰，语气平稳，适合角色旁白'
+_running_hub_cfg.AUDIO_STYLE_LLM_MAX_TOKENS = 256
+_running_hub_cfg.AUDIO_STYLE_LLM_TEMPERATURE = 0.7
 
-# audio_task 新增了这些子模块的直接 import，需 mock 以避免触发真实 DB/配置加载
-_sb_mod = types.ModuleType('model.storyboard')
-_sb_mod.StoryboardModel = MagicMock()
-_sb_mod.StoryboardSceneModel = MagicMock()
-sys.modules['model.storyboard'] = _sb_mod
-_sd_mod = types.ModuleType('model.storyboard_dialogue')
-_sd_mod.StoryboardDialogueModel = MagicMock()
-sys.modules['model.storyboard_dialogue'] = _sd_mod
-# storyboard_dialogue_audio 已在真实模块中, 但测试里也 mock 掉避免 DB
-_sda_mod = types.ModuleType('model.storyboard_dialogue_audio')
-_sda_mod.StoryboardDialogueAudioModel = MagicMock()
-sys.modules['model.storyboard_dialogue_audio'] = _sda_mod
-# utils.audio_duration_util
-_adu_mod = types.ModuleType('utils.audio_duration_util')
-_adu_mod.probe_audio_duration = MagicMock()
-sys.modules['utils.audio_duration_util'] = _adu_mod
-
-# Mock config.constant
-config_constant = types.ModuleType('config.constant')
-config_constant.TASK_TYPE_GENERATE_AUDIO = 10
-config_constant.AI_AUDIO_STATUS_PENDING = 0
-config_constant.AI_AUDIO_STATUS_PROCESSING = 1
-config_constant.AI_AUDIO_STATUS_COMPLETED = 2
-config_constant.AI_AUDIO_STATUS_FAILED = -1
-config_constant.TASK_STATUS_QUEUED = 0
-config_constant.TASK_STATUS_PROCESSING = 1
-config_constant.TASK_STATUS_COMPLETED = 2
-config_constant.TASK_STATUS_FAILED = -1
-sys.modules['config.constant'] = config_constant
-
-# Mock RunningHubAudioConfig
-rh_config = types.ModuleType('task.async_drivers.runninghub_audio_driver')
-rh_config.RunningHubAudioConfig = MagicMock()
-rh_config.RunningHubAudioConfig.AUDIO_STYLE_DEFAULT_PROMPT = '声音自然清晰，语气平稳，适合角色旁白'
-rh_config.RunningHubAudioConfig.AUDIO_STYLE_LLM_MAX_TOKENS = 256
-rh_config.RunningHubAudioConfig.AUDIO_STYLE_LLM_TEMPERATURE = 0.7
-sys.modules['task.async_drivers.runninghub_audio_driver'] = rh_config
-
-sys.modules['utils.index_tts_util'] = MagicMock()
-sys.modules['config.config_util'] = MagicMock()
-
-from task.audio_task import build_character_audio_text, calculate_next_retry_delay
-
-# 恢复被 mock 的 sys.modules，防止污染后续测试
-for _key, _saved in [
-    ('model', _saved_model),
-    ('model.storyboard', None),
-    ('model.storyboard_dialogue', None),
-    ('model.storyboard_dialogue_audio', None),
-    ('utils.audio_duration_util', None),
-    ('config.constant', _saved_config_constant),
-    ('config.config_util', _saved_config_util),
-    ('task.async_drivers.runninghub_audio_driver', _saved_rh_config),
-    ('utils.index_tts_util', _saved_index_tts),
-]:
-    if _saved is not None:
-        sys.modules[_key] = _saved
-    else:
-        sys.modules.pop(_key, None)
+with stub_modules({
+    'model': module_stub(
+        'model',
+        TasksModel=MagicMock(),
+        AIAudioModel=MagicMock(),
+        StoryboardModel=MagicMock(),
+        StoryboardSceneModel=MagicMock(),
+        StoryboardDialogueModel=MagicMock(),
+    ),
+    # audio_task 直接 import 这些子模块，需 mock 以避免触发真实 DB/配置加载
+    'model.storyboard': module_stub(
+        'model.storyboard',
+        StoryboardModel=MagicMock(),
+        StoryboardSceneModel=MagicMock(),
+    ),
+    'model.storyboard_dialogue': module_stub(
+        'model.storyboard_dialogue',
+        StoryboardDialogueModel=MagicMock(),
+    ),
+    # storyboard_dialogue_audio 已在真实模块中, 但测试里也 mock 掉避免 DB
+    'model.storyboard_dialogue_audio': module_stub(
+        'model.storyboard_dialogue_audio',
+        StoryboardDialogueAudioModel=MagicMock(),
+    ),
+    'utils.audio_duration_util': module_stub(
+        'utils.audio_duration_util',
+        probe_audio_duration=MagicMock(),
+    ),
+    'config.constant': module_stub(
+        'config.constant',
+        TASK_TYPE_GENERATE_AUDIO=10,
+        AI_AUDIO_STATUS_PENDING=0,
+        AI_AUDIO_STATUS_PROCESSING=1,
+        AI_AUDIO_STATUS_COMPLETED=2,
+        AI_AUDIO_STATUS_FAILED=-1,
+        TASK_STATUS_QUEUED=0,
+        TASK_STATUS_PROCESSING=1,
+        TASK_STATUS_COMPLETED=2,
+        TASK_STATUS_FAILED=-1,
+    ),
+    'task.async_drivers.runninghub_audio_driver': module_stub(
+        'task.async_drivers.runninghub_audio_driver',
+        RunningHubAudioConfig=_running_hub_cfg,
+    ),
+    'utils.index_tts_util': MagicMock(),
+    'config.config_util': MagicMock(),
+}):
+    from task.audio_task import build_character_audio_text, calculate_next_retry_delay
 
 
 def _run_async(coro):

@@ -1506,11 +1506,29 @@ class PMAgent(BaseAgent, AskUserMixin):
             return list(expert_agents.keys())
 
         allowed_types = set(self.allowed_expert_types)
-        return sorted(
+        allowed = sorted(
             name
             for name, config in expert_agents.items()
             if config.get("expert_type") in allowed_types
         )
+        if "admin" in allowed_types and not self._is_admin_user():
+            allowed = [name for name in allowed if expert_agents[name].get("expert_type") != "admin"]
+        return allowed
+
+    def _is_admin_user(self) -> bool:
+        cached = getattr(self, "_admin_user_cache", None)
+        if cached is not None:
+            return cached
+        try:
+            from model.users import UsersModel
+
+            user = UsersModel.get_by_id(int(self.user_id))
+            result = bool(user and user.role == "admin")
+        except Exception:
+            logger.exception("%s: 无法校验管理员专家权限", self.agent_id)
+            result = False
+        self._admin_user_cache = result
+        return result
 
     def _is_expert_allowed(self, skill_name: str) -> bool:
         """校验当前 PM 是否允许调用指定专家。"""
@@ -1518,7 +1536,10 @@ class PMAgent(BaseAgent, AskUserMixin):
             return True
 
         expert_config = self.agents_config.get("expert_agents", {}).get(skill_name, {})
-        return expert_config.get("expert_type") in set(self.allowed_expert_types)
+        expert_type = expert_config.get("expert_type")
+        if expert_type == "admin" and not self._is_admin_user():
+            return False
+        return expert_type in set(self.allowed_expert_types)
 
     def should_stop(self) -> tuple[bool, str]:
         """检查是否需要停止"""

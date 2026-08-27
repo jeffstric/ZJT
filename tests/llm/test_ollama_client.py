@@ -134,6 +134,78 @@ class TestOllamaClient(unittest.TestCase):
         mock_openai.chat.completions.create.assert_called_once()
 
     @patch('llm.ollama_client.get_dynamic_config_value')
+    @patch('llm.ollama_client.OpenAI')
+    def test_qwen38_uses_global_thinking_when_request_omits_it(self, mock_openai_class, mock_config):
+        """llm.ollama.enable_thinking=true 且调用方未传 enable_thinking 时开启思考"""
+        mock_config.side_effect = lambda *args, default=None: {
+            ('llm', 'ollama', 'enabled'): True,
+            ('llm', 'ollama', 'base_url'): 'http://localhost:11434',
+            ('llm', 'ollama', 'temperature'): 0.7,
+            ('llm', 'ollama', 'top_p'): 0.8,
+            ('llm', 'ollama', 'top_k'): 20,
+            ('llm', 'ollama', 'min_p'): 0.0,
+            ('llm', 'ollama', 'presence_penalty'): 1.5,
+            ('llm', 'ollama', 'repetition_penalty'): 1.0,
+            ('llm', 'ollama', 'enable_thinking'): True,
+        }.get(args, default)
+
+        mock_openai = MagicMock()
+        mock_openai_class.return_value = mock_openai
+        mock_choice = MagicMock()
+        mock_choice.message.content = "ok"
+        mock_choice.message.tool_calls = None
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_openai.chat.completions.create.return_value = mock_response
+
+        from llm.ollama_client import OllamaClient
+        client = OllamaClient()
+        self.assertTrue(client.enable_thinking)
+
+        client.call_api(
+            model="ollama:qwen3.8:27b",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+        kwargs = mock_openai.chat.completions.create.call_args.kwargs
+        self.assertTrue(kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"])
+
+    @patch('llm.ollama_client.get_dynamic_config_value')
+    @patch('llm.ollama_client.OpenAI')
+    def test_explicit_enable_thinking_false_overrides_global(self, mock_openai_class, mock_config):
+        """全局 enable_thinking=true 时，调用方显式传 False 应能关闭思考"""
+        mock_config.side_effect = lambda *args, default=None: {
+            ('llm', 'ollama', 'enabled'): True,
+            ('llm', 'ollama', 'base_url'): 'http://localhost:11434',
+            ('llm', 'ollama', 'temperature'): 0.7,
+            ('llm', 'ollama', 'top_p'): 0.8,
+            ('llm', 'ollama', 'top_k'): 20,
+            ('llm', 'ollama', 'min_p'): 0.0,
+            ('llm', 'ollama', 'presence_penalty'): 1.5,
+            ('llm', 'ollama', 'repetition_penalty'): 1.0,
+            ('llm', 'ollama', 'enable_thinking'): True,
+        }.get(args, default)
+
+        mock_openai = MagicMock()
+        mock_openai_class.return_value = mock_openai
+        mock_choice = MagicMock()
+        mock_choice.message.content = "ok"
+        mock_choice.message.tool_calls = None
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_openai.chat.completions.create.return_value = mock_response
+
+        from llm.ollama_client import OllamaClient
+        client = OllamaClient()
+
+        client.call_api(
+            model="ollama:qwen3.8:27b",
+            messages=[{"role": "user", "content": "Hello"}],
+            enable_thinking=False,
+        )
+        kwargs = mock_openai.chat.completions.create.call_args.kwargs
+        self.assertFalse(kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"])
+
+    @patch('llm.ollama_client.get_dynamic_config_value')
     def test_refresh_config(self, mock_config):
         """测试配置刷新"""
         call_count = [0]
@@ -184,10 +256,16 @@ class TestLLMClientFactory(unittest.TestCase):
     def test_get_vendor_by_model_ollama(self):
         """测试 Ollama 模型前缀正确映射到 vendor"""
         from llm.llm_client_factory import LLMClientFactory
-        from config.constant import LLMVendor
+        from config.constant import LLMVendor, LLMModel
 
         vendor = LLMClientFactory._get_vendor_by_model("ollama:qwen3.6:35b-a3b")
         self.assertEqual(vendor, LLMVendor.OLLAMA)
+
+        vendor_38 = LLMClientFactory._get_vendor_by_model(
+            f"ollama:{LLMModel.OLLAMA_QWEN_3_8_27B}"
+        )
+        self.assertEqual(vendor_38, LLMVendor.OLLAMA)
+        self.assertEqual(LLMModel.OLLAMA_QWEN_3_8_27B, 'qwen3.8:27b')
 
     def test_get_vendor_by_model_qwen(self):
         """测试 Qwen 模型前缀正确映射到 aliyun vendor"""

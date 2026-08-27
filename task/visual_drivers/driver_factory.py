@@ -45,11 +45,15 @@ class VideoDriverFactory:
             driver_class: 驱动类（必须继承自 BaseVideoDriver）
         """
         if not issubclass(driver_class, BaseVideoDriver):
-            raise ValueError(f"Driver class {driver_class} must inherit from BaseVideoDriver")
-        
+            raise ValueError(f"Driver class {driver_class} must inherit from BaseVideoDriver")        
         cls._registered_drivers[driver_name] = driver_class
         logger.debug(f"Registered video driver: {driver_name} -> {driver_class.__name__}")
-    
+
+    @classmethod
+    def unregister_driver(cls, driver_name: str):
+        """注销驱动类（仅用于用户模块动态实现方的重载卸载）"""
+        cls._registered_drivers.pop(driver_name, None)
+
     # 存储最近一次创建驱动失败的原因（用于返回更友好的错误信息）
     _last_create_error: Optional[Dict[str, Any]] = None
 
@@ -96,11 +100,12 @@ class VideoDriverFactory:
         # 获取实现驱动名称（考虑用户偏好）和驱动参数
         implementation_driver_name, driver_params = cls._get_implementation_for_user(driver_type, user_id, config)
         if not implementation_driver_name:
-            logger.error(f"No implementation configured for business driver: {business_driver_name}")
-            cls._last_create_error = {
-                "reason": "NO_IMPLEMENTATION",
-                "message": f"驱动 {business_driver_name} 未配置实现方"
-            }
+            if not cls._last_create_error:
+                logger.error(f"No implementation configured for business driver: {business_driver_name}")
+                cls._last_create_error = {
+                    "reason": "NO_IMPLEMENTATION",
+                    "message": f"驱动 {business_driver_name} 未配置实现方"
+                }
             return None
 
         # 第三层：根据实现驱动名称获取驱动类
@@ -271,6 +276,7 @@ class VideoDriverFactory:
           2. 按 sort_order 排序的第一个可用实现方
           3. 配置文件中的默认实现方
         注意：用户偏好不能绕过 admin 禁用（_is_impl_enabled 检查）
+        若用户将该任务类型「固定」供应商，偏好不可用时不降级，并写入 _last_create_error。
 
         Args:
             task_type: 任务类型
@@ -283,11 +289,16 @@ class VideoDriverFactory:
             - driver_params: 创建驱动实例需要的额外参数，如 {'site_id': 'site_1'}
         """
         impl_name = None
+        locked_pref_failed = False
 
         # 1. 检查用户偏好
         if user_id:
             try:
                 from model.users import UsersModel
+                from config.constant import (
+                    DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE,
+                    FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE,
+                )
                 task_key = config.key
                 user_pref = UsersModel.get_implementation_preference(user_id, task_key)
                 if user_pref:
@@ -295,13 +306,27 @@ class VideoDriverFactory:
                     if cls._is_driver_available(user_pref) and cls._is_impl_enabled(user_pref, config.driver_name):
                         logger.debug(f"Using user preference for task {task_key}: {user_pref}")
                         impl_name = user_pref
+                    elif UsersModel.is_implementation_locked(user_id, task_key):
+                        display_name = cls._get_display_name_for_impl(user_pref)
+                        cls._last_create_error = {
+                            "reason": DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE,
+                            "message": FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE.format(
+                                display_name=display_name
+                            ),
+                            "implementation": user_pref,
+                        }
+                        locked_pref_failed = True
+                        logger.warning(
+                            f"User locked preference {user_pref} unavailable or disabled "
+                            f"for task {task_key}, skip auto-select"
+                        )
                     else:
                         logger.warning(f"User preference {user_pref} unavailable or disabled, will auto-select")
             except Exception as e:
                 logger.warning(f"Failed to get user preference: {e}")
 
-        # 2. 如果没有用户偏好或偏好不可用，根据排序选择排序最靠前的可用实现方
-        if not impl_name:
+        # 2. 如果没有用户偏好或偏好不可用（且未固定），根据排序选择排序最靠前的可用实现方
+        if not impl_name and not locked_pref_failed:
             available_impls = config._get_implementations_info()
             for impl in available_impls:
                 if cls._is_driver_available(impl['name']):
@@ -309,10 +334,27 @@ class VideoDriverFactory:
                     logger.debug(f"Auto-selected implementation for task {config.key}: {impl_name}")
                     break
 
-            # 回退到默认实现方
+            # 回退到默认实现方；与偏好路径接受同样的校验（可实例化 + 未被 admin 禁用）。
+            # 管理员禁用的实现方绝不能被兜底静默放行，宁可任务失败也要尊重禁用。
             if not impl_name:
-                impl_name = config.implementation
-                logger.warning(f"All implementations unavailable for task {config.key}, falling back to default: {impl_name}")
+                from config.constant import (
+                    DRIVER_ERROR_NO_IMPLEMENTATION_AVAILABLE,
+                    NO_IMPLEMENTATION_AVAILABLE_MESSAGE,
+                )
+
+                default_impl = config.implementation
+                if default_impl and cls._is_driver_available(default_impl) and cls._is_impl_enabled(default_impl, config.driver_name):
+                    impl_name = default_impl
+                else:
+                    cls._last_create_error = {
+                        "reason": DRIVER_ERROR_NO_IMPLEMENTATION_AVAILABLE,
+                        "message": NO_IMPLEMENTATION_AVAILABLE_MESSAGE.format(task=config.key),
+                        "implementation": default_impl or None,
+                    }
+                    logger.error(
+                        f"No available implementation for task {config.key}; default "
+                        f"{default_impl!r} is disabled or unavailable"
+                    )
 
         # 3. 获取驱动参数
         driver_params = {}
@@ -672,6 +714,13 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1, MinimaxH3RunninghubV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import MinimaxH3RunninghubV1Driver: {e}")
+
+    try:
+        from .minimax_h3_turbo_runninghub_v1_driver import MinimaxH3TurboRunninghubV1Driver
+        # 注册 MiniMax H3 图生视频加速版 RunningHub v1 版本
+        VideoDriverFactory.register_driver(DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1, MinimaxH3TurboRunninghubV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import MinimaxH3TurboRunninghubV1Driver: {e}")
 
     try:
         from .minimax_h3_reference_runninghub_v1_driver import MinimaxH3ReferenceRunninghubV1Driver

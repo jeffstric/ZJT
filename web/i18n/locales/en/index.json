@@ -1048,7 +1048,7 @@
   "alert_login_expired": "Login expired\n\nYour session has expired, please log in again.",
   "alert_missing_params": "Missing parameters\n\nPlease return to the workflow list first.",
   "alert_insufficient_power": "Insufficient power\n\nPlease recharge to continue.",
-  "warn_ollama_local": "Local model notice: Ollama runs locally and may be unstable. Recommended: {model} for better experience.",
+  "warn_ollama_local": "Local model notice: local models (Ollama/vLLM) run locally and may be unstable. Recommended: {model} for better experience.",
   "warn_expensive_model": "This model is expensive. Recommended: {model} for better value.",
   "warn_weak_model": "This model may not handle complex tasks well. Recommended: {model} for better results.",
   "warn_no_images_generated": "Task completed, but no images were generated",

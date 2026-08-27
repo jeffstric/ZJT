@@ -1622,6 +1622,17 @@ function scenesStructureSig() {
     return (state.scenes || []).map(s => s.id).join(',');
 }
 
+/**
+ * 缩略图中会展示首帧、时长和视频类型角标；任一字段变化都必须触发重绘。
+ * 特别是 digital_human 切回 video 时，需移除时间轴中的“对口型”角标。
+ */
+function sceneThumbMediaSig(scene) {
+    const firstFrameUrl = scene?.firstFrameUrl || '';
+    const firstFrameStatus = getFirstFrameDisplayStatus(scene);
+    const videoType = String(scene?.videoType || scene?.video_type || 'video').toLowerCase();
+    return `${firstFrameUrl}|${firstFrameStatus}|${scene?.durationLabel || ''}|${videoType}`;
+}
+
 export function renderTimeline() {
     return `
         <section class="timeline-controls">
@@ -3026,9 +3037,7 @@ export function patchTimelineListStructure() {
     (state.scenes || []).forEach((sc) => {
         const thumbBtn = document.querySelector(`.scene-timeline-thumb[data-scene="${sc.id}"]`);
         if (!thumbBtn) return;
-        const nextUrl = sc.firstFrameUrl || '';
-        const nextStatus = getFirstFrameDisplayStatus(sc);
-        thumbBtn.dataset.mediaSig = `${nextUrl}|${nextStatus}|${sc.durationLabel || ''}`;
+        thumbBtn.dataset.mediaSig = sceneThumbMediaSig(sc);
     });
     updateAutoCompleteHeader();
     updatePlayheadPosition({ followScroll: false });
@@ -3050,9 +3059,7 @@ export function patchGridStructure() {
     (state.scenes || []).forEach((sc) => {
         const cell = document.querySelector(`.storyboard-card[data-scene="${sc.id}"]`)?.closest('.storyboard-grid-cell');
         if (!cell) return;
-        const nextUrl = sc.firstFrameUrl || '';
-        const nextStatus = getFirstFrameDisplayStatus(sc);
-        cell.dataset.mediaSig = `${nextUrl}|${nextStatus}|${sc.durationLabel || ''}`;
+        cell.dataset.mediaSig = sceneThumbMediaSig(sc);
         cell.dataset.sceneId = String(sc.id);
     });
     updateAutoCompleteHeader();
@@ -3615,9 +3622,7 @@ function renderEmoVecEditorDialog() {
 export function updateSceneThumb(scene) {
     if (!scene) return false;
     let updated = false;
-    const nextUrl = scene.firstFrameUrl || '';
-    const nextStatus = getFirstFrameDisplayStatus(scene);
-    const mediaSig = `${nextUrl}|${nextStatus}|${scene.durationLabel || ''}`;
+    const mediaSig = sceneThumbMediaSig(scene);
 
     // timeline 模式：替换 thumb 按钮内部内容（保留按钮本身，不破坏 active 态与滚动）
     const thumbBtn = document.querySelector(`.scene-timeline-thumb[data-scene="${scene.id}"]`);

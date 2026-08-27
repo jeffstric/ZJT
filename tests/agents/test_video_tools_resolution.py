@@ -58,6 +58,7 @@ class _StubConfig:
 @pytest.fixture
 def video_impl():
     """注册一个支持 480P/720P/1080P 的测试实现，供 validate_video_resolution 解析。"""
+    snapshot = UnifiedConfigRegistry.snapshot()
     UnifiedConfigRegistry._implementations.clear()
     UnifiedConfigRegistry.register_implementation(
         ImplementationConfig(
@@ -73,7 +74,7 @@ def video_impl():
         )
     )
     yield SUPPORTED_IMPL_NAME
-    UnifiedConfigRegistry._implementations.clear()
+    UnifiedConfigRegistry.restore(snapshot)
 
 
 # -----------------------------
@@ -108,6 +109,7 @@ def test_resolve_video_resolution_invalid_falls_back(video_impl):
 
 def test_resolve_video_resolution_unsupported_impl_returns_none():
     # impl 不支持分辨率选择时返回 None（端点与工具都不应下发 resolution）
+    snapshot = UnifiedConfigRegistry.snapshot()
     UnifiedConfigRegistry._implementations.clear()
     UnifiedConfigRegistry.register_implementation(
         ImplementationConfig(name='plain_impl', display_name='普通实现', driver_class='PlainDriver')
@@ -115,7 +117,7 @@ def test_resolve_video_resolution_unsupported_impl_returns_none():
     from enterprise.tools.video_tools import _resolve_video_resolution
 
     assert _resolve_video_resolution({'resolution': '1080P'}, None, 'plain_impl') is None
-    UnifiedConfigRegistry._implementations.clear()
+    UnifiedConfigRegistry.restore(snapshot)
 
 
 # -----------------------------

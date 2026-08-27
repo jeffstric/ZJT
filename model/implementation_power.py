@@ -204,6 +204,114 @@ class ImplementationPowerModel:
             return {}
 
     @staticmethod
+    def set_modifiers(
+        implementation_name: str,
+        driver_key: str,
+        attribute: str,
+        values: Dict[str, float],
+        default: float = 1.0,
+        updated_by: Optional[int] = None,
+    ) -> int:
+        """写入某个修饰符 attribute，不改动 fixed / 时长算力键。"""
+        if not driver_key:
+            raise ValueError("driver_key is required")
+        if not attribute:
+            raise ValueError("attribute is required")
+
+        sql = """
+            SELECT power_config FROM implementation_power_config
+            WHERE implementation_name = %s AND driver_key = %s
+            LIMIT 1
+        """
+        result = execute_query(sql, (implementation_name, driver_key), fetch_one=True)
+        power_config = ImplementationPowerModel._parse_power_config(
+            result.get("power_config") if result else None
+        )
+        modifiers = power_config.get("modifiers")
+        if not isinstance(modifiers, dict):
+            modifiers = {}
+        payload = {str(key): float(value) for key, value in (values or {}).items()}
+        payload["_default"] = float(default)
+        modifiers[str(attribute)] = payload
+        power_config["modifiers"] = modifiers
+        power_config_json = json.dumps(power_config, ensure_ascii=False)
+
+        if not result:
+            site_number = None
+            impl_config = UnifiedConfigRegistry.get_implementation(implementation_name)
+            if impl_config:
+                site_number = impl_config.site_number
+            insert_sql = """
+                INSERT INTO implementation_power_config
+                (implementation_name, driver_key, site_number, power_config, updated_by)
+                VALUES (%s, %s, %s, %s, %s)
+            """
+            execute_insert(
+                insert_sql,
+                (implementation_name, driver_key, site_number, power_config_json, updated_by),
+            )
+            logger.info(
+                "Inserted power modifiers: %s/%s attribute=%s",
+                implementation_name,
+                driver_key,
+                attribute,
+            )
+            return 1
+
+        update_sql = """
+            UPDATE implementation_power_config
+            SET power_config = %s, updated_by = %s, updated_at = NOW()
+            WHERE implementation_name = %s AND driver_key = %s
+        """
+        affected = execute_update(
+            update_sql,
+            (power_config_json, updated_by, implementation_name, driver_key),
+        )
+        logger.info(
+            "Updated power modifiers: %s/%s attribute=%s",
+            implementation_name,
+            driver_key,
+            attribute,
+        )
+        return affected
+
+    @staticmethod
+    def delete_modifiers(
+        implementation_name: str,
+        driver_key: str,
+        attribute: str,
+    ) -> int:
+        """删除某个修饰符 attribute，保留基础算力。"""
+        if not driver_key or not attribute:
+            return 0
+        sql = """
+            SELECT power_config FROM implementation_power_config
+            WHERE implementation_name = %s AND driver_key = %s
+            LIMIT 1
+        """
+        result = execute_query(sql, (implementation_name, driver_key), fetch_one=True)
+        if not result:
+            return 0
+        power_config = ImplementationPowerModel._parse_power_config(result.get("power_config"))
+        modifiers = power_config.get("modifiers")
+        if not isinstance(modifiers, dict) or str(attribute) not in modifiers:
+            return 0
+        modifiers.pop(str(attribute), None)
+        if modifiers:
+            power_config["modifiers"] = modifiers
+        else:
+            power_config.pop("modifiers", None)
+        update_sql = """
+            UPDATE implementation_power_config
+            SET power_config = %s, updated_at = NOW()
+            WHERE implementation_name = %s AND driver_key = %s
+        """
+        return execute_update(
+            update_sql,
+            (json.dumps(power_config, ensure_ascii=False), implementation_name, driver_key),
+        )
+
+    @staticmethod
     def set_power(
         implementation_name: str,
         computing_power: int,
@@ -629,6 +737,101 @@ class ImplementationPowerModel:
         except Exception as e:
             logger.error(f"Failed to set implementation config for {implementation_name}/{driver_key}: {e}")
             raise
+
+    @staticmethod
+    def reassign_driver_key(
+        implementation_name: str,
+        old_driver_key: str,
+        new_driver_keys: Optional[List[str]] = None,
+    ) -> None:
+        """把一条算力配置从旧 driver_key 改挂到一个或多个新 key。
+
+        无目标 key 时删除旧行。第一个目标 UPDATE 旧行（若目标已存在则删旧行），
+        其余目标在不存在时复制插入。
+        """
+        if not implementation_name or not old_driver_key:
+            return
+        targets = [key for key in (new_driver_keys or []) if key and key != old_driver_key]
+        if not targets:
+            execute_update(
+                """
+                DELETE FROM implementation_power_config
+                WHERE implementation_name = %s AND driver_key = %s
+                """,
+                (implementation_name, old_driver_key),
+            )
+            return
+
+        existing_rows = execute_query(
+            """
+            SELECT driver_key FROM implementation_power_config
+            WHERE implementation_name = %s
+            """,
+            (implementation_name,),
+            fetch_all=True,
+        ) or []
+        have = {row.get("driver_key") for row in existing_rows}
+        first, *rest = targets
+        if first in have:
+            execute_update(
+                """
+                DELETE FROM implementation_power_config
+                WHERE implementation_name = %s AND driver_key = %s
+                """,
+                (implementation_name, old_driver_key),
+            )
+            source_key = first
+        else:
+            execute_update(
+                """
+                UPDATE implementation_power_config
+                SET driver_key = %s
+                WHERE implementation_name = %s AND driver_key = %s
+                """,
+                (first, implementation_name, old_driver_key),
+            )
+            have.add(first)
+            source_key = first
+
+        if not rest:
+            return
+        source = execute_query(
+            """
+            SELECT enabled, sort_order, site_number, power_config, display_name, updated_by
+            FROM implementation_power_config
+            WHERE implementation_name = %s AND driver_key = %s
+            LIMIT 1
+            """,
+            (implementation_name, source_key),
+            fetch_one=True,
+        )
+        if not source:
+            return
+        power_config = source.get("power_config")
+        if isinstance(power_config, dict):
+            power_config = json.dumps(power_config, ensure_ascii=False)
+        for key in rest:
+            if key in have:
+                continue
+            execute_insert(
+                """
+                INSERT INTO implementation_power_config
+                (implementation_name, driver_key, site_number, power_config,
+                 enabled, sort_order, display_name, updated_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    implementation_name,
+                    key,
+                    source.get("site_number"),
+                    power_config,
+                    source.get("enabled"),
+                    source.get("sort_order"),
+                    source.get("display_name"),
+                    source.get("updated_by"),
+                ),
+            )
+            have.add(key)
 
     @staticmethod
     def get_all_configs() -> List[Dict[str, Any]]:

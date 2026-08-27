@@ -22,7 +22,9 @@
 UnifiedTaskConfig(
     id=20,                              # 任务类型ID（唯一）
     key='new_model_image_to_video',     # 唯一标识符
-    name='新模型图生视频',                # 显示名称
+    name='新模型图生视频',                # 历史任务标签（兼容旧接口）
+    model_name='新模型',                  # 用户可见的纯模型名
+    variant_label='首尾帧',                 # 同名条目需要消歧时才显示
     category=TaskCategory.IMAGE_TO_VIDEO,
     provider=TaskProvider.NEW_PROVIDER,
     driver_name='new_model_image_to_video',  # 业务驱动名称
@@ -94,7 +96,10 @@ const data = await response.json();
 |------|------|------|------|
 | `id` | int | ✅ | 任务类型ID，数据库中的 type 字段 |
 | `key` | str | ✅ | 唯一标识符，用于代码引用 |
-| `name` | str | ✅ | 显示名称 |
+| `name` | str | ✅ | 历史任务标签，保留给旧接口/旧快照 |
+| `model_name` | str | ✅（内置任务） | 用户可见的纯模型名，不包含 ID、供应商或能力后缀 |
+| `variant_label` | str | ❌ | 同一能力下的同名模型消歧，如“首帧”“多参考” |
+| `legacy_names` | list | ❌ | 历史名称别名，用于旧请求/快照反查 |
 | `category` | str | ✅ | 分类，使用 TaskCategory 常量 |
 | `provider` | str | ✅ | 供应商，使用 TaskProvider 常量 |
 | `driver_name` | str | ❌ | 业务驱动名称 |
@@ -108,6 +113,21 @@ const data = await response.json();
 | `default_duration` | int | ❌ | 默认时长 |
 | `enabled` | bool | ❌ | 是否启用，默认 True |
 | `sort_order` | int | ❌ | 排序顺序 |
+
+## 图片编辑任务（节选）
+
+| ID | key | 名称 | 说明 |
+|----|-----|------|------|
+| 38 | `qwen-image-edit` | Qwen Image Edit | 空壳任务，无实现方；无比例/分辨率选项（跟随原图缩到约 1MP） |
+
+完整列表见 `config/unified_config.py` 的 `ALL_TASK_CONFIGS`。
+
+### 模型名与任务标识
+
+`id` / `key` 是调度与持久化标识，不应拼入面向用户的模型名。
+新界面读取 `model_name`，必要时附加 `variant_label`；`name` 在存量前端
+完成迁移前继续下发。`matches_identifier()` 同时识别 key、纯模型名、
+历史 `name` 和 `legacy_names`，以保证已保存偏好和任务快照可继续恢复。
 
 ## 分类常量 (TaskCategory)
 

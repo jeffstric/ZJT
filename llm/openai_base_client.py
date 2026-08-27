@@ -120,6 +120,7 @@ class OpenAIBaseClient(BaseLLMClient):
         agent_id: Optional[str] = None,
         agent_scope: Optional[str] = None,
         request_timeout: Optional[float] = None,
+        suppress_payload_logging: bool = False,
     ) -> Any:
         """
         调用 OpenAI 兼容格式 API
@@ -133,6 +134,7 @@ class OpenAIBaseClient(BaseLLMClient):
             enable_thinking: 是否开启思考模式
             thinking_effort: 思考强度（值：low/medium/high）
             request_timeout: 单次请求 HTTP 超时（秒），None 时用 client 默认值
+            suppress_payload_logging: 禁止将请求/响应/异常正文写入日志
 
         Returns:
             Response 对象
@@ -177,8 +179,16 @@ class OpenAIBaseClient(BaseLLMClient):
             llm_logger.info("=" * 80)
             llm_logger.info(f"{self.vendor_name.upper()} API REQUEST:")
             llm_logger.info(f"  Model: {actual_model}")
-            llm_logger.info(f"  Base URL: {self.base_url}")
-            llm_logger.info(f"  API Key: {_mask_api_key(self.api_key)}")
+            llm_logger.info(
+                "  Base URL: configured"
+                if suppress_payload_logging
+                else f"  Base URL: {self.base_url}"
+            )
+            llm_logger.info(
+                "  API Key: configured"
+                if suppress_payload_logging
+                else f"  API Key: {_mask_api_key(self.api_key)}"
+            )
             llm_logger.info(f"  Messages count: {len(messages)}")
             self._log_request_context(llm_logger, agent_id, agent_scope)
             llm_logger.info(f"  Temperature: {temperature}")
@@ -187,22 +197,23 @@ class OpenAIBaseClient(BaseLLMClient):
             if tools:
                 llm_logger.info(f"  Tools count: {len(tools)}")
 
-            # 脱敏后打印完整请求 payload（截断 base64 图片数据避免日志膨胀）
-            safe_kwargs = json.loads(json.dumps(kwargs, ensure_ascii=False, default=str))
-            if "messages" in safe_kwargs:
-                for msg in safe_kwargs["messages"]:
-                    content = msg.get("content")
-                    if isinstance(content, list):
-                        for part in content:
-                            # 截断多模态消息中的 base64 图片
-                            if isinstance(part, dict):
-                                url = part.get("image_url", {}).get("url", "")
-                                if isinstance(url, str) and url.startswith("data:image/") and len(url) > 200:
-                                    part["image_url"]["url"] = url[:100] + f"... [base64 truncated, total {len(url)} chars]"
-                    elif isinstance(content, str) and len(content) > 2000:
-                        msg["content"] = content[:2000] + f"... [truncated, total {len(content)} chars]"
-            payload_str = json.dumps(safe_kwargs, ensure_ascii=False, indent=2)
-            llm_logger.info(f"{self.vendor_name.upper()} API request payload:\n{payload_str}")
+            if not suppress_payload_logging:
+                # 脱敏后打印完整请求 payload（截断 base64 图片数据避免日志膨胀）
+                safe_kwargs = json.loads(json.dumps(kwargs, ensure_ascii=False, default=str))
+                if "messages" in safe_kwargs:
+                    for msg in safe_kwargs["messages"]:
+                        content = msg.get("content")
+                        if isinstance(content, list):
+                            for part in content:
+                                # 截断多模态消息中的 base64 图片
+                                if isinstance(part, dict):
+                                    url = part.get("image_url", {}).get("url", "")
+                                    if isinstance(url, str) and url.startswith("data:image/") and len(url) > 200:
+                                        part["image_url"]["url"] = url[:100] + f"... [base64 truncated, total {len(url)} chars]"
+                        elif isinstance(content, str) and len(content) > 2000:
+                            msg["content"] = content[:2000] + f"... [truncated, total {len(content)} chars]"
+                payload_str = json.dumps(safe_kwargs, ensure_ascii=False, indent=2)
+                llm_logger.info(f"{self.vendor_name.upper()} API request payload:\n{payload_str}")
 
             logger.info(f"{self.vendor_name} API request: model={actual_model}, messages_count={len(messages)}")
 
@@ -235,24 +246,43 @@ class OpenAIBaseClient(BaseLLMClient):
             llm_logger.info("=" * 80)
             llm_logger.info(f"{self.vendor_name.upper()} API RESPONSE:")
             llm_logger.info(f"  Content length: {len(content)} chars")
-            if content:
+            if content and not suppress_payload_logging:
                 llm_logger.info(f"  Content:\n{content}")
             if reasoning_content:
                 llm_logger.info(f"  Reasoning content length: {len(reasoning_content)} chars")
-                llm_logger.info(f"  Reasoning content:\n{truncate_log_content(reasoning_content)}")
+                if not suppress_payload_logging:
+                    llm_logger.info(f"  Reasoning content:\n{truncate_log_content(reasoning_content)}")
             if tool_calls:
                 llm_logger.info(f"  Tool calls count: {len(tool_calls)}")
-                for i, tc in enumerate(tool_calls):
-                    llm_logger.info(f"    Tool[{i}]: {tc.function.name}")
-                    llm_logger.info(f"      Args: {tc.function.arguments}")
+                if not suppress_payload_logging:
+                    for i, tc in enumerate(tool_calls):
+                        llm_logger.info(f"    Tool[{i}]: {tc.function.name}")
+                        llm_logger.info(f"      Args: {tc.function.arguments}")
             llm_logger.info(f"  Token usage: {usage_info}")
             llm_logger.info("-" * 80)
 
             if auth_token and model_id:
-                self._log_token_usage(usage_info, auth_token, vendor_id, model_id)
+                self._log_token_usage(
+                    usage_info,
+                    auth_token,
+                    vendor_id,
+                    model_id,
+                    suppress_error_details=suppress_payload_logging,
+                )
 
             return self._create_response(content, tool_calls, usage_info, reasoning_content, finish_reason)
 
         except Exception as e:
-            logger.error(f"{self.vendor_name} API call failed: {e}")
+            if suppress_payload_logging:
+                status_code = getattr(e, "status_code", None)
+                if status_code is None:
+                    status_code = getattr(getattr(e, "response", None), "status_code", None)
+                logger.error(
+                    "%s API call failed: error_type=%s, status=%s",
+                    self.vendor_name,
+                    type(e).__name__,
+                    status_code if status_code is not None else "unknown",
+                )
+            else:
+                logger.error(f"{self.vendor_name} API call failed: {e}")
             raise

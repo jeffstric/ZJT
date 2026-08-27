@@ -787,7 +787,7 @@ def reset_test_balance(user_id: int, amount: int = 1_000_000) -> None:
 **应对（必须执行其一）**：
 1. **主进程预判（推荐）**：视觉同步任务的 mock 判定放在**主进程** `visual_task._submit_new_task` 的 sync 分流之前（§5.1 改动 A 已在分流之前短路）。若 mock，则**不** `executor.submit()` 到子进程，直接在主进程写 mock 结果。这样子进程缓存不影响 mock 判定。
 2. **fixture 操作时序**：开 test_mode 后调用 `POST /api/admin/config/reload`，并**重启 `SyncTaskExecutor` 进程池**（`shutdown()` + `start()`，让 worker 重新 fork），或**等待 >30s** 再提交任务。
-3. **batch 接口注意**：`PUT /api/admin/config/batch`（`admin.py:734`）更新后**不**自动刷缓存（单条 PUT 在 `:873` 会刷）。用 batch 后必须再调 `/config/reload`。
+3. **batch 接口注意**：`PUT /api/admin/config/batch` 会在每个成功新建/更新项提交后主动清除对应的当前进程缓存，无需再调 `/config/reload`。
 
 > 主进程 `BackgroundScheduler` 是**线程**非进程，与主进程共享缓存，30s TTL 对其可接受；问题主要在 `SyncTaskExecutor` 子进程。故方案 1 优先。
 
@@ -1131,7 +1131,7 @@ print("[MOCK SUMMARY]", mock_hit_summary())
 - 音频通道**不扣费**；扣费在 perseids（媒体）与 `token_task`（LLM token）两套独立后端。
 - `_DYNAMIC_CACHE_TTL=30`，跨进程缓存（§7）。
 - `async_tasks.external_task_id varchar(100)`（`model/async_tasks.py:454`），`mock_task_`+16hex 远小于上限。
-- admin 配置接口：`PUT /api/admin/config/batch`、`PUT /api/admin/config/{key}`、`POST /api/admin/config/reload`（`api/admin.py:734/830/890`）；`PUT /config/batch` **不自动刷缓存**。
+- admin 配置接口：`PUT /api/admin/config/batch`、`PUT /api/admin/config/{key}`、`POST /api/admin/config/reload`；单条与 batch 写入都会主动清除对应的当前进程缓存。
 - `set_dynamic_config_value`（`config_util.py:332`）用 upsert 可新建配置；`PUT /api/admin/config/{key}` 不存在则 404。
 - **bool 配置必须传 Python `True`/`False`**：`config_util.py:365` 为 `'true' if value else 'false'`，非空字符串 `"false"` 会被当真值写成 `'true'`。
 - 世界导出/导入（`api/script_writer.py:4563/4599`）无需 mock：导出仅图床上传（§6.2 保留），导入纯本地 zip 处理；测试需预置合法 `world_export_sample.zip`（结构见 §5.10）。

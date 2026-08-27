@@ -290,6 +290,170 @@ body {
     margin-top: 8px;
 }
 
+/* 队列积压看板 */
+.queue-backlog-section {
+    margin-bottom: 30px;
+}
+
+.queue-backlog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.queue-backlog-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--admin-text);
+}
+
+.queue-backlog-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.queue-backlog-updated {
+    font-size: 12px;
+    color: var(--admin-text-muted);
+}
+
+.queue-backlog-hint {
+    margin: 0 0 14px;
+    font-size: 12px;
+    color: var(--admin-text-muted);
+    line-height: 1.5;
+}
+
+.queue-backlog-error {
+    padding: 16px;
+    background: #fef2f2;
+    color: var(--admin-danger);
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.queue-backlog-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+}
+
+.queue-card {
+    background: var(--admin-card-bg);
+    border-radius: 12px;
+    padding: 16px 18px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border-left: 4px solid var(--admin-success);
+}
+
+.queue-card.warn {
+    border-left-color: var(--admin-warning);
+}
+
+.queue-card.danger {
+    border-left-color: var(--admin-danger);
+    background: #fef2f2;
+}
+
+.queue-card.unknown {
+    border-left-color: var(--admin-text-muted);
+}
+
+.queue-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.queue-card-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--admin-text);
+}
+
+.queue-level-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #d1fae5;
+    color: #065f46;
+    white-space: nowrap;
+}
+
+.queue-level-badge.warn {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.queue-level-badge.danger {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.queue-level-badge.unknown {
+    background: var(--admin-border);
+    color: var(--admin-text-muted);
+}
+
+.queue-card-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--admin-text);
+    line-height: 1.2;
+}
+
+.queue-card-value.warn {
+    color: var(--admin-warning);
+}
+
+.queue-card-value.danger {
+    color: var(--admin-danger);
+}
+
+.queue-card-headline-label {
+    font-size: 12px;
+    color: var(--admin-text-muted);
+    margin-bottom: 10px;
+}
+
+.queue-card-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 10px;
+}
+
+.queue-metric {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--admin-text-muted);
+}
+
+.queue-metric.alert {
+    color: var(--admin-danger);
+    font-weight: 600;
+}
+
+.queue-metric-value {
+    font-variant-numeric: tabular-nums;
+}
+
+.queue-card-hint {
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--admin-danger);
+}
+
 /* 模型分析区域 */
 .model-analysis-section {
     margin-top: 30px;
@@ -1313,7 +1477,8 @@ body {
         padding: 15px;
     }
     
-    .stats-grid {
+    .stats-grid,
+    .queue-backlog-grid {
         grid-template-columns: 1fr;
     }
     
@@ -1681,6 +1846,42 @@ body {
     font-size: 12px;
 }
 
+.resolution-multiplier-list {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--admin-border);
+}
+
+.resolution-multiplier-fields {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.resolution-multiplier-title {
+    color: var(--admin-text-muted);
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.resolution-multiplier-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.resolution-multiplier-reset {
+    flex-shrink: 0;
+    align-self: center;
+}
+
 .power-hint {
     color: var(--admin-text-muted);
     font-size: 12px;
@@ -1960,7 +2161,8 @@ body {
 
 .qc-tabs {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    /* 大模型 + 多媒体 两个分组 */
+    grid-template-columns: repeat(2, 1fr);
     gap: 2px;
     background: #e2e8f0;
     border-radius: 8px;
@@ -2225,6 +2427,25 @@ body {
     background: white;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
     overflow: hidden;
+}
+
+/* 左侧点击已选供应商时，右侧定位卡片的短暂高亮 */
+.qc-config-card-highlight {
+    animation: qc-card-highlight 1.6s ease-out;
+}
+
+@keyframes qc-card-highlight {
+    0% {
+        box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.55);
+        border-color: #3b82f6;
+    }
+    60% {
+        box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.25);
+    }
+    100% {
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+        border-color: var(--admin-border);
+    }
 }
 
 .qc-config-header {
@@ -3371,4 +3592,67 @@ body {
     .constants-grid {
         grid-template-columns: 1fr;
     }
+}
+
+/* 模型管理页：本地推理服务（Ollama / vLLM）配置框（独立于计费 AI 框的靛蓝系） */
+.local-inference-box {
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+    border: 1px solid #6366f1;
+    border-left: 4px solid #4f46e5;
+    border-radius: 8px;
+}
+
+.local-inference-title {
+    color: #3730a3;
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.local-inference-desc {
+    margin: 0 0 12px;
+    color: #312e81;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.local-inference-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.local-inference-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #3730a3;
+    min-width: 56px;
+}
+
+.local-inference-hint {
+    font-size: 12px;
+    color: #6366f1;
+}
+
+/* 模型管理页：本地推理服务（Ollama / vLLM）配置行 */
+.local-inference-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #3730a3;
+    cursor: pointer;
+    min-width: 72px;
+}
+.local-inference-switch input[type='checkbox'] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+.local-inference-url {
+    min-width: 260px;
+    max-width: 360px;
+    text-align: left;
 }

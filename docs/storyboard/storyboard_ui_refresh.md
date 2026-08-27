@@ -83,6 +83,8 @@ refresh('all'); // 仅启动、拆分后整表重建等
 
 增删分镜用预设 `REGIONS_ON_SCENE_STRUCT`（含 TIMELINE_LIST/GRID，不含整页）。
 
+单卡缩略图的 `data-media-sig` 同时包含首帧 URL、首帧状态、时长和 `videoType`。因此在普通视频与对口型之间切换时，即使首帧和时长未变化，时间轴与 Grid 仍会重绘对应卡片，并立即增删视频类型角标。
+
 ## CI
 
 ```bash

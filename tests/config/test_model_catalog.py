@@ -11,6 +11,7 @@ from config.model_catalog import (
     annotate_llm_models,
     annotate_task_models,
     build_tracks_payload,
+    get_model_family,
     infer_track_from_item,
     match_canonical,
     normalize_scene,
@@ -23,6 +24,9 @@ from config.model_catalog import (
 
 
 class TestModelCatalog(unittest.TestCase):
+    def test_qwen38_ollama_family(self):
+        self.assertEqual(get_model_family("qwen3.8:27b"), "Qwen")
+
     def test_normalize_scene_and_track(self):
         self.assertEqual(normalize_scene("script_split"), ModelScene.LLM_SCRIPT_SPLIT)
         self.assertEqual(normalize_scene("llm.marketing"), ModelScene.LLM_MARKETING)

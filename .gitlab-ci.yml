@@ -167,9 +167,11 @@ unit_tests:
       done
 
     # 等待测试容器完成并获取日志
+    # run_unit_tests.py 默认进程隔离执行（每测试模块一个子进程），
+    # 启动开销使整轮耗时增加约 3~8 分钟，等待上限相应放宽到 1800s
     - |
       echo "等待测试执行完成..."
-      timeout=600
+      timeout=1800
       elapsed=0
       while [ $elapsed -lt $timeout ]; do
         status=$(docker inspect -f '{{.State.Status}}' zjt_test 2>/dev/null || echo "not_found")

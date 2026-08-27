@@ -6,6 +6,7 @@ LLM 客户端工厂类
   模型前缀 → vendor（config/constant.py 中 MODEL_PREFIX_VENDOR_MAP 定义）
   vendor → client getter（本文件 _VENDOR_CLIENT_MAP 定义）
 """
+import asyncio
 import logging
 from typing import Optional
 
@@ -13,6 +14,7 @@ from config.constant import LLMVendor, MODEL_PREFIX_VENDOR_MAP
 from .base_llm_client import BaseLLMClient
 from .gemini_client import GeminiClient, get_gemini_client
 from .ollama_client import OllamaClient, get_ollama_client
+from .vllm_client import VLLMClient, get_vllm_client
 from .aliyun_openai_client import AliyunOpenAIClient, get_aliyun_openai_client
 from .volcengine_openai_client import VolcengineOpenAIClient, get_volcengine_openai_client
 from .claude_customer_client import ClaudeCustomerClient, get_claude_customer_client
@@ -21,6 +23,9 @@ from .openai_deepseek import DeepSeekOpenAIClient, get_deepseek_openai_client
 from .openai_agnes import AgnesOpenAIClient, get_agnes_openai_client
 
 logger = logging.getLogger(__name__)
+
+# 本地服务供应商（无云端凭据，模型 ID 下发时使用 "vendor:模型名" 前缀）
+_LOCAL_SERVICE_VENDORS = (LLMVendor.OLLAMA, LLMVendor.VLLM)
 
 
 class LLMClientFactory:
@@ -31,12 +36,17 @@ class LLMClientFactory:
         LLMVendor.JIEKOU: get_gemini_client,
         LLMVendor.ALIYUN: get_aliyun_openai_client,
         LLMVendor.OLLAMA: get_ollama_client,
+        LLMVendor.VLLM: get_vllm_client,
         LLMVendor.VOLCENGINE: get_volcengine_openai_client,
         LLMVendor.CLAUDE: get_claude_customer_client,
         LLMVendor.ZJT_API: get_zjt_openai_client,
         LLMVendor.DEEPSEEK: get_deepseek_openai_client,
         LLMVendor.AGNES: get_agnes_openai_client,
     }
+
+    # 历史数据中 Gemini 供应商（LLMVendor.JIEKOU）可能被命名为 google；
+    # 普通调用经模型前缀回退不受影响，精确路由（安全审核）需要别名兼容。
+    _EXACT_VENDOR_ALIASES = {"google": LLMVendor.JIEKOU}
 
     @classmethod
     def _get_vendor_by_model(cls, model: str) -> str:
@@ -89,6 +99,22 @@ class LLMClientFactory:
         return client
 
     @classmethod
+    def get_client_for_exact_vendor(cls, vendor_name: str) -> BaseLLMClient:
+        """按明确的供应商名称取客户端，任何异常配置都不回退。
+
+        普通模型调用仍由 :meth:`get_client` 保持历史兼容行为；安全审核等
+        fail-closed 场景必须先自行校验数据库路由，再调用本方法。
+        """
+
+        if not isinstance(vendor_name, str) or not vendor_name:
+            raise ValueError("LLM 供应商名称为空")
+        resolved = cls._EXACT_VENDOR_ALIASES.get(vendor_name, vendor_name)
+        getter = cls._VENDOR_CLIENT_MAP.get(resolved)
+        if getter is None:
+            raise ValueError("LLM 供应商类型不受支持")
+        return getter()
+
+    @classmethod
     def register_model_prefix(cls, prefix: str, vendor: str):
         """
         注册新的模型前缀映射
@@ -118,27 +144,23 @@ def get_llm_client(model: str, vendor_id: Optional[int] = None) -> BaseLLMClient
 
 
 def is_llm_client_configured(client: BaseLLMClient) -> bool:
-    """判断 LLM 客户端是否已配置可用凭据。
+    """判断 LLM 客户端是否已配置可用。
 
-    Ollama 等本地部署 client 无需真实 api_key（无需联网鉴权），不应判为未配置；
+    Ollama/vLLM 等本地部署 client 无需真实 api_key（无需联网鉴权），
+    但受 llm.<vendor>.enabled 开关控制：未启用时不能判为可用，
+    否则 H3 等回退链路会反复选中已禁用的本地模型，调用失败后直接退回
+    原始提示词，而不会继续切换到下一个云端候选。
     云端供应商（gemini/claude/aliyun/deepseek/volcengine/zjt/agnes）必须配置非空 api_key。
 
-    供 H3 提示词优化等场景做模型回退判定，避免对未配置密钥的供应商发起必败调用。
+    供 H3 提示词优化等场景做模型回退判定，避免对未配置供应商发起必败调用。
     """
-    if isinstance(client, OllamaClient):
-        return True
+    if isinstance(client, (OllamaClient, VLLMClient)):
+        return bool(getattr(client, 'enabled', False))
     return bool(getattr(client, 'api_key', ''))
 
 
-async def get_available_models() -> dict:
-    """
-    获取可用的 AI 模型列表，根据 vendor 表分组
-
-    遍历所有 vendor_model 关联，通过配置检查过滤不可用的 vendor。
-
-    Returns:
-        dict: { 'success': bool, 'models': [...] }
-    """
+def _get_available_models_sync() -> dict:
+    """同步实现：获取可用的 AI 模型列表（在 asyncio.to_thread 线程池中调用）。"""
     from config.config_util import get_dynamic_config_value
     from model.model import ModelModel
     from model.vendor import VendorDAO
@@ -159,6 +181,7 @@ async def get_available_models() -> dict:
             'claude': ('llm', 'claude', 'api_key'),
             'aliyun': ('llm', 'qwen', 'api_key'),
             'ollama': ('llm', 'ollama', 'enabled'),
+            'vllm': ('llm', 'vllm', 'enabled'),
             'volcengine': ('volcengine', 'api_key'),
             'zjt_api': ('api_aggregator', 'site_0', 'api_key'),
             'deepseek': ('llm', 'deepseek', 'api_key'),
@@ -215,8 +238,13 @@ async def get_available_models() -> dict:
         except Exception as vm_err:
             logger.warning(f"获取模型 {model_id} 的 billing 配置失败: {vm_err}")
 
-        # Ollama 模型 ID 使用特殊格式
-        model_id_str = f"ollama:{local_model.model_name}" if vendor_name == 'ollama' else str(model_id)
+        # 本地服务供应商（Ollama / vLLM）模型 ID 使用 "vendor:模型名" 特殊格式，
+        # 供 LLMClientFactory 按前缀路由
+        model_id_str = (
+            f"{vendor_name}:{local_model.model_name}"
+            if vendor_name in _LOCAL_SERVICE_VENDORS
+            else str(model_id)
+        )
 
         models.append({
             'id': model_id_str,
@@ -235,3 +263,16 @@ async def get_available_models() -> dict:
     # logger.info(f"添加了 {len(models)} 个模型")
 
     return {'success': True, 'models': models}
+
+
+async def get_available_models() -> dict:
+    """
+    获取可用的 AI 模型列表，根据 vendor 表分组
+
+    遍历所有 vendor_model 关联，通过配置检查过滤不可用的 vendor。
+    同步查库放线程池（asyncio.to_thread），避免 async 接口内同步查库阻塞 Event Loop。
+
+    Returns:
+        dict: { 'success': bool, 'models': [...] }
+    """
+    return await asyncio.to_thread(_get_available_models_sync)

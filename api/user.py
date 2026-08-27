@@ -7,6 +7,7 @@
 from fastapi import APIRouter, HTTPException, Header, Query
 from pydantic import BaseModel
 from typing import Optional, Dict, List
+import asyncio
 import logging
 
 from model.users import UsersModel
@@ -27,6 +28,7 @@ router = APIRouter(prefix="/api/user", tags=["user"])
 class ImplementationPreferenceRequest(BaseModel):
     task_key: str
     implementation_name: str
+    locked: bool = False
 
 
 class PowerConfirmRequest(BaseModel):
@@ -75,17 +77,18 @@ async def get_implementation_preferences(
         auth_token = auth_token[7:]
 
     # 验证 token 并获取用户ID
-    user_id = UserTokensModel.get_user_id_by_token(auth_token)
+    user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, auth_token)
     if not user_id:
         raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
 
     # 获取用户信息
-    user = UsersModel.get_by_id(user_id)
+    user = await asyncio.to_thread(UsersModel.get_by_id, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    # 获取当前激活组的偏好
-    current_prefs = UsersModel.get_all_preferences(user_id)
+    # 获取当前激活组的偏好与固定标记
+    current_prefs = await asyncio.to_thread(UsersModel.get_all_preferences, user_id)
+    current_locks = await asyncio.to_thread(UsersModel.get_all_locks, user_id)
 
     # 获取所有任务类型及其可选实现方
     all_task_configs = UnifiedConfigRegistry.get_all()
@@ -94,7 +97,7 @@ async def get_implementation_preferences(
     # 一次性加载所有统计数据（仅商业版）
     stats_map = {}
     if not IS_COMMUNITY_EDITION:
-        stats_cache = ImplementationStatsCacheModel.get_by_days(7)
+        stats_cache = await asyncio.to_thread(ImplementationStatsCacheModel.get_by_days, 7)
         for stat in stats_cache:
             key = f"{stat['type']}_{stat['impl_id']}"
             stats_map[key] = {
@@ -231,6 +234,7 @@ async def get_implementation_preferences(
         "code": 0,
         "data": {
             "preferences": current_prefs,
+            "locks": current_locks,
             "available_implementations": available_implementations,
             "is_community_edition": IS_COMMUNITY_EDITION
         }
@@ -255,11 +259,17 @@ async def set_implementation_preference(
         auth_token = auth_token[7:]
 
     # 验证 token 有效性
-    user_id = UserTokensModel.get_user_id_by_token(auth_token)
+    user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, auth_token)
     if not user_id:
         raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
 
-    logger.info(f"[Demo] User {user_id} attempted to set preference {request.task_key}={request.implementation_name}")
+    if request.locked and not (request.implementation_name or "").strip():
+        raise HTTPException(status_code=400, detail="固定供应商需要先选择实现方")
+
+    logger.info(
+        f"[Demo] User {user_id} attempted to set preference "
+        f"{request.task_key}={request.implementation_name}, locked={request.locked}"
+    )
 
     return {
         "code": 0,
@@ -286,7 +296,7 @@ async def delete_implementation_preference(
         auth_token = auth_token[7:]
 
     # 验证 token 有效性
-    user_id = UserTokensModel.get_user_id_by_token(auth_token)
+    user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, auth_token)
     if not user_id:
         raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
 

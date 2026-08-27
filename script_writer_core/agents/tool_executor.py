@@ -47,12 +47,36 @@ logger = logging.getLogger(__name__)
 
 # 企业版动态注册的工具函数（在 enterprise 模块加载时注入）
 _enterprise_tool_functions: Dict[str, Callable] = {}
+# 注册时声明的工具元数据（如受信模型注入），见 register_enterprise_tool
+_enterprise_tool_metadata: Dict[str, Dict[str, Any]] = {}
 
 
-def register_enterprise_tool(name: str, func: Callable):
-    """注册企业版工具函数（由 enterprise 模块调用）"""
+def register_enterprise_tool(
+    name: str,
+    func: Callable,
+    schema: Optional[Dict[str, Any]] = None,
+    inject_trusted_model: bool = False,
+):
+    """注册企业版工具函数（由 enterprise 模块调用）。
+
+    schema：同时注入 MCP 工具 schema（LLM 可见），无需修改主仓静态列表。
+    inject_trusted_model：执行时由当前 ExpertAgent 注入受信模型路由
+    （model/model_id/vendor_id），并从 LLM 参数中剔除同名伪造字段——
+    用于审核目标等必须由服务端决定的工具参数。
+    """
     _enterprise_tool_functions[name] = func
+    _enterprise_tool_metadata[name] = {"inject_trusted_model": inject_trusted_model}
+    if schema is not None:
+        from script_writer_core.mcp_tool import register_dynamic_tools
+
+        register_dynamic_tools([schema])
     logger.info(f"已注册企业版工具: {name}")
+
+
+def unregister_enterprise_tool(name: str) -> None:
+    """卸载企业版工具（enterprise 回滚注册时调用）。"""
+    _enterprise_tool_functions.pop(name, None)
+    _enterprise_tool_metadata.pop(name, None)
 
 
 class ToolExecutor:
@@ -116,6 +140,7 @@ class ToolExecutor:
         language: str = "zh-CN",
         model: Optional[str] = None,
         vendor_id: Optional[int] = None,
+        model_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """执行工具"""
         # 调试日志：记录接收到的工具名称和参数
@@ -161,15 +186,26 @@ class ToolExecutor:
                 "generate_character_reference_audio"
             ]
 
-            if tool_name in mcp_tool_names:
-                # MCP 工具：将 user_id, world_id, auth_token 作为前三个参数传递
+            if tool_name in mcp_tool_names or tool_name in _enterprise_tool_functions:
+                # MCP 工具与动态注册的企业版工具共用同一调用约定：
+                # user_id, world_id, auth_token 作为前三个参数传递
                 extra_kwargs = {}
                 if tool_name in language_aware_tools:
                     extra_kwargs['language'] = language
                 if tool_name in model_aware_tools:
                     extra_kwargs['model'] = model
                     extra_kwargs['vendor_id'] = vendor_id
-                result = tool_func(user_id, world_id, auth_token, **extra_kwargs, **tool_args)
+                safe_tool_args = dict(tool_args)
+                if _enterprise_tool_metadata.get(tool_name, {}).get("inject_trusted_model"):
+                    # 受信模型路由字段不属于 MCP schema，从 LLM 参数中剔除伪造值，
+                    # 改由当前 ExpertAgent 的受信路由注入。
+                    safe_tool_args.pop('model', None)
+                    safe_tool_args.pop('model_id', None)
+                    safe_tool_args.pop('vendor_id', None)
+                    extra_kwargs['model'] = model
+                    extra_kwargs['model_id'] = model_id
+                    extra_kwargs['vendor_id'] = vendor_id
+                result = tool_func(user_id, world_id, auth_token, **extra_kwargs, **safe_tool_args)
             else:
                 # 兼容旧逻辑，但理论上现在应该都走上面
                 tool_args["user_id"] = user_id

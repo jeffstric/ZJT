@@ -26,6 +26,7 @@ Video generation task processing
 """
 import logging
 import json
+import asyncio
 from datetime import datetime, timedelta
 import uuid
 from perseids_server.client import make_perseids_request
@@ -516,6 +517,13 @@ async def _submit_new_task(ai_tool):
             except Exception as e:
                 logger.warning(f"Failed to mark attempt as success for sync task {task_id}: {e}")
 
+            # 供应商切换差价结算（多扣退差/少扣补收，幂等；to_thread 避免阻塞事件循环）
+            try:
+                from utils.computing_power import settle_success_diff_for_task
+                await asyncio.to_thread(settle_success_diff_for_task, task_id)
+            except Exception as e:
+                logger.warning(f"Settle diff failed for sync task {task_id}: {e}")
+
             logger.info(f"Sync task {task_id} completed with result: {final_url}")
             AIToolsLogModel.log(task_id, AIToolsLogEvent.TASK_COMPLETED,
                                user_id=ai_tool.user_id, status_to=AI_TOOL_STATUS_COMPLETED,
@@ -957,6 +965,13 @@ async def _handle_task_success(project_id, task_id, media_url):
         except Exception as e:
             logger.warning(f"Failed to mark attempt as success for task {task_id}: {e}")
 
+        # 供应商切换差价结算（多扣退差/少扣补收，幂等；to_thread 避免阻塞事件循环）
+        try:
+            from utils.computing_power import settle_success_diff_for_task
+            await asyncio.to_thread(settle_success_diff_for_task, task_id)
+        except Exception as e:
+            logger.warning(f"Settle diff failed for task {task_id}: {e}")
+
         logger.info(f"Task {project_id} completed successfully")
         AIToolsLogModel.log(task_id, AIToolsLogEvent.TASK_COMPLETED,
                            project_id=project_id, status_to=AI_TOOL_STATUS_COMPLETED,
@@ -1268,6 +1283,41 @@ def process_task_with_retry(task_type, process_func):
                         else:
                             RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_TASK)
 
+                    # 过期任务退费（与超最大重试分支同模式：原额+幂等；
+                    # 此前该路径漏退费，卡死 7 天的任务用户被白扣）
+                    if ai_tool:
+                        try:
+                            from utils.computing_power import (
+                                resolve_refund_amount,
+                                build_refund_transaction_id,
+                                is_already_refunded
+                            )
+                            if not is_already_refunded(ai_tool):
+                                expired_refund = resolve_refund_amount(ai_tool)
+                                if expired_refund:
+                                    refund_txn = build_refund_transaction_id(ai_tool) or str(uuid.uuid4())
+                                    success, message, response_data = make_perseids_request(
+                                        endpoint='get_auth_token_by_user_id',
+                                        method='POST',
+                                        data={"user_id": ai_tool.user_id}
+                                    )
+                                    if success:
+                                        headers = {'Authorization': f"Bearer {response_data['token']}"}
+                                        success, message, _ = make_perseids_request(
+                                            endpoint='user/calculate_computing_power',
+                                            method='POST',
+                                            headers=headers,
+                                            data={
+                                                "computing_power": expired_refund,
+                                                "behavior": "increase",
+                                                "transaction_id": refund_txn
+                                            }
+                                        )
+                                        if success:
+                                            logger.info(f"Expired task {task.task_id} refunded {expired_refund} computing power")
+                        except Exception as e:
+                            logger.warning(f"Failed to refund expired task {task.task_id}: {e}")
+
                     expired_count += 1
                     logger.info(f"Task {task.task_id} marked as expired")
                     continue
@@ -1354,6 +1404,18 @@ def process_task_with_retry(task_type, process_func):
                     continue
                 
                 is_runninghub = ai_tool.type in RUNNINGHUB_TASK_TYPES
+                if is_runninghub and ai_tool.implementation:
+                    # 槽位按任务类型判断，但同一任务条目可绑定非 RunningHub 的
+                    # 用户模块实现方；此类任务不占用也不受制于 RunningHub 槽位。
+                    from config.unified_config import get_implementation_name
+
+                    recorded_impl = get_implementation_name(ai_tool.implementation)
+                    # 用户模块实现方前缀常量惰性导入：主仓核心模块级 import 不依赖
+                    # 用户模块契约常量，避免测试 stub 的常量清单被迫同步维护
+                    from config.constant import USER_MODULE_IMPL_NAME_PREFIX
+
+                    if recorded_impl.startswith(USER_MODULE_IMPL_NAME_PREFIX):
+                        is_runninghub = False
 
                 # ⚠️ RunningHub 槽位控制：QUEUED 状态必须先获取槽位
                 # 获取失败 → 延迟30秒后重试，不计入 try_count
@@ -1410,7 +1472,6 @@ def process_task_with_retry(task_type, process_func):
                 
                 # Call the specific processing function
                 # 检查是否为协程函数
-                import asyncio
                 import inspect
                 if inspect.iscoroutinefunction(process_func):
                     # 异步函数，使用 asyncio.run

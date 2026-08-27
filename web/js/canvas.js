@@ -9,16 +9,16 @@
         return;
       }
       
+      // 性能优化：尺寸统一走缓存，一次查询后两轮循环复用
+      const nodeSizeList = state.nodes.map(node => ({ node, size: getNodeSize(node) }));
+
       // 计算所有节点的边界
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for(const node of state.nodes){
-        const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
-        const w = el ? el.offsetWidth : 300;
-        const h = el ? el.offsetHeight : 200;
+      for(const { node, size } of nodeSizeList){
         minX = Math.min(minX, node.x);
         minY = Math.min(minY, node.y);
-        maxX = Math.max(maxX, node.x + w);
-        maxY = Math.max(maxY, node.y + h);
+        maxX = Math.max(maxX, node.x + size.w);
+        maxY = Math.max(maxY, node.y + size.h);
       }
       
       // 添加边距
@@ -36,16 +36,13 @@
       const scale = Math.min(scaleX, scaleY, 0.15); // 最大缩放0.15
       
       let html = '';
-      
+
       // 渲染节点
-      for(const node of state.nodes){
-        const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
-        const w = el ? el.offsetWidth : 300;
-        const h = el ? el.offsetHeight : 200;
+      for(const { node, size } of nodeSizeList){
         const x = (node.x - minX) * scale + MINIMAP_PADDING;
         const y = (node.y - minY) * scale + MINIMAP_PADDING;
-        const mw = w * scale;
-        const mh = h * scale;
+        const mw = size.w * scale;
+        const mh = size.h * scale;
         html += `<div class="minimap-node" style="left:${x}px;top:${y}px;width:${mw}px;height:${mh}px;"></div>`;
       }
       
@@ -61,6 +58,16 @@
       
       // 保存minimap状态用于点击导航
       state.minimapState = { minX, minY, scale };
+    }
+
+    // 性能优化：小地图渲染 rAF 合帧，滚轮连续缩放等高频路径每帧最多重建一次
+    let _minimapRenderRafId = null;
+    function scheduleMinimapRender(){
+      if(_minimapRenderRafId !== null) return;
+      _minimapRenderRafId = requestAnimationFrame(() => {
+        _minimapRenderRafId = null;
+        renderMinimap();
+      });
     }
 
     function applyTransform(){
@@ -88,8 +95,9 @@
 
       applyTransform();
       updateZoomLevel();
-      renderAllConnections();
-      renderMinimap();
+      // 性能优化：滚轮连续缩放时 rAF 合帧，每帧最多重画一次
+      if(typeof scheduleConnectionsRender === 'function') scheduleConnectionsRender();
+      scheduleMinimapRender();
     }
 
     function zoomIn(){
@@ -108,7 +116,7 @@
         nodeEl.classList.toggle('selected', nid === id);
       }
       setTimeout(() => {
-        if(typeof renderAllConnections === 'function') renderAllConnections();
+        if(typeof scheduleConnectionsRender === 'function') scheduleConnectionsRender();
         if(typeof renderMinimap === 'function') renderMinimap();
       }, 250);
     }
@@ -157,7 +165,7 @@
         nodeEl.classList.remove('selected');
       }
       setTimeout(() => {
-        if(typeof renderAllConnections === 'function') renderAllConnections();
+        if(typeof scheduleConnectionsRender === 'function') scheduleConnectionsRender();
       }, 250);
     }
 
@@ -169,7 +177,7 @@
         nodeEl.classList.toggle('selected', nodeIds.includes(nid));
       }
       setTimeout(() => {
-        if(typeof renderAllConnections === 'function') renderAllConnections();
+        if(typeof scheduleConnectionsRender === 'function') scheduleConnectionsRender();
       }, 250);
     }
 
@@ -189,7 +197,7 @@
       const nodeEl = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
       if(nodeEl) nodeEl.classList.remove('selected');
       setTimeout(() => {
-        if(typeof renderAllConnections === 'function') renderAllConnections();
+        if(typeof scheduleConnectionsRender === 'function') scheduleConnectionsRender();
       }, 250);
     }
 
@@ -271,13 +279,12 @@
       
       let maxX = 0;
       let maxY = 0;
-      
+
       for(const node of state.nodes){
-        const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
-        const w = el ? el.offsetWidth : 300;
-        const h = el ? el.offsetHeight : 200;
-        maxX = Math.max(maxX, node.x + w);
-        maxY = Math.max(maxY, node.y + h);
+        // 性能优化：走尺寸缓存，避免每次全量读取 offsetWidth/offsetHeight 触发强制布局
+        const size = getNodeSize(node);
+        maxX = Math.max(maxX, node.x + size.w);
+        maxY = Math.max(maxY, node.y + size.h);
       }
       
       const minWidth = 10000;
@@ -491,7 +498,7 @@
       renderAllConnections();
       renderMinimap();
 
-      // 自动保存
-      safeAutoSave();
+      // 删除节点需要立即落盘（不走 1.5s 防抖，避免关页/崩溃丢失删除操作）
+      flushAutoSave();
     }
 

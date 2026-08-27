@@ -680,6 +680,33 @@
                 return is25 && Array.isArray(agentVideoFiles.value) && agentVideoFiles.value.length > 0;
             });
 
+            // 当前视频场景（与 currentModels 过滤口径一致：无图→文生视频；有图按 videoImageMode→图生/多参考）
+            const currentVideoScene = Vue.computed(() => {
+                if (!isVideoMode.value) return '';
+                if (!hasUploadedImage.value) return 'video.text_to_video';
+                return window.ModelCatalog && window.ModelCatalog.sceneForVideoImageMode
+                    ? window.ModelCatalog.sceneForVideoImageMode(videoImageMode.value)
+                    : 'video.image_to_video';
+            });
+
+            // 当前视频模型所处轨道：'value'（性价比）| 'quality'（效果）| 'custom'（非推荐模型，两按钮均不高亮）
+            const currentVideoTrack = Vue.computed(() => {
+                if (!isVideoMode.value) return 'custom';
+                const model = currentModels.value.find(m => m.key === selectedVideoModelKey.value || m.name === selectedVideoModelName.value);
+                if (model?.track) return model.track;
+                if (window.ModelCatalog && model) {
+                    return window.ModelCatalog.inferTrack(currentVideoScene.value, model.short_key || model.value || model.key, null);
+                }
+                return 'custom';
+            });
+
+            // 切换轨道：选中该场景该轨道的推荐模型，复用 selectModel 完成偏好同步
+            function selectVideoTrack(track) {
+                if (!window.ModelCatalog) return;
+                const hit = window.ModelCatalog.findTaskByTrack(currentModels.value, currentVideoScene.value, null, track);
+                if (hit) selectModel(hit);
+            }
+
             const selectedModel = Vue.computed({
                 get() {
                     return isVideoMode.value ? selectedVideoModelName.value : selectedImageModel.value;
@@ -4582,7 +4609,9 @@
                         name: opt.label.split(' (')[0],
                         desc: opt.label,
                         key: opt.key,
-                        value: opt.value
+                        value: opt.value,
+                        short_key: opt.short_key || opt.value,
+                        track: opt.track || null
                     }));
 
                     // 获取图生视频模型
@@ -4594,6 +4623,7 @@
                         key: opt.key,
                         value: opt.value,
                         short_key: opt.short_key || opt.value,
+                        track: opt.track || null,
                         supportedImageModes: opt.supportedImageModes || ['first_last_frame']
                     }));
 
@@ -4862,38 +4892,40 @@
                 if (!modelKey) return;
                 selectedModelKey.value = modelKey;
 
-                // 获取比例选项
+                // 获取比例选项；空列表表示该模型不提供比例选择，不要回落到默认档
                 const ratios = window.TaskConfig.getRatioOptions(modelKey);
-                availableRatios.value = ratios.length > 0 ? ratios : ['auto', '1:1', '16:9', '9:16', '4:3', '3:4'];
-                const defaultRatio = window.TaskConfig.getDefaultRatio
-                    ? window.TaskConfig.getDefaultRatio(modelKey)
-                    : availableRatios.value[0];
-                const preferredDefaultRatio = availableRatios.value.includes(defaultRatio)
-                    ? defaultRatio
-                    : availableRatios.value[0];
-                if (!hasUserSelectedRatio.value && preferredDefaultRatio) {
-                    selectedRatio.value = preferredDefaultRatio;
-                } else if (!availableRatios.value.includes(selectedRatio.value)) {
-                    selectedRatio.value = preferredDefaultRatio;
+                availableRatios.value = Array.isArray(ratios) ? ratios.slice() : [];
+                if (availableRatios.value.length) {
+                    const defaultRatio = window.TaskConfig.getDefaultRatio
+                        ? window.TaskConfig.getDefaultRatio(modelKey)
+                        : availableRatios.value[0];
+                    const preferredDefaultRatio = availableRatios.value.includes(defaultRatio)
+                        ? defaultRatio
+                        : availableRatios.value[0];
+                    if (!hasUserSelectedRatio.value && preferredDefaultRatio) {
+                        selectedRatio.value = preferredDefaultRatio;
+                    } else if (!availableRatios.value.includes(selectedRatio.value)) {
+                        selectedRatio.value = preferredDefaultRatio;
+                    }
                 }
 
                 if (isVideoMode.value) {
                     ensureSelectedVideoResolution();
                 } else {
-                    // 获取图片分辨率选项
-                    const sizes = window.TaskConfig.getSizeOptions(modelKey);
-                    const mappedSizes = sizes.map(s => {
-                        if (s === '1K') return '1K';
-                        if (s === '2K') return window.t('resolution_2k');
-                        if (s === '4K') return window.t('resolution_4k');
-                        return s;
-                    });
-                    // 在最前面添加 auto 选项
-                    availableResolutions.value = ['auto', ...mappedSizes];
-                    if (availableResolutions.value.length === 1) {
-                        availableResolutions.value = ['auto', '1K', window.t('resolution_2k')];
+                    // 获取图片分辨率选项；空列表表示该模型不提供分辨率选择
+                    const sizes = window.TaskConfig.getSizeOptions(modelKey) || [];
+                    if (sizes.length === 0) {
+                        availableResolutions.value = [];
+                    } else {
+                        const mappedSizes = sizes.map(s => {
+                            if (s === '1K') return '1K';
+                            if (s === '2K') return window.t('resolution_2k');
+                            if (s === '4K') return window.t('resolution_4k');
+                            return s;
+                        });
+                        availableResolutions.value = ['auto', ...mappedSizes];
                     }
-                    if (!availableResolutions.value.includes(selectedResolution.value)) {
+                    if (availableResolutions.value.length && !availableResolutions.value.includes(selectedResolution.value)) {
                         selectedResolution.value = 'auto';
                     }
                 }
@@ -6806,8 +6838,10 @@
                 }
                 ensureSelectedVideoResolution();
                 // 如果不支持尾帧且当前有多张图片，只保留第一张
+                // （仅首尾帧模式需要此裁剪；全能参考模式的模型天然不使用尾帧，
+                //   参考图数量由各模型 max_multi_ref_images 在上传时限制）
                 const supportsLastFrame = config?.supports_last_frame !== false;
-                if (!supportsLastFrame) {
+                if (videoImageMode.value === 'first_last_frame' && !supportsLastFrame) {
                     const imageItems = mediaItems.value.filter(m => m.type === 'image');
                     if (imageItems.length > 1) {
                         const toRemove = imageItems.slice(1).map(item => item.id);
@@ -6901,6 +6935,9 @@
                 selectedVideoResolution,
                 currentModels,
                 selectModel,
+                currentVideoScene,
+                currentVideoTrack,
+                selectVideoTrack,
                 toggleDropdown,
                 toggleModelPanel,
                 toggleRatioPanel,

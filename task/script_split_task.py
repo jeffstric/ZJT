@@ -19,8 +19,25 @@ from config.constant import ScriptSplitConstants
 from model.script_split_segment import ScriptSplitSegmentModel
 from model.script_split_task import ScriptSplitTaskModel
 from services import script_split_engine as engine
+from utils.sentry_util import SentryUtil
 
 logger = logging.getLogger(__name__)
+
+
+def _record_gather_exceptions(results, context: str) -> None:
+    """Log + Sentry each exception returned by gather(return_exceptions=True)."""
+    for item in results or ():
+        if isinstance(item, BaseException) and not isinstance(item, asyncio.CancelledError):
+            try:
+                logger.error(
+                    "%s gather exception: %s",
+                    context,
+                    item,
+                    exc_info=(type(item), item, item.__traceback__),
+                )
+                SentryUtil.capture_exception(item)
+            except Exception:
+                logger.exception("%s failed to record gather exception", context)
 
 
 class LeaseLostError(RuntimeError):
@@ -117,14 +134,16 @@ async def _run_with_lease_heartbeat(task, worker_id: str) -> None:
             heartbeat_error = heartbeat.exception()
             if heartbeat_error is not None:
                 step.cancel()
-                await asyncio.gather(step, return_exceptions=True)
+                step_results = await asyncio.gather(step, return_exceptions=True)
+                _record_gather_exceptions(step_results, "script_split step-cancel")
                 raise heartbeat_error
         await step
     finally:
         stop_event.set()
         if not heartbeat.done():
             heartbeat.cancel()
-        await asyncio.gather(heartbeat, return_exceptions=True)
+        heartbeat_results = await asyncio.gather(heartbeat, return_exceptions=True)
+        _record_gather_exceptions(heartbeat_results, "script_split heartbeat")
 
 
 async def process_script_split_tasks() -> None:

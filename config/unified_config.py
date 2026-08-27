@@ -25,6 +25,96 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass(frozen=True)
+class UserModuleRuntimeConfig:
+    """用户模块运行时的稳定协议与资源边界。"""
+
+    manifest_schema_version: int = 1
+    rpc_protocol_version: str = "user-module-rpc/v1"
+    media_driver_protocol: str = "media-driver/v1"
+    sdk_version: str = "1.0.0"
+    abi_file_relative: str = "config/user_module_abi.json"
+    default_root_relative: str = "data/user_modules"
+    root_env_name: str = "ZJT_USER_MODULES_DIR"
+    enabled_env_name: str = "ZJT_USER_MODULES_ENABLED"
+    callback_base_url_env_name: str = "ZJT_USER_MODULE_CALLBACK_BASE_URL"
+    supervisor_host: str = "127.0.0.1"
+    supervisor_port_env_name: str = "ZJT_MODULE_SUPERVISOR_PORT"
+    supervisor_url_env_name: str = "ZJT_MODULE_SUPERVISOR_URL"
+    supervisor_token_env_name: str = "ZJT_MODULE_SUPERVISOR_TOKEN"
+    max_manifest_bytes: int = 256 * 1024
+    max_rpc_message_bytes: int = 2 * 1024 * 1024
+    rpc_connect_timeout_seconds: float = 3.0
+    rpc_request_timeout_seconds: float = 120.0
+    runner_health_timeout_seconds: float = 5.0
+    supervisor_startup_timeout_seconds: float = 20.0
+    runner_shutdown_timeout_seconds: float = 10.0
+    max_operation_timeout_seconds: int = 1800
+    db_operation_timeout_seconds: float = 15.0
+    scheduler_interval_seconds: int = 3
+    scheduler_batch_size: int = 50
+    max_prefer_wait_seconds: int = 10
+    generation_io_timeout_seconds: float = 30.0
+    generation_revision_timeout_seconds: float = 5.0
+    generation_validation_timeout_seconds: float = 60.0
+    generation_lock_timeout_seconds: float = 10.0
+    generation_max_file_bytes: int = 512 * 1024
+    generation_max_total_bytes: int = 5 * 1024 * 1024
+    generation_max_search_results: int = 200
+    agent_task_result_max_chars: int = 100_000
+    agent_task_max_concurrency: int = 2
+    agent_task_heartbeat_interval_seconds: float = 5.0
+    agent_task_stale_timeout_seconds: float = 30.0
+    agent_task_state_lock_timeout_seconds: float = 5.0
+    # 单次 agent 任务的挂钟时间上限：LLM hang 时心跳仍会刷新，计数型限制无法兜底，
+    # 必须有挂钟 deadline 强制置失败释放执行槽（见 review.md M4）。
+    agent_task_wall_clock_timeout_seconds: int = 1800
+    # 后台生成任务 ask_user 单次提问等待上限。会话版 mixin 写死 300s 太短；
+    # 等待期间必须暂停墙钟，否则会与本字段打架。
+    agent_task_question_timeout_seconds: int = 1800
+    agent_task_max_questions: int = 15  # HTTP 供应商提问上限，与本地 ComfyUI 统一
+    # 本地 ComfyUI 工作流节点确认需要更多轮问答。
+    agent_task_max_questions_comfyui: int = 15
+    agent_task_question_poll_interval_seconds: float = 3.0
+    # 进度弹框里的 tool_call 等阶段事件上限，避免任务 JSON 无限膨胀。
+    agent_task_max_progress_events: int = 200
+    agent_task_progress_content_max_chars: int = 500
+    # Supervisor 崩溃自愈：异常退出后带退避地 respawn，避免用户模块运行时静默永久失效
+    # （见 review.md S1）。正常运行 supervisor_healthy_uptime_reset_seconds 后重置重试计数，
+    # 防止偶发崩溃耗尽配额。
+    supervisor_respawn_enabled: bool = True
+    supervisor_max_respawn_attempts: int = 5
+    supervisor_respawn_backoff_seconds: float = 2.0
+    supervisor_respawn_max_backoff_seconds: float = 30.0
+    supervisor_healthy_uptime_reset_seconds: int = 60
+    # 用户模块代码审核智能体（方案七，用 AI 防 AI）。review_model 为空时复用创建
+    # generation 的模型；显式配置后可改用独立审核模型，降低同模型盲区。
+    review_enabled: bool = True
+    # enabled 且 required 时，审核缺失、跳过或执行失败都会阻止批准发布。
+    review_required: bool = True
+    review_model: str = ""
+    review_vendor_id: int = 0
+    review_model_id: int = 0
+    review_temperature: float = 0.1
+    review_timeout_seconds: int = 120
+    review_max_code_chars: int = 60000
+    # 审核只输出结构化风险报告，限制输出规模以控制费用和线程占用。
+    review_max_output_tokens: int = 4096
+    # 修改审核 prompt、schema 或判定逻辑时必须递增；缓存与发布门都绑定此版本。
+    # v3：checklist 新增第 10 项（secret_names 与用途一致性，声明即授权）。
+    review_policy_version: str = "user-module-security-review/v3"
+    # 跨 Web Worker 的全局审核并发上限；同一 generation 另有单航班文件锁。
+    review_max_concurrency: int = 2
+    # 外层挂钟上限略大于底层 HTTP deadline，超时后底层线程仍持锁至真实退出。
+    review_operation_timeout_seconds: int = 130
+    # 接口模块生成弹窗默认推荐的 LLM（vendor 名为 deepseek）。
+    generation_preferred_model: str = "deepseek-v4-flash"
+    generation_preferred_vendor: str = "deepseek"
+
+
+USER_MODULE_RUNTIME_CONFIG = UserModuleRuntimeConfig()
+
 class VideoResolution:
     """视频分辨率标准值与各驱动参数值映射
 
@@ -392,7 +482,10 @@ class UnifiedTaskConfig:
     Attributes:
         id: 任务类型ID（数据库中的 type 字段）
         key: 唯一标识符，用于代码引用（如 sora2_image_to_video）
-        name: 显示名称
+        name: 任务条目名称（兼容历史接口，新界面不应直接使用）
+        model_name: 统一的用户可见模型名，不包含任务 ID、供应商或“文生图/图片编辑”等能力后缀
+        variant_label: 同一模型在同一能力下有多个任务条目时的区分标签（如“首帧”“多参考”）
+        legacy_names: 历史名称别名，仅用于兼容旧请求/快照的名称反查
         category: 主分类，使用 TaskCategory 常量
         categories: 额外分类列表（可选），任务可同时属于多个分类
         provider: 供应商，使用 TaskProvider 常量
@@ -415,6 +508,9 @@ class UnifiedTaskConfig:
     name: str
     category: str
     provider: str
+    model_name: str = ''  # 纯模型名；绑定页和新接口优先使用
+    variant_label: str = ''  # 仅区分同能力下的同名任务条目
+    legacy_names: List[str] = field(default_factory=list)  # 兼容旧的用户可见名称
     driver_name: Optional[str] = None
     implementation: Optional[str] = None  # 默认实现方
     implementations: List[str] = field(default_factory=list)  # 可选实现方列表，注意，如果不配置，无法支持多实现方切换
@@ -444,6 +540,36 @@ class UnifiedTaskConfig:
     power_modifiers: List[PowerModifier] = field(default_factory=list)  # 算力修饰符列表
     supports_ref_audio_video: bool = False  # 是否支持参考音频和视频
     max_multi_ref_images: int = 5  # 多参考图模式最大图片数量
+
+    def get_model_name(self) -> str:
+        """获取统一的用户可见模型名。
+
+        ``name`` 仍作为历史兼容字段；未迁移的内部/测试任务
+        回退到 ``name``，避免破坏存量扩展。
+        """
+        return (self.model_name or self.name or '').strip()
+
+    def get_model_display_name(self, include_variant: bool = False) -> str:
+        """获取界面显示名；只在需要消除同名歧义时附加变体。"""
+        model_name = self.get_model_name()
+        if include_variant and self.variant_label:
+            return f"{model_name} · {self.variant_label}"
+        return model_name
+
+    def matches_identifier(self, value: Any) -> bool:
+        """兼容 key/新模型名/历史名的反查，不把显示名当唯一主键。"""
+        candidate = str(value or '').strip()
+        if not candidate:
+            return False
+        aliases = {
+            str(self.id),
+            self.key,
+            self.short_key,
+            self.name,
+            self.get_model_name(),
+            *(self.legacy_names or []),
+        }
+        return candidate in {str(alias).strip() for alias in aliases if alias not in (None, '')}
 
     def get_computing_power(self, duration: Optional[int] = None, implementation: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> int:
         """
@@ -476,19 +602,30 @@ class UnifiedTaskConfig:
             if not implementation:
                 implementation = self.implementation
 
-            if not implementation:
-                return 0  # 没有实现方配置，返回0
-
-            impl_config = UnifiedConfigRegistry.get_implementation(implementation)
+            impl_config = (
+                UnifiedConfigRegistry.get_implementation(implementation)
+                if implementation
+                else None
+            )
+            if impl_config is None:
+                # 占位 implementation（如 qwen_image_edit_pending）未注册时，
+                # 改用已绑定的第一个真实实现方（用户模块等）。
+                for name in self.implementations or []:
+                    candidate = UnifiedConfigRegistry.get_implementation(name)
+                    if candidate is not None:
+                        implementation = name
+                        impl_config = candidate
+                        break
             if not impl_config:
                 return 0
 
             base_power = impl_config.get_computing_power(duration, self.driver_name)
 
-        # 应用修饰符（累积乘数，最后一次向上取整）
-        if context and self.power_modifiers:
+        # 应用修饰符：任务默认 × 该供应商 DB 覆盖（累积乘数，最后一次向上取整）
+        effective_modifiers = self.effective_power_modifiers(implementation)
+        if context and effective_modifiers:
             multiplier = 1.0
-            for modifier in self.power_modifiers:
+            for modifier in effective_modifiers:
                 attr_value = context.get(modifier.attribute)
                 if attr_value and attr_value in modifier.values:
                     multiplier *= modifier.values[attr_value]
@@ -497,6 +634,52 @@ class UnifiedTaskConfig:
             base_power = math.ceil(base_power * multiplier)
 
         return int(base_power)
+
+    def effective_power_modifiers(self, implementation: Optional[str] = None) -> List["PowerModifier"]:
+        """任务级 power_modifiers 与实现方 DB 覆盖合并，DB 同 attribute 的 key 覆盖代码默认。"""
+        merged: Dict[str, PowerModifier] = {}
+        for modifier in self.power_modifiers or []:
+            merged[modifier.attribute] = PowerModifier(
+                attribute=modifier.attribute,
+                values=dict(modifier.values or {}),
+                default=float(modifier.default),
+            )
+        if not implementation or not self.driver_name:
+            return list(merged.values())
+        try:
+            from model.implementation_power import ImplementationPowerModel
+
+            db_modifiers = ImplementationPowerModel.get_modifiers(implementation, self.driver_name) or {}
+        except Exception:
+            db_modifiers = {}
+        for attribute, spec in db_modifiers.items():
+            if not isinstance(spec, dict):
+                continue
+            values: Dict[str, float] = {}
+            default = None
+            for key, raw in spec.items():
+                if key == "_default":
+                    try:
+                        default = float(raw)
+                    except (TypeError, ValueError):
+                        default = 1.0
+                    continue
+                try:
+                    values[str(key)] = float(raw)
+                except (TypeError, ValueError):
+                    continue
+            existing = merged.get(attribute)
+            if existing is None:
+                merged[attribute] = PowerModifier(
+                    attribute=str(attribute),
+                    values=values,
+                    default=1.0 if default is None else default,
+                )
+            else:
+                existing.values.update(values)
+                if default is not None:
+                    existing.default = default
+        return list(merged.values())
     
     def to_frontend_dict(self) -> Dict[str, Any]:
         """
@@ -508,6 +691,8 @@ class UnifiedTaskConfig:
             'key': self.key,
             'short_key': self.short_key or self.key,
             'name': self.name,
+            'model_name': self.get_model_name(),
+            'variant_label': self.variant_label,
             'category': self.category,
             'categories': all_categories,  # 包含主分类和额外分类
             'provider': self.provider,
@@ -521,9 +706,9 @@ class UnifiedTaskConfig:
             'computing_power': self.computing_power,  # 算力配置（可能是固定值或按时长映射）
         }
 
-        if self.supported_sizes:
-            result['supported_sizes'] = self.supported_sizes
-            result['default_size'] = self.default_size
+        # 始终下发，空列表表示该模型不支持选择分辨率（勿与缺省字段混淆）
+        result['supported_sizes'] = self.supported_sizes
+        result['default_size'] = self.default_size
 
         if self.supported_durations:
             result['supported_durations'] = self.supported_durations
@@ -625,6 +810,18 @@ class UnifiedTaskConfig:
                 except Exception:
                     computing_power = impl_config.default_computing_power
 
+                operation = None
+                params = getattr(impl_config, "driver_params", None)
+                if isinstance(params, dict):
+                    operation = params.get("operation")
+                frontend_modifiers = [
+                    {
+                        'attribute': modifier.attribute,
+                        'values': modifier.values,
+                        'default': modifier.default,
+                    }
+                    for modifier in self.effective_power_modifiers(impl_name)
+                ]
                 result.append({
                     'name': impl_name,
                     'display_name': impl_config.get_display_name(),
@@ -634,6 +831,8 @@ class UnifiedTaskConfig:
                     'sort_order': sort_order,
                     'supported_video_resolutions': impl_config.supported_video_resolutions,
                     'default_video_resolution': impl_config.default_video_resolution,
+                    'operation': operation,
+                    'power_modifiers': frontend_modifiers,
                 })
 
         # 按 sort_order 排序（排序值小的在前）
@@ -658,6 +857,31 @@ class UnifiedConfigRegistry:
     _implementations: Dict[str, ImplementationConfig] = {}  # 实现方配置
 
     @classmethod
+    def snapshot(cls) -> dict:
+        """测试辅助：快照当前注册表（三个映射的浅拷贝）。
+
+        需要"清空注册表再注册测试数据"的测试必须在 setUp 快照、tearDown
+        restore——清空不恢复会让同进程后续测试查不到任何真实任务
+        （曾导致 CI 全量跑时 qwen_image_edit 等任务注册用例连锁失败）。
+        """
+        return {
+            "configs": dict(cls._configs),
+            "id_map": dict(cls._id_map),
+            "implementations": dict(cls._implementations),
+        }
+
+    @classmethod
+    def restore(cls, snapshot: Optional[dict] = None) -> None:
+        """测试辅助：整体恢复快照（未传快照时仅清空）。"""
+        cls._configs.clear()
+        cls._id_map.clear()
+        cls._implementations.clear()
+        if snapshot:
+            cls._configs.update(snapshot["configs"])
+            cls._id_map.update(snapshot["id_map"])
+            cls._implementations.update(snapshot["implementations"])
+
+    @classmethod
     def register(cls, config: UnifiedTaskConfig) -> None:
         """注册任务配置"""
         if config.key in cls._configs:
@@ -680,6 +904,11 @@ class UnifiedConfigRegistry:
         """批量注册实现方配置"""
         for impl in implementations:
             cls.register_implementation(impl)
+
+    @classmethod
+    def unregister_implementation(cls, name: str) -> None:
+        """注销实现方配置（仅用于用户模块动态实现方的重载卸载）"""
+        cls._implementations.pop(name, None)
 
     @classmethod
     def get_implementation(cls, name: str) -> Optional[ImplementationConfig]:
@@ -926,22 +1155,25 @@ class UnifiedConfigRegistry:
                 try:
                     db_powers = ImplementationPowerModel.get_all_powers_for_implementation(user_pref_impl, driver_name)
                     if db_powers:
-                        if None in db_powers:
+                        # 与 _get_implementations_info 保持一致：分档价格必须保留完整 dict，
+                        # 扁平化为首档 int 会导致前端 computing_power[duration] 失效（时长切换算力不变）
+                        duration_powers = {k: v for k, v in db_powers.items() if k is not None}
+                        if duration_powers:
+                            impl_power = duration_powers
+                        elif None in db_powers:
                             impl_power = db_powers[None]
-                        else:
-                            impl_power = list(db_powers.values())[0]
                 except Exception as e:
                     logger.debug(f"Failed to get implementation power for {user_pref_impl}: {e}")
 
                 # 如果数据库中没有配置，从 implementations 列表中查找
-                if impl_power is None or impl_power == 0:
+                if not impl_power:
                     for impl in implementations:
                         if impl.get('name') == user_pref_impl:
                             impl_power = impl.get('computing_power')
                             break
 
-                # 更新算力
-                if impl_power is not None and impl_power != 0:
+                # 更新算力（int 或按时长 dict；空值/0 跳过）
+                if impl_power:
                     task['computing_power'] = impl_power
                     task['user_preferred_implementation'] = user_pref_impl
             elif implementations and (task.get('computing_power') == 0 or not task.get('computing_power')):
@@ -1015,6 +1247,7 @@ class DriverImplementation:
 
     # MiniMax H3
     MINIMAX_H3_RUNNINGHUB_V1 = 'minimax_h3_runninghub_v1'
+    MINIMAX_H3_TURBO_RUNNINGHUB_V1 = 'minimax_h3_turbo_runninghub_v1'
     MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 'minimax_h3_reference_runninghub_v1'
 
     # MiniMax H3 数字人
@@ -1159,6 +1392,7 @@ class DriverImplementationId:
 
     # MiniMax H3
     MINIMAX_H3_RUNNINGHUB_V1 = 65
+    MINIMAX_H3_TURBO_RUNNINGHUB_V1 = 71
     MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 67
 
     # MiniMax H3 数字人
@@ -1241,6 +1475,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_5_volcengine_v1': DriverImplementationId.SEEDANCE_2_5_VOLCENGINE_V1,
     'seedance_2_5_huimengi_v1': DriverImplementationId.SEEDANCE_2_5_HUIMENGI_V1,
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
+    'minimax_h3_turbo_runninghub_v1': DriverImplementationId.MINIMAX_H3_TURBO_RUNNINGHUB_V1,
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
 }
@@ -1250,13 +1485,40 @@ IMPLEMENTATION_FROM_ID = {v: k for k, v in IMPLEMENTATION_TO_ID.items()}
 
 
 def get_implementation_id(name: str) -> int:
-    """获取 implementation 的 ID，不存在返回 0"""
-    return IMPLEMENTATION_TO_ID.get(name, 0)
+    """获取 implementation 的 ID，不存在返回 0。
+
+    静态映射未命中时兜底查询用户模块动态实现方注册表（由绑定服务维护）。
+    """
+    impl_id = IMPLEMENTATION_TO_ID.get(name)
+    if impl_id:
+        return impl_id
+    try:
+        # 惰性导入避免 config -> services 顶层循环依赖；失败（如测试环境缺依赖）时按未知处理
+        from enterprise.services.user_module_binding_service import get_dynamic_impl_id
+        return get_dynamic_impl_id(name) or 0
+    except Exception:
+        return 0
 
 
 def get_implementation_name(id: int) -> str:
-    """根据 ID 获取 implementation 名称，不存在返回 'unknown'"""
-    return IMPLEMENTATION_FROM_ID.get(id, 'unknown')
+    """根据 ID 获取 implementation 名称，不存在返回 'unknown'。
+
+    静态映射未命中时兜底查询用户模块动态实现方注册表（由绑定服务维护）。
+    未知 ID 常见于动态绑定尚未在本进程重载（调度器 60 秒周期），打告警便于定位。
+    """
+    impl_name = IMPLEMENTATION_FROM_ID.get(id)
+    if impl_name:
+        return impl_name
+    try:
+        from enterprise.services.user_module_binding_service import get_dynamic_impl_name
+        impl_name = get_dynamic_impl_name(id)
+        if impl_name:
+            return impl_name
+    except Exception:
+        # 测试环境可能缺依赖，保持静默按未知处理
+        return 'unknown'
+    logger.warning("get_implementation_name: 未知实现方 ID %s（可能为动态绑定尚未在本进程重载）", id)
+    return 'unknown'
 
 
 # ============ 业务驱动名称常量 ============
@@ -1300,6 +1562,9 @@ class DriverKey:
 
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_IMAGE_EDIT = 'qwen_multi_angle_image_edit'
+
+    # Qwen Image Edit
+    QWEN_IMAGE_EDIT = 'qwen_image_edit'
 
     # 文生图
     SEEDREAM_TEXT_TO_IMAGE = 'seedream_text_to_image'
@@ -1438,6 +1703,7 @@ class TaskTypeId:
         'SEEDREAM_4_5_IMAGE': 'Seedream 4.5 图片编辑',
         'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
+        'QWEN_IMAGE_EDIT': 'Qwen Image Edit',
         'GPT_IMAGE_2': 'GPT Image 2 文生图',
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
         'SORA2_TEXT_TO_VIDEO': 'Sora2 文生视频',
@@ -1476,6 +1742,7 @@ class TaskTypeId:
     SEEDREAM_4_5_IMAGE = 18
     SEEDREAM_5_0_PRO = 33
     QWEN_MULTI_ANGLE_IMAGE = 24
+    QWEN_IMAGE_EDIT = 38
     GPT_IMAGE_2 = 25
     GPT_IMAGE_2_EDIT = 26
 
@@ -1529,6 +1796,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='gemini-2.5-flash-image-preview',
         short_key='gemini-2.5-flash',
         name='nano-banana',
+        model_name='nano-banana',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
@@ -1556,6 +1824,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='gemini-3-pro-image-preview',
         short_key='gemini-3-pro',
         name='nano-banana-Pro',
+        model_name='nano-banana Pro',
+        legacy_names=['nano-banana-Pro'],
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
@@ -1583,6 +1853,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='gemini-3.1-flash-image-preview',
         short_key='gemini-3.1-flash',
         name='nano-banana-2',
+        model_name='nano-banana 2',
+        legacy_names=['nano-banana-2'],
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
@@ -1610,6 +1882,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedream-5.0',
         short_key='seedream-5.0',
         name='Seedream 5.0',
+        model_name='Seedream 5.0',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.VOLCENGINE,
@@ -1632,6 +1905,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedream-4.5',
         short_key='seedream-4.5',
         name='Seedream 4.5',
+        model_name='Seedream 4.5',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.VOLCENGINE,
@@ -1654,6 +1928,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedream-5.0-pro',
         short_key='seedream-5.0-pro',
         name='Seedream 5.0 Pro',
+        model_name='Seedream 5.0 Pro',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.VOLCENGINE,
@@ -1676,6 +1951,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='qwen-multi-angle',
         short_key='qwen-multi-angle',
         name='多角度图片编辑',
+        model_name='Qwen Multi-Angle',
+        variant_label='多角度',
         category=TaskCategory.IMAGE_EDIT,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.QWEN_MULTI_ANGLE_IMAGE_EDIT,
@@ -1688,6 +1965,28 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=15,
         hidden=True,  # 隐藏，前端不显示
     ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.QWEN_IMAGE_EDIT,
+        key='qwen-image-edit',
+        short_key='qwen-image-edit',
+        name='Qwen Image Edit',
+        model_name='Qwen Image Edit',
+        category=TaskCategory.IMAGE_EDIT,
+        provider=TaskProvider.LOCAL,  # 占位，接入供应商后再改
+        driver_name=DriverKey.QWEN_IMAGE_EDIT,
+        implementation='qwen_image_edit_pending',  # 仅满足校验，未注册驱动
+        implementations=[],  # 绑定用户模块后动态追加
+        computing_power=1,  # 扣费不能为 0；本地 ComfyUI 默认 1 点
+        # 参考 ComfyUI 工作流 qwen_image_edit_api_0824：ImageScaleToTotalPixels(megapixels=1)
+        # 跟随原图比例缩到约 1MP，无独立比例/分辨率参数
+        supported_ratios=[],
+        supported_sizes=[],
+        default_ratio='',
+        default_size=None,
+        sort_order=16,
+        supports_grid_image=False,
+        max_multi_ref_images=3,  # 对齐官方 I2I 1–3 张参考图
+    ),
 
     # ==================== 文生图/图片编辑 ====================
     UnifiedTaskConfig(
@@ -1695,6 +1994,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='gpt-image-2-edit',
         short_key='gpt-image-2',
         name='GPT Image 2 图片编辑',
+        model_name='GPT Image 2',
+        legacy_names=['GPT Image 2 图片编辑'],
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
@@ -1725,6 +2026,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='sora2_text_to_video',
         short_key='sora2-t2v',
         name='Sora2',
+        model_name='Sora2',
         category=TaskCategory.TEXT_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.SORA2_TEXT_TO_VIDEO,
@@ -1744,6 +2046,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='wan22_image_to_video',
         short_key='wan22',
         name='Wan2.2',
+        model_name='Wan2.2',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.WAN22_IMAGE_TO_VIDEO,
@@ -1763,6 +2066,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='sora2_image_to_video',
         short_key='sora2',
         name='Sora2',
+        model_name='Sora2',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.SORA2_IMAGE_TO_VIDEO,
@@ -1783,6 +2087,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='ltx2_image_to_video',
         short_key='ltx2',
         name='LTX2.0',
+        model_name='LTX2.0',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.LTX2_IMAGE_TO_VIDEO,
@@ -1802,6 +2107,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='ltx2_3_image_to_video',
         short_key='ltx2_3',
         name='LTX2.3',
+        model_name='LTX2.3',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.LTX2_3_IMAGE_TO_VIDEO,
@@ -1820,11 +2126,17 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='minimax_h3_image_to_video',
         short_key='minimax_h3',
         name='MiniMax H3',
+        model_name='MiniMax H3',
+        variant_label='首尾帧',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,
+        implementations=[
+            DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,          # 标准版（默认）
+            DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,    # 加速版
+        ],
         computing_power=0,
         supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4'],
         supported_durations=[4, 5, 6, 7, 8, 9, 10],
@@ -1849,6 +2161,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='minimax_h3_reference_to_video',
         short_key='minimax_h3_r2v',
         name='MiniMax H3 参考生视频',
+        model_name='MiniMax H3',
+        variant_label='多参考',
+        legacy_names=['MiniMax H3 参考生视频'],
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
@@ -1879,6 +2194,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='kling_image_to_video',
         short_key='kling',
         name='可灵v2.5-turbo',
+        model_name='可灵 v2.5 Turbo',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.KLING_IMAGE_TO_VIDEO,
@@ -1916,6 +2232,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='vidu_image_to_video',
         short_key='vidu',
         name='Vidu-q2-pro-fast',
+        model_name='Vidu Q2 Pro Fast',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.VIDU,
         driver_name=DriverKey.VIDU_IMAGE_TO_VIDEO,
@@ -1933,6 +2250,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='vidu_q2_image_to_video',
         short_key='vidu_q2',
         name='Vidu-Q2',
+        model_name='Vidu Q2',
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.VIDU,
         driver_name=DriverKey.VIDU_Q2_IMAGE_TO_VIDEO,
@@ -1950,6 +2268,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='veo3_image_to_video',
         short_key='veo3',
         name='VEO3.1-fast',
+        model_name='VEO 3.1 Fast',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.DUOMI,
@@ -1979,6 +2298,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='grok_image_to_video',
         short_key='grok',
         name='Grok',
+        model_name='Grok',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.DUOMI,
@@ -2009,6 +2329,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedance_1_5_pro_image_to_video',
         short_key='seedance_1_5_pro',
         name='Seedance 1.5 Pro',
+        model_name='Seedance 1.5 Pro',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.VOLCENGINE,
@@ -2028,6 +2349,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedance_2_0_fast_image_to_video',
         short_key='seedance_2_0_fast',
         name='Seedance 2.0 Fast',
+        model_name='Seedance 2.0 Fast',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.VOLCENGINE,
@@ -2065,6 +2387,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedance_2_0_image_to_video',
         short_key='seedance_2_0',
         name='Seedance 2.0',
+        model_name='Seedance 2.0',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.VOLCENGINE,
@@ -2104,6 +2427,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedance_2_0_mini_image_to_video',
         short_key='seedance_2_0_mini',
         name='Seedance 2.0 Mini',
+        model_name='Seedance 2.0 Mini',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.VOLCENGINE,
@@ -2141,6 +2465,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='seedance_2_5_image_to_video',
         short_key='seedance_2_5',
         name='Seedance 2.5',
+        model_name='Seedance 2.5',
         category=TaskCategory.IMAGE_TO_VIDEO,
         categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
         provider=TaskProvider.VOLCENGINE,
@@ -2177,6 +2502,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='happy_horse_image_to_video',
         short_key='happy_horse',
         name='Happy Horse (首帧)',
+        model_name='Happy Horse',
+        variant_label='首帧',
+        legacy_names=['Happy Horse (首帧)'],
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.HAPPY_HORSE_IMAGE_TO_VIDEO,
@@ -2202,6 +2530,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='happy_horse_reference_to_video',
         short_key='happy_horse_r2v',
         name='Happy Horse (多参考)',
+        model_name='Happy Horse',
+        variant_label='多参考',
+        legacy_names=['Happy Horse (多参考)'],
         category=TaskCategory.IMAGE_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.HAPPY_HORSE_REFERENCE_TO_VIDEO,
@@ -2228,6 +2559,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='happy_horse_text_to_video',
         short_key='happy_horse_t2v',
         name='Happy Horse',
+        model_name='Happy Horse',
         category=TaskCategory.TEXT_TO_VIDEO,
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.HAPPY_HORSE_TEXT_TO_VIDEO,
@@ -2252,6 +2584,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='digital_human',
         short_key='digital_human',
         name='wan2.2 数字人',
+        model_name='Wan2.2',
+        variant_label='数字人',
         category=TaskCategory.DIGITAL_HUMAN,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.DIGITAL_HUMAN,
@@ -2265,6 +2599,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='digital_human_ltx2_3_voice',
         short_key='digital_human_ltx2_3_voice',
         name='LTX2.3 数字人',
+        model_name='LTX2.3',
+        variant_label='数字人',
         category=TaskCategory.DIGITAL_HUMAN,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE,
@@ -2278,6 +2614,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='digital_human_minimax_h3',
         short_key='digital_human_minimax_h3',
         name='MiniMax H3 数字人',
+        model_name='MiniMax H3',
+        variant_label='数字人',
         category=TaskCategory.DIGITAL_HUMAN,
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.DIGITAL_HUMAN_MINIMAX_H3,
@@ -2294,6 +2632,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='image_enhance',
         short_key='image_enhance',
         name='图片高清放大',
+        model_name='图片高清放大',
         category=TaskCategory.VISUAL_ENHANCE,
         provider=TaskProvider.LOCAL,
         implementation='local_enhance',
@@ -2304,6 +2643,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='video_enhance',
         short_key='video_enhance',
         name='AI视频高清修复',
+        model_name='AI 视频高清修复',
         category=TaskCategory.VISUAL_ENHANCE,
         provider=TaskProvider.LOCAL,
         implementation='local_video_enhance',
@@ -2316,6 +2656,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         key='audio_generate',
         short_key='audio_generate',
         name='AI音频生成',
+        model_name='AI 音频生成',
         category=TaskCategory.AUDIO,
         provider=TaskProvider.LOCAL,
         computing_power=0,  # 音频生成不消耗算力
@@ -2817,6 +3158,21 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
+        name='minimax_h3_turbo_runninghub_v1',
+        display_name='RunningHub（加速版）',
+        driver_class='MinimaxH3TurboRunninghubV1Driver',
+        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},  # 复用 H3 首尾帧版算力表
+        enabled=True,
+        description='RunningHub MiniMax H3 图生视频加速版接口（webapp 2092199541612306434，支持首尾帧）',
+        sort_order=5202.0,
+        required_config_keys=['runninghub.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
         name='minimax_h3_reference_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3ReferenceRunninghubV1Driver',
@@ -3201,8 +3557,8 @@ def validate_configs() -> List[str]:
         if config.driver_name and not config.implementation:
             errors.append(f"{config.key}: 配置了 driver_name 但缺少 implementation")
         
-        # 默认值必须在支持列表中
-        if config.default_ratio not in config.supported_ratios:
+        # 默认值必须在支持列表中；空列表表示该模型不提供该参数
+        if config.supported_ratios and config.default_ratio not in config.supported_ratios:
             errors.append(f"{config.key}: default_ratio '{config.default_ratio}' 不在 supported_ratios 中")
         
         if config.supported_sizes and config.default_size not in config.supported_sizes:

@@ -3,7 +3,12 @@ System Config History Model - Database operations for system_config_history tabl
 系统配置修改历史表
 """
 from typing import Dict, Any, List
-from .database import execute_query, execute_update, execute_insert
+from .database import (
+    execute_insert,
+    execute_insert_in_transaction,
+    execute_query,
+    execute_update,
+)
 from .system_config import SystemConfigModel
 from config.constant import CONFIG_KEY_MAX_LENGTH
 import logging
@@ -87,6 +92,39 @@ class SystemConfigHistoryModel:
         except Exception as e:
             logger.error(f"Failed to create system_config_history: {e}")
             raise
+
+    @staticmethod
+    def create_in_transaction(
+        conn,
+        config_id: int,
+        env: str,
+        config_key: str,
+        old_value: str,
+        new_value: str,
+        value_type: str = 'string',
+        is_sensitive: int = 0,
+        updated_by: int = None,
+    ) -> int:
+        """在调用方事务内写审计历史；敏感值沿用既有脱敏规则。"""
+        if len(config_key) > CONFIG_KEY_MAX_LENGTH:
+            raise ValueError(
+                f"config_key 长度超过限制: {len(config_key)} > {CONFIG_KEY_MAX_LENGTH}, "
+                f"key: {config_key}"
+            )
+
+        if is_sensitive:
+            old_value = SystemConfigModel.mask_sensitive_value(old_value)
+            new_value = SystemConfigModel.mask_sensitive_value(new_value)
+
+        sql = """
+            INSERT INTO system_config_history
+            (config_id, env, config_key, old_value, new_value, value_type, is_sensitive, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        return execute_insert_in_transaction(conn, sql, (
+            config_id, env, config_key, old_value, new_value,
+            value_type, is_sensitive, updated_by,
+        ))
     
     @staticmethod
     def get_by_config_id(config_id: int, limit: int = 10) -> List[SystemConfigHistory]:
