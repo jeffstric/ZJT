@@ -196,7 +196,6 @@ def test_force_release_uses_state_lock_and_handles_result_outside_lock(monkeypat
 
     def fake_kill(task_id, driver, elapsed, refund=True):
         observations.append(("kill", lock.depth))
-        executor._cleanup_task_metadata(task_id)
         return ste.SyncTaskResult(task_id=task_id, ai_tool_type=16, success=False, error="forced")
 
     def fake_handle(result):
@@ -207,5 +206,33 @@ def test_force_release_uses_state_lock_and_handles_result_outside_lock(monkeypat
 
     assert executor.force_release_task(108, refund=True) is True
 
-    assert lock.events == ["enter", "exit"]
+    # f668 顺序约束：kill 在锁内 → 终态落库在锁外 → 落库完成后 cleanup 再进锁。
+    # cleanup 必须发生在终态写入之后，否则「内存已删 + DB 仍 PROCESSING」窗口
+    # 会被 visual_task._check_task_status 孤儿恢复误判为子进程崩溃而重复提交。
+    assert lock.events == ["enter", "exit", "enter", "exit"]
     assert observations == [("kill", 1), ("handle", 0)]
+
+
+def test_cleanup_happens_only_after_result_persisted(monkeypatch):
+    """f668 回归：终态落库（_handle_task_result）执行期间，task 必须仍保留在
+    _futures 中（is_task_running=True），使调度器孤儿恢复不会误判；异常路径
+    也必须由 finally 兜底清理，避免元数据泄漏。"""
+    result = ste.SyncTaskResult(task_id=109, ai_tool_type=16, success=True, result_url="ok")
+    executor = make_executor(monkeypatch)
+    executor._futures[109] = CompletedFuture(result)
+    executor._task_drivers[109] = "seedream5_volcengine_v1"
+    executor._task_types[109] = 16
+    observations = []
+
+    def slow_handle(_result):
+        # 模拟慢 DB：落库进行中，任务必须仍被视作 running
+        observations.append(("is_task_running_during_handle", executor.is_task_running(109)))
+        raise RuntimeError("db slow")
+
+    monkeypatch.setattr(executor, "_handle_task_result", slow_handle)
+    monkeypatch.setattr(executor, "_handle_task_failure", lambda *args: None)
+
+    executor.check_results()
+
+    assert observations == [("is_task_running_during_handle", True)]
+    assert 109 not in executor._futures

@@ -307,7 +307,35 @@ sequenceDiagram
 | WAITING_BEFORE_FINISH 恢复 | 每次调度 | `process_task_with_retry()` 末尾检测卡在 WAITING_BEFORE_FINISH 的任务，根据 ai_tools.status 修复 tasks.status |
 | 流水线步骤完成检测 | 13s | `_check_ai_tool_stage_completion()` 检测所有步骤完成后推进 ai_tools 状态 |
 | 同步任务兜底 | 5s | `check_results()` 异常时强制标记 FAILED，防止永久卡住 |
-| 无 project_id 的 PROCESSING 任务 | 5s | `_check_task_status()` 检测孤儿任务并重置 |
+| 无 project_id 的 PROCESSING 任务 | 5s | `_check_task_status()` 检测孤儿任务并重置；**带 300s 宽限保护**（见 9.1） |
+
+### 9.1 同步任务终态落库时序红线（f668）
+
+**背景事故**：sync_mode 任务（如 gpt_image_common 系列驱动）上游成功出图后，曾出现单次任务
+对同一供应商连续计费调用 3 次。根因是 `check_results()` 先把 task_id 从内存字典 `_futures`
+移除、后写数据库终态，两个动作之间存在时序窗口；窗口内任务呈现
+「`PROCESSING` + 无 project_id + 不在同步执行器」的组合，与子进程崩溃无法区分，
+被孤儿恢复误判后重置 PENDING，调度器用**同一实现方**重新提交 → 重复计费。
+慢 DB（Windows 个人电脑 + 本地 MySQL）与多任务串行收割（`check_results` 一轮
+tick 的结果逐个处理）会把窗口拉长到秒级，与 5s 主调度周期的碰撞概率显著上升。
+
+**时序红线（改动约束，修改相关代码时必须保持）**：
+
+1. `SyncTaskExecutor` 的结果处理必须走 `_handle_result_then_cleanup()`：
+   **先**`_safe_handle_task_result()` 写终态（COMPLETED/FAILED 落库），
+   **再**在 `finally` 中清理 `_futures` 等内存元数据。任何「先清理内存、后写库」
+   的顺序都会重新打开孤儿误判窗口。
+2. `_kill_stale_worker()`（stale 强杀）不再自行清理元数据，refund 路径的清理
+   统一交由上述 helper；`force_release_task()` 同理。
+3. `_check_task_status()` 的孤儿恢复带时间宽限：`ai_tools.update_time` 距今
+   超过 `sync_task.orphan_grace_seconds`（默认 `SYNC_ORPHAN_GRACE_SECONDS_DEFAULT=300`，
+   动态配置可覆盖，0=禁用）才允许重置。宽限期内返回 True（本轮无需重试计数）。
+   真孤儿（子进程崩溃，update_time 长期停滞）在宽限到期后仍正常恢复；
+   服务重启场景由启动时 `_reset_orphan_sync_tasks()` 处理，不受宽限影响。
+
+**回归测试**：`tests/task/test_sync_task_stale_recovery.py::test_cleanup_happens_only_after_result_persisted`
+（落库期间 `is_task_running()` 必须为 True）、
+`tests/task/test_visual_task_orphan_grace.py`（宽限跳过/到期重置/禁用/脏数据四个分支）。
 
 ## 10. 监控 SQL
 
