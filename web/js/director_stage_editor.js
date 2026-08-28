@@ -13,10 +13,119 @@
   // ============ 常量 ============
 
   var GROUND_LIMIT = 9.5;             // 人偶/相机可拖拽范围
-  var HIP_H = 0.905;                  // 髋关节离地高度（米）
+  var PUPPET_Y_MIN = -0.5;            // 人偶离地高度下限
+  var PUPPET_Y_MAX = 2.0;             // 人偶离地高度上限（轴向拖动）
+  var HIP_H = 0.905;                  // 默认髋关节离地高度（米），具体体型见 BODY_TYPES
   var MAX_UNDO = 50;
 
   var PUPPET_COLORS = ['#4f8ef7', '#f76f5e', '#34c38f', '#b57de8', '#e8b34d', '#4dc3e8', '#f07ab6', '#8d9aa8'];
+
+  // ==== PUPPET_GEOMETRY_BEGIN ====
+  // 人偶体型：关节层级相同。躯干用一条侧轮廓控制点列 profile 描述（[y, rx, rz, zOffset]，
+  // y 为相对髋节高度，zOffset 为该高度截面的前移量），构建时沿轮廓密排椭球切片平滑混合成
+  // 一体成型身体曲线（苹果/沙漏等），不再用大椭球穿插或另贴胸球/肚球。
+  var BODY_TYPES = {
+    man: {
+      label: '男人', hipH: 0.92, labelY: 2.00, jointR: 0.036,
+      headR: 0.116, headScale: [1, 1.04, 0.98], jaw: 0.74,
+      neckR: 0.040, neckH: 0.085, neckY: 0.235,
+      spineY: 0.12, chestJointY: 0.13,
+      profile: [
+        [-0.115, 0.105, 0.092, 0], [-0.06, 0.148, 0.112, 0], [0.00, 0.152, 0.112, 0],
+        [0.06, 0.138, 0.102, 0], [0.12, 0.128, 0.096, 0], [0.18, 0.138, 0.100, 0.002],
+        [0.24, 0.160, 0.110, 0.004], [0.295, 0.166, 0.112, 0.002], [0.345, 0.152, 0.102, 0],
+        [0.39, 0.128, 0.092, 0], [0.425, 0.092, 0.076, 0], [0.455, 0.056, 0.056, 0]
+      ],
+      shoulderX: 0.225, shoulderY: 0.18,
+      upperArmR: 0.047, upperArmH: 0.28, lowerArmR: 0.040, lowerArmH: 0.25, hand: [0.040, 0.058, 0.026],
+      hipX: 0.10, hipJointY: -0.045, upperLegR: 0.068, upperLegH: 0.42, lowerLegR: 0.052, lowerLegH: 0.40,
+      foot: [0.048, 0.030, 0.105]
+    },
+    woman: {
+      label: '女人', hipH: 0.86, labelY: 1.86, jointR: 0.030,
+      headR: 0.102, headScale: [0.92, 1.10, 0.95], jaw: 0.60,
+      neckR: 0.030, neckH: 0.09, neckY: 0.225,
+      spineY: 0.125, chestJointY: 0.125,
+      profile: [
+        [-0.11, 0.122, 0.100, 0], [-0.055, 0.160, 0.118, 0], [0.005, 0.158, 0.116, 0.002],
+        [0.06, 0.130, 0.098, 0], [0.11, 0.106, 0.086, 0], [0.16, 0.112, 0.090, 0.002],
+        [0.21, 0.128, 0.104, 0.012], [0.25, 0.136, 0.116, 0.024], [0.29, 0.128, 0.100, 0.010],
+        [0.33, 0.106, 0.082, 0], [0.365, 0.086, 0.072, 0], [0.395, 0.066, 0.060, 0], [0.42, 0.048, 0.048, 0]
+      ],
+      shoulderX: 0.152, shoulderY: 0.165,
+      upperArmR: 0.036, upperArmH: 0.255, lowerArmR: 0.030, lowerArmH: 0.235, hand: [0.032, 0.050, 0.022],
+      hipX: 0.108, hipJointY: -0.047, upperLegR: 0.060, upperLegH: 0.40, lowerLegR: 0.042, lowerLegH: 0.375,
+      foot: [0.040, 0.025, 0.090]
+    },
+    child: {
+      label: '小孩', hipH: 0.50, labelY: 1.20, jointR: 0.034,
+      headR: 0.138, headScale: [1.02, 1.0, 1.0], jaw: 0.82,
+      neckR: 0.042, neckH: 0.045, neckY: 0.15,
+      spineY: 0.10, chestJointY: 0.10,
+      profile: [
+        [-0.075, 0.096, 0.088, 0], [-0.02, 0.116, 0.104, 0.002], [0.035, 0.118, 0.108, 0.006],
+        [0.09, 0.108, 0.100, 0.004], [0.14, 0.106, 0.094, 0], [0.185, 0.100, 0.088, 0],
+        [0.225, 0.086, 0.076, 0], [0.26, 0.072, 0.064, 0], [0.29, 0.054, 0.050, 0], [0.315, 0.042, 0.042, 0]
+      ],
+      shoulderX: 0.135, shoulderY: 0.12,
+      upperArmR: 0.040, upperArmH: 0.155, lowerArmR: 0.034, lowerArmH: 0.135, hand: [0.036, 0.042, 0.028],
+      hipX: 0.078, hipJointY: -0.036, upperLegR: 0.052, upperLegH: 0.21, lowerLegR: 0.044, lowerLegH: 0.19,
+      foot: [0.040, 0.024, 0.072]
+    },
+    fat: {
+      label: '胖子', hipH: 0.86, labelY: 1.88, jointR: 0.042,
+      headR: 0.118, headScale: [1.08, 1.02, 1.06], jaw: 0.86, doubleChin: true,
+      neckR: 0.050, neckH: 0.055, neckY: 0.215,
+      spineY: 0.13, chestJointY: 0.145,
+      profile: [
+        [-0.12, 0.142, 0.122, 0], [-0.055, 0.180, 0.150, 0.004], [0.01, 0.196, 0.166, 0.012],
+        [0.075, 0.206, 0.180, 0.024], [0.14, 0.200, 0.176, 0.026], [0.20, 0.188, 0.162, 0.018],
+        [0.26, 0.176, 0.146, 0.008], [0.315, 0.158, 0.128, 0.002], [0.36, 0.128, 0.102, 0],
+        [0.40, 0.104, 0.086, 0], [0.435, 0.080, 0.070, 0], [0.465, 0.062, 0.060, 0]
+      ],
+      shoulderX: 0.215, shoulderY: 0.155,
+      upperArmR: 0.068, upperArmH: 0.25, lowerArmR: 0.056, lowerArmH: 0.23, hand: [0.045, 0.055, 0.032],
+      hipX: 0.12, hipJointY: -0.054, upperLegR: 0.086, upperLegH: 0.39, lowerLegR: 0.066, lowerLegH: 0.36,
+      foot: [0.052, 0.030, 0.10]
+    },
+    thin: {
+      label: '瘦子', hipH: 0.95, labelY: 2.08, jointR: 0.028,
+      headR: 0.108, headScale: [0.95, 1.08, 0.95], jaw: 0.66,
+      neckR: 0.028, neckH: 0.10, neckY: 0.24,
+      spineY: 0.11, chestJointY: 0.135,
+      profile: [
+        [-0.105, 0.088, 0.076, 0], [-0.05, 0.110, 0.088, 0], [0.01, 0.106, 0.084, 0],
+        [0.07, 0.094, 0.078, 0], [0.13, 0.096, 0.078, 0], [0.19, 0.106, 0.082, 0],
+        [0.25, 0.116, 0.086, 0], [0.305, 0.112, 0.082, 0], [0.35, 0.094, 0.074, 0],
+        [0.39, 0.080, 0.068, 0], [0.425, 0.060, 0.056, 0], [0.455, 0.050, 0.050, 0]
+      ],
+      shoulderX: 0.185, shoulderY: 0.19,
+      upperArmR: 0.036, upperArmH: 0.30, lowerArmR: 0.031, lowerArmH: 0.27, hand: [0.032, 0.052, 0.021],
+      hipX: 0.082, hipJointY: -0.038, upperLegR: 0.052, upperLegH: 0.45, lowerLegR: 0.042, lowerLegH: 0.43,
+      foot: [0.038, 0.022, 0.092]
+    }
+  };
+  var LIMB_JOINTS = {
+    shoulderL: 1, shoulderR: 1, elbowL: 1, elbowR: 1, wristL: 1, wristR: 1,
+    hipL: 1, hipR: 1, kneeL: 1, kneeR: 1, ankleL: 1, ankleR: 1
+  };
+  var BODY_TYPE_ORDER = ['man', 'woman', 'child', 'fat', 'thin'];
+
+  function getBodyType(key) {
+    return BODY_TYPES[key] || BODY_TYPES.man;
+  }
+  function normalizeBodyType(key) {
+    return BODY_TYPES[key] ? key : 'man';
+  }
+  function inferBodyType(name, age, identity) {
+    var blob = ((name || '') + ' ' + (identity || '') + ' ' + (age || '')).toLowerCase();
+    var n = parseInt(age, 10);
+    if ((n > 0 && n < 12) || /童|孩|婴|娃|child|kid|baby|toddler/.test(blob)) return 'child';
+    if (/胖|肥|\bfat\b|chubby/.test(blob)) return 'fat';
+    if (/瘦|slim|thin|skinny/.test(blob)) return 'thin';
+    if (/女|woman|female|girl|姐|妹|妈|娘|夫人|阿姨|小姐/.test(blob)) return 'woman';
+    return 'man';
+  }
 
   // 关节旋转轴约定（度，右手系，人偶面向 +Z）:
   //   肩/髋 X:-θ=向前抬，肘 X:-θ=向前弯，膝 X:+θ=向后弯，
@@ -189,91 +298,258 @@
 
   // ============ 人偶骨骼构建 ============
 
-  function buildPuppetRig(colorHex) {
-    var mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.82, metalness: 0.05 });
-    var jointMat = new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.95 });
-    var eyeMat = new THREE.MeshBasicMaterial({ color: 0x14161d });
+  function buildPuppetRig(colorHex, bodyTypeKey) {
+    var t = getBodyType(bodyTypeKey);
+    // 哑光木偶材质（接近参考图质感）；关节球用体色加深，模拟人偶关节接缝
+    var mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.6, metalness: 0.0 });
+    var seamMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(colorHex).multiplyScalar(0.8), roughness: 0.55, metalness: 0.0
+    });
+    var markerBaseMat = new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.95 });
+    var eyeMat = new THREE.MeshBasicMaterial({ color: 0x1a1d26 });
 
-    var rig = { joints: {}, markers: {}, bodyMeshes: [], materials: [mat, jointMat, eyeMat] };
+    var rig = {
+      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, seamMat, markerBaseMat, eyeMat],
+      hipH: t.hipH, labelY: t.labelY, bodyType: normalizeBodyType(bodyTypeKey)
+    };
 
-    function cyl(r, h, matx) {
-      var g = new THREE.CylinderGeometry(r, r * 0.92, h, 12);
-      var m = new THREE.Mesh(g, matx || mat);
-      rig.bodyMeshes.push(m);
-      return m;
-    }
-    function box(w, h, d) {
-      var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-      rig.bodyMeshes.push(m);
-      return m;
-    }
-    function sph(r, m2) {
-      var mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), m2 || mat);
+    // 人偶网格几乎都是缩放球体，rig 内共享同一个单位球几何体
+    var unitSphere = new THREE.SphereGeometry(1, 24, 18);
+
+    function ball(r, m2) {
+      var mesh = new THREE.Mesh(unitSphere, m2 || mat);
+      mesh.scale.set(r, r, r);
       rig.bodyMeshes.push(mesh);
       return mesh;
+    }
+    function ellip(rx, ry, rz, m2) {
+      var m = new THREE.Mesh(unitSphere, m2 || mat);
+      m.scale.set(rx, ry, rz);
+      rig.bodyMeshes.push(m);
+      return m;
     }
     function joint(key, parent, x, y, z) {
       var g = new THREE.Group();
       g.position.set(x, y, z);
       parent.add(g);
       rig.joints[key] = g;
-      // 关节标记球（选中人偶时显示）
-      var marker = new THREE.Mesh(new THREE.SphereGeometry(0.042, 10, 8), jointMat.clone());
+      // 四肢关节球：体色加深、半埋进肢体，只露一圈接缝
+      if (LIMB_JOINTS[key]) {
+        g.add(ball(t.jointR, seamMat));
+      }
+      var markerMat = markerBaseMat.clone();
+      rig.materials.push(markerMat);
+      var marker = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.032, t.jointR * 0.9), 10, 8), markerMat);
       marker.visible = false;
       marker.userData.jointKey = key;
       g.add(marker);
       rig.markers[key] = marker;
       return g;
     }
+    // 通过控制点的 Catmull-Rom 样条插值（索引空间均匀参数化），返回密集采样表。
+    // 注意不能用 smoothstep：它在每个控制点导数为零，旋转成曲面后会留下一圈圈棱线。
+    function smoothProfile(ctrl, samples) {
+      function cr(p0, p1, p2, p3, f) {
+        return 0.5 * ((2 * p1) + (-p0 + p2) * f +
+          (2 * p0 - 5 * p1 + 4 * p2 - p3) * f * f + (-p0 + 3 * p1 - 3 * p2 + p3) * f * f * f);
+      }
+      var out = [];
+      var n = ctrl.length - 1;
+      for (var k = 0; k <= samples; k++) {
+        var g = k / samples * n;
+        var i = Math.min(Math.floor(g), n - 1);
+        var f = g - i;
+        var p0 = ctrl[Math.max(0, i - 1)], p1 = ctrl[i], p2 = ctrl[i + 1], p3 = ctrl[Math.min(n, i + 2)];
+        var row = [];
+        for (var c = 0; c < p1.length; c++) row.push(cr(p0[c] || 0, p1[c] || 0, p2[c] || 0, p3[c] || 0, f));
+        out.push(row);
+      }
+      return out;
+    }
+    // lathe 曲面在 phi 环绕接缝处的顶点是两份，法线各算一半会留一条竖直接缝，这里把接缝两侧法线焊平。
+    // 注意 LatheGeometry 顶点序是"分段在外、控制点在内"：同一圈第 j 点的接缝对是 [j] 与 [segs*rings + j]。
+    function weldLatheSeam(geo, segs) {
+      var nrm = geo.attributes.normal;
+      var rings = nrm.count / (segs + 1);
+      for (var j = 0; j < rings; j++) {
+        var a = j, b = segs * rings + j;
+        var nx = (nrm.getX(a) + nrm.getX(b)) / 2;
+        var ny = (nrm.getY(a) + nrm.getY(b)) / 2;
+        var nz = (nrm.getZ(a) + nrm.getZ(b)) / 2;
+        var len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+        nrm.setXYZ(a, nx / len, ny / len, nz / len);
+        nrm.setXYZ(b, nx / len, ny / len, nz / len);
+      }
+    }
+    // 一段肢体：沿 -Y 的 lathe 平滑曲面，肌肉轮廓一次成型，两端收进球形关节
+    function limbSeg(parent, prof2) {
+      var pts = smoothProfile(prof2, 24).map(function (p) {
+        return new THREE.Vector2(Math.max(0.004, p[1]), p[0]);
+      });
+      var geo = new THREE.LatheGeometry(pts, 22);
+      geo.computeVertexNormals();
+      weldLatheSeam(geo, 22);
+      var m = new THREE.Mesh(geo, mat);
+      rig.bodyMeshes.push(m);
+      parent.add(m);
+      return m;
+    }
 
     var root = new THREE.Group();
     rig.root = root;
 
     var hipsY = new THREE.Group();
-    hipsY.position.y = HIP_H;
+    hipsY.position.y = t.hipH;
     root.add(hipsY);
     rig.hipsY = hipsY;
 
-    var pelvis = box(0.30, 0.17, 0.19); pelvis.position.y = 0.02; hipsY.add(pelvis);
+    var spine = joint('spine', hipsY, 0, t.spineY, 0);
+    var chest = joint('chest', spine, 0, t.chestJointY, 0);
 
-    // 躯干
-    var spine = joint('spine', hipsY, 0, 0.12, 0);
-    var waist = cyl(0.095, 0.10); waist.position.y = 0.06; spine.add(waist);
-    var chest = joint('chest', spine, 0, 0.15, 0);
-    var chestMesh = box(0.335, 0.26, 0.20); chestMesh.position.y = 0.10; chest.add(chestMesh);
+    // 躯干：按 profile 轮廓（[y, rx, rz, zOffset]，y 相对髋节）生成 3 段 lathe 平滑曲面，
+    // 分别挂 hipsY/spine/chest 关节，分段处互相嵌入，弯腰/转胸时分段联动不脱节。
+    var spineAbs = t.spineY;
+    var chestAbs = t.spineY + t.chestJointY;
+    var prof = t.profile;
 
-    // 颈 / 头
-    var neck = joint('neck', chest, 0, 0.25, 0);
-    var neckMesh = cyl(0.045, 0.08); neckMesh.position.y = 0.03; neck.add(neckMesh);
-    var head = joint('head', neck, 0, 0.08, 0);
-    var headMesh = sph(0.115); headMesh.position.y = 0.10; head.add(headMesh);
-    // 眼睛（面向 +Z 指示）
-    var eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.017, 8, 6), eyeMat);
-    eyeL.position.set(0.042, 0.115, 0.102); head.add(eyeL);
-    var eyeR = eyeL.clone(); eyeR.position.x = -0.042; head.add(eyeR);
+    var profDense = smoothProfile(prof, 240);
+    function profileAt(y) {
+      var first = profDense[0], last = profDense[profDense.length - 1];
+      if (y <= first[0]) return { rx: first[1], rz: first[2], z: first[3] };
+      if (y >= last[0]) return { rx: last[1], rz: last[2], z: last[3] };
+      var lo = 0, hi = profDense.length - 1;
+      while (hi - lo > 1) { var mid = (lo + hi) >> 1; if (profDense[mid][0] <= y) lo = mid; else hi = mid; }
+      var a = profDense[lo], b = profDense[hi];
+      var f = (y - a[0]) / Math.max(1e-6, b[0] - a[0]);
+      return { rx: a[1] + (b[1] - a[1]) * f, rz: a[2] + (b[2] - a[2]) * f, z: a[3] + (b[3] - a[3]) * f };
+    }
 
-    // 手臂（puppet 左侧 = +X）
+    // 生成躯干段：owned 区 [y0,y1]（相对 hipsY）内为完整轮廓半径，
+    // 两端延伸段（extDown/extUp）从分界处开始连续收细到轴心并伸入相邻段内部——
+    // 重叠区始终是"外段全径 / 内段收细"的包含关系，只在分界线留下一圈接缝，不会平行重叠产生条纹。
+    function torsoPart(y0, y1, extDown, extUp, parent, baseY) {
+      function taper(y) {
+        var f = 1;
+        if (y < y0 && extDown > 0) f = (y - (y0 - extDown)) / extDown;
+        else if (y > y1 && extUp > 0) f = 1 - (y - y1) / extUp;
+        f = Math.max(0, Math.min(1, f));
+        return f * f * (3 - 2 * f);
+      }
+      var pts = [];
+      var ya = y0 - extDown, yb = y1 + extUp;
+      var N = 40;
+      for (var k = 0; k <= N; k++) {
+        var y = ya + (yb - ya) * k / N;
+        pts.push(new THREE.Vector2(Math.max(0.0035, profileAt(y).rz * taper(y)), y - baseY));
+      }
+      var geo = new THREE.LatheGeometry(pts, 28);
+      var pos = geo.attributes.position;
+      for (var v = 0; v < pos.count; v++) {
+        var pr = profileAt(pos.getY(v) + baseY);
+        var ratio = pr.rz > 0.0001 ? pr.rx / pr.rz : 1;
+        pos.setX(v, pos.getX(v) * ratio);
+        pos.setZ(v, pos.getZ(v) + pr.z);
+      }
+      geo.computeVertexNormals();
+      weldLatheSeam(geo, 28);
+      var mesh = new THREE.Mesh(geo, mat);
+      rig.bodyMeshes.push(mesh);
+      parent.add(mesh);
+      return mesh;
+    }
+
+    var waistSplit = spineAbs * 0.55;                 // 髋/腰分段高度
+    var chestSplit = spineAbs + t.chestJointY * 0.55; // 腰/胸分段高度
+    torsoPart(prof[0][0], waistSplit, 0.05, 0.11, hipsY, 0);
+    torsoPart(waistSplit, chestSplit, 0.07, 0.11, spine, spineAbs);
+    torsoPart(chestSplit, prof[prof.length - 1][0], 0.07, 0.045, chest, chestAbs);
+    // 肩线：横跨两肩的圆顶，与手臂三角肌衔接
+    var shoulderBar = ellip(t.shoulderX * 0.92, t.upperArmR * 1.25, t.upperArmR * 1.1);
+    shoulderBar.position.set(0, t.shoulderY - 0.012, 0);
+    chest.add(shoulderBar);
+
+    var neck = joint('neck', chest, 0, t.neckY, 0);
+    var neckMesh = ellip(t.neckR * 1.25, t.neckH * 0.7, t.neckR * 1.2);
+    neckMesh.position.y = t.neckH * 0.15;
+    neck.add(neckMesh);
+
+    var head = joint('head', neck, 0, t.neckH * 0.8, 0);
+    var headSY = t.headScale ? t.headScale[1] : 1;
+    var headCY = t.headR * headSY * 0.82;
+    var headMesh = ball(t.headR);
+    if (t.headScale) headMesh.scale.set(t.headR * t.headScale[0], t.headR * t.headScale[1], t.headR * t.headScale[2]);
+    headMesh.position.y = headCY;
+    head.add(headMesh);
+    // 下颌/脸部：下半张脸略收窄，与颅球融合出脸型（jaw 越小脸越尖）
+    var jawF = t.jaw || 0.7;
+    var jaw = ellip(t.headR * 0.88 * jawF, t.headR * 0.62 * jawF, t.headR * 0.80 * jawF);
+    jaw.position.set(0, headCY - t.headR * 0.40, t.headR * 0.16);
+    head.add(jaw);
+    if (t.doubleChin) {
+      var chin = ellip(t.headR * 0.50, t.headR * 0.24, t.headR * 0.38);
+      chin.position.set(0, headCY - t.headR * 0.55, t.headR * 0.18);
+      head.add(chin);
+    }
+    // 鼻梁微凸
+    var nose = ellip(t.headR * 0.10, t.headR * 0.15, t.headR * 0.11);
+    nose.position.set(0, headCY - t.headR * 0.08, t.headR * 0.90);
+    head.add(nose);
+    var eyeRad = t.headR * 0.11;
+    var eyeL = new THREE.Mesh(new THREE.SphereGeometry(eyeRad, 10, 8), eyeMat);
+    eyeL.position.set(t.headR * 0.32, headCY + t.headR * 0.10, t.headR * 0.88);
+    head.add(eyeL);
+    var eyeRight = eyeL.clone();
+    eyeRight.position.x = -t.headR * 0.32;
+    head.add(eyeRight);
+
     function buildArm(side) {
       var s = side === 'L' ? 1 : -1;
-      var sh = joint('shoulder' + side, chest, s * 0.225, 0.19, 0);
-      var upper = cyl(0.048, 0.27); upper.position.y = -0.135; sh.add(upper);
-      var elbow = joint('elbow' + side, sh, 0, -0.27, 0);
-      var lower = cyl(0.042, 0.25); lower.position.y = -0.125; elbow.add(lower);
-      var wrist = joint('wrist' + side, elbow, 0, -0.25, 0);
-      var hand = sph(0.055); hand.position.y = -0.02; wrist.add(hand);
+      var sh = joint('shoulder' + side, chest, s * t.shoulderX, t.shoulderY, 0);
+      // 三角肌圆头，与肩线衔接
+      var delt = ellip(t.upperArmR * 1.5, t.upperArmR * 1.75, t.upperArmR * 1.4);
+      delt.position.set(s * t.upperArmR * 0.2, -t.upperArmR * 0.5, 0);
+      sh.add(delt);
+      var uaH = t.upperArmH, uaR = t.upperArmR;
+      limbSeg(sh, [
+        [0.015, uaR * 1.0], [-uaH * 0.12, uaR * 1.26], [-uaH * 0.38, uaR * 1.16],
+        [-uaH * 0.72, uaR * 0.92], [-uaH + 0.012, uaR * 0.82], [-uaH - 0.01, uaR * 0.5]
+      ]);
+      var elbow = joint('elbow' + side, sh, 0, -uaH, 0);
+      var laH = t.lowerArmH, laR = t.lowerArmR;
+      limbSeg(elbow, [
+        [0.012, laR * 0.9], [-laH * 0.18, laR * 1.22], [-laH * 0.5, laR * 0.98],
+        [-laH + 0.012, laR * 0.72], [-laH - 0.01, laR * 0.5]
+      ]);
+      var wrist = joint('wrist' + side, elbow, 0, -laH, 0);
+      var hand = ellip(t.hand[0], t.hand[1], t.hand[2]);
+      hand.position.y = -t.hand[1] * 0.55;
+      wrist.add(hand);
     }
     buildArm('L');
     buildArm('R');
 
-    // 腿
     function buildLeg(side) {
       var s = side === 'L' ? 1 : -1;
-      var hip = joint('hip' + side, hipsY, s * 0.105, -0.06, 0);
-      var upper = cyl(0.068, 0.40); upper.position.y = -0.20; hip.add(upper);
-      var knee = joint('knee' + side, hip, 0, -0.40, 0);
-      var lower = cyl(0.055, 0.38); lower.position.y = -0.19; knee.add(lower);
-      var ankle = joint('ankle' + side, knee, 0, -0.38, 0);
-      var foot = box(0.10, 0.06, 0.21); foot.position.set(0, -0.035, 0.05); ankle.add(foot);
+      var hip = joint('hip' + side, hipsY, s * t.hipX, t.hipJointY, 0);
+      var ulH = t.upperLegH, ulR = t.upperLegR;
+      limbSeg(hip, [
+        [0.015, ulR * 1.02], [-ulH * 0.25, ulR * 1.14], [-ulH * 0.65, ulR * 0.90],
+        [-ulH + 0.012, ulR * 0.76], [-ulH - 0.01, ulR * 0.5]
+      ]);
+      var knee = joint('knee' + side, hip, 0, -ulH, 0);
+      var llH = t.lowerLegH, llR = t.lowerLegR;
+      limbSeg(knee, [
+        [0.012, llR * 0.92], [-llH * 0.22, llR * 1.14], [-llH * 0.55, llR * 0.86],
+        [-llH + 0.010, llR * 0.60], [-llH - 0.008, llR * 0.42]
+      ]);
+      var ankle = joint('ankle' + side, knee, 0, -t.lowerLegH, 0);
+      // 鞋形脚：跟部 + 前掌两块拼合
+      var heel = ellip(t.foot[0] * 0.88, t.foot[1], t.foot[2] * 0.55);
+      heel.position.set(0, -t.foot[1] * 0.3, -t.foot[2] * 0.12);
+      ankle.add(heel);
+      var toe = ellip(t.foot[0], t.foot[1] * 0.82, t.foot[2] * 0.62);
+      toe.position.set(0, -t.foot[1] * 0.42, t.foot[2] * 0.40);
+      ankle.add(toe);
     }
     buildLeg('L');
     buildLeg('R');
@@ -281,6 +557,7 @@
     rig.bodyMeshes.forEach(function (m) { m.castShadow = false; m.receiveShadow = false; });
     return rig;
   }
+  // ==== PUPPET_GEOMETRY_END ====
 
   // 对焦十字标记纹理：白色圆环 + 十字准线（用 material.color 染色，便于切换选中色）
   function makeFocusMarkerSprite() {
@@ -349,6 +626,86 @@
     return sprite;
   }
 
+  function makeAxisLabel(text, hex) {
+    var canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 64;
+    var ctx = canvas.getContext('2d');
+    ctx.font = '700 30px "PingFang SC","Microsoft YaHei",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillStyle = '#' + ('000000' + hex.toString(16)).slice(-6);
+    ctx.strokeText(text, 64, 34);
+    ctx.fillText(text, 64, 34);
+    var tex = new THREE.CanvasTexture(canvas);
+    tex.needsUpdate = true;
+    var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+    sp.scale.set(0.28, 0.14, 1);
+    sp.renderOrder = 1002;
+    sp.userData._texture = tex;
+    return sp;
+  }
+
+  // 世界坐标轴箭头：沿本地 +Y 生长，再旋转到 X/Y/Z
+  function makeAxisArrow(axis, color, length, label) {
+    var g = new THREE.Group();
+    g.userData.gizmoAxis = axis;
+    var mat = new THREE.MeshBasicMaterial({
+      color: color, depthTest: false, transparent: true, opacity: 0.95
+    });
+    var shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, length, 8), mat);
+    shaft.position.y = length * 0.5;
+    var head = new THREE.Mesh(new THREE.CylinderGeometry(0, 0.048, 0.12, 12), mat);
+    head.position.y = length + 0.055;
+    var pick = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.055, length + 0.16, 8),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    pick.position.y = (length + 0.16) * 0.5;
+    [shaft, head, pick].forEach(function (m) {
+      m.userData.gizmoAxis = axis;
+      m.userData.baseColor = color;
+      m.renderOrder = 1000;
+      g.add(m);
+    });
+    pick.userData._pickOnly = true;
+    if (label) {
+      var sp = makeAxisLabel(label, color);
+      sp.position.y = length + 0.20;
+      sp.userData.gizmoAxis = axis;
+      g.add(sp);
+    }
+    if (axis === 'x') g.rotation.z = -Math.PI / 2;
+    if (axis === 'z') g.rotation.x = Math.PI / 2;
+    return g;
+  }
+
+  function buildWorldAxisGizmo() {
+    var root = new THREE.Group();
+    root.userData._isGizmo = true;
+    root.add(makeAxisArrow('x', 0xef4444, 0.55, 'X'));
+    root.add(makeAxisArrow('y', 0x22c55e, 0.55, 'Y'));
+    root.add(makeAxisArrow('z', 0x3b82f6, 0.55, 'Z'));
+    var hub = new THREE.Mesh(
+      new THREE.SphereGeometry(0.04, 12, 10),
+      new THREE.MeshBasicMaterial({ color: 0xe5e7eb, depthTest: false })
+    );
+    hub.renderOrder = 1000;
+    root.add(hub);
+    root.visible = false;
+    return root;
+  }
+
+  function buildFovAxisGizmo() {
+    var root = new THREE.Group();
+    root.userData._isGizmo = true;
+    var arrow = makeAxisArrow('fov', 0xf59e0b, 0.48, '焦距');
+    root.add(arrow);
+    root.visible = false;
+    return root;
+  }
+
   function roundRect(ctx, x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
@@ -368,7 +725,8 @@
     this.node = state.nodes.find(function (n) { return n.id === nodeId; });
     if (!this.node) throw new Error('节点不存在');
 
-    this.puppets = [];          // {id,name,color,characterId,characterName,rig,jointDeg:{},x,z,rotY,rootYOffset,scale,pose,label}
+    this.puppets = [];          // {id,name,color,bodyType,characterId,characterName,rig,jointDeg:{},x,z,rotY,rootYOffset,scale,pose,label}
+    this._pendingBodyType = 'man';
     this.selectedPuppetId = null;
     this.selectedJointKey = null;
     this.selectedCamTarget = null; // 'camera' | 'focus' | null（与人偶选中互斥）
@@ -385,6 +743,14 @@
     this.roObserver = null;
     this.helpersVisible = true;
     this.gridVisible = true;
+    this.envSphere = null;
+    this.envBackdrop = null;
+    this._envHint = '';
+    this._envLoading = false;
+    this._envFitAbort = null;
+    this._envFitToken = 0;
+    this._envGridAutoOff = false;
+    this._envFitStatus = '';
   }
 
   // ---------- DOM 注入 ----------
@@ -419,7 +785,7 @@
           '<button class="ds-mini-btn active" id="dsGridBtn" title="显示/隐藏网格">网格</button>' +
           '<button class="ds-mini-btn" id="dsResetViewBtn" title="重置视角">重置视角</button>' +
         '</div>' +
-        '<div class="ds-mode-hint" id="dsModeHint">左键拖人偶=移动 · 点关节球=调姿态 · 空白拖拽=旋转视角 · 滚轮=缩放 · 右键拖拽=平移</div>' +
+        '<div class="ds-mode-hint" id="dsModeHint">左键拖人偶=水平移动 · 选中后拖 RGB 轴=单轴移动（绿=高度） · 机位琥珀色轴=焦距 · 空白拖拽=旋转视角</div>' +
         '<div class="ds-drag-banner" id="dsDragBanner"></div>' +
         '<div class="ds-hover-tip" id="dsHoverTip"></div>' +
         '<div class="ds-pip" id="dsPip">' +
@@ -470,14 +836,17 @@
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x14161d);
 
-    // 光照
-    this.scene.add(new THREE.HemisphereLight(0x8ea2c0, 0x1a1d26, 0.95));
-    var key = new THREE.DirectionalLight(0xffffff, 0.85);
+    // 光照（略提亮，让木偶关节球和体型轮廓更清楚）
+    this.scene.add(new THREE.HemisphereLight(0xb8c6dc, 0x1a1d26, 1.05));
+    var key = new THREE.DirectionalLight(0xffffff, 0.95);
     key.position.set(4, 7, 5);
     this.scene.add(key);
-    var fill = new THREE.DirectionalLight(0x88aaff, 0.3);
+    var fill = new THREE.DirectionalLight(0x88aaff, 0.32);
     fill.position.set(-5, 3, -4);
     this.scene.add(fill);
+    var rim = new THREE.DirectionalLight(0xc5d4ff, 0.22);
+    rim.position.set(-2, 4, -6);
+    this.scene.add(rim);
 
     // 地面
     var ground = new THREE.Mesh(
@@ -510,6 +879,13 @@
     // 虚拟相机 helper（机身图标 + 视锥线）
     this.camRig = this.buildCameraHelper();
     this.scene.add(this.camRig);
+
+    // 选中机位/焦点时显示的世界 XYZ 轴 + 机位焦距轴
+    this.axisGizmo = buildWorldAxisGizmo();
+    this.scene.add(this.axisGizmo);
+    this.fovGizmo = buildFovAxisGizmo();
+    this.scene.add(this.fovGizmo);
+    this._gizmoHoverAxis = null;
 
     // PiP renderer（内部分辨率 = 快照分辨率）
     var ratio = getWorkflowRatio();
@@ -630,6 +1006,7 @@
     var puppets = this.puppets.map(function (p) {
       return {
         id: p.id, name: p.name, color: p.color,
+        bodyType: normalizeBodyType(p.bodyType),
         characterId: p.characterId || null, characterName: p.characterName || '',
         x: round2(p.x), z: round2(p.z), rotY: round2(p.rotY),
         rootYOffset: round2(p.rootYOffset), scale: round2(p.scale),
@@ -644,7 +1021,12 @@
       environment: (env && env.url) ? {
         url: env.url,
         ratio: env.ratio || '21:9',
-        yaw: round2(env.yaw || 0)
+        yaw: round2(env.yaw || 0),
+        horizonY: typeof env.horizonY === 'number' ? round2(env.horizonY) : 1.5,
+        sceneScale: typeof env.sceneScale === 'number' ? round2(env.sceneScale) : 1,
+        groundY: typeof env.groundY === 'number' ? round2(env.groundY) : 0,
+        autoFitDone: !!env.autoFitDone,
+        fitVersion: env.fitVersion || 0
       } : null,
       camera: {
         pos: [round2(this.virtualCamCfg.pos.x), round2(this.virtualCamCfg.pos.y), round2(this.virtualCamCfg.pos.z)],
@@ -709,6 +1091,13 @@
     }
     this.selectedPuppetId = null;
     this.selectedJointKey = null;
+    if (snap.environment && snap.environment.url) {
+      if (!this.node.data.directorData) this.node.data.directorData = {};
+      this.node.data.directorData.environment = snap.environment;
+      this.applyEnvHorizon();
+      this.applyAllPuppetTransforms();
+      this.renderEnvSection();
+    }
     this.renderPuppetList();
     this.renderPropsPanel();
     this.updateSelectionVisuals();
@@ -739,6 +1128,27 @@
   };
 
   // ---------- 全景环境管理（与 360全景图节点融合） ----------
+
+  function sampleTextureEdgeColor(texture, fallback) {
+    try {
+      var img = texture.image;
+      if (!img || !img.width) return fallback;
+      var c = document.createElement('canvas');
+      c.width = 2;
+      c.height = 1;
+      var ctx = c.getContext('2d');
+      var midY = Math.max(0, Math.floor((img.height || 1) / 2));
+      ctx.drawImage(img, 0, midY, 1, 1, 0, 0, 1, 1);
+      ctx.drawImage(img, Math.max(0, img.width - 1), midY, 1, 1, 1, 0, 1, 1);
+      var p = ctx.getImageData(0, 0, 2, 1).data;
+      var r = Math.round(((p[0] + p[4]) >> 1) * 0.55);
+      var g = Math.round(((p[1] + p[5]) >> 1) * 0.55);
+      var b = Math.round(((p[2] + p[6]) >> 1) * 0.55);
+      return (r << 16) | (g << 8) | b;
+    } catch (e) {
+      return fallback;
+    }
+  }
 
   // 加载全景环境球：equirectangular 纹理贴到部分球面内壁
   // 比例→视场换算与 panorama_node.js computePanoramaFov 保持一致
@@ -779,10 +1189,47 @@
       sphere.rotation.y = deg2rad(env.yaw || 0);
       self.scene.add(sphere);
       self.envSphere = sphere;
+      self.ensureEnvFitDefaults(env);
+      self.syncEnvToCamera(self.viewCam || self.virtualCam);
+      self.applyAllPuppetTransforms();
+      // 环境刚贴上且仍是默认远机位时，收到接近拍摄点的平视，否则脚会对不齐地面
+      if (Math.abs(self.orbit.radius - 8.5) < 0.3 && Math.abs(self.orbit.phi - 1.02) < 0.08) {
+        self.orbit.phi = 1.40;
+        self.orbit.radius = 4.5;
+        self.orbit.target.set(0, 0.95, 0);
+      }
+      if (!self._envGridAutoOff) {
+        self.gridVisible = false;
+        self._envGridAutoOff = true;
+        self.syncGridBtn();
+      }
+
+      // 未覆盖的球面用边缘色填充，避免露出编辑器背景
+      var edgeColor = sampleTextureEdgeColor(texture, 0x0a0c12);
+      var backdropGeo = new THREE.SphereGeometry(51, 32, 24);
+      backdropGeo.scale(-1, 1, 1);
+      var backdrop = new THREE.Mesh(backdropGeo, new THREE.MeshBasicMaterial({ color: edgeColor }));
+      backdrop.renderOrder = -1;
+      self.scene.add(backdrop);
+      self.envBackdrop = backdrop;
+
+      var hints = [];
+      // 21:9 垂直约 154° 是推荐画幅的正常表现，不提示；只在水平未满 360° 时提醒
+      if (haov < 359) {
+        hints.push('当前画幅水平约 ' + Math.round(haov) + '°，缺口已用边缘色填充。完整环绕请使用 2:1 或 21:9 全景图。');
+      }
+      if (texture.image && texture.image.width && texture.image.height) {
+        var imgRatio = texture.image.width / texture.image.height;
+        if (Math.abs(imgRatio - w / h) > 0.15) {
+          hints.push('图片实际比例与节点设定不一致，贴面可能有轻微拉伸。');
+        }
+      }
+      self._envHint = hints.join(' ');
       self._envLoading = false;
       self.applyGroundVisibility();
       self.renderEnvSection();
       self.setStatus('全景环境已加载');
+      self.fitEnvironment({ auto: true });
     }, undefined, function () {
       self._envLoading = false;
       self.renderEnvSection();
@@ -799,8 +1246,23 @@
       this.envSphere.material.dispose();
       this.envSphere = null;
     }
+    if (this.envBackdrop) {
+      this.scene.remove(this.envBackdrop);
+      this.envBackdrop.geometry.dispose();
+      this.envBackdrop.material.dispose();
+      this.envBackdrop = null;
+    }
+    this.abortEnvFit();
+    this._envHint = '';
     this._envLoading = false;
+    this._envFitStatus = '';
+    if (this._envGridAutoOff) {
+      this.gridVisible = true;
+      this._envGridAutoOff = false;
+      this.syncGridBtn();
+    }
     this.applyGroundVisibility();
+    this.applyAllPuppetTransforms();
     this.renderEnvSection();
   };
 
@@ -809,6 +1271,160 @@
     var hasEnv = !!this.envSphere;
     if (this.groundPlane) this.groundPlane.visible = !hasEnv;
     if (this.groundDisc) this.groundDisc.visible = !hasEnv;
+  };
+
+  DirectorEditor.prototype.syncGridBtn = function () {
+    var btn = this.$('dsGridBtn');
+    if (btn) btn.classList.toggle('active', this.gridVisible);
+    if (this.grid) this.grid.visible = this.gridVisible;
+  };
+
+  DirectorEditor.prototype.ensureEnvFitDefaults = function (env) {
+    if (!env) return;
+    if (typeof env.horizonY !== 'number' || isNaN(env.horizonY)) env.horizonY = 1.5;
+    if (typeof env.sceneScale !== 'number' || isNaN(env.sceneScale)) env.sceneScale = 1;
+    if (typeof env.groundY !== 'number' || isNaN(env.groundY)) env.groundY = 0;
+  };
+
+  DirectorEditor.prototype.getEnvHorizonY = function () {
+    var env = this.getEnvData();
+    if (env && typeof env.horizonY === 'number' && !isNaN(env.horizonY)) return clamp(env.horizonY, 0, 2.5);
+    return 1.5;
+  };
+
+  DirectorEditor.prototype.getEnvSceneScale = function () {
+    var env = this.getEnvData();
+    if (env && typeof env.sceneScale === 'number' && !isNaN(env.sceneScale)) return clamp(env.sceneScale, 0.5, 4);
+    return 1;
+  };
+
+  DirectorEditor.prototype.getEnvGroundY = function () {
+    var env = this.getEnvData();
+    if (env && typeof env.groundY === 'number' && !isNaN(env.groundY)) return clamp(env.groundY, -2.5, 1.5);
+    return 0;
+  };
+
+  DirectorEditor.prototype.applyEnvHorizon = function () {
+    this.syncEnvToCamera(this.viewCam || this.virtualCam);
+  };
+
+  // 全景是拍摄点看到的方向，不是可走进去的房间。球心必须跟着当前渲染相机，
+  // 脚底 y=groundY 与「相机下方的地面」才对得上；钉在世界原点绕开后必悬空。
+  DirectorEditor.prototype.syncEnvToCamera = function (cam) {
+    if (!this.envSphere || !cam) return;
+    var env = this.getEnvData();
+    var yaw = env ? (env.yaw || 0) : 0;
+    var hy = this.getEnvHorizonY();
+    var pitch = deg2rad((1.5 - hy) * 28);
+    this.envSphere.position.copy(cam.position);
+    this.envSphere.rotation.set(pitch, deg2rad(yaw), 0);
+    if (this.envBackdrop) {
+      this.envBackdrop.position.copy(cam.position);
+      this.envBackdrop.rotation.set(pitch, deg2rad(yaw), 0);
+    }
+  };
+
+  DirectorEditor.prototype.applyEnvFitParams = function (horizonY, sceneScale, groundY, markFitted) {
+    var env = this.getEnvData();
+    if (!env) return;
+    env.horizonY = clamp(horizonY, 0, 2.5);
+    env.sceneScale = clamp(sceneScale, 0.5, 4);
+    env.groundY = clamp(typeof groundY === 'number' ? groundY : 0, -2.5, 1.5);
+    if (markFitted) {
+      env.autoFitDone = true;
+      env.fitVersion = 3;
+    }
+    this.applyEnvHorizon();
+    this.applyAllPuppetTransforms();
+    this.renderEnvSection();
+  };
+
+  DirectorEditor.prototype.abortEnvFit = function () {
+    this._envFitToken += 1;
+    if (this._envFitAbort) {
+      try { this._envFitAbort.abort(); } catch (e) { /* noop */ }
+      this._envFitAbort = null;
+    }
+  };
+
+  DirectorEditor.prototype.fitEnvironment = async function (opts) {
+    opts = opts || {};
+    var auto = !!opts.auto;
+    var env = this.getEnvData();
+    if (!env || !this.envSphere) return;
+    this.ensureEnvFitDefaults(env);
+    if (auto && env.autoFitDone && env.fitVersion === 3) return;
+
+    var token = ++this._envFitToken;
+    this._envFitStatus = '识别中…';
+    this.renderEnvSection();
+    this.setStatus('正在智能对齐人偶与场景…');
+
+    var previewUrl = null;
+    try {
+      var dataUrl = this.renderSnapshotDataUrl();
+      var blob = dataUrlToBlob(dataUrl);
+      var file = new File([blob], 'ds_env_fit.jpg', { type: 'image/jpeg' });
+      if (typeof uploadFile !== 'function') throw new Error('uploadFile missing');
+      previewUrl = await uploadFile(file);
+    } catch (err) {
+      if (token !== this._envFitToken) return;
+      this.fallbackEnvFitManual('预览图上传失败，请手动调节地平线与场景比例');
+      return;
+    }
+    if (token !== this._envFitToken) return;
+    if (!previewUrl) {
+      this.fallbackEnvFitManual('预览图上传失败，请手动调节地平线与场景比例');
+      return;
+    }
+
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    this._envFitAbort = controller;
+    try {
+      var headers = { 'Content-Type': 'application/json' };
+      if (typeof getAuthToken === 'function') headers['Authorization'] = getAuthToken();
+      if (typeof getUserId === 'function') headers['X-User-Id'] = getUserId();
+      var resp = await fetch('/api/video-workflow/fit-environment', {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({
+          image_url: previewUrl,
+          horizon_y: this.getEnvHorizonY(),
+          scene_scale: this.getEnvSceneScale(),
+          ground_y: this.getEnvGroundY()
+        }),
+        signal: controller ? controller.signal : undefined
+      });
+      var result = await resp.json();
+      if (token !== this._envFitToken) return;
+      if (result && result.success) {
+        this.applyEnvFitParams(result.horizonY, result.sceneScale, result.groundY, true);
+        this._envFitStatus = result.reason ? ('已对齐：' + result.reason) : '已智能对齐';
+        this.renderEnvSection();
+        this.markDirty();
+        this.setStatus(this._envFitStatus);
+      } else {
+        this.fallbackEnvFitManual((result && result.error) || '未配置视觉模型，请手动调节地平线与场景比例');
+      }
+    } catch (err) {
+      if (token !== this._envFitToken) return;
+      if (err && err.name === 'AbortError') return;
+      this.fallbackEnvFitManual('视觉模型不可用，请手动调节地平线与场景比例');
+    } finally {
+      if (this._envFitAbort === controller) this._envFitAbort = null;
+    }
+  };
+
+  DirectorEditor.prototype.fallbackEnvFitManual = function (msg) {
+    var env = this.getEnvData();
+    if (env) {
+      env.autoFitDone = true;
+      env.fitVersion = 3;
+    }
+    this._envFitStatus = msg || '请手动调节地平线与场景比例';
+    this.renderEnvSection();
+    this.setStatus(this._envFitStatus);
+    if (typeof showToast === 'function') showToast(this._envFitStatus, 'info');
   };
 
   // 当前保存的环境数据（随 markDirty 序列化）
@@ -820,7 +1436,10 @@
   // 从画布上相连的 360全景节点重新拉取最新结果（全景重新生成后使用）
   DirectorEditor.prototype.refreshEnvironment = function () {
     var conn = (state.connections || []).find(function (c) {
-      return c.to === this.nodeId && c.portType === 'environment';
+      if (c.to !== this.nodeId) return false;
+      if (c.portType === 'environment') return true;
+      var fromNode = state.nodes.find(function (n) { return n.id === c.from; });
+      return !!(fromNode && fromNode.type === 'panorama');
     }, this);
     if (!conn) {
       this.setStatus('未找到相连的全景节点');
@@ -833,6 +1452,7 @@
       return;
     }
     var env = this.getEnvData() || {};
+    if (env.url !== url) env.autoFitDone = false;
     env.url = url;
     env.ratio = (fromNode.data.ratio || env.ratio || '21:9');
     if (!this.node.data.directorData) this.node.data.directorData = {};
@@ -860,13 +1480,33 @@
         '<div style="border:1px solid #2a2e3a; border-radius:8px; overflow:hidden; background:#20232e;">' +
           '<img src="' + esc(imgUrl) + '" style="width:100%; height:64px; object-fit:cover; display:block;" alt="">' +
           '<div style="padding:8px 10px; font-size:11px; color:#9ca3af;">🌐 全景环境 · ' + esc(env.ratio || '21:9') + '</div>' +
+          (this._envHint ? '<div style="padding:0 10px 8px; font-size:10px; color:#f59e0b; line-height:1.5;">' + esc(this._envHint) + '</div>' : '') +
         '</div>' +
         '<div class="ds-slider-row" style="margin-top:8px;">' +
           '<label title="环境旋转">旋转</label>' +
           '<input type="range" id="dsEnvYaw" min="0" max="360" step="1" value="' + Math.round(env.yaw || 0) + '" />' +
           '<input type="number" class="ds-num" id="dsEnvYawNum" min="0" max="360" value="' + Math.round(env.yaw || 0) + '" />' +
         '</div>' +
-        '<div style="display:flex; gap:6px; margin-top:8px;">' +
+        '<div class="ds-slider-row">' +
+          '<label title="照片地平线高度">地平线</label>' +
+          '<input type="range" id="dsEnvHorizon" min="0" max="2.5" step="0.05" value="' + this.getEnvHorizonY() + '" />' +
+          '<input type="number" class="ds-num" id="dsEnvHorizonNum" min="0" max="2.5" step="0.05" value="' + this.getEnvHorizonY() + '" />' +
+        '</div>' +
+        '<div class="ds-slider-row">' +
+          '<label title="人偶相对全景的大小">场景比例</label>' +
+          '<input type="range" id="dsEnvScale" min="0.5" max="4" step="0.05" value="' + this.getEnvSceneScale() + '" />' +
+          '<input type="number" class="ds-num" id="dsEnvScaleNum" min="0.5" max="4" step="0.05" value="' + this.getEnvSceneScale() + '" />' +
+        '</div>' +
+        '<div class="ds-slider-row">' +
+          '<label title="负值让人偶下落到可见地面">贴地</label>' +
+          '<input type="range" id="dsEnvGround" min="-2.5" max="1.5" step="0.05" value="' + this.getEnvGroundY() + '" />' +
+          '<input type="number" class="ds-num" id="dsEnvGroundNum" min="-2.5" max="1.5" step="0.05" value="' + this.getEnvGroundY() + '" />' +
+        '</div>' +
+        '<div style="font-size:10px; color:#6b7280; line-height:1.5; padding:2px 0 6px;">旋转=转房间；地平线=抬/压全景地面；场景比例=人偶大小；贴地=人偶升降。无视觉模型时请手动调节。</div>' +
+        (this._envFitStatus ? '<div style="font-size:10px; color:#93c5fd; line-height:1.5; padding:0 0 6px;">' + esc(this._envFitStatus) + '</div>' : '') +
+        '<div style="display:flex; gap:6px; margin-top:4px;">' +
+          '<button class="ds-mini-btn" id="dsEnvFit" style="flex:1; justify-content:center;"' +
+            (this._envFitStatus === '识别中…' ? ' disabled' : '') + '>✧ 智能对齐</button>' +
           '<button class="ds-mini-btn" id="dsEnvRefresh" style="flex:1; justify-content:center;">↻ 刷新</button>' +
           '<button class="ds-mini-btn danger" id="dsEnvRemove" style="flex:1; justify-content:center;">✕ 移除</button>' +
         '</div>';
@@ -874,25 +1514,108 @@
     wrap.innerHTML = html;
 
     if (!this._envLoading && env) {
+      function liveEnv() {
+        var e = self.getEnvData();
+        if (e) {
+          e.autoFitDone = true;
+          e.fitVersion = 3;
+        }
+        return e;
+      }
       var yawSlider = this.$('dsEnvYaw');
       var yawNum = this.$('dsEnvYawNum');
       if (yawSlider) {
         this.on(yawSlider, 'input', function () {
-          env.yaw = parseFloat(yawSlider.value) || 0;
-          if (self.envSphere) self.envSphere.rotation.y = deg2rad(env.yaw);
-          if (yawNum) yawNum.value = yawSlider.value;
+          var e = liveEnv();
+          if (!e) return;
+          e.yaw = parseFloat(yawSlider.value) || 0;
+          if (yawNum) yawNum.value = e.yaw;
+          self.syncEnvToCamera(self.viewCam);
           self.markDirty(true);
         });
         this.on(yawSlider, 'change', function () { self.markDirty(); });
       }
       if (yawNum) {
         this.on(yawNum, 'change', function () {
-          env.yaw = clamp(parseFloat(yawNum.value) || 0, 0, 360);
-          if (self.envSphere) self.envSphere.rotation.y = deg2rad(env.yaw);
-          if (yawSlider) yawSlider.value = env.yaw;
+          var e = liveEnv();
+          if (!e) return;
+          e.yaw = clamp(parseFloat(yawNum.value) || 0, 0, 360);
+          if (yawSlider) yawSlider.value = e.yaw;
+          self.syncEnvToCamera(self.viewCam);
           self.markDirty();
         });
       }
+      var hzSlider = this.$('dsEnvHorizon');
+      var hzNum = this.$('dsEnvHorizonNum');
+      if (hzSlider) {
+        this.on(hzSlider, 'input', function () {
+          var e = liveEnv();
+          if (!e) return;
+          e.horizonY = clamp(parseFloat(hzSlider.value) || 0, 0, 2.5);
+          if (hzNum) hzNum.value = e.horizonY;
+          self.syncEnvToCamera(self.viewCam);
+          self.markDirty(true);
+        });
+        this.on(hzSlider, 'change', function () { self.markDirty(); });
+      }
+      if (hzNum) {
+        this.on(hzNum, 'change', function () {
+          var e = liveEnv();
+          if (!e) return;
+          e.horizonY = clamp(parseFloat(hzNum.value) || 0, 0, 2.5);
+          if (hzSlider) hzSlider.value = e.horizonY;
+          self.syncEnvToCamera(self.viewCam);
+          self.markDirty();
+        });
+      }
+      var scSlider = this.$('dsEnvScale');
+      var scNum = this.$('dsEnvScaleNum');
+      if (scSlider) {
+        this.on(scSlider, 'input', function () {
+          var e = liveEnv();
+          if (!e) return;
+          e.sceneScale = clamp(parseFloat(scSlider.value) || 1, 0.5, 4);
+          self.applyAllPuppetTransforms();
+          if (scNum) scNum.value = e.sceneScale;
+          self.markDirty(true);
+        });
+        this.on(scSlider, 'change', function () { self.markDirty(); });
+      }
+      if (scNum) {
+        this.on(scNum, 'change', function () {
+          var e = liveEnv();
+          if (!e) return;
+          e.sceneScale = clamp(parseFloat(scNum.value) || 1, 0.5, 4);
+          self.applyAllPuppetTransforms();
+          if (scSlider) scSlider.value = e.sceneScale;
+          self.markDirty();
+        });
+      }
+      var gdSlider = this.$('dsEnvGround');
+      var gdNum = this.$('dsEnvGroundNum');
+      if (gdSlider) {
+        this.on(gdSlider, 'input', function () {
+          var e = liveEnv();
+          if (!e) return;
+          e.groundY = clamp(parseFloat(gdSlider.value) || 0, -2.5, 1.5);
+          self.applyAllPuppetTransforms();
+          if (gdNum) gdNum.value = e.groundY;
+          self.markDirty(true);
+        });
+        this.on(gdSlider, 'change', function () { self.markDirty(); });
+      }
+      if (gdNum) {
+        this.on(gdNum, 'change', function () {
+          var e = liveEnv();
+          if (!e) return;
+          e.groundY = clamp(parseFloat(gdNum.value) || 0, -2.5, 1.5);
+          self.applyAllPuppetTransforms();
+          if (gdSlider) gdSlider.value = e.groundY;
+          self.markDirty();
+        });
+      }
+      var fitBtn = this.$('dsEnvFit');
+      if (fitBtn) this.on(fitBtn, 'click', function () { self.fitEnvironment({ auto: false }); });
       var refreshBtn = this.$('dsEnvRefresh');
       if (refreshBtn) this.on(refreshBtn, 'click', function () { self.refreshEnvironment(); });
       var removeBtn = this.$('dsEnvRemove');
@@ -913,12 +1636,14 @@
     pd = pd || {};
     var color = pd.color || PUPPET_COLORS[this.colorIndex % PUPPET_COLORS.length];
     this.colorIndex++;
+    var bodyType = normalizeBodyType(pd.bodyType || this._pendingBodyType || 'man');
 
-    var rig = buildPuppetRig(color);
+    var rig = buildPuppetRig(color, bodyType);
     var puppet = {
       id: pd.id || ('p' + Date.now().toString(36) + Math.floor(Math.random() * 1000)),
       name: pd.name || ('人偶 ' + this.puppetSeq),
       color: color,
+      bodyType: bodyType,
       characterId: pd.characterId || null,
       characterName: pd.characterName || '',
       rig: rig,
@@ -950,6 +1675,7 @@
 
     // 名牌
     var label = makeLabelSprite(puppet.name);
+    label.position.y = rig.labelY || 2.02;
     puppet.label = label;
     rig.root.add(label);
 
@@ -1003,11 +1729,54 @@
     this.setStatus('已删除人偶');
   };
 
+  DirectorEditor.prototype.setPuppetBodyType = function (p, bodyType) {
+    if (!p) return;
+    bodyType = normalizeBodyType(bodyType);
+    if (p.bodyType === bodyType && p.rig && p.rig.bodyType === bodyType) return;
+    var selected = this.selectedPuppetId === p.id;
+    var jointKey = this.selectedJointKey;
+    this.scene.remove(p.rig.root);
+    disposeRig(p.rig);
+    if (p.label && p.label.userData._texture) p.label.userData._texture.dispose();
+    p.bodyType = bodyType;
+    p.rig = buildPuppetRig(p.color, bodyType);
+    var self = this;
+    p.rig.bodyMeshes.forEach(function (m) { m.userData.puppetId = p.id; });
+    p.label = makeLabelSprite(p.name);
+    p.label.position.y = p.rig.labelY || 2.02;
+    p.rig.root.add(p.label);
+    this.scene.add(p.rig.root);
+    this.applyPuppetTransform(p);
+    this.applyJointDeg(p);
+    if (selected) {
+      this.selectedPuppetId = p.id;
+      this.selectedJointKey = jointKey;
+    }
+    this.updateSelectionVisuals();
+  };
+
   DirectorEditor.prototype.applyPuppetTransform = function (p) {
-    p.rig.root.position.set(p.x, 0, p.z);
+    p.rig.root.position.set(p.x, this.getEnvGroundY(), p.z);
     p.rig.root.rotation.y = deg2rad(p.rotY);
-    p.rig.root.scale.setScalar(p.scale);
-    p.rig.hipsY.position.y = (HIP_H + p.rootYOffset);
+    p.rig.root.scale.setScalar(p.scale * this.getEnvSceneScale());
+    p.rig.hipsY.position.y = ((p.rig.hipH || HIP_H) + p.rootYOffset);
+  };
+
+  DirectorEditor.prototype.getPuppetWorldScale = function (p) {
+    var s = (p && p.scale ? p.scale : 1) * this.getEnvSceneScale();
+    return s > 1e-6 ? s : 1;
+  };
+
+  DirectorEditor.prototype.getPuppetGizmoOrigin = function (p) {
+    // hipsY 在已缩放的 root 下，世界高度 = 地面 + (髋高+离地) * scale
+    var s = this.getPuppetWorldScale(p);
+    var localH = ((p.rig && p.rig.hipH) ? p.rig.hipH : HIP_H) + (p.rootYOffset || 0);
+    return new THREE.Vector3(p.x, this.getEnvGroundY() + localH * s, p.z);
+  };
+
+  DirectorEditor.prototype.applyAllPuppetTransforms = function () {
+    var self = this;
+    this.puppets.forEach(function (p) { self.applyPuppetTransform(p); });
   };
 
   DirectorEditor.prototype.applyJointDeg = function (p) {
@@ -1077,9 +1846,10 @@
       });
     });
 
-    // 相机 / 对焦中心选中高亮：机身红→橙、视锥线加亮、地面显示橙色选中环、对焦十字与视线虚线变青
+    // 相机 / 对焦中心选中高亮：机身红→橙、视锥线加亮、地面显示橙色选中环、对焦十字与视线虚线变青；显示轴向把手
     var camSel = this.selectedCamTarget === 'camera';
     var focusSel = this.selectedCamTarget === 'focus';
+    this.updateAxisGizmo();
     if (this.camBodyMat) {
       this.camBodyMat.color.setHex(camSel ? 0xf97316 : 0xef4444);
       if (!this.camBodyMat.emissive) this.camBodyMat.emissive = new THREE.Color(0);
@@ -1107,13 +1877,13 @@
         mk.scale.setScalar(k === this.selectedJointKey ? 1.5 : 1);
       });
       var jointLabel = this.selectedJointKey ? (' · ' + (JOINT_LABELS[this.selectedJointKey] || this.selectedJointKey)) : '';
-      tip.textContent = sel.name + jointLabel;
+      tip.textContent = sel.name + jointLabel + ' — 拖 RGB 轴单轴移动（绿=高度）';
       tip.classList.add('show');
     } else if (camSel) {
-      tip.textContent = '🎥 机位已选中 — 按住拖动移动；高度在右侧「镜头设置」中调整';
+      tip.textContent = '🎥 机位 — 拖 RGB 轴单轴移动（绿=高度），琥珀色轴调焦距';
       tip.classList.add('show');
     } else if (focusSel) {
-      tip.textContent = '🎯 对焦中心已选中 — 按住拖动移动';
+      tip.textContent = '🎯 对焦中心 — 拖 RGB 轴单轴移动，绿轴调节高度';
       tip.classList.add('show');
     } else {
       tip.classList.remove('show');
@@ -1140,9 +1910,11 @@
     var listEl = this.$('dsPuppetList');
     var self = this;
     listEl.innerHTML = this.puppets.map(function (p) {
+      var typeLabel = getBodyType(p.bodyType).label;
       return '<div class="ds-puppet-item' + (p.id === self.selectedPuppetId ? ' selected' : '') + '" data-pid="' + esc(p.id) + '">' +
         '<span class="ds-puppet-color" style="background:' + esc(p.color) + '"></span>' +
         '<span class="ds-puppet-name" title="' + esc(p.name) + '">' + esc(p.name) + '</span>' +
+        '<span class="ds-puppet-type">' + esc(typeLabel) + '</span>' +
         '<button class="ds-puppet-del" data-del="' + esc(p.id) + '" title="删除">✕</button>' +
       '</div>';
     }).join('') || '<div style="padding:12px; font-size:12px; color:#6b7280; text-align:center;">无人偶，点击上方添加</div>';
@@ -1218,12 +1990,21 @@
       '<input class="ds-prop-input" id="dsPuppetName" value="' + esc(p.name) + '" maxlength="20" />' +
     '</div>';
     html += '<div class="ds-prop-group">' +
-      sliderRow('朝向', 'rotY', -180, 180, 1, fmt(p.rotY), 'dsPupRotY') +
-      sliderRow('身高', 'scale', 0.75, 1.25, 0.01, fmt(p.scale), 'dsPupScale') +
-      sliderRow('离地高度', 'yOff', -0.5, 0.6, 0.01, fmt(p.rootYOffset), 'dsPupYOff') +
+      '<div class="ds-prop-label"><span>体型</span></div>' +
+      '<div class="ds-bodytype-grid compact">' +
+        BODY_TYPE_ORDER.map(function (k) {
+          var active = normalizeBodyType(p.bodyType) === k ? ' active' : '';
+          return '<button type="button" class="ds-bodytype-item' + active + '" data-bodytype="' + k + '">' + esc(BODY_TYPES[k].label) + '</button>';
+        }).join('') +
+      '</div>' +
     '</div>';
     html += '<div class="ds-prop-group">' +
-      '<div class="ds-prop-label"><span>位置</span><span class="ds-prop-value" id="dsPupPos">' + fmt(p.x) + ', ' + fmt(p.z) + '</span></div>' +
+      sliderRow('朝向', 'rotY', -180, 180, 1, fmt(p.rotY), 'dsPupRotY') +
+      sliderRow('身高', 'scale', 0.75, 1.25, 0.01, fmt(p.scale), 'dsPupScale') +
+      sliderRow('离地高度', 'yOff', PUPPET_Y_MIN, PUPPET_Y_MAX, 0.01, fmt(p.rootYOffset), 'dsPupYOff') +
+    '</div>';
+    html += '<div class="ds-prop-group">' +
+      '<div class="ds-prop-label"><span>位置 XYZ</span><span class="ds-prop-value" id="dsPupPos">' + fmt(p.x) + ', ' + fmt(p.rootYOffset) + ', ' + fmt(p.z) + '</span></div>' +
     '</div>';
     html += JOINT_GROUPS.map((g) => {
       return '<details class="ds-joint-details" open>' +
@@ -1264,6 +2045,7 @@
       if (p.label && p.label.userData._texture) p.label.userData._texture.dispose();
       p.rig.root.remove(p.label);
       p.label = makeLabelSprite(p.name);
+      p.label.position.y = p.rig.labelY || 2.02;
       p.rig.root.add(p.label);
       self.renderPuppetList();
       self.updateSelectionVisuals();
@@ -1271,9 +2053,23 @@
     });
 
     // 朝向 / 身高 / 离地
+    panel.querySelectorAll('.ds-bodytype-item').forEach(function (btn) {
+      self.on(btn, 'click', function () {
+        self.setPuppetBodyType(p, btn.dataset.bodytype);
+        self.renderPuppetList();
+        self.renderPropsPanel();
+        self.markDirty();
+        self.setStatus('体型：' + getBodyType(p.bodyType).label);
+      });
+    });
+
     bindTransformSlider.call(this, 'rotY', function (v) { p.rotY = v; self.applyPuppetTransform(p); }, -180, 180);
     bindTransformSlider.call(this, 'scale', function (v) { p.scale = v; self.applyPuppetTransform(p); }, 0.75, 1.25);
-    bindTransformSlider.call(this, 'yOff', function (v) { p.rootYOffset = v; self.applyPuppetTransform(p); }, -0.5, 0.6);
+    bindTransformSlider.call(this, 'yOff', function (v) {
+      p.rootYOffset = v;
+      self.applyPuppetTransform(p);
+      self.updateAxisGizmo();
+    }, PUPPET_Y_MIN, PUPPET_Y_MAX);
 
     // 关节滑块
     panel.querySelectorAll('input[data-slider]').forEach(function (input) {
@@ -1451,10 +2247,11 @@
     var pos = new THREE.Vector3(p.x, 0, p.z)
       .add(back.clone().multiplyScalar(1.1))
       .add(right.clone().multiplyScalar(0.38));
-    pos.y = 1.58;
+    var headY = (p.rig && p.rig.labelY) ? p.rig.labelY * 0.78 : 1.58;
+    pos.y = headY;
     var target = new THREE.Vector3(p.x, 0, p.z)
       .add(back.clone().multiplyScalar(-2.5));
-    target.y = 1.35;
+    target.y = headY * 0.85;
     this.virtualCamCfg.pos.copy(pos);
     this.virtualCamCfg.target.copy(target);
     this.virtualCamCfg.fov = 38;
@@ -1486,6 +2283,122 @@
       this.sightLine.geometry.computeBoundingSphere();
       this.sightLine.computeLineDistances();
     }
+
+    this.updateAxisGizmo();
+  };
+
+  DirectorEditor.prototype.updateAxisGizmo = function () {
+    if (!this.axisGizmo) return;
+    var camSel = this.selectedCamTarget === 'camera';
+    var focusSel = this.selectedCamTarget === 'focus';
+    var puppet = this.getPuppet(this.selectedPuppetId);
+    var helpersOn = !this.camRig || this.camRig.visible;
+    var show = (camSel || focusSel || !!puppet) && helpersOn;
+    this.axisGizmo.visible = !!show;
+    if (this.fovGizmo) this.fovGizmo.visible = !!(show && camSel);
+    if (!show) return;
+    var origin;
+    if (puppet) origin = this.getPuppetGizmoOrigin(puppet);
+    else if (camSel) origin = this.virtualCamCfg.pos;
+    else origin = this.virtualCamCfg.target;
+    this.axisGizmo.position.copy(origin);
+    var dist = this.viewCam ? this.viewCam.position.distanceTo(origin) : 6;
+    var s = clamp(dist * 0.11, 0.5, 1.7);
+    this.axisGizmo.scale.setScalar(s);
+    if (this.fovGizmo && camSel) {
+      this.fovGizmo.position.copy(this.virtualCamCfg.pos);
+      this.fovGizmo.scale.setScalar(s);
+      var look = new THREE.Vector3().subVectors(this.virtualCamCfg.target, this.virtualCamCfg.pos);
+      if (look.lengthSq() < 1e-8) look.set(0, 0, -1);
+      look.normalize();
+      this.fovGizmo.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), look);
+    }
+  };
+
+  DirectorEditor.prototype.highlightGizmoAxis = function (axis) {
+    function paint(root) {
+      if (!root) return;
+      root.traverse(function (o) {
+        if (!o.userData || !o.userData.gizmoAxis) return;
+        if (o.userData._pickOnly || !o.material || !o.material.color) return;
+        if (typeof o.userData.baseColor !== 'number') return;
+        var hot = !!(axis && o.userData.gizmoAxis === axis);
+        o.material.color.setHex(hot ? 0xffffff : o.userData.baseColor);
+      });
+    }
+    paint(this.axisGizmo);
+    paint(this.fovGizmo);
+    this._gizmoHoverAxis = axis || null;
+  };
+
+  DirectorEditor.prototype.gizmoAxisDir = function (axis) {
+    if (axis === 'x') return new THREE.Vector3(1, 0, 0);
+    if (axis === 'y') return new THREE.Vector3(0, 1, 0);
+    if (axis === 'z') return new THREE.Vector3(0, 0, 1);
+    var look = new THREE.Vector3().subVectors(this.virtualCamCfg.target, this.virtualCamCfg.pos);
+    if (look.lengthSq() < 1e-8) look.set(0, 0, -1);
+    return look.normalize();
+  };
+
+  DirectorEditor.prototype.intersectAxisPlane = function (e, origin, axisDir) {
+    this.raycaster.setFromCamera(this.ndcAt(e), this.viewCam);
+    var viewDir = this.raycaster.ray.direction;
+    var n = new THREE.Vector3().crossVectors(axisDir, viewDir);
+    if (n.lengthSq() < 1e-10) {
+      n.crossVectors(axisDir, new THREE.Vector3(0, 1, 0));
+      if (n.lengthSq() < 1e-10) n.set(1, 0, 0);
+    }
+    n.cross(axisDir);
+    if (n.lengthSq() < 1e-10) return null;
+    n.normalize();
+    var plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, origin);
+    var hit = new THREE.Vector3();
+    return this.raycaster.ray.intersectPlane(plane, hit) ? hit : null;
+  };
+
+  DirectorEditor.prototype.applyGizmoDrag = function (d, e) {
+    var hit = this.intersectAxisPlane(e, d.origin, d.dir);
+    if (!hit) return;
+    var delta = hit.dot(d.dir) - d.startAlong;
+    if (d.kind === 'puppet' && d.puppet) {
+      var pup = d.puppet;
+      if (d.axis === 'x') pup.x = clamp(d.startPos.x + delta, -GROUND_LIMIT, GROUND_LIMIT);
+      else if (d.axis === 'z') pup.z = clamp(d.startPos.z + delta, -GROUND_LIMIT, GROUND_LIMIT);
+      else if (d.axis === 'y') {
+        // 鼠标 delta 是世界米；rootYOffset 是未缩放的局部高度，需除以世界缩放
+        var ws = d.worldScale || this.getPuppetWorldScale(pup);
+        pup.rootYOffset = clamp(d.startRootY + delta / ws, PUPPET_Y_MIN, PUPPET_Y_MAX);
+      }
+      this.applyPuppetTransform(pup);
+      this.updateAxisGizmo();
+      this.syncPuppetAxisSliders(pup);
+      return;
+    }
+    if (d.axis === 'fov') {
+      this.virtualCamCfg.fov = clamp(d.startFov - delta * 22, 15, 90);
+    } else {
+      var p = d.startPos.clone().addScaledVector(d.dir, delta);
+      p.x = clamp(p.x, -GROUND_LIMIT, GROUND_LIMIT);
+      p.z = clamp(p.z, -GROUND_LIMIT, GROUND_LIMIT);
+      if (d.kind === 'camera') {
+        p.y = clamp(p.y, 0.2, 8);
+        this.virtualCamCfg.pos.copy(p);
+      } else {
+        p.y = clamp(p.y, 0, 6);
+        this.virtualCamCfg.target.copy(p);
+      }
+    }
+    this.updateCamHelper();
+    this.syncCameraPanelSliders();
+  };
+
+  DirectorEditor.prototype.syncPuppetAxisSliders = function (p) {
+    var panel = this.$('dsPropsPanel');
+    if (!panel || this._panelMode !== 'puppet') return;
+    var posEl = this.$('dsPupPos');
+    if (posEl) posEl.textContent = fmt(p.x) + ', ' + fmt(p.rootYOffset) + ', ' + fmt(p.z);
+    this.syncSlider(panel, 'yOff', p.rootYOffset);
+    this.syncNum(panel, 'yOff', fmt(p.rootYOffset));
   };
 
   // ---------- 视口交互 ----------
@@ -1500,9 +2413,32 @@
     );
   };
 
-  // 射线拾取：joint marker → 人偶 body → 相机 helper / 焦点球
+  function resolveGizmoAxis(obj) {
+    var o = obj;
+    while (o) {
+      if (o.userData && o.userData.gizmoAxis) return o.userData.gizmoAxis;
+      o = o.parent;
+    }
+    return null;
+  }
+
+  // 射线拾取：轴向把手 → 关节球 → 人偶 body → 焦点 / 相机
   DirectorEditor.prototype.pickAt = function (e) {
     this.raycaster.setFromCamera(this.ndcAt(e), this.viewCam);
+    // 0. 选中机位/焦点时优先拾取轴向把手
+    var gizmos = [];
+    if (this.axisGizmo && this.axisGizmo.visible) gizmos.push(this.axisGizmo);
+    if (this.fovGizmo && this.fovGizmo.visible) gizmos.push(this.fovGizmo);
+    if (gizmos.length) {
+      var gz = this.raycaster.intersectObjects(gizmos, true);
+      if (gz.length) {
+        var axis = resolveGizmoAxis(gz[0].object);
+        if (axis) {
+          var kind = this.selectedCamTarget || (this.selectedPuppetId ? 'puppet' : null);
+          return { type: 'gizmo', axis: axis, kind: kind };
+        }
+      }
+    }
     var hits = [];
     // 1. 关节球（选中人偶的）
     var sel = this.getPuppet(this.selectedPuppetId);
@@ -1549,15 +2485,21 @@
         text = '🖱 ' + (JOINT_LABELS[hit.jointKey] || hit.jointKey) + ' — 点击选中关节';
       } else if (hit.type === 'puppet') {
         cursor = 'grab';
-        text = '🧍 ' + hit.puppet.name + ' — 按住拖动移动，单击选中';
+        text = '🧍 ' + hit.puppet.name + ' — 拖身体水平移动，或拖 RGB 轴单轴移动';
       } else if (hit.type === 'camera') {
         cursor = 'move';
-        text = '🎥 虚拟相机 — 按住拖动机位，单击选中';
+        text = '🎥 虚拟相机 — 拖机身水平移动，或拖 RGB 轴单轴移动';
       } else if (hit.type === 'focus') {
         cursor = 'move';
-        text = '🎯 对焦中心 — 镜头看向这里，按住拖动';
+        text = '🎯 对焦中心 — 拖绿轴调节高度，红/蓝轴水平移动';
+      } else if (hit.type === 'gizmo') {
+        cursor = 'ns-resize';
+        var axisName = { x: 'X 轴', y: 'Y 轴（高度）', z: 'Z 轴', fov: '焦距 / FOV' }[hit.axis] || hit.axis;
+        text = '↕ ' + axisName + ' — 按住只沿此轴拖动';
+        this.highlightGizmoAxis(hit.axis);
       }
     }
+    if (!hit || hit.type !== 'gizmo') this.highlightGizmoAxis(null);
     var canvas = this.$('dsCanvas');
     if (canvas) canvas.style.cursor = cursor;
     var tip = this.$('dsHoverTip');
@@ -1591,8 +2533,9 @@
       orbit: '🔄 旋转视角 — 只改变观察角度，不影响镜头画面',
       pan: '✋ 平移视角 — 只改变观察角度，不影响镜头画面',
       puppet: '🧍 移动人偶' + (extra ? '：' + extra : '') + ' — 松开鼠标落位',
-      camera: '🎥 移动机位 — 水平拖动；高度用右侧「镜头设置」滑块调整',
-      focus: '🎯 移动对焦中心 — 镜头始终看向它'
+      camera: '🎥 移动机位 — 水平拖动；高度请拖绿色 Y 轴',
+      focus: '🎯 移动对焦中心 — 水平拖动；高度请拖绿色 Y 轴',
+      gizmo: '↕ 单轴拖动' + (extra ? '：' + extra : '')
     };
     var cursorMap = { orbit: 'grabbing', pan: 'move', puppet: 'grabbing', camera: 'move', focus: 'move' };
     var banner = this.$('dsDragBanner');
@@ -1645,7 +2588,7 @@
           if (self.selectedPuppetId !== hit.puppet.id) {
             self.selectPuppet(hit.puppet.id, null);
           }
-          var gp = groundPoint(e, 0);
+          var gp = groundPoint(e, self.getEnvGroundY());
           if (gp) {
             self.dragging = {
               mode: 'puppet', puppet: hit.puppet,
@@ -1653,6 +2596,49 @@
             };
             self.showDragBanner('puppet', hit.puppet.name);
           }
+          return;
+        }
+        if (hit.type === 'gizmo') {
+          var kind = hit.kind || self.selectedCamTarget || (self.selectedPuppetId ? 'puppet' : 'camera');
+          self.highlightGizmoAxis(hit.axis);
+          var origin, dir, ah;
+          if (kind === 'puppet') {
+            var pup = self.getPuppet(self.selectedPuppetId);
+            if (!pup || hit.axis === 'fov') return;
+            origin = self.getPuppetGizmoOrigin(pup);
+            dir = self.gizmoAxisDir(hit.axis);
+            ah = self.intersectAxisPlane(e, origin, dir);
+            self.dragging = {
+              mode: 'gizmo',
+              axis: hit.axis,
+              kind: 'puppet',
+              puppet: pup,
+              origin: origin,
+              dir: dir,
+              startAlong: ah ? ah.dot(dir) : 0,
+              startPos: { x: pup.x, z: pup.z },
+              startRootY: pup.rootYOffset || 0,
+              worldScale: self.getPuppetWorldScale(pup)
+            };
+          } else {
+            if (kind !== 'camera' && kind !== 'focus') kind = 'camera';
+            self.selectCamera(kind);
+            origin = (kind === 'camera' ? self.virtualCamCfg.pos : self.virtualCamCfg.target).clone();
+            dir = self.gizmoAxisDir(hit.axis);
+            ah = self.intersectAxisPlane(e, origin, dir);
+            self.dragging = {
+              mode: 'gizmo',
+              axis: hit.axis,
+              kind: kind,
+              origin: origin,
+              dir: dir,
+              startAlong: ah ? ah.dot(dir) : 0,
+              startPos: origin.clone(),
+              startFov: self.virtualCamCfg.fov
+            };
+          }
+          var axisLabel = { x: 'X', y: 'Y 高度', z: 'Z', fov: '焦距' }[hit.axis] || hit.axis;
+          self.showDragBanner('gizmo', axisLabel);
           return;
         }
         if (hit.type === 'camera') {
@@ -1713,13 +2699,13 @@
         self.orbit.target.y = clamp(self.orbit.target.y + py * scale, 0, 8);
         d.lastX = e.clientX; d.lastY = e.clientY;
       } else if (d.mode === 'puppet') {
-        var gp = groundPoint(e, 0);
+        var gp = groundPoint(e, self.getEnvGroundY());
         if (gp) {
           d.puppet.x = clamp(gp.x - d.offX, -GROUND_LIMIT, GROUND_LIMIT);
           d.puppet.z = clamp(gp.z - d.offZ, -GROUND_LIMIT, GROUND_LIMIT);
           self.applyPuppetTransform(d.puppet);
-          var posEl = self.$('dsPupPos');
-          if (posEl) posEl.textContent = fmt(d.puppet.x) + ', ' + fmt(d.puppet.z);
+          self.updateAxisGizmo();
+          self.syncPuppetAxisSliders(d.puppet);
         }
       } else if (d.mode === 'camera') {
         var cp = groundPoint(e, self.virtualCamCfg.pos.y);
@@ -1737,6 +2723,8 @@
           self.updateCamHelper();
           self.syncCameraPanelSliders();
         }
+      } else if (d.mode === 'gizmo') {
+        self.applyGizmoDrag(d, e);
       }
     });
 
@@ -1746,7 +2734,8 @@
       self.hideDragBanner();
       if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
       if (!d) return;
-      if ((d.mode === 'puppet' || d.mode === 'camera' || d.mode === 'focus')) {
+      if ((d.mode === 'puppet' || d.mode === 'camera' || d.mode === 'focus' || d.mode === 'gizmo')) {
+        self.highlightGizmoAxis(null);
         self.markDirty();
       } else if (d.mode === 'orbit' && !d.moved && e.button === 0) {
         // 点击空白取消选中（人偶 / 相机 / 焦点）
@@ -1787,8 +2776,7 @@
     });
     this.on(this.$('dsGridBtn'), 'click', function () {
       self.gridVisible = !self.gridVisible;
-      self.grid.visible = self.gridVisible;
-      this.classList.toggle('active', self.gridVisible);
+      self.syncGridBtn();
     });
     this.on(this.$('dsResetViewBtn'), 'click', function () {
       self.orbit = { theta: 0.55, phi: 1.02, radius: 8.5, target: new THREE.Vector3(0, 1.0, 0) };
@@ -1844,10 +2832,24 @@
 
     function closePop() { pop.classList.remove('show'); }
 
+    function bodyTypeGridHtml(selected) {
+      return '<div class="ds-bodytype-grid">' +
+        BODY_TYPE_ORDER.map(function (k) {
+          var active = selected === k ? ' active' : '';
+          return '<button type="button" class="ds-bodytype-item' + active + '" data-pick-type="' + k + '">' + esc(BODY_TYPES[k].label) + '</button>';
+        }).join('') +
+      '</div>' +
+      '<div class="ds-add-type-hint">先选体型，再点下方添加</div>';
+    }
+
     this.on(this.$('dsAddPuppetBtn'), 'click', async function () {
       body.innerHTML = '<div style="color:#6b7280; font-size:12px; padding:8px 0;">加载中…</div>';
       pop.classList.add('show');
-      var items = ['<div class="ds-char-item" data-blank="1"><span class="ds-char-placeholder">🧍</span><span>空白人偶</span></div>'];
+      if (!self._pendingBodyType) self._pendingBodyType = 'man';
+      var items = [
+        bodyTypeGridHtml(self._pendingBodyType),
+        '<div class="ds-char-item" data-blank="1"><span class="ds-char-placeholder">🧍</span><span>空白人偶</span></div>'
+      ];
       try {
         var worldId = '';
         var ws = document.getElementById('defaultWorldSelect');
@@ -1866,7 +2868,9 @@
               var thumb = img
                 ? '<img src="' + esc(normalizeImageUrl ? normalizeImageUrl(img) : img) + '" alt="">'
                 : '<span class="ds-char-placeholder">👤</span>';
-              items.push('<div class="ds-char-item" data-cid="' + esc(String(c.id)) + '" data-cname="' + esc(c.name || '') + '">' + thumb + '<span>' + esc(c.name || ('角色 ' + c.id)) + '</span></div>');
+              items.push('<div class="ds-char-item" data-cid="' + esc(String(c.id)) + '" data-cname="' + esc(c.name || '') +
+                '" data-cage="' + esc(c.age || '') + '" data-cidentity="' + esc(c.identity || '') + '">' +
+                thumb + '<span>' + esc(c.name || ('角色 ' + c.id)) + '</span></div>');
             });
           }
         } else {
@@ -1877,20 +2881,38 @@
       }
       body.innerHTML = items.join('');
 
+      body.querySelectorAll('[data-pick-type]').forEach(function (btn) {
+        self.on(btn, 'click', function (e) {
+          e.stopPropagation();
+          self._pendingBodyType = btn.dataset.pickType;
+          body.querySelectorAll('[data-pick-type]').forEach(function (b) {
+            b.classList.toggle('active', b.dataset.pickType === self._pendingBodyType);
+          });
+        });
+      });
+
       body.querySelectorAll('.ds-char-item').forEach(function (item) {
         self.on(item, 'click', function () {
           var p;
+          var bodyType = self._pendingBodyType || 'man';
           if (item.dataset.blank) {
-            p = self.addPuppet({ name: '人偶 ' + (self.puppets.length + 1) });
+            var typeLabel = getBodyType(bodyType).label;
+            var sameCount = self.puppets.filter(function (x) { return x.bodyType === bodyType; }).length;
+            p = self.addPuppet({
+              name: typeLabel + ' ' + (sameCount + 1),
+              bodyType: bodyType
+            });
           } else {
+            bodyType = inferBodyType(item.dataset.cname, item.dataset.cage, item.dataset.cidentity) || bodyType;
             p = self.addPuppet({
               name: item.dataset.cname || '角色人偶',
               characterId: parseInt(item.dataset.cid, 10) || null,
-              characterName: item.dataset.cname || ''
+              characterName: item.dataset.cname || '',
+              bodyType: bodyType
             });
           }
           closePop();
-          self.setStatus('已添加「' + p.name + '」');
+          self.setStatus('已添加「' + p.name + '」（' + getBodyType(p.bodyType).label + '）');
         });
       });
     });
@@ -1917,7 +2939,10 @@
     this.camRig.visible = visible;
     if (this.focusMarker) this.focusMarker.visible = visible;
     if (this.sightLine) this.sightLine.visible = visible;
+    if (this.axisGizmo) this.axisGizmo.visible = visible && !!(this.selectedCamTarget === 'camera' || this.selectedCamTarget === 'focus' || this.selectedPuppetId);
+    if (this.fovGizmo) this.fovGizmo.visible = visible && this.selectedCamTarget === 'camera';
     this.updateCamSelectRing();
+    if (visible) this.updateAxisGizmo();
     var self = this;
     this.puppets.forEach(function (p) {
       Object.keys(p.rig.markers).forEach(function (k) { p.rig.markers[k].visible = false; });
@@ -1992,14 +3017,13 @@
         o.target.z + o.radius * sp * Math.cos(o.theta)
       );
       self.viewCam.lookAt(o.target);
+      self.syncEnvToCamera(self.viewCam);
 
       // 虚拟相机姿态
       self.virtualCam.position.copy(self.virtualCamCfg.pos);
       self.virtualCam.lookAt(self.virtualCamCfg.target);
       self.virtualCam.fov = self.virtualCamCfg.fov;
       self.virtualCam.updateProjectionMatrix();
-
-      self.renderer.render(self.scene, self.viewCam);
 
       // 对焦十字呼吸动画 + 选中放大
       if (self.focusMarker) {
@@ -2008,9 +3032,13 @@
         var fPulse = 1 + 0.05 * Math.sin(tNow * 3);
         self.focusMarker.scale.set(fBase * fPulse, fBase * fPulse, 1);
       }
+      self.updateAxisGizmo();
 
-      // PiP（隐藏 helper 再渲染）
+      self.renderer.render(self.scene, self.viewCam);
+
+      // PiP（隐藏 helper 再渲染；环境球改跟虚拟相机，保证快照里脚也贴地）
       self.setHelpersVisible(false);
+      self.syncEnvToCamera(self.virtualCam);
       self.pipRenderer.render(self.scene, self.virtualCam);
       self.setHelpersVisible(true);
     }
@@ -2061,7 +3089,11 @@
     this.on(document, 'keydown.directorStage', function (e) {
       if (!self.overlay || !self.overlay.classList.contains('show')) return;
       if (e.key === 'Escape') { self.close(true); }
-      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); self.undo(); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        e.stopPropagation();
+        self.undo();
+      }
       else if (e.key.toLowerCase() === 'delete' && self.selectedPuppetId) {
         var tag = document.activeElement && document.activeElement.tagName;
         if (tag !== 'INPUT' && tag !== 'TEXTAREA') self.removePuppet(self.selectedPuppetId);
@@ -2070,6 +3102,7 @@
   };
 
   DirectorEditor.prototype.close = function (flush) {
+    this.abortEnvFit();
     // 收尾数据
     this.node.data.directorData = this.serializeData();
     this.updateNodeShell();
@@ -2103,6 +3136,22 @@
       this.sightLine.geometry.dispose();
       this.sightLine.material.dispose();
     }
+    function disposeGizmo(g) {
+      if (!g) return;
+      if (g.parent) g.parent.remove(g);
+      g.traverse(function (o) {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          if (o.material.map) o.material.map.dispose();
+          o.material.dispose();
+        }
+        if (o.userData && o.userData._texture) o.userData._texture.dispose();
+      });
+    }
+    disposeGizmo(this.axisGizmo);
+    disposeGizmo(this.fovGizmo);
+    this.axisGizmo = null;
+    this.fovGizmo = null;
 
     if (this.overlay) this.overlay.remove();
     ed = null;
@@ -2127,8 +3176,18 @@
     return !!(ed && ed.overlay && ed.overlay.classList.contains('show'));
   }
 
+  function syncDirectorStageEnvironment(nodeId) {
+    if (!ed || !isDirectorStageEditorOpen()) return;
+    if (nodeId != null && ed.nodeId !== nodeId) return;
+    var env = ed.getEnvData();
+    if (env && env.url) ed.setupEnvironment(env);
+    else ed.removeEnvironment();
+  }
+
   window.DirectorStageEditor = {
     open: openDirectorStageEditor,
-    isOpen: isDirectorStageEditorOpen
+    isOpen: isDirectorStageEditorOpen,
+    syncEnvironment: syncDirectorStageEnvironment,
+    getInstance: function () { return ed; }
   };
 })();
