@@ -267,6 +267,13 @@
       startNodePlacing(nodeId);
     });
 
+    document.getElementById('menuAddDirectorStage').addEventListener('click', () => {
+      const nodeId = createDirectorStageNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
     document.getElementById('menuAddScript').addEventListener('click', () => {
       const nodeId = createScriptNode();
       renderMinimap();

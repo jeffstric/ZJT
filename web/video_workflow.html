@@ -23,6 +23,7 @@
   <link rel="stylesheet" href="/css/model_catalog.css" />
   <link rel="stylesheet" href="/css/image_coloring_editor.css" />
   <link rel="stylesheet" href="/css/pannellum.css" />
+  <link rel="stylesheet" href="/css/director_stage.css" />
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
   <script src="/i18n/i18n-dom.js?v=__VERSION__"></script>
@@ -191,6 +192,15 @@
                 <path d="M3 12h18M12 3c2.5 2.6 3.6 5.6 3.6 9s-1.1 6.4-3.6 9c-2.5-2.6-3.6-5.6-3.6-9s1.1-6.4 3.6-9z" stroke="currentColor" stroke-width="2"/>
               </svg>
               <span class="add-menu-text" data-i18n="panorama">360全景图</span>
+            </div>
+            <div class="add-menu-item" id="menuAddDirectorStage">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="3" y="7" width="13" height="10" rx="2" stroke="currentColor" stroke-width="2"/>
+                <path d="M16 10L21 8V16L16 14V10Z" fill="currentColor"/>
+                <circle cx="8.5" cy="3.5" r="1.5" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M8.5 5V7M8.5 7L7 10M8.5 7L10 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              <span class="add-menu-text" data-i18n="director_stage">导演台</span>
             </div>
             <div class="add-menu-item" id="menuAddScript">
               <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -1361,6 +1371,9 @@
   <script src="/js/camera_control_node.js"></script>
   <script src="/js/vendor/pannellum.min.js"></script>
   <script src="/js/panorama_node.js"></script>
+  <script src="/assets/vendor/three.min.js?v=__VERSION__"></script>
+  <script src="/js/director_stage_editor.js?v=__VERSION__"></script>
+  <script src="/js/director_stage_node.js?v=__VERSION__"></script>
   <script src="/js/shot_frame_generator.js"></script>
   <script src="/js/video_prompt_suffix.js"></script>
   <script src="/js/shot_frame_video_generator.js"></script>
