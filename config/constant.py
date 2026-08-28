@@ -396,6 +396,10 @@ class MediaGenerationErrorCode:
     MODEL_INPUT_UNSUPPORTED = "MODEL_INPUT_UNSUPPORTED"
     SNAPSHOT_MISMATCH = "SNAPSHOT_MISMATCH"
 ASSET_LIST_DB_QUERY_TIMEOUT = 30
+# 资产库写操作（更新/删除 DB 记录、解绑分镜 script_id）
+ASSET_MUTATION_DB_TIMEOUT = 30
+# 删除已入库资产时顺带删除暂存 JSON
+ASSET_STAGING_IO_TIMEOUT = 15
 
 # 音频时长探测（ffprobe）单次执行超时（秒）。用于分镜配音完成后探测时长并回写。
 FFPROBE_AUDIO_DURATION_TIMEOUT = 30
