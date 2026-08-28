@@ -6,6 +6,11 @@
   - 3x3 九宫格（9 格，子场景参考图）
 适用于批量生成角色、场景、道具等设计图的场景。
 
+切分后默认对每个单元图做白边/黑边自动清理（去除错位分隔线、白色相框、
+纯黑 padding 残留并拉伸回原尺寸），算法为商业版能力，经
+services/grid_border_clean_provider 公共门面调用；社区版/许可证未激活时
+降级为不清理，可通过 trim_border=False 关闭。
+
 新增宫格规格时，在 config/constant.py 的 GridConfig.VALID_SIZES 中登记即可，
 本模块按 int(sqrt(grid_size)) 自动推导行列数。
 """
@@ -38,6 +43,7 @@ class ImageGridSplitter:
         output_names: Optional[List[str]] = None,
         output_format: str = "png",
         validate: bool = True,
+        trim_border: bool = True,
     ) -> List[str]:
         """
         将 N×N 宫格图像切分成独立图像。
@@ -50,6 +56,8 @@ class ImageGridSplitter:
                           - None → 使用默认 {stem}_shot{i} 命名
                           - 长度必须等于 grid_size
             output_format: 输出格式，默认为 png
+            validate: 切分前是否执行宫格几何校验，默认 True
+            trim_border: 切分后是否清理单元图白边/黑边并拉伸回原尺寸，默认 True
 
         Returns:
             List[str]: 切分后的图像路径列表，行优先顺序
@@ -126,6 +134,21 @@ class ImageGridSplitter:
         output_paths = []
         for i, (region, name) in enumerate(zip(regions, output_names)):
             sub_img = img.crop(region)
+            if trim_border:
+                # 延迟 import：拆分器位于 script_writer_core，避免与 services 包
+                # 产生模块加载顺序耦合；社区版 Provider 未注册时原样返回
+                from services.grid_border_clean_provider import (
+                    trim_border_and_stretch,
+                )
+
+                sub_img, clean_result = trim_border_and_stretch(sub_img)
+                if clean_result.trimmed and clean_result.bbox is not None:
+                    w, h = sub_img.size
+                    x0, y0, x1, y1 = clean_result.bbox
+                    print(
+                        f"白边清理: {name} 裁剪 L{x0}/T{y0}/R{w - x1}/B{h - y1}"
+                        f" (内部切线 {clean_result.interior_cuts} 次) 后拉伸回 {w}x{h}"
+                    )
             output_path = os.path.join(output_dir, f"{name}.{output_format}")
             sub_img.save(output_path, format=output_format.upper())
             output_paths.append(output_path)
