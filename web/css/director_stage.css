@@ -1,0 +1,836 @@
+/* ============================
+   director_stage.css - 导演台 3D 编辑器样式
+   供 director_stage_editor.js 注入的全屏 overlay 使用
+   编辑器固定深色主题（3D 视口场景），不受工作流浅色/深色主题影响
+   ============================ */
+
+.ds-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: none;
+  flex-direction: column;
+  background: #14161d;
+  color: #e5e7eb;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.ds-overlay.show {
+  display: flex;
+}
+
+/* ---------- 顶栏 ---------- */
+.ds-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 16px;
+  background: #1b1e27;
+  border-bottom: 1px solid #2a2e3a;
+  flex-shrink: 0;
+}
+
+.ds-topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #f3f4f6;
+  white-space: nowrap;
+}
+
+.ds-topbar-title svg {
+  color: #60a5fa;
+}
+
+.ds-topbar-subtitle {
+  font-size: 12px;
+  color: #9ca3af;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-topbar-spacer {
+  flex: 1;
+}
+
+.ds-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  background: #232734;
+  color: #e5e7eb;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.ds-btn:hover {
+  background: #2c3140;
+  border-color: #4b5563;
+}
+
+.ds-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ds-btn.primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #ffffff;
+}
+
+.ds-btn.primary:hover {
+  background: #1d4ed8;
+}
+
+.ds-btn.success {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #ffffff;
+}
+
+.ds-btn.success:hover {
+  background: #15803d;
+}
+
+.ds-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: #9ca3af;
+}
+
+.ds-btn.ghost:hover {
+  background: #232734;
+  color: #e5e7eb;
+}
+
+/* ---------- 主体三栏 ---------- */
+.ds-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* 左栏 */
+.ds-left {
+  width: 224px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: #1b1e27;
+  border-right: 1px solid #2a2e3a;
+  overflow-y: auto;
+}
+
+.ds-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ds-section-head .ds-mini-btn {
+  margin-left: auto;
+}
+
+.ds-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  background: #232734;
+  color: #d1d5db;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.ds-mini-btn:hover {
+  background: #2c3140;
+}
+
+.ds-mini-btn.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #ffffff;
+}
+
+.ds-mini-btn.danger {
+  color: #f87171;
+}
+
+.ds-puppet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+.ds-puppet-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #2a2e3a;
+  border-radius: 8px;
+  background: #20232e;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.ds-puppet-item:hover {
+  border-color: #4b5563;
+}
+
+.ds-puppet-item.selected {
+  border-color: #2563eb;
+  background: #1d2839;
+}
+
+.ds-puppet-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.3);
+}
+
+.ds-puppet-name {
+  flex: 1;
+  font-size: 13px;
+  color: #e5e7eb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-puppet-del {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.ds-puppet-del:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.ds-pose-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 0 10px 12px;
+}
+
+.ds-pose-item {
+  padding: 8px 6px;
+  border: 1px solid #2a2e3a;
+  border-radius: 8px;
+  background: #20232e;
+  color: #d1d5db;
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.ds-pose-item:hover {
+  border-color: #2563eb;
+  background: #23294a;
+}
+
+.ds-pose-item.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ds-pose-item.active {
+  border-color: #2563eb;
+  background: #1d2839;
+  color: #ffffff;
+}
+
+/* 中间视口 */
+.ds-viewport-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  background: #14161d;
+}
+
+#dsCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.ds-viewport-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 6px;
+  z-index: 5;
+}
+
+.ds-mode-hint {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: rgba(20, 22, 29, 0.75);
+  border: 1px solid #2a2e3a;
+  color: #9ca3af;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 5;
+  white-space: nowrap;
+}
+
+/* 拖拽模式横幅：明确告知当前拖动在操作什么 */
+.ds-drag-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.92);
+  border: 1px solid #60a5fa;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: none;
+  z-index: 6;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.ds-drag-banner.show {
+  display: block;
+}
+
+/* 悬停提示：跟随鼠标，说明光标下对象可做什么 */
+.ds-hover-tip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(20, 22, 29, 0.9);
+  border: 1px solid #374151;
+  color: #e5e7eb;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 6;
+  white-space: nowrap;
+}
+
+.ds-hover-tip.show {
+  display: block;
+}
+
+/* 镜头预览画中画 */
+.ds-pip {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 240px;
+  border: 1px solid #374151;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  z-index: 5;
+}
+
+.ds-pip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  background: rgba(20, 22, 29, 0.9);
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.ds-pip-header .rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: ds-rec-blink 1.2s infinite;
+}
+
+@keyframes ds-rec-blink {
+  0%, 60% { opacity: 1; }
+  61%, 100% { opacity: 0.25; }
+}
+
+#dsPipCanvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* 选中信息浮层 */
+.ds-selection-tip {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 16px;
+  border-radius: 8px;
+  background: rgba(29, 40, 57, 0.92);
+  border: 1px solid #2563eb;
+  color: #dbeafe;
+  font-size: 12px;
+  z-index: 5;
+  pointer-events: none;
+  display: none;
+  white-space: nowrap;
+}
+
+.ds-selection-tip.show {
+  display: block;
+}
+
+/* 右栏 */
+.ds-right {
+  width: 268px;
+  flex-shrink: 0;
+  background: #1b1e27;
+  border-left: 1px solid #2a2e3a;
+  overflow-y: auto;
+  padding-bottom: 16px;
+}
+
+.ds-props-empty {
+  padding: 40px 16px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.ds-prop-group {
+  padding: 8px 12px 4px;
+}
+
+.ds-prop-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #9ca3af;
+  margin-bottom: 4px;
+}
+
+.ds-prop-value {
+  font-size: 11px;
+  color: #60a5fa;
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ds-slider-row label {
+  width: 52px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #9ca3af;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-slider-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
+.ds-slider-row .ds-num {
+  width: 46px;
+  flex-shrink: 0;
+  padding: 3px 4px;
+  border: 1px solid #374151;
+  border-radius: 5px;
+  background: #14161d;
+  color: #e5e7eb;
+  font-size: 11px;
+  text-align: right;
+}
+
+.ds-prop-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid #374151;
+  border-radius: 7px;
+  background: #14161d;
+  color: #e5e7eb;
+  font-size: 13px;
+  outline: none;
+}
+
+.ds-prop-input:focus {
+  border-color: #2563eb;
+}
+
+.ds-joint-details {
+  border-top: 1px solid #2a2e3a;
+  margin-top: 6px;
+}
+
+.ds-joint-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #d1d5db;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.ds-joint-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.ds-joint-details summary::after {
+  content: "▸";
+  color: #6b7280;
+  transition: transform 0.15s;
+}
+
+.ds-joint-details[open] summary::after {
+  transform: rotate(90deg);
+}
+
+.ds-joint-details summary:hover {
+  background: #20232e;
+}
+
+.ds-joint-body {
+  padding: 0 12px 10px;
+}
+
+.ds-joint-row {
+  padding: 6px 8px;
+  border-radius: 8px;
+  margin-bottom: 2px;
+  cursor: pointer;
+}
+
+.ds-joint-row:hover {
+  background: #20232e;
+}
+
+.ds-joint-row.active {
+  background: #1d2839;
+  outline: 1px solid #2563eb;
+}
+
+.ds-joint-row .ds-joint-name {
+  font-size: 12px;
+  color: #e5e7eb;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.ds-joint-row .ds-joint-name .ds-joint-reset {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 4px;
+}
+
+.ds-joint-row .ds-joint-reset:hover {
+  color: #f87171;
+}
+
+.ds-camera-preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 4px 12px 8px;
+}
+
+.ds-divider {
+  height: 1px;
+  background: #2a2e3a;
+  margin: 8px 0;
+}
+
+/* 添加人偶弹层 */
+.ds-add-pop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 280px;
+  max-height: 70%;
+  display: none;
+  flex-direction: column;
+  background: #1e2230;
+  border: 1px solid #374151;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  z-index: 20;
+  overflow: hidden;
+}
+
+.ds-add-pop.show {
+  display: flex;
+}
+
+.ds-add-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #2a2e3a;
+  font-size: 13px;
+  font-weight: 700;
+  color: #e5e7eb;
+}
+
+.ds-add-pop-body {
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ds-char-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #2a2e3a;
+  border-radius: 8px;
+  background: #20232e;
+  cursor: pointer;
+  font-size: 12px;
+  color: #e5e7eb;
+}
+
+.ds-char-item:hover {
+  border-color: #2563eb;
+}
+
+.ds-char-item img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.ds-char-placeholder {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #374151;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+/* 底部状态栏 */
+.ds-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 32px;
+  padding: 0 16px;
+  background: #1b1e27;
+  border-top: 1px solid #2a2e3a;
+  font-size: 11px;
+  color: #6b7280;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ds-statusbar .ds-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+}
+
+.ds-statusbar .ds-status-dot.dirty {
+  background: #f59e0b;
+}
+
+/* ---------- 节点壳样式（画布内节点使用，需兼容工作流主题） ---------- */
+/* 环境输入端口：绿色，区别于普通端口 */
+.port.input.ds-env-port {
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
+
+.ds-node-preview {
+  position: relative;
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0f172a;
+  border: 1px solid #e5e7eb;
+  aspect-ratio: 16 / 9;
+  cursor: pointer;
+}
+
+.ds-node-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ds-node-preview-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #94a3b8;
+  font-size: 12px;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+}
+
+.ds-node-preview-empty svg {
+  opacity: 0.7;
+}
+
+.ds-node-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ds-node-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.ds-node-btn:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.ds-node-btn.primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #ffffff;
+}
+
+.ds-node-btn.primary:hover {
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
+.ds-node-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ds-node-meta {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.ds-node-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+html.theme-dark .ds-node-btn {
+  background: #232734;
+  border-color: #374151;
+  color: #d1d5db;
+}
+
+html.theme-dark .ds-node-preview {
+  border-color: #374151;
+}
+
+/* 滚动条 */
+.ds-left::-webkit-scrollbar,
+.ds-right::-webkit-scrollbar,
+.ds-add-pop-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.ds-left::-webkit-scrollbar-thumb,
+.ds-right::-webkit-scrollbar-thumb,
+.ds-add-pop-body::-webkit-scrollbar-thumb {
+  background: #374151;
+  border-radius: 4px;
+}

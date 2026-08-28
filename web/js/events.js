@@ -267,6 +267,13 @@
       startNodePlacing(nodeId);
     });
 
+    document.getElementById('menuAddDirectorStage').addEventListener('click', () => {
+      const nodeId = createDirectorStageNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
     document.getElementById('menuAddScript').addEventListener('click', () => {
       const nodeId = createScriptNode();
       renderMinimap();
@@ -887,6 +894,23 @@
         // 辅助：计算鼠标到端口中心的距离
         function distToPort(portEl){
           return getPortDistance(portEl, mouseX, mouseY);
+        }
+
+        if(fromNode && fromNode.type === 'panorama'){
+          // 360全景节点输出 → 导演台环境端口等（注册表驱动）
+          const envPort = findNearestConnectablePort(mouseX, mouseY, 'panorama', PROXIMITY_DIST);
+          if(envPort){
+            const connArray = state[envPort.portCfg.connectionType] || state.connections;
+            const exists = connArray.some(c => c.from === fromNode.id && c.to === envPort.nodeId && c.portType === envPort.portType);
+            if(!exists){
+              connArray.push({ id: state.nextConnId++, from: fromNode.id, to: envPort.nodeId, portType: envPort.portType });
+              if(typeof envPort.portCfg.onConnect === 'function'){
+                envPort.portCfg.onConnect(fromNode, envPort.node);
+              }
+              renderAllConnections();
+              safeAutoSave();
+            }
+          }
         }
 
         if(fromNode && fromNode.type === 'image'){
