@@ -2,12 +2,13 @@
 峰谷计费时段判断单元测试
 测试 utils.billing_period 模块：北京时间高峰/空闲时段判断、时区转换、异常兜底。
 
-DeepSeek 峰谷规则：高峰 9:00-12:00、14:00-18:00（左闭右开），其余空闲。
+DeepSeek 峰谷规则：自 2026-08-23（北京时间）起，高峰为周一至周五 9:00-12:00、14:00-18:00
+（左闭右开），其余（含周末全天）空闲；此前高峰窗口不区分星期。
 """
 import unittest
 from datetime import datetime, timezone, timedelta
 
-from utils.billing_period import get_billing_period, to_bjt_naive
+from utils.billing_period import get_billing_period, to_bjt_naive, resolve_billing_period
 from config.constant import PeakValleyBillingConstants
 
 
@@ -52,6 +53,77 @@ class TestGetBillingPeriod(unittest.TestCase):
         self.assertEqual(get_billing_period(self._dt(14, 0)), PeakValleyBillingConstants.PERIOD_PEAK)
         # 18:00 退出高峰
         self.assertEqual(get_billing_period(self._dt(18, 0)), PeakValleyBillingConstants.PERIOD_OFF_PEAK)
+
+
+class TestWeekendRules(unittest.TestCase):
+    """测试周末全天空闲规则（2026-08-23 00:00 北京时间起生效）"""
+
+    def test_weekend_off_peak_after_effective(self):
+        """生效后周六全天（含原高峰窗口 9-12 / 14-18）均为空闲"""
+        # 2026-08-29 周六
+        for hour, minute in ((0, 0), (9, 0), (11, 59), (12, 0), (14, 0), (17, 59), (23, 59)):
+            self.assertEqual(
+                get_billing_period(datetime(2026, 8, 29, hour, minute)),
+                PeakValleyBillingConstants.PERIOD_OFF_PEAK,
+                f"周六 {hour}:{minute:02d} 应为空闲",
+            )
+
+    def test_sunday_off_peak_after_effective(self):
+        """生效后周日全天为空闲"""
+        # 2026-08-30 周日
+        self.assertEqual(get_billing_period(datetime(2026, 8, 30, 10, 0)),
+                         PeakValleyBillingConstants.PERIOD_OFF_PEAK)
+        self.assertEqual(get_billing_period(datetime(2026, 8, 30, 16, 30)),
+                         PeakValleyBillingConstants.PERIOD_OFF_PEAK)
+
+    def test_weekend_peak_before_effective(self):
+        """生效前周末仍按小时窗口判高峰（历史补扣/对账按旧规则）"""
+        # 2026-08-22 周六、2026-08-16 周日，均在生效时刻之前
+        self.assertEqual(get_billing_period(datetime(2026, 8, 22, 10, 0)),
+                         PeakValleyBillingConstants.PERIOD_PEAK)
+        self.assertEqual(get_billing_period(datetime(2026, 8, 16, 15, 0)),
+                         PeakValleyBillingConstants.PERIOD_PEAK)
+        # 生效前周末夜间仍为空闲
+        self.assertEqual(get_billing_period(datetime(2026, 8, 22, 20, 0)),
+                         PeakValleyBillingConstants.PERIOD_OFF_PEAK)
+
+    def test_effective_boundary(self):
+        """生效时刻边界：2026-08-23 00:00（周日）起空闲"""
+        # 边界前一刻（2026-08-22 23:59 周六夜间，旧规则本就是空闲）
+        self.assertEqual(get_billing_period(datetime(2026, 8, 22, 23, 59)),
+                         PeakValleyBillingConstants.PERIOD_OFF_PEAK)
+        # 生效时刻本身（周日 00:00）
+        self.assertEqual(get_billing_period(datetime(2026, 8, 23, 0, 0)),
+                         PeakValleyBillingConstants.PERIOD_OFF_PEAK)
+        # 对比：生效前一天周六 10:00 高峰 vs 生效后首个周末（8-29 周六）10:00 空闲
+        self.assertEqual(get_billing_period(datetime(2026, 8, 22, 10, 0)),
+                         PeakValleyBillingConstants.PERIOD_PEAK)
+        self.assertEqual(get_billing_period(datetime(2026, 8, 29, 10, 0)),
+                         PeakValleyBillingConstants.PERIOD_OFF_PEAK)
+
+    def test_weekday_peak_still_applies_after_effective(self):
+        """生效后工作日高峰窗口不变（2026-08-28 周五）"""
+        self.assertEqual(get_billing_period(datetime(2026, 8, 28, 10, 0)),
+                         PeakValleyBillingConstants.PERIOD_PEAK)
+        self.assertEqual(get_billing_period(datetime(2026, 8, 28, 16, 0)),
+                         PeakValleyBillingConstants.PERIOD_PEAK)
+        # 工作日午间/夜间仍为空闲
+        self.assertEqual(get_billing_period(datetime(2026, 8, 28, 13, 0)),
+                         PeakValleyBillingConstants.PERIOD_OFF_PEAK)
+        self.assertEqual(get_billing_period(datetime(2026, 8, 28, 21, 0)),
+                         PeakValleyBillingConstants.PERIOD_OFF_PEAK)
+
+    def test_weekend_rule_uses_bjt_weekday(self):
+        """跨时区日期翻转后按北京星期/日期判定（UTC 16:00 后北京进入次日）"""
+        # UTC 2026-08-28（周五）17:00 = BJT 2026-08-29（周六）01:00 → 周末空闲
+        dt = datetime(2026, 8, 28, 17, 0, tzinfo=timezone.utc)
+        self.assertEqual(get_billing_period(dt), PeakValleyBillingConstants.PERIOD_OFF_PEAK)
+        # UTC 2026-08-29（周六）02:00 = BJT 周六 10:00（原高峰窗口）→ 生效后周末空闲
+        dt_sat = datetime(2026, 8, 29, 2, 0, tzinfo=timezone.utc)
+        self.assertEqual(get_billing_period(dt_sat), PeakValleyBillingConstants.PERIOD_OFF_PEAK)
+        # 对照（生效前）：UTC 2026-08-22（周六）02:00 = BJT 周六 10:00 → 旧规则仍高峰
+        dt_sat_old = datetime(2026, 8, 22, 2, 0, tzinfo=timezone.utc)
+        self.assertEqual(get_billing_period(dt_sat_old), PeakValleyBillingConstants.PERIOD_PEAK)
 
 
 class TestTimezoneConversion(unittest.TestCase):
@@ -111,6 +183,48 @@ class TestRobustness(unittest.TestCase):
         result = to_bjt_naive(None)
         self.assertIsInstance(result, datetime)
         self.assertIsNone(result.tzinfo)
+
+
+class TestResolveBillingPeriod(unittest.TestCase):
+    """测试 resolve_billing_period 的兜底标记（区分调用时间判定 vs 当前时间估算）"""
+
+    def test_valid_datetime_not_fallback(self):
+        """正常 datetime：is_fallback=False"""
+        period, is_fallback = resolve_billing_period(datetime(2026, 8, 13, 10, 0))
+        self.assertEqual(period, PeakValleyBillingConstants.PERIOD_PEAK)
+        self.assertFalse(is_fallback)
+
+    def test_valid_string_not_fallback(self):
+        """可解析的 ISO 字符串：is_fallback=False"""
+        period, is_fallback = resolve_billing_period('2026-08-29 10:00:00')
+        self.assertEqual(period, PeakValleyBillingConstants.PERIOD_OFF_PEAK)  # 周六
+        self.assertFalse(is_fallback)
+
+    def test_none_is_fallback(self):
+        """None：按当前时间估算，is_fallback=True"""
+        period, is_fallback = resolve_billing_period(None)
+        self.assertIn(period, (PeakValleyBillingConstants.PERIOD_PEAK,
+                               PeakValleyBillingConstants.PERIOD_OFF_PEAK))
+        self.assertTrue(is_fallback)
+
+    def test_invalid_string_is_fallback(self):
+        """无法解析的字符串：is_fallback=True"""
+        period, is_fallback = resolve_billing_period('not-a-date')
+        self.assertIn(period, (PeakValleyBillingConstants.PERIOD_PEAK,
+                               PeakValleyBillingConstants.PERIOD_OFF_PEAK))
+        self.assertTrue(is_fallback)
+
+    def test_non_datetime_type_is_fallback(self):
+        """非日期类型（如 int）：is_fallback=True，不抛异常"""
+        period, is_fallback = resolve_billing_period(20260829)
+        self.assertIn(period, (PeakValleyBillingConstants.PERIOD_PEAK,
+                               PeakValleyBillingConstants.PERIOD_OFF_PEAK))
+        self.assertTrue(is_fallback)
+
+    def test_consistent_with_get_billing_period(self):
+        """get_billing_period 与 resolve_billing_period 的时段结果一致"""
+        for dt in (datetime(2026, 8, 28, 10, 0), datetime(2026, 8, 29, 15, 0), None, 'bad'):
+            self.assertEqual(get_billing_period(dt), resolve_billing_period(dt)[0])
 
 
 if __name__ == '__main__':

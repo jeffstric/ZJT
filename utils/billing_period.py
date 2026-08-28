@@ -10,6 +10,8 @@
 - 与项目现有约定一致（如 checkin_service 依赖 DB=北京时间）：
   token_log.created_at 为 MySQL CURRENT_TIMESTAMP，视为北京时间 naive datetime。
 - 提供 aware→北京时间 naive 的归一化，兼容传入带 tzinfo 的时间。
+- 高峰窗口仅周一至周五生效；自 2026-08-23（北京时间）起周末全天为空闲，
+  生效时刻见 PeakValleyBillingConstants.WEEKEND_OFF_PEAK_FROM。
 """
 from __future__ import annotations
 
@@ -86,23 +88,55 @@ def get_billing_period(dt: DateTimeLike) -> str:
         PeakValleyBillingConstants.PERIOD_OFF_PEAK ('off_peak')
 
     任何异常都不会抛出：解析失败回退「当前时间」，确保扣费链路不中断。
+    需要区分「按调用时间判定」与「兜底估算」时用 resolve_billing_period。
     """
+    return resolve_billing_period(dt)[0]
+
+
+def resolve_billing_period(dt: DateTimeLike) -> tuple[str, bool]:
+    """判断 dt 所属计费时段，并标记时段是否为兜底估算。
+
+    Args:
+        dt: datetime / ISO 字符串 / None。视为北京时间（naive）或自动转换（aware）。
+
+    Returns:
+        (period, is_fallback)：
+        - period: PERIOD_PEAK 或 PERIOD_OFF_PEAK
+        - is_fallback: True 表示入参为 None / 无法解析 / 异常，时段按「当前北京时间」
+          估算而非调用发生时间。两者在扣费结果上等价（不中断扣费），但对账 /
+          审计时含义不同，落 computing_power_log.note 需区分标记。
+
+    任何异常都不会抛出，确保扣费链路不中断。
+    """
+    if dt is None:
+        return now_period(), True
+    if isinstance(dt, str):
+        if _parse_str(dt) is None:
+            return now_period(), True
+    elif not isinstance(dt, datetime):
+        return now_period(), True
     try:
-        bjt = to_bjt_naive(dt)
-        hour = bjt.hour
-        for start, end in PVB.PEAK_TIME_RANGES:
-            if start <= hour < end:
-                return PVB.PERIOD_PEAK
-        return PVB.PERIOD_OFF_PEAK
+        return _period_for(to_bjt_naive(dt)), False
     except Exception:
-        # 极端情况下按当前时间兜底（默认大概率空闲时段）
-        hour = datetime.now(BJT).hour
-        for start, end in PVB.PEAK_TIME_RANGES:
-            if start <= hour < end:
-                return PVB.PERIOD_PEAK
+        return now_period(), True
+
+
+def _period_for(bjt: datetime) -> str:
+    """按北京时间 naive datetime 判定计费时段。
+
+    规则（北京时间）：
+    - 自 WEEKEND_OFF_PEAK_FROM（2026-08-23 00:00）起，周六日全天为空闲；
+    - 周一至周五的高峰窗口见 PEAK_TIME_RANGES（左闭右开），其余为空闲。
+    """
+    if bjt >= PVB.WEEKEND_OFF_PEAK_FROM and bjt.isoweekday() not in PVB.PEAK_WEEKDAYS:
         return PVB.PERIOD_OFF_PEAK
+    hour = bjt.hour
+    for start, end in PVB.PEAK_TIME_RANGES:
+        if start <= hour < end:
+            return PVB.PERIOD_PEAK
+    return PVB.PERIOD_OFF_PEAK
 
 
 def now_period() -> str:
     """返回当前北京时间所属计费时段（调试/展示用）。"""
-    return get_billing_period(None)
+    return _period_for(datetime.now(BJT).replace(tzinfo=None))
