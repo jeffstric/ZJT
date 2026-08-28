@@ -19,6 +19,9 @@
   const DEFAULT_LINE_WIDTH = 6;
   const MIN_LINE_WIDTH = 1;
   const MAX_LINE_WIDTH = 40;
+  const MIN_OPACITY_PERCENT = 10;
+  const DEFAULT_OPACITY_PERCENT = 100;
+  const MAX_OPACITY_PERCENT = 100;
   const MIN_TEXT_FONT_CSS = 14;
   const MAX_TEXT_FONT_CSS = 96;
   const MAX_UNDO = 50;
@@ -271,6 +274,7 @@
     tool: 'select',
     color: DEFAULT_COLOR,
     lineWidth: DEFAULT_LINE_WIDTH,
+    opacity: DEFAULT_OPACITY_PERCENT / 100,
     ratio: 'original',
     out: { w: 1, h: 1 },
     cssScale: 1,   // css px / 输出画布自然 px
@@ -347,8 +351,14 @@
             '</div>' +
             '<button class="doodle-confirm-btn" id="doodleConfirmBtn" type="button">' + tr('doodle_confirm', '确认') + '</button>' +
             '<div class="doodle-panel doodle-size-panel" id="doodleSizePanel">' +
-              '<input type="range" id="doodleSizeRange" min="' + MIN_LINE_WIDTH + '" max="' + MAX_LINE_WIDTH + '" step="1" value="' + DEFAULT_LINE_WIDTH + '" />' +
-              '<span class="doodle-size-value"><span id="doodleSizeValue">' + DEFAULT_LINE_WIDTH + '</span>px</span>' +
+              '<div class="doodle-panel-row">' +
+                '<input type="range" id="doodleSizeRange" min="' + MIN_LINE_WIDTH + '" max="' + MAX_LINE_WIDTH + '" step="1" value="' + DEFAULT_LINE_WIDTH + '" aria-label="' + tr('doodle_size', '粗细') + '" />' +
+                '<span class="doodle-size-value"><span id="doodleSizeValue">' + DEFAULT_LINE_WIDTH + '</span>px</span>' +
+              '</div>' +
+              '<div class="doodle-panel-row">' +
+                '<input type="range" id="doodleOpacityRange" min="' + MIN_OPACITY_PERCENT + '" max="' + MAX_OPACITY_PERCENT + '" step="5" value="' + DEFAULT_OPACITY_PERCENT + '" aria-label="' + tr('doodle_opacity', '透明度') + '" />' +
+                '<span class="doodle-size-value"><span id="doodleOpacityValue">' + DEFAULT_OPACITY_PERCENT + '</span>%</span>' +
+              '</div>' +
             '</div>' +
             '<div class="doodle-panel doodle-color-panel" id="doodleColorPanel"></div>' +
           '</div>' +
@@ -431,7 +441,7 @@
       if (S.cursorEl) S.cursorEl.style.display = 'none';
     });
     S.canvas.addEventListener('mouseenter', () => {
-      if (S.cursorEl && S.tool === 'eraser') S.cursorEl.style.display = 'block';
+      if (S.cursorEl && (S.tool === 'eraser' || S.tool === 'pen')) S.cursorEl.style.display = 'block';
     });
 
     document.getElementById('doodleCloseBtn').addEventListener('click', requestClose);
@@ -470,6 +480,13 @@
       range.value = String(S.lineWidth);
       document.getElementById('doodleSizeValue').textContent = String(S.lineWidth);
       updateCursorSize();
+    });
+
+    const opacityRange = document.getElementById('doodleOpacityRange');
+    opacityRange.addEventListener('input', () => {
+      S.opacity = clamp(parseInt(opacityRange.value, 10) || DEFAULT_OPACITY_PERCENT, MIN_OPACITY_PERCENT, MAX_OPACITY_PERCENT) / 100;
+      opacityRange.value = String(Math.round(S.opacity * 100));
+      document.getElementById('doodleOpacityValue').textContent = String(Math.round(S.opacity * 100));
     });
 
     document.getElementById('doodleRatioBtn').addEventListener('click', (e) => {
@@ -608,12 +625,18 @@
     ctx.save();
     ctx.translate(img.x, img.y);
     ctx.scale(img.scale, img.scale);
+    const applyOpacity = (el) => {
+      // eraser 为 destination-out 全擦，不受透明度影响
+      ctx.globalAlpha = (el && el.type !== 'eraser' && el.opacity != null) ? clamp(el.opacity, 0.05, 1) : 1;
+    };
     for (const el of S.elements) {
+      applyOpacity(el);
       drawElement(ctx, el);
     }
-    if (S.drag && S.drag.kind === 'pen') drawElement(ctx, S.drag.stroke);
+    if (S.drag && S.drag.kind === 'pen') { applyOpacity(S.drag.stroke); drawElement(ctx, S.drag.stroke); }
     if (S.drag && S.drag.kind === 'eraser') drawElement(ctx, S.drag.stroke);
-    if (S.drag && S.drag.kind === 'rect') drawElement(ctx, S.drag.draft);
+    if (S.drag && S.drag.kind === 'rect') { applyOpacity(S.drag.draft); drawElement(ctx, S.drag.draft); }
+    ctx.globalAlpha = 1;
     ctx.restore();
     ctx.globalCompositeOperation = 'destination-over';
     ctx.drawImage(img.img, img.x, img.y, img.naturalW * img.scale, img.naturalH * img.scale);
@@ -736,7 +759,7 @@
         const width = Math.max(0.5, cssLenToImg(S.lineWidth));
         S.drag = {
           kind: 'pen',
-          stroke: { id: S.nextId++, type: 'stroke', points: [{ x: imgPt.x, y: imgPt.y }], color: S.color, width },
+          stroke: { id: S.nextId++, type: 'stroke', points: [{ x: imgPt.x, y: imgPt.y }], color: S.color, width, opacity: S.opacity },
         };
         break;
       }
@@ -759,7 +782,7 @@
         S.drag = {
           kind: 'rect',
           start: imgPt,
-          draft: { id: S.nextId++, type: 'rect', x: imgPt.x, y: imgPt.y, w: 0, h: 0, color: S.color, width },
+          draft: { id: S.nextId++, type: 'rect', x: imgPt.x, y: imgPt.y, w: 0, h: 0, color: S.color, width, opacity: S.opacity },
         };
         break;
       }
@@ -1096,6 +1119,7 @@
         text,
         color: ed.color,
         fontSize: ed.fontSizeImg,
+        opacity: S.opacity,
       };
       S.elements.push(el);
       pushRecord({ action: 'add', element: el });
@@ -1226,15 +1250,16 @@
 
   function updateCursor() {
     if (!S.canvas) return;
-    const map = { select: 'default', pen: 'crosshair', eraser: 'none', rect: 'crosshair', text: 'text' };
+    // 画笔/橡皮隐藏系统光标，显示跟随鼠标的圆形轮廓（直径=粗细面板值）
+    const map = { select: 'default', pen: 'none', eraser: 'none', rect: 'crosshair', text: 'text' };
     S.canvas.style.cursor = map[S.tool] || 'default';
     updateCursorSize();
   }
 
-  /** 橡皮擦圆形光标：直径跟随粗细面板，实时预示擦除范围。 */
+  /** 画笔/橡皮的圆形光标：直径跟随粗细面板，橡皮预示擦除范围、画笔预示笔画粗细。 */
   function updateCursorSize() {
     if (!S.cursorEl) return;
-    const show = S.tool === 'eraser';
+    const show = S.tool === 'eraser' || S.tool === 'pen';
     S.cursorEl.style.display = show ? 'block' : 'none';
     if (show) {
       const d = Math.max(S.lineWidth, 4);
@@ -1244,7 +1269,8 @@
   }
 
   function updateCursorPos(css) {
-    if (!S.cursorEl || S.tool !== 'eraser' || !S.canvas) return;
+    if (!S.cursorEl || !S.canvas) return;
+    if (S.tool !== 'eraser' && S.tool !== 'pen') return;
     S.cursorEl.style.left = Math.round(S.canvas.offsetLeft + css.x) + 'px';
     S.cursorEl.style.top = Math.round(S.canvas.offsetTop + css.y) + 'px';
   }
@@ -1258,9 +1284,12 @@
   function showSizePanel(btnEl) {
     const panel = document.getElementById('doodleSizePanel');
     const range = document.getElementById('doodleSizeRange');
+    const opacityRange = document.getElementById('doodleOpacityRange');
     closePanels();
     range.value = String(S.lineWidth);
     document.getElementById('doodleSizeValue').textContent = String(S.lineWidth);
+    opacityRange.value = String(Math.round(S.opacity * 100));
+    document.getElementById('doodleOpacityValue').textContent = String(Math.round(S.opacity * 100));
     let btn = btnEl;
     if (!btn) btn = S.modal.querySelector('#doodleToolbar [data-tool="' + S.tool + '"]');
     positionPanel(panel, btn);
@@ -1489,6 +1518,7 @@
     S.tool = 'select';
     S.color = DEFAULT_COLOR;
     S.lineWidth = DEFAULT_LINE_WIDTH;
+    S.opacity = DEFAULT_OPACITY_PERCENT / 100;
     S.context = options;
     S.onComplete = typeof options.onComplete === 'function' ? options.onComplete : null;
 

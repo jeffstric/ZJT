@@ -263,11 +263,11 @@
   display: block;
 }
 
-/* 粗细面板 */
+/* 粗细 / 透明度面板 */
 .doodle-editor-modal .doodle-size-panel {
   display: none;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   min-width: 220px;
 }
 
@@ -275,7 +275,13 @@
   display: flex;
 }
 
-.doodle-editor-modal .doodle-size-panel input[type='range'] {
+.doodle-editor-modal .doodle-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.doodle-editor-modal .doodle-panel-row input[type='range'] {
   flex: 1;
 }
 
