@@ -37,7 +37,7 @@
 | [digital_human_node.md](./digital_human_node.md) | 数字人节点 - 图片+音频生成数字人视频、绘制功能 |
 | [dialogue_group_node.md](./dialogue_group_node.md) | 对话组节点 - 多角色对话、自动 TTS、时间轴关联 |
 | [camera_control_node.md](./camera_control_node.md) | 相机控制节点 - 水平/垂直角度、缩放、3D 预览、预设运动 |
-| [panorama_node.md](./panorama_node.md) | 360全景图节点 - equirectangular 全景生成、Pannellum 拖拽查看、全屏、提示词模板 |
+| [panorama_node.md](./panorama_node.md) | 360全景图节点 - equirectangular 全景生成、Pannellum 拖拽查看、全屏、视角截图（1K/2K+比例可选）、提示词模板 |
 | [text_node.md](./text_node.md) | 文本节点 - 纯文本注释 |
 
 ## 资产管理

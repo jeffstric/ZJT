@@ -72,6 +72,18 @@
 - WebGL 上下文管理：`window.PanoramaViewerRegistry` 按 nodeId 登记；节点删除（`canvas.js removeNode` → `node.onDestroy()`）与工作流切换（`restoreWorkflow` → `destroyAll()`）时销毁，防止上下文泄漏。
 - 降级：`pannellum` 未加载时退回平面 `<img>` 预览并 toast 提示。
 
+## 视角截图（Snapshot）
+
+在全景预览（节点内或全屏弹层）中拖拽到任意视角后，可一键截图并自动生成图片节点：
+
+- **入口**：节点工具栏「截图」按钮（弹出画质/比例设置）或全屏弹层顶栏（画质/比例选择器 + 截图按钮）。
+- **画质**：默认 **1K**（长边 1024px），可选 2K（长边 2048px）。
+- **比例**：默认跟随工作流比例（`state.ratio`），可选 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 2:1 / 21:9；设置随工作流保存复原（`node.data.snapshot`）。
+- **实现原理**：截图不受屏幕上查看器尺寸限制——用同一张全景图新建一个**离屏 pannellum 查看器**（容器尺寸=目标分辨率），复位当前 yaw/pitch/hfov 渲染首帧后 `toDataURL` 导出 JPEG。
+- **WebGL 前置补丁**：Pannellum 创建 WebGL 上下文未传 `preserveDrawingBuffer`，渲染帧合成后 `toDataURL` 会得到空白图。`panorama_node.js` 在脚本加载时对 `HTMLCanvasElement.prototype.getContext` 注入 `preserveDrawingBuffer: true`（本页面无其他 WebGL 使用方，无副作用）。
+- **产物链路**：JPEG dataURL → Blob → `uploadFile`（`POST /api/video-workflow/upload`）→ 自动创建标准图片节点并连线（全景节点 → 图片节点，图片节点 `data.ratio` 同步为截图比例），可直接接图生视频等下游节点。
+- **失败保护**：离屏加载 20s 超时；截图过程中按钮置 busy 防重复提交；全屏弹层内通过顶栏 flash 提示进度/结果（普通 toast 会被弹层遮挡）。
+
 ## 重载复原（对应 AGENTS.md 第 4 条）
 
 `createNodeWithDataFactory(createPanoramaNode, restoreDomFn)`：

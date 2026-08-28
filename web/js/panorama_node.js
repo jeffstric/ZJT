@@ -1,12 +1,27 @@
 // ============================
 // panorama_node.js - 360度全景图节点
 // 生成 equirectangular 等距圆柱全景图，内置 Pannellum 查看器：
-// 拖拽旋转视角（yaw/pitch）、惯性、全屏查看、视角状态随工作流保存复原。
+// 拖拽旋转视角（yaw/pitch/hfov）、惯性、全屏查看、视角状态随工作流保存复原。
+// 支持视角截图：任意比例/画质（默认1K）离屏渲染当前视角，自动上传并生成图片节点。
 // 提示词侧内置 8 类场景模板 + 全景技术后缀自动拼接。
 // 依赖：/js/vendor/pannellum.min.js（本地 vendor，零外部依赖）
 // ============================
 
 (function() {
+
+  // Pannellum 的 WebGL 上下文默认不保留绘制缓冲（未传 preserveDrawingBuffer），
+  // 渲染帧合成后 canvas.toDataURL() 会得到空白图像，截图前必须注入该选项。
+  // 本页面除全景查看器外没有其他 WebGL 使用方，一次性补丁无副作用。
+  if (!window.__panoGetContextPatched) {
+    window.__panoGetContextPatched = true;
+    var origGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(type, attrs) {
+      if (type === 'webgl' || type === 'experimental-webgl') {
+        attrs = Object.assign({}, attrs || {}, { preserveDrawingBuffer: true });
+      }
+      return origGetContext.call(this, type, attrs);
+    };
+  }
 
   // ---------- 提示词模板库 ----------
   // 结构遵循 equirectangular 提示词最佳实践：四周环绕式环境描述 + 光照一致性，
@@ -88,6 +103,111 @@
     return out;
   }
 
+  // ---------- 视角截图 ----------
+  // 截图比例选项（透视视角常用比例，非全景展开比例）
+  var SNAPSHOT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '2:1', '21:9'];
+
+  // 画质 → 目标像素：1K/2K 均指长边像素，短边按比例推导
+  function snapshotDimensions(size, ratio) {
+    var long = size === '2K' ? 2048 : 1024;
+    var w = 16, h = 9;
+    var m = String(ratio || '').match(/^(\d+(?:\.\d+)?)[:x](\d+(?:\.\d+)?)$/);
+    if (m) { w = parseFloat(m[1]); h = parseFloat(m[2]); }
+    if (w >= h) return { width: long, height: Math.round(long * h / w) };
+    return { width: Math.round(long * w / h), height: long };
+  }
+
+  function dataUrlToBlob(dataUrl) {
+    var parts = String(dataUrl).split(',');
+    var mime = (parts[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
+    var bin = atob(parts[1]);
+    var arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+
+  /**
+   * 离屏渲染指定视角并导出 JPEG dataURL。
+   * 原理：用同一张全景图新建一个隐藏的 pannellum 查看器（容器尺寸=目标分辨率），
+   * 复位 yaw/pitch/hfov 渲染首帧后 toDataURL——因此可输出任意比例/分辨率，
+   * 而不受屏幕上查看器实际大小的限制。
+   * @param {string} proxiedUrl 已走 proxyImageUrl 的同源全景图地址
+   * @param {{haov:number, vaov:number}} fov 全景视场（与主查看器一致）
+   * @param {{yaw:number, pitch:number, hfov:number}} view 要截取的视角
+   * @param {number} width 目标宽度(px)
+   * @param {number} height 目标高度(px)
+   * @returns {Promise<string>} JPEG dataURL
+   */
+  function capturePanoramaView(proxiedUrl, fov, view, width, height) {
+    return new Promise(function(resolve, reject) {
+      if (typeof window.pannellum === 'undefined') {
+        reject(new Error('pannellum not loaded'));
+        return;
+      }
+      var container = document.createElement('div');
+      container.className = 'panorama-snapshot-stage';
+      container.style.width = width + 'px';
+      container.style.height = height + 'px';
+      document.body.appendChild(container);
+
+      var viewer = null;
+      var settled = false;
+      var timer = null;
+      var cleanup = function() {
+        if (timer) { clearTimeout(timer); timer = null; }
+        try { if (viewer) viewer.destroy(); } catch (e) { /* ignore */ }
+        if (container.parentNode) container.parentNode.removeChild(container);
+      };
+      var fail = function(err) {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String(err || '截图失败')));
+      };
+
+      // 加载超时保护（正常 <2s，网络图代理较慢时放宽）
+      timer = setTimeout(function() { fail(new Error('全景图加载超时')); }, 20000);
+
+      try {
+        viewer = window.pannellum.viewer(container, {
+          type: 'equirectangular',
+          panorama: proxiedUrl,
+          autoLoad: true,
+          haov: fov.haov, vaov: fov.vaov, vOffset: 0,
+          yaw: view.yaw || 0,
+          pitch: view.pitch || 0,
+          hfov: Math.min(120, Math.max(50, view.hfov || 100)),
+          showControls: false,
+          compass: false,
+          mouseZoom: false,
+          doubleClickZoom: false
+        });
+      } catch (e) {
+        fail(e);
+        return;
+      }
+
+      viewer.on('error', function(err) { fail(err); });
+      viewer.on('load', function() {
+        // 等待首帧渲染落盘（preserveDrawingBuffer 已由 getContext 补丁保证）
+        setTimeout(function() {
+          if (settled) return;
+          try {
+            var canvas = container.querySelector('canvas');
+            if (!canvas) throw new Error('渲染画布未创建');
+            var dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+            if (!dataUrl || dataUrl.length < 1000) throw new Error('截图内容为空');
+            settled = true;
+            cleanup();
+            resolve(dataUrl);
+          } catch (e) {
+            fail(e);
+          }
+        }, 200);
+      });
+    });
+  }
+
   // ---------- Pannellum 查看器管理 ----------
   var viewerRegistry = {}; // nodeId -> { viewer, containerId }
 
@@ -167,9 +287,9 @@
     if (!fullscreenState) return;
     var st = fullscreenState;
     fullscreenState = null;
-    if (st.onSaveView && saveView !== false) {
+    if (st.opts && st.opts.onSaveView && saveView !== false) {
       try {
-        st.onSaveView({ yaw: st.viewer.getYaw(), pitch: st.viewer.getPitch(), hfov: st.viewer.getHfov() });
+        st.opts.onSaveView({ yaw: st.viewer.getYaw(), pitch: st.viewer.getPitch(), hfov: st.viewer.getHfov() });
       } catch (e) { /* ignore */ }
     }
     try { st.viewer.destroy(); } catch (e) { /* ignore */ }
@@ -177,19 +297,35 @@
     if (st.overlay && st.overlay.parentNode) st.overlay.parentNode.removeChild(st.overlay);
   }
 
+  function snapshotSelectHtml(cls, sizeVal, ratioVal) {
+    var ratioOpts = SNAPSHOT_RATIOS.map(function(r) {
+      return '<option value="' + r + '"' + (r === ratioVal ? ' selected' : '') + '>' + r + '</option>';
+    }).join('');
+    return '<select class="panorama-fs-select ' + cls + '-size" title="' + tr('panorama_snapshot_size_label', '画质') + '">' +
+        '<option value="1K"' + (sizeVal !== '2K' ? ' selected' : '') + '>1K</option>' +
+        '<option value="2K"' + (sizeVal === '2K' ? ' selected' : '') + '>2K</option>' +
+      '</select>' +
+      '<select class="panorama-fs-select ' + cls + '-ratio" title="' + tr('panorama_snapshot_ratio_label', '图片比例') + '">' + ratioOpts + '</select>';
+  }
+
   /**
    * 打开全屏 360 查看弹层
    * @param {string} imageUrl 原始图片地址（内部会走 proxyImageUrl）
    * @param {string} ratioStr 用于计算视场
    * @param {{yaw:number,pitch:number,hfov:number}} [initialView]
-   * @param {Function} [onSaveView] 关闭时回传最终视角
+   * @param {{onSaveView?:Function, getSnapshot?:Function, setSnapshot?:Function, onSnapshot?:Function}} [opts]
+   *   onSaveView 关闭时回传最终视角；getSnapshot/setSnapshot 读写截图设置；onSnapshot(view,size,ratio) 执行截图
    */
-  function openPanoramaFullscreen(imageUrl, ratioStr, initialView, onSaveView) {
+  function openPanoramaFullscreen(imageUrl, ratioStr, initialView, opts) {
     closePanoramaFullscreen(false);
+    opts = opts || {};
     if (typeof window.pannellum === 'undefined') {
       showToast('全景查看器脚本未加载', 'error');
       return;
     }
+    var snapDefaults = (opts.getSnapshot && opts.getSnapshot()) || { size: '1K', ratio: '16:9' };
+    if (SNAPSHOT_RATIOS.indexOf(snapDefaults.ratio) === -1) snapDefaults.ratio = '16:9';
+
     var overlay = document.createElement('div');
     overlay.className = 'panorama-fullscreen-overlay';
     overlay.innerHTML =
@@ -197,13 +333,18 @@
         '<div class="panorama-fullscreen-header">' +
           '<div class="panorama-fullscreen-title">' + (window.t ? window.t('panorama_fullscreen_title') : '360° 全景查看') + '</div>' +
           '<div class="panorama-fullscreen-actions">' +
+            snapshotSelectHtml('panorama-fs-snap', snapDefaults.size, snapDefaults.ratio) +
+            '<button type="button" class="panorama-fs-btn panorama-fs-snapshot">' + (window.t ? window.t('panorama_snapshot_btn') : '截图') + '</button>' +
             '<button type="button" class="panorama-fs-btn panorama-fs-reset">' + (window.t ? window.t('panorama_reset_view') : '重置视角') + '</button>' +
             '<button type="button" class="panorama-fs-btn panorama-fs-rotate">' + (window.t ? window.t('panorama_auto_rotate') : '自动旋转') + '</button>' +
             '<button type="button" class="panorama-fs-btn panorama-fs-close">✕ ' + (window.t ? window.t('panorama_close') : '关闭') + '</button>' +
           '</div>' +
         '</div>' +
         '<div class="panorama-fullscreen-body"><div class="panorama-fullscreen-viewer"></div></div>' +
-        '<div class="panorama-fullscreen-hint">' + (window.t ? window.t('panorama_fullscreen_hint') : '按住拖拽可环顾 360° 任意角度 · 滚轮缩放视野') + '</div>' +
+        '<div class="panorama-fullscreen-hint">' +
+          '<span class="panorama-fs-flash" style="display:none;"></span>' +
+          '<span>' + (window.t ? window.t('panorama_fullscreen_hint') : '按住拖拽可环顾 360° 任意角度 · 滚轮缩放视野') + '</span>' +
+        '</div>' +
       '</div>';
     document.body.appendChild(overlay);
 
@@ -215,6 +356,16 @@
       return;
     }
     var rotating = false;
+    var flashEl = overlay.querySelector('.panorama-fs-flash');
+    var flashTimer = null;
+    function showFlash(text, autoHideMs) {
+      if (!flashEl) return;
+      flashEl.style.display = 'inline-block';
+      flashEl.textContent = text;
+      if (flashTimer) { clearTimeout(flashTimer); flashTimer = null; }
+      if (autoHideMs) flashTimer = setTimeout(function() { flashEl.style.display = 'none'; }, autoHideMs);
+    }
+
     overlay.querySelector('.panorama-fs-close').addEventListener('click', function() { closePanoramaFullscreen(true); });
     overlay.addEventListener('mousedown', function(e) { if (e.target === overlay) closePanoramaFullscreen(true); });
     overlay.querySelector('.panorama-fs-reset').addEventListener('click', function() {
@@ -225,10 +376,32 @@
       if (rotating) { viewer.stopAutoRotate(); rotating = false; }
       else { viewer.startAutoRotate(-2.5); rotating = true; }
     });
+    overlay.querySelector('.panorama-fs-snapshot').addEventListener('click', function() {
+      if (!opts.onSnapshot) return;
+      var sizeSel = overlay.querySelector('.panorama-fs-snap-size');
+      var ratioSel = overlay.querySelector('.panorama-fs-snap-ratio');
+      var settings = { size: sizeSel ? sizeSel.value : '1K', ratio: ratioSel ? ratioSel.value : '16:9' };
+      if (opts.setSnapshot) opts.setSnapshot(settings);
+      var view = { yaw: viewer.getYaw(), pitch: viewer.getPitch(), hfov: viewer.getHfov() };
+      showFlash(tr('panorama_snapshot_processing', '正在截取当前视角...'));
+      Promise.resolve(opts.onSnapshot(view, settings.size, settings.ratio))
+        .then(function(result) {
+          if (result && result.ok === false) showFlash(result.message || tr('panorama_snapshot_failed', '截图失败'), 3500);
+          else showFlash(tr('panorama_snapshot_success', '视角截图已生成图片节点'), 2600);
+        });
+    });
+    var snapSizeSel = overlay.querySelector('.panorama-fs-snap-size');
+    var snapRatioSel = overlay.querySelector('.panorama-fs-snap-ratio');
+    function syncSnapshotSettings() {
+      if (!opts.setSnapshot) return;
+      opts.setSnapshot({ size: snapSizeSel ? snapSizeSel.value : '1K', ratio: snapRatioSel ? snapRatioSel.value : '16:9' });
+    }
+    if (snapSizeSel) snapSizeSel.addEventListener('change', syncSnapshotSettings);
+    if (snapRatioSel) snapRatioSel.addEventListener('change', syncSnapshotSettings);
 
     var onKeydown = function(e) { if (e.key === 'Escape') closePanoramaFullscreen(true); };
     document.addEventListener('keydown', onKeydown);
-    fullscreenState = { overlay: overlay, viewer: viewer, onKeydown: onKeydown, onSaveView: onSaveView };
+    fullscreenState = { overlay: overlay, viewer: viewer, onKeydown: onKeydown, opts: opts };
   }
 
   // ---------- 节点定义 ----------
@@ -310,10 +483,28 @@
           '<div class="field panorama-viewer-field" style="display:none;">' +
             '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
               '<div class="label" style="margin:0;" data-i18n="panorama_preview_label">' + tr('panorama_preview_label', '全景预览') + '</div>' +
-              '<div style="display:flex; gap:6px;">' +
+              '<div class="panorama-viewer-actions" style="display:flex; gap:6px; position:relative;">' +
                 '<button type="button" class="mini-btn panorama-reset-btn" style="font-size:11px; padding:4px 8px;" data-i18n="panorama_reset_view">' + tr('panorama_reset_view', '重置视角') + '</button>' +
                 '<button type="button" class="mini-btn panorama-rotate-btn" style="font-size:11px; padding:4px 8px;" data-i18n="panorama_auto_rotate">' + tr('panorama_auto_rotate', '自动旋转') + '</button>' +
                 '<button type="button" class="mini-btn panorama-fullscreen-btn" style="font-size:11px; padding:4px 8px;" data-i18n="panorama_fullscreen">' + tr('panorama_fullscreen', '全屏查看') + '</button>' +
+                '<button type="button" class="mini-btn panorama-snapshot-btn" style="font-size:11px; padding:4px 8px;" data-i18n="panorama_snapshot_btn">' + tr('panorama_snapshot_btn', '截图') + '</button>' +
+                '<div class="panorama-snapshot-menu" style="display:none;">' +
+                  '<div class="pano-snap-row">' +
+                    '<span class="pano-snap-label" data-i18n="panorama_snapshot_size_label">' + tr('panorama_snapshot_size_label', '画质') + '</span>' +
+                    '<select class="panorama-snap-size">' +
+                      '<option value="1K" selected>1K</option>' +
+                      '<option value="2K">2K</option>' +
+                    '</select>' +
+                  '</div>' +
+                  '<div class="pano-snap-row">' +
+                    '<span class="pano-snap-label" data-i18n="panorama_snapshot_ratio_label">' + tr('panorama_snapshot_ratio_label', '图片比例') + '</span>' +
+                    '<select class="panorama-snap-ratio">' + SNAPSHOT_RATIOS.map(function(r) {
+                      var sel = r === (state.ratio || '16:9') ? ' selected' : '';
+                      return '<option value="' + r + '"' + sel + '>' + r + '</option>';
+                    }).join('') + '</select>' +
+                  '</div>' +
+                  '<button type="button" class="mini-btn panorama-snap-confirm" style="align-self:stretch; justify-content:center;" data-i18n="panorama_snapshot_confirm">' + tr('panorama_snapshot_confirm', '截图并生成图片') + '</button>' +
+                '</div>' +
               '</div>' +
             '</div>' +
             '<div class="panorama-viewer"></div>' +
@@ -338,6 +529,12 @@
         var resetBtn = el.querySelector('.panorama-reset-btn');
         var rotateBtn = el.querySelector('.panorama-rotate-btn');
         var fullscreenBtn = el.querySelector('.panorama-fullscreen-btn');
+        var snapshotBtn = el.querySelector('.panorama-snapshot-btn');
+        var snapMenu = el.querySelector('.panorama-snapshot-menu');
+        var snapSizeEl = el.querySelector('.panorama-snap-size');
+        var snapRatioEl = el.querySelector('.panorama-snap-ratio');
+        var snapConfirmBtn = el.querySelector('.panorama-snap-confirm');
+        var snapshotBusy = false;
         var sourceThumb = el.querySelector('.panorama-source-thumb');
         var sourceImg = el.querySelector('.panorama-source-img');
         var sourcePlaceholder = el.querySelector('.panorama-source-placeholder');
@@ -596,14 +793,121 @@
           saveCurrentView();
           openPanoramaFullscreen(node.data.url, node.data.ratio, {
             yaw: node.data.yaw, pitch: node.data.pitch, hfov: node.data.hfov
-          }, function(view) {
-            node.data.yaw = Math.round(view.yaw * 10) / 10;
-            node.data.pitch = Math.round(view.pitch * 10) / 10;
-            node.data.hfov = Math.round(view.hfov * 10) / 10;
-            var entry = viewerRegistry[node.id];
-            if (entry) entry.viewer.lookAt(view.pitch, view.yaw, view.hfov, 0);
-            safeAutoSave();
+          }, {
+            onSaveView: function(view) {
+              node.data.yaw = Math.round(view.yaw * 10) / 10;
+              node.data.pitch = Math.round(view.pitch * 10) / 10;
+              node.data.hfov = Math.round(view.hfov * 10) / 10;
+              var entry = viewerRegistry[node.id];
+              if (entry) entry.viewer.lookAt(view.pitch, view.yaw, view.hfov, 0);
+              safeAutoSave();
+            },
+            getSnapshot: getSnapshotSettings,
+            setSnapshot: persistSnapshotSettings,
+            onSnapshot: function(view, size, ratio) { return runSnapshot(view, size, ratio); }
           });
+        });
+
+        // ---------- 视角截图 ----------
+        function getSnapshotSettings() {
+          return {
+            size: (snapSizeEl && snapSizeEl.value) || '1K',
+            ratio: (snapRatioEl && snapRatioEl.value) || state.ratio || '16:9'
+          };
+        }
+
+        function persistSnapshotSettings() {
+          node.data.snapshot = getSnapshotSettings();
+          safeAutoSave();
+        }
+
+        // 截图管线：离屏渲染 → 上传 → 创建图片节点并连线
+        // 始终 resolve（{ok, message}），失败不抛出——调用方（节点/全屏）按结果提示
+        function runSnapshot(view, size, ratio) {
+          if (!node.data.url) return Promise.resolve({ ok: false, message: 'no panorama' });
+          if (snapshotBusy) return Promise.resolve({ ok: false, message: 'busy' });
+          snapshotBusy = true;
+          var dims = snapshotDimensions(size, ratio);
+          setBtnLoading(snapConfirmBtn, tr('panorama_snapshot_processing', '正在截取当前视角...'));
+          return capturePanoramaView(proxyImageUrl(node.data.url), computePanoramaFov(node.data.ratio), view, dims.width, dims.height)
+            .then(function(dataUrl) {
+              var blob = dataUrlToBlob(dataUrl);
+              var file = new File([blob], 'panorama_snapshot_' + Date.now() + '.jpg', { type: 'image/jpeg' });
+              return uploadFile(file);
+            })
+            .then(function(uploadedUrl) {
+              if (!uploadedUrl) throw new Error(tr('panorama_snapshot_upload_failed', '截图上传失败'));
+              var normalized = normalizeImageUrl(uploadedUrl);
+              createSnapshotImageNode(normalized, ratio);
+              showToast(tr('panorama_snapshot_success', '视角截图已生成图片节点'), 'success');
+              safeAutoSave();
+              if (typeof fetchComputingPower === 'function') fetchComputingPower();
+              return { ok: true };
+            })
+            .catch(function(err) {
+              var msg = tr('panorama_snapshot_failed', '截图失败: {error}', { error: (err && err.message) || err });
+              showToast(msg, 'error');
+              return { ok: false, message: msg };
+            })
+            .finally(function() {
+              snapshotBusy = false;
+              setBtnReady(snapConfirmBtn, tr('panorama_snapshot_confirm', '截图并生成图片'));
+              if (snapMenu) snapMenu.style.display = 'none';
+            });
+        }
+
+        // 截图落画布：创建标准图片节点（全景 → 图片 连线），供下游节点复用
+        function createSnapshotImageNode(url, ratio) {
+          var newNodeId = createImageNode({ x: node.x + 460, y: node.y + 320, checkCollision: true });
+          var newNode = state.nodes.find(function(n) { return n.id === newNodeId; });
+          if (!newNode) return;
+          newNode.data.name = tr('panorama_snapshot_name', '全景截图');
+          newNode.data.url = url;
+          newNode.data.preview = url;
+          if (ratio) newNode.data.ratio = ratio;
+          newNode.title = newNode.data.name;
+          var newEl = canvasEl.querySelector('.node[data-node-id="' + newNodeId + '"]');
+          if (newEl) {
+            var titleEl = newEl.querySelector('.node-title');
+            if (titleEl) titleEl.textContent = newNode.title;
+            var previewImg = newEl.querySelector('.image-preview');
+            var previewRow = newEl.querySelector('.image-preview-row');
+            if (previewImg && previewRow) {
+              previewImg.src = proxyImageUrl(url);
+              previewRow.style.display = 'flex';
+            }
+          }
+          state.connections.push({ id: state.nextConnId++, from: node.id, to: newNodeId });
+          renderAllConnections();
+          renderMinimap();
+        }
+
+        if (snapshotBtn) {
+          snapshotBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (!node.data.url) return;
+            if (!snapMenu) return;
+            snapMenu.style.display = snapMenu.style.display === 'none' ? 'flex' : 'none';
+          });
+        }
+        if (snapConfirmBtn) {
+          snapConfirmBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            persistSnapshotSettings();
+            saveCurrentView();
+            var settings = getSnapshotSettings();
+            runSnapshot(
+              { yaw: node.data.yaw || 0, pitch: node.data.pitch || 0, hfov: node.data.hfov || 100 },
+              settings.size, settings.ratio
+            );
+          });
+        }
+        Array.prototype.forEach.call([snapSizeEl, snapRatioEl], function(selEl) {
+          if (selEl) {
+            selEl.addEventListener('change', function() { persistSnapshotSettings(); });
+            selEl.addEventListener('click', function(e) { e.stopPropagation(); });
+            selEl.addEventListener('mousedown', function(e) { e.stopPropagation(); });
+          }
         });
 
         // 节点删除时销毁 WebGL 上下文（由 canvas.js removeNode 钩子调用）
@@ -791,6 +1095,13 @@
           // 这里重新同步模型/比例下拉框为保存值
           populateModelOptions();
           if (node.data.prompt) promptEl.value = node.data.prompt;
+          // 恢复截图设置（画质/比例）
+          if (node.data.snapshot) {
+            if (snapSizeEl && node.data.snapshot.size) snapSizeEl.value = node.data.snapshot.size;
+            if (snapRatioEl && node.data.snapshot.ratio && SNAPSHOT_RATIOS.indexOf(node.data.snapshot.ratio) !== -1) {
+              snapRatioEl.value = node.data.snapshot.ratio;
+            }
+          }
           updateDrawCountLabel();
           updateSourceThumbnail();
           if (node.data.url) {
@@ -845,6 +1156,11 @@
   window.createPanoramaNodeWithData = createPanoramaNodeWithData;
   window.buildPanoramaPrompt = buildPanoramaPrompt;
   window.computePanoramaFov = computePanoramaFov;
+  window.PanoramaSnapshot = {
+    capture: capturePanoramaView,
+    dimensions: snapshotDimensions,
+    ratios: SNAPSHOT_RATIOS
+  };
 
   // 注册到节点注册表
   registerNodeType('panorama', {

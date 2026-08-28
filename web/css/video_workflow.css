@@ -4105,3 +4105,64 @@ html.theme-dark .audio-node-preview{
   border-top: 1px solid var(--border);
   text-align: center;
 }
+
+/* 视角截图（panorama_node.js） */
+.panorama-node .panorama-snapshot-menu{
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 40;
+  min-width: 190px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  padding: 10px;
+  flex-direction: column;
+  gap: 8px;
+}
+.panorama-node .pano-snap-row{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.panorama-node .pano-snap-label{
+  font-size: 12px;
+  color: var(--text);
+}
+.panorama-node .pano-snap-row select{
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+}
+.panorama-node .panorama-snap-confirm{
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+/* 离屏截图渲染舞台（不可见，但必须有实际尺寸供 WebGL 渲染） */
+.panorama-snapshot-stage{
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* 全屏弹层中的截图选择器 */
+.panorama-fs-select{
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+.panorama-fs-flash{
+  color: var(--primary);
+  font-weight: 600;
+  margin-right: 10px;
+}
