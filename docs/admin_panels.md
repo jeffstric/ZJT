@@ -284,13 +284,14 @@ POST /api/admin/models/{id}/billing/reset-defaults?vendor_id=可选
 
 部分供应商（如 DeepSeek 官方自 2026-08-17）采用峰谷定价：高峰时段价格为空闲时段的倍数。
 
-- **高峰时段**（北京时间，左闭右开）：`9:00-12:00`、`14:00-18:00`；其余为空闲
-- **时段定义**：常量 `config/constant.py` → `PeakValleyBillingConstants.PEAK_TIME_RANGES`
-- **判断工具**：`utils/billing_period.py` → `get_billing_period(dt)`（固定 UTC+8，不依赖系统时区库）
+- **高峰时段**（北京时间，左闭右开）：**周一至周五** `9:00-12:00`、`14:00-18:00`；其余（含周末全天）为空闲。
+  自 2026-08-23 00:00（北京时间）起周末全天为空闲；此前周末同时段同为高峰，历史补扣按旧规则
+- **时段定义**：常量 `config/constant.py` → `PeakValleyBillingConstants.PEAK_TIME_RANGES` / `PEAK_WEEKDAYS` / `WEEKEND_OFF_PEAK_FROM`
+- **判断工具**：`utils/billing_period.py` → `get_billing_period(dt)`（固定 UTC+8，不依赖系统时区库，星期与小时均按北京时间判定）
 - **配置方式**：同一「供应商 × 模型 × token 区间」下分别配置 `peak` 与 `off_peak` 两档；`normal` 表示不分峰谷（旧模型默认值，完全向后兼容）
 - **扣费时机**：按 `token_log.created_at`（调用发生时间）判断时段，而非后台扣费任务执行时间，避免跨时段边界算错
 - **选档兜底**（三级，确保不漏扣）：① 当前时段精确档 → ② `normal` 档 → ③ 其余时段档。即未配峰谷的模型自动回退 `normal`，配错也不会漏扣
-- **扣费流水**：`computing_power_log.note` 记录 `时段(调用:peak, 命中档:peak)` 便于审计
+- **扣费流水**：`computing_power_log.note` 记录 `时段(调用:peak, 命中档:peak, 判定:调用时间)` 便于审计；入参缺失按当前时间兜底时标记 `判定:当前时间兜底`，对账可区分
 - **官方 DeepSeek**：迁移 `20260813_vendor_model_time_period` 已为其 `flash/pro` 初始化峰谷两档；其他中转商（zjt_api / 火山）是否峰谷需在界面按实际计费规则单独配置
 
 > DeepSeek 官方峰谷价（元/百万 token）：flash 高峰 3/9/0.10、空闲 1.5/4.5/0.05；pro 高峰 9/27/0.30、空闲 4.5/13.5/0.15。
