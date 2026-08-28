@@ -422,6 +422,10 @@
       if(!isCtrl) return;
       if(document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA' || document.activeElement.isContentEditable)) return;
       if(e.key.toLowerCase() === 'z'){
+        // 涂鸦编辑弹窗打开时由弹窗自己处理撤销/重做
+        if(window.imageDoodleEditor && typeof window.imageDoodleEditor.isOpen === 'function' && window.imageDoodleEditor.isOpen()){
+          return;
+        }
         e.preventDefault();
         undoWorkflowChange();
       }
@@ -432,6 +436,10 @@
       if(e.key === 'Delete' || e.key === 'Backspace'){
         // 不在输入框内时才响应
         if(document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) return;
+        // 涂鸦编辑弹窗打开时 Delete/Backspace 由弹窗处理（删除选中涂鸦元素），避免误删工作流节点
+        if(window.imageDoodleEditor && typeof window.imageDoodleEditor.isOpen === 'function' && window.imageDoodleEditor.isOpen()){
+          return;
+        }
 
         if(deleteSelectedConnection()){
           e.preventDefault();
