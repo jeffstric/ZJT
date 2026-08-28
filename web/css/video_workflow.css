@@ -3987,3 +3987,182 @@ html.theme-dark .audio-node-preview{
   border-color: rgba(139,92,246,0.35);
   color: #c4b5fd;
 }
+
+/* ============================
+   360全景图节点 (panorama_node.js)
+   ============================ */
+.panorama-node .panorama-tpl-menu{
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 30;
+  min-width: 150px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+}
+.panorama-node .panorama-tpl-item{
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.panorama-node .panorama-tpl-item:hover{
+  background: var(--hover-bg);
+  color: var(--primary);
+}
+.panorama-node .panorama-viewer{
+  position: relative;
+  width: 100%;
+  height: 220px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #000;
+  cursor: grab;
+  touch-action: none;
+}
+.panorama-node .panorama-viewer:active{
+  cursor: grabbing;
+}
+.panorama-node .panorama-viewer img{
+  pointer-events: none;
+}
+
+/* 全屏 360 查看弹层 */
+.panorama-fullscreen-overlay{
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.panorama-fullscreen-panel{
+  width: min(1100px, 92vw);
+  height: min(760px, 88vh);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.panorama-fullscreen-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.panorama-fullscreen-title{
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--text);
+}
+.panorama-fullscreen-actions{
+  display: flex;
+  gap: 8px;
+}
+.panorama-fs-btn{
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.panorama-fs-btn:hover{
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.panorama-fullscreen-body{
+  flex: 1;
+  min-height: 0;
+}
+.panorama-fullscreen-viewer{
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+.panorama-fullscreen-viewer:active{
+  cursor: grabbing;
+}
+.panorama-fullscreen-hint{
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+/* 视角截图（panorama_node.js） */
+.panorama-node .panorama-snapshot-menu{
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 40;
+  min-width: 190px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  padding: 10px;
+  flex-direction: column;
+  gap: 8px;
+}
+.panorama-node .pano-snap-row{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.panorama-node .pano-snap-label{
+  font-size: 12px;
+  color: var(--text);
+}
+.panorama-node .pano-snap-row select{
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+}
+.panorama-node .panorama-snap-confirm{
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+/* 离屏截图渲染舞台（不可见，但必须有实际尺寸供 WebGL 渲染） */
+.panorama-snapshot-stage{
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* 全屏弹层中的截图选择器 */
+.panorama-fs-select{
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+.panorama-fs-flash{
+  color: var(--primary);
+  font-weight: 600;
+  margin-right: 10px;
+}
