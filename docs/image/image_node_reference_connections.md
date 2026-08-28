@@ -13,6 +13,8 @@
 | 场景节点 | `location` | `data.reference_image` | 场景参考图 |
 | 道具节点 | `props` | `data.reference_image` | 道具参考图 |
 
+同一批来源节点也可以直接连到**生视频节点**（`image_to_video`）的首帧 / 尾帧 / 多参考图端口，走 `imageConnections` 而非本页的紫色参考连接。详见 `docs/video/image_to_video_node.md`。
+
 ## 连接方式
 
 ### 方式一：从来源节点拖拽到参考端口
