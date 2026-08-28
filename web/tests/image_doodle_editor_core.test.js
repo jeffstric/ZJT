@@ -138,6 +138,12 @@ describe('hitTestElement 命中检测', () => {
     expect(hitTestElement(text, 5, 5, 0)).toBe(true);
     expect(hitTestElement(text, 100, 100, 0)).toBe(false);
   });
+
+  test('eraser 擦除轨迹不可命中、无包围盒（不参与选中/移动）', () => {
+    const eraser = { id: 8, type: 'eraser', points: [{ x: 0, y: 0 }, { x: 50, y: 0 }], color: '#000', width: 6 };
+    expect(hitTestElement(eraser, 25, 0, 10)).toBe(false);
+    expect(elementBBox(eraser)).toBe(null);
+  });
 });
 
 describe('控制点几何', () => {

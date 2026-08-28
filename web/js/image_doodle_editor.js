@@ -91,9 +91,9 @@
     return { w: Math.max(fontSize * 0.56, w), h: lines.length * fontSize * 1.25, lines: lines.length };
   }
 
-  /** 元素包围盒（图片自然像素系）；rect 含线宽外扩。 */
+  /** 元素包围盒（图片自然像素系）；rect 含线宽外扩；eraser 擦除轨迹不参与选中。 */
   function elementBBox(el) {
-    if (!el) return null;
+    if (!el || el.type === 'eraser') return null;
     if (el.type === 'stroke') {
       if (!el.points || el.points.length === 0) return null;
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -117,9 +117,9 @@
     return null;
   }
 
-  /** 元素命中检测（坐标与 tol 均为图片自然像素）。 */
+  /** 元素命中检测（坐标与 tol 均为图片自然像素）；eraser 擦除轨迹不参与命中。 */
   function hitTestElement(el, x, y, tol) {
-    if (!el) return false;
+    if (!el || el.type === 'eraser') return false;
     if (el.type === 'stroke') {
       const r = (el.width || 1) / 2 + tol;
       const pts = el.points || [];
@@ -263,6 +263,7 @@
     bodyEl: null,
     canvas: null,
     ctx: null,
+    cursorEl: null,
     confirmBtn: null,
     open: false,
     busy: false,
@@ -322,6 +323,7 @@
           '</div>' +
           '<div class="doodle-body" id="doodleBody">' +
             '<canvas id="doodleCanvas" class="doodle-canvas"></canvas>' +
+            '<div class="doodle-cursor" id="doodleCursor"></div>' +
             '<div class="doodle-body-loading" id="doodleLoading" style="display:none;">' + tr('doodle_loading', '图片加载中…') + '</div>' +
             '<div class="doodle-ratio-wrap">' +
               '<button class="doodle-ratio-btn" id="doodleRatioBtn" type="button">' + tr('doodle_ratio_original', '原始比例') + ' ▾</button>' +
@@ -369,6 +371,7 @@
     S.bodyEl = document.getElementById('doodleBody');
     S.canvas = document.getElementById('doodleCanvas');
     S.ctx = S.canvas ? S.canvas.getContext('2d') : null;
+    S.cursorEl = document.getElementById('doodleCursor');
     S.confirmBtn = document.getElementById('doodleConfirmBtn');
     buildColorPanel();
     buildRatioMenu();
@@ -424,6 +427,12 @@
     S.canvas.addEventListener('pointermove', onPointerMove);
     S.canvas.addEventListener('pointerup', onPointerUp);
     S.canvas.addEventListener('pointercancel', onPointerUp);
+    S.canvas.addEventListener('mouseleave', () => {
+      if (S.cursorEl) S.cursorEl.style.display = 'none';
+    });
+    S.canvas.addEventListener('mouseenter', () => {
+      if (S.cursorEl && S.tool === 'eraser') S.cursorEl.style.display = 'block';
+    });
 
     document.getElementById('doodleCloseBtn').addEventListener('click', requestClose);
     S.confirmBtn.addEventListener('click', confirmEdit);
@@ -460,6 +469,7 @@
       S.lineWidth = clamp(parseInt(range.value, 10) || DEFAULT_LINE_WIDTH, MIN_LINE_WIDTH, MAX_LINE_WIDTH);
       range.value = String(S.lineWidth);
       document.getElementById('doodleSizeValue').textContent = String(S.lineWidth);
+      updateCursorSize();
     });
 
     document.getElementById('doodleRatioBtn').addEventListener('click', (e) => {
@@ -583,29 +593,33 @@
     // 切到输出画布自然像素系（canvas px = 自然 px × cssScale × dpr）
     const k = S.cssScale * S.dpr;
     ctx.setTransform(k, 0, 0, k, 0, 0);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, S.out.w, S.out.h);
     drawContent(ctx);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     drawOverlay(ctx);
   }
 
-  /** 底图 + 全部元素（含进行中的 draft）。调用前 ctx 已处于输出画布自然像素系。 */
+  /**
+   * 元素层 + 底图 + 白底。调用前 ctx 已处于输出画布自然像素系、画布已清空。
+   * 顺序：按序画元素（eraser 笔画 destination-out 擦掉已画涂鸦）→ destination-over 垫底图 → destination-over 垫白底。
+   * 橡皮擦除区域露出底图；底图透明像素处露出白底；导出与屏幕渲染共用本函数。
+   */
   function drawContent(ctx) {
     const img = S.image;
-    ctx.drawImage(img.img, img.x, img.y, img.naturalW * img.scale, img.naturalH * img.scale);
     ctx.save();
     ctx.translate(img.x, img.y);
     ctx.scale(img.scale, img.scale);
-    const eraserSet = S.drag && S.drag.kind === 'eraser' ? S.drag.hits : null;
     for (const el of S.elements) {
-      if (eraserSet && eraserSet.has(el.id)) ctx.globalAlpha = 0.35;
       drawElement(ctx, el);
-      ctx.globalAlpha = 1;
     }
     if (S.drag && S.drag.kind === 'pen') drawElement(ctx, S.drag.stroke);
+    if (S.drag && S.drag.kind === 'eraser') drawElement(ctx, S.drag.stroke);
     if (S.drag && S.drag.kind === 'rect') drawElement(ctx, S.drag.draft);
     ctx.restore();
+    ctx.globalCompositeOperation = 'destination-over';
+    ctx.drawImage(img.img, img.x, img.y, img.naturalW * img.scale, img.naturalH * img.scale);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, S.out.w, S.out.h);
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   /** 单个元素绘制（处于图片自然像素系）。合成导出与屏幕渲染共用，保证所见即所得。 */
@@ -628,6 +642,29 @@
       ctx.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.stroke();
+      return;
+    }
+    if (el.type === 'eraser') {
+      // 圆头局部擦除：destination-out 只擦掉已画内容（白底+下方涂鸦），
+      // 底图由 drawContent 最后 destination-over 垫底，故擦除区域露出底图
+      const pts = el.points || [];
+      ctx.globalCompositeOperation = 'destination-out';
+      if (pts.length === 1) {
+        ctx.beginPath();
+        ctx.arc(pts[0].x, pts[0].y, Math.max(0.5, (el.width || 1) / 2), 0, Math.PI * 2);
+        ctx.fillStyle = '#000';
+        ctx.fill();
+      } else {
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = el.width || 1;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = 'source-over';
       return;
     }
     if (el.type === 'rect') {
@@ -704,8 +741,17 @@
         break;
       }
       case 'eraser': {
-        S.drag = { kind: 'eraser', hits: new Set() };
-        eraserProbe(imgPt, S.drag.hits);
+        // 圆形局部擦除：与画笔同构收集轨迹，渲染时 destination-out 擦除
+        S.drag = {
+          kind: 'eraser',
+          stroke: {
+            id: S.nextId++,
+            type: 'eraser',
+            points: [{ x: imgPt.x, y: imgPt.y }],
+            color: '#000000',
+            width: Math.max(0.5, cssLenToImg(S.lineWidth)),
+          },
+        };
         break;
       }
       case 'rect': {
@@ -736,14 +782,15 @@
         const ptsCss = handlePointsForBbox(imgBboxToCss(bboxImg));
         const hi = hitHandleIndex(ptsCss, css.x, css.y, HANDLE_HIT_CSS);
         if (hi >= 0) {
-          beginScale(sel, hi, imgPt, bboxImg);
+          beginScale(sel, hi, css, imgPt, bboxImg);
           return;
         }
       }
     }
-    // 2) 涂鸦元素（顶层优先）
+    // 2) 涂鸦元素（顶层优先）；eraser 擦除轨迹不可选中
     const tolImg = Math.max(cssLenToImg(HIT_TOL_CSS), 1);
     for (let i = S.elements.length - 1; i >= 0; i--) {
+      if (S.elements[i].type === 'eraser') continue;
       if (hitTestElement(S.elements[i], imgPt.x, imgPt.y, tolImg)) {
         S.selectedId = S.elements[i].id;
         S.drag = { kind: 'move', startImg: imgPt, snapshot: cloneEl(S.elements[i]), moved: false };
@@ -753,18 +800,30 @@
     // 3) 底图本身可选中移动
     if (imgPt.x >= 0 && imgPt.y >= 0 && imgPt.x <= S.image.naturalW && imgPt.y <= S.image.naturalH) {
       S.selectedId = IMAGE_ID;
-      S.drag = { kind: 'move', startImg: imgPt, snapshot: snapImage(), isImage: true, moved: false };
+      // startCss：css 偏移在拖动中保持稳定；若用图片系坐标会随 image.x/y 更新形成反馈回路导致抖动
+      S.drag = { kind: 'move', startImg: imgPt, startCss: css, snapshot: snapImage(), isImage: true, moved: false };
       return;
     }
     // 4) 空白取消选中
     S.selectedId = null;
   }
 
-  function beginScale(sel, handleIdx, imgPt, bboxImg) {
+  function beginScale(sel, handleIdx, css, imgPt, bboxImg) {
     const ptsImg = handlePointsForBbox(bboxImg);
     const anchor = ptsImg[(handleIdx + 4) % 8]; // 对角固定点（0↔4, 1↔5, 2↔6, 3↔7）
     if (sel.kind === 'image') {
-      S.drag = { kind: 'scale-image', start: imgPt, anchor, snapshot: snapImage() };
+      // 锚点在输出画布上的投影基于 snapshot 预计算并保持不变，缩放因子用 css 距离计算
+      const snapshot = snapImage();
+      S.drag = {
+        kind: 'scale-image',
+        startCss: css,
+        anchor,
+        anchorCss: {
+          x: (snapshot.x + anchor.x * snapshot.scale) * S.cssScale,
+          y: (snapshot.y + anchor.y * snapshot.scale) * S.cssScale,
+        },
+        snapshot,
+      };
     } else if (sel.el.type === 'rect') {
       S.drag = { kind: 'scale-rect', handle: handleIdx, bbox0: bboxImg, snapshot: cloneEl(sel.el) };
     } else {
@@ -775,8 +834,9 @@
 
   function onPointerMove(e) {
     if (!S.open || !S.image) return;
-    if (!S.drag) return;
     const css = eventCss(e);
+    updateCursorPos(css);
+    if (!S.drag) return;
     const imgPt = cssToImgPt(css);
     const d = S.drag;
 
@@ -790,9 +850,12 @@
         if (imgLenToCss(Math.hypot(dx, dy)) > 1) pts.push({ x: imgPt.x, y: imgPt.y });
         break;
       }
-      case 'eraser':
-        eraserProbe(imgPt, d.hits);
+      case 'eraser': {
+        const pts = d.stroke.points;
+        const last = pts[pts.length - 1];
+        if (imgLenToCss(Math.hypot(imgPt.x - last.x, imgPt.y - last.y)) > 1) pts.push({ x: imgPt.x, y: imgPt.y });
         break;
+      }
       case 'rect': {
         const n = normalizeRect(d.start.x, d.start.y, imgPt.x, imgPt.y);
         d.draft.x = n.x; d.draft.y = n.y; d.draft.w = n.w; d.draft.h = n.h;
@@ -803,15 +866,17 @@
         const dx = imgPt.x - d.startImg.x;
         const dy = imgPt.y - d.startImg.y;
         if (d.isImage) {
-          S.image.x = d.snapshot.x + dx * d.snapshot.scale;
-          S.image.y = d.snapshot.y + dy * d.snapshot.scale;
+          // css 偏移直译为输出画布偏移并绝对定位于 snapshot，不经过随底图变化的 cssToImgPt
+          S.image.x = d.snapshot.x + (css.x - d.startCss.x) / S.cssScale;
+          S.image.y = d.snapshot.y + (css.y - d.startCss.y) / S.cssScale;
         } else {
           S.elements = S.elements.map((el) => el.id === d.snapshot.id ? moveElement(d.snapshot, dx, dy) : el);
         }
         break;
       }
       case 'scale-image': {
-        const f = distFactor(d.anchor, d.start, imgPt);
+        // 因子基于纯 css 距离（锚点投影固定），与底图当前状态无关，避免缩放抖动
+        const f = distFactor(d.anchorCss, d.startCss, css);
         applyImageScale(d.snapshot, d.anchor, clamp(d.snapshot.scale * f, 0.02, 60));
         break;
       }
@@ -874,14 +939,9 @@
         break;
       }
       case 'eraser': {
-        if (d.hits.size > 0) {
-          const items = [];
-          S.elements.forEach((el, idx) => {
-            if (d.hits.has(el.id)) items.push({ index: idx, element: el });
-          });
-          S.elements = S.elements.filter((el) => !d.hits.has(el.id));
-          pushRecord({ action: 'delete', items });
-        }
+        // 擦除轨迹作为一个 eraser 元素入栈，撤销即恢复被擦内容
+        S.elements.push(d.stroke);
+        pushRecord({ action: 'add', element: d.stroke });
         break;
       }
       case 'move': {
@@ -928,13 +988,6 @@
       });
     }
     return Object.assign({}, snapshot, { x: snapshot.x + dx, y: snapshot.y + dy });
-  }
-
-  function eraserProbe(imgPt, hits) {
-    const tol = Math.max(cssLenToImg(HIT_TOL_CSS), cssLenToImg(S.lineWidth) / 2);
-    for (const el of S.elements) {
-      if (hitTestElement(el, imgPt.x, imgPt.y, tol)) hits.add(el.id);
-    }
   }
 
   function snapImage() {
@@ -1173,8 +1226,27 @@
 
   function updateCursor() {
     if (!S.canvas) return;
-    const map = { select: 'default', pen: 'crosshair', eraser: 'crosshair', rect: 'crosshair', text: 'text' };
+    const map = { select: 'default', pen: 'crosshair', eraser: 'none', rect: 'crosshair', text: 'text' };
     S.canvas.style.cursor = map[S.tool] || 'default';
+    updateCursorSize();
+  }
+
+  /** 橡皮擦圆形光标：直径跟随粗细面板，实时预示擦除范围。 */
+  function updateCursorSize() {
+    if (!S.cursorEl) return;
+    const show = S.tool === 'eraser';
+    S.cursorEl.style.display = show ? 'block' : 'none';
+    if (show) {
+      const d = Math.max(S.lineWidth, 4);
+      S.cursorEl.style.width = d + 'px';
+      S.cursorEl.style.height = d + 'px';
+    }
+  }
+
+  function updateCursorPos(css) {
+    if (!S.cursorEl || S.tool !== 'eraser' || !S.canvas) return;
+    S.cursorEl.style.left = Math.round(S.canvas.offsetLeft + css.x) + 'px';
+    S.cursorEl.style.top = Math.round(S.canvas.offsetTop + css.y) + 'px';
   }
 
   function positionPanel(panel, btn) {
@@ -1498,9 +1570,8 @@
         c.width = w;
         c.height = h;
         const g = c.getContext('2d');
-        g.fillStyle = '#ffffff';
-        g.fillRect(0, 0, w, h);
         if (scale !== 1) g.scale(w / S.out.w, h / S.out.h);
+        // drawContent 内部自行垫底图与白底（destination-over），此处不可预铺白底
         drawContent(g);
         c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png');
       } catch (err) {

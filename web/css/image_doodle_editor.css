@@ -99,9 +99,20 @@
   background: rgba(245, 246, 247, 0.85);
 }
 
-/* 文字工具的行内输入框 */
-.doodle-editor-modal .doodle-text-input {
+/* 橡皮擦圆形光标：直径由 JS 按粗细面板设置 */
+.doodle-editor-modal .doodle-cursor {
   position: absolute;
+  border: 1.5px solid rgba(15, 23, 42, 0.65);
+  border-radius: 50%;
+  pointer-events: none;
+  display: none;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+  z-index: 6;
+}
+
+/* 文字工具的行内输入框 */
+.doodle-editor-modal .doodle-text-input {  position: absolute;
   min-width: 24px;
   min-height: 1.4em;
   padding: 0;
