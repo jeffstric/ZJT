@@ -6,7 +6,8 @@
     <title data-i18n="script_writer_title">剧本智能创作系统</title>
     <link rel="icon" href="__BRANDING_FAVICON_URL__" type="image/vnd.microsoft.icon"/>
     <link rel="stylesheet" href="/css/common.css">
-    <link rel="stylesheet" href="css/script_writer.css">
+    <link rel="stylesheet" href="css/script_writer.css?v=__VERSION__">
+    <link rel="stylesheet" href="css/script_writer_library.css?v=__VERSION__">
     <link rel="stylesheet" href="/css/model_catalog.css">
     <!-- Markdown渲染支持 -->
     <script src="/js/vendor/marked.min.js"></script>
@@ -461,8 +462,8 @@
             <!-- 文件管理面板 -->
             <aside class="file-sidebar" id="file-sidebar">
                 <div class="sidebar-header">
-                    <h3 class="sidebar-title" data-i18n="file_management">📁 暂存文件管理</h3>
-                    <div class="sidebar-header-actions">
+                    <h3 class="sidebar-title" id="file-sidebar-title" data-i18n="file_management">📁 暂存文件管理</h3>
+                    <div class="sidebar-header-actions" id="staging-header-actions">
                         <button class="export-icon-btn" onclick="exportWorld()" title="导出世界数据" data-i18n="export_world:title">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -497,6 +498,14 @@
                             </svg>
                         </button>
                     </div>
+                </div>
+                <div class="asset-source-switch" id="asset-source-switch" role="tablist" aria-label="数据源">
+                    <button type="button" class="asset-source-btn active" data-source="staging" onclick="switchAssetSource('staging')" data-i18n="asset_source_staging">暂存草稿</button>
+                    <button type="button" class="asset-source-btn" data-source="database" onclick="switchAssetSource('database')" data-i18n="asset_source_database">已入库</button>
+                </div>
+                <div class="library-search-box" id="library-search-box" hidden>
+                    <input type="search" id="library-search-input" class="library-search-input" placeholder="搜索已入库资产..." data-i18n="library_search_placeholder:placeholder" autocomplete="off">
+                    <span class="library-count" id="library-count"></span>
                 </div>
                 <div class="file-tabs">
                     <button class="tab-btn active" onclick="switchFileTab('worlds')">
@@ -1538,7 +1547,36 @@
         </div>
     </div>
 
-    <script src="/js/script_writer.js"></script>
+    <!-- 已入库资产删除确认 -->
+    <div id="library-delete-modal" class="modal">
+        <div class="modal-overlay" onclick="closeLibraryDeleteModal()"></div>
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3 class="modal-title" data-i18n="library_delete_title">删除已入库资产</h3>
+                <button class="modal-close-btn" onclick="closeLibraryDeleteModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p id="library-delete-summary" class="library-delete-summary"></p>
+                <ul id="library-delete-warnings" class="library-delete-warnings"></ul>
+                <label class="library-delete-check">
+                    <input type="checkbox" id="library-delete-staging" checked>
+                    <span data-i18n="library_delete_also_staging">同时删除暂存区同名文件</span>
+                </label>
+                <p class="library-delete-hint" data-i18n="library_delete_resurrect_hint">若不删除暂存文件，下次点「提交」会按名称/集数重新写入数据库。</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeLibraryDeleteModal()" data-i18n="cancel">取消</button>
+                <button type="button" class="btn btn-danger" id="library-delete-confirm-btn" onclick="confirmLibraryDelete()" data-i18n="library_delete_confirm">确认删除</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/script_writer.js?v=__VERSION__"></script>
+    <script src="/js/script_writer_library.js?v=__VERSION__-lib2"></script>
     <!-- 导入剧本弹窗 -->
     <div id="import-script-modal" class="modal">
         <div class="modal-overlay" onclick="closeImportScriptModal()"></div>
