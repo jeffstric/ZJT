@@ -890,6 +890,23 @@
           return getPortDistance(portEl, mouseX, mouseY);
         }
 
+        if(fromNode && fromNode.type === 'panorama'){
+          // 360全景节点输出 → 导演台环境端口等（注册表驱动）
+          const envPort = findNearestConnectablePort(mouseX, mouseY, 'panorama', PROXIMITY_DIST);
+          if(envPort){
+            const connArray = state[envPort.portCfg.connectionType] || state.connections;
+            const exists = connArray.some(c => c.from === fromNode.id && c.to === envPort.nodeId && c.portType === envPort.portType);
+            if(!exists){
+              connArray.push({ id: state.nextConnId++, from: fromNode.id, to: envPort.nodeId, portType: envPort.portType });
+              if(typeof envPort.portCfg.onConnect === 'function'){
+                envPort.portCfg.onConnect(fromNode, envPort.node);
+              }
+              renderAllConnections();
+              safeAutoSave();
+            }
+          }
+        }
+
         if(fromNode && fromNode.type === 'image'){
           // 通过注册表查找所有可接受图片节点的端口（image_to_video、digital_human 等）
           let imgConnected = false;

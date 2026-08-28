@@ -2486,6 +2486,10 @@
         if(toNode && toNode.type === 'shot_frame' && toNode.updatePreview){
           toNode.updatePreview();
         }
+        // 断开 360全景 → 导演台 的环境连线时，清除导演台的全景环境
+        if(conn && conn.portType === 'environment' && toNode && toNode.type === 'director_stage' && typeof window.handleDirectorStageEnvDisconnect === 'function'){
+          window.handleDirectorStageEnvDisconnect(conn.from, toNode);
+        }
       }
     }
 

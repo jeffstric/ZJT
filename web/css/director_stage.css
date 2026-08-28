@@ -712,6 +712,12 @@
 }
 
 /* ---------- 节点壳样式（画布内节点使用，需兼容工作流主题） ---------- */
+/* 环境输入端口：绿色，区别于普通端口 */
+.port.input.ds-env-port {
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
+
 .ds-node-preview {
   position: relative;
   width: 100%;

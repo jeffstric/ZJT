@@ -6,7 +6,10 @@
 
 (function () {
 
-  var DIRECTOR_STAGE_PORTS = [];
+  var DIRECTOR_STAGE_PORTS = [
+    // 全景环境输入：接收 360 全景图节点的输出，把全景作为导演台 3D 场景的环境背景
+    { direction: 'input', titleI18nKey: 'director_stage_env_port', acceptType: 'panorama', connectionType: 'connections', cssClass: 'ds-env-port' }
+  ];
 
   function directorShellHtml() {
     return '<div class="ds-node-preview ds-open-editor" title="打开导演台">' +
@@ -27,6 +30,7 @@
       '<div class="ds-node-meta">' +
         '<span class="ds-meta-puppets">🧍 ' + (window.t ? window.t('director_stage_puppets_zero') : '人偶 ×0') + '</span>' +
         '<span class="ds-meta-shot">🎥 FOV --</span>' +
+        '<span class="ds-meta-env" style="display:none;">🌐 ' + (window.t ? window.t('director_stage_env_badge') : '全景环境') + '</span>' +
       '</div>' +
       '<div class="ds-node-hint" style="margin-top:6px; font-size:11px; color:#6b7280; text-align:center;">' +
         (window.t ? window.t('director_stage_export_hint') : '在导演台中「导出快照」会自动生成图片节点') +
@@ -144,6 +148,10 @@
     if (shotEl && d && d.camera) {
       shotEl.textContent = '🎥 FOV ' + Math.round(d.camera.fov || 35) + '°';
     }
+    var envEl = el.querySelector('.ds-meta-env');
+    if (envEl) {
+      envEl.style.display = (d && d.environment && d.environment.url) ? '' : 'none';
+    }
   }
 
   var createDirectorStageNodeWithData = createNodeWithDataFactory(
@@ -159,6 +167,46 @@
   window.createDirectorStageNodeWithData = createDirectorStageNodeWithData;
   window.updateDirectorStageNodeShell = updateDirectorStageNodeShell;
   window.createDirectorStageImageNode = createDirectorStageImageNode;
+
+  // 注册环境输入端口：接受 360 全景图节点连线，导入全景作为导演台环境
+  registerInputPorts('director_stage', [{
+    selector: '.ds-env-port',
+    portType: 'environment',
+    accepts: ['panorama'],
+    connectionType: 'connections',
+    guard: function (node) {
+      // 全景节点无生成结果时也可连线（等待生成后手动刷新），不做硬限制
+      return true;
+    },
+    onConnect: function (fromNode, targetNode) {
+      var url = fromNode.data && fromNode.data.url;
+      if (!url) {
+        showToast(window.t ? window.t('director_stage_env_no_result') : '全景节点还没有生成结果，生成后请在导演台中刷新环境', 'info');
+        return;
+      }
+      if (!targetNode.data.directorData) targetNode.data.directorData = {};
+      targetNode.data.directorData.environment = {
+        url: url,
+        ratio: fromNode.data.ratio || '21:9',
+        yaw: 0
+      };
+      if (typeof updateDirectorStageNodeShell === 'function') updateDirectorStageNodeShell(targetNode.id);
+      if (typeof safeAutoSave === 'function') safeAutoSave();
+      showToast(window.t ? window.t('director_stage_env_connected') : '全景环境已导入导演台', 'success');
+    }
+  }]);
+
+  // 断开环境连线时清除导演台环境（由 nodes.js removeConnection 调用）
+  window.handleDirectorStageEnvDisconnect = function (fromNodeId, toNode) {
+    if (!toNode || toNode.type !== 'director_stage') return;
+    var d = toNode.data.directorData;
+    var fromNode = state.nodes.find(function (n) { return n.id === fromNodeId; });
+    if (!d || !d.environment) return;
+    if (fromNode && fromNode.type === 'panorama' && fromNode.data.url !== d.environment.url) return; // 环境已来自其他来源
+    d.environment = null;
+    if (typeof updateDirectorStageNodeShell === 'function') updateDirectorStageNodeShell(toNode.id);
+    if (typeof safeAutoSave === 'function') safeAutoSave();
+  };
 
   // 注册到节点注册表
   registerNodeType('director_stage', {

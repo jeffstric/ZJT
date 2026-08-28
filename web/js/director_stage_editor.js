@@ -409,6 +409,8 @@
         '<div class="ds-puppet-list" id="dsPuppetList"></div>' +
         '<div class="ds-section-head"><span>姿态预设</span></div>' +
         '<div class="ds-pose-list" id="dsPoseList"></div>' +
+        '<div class="ds-section-head"><span>全景环境</span></div>' +
+        '<div style="padding: 0 10px 12px;" id="dsEnvSection"></div>' +
       '</div>' +
       '<div class="ds-viewport-wrap" id="dsViewportWrap">' +
         '<canvas id="dsCanvas" tabindex="0"></canvas>' +
@@ -485,6 +487,7 @@
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.005;
     this.scene.add(ground);
+    this.groundPlane = ground;
 
     // 站位圆台（快照保留）
     var disc = new THREE.Mesh(
@@ -494,6 +497,7 @@
     disc.rotation.x = -Math.PI / 2;
     disc.position.y = 0.001;
     this.scene.add(disc);
+    this.groundDisc = disc;
 
     // 网格（helper，快照隐藏）
     this.grid = new THREE.GridHelper(20, 20, 0x3a4052, 0x272c3a);
@@ -614,6 +618,10 @@
       this.virtualCamCfg.target.fromArray(d.camera.target || [0, 1.05, 0]);
       this.virtualCamCfg.fov = d.camera.fov || 35;
     }
+    // 全景环境（来自 360全景图节点连线）
+    if (d && d.environment && d.environment.url) {
+      this.setupEnvironment(d.environment);
+    }
     // 初始撤销快照
     this.undoStack = [this.serializeData()];
   };
@@ -629,9 +637,15 @@
         joints: serializeJoints(p.jointDeg)
       };
     });
+    var env = this.node.data.directorData && this.node.data.directorData.environment;
     return {
       version: 1,
       puppets: puppets,
+      environment: (env && env.url) ? {
+        url: env.url,
+        ratio: env.ratio || '21:9',
+        yaw: round2(env.yaw || 0)
+      } : null,
       camera: {
         pos: [round2(this.virtualCamCfg.pos.x), round2(this.virtualCamCfg.pos.y), round2(this.virtualCamCfg.pos.z)],
         target: [round2(this.virtualCamCfg.target.x), round2(this.virtualCamCfg.target.y), round2(this.virtualCamCfg.target.z)],
@@ -722,6 +736,175 @@
 
   DirectorEditor.prototype.setStatus = function (text) {
     this.$('dsStatusText').textContent = text;
+  };
+
+  // ---------- 全景环境管理（与 360全景图节点融合） ----------
+
+  // 加载全景环境球：equirectangular 纹理贴到部分球面内壁
+  // 比例→视场换算与 panorama_node.js computePanoramaFov 保持一致
+  DirectorEditor.prototype.setupEnvironment = function (env) {
+    var self = this;
+    this.removeEnvironment();
+    if (!env || !env.url) return;
+    var url = (typeof proxyImageUrl === 'function' ? proxyImageUrl(env.url) : env.url);
+    this._envLoading = true;
+    this.renderEnvSection();
+
+    new THREE.TextureLoader().load(url, function (texture) {
+      // 编辑器已关闭则直接释放
+      if (!self.overlay || !self.overlay.classList.contains('show')) {
+        texture.dispose();
+        return;
+      }
+      texture.encoding = THREE.sRGBEncoding;
+
+      var w = 21, h = 9;
+      var m = String(env.ratio || '').match(/^(\d+(?:\.\d+)?)[:x](\d+(?:\.\d+)?)$/i);
+      if (m) { w = parseFloat(m[1]); h = parseFloat(m[2]); }
+      var haov, vaov;
+      if (w / h >= 2) {
+        haov = 360;
+        vaov = Math.min(180, 360 * h / w);
+      } else {
+        vaov = 180;
+        haov = Math.min(360, 180 * w / h);
+      }
+      var phiLength = haov / 360 * Math.PI * 2;
+      var thetaLength = vaov / 180 * Math.PI;
+      var thetaStart = (Math.PI - thetaLength) / 2;      // 垂直居中
+      var phiStart = Math.PI / 2 - phiLength / 2;        // equirect 水平中心对齐 +Z（人偶面向）
+      var geo = new THREE.SphereGeometry(50, 64, 40, phiStart, phiLength, thetaStart, thetaLength);
+      geo.scale(-1, 1, 1); // 翻转到内壁视角，图像不镜像
+      var sphere = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: texture }));
+      sphere.rotation.y = deg2rad(env.yaw || 0);
+      self.scene.add(sphere);
+      self.envSphere = sphere;
+      self._envLoading = false;
+      self.applyGroundVisibility();
+      self.renderEnvSection();
+      self.setStatus('全景环境已加载');
+    }, undefined, function () {
+      self._envLoading = false;
+      self.renderEnvSection();
+      self.setStatus('全景环境加载失败');
+      if (typeof showToast === 'function') showToast('全景环境图片加载失败', 'error');
+    });
+  };
+
+  DirectorEditor.prototype.removeEnvironment = function () {
+    if (this.envSphere) {
+      this.scene.remove(this.envSphere);
+      this.envSphere.geometry.dispose();
+      if (this.envSphere.material.map) this.envSphere.material.map.dispose();
+      this.envSphere.material.dispose();
+      this.envSphere = null;
+    }
+    this._envLoading = false;
+    this.applyGroundVisibility();
+    this.renderEnvSection();
+  };
+
+  // 有环境时隐藏默认地面/站位圆台（露出全景自带地面）
+  DirectorEditor.prototype.applyGroundVisibility = function () {
+    var hasEnv = !!this.envSphere;
+    if (this.groundPlane) this.groundPlane.visible = !hasEnv;
+    if (this.groundDisc) this.groundDisc.visible = !hasEnv;
+  };
+
+  // 当前保存的环境数据（随 markDirty 序列化）
+  DirectorEditor.prototype.getEnvData = function () {
+    var d = this.node.data.directorData;
+    return (d && d.environment && d.environment.url) ? d.environment : null;
+  };
+
+  // 从画布上相连的 360全景节点重新拉取最新结果（全景重新生成后使用）
+  DirectorEditor.prototype.refreshEnvironment = function () {
+    var conn = (state.connections || []).find(function (c) {
+      return c.to === this.nodeId && c.portType === 'environment';
+    }, this);
+    if (!conn) {
+      this.setStatus('未找到相连的全景节点');
+      return;
+    }
+    var fromNode = state.nodes.find(function (n) { return n.id === conn.from; });
+    var url = fromNode && fromNode.data && fromNode.data.url;
+    if (!url) {
+      this.setStatus('全景节点还没有生成结果');
+      return;
+    }
+    var env = this.getEnvData() || {};
+    env.url = url;
+    env.ratio = (fromNode.data.ratio || env.ratio || '21:9');
+    if (!this.node.data.directorData) this.node.data.directorData = {};
+    this.node.data.directorData.environment = env;
+    this.setupEnvironment(env);
+    this.markDirty();
+    this.setStatus('已从全景节点刷新环境');
+  };
+
+  // 左栏「全景环境」区块
+  DirectorEditor.prototype.renderEnvSection = function () {
+    var wrap = this.$('dsEnvSection');
+    if (!wrap) return;
+    var self = this;
+    var env = this.getEnvData();
+    var html = '';
+    if (this._envLoading) {
+      html = '<div style="padding:10px; font-size:12px; color:#9ca3af;">🌐 全景环境加载中…</div>';
+    } else if (!env) {
+      html = '<div style="padding:10px 12px; font-size:11px; color:#6b7280; line-height:1.7;">' +
+        '在画布上把「360全景图」节点的输出连到导演台节点左侧的环境端口，即可把全景作为舞台背景。</div>';
+    } else {
+      var imgUrl = (typeof proxyImageUrl === 'function' ? proxyImageUrl(env.url) : env.url);
+      html =
+        '<div style="border:1px solid #2a2e3a; border-radius:8px; overflow:hidden; background:#20232e;">' +
+          '<img src="' + esc(imgUrl) + '" style="width:100%; height:64px; object-fit:cover; display:block;" alt="">' +
+          '<div style="padding:8px 10px; font-size:11px; color:#9ca3af;">🌐 全景环境 · ' + esc(env.ratio || '21:9') + '</div>' +
+        '</div>' +
+        '<div class="ds-slider-row" style="margin-top:8px;">' +
+          '<label title="环境旋转">旋转</label>' +
+          '<input type="range" id="dsEnvYaw" min="0" max="360" step="1" value="' + Math.round(env.yaw || 0) + '" />' +
+          '<input type="number" class="ds-num" id="dsEnvYawNum" min="0" max="360" value="' + Math.round(env.yaw || 0) + '" />' +
+        '</div>' +
+        '<div style="display:flex; gap:6px; margin-top:8px;">' +
+          '<button class="ds-mini-btn" id="dsEnvRefresh" style="flex:1; justify-content:center;">↻ 刷新</button>' +
+          '<button class="ds-mini-btn danger" id="dsEnvRemove" style="flex:1; justify-content:center;">✕ 移除</button>' +
+        '</div>';
+    }
+    wrap.innerHTML = html;
+
+    if (!this._envLoading && env) {
+      var yawSlider = this.$('dsEnvYaw');
+      var yawNum = this.$('dsEnvYawNum');
+      if (yawSlider) {
+        this.on(yawSlider, 'input', function () {
+          env.yaw = parseFloat(yawSlider.value) || 0;
+          if (self.envSphere) self.envSphere.rotation.y = deg2rad(env.yaw);
+          if (yawNum) yawNum.value = yawSlider.value;
+          self.markDirty(true);
+        });
+        this.on(yawSlider, 'change', function () { self.markDirty(); });
+      }
+      if (yawNum) {
+        this.on(yawNum, 'change', function () {
+          env.yaw = clamp(parseFloat(yawNum.value) || 0, 0, 360);
+          if (self.envSphere) self.envSphere.rotation.y = deg2rad(env.yaw);
+          if (yawSlider) yawSlider.value = env.yaw;
+          self.markDirty();
+        });
+      }
+      var refreshBtn = this.$('dsEnvRefresh');
+      if (refreshBtn) this.on(refreshBtn, 'click', function () { self.refreshEnvironment(); });
+      var removeBtn = this.$('dsEnvRemove');
+      if (removeBtn) {
+        this.on(removeBtn, 'click', function () {
+          if (self.node.data.directorData) self.node.data.directorData.environment = null;
+          self.removeEnvironment();
+          self.markDirty();
+          self.setStatus('已移除全景环境');
+        });
+      }
+    }
   };
 
   // ---------- 人偶管理 ----------
@@ -1846,6 +2029,7 @@
     this.restoreFromData();
     this.renderPuppetList();
     this.renderPoseList();
+    this.renderEnvSection();
     this._panelMode = 'camera';
     this.renderPropsPanel();
     this.updateSelectionVisuals();
@@ -1897,6 +2081,7 @@
 
     if (this.rafId) cancelAnimationFrame(this.rafId);
     if (this.roObserver) this.roObserver.disconnect();
+    this.removeEnvironment();
     this.bound.forEach(function (b) {
       try { b[0].removeEventListener(b[1], b[2], b[3]); } catch (e) { /* noop */ }
     });
