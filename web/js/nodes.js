@@ -422,14 +422,29 @@
 
       const worldId = state.defaultWorldId;
       for (const shotNode of allShotFrameNodes) {
-        const imagePrompt = shotNode.data.imagePrompt || '';
         const shotData = shotNode.data.shotJson || {};
 
-        // 1. 提取角色名并获取参考图URL
-        const characterPattern = /【【([^】]+)】】/g;
-        let match;
-        while ((match = characterPattern.exec(imagePrompt)) !== null) {
-          const characterName = match[1].trim();
+        // 1. 提取角色名并获取参考图URL（图片提示词 ∪ 生视频提示词）
+        const shotCharacterNames = typeof mergeShotCharacterNames === 'function'
+          ? mergeShotCharacterNames(shotNode)
+          : (function() {
+              const names = [];
+              const pattern = /【【([^】]+)】】/g;
+              const texts = [
+                shotNode.data.imagePrompt || '',
+                shotNode.data.videoPromptText || shotNode.data.videoPrompt || ''
+              ];
+              texts.forEach(function(text) {
+                pattern.lastIndex = 0;
+                let match;
+                while ((match = pattern.exec(text)) !== null) {
+                  const name = match[1].trim();
+                  if (name && names.indexOf(name) === -1) names.push(name);
+                }
+              });
+              return names;
+            })();
+        for (const characterName of shotCharacterNames) {
           if (characterName && !collectedCharacters.has(characterName)) {
             collectedCharacters.add(characterName);
             try {

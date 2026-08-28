@@ -630,10 +630,15 @@
         }
 
         
-        // 如果从角色/场景/道具节点拖拽，查找图片节点的参考端口
+        // 如果从角色/场景/道具节点拖拽：优先吸附生视频图片口，其次图片节点参考口
         let nearestRefPort = null;
         if(fromNode && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
+          const registryPort = findNearestConnectablePort(toX, toY, fromNode.type, 50);
           let nearestRefDist = 50;
+          if(registryPort){
+            nearestRefDist = registryPort.dist;
+            nearestImgPort = { nodeId: registryPort.nodeId, portType: registryPort.portType, x: registryPort.x, y: registryPort.y };
+          }
           for(const node of state.nodes){
             if(node.type !== 'image') continue;
             const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
@@ -644,6 +649,7 @@
             if(dist < nearestRefDist){
               nearestRefDist = dist;
               nearestRefPort = { nodeId: node.id, x: portX, y: portY };
+              nearestImgPort = null;
             }
           }
         }
@@ -888,46 +894,8 @@
           let imgConnected = false;
           {
             const i2vPort = findNearestConnectablePort(mouseX, mouseY, 'image', PROXIMITY_DIST);
-            if(i2vPort){
-              const connArray = state[i2vPort.portCfg.connectionType] || state.imageConnections;
-              // 允许端口声明支持多连接（如参考图），否则检查重复
-              const shouldConnect = i2vPort.portCfg.allowMultiple
-                ? true
-                : !connArray.some(c => c.to === i2vPort.nodeId && c.portType === i2vPort.portType);
-              if(shouldConnect){
-                connArray.push({ id: state.nextImgConnId++, from: fromNode.id, to: i2vPort.nodeId, portType: i2vPort.portType });
-                const tn = i2vPort.node;
-                // 优先使用注册表的 onConnect 回调，否则使用默认行为
-                if(typeof i2vPort.portCfg.onConnect === 'function'){
-                  i2vPort.portCfg.onConnect(fromNode, tn);
-                } else {
-                  // 默认行为：根据 portType 设置节点数据
-                  if(i2vPort.portType === 'start'){
-                    tn.data.startUrl = fromNode.data.url || '';
-                    tn.data.startPreview = fromNode.data.preview || fromNode.data.url || '';
-                  } else if(i2vPort.portType === 'end'){
-                    tn.data.endUrl = fromNode.data.url || '';
-                    tn.data.endPreview = fromNode.data.preview || fromNode.data.url || '';
-                  } else if(i2vPort.portType === 'ref-image'){
-                    if(fromNode.data.url){
-                      if(!tn.data.referenceUrls) tn.data.referenceUrls = [];
-                      tn.data.referenceUrls.push(fromNode.data.url);
-                    }
-                  }
-                }
-                renderImageConnections();
-                // 更新预览显示
-                const targetEl = canvasEl.querySelector(`.node[data-node-id="${tn.id}"]`);
-                if(i2vPort.portType === 'start' && typeof targetEl?._updateStartFrame === 'function'){
-                  targetEl._updateStartFrame();
-                } else if(i2vPort.portType === 'end' && typeof targetEl?._updateEndFrame === 'function'){
-                  targetEl._updateEndFrame();
-                } else if(i2vPort.portType === 'ref-image' && typeof targetEl?._updateReferencePreview === 'function'){
-                  targetEl._updateReferencePreview();
-                }
-                safeAutoSave()
-                imgConnected = true;
-              }
+            if(i2vPort && connectToRegisteredImagePort(fromNode, i2vPort)){
+              imgConnected = true;
             }
           }
 
@@ -990,8 +958,12 @@
           }
         }
 
-        // 如果从角色/场景/道具节点拖拽，查找图片节点的参考端口
+        // 如果从角色/场景/道具节点拖拽：先连生视频图片口，否则连图片节点参考口
         if(fromNode && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
+          let assetConnected = false;
+          const i2vPort = findNearestConnectablePort(mouseX, mouseY, fromNode.type, PROXIMITY_DIST);
+          const i2vDist = i2vPort ? i2vPort.dist : Infinity;
+
           let nearestReferencePort = null;
           let nearestReferenceDist = PROXIMITY_DIST;
 
@@ -1007,8 +979,12 @@
               nearestReferencePort = { nodeId: node.id, node: node };
             }
           }
-          
-          if(nearestReferencePort){
+
+          if(i2vPort && i2vDist <= nearestReferenceDist){
+            assetConnected = connectToRegisteredImagePort(fromNode, i2vPort);
+          }
+
+          if(!assetConnected && nearestReferencePort){
             const exists = state.referenceConnections.some(c => c.from === state.connecting.fromId && c.to === nearestReferencePort.nodeId);
             if(!exists){
               // 检查参考图数量限制

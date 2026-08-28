@@ -32,18 +32,26 @@ async function collectShotFrameRefImages(node) {
   const missingCharacters = new Set();
   let imageIndex = 1;
 
-  const imagePrompt = node.data.imagePrompt || '';
-
-  // 1. 提取角色名（用【【】】包裹）
-  const characterPattern = /【【([^】]+)】】/g;
-  const characterNames = [];
-  let match;
-  while ((match = characterPattern.exec(imagePrompt)) !== null) {
-    const name = match[1].trim();
-    if (name && !characterNames.includes(name)) {
-      characterNames.push(name);
-    }
-  }
+  // 1. 提取角色名：图片提示词 ∪ 生视频提示词中的 【【角色名】】（去重，图片提示词优先）
+  const characterNames = typeof mergeShotCharacterNames === 'function'
+    ? mergeShotCharacterNames(node)
+    : (function() {
+        const names = [];
+        const pattern = /【【([^】]+)】】/g;
+        const texts = [
+          (node.data && node.data.imagePrompt) || '',
+          (node.data && (node.data.videoPromptText || node.data.videoPrompt)) || ''
+        ];
+        texts.forEach(function(text) {
+          pattern.lastIndex = 0;
+          let match;
+          while ((match = pattern.exec(text)) !== null) {
+            const name = match[1].trim();
+            if (name && names.indexOf(name) === -1) names.push(name);
+          }
+        });
+        return names;
+      })();
 
   // 2. 匹配角色并获取参考图 URL
   if (characterNames.length > 0) {
@@ -126,8 +134,11 @@ async function collectShotFrameRefImages(node) {
   const videoModel = node.data.videoModel || 'wan22';
   const modelConfig = window.TaskConfig?.getModelConfigs()?.[videoModel];
   const maxRefImages = modelConfig?.max_multi_ref_images || 5;
-  if (referenceImageUrls.length > maxRefImages) {
+  if (typeof truncateRefCollection === 'function') {
+    truncateRefCollection(referenceImageUrls, promptSuffix, maxRefImages);
+  } else if (referenceImageUrls.length > maxRefImages) {
     referenceImageUrls.length = maxRefImages;
+    if (promptSuffix.length > maxRefImages) promptSuffix.length = maxRefImages;
   }
 
   return { referenceImageUrls, promptSuffix, missingCharacters };
@@ -156,15 +167,9 @@ async function generateShotFrameImage(nodeId, node){
     }
     
     // 1. 收集参考图（角色/场景/道具）
-    const characterPattern = /【【([^】]+)】】/g;
-    const characterNames = [];
-    let charMatch;
-    while((charMatch = characterPattern.exec(imagePrompt)) !== null){
-      const name = charMatch[1].trim();
-      if(name && !characterNames.includes(name)){
-        characterNames.push(name);
-      }
-    }
+    const characterNames = typeof mergeShotCharacterNames === 'function'
+      ? mergeShotCharacterNames(node)
+      : [];
     if(characterNames.length > 0){
       showToast(`检测到${characterNames.length}个角色，正在匹配...`, 'info');
     }
