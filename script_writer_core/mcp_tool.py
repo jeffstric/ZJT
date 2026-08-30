@@ -1509,9 +1509,16 @@ def create_character_json(user_id: str, world_id: str, auth_token: str, name: st
         
         # 生成安全的文件名（支持临时文件名用于比较）
         filename = _temp_filename if _temp_filename else f"character_{validated_name}.json"
-        
+
         # 使用FileManager统一路径管理
         file_manager = get_file_manager()
+
+        # 主形象图被替换/删除时归档旧图到 image_history（临时文件用于对比，不归档）；
+        # 同时在 agent 重建 JSON 不带该字段时继承旧历史，避免丢失。
+        if not _temp_filename:
+            old_json = file_manager.get_character_json(validated_name, user_id, world_id)
+            FileManager._archive_character_image_history(old_json, character_data)
+
         success = file_manager.save_json_content(user_id, world_id, "characters", filename, character_data)
         
         if not success:
@@ -2497,11 +2504,13 @@ def update_character_json(user_id: str, world_id: str, auth_token: str, name: st
             }
         file_path = str(resolved_path)
         filename = resolved_path.name
-        
+
         # 读取现有数据
         with open(file_path, 'r', encoding='utf-8') as f:
             existing_data = json.load(f)
-        
+        # 旧数据快照：主形象图被替换/删除时据此归档到 image_history
+        old_data = dict(existing_data)
+
         # 验证reference_image（如果提供）
         if reference_image is not None:
             url_validation = validate_image_url(reference_image, "reference_image")
@@ -2534,7 +2543,10 @@ def update_character_json(user_id: str, world_id: str, auth_token: str, name: st
         
         # 更新修改时间
         existing_data['updated_at'] = datetime.now().isoformat()
-        
+
+        # 主形象图被替换/删除时归档旧图到 image_history（与 save_character / create_character_json 一致）
+        FileManager._archive_character_image_history(old_data, existing_data)
+
         # 直接写回已解析到的真实文件路径，避免 sanitize 后写到另一个新文件
         try:
             with open(file_path, 'w', encoding='utf-8') as f:

@@ -18,6 +18,8 @@ from config.constant import (
     StoryType,
     UploadPathConstants,
     ENTITY_PROTECTED_META_FIELDS,
+    CHARACTER_IMAGE_HISTORY_FIELD,
+    CHARACTER_IMAGE_HISTORY_MAX_ENTRIES,
 )
 from utils.project_path import get_project_root
 
@@ -164,6 +166,10 @@ class FileManager:
         data.setdefault('user_id', user_id)
         data.setdefault('world_id', world_id)
 
+        # 角色主形象图被替换时，旧图自动归档到 image_history（供前端「历史形象图」查看）
+        if file_prefix == "character_":
+            self._archive_character_image_history(old_data, data)
+
         # 4. 写入
         try:
             file_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -182,6 +188,51 @@ class FileManager:
                     logger.warning(f"清理旧名文件失败 {old_file}: {e}")
 
         return True
+
+    @staticmethod
+    def _archive_character_image_history(old_data: Optional[Dict[str, Any]], new_data: Dict[str, Any]) -> None:
+        """角色形象图历史维护（image_history，最新在前）。
+
+        - 旧主图非空，且被替换或被删除/清空（新图缺失、为空或不同）：旧图归档到历史头部；
+          历史基线优先取 new_data 显式携带的（编辑弹窗回存场景），
+          否则继承 old_data 的（agent 重建 JSON 时不带该字段）；
+        - 主图未变化：new_data 未显式携带历史时从 old_data 继承，
+          避免前端/agent 重建 JSON 导致历史丢失；
+        - 换回旧图场景：当前主图从历史中移出；
+        - 去重并截断到上限；异常不影响主写入流程。
+        """
+        try:
+            old_history = (old_data or {}).get(CHARACTER_IMAGE_HISTORY_FIELD)
+            old_history = old_history if isinstance(old_history, list) else []
+
+            old_ref = (old_data or {}).get('reference_image')
+            new_ref = new_data.get('reference_image')
+            new_ref = new_ref.strip() if isinstance(new_ref, str) else ''
+            if not isinstance(old_ref, str) or not old_ref.strip() or new_ref == old_ref.strip():
+                # 旧图为空（首次生成/删除后重建）或图片未变化：仅继承历史
+                if (CHARACTER_IMAGE_HISTORY_FIELD not in new_data and old_history):
+                    new_data[CHARACTER_IMAGE_HISTORY_FIELD] = old_history
+                return
+            old_ref = old_ref.strip()
+
+            history = new_data.get(CHARACTER_IMAGE_HISTORY_FIELD)
+            if not isinstance(history, list):
+                history = old_history
+            # 旧主图归档到头部；当前主图若曾在历史中（换回旧图场景）则移出
+            history = [old_ref] + [u for u in history if u != old_ref and u != new_ref]
+
+            seen: Set[str] = set()
+            deduped: List[str] = []
+            for url in history:
+                if not isinstance(url, str):
+                    continue
+                url = url.strip()
+                if url and url not in seen:
+                    seen.add(url)
+                    deduped.append(url)
+            new_data[CHARACTER_IMAGE_HISTORY_FIELD] = deduped[:CHARACTER_IMAGE_HISTORY_MAX_ENTRIES]
+        except Exception as e:
+            logger.warning(f"归档角色历史形象图失败（忽略，不影响保存）: {e}")
 
     # ==================== 路径管理工具函数 ====================
     

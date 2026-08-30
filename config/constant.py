@@ -205,6 +205,11 @@ IMAGE_STYLE_LLM_TIMEOUT = 120
 IMAGE_STYLE_PREFERRED_VENDOR = "volcengine"
 IMAGE_STYLE_PREFERRED_MODEL = "doubao-seed-2-0-lite"
 
+# ===== 角色形象图历史归档（暂存区 character_*.json 的 image_history 字段）=====
+# 替换 reference_image 时旧图自动插入 image_history 头部；超过上限后丢弃最旧的。
+CHARACTER_IMAGE_HISTORY_FIELD = "image_history"
+CHARACTER_IMAGE_HISTORY_MAX_ENTRIES = 20
+
 # 剧本创作等入口无偏好时的默认生图模型：GPT Image 2（short_key=gpt-image-2）
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = TaskTypeId.GPT_IMAGE_2_EDIT
 

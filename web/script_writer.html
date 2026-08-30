@@ -259,8 +259,6 @@
                     <img src="__BRANDING_LOGO_URL__" alt="Logo" class="app-logo">
                 </a>
                 <nav class="breadcrumb-nav">
-                    <a href="/video-workflow-list" class="breadcrumb-link" data-i18n="workflow_list">工作流</a>
-                    <span class="breadcrumb-separator">/</span>
                     <span class="breadcrumb-current" data-i18n="script_writer_title">剧本智能创作系统</span>
                 </nav>
                 <span class="world-name-display" id="world-name-display" data-i18n="loading">加载中...</span>
@@ -279,8 +277,7 @@
                                 <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
                             </svg>
                         </div>
-                        <div class="model-select-wrapper has-track-toggle">
-                            <div id="llm-track-host" class="model-track-host"></div>
+                        <div class="model-select-wrapper">
                             <select id="model-selector" class="model-select" onchange="changeModel()" title="选择 AI 模型" data-i18n="select_ai_model:title">
                                 <option value="" data-i18n="loading">加载中...</option>
                             </select>
@@ -327,8 +324,7 @@
                                 <path d="M9 12c0 1.5 1 3 3 3s3-1.5 3-3"/>
                             </svg>
                         </div>
-                        <div class="model-select-wrapper has-track-toggle">
-                            <div id="image-track-host" class="model-track-host"></div>
+                        <div class="model-select-wrapper">
                             <select id="text-to-image-model-selector" class="model-select" onchange="changeTextToImageModel()" title="选择生图模型" style="display: none;" data-i18n="select_image_model:title">
                                 <option value="" data-i18n="loading">加载中...</option>
                             </select>
@@ -430,6 +426,8 @@
 
                 <!-- 输入区域 -->
                 <div class="input-section">
+                    <!-- 排队消息堆叠区：AI 吞吐中压入的消息显示在输入框上方，任务完成后自动发送 -->
+                    <div class="pending-queue-container" id="pendingQueueContainer" style="display: none;"></div>
                     <div class="input-container">
                         <textarea 
                             id="message-input" 
@@ -552,7 +550,7 @@
                         <div class="file-empty" data-i18n="loading">加载中...</div>
                     </div>
                 </div>
-                <!-- 画风识别区块：仅在「世界」tab 显示；支持拖入/点击上传 -->
+                <!-- 画风识别区块：仅在「世界」tab 显示；支持拖入/点击上传；标题栏可折叠收起 -->
                 <div class="style-recognize-section" id="styleRecognizeSection" hidden>
                     <div class="style-recognize-header">
                         <div class="style-recognize-title-row">
@@ -568,12 +566,20 @@
                                target="_blank"
                                rel="noopener noreferrer"
                                data-i18n="style_recognize_more_styles">查看更多画风</a>
+                            <button type="button" class="style-recognize-collapse-btn" id="styleRecognizeCollapseBtn"
+                                    onclick="toggleStyleRecognizeCollapse()" aria-expanded="true"
+                                    title="收起画风识别" data-i18n="style_recognize_collapse:title">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </button>
                         </div>
                         <div class="style-recognize-subtitle" data-i18n="style_recognize_subtitle">拖入参考图识别画风，写入世界设定</div>
                     </div>
                     <input type="hidden" id="style-image" value="">
                     <input type="file" id="style-image-file" accept="image/*" style="display:none"
                            onchange="handleImageUpload(event, 'style-image', 4)">
+                    <div class="style-recognize-body" id="styleRecognizeBody">
                     <div class="style-drop-zone" id="styleDropZone"
                          role="button" tabindex="0"
                          onclick="onStyleDropZoneClick(event)"
@@ -603,6 +609,7 @@
                         </div>
                         <button type="button" class="btn btn-primary style-recognize-btn" id="recognizeStyleBtn" onclick="recognizeStyle()" disabled data-i18n="style_recognize_btn">识别画风</button>
                     </div>
+                    </div><!-- /.style-recognize-body -->
                 </div>
             </aside>
         </main>
@@ -938,7 +945,17 @@
                                     </button>
                                 </div>
                                 <input type="file" id="char-image-file" accept="image/*" style="display: none;" onchange="handleImageUpload(event, 'char-image', 1)">
-                            </div>
+                                </div>
+                                <div style="margin-top: 8px;">
+                                    <button type="button" class="btn btn-primary btn-sm" id="regenerate-character-image-btn" onclick="regenerateCharacterImageFromEditor()" style="background: #8b5cf6;" title="将重新生成角色形象图的任务发送给 AI">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;">
+                                            <path d="M21.5 2v6h-6M2.5 22v-6h6"/>
+                                            <path d="M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                                        </svg>
+                                        <span data-i18n="regenerate_character_image">重新生成形象图</span>
+                                    </button>
+                                    <span style="margin-left: 8px; font-size: 12px; color: #6b7280;" data-i18n="regenerate_character_image_hint">点击后由 AI 重新生成该角色的形象参考图（AI 处理中会自动排队）</span>
+                                </div>
                             <div id="char-image-preview" class="image-preview-box" style="display: none;">
                                 <img class="preview-thumbnail" alt="预览">
                                 <button type="button" class="preview-remove-btn" onclick="removeImagePreview('char-image')">×</button>
@@ -1499,6 +1516,17 @@
                 <div id="main-preview-container" style="margin-bottom: 15px;">
                     <img id="preview-image" class="full-preview-image" alt="参考图片" style="max-width: 100%; max-height: 55vh; border-radius: 8px;">
                 </div>
+                <!-- 历史形象图恢复操作区（仅角色历史视图显示；恢复的是当前大图这张） -->
+                <div id="preview-restore-section" style="display: none; margin-bottom: 15px; padding-top: 10px; border-top: 1px dashed #e5e7eb;">
+                    <button type="button" class="btn btn-primary" id="preview-restore-image-btn" onclick="restoreCharacterImageFromHistory()" style="background: #10b981;" title="将当前显示的这张历史图恢复为角色形象图">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;">
+                            <path d="M3 12a9 9 0 1 0 3-6.7L3 8"/>
+                            <path d="M3 3v5h5"/>
+                        </svg>
+                        <span data-i18n="restore_history_image">设为当前形象图</span>
+                    </button>
+                    <span id="preview-restore-status" style="margin-left: 10px; font-size: 12px; color: #6b7280;" data-i18n="restore_history_image_hint">在下方缩略图中选择后，当前大图将被恢复为角色形象图</span>
+                </div>
                 <!-- 生成多角度图按钮（仅场景显示） -->
                 <div id="preview-generate-section" style="display: none; margin-bottom: 15px; padding-top: 10px; border-top: 1px dashed #e5e7eb;">
                     <button type="button" class="btn btn-primary" id="preview-generate-multi-angle-btn" onclick="generatePreviewMultiAngleImages()" style="background: #8b5cf6;" title="">
@@ -1510,6 +1538,25 @@
                         生成多角度图（90°, 180°, 270°）
                     </button>
                     <span id="preview-generate-status" style="margin-left: 10px; font-size: 12px;"></span>
+                </div>
+                <!-- 重新生成角色形象图 / 查看历史形象图（仅角色显示） -->
+                <div id="preview-regenerate-section" style="display: none; margin-bottom: 15px; padding-top: 10px; border-top: 1px dashed #e5e7eb;">
+                    <button type="button" class="btn btn-primary" id="preview-regenerate-image-btn" onclick="regenerateCharacterImageFromPreview()" style="background: #8b5cf6;" title="将重新生成角色形象图的任务发送给 AI">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;">
+                            <path d="M21.5 2v6h-6M2.5 22v-6h6"/>
+                            <path d="M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                        </svg>
+                        <span data-i18n="regenerate_character_image">重新生成形象图</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="preview-image-history-btn" onclick="viewCharacterImageHistory()" style="margin-left: 8px;" title="查看历史形象图">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            <circle cx="12" cy="8.5" r="6.5" stroke-dasharray="2 2"/>
+                        </svg>
+                        <span data-i18n="view_image_history">历史形象图</span>
+                    </button>
+                    <span id="preview-regenerate-status" style="margin-left: 10px; font-size: 12px; color: #6b7280;" data-i18n="regenerate_character_image_hint">点击后由 AI 重新生成该角色的形象参考图（AI 处理中会自动排队）</span>
                 </div>
                 <!-- 缩略图网格 -->
                 <div id="image-preview-thumbnails" style="display: flex; justify-content: center; flex-wrap: wrap; gap: 10px;"></div>

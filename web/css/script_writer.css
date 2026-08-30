@@ -4571,3 +4571,133 @@ body {
 }
 
 
+
+/* ==================== 画风识别折叠（收起/展开） ==================== */
+
+.style-recognize-collapse-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted, #9ca3af);
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease, transform 0.2s ease;
+}
+
+.style-recognize-collapse-btn:hover {
+    color: var(--primary-color, #8b5cf6);
+    background: rgba(139, 92, 246, 0.08);
+}
+
+.style-recognize-collapse-btn:focus-visible {
+    outline: 2px solid rgba(139, 92, 246, 0.45);
+    outline-offset: 1px;
+}
+
+.style-recognize-collapse-btn svg {
+    transition: transform 0.2s ease;
+}
+
+/* 收起态：主体与副标题隐藏，箭头向上 */
+.style-recognize-section.is-collapsed .style-recognize-body,
+.style-recognize-section.is-collapsed .style-recognize-subtitle {
+    display: none;
+}
+
+.style-recognize-section.is-collapsed .style-recognize-collapse-btn svg {
+    transform: rotate(180deg);
+}
+
+.style-recognize-section.is-collapsed {
+    padding-bottom: 10px;
+}
+
+/* ==================== 排队消息堆叠区（AI 吞吐中压入的消息，显示在输入框上方） ==================== */
+
+.pending-queue-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+    max-height: 132px;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+.pending-queue-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px dashed rgba(139, 92, 246, 0.45);
+    background: rgba(139, 92, 246, 0.06);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text-primary, #1f2937);
+    line-height: 1.4;
+}
+
+.pending-queue-item::before {
+    content: "⏳";
+    flex-shrink: 0;
+    font-size: 12px;
+}
+
+.pending-queue-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pending-queue-remove {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted, #9ca3af);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+
+.pending-queue-remove:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.08);
+}
+
+/* ==================== 暂存区：图片生成中标识 ==================== */
+
+/* 生成中：图片预览按钮图标替换为 loading 圈（无文字，避免挤占文件名宽度） */
+.image-preview-btn.is-generating {
+    color: #3b82f6;
+    cursor: default;
+}
+
+.image-preview-btn .image-generating-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(59, 130, 246, 0.3);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: image-generating-spin 0.8s linear infinite;
+    vertical-align: middle;
+}
+
+@keyframes image-generating-spin {
+    to { transform: rotate(360deg); }
+}
