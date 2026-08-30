@@ -2244,3 +2244,25 @@ DIFF_CHARGE_TXN_PREFIX = 'diff-charge-'
 # DB 集成类模块（crud/driver_integration）含 alembic 迁移与建表，耗时更长，
 # 如仍遇合理超时可用 --module-timeout 覆盖。
 UNIT_TEST_MODULE_TIMEOUT_SECONDS = 600
+
+
+# ============ 导演台全景环境尺度对齐（services/director_stage_env_fit.py） ============
+# 用 VL 视觉模型估计 360 全景背景的 horizonY / sceneScale / groundY，把 3D 人偶对齐到全景场景。
+# 数值范围与该模块 SYSTEM_PROMPT 中的约定保持一致：
+#   horizonY（米）：0=照片地平线在脚边，1.5=平视，范围 0~2.5
+#   sceneScale（相对当前身高倍率）：人偶像玩具则增大、像巨人则减小，范围 0.5~4
+#   groundY（米）：人偶脚底相对 3D 地面，脚悬空为负（如 -0.8~-1.5）、陷地为正
+DS_ENV_FIT_PREFERRED_VENDOR = 'volcengine'
+DS_ENV_FIT_PREFERRED_MODEL = 'doubao-seed-2-0-lite'
+DS_ENV_FIT_DEFAULT_HORIZON = 1.5
+DS_ENV_FIT_HORIZON_MIN = 0.0
+DS_ENV_FIT_HORIZON_MAX = 2.5
+DS_ENV_FIT_DEFAULT_SCALE = 1.0
+DS_ENV_FIT_SCALE_MIN = 0.5
+DS_ENV_FIT_SCALE_MAX = 4.0
+DS_ENV_FIT_DEFAULT_GROUND = 0.0
+DS_ENV_FIT_GROUND_MIN = -2.0
+DS_ENV_FIT_GROUND_MAX = 1.0
+# 预览图压缩（asyncio.to_thread 执行）与 VL 请求（wait_for 整体超时 = LLM_TIMEOUT + 10）的超时（秒）
+DS_ENV_FIT_COMPRESS_TIMEOUT = 15
+DS_ENV_FIT_LLM_TIMEOUT = 60
