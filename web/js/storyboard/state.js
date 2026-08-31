@@ -212,6 +212,8 @@ const state = {
     enableScriptSplitQc: false,
     /** 质检最大循环次数 1–5，超次强制用最后一轮结果 */
     scriptSplitQcMaxRounds: 2,
+    /** 拆分时检测角色形象变化并自动生成角色变体参考图（换装/变身等） */
+    enableCharacterVariant: true,
 
     // 生成分镜进度弹框
     showGenerateProgressDialog: false,
@@ -1256,6 +1258,7 @@ export function serializeUiConfig() {
         scriptPromptLanguage: state.scriptPromptLanguage,
         enableScriptSplitQc: state.enableScriptSplitQc === true,
         scriptSplitQcMaxRounds: state.scriptSplitQcMaxRounds,
+        enableCharacterVariant: state.enableCharacterVariant !== false,
     };
 }
 
@@ -1342,6 +1345,9 @@ export function restoreUiConfig(config = {}) {
     }
     if (typeof config.enableScriptSplitQc === 'boolean') {
         state.enableScriptSplitQc = config.enableScriptSplitQc;
+    }
+    if (typeof config.enableCharacterVariant === 'boolean') {
+        state.enableCharacterVariant = config.enableCharacterVariant;
     }
     if ([1, 2, 3, 4, 5].includes(Number(config.scriptSplitQcMaxRounds))) {
         state.scriptSplitQcMaxRounds = Number(config.scriptSplitQcMaxRounds);

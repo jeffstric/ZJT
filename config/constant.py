@@ -1203,6 +1203,23 @@ class ScriptSplitConstants:
     # 角色契约校验严格模式。False（默认）：名称/提示词不匹配仅记录 warning 日志，
     # 不阻塞拆分；True：恢复严格全等硬门禁，失败重试后暂停任务。
     CHARACTER_CONTRACT_STRICT_MODE = False
+
+    # ---- 角色形象变化变体（见 docs/storyboard/script_split_character_variant.md）----
+    # 请求参数 enable_character_variant 的服务端默认值：拆分时检测角色形象变化
+    # （换装/变身等持续性造型改变）并自动生成角色变体参考图。
+    ENABLE_CHARACTER_VARIANT_DEFAULT = True
+    # 变体标签长度上限（LLM 输出的 label 会被截断到该长度，保证 task_key 可控）
+    CHARACTER_VARIANT_LABEL_MAX_LENGTH = 24
+    # 单个拆分任务最多生成的变体数（防 LLM 输出泛滥，超出部分降级用主图）
+    CHARACTER_VARIANT_MAX_COUNT = 20
+    # 单个 worker tick 最多提交的变体生图任务数（edit_image 提交含同步 HTTP，需限批）
+    CHARACTER_VARIANT_SUBMIT_BATCH_SIZE = 4
+    # 单个变体生图任务从提交到终态的等待上限（秒）；超时按失败降级，不阻塞拆分
+    CHARACTER_VARIANT_TASK_TIMEOUT_SECONDS = 900
+    # 变体图生图宽高比，与角色变体既有管线（generate_character_variant_image）一致
+    CHARACTER_VARIANT_ASPECT_RATIO = "16:9"
+    # 发布阶段变体生成的子阶段 phase（前端进度步骤归入「发布分镜」）
+    PHASE_CHARACTER_VARIANT = "character_variant"
     # 效果模式按段并发生成的批次上限。单个批次仍受 worker watchdog 保护。
     QUALITY_SEGMENT_PARALLELISM = 3
     # 运行时 spatial handoff JSON 序列化字节上限（超出时压缩软描述字段，见设计文档 §9.3）

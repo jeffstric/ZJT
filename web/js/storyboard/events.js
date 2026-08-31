@@ -151,6 +151,8 @@ function updateGenerateProgressStepsByStatus(statusData) {
         merging: 2,
         global_qc: 2,
         publishing: 3,
+        // 角色形象变体生成是发布阶段的子阶段（见后端 PHASE_CHARACTER_VARIANT）
+        character_variant: 3,
         done: 4,
     };
     const targetStep = phaseToStep[phase] !== undefined
@@ -1544,6 +1546,7 @@ async function handleAction(action, target) {
                 thinking_effort: thinking.thinking_effort,
                 enable_script_split_qc: state.enableScriptSplitQc === true,
                 script_split_qc_max_rounds: Number(state.scriptSplitQcMaxRounds) || 2,
+                enable_character_variant: state.enableCharacterVariant !== false,
                 sequence_mode: state.autoImageSequenceMode,
             });
             // 后端返回 202 + { data: { task_id, status, status_url } }
@@ -1775,6 +1778,7 @@ async function handleAction(action, target) {
         action === 'toggle-force-medium-shot'
         || action === 'toggle-no-bg-music'
         || action === 'toggle-split-multi-dialogue'
+        || action === 'toggle-enable-character-variant'
         || action === 'toggle-enable-script-split-qc'
     ) {
         if (state.isGeneratingFromScript) return;
@@ -1784,6 +1788,8 @@ async function handleAction(action, target) {
             state.noBgMusic = nextCheckboxState(target, state.noBgMusic);
         } else if (action === 'toggle-split-multi-dialogue') {
             state.splitMultiDialogue = nextCheckboxState(target, state.splitMultiDialogue);
+        } else if (action === 'toggle-enable-character-variant') {
+            state.enableCharacterVariant = nextCheckboxState(target, state.enableCharacterVariant);
         } else {
             state.enableScriptSplitQc = nextCheckboxState(target, state.enableScriptSplitQc);
         }

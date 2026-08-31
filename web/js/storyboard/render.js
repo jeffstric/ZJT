@@ -2100,6 +2100,12 @@ function renderScriptSplitOptions(disabled = false) {
                 ${toggleItem('toggle-no-bg-music', '不生成背景音乐', state.noBgMusic !== false)}
                 ${toggleItem('toggle-split-multi-dialogue', '拆分多人对话镜头（每人尽量一个镜头）', state.splitMultiDialogue === true)}
                 ${toggleItem(
+                    'toggle-enable-character-variant',
+                    '自动生成角色形象变化参考图',
+                    state.enableCharacterVariant !== false,
+                    '（检测换装/变身等变化并生成角色新形象，分镜生图自动使用）'
+                )}
+                ${toggleItem(
                     'toggle-enable-script-split-qc',
                     '开启拆分质检',
                     qcOn,

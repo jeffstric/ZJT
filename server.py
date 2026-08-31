@@ -6421,6 +6421,12 @@ async def parse_script(
             "sequence_mode": sequence_mode,
             "enable_qc": enable_qc,
             "qc_max_rounds": qc_max_rounds,
+            # 角色形象变化：拆分时输出形象变化标记（video_workflow 来源不做
+            # 发布期变体生成，标记保留在结果中供前端节点消费）
+            "enable_character_variant": _json_bool(
+                body.get('enable_character_variant'),
+                ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
+            ),
         }
         task_id, is_new = await create_split_task(
             user_id=user_id,

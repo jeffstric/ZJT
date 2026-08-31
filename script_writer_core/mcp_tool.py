@@ -16,7 +16,7 @@ from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from script_writer_core.cron_task_manager import get_task_manager
 from script_writer_core.constant import ItemType
-from config.config_util import get_config
+from config.config_util import get_config, get_config_value
 from config.constant import FilePathConstants, StoryType, GridConfig, DEFAULT_TEXT_TO_IMAGE_TASK_ID
 
 # 模块级日志
@@ -5718,6 +5718,25 @@ def generate_4grid_character_images(user_id: str, world_id: str, auth_token: str
     return result
 
 
+def _resolve_local_upload_url(url: str) -> str:
+    """把本服务存储的 /upload/ 相对路径补齐为绝对 URL。
+
+    角色主参考图等资产在系统内常态存储为 /upload/... 相对路径，而
+    edit_image 等图生图调用要求可访问的绝对 URL。host 取值逻辑与
+    server.py 的 SERVER_HOST 一致（优先 https_host，其次 server.host）。
+    """
+    from utils.project_path import build_upload_url
+
+    host = ""
+    if get_config_value("server", "https", "enabled", default=False):
+        host = get_config_value("server", "https_host", default="")
+    if not host:
+        host = get_config_value("server", "host", default="")
+    path = url if url.startswith("/") else "/" + url
+    relative = path[len("/upload/"):]
+    return build_upload_url(relative, host=str(host).rstrip("/"))
+
+
 def generate_character_variant_image(user_id: str, world_id: str, auth_token: str,
                                       character_name: str, variant_label: str,
                                       variant_prompt: str, aspect_ratio: str = "16:9",
@@ -5772,6 +5791,10 @@ def generate_character_variant_image(user_id: str, world_id: str, auth_token: st
             'error': f'角色 "{character_name}" 尚未生成主参考图(reference_image)，请先生成主图后再生成变体图',
             'skip_reason': 'no_main_image'
         }
+
+    # 主图常态存储为本服务的 /upload/ 相对路径，edit_image 需要绝对 URL，先补齐
+    if main_image_url.startswith(('/upload/', 'upload/')):
+        main_image_url = _resolve_local_upload_url(main_image_url)
 
     # 主图必须是 http/https，否则 edit_image 无法引用
     from urllib.parse import urlparse
