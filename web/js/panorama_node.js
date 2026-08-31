@@ -406,7 +406,7 @@
 
   // ---------- 节点定义 ----------
   var PANORAMA_PORTS = [
-    { direction: 'input', titleI18nKey: 'panorama_input_port', acceptType: 'image', connectionType: 'connections' },
+    { direction: 'input', titleI18nKey: 'panorama_input_port', acceptType: ['image', 'location'], connectionType: 'connections' },
     { direction: 'output', titleI18nKey: 'panorama_output_port' }
   ];
 
@@ -542,18 +542,43 @@
         var modelOptionsCache = [];
         var rotating = false;
 
-        // 参考图输入端口
+        // 参考图输入端口（支持图片节点；也支持场景节点——自动取场景参考图与描述）
         bindInputPortEvents(el, node, {
           cssClass: null,
-          acceptType: 'image',
+          acceptType: ['image', 'location'],
           connectionType: 'connections',
-          onConnect: function() { updateSourceThumbnail(); }
+          onConnect: function(fromNode) {
+            updateSourceThumbnail();
+            autoFillPromptFromScene(fromNode);
+          }
         });
+
+        function getSourceImageUrl(sourceNode) {
+          // 图片节点用 data.url；场景节点用 data.reference_image（与 getNodeImageUrl 语义一致）
+          if (!sourceNode || !sourceNode.data) return '';
+          if (typeof getNodeImageUrl === 'function') return getNodeImageUrl(sourceNode) || '';
+          return sourceNode.data.url || sourceNode.data.preview || sourceNode.data.reference_image || '';
+        }
+
+        // 场景节点连线后：提示词为空时自动填入场景描述，生成即得到该场景的 360 全景图
+        function autoFillPromptFromScene(fromNode) {
+          if (!fromNode || fromNode.type !== 'location') return;
+          if (String(node.data.prompt || '').trim()) return; // 已有提示词不覆盖
+          var parts = [];
+          if (fromNode.data.name) parts.push(String(fromNode.data.name).trim());
+          if (fromNode.data.description) parts.push(String(fromNode.data.description).trim());
+          var scenePrompt = parts.filter(Boolean).join('，');
+          if (!scenePrompt) return;
+          node.data.prompt = scenePrompt;
+          promptEl.value = scenePrompt;
+          showToast(tr('panorama_scene_prompt_filled', '已按场景「{name}」填充描述，可直接生成该场景的 360 全景图', { name: fromNode.data.name || '' }), 'info');
+          safeAutoSave();
+        }
 
         function updateSourceThumbnail() {
           var conn = state.connections.find(function(c) { return c.to === node.id; });
           var sourceNode = conn ? state.nodes.find(function(n) { return n.id === conn.from; }) : null;
-          var url = sourceNode && sourceNode.type === 'image' ? (sourceNode.data.url || sourceNode.data.preview) : null;
+          var url = sourceNode ? getSourceImageUrl(sourceNode) : null;
           if (url) {
             sourceImg.src = proxyImageUrl(url);
             sourceThumb.style.display = 'block';
@@ -563,7 +588,7 @@
             sourcePlaceholder.style.display = 'block';
             sourcePlaceholder.textContent = conn
               ? tr('panorama_source_no_image', '源图片节点没有图片')
-              : tr('panorama_source_hint', '可连接图片节点作为参考图，不连接则纯文生全景');
+              : tr('panorama_source_hint', '可连接图片/场景节点作为参考图，不连接则纯文生全景');
           }
         }
         el._updateSourceThumbnail = updateSourceThumbnail;
@@ -930,10 +955,10 @@
             return;
           }
 
-          // 参考图（可选）
+          // 参考图（可选，支持图片节点/场景节点）
           var conn = state.connections.find(function(c) { return c.to === node.id; });
           var sourceNode = conn ? state.nodes.find(function(n) { return n.id === conn.from; }) : null;
-          var refImageUrl = sourceNode && sourceNode.type === 'image' ? (sourceNode.data.url || '') : '';
+          var refImageUrl = sourceNode ? getSourceImageUrl(sourceNode) : '';
           var category = refImageUrl ? 'image_edit' : 'text_to_image';
 
           var model = node.data.model;

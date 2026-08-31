@@ -34,7 +34,8 @@
 
 ## 节点结构
 
-- **输入端口**：`image` 类型（可选）。连接图片节点后走「图生全景」（`/api/image-edit` + `ref_image_urls`）；不连接走纯文生全景（`/api/text-to-image` + `aspect_ratio`）。
+- **输入端口**：`image` / `location` 类型（可选）。连接图片节点或场景节点后走「图生全景」（`/api/image-edit` + `ref_image_urls`）；不连接走纯文生全景（`/api/text-to-image` + `aspect_ratio`）。
+  - 连接**场景节点**时：参考图自动取场景的 `reference_image`；若提示词为空，自动按「场景名，场景描述」填充提示词（不覆盖用户已输入内容），点击生成即得到该场景的 360 全景图。
 - **输出端口**：全景结果。生成后自动为每张结果创建标准图片节点并连接（全景节点 → 图片节点）。
 - **节点数据**（`node.data`，全部可序列化）：
 

@@ -678,10 +678,12 @@ export function setModels({
         );
     }
     if (state.imageEditModels.length) {
+        // key 带 _v2：2026-08 默认图片编辑模型切换为 GPT Image 2 时强制旧记忆作废一次
         state.selectedImageEditTaskId = resolveAvailableTaskId(
             state.selectedImageEditTaskId ?? state.selectedImageTaskId,
             state.imageEditModels,
-            'storyboard_lastSelectedImageEditTaskId',
+            'storyboard_lastSelectedImageEditTaskId_v2',
+            'gpt-image-2',
         );
     }
     if (state.textToVideoModels.length) {
