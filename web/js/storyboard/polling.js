@@ -23,7 +23,7 @@ const pollTimers = {};
 const batchPollTimers = {};
 
 // 内容违规提醒（前端兜底层，见 web/js/content_violation.js）：
-// 资产/配音任务失败（-1）且 error 命中违禁/内容安全特征时弹出「内容违规提醒」，
+// 分镜图/视频资产任务失败（-1）且 error 命中违禁/内容安全特征时弹出「内容违规提醒」，
 // 按「分镜+资产」维度冷却去重，批量生成不会连环弹窗。
 function notifyContentViolation(scopeKey, status, error) {
     if (status !== -1 || !error) return;
@@ -155,9 +155,6 @@ function applyTaskStatus(scene, data, requestSelection) {
             }
             dialogue.audioStatus = d.status;
             dialogue.audioError = d.error || '';
-            if (d.status === -1 && d.error) {
-                notifyContentViolation(`sb:${scene.id}:audio:${d.dialogue_id}`, d.status, d.error);
-            }
         }
     });
     scene.taskStatus = {

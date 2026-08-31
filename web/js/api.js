@@ -362,7 +362,6 @@
           if (status === 'SUCCESS' || status === 2) {
             opts.onSuccess(payload);
           } else if (status === 'FAILED' || status === -1) {
-            notifyContentViolations([{ key: 'wf-poll:' + opts.statusUrl, error: payload.reason || payload.error || payload.message || null, failed: true }]);
             opts.onFailed(payload);
           } else {
             if (opts.onPending && opts.onPending(payload) === true) return;

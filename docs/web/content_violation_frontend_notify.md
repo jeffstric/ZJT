@@ -68,9 +68,8 @@
 ### 3.1 video_workflow.html（工作流页）
 
 - `video_workflow.html`：在 `api.js` 之前加载 `<script src="/js/content_violation.js">`；
-- `web/js/api.js` `checkVideoStatus`（所有节点的统一状态轮询收口：图生视频 / 图像 / 视频 / 全景 / 剧本 / 分镜帧 / 数字人 / 运镜）：
+- `web/js/api.js` `checkVideoStatus`（所有图/视频节点的统一状态轮询收口：图生视频 / 图像 / 视频 / 全景 / 剧本 / 分镜帧 / 数字人 / 运镜）：
   多任务与单任务两个分支中，任一任务 `FAILED` 且 `error` 命中违规 → `notify('wf:{project_id}', error)`；
-- `web/js/api.js` `pollTaskStatus`（TTS / 对白等旁路轮询）：`onFailed` 前对 `reason || error || message` 做违规提醒；
 - `web/js/nodes.js` `friendlyContentModerationMessage`：委托 `window.ContentViolation.describe`（特征表更完整、文案与后端严格对齐），
   模块不存在时（如 Vitest 环境）回退本地规则。节点上的 `✗ 生成失败: …` 行内文案因此也自动获得新特征覆盖。
 
@@ -80,7 +79,6 @@
 - `web/js/storyboard/polling.js` `applyTaskStatus`（4s 分镜任务轮询）：
   - 记录 `scene.firstFrameError / lastFrameError / videoError`，候选项 `upsertSceneCandidateFromTask` 记录 `candidate.error`；
   - 资产 `status === -1` 且 `error` 命中违规 → `notify('sb:{scene_id}:{first_frame|last_frame|video}', error)`；
-  - 配音失败（`d.status === -1 && d.error`）→ `notify('sb:{scene_id}:audio:{dialogue_id}', error)`；
 - `web/js/storyboard/render.js` `renderCandidatePlaceholder(status, kind, error)`：
   失败且命中违规时占位符文案为「生成失败：内容违规」，`title` 悬浮展示友好原因；
 - `web/js/storyboard/events.js`：单条视频生成提交 catch、批量视频生成提交 catch —— 提交阶段即被内容安全拒绝时弹框提醒。
@@ -108,6 +106,8 @@
 
 ## 6. 边界与不做的事
 
+- **范围仅图片/视频生成**：配音（TTS/ai_audio）不会出现内容违规，不做识别与提醒
+  （`api.js` 的 `pollTaskStatus` 仅 TTS/对白节点使用，不接入）；
 - 只在**任务失败**路径提醒，提交成功后的进行中状态不弹框；
 - 不改动失败任务本身的展示逻辑（行内错误文案、候选占位符的既有行为保留）；
 - 不处理 `web/js/pages/*`（index.html 页面，非本次范围）；
