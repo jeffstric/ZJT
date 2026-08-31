@@ -1111,7 +1111,13 @@ async function sendDirectVideo(current) {
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
     } catch (error) {
-        notify(`视频生成失败：${error.message || error}`);
+        // 提交阶段即被内容安全拒绝时，弹「内容违规提醒」弹框（带冷却去重）
+        const submitMsg = (error && error.message != null && error.message !== '') ? String(error.message) : (error ? String(error) : '');
+        const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+        if (cv && typeof cv.notify === 'function') {
+            try { cv.notify(`sb:${sceneId}:video-submit`, submitMsg); } catch (e) { /* 提醒异常不影响主流程 */ }
+        }
+        notify(`视频生成失败：${submitMsg}`);
     } finally {
         finishSceneAgentRun(sceneId);
         rerenderAgentPanelForScene(sceneId);
@@ -1316,7 +1322,12 @@ async function handleAction(action, target) {
         try {
             await autoCompleteMissingVideos();
         } catch (error) {
-            notify(error.message || '批量生成视频失败');
+            const errMsg = error && error.message ? String(error.message) : '';
+            const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+            if (cv && typeof cv.notify === 'function') {
+                try { cv.notify('sb:video-batch-submit', errMsg || String(error)); } catch (e) { /* 提醒异常不影响主流程 */ }
+            }
+            notify(errMsg || '批量生成视频失败');
         }
         return;
     }

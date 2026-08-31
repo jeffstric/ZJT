@@ -110,6 +110,10 @@ _MESSAGE_SOURCE_HINTS = (
         "image_prohibited",
         "prohibited content",
         "prohibited material",
+        # Gemini duomi 输入侧拒绝话术（2026-08 日志样本）
+        "sensitive_words",
+        "considered unsafe",
+        "candidate stopped before producing",
         "文本",
         "提示词",
     )),
@@ -126,6 +130,12 @@ _MODERATION_MESSAGE_MARKERS = (
     "sensitive content",
     "sensitive information",
     "sensitivecontent",
+    # Gemini duomi / Grok 渠道原始话术（2026-08 日志样本）
+    "sensitive_words",
+    "unsafe",
+    "content security",
+    "gemini blocked",
+    "candidate stopped before producing",
     "rejected by the safety",
     "image generation blocked",
     "generation blocked",
