@@ -482,6 +482,11 @@ async function generateShotFrameImage(nodeId, node){
           node.updatePreview();
         }
         
+        // 通知分镜节点：新分镜图已生成（caret 角标/脉冲提醒 + 菜单最新置顶）
+        if(typeof node.notifyNewImages === 'function' && createdImageNodeIds.length > 0){
+          node.notifyNewImages(createdImageNodeIds);
+        }
+        
         generateBtn.disabled = false;
         generateBtn.textContent = '生成分镜图';
         showToast(`分镜图生成成功！已创建 ${imageUrls.length} 个图片节点`, 'success');
