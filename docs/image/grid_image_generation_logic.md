@@ -591,6 +591,34 @@ grid_image_tasks 标记为终态 FAILED
 
 8. **模型动态切换**：用户可在前端切换生图模型（如 GPT Image 2 → Seedream 5.0），不同模型的算力价格和支持尺寸不同。Agent 对话中切换后 **下一条消息新建的 `agent_tasks`** 写入新的 `generation_snapshots`；工具执行优先读任务快照（`scoped_media_generation_snapshots`），而非运行中任务的 live 偏好。script_writer 发送任务时应携带 `image_preferences.task_id`，后端另以 `chat_sessions.text_to_image_model_id` 作会话草稿回退。
 
+9. **宫格切分污染（质检闭环）**：生图模型偶发不规整宫格（角色跨格、一格混入两个角色、边缘裁切），切分后单个资产的 `reference_image` 会是污染图。几何校验 `validate_grid_image` 只能拦"整图不是 N×N 网格"，拦不住"格内内容错位"。质检闭环见下节。
+
+---
+
+## 宫格切分污染检测与坏图清理（2026-08-30）
+
+### 问题
+
+4宫格大图本身可能不规整（例：一格内出现双人互动、面部特写与三视角不是同一角色、人物贴边被裁切）。切分后这些坏图被当作正常资产写入 `reference_image`，后续视频制作会把"角色A的图片"用作"角色B"，导致角色资产完全错误。
+
+### 质检闭环设计
+
+检查动作放在 **asset-readiness-checker（资产就绪检查专家）**，新增为「五步检查法」的第三步（见 `script_writer_core/skills/asset-readiness-checker/SKILL.md`）：
+
+1. **看图**：对每个 `reference_image` 非空的资产调用 MCP 工具 `fetch_image_as_base64(image_url=...)`，图片经 `expert_agent.py` 的多模态注入机制以 user 消息进入对话，专家（须为 VL 模型）直接目检。
+2. **判定**：单一角色（面部特写+三视角同一人）、无边缘裁切 → 合格；多角色混切 / 特写与三视图不同人 / 边缘残缺 / 占位黑格残留 → 污染。
+3. **删除**：调用新工具 `delete_asset_reference_image(asset_type, name, reason)` 置空 `reference_image`，并在 JSON 中留 `reference_image_quality_log` 质检日志。
+4. **重生成**：报告中列出「已删除坏图、待重新生成」清单，PM 智能体据专家路由表重新调用 `character-image-designer` / `location-prop-image-designer`（删除后资产回到缺图状态，4宫格入口的覆盖保护不再拦截，可直接批量重生成）。
+
+### 关键实现点
+
+| 环节 | 位置 | 说明 |
+|---|---|---|
+| 新 MCP 工具 | `script_writer_core/mcp_tool.py` `delete_asset_reference_image()` | 角色/场景/道具通用；只清空字段不删图片文件；DB 侧由用户「提交数据」统一同步 |
+| 工具注册 | `agents/tool_executor.py`（tool_map + mcp_tool_names）、`mcp_tool.py`（MCP_TOOLS schema） | 自动注入 user_id/world_id/auth_token |
+| VL 模型 | 用户级偏好 `user_preferences.pref_type='vl_model'`，默认 `deepseek-v4-flash-vision-exp`（`config/constant.py` `VL_MODEL_PREFERRED_DEFAULT`） | 画风识别「识别模型」下拉与资产检查专家**共用同一偏好**；解析顺序：用户偏好 → agents_config 默认（`use_config_model: true`）→ 用户会话模型（仅前两者均失效时，打 warning） |
+| 降级 | 模型不支持视觉时跳过内容检查 | 报告注明「未验证，建议人工抽查」 |
+
 ---
 
 ## 相关文件清单
@@ -656,3 +684,4 @@ grid_image_tasks 标记为终态 FAILED
 - **2026-06-04**：新增自动重试机制文档；grid image 跳过 pipeline before_finish 重试，由 `process_grid_image_tasks` 独立管理
 - **2026-06-08**：移除 grid image 跳过逻辑，宫格生图现在支持失败后自动切换实现方；增加两个调度器竞争处理说明
 - **2026-08-03**：`generate_text_to_image` 的 MCP schema 补齐 `force_update_exist_image`；明确多宫格不支持 force，覆盖已有主图只能单图 + 用户确认
+- **2026-08-30**：新增宫格切分污染检测与坏图清理闭环（`delete_asset_reference_image` 工具 + asset-readiness-checker VL 目检，详见对应章节）

@@ -1343,7 +1343,7 @@ async function handleAction(action, target) {
         const mediaTarget = target?.dataset?.target || '';
         const typeMap = {
             textToImage: ['textToImageModels', 'selectedTextToImageTaskId', 'storyboard_lastSelectedImageTaskId'],
-            imageEdit: ['imageEditModels', 'selectedImageEditTaskId', 'storyboard_lastSelectedImageEditTaskId'],
+            imageEdit: ['imageEditModels', 'selectedImageEditTaskId', 'storyboard_lastSelectedImageEditTaskId_v2'],
             textToVideo: ['textToVideoModels', 'selectedTextToVideoTaskId', 'storyboard_lastSelectedTextToVideoTaskId'],
             imageToVideo: ['imageToVideoModels', 'selectedImageToVideoTaskId', 'storyboard_lastSelectedVideoTaskId'],
             referenceToVideo: ['imageToVideoModels', 'selectedReferenceToVideoTaskId', 'storyboard_lastSelectedReferenceToVideoTaskId'],
@@ -3070,7 +3070,7 @@ export function bindEvents() {
             } else if (['textToImage', 'imageEdit', 'textToVideo', 'imageToVideo', 'referenceToVideo'].includes(type)) {
                 const [field, mediaType, mode, storageKey] = {
                     textToImage: ['selectedTextToImageTaskId', 'image', 'text_to_image', 'storyboard_lastSelectedImageTaskId'],
-                    imageEdit: ['selectedImageEditTaskId', 'image', 'image_edit', 'storyboard_lastSelectedImageEditTaskId'],
+                    imageEdit: ['selectedImageEditTaskId', 'image', 'image_edit', 'storyboard_lastSelectedImageEditTaskId_v2'],
                     textToVideo: ['selectedTextToVideoTaskId', 'video', 'text_to_video', 'storyboard_lastSelectedTextToVideoTaskId'],
                     imageToVideo: ['selectedImageToVideoTaskId', 'video', 'image_to_video', 'storyboard_lastSelectedVideoTaskId'],
                     referenceToVideo: ['selectedReferenceToVideoTaskId', 'video', 'reference_to_video', 'storyboard_lastSelectedReferenceToVideoTaskId'],

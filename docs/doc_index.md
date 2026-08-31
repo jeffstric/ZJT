@@ -127,6 +127,8 @@
 | [脚本语言同步](script/script_language_sync.md) | 多语言脚本同步 | 待补充 |
 | [SSE 断连处理](script/script_writer_sse_disconnect.md) | SSE 连接断开处理 | 待补充 |
 | [已入库资产管理](script/script_writer_asset_library.md) | 创作页查看/编辑/删除数据库资产 | 待补充 |
+| [AI 介入程度调查](script/ai_intervention_level_investigation.md) | 介入程度设置未生效的根因分析与接入实施记录 | 待补充 |
+| [剧本智能体优化测试](script/script_writer_skills_optimization_test.md) | 本轮技能/SOP/质检改动的测试内容 | 待补充 |
 | [分镜帧参考素材](script/shot_frame_references.md) | 参考素材收集机制 | 待补充 |
 | [分镜组增量同步](script/shot_group_incremental_sync.md) | 数据增量同步 | 待补充 |
 

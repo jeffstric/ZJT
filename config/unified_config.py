@@ -2015,7 +2015,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_sizes=['1k', '2k', '4k'],
         default_ratio='1:1',
         default_size='1k',
-        sort_order=17,
+        # 类目首项即各端“图片编辑/文生图”默认模型（见 api/storyboard.py /models 排序说明）；
+        # 调为 5 使 GPT Image 2 成为 IMAGE_EDIT / TEXT_TO_IMAGE 列表第一项
+        sort_order=5,
         supports_grid_image=True,
         supports_grid_merge=False,
     ),

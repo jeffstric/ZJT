@@ -96,6 +96,7 @@ from model.user_preferences import (
     PREF_TYPE_TEXT_TO_VIDEO_MODEL,
     PREF_TYPE_IMAGE_TO_VIDEO_MODEL,
     PREF_TYPE_DEFAULT_LLM_MODEL,
+    PREF_TYPE_VL_MODEL,
 )
 # 生图模型设置范围：session=本对话草稿；world_default=世界默认（新会话种子）
 IMAGE_MODEL_SCOPE_SESSION = "session"
@@ -314,6 +315,33 @@ def get_image_to_video_model_id(user_id: str, world_id: str) -> Optional[int]:
 def set_image_to_video_model_id(user_id: str, world_id: str, task_id: int):
     """设置用户在指定世界的图生视频模型 task_id"""
     UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_IMAGE_TO_VIDEO_MODEL, task_id)
+
+
+def get_vl_model_preference(user_id: str, world_id: str) -> Optional[Dict[str, Any]]:
+    """获取用户在指定世界的 VL 模型偏好：{model, model_id, vendor_id}
+
+    画风识别（识别模型下拉）与资产检查专家（asset-readiness-checker）等看图场景共用；
+    无偏好时返回 None，由调用方回落 config/constant.py VL_MODEL_PREFERRED_DEFAULT。
+    """
+    pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_VL_MODEL)
+    if pref and pref.config_value is not None:
+        value = pref.get_value()
+        if isinstance(value, dict) and value.get('model'):
+            return value
+    return None
+
+
+def set_vl_model_preference(user_id: str, world_id: str, model: str,
+                            model_id: Optional[int] = None, vendor_id: Optional[int] = None) -> bool:
+    """保存用户在指定世界的 VL 模型偏好（画风识别处切换模型时调用）"""
+    if not model:
+        return False
+    UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_VL_MODEL, {
+        'model': str(model),
+        'model_id': int(model_id) if model_id is not None else None,
+        'vendor_id': int(vendor_id) if vendor_id is not None else None,
+    })
+    return True
 
 
 def _session_expire_hours(session_type: int) -> int:
@@ -1021,6 +1049,7 @@ class TaskCreateRequest(BaseModel):
     vendor_id: int = 1
     enable_thinking: bool = False
     thinking_effort: str = "medium"
+    intervention_level: Optional[str] = None
     image_urls: Optional[List[str]] = None
     video_urls: Optional[List[str]] = None
     audio_urls: Optional[List[str]] = None
@@ -3498,12 +3527,26 @@ async def list_style_models(request: Request):
         vl_models = annotate_llm_models(vl_models, ModelScene.LLM_STYLE_RECOGNIZE)
         catalog = build_tracks_payload(ModelScene.LLM_STYLE_RECOGNIZE, vl_models, kind="llm")
 
+        # 用户已保存的 VL 模型偏好（画风识别处切换即保存；资产检查专家共用），
+        # 前端选中优先级：saved_preference > VL_MODEL_PREFERRED_DEFAULT > 推荐⭐ > 第一个
+        saved_preference = None
+        try:
+            pref_user_id = request.headers.get('X-User-Id') or request.query_params.get('user_id')
+            pref_world_id = request.query_params.get('world_id') or ''
+            if pref_user_id and pref_world_id:
+                saved_preference = get_vl_model_preference(str(pref_user_id), str(pref_world_id))
+        except Exception as e:
+            logger.warning(f'读取 VL 模型偏好失败（非致命）: {e}')
+
+        from config.constant import VL_MODEL_PREFERRED_DEFAULT
         return JSONResponse({
             'success': True,
             'models': vl_models,
             'llm_timeout': IMAGE_STYLE_LLM_TIMEOUT,
             'preferred_vendor': IMAGE_STYLE_PREFERRED_VENDOR,
             'preferred_model': IMAGE_STYLE_PREFERRED_MODEL,
+            'vl_model_default': VL_MODEL_PREFERRED_DEFAULT,
+            'saved_preference': saved_preference,
             'catalog': catalog,
         })
     except Exception as e:
@@ -3512,6 +3555,38 @@ async def list_style_models(request: Request):
             'success': False,
             'error': str(e)
         }, status_code=500)
+
+
+@router.post('/style-models/preference')
+async def set_style_model_preference(request: Request):
+    """保存用户 VL 模型偏好（画风识别「识别模型」下拉切换时调用）。
+
+    偏好与资产检查专家（asset-readiness-checker）等看图场景共用，
+    body: {user_id, world_id, model, model_id?, vendor_id?}
+    """
+    try:
+        data = await request.json()
+        user_id = str(data.get('user_id', ''))
+        world_id = str(data.get('world_id', ''))
+        model = data.get('model')
+        if not user_id or not world_id or not model:
+            return JSONResponse({
+                'success': False,
+                'error': '缺少必填参数 user_id / world_id / model',
+            }, status_code=400)
+
+        ok = set_vl_model_preference(
+            user_id, world_id, model,
+            model_id=data.get('model_id'),
+            vendor_id=data.get('vendor_id'),
+        )
+        if not ok:
+            return JSONResponse({'success': False, 'error': 'model 不能为空'}, status_code=400)
+        logger.info(f'已保存 VL 模型偏好: user_id={user_id}, world_id={world_id}, model={model}')
+        return JSONResponse({'success': True, 'model': model})
+    except Exception as e:
+        logger.error(f'保存 VL 模型偏好失败: {str(e)}')
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
 
 
 class RecognizeStyleRequest(BaseModel):
@@ -3984,7 +4059,23 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
 
         # 创建任务（返回 task_id 字符串）
         task_language = task_request.language or 'zh-CN'
-        logger.info(f'创建任务: language={task_language} (from request: {task_request.language})')
+        # 介入程度校验：非法值/未传一律回落标准档，避免把脏值注入 PM 上下文
+        from config.constant import (
+            VALID_INTERVENTION_LEVELS, INTERVENTION_LEVEL_DEFAULT, INTERVENTION_LEVEL_INSTRUCTIONS,
+        )
+        task_intervention_level = task_request.intervention_level
+        if task_intervention_level not in VALID_INTERVENTION_LEVELS:
+            if task_intervention_level:
+                logger.warning(f'非法 intervention_level 已忽略: {task_intervention_level!r}')
+            task_intervention_level = INTERVENTION_LEVEL_DEFAULT
+        # 介入程度指令随 user 消息注入（detailed/concise 档；balanced 不注入）。
+        # 必须在 API 层拼接：PM 内存历史与 chat_messages 持久化共用
+        # task:{task_id}:user:initial 幂等键，若由 PM 侧再拼会被幂等去重丢弃
+        intervention_instruction = INTERVENTION_LEVEL_INSTRUCTIONS.get(task_intervention_level, '')
+        if intervention_instruction:
+            user_message = intervention_instruction + user_message
+        logger.info(f'创建任务: language={task_language} (from request: {task_request.language}), '
+                    f'intervention_level={task_intervention_level}')
         task_id = await asyncio.to_thread(
             task_manager.create_task,
             session_id=session_id,
@@ -3996,6 +4087,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             model_id=model_id,
             enable_thinking=task_request.enable_thinking,
             thinking_effort=task_request.thinking_effort,
+            intervention_level=task_intervention_level,
             image_urls=task_request.image_urls,
             video_urls=task_request.video_urls,
             audio_urls=task_request.audio_urls,

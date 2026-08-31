@@ -2466,8 +2466,15 @@ function renderFaceMaskToggle(disabled = false) {
         </div>`;
 }
 
-/** 拆分弹窗：默认视频模型（仅首帧/首尾帧图生视频）+ 条件人脸遮盖 */
+/** 拆分弹窗：默认视频模型（仅首帧/首尾帧图生视频）+ 分辨率 + 条件人脸遮盖 */
 function renderDefaultVideoModelConfig(disabled = false) {
+    // 分辨率与齿轮弹窗同源：绑定「图生视频模型」，随模型切换自动校正
+    const resolutionChips = disabled
+        ? ''
+        : renderVideoResolutionChips(getSelectedImageToVideoModel(), {
+            label: '分辨率',
+            hint: '分镜生成视频时使用的分辨率偏好；随上方图生视频模型变化',
+        });
     return renderMediaModelSelect(
         '默认视频模型',
         '分镜有首帧时用于生成视频；仅列出支持首帧/首尾帧的模型。参考图专用模型请到齿轮「参考视频模型」中选择',
@@ -2475,7 +2482,7 @@ function renderDefaultVideoModelConfig(disabled = false) {
         getImageToVideoSlotModels(),
         state.selectedImageToVideoTaskId,
         disabled,
-    ) + renderFaceMaskToggle(disabled);
+    ) + resolutionChips + renderFaceMaskToggle(disabled);
 }
 
 function renderVideoResolutionChips(model, { label = '分辨率', hint = '' } = {}) {

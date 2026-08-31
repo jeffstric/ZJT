@@ -1204,13 +1204,13 @@ button {
     color: var(--foreground);
     outline: none;
 }
-.model-config-dialog .config-chip-row {
+.config-chip-row {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
     margin-bottom: 4px;
 }
-.model-config-dialog .config-chip {
+.config-chip {
     flex: 1 1 auto;
     min-width: 64px;
     padding: 8px 10px;
@@ -1223,10 +1223,10 @@ button {
     text-align: center;
     transition: all 0.15s ease;
 }
-.model-config-dialog .config-chip:hover {
+.config-chip:hover {
     border-color: var(--primary, #2f6df6);
 }
-.model-config-dialog .config-chip.active {
+.config-chip.active {
     border: 2px solid var(--primary, #2f6df6);
     background: #e8f0fe;
     color: var(--primary, #2f6df6);
