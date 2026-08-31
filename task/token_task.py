@@ -11,7 +11,7 @@ from model.computing_power_log import ComputingPowerLogModel
 from model.token_log import TokenLogModel
 from model.uncalculated_power import UncalculatedPowerModel
 from model.vendor_model import VendorModelModel
-from utils.billing_period import get_billing_period
+from utils.billing_period import resolve_billing_period
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +43,14 @@ def calculate_computing_power_from_tokens(
         model_id: 模型ID
         raw_input_token: 原始输入token数，用于分段计费选择
         created_at: token_log 的调用发生时间，用于判断峰谷时段。
-                    为 None 时按当前北京时间兜底判断。扣费必须用调用时间，
+                    为 None 时按当前北京时间兜底判断（note 中会标记）。扣费必须用调用时间，
                     而非后台任务执行时间，否则跨时段边界会算错。
 
     Returns:
         (需要扣除的算力, 备注)
     """
     # 判断本次调用所属计费时段（基于北京时间，用 created_at 而非当前时间）
-    period = get_billing_period(created_at)
+    period, period_is_fallback = resolve_billing_period(created_at)
 
     # 获取供应商模型配置（支持分段 + 峰谷计费，按时段选档）
     vendor_model = None
@@ -115,10 +115,11 @@ def calculate_computing_power_from_tokens(
     except Exception as e:
         logger.error(f"更新用户 {user_id} 未扣减算力失败: {e}")
 
-    # 构建详细note（含峰谷时段信息，便于审计）
+    # 构建详细note（含峰谷时段信息，便于审计；兜底估算时标记判定来源，对账可区分）
     hit_period = getattr(vendor_model, 'time_period', 'normal') or 'normal'
+    period_source = '当前时间兜底' if period_is_fallback else '调用时间'
     note = (
-        f"时段(调用:{period}, 命中档:{hit_period}) | "
+        f"时段(调用:{period}, 命中档:{hit_period}, 判定:{period_source}) | "
         f"token(输入:{input_token}, 输出:{output_token}, 缓存读取:{cache_read}) | "
         f"阈值(输入:{vendor_model.input_token_threshold}, 输出:{vendor_model.output_token_threshold}, "
         f"缓存读取:{vendor_model.cache_read_threshold}) | "

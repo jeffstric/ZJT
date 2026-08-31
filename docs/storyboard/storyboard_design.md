@@ -428,6 +428,8 @@ class SceneDifficulty:
 
 > **分镜复制 in-flight 守卫**：复制分镜（`POST /scene/{id}/duplicate`）后端无幂等保护（复制本身允许内容重复，无法用唯一索引去重），因此前端按 `sceneId` 维度做提交中守卫——请求飞行中 `state.duplicatingSceneId` 记录该 id，复制按钮置 `disabled`、`handleAction` 重复进入直接 return，`try/finally` 释放。避免连点/鼠标抖动让一次操作发出多个 POST，导致复制出多份重复分镜。
 
+> **分镜复制确认弹框**：点击「复制」后先弹 `window.confirm` 确认（文案含分镜标题：`确定复制分镜「{title}」吗？`，无标题时回退 `确定复制这个分镜吗？`），用户确认后才发起 `POST /scene/{id}/duplicate`；取消则不复制、不进入 in-flight 状态。与「删除分镜」的确认交互一致（守护测试 `web/tests/storyboard_duplicate_scene_confirm.test.js`）。
+
 ### 2.4 新增表：`storyboard_dialogue`（分镜对话表）
 
 把原 scene 的配音台词拆成「一个分镜多句对话」，每句对话绑定说话角色（取其参考声音）、语速、音量。

@@ -3634,10 +3634,10 @@
             document.querySelectorAll('.tab-btn').forEach(tab => tab.classList.remove('active'));
             var target = (evt || event).target;
             if (target) target.closest('.tab-btn').classList.add('active');
-            // 新建按钮：世界标签页不显示，其他都显示
+            // 新建按钮：世界标签页 / 已入库模式不显示
             const addBtn = document.getElementById('add-file-btn');
             if (addBtn) {
-                if (fileType === 'worlds') {
+                if (fileType === 'worlds' || (window.ScriptWriterLibrary && window.ScriptWriterLibrary.isLibrary())) {
                     addBtn.style.display = 'none';
                 } else {
                     addBtn.style.display = 'flex';
@@ -3909,6 +3909,9 @@
         }
 
         async function loadFiles(fileType) {
+            if (window.ScriptWriterLibrary && window.ScriptWriterLibrary.isLibrary()) {
+                return window.ScriptWriterLibrary.loadLibraryFiles(fileType);
+            }
             const fileItemsContainer = document.getElementById('file-items-container');
             try {
                 const apiMap = {
@@ -4442,6 +4445,8 @@
                 if (data.success) {
                     currentEditFile.fileType = fileType;
                     currentEditFile.fileName = fileName;
+                    currentEditFile.source = 'staging';
+                    currentEditFile.id = null;
                     
                     document.querySelectorAll('.edit-form').forEach(form => form.style.display = 'none');
                     
@@ -5662,6 +5667,10 @@
         function updateStyleRecognizeVisibility(fileType) {
             const section = document.getElementById('styleRecognizeSection');
             if (!section) return;
+            if (window.ScriptWriterLibrary && window.ScriptWriterLibrary.isLibrary()) {
+                section.setAttribute('hidden', '');
+                return;
+            }
             if (fileType === 'worlds') {
                 section.removeAttribute('hidden');
                 updateStyleRecognizeEditionBadge();
@@ -6089,6 +6098,10 @@
         }
 
         async function saveEditedFile() {
+            if (window.ScriptWriterLibrary && currentEditFile && currentEditFile.source === 'database') {
+                await window.ScriptWriterLibrary.saveLibraryAsset();
+                return;
+            }
             let newContent = '';
             
             if (document.getElementById('world-edit-form').style.display !== 'none') {

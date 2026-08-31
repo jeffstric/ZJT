@@ -126,6 +126,7 @@
 | [脚本自动拆分改进](script/script_auto_split_improvement.md) | 自动拆分算法优化 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/WqHKdwsEZoFYGkxRMSyc3W1tnDb) |
 | [脚本语言同步](script/script_language_sync.md) | 多语言脚本同步 | 待补充 |
 | [SSE 断连处理](script/script_writer_sse_disconnect.md) | SSE 连接断开处理 | 待补充 |
+| [已入库资产管理](script/script_writer_asset_library.md) | 创作页查看/编辑/删除数据库资产 | 待补充 |
 | [分镜帧参考素材](script/shot_frame_references.md) | 参考素材收集机制 | 待补充 |
 | [分镜组增量同步](script/shot_group_incremental_sync.md) | 数据增量同步 | 待补充 |
 

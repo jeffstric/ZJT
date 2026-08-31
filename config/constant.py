@@ -9,6 +9,7 @@
 本文件保留向后兼容的常量别名，逐步废弃中。
 """
 
+from datetime import datetime
 from typing import Union, Dict, List, Optional
 
 # 从统一配置系统导入（新系统）
@@ -395,6 +396,10 @@ class MediaGenerationErrorCode:
     MODEL_INPUT_UNSUPPORTED = "MODEL_INPUT_UNSUPPORTED"
     SNAPSHOT_MISMATCH = "SNAPSHOT_MISMATCH"
 ASSET_LIST_DB_QUERY_TIMEOUT = 30
+# 资产库写操作（更新/删除 DB 记录、解绑分镜 script_id）
+ASSET_MUTATION_DB_TIMEOUT = 30
+# 删除已入库资产时顺带删除暂存 JSON
+ASSET_STAGING_IO_TIMEOUT = 15
 
 # 音频时长探测（ffprobe）单次执行超时（秒）。用于分镜配音完成后探测时长并回写。
 FFPROBE_AUDIO_DURATION_TIMEOUT = 30
@@ -2106,7 +2111,9 @@ class PeakValleyBillingConstants:
     """大模型峰谷计费常量（北京时间，UTC+8）
 
     DeepSeek 官方自 2026-08-17 起采用峰谷定价：高峰时段价格为空闲时段的 2 倍。
-    高峰时段为北京时间 9:00-12:00、14:00-18:00，其余为空闲时段。
+    自 2026-08-23 00:00（北京时间）起高峰时段为周一至周五 9:00-12:00、14:00-18:00，
+    其余（含周末全天）为空闲时段；此前高峰窗口不区分星期，周末同时段同为高峰。
+    历史补扣 / 对账重算时按 WEEKEND_OFF_PEAK_FROM 区分新旧规则。
     其他模型默认 time_period='normal'，不参与峰谷，完全向后兼容。
     """
     _CONSTANT_GROUP = True
@@ -2126,6 +2133,12 @@ class PeakValleyBillingConstants:
     # 高峰时段（左闭右开 [start_hour, end_hour)），北京时间 UTC+8
     # DeepSeek 官方：9:00-12:00、14:00-18:00；其余为空闲
     PEAK_TIME_RANGES = ((9, 12), (14, 18))
+
+    # 高峰仅限周一至周五（ISO 星期，周一=1..周日=7）；周六日全天空闲
+    PEAK_WEEKDAYS = (1, 2, 3, 4, 5)
+    # 周末全天空闲的生效时刻：北京时间 2026-08-23 00:00（naive，与 to_bjt_naive 同基准）。
+    # 此前周末 9-12 / 14-18 仍为高峰档，8-23 前的 token_log 补扣按旧规则算
+    WEEKEND_OFF_PEAK_FROM = datetime(2026, 8, 23)
 
 
 # ============ 一体包 MySQL binlog 保留 ============

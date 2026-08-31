@@ -1631,6 +1631,12 @@ async function handleAction(action, target) {
         // in-flight 守卫：复制请求飞行中再次点击（连点/鼠标抖动）直接忽略，
         // 避免后端无幂等保护下连点 N 次复制出 N 份重复分镜。
         if (state.duplicatingSceneId === sceneId) return;
+        // 复制前需弹框确认，用户确认后才真正发起请求（与 delete-scene 交互一致）；
+        // 确认文案带分镜标题，便于用户辨认要复制的是哪一个分镜
+        const duplicatingScene = state.scenes.find((s) => s.id === sceneId);
+        if (!window.confirm(duplicatingScene
+            ? `确定复制分镜「${duplicatingScene.title}」吗？`
+            : '确定复制这个分镜吗？')) return;
         state.duplicatingSceneId = sceneId;
         rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
         try {

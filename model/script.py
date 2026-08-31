@@ -102,7 +102,8 @@ class ScriptModel:
         page: int = 1,
         page_size: int = 20,
         order_by: str = 'create_time',
-        order_direction: str = 'DESC'
+        order_direction: str = 'DESC',
+        keyword: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Get script records list by world ID with pagination
@@ -113,6 +114,7 @@ class ScriptModel:
             page_size: Number of records per page
             order_by: Order by field (create_time, update_time, id, episode_number)
             order_direction: Order direction (ASC, DESC)
+            keyword: Optional title search
         
         Returns:
             Dictionary with 'total', 'page', 'page_size', 'data' keys
@@ -127,6 +129,9 @@ class ScriptModel:
         
         where_clause = "world_id = %s"
         params = [world_id]
+        if keyword and str(keyword).strip():
+            where_clause += " AND title LIKE %s"
+            params.append(f"%{str(keyword).strip()}%")
         
         count_sql = f"SELECT COUNT(*) as total FROM script WHERE {where_clause}"
         count_result = execute_query(count_sql, tuple(params), fetch_one=True)

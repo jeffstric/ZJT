@@ -166,7 +166,13 @@
                   <div class="gen-item" data-count="4">X4</div>
                 </div>
               </div>
-              <button class="mini-btn secondary image-coloring-btn" type="button" style="border-radius: 10px;" data-i18n="image_node_coloring_btn">${window.t ? window.t('image_node_coloring_btn') : '涂色编辑'}</button>
+              <div class="gen-container image-doodle-container">
+                <button class="gen-btn gen-btn-main image-doodle-btn" type="button" data-i18n="image_node_doodle_btn">${window.t ? window.t('image_node_doodle_btn') : '涂鸦编辑'}</button>
+                <button class="gen-btn gen-btn-caret" type="button" aria-label="${window.t ? window.t('image_node_doodle_menu') : '选择编辑器版本'}" data-i18n="image_node_doodle_menu:aria-label">▾</button>
+                <div class="gen-menu">
+                  <div class="gen-item image-doodle-legacy" data-i18n="image_node_doodle_legacy">${window.t ? window.t('image_node_doodle_legacy') : '使用旧版'}</div>
+                </div>
+              </div>
             </div>
             <div class="gen-meta image-draw-count-label"></div>
             <div class="muted image-edit-status" style="display:none;"></div>
@@ -378,7 +384,11 @@
       const modelEl = el.querySelector('.image-model');
       const editBtn = el.querySelector('.image-edit-btn');
       const downloadBtn = el.querySelector('.image-download-icon-btn');
-      const coloringBtn = el.querySelector('.image-coloring-btn');
+      const doodleBtn = el.querySelector('.image-doodle-btn');
+      const doodleContainer = doodleBtn ? doodleBtn.closest('.gen-container') : null;
+      const doodleCaret = doodleContainer ? doodleContainer.querySelector('.gen-btn-caret') : null;
+      const doodleMenu = doodleContainer ? doodleContainer.querySelector('.gen-menu') : null;
+      const doodleLegacyItem = doodleContainer ? doodleContainer.querySelector('.image-doodle-legacy') : null;
       const statusEl = el.querySelector('.image-edit-status');
       const drawCountLabel = el.querySelector('.image-draw-count-label');
       const genCaret = el.querySelector('.gen-btn-caret');
@@ -508,13 +518,16 @@
 
       function setImageEditActionsDisabled(disabled) {
         if (editBtn) editBtn.disabled = !!disabled;
-        if (coloringBtn) coloringBtn.disabled = !!disabled;
+        if (doodleBtn) doodleBtn.disabled = !!disabled;
+        if (doodleLegacyItem) doodleLegacyItem.classList.toggle('disabled', !!disabled);
       }
 
-      // 涂色编辑按钮
-      if(coloringBtn){
-        coloringBtn.addEventListener('click', async (e) => {
+      // 「使用旧版」菜单项：打开原涂色编辑器（旧版涂鸦能力）
+      if(doodleLegacyItem){
+        doodleLegacyItem.addEventListener('click', async (e) => {
           e.stopPropagation();
+          if (doodleMenu) doodleMenu.classList.remove('show');
+          if (doodleBtn && doodleBtn.disabled) return;
           const gate = canEditImageNode(node.data);
           if(!gate.allowed){
             const msg = getImageUploadBlockMessage(gate.reason);
@@ -532,7 +545,7 @@
             const safeImageUrl = (typeof proxyImageUrl === 'function') ? proxyImageUrl(imageUrl) : imageUrl;
             window.imageColoringEditor.open(safeImageUrl, id, async (result) => {
               try {
-                coloringBtn.disabled = true;
+                doodleBtn.disabled = true;
                 statusEl.style.display = 'block';
                 setStatusEl(statusEl, window.t ? window.t('uploading_image') : '正在上传涂色图片...', '#666');
                 
@@ -568,12 +581,74 @@
                 setStatusEl(statusEl, window.t ? window.t('fill_error_msg') : '涂色失败', '#dc2626');
                 showToast((window.t ? window.t('fill_error_msg') : '涂色失败: ') + err.message, 'error');
               } finally {
-                coloringBtn.disabled = false;
+                doodleBtn.disabled = false;
               }
             });
           } else {
             showToast(window.t ? window.t('fill_editor_not_loaded') : '涂色编辑器未加载', 'error');
           }
+        });
+      }
+
+      // 涂鸦编辑下拉菜单：▾ 展开显示「使用旧版」
+      if(doodleCaret && doodleMenu){
+        doodleCaret.addEventListener('click', (e) => {
+          e.stopPropagation();
+          doodleMenu.classList.toggle('show');
+        });
+      }
+
+      // 涂鸦编辑按钮：合成底图+涂鸦上传回填，复用涂色编辑的确认链路
+      if(doodleBtn){
+        doodleBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const gate = canEditImageNode(node.data);
+          if(!gate.allowed){
+            const msg = getImageUploadBlockMessage(gate.reason);
+            showToast(msg, gate.reason === 'uploading' ? 'warning' : 'error');
+            if (statusEl) {
+              statusEl.style.display = 'block';
+              setStatusEl(statusEl, msg, gate.reason === 'uploading' ? '#d97706' : '#dc2626');
+            }
+            return;
+          }
+          if(!(window.imageDoodleEditor && window.imageDoodleEditor.open)){
+            showToast(window.t ? window.t('doodle_editor_not_loaded') : '涂鸦编辑器未加载', 'error');
+            return;
+          }
+
+          const safeImageUrl = (typeof proxyImageUrl === 'function') ? proxyImageUrl(node.data.url) : node.data.url;
+          window.imageDoodleEditor.open(safeImageUrl, {
+            nodeId: id,
+            onComplete: async ({ blob }) => {
+              try {
+                doodleBtn.disabled = true;
+                statusEl.style.display = 'block';
+                setStatusEl(statusEl, window.t ? window.t('doodle_uploading') : '正在上传涂鸦图片...', '#666');
+
+                const file = new File([blob], `doodle_${Date.now()}.png`, { type: 'image/png' });
+                const uploadedUrl = await uploadFile(file);
+                if(!uploadedUrl) throw new Error(window.t ? window.t('image_node_upload_failed') : '图片上传失败');
+
+                node.data.url = uploadedUrl;
+                node.data.preview = uploadedUrl;
+                imagePreviewImg.src = proxyImageUrl(uploadedUrl);
+                imagePreviewRow.style.display = 'block';
+
+                setStatusEl(statusEl, window.t ? window.t('doodle_done') : '涂鸦已应用！', '#22c55e');
+                showToast(window.t ? window.t('doodle_done') : '涂鸦已应用！', 'success');
+
+                safeAutoSave()
+                renderMinimap();
+              } catch(err){
+                console.error('涂鸦编辑失败:', err);
+                setStatusEl(statusEl, window.t ? window.t('doodle_upload_fail') : '涂鸦上传失败', '#dc2626');
+                showToast((window.t ? window.t('doodle_upload_fail') : '涂鸦上传失败: ') + (err.message || ''), 'error');
+              } finally {
+                doodleBtn.disabled = false;
+              }
+            }
+          });
         });
       }
 

@@ -1443,6 +1443,8 @@
           const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
           if(el) el.remove();
         }
+        // 清理节点级持有资源（如全景查看器的 WebGL 上下文），避免跨工作流泄漏
+        if(window.PanoramaViewerRegistry) window.PanoramaViewerRegistry.destroyAll();
         
         // 重置状态
         state.nodes = [];
