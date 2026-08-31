@@ -1671,11 +1671,17 @@ function isCandidateTaskRunning(status) {
         || status === 'queued' || status === 'processing';
 }
 
-function renderCandidatePlaceholder(status, kind = 'image') {
+function renderCandidatePlaceholder(status, kind = 'image', error) {
     if (isCandidateTaskFailed(status)) {
-        return `<div class="candidate-placeholder candidate-failed">
+        // 内容违规变体：文案更醒目，hover 展示友好原因（web/js/content_violation.js）
+        const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+        const isViolation = !!(cv && cv.isViolation && error && cv.isViolation(error));
+        const label = isViolation ? '生成失败：内容违规' : '生成失败';
+        const title = isViolation ? (cv.describe(error) || '内容审核未通过：请检查提示词和参考图后重试') : '';
+        const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
+        return `<div class="candidate-placeholder candidate-failed"${titleAttr}>
             ${icon('error', 16)}
-            <span>生成失败</span>
+            <span>${label}</span>
         </div>`;
     }
     // 无合法 URL：生成中 / 排队中 / 绑定后等待首轮轮询
@@ -1712,7 +1718,7 @@ function renderCandidateMedia(item, kind = 'image') {
         }
         return `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.label || '分镜图')}">`;
     }
-    return renderCandidatePlaceholder(item?.status, kind);
+    return renderCandidatePlaceholder(item?.status, kind, item?.error);
 }
 
 function renderCandidateUploadControl(scene, assetType) {
@@ -1781,7 +1787,7 @@ export function renderRightSidebar(scene) {
                 ${img.label ? `<span class="candidate-label">${escapeHtml(img.label)}</span>` : ''}
             </div>`).join('')}</div>`
         : (imageRunning
-            ? `<div class="candidate-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.first_frame, 'image')}</div></div>`
+            ? `<div class="candidate-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.first_frame, 'image', scene?.firstFrameError)}</div></div>`
             : '<div class="candidate-empty">暂无分镜图候选</div>');
 
     const videoGrid = displayVideos.length
@@ -1793,7 +1799,7 @@ export function renderRightSidebar(scene) {
                 ${vid.label ? `<span class="candidate-label">${escapeHtml(vid.label)}</span>` : ''}
             </div>`).join('')}</div>`
         : (videoRunning
-            ? `<div class="candidate-grid candidate-video-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.video, 'video')}</div></div>`
+            ? `<div class="candidate-grid candidate-video-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.video, 'video', scene?.videoError)}</div></div>`
             : '<div class="candidate-empty">暂无视频候选</div>');
 
     return `
@@ -2040,6 +2046,8 @@ function renderScriptSplitOptions(disabled = false) {
             <span>${escapeHtml(label)}${hint ? `<span class="script-split-warn">${escapeHtml(hint)}</span>` : ''}</span>
         </label>`;
     const qcOn = state.enableScriptSplitQc === true;
+    // 「开源版限时免费」徽章仅开源/社区版展示；商业版不展示（与画风识别徽章口径一致）
+    const isCommunity = String(state.editionInfo?.mode || '').toLowerCase() === 'community';
     const qcRounds = [1, 2, 3, 4, 5].includes(Number(state.scriptSplitQcMaxRounds))
         ? Number(state.scriptSplitQcMaxRounds) : 2;
     const qcRoundsOptions = [1, 2, 3, 4, 5].map(n =>
@@ -2101,7 +2109,7 @@ function renderScriptSplitOptions(disabled = false) {
             ${qcOn ? `
             <div class="script-split-qc-rounds-heading">
                 <span class="config-label">质检最大循环次数</span>
-                <span class="script-split-qc-free-badge" aria-label="质检次数限时免费">限时免费</span>
+                ${isCommunity ? `<span class="script-split-qc-free-badge" aria-label="本功能开源版限时免费">开源版限时免费</span>` : ''}
             </div>
             <div class="config-hint">拆分→质检最多循环 N 次；仍不通过则强制采用最后一轮结果，避免无法拆分</div>
             <div class="config-select-wrapper">

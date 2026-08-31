@@ -2,6 +2,11 @@
 
     // 内容审核错误友好中文（与 utils/content_moderation_error.py / 设计文档 A 对齐；历史英文 reason 兜底）
     function friendlyContentModerationMessage(errorMsg) {
+      // 委托共享模块 web/js/content_violation.js（video_workflow 页面已加载）；
+      // 模块不存在时（如 Vitest 测试环境）走下方本地规则兜底
+      if (typeof window !== 'undefined' && window.ContentViolation && typeof window.ContentViolation.describe === 'function') {
+        return window.ContentViolation.describe(errorMsg);
+      }
       if(!errorMsg) return null;
       const msg = String(errorMsg);
       if(msg.startsWith('内容审核未通过')) return msg;
