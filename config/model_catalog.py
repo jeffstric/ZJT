@@ -149,6 +149,9 @@ MODEL_FAMILIES: Dict[str, str] = {
     "happy_horse": "Happy Horse",
     "happy_horse_r2v": "Happy Horse",
     "happy_horse_t2v": "Happy Horse",
+    "wan3_t2v": "万相3.0",
+    "wan3_i2v": "万相3.0",
+    "wan3_r2v": "万相3.0",
     "ltx2": "LTX",
     "ltx2_3": "LTX",
     "minimax_h3": "MiniMax",
@@ -230,6 +233,8 @@ def get_model_family(canonical: Optional[str]) -> str:
         return "nano-banana"
     if "happy_horse" in lowered or "happy horse" in lowered:
         return "Happy Horse"
+    if "wan3" in lowered or "万相" in lowered:
+        return "万相3.0"
     return "其它"
 
 

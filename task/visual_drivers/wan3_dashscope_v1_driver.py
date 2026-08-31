@@ -1,49 +1,52 @@
 """
-Happy Horse 阿里云百炼驱动实现
-模型: happyhorse-1.0-i2v
-支持图生视频（基于首帧），异步任务模式
+Wan3.0 阿里云百炼驱动实现
+模型: wan3.0-video（标准版）/ wan3.0-video-prime（高速版）
+支持图生视频（首尾帧）、参考生视频（参考图/视频/音频）、文生视频，异步任务模式
 """
 from typing import Dict, Any, Optional, List
-import os
 import traceback
 import json
-from pathlib import Path
-from .base_video_driver import BaseVideoDriver, ImageMode
-from config.config_util import get_config, get_dynamic_config_value, normalize_aliyun_bailian_base_url
+from .base_video_driver import BaseVideoDriver
+from config.config_util import get_config, get_dynamic_config_value
 from config.constant import LEGACY_RESOLUTION_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
 from config.unified_config import VideoResolution
 from api.media import _get_media_duration_seconds
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync
 
+# 支持的比例（adaptive 由 API 自动推断）
+SUPPORTED_RATIOS = ('adaptive', '16:9', '4:3', '1:1', '3:4', '9:16')
+# 无视频输入时 duration 取值范围（秒）
+MIN_DURATION = 2
+MAX_DURATION = 30
+# 参考视频/音频数量与总时长上限
+MAX_REF_MEDIA_COUNT = 5
+MAX_REF_MEDIA_TOTAL_SECONDS = 15
 
-class HappyHorseDashscopeV1Driver(BaseVideoDriver):
+
+class Wan3DashscopeV1Driver(BaseVideoDriver):
     """
-    Happy Horse 图生视频驱动（阿里云百炼 DashScope）
-    支持单张首帧图片 + 可选的驱动音频和驱动视频
+    Wan3.0 图生视频驱动（阿里云百炼 DashScope，业务空间版异步 API）
+    支持首帧图片 + 可选尾帧图片
     """
 
-    MODEL = "happyhorse-1.0-i2v"
+    MODEL = "wan3.0-video"
 
-    def __init__(self, driver_name: str = "happy_horse_dashscope_v1", driver_type: int = 28):
+    def __init__(self, driver_name: str = "wan3_video_dashscope_v1", driver_type: int = 40):
         super().__init__(driver_name=driver_name, driver_type=driver_type)
 
-        # 加载配置（复用 LLM 配置的阿里云百炼 API Key 与 base_url）
-        # 用户只配置基础 URL，多媒体走 DashScope 原生异步接口，自动追加 /api/v1；
-        # 未配置时结果为默认 https://dashscope.aliyuncs.com/api/v1，与原硬编码一致
+        # 加载配置（复用 LLM 配置的阿里云 Qwen API Key）
         self._api_key = get_dynamic_config_value("llm", "qwen", "api_key", default="")
-        self._base_url = normalize_aliyun_bailian_base_url(
-            get_dynamic_config_value("llm", "qwen", "base_url", default=None),
-            for_llm=False,
-        )
+        self._workspace_id = get_dynamic_config_value("wan3", "workspace_id", default="")
+        self._region = get_dynamic_config_value("wan3", "endpoint_region", default="cn-beijing")
         self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
 
-        # 是否为本地环境
-        self._is_local = get_dynamic_config_value("server", "is_local", default=False)
         self._config = get_config()
+        self._base_url = f"https://{self._workspace_id}.{self._region}.maas.aliyuncs.com/api/v1"
 
         self._validate_required({
             "DashScope API Key": self._api_key,
+            "百炼业务空间ID": self._workspace_id,
         })
 
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
@@ -69,11 +72,12 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
             },
             "request_id": "..."
         }
+        失败响应: {"code": "...", "message": "...", "request_id": "..."}
         """
         if not isinstance(result, dict):
             return False, f"响应不是字典类型，实际类型: {type(result)}"
 
-        if "error" in result:
+        if "code" in result:
             return True, None  # 有错误字段，格式有效但业务失败
 
         output = result.get("output")
@@ -102,7 +106,7 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
         if not isinstance(result, dict):
             return False, f"响应不是字典类型，实际类型: {type(result)}"
 
-        if "error" in result:
+        if "code" in result:
             return True, None
 
         output = result.get("output")
@@ -117,12 +121,14 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
     def _parse_extra_params(self, ai_tool) -> Dict[str, Any]:
         """
         从 extra_config 解析可选参数
-        支持: resolution (720P/1080P), watermark (true/false), seed (int), prompt_extend (bool)
+        支持: resolution (480P/720P/1080P), audio (bool), watermark (true/false),
+        seed (int), prompt_extend (bool)
         """
         params = {
-            "resolution": VideoResolution.P720,  # 默认值
-            "watermark": False,      # 默认添加水印
-            "prompt_extend": True,  # 默认开启 prompt 扩展
+            "resolution": VideoResolution.P1080,  # 默认值
+            "audio": True,         # 默认生成有声视频
+            "watermark": False,    # 默认不添加水印
+            "prompt_extend": True,  # 默认开启 prompt 智能改写
         }
 
         if not ai_tool.extra_config:
@@ -135,8 +141,10 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
                     config.get(VIDEO_RESOLUTION_EXTRA_CONFIG_KEY)
                     or config.get(LEGACY_RESOLUTION_EXTRA_CONFIG_KEY)
                 )
-                if resolution in VideoResolution.HAPPY_HORSE_DRIVER_VALUES:
+                if resolution in VideoResolution.WAN3_DRIVER_VALUES:
                     params["resolution"] = resolution
+                if "audio" in config:
+                    params["audio"] = bool(config["audio"])
                 if "watermark" in config:
                     params["watermark"] = bool(config["watermark"])
                 if "seed" in config:
@@ -150,62 +158,47 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
 
         return params
 
-    def _get_audio_duration(self, audio_path: str) -> Optional[float]:
-        """
-        获取音频文件时长（秒），复用 api/media.py 的 ffprobe 逻辑
-        """
-        if not audio_path or not os.path.exists(audio_path):
-            return None
+    def _resolve_ratio(self, ai_tool) -> str:
+        """解析比例参数，无效值回退为 adaptive（由 API 自动推断）"""
+        ratio = ai_tool.ratio or 'adaptive'
+        if ratio not in SUPPORTED_RATIOS:
+            ratio = 'adaptive'
+        return ratio
 
-        try:
-            return _get_media_duration_seconds(audio_path)
-        except Exception:
-            return None
+    def _resolve_duration(self, ai_tool) -> int:
+        """解析时长参数，钳制到 2-30 秒"""
+        duration = ai_tool.duration or 5
+        if not (MIN_DURATION <= duration <= MAX_DURATION):
+            duration = 5
+        return duration
 
-    def _validate_audio(self, audio_path: str, video_duration: int) -> tuple[bool, Optional[str]]:
-        """
-        校验音频文件是否符合 Happy Horse API 要求
+    def _build_parameters(self, ai_tool, extra_params: Dict[str, Any], duration: int) -> Dict[str, Any]:
+        """组装 parameters 字段（resolution/ratio/duration/audio/watermark/prompt_extend/seed）"""
+        parameters = {
+            "resolution": extra_params["resolution"],
+            "ratio": self._resolve_ratio(ai_tool),
+            "duration": duration,
+            "audio": extra_params["audio"],
+            "watermark": extra_params["watermark"],
+            "prompt_extend": extra_params["prompt_extend"],
+        }
+        if "seed" in extra_params:
+            parameters["seed"] = extra_params["seed"]
+        return parameters
 
-        返回: (是否通过, 错误信息)
-        """
-        if not audio_path:
-            return True, None
-
-        # 1. 格式校验
-        ext = Path(audio_path).suffix.lower()
-        if ext not in (".wav", ".mp3"):
-            return False, f"音频格式不支持: {ext}，仅支持 wav、mp3"
-
-        # 2. 文件大小校验（≤15MB）
-        try:
-            if os.path.exists(audio_path):
-                size_mb = os.path.getsize(audio_path) / (1024 * 1024)
-                if size_mb > 15:
-                    return False, f"音频文件过大: {size_mb:.1f}MB，限制 15MB"
-        except OSError:
-            pass
-
-        # 3. 时长校验（2-30秒）
-        duration = self._get_audio_duration(audio_path)
-        if duration is not None:
-            if duration < 2:
-                return False, f"音频时长过短: {duration:.1f}秒，要求 2-30 秒"
-            if duration > 30:
-                return False, f"音频时长过长: {duration:.1f}秒，要求 2-30 秒"
-
-            # 4. 截断提示（API 会自动截断，但提醒用户）
-            if duration > video_duration:
-                self.logger.info(
-                    f"音频时长({duration:.1f}s)超过视频时长({video_duration}s)，"
-                    f"API 将自动截取前 {video_duration} 秒"
-                )
-            elif duration < video_duration:
-                self.logger.info(
-                    f"音频时长({duration:.1f}s)短于视频时长({video_duration}s)，"
-                    f"超出部分为无声视频"
-                )
-
-        return True, None
+    def _build_request_result(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """包装请求参数（URL / method / headers / timeout）"""
+        return {
+            "url": f"{self._base_url}/services/aigc/video-generation/video-synthesis",
+            "method": "POST",
+            "json": payload,
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}",
+                "X-DashScope-Async": "enable"
+            },
+            "timeout": self._timeout
+        }
 
     def _upload_media_to_cdn(self, media_urls: List[str], media_type: str = "媒体") -> List[str]:
         """
@@ -228,12 +221,12 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
 
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
-        构建创建 Happy Horse 任务的完整请求参数
+        构建创建 Wan3.0 任务的完整请求参数
         根据 driver_type 自动分发到 i2v / r2v / t2v 模式
         """
-        if self.driver_type == 29:
+        if self.driver_type == 41:
             return self._build_r2v_request(ai_tool)
-        if self.driver_type == 30:
+        if self.driver_type == 39:
             return self._build_t2v_request(ai_tool)
         return self._build_i2v_request(ai_tool)
 
@@ -242,13 +235,10 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
         构建 i2v（图生视频）请求
 
         支持：
-        - 首帧图片（有且仅有1张，必须）
-        - 驱动音频（可选，type=driving_audio）
-        - 驱动视频（可选，type=driving_video）
-        ratio 由 API 从首帧自动推断
+        - 首帧图片（最多1张，与 prompt 必填其一，本项目必选）
+        - 尾帧图片（可选，最多1张）
         """
-        # 获取首帧图片（仅取第一张）
-        first_frame, _ = self.get_first_last_frames(ai_tool)
+        first_frame, last_frame = self.get_first_last_frames(ai_tool)
 
         if not first_frame:
             return {
@@ -258,56 +248,16 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
                 "retry": False
             }
 
-        # 处理首帧图片上传
-        image_urls = self._upload_media_to_cdn([first_frame], "图片")
-        first_frame_url = image_urls[0]
+        # 处理首尾帧图片上传
+        frames = [first_frame] + ([last_frame] if last_frame else [])
+        uploaded_urls = self._upload_media_to_cdn(frames, "图片")
 
-        # 构建 media 列表
-        media_list = [
-            {
-                "type": "first_frame",
-                "url": first_frame_url
-            }
-        ]
+        media_list = [{"type": "first_frame", "url": uploaded_urls[0]}]
+        if last_frame and len(uploaded_urls) > 1 and uploaded_urls[1]:
+            media_list.append({"type": "last_frame", "url": uploaded_urls[1]})
 
-        # 解析 extra_config 中的可选参数
         extra_params = self._parse_extra_params(ai_tool)
-
-        # 确定视频时长（音频校验需要）
-        duration = ai_tool.duration or 5
-        if not (3 <= duration <= 15):
-            duration = 5
-
-        # 处理驱动音频
-        audio_path = self.get_audio_path(ai_tool)
-        if audio_path:
-            # 校验音频文件
-            is_valid, error_msg = self._validate_audio(audio_path, duration)
-            if not is_valid:
-                return {
-                    "success": False,
-                    "error": error_msg,
-                    "error_type": "USER",
-                    "retry": False
-                }
-            audio_urls = self._upload_media_to_cdn([audio_path], "音频")
-            if audio_urls and audio_urls[0]:
-                media_list.append({
-                    "type": "driving_audio",
-                    "url": audio_urls[0]
-                })
-                self.logger.info(f"已添加驱动音频: {audio_urls[0]}")
-
-        # 处理驱动视频
-        video_path = self.get_video_path(ai_tool)
-        if video_path:
-            video_urls = self._upload_media_to_cdn([video_path], "视频")
-            if video_urls and video_urls[0]:
-                media_list.append({
-                    "type": "driving_video",
-                    "url": video_urls[0]
-                })
-                self.logger.info(f"已添加驱动视频: {video_urls[0]}")
+        duration = self._resolve_duration(ai_tool)
 
         payload = {
             "model": self.MODEL,
@@ -315,29 +265,10 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
                 "prompt": ai_tool.prompt or "",
                 "media": media_list
             },
-            "parameters": {
-                "resolution": extra_params["resolution"],
-                "duration": duration,
-                "watermark": extra_params["watermark"],
-                "prompt_extend": extra_params["prompt_extend"]
-            }
+            "parameters": self._build_parameters(ai_tool, extra_params, duration)
         }
 
-        # 可选参数：seed
-        if "seed" in extra_params:
-            payload["parameters"]["seed"] = extra_params["seed"]
-
-        return {
-            "url": f"{self._base_url}/services/aigc/video-generation/video-synthesis",
-            "method": "POST",
-            "json": payload,
-            "headers": {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-                "X-DashScope-Async": "enable"
-            },
-            "timeout": self._timeout
-        }
+        return self._build_request_result(payload)
 
     def _get_r2v_image_urls(self, ai_tool) -> List[str]:
         """
@@ -361,62 +292,97 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
 
         return image_urls
 
+    def _split_paths(self, raw: Optional[str]) -> List[str]:
+        """拆分逗号分隔的媒体路径"""
+        if not raw:
+            return []
+        return [p.strip() for p in raw.split(',') if p.strip()]
+
+    def _sum_video_durations(self, video_paths: List[str]) -> float:
+        """累加参考视频总时长（秒），无法获取时长的段跳过"""
+        total = 0.0
+        for path in video_paths:
+            try:
+                seconds = _get_media_duration_seconds(path)
+            except Exception:
+                seconds = None
+            if seconds:
+                total += seconds
+        return total
+
     def _build_r2v_request(self, ai_tool) -> Dict[str, Any]:
         """
         构建 r2v（参考生视频）请求
 
         支持：
-        - 多张参考图像（1-9张，必须）
-        - 文本提示词中通过 [Image 1]、[Image 2] 指代参考图像
-        - 支持 ratio 参数
+        - 参考图像（最多10张）
+        - 参考视频（最多5段，总时长≤15秒；输入总时长+输出时长≤30秒）
+        - 参考音频（最多5段，总时长≤15秒）
+        prompt 与 media 必填其一
         """
-        # 获取参考图像
+        duration = self._resolve_duration(ai_tool)
+
+        # 参考图像
         image_urls = self._get_r2v_image_urls(ai_tool)
-        if not image_urls:
+        if len(image_urls) > 10:
+            self.logger.warning("参考图数量超过10张，已截取前10张")
+            image_urls = image_urls[:10]
+
+        # 参考视频（逗号分隔多段）
+        video_paths = self._split_paths(self.get_video_path(ai_tool))
+        if len(video_paths) > MAX_REF_MEDIA_COUNT:
+            self.logger.warning(f"参考视频超过{MAX_REF_MEDIA_COUNT}段，已截取前{MAX_REF_MEDIA_COUNT}段")
+            video_paths = video_paths[:MAX_REF_MEDIA_COUNT]
+
+        # 校验：输入视频总时长 + 输出时长 ≤ 30 秒
+        if video_paths:
+            total_input = self._sum_video_durations(video_paths)
+            if total_input > 0 and total_input + duration > MAX_DURATION:
+                return {
+                    "success": False,
+                    "error": f"参考视频总时长({total_input:.1f}秒)+输出时长({duration}秒)超过30秒限制，请缩短参考视频或输出时长",
+                    "error_type": "USER",
+                    "retry": False
+                }
+
+        # 参考音频（逗号分隔多段）
+        audio_paths = self._split_paths(self.get_audio_path(ai_tool))
+        if len(audio_paths) > MAX_REF_MEDIA_COUNT:
+            self.logger.warning(f"参考音频超过{MAX_REF_MEDIA_COUNT}段，已截取前{MAX_REF_MEDIA_COUNT}段")
+            audio_paths = audio_paths[:MAX_REF_MEDIA_COUNT]
+
+        prompt = (ai_tool.prompt or "").strip()
+        if not image_urls and not video_paths and not audio_paths and not prompt:
             return {
                 "success": False,
-                "error": "缺少参考图片",
+                "error": "缺少参考素材或提示词",
                 "error_type": "USER",
                 "retry": False
             }
 
-        if len(image_urls) > 9:
-            self.logger.warning(f"参考图数量超过9张，已截取前9张")
-            image_urls = image_urls[:9]
-
-        # 上传所有参考图
-        uploaded_urls = self._upload_media_to_cdn(image_urls, "参考图")
-
-        # 构建 media 列表
+        # 上传并组装 media 列表（参考图 → 参考视频 → 参考音频）
         media_list = []
-        for url in uploaded_urls:
-            if url:
-                media_list.append({
-                    "type": "reference_image",
-                    "url": url
-                })
+        if image_urls:
+            uploaded_images = self._upload_media_to_cdn(image_urls, "参考图")
+            for url in uploaded_images:
+                if url:
+                    media_list.append({"type": "reference_image", "url": url})
+        if video_paths:
+            uploaded_videos = self._upload_media_to_cdn(video_paths, "参考视频")
+            for url in uploaded_videos:
+                if url:
+                    media_list.append({"type": "reference_video", "url": url})
+        if audio_paths:
+            uploaded_audios = self._upload_media_to_cdn(audio_paths, "参考音频")
+            for url in uploaded_audios:
+                if url:
+                    media_list.append({"type": "reference_audio", "url": url})
 
-        if not media_list:
-            return {
-                "success": False,
-                "error": "参考图片上传失败",
-                "error_type": "SYSTEM",
-                "retry": True
-            }
+        self.logger.info(
+            f"r2v 素材: 参考图={len(image_urls)}, 参考视频={len(video_paths)}, 参考音频={len(audio_paths)}"
+        )
 
-        self.logger.info(f"已添加 {len(media_list)} 张参考图")
-
-        # 解析 extra_config 中的可选参数
         extra_params = self._parse_extra_params(ai_tool)
-
-        # 构建请求体
-        duration = ai_tool.duration or 5
-        if not (3 <= duration <= 15):
-            duration = 5
-
-        ratio = ai_tool.ratio or '16:9'
-        if ratio not in ('16:9', '9:16', '3:4', '4:3', '1:1'):
-            ratio = '16:9'
 
         payload = {
             "model": self.MODEL,
@@ -424,29 +390,10 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
                 "prompt": ai_tool.prompt or "",
                 "media": media_list
             },
-            "parameters": {
-                "resolution": extra_params["resolution"],
-                "ratio": ratio,
-                "duration": duration,
-                "watermark": extra_params["watermark"]
-            }
+            "parameters": self._build_parameters(ai_tool, extra_params, duration)
         }
 
-        # 可选参数：seed
-        if "seed" in extra_params:
-            payload["parameters"]["seed"] = extra_params["seed"]
-
-        return {
-            "url": f"{self._base_url}/services/aigc/video-generation/video-synthesis",
-            "method": "POST",
-            "json": payload,
-            "headers": {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-                "X-DashScope-Async": "enable"
-            },
-            "timeout": self._timeout
-        }
+        return self._build_request_result(payload)
 
     def _build_t2v_request(self, ai_tool) -> Dict[str, Any]:
         """
@@ -454,50 +401,31 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
 
         仅需要文本提示词，不需要任何图片/音频/视频
         """
-        # 解析 extra_config 中的可选参数
+        prompt = (ai_tool.prompt or "").strip()
+        if not prompt:
+            return {
+                "success": False,
+                "error": "提示词不能为空",
+                "error_type": "USER",
+                "retry": False
+            }
+
         extra_params = self._parse_extra_params(ai_tool)
-
-        # 构建请求体
-        duration = ai_tool.duration or 5
-        if not (3 <= duration <= 15):
-            duration = 5
-
-        ratio = ai_tool.ratio or '16:9'
-        if ratio not in ('16:9', '9:16', '1:1', '4:3', '3:4'):
-            ratio = '16:9'
+        duration = self._resolve_duration(ai_tool)
 
         payload = {
             "model": self.MODEL,
             "input": {
                 "prompt": ai_tool.prompt or ""
             },
-            "parameters": {
-                "resolution": extra_params["resolution"],
-                "ratio": ratio,
-                "duration": duration,
-                "watermark": extra_params["watermark"]
-            }
+            "parameters": self._build_parameters(ai_tool, extra_params, duration)
         }
 
-        # 可选参数：seed
-        if "seed" in extra_params:
-            payload["parameters"]["seed"] = extra_params["seed"]
-
-        return {
-            "url": f"{self._base_url}/services/aigc/video-generation/video-synthesis",
-            "method": "POST",
-            "json": payload,
-            "headers": {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-                "X-DashScope-Async": "enable"
-            },
-            "timeout": self._timeout
-        }
+        return self._build_request_result(payload)
 
     def build_check_query(self, project_id: str) -> Dict[str, Any]:
         """
-        构建查询 Happy Horse 任务状态的完整请求参数
+        构建查询 Wan3.0 任务状态的完整请求参数
         """
         return {
             "url": f"{self._base_url}/tasks/{project_id}",
@@ -510,10 +438,10 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
 
     def submit_task(self, ai_tool) -> Dict[str, Any]:
         """
-        提交 Happy Horse 视频生成任务
+        提交 Wan3.0 视频生成任务
         """
         try:
-            if self.driver_type == 30:
+            if self.driver_type == 39:
                 # t2v 模式：只需要 prompt
                 if not ai_tool.prompt or not ai_tool.prompt.strip():
                     return {
@@ -523,26 +451,28 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
                         "retry": False
                     }
                 self.logger.info(
-                    f"Submitting Happy Horse t2v task: prompt='{(ai_tool.prompt or '')[:50]}...', "
+                    f"Submitting Wan3.0 t2v task: prompt='{(ai_tool.prompt or '')[:50]}...', "
                     f"duration={ai_tool.duration}"
                 )
-            elif self.driver_type == 29:
-                # r2v 模式：验证参考图片
+            elif self.driver_type == 41:
+                # r2v 模式：参考素材与提示词至少其一
                 image_urls = self._get_r2v_image_urls(ai_tool)
-                if not image_urls:
+                has_media = bool(image_urls or self.get_video_path(ai_tool) or self.get_audio_path(ai_tool))
+                has_prompt = bool(ai_tool.prompt and ai_tool.prompt.strip())
+                if not has_media and not has_prompt:
                     return {
                         "success": False,
-                        "error": "缺少参考图片",
+                        "error": "缺少参考素材或提示词",
                         "error_type": "USER",
                         "retry": False
                     }
                 self.logger.info(
-                    f"Submitting Happy Horse r2v task: prompt='{(ai_tool.prompt or '')[:50]}...', "
+                    f"Submitting Wan3.0 r2v task: prompt='{(ai_tool.prompt or '')[:50]}...', "
                     f"duration={ai_tool.duration}, ref_images={len(image_urls)}"
                 )
             else:
                 # i2v 模式：验证首帧图片
-                first_frame, _ = self.get_first_last_frames(ai_tool)
+                first_frame, last_frame = self.get_first_last_frames(ai_tool)
                 if not first_frame:
                     return {
                         "success": False,
@@ -550,13 +480,10 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
                         "error_type": "USER",
                         "retry": False
                     }
-
-                audio_path = self.get_audio_path(ai_tool)
-                video_path = self.get_video_path(ai_tool)
                 self.logger.info(
-                    f"Submitting Happy Horse i2v task: prompt='{(ai_tool.prompt or '')[:50]}...', "
+                    f"Submitting Wan3.0 i2v task: prompt='{(ai_tool.prompt or '')[:50]}...', "
                     f"duration={ai_tool.duration}, first_frame={first_frame}, "
-                    f"audio={audio_path is not None}, video={video_path is not None}"
+                    f"last_frame={last_frame is not None}"
                 )
 
             # 构建请求参数
@@ -568,7 +495,7 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
             try:
                 result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
-                self.logger.warning(f"Network error during Happy Horse task submission: {str(network_error)}")
+                self.logger.warning(f"Network error during Wan3.0 task submission: {str(network_error)}")
                 return {
                     "success": False,
                     "error": "网络连接异常，请稍后重试",
@@ -576,16 +503,16 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
                     "retry": True
                 }
 
-            self.logger.info(f"Happy Horse API response: {result}")
+            self.logger.info(f"Wan3.0 API response: {result}")
 
             # 验证响应格式
             is_valid, validation_error = self._validate_submit_response(result)
             if not is_valid:
                 self._send_alert(
                     alert_type="INVALID_RESPONSE_FORMAT",
-                    message=f"Happy Horse submit_task 响应格式错误: {validation_error}",
+                    message=f"Wan3.0 submit_task 响应格式错误: {validation_error}",
                     context={
-                        "api": "create_happy_horse_video",
+                        "api": "create_wan3_video",
                         "response": result,
                         "ai_tool_id": ai_tool.id
                     }
@@ -599,14 +526,9 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
                 }
 
             # 检查业务错误
-            if "error" in result:
-                error_code = result.get("error", {})
-                error_msg = "未知错误"
-                if isinstance(error_code, dict):
-                    error_msg = error_code.get("message", str(error_code))
-                else:
-                    error_msg = str(error_code)
-                self.logger.warning(f"Happy Horse API returned error: {error_msg}")
+            if "code" in result:
+                error_msg = result.get("message") or str(result.get("code"))
+                self.logger.warning(f"Wan3.0 API returned error: {error_msg}")
                 return {
                     "success": False,
                     "error": f"任务提交失败: {error_msg}",
@@ -620,9 +542,9 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
             if not task_id:
                 self._send_alert(
                     alert_type="MISSING_TASK_ID",
-                    message="Happy Horse submit_task 响应缺少 task_id",
+                    message="Wan3.0 submit_task 响应缺少 task_id",
                     context={
-                        "api": "create_happy_horse_video",
+                        "api": "create_wan3_video",
                         "response": result,
                         "ai_tool_id": ai_tool.id
                     }
@@ -641,12 +563,12 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
             }
 
         except Exception as e:
-            self.logger.error(f"Unexpected exception in Happy Horse submit_task: {str(e)}")
+            self.logger.error(f"Unexpected exception in Wan3.0 submit_task: {str(e)}")
             self.logger.error(traceback.format_exc())
 
             self._send_alert(
                 alert_type="UNEXPECTED_EXCEPTION",
-                message=f"Happy Horse submit_task 发生未预期异常: {str(e)}",
+                message=f"Wan3.0 submit_task 发生未预期异常: {str(e)}",
                 context={
                     "exception": str(e),
                     "traceback": traceback.format_exc(),
@@ -664,10 +586,10 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
 
     def check_status(self, project_id: str) -> Dict[str, Any]:
         """
-        检查 Happy Horse 任务状态
+        检查 Wan3.0 任务状态
         """
         try:
-            self.logger.info(f"Checking Happy Horse task status: project_id={project_id}")
+            self.logger.info(f"Checking Wan3.0 task status: project_id={project_id}")
 
             # 构建请求参数并调用统一请求方法
             request_params = self.build_check_query(project_id)
@@ -675,22 +597,22 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
             try:
                 result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
-                self.logger.warning(f"Network error during Happy Horse status check: {str(network_error)}")
+                self.logger.warning(f"Network error during Wan3.0 status check: {str(network_error)}")
                 return {
                     "status": "RUNNING",
                     "message": "网络连接异常，稍后将重试"
                 }
 
-            self.logger.info(f"Happy Horse status API response: {result}")
+            self.logger.info(f"Wan3.0 status API response: {result}")
 
             # 验证响应格式
             is_valid, validation_error = self._validate_status_response(result)
             if not is_valid:
                 self._send_alert(
                     alert_type="INVALID_RESPONSE_FORMAT",
-                    message=f"Happy Horse check_status 响应格式错误: {validation_error}",
+                    message=f"Wan3.0 check_status 响应格式错误: {validation_error}",
                     context={
-                        "api": "get_happy_horse_task_status",
+                        "api": "get_wan3_task_status",
                         "response": result,
                         "project_id": project_id
                     }
@@ -703,14 +625,9 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
                 }
 
             # 检查业务错误
-            if "error" in result:
-                error_code = result.get("error", {})
-                error_msg = "未知错误"
-                if isinstance(error_code, dict):
-                    error_msg = error_code.get("message", str(error_code))
-                else:
-                    error_msg = str(error_code)
-                self.logger.warning(f"Happy Horse status API returned error: {error_msg}")
+            if "code" in result:
+                error_msg = result.get("message") or str(result.get("code"))
+                self.logger.warning(f"Wan3.0 status API returned error: {error_msg}")
                 return {
                     "status": "FAILED",
                     "error": f"查询任务状态失败: {error_msg}",
@@ -761,19 +678,19 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
                     "message": f"任务{task_status == 'PENDING' and '排队中' or '处理中'}..."
                 }
             else:
-                self.logger.warning(f"Unknown Happy Horse task status: {task_status}")
+                self.logger.warning(f"Unknown Wan3.0 task status: {task_status}")
                 return {
                     "status": "RUNNING",
                     "message": f"任务状态: {task_status}"
                 }
 
         except Exception as e:
-            self.logger.error(f"Unexpected exception in Happy Horse check_status: {str(e)}")
+            self.logger.error(f"Unexpected exception in Wan3.0 check_status: {str(e)}")
             self.logger.error(traceback.format_exc())
 
             self._send_alert(
                 alert_type="UNEXPECTED_EXCEPTION",
-                message=f"Happy Horse check_status 发生未预期异常: {str(e)}",
+                message=f"Wan3.0 check_status 发生未预期异常: {str(e)}",
                 context={
                     "exception": str(e),
                     "traceback": traceback.format_exc(),
@@ -789,23 +706,51 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
             }
 
 
-class HappyHorseDashscopeR2VV1Driver(HappyHorseDashscopeV1Driver):
+class Wan3DashscopeR2VV1Driver(Wan3DashscopeV1Driver):
     """
-    Happy Horse 参考生视频驱动（r2v）
-    支持多张参考图像 + 文本提示词生成视频
+    Wan3.0 参考生视频驱动（r2v）
+    支持参考图像/参考视频/参考音频 + 文本提示词生成视频
     """
-    MODEL = "happyhorse-1.0-r2v"
 
     def __init__(self):
-        super().__init__(driver_name="happy_horse_dashscope_r2v_v1", driver_type=29)
+        super().__init__(driver_name="wan3_video_dashscope_r2v_v1", driver_type=41)
 
 
-class HappyHorseDashscopeT2VV1Driver(HappyHorseDashscopeV1Driver):
+class Wan3DashscopeT2VV1Driver(Wan3DashscopeV1Driver):
     """
-    Happy Horse 文生视频驱动（t2v）
+    Wan3.0 文生视频驱动（t2v）
     仅需要文本提示词生成视频
     """
-    MODEL = "happyhorse-1.0-t2v"
 
     def __init__(self):
-        super().__init__(driver_name="happy_horse_dashscope_t2v_v1", driver_type=30)
+        super().__init__(driver_name="wan3_video_dashscope_t2v_v1", driver_type=39)
+
+
+class Wan3VideoPrimeDashscopeV1Driver(Wan3DashscopeV1Driver):
+    """
+    Wan3.0 图生视频驱动（高速版 wan3.0-video-prime）
+    """
+    MODEL = "wan3.0-video-prime"
+
+    def __init__(self):
+        super().__init__(driver_name="wan3_video_prime_dashscope_v1", driver_type=40)
+
+
+class Wan3VideoPrimeDashscopeR2VV1Driver(Wan3DashscopeR2VV1Driver):
+    """
+    Wan3.0 参考生视频驱动（高速版 wan3.0-video-prime）
+    """
+    MODEL = "wan3.0-video-prime"
+
+    def __init__(self):
+        Wan3DashscopeV1Driver.__init__(self, driver_name="wan3_video_prime_dashscope_r2v_v1", driver_type=41)
+
+
+class Wan3VideoPrimeDashscopeT2VV1Driver(Wan3DashscopeT2VV1Driver):
+    """
+    Wan3.0 文生视频驱动（高速版 wan3.0-video-prime）
+    """
+    MODEL = "wan3.0-video-prime"
+
+    def __init__(self):
+        Wan3DashscopeV1Driver.__init__(self, driver_name="wan3_video_prime_dashscope_t2v_v1", driver_type=39)

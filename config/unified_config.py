@@ -152,6 +152,13 @@ class VideoResolution:
         P1080: P1080,
     }
 
+    # Wan3.0 阿里云驱动下发值（直接等于标准值，支持 480P/720P/1080P）
+    WAN3_DRIVER_VALUES = {
+        P480: P480,
+        P720: P720,
+        P1080: P1080,
+    }
+
     # MiniMax H3 RunningHub 驱动下发值（megapixels：480P=0.4, 720P=0.9）
     MINIMAX_H3_DRIVER_VALUES = {
         P480: '0.4',
@@ -1311,6 +1318,14 @@ class DriverImplementation:
     HAPPY_HORSE_DASHSCOPE_R2V_V1 = 'happy_horse_dashscope_r2v_v1'
     HAPPY_HORSE_DASHSCOPE_T2V_V1 = 'happy_horse_dashscope_t2v_v1'
 
+    # Wan3.0（标准版 wan3.0-video / 高速版 wan3.0-video-prime）
+    WAN3_VIDEO_DASHSCOPE_V1 = 'wan3_video_dashscope_v1'
+    WAN3_VIDEO_DASHSCOPE_R2V_V1 = 'wan3_video_dashscope_r2v_v1'
+    WAN3_VIDEO_DASHSCOPE_T2V_V1 = 'wan3_video_dashscope_t2v_v1'
+    WAN3_VIDEO_PRIME_DASHSCOPE_V1 = 'wan3_video_prime_dashscope_v1'
+    WAN3_VIDEO_PRIME_DASHSCOPE_R2V_V1 = 'wan3_video_prime_dashscope_r2v_v1'
+    WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1 = 'wan3_video_prime_dashscope_t2v_v1'
+
 
 # ============ 驱动实现 ID 常量（用于数据库存储） ============
 class DriverImplementationId:
@@ -1405,6 +1420,14 @@ class DriverImplementationId:
     # Grok huimengi 网关
     GROK_HUIMENGI_V1 = 70
 
+    # Wan3.0（标准版 / 高速版，i2v / r2v / t2v）
+    WAN3_VIDEO_DASHSCOPE_V1 = 72
+    WAN3_VIDEO_DASHSCOPE_R2V_V1 = 73
+    WAN3_VIDEO_DASHSCOPE_T2V_V1 = 74
+    WAN3_VIDEO_PRIME_DASHSCOPE_V1 = 75
+    WAN3_VIDEO_PRIME_DASHSCOPE_R2V_V1 = 76
+    WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1 = 77
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1478,6 +1501,12 @@ IMPLEMENTATION_TO_ID = {
     'minimax_h3_turbo_runninghub_v1': DriverImplementationId.MINIMAX_H3_TURBO_RUNNINGHUB_V1,
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
+    'wan3_video_dashscope_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_V1,
+    'wan3_video_dashscope_r2v_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_R2V_V1,
+    'wan3_video_dashscope_t2v_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_T2V_V1,
+    'wan3_video_prime_dashscope_v1': DriverImplementationId.WAN3_VIDEO_PRIME_DASHSCOPE_V1,
+    'wan3_video_prime_dashscope_r2v_v1': DriverImplementationId.WAN3_VIDEO_PRIME_DASHSCOPE_R2V_V1,
+    'wan3_video_prime_dashscope_t2v_v1': DriverImplementationId.WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1588,6 +1617,15 @@ class DriverKey:
 
     # Happy Horse 文生视频
     HAPPY_HORSE_TEXT_TO_VIDEO = 'happy_horse_text_to_video'
+
+    # Wan3.0 图生视频
+    WAN3_IMAGE_TO_VIDEO = 'wan3_image_to_video'
+
+    # Wan3.0 参考生视频
+    WAN3_REFERENCE_TO_VIDEO = 'wan3_reference_to_video'
+
+    # Wan3.0 文生视频
+    WAN3_TEXT_TO_VIDEO = 'wan3_text_to_video'
 
 
 # ============ 走 param_prepare 人脸遮盖预处理的 Seedance 任务 DriverKey 集合 ============
@@ -1733,6 +1771,9 @@ class TaskTypeId:
         'DIGITAL_HUMAN_MINIMAX_H3': '数字人 MiniMax H3',
         'MINIMAX_H3_IMAGE_TO_VIDEO': 'MiniMax H3 图生视频',
         'MINIMAX_H3_REFERENCE_TO_VIDEO': 'MiniMax H3 参考生视频',
+        'WAN3_IMAGE_TO_VIDEO': '万相3.0 图生视频',
+        'WAN3_REFERENCE_TO_VIDEO': '万相3.0 参考生视频',
+        'WAN3_TEXT_TO_VIDEO': '万相3.0 文生视频',
     }
     # 图片编辑
     GEMINI_2_5_FLASH_IMAGE = 1
@@ -1769,6 +1810,9 @@ class TaskTypeId:
     HAPPY_HORSE_TEXT_TO_VIDEO = 30
     MINIMAX_H3_IMAGE_TO_VIDEO = 34
     MINIMAX_H3_REFERENCE_TO_VIDEO = 37
+    WAN3_TEXT_TO_VIDEO = 39
+    WAN3_IMAGE_TO_VIDEO = 40
+    WAN3_REFERENCE_TO_VIDEO = 41
 
 
     # 图片/视频 增强
@@ -2573,6 +2617,101 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             PowerModifier(
                 attribute='resolution',
                 values={VideoResolution.P720: 1.0, VideoResolution.P1080: 1.5},
+                default=1.0
+            )
+        ],
+    ),
+
+    UnifiedTaskConfig(
+        id=TaskTypeId.WAN3_IMAGE_TO_VIDEO,
+        key='wan3_image_to_video',
+        short_key='wan3_i2v',
+        name='万相3.0 (首尾帧)',
+        model_name='万相3.0',
+        variant_label='首尾帧',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.WAN3_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.WAN3_VIDEO_DASHSCOPE_V1,
+        supported_ratios=['adaptive', '16:9', '4:3', '1:1', '3:4', '9:16'],
+        supported_durations=[2, 3, 5, 8, 10, 15, 20, 25, 30],
+        default_ratio='adaptive',
+        default_duration=5,
+        sort_order=44,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+        supports_last_frame=True,  # 支持尾帧
+        supports_ref_audio_video=False,  # 首尾帧模式不支持参考音频和视频
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: 0.5,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: 2.0,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.WAN3_REFERENCE_TO_VIDEO,
+        key='wan3_reference_to_video',
+        short_key='wan3_r2v',
+        name='万相3.0 (参考生)',
+        model_name='万相3.0',
+        variant_label='参考生',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.WAN3_REFERENCE_TO_VIDEO,
+        implementation=DriverImplementation.WAN3_VIDEO_DASHSCOPE_R2V_V1,
+        supported_ratios=['adaptive', '16:9', '4:3', '1:1', '3:4', '9:16'],
+        supported_durations=[2, 3, 5, 8, 10, 15, 20, 25, 30],
+        default_ratio='adaptive',
+        default_duration=5,
+        sort_order=45,
+        supported_image_modes=[ImageMode.MULTI_REFERENCE],  # 多参考图模式
+        supports_last_frame=False,
+        supports_ref_audio_video=True,  # 支持参考音频和视频
+        max_multi_ref_images=10,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: 0.5,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: 2.0,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.WAN3_TEXT_TO_VIDEO,
+        key='wan3_text_to_video',
+        short_key='wan3_t2v',
+        name='万相3.0 (文生)',
+        model_name='万相3.0',
+        variant_label='文生',
+        category=TaskCategory.TEXT_TO_VIDEO,
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.WAN3_TEXT_TO_VIDEO,
+        implementation=DriverImplementation.WAN3_VIDEO_DASHSCOPE_T2V_V1,
+        supported_ratios=['adaptive', '16:9', '4:3', '1:1', '3:4', '9:16'],
+        supported_durations=[2, 3, 5, 8, 10, 15, 20, 25, 30],
+        default_ratio='adaptive',
+        default_duration=5,
+        sort_order=46,
+        supported_image_modes=[],  # 文生视频不需要图片输入
+        supports_last_frame=False,
+        supports_ref_audio_video=False,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: 0.5,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: 2.0,
+                },
                 default=1.0
             )
         ],
@@ -3486,6 +3625,102 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
             {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
         ],
         default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='wan3_video_dashscope_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3DashscopeV1Driver',
+        default_computing_power={2: 34, 3: 51, 5: 85, 8: 136, 10: 170, 15: 255, 20: 340, 25: 425, 30: 510},
+        enabled=True,
+        description='阿里云百炼 万相3.0 图生视频接口（标准版）',
+        sort_order=1.0,
+        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
+    ),
+    ImplementationConfig(
+        name='wan3_video_prime_dashscope_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3VideoPrimeDashscopeV1Driver',
+        default_computing_power={2: 50, 3: 75, 5: 125, 8: 200, 10: 250, 15: 375, 20: 500, 25: 625, 30: 750},
+        enabled=True,
+        description='阿里云百炼 万相3.0 图生视频接口（高速版）',
+        sort_order=2.0,
+        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
+    ),
+    ImplementationConfig(
+        name='wan3_video_dashscope_r2v_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3DashscopeR2VV1Driver',
+        default_computing_power={2: 34, 3: 51, 5: 85, 8: 136, 10: 170, 15: 255, 20: 340, 25: 425, 30: 510},
+        enabled=True,
+        description='阿里云百炼 万相3.0 参考生视频接口（标准版）',
+        sort_order=1.0,
+        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
+    ),
+    ImplementationConfig(
+        name='wan3_video_prime_dashscope_r2v_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3VideoPrimeDashscopeR2VV1Driver',
+        default_computing_power={2: 50, 3: 75, 5: 125, 8: 200, 10: 250, 15: 375, 20: 500, 25: 625, 30: 750},
+        enabled=True,
+        description='阿里云百炼 万相3.0 参考生视频接口（高速版）',
+        sort_order=2.0,
+        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
+    ),
+    ImplementationConfig(
+        name='wan3_video_dashscope_t2v_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3DashscopeT2VV1Driver',
+        default_computing_power={2: 34, 3: 51, 5: 85, 8: 136, 10: 170, 15: 255, 20: 340, 25: 425, 30: 510},
+        enabled=True,
+        description='阿里云百炼 万相3.0 文生视频接口（标准版）',
+        sort_order=1.0,
+        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
+    ),
+    ImplementationConfig(
+        name='wan3_video_prime_dashscope_t2v_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3VideoPrimeDashscopeT2VV1Driver',
+        default_computing_power={2: 50, 3: 75, 5: 125, 8: 200, 10: 250, 15: 375, 20: 500, 25: 625, 30: 750},
+        enabled=True,
+        description='阿里云百炼 万相3.0 文生视频接口（高速版）',
+        sort_order=2.0,
+        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
     ),
 
     # ==================== 本地处理 ====================
