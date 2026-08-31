@@ -210,6 +210,13 @@ IMAGE_STYLE_PREFERRED_MODEL = "doubao-seed-2-0-lite"
 CHARACTER_IMAGE_HISTORY_FIELD = "image_history"
 CHARACTER_IMAGE_HISTORY_MAX_ENTRIES = 20
 
+# 用户级 VL 模型偏好默认值（user_preferences.pref_type='vl_model'，结构 {model, model_id, vendor_id}）：
+# 画风识别（script_writer.html 识别模型下拉）与资产检查专家（asset-readiness-checker）
+# 等看图场景共用同一偏好；用户在画风识别处切换模型即更新。
+# 选中优先级：已存偏好 > 本默认值（须在可用 VL 列表中）> 推荐⭐ > 第一个
+# （与 LLMModel.DEEPSEEK_V4_FLASH_VISION_EXP 同值；此处用字面量避免前向引用）
+VL_MODEL_PREFERRED_DEFAULT = 'deepseek-v4-flash-vision-exp'
+
 # 剧本创作等入口无偏好时的默认生图模型：GPT Image 2（short_key=gpt-image-2）
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = TaskTypeId.GPT_IMAGE_2_EDIT
 
@@ -2044,6 +2051,8 @@ class LLMModel:
     # DeepSeek 模型
     DEEPSEEK_V4_FLASH = 'deepseek-v4-flash'
     DEEPSEEK_V4_PRO = 'deepseek-v4-pro'
+    # VL 实验模型：支持图片理解，计费与 deepseek-v4-flash 一致
+    DEEPSEEK_V4_FLASH_VISION_EXP = 'deepseek-v4-flash-vision-exp'
 
     # Agnes 模型
     AGNES_2_5_FLASH = 'agnes-2.5-flash'
@@ -2234,6 +2243,42 @@ LANGUAGE_INSTRUCTIONS = {
 # 结算逻辑见 utils/computing_power.py: settle_task_success_diff
 DIFF_REFUND_TXN_PREFIX = 'diff-refund-'
 DIFF_CHARGE_TXN_PREFIX = 'diff-charge-'
+
+
+# ============ AI 介入程度（intervention_level） ============
+# 前端 script_writer.html 顶栏「AI 介入程度」选择器，随 /api/session/{id}/task 请求体传入，
+# 由 PM Agent 随任务 user 消息注入生效（见 pm_agent.execute）。
+# - balanced：标准（默认，不注入指令，维持 SOP 默认行为：资产创建一步到位）
+# - concise：简洁·少提问（非关键决策不打断用户）
+# - detailed：精细·多确认（角色卡/场景道具创建后恢复满意度确认与形象生成对象选择）
+INTERVENTION_LEVEL_BALANCED = 'balanced'
+INTERVENTION_LEVEL_CONCISE = 'concise'
+INTERVENTION_LEVEL_DETAILED = 'detailed'
+VALID_INTERVENTION_LEVELS = {
+    INTERVENTION_LEVEL_BALANCED, INTERVENTION_LEVEL_CONCISE, INTERVENTION_LEVEL_DETAILED,
+}
+INTERVENTION_LEVEL_DEFAULT = INTERVENTION_LEVEL_BALANCED
+
+# 各档位随任务注入的行为指令（balanced 不注入）
+INTERVENTION_LEVEL_INSTRUCTIONS = {
+    INTERVENTION_LEVEL_CONCISE: (
+        "\n\n[系统指令·AI介入程度：简洁·少提问]\n"
+        "用户希望尽量少被打断，请遵守：\n"
+        "1. 除大纲、剧本定稿等必要节点外，其余决策自行完成并在进度消息中汇报，不使用 ask_user\n"
+        "2. 角色卡、场景道具创建后直接一步到位生成形象（SOP 默认行为）\n"
+        "3. 遇到必须二选一且影响成本或风格的决策时，选择最稳妥的方案并在进度消息中说明理由"
+    ),
+    INTERVENTION_LEVEL_DETAILED: (
+        "\n\n[系统指令·AI介入程度：精细·多确认]\n"
+        "用户希望在关键节点进行更多确认，请遵守（SOP 中「资产创建一步到位、不询问用户」的规则在本模式下让位于以下流程）：\n"
+        "1. 角色卡创建完成后：先使用 ask_user 展示角色清单并确认是否满意；"
+        "满意后再使用 ask_user 让用户选择需要生成形象的角色（options 只列 reference_image 为空的角色，multiSelect），"
+        "然后才调用 character-image-designer\n"
+        "2. 场景和道具创建完成后：同样先使用 ask_user 确认满意度，"
+        "再让用户选择需要生成形象的场景和道具，然后才调用 location-prop-image-designer\n"
+        "3. 大纲、剧本的确认步骤照常执行"
+    ),
+}
 
 
 # ============ 单元测试基础设施 ============

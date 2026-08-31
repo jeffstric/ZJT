@@ -6060,10 +6060,13 @@
         async function loadStyleModels() {
             const select = document.getElementById('style-model-select');
             if (!select) return;
+            // 切换识别模型即保存为用户 VL 偏好（赋值方式幂等，可重复绑定）
+            select.onchange = onStyleModelChange;
             styleModelsLoading = true;
             select.innerHTML = `<option value="">${window.t ? window.t('style_recognize_loading_models') : '加载模型中…'}</option>`;
             try {
-                const response = await fetch('/api/style-models', {
+                const qs = (typeof WORLD_ID !== 'undefined' && WORLD_ID) ? `?world_id=${encodeURIComponent(WORLD_ID)}` : '';
+                const response = await fetch(`/api/style-models${qs}`, {
                     headers: { 'Authorization': AUTH_TOKEN, 'X-User-Id': USER_ID }
                 });
                 const data = await response.json();
@@ -6122,8 +6125,17 @@
                         select.appendChild(optGroup);
                     });
 
-                    // 默认选中：火山引擎 doubao-seed-2-0-lite → 第一个可用
-                    const defaultOpt = preferredOption || firstOption;
+                    // 默认选中优先级：用户已存 VL 偏好 > VL_MODEL_PREFERRED_DEFAULT（须在列表中）
+                    // > 推荐⭐/preferred 匹配 > 第一个可用
+                    const savedModel = (data.saved_preference && data.saved_preference.model) ? String(data.saved_preference.model).toLowerCase() : '';
+                    const defaultVlModel = (data.vl_model_default || '').toLowerCase();
+                    const savedOption = (savedModel || defaultVlModel)
+                        ? Array.from(select.querySelectorAll('option')).find(opt => {
+                            const name = (opt.value || '').toLowerCase();
+                            return (savedModel && name === savedModel) || (!savedModel && name === defaultVlModel);
+                        }) || null
+                        : null;
+                    const defaultOpt = savedOption || preferredOption || firstOption;
                     if (defaultOpt) {
                         defaultOpt.selected = true;
                     }
@@ -6149,6 +6161,38 @@
             const hasModel = !!select.value && !!cachedStyleModels.length;
             const hasImage = !!(imgInput.value && imgInput.value.trim());
             btn.disabled = !(hasModel && hasImage);
+        }
+
+        // 切换识别模型：保存为用户 VL 偏好（画风识别与资产检查专家共用同一模型）
+        function onStyleModelChange() {
+            const select = document.getElementById('style-model-select');
+            if (!select || !select.value) return;
+            const opt = select.options[select.selectedIndex];
+            if (!opt) return;
+            saveStyleModelPreference({
+                model: select.value,
+                model_id: opt.dataset.modelId || null,
+                vendor_id: opt.dataset.vendorId || null
+            });
+        }
+
+        async function saveStyleModelPreference({ model, model_id, vendor_id }) {
+            if (typeof USER_ID === 'undefined' || typeof WORLD_ID === 'undefined' || !USER_ID || !WORLD_ID) return;
+            try {
+                await fetch('/api/style-models/preference', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': AUTH_TOKEN, 'X-User-Id': USER_ID },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        model,
+                        model_id: model_id ? parseInt(model_id, 10) : null,
+                        vendor_id: vendor_id ? parseInt(vendor_id, 10) : null
+                    })
+                });
+            } catch (e) {
+                console.warn('保存 VL 模型偏好失败（不影响本次识别）:', e);
+            }
         }
 
         // 监听模型下拉变化，刷新按钮状态

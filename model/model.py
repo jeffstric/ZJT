@@ -69,6 +69,21 @@ class ModelModel:
             raise
 
     @staticmethod
+    def get_by_name(model_name: str) -> Optional[Model]:
+        """根据模型名获取 model 记录（用于按 agents_config 固定模型的专家解析路由/计费 id）"""
+        if not model_name:
+            return None
+        sql = "SELECT id, model_name, context_window, supports_tools, max_output_tokens, supports_thinking, supports_vl, enabled, created_at, note FROM model WHERE model_name = %s AND enabled = 1 LIMIT 1"
+        try:
+            result = execute_query(sql, (model_name,), fetch_one=True)
+            if result:
+                return Model(**result)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get model by name {model_name}: {e}")
+            raise
+
+    @staticmethod
     def get_all(limit: int = 50, offset: int = 0) -> List[Model]:
         """
         获取所有模型（分页）

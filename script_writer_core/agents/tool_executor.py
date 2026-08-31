@@ -37,6 +37,7 @@ from script_writer_core.mcp_tool import (
     list_video_models,
     list_llm_models,
     fetch_image_as_base64,
+    delete_asset_reference_image,
     generate_reference_audio,
     generate_character_reference_audio,
     check_reference_audio_status,
@@ -121,6 +122,7 @@ class ToolExecutor:
             "list_video_models": list_video_models,
             "list_llm_models": list_llm_models,
             "fetch_image_as_base64": fetch_image_as_base64,
+            "delete_asset_reference_image": delete_asset_reference_image,
             "generate_reference_audio": generate_reference_audio,
             "generate_character_reference_audio": generate_character_reference_audio,
             "check_reference_audio_status": check_reference_audio_status,
@@ -170,6 +172,7 @@ class ToolExecutor:
                 "list_video_models", "list_llm_models",
                 "generate_text_to_video", "image_to_video",
                 "fetch_image_as_base64",
+                "delete_asset_reference_image",
                 "generate_reference_audio",
                 "generate_character_reference_audio", "check_reference_audio_status",
                 "generate_digital_human"

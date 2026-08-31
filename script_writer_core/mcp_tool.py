@@ -778,12 +778,105 @@ def fetch_image_as_base64(user_id: str, world_id: str, auth_token: str,
         return {'success': False, 'error': f'获取图片失败: {str(e)}'}
 
 
+def delete_asset_reference_image(user_id: str, world_id: str, auth_token: str,
+                                 asset_type: str, name: str, reason: str = '') -> Dict[str, Any]:
+    """
+    删除角色/场景/道具的参考图（reference_image 置空） - MCP工具函数
+
+    用于宫格图切分污染（一格出现多个角色/多人物混切、边缘裁切）等图片质量问题的清理：
+    清理后资产回到"缺图"状态，形象生成智能体即可重新生成（4宫格生成会拒绝已有图的角色，
+    必须先删除坏图才能重新生成）。仅清空 JSON 中的字段，不删除图片文件本身；
+    数据库侧由用户点击"提交数据"后统一同步。
+
+    Args:
+        user_id: 用户ID（必填）
+        world_id: 世界ID（必填）
+        auth_token: 认证令牌（必填）
+        asset_type: 资产类型（必填）：character（角色）/ location（场景）/ prop（道具）
+        name: 资产名称（必填，与文件中的 name 字段一致）
+        reason: 删除原因（可选，用于检查报告留痕）
+
+    Returns:
+        dict: success=True 时包含 deleted_image_url（被删除的图片URL）；
+              reference_image 本来就为空时返回 already_empty=True
+    """
+    try:
+        if not name or not isinstance(name, str):
+            return {'success': False, 'error': '资产名称不能为空且必须是字符串'}
+
+        asset_type = (asset_type or '').strip().lower()
+        valid_types = {'character': ('characters', 'character'), 'location': ('locations', 'location'),
+                       'prop': ('props', 'prop')}
+        if asset_type not in valid_types:
+            return {
+                'success': False,
+                'error': f'asset_type 必须是 character / location / prop 之一，收到: {asset_type}'
+            }
+
+        file_manager = get_file_manager()
+
+        if asset_type == 'character':
+            # 角色文件名可能与显示名不一致（中文名/sanitize/拼音临时名），按 name 解析真实路径
+            resolved_path = file_manager.resolve_character_file_path(name, user_id, world_id)
+            if not resolved_path or not resolved_path.exists():
+                return {'success': False, 'error': f'角色 "{name}" 不存在，无法删除参考图'}
+            file_path = str(resolved_path)
+        else:
+            folder, prefix = valid_types[asset_type]
+            safe_name = _sanitize_filename(name)
+            file_path = file_manager.get_content_file_path(user_id, world_id, folder, f"{prefix}_{safe_name}.json")
+            if not os.path.exists(file_path):
+                type_label = '场景' if asset_type == 'location' else '道具'
+                return {'success': False, 'error': f'{type_label} "{name}" 不存在，无法删除参考图'}
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        old_image = data.get('reference_image')
+        if not old_image or str(old_image).strip() in ('', 'null'):
+            return {
+                'success': True,
+                'already_empty': True,
+                'message': f'"{name}" 的 reference_image 本来就为空，无需删除'
+            }
+
+        data['reference_image'] = ''
+        data['updated_at'] = datetime.now().isoformat()
+        if reason:
+            # 质检留痕：记录删除原因与时间，不覆盖已有字段结构
+            quality_log = data.get('reference_image_quality_log')
+            if not isinstance(quality_log, list):
+                quality_log = []
+            quality_log.append({
+                'action': 'delete_reference_image',
+                'reason': reason,
+                'deleted_image_url': old_image,
+                'deleted_at': data['updated_at'],
+            })
+            data['reference_image_quality_log'] = quality_log
+
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"[delete_asset_reference_image] {asset_type} '{name}' 参考图已删除: {old_image} (reason={reason})")
+        return {
+            'success': True,
+            'deleted_image_url': old_image,
+            'message': f'"{name}" 的参考图已删除，该资产已回到缺图状态，可重新生成形象'
+        }
+
+    except Exception as e:
+        logger.error(f"delete_asset_reference_image 失败: {e}", exc_info=True)
+        return {'success': False, 'error': f'删除参考图失败: {str(e)}'}
+
+
 def get_skill_loader():
     """获取技能加载器实例（单例模式）"""
     global _skill_loader
     if _skill_loader is None:
         _skill_loader = SkillLoader()
     return _skill_loader
+
 
 def set_file_manager(file_manager: FileManager):
     """设置全局文件管理器实例"""
@@ -3827,6 +3920,28 @@ MCP_TOOLS = [
                 }
             },
             "required": ["image_url"]
+        }
+    },
+    {
+        "name": "delete_asset_reference_image",
+        "description": "删除角色/场景/道具的参考图（reference_image 置空）。当检查发现参考图存在质量问题（如宫格切分污染：图中出现多个不同角色/多人物混在一格、角色被边缘裁切、画面不完整等）时调用。删除后该资产回到缺图状态，形象生成智能体即可重新生成。注意：4宫格批量生成会拒绝已有参考图的角色，必须先删除坏图再重新生成。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "asset_type": {
+                    "type": "string",
+                    "description": "资产类型（必填）：character（角色）/ location（场景）/ prop（道具）"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "资产名称（必填），与角色/场景/道具 JSON 中的 name 字段一致"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "删除原因（可选），如：宫格切分污染-图中出现两个角色。会记录在质检日志中"
+                }
+            },
+            "required": ["asset_type", "name"]
         }
     },
     {
