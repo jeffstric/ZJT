@@ -386,6 +386,10 @@ def _submit_pending(entry: Dict[str, Any], task, world_id: Any) -> None:
         else:
             _mark_entry(entry, _STATUS_SKIPPED, error="already_has_variant")
         return
+    logger.warning(
+        "script split character variant submit rejected: character=%s label=%s err=%s",
+        character_name, label, result.get("error"),
+    )
     _mark_entry(entry, _STATUS_FAILED, error=str(result.get("error") or "submit_failed"))
 
 

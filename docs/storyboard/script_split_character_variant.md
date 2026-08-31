@@ -77,6 +77,10 @@ LLM 只输出"变化点"，延续与恢复由代码保证：
 
 - 每个 tick 最多提交 `CHARACTER_VARIANT_SUBMIT_BATCH_SIZE`(4) 个（edit_image 提交含
   同步 HTTP，限批避免超 worker watchdog）。
+- 主参考图在系统内常态存储为 `/upload/...` 相对路径；`generate_character_variant_image`
+  内部会按 server 配置（https_host / server.host）补齐为绝对 URL 后再校验
+  http/https 并提交 edit_image（见 `_resolve_local_upload_url`），相对路径不再
+  导致提交被拒。
 - 计划持久化在 `final_result.metadata.character_variant_plan`，跨 tick / 崩溃后
   从检查点恢复；未全部终态时保存 final_result 并 `phase=character_variant` 保持
   publishing（publishing 在 claim_next_task 可领取列表内，租约过期自动回收）。
