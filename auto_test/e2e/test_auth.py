@@ -2,8 +2,8 @@
 import httpx
 import pytest
 
+pytestmark = [pytest.mark.e2e, pytest.mark.auth, pytest.mark.ci_smoke]
 
-@pytest.mark.auth
 class TestAuth:
     """认证模块测试"""
 
@@ -39,15 +39,15 @@ class TestAuth:
         assert resp.status_code != 200, "错误密码登录应返回非200状态码"
 
     @pytest.mark.p0
-    def test_logout_success(self, base_url, auth_token, user_id):
-        """登出成功"""
+    def test_logout_success(self, base_url, secondary_auth_token, secondary_user_id):
+        """使用次账号验证登出，避免注销后续用例共用的主账号 token。"""
         try:
             resp = httpx.post(
                 f"{base_url}/api/auth/logout",
-                json={"auth_token": auth_token},
+                json={"auth_token": secondary_auth_token},
                 headers={
-                    "Authorization": f"Bearer {auth_token}",
-                    "X-User-Id": str(user_id),
+                    "Authorization": f"Bearer {secondary_auth_token}",
+                    "X-User-Id": str(secondary_user_id),
                 },
                 timeout=10,
             )
