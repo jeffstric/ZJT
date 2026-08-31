@@ -76,6 +76,7 @@ from config.constant import (
     BrandingConstants,
     SMART_INSERT_SHOT_TIMEOUT,
     SMART_INSERT_SHOT_DEFAULT_MODEL,
+    ScriptSplitConstants,
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
@@ -440,7 +441,11 @@ from api.storyboard import router as storyboard_router
 app.include_router(storyboard_router)
 
 # 剧本分段拆分任务 API（见 docs/script/script_parser_incremental_split_design.md §13）
-from api.script_split import router as script_split_router
+from api.script_split import (
+    router as script_split_router,
+    create_split_task,
+    ScriptSplitPreconditionError,
+)
 app.include_router(script_split_router)
 
 # 导入并注册测试路由（临时测试，完成后移除）
@@ -6355,8 +6360,6 @@ async def parse_script(
         # 见 docs/script/script_parser_incremental_split_design.md §10 §13.1。
         # db_location/db_character 后处理在 worker 的 merge 阶段完成
         #（_enrich_shot_location_fields 回填 shot 级场景字段，见设计文档 §9）。
-        from api.script_split import create_split_task, ScriptSplitPreconditionError
-        from config.constant import ScriptSplitConstants
         request_config = {
             "max_group_duration": max_group_duration,
             "world_id": world_id,
