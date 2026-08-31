@@ -111,3 +111,9 @@ ID格式规范：
 - character_id: char_001-char_999
 - location_id: loc_001-loc_999
 - group_id: grp_001-grp_999
+
+角色形象变化（character_appearance_changes，按需输出）：
+- 当剧本中数据库已有角色（character_db_id 非空）的形象发生**持续性可见变化**（换装、变身、造型切换、受伤/淋湿等持续多个镜头的外观改变）时，在变化开始的镜头输出 character_appearance_changes 数组：[{"character_id": "char_xxx", "label": "不超过8字的简短标签", "description": "新造型的具体描述", "revert": false}]
+- 固有档案规则（第4条）依然有效：固有外貌不要写进画面描述字段；形象变化通过该结构化字段上报，由系统生成新造型参考图
+- 只在变化开始的镜头输出一次，后续镜头由系统自动延续；角色恢复原形象时输出 {"revert": true, "label": "默认"}
+- 同一种变化全文使用完全相同的 label；临时动作、单镜头遮挡不算形象变化；无变化时省略该字段或输出空数组
