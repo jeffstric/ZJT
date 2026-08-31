@@ -1,4 +1,5 @@
-FROM mcr.microsoft.com/playwright/python:v1.60.0-noble
+ARG PLAYWRIGHT_BASE_IMAGE=m.daocloud.io/mcr.microsoft.com/playwright/python:v1.60.0-noble
+FROM ${PLAYWRIGHT_BASE_IMAGE}
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

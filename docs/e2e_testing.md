@@ -63,6 +63,18 @@ playwright install chromium
 
 CI 使用临时数据库中的固定一次性凭据，不依赖生产账号或 GitLab Secret。可通过同名 CI/CD Variables 覆盖 `E2E_TEST_PHONE`、`E2E_TEST_PASSWORD`、`E2E_SECONDARY_PHONE` 和 `E2E_SECONDARY_PASSWORD`，但不得配置生产凭据。
 
+E2E Runner 默认通过 DaoCloud 公共镜像代理拉取 Playwright 基础镜像，避免国内 Runner 直连 `mcr.microsoft.com` 时因约 800 MB 浏览器镜像下载过慢而耗尽 Job 时间。`e2e_smoke` 首次执行的超时上限为 90 分钟；后续如果配置 GitLab Container Registry，建议将构建完成的 E2E Runner 镜像推入内部 Registry，并在流水线中直接复用。
+
+需要切换其他镜像仓库时，可覆盖 Dockerfile 的构建参数：
+
+```bash
+docker build \
+  --build-arg PLAYWRIGHT_BASE_IMAGE=<registry>/playwright/python:v1.60.0-noble \
+  -f docker/Dockerfile.e2e \
+  -t zjt-e2e-runner:local \
+  .
+```
+
 ### 本地复现 CI 冒烟测试
 
 ```bash

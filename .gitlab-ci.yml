@@ -342,7 +342,8 @@ e2e_smoke:
       junit: e2e-results/junit.xml
 
   interruptible: true
-  timeout: 45m
+  # 首次执行需要构建应用和拉取 Playwright 浏览器镜像；代理缓存未命中时预留足够时间。
+  timeout: 90m
   retry:
     max: 1
     when:
