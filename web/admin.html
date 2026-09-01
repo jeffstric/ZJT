@@ -2619,6 +2619,9 @@
                                                :readonly="field.readOnly || false"
                                                :class="{ 'qc-readonly-input': field.readOnly }">
                                         <p v-if="field.helpText" class="form-hint">{{ field.helpText }}</p>
+                                        <a v-if="field.helpImage" class="qc-example-link" @click="openImagePreview(field.helpImage)">
+                                            &#128247; {{ t('btn_view_example_image') }}
+                                        </a>
                                     </div>
 
                                     <!-- 操作按钮 -->
@@ -2663,6 +2666,14 @@
                         </button>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- 字段示例图灯箱弹窗 -->
+        <div class="modal-overlay qc-image-preview-overlay" v-if="imagePreviewModal.show" @click.self="closeImagePreview">
+            <div class="qc-image-preview">
+                <button class="modal-close" @click="closeImagePreview">&times;</button>
+                <img :src="imagePreviewModal.src" :alt="t('btn_view_example_image')">
             </div>
         </div>
 

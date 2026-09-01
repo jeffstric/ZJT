@@ -110,7 +110,7 @@ python3 scripts/running/run_dev.py
 | 配置项 | 说明 |
 |--------|------|
 | `runninghub.*` | RunningHub 视频生成 API |
-| `llm.qwen.*` | 阿里通义千问 |
+| `llm.qwen.*` | 阿里云百炼（通义千问，大模型与生图/生视频共用；base_url 只填基础地址，大模型自动追加 `/compatible-mode/v1`，生图/生视频自动追加 `/api/v1`） |
 | `llm.google.*` | Google Gemini |
 | `tts.*` | TTS 语音合成服务 |
 | `duomi.*` | 多米 API（图生视频） |

@@ -804,6 +804,34 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.HAPPY_HORSE_REFERENCE_TO_VIDEO: DriverImplementation.HAPPY_HORSE_DASHSCOPE_R2V_V1,
     DriverKey.HAPPY_HORSE_TEXT_TO_VIDEO: DriverImplementation.HAPPY_HORSE_DASHSCOPE_T2V_V1,
 
+    # Wan3.0 相关驱动（标准版 / 高速版可切换）
+    DriverKey.WAN3_IMAGE_TO_VIDEO: [
+        DriverImplementation.WAN3_VIDEO_DASHSCOPE_V1,        # 标准版（默认）
+        DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_V1,  # 高速版
+    ],
+    DriverKey.WAN3_REFERENCE_TO_VIDEO: [
+        DriverImplementation.WAN3_VIDEO_DASHSCOPE_R2V_V1,        # 标准版（默认）
+        DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_R2V_V1,  # 高速版
+    ],
+    DriverKey.WAN3_TEXT_TO_VIDEO: [
+        DriverImplementation.WAN3_VIDEO_DASHSCOPE_T2V_V1,        # 标准版（默认）
+        DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1,  # 高速版
+    ],
+
+    # Vidu Q3 相关驱动（turbo / pro 可切换）
+    DriverKey.VIDU_Q3_IMAGE_TO_VIDEO: [
+        DriverImplementation.VIDU_Q3_I2V_TURBO_V1,  # turbo（默认）
+        DriverImplementation.VIDU_Q3_I2V_PRO_V1,    # pro
+    ],
+    DriverKey.VIDU_Q3_REFERENCE_TO_VIDEO: [
+        DriverImplementation.VIDU_Q3_R2V_TURBO_V1,  # turbo（默认）
+        DriverImplementation.VIDU_Q3_R2V_PRO_V1,    # pro
+    ],
+    DriverKey.VIDU_Q3_TEXT_TO_VIDEO: [
+        DriverImplementation.VIDU_Q3_T2V_TURBO_V1,  # turbo（默认）
+        DriverImplementation.VIDU_Q3_T2V_PRO_V1,    # pro
+    ],
+
     # Qwen Image Edit（空壳任务，待接入实现方）
     DriverKey.QWEN_IMAGE_EDIT: [],
 
@@ -1993,13 +2021,22 @@ class ExternalLinks:
     FEEDBACK_QR_URL = '/files/二维码.jpg'
 
 
+# 阿里云百炼（DashScope）BaseURL 常量
+# 用户只配置基础 URL；大模型走 OpenAI 兼容接口时自动追加 DASHSCOPE_COMPATIBLE_MODE_SUFFIX，
+# 生图/生视频走 DashScope 原生异步接口时自动追加 DASHSCOPE_API_V1_SUFFIX。
+# 规范化逻辑见 config/config_util.py 的 normalize_aliyun_bailian_base_url()
+DASHSCOPE_BASE_URL_DEFAULT = 'https://dashscope.aliyuncs.com'
+DASHSCOPE_COMPATIBLE_MODE_SUFFIX = '/compatible-mode/v1'
+DASHSCOPE_API_V1_SUFFIX = '/api/v1'
+
+
 # LLM 模型和供应商常量
 class LLMVendor:
     """LLM 供应商"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'JIEKOU': '接口供应商（Gemini 模型）',
-        'ALIYUN': '阿里云供应商（Qwen 模型）',
+        'ALIYUN': '阿里云百炼（通义千问 Qwen 模型）',
         'OLLAMA': '本地运行供应商（Ollama 模型）',
         'VOLCENGINE': '火山引擎供应商（Doubao / DeepSeek-V4 模型）',
         'CLAUDE': 'Claude 供应商（Anthropic 模型）',

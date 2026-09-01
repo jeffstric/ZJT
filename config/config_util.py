@@ -5,7 +5,13 @@ import os
 import time
 import logging
 import yaml
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+from config.constant import (
+    DASHSCOPE_API_V1_SUFFIX,
+    DASHSCOPE_BASE_URL_DEFAULT,
+    DASHSCOPE_COMPATIBLE_MODE_SUFFIX,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -432,3 +438,32 @@ def reload_all_dynamic_configs() -> None:
     """
     invalidate_dynamic_cache()
     logger.info("Reloaded all dynamic configs")
+
+
+def normalize_aliyun_bailian_base_url(base_url: Optional[str], for_llm: bool) -> str:
+    """
+    规范化阿里云百炼（DashScope）base_url。
+
+    用户只需配置基础 URL（如 https://dashscope.aliyuncs.com）：
+    - for_llm=True  -> 基础 URL + /compatible-mode/v1（OpenAI 兼容大模型接口）
+    - for_llm=False -> 基础 URL + /api/v1（DashScope 原生多媒体异步接口）
+
+    兼容性处理（幂等）：
+    - 空值回退默认基础 URL（DASHSCOPE_BASE_URL_DEFAULT）
+    - 兼容存量旧值：已带 /compatible-mode/v1 后缀的先剥离
+    - 兼容尾部带 / 与不带 /
+
+    Args:
+        base_url: 用户配置的 base_url，可为空
+        for_llm: True 表示大模型（OpenAI 兼容）用途，False 表示多媒体（DashScope 原生）用途
+
+    Returns:
+        规范化后的完整 base_url
+    """
+    url = (base_url or '').strip() or DASHSCOPE_BASE_URL_DEFAULT
+    url = url.rstrip('/')
+    # 剥离存量旧值可能携带的 OpenAI 兼容模式后缀
+    if url.endswith(DASHSCOPE_COMPATIBLE_MODE_SUFFIX):
+        url = url[:-len(DASHSCOPE_COMPATIBLE_MODE_SUFFIX)].rstrip('/')
+    suffix = DASHSCOPE_COMPATIBLE_MODE_SUFFIX if for_llm else DASHSCOPE_API_V1_SUFFIX
+    return f"{url}{suffix}"

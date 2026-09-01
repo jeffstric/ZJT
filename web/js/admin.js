@@ -109,9 +109,11 @@ const PROVIDER_DEFINITIONS = [
         impactsKey: 'provider_qwen_impacts',
         fields: [
             { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_qwen', required: true },
-            { id: 'base_url', labelKey: 'field_base_url_label_optional', type: 'url', placeholder: 'https://dashscope.aliyuncs.com/compatible-mode/v1', required: false, helpTextKey: 'field_base_url_placeholder' }
+            { id: 'base_url', labelKey: 'field_api_host_label_optional', type: 'url', placeholder: 'https://llm-xxx.cn-beijing.maas.aliyuncs.com', required: false, helpTextKey: 'field_base_url_help_qwen', helpImage: 'assets/guide/aliyun_api_key_api_host.png' },
+            { id: 'workspace_id', label: '业务空间 ID（万相3.0 视频，一般留空）', type: 'text', placeholder: '如 llm-xxxxxxxx', required: false, helpText: '一般无需填写：上方 API Host 填密钥弹窗中的地址即可自动识别。手动填写时，取 API Host（如 llm-xxx.cn-beijing.maas.aliyuncs.com）第一个点号前的部分' },
+            { id: 'endpoint_region', label: '业务空间地域（可选）', type: 'text', placeholder: 'cn-beijing', required: false, helpText: '万相3.0 视频模型用，默认 cn-beijing；可选 ap-southeast-1 / ap-northeast-1 / eu-central-1 / us-east-1' }
         ],
-        configKeyMap: { api_key: 'llm.qwen.api_key', base_url: 'llm.qwen.base_url' },
+        configKeyMap: { api_key: 'llm.qwen.api_key', base_url: 'llm.qwen.base_url', workspace_id: 'wan3.workspace_id', endpoint_region: 'wan3.endpoint_region' },
         testEndpoint: 'qwen'
     },
     {
@@ -154,7 +156,7 @@ const PROVIDER_DEFINITIONS = [
     },
 
     // ===== 生图/生视频共享键供应商 =====
-    // 多米、火山引擎（多媒体）、火山引擎海外版、聚合站 1-5 的生图与生视频共用同一配置键，
+    // 多米、火山引擎（多媒体）、火山引擎海外版、阿里云百炼（多媒体）、聚合站 1-5 的生图与生视频共用同一配置键，
     // 各仅保留一个条目，选中即同时覆盖生图与生视频实现方
     {
         id: 'duomi',
@@ -212,6 +214,27 @@ const PROVIDER_DEFINITIONS = [
         ],
         configKeyMap: { api_key: 'volcengine_oversea.api_key', base_url: 'volcengine_oversea.base_url' },
         testEndpoint: null
+    },
+    {
+        // 阿里云百炼（多媒体）：与大模型条目 qwen 共享 llm.qwen.api_key，
+        // base_url 复用大模型条目配置（生图/生视频自动追加 /api/v1）
+        id: 'qwen_media',
+        nameKey: 'provider_qwen_name',
+        descKey: 'provider_qwen_media_desc',
+        category: 'multimedia',
+        icon: '🧠',
+        docUrl: 'https://dashscope.console.aliyun.com/apiKey',
+        lazyRecommended: false,
+        displayOrder: 3,
+        baseName: 'qwen',
+        isOfficialAPI: false,
+        impactsKey: 'provider_qwen_media_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_qwen', required: true }
+        ],
+        configKeyMap: { api_key: 'llm.qwen.api_key' },
+        testEndpoint: null,
+        _sharedWith: 'qwen'
     },
     {
         id: 'site_1_image',
@@ -646,7 +669,13 @@ const AdminApp = {
                 saveLoading: {},         // { providerId: boolean }
                 leftPanelOpen: true
             },
-            
+
+            // 字段示例图灯箱（快速配置字段 helpImage 点击放大查看）
+            imagePreviewModal: {
+                show: false,
+                src: ''
+            },
+
             // 使用手册引导弹窗
             guideModal: {
                 show: false,
@@ -3378,6 +3407,17 @@ const AdminApp = {
             this.quickConfigModal.testLoading = {};
             this.quickConfigModal.testResults = {};
             this.quickConfigModal.saveLoading = {};
+        },
+
+        // 打开/关闭字段示例图灯箱
+        openImagePreview(src) {
+            this.imagePreviewModal.src = src;
+            this.imagePreviewModal.show = true;
+        },
+
+        closeImagePreview() {
+            this.imagePreviewModal.show = false;
+            this.imagePreviewModal.src = '';
         },
 
         // 点击左侧服务商卡片：未选中则选中并定位；已选中则不再取消选中
