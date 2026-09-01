@@ -28,14 +28,21 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """幂等补回 deepseek-v4-flash-vision-exp 模型与计费配置（与 no_120 相同的两条 INSERT）"""
+    """幂等补回 deepseek-v4-flash-vision-exp 模型与计费配置。
+
+    注意：``model.model_name`` 上没有唯一索引，``ON DUPLICATE KEY UPDATE``
+    不会触发（no_120 的写法在重复执行时会插入重复行），此处一律改用
+    ``NOT EXISTS`` 守卫，保证任意次数重放都不产生重复行。
+    """
     conn = op.get_bind()
 
     # 1. 添加 deepseek-v4-flash-vision-exp 模型（VL 模型，支持图片理解）
     conn.execute(text("""
         INSERT INTO `model` (model_name, context_window, supports_tools, max_output_tokens, supports_thinking, supports_vl, created_at, note)
-        VALUES ('deepseek-v4-flash-vision-exp', 1000000, 1, 384000, 1, 1, NOW(), 'DeepSeek V4 Flash Vision 实验版，支持图片理解，价格与 deepseek-v4-flash 相同')
-        ON DUPLICATE KEY UPDATE note = VALUES(note)
+        SELECT 'deepseek-v4-flash-vision-exp', 1000000, 1, 384000, 1, 1, NOW(), 'DeepSeek V4 Flash Vision 实验版，支持图片理解，价格与 deepseek-v4-flash 相同'
+        WHERE NOT EXISTS (
+            SELECT 1 FROM `model` WHERE model_name = 'deepseek-v4-flash-vision-exp'
+        )
     """))
     logger.info("[Migration] Ensured deepseek-v4-flash-vision-exp model exists")
 
