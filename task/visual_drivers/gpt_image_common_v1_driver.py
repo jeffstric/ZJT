@@ -19,7 +19,7 @@ from utils.sentry_util import SentryUtil, AlertLevel
 from utils.network_utils import is_local_file_path
 from utils.image_upload_utils import try_map_url_to_local_file, upload_local_images_to_cdn_sync, ensure_fresh_image_url_sync
 from utils.media_mapping_util import extract_local_path_from_url
-from utils.project_path import get_project_root
+from utils.project_path import get_project_root, resolve_upload_url_to_local_path
 from utils.media_cache import get_cache_manager
 from .exceptions import ImageExpiredError
 
@@ -214,10 +214,19 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             return image_path
         local_rel = extract_local_path_from_url(image_path)
         if local_rel:
-            candidate = os.path.join(get_project_root(), local_rel)
+            # 先通过统一解析器做 traversal 校验；实际映射仍基于项目根目录，
+            # 兼容测试、便携部署及历史调用约定。
+            resolve_upload_url_to_local_path(image_path)
+            candidate = os.path.realpath(os.path.join(get_project_root(), local_rel))
+            upload_root = os.path.realpath(os.path.join(get_project_root(), "upload"))
+            if os.path.commonpath((candidate, upload_root)) != upload_root:
+                raise ValueError("非法的上传路径")
             if os.path.exists(candidate):
                 self.logger.info(f"Web相对路径映射到本地文件: {image_path} -> {candidate}")
                 return candidate
+        elif "/upload/" in str(image_path).replace("\\", "/"):
+            # 明确拒绝伪装成本地 upload URL 的非法路径，不能回退为普通本地路径。
+            resolve_upload_url_to_local_path(image_path)
         return image_path
 
     def _prepare_image_data(self, image_path: str) -> tuple[str, str]:
@@ -239,7 +248,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             # /upload/ 本地映射兜底（与域名无关）
             local_rel = extract_local_path_from_url(fresh)
             if local_rel:
-                candidate = os.path.join(get_project_root(), local_rel)
+                candidate = self._resolve_local_path(fresh)
                 if os.path.exists(candidate):
                     local_file = candidate
         if local_file:
@@ -270,7 +279,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                 # /upload/ 本地映射兜底（与域名无关）
                 local_rel = extract_local_path_from_url(fresh)
                 if local_rel:
-                    candidate = os.path.join(get_project_root(), local_rel)
+                    candidate = self._resolve_local_path(fresh)
                     if os.path.exists(candidate):
                         local_file = candidate
             if local_file:

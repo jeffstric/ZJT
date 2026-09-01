@@ -2,6 +2,8 @@ import logging
 import os
 from types import SimpleNamespace
 
+import pytest
+
 os.environ.setdefault("comfyui_env", "prod")
 
 from task.visual_drivers.gpt_image_common_v1_driver import GptImageCommonV1Driver
@@ -141,6 +143,20 @@ def test_resolve_local_path_returns_original_when_unresolvable(tmp_path, monkeyp
     driver = make_driver()
     missing = "/upload/location/pic/not_exist_xxx.png"
     assert driver._resolve_local_path(missing) == missing
+
+
+@pytest.mark.parametrize(
+    "malicious_path",
+    [
+        "/upload/../pyproject.toml",
+        "/upload/%2e%2e/pyproject.toml",
+        r"/upload/..\pyproject.toml",
+    ],
+)
+def test_resolve_local_path_rejects_upload_traversal(malicious_path):
+    driver = make_driver()
+    with pytest.raises(ValueError, match="非法的上传路径"):
+        driver._resolve_local_path(malicious_path)
 
 
 def test_prepare_image_file_reads_upload_web_relative_path(tmp_path, monkeypatch):

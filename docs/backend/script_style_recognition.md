@@ -20,7 +20,8 @@
 
 ### 1. 获取可用 vl 模型 — `GET /api/style-models`
 
-- 权限：`world:view_files`
+- 权限：`world:view_files`。必须携带 `Authorization`；服务端从 token 解析真实用户，若同时携带
+  `X-User-Id`，两者不一致返回 403。带 `world_id` 读取模型偏好前会校验该用户的世界访问权限。
 - 返回：
   ```json
   {
@@ -49,6 +50,10 @@
   2. 其余 `volcengine` 视觉模型；
   3. 其他已配置密钥供应商的视觉模型。
   前端按 vendor 分组（optgroup + 图标），默认选中推荐项。
+
+模型切换通过 `POST /api/style-models/preference` 保存。该接口不信任请求体中的 `user_id`：
+用户身份仅取自 `Authorization`，请求头或 body 中声明的用户必须与 token 一致，并在写入前校验
+`world_id` 编辑权限。权限查询与偏好数据库读写均通过 `asyncio.to_thread` + 统一超时执行，避免阻塞接口事件循环。
 
 ### 2. 上传画风参考图 — 复用 `POST /api/upload-image`
 
