@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS `model` (
   `enabled` tinyint(1) DEFAULT 1 COMMENT '是否启用(1=启用, 0=禁用)',
   `created_at` datetime DEFAULT NULL,
   `note` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '其他信息',
-  PRIMARY KEY (`id`) USING BTREE
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE KEY `uk_model_name` (`model_name`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC COMMENT='模型表';
 """
