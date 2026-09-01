@@ -285,6 +285,10 @@ describe('生成结果图片节点携带提示词', () => {
     expect(src).toContain("fetch('/api/video-workflow/describe-image'");
     expect(src).toMatch(/headers\['Authorization'\] = getAuthToken\(\)/);
     expect(src).toMatch(/body: JSON\.stringify\(\{ image_url: imgUrl \}\)/);
+    // 状态提示必须用文件内已定义的 updateStatus（曾误用不存在的 showStatus 导致 ReferenceError）
+    expect(src).toMatch(/updateStatus\(tr\('panorama_describing'/);
+    expect(src).toMatch(/updateStatus\(tr\('panorama_describe_failed'/);
+    expect(src).not.toContain('showStatus(');
     // 过期响应守卫（重新识图/换源后丢弃旧响应）+ 等待期间用户手动输入不覆盖
     expect(src).toMatch(/if \(token !== describeToken\) return;/);
     expect(src).toMatch(/if \(String\(node\.data\.prompt \|\| ''\)\.trim\(\) \|\| promptEl\.value\.trim\(\)\) return;/);

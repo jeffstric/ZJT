@@ -589,7 +589,7 @@
         var describeToken = 0;
         function describeImageIntoPrompt(imgUrl) {
           var token = ++describeToken;
-          showStatus(tr('panorama_describing', '正在识图生成场景描述...'), '#666');
+          updateStatus(tr('panorama_describing', '正在识图生成场景描述...'), '#666');
           var headers = { 'Content-Type': 'application/json' };
           if (typeof getAuthToken === 'function') headers['Authorization'] = getAuthToken();
           if (typeof getUserId === 'function') headers['X-User-Id'] = getUserId();
@@ -610,12 +610,12 @@
                 showToast(tr('panorama_image_prompt_described', '已识图生成场景描述，可按需修改'), 'info');
                 safeAutoSave();
               } else {
-                showStatus(tr('panorama_describe_failed', '识图生成描述失败，可手动输入'), '#d97706');
+                updateStatus(tr('panorama_describe_failed', '识图生成描述失败，可手动输入'), '#d97706');
               }
             })
             .catch(function() {
               if (token !== describeToken) return;
-              showStatus(tr('panorama_describe_failed', '识图生成描述失败，可手动输入'), '#d97706');
+              updateStatus(tr('panorama_describe_failed', '识图生成描述失败，可手动输入'), '#d97706');
             });
         }
 
