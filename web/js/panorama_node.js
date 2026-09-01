@@ -587,9 +587,37 @@
         // VL 识图：调用后端视觉模型为图片生成场景描述并填入提示词。
         // 仅新连线触发（工作流重载恢复不会调用）；成功后 prompt 非空，重连不重复识图
         var describeToken = 0;
+        // 识图 loading：提示词框 placeholder 动态省略号 + 节点状态行同步提示
+        // （识图仅在提示词为空时触发，placeholder 恰好可见，用户视线焦点即在提示词框）
+        var promptLoadingTimer = null;
+        var promptOriginalPlaceholder = null;
+        function setPromptLoading(on) {
+          if (on) {
+            if (promptLoadingTimer) clearInterval(promptLoadingTimer);
+            if (promptOriginalPlaceholder === null) {
+              promptOriginalPlaceholder = promptEl.getAttribute('placeholder') || '';
+            }
+            var base = tr('panorama_describing', '正在识图生成场景描述');
+            var dots = 3;
+            var tick = function() {
+              dots = (dots + 1) % 4;
+              var text = base + '.'.repeat(dots);
+              promptEl.setAttribute('placeholder', text);
+              updateStatus(text, '#666');
+            };
+            tick();
+            promptLoadingTimer = setInterval(tick, 400);
+          } else {
+            if (promptLoadingTimer) { clearInterval(promptLoadingTimer); promptLoadingTimer = null; }
+            if (promptOriginalPlaceholder !== null) {
+              promptEl.setAttribute('placeholder', promptOriginalPlaceholder);
+              promptOriginalPlaceholder = null;
+            }
+          }
+        }
         function describeImageIntoPrompt(imgUrl) {
           var token = ++describeToken;
-          updateStatus(tr('panorama_describing', '正在识图生成场景描述...'), '#666');
+          setPromptLoading(true);
           var headers = { 'Content-Type': 'application/json' };
           if (typeof getAuthToken === 'function') headers['Authorization'] = getAuthToken();
           if (typeof getUserId === 'function') headers['X-User-Id'] = getUserId();
@@ -600,7 +628,8 @@
           })
             .then(function(r) { return r.json(); })
             .then(function(data) {
-              if (token !== describeToken) return; // 已重新识图/换源，丢弃过期响应
+              if (token !== describeToken) return; // 已重新识图/换源，新调用已接管 loading
+              setPromptLoading(false);
               if (data && data.success && data.description) {
                 statusEl.style.display = 'none';
                 // 等待期间用户已手动输入则不覆盖
@@ -615,6 +644,7 @@
             })
             .catch(function() {
               if (token !== describeToken) return;
+              setPromptLoading(false);
               updateStatus(tr('panorama_describe_failed', '识图生成描述失败，可手动输入'), '#d97706');
             });
         }
@@ -983,6 +1013,7 @@
 
         // 节点删除时销毁 WebGL 上下文（由 canvas.js removeNode 钩子调用）
         node.onDestroy = function() {
+          setPromptLoading(false);
           destroyPanoramaViewer(node.id);
         };
 

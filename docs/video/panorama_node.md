@@ -44,7 +44,7 @@
 - **输入端口**（`.port.input.panorama-source-port`，经 `registerInputPorts('panorama', ...)` 注册到连接吸附注册表）：`image` / `location` 类型（可选）。从图片/场景节点拖线到全景节点附近（50px 吸附）即可建立连接，端口绿色高亮提示；连接后走「图生全景」（`/api/image-edit` + `ref_image_urls`）；不连接走纯文生全景（`/api/text-to-image` + `aspect_ratio`）。源节点无参考图也允许连接（`allowMissingImage`），生成时自动降级为纯文生全景。
   - 连接**图片节点**时：参考图取图片节点的 `url`；若全景提示词为空，按以下优先级自动填入（不覆盖用户已输入内容）：
     1. 图片节点自带提示词（`data.prompt`，含生成结果节点回填的生成提示词——图片编辑结果携带原节点提示词、分镜图携带分镜生图 `finalPrompt`、全景结果节点携带含 360° 后缀的 `finalPrompt`、全景截图携带场景描述）；
-    2. **任意图片（上传图等无提示词）→ VL 识图**：前端调用 `POST /api/video-workflow/describe-image`（`services/image_describe.py`，复用已配置密钥的 VL 模型，默认优先 `volcengine/doubao-seed-2-0-lite`），生成 360° 全景导向的场景描述填入并 toast 提示。识图期间节点状态行显示进度；失败降级为提示手动输入。仅**新连线**触发识图（工作流重载恢复不触发、不重复扣费），成功后提示词非空、断开重连不会重复识图；等待期间用户手动输入的内容不会被覆盖。支持本站 `upload/` 路径与 http(s) 远程 URL。走 LLM token 计费。
+    2. **任意图片（上传图等无提示词）→ VL 识图**：前端调用 `POST /api/video-workflow/describe-image`（`services/image_describe.py`，复用已配置密钥的 VL 模型，默认优先 `volcengine/doubao-seed-2-0-lite`），生成 360° 全景导向的场景描述填入并 toast 提示。识图期间**提示词框 placeholder 显示动态省略号 loading**（"正在识图生成场景描述.→..→..."，识图仅在提示词为空时触发、placeholder 恰好可见），节点状态行同步提示；完成/失败后恢复原 placeholder，失败降级为提示手动输入。仅**新连线**触发识图（工作流重载恢复不触发、不重复扣费），成功后提示词非空、断开重连不会重复识图；等待期间用户手动输入的内容不会被覆盖。支持本站 `upload/` 路径与 http(s) 远程 URL。走 LLM token 计费。
   - 连接**场景节点**时：参考图自动取场景的 `reference_image`；若提示词为空，自动按「场景名，场景描述」填充提示词（不覆盖用户已输入内容），点击生成即得到该场景的 360 全景图。
   - 断开参考连线（连接 `portType: 'panorama-source'`）时自动复位节点内参考图缩略图；提示词保留不回滚。
 - **输出端口**：全景结果。生成后自动为每张结果创建标准图片节点并连接（全景节点 → 图片节点）。

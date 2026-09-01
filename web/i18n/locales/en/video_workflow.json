@@ -620,7 +620,7 @@
   "panorama_source_no_image": "Source image node has no image",
   "panorama_scene_prompt_filled": "Prompt auto-filled from scene \"{name}\"; click generate to create its 360 panorama",
   "panorama_image_prompt_filled": "Prompt auto-filled from the connected image node; feel free to edit",
-  "panorama_describing": "Describing image with vision model...",
+  "panorama_describing": "Describing image with vision model",
   "panorama_image_prompt_described": "Scene description generated from the image; feel free to edit",
   "panorama_describe_failed": "Failed to describe the image; please enter a description manually",
   "panorama_prompt_label": "Scene Description",

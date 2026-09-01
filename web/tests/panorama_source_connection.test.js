@@ -286,9 +286,17 @@ describe('生成结果图片节点携带提示词', () => {
     expect(src).toMatch(/headers\['Authorization'\] = getAuthToken\(\)/);
     expect(src).toMatch(/body: JSON\.stringify\(\{ image_url: imgUrl \}\)/);
     // 状态提示必须用文件内已定义的 updateStatus（曾误用不存在的 showStatus 导致 ReferenceError）
-    expect(src).toMatch(/updateStatus\(tr\('panorama_describing'/);
     expect(src).toMatch(/updateStatus\(tr\('panorama_describe_failed'/);
     expect(src).not.toContain('showStatus(');
+    // 识图 loading：提示词框 placeholder 动态省略号（用户视线焦点处），
+    // 所有出口（成功/失败/过期）都恢复 placeholder；节点销毁清理定时器
+    expect(src).toMatch(/function setPromptLoading\(on\)/);
+    expect(src).toMatch(/promptEl\.setAttribute\('placeholder', text\)/);
+    expect(src).toMatch(/promptLoadingTimer = setInterval\(tick, 400\)/);
+    expect(src).toMatch(/setPromptLoading\(true\);/);
+    expect(src).toMatch(/setPromptLoading\(false\);\s*\n\s*if \(data && data\.success/);
+    expect(src).toMatch(/onDestroy[\s\S]*?setPromptLoading\(false\)/);
+    // 过期响应（token 不匹配）不清 loading：新调用已接管，避免竞态闪烁
     // 过期响应守卫（重新识图/换源后丢弃旧响应）+ 等待期间用户手动输入不覆盖
     expect(src).toMatch(/if \(token !== describeToken\) return;/);
     expect(src).toMatch(/if \(String\(node\.data\.prompt \|\| ''\)\.trim\(\) \|\| promptEl\.value\.trim\(\)\) return;/);
