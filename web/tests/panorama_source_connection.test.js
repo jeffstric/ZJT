@@ -213,6 +213,13 @@ describe('全景参考端口修复接线（源码断言）', () => {
     // 端口 DOM 带专属类（供注册表选择器与 mousemove 高亮）
     expect(src).toMatch(/direction:\s*'input'[^}]*cssClass:\s*'panorama-source-port'/);
 
+    // 模板菜单锚定在模板按钮的 position:relative 容器内（否则 absolute 菜单会相对整个
+    // 节点定位、弹到节点底部）；点击菜单外任意区域收起，节点销毁移除 document 监听
+    expect(src).toMatch(/position:relative;">'\s*\+\s*'<button type="button" class="mini-btn panorama-tpl-btn/);
+    expect(src).toMatch(/\.panorama-tpl-menu/);
+    expect(src).toMatch(/onTplMenuDismiss/);
+    expect(src).toMatch(/document\.removeEventListener\('mousedown', onTplMenuDismiss\)/);
+
     // 不再使用 bindInputPortEvents 直落路径（两套路径并存会导致查重/占用失效）
     expect(src).not.toContain('bindInputPortEvents(');
 

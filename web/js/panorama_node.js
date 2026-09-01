@@ -448,12 +448,16 @@
             '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
               '<div class="label" style="margin:0;" data-i18n="panorama_prompt_label">' + tr('panorama_prompt_label', '场景描述') + '</div>' +
               '<div style="display:flex; gap:6px;">' +
-                '<button type="button" class="mini-btn panorama-tpl-btn" style="font-size:11px; padding:4px 8px;">' + tr('panorama_template_btn', '模板') + ' ▾</button>' +
+                // position:relative 锚点：模板菜单（absolute, top:100%）据此在模板按钮正下方弹出，
+                // 否则会相对整个节点定位、落到节点底部
+                '<div style="position:relative;">' +
+                  '<button type="button" class="mini-btn panorama-tpl-btn" style="font-size:11px; padding:4px 8px;">' + tr('panorama_template_btn', '模板') + ' ▾</button>' +
+                  '<div class="panorama-tpl-menu" style="display:none;">' + PANORAMA_PROMPT_TEMPLATES.map(function(tpl) {
+                    return '<div class="panorama-tpl-item" data-tpl="' + tpl.key + '">' + tr('panorama_tpl_' + tpl.key, tpl.key) + '</div>';
+                  }).join('') + '</div>' +
+                '</div>' +
                 '<button type="button" class="mini-btn panorama-prompt-expand-btn" style="font-size:11px; padding:4px 8px;" title="' + tr('script_expand_btn', '放大编辑') + '">\u2922</button>' +
               '</div>' +
-              '<div class="panorama-tpl-menu" style="display:none;">' + PANORAMA_PROMPT_TEMPLATES.map(function(tpl) {
-                return '<div class="panorama-tpl-item" data-tpl="' + tpl.key + '">' + tr('panorama_tpl_' + tpl.key, tpl.key) + '</div>';
-              }).join('') + '</div>' +
             '</div>' +
             '<textarea class="panorama-prompt" rows="3" placeholder="' + tr('panorama_prompt_placeholder', '描述你想身临其境的360°环境，例如：夕阳下的雪山湖泊，四周环山…') + '" style="resize:vertical; min-height:60px;"></textarea>' +
           '</div>' +
@@ -700,6 +704,13 @@
             tplMenu.style.display = 'none';
           });
         });
+        // 点击模板按钮/菜单以外任意区域收起菜单（节点销毁时随 onDestroy 移除）
+        var onTplMenuDismiss = function(e) {
+          if (tplMenu.style.display === 'none') return;
+          if (e.target && e.target.closest && e.target.closest('.panorama-tpl-btn, .panorama-tpl-menu')) return;
+          tplMenu.style.display = 'none';
+        };
+        document.addEventListener('mousedown', onTplMenuDismiss);
 
         // 模型下拉（文生图分类；参考图模式复用同模型的 image_edit task_id）
         function populateModelOptions() {
@@ -1014,6 +1025,7 @@
         // 节点删除时销毁 WebGL 上下文（由 canvas.js removeNode 钩子调用）
         node.onDestroy = function() {
           setPromptLoading(false);
+          document.removeEventListener('mousedown', onTplMenuDismiss);
           destroyPanoramaViewer(node.id);
         };
 
