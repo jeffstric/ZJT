@@ -276,6 +276,18 @@ class StoryboardAgentCommandService:
                     ],
                 },
                 {
+                    "name": "estimate-missing-videos-power",
+                    "permission": "storyboard:generate",
+                    "params": [
+                        "storyboard_id",
+                        "limit",
+                        "task_type",
+                        "ratio",
+                        "image_mode",
+                        "scene_ids",
+                    ],
+                },
+                {
                     "name": "generate-video",
                     "permission": "storyboard:generate",
                     "params": ["scene_id", "mode", "image_mode", "prompt", "ratio", "duration_seconds", "count"],
@@ -583,6 +595,21 @@ class StoryboardAgentCommandService:
                 ),
                 ratio=data.get("ratio"),
                 sequence_mode=data.get("sequence_mode") or data.get("batch_mode") or "speed",
+                image_mode=data.get("image_mode"),
+                scene_ids=data.get("scene_ids"),
+                enable_face_mask=_to_bool(data.get("enable_face_mask")),
+            )
+
+        if command == "estimate-missing-videos-power":
+            # 试算批量视频预计算力：只算价不建批次，参数与 auto-generate-missing-videos 对齐。
+            return self.service.estimate_missing_videos_power(
+                storyboard_id=_to_required_int(data.get("storyboard_id"), "storyboard_id"),
+                user_id=_to_required_int(data.get("user_id"), "user_id"),
+                limit=_to_int(data.get("limit"), "limit"),
+                task_type=_to_int(
+                    data.get("task_type") or data.get("video_task_id"), "task_type"
+                ),
+                ratio=data.get("ratio"),
                 image_mode=data.get("image_mode"),
                 scene_ids=data.get("scene_ids"),
                 enable_face_mask=_to_bool(data.get("enable_face_mask")),

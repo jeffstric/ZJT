@@ -1321,9 +1321,53 @@ async function handleAction(action, target) {
             return;
         }
         if (target.disabled) return;
+        // 先弹确认框并异步试算预计算力，用户确认后才真正提交批次
+        state.videoBatchConfirm = {
+            open: true,
+            loading: true,
+            estimate: null,
+            error: '',
+            submitting: false,
+        };
+        rerenderModals();
+        try {
+            const estimate = await api.estimateMissingVideosPower(state.storyboardId, {
+                ratio: state.workflowRatio,
+                task_type: getSelectedVideoTaskId({ hasInputs: true, imageMode: state.videoImageMode }),
+                image_mode: state.videoImageMode || 'first_last_frame',
+                enable_face_mask: getEffectiveEnableFaceMask(),
+            });
+            if (!state.videoBatchConfirm.open) return;
+            state.videoBatchConfirm.estimate = estimate;
+            state.videoBatchConfirm.loading = false;
+        } catch (error) {
+            if (!state.videoBatchConfirm.open) return;
+            // 估价失败不阻断：弹窗降级为「以实际扣费为准」，仍可确认提交
+            state.videoBatchConfirm.error = error && error.message ? String(error.message) : '';
+            state.videoBatchConfirm.loading = false;
+        }
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'cancel-video-batch-submit') {
+        if (state.videoBatchConfirm.submitting) return;
+        state.videoBatchConfirm = { open: false, loading: false, estimate: null, error: '', submitting: false };
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'confirm-video-batch-submit') {
+        if (!state.videoBatchConfirm.open || state.videoBatchConfirm.loading || state.videoBatchConfirm.submitting) return;
+        state.videoBatchConfirm.submitting = true;
+        rerenderModals();
         try {
             await autoCompleteMissingVideos();
+            state.videoBatchConfirm = { open: false, loading: false, estimate: null, error: '', submitting: false };
+            rerenderModals();
         } catch (error) {
+            state.videoBatchConfirm.submitting = false;
+            rerenderModals();
             const errMsg = error && error.message ? String(error.message) : '';
             const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
             if (cv && typeof cv.notify === 'function') {
@@ -1585,6 +1629,9 @@ async function handleAction(action, target) {
         // in-flight 守卫：智能插入请求飞行中再次点击直接忽略，
         // 避免用户误以为无响应而连点，导致重复调用 LLM 生成多个分镜。
         if (state.isSmartInserting) return;
+        // 插入前需弹框确认，用户确认后才真正发起请求（与 duplicate-scene 交互一致）；
+        // 智能插入会调用 LLM 生成分镜内容，确认一次覆盖智能/普通两条路径
+        if (!window.confirm('确定在此处插入新分镜吗？（将调用 AI 生成分镜内容）')) return;
         const prevId = target.dataset.prevId ? parseInt(target.dataset.prevId, 10) : null;
         const nextId = target.dataset.nextId ? parseInt(target.dataset.nextId, 10) : null;
         

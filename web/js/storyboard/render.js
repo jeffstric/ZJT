@@ -2675,6 +2675,61 @@ function renderVideoTypeSwitchDialog() {
         </div>`;
 }
 
+function renderVideoBatchConfirmDialog() {
+    const confirmState = state.videoBatchConfirm || {};
+    if (!confirmState.open) return '';
+    const estimate = confirmState.estimate || null;
+    const busy = confirmState.loading || confirmState.submitting;
+
+    let bodyHtml;
+    let confirmLabel = '确认生成';
+    if (confirmState.loading) {
+        bodyHtml = `<p><span class="spinner">${icon('loading', 16)}</span> 正在估算算力费用…</p>`;
+    } else if (estimate && estimate.scene_count > 0) {
+        // 按「类型 + 时长档位 + 单价」分组聚合明细，如：5 秒档 38 算力 × 2 个
+        const groups = new Map();
+        let unpricedCount = 0;
+        for (const item of estimate.items || []) {
+            if (item.power == null) {
+                unpricedCount += 1;
+                continue;
+            }
+            const typeLabel = item.video_type === 'digital_human' ? '对口型' : `${item.duration ?? '?'} 秒档`;
+            const key = `${typeLabel}|${item.power}`;
+            groups.set(key, { typeLabel, power: item.power, count: (groups.get(key)?.count || 0) + 1 });
+        }
+        const lines = [...groups.values()].map(g =>
+            `<li>${escapeHtml(g.typeLabel)}：${g.power} 算力 × ${g.count} 个 = ${g.power * g.count} 算力</li>`
+        ).join('');
+        bodyHtml = `
+            <p>将为 <strong>${estimate.scene_count}</strong> 个分镜生成视频：</p>
+            <ul style="margin:8px 0; padding-left:20px; font-size:13px; line-height:1.8;">${lines}</ul>
+            ${unpricedCount ? `<p style="color:#b45309; font-size:13px;">${unpricedCount} 个分镜估价失败，以实际扣费为准。</p>` : ''}
+            <p style="font-weight:600;">预计扣减算力：${estimate.total_power}</p>`;
+        confirmLabel = `确认生成（预计扣减 ${estimate.total_power} 算力）`;
+    } else {
+        const fallbackCount = getAutoVideoCompleteSummary().missingCount;
+        bodyHtml = `
+            <p style="color:#b45309;">费用预估失败${confirmState.error ? `：${escapeHtml(confirmState.error)}` : ''}，以实际扣费为准。</p>
+            <p>将为 <strong>${fallbackCount}</strong> 个分镜生成视频。</p>`;
+    }
+
+    return `
+        <div class="modal-overlay" data-modal="video-batch-confirm">
+            <div class="edit-dialog video-type-switch-dialog" role="dialog" aria-modal="true" aria-labelledby="video-batch-confirm-title">
+                <header>
+                    <h2 id="video-batch-confirm-title">批量生成视频确认</h2>
+                    <button type="button" data-action="cancel-video-batch-submit" ${busy ? 'disabled' : ''}>${icon('close', 18)}</button>
+                </header>
+                <div class="video-type-switch-dialog-body">${bodyHtml}</div>
+                <footer class="dialog-footer">
+                    <button class="btn-ghost" data-action="cancel-video-batch-submit" ${busy ? 'disabled' : ''}>取消</button>
+                    <button class="btn-primary" data-action="confirm-video-batch-submit" ${busy ? 'disabled' : ''}>${confirmState.submitting ? '提交中…' : escapeHtml(confirmLabel)}</button>
+                </footer>
+            </div>
+        </div>`;
+}
+
 function renderGenerateProgressDialog() {
     if (!state.showGenerateProgressDialog) return '';
     const steps = state.generateProgressSteps || [];
@@ -2810,6 +2865,7 @@ function renderModalsHtml() {
         renderGlobalStyleDialog(),
         renderSceneEditDialog(),
         renderVideoTypeSwitchDialog(),
+        renderVideoBatchConfirmDialog(),
         renderEmoVecEditorDialog(),
     ].join('');
 }
