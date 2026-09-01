@@ -16,7 +16,7 @@ from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from script_writer_core.cron_task_manager import get_task_manager
 from script_writer_core.constant import ItemType
-from config.config_util import get_config
+from config.config_util import get_config, get_config_value
 from config.constant import FilePathConstants, StoryType, GridConfig, DEFAULT_TEXT_TO_IMAGE_TASK_ID
 
 # 模块级日志
@@ -778,12 +778,105 @@ def fetch_image_as_base64(user_id: str, world_id: str, auth_token: str,
         return {'success': False, 'error': f'获取图片失败: {str(e)}'}
 
 
+def delete_asset_reference_image(user_id: str, world_id: str, auth_token: str,
+                                 asset_type: str, name: str, reason: str = '') -> Dict[str, Any]:
+    """
+    删除角色/场景/道具的参考图（reference_image 置空） - MCP工具函数
+
+    用于宫格图切分污染（一格出现多个角色/多人物混切、边缘裁切）等图片质量问题的清理：
+    清理后资产回到"缺图"状态，形象生成智能体即可重新生成（4宫格生成会拒绝已有图的角色，
+    必须先删除坏图才能重新生成）。仅清空 JSON 中的字段，不删除图片文件本身；
+    数据库侧由用户点击"提交数据"后统一同步。
+
+    Args:
+        user_id: 用户ID（必填）
+        world_id: 世界ID（必填）
+        auth_token: 认证令牌（必填）
+        asset_type: 资产类型（必填）：character（角色）/ location（场景）/ prop（道具）
+        name: 资产名称（必填，与文件中的 name 字段一致）
+        reason: 删除原因（可选，用于检查报告留痕）
+
+    Returns:
+        dict: success=True 时包含 deleted_image_url（被删除的图片URL）；
+              reference_image 本来就为空时返回 already_empty=True
+    """
+    try:
+        if not name or not isinstance(name, str):
+            return {'success': False, 'error': '资产名称不能为空且必须是字符串'}
+
+        asset_type = (asset_type or '').strip().lower()
+        valid_types = {'character': ('characters', 'character'), 'location': ('locations', 'location'),
+                       'prop': ('props', 'prop')}
+        if asset_type not in valid_types:
+            return {
+                'success': False,
+                'error': f'asset_type 必须是 character / location / prop 之一，收到: {asset_type}'
+            }
+
+        file_manager = get_file_manager()
+
+        if asset_type == 'character':
+            # 角色文件名可能与显示名不一致（中文名/sanitize/拼音临时名），按 name 解析真实路径
+            resolved_path = file_manager.resolve_character_file_path(name, user_id, world_id)
+            if not resolved_path or not resolved_path.exists():
+                return {'success': False, 'error': f'角色 "{name}" 不存在，无法删除参考图'}
+            file_path = str(resolved_path)
+        else:
+            folder, prefix = valid_types[asset_type]
+            safe_name = _sanitize_filename(name)
+            file_path = file_manager.get_content_file_path(user_id, world_id, folder, f"{prefix}_{safe_name}.json")
+            if not os.path.exists(file_path):
+                type_label = '场景' if asset_type == 'location' else '道具'
+                return {'success': False, 'error': f'{type_label} "{name}" 不存在，无法删除参考图'}
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        old_image = data.get('reference_image')
+        if not old_image or str(old_image).strip() in ('', 'null'):
+            return {
+                'success': True,
+                'already_empty': True,
+                'message': f'"{name}" 的 reference_image 本来就为空，无需删除'
+            }
+
+        data['reference_image'] = ''
+        data['updated_at'] = datetime.now().isoformat()
+        if reason:
+            # 质检留痕：记录删除原因与时间，不覆盖已有字段结构
+            quality_log = data.get('reference_image_quality_log')
+            if not isinstance(quality_log, list):
+                quality_log = []
+            quality_log.append({
+                'action': 'delete_reference_image',
+                'reason': reason,
+                'deleted_image_url': old_image,
+                'deleted_at': data['updated_at'],
+            })
+            data['reference_image_quality_log'] = quality_log
+
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"[delete_asset_reference_image] {asset_type} '{name}' 参考图已删除: {old_image} (reason={reason})")
+        return {
+            'success': True,
+            'deleted_image_url': old_image,
+            'message': f'"{name}" 的参考图已删除，该资产已回到缺图状态，可重新生成形象'
+        }
+
+    except Exception as e:
+        logger.error(f"delete_asset_reference_image 失败: {e}", exc_info=True)
+        return {'success': False, 'error': f'删除参考图失败: {str(e)}'}
+
+
 def get_skill_loader():
     """获取技能加载器实例（单例模式）"""
     global _skill_loader
     if _skill_loader is None:
         _skill_loader = SkillLoader()
     return _skill_loader
+
 
 def set_file_manager(file_manager: FileManager):
     """设置全局文件管理器实例"""
@@ -1509,9 +1602,16 @@ def create_character_json(user_id: str, world_id: str, auth_token: str, name: st
         
         # 生成安全的文件名（支持临时文件名用于比较）
         filename = _temp_filename if _temp_filename else f"character_{validated_name}.json"
-        
+
         # 使用FileManager统一路径管理
         file_manager = get_file_manager()
+
+        # 主形象图被替换/删除时归档旧图到 image_history（临时文件用于对比，不归档）；
+        # 同时在 agent 重建 JSON 不带该字段时继承旧历史，避免丢失。
+        if not _temp_filename:
+            old_json = file_manager.get_character_json(validated_name, user_id, world_id)
+            FileManager._archive_character_image_history(old_json, character_data)
+
         success = file_manager.save_json_content(user_id, world_id, "characters", filename, character_data)
         
         if not success:
@@ -2497,11 +2597,13 @@ def update_character_json(user_id: str, world_id: str, auth_token: str, name: st
             }
         file_path = str(resolved_path)
         filename = resolved_path.name
-        
+
         # 读取现有数据
         with open(file_path, 'r', encoding='utf-8') as f:
             existing_data = json.load(f)
-        
+        # 旧数据快照：主形象图被替换/删除时据此归档到 image_history
+        old_data = dict(existing_data)
+
         # 验证reference_image（如果提供）
         if reference_image is not None:
             url_validation = validate_image_url(reference_image, "reference_image")
@@ -2534,7 +2636,10 @@ def update_character_json(user_id: str, world_id: str, auth_token: str, name: st
         
         # 更新修改时间
         existing_data['updated_at'] = datetime.now().isoformat()
-        
+
+        # 主形象图被替换/删除时归档旧图到 image_history（与 save_character / create_character_json 一致）
+        FileManager._archive_character_image_history(old_data, existing_data)
+
         # 直接写回已解析到的真实文件路径，避免 sanitize 后写到另一个新文件
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
@@ -3801,7 +3906,7 @@ MCP_TOOLS = [
     },
     {
         "name": "fetch_image_as_base64",
-        "description": "下载图片并获取其 base64 数据。当你看到对话中 [图片N] 标签显示「该图片加载失败」时，立即调用此工具传入对应的图片 URL 来重新获取图片数据。调用成功后图片将自动注入到你的对话中，你就能看到并分析图片了。也可用于获取对话中任何图片 URL 对应的图片数据。",
+        "description": "传入图片 URL 获取图片数据。对话中的 [图片N]（URL: ...）标签只是图片地址文本，不包含图片内容——在描述、分析、对比图片或识别图片文字之前，必须先调用本工具获取图片数据，调用成功后图片将自动注入到你的对话中，你才能真正看到并分析图片。图片标签显示「该图片加载失败」时，同样调用本工具重新获取。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -3815,6 +3920,28 @@ MCP_TOOLS = [
                 }
             },
             "required": ["image_url"]
+        }
+    },
+    {
+        "name": "delete_asset_reference_image",
+        "description": "删除角色/场景/道具的参考图（reference_image 置空）。当检查发现参考图存在质量问题（如宫格切分污染：图中出现多个不同角色/多人物混在一格、角色被边缘裁切、画面不完整等）时调用。删除后该资产回到缺图状态，形象生成智能体即可重新生成。注意：4宫格批量生成会拒绝已有参考图的角色，必须先删除坏图再重新生成。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "asset_type": {
+                    "type": "string",
+                    "description": "资产类型（必填）：character（角色）/ location（场景）/ prop（道具）"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "资产名称（必填），与角色/场景/道具 JSON 中的 name 字段一致"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "删除原因（可选），如：宫格切分污染-图中出现两个角色。会记录在质检日志中"
+                }
+            },
+            "required": ["asset_type", "name"]
         }
     },
     {
@@ -5591,6 +5718,25 @@ def generate_4grid_character_images(user_id: str, world_id: str, auth_token: str
     return result
 
 
+def _resolve_local_upload_url(url: str) -> str:
+    """把本服务存储的 /upload/ 相对路径补齐为绝对 URL。
+
+    角色主参考图等资产在系统内常态存储为 /upload/... 相对路径，而
+    edit_image 等图生图调用要求可访问的绝对 URL。host 取值逻辑与
+    server.py 的 SERVER_HOST 一致（优先 https_host，其次 server.host）。
+    """
+    from utils.project_path import build_upload_url
+
+    host = ""
+    if get_config_value("server", "https", "enabled", default=False):
+        host = get_config_value("server", "https_host", default="")
+    if not host:
+        host = get_config_value("server", "host", default="")
+    path = url if url.startswith("/") else "/" + url
+    relative = path[len("/upload/"):]
+    return build_upload_url(relative, host=str(host).rstrip("/"))
+
+
 def generate_character_variant_image(user_id: str, world_id: str, auth_token: str,
                                       character_name: str, variant_label: str,
                                       variant_prompt: str, aspect_ratio: str = "16:9",
@@ -5645,6 +5791,10 @@ def generate_character_variant_image(user_id: str, world_id: str, auth_token: st
             'error': f'角色 "{character_name}" 尚未生成主参考图(reference_image)，请先生成主图后再生成变体图',
             'skip_reason': 'no_main_image'
         }
+
+    # 主图常态存储为本服务的 /upload/ 相对路径，edit_image 需要绝对 URL，先补齐
+    if main_image_url.startswith(('/upload/', 'upload/')):
+        main_image_url = _resolve_local_upload_url(main_image_url)
 
     # 主图必须是 http/https，否则 edit_image 无法引用
     from urllib.parse import urlparse

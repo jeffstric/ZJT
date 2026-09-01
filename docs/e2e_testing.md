@@ -172,6 +172,10 @@ python -m pytest test_audio.py test_grid_image.py -v
 
 ## E2E 运行前检查清单
 
+### 认证会话约束
+
+`auto_test/e2e/conftest.py` 的 `auth_token` 和 `user_id` 均为 session 级 fixture。测试账户的登录接口会使同一用户此前签发的 token 失效，因此单次 pytest 运行中不得调用 `refresh_login`；需要独立浏览器上下文的用例应复用这两个 fixture 注入认证信息。
+
 - [ ] `auto_test/test_config.json` 的 `base_url` 指向当前后端服务。
 - [ ] `auto_test/test_assets/test_image.jpg` 存在。
 - [ ] `auto_test/test_assets/test.mp4` 存在。

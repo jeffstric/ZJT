@@ -355,7 +355,9 @@ async function generateShotFrameImage(nodeId, node){
       const newNodeId = createImageNode({
         x: node.x + 380,
         y: node.y + offsetY,
-        checkCollision: true
+        checkCollision: true,
+        // 结果节点携带生成提示词：下游连线（如 360 全景）可自动适配提示词
+        data: { prompt: finalPrompt }
       });
       
       const newNode = state.nodes.find(n => n.id === newNodeId);
@@ -480,6 +482,11 @@ async function generateShotFrameImage(nodeId, node){
         // 更新分镜节点的预览图
         if(node.updatePreview){
           node.updatePreview();
+        }
+        
+        // 通知分镜节点：新分镜图已生成（caret 角标/脉冲提醒 + 菜单最新置顶）
+        if(typeof node.notifyNewImages === 'function' && createdImageNodeIds.length > 0){
+          node.notifyNewImages(createdImageNodeIds);
         }
         
         generateBtn.disabled = false;

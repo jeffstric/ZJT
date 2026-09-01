@@ -796,12 +796,49 @@ def _extract_act_name(raw_group_name: str) -> Optional[str]:
     return cleaned or None
 
 
-def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '') -> List[dict]:
+def _build_reference_selections(
+    shot: dict,
+    character_db_map: Dict[str, Optional[int]],
+    character_variants: Optional[Dict[str, Dict[str, str]]],
+) -> Optional[dict]:
+    """把 shot 的有效角色形象变化解析为 reference_selections（仅取已生成的变体）。
+
+    键为 str(character_db_id)，与前端 characterReferenceSelectionKey 及
+    select_reference_variant_for_asset 的 _selection_key 优先级一致。
+    """
+    if not character_variants:
+        return None
+    selections: Dict[str, dict] = {}
+    for change in shot.get('_effective_appearance_changes') or []:
+        if not isinstance(change, dict):
+            continue
+        db_id = character_db_map.get(str(change.get('character_id')))
+        if db_id is None:
+            continue
+        label = str(change.get('label') or '').strip()
+        url = (character_variants.get(str(db_id)) or {}).get(label)
+        if url:
+            selections[str(db_id)] = {'url': url, 'label': label}
+    if not selections:
+        return None
+    return {'schema_version': 1, 'characters': selections}
+
+
+def build_storyboard_scenes_from_parsed_script(
+    parsed_data: dict,
+    style: str = '',
+    character_variants: Optional[Dict[str, Dict[str, str]]] = None,
+) -> List[dict]:
     """
     Convert llm.script_parser output into StoryboardModel.create_scenes payload.
 
     One parsed shot becomes one storyboard_scene; dialogue entries under the shot
     become storyboard_dialogue rows.
+
+    character_variants: 角色形象变化变体映射 ``{str(character_db_id): {label: url}}``
+    （见 services/script_split_character_variant_service.py）。shot 携带
+    ``_effective_appearance_changes`` 且对应变体已生成时，写入
+    ``prompt_json.reference_selections``，使分镜生图直接使用新形象。
     """
     character_db_map = _build_character_db_map(parsed_data)
     character_name_map = _build_character_name_map(parsed_data)
@@ -920,6 +957,11 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                 prompt_payload['spatial_world'] = spatial_world
             if isinstance(shot.get('spatial_layout'), dict):
                 prompt_payload['spatial_layout'] = shot.get('spatial_layout')
+            # 角色形象变化：已生成的变体直接作为分镜生图参考选择
+            reference_selections = _build_reference_selections(
+                shot, character_db_map, character_variants)
+            if reference_selections:
+                prompt_payload['reference_selections'] = reference_selections
 
             scenes.append({
                 'title': f"分镜{scene_index}",
@@ -3013,6 +3055,40 @@ async def auto_generate_missing_storyboard_videos(
     return JSONResponse(result)
 
 
+@router.post('/{storyboard_id:int}/estimate-missing-videos-power')
+async def estimate_missing_storyboard_videos_power(
+    request: Request,
+    storyboard_id: int,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+):
+    """试算批量生成缺失分镜视频的预计算力扣减（只算价，不建批次、不扣费）。"""
+    user_id, err = await _resolve_auth_user_id(auth_token)
+    if err:
+        return err
+
+    data, body_err = await _read_json_object_body(request)
+    if body_err:
+        return body_err
+
+    params = dict(data)
+    params['storyboard_id'] = storyboard_id
+    params['user_id'] = user_id
+
+    try:
+        result = await asyncio.to_thread(
+            StoryboardAgentCommandService().execute,
+            'estimate-missing-videos-power',
+            params,
+        )
+    except StoryboardCliError as exc:
+        status_code = {
+            "enterprise_only": 403,
+        }.get(exc.error_code, 400)
+        return JSONResponse(status_code=status_code, content=exc.to_dict())
+
+    return JSONResponse(result)
+
+
 @router.post('/{storyboard_id:int}/batch-generate-missing-voiceovers')
 @require_permission("storyboard:generate")
 async def batch_generate_missing_storyboard_voiceovers(
@@ -3271,6 +3347,11 @@ async def generate_storyboard_from_script(
         'enable_qc': enable_qc,
         'qc_max_rounds': max_rounds,
         'sequence_mode': sequence_mode,
+        # 角色形象变化：检测并自动生成角色变体参考图（默认开启）
+        'enable_character_variant': _json_bool(
+            data.get('enable_character_variant'),
+            ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
+        ),
     }
     try:
         task_id, is_new = await create_split_task(

@@ -2,6 +2,8 @@ import logging
 import os
 from types import SimpleNamespace
 
+import pytest
+
 os.environ.setdefault("comfyui_env", "prod")
 
 from task.visual_drivers.gpt_image_common_v1_driver import GptImageCommonV1Driver
@@ -39,7 +41,7 @@ def test_build_edit_request_uses_yunwu_gpt_image_2_form_fields():
     assert [field for field, _ in request["files"]] == ["image[]", "image[]", "mask"]
     assert request["data"] == {
         "prompt": "merge these images",
-        "model": "gpt-image-2",
+        "model": "gpt-image-2-c",
         "n": "2",
         "size": "3840x2160",
         "quality": "high",
@@ -99,3 +101,76 @@ def test_build_edit_request_logs_portrait_size_context_without_rewriting_image()
         "image_count": 1,
     }
     assert request["files"] == [("image", ("input.png", b"image-bytes", "image/png"))]
+
+
+def test_resolve_local_path_maps_upload_web_relative_path(tmp_path, monkeypatch):
+    """`/upload/...` Web 相对路径（前端场景参考图常见形态）映射到项目根目录。"""
+    import task.visual_drivers.gpt_image_common_v1_driver as driver_module
+
+    rel = os.path.join("upload", "location", "pic", "scene.png")
+    abs_path = tmp_path / rel
+    abs_path.parent.mkdir(parents=True)
+    abs_path.write_bytes(b"png-bytes")
+    monkeypatch.setattr(driver_module, "get_project_root", lambda: str(tmp_path))
+
+    driver = make_driver()
+    resolved = driver._resolve_local_path("/upload/location/pic/scene.png")
+    assert os.path.normpath(resolved) == os.path.normpath(str(abs_path))
+
+
+def test_resolve_local_path_keeps_existing_absolute_path(tmp_path, monkeypatch):
+    """字面路径存在时不重映射，避免误伤真实绝对路径。"""
+    import task.visual_drivers.gpt_image_common_v1_driver as driver_module
+
+    real_file = tmp_path / "real.png"
+    real_file.write_bytes(b"real")
+    # 即使 /upload/ 下有同名文件，也不应重映射
+    rel = tmp_path / "upload" / "real.png"
+    rel.parent.mkdir(parents=True)
+    rel.write_bytes(b"other")
+    monkeypatch.setattr(driver_module, "get_project_root", lambda: str(tmp_path))
+
+    driver = make_driver()
+    assert driver._resolve_local_path(str(real_file)) == str(real_file)
+
+
+def test_resolve_local_path_returns_original_when_unresolvable(tmp_path, monkeypatch):
+    """字面路径与映射候选都不存在时原样返回（保留 FileNotFoundError 语义）。"""
+    import task.visual_drivers.gpt_image_common_v1_driver as driver_module
+
+    monkeypatch.setattr(driver_module, "get_project_root", lambda: str(tmp_path))
+
+    driver = make_driver()
+    missing = "/upload/location/pic/not_exist_xxx.png"
+    assert driver._resolve_local_path(missing) == missing
+
+
+@pytest.mark.parametrize(
+    "malicious_path",
+    [
+        "/upload/../pyproject.toml",
+        "/upload/%2e%2e/pyproject.toml",
+        r"/upload/..\pyproject.toml",
+    ],
+)
+def test_resolve_local_path_rejects_upload_traversal(malicious_path):
+    driver = make_driver()
+    with pytest.raises(ValueError, match="非法的上传路径"):
+        driver._resolve_local_path(malicious_path)
+
+
+def test_prepare_image_file_reads_upload_web_relative_path(tmp_path, monkeypatch):
+    """回归：/upload/ Web 相对路径不再 FileNotFoundError。"""
+    import task.visual_drivers.gpt_image_common_v1_driver as driver_module
+
+    rel = os.path.join("upload", "location", "pic", "scene.png")
+    abs_path = tmp_path / rel
+    abs_path.parent.mkdir(parents=True)
+    abs_path.write_bytes(b"png-bytes")
+    monkeypatch.setattr(driver_module, "get_project_root", lambda: str(tmp_path))
+
+    driver = make_driver()
+    content, filename, mime_type = driver._prepare_image_file("/upload/location/pic/scene.png")
+    assert content == b"png-bytes"
+    assert filename == "scene.png"
+    assert mime_type == "image/png"

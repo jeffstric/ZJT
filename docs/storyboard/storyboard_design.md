@@ -430,6 +430,10 @@ class SceneDifficulty:
 
 > **分镜复制确认弹框**：点击「复制」后先弹 `window.confirm` 确认（文案含分镜标题：`确定复制分镜「{title}」吗？`，无标题时回退 `确定复制这个分镜吗？`），用户确认后才发起 `POST /scene/{id}/duplicate`；取消则不复制、不进入 in-flight 状态。与「删除分镜」的确认交互一致（守护测试 `web/tests/storyboard_duplicate_scene_confirm.test.js`）。
 
+> **插入分镜确认弹框**：点击插入位「+」（`data-action="insert-scene"`）后先弹 `window.confirm`（`确定在此处插入新分镜吗？（将调用 AI 生成分镜内容）`），确认后才发起智能插入（LLM）/普通插入请求；取消则不插入。in-flight 守卫（`state.isSmartInserting`）在确认之前，连点不重复弹框（守护测试 `web/tests/storyboard_insert_scene_confirm.test.js`）。
+
+> **批量生成视频确认弹窗（含算力预估）**：点击顶栏「批量生成视频 (N)」（`data-action="auto-complete-missing-videos"`）不再直接提交，而是打开 `Region.MODAL` 自定义弹窗（`renderVideoBatchConfirmDialog`，state 字段 `videoBatchConfirm`），异步调用 `POST /api/storyboard/{id}/estimate-missing-videos-power` 试算费用；弹窗展示分镜数量、按「时长档位 × 单价 × 个数」聚合的明细与**预计扣减算力总额**，确认（`confirm-video-batch-submit`）后才走原 `autoCompleteMissingVideos()` 提交。估价失败时弹窗降级为「以实际扣费为准」，仍可确认提交。「视频已全部生成」「需先补全画面」等禁用态不变（守护测试 `web/tests/storyboard_video_batch_confirm.test.js`）。
+
 ### 2.4 新增表：`storyboard_dialogue`（分镜对话表）
 
 把原 scene 的配音台词拆成「一个分镜多句对话」，每句对话绑定说话角色（取其参考声音）、语速、音量。

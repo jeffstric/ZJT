@@ -72,4 +72,7 @@ state 字段：`showSceneEditDialog` / `sceneEditTargetId` / `sceneEditSaving` /
 - 分镜之间的添加入口仍由 `renderInsertSceneSlot(..., 'timeline'|'grid')` 生成。
 - 时间轴模式下按钮类名为 `.scene-timeline-insert-slot`，事件仍使用
   `data-action="insert-scene"`、`data-prev-id` 和 `data-next-id`。
+- 点击「+」先弹确认框（`window.confirm`，文案「确定在此处插入新分镜吗？（将调用 AI 生成
+  分镜内容）」），确认后才会发起智能插入（LLM）/普通插入请求；取消则不插入
+  （与「复制」「删除」的确认交互一致）。in-flight 守卫在确认之前，连点不重复弹框。
 - 插入按钮样式为细竖线加圆形加号，降低横向浏览时的占位，但保留原有点击语义。

@@ -152,6 +152,14 @@ const state = {
         targetType: null,
         previousType: null,
     },
+    /** 批量生成视频确认弹窗：打开时异步试算预计算力，确认后才提交批次 */
+    videoBatchConfirm: {
+        open: false,
+        loading: false,
+        estimate: null,
+        error: '',
+        submitting: false,
+    },
     mentionTab: 'character',
     isSaving: false,
     error: '',
@@ -212,6 +220,8 @@ const state = {
     enableScriptSplitQc: false,
     /** 质检最大循环次数 1–5，超次强制用最后一轮结果 */
     scriptSplitQcMaxRounds: 2,
+    /** 拆分时检测角色形象变化并自动生成角色变体参考图（换装/变身等） */
+    enableCharacterVariant: true,
 
     // 生成分镜进度弹框
     showGenerateProgressDialog: false,
@@ -678,10 +688,12 @@ export function setModels({
         );
     }
     if (state.imageEditModels.length) {
+        // key 带 _v2：2026-08 默认图片编辑模型切换为 GPT Image 2 时强制旧记忆作废一次
         state.selectedImageEditTaskId = resolveAvailableTaskId(
             state.selectedImageEditTaskId ?? state.selectedImageTaskId,
             state.imageEditModels,
-            'storyboard_lastSelectedImageEditTaskId',
+            'storyboard_lastSelectedImageEditTaskId_v2',
+            'gpt-image-2',
         );
     }
     if (state.textToVideoModels.length) {
@@ -1254,6 +1266,7 @@ export function serializeUiConfig() {
         scriptPromptLanguage: state.scriptPromptLanguage,
         enableScriptSplitQc: state.enableScriptSplitQc === true,
         scriptSplitQcMaxRounds: state.scriptSplitQcMaxRounds,
+        enableCharacterVariant: state.enableCharacterVariant !== false,
     };
 }
 
@@ -1340,6 +1353,9 @@ export function restoreUiConfig(config = {}) {
     }
     if (typeof config.enableScriptSplitQc === 'boolean') {
         state.enableScriptSplitQc = config.enableScriptSplitQc;
+    }
+    if (typeof config.enableCharacterVariant === 'boolean') {
+        state.enableCharacterVariant = config.enableCharacterVariant;
     }
     if ([1, 2, 3, 4, 5].includes(Number(config.scriptSplitQcMaxRounds))) {
         state.scriptSplitQcMaxRounds = Number(config.scriptSplitQcMaxRounds);

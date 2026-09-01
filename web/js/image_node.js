@@ -94,6 +94,11 @@
           uploading: false,
         }
       };
+      // 生成结果节点可通过 opts.data 携带初始数据（如生成时使用的提示词，
+      // 供下游连线（360全景等）自动适配提示词）
+      if (opts && opts.data) {
+        Object.assign(node.data, opts.data);
+      }
       state.nodes.push(node);
 
       const el = document.createElement('div');
@@ -135,7 +140,7 @@
               <div class="label" style="margin: 0;" data-i18n="image_node_prompt_label">${window.t ? window.t('image_node_prompt_label') : '编辑提示词（可选）'}</div>
               <button class="mini-btn image-prompt-expand-btn" type="button" style="font-size: 11px; padding: 4px 8px;" title="${window.t ? window.t('script_expand_btn') : '放大编辑'}" data-i18n="script_expand_btn:title">⤢</button>
             </div>
-            <textarea class="image-prompt" rows="2" placeholder="${window.t ? window.t('image_node_prompt_placeholder') : '输入提示词进行图片编辑'}" data-i18n="image_node_prompt_placeholder:placeholder"></textarea>
+            <textarea class="image-prompt" rows="2" placeholder="${window.t ? window.t('image_node_prompt_placeholder') : '输入提示词进行图片编辑'}" data-i18n="image_node_prompt_placeholder:placeholder">${escapeHtml(node.data.prompt || '')}</textarea>
           </div>
           <div class="field field-collapsible">
             <div class="label" data-i18n="image_node_model_label">${window.t ? window.t('image_node_model_label') : '模型'}</div>
@@ -930,7 +935,9 @@
             const newNodeId = createImageNode({
               x: node.x + 380,
               y: node.y + offsetY,
-              checkCollision: true
+              checkCollision: true,
+              // 结果节点携带生成提示词：下游连线（如 360 全景）可自动适配提示词
+              data: { prompt: node.data.prompt || '' }
             });
             const newNode = state.nodes.find(n => n.id === newNodeId);
             if(newNode){

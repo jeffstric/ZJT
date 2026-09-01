@@ -208,10 +208,21 @@
       }
     }
 
+    // 内容违规提醒（前端兜底层，见 web/js/content_violation.js）
+    // items: [{ key, error, failed }] — 命中违禁/内容安全特征时弹出「内容违规提醒」弹框，带冷却去重
+    function notifyContentViolations(items){
+      const cv = typeof window !== 'undefined' && window.ContentViolation;
+      if (!cv || !cv.notify) return;
+      (items || []).forEach(item => {
+        if (!item || !item.failed || !item.error) return;
+        try { cv.notify(item.key || 'wf', item.error); } catch (e) { /* 提醒异常不影响主流程 */ }
+      });
+    }
+
     // 查询视频生成状态
     // 测试模式下的模拟状态计数器
     const mockStatusCounter = {};
-    
+
     async function checkVideoStatus(projectIds){
       // 测试模式：模拟状态查询（第2次查询返回成功）
       if(TEST_MODE){
@@ -260,6 +271,9 @@
             error: task.reason || task.error || null
           };
         });
+
+        // 内容违规提醒：任一任务失败且 error 命中违禁/内容安全特征时弹框（带冷却去重）
+        notifyContentViolations(taskDetails.map(t => ({ key: 'wf:' + t.project_id, error: t.error, failed: t.status === 'FAILED' })));
         
         // 全局状态判断
         let globalStatus = 'RUNNING';
@@ -277,14 +291,16 @@
       } else {
         // 单任务响应
         const results = extractResultsArray(data);
+        const singleError = data.reason || data.error || null;
+        notifyContentViolations([{ key: 'wf:' + projectIdsStr, error: singleError, failed: (data.status || 'RUNNING') === 'FAILED' }]);
         return {
           status: data.status || 'RUNNING',
           tasks: [{
             status: data.status || 'RUNNING',
             result: results.length > 0 ? results[0] : null,
-            error: data.reason || data.error || null
+            error: singleError
           }],
-          error: data.reason || data.error
+          error: singleError
         };
       }
     }

@@ -169,11 +169,16 @@
       timer = setTimeout(function() { fail(new Error('全景图加载超时')); }, 20000);
 
       try {
-        viewer = window.pannellum.viewer(container, {
+        var snapBounds = panoramaViewBounds(fov);
+        var snapConfig = {
           type: 'equirectangular',
           panorama: proxiedUrl,
           autoLoad: true,
           haov: fov.haov, vaov: fov.vaov, vOffset: 0,
+          // 历史保存的视角可能越界（启用防护前的数据），截图渲染同样约束，避免截出黑边图
+          avoidShowingBackground: true,
+          minPitch: snapBounds.minPitch,
+          maxPitch: snapBounds.maxPitch,
           yaw: view.yaw || 0,
           pitch: view.pitch || 0,
           hfov: Math.min(120, Math.max(50, view.hfov || 100)),
@@ -181,7 +186,12 @@
           compass: false,
           mouseZoom: false,
           doubleClickZoom: false
-        });
+        };
+        if (snapBounds.minYaw !== undefined) {
+          snapConfig.minYaw = snapBounds.minYaw;
+          snapConfig.maxYaw = snapBounds.maxYaw;
+        }
+        viewer = window.pannellum.viewer(container, snapConfig);
       } catch (e) {
         fail(e);
         return;
@@ -236,6 +246,21 @@
    * @param {{mouseZoom?: boolean, onViewChange?: Function, onReady?: Function}} [opts]
    * @returns {object|null} pannellum viewer 实例
    */
+  // pannellum 2.5.7 的 avoidShowingBackground 只在显式给出 min/maxPitch、min/maxYaw 时才生效：
+  // - 未设 min/maxPitch 时其 hfov 夹取计算 tan(maxPitch-minPitch) 得 NaN，滚轮缩放后 hfov=NaN 画布全灰
+  // - 未设 min/maxYaw 时 yaw 永不约束，haov<360°（如 16:9 仅覆盖 320°）转到背面缺口即黑色竖带
+  function panoramaViewBounds(fov) {
+    var bounds = {
+      minPitch: Math.max(-90, -fov.vaov / 2),
+      maxPitch: Math.min(90, fov.vaov / 2)
+    };
+    if (fov.haov < 360) {
+      bounds.minYaw = -fov.haov / 2;
+      bounds.maxYaw = fov.haov / 2;
+    }
+    return bounds;
+  }
+
   function createPanoramaViewer(container, proxiedUrl, fov, initialView, opts) {
     if (typeof window.pannellum === 'undefined') return null;
     opts = opts || {};
@@ -246,6 +271,9 @@
       panorama: proxiedUrl,
       autoLoad: true,
       haov: fov.haov, vaov: fov.vaov, vOffset: 0,
+      // 部分全景（vaov<180° 或 haov<360°）时约束视线/视野不超出图像覆盖，
+      // 避免视线转到图像外显示黑色背景（如 21:9 图垂直仅覆盖约154°，仰/俯视到极区外即黑边）
+      avoidShowingBackground: true,
       hfov: Math.min(120, Math.max(50, (initialView && initialView.hfov) || 100)),
       minHfov: 50, maxHfov: 120,
       yaw: (initialView && initialView.yaw) || 0,
@@ -256,6 +284,13 @@
       mouseZoom: opts.mouseZoom !== false,
       friction: 0.15
     };
+    var bounds = panoramaViewBounds(fov);
+    config.minPitch = bounds.minPitch;
+    config.maxPitch = bounds.maxPitch;
+    if (bounds.minYaw !== undefined) {
+      config.minYaw = bounds.minYaw;
+      config.maxYaw = bounds.maxYaw;
+    }
     var viewer = window.pannellum.viewer(container, config);
 
     // 阻断向画布冒泡：节点内拖全景不触发画布平移，滚轮只缩放全景
@@ -273,6 +308,15 @@
       viewer.on('mouseup', report);
       viewer.on('animatefinished', report);
     }
+    // 历史保存的视角可能越界（启用 avoidShowingBackground 前的数据）：
+    // 加载完成后原地跳转一次，触发 pannellum 约束把 yaw/pitch/hfov 校正回图像覆盖内
+    viewer.on('load', function() {
+      try {
+        viewer.setYaw(viewer.getYaw(), 0);
+        viewer.setPitch(viewer.getPitch(), 0);
+        viewer.setHfov(viewer.getHfov(), 0);
+      } catch (e) { /* ignore */ }
+    });
     if (opts.onReady) viewer.on('load', opts.onReady);
     viewer.on('error', function(err) {
       console.warn('[全景节点] 查看器加载失败:', err);
@@ -406,7 +450,7 @@
 
   // ---------- 节点定义 ----------
   var PANORAMA_PORTS = [
-    { direction: 'input', titleI18nKey: 'panorama_input_port', acceptType: 'image', connectionType: 'connections' },
+    { direction: 'input', titleI18nKey: 'panorama_input_port', cssClass: 'panorama-source-port', acceptType: ['image', 'location'], connectionType: 'connections' },
     { direction: 'output', titleI18nKey: 'panorama_output_port' }
   ];
 
@@ -448,12 +492,16 @@
             '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">' +
               '<div class="label" style="margin:0;" data-i18n="panorama_prompt_label">' + tr('panorama_prompt_label', '场景描述') + '</div>' +
               '<div style="display:flex; gap:6px;">' +
-                '<button type="button" class="mini-btn panorama-tpl-btn" style="font-size:11px; padding:4px 8px;">' + tr('panorama_template_btn', '模板') + ' ▾</button>' +
+                // position:relative 锚点：模板菜单（absolute, top:100%）据此在模板按钮正下方弹出，
+                // 否则会相对整个节点定位、落到节点底部
+                '<div style="position:relative;">' +
+                  '<button type="button" class="mini-btn panorama-tpl-btn" style="font-size:11px; padding:4px 8px;">' + tr('panorama_template_btn', '模板') + ' ▾</button>' +
+                  '<div class="panorama-tpl-menu" style="display:none;">' + PANORAMA_PROMPT_TEMPLATES.map(function(tpl) {
+                    return '<div class="panorama-tpl-item" data-tpl="' + tpl.key + '">' + tr('panorama_tpl_' + tpl.key, tpl.key) + '</div>';
+                  }).join('') + '</div>' +
+                '</div>' +
                 '<button type="button" class="mini-btn panorama-prompt-expand-btn" style="font-size:11px; padding:4px 8px;" title="' + tr('script_expand_btn', '放大编辑') + '">\u2922</button>' +
               '</div>' +
-              '<div class="panorama-tpl-menu" style="display:none;">' + PANORAMA_PROMPT_TEMPLATES.map(function(tpl) {
-                return '<div class="panorama-tpl-item" data-tpl="' + tpl.key + '">' + tr('panorama_tpl_' + tpl.key, tpl.key) + '</div>';
-              }).join('') + '</div>' +
             '</div>' +
             '<textarea class="panorama-prompt" rows="3" placeholder="' + tr('panorama_prompt_placeholder', '描述你想身临其境的360°环境，例如：夕阳下的雪山湖泊，四周环山…') + '" style="resize:vertical; min-height:60px;"></textarea>' +
           '</div>' +
@@ -542,18 +590,117 @@
         var modelOptionsCache = [];
         var rotating = false;
 
-        // 参考图输入端口
-        bindInputPortEvents(el, node, {
-          cssClass: null,
-          acceptType: 'image',
-          connectionType: 'connections',
-          onConnect: function() { updateSourceThumbnail(); }
-        });
+        // 参考图输入端口（支持图片节点；也支持场景节点——自动取场景参考图与描述）
+        // 连接走模块级 registerInputPorts('panorama', ...) 注册表吸附路径（见文件末尾），
+        // 不再用 bindInputPortEvents 端口直落：两套路径并存会导致查重/单连接限制失效
+
+        function getSourceImageUrl(sourceNode) {
+          // 图片节点用 data.url；场景节点用 data.reference_image（与 getNodeImageUrl 语义一致）
+          if (!sourceNode || !sourceNode.data) return '';
+          if (typeof getNodeImageUrl === 'function') return getNodeImageUrl(sourceNode) || '';
+          return sourceNode.data.url || sourceNode.data.preview || sourceNode.data.reference_image || '';
+        }
+
+        // 源节点连线后：提示词为空时自动填入（不覆盖已有内容）
+        // 场景节点填「场景名，场景描述」；图片节点优先用其编辑提示词，
+        // 没有提示词的任意图片（上传图等）由 VL 识图生成场景描述
+        function autoFillPromptFromSource(fromNode) {
+          if (!fromNode || !fromNode.data) return;
+          if (String(node.data.prompt || '').trim()) return; // 已有提示词不覆盖
+          if (fromNode.type === 'location') {
+            var parts = [];
+            if (fromNode.data.name) parts.push(String(fromNode.data.name).trim());
+            if (fromNode.data.description) parts.push(String(fromNode.data.description).trim());
+            var scenePrompt = parts.filter(Boolean).join('，');
+            if (!scenePrompt) return;
+            node.data.prompt = scenePrompt;
+            promptEl.value = scenePrompt;
+            showToast(tr('panorama_scene_prompt_filled', '已按场景「{name}」填充描述，可直接生成该场景的 360 全景图', { name: fromNode.data.name || '' }), 'info');
+            safeAutoSave();
+          } else if (fromNode.type === 'image') {
+            var imgPrompt = String(fromNode.data.prompt || '').trim();
+            if (imgPrompt) {
+              node.data.prompt = imgPrompt;
+              promptEl.value = imgPrompt;
+              showToast(tr('panorama_image_prompt_filled', '已按图片节点提示词填充描述，可按需修改'), 'info');
+              safeAutoSave();
+            } else {
+              // 任意图片（上传图/无提示词）→ VL 识图生成场景描述
+              var imgUrl = getSourceImageUrl(fromNode);
+              if (imgUrl) describeImageIntoPrompt(imgUrl);
+            }
+          }
+        }
+
+        // VL 识图：调用后端视觉模型为图片生成场景描述并填入提示词。
+        // 仅新连线触发（工作流重载恢复不会调用）；成功后 prompt 非空，重连不重复识图
+        var describeToken = 0;
+        // 识图 loading：提示词框 placeholder 动态省略号 + 节点状态行同步提示
+        // （识图仅在提示词为空时触发，placeholder 恰好可见，用户视线焦点即在提示词框）
+        var promptLoadingTimer = null;
+        var promptOriginalPlaceholder = null;
+        function setPromptLoading(on) {
+          if (on) {
+            if (promptLoadingTimer) clearInterval(promptLoadingTimer);
+            if (promptOriginalPlaceholder === null) {
+              promptOriginalPlaceholder = promptEl.getAttribute('placeholder') || '';
+            }
+            var base = tr('panorama_describing', '正在识图生成场景描述');
+            var dots = 3;
+            var tick = function() {
+              dots = (dots + 1) % 4;
+              var text = base + '.'.repeat(dots);
+              promptEl.setAttribute('placeholder', text);
+              updateStatus(text, '#666');
+            };
+            tick();
+            promptLoadingTimer = setInterval(tick, 400);
+          } else {
+            if (promptLoadingTimer) { clearInterval(promptLoadingTimer); promptLoadingTimer = null; }
+            if (promptOriginalPlaceholder !== null) {
+              promptEl.setAttribute('placeholder', promptOriginalPlaceholder);
+              promptOriginalPlaceholder = null;
+            }
+          }
+        }
+        function describeImageIntoPrompt(imgUrl) {
+          var token = ++describeToken;
+          setPromptLoading(true);
+          var headers = { 'Content-Type': 'application/json' };
+          if (typeof getAuthToken === 'function') headers['Authorization'] = getAuthToken();
+          if (typeof getUserId === 'function') headers['X-User-Id'] = getUserId();
+          fetch('/api/video-workflow/describe-image', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ image_url: imgUrl })
+          })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              if (token !== describeToken) return; // 已重新识图/换源，新调用已接管 loading
+              setPromptLoading(false);
+              if (data && data.success && data.description) {
+                statusEl.style.display = 'none';
+                // 等待期间用户已手动输入则不覆盖
+                if (String(node.data.prompt || '').trim() || promptEl.value.trim()) return;
+                node.data.prompt = data.description;
+                promptEl.value = data.description;
+                showToast(tr('panorama_image_prompt_described', '已识图生成场景描述，可按需修改'), 'info');
+                safeAutoSave();
+              } else {
+                updateStatus(tr('panorama_describe_failed', '识图生成描述失败，可手动输入'), '#d97706');
+              }
+            })
+            .catch(function() {
+              if (token !== describeToken) return;
+              setPromptLoading(false);
+              updateStatus(tr('panorama_describe_failed', '识图生成描述失败，可手动输入'), '#d97706');
+            });
+        }
 
         function updateSourceThumbnail() {
           var conn = state.connections.find(function(c) { return c.to === node.id; });
           var sourceNode = conn ? state.nodes.find(function(n) { return n.id === conn.from; }) : null;
-          var url = sourceNode && sourceNode.type === 'image' ? (sourceNode.data.url || sourceNode.data.preview) : null;
+          var url = sourceNode ? getSourceImageUrl(sourceNode) : null;
           if (url) {
             sourceImg.src = proxyImageUrl(url);
             sourceThumb.style.display = 'block';
@@ -563,10 +710,11 @@
             sourcePlaceholder.style.display = 'block';
             sourcePlaceholder.textContent = conn
               ? tr('panorama_source_no_image', '源图片节点没有图片')
-              : tr('panorama_source_hint', '可连接图片节点作为参考图，不连接则纯文生全景');
+              : tr('panorama_source_hint', '可连接图片/场景节点作为参考图，不连接则纯文生全景');
           }
         }
         el._updateSourceThumbnail = updateSourceThumbnail;
+        el._autoFillPromptFromSource = autoFillPromptFromSource;
         updateSourceThumbnail();
 
         // 提示词输入
@@ -600,6 +748,13 @@
             tplMenu.style.display = 'none';
           });
         });
+        // 点击模板按钮/菜单以外任意区域收起菜单（节点销毁时随 onDestroy 移除）
+        var onTplMenuDismiss = function(e) {
+          if (tplMenu.style.display === 'none') return;
+          if (e.target && e.target.closest && e.target.closest('.panorama-tpl-btn, .panorama-tpl-menu')) return;
+          tplMenu.style.display = 'none';
+        };
+        document.addEventListener('mousedown', onTplMenuDismiss);
 
         // 模型下拉（文生图分类；参考图模式复用同模型的 image_edit task_id）
         function populateModelOptions() {
@@ -858,7 +1013,8 @@
 
         // 截图落画布：创建标准图片节点（全景 → 图片 连线），供下游节点复用
         function createSnapshotImageNode(url, ratio) {
-          var newNodeId = createImageNode({ x: node.x + 460, y: node.y + 320, checkCollision: true });
+          // 携带全景场景描述：截图内容即该场景的某个视角，下游连线可自动适配提示词
+          var newNodeId = createImageNode({ x: node.x + 460, y: node.y + 320, checkCollision: true, data: { prompt: String(node.data.prompt || '').trim() } });
           var newNode = state.nodes.find(function(n) { return n.id === newNodeId; });
           if (!newNode) return;
           newNode.data.name = tr('panorama_snapshot_name', '全景截图');
@@ -912,6 +1068,8 @@
 
         // 节点删除时销毁 WebGL 上下文（由 canvas.js removeNode 钩子调用）
         node.onDestroy = function() {
+          setPromptLoading(false);
+          document.removeEventListener('mousedown', onTplMenuDismiss);
           destroyPanoramaViewer(node.id);
         };
 
@@ -930,10 +1088,10 @@
             return;
           }
 
-          // 参考图（可选）
+          // 参考图（可选，支持图片节点/场景节点）
           var conn = state.connections.find(function(c) { return c.to === node.id; });
           var sourceNode = conn ? state.nodes.find(function(n) { return n.id === conn.from; }) : null;
-          var refImageUrl = sourceNode && sourceNode.type === 'image' ? (sourceNode.data.url || '') : '';
+          var refImageUrl = sourceNode ? getSourceImageUrl(sourceNode) : '';
           var category = refImageUrl ? 'image_edit' : 'text_to_image';
 
           var model = node.data.model;
@@ -1005,7 +1163,8 @@
             // 为每张结果创建标准图片节点（可被下游节点复用），并连接 全景 → 图片
             var createdImageNodeIds = [];
             for (var i = 0; i < projectIds.length; i++) {
-              var newNodeId = createImageNode({ x: node.x + 460, y: node.y + i * 280, checkCollision: true });
+              // 结果节点携带生成提示词（含 360° 全景后缀，忠实描述结果图），供下游连线适配
+              var newNodeId = createImageNode({ x: node.x + 460, y: node.y + i * 280, checkCollision: true, data: { prompt: finalPrompt } });
               var newNode = state.nodes.find(function(n) { return n.id === newNodeId; });
               if (newNode) {
                 newNode.data.name = projectIds.length > 1 ? ('全景图' + (i + 1)) : '全景图';
@@ -1167,5 +1326,24 @@
     createFn: createPanoramaNode,
     createWithDataFn: createPanoramaNodeWithData
   });
+
+  // ── 注册参考图输入端口（供连接系统自动发现）───
+  // 图片/场景节点拖线到全景节点附近即可吸附连接（50px），不再要求精确落在端口圆点上
+  if (typeof registerInputPorts === 'function') {
+    registerInputPorts('panorama', [{
+      selector: '.port.input.panorama-source-port',
+      portType: 'panorama-source',
+      accepts: ['image', 'location'],
+      connectionType: 'connections',
+      // 无参考图也允许连接：场景节点可仅提供描述（自动填提示词），生成时走纯文生全景
+      allowMissingImage: true,
+      onConnect: function(fromNode, targetNode) {
+        var targetEl = canvasEl.querySelector('.node[data-node-id="' + targetNode.id + '"]');
+        if (!targetEl) return;
+        if (typeof targetEl._updateSourceThumbnail === 'function') targetEl._updateSourceThumbnail();
+        if (typeof targetEl._autoFillPromptFromSource === 'function') targetEl._autoFillPromptFromSource(fromNode);
+      }
+    }]);
+  }
 
 })();

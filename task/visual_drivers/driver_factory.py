@@ -890,4 +890,114 @@ def register_all_drivers():
     except ImportError as e:
         logger.warning(f"Failed to import HappyHorseDashscopeT2VV1Driver: {e}")
 
+    # Wan3.0 阿里云百炼驱动注册（标准版 / 高速版，配置检查在运行时进行）
+    try:
+        from .wan3_dashscope_v1_driver import Wan3DashscopeV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.WAN3_VIDEO_DASHSCOPE_V1,
+            Wan3DashscopeV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import Wan3DashscopeV1Driver: {e}")
+
+    try:
+        from .wan3_dashscope_v1_driver import Wan3DashscopeR2VV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.WAN3_VIDEO_DASHSCOPE_R2V_V1,
+            Wan3DashscopeR2VV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import Wan3DashscopeR2VV1Driver: {e}")
+
+    try:
+        from .wan3_dashscope_v1_driver import Wan3DashscopeT2VV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.WAN3_VIDEO_DASHSCOPE_T2V_V1,
+            Wan3DashscopeT2VV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import Wan3DashscopeT2VV1Driver: {e}")
+
+    try:
+        from .wan3_dashscope_v1_driver import Wan3VideoPrimeDashscopeV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_V1,
+            Wan3VideoPrimeDashscopeV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import Wan3VideoPrimeDashscopeV1Driver: {e}")
+
+    try:
+        from .wan3_dashscope_v1_driver import Wan3VideoPrimeDashscopeR2VV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_R2V_V1,
+            Wan3VideoPrimeDashscopeR2VV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import Wan3VideoPrimeDashscopeR2VV1Driver: {e}")
+
+    try:
+        from .wan3_dashscope_v1_driver import Wan3VideoPrimeDashscopeT2VV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1,
+            Wan3VideoPrimeDashscopeT2VV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import Wan3VideoPrimeDashscopeT2VV1Driver: {e}")
+
+    # Vidu Q3 官方驱动注册（turbo / pro，配置检查在运行时进行）
+    try:
+        from .vidu_q3_driver import ViduQ3TurboV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.VIDU_Q3_I2V_TURBO_V1,
+            ViduQ3TurboV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import ViduQ3TurboV1Driver: {e}")
+
+    try:
+        from .vidu_q3_driver import ViduQ3ProV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.VIDU_Q3_I2V_PRO_V1,
+            ViduQ3ProV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import ViduQ3ProV1Driver: {e}")
+
+    try:
+        from .vidu_q3_driver import ViduQ3TurboR2VV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.VIDU_Q3_R2V_TURBO_V1,
+            ViduQ3TurboR2VV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import ViduQ3TurboR2VV1Driver: {e}")
+
+    try:
+        from .vidu_q3_driver import ViduQ3ProR2VV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.VIDU_Q3_R2V_PRO_V1,
+            ViduQ3ProR2VV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import ViduQ3ProR2VV1Driver: {e}")
+
+    try:
+        from .vidu_q3_driver import ViduQ3TurboT2VV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.VIDU_Q3_T2V_TURBO_V1,
+            ViduQ3TurboT2VV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import ViduQ3TurboT2VV1Driver: {e}")
+
+    try:
+        from .vidu_q3_driver import ViduQ3ProT2VV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.VIDU_Q3_T2V_PRO_V1,
+            ViduQ3ProT2VV1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import ViduQ3ProT2VV1Driver: {e}")
+
     logger.info(f"Registered {len(VideoDriverFactory.get_supported_drivers())} video drivers")

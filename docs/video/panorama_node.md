@@ -27,6 +27,13 @@
 | `web/css/pannellum.css` | Pannellum 样式（vendor） |
 | `web/css/video_workflow.css` | 节点样式与全屏弹层样式（文件末尾 panorama 段落） |
 | `web/js/canvas.js` | `removeNode` 新增 `node.onDestroy()` 通用清理钩子 |
+| `web/js/node_base.js` | `connectToRegisteredImagePort` 支持 `connectionType: 'connections'`（id 计数器按连接数组选择、`renderAllConnections` 渲染、`allowMissingImage` 跳过参考图检查） |
+| `web/js/nodes.js` | `removeConnection` 断开 `panorama-source` 连线时复位参考图缩略图 |
+| `web/js/image_node.js` | `createImageNode` 支持 `opts.data` 初始数据（结果节点携带生成提示词） |
+| `web/js/shot_frame_generator.js` | 分镜图结果节点回填 `finalPrompt` |
+| `services/image_describe.py` | VL 识图业务：360° 全景导向提示词与描述清洗（模型挑选/图片获取/VL 调用由 `services/vl_gateway.py` 共享网关提供，与画风识别、导演台估参复用同一实现） |
+| `server.py` | `POST /api/video-workflow/describe-image` 路由（Header 鉴权，LLM token 计费） |
+| `config/constant.py` | `IMAGE_DESCRIBE_*` 常量（超时/推荐模型） |
 | `web/js/workflow.js` | `restoreWorkflow` 切换工作流时调用 `PanoramaViewerRegistry.destroyAll()` |
 | `web/js/events.js` | 添加菜单项 `#menuAddPanorama` 点击绑定 |
 | `web/video_workflow.html` | 菜单项、`pannellum.css`/`pannellum.min.js`/`panorama_node.js` 引入 |
@@ -34,7 +41,12 @@
 
 ## 节点结构
 
-- **输入端口**：`image` 类型（可选）。连接图片节点后走「图生全景」（`/api/image-edit` + `ref_image_urls`）；不连接走纯文生全景（`/api/text-to-image` + `aspect_ratio`）。
+- **输入端口**（`.port.input.panorama-source-port`，经 `registerInputPorts('panorama', ...)` 注册到连接吸附注册表）：`image` / `location` 类型（可选）。从图片/场景节点拖线到全景节点附近（50px 吸附）即可建立连接，端口绿色高亮提示；连接后走「图生全景」（`/api/image-edit` + `ref_image_urls`）；不连接走纯文生全景（`/api/text-to-image` + `aspect_ratio`）。源节点无参考图也允许连接（`allowMissingImage`），生成时自动降级为纯文生全景。
+  - 连接**图片节点**时：参考图取图片节点的 `url`；若全景提示词为空，按以下优先级自动填入（不覆盖用户已输入内容）：
+    1. 图片节点自带提示词（`data.prompt`，含生成结果节点回填的生成提示词——图片编辑结果携带原节点提示词、分镜图携带分镜生图 `finalPrompt`、全景结果节点携带含 360° 后缀的 `finalPrompt`、全景截图携带场景描述）；
+    2. **任意图片（上传图等无提示词）→ VL 识图**：前端调用 `POST /api/video-workflow/describe-image`（`services/image_describe.py`，复用已配置密钥的 VL 模型，默认优先 `volcengine/doubao-seed-2-0-lite`），生成 360° 全景导向的场景描述填入并 toast 提示。识图期间**提示词框 placeholder 显示动态省略号 loading**（"正在识图生成场景描述.→..→..."，识图仅在提示词为空时触发、placeholder 恰好可见），节点状态行同步提示；完成/失败后恢复原 placeholder，失败降级为提示手动输入。仅**新连线**触发识图（工作流重载恢复不触发、不重复扣费），成功后提示词非空、断开重连不会重复识图；等待期间用户手动输入的内容不会被覆盖。支持本站 `upload/` 路径与 http(s) 远程 URL。走 LLM token 计费。
+  - 连接**场景节点**时：参考图自动取场景的 `reference_image`；若提示词为空，自动按「场景名，场景描述」填充提示词（不覆盖用户已输入内容），点击生成即得到该场景的 360 全景图。
+  - 断开参考连线（连接 `portType: 'panorama-source'`）时自动复位节点内参考图缩略图；提示词保留不回滚。
 - **输出端口**：全景结果。生成后自动为每张结果创建标准图片节点并连接（全景节点 → 图片节点）。
 - **节点数据**（`node.data`，全部可序列化）：
 
@@ -65,6 +77,7 @@
 - 视场计算：等距圆柱投影度/像素均匀。`computePanoramaFov(ratio)`：
   - 宽比 ≥ 2:1（如 21:9）→ `haov: 360`，`vaov: 360×h/w`（21:9 ≈ 154.3°，上下极区不可见，符合宽幅全景常态）；
   - 宽比 < 2:1（如 16:9）→ `vaov: 180`，`haov: 180×w/h`（水平非完整 360°，无接缝落差）。
+- **背景防护（无黑边）**：查看器启用 pannellum `avoidShowingBackground: true`——部分全景（vaov<180° 或 haov<360°）时动态约束 yaw/pitch/hfov，视线/视野不会超出图像覆盖范围，节点内与全屏均不会出现黑色背景区；加载完成后原地跳转一次（`setYaw/setPitch/setHfov`，0 动画）校正历史保存的越界视角；离屏截图查看器同样启用，避免截出黑边图。对 360°×180° 完整全景无影响。
 - 图片一律经 `proxyImageUrl()` 同源代理后交给 Pannellum（WebGL 纹理要求跨域可控）。
 - **事件隔离**（与画布冲突处理）：查看器容器 `mousedown`/`wheel`/`touchstart` 均 `stopPropagation()`——节点内拖全景不触发画布平移、滚轮不缩放画布；节点本体拖拽仅从 header 发起（`node_base.js` 惯例），互不干扰。
 - 交互：拖拽改 yaw/pitch（带惯性 `friction: 0.15`）；节点内禁用滚轮缩放（避免误触画布习惯），全屏弹层内启用。

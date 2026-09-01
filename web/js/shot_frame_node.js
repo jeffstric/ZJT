@@ -147,7 +147,7 @@
                   <div class="label" style="margin: 0;" data-i18n="shot_frame_video_first_frame_label">${window.t ? window.t('shot_frame_video_first_frame_label') : '视频首帧'}</div>
                   <div class="gen-container shot-frame-image-selector-container" style="display: none;">
                     <button class="mini-btn shot-frame-image-selector-btn" type="button" style="font-size: 11px; padding: 4px 8px; background: white; color: #333; border: 1px solid #ddd;" data-i18n="shot_frame_select_image_btn">${window.t ? window.t('shot_frame_select_image_btn') : '选择图片'}</button>
-                    <button class="gen-btn-caret" type="button" aria-label="${window.t ? window.t('shot_frame_select_image_btn') : '选择图片'}" style="font-size: 11px; padding: 4px 6px;">▾</button>
+                    <button class="gen-btn-caret" type="button" aria-label="${window.t ? window.t('shot_frame_select_image_btn') : '选择图片'}" style="font-size: 11px; padding: 4px 6px; position: relative;">▾<span class="new-image-badge" style="display: ${node.data.hasNewImages ? 'block' : 'none'};">${node.data.hasNewImages ? (node.data.newImageCount || '') : ''}</span></button>
                     <div class="gen-menu shot-frame-image-menu"></div>
                   </div>
                 </div>
@@ -1400,7 +1400,18 @@
       // 更新图片选择菜单
       function updateImageSelectionMenu(){
         const connectedImageNodes = getConnectedImageNodes();
-        
+
+        // 按生成新旧排序：imageMenuOrder 中靠前的（新生成）排最上方，不在其中的保持原遍历顺序追加在后
+        const menuOrder = Array.isArray(node.data.imageMenuOrder) ? node.data.imageMenuOrder : [];
+        if(menuOrder.length > 0){
+          const rank = new Map(menuOrder.map((oid, i) => [oid, i]));
+          connectedImageNodes.sort((a, b) => {
+            const ra = rank.has(a.id) ? rank.get(a.id) : menuOrder.length;
+            const rb = rank.has(b.id) ? rank.get(b.id) : menuOrder.length;
+            return ra - rb;
+          });
+        }
+
         if(connectedImageNodes.length > 0 && imageMenu){
           // 有图片节点时显示选择按钮
           imageSelectorContainer.style.display = 'flex';
@@ -1512,11 +1523,45 @@
         refreshParentShotGroupPreview();
       }
 
+      // 新生成的分镜图提醒：最新一批置顶到菜单最上方 + caret 角标/脉冲动画
+      function notifyNewImages(imageNodeIds){
+        if(!Array.isArray(imageNodeIds) || imageNodeIds.length === 0) return;
+        const order = Array.isArray(node.data.imageMenuOrder) ? node.data.imageMenuOrder : [];
+        // 清理已删除的图片节点 id，再把本批新图整体放到最上方（批次内保持生成顺序）
+        const newIdSet = new Set(imageNodeIds);
+        const cleaned = order.filter(oid => !newIdSet.has(oid) && state.nodes.some(n => n.id === oid));
+        node.data.imageMenuOrder = [...imageNodeIds, ...cleaned];
+        node.data.hasNewImages = true;
+        node.data.newImageCount = imageNodeIds.length;
+        if(imageSelectorCaret){
+          // 重新触发脉冲动画（只播放固定次数后自动停止，角标持续保留）
+          imageSelectorCaret.classList.remove('has-new-images');
+          void imageSelectorCaret.offsetWidth;
+          imageSelectorCaret.classList.add('has-new-images');
+          const badge = imageSelectorCaret.querySelector('.new-image-badge');
+          if(badge){
+            badge.textContent = String(imageNodeIds.length);
+            badge.style.display = 'block';
+          }
+        }
+        updateImageSelectionMenu();
+        safeAutoSave();
+      }
+
       // 图片选择按钮事件
       if(imageSelectorCaret){
         imageSelectorCaret.addEventListener('click', (e) => {
           e.stopPropagation();
           imageMenu.classList.toggle('show');
+          // 用户已查看，清除新图提醒（角标与动画）
+          if(node.data.hasNewImages){
+            node.data.hasNewImages = false;
+            node.data.newImageCount = 0;
+            imageSelectorCaret.classList.remove('has-new-images');
+            const badge = imageSelectorCaret.querySelector('.new-image-badge');
+            if(badge) badge.style.display = 'none';
+            safeAutoSave();
+          }
         });
       }
 
@@ -1641,6 +1686,7 @@
 
       // 暴露方法供外部调用（工作流恢复时使用）
       node.updatePreview = updatePreviewImage;
+      node.notifyNewImages = notifyNewImages;
       node.updateModeUI = updateModeUI;
       node.populateVideoModelOptions = populateVideoModelOptions;
       node.updateShotFrameResolutionOptions = updateResolutionOptions;

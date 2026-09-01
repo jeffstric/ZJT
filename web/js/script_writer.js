@@ -361,6 +361,7 @@
             // 首次进入默认激活「世界」tab，需主动触发一次画风识别区块显隐
             //（switchFileTab 仅在用户点击 tab 时触发，首屏直接调 loadFiles 会绕过它）
             updateStyleRecognizeVisibility('worlds');
+            restoreStyleRecognizeCollapseState();
 
             // 核心初始化流程：加载世界名称、初始化会话、加载文件
             // 使用 try-catch 防止快速刷新时 fetch 被取消导致异常中断后续流程
@@ -1157,6 +1158,77 @@
             });
         });
 
+        // ===== 用户消息排队机制 =====
+        // AI 正在吞吐时，用户新输入不丢弃：进入队列并堆叠显示在输入框上方（不进聊天历史），
+        // 当前任务 done/error 后自动按序发送，不打断正在进行的任务。
+        const pendingUserMessages = [];
+        let pendingDrainScheduled = false;
+
+        function enqueueUserMessage(message) {
+            pendingUserMessages.push(message);
+            renderPendingQueue();
+            updateStatus(window.t
+                ? window.t('status_message_queued', { count: pendingUserMessages.length })
+                : `消息已加入队列（共 ${pendingUserMessages.length} 条），当前任务完成后自动发送`);
+        }
+
+        // 排队消息堆叠在输入框上方：内容再多也能看到将要发送什么；× 可随时移除
+        function renderPendingQueue() {
+            const container = document.getElementById('pendingQueueContainer');
+            if (!container) return;
+            container.innerHTML = '';
+            pendingUserMessages.forEach(msg => {
+                const item = document.createElement('div');
+                item.className = 'pending-queue-item';
+                item.dataset.queuedMessage = msg;
+
+                const text = document.createElement('span');
+                text.className = 'pending-queue-text';
+                text.textContent = msg;
+
+                const removeBtn = document.createElement('button');
+                removeBtn.type = 'button';
+                removeBtn.className = 'pending-queue-remove';
+                removeBtn.title = window.t ? window.t('remove_queued_message') : '移除该排队消息';
+                removeBtn.textContent = '×';
+                removeBtn.onclick = () => removePendingUserMessage(msg);
+
+                item.appendChild(text);
+                item.appendChild(removeBtn);
+                container.appendChild(item);
+            });
+            container.style.display = pendingUserMessages.length ? 'flex' : 'none';
+        }
+
+        function removePendingUserMessage(message) {
+            const idx = pendingUserMessages.indexOf(message);
+            if (idx !== -1) pendingUserMessages.splice(idx, 1);
+            renderPendingQueue();
+        }
+
+        function dequeueUserMessage(message) {
+            const idx = pendingUserMessages.indexOf(message);
+            if (idx !== -1) pendingUserMessages.splice(idx, 1);
+            renderPendingQueue();
+        }
+
+        // 任务进入终态（done/error/连接失败等）后，延迟触发一次队列排空；幂等且不与进行中任务并发
+        function schedulePendingDrain() {
+            if (pendingDrainScheduled || pendingUserMessages.length === 0) return;
+            pendingDrainScheduled = true;
+            setTimeout(() => {
+                pendingDrainScheduled = false;
+                if (isProcessing || pendingVerificationId) return;
+                const next = pendingUserMessages.shift();
+                if (next === undefined) return;
+                dequeueUserMessage(next);
+                // 队列消息发送时才以正常用户气泡进入聊天历史
+                sendMessage(next).catch(err => {
+                    console.error('发送排队消息失败:', err);
+                });
+            }, 400);
+        }
+
         async function sendMessage(customMessage = null, isSystemMessage = false) {
             console.log('sendMessage called, isProcessing:', isProcessing, 'pendingVerificationId:', pendingVerificationId);
 
@@ -1207,7 +1279,21 @@
             }
 
             if (isProcessing) {
-                console.log('Already processing, re-enabling button');
+                console.log('Already processing, queueing user message');
+                // AI 正在吞吐：不丢弃用户输入，压入队列等待当前任务完成（不打断任务）
+                if (customMessage) {
+                    // 按钮等系统触发（如「重新生成形象图」）：同样入队展示，发送时以普通气泡呈现
+                    enqueueUserMessage(customMessage);
+                } else {
+                    const input = document.getElementById('message-input');
+                    const queued = input.value.trim();
+                    if (queued) {
+                        input.value = '';
+                        input.style.height = 'auto';
+                        syncSendBtnLayout();
+                        enqueueUserMessage(queued);
+                    }
+                }
                 if (sendBtn) {
                     sendBtn.disabled = false;
                     sendBtn.classList.remove('sending');
@@ -1281,7 +1367,8 @@
                 const imageModelTaskId = imageModelSelector?.value
                     ? parseInt(imageModelSelector.value, 10)
                     : null;
-                const imageModelName = imageModelSelector?.options?.[imageModelSelector.selectedIndex]?.textContent || '';
+                const imageModelName = imageModelSelector?.options?.[imageModelSelector.selectedIndex]?.dataset?.conciseName
+                    || imageModelSelector?.options?.[imageModelSelector.selectedIndex]?.textContent || '';
                 const imagePreferences = {};
                 if (imageModelTaskId && !Number.isNaN(imageModelTaskId)) {
                     imagePreferences.task_id = imageModelTaskId;
@@ -1376,6 +1463,7 @@
                             // 实时显示工具调用
                             if (data.tool_names && data.tool_names.length > 0) {
                                 showToolCalls(data.tool_names);
+                                markGeneratingOnImageTools(data.tool_names);
                             }
                         } else if (data.type === 'context_compression') {
                             updateStatus(window.t ? window.t('status_context_compressed') : '上下文已自动压缩，继续回复中...');
@@ -1393,11 +1481,17 @@
                             sendBtn.classList.remove('sending');
                             // 刷新算力显示
                             loadComputingPower();
-                            // 自动刷新暂存文件列表
+                            // 自动刷新暂存文件列表（完成后清除图片生成中标识）
                             try {
-                                refreshFiles().catch(err => console.error('刷新文件列表失败:', err));
+                                refreshFiles().catch(err => console.error('刷新文件列表失败:', err))
+                                    .finally(() => {
+                                        clearAllImageGenerating();
+                                        schedulePendingDrain();
+                                    });
                             } catch (err) {
                                 console.error('调用refreshFiles失败:', err);
+                                clearAllImageGenerating();
+                                schedulePendingDrain();
                             }
                         } else if (data.type === 'error') {
                             eventSource.close();
@@ -1409,6 +1503,8 @@
                             const sendBtn = document.getElementById('send-btn');
                             sendBtn.disabled = false;
                             sendBtn.classList.remove('sending');
+                            clearAllImageGenerating();
+                            schedulePendingDrain();
                         } else if (data.type === 'human_verification_required') {
                             hideToolCalls(); // ask_user 工具调用完成，隐藏指示器
                             const verification = data.verification || {};
@@ -1430,6 +1526,8 @@
                                     sendBtn.disabled = false;
                                     sendBtn.classList.remove('sending');
                                 }
+                                clearAllImageGenerating();
+                                schedulePendingDrain();
                             }
                             showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
                         } else if (data.type === 'status') {
@@ -1506,6 +1604,9 @@
                 sendBtn.classList.remove('sending');
             }
             updateStatus(window.t ? window.t('status_ready') : '就绪');
+            // 终态兜底：清除图片生成中标识 + 尝试排空排队消息（幂等）
+            clearAllImageGenerating();
+            schedulePendingDrain();
         }
 
         // 重连SSE（最多重连5次）
@@ -1551,6 +1652,7 @@
                     } else if (data.type === 'tool_call') {
                         if (data.tool_names && data.tool_names.length > 0) {
                             showToolCalls(data.tool_names);
+                            markGeneratingOnImageTools(data.tool_names);
                         }
                     } else if (data.type === 'context_compression') {
                         updateStatus(window.t ? window.t('status_context_compressed') : '上下文已自动压缩，继续回复中...');
@@ -1589,6 +1691,8 @@
                                 sendBtn.disabled = false;
                                 sendBtn.classList.remove('sending');
                             }
+                            clearAllImageGenerating();
+                            schedulePendingDrain();
                         }
                         showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
                     } else if (data.type === 'status') {
@@ -2408,7 +2512,6 @@
                 updateModelSelectorDisplay();
                 updateModelTooltip();
                 updateThinkingModeUI();
-                bindLlmTrackToggle();
 
                 // 确保选中的模型可用，否则自动切换
                 ensureValidModelSelected();
@@ -2990,7 +3093,7 @@
                 return;
             }
 
-            const modelName = selectedOption.textContent;
+            const modelName = selectedOption.dataset.conciseName || selectedOption.textContent;
             icon.title = `生图模型: ${modelName}`;
             // 同步自定义下拉框的显示文本（与 LLM 模型的 updateModelSelectorDisplay 保持一致）
             updateImageModelDisplay();
@@ -3009,37 +3112,6 @@
         }
 
 
-        function currentLlmTrack() {
-            const selector = document.getElementById('model-selector');
-            const selected = selector?.options?.[selector.selectedIndex];
-            if (!selected || !window.ModelCatalog) return 'custom';
-            return window.ModelCatalog.inferTrack('llm.chat', selected.value, llmModelCatalog);
-        }
-
-        function bindLlmTrackToggle() {
-            const host = document.getElementById('llm-track-host');
-            if (!host || !window.ModelCatalog) return;
-            window.ModelCatalog.mountTrackToggle(host, {
-                track: currentLlmTrack(),
-                onSelect: (track) => {
-                    const selector = document.getElementById('model-selector');
-                    if (!selector) return;
-                    const tracks = window.ModelCatalog.tracksFromCatalog(llmModelCatalog, 'llm.chat');
-                    const target = track === 'quality' ? tracks.quality : tracks.value;
-                    const options = Array.from(selector.options);
-                    const hit = options.find((opt) => !opt.disabled && opt.value && window.ModelCatalog.matchCanonical(opt.value, target)
-                        && opt.closest('optgroup')?.label === '推荐')
-                        || options.find((opt) => !opt.disabled && opt.value && window.ModelCatalog.matchCanonical(opt.value, target));
-                    if (hit) {
-                        selector.value = hit.value;
-                        selector.selectedIndex = options.indexOf(hit);
-                        changeModel();
-                    }
-                    window.ModelCatalog.applyTrackButtons(host.querySelector('.model-track-toggle'), track);
-                }
-            });
-        }
-
         async function changeModel() {
             if (!sessionId) {
                 showError(window.t ? window.t('error_create_session_first') : '请先创建会话');
@@ -3057,7 +3129,6 @@
             updateModelTooltip();
             updateLlmModelIcon();
             updateThinkingModeUI();
-            bindLlmTrackToggle();
 
             // 本地模型（Ollama / vLLM）检测和警告
             const vendorName = selectedOption?.dataset?.vendorName || '';
@@ -3176,15 +3247,22 @@
                     option.value = model.task_id;
                     option.dataset.shortKey = model.short_key || model.canonical || '';
                     option.dataset.track = model.track || '';
+                    // display 层显示纯模型名；档位与算力只在下拉 option 中展示
+                    option.dataset.conciseName = model.name || '';
                     const taskTypeKey = String(model.task_id);
                     const status = driverStatus[taskTypeKey];
                     const isAvailable = !status || status.available !== false;
-                    const badge = model.track === 'value' ? '（性价比）' : (model.track === 'quality' ? '（效果）' : '');
+                    // 徽标合并进一个括号：Name（性价比 · 5算力）
+                    const badge = model.track === 'value' ? '性价比' : (model.track === 'quality' ? '效果' : '');
+                    const power = Number(model.computing_power) || 0;
+                    const powerLabel = power > 0 ? `${power}算力` : '';
+                    const extras = [badge, powerLabel].filter(Boolean).join(' · ');
+                    const suffix = extras ? `（${extras}）` : '';
                     if (!isAvailable) {
-                        option.textContent = `${model.name}${badge} (未配置)`;
+                        option.textContent = `${model.name}${suffix} (未配置)`;
                         option.disabled = true;
                     } else {
-                        option.textContent = `${model.name}${badge}`;
+                        option.textContent = `${model.name}${suffix}`;
                         if (String(model.task_id) === String(defaultTaskId)) {
                             option.selected = true;
                         }
@@ -3203,7 +3281,6 @@
                 // 包装在 .model-select-wrapper 后，同步自定义显示层的文本
                 updateImageModelDisplay();
                 updateImageModelIcon();
-                bindImageTrackToggle();
                 // 注意：自动设置模型逻辑已移至 createSession() 成功后执行。
             } catch (error) {
                 console.error('加载生图模型列表失败:', error);
@@ -3467,7 +3544,7 @@
             }
             worldDefaultModels.image = {
                 task_id: data.task_id,
-                name: data.model_name || opt.textContent || String(data.task_id),
+                name: data.model_name || opt.dataset.conciseName || opt.textContent || String(data.task_id),
             };
             showSuccess(tOr(
                 'success_set_default_image',
@@ -3476,40 +3553,6 @@
             ));
         }
 
-        function currentImageTrack() {
-            const selector = document.getElementById('text-to-image-model-selector');
-            const selected = selector?.options?.[selector.selectedIndex];
-            if (!selected || !window.ModelCatalog) return 'custom';
-            const canonical = selected.dataset.shortKey || selected.textContent || '';
-            return window.ModelCatalog.inferTrack('image.script_writer', canonical, imageModelCatalog);
-        }
-
-        function bindImageTrackToggle() {
-            const host = document.getElementById('image-track-host');
-            if (!host || !window.ModelCatalog) return;
-            window.ModelCatalog.mountTrackToggle(host, {
-                track: currentImageTrack(),
-                onSelect: (track) => {
-                    const selector = document.getElementById('text-to-image-model-selector');
-                    if (!selector) return;
-                    const options = Array.from(selector.options).map((opt) => ({
-                        task_id: opt.value,
-                        short_key: opt.dataset.shortKey || '',
-                        name: opt.textContent,
-                        label: opt.textContent,
-                        value: opt.dataset.shortKey || opt.value,
-                    }));
-                    const hit = window.ModelCatalog.findTaskByTrack(
-                        options, 'image.script_writer', imageModelCatalog, track
-                    );
-                    if (hit) {
-                        selector.value = String(hit.task_id);
-                        changeTextToImageModel();
-                    }
-                    bindImageTrackToggle();
-                }
-            });
-        }
 
         async function changeTextToImageModel() {
             if (!sessionId) {
@@ -3564,7 +3607,6 @@
             }
             updateImageModelIcon();
             updateImageModelDisplay();
-            bindImageTrackToggle();
         }
 
         function escapeHtml(text) {
@@ -3961,13 +4003,14 @@
                     files.forEach(file => {
                         const fileItem = document.createElement('div');
                         fileItem.className = 'file-item';
-                        
+                        fileItem.dataset.fileType = fileType;
+
                         // 对于角色、场景、道具、剧本，添加图片预览图标和删除按钮
                         let imageIconHtml = '';
                         let voiceIconHtml = '';
                         let deleteButtonHtml = '';
                         let storyboardButtonHtml = '';
-                        
+
                         // 角色、场景、道具显示图片预览图标
                         if (['characters', 'locations', 'props'].includes(fileType)) {
                             // reference_image 在 json_data 对象里
@@ -3977,13 +4020,13 @@
                             const iconTitle = hasImage ? '预览图片' : '暂无参考图';
                             imageIconHtml = `
                                 <button class="file-btn image-preview-btn ${iconClass}" data-action="preview-image" data-file-type="${escapeHtmlAttr(fileType)}" data-file-name="${escapeHtmlAttr(file.name || '')}" title="${iconTitle}">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                                        <circle cx="8.5" cy="8.5" r="1.5"/>
-                                        <polyline points="21 15 16 10 5 21"/>
-                                    </svg>
+                                    ${IMAGE_PREVIEW_ICON_SVG}
                                 </button>
                             `;
+                            // 图片生成中：预览图标替换为 loading 圈（不含文字，避免挤占名称宽度）
+                            if (imageGeneratingKeys.has(assetGeneratingKey(fileType, file.name || ''))) {
+                                fileItem.classList.add('image-generating');
+                            }
                         }
                         
                         // 角色显示音色播放按钮
@@ -4076,6 +4119,9 @@
                         `;
                         fileItemsContainer.appendChild(fileItem);
                     });
+
+                    // 渲染完成后应用图片生成中标识（预览图标 → loading 圈）
+                    applyImageGeneratingBadges();
 
                     // Event delegation for file action buttons (replaces inline onclick for XSS safety)
                     if (!fileItemsContainer._delegationBound) {
@@ -4859,6 +4905,18 @@
             } else {
                 generateSection.style.display = 'none';
             }
+
+            // 显示/隐藏「重新生成形象图 / 历史形象图」区域（仅角色）
+            const regenerateSection = document.getElementById('preview-regenerate-section');
+            if (regenerateSection) {
+                regenerateSection.style.display = previewImageFileType === 'characters' ? 'block' : 'none';
+            }
+
+            // 显示/隐藏「设为当前形象图」恢复区（仅角色历史视图；恢复的是当前选中大图）
+            const restoreSection = document.getElementById('preview-restore-section');
+            if (restoreSection) {
+                restoreSection.style.display = previewViewingHistory && previewImageFileType === 'characters' ? 'block' : 'none';
+            }
         }
 
         async function previewItemImage(fileType, fileName) {
@@ -4947,6 +5005,7 @@
                         'props': '道具'
                     };
                     previewImageIndex = 0;
+                    resetPreviewHistoryViewState();
                     document.getElementById('image-preview-title').textContent = `${typeNames[fileType]}参考图 - ${fileName}`;
                     document.getElementById('preview-image').src = previewImages[0].url;
 
@@ -4964,6 +5023,276 @@
 
         function closeImagePreviewModal() {
             document.getElementById('image-preview-modal').classList.remove('show');
+            // 关闭弹窗时退出历史视图并还原标题，避免下次打开残留
+            if (previewViewingHistory) {
+                previewViewingHistory = false;
+                previewCurrentImages = [];
+                const titleEl = document.getElementById('image-preview-title');
+                if (titleEl?.dataset.originTitle) {
+                    titleEl.textContent = titleEl.dataset.originTitle;
+                    delete titleEl.dataset.originTitle;
+                }
+                resetPreviewHistoryViewState();
+            }
+        }
+
+        // ===== 暂存区资产图片「生成中」标识（内存级瞬态状态，任务终态后清除） =====
+        // key 形如 `${fileType}||${name}`；来源：重新生成按钮（精确）与 SSE tool_call 生图工具（弱推断）
+        const imageGeneratingKeys = new Set();
+        const IMAGE_GENERATING_TOOL_NAMES = new Set([
+            'generate_text_to_image',
+            'generate_4grid_images',
+            'generate_4grid_character_images',
+            'generate_character_variant_image',
+            'generate_9grid_location_images',
+            'generate_4grid_location_images_i2i',
+            'edit_image',
+        ]);
+
+        // 图片预览按钮的默认图标（生成中会被 loading 圈替换，恢复时写回）
+        const IMAGE_PREVIEW_ICON_SVG = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+            </svg>
+        `;
+
+        function assetGeneratingKey(fileType, name) {
+            return `${fileType}||${name || ''}`;
+        }
+
+        function markAssetImageGenerating(fileType, name) {
+            imageGeneratingKeys.add(assetGeneratingKey(fileType, name));
+            applyImageGeneratingBadges();
+        }
+
+        // AI 在本次任务中调用了生图工具：将当前 tab 下「还没有参考图」的资产标记为生成中
+        //（典型场景：角色形象设计师扫描缺图资产批量补图；任务结束统一清除，误标无副作用）
+        function markGeneratingOnImageTools(toolNames) {
+            if (!Array.isArray(toolNames)) return;
+            const hasImageTool = toolNames.some(name => IMAGE_GENERATING_TOOL_NAMES.has(name));
+            if (!hasImageTool) return;
+            if (!['characters', 'locations', 'props'].includes(currentFileType)) return;
+            const items = document.querySelectorAll('#file-items-container .file-item');
+            let changed = false;
+            items.forEach(item => {
+                const nameEl = item.querySelector('.file-name');
+                const previewBtn = item.querySelector('.image-preview-btn');
+                if (!nameEl || !previewBtn) return;
+                if (previewBtn.classList.contains('has-image')) return; // 已有图：本次大概率不在补图范围
+                imageGeneratingKeys.add(assetGeneratingKey(currentFileType, nameEl.textContent.trim()));
+                changed = true;
+            });
+            if (changed) applyImageGeneratingBadges();
+        }
+
+        function clearAllImageGenerating() {
+            if (imageGeneratingKeys.size === 0) return;
+            imageGeneratingKeys.clear();
+            applyImageGeneratingBadges();
+        }
+
+        // 列表渲染后调用：生成中的条目把图片预览按钮的图标替换为 loading 圈（不加文字，避免挤占名称宽度）
+        function applyImageGeneratingBadges() {
+            const items = document.querySelectorAll('#file-items-container .file-item');
+            items.forEach(item => {
+                const nameEl = item.querySelector('.file-name');
+                const previewBtn = item.querySelector('.image-preview-btn');
+                if (!nameEl || !previewBtn) return;
+                const type = item.dataset.fileType || currentFileType;
+                const generating = imageGeneratingKeys.has(assetGeneratingKey(type, nameEl.textContent.trim()));
+                item.classList.toggle('image-generating', generating);
+                if (generating) {
+                    if (!previewBtn.querySelector('.image-generating-spinner')) {
+                        previewBtn.innerHTML = '<span class="image-generating-spinner"></span>';
+                        previewBtn.classList.add('is-generating');
+                        previewBtn.title = window.t ? window.t('image_generating_badge') : '图片生成中';
+                    }
+                } else if (previewBtn.querySelector('.image-generating-spinner')) {
+                    previewBtn.innerHTML = IMAGE_PREVIEW_ICON_SVG;
+                    previewBtn.classList.remove('is-generating');
+                    previewBtn.title = '预览图片';
+                }
+            });
+        }
+
+        // ===== 重新生成角色形象图（预览弹窗 / 编辑弹窗共用） =====
+        function buildCharacterImageRegenerationPrompt(characterName) {
+            return `请为角色「${characterName}」重新生成角色形象参考图：` +
+                `先读取该角色的现有设定（外貌、身份、性格）与世界设定中的画面风格（visual_style），` +
+                `然后调用角色形象设计师重新生成该角色的 reference_image 主形象图——` +
+                `保持角色核心外貌特征一致（可优化画质与画风贴合度），风格必须与世界画面风格统一，` +
+                `生成完成后把新图写入角色 JSON 的 reference_image 字段并保存。` +
+                `注意：本次无需重新生成参考音频，也不要改动角色其他设定字段。`;
+        }
+
+        function requestCharacterImageRegeneration(characterName) {
+            if (!characterName) return;
+            const prompt = buildCharacterImageRegenerationPrompt(characterName);
+            // 发送给 AI；若 AI 正在吞吐，sendMessage 会自动将任务压入队列
+            sendMessage(prompt, true);
+            markAssetImageGenerating('characters', characterName);
+            showInfo(window.t ? window.t('regenerate_image_dispatched') : '已发送重新生成请求，AI 将更新该角色的形象图');
+        }
+
+        function regenerateCharacterImageFromPreview() {
+            if (previewImageFileType !== 'characters' || !previewImageFileName) return;
+            const characterName = previewImageFileName;
+            closeImagePreviewModal();
+            requestCharacterImageRegeneration(characterName);
+        }
+
+        function regenerateCharacterImageFromEditor() {
+            if (currentEditFile.fileType !== 'characters' || !currentEditFile.fileName) {
+                showError(window.t ? window.t('error_open_character_first') : '请先打开一个角色进行编辑');
+                return;
+            }
+            const characterName = document.getElementById('char-name').value.trim() || currentEditFile.fileName;
+            closeEditModal();
+            requestCharacterImageRegeneration(characterName);
+        }
+
+        // ===== 角色形象图历史（后端在替换/删除 reference_image 时自动归档到 image_history） =====
+        // 预览弹框内切换「当前形象图 ↔ 历史形象图」视图
+        let previewViewingHistory = false;
+        let previewCurrentImages = [];
+
+        function resetPreviewHistoryViewState() {
+            previewViewingHistory = false;
+            previewCurrentImages = [];
+            const historyBtn = document.getElementById('preview-image-history-btn');
+            if (historyBtn) {
+                const label = historyBtn.querySelector('span:last-child');
+                if (label) label.textContent = window.t ? window.t('view_image_history') : '历史形象图';
+                historyBtn.title = window.t ? window.t('title_image_history') : '查看历史形象图';
+            }
+        }
+
+        function enterPreviewHistoryView(historyUrls) {
+            previewCurrentImages = previewImages.slice();
+            previewViewingHistory = true;
+            previewImages = historyUrls.map((url, idx) => ({ url, label: idx === 0 ? '最近归档' : `历史 ${idx + 1}` }));
+            previewImageIndex = 0;
+            document.getElementById('preview-image').src = previewImages[0].url;
+            renderImageThumbnails();
+            const historyBtn = document.getElementById('preview-image-history-btn');
+            if (historyBtn) {
+                const label = historyBtn.querySelector('span:last-child');
+                if (label) label.textContent = window.t ? window.t('back_to_current_image') : '返回当前形象图';
+                historyBtn.title = window.t ? window.t('back_to_current_image') : '返回当前形象图';
+            }
+        }
+
+        function exitPreviewHistoryView() {
+            previewViewingHistory = false;
+            previewImages = previewCurrentImages.length ? previewCurrentImages : previewImages;
+            previewCurrentImages = [];
+            previewImageIndex = 0;
+            document.getElementById('preview-image').src = previewImages[0]?.url || '';
+            // 恢复原标题（进入历史视图前记录在 dataset.originTitle）
+            const titleEl = document.getElementById('image-preview-title');
+            if (titleEl?.dataset.originTitle) {
+                titleEl.textContent = titleEl.dataset.originTitle;
+                delete titleEl.dataset.originTitle;
+            }
+            renderImageThumbnails();
+            resetPreviewHistoryViewState();
+        }
+
+        async function viewCharacterImageHistory() {
+            if (previewImageFileType !== 'characters' || !previewImageFileName) return;
+            // 历史视图下再点按钮：返回当前形象图
+            if (previewViewingHistory) {
+                exitPreviewHistoryView();
+                return;
+            }
+            try {
+                const response = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const data = await response.json();
+                if (checkTokenExpired(data, response)) return;
+                if (!data.success) {
+                    showError((window.t ? window.t('error_fetch_data_failed', {error: data.error || '未知错误'}) : '获取数据失败: ' + (data.error || '未知错误')));
+                    return;
+                }
+                let jsonData = data.character?.json_data || {};
+                if (!jsonData || Object.keys(jsonData).length === 0) {
+                    const content = data.character?.content || '';
+                    try {
+                        jsonData = content.trim() ? JSON.parse(content) : {};
+                    } catch (e) {
+                        jsonData = {};
+                    }
+                }
+                const history = Array.isArray(jsonData.image_history) ? jsonData.image_history : [];
+                const urls = history.filter(u => typeof u === 'string' && u.trim() !== '');
+                if (urls.length === 0) {
+                    showInfo(window.t ? window.t('image_history_empty') : '该角色暂无历史形象图（替换形象图后会自动归档到历史）');
+                    return;
+                }
+                const typeTitle = document.getElementById('image-preview-title');
+                typeTitle.dataset.originTitle = typeTitle.textContent;
+                typeTitle.textContent = `👤 ${window.t ? window.t('image_history_title') : '历史形象图'} - ${previewImageFileName}`;
+                enterPreviewHistoryView(urls);
+            } catch (error) {
+                showError((window.t ? window.t('error_preview_image_failed', {error: error.message}) : '预览图片失败: ' + error.message));
+            }
+        }
+
+        // 将历史视图中当前选中的形象图恢复为角色主形象图（reference_image）。
+        // 复用角色保存接口：后端归档逻辑自动完成双向整理——旧主图进历史、被恢复图从历史移出。
+        async function restoreCharacterImageFromHistory() {
+            if (previewImageFileType !== 'characters' || !previewImageFileName || !previewViewingHistory) return;
+            const url = previewImages[previewImageIndex]?.url;
+            if (!url) return;
+            const btn = document.getElementById('preview-restore-image-btn');
+            const statusEl = document.getElementById('preview-restore-status');
+            const originalHint = statusEl ? statusEl.textContent : '';
+            if (btn) btn.disabled = true;
+            try {
+                if (statusEl) statusEl.textContent = window.t ? window.t('restoring_history_image') : '正在恢复…';
+                // 读取角色完整 JSON
+                const resp = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const data = await resp.json();
+                if (checkTokenExpired(data, resp)) return;
+                if (!data.success) {
+                    throw new Error(data.error || (window.t ? window.t('error_unknown') : '未知错误'));
+                }
+                let jsonData = data.character?.json_data || {};
+                if (!jsonData || Object.keys(jsonData).length === 0) {
+                    const content = data.character?.content || '';
+                    jsonData = content.trim() ? JSON.parse(content) : {};
+                }
+                if ((jsonData.reference_image || '') === url) {
+                    showInfo(window.t ? window.t('restore_image_already_current') : '该图已是当前形象图');
+                    return;
+                }
+                jsonData.reference_image = url;
+                const saveResp = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: JSON.stringify(jsonData),
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        auth_token: AUTH_TOKEN
+                    })
+                });
+                const saveData = await saveResp.json();
+                if (checkTokenExpired(saveData, saveResp)) return;
+                if (!saveResp.ok || !saveData.success) {
+                    throw new Error(saveData.error || saveData.message || `HTTP ${saveResp.status}`);
+                }
+                showSuccess(window.t ? window.t('restore_image_success') : '已恢复为当前形象图');
+                closeImagePreviewModal();
+                loadFiles('characters');
+                notifyAgentAssetUpdated(`系统通知：角色卡 "${previewImageFileName}" 的形象图已被用户从历史形象图恢复，请重新读取最新内容。`);
+            } catch (error) {
+                showError((window.t ? window.t('restore_image_failed', {error: error.message}) : '恢复失败: ' + error.message));
+                if (statusEl) statusEl.textContent = originalHint;
+            } finally {
+                if (btn) btn.disabled = false;
+            }
         }
 
         // 生成场景多角度图片（90°, 180°, 270°）
@@ -5682,6 +6011,40 @@
             }
         }
 
+        // ===== 画风识别区块折叠/展开（状态记忆在 localStorage） =====
+        const STYLE_RECOGNIZE_COLLAPSE_KEY = 'script_writer_styleRecognizeCollapsed';
+
+        function toggleStyleRecognizeCollapse() {
+            const section = document.getElementById('styleRecognizeSection');
+            if (!section) return;
+            const collapsed = section.classList.toggle('is-collapsed');
+            try {
+                localStorage.setItem(STYLE_RECOGNIZE_COLLAPSE_KEY, collapsed ? '1' : '0');
+            } catch (e) { /* 隐私模式等场景下忽略持久化失败 */ }
+            syncStyleRecognizeCollapseState(section);
+        }
+
+        function syncStyleRecognizeCollapseState(section) {
+            const btn = document.getElementById('styleRecognizeCollapseBtn');
+            if (!btn) return;
+            const collapsed = section.classList.contains('is-collapsed');
+            btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+            btn.title = collapsed
+                ? (window.t ? window.t('style_recognize_expand') : '展开画风识别')
+                : (window.t ? window.t('style_recognize_collapse') : '收起画风识别');
+        }
+
+        function restoreStyleRecognizeCollapseState() {
+            const section = document.getElementById('styleRecognizeSection');
+            if (!section) return;
+            let collapsed = false;
+            try {
+                collapsed = localStorage.getItem(STYLE_RECOGNIZE_COLLAPSE_KEY) === '1';
+            } catch (e) { collapsed = false; }
+            section.classList.toggle('is-collapsed', collapsed);
+            syncStyleRecognizeCollapseState(section);
+        }
+
         // 开源/社区版显示「限时免费」角标；商业版（enterprise 等）不显示
         function updateStyleRecognizeEditionBadge() {
             const badge = document.getElementById('styleRecognizeFreeBadge');
@@ -5697,10 +6060,13 @@
         async function loadStyleModels() {
             const select = document.getElementById('style-model-select');
             if (!select) return;
+            // 切换识别模型即保存为用户 VL 偏好（赋值方式幂等，可重复绑定）
+            select.onchange = onStyleModelChange;
             styleModelsLoading = true;
             select.innerHTML = `<option value="">${window.t ? window.t('style_recognize_loading_models') : '加载模型中…'}</option>`;
             try {
-                const response = await fetch('/api/style-models', {
+                const qs = (typeof WORLD_ID !== 'undefined' && WORLD_ID) ? `?world_id=${encodeURIComponent(WORLD_ID)}` : '';
+                const response = await fetch(`/api/style-models${qs}`, {
                     headers: { 'Authorization': AUTH_TOKEN, 'X-User-Id': USER_ID }
                 });
                 const data = await response.json();
@@ -5759,8 +6125,17 @@
                         select.appendChild(optGroup);
                     });
 
-                    // 默认选中：火山引擎 doubao-seed-2-0-lite → 第一个可用
-                    const defaultOpt = preferredOption || firstOption;
+                    // 默认选中优先级：用户已存 VL 偏好 > VL_MODEL_PREFERRED_DEFAULT（须在列表中）
+                    // > 推荐⭐/preferred 匹配 > 第一个可用
+                    const savedModel = (data.saved_preference && data.saved_preference.model) ? String(data.saved_preference.model).toLowerCase() : '';
+                    const defaultVlModel = (data.vl_model_default || '').toLowerCase();
+                    const savedOption = (savedModel || defaultVlModel)
+                        ? Array.from(select.querySelectorAll('option')).find(opt => {
+                            const name = (opt.value || '').toLowerCase();
+                            return (savedModel && name === savedModel) || (!savedModel && name === defaultVlModel);
+                        }) || null
+                        : null;
+                    const defaultOpt = savedOption || preferredOption || firstOption;
                     if (defaultOpt) {
                         defaultOpt.selected = true;
                     }
@@ -5786,6 +6161,38 @@
             const hasModel = !!select.value && !!cachedStyleModels.length;
             const hasImage = !!(imgInput.value && imgInput.value.trim());
             btn.disabled = !(hasModel && hasImage);
+        }
+
+        // 切换识别模型：保存为用户 VL 偏好（画风识别与资产检查专家共用同一模型）
+        function onStyleModelChange() {
+            const select = document.getElementById('style-model-select');
+            if (!select || !select.value) return;
+            const opt = select.options[select.selectedIndex];
+            if (!opt) return;
+            saveStyleModelPreference({
+                model: select.value,
+                model_id: opt.dataset.modelId || null,
+                vendor_id: opt.dataset.vendorId || null
+            });
+        }
+
+        async function saveStyleModelPreference({ model, model_id, vendor_id }) {
+            if (typeof USER_ID === 'undefined' || typeof WORLD_ID === 'undefined' || !USER_ID || !WORLD_ID) return;
+            try {
+                await fetch('/api/style-models/preference', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': AUTH_TOKEN, 'X-User-Id': USER_ID },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        model,
+                        model_id: model_id ? parseInt(model_id, 10) : null,
+                        vendor_id: vendor_id ? parseInt(vendor_id, 10) : null
+                    })
+                });
+            } catch (e) {
+                console.warn('保存 VL 模型偏好失败（不影响本次识别）:', e);
+            }
         }
 
         // 监听模型下拉变化，刷新按钮状态
@@ -7572,25 +7979,27 @@
                 updateStatus(window.t ? window.t('status_saving_world') : '正在保存世界信息...');
                 const response = await fetch(`/api/worlds/${currentEditWorld.id}`, {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${AUTH_TOKEN}`,
+                        'X-User-Id': USER_ID
+                    },
                     body: JSON.stringify({
                         name: name,
                         description: description,
-                        story_type: storyType,
-                        user_id: USER_ID,
-                        auth_token: AUTH_TOKEN
+                        story_type: storyType
                     })
                 });
-                
-                const data = await response.json();
-                if (data.success) {
+
+                const data = await response.json().catch(() => ({}));
+                if (data.code === 0) {
                     showSuccess(window.t ? window.t('success_world_updated_detail', {name: name}) : `✓ 世界 "${name}" 更新成功！`);
                     closeEditWorldModal();
                     await loadUserWorlds();
                     await loadCurrentWorldName();
                     updateStatus(window.t ? window.t('status_world_updated') : '世界信息已更新');
                 } else {
-                    showError((window.t ? window.t('error_update_world_failed', {error: data.error || (window.t ? window.t('error_unknown') : '未知错误')}) : '更新世界失败: ' + (data.error || '未知错误')));
+                    showError((window.t ? window.t('error_update_world_failed', {error: data.message || (window.t ? window.t('error_unknown') : '未知错误')}) : '更新世界失败: ' + (data.message || '未知错误')));
                     updateStatus(window.t ? window.t('status_update_failed') : '更新失败');
                 }
             } catch (error) {

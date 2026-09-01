@@ -722,6 +722,12 @@ async def step_generate_segment(
                 character_contract=character_contract,
                 strict_json=True,
                 user_id=task.user_id,
+                enable_character_appearance_changes=bool(
+                    cfg.get(
+                        "enable_character_variant",
+                        ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
+                    )
+                ),
             ),
             timeout=ScriptSplitConstants.LLM_CALL_TIMEOUT_SECONDS,
         )
@@ -1416,6 +1422,13 @@ async def step_merge(task: ScriptSplitTask) -> None:
         merged, cfg.get("max_group_duration", 15))
 
     merged = renumber_global(merged)
+    # 角色形象变化：清洗 LLM 变化点标记并向前传播持续状态（必须在
+    # reorganize/renumber 之后按最终镜头顺序执行，见
+    # docs/storyboard/script_split_character_variant.md）
+    from services.script_split_character_variant_service import (
+        sanitize_and_propagate_appearance_changes,
+    )
+    merged = sanitize_and_propagate_appearance_changes(merged)
     # 回填 shot 级场景字段（db_location_id/location_name/db_location_pic）。
     # 视频工作流来源不经过发布 bootstrap，前端只能依赖这些字段匹配世界场景。
     merged = _enrich_shot_location_fields(merged, db_locations)
@@ -1523,6 +1536,45 @@ async def step_publish(task: ScriptSplitTask) -> None:
             "故事板已存在分镜，不能重复生成",
         )
 
+    # 角色形象变化变体生成（幂等、分 tick 推进，见
+    # docs/storyboard/script_split_character_variant.md）。未全部终态时保存
+    # final_result（含 plan 检查点）并保持 publishing 让出 tick，下个 worker
+    # tick 从 plan 恢复继续轮询/提交；单变体失败/超时降级用主参考图。
+    if bool(cfg.get(
+        "enable_character_variant",
+        ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
+    )):
+        from services.script_split_character_variant_service import (
+            SUMMARY_METADATA_KEY,
+            build_character_variant_summary,
+            ensure_character_variants,
+        )
+        variant_summary = await asyncio.to_thread(
+            ensure_character_variants, task, final_result,
+        )
+        if not variant_summary.get("all_settled"):
+            ScriptSplitTaskModel.save_field(task.id, final_result_json=final_result)
+            ScriptSplitTaskModel.update_status(
+                task.id, ScriptSplitConstants.STATUS_PUBLISHING,
+                phase=ScriptSplitConstants.PHASE_CHARACTER_VARIANT,
+            )
+            logger.info(
+                "task %s 角色形象变体生成进行中: %s", task.id, variant_summary,
+            )
+            return
+        if int(variant_summary.get("total") or 0) > 0:
+            final_result.setdefault("metadata", {})[SUMMARY_METADATA_KEY] = (
+                build_character_variant_summary(final_result)
+            )
+            ScriptSplitTaskModel.save_field(task.id, final_result_json=final_result)
+            logger.info(
+                "task %s 角色形象变体生成完成: ready=%s failed=%s skipped=%s",
+                task.id,
+                variant_summary.get("ready"),
+                variant_summary.get("failed"),
+                variant_summary.get("skipped"),
+            )
+
     # 发布前最后一道独立结构硬门禁。必须位于 bootstrap/create_scenes 之前，
     # 防止历史检查点、恢复流程或并发修改绕过合并级校验并产生非法场景资产。
     publish_db_locations = await _load_current_db_locations(cfg)
@@ -1559,8 +1611,12 @@ async def step_publish(task: ScriptSplitTask) -> None:
                 str(task.auth_token or ""),
             )
 
-    # 2. 构造 scenes_payload
+    # 2. 构造 scenes_payload（携带角色形象变化变体选择，使分镜生图直接
+    #     使用新形象：reference_selections → select_reference_variant_for_asset）
     from api.storyboard import build_storyboard_scenes_from_parsed_script
+    from services.script_split_character_variant_service import (
+        collect_ready_variant_map,
+    )
     style = ""
     try:
         sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
@@ -1569,7 +1625,9 @@ async def step_publish(task: ScriptSplitTask) -> None:
     except Exception:
         pass
     scenes_payload = await asyncio.to_thread(
-        build_storyboard_scenes_from_parsed_script, final_result, style
+        build_storyboard_scenes_from_parsed_script,
+        final_result, style,
+        character_variants=collect_ready_variant_map(final_result),
     )
 
     # 3. 幂等创建分镜（带 script_split_task_id + source_shot_key）

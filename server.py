@@ -79,7 +79,12 @@ from config.constant import (
     BrandingConstants,
     SMART_INSERT_SHOT_TIMEOUT,
     SMART_INSERT_SHOT_DEFAULT_MODEL,
+    ScriptSplitConstants,
+    DS_ENV_FIT_DEFAULT_GROUND,
+    DS_ENV_FIT_DEFAULT_HORIZON,
+    DS_ENV_FIT_DEFAULT_SCALE,
 )
+from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
     get_upload_dir, get_upload_subdir, get_upload_temp_dir,
@@ -117,6 +122,7 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceError,
     MediaGenerationPreferenceService,
 )
+from services.director_stage_env_fit import fit_environment_from_image
 from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
@@ -483,7 +489,11 @@ from api.storyboard import router as storyboard_router
 app.include_router(storyboard_router)
 
 # 剧本分段拆分任务 API（见 docs/script/script_parser_incremental_split_design.md §13）
-from api.script_split import router as script_split_router
+from api.script_split import (
+    router as script_split_router,
+    create_split_task,
+    ScriptSplitPreconditionError,
+)
 app.include_router(script_split_router)
 
 # 导入并注册测试路由（临时测试，完成后移除）
@@ -5329,6 +5339,47 @@ class VideoWorkflowUpdateRequest(BaseModel):
     workflow_ratio: Optional[str] = None
 
 
+class VideoWorkflowEnvironmentFitRequest(BaseModel):
+    image_url: str
+    horizon_y: float = DS_ENV_FIT_DEFAULT_HORIZON
+    scene_scale: float = DS_ENV_FIT_DEFAULT_SCALE
+    ground_y: float = DS_ENV_FIT_DEFAULT_GROUND
+    model: Optional[str] = None
+    vendor_id: Optional[int] = None
+    model_id: Optional[int] = None
+
+
+@app.post('/api/video-workflow/fit-environment')
+@require_permission("video_workflow:update")
+async def fit_video_workflow_environment(
+    request: Request,
+    body: VideoWorkflowEnvironmentFitRequest,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """用 VL 模型估计导演台环境参数，仅允许读取登录用户的工作流预览图。"""
+    resolved_user_id, auth_error = await resolve_authorization_user_id(auth_token)
+    if auth_error:
+        return auth_error
+    if header_user_id is not None and header_user_id != resolved_user_id:
+        return JSONResponse(
+            status_code=403,
+            content={"success": False, "error": "X-User-Id 与登录用户不一致"},
+        )
+
+    return await fit_environment_from_image(
+        image_url=body.image_url,
+        user_id=resolved_user_id,
+        auth_token=normalize_authorization_token(auth_token),
+        model=body.model,
+        vendor_id=body.vendor_id,
+        model_id=body.model_id,
+        horizon_y=body.horizon_y,
+        scene_scale=body.scene_scale,
+        ground_y=body.ground_y,
+    )
+
+
 @app.get('/api/video-workflow/list')
 @require_permission("video_workflow:list")
 async def get_video_workflow_list(
@@ -5625,6 +5676,64 @@ async def upload_workflow_asset(
             status_code=500,
             content={"code": -1, "message": f"上传失败: {str(e)}"}
         )
+
+
+class DescribeImageRequest(BaseModel):
+    """VL 识图生成场景描述（360 全景节点连入无提示词图片时自动调用）"""
+    image_url: str
+    model: Optional[str] = None
+    model_id: Optional[int] = None
+    vendor_id: Optional[int] = None
+
+
+@app.post('/api/video-workflow/describe-image')
+@require_permission("world:view_files")
+async def describe_workflow_image(
+    request: Request,
+    body: DescribeImageRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    任意图片 → VL 模型生成场景描述提示词
+
+    360 全景节点连入图片节点且图片无提示词时，前端自动调用本接口识图，
+    生成的描述填入全景节点提示词（不覆盖用户已输入内容）。
+    走 LLM token 计费（call_api 内部上报）。
+    """
+    from services.image_describe import describe_image
+
+    try:
+        token = (auth_token or '').strip()
+        if token.lower().startswith('bearer '):
+            token = token[7:].strip()
+        if not body.image_url or not body.image_url.strip():
+            return JSONResponse({'success': False, 'error': '缺少图片 url'}, status_code=400)
+
+        result = await describe_image(
+            image_url=body.image_url.strip(),
+            user_id=user_id,
+            auth_token=token or None,
+            model=body.model,
+            model_id=body.model_id,
+            vendor_id=body.vendor_id,
+        )
+        if not result.get('success'):
+            status_code = 504 if '超时' in str(result.get('error') or '') else 400
+            return JSONResponse({
+                'success': False,
+                'error': result.get('error') or '识图生成描述失败',
+            }, status_code=status_code)
+        return JSONResponse({
+            'success': True,
+            'description': result.get('description'),
+            'model': result.get('model'),
+            'vendor_id': result.get('vendor_id'),
+        })
+    except Exception as e:
+        logger.error(f"VL 图片描述失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse({'success': False, 'error': f'识图生成描述失败: {str(e)}'}, status_code=500)
 
 
 @app.post('/api/video-workflow/extract-frame')
@@ -6398,8 +6507,6 @@ async def parse_script(
         # 见 docs/script/script_parser_incremental_split_design.md §10 §13.1。
         # db_location/db_character 后处理在 worker 的 merge 阶段完成
         #（_enrich_shot_location_fields 回填 shot 级场景字段，见设计文档 §9）。
-        from api.script_split import create_split_task, ScriptSplitPreconditionError
-        from config.constant import ScriptSplitConstants
         request_config = {
             "max_group_duration": max_group_duration,
             "world_id": world_id,
@@ -6418,6 +6525,12 @@ async def parse_script(
             "sequence_mode": sequence_mode,
             "enable_qc": enable_qc,
             "qc_max_rounds": qc_max_rounds,
+            # 角色形象变化：拆分时输出形象变化标记（video_workflow 来源不做
+            # 发布期变体生成，标记保留在结果中供前端节点消费）
+            "enable_character_variant": _json_bool(
+                body.get('enable_character_variant'),
+                ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
+            ),
         }
         task_id, is_new = await create_split_task(
             user_id=user_id,

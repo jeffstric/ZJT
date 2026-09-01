@@ -23,6 +23,8 @@
 
 剧本创作无偏好时的硬兜底是 `config/constant.py` 的 `DEFAULT_TEXT_TO_IMAGE_TASK_ID`（GPT Image 2，`task_id=26`），不再回落到 nano-banana-Pro。
 
+2026-08 起，`GPT_IMAGE_2_EDIT`（task_id=26）的 `sort_order` 调为 5，成为 IMAGE_EDIT / TEXT_TO_IMAGE 类目列表首项（`config/unified_config.py`），各端"取列表第一项"的默认图片编辑/文生图模型随之变为 GPT Image 2；故事板页图片编辑槽位的 localStorage 记忆键同步升级为 `storyboard_lastSelectedImageEditTaskId_v2`，旧记忆一次性作废。
+
 ## 默认解析
 
 ```text

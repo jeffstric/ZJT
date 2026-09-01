@@ -122,7 +122,8 @@
     "asset-readiness-checker": {
       "expert_type": "script",
       "skills": ["asset-readiness-checker"],
-      "model": "gemini/gemini-3-flash-preview",
+      "model": "deepseek-v4-flash-vision-exp",
+      "use_config_model": true,
       "allowed_tools": [
         "read_world",
         "read_character_json",
@@ -131,6 +132,8 @@
         "list_location_jsons",
         "read_prop_json",
         "list_prop_jsons",
+        "fetch_image_as_base64",
+        "delete_asset_reference_image",
         "ask_user"
       ],
       "summary_only": true

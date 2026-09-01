@@ -185,26 +185,29 @@ function findNearestConnectablePort(mouseX, mouseY, fromType, proximity) {
  */
 function connectToRegisteredImagePort(fromNode, i2vPort) {
   if (!fromNode || !i2vPort) return false;
+  var portCfg = (i2vPort.portCfg) || {};
   var imageUrl = typeof getNodeImageUrl === 'function'
     ? getNodeImageUrl(fromNode)
     : ((fromNode.data && (fromNode.data.url || fromNode.data.reference_image)) || '');
-  if (!imageUrl) {
+  // allowMissingImage：无参考图也允许连接（如全景参考口——场景节点可仅提供描述）
+  if (!imageUrl && !portCfg.allowMissingImage) {
     if (typeof showToast === 'function') {
       showToast(window.t ? window.t('asset_no_reference_image') : '该节点没有参考图，无法连接', 'error');
     }
     return false;
   }
 
-  var connArray = (i2vPort.portCfg && i2vPort.portCfg.connectionType && state[i2vPort.portCfg.connectionType])
-    ? state[i2vPort.portCfg.connectionType]
-    : state.imageConnections;
+  var connType = (portCfg.connectionType && state[portCfg.connectionType])
+    ? portCfg.connectionType
+    : 'imageConnections';
+  var connArray = state[connType];
 
   var existsSame = connArray.some(function(c) {
     return c.from === fromNode.id && c.to === i2vPort.nodeId && c.portType === i2vPort.portType;
   });
   if (existsSame) return false;
 
-  var allowMultiple = i2vPort.portCfg && i2vPort.portCfg.allowMultiple;
+  var allowMultiple = portCfg.allowMultiple;
   if (!allowMultiple) {
     var occupied = connArray.some(function(c) {
       return c.to === i2vPort.nodeId && c.portType === i2vPort.portType;
@@ -212,16 +215,25 @@ function connectToRegisteredImagePort(fromNode, i2vPort) {
     if (occupied) return false;
   }
 
+  // 连接 id 计数器必须与连接数组匹配（同 bindInputPortEvents 的映射）：
+  // 混用计数器会导致同一数组内 id 重复，removeConnection 按 id 删线时删错
+  var connIdKey = 'nextImgConnId';
+  if (connType === 'connections') connIdKey = 'nextConnId';
+  else if (connType === 'videoConnections') connIdKey = 'nextVideoConnId';
+  else if (connType === 'referenceConnections') connIdKey = 'nextReferenceConnId';
+  else if (connType === 'firstFrameConnections') connIdKey = 'nextFirstFrameConnId';
+  else if (connType === 'audioConnections') connIdKey = 'nextAudioConnId';
+
   connArray.push({
-    id: state.nextImgConnId++,
+    id: state[connIdKey]++,
     from: fromNode.id,
     to: i2vPort.nodeId,
     portType: i2vPort.portType
   });
 
   var tn = i2vPort.node;
-  if (i2vPort.portCfg && typeof i2vPort.portCfg.onConnect === 'function') {
-    i2vPort.portCfg.onConnect(fromNode, tn);
+  if (typeof portCfg.onConnect === 'function') {
+    portCfg.onConnect(fromNode, tn);
   } else if (tn && tn.data) {
     if (i2vPort.portType === 'start') {
       tn.data.startUrl = imageUrl;
@@ -231,11 +243,17 @@ function connectToRegisteredImagePort(fromNode, i2vPort) {
       tn.data.endPreview = imageUrl;
     } else if (i2vPort.portType === 'ref-image') {
       if (!tn.data.referenceUrls) tn.data.referenceUrls = [];
-      if (tn.data.referenceUrls.indexOf(imageUrl) === -1) tn.data.referenceUrls.push(imageUrl);
+      if (imageUrl && tn.data.referenceUrls.indexOf(imageUrl) === -1) tn.data.referenceUrls.push(imageUrl);
     }
   }
 
-  if (typeof renderImageConnections === 'function') renderImageConnections();
+  // 普通连接（connections）由 renderAllConnections 统一渲染
+  if (connType === 'connections') {
+    if (typeof renderAllConnections === 'function') renderAllConnections();
+    if (typeof renderMinimap === 'function') renderMinimap();
+  } else if (typeof renderImageConnections === 'function') {
+    renderImageConnections();
+  }
 
   var targetEl = canvasEl.querySelector('.node[data-node-id="' + tn.id + '"]');
   if (i2vPort.portType === 'start' && targetEl && typeof targetEl._updateStartFrame === 'function') {

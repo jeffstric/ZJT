@@ -155,6 +155,10 @@ def _phase_message(status, phase, current_seg, total_seg) -> str:
     if status == ScriptSplitConstants.STATUS_VALIDATING:
         return '正在全局校验'
     if status == ScriptSplitConstants.STATUS_PUBLISHING:
+        if phase == ScriptSplitConstants.PHASE_CHARACTER_VARIANT:
+            return '正在生成角色形象变化参考图'
+        if phase == 'voiceover_bootstrap':
+            return '正在生成对白配音'
         return '正在发布结果'
     if status == ScriptSplitConstants.STATUS_COMPLETED:
         return '拆分完成'

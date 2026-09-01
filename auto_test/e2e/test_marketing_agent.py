@@ -83,8 +83,10 @@ def _navigate_and_wait(page, base_url, path="/marketing-agent"):
         page.reload(wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
 
+    # 30s：全量套件长跑时浏览器负载高（headless=False + slow_mo=500 + 多上下文），
+    # 页面渲染可能超过 15s（曾造成 new_chat/switch_session 连锁超时 flake）
     page.locator(".sidebar, main.main-content").first.wait_for(
-        state="attached", timeout=15000
+        state="attached", timeout=30000
     )
 
 
@@ -464,17 +466,14 @@ def test_marketing_agent_timeout_verification_does_not_block_input_after_session
 
 @pytest.mark.p0
 @pytest.mark.marketing_agent
-def test_marketing_agent_send_message(browser, base_url, e2e_config):
-    """ma_010 - 发送消息后用户消息出现在聊天区域。"""
-    from conftest import MarketingAgentPage, refresh_login
+def test_marketing_agent_send_message(browser, base_url, auth_token, user_id):
+    """ma_010 - 发送消息后用户消息出现在聊天区域。
 
-    # 重新登录获取新 token
-    login_data = refresh_login(e2e_config, base_url)
-    if not login_data:
-        pytest.skip("登录失败，跳过测试")
-
-    auth_token = login_data["token"]
-    user_id = login_data["user_id"]
+    复用 session 级 auth_token/user_id，不在此重新登录：登录接口会删除该用户
+    所有旧 token，一旦 refresh_login 会使后续依赖 page/browser_context fixture
+    （注入 session token）的用例全部 401 跳登录页（见 _login_data 注释"必须只登录一次"）。
+    """
+    from conftest import MarketingAgentPage
 
     # 创建新的浏览器上下文
     context = browser.new_context(
@@ -753,7 +752,13 @@ def test_marketing_agent_computing_power_display(page, base_url):
 @pytest.mark.p1
 @pytest.mark.marketing_agent
 def test_marketing_agent_feedback_modal(marketing_agent_page, page, base_url):
-    """ma_020 - 点击反馈按钮打开联系弹窗。"""
+    """ma_020 - 点击反馈按钮打开联系弹窗。
+
+    注：marketing_agent.css 在视口 ≤1389px 时隐藏 .feedback-fab-container（响应式设计），
+    e2e 默认视口 1280px 会命中该规则。本用例将视口临时放大到 1440px，
+    让反馈按钮按产品预期显示后再验证弹窗。
+    """
+    page.set_viewport_size({"width": 1440, "height": 900})
     _navigate_and_wait(page, base_url)
 
     # 点击反馈按钮
@@ -776,20 +781,19 @@ def test_marketing_agent_feedback_modal(marketing_agent_page, page, base_url):
 
 @pytest.mark.p1
 @pytest.mark.marketing_agent
-def test_marketing_agent_title_auto_update(browser, base_url, e2e_config):
-    """ma_019 - 发送第一条消息后会话标题自动更新。"""
-    from conftest import MarketingAgentPage, refresh_login
+def test_marketing_agent_title_auto_update(browser, base_url, auth_token, user_id):
+    """ma_019 - 发送第一条消息后会话标题自动更新。
 
-    login_data = refresh_login(e2e_config, base_url)
-    if not login_data:
-        pytest.skip("登录失败，跳过测试")
+    复用 session 级 token，不重新登录（登录会删旧 token，破坏后续 page fixture 用例）。
+    """
+    from conftest import MarketingAgentPage
 
     context = browser.new_context(
         viewport={"width": 1280, "height": 720}, locale="zh-CN"
     )
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{login_data["token"]}');
-        localStorage.setItem('user_id', '{login_data["user_id"]}');
+        localStorage.setItem('auth_token', '{auth_token}');
+        localStorage.setItem('user_id', '{user_id}');
     """)
     p = context.new_page()
     _mock_computing_power(p)
@@ -798,7 +802,7 @@ def test_marketing_agent_title_auto_update(browser, base_url, e2e_config):
         p.goto(f"{base_url}/marketing-agent", wait_until="domcontentloaded")
         p.wait_for_timeout(3000)
         p.locator(".sidebar, main.main-content").first.wait_for(
-            state="attached", timeout=15000
+            state="attached", timeout=30000
         )
 
         marketing_agent_page = MarketingAgentPage(p, base_url)
@@ -832,20 +836,19 @@ def test_marketing_agent_title_auto_update(browser, base_url, e2e_config):
 
 @pytest.mark.p2
 @pytest.mark.marketing_agent
-def test_marketing_agent_message_scroll(browser, base_url, e2e_config):
-    """ma_011 - 消息较多时聊天区域可滚动。"""
-    from conftest import MarketingAgentPage, refresh_login
+def test_marketing_agent_message_scroll(browser, base_url, auth_token, user_id):
+    """ma_011 - 消息较多时聊天区域可滚动。
 
-    login_data = refresh_login(e2e_config, base_url)
-    if not login_data:
-        pytest.skip("登录失败，跳过测试")
+    复用 session 级 token，不重新登录（登录会删旧 token，破坏后续 page fixture 用例）。
+    """
+    from conftest import MarketingAgentPage
 
     context = browser.new_context(
         viewport={"width": 1280, "height": 720}, locale="zh-CN"
     )
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{login_data["token"]}');
-        localStorage.setItem('user_id', '{login_data["user_id"]}');
+        localStorage.setItem('auth_token', '{auth_token}');
+        localStorage.setItem('user_id', '{user_id}');
     """)
     p = context.new_page()
     _mock_computing_power(p)
@@ -854,7 +857,7 @@ def test_marketing_agent_message_scroll(browser, base_url, e2e_config):
         p.goto(f"{base_url}/marketing-agent", wait_until="domcontentloaded")
         p.wait_for_timeout(3000)
         p.locator(".sidebar, main.main-content").first.wait_for(
-            state="attached", timeout=15000
+            state="attached", timeout=30000
         )
 
         marketing_agent_page = MarketingAgentPage(p, base_url)

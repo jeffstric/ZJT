@@ -224,46 +224,70 @@ def test_draw_count_select(editor_page, base_url, test_workflow):
 @pytest.mark.p0
 @pytest.mark.node_operations
 def test_image_to_video_ratio_sora(editor_page, base_url, test_workflow):
-    """node_009_3 - 验证 sora 模型仅显示 16:9 和 9:16 两种比例。"""
+    """node_009_3 - 验证 sora 模型仅显示 16:9 和 9:16 两种比例。
+
+    注：sora2 图生视频已下线（unified_config 中 sora2_image_to_video hidden=True），
+    前端 getModelOptionsForCategory 会过滤 hidden 任务，模型下拉中不再有 sora 选项。
+    此时本用例无有效被测对象，优雅跳过；若 sora 重新上架则恢复正常断言。
+    """
     wf_id = test_workflow["id"]
     page = editor_page
     navigate_to_editor(page, base_url, wf_id)
 
     add_image_to_video_node(page)
 
-    # 通过 JS 设置模型为 sora 并获取比例选项
-    ratio_options = page.evaluate("""() => {
+    # 检测 sora 选项是否仍在上架（sora 的 short_key 为 'sora2'，label 形如 "Sora2 图生视频 (xx算力)"）
+    sora_available = page.evaluate("""() => {
         const node = document.querySelector('.node.selected');
-        if (!node) return [];
+        if (!node) return false;
         const modelSel = node.querySelector('.video-model-select');
-        if (modelSel) {
-            // 尝试设置为 sora
-            for (let i = 0; i < modelSel.options.length; i++) {
-                if (modelSel.options[i].value === 'sora' || modelSel.options[i].textContent.includes('sora')) {
-                    modelSel.selectedIndex = i;
-                    modelSel.dispatchEvent(new Event('change', { bubbles: true }));
-                    break;
-                }
+        if (!modelSel) return false;
+        return Array.from(modelSel.options).some(o => {
+            const val = (o.value || '').toLowerCase();
+            const txt = (o.textContent || '').toLowerCase();
+            return val === 'sora' || val === 'sora2' || txt.includes('sora');
+        });
+    }""")
+    if not sora_available:
+        pytest.skip("sora2 图生视频已下线（hidden），模型下拉中无 sora 选项，无有效被测对象")
+
+    # 选择 sora 并触发 change，使比例下拉按 sora 的 supported_ratios 刷新
+    page.evaluate("""() => {
+        const node = document.querySelector('.node.selected');
+        const modelSel = node && node.querySelector('.video-model-select');
+        if (!modelSel) return;
+        for (let i = 0; i < modelSel.options.length; i++) {
+            const val = (modelSel.options[i].value || '').toLowerCase();
+            const txt = (modelSel.options[i].textContent || '').toLowerCase();
+            if (val === 'sora' || val === 'sora2' || txt.includes('sora')) {
+                modelSel.selectedIndex = i;
+                modelSel.dispatchEvent(new Event('change', { bubbles: true }));
+                break;
             }
         }
-        const ratioSel = node.querySelector('.ratio-select');
-        if (!ratioSel) return [];
-        return Array.from(ratioSel.options).map(o => o.textContent.trim());
     }""")
     page.wait_for_timeout(500)
 
-    if ratio_options:
-        valid_ratios = {"16:9", "9:16"}
-        for ratio in ratio_options:
-            # 提取比例部分（去掉 "(竖屏)" 等后缀）
-            cleaned = ratio.replace("\u00a0", " ").strip()
-            ratio_part = cleaned.split("(")[0].strip().split("（")[0].strip()
-            assert ratio_part in valid_ratios, (
-                f"sora 模型出现了非预期的比例选项: {cleaned}，仅允许: {valid_ratios}"
-            )
-        assert len(ratio_options) >= 2, (
-            f"sora 模型比例选项不足，期望至少 2 个，实际: {ratio_options}"
+    # 选择完成后再读取比例选项（比例刷新为异步）
+    ratio_options = page.evaluate("""() => {
+        const node = document.querySelector('.node.selected');
+        const ratioSel = node && node.querySelector('.ratio-select');
+        if (!ratioSel) return [];
+        return Array.from(ratioSel.options).map(o => o.textContent.trim());
+    }""")
+
+    assert ratio_options, "已选择 sora 模型，但未加载比例选项"
+    valid_ratios = {"16:9", "9:16"}
+    for ratio in ratio_options:
+        # 提取比例部分（去掉 "(竖屏)" 等后缀）
+        cleaned = ratio.replace("\u00a0", " ").strip()
+        ratio_part = cleaned.split("(")[0].strip().split("（")[0].strip()
+        assert ratio_part in valid_ratios, (
+            f"sora 模型出现了非预期的比例选项: {cleaned}，仅允许: {valid_ratios}"
         )
+    assert len(ratio_options) >= 2, (
+        f"sora 模型比例选项不足，期望至少 2 个，实际: {ratio_options}"
+    )
 
 
 @pytest.mark.p0

@@ -370,3 +370,72 @@ def test_storyboard_frontend_polls_auto_dialogue_audio_after_split():
     assert "pollSceneTaskStatus(sceneId);" in events_js
     assert "条配音任务" in events_js
     assert events_js.index("loadStoryboardData(response);") < events_js.index("handleAutoDialogueAudioPolling(response);")
+
+
+def _variant_parsed():
+    return {
+        "characters": [
+            {"id": "char_001", "name": "小林_Xiaolin", "character_db_id": 17},
+            {"id": "char_002", "name": "阿珍_Azhen", "character_db_id": 28},
+        ],
+        "locations": [{"id": "loc_001", "name": "宴会厅", "location_db_id": 23}],
+        "shot_groups": [{
+            "group_id": "grp_001",
+            "group_name": "宴会",
+            "shots": [
+                {
+                    "shot_id": "s001",
+                    "shot_number": 1,
+                    "duration": 5,
+                    "location_id": "loc_001",
+                    "camera_angle": "平视",
+                    "shot_type": "中景",
+                    "description": "【【小林_Xiaolin】】步入宴会厅",
+                    "characters_present": ["char_001"],
+                    # 传播产物：小林已换晚礼服 + 阿珍战斗形态未生成（不在 ready 映射）
+                    "_effective_appearance_changes": [
+                        {"character_id": "char_001", "label": "晚礼服", "description": ""},
+                        {"character_id": "char_002", "label": "战斗形态", "description": ""},
+                    ],
+                },
+                {
+                    "shot_id": "s002",
+                    "shot_number": 2,
+                    "duration": 5,
+                    "location_id": "loc_001",
+                    "camera_angle": "平视",
+                    "shot_type": "近景",
+                    "description": "【【小林_Xiaolin】】落座",
+                    "characters_present": ["char_001"],
+                },
+            ],
+        }],
+    }
+
+
+def test_build_scenes_injects_ready_character_variant_selections():
+    variants = {"17": {"晚礼服": "http://img/evening.png"}}
+    scenes = storyboard_api.build_storyboard_scenes_from_parsed_script(
+        _variant_parsed(), style="", character_variants=variants,
+    )
+
+    # s001：小林晚礼服已生成 → 写入 reference_selections（键为 db_id）
+    assert scenes[0]["prompt"]["reference_selections"] == {
+        "schema_version": 1,
+        "characters": {"17": {"url": "http://img/evening.png", "label": "晚礼服"}},
+    }
+    # s002：无形象变化 → 不写
+    assert "reference_selections" not in scenes[1]["prompt"]
+
+
+def test_build_scenes_without_variants_keeps_prompt_unchanged():
+    scenes = storyboard_api.build_storyboard_scenes_from_parsed_script(
+        _variant_parsed(), style="",
+    )
+    assert all("reference_selections" not in scene["prompt"] for scene in scenes)
+
+    # 传空映射同样不写
+    scenes = storyboard_api.build_storyboard_scenes_from_parsed_script(
+        _variant_parsed(), style="", character_variants={},
+    )
+    assert all("reference_selections" not in scene["prompt"] for scene in scenes)

@@ -123,6 +123,7 @@ class VideoResolution:
     """
     _CONSTANT_GROUP = True
     _LABELS = {
+        'P540': '540P',
         'P480': '480P',
         'P720': '720P',
         'P1080': '1080P',
@@ -130,13 +131,14 @@ class VideoResolution:
     }
 
     # 标准值（大写）
+    P540 = '540P'
     P480 = '480P'
     P720 = '720P'
     P1080 = '1080P'
     P4K = '4K'
 
     # 全部标准值（按档位升序）
-    ALL = [P480, P720, P1080, P4K]
+    ALL = [P540, P480, P720, P1080, P4K]
 
     # Seedance 火山驱动下发值（小写）
     SEEDANCE_DRIVER_VALUES = {
@@ -150,6 +152,20 @@ class VideoResolution:
     HAPPY_HORSE_DRIVER_VALUES = {
         P720: P720,
         P1080: P1080,
+    }
+
+    # Wan3.0 阿里云驱动下发值（直接等于标准值，支持 480P/720P/1080P）
+    WAN3_DRIVER_VALUES = {
+        P480: P480,
+        P720: P720,
+        P1080: P1080,
+    }
+
+    # Vidu Q3 官方驱动下发值（小写，支持 540P/720P/1080P）
+    VIDU_Q3_DRIVER_VALUES = {
+        P540: '540p',
+        P720: '720p',
+        P1080: '1080p',
     }
 
     # MiniMax H3 RunningHub 驱动下发值（megapixels：480P=0.4, 720P=0.9）
@@ -1257,6 +1273,14 @@ class DriverImplementation:
     VIDU_DEFAULT = 'vidu_default'
     VIDU_Q2 = 'vidu_q2'
 
+    # Vidu Q3（turbo / pro，i2v / r2v / t2v）
+    VIDU_Q3_I2V_TURBO_V1 = 'vidu_q3_i2v_turbo_v1'
+    VIDU_Q3_I2V_PRO_V1 = 'vidu_q3_i2v_pro_v1'
+    VIDU_Q3_R2V_TURBO_V1 = 'vidu_q3_r2v_turbo_v1'
+    VIDU_Q3_R2V_PRO_V1 = 'vidu_q3_r2v_pro_v1'
+    VIDU_Q3_T2V_TURBO_V1 = 'vidu_q3_t2v_turbo_v1'
+    VIDU_Q3_T2V_PRO_V1 = 'vidu_q3_t2v_pro_v1'
+
     # Seedream 5.0
     SEEDREAM5_VOLCENGINE_V1 = 'seedream5_volcengine_v1'
 
@@ -1310,6 +1334,14 @@ class DriverImplementation:
     HAPPY_HORSE_DASHSCOPE_V1 = 'happy_horse_dashscope_v1'
     HAPPY_HORSE_DASHSCOPE_R2V_V1 = 'happy_horse_dashscope_r2v_v1'
     HAPPY_HORSE_DASHSCOPE_T2V_V1 = 'happy_horse_dashscope_t2v_v1'
+
+    # Wan3.0（标准版 wan3.0-video / 高速版 wan3.0-video-prime）
+    WAN3_VIDEO_DASHSCOPE_V1 = 'wan3_video_dashscope_v1'
+    WAN3_VIDEO_DASHSCOPE_R2V_V1 = 'wan3_video_dashscope_r2v_v1'
+    WAN3_VIDEO_DASHSCOPE_T2V_V1 = 'wan3_video_dashscope_t2v_v1'
+    WAN3_VIDEO_PRIME_DASHSCOPE_V1 = 'wan3_video_prime_dashscope_v1'
+    WAN3_VIDEO_PRIME_DASHSCOPE_R2V_V1 = 'wan3_video_prime_dashscope_r2v_v1'
+    WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1 = 'wan3_video_prime_dashscope_t2v_v1'
 
 
 # ============ 驱动实现 ID 常量（用于数据库存储） ============
@@ -1405,6 +1437,22 @@ class DriverImplementationId:
     # Grok huimengi 网关
     GROK_HUIMENGI_V1 = 70
 
+    # Wan3.0（标准版 / 高速版，i2v / r2v / t2v）
+    WAN3_VIDEO_DASHSCOPE_V1 = 72
+    WAN3_VIDEO_DASHSCOPE_R2V_V1 = 73
+    WAN3_VIDEO_DASHSCOPE_T2V_V1 = 74
+    WAN3_VIDEO_PRIME_DASHSCOPE_V1 = 75
+    WAN3_VIDEO_PRIME_DASHSCOPE_R2V_V1 = 76
+    WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1 = 77
+
+    # Vidu Q3（turbo / pro，i2v / r2v / t2v，不同实现不可共用 ID）
+    VIDU_Q3_I2V_TURBO_V1 = 78
+    VIDU_Q3_I2V_PRO_V1 = 79
+    VIDU_Q3_R2V_TURBO_V1 = 80
+    VIDU_Q3_R2V_PRO_V1 = 81
+    VIDU_Q3_T2V_TURBO_V1 = 82
+    VIDU_Q3_T2V_PRO_V1 = 83
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1478,6 +1526,18 @@ IMPLEMENTATION_TO_ID = {
     'minimax_h3_turbo_runninghub_v1': DriverImplementationId.MINIMAX_H3_TURBO_RUNNINGHUB_V1,
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
+    'wan3_video_dashscope_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_V1,
+    'wan3_video_dashscope_r2v_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_R2V_V1,
+    'wan3_video_dashscope_t2v_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_T2V_V1,
+    'wan3_video_prime_dashscope_v1': DriverImplementationId.WAN3_VIDEO_PRIME_DASHSCOPE_V1,
+    'wan3_video_prime_dashscope_r2v_v1': DriverImplementationId.WAN3_VIDEO_PRIME_DASHSCOPE_R2V_V1,
+    'wan3_video_prime_dashscope_t2v_v1': DriverImplementationId.WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1,
+    'vidu_q3_i2v_turbo_v1': DriverImplementationId.VIDU_Q3_I2V_TURBO_V1,
+    'vidu_q3_i2v_pro_v1': DriverImplementationId.VIDU_Q3_I2V_PRO_V1,
+    'vidu_q3_r2v_turbo_v1': DriverImplementationId.VIDU_Q3_R2V_TURBO_V1,
+    'vidu_q3_r2v_pro_v1': DriverImplementationId.VIDU_Q3_R2V_PRO_V1,
+    'vidu_q3_t2v_turbo_v1': DriverImplementationId.VIDU_Q3_T2V_TURBO_V1,
+    'vidu_q3_t2v_pro_v1': DriverImplementationId.VIDU_Q3_T2V_PRO_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1554,6 +1614,9 @@ class DriverKey:
     # Vidu 相关
     VIDU_IMAGE_TO_VIDEO = 'vidu_image_to_video'
     VIDU_Q2_IMAGE_TO_VIDEO = 'vidu_q2_image_to_video'
+    VIDU_Q3_IMAGE_TO_VIDEO = 'vidu_q3_image_to_video'
+    VIDU_Q3_REFERENCE_TO_VIDEO = 'vidu_q3_reference_to_video'
+    VIDU_Q3_TEXT_TO_VIDEO = 'vidu_q3_text_to_video'
 
     # 数字人
     DIGITAL_HUMAN = 'digital_human'
@@ -1588,6 +1651,15 @@ class DriverKey:
 
     # Happy Horse 文生视频
     HAPPY_HORSE_TEXT_TO_VIDEO = 'happy_horse_text_to_video'
+
+    # Wan3.0 图生视频
+    WAN3_IMAGE_TO_VIDEO = 'wan3_image_to_video'
+
+    # Wan3.0 参考生视频
+    WAN3_REFERENCE_TO_VIDEO = 'wan3_reference_to_video'
+
+    # Wan3.0 文生视频
+    WAN3_TEXT_TO_VIDEO = 'wan3_text_to_video'
 
 
 # ============ 走 param_prepare 人脸遮盖预处理的 Seedance 任务 DriverKey 集合 ============
@@ -1733,6 +1805,12 @@ class TaskTypeId:
         'DIGITAL_HUMAN_MINIMAX_H3': '数字人 MiniMax H3',
         'MINIMAX_H3_IMAGE_TO_VIDEO': 'MiniMax H3 图生视频',
         'MINIMAX_H3_REFERENCE_TO_VIDEO': 'MiniMax H3 参考生视频',
+        'WAN3_IMAGE_TO_VIDEO': '万相3.0 图生视频',
+        'WAN3_REFERENCE_TO_VIDEO': '万相3.0 参考生视频',
+        'WAN3_TEXT_TO_VIDEO': '万相3.0 文生视频',
+        'VIDU_Q3_IMAGE_TO_VIDEO': 'Vidu Q3 图生视频',
+        'VIDU_Q3_REFERENCE_TO_VIDEO': 'Vidu Q3 参考生视频',
+        'VIDU_Q3_TEXT_TO_VIDEO': 'Vidu Q3 文生视频',
     }
     # 图片编辑
     GEMINI_2_5_FLASH_IMAGE = 1
@@ -1769,6 +1847,12 @@ class TaskTypeId:
     HAPPY_HORSE_TEXT_TO_VIDEO = 30
     MINIMAX_H3_IMAGE_TO_VIDEO = 34
     MINIMAX_H3_REFERENCE_TO_VIDEO = 37
+    WAN3_TEXT_TO_VIDEO = 39
+    WAN3_IMAGE_TO_VIDEO = 40
+    WAN3_REFERENCE_TO_VIDEO = 41
+    VIDU_Q3_TEXT_TO_VIDEO = 42
+    VIDU_Q3_IMAGE_TO_VIDEO = 43
+    VIDU_Q3_REFERENCE_TO_VIDEO = 44
 
 
     # 图片/视频 增强
@@ -2015,7 +2099,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_sizes=['1k', '2k', '4k'],
         default_ratio='1:1',
         default_size='1k',
-        sort_order=17,
+        # 类目首项即各端“图片编辑/文生图”默认模型（见 api/storyboard.py /models 排序说明）；
+        # 调为 5 使 GPT Image 2 成为 IMAGE_EDIT / TEXT_TO_IMAGE 列表第一项
+        sort_order=5,
         supports_grid_image=True,
         supports_grid_merge=False,
     ),
@@ -2573,6 +2659,212 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             PowerModifier(
                 attribute='resolution',
                 values={VideoResolution.P720: 1.0, VideoResolution.P1080: 1.5},
+                default=1.0
+            )
+        ],
+    ),
+
+    UnifiedTaskConfig(
+        id=TaskTypeId.WAN3_IMAGE_TO_VIDEO,
+        key='wan3_image_to_video',
+        short_key='wan3_i2v',
+        name='万相3.0 (首尾帧)',
+        model_name='万相3.0',
+        variant_label='首尾帧',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.WAN3_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.WAN3_VIDEO_DASHSCOPE_V1,
+        implementations=[
+            DriverImplementation.WAN3_VIDEO_DASHSCOPE_V1,
+            DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_V1,
+        ],
+        supported_ratios=['adaptive', '16:9', '4:3', '1:1', '3:4', '9:16'],
+        supported_durations=[2, 3, 5, 8, 10, 15, 20, 25, 30],
+        default_ratio='adaptive',
+        default_duration=5,
+        sort_order=44,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+        supports_last_frame=True,  # 支持尾帧
+        supports_ref_audio_video=False,  # 首尾帧模式不支持参考音频和视频
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: 0.5,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: 2.0,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.WAN3_REFERENCE_TO_VIDEO,
+        key='wan3_reference_to_video',
+        short_key='wan3_r2v',
+        name='万相3.0 (参考生)',
+        model_name='万相3.0',
+        variant_label='参考生',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.WAN3_REFERENCE_TO_VIDEO,
+        implementation=DriverImplementation.WAN3_VIDEO_DASHSCOPE_R2V_V1,
+        implementations=[
+            DriverImplementation.WAN3_VIDEO_DASHSCOPE_R2V_V1,
+            DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_R2V_V1,
+        ],
+        supported_ratios=['adaptive', '16:9', '4:3', '1:1', '3:4', '9:16'],
+        supported_durations=[2, 3, 5, 8, 10, 15, 20, 25, 30],
+        default_ratio='adaptive',
+        default_duration=5,
+        sort_order=45,
+        supported_image_modes=[ImageMode.MULTI_REFERENCE],  # 多参考图模式
+        supports_last_frame=False,
+        supports_ref_audio_video=True,  # 支持参考音频和视频
+        max_multi_ref_images=10,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: 0.5,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: 2.0,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.WAN3_TEXT_TO_VIDEO,
+        key='wan3_text_to_video',
+        short_key='wan3_t2v',
+        name='万相3.0 (文生)',
+        model_name='万相3.0',
+        variant_label='文生',
+        category=TaskCategory.TEXT_TO_VIDEO,
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.WAN3_TEXT_TO_VIDEO,
+        implementation=DriverImplementation.WAN3_VIDEO_DASHSCOPE_T2V_V1,
+        implementations=[
+            DriverImplementation.WAN3_VIDEO_DASHSCOPE_T2V_V1,
+            DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1,
+        ],
+        supported_ratios=['adaptive', '16:9', '4:3', '1:1', '3:4', '9:16'],
+        supported_durations=[2, 3, 5, 8, 10, 15, 20, 25, 30],
+        default_ratio='adaptive',
+        default_duration=5,
+        sort_order=46,
+        supported_image_modes=[],  # 文生视频不需要图片输入
+        supports_last_frame=False,
+        supports_ref_audio_video=False,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: 0.5,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: 2.0,
+                },
+                default=1.0
+            )
+        ],
+    ),
+
+    # ==================== Vidu Q3 ====================
+    UnifiedTaskConfig(
+        id=TaskTypeId.VIDU_Q3_TEXT_TO_VIDEO,
+        key='vidu_q3_text_to_video',
+        short_key='vidu_q3_t2v',
+        name='Vidu-Q3 (文生)',
+        model_name='Vidu Q3',
+        variant_label='文生',
+        category=TaskCategory.TEXT_TO_VIDEO,
+        provider=TaskProvider.VIDU,
+        driver_name=DriverKey.VIDU_Q3_TEXT_TO_VIDEO,
+        implementation=DriverImplementation.VIDU_Q3_T2V_TURBO_V1,
+        supported_ratios=['16:9', '9:16', '3:4', '4:3', '1:1'],
+        supported_durations=[3, 5, 8, 10, 16],
+        default_ratio='16:9',
+        default_duration=5,
+        sort_order=47,
+        supported_image_modes=[],  # 文生视频不需要图片输入
+        supports_last_frame=False,
+        supports_ref_audio_video=False,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    # turbo 档精确比例（540P 7积分/720P 12积分/1080P 13积分）；pro 档由 DB 实现方修饰符覆盖
+                    VideoResolution.P540: 0.6363,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: 1.0909,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.VIDU_Q3_IMAGE_TO_VIDEO,
+        key='vidu_q3_image_to_video',
+        short_key='vidu_q3_i2v',
+        name='Vidu-Q3 (首尾帧)',
+        model_name='Vidu Q3',
+        variant_label='首尾帧',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.VIDU,
+        driver_name=DriverKey.VIDU_Q3_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.VIDU_Q3_I2V_TURBO_V1,
+        supported_ratios=['9:16', '16:9', '1:1'],
+        supported_durations=[3, 5, 8, 10, 16],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=48,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧（1-2张图片）
+        supports_last_frame=True,  # 真正支持尾帧
+        supports_ref_audio_video=False,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    # turbo 档精确比例（540P 7积分/720P 12积分/1080P 13积分）；pro 档由 DB 实现方修饰符覆盖
+                    VideoResolution.P540: 0.6363,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: 1.0909,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.VIDU_Q3_REFERENCE_TO_VIDEO,
+        key='vidu_q3_reference_to_video',
+        short_key='vidu_q3_r2v',
+        name='Vidu-Q3 (参考生)',
+        model_name='Vidu Q3',
+        variant_label='参考生',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.VIDU,
+        driver_name=DriverKey.VIDU_Q3_REFERENCE_TO_VIDEO,
+        implementation=DriverImplementation.VIDU_Q3_R2V_TURBO_V1,
+        supported_ratios=['16:9', '9:16', '1:1'],
+        supported_durations=[3, 5, 8, 10, 16],
+        default_ratio='16:9',
+        default_duration=5,
+        sort_order=49,
+        supported_image_modes=[ImageMode.MULTI_REFERENCE],  # 多参考图模式（1-7张）
+        max_multi_ref_images=7,
+        supports_last_frame=False,
+        supports_ref_audio_video=False,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    # turbo 档精确比例（540P 4积分/720P 10积分/1080P 13积分）；pro 档由 DB 实现方修饰符覆盖
+                    VideoResolution.P540: 0.4444,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: 1.3333,
+                },
                 default=1.0
             )
         ],
@@ -3482,6 +3774,201 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10820.0,
         required_config_keys=['llm.qwen.api_key'],
         supported_video_resolutions=[
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='wan3_video_dashscope_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3DashscopeV1Driver',
+        default_computing_power={2: 34, 3: 51, 5: 85, 8: 136, 10: 170, 15: 255, 20: 340, 25: 425, 30: 510},
+        enabled=True,
+        description='阿里云百炼 万相3.0 图生视频接口（标准版）',
+        sort_order=1.0,
+        required_config_keys=['llm.qwen.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
+    ),
+    ImplementationConfig(
+        name='wan3_video_prime_dashscope_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3VideoPrimeDashscopeV1Driver',
+        default_computing_power={2: 50, 3: 75, 5: 125, 8: 200, 10: 250, 15: 375, 20: 500, 25: 625, 30: 750},
+        enabled=True,
+        description='阿里云百炼 万相3.0 图生视频接口（高速版）',
+        sort_order=2.0,
+        required_config_keys=['llm.qwen.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
+    ),
+    ImplementationConfig(
+        name='wan3_video_dashscope_r2v_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3DashscopeR2VV1Driver',
+        default_computing_power={2: 34, 3: 51, 5: 85, 8: 136, 10: 170, 15: 255, 20: 340, 25: 425, 30: 510},
+        enabled=True,
+        description='阿里云百炼 万相3.0 参考生视频接口（标准版）',
+        sort_order=1.0,
+        required_config_keys=['llm.qwen.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
+    ),
+    ImplementationConfig(
+        name='wan3_video_prime_dashscope_r2v_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3VideoPrimeDashscopeR2VV1Driver',
+        default_computing_power={2: 50, 3: 75, 5: 125, 8: 200, 10: 250, 15: 375, 20: 500, 25: 625, 30: 750},
+        enabled=True,
+        description='阿里云百炼 万相3.0 参考生视频接口（高速版）',
+        sort_order=2.0,
+        required_config_keys=['llm.qwen.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
+    ),
+    ImplementationConfig(
+        name='wan3_video_dashscope_t2v_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3DashscopeT2VV1Driver',
+        default_computing_power={2: 34, 3: 51, 5: 85, 8: 136, 10: 170, 15: 255, 20: 340, 25: 425, 30: 510},
+        enabled=True,
+        description='阿里云百炼 万相3.0 文生视频接口（标准版）',
+        sort_order=1.0,
+        required_config_keys=['llm.qwen.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
+    ),
+    ImplementationConfig(
+        name='wan3_video_prime_dashscope_t2v_v1',
+        display_name='阿里云百炼',
+        driver_class='Wan3VideoPrimeDashscopeT2VV1Driver',
+        default_computing_power={2: 50, 3: 75, 5: 125, 8: 200, 10: 250, 15: 375, 20: 500, 25: 625, 30: 750},
+        enabled=True,
+        description='阿里云百炼 万相3.0 文生视频接口（高速版）',
+        sort_order=2.0,
+        required_config_keys=['llm.qwen.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P1080
+    ),
+
+    # ==================== Vidu Q3 官方供应商 ====================
+    # 算力按高峰定价换算：500元/16000积分=0.03125元/积分，ceil(积分/秒×0.03125÷0.04×1.1)，720P 基准
+    ImplementationConfig(
+        name='vidu_q3_i2v_turbo_v1',
+        display_name='Vidu Q3',
+        driver_class='ViduQ3TurboV1Driver',
+        default_computing_power={3: 33, 5: 55, 8: 88, 10: 110, 16: 176},
+        enabled=True,
+        description='Vidu Q3 图生视频接口（turbo，720P 12积分/秒）',
+        sort_order=1.0,
+        required_config_keys=['vidu.token'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P540, 'label': VideoResolution.P540},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='vidu_q3_i2v_pro_v1',
+        display_name='Vidu Q3',
+        driver_class='ViduQ3ProV1Driver',
+        default_computing_power={3: 54, 5: 90, 8: 144, 10: 180, 16: 288},
+        enabled=True,
+        description='Vidu Q3 图生视频接口（pro，720P 20积分/秒）',
+        sort_order=2.0,
+        required_config_keys=['vidu.token'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P540, 'label': VideoResolution.P540},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='vidu_q3_r2v_turbo_v1',
+        display_name='Vidu Q3',
+        driver_class='ViduQ3TurboR2VV1Driver',
+        default_computing_power={3: 27, 5: 45, 8: 72, 10: 90, 16: 144},
+        enabled=True,
+        description='Vidu Q3 参考生视频接口（turbo，720P 10积分/秒）',
+        sort_order=1.0,
+        required_config_keys=['vidu.token'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P540, 'label': VideoResolution.P540},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='vidu_q3_r2v_pro_v1',
+        display_name='Vidu Q3',
+        driver_class='ViduQ3ProR2VV1Driver',
+        default_computing_power={3: 33, 5: 55, 8: 88, 10: 110, 16: 176},
+        enabled=True,
+        description='Vidu Q3 参考生视频接口（pro，720P 12积分/秒）',
+        sort_order=2.0,
+        required_config_keys=['vidu.token'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P540, 'label': VideoResolution.P540},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='vidu_q3_t2v_turbo_v1',
+        display_name='Vidu Q3',
+        driver_class='ViduQ3TurboT2VV1Driver',
+        default_computing_power={3: 33, 5: 55, 8: 88, 10: 110, 16: 176},
+        enabled=True,
+        description='Vidu Q3 文生视频接口（turbo，720P 12积分/秒）',
+        sort_order=1.0,
+        required_config_keys=['vidu.token'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P540, 'label': VideoResolution.P540},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='vidu_q3_t2v_pro_v1',
+        display_name='Vidu Q3',
+        driver_class='ViduQ3ProT2VV1Driver',
+        default_computing_power={3: 54, 5: 90, 8: 144, 10: 180, 16: 288},
+        enabled=True,
+        description='Vidu Q3 文生视频接口（pro，720P 20积分/秒）',
+        sort_order=2.0,
+        required_config_keys=['vidu.token'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P540, 'label': VideoResolution.P540},
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
             {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
         ],

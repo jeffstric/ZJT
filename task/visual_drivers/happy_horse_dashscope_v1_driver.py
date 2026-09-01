@@ -9,7 +9,7 @@ import traceback
 import json
 from pathlib import Path
 from .base_video_driver import BaseVideoDriver, ImageMode
-from config.config_util import get_config, get_dynamic_config_value
+from config.config_util import get_config, get_dynamic_config_value, normalize_aliyun_bailian_base_url
 from config.constant import LEGACY_RESOLUTION_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
 from config.unified_config import VideoResolution
 from api.media import _get_media_duration_seconds
@@ -28,9 +28,14 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
     def __init__(self, driver_name: str = "happy_horse_dashscope_v1", driver_type: int = 28):
         super().__init__(driver_name=driver_name, driver_type=driver_type)
 
-        # 加载配置（复用 LLM 配置的阿里云 Qwen API Key）
+        # 加载配置（复用 LLM 配置的阿里云百炼 API Key 与 base_url）
+        # 用户只配置基础 URL，多媒体走 DashScope 原生异步接口，自动追加 /api/v1；
+        # 未配置时结果为默认 https://dashscope.aliyuncs.com/api/v1，与原硬编码一致
         self._api_key = get_dynamic_config_value("llm", "qwen", "api_key", default="")
-        self._base_url = "https://dashscope.aliyuncs.com/api/v1"
+        self._base_url = normalize_aliyun_bailian_base_url(
+            get_dynamic_config_value("llm", "qwen", "base_url", default=None),
+            for_llm=False,
+        )
         self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
 
         # 是否为本地环境
