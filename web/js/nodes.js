@@ -2510,6 +2510,13 @@
         if(conn && conn.portType === 'environment' && toNode && toNode.type === 'director_stage' && typeof window.handleDirectorStageEnvDisconnect === 'function'){
           window.handleDirectorStageEnvDisconnect(conn.from, toNode);
         }
+        // 断开 图片/场景 → 360全景 的参考连线时，复位全景参考图缩略图（提示词保留不回滚）
+        if(conn && conn.portType === 'panorama-source' && toNode && toNode.type === 'panorama'){
+          const panoEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+          if(panoEl && typeof panoEl._updateSourceThumbnail === 'function'){
+            panoEl._updateSourceThumbnail();
+          }
+        }
       }
     }
 

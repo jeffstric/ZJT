@@ -740,12 +740,13 @@
         }
         
         // 更新图片端口高亮状态
-        for(const portEl of canvasEl.querySelectorAll('.start-image-port, .end-image-port, .ref-image-input-port')){
+        for(const portEl of canvasEl.querySelectorAll('.start-image-port, .end-image-port, .ref-image-input-port, .panorama-source-port')){
           const nodeEl = portEl.closest('.node');
           const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
           let portType;
           if(portEl.classList.contains('start-image-port')) portType = 'start';
           else if(portEl.classList.contains('end-image-port')) portType = 'end';
+          else if(portEl.classList.contains('panorama-source-port')) portType = 'panorama-source';
           else portType = 'ref-image';
           const isNearest = nearestImgPort && nearestImgPort.nodeId === nodeId && nearestImgPort.portType === portType;
           portEl.classList.toggle('can-connect', isNearest);

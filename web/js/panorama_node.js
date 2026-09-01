@@ -406,7 +406,7 @@
 
   // ---------- 节点定义 ----------
   var PANORAMA_PORTS = [
-    { direction: 'input', titleI18nKey: 'panorama_input_port', acceptType: ['image', 'location'], connectionType: 'connections' },
+    { direction: 'input', titleI18nKey: 'panorama_input_port', cssClass: 'panorama-source-port', acceptType: ['image', 'location'], connectionType: 'connections' },
     { direction: 'output', titleI18nKey: 'panorama_output_port' }
   ];
 
@@ -543,15 +543,8 @@
         var rotating = false;
 
         // 参考图输入端口（支持图片节点；也支持场景节点——自动取场景参考图与描述）
-        bindInputPortEvents(el, node, {
-          cssClass: null,
-          acceptType: ['image', 'location'],
-          connectionType: 'connections',
-          onConnect: function(fromNode) {
-            updateSourceThumbnail();
-            autoFillPromptFromScene(fromNode);
-          }
-        });
+        // 连接走模块级 registerInputPorts('panorama', ...) 注册表吸附路径（见文件末尾），
+        // 不再用 bindInputPortEvents 端口直落：两套路径并存会导致查重/单连接限制失效
 
         function getSourceImageUrl(sourceNode) {
           // 图片节点用 data.url；场景节点用 data.reference_image（与 getNodeImageUrl 语义一致）
@@ -560,19 +553,70 @@
           return sourceNode.data.url || sourceNode.data.preview || sourceNode.data.reference_image || '';
         }
 
-        // 场景节点连线后：提示词为空时自动填入场景描述，生成即得到该场景的 360 全景图
-        function autoFillPromptFromScene(fromNode) {
-          if (!fromNode || fromNode.type !== 'location') return;
+        // 源节点连线后：提示词为空时自动填入（不覆盖已有内容）
+        // 场景节点填「场景名，场景描述」；图片节点优先用其编辑提示词，
+        // 没有提示词的任意图片（上传图等）由 VL 识图生成场景描述
+        function autoFillPromptFromSource(fromNode) {
+          if (!fromNode || !fromNode.data) return;
           if (String(node.data.prompt || '').trim()) return; // 已有提示词不覆盖
-          var parts = [];
-          if (fromNode.data.name) parts.push(String(fromNode.data.name).trim());
-          if (fromNode.data.description) parts.push(String(fromNode.data.description).trim());
-          var scenePrompt = parts.filter(Boolean).join('，');
-          if (!scenePrompt) return;
-          node.data.prompt = scenePrompt;
-          promptEl.value = scenePrompt;
-          showToast(tr('panorama_scene_prompt_filled', '已按场景「{name}」填充描述，可直接生成该场景的 360 全景图', { name: fromNode.data.name || '' }), 'info');
-          safeAutoSave();
+          if (fromNode.type === 'location') {
+            var parts = [];
+            if (fromNode.data.name) parts.push(String(fromNode.data.name).trim());
+            if (fromNode.data.description) parts.push(String(fromNode.data.description).trim());
+            var scenePrompt = parts.filter(Boolean).join('，');
+            if (!scenePrompt) return;
+            node.data.prompt = scenePrompt;
+            promptEl.value = scenePrompt;
+            showToast(tr('panorama_scene_prompt_filled', '已按场景「{name}」填充描述，可直接生成该场景的 360 全景图', { name: fromNode.data.name || '' }), 'info');
+            safeAutoSave();
+          } else if (fromNode.type === 'image') {
+            var imgPrompt = String(fromNode.data.prompt || '').trim();
+            if (imgPrompt) {
+              node.data.prompt = imgPrompt;
+              promptEl.value = imgPrompt;
+              showToast(tr('panorama_image_prompt_filled', '已按图片节点提示词填充描述，可按需修改'), 'info');
+              safeAutoSave();
+            } else {
+              // 任意图片（上传图/无提示词）→ VL 识图生成场景描述
+              var imgUrl = getSourceImageUrl(fromNode);
+              if (imgUrl) describeImageIntoPrompt(imgUrl);
+            }
+          }
+        }
+
+        // VL 识图：调用后端视觉模型为图片生成场景描述并填入提示词。
+        // 仅新连线触发（工作流重载恢复不会调用）；成功后 prompt 非空，重连不重复识图
+        var describeToken = 0;
+        function describeImageIntoPrompt(imgUrl) {
+          var token = ++describeToken;
+          showStatus(tr('panorama_describing', '正在识图生成场景描述...'), '#666');
+          var headers = { 'Content-Type': 'application/json' };
+          if (typeof getAuthToken === 'function') headers['Authorization'] = getAuthToken();
+          if (typeof getUserId === 'function') headers['X-User-Id'] = getUserId();
+          fetch('/api/video-workflow/describe-image', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ image_url: imgUrl })
+          })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              if (token !== describeToken) return; // 已重新识图/换源，丢弃过期响应
+              if (data && data.success && data.description) {
+                statusEl.style.display = 'none';
+                // 等待期间用户已手动输入则不覆盖
+                if (String(node.data.prompt || '').trim() || promptEl.value.trim()) return;
+                node.data.prompt = data.description;
+                promptEl.value = data.description;
+                showToast(tr('panorama_image_prompt_described', '已识图生成场景描述，可按需修改'), 'info');
+                safeAutoSave();
+              } else {
+                showStatus(tr('panorama_describe_failed', '识图生成描述失败，可手动输入'), '#d97706');
+              }
+            })
+            .catch(function() {
+              if (token !== describeToken) return;
+              showStatus(tr('panorama_describe_failed', '识图生成描述失败，可手动输入'), '#d97706');
+            });
         }
 
         function updateSourceThumbnail() {
@@ -592,6 +636,7 @@
           }
         }
         el._updateSourceThumbnail = updateSourceThumbnail;
+        el._autoFillPromptFromSource = autoFillPromptFromSource;
         updateSourceThumbnail();
 
         // 提示词输入
@@ -883,7 +928,8 @@
 
         // 截图落画布：创建标准图片节点（全景 → 图片 连线），供下游节点复用
         function createSnapshotImageNode(url, ratio) {
-          var newNodeId = createImageNode({ x: node.x + 460, y: node.y + 320, checkCollision: true });
+          // 携带全景场景描述：截图内容即该场景的某个视角，下游连线可自动适配提示词
+          var newNodeId = createImageNode({ x: node.x + 460, y: node.y + 320, checkCollision: true, data: { prompt: String(node.data.prompt || '').trim() } });
           var newNode = state.nodes.find(function(n) { return n.id === newNodeId; });
           if (!newNode) return;
           newNode.data.name = tr('panorama_snapshot_name', '全景截图');
@@ -1030,7 +1076,8 @@
             // 为每张结果创建标准图片节点（可被下游节点复用），并连接 全景 → 图片
             var createdImageNodeIds = [];
             for (var i = 0; i < projectIds.length; i++) {
-              var newNodeId = createImageNode({ x: node.x + 460, y: node.y + i * 280, checkCollision: true });
+              // 结果节点携带生成提示词（含 360° 全景后缀，忠实描述结果图），供下游连线适配
+              var newNodeId = createImageNode({ x: node.x + 460, y: node.y + i * 280, checkCollision: true, data: { prompt: finalPrompt } });
               var newNode = state.nodes.find(function(n) { return n.id === newNodeId; });
               if (newNode) {
                 newNode.data.name = projectIds.length > 1 ? ('全景图' + (i + 1)) : '全景图';
@@ -1192,5 +1239,24 @@
     createFn: createPanoramaNode,
     createWithDataFn: createPanoramaNodeWithData
   });
+
+  // ── 注册参考图输入端口（供连接系统自动发现）───
+  // 图片/场景节点拖线到全景节点附近即可吸附连接（50px），不再要求精确落在端口圆点上
+  if (typeof registerInputPorts === 'function') {
+    registerInputPorts('panorama', [{
+      selector: '.port.input.panorama-source-port',
+      portType: 'panorama-source',
+      accepts: ['image', 'location'],
+      connectionType: 'connections',
+      // 无参考图也允许连接：场景节点可仅提供描述（自动填提示词），生成时走纯文生全景
+      allowMissingImage: true,
+      onConnect: function(fromNode, targetNode) {
+        var targetEl = canvasEl.querySelector('.node[data-node-id="' + targetNode.id + '"]');
+        if (!targetEl) return;
+        if (typeof targetEl._updateSourceThumbnail === 'function') targetEl._updateSourceThumbnail();
+        if (typeof targetEl._autoFillPromptFromSource === 'function') targetEl._autoFillPromptFromSource(fromNode);
+      }
+    }]);
+  }
 
 })();
