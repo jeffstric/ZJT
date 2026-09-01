@@ -2325,7 +2325,7 @@ DIFF_CHARGE_TXN_PREFIX = 'diff-charge-'
 # 前端 script_writer.html 顶栏「AI 介入程度」选择器，随 /api/session/{id}/task 请求体传入，
 # 由 PM Agent 随任务 user 消息注入生效（见 pm_agent.execute）。
 # - balanced：标准（默认，不注入指令，维持 SOP 默认行为：资产创建一步到位）
-# - concise：简洁·少提问（非关键决策不打断用户）
+# - concise：简洁·少提问（需求收集项（题材/集数/时长/画风）与大纲、剧本定稿仍必须询问，其余决策自行完成）
 # - detailed：精细·多确认（角色卡/场景道具创建后恢复满意度确认与形象生成对象选择）
 INTERVENTION_LEVEL_BALANCED = 'balanced'
 INTERVENTION_LEVEL_CONCISE = 'concise'
@@ -2340,9 +2340,11 @@ INTERVENTION_LEVEL_INSTRUCTIONS = {
     INTERVENTION_LEVEL_CONCISE: (
         "\n\n[系统指令·AI介入程度：简洁·少提问]\n"
         "用户希望尽量少被打断，请遵守：\n"
-        "1. 除大纲、剧本定稿等必要节点外，其余决策自行完成并在进度消息中汇报，不使用 ask_user\n"
-        "2. 角色卡、场景道具创建后直接一步到位生成形象（SOP 默认行为）\n"
-        "3. 遇到必须二选一且影响成本或风格的决策时，选择最稳妥的方案并在进度消息中说明理由"
+        "1. 需求收集阶段的基础创作参数（题材/风格、集数与每集时长、画风类型）属于必须确认项："
+        "用户消息中未明确给出的，仍须使用 ask_user 依次询问，不得自行决定；已明确给出的不要重复询问\n"
+        "2. 除上述需求收集项和大纲、剧本定稿等必要节点外，其余决策自行完成并在进度消息中汇报，不使用 ask_user\n"
+        "3. 角色卡、场景道具创建后直接一步到位生成形象（SOP 默认行为）\n"
+        "4. 遇到必须二选一且影响成本或风格的决策时（第1条豁免项除外），选择最稳妥的方案并在进度消息中说明理由"
     ),
     INTERVENTION_LEVEL_DETAILED: (
         "\n\n[系统指令·AI介入程度：精细·多确认]\n"

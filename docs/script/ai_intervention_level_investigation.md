@@ -117,3 +117,12 @@ Pydantic 对请求体中模型未声明的额外字段默认**静默忽略**（�
 | 任务接口 | `api/script_writer.py` | 3745 |
 | PM 系统提示词构建 | `script_writer_core/agents/pm_agent.py` | 139-176 |
 | SOP 确认节点（本轮已改造部分） | `script_writer_core/skills/script-orchestrator/sops/` | — |
+
+## 8. 后续修复：简洁档误杀「需求收集」提问（2026-09-01）
+
+- **现象**：选择 `concise`（简洁·少提问）后，PM 不再询问「题材/风格、生成多少集、每集时长、画风类型」，直接自行决定。
+- **根因**：`INTERVENTION_LEVEL_INSTRUCTIONS['concise']` 第 1 条豁免范围仅写「大纲、剧本定稿等必要节点」，而需求收集（SKILL.md 步骤2 第一阶段）发生在大纲生成**之前**，不在豁免范围；且第 3 条「影响成本或风格的决策自行选择最稳妥方案」恰好命中集数（成本）与画风（风格）。模型合理服从注入指令，跳过了 ask_user。
+- **修复**：
+  1. `config/constant.py` 改写 concise 指令：需求收集基础参数（题材/风格、集数×时长、画风）列为必须确认项——用户未明确给出的仍须 ask_user，已给出的不重复询问；其余决策维持「不使用 ask_user」。
+  2. `script_writer_core/skills/script-orchestrator/SKILL.md` 步骤2 第一阶段增加「简洁模式例外」条款，与注入指令双向呼应。
+  3. `tests/script_writer_core/test_intervention_level.py` 新增 `test_concise_instruction_exempts_requirement_collection` 断言。
