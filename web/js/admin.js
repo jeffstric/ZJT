@@ -109,9 +109,11 @@ const PROVIDER_DEFINITIONS = [
         impactsKey: 'provider_qwen_impacts',
         fields: [
             { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_qwen', required: true },
-            { id: 'base_url', labelKey: 'field_base_url_label_optional', type: 'url', placeholder: 'https://dashscope.aliyuncs.com', required: false, helpTextKey: 'field_base_url_help_qwen' }
+            { id: 'base_url', labelKey: 'field_api_host_label_optional', type: 'url', placeholder: 'https://llm-xxx.cn-beijing.maas.aliyuncs.com', required: false, helpTextKey: 'field_base_url_help_qwen', helpImage: 'assets/guide/aliyun_api_key_api_host.png' },
+            { id: 'workspace_id', label: '业务空间 ID（万相3.0 视频，一般留空）', type: 'text', placeholder: '如 llm-xxxxxxxx', required: false, helpText: '一般无需填写：上方 API Host 填密钥弹窗中的地址即可自动识别。手动填写时，取 API Host（如 llm-xxx.cn-beijing.maas.aliyuncs.com）第一个点号前的部分' },
+            { id: 'endpoint_region', label: '业务空间地域（可选）', type: 'text', placeholder: 'cn-beijing', required: false, helpText: '万相3.0 视频模型用，默认 cn-beijing；可选 ap-southeast-1 / ap-northeast-1 / eu-central-1 / us-east-1' }
         ],
-        configKeyMap: { api_key: 'llm.qwen.api_key', base_url: 'llm.qwen.base_url' },
+        configKeyMap: { api_key: 'llm.qwen.api_key', base_url: 'llm.qwen.base_url', workspace_id: 'wan3.workspace_id', endpoint_region: 'wan3.endpoint_region' },
         testEndpoint: 'qwen'
     },
     {
@@ -667,7 +669,13 @@ const AdminApp = {
                 saveLoading: {},         // { providerId: boolean }
                 leftPanelOpen: true
             },
-            
+
+            // 字段示例图灯箱（快速配置字段 helpImage 点击放大查看）
+            imagePreviewModal: {
+                show: false,
+                src: ''
+            },
+
             // 使用手册引导弹窗
             guideModal: {
                 show: false,
@@ -3399,6 +3407,17 @@ const AdminApp = {
             this.quickConfigModal.testLoading = {};
             this.quickConfigModal.testResults = {};
             this.quickConfigModal.saveLoading = {};
+        },
+
+        // 打开/关闭字段示例图灯箱
+        openImagePreview(src) {
+            this.imagePreviewModal.src = src;
+            this.imagePreviewModal.show = true;
+        },
+
+        closeImagePreview() {
+            this.imagePreviewModal.show = false;
+            this.imagePreviewModal.src = '';
         },
 
         // 点击左侧服务商卡片：未选中则选中并定位；已选中则不再取消选中
