@@ -15,12 +15,15 @@ class TestVendorModelCRUD(DatabaseTestCase):
         from model.vendor import VendorDAO
         from model.model import ModelModel
         VendorDAO.create('test_vendor_for_vm', '测试供应商')
-        ModelModel.create(
-            model_name='test_model_for_vm',
-            context_window=100000,
-            supports_tools=True,
-            note='测试模型'
-        )
+        # model.model_name 有唯一索引 uk_model_name：Model 层 create 走连接池且提交独立事务，跨测试累积，
+        # 第二个用例起重复插入同名模型会触发 1062，故先查后建保证幂等
+        if not ModelModel.get_by_name('test_model_for_vm'):
+            ModelModel.create(
+                model_name='test_model_for_vm',
+                context_window=100000,
+                supports_tools=True,
+                note='测试模型'
+            )
         # 注意：不创建 vendor_model，让每个测试根据需要自行插入
 
     def test_create_vendor_model(self):
