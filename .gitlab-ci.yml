@@ -81,11 +81,21 @@ unit_tests:
 
 
   # 缓存配置（加速后续构建）
+  # 注意：DinD 每个 job 都是全新守护进程，镜像层缓存无法保留（实测 docker
+  # save/load 后 builder 缓存元数据丢失，无法增量重建）。因此改为把构建出的
+  # 环境镜像整体 docker save 到 CI cache，下次 job docker load 后按
+  # requirements.txt+Dockerfile 指纹复用镜像、跳过构建，源码经 ..:/app
+  # 挂载进容器运行——纯代码改动零构建（pip 全量下载是 1h 超时的主因）。
+  # key 固定为全局共享，让所有分支都能复用同一份镜像缓存。
   cache:
-    key: ${CI_COMMIT_REF_SLUG}
+    key: zjt-unit-test-shared
     paths:
       - cache/pip
       - .cache/pip
+      - docker-image-cache/
+
+  # job 超时兜底：依赖变化触发全量重建时可能接近 1h，放宽到 2h 避免误杀
+  timeout: 2 hours
 
   before_script:
     # 使用国内 Alpine 镜像源加速
@@ -151,12 +161,49 @@ unit_tests:
     - docker --version
     - docker-compose --version
 
+    # 加载上一次流水线保存的环境镜像（含基础镜像与 MySQL 镜像），首次运行为空则跳过
+    - |
+      if [ -f docker-image-cache/zjt_test_image.tar.gz ]; then
+        echo "加载环境镜像缓存..."
+        docker load -i docker-image-cache/zjt_test_image.tar.gz || echo "镜像缓存加载失败，按全量构建继续"
+      else
+        echo "无镜像缓存，本次为全量构建"
+      fi
+
   script:
     # 进入 docker 目录
     - cd docker
 
-    # 启动测试环境（MySQL + 测试容器）
-    - docker compose -f docker-compose-test.yml up -d --build
+    # 环境镜像指纹：requirements.txt 或 Dockerfile 变化才需要重建。
+    # 源码通过 ..:/app 挂载进容器运行，纯代码改动复用缓存镜像即可
+    - DEPS_HASH=$(cat ../requirements.txt Dockerfile | sha256sum | cut -c1-16)
+    - export TEST_IMAGE_TAG=$DEPS_HASH
+    - 'echo "环境镜像标签: zjt_test_image:$TEST_IMAGE_TAG"'
+
+    # 缓存已加载且依赖未变则跳过构建（这是防 1h 超时的核心：避免每次 pip 全量下载）
+    - |
+      export REBUILT=0
+      if docker image inspect "zjt_test_image:$TEST_IMAGE_TAG" > /dev/null 2>&1; then
+        echo "依赖未变化且镜像缓存已加载，跳过构建"
+      else
+        echo "依赖变化或无缓存，执行全量构建（首次约 40-60 分钟）"
+        docker compose -f docker-compose-test.yml build test
+        export REBUILT=1
+      fi
+
+    # 启动测试环境（MySQL + 测试容器）。注意不带 --build
+    - docker compose -f docker-compose-test.yml up -d
+
+    # 仅在发生过重建时更新镜像缓存。
+    # 必须连同基础镜像一起保存：否则下次 FROM 重新拉取，tag 上游重建后 ID 变化会导致缓存失配
+    - |
+      if [ "$REBUILT" = "1" ]; then
+        mkdir -p ../docker-image-cache
+        BASE_IMAGE=$(grep -m1 '^FROM ' Dockerfile | awk '{print $2}')
+        docker save "zjt_test_image:$TEST_IMAGE_TAG" "$BASE_IMAGE" m.daocloud.io/docker.io/library/mysql:8.0 | gzip > ../docker-image-cache/zjt_test_image.tar.gz || echo "镜像缓存保存失败，忽略"
+      else
+        echo "镜像未重建，缓存保持不变"
+      fi
 
     # 等待 MySQL 就绪
     - |

@@ -362,6 +362,21 @@ docker-compose -f docker-compose-test.yml logs
 docker-compose -f docker-compose-test.yml down -v
 ```
 
+### GitLab CI 环境镜像缓存（防 1h 超时）
+
+CI `unit_tests` job 运行在 DinD 中，每个 job 都是全新 Docker 守护进程，构建缓存无法保留
+（实测 docker save/load 后 builder 缓存元数据丢失，无法增量重建），历史上每次全量重建时
+pip 全量下载依赖（runner 机器出口带宽仅 ~100-200KB/s，全量约 40-60 分钟）是 1h 超时的主因。
+为此 `.gitlab-ci.yml` 与 `docker-compose-test.yml` 配套做了三件事：
+
+1. **环境镜像整体复用**：构建出的 `zjt_test_image` 连同基础镜像、MySQL 镜像通过
+   `docker save | gzip` 存入 GitLab cache（`docker-image-cache/`，全局共享 key
+   `zjt-unit-test-shared`），下次 job `docker load` 整体恢复。
+2. **依赖指纹跳过构建**：job 按 `requirements.txt + Dockerfile` 的 sha256 前 16 位作为
+   镜像 tag（`TEST_IMAGE_TAG`）。指纹未变且镜像已从缓存加载时直接跳过构建；
+   源码通过 compose 卷 `..:/app` 挂载进容器运行，纯代码改动零构建。
+3. **超时兜底**：job `timeout: 2 hours`，依赖变化触发全量重建时也不会被默认 1h 限制误杀。
+
 ---
 
 ## 相关文档
