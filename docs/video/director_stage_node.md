@@ -104,7 +104,7 @@
 - **自动保存**：编辑器内每次结构性修改调用 `markDirty()`（防抖 400ms 后 `safeAutoSave()`），关闭时 `flushAutoSave()`。
 - **全景环境连线**：环境端口走主 `state.connections`，`portType: 'environment'`。`serializeWorkflow` 会持久化该字段；旧快照缺 `portType` 时，恢复阶段把「全景 → 导演台」补成环境连线。删除连线走 `removeConnection` → `handleDirectorStageEnvDisconnect`；Ctrl+Z 走 `restoreWorkflow` → `syncDirectorStageEnvironments()`，避免「连线没了但环境还在」。
 - **环境球**：贴面范围与全景节点 `computePanoramaFov` 一致；未覆盖区域用全景图边缘色做内壁衬底，左栏在非 360° 或比例不一致时给出提示。
-- **人偶与房间尺度**：360 只有角度没有米。加载环境时球心默认抬到 `horizonY=1.5m`。随后用镜头预览图调用 `POST /api/video-workflow/fit-environment` 估计 `horizonY` / `sceneScale` / `groundY`（贴地，负值把脚落到可见地面）。未配置视觉模型时 `fallback=manual`，用左栏「地平线」「场景比例」「贴地」滑块手动调。
+- **人偶与房间尺度**：360 只有角度没有米。加载环境时球心默认抬到 `horizonY=1.5m`。随后用镜头预览图调用 `POST /api/video-workflow/fit-environment` 估计 `horizonY` / `sceneScale` / `groundY`（贴地，负值把脚落到可见地面）。接口必须携带 `Authorization`，并只读取 token 所属用户的 `upload/workflow/<user_id>` 图片；越权路径、路径穿越和非图片扩展名会被拒绝。未配置视觉模型时 `fallback=manual`，用左栏「地平线」「场景比例」「贴地」滑块手动调。
 - **连线点选**：画布 `mousedown` 忽略 `path.hitbox`，避免重建 SVG 吞掉 click（真实点击与 Playwright 均可选中后 Delete）。
 - **i18n**：节点壳文案走 `web/i18n/locales/{zh-CN,en}/video_workflow.json`（`director_stage_*` 前缀）；编辑器内部为中文固定文案。
 - **事件清理**：编辑器所有监听收集在 `bound` 数组，关闭时统一移除并 dispose 两个 renderer 与几何体/纹理，避免内存泄漏。

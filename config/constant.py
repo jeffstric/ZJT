@@ -2325,6 +2325,7 @@ DS_ENV_FIT_SCALE_MAX = 4.0
 DS_ENV_FIT_DEFAULT_GROUND = 0.0
 DS_ENV_FIT_GROUND_MIN = -2.0
 DS_ENV_FIT_GROUND_MAX = 1.0
+DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 # 预览图压缩（asyncio.to_thread 执行）与 VL 请求（wait_for 整体超时 = LLM_TIMEOUT + 10）的超时（秒）
 DS_ENV_FIT_COMPRESS_TIMEOUT = 15
 DS_ENV_FIT_LLM_TIMEOUT = 60

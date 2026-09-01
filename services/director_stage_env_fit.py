@@ -6,13 +6,14 @@ import asyncio
 import inspect
 import json
 import logging
-import os
 import re
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from config.constant import (
     DS_ENV_FIT_COMPRESS_TIMEOUT,
+    DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS,
     DS_ENV_FIT_DEFAULT_GROUND,
     DS_ENV_FIT_DEFAULT_HORIZON,
     DS_ENV_FIT_DEFAULT_SCALE,
@@ -28,6 +29,7 @@ from config.constant import (
 )
 from llm.llm_client_factory import get_available_models, get_llm_client
 from utils.image_compressor import compress_local_image_to_base64
+from utils.project_path import get_upload_dir
 
 logger = logging.getLogger(__name__)
 
@@ -54,26 +56,43 @@ USER_TEXT_TMPL = (
 )
 
 
-def resolve_upload_path(image_url: str) -> Tuple[Optional[str], Optional[str]]:
-    """把本站 upload url 解析为本地路径。失败返回 (None, error)。"""
+def resolve_upload_path(
+    image_url: str,
+    user_id: Optional[int] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """把本站 upload URL 安全解析到当前用户的工作流目录。"""
     if not image_url or not str(image_url).strip():
         return None, "缺少图片 url"
-    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    upload_root = os.path.join(app_dir, "upload").replace("\\", "/")
-    rel = str(image_url).strip()
-    if "://" in rel:
-        rel = urlparse(rel).path
-    rel = rel.lstrip("/").replace("\\", "/")
-    if "/upload/" in rel:
-        rel = rel[rel.index("/upload/") + len("/upload/"):]
-    elif rel.startswith("upload/"):
-        rel = rel[len("upload/"):]
-    local_path = os.path.normpath(os.path.join(upload_root, rel))
-    if not local_path.replace("\\", "/").startswith(upload_root):
+    raw_path = str(image_url).strip()
+    parsed = urlparse(raw_path)
+    path = unquote(parsed.path if parsed.scheme else raw_path)
+    if "\\" in path:
         return None, "非法的图片路径"
-    if not os.path.isfile(local_path):
+    if path.startswith("/upload/"):
+        path = path[len("/upload/"):]
+    elif path.startswith("upload/"):
+        path = path[len("upload/"):]
+    else:
+        return None, "非法的图片路径"
+
+    parts = [part for part in path.split("/") if part]
+    if not parts or any(part in (".", "..") for part in parts):
+        return None, "非法的图片路径"
+
+    upload_root = Path(get_upload_dir()).resolve()
+    allowed_root = upload_root
+    if user_id is not None:
+        allowed_root = (upload_root / "workflow" / str(user_id)).resolve()
+    try:
+        local_path = upload_root.joinpath(*parts).resolve(strict=False)
+        local_path.relative_to(allowed_root)
+    except (OSError, RuntimeError, ValueError):
+        return None, "非法的图片路径"
+    if local_path.suffix.lower() not in DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS:
+        return None, "不支持的图片格式"
+    if not local_path.is_file():
         return None, "图片文件不存在"
-    return local_path, None
+    return str(local_path), None
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -148,6 +167,7 @@ async def pick_vl_model(model: Optional[str] = None, vendor_id: Optional[int] = 
 
 async def fit_environment_from_image(
     image_url: str,
+    user_id: Optional[int] = None,
     auth_token: Optional[str] = None,
     model: Optional[str] = None,
     vendor_id: Optional[int] = None,
@@ -157,7 +177,7 @@ async def fit_environment_from_image(
     ground_y: float = DS_ENV_FIT_DEFAULT_GROUND,
 ) -> Dict[str, Any]:
     """返回 {success, fallback?, horizonY?, sceneScale?, groundY?, reason?, error?}。"""
-    local_path, path_err = resolve_upload_path(image_url)
+    local_path, path_err = resolve_upload_path(image_url, user_id=user_id)
     if path_err:
         return {"success": False, "fallback": "manual", "error": path_err}
 

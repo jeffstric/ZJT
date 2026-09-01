@@ -12,7 +12,7 @@ import uuid
 import asyncio
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-from fastapi import APIRouter, Request, Query as QueryParam, Header, UploadFile, File, Form
+from fastapi import APIRouter, Request, Query as QueryParam, Header, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from perseids_server.utils.permission import require_permission
@@ -29,11 +29,17 @@ from config.constant import (
     PERSEIDS_ERR_NO_VALID_TOKEN,
     ERROR_CODE_TOKEN_EXPIRED,
     ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
+    IMAGE_STYLE_LLM_TIMEOUT,
+    IMAGE_STYLE_PREFERRED_MODEL,
+    IMAGE_STYLE_PREFERRED_VENDOR,
     USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+    VL_MODEL_PREFERRED_DEFAULT,
 )
+from api.auth_identity import resolve_authorization_user_id
+from config.model_catalog import ModelScene, annotate_llm_models, build_tracks_payload
 from utils.resource_access import get_user_id_from_header, ensure_world_access
 from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
-from llm.llm_client_factory import get_llm_client
+from llm.llm_client_factory import get_available_models, get_llm_client
 
 # ==================== 加载 API 配置 ====================
 def _load_api_config():
@@ -3470,7 +3476,11 @@ async def save_world_file(
 
 @router.get('/style-models')
 @require_permission("world:view_files")
-async def list_style_models(request: Request):
+async def list_style_models(
+    request: Request,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
     """获取可用于画风识别的 vl 模型列表。
 
     复用 ``llm_client_factory.get_available_models``：它已过滤掉未配置密钥的 vendor，
@@ -3479,15 +3489,42 @@ async def list_style_models(request: Request):
 
     排序：优先 ``volcengine / doubao-seed-2-0-lite``，再其余 volcengine，再其他供应商。
     """
-    try:
-        from llm.llm_client_factory import get_available_models as _get_available_models
-        from config.constant import (
-            IMAGE_STYLE_LLM_TIMEOUT,
-            IMAGE_STYLE_PREFERRED_MODEL,
-            IMAGE_STYLE_PREFERRED_VENDOR,
+    resolved_user_id, auth_error = await resolve_authorization_user_id(auth_token)
+    if auth_error:
+        return auth_error
+    if header_user_id is not None and header_user_id != resolved_user_id:
+        return JSONResponse(
+            status_code=403,
+            content={'success': False, 'error': 'X-User-Id 与登录用户不一致'},
         )
 
-        result = await _get_available_models()
+    pref_world_id = request.query_params.get('world_id') or ''
+    if pref_world_id:
+        try:
+            world_id = int(pref_world_id)
+            await asyncio.wait_for(
+                asyncio.to_thread(ensure_world_access, world_id, resolved_user_id, Action.VIEW),
+                timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+            )
+        except (TypeError, ValueError):
+            return JSONResponse(
+                status_code=400,
+                content={'success': False, 'error': 'world_id 格式错误'},
+            )
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={'success': False, 'error': exc.detail},
+            )
+        except asyncio.TimeoutError:
+            return JSONResponse(
+                status_code=503,
+                content={'success': False, 'error': '世界权限校验超时'},
+            )
+
+    try:
+
+        result = await get_available_models()
         pref_vendor = (IMAGE_STYLE_PREFERRED_VENDOR or 'volcengine').lower()
         pref_model = (IMAGE_STYLE_PREFERRED_MODEL or 'doubao-seed-2-0-lite').lower()
 
@@ -3519,26 +3556,27 @@ async def list_style_models(request: Request):
 
         vl_models.sort(key=_sort_key)
 
-        from config.model_catalog import (
-            ModelScene,
-            annotate_llm_models,
-            build_tracks_payload,
-        )
         vl_models = annotate_llm_models(vl_models, ModelScene.LLM_STYLE_RECOGNIZE)
         catalog = build_tracks_payload(ModelScene.LLM_STYLE_RECOGNIZE, vl_models, kind="llm")
 
         # 用户已保存的 VL 模型偏好（画风识别处切换即保存；资产检查专家共用），
         # 前端选中优先级：saved_preference > VL_MODEL_PREFERRED_DEFAULT > 推荐⭐ > 第一个
         saved_preference = None
-        try:
-            pref_user_id = request.headers.get('X-User-Id') or request.query_params.get('user_id')
-            pref_world_id = request.query_params.get('world_id') or ''
-            if pref_user_id and pref_world_id:
-                saved_preference = get_vl_model_preference(str(pref_user_id), str(pref_world_id))
-        except Exception as e:
-            logger.warning(f'读取 VL 模型偏好失败（非致命）: {e}')
+        if pref_world_id:
+            try:
+                saved_preference = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_vl_model_preference,
+                        str(resolved_user_id),
+                        str(pref_world_id),
+                    ),
+                    timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning('读取 VL 模型偏好超时（非致命）')
+            except Exception as exc:
+                logger.warning(f'读取 VL 模型偏好失败（非致命）: {exc}')
 
-        from config.constant import VL_MODEL_PREFERRED_DEFAULT
         return JSONResponse({
             'success': True,
             'models': vl_models,
@@ -3558,32 +3596,82 @@ async def list_style_models(request: Request):
 
 
 @router.post('/style-models/preference')
-async def set_style_model_preference(request: Request):
+@require_permission("world:save_files")
+async def set_style_model_preference(
+    request: Request,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
     """保存用户 VL 模型偏好（画风识别「识别模型」下拉切换时调用）。
 
     偏好与资产检查专家（asset-readiness-checker）等看图场景共用，
     body: {user_id, world_id, model, model_id?, vendor_id?}
     """
+    resolved_user_id, auth_error = await resolve_authorization_user_id(auth_token)
+    if auth_error:
+        return auth_error
+    if header_user_id is not None and header_user_id != resolved_user_id:
+        return JSONResponse(
+            status_code=403,
+            content={'success': False, 'error': 'X-User-Id 与登录用户不一致'},
+        )
+
     try:
         data = await request.json()
-        user_id = str(data.get('user_id', ''))
-        world_id = str(data.get('world_id', ''))
+        claimed_user_id = str(data.get('user_id', '')).strip()
+        if claimed_user_id and claimed_user_id != str(resolved_user_id):
+            return JSONResponse(
+                status_code=403,
+                content={'success': False, 'error': 'user_id 与登录用户不一致'},
+            )
+        world_id_raw = data.get('world_id')
         model = data.get('model')
-        if not user_id or not world_id or not model:
+        if world_id_raw in (None, '') or not model:
             return JSONResponse({
                 'success': False,
-                'error': '缺少必填参数 user_id / world_id / model',
+                'error': '缺少必填参数 world_id / model',
             }, status_code=400)
+        try:
+            world_id = int(world_id_raw)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {'success': False, 'error': 'world_id 格式错误'},
+                status_code=400,
+            )
 
-        ok = set_vl_model_preference(
-            user_id, world_id, model,
-            model_id=data.get('model_id'),
-            vendor_id=data.get('vendor_id'),
+        await asyncio.wait_for(
+            asyncio.to_thread(ensure_world_access, world_id, resolved_user_id, Action.EDIT),
+            timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+        )
+
+        ok = await asyncio.wait_for(
+            asyncio.to_thread(
+                set_vl_model_preference,
+                str(resolved_user_id),
+                str(world_id),
+                model,
+                model_id=data.get('model_id'),
+                vendor_id=data.get('vendor_id'),
+            ),
+            timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
         )
         if not ok:
             return JSONResponse({'success': False, 'error': 'model 不能为空'}, status_code=400)
-        logger.info(f'已保存 VL 模型偏好: user_id={user_id}, world_id={world_id}, model={model}')
+        logger.info(
+            f'已保存 VL 模型偏好: user_id={resolved_user_id}, '
+            f'world_id={world_id}, model={model}'
+        )
         return JSONResponse({'success': True, 'model': model})
+    except HTTPException as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={'success': False, 'error': exc.detail},
+        )
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=503,
+            content={'success': False, 'error': '保存模型偏好超时'},
+        )
     except Exception as e:
         logger.error(f'保存 VL 模型偏好失败: {str(e)}')
         return JSONResponse({'success': False, 'error': str(e)}, status_code=500)

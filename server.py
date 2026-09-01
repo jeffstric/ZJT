@@ -80,7 +80,11 @@ from config.constant import (
     SMART_INSERT_SHOT_TIMEOUT,
     SMART_INSERT_SHOT_DEFAULT_MODEL,
     ScriptSplitConstants,
+    DS_ENV_FIT_DEFAULT_GROUND,
+    DS_ENV_FIT_DEFAULT_HORIZON,
+    DS_ENV_FIT_DEFAULT_SCALE,
 )
+from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
     get_upload_dir, get_upload_subdir, get_upload_temp_dir,
@@ -118,6 +122,7 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceError,
     MediaGenerationPreferenceService,
 )
+from services.director_stage_env_fit import fit_environment_from_image
 from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
@@ -5332,6 +5337,47 @@ class VideoWorkflowUpdateRequest(BaseModel):
     style_reference_image: Optional[str] = None
     default_world_id: Optional[int] = None
     workflow_ratio: Optional[str] = None
+
+
+class VideoWorkflowEnvironmentFitRequest(BaseModel):
+    image_url: str
+    horizon_y: float = DS_ENV_FIT_DEFAULT_HORIZON
+    scene_scale: float = DS_ENV_FIT_DEFAULT_SCALE
+    ground_y: float = DS_ENV_FIT_DEFAULT_GROUND
+    model: Optional[str] = None
+    vendor_id: Optional[int] = None
+    model_id: Optional[int] = None
+
+
+@app.post('/api/video-workflow/fit-environment')
+@require_permission("video_workflow:update")
+async def fit_video_workflow_environment(
+    request: Request,
+    body: VideoWorkflowEnvironmentFitRequest,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """用 VL 模型估计导演台环境参数，仅允许读取登录用户的工作流预览图。"""
+    resolved_user_id, auth_error = await resolve_authorization_user_id(auth_token)
+    if auth_error:
+        return auth_error
+    if header_user_id is not None and header_user_id != resolved_user_id:
+        return JSONResponse(
+            status_code=403,
+            content={"success": False, "error": "X-User-Id 与登录用户不一致"},
+        )
+
+    return await fit_environment_from_image(
+        image_url=body.image_url,
+        user_id=resolved_user_id,
+        auth_token=normalize_authorization_token(auth_token),
+        model=body.model,
+        vendor_id=body.vendor_id,
+        model_id=body.model_id,
+        horizon_y=body.horizon_y,
+        scene_scale=body.scene_scale,
+        ground_y=body.ground_y,
+    )
 
 
 @app.get('/api/video-workflow/list')
