@@ -174,6 +174,8 @@
           panorama: proxiedUrl,
           autoLoad: true,
           haov: fov.haov, vaov: fov.vaov, vOffset: 0,
+          // 历史保存的视角可能越界（启用防护前的数据），截图渲染同样约束，避免截出黑边图
+          avoidShowingBackground: true,
           yaw: view.yaw || 0,
           pitch: view.pitch || 0,
           hfov: Math.min(120, Math.max(50, view.hfov || 100)),
@@ -246,6 +248,9 @@
       panorama: proxiedUrl,
       autoLoad: true,
       haov: fov.haov, vaov: fov.vaov, vOffset: 0,
+      // 部分全景（vaov<180° 或 haov<360°）时约束视线/视野不超出图像覆盖，
+      // 避免视线转到图像外显示黑色背景（如 21:9 图垂直仅覆盖约154°，仰/俯视到极区外即黑边）
+      avoidShowingBackground: true,
       hfov: Math.min(120, Math.max(50, (initialView && initialView.hfov) || 100)),
       minHfov: 50, maxHfov: 120,
       yaw: (initialView && initialView.yaw) || 0,
@@ -273,6 +278,15 @@
       viewer.on('mouseup', report);
       viewer.on('animatefinished', report);
     }
+    // 历史保存的视角可能越界（启用 avoidShowingBackground 前的数据）：
+    // 加载完成后原地跳转一次，触发 pannellum 约束把 yaw/pitch/hfov 校正回图像覆盖内
+    viewer.on('load', function() {
+      try {
+        viewer.setYaw(viewer.getYaw(), 0);
+        viewer.setPitch(viewer.getPitch(), 0);
+        viewer.setHfov(viewer.getHfov(), 0);
+      } catch (e) { /* ignore */ }
+    });
     if (opts.onReady) viewer.on('load', opts.onReady);
     viewer.on('error', function(err) {
       console.warn('[全景节点] 查看器加载失败:', err);

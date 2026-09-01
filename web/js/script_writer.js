@@ -7979,25 +7979,27 @@
                 updateStatus(window.t ? window.t('status_saving_world') : '正在保存世界信息...');
                 const response = await fetch(`/api/worlds/${currentEditWorld.id}`, {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${AUTH_TOKEN}`,
+                        'X-User-Id': USER_ID
+                    },
                     body: JSON.stringify({
                         name: name,
                         description: description,
-                        story_type: storyType,
-                        user_id: USER_ID,
-                        auth_token: AUTH_TOKEN
+                        story_type: storyType
                     })
                 });
-                
-                const data = await response.json();
-                if (data.success) {
+
+                const data = await response.json().catch(() => ({}));
+                if (data.code === 0) {
                     showSuccess(window.t ? window.t('success_world_updated_detail', {name: name}) : `✓ 世界 "${name}" 更新成功！`);
                     closeEditWorldModal();
                     await loadUserWorlds();
                     await loadCurrentWorldName();
                     updateStatus(window.t ? window.t('status_world_updated') : '世界信息已更新');
                 } else {
-                    showError((window.t ? window.t('error_update_world_failed', {error: data.error || (window.t ? window.t('error_unknown') : '未知错误')}) : '更新世界失败: ' + (data.error || '未知错误')));
+                    showError((window.t ? window.t('error_update_world_failed', {error: data.message || (window.t ? window.t('error_unknown') : '未知错误')}) : '更新世界失败: ' + (data.message || '未知错误')));
                     updateStatus(window.t ? window.t('status_update_failed') : '更新失败');
                 }
             } catch (error) {

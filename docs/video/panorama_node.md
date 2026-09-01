@@ -77,6 +77,7 @@
 - 视场计算：等距圆柱投影度/像素均匀。`computePanoramaFov(ratio)`：
   - 宽比 ≥ 2:1（如 21:9）→ `haov: 360`，`vaov: 360×h/w`（21:9 ≈ 154.3°，上下极区不可见，符合宽幅全景常态）；
   - 宽比 < 2:1（如 16:9）→ `vaov: 180`，`haov: 180×w/h`（水平非完整 360°，无接缝落差）。
+- **背景防护（无黑边）**：查看器启用 pannellum `avoidShowingBackground: true`——部分全景（vaov<180° 或 haov<360°）时动态约束 yaw/pitch/hfov，视线/视野不会超出图像覆盖范围，节点内与全屏均不会出现黑色背景区；加载完成后原地跳转一次（`setYaw/setPitch/setHfov`，0 动画）校正历史保存的越界视角；离屏截图查看器同样启用，避免截出黑边图。对 360°×180° 完整全景无影响。
 - 图片一律经 `proxyImageUrl()` 同源代理后交给 Pannellum（WebGL 纹理要求跨域可控）。
 - **事件隔离**（与画布冲突处理）：查看器容器 `mousedown`/`wheel`/`touchstart` 均 `stopPropagation()`——节点内拖全景不触发画布平移、滚轮不缩放画布；节点本体拖拽仅从 header 发起（`node_base.js` 惯例），互不干扰。
 - 交互：拖拽改 yaw/pitch（带惯性 `friction: 0.15`）；节点内禁用滚轮缩放（避免误触画布习惯），全屏弹层内启用。

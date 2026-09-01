@@ -937,6 +937,7 @@
   "error_enter_prop_name": "请输入道具名称",
   "error_prop_exists": "道具\"{name}\"已存在",
   "error_invalid_world_id": "无效的世界ID",
+  "error_update_world_failed": "更新世界失败: {error}",
   "error_select_llm_model": "请先选择一个 LLM 模型",
   "error_test_error": "测试过程发生错误",
   "error_test_failed": "测试失败",

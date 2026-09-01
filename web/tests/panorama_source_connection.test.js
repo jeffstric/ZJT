@@ -213,6 +213,14 @@ describe('全景参考端口修复接线（源码断言）', () => {
     // 端口 DOM 带专属类（供注册表选择器与 mousemove 高亮）
     expect(src).toMatch(/direction:\s*'input'[^}]*cssClass:\s*'panorama-source-port'/);
 
+    // 全景查看器背景防护：部分全景（vaov<180°/haov<360°）时约束视线不超出图像覆盖，
+    // 消除全屏/节点内的黑色背景区；主查看器与离屏截图查看器都要启用，
+    // 加载后原地跳转一次校正历史保存的越界视角
+    expect(src.match(/avoidShowingBackground: true/g).length).toBeGreaterThanOrEqual(2);
+    expect(src).toMatch(/viewer\.setYaw\(viewer\.getYaw\(\), 0\)/);
+    expect(src).toMatch(/viewer\.setPitch\(viewer\.getPitch\(\), 0\)/);
+    expect(src).toMatch(/viewer\.setHfov\(viewer\.getHfov\(\), 0\)/);
+
     // 模板菜单锚定在模板按钮的 position:relative 容器内（否则 absolute 菜单会相对整个
     // 节点定位、弹到节点底部）；点击菜单外任意区域收起，节点销毁移除 document 监听
     expect(src).toMatch(/position:relative;">'\s*\+\s*'<button type="button" class="mini-btn panorama-tpl-btn/);
