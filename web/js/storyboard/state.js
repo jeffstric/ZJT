@@ -152,6 +152,14 @@ const state = {
         targetType: null,
         previousType: null,
     },
+    /** 批量生成视频确认弹窗：打开时异步试算预计算力，确认后才提交批次 */
+    videoBatchConfirm: {
+        open: false,
+        loading: false,
+        estimate: null,
+        error: '',
+        submitting: false,
+    },
     mentionTab: 'character',
     isSaving: false,
     error: '',

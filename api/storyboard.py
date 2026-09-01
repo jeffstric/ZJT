@@ -3055,6 +3055,40 @@ async def auto_generate_missing_storyboard_videos(
     return JSONResponse(result)
 
 
+@router.post('/{storyboard_id:int}/estimate-missing-videos-power')
+async def estimate_missing_storyboard_videos_power(
+    request: Request,
+    storyboard_id: int,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+):
+    """试算批量生成缺失分镜视频的预计算力扣减（只算价，不建批次、不扣费）。"""
+    user_id, err = await _resolve_auth_user_id(auth_token)
+    if err:
+        return err
+
+    data, body_err = await _read_json_object_body(request)
+    if body_err:
+        return body_err
+
+    params = dict(data)
+    params['storyboard_id'] = storyboard_id
+    params['user_id'] = user_id
+
+    try:
+        result = await asyncio.to_thread(
+            StoryboardAgentCommandService().execute,
+            'estimate-missing-videos-power',
+            params,
+        )
+    except StoryboardCliError as exc:
+        status_code = {
+            "enterprise_only": 403,
+        }.get(exc.error_code, 400)
+        return JSONResponse(status_code=status_code, content=exc.to_dict())
+
+    return JSONResponse(result)
+
+
 @router.post('/{storyboard_id:int}/batch-generate-missing-voiceovers')
 @require_permission("storyboard:generate")
 async def batch_generate_missing_storyboard_voiceovers(
