@@ -8,7 +8,7 @@ Vidu Q3 定价（高峰价，积分/秒）：
 分辨率修饰符按实现方分别配置（turbo/pro 价格比例不同，任务级代码系数仅为 turbo 兜底）
 
 Revision ID: 20260901_vidu_q3_power
-Revises: 20260828_loc_plot_role
+Revises: 20260830_ds_vision
 Create Date: 2026-09-01
 """
 from typing import Sequence, Union
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # revision identifiers, used by Alembic.
 # ⚠️ revision 长度必须 ≤ 32 字符 (alembic_version.version_num 为 varchar(32))
 revision: str = '20260901_vidu_q3_power'
-down_revision: Union[str, None] = '20260828_loc_plot_role'
+down_revision: Union[str, None] = '20260830_ds_vision'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
