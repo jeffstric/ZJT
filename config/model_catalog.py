@@ -159,6 +159,9 @@ MODEL_FAMILIES: Dict[str, str] = {
     "digital_human_minimax_h3": "MiniMax",
     "vidu": "Vidu",
     "vidu_q2": "Vidu",
+    "vidu_q3_t2v": "Vidu Q3",
+    "vidu_q3_i2v": "Vidu Q3",
+    "vidu_q3_r2v": "Vidu Q3",
     "digital_human": "数字人",
     "digital_human_ltx2_3_voice": "数字人",
 }
@@ -235,6 +238,8 @@ def get_model_family(canonical: Optional[str]) -> str:
         return "Happy Horse"
     if "wan3" in lowered or "万相" in lowered:
         return "万相3.0"
+    if "vidu_q3" in lowered or "vidu-q3" in lowered:
+        return "Vidu Q3"
     return "其它"
 
 

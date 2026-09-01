@@ -56,6 +56,11 @@ runninghub:
 
 适用驱动：
 - `vidu_default` - Vidu 图生视频（任务类型 14）
+- `vidu_q3_i2v_turbo_v1` / `vidu_q3_i2v_pro_v1` - Vidu Q3 图生视频（首尾帧，任务类型 43）
+- `vidu_q3_r2v_turbo_v1` / `vidu_q3_r2v_pro_v1` - Vidu Q3 参考生视频（任务类型 44，1-7 张参考图）
+- `vidu_q3_t2v_turbo_v1` / `vidu_q3_t2v_pro_v1` - Vidu Q3 文生视频（任务类型 42）
+
+Vidu Q3 复用 `vidu.token`，turbo 档模型为 `viduq3-turbo`，pro 档为 `viduq3-pro`（reference2video 端点的 pro 档模型名为 `viduq3`）。支持 540P/720P/1080P 分辨率（默认 720P），时长 3-16 秒。
 
 配置示例：
 ```yaml

@@ -811,6 +811,20 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1,  # 高速版
     ],
 
+    # Vidu Q3 相关驱动（turbo / pro 可切换）
+    DriverKey.VIDU_Q3_IMAGE_TO_VIDEO: [
+        DriverImplementation.VIDU_Q3_I2V_TURBO_V1,  # turbo（默认）
+        DriverImplementation.VIDU_Q3_I2V_PRO_V1,    # pro
+    ],
+    DriverKey.VIDU_Q3_REFERENCE_TO_VIDEO: [
+        DriverImplementation.VIDU_Q3_R2V_TURBO_V1,  # turbo（默认）
+        DriverImplementation.VIDU_Q3_R2V_PRO_V1,    # pro
+    ],
+    DriverKey.VIDU_Q3_TEXT_TO_VIDEO: [
+        DriverImplementation.VIDU_Q3_T2V_TURBO_V1,  # turbo（默认）
+        DriverImplementation.VIDU_Q3_T2V_PRO_V1,    # pro
+    ],
+
     # Qwen Image Edit（空壳任务，待接入实现方）
     DriverKey.QWEN_IMAGE_EDIT: [],
 
