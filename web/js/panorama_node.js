@@ -169,13 +169,16 @@
       timer = setTimeout(function() { fail(new Error('全景图加载超时')); }, 20000);
 
       try {
-        viewer = window.pannellum.viewer(container, {
+        var snapBounds = panoramaViewBounds(fov);
+        var snapConfig = {
           type: 'equirectangular',
           panorama: proxiedUrl,
           autoLoad: true,
           haov: fov.haov, vaov: fov.vaov, vOffset: 0,
           // 历史保存的视角可能越界（启用防护前的数据），截图渲染同样约束，避免截出黑边图
           avoidShowingBackground: true,
+          minPitch: snapBounds.minPitch,
+          maxPitch: snapBounds.maxPitch,
           yaw: view.yaw || 0,
           pitch: view.pitch || 0,
           hfov: Math.min(120, Math.max(50, view.hfov || 100)),
@@ -183,7 +186,12 @@
           compass: false,
           mouseZoom: false,
           doubleClickZoom: false
-        });
+        };
+        if (snapBounds.minYaw !== undefined) {
+          snapConfig.minYaw = snapBounds.minYaw;
+          snapConfig.maxYaw = snapBounds.maxYaw;
+        }
+        viewer = window.pannellum.viewer(container, snapConfig);
       } catch (e) {
         fail(e);
         return;
@@ -238,6 +246,21 @@
    * @param {{mouseZoom?: boolean, onViewChange?: Function, onReady?: Function}} [opts]
    * @returns {object|null} pannellum viewer 实例
    */
+  // pannellum 2.5.7 的 avoidShowingBackground 只在显式给出 min/maxPitch、min/maxYaw 时才生效：
+  // - 未设 min/maxPitch 时其 hfov 夹取计算 tan(maxPitch-minPitch) 得 NaN，滚轮缩放后 hfov=NaN 画布全灰
+  // - 未设 min/maxYaw 时 yaw 永不约束，haov<360°（如 16:9 仅覆盖 320°）转到背面缺口即黑色竖带
+  function panoramaViewBounds(fov) {
+    var bounds = {
+      minPitch: Math.max(-90, -fov.vaov / 2),
+      maxPitch: Math.min(90, fov.vaov / 2)
+    };
+    if (fov.haov < 360) {
+      bounds.minYaw = -fov.haov / 2;
+      bounds.maxYaw = fov.haov / 2;
+    }
+    return bounds;
+  }
+
   function createPanoramaViewer(container, proxiedUrl, fov, initialView, opts) {
     if (typeof window.pannellum === 'undefined') return null;
     opts = opts || {};
@@ -261,6 +284,13 @@
       mouseZoom: opts.mouseZoom !== false,
       friction: 0.15
     };
+    var bounds = panoramaViewBounds(fov);
+    config.minPitch = bounds.minPitch;
+    config.maxPitch = bounds.maxPitch;
+    if (bounds.minYaw !== undefined) {
+      config.minYaw = bounds.minYaw;
+      config.maxYaw = bounds.maxYaw;
+    }
     var viewer = window.pannellum.viewer(container, config);
 
     // 阻断向画布冒泡：节点内拖全景不触发画布平移，滚轮只缩放全景

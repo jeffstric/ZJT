@@ -74,6 +74,29 @@ DEFAULT_VENDOR_MODEL_BILLING: List[Dict[str, Any]] = [
             },
         ],
     },
+    {
+        "vendor_name": "deepseek",
+        "model_name": "deepseek-v4-flash-vision-exp",
+        "note": "DeepSeek 官方峰谷计费（与 flash 同价）：高峰 3/9/0.10，空闲 1.5/4.5/0.05 元/百万",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "time_period": "peak",
+                "input_yuan_per_m": 3.0,
+                "out_yuan_per_m": 9.0,
+                "cache_yuan_per_m": 0.10,
+                "commission_rate": 0.0,
+            },
+            {
+                "raw_token_threshold": None,
+                "time_period": "off_peak",
+                "input_yuan_per_m": 1.5,
+                "out_yuan_per_m": 4.5,
+                "cache_yuan_per_m": 0.05,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
     # ---------- zjt_api 挂载 DeepSeek（与官方同步调价）----------
     {
         "vendor_name": "zjt_api",

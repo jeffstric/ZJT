@@ -141,7 +141,7 @@ process_token_logs()
 
 ## 默认档位 — `config/default_vendor_model_billing.py`
 
-官方 `deepseek` 的 `flash`/`pro` 已登记 `peak` + `off_peak` 两档：
+官方 `deepseek` 的 `flash`/`pro`/`flash-vision-exp` 已登记 `peak` + `off_peak` 两档：
 
 | 模型 | 时段 | 输入(未命中) | 输出 | 缓存(命中) | 元/百万 |
 |------|------|------|------|------|------|
@@ -149,6 +149,11 @@ process_token_logs()
 | deepseek-v4-flash | off_peak | 1.5 | 4.5 | 0.05 |
 | deepseek-v4-pro | peak | 9.0 | 27.0 | 0.30 |
 | deepseek-v4-pro | off_peak | 4.5 | 13.5 | 0.15 |
+| deepseek-v4-flash-vision-exp | peak | 3.0 | 9.0 | 0.10 |
+| deepseek-v4-flash-vision-exp | off_peak | 1.5 | 4.5 | 0.05 |
+
+`deepseek-v4-flash-vision-exp`（VL 实验模型）与 `flash` 同价：no_120/no_122 初建时误插 normal 单档旧价，
+由 `no_123_20260901_ds_vision_peak_valley` 迁移修正为峰谷两档（normal 档转 peak + 补插 off_peak，幂等）。
 
 中转商（zjt_api / 火山）维持 `normal`，是否峰谷按实际计费规则在界面单独配置。
 
@@ -158,6 +163,10 @@ process_token_logs()
 2. 为官方 deepseek 初始化峰谷两档（`INSERT ... SELECT ... WHERE NOT EXISTS`，幂等）
 
 `downgrade` 删除迁移插入的峰谷档 + 移除字段。
+
+后续补充迁移 `no_123_20260901_ds_vision_peak_valley`：把 `deepseek-v4-flash-vision-exp` 的
+normal 单档转为 peak 档并补插 off_peak 档（与 flash 同价）；已手动配置峰谷档的库只补缺不覆盖，
+`downgrade` 恢复 no_120 原始 normal 单档。
 
 ## 前端 — `web/admin.html` / `web/js/admin.js`
 
