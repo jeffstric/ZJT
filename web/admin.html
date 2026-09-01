@@ -65,27 +65,19 @@
                     </a>
                 </li>
                 <li>
-                    <a href="#" :class="{ active: currentPage === 'checkin' }" @click.prevent="switchPage('checkin')">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                        </svg>
-                        <span>{{ t('nav_checkin') }}</span>
-                    </a>
-                </li>
-                <li>
-                    <a href="#" :class="{ active: currentPage === 'mediaCache' }" @click.prevent="switchPage('mediaCache')">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-                        </svg>
-                        <span>{{ t('nav_media_cache') }}</span>
-                    </a>
-                </li>
-                <li>
                     <a href="#" :class="{ active: currentPage === 'implementations' }" @click.prevent="switchPage('implementations')">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                         </svg>
                         <span>{{ t('nav_implementations') }}</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" :class="{ active: currentPage === 'models' }" @click.prevent="switchPage('models')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                        <span>{{ t('nav_models') }}</span>
                     </a>
                 </li>
                 <li>
@@ -105,11 +97,19 @@
                     </a>
                 </li>
                 <li>
-                    <a href="#" :class="{ active: currentPage === 'models' }" @click.prevent="switchPage('models')">
+                    <a href="#" :class="{ active: currentPage === 'checkin' }" @click.prevent="switchPage('checkin')">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                         </svg>
-                        <span>{{ t('nav_models') }}</span>
+                        <span>{{ t('nav_checkin') }}</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" :class="{ active: currentPage === 'mediaCache' }" @click.prevent="switchPage('mediaCache')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                        </svg>
+                        <span>{{ t('nav_media_cache') }}</span>
                     </a>
                 </li>
                 <li>
@@ -172,11 +172,11 @@
                 <h2 v-if="currentPage === 'dashboard'">{{ t('nav_dashboard') }}</h2>
                 <h2 v-else-if="currentPage === 'users'">{{ t('nav_users') }}</h2>
                 <h2 v-else-if="currentPage === 'config'">{{ t('nav_config') }}</h2>
-                <h2 v-else-if="currentPage === 'checkin'">{{ t('nav_checkin') }}</h2>
                 <h2 v-else-if="currentPage === 'implementations'">{{ t('nav_implementations') }}</h2>
+                <h2 v-else-if="currentPage === 'models'">{{ t('nav_models') }}</h2>
                 <h2 v-else-if="currentPage === 'userModules'">{{ t('nav_user_modules') }}</h2>
                 <h2 v-else-if="currentPage === 'runninghubKeyPool'">{{ t('nav_runninghub_key_pool') }}</h2>
-                <h2 v-else-if="currentPage === 'models'">{{ t('nav_models') }}</h2>
+                <h2 v-else-if="currentPage === 'checkin'">{{ t('nav_checkin') }}</h2>
                 <h2 v-else-if="currentPage === 'notifications'">{{ t('nav_notifications') }}</h2>
                 <h2 v-else-if="currentPage === 'constants'">{{ t('nav_constants') }}</h2>
                 <h2 v-else-if="currentPage === 'marketingPublications'">{{ t('nav_marketing_publications') }}</h2>
@@ -1413,6 +1413,7 @@
                         <li>{{ t('models_billing_hint_threshold') }}</li>
                         <li>{{ t('models_billing_hint_price_source') }}</li>
                         <li>{{ t('models_billing_hint_range') }}</li>
+                        <li>{{ t('models_billing_hint_peak_hours') }}</li>
                         <li>{{ t('models_billing_hint_reset') }}</li>
                         <li style="color: #dc2626;">⚠️ {{ t('models_billing_hint_warn') }}</li>
                     </ul>
@@ -1574,6 +1575,7 @@
                                                                 {{ t('models_billing_reset_defaults') }}
                                                             </button>
                                                         </div>
+                                                        <p class="form-hint" style="margin: 2px 0 6px;">{{ t('models_billing_ai_period_hint') }}</p>
                                                         <textarea class="billing-ai-textarea"
                                                                   rows="2"
                                                                   v-model="billingAi.instruction"
