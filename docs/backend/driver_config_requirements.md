@@ -157,10 +157,15 @@ llm:
 
 **必需配置**:
 - `llm.qwen.api_key`（与 Happy Horse / Qwen LLM 复用同一个 DashScope API Key）
-- `wan3.workspace_id`（阿里云百炼业务空间 ID）
+- 业务空间来源（二选一）：
+  - `llm.qwen.base_url` 填密钥弹窗中的 API Host（如 `https://llm-xxx.cn-beijing.maas.aliyuncs.com`）——驱动自动解析出业务空间 ID 和地域，**推荐，用户零额外配置**
+  - 或显式配置 `wan3.workspace_id`（取 API Host 第一个点号前的部分）
+
+**配置入口**：admin「系统配置 → 快速配置」弹窗的「阿里云百炼（Qwen）」服务商卡片，除 API Key / Base URL 外还有「业务空间 ID」（一般留空）和「业务空间地域」两个字段；保存时若 DB 中尚无该配置项会自动创建。配置完整后，「实现方管理」页面才会显示 wan3.0 的实现方（页面会实例化驱动校验配置完整性）。
 
 **可选配置**:
-- `wan3.endpoint_region`（业务空间地域，默认 `cn-beijing`，可选 `ap-southeast-1` / `ap-northeast-1` / `eu-central-1` / `us-east-1`）
+- `wan3.workspace_id`（业务空间 ID，优先级高于 base_url 解析，可留空）
+- `wan3.endpoint_region`（业务空间地域，默认 `cn-beijing` 或从 base_url 解析，可选 `ap-southeast-1` / `ap-northeast-1` / `eu-central-1` / `us-east-1`）
 
 适用驱动：
 - `wan3_video_dashscope_v1` - 万相3.0 图生视频，标准版（任务类型 40），模型 `wan3.0-video`

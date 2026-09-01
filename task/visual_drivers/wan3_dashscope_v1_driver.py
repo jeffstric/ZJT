@@ -4,6 +4,7 @@ Wan3.0 阿里云百炼驱动实现
 支持图生视频（首尾帧）、参考生视频（参考图/视频/音频）、文生视频，异步任务模式
 """
 from typing import Dict, Any, Optional, List
+import re
 import traceback
 import json
 from .base_video_driver import BaseVideoDriver
@@ -22,6 +23,10 @@ MAX_DURATION = 30
 # 参考视频/音频数量与总时长上限
 MAX_REF_MEDIA_COUNT = 5
 MAX_REF_MEDIA_TOTAL_SECONDS = 15
+# 业务空间版 maas 域名：https://{workspace_id}.{region}.maas.aliyuncs.com
+MAAS_HOST_PATTERN = re.compile(
+    r'^(?:https?://)?([^./]+)\.([a-z0-9-]+)\.maas\.aliyuncs\.com', re.IGNORECASE
+)
 
 
 class Wan3DashscopeV1Driver(BaseVideoDriver):
@@ -35,19 +40,38 @@ class Wan3DashscopeV1Driver(BaseVideoDriver):
     def __init__(self, driver_name: str = "wan3_video_dashscope_v1", driver_type: int = 40):
         super().__init__(driver_name=driver_name, driver_type=driver_type)
 
-        # 加载配置（复用 LLM 配置的阿里云 Qwen API Key）
+        # 加载配置（复用 LLM 配置的阿里云百炼 API Key）
         self._api_key = get_dynamic_config_value("llm", "qwen", "api_key", default="")
-        self._workspace_id = get_dynamic_config_value("wan3", "workspace_id", default="")
-        self._region = get_dynamic_config_value("wan3", "endpoint_region", default="cn-beijing")
         self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
 
         self._config = get_config()
+        self._workspace_id, self._region = self._resolve_workspace()
         self._base_url = f"https://{self._workspace_id}.{self._region}.maas.aliyuncs.com/api/v1"
 
         self._validate_required({
             "DashScope API Key": self._api_key,
-            "百炼业务空间ID": self._workspace_id,
+            "百炼业务空间ID（可配置 wan3.workspace_id，或把 llm.qwen.base_url 填为密钥弹窗中的 API Host 自动解析）": self._workspace_id,
         })
+
+    @staticmethod
+    def _resolve_workspace() -> tuple[str, str]:
+        """
+        解析业务空间 ID 与地域，优先级：
+        1. 显式配置 wan3.workspace_id / wan3.endpoint_region
+        2. 从 llm.qwen.base_url 的 maas 域名自动解析
+           （如 https://llm-xxx.cn-beijing.maas.aliyuncs.com -> llm-xxx / cn-beijing）
+           让用户只填密钥弹窗里的 API Host 即可，无需单独查业务空间 ID
+        """
+        workspace_id = (get_dynamic_config_value("wan3", "workspace_id", default="") or "").strip()
+        region = (get_dynamic_config_value("wan3", "endpoint_region", default="") or "").strip()
+        if workspace_id:
+            return workspace_id, region or "cn-beijing"
+
+        base_url = (get_dynamic_config_value("llm", "qwen", "base_url", default="") or "").strip()
+        match = MAAS_HOST_PATTERN.match(base_url)
+        if match:
+            return match.group(1), region or match.group(2)
+        return "", region or "cn-beijing"
 
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
         """

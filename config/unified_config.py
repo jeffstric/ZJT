@@ -2673,6 +2673,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.WAN3_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.WAN3_VIDEO_DASHSCOPE_V1,
+        implementations=[
+            DriverImplementation.WAN3_VIDEO_DASHSCOPE_V1,
+            DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_V1,
+        ],
         supported_ratios=['adaptive', '16:9', '4:3', '1:1', '3:4', '9:16'],
         supported_durations=[2, 3, 5, 8, 10, 15, 20, 25, 30],
         default_ratio='adaptive',
@@ -2704,6 +2708,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.WAN3_REFERENCE_TO_VIDEO,
         implementation=DriverImplementation.WAN3_VIDEO_DASHSCOPE_R2V_V1,
+        implementations=[
+            DriverImplementation.WAN3_VIDEO_DASHSCOPE_R2V_V1,
+            DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_R2V_V1,
+        ],
         supported_ratios=['adaptive', '16:9', '4:3', '1:1', '3:4', '9:16'],
         supported_durations=[2, 3, 5, 8, 10, 15, 20, 25, 30],
         default_ratio='adaptive',
@@ -2736,6 +2744,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.WAN3_TEXT_TO_VIDEO,
         implementation=DriverImplementation.WAN3_VIDEO_DASHSCOPE_T2V_V1,
+        implementations=[
+            DriverImplementation.WAN3_VIDEO_DASHSCOPE_T2V_V1,
+            DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1,
+        ],
         supported_ratios=['adaptive', '16:9', '4:3', '1:1', '3:4', '9:16'],
         supported_durations=[2, 3, 5, 8, 10, 15, 20, 25, 30],
         default_ratio='adaptive',
@@ -3773,7 +3785,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='阿里云百炼 万相3.0 图生视频接口（标准版）',
         sort_order=1.0,
-        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        required_config_keys=['llm.qwen.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
@@ -3789,7 +3801,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='阿里云百炼 万相3.0 图生视频接口（高速版）',
         sort_order=2.0,
-        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        required_config_keys=['llm.qwen.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
@@ -3805,7 +3817,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='阿里云百炼 万相3.0 参考生视频接口（标准版）',
         sort_order=1.0,
-        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        required_config_keys=['llm.qwen.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
@@ -3821,7 +3833,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='阿里云百炼 万相3.0 参考生视频接口（高速版）',
         sort_order=2.0,
-        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        required_config_keys=['llm.qwen.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
@@ -3837,7 +3849,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='阿里云百炼 万相3.0 文生视频接口（标准版）',
         sort_order=1.0,
-        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        required_config_keys=['llm.qwen.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
@@ -3853,7 +3865,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='阿里云百炼 万相3.0 文生视频接口（高速版）',
         sort_order=2.0,
-        required_config_keys=['llm.qwen.api_key', 'wan3.workspace_id'],
+        required_config_keys=['llm.qwen.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},

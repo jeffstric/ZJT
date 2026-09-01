@@ -130,13 +130,92 @@ class TestWan3DriverInit(unittest.TestCase):
                 Wan3DashscopeV1Driver()
 
     def test_missing_workspace_id_raises(self):
-        """业务空间 ID 为空时抛出异常"""
+        """业务空间 ID 为空且 base_url 无法解析时抛出异常"""
         def side_effect(*keys, default=None):
             if keys == ('wan3', 'workspace_id'):
                 return ''
             if keys == ('llm', 'qwen', 'api_key'):
                 return 'test_api_key'
             return default
+
+        with patch('task.visual_drivers.wan3_dashscope_v1_driver.get_dynamic_config_value',
+                   side_effect=side_effect), \
+             patch('task.visual_drivers.wan3_dashscope_v1_driver.get_config', return_value={}):
+            with self.assertRaises(DriverConfigError):
+                Wan3DashscopeV1Driver()
+
+    def test_workspace_derived_from_maas_base_url(self):
+        """未配置 workspace_id 时，从 llm.qwen.base_url 的 maas 域名自动解析"""
+        def side_effect(*keys, default=None):
+            key_map = {
+                ('llm', 'qwen', 'api_key'): 'test_api_key',
+                ('llm', 'qwen', 'base_url'): 'https://llm-nqvx1sbyyhmh3olj.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+                ('wan3', 'workspace_id'): '',
+                ('wan3', 'endpoint_region'): '',
+                ('timeout', 'request_timeout'): 30,
+            }
+            return key_map.get(keys, default)
+
+        with patch('task.visual_drivers.wan3_dashscope_v1_driver.get_dynamic_config_value',
+                   side_effect=side_effect), \
+             patch('task.visual_drivers.wan3_dashscope_v1_driver.get_config', return_value={}):
+            driver = Wan3DashscopeV1Driver()
+            self.assertEqual(driver._workspace_id, 'llm-nqvx1sbyyhmh3olj')
+            self.assertEqual(driver._region, 'cn-beijing')
+            self.assertEqual(
+                driver._base_url,
+                'https://llm-nqvx1sbyyhmh3olj.cn-beijing.maas.aliyuncs.com/api/v1'
+            )
+
+    def test_workspace_derived_region_from_host(self):
+        """从 maas 域名同时解析地域（如新加坡）"""
+        def side_effect(*keys, default=None):
+            key_map = {
+                ('llm', 'qwen', 'api_key'): 'test_api_key',
+                ('llm', 'qwen', 'base_url'): 'llm-abc123.ap-southeast-1.maas.aliyuncs.com',
+                ('wan3', 'workspace_id'): '',
+                ('wan3', 'endpoint_region'): '',
+                ('timeout', 'request_timeout'): 30,
+            }
+            return key_map.get(keys, default)
+
+        with patch('task.visual_drivers.wan3_dashscope_v1_driver.get_dynamic_config_value',
+                   side_effect=side_effect), \
+             patch('task.visual_drivers.wan3_dashscope_v1_driver.get_config', return_value={}):
+            driver = Wan3DashscopeV1Driver()
+            self.assertEqual(driver._workspace_id, 'llm-abc123')
+            self.assertEqual(driver._region, 'ap-southeast-1')
+
+    def test_explicit_workspace_id_takes_precedence(self):
+        """显式配置 wan3.workspace_id 优先于 base_url 解析"""
+        def side_effect(*keys, default=None):
+            key_map = {
+                ('llm', 'qwen', 'api_key'): 'test_api_key',
+                ('llm', 'qwen', 'base_url'): 'https://llm-xxx.cn-beijing.maas.aliyuncs.com',
+                ('wan3', 'workspace_id'): 'explicit-ws',
+                ('wan3', 'endpoint_region'): 'eu-central-1',
+                ('timeout', 'request_timeout'): 30,
+            }
+            return key_map.get(keys, default)
+
+        with patch('task.visual_drivers.wan3_dashscope_v1_driver.get_dynamic_config_value',
+                   side_effect=side_effect), \
+             patch('task.visual_drivers.wan3_dashscope_v1_driver.get_config', return_value={}):
+            driver = Wan3DashscopeV1Driver()
+            self.assertEqual(driver._workspace_id, 'explicit-ws')
+            self.assertEqual(driver._region, 'eu-central-1')
+
+    def test_classic_dashscope_base_url_not_parsed(self):
+        """经典 dashscope 域名无法解析业务空间，仍抛配置异常"""
+        def side_effect(*keys, default=None):
+            key_map = {
+                ('llm', 'qwen', 'api_key'): 'test_api_key',
+                ('llm', 'qwen', 'base_url'): 'https://dashscope.aliyuncs.com',
+                ('wan3', 'workspace_id'): '',
+                ('wan3', 'endpoint_region'): '',
+                ('timeout', 'request_timeout'): 30,
+            }
+            return key_map.get(keys, default)
 
         with patch('task.visual_drivers.wan3_dashscope_v1_driver.get_dynamic_config_value',
                    side_effect=side_effect), \
