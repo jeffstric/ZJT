@@ -178,7 +178,7 @@ unit_tests:
     # 源码通过 ..:/app 挂载进容器运行，纯代码改动复用缓存镜像即可
     - DEPS_HASH=$(cat ../requirements.txt Dockerfile | sha256sum | cut -c1-16)
     - export TEST_IMAGE_TAG=$DEPS_HASH
-    - echo "环境镜像标签: zjt_test_image:$TEST_IMAGE_TAG"
+    - 'echo "环境镜像标签: zjt_test_image:$TEST_IMAGE_TAG"'
 
     # 缓存已加载且依赖未变则跳过构建（这是防 1h 超时的核心：避免每次 pip 全量下载）
     - |
