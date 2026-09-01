@@ -2757,20 +2757,14 @@ async def get_vendors():
 
 
 @router.get('/models')
-async def get_available_models(scene: Optional[str] = None):
+async def list_models_endpoint(scene: Optional[str] = None):
     """获取可用的 AI 模型列表，根据 vendor 表分组。
 
     scene 可选，传入后附加性价比/效果双档 catalog，并为每条模型标注 track。
     """
     try:
-        from llm.llm_client_factory import get_available_models as _get_available_models
-        from config.model_catalog import (
-            ModelScene,
-            annotate_llm_models,
-            build_tracks_payload,
-        )
         result = await asyncio.wait_for(
-            _get_available_models(),
+            get_available_models(),
             timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
         )
         models = result.get('models') or []
@@ -3526,7 +3520,10 @@ async def list_style_models(
 
     try:
 
-        result = await get_available_models()
+        result = await asyncio.wait_for(
+            get_available_models(),
+            timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+        )
         pref_vendor = (IMAGE_STYLE_PREFERRED_VENDOR or 'volcengine').lower()
         pref_model = (IMAGE_STYLE_PREFERRED_MODEL or 'doubao-seed-2-0-lite').lower()
 
