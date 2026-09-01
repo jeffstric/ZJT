@@ -30,6 +30,16 @@ def test_concise_instruction_targets_ask_user_reduction():
     assert "不使用 ask_user" in INTERVENTION_LEVEL_INSTRUCTIONS["concise"]
 
 
+def test_concise_instruction_exempts_requirement_collection():
+    """简洁档必须豁免需求收集项（题材/集数/时长/画风），不得跳过这些必答提问。"""
+    from config.constant import INTERVENTION_LEVEL_INSTRUCTIONS
+    instruction = INTERVENTION_LEVEL_INSTRUCTIONS["concise"]
+    assert "需求收集" in instruction
+    assert "集数" in instruction
+    assert "画风" in instruction
+    assert "仍须使用 ask_user" in instruction
+
+
 def test_detailed_instruction_restores_confirmation_flow():
     from config.constant import INTERVENTION_LEVEL_INSTRUCTIONS
     instruction = INTERVENTION_LEVEL_INSTRUCTIONS["detailed"]
