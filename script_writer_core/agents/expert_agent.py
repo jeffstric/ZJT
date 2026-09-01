@@ -203,10 +203,11 @@ class ExpertAgent(BaseAgent, AskUserMixin):
 
             # 图片、视频、音频以文字标签形式注入，不需要 base64
             # 需要看图的专家（如 image-understanding）通过 fetch_image_as_base64 工具按需获取
+            # 标签文案必须声明"不包含图片内容"，防止 LLM 误以为能看到图片而编造描述
             combined_parts = []
             if image_urls:
                 for i, img_url in enumerate(image_urls, 1):
-                    combined_parts.append(f"[图片{i}]（URL: {img_url}）")
+                    combined_parts.append(f"[图片{i}]（URL: {img_url}，注意：此为图片地址文本，不包含图片内容）")
             if video_urls:
                 for i, vid_url in enumerate(video_urls, 1):
                     combined_parts.append(f"[视频{i}]（URL: {vid_url}）")
