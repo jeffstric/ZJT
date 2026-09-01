@@ -184,5 +184,27 @@ class TestFormatMessagesForApi(TestExpertAgent):
         self.assertEqual(messages[1]["content"], "None")
 
 
+class TestPowerConfirmSwitch(TestExpertAgent):
+    """算力确认门开关：script_writer 链路关闭（不拦截/不注入提示），marketing 链路默认开启"""
+
+    def test_disabled_gate_passes_through(self):
+        agent = self._create_agent(power_confirm_enabled=False)
+        # 门关闭：计费生成工具直接放行（返回 None），不估算、不弹验证
+        self.assertIsNone(
+            agent._gate_computing_power("generate_text_to_image", {"prompt": "x"})
+        )
+
+    def test_disabled_gate_no_prompt_note(self):
+        agent = self._create_agent(power_confirm_enabled=False)
+        self.assertNotIn("算力确认上限", agent.system_prompt)
+        self.assertNotIn("把确认交给系统", agent.system_prompt)
+
+    def test_enabled_gate_prompt_note_present(self):
+        with patch('script_writer_core.agents.power_confirm.resolve_user_soft_threshold',
+                   return_value=(35, False)):
+            agent = self._create_agent()
+        self.assertIn("算力确认上限", agent.system_prompt)
+
+
 if __name__ == '__main__':
     unittest.main()

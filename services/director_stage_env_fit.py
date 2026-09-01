@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
-"""导演台全景环境尺度对齐：用已接入的 VL 模型估计 horizonY / sceneScale。"""
+"""导演台全景环境尺度对齐：用已接入的 VL 模型估计 horizonY / sceneScale。
+
+模型挑选 / 图片压缩 / VL 调用由 services/vl_gateway.py 共享网关提供，
+本模块保留：用户隔离的图片路径安全解析（develop 加固版语义）与估参业务解析。
+"""
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
 import re
@@ -12,8 +15,8 @@ from typing import Any, Dict, Optional, Tuple
 from urllib.parse import unquote, urlparse
 
 from config.constant import (
-    DS_ENV_FIT_COMPRESS_TIMEOUT,
     DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS,
+    DS_ENV_FIT_COMPRESS_TIMEOUT,
     DS_ENV_FIT_DEFAULT_GROUND,
     DS_ENV_FIT_DEFAULT_HORIZON,
     DS_ENV_FIT_DEFAULT_SCALE,
@@ -26,9 +29,13 @@ from config.constant import (
     DS_ENV_FIT_PREFERRED_VENDOR,
     DS_ENV_FIT_SCALE_MAX,
     DS_ENV_FIT_SCALE_MIN,
+    VL_GATEWAY_DB_TIMEOUT,
 )
-from llm.llm_client_factory import get_available_models, get_llm_client
-from utils.image_compressor import compress_local_image_to_base64
+from services.vl_gateway import (
+    call_vl,
+    image_url_to_base64,
+    pick_vl_model as _gateway_pick_vl_model,
+)
 from utils.project_path import get_upload_dir
 
 logger = logging.getLogger(__name__)
@@ -136,33 +143,16 @@ def parse_fit_json(content: str) -> Optional[Dict[str, Any]]:
 
 
 async def pick_vl_model(model: Optional[str] = None, vendor_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    """选出已配置密钥的 VL 模型。没有则返回 None（调用方应降级为人工）。"""
-    result = await get_available_models()
-    models = [m for m in (result.get("models") or []) if m.get("supports_vl")]
-    if not models:
-        return None
-    pref_vendor = (DS_ENV_FIT_PREFERRED_VENDOR or "volcengine").lower()
-    pref_model = (DS_ENV_FIT_PREFERRED_MODEL or "doubao-seed-2-0-lite").lower()
-    if model:
-        name = str(model).lower()
-        for m in models:
-            if (m.get("name") or "").lower() == name:
-                if vendor_id is None or m.get("vendor_id") == vendor_id:
-                    return m
-        for m in models:
-            if pref_model in (m.get("name") or "").lower():
-                return m
-        return models[0]
-
-    def sort_key(item: dict):
-        vendor = (item.get("vendor_name") or "").lower()
-        name = (item.get("name") or "").lower()
-        is_pref = 0 if (vendor == pref_vendor and pref_model in name) else 1
-        is_volc = 0 if vendor == pref_vendor else 1
-        return (is_pref, is_volc, vendor, name)
-
-    models.sort(key=sort_key)
-    return models[0]
+    """选出已配置密钥的 VL 模型（偏好见 DS_ENV_FIT_* 常量）。没有则返回 None。"""
+    return await asyncio.wait_for(
+        _gateway_pick_vl_model(
+            DS_ENV_FIT_PREFERRED_VENDOR,
+            DS_ENV_FIT_PREFERRED_MODEL,
+            model=model,
+            vendor_id=vendor_id,
+        ),
+        timeout=VL_GATEWAY_DB_TIMEOUT,
+    )
 
 
 async def fit_environment_from_image(
@@ -177,11 +167,18 @@ async def fit_environment_from_image(
     ground_y: float = DS_ENV_FIT_DEFAULT_GROUND,
 ) -> Dict[str, Any]:
     """返回 {success, fallback?, horizonY?, sceneScale?, groundY?, reason?, error?}。"""
+    # 用户隔离的安全路径解析（限制在 upload/workflow/{user_id}/ 内）
     local_path, path_err = resolve_upload_path(image_url, user_id=user_id)
     if path_err:
         return {"success": False, "fallback": "manual", "error": path_err}
 
-    picked = await pick_vl_model(model=model, vendor_id=vendor_id)
+    try:
+        picked = await asyncio.wait_for(
+            pick_vl_model(model=model, vendor_id=vendor_id),
+            timeout=VL_GATEWAY_DB_TIMEOUT + 5,
+        )
+    except asyncio.TimeoutError:
+        return {"success": False, "fallback": "manual", "error": "视觉模型列表查询超时，请手动调节地平线与场景比例"}
     if not picked:
         return {
             "success": False,
@@ -193,58 +190,49 @@ async def fit_environment_from_image(
     use_vendor_id = vendor_id if vendor_id is not None else picked.get("vendor_id")
     use_model_id = model_id if model_id is not None else picked.get("model_id")
 
+    # 已完成用户隔离解析的本地路径直通压缩（env_fit 仅支持本站图，不走远程）
     try:
         ok, data_url, err = await asyncio.wait_for(
-            asyncio.to_thread(
-                compress_local_image_to_base64,
-                local_path,
-                2.0,
-                2_073_600,
+            image_url_to_base64(
+                compress_timeout=DS_ENV_FIT_COMPRESS_TIMEOUT,
+                allow_remote=False,
+                local_path=local_path,
             ),
-            timeout=DS_ENV_FIT_COMPRESS_TIMEOUT,
+            timeout=DS_ENV_FIT_COMPRESS_TIMEOUT + 5,
         )
     except asyncio.TimeoutError:
         return {"success": False, "fallback": "manual", "error": "预览图压缩超时，请手动调节"}
     if not ok or not data_url:
-        return {"success": False, "fallback": "manual", "error": "预览图处理失败，请手动调节"}
+        if err and "超时" in str(err):
+            return {"success": False, "fallback": "manual", "error": "预览图压缩超时，请手动调节"}
+        return {"success": False, "fallback": "manual", "error": str(err or "预览图处理失败，请手动调节")}
 
     user_text = USER_TEXT_TMPL.format(horizon=horizon_y, scale=scene_scale, ground=ground_y)
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": [
-            {"type": "text", "text": user_text},
-            {"type": "image_url", "image_url": {"url": data_url}},
-        ]},
-    ]
 
-    client = await asyncio.to_thread(get_llm_client, use_model, use_vendor_id)
-    call_kwargs = dict(
-        model=use_model,
-        messages=messages,
-        temperature=0.2,
-        max_tokens=300,
-        auth_token=auth_token or None,
-        vendor_id=use_vendor_id,
-        model_id=use_model_id,
-    )
-    if "request_timeout" in inspect.signature(client.call_api).parameters:
-        call_kwargs["request_timeout"] = DS_ENV_FIT_LLM_TIMEOUT
     try:
-        response = await asyncio.wait_for(
-            asyncio.to_thread(client.call_api, **call_kwargs),
-            timeout=DS_ENV_FIT_LLM_TIMEOUT + 10,
+        ok, content, err = await asyncio.wait_for(
+            call_vl(
+                SYSTEM_PROMPT,
+                user_text,
+                data_url,
+                model=use_model,
+                llm_timeout=DS_ENV_FIT_LLM_TIMEOUT,
+                vendor_id=use_vendor_id,
+                model_id=use_model_id,
+                auth_token=auth_token,
+                temperature=0.2,
+                max_tokens=300,
+            ),
+            timeout=DS_ENV_FIT_LLM_TIMEOUT + 15,
         )
     except asyncio.TimeoutError:
         return {"success": False, "fallback": "manual", "error": "视觉模型超时，请手动调节地平线与场景比例"}
-    except Exception as exc:
-        logger.exception("导演台环境 VL 估参失败")
+    if not ok:
+        if err and "超时" in str(err):
+            return {"success": False, "fallback": "manual", "error": "视觉模型超时，请手动调节地平线与场景比例"}
+        logger.warning("导演台环境 VL 估参失败: %s", err)
         return {"success": False, "fallback": "manual", "error": "视觉模型不可用，请手动调节地平线与场景比例"}
 
-    content = ""
-    try:
-        content = response.choices[0].message.content if response and response.choices else ""
-    except Exception:
-        content = ""
     parsed = parse_fit_json(content or "")
     if not parsed:
         logger.warning("导演台环境 VL 返回无法解析: %s", (content or "")[:300])

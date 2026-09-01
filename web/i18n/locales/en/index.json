@@ -946,6 +946,7 @@
   "error_enter_prop_name": "Please enter prop name",
   "error_prop_exists": "Prop \"{name}\" already exists",
   "error_invalid_world_id": "Invalid world ID",
+  "error_update_world_failed": "Failed to update world: {error}",
   "error_select_llm_model": "Please select an LLM model first",
   "error_test_error": "Error during test",
   "error_test_failed": "Test failed",

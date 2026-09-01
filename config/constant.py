@@ -205,6 +205,28 @@ IMAGE_STYLE_LLM_TIMEOUT = 120
 IMAGE_STYLE_PREFERRED_VENDOR = "volcengine"
 IMAGE_STYLE_PREFERRED_MODEL = "doubao-seed-2-0-lite"
 
+# ===== VL 调用共享网关（services/vl_gateway.py）=====
+# 三处 VL 识图链路（画风识别 recognize-style / 导演台环境对齐 director_stage_env_fit /
+# 图片描述 image_describe）共用的超时常量。
+# 可用 VL 模型列表查询（DB）超时（秒）。
+VL_GATEWAY_DB_TIMEOUT = 10
+# VL 客户端初始化超时（秒）。
+VL_GATEWAY_CLIENT_INIT_TIMEOUT = 10
+# 远程图片下载压缩默认超时（秒）。
+VL_GATEWAY_REMOTE_FETCH_TIMEOUT = 30
+
+# ===== 图片描述（任意图片 → vl 模型生成场景描述提示词）=====
+# 视频工作流画布：360 全景节点连入图片节点且图片无提示词时，调用 VL 识图生成场景描述。
+# 图片压缩转 base64 的同步包装超时（秒）；远程 URL 场景含下载时间。
+IMAGE_DESCRIBE_COMPRESS_TIMEOUT = 15
+# 单次 VL 描述调用超时（秒）：作为 transport 超时传入 call_api。
+IMAGE_DESCRIBE_LLM_TIMEOUT = 60
+# 图片获取（本地压缩/远程下载）外层总超时（秒）。
+IMAGE_DESCRIBE_FETCH_TIMEOUT = 45
+# 默认推荐模型：与画风识别一致（volcengine doubao-seed-2-0-lite，须已配置密钥）。
+IMAGE_DESCRIBE_PREFERRED_VENDOR = "volcengine"
+IMAGE_DESCRIBE_PREFERRED_MODEL = "doubao-seed-2-0-lite"
+
 # ===== 角色形象图历史归档（暂存区 character_*.json 的 image_history 字段）=====
 # 替换 reference_image 时旧图自动插入 image_history 头部；超过上限后丢弃最旧的。
 CHARACTER_IMAGE_HISTORY_FIELD = "image_history"

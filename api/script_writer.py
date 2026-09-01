@@ -72,6 +72,8 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceError,
     MediaGenerationPreferenceService,
 )
+from services.vl_gateway import call_vl as _vl_call
+from services.vl_gateway import image_url_to_base64 as _vl_image_url_to_base64
 
 # 导入智能体系统
 from script_writer_core.agents import TaskManager, TaskStatus, ToolExecutor
@@ -3725,7 +3727,6 @@ def _extract_style_json(content: str) -> Optional[dict]:
 async def recognize_style(request: Request, body: RecognizeStyleRequest):
     """调用 vl 模型识别图片画风，仅返回画面风格（供前端确认后再写入）。"""
     from config.constant import IMAGE_STYLE_LLM_TIMEOUT, IMAGE_STYLE_COMPRESS_TIMEOUT
-    from utils.image_compressor import compress_local_image_to_base64
 
     if not body.image_url:
         return JSONResponse({'success': False, 'error': '缺少图片 url'}, status_code=400)
@@ -3733,42 +3734,19 @@ async def recognize_style(request: Request, body: RecognizeStyleRequest):
         return JSONResponse({'success': False, 'error': '未选择识别模型'}, status_code=400)
 
     try:
-        # 1) 解析 image_url → 本地路径（仅允许本服务 upload 目录下的文件）
-        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        upload_root = os.path.join(app_dir, 'upload').replace('\\', '/')
-        image_url = body.image_url.strip()
-        # 取 URL path 部分，定位 upload/... 相对片段
-        rel = image_url
-        if '://' in rel:
-            from urllib.parse import urlparse
-            rel = urlparse(rel).path
-        rel = rel.lstrip('/').replace('\\', '/')
-        if '/upload/' in rel:
-            rel = rel[rel.index('/upload/') + len('/upload/'):]
-        elif rel.startswith('upload/'):
-            rel = rel[len('upload/'):]
-        local_path = os.path.normpath(os.path.join(upload_root, rel))
-        # 防目录穿越：最终路径必须在 upload_root 下
-        if not local_path.replace('\\', '/').startswith(upload_root):
-            return JSONResponse({'success': False, 'error': '非法的图片路径'}, status_code=400)
-        if not os.path.isfile(local_path):
-            return JSONResponse({'success': False, 'error': f'图片文件不存在: {rel}'}, status_code=404)
-
-        # 2) 压缩转 base64（同步 CPU 操作 → to_thread 包装 + wait_for 超时保护）
-        try:
-            ok, data_url, err = await asyncio.wait_for(
-                asyncio.to_thread(
-                    compress_local_image_to_base64,
-                    local_path, 2.0, 2_073_600
-                ),
-                timeout=IMAGE_STYLE_COMPRESS_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            return JSONResponse({'success': False, 'error': '图片压缩超时，请重试'}, status_code=504)
+        # 1) 图片获取：URL → 压缩 base64（仅允许本站 upload 目录，allow_remote=False；
+        #     压缩/超时/路径校验由 services/vl_gateway.py 共享网关处理）
+        ok, data_url, err = await _vl_image_url_to_base64(
+            body.image_url.strip(),
+            compress_timeout=IMAGE_STYLE_COMPRESS_TIMEOUT,
+            allow_remote=False,
+        )
         if not ok or not data_url:
-            return JSONResponse({'success': False, 'error': f'图片处理失败: {err}'}, status_code=400)
+            error_text = str(err or '图片处理失败')
+            status_code = 504 if '超时' in error_text else (404 if '不存在' in error_text else 400)
+            return JSONResponse({'success': False, 'error': error_text}, status_code=status_code)
 
-        # 3) 构造多模态消息，调用 vl 模型（同步 call_api → to_thread + wait_for）
+        # 2) 构造多模态消息，调用 vl 模型（共享网关：request_timeout 兼容探测 + 超时保护）
         # visual_style 规范与 asset-readiness-checker 画风审核条款一致，
         # 字段语义对齐 plot-analyzer：只回答「是什么风格」，不产出构图/色彩。
         system_prompt = (
@@ -3802,39 +3780,24 @@ async def recognize_style(request: Request, body: RecognizeStyleRequest):
             '{"visual_style":"画风大类+具体风格关键词，如：现代都市写实风格 / 日系新海诚动漫风格"}\n'
             "记住：只写 visual_style，不要写构图倾向、色彩、镜头、剧情内容。"
         )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": [
-                {"type": "text", "text": user_text},
-                {"type": "image_url", "image_url": {"url": data_url}},
-            ]},
-        ]
 
-        client = get_llm_client(body.model, vendor_id=body.vendor_id)
-        # 仅 OpenAI 兼容系列（含 doubao）的 call_api 支持 request_timeout；
-        # Gemini 等原生 client 不支持该参数，传了会 TypeError。先探测再条件传入。
-        import inspect as _inspect
-        call_kwargs = dict(
+        ok, content, err = await _vl_call(
+            system_prompt,
+            user_text,
+            data_url,
             model=body.model,
-            messages=messages,
-            temperature=0.4,
-            max_tokens=400,
-            auth_token=body.auth_token or None,
+            llm_timeout=IMAGE_STYLE_LLM_TIMEOUT,
             vendor_id=body.vendor_id,
             model_id=body.model_id,
+            auth_token=body.auth_token,
+            temperature=0.4,
+            max_tokens=400,
         )
-        if 'request_timeout' in _inspect.signature(client.call_api).parameters:
-            call_kwargs['request_timeout'] = IMAGE_STYLE_LLM_TIMEOUT
-        try:
-            # 外层 wait_for 对所有 client 兜底超时，满足超时红线（R4/R5/R6）
-            response = await asyncio.wait_for(
-                asyncio.to_thread(client.call_api, **call_kwargs),
-                timeout=IMAGE_STYLE_LLM_TIMEOUT + 10,
-            )
-        except asyncio.TimeoutError:
-            return JSONResponse({'success': False, 'error': '模型识别超时，请重试或更换模型'}, status_code=504)
+        if not ok:
+            error_text = str(err or '模型识别失败')
+            status_code = 504 if '超时' in error_text else 500
+            return JSONResponse({'success': False, 'error': error_text}, status_code=status_code)
 
-        content = response.choices[0].message.content if response and response.choices else ''
         parsed = _extract_style_json(content)
         if not parsed or not parsed.get('visual_style'):
             return JSONResponse({

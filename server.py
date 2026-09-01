@@ -5678,6 +5678,64 @@ async def upload_workflow_asset(
         )
 
 
+class DescribeImageRequest(BaseModel):
+    """VL 识图生成场景描述（360 全景节点连入无提示词图片时自动调用）"""
+    image_url: str
+    model: Optional[str] = None
+    model_id: Optional[int] = None
+    vendor_id: Optional[int] = None
+
+
+@app.post('/api/video-workflow/describe-image')
+@require_permission("world:view_files")
+async def describe_workflow_image(
+    request: Request,
+    body: DescribeImageRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    任意图片 → VL 模型生成场景描述提示词
+
+    360 全景节点连入图片节点且图片无提示词时，前端自动调用本接口识图，
+    生成的描述填入全景节点提示词（不覆盖用户已输入内容）。
+    走 LLM token 计费（call_api 内部上报）。
+    """
+    from services.image_describe import describe_image
+
+    try:
+        token = (auth_token or '').strip()
+        if token.lower().startswith('bearer '):
+            token = token[7:].strip()
+        if not body.image_url or not body.image_url.strip():
+            return JSONResponse({'success': False, 'error': '缺少图片 url'}, status_code=400)
+
+        result = await describe_image(
+            image_url=body.image_url.strip(),
+            user_id=user_id,
+            auth_token=token or None,
+            model=body.model,
+            model_id=body.model_id,
+            vendor_id=body.vendor_id,
+        )
+        if not result.get('success'):
+            status_code = 504 if '超时' in str(result.get('error') or '') else 400
+            return JSONResponse({
+                'success': False,
+                'error': result.get('error') or '识图生成描述失败',
+            }, status_code=status_code)
+        return JSONResponse({
+            'success': True,
+            'description': result.get('description'),
+            'model': result.get('model'),
+            'vendor_id': result.get('vendor_id'),
+        })
+    except Exception as e:
+        logger.error(f"VL 图片描述失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse({'success': False, 'error': f'识图生成描述失败: {str(e)}'}, status_code=500)
+
+
 @app.post('/api/video-workflow/extract-frame')
 @require_permission("video_workflow:upload")
 async def extract_video_frame(

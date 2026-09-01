@@ -355,7 +355,9 @@ async function generateShotFrameImage(nodeId, node){
       const newNodeId = createImageNode({
         x: node.x + 380,
         y: node.y + offsetY,
-        checkCollision: true
+        checkCollision: true,
+        // 结果节点携带生成提示词：下游连线（如 360 全景）可自动适配提示词
+        data: { prompt: finalPrompt }
       });
       
       const newNode = state.nodes.find(n => n.id === newNodeId);

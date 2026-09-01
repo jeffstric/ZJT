@@ -46,7 +46,8 @@ class PMAgent(BaseAgent, AskUserMixin):
         skill_loader: Optional[SkillLoader] = None,
         sop_loader: Optional[SopLoader] = None,
         skill_names: Optional[List[str]] = None,
-        skip_env_context: bool = False
+        skip_env_context: bool = False,
+        power_confirm_enabled: bool = True
     ):
         agent_id = "pm_agent"
 
@@ -72,6 +73,8 @@ class PMAgent(BaseAgent, AskUserMixin):
         self.user_id = user_id
         self.world_id = world_id
         self.auth_token = auth_token
+        # 算力确认门开关透传给 ExpertAgent（marketing 链路开启，剧本创作链路关闭）
+        self.power_confirm_enabled = power_confirm_enabled
 
         # 获取环境上下文并构建增强的 system prompt（只在初始化时执行一次）
         if skip_env_context:
@@ -701,7 +704,8 @@ class PMAgent(BaseAgent, AskUserMixin):
             language=task.language,
             max_consecutive_no_progress=expert_config.get("max_consecutive_no_progress", 3),
             max_consecutive_errors=expert_config.get("max_consecutive_errors", 3),
-            max_total_errors=expert_config.get("max_total_errors", 7)
+            max_total_errors=expert_config.get("max_total_errors", 7),
+            power_confirm_enabled=getattr(self, "power_confirm_enabled", True)
         )
 
         # 合并 LLM 提供的 conversation_history 和 PM 已有的 ask_user 交互

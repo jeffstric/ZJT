@@ -10,6 +10,7 @@
 | 层 | 文件 | 说明 |
 |----|------|------|
 | 后端常量 | `config/constant.py` | `IMAGE_STYLE_COMPRESS_TIMEOUT`、`IMAGE_STYLE_LLM_TIMEOUT`、`IMAGE_STYLE_PREFERRED_VENDOR`、`IMAGE_STYLE_PREFERRED_MODEL` |
+| 共享网关 | `services/vl_gateway.py` | 图片 URL→base64（本站路径校验/压缩）与 VL 多模态调用的统一封装（画风识别 / 导演台估参 / 图片描述共用） |
 | 后端接口 | `api/script_writer.py` | 新增 `/api/style-models`、`/api/recognize-style`、`/api/world-style`；扩展 `upload_reference_image` 支持 `item_type=4` |
 | 前端页面 | `web/script_writer.html` | 暂存区底部「画风识别」拖放区 + 确认弹窗 |
 | 前端样式 | `web/css/script_writer.css` | `.style-recognize-section` / `.style-drop-zone` 等样式 |
@@ -72,11 +73,13 @@
     "model_id": 12, "vendor_id": 3
   }
   ```
-- 流程（全异步、非阻塞，遵守 AGENTS.md 超时红线）：
-  1. 解析 `image_url` → 本地 `upload/style/pic/<file>`，做目录穿越校验（必须落在 `upload_root` 下）。
-  2. `compress_local_image_to_base64(path, 2.0, 2_073_600)` 压缩为 base64 data URL（同步 CPU 操作，
-     用 `asyncio.wait_for(asyncio.to_thread(...), IMAGE_STYLE_COMPRESS_TIMEOUT)` 包装）。
-  3. 构造多模态消息（OpenAI 兼容格式）调用 LLM：
+- 流程（全异步、非阻塞，遵守 AGENTS.md 超时红线；1~3 步由共享网关 `services/vl_gateway.py` 提供，
+  画风识别 / 导演台环境估参 / 图片描述三条 VL 链路复用同一实现）：
+  1. `vl_gateway.image_url_to_base64`：解析 `image_url` → 本地 `upload/style/pic/<file>`，
+     目录穿越校验（必须落在 `upload_root` 下，`allow_remote=False` 仅允许本站路径）。
+  2. 内部 `compress_local_image_to_base64(path, 2.0, 2_073_600)` 压缩为 base64 data URL
+     （同步 CPU 操作，用 `asyncio.wait_for(asyncio.to_thread(...), IMAGE_STYLE_COMPRESS_TIMEOUT)` 包装）。
+  3. `vl_gateway.call_vl` 构造多模态消息（OpenAI 兼容格式）调用 LLM：
      - `call_api` 为同步方法，统一用 `asyncio.wait_for(asyncio.to_thread(client.call_api, **kw), timeout=IMAGE_STYLE_LLM_TIMEOUT+10)` 包装。
      - 仅 OpenAI 兼容系列（含 doubao）支持 `request_timeout` 形参；Gemini 等原生 client 不支持，
        故先 `inspect.signature` 探测后条件传入，避免 `TypeError`。

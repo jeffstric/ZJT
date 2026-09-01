@@ -4027,7 +4027,8 @@ html.theme-dark .audio-node-preview{
 .panorama-node .panorama-tpl-menu{
   position: absolute;
   right: 0;
-  top: 100%;
+  /* 锚点为模板按钮的 position:relative 容器（bodyHtml 内），在按钮正下方弹出 */
+  top: calc(100% + 6px);
   z-index: 30;
   min-width: 150px;
   background: var(--surface);
