@@ -1,0 +1,6 @@
+# execute_tool 鸭子接口签名一致性 lint 豁免清单。
+# Format:
+#   path/to/file.py:RULE
+#   path/to/file.py:line:RULE
+#
+# Keep this file as small as possible. New violations should fail CI.
