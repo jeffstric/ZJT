@@ -104,6 +104,7 @@ class StoryboardAgentVideoToolExecutor:
         language: str = "zh-CN",
         model: str = None,
         vendor_id: int = None,
+        model_id: int = None,
     ) -> Dict[str, Any]:
         if tool_name in STANDARD_VIDEO_TOOL_NAMES:
             from script_writer_core.mcp_tool import scoped_video_preferences
@@ -136,6 +137,7 @@ class StoryboardAgentVideoToolExecutor:
                     language=language,
                     model=model,
                     vendor_id=vendor_id,
+                    model_id=model_id,
                 )
 
         if tool_name != DIGITAL_HUMAN_TOOL_NAME:
@@ -148,6 +150,7 @@ class StoryboardAgentVideoToolExecutor:
                 language=language,
                 model=model,
                 vendor_id=vendor_id,
+                model_id=model_id,
             )
 
         from services.storyboard_digital_human_service import (

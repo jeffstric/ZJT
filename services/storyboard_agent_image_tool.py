@@ -184,6 +184,7 @@ class StoryboardAgentImageToolExecutor:
         language: str = "zh-CN",
         model: Optional[str] = None,
         vendor_id: Optional[int] = None,
+        model_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         args = dict(tool_args or {})
         snapshot = dict(self._generation_snapshot)
@@ -222,4 +223,5 @@ class StoryboardAgentImageToolExecutor:
                 language=language,
                 model=model,
                 vendor_id=vendor_id,
+                model_id=model_id,
             )
