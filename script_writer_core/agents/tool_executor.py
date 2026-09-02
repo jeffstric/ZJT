@@ -37,6 +37,7 @@ from script_writer_core.mcp_tool import (
     list_video_models,
     list_llm_models,
     fetch_image_as_base64,
+    delete_asset_reference_image,
     generate_reference_audio,
     generate_character_reference_audio,
     check_reference_audio_status,
@@ -121,15 +122,14 @@ class ToolExecutor:
             "list_video_models": list_video_models,
             "list_llm_models": list_llm_models,
             "fetch_image_as_base64": fetch_image_as_base64,
+            "delete_asset_reference_image": delete_asset_reference_image,
             "generate_reference_audio": generate_reference_audio,
             "generate_character_reference_audio": generate_character_reference_audio,
             "check_reference_audio_status": check_reference_audio_status,
             "generate_digital_human": generate_digital_human,
         }
 
-        # 注入企业版工具函数
-        self.tool_map.update(_enterprise_tool_functions)
-    
+
     def execute_tool(
         self,
         tool_name: str,
@@ -146,8 +146,9 @@ class ToolExecutor:
         # 调试日志：记录接收到的工具名称和参数
         logger.info(f"Requesting execution for tool: '{tool_name}' (repr: {repr(tool_name)})")
 
-        # 检查工具是否存在（优先本地 tool_map，再查企业版动态注册表）
-        tool_func = self.tool_map.get(tool_name) or _enterprise_tool_functions.get(tool_name)
+        # 企业工具会在运行期注册/卸载，必须实时读取注册表，不能在实例化时复制快照。
+        # 动态注册表优先，确保重注册同名工具后已有 executor 立即使用新实现。
+        tool_func = _enterprise_tool_functions.get(tool_name) or self.tool_map.get(tool_name)
         if not tool_func:
             return {"error": f"未知工具: {tool_name}"}
 
@@ -170,6 +171,7 @@ class ToolExecutor:
                 "list_video_models", "list_llm_models",
                 "generate_text_to_video", "image_to_video",
                 "fetch_image_as_base64",
+                "delete_asset_reference_image",
                 "generate_reference_audio",
                 "generate_character_reference_audio", "check_reference_audio_status",
                 "generate_digital_human"

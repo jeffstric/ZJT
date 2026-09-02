@@ -172,9 +172,12 @@ class MarketingAgentPage(BasePage):
         )
 
     def wait_for_sidebar_loaded(self):
-        """等待侧边栏会话列表加载"""
+        """等待侧边栏会话列表加载
+
+        30s：全量套件长跑时浏览器负载高，页面渲染可能超过 10s（曾造成 flake）。
+        """
         self.page.wait_for_selector(
-            ".sidebar-history-item, .new-chat-btn", timeout=10000
+            ".sidebar-history-item, .new-chat-btn", timeout=30000
         )
 
     def send_message(self, text: str):

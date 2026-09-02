@@ -1671,11 +1671,17 @@ function isCandidateTaskRunning(status) {
         || status === 'queued' || status === 'processing';
 }
 
-function renderCandidatePlaceholder(status, kind = 'image') {
+function renderCandidatePlaceholder(status, kind = 'image', error) {
     if (isCandidateTaskFailed(status)) {
-        return `<div class="candidate-placeholder candidate-failed">
+        // 内容违规变体：文案更醒目，hover 展示友好原因（web/js/content_violation.js）
+        const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+        const isViolation = !!(cv && cv.isViolation && error && cv.isViolation(error));
+        const label = isViolation ? '生成失败：内容违规' : '生成失败';
+        const title = isViolation ? (cv.describe(error) || '内容审核未通过：请检查提示词和参考图后重试') : '';
+        const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
+        return `<div class="candidate-placeholder candidate-failed"${titleAttr}>
             ${icon('error', 16)}
-            <span>生成失败</span>
+            <span>${label}</span>
         </div>`;
     }
     // 无合法 URL：生成中 / 排队中 / 绑定后等待首轮轮询
@@ -1712,7 +1718,7 @@ function renderCandidateMedia(item, kind = 'image') {
         }
         return `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.label || '分镜图')}">`;
     }
-    return renderCandidatePlaceholder(item?.status, kind);
+    return renderCandidatePlaceholder(item?.status, kind, item?.error);
 }
 
 function renderCandidateUploadControl(scene, assetType) {
@@ -1781,7 +1787,7 @@ export function renderRightSidebar(scene) {
                 ${img.label ? `<span class="candidate-label">${escapeHtml(img.label)}</span>` : ''}
             </div>`).join('')}</div>`
         : (imageRunning
-            ? `<div class="candidate-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.first_frame, 'image')}</div></div>`
+            ? `<div class="candidate-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.first_frame, 'image', scene?.firstFrameError)}</div></div>`
             : '<div class="candidate-empty">暂无分镜图候选</div>');
 
     const videoGrid = displayVideos.length
@@ -1793,7 +1799,7 @@ export function renderRightSidebar(scene) {
                 ${vid.label ? `<span class="candidate-label">${escapeHtml(vid.label)}</span>` : ''}
             </div>`).join('')}</div>`
         : (videoRunning
-            ? `<div class="candidate-grid candidate-video-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.video, 'video')}</div></div>`
+            ? `<div class="candidate-grid candidate-video-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.video, 'video', scene?.videoError)}</div></div>`
             : '<div class="candidate-empty">暂无视频候选</div>');
 
     return `
@@ -2040,6 +2046,8 @@ function renderScriptSplitOptions(disabled = false) {
             <span>${escapeHtml(label)}${hint ? `<span class="script-split-warn">${escapeHtml(hint)}</span>` : ''}</span>
         </label>`;
     const qcOn = state.enableScriptSplitQc === true;
+    // 「开源版限时免费」徽章仅开源/社区版展示；商业版不展示（与画风识别徽章口径一致）
+    const isCommunity = String(state.editionInfo?.mode || '').toLowerCase() === 'community';
     const qcRounds = [1, 2, 3, 4, 5].includes(Number(state.scriptSplitQcMaxRounds))
         ? Number(state.scriptSplitQcMaxRounds) : 2;
     const qcRoundsOptions = [1, 2, 3, 4, 5].map(n =>
@@ -2092,6 +2100,12 @@ function renderScriptSplitOptions(disabled = false) {
                 ${toggleItem('toggle-no-bg-music', '不生成背景音乐', state.noBgMusic !== false)}
                 ${toggleItem('toggle-split-multi-dialogue', '拆分多人对话镜头（每人尽量一个镜头）', state.splitMultiDialogue === true)}
                 ${toggleItem(
+                    'toggle-enable-character-variant',
+                    '自动生成角色形象变化参考图',
+                    state.enableCharacterVariant !== false,
+                    '（检测换装/变身等变化并生成角色新形象，分镜生图自动使用）'
+                )}
+                ${toggleItem(
                     'toggle-enable-script-split-qc',
                     '开启拆分质检',
                     qcOn,
@@ -2101,7 +2115,7 @@ function renderScriptSplitOptions(disabled = false) {
             ${qcOn ? `
             <div class="script-split-qc-rounds-heading">
                 <span class="config-label">质检最大循环次数</span>
-                <span class="script-split-qc-free-badge" aria-label="质检次数限时免费">限时免费</span>
+                ${isCommunity ? `<span class="script-split-qc-free-badge" aria-label="本功能开源版限时免费">开源版限时免费</span>` : ''}
             </div>
             <div class="config-hint">拆分→质检最多循环 N 次；仍不通过则强制采用最后一轮结果，避免无法拆分</div>
             <div class="config-select-wrapper">
@@ -2466,8 +2480,15 @@ function renderFaceMaskToggle(disabled = false) {
         </div>`;
 }
 
-/** 拆分弹窗：默认视频模型（仅首帧/首尾帧图生视频）+ 条件人脸遮盖 */
+/** 拆分弹窗：默认视频模型（仅首帧/首尾帧图生视频）+ 分辨率 + 条件人脸遮盖 */
 function renderDefaultVideoModelConfig(disabled = false) {
+    // 分辨率与齿轮弹窗同源：绑定「图生视频模型」，随模型切换自动校正
+    const resolutionChips = disabled
+        ? ''
+        : renderVideoResolutionChips(getSelectedImageToVideoModel(), {
+            label: '分辨率',
+            hint: '分镜生成视频时使用的分辨率偏好；随上方图生视频模型变化',
+        });
     return renderMediaModelSelect(
         '默认视频模型',
         '分镜有首帧时用于生成视频；仅列出支持首帧/首尾帧的模型。参考图专用模型请到齿轮「参考视频模型」中选择',
@@ -2475,7 +2496,7 @@ function renderDefaultVideoModelConfig(disabled = false) {
         getImageToVideoSlotModels(),
         state.selectedImageToVideoTaskId,
         disabled,
-    ) + renderFaceMaskToggle(disabled);
+    ) + resolutionChips + renderFaceMaskToggle(disabled);
 }
 
 function renderVideoResolutionChips(model, { label = '分辨率', hint = '' } = {}) {
@@ -2654,6 +2675,61 @@ function renderVideoTypeSwitchDialog() {
         </div>`;
 }
 
+function renderVideoBatchConfirmDialog() {
+    const confirmState = state.videoBatchConfirm || {};
+    if (!confirmState.open) return '';
+    const estimate = confirmState.estimate || null;
+    const busy = confirmState.loading || confirmState.submitting;
+
+    let bodyHtml;
+    let confirmLabel = '确认生成';
+    if (confirmState.loading) {
+        bodyHtml = `<p><span class="spinner">${icon('loading', 16)}</span> 正在估算算力费用…</p>`;
+    } else if (estimate && estimate.scene_count > 0) {
+        // 按「类型 + 时长档位 + 单价」分组聚合明细，如：5 秒档 38 算力 × 2 个
+        const groups = new Map();
+        let unpricedCount = 0;
+        for (const item of estimate.items || []) {
+            if (item.power == null) {
+                unpricedCount += 1;
+                continue;
+            }
+            const typeLabel = item.video_type === 'digital_human' ? '对口型' : `${item.duration ?? '?'} 秒档`;
+            const key = `${typeLabel}|${item.power}`;
+            groups.set(key, { typeLabel, power: item.power, count: (groups.get(key)?.count || 0) + 1 });
+        }
+        const lines = [...groups.values()].map(g =>
+            `<li>${escapeHtml(g.typeLabel)}：${g.power} 算力 × ${g.count} 个 = ${g.power * g.count} 算力</li>`
+        ).join('');
+        bodyHtml = `
+            <p>将为 <strong>${estimate.scene_count}</strong> 个分镜生成视频：</p>
+            <ul style="margin:8px 0; padding-left:20px; font-size:13px; line-height:1.8;">${lines}</ul>
+            ${unpricedCount ? `<p style="color:#b45309; font-size:13px;">${unpricedCount} 个分镜估价失败，以实际扣费为准。</p>` : ''}
+            <p style="font-weight:600;">预计扣减算力：${estimate.total_power}</p>`;
+        confirmLabel = `确认生成（预计扣减 ${estimate.total_power} 算力）`;
+    } else {
+        const fallbackCount = getAutoVideoCompleteSummary().missingCount;
+        bodyHtml = `
+            <p style="color:#b45309;">费用预估失败${confirmState.error ? `：${escapeHtml(confirmState.error)}` : ''}，以实际扣费为准。</p>
+            <p>将为 <strong>${fallbackCount}</strong> 个分镜生成视频。</p>`;
+    }
+
+    return `
+        <div class="modal-overlay" data-modal="video-batch-confirm">
+            <div class="edit-dialog video-type-switch-dialog" role="dialog" aria-modal="true" aria-labelledby="video-batch-confirm-title">
+                <header>
+                    <h2 id="video-batch-confirm-title">批量生成视频确认</h2>
+                    <button type="button" data-action="cancel-video-batch-submit" ${busy ? 'disabled' : ''}>${icon('close', 18)}</button>
+                </header>
+                <div class="video-type-switch-dialog-body">${bodyHtml}</div>
+                <footer class="dialog-footer">
+                    <button class="btn-ghost" data-action="cancel-video-batch-submit" ${busy ? 'disabled' : ''}>取消</button>
+                    <button class="btn-primary" data-action="confirm-video-batch-submit" ${busy ? 'disabled' : ''}>${confirmState.submitting ? '提交中…' : escapeHtml(confirmLabel)}</button>
+                </footer>
+            </div>
+        </div>`;
+}
+
 function renderGenerateProgressDialog() {
     if (!state.showGenerateProgressDialog) return '';
     const steps = state.generateProgressSteps || [];
@@ -2789,6 +2865,7 @@ function renderModalsHtml() {
         renderGlobalStyleDialog(),
         renderSceneEditDialog(),
         renderVideoTypeSwitchDialog(),
+        renderVideoBatchConfirmDialog(),
         renderEmoVecEditorDialog(),
     ].join('');
 }

@@ -9,6 +9,7 @@
 本文件保留向后兼容的常量别名，逐步废弃中。
 """
 
+from datetime import datetime
 from typing import Union, Dict, List, Optional
 
 # 从统一配置系统导入（新系统）
@@ -204,6 +205,40 @@ IMAGE_STYLE_LLM_TIMEOUT = 120
 IMAGE_STYLE_PREFERRED_VENDOR = "volcengine"
 IMAGE_STYLE_PREFERRED_MODEL = "doubao-seed-2-0-lite"
 
+# ===== VL 调用共享网关（services/vl_gateway.py）=====
+# 三处 VL 识图链路（画风识别 recognize-style / 导演台环境对齐 director_stage_env_fit /
+# 图片描述 image_describe）共用的超时常量。
+# 可用 VL 模型列表查询（DB）超时（秒）。
+VL_GATEWAY_DB_TIMEOUT = 10
+# VL 客户端初始化超时（秒）。
+VL_GATEWAY_CLIENT_INIT_TIMEOUT = 10
+# 远程图片下载压缩默认超时（秒）。
+VL_GATEWAY_REMOTE_FETCH_TIMEOUT = 30
+
+# ===== 图片描述（任意图片 → vl 模型生成场景描述提示词）=====
+# 视频工作流画布：360 全景节点连入图片节点且图片无提示词时，调用 VL 识图生成场景描述。
+# 图片压缩转 base64 的同步包装超时（秒）；远程 URL 场景含下载时间。
+IMAGE_DESCRIBE_COMPRESS_TIMEOUT = 15
+# 单次 VL 描述调用超时（秒）：作为 transport 超时传入 call_api。
+IMAGE_DESCRIBE_LLM_TIMEOUT = 60
+# 图片获取（本地压缩/远程下载）外层总超时（秒）。
+IMAGE_DESCRIBE_FETCH_TIMEOUT = 45
+# 默认推荐模型：与画风识别一致（volcengine doubao-seed-2-0-lite，须已配置密钥）。
+IMAGE_DESCRIBE_PREFERRED_VENDOR = "volcengine"
+IMAGE_DESCRIBE_PREFERRED_MODEL = "doubao-seed-2-0-lite"
+
+# ===== 角色形象图历史归档（暂存区 character_*.json 的 image_history 字段）=====
+# 替换 reference_image 时旧图自动插入 image_history 头部；超过上限后丢弃最旧的。
+CHARACTER_IMAGE_HISTORY_FIELD = "image_history"
+CHARACTER_IMAGE_HISTORY_MAX_ENTRIES = 20
+
+# 用户级 VL 模型偏好默认值（user_preferences.pref_type='vl_model'，结构 {model, model_id, vendor_id}）：
+# 画风识别（script_writer.html 识别模型下拉）与资产检查专家（asset-readiness-checker）
+# 等看图场景共用同一偏好；用户在画风识别处切换模型即更新。
+# 选中优先级：已存偏好 > 本默认值（须在可用 VL 列表中）> 推荐⭐ > 第一个
+# （与 LLMModel.DEEPSEEK_V4_FLASH_VISION_EXP 同值；此处用字面量避免前向引用）
+VL_MODEL_PREFERRED_DEFAULT = 'deepseek-v4-flash-vision-exp'
+
 # 剧本创作等入口无偏好时的默认生图模型：GPT Image 2（short_key=gpt-image-2）
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = TaskTypeId.GPT_IMAGE_2_EDIT
 
@@ -395,6 +430,10 @@ class MediaGenerationErrorCode:
     MODEL_INPUT_UNSUPPORTED = "MODEL_INPUT_UNSUPPORTED"
     SNAPSHOT_MISMATCH = "SNAPSHOT_MISMATCH"
 ASSET_LIST_DB_QUERY_TIMEOUT = 30
+# 资产库写操作（更新/删除 DB 记录、解绑分镜 script_id）
+ASSET_MUTATION_DB_TIMEOUT = 30
+# 删除已入库资产时顺带删除暂存 JSON
+ASSET_STAGING_IO_TIMEOUT = 15
 
 # 音频时长探测（ffprobe）单次执行超时（秒）。用于分镜配音完成后探测时长并回写。
 FFPROBE_AUDIO_DURATION_TIMEOUT = 30
@@ -786,6 +825,34 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.HAPPY_HORSE_IMAGE_TO_VIDEO: DriverImplementation.HAPPY_HORSE_DASHSCOPE_V1,
     DriverKey.HAPPY_HORSE_REFERENCE_TO_VIDEO: DriverImplementation.HAPPY_HORSE_DASHSCOPE_R2V_V1,
     DriverKey.HAPPY_HORSE_TEXT_TO_VIDEO: DriverImplementation.HAPPY_HORSE_DASHSCOPE_T2V_V1,
+
+    # Wan3.0 相关驱动（标准版 / 高速版可切换）
+    DriverKey.WAN3_IMAGE_TO_VIDEO: [
+        DriverImplementation.WAN3_VIDEO_DASHSCOPE_V1,        # 标准版（默认）
+        DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_V1,  # 高速版
+    ],
+    DriverKey.WAN3_REFERENCE_TO_VIDEO: [
+        DriverImplementation.WAN3_VIDEO_DASHSCOPE_R2V_V1,        # 标准版（默认）
+        DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_R2V_V1,  # 高速版
+    ],
+    DriverKey.WAN3_TEXT_TO_VIDEO: [
+        DriverImplementation.WAN3_VIDEO_DASHSCOPE_T2V_V1,        # 标准版（默认）
+        DriverImplementation.WAN3_VIDEO_PRIME_DASHSCOPE_T2V_V1,  # 高速版
+    ],
+
+    # Vidu Q3 相关驱动（turbo / pro 可切换）
+    DriverKey.VIDU_Q3_IMAGE_TO_VIDEO: [
+        DriverImplementation.VIDU_Q3_I2V_TURBO_V1,  # turbo（默认）
+        DriverImplementation.VIDU_Q3_I2V_PRO_V1,    # pro
+    ],
+    DriverKey.VIDU_Q3_REFERENCE_TO_VIDEO: [
+        DriverImplementation.VIDU_Q3_R2V_TURBO_V1,  # turbo（默认）
+        DriverImplementation.VIDU_Q3_R2V_PRO_V1,    # pro
+    ],
+    DriverKey.VIDU_Q3_TEXT_TO_VIDEO: [
+        DriverImplementation.VIDU_Q3_T2V_TURBO_V1,  # turbo（默认）
+        DriverImplementation.VIDU_Q3_T2V_PRO_V1,    # pro
+    ],
 
     # Qwen Image Edit（空壳任务，待接入实现方）
     DriverKey.QWEN_IMAGE_EDIT: [],
@@ -1186,6 +1253,23 @@ class ScriptSplitConstants:
     # 角色契约校验严格模式。False（默认）：名称/提示词不匹配仅记录 warning 日志，
     # 不阻塞拆分；True：恢复严格全等硬门禁，失败重试后暂停任务。
     CHARACTER_CONTRACT_STRICT_MODE = False
+
+    # ---- 角色形象变化变体（见 docs/storyboard/script_split_character_variant.md）----
+    # 请求参数 enable_character_variant 的服务端默认值：拆分时检测角色形象变化
+    # （换装/变身等持续性造型改变）并自动生成角色变体参考图。
+    ENABLE_CHARACTER_VARIANT_DEFAULT = True
+    # 变体标签长度上限（LLM 输出的 label 会被截断到该长度，保证 task_key 可控）
+    CHARACTER_VARIANT_LABEL_MAX_LENGTH = 24
+    # 单个拆分任务最多生成的变体数（防 LLM 输出泛滥，超出部分降级用主图）
+    CHARACTER_VARIANT_MAX_COUNT = 20
+    # 单个 worker tick 最多提交的变体生图任务数（edit_image 提交含同步 HTTP，需限批）
+    CHARACTER_VARIANT_SUBMIT_BATCH_SIZE = 4
+    # 单个变体生图任务从提交到终态的等待上限（秒）；超时按失败降级，不阻塞拆分
+    CHARACTER_VARIANT_TASK_TIMEOUT_SECONDS = 900
+    # 变体图生图宽高比，与角色变体既有管线（generate_character_variant_image）一致
+    CHARACTER_VARIANT_ASPECT_RATIO = "16:9"
+    # 发布阶段变体生成的子阶段 phase（前端进度步骤归入「发布分镜」）
+    PHASE_CHARACTER_VARIANT = "character_variant"
     # 效果模式按段并发生成的批次上限。单个批次仍受 worker watchdog 保护。
     QUALITY_SEGMENT_PARALLELISM = 3
     # 运行时 spatial handoff JSON 序列化字节上限（超出时压缩软描述字段，见设计文档 §9.3）
@@ -1959,13 +2043,22 @@ class ExternalLinks:
     FEEDBACK_QR_URL = '/files/二维码.jpg'
 
 
+# 阿里云百炼（DashScope）BaseURL 常量
+# 用户只配置基础 URL；大模型走 OpenAI 兼容接口时自动追加 DASHSCOPE_COMPATIBLE_MODE_SUFFIX，
+# 生图/生视频走 DashScope 原生异步接口时自动追加 DASHSCOPE_API_V1_SUFFIX。
+# 规范化逻辑见 config/config_util.py 的 normalize_aliyun_bailian_base_url()
+DASHSCOPE_BASE_URL_DEFAULT = 'https://dashscope.aliyuncs.com'
+DASHSCOPE_COMPATIBLE_MODE_SUFFIX = '/compatible-mode/v1'
+DASHSCOPE_API_V1_SUFFIX = '/api/v1'
+
+
 # LLM 模型和供应商常量
 class LLMVendor:
     """LLM 供应商"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'JIEKOU': '接口供应商（Gemini 模型）',
-        'ALIYUN': '阿里云供应商（Qwen 模型）',
+        'ALIYUN': '阿里云百炼（通义千问 Qwen 模型）',
         'OLLAMA': '本地运行供应商（Ollama 模型）',
         'VOLCENGINE': '火山引擎供应商（Doubao / DeepSeek-V4 模型）',
         'CLAUDE': 'Claude 供应商（Anthropic 模型）',
@@ -2034,6 +2127,8 @@ class LLMModel:
     # DeepSeek 模型
     DEEPSEEK_V4_FLASH = 'deepseek-v4-flash'
     DEEPSEEK_V4_PRO = 'deepseek-v4-pro'
+    # VL 实验模型：支持图片理解，计费与 deepseek-v4-flash 一致
+    DEEPSEEK_V4_FLASH_VISION_EXP = 'deepseek-v4-flash-vision-exp'
 
     # Agnes 模型
     AGNES_2_5_FLASH = 'agnes-2.5-flash'
@@ -2106,7 +2201,9 @@ class PeakValleyBillingConstants:
     """大模型峰谷计费常量（北京时间，UTC+8）
 
     DeepSeek 官方自 2026-08-17 起采用峰谷定价：高峰时段价格为空闲时段的 2 倍。
-    高峰时段为北京时间 9:00-12:00、14:00-18:00，其余为空闲时段。
+    自 2026-08-23 00:00（北京时间）起高峰时段为周一至周五 9:00-12:00、14:00-18:00，
+    其余（含周末全天）为空闲时段；此前高峰窗口不区分星期，周末同时段同为高峰。
+    历史补扣 / 对账重算时按 WEEKEND_OFF_PEAK_FROM 区分新旧规则。
     其他模型默认 time_period='normal'，不参与峰谷，完全向后兼容。
     """
     _CONSTANT_GROUP = True
@@ -2126,6 +2223,12 @@ class PeakValleyBillingConstants:
     # 高峰时段（左闭右开 [start_hour, end_hour)），北京时间 UTC+8
     # DeepSeek 官方：9:00-12:00、14:00-18:00；其余为空闲
     PEAK_TIME_RANGES = ((9, 12), (14, 18))
+
+    # 高峰仅限周一至周五（ISO 星期，周一=1..周日=7）；周六日全天空闲
+    PEAK_WEEKDAYS = (1, 2, 3, 4, 5)
+    # 周末全天空闲的生效时刻：北京时间 2026-08-23 00:00（naive，与 to_bjt_naive 同基准）。
+    # 此前周末 9-12 / 14-18 仍为高峰档，8-23 前的 token_log 补扣按旧规则算
+    WEEKEND_OFF_PEAK_FROM = datetime(2026, 8, 23)
 
 
 # ============ 一体包 MySQL binlog 保留 ============
@@ -2218,6 +2321,44 @@ DIFF_REFUND_TXN_PREFIX = 'diff-refund-'
 DIFF_CHARGE_TXN_PREFIX = 'diff-charge-'
 
 
+# ============ AI 介入程度（intervention_level） ============
+# 前端 script_writer.html 顶栏「AI 介入程度」选择器，随 /api/session/{id}/task 请求体传入，
+# 由 PM Agent 随任务 user 消息注入生效（见 pm_agent.execute）。
+# - balanced：标准（默认，不注入指令，维持 SOP 默认行为：资产创建一步到位）
+# - concise：简洁·少提问（需求收集项（题材/集数/时长/画风）与大纲、剧本定稿仍必须询问，其余决策自行完成）
+# - detailed：精细·多确认（角色卡/场景道具创建后恢复满意度确认与形象生成对象选择）
+INTERVENTION_LEVEL_BALANCED = 'balanced'
+INTERVENTION_LEVEL_CONCISE = 'concise'
+INTERVENTION_LEVEL_DETAILED = 'detailed'
+VALID_INTERVENTION_LEVELS = {
+    INTERVENTION_LEVEL_BALANCED, INTERVENTION_LEVEL_CONCISE, INTERVENTION_LEVEL_DETAILED,
+}
+INTERVENTION_LEVEL_DEFAULT = INTERVENTION_LEVEL_BALANCED
+
+# 各档位随任务注入的行为指令（balanced 不注入）
+INTERVENTION_LEVEL_INSTRUCTIONS = {
+    INTERVENTION_LEVEL_CONCISE: (
+        "\n\n[系统指令·AI介入程度：简洁·少提问]\n"
+        "用户希望尽量少被打断，请遵守：\n"
+        "1. 需求收集阶段的基础创作参数（题材/风格、集数与每集时长、画风类型）属于必须确认项："
+        "用户消息中未明确给出的，仍须使用 ask_user 依次询问，不得自行决定；已明确给出的不要重复询问\n"
+        "2. 除上述需求收集项和大纲、剧本定稿等必要节点外，其余决策自行完成并在进度消息中汇报，不使用 ask_user\n"
+        "3. 角色卡、场景道具创建后直接一步到位生成形象（SOP 默认行为）\n"
+        "4. 遇到必须二选一且影响成本或风格的决策时（第1条豁免项除外），选择最稳妥的方案并在进度消息中说明理由"
+    ),
+    INTERVENTION_LEVEL_DETAILED: (
+        "\n\n[系统指令·AI介入程度：精细·多确认]\n"
+        "用户希望在关键节点进行更多确认，请遵守（SOP 中「资产创建一步到位、不询问用户」的规则在本模式下让位于以下流程）：\n"
+        "1. 角色卡创建完成后：先使用 ask_user 展示角色清单并确认是否满意；"
+        "满意后再使用 ask_user 让用户选择需要生成形象的角色（options 只列 reference_image 为空的角色，multiSelect），"
+        "然后才调用 character-image-designer\n"
+        "2. 场景和道具创建完成后：同样先使用 ask_user 确认满意度，"
+        "再让用户选择需要生成形象的场景和道具，然后才调用 location-prop-image-designer\n"
+        "3. 大纲、剧本的确认步骤照常执行"
+    ),
+}
+
+
 # ============ 单元测试基础设施 ============
 # 隔离执行模式下单个测试模块的子进程超时（秒）：
 # 防止个别测试模块挂死拖垮整轮 CI（scripts/testing/run_unit_tests.py --isolate）。
@@ -2226,3 +2367,26 @@ DIFF_CHARGE_TXN_PREFIX = 'diff-charge-'
 # DB 集成类模块（crud/driver_integration）含 alembic 迁移与建表，耗时更长，
 # 如仍遇合理超时可用 --module-timeout 覆盖。
 UNIT_TEST_MODULE_TIMEOUT_SECONDS = 600
+
+
+# ============ 导演台全景环境尺度对齐（services/director_stage_env_fit.py） ============
+# 用 VL 视觉模型估计 360 全景背景的 horizonY / sceneScale / groundY，把 3D 人偶对齐到全景场景。
+# 数值范围与该模块 SYSTEM_PROMPT 中的约定保持一致：
+#   horizonY（米）：0=照片地平线在脚边，1.5=平视，范围 0~2.5
+#   sceneScale（相对当前身高倍率）：人偶像玩具则增大、像巨人则减小，范围 0.5~4
+#   groundY（米）：人偶脚底相对 3D 地面，脚悬空为负（如 -0.8~-1.5）、陷地为正
+DS_ENV_FIT_PREFERRED_VENDOR = 'volcengine'
+DS_ENV_FIT_PREFERRED_MODEL = 'doubao-seed-2-0-lite'
+DS_ENV_FIT_DEFAULT_HORIZON = 1.5
+DS_ENV_FIT_HORIZON_MIN = 0.0
+DS_ENV_FIT_HORIZON_MAX = 2.5
+DS_ENV_FIT_DEFAULT_SCALE = 1.0
+DS_ENV_FIT_SCALE_MIN = 0.5
+DS_ENV_FIT_SCALE_MAX = 4.0
+DS_ENV_FIT_DEFAULT_GROUND = 0.0
+DS_ENV_FIT_GROUND_MIN = -2.0
+DS_ENV_FIT_GROUND_MAX = 1.0
+DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
+# 预览图压缩（asyncio.to_thread 执行）与 VL 请求（wait_for 整体超时 = LLM_TIMEOUT + 10）的超时（秒）
+DS_ENV_FIT_COMPRESS_TIMEOUT = 15
+DS_ENV_FIT_LLM_TIMEOUT = 60

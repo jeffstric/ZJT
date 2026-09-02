@@ -19,6 +19,8 @@
   `renderTimelineThumbInner(scene)`，因此轮询刷新不会移除编号。
 - 分镜时长显示在卡片左下角，带播放图标；复制和删除按钮作为合法的兄弟按钮保留在
   `.scene-timeline-actions` 中，并通过绝对定位覆盖到卡片右下角。
+- 点击「复制」先弹确认框（文案含分镜标题），确认后才会真正发起复制请求；取消则不复制
+  （与「删除」的确认交互一致，时间轴与分镜详情面板两处入口均生效）。
 
 ## Grid 总览卡片
 
@@ -70,4 +72,7 @@ state 字段：`showSceneEditDialog` / `sceneEditTargetId` / `sceneEditSaving` /
 - 分镜之间的添加入口仍由 `renderInsertSceneSlot(..., 'timeline'|'grid')` 生成。
 - 时间轴模式下按钮类名为 `.scene-timeline-insert-slot`，事件仍使用
   `data-action="insert-scene"`、`data-prev-id` 和 `data-next-id`。
+- 点击「+」先弹确认框（`window.confirm`，文案「确定在此处插入新分镜吗？（将调用 AI 生成
+  分镜内容）」），确认后才会发起智能插入（LLM）/普通插入请求；取消则不插入
+  （与「复制」「删除」的确认交互一致）。in-flight 守卫在确认之前，连点不重复弹框。
 - 插入按钮样式为细竖线加圆形加号，降低横向浏览时的占位，但保留原有点击语义。

@@ -449,6 +449,17 @@ def _normalize_request_config(request_config: dict) -> dict:
     if sequence_mode not in {"speed", "balanced", "quality"}:
         raise ValueError(f"invalid sequence_mode: {sequence_mode}")
     cfg["sequence_mode"] = sequence_mode
+    # 角色形象变化变体开关统一为 bool（缺省用服务端常量），避免 active_key
+    # 因 "true"/True 漂移
+    variant_value = cfg.get("enable_character_variant")
+    if variant_value is None:
+        cfg["enable_character_variant"] = bool(
+            ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT
+        )
+    elif isinstance(variant_value, str):
+        cfg["enable_character_variant"] = variant_value.strip().lower() in ("1", "true", "yes", "on")
+    else:
+        cfg["enable_character_variant"] = bool(variant_value)
     return cfg
 
 

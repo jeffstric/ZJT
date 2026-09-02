@@ -151,6 +151,8 @@ function updateGenerateProgressStepsByStatus(statusData) {
         merging: 2,
         global_qc: 2,
         publishing: 3,
+        // 角色形象变体生成是发布阶段的子阶段（见后端 PHASE_CHARACTER_VARIANT）
+        character_variant: 3,
         done: 4,
     };
     const targetStep = phaseToStep[phase] !== undefined
@@ -1111,7 +1113,13 @@ async function sendDirectVideo(current) {
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
     } catch (error) {
-        notify(`视频生成失败：${error.message || error}`);
+        // 提交阶段即被内容安全拒绝时，弹「内容违规提醒」弹框（带冷却去重）
+        const submitMsg = (error && error.message != null && error.message !== '') ? String(error.message) : (error ? String(error) : '');
+        const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+        if (cv && typeof cv.notify === 'function') {
+            try { cv.notify(`sb:${sceneId}:video-submit`, submitMsg); } catch (e) { /* 提醒异常不影响主流程 */ }
+        }
+        notify(`视频生成失败：${submitMsg}`);
     } finally {
         finishSceneAgentRun(sceneId);
         rerenderAgentPanelForScene(sceneId);
@@ -1313,10 +1321,59 @@ async function handleAction(action, target) {
             return;
         }
         if (target.disabled) return;
+        // 先弹确认框并异步试算预计算力，用户确认后才真正提交批次
+        state.videoBatchConfirm = {
+            open: true,
+            loading: true,
+            estimate: null,
+            error: '',
+            submitting: false,
+        };
+        rerenderModals();
+        try {
+            const estimate = await api.estimateMissingVideosPower(state.storyboardId, {
+                ratio: state.workflowRatio,
+                task_type: getSelectedVideoTaskId({ hasInputs: true, imageMode: state.videoImageMode }),
+                image_mode: state.videoImageMode || 'first_last_frame',
+                enable_face_mask: getEffectiveEnableFaceMask(),
+            });
+            if (!state.videoBatchConfirm.open) return;
+            state.videoBatchConfirm.estimate = estimate;
+            state.videoBatchConfirm.loading = false;
+        } catch (error) {
+            if (!state.videoBatchConfirm.open) return;
+            // 估价失败不阻断：弹窗降级为「以实际扣费为准」，仍可确认提交
+            state.videoBatchConfirm.error = error && error.message ? String(error.message) : '';
+            state.videoBatchConfirm.loading = false;
+        }
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'cancel-video-batch-submit') {
+        if (state.videoBatchConfirm.submitting) return;
+        state.videoBatchConfirm = { open: false, loading: false, estimate: null, error: '', submitting: false };
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'confirm-video-batch-submit') {
+        if (!state.videoBatchConfirm.open || state.videoBatchConfirm.loading || state.videoBatchConfirm.submitting) return;
+        state.videoBatchConfirm.submitting = true;
+        rerenderModals();
         try {
             await autoCompleteMissingVideos();
+            state.videoBatchConfirm = { open: false, loading: false, estimate: null, error: '', submitting: false };
+            rerenderModals();
         } catch (error) {
-            notify(error.message || '批量生成视频失败');
+            state.videoBatchConfirm.submitting = false;
+            rerenderModals();
+            const errMsg = error && error.message ? String(error.message) : '';
+            const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+            if (cv && typeof cv.notify === 'function') {
+                try { cv.notify('sb:video-batch-submit', errMsg || String(error)); } catch (e) { /* 提醒异常不影响主流程 */ }
+            }
+            notify(errMsg || '批量生成视频失败');
         }
         return;
     }
@@ -1343,7 +1400,7 @@ async function handleAction(action, target) {
         const mediaTarget = target?.dataset?.target || '';
         const typeMap = {
             textToImage: ['textToImageModels', 'selectedTextToImageTaskId', 'storyboard_lastSelectedImageTaskId'],
-            imageEdit: ['imageEditModels', 'selectedImageEditTaskId', 'storyboard_lastSelectedImageEditTaskId'],
+            imageEdit: ['imageEditModels', 'selectedImageEditTaskId', 'storyboard_lastSelectedImageEditTaskId_v2'],
             textToVideo: ['textToVideoModels', 'selectedTextToVideoTaskId', 'storyboard_lastSelectedTextToVideoTaskId'],
             imageToVideo: ['imageToVideoModels', 'selectedImageToVideoTaskId', 'storyboard_lastSelectedVideoTaskId'],
             referenceToVideo: ['imageToVideoModels', 'selectedReferenceToVideoTaskId', 'storyboard_lastSelectedReferenceToVideoTaskId'],
@@ -1533,6 +1590,7 @@ async function handleAction(action, target) {
                 thinking_effort: thinking.thinking_effort,
                 enable_script_split_qc: state.enableScriptSplitQc === true,
                 script_split_qc_max_rounds: Number(state.scriptSplitQcMaxRounds) || 2,
+                enable_character_variant: state.enableCharacterVariant !== false,
                 sequence_mode: state.autoImageSequenceMode,
             });
             // 后端返回 202 + { data: { task_id, status, status_url } }
@@ -1571,6 +1629,9 @@ async function handleAction(action, target) {
         // in-flight 守卫：智能插入请求飞行中再次点击直接忽略，
         // 避免用户误以为无响应而连点，导致重复调用 LLM 生成多个分镜。
         if (state.isSmartInserting) return;
+        // 插入前需弹框确认，用户确认后才真正发起请求（与 duplicate-scene 交互一致）；
+        // 智能插入会调用 LLM 生成分镜内容，确认一次覆盖智能/普通两条路径
+        if (!window.confirm('确定在此处插入新分镜吗？（将调用 AI 生成分镜内容）')) return;
         const prevId = target.dataset.prevId ? parseInt(target.dataset.prevId, 10) : null;
         const nextId = target.dataset.nextId ? parseInt(target.dataset.nextId, 10) : null;
         
@@ -1631,6 +1692,12 @@ async function handleAction(action, target) {
         // in-flight 守卫：复制请求飞行中再次点击（连点/鼠标抖动）直接忽略，
         // 避免后端无幂等保护下连点 N 次复制出 N 份重复分镜。
         if (state.duplicatingSceneId === sceneId) return;
+        // 复制前需弹框确认，用户确认后才真正发起请求（与 delete-scene 交互一致）；
+        // 确认文案带分镜标题，便于用户辨认要复制的是哪一个分镜
+        const duplicatingScene = state.scenes.find((s) => s.id === sceneId);
+        if (!window.confirm(duplicatingScene
+            ? `确定复制分镜「${duplicatingScene.title}」吗？`
+            : '确定复制这个分镜吗？')) return;
         state.duplicatingSceneId = sceneId;
         rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
         try {
@@ -1758,6 +1825,7 @@ async function handleAction(action, target) {
         action === 'toggle-force-medium-shot'
         || action === 'toggle-no-bg-music'
         || action === 'toggle-split-multi-dialogue'
+        || action === 'toggle-enable-character-variant'
         || action === 'toggle-enable-script-split-qc'
     ) {
         if (state.isGeneratingFromScript) return;
@@ -1767,6 +1835,8 @@ async function handleAction(action, target) {
             state.noBgMusic = nextCheckboxState(target, state.noBgMusic);
         } else if (action === 'toggle-split-multi-dialogue') {
             state.splitMultiDialogue = nextCheckboxState(target, state.splitMultiDialogue);
+        } else if (action === 'toggle-enable-character-variant') {
+            state.enableCharacterVariant = nextCheckboxState(target, state.enableCharacterVariant);
         } else {
             state.enableScriptSplitQc = nextCheckboxState(target, state.enableScriptSplitQc);
         }
@@ -3064,7 +3134,7 @@ export function bindEvents() {
             } else if (['textToImage', 'imageEdit', 'textToVideo', 'imageToVideo', 'referenceToVideo'].includes(type)) {
                 const [field, mediaType, mode, storageKey] = {
                     textToImage: ['selectedTextToImageTaskId', 'image', 'text_to_image', 'storyboard_lastSelectedImageTaskId'],
-                    imageEdit: ['selectedImageEditTaskId', 'image', 'image_edit', 'storyboard_lastSelectedImageEditTaskId'],
+                    imageEdit: ['selectedImageEditTaskId', 'image', 'image_edit', 'storyboard_lastSelectedImageEditTaskId_v2'],
                     textToVideo: ['selectedTextToVideoTaskId', 'video', 'text_to_video', 'storyboard_lastSelectedTextToVideoTaskId'],
                     imageToVideo: ['selectedImageToVideoTaskId', 'video', 'image_to_video', 'storyboard_lastSelectedVideoTaskId'],
                     referenceToVideo: ['selectedReferenceToVideoTaskId', 'video', 'reference_to_video', 'storyboard_lastSelectedReferenceToVideoTaskId'],

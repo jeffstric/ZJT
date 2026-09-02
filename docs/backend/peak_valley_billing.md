@@ -6,6 +6,10 @@ DeepSeek 官方自 **2026-08-17** 起采用峰谷定价：高峰时段价格为�
 - 高峰时段（北京时间，左闭右开）：`9:00-12:00`、`14:00-18:00`
 - 其余为空闲时段
 
+**2026-08-23 00:00（北京时间）规则调整**：高峰时段改为**仅周一至周五**的上述窗口，
+周末全天为空闲时段（此前周末同时段同为高峰）。生效时刻常量为
+`WEEKEND_OFF_PEAK_FROM`；8-23 之前的 token_log 补扣 / 对账重算仍按旧规则（周末高峰 2 倍）。
+
 本方案在现有「供应商 × 模型 × token 区间」分段计费基础上，新增「计费时段」维度，完全向后兼容。
 
 ## 字段语义对照
@@ -43,6 +47,8 @@ class PeakValleyBillingConstants:
     PERIOD_OFF_PEAK = 'off_peak'
     ALL_PERIODS = (PERIOD_NORMAL, PERIOD_PEAK, PERIOD_OFF_PEAK)
     PEAK_TIME_RANGES = ((9, 12), (14, 18))   # 北京时间 [start, end)
+    PEAK_WEEKDAYS = (1, 2, 3, 4, 5)          # ISO 星期，高峰仅工作日
+    WEEKEND_OFF_PEAK_FROM = datetime(2026, 8, 23)  # 北京时间 naive；此后周末全天空闲
 
     # AI 改档「目标计费模式」（UI 层概念，非数据库时段；normal=通用一组价 / peak_valley=峰谷两组价）
     TARGET_MODE_NORMAL = 'normal'
@@ -54,11 +60,15 @@ class PeakValleyBillingConstants:
 
 ```python
 get_billing_period(dt) -> 'peak' | 'off_peak'
+resolve_billing_period(dt) -> (period, is_fallback)
 ```
 
 - 固定 UTC+8（`timezone(timedelta(hours=8))`），不依赖系统时区库 / tzdata，跨 Win/Linux/macOS 一致
-- naive datetime 视为北京时间；aware datetime 自动转换
+- naive datetime 视为北京时间；aware datetime 自动转换（**星期与小时均按转换后的北京时间判定**）
+- 自 `WEEKEND_OFF_PEAK_FROM`（2026-08-23）起，周六日全天直接判空闲，不看小时窗口
 - None / 无法解析 → 当前北京时间兜底，**绝不抛异常**，保证扣费链路不中断
+- `resolve_billing_period` 额外返回 `is_fallback` 标记：True 表示时段按「当前时间」估算
+  而非调用发生时间，扣费结果等价但对账 / 审计含义不同
 
 ### 3. 选档算法 — `model/vendor_model.py`
 
@@ -86,7 +96,7 @@ LLM 调用 → token_log(status=0, created_at=调用时间)
    ↓ 每 6s 后台任务
 process_token_logs()
    → calculate_computing_power_from_tokens(..., created_at=token_log.created_at)
-       period = get_billing_period(created_at)          # 用调用时间，非任务时间
+       period, is_fallback = resolve_billing_period(created_at)  # 用调用时间，非任务时间
        vm = get_by_vendor_model_for_billing(..., period) # 时段选档
        cost = (input/th + out/th + cache/th) × (1+抽成)
    → 扣减算力 + 写 computing_power_log
@@ -94,7 +104,8 @@ process_token_logs()
 
 **关键**：时段判断用 `token_log.created_at`（调用发生时间），不能用后台任务执行时间，否则跨时段边界算错。
 
-`computing_power_log.note` 记录 `时段(调用:peak, 命中档:peak)` 便于审计。
+`computing_power_log.note` 记录 `时段(调用:peak, 命中档:peak, 判定:调用时间)` 便于审计；
+入参缺失 / 无法解析而按当前时间兜底时标记为 `判定:当前时间兜底`，对账时可区分两种来源。
 
 ### 5. 估算链路
 
@@ -130,7 +141,7 @@ process_token_logs()
 
 ## 默认档位 — `config/default_vendor_model_billing.py`
 
-官方 `deepseek` 的 `flash`/`pro` 已登记 `peak` + `off_peak` 两档：
+官方 `deepseek` 的 `flash`/`pro`/`flash-vision-exp` 已登记 `peak` + `off_peak` 两档：
 
 | 模型 | 时段 | 输入(未命中) | 输出 | 缓存(命中) | 元/百万 |
 |------|------|------|------|------|------|
@@ -138,6 +149,11 @@ process_token_logs()
 | deepseek-v4-flash | off_peak | 1.5 | 4.5 | 0.05 |
 | deepseek-v4-pro | peak | 9.0 | 27.0 | 0.30 |
 | deepseek-v4-pro | off_peak | 4.5 | 13.5 | 0.15 |
+| deepseek-v4-flash-vision-exp | peak | 3.0 | 9.0 | 0.10 |
+| deepseek-v4-flash-vision-exp | off_peak | 1.5 | 4.5 | 0.05 |
+
+`deepseek-v4-flash-vision-exp`（VL 实验模型）与 `flash` 同价：no_120/no_122 初建时误插 normal 单档旧价，
+由 `no_123_20260901_ds_vision_peak_valley` 迁移修正为峰谷两档（normal 档转 peak + 补插 off_peak，幂等）。
 
 中转商（zjt_api / 火山）维持 `normal`，是否峰谷按实际计费规则在界面单独配置。
 
@@ -147,6 +163,10 @@ process_token_logs()
 2. 为官方 deepseek 初始化峰谷两档（`INSERT ... SELECT ... WHERE NOT EXISTS`，幂等）
 
 `downgrade` 删除迁移插入的峰谷档 + 移除字段。
+
+后续补充迁移 `no_123_20260901_ds_vision_peak_valley`：把 `deepseek-v4-flash-vision-exp` 的
+normal 单档转为 peak 档并补插 off_peak 档（与 flash 同价）；已手动配置峰谷档的库只补缺不覆盖，
+`downgrade` 恢复 no_120 原始 normal 单档。
 
 ## 前端 — `web/admin.html` / `web/js/admin.js`
 
@@ -165,4 +185,6 @@ process_token_logs()
 
 ## 测试
 
-`tests/utils/test_billing_period.py`：14 个用例覆盖高峰/空闲窗口、边界值、时区转换、字符串解析、异常兜底。
+`tests/utils/test_billing_period.py`：26 个用例覆盖工作日高峰/空闲窗口、边界值、周末规则
+（生效前后、生效时刻边界、跨时区日期翻转）、时区转换、字符串解析、异常兜底及
+`resolve_billing_period` 的兜底标记。

@@ -32,8 +32,19 @@ RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
     default-mysql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files
+# Copy dependency manifest first so the pip layer stays cached
+# when only source code changes (CI DinD 依赖 save/load 层缓存复用该层)
 COPY requirements.txt pyproject.toml ./
+
+# Configure pip to use Aliyun mirror for faster downloads in China
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com
+
+# Upgrade pip and install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy project files
 COPY agents/ ./agents/
 COPY api/ ./api/
 COPY alembic/ ./alembic/
@@ -58,14 +69,6 @@ COPY config_unit.base.yml ./
 COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && \
     chmod +x /usr/local/bin/docker-entrypoint.sh
-
-# Configure pip to use Aliyun mirror for faster downloads in China
-RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
-    pip config set global.trusted-host mirrors.aliyun.com
-
-# Upgrade pip and install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
 
 # Create necessary directories
 RUN mkdir -p /app/data /app/logs /app/upload/cache /app/dist

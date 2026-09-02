@@ -411,21 +411,30 @@
       }
       
       // 清除该节点相关的图片连接
-      // 如果删除的是图片节点，需要清除连接的图生视频节点的URL和更新算力
-      if(node && node.type === 'image') {
+      // 删除图片/角色/场景/道具源节点时，同步清除图生视频节点上的 URL 与预览
+      if(node && (typeof isImageSourceNodeType === 'function' ? isImageSourceNodeType(node.type) : node.type === 'image')) {
         const imageConns = state.imageConnections.filter(c => c.from === id);
         const affectedVideoNodes = new Set();
+        const srcUrl = typeof getNodeImageUrl === 'function' ? getNodeImageUrl(node) : (node.data && (node.data.url || node.data.reference_image));
 
         for(const conn of imageConns) {
           const targetNode = state.nodes.find(n => n.id === conn.to);
           if(targetNode && targetNode.type === 'image_to_video') {
             if(conn.portType === 'start') {
               targetNode.data.startUrl = '';
+              targetNode.data.startPreview = '';
             } else if(conn.portType === 'end') {
               targetNode.data.endUrl = '';
+              targetNode.data.endPreview = '';
+            } else if(conn.portType === 'ref-image' && srcUrl && targetNode.data.referenceUrls) {
+              const idx = targetNode.data.referenceUrls.indexOf(srcUrl);
+              if(idx >= 0) targetNode.data.referenceUrls.splice(idx, 1);
             }
             affectedVideoNodes.add(conn.to);
-            console.log(`[删除图片节点 ${id}] 清除图生视频节点 ${conn.to} 的 ${conn.portType} URL`);
+            const targetEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+            if(conn.portType === 'start' && targetEl && typeof targetEl._updateStartFrame === 'function') targetEl._updateStartFrame();
+            else if(conn.portType === 'end' && targetEl && typeof targetEl._updateEndFrame === 'function') targetEl._updateEndFrame();
+            else if(conn.portType === 'ref-image' && targetEl && typeof targetEl._updateReferencePreview === 'function') targetEl._updateReferencePreview();
           }
         }
 
@@ -483,6 +492,10 @@
       // 删除节点
       state.nodes = state.nodes.filter(n => n.id !== id);
       state.connections = state.connections.filter(c => c.from !== id && c.to !== id);
+      // 节点自定义资源清理钩子（如全景查看器的 WebGL 上下文销毁）
+      if(node && typeof node.onDestroy === 'function'){
+        try{ node.onDestroy(); }catch(e){ console.warn('节点 onDestroy 钩子执行失败:', e); }
+      }
       const el = canvasEl.querySelector(`.node[data-node-id="${id}"]`);
       if(el) el.remove();
       if(state.selectedNodeId === id) state.selectedNodeId = null;

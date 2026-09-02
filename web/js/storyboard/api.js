@@ -303,6 +303,12 @@ export async function autoGenerateMissingVideos(storyboardId, config = {}) {
         body: JSON.stringify(config),
     });
 }
+export async function estimateMissingVideosPower(storyboardId, config = {}) {
+    return request(`/${storyboardId}/estimate-missing-videos-power`, {
+        method: 'POST',
+        body: JSON.stringify(config),
+    });
+}
 export async function generateSceneVideo(sceneId, config = {}) {
     return request(`/scene/${sceneId}/generate-video`, { method: 'POST', body: JSON.stringify(config) });
 }

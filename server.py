@@ -36,6 +36,7 @@ from model.character import CharacterModel
 from model.location import LocationModel
 from model.script import ScriptModel
 from model.props import PropsModel
+from model.storyboard import StoryboardModel
 from model.computing_power import ComputingPowerModel
 import uuid
 from PIL import Image
@@ -73,10 +74,17 @@ from config.constant import (
     VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
     ASSET_LIST_MAX_PAGE_SIZE,
     ASSET_LIST_DB_QUERY_TIMEOUT,
+    ASSET_MUTATION_DB_TIMEOUT,
+    ASSET_STAGING_IO_TIMEOUT,
     BrandingConstants,
     SMART_INSERT_SHOT_TIMEOUT,
     SMART_INSERT_SHOT_DEFAULT_MODEL,
+    ScriptSplitConstants,
+    DS_ENV_FIT_DEFAULT_GROUND,
+    DS_ENV_FIT_DEFAULT_HORIZON,
+    DS_ENV_FIT_DEFAULT_SCALE,
 )
+from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
     get_upload_dir, get_upload_subdir, get_upload_temp_dir,
@@ -101,10 +109,20 @@ from utils.resource_access import (
     ensure_resource_access,
     ensure_world_access,
 )
+from services.asset_library import (
+    attach_usage,
+    delete_staging_asset,
+    owner_user_id_matches,
+    ASSET_TYPE_CHARACTERS,
+    ASSET_TYPE_LOCATIONS,
+    ASSET_TYPE_PROPS,
+    ASSET_TYPE_SCRIPTS,
+)
 from services.media_generation_preference_service import (
     MediaGenerationPreferenceError,
     MediaGenerationPreferenceService,
 )
+from services.director_stage_env_fit import fit_environment_from_image
 from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
@@ -121,6 +139,37 @@ _ensure_world_access = ensure_world_access
 # _ensure_resource_access / _ensure_world_access
 # 已迁移至 utils/resource_access.py，上方通过别名保持向后兼容
 
+
+def _asset_not_owner_response(message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=403,
+        content={'code': -1, 'message': message, 'data': None}
+    )
+
+
+async def _maybe_delete_staging_asset(
+    also_delete_staging: bool,
+    asset_type: str,
+    key: Optional[str],
+    user_id: int,
+    world_id: Any,
+) -> bool:
+    if not also_delete_staging or not key:
+        return False
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                delete_staging_asset,
+                asset_type,
+                str(key),
+                str(user_id),
+                str(world_id),
+            ),
+            timeout=ASSET_STAGING_IO_TIMEOUT,
+        )
+    except Exception as e:
+        logger.warning(f"Staging delete skipped for {asset_type} key={key}: {e}")
+        return False
 
 
 def _write_and_validate_image(content: bytes, save_path: str):
@@ -440,7 +489,11 @@ from api.storyboard import router as storyboard_router
 app.include_router(storyboard_router)
 
 # 剧本分段拆分任务 API（见 docs/script/script_parser_incremental_split_design.md §13）
-from api.script_split import router as script_split_router
+from api.script_split import (
+    router as script_split_router,
+    create_split_task,
+    ScriptSplitPreconditionError,
+)
 app.include_router(script_split_router)
 
 # 导入并注册测试路由（临时测试，完成后移除）
@@ -5286,6 +5339,47 @@ class VideoWorkflowUpdateRequest(BaseModel):
     workflow_ratio: Optional[str] = None
 
 
+class VideoWorkflowEnvironmentFitRequest(BaseModel):
+    image_url: str
+    horizon_y: float = DS_ENV_FIT_DEFAULT_HORIZON
+    scene_scale: float = DS_ENV_FIT_DEFAULT_SCALE
+    ground_y: float = DS_ENV_FIT_DEFAULT_GROUND
+    model: Optional[str] = None
+    vendor_id: Optional[int] = None
+    model_id: Optional[int] = None
+
+
+@app.post('/api/video-workflow/fit-environment')
+@require_permission("video_workflow:update")
+async def fit_video_workflow_environment(
+    request: Request,
+    body: VideoWorkflowEnvironmentFitRequest,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """用 VL 模型估计导演台环境参数，仅允许读取登录用户的工作流预览图。"""
+    resolved_user_id, auth_error = await resolve_authorization_user_id(auth_token)
+    if auth_error:
+        return auth_error
+    if header_user_id is not None and header_user_id != resolved_user_id:
+        return JSONResponse(
+            status_code=403,
+            content={"success": False, "error": "X-User-Id 与登录用户不一致"},
+        )
+
+    return await fit_environment_from_image(
+        image_url=body.image_url,
+        user_id=resolved_user_id,
+        auth_token=normalize_authorization_token(auth_token),
+        model=body.model,
+        vendor_id=body.vendor_id,
+        model_id=body.model_id,
+        horizon_y=body.horizon_y,
+        scene_scale=body.scene_scale,
+        ground_y=body.ground_y,
+    )
+
+
 @app.get('/api/video-workflow/list')
 @require_permission("video_workflow:list")
 async def get_video_workflow_list(
@@ -5582,6 +5676,64 @@ async def upload_workflow_asset(
             status_code=500,
             content={"code": -1, "message": f"上传失败: {str(e)}"}
         )
+
+
+class DescribeImageRequest(BaseModel):
+    """VL 识图生成场景描述（360 全景节点连入无提示词图片时自动调用）"""
+    image_url: str
+    model: Optional[str] = None
+    model_id: Optional[int] = None
+    vendor_id: Optional[int] = None
+
+
+@app.post('/api/video-workflow/describe-image')
+@require_permission("world:view_files")
+async def describe_workflow_image(
+    request: Request,
+    body: DescribeImageRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    任意图片 → VL 模型生成场景描述提示词
+
+    360 全景节点连入图片节点且图片无提示词时，前端自动调用本接口识图，
+    生成的描述填入全景节点提示词（不覆盖用户已输入内容）。
+    走 LLM token 计费（call_api 内部上报）。
+    """
+    from services.image_describe import describe_image
+
+    try:
+        token = (auth_token or '').strip()
+        if token.lower().startswith('bearer '):
+            token = token[7:].strip()
+        if not body.image_url or not body.image_url.strip():
+            return JSONResponse({'success': False, 'error': '缺少图片 url'}, status_code=400)
+
+        result = await describe_image(
+            image_url=body.image_url.strip(),
+            user_id=user_id,
+            auth_token=token or None,
+            model=body.model,
+            model_id=body.model_id,
+            vendor_id=body.vendor_id,
+        )
+        if not result.get('success'):
+            status_code = 504 if '超时' in str(result.get('error') or '') else 400
+            return JSONResponse({
+                'success': False,
+                'error': result.get('error') or '识图生成描述失败',
+            }, status_code=status_code)
+        return JSONResponse({
+            'success': True,
+            'description': result.get('description'),
+            'model': result.get('model'),
+            'vendor_id': result.get('vendor_id'),
+        })
+    except Exception as e:
+        logger.error(f"VL 图片描述失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse({'success': False, 'error': f'识图生成描述失败: {str(e)}'}, status_code=500)
 
 
 @app.post('/api/video-workflow/extract-frame')
@@ -6355,8 +6507,6 @@ async def parse_script(
         # 见 docs/script/script_parser_incremental_split_design.md §10 §13.1。
         # db_location/db_character 后处理在 worker 的 merge 阶段完成
         #（_enrich_shot_location_fields 回填 shot 级场景字段，见设计文档 §9）。
-        from api.script_split import create_split_task, ScriptSplitPreconditionError
-        from config.constant import ScriptSplitConstants
         request_config = {
             "max_group_duration": max_group_duration,
             "world_id": world_id,
@@ -6375,6 +6525,12 @@ async def parse_script(
             "sequence_mode": sequence_mode,
             "enable_qc": enable_qc,
             "qc_max_rounds": qc_max_rounds,
+            # 角色形象变化：拆分时输出形象变化标记（video_workflow 来源不做
+            # 发布期变体生成，标记保留在结果中供前端节点消费）
+            "enable_character_variant": _json_bool(
+                body.get('enable_character_variant'),
+                ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
+            ),
         }
         task_id, is_new = await create_split_task(
             user_id=user_id,
@@ -6868,6 +7024,33 @@ async def get_worlds(
         )
 
 
+@app.get('/api/worlds/{world_id}')
+async def get_world_by_id(
+    world_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """获取单个世界详情。协作者可查看（世界 VIEW）。"""
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        world = await asyncio.wait_for(
+            asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.VIEW),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={'code': 0, 'message': 'success', 'data': world.to_dict()}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get world {world_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={'code': -1, 'message': str(e), 'data': None}
+        )
+
+
 class CreateWorldRequest(BaseModel):
     name: str
     description: Optional[str] = None
@@ -6878,6 +7061,46 @@ class UpdateWorldRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     story_type: Optional[str] = None
+    story_outline: Optional[str] = None
+    visual_style: Optional[str] = None
+    era_environment: Optional[str] = None
+    color_language: Optional[str] = None
+    composition_preference: Optional[str] = None
+
+
+class ScriptUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    episode_number: Optional[int] = None
+    content: Optional[str] = None
+
+
+class CharacterJsonUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    age: Optional[str] = None
+    identity: Optional[str] = None
+    appearance: Optional[str] = None
+    personality: Optional[str] = None
+    behavior: Optional[str] = None
+    other_info: Optional[str] = None
+    reference_image: Optional[str] = None
+    reference_images: Optional[List[Dict[str, Any]]] = None
+    default_voice: Optional[str] = None
+
+
+class LocationJsonUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    parent_id: Optional[int] = None
+    parent_name: Optional[str] = None
+    description: Optional[str] = None
+    reference_image: Optional[str] = None
+    reference_images: Optional[List[Dict[str, Any]]] = None
+
+
+class PropsJsonUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    content: Optional[str] = None
+    other_info: Optional[str] = None
+    reference_image: Optional[str] = None
 
 
 @app.post('/api/worlds')
@@ -6991,6 +7214,19 @@ async def update_world(
 
         if request.story_type is not None:
             update_fields['story_type'] = StoryType.normalize(request.story_type)
+
+        if request.story_outline is not None:
+            update_fields['story_outline'] = request.story_outline.strip() if request.story_outline else None
+        if request.visual_style is not None:
+            update_fields['visual_style'] = request.visual_style.strip() if request.visual_style else None
+        if request.era_environment is not None:
+            update_fields['era_environment'] = request.era_environment.strip() if request.era_environment else None
+        if request.color_language is not None:
+            update_fields['color_language'] = request.color_language.strip() if request.color_language else None
+        if request.composition_preference is not None:
+            update_fields['composition_preference'] = (
+                request.composition_preference.strip() if request.composition_preference else None
+            )
 
         if not update_fields:
             return JSONResponse(
@@ -7184,9 +7420,10 @@ async def delete_world(
 async def get_scripts(
     world_id: int = Query(..., description="世界ID"),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(20, ge=1, le=ASSET_LIST_MAX_PAGE_SIZE, description="每页数量"),
     order_by: str = Query('create_time', description="排序字段"),
     order_direction: str = Query('DESC', description="排序方向"),
+    keyword: Optional[str] = Query(None, description="标题关键词"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
@@ -7195,14 +7432,22 @@ async def get_scripts(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        _ensure_world_access(world_id, user_id, Action.VIEW)
+        await asyncio.wait_for(
+            asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.VIEW),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
         
-        result = ScriptModel.list_by_world(
-            world_id=world_id,
-            page=page,
-            page_size=page_size,
-            order_by=order_by,
-            order_direction=order_direction
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                ScriptModel.list_by_world,
+                world_id=world_id,
+                page=page,
+                page_size=page_size,
+                order_by=order_by,
+                order_direction=order_direction,
+                keyword=keyword,
+            ),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
         )
         
         return JSONResponse(
@@ -7224,6 +7469,161 @@ async def get_scripts(
                 'message': str(e),
                 'data': None
             }
+        )
+
+
+@app.get('/api/scripts/{script_id}')
+async def get_script_by_id(
+    script_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """获取单个剧本。协作者可查看。"""
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        script = await asyncio.wait_for(
+            asyncio.to_thread(ScriptModel.get_by_id, script_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not script:
+            return JSONResponse(
+                status_code=404,
+                content={'code': -1, 'message': '剧本不存在', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(_ensure_world_access, int(script.world_id), user_id, Action.VIEW),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(attach_usage, ASSET_TYPE_SCRIPTS, script.to_dict(), str(user_id)),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={'code': 0, 'message': 'success', 'data': payload}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get script {script_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={'code': -1, 'message': str(e), 'data': None}
+        )
+
+
+@app.put('/api/scripts/{script_id}')
+async def update_script(
+    script_id: int,
+    request: ScriptUpdateRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """更新剧本。仅创建者可改。"""
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        script = await asyncio.wait_for(
+            asyncio.to_thread(ScriptModel.get_by_id, script_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not script:
+            return JSONResponse(
+                status_code=404,
+                content={'code': -1, 'message': '剧本不存在', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(_ensure_world_access, int(script.world_id), user_id, Action.VIEW),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not owner_user_id_matches(script.user_id, user_id):
+            return _asset_not_owner_response('无权限修改此剧本')
+        update_fields = {}
+        if request.title is not None:
+            update_fields['title'] = request.title.strip()
+        if request.episode_number is not None:
+            update_fields['episode_number'] = request.episode_number
+        if request.content is not None:
+            update_fields['content'] = request.content
+        if not update_fields:
+            return JSONResponse(
+                status_code=400,
+                content={'code': -1, 'message': '没有可更新的字段', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(ScriptModel.update, script_id, **update_fields),
+            timeout=ASSET_MUTATION_DB_TIMEOUT,
+        )
+        updated = await asyncio.wait_for(
+            asyncio.to_thread(ScriptModel.get_by_id, script_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={'code': 0, 'message': '更新成功', 'data': updated.to_dict() if updated else None}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update script {script_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={'code': -1, 'message': str(e), 'data': None}
+        )
+
+
+@app.delete('/api/scripts/{script_id}')
+async def delete_script(
+    script_id: int,
+    also_delete_staging: bool = Query(False, description="同时删除当前用户暂存区同名/同集剧本"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """删除剧本。仅创建者可删。关联分镜的 script_id 置空，不删分镜。"""
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        script = await asyncio.wait_for(
+            asyncio.to_thread(ScriptModel.get_by_id, script_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not script:
+            return JSONResponse(
+                status_code=404,
+                content={'code': -1, 'message': '剧本不存在', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(_ensure_world_access, int(script.world_id), user_id, Action.VIEW),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not owner_user_id_matches(script.user_id, user_id):
+            return _asset_not_owner_response('无权限删除此剧本')
+        staging_key = str(script.episode_number) if script.episode_number is not None else (script.title or '')
+        world_id = script.world_id
+        await asyncio.wait_for(
+            asyncio.to_thread(StoryboardModel.clear_script_id, script_id),
+            timeout=ASSET_MUTATION_DB_TIMEOUT,
+        )
+        await asyncio.wait_for(
+            asyncio.to_thread(ScriptModel.delete, script_id),
+            timeout=ASSET_MUTATION_DB_TIMEOUT,
+        )
+        staging_deleted = await _maybe_delete_staging_asset(
+            also_delete_staging, ASSET_TYPE_SCRIPTS, staging_key, user_id, world_id
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '删除成功',
+                'data': {'staging_deleted': staging_deleted}
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete script {script_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={'code': -1, 'message': str(e), 'data': None}
         )
 
 
@@ -7268,6 +7668,106 @@ async def get_characters(
                 'message': str(e),
                 'data': None
             }
+        )
+
+
+@app.get('/api/characters/{character_id}')
+async def get_character_by_id(
+    character_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """获取单个角色。协作者可查看。"""
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        character = await asyncio.wait_for(
+            asyncio.to_thread(CharacterModel.get_by_id, character_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not character:
+            return JSONResponse(
+                status_code=404,
+                content={'code': -1, 'message': '角色不存在', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(_ensure_world_access, int(character.world_id), user_id, Action.VIEW),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(attach_usage, ASSET_TYPE_CHARACTERS, character.to_dict(), str(user_id)),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={'code': 0, 'message': 'success', 'data': payload}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get character {character_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={'code': -1, 'message': str(e), 'data': None}
+        )
+
+
+@app.put('/api/characters/{character_id}')
+async def update_character_json(
+    character_id: int,
+    request: CharacterJsonUpdateRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """JSON 更新角色（资产库用）。仅创建者可改。"""
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        character = await asyncio.wait_for(
+            asyncio.to_thread(CharacterModel.get_by_id, character_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not character:
+            return JSONResponse(
+                status_code=404,
+                content={'code': -1, 'message': '角色不存在', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(_ensure_world_access, int(character.world_id), user_id, Action.VIEW),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not owner_user_id_matches(character.user_id, user_id):
+            return _asset_not_owner_response('无权限修改此角色')
+        update_fields = request.model_dump(exclude_unset=True)
+        if 'name' in update_fields and update_fields['name'] is not None:
+            update_fields['name'] = update_fields['name'].strip()
+            if not update_fields['name']:
+                return JSONResponse(
+                    status_code=400,
+                    content={'code': -1, 'message': '角色名称不能为空', 'data': None}
+                )
+        if not update_fields:
+            return JSONResponse(
+                status_code=400,
+                content={'code': -1, 'message': '没有可更新的字段', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(CharacterModel.update, character_id, **update_fields),
+            timeout=ASSET_MUTATION_DB_TIMEOUT,
+        )
+        updated = await asyncio.wait_for(
+            asyncio.to_thread(CharacterModel.get_by_id, character_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={'code': 0, 'message': '更新成功', 'data': updated.to_dict() if updated else None}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update character {character_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={'code': -1, 'message': str(e), 'data': None}
         )
 
 
@@ -7665,6 +8165,7 @@ async def update_character(
 @app.delete('/api/characters/{character_id}')
 async def delete_character(
     character_id: int,
+    also_delete_staging: bool = Query(False, description="同时删除当前用户暂存区同名角色"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
@@ -7675,7 +8176,10 @@ async def delete_character(
         user_id = _get_user_id_from_header(user_id)
 
         # 获取角色信息
-        character = CharacterModel.get_by_id(character_id)
+        character = await asyncio.wait_for(
+            asyncio.to_thread(CharacterModel.get_by_id, character_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
         if not character:
             return JSONResponse(
                 status_code=404,
@@ -7686,28 +8190,30 @@ async def delete_character(
                 }
             )
 
-        # 验证权限
-        if character.user_id != user_id:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    'code': -1,
-                    'message': '无权限删除此角色',
-                    'data': None
-                }
-            )
+        # 验证权限：仅创建者可删
+        if not owner_user_id_matches(character.user_id, user_id):
+            return _asset_not_owner_response('无权限删除此角色')
 
-        # 删除角色
-        CharacterModel.delete(character_id)
+        staging_name = character.name
+        world_id = character.world_id
+        await asyncio.wait_for(
+            asyncio.to_thread(CharacterModel.delete, character_id),
+            timeout=ASSET_MUTATION_DB_TIMEOUT,
+        )
+        staging_deleted = await _maybe_delete_staging_asset(
+            also_delete_staging, ASSET_TYPE_CHARACTERS, staging_name, user_id, world_id
+        )
 
         return JSONResponse(
             status_code=200,
             content={
                 'code': 0,
                 'message': '删除成功',
-                'data': None
+                'data': {'staging_deleted': staging_deleted}
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to delete character: {e}")
         return JSONResponse(
@@ -7838,6 +8344,118 @@ async def get_locations_tree(
                 'message': str(e),
                 'data': None
             }
+        )
+
+
+@app.get('/api/locations/{location_id}')
+async def get_location_detail(
+    location_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """获取单个场景。协作者可查看（世界 VIEW）。"""
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        location = await asyncio.wait_for(
+            asyncio.to_thread(LocationModel.get_by_id, location_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not location:
+            return JSONResponse(
+                status_code=404,
+                content={'code': -1, 'message': '场景不存在', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(_ensure_world_access, int(location.world_id), user_id, Action.VIEW),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(attach_usage, ASSET_TYPE_LOCATIONS, location.to_dict(), str(user_id)),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={'code': 0, 'message': 'success', 'data': payload}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get location {location_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={'code': -1, 'message': str(e), 'data': None}
+        )
+
+
+@app.patch('/api/locations/{location_id}')
+async def patch_location_json(
+    location_id: int,
+    request: LocationJsonUpdateRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """JSON 更新场景（资产库用）。仅创建者可改。"""
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        location = await asyncio.wait_for(
+            asyncio.to_thread(LocationModel.get_by_id, location_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not location:
+            return JSONResponse(
+                status_code=404,
+                content={'code': -1, 'message': '场景不存在', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(_ensure_world_access, int(location.world_id), user_id, Action.VIEW),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not owner_user_id_matches(location.user_id, user_id):
+            return _asset_not_owner_response('无权限修改此场景')
+        update_fields = request.model_dump(exclude_unset=True)
+        parent_name = update_fields.pop('parent_name', None)
+        if parent_name:
+            parent = await asyncio.wait_for(
+                asyncio.to_thread(LocationModel.get_by_name, int(location.world_id), str(parent_name).strip()),
+                timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+            )
+            if parent and int(parent.id) != int(location_id):
+                update_fields['parent_id'] = int(parent.id)
+            elif 'parent_id' not in update_fields:
+                update_fields['parent_id'] = None
+        elif 'parent_name' in request.model_dump(exclude_unset=True) and not parent_name:
+            update_fields['parent_id'] = None
+        if 'name' in update_fields and update_fields['name'] is not None:
+            update_fields['name'] = update_fields['name'].strip()
+            if not update_fields['name']:
+                return JSONResponse(
+                    status_code=400,
+                    content={'code': -1, 'message': '场景名称不能为空', 'data': None}
+                )
+        if not update_fields:
+            return JSONResponse(
+                status_code=400,
+                content={'code': -1, 'message': '没有可更新的字段', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(LocationModel.update, location_id, **update_fields),
+            timeout=ASSET_MUTATION_DB_TIMEOUT,
+        )
+        updated = await asyncio.wait_for(
+            asyncio.to_thread(LocationModel.get_by_id, location_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={'code': 0, 'message': '更新成功', 'data': updated.to_dict() if updated else None}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to patch location {location_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={'code': -1, 'message': str(e), 'data': None}
         )
 
 
@@ -8157,17 +8775,21 @@ async def update_location(
 @app.delete('/api/locations/{location_id}')
 async def delete_location(
     location_id: int,
+    also_delete_staging: bool = Query(False, description="同时删除当前用户暂存区同名场景"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
-    删除场景
+    删除场景。子场景 parent_id 由外键 SET NULL 升为顶级。
     """
     try:
         user_id = _get_user_id_from_header(user_id)
 
         # 获取场景信息
-        location = LocationModel.get_by_id(location_id)
+        location = await asyncio.wait_for(
+            asyncio.to_thread(LocationModel.get_by_id, location_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
         if not location:
             return JSONResponse(
                 status_code=404,
@@ -8178,28 +8800,30 @@ async def delete_location(
                 }
             )
 
-        # 验证权限
-        if location.user_id != user_id:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    'code': -1,
-                    'message': '无权限删除此场景',
-                    'data': None
-                }
-            )
+        # 验证权限：仅创建者可删
+        if not owner_user_id_matches(location.user_id, user_id):
+            return _asset_not_owner_response('无权限删除此场景')
 
-        # 删除场景
-        LocationModel.delete(location_id)
+        staging_name = location.name
+        world_id = location.world_id
+        await asyncio.wait_for(
+            asyncio.to_thread(LocationModel.delete, location_id),
+            timeout=ASSET_MUTATION_DB_TIMEOUT,
+        )
+        staging_deleted = await _maybe_delete_staging_asset(
+            also_delete_staging, ASSET_TYPE_LOCATIONS, staging_name, user_id, world_id
+        )
 
         return JSONResponse(
             status_code=200,
             content={
                 'code': 0,
                 'message': '删除成功',
-                'data': None
+                'data': {'staging_deleted': staging_deleted}
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to delete location: {e}")
         return JSONResponse(
@@ -8566,7 +9190,10 @@ async def get_props_by_id(
         user_id = _get_user_id_from_header(user_id)
         logger.info(f"Getting props detail - props_id: {props_id}")
         
-        props = PropsModel.get_by_id(props_id)
+        props = await asyncio.wait_for(
+            asyncio.to_thread(PropsModel.get_by_id, props_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
         
         if not props:
             return JSONResponse(
@@ -8577,15 +9204,25 @@ async def get_props_by_id(
                     'data': None
                 }
             )
+        await asyncio.wait_for(
+            asyncio.to_thread(_ensure_world_access, int(props.world_id), user_id, Action.VIEW),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        payload = await asyncio.wait_for(
+            asyncio.to_thread(attach_usage, ASSET_TYPE_PROPS, props.to_dict(), str(user_id)),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
         
         return JSONResponse(
             status_code=200,
             content={
                 'code': 0,
                 'message': 'success',
-                'data': props.to_dict()
+                'data': payload
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get props detail: {e}")
         return JSONResponse(
@@ -8595,6 +9232,66 @@ async def get_props_by_id(
                 'message': str(e),
                 'data': None
             }
+        )
+
+
+@app.patch('/api/props/{props_id}')
+async def patch_props_json(
+    props_id: int,
+    request: PropsJsonUpdateRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """JSON 更新道具（资产库用）。仅创建者可改。"""
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        props = await asyncio.wait_for(
+            asyncio.to_thread(PropsModel.get_by_id, props_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not props:
+            return JSONResponse(
+                status_code=404,
+                content={'code': -1, 'message': '道具不存在', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(_ensure_world_access, int(props.world_id), user_id, Action.VIEW),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        if not owner_user_id_matches(props.user_id, user_id):
+            return _asset_not_owner_response('无权限修改此道具')
+        dumped = request.model_dump(exclude_unset=True)
+        if 'name' in dumped and dumped['name'] is not None:
+            dumped['name'] = dumped['name'].strip()
+            if not dumped['name']:
+                return JSONResponse(
+                    status_code=400,
+                    content={'code': -1, 'message': '道具名称不能为空', 'data': None}
+                )
+        if not dumped:
+            return JSONResponse(
+                status_code=400,
+                content={'code': -1, 'message': '没有可更新的字段', 'data': None}
+            )
+        await asyncio.wait_for(
+            asyncio.to_thread(PropsModel.update, props_id, **dumped),
+            timeout=ASSET_MUTATION_DB_TIMEOUT,
+        )
+        updated = await asyncio.wait_for(
+            asyncio.to_thread(PropsModel.get_by_id, props_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={'code': 0, 'message': '更新成功', 'data': updated.to_dict() if updated else None}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to patch props {props_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={'code': -1, 'message': str(e), 'data': None}
         )
 
 
@@ -8785,6 +9482,7 @@ async def update_props(
 @app.delete('/api/props/{props_id}')
 async def delete_props(
     props_id: int,
+    also_delete_staging: bool = Query(False, description="同时删除当前用户暂存区同名道具"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
@@ -8795,7 +9493,10 @@ async def delete_props(
         user_id = _get_user_id_from_header(user_id)
         
         # 获取道具信息
-        props = PropsModel.get_by_id(props_id)
+        props = await asyncio.wait_for(
+            asyncio.to_thread(PropsModel.get_by_id, props_id),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
+        )
         if not props:
             return JSONResponse(
                 status_code=404,
@@ -8806,28 +9507,30 @@ async def delete_props(
                 }
             )
         
-        # 验证权限
-        if props.user_id != user_id:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    'code': -1,
-                    'message': '无权限删除此道具',
-                    'data': None
-                }
-            )
+        # 验证权限：仅创建者可删
+        if not owner_user_id_matches(props.user_id, user_id):
+            return _asset_not_owner_response('无权限删除此道具')
         
-        # 删除道具
-        PropsModel.delete(props_id)
+        staging_name = props.name
+        world_id = props.world_id
+        await asyncio.wait_for(
+            asyncio.to_thread(PropsModel.delete, props_id),
+            timeout=ASSET_MUTATION_DB_TIMEOUT,
+        )
+        staging_deleted = await _maybe_delete_staging_asset(
+            also_delete_staging, ASSET_TYPE_PROPS, staging_name, user_id, world_id
+        )
         
         return JSONResponse(
             status_code=200,
             content={
                 'code': 0,
                 'message': '删除成功',
-                'data': None
+                'data': {'staging_deleted': staging_deleted}
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to delete props: {e}")
         return JSONResponse(

@@ -96,7 +96,7 @@
 
 - **视觉参考**：提供给 AI 生成时的参考依据
 - **信息记录**：集中管理角色/场景/道具信息
-- **连接传递**：通过连接线传递给图生视频节点作为参考图
+- **连接传递**：从输出端口拖到生视频节点的首帧 / 尾帧 / 参考图端口，使用资产的 `reference_image`；也可以拖到图片节点的紫色参考端口，供编辑图片时作为参考
 
 ## 分镜关联
 
@@ -127,17 +127,22 @@
 
 ## 编辑和删除
 
+数据库资产的主入口是剧本创作页右侧栏「已入库」，见 [已入库资产管理](../script/script_writer_asset_library.md)。画布编辑弹窗里的删除是快捷方式。
+
 ### 编辑资产
 
-- 点击资产卡片上的「编辑」按钮
+- 剧本创作页「已入库」或画布资产卡片上的「编辑」
 - 修改资产信息
 - 支持添加/删除参考图片
+- 仅创建者可编辑；协作者只读，条目上显示创建者 user_id 末 4 位
 
 ### 删除资产
 
-- 点击编辑弹窗中的「删除」按钮
-- 删除前需要确认
-- 删除后相关的画布节点不会自动删除
+- 剧本创作页「已入库」删除确认弹窗（可同时删暂存同名文件）
+- 或画布编辑弹窗中的「删除」按钮
+- 仅创建者可删
+- 删除剧本不会删除已生成的分镜，只解除 `script_id`
+- 画布删除后对应节点会从当前工作流移除；分镜引用不会级联删除
 
 ## 数据结构
 
@@ -163,9 +168,11 @@
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | /api/characters | 获取角色列表 |
+| GET | /api/characters/{id} | 角色详情（含 usage） |
 | POST | /api/characters | 创建角色 |
-| POST | /api/characters/update | 更新角色 |
-| DELETE | /api/characters/{id} | 删除角色 |
+| POST | /api/characters/update | 更新角色（表单/上传） |
+| PUT | /api/characters/{id} | JSON 更新角色 |
+| DELETE | /api/characters/{id} | 删除角色（`also_delete_staging`） |
 
 ### 场景接口
 
@@ -173,18 +180,31 @@
 |------|------|------|
 | GET | /api/locations | 获取场景列表 |
 | GET | /api/locations/tree | 获取场景树结构 |
+| GET | /api/locations/{id} | 场景详情（含 usage） |
 | POST | /api/locations | 创建场景 |
-| PUT | /api/locations/{id} | 更新场景 |
-| DELETE | /api/locations/{id} | 删除场景 |
+| PUT | /api/locations/{id} | 更新场景（表单/上传） |
+| PATCH | /api/locations/{id} | JSON 更新场景 |
+| DELETE | /api/locations/{id} | 删除场景（`also_delete_staging`） |
 
 ### 道具接口
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | /api/props | 获取道具列表 |
+| GET | /api/props/{id} | 道具详情（含 usage） |
 | POST | /api/props | 创建道具 |
-| PUT | /api/props/{id} | 更新道具 |
-| DELETE | /api/props/{id} | 删除道具 |
+| PUT | /api/props/{id} | 更新道具（表单/上传） |
+| PATCH | /api/props/{id} | JSON 更新道具 |
+| DELETE | /api/props/{id} | 删除道具（`also_delete_staging`） |
+
+### 剧本接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | /api/scripts | 按世界列出剧本 |
+| GET | /api/scripts/{id} | 剧本详情（含 usage） |
+| PUT | /api/scripts/{id} | 更新剧本 |
+| DELETE | /api/scripts/{id} | 删除剧本（解绑分镜 `script_id`，`also_delete_staging`） |
 
 ## 注意事项
 

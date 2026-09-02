@@ -174,13 +174,16 @@ bootstrap 中实现优先级（仅首次无保存值时）：
 | 字段 | localStorage 键 | 写入点 | 读取/兜底点 |
 |------|----------------|--------|-------------|
 | 生图模型 | `storyboard_lastSelectedImageTaskId` | `events.js` 的 `data-config-select="image"` change 处理 | `state.js` `setModels` → `pickRememberedTaskId` |
+| 图片编辑模型 | `storyboard_lastSelectedImageEditTaskId_v2` | `events.js` 的 `data-config-select="image"` change 处理 | `state.js` `setModels` → `pickRememberedTaskId` |
 | 视频模型 | `storyboard_lastSelectedVideoTaskId` | `events.js` 的 `data-config-select="video"` change 处理 | `state.js` `setModels` → `pickRememberedTaskId` |
 
 **生图模型优先级链路**：`config_json`（当前故事板，主记忆）> `localStorage`（跨故事板兜底）> GPT Image 2（`short_key=gpt-image-2`）> 模型列表第一项。
 
+**图片编辑模型优先级链路**：与生图模型一致，默认同样优先 GPT Image 2（`short_key=gpt-image-2`）。2026-08 默认模型从 nano-banana 切换为 GPT Image 2 时，存储 key 从 `storyboard_lastSelectedImageEditTaskId` 升级为 `_v2` 后缀，旧 key 中的历史记忆一次性作废（强制切换）；此后用户手动改选仍在新 key 下记住。同时 `GPT_IMAGE_2_EDIT` 的 `sort_order` 调为 5，成为 IMAGE_EDIT / TEXT_TO_IMAGE 类目列表首项，各端"取列表第一项"的兜底默认随之变为 GPT Image 2。
+
 **视频模型优先级链路**：`config_json`（当前故事板，主记忆）> `localStorage`（跨故事板兜底）> 模型列表第一项。
 
-`pickRememberedTaskId(models, storageKey, preferredModelKey)` 在读取 localStorage 后会**校验该 task_id 仍存在于当前可用模型列表**，避免读到已下线模型的 task_id 造成空选中。有效历史选择（包括 nano-banana）会继续保留；只有没有有效历史选择时，生图模型才优先选择 GPT Image 2。若 GPT Image 2 不可用则回退到列表第一项，并同步回写 localStorage 以固化默认。该兜底对齐已有 LLM 模型的 `storyboard_lastSelectedLlmModel` / `storyboard_lastScriptSplitLlmModel` 设计。
+`pickRememberedTaskId(models, storageKey, preferredModelKey)` 在读取 localStorage 后会**校验该 task_id 仍存在于当前可用模型列表**，避免读到已下线模型的 task_id 造成空选中。有效历史选择会继续保留；只有没有有效历史选择时，生图/图片编辑模型才优先选择 GPT Image 2。若 GPT Image 2 不可用则回退到列表第一项，并同步回写 localStorage 以固化默认。该兜底对齐已有 LLM 模型的 `storyboard_lastSelectedLlmModel` / `storyboard_lastScriptSplitLlmModel` 设计。
 
 `GET /api/storyboard/models` 的列表按各任务 `UnifiedTaskConfig.sort_order` **升序**返回（越小越靠前）。无记忆时默认视频模型即为列表第一项；当前代码配置下 LTX2.3 的 `sort_order=30` 小于 Wan2.2 的 `32`，因此默认会是 LTX2.3。不在前端再硬编码某个模型 key。
 

@@ -87,6 +87,16 @@ class StoryboardDialogueModel:
             raise
 
     @staticmethod
+    def count_by_character_id(character_id: int) -> int:
+        sql = "SELECT COUNT(*) AS total FROM storyboard_dialogue WHERE character_id = %s"
+        try:
+            result = execute_query(sql, (character_id,), fetch_one=True)
+            return int(result['total']) if result and result.get('total') is not None else 0
+        except Exception as e:
+            logger.error(f"Failed to count dialogues for character {character_id}: {e}")
+            raise
+
+    @staticmethod
     def list_by_scene(scene_id: int) -> List[Dict]:
         sql = """
             SELECT d.*, da.audio_url, da.duration AS audio_duration

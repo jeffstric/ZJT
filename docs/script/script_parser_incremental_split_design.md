@@ -1139,3 +1139,7 @@ v3 不再要求分镜 LLM 重复生成规划期 `continuity_in/out` 和每镜完
 暂停状态接口只在 `character_prompt_contract_invalid` 时附带当前段的精简 `validation_errors`，字段包括错误码、镜头、提示词字段、实际名称和期望名称；前端优先显示具体错误消息。
 
 新任务始终保存完整角色快照。存量检查点没有快照时，仅依据任务已接受角色注册表继续校验，不在 worker 中读取当前角色库，以免历史任务因为库内容已删除或改名而引入不可重现的真值。
+
+## 29. 角色形象变化变体（publishing 子阶段 character_variant）
+
+拆分开启 `enable_character_variant`（默认开）时，LLM 在 `shot.character_appearance_changes` 输出角色形象"变化点"（换装/变身等持续造型改变，仅数据库角色）；merge 末尾由 `sanitize_and_propagate_appearance_changes` 清洗并向前传播持续状态到 `shot._effective_appearance_changes`。发布阶段在幂等恢复检查与场景冲突检查之后、结构硬门禁之前，按 `(character_db_id, label)` 去重建计划并复用 item_type=7 角色变体图生图管线自动生成新形象参考图：未全部终态时保存 `final_result.metadata.character_variant_plan` 检查点、`phase=character_variant` 保持 `publishing` 让出 tick（publishing 仍在 claim_next_task 可领取列表，租约过期自动续推）；全部终态后把 ready 变体写入各分镜 `prompt_json.reference_selections`，生图自动使用新形象。单变体失败/超时/缺主图一律降级用主参考图，不阻塞拆分。详见 `docs/storyboard/script_split_character_variant.md`。

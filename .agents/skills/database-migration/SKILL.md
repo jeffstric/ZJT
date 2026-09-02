@@ -36,14 +36,20 @@ allowed-tools: Read, Write, Terminal
 3. **数据迁移** - 插入/更新/删除数据记录
 4. **混合操作** - 以上多种操作的组合
 
-### 第二步：创建迁移脚本
+### 第二步：创建迁移脚本（一律使用脚手架）
 
-**文件命名规范**：`YYYYMMDD_简短描述.py`
+**不要手工新建文件**。统一运行脚手架生成，自动处理编号、命名与 down_revision：
 
-示例：
-- `20260421_add_claude_haiku.py`
-- `20260228_create_sys_config.py`
-- `20260325_add_user_avatar.py`
+```bash
+python scripts/new_migration.py <简短描述>   # 如 add_user_avatar
+```
+
+**文件命名规范（CI 强制）**：`no_<N>_<YYYYMMDD>_<简短描述>.py`
+
+- `N` 为全库递增序号（脚手架自动取最大值 +1，禁止重复）
+- 存量 dated 格式文件（如 `20260421_add_claude_haiku.py`）属历史遗留，见
+  `scripts/lint_migration_names_allowlist.txt` 豁免清单，**禁止再新增 dated 格式**
+- 违例由 CI `scripts/lint_migration_names.py` M1/M2 拦截
 
 **⚠️ 重要**：`revision` ID **必须 ≤ 32 字符**（数据库 `alembic_version.version_num` 为 `varchar(32)`）
 
@@ -211,16 +217,19 @@ class ExampleModel(Base):
 from model.example_model import ExampleModel
 ```
 
-### 第五步：获取上一个迁移的 revision_id
+### 第五步：确认 down_revision（脚手架已自动填好）
 
-在创建迁移脚本前，需要查看 `alembic/versions/` 目录下最新的迁移脚本，获取其 `revision` 值作为新脚本的 `down_revision`。
+脚手架 `scripts/new_migration.py` 会自动取**当前迁移图唯一 head** 的 `revision` 作为新脚本的
+`down_revision`，保证链式衔接。手工核对方法：
 
-**查看方法**：
 ```bash
-ls -lt alembic/versions/ | head -5
+python scripts/lint_migration_names.py   # 通过即说明单头且衔接正确
 ```
 
-然后读取最新文件中的 `revision` 值。
+**单头纪律（CI 强制）**：迁移图任何时候只能有 1 个 head。并行分支各自新增迁移会产生多头，
+启动时 `alembic upgrade head` 会直接报错、所有迁移都不执行。处理方式：rebase 后把自己迁移的
+`down_revision` 改指当前唯一 head（必要时同步改 no_ 编号）；确实需要并行的，补一个合并迁移
+（参考 `no_118_20260812_merge_emo_world_heads.py`）。
 
 ### 第六步：执行迁移
 
@@ -263,12 +272,21 @@ alembic downgrade -1
 - 本系统需兼容 Windows/Linux/macOS
 - 避免使用平台特定的 SQL 语法
 
+### 7. 禁止只 stamp 不执行（数据丢失红线）
+- **禁止对存量库执行 `alembic stamp`**：stamp 只在 `alembic_version` 写版本号而不执行迁移，
+  被跳过的数据迁移会静默丢失（2026-09 真实事故：库被戳版后 `deepseek-v4-flash-vision-exp`
+  模型行缺失，画风识别报「无可用视觉模型」）
+- 基线 SQL dump 必须从**完整执行过 `upgrade head`** 的库导出
+- 已发生戳版丢失时：新增一个幂等修复迁移重放丢失的 INSERT（参考
+  `no_122_20260901_fix_ds_vision_data.py），**不要** downgrade 重跑
+
 ## 检查清单
 
 在完成迁移脚本后，确认以下事项：
 
-- [ ] 迁移脚本文件名符合规范 `YYYYMMDD_描述.py`
-- [ ] `revision` 和 `down_revision` 正确设置
+- [ ] 使用 `scripts/new_migration.py` 脚手架创建，文件名符合 `no_<N>_YYYYMMDD_描述.py`
+- [ ] `revision` 和 `down_revision` 正确设置（down_revision 为当前唯一 head）
+- [ ] `python scripts/lint_migration_names.py` 校验通过
 - [ ] `upgrade()` 函数实现完整
 - [ ] `downgrade()` 函数能完全回滚
 - [ ] 如涉及表结构变更，已同步修改 `model/` 下的模型文件
@@ -282,7 +300,8 @@ alembic downgrade -1
 A: 使用条件判断或 `ON DUPLICATE KEY UPDATE`
 
 ### Q: down_revision 应该填什么？
-A: 查看 `alembic/versions/` 目录，找到时间最新的迁移脚本，使用其 `revision` 值
+A: 不需要手工填——用 `scripts/new_migration.py` 脚手架创建，它会自动取当前唯一 head 的
+`revision`。手工核对该 head 可运行 `python scripts/lint_migration_names.py`
 
 ### Q: 迁移失败如何处理？
 A: 

@@ -31,12 +31,94 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+/** 可作为图片源连接到生视频/图片参考口的节点类型 */
+var IMAGE_SOURCE_NODE_TYPES = ['image', 'character', 'location', 'props'];
+
+/**
+ * 读取节点对外提供的图片 URL。
+ * 图片节点用 data.url；角色/场景/道具用 data.reference_image。
+ * @param {Object|null} node
+ * @returns {string}
+ */
+function getNodeImageUrl(node) {
+  if (!node || !node.data) return '';
+  if (node.type === 'image') return node.data.url || node.data.preview || '';
+  if (node.type === 'character' || node.type === 'location' || node.type === 'props') {
+    return node.data.reference_image || '';
+  }
+  return node.data.url || node.data.preview || node.data.reference_image || '';
+}
+
+function isImageSourceNodeType(type) {
+  return IMAGE_SOURCE_NODE_TYPES.indexOf(type) !== -1;
+}
+
+/**
+ * 从提示词中提取 【【角色名】】，按出现顺序去重。
+ * @param {string} prompt
+ * @returns {string[]}
+ */
+function extractMarkedCharacterNames(prompt) {
+  if (!prompt) return [];
+  const pattern = /【【([^】]+)】】/g;
+  const names = [];
+  let match;
+  while ((match = pattern.exec(String(prompt))) !== null) {
+    const name = match[1].trim();
+    if (name && names.indexOf(name) === -1) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * 合并分镜节点图片提示词与生视频提示词中的角色名。
+ * 图片提示词中先出现的角色在前，视频提示词多出的角色追加在后。
+ * @param {Object} node
+ * @returns {string[]}
+ */
+function mergeShotCharacterNames(node) {
+  if (!node || !node.data) return [];
+  const names = extractMarkedCharacterNames(node.data.imagePrompt || '');
+  const videoPrompt = node.data.videoPromptText || node.data.videoPrompt || '';
+  extractMarkedCharacterNames(videoPrompt).forEach(function(name) {
+    if (names.indexOf(name) === -1) names.push(name);
+  });
+  return names;
+}
+
+/**
+ * 按 max 同步裁切参考图 URL 与「图N是xxx」后缀，避免提示词编号超过实际张数。
+ * @param {string[]} urls
+ * @param {string[]} suffix
+ * @param {number} maxCount
+ */
+function truncateRefCollection(urls, suffix, maxCount) {
+  const max = Number(maxCount);
+  if (!max || !urls || urls.length <= max) return;
+  urls.length = max;
+  if (Array.isArray(suffix) && suffix.length > max) suffix.length = max;
+}
+
 // 浏览器环境：挂载到 window
 if (typeof window !== 'undefined') {
   window.escapeHtml = escapeHtml;
+  window.IMAGE_SOURCE_NODE_TYPES = IMAGE_SOURCE_NODE_TYPES;
+  window.getNodeImageUrl = getNodeImageUrl;
+  window.isImageSourceNodeType = isImageSourceNodeType;
+  window.extractMarkedCharacterNames = extractMarkedCharacterNames;
+  window.mergeShotCharacterNames = mergeShotCharacterNames;
+  window.truncateRefCollection = truncateRefCollection;
 }
 
 // Node.js 环境（Vitest）：导出供测试使用
 if (typeof module !== 'undefined') {
-  module.exports = { escapeHtml };
+  module.exports = {
+    escapeHtml,
+    IMAGE_SOURCE_NODE_TYPES,
+    getNodeImageUrl,
+    isImageSourceNodeType,
+    extractMarkedCharacterNames,
+    mergeShotCharacterNames,
+    truncateRefCollection
+  };
 }

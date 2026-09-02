@@ -22,6 +22,18 @@ const POLL_INTERVAL = 4000;
 const pollTimers = {};
 const batchPollTimers = {};
 
+// 内容违规提醒（前端兜底层，见 web/js/content_violation.js）：
+// 分镜图/视频资产任务失败（-1）且 error 命中违禁/内容安全特征时弹出「内容违规提醒」，
+// 按「分镜+资产」维度冷却去重，批量生成不会连环弹窗。
+function notifyContentViolation(scopeKey, status, error) {
+    if (status !== -1 || !error) return;
+    const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+    if (!cv || typeof cv.notify !== 'function') return;
+    try {
+        cv.notify(scopeKey, error);
+    } catch (e) { /* 提醒异常不影响主流程 */ }
+}
+
 function isRenderableCandidateUrl(url) {
     if (url == null) return false;
     const value = String(url).trim();
@@ -80,6 +92,10 @@ function upsertSceneCandidateFromTask(sceneId, assetType, taskInfo) {
     if (taskInfo.status !== undefined && taskInfo.status !== null) {
         candidate.status = taskInfo.status;
     }
+    // 失败原因（如内容违规）随候选保留，供占位符展示违规变体
+    if (taskInfo.error) {
+        candidate.error = taskInfo.error;
+    }
     list.forEach(item => {
         item.selected = String(item.id) === String(assetId);
     });
@@ -112,6 +128,19 @@ function applyTaskStatus(scene, data, requestSelection) {
     }
     if (firstFrameCurrent) upsertSceneCandidateFromTask(scene.id, 'first_frame', data.first_frame);
     if (videoCurrent) upsertSceneCandidateFromTask(scene.id, 'video', data.video);
+    // 记录各资产失败原因（内容违规时供候选占位符展示违规变体），并触发违规提醒
+    if (data.first_frame && data.first_frame.error) {
+        scene.firstFrameError = data.first_frame.error;
+        notifyContentViolation(`sb:${scene.id}:first_frame`, data.first_frame.status, data.first_frame.error);
+    }
+    if (data.last_frame && data.last_frame.error) {
+        scene.lastFrameError = data.last_frame.error;
+        notifyContentViolation(`sb:${scene.id}:last_frame`, data.last_frame.status, data.last_frame.error);
+    }
+    if (data.video && data.video.error) {
+        scene.videoError = data.video.error;
+        notifyContentViolation(`sb:${scene.id}:video`, data.video.status, data.video.error);
+    }
     // 视频助手模式下，首帧生成完成后同步到输入区首帧槽
     if ((state.chatMode === 'video' || state.chatMode === 'aivideo') && state.currentSceneId === scene.id) {
         refreshSceneFirstFrameSlot(scene);

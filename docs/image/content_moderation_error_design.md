@@ -529,3 +529,4 @@ else:
 | 2026-07-16 | 撤销试写代码，仅保留设计文档 |
 | 2026-07-16 | **定稿 A + D**：解释失败用规则，修复提示词用按需 LLM；补充方案对比、D 联动、reduce-violation 演进与验收标准 |
 | 2026-07-16 | **实现落地**：util + visual_task + GPT/Gemini/Seedream/Seedance 驱动 + 前端兜底 + reduce-violation 泛化 + 分镜降低违规联动 |
+| 2026-08-30 | **P2 前端违规提醒弹框落地**：新增 `web/js/content_violation.js`（识别/友好文案/带冷却去重的「内容违规提醒」弹框），video_workflow 全量任务轮询 + storyboard 分镜资产/配音轮询 + 视频提交 catch 接入；同时补齐后端 `_MODERATION_MESSAGE_MARKERS` 4 条缺失特征（`sensitive_words`/`unsafe`/`content security`/`gemini blocked`/`candidate stopped before producing`，覆盖 duomi Gemini 约 33 次/月未改写样本）。详见 `docs/web/content_violation_frontend_notify.md` |

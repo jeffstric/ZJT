@@ -19,7 +19,7 @@ from utils.sentry_util import SentryUtil, AlertLevel
 from utils.network_utils import is_local_file_path
 from utils.image_upload_utils import try_map_url_to_local_file, upload_local_images_to_cdn_sync, ensure_fresh_image_url_sync
 from utils.media_mapping_util import extract_local_path_from_url
-from utils.project_path import get_project_root
+from utils.project_path import get_project_root, resolve_upload_url_to_local_path
 from utils.media_cache import get_cache_manager
 from .exceptions import ImageExpiredError
 
@@ -203,6 +203,32 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         
         return size
 
+    def _resolve_local_path(self, image_path: str) -> str:
+        """解析本地文件路径：/upload/ 开头的 Web 相对路径映射到项目根目录。
+
+        前端传入的参考图常是 `/upload/location/pic/xxx.png` 这类 Web 相对路径，
+        并非磁盘绝对路径（Windows 下会被当成驱动器相对路径而 FileNotFoundError）。
+        仅当字面路径不存在且映射候选存在时才重映射，避免误伤真实绝对路径。
+        """
+        if os.path.exists(image_path):
+            return image_path
+        local_rel = extract_local_path_from_url(image_path)
+        if local_rel:
+            # 先通过统一解析器做 traversal 校验；实际映射仍基于项目根目录，
+            # 兼容测试、便携部署及历史调用约定。
+            resolve_upload_url_to_local_path(image_path)
+            candidate = os.path.realpath(os.path.join(get_project_root(), local_rel))
+            upload_root = os.path.realpath(os.path.join(get_project_root(), "upload"))
+            if os.path.commonpath((candidate, upload_root)) != upload_root:
+                raise ValueError("非法的上传路径")
+            if os.path.exists(candidate):
+                self.logger.info(f"Web相对路径映射到本地文件: {image_path} -> {candidate}")
+                return candidate
+        elif "/upload/" in str(image_path).replace("\\", "/"):
+            # 明确拒绝伪装成本地 upload URL 的非法路径，不能回退为普通本地路径。
+            resolve_upload_url_to_local_path(image_path)
+        return image_path
+
     def _prepare_image_data(self, image_path: str) -> tuple[str, str]:
         """
         准备图片数据（本地文件或URL）
@@ -214,8 +240,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             tuple[str, str]: (base64_data, mime_type)
         """
         if is_local_file_path(image_path):
-            self.logger.info(f"检测到本地文件路径: {image_path}")
-            return self._read_local_file_as_base64(image_path)
+            return self._read_local_file_as_base64(self._resolve_local_path(image_path))
         # URL：先刷新签名(自有CDN重签名/第三方探测)，再尝试本地映射，最后HTTP下载
         fresh = ensure_fresh_image_url_sync(image_path, self._config)
         local_file = try_map_url_to_local_file(fresh, self._config)
@@ -223,7 +248,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             # /upload/ 本地映射兜底（与域名无关）
             local_rel = extract_local_path_from_url(fresh)
             if local_rel:
-                candidate = os.path.join(get_project_root(), local_rel)
+                candidate = self._resolve_local_path(fresh)
                 if os.path.exists(candidate):
                     local_file = candidate
         if local_file:
@@ -244,8 +269,8 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         """
         # 确定实际文件路径
         if is_local_file_path(image_path):
-            actual_path = image_path
-            self.logger.info(f"准备上传本地文件: {image_path}")
+            actual_path = self._resolve_local_path(image_path)
+            self.logger.info(f"准备上传本地文件: {actual_path}")
         else:
             # URL：先刷新签名(自有CDN重签名/第三方探测)，再尝试本地映射
             fresh = ensure_fresh_image_url_sync(image_path, self._config)
@@ -254,7 +279,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                 # /upload/ 本地映射兜底（与域名无关）
                 local_rel = extract_local_path_from_url(fresh)
                 if local_rel:
-                    candidate = os.path.join(get_project_root(), local_rel)
+                    candidate = self._resolve_local_path(fresh)
                     if os.path.exists(candidate):
                         local_file = candidate
             if local_file:

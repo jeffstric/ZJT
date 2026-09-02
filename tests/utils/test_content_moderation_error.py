@@ -120,6 +120,86 @@ class TestGeminiCustomerLogPatterns:
         assert rewritten.startswith("内容审核未通过")
 
 
+class TestDuomiAndGrokLogPatterns:
+    """2026-08-01 ~ 2026-08-30 /nas/tmp/api_request_log/ 真实失败样本补充。"""
+
+    def test_grok_content_security_audit(self):
+        """Grok 渠道主违规话术（30 天 5000+ 次）。"""
+        info = classify_content_moderation(
+            error_message="Content security audit did not pass | 内容安全审查未通过",
+        )
+        assert info is not None
+        assert info["source"] == SOURCE_GENERAL
+        assert "内容审核未通过" in info["friendly_message"]
+
+    def test_grok_english_only_content_security(self):
+        """仅英文时（无中文话术）也应识别。"""
+        info = classify_content_moderation(
+            error_message="Content security audit did not pass",
+        )
+        assert info is not None
+
+    def test_gemini_sensitive_words_detected(self):
+        """duomi gemini 违禁词拒绝。"""
+        info = classify_content_moderation(
+            error_message="任务执行失败: sensitive_words_detected",
+        )
+        assert info is not None
+        assert info["source"] == SOURCE_PROMPT
+        assert "提示词" in info["friendly_message"]
+
+    def test_gemini_generated_images_unsafe(self):
+        """duomi gemini 输出侧 unsafe 拒绝。"""
+        info = classify_content_moderation(
+            error_message=(
+                "The generated images appear to be unsafe. "
+                "Try modifying the prompts or the seeds."
+            ),
+        )
+        assert info is not None
+        assert info["source"] == SOURCE_OUTPUT
+        assert "生成结果" in info["friendly_message"]
+
+    def test_gemini_prompt_considered_unsafe(self):
+        """duomi gemini 提示词侧 unsafe 拒绝。"""
+        info = classify_content_moderation(
+            error_message=(
+                "The provided prompt is considered unsafe and "
+                "it cannot be used to generate content."
+            ),
+        )
+        assert info is not None
+        assert info["source"] == SOURCE_PROMPT
+        assert "提示词" in info["friendly_message"]
+
+    def test_gemini_blocked_candidate_stopped(self):
+        """duomi gemini finish_reason:STOP 拦截。"""
+        info = classify_content_moderation(
+            error_message=(
+                "任务执行失败: gemini blocked: finish_reason:STOP "
+                "(candidate stopped before producing an image)"
+            ),
+        )
+        assert info is not None
+        assert info["source"] == SOURCE_PROMPT
+        assert "提示词" in info["friendly_message"]
+
+    def test_non_moderation_errors_unchanged(self):
+        """繁忙/限额/基础设施类失败不得误判为内容审核。"""
+        for raw in (
+            "AI服务繁忙，请稍后重试",
+            "抱歉，系统繁忙，请稍后重试",
+            "图片大小超过 10MB",
+            "Total reference images and elements cannot exceed 4, got 5.",
+            "模型 grok-video-channel 并发上限(10)已达，请等待其他任务完成后重试",
+            "无可用渠道",
+            "APIKEY_TASK_NOT_FOUND",
+            "The model load is too high, please try again later",
+            "未知原因,可能是当前官方算力问题",
+        ):
+            assert rewrite_failure_reason_if_moderation(raw) == raw, raw
+
+
 class TestRewriteAndBuild:
     def test_rewrite_raw_english_reason(self):
         raw = (
