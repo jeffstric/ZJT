@@ -1293,13 +1293,13 @@ export function estimateScenePower(scene = null) {
             const power = resolvePowerFromModel(dhModel, sec);
             return power == null ? null : { power, label: '数字人视频' };
         }
+        // 槽位口径与 sendDirectVideo 提交一致：强制 hasInputs=true（提交前已校验必须有首帧），
+        // 池子用槽位过滤函数（首尾帧/参考模式各自过滤，勿用未定义的 state.referenceToVideoModels）
         const imageMode = state.videoImageMode;
+        const isRef = imageMode === 'multi_reference' || imageMode === 'first_last_with_ref';
         const taskId = getSelectedVideoTaskId({ hasInputs: true, imageMode });
-        const pool = (imageMode === 'multi_reference' || imageMode === 'first_last_with_ref')
-            ? state.referenceToVideoModels
-            : state.imageToVideoModels;
-        const model = (pool || []).find(m => String(m.task_id) === String(taskId))
-            || (state.imageToVideoModels || []).find(m => String(m.task_id) === String(state.selectedImageToVideoTaskId));
+        const pool = isRef ? getReferenceToVideoSlotModels() : getImageToVideoSlotModels();
+        const model = pool.find(m => String(m.task_id) === String(taskId)) || pool[0] || null;
         const duration = buildVideoGenerationPayloadExtras(sc).duration;
         const power = resolvePowerFromModel(model, duration);
         return power == null ? null : { power, label: mode === 'aivideo' ? 'AI生视频' : '视频' };

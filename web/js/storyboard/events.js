@@ -1453,11 +1453,13 @@ async function handleAction(action, target) {
         const hit = window.ModelCatalog.findTaskByTrack(state[listKey] || [], scene, state.modelCatalog, track);
         if (!hit || hit.task_id == null) return;
         state[field] = hit.task_id;
+        // 档位切换等价于换模型：清实际消耗，左下角回到按新模型的预估显示
+        state.lastPowerSpend = null;
         state.selectedImageTaskId = state.selectedTextToImageTaskId;
         state.selectedVideoTaskId = state.selectedImageToVideoTaskId;
         try { localStorage.setItem(storageKey, String(hit.task_id)); } catch {}
         if (state.storyboardId) persistUiConfig().catch(() => {});
-        rerenderModals();
+        rerender([Region.MODAL, Region.AGENT_PANEL]);
         return;
     }
 
