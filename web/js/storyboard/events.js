@@ -35,6 +35,7 @@ import state, {
     activateSceneAgentMessages,
     getSelectedVideoTaskId,
     getSelectedImageTaskId,
+    composeSceneImagePrompt,
     getSelectedImageToVideoModel,
     modelNeedsFaceMask,
     isEnterpriseEdition,
@@ -1131,13 +1132,14 @@ async function sendDirectVideo(current) {
  * 「直填生图」模式（直连）：完全绕过智能体，直接用文本框提示词调
  * POST /scene/{id}/generate-image（零 LLM 消耗）。mode='auto' 保留角色/场景参考图注入；
  * prompt 透传且后端优先采用（prompt or context['image_prompt']）。
+ * 文本框预填当前分镜画面提示词（composeSceneImagePrompt，用户可编辑）。
  * 不往助手聊天区 push 任何消息，只用 notify() 提示，图片结果直接出现在右侧候选区。
  * 提交后复用 pollSceneTaskStatus 轮询并回填候选区。
  */
 async function sendDirectImage(current) {
     const sceneId = current.id;
     if (!sceneId || isSceneAgentRunning(sceneId)) return;
-    // 生图提示词不能为空（用户直填，无预填基线）
+    // 生图提示词不能为空（文本框预填分镜画面提示词，预填为空时需手填）
     const prompt = (state.inputMessage || '').trim();
     if (!prompt) {
         notify('请输入生图提示词');
@@ -3092,11 +3094,14 @@ export function bindEvents() {
                 state.videoFirstFrameDismissedSceneId = null;
                 state.referenceImages = [];
             }
-            // 直连「视频生成」模式：文本框预填当前分镜视频提示词（对口型分镜无文本框，置空）；其它模式清空，避免残留
+            // 直连「视频生成」模式：文本框预填当前分镜视频提示词（对口型分镜无文本框，置空）；
+            // 直连「直填生图」模式：预填当前分镜画面提示词；其它模式清空，避免残留
             if (state.chatMode === 'video') {
                 const modeScene = getCurrentScene();
                 const modeIsDh = String(modeScene?.videoType || modeScene?.video_type || '').toLowerCase() === 'digital_human';
                 state.inputMessage = modeIsDh ? '' : (modeScene?.videoPrompt || '');
+            } else if (state.chatMode === 'image') {
+                state.inputMessage = composeSceneImagePrompt(getCurrentScene());
             } else {
                 state.inputMessage = '';
             }

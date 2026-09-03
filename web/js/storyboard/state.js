@@ -909,6 +909,19 @@ export function getSelectedImageTaskId(hasReferences = true) {
     return hasReferences ? state.selectedImageEditTaskId : state.selectedTextToImageTaskId;
 }
 
+/**
+ * 组合当前分镜的画面提示词（「直填生图」模式的文本框预填基线）。
+ * 组合顺序与后端 api/storyboard.py:_compose_image_prompt 对齐：
+ * perspective / style / scene_desc / character_desc，中文逗号连接。
+ */
+export function composeSceneImagePrompt(scene = null) {
+    const pj = scene?.promptJson || {};
+    return [pj.perspective, pj.style, pj.scene_desc, pj.character_desc]
+        .map((part) => String(part || '').trim())
+        .filter(Boolean)
+        .join('，');
+}
+
 export function getSelectedVideoTaskId({ hasInputs = true, imageMode = state.videoImageMode } = {}) {
     if (!hasInputs) return state.selectedTextToVideoTaskId;
     if (imageMode === 'multi_reference' || imageMode === 'first_last_with_ref') {

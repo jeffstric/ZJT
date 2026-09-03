@@ -11,6 +11,8 @@
 
 「直填生图」模式（2026-09 新增）：用户直接输入生图提示词，前端调 `api.generateSceneImage`（`{ asset_type: 'first_frame', prompt, task_type, ratio, mode: 'auto' }`），`prompt` 透传且优先级最高（`storyboard_agent_cli_service.py` 中 `prompt or context["image_prompt"]`），`mode='auto'` 时保留角色/场景参考图注入；不经过任何 LLM 调用。
 
+文本框预填基线：切换到该模式（或刷新页面恢复 `chatMode=image`）时，前端用 `state.js` 的 `composeSceneImagePrompt` 预填当前分镜画面提示词——由 `scene.prompt_json` 的 `perspective` / `style` / `scene_desc` / `character_desc` 按序以中文逗号组合，与后端 `api/storyboard.py` 的 `_compose_image_prompt` 同序；用户可直接编辑后提交，编辑值仅本次使用、不回写 `prompt_json`。旧分镜 `prompt_json` 为空时预填为空，需手填。
+
 「视频生成」直连模式复用现成的社区版路由 `POST /scene/{id}/generate-video`，不经 `ToolExecutor`/企业版工具，社区版可用；「AI生视频」走智能体，社区版下视频工具未注册会报"未知工具"，故禁用并提示商业版特权。
 
 ## 左侧布局与防遮挡

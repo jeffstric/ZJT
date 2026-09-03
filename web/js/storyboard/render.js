@@ -1410,7 +1410,7 @@ function renderAiPanel() {
         : (state.chatMode === 'dialogue'
             ? '和智能体描述要如何调整当前分镜画面'
             : (state.chatMode === 'image'
-                ? '直接输入生图提示词，不经过 AI 润色'
+                ? '已预填当前分镜画面提示词，可直接编辑后生成（不经过 AI 润色）'
                 : (state.chatMode === 'video'
                     ? '描述视频的运动方式、镜头变化与角色动作（预填当前分镜视频提示词，可直接编辑）'
                     : '和智能体描述要如何生成当前分镜视频')));
