@@ -32,8 +32,21 @@ RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
     default-mysql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files
+# Copy dependency manifests before source code. BuildKit can then reuse the
+# expensive dependency layer when a commit only changes application code.
 COPY requirements.txt pyproject.toml ./
+
+# Configure pip to use Aliyun mirror for faster downloads in China
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com
+
+# uv resolves and downloads dependencies concurrently. On the GitLab Runner this
+# avoids pip's serial downloads turning a temporary slow mirror into a 60m job.
+RUN pip install --no-cache-dir uv==0.12.9 && \
+    uv pip install --system --no-cache -r requirements.txt && \
+    pip uninstall -y uv
+
+# Copy project files
 COPY agents/ ./agents/
 COPY api/ ./api/
 COPY alembic/ ./alembic/
@@ -58,14 +71,6 @@ COPY config_unit.base.yml ./
 COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && \
     chmod +x /usr/local/bin/docker-entrypoint.sh
-
-# Configure pip to use Aliyun mirror for faster downloads in China
-RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
-    pip config set global.trusted-host mirrors.aliyun.com
-
-# Upgrade pip and install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
 
 # Create necessary directories
 RUN mkdir -p /app/data /app/logs /app/upload/cache /app/dist

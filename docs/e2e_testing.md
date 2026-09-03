@@ -63,7 +63,11 @@ playwright install chromium
 
 CI 使用临时数据库中的固定一次性凭据，不依赖生产账号或 GitLab Secret。可通过同名 CI/CD Variables 覆盖 `E2E_TEST_PHONE`、`E2E_TEST_PASSWORD`、`E2E_SECONDARY_PHONE` 和 `E2E_SECONDARY_PASSWORD`，但不得配置生产凭据。
 
-E2E Runner 默认通过 DaoCloud 公共镜像代理拉取 Playwright 基础镜像，避免国内 Runner 直连 `mcr.microsoft.com` 时因约 800 MB 浏览器镜像下载过慢而耗尽 Job 时间。`e2e_smoke` 首次执行的超时上限为 90 分钟；后续如果配置 GitLab Container Registry，建议将构建完成的 E2E Runner 镜像推入内部 Registry，并在流水线中直接复用。
+E2E Runner 默认通过 DaoCloud 公共镜像代理拉取 Playwright 基础镜像，避免国内 Runner 直连 `mcr.microsoft.com` 时因约 800 MB 浏览器镜像下载过慢而耗尽 Job 时间。
+
+应用镜像先复制依赖清单并安装依赖，再复制源码，支持在具有 Docker layer cache 的环境中复用依赖层。镜像内使用 `uv` 并发解析和下载 Python 包；在 jeffNas1 Runner 的全新 `python:3.10-slim` 容器中，完整解析、下载及安装实测约 1 分钟，而原先的 pip 串行下载在慢速连接下会持续数十分钟。
+
+`mcp` 固定为与 `fastapi==0.111.0` / Starlette 0.37.x 兼容的 `1.12.4`，避免 pip 在 CI 中从 2.x 向下尝试大量历史版本。`e2e_smoke` 声明了 90 分钟 job timeout，但 GitLab 实例或项目的最大超时仍可能将其限制为 60 分钟；依赖安装加速用于确保正常构建不依赖放宽该上限。
 
 需要切换其他镜像仓库时，可覆盖 Dockerfile 的构建参数：
 
