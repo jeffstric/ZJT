@@ -1268,11 +1268,42 @@ function resolvePowerFromModel(model, durationSeconds = null) {
 }
 
 /**
- * 提交前的预计算力消耗（左下角提示行的预估基线，随模式/模型/时长变化）。
- * 返回 { power, label }；无可用计费信息时返回 null。
+ * 视频预估缓存（键含分镜/模型/时长档/分辨率/图模式，参数变化自动 miss 重拉）。
+ * 倍率表（分辨率/图模式修饰符，DB 可热更新）前端不复刻，一律走后端估价接口。
+ */
+const videoPowerEstimates = new Map();
+const videoPowerEstimateInflight = new Set();
+const powerEstimateListeners = new Set();
+
+/** 预估价回填后通知（events.js 注册 → 重渲助手面板的预估行） */
+export function onPowerEstimateUpdated(fn) {
+    if (typeof fn === 'function') powerEstimateListeners.add(fn);
+    return () => powerEstimateListeners.delete(fn);
+}
+
+function requestVideoPowerEstimate(key, sceneId, payload) {
+    if (videoPowerEstimateInflight.has(key)) return;
+    videoPowerEstimateInflight.add(key);
+    import('./api.js').then(({ estimateSceneVideoPower }) =>
+        estimateSceneVideoPower(sceneId, payload),
+    ).then((res) => {
+        if (res && res.success !== false && Number(res.computing_power) > 0) {
+            videoPowerEstimates.set(key, Number(res.computing_power));
+            powerEstimateListeners.forEach((fn) => {
+                try { fn(); } catch (e) { /* 监听异常不影响缓存 */ }
+            });
+        }
+    }).catch(() => {}).finally(() => {
+        videoPowerEstimateInflight.delete(key);
+    });
+}
+
+/**
+ * 提交前的预计算力消耗（左下角提示行的预估基线，随模式/模型/时长/分辨率变化）。
+ * 返回 { power, label }；无可用计费信息时返回 null（异步估价未返回时本轮不显示）。
  * - image（直填生图）：图生图/编辑模型固定单价（单张）
- * - video/aivideo：所选视频槽位模型；按时长计费时按当前 duration 匹配档位；
- *   对口型分镜固定数字人链路（MiniMax H3），按分镜时长向上取整到 5s 档预估
+ * - video/aivideo：后端估价接口（与扣费同口径：时长档位 × 分辨率/图模式修饰符）；
+ *   对口型分镜由服务端按数字人规划精确计价
  * - dialogue（对话改图）：编辑模型单价（LLM 消耗小额，不预估）
  */
 export function estimateScenePower(scene = null) {
@@ -1284,25 +1315,28 @@ export function estimateScenePower(scene = null) {
         return power == null ? null : { power, label: mode === 'image' ? '生图' : 'AI生图' };
     }
     if (mode === 'video' || mode === 'aivideo') {
+        const sceneId = sc?.id;
+        if (sceneId == null) return null;
         const isDh = String(sc?.videoType || sc?.video_type || '').toLowerCase() === 'digital_human';
-        if (isDh) {
-            const dhModel = (state.digitalHumanModels || [])[0]
-                || (state.digitalHumanModels || []).find(m => String(m.task_id) === String(state.selectedDigitalHumanTaskId));
-            // 对口型计费时长按 5s 档向上取整（与后端 billable_duration clamp 4–10 对齐）
-            const sec = Math.ceil(Number(sc?.duration || 5) / 5) * 5;
-            const power = resolvePowerFromModel(dhModel, sec);
-            return power == null ? null : { power, label: '数字人视频' };
+        const imageMode = isDh ? '' : (state.videoImageMode || 'first_last_frame');
+        const taskId = isDh ? 'dh' : getSelectedVideoTaskId({ hasInputs: true, imageMode: state.videoImageMode });
+        const extras = isDh ? {} : buildVideoGenerationPayloadExtras(sc);
+        const key = [
+            sceneId, taskId, extras.duration_mode, extras.duration, extras.resolution, imageMode, isDh ? 'dh' : '',
+        ].join('|');
+        if (videoPowerEstimates.has(key)) {
+            return { power: videoPowerEstimates.get(key), label: mode === 'aivideo' ? 'AI生视频' : (isDh ? '数字人视频' : '视频') };
         }
-        // 槽位口径与 sendDirectVideo 提交一致：强制 hasInputs=true（提交前已校验必须有首帧），
-        // 池子用槽位过滤函数（首尾帧/参考模式各自过滤，勿用未定义的 state.referenceToVideoModels）
-        const imageMode = state.videoImageMode;
-        const isRef = imageMode === 'multi_reference' || imageMode === 'first_last_with_ref';
-        const taskId = getSelectedVideoTaskId({ hasInputs: true, imageMode });
-        const pool = isRef ? getReferenceToVideoSlotModels() : getImageToVideoSlotModels();
-        const model = pool.find(m => String(m.task_id) === String(taskId)) || pool[0] || null;
-        const duration = buildVideoGenerationPayloadExtras(sc).duration;
-        const power = resolvePowerFromModel(model, duration);
-        return power == null ? null : { power, label: mode === 'aivideo' ? 'AI生视频' : '视频' };
+        // 异步估价：结果回填缓存后经 onPowerEstimateUpdated 通知重渲
+        requestVideoPowerEstimate(key, sceneId, isDh ? {
+            resolution: state.videoResolution || undefined,
+        } : {
+            task_type: taskId,
+            duration_mode: extras.duration_mode,
+            resolution: extras.resolution,
+            image_mode: imageMode,
+        });
+        return null;
     }
     return null;
 }

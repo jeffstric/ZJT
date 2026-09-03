@@ -36,6 +36,7 @@ import state, {
     getSelectedVideoTaskId,
     getSelectedImageTaskId,
     composeSceneImagePrompt,
+    onPowerEstimateUpdated,
     getSelectedImageToVideoModel,
     modelNeedsFaceMask,
     isEnterpriseEdition,
@@ -2256,6 +2257,8 @@ async function handleAction(action, target) {
         const res = target.dataset.videoResolution;
         if (!res) return;
         state.videoResolution = res;
+        // 分辨率影响修饰符倍率 → 清实际值回到预估（后端按新分辨率重算）
+        state.lastPowerSpend = null;
         // 选中态位于 modal 内：先即时刷新弹窗，再异步持久化，避免点击后仍显示旧分辨率。
         rerender([Region.MODAL, Region.AGENT_PANEL]);
         await persistUiConfig();
@@ -2657,6 +2660,9 @@ const RATIO_GATE_ALLOWED_ACTIONS = new Set([
 ]);
 
 export function bindEvents() {
+    // 视频预估（后端估价接口异步返回）回填后重渲助手面板的预估行
+    onPowerEstimateUpdated(() => rerenderAgentPanel());
+
     // 鼠标离开分镜助手区：解除浮层 pin，恢复「移出渐隐」
     document.addEventListener('mouseout', (event) => {
         const section = event.target?.closest?.('.ai-chat-section');

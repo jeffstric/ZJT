@@ -45,6 +45,7 @@ from config.unified_config import (
     UnifiedConfigRegistry,
     TaskTypeId,
     TaskCategory,
+    ImageMode,
     SEEDANCE_FACE_MASK_DRIVER_KEYS,
 )
 from utils.project_path import (
@@ -54,6 +55,7 @@ from utils.project_path import (
     resolve_upload_url_to_local_path,
 )
 from utils.video_compressor import get_video_info
+from utils.computing_power import get_computing_power_for_task
 from model.storyboard import (
     StoryboardModel, StoryboardSceneModel,
     StoryboardDialogueModel, StoryboardDialogueAudioModel,
@@ -4223,7 +4225,14 @@ async def generate_scene_video(
     except Exception as e:
         logger.warning(f"Failed to persist video_config_json on generate-video scene {scene_id}: {e}")
 
-    computing_power = config.get_computing_power(duration=video_duration) if config else 0
+    # 预扣口径与估价接口/结算一致：时长档位基价 × 分辨率/图模式修饰符（向上取整）
+    computing_power = config.get_computing_power(
+        duration=video_duration,
+        context={
+            'image_mode': 'first_last_frame',
+            **({'resolution': video_resolution} if video_resolution else {}),
+        },
+    ) if config else 0
     transaction_id = str(uuid.uuid4())
     ok, msg = await _deduct_computing_power(request, computing_power, transaction_id)
     if not ok:
@@ -4334,6 +4343,104 @@ async def generate_scene_video(
         'video_type': video_type,
         'computing_power': computing_power,
         'status': 'submitted',
+    })
+
+
+@router.post('/scene/{scene_id}/estimate-video-power')
+@require_permission("storyboard:view")
+async def estimate_scene_video_power(
+    request: Request,
+    scene_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """单分镜视频生成预计算力（提交前左下角预估行）。
+
+    口径与扣费一致：时长档位基价 × 修饰符（分辨率/图模式，DB 可热更新）向上取整，
+    即 get_computing_power_for_task(context={resolution, image_mode})——前端不复刻
+    倍率表，一律经本接口取值。纯只读，不写偏好不建任务。
+
+    Body:
+        task_type: 视频模型 task_id（普通视频必传）
+        duration_mode: 'auto' | 数字时长档（默认 auto，与提交同参）
+        resolution: '480P'/'720P'/...（缺省取模型默认，与 generate-video 同规则）
+        image_mode: 首尾帧/多参考（缺省 first_last_frame）
+    """
+    user_id = get_user_id_from_header(user_id)
+    scene, err = await _ensure_scene_access(scene_id, user_id, Action.VIEW)
+    if err:
+        return err
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    video_type = scene.video_type or SceneVideoType.VIDEO
+    if video_type == SceneVideoType.DIGITAL_HUMAN:
+        # 对口型：与 generate-video 相同的服务端规划（只读），按 plan 精确计价
+        from services.storyboard_digital_human_service import (
+            StoryboardDigitalHumanError,
+            compute_digital_human_power,
+            orchestrate_digital_human_generation,
+        )
+        try:
+            plan, _segments, _scene, _sb = await asyncio.to_thread(
+                orchestrate_digital_human_generation,
+                scene_id,
+                resolution=data.get('resolution'),
+            )
+        except StoryboardDigitalHumanError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+        power = compute_digital_human_power(plan)
+        return JSONResponse({
+            'success': True,
+            'computing_power': int(math.ceil(float(power or 0))),
+            'duration': int(plan.billable_duration) if plan.billable_duration else None,
+            'resolution': plan.resolution,
+            'task_type': plan.task_type,
+            'digital_human': True,
+        })
+
+    try:
+        task_type = int(data.get('task_type'))
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={'success': False, 'error': 'task_type 必须为整数'})
+    config = UnifiedConfigRegistry.get_by_id(task_type)
+    if not config:
+        return JSONResponse(status_code=400, content={'success': False, 'error': f'未知视频模型 task_type={task_type}'})
+
+    supported_durations = list(getattr(config, 'supported_durations', None) or [])
+    duration = _resolve_storyboard_video_duration_seconds(
+        scene.duration,
+        supported_durations,
+        duration_mode=data.get('duration_mode', 'auto'),
+        explicit_duration=data.get('duration'),
+    )
+    # 分辨率与 generate-video 同规则：白名单校验，缺省取模型默认
+    res_opts, default_res = _video_resolution_options_from_task(config)
+    allowed_res = {str(o.get('value')) for o in res_opts if o.get('value')}
+    raw_res = data.get('resolution')
+    resolution = str(raw_res) if raw_res and str(raw_res) in allowed_res else (str(default_res) if default_res else None)
+
+    image_mode = data.get('image_mode') or ImageMode.FIRST_LAST_FRAME
+    context = {'image_mode': image_mode}
+    if resolution:
+        context['resolution'] = resolution
+    # get_computing_power_for_task 内部查 DB（实现方倍率热更新），to_thread 避免阻塞事件循环
+    computing_power = await asyncio.to_thread(
+        get_computing_power_for_task,
+        task_type,
+        duration=duration,
+        user_id=user_id,
+        context=context,
+    )
+    return JSONResponse({
+        'success': True,
+        'computing_power': int(computing_power or 0),
+        'duration': duration,
+        'resolution': resolution,
+        'task_type': task_type,
+        'digital_human': False,
     })
 
 

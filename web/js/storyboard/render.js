@@ -1492,11 +1492,16 @@ function renderAiPanel() {
 /**
  * 左下角算力提示行：
  * - 提交成功后显示实际消耗（recordPowerSpend 写入 lastPowerSpend）
- * - 提交前常驻显示预估（estimateScenePower 按当前模式/模型/时长计算，随选择变化）
+ * - 提交前常驻显示预估（estimateScenePower；视频经后端估价接口，未返回时短暂显示「预估中」）
  */
 function renderPowerSpendHint() {
     const spend = state.lastPowerSpend || estimateScenePower();
-    if (!spend) return '';
+    if (!spend) {
+        if (!state.lastPowerSpend && (state.chatMode === 'video' || state.chatMode === 'aivideo')) {
+            return `<div class="chat-power-spend" style="flex:0 0 auto;font-size:11px;color:var(--text-secondary);line-height:1.4;margin-top:4px;"><span class="power-icon">⚡</span> 正在预估消耗…</div>`;
+        }
+        return '';
+    }
     const isActual = state.lastPowerSpend != null;
     return `<div class="chat-power-spend" style="flex:0 0 auto;font-size:11px;color:var(--text-secondary);line-height:1.4;margin-top:4px;"><span class="power-icon">⚡</span> ${isActual ? `本次${spend.label || '生成'}消耗 ${spend.power} 算力` : `预计${spend.label || '生成'}消耗 ${spend.power} 算力`}</div>`;
 }
