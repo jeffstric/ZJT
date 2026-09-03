@@ -15,10 +15,14 @@ warnings.warn(
 )
 
 from openai import OpenAI
-from config.config_util import get_config_value
+from config.config_util import get_config_value, normalize_aliyun_bailian_base_url
 
 API_KEY = get_config_value('llm', 'qwen', 'api_key', default='')
-BASE_URL = get_config_value('llm', 'qwen', 'base_url', default="https://dashscope.aliyuncs.com/compatible-mode/v1")
+# 用户只配置基础 URL，大模型走 OpenAI 兼容接口，自动追加 /compatible-mode/v1
+BASE_URL = normalize_aliyun_bailian_base_url(
+    get_config_value('llm', 'qwen', 'base_url', default=None),
+    for_llm=True,
+)
 DEFAULT_MODEL = "qwen-plus"
 
 

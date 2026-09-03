@@ -148,6 +148,21 @@ class TestResolveUploadUrlToLocalPath(unittest.TestCase):
         result = resolve_upload_url_to_local_path('temp/image.png')
         self.assertTrue(os.path.isabs(result))
 
+    def test_rejects_parent_directory_traversal(self):
+        from utils.project_path import resolve_upload_url_to_local_path
+        with self.assertRaises(ValueError):
+            resolve_upload_url_to_local_path('/upload/../config.yml')
+
+    def test_rejects_encoded_parent_directory_traversal(self):
+        from utils.project_path import resolve_upload_url_to_local_path
+        with self.assertRaises(ValueError):
+            resolve_upload_url_to_local_path('/upload/%2e%2e/config.yml')
+
+    def test_rejects_windows_separator_traversal(self):
+        from utils.project_path import resolve_upload_url_to_local_path
+        with self.assertRaises(ValueError):
+            resolve_upload_url_to_local_path(r'/upload/..\config.yml')
+
 
 if __name__ == '__main__':
     unittest.main()

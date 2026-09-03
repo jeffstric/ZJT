@@ -2,6 +2,11 @@
 
     // 内容审核错误友好中文（与 utils/content_moderation_error.py / 设计文档 A 对齐；历史英文 reason 兜底）
     function friendlyContentModerationMessage(errorMsg) {
+      // 委托共享模块 web/js/content_violation.js（video_workflow 页面已加载）；
+      // 模块不存在时（如 Vitest 测试环境）走下方本地规则兜底
+      if (typeof window !== 'undefined' && window.ContentViolation && typeof window.ContentViolation.describe === 'function') {
+        return window.ContentViolation.describe(errorMsg);
+      }
       if(!errorMsg) return null;
       const msg = String(errorMsg);
       if(msg.startsWith('内容审核未通过')) return msg;
@@ -422,14 +427,29 @@
 
       const worldId = state.defaultWorldId;
       for (const shotNode of allShotFrameNodes) {
-        const imagePrompt = shotNode.data.imagePrompt || '';
         const shotData = shotNode.data.shotJson || {};
 
-        // 1. 提取角色名并获取参考图URL
-        const characterPattern = /【【([^】]+)】】/g;
-        let match;
-        while ((match = characterPattern.exec(imagePrompt)) !== null) {
-          const characterName = match[1].trim();
+        // 1. 提取角色名并获取参考图URL（图片提示词 ∪ 生视频提示词）
+        const shotCharacterNames = typeof mergeShotCharacterNames === 'function'
+          ? mergeShotCharacterNames(shotNode)
+          : (function() {
+              const names = [];
+              const pattern = /【【([^】]+)】】/g;
+              const texts = [
+                shotNode.data.imagePrompt || '',
+                shotNode.data.videoPromptText || shotNode.data.videoPrompt || ''
+              ];
+              texts.forEach(function(text) {
+                pattern.lastIndex = 0;
+                let match;
+                while ((match = pattern.exec(text)) !== null) {
+                  const name = match[1].trim();
+                  if (name && names.indexOf(name) === -1) names.push(name);
+                }
+              });
+              return names;
+            })();
+        for (const characterName of shotCharacterNames) {
           if (characterName && !collectedCharacters.has(characterName)) {
             collectedCharacters.add(characterName);
             try {
@@ -2485,6 +2505,17 @@
         }
         if(toNode && toNode.type === 'shot_frame' && toNode.updatePreview){
           toNode.updatePreview();
+        }
+        // 断开 360全景 → 导演台 的环境连线时，清除导演台的全景环境
+        if(conn && conn.portType === 'environment' && toNode && toNode.type === 'director_stage' && typeof window.handleDirectorStageEnvDisconnect === 'function'){
+          window.handleDirectorStageEnvDisconnect(conn.from, toNode);
+        }
+        // 断开 图片/场景 → 360全景 的参考连线时，复位全景参考图缩略图（提示词保留不回滚）
+        if(conn && conn.portType === 'panorama-source' && toNode && toNode.type === 'panorama'){
+          const panoEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+          if(panoEl && typeof panoEl._updateSourceThumbnail === 'function'){
+            panoEl._updateSourceThumbnail();
+          }
         }
       }
     }

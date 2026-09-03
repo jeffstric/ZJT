@@ -22,8 +22,11 @@
 - 存储结构：`node.data.refProps = [{ id, name, props_db_id }]`
 
 ### 角色匹配
-- 自动从 `node.data.imagePrompt` 中提取 `【【角色名】】` 模式
+- 首帧模式：从 `node.data.imagePrompt` 提取 `【【角色名】】`
+- 参考图模式（参考生视频）：从 `node.data.videoPromptText` 提取 `【【角色名】】`（无则回退 `videoPrompt`）
 - 存储结构：`node.data.refCharacters = ['角色名1', '角色名2']`
+
+提交参考生视频 / 宫格参考收集时，角色图来源是 **图片提示词 ∪ 生视频提示词** 中的 `【【角色名】】`（`mergeShotCharacterNames`），不依赖 `refCharacters` 展示列表。没有 `【【】】` 包裹的「角色名: 台词」不会被识别为角色。
 
 ## 用户交互
 

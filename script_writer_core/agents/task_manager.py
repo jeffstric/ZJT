@@ -156,6 +156,9 @@ class AgentTask:
     model_id: int
     enable_thinking: bool = False
     thinking_effort: str = "medium"
+    # AI 介入程度档位：行为指令由 API 层拼入 user_message 持久化（agent_tasks 表无此列，
+    # DB 重建任务时回落 balanced 仅影响日志展示，不影响行为）
+    intervention_level: str = "balanced"
     image_urls: Optional[List[str]] = None
     video_urls: Optional[List[str]] = None
     audio_urls: Optional[List[str]] = None
@@ -171,7 +174,7 @@ class AgentTask:
     progress: float = 0.0
     current_step: str = ""
     message_queue: queue.Queue = field(default_factory=queue.Queue)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
         return {
@@ -185,6 +188,7 @@ class AgentTask:
             "model_id":self.model_id,
             "enable_thinking": self.enable_thinking,
             "thinking_effort": self.thinking_effort,
+            "intervention_level": self.intervention_level,
             "image_urls": self.image_urls,
             "video_urls": self.video_urls,
             "audio_urls": self.audio_urls,
@@ -222,6 +226,7 @@ class TaskManager:
         model_id: int,
         enable_thinking: bool = False,
         thinking_effort: str = "medium",
+        intervention_level: str = "balanced",
         image_urls: Optional[List[str]] = None,
         video_urls: Optional[List[str]] = None,
         audio_urls: Optional[List[str]] = None,
@@ -260,6 +265,7 @@ class TaskManager:
             model_id=model_id,
             enable_thinking=enable_thinking,
             thinking_effort=thinking_effort,
+            intervention_level=intervention_level,
             image_urls=image_urls,
             video_urls=video_urls,
             audio_urls=audio_urls,

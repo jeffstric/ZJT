@@ -57,7 +57,8 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         language: str = "zh-CN",
         max_consecutive_no_progress: int = 3,
         max_consecutive_errors: int = 3,
-        max_total_errors: int = 7
+        max_total_errors: int = 7,
+        power_confirm_enabled: bool = True
     ):
         # 使用第一个技能名称作为主要标识
         primary_skill = skill_names[0] if skill_names else "unknown"
@@ -69,6 +70,9 @@ class ExpertAgent(BaseAgent, AskUserMixin):
 
         self.language = language
         self.user_id = user_id
+        # 算力确认门开关：marketing 链路开启，剧本创作（script_writer）链路关闭。
+        # 必须在 _build_system_prompt 之前赋值（提示词按开关生成）。
+        self.power_confirm_enabled = power_confirm_enabled
         system_prompt = self._build_system_prompt(skill_names, context_from_pm)
         
         super().__init__(
@@ -112,12 +116,19 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         """构建系统提示"""
         # 构建基础提示
         skills_str = "、".join(skill_names)
-        try:
-            from .power_confirm import resolve_user_soft_threshold
-            power_threshold, _ = resolve_user_soft_threshold(getattr(self, "user_id", None))
-        except Exception:
-            from config.constant import AGENT_POWER_CONFIRM_THRESHOLD
-            power_threshold = AGENT_POWER_CONFIRM_THRESHOLD
+        power_confirm_note = ""
+        if self.power_confirm_enabled:
+            try:
+                from .power_confirm import resolve_user_soft_threshold
+                power_threshold, _ = resolve_user_soft_threshold(getattr(self, "user_id", None))
+            except Exception:
+                from config.constant import AGENT_POWER_CONFIRM_THRESHOLD
+                power_threshold = AGENT_POWER_CONFIRM_THRESHOLD
+            power_confirm_note = (
+                f"\n6. 系统会在提交生成前按用户的算力确认上限自动向用户确认。"
+                f"当前上限为 {power_threshold} 算力。不要自己用 ask_user 询问「是否消耗 X 算力」，"
+                f"把确认交给系统。提交前仍应查询模型与余额，并在工作总结里写清预估消耗。"
+            )
         base_prompt = f"""你是一个专业的专家智能体，具备以下技能：{skills_str}
 
 **PM 提供的上下文**：
@@ -128,8 +139,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
 2. 使用工具时确保参数正确
 3. 遇到问题及时报告
 4. 完成后提供详细的执行总结
-5. 向用户提问时必须使用 ask_user 工具，禁止以纯文本方式提问（纯文本提问用户无法收到交互弹框）
-6. 系统会在提交生成前按用户的算力确认上限自动向用户确认。当前上限为 {power_threshold} 算力。不要自己用 ask_user 询问「是否消耗 X 算力」，把确认交给系统。提交前仍应查询模型与余额，并在工作总结里写清预估消耗。
+5. 向用户提问时必须使用 ask_user 工具，禁止以纯文本方式提问（纯文本提问用户无法收到交互弹框）{power_confirm_note}
 """
         
         # 加载所有技能内容
@@ -193,10 +203,11 @@ class ExpertAgent(BaseAgent, AskUserMixin):
 
             # 图片、视频、音频以文字标签形式注入，不需要 base64
             # 需要看图的专家（如 image-understanding）通过 fetch_image_as_base64 工具按需获取
+            # 标签文案必须声明"不包含图片内容"，防止 LLM 误以为能看到图片而编造描述
             combined_parts = []
             if image_urls:
                 for i, img_url in enumerate(image_urls, 1):
-                    combined_parts.append(f"[图片{i}]（URL: {img_url}）")
+                    combined_parts.append(f"[图片{i}]（URL: {img_url}，注意：此为图片地址文本，不包含图片内容）")
             if video_urls:
                 for i, vid_url in enumerate(video_urls, 1):
                     combined_parts.append(f"[视频{i}]（URL: {vid_url}）")
@@ -482,6 +493,10 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         计费生成工具的算力确认门。
         返回 None 表示放行；返回 dict 则作为工具错误结果，不执行生成。
         """
+        # 剧本创作（script_writer）链路已关闭算力确认门：不再弹确认、不再累计未确认消耗
+        if not getattr(self, "power_confirm_enabled", True):
+            return None
+
         from .power_confirm import (
             BILLABLE_GENERATION_TOOLS,
             OPTION_APPROVE,

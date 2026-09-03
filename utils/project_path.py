@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
+from urllib.parse import unquote, urlparse
 
 
 def get_project_root():
@@ -261,13 +262,18 @@ def resolve_upload_url_to_local_path(url_or_relative_path: str) -> str:
     Returns:
         str: 本地文件系统绝对路径
     """
-    path = url_or_relative_path
+    if not isinstance(url_or_relative_path, str) or not url_or_relative_path.strip():
+        raise ValueError("上传路径不能为空")
+    path = url_or_relative_path.strip()
 
     # 处理完整 URL：提取路径部分
     if "://" in path:
-        from urllib.parse import urlparse
         parsed = urlparse(path)
         path = parsed.path
+
+    path = unquote(path)
+    if "\\" in path:
+        raise ValueError("非法的上传路径")
 
     # 移除 /upload/ 前缀
     if path.startswith("/upload/"):
@@ -275,9 +281,20 @@ def resolve_upload_url_to_local_path(url_or_relative_path: str) -> str:
     elif path.startswith("upload/"):
         path = path[7:]
 
-    # 使用 os.path.join 保证跨平台路径分隔符
-    parts = [p for p in path.split("/") if p]
-    return os.path.join(get_upload_dir(), *parts)
+    # 路径必须是 upload 根目录下的普通相对路径，禁止绝对路径和 dot segment。
+    if path.startswith("/"):
+        raise ValueError("非法的上传路径")
+    parts = [part for part in path.split("/") if part]
+    if any(part in (".", "..") for part in parts):
+        raise ValueError("非法的上传路径")
+
+    upload_root = Path(get_upload_dir()).resolve()
+    candidate = upload_root.joinpath(*parts).resolve()
+    try:
+        candidate.relative_to(upload_root)
+    except ValueError as exc:
+        raise ValueError("非法的上传路径") from exc
+    return str(candidate)
 
 
 if __name__ == "__main__":

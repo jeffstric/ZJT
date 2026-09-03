@@ -21,6 +21,7 @@ class Location:
         self.reference_image = kwargs.get('reference_image')
         self.reference_images = kwargs.get('reference_images')
         self.description = kwargs.get('description')
+        self.plot_role = kwargs.get('plot_role')
         self.user_id = kwargs.get('user_id')
         self.create_time = kwargs.get('create_time')
         self.update_time = kwargs.get('update_time')
@@ -42,6 +43,7 @@ class Location:
             'reference_image': self.reference_image,
             'reference_images': reference_images,
             'description': self.description,
+            'plot_role': self.plot_role,
             'user_id': self.user_id,
             'create_time': self.create_time.isoformat() if self.create_time else None,
             'update_time': self.update_time.isoformat() if self.update_time else None
@@ -93,7 +95,8 @@ class LocationModel:
         parent_id: Optional[int] = None,
         reference_image: Optional[str] = None,
         reference_images: Optional[List[Dict]] = None,
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        plot_role: Optional[str] = None
     ) -> int:
         """
         Create a new location record
@@ -106,6 +109,7 @@ class LocationModel:
             reference_image: Reference image path (optional)
             reference_images: Multiple reference images list (optional)
             description: Location description (optional)
+            plot_role: Plot role of the location (optional)
 
         Returns:
             Inserted record ID
@@ -113,10 +117,10 @@ class LocationModel:
         reference_images_str = json.dumps(reference_images, ensure_ascii=False) if reference_images else None
         sql = """
             INSERT INTO location
-            (world_id, name, user_id, parent_id, reference_image, reference_images, description)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (world_id, name, user_id, parent_id, reference_image, reference_images, description, plot_role)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (world_id, name, user_id, parent_id, reference_image, reference_images_str, description)
+        params = (world_id, name, user_id, parent_id, reference_image, reference_images_str, description, plot_role)
         
         try:
             record_id = execute_insert(sql, params)
@@ -134,7 +138,8 @@ class LocationModel:
         parent_id: Optional[int] = None,
         reference_image: Optional[str] = None,
         reference_images: Optional[List[Dict]] = None,
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        plot_role: Optional[str] = None
     ) -> int:
         """
         Create a new location record or update if exists (based on world_id, name unique constraint)
@@ -146,16 +151,17 @@ class LocationModel:
         reference_images_str = json.dumps(reference_images, ensure_ascii=False) if reference_images else None
         sql = """
             INSERT INTO location
-            (world_id, name, user_id, parent_id, reference_image, reference_images, description)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (world_id, name, user_id, parent_id, reference_image, reference_images, description, plot_role)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 parent_id = VALUES(parent_id),
                 reference_image = VALUES(reference_image),
                 reference_images = VALUES(reference_images),
                 description = VALUES(description),
+                plot_role = VALUES(plot_role),
                 user_id = VALUES(user_id)
         """
-        params = (world_id, name, user_id, parent_id, reference_image, reference_images_str, description)
+        params = (world_id, name, user_id, parent_id, reference_image, reference_images_str, description, plot_role)
         
         try:
             record_id = execute_insert(sql, params)
@@ -387,12 +393,12 @@ class LocationModel:
         
         Args:
             record_id: Record ID
-            **kwargs: Fields to update (world_id, name, parent_id, reference_image, description)
-        
+            **kwargs: Fields to update (world_id, name, parent_id, reference_image, reference_images, description, plot_role)
+
         Returns:
             Number of affected rows
         """
-        allowed_fields = ['world_id', 'name', 'parent_id', 'reference_image', 'reference_images', 'description']
+        allowed_fields = ['world_id', 'name', 'parent_id', 'reference_image', 'reference_images', 'description', 'plot_role']
         
         update_fields = []
         params = []
@@ -542,6 +548,7 @@ CREATE TABLE IF NOT EXISTS `location` (
   `parent_id` int unsigned DEFAULT NULL COMMENT '父级地点ID',
   `reference_image` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '参考图片',
   `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '地点描述',
+  `plot_role` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '剧情作用',
   `user_id` int unsigned NOT NULL COMMENT '创建者用户ID',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',

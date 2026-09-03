@@ -20,7 +20,7 @@ from model.implementation_attempts import ImplementationAttemptModel
 from config.unified_config import UnifiedConfigRegistry, TaskCategory, get_implementation_name
 from model.system_config import SystemConfigModel
 from model.system_config_history import SystemConfigHistoryModel
-from config.config_util import get_current_env, invalidate_dynamic_cache
+from config.config_util import get_current_env, invalidate_dynamic_cache, normalize_aliyun_bailian_base_url
 from config.default_configs import init_default_configs
 from utils.log_sanitizer import mask_phone
 from config.constant import (
@@ -1249,9 +1249,9 @@ async def admin_test_qwen_connection(
     if not request.api_key:
         raise HTTPException(status_code=400, detail="API Key 不能为空")
 
-    # 构建请求 URL
-    base_url = request.base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    base_url = base_url.rstrip("/")
+    # 构建请求 URL（用户只配置基础 URL，大模型测试走 OpenAI 兼容接口，自动追加 /compatible-mode/v1；
+    # 兼容存量带后缀旧值与尾部 /）
+    base_url = normalize_aliyun_bailian_base_url(request.base_url, for_llm=True)
 
     # 测试模型
     test_model = "qwen-plus"

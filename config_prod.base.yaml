@@ -109,8 +109,10 @@ llm:
     api_url: "https://qianfan.baidubce.com/v2/chat/completions"
     model: "ernie-4.5-turbo-vl-latest"
   qwen:
+    # 注意：该 api_key 同时被 wan3.0 视频驱动（阿里云百炼 DashScope）复用
+    # base_url 只填基础地址即可：大模型自动追加 /compatible-mode/v1，生图/生视频自动追加 /api/v1
     api_key: ""
-    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    base_url: "https://dashscope.aliyuncs.com"
   google:
     api_key: ""
     gemini_base_url: "https://api.jiekou.ai"
@@ -145,6 +147,11 @@ llm:
   agnes:
     api_key: ""  # Agnes AI API Key
     base_url: "https://api.agnes-ai.cn/v1"
+
+# Wan3.0 视频模型（阿里云百炼 DashScope，API Key 复用上面的 llm.qwen.api_key）
+wan3:
+  workspace_id: ""  # 阿里云百炼业务空间 ID
+  endpoint_region: "cn-beijing"  # 可选: cn-beijing / ap-southeast-1 / ap-northeast-1 / eu-central-1 / us-east-1
 
 tts:
   api_url: "http://47.98.190.124"

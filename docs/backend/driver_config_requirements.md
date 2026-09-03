@@ -56,6 +56,11 @@ runninghub:
 
 适用驱动：
 - `vidu_default` - Vidu 图生视频（任务类型 14）
+- `vidu_q3_i2v_turbo_v1` / `vidu_q3_i2v_pro_v1` - Vidu Q3 图生视频（首尾帧，任务类型 43）
+- `vidu_q3_r2v_turbo_v1` / `vidu_q3_r2v_pro_v1` - Vidu Q3 参考生视频（任务类型 44，1-7 张参考图）
+- `vidu_q3_t2v_turbo_v1` / `vidu_q3_t2v_pro_v1` - Vidu Q3 文生视频（任务类型 42）
+
+Vidu Q3 复用 `vidu.token`，turbo 档模型为 `viduq3-turbo`，pro 档为 `viduq3-pro`（reference2video 端点的 pro 档模型名为 `viduq3`）。支持 540P/720P/1080P 分辨率（默认 720P），时长 3-16 秒。
 
 配置示例：
 ```yaml
@@ -86,6 +91,8 @@ volcengine:
 ### 阿里云百炼驱动 (Happy Horse)
 
 **必需配置**: `llm.qwen.api_key`
+
+**可选配置**: `llm.qwen.base_url`（与 Qwen 大模型共用同一个基础地址配置；多媒体接口自动追加 `/api/v1`，未配置时默认 `https://dashscope.aliyuncs.com/api/v1`。base_url 规范化逻辑见 `config/config_util.py` 的 `normalize_aliyun_bailian_base_url()`）
 
 适用驱动：
 - `happy_horse_dashscope_v1` - Happy Horse 图生视频（任务类型 28）
@@ -145,6 +152,59 @@ llm:
 - 视频 URL 有效期24小时，获取后会自动下载保存
 
 > **注意**: 图片上传不再受 `server.is_local` 配置影响，所有环境都会自动上传。
+
+### 阿里云百炼驱动 (Wan3.0)
+
+**必需配置**:
+- `llm.qwen.api_key`（与 Happy Horse / Qwen LLM 复用同一个 DashScope API Key）
+- 业务空间来源（二选一）：
+  - `llm.qwen.base_url` 填密钥弹窗中的 API Host（如 `https://llm-xxx.cn-beijing.maas.aliyuncs.com`）——驱动自动解析出业务空间 ID 和地域，**推荐，用户零额外配置**
+  - 或显式配置 `wan3.workspace_id`（取 API Host 第一个点号前的部分）
+
+**配置入口**：admin「系统配置 → 快速配置」弹窗的「阿里云百炼（Qwen）」服务商卡片，除 API Key / Base URL 外还有「业务空间 ID」（一般留空）和「业务空间地域」两个字段；保存时若 DB 中尚无该配置项会自动创建。配置完整后，「实现方管理」页面才会显示 wan3.0 的实现方（页面会实例化驱动校验配置完整性）。
+
+**可选配置**:
+- `wan3.workspace_id`（业务空间 ID，优先级高于 base_url 解析，可留空）
+- `wan3.endpoint_region`（业务空间地域，默认 `cn-beijing` 或从 base_url 解析，可选 `ap-southeast-1` / `ap-northeast-1` / `eu-central-1` / `us-east-1`）
+
+适用驱动：
+- `wan3_video_dashscope_v1` - 万相3.0 图生视频，标准版（任务类型 40），模型 `wan3.0-video`
+- `wan3_video_prime_dashscope_v1` - 万相3.0 图生视频，高速版（任务类型 40），模型 `wan3.0-video-prime`
+- `wan3_video_dashscope_r2v_v1` - 万相3.0 参考生视频，标准版（任务类型 41），模型 `wan3.0-video`
+- `wan3_video_prime_dashscope_r2v_v1` - 万相3.0 参考生视频，高速版（任务类型 41），模型 `wan3.0-video-prime`
+- `wan3_video_dashscope_t2v_v1` - 万相3.0 文生视频，标准版（任务类型 39），模型 `wan3.0-video`
+- `wan3_video_prime_dashscope_t2v_v1` - 万相3.0 文生视频，高速版（任务类型 39），模型 `wan3.0-video-prime`
+
+配置示例：
+```yaml
+llm:
+  qwen:
+    api_key: "sk-your-dashscope-api-key"
+wan3:
+  workspace_id: "your-bailian-workspace-id"
+  endpoint_region: "cn-beijing"
+```
+
+**注意**:
+- API 域名为 `https://{workspace_id}.{region}.maas.aliyuncs.com/api/v1`，创建任务必须带 `X-DashScope-Async: enable` 头
+- 异步 API，提交后返回 task_id，需轮询查询结果（PENDING/RUNNING/SUCCEEDED/FAILED/CANCELED/UNKNOWN）
+- prompt 与 media 必填其一
+
+**图生视频（i2v）限制**:
+- 首帧图片必选（最多1张），尾帧可选（最多1张），与参考生模式互斥
+- 支持时长：2-30秒，默认5秒
+- 支持分辨率：480P、720P、1080P（默认）
+- 支持比例：adaptive(默认)、16:9、4:3、1:1、3:4、9:16
+- 可选参数：`resolution`、`ratio`、`duration`、`audio`（默认true）、`watermark`（默认false）、`prompt_extend`（默认true）、`seed` (0-2147483647)
+
+**参考生视频（r2v）限制**:
+- 参考图像：最多10张；参考视频：最多5段且总时长≤15秒；参考音频：最多5段且总时长≤15秒
+- 有视频输入时校验：输入视频总时长 + 输出时长 ≤ 30秒，超限返回用户错误
+- 分辨率/比例/时长同上
+
+**文生视频（t2v）限制**:
+- 仅需文本提示词，无需任何图片/音频/视频
+- 分辨率/比例/时长同上
 
 ## 配置检查
 

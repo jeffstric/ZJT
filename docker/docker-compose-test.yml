@@ -41,6 +41,10 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    # 显式镜像名：CI 中用于 docker save/load 缓存环境镜像，避免 DinD 每次全量重建。
+    # tag 由 CI 按 requirements.txt + Dockerfile 指纹注入（TEST_IMAGE_TAG），
+    # 依赖未变化时直接复用缓存镜像跳过构建；本地默认 latest 行为不变。
+    image: zjt_test_image:${TEST_IMAGE_TAG:-latest}
     container_name: zjt_test
     restart: "no"
     environment:
@@ -62,6 +66,9 @@ services:
       # 时区设置
       TZ: Asia/Shanghai
     volumes:
+      # 源码挂载：容器内直接运行当前检出的代码，
+      # 代码改动无需重建镜像（镜像只提供 Python 依赖等运行环境）
+      - ..:/app
       # 数据持久化
       - ../data:/app/data
       - ../logs:/app/logs

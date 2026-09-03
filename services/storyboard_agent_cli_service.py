@@ -50,6 +50,7 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceError,
     MediaGenerationPreferenceService,
 )
+from utils.computing_power import get_computing_power_for_task
 
 
 VALID_IMAGE_MODES = {"auto", "text_to_image", "image_edit"}
@@ -1737,6 +1738,139 @@ class StoryboardAgentCliService:
             "failed_count": status.get("failed_count", 0),
             "status": status.get("status"),
             "items": status.get("items", created_items),
+        }
+
+    def estimate_missing_videos_power(
+        self,
+        storyboard_id: int,
+        user_id: int,
+        *,
+        limit: Optional[int] = None,
+        task_type: Optional[int] = None,
+        ratio: Optional[str] = None,
+        image_mode: Optional[str] = None,
+        scene_ids: Optional[Sequence[int]] = None,
+        enable_face_mask: bool = False,
+    ) -> Dict[str, Any]:
+        """试算批量生成缺失视频的预计算力扣减：只算价，不建批次、不扣费。
+
+        估价口径与真实扣费同源：
+        - 常规视频：`get_computing_power_for_task`（按时长档位查表 + image_mode 修饰符），
+          时长取 `max(1, ceil(scene.duration))`，有选中尾帧时 image_mode 升级为
+          `first_last_with_tail`（对齐 server.py 扣费时的 context 构造）。
+        - 对口型（digital_human）：`compute_digital_human_power`（MiniMax H3 档位）。
+        单个分镜估价失败不阻断整体，该项 power=None 并在 note 中说明。
+        """
+        if not int(user_id or 0):
+            raise StoryboardCliError("missing_user_id", "user_id is required")
+
+        storyboard = StoryboardModel.get_by_id(int(storyboard_id))
+        if not storyboard:
+            raise StoryboardCliError("not_found", f"storyboard not found: {storyboard_id}")
+        requested_scene_ids = self._normalize_requested_scene_ids(
+            int(storyboard_id), scene_ids
+        )
+
+        image_mode = self._normalize_video_image_mode(image_mode)
+        batch_limit = self._normalize_batch_limit(limit)
+        effective_ratio = ratio or _get_field(storyboard, "workflow_ratio")
+        media_mode = (
+            MediaGenerationMode.REFERENCE_TO_VIDEO
+            if image_mode in ('multi_reference', 'first_last_with_ref')
+            else MediaGenerationMode.IMAGE_TO_VIDEO
+        )
+        generation_snapshots = _build_cli_generation_snapshots(
+            int(user_id),
+            int(_get_field(storyboard, 'world_id')),
+            media_type=MediaGenerationType.VIDEO,
+            modes=[media_mode],
+            explicit_task_id=task_type,
+            profile_values={
+                'ratio': effective_ratio,
+                'image_mode': image_mode,
+                'enable_face_mask': bool(enable_face_mask),
+            },
+        )
+        locked_snapshot = generation_snapshots[
+            MediaGenerationPreferenceService.slot_key(MediaGenerationType.VIDEO, media_mode)
+        ]
+        resolved_task_type = int(locked_snapshot['task_id'])
+
+        planned_items = self._plan_video_batch_items(
+            storyboard_id=int(storyboard_id),
+            limit=batch_limit,
+            scene_ids=requested_scene_ids,
+        )
+        pending_items = [item for item in planned_items if item.get("status") == "pending"]
+        scenes_by_id = {
+            int(_get_field(scene, "id")): scene
+            for scene in (StoryboardSceneModel.list_by_storyboard(int(storyboard_id)) or [])
+        }
+
+        estimate_items: List[Dict[str, Any]] = []
+        total_power = 0
+        for item in pending_items:
+            scene_id = int(item["scene_id"])
+            video_type = str(item.get("video_type") or SceneVideoType.VIDEO)
+            entry: Dict[str, Any] = {
+                "scene_id": scene_id,
+                "title": item.get("title") or "",
+                "video_type": video_type,
+                "duration": None,
+                "power": None,
+                "note": "",
+            }
+            if video_type == SceneVideoType.DIGITAL_HUMAN:
+                # 与 generate_video 同样延迟导入，避免模块级循环依赖
+                from services.storyboard_digital_human_service import (
+                    StoryboardDigitalHumanError,
+                    compute_digital_human_power,
+                    orchestrate_digital_human_generation,
+                )
+                try:
+                    plan, _segments, _scene, _sb = orchestrate_digital_human_generation(scene_id)
+                    power = compute_digital_human_power(plan)
+                    entry["power"] = int(math.ceil(float(power or 0)))
+                    entry["duration"] = int(plan.billable_duration) if plan.billable_duration else None
+                except StoryboardDigitalHumanError as exc:
+                    entry["note"] = exc.message or "对口型估价失败"
+                except Exception as exc:
+                    entry["note"] = f"对口型估价失败: {exc}"
+            else:
+                scene = scenes_by_id.get(scene_id) or {}
+                # 时长口径与 generate_video 一致：有已完成配音则用真实音频求和覆盖
+                try:
+                    refreshed = StoryboardDialogueAudioModel.sum_selected_durations_if_all_completed(scene_id)
+                    if refreshed is not None:
+                        scene["duration"] = max(0.1, round(float(refreshed), 3))
+                except Exception as exc:
+                    logger.warning("estimate_missing_videos_power: scene=%s 刷新 duration 失败: %s", scene_id, exc)
+                duration_value = max(1, math.ceil(float(scene.get("duration") or 5)))
+                entry["duration"] = duration_value
+                context = {"image_mode": image_mode}
+                if image_mode == "first_last_frame":
+                    last_frame = self._selected_asset_for_scene(scene, "last_frame")
+                    if last_frame and last_frame.get("result_url"):
+                        context["image_mode"] = "first_last_with_tail"
+                power = get_computing_power_for_task(
+                    resolved_task_type,
+                    duration=duration_value,
+                    user_id=int(user_id),
+                    context=context,
+                )
+                entry["power"] = int(power or 0)
+            if entry["power"]:
+                total_power += int(entry["power"])
+            estimate_items.append(entry)
+
+        return {
+            "success": True,
+            "storyboard_id": int(storyboard_id),
+            "task_type": resolved_task_type,
+            "image_mode": image_mode,
+            "scene_count": len(estimate_items),
+            "total_power": total_power,
+            "items": estimate_items,
         }
 
     def _plan_video_batch_items(

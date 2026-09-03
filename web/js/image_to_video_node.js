@@ -82,7 +82,7 @@
                 <!-- 首帧 -->
                 <div class="video-frame-content active" data-frame="start">
                   <div class="label" style="margin-bottom: 4px;" data-i18n="first_frame_label">${window.t ? window.t('first_frame_label') : '首帧'}</div>
-                  <div class="port start-image-port port-anchor-start" data-port-type="start" title="${window.t ? window.t('first_frame_label') : '连接图片节点（首帧）'}" style="position: relative; margin-bottom: 4px;"></div>
+                  <div class="port start-image-port port-anchor-start" data-port-type="start" title="${window.t ? window.t('first_frame_port') : '连接图片/角色节点（首帧）'}" style="position: relative; margin-bottom: 4px;"></div>
                   <input class="start-file" type="file" accept="image/*" />
                   <button class="mini-btn start-clear" type="button" data-i18n="node_clear_btn">${window.t ? window.t('node_clear_btn') : '清除'}</button>
                   <div class="preview-row start-preview-row" style="display:none; margin-top: 8px;">
@@ -92,7 +92,7 @@
                 <!-- 尾帧 -->
                 <div class="video-frame-content active" data-frame="end" style="margin-top: 8px;">
                   <div class="label" style="margin-bottom: 4px;" data-i18n="last_frame_label">${window.t ? window.t('last_frame_label') : '尾帧'}</div>
-                  <div class="port end-image-port port-anchor-end" data-port-type="end" title="${window.t ? window.t('last_frame_label') : '连接图片节点（尾帧）'}" style="position: relative; margin-bottom: 4px;"></div>
+                  <div class="port end-image-port port-anchor-end" data-port-type="end" title="${window.t ? window.t('last_frame_port') : '连接图片/角色节点（尾帧）'}" style="position: relative; margin-bottom: 4px;"></div>
                   <input class="end-file" type="file" accept="image/*" />
                   <button class="mini-btn end-clear" type="button" data-i18n="node_clear_btn">${window.t ? window.t('node_clear_btn') : '清除'}</button>
                   <div class="preview-row end-preview-row" style="display:none; margin-top: 8px;">
@@ -102,7 +102,7 @@
               </div>
               <!-- 参考图片（多参考模式） -->
               <div class="field field-collapsible reference-fields" style="display:none; position: relative;">
-                <div class="port ref-image-input-port" data-port-type="ref-image" title="${window.t ? window.t('reference_frame_port') : '连接图片节点（参考图）'}"></div>
+                <div class="port ref-image-input-port" data-port-type="ref-image" title="${window.t ? window.t('reference_frame_port') : '连接图片/角色节点（参考图）'}"></div>
                 <div class="label ref-images-label" data-i18n="reference_images_label">${window.t ? window.t('reference_images_label') : '参考图片 (1-5张)'}<span class="req">*</span></div>
                 <input class="reference-file" type="file" accept="image/*" multiple />
                 <button class="mini-btn reference-clear" type="button" style="margin-top: 4px;" data-i18n="clear_all_btn">${window.t ? window.t('clear_all_btn') : '清除全部'}</button>
@@ -479,10 +479,12 @@
             const removedUrl = node.data.referenceUrls[idx];
             node.data.referenceUrls.splice(idx, 1);
             // 同步删除对应的连接线
-            const connIdx = state.imageConnections.findIndex(c =>
-              c.to === id && c.portType === 'ref-image' &&
-              state.nodes.find(n => n.id === c.from)?.data?.url === removedUrl
-            );
+            const connIdx = state.imageConnections.findIndex(c => {
+              if(c.to !== id || c.portType !== 'ref-image') return false;
+              const src = state.nodes.find(n => n.id === c.from);
+              const srcUrl = typeof getNodeImageUrl === 'function' ? getNodeImageUrl(src) : (src?.data?.url || src?.data?.reference_image);
+              return srcUrl === removedUrl;
+            });
             if(connIdx >= 0){
               state.imageConnections.splice(connIdx, 1);
               renderImageConnections();
@@ -1179,9 +1181,7 @@
             const startConn = state.imageConnections.find(c => c.to === id && c.portType === 'start');
             if(startConn){
               const fromNode = state.nodes.find(n => n.id === startConn.from);
-              if(fromNode && fromNode.type === 'image' && fromNode.data && fromNode.data.url){
-                startImageUrl = fromNode.data.url;
-              }
+              startImageUrl = typeof getNodeImageUrl === 'function' ? getNodeImageUrl(fromNode) : (fromNode?.data?.url || '');
             }
           }
 
@@ -1200,17 +1200,16 @@
             const endConn = state.imageConnections.find(c => c.to === id && c.portType === 'end');
             if(endConn){
               const fromNode = state.nodes.find(n => n.id === endConn.from);
-              if(fromNode && fromNode.type === 'image' && fromNode.data && fromNode.data.url){
-                endImageUrl = fromNode.data.url;
-              }
+              endImageUrl = typeof getNodeImageUrl === 'function' ? getNodeImageUrl(fromNode) : (fromNode?.data?.url || '');
             }
           }
 
           // 拼接图片URL：如果有尾帧，用逗号拼接；否则只传首帧
           imageUrls = endImageUrl ? `${startImageUrl},${endImageUrl}` : startImageUrl;
         } else if(currentImageMode === 'multi_reference') {
-          // 多参考图模式
-          const refUrls = node.data.referenceUrls || [];
+          // 多参考图模式：合并本地上传与连线过来的角色/场景/道具/图片
+          const refUrls = collectI2VReferenceUrls(node, id);
+          node.data.referenceUrls = refUrls;
           if(refUrls.length === 0){
             genStatus.style.display = 'block';
             genStatus.style.color = '#dc2626';
@@ -1230,11 +1229,17 @@
         try {
           const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
           const duration = node.data.duration || 10;
-          const prompt = node.data.prompt || '';
+          let submitPrompt = node.data.prompt || '';
+          if(currentImageMode === 'multi_reference') {
+            const assetSuffix = buildI2VAssetPromptSuffix(id, node.data.referenceUrls || []);
+            if(assetSuffix && submitPrompt.indexOf(assetSuffix) === -1){
+              submitPrompt = (submitPrompt + ' ' + assetSuffix).trim();
+            }
+          }
           const ratio = node.data.ratio || state.ratio || '9:16';
           const videoModel = node.data.videoModel || 'sora2';
           
-          console.log('[DEBUG] 生成视频参数:', { drawCount: node.data.drawCount, desiredCount, duration, prompt, ratio, videoModel, imageUrls, imageMode: currentImageMode, referenceImages });
+          console.log('[DEBUG] 生成视频参数:', { drawCount: node.data.drawCount, desiredCount, duration, prompt: submitPrompt, ratio, videoModel, imageUrls, imageMode: currentImageMode, referenceImages });
 
           // 收集所有音频URL（上传 + 连接节点）
           let allAudioUrls = [...(node.data.audioUrls || []).map(a => a.url)];
@@ -1264,9 +1269,9 @@
           // 调用生成API
           let result;
           if(currentImageMode === 'text_to_video') {
-            result = await generateVideoFromText(prompt, duration, desiredCount, ratio, videoModel, node.data.videoResolution);
+            result = await generateVideoFromText(submitPrompt, duration, desiredCount, ratio, videoModel, node.data.videoResolution);
           } else {
-            result = await generateVideoFromImage(imageUrls, prompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences), node.data.videoResolution, node.data.processFace);
+            result = await generateVideoFromImage(imageUrls, submitPrompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences), node.data.videoResolution, node.data.processFace);
           }
           console.log('[DEBUG] API返回:', { projectIds: result.projectIds, count: result.projectIds?.length });
           
@@ -1814,26 +1819,83 @@
       return id;
     }
 
+    function applyI2VImageConnect(fromNode, tn, portType) {
+      var url = typeof getNodeImageUrl === 'function'
+        ? getNodeImageUrl(fromNode)
+        : ((fromNode && fromNode.data && (fromNode.data.url || fromNode.data.reference_image)) || '');
+      if (!url || !tn || !tn.data) return;
+      if (portType === 'start') {
+        tn.data.startUrl = url;
+        tn.data.startPreview = url;
+      } else if (portType === 'end') {
+        tn.data.endUrl = url;
+        tn.data.endPreview = url;
+      } else if (portType === 'ref-image') {
+        if (!tn.data.referenceUrls) tn.data.referenceUrls = [];
+        if (tn.data.referenceUrls.indexOf(url) === -1) tn.data.referenceUrls.push(url);
+      }
+    }
+
+    function collectI2VReferenceUrls(node, nodeId) {
+      var urls = (node.data.referenceUrls || []).slice();
+      (state.imageConnections || []).forEach(function(c) {
+        if (c.to !== nodeId || c.portType !== 'ref-image') return;
+        var fromNode = state.nodes.find(function(n) { return n.id === c.from; });
+        var url = typeof getNodeImageUrl === 'function' ? getNodeImageUrl(fromNode) : (fromNode && fromNode.data && fromNode.data.url);
+        if (url && urls.indexOf(url) === -1) urls.push(url);
+      });
+      return urls;
+    }
+
+    function buildI2VAssetPromptSuffix(nodeId, urls) {
+      var parts = [];
+      (urls || []).forEach(function(url, i) {
+        var conn = (state.imageConnections || []).find(function(c) {
+          if (c.to !== nodeId || c.portType !== 'ref-image') return false;
+          var fromNode = state.nodes.find(function(n) { return n.id === c.from; });
+          var srcUrl = typeof getNodeImageUrl === 'function' ? getNodeImageUrl(fromNode) : (fromNode && fromNode.data && fromNode.data.url);
+          return srcUrl === url;
+        });
+        if (!conn) return;
+        var fromNode = state.nodes.find(function(n) { return n.id === conn.from; });
+        if (!fromNode || !fromNode.data) return;
+        var name = fromNode.data.name || fromNode.title || '';
+        if (!name) return;
+        if (fromNode.type === 'character') parts.push('图' + (i + 1) + '是' + name);
+        else if (fromNode.type === 'location') parts.push('图' + (i + 1) + '是' + name + '所在地点');
+        else if (fromNode.type === 'props') parts.push('图' + (i + 1) + '是' + name);
+      });
+      return parts.length ? parts.join('，') + '。' : '';
+    }
+
     // ── 注册 image_to_video 输入端口（供连接系统自动发现）───
+    var I2V_IMAGE_ACCEPTS = ['image', 'character', 'location', 'props'];
     if (typeof registerInputPorts === 'function') {
       registerInputPorts('image_to_video', [
-        // 首帧端口（接受图片节点连接）
+        // 首帧端口（接受图片/角色/场景/道具节点连接）
         PORT_PRESETS.IMAGE_INPUT({
-          guard: function(n) { return !n.data.startFile; }
+          accepts: I2V_IMAGE_ACCEPTS,
+          guard: function(n) {
+            return !n.data.startFile && (n.data.imageMode || 'first_last_frame') === 'first_last_frame';
+          },
+          onConnect: function(fromNode, tn) { applyI2VImageConnect(fromNode, tn, 'start'); }
         }),
         // 尾帧端口
         {
           selector: '.end-image-port',
           portType: 'end',
-          accepts: ['image'],
+          accepts: I2V_IMAGE_ACCEPTS,
           connectionType: 'imageConnections',
-          guard: function(n) { return !n.data.endFile; }
+          guard: function(n) {
+            return !n.data.endFile && (n.data.imageMode || 'first_last_frame') === 'first_last_frame';
+          },
+          onConnect: function(fromNode, tn) { applyI2VImageConnect(fromNode, tn, 'end'); }
         },
         // 参考图端口（多参考模式，允许多连接）
         {
           selector: '.ref-image-input-port',
           portType: 'ref-image',
-          accepts: ['image'],
+          accepts: I2V_IMAGE_ACCEPTS,
           connectionType: 'imageConnections',
           allowMultiple: true,
           guard: function(n) {
@@ -1844,7 +1906,8 @@
               return (n.data.referenceUrls || []).length < maxCount;
             }
             return true;
-          }
+          },
+          onConnect: function(fromNode, tn) { applyI2VImageConnect(fromNode, tn, 'ref-image'); }
         },
         // 音频端口（接受音频节点连接）
         PORT_PRESETS.AUDIO_INPUT(),

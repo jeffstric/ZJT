@@ -4,7 +4,7 @@
 """
 import logging
 from .openai_base_client import OpenAIBaseClient
-from config.config_util import get_dynamic_config_value
+from config.config_util import get_dynamic_config_value, normalize_aliyun_bailian_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +15,11 @@ class AliyunOpenAIClient(OpenAIBaseClient):
     def _refresh_config(self):
         """刷新阿里云配置"""
         self.api_key = get_dynamic_config_value('llm', 'qwen', 'api_key', default='')
-        self.base_url = get_dynamic_config_value(
-            'llm', 'qwen', 'base_url',
-            default='https://dashscope.aliyuncs.com/compatible-mode/v1'
-        )
+        # 用户只配置基础 URL（如 https://dashscope.aliyuncs.com），
+        # 大模型走 OpenAI 兼容接口，统一在此自动追加 /compatible-mode/v1；
+        # 存量带后缀的旧值、尾部带 / 的情况由规范化函数兼容
+        raw_base_url = get_dynamic_config_value('llm', 'qwen', 'base_url', default=None)
+        self.base_url = normalize_aliyun_bailian_base_url(raw_base_url, for_llm=True)
         self.vendor_name = 'aliyun'
         self.thinking_mode = 'enable_thinking'
 

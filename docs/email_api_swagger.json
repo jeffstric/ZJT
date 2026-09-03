@@ -1,0 +1,172 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "邮箱验证码发送 API",
+    "description": "外部邮件服务接口规范。智剧通系统通过 HTTP API 调用此接口发送验证码邮件，无需本地配置 SMTP。\n\n## 使用方式\n\n1. 部署一个实现此接口规范的外部邮件服务\n2. 在 `config.yml` 中配置 `email.agents.api_agent.api_url` 指向该服务地址\n3. 设置 `email.active_driver: \"api\"`\n\n## 接口约定\n\n- 请求方式: POST\n- Content-Type: application/json\n- 超时时间: 15秒",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/send_verify_code": {
+      "post": {
+        "summary": "发送邮箱验证码",
+        "description": "接收邮箱地址和验证码，通过邮件服务发送验证码邮件给指定用户。\n\n邮件内容应包含：\n- 验证码数字（醒目展示）\n- 有效期提示（5分钟）\n- 安全提示（勿泄露给他人）",
+        "operationId": "sendEmailVerifyCode",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendVerifyCodeRequest"
+              },
+              "examples": {
+                "default": {
+                  "summary": "发送验证码",
+                  "value": {
+                    "email": "user@example.com",
+                    "code": "583921"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "请求成功（邮件发送结果在响应体中）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendVerifyCodeResponse"
+                },
+                "examples": {
+                  "success": {
+                    "summary": "发送成功",
+                    "value": {
+                      "success": true,
+                      "message": "验证码邮件发送成功"
+                    }
+                  },
+                  "failure": {
+                    "summary": "发送失败",
+                    "value": {
+                      "success": false,
+                      "message": "邮件投递失败：邮箱地址不存在"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "invalid_email": {
+                    "summary": "邮箱格式错误",
+                    "value": {
+                      "success": false,
+                      "message": "无效的邮箱地址格式"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求频率限制",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "rate_limit": {
+                    "summary": "频率限制",
+                    "value": {
+                      "success": false,
+                      "message": "该邮箱发送过于频繁，请60秒后重试"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "server_error": {
+                    "summary": "服务异常",
+                    "value": {
+                      "success": false,
+                      "message": "邮件服务暂时不可用"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SendVerifyCodeRequest": {
+        "type": "object",
+        "required": ["email", "code"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "收件人邮箱地址",
+            "example": "user@example.com"
+          },
+          "code": {
+            "type": "string",
+            "description": "6位数字验证码",
+            "example": "583921",
+            "pattern": "^[0-9]{6}$"
+          }
+        }
+      },
+      "SendVerifyCodeResponse": {
+        "type": "object",
+        "required": ["success", "message"],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "邮件是否发送成功"
+          },
+          "message": {
+            "type": "string",
+            "description": "结果描述信息"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["success", "message"],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "始终为 false",
+            "enum": [false]
+          },
+          "message": {
+            "type": "string",
+            "description": "错误描述信息"
+          }
+        }
+      }
+    }
+  }
+}

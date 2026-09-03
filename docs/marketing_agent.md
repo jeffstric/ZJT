@@ -219,6 +219,8 @@ Agent 模式提交文生图 / 图生图 / 文生视频 / 图生视频 / 数字�
 
 确认不可被模型绕过：拦截点在 `ExpertAgent._execute_tool`，确认完成前不会调用 `generate_*`。模型也不应再自己用 `ask_user` 问算力。
 
+> **作用范围**：算力确认门仅对营销智能体（`MarketingPMAgent`，`session_type=2`）及分镜（storyboard）链路开启。剧本创作页（`script_writer.html`，`PMAgent`）已于 2026-09-01 关闭此门（`power_confirm_enabled=False`，见 `docs/backend/incidents/2026-09-01-script-writer-power-confirm-loop.md`）：生成前不弹「算力确认」，也不在系统提示中注入阈值说明。
+
 ### SSE 流式响应
 
 #### 连接建立
@@ -671,6 +673,7 @@ Agent 模式的消息通过 PM Agent（`pm_agent.py`）处理：
 - PM Agent 根据用户意图委托专家（如 `marketing-image` 专家生图）
 - 专家返回结果后，PM Agent 自动提取图片 URL 并注入对话历史（多模态消息）
 - PM Agent 通过 `call_agent` 委托专家时会透传本次任务的 `image_urls`、`audio_urls`、`video_urls`；专家会以 `[图片N]`、`[音频N]`、`[视频N]` 标签注入上下文，避免数字人等任务只知道"用户已提供音频"但拿不到真实 URL
+- **图片标签不等于图片内容**：注入专家上下文的 `[图片N]（URL: ...，注意：此为图片地址文本，不包含图片内容）` 只是地址文本，LLM 看不到图片本身。需要看图的专家（`image-understanding`）必须先调用 `fetch_image_as_base64(image_url)`，工具成功后 base64 图片才会作为多模态 user 消息注入对话（`expert_agent.py` 的 deferred 多模态注入机制）。2026-09-01 修复：此前 `image-understanding/SKILL.md` 残留旧设计的"正常情况下你能直接看到图片内容"表述（旧版曾直接注入 base64，2026-05-19 提交 20ef0a68 改为按需工具获取），导致模型不调工具就编造图片描述（实际为大虾面被描述成"红烧牛肉面"）；现 SKILL.md、工具描述与标签文案三处均已明确"分析前必须先获取图片数据"
 - Agent 前端发送任务前会等待音频上传完成，并只把真实 HTTP 音频 URL 写入 `audio_urls`；上传完成后会同步更新 `mediaItems.serverUrl` 和 `mediaItems.fileUrl`
 - 数字人 RunningHub v1 驱动提交 node 185 的音频前会检查音频地址：`localhost`、内网地址和本地文件路径会先上传到 RunningHub 文件存储，并改用返回的 `openapi/...` fileName；已经是 `openapi/...` 的 RunningHub 文件名会直接复用，公网 URL 保持原值
 - 通过 `ask_user` 工具实现向用户提问的交互

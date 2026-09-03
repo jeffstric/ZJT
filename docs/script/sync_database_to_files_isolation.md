@@ -16,6 +16,8 @@ script_writer.html 「删除暂存」按钮 (onclick="newSession()")
 
 `force_overwrite=True` 时会先删除 `worlds/characters/scripts/locations/props` 目录下所有非 `temp_` 前缀的 JSON，再从 DB 重建。
 
+「已入库」里删除数据库记录 **不会** 自动清空整个暂存区。默认会勾选「同时删除暂存区同名文件」；若不勾选，下次点「提交」会按名称/集数把暂存内容 upsert 回数据库（看起来像删除被复活）。详见 [已入库资产管理](script_writer_asset_library.md)。
+
 前端同步后通过 `/api/{type}-files`（如 `/api/characters-files`）从**文件系统**重新读取列表展示，因此「同步是否成功」直接取决于文件是否被写出来。
 
 ## user_id 过滤约定（重点）

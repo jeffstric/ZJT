@@ -12,7 +12,7 @@ import uuid
 import asyncio
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-from fastapi import APIRouter, Request, Query as QueryParam, Header, UploadFile, File, Form
+from fastapi import APIRouter, Request, Query as QueryParam, Header, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from perseids_server.utils.permission import require_permission
@@ -29,11 +29,17 @@ from config.constant import (
     PERSEIDS_ERR_NO_VALID_TOKEN,
     ERROR_CODE_TOKEN_EXPIRED,
     ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
+    IMAGE_STYLE_LLM_TIMEOUT,
+    IMAGE_STYLE_PREFERRED_MODEL,
+    IMAGE_STYLE_PREFERRED_VENDOR,
     USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+    VL_MODEL_PREFERRED_DEFAULT,
 )
+from api.auth_identity import resolve_authorization_user_id
+from config.model_catalog import ModelScene, annotate_llm_models, build_tracks_payload
 from utils.resource_access import get_user_id_from_header, ensure_world_access
 from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
-from llm.llm_client_factory import get_llm_client
+from llm.llm_client_factory import get_available_models, get_llm_client
 
 # ==================== 加载 API 配置 ====================
 def _load_api_config():
@@ -66,6 +72,8 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceError,
     MediaGenerationPreferenceService,
 )
+from services.vl_gateway import call_vl as _vl_call
+from services.vl_gateway import image_url_to_base64 as _vl_image_url_to_base64
 
 # 导入智能体系统
 from script_writer_core.agents import TaskManager, TaskStatus, ToolExecutor
@@ -96,6 +104,7 @@ from model.user_preferences import (
     PREF_TYPE_TEXT_TO_VIDEO_MODEL,
     PREF_TYPE_IMAGE_TO_VIDEO_MODEL,
     PREF_TYPE_DEFAULT_LLM_MODEL,
+    PREF_TYPE_VL_MODEL,
 )
 # 生图模型设置范围：session=本对话草稿；world_default=世界默认（新会话种子）
 IMAGE_MODEL_SCOPE_SESSION = "session"
@@ -314,6 +323,33 @@ def get_image_to_video_model_id(user_id: str, world_id: str) -> Optional[int]:
 def set_image_to_video_model_id(user_id: str, world_id: str, task_id: int):
     """设置用户在指定世界的图生视频模型 task_id"""
     UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_IMAGE_TO_VIDEO_MODEL, task_id)
+
+
+def get_vl_model_preference(user_id: str, world_id: str) -> Optional[Dict[str, Any]]:
+    """获取用户在指定世界的 VL 模型偏好：{model, model_id, vendor_id}
+
+    画风识别（识别模型下拉）与资产检查专家（asset-readiness-checker）等看图场景共用；
+    无偏好时返回 None，由调用方回落 config/constant.py VL_MODEL_PREFERRED_DEFAULT。
+    """
+    pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_VL_MODEL)
+    if pref and pref.config_value is not None:
+        value = pref.get_value()
+        if isinstance(value, dict) and value.get('model'):
+            return value
+    return None
+
+
+def set_vl_model_preference(user_id: str, world_id: str, model: str,
+                            model_id: Optional[int] = None, vendor_id: Optional[int] = None) -> bool:
+    """保存用户在指定世界的 VL 模型偏好（画风识别处切换模型时调用）"""
+    if not model:
+        return False
+    UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_VL_MODEL, {
+        'model': str(model),
+        'model_id': int(model_id) if model_id is not None else None,
+        'vendor_id': int(vendor_id) if vendor_id is not None else None,
+    })
+    return True
 
 
 def _session_expire_hours(session_type: int) -> int:
@@ -1021,6 +1057,7 @@ class TaskCreateRequest(BaseModel):
     vendor_id: int = 1
     enable_thinking: bool = False
     thinking_effort: str = "medium"
+    intervention_level: Optional[str] = None
     image_urls: Optional[List[str]] = None
     video_urls: Optional[List[str]] = None
     audio_urls: Optional[List[str]] = None
@@ -2720,20 +2757,14 @@ async def get_vendors():
 
 
 @router.get('/models')
-async def get_available_models(scene: Optional[str] = None):
+async def list_models_endpoint(scene: Optional[str] = None):
     """获取可用的 AI 模型列表，根据 vendor 表分组。
 
     scene 可选，传入后附加性价比/效果双档 catalog，并为每条模型标注 track。
     """
     try:
-        from llm.llm_client_factory import get_available_models as _get_available_models
-        from config.model_catalog import (
-            ModelScene,
-            annotate_llm_models,
-            build_tracks_payload,
-        )
         result = await asyncio.wait_for(
-            _get_available_models(),
+            get_available_models(),
             timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
         )
         models = result.get('models') or []
@@ -3441,7 +3472,11 @@ async def save_world_file(
 
 @router.get('/style-models')
 @require_permission("world:view_files")
-async def list_style_models(request: Request):
+async def list_style_models(
+    request: Request,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
     """获取可用于画风识别的 vl 模型列表。
 
     复用 ``llm_client_factory.get_available_models``：它已过滤掉未配置密钥的 vendor，
@@ -3450,15 +3485,45 @@ async def list_style_models(request: Request):
 
     排序：优先 ``volcengine / doubao-seed-2-0-lite``，再其余 volcengine，再其他供应商。
     """
-    try:
-        from llm.llm_client_factory import get_available_models as _get_available_models
-        from config.constant import (
-            IMAGE_STYLE_LLM_TIMEOUT,
-            IMAGE_STYLE_PREFERRED_MODEL,
-            IMAGE_STYLE_PREFERRED_VENDOR,
+    resolved_user_id, auth_error = await resolve_authorization_user_id(auth_token)
+    if auth_error:
+        return auth_error
+    if header_user_id is not None and header_user_id != resolved_user_id:
+        return JSONResponse(
+            status_code=403,
+            content={'success': False, 'error': 'X-User-Id 与登录用户不一致'},
         )
 
-        result = await _get_available_models()
+    pref_world_id = request.query_params.get('world_id') or ''
+    if pref_world_id:
+        try:
+            world_id = int(pref_world_id)
+            await asyncio.wait_for(
+                asyncio.to_thread(ensure_world_access, world_id, resolved_user_id, Action.VIEW),
+                timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+            )
+        except (TypeError, ValueError):
+            return JSONResponse(
+                status_code=400,
+                content={'success': False, 'error': 'world_id 格式错误'},
+            )
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={'success': False, 'error': exc.detail},
+            )
+        except asyncio.TimeoutError:
+            return JSONResponse(
+                status_code=503,
+                content={'success': False, 'error': '世界权限校验超时'},
+            )
+
+    try:
+
+        result = await asyncio.wait_for(
+            get_available_models(),
+            timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+        )
         pref_vendor = (IMAGE_STYLE_PREFERRED_VENDOR or 'volcengine').lower()
         pref_model = (IMAGE_STYLE_PREFERRED_MODEL or 'doubao-seed-2-0-lite').lower()
 
@@ -3490,13 +3555,26 @@ async def list_style_models(request: Request):
 
         vl_models.sort(key=_sort_key)
 
-        from config.model_catalog import (
-            ModelScene,
-            annotate_llm_models,
-            build_tracks_payload,
-        )
         vl_models = annotate_llm_models(vl_models, ModelScene.LLM_STYLE_RECOGNIZE)
         catalog = build_tracks_payload(ModelScene.LLM_STYLE_RECOGNIZE, vl_models, kind="llm")
+
+        # 用户已保存的 VL 模型偏好（画风识别处切换即保存；资产检查专家共用），
+        # 前端选中优先级：saved_preference > VL_MODEL_PREFERRED_DEFAULT > 推荐⭐ > 第一个
+        saved_preference = None
+        if pref_world_id:
+            try:
+                saved_preference = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        get_vl_model_preference,
+                        str(resolved_user_id),
+                        str(pref_world_id),
+                    ),
+                    timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning('读取 VL 模型偏好超时（非致命）')
+            except Exception as exc:
+                logger.warning(f'读取 VL 模型偏好失败（非致命）: {exc}')
 
         return JSONResponse({
             'success': True,
@@ -3504,6 +3582,8 @@ async def list_style_models(request: Request):
             'llm_timeout': IMAGE_STYLE_LLM_TIMEOUT,
             'preferred_vendor': IMAGE_STYLE_PREFERRED_VENDOR,
             'preferred_model': IMAGE_STYLE_PREFERRED_MODEL,
+            'vl_model_default': VL_MODEL_PREFERRED_DEFAULT,
+            'saved_preference': saved_preference,
             'catalog': catalog,
         })
     except Exception as e:
@@ -3512,6 +3592,88 @@ async def list_style_models(request: Request):
             'success': False,
             'error': str(e)
         }, status_code=500)
+
+
+@router.post('/style-models/preference')
+@require_permission("world:save_files")
+async def set_style_model_preference(
+    request: Request,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """保存用户 VL 模型偏好（画风识别「识别模型」下拉切换时调用）。
+
+    偏好与资产检查专家（asset-readiness-checker）等看图场景共用，
+    body: {user_id, world_id, model, model_id?, vendor_id?}
+    """
+    resolved_user_id, auth_error = await resolve_authorization_user_id(auth_token)
+    if auth_error:
+        return auth_error
+    if header_user_id is not None and header_user_id != resolved_user_id:
+        return JSONResponse(
+            status_code=403,
+            content={'success': False, 'error': 'X-User-Id 与登录用户不一致'},
+        )
+
+    try:
+        data = await request.json()
+        claimed_user_id = str(data.get('user_id', '')).strip()
+        if claimed_user_id and claimed_user_id != str(resolved_user_id):
+            return JSONResponse(
+                status_code=403,
+                content={'success': False, 'error': 'user_id 与登录用户不一致'},
+            )
+        world_id_raw = data.get('world_id')
+        model = data.get('model')
+        if world_id_raw in (None, '') or not model:
+            return JSONResponse({
+                'success': False,
+                'error': '缺少必填参数 world_id / model',
+            }, status_code=400)
+        try:
+            world_id = int(world_id_raw)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {'success': False, 'error': 'world_id 格式错误'},
+                status_code=400,
+            )
+
+        await asyncio.wait_for(
+            asyncio.to_thread(ensure_world_access, world_id, resolved_user_id, Action.EDIT),
+            timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+        )
+
+        ok = await asyncio.wait_for(
+            asyncio.to_thread(
+                set_vl_model_preference,
+                str(resolved_user_id),
+                str(world_id),
+                model,
+                model_id=data.get('model_id'),
+                vendor_id=data.get('vendor_id'),
+            ),
+            timeout=USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
+        )
+        if not ok:
+            return JSONResponse({'success': False, 'error': 'model 不能为空'}, status_code=400)
+        logger.info(
+            f'已保存 VL 模型偏好: user_id={resolved_user_id}, '
+            f'world_id={world_id}, model={model}'
+        )
+        return JSONResponse({'success': True, 'model': model})
+    except HTTPException as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={'success': False, 'error': exc.detail},
+        )
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=503,
+            content={'success': False, 'error': '保存模型偏好超时'},
+        )
+    except Exception as e:
+        logger.error(f'保存 VL 模型偏好失败: {str(e)}')
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
 
 
 class RecognizeStyleRequest(BaseModel):
@@ -3562,7 +3724,6 @@ def _extract_style_json(content: str) -> Optional[dict]:
 async def recognize_style(request: Request, body: RecognizeStyleRequest):
     """调用 vl 模型识别图片画风，仅返回画面风格（供前端确认后再写入）。"""
     from config.constant import IMAGE_STYLE_LLM_TIMEOUT, IMAGE_STYLE_COMPRESS_TIMEOUT
-    from utils.image_compressor import compress_local_image_to_base64
 
     if not body.image_url:
         return JSONResponse({'success': False, 'error': '缺少图片 url'}, status_code=400)
@@ -3570,42 +3731,19 @@ async def recognize_style(request: Request, body: RecognizeStyleRequest):
         return JSONResponse({'success': False, 'error': '未选择识别模型'}, status_code=400)
 
     try:
-        # 1) 解析 image_url → 本地路径（仅允许本服务 upload 目录下的文件）
-        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        upload_root = os.path.join(app_dir, 'upload').replace('\\', '/')
-        image_url = body.image_url.strip()
-        # 取 URL path 部分，定位 upload/... 相对片段
-        rel = image_url
-        if '://' in rel:
-            from urllib.parse import urlparse
-            rel = urlparse(rel).path
-        rel = rel.lstrip('/').replace('\\', '/')
-        if '/upload/' in rel:
-            rel = rel[rel.index('/upload/') + len('/upload/'):]
-        elif rel.startswith('upload/'):
-            rel = rel[len('upload/'):]
-        local_path = os.path.normpath(os.path.join(upload_root, rel))
-        # 防目录穿越：最终路径必须在 upload_root 下
-        if not local_path.replace('\\', '/').startswith(upload_root):
-            return JSONResponse({'success': False, 'error': '非法的图片路径'}, status_code=400)
-        if not os.path.isfile(local_path):
-            return JSONResponse({'success': False, 'error': f'图片文件不存在: {rel}'}, status_code=404)
-
-        # 2) 压缩转 base64（同步 CPU 操作 → to_thread 包装 + wait_for 超时保护）
-        try:
-            ok, data_url, err = await asyncio.wait_for(
-                asyncio.to_thread(
-                    compress_local_image_to_base64,
-                    local_path, 2.0, 2_073_600
-                ),
-                timeout=IMAGE_STYLE_COMPRESS_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            return JSONResponse({'success': False, 'error': '图片压缩超时，请重试'}, status_code=504)
+        # 1) 图片获取：URL → 压缩 base64（仅允许本站 upload 目录，allow_remote=False；
+        #     压缩/超时/路径校验由 services/vl_gateway.py 共享网关处理）
+        ok, data_url, err = await _vl_image_url_to_base64(
+            body.image_url.strip(),
+            compress_timeout=IMAGE_STYLE_COMPRESS_TIMEOUT,
+            allow_remote=False,
+        )
         if not ok or not data_url:
-            return JSONResponse({'success': False, 'error': f'图片处理失败: {err}'}, status_code=400)
+            error_text = str(err or '图片处理失败')
+            status_code = 504 if '超时' in error_text else (404 if '不存在' in error_text else 400)
+            return JSONResponse({'success': False, 'error': error_text}, status_code=status_code)
 
-        # 3) 构造多模态消息，调用 vl 模型（同步 call_api → to_thread + wait_for）
+        # 2) 构造多模态消息，调用 vl 模型（共享网关：request_timeout 兼容探测 + 超时保护）
         # visual_style 规范与 asset-readiness-checker 画风审核条款一致，
         # 字段语义对齐 plot-analyzer：只回答「是什么风格」，不产出构图/色彩。
         system_prompt = (
@@ -3639,39 +3777,24 @@ async def recognize_style(request: Request, body: RecognizeStyleRequest):
             '{"visual_style":"画风大类+具体风格关键词，如：现代都市写实风格 / 日系新海诚动漫风格"}\n'
             "记住：只写 visual_style，不要写构图倾向、色彩、镜头、剧情内容。"
         )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": [
-                {"type": "text", "text": user_text},
-                {"type": "image_url", "image_url": {"url": data_url}},
-            ]},
-        ]
 
-        client = get_llm_client(body.model, vendor_id=body.vendor_id)
-        # 仅 OpenAI 兼容系列（含 doubao）的 call_api 支持 request_timeout；
-        # Gemini 等原生 client 不支持该参数，传了会 TypeError。先探测再条件传入。
-        import inspect as _inspect
-        call_kwargs = dict(
+        ok, content, err = await _vl_call(
+            system_prompt,
+            user_text,
+            data_url,
             model=body.model,
-            messages=messages,
-            temperature=0.4,
-            max_tokens=400,
-            auth_token=body.auth_token or None,
+            llm_timeout=IMAGE_STYLE_LLM_TIMEOUT,
             vendor_id=body.vendor_id,
             model_id=body.model_id,
+            auth_token=body.auth_token,
+            temperature=0.4,
+            max_tokens=400,
         )
-        if 'request_timeout' in _inspect.signature(client.call_api).parameters:
-            call_kwargs['request_timeout'] = IMAGE_STYLE_LLM_TIMEOUT
-        try:
-            # 外层 wait_for 对所有 client 兜底超时，满足超时红线（R4/R5/R6）
-            response = await asyncio.wait_for(
-                asyncio.to_thread(client.call_api, **call_kwargs),
-                timeout=IMAGE_STYLE_LLM_TIMEOUT + 10,
-            )
-        except asyncio.TimeoutError:
-            return JSONResponse({'success': False, 'error': '模型识别超时，请重试或更换模型'}, status_code=504)
+        if not ok:
+            error_text = str(err or '模型识别失败')
+            status_code = 504 if '超时' in error_text else 500
+            return JSONResponse({'success': False, 'error': error_text}, status_code=status_code)
 
-        content = response.choices[0].message.content if response and response.choices else ''
         parsed = _extract_style_json(content)
         if not parsed or not parsed.get('visual_style'):
             return JSONResponse({
@@ -3984,7 +4107,23 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
 
         # 创建任务（返回 task_id 字符串）
         task_language = task_request.language or 'zh-CN'
-        logger.info(f'创建任务: language={task_language} (from request: {task_request.language})')
+        # 介入程度校验：非法值/未传一律回落标准档，避免把脏值注入 PM 上下文
+        from config.constant import (
+            VALID_INTERVENTION_LEVELS, INTERVENTION_LEVEL_DEFAULT, INTERVENTION_LEVEL_INSTRUCTIONS,
+        )
+        task_intervention_level = task_request.intervention_level
+        if task_intervention_level not in VALID_INTERVENTION_LEVELS:
+            if task_intervention_level:
+                logger.warning(f'非法 intervention_level 已忽略: {task_intervention_level!r}')
+            task_intervention_level = INTERVENTION_LEVEL_DEFAULT
+        # 介入程度指令随 user 消息注入（detailed/concise 档；balanced 不注入）。
+        # 必须在 API 层拼接：PM 内存历史与 chat_messages 持久化共用
+        # task:{task_id}:user:initial 幂等键，若由 PM 侧再拼会被幂等去重丢弃
+        intervention_instruction = INTERVENTION_LEVEL_INSTRUCTIONS.get(task_intervention_level, '')
+        if intervention_instruction:
+            user_message = intervention_instruction + user_message
+        logger.info(f'创建任务: language={task_language} (from request: {task_request.language}), '
+                    f'intervention_level={task_intervention_level}')
         task_id = await asyncio.to_thread(
             task_manager.create_task,
             session_id=session_id,
@@ -3996,6 +4135,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             model_id=model_id,
             enable_thinking=task_request.enable_thinking,
             thinking_effort=task_request.thinking_effort,
+            intervention_level=task_intervention_level,
             image_urls=task_request.image_urls,
             video_urls=task_request.video_urls,
             audio_urls=task_request.audio_urls,

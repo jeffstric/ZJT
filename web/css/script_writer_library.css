@@ -1,0 +1,132 @@
+/* 剧本创作页：已入库资产库（侧栏双数据源） */
+
+.asset-source-switch {
+    display: flex;
+    margin: 0 16px 8px;
+    padding: 3px;
+    background: var(--bg-light, #f5f3ff);
+    border-radius: 10px;
+    gap: 2px;
+}
+
+.asset-source-btn {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary, #64748b);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 6px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.asset-source-btn:hover {
+    color: var(--text-primary, #1e293b);
+}
+
+.asset-source-btn.active {
+    background: #fff;
+    color: var(--primary-color, #8b5cf6);
+    box-shadow: 0 1px 3px rgba(139, 92, 246, 0.18);
+}
+
+.file-sidebar.is-library .sidebar-header-actions,
+.file-sidebar.is-library #staging-header-actions,
+.file-sidebar.is-library .style-recognize-section {
+    display: none !important;
+}
+
+.library-search-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px 10px;
+}
+
+.library-search-box[hidden] {
+    display: none !important;
+}
+
+.library-search-input {
+    flex: 1;
+    min-width: 0;
+    height: 32px;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 8px;
+    padding: 0 10px;
+    font-size: 13px;
+    outline: none;
+}
+
+.library-search-input:focus {
+    border-color: var(--primary-color, #8b5cf6);
+}
+
+.library-count {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-muted, #94a3b8);
+}
+
+.file-item-meta {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+    gap: 2px;
+}
+
+.file-item-sub {
+    font-size: 11px;
+    color: var(--text-muted, #94a3b8);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-btn:disabled,
+.file-btn.is-disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: auto;
+}
+
+.library-delete-summary {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-primary, #1e293b);
+    margin-bottom: 10px;
+}
+
+.library-delete-warnings {
+    margin: 0 0 12px 18px;
+    padding: 0;
+    color: var(--warning-color, #f59e0b);
+    font-size: 13px;
+}
+
+.library-delete-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 13px;
+    margin-bottom: 8px;
+    cursor: pointer;
+}
+
+.library-delete-hint {
+    font-size: 12px;
+    color: var(--text-secondary, #64748b);
+    line-height: 1.5;
+}
+
+.btn-danger {
+    background: #ef4444;
+    color: #fff;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+}

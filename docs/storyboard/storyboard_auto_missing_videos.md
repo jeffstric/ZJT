@@ -14,6 +14,14 @@
   - 无首帧：`需先补全画面`（disabled）
   - 已齐：`视频已全部生成`（disabled）
 
+## 确认弹窗（含算力预估）
+
+- 点击「批量生成视频 (N)」不再直接提交，而是打开 `Region.MODAL` 确认弹窗（`renderVideoBatchConfirmDialog`，state 字段 `videoBatchConfirm`）：
+  先异步试算费用，弹窗内展示分镜数量、按「时长档位 × 单价 × 个数」聚合的明细与**预计扣减算力总额**；
+  确认（`confirm-video-batch-submit`）后才提交批次，取消（`cancel-video-batch-submit`）不产生任何请求。
+- 估价失败时弹窗降级提示「以实际扣费为准」，确认按钮仍可用。
+- 宫格多选工具条的 `batch-generate-videos` 维持 `window.confirm`，不走该弹窗。
+
 ## API
 
 ```http
@@ -31,6 +39,35 @@ Content-Type: application/json
   "enable_face_mask": false
 }
 ```
+
+### 费用试算
+
+```http
+POST /api/storyboard/{storyboard_id}/estimate-missing-videos-power
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "ratio": "16:9",
+  "task_type": 可选视频模型 task_id,
+  "image_mode": "first_last_frame",
+  "enable_face_mask": false,
+  "scene_ids": [607, 643]  // 可选，不传为全部待生成分镜
+}
+```
+
+返回 `{success, task_type, image_mode, scene_count, total_power, items[]}`，
+`items[]` 每项含 `scene_id / title / video_type / duration / power / note`；
+单个分镜估价失败时 `power=null` 并在 `note` 说明，不阻断整体。
+
+估价口径与真实扣费同源：
+
+- 常规视频：`get_computing_power_for_task`（按时长档位查表 + `image_mode` 修饰符），
+  时长取 `max(1, ceil(scene.duration))`（有已完成配音先用真实音频求和覆盖），
+  有选中尾帧时 `image_mode` 升级为 `first_last_with_tail`；
+- 对口型：`compute_digital_human_power`（MiniMax H3 档位，按 clamp 后时长）。
+
+只算价，不建批次、不扣费、不需要 auth_token 扣费身份。
 
 `enable_face_mask`：是否启用人脸遮盖预处理（仅 Seedance 2.0 系列 + 商业版生效）。写入批次 `generation_snapshots`，经 `video_tools.image_to_video` 透传到 `/api/ai-app-run-image`。前端取自拆分弹窗/齿轮中的「是否处理人脸」有效值。
 
@@ -126,8 +163,8 @@ GET /api/storyboard/image-batches/{batch_id}/status
 |------|------|
 | `auto_missing_videos_state.js` | 批次状态、按钮 VM、sessionStorage |
 | `auto_missing_videos.js` | 提交、恢复、轮询 |
-| `render.js` | 时间轴按钮 |
-| `events.js` | `auto-complete-missing-videos` |
+| `render.js` | 时间轴按钮、确认弹窗 `renderVideoBatchConfirmDialog` |
+| `events.js` | `auto-complete-missing-videos`（开弹窗+试算）、`confirm/cancel-video-batch-submit` |
 | `bootstrap.js` | 打开页面恢复进行中批次 |
 
 ## 与「补全首帧」关系

@@ -104,13 +104,17 @@ PREF_TYPE_IMAGE_TO_VIDEO_MODEL = "image_to_video_model"
 PREF_TYPE_DEFAULT_LLM_MODEL = "default_llm_model"
 # 用户级算力确认软阈值：{"threshold": int}，world_id 使用 PREF_WORLD_ID_GLOBAL
 PREF_TYPE_POWER_CONFIRM = "power_confirm"
+# 用户级 VL（视觉语言）模型偏好：{model, model_id, vendor_id}
+# 画风识别（script_writer.html 识别模型下拉）与资产检查专家（asset-readiness-checker）
+# 等需要看图的场景共用同一存储；默认值见 config/constant.py VL_MODEL_PREFERRED_DEFAULT
+PREF_TYPE_VL_MODEL = "vl_model"
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `user_preferences` (
   `id` int NOT NULL AUTO_INCREMENT,
   `user_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
   `world_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `pref_type` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'text_to_image_model|image_preferences|video_preferences|text_to_video_model|image_to_video_model|default_llm_model|power_confirm|media_pref.*',
+  `pref_type` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'text_to_image_model|image_preferences|video_preferences|text_to_video_model|image_to_video_model|default_llm_model|power_confirm|vl_model|media_pref.*',
   `config_value` json NOT NULL,
   `create_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `update_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

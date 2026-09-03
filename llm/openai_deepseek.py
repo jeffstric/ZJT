@@ -16,6 +16,7 @@ class DeepSeekOpenAIClient(OpenAIBaseClient):
     _MODEL_NAME_MAP = {
         'deepseek-v4-flash': 'deepseek-v4-flash',
         'deepseek-v4-pro': 'deepseek-v4-pro',
+        'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp',
         # 兼容即将弃用的旧模型名
         'deepseek-chat': 'deepseek-v4-flash',
         'deepseek-reasoner': 'deepseek-v4-pro',

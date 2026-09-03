@@ -439,7 +439,10 @@ function deleteSelectedConnection() {
         } else if (conn.portType === 'ref-image') {
           var _fromNode = state.nodes.find(function(n) { return n.id === conn.from; });
           if (_fromNode && targetNode.data.referenceUrls) {
-            var idx = targetNode.data.referenceUrls.indexOf(_fromNode.data.url);
+            var srcUrl = typeof getNodeImageUrl === 'function'
+              ? getNodeImageUrl(_fromNode)
+              : (_fromNode.data.url || _fromNode.data.reference_image);
+            var idx = targetNode.data.referenceUrls.indexOf(srcUrl);
             if (idx >= 0) targetNode.data.referenceUrls.splice(idx, 1);
             var targetEl = document.querySelector('.node[data-node-id="' + conn.to + '"]');
             if (targetEl && typeof targetEl._updateReferencePreview === 'function') {

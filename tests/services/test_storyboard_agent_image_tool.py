@@ -18,6 +18,7 @@ class FakeToolExecutor:
         language="zh-CN",
         model=None,
         vendor_id=None,
+        model_id=None,
     ):
         self.calls.append({
             "tool_name": tool_name,
@@ -28,6 +29,7 @@ class FakeToolExecutor:
             "language": language,
             "model": model,
             "vendor_id": vendor_id,
+            "model_id": model_id,
         })
         return {"project_ids": [123]}
 
@@ -288,3 +290,23 @@ def test_edit_image_rebuilds_reference_legend_to_match_forced_urls():
     assert "图1是角色：德保罗" in prompt
     assert "图2是角色：梅西" in prompt
     assert "图3是场景：街道" in prompt
+
+
+def test_execute_tool_accepts_and_forwards_model_id():
+    """回归：ExpertAgent 透传 model_id（受信模型路由），包装器签名必须接受并转发。"""
+    executor, delegate = _build_executor()
+
+    result = executor.execute_tool(
+        "get_user_computing_power",
+        {},
+        "1",
+        "2",
+        "token",
+        model="deepseek-v4-flash",
+        vendor_id=3,
+        model_id=34,
+    )
+
+    assert result == {"project_ids": [123]}
+    assert delegate.calls[0]["model_id"] == 34
+    assert delegate.calls[0]["vendor_id"] == 3

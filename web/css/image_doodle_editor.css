@@ -1,0 +1,434 @@
+/**
+ * 图片涂鸦编辑器（仿火山引擎「涂鸦编辑」弹窗）
+ * 独立 modal 外壳，不依赖宿主页面其它弹层样式；z-index 与涂色编辑器同层（10050）。
+ */
+
+.doodle-editor-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 10050;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.doodle-editor-modal.show {
+  display: flex;
+}
+
+.doodle-editor-modal .doodle-modal-card {
+  display: flex;
+  flex-direction: column;
+  width: min(1200px, 94vw);
+  height: min(860px, 90vh);
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+}
+
+.doodle-editor-modal .doodle-modal-card:focus {
+  outline: none;
+}
+
+/* ---------- 头部 ---------- */
+.doodle-editor-modal .doodle-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e5e7eb;
+  flex: none;
+}
+
+.doodle-editor-modal .doodle-modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.doodle-editor-modal .doodle-modal-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: #e2e8f0;
+  color: #0f172a;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.doodle-editor-modal .doodle-modal-close:hover {
+  background: #cbd5e1;
+}
+
+/* ---------- 画布区 ---------- */
+.doodle-editor-modal .doodle-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f6f7;
+  overflow: hidden;
+}
+
+.doodle-editor-modal .doodle-canvas {
+  display: block;
+  background: #ffffff;
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.12);
+  touch-action: none;
+}
+
+.doodle-editor-modal .doodle-body-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  font-size: 14px;
+  background: rgba(245, 246, 247, 0.85);
+}
+
+/* 橡皮擦圆形光标：直径由 JS 按粗细面板设置 */
+.doodle-editor-modal .doodle-cursor {
+  position: absolute;
+  border: 1.5px solid rgba(15, 23, 42, 0.65);
+  border-radius: 50%;
+  pointer-events: none;
+  display: none;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+  z-index: 6;
+}
+
+/* 文字工具的行内输入框 */
+.doodle-editor-modal .doodle-text-input {  position: absolute;
+  min-width: 24px;
+  min-height: 1.4em;
+  padding: 0;
+  border: 1px dashed #387bff;
+  outline: none;
+  background: rgba(255, 255, 255, 0.35);
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-weight: 600;
+  line-height: 1.25;
+  z-index: 5;
+}
+
+/* 画布右下角浮动按钮 */
+.doodle-editor-modal .doodle-ratio-wrap {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 4;
+}
+
+.doodle-editor-modal .doodle-ratio-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #374151;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+
+.doodle-editor-modal .doodle-ratio-btn:hover {
+  background: #f3f4f6;
+}
+
+/* ---------- 底部工具栏 ---------- */
+.doodle-editor-modal .doodle-modal-footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid #e5e7eb;
+  background: #f8fafc;
+  flex: none;
+}
+
+.doodle-editor-modal .doodle-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 auto;
+}
+
+.doodle-editor-modal .doodle-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #4b5563;
+  cursor: pointer;
+}
+
+.doodle-editor-modal .doodle-tool-btn:hover {
+  background: #eef2f7;
+}
+
+.doodle-editor-modal .doodle-tool-btn.active {
+  background: #e8f0ff;
+  color: #387bff;
+}
+
+.doodle-editor-modal .doodle-tool-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.doodle-editor-modal .doodle-tool-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 6px;
+  background: #d1d5db;
+  flex: none;
+}
+
+/* 颜色按钮：圆形色块 */
+.doodle-editor-modal .doodle-color-btn {
+  padding: 0;
+}
+
+.doodle-editor-modal .doodle-color-swatch {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.25);
+  box-sizing: border-box;
+}
+
+.doodle-editor-modal .doodle-confirm-btn {
+  flex: none;
+  padding: 8px 22px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  background: #2563eb;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.doodle-editor-modal .doodle-confirm-btn:hover {
+  background: #1d4ed8;
+}
+
+.doodle-editor-modal .doodle-confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ---------- 浮出面板（粗细 / 色板 / 比例菜单） ---------- */
+.doodle-editor-modal .doodle-panel {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%);
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+  padding: 10px 12px;
+  display: none;
+  z-index: 20;
+}
+
+.doodle-editor-modal .doodle-panel.show {
+  display: block;
+}
+
+/* 粗细 / 透明度面板 */
+.doodle-editor-modal .doodle-size-panel {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+}
+
+.doodle-editor-modal .doodle-size-panel.show {
+  display: flex;
+}
+
+.doodle-editor-modal .doodle-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.doodle-editor-modal .doodle-panel-row input[type='range'] {
+  flex: 1;
+}
+
+.doodle-editor-modal .doodle-size-value {
+  min-width: 40px;
+  text-align: right;
+  font-size: 12px;
+  color: #374151;
+}
+
+/* 色板 */
+.doodle-editor-modal .doodle-color-panel {
+  display: none;
+  gap: 8px;
+}
+
+.doodle-editor-modal .doodle-color-panel.show {
+  display: flex;
+}
+
+.doodle-editor-modal .doodle-swatch {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  cursor: pointer;
+}
+
+.doodle-editor-modal .doodle-swatch.selected::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  mix-blend-mode: difference;
+  color: #ffffff;
+}
+
+/* 比例菜单（挂在画布右下角按钮上方） */
+.doodle-editor-modal .doodle-ratio-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  min-width: 120px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+  padding: 6px;
+  display: none;
+  z-index: 20;
+}
+
+.doodle-editor-modal .doodle-ratio-menu.show {
+  display: block;
+}
+
+.doodle-editor-modal .doodle-ratio-item {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  font-size: 13px;
+  text-align: left;
+  color: #374151;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.doodle-editor-modal .doodle-ratio-item:hover {
+  background: #f3f4f6;
+}
+
+.doodle-editor-modal .doodle-ratio-item.selected {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+/* 隐藏的底图替换文件选择 */
+.doodle-editor-modal .doodle-upload-input {
+  display: none;
+}
+
+/* ---------- 暗色模式（html.theme-dark） ---------- */
+html.theme-dark .doodle-editor-modal .doodle-modal-card {
+  background: var(--surface, #161920);
+  color: var(--text, #e8eaed);
+  border-color: var(--border, #2a2f3a);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+html.theme-dark .doodle-editor-modal .doodle-modal-header,
+html.theme-dark .doodle-editor-modal .doodle-modal-footer {
+  background: var(--panel, #1a1d24);
+  border-color: var(--border, #2a2f3a);
+}
+html.theme-dark .doodle-editor-modal .doodle-modal-title {
+  color: var(--text, #e8eaed);
+}
+html.theme-dark .doodle-editor-modal .doodle-modal-close {
+  background: var(--surface-3, #252a33);
+  color: var(--text, #e8eaed);
+}
+html.theme-dark .doodle-editor-modal .doodle-modal-close:hover {
+  background: var(--panel-hover, #2f3540);
+}
+html.theme-dark .doodle-editor-modal .doodle-body {
+  background: var(--surface-2, #1c1f26);
+}
+html.theme-dark .doodle-editor-modal .doodle-canvas {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+}
+html.theme-dark .doodle-editor-modal .doodle-tool-btn {
+  color: var(--muted, #9aa0a6);
+}
+html.theme-dark .doodle-editor-modal .doodle-tool-btn:hover {
+  background: var(--panel-hover, #2f3540);
+}
+html.theme-dark .doodle-editor-modal .doodle-tool-btn.active {
+  background: rgba(56, 123, 255, 0.18);
+  color: #6ea0ff;
+}
+html.theme-dark .doodle-editor-modal .doodle-tool-sep {
+  background: var(--border, #2a2f3a);
+}
+html.theme-dark .doodle-editor-modal .doodle-ratio-btn,
+html.theme-dark .doodle-editor-modal .doodle-panel,
+html.theme-dark .doodle-editor-modal .doodle-ratio-menu {
+  background: var(--surface, #161920);
+  color: var(--text, #e8eaed);
+  border-color: var(--border, #2a2f3a);
+}
+html.theme-dark .doodle-editor-modal .doodle-ratio-btn:hover,
+html.theme-dark .doodle-editor-modal .doodle-ratio-item:hover {
+  background: var(--panel-hover, #2f3540);
+}
+html.theme-dark .doodle-editor-modal .doodle-ratio-item {
+  color: var(--text, #e8eaed);
+}
+html.theme-dark .doodle-editor-modal .doodle-ratio-item.selected {
+  color: #6ea0ff;
+}
+html.theme-dark .doodle-editor-modal .doodle-size-value {
+  color: var(--text, #e8eaed);
+}

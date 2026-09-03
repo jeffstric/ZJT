@@ -46,7 +46,8 @@ class PMAgent(BaseAgent, AskUserMixin):
         skill_loader: Optional[SkillLoader] = None,
         sop_loader: Optional[SopLoader] = None,
         skill_names: Optional[List[str]] = None,
-        skip_env_context: bool = False
+        skip_env_context: bool = False,
+        power_confirm_enabled: bool = True
     ):
         agent_id = "pm_agent"
 
@@ -72,6 +73,8 @@ class PMAgent(BaseAgent, AskUserMixin):
         self.user_id = user_id
         self.world_id = world_id
         self.auth_token = auth_token
+        # 算力确认门开关透传给 ExpertAgent（marketing 链路开启，剧本创作链路关闭）
+        self.power_confirm_enabled = power_confirm_enabled
 
         # 获取环境上下文并构建增强的 system prompt（只在初始化时执行一次）
         if skip_env_context:
@@ -242,6 +245,13 @@ class PMAgent(BaseAgent, AskUserMixin):
         self.total_failures = 0
 
         try:
+            # 记录当前任务的介入程度档位（指令已由 API 层拼入 task.user_message，
+            # 此处仅记录，供日志与调试；balanced 为默认档不注入指令）
+            from config.constant import INTERVENTION_LEVEL_DEFAULT
+            self.current_intervention_level = (
+                getattr(task, 'intervention_level', '') or INTERVENTION_LEVEL_DEFAULT
+            )
+
             # 添加用户消息到历史（图片、视频、音频以文字标签形式注入，不需要 base64）
             combined_parts = []
             if task.image_urls:
@@ -641,7 +651,37 @@ class PMAgent(BaseAgent, AskUserMixin):
 
         # 使用用户选择的模型（self.model）而非配置文件中的硬编码模型
         # 这样当用户切换模型时，Expert Agent 也会使用新模型
-        expert_model = self.model if self.model else expert_config["model"]
+        # 例外：use_config_model 的专家（如 VL 看图检查）使用固定的 VL 模型，
+        # 解析顺序：用户 VL 偏好（画风识别处选择，user_preferences.pref_type='vl_model'）
+        # → agents_config 默认模型；并解析 vendor_id/model_id，保证路由与计费正确
+        expert_vendor_id = task.vendor_id
+        expert_model_id = task.model_id
+        if expert_config.get("use_config_model"):
+            expert_model = self._get_vl_model_for_expert(expert_config, task)
+            resolved_vendor_id, resolved_model_id = self._resolve_model_routing(
+                expert_model, task.vendor_id, task.model_id
+            )
+            if resolved_model_id is None and expert_model != expert_config.get("model"):
+                # 偏好模型已失效：回落 agents_config 默认 VL 模型再解析一次
+                expert_model = expert_config["model"]
+                resolved_vendor_id, resolved_model_id = self._resolve_model_routing(
+                    expert_model, task.vendor_id, task.model_id
+                )
+            if resolved_model_id is not None:
+                expert_vendor_id = resolved_vendor_id
+                expert_model_id = resolved_model_id
+                logger.info(
+                    f"{self.agent_id}: Expert {skill_name} 使用 VL 模型: {expert_model} "
+                    f"(vendor_id={expert_vendor_id}, model_id={expert_model_id})"
+                )
+            else:
+                # 默认模型也不可用（如迁移未执行）：回退用户会话模型（可能不支持看图）
+                logger.warning(
+                    f"{self.agent_id}: VL 模型 {expert_model} 在数据库中未找到，回退用户会话模型（可能不支持看图）"
+                )
+                expert_model = self.model if self.model else expert_config["model"]
+        else:
+            expert_model = self.model if self.model else expert_config["model"]
         logger.info(f"{self.agent_id}: Expert {skill_name} 使用模型: {expert_model}")
 
         expert = ExpertAgent(
@@ -654,8 +694,8 @@ class PMAgent(BaseAgent, AskUserMixin):
             world_id=task.world_id,
             auth_token=task.auth_token,
             tool_executor=self.tool_executor,
-            vendor_id=task.vendor_id,
-            model_id=task.model_id,
+            vendor_id=expert_vendor_id,
+            model_id=expert_model_id,
             enable_thinking=task.enable_thinking,
             thinking_effort=task.thinking_effort,
             task_manager=self.task_manager,
@@ -664,7 +704,8 @@ class PMAgent(BaseAgent, AskUserMixin):
             language=task.language,
             max_consecutive_no_progress=expert_config.get("max_consecutive_no_progress", 3),
             max_consecutive_errors=expert_config.get("max_consecutive_errors", 3),
-            max_total_errors=expert_config.get("max_total_errors", 7)
+            max_total_errors=expert_config.get("max_total_errors", 7),
+            power_confirm_enabled=getattr(self, "power_confirm_enabled", True)
         )
 
         # 合并 LLM 提供的 conversation_history 和 PM 已有的 ask_user 交互
@@ -807,6 +848,48 @@ class PMAgent(BaseAgent, AskUserMixin):
                 logger.warning(f"{self.agent_id}: 清除会话缓存失败: {cache_err}")
         except Exception as e:
             logger.warning(f"{self.agent_id}: 保存 pending task 标记到 chat_messages 失败: {e}")
+
+    def _get_vl_model_for_expert(self, expert_config: Dict[str, Any], task) -> str:
+        """返回 use_config_model 专家应使用的 VL 模型名。
+
+        优先用户 VL 偏好（画风识别「识别模型」下拉保存，与资产检查共用同一存储），
+        无偏好/读取失败返回 agents_config 默认模型；
+        模型失效（已删除/禁用）由调用方 _resolve_model_routing 统一回落。
+        """
+        fallback = expert_config.get("model") or ""
+        try:
+            from model.user_preferences import UserPreferencesModel, PREF_TYPE_VL_MODEL
+            pref = UserPreferencesModel.get(task.user_id, task.world_id, PREF_TYPE_VL_MODEL)
+            value = pref.get_value() if pref else None
+            if isinstance(value, dict) and value.get('model'):
+                return str(value['model'])
+        except Exception as e:
+            logger.warning(f"{self.agent_id}: 读取用户 VL 模型偏好失败，回落默认 {fallback}: {e}")
+        return fallback
+
+    def _resolve_model_routing(
+        self, model_name: str, fallback_vendor_id: Optional[int], fallback_model_id: Optional[int]
+    ) -> tuple:
+        """按模型名解析 vendor_id/model_id（供 use_config_model 专家保证路由与计费正确）。
+
+        解析失败（模型未入库/查询异常）时返回 (fallback_vendor_id, None)，
+        由调用方决定回退用户会话模型。
+        """
+        try:
+            from model.model import ModelModel
+            from model.vendor_model import VendorModelModel
+            model_entity = ModelModel.get_by_name(model_name)
+            if not model_entity:
+                return fallback_vendor_id, None
+            vendor_id = None
+            try:
+                vendor_id = VendorModelModel.get_vendor_id_by_model_id(model_entity.id)
+            except Exception as e:
+                logger.warning(f"{self.agent_id}: 查询模型 {model_name} 的 vendor_id 失败: {e}")
+            return (vendor_id or fallback_vendor_id), model_entity.id
+        except Exception as e:
+            logger.error(f"{self.agent_id}: 解析模型 {model_name} 路由失败: {e}")
+            return fallback_vendor_id, None
 
     def _build_context_for_expert(self, skill_name: str, user_id: str = "0", world_id: str = "0") -> str:
         """为专家构建上下文，包含所有环境内容"""

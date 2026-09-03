@@ -90,6 +90,15 @@ class TestExtractLocalPathFromUrl(unittest.TestCase):
         result = extract_local_path_from_url("/upload/")
         self.assertEqual(result, "upload/")
 
+    def test_rejects_parent_directory_traversal(self):
+        self.assertIsNone(extract_local_path_from_url("/upload/../pyproject.toml"))
+
+    def test_rejects_encoded_parent_directory_traversal(self):
+        self.assertIsNone(extract_local_path_from_url("/upload/%2e%2e/pyproject.toml"))
+
+    def test_rejects_windows_separator_traversal(self):
+        self.assertIsNone(extract_local_path_from_url(r"/upload/..\pyproject.toml"))
+
     def test_path_not_starting_with_upload(self):
         """路径不以 /upload/ 开头返回 None"""
         result = extract_local_path_from_url("http://localhost:8000/static/image.png")

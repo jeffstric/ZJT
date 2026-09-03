@@ -992,6 +992,14 @@ JSON_FORMAT_EXAMPLE = """{
           "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化,涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式；有对白时可在此或 description/action 中写出完整台词）",
           "characters_present": ["char_001"],
           "focus_character_ids": ["char_001"],
+          "character_appearance_changes": [
+            {
+              "character_id": "char_001",
+              "label": "晚礼服",
+              "description": "换上深蓝色露肩晚礼服，头发盘起，佩戴珍珠耳环",
+              "revert": false
+            }
+          ],
           "props_present": ["prop_001"],
           "dialogue": [
             {
@@ -1164,6 +1172,9 @@ async def parse_script_to_shots(
     strict_json: bool = False,
     # 用于加载用户自定义 script-parser skill（system prompt）；None 则用文件系统默认
     user_id: Optional[int] = None,
+    # 开启后要求模型输出 shot.character_appearance_changes（角色形象持续变化标记），
+    # 供发布阶段自动生成角色变体参考图（见 docs/storyboard/script_split_character_variant.md）
+    enable_character_appearance_changes: bool = False,
 ) -> Dict[str, Any]:
     """
     将剧本内容解析为结构化的人物、场景和分镜数据
@@ -1362,6 +1373,21 @@ async def parse_script_to_shots(
                     logger.warning(f"No characters found for world_id: {world_id}")
             except Exception as e:
                 logger.error(f"Failed to load database characters: {e}", exc_info=True)
+
+        # 角色形象变化检测指令（开启后发布阶段自动生成角色变体参考图）
+        character_variant_text = ""
+        if enable_character_appearance_changes:
+            character_variant_text = f"""
+
+**【角色形象变化检测（shot.character_appearance_changes 字段）】**
+当剧本中某角色的形象发生**持续性可见变化**（换装、变身、盔甲/礼服等造型切换、化妆造型、受伤/淋湿等持续多个镜头的外观改变）时，系统会在发布分镜前为该角色自动生成新造型参考图。你需要在变化开始的镜头输出 character_appearance_changes 数组：
+- 每个条目格式：{{"character_id": "char_xxx", "label": "不超过8字的简短标签", "description": "新造型的具体描述（服装/发型/配饰/身体外观变化，不含表情和动作）", "revert": false}}
+- **只在变化开始的镜头输出一次**：同一造型的后续镜头不要重复输出该条目（系统会自动延续到后续镜头）
+- **角色恢复原形象时**：在恢复开始的镜头输出 {{"character_id": "...", "label": "默认", "revert": true}}，后续镜头同样不要重复
+- label 必须是简短稳定短语；同一种变化在全文中必须用完全相同的 label（如"晚礼服"、"战斗形态"），禁止写完整句子，禁止同一变化换用不同 label
+- 只报告数据库已有角色（character_db_id 非空）；角色的临时动作（跑动、转身、挥手）、单镜头遮挡（打伞）不算形象变化，禁止输出
+- 该镜头没有任何角色形象变化时，shot 中省略该字段或输出空数组 []
+"""
 
         # 构建特殊要求文本
         special_requirements = ""
@@ -1757,7 +1783,7 @@ async def parse_script_to_shots(
 
 数据库中的角色列表：
 ```{db_characters_text} ```
-
+{character_variant_text}
 **【核心要求 - 必须严格遵守】**
 
 1. **镜头组时长限制与分组规则（最重要）**：

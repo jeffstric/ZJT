@@ -61,6 +61,9 @@ http://zjtcdn.perseids.cn/upload/cache/2026-06-30/xxx.png?e=<过期时间戳>&to
 
 `extract_local_path_from_url`（`utils/media_mapping_util.py`）按 `/upload/` 前缀提取本地相对路径，**与域名无关**。`zjtcdn` 的 URL 路径以 `/upload/` 开头，能映射到本地文件。
 
+映射前会 URL 解码并拒绝 `.`、`..`、反斜杠等路径穿越片段；最终文件路径还会通过
+`Path.resolve()` / 根目录包含关系再次校验（包括符号链接逃逸），确保读取目标始终位于 `upload` 下。
+
 在 A/B/C/D 接入点的下载链路追加此兜底：当自有 CDN 重签名失败（配置缺失/七牛故障）时，仍能读到本地副本，**任务不抛异常、不失败**。
 
 ## RunningHub 静默降级 bug 修复

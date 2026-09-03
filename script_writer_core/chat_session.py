@@ -139,7 +139,10 @@ class ChatSession:
                 skill_loader=marketing_skill_loader,
                 sop_loader=sop_loader,
                 skill_names=pm_skill_names,
-                skip_env_context=skip_env_context
+                skip_env_context=skip_env_context,
+                # 剧本创作页（script_writer.html）不启用算力确认门：
+                # 生成前不弹「算力确认」验证，避免无人应答超时后 agent 重试循环持续扣费
+                power_confirm_enabled=False
             )
         logger.info(f"[ChatSession] PM Agent 初始化完成: {self.pm_agent.agent_id}")
 

@@ -17,14 +17,31 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
 
     agent_hint = "提示词长度请控制在5000字符以内，超出将被API拒绝。请精简描述，避免冗余。"
 
-    # 比例映射：前端比例 -> API 支持的比例
-    # API 仅支持 1:1, 3:2, 2:3，需要将 16:9 映射为 3:2，9:16 映射为 2:3
-    RATIO_MAPPING = {
-        '1:1': '1:1',
-        '2:3': '2:3',
-        '3:2': '3:2',
-        '16:9': '3:2',  # 兼容映射
-        '9:16': '2:3',  # 兼容映射
+    # 尺寸映射：image_size + ratio -> 显式像素（宽x高）
+    # 多米 API 约束：宽高均需被 16 整除，单边范围 [16, 3840]，
+    # 像素预算 655,360 <= 宽x高 <= 8,294,400。
+    SIZE_MAPPING = {
+        '1k': {
+            '1:1': '1024x1024',
+            '3:2': '1536x1024',
+            '2:3': '1024x1536',
+            '16:9': '1280x720',
+            '9:16': '720x1280',
+        },
+        '2k': {
+            '1:1': '2048x2048',
+            '3:2': '2048x1360',
+            '2:3': '1360x2048',
+            '16:9': '2048x1152',
+            '9:16': '1152x2048',
+        },
+        '4k': {
+            '1:1': '2880x2880',
+            '3:2': '3520x2352',
+            '2:3': '2352x3520',
+            '16:9': '3840x2160',
+            '9:16': '2160x3840',
+        },
     }
 
     # 默认模型
@@ -118,22 +135,34 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
 
         return True, None
 
-    def _map_ratio(self, ratio: str) -> str:
+    def _map_size(self, image_size: str, ratio: str) -> str:
         """
-        将前端比例映射为 API 支持的比例
+        根据分辨率档位和比例映射为多米 API 的显式像素尺寸
 
         Args:
+            image_size: 分辨率档位，如 "1k", "2k", "4k"（大小写不敏感）
             ratio: 前端传入的比例，如 "1:1", "16:9", "9:16"
 
         Returns:
-            API 支持的比例
+            显式像素尺寸（宽x高），满足多米约束：宽高被 16 整除、
+            单边 [16, 3840]、像素预算 [655360, 8294400]
         """
-        mapped = self.RATIO_MAPPING.get(ratio)
-        if mapped:
-            return mapped
-        # 默认返回 1:1
-        self.logger.warning(f"未知的比例 '{ratio}'，使用默认比例 1:1")
-        return "1:1"
+        # 标准化 image_size（宫格链路传入的是 "2K"/"4K" 大写）
+        image_size = (image_size or '1k').lower()
+
+        # 获取对应分辨率的映射
+        size_dict = self.SIZE_MAPPING.get(image_size)
+        if not size_dict:
+            self.logger.warning(f"未知的分辨率 '{image_size}'，使用默认分辨率 1k")
+            size_dict = self.SIZE_MAPPING['1k']
+
+        # 获取对应比例的尺寸
+        size = size_dict.get(ratio)
+        if not size:
+            self.logger.warning(f"未知的比例 '{ratio}'，使用默认比例 1:1")
+            size = size_dict['1:1']
+
+        return size
 
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
@@ -141,12 +170,12 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
 
         Args:
             ai_tool: AITool 对象
+                - prompt: 提示词
+                - ratio: 图片比例（支持 1:1, 2:3, 3:2, 16:9, 9:16）
+                - image_size: 分辨率档位（支持 1k/2k/4k，大小写不敏感）
 
         Returns:
             Dict[str, Any]: 请求参数字典
-            
-        注意：
-            多米 API 只支持 1K 分辨率，image_size 参数会被忽略
         """
         # 准备图片URL列表 - 支持参考图（可选）
         image_urls = None
@@ -157,13 +186,13 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
         if image_urls:
             image_urls = self.ensure_public_urls(image_urls)
 
-        # 映射比例（多米只支持 1K 分辨率，忽略 image_size 参数）
-        api_ratio = self._map_ratio(ai_tool.ratio or "1:1")
+        # 映射为显式像素尺寸（多米支持自定义 宽x高，2K/4K 需显式指定像素）
+        api_size = self._map_size(ai_tool.image_size, ai_tool.ratio or "1:1")
 
         payload = {
             "model": self.DEFAULT_MODEL,
             "prompt": ai_tool.prompt,
-            "size": api_ratio,
+            "size": api_size,
         }
 
         # 添加参考图（如果有）
@@ -207,6 +236,7 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
             ai_tool: AITool 对象
                 - prompt: 提示词
                 - ratio: 图片比例（支持 1:1, 2:3, 3:2, 16:9, 9:16）
+                - image_size: 分辨率档位（支持 1k/2k/4k，大小写不敏感）
                 - image_path: 输入图片路径（可选，作为参考图）
 
         Returns:

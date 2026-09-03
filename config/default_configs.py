@@ -715,11 +715,11 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
-    # ==================== Qwen 配置 ====================
+    # ==================== 阿里云百炼（Qwen）配置 ====================
     {
         'key': 'llm.qwen.api_key',
         'value_type': 'string',
-        'description': 'Qwen API Key（阿里通义千问）',
+        'description': '阿里云百炼 API Key（通义千问，大模型与生图/生视频共用）',
         'editable': True,
         'is_sensitive': True,
         'quick_config': True,
@@ -728,10 +728,30 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'llm.qwen.base_url',
         'value_type': 'string',
-        'description': 'Qwen API 基础URL',
+        'description': '阿里云百炼基础 URL（只填基础地址即可：大模型自动追加 /compatible-mode/v1，生图/生视频自动追加 /api/v1）',
         'editable': True,
         'is_sensitive': False,
         'quick_config': True
+    },
+
+    # ==================== Wan3.0 视频模型配置 ====================
+    # 说明：workspace_id 通常无需填写——llm.qwen.base_url 填密钥弹窗中的 API Host
+    # （如 https://llm-xxx.cn-beijing.maas.aliyuncs.com）时，驱动会自动解析出业务空间 ID 和地域
+    {
+        'key': 'wan3.workspace_id',
+        'value_type': 'string',
+        'description': '阿里云百炼业务空间 ID（wan3.0 视频模型，可留空：llm.qwen.base_url 填 API Host 时自动解析；手动填写时取 API Host 第一个点号前的部分）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'wan3.endpoint_region',
+        'value_type': 'string',
+        'description': '阿里云百炼业务空间地域（默认 cn-beijing，可选 ap-southeast-1 / ap-northeast-1 / eu-central-1 / us-east-1）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': False
     },
 
     # ==================== Ollama 配置 ====================

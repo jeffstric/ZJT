@@ -10,7 +10,7 @@
 import logging
 import os
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from utils.project_path import get_project_root
 
@@ -24,10 +24,9 @@ def extract_local_path_from_url(url: str) -> Optional[str]:
     只要 URL 的 path 以 `/upload/` 开头即认定为本服务文件，去掉前导 `/` 返回相对路径；
     其它路径（如外部 CDN、`/static/` 等）返回 None。
 
-    本函数只做「字符串提取」，不读磁盘、不校验文件是否存在。
-    **调用方拿到相对路径后，需自行 `os.path.join(get_project_root(), rel)` 拼成绝对路径，
-    并用 `os.path.exists()` 校验后再使用**——否则当某 `/upload/` URL 实际指向另一台机器
-    的文件时，可能读到本机同名路径的错误文件。
+    本函数只做「字符串提取 + 路径穿越片段拒绝」，不读磁盘、不校验文件是否存在。
+    **调用方拿到相对路径后，需通过安全路径解析器映射并校验文件存在**——否则当某
+    `/upload/` URL 实际指向另一台机器的文件时，可能读到本机同名路径的错误文件。
 
     Examples:
         "http://localhost:8000/upload/character/pic/abc.png" → "upload/character/pic/abc.png"
@@ -45,9 +44,15 @@ def extract_local_path_from_url(url: str) -> Optional[str]:
         return None
 
     parsed = urlparse(url)
-    path = parsed.path
+    path = unquote(parsed.path)
 
     if not path.startswith("/upload/"):
+        return None
+
+    # URL path 最终会映射到本地文件，必须在任何 join 之前拒绝路径穿越。
+    # 同时拒绝反斜杠，避免 Windows 将其解释为目录分隔符。
+    relative_parts = path[len("/upload/"):].split("/")
+    if "\\" in path or any(part in (".", "..") for part in relative_parts):
         return None
 
     return path.lstrip("/")

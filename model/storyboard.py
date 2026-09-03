@@ -375,6 +375,28 @@ class StoryboardModel:
             raise
 
     @staticmethod
+    def count_by_script_id(script_id: int) -> int:
+        sql = "SELECT COUNT(*) AS total FROM storyboard WHERE script_id = %s"
+        try:
+            result = execute_query(sql, (script_id,), fetch_one=True)
+            return int(result['total']) if result and result.get('total') is not None else 0
+        except Exception as e:
+            logger.error(f"Failed to count storyboards for script {script_id}: {e}")
+            raise
+
+    @staticmethod
+    def clear_script_id(script_id: int) -> int:
+        """Unlink storyboards from a script. script_id has no FK, must be nulled before delete."""
+        sql = "UPDATE storyboard SET script_id = NULL WHERE script_id = %s"
+        try:
+            affected = execute_update(sql, (script_id,))
+            logger.info(f"Cleared script_id={script_id} on {affected} storyboard row(s)")
+            return affected
+        except Exception as e:
+            logger.error(f"Failed to clear script_id {script_id} on storyboard: {e}")
+            raise
+
+    @staticmethod
     def delete(record_id: int) -> int:
         sql = "DELETE FROM storyboard WHERE id = %s"
         try:
