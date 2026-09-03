@@ -240,7 +240,8 @@
     card.appendChild(titleEl);
     card.appendChild(bodyEl);
 
-    if (raw) {
+    // 后端已归一改写时原文与友好文案相同，不再展示重复的"原始错误信息"
+    if (raw && raw !== String(friendly || '').trim()) {
       var details = document.createElement('details');
       details.className = 'cv-raw';
       var summary = document.createElement('summary');

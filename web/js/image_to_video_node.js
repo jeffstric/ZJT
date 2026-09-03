@@ -1498,10 +1498,6 @@
           // 持久化失败原因，工作流重载后可恢复显示
           node.data.lastError = truncatedErr || '生成失败';
           showToast('视频生成失败: ' + truncatedErr, 'error');
-          // 提交即被内容审核拦截时，弹违规提醒让用户知晓
-          if (window.ContentViolation && window.ContentViolation.isViolation(err.message)) {
-            window.ContentViolation.notify('wf:submit:' + node.id, err.message);
-          }
         }
       });
 

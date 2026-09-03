@@ -992,9 +992,6 @@
                   node.data.lastError = String(displayError);
                   editBtn.disabled = false;
                   showToast(displayError, 'error');
-                  if(window.ContentViolation && window.ContentViolation.isViolation(failReason)){
-                    window.ContentViolation.notify('wf:img:' + node.id, failReason);
-                  }
                   return;
                 }
                 setStatusEl(statusEl, '生成成功，但未获取到图片地址', '#dc2626');
@@ -1050,10 +1047,6 @@
           node.data.lastError = String(err.message || '提交失败');
           editBtn.disabled = false;
           showToast('提交失败: ' + (err.message || ''), 'error');
-          // 提交即被内容审核拦截时，弹违规提醒让用户知晓
-          if (window.ContentViolation && window.ContentViolation.isViolation(err.message)) {
-            window.ContentViolation.notify('wf:submit:' + node.id, err.message);
-          }
         }
       });
 

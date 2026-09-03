@@ -362,8 +362,8 @@
             }
 
             // 生成失败文案（内容违规识别，见 web/js/content_violation.js）：
-            // 失败任务的 reason/error 命中违禁/内容安全特征时，返回红色违规气泡文案并弹出违规提醒弹框；
-            // 否则返回通用失败文案。去重 key 使用稳定前缀 'ma:{type}:{project_id}'。
+            // 失败任务的 reason/error 命中违禁/内容安全特征时，返回红色违规气泡文案（不弹窗，气泡即提示）；
+            // 否则返回通用失败文案。
             function describeFailedTasks(tasks, type) {
                 const fallback = type === 'image' ? window.t('image_generation_failed') : window.t('video_generation_failed');
                 const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
@@ -372,19 +372,16 @@
                 for (const task of failedTasks) {
                     const raw = task && (task.reason || task.error || '');
                     if (!raw || !cv.isViolation(raw)) continue;
-                    const pid = task.project_id || task.ai_tool_id || task.id || '';
-                    try { cv.notify('ma:' + type + ':' + pid, raw); } catch (e) { /* 提醒异常不影响主流程 */ }
                     const friendly = (cv.describe && cv.describe(raw)) || window.t('generation_violation');
                     return `<span style="color:#dc2626;">${friendly}</span>`;
                 }
                 return fallback;
             }
 
-            // 提交阶段错误：命中内容违规时弹框提醒并返回红色违规文案，否则返回 null（走原通用文案）
-            function describeSubmitViolation(raw, type, notifyKey) {
+            // 提交阶段错误：命中内容违规时返回红色违规文案（不弹窗），否则返回 null（走原通用文案）
+            function describeSubmitViolation(raw, type) {
                 const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
                 if (!cv || !cv.isViolation || !raw || !cv.isViolation(raw)) return null;
-                try { cv.notify(notifyKey || ('ma:submit:' + type), raw); } catch (e) { /* 提醒异常不影响主流程 */ }
                 const friendly = (cv.describe && cv.describe(raw)) || window.t('generation_violation');
                 return `<span style="color:#dc2626;">${friendly}</span>`;
             }
@@ -2327,8 +2324,8 @@
 
                 } catch (e) {
                     showError(e.message || window.t('image_generation_request_failed'));
-                    // 内容违规：提交阶段即被安全系统拦截时，弹框提醒 + 气泡红色违规文案
-                    const violationContent = describeSubmitViolation(e && e.message, 'image', 'ma:submit:image:' + (requestSessionId || ''));
+                    // 内容违规：提交阶段即被安全系统拦截时，气泡显示红色违规文案
+                    const violationContent = describeSubmitViolation(e && e.message, 'image');
                     messages.value.push({
                         role: 'ai',
                         content: violationContent || window.t('image_generation_prefix_failed') + (e.message || window.t('send_failed')),
@@ -2896,8 +2893,8 @@
 
                 } catch (e) {
                     showError(e.message || window.t('video_generation_request_failed'));
-                    // 内容违规：提交阶段即被安全系统拦截时，弹框提醒 + 气泡红色违规文案
-                    const violationContent = describeSubmitViolation(e && e.message, 'video', 'ma:submit:video:' + (requestSessionId || ''));
+                    // 内容违规：提交阶段即被安全系统拦截时，气泡显示红色违规文案
+                    const violationContent = describeSubmitViolation(e && e.message, 'video');
                     messages.value.push({
                         role: 'ai',
                         content: violationContent || window.t('video_generation_prefix_failed') + (e.message || window.t('send_failed')),
@@ -3226,8 +3223,8 @@
                     }
                     // 超时分支已在 handleStream 中写入明确提示，避免额外追加通用错误气泡刷屏。
                     if (!isTimeoutError) {
-                        // 内容违规：提交/流式阶段即被安全系统拦截时，弹框提醒 + 气泡红色违规文案
-                        const violationContent = describeSubmitViolation(e && e.message, 'agent', 'ma:submit:agent:' + (sessionId || ''));
+                        // 内容违规：提交/流式阶段即被安全系统拦截时，气泡显示红色违规文案
+                        const violationContent = describeSubmitViolation(e && e.message, 'agent');
                         messages.value.push({
                             role: 'ai',
                             content: violationContent || window.t('request_error'),
