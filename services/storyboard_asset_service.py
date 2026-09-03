@@ -277,6 +277,108 @@ def select_storyboard_scene_asset(
     }
 
 
+def resolve_scene_generation_bindings(
+    scene_id: int,
+    selected_map: Dict[str, Optional[int]],
+) -> Dict[str, Dict[str, Any]]:
+    """延迟选中的轮询期解析（生成成功前不切换选中资产）。
+
+    提交生成时只建 storyboard_scene_asset、不 set_selected（见 bind_projects 延迟选中），
+    选中指针在本函数于轮询期检测到「更新成功资产」时才切换：
+
+    - generating：该类型最新的非终态资产（LEFT JOIN ai_tools 状态），
+      供轮询方展示「生成中」占位并维持轮询不中断；
+    - selected_asset_id：存在比当前选中「更新且已成功」的资产时自动切换到最新成功者
+      （多次重新生成时最新成功者胜出），否则保持原值（含 None）。
+
+    闩锁语义：仅当资产完成时间（ai_tools.update_time）不早于分镜 update_at 时才切换。
+    切换本身会刷新 scene.update_at，使后续轮询自然稳定；用户在生成完成后的手动改选
+    （scene.update_at 晚于完成时间）不会被覆盖。切换只认 ai_tool 生成产物，上传资产
+    始终走显式选中。
+
+    与删除/手动选中采用相同的 scene 行锁顺序。系统驱动的切换不更新
+    last_modified_user_id，避免轮询副作用污染分镜修改人。
+    """
+    results: Dict[str, Dict[str, Any]] = {}
+    with transaction() as conn:
+        scene = execute_query_in_transaction(
+            conn,
+            """
+                SELECT id, selected_first_frame_id, selected_last_frame_id, selected_video_id,
+                       update_at
+                FROM storyboard_scene
+                WHERE id = %s
+                FOR UPDATE
+            """,
+            (int(scene_id),),
+            fetch_one=True,
+        )
+        if not scene:
+            return {
+                asset_type: {"selected_asset_id": selected_id, "switched": False, "generating": None}
+                for asset_type, selected_id in selected_map.items()
+            }
+        scene_update_at = scene.get("update_at")
+
+        for asset_type in selected_map:
+            column = ASSET_SELECTION_COLUMNS.get(asset_type)
+            if not column:
+                continue
+            current_selected = scene.get(column)
+            rows = execute_query_in_transaction(
+                conn,
+                """
+                    SELECT a.id, a.ai_tool_id, a.result_url AS asset_result_url,
+                           t.result_url AS tool_result_url, t.status,
+                           t.update_time AS tool_update_time
+                    FROM storyboard_scene_asset a
+                    LEFT JOIN ai_tools t ON t.id = a.ai_tool_id
+                    WHERE a.scene_id = %s AND a.asset_type = %s
+                    ORDER BY a.create_at DESC, a.id DESC
+                """,
+                (int(scene_id), asset_type),
+            ) or []
+
+            generating = next((row for row in rows if is_asset_task_running(row.get("status"))), None)
+
+            # 行按新→旧排序；一旦走到选中或更旧的资产，不会再有「更新成功者」
+            winner = None
+            for row in rows:
+                row_id = int(row["id"])
+                if current_selected is not None and row_id <= int(current_selected):
+                    break
+                if not row.get("ai_tool_id"):
+                    continue  # 上传资产走显式选中，不参与自动切换
+                if not asset_result_url(row):
+                    continue  # 未产出结果（生成中/失败）
+                status = _normalized_status(row.get("status"))
+                if status not in {AI_TOOL_STATUS_COMPLETED, "completed", "success"}:
+                    continue
+                tool_update_time = row.get("tool_update_time")
+                if tool_update_time is None:
+                    continue
+                if scene_update_at is not None and tool_update_time < scene_update_at:
+                    continue  # 完成早于分镜最后更新：用户已表达过更新意图，不覆盖
+                winner = row
+                break
+
+            if winner:
+                execute_update_in_transaction(
+                    conn,
+                    f"UPDATE storyboard_scene SET {column} = %s WHERE id = %s",
+                    (int(winner["id"]), int(scene_id)),
+                )
+                current_selected = int(winner["id"])
+
+            results[asset_type] = {
+                "selected_asset_id": current_selected,
+                "switched": bool(winner),
+                "generating": generating,
+            }
+
+    return results
+
+
 __all__ = [
     "StoryboardAssetDeleteError",
     "StoryboardAssetSelectError",
@@ -284,5 +386,6 @@ __all__ = [
     "choose_asset_fallback",
     "delete_storyboard_scene_asset",
     "is_asset_task_running",
+    "resolve_scene_generation_bindings",
     "select_storyboard_scene_asset",
 ]

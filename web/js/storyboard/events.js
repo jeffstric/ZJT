@@ -34,6 +34,9 @@ import state, {
     appendSceneAgentMessage,
     activateSceneAgentMessages,
     getSelectedVideoTaskId,
+    getSelectedImageTaskId,
+    composeSceneImagePrompt,
+    onPowerEstimateUpdated,
     getSelectedImageToVideoModel,
     modelNeedsFaceMask,
     isEnterpriseEdition,
@@ -43,6 +46,7 @@ import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
 import { showToast } from './utils.js';
 import { downloadAsAttachment } from './download.js';
+import { loadSceneCandidates } from './scene_candidates.js';
 import {
     refresh,
     renderPromptWithInlineRoles,
@@ -50,6 +54,7 @@ import {
     updateDialogueRow,
     Region,
     syncSequenceModeIntroCards,
+    patchHeaderPower,
 } from './render.js';
 import {
     REGIONS_ON_SCENE_CHANGE,
@@ -386,49 +391,7 @@ function buildQuery(base, params) {
  * 候选媒体可展示 URL：必须是单条路径/URL。
  * 生成中的 ai_tools.image_path 常为逗号拼接的多张参考图，不能当作结果图。
  */
-export function isRenderableCandidateUrl(url) {
-    if (url == null) return false;
-    const value = String(url).trim();
-    if (!value) return false;
-    if (value.includes(',')) return false;
-    return true;
-}
-
-function getSceneAssetCandidateUrl(asset) {
-    if (!asset) return '';
-    const raw = asset.result_url
-        || asset.url
-        || asset.image_url
-        || asset.video_url
-        || asset.ai_tool?.result_url
-        || asset.tool?.result_url
-        || '';
-    return isRenderableCandidateUrl(raw) ? String(raw).trim() : '';
-}
-
-function mapSceneAssetCandidates(response, assetType) {
-    const selectedId = response?.selected?.[assetType];
-    const assets = response?.assets || response?.data || [];
-    return assets.map(asset => ({
-        id: asset.id,
-        url: getSceneAssetCandidateUrl(asset),
-        posterUrl: asset.poster_url || asset.thumbnail_url || '',
-        status: asset.status ?? asset.ai_tool?.status ?? asset.tool?.status ?? null,
-        selected: selectedId !== null && selectedId !== undefined && String(asset.id) === String(selectedId),
-    }));
-}
-
-async function loadSceneCandidates(sceneId) {
-    const [imageRes, videoRes] = await Promise.all([
-        api.listSceneAssets(sceneId, 'first_frame').catch(() => null),
-        api.listSceneAssets(sceneId, 'video').catch(() => null),
-    ]);
-    if (!state.sceneCandidates) state.sceneCandidates = {};
-    state.sceneCandidates[sceneId] = {
-        images: mapSceneAssetCandidates(imageRes, 'first_frame'),
-        videos: mapSceneAssetCandidates(videoRes, 'video'),
-    };
-}
+export { isRenderableCandidateUrl } from './scene_candidates.js';
 
 function setCandidateUploadState(sceneId, assetType, uploading) {
     if (!state.candidateUploadsBySceneId) state.candidateUploadsBySceneId = {};
@@ -975,6 +938,8 @@ async function sendStoryboardAgentMessage(current) {
                 } else if (data.type === 'image_task_submitted') {
                     const ids = data.project_ids || data.projectIds || [];
                     pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || '图片生成任务已提交，正在绑定到当前分镜');
+                    recordPowerSpend(data, 'AI生图');
+                    rerenderAgentPanelForScene(streamSceneId);
                     try {
                         await bindSubmittedAgentTasks(streamSceneId, ids, 'first_frame');
                         pushAgentMessageForScene(streamSceneId, 'status', '已绑定图片生成任务，右侧资产状态会自动刷新');
@@ -986,6 +951,8 @@ async function sendStoryboardAgentMessage(current) {
                     pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || (data.already_bound
                         ? '数字人视频任务已提交，正在刷新当前分镜'
                         : '视频生成任务已提交，正在绑定到当前分镜'));
+                    recordPowerSpend(data, 'AI生视频');
+                    rerenderAgentPanelForScene(streamSceneId);
                     try {
                         if (data.already_bound) {
                             await loadSceneCandidates(streamSceneId);
@@ -1038,8 +1005,8 @@ async function sendStoryboardAgentMessage(current) {
  * 「视频生成」模式（直连）：完全绕过智能体，直接用选中首帧 + 文本框提示词调
  * POST /scene/{id}/generate-video（社区版可用）。文本框预填 scene.videoPrompt，
  * 用户可编辑；编辑值仅本次使用，不回写 scene.videoPrompt。
- * 不往助手聊天区 push 任何消息，只用 notify() 提示，视频结果直接出现在右侧候选区。
- * 提交后复用 pollSceneTaskStatus 轮询并回填候选区。
+ * 不往助手聊天区 push 任何消息、不弹框，消耗计入左下角算力提示行；
+ * 视频结果直接出现在右侧候选区。提交后复用 pollSceneTaskStatus 轮询并回填候选区。
  */
 async function sendDirectVideo(current) {
     const sceneId = current.id;
@@ -1081,9 +1048,8 @@ async function sendDirectVideo(current) {
         }
     }
 
-    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息
+    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息，不弹框直接提交
     startSceneAgentRun(sceneId);
-    notify(isDh ? '正在提交数字人视频任务...' : '正在提交视频生成任务...');
     if (!isDh) {
         // 编辑值仅本次使用：提交前先重置文本框回 scene.videoPrompt 基线
         state.inputMessage = current?.videoPrompt || '';
@@ -1108,8 +1074,8 @@ async function sendDirectVideo(current) {
         if (result && result.success === false) {
             throw new Error(result.error || '提交失败');
         }
-        notify(`${isDh ? '数字人视频任务已提交' : '视频生成任务已提交'}（算力消耗 ${result.computing_power ?? '?'}），请稍候在右侧查看结果`);
-        // 后端已通过 set_selected 绑定资产，刷新候选区并轮询
+        recordPowerSpend(result, isDh ? '数字人视频' : '视频');
+        // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
     } catch (error) {
@@ -1120,6 +1086,83 @@ async function sendDirectVideo(current) {
             try { cv.notify(`sb:${sceneId}:video-submit`, submitMsg); } catch (e) { /* 提醒异常不影响主流程 */ }
         }
         notify(`视频生成失败：${submitMsg}`);
+    } finally {
+        finishSceneAgentRun(sceneId);
+        rerenderAgentPanelForScene(sceneId);
+    }
+}
+
+/**
+ * 提交成功后记录本次算力消耗：写入左下角提示行，并异步刷新右上角余额。
+ * 生图路径的消耗字段在响应顶层（视频/智能体事件）或 submission 嵌套对象（生图）里，此处统一兜底。
+ * 0/缺失不写（already_bound 等场景无新扣费，保留上次显示）。
+ */
+function recordPowerSpend(result, label) {
+    const submission = result?.submission || {};
+    const power = result?.computing_power ?? submission.computing_power_required ?? submission.computing_power_total;
+    if (power == null || Number(power) <= 0) return;
+    state.lastPowerSpend = { power, label };
+    api.fetchComputingPower().then((powerInfo) => {
+        state.computingPower = powerInfo?.computing_power ?? powerInfo?.balance ?? state.computingPower;
+        patchHeaderPower();
+    }).catch(() => {});
+}
+
+/**
+ * 「直填生图」模式（直连）：完全绕过智能体，直接用文本框提示词调
+ * POST /scene/{id}/generate-image（零 LLM 消耗）。mode='auto' 保留角色/场景参考图注入；
+ * prompt 透传且后端优先采用（prompt or context['image_prompt']）。
+ * 文本框预填当前分镜画面提示词（composeSceneImagePrompt，用户可编辑）。
+ * 不往助手聊天区 push 任何消息、不弹框，消耗计入左下角算力提示行；
+ * 图片结果直接出现在右侧候选区。提交后复用 pollSceneTaskStatus 轮询并回填候选区。
+ */
+async function sendDirectImage(current) {
+    const sceneId = current.id;
+    if (!sceneId || isSceneAgentRunning(sceneId)) return;
+    // 生图提示词不能为空（文本框预填分镜画面提示词，预填为空时需手填）
+    const prompt = (state.inputMessage || '').trim();
+    if (!prompt) {
+        notify('请输入生图提示词');
+        return;
+    }
+    // 必须已选生图模型（mode='auto' 注入参考图，走图生图/编辑模型槽位）
+    const imageTaskId = getSelectedImageTaskId(true);
+    if (imageTaskId == null || imageTaskId === '') {
+        notify('请先在模型配置中选择生图模型');
+        state.showModelConfigModal = true;
+        state.currentConfigTab = 'image';
+        rerenderModals();
+        return;
+    }
+
+    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息，不弹框直接提交
+    startSceneAgentRun(sceneId);
+    state.inputMessage = '';
+    rerenderAgentPanel();
+
+    try {
+        const result = await api.generateSceneImage(sceneId, {
+            asset_type: 'first_frame',
+            prompt,  // 用户直填提示词；后端 data.get('prompt') 优先采用
+            task_type: imageTaskId,
+            ratio: state.workflowRatio,
+            mode: 'auto',
+        });
+        if (result && result.success === false) {
+            throw new Error(result.error || '提交失败');
+        }
+        recordPowerSpend(result, '生图');
+        // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
+        await loadSceneCandidates(sceneId).catch(() => {});
+        pollSceneTaskStatus(sceneId);
+    } catch (error) {
+        // 提交阶段即被内容安全拒绝时，弹「内容违规提醒」弹框（带冷却去重）
+        const submitMsg = (error && error.message != null && error.message !== '') ? String(error.message) : (error ? String(error) : '');
+        const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+        if (cv && typeof cv.notify === 'function') {
+            try { cv.notify(`sb:${sceneId}:image-submit`, submitMsg); } catch (e) { /* 提醒异常不影响主流程 */ }
+        }
+        notify(`生图失败：${submitMsg}`);
     } finally {
         finishSceneAgentRun(sceneId);
         rerenderAgentPanelForScene(sceneId);
@@ -1411,11 +1454,13 @@ async function handleAction(action, target) {
         const hit = window.ModelCatalog.findTaskByTrack(state[listKey] || [], scene, state.modelCatalog, track);
         if (!hit || hit.task_id == null) return;
         state[field] = hit.task_id;
+        // 档位切换等价于换模型：清实际消耗，左下角回到按新模型的预估显示
+        state.lastPowerSpend = null;
         state.selectedImageTaskId = state.selectedTextToImageTaskId;
         state.selectedVideoTaskId = state.selectedImageToVideoTaskId;
         try { localStorage.setItem(storageKey, String(hit.task_id)); } catch {}
         if (state.storyboardId) persistUiConfig().catch(() => {});
-        rerenderModals();
+        rerender([Region.MODAL, Region.AGENT_PANEL]);
         return;
     }
 
@@ -2212,6 +2257,8 @@ async function handleAction(action, target) {
         const res = target.dataset.videoResolution;
         if (!res) return;
         state.videoResolution = res;
+        // 分辨率影响修饰符倍率 → 清实际值回到预估（后端按新分辨率重算）
+        state.lastPowerSpend = null;
         // 选中态位于 modal 内：先即时刷新弹窗，再异步持久化，避免点击后仍显示旧分辨率。
         rerender([Region.MODAL, Region.AGENT_PANEL]);
         await persistUiConfig();
@@ -2282,7 +2329,7 @@ async function handleAction(action, target) {
         state.showModelConfigModal = true;
         // 默认根据当前助手模式
         const mode = state.chatMode;
-        state.currentConfigTab = mode === 'video' ? 'video' : 'dialogue';
+        state.currentConfigTab = mode === 'video' ? 'video' : (mode === 'image' ? 'image' : 'dialogue');
         rerenderModals();
         return;
     }
@@ -2291,9 +2338,11 @@ async function handleAction(action, target) {
 
     if (action === 'send-ai') {
         if (!current) return;
-        // 「视频生成」模式走直连（不走智能体，社区版可用）；「AI生视频」/「对话改图」走智能体
+        // 「视频生成」/「直填生图」模式走直连（不走智能体，社区版可用）；「AI生视频」/「对话改图」走智能体
         if (state.chatMode === 'video') {
             await sendDirectVideo(current);
+        } else if (state.chatMode === 'image') {
+            await sendDirectImage(current);
         } else {
             await sendStoryboardAgentMessage(current);
         }
@@ -2611,6 +2660,9 @@ const RATIO_GATE_ALLOWED_ACTIONS = new Set([
 ]);
 
 export function bindEvents() {
+    // 视频预估（后端估价接口异步返回）回填后重渲助手面板的预估行
+    onPowerEstimateUpdated(() => rerenderAgentPanel());
+
     // 鼠标离开分镜助手区：解除浮层 pin，恢复「移出渐隐」
     document.addEventListener('mouseout', (event) => {
         const section = event.target?.closest?.('.ai-chat-section');
@@ -2774,7 +2826,12 @@ export function bindEvents() {
             // 直连「视频生成」模式：切分镜后文本框同步为新分镜的视频提示词
             if (state.chatMode === 'video') {
                 state.inputMessage = scene?.videoPrompt || '';
+            } else if (state.chatMode === 'image') {
+                // 直填生图：切分镜后文本框同步为新分镜的画面提示词
+                state.inputMessage = composeSceneImagePrompt(scene);
             }
+            // 切分镜（时长/模型上下文变化）→ 左下角提示行回到预估显示
+            state.lastPowerSpend = null;
             // 分区刷新：左栏+预览+候选+时间轴，禁止整页 renderApp
             rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
             // 布局稳定后滚到当前缩略图（点击切镜与键盘一致）
@@ -2987,7 +3044,12 @@ export function bindEvents() {
         if (state.chatMode === 'video') {
             const nextIsDh = String(nextScene?.videoType || nextScene?.video_type || '').toLowerCase() === 'digital_human';
             state.inputMessage = nextIsDh ? '' : (nextScene?.videoPrompt || '');
+        } else if (state.chatMode === 'image') {
+            // 直填生图：切分镜后文本框同步为新分镜的画面提示词
+            state.inputMessage = composeSceneImagePrompt(nextScene);
         }
+        // 切分镜（时长/模型上下文变化）→ 左下角提示行回到预估显示
+        state.lastPowerSpend = null;
         rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
 
         // 双 rAF：等区域 patch 完成布局后再滚，避免 scrollLeft 算错 / 不滚动
@@ -3028,14 +3090,19 @@ export function bindEvents() {
                 state.videoFirstFrameDismissedSceneId = null;
                 state.referenceImages = [];
             }
-            // 直连「视频生成」模式：文本框预填当前分镜视频提示词（对口型分镜无文本框，置空）；其它模式清空，避免残留
+            // 直连「视频生成」模式：文本框预填当前分镜视频提示词（对口型分镜无文本框，置空）；
+            // 直连「直填生图」模式：预填当前分镜画面提示词；其它模式清空，避免残留
             if (state.chatMode === 'video') {
                 const modeScene = getCurrentScene();
                 const modeIsDh = String(modeScene?.videoType || modeScene?.video_type || '').toLowerCase() === 'digital_human';
                 state.inputMessage = modeIsDh ? '' : (modeScene?.videoPrompt || '');
+            } else if (state.chatMode === 'image') {
+                state.inputMessage = composeSceneImagePrompt(getCurrentScene());
             } else {
                 state.inputMessage = '';
             }
+            // 模式切换 → 左下角提示行按新模式回到预估显示
+            state.lastPowerSpend = null;
             rerenderAgentPanel();
             await persistUiConfig();
             return;
@@ -3141,6 +3208,8 @@ export function bindEvents() {
                 }[type];
                 const taskId = parseInt(val, 10);
                 if (Number.isFinite(taskId)) state[field] = taskId;
+                // 模型变化 → 左下角提示行回到预估显示（按新模型单价/档位重算）
+                state.lastPowerSpend = null;
                 state.selectedImageTaskId = state.selectedTextToImageTaskId;
                 state.selectedVideoTaskId = state.selectedImageToVideoTaskId;
                 try {
@@ -3180,6 +3249,8 @@ export function bindEvents() {
                     const n = parseInt(val, 10);
                     state.videoDurationMode = Number.isFinite(n) ? n : 'auto';
                 }
+                // 时长档变化影响按时长计费的预估，回到预估显示
+                state.lastPowerSpend = null;
             } else if (type === 'maxGroupDuration') {
                 const d = parseInt(val, 10);
                 if ([5, 8, 10, 15].includes(d)) state.maxGroupDuration = d;
@@ -3201,8 +3272,8 @@ export function bindEvents() {
                 }
             }
 
-            // 模型配置在弹层内：只刷 modal；视频相关可能影响助手槽位
-            if (['textToVideo', 'imageToVideo', 'referenceToVideo', 'videoDuration'].includes(type)) {
+            // 模型配置在弹层内：只刷 modal；视频/图片槽位与时长会影响助手左下角的预估算力行
+            if (['textToImage', 'imageEdit', 'textToVideo', 'imageToVideo', 'referenceToVideo', 'videoDuration'].includes(type)) {
                 rerender([Region.MODAL, Region.AGENT_PANEL]);
             } else {
                 rerenderModals();

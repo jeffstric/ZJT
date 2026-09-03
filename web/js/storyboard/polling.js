@@ -5,6 +5,7 @@
 import state, { refreshSceneFirstFrameSlot } from './state.js';
 import * as api from './api.js';
 import { formatDuration } from './adapters.js';
+import { loadSceneCandidates } from './scene_candidates.js';
 import {
     captureAssetSelection,
     isPollAssetSelectionCurrent,
@@ -21,6 +22,8 @@ import {
 const POLL_INTERVAL = 4000;
 const pollTimers = {};
 const batchPollTimers = {};
+// 记录「本轮轮询见过进行中任务」：收尾时刷新候选区，把 generating 占位卡修正为最终状态
+const pollHadActivity = {};
 
 // 内容违规提醒（前端兜底层，见 web/js/content_violation.js）：
 // 分镜图/视频资产任务失败（-1）且 error 命中违禁/内容安全特征时弹出「内容违规提醒」，
@@ -113,6 +116,12 @@ function snapshotDialogueAudio(scene) {
 
 function applyTaskStatus(scene, data, requestSelection) {
     if (!scene) return;
+    // 延迟选中：生成中任务先 upsert 占位卡（不触碰选中态与画面 URL；
+    // 成功后后端自动切换选中，走下方既有 selected 路径完成画面替换）
+    ['first_frame', 'video'].forEach((key) => {
+        const gen = data.generating?.[key];
+        if (gen) upsertGeneratingCandidate(scene.id, key, gen);
+    });
     const firstFrameCurrent = isPollAssetSelectionCurrent(scene, 'first_frame', requestSelection);
     const videoCurrent = isPollAssetSelectionCurrent(scene, 'video', requestSelection);
     if (firstFrameCurrent && data.first_frame && data.first_frame.asset_id) scene.selectedFirstFrameId = data.first_frame.asset_id;
@@ -181,7 +190,34 @@ function hasRunning(data) {
         data.video ? data.video.status : null,
         ...(data.dialogues || []).map(d => d.status),
     ];
-    return vals.some(v => v === 0 || v === 1);
+    // 延迟选中：生成中任务不占据选中指针，进度由 generating 字段驱动（含排队/下载等非终态）
+    const generatingVals = ['first_frame', 'last_frame', 'video']
+        .map(key => data.generating?.[key]?.status ?? null);
+    return vals.some(v => v === 0 || v === 1)
+        || generatingVals.some(v => [0, 1, 3, 4, 5, 6].includes(v));
+}
+
+/**
+ * 延迟选中：用 generating 信息 upsert 候选占位卡（url 空 → 渲染「生成中」占位）。
+ * 不改 selected 标记——旧资产保持选中展示，新任务成功后由后端切换选中、
+ * 下一轮 selected info 走 upsertSceneCandidateFromTask 完成替换。
+ */
+function upsertGeneratingCandidate(sceneId, assetType, genInfo) {
+    if (!genInfo || !genInfo.asset_id) return;
+    if (assetType !== 'first_frame' && assetType !== 'video') return; // last_frame 无候选区，不展示
+    if (!state.sceneCandidates) state.sceneCandidates = {};
+    if (!state.sceneCandidates[sceneId]) state.sceneCandidates[sceneId] = { images: [], videos: [] };
+    const listKey = assetType === 'video' ? 'videos' : 'images';
+    const list = state.sceneCandidates[sceneId][listKey] || [];
+    const assetId = genInfo.asset_id;
+    let candidate = list.find(item => String(item.id) === String(assetId));
+    if (!candidate) {
+        candidate = { id: assetId, url: '', status: genInfo.status ?? null, selected: false };
+        list.unshift(candidate);
+    } else if (genInfo.status !== undefined && genInfo.status !== null) {
+        candidate.status = genInfo.status;
+    }
+    state.sceneCandidates[sceneId][listKey] = list;
 }
 
 // 局部更新某分镜变化波及的 UI 区域，替代全量 renderApp。
@@ -223,9 +259,15 @@ export function pollSceneTaskStatus(sceneId) {
             // 局部更新该分镜相关 UI，不再全量重建
             applySceneUpdate(scene, changedDialogueIds);
             if (hasRunning(data)) {
+                pollHadActivity[sceneId] = true;
                 pollTimers[sceneId] = setTimeout(poll, POLL_INTERVAL);
             } else {
                 delete pollTimers[sceneId];
+                // 生成收尾：刷新候选列表，把「生成中」占位卡修正为最终状态（成功/失败占位）
+                if (pollHadActivity[sceneId]) {
+                    delete pollHadActivity[sceneId];
+                    loadSceneCandidates(sceneId).catch(() => {});
+                }
             }
         } catch (e) {
             pollTimers[sceneId] = setTimeout(poll, POLL_INTERVAL * 2);

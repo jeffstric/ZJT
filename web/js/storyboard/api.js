@@ -312,6 +312,10 @@ export async function estimateMissingVideosPower(storyboardId, config = {}) {
 export async function generateSceneVideo(sceneId, config = {}) {
     return request(`/scene/${sceneId}/generate-video`, { method: 'POST', body: JSON.stringify(config) });
 }
+/** 单分镜视频预计算力（提交前预估行；口径与扣费一致：时长档位 × 分辨率/图模式修饰符） */
+export async function estimateSceneVideoPower(sceneId, config = {}) {
+    return request(`/scene/${sceneId}/estimate-video-power`, { method: 'POST', body: JSON.stringify(config) });
+}
 export async function getSceneTaskStatus(sceneId) {
     return request(`/scene/${sceneId}/task-status`);
 }

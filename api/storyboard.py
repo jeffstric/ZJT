@@ -45,6 +45,7 @@ from config.unified_config import (
     UnifiedConfigRegistry,
     TaskTypeId,
     TaskCategory,
+    ImageMode,
     SEEDANCE_FACE_MASK_DRIVER_KEYS,
 )
 from utils.project_path import (
@@ -54,6 +55,7 @@ from utils.project_path import (
     resolve_upload_url_to_local_path,
 )
 from utils.video_compressor import get_video_info
+from utils.computing_power import get_computing_power_for_task
 from model.storyboard import (
     StoryboardModel, StoryboardSceneModel,
     StoryboardDialogueModel, StoryboardDialogueAudioModel,
@@ -83,6 +85,7 @@ from services.storyboard_asset_service import (
     StoryboardAssetDeleteError,
     StoryboardAssetSelectError,
     delete_storyboard_scene_asset,
+    resolve_scene_generation_bindings,
     select_storyboard_scene_asset,
 )
 from services.storyboard_voiceover_bootstrap_service import (
@@ -1352,6 +1355,22 @@ async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
     return info
 
 
+def _generating_row_task_info(row: Optional[dict], asset_type: str) -> Optional[dict]:
+    """生成中资产的轮询信息（延迟选中：选中指针在成功前不指向生成中任务）。
+
+    row 来自 resolve_scene_generation_bindings（已 LEFT JOIN ai_tools 状态与结果）。
+    """
+    if not row:
+        return None
+    return {
+        'asset_id': row.get('id'),
+        'asset_type': asset_type,
+        'result_url': str(row.get('asset_result_url') or row.get('tool_result_url') or '').strip(),
+        'status': row.get('status'),
+        'error': None,
+    }
+
+
 def _enrich_scene_asset_result_urls(assets: list) -> list:
     """为候选资产补全 ai_tools 中的任务结果 URL/状态。需在 asyncio.to_thread 中调用。"""
     enriched = []
@@ -2248,6 +2267,8 @@ class StoryboardImageAgentRunner:
                 "project_ids": project_ids,
                 "asset_type": "video" if is_video else "first_frame",
                 "already_bound": already_bound,
+                # 生成工具累计消耗的算力（expert 聚合），前端写入左下角算力提示行
+                "computing_power": result.get("computing_power") or 0,
                 "message": f"已提交 {len(project_ids)} 个分镜{'视频' if is_video else '图片'}生成任务",
             })
 
@@ -2715,6 +2736,9 @@ async def get_storyboard_models(
                 'computing_power': (list(eff_cp.values())[0] if isinstance(eff_cp, dict) and eff_cp else (eff_cp or 0)),
                 'computing_power_mode': 'by_duration' if isinstance(eff_cp, dict) else 'fixed',
                 'computing_power_range': _computing_power_range(eff_cp),
+                # 按时长的完整档位表（{时长秒: 算力}，fixed 时为 None）：
+                # 前端提交前预估消耗用，取值口径与 get_computing_power(duration=...) 一致
+                'computing_power_map': (eff_cp if isinstance(eff_cp, dict) else None),
                 'supported_durations': c.supported_durations or [],
                 'default_duration': c.default_duration,
                 'supported_ratios': c.supported_ratios or [],
@@ -3923,7 +3947,8 @@ async def generate_scene_image(
     生成分镜图片（首帧/尾帧）。
 
     数据链路：预扣算力 → 创建 ai_tools（文生图）+ TasksModel(GENERATE_VIDEO) 由 scheduler 处理
-    → 插入 storyboard_scene_asset(first_frame/last_frame) → 设为当前选中 → 前端轮询 task-status。
+    → 插入 storyboard_scene_asset(first_frame/last_frame，延迟选中：不切换选中指针)
+    → 前端轮询 task-status（生成中任务经 generating 字段返回；成功后自动切换选中）。
     任务完成后 scheduler 回填 ai_tools.result_url（task-status 优先返回 ai_tools.result_url）。
 
     Body:
@@ -4200,7 +4225,14 @@ async def generate_scene_video(
     except Exception as e:
         logger.warning(f"Failed to persist video_config_json on generate-video scene {scene_id}: {e}")
 
-    computing_power = config.get_computing_power(duration=video_duration) if config else 0
+    # 预扣口径与估价接口/结算一致：时长档位基价 × 分辨率/图模式修饰符（向上取整）
+    computing_power = config.get_computing_power(
+        duration=video_duration,
+        context={
+            'image_mode': 'first_last_frame',
+            **({'resolution': video_resolution} if video_resolution else {}),
+        },
+    ) if config else 0
     transaction_id = str(uuid.uuid4())
     ok, msg = await _deduct_computing_power(request, computing_power, transaction_id)
     if not ok:
@@ -4300,7 +4332,8 @@ async def generate_scene_video(
         StoryboardSceneAssetModel.create,
         scene_id=scene_id, asset_type='video', ai_tool_id=ai_tool_id,
     )
-    await asyncio.to_thread(StoryboardSceneAssetModel.set_selected, scene_id, 'video', asset_id)
+    # 延迟选中：生成成功前不切换选中视频（否则生成期间导出/再生成会读到空资产，
+    # 失败导致原视频落空）；选中在轮询 task-status 检测到成功后自动切换。
     await asyncio.to_thread(StoryboardSceneModel.update, scene_id, last_modified_user_id=user_id)
 
     return JSONResponse({
@@ -4310,6 +4343,104 @@ async def generate_scene_video(
         'video_type': video_type,
         'computing_power': computing_power,
         'status': 'submitted',
+    })
+
+
+@router.post('/scene/{scene_id}/estimate-video-power')
+@require_permission("storyboard:view")
+async def estimate_scene_video_power(
+    request: Request,
+    scene_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """单分镜视频生成预计算力（提交前左下角预估行）。
+
+    口径与扣费一致：时长档位基价 × 修饰符（分辨率/图模式，DB 可热更新）向上取整，
+    即 get_computing_power_for_task(context={resolution, image_mode})——前端不复刻
+    倍率表，一律经本接口取值。纯只读，不写偏好不建任务。
+
+    Body:
+        task_type: 视频模型 task_id（普通视频必传）
+        duration_mode: 'auto' | 数字时长档（默认 auto，与提交同参）
+        resolution: '480P'/'720P'/...（缺省取模型默认，与 generate-video 同规则）
+        image_mode: 首尾帧/多参考（缺省 first_last_frame）
+    """
+    user_id = get_user_id_from_header(user_id)
+    scene, err = await _ensure_scene_access(scene_id, user_id, Action.VIEW)
+    if err:
+        return err
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    video_type = scene.video_type or SceneVideoType.VIDEO
+    if video_type == SceneVideoType.DIGITAL_HUMAN:
+        # 对口型：与 generate-video 相同的服务端规划（只读），按 plan 精确计价
+        from services.storyboard_digital_human_service import (
+            StoryboardDigitalHumanError,
+            compute_digital_human_power,
+            orchestrate_digital_human_generation,
+        )
+        try:
+            plan, _segments, _scene, _sb = await asyncio.to_thread(
+                orchestrate_digital_human_generation,
+                scene_id,
+                resolution=data.get('resolution'),
+            )
+        except StoryboardDigitalHumanError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+        power = compute_digital_human_power(plan)
+        return JSONResponse({
+            'success': True,
+            'computing_power': int(math.ceil(float(power or 0))),
+            'duration': int(plan.billable_duration) if plan.billable_duration else None,
+            'resolution': plan.resolution,
+            'task_type': plan.task_type,
+            'digital_human': True,
+        })
+
+    try:
+        task_type = int(data.get('task_type'))
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={'success': False, 'error': 'task_type 必须为整数'})
+    config = UnifiedConfigRegistry.get_by_id(task_type)
+    if not config:
+        return JSONResponse(status_code=400, content={'success': False, 'error': f'未知视频模型 task_type={task_type}'})
+
+    supported_durations = list(getattr(config, 'supported_durations', None) or [])
+    duration = _resolve_storyboard_video_duration_seconds(
+        scene.duration,
+        supported_durations,
+        duration_mode=data.get('duration_mode', 'auto'),
+        explicit_duration=data.get('duration'),
+    )
+    # 分辨率与 generate-video 同规则：白名单校验，缺省取模型默认
+    res_opts, default_res = _video_resolution_options_from_task(config)
+    allowed_res = {str(o.get('value')) for o in res_opts if o.get('value')}
+    raw_res = data.get('resolution')
+    resolution = str(raw_res) if raw_res and str(raw_res) in allowed_res else (str(default_res) if default_res else None)
+
+    image_mode = data.get('image_mode') or ImageMode.FIRST_LAST_FRAME
+    context = {'image_mode': image_mode}
+    if resolution:
+        context['resolution'] = resolution
+    # get_computing_power_for_task 内部查 DB（实现方倍率热更新），to_thread 避免阻塞事件循环
+    computing_power = await asyncio.to_thread(
+        get_computing_power_for_task,
+        task_type,
+        duration=duration,
+        user_id=user_id,
+        context=context,
+    )
+    return JSONResponse({
+        'success': True,
+        'computing_power': int(computing_power or 0),
+        'duration': duration,
+        'resolution': resolution,
+        'task_type': task_type,
+        'digital_human': False,
     })
 
 
@@ -4881,7 +5012,7 @@ async def bind_agent_image_task(
     scene_id: int,
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
-    """Bind agent-submitted ai_tools project_ids to current storyboard scene assets."""
+    """Bind agent-submitted ai_tools project_ids to current storyboard scene assets (延迟选中，不切换选中指针)."""
     user_id = get_user_id_from_header(user_id)
     scene, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
     if err:
@@ -4915,19 +5046,16 @@ async def bind_agent_image_task(
     if not asset_ids:
         return JSONResponse(status_code=400, content={'success': False, 'error': '未提供有效 project_ids'})
 
-    await asyncio.to_thread(
-        StoryboardSceneAssetModel.set_selected,
-        scene_id,
-        asset_type,
-        asset_ids[0],
-    )
+    # 延迟选中：绑定只建资产、不切换选中指针——生成中的空资产不得成为选中项，
+    # 否则生成期间导出/再生成视频会读到空资产（丢片段），失败还会导致原画面落空。
+    # 选中在轮询 task-status 时检测到生成成功后自动切换（resolve_scene_generation_bindings）。
     await asyncio.to_thread(StoryboardSceneModel.update, scene_id, last_modified_user_id=user_id)
 
     return JSONResponse({
         'success': True,
         'asset_type': asset_type,
         'asset_ids': asset_ids,
-        'selected_asset_id': asset_ids[0],
+        'selected_asset_id': None,
     })
 
 
@@ -4950,6 +5078,30 @@ async def get_scene_task_status(
     first_frame = await _asset_task_info(scene, 'first_frame')
     last_frame = await _asset_task_info(scene, 'last_frame')
     video = await _asset_task_info(scene, 'video')
+
+    # 延迟选中解析：提交生成不再立即切换选中指针；此处检测到「更新成功资产」时
+    # 自动切换选中（最新成功者胜出），并返回各类型最新的生成中任务供前端维持进度展示。
+    binding = await asyncio.to_thread(
+        resolve_scene_generation_bindings,
+        scene_id,
+        {
+            'first_frame': scene.selected_first_frame_id,
+            'last_frame': scene.selected_last_frame_id,
+            'video': scene.selected_video_id,
+        },
+    )
+    generating = {}
+    for bind_type, bind_info in binding.items():
+        gen_row = bind_info.get('generating')
+        generating[bind_type] = _generating_row_task_info(gen_row, bind_type) if gen_row else None
+        if bind_info.get('switched'):
+            # 选中已自动切换到最新成功资产，重算该类型的选中 info 供本轮响应直接生效
+            if bind_type == 'first_frame':
+                first_frame = await _asset_task_info(scene, 'first_frame')
+            elif bind_type == 'last_frame':
+                last_frame = await _asset_task_info(scene, 'last_frame')
+            else:
+                video = await _asset_task_info(scene, 'video')
 
     # 对话配音状态
     dialogues = await asyncio.to_thread(StoryboardDialogueModel.list_by_scene, scene_id)
@@ -4981,6 +5133,7 @@ async def get_scene_task_status(
         'first_frame': first_frame,
         'last_frame': last_frame,
         'video': video,
+        'generating': generating,
         'dialogues': voice_items,
         # 分镜当前时长（音频全部完成时由后端自动同步为选中配音求和，浮点秒）。
         # 前端轮询据此即时刷新时间线/MM:SS 标签与进度行总时长。
