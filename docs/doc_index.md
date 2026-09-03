@@ -225,6 +225,7 @@
 | [工作流反馈功能](video_workflow_feedback.md) | 用户反馈收集 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/YZNCdkBsdoNa4RxS9w4cnwDmn8g) |
 | [通知系统设计](notification_system.md) | 系统通知架构 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/EvAMd3e1IoUbiRxXXiocIPh3nYW) |
 | [轮询状态世界数据](poll_status_world_data.md) | 轮询世界数据 | 待补充 |
+| [自动保存上传去重门](web/video_workflow_upload_dedup.md) | 工作流保存按已确认内容基线去重，消除周期性全量 PUT | 待补充 |
 | [常量使用示例](常量使用示例.md) | 代码常量定义 | 待补充 |
 | [短信驱动架构](短信驱动架构说明.md) | 短信服务架构 | 待补充 |
 | [数字人节点设计](superpowers/specs/2026-06-14-digital-human-node-power-and-draw-design.md) | 数字人算力与绘制设计 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/T5Cld9mDmoeX0xxAZSWcZGVsnRb) |

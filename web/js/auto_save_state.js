@@ -47,6 +47,11 @@
       inFlight: null
     };
 
+    // 最近一次被服务端确认的 PUT body 基线（{ workflowId, body } 或 null）。
+    // 上传去重门依据：与基线逐字节一致的 body 无需再上传（服务端已是该内容）。
+    // workflowId 参与匹配，切换工作流后旧基线自动失效。
+    let confirmedBodyRecord = null;
+
     // 一次用户操作/状态变更 → 一个待确认版本
     function markDirty(){
       saveState.version += 1;
@@ -153,10 +158,43 @@
       return { action: 'send', keepalive: keepaliveOk, abort: false };
     }
 
+    /**
+     * 记录服务端已确认的 body 基线。调用点：
+     * - PUT 返回 code===0（服务端已落库该 body，含手动保存）
+     * - loadWorkflow 成功后（当前序列化即服务端内容）
+     */
+    function setConfirmedBody(workflowId, body){
+      if(typeof body !== 'string') return;
+      confirmedBodyRecord = { workflowId: String(workflowId), body: body };
+    }
+
+    /**
+     * 上传去重门：body 与当前工作流最近确认基线完全一致时返回 true。
+     * 用字符串直接比较而非哈希：入口为 http（非 secure context）时
+     * crypto.subtle 不可用；且 body 本就已在手，大字符串 === 是
+     * 长度 + memcmp，零碰撞、零依赖。
+     */
+    function isConfirmedBody(workflowId, body){
+      return !!confirmedBodyRecord
+        && confirmedBodyRecord.workflowId === String(workflowId)
+        && confirmedBodyRecord.body === body;
+    }
+
+    /**
+     * 门命中跳过上传后推进确认版本：内容已在服务端，当前 version 不再
+     * 视为未确认，关页 isDirty() 才不会误判而触发 keepalive 补发绕过门。
+     */
+    function confirmSkipped(){
+      if(saveState.version > saveState.confirmedVersion){
+        saveState.confirmedVersion = saveState.version;
+      }
+    }
+
     function reset(){
       saveState.version = 0;
       saveState.confirmedVersion = 0;
       saveState.inFlight = null;
+      confirmedBodyRecord = null;
     }
 
     return {
@@ -168,6 +206,9 @@
       endSend: endSend,
       abortInFlight: abortInFlight,
       planUnloadSend: planUnloadSend,
+      setConfirmedBody: setConfirmedBody,
+      isConfirmedBody: isConfirmedBody,
+      confirmSkipped: confirmSkipped,
       reset: reset
     };
   }
