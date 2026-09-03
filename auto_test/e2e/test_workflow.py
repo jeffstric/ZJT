@@ -4,6 +4,13 @@
 """
 import pytest
 
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.workflow,
+    pytest.mark.p0,
+    pytest.mark.ci_smoke,
+]
+
 
 class TestWorkflowCRUD:
     """工作流增删改查 P0 测试"""

@@ -291,3 +291,47 @@ def test_scene_scoped_digital_human_tool_does_not_charge_when_scene_is_not_ready
         raise AssertionError("未就绪的对口型分镜必须拒绝提交")
 
     assert charged == []
+
+
+def test_video_tool_executor_accepts_and_forwards_model_id():
+    """回归：ExpertAgent 透传 model_id（受信模型路由），包装器签名必须接受并转发。"""
+    module = _load_video_tool_module()
+    assert module is not None
+
+    delegated_calls = []
+
+    class FakeDelegate:
+        def get_tool_definitions(self, allowed_tools):
+            return []
+
+        def execute_tool(self, tool_name, tool_args, user_id, world_id, auth_token, **kwargs):
+            delegated_calls.append({"tool_name": tool_name, "kwargs": kwargs})
+            return {"success": True}
+
+    executor = module.StoryboardAgentVideoToolExecutor(FakeDelegate(), scene_id=26)
+
+    # 普通工具透传分支：get_user_computing_power 是线上报错路径
+    executor.execute_tool(
+        "get_user_computing_power",
+        {},
+        user_id="7",
+        world_id="9",
+        auth_token="token",
+        model="deepseek-v4-flash",
+        vendor_id=3,
+        model_id=34,
+    )
+    assert delegated_calls[-1]["tool_name"] == "get_user_computing_power"
+    assert delegated_calls[-1]["kwargs"].get("model_id") == 34
+
+    # 标准视频工具分支同样透传
+    executor.execute_tool(
+        "generate_text_to_video",
+        {"prompt": "camera moves"},
+        user_id="7",
+        world_id="9",
+        auth_token="token",
+        model_id=34,
+    )
+    assert delegated_calls[-1]["tool_name"] == "generate_text_to_video"
+    assert delegated_calls[-1]["kwargs"].get("model_id") == 34

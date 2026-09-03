@@ -79,8 +79,12 @@ def calculate_computing_power_from_tokens(
         return 0, ""
 
     # 计算本次 token_log 的算力成本（浮点）
+    # input_token 是含缓存命中的全量 prompt（各 LLM 客户端按 total-output 口径上报，
+    # 与 OpenAI prompt_tokens 一致，缓存命中是其子集，实测恒等式 hit+miss=prompt）。
+    # 未命中部分才按输入价计费，命中部分只按缓存价（约为输入价的1/30）计费一次。
+    uncached_input = max(0, input_token - cache_read)
     base_cost = (
-        input_token / vendor_model.input_token_threshold
+        uncached_input / vendor_model.input_token_threshold
         + output_token / vendor_model.output_token_threshold
         + cache_read / vendor_model.cache_read_threshold
     )
@@ -121,6 +125,7 @@ def calculate_computing_power_from_tokens(
     note = (
         f"时段(调用:{period}, 命中档:{hit_period}, 判定:{period_source}) | "
         f"token(输入:{input_token}, 输出:{output_token}, 缓存读取:{cache_read}) | "
+        f"输入未命中:{uncached_input} | "
         f"阈值(输入:{vendor_model.input_token_threshold}, 输出:{vendor_model.output_token_threshold}, "
         f"缓存读取:{vendor_model.cache_read_threshold}) | "
         f"抽成:{commission_rate:.2%} 倍率:{1.0 + commission_rate:.4f} 基础算力:{base_cost:.4f} | "

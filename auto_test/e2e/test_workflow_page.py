@@ -4,6 +4,13 @@
 """
 import pytest
 
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.workflow_page,
+    pytest.mark.p0,
+    pytest.mark.ci_smoke,
+]
+
 
 class TestWorkflowPage:
     """工作流页面 P0 测试"""

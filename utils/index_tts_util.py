@@ -74,7 +74,11 @@ async def generate_audio(
         uploaded_spk_audio_path = spk_audio_path
         local_spk_path = None
         if spk_audio_path:
-            local_spk_path = resolve_upload_url_to_local_path(spk_audio_path)
+            try:
+                local_spk_path = resolve_upload_url_to_local_path(spk_audio_path)
+            except ValueError:
+                # 非法/绝对路径等解析失败时走下方 isfile 兜底（原逻辑中兜底不可达）
+                local_spk_path = None
             if not (local_spk_path and os.path.isfile(local_spk_path)):
                 if os.path.isfile(spk_audio_path):
                     local_spk_path = spk_audio_path
@@ -111,7 +115,10 @@ async def generate_audio(
         uploaded_emo_ref_path = emo_ref_path
         local_emo_path = None
         if emo_ref_path:
-            local_emo_path = resolve_upload_url_to_local_path(emo_ref_path)
+            try:
+                local_emo_path = resolve_upload_url_to_local_path(emo_ref_path)
+            except ValueError:
+                local_emo_path = None
             if not (local_emo_path and os.path.isfile(local_emo_path)):
                 if os.path.isfile(emo_ref_path):
                     local_emo_path = emo_ref_path

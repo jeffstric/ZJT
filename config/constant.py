@@ -2197,6 +2197,15 @@ class AdminBillingConstants:
     MAX_COMMISSION_RATE = 1.0
 
 
+class TokenRefundCalcConstants:
+    """缓存双重计费历史退费测算常量（script/token_cache_refund_calc.py）"""
+    _CONSTANT_GROUP = True
+    # 支付订单状态：1-已支付（枚举定义见 model/payment_orders.py）
+    PAYMENT_STATUS_PAID = 1
+    # 退费资格线：累计实付 <= 该金额（元）的用户不退（未充值或仅 0.1 元首充体验包）
+    MIN_RECHARGE_YUAN = 0.1
+
+
 class PeakValleyBillingConstants:
     """大模型峰谷计费常量（北京时间，UTC+8）
 
