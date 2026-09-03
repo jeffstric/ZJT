@@ -975,8 +975,14 @@ async function sendStoryboardAgentMessage(current) {
                 } else if (data.type === 'message') {
                     pushAgentMessageForScene(streamSceneId, data.role || 'assistant', getAgentContent(data));
                 } else if (data.type === 'error') {
-                    pushAgentMessageForScene(streamSceneId, 'assistant', getAgentContent(data) || (isVideo ? '分镜视频智能体执行失败' : '分镜图片智能体执行失败'));
+                    const errContent = getAgentContent(data) || (isVideo ? '分镜视频智能体执行失败' : '分镜图片智能体执行失败');
+                    pushAgentMessageForScene(streamSceneId, 'assistant', errContent);
                     finishSceneAgentRun(streamSceneId, streamTaskId);
+                    // 智能体流错误命中违禁/内容安全特征时，弹「内容违规提醒」弹框（带冷却去重）
+                    const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+                    if (cv && typeof cv.notify === 'function') {
+                        try { cv.notify(`sb:${streamSceneId}:agent-stream`, errContent); } catch (e) { /* 提醒异常不影响主流程 */ }
+                    }
                 } else if (data.type === 'done') {
                     const content = getAgentContent(data);
                     if (content) pushAgentMessageForScene(streamSceneId, 'assistant', content);

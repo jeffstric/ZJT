@@ -530,3 +530,5 @@ else:
 | 2026-07-16 | **定稿 A + D**：解释失败用规则，修复提示词用按需 LLM；补充方案对比、D 联动、reduce-violation 演进与验收标准 |
 | 2026-07-16 | **实现落地**：util + visual_task + GPT/Gemini/Seedream/Seedance 驱动 + 前端兜底 + reduce-violation 泛化 + 分镜降低违规联动 |
 | 2026-08-30 | **P2 前端违规提醒弹框落地**：新增 `web/js/content_violation.js`（识别/友好文案/带冷却去重的「内容违规提醒」弹框），video_workflow 全量任务轮询 + storyboard 分镜资产/配音轮询 + 视频提交 catch 接入；同时补齐后端 `_MODERATION_MESSAGE_MARKERS` 4 条缺失特征（`sensitive_words`/`unsafe`/`content security`/`gemini blocked`/`candidate stopped before producing`，覆盖 duomi Gemini 约 33 次/月未改写样本）。详见 `docs/web/content_violation_frontend_notify.md` |
+| 2026-09-03 | **SYSTEM 归类违规信息保留 + 接口透出违规标记**：`task/visual_task.py` 新增 `_resolve_submit_failure_reason`，提交失败被驱动归为 SYSTEM 时若命中审核特征（`classify_content_moderation`）仍保留原文，不再被「服务异常」屏蔽；`server.py` `/api/get-status` 与 `api/storyboard.py` `_asset_task_info` 失败返回新增 `is_content_violation` 字段（`is_content_moderation_user_message` 判定），供前端 `ContentViolation` 识别 |
+| 2026-09-03 | **故事板违规提示补漏**：`mapSceneAssetCandidates` 透传候选 `error`；卡片角标（`assetBadge`）、主预览空态（`mediaFrame`）、时间轴首帧占位（`renderTimelineMediaFrame`）失败态命中违规时显示「内容违规」红色变体（hover 友好文案）；智能体流 `error` 分支接入 `ContentViolation.notify` 弹框 |

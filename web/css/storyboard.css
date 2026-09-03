@@ -2331,6 +2331,8 @@ button {
 .scene-timeline-media-frame.first-frame-pending { background: #eff6ff; color: #2563eb; }
 .scene-timeline-media-frame.first-frame-running { background: #2f6df6; color: #fff; }
 .scene-timeline-media-frame.first-frame-failed { background: #fee2e2; color: var(--danger); }
+/* 内容违规占位文案：醒目红色（沿用 .candidate-failed 的红色系） */
+.scene-timeline-media-frame .violation { color: #c2410c; font-weight: 600; }
 .scene-timeline-media-frame.first-frame-missing { background: #f8fafc; color: #64748b; }
 .first-frame-status-mark {
     position: absolute;
@@ -3258,6 +3260,8 @@ button {
 .status.ready { color: var(--success); }
 .status.running { color: var(--warning); }
 .status.failed { color: var(--danger); }
+/* 内容违规角标：浅红底 + 醒目红色文字（沿用 .candidate-failed 的红色系） */
+.status.failed.violation { background: #fee2e2; color: #c2410c; font-weight: 600; }
 /* 分镜难度 badge：易=绿 / 中=橙 / 难=红（浅底 + 同色系文字） */
 .difficulty-badge { padding: 2px 6px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.4; flex-shrink: 0; }
 .difficulty-badge.diff-easy { background: #d1fae5; color: var(--success); }

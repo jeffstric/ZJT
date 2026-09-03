@@ -103,6 +103,7 @@ from utils.computing_power import (
     BILLING_DURATION_SOURCE_REFERENCE_VIDEO,
 )
 from utils.video_resolution import validate_video_resolution
+from utils.content_moderation_error import is_content_moderation_user_message
 from utils.resource_access import (
     get_user_id_from_header,
     check_resource_permission,
@@ -2015,7 +2016,9 @@ async def get_status(
                 "project_id": ai_tool_id,
                 "status": status_str,
                 "results": results_payload,
-                "reason": reason_payload
+                "reason": reason_payload,
+                # 失败原因是否命中内容审核违规（前端 ContentViolation 识别用）
+                "is_content_violation": is_content_moderation_user_message(reason_payload)
             })
 
         # Multiple project_ids: return list

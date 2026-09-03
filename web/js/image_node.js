@@ -870,6 +870,8 @@
         editBtn.disabled = true;
         statusEl.style.display = 'block';
         setStatusEl(statusEl, '正在提交任务...');
+        // 新一轮生成开始，清除上次失败原因（避免重载后误显示过期错误）
+        node.data.lastError = '';
 
         try{
           const resolved = resolveImageEditSubmitData(node.data);
@@ -1022,14 +1024,22 @@
             },
             (errMsg) => {
               setStatusEl(statusEl, errMsg, '#dc2626');
+              // 持久化失败原因，工作流重载后可恢复显示
+              node.data.lastError = String(truncateErrorMessage(errMsg) || '');
               editBtn.disabled = false;
               showToast(errMsg || '图片编辑失败', 'error');
             }
           );
         } catch(err){
           setStatusEl(statusEl, err.message || '提交失败', '#dc2626');
+          // 持久化失败原因，工作流重载后可恢复显示
+          node.data.lastError = String(err.message || '提交失败');
           editBtn.disabled = false;
           showToast('提交失败: ' + (err.message || ''), 'error');
+          // 提交即被内容审核拦截时，弹违规提醒让用户知晓
+          if (window.ContentViolation && window.ContentViolation.isViolation(err.message)) {
+            window.ContentViolation.notify('wf:submit:' + node.id, err.message);
+          }
         }
       });
 

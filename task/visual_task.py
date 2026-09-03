@@ -57,6 +57,7 @@ from config.constant import (
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
+from utils.content_moderation_error import classify_content_moderation
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -130,6 +131,17 @@ def _normalize_failure_reason(reason):
         return rewrite_failure_reason_if_moderation(json.dumps(reason, ensure_ascii=False))
     except (TypeError, ValueError):
         return rewrite_failure_reason_if_moderation(str(reason))
+
+
+def _resolve_submit_failure_reason(error, error_type):
+    """提交失败时计算写入 ai_tools.message 的失败原因。
+
+    驱动归类为 SYSTEM 时也可能命中内容审核特征（部分供应商把审核拒绝归为系统错误），
+    此时同样保留原文，避免违规信息被「服务异常」屏蔽导致前端无法识别。
+    """
+    if error_type == "USER" or classify_content_moderation(error_message=error or ""):
+        return error
+    return "服务异常，请联系技术支持"
 
 if _is_test_mode_enabled():
     logger.info("=" * 60)
@@ -461,7 +473,7 @@ async def _submit_new_task(ai_tool):
             # 因为不同供应商的审核策略、网络状况、API 行为都不同
             return _handle_task_failure(
                 task_id=task_id, ai_tool_type=ai_tool_type,
-                reason=error if error_type == "USER" else "服务异常，请联系技术支持",
+                reason=_resolve_submit_failure_reason(error, error_type),
                 user_id=ai_tool.user_id
             )
         

@@ -83,6 +83,18 @@
   失败且命中违规时占位符文案为「生成失败：内容违规」，`title` 悬浮展示友好原因；
 - `web/js/storyboard/events.js`：单条视频生成提交 catch、批量视频生成提交 catch —— 提交阶段即被内容安全拒绝时弹框提醒。
 
+### 3.3 marketing_agent.html（营销助手页）
+
+- `marketing_agent.html`：在 `task_config.js` 之后加载 `content_violation.js`（早于 `marketing_agent.js`）；
+- `web/js/marketing_agent.js` `describeFailedTasks(tasks, type)`：任务失败收口。取失败任务的 `reason/error`，
+  命中违规时返回红色气泡文案（`ContentViolation.describe` 友好文案，缺失时回退 i18n `generation_violation`），
+  并以稳定前缀 `ma:{type}:{project_id}` 调 `notify` 弹框；否则返回通用失败文案。
+  覆盖 5 个失败分支：`checkDirectGenerationStatus`（直出图/视频 anyFailed）、`checkImageStatus`、
+  `checkVideoStatus`、Agent 图片/视频轮询（`allDone` 且无结果 URL）；
+- `describeSubmitViolation(raw, type, notifyKey)`：提交阶段 catch 用。图片提交 catch、视频提交 catch、
+  `sendMessageToApi` catch（key `ma:submit:{image|video|agent}:{sessionId}`）命中违规时弹框 + 气泡红色违规文案，否则返回 `null` 走原通用文案；
+- i18n：`zh-CN/en marketing_agent.json` 新增 `generation_violation` 键（describe 缺失时的违规兜底文案）。
+
 ## 4. 后端规则补齐（`utils/content_moderation_error.py`）
 
 按「后端归一为主」原则，把 30 天日志中**未被改写**的 duomi/Gemini 话术补入 `_MODERATION_MESSAGE_MARKERS`：
@@ -112,3 +124,16 @@
 - 不改动失败任务本身的展示逻辑（行内错误文案、候选占位符的既有行为保留）；
 - 不处理 `web/js/pages/*`（index.html 页面，非本次范围）；
 - 弹框纯展示，不内嵌「降低违规」改写入口（方案 D 入口在既有节点/分镜降低违规联动中）。
+
+## 7. video_workflow 失败原因持久化（lastError）
+
+行内失败文案（含违规友好文案）此前重载工作流后丢失。现失败时把 `truncateErrorMessage(...)`
+结果写入节点 `node.data.lastError`（`serializeWorkflow` 全量序列化 `node.data`，无需额外字段），
+重载时恢复逻辑检测到 `lastError` 非空即以红色重新渲染状态行：
+
+- `image_to_video_node.js`：提交 catch / 轮询失败回调写入图生视频节点；onTaskUpdate 逐任务
+  FAILED 分支写入对应视频节点；新一轮生成开始时清空；
+- `image_node.js`：图片编辑轮询失败回调 / 提交 catch 写入图片节点；重新提交时清空；
+- `workflow.js` `createImageToVideoNodeWithData` / `createVideoNodeWithData` 显式拷贝
+  `lastError` 并恢复 `.gen-status` / `.video-status` 显示；`createImageNodeWithData`
+  经 `Object.assign` 自动携带，仅补 `.image-edit-status` 恢复渲染。
