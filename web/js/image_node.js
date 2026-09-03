@@ -983,6 +983,20 @@
               }
 
               if(imageUrls.length === 0){
+                // 任务失败时优先展示真实失败原因（含内容违规），避免误报"生成成功"
+                const failedTasks = (statusResult.tasks || []).filter(t => t.status === 'FAILED');
+                const failReason = failedTasks.map(t => t.error || t.reason).find(Boolean);
+                if(failReason){
+                  const displayError = truncateErrorMessage(failReason) || '生成失败';
+                  setStatusEl(statusEl, displayError, '#dc2626');
+                  node.data.lastError = String(displayError);
+                  editBtn.disabled = false;
+                  showToast(displayError, 'error');
+                  if(window.ContentViolation && window.ContentViolation.isViolation(failReason)){
+                    window.ContentViolation.notify('wf:img:' + node.id, failReason);
+                  }
+                  return;
+                }
                 setStatusEl(statusEl, '生成成功，但未获取到图片地址', '#dc2626');
                 editBtn.disabled = false;
                 showToast('生成成功但未返回图片地址', 'error');
