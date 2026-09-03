@@ -83,6 +83,7 @@ from services.storyboard_asset_service import (
     StoryboardAssetDeleteError,
     StoryboardAssetSelectError,
     delete_storyboard_scene_asset,
+    resolve_scene_generation_bindings,
     select_storyboard_scene_asset,
 )
 from services.storyboard_voiceover_bootstrap_service import (
@@ -1350,6 +1351,22 @@ async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
             if tool.result_url and not info.get('result_url'):
                 info['result_url'] = tool.result_url
     return info
+
+
+def _generating_row_task_info(row: Optional[dict], asset_type: str) -> Optional[dict]:
+    """生成中资产的轮询信息（延迟选中：选中指针在成功前不指向生成中任务）。
+
+    row 来自 resolve_scene_generation_bindings（已 LEFT JOIN ai_tools 状态与结果）。
+    """
+    if not row:
+        return None
+    return {
+        'asset_id': row.get('id'),
+        'asset_type': asset_type,
+        'result_url': str(row.get('asset_result_url') or row.get('tool_result_url') or '').strip(),
+        'status': row.get('status'),
+        'error': None,
+    }
 
 
 def _enrich_scene_asset_result_urls(assets: list) -> list:
@@ -3923,7 +3940,8 @@ async def generate_scene_image(
     生成分镜图片（首帧/尾帧）。
 
     数据链路：预扣算力 → 创建 ai_tools（文生图）+ TasksModel(GENERATE_VIDEO) 由 scheduler 处理
-    → 插入 storyboard_scene_asset(first_frame/last_frame) → 设为当前选中 → 前端轮询 task-status。
+    → 插入 storyboard_scene_asset(first_frame/last_frame，延迟选中：不切换选中指针)
+    → 前端轮询 task-status（生成中任务经 generating 字段返回；成功后自动切换选中）。
     任务完成后 scheduler 回填 ai_tools.result_url（task-status 优先返回 ai_tools.result_url）。
 
     Body:
@@ -4300,7 +4318,8 @@ async def generate_scene_video(
         StoryboardSceneAssetModel.create,
         scene_id=scene_id, asset_type='video', ai_tool_id=ai_tool_id,
     )
-    await asyncio.to_thread(StoryboardSceneAssetModel.set_selected, scene_id, 'video', asset_id)
+    # 延迟选中：生成成功前不切换选中视频（否则生成期间导出/再生成会读到空资产，
+    # 失败导致原视频落空）；选中在轮询 task-status 检测到成功后自动切换。
     await asyncio.to_thread(StoryboardSceneModel.update, scene_id, last_modified_user_id=user_id)
 
     return JSONResponse({
@@ -4881,7 +4900,7 @@ async def bind_agent_image_task(
     scene_id: int,
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
-    """Bind agent-submitted ai_tools project_ids to current storyboard scene assets."""
+    """Bind agent-submitted ai_tools project_ids to current storyboard scene assets (延迟选中，不切换选中指针)."""
     user_id = get_user_id_from_header(user_id)
     scene, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
     if err:
@@ -4915,19 +4934,16 @@ async def bind_agent_image_task(
     if not asset_ids:
         return JSONResponse(status_code=400, content={'success': False, 'error': '未提供有效 project_ids'})
 
-    await asyncio.to_thread(
-        StoryboardSceneAssetModel.set_selected,
-        scene_id,
-        asset_type,
-        asset_ids[0],
-    )
+    # 延迟选中：绑定只建资产、不切换选中指针——生成中的空资产不得成为选中项，
+    # 否则生成期间导出/再生成视频会读到空资产（丢片段），失败还会导致原画面落空。
+    # 选中在轮询 task-status 时检测到生成成功后自动切换（resolve_scene_generation_bindings）。
     await asyncio.to_thread(StoryboardSceneModel.update, scene_id, last_modified_user_id=user_id)
 
     return JSONResponse({
         'success': True,
         'asset_type': asset_type,
         'asset_ids': asset_ids,
-        'selected_asset_id': asset_ids[0],
+        'selected_asset_id': None,
     })
 
 
@@ -4950,6 +4966,30 @@ async def get_scene_task_status(
     first_frame = await _asset_task_info(scene, 'first_frame')
     last_frame = await _asset_task_info(scene, 'last_frame')
     video = await _asset_task_info(scene, 'video')
+
+    # 延迟选中解析：提交生成不再立即切换选中指针；此处检测到「更新成功资产」时
+    # 自动切换选中（最新成功者胜出），并返回各类型最新的生成中任务供前端维持进度展示。
+    binding = await asyncio.to_thread(
+        resolve_scene_generation_bindings,
+        scene_id,
+        {
+            'first_frame': scene.selected_first_frame_id,
+            'last_frame': scene.selected_last_frame_id,
+            'video': scene.selected_video_id,
+        },
+    )
+    generating = {}
+    for bind_type, bind_info in binding.items():
+        gen_row = bind_info.get('generating')
+        generating[bind_type] = _generating_row_task_info(gen_row, bind_type) if gen_row else None
+        if bind_info.get('switched'):
+            # 选中已自动切换到最新成功资产，重算该类型的选中 info 供本轮响应直接生效
+            if bind_type == 'first_frame':
+                first_frame = await _asset_task_info(scene, 'first_frame')
+            elif bind_type == 'last_frame':
+                last_frame = await _asset_task_info(scene, 'last_frame')
+            else:
+                video = await _asset_task_info(scene, 'video')
 
     # 对话配音状态
     dialogues = await asyncio.to_thread(StoryboardDialogueModel.list_by_scene, scene_id)
@@ -4981,6 +5021,7 @@ async def get_scene_task_status(
         'first_frame': first_frame,
         'last_frame': last_frame,
         'video': video,
+        'generating': generating,
         'dialogues': voice_items,
         # 分镜当前时长（音频全部完成时由后端自动同步为选中配音求和，浮点秒）。
         # 前端轮询据此即时刷新时间线/MM:SS 标签与进度行总时长。

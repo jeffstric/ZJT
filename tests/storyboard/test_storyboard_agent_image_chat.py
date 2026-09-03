@@ -141,8 +141,10 @@ def test_storyboard_agent_image_frontend_flow_exists():
     assert "agentMessages" in state_js
     assert "['image', '图片生成']" not in render_js
     assert "generation_target: isVideo ? 'video' : 'image'" in events_js
-    assert "api.generateSceneImage" not in events_js
-    assert "api.generateSceneVideo" not in events_js
+    # 直连模式（「视频生成」/「直填生图」）合法直调场景生成接口（社区版零 LLM 消耗）；
+    # 智能体模式仍走 agent 消息流（sendStoryboardAgentMessage），两者并存
+    assert "api.generateSceneImage" in events_js
+    assert "api.generateSceneVideo" in events_js
 
 
 def test_storyboard_agent_running_state_is_isolated_by_scene():

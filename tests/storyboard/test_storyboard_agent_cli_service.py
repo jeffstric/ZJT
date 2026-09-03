@@ -648,7 +648,8 @@ def test_generate_image_text_to_image_binds_first_frame_asset(patched_storyboard
     assert result["project_ids"] == [701]
     assert patched_storyboard_cli.submitter.calls[0][0] == "text_to_image"
     assert patched_storyboard_cli.created_assets[0]["ai_tool_id"] == 701
-    assert patched_storyboard_cli.selected_assets[0] == (11, "first_frame", 900)
+    # 延迟选中：生成提交只建资产、不切换选中指针（选中在 task-status 轮询成功后自动切换）
+    assert patched_storyboard_cli.selected_assets == []
 
 
 def test_generate_image_deduplicates_multiline_visual_suffix(patched_storyboard_cli):
@@ -1241,7 +1242,8 @@ def test_bind_projects_can_create_candidate_without_selecting_it(patched_storybo
         select_result=False,
     )
 
-    assert result["selected_asset_id"] == result["asset_ids"][0]
+    # 延迟选中：不选中时 selected_asset_id 为 None（选中在 task-status 轮询成功后自动切换）
+    assert result["selected_asset_id"] is None
     assert patched_storyboard_cli.selected_assets == []
 
 
