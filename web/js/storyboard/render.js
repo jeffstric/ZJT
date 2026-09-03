@@ -1482,9 +1482,17 @@ function renderAiPanel() {
                         <button class="tool-button" data-action="mention">@</button>
                         <button class="chat-send-btn" data-action="send-ai" title="${isDhDirectVideo ? '生成数字人对口型视频（台词/口型以配音为准）' : '发送'}" ${sendDisabled}>${icon('send', 16)}</button>
                     </div>
+                    ${renderPowerSpendHint()}
                 </div>
             </div>
         </section>`;
+}
+
+/** 左下角算力消耗提示行：直填生图/直连视频提交成功后显示本次消耗（recordPowerSpend 写入） */
+function renderPowerSpendHint() {
+    const spend = state.lastPowerSpend;
+    if (!spend) return '';
+    return `<div class="chat-power-spend" style="flex:0 0 auto;font-size:11px;color:var(--text-secondary);line-height:1.4;margin-top:4px;"><span class="power-icon">⚡</span> 本次${spend.label || '生成'}消耗 ${spend.power} 算力</div>`;
 }
 
 function agentMessageKey(message, index) {

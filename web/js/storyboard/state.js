@@ -47,6 +47,12 @@ const state = {
     computingPower: null,
 
     /**
+     * 左下角算力消耗提示（直填生图/直连视频提交成功后写入）。
+     * 形如 { power: 5, label: '生图' }；null 时不渲染提示行。
+     */
+    lastPowerSpend: null,
+
+    /**
      * 比例门禁：世界内首个故事板创建前为 true。
      * 为 true 时禁止拆分/生图/生视频/导出等一切业务操作。
      */

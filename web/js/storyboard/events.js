@@ -45,6 +45,7 @@ import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
 import { showToast } from './utils.js';
 import { downloadAsAttachment } from './download.js';
+import { loadSceneCandidates } from './scene_candidates.js';
 import {
     refresh,
     renderPromptWithInlineRoles,
@@ -52,6 +53,7 @@ import {
     updateDialogueRow,
     Region,
     syncSequenceModeIntroCards,
+    patchHeaderPower,
 } from './render.js';
 import {
     REGIONS_ON_SCENE_CHANGE,
@@ -388,49 +390,7 @@ function buildQuery(base, params) {
  * 候选媒体可展示 URL：必须是单条路径/URL。
  * 生成中的 ai_tools.image_path 常为逗号拼接的多张参考图，不能当作结果图。
  */
-export function isRenderableCandidateUrl(url) {
-    if (url == null) return false;
-    const value = String(url).trim();
-    if (!value) return false;
-    if (value.includes(',')) return false;
-    return true;
-}
-
-function getSceneAssetCandidateUrl(asset) {
-    if (!asset) return '';
-    const raw = asset.result_url
-        || asset.url
-        || asset.image_url
-        || asset.video_url
-        || asset.ai_tool?.result_url
-        || asset.tool?.result_url
-        || '';
-    return isRenderableCandidateUrl(raw) ? String(raw).trim() : '';
-}
-
-function mapSceneAssetCandidates(response, assetType) {
-    const selectedId = response?.selected?.[assetType];
-    const assets = response?.assets || response?.data || [];
-    return assets.map(asset => ({
-        id: asset.id,
-        url: getSceneAssetCandidateUrl(asset),
-        posterUrl: asset.poster_url || asset.thumbnail_url || '',
-        status: asset.status ?? asset.ai_tool?.status ?? asset.tool?.status ?? null,
-        selected: selectedId !== null && selectedId !== undefined && String(asset.id) === String(selectedId),
-    }));
-}
-
-async function loadSceneCandidates(sceneId) {
-    const [imageRes, videoRes] = await Promise.all([
-        api.listSceneAssets(sceneId, 'first_frame').catch(() => null),
-        api.listSceneAssets(sceneId, 'video').catch(() => null),
-    ]);
-    if (!state.sceneCandidates) state.sceneCandidates = {};
-    state.sceneCandidates[sceneId] = {
-        images: mapSceneAssetCandidates(imageRes, 'first_frame'),
-        videos: mapSceneAssetCandidates(videoRes, 'video'),
-    };
-}
+export { isRenderableCandidateUrl } from './scene_candidates.js';
 
 function setCandidateUploadState(sceneId, assetType, uploading) {
     if (!state.candidateUploadsBySceneId) state.candidateUploadsBySceneId = {};
@@ -1040,8 +1000,8 @@ async function sendStoryboardAgentMessage(current) {
  * 「视频生成」模式（直连）：完全绕过智能体，直接用选中首帧 + 文本框提示词调
  * POST /scene/{id}/generate-video（社区版可用）。文本框预填 scene.videoPrompt，
  * 用户可编辑；编辑值仅本次使用，不回写 scene.videoPrompt。
- * 不往助手聊天区 push 任何消息，只用 notify() 提示，视频结果直接出现在右侧候选区。
- * 提交后复用 pollSceneTaskStatus 轮询并回填候选区。
+ * 不往助手聊天区 push 任何消息、不弹框，消耗计入左下角算力提示行；
+ * 视频结果直接出现在右侧候选区。提交后复用 pollSceneTaskStatus 轮询并回填候选区。
  */
 async function sendDirectVideo(current) {
     const sceneId = current.id;
@@ -1083,9 +1043,8 @@ async function sendDirectVideo(current) {
         }
     }
 
-    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息
+    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息，不弹框直接提交
     startSceneAgentRun(sceneId);
-    notify(isDh ? '正在提交数字人视频任务...' : '正在提交视频生成任务...');
     if (!isDh) {
         // 编辑值仅本次使用：提交前先重置文本框回 scene.videoPrompt 基线
         state.inputMessage = current?.videoPrompt || '';
@@ -1110,8 +1069,8 @@ async function sendDirectVideo(current) {
         if (result && result.success === false) {
             throw new Error(result.error || '提交失败');
         }
-        notify(`${isDh ? '数字人视频任务已提交' : '视频生成任务已提交'}（算力消耗 ${result.computing_power ?? '?'}），请稍候在右侧查看结果`);
-        // 后端已通过 set_selected 绑定资产，刷新候选区并轮询
+        recordPowerSpend(result, isDh ? '数字人视频' : '视频');
+        // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
     } catch (error) {
@@ -1129,12 +1088,27 @@ async function sendDirectVideo(current) {
 }
 
 /**
+ * 提交成功后记录本次算力消耗：写入左下角提示行，并异步刷新右上角余额。
+ * 生图路径的消耗字段在响应顶层（视频）或 submission 嵌套对象（生图）里，此处统一兜底。
+ */
+function recordPowerSpend(result, label) {
+    const submission = result?.submission || {};
+    const power = result?.computing_power ?? submission.computing_power_required ?? submission.computing_power_total;
+    if (power == null) return;
+    state.lastPowerSpend = { power, label };
+    api.fetchComputingPower().then((powerInfo) => {
+        state.computingPower = powerInfo?.computing_power ?? powerInfo?.balance ?? state.computingPower;
+        patchHeaderPower();
+    }).catch(() => {});
+}
+
+/**
  * 「直填生图」模式（直连）：完全绕过智能体，直接用文本框提示词调
  * POST /scene/{id}/generate-image（零 LLM 消耗）。mode='auto' 保留角色/场景参考图注入；
  * prompt 透传且后端优先采用（prompt or context['image_prompt']）。
  * 文本框预填当前分镜画面提示词（composeSceneImagePrompt，用户可编辑）。
- * 不往助手聊天区 push 任何消息，只用 notify() 提示，图片结果直接出现在右侧候选区。
- * 提交后复用 pollSceneTaskStatus 轮询并回填候选区。
+ * 不往助手聊天区 push 任何消息、不弹框，消耗计入左下角算力提示行；
+ * 图片结果直接出现在右侧候选区。提交后复用 pollSceneTaskStatus 轮询并回填候选区。
  */
 async function sendDirectImage(current) {
     const sceneId = current.id;
@@ -1155,9 +1129,8 @@ async function sendDirectImage(current) {
         return;
     }
 
-    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息
+    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息，不弹框直接提交
     startSceneAgentRun(sceneId);
-    notify('正在提交生图任务...');
     state.inputMessage = '';
     rerenderAgentPanel();
 
@@ -1172,8 +1145,8 @@ async function sendDirectImage(current) {
         if (result && result.success === false) {
             throw new Error(result.error || '提交失败');
         }
-        notify(`生图任务已提交（算力消耗 ${result.computing_power ?? '?'}），请稍候在右侧查看结果`);
-        // 后端已通过 set_selected 绑定资产，刷新候选区并轮询
+        recordPowerSpend(result, '生图');
+        // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
     } catch (error) {
