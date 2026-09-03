@@ -663,12 +663,7 @@
       let recoveryMeta = null;
 
       try {
-        const workflowData = serializeWorkflow();
-        const body = JSON.stringify({
-          workflow_data: workflowData,
-          default_world_id: state.defaultWorldId,
-          workflow_ratio: state.ratio
-        });
+        const body = buildAutoSaveBody();
         const controller = new AbortController();
 
         if(typeof autoSaveState !== 'undefined'){
@@ -707,6 +702,10 @@
         const result = await response.json();
 
         if(result.code === 0){
+          // 手动保存成功：与自动保存共用去重门基线（body 同构）
+          if(typeof autoSaveState !== 'undefined'){
+            autoSaveState.setConfirmedBody(workflowId, body);
+          }
           let confirmed = true;
           if(typeof autoSaveState !== 'undefined'){
             confirmed = autoSaveState.endSend(sentVersion, true);
@@ -733,6 +732,16 @@
       }
     }
 
+    // 自动/手动保存共用的 PUT body 构造。两处必须严格同构：上传去重门按
+    // body 全文比较，任何字段差异都会导致基线永不命中（退化为总是上传）。
+    function buildAutoSaveBody(){
+      return JSON.stringify({
+        workflow_data: serializeWorkflow(),
+        default_world_id: state.defaultWorldId,
+        workflow_ratio: state.ratio
+      });
+    }
+
     // 自动保存（静默保存，不显示提示）
     async function autoSaveWorkflow(options){
       const opts = options || {};
@@ -756,11 +765,20 @@
       try {
         const body = typeof opts.serializedBody === 'string'
           ? opts.serializedBody
-          : JSON.stringify({
-              workflow_data: serializeWorkflow(),
-              default_world_id: state.defaultWorldId,
-              workflow_ratio: state.ratio
-            });
+          : buildAutoSaveBody();
+
+        // 上传去重门：body 与服务端最近确认内容逐字节一致时跳过本次 PUT。
+        // 典型触发：poll-status 对失败/CDN PENDING 节点每轮重复返回相同的
+        // updated_nodes，前端内容实际未变却全量上传——大工作流可达十余 MB，
+        // 经 frp 转发会周期性打满 ECS 公网出带宽。基线只在 PUT 成功或
+        // loadWorkflow 成功时建立，上传失败不会记录（下次照常重传）。
+        if(typeof autoSaveState !== 'undefined'
+            && autoSaveState.isConfirmedBody(workflowId, body)){
+          autoSaveState.confirmSkipped();
+          console.log('[自动保存] 内容与服务端一致，跳过上传');
+          return;
+        }
+
         const keepalive = !!opts.keepalive;
         const unload = opts.unload === true;
 
@@ -828,6 +846,11 @@
 
         if(result.code === 0){
           console.log('自动保存成功:', new Date().toLocaleTimeString(), 'defaultWorldId:', state.defaultWorldId);
+          // 服务端已确认这份 body，更新去重门基线（无论该请求是否已被更新的
+          // 发送取代：此刻服务端内容就是这份 body，基线应如实反映）
+          if(typeof autoSaveState !== 'undefined'){
+            autoSaveState.setConfirmedBody(workflowId, body);
+          }
           // 仅当"该请求是最新发送且成功"才清除恢复记录：被新请求取代的旧请求
           // 的成功 ack（endSend 返回 false）不得清掉新请求的恢复快照——否则
           // 新请求随后失败时，兜底记录已被误清，数据丢失
@@ -1135,6 +1158,18 @@
             }
           }
           success = true;
+
+          // 加载成功即建立上传去重基线：此刻的序列化 == 服务端已确认内容。
+          // 之后若无真实修改，防抖/轮询触发的保存会命中基线直接跳过上传。
+          // 恢复重放（maybeRecoverPendingAutoSave）成功后会重新 loadWorkflow，
+          // 基线随重放后的最新服务端内容重建，语义保持一致。
+          try {
+            if(typeof autoSaveState !== 'undefined'){
+              autoSaveState.setConfirmedBody(workflowId, buildAutoSaveBody());
+            }
+          } catch(e) {
+            console.warn('[加载工作流] 建立保存去重基线失败:', e);
+          }
         } else {
           showToast(result.message || '加载工作流失败', 'error');
         }
