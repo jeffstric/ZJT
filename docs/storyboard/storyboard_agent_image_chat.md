@@ -13,7 +13,9 @@
 
 交互约定（直填生图与直连视频一致）：点击发送**不弹任何确认/提示 alert**，直接提交；提交成功后消耗计入「分镜助手」输入框下方的左下角提示行（`state.lastPowerSpend`，如「⚡ 本次生图消耗 X 算力」），同时异步刷新右上角算力余额。生图路径响应顶层 `computing_power` 由 `_finalize_submission` 从 `submission.computing_power_required/total` 提升而来（与 generate-video 路径字段对齐）；提交/生成失败仍走 alert 与「内容违规提醒」弹框。
 
-文本框预填基线：切换到该模式（或刷新页面恢复 `chatMode=image`）时，前端用 `state.js` 的 `composeSceneImagePrompt` 预填当前分镜画面提示词——由 `scene.prompt_json` 的 `perspective` / `style` / `scene_desc` / `character_desc` 按序以中文逗号组合，与后端 `api/storyboard.py` 的 `_compose_image_prompt` 同序；用户可直接编辑后提交，编辑值仅本次使用、不回写 `prompt_json`。旧分镜 `prompt_json` 为空时预填为空，需手填。
+智能体路径（对话改图 / AI生视频）同样计入左下角提示行：`expert_agent` 在聚合 `project_ids` 的同点累加生成工具的算力消耗（`pending_computing_power`），`image_task_submitted` / `video_task_submitted` 流式事件携带 `computing_power`，前端 `recordPowerSpend` 写入提示行（label 为「AI生图」/「AI生视频」）。0/缺失不覆盖上次显示（`already_bound` 等无新扣费场景）。
+
+文本框预填基线：切换到该模式、刷新页面恢复 `chatMode=image`、**切换分镜**时，前端用 `state.js` 的 `composeSceneImagePrompt` 预填当前分镜画面提示词——由 `scene.prompt_json` 的 `perspective` / `style` / `scene_desc` / `character_desc` 按序以中文逗号组合，与后端 `api/storyboard.py` 的 `_compose_image_prompt` 同序；用户可直接编辑后提交，编辑值仅本次使用、不回写 `prompt_json`。旧分镜 `prompt_json` 为空时预填为空，需手填。
 
 「视频生成」直连模式复用现成的社区版路由 `POST /scene/{id}/generate-video`，不经 `ToolExecutor`/企业版工具，社区版可用；「AI生视频」走智能体，社区版下视频工具未注册会报"未知工具"，故禁用并提示商业版特权。
 

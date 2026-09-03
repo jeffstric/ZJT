@@ -937,6 +937,8 @@ async function sendStoryboardAgentMessage(current) {
                 } else if (data.type === 'image_task_submitted') {
                     const ids = data.project_ids || data.projectIds || [];
                     pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || '图片生成任务已提交，正在绑定到当前分镜');
+                    recordPowerSpend(data, 'AI生图');
+                    rerenderAgentPanelForScene(streamSceneId);
                     try {
                         await bindSubmittedAgentTasks(streamSceneId, ids, 'first_frame');
                         pushAgentMessageForScene(streamSceneId, 'status', '已绑定图片生成任务，右侧资产状态会自动刷新');
@@ -948,6 +950,8 @@ async function sendStoryboardAgentMessage(current) {
                     pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || (data.already_bound
                         ? '数字人视频任务已提交，正在刷新当前分镜'
                         : '视频生成任务已提交，正在绑定到当前分镜'));
+                    recordPowerSpend(data, 'AI生视频');
+                    rerenderAgentPanelForScene(streamSceneId);
                     try {
                         if (data.already_bound) {
                             await loadSceneCandidates(streamSceneId);
@@ -1089,12 +1093,13 @@ async function sendDirectVideo(current) {
 
 /**
  * 提交成功后记录本次算力消耗：写入左下角提示行，并异步刷新右上角余额。
- * 生图路径的消耗字段在响应顶层（视频）或 submission 嵌套对象（生图）里，此处统一兜底。
+ * 生图路径的消耗字段在响应顶层（视频/智能体事件）或 submission 嵌套对象（生图）里，此处统一兜底。
+ * 0/缺失不写（already_bound 等场景无新扣费，保留上次显示）。
  */
 function recordPowerSpend(result, label) {
     const submission = result?.submission || {};
     const power = result?.computing_power ?? submission.computing_power_required ?? submission.computing_power_total;
-    if (power == null) return;
+    if (power == null || Number(power) <= 0) return;
     state.lastPowerSpend = { power, label };
     api.fetchComputingPower().then((powerInfo) => {
         state.computingPower = powerInfo?.computing_power ?? powerInfo?.balance ?? state.computingPower;
@@ -2813,6 +2818,9 @@ export function bindEvents() {
             // 直连「视频生成」模式：切分镜后文本框同步为新分镜的视频提示词
             if (state.chatMode === 'video') {
                 state.inputMessage = scene?.videoPrompt || '';
+            } else if (state.chatMode === 'image') {
+                // 直填生图：切分镜后同步为新分镜的画面提示词
+                state.inputMessage = composeSceneImagePrompt(scene);
             }
             // 分区刷新：左栏+预览+候选+时间轴，禁止整页 renderApp
             rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
@@ -3026,6 +3034,9 @@ export function bindEvents() {
         if (state.chatMode === 'video') {
             const nextIsDh = String(nextScene?.videoType || nextScene?.video_type || '').toLowerCase() === 'digital_human';
             state.inputMessage = nextIsDh ? '' : (nextScene?.videoPrompt || '');
+        } else if (state.chatMode === 'image') {
+            // 直填生图：切分镜后文本框同步为新分镜的画面提示词
+            state.inputMessage = composeSceneImagePrompt(nextScene);
         }
         rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
 

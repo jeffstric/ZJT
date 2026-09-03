@@ -2265,6 +2265,8 @@ class StoryboardImageAgentRunner:
                 "project_ids": project_ids,
                 "asset_type": "video" if is_video else "first_frame",
                 "already_bound": already_bound,
+                # 生成工具累计消耗的算力（expert 聚合），前端写入左下角算力提示行
+                "computing_power": result.get("computing_power") or 0,
                 "message": f"已提交 {len(project_ids)} 个分镜{'视频' if is_video else '图片'}生成任务",
             })
 

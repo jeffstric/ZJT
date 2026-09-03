@@ -111,6 +111,8 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         self.tool_calls_made: List[Dict[str, Any]] = []
         self.outputs: List[Any] = []
         self.pending_project_ids: List[str] = []
+        # 本次任务生成工具累计消耗的算力（随 project_ids 同点聚合，供上层展示给用户）
+        self.pending_computing_power: int = 0
     
     def _build_system_prompt(self, skill_names: List[str], context: str) -> str:
         """构建系统提示"""
@@ -233,7 +235,8 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             return {
                 "success": True,
                 "result": result,
-                "project_ids": self.pending_project_ids
+                "project_ids": self.pending_project_ids,
+                "computing_power": self.pending_computing_power,
             }
 
         except InsufficientComputingPowerError:
@@ -252,7 +255,8 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             return {
                 "success": False,
                 "error": str(e),
-                "project_ids": self.pending_project_ids
+                "project_ids": self.pending_project_ids,
+                "computing_power": self.pending_computing_power,
             }
     
     def _run_task_loop(self, task_description: str, max_iterations: int = None) -> str:
@@ -423,7 +427,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
 
             result = self._execute_tool(tool_name, tool_args)
 
-            # 收集图片/视频生成任务的 project_ids
+            # 收集图片/视频生成任务的 project_ids 与算力消耗
             if tool_name in (
                 "generate_text_to_image",
                 "edit_image",
@@ -434,6 +438,10 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             ):
                 if isinstance(result, dict) and result.get("project_ids"):
                     self.pending_project_ids.extend(result["project_ids"])
+                if isinstance(result, dict):
+                    power = result.get("computing_power") or result.get("computing_power_total") or result.get("computing_power_required")
+                    if isinstance(power, (int, float)) and power > 0:
+                        self.pending_computing_power += int(power)
 
             # ask_user 工具：在 tool 回答之前，将问题写入历史（保证顺序正确）
             # 同时移除 _verification_meta，避免 LLM 看到后重复提问
