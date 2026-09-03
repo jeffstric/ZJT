@@ -1273,7 +1273,7 @@ export function serializeUiConfig() {
 export function restoreUiConfig(config = {}) {
     state.activeTab = config.activeTab === 'dialogue' ? 'dialogue' : (config.activeTab || state.activeTab);
     state.viewMode = config.viewMode === 'grid' ? 'grid' : (config.viewMode || state.viewMode);
-    state.chatMode = ['dialogue', 'video', 'aivideo'].includes(config.chatMode) ? config.chatMode : 'dialogue';
+    state.chatMode = ['dialogue', 'image', 'video', 'aivideo'].includes(config.chatMode) ? config.chatMode : 'dialogue';
     if (config.videoImageMode === 'multi_reference' || config.videoImageMode === 'first_last_frame') {
         state.videoImageMode = config.videoImageMode;
     }

@@ -1391,6 +1391,7 @@ function renderMediaStack(disabled) {
 function renderAiPanel() {
     const modes = [
         ['dialogue', '对话改图', '选择对话模型后，可让智能体基于当前画面提示词生成或调整首帧'],
+        ['image', '直填生图', '直接输入提示词生成首帧图片，不经过智能体润色（零 LLM 消耗）'],
         ['video', '视频生成', '基于当前分镜首帧直接生成视频（不走智能体）'],
         ['aivideo', 'AI生视频', '由智能体基于当前分镜生成视频（商业版）'],
     ].map(([key, label, title]) => `<option value="${key}" ${state.chatMode === key ? 'selected' : ''} title="${title}">${label}</option>`).join('');
@@ -1408,9 +1409,11 @@ function renderAiPanel() {
         ? 'AI生视频为商业版特权，请切换到「视频生成」模式'
         : (state.chatMode === 'dialogue'
             ? '和智能体描述要如何调整当前分镜画面'
-            : (state.chatMode === 'video'
-                ? '描述视频的运动方式、镜头变化与角色动作（预填当前分镜视频提示词，可直接编辑）'
-                : '和智能体描述要如何生成当前分镜视频'));
+            : (state.chatMode === 'image'
+                ? '直接输入生图提示词，不经过 AI 润色'
+                : (state.chatMode === 'video'
+                    ? '描述视频的运动方式、镜头变化与角色动作（预填当前分镜视频提示词，可直接编辑）'
+                    : '和智能体描述要如何生成当前分镜视频')));
 
     const isVideo = isVideoMode;
     const isDhScene = isDigitalHumanScene(currentScene);
@@ -2238,8 +2241,9 @@ function renderModelConfigModal() {
     if (!state.showModelConfigModal) return '';
 
     const currentMode = state.chatMode;
-    const modeLabel = currentMode === 'video' ? '视频生成' : '对话改图';
-    const activeTab = state.currentConfigTab || (currentMode === 'video' ? 'video' : 'dialogue');
+    const modeLabel = currentMode === 'video' ? '视频生成' : (currentMode === 'image' ? '直填生图' : '对话改图');
+    const activeTab = state.currentConfigTab
+        || (currentMode === 'video' ? 'video' : (currentMode === 'image' ? 'image' : 'dialogue'));
 
     const dialogueContent = renderDialogueModelConfig();
     const imageContent = renderImageModelConfig();

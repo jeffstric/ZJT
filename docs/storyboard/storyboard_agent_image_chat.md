@@ -1,12 +1,15 @@
 # 分镜助手对话生图
 
-`web/storyboard.html` 的左侧「分镜助手」支持三种模式：
+`web/storyboard.html` 的左侧「分镜助手」支持四种模式：
 
 | 模式 | chatMode | 路径 | 社区版 |
 |------|----------|------|--------|
 | 对话改图 | `dialogue` | 智能体生图/改图 | ✅ |
+| 直填生图 | `image` | **直连** `/scene/{id}/generate-image`（用户提示词透传，不走智能体，零 LLM 消耗） | ✅ |
 | 视频生成 | `video` | **直连** `/scene/{id}/generate-video`（首帧图 + `scene.video_prompt`，不走智能体） | ✅ |
 | AI生视频 | `aivideo` | 智能体生视频（`storyboard-video` skill） | ❌（禁用，商业版特权） |
+
+「直填生图」模式（2026-09 新增）：用户直接输入生图提示词，前端调 `api.generateSceneImage`（`{ asset_type: 'first_frame', prompt, task_type, ratio, mode: 'auto' }`），`prompt` 透传且优先级最高（`storyboard_agent_cli_service.py` 中 `prompt or context["image_prompt"]`），`mode='auto'` 时保留角色/场景参考图注入；不经过任何 LLM 调用。
 
 「视频生成」直连模式复用现成的社区版路由 `POST /scene/{id}/generate-video`，不经 `ToolExecutor`/企业版工具，社区版可用；「AI生视频」走智能体，社区版下视频工具未注册会报"未知工具"，故禁用并提示商业版特权。
 

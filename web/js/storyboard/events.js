@@ -34,6 +34,7 @@ import state, {
     appendSceneAgentMessage,
     activateSceneAgentMessages,
     getSelectedVideoTaskId,
+    getSelectedImageTaskId,
     getSelectedImageToVideoModel,
     modelNeedsFaceMask,
     isEnterpriseEdition,
@@ -1120,6 +1121,67 @@ async function sendDirectVideo(current) {
             try { cv.notify(`sb:${sceneId}:video-submit`, submitMsg); } catch (e) { /* 提醒异常不影响主流程 */ }
         }
         notify(`视频生成失败：${submitMsg}`);
+    } finally {
+        finishSceneAgentRun(sceneId);
+        rerenderAgentPanelForScene(sceneId);
+    }
+}
+
+/**
+ * 「直填生图」模式（直连）：完全绕过智能体，直接用文本框提示词调
+ * POST /scene/{id}/generate-image（零 LLM 消耗）。mode='auto' 保留角色/场景参考图注入；
+ * prompt 透传且后端优先采用（prompt or context['image_prompt']）。
+ * 不往助手聊天区 push 任何消息，只用 notify() 提示，图片结果直接出现在右侧候选区。
+ * 提交后复用 pollSceneTaskStatus 轮询并回填候选区。
+ */
+async function sendDirectImage(current) {
+    const sceneId = current.id;
+    if (!sceneId || isSceneAgentRunning(sceneId)) return;
+    // 生图提示词不能为空（用户直填，无预填基线）
+    const prompt = (state.inputMessage || '').trim();
+    if (!prompt) {
+        notify('请输入生图提示词');
+        return;
+    }
+    // 必须已选生图模型（mode='auto' 注入参考图，走图生图/编辑模型槽位）
+    const imageTaskId = getSelectedImageTaskId(true);
+    if (imageTaskId == null || imageTaskId === '') {
+        notify('请先在模型配置中选择生图模型');
+        state.showModelConfigModal = true;
+        state.currentConfigTab = 'image';
+        rerenderModals();
+        return;
+    }
+
+    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息
+    startSceneAgentRun(sceneId);
+    notify('正在提交生图任务...');
+    state.inputMessage = '';
+    rerenderAgentPanel();
+
+    try {
+        const result = await api.generateSceneImage(sceneId, {
+            asset_type: 'first_frame',
+            prompt,  // 用户直填提示词；后端 data.get('prompt') 优先采用
+            task_type: imageTaskId,
+            ratio: state.workflowRatio,
+            mode: 'auto',
+        });
+        if (result && result.success === false) {
+            throw new Error(result.error || '提交失败');
+        }
+        notify(`生图任务已提交（算力消耗 ${result.computing_power ?? '?'}），请稍候在右侧查看结果`);
+        // 后端已通过 set_selected 绑定资产，刷新候选区并轮询
+        await loadSceneCandidates(sceneId).catch(() => {});
+        pollSceneTaskStatus(sceneId);
+    } catch (error) {
+        // 提交阶段即被内容安全拒绝时，弹「内容违规提醒」弹框（带冷却去重）
+        const submitMsg = (error && error.message != null && error.message !== '') ? String(error.message) : (error ? String(error) : '');
+        const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+        if (cv && typeof cv.notify === 'function') {
+            try { cv.notify(`sb:${sceneId}:image-submit`, submitMsg); } catch (e) { /* 提醒异常不影响主流程 */ }
+        }
+        notify(`生图失败：${submitMsg}`);
     } finally {
         finishSceneAgentRun(sceneId);
         rerenderAgentPanelForScene(sceneId);
@@ -2282,7 +2344,7 @@ async function handleAction(action, target) {
         state.showModelConfigModal = true;
         // 默认根据当前助手模式
         const mode = state.chatMode;
-        state.currentConfigTab = mode === 'video' ? 'video' : 'dialogue';
+        state.currentConfigTab = mode === 'video' ? 'video' : (mode === 'image' ? 'image' : 'dialogue');
         rerenderModals();
         return;
     }
@@ -2291,9 +2353,11 @@ async function handleAction(action, target) {
 
     if (action === 'send-ai') {
         if (!current) return;
-        // 「视频生成」模式走直连（不走智能体，社区版可用）；「AI生视频」/「对话改图」走智能体
+        // 「视频生成」/「直填生图」模式走直连（不走智能体，社区版可用）；「AI生视频」/「对话改图」走智能体
         if (state.chatMode === 'video') {
             await sendDirectVideo(current);
+        } else if (state.chatMode === 'image') {
+            await sendDirectImage(current);
         } else {
             await sendStoryboardAgentMessage(current);
         }
