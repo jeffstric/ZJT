@@ -2734,6 +2734,9 @@ async def get_storyboard_models(
                 'computing_power': (list(eff_cp.values())[0] if isinstance(eff_cp, dict) and eff_cp else (eff_cp or 0)),
                 'computing_power_mode': 'by_duration' if isinstance(eff_cp, dict) else 'fixed',
                 'computing_power_range': _computing_power_range(eff_cp),
+                # 按时长的完整档位表（{时长秒: 算力}，fixed 时为 None）：
+                # 前端提交前预估消耗用，取值口径与 get_computing_power(duration=...) 一致
+                'computing_power_map': (eff_cp if isinstance(eff_cp, dict) else None),
                 'supported_durations': c.supported_durations or [],
                 'default_duration': c.default_duration,
                 'supported_ratios': c.supported_ratios or [],

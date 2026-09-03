@@ -2819,9 +2819,11 @@ export function bindEvents() {
             if (state.chatMode === 'video') {
                 state.inputMessage = scene?.videoPrompt || '';
             } else if (state.chatMode === 'image') {
-                // 直填生图：切分镜后同步为新分镜的画面提示词
+                // 直填生图：切分镜后文本框同步为新分镜的画面提示词
                 state.inputMessage = composeSceneImagePrompt(scene);
             }
+            // 切分镜（时长/模型上下文变化）→ 左下角提示行回到预估显示
+            state.lastPowerSpend = null;
             // 分区刷新：左栏+预览+候选+时间轴，禁止整页 renderApp
             rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
             // 布局稳定后滚到当前缩略图（点击切镜与键盘一致）
@@ -3038,6 +3040,8 @@ export function bindEvents() {
             // 直填生图：切分镜后文本框同步为新分镜的画面提示词
             state.inputMessage = composeSceneImagePrompt(nextScene);
         }
+        // 切分镜（时长/模型上下文变化）→ 左下角提示行回到预估显示
+        state.lastPowerSpend = null;
         rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
 
         // 双 rAF：等区域 patch 完成布局后再滚，避免 scrollLeft 算错 / 不滚动
@@ -3089,6 +3093,8 @@ export function bindEvents() {
             } else {
                 state.inputMessage = '';
             }
+            // 模式切换 → 左下角提示行按新模式回到预估显示
+            state.lastPowerSpend = null;
             rerenderAgentPanel();
             await persistUiConfig();
             return;
@@ -3194,6 +3200,8 @@ export function bindEvents() {
                 }[type];
                 const taskId = parseInt(val, 10);
                 if (Number.isFinite(taskId)) state[field] = taskId;
+                // 模型变化 → 左下角提示行回到预估显示（按新模型单价/档位重算）
+                state.lastPowerSpend = null;
                 state.selectedImageTaskId = state.selectedTextToImageTaskId;
                 state.selectedVideoTaskId = state.selectedImageToVideoTaskId;
                 try {
@@ -3233,6 +3241,8 @@ export function bindEvents() {
                     const n = parseInt(val, 10);
                     state.videoDurationMode = Number.isFinite(n) ? n : 'auto';
                 }
+                // 时长档变化影响按时长计费的预估，回到预估显示
+                state.lastPowerSpend = null;
             } else if (type === 'maxGroupDuration') {
                 const d = parseInt(val, 10);
                 if ([5, 8, 10, 15].includes(d)) state.maxGroupDuration = d;
@@ -3254,8 +3264,8 @@ export function bindEvents() {
                 }
             }
 
-            // 模型配置在弹层内：只刷 modal；视频相关可能影响助手槽位
-            if (['textToVideo', 'imageToVideo', 'referenceToVideo', 'videoDuration'].includes(type)) {
+            // 模型配置在弹层内：只刷 modal；视频/图片槽位与时长会影响助手左下角的预估算力行
+            if (['textToImage', 'imageEdit', 'textToVideo', 'imageToVideo', 'referenceToVideo', 'videoDuration'].includes(type)) {
                 rerender([Region.MODAL, Region.AGENT_PANEL]);
             } else {
                 rerenderModals();

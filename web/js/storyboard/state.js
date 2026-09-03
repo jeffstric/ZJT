@@ -1251,6 +1251,62 @@ export function buildVideoGenerationPayloadExtras(scene = null) {
     };
 }
 
+/**
+ * 按档位表解析按时长计费的算力（口径与后端 get_computing_power 一致：
+ * 精确匹配时长档，无匹配取首档/固定值）。map 来自 /models 的 computing_power_map，
+ * JSON 序列化后键为字符串。
+ */
+function resolvePowerFromModel(model, durationSeconds = null) {
+    if (!model) return null;
+    const map = model.computing_power_map;
+    if (map && typeof map === 'object' && Number.isFinite(Number(durationSeconds))) {
+        const hit = map[String(Math.round(Number(durationSeconds)))];
+        if (hit != null && Number(hit) > 0) return Number(hit);
+    }
+    const cp = Number(model.computing_power) || 0;
+    return cp > 0 ? cp : null;
+}
+
+/**
+ * 提交前的预计算力消耗（左下角提示行的预估基线，随模式/模型/时长变化）。
+ * 返回 { power, label }；无可用计费信息时返回 null。
+ * - image（直填生图）：图生图/编辑模型固定单价（单张）
+ * - video/aivideo：所选视频槽位模型；按时长计费时按当前 duration 匹配档位；
+ *   对口型分镜固定数字人链路（MiniMax H3），按分镜时长向上取整到 5s 档预估
+ * - dialogue（对话改图）：编辑模型单价（LLM 消耗小额，不预估）
+ */
+export function estimateScenePower(scene = null) {
+    const sc = scene || getCurrentScene();
+    const mode = state.chatMode;
+    if (mode === 'image' || mode === 'dialogue') {
+        const model = (state.imageEditModels || []).find(m => String(m.task_id) === String(state.selectedImageEditTaskId));
+        const power = resolvePowerFromModel(model);
+        return power == null ? null : { power, label: mode === 'image' ? '生图' : 'AI生图' };
+    }
+    if (mode === 'video' || mode === 'aivideo') {
+        const isDh = String(sc?.videoType || sc?.video_type || '').toLowerCase() === 'digital_human';
+        if (isDh) {
+            const dhModel = (state.digitalHumanModels || [])[0]
+                || (state.digitalHumanModels || []).find(m => String(m.task_id) === String(state.selectedDigitalHumanTaskId));
+            // 对口型计费时长按 5s 档向上取整（与后端 billable_duration clamp 4–10 对齐）
+            const sec = Math.ceil(Number(sc?.duration || 5) / 5) * 5;
+            const power = resolvePowerFromModel(dhModel, sec);
+            return power == null ? null : { power, label: '数字人视频' };
+        }
+        const imageMode = state.videoImageMode;
+        const taskId = getSelectedVideoTaskId({ hasInputs: true, imageMode });
+        const pool = (imageMode === 'multi_reference' || imageMode === 'first_last_with_ref')
+            ? state.referenceToVideoModels
+            : state.imageToVideoModels;
+        const model = (pool || []).find(m => String(m.task_id) === String(taskId))
+            || (state.imageToVideoModels || []).find(m => String(m.task_id) === String(state.selectedImageToVideoTaskId));
+        const duration = buildVideoGenerationPayloadExtras(sc).duration;
+        const power = resolvePowerFromModel(model, duration);
+        return power == null ? null : { power, label: mode === 'aivideo' ? 'AI生视频' : '视频' };
+    }
+    return null;
+}
+
 export function serializeUiConfig() {
     return {
         activeTab: state.activeTab,
