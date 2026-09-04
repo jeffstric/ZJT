@@ -213,4 +213,7 @@ def test_plan_segments_uses_enterprise_prompt_override(monkeypatch):
         )
     )
 
-    assert captured["messages"][0]["content"] == "QUALITY SCHEMA VERSION 2"
+    # enterprise 自定义提示词原样在前；非正文排除指引由核心仓库统一追加注入
+    content = captured["messages"][0]["content"]
+    assert content.startswith("QUALITY SCHEMA VERSION 2")
+    assert "excluded_block_ids" in content

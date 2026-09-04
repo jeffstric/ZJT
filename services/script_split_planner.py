@@ -92,10 +92,13 @@ def validate_segment_plan(
     见设计文档 §6.4。只验证、不替模型重新分段：
     1. segment_id 唯一且顺序稳定。
     2. 所有 block_id 来自原始锚点集合。
-    3. 每个锚点恰好出现一次。
+    3. 每个锚点恰好出现一次（归属某个 segment 或 excluded_block_ids）。
     4. 分段顺序与原文一致。
     5. 单个分段的 block_id 连续，不跨未包含文本。
     6. 不允许空分段。
+    7. excluded_block_ids（非正文 block，如剧名标题/爽点/分隔线）只做
+       结构校验：id 合法、不与分段重复、与 segments 合计覆盖全部锚点；
+       内容是否属于非正文由规划模型判断，此处不审核。
 
     Returns:
         (ok, errors): ok=True 时 errors 为空。
@@ -111,6 +114,30 @@ def validate_segment_plan(
     valid_block_ids = [b["block_id"] for b in anchors]
     block_order = {bid: idx for idx, bid in enumerate(valid_block_ids)}
     anchor_set = set(valid_block_ids)
+
+    # 非正文排除区：旧模型输出无该字段，按空集处理（行为与历史完全一致）
+    raw_excluded = plan.get("excluded_block_ids")
+    if raw_excluded is None:
+        raw_excluded = []
+    if not isinstance(raw_excluded, list):
+        errors.append({"code": "excluded_block_ids_invalid",
+                       "message": "excluded_block_ids 必须是 block_id 字符串数组"})
+        raw_excluded = []
+    excluded_seen: set = set()
+    for bid in raw_excluded:
+        if not isinstance(bid, str):
+            errors.append({"code": "excluded_block_id_invalid", "block_id": bid,
+                           "message": f"excluded_block_ids 含非字符串项: {bid!r}"})
+            continue
+        if bid not in anchor_set:
+            errors.append({"code": "block_id_unknown", "block_id": bid,
+                           "message": f"excluded block_id 不在原始锚点集合: {bid}"})
+            continue
+        if bid in excluded_seen:
+            errors.append({"code": "block_id_duplicate", "block_id": bid,
+                           "message": f"excluded_block_ids 重复包含: {bid}"})
+            continue
+        excluded_seen.add(bid)
 
     seen_segment_ids = set()
     seen_block_ids = set()
@@ -146,6 +173,11 @@ def validate_segment_plan(
                                "segment_id": seg_id, "block_id": bid,
                                "message": f"block_id 不在原始锚点集合: {bid}"})
                 continue
+            if bid in excluded_seen:
+                errors.append({"code": "block_id_duplicate", "segment_index": i,
+                               "segment_id": seg_id, "block_id": bid,
+                               "message": f"block_id 同时出现在 excluded_block_ids 与分段中: {bid}"})
+                continue
             if bid in seen_block_ids:
                 errors.append({"code": "block_id_duplicate", "segment_index": i,
                                "segment_id": seg_id, "block_id": bid,
@@ -169,13 +201,30 @@ def validate_segment_plan(
                                "message": f"分段与前一区间重叠或乱序"})
             prev_max_order = max(prev_max_order, seg_max)
 
-    # 完整覆盖
-    missing = anchor_set - seen_block_ids
+    # 完整覆盖：每个锚点必须归属某个 segment 或 excluded_block_ids
+    missing = anchor_set - seen_block_ids - excluded_seen
     if missing:
         errors.append({"code": "block_not_covered", "block_ids": sorted(missing),
                        "message": f"分段未覆盖全部锚点，缺少 {len(missing)} 个 block"})
 
     return (len(errors) == 0), errors
+
+
+def extract_script_title_from_excluded(excluded_blocks: List[Dict[str, Any]]) -> str:
+    """从被排除的非正文 block 中提取剧名标题。
+
+    取首个 markdown 标题行（#{1,3} 开头）剥掉 # 前缀；无标题行时返回空串。
+    标题 block 被排除后拆分模型看不到剧名，合并阶段用本函数结果回填 script_title。
+    """
+    for block in excluded_blocks or []:
+        content = (block or {}).get("content") or ""
+        for line in content.splitlines():
+            matched = re.match(r"^#{1,3}\s+(.+)$", line.strip())
+            if matched:
+                title = matched.group(1).strip()
+                if title:
+                    return title
+    return ""
 
 
 def split_text_at_natural_boundaries(text: str, max_chars: int) -> List[str]:
@@ -286,6 +335,7 @@ def plan_to_segments(plan: Dict[str, Any], anchors: List[Dict[str, Any]]) -> Lis
 __all__ = [
     "anchorize_script",
     "validate_segment_plan",
+    "extract_script_title_from_excluded",
     "plan_to_segments",
     "split_text_at_natural_boundaries",
 ]

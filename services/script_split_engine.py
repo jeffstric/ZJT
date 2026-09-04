@@ -24,6 +24,7 @@ from llm.script_split_qc_agent import create_qc_log_context, run_script_split_qc
 from services.script_split_planner import (
     anchorize_script,
     validate_segment_plan,
+    extract_script_title_from_excluded,
     plan_to_segments,
 )
 from services.script_split_registry import (
@@ -483,6 +484,24 @@ async def step_plan(task: ScriptSplitTask) -> None:
         raise TaskPaused(
             str(first.get("code") or "plan_failed"),
             str(detail),
+        )
+
+    # 非正文排除区：记录被排除 block，并提取剧名供合并阶段回填 script_title
+    raw_excluded = plan.get("excluded_block_ids")
+    if not isinstance(raw_excluded, list):
+        raw_excluded = []
+    anchor_map = {b["block_id"]: b for b in anchors}
+    excluded_blocks = [anchor_map[bid] for bid in raw_excluded if bid in anchor_map]
+    if excluded_blocks:
+        excluded_title = extract_script_title_from_excluded(excluded_blocks)
+        plan.setdefault("metadata", {})
+        if excluded_title:
+            plan["metadata"]["script_title"] = excluded_title
+        logger.info(
+            "task %s 规划排除非正文 block %s，提取剧名: %s",
+            task.id,
+            [b.get("block_id") for b in excluded_blocks],
+            excluded_title or "（无标题行）",
         )
 
     # 持久化计划
@@ -1324,6 +1343,15 @@ async def step_merge(task: ScriptSplitTask) -> None:
         )
 
     merged = _merge_segments(completed)
+    # 标题 block 在规划阶段被排除后，拆分模型看不到剧名；
+    # script_title 为空时用排除区提取的剧名回填。
+    if not merged.get("script_title"):
+        plan_title = str(
+            ((task.get_segment_plan() or {}).get("metadata") or {}).get("script_title")
+            or ""
+        ).strip()
+        if plan_title:
+            merged["script_title"] = plan_title
     # 全局资产清理 + 空间修复 + 分组重排（复用 script_parser 后处理）
     from llm.script_parser import (
         sanitize_parsed_prop_references,

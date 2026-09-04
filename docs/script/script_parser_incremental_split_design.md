@@ -103,15 +103,18 @@
 
 规划提示词同时给出“单段最大输出 token”和“原文不超过 1500 字”。模型仍必须优先保持语义完整。后端在还原原文时执行最终硬检查：多 block 超限段优先沿 block 边界继续切细，单 block 超限时依次寻找空行、换行和句末标点，最后才按字符上限兜底。该后处理只收紧模型已经确定的段内范围，不跨模型语义边界重新组合文本。规划阶段不预估镜头数量，实际镜头数完全由后续分镜生成模型决定。
 
+**非正文 block 排除（2026-09-04 起）**：剧本头部的剧名/集标题、爽点/概要/风格/基调等元信息说明、`---` 分隔线、创作备注不构成剧情，由规划模型在分段的同时输出顶层 `excluded_block_ids` 一并排除——这些 block 不进入任何 segment、不生成分镜。判定指引由 `llm/script_segment_planner.py:build_exclusion_instruction` 统一维护：speed 模式内嵌于默认提示词；quality 等策略自定义提示词（`prompt_override`）在 `plan_segments` 必经点统一追加注入（enterprise 代码不进 git，无法也无需单独修改）。对白、旁白、括号动作描述、`[场景 …]` 声明行、`场景编号：` 行属于正文，提示词明确禁止排除。背景：此类“纯标题段”曾导致阶段二拆分模型为无剧情段落凭空编造分镜、与后续段落内容重复（线上事故，工作流 1646 / 任务 656）。被排除 block 中首个 `#{1,3}` 标题行由 `extract_script_title_from_excluded` 提取，持久化于 `plan.metadata.script_title`，合并阶段 `_merge_segments` 未取到剧名时回填。
+
 ### 6.3 分段计划协议
 
 ```json
 {
   "schema_version": 1,
+  "excluded_block_ids": ["block_0001", "block_0002"],
   "segments": [
     {
       "segment_id": "seg_0001",
-      "block_ids": ["block_0001", "block_0002", "block_0003"],
+      "block_ids": ["block_0003", "block_0004"],
       "title": "主卧清晨",
       "summary": "苏晚醒来观察熟睡的林诚",
       "continuity_notes": "结束时两人仍位于主卧"
@@ -120,16 +123,19 @@
 }
 ```
 
+`excluded_block_ids` 为非正文 block（头部元信息），与 `segments` 的 `block_ids` 合计覆盖全部锚点；整个剧本都是正文时输出空数组（旧模型输出无该字段，后端按空集处理，行为不变）。
+
 ### 6.4 后端计划校验
 
 后端不替模型重新分段，只验证：
 
 1. `segment_id` 唯一且顺序稳定。
 2. 所有 `block_id` 均来自原始锚点集合。
-3. 每个锚点恰好出现一次。
+3. 每个锚点恰好出现一次（归属某个 segment 或 `excluded_block_ids`）。
 4. 分段顺序与原文一致。
 5. 单个分段的 `block_id` 连续，不允许跨过未包含的文本。
 6. 不允许空分段。
+7. `excluded_block_ids` 只做结构校验：id 合法、不重复、不与分段重复包含；合计与 segments 覆盖全部锚点。block 是否属于非正文由规划模型判断，后端不做内容审核。
 
 如果计划 JSON 或覆盖校验失败，只重试阶段一。规划成功后将计划持久化，正常执行路径不重复调用规划模型。1500 字硬限制在计划持久化之前完成，因此阶段二不再自动触发局部再规划，也不会删除并重建已经存在的 segment 检查点。
 
