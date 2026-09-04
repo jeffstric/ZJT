@@ -218,8 +218,9 @@ function upsertGeneratingCandidate(sceneId, assetType, genInfo) {
     } else if (genInfo.status !== undefined && genInfo.status !== null) {
         candidate.status = genInfo.status;
     }
-    // 生成中行一旦带可播 URL（如下载中已能回放的地址）立即填入：右栏占位卡换成可播媒体；
-    // 仅可渲染才写，已有合法 URL 不被空值清掉
+    // generating 行带可播 URL 时填入候选卡（防御性：当前后端在生成/下载阶段不写
+    // result_url，此路径正常不触发，占位卡仍显示「生成中」）；仅可渲染才写，
+    // 已有合法 URL 不被空值清掉
     if (isRenderableCandidateUrl(genInfo.result_url)) {
         candidate.url = String(genInfo.result_url).trim();
     }
