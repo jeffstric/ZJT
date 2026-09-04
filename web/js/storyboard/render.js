@@ -1687,10 +1687,12 @@ function isCandidateTaskFailed(status) {
 }
 
 function isCandidateTaskRunning(status) {
-    // ai_tools: 0=PENDING, 1=PROCESSING；也兼容字符串态
-    return status === 0 || status === 1
+    // ai_tools: 0=PENDING, 1=PROCESSING, 6=DOWNLOADING；也兼容字符串态。
+    // 口径与 polling.js hasRunning 一致：下载中仍算进行中
+    return status === 0 || status === 1 || status === 6
         || status === 'pending' || status === 'running'
-        || status === 'queued' || status === 'processing';
+        || status === 'queued' || status === 'processing'
+        || status === 'downloading';
 }
 
 function renderCandidatePlaceholder(status, kind = 'image', error) {
