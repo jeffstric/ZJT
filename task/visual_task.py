@@ -51,6 +51,7 @@ from config.constant import (
     TASK_STATUS_WAITING_BEFORE_FINISH,
     RUNNINGHUB_TASK_TYPES,
     RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT,
+    VIDEO_TASK_RETRY_DELAY_MAX_SECONDS,
     get_sync_orphan_grace_seconds
 )
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
@@ -139,17 +140,20 @@ if _is_test_mode_enabled():
 def calculate_next_retry_delay(try_count):
     """
     Calculate next retry delay time
-    
+
+    RUNNING 轮询与失败重试共用此退避；封顶 VIDEO_TASK_RETRY_DELAY_MAX_SECONDS，
+    保证上游任务完成到被调度器发现之间的空窗不超过该封顶值
+    （360s 封顶时代实测成片跑完后最久 195s+ 才被发现，分镜长时间停在「生成中」）。
+
     Args:
         try_count: Number of attempts made
-    
+
     Returns:
-        Delay in seconds, maximum 360 seconds
+        Delay in seconds, maximum VIDEO_TASK_RETRY_DELAY_MAX_SECONDS
     """
     base_delay = 3
-    max_delay = 360
     delay_seconds = base_delay * (2 ** (try_count - 1))
-    return min(delay_seconds, max_delay)
+    return min(delay_seconds, VIDEO_TASK_RETRY_DELAY_MAX_SECONDS)
 
 
 def _refund_computing_power(ai_tool, reason: str):

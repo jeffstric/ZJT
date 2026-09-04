@@ -193,7 +193,8 @@ function hasRunning(data) {
     // 延迟选中：生成中任务不占据选中指针，进度由 generating 字段驱动（含排队/下载等非终态）
     const generatingVals = ['first_frame', 'last_frame', 'video']
         .map(key => data.generating?.[key]?.status ?? null);
-    return vals.some(v => v === 0 || v === 1)
+    // 选中资产口径与 generating 对齐：DOWNLOADING(6) 仍在跑（如手动点选了下载中候选），不提前停轮询
+    return vals.some(v => v === 0 || v === 1 || v === 6)
         || generatingVals.some(v => [0, 1, 3, 4, 5, 6].includes(v));
 }
 
@@ -216,6 +217,11 @@ function upsertGeneratingCandidate(sceneId, assetType, genInfo) {
         list.unshift(candidate);
     } else if (genInfo.status !== undefined && genInfo.status !== null) {
         candidate.status = genInfo.status;
+    }
+    // 生成中行一旦带可播 URL（如下载中已能回放的地址）立即填入：右栏占位卡换成可播媒体；
+    // 仅可渲染才写，已有合法 URL 不被空值清掉
+    if (isRenderableCandidateUrl(genInfo.result_url)) {
+        candidate.url = String(genInfo.result_url).trim();
     }
     state.sceneCandidates[sceneId][listKey] = list;
 }
@@ -263,10 +269,28 @@ export function pollSceneTaskStatus(sceneId) {
                 pollTimers[sceneId] = setTimeout(poll, POLL_INTERVAL);
             } else {
                 delete pollTimers[sceneId];
-                // 生成收尾：刷新候选列表，把「生成中」占位卡修正为最终状态（成功/失败占位）
+                // 生成收尾：刷新候选列表并重绘，把「生成中」占位卡修正为最终状态（成功/失败占位），
+                // 同时用选中候选的最新 URL 回写主预览（最后一轮轮询可能尚未拿到，如用户改选/失败收尾场景）。
+                // 整段自捕获异常：外层 catch 会把收尾失败当成轮询错误退避重试，导致已停轮询复活。
                 if (pollHadActivity[sceneId]) {
                     delete pollHadActivity[sceneId];
-                    loadSceneCandidates(sceneId).catch(() => {});
+                    try {
+                        await loadSceneCandidates(sceneId);
+                        const scene = state.scenes.find(item => item.id === sceneId);
+                        if (scene) {
+                            const selVideo = (state.sceneCandidates[sceneId]?.videos || []).find(item => item.selected);
+                            if (selVideo?.url) {
+                                scene.videoUrl = preferSceneMediaUrl(scene.videoUrl, selVideo.url);
+                                if (selVideo.id) scene.selectedVideoId = selVideo.id;
+                            }
+                            const selImage = (state.sceneCandidates[sceneId]?.images || []).find(item => item.selected);
+                            if (selImage?.url) {
+                                scene.firstFrameUrl = preferSceneMediaUrl(scene.firstFrameUrl, selImage.url);
+                                if (selImage.id) scene.selectedFirstFrameId = selImage.id;
+                            }
+                            applySceneUpdate(scene, []);
+                        }
+                    } catch (e) { /* 收尾失败不影响主流程 */ }
                 }
             }
         } catch (e) {

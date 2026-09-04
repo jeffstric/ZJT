@@ -1,10 +1,13 @@
 """
-visual_task 失败原因归一化单元测试
+visual_task 调度退避封顶单元测试
 
-依赖 stub 全部通过 tests/base/test_isolation.py 官方工具安装：
-- with 块内即使 import 中断，离开时也必然恢复 sys.modules 与父包属性；
-- purged_modules 保证 stub 绑定版 task.visual_task 不会驻留，
-  后续测试重新 import 时按真实依赖加载。
+背景：RUNNING 轮询与失败重试共用 calculate_next_retry_delay 的指数退避。
+360s 封顶时代，上游任务完成到被调度器发现之间的空窗最坏可达数分钟
+（实测 Task 104 成片 19:55 跑完、19:57:35 才被发现），分镜长时间停在「生成中」。
+封顶降为 VIDEO_TASK_RETRY_DELAY_MAX_SECONDS=96 后，完成发现延迟 ≤96s。
+
+依赖 stub 全部通过 tests/base/test_isolation.py 官方工具安装
+（模式同 test_visual_task_failure_reason.py）。
 """
 import unittest
 from unittest.mock import MagicMock
@@ -47,6 +50,7 @@ with purged_modules('task.visual_task'), stub_modules({
         AI_TOOL_STATUS_SYNC_QUEUED=3,
         AI_TOOL_STATUS_WAITING_PARAM_PREPARE=4,
         AI_TOOL_STATUS_WAITING_BEFORE_FINISH=5,
+        AI_TOOL_STATUS_DOWNLOADING=6,
         TASK_STATUS_QUEUED=0,
         TASK_STATUS_PROCESSING=1,
         TASK_STATUS_COMPLETED=2,
@@ -57,7 +61,6 @@ with purged_modules('task.visual_task'), stub_modules({
         RUNNINGHUB_TASK_TYPES=[],
         RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT=30,
         VIDEO_TASK_RETRY_DELAY_MAX_SECONDS=96,
-        # f668 孤儿宽限：0 = 禁用（本测试只关注失败原因归一化，不涉及孤儿恢复）
         get_sync_orphan_grace_seconds=MagicMock(return_value=0),
     ),
     'config.config_util': module_stub(
@@ -69,33 +72,30 @@ with purged_modules('task.visual_task'), stub_modules({
         make_perseids_request=MagicMock(),
     ),
 }):
-    from task.visual_task import _normalize_failure_reason
+    from task.visual_task import calculate_next_retry_delay
 
 
-class TestNormalizeFailureReason(unittest.TestCase):
-    """测试外部 API 返回的失败原因可安全写入数据库"""
+class TestRetryDelayCap(unittest.TestCase):
+    """退避斜坡 3*2^(n-1) 保持不变，封顶 96 秒"""
 
-    def test_dict_error_uses_message_text(self):
-        reason = {
-            'code': 'task_failed',
-            'message': '任务处理异常崩溃: Redis timeout'
-        }
+    def test_ramp_preserved(self):
+        self.assertEqual(calculate_next_retry_delay(1), 3)
+        self.assertEqual(calculate_next_retry_delay(2), 6)
+        self.assertEqual(calculate_next_retry_delay(3), 12)
+        self.assertEqual(calculate_next_retry_delay(4), 24)
+        self.assertEqual(calculate_next_retry_delay(5), 48)
 
-        self.assertEqual(
-            _normalize_failure_reason(reason),
-            '任务处理异常崩溃: Redis timeout'
-        )
+    def test_capped_at_96(self):
+        # 斜坡第 6 次恰好到 96，之后不再增长（旧封顶 360 时代第 7 次为 192）
+        self.assertEqual(calculate_next_retry_delay(6), 96)
+        self.assertEqual(calculate_next_retry_delay(7), 96)
+        self.assertEqual(calculate_next_retry_delay(20), 96)
+        self.assertEqual(calculate_next_retry_delay(100), 96)
 
-    def test_dict_without_message_serializes_to_json(self):
-        reason = {'code': 'task_failed', 'detail': {'phase': 'query'}}
-
-        self.assertEqual(
-            _normalize_failure_reason(reason),
-            '{"code": "task_failed", "detail": {"phase": "query"}}'
-        )
-
-    def test_none_uses_default_message(self):
-        self.assertEqual(_normalize_failure_reason(None), '任务失败')
+    def test_real_constant_value(self):
+        # 真实常量（不经 stub）：防止误改回 360 级别
+        from config.constant import VIDEO_TASK_RETRY_DELAY_MAX_SECONDS
+        self.assertEqual(VIDEO_TASK_RETRY_DELAY_MAX_SECONDS, 96)
 
 
 if __name__ == '__main__':

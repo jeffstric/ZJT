@@ -1041,6 +1041,13 @@ AI_TOOL_STATUS_WAITING_BEFORE_FINISH = AIToolStatus.WAITING_BEFORE_FINISH
 AI_TOOL_STATUS_DOWNLOADING = AIToolStatus.DOWNLOADING
 
 
+# ===== 视觉任务调度退避封顶 =====
+# calculate_next_retry_delay 按 3 * 2^(try_count-1) 爬坡，封顶此值。
+# RUNNING 轮询与失败重试共用：上游任务完成到被调度器发现之间的空窗最坏 = 此封顶值
+# （360s 时代实测成片跑完后最久 195s+ 才被发现，分镜长时间停在「生成中」）。
+VIDEO_TASK_RETRY_DELAY_MAX_SECONDS = 96
+
+
 # ===== 下载队列（download_queue）解耦配置 =====
 # visual_task 主循环检测到上游生成完成后，不再同步 await 分钟级下载，而是把下载意图
 # 写入 download_queue 表、状态置 DOWNLOADING，由独立 job download_queue_worker 异步消费。
