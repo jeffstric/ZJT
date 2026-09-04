@@ -1462,7 +1462,9 @@
 
               node.data.gridModel = finalModel;
 
-              const imagePower = TaskConfig.getComputingPower(finalModel) || 2;
+              // 宫格整图含 N 格，拆分后单格分辨率≈整图/N，始终按模型支持的最高分辨率提交（如 GPT Image 2 → 4K）
+              const gridImageSize = TaskConfig.getMaxSupportedSize(finalModel);
+              const imagePower = TaskConfig.getComputingPower(finalModel, undefined, gridImageSize ? { resolution: gridImageSize } : {}) || 2;
               const imageCount = Math.ceil(shotCount / gridSize);
               const totalPower = imageCount * imagePower;
 
@@ -1471,9 +1473,10 @@
               const modelDisplayName = taskInfo ? taskInfo.name : finalModel;
 
               const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
+              const sizeInfo = gridImageSize ? `\n分辨率：${gridImageSize}` : '';
               const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
                 `分镜数量：${shotCount}个\n` +
-                `模型：${modelDisplayName}${refImageInfo}\n` +
+                `模型：${modelDisplayName}${refImageInfo}${sizeInfo}\n` +
                 `预计消耗算力：${totalPower}\n\n` +
                 `确认生成吗？`;
               
@@ -1524,11 +1527,11 @@
                 form.append('prompt', finalGridPrompt);
                 form.append('count', '1');
                 appendAuthToForm(form);
-                
-                if(finalModel === 'gemini-3-pro-image-preview') {
-                  form.append('image_size', '4K');
+
+                if(gridImageSize) {
+                  form.append('image_size', gridImageSize);
                 }
-                
+
                 let apiUrl, res;
                 console.log('[DEBUG-宫格生图] state.ratio:', state.ratio, 'ratioSelectEl.value:', ratioSelectEl.value, '发送比例:', state.ratio || '16:9', '模型:', finalModel);
                 if(referenceImageUrls.length > 0) {
@@ -1886,7 +1889,9 @@
           }
           
           node.data.gridModel = finalModel;
-          const imagePower = TaskConfig.getComputingPower(finalModel) || 2;
+          // 宫格整图含 N 格，拆分后单格分辨率≈整图/N，始终按模型支持的最高分辨率提交（如 GPT Image 2 → 4K）
+          const gridImageSize = TaskConfig.getMaxSupportedSize(finalModel);
+          const imagePower = TaskConfig.getComputingPower(finalModel, undefined, gridImageSize ? { resolution: gridImageSize } : {}) || 2;
           const imageCount = Math.ceil(shotCount / gridSize);
           const totalPower = imageCount * imagePower;
 
@@ -1896,9 +1901,10 @@
 
           // 确认生成
           const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
+          const sizeInfo = gridImageSize ? `\n分辨率：${gridImageSize}` : '';
           const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
             `分镜数量：${shotCount}个\n` +
-            `模型：${modelDisplayName}${refImageInfo}\n` +
+            `模型：${modelDisplayName}${refImageInfo}${sizeInfo}\n` +
             `预计消耗算力：${totalPower}\n\n` +
             `确认生成吗？`;
           
@@ -1948,12 +1954,11 @@
             form.append('prompt', finalGridPrompt);
             form.append('count', '1');
             appendAuthToForm(form);
-            
-            // 加强版模型需要传入4K图片大小
-            if(finalModel === 'gemini-3-pro-image-preview') {
-              form.append('image_size', '4K');
+
+            if(gridImageSize) {
+              form.append('image_size', gridImageSize);
             }
-            
+
             let apiUrl, res;
             if(referenceImageUrls.length > 0) {
               // 有参考图片URL，使用图片编辑API，直接传URL
@@ -2333,7 +2338,9 @@
           
           node.data.gridModel = finalModel;
 
-          const imagePower = TaskConfig.getComputingPower(finalModel) || 2;
+          // 宫格整图含 N 格，拆分后单格分辨率≈整图/N，始终按模型支持的最高分辨率提交（如 GPT Image 2 → 4K）
+          const gridImageSize = TaskConfig.getMaxSupportedSize(finalModel);
+          const imagePower = TaskConfig.getComputingPower(finalModel, undefined, gridImageSize ? { resolution: gridImageSize } : {}) || 2;
           const imageCount = Math.ceil(shotCount / gridSize);
           const totalPower = imageCount * imagePower;
 
@@ -2342,9 +2349,10 @@
           const modelDisplayName = taskInfo ? taskInfo.name : finalModel;
 
           const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
+          const sizeInfo = gridImageSize ? `\n分辨率：${gridImageSize}` : '';
           const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
             `分镜数量：${shotCount}个\n` +
-            `模型：${modelDisplayName}${refImageInfo}\n` +
+            `模型：${modelDisplayName}${refImageInfo}${sizeInfo}\n` +
             `预计消耗算力：${totalPower}\n\n` +
             `确认生成吗？`;
           
@@ -2392,11 +2400,11 @@
             form.append('prompt', finalGridPrompt);
             form.append('count', '1');
             appendAuthToForm(form);
-            
-            if(finalModel === 'gemini-3-pro-image-preview') {
-              form.append('image_size', '4K');
+
+            if(gridImageSize) {
+              form.append('image_size', gridImageSize);
             }
-            
+
             let apiUrl, res;
             if(referenceImageUrls.length > 0) {
               const taskId5 = TaskConfig.getTaskIdByKey(finalModel, 'image_edit');
