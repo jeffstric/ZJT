@@ -92,15 +92,25 @@ def test_build_edit_request_logs_portrait_size_context_without_rewriting_image()
 
     request = driver.build_edit_request(ai_tool)
 
-    assert request["data"]["size"] == "1024x1536"
+    assert request["data"]["size"] == "864x1536"
     assert request["request_context"] == {
         "mode": "edit",
         "ratio": "9:16",
         "image_size": "1K",
-        "mapped_size": "1024x1536",
+        "mapped_size": "864x1536",
         "image_count": 1,
     }
     assert request["files"] == [("image", ("input.png", b"image-bytes", "image/png"))]
+
+
+def test_map_size_1k_widescreen_and_portrait_use_true_ratio():
+    """1k 档位 16:9 / 9:16 映射为真比例自定义尺寸，2:3 / 3:2 保持预设尺寸。"""
+    driver = make_driver()
+
+    assert driver._map_size("1k", "9:16") == "864x1536"
+    assert driver._map_size("1k", "16:9") == "1536x864"
+    assert driver._map_size("1k", "2:3") == "1024x1536"
+    assert driver._map_size("1k", "3:2") == "1536x1024"
 
 
 def test_resolve_local_path_maps_upload_web_relative_path(tmp_path, monkeypatch):
