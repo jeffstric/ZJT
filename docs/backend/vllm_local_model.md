@@ -167,6 +167,17 @@ llm:
 
 `--served-model-name` 与数据库 `model_name` 不一致，重启 vLLM 并修正参数
 
+## 路由与 vendor_id（2026-09-04 修复）
+
+本地模型（vLLM/Ollama）在系统中的模型 ID 为 `vllm:qwen3.8:27b` 这种 `vendor:模型名` 显式前缀格式。路由规则：
+
+1. **会话切换模型时 vendor_id 随链路保存**：前端 `changeModel()` 在 `POST /api/session/{id}/model` 中携带 `vendor_id`；`chat_sessions` 表新增 `vendor_id` 列持久化（迁移 `no_126_20260904_add_vendor_id_to_chat_sessions`），`ChatSession.set_model()` 同步更新运行中 PM Agent 的 `_vendor_id`，下一轮 PM 循环即生效。
+2. **PM 循环路由**：`pm_agent` 中所有以 `self.model` 发起的 LLM 调用使用 `getattr(self, '_vendor_id', None) or task.vendor_id`，保证模型字符串与供应商同源。
+3. **工厂防御层**：`llm/llm_client_factory.py` 的 `get_client` 中，`vllm:`/`ollama:` 显式前缀优先于 `vendor_id` 路由；若 `vendor_id` 解析出的供应商与前缀冲突，记录 warning 并按前缀路由。云端模型（如 zjt_api 的 `qwen3.5-plus`）仍是 `vendor_id` 优先，不受此前缀规则影响。
+4. **任务创建兜底**：`create_agent_task` 在 `vendor_id` 为默认值 1 时，优先使用会话保存的 `vendor_id`，其次才用 `vendor_model` 表反查（反查为 `LIMIT 1` 且关联可能缺失，不可靠）。
+
+历史事故参见 `docs/backend/incidents/2026-09-04-session-vendor-id.md`。
+
 ## 相关文件
 
 | 文件 | 说明 |

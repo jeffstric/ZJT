@@ -3159,6 +3159,7 @@
                     body: JSON.stringify({ 
                         model: model,
                         model_id: modelId,
+                        vendor_id: selectedOption?.dataset?.vendorId ? parseInt(selectedOption.dataset.vendorId, 10) : null,
                         auth_token: AUTH_TOKEN
                     })
                 });
