@@ -186,6 +186,28 @@
   }
 
   /**
+   * 获取模型支持的最高分辨率档位
+   * 宫格生图整图含 N 个分镜格子，拆分后单格分辨率 ≈ 整图/N，因此宫格场景
+   * 始终按模型支持的最高档提交（如 GPT Image 2 → 4K）。
+   * 各模型 supported_sizes 大小写不统一（'1k'/'1K'），统一按数字比较，输出大写。
+   * @param {string} modelKey 模型标识符
+   * @returns {string|null} 最高档位（如 '4K'）；模型未配置尺寸列表时返回 null，调用方不传该字段、走后端默认
+   */
+  function getMaxSupportedSize(modelKey) {
+    const task = getTaskByKey(modelKey);
+    const sizes = (task && Array.isArray(task.supported_sizes)) ? task.supported_sizes : [];
+    let maxK = 0;
+    for(const size of sizes) {
+      const match = /^(\d+)\s*k$/i.exec(String(size || '').trim());
+      if(match) {
+        const k = parseInt(match[1], 10);
+        if(k > maxK) maxK = k;
+      }
+    }
+    return maxK > 0 ? `${maxK}K` : null;
+  }
+
+  /**
    * 获取模型的默认时长
    * @param {string} modelKey 模型标识符
    * @returns {number} 默认时长
@@ -554,6 +576,7 @@
     getDurationOptions,
     getRatioOptions,
     getSizeOptions,
+    getMaxSupportedSize,
 
     // 获取默认值
     getDefaultDuration,
