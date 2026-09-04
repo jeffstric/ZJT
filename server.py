@@ -28,6 +28,7 @@ from config.config_util import resolve_bin_path
 from config.version import get_app_version
 from perseids_server.client import make_perseids_request, get_device_uuid, async_make_perseids_request, async_call_external_auth_server
 from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel
+from model.video_workflow import compute_content_hash
 from model.ai_tools_log import AIToolsLogModel
 from model.users import UsersModel
 from model.user_tokens import UserTokensModel
@@ -5450,10 +5451,13 @@ async def get_video_workflow(
                 content={"code": -1, "message": "无权限访问该工作流"}
             )
         
+        data = workflow.to_dict()
+        # 服务端权威内容哈希：前端上传去重门与 PUT CAS（X-Base-Hash）的依据
+        data['content_hash'] = compute_content_hash(workflow)
         return JSONResponse({
             "code": 0,
             "message": "success",
-            "data": workflow.to_dict()
+            "data": data
         })
     except Exception as e:
         logger.error(f"Failed to get video workflow {workflow_id}: {str(e)}")
@@ -5506,7 +5510,7 @@ async def poll_workflow_node_status(
             return JSONResponse({
                 "code": 0,
                 "message": "success",
-                "data": {"updated_nodes": []}
+                "data": {"updated_nodes": [], "content_hash": compute_content_hash(workflow)}
             })
         
         # 查找有 project_id 但结果为空的节点
@@ -5624,7 +5628,10 @@ async def poll_workflow_node_status(
                 "total": len(updated_nodes),
                 "characters": characters,
                 "props": props_list,
-                "locations": locations
+                "locations": locations,
+                # 服务端权威内容哈希：前端去重门据此感知服务端内容是否
+                # 被其他会话/迟到请求改变（此时放弃跳过、重传收敛）
+                "content_hash": compute_content_hash(workflow)
             }
         })
         
@@ -6798,11 +6805,32 @@ async def update_video_workflow(
                         del update_fields['workflow_data']
 
         if update_fields:
+            # CAS（乐观并发控制）：客户端在 X-Base-Hash 头携带本次编辑所基于的
+            # 服务端内容哈希。不一致说明内容已被其他会话/迟到请求改写，
+            # 拒绝写入（避免静默覆盖丢失），并返回当前哈希供前端收敛。
+            # 头部缺省 = 不做 CAS（兼容旧前端、恢复重放等强制写路径）。
+            base_hash = request.headers.get('x-base-hash')
+            if base_hash:
+                current_hash = compute_content_hash(workflow)
+                if current_hash != base_hash:
+                    logger.warning(
+                        f"[CAS] 拒绝更新工作流 {workflow_id}："
+                        f"base_hash={base_hash[:12]}... != current={current_hash[:12]}..."
+                    )
+                    return JSONResponse({
+                        "code": 409,
+                        "message": "工作流内容已被其他会话修改，本次保存被拒绝",
+                        "data": {"content_hash": current_hash}
+                    })
             VideoWorkflowModel.update(workflow_id, **update_fields)
 
+        # 返回写入后的最新内容哈希（未写字段时哈希即当前值），
+        # 前端据此滚动上传去重门基线与下一次 CAS 的 base_hash
+        latest = VideoWorkflowModel.get_by_id(workflow_id)
         return JSONResponse({
             "code": 0,
-            "message": "更新成功"
+            "message": "更新成功",
+            "data": {"content_hash": compute_content_hash(latest) if latest else None}
         })
     except Exception as e:
         logger.error(f"Failed to update video workflow {workflow_id}: {str(e)}")

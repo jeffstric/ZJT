@@ -47,10 +47,23 @@
       inFlight: null
     };
 
-    // 最近一次被服务端确认的 PUT body 基线（{ workflowId, body } 或 null）。
+    // 最近一次被服务端确认的 PUT body 基线（{ workflowId, body, serverHash } 或 null）。
     // 上传去重门依据：与基线逐字节一致的 body 无需再上传（服务端已是该内容）。
     // workflowId 参与匹配，切换工作流后旧基线自动失效。
+    // serverHash 是 PUT/GET/poll-status 返回的服务端权威内容哈希（服务端对解析后
+    // 数据规范化计算；前端绝不自行计算，规避 JS/Python 序列化差异）。
     let confirmedBodyRecord = null;
+
+    // 最近一次从服务端响应（poll-status/GET/PUT）看到的权威内容哈希。
+    // 去重门的第二条件：该值与基线 serverHash 不一致，说明服务端内容已被
+    // 其他会话或迟到请求改写——放弃跳过、重传收敛（不依赖 abort 成功）。
+    let lastSeenServerHashRecord = null;
+
+    // CAS 409 冲突熔断（{ workflowId } 或 null）：冲突后 base_hash 不变
+    // 必然再冲突，若无熔断，dirty 状态会让每轮 poll 都全量 PUT 一次
+    // （重新打满带宽）。熔断后自动保存静默跳过，保持 dirty + 恢复快照
+    // 兜底，等用户刷新解决冲突；成功保存（setConfirmedBody）/reset 解除。
+    let conflictBlockRecord = null;
 
     // 一次用户操作/状态变更 → 一个待确认版本
     function markDirty(){
@@ -162,22 +175,79 @@
      * 记录服务端已确认的 body 基线。调用点：
      * - PUT 返回 code===0（服务端已落库该 body，含手动保存）
      * - loadWorkflow 成功后（当前序列化即服务端内容）
+     * serverHash 为响应对应的服务端权威内容哈希（可空：旧服务端不下发）。
      */
-    function setConfirmedBody(workflowId, body){
+    function setConfirmedBody(workflowId, body, serverHash){
       if(typeof body !== 'string') return;
-      confirmedBodyRecord = { workflowId: String(workflowId), body: body };
+      confirmedBodyRecord = {
+        workflowId: String(workflowId),
+        body: body,
+        serverHash: serverHash ? String(serverHash) : null
+      };
+      // 成功保存 = 已与服务端重新同步，解除 CAS 冲突熔断
+      if(conflictBlockRecord
+          && conflictBlockRecord.workflowId === String(workflowId)){
+        conflictBlockRecord = null;
+      }
+    }
+
+    /**
+     * 记录最近一次从服务端响应看到的权威内容哈希（poll-status/GET/PUT）。
+     * 这是去重门感知"服务端内容被其他会话/迟到请求改写"的唯一通道。
+     */
+    function noteServerHash(workflowId, serverHash){
+      if(!serverHash) return;
+      lastSeenServerHashRecord = {
+        workflowId: String(workflowId),
+        serverHash: String(serverHash)
+      };
+    }
+
+    /**
+     * 基线对应的服务端内容哈希（PUT CAS 的 X-Base-Hash 取值）。未知返回 null。
+     */
+    function getConfirmedHash(workflowId){
+      return (confirmedBodyRecord
+        && confirmedBodyRecord.workflowId === String(workflowId))
+        ? confirmedBodyRecord.serverHash
+        : null;
+    }
+
+    /** 记录一次 CAS 409 冲突，熔断后续自动保存（见 conflictBlockRecord 注释）。 */
+    function noteConflict(workflowId){
+      conflictBlockRecord = { workflowId: String(workflowId) };
+    }
+
+    /** 当前工作流是否处于 409 冲突熔断中（自动保存应静默跳过）。 */
+    function isConflictBlocked(workflowId){
+      return !!conflictBlockRecord
+        && conflictBlockRecord.workflowId === String(workflowId);
     }
 
     /**
      * 上传去重门：body 与当前工作流最近确认基线完全一致时返回 true。
-     * 用字符串直接比较而非哈希：入口为 http（非 secure context）时
+     * 用字符串直接比较而非前端哈希：入口为 http（非 secure context）时
      * crypto.subtle 不可用；且 body 本就已在手，大字符串 === 是
      * 长度 + memcmp，零碰撞、零依赖。
+     * 双条件：除 body 一致外，若双方都已知服务端哈希还要求其一致——
+     * 最近一次 poll 看到的哈希与基线哈希不同，说明服务端内容已被改写，
+     * 必须重传收敛。任一侧哈希未知（旧服务端/滚动发布）退化为纯 body 比较。
      */
     function isConfirmedBody(workflowId, body){
-      return !!confirmedBodyRecord
-        && confirmedBodyRecord.workflowId === String(workflowId)
-        && confirmedBodyRecord.body === body;
+      if(!confirmedBodyRecord
+          || confirmedBodyRecord.workflowId !== String(workflowId)
+          || confirmedBodyRecord.body !== body){
+        return false;
+      }
+      const baseHash = confirmedBodyRecord.serverHash;
+      const seenHash = (lastSeenServerHashRecord
+        && lastSeenServerHashRecord.workflowId === String(workflowId))
+        ? lastSeenServerHashRecord.serverHash
+        : null;
+      if(baseHash && seenHash && baseHash !== seenHash){
+        return false;
+      }
+      return true;
     }
 
     /**
@@ -195,6 +265,8 @@
       saveState.confirmedVersion = 0;
       saveState.inFlight = null;
       confirmedBodyRecord = null;
+      lastSeenServerHashRecord = null;
+      conflictBlockRecord = null;
     }
 
     return {
@@ -208,6 +280,10 @@
       planUnloadSend: planUnloadSend,
       setConfirmedBody: setConfirmedBody,
       isConfirmedBody: isConfirmedBody,
+      noteServerHash: noteServerHash,
+      getConfirmedHash: getConfirmedHash,
+      noteConflict: noteConflict,
+      isConflictBlocked: isConflictBlocked,
       confirmSkipped: confirmSkipped,
       reset: reset
     };
@@ -385,6 +461,8 @@
   }
 
   // 归一化 meta。workflowId/userId 缺失时记录不可安全分区，调用方会拒绝写入。
+  // baseHash：写入快照时服务端的内容哈希（可为空），重放时作为 PUT CAS 的
+  // X-Base-Hash——若服务端已被其他会话推进，重放被拒，避免兜底覆盖他人内容。
   function buildRecoveryRecord(payload, meta){
     const m = meta || {};
     return {
@@ -392,6 +470,7 @@
       version: m.version || 0,
       workflowId: normalizeRecoveryIdentity(m.workflowId),
       userId: normalizeRecoveryIdentity(m.userId),
+      baseHash: normalizeRecoveryIdentity(m.baseHash),
       snapshotId: m.snapshotId ? String(m.snapshotId) : null,
       writerId: m.writerId ? String(m.writerId) : null,
       writerSequence: normalizeFiniteNumber(m.writerSequence),
@@ -616,6 +695,23 @@
           }
         });
       });
+    },
+
+    /**
+     * 上传去重门命中跳过时调用：清除【本标签页自己】留下的残留恢复快照。
+     * 门命中意味着服务端已持有当前内容，本页此前失败/被取代发送留下的
+     * 快照（payload 与当前内容不同）已失去恢复意义；若不清除，下次会话
+     * 会被 maybeRecoverPendingAutoSave 无条件重放，把已撤销的内容复活。
+     * 仅处理 record.writerId === 本页 writerId 的快照，不碰其他标签页的
+     * 恢复记录（那可能是其未送达的真实修改）。复用条件清除防止误删新快照。
+     */
+    discardOwnSnapshot: function(context){
+      const self = this;
+      return self.loadSnapshot(context).then(function(record){
+        if(!record) return false;
+        if(String(record.writerId || '') !== RECOVERY_WRITER_ID) return false;
+        return self.clearSnapshot(record);
+      }).catch(function(){ return false; });
     },
 
     // 页面初始化时预热 IDB 连接，提高 beforeunload 同步 put 能入队的概率。

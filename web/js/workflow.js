@@ -672,11 +672,17 @@
           sentVersion = autoSaveState.beginSend(controller, false);
         }
 
+        // CAS 基值：本次编辑所基于的服务端内容哈希（无基线时为空，不做 CAS）
+        const baseHash = (typeof autoSaveState !== 'undefined')
+          ? autoSaveState.getConfirmedHash(workflowId)
+          : null;
+
         if(typeof WorkflowRecovery !== 'undefined'){
           recoveryMeta = {
             version: sentVersion,
             workflowId: workflowId,
             userId: getUserId(),
+            baseHash: baseHash,
             ...WorkflowRecovery.createWriteIdentity()
           };
           // 用手动保存的最新 body 覆盖旧自动保存快照；否则下次打开
@@ -684,14 +690,17 @@
           await WorkflowRecovery.saveSnapshot(body, recoveryMeta).catch(() => null);
         }
 
+        const headers = {
+          'Content-Type': 'application/json',
+          'Authorization': getAuthToken(),
+          'X-User-Id': getUserId()
+        };
+        if(baseHash) headers['X-Base-Hash'] = baseHash;
+
         const responsePromise = fetch(`/api/video-workflow/${workflowId}`, {
           method: 'PUT',
           signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': getAuthToken(),
-            'X-User-Id': getUserId()
-          },
+          headers: headers,
           body: body
         });
         if(typeof autoSaveState !== 'undefined'){
@@ -702,9 +711,11 @@
         const result = await response.json();
 
         if(result.code === 0){
-          // 手动保存成功：与自动保存共用去重门基线（body 同构）
+          // 手动保存成功：与自动保存共用去重门基线（body 同构），
+          // 并以服务端返回的最新内容哈希滚动 CAS 基值
           if(typeof autoSaveState !== 'undefined'){
-            autoSaveState.setConfirmedBody(workflowId, body);
+            autoSaveState.setConfirmedBody(
+              workflowId, body, result.data && result.data.content_hash);
           }
           let confirmed = true;
           if(typeof autoSaveState !== 'undefined'){
@@ -714,6 +725,18 @@
             await WorkflowRecovery.clearConfirmedSnapshot(recoveryMeta).catch(() => false);
           }
           showToast('保存成功', 'success');
+        } else if(result.code === 409){
+          // CAS 冲突：内容已被其他会话修改。本地修改已通过恢复快照兜底，
+          // 不静默丢失；熔断自动保存避免周期性无效重试，手动保存每次点击
+          // 仍照常尝试并提示（用户显式动作），由用户刷新后继续
+          if(typeof autoSaveState !== 'undefined'){
+            autoSaveState.endSend(sentVersion, false);
+            if(result.data && result.data.content_hash){
+              autoSaveState.noteServerHash(workflowId, result.data.content_hash);
+            }
+            autoSaveState.noteConflict(workflowId);
+          }
+          showToast(result.message || '工作流内容已被其他会话修改，本次保存被拒绝，请刷新页面', 'warning');
         } else {
           if(typeof autoSaveState !== 'undefined'){
             autoSaveState.endSend(sentVersion, false);
@@ -774,8 +797,30 @@
         // loadWorkflow 成功时建立，上传失败不会记录（下次照常重传）。
         if(typeof autoSaveState !== 'undefined'
             && autoSaveState.isConfirmedBody(workflowId, body)){
+          // 尽力中止可能在途的旧请求（其 payload 与当前内容不同）。
+          // 注意：abort 只是降低旧 payload 落库概率的防御层，不是正确性
+          // 依据——请求已到达服务端时不可撤回；该窗口由服务端哈希感知
+          // （下轮 poll 哈希漂移 → 门失效 → 重传收敛）与 PUT CAS 兜底。
+          autoSaveState.abortInFlight();
           autoSaveState.confirmSkipped();
+          // 清除本页此前失败/被取代发送留下的残留恢复快照：服务端已持有
+          // 当前内容，残留快照若被下次会话重放会把已撤销的内容复活
+          if(typeof WorkflowRecovery !== 'undefined'){
+            WorkflowRecovery.discardOwnSnapshot({
+              workflowId: workflowId,
+              userId: getUserId()
+            }).catch(() => false);
+          }
           console.log('[自动保存] 内容与服务端一致，跳过上传');
+          return;
+        }
+
+        // CAS 409 冲突熔断：冲突未解决前自动保存静默跳过——base_hash 不变
+        // 必然再冲突，周期性全量 PUT 重试会重新打满带宽。保持 dirty +
+        // 恢复快照兜底（本地修改不丢），等用户刷新以服务端最新内容继续。
+        if(typeof autoSaveState !== 'undefined'
+            && autoSaveState.isConflictBlocked(workflowId)){
+          console.warn('[自动保存] 存在未解决的内容冲突，暂停自动保存，请刷新页面');
           return;
         }
 
@@ -783,32 +828,41 @@
         const unload = opts.unload === true;
 
         // 跟踪在途请求，并在发起新请求前中止本页旧请求，降低过期
-        // payload 晚到的概率。已到达服务端的请求不可撤回，严格乱序保护需后端 CAS。
+        // payload 晚到的概率。已到达服务端的请求不可撤回，由服务端
+        // X-Base-Hash CAS 与下轮 poll 的哈希感知保证收敛。
         const controller = new AbortController();
         if(typeof autoSaveState !== 'undefined'){
           autoSaveState.abortInFlight();
           sentVersion = autoSaveState.beginSend(controller, keepalive);
         }
 
+        // CAS 基值：本次编辑所基于的服务端内容哈希（无基线时为空，不做 CAS）
+        const baseHash = (typeof autoSaveState !== 'undefined')
+          ? autoSaveState.getConfirmedHash(workflowId)
+          : null;
+
         const recoveryMeta = (typeof WorkflowRecovery !== 'undefined') ? {
           version: sentVersion,
           workflowId: workflowId,
           userId: getUserId(),
+          baseHash: baseHash,
           ...WorkflowRecovery.createWriteIdentity()
         } : null;
 
         const requestUrl = `/api/video-workflow/${workflowId}`;
+        const requestHeaders = {
+            'Content-Type': 'application/json',
+            'Authorization': getAuthToken(),
+            'X-User-Id': getUserId()
+          };
+        if(baseHash) requestHeaders['X-Base-Hash'] = baseHash;
         const requestOptions = {
             method: 'PUT',
             // 页面卸载（beforeunload）触发的保存需要 keepalive，
             // 否则请求会在页面销毁时被浏览器取消
             keepalive: keepalive,
             signal: controller.signal,
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': getAuthToken(),
-              'X-User-Id': getUserId()
-            },
+            headers: requestHeaders,
             body: body
           };
 
@@ -846,10 +900,12 @@
 
         if(result.code === 0){
           console.log('自动保存成功:', new Date().toLocaleTimeString(), 'defaultWorldId:', state.defaultWorldId);
-          // 服务端已确认这份 body，更新去重门基线（无论该请求是否已被更新的
-          // 发送取代：此刻服务端内容就是这份 body，基线应如实反映）
+          // 服务端已确认这份 body，以响应返回的最新内容哈希滚动去重门基线
+          // 与 CAS 基值。若这是被更新发送取代的迟到 ack，服务端可能随后被
+          // 更新请求覆盖——下轮 poll 的哈希漂移会使门失效并重传收敛
           if(typeof autoSaveState !== 'undefined'){
-            autoSaveState.setConfirmedBody(workflowId, body);
+            autoSaveState.setConfirmedBody(
+              workflowId, body, result.data && result.data.content_hash);
           }
           // 仅当"该请求是最新发送且成功"才清除恢复记录：被新请求取代的旧请求
           // 的成功 ack（endSend 返回 false）不得清掉新请求的恢复快照——否则
@@ -861,6 +917,22 @@
               // snapshotId/version 条件删除，避免清理先发生后又写回陈旧记录。
               await recoveryWritePromise;
               await WorkflowRecovery.clearConfirmedSnapshot(recoveryMeta).catch(() => false);
+            }
+          }
+        } else if(result.code === 409){
+          // CAS 冲突：内容已被其他会话修改。保持 dirty（恢复快照已在发送前
+          // 写入，本地修改不丢），更新已知服务端哈希使去重门立即失效，
+          // 并熔断后续自动保存（不再周期性全量重试）；toast 仅首次提示
+          console.warn('自动保存冲突:', result.message);
+          if(typeof autoSaveState !== 'undefined'){
+            const alreadyBlocked = autoSaveState.isConflictBlocked(workflowId);
+            autoSaveState.endSend(sentVersion, false);
+            if(result.data && result.data.content_hash){
+              autoSaveState.noteServerHash(workflowId, result.data.content_hash);
+            }
+            autoSaveState.noteConflict(workflowId);
+            if(!alreadyBlocked){
+              showToast(result.message || '工作流内容已被其他会话修改，自动保存已暂停，请刷新页面', 'warning');
             }
           }
         } else {
@@ -992,13 +1064,18 @@
       }
 
       try {
+        // 重放携带快照写入时的服务端哈希做 CAS：若服务端已被其他会话推进，
+        // 强制重放会把别人的新内容覆盖掉。冲突时放弃重放并清除该快照
+        // （服务端已有更新的权威版本）。无 baseHash 的存量快照维持强制重放。
+        const replayHeaders = {
+          'Content-Type': 'application/json',
+          'Authorization': getAuthToken(),
+          'X-User-Id': getUserId()
+        };
+        if(record.baseHash) replayHeaders['X-Base-Hash'] = record.baseHash;
         const response = await fetch(`/api/video-workflow/${workflowId}`, {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': getAuthToken(),
-            'X-User-Id': getUserId()
-          },
+          headers: replayHeaders,
           body: record.payload
         });
         const result = await response.json();
@@ -1012,6 +1089,11 @@
             console.warn('[自动保存恢复] 恢复记录已变更或未能清除，保留供后续页面处理');
           }
           await loadWorkflow(workflowId, { skipAutoSaveRecovery: true });
+        } else if(result.code === 409){
+          // CAS 冲突：服务器已有更新版本，重放会覆盖他人内容——放弃并清除
+          console.warn('[自动保存恢复] 服务器版本较新，放弃重放:', result.message);
+          await WorkflowRecovery.clearSnapshot(record).catch(() => false);
+          showToast('服务器上的工作流已有更新版本，未恢复本地未送达的修改', 'warning');
         } else {
           console.warn('[自动保存恢复] 重放失败:', result.message);
           showToast('上次自动保存可能未送达，恢复失败，请手动保存', 'error');
@@ -1159,13 +1241,16 @@
           }
           success = true;
 
-          // 加载成功即建立上传去重基线：此刻的序列化 == 服务端已确认内容。
-          // 之后若无真实修改，防抖/轮询触发的保存会命中基线直接跳过上传。
+          // 加载成功即建立上传去重基线：此刻的序列化 == 服务端已确认内容，
+          // 基线同时记录服务端权威内容哈希（GET 返回），供去重门双条件比对
+          // 与后续 PUT 的 CAS（X-Base-Hash）使用。
           // 恢复重放（maybeRecoverPendingAutoSave）成功后会重新 loadWorkflow，
           // 基线随重放后的最新服务端内容重建，语义保持一致。
           try {
             if(typeof autoSaveState !== 'undefined'){
-              autoSaveState.setConfirmedBody(workflowId, buildAutoSaveBody());
+              autoSaveState.setConfirmedBody(
+                workflowId, buildAutoSaveBody(), workflow.content_hash);
+              autoSaveState.noteServerHash(workflowId, workflow.content_hash);
             }
           } catch(e) {
             console.warn('[加载工作流] 建立保存去重基线失败:', e);
@@ -2803,6 +2888,11 @@
         const result = await response.json();
         
         if(result.code === 0 && result.data){
+          // 记录服务端权威内容哈希：去重门的第二条件。服务端内容一旦被其他
+          // 会话/迟到请求改写，该值与基线哈希不一致，门即失效并重传收敛
+          if(typeof autoSaveState !== 'undefined' && result.data.content_hash){
+            autoSaveState.noteServerHash(workflowId, result.data.content_hash);
+          }
           // 保存世界数据到全局变量
           if(Array.isArray(result.data.characters)){
             state.worldCharacters = result.data.characters;
