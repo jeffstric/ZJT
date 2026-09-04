@@ -1237,8 +1237,15 @@ class ScriptSplitConstants:
     PLANNER_DIAGNOSTIC_LOG_DIR = "logs/script_parser"
 
     # ---- 重试与上界 ----
-    # 阶段一规划失败的最大重试次数（同一边界重试规划）
+    # 阶段一规划失败的最大重试次数（同一边界重试规划）。
+    # 规划同样遵守「一个 tick 最多一次 LLM 调用」：失败尝试的轮次与错误
+    # 持久化到 request_config[PLAN_CHECKPOINT_CONFIG_KEY]，下一 tick 携带
+    # feedback 重试，避免多轮调用共享 WORKER_STEP_TIMEOUT_SECONDS 看门狗
+    # 预算（效果模式 + thinking 模型单次规划可达数分钟，二次重试必然撞
+    # 540s 看门狗被误杀为 step_watchdog_timeout）。
     PLAN_MAX_RETRIES = 3
+    # 规划重试检查点在 request_config 中的保留键：{"attempt": N, "last_errors": [...]}
+    PLAN_CHECKPOINT_CONFIG_KEY = "_plan_checkpoint"
     # 单段拆分失败的最大重试次数（同一边界重试当前段）
     SEGMENT_MAX_RETRIES = 3
     # 角色名称/图片提示词/视频提示词硬契约失败后的当前段定向修复次数。
