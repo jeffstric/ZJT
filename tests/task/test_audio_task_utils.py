@@ -11,6 +11,9 @@ from unittest.mock import MagicMock, patch
 
 from tests.base.test_isolation import module_stub, stub_modules
 
+# 真实 config.constant 是纯常量模块，可安全导入；audio_task 新增导入的语速归一化函数以真实实现注入 stub
+from config.constant import normalize_dialogue_tts_speed as _normalize_dialogue_tts_speed
+
 _running_hub_cfg = MagicMock()
 _running_hub_cfg.AUDIO_STYLE_DEFAULT_PROMPT = '声音自然清晰，语气平稳，适合角色旁白'
 _running_hub_cfg.AUDIO_STYLE_LLM_MAX_TOKENS = 256
@@ -55,6 +58,7 @@ with stub_modules({
         TASK_STATUS_PROCESSING=1,
         TASK_STATUS_COMPLETED=2,
         TASK_STATUS_FAILED=-1,
+        normalize_dialogue_tts_speed=_normalize_dialogue_tts_speed,
     ),
     'task.async_drivers.runninghub_audio_driver': module_stub(
         'task.async_drivers.runninghub_audio_driver',
