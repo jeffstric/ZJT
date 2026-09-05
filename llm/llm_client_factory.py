@@ -72,23 +72,43 @@ class LLMClientFactory:
             model: 模型名称（如 gemini-3-flash-preview, qwen3.5-plus）
             vendor_id: 可选的供应商 ID。若提供，优先使用该 ID 直接路由，
                       不再依赖模型名称前缀匹配。
+                      例外：model 为 "vendor:模型名" 显式本地格式（vllm:/ollama:）时，
+                      前缀优先于 vendor_id，避免本地模型名被透传给云端 API。
 
         Returns:
             对应的 LLM 客户端实例
         """
-        # 如果提供了 vendor_id，优先从数据库查询 vendor_name 直接路由
+        # 防御层：本地服务显式前缀（vllm:/ollama:）优先于 vendor_id 路由
+        local_prefix = None
+        if isinstance(model, str) and ':' in model:
+            prefix = model.split(':', 1)[0].lower()
+            if prefix in _LOCAL_SERVICE_VENDORS:
+                local_prefix = prefix
+
         if vendor_id is not None:
             try:
                 from model.vendor import VendorDAO
                 vendor_obj = VendorDAO.get_by_id(vendor_id)
                 if vendor_obj and vendor_obj.vendor_name:
                     vendor = vendor_obj.vendor_name
-                    getter = cls._VENDOR_CLIENT_MAP.get(vendor, get_gemini_client)
-                    client = getter()
-                    logger.debug(f"模型 {model} (vendor_id={vendor_id}, vendor={vendor}) -> {type(client).__name__}")
-                    return client
+                    if local_prefix and local_prefix != vendor:
+                        logger.warning(
+                            f"模型 {model} 的本地前缀 {local_prefix} 与 vendor_id={vendor_id} "
+                            f"解析的供应商 {vendor} 冲突，按前缀路由到本地服务"
+                        )
+                    else:
+                        getter = cls._VENDOR_CLIENT_MAP.get(vendor, get_gemini_client)
+                        client = getter()
+                        logger.debug(f"模型 {model} (vendor_id={vendor_id}, vendor={vendor}) -> {type(client).__name__}")
+                        return client
             except Exception as e:
                 logger.warning(f"根据 vendor_id={vendor_id} 查询供应商失败，回退到前缀匹配: {e}")
+
+        if local_prefix:
+            getter = cls._VENDOR_CLIENT_MAP[local_prefix]
+            client = getter()
+            logger.debug(f"模型 {model} 按本地前缀 {local_prefix} 路由 -> {type(client).__name__}")
+            return client
 
         # 回退：根据模型名称前缀匹配
         vendor = cls._get_vendor_by_model(model)
