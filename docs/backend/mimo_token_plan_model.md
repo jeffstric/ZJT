@@ -1,6 +1,6 @@
 # 小米 MiMo（Token Plan）接入说明
 
-> 接入时间：2026-09-05（迁移 no_126_20260905_add_mimo_models）
+> 接入时间：2026-09-05（迁移 no_127_20260905_add_mimo_models）
 > 接入模式：**Token Plan 套餐**（包月买断 credits），区别于此前的按量计费 API
 
 ## 1. 供应商与端点
@@ -48,7 +48,7 @@ normal 时段、不分段（`raw_token_threshold = NULL`）。
   `MODEL_PREFIX_VENDOR_MAP['mimo']`、`VENDOR_ICONS['mimo']`
 - `llm/openai_mimo.py`：新增客户端（单例 `get_mimo_openai_client`）
 - `llm/llm_client_factory.py`：`_VENDOR_CLIENT_MAP` + `vendor_config_map` 两处注册
-- `alembic/versions/no_126_20260905_add_mimo_models.py`：vendor + model + vendor_model 计费档位
+- `alembic/versions/no_127_20260905_add_mimo_models.py`：vendor + model + vendor_model 计费档位
 - `config.example.yml` / `config_prod.base.yaml` / `config_dev.base.yml`：`llm.mimo` 配置段
   （dev.base 为本地开发兜底默认值，完整模板见 example，按项目约定三处同步维护）
 - `config/default_configs.py`：`llm.mimo.api_key` / `llm.mimo.base_url` 热更新项

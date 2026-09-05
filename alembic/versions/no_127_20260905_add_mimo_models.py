@@ -1,7 +1,7 @@
 """Add Xiaomi MiMo vendor (Token Plan) and mimo-v2.5/mimo-v2.5-pro models with billing config
 
 Revision ID: 20260905_add_mimo_models
-Revises: 20260901_merge_ds_heads
+Revises: 20260904_add_vendor_id_to_chat_s
 Create Date: 2026-09-05
 """
 from typing import Sequence, Union
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # revision identifiers, used by Alembic.
 # ⚠️ revision 长度必须 <= 32 字符 (alembic_version.version_num 为 varchar(32))
 revision: str = '20260905_add_mimo_models'
-down_revision: Union[str, None] = '20260901_merge_ds_heads'
+down_revision: Union[str, None] = '20260904_add_vendor_id_to_chat_s'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
