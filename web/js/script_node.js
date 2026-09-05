@@ -1307,7 +1307,8 @@
             x: node.x + 800,
             y: node.y + cumulativeY,
             shotGroupData: shotGroup,
-            scriptData: parsedData,
+            // 轻量 scriptData：只保留 props/characters/剧本元信息引用，不嵌整份剧本解析数据
+            scriptData: buildSlimScriptData(parsedData),
             scriptNodeId: id,  // 关联的剧本节点 ID
             scriptContent: node.data.scriptContent || ''  // 原始剧本内容
           });
@@ -1807,7 +1808,8 @@
                   x: node.x + offsetX,
                   y: node.y + cumulativeY,
                   shotGroupData: shotGroup,
-                  scriptData: parsedData,
+                  // 轻量 scriptData：只保留 props/characters/剧本元信息引用，不嵌整份剧本解析数据
+                  scriptData: buildSlimScriptData(parsedData),
                   scriptNodeId: id,  // 关联的剧本节点 ID
                   scriptContent: node.data.scriptContent || ''  // 原始剧本内容
                 });

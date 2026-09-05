@@ -586,6 +586,31 @@
         // 性能优化：剔除 data:URL base64 大字符串（含 preview 类字段的 url 回填）
         nodeData = stripLargeDataUrls(nodeData, 0);
 
+        // 瘦身 workflow_data（去重而非压缩）：
+        // 1) shot_frame.data.videoPrompt 是 shotJson 的 JSON.stringify 美化版（纯重复，
+        //    实测占大工作流体积的一半以上），不落库；展示/生成用 videoPromptText
+        //   （用户可编辑），缺失时各消费点可由 shotJson 现场格式化兜底。
+        // 2) shot_frame 的 shotJson.scriptData 与 shot_group 的 scriptData 是同一份剧本
+        //    解析数据的逐字拷贝（每节点一份），只保留各消费点实际读取的轻量引用
+        //   （props/characters/剧本元信息），世界数据由 state.worldXxx 全局加载兜底。
+        // 兼容性：旧工作流加载后内存保持完整数据，此处仅在序列化时精简，重新保存即瘦身；
+        // buildSlimScriptData 为不可变实现（nodes.js），不会污染运行态 state。
+        if(typeof buildSlimScriptData === 'function'){
+          if(node.type === 'shot_frame'){
+            if(nodeData.videoPrompt !== undefined) delete nodeData.videoPrompt;
+            if(nodeData.shotJson && typeof nodeData.shotJson === 'object'){
+              nodeData.shotJson = {
+                ...nodeData.shotJson,
+                scriptData: buildSlimScriptData(nodeData.shotJson.scriptData, nodeData.shotJson)
+              };
+            }
+          } else if(node.type === 'shot_group'){
+            if(nodeData.scriptData && typeof nodeData.scriptData === 'object'){
+              nodeData.scriptData = buildSlimScriptData(nodeData.scriptData);
+            }
+          }
+        }
+
         return {
           id: node.id,
           type: node.type,
