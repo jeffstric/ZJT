@@ -21,6 +21,7 @@ from .claude_customer_client import ClaudeCustomerClient, get_claude_customer_cl
 from .zjt_openai_client import ZJTOpenAIClient, get_zjt_openai_client
 from .openai_deepseek import DeepSeekOpenAIClient, get_deepseek_openai_client
 from .openai_agnes import AgnesOpenAIClient, get_agnes_openai_client
+from .openai_mimo import MimoOpenAIClient, get_mimo_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class LLMClientFactory:
         LLMVendor.ZJT_API: get_zjt_openai_client,
         LLMVendor.DEEPSEEK: get_deepseek_openai_client,
         LLMVendor.AGNES: get_agnes_openai_client,
+        LLMVendor.MIMO: get_mimo_openai_client,
     }
 
     # 历史数据中 Gemini 供应商（LLMVendor.JIEKOU）可能被命名为 google；
@@ -206,6 +208,7 @@ def _get_available_models_sync() -> dict:
             'zjt_api': ('api_aggregator', 'site_0', 'api_key'),
             'deepseek': ('llm', 'deepseek', 'api_key'),
             'agnes': ('llm', 'agnes', 'api_key'),
+            'mimo': ('llm', 'mimo', 'api_key'),
         }
         if vendor_name not in vendor_config_map:
             return True  # 未知 vendor 默认放行

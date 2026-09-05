@@ -240,6 +240,9 @@ llm:
   agnes:
     api_key: ""  # Agnes AI API Key
     base_url: "https://api.agnes-ai.cn/v1"
+  mimo:
+    api_key: ""  # 小米 MiMo API Key（Token Plan 套餐）
+    base_url: "https://token-plan-cn.xiaomimimo.com/v1"
 
 # Wan3.0 视频模型（阿里云百炼 DashScope，API Key 复用上面的 llm.qwen.api_key）
 wan3:
