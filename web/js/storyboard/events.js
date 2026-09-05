@@ -652,11 +652,18 @@ function patchDialogueInState(dialogueId, patch) {
     return false;
 }
 
+// 数值兜底：非法/越界时收敛到 [min, max]，NaN 时用 fallback
+function clampNumber(value, min, max, fallback) {
+    if (!Number.isFinite(value)) return fallback;
+    return Math.min(max, Math.max(min, value));
+}
+
 function collectDialoguePayload(row) {
     const characterRaw = row.querySelector('[data-dialogue-field="characterId"]')?.value;
     const text = row.querySelector('[data-dialogue-field="text"]')?.value || '';
-    const speed = parseFloat(row.querySelector('[data-dialogue-field="speed"]')?.value || 1.0);
-    const volume = parseInt(row.querySelector('[data-dialogue-field="volume"]')?.value || 100, 10);
+    // 语速范围与 IndexTTS duration_factor 接口上限（0.5~2.0）对称，>1 更快
+    const speed = clampNumber(parseFloat(row.querySelector('[data-dialogue-field="speed"]')?.value || 1.0), 0.5, 2, 1.0);
+    const volume = Math.round(clampNumber(parseInt(row.querySelector('[data-dialogue-field="volume"]')?.value || 100, 10), 0, 100, 100));
     const dialogueId = parseInt(row?.dataset?.dialogueId, 10);
     let emoVec = null;
     if (dialogueId) {
@@ -2933,6 +2940,15 @@ export function bindEvents() {
             state.scriptDialogueLanguage = target.value;
         } else if (target.dataset.scriptLanguageCustom === 'prompt') {
             state.scriptPromptLanguage = target.value;
+        } else if (target.matches && target.matches('[data-dialogue-field="speed"], [data-dialogue-field="volume"]')) {
+            // 对话行语速/音量滑块：拖动中只更新旁边数值显示，松手后由 change 委托自动保存
+            const field = target.getAttribute('data-dialogue-field');
+            const valueEl = target.parentElement?.querySelector(`[data-field-display="${field}"]`);
+            if (valueEl) {
+                valueEl.textContent = field === 'speed'
+                    ? Number(target.value).toFixed(1)
+                    : String(Math.round(Number(target.value)));
+            }
         } else if (target.matches && target.matches('[data-emo-slider]')) {
             // 情感向量滑块：只更新 state + 轻量 DOM，避免整弹窗重绘打断拖动
             const idx = parseInt(target.getAttribute('data-emo-slider'), 10);

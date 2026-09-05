@@ -33,6 +33,7 @@ from config.constant import (
     StoryboardAudioGenerateConstants,
     StoryboardDigitalHumanConstants,
     StoryboardAgentCommandConstants,
+    normalize_dialogue_tts_speed,
     SceneDifficulty,
     MediaConstants,
     MediaGenerationMode,
@@ -1177,6 +1178,8 @@ def submit_storyboard_dialogue_voiceover(
     transaction_id = str(uuid.uuid4())
     extra_audio_kwargs = {'transaction_id': transaction_id}
     extra_audio_kwargs.update(emo_kwargs)
+    # 语速取自对话（前端滑杆 0.5~2.0，>1 更快），随任务落 ai_audio.speed 供 TTS 换算 duration_factor
+    extra_audio_kwargs['speed'] = normalize_dialogue_tts_speed(getattr(dialogue, 'speed', None))
     # 手动点「生成配音」默认强制重跑（改情感/改台词后可覆盖选中配音）；
     # 自动补缺路径传 skip_existing=True，不会走到 force。
     force_regenerate = bool(config.get('force_regenerate', not config.get('skip_existing')))
@@ -5202,7 +5205,7 @@ async def add_dialogue(
         sort_order=sort_order,
         character_id=data.get('character_id'),
         text=data.get('text'),
-        speed=data.get('speed', 1.0),
+        speed=normalize_dialogue_tts_speed(data.get('speed')),
         volume=data.get('volume', 100),
         emo_vec=emo_vec,
         last_modified_user_id=user_id,
@@ -5226,6 +5229,8 @@ async def update_dialogue(
 
     data = await request.json()
     update_data = {k: v for k, v in data.items() if k in ALLOWED_DIALOGUE_UPDATE_FIELDS}
+    if 'speed' in update_data:
+        update_data['speed'] = normalize_dialogue_tts_speed(update_data.get('speed'))
     if 'emo_vec' in update_data:
         # 全版本可编辑；空串/非法 → 清空为 NULL
         try:

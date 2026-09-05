@@ -4155,6 +4155,25 @@ button {
 
 .meta-field input[type="number"]:focus { border-color: var(--primary); }
 
+/* 对话行语速/音量滑杆：头部一行放标签与实时数值，下方为拖动条 */
+.meta-field-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.meta-field .field-value {
+    color: var(--primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.meta-field input[type="range"] {
+    width: 100%;
+    margin: 4px 0 2px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
 .dialogue-audio {
     width: 100%;
     height: 34px;

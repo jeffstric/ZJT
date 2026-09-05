@@ -1561,6 +1561,31 @@ class StoryboardAgentCommandConstants:
     MAX_GROUP_DURATION_MIN = 10
     MAX_GROUP_DURATION_MAX = 15
 
+
+class DialogueTtsSpeedConstants:
+    """对话配音语速常量。
+
+    speed 为「语速」语义：1.0 正常，>1 更快，<1 更慢。
+    IndexTTS-2.5 POST /tts_url 的 duration_factor（时长因子，>1 变慢）取值范围
+    0.5~2.0；换算 duration_factor = 1/speed 后两者范围恰好对称，不会越界。
+    """
+    DEFAULT = 1.0
+    MIN = 0.5
+    MAX = 2.0
+
+
+def normalize_dialogue_tts_speed(value) -> float:
+    """语速归一化：非法/越界值收敛到 [MIN, MAX]，非法输入返回 DEFAULT。"""
+    try:
+        speed = float(value)
+    except (TypeError, ValueError):
+        return DialogueTtsSpeedConstants.DEFAULT
+    if speed != speed:  # NaN
+        return DialogueTtsSpeedConstants.DEFAULT
+    return round(min(DialogueTtsSpeedConstants.MAX,
+                     max(DialogueTtsSpeedConstants.MIN, speed)), 2)
+
+
 # 向后兼容别名 - Tasks 状态
 TASK_STATUS_QUEUED = TaskStatus.QUEUED
 TASK_STATUS_PROCESSING = TaskStatus.PROCESSING

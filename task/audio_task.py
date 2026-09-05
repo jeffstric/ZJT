@@ -20,7 +20,8 @@ from config.constant import (
     TASK_STATUS_QUEUED,
     TASK_STATUS_PROCESSING,
     TASK_STATUS_COMPLETED,
-    TASK_STATUS_FAILED
+    TASK_STATUS_FAILED,
+    normalize_dialogue_tts_speed
 )
 from task.async_drivers.runninghub_audio_driver import RunningHubAudioConfig
 from utils.index_tts_util import generate_audio, validate_emotion_vector
@@ -212,6 +213,8 @@ async def _submit_new_task(ai_audio):
         emo_weight = ai_audio.emo_weight if ai_audio.emo_weight is not None else 1.0
         emo_vec = None
         emo_text = ai_audio.emo_text
+        # 语速（1.0 正常，>1 更快），由 generate_audio 内换算为 IndexTTS duration_factor
+        speed = normalize_dialogue_tts_speed(getattr(ai_audio, 'speed', None))
         
         # Handle emotion reference audio path
         if emo_control_method == 1 and ai_audio.emo_ref_path:
@@ -271,7 +274,8 @@ async def _submit_new_task(ai_audio):
             emo_weight=emo_weight,
             emo_vec=emo_vec,
             emo_text=emo_text,
-            result_path=result_path
+            result_path=result_path,
+            speed=speed
         )
         
         if not success:

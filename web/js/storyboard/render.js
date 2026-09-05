@@ -1134,8 +1134,8 @@ function renderDialoguePanel(scene) {
                 <select class="dialogue-character" data-dialogue-field="characterId">${characterOptions}</select>
                 <textarea class="dialogue-text" data-dialogue-field="text" placeholder="台词">${escapeHtml(d.text)}</textarea>
                 <div class="dialogue-meta">
-                    <label class="meta-field">语速<input type="number" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
-                    <label class="meta-field">音量<input type="number" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
+                    <label class="meta-field"><span class="meta-field-head">语速<span class="field-value" data-field-display="speed">${Number(d.speed ?? 1).toFixed(1)}</span></span><input type="range" min="0.5" max="2" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
+                    <label class="meta-field"><span class="meta-field-head">音量<span class="field-value" data-field-display="volume">${parseInt(d.volume ?? 100, 10)}</span></span><input type="range" min="0" max="100" step="1" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
                 </div>
                 ${renderDialogueAudioBlock(d)}
                 <div class="dialogue-actions">
@@ -3642,8 +3642,8 @@ function renderDialogueRowOuter(d) {
                 <select class="dialogue-character" data-dialogue-field="characterId">${characterOptions}</select>
                 <textarea class="dialogue-text" data-dialogue-field="text" placeholder="台词">${escapeHtml(d.text)}</textarea>
                 <div class="dialogue-meta">
-                    <label class="meta-field">语速<input type="number" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
-                    <label class="meta-field">音量<input type="number" step="0.1" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
+                    <label class="meta-field"><span class="meta-field-head">语速<span class="field-value" data-field-display="speed">${Number(d.speed ?? 1).toFixed(1)}</span></span><input type="range" min="0.5" max="2" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
+                    <label class="meta-field"><span class="meta-field-head">音量<span class="field-value" data-field-display="volume">${parseInt(d.volume ?? 100, 10)}</span></span><input type="range" min="0" max="100" step="1" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
                 </div>
                 ${renderDialogueAudioBlock(d)}
                 <div class="dialogue-actions">
