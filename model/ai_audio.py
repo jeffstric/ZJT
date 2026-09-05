@@ -4,7 +4,8 @@ AI Audio Model - Database operations for ai_audio table
 from typing import List, Optional, Dict, Any
 from .database import execute_query, execute_update, execute_insert, execute_insert_in_transaction
 from config.constant import (
-    AI_AUDIO_STATUS_PENDING
+    AI_AUDIO_STATUS_PENDING,
+    DialogueTtsSpeedConstants
 )
 import logging
 
@@ -30,6 +31,7 @@ class AIAudio:
         self.emo_control_method = kwargs.get('emo_control_method')
         self.status = kwargs.get('status')
         self.message = kwargs.get('message')
+        self.speed = kwargs.get('speed')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -48,7 +50,9 @@ class AIAudio:
             'emo_vec': self.emo_vec,
             'emo_control_method': self.emo_control_method,
             'status': self.status,
-            'message': self.message
+            'message': self.message,
+            # DECIMAL → float，避免 Decimal 无法 JSON 序列化
+            'speed': float(self.speed) if self.speed is not None else None
         }
 
 
@@ -68,11 +72,12 @@ class AIAudioModel:
         emo_vec: Optional[str] = None,
         emo_control_method: Optional[int] = None,
         status: Optional[int] = AI_AUDIO_STATUS_PENDING,
-        message: Optional[str] = None
+        message: Optional[str] = None,
+        speed: Optional[float] = DialogueTtsSpeedConstants.DEFAULT
     ) -> int:
         """
         Create a new AI audio record
-        
+
         Args:
             text: Generation text
             user_id: User ID
@@ -86,18 +91,20 @@ class AIAudioModel:
             emo_control_method: Emotion control method (0-same as voice reference, 1-use emotion reference, 2-use emotion vector, 3-use emotion text, optional)
             status: Status (AI_AUDIO_STATUS_PENDING-未处理, AI_AUDIO_STATUS_PROCESSING-处理中, AI_AUDIO_STATUS_FAILED-处理失败, AI_AUDIO_STATUS_COMPLETED-处理完成, default: AI_AUDIO_STATUS_PENDING)
             message: Error message (optional)
-        
+            speed: 语速（1.0 正常，>1 更快，<1 更慢，范围 0.5~2.0）
+
         Returns:
             Inserted record ID
         """
         sql = """
-            INSERT INTO ai_audio 
-            (text, user_id, ref_path, emo_ref_path, transaction_id, result_url, 
-             emo_text, emo_weight, emo_vec, emo_control_method, status, message)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO ai_audio
+            (text, user_id, ref_path, emo_ref_path, transaction_id, result_url,
+             emo_text, emo_weight, emo_vec, emo_control_method, status, message, speed)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (text, user_id, ref_path, emo_ref_path, transaction_id, result_url,
-                  emo_text, emo_weight, emo_vec, emo_control_method, status, message)
+                  emo_text, emo_weight, emo_vec, emo_control_method, status, message,
+                  speed)
         
         try:
             record_id = execute_insert(sql, params)
@@ -121,7 +128,8 @@ class AIAudioModel:
         emo_vec: Optional[str] = None,
         emo_control_method: Optional[int] = None,
         status: Optional[int] = AI_AUDIO_STATUS_PENDING,
-        message: Optional[str] = None
+        message: Optional[str] = None,
+        speed: Optional[float] = DialogueTtsSpeedConstants.DEFAULT
     ) -> int:
         """
         ⚠️ 仅供事务型原子配音提交内部调用，禁止在此 conn 上执行网络/文件/TTS 等慢操作。
@@ -140,11 +148,12 @@ class AIAudioModel:
         sql = """
             INSERT INTO ai_audio
             (text, user_id, ref_path, emo_ref_path, transaction_id, result_url,
-             emo_text, emo_weight, emo_vec, emo_control_method, status, message)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             emo_text, emo_weight, emo_vec, emo_control_method, status, message, speed)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (text, user_id, ref_path, emo_ref_path, transaction_id, result_url,
-                  emo_text, emo_weight, emo_vec, emo_control_method, status, message)
+                  emo_text, emo_weight, emo_vec, emo_control_method, status, message,
+                  speed)
         return execute_insert_in_transaction(conn, sql, params)
 
     @staticmethod
@@ -273,7 +282,8 @@ class AIAudioModel:
         """
         allowed_fields = [
             'text', 'ref_path', 'emo_ref_path', 'transaction_id', 'result_url',
-            'emo_text', 'emo_weight', 'emo_vec', 'emo_control_method', 'status', 'message'
+            'emo_text', 'emo_weight', 'emo_vec', 'emo_control_method', 'status', 'message',
+            'speed'
         ]
         
         update_fields = []
@@ -338,6 +348,7 @@ CREATE TABLE IF NOT EXISTS `ai_audio` (
   `emo_control_method` tinyint DEFAULT NULL COMMENT '情感控制方式: 0-与音色参考音频相同, 1-使用情感参考音频, 2-使用情感向量控制, 3-使用情感描述文本控制',
   `status` tinyint DEFAULT NULL COMMENT '状态: 0-未处理, 1-正在处理, -1-处理失败, 2-处理完成',
   `message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci COMMENT '错误信息',
+  `speed` decimal(4,2) NOT NULL DEFAULT '1.00' COMMENT '语速: 1.00正常, >1更快, <1更慢, 范围0.50~2.00（IndexTTS duration_factor=1/speed）',
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 """
