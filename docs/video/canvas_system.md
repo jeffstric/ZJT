@@ -64,6 +64,10 @@
 
 - 点击右下角 `排` 按钮
 - 自动整理节点布局，避免重叠
+- 排序规则（实现见 `web/js/workflow_layout.js`）：
+  - 分镜节点（shot_frame）的上下顺序按父幕节点 `data.shots` 的数组顺序排列，与 `syncShotFramesToShots` 的权威顺序一致；不在 shots 中的孤儿分镜追加到末尾。不以节点标题排序（标题是 shot_id / shot_number / 兜底文案的混用，无统一顺序语义）
+  - 幕节点（shot_group）的上下堆叠顺序按该幕首个分镜的 `shot_number`（跨幕全局连续编号）排序；无分镜数据的幕回退按标题比较
+  - 其余节点按标题自然排序 + 拓扑分层布局
 
 ## 连接线
 
