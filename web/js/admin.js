@@ -154,6 +154,25 @@ const PROVIDER_DEFINITIONS = [
         configKeyMap: { api_key: 'llm.agnes.api_key', base_url: 'llm.agnes.base_url' },
         testEndpoint: null
     },
+    {
+        id: 'mimo',
+        nameKey: 'provider_mimo_name',
+        descKey: 'provider_mimo_desc',
+        category: 'llm',
+        icon: '📱',
+        docUrl: 'https://mimo.mi.com',
+        lazyRecommended: false,
+        displayOrder: 8,
+        baseName: 'mimo',
+        isOfficialAPI: false,
+        impactsKey: 'provider_mimo_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_mimo', required: true },
+            { id: 'base_url', labelKey: 'field_base_url_label_optional', type: 'url', placeholder: 'https://token-plan-cn.xiaomimimo.com/v1', required: false, helpTextKey: 'field_base_url_placeholder' }
+        ],
+        configKeyMap: { api_key: 'llm.mimo.api_key', base_url: 'llm.mimo.base_url' },
+        testEndpoint: null
+    },
 
     // ===== 生图/生视频共享键供应商 =====
     // 多米、火山引擎（多媒体）、火山引擎海外版、阿里云百炼（多媒体）、聚合站 1-5 的生图与生视频共用同一配置键，

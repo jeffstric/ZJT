@@ -940,6 +940,25 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== 小米 MiMo 配置（Token Plan 套餐） ====================
+    {
+        'key': 'llm.mimo.api_key',
+        'value_type': 'string',
+        'description': '小米 MiMo API Key（Token Plan 套餐）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True,
+        'user_module_grantable': True
+    },
+    {
+        'key': 'llm.mimo.base_url',
+        'value_type': 'string',
+        'description': '小米 MiMo API 基础URL（默认 https://token-plan-cn.xiaomimimo.com/v1）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== 七牛云存储配置 ====================
     {
         'key': 'file_storage.qiniu.access_key',

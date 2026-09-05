@@ -2072,6 +2072,7 @@ class LLMVendor:
         'ZJT_API': 'ZJT API 供应商（Qwen3.5/3.6 模型）',
         'DEEPSEEK': 'DeepSeek 供应商（DeepSeek-V4 模型）',
         'AGNES': 'Agnes 供应商（Agnes 2.5 对话模型）',
+        'MIMO': '小米 MiMo 供应商（mimo-v2.5 系列，Token Plan 套餐）',
         'VLLM': '本地推理供应商（vLLM 模型）',
     }
     JIEKOU = 'jiekou'
@@ -2082,6 +2083,7 @@ class LLMVendor:
     ZJT_API = 'zjt_api'
     DEEPSEEK = 'deepseek'
     AGNES = 'agnes'
+    MIMO = 'mimo'
     VLLM = 'vllm'
 
 
@@ -2105,6 +2107,8 @@ class LLMModel:
         'DEEPSEEK_V4_PRO': 'DeepSeek V4 Pro',
         'AGNES_2_5_FLASH': 'Agnes 2.5 Flash',
         'AGNES_2_5_PRO': 'Agnes 2.5 Pro',
+        'MIMO_V2_5': '小米 MiMo V2.5',
+        'MIMO_V2_5_PRO': '小米 MiMo V2.5 Pro',
         'REDUCE_VIOLATION_DEFAULT': '内容安全提示词改写默认模型（reduce-violation 兜底）',
     }
     # Gemini 模型
@@ -2141,6 +2145,10 @@ class LLMModel:
     AGNES_2_5_FLASH = 'agnes-2.5-flash'
     AGNES_2_5_PRO = 'agnes-2.5-pro'
 
+    # 小米 MiMo 模型（Token Plan 套餐，OpenAI 兼容端点 token-plan-cn.xiaomimimo.com/v1）
+    MIMO_V2_5 = 'mimo-v2.5'
+    MIMO_V2_5_PRO = 'mimo-v2.5-pro'
+
     # 内容安全提示词改写（reduce-violation）的默认兜底模型
     # 前端未传/所选拆分模型供应商未配置时使用；复用剧本拆分默认模型，走 DEEPSEEK 供应商独立 key
     # （2026-08：原默认 gemini-3-flash-preview 已下线）
@@ -2167,6 +2175,7 @@ VENDOR_ICONS = {
     'zjt_api': '🚀',
     'deepseek': '🔍',
     'agnes': '✨',
+    'mimo': '📱',
     'vllm': '⚡',
 }
 
@@ -2183,6 +2192,7 @@ MODEL_PREFIX_VENDOR_MAP = {
     'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
     'deepseek': LLMVendor.DEEPSEEK,  # DeepSeek 的 DeepSeek-V4 模型
     'agnes': LLMVendor.AGNES,  # Agnes AI 对话模型
+    'mimo': LLMVendor.MIMO,  # 小米 MiMo 的 mimo-v2.5 系列模型
 }
 
 

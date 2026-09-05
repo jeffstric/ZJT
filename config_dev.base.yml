@@ -24,3 +24,9 @@ pipeline:
 # 由 run_dev.py 读取，>0 时拉起 N 个独立 worker 进程，主调度器跳过此 job
 script_split:
   worker_total: 0  # 0=主调度器单进程(兼容旧行为)；>0=由 N 个独立 worker 进程分片接管(id MOD N = index)
+
+# LLM 供应商兜底默认值（完整模板见 config.example.yml，同步维护）
+llm:
+  mimo:
+    api_key: ""  # 小米 MiMo API Key（Token Plan 套餐），本地开发填入 config_dev.yml
+    base_url: "https://token-plan-cn.xiaomimimo.com/v1"
