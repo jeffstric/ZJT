@@ -1181,13 +1181,49 @@ class StoryboardSubtitleConstants:
     # 无探测时长时的单条对白默认秒数
     DEFAULT_CUE_DURATION_SECONDS = 2.0
     # 内置 CJK 字体（相对项目根），烧录时拷贝到 work_dir 并传 fontsdir=
-    # 规避宿主机无中文字体 / Windows fontconfig 解析失败导致字幕渲染为豆腐块（蚂蚁文）
+    # 规避宿主机无中文字体 / Windows fontconfig 解析失败导致中文渲染为豆腐块（蚂蚁文）
     # 字体放 files/（非 web 公开目录，避免被外部下载），程序通过文件系统直接读取
     BUILTIN_FONT_SUBDIR = "files/fonts"
     BUILTIN_FONT_FILENAME = "NotoSansSC-Regular.otf"
     BUILTIN_FONT_FAMILY = "Noto Sans SC"
     # 烧录时拷贝到 work_dir 下的子目录名（相对路径规避 Windows 盘符冒号转义）
     WORK_FONT_SUBDIR = "fonts"
+
+    # ---- 字幕模式 ----
+    # smart: 按语音时间轴逐句显示（ASR 句级时间戳，见 asr_sentence_client）；
+    # block: 整条对白折行分页（旧行为）。
+    SUBTITLE_MODE_SMART = "smart"
+    SUBTITLE_MODE_BLOCK = "block"
+    SUBTITLE_MODE_DEFAULT = SUBTITLE_MODE_SMART
+    # smart 模式下单句 ASR 时间轴与对白 audio.duration 的比例缩放下限：
+    # ASR 识别时长与 TTS 音频实际时长偏差超过该比例时按比例缩放对齐
+    ASR_SENTS_SCALE_MIN = 0.5
+    ASR_SENTS_SCALE_MAX = 2.0
+    # 原文按 ASR 句占比切分时，切点向就近标点吸附的搜索窗口（字符）
+    ASR_SPLIT_SNAP_WINDOW = 3
+
+    # ---- 左右边距（用户可在前端调整，导出时透传）----
+    SIDE_MARGIN_RATIO_MIN = 0.0
+    SIDE_MARGIN_RATIO_MAX = 0.18
+    # 前端可选档位（画面宽比例），与前端滑杆保持一致
+    SIDE_MARGIN_RATIO_STEP = 0.01
+
+
+class StoryboardAsrConstants:
+    """整片导出 smart 字幕：句级 ASR（SenseVoice）调用约束。
+
+    ASR 服务地址在 config.yml 的 asr.api_url（如 http://192.168.10.108:7861），
+    由 services/asr_sentence_client 读取；服务不可达/失败时逐条回退 block 分页，
+    不影响导出。
+    """
+    _CONSTANT_GROUP = True
+
+    # 单条对白音频的 ASR 超时
+    SENTENCES_TIMEOUT_SECONDS = 30
+    # 一次导出全片 ASR 总预算：超预算后剩余对白直接回退 block 分页，避免导出被拖死
+    SENTENCES_TOTAL_BUDGET_SECONDS = 300
+    # ASR 服务返回句级时间轴时允许的最小句数（0 表示不限制）
+    SENTENCES_MIN_COUNT = 1
 
 
 class ScriptParserConstants:

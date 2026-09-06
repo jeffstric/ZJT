@@ -68,6 +68,10 @@ import {
     stopPlayback,
     syncSelectionToTimeline,
     scrollTimelineToScene,
+    applySubtitleMargin,
+    showSubtitleSample,
+    clearSubtitleSample,
+    normalizedSubtitleMarginRatio,
 } from './playback.js';
 import {
     autoCompleteMissingFirstFrames,
@@ -1865,11 +1869,27 @@ async function handleAction(action, target) {
         if (sub) {
             if (!state.subtitleEnabled) {
                 sub.hidden = true;
-            } else if (state.playback?.audioDialogueId != null && sub.textContent) {
-                sub.hidden = false;
+            } else {
+                const inner = sub.querySelector('.preview-subtitle-text') || sub;
+                if (state.playback?.audioDialogueId != null && inner.textContent) {
+                    sub.hidden = false;
+                }
             }
         }
         await persistUiConfig();
+        return;
+    }
+
+    if (action === 'toggle-subtitle-settings') {
+        state.showSubtitleSettings = !state.showSubtitleSettings;
+        refresh('timelineChrome');
+        if (state.showSubtitleSettings) showSubtitleSample();
+        else clearSubtitleSample();
+        return;
+    }
+
+    if (action === 'subtitle-mode') {
+        // radio 由 change 委托处理（此处 click 只 preventDefault 防冒泡）
         return;
     }
 
@@ -2417,9 +2437,12 @@ async function handleAction(action, target) {
 
     if (action === 'export-full') {
         try {
-            // 固定烧录字幕：内置 CJK 字体已解决 Windows fontconfig 豆腐块问题
+            // 固定烧录字幕：内置 CJK 字体已解决 Windows fontconfig 豆腐块问题。
+            // 显示方式与左右边距来自字幕设置（预览所见即所得）。
             const response = await api.exportFullVideo(state.storyboardId, {
                 include_subtitles: true,
+                subtitle_mode: state.subtitleMode === 'block' ? 'block' : 'smart',
+                subtitle_side_margin: normalizedSubtitleMarginRatio(),
             });
             if (!response.success && response.error) {
                 notify(response.error);
@@ -2932,10 +2955,43 @@ export function bindEvents() {
         }
     });
 
+    // 字幕显示方式 radio（smart 逐句 / block 整段）
+    document.addEventListener('change', async (event) => {
+        const target = event.target;
+        if (!target || typeof target.matches !== 'function') return;
+        if (!target.matches('input[type="radio"][data-action="subtitle-mode"]')) return;
+        state.subtitleMode = target.value === 'block' ? 'block' : 'smart';
+        try {
+            await persistUiConfig();
+        } catch {
+            // 持久化失败不阻塞交互
+        }
+    });
+
+    // 字幕左右边距滑杆：拖动中实时应用预览并更新数值，松手后持久化
+    document.addEventListener('change', async (event) => {
+        const target = event.target;
+        if (!target || typeof target.matches !== 'function') return;
+        if (!target.matches('[data-subtitle-margin]')) return;
+        try {
+            await persistUiConfig();
+        } catch {
+            // 持久化失败不阻塞交互
+        }
+    });
+
     document.addEventListener('input', (event) => {
         const target = event.target;
         if (target.id === 'chat-textarea') {
             state.inputMessage = target.value;
+        } else if (target.matches && target.matches('[data-subtitle-margin]')) {
+            // 字幕左右边距滑杆：实时应用预览（数值与持久化由 change/其它逻辑处理）
+            const pct = Number(target.value) || 0;
+            state.subtitleSideMarginRatio = Math.min(0.18, Math.max(0, pct / 100));
+            const valueEl = document.querySelector('[data-subtitle-margin-value]');
+            if (valueEl) valueEl.textContent = `${pct}%`;
+            applySubtitleMargin();
+            if (state.showSubtitleSettings) showSubtitleSample();
         } else if (target.dataset.scriptLanguageCustom === 'dialogue') {
             state.scriptDialogueLanguage = target.value;
         } else if (target.dataset.scriptLanguageCustom === 'prompt') {

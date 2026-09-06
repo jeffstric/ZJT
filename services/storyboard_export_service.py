@@ -26,12 +26,18 @@ from urllib.parse import urlparse
 from urllib.request import urlopen, Request
 
 from config.config_util import get_config, get_config_value, resolve_bin_path
-from config.constant import StoryboardExportConstants, StoryboardTimeouts
+from config.constant import (
+    StoryboardAsrConstants,
+    StoryboardExportConstants,
+    StoryboardSubtitleConstants,
+    StoryboardTimeouts,
+)
 from model.ai_tools import AIToolsModel
 from model.storyboard import StoryboardModel
 from model.storyboard_scene import StoryboardSceneModel
 from model.storyboard_scene_asset import StoryboardSceneAssetModel
 from model.storyboard_dialogue import StoryboardDialogueModel
+from services.asr_sentence_client import is_asr_enabled, transcribe_sentences
 from utils.project_path import get_project_root, get_upload_dir, resolve_upload_url_to_local_path
 
 logger = logging.getLogger(__name__)
@@ -789,15 +795,51 @@ def _mux_segment(
         ], timeout=timeout)
 
 
+def _collect_asr_sentences(plan: ExportPlan, pack_dir: str, *, total_budget: float) -> Dict[int, List[dict]]:
+    """smart 字幕：逐条对白 wav 调句级 ASR，返回 {dialogue_id: [{start,end,text}]}。
+
+    单条失败只影响该条（该对白回退 block 分页）；总预算耗尽后剩余对白直接回退，
+    避免导出被 ASR 拖死。在导出后台线程中同步调用，不碰事件循环。
+    """
+    if not is_asr_enabled():
+        return {}
+    out: Dict[int, List[dict]] = {}
+    deadline = time.monotonic() + max(1.0, float(total_budget))
+    for sc in plan.scenes:
+        for a in sc.audios:
+            if not a.text or a.dialogue_id is None:
+                continue
+            if time.monotonic() >= deadline:
+                logger.info(
+                    "asr sentences budget exhausted, remaining dialogues fallback to block mode"
+                )
+                return out
+            wav = os.path.join(pack_dir, a.file)
+            if not os.path.isfile(wav):
+                continue
+            sents = transcribe_sentences(
+                wav, timeout=StoryboardAsrConstants.SENTENCES_TIMEOUT_SECONDS
+            )
+            if sents:
+                out[int(a.dialogue_id)] = sents
+            else:
+                logger.info("asr sentences empty for dialogue=%s, fallback block", a.dialogue_id)
+    return out
+
+
 def build_merged_video(
     plan: ExportPlan,
     work_dir: str,
     *,
     burn_subtitles: bool = True,
+    subtitle_options: Optional[Dict[str, Any]] = None,
 ) -> str:
     """合成完整 MP4，返回本地路径。依赖 pack 目录已 materialize。
 
     burn_subtitles=True 时，在整片 concat 后硬烧 ASS 字幕（见 storyboard_subtitle）。
+    subtitle_options:
+        - mode: "smart"（默认，ASR 逐句字幕）| "block"（整条对白分页）
+        - side_margin_ratio: 字幕左右边距比例（前端字幕设置透传，None 用默认）
     """
     pack_dir = os.path.join(work_dir, "package")
     if not os.path.isdir(pack_dir):
@@ -866,18 +908,50 @@ def build_merged_video(
 
     if burn_subtitles:
         try:
-            from config.constant import StoryboardSubtitleConstants
+            opts = subtitle_options or {}
+            mode = str(opts.get("mode") or StoryboardSubtitleConstants.SUBTITLE_MODE_DEFAULT).strip().lower()
+            if mode not in (
+                StoryboardSubtitleConstants.SUBTITLE_MODE_SMART,
+                StoryboardSubtitleConstants.SUBTITLE_MODE_BLOCK,
+            ):
+                mode = StoryboardSubtitleConstants.SUBTITLE_MODE_DEFAULT
+            side_margin = opts.get("side_margin_ratio")
+
+            asr_map: Dict[int, List[dict]] = {}
+            if mode == StoryboardSubtitleConstants.SUBTITLE_MODE_SMART:
+                try:
+                    asr_map = _collect_asr_sentences(
+                        plan,
+                        pack_dir,
+                        total_budget=StoryboardAsrConstants.SENTENCES_TOTAL_BUDGET_SECONDS,
+                    )
+                    if asr_map:
+                        logger.info(
+                            "asr sentences collected for %s/%s dialogues",
+                            len(asr_map),
+                            sum(len(sc.audios) for sc in plan.scenes),
+                        )
+                except Exception as e:
+                    logger.warning("collect asr sentences failed, fallback block: %s", e)
+                    asr_map = {}
+
             from services.storyboard_subtitle import (
                 build_subtitle_cues,
                 write_ass_file,
                 ffmpeg_subtitles_filter_arg,
                 resolve_builtin_font,
             )
-            cues = build_subtitle_cues(plan, width=width, height=height)
+            cues = build_subtitle_cues(
+                plan,
+                width=width,
+                height=height,
+                subtitle_mode=mode,
+                asr_sents_by_dialogue=asr_map,
+            )
             if cues:
                 ass_name = "subtitles.ass"
                 ass_path = os.path.join(work_dir, ass_name)
-                write_ass_file(cues, ass_path, width, height)
+                write_ass_file(cues, ass_path, width, height, side_margin_ratio=side_margin)
 
                 # 拷贝内置 CJK 字体到 work_dir/fonts/，让 libass 经 fontsdir= 加载，
                 # 规避宿主机 fontconfig 在 Windows 下解析失败导致字幕渲染为豆腐块（蚂蚁文）

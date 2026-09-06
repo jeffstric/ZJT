@@ -126,6 +126,18 @@ const state = {
     agentChatFontStep: 0,
     aiOptimize: true,
     subtitleEnabled: true,
+    /**
+     * 导出字幕显示方式：'smart' 按配音语音时间轴逐句显示（默认），
+     * 'block' 整条对白折行分页（旧行为）。随 UI 配置持久化。
+     */
+    subtitleMode: 'smart',
+    /**
+     * 导出字幕左右边距（画面宽比例 0~0.18，默认 0.07）。
+     * 预览字幕实时应用，导出时透传后端写入 ASS MarginL/MarginR。
+     */
+    subtitleSideMarginRatio: 0.07,
+    /** 预览控制条上的字幕设置小面板开关 */
+    showSubtitleSettings: false,
     isPlaying: false,
     currentTime: 0,
     // 时间轴预览播放细粒度状态（由 playback.js 维护）
@@ -1354,6 +1366,8 @@ export function serializeUiConfig() {
         enableFaceMask: state.enableFaceMask === true,
         aiOptimize: state.aiOptimize,
         subtitleEnabled: state.subtitleEnabled,
+        subtitleMode: state.subtitleMode,
+        subtitleSideMarginRatio: state.subtitleSideMarginRatio,
         selectedImageTaskId: state.selectedImageTaskId,
         selectedVideoTaskId: state.selectedVideoTaskId,
         selectedTextToImageTaskId: state.selectedTextToImageTaskId,
@@ -1414,6 +1428,15 @@ export function restoreUiConfig(config = {}) {
     }
     state.aiOptimize = config.aiOptimize !== false;
     state.subtitleEnabled = config.subtitleEnabled !== false;
+    if (config.subtitleMode === 'block' || config.subtitleMode === 'smart') {
+        state.subtitleMode = config.subtitleMode;
+    }
+    {
+        const margin = Number(config.subtitleSideMarginRatio);
+        if (Number.isFinite(margin) && margin >= 0 && margin <= 0.18) {
+            state.subtitleSideMarginRatio = margin;
+        }
+    }
     if (config.selectedImageTaskId !== undefined && config.selectedImageTaskId !== null) {
         state.selectedImageTaskId = config.selectedImageTaskId;
     }
