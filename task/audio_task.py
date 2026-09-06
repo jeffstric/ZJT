@@ -11,6 +11,8 @@ from model import TasksModel, AIAudioModel
 from model.storyboard import StoryboardModel, StoryboardSceneModel
 from model.storyboard_dialogue_audio import StoryboardDialogueAudioModel
 from model.storyboard_dialogue import StoryboardDialogueModel
+from config.media_file_policy import MediaFilePolicy
+from model.media_file_mapping import MediaFileEntity
 from config.constant import (
     TASK_TYPE_GENERATE_AUDIO,
     AI_AUDIO_STATUS_PENDING,
@@ -26,6 +28,7 @@ from config.constant import (
 from task.async_drivers.runninghub_audio_driver import RunningHubAudioConfig
 from utils.index_tts_util import generate_audio, validate_emotion_vector
 from utils.audio_duration_util import probe_audio_duration
+from utils.media_mapping_util import extract_local_path_from_url, register_uploaded_file_mapping
 import os
 from config.config_util import get_dynamic_config_value
 
@@ -289,6 +292,22 @@ async def _submit_new_task(ai_audio):
         logger.info(f"Task {task_id}: Audio saved to {audio_file_path}")
         upload_url = get_dynamic_config_value("tts", "upload_url")
         result_url = f"{upload_url}{audio_filename}"
+
+        # 配音结果注册 CDN mapping 并异步上传七牛：此前 /upload/tts/ 从不建
+        # mapping，音频播放全部从本机经 frp 隧道全量吐出。注册后
+        # cdn_redirect_middleware 会把后续访问 302 到七牛。同步 DB 调用放入
+        # 工作线程避免阻塞事件循环；register 内部吞异常，注册失败不影响配音任务。
+        tts_local_rel = extract_local_path_from_url(result_url)
+        if tts_local_rel:
+            await asyncio.to_thread(
+                register_uploaded_file_mapping,
+                None,
+                tts_local_rel,
+                MediaFileEntity.TTS,
+                MediaFilePolicy.NEVER_EXPIRE,
+                task_id,
+            )
+
         # Update database with result
         AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_COMPLETED, result_url=result_url, message="音频生成成功")
         StoryboardDialogueAudioModel.update_audio_url_by_ai_audio_id(task_id, result_url)

@@ -58,6 +58,76 @@ def extract_local_path_from_url(url: str) -> Optional[str]:
     return path.lstrip("/")
 
 
+def register_uploaded_file_mapping(
+    user_id: Optional[int],
+    local_path: str,
+    entity_type: int,
+    policy_code: str,
+    source_id: Optional[int] = None,
+) -> Optional[int]:
+    """
+    上传素材落盘后注册 CDN mapping 并触发异步上传七牛。
+
+    供此前未接入 CDN 的上传链路（工作流素材、TTS 配音结果等）调用：
+    注册后 cdn_redirect_middleware 会把后续 /upload/ 访问 302 到七牛，
+    媒体出流量不再占用 frp 隧道带宽。
+
+    本函数绝不抛异常——注册失败只记 warning，不影响上传主流程。
+
+    Args:
+        user_id: 上传用户 ID（可为 None）
+        local_path: 相对 upload 根目录的 POSIX 路径，如 "upload/workflow/12/xxx.png"
+        entity_type: MediaFileEntity 枚举值（如 WORKFLOW / TTS）
+        policy_code: MediaFilePolicy 策略（用户长期资产用 NEVER_EXPIRE）
+        source_id: 关联业务记录 ID（可选）
+
+    Returns:
+        mapping_id；未启用 CDN 或注册失败返回 None
+    """
+    try:
+        from config.config_util import get_config
+        from model.media_file_mapping import MediaFileMappingModel
+        from utils.cdn_util import CDNUtil
+        from utils.mime_type import get_mime_type_from_extension
+
+        if not get_config().get("server", {}).get("auto_upload_to_cdn", False):
+            return None
+        if not local_path:
+            return None
+
+        # 同路径已注册过则复用（文件名含时间戳+uuid，正常不会重复；防御性兜底）
+        existing = MediaFileMappingModel.get_by_local_path(local_path)
+        if existing:
+            return existing.id
+
+        file_size = None
+        try:
+            abs_path = os.path.join(get_project_root(), local_path)
+            if os.path.exists(abs_path):
+                file_size = os.path.getsize(abs_path)
+        except Exception:
+            pass
+
+        ext = os.path.splitext(local_path)[1].lower()
+        mapping_id = MediaFileMappingModel.create(
+            user_id=user_id,
+            local_path=local_path,
+            cloud_path=None,
+            policy_code=policy_code,
+            entity_type=entity_type,
+            source_id=source_id,
+            media_type=get_mime_type_from_extension(ext),
+            original_url=None,
+            file_size=file_size,
+        )
+        CDNUtil.trigger_cdn_upload(mapping_id, local_path)
+        logger.info(f"Registered CDN mapping {mapping_id} for uploaded file: {local_path}")
+        return mapping_id
+    except Exception as e:
+        logger.warning(f"注册 CDN mapping 失败（不影响上传主流程）: {local_path}, {e}")
+        return None
+
+
 def ensure_entity_image_mapping(
     user_id,
     image_url: str,

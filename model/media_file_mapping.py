@@ -19,6 +19,7 @@ class MediaFileEntity:
     PROPS = 4          # props 表
     WORKFLOW = 5      # 工作流上传
     STORYBOARD_SCENE_ASSET = 6  # storyboard_scene_asset 表（分镜首帧/尾帧/视频资产）
+    TTS = 7           # TTS 配音音频（ai_audio 结果）
 
     @staticmethod
     def get_entity_name(value: int) -> str:
@@ -31,6 +32,7 @@ class MediaFileEntity:
             MediaFileEntity.PROPS: 'props',
             MediaFileEntity.WORKFLOW: 'workflow',
             MediaFileEntity.STORYBOARD_SCENE_ASSET: 'storyboard_scene_asset',
+            MediaFileEntity.TTS: 'tts',
         }
         return mapping.get(value, 'unknown')
 
@@ -45,6 +47,7 @@ class MediaFileEntity:
             'props': MediaFileEntity.PROPS,
             'workflow': MediaFileEntity.WORKFLOW,
             'storyboard_scene_asset': MediaFileEntity.STORYBOARD_SCENE_ASSET,
+            'tts': MediaFileEntity.TTS,
         }
         return mapping.get(name, 0)
 
