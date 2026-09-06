@@ -1131,5 +1131,16 @@
   "restoring_history_image": "Restoring...",
   "restore_image_already_current": "This image is already the current one",
   "restore_image_success": "Restored as current image",
-  "restore_image_failed": "Restore failed: {error}"
+  "restore_image_failed": "Restore failed: {error}",
+  "ann_bell_title": "Notifications",
+  "ann_panel_title": "Notification Center",
+  "ann_mark_all_read": "Mark all read",
+  "ann_section_announcements": "Announcements",
+  "ann_section_system": "System Notices",
+  "ann_empty": "No notifications",
+  "ann_level_info": "Info",
+  "ann_level_success": "Success",
+  "ann_level_warning": "Warning",
+  "ann_level_error": "Error",
+  "ann_view_link": "View details"
 }
