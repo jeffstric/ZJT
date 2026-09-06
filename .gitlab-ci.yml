@@ -205,11 +205,25 @@ unit_tests:
 
     # 仅在发生过重建时更新镜像缓存。
     # 必须连同基础镜像一起保存：否则下次 FROM 重新拉取，tag 上游重建后 ID 变化会导致缓存失配
+    # 先写临时文件并校验（gzip -t + 非空 tar）：管道会掩盖 docker save 失败，
+    # 曾导致 20 字节空压缩包被上传为共享缓存，所有 job 加载失败被迫全量重建
     - |
       if [ "$REBUILT" = "1" ]; then
         mkdir -p ../docker-image-cache
         BASE_IMAGE=$(grep -m1 '^FROM ' Dockerfile | awk '{print $2}')
-        docker save "zjt_test_image:$TEST_IMAGE_TAG" "$BASE_IMAGE" m.daocloud.io/docker.io/library/mysql:8.0 | gzip > ../docker-image-cache/zjt_test_image.tar.gz || echo "镜像缓存保存失败，忽略"
+        # buildkit 构建不会把 FROM 基础镜像落到本地镜像库，直接 save 会报
+        # "reference does not exist" 导致缓存为空，需先显式 pull
+        docker pull "$BASE_IMAGE" || echo "基础镜像拉取失败，仅保存已有镜像"
+        docker image inspect "$BASE_IMAGE" > /dev/null 2>&1 || BASE_IMAGE=""
+        TMP=../docker-image-cache/zjt_test_image.tar.gz.tmp
+        if docker save "zjt_test_image:$TEST_IMAGE_TAG" $BASE_IMAGE m.daocloud.io/docker.io/library/mysql:8.0 | gzip > "$TMP" \
+           && gzip -t "$TMP" && [ "$(stat -c%s "$TMP")" -gt 1000000 ]; then
+          mv "$TMP" ../docker-image-cache/zjt_test_image.tar.gz
+          echo "镜像缓存已更新 ($(stat -c%s ../docker-image-cache/zjt_test_image.tar.gz) 字节)"
+        else
+          echo "镜像缓存保存失败（校验未通过），保留旧缓存"
+          rm -f "$TMP"
+        fi
       else
         echo "镜像未重建，缓存保持不变"
       fi
@@ -217,7 +231,7 @@ unit_tests:
     # 等待 MySQL 就绪
     - |
       for i in {1..30}; do
-        docker exec zjt_mysql_test mysqladmin ping -h localhost -u root -proot_test_pass && break
+        docker exec zjt_mysql_test mysqladmin ping -h 127.0.0.1 -P 3306 -u root -proot_test_pass && break
         echo "等待 MySQL 启动..."
         sleep 2
       done
