@@ -29,5 +29,5 @@ POST /api/parse-script
 
 ## 遗留
 
-- model 1011 的 note 文案建议改为 vLLM（AWQ）部署说明（涉及线上库数据修订，另行处理）。
+- ~~model 1011 的 note 文案误导~~（已处理）：2026-09-06 按产品决策清除线上库 `model` 表全部 7 行 note（含 model 1011），备份见 `model_note_backup_20260906.json`（未入库）；前端下拉随之只展示模型名。代码读取处均为 `note or ''` 兜底，无需改动。
 - 若工作流草稿里存有复合串 `splitModelId` 且模型列表加载失败（走默认 deepseek 选项、不执行恢复逻辑），存量复合串仍会被提交，由后端 `resolve_composite_model_ref` 兜底。
