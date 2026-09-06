@@ -299,3 +299,42 @@ async def get_available_models() -> dict:
         dict: { 'success': bool, 'models': [...] }
     """
     return await asyncio.to_thread(_get_available_models_sync)
+
+
+def resolve_composite_model_ref(model_ref: str) -> tuple:
+    """
+    将 "vendor:模型名" 复合模型标识还原为 (vendor_id, model_db_id)。
+
+    本地服务供应商（Ollama/vLLM）的模型经 /api/models 下发时 id 字段使用
+    "vendor:模型名" 前缀格式（见 _get_available_models_sync），历史版本前端
+    会把该复合串当作 model_id 回传（如剧本节点拆分请求）。按首个冒号拆分后
+    查库还原数值 ID；vendor/model/关联任一缺失或查询异常时返回 (None, None)。
+
+    同步查库函数，async 接口调用方须用 asyncio.to_thread 包裹。
+    """
+    ref = str(model_ref or '').strip()
+    if not ref or ':' not in ref:
+        return None, None
+    vendor_name, _, model_name = ref.partition(':')
+    vendor_name = vendor_name.strip()
+    model_name = model_name.strip()
+    if not vendor_name or not model_name:
+        return None, None
+    try:
+        from model.model import ModelModel
+        from model.vendor import VendorDAO
+        from model.vendor_model import VendorModelModel
+
+        vendor = VendorDAO.get_by_name(vendor_name)
+        if not vendor:
+            return None, None
+        local_model = ModelModel.get_by_name(model_name)
+        if not local_model:
+            return None, None
+        # 复合串由 vendor_model 关联生成，关联缺失说明供应商或模型已下架，拒绝猜测
+        if not VendorModelModel.get_by_vendor_model(vendor.id, local_model.id):
+            return None, None
+        return vendor.id, local_model.id
+    except Exception as e:
+        logger.warning(f"解析复合模型标识失败: {model_ref}: {e}")
+        return None, None

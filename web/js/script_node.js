@@ -510,7 +510,10 @@
         const modelDesc = model.note || model.description || '';
         option.value = modelName;
         option.textContent = labelOverride || (modelDesc ? `${modelName} - ${modelDesc}` : modelName);
-        const modelId = model.id ?? model.model_id ?? '';
+        // 本地服务模型（ollama/vllm）的 model.id 是 "vendor:模型名" 路由串，
+        // data-model-id 必须存数值库 ID（model_id），否则后端 int() 转换会 500
+        const rawModelId = model.model_id ?? model.id ?? '';
+        const modelId = String(rawModelId).includes(':') ? '' : rawModelId;
         if(modelId) option.dataset.modelId = modelId;
         option.dataset.vendorId = model.vendor_id || 1;
         option.dataset.vendorName = model.vendor_name || 'unknown';

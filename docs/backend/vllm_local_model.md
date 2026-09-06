@@ -178,6 +178,16 @@ llm:
 
 历史事故参见 `docs/backend/incidents/2026-09-04-session-vendor-id.md`。
 
+## 拆分链路 model_id 归一化（2026-09-06 修复）
+
+`/api/models` 下发的本地服务模型对象中，`id` 是 `vllm:qwen3.8:27b` 复合串（供工厂按前缀路由），数值库 ID 在同对象的 `model_id` 字段。历史版本剧本节点把复合串当 `model_id` 提交，后端 `int()` 转换抛 `ValueError`，拆分接口整体 500。修复分三层：
+
+1. **前端（根治）**：`web/js/script_node.js` 的 `appendSplitOption` 改为数值库 ID 优先（`model.model_id ?? model.id`），且含 `:` 的值不写入 `data-model-id`；工作流重载按 `option.value`（模型名）恢复选择并重写 `splitModelId`，存量复合串会被自动纠正。
+2. **后端（兼容存量请求）**：`llm/llm_client_factory.py` 新增 `resolve_composite_model_ref()`，按首个冒号拆分后经 `vendor` / `model` / `vendor_model` 三表查库还原 `(vendor_id, model_db_id)`（任一缺失即返回 `(None, None)`，拒绝猜测）；`/api/parse-script`（server.py）与故事板发布拆分（api/storyboard.py generate-from-script）对非数字 `model_id` 用 `asyncio.to_thread` 包裹调用还原，并用解析出的 vendor_id 修正路由。
+3. **回归测试**：`tests/llm/test_resolve_composite_model_ref.py`。
+
+事故记录参见 `docs/backend/incidents/2026-09-06-script-split-composite-model-id.md`。
+
 ## 相关文件
 
 | 文件 | 说明 |
