@@ -192,7 +192,16 @@ unit_tests:
       fi
 
     # 启动测试环境（MySQL + 测试容器）。注意不带 --build
-    - docker compose -f docker-compose-test.yml up -d
+    # 失败时输出 MySQL 日志与健康检查记录，便于定位 unhealthy 根因
+    - |
+      if ! docker compose -f docker-compose-test.yml up -d; then
+        echo "===== compose up 失败，输出诊断信息 ====="
+        docker compose -f docker-compose-test.yml ps -a || true
+        docker inspect -f '{{json .State.Health}}' zjt_mysql_test || true
+        echo "===== zjt_mysql_test 日志 ====="
+        docker logs zjt_mysql_test 2>&1 | tail -100 || true
+        exit 1
+      fi
 
     # 仅在发生过重建时更新镜像缓存。
     # 必须连同基础镜像一起保存：否则下次 FROM 重新拉取，tag 上游重建后 ID 变化会导致缓存失配
