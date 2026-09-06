@@ -482,3 +482,63 @@ def test_duplicate_submission_refreshes_token_and_resumes_waiting_auth(monkeypat
             "clear_error": True,
         })
     ]
+
+
+def test_resume_without_plan_resets_plan_retry_checkpoint(monkeypatch):
+    """恢复到 queued（重新规划）时清除规划重试检查点，给满重试预算。"""
+    task = ScriptSplitTask(
+        id=26,
+        user_id=7,
+        status=ScriptSplitConstants.STATUS_PAUSED,
+        phase="planning",
+        request_config={
+            "sequence_mode": "quality",
+            ScriptSplitConstants.PLAN_CHECKPOINT_CONFIG_KEY: {
+                "attempt": 2,
+                "last_errors": [
+                    {"code": "segment_gap", "message": "未覆盖全部 block"},
+                ],
+            },
+        },
+    )
+    saved_fields = []
+
+    async def fake_get_task(_task_id):
+        return task
+
+    monkeypatch.setattr(script_split, "_get_task_async", fake_get_task)
+    monkeypatch.setattr(
+        script_split.ScriptSplitTaskModel,
+        "update_status",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        script_split.ScriptSplitTaskModel,
+        "save_field",
+        lambda task_id, **fields: saved_fields.append((task_id, fields)),
+    )
+    monkeypatch.setattr(
+        script_split.ScriptSplitSegmentModel,
+        "reset_retry_budget",
+        lambda _task_id: None,
+        raising=False,
+    )
+
+    response = asyncio.run(script_split.resume_task(
+        task_id=26,
+        request=None,
+        auth_token=None,
+        user_id=7,
+    ))
+
+    assert response["data"]["status"] == ScriptSplitConstants.STATUS_QUEUED
+    cleared = [
+        fields for _task_id, fields in saved_fields
+        if "request_config" in fields
+    ]
+    assert len(cleared) == 1
+    assert (
+        ScriptSplitConstants.PLAN_CHECKPOINT_CONFIG_KEY
+        not in cleared[0]["request_config"]
+    )
+    assert cleared[0]["request_config"]["sequence_mode"] == "quality"

@@ -139,6 +139,8 @@
 
 如果计划 JSON 或覆盖校验失败，只重试阶段一。规划成功后将计划持久化，正常执行路径不重复调用规划模型。1500 字硬限制在计划持久化之前完成，因此阶段二不再自动触发局部再规划，也不会删除并重建已经存在的 segment 检查点。
 
+**规划重试跨 tick 检查点（2026-09-04 起）**：阶段一规划同样严格遵守"一次 scheduler tick 最多一次 LLM 调用"。效果模式（v3 空间连续性规划）+ thinking 模型单次规划调用可达数分钟，若在同一个 `step_plan()` 内循环重试，多轮调用会共享 `WORKER_STEP_TIMEOUT_SECONDS`（540s）看门狗预算：第 1 次尝试校验失败后，第 2 次尝试会在看门狗到点时被整体取消，任务被误标为 `step_watchdog_timeout` 暂停且丢失全部规划进度（历史事故：2800 字剧本 + 效果模式 + 深度思考反复命中该误杀）。现在每次校验失败后将 `{"attempt": N, "last_errors": [...]}` 检查点持久化到 `request_config[_plan_checkpoint]`（常量 `PLAN_CHECKPOINT_CONFIG_KEY`）并正常结束当前 tick、释放租约；下一 tick 携带 feedback 定向重试。达到 `PLAN_MAX_RETRIES` 上限后以最后一轮首个错误进入 `paused(plan_failed 或具体校验码)`。用户显式 resume（恢复目标为 `queued`，即无已持久化计划）时清除该检查点给满重试预算，与段级 `reset_retry_budget` 语义一致；`step_plan` 的 L0 复检清空旧计划重规划时同样重置检查点。
+
 阶段二发生 `MAX_TOKENS`、重复截断或调用失败时，只在当前分段的有限重试范围内处理。调用重试达到上限时，如果检查点中已经存在最近一次成功解析的完整 `parsed_result_json`，则强制保存该候选为 `completed`，并在最后一次错误上保留 `_forced_accept=true` 后继续合并发布；只有从未得到任何可解析候选时，当前段才保留为 `failed`、根任务进入 `paused`。质检失败采用相同的可用候选优先原则：拆分与质检最多循环 `qc_max_rounds` 次，仍不通过时采用最后一轮完整 JSON。该线性失败路径避免 `planning/replan → generating → planning` 循环和检查点重建复杂度，同时不会让非致命质检问题或后续修正调用异常永久阻塞拆分。
 
 场景父级结构是上述 forced-accept 的明确例外。`new_root_location_forbidden`、`location_parent_invalid` 带 `_hard_gate=true`，无论 `enable_qc`、修正轮数或调用重试是否耗尽都不得强制接纳。段级、合并级和发布前会分别重跑结构硬门禁；合并发现历史完成段非法时原子重开具体段并按数据库实际状态校准 `completed_segment_count`，发布前失败则禁止调用 location bootstrap 和创建分镜。
@@ -723,6 +725,7 @@ UNIQUE KEY uk_storyboard_scene_split_source(script_split_task_id, source_shot_ke
 
 ```text
 SCRIPT_SPLIT_PLAN_MAX_RETRIES
+SCRIPT_SPLIT_PLAN_CHECKPOINT_CONFIG_KEY
 SCRIPT_SPLIT_SEGMENT_MAX_RETRIES
 SCRIPT_SPLIT_SEGMENT_MAX_OUTPUT_TOKENS
 SCRIPT_SPLIT_LLM_TIMEOUT_SECONDS
@@ -842,7 +845,7 @@ web/js/storyboard/state.js
 - APScheduler 每个 tick 只推进一个有限步骤，`max_instances=1/coalesce=True` 不发生重叠。
 - 调度器中断后通过 `worker_id/lease_until` 从第一个未完成段恢复。
 - 达到重试上限且没有任何可解析候选时进入 `paused`；已有候选时标记 `_forced_accept=true` 并继续。
-- 同一生成 tick 最多调用一次 LLM；QC 失败候选在下一 tick 作为修复上下文恢复。
+- 同一生成 tick 最多调用一次 LLM；QC 失败候选在下一 tick 作为修复上下文恢复（阶段一规划重试同样跨 tick 检查点恢复，见 §6.4）。
 - 单次调用超时先于 worker watchdog；watchdog 触发后任务进入可继续的 `paused`。
 - 执行中取消先进入 `cancelling`，当前 LLM 调用结束后丢弃响应并进入 `cancelled`。
 - 新 token 可以恢复 `waiting_auth` 任务。
