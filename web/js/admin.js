@@ -160,7 +160,7 @@ const PROVIDER_DEFINITIONS = [
         descKey: 'provider_mimo_desc',
         category: 'llm',
         icon: '📱',
-        docUrl: 'https://mimo.mi.com',
+        docUrl: 'https://platform.xiaomimimo.com?ref=WGMLTN',
         lazyRecommended: false,
         displayOrder: 8,
         baseName: 'mimo',

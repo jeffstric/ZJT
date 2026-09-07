@@ -1466,21 +1466,6 @@ def _enrich_scene_location_props(scenes: list) -> list:
     return scenes
 
 
-def _compose_image_prompt(scene) -> str:
-    """从 scene.prompt_json 组合图片提示词（视角/风格/场景/角色描述）"""
-    prompt = scene.prompt_json
-    if isinstance(prompt, str):
-        try:
-            prompt = json.loads(prompt)
-        except Exception:
-            prompt = {}
-    if not isinstance(prompt, dict):
-        return ''
-    parts = [prompt.get('perspective'), prompt.get('style'),
-             prompt.get('scene_desc'), prompt.get('character_desc')]
-    return '，'.join([p for p in parts if p])
-
-
 def _scene_prompt_dict(scene) -> Dict[str, Any]:
     prompt = scene.prompt_json
     if isinstance(prompt, str):

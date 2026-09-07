@@ -929,12 +929,14 @@ export function getSelectedImageTaskId(hasReferences = true) {
 
 /**
  * 组合当前分镜的画面提示词（「直填生图」模式的文本框预填基线）。
- * 组合顺序与后端 api/storyboard.py:_compose_image_prompt 对齐：
- * perspective / style / scene_desc / character_desc，中文逗号连接。
+ * 与实际生图链路 services/storyboard_agent_cli_service.py:_compose_image_prompt
+ * 对齐：scene_desc 为主体，辅以 perspective / style；不拼 character_desc
+ * （该字段只是「、」连接的角色名列表，实际链路中角色外貌由参考图注入，
+ * 拼进文本只会污染画面提示词）。
  */
 export function composeSceneImagePrompt(scene = null) {
     const pj = scene?.promptJson || {};
-    return [pj.perspective, pj.style, pj.scene_desc, pj.character_desc]
+    return [pj.perspective, pj.style, pj.scene_desc]
         .map((part) => String(part || '').trim())
         .filter(Boolean)
         .join('，');
