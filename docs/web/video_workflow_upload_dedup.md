@@ -29,6 +29,9 @@
   `compute_content_hash()`：`json.dumps(sort_keys=True, separators=...)` +
   PUT 可写标量字段，sha256）；前端本地比对仍用字符串 `===`
   （http 非 secure context 下 `crypto.subtle` 不可用，且零碰撞零依赖）。
+  **例外：`workflow_data.viewport`（panX/panY/zoom）不参与哈希**——视口是
+  各端本地视图状态，不同用户缩放/平移必然不同，参与会导致「内容没变、仅
+  视角不同」也互相 CAS 409；存储与恢复不受影响。
 - 哈希实时计算，**无 schema 变更**；poll-status 每轮搭车返回，不增加请求。
 - **非阻塞**：`workflow_data` 单工作流可达 9~18MB，解析+序列化+sha256 是
   数百毫秒级 CPU——GET/poll/PUT 全部经 `asyncio.to_thread` 在工作线程计算
@@ -53,14 +56,17 @@
 | `isConfirmedBody(workflowId, body)` | 去重门：body 逐字节一致 **且**（双方哈希已知时）最近一次 poll 哈希 == 基线哈希；任一侧哈希未知退化为纯 body 比较（滚动发布兼容） |
 | `noteServerHash(workflowId, hash)` | 每轮 poll-status/GET/PUT 响应刷新「服务端当前哈希」——服务端被改写的唯一感知通道 |
 | `getConfirmedHash(workflowId)` | PUT 的 `X-Base-Hash` 取值（CAS 基值） |
-| `getLastSeenServerHash(workflowId)` | 最近感知到的服务端哈希；409 熔断后基线已过期，冲突快照的 `baseHash` 取此值 |
+| `getLastSeenServerHash(workflowId)` | 最近感知到的服务端哈希，仅用于去重门失效判断；**不得**用作冲突快照的 `baseHash`（否则刷新重放会覆盖他人内容） |
 | `noteConflict(workflowId)` / `isConflictBlocked(workflowId)` | 409 冲突熔断：自动保存静默跳过直到成功保存/reset 解除 |
 | `confirmSkipped()` | 门命中跳过上传后推进 `confirmedVersion`，保证关页 `isDirty()` 归零、不会触发 keepalive 补发绕过门 |
 | `reset()` | 同时清理基线与已知服务端哈希 |
 
 ### 门的位置与基线来源（`web/js/workflow.js`）
 
-`autoSaveWorkflow()` 在 body 构造后、发起请求前过门；基线有三个写入点：
+`autoSaveWorkflow()` 在 body 构造后、发起请求前过门；手动 `saveWorkflow()`
+同样过门（内容未变且服务端未漂移时跳过 PUT 并提示「内容没有变化，无需
+保存」——无变化的手动保存若落库，serialize/restore 往返差异会翻动服务端
+哈希，误伤其他在线用户的 CAS）。基线有三个写入点：
 
 1. **自动/手动 PUT 返回 `code === 0`**——以响应 `data.content_hash` 滚动基线
    （失败不记录，下次照常重传，不存在假确认丢数据）；
@@ -83,12 +89,21 @@ JSON body，正是为了避免改变 body 使基线永不命中。
 - **409 后熔断自动保存**（`noteConflict`/`isConflictBlocked`）：base_hash 不变
   必然再冲突，若无熔断，dirty 状态会让每轮 poll 都全量 PUT 重试，重新打满
   带宽。熔断后自动保存不再 PUT，但**每轮把最新本地内容写入 IndexedDB 恢复
-  快照**（`baseHash` 取 `getLastSeenServerHash`——409 响应下发的最新服务端
-  哈希，而非已过期的基线哈希），关页/刷新不丢编辑；toast 仅首次提示；手动
-  保存每次点击仍照常尝试并提示（用户显式动作）；成功保存或 reset 解除熔断。
-- **熔断快照刷新后的恢复语义**：刷新 → 重放携带 409 时的服务端哈希做 CAS——
-  服务器未再变化 → 本地修改写回成功（最后写者胜，用户在冲突提示后仍继续
-  编辑属显式意图）；服务器又被推进 → 重放 409，按既有语义放弃并 toast 告知。
+  快照**（`baseHash` 保留**过期的确认基线** `getConfirmedHash`——绝不能取
+  409 响应下发的最新服务端哈希，否则刷新重放 CAS 会通过，本地旧内容静默
+  覆盖他人新内容），关页/刷新有兜底；toast 仅首次提示；同时
+  右上角保存按钮变为黄色脉冲态（`markSaveConflict()`，文案「⚠ 保存冲突」）
+  并弹出冲突解决对话框，由用户二选一（`resolveSaveConflict()`）：
+  **「用本地版本覆盖」**——不携带 `X-Base-Hash` 强制 PUT（服务端跳过 CAS），
+  成功后 `setConfirmedBody` 滚动基线并解除熔断、丢弃冲突快照、按钮恢复；
+  **「使用服务器版本」**——置 `acceptServerVersionPending` 标志（阻止
+  beforeunload 熔断分支重写快照）→ 丢弃本地冲突快照 → `location.reload()`
+  加载服务器最新内容。冲突态下点击保存按钮会重新打开该对话框；成功保存或
+  reset（刷新/loadWorkflow 重建）解除熔断。
+- **熔断快照刷新后的恢复语义**：刷新 → 重放携带过期基线做 CAS → 服务端已被
+  他人推进 → 必然 409 → 放弃重放并清除快照，以服务端最新数据为准（toast
+  告知本地未送达修改未恢复）。例外：服务端恰好回到基线内容（他人撤销了
+  修改）时 CAS 通过、本地修改写回，属可接受的极端边角。
 - **恢复快照重放也走 CAS**：快照 meta 记录写入时的 `baseHash`，重放携带
   `X-Base-Hash`；冲突说明服务端已有更新版本 → 放弃重放并清除快照（避免
   兜底机制覆盖他人内容）。无 `baseHash` 的存量快照维持强制重放兼容。

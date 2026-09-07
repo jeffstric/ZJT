@@ -22,6 +22,7 @@ def compute_content_hash(workflow, workflow_data=None) -> str:
 
     覆盖 PUT 可写的全部内容字段：workflow_data / style /
     style_reference_image / default_world_id / workflow_ratio。
+    例外：workflow_data.viewport（各端本地视口状态）不参与哈希。
 
     Args:
         workflow: 工作流行对象
@@ -36,6 +37,11 @@ def compute_content_hash(workflow, workflow_data=None) -> str:
             workflow_data = json.loads(workflow_data)
         except Exception:
             workflow_data = None
+    if isinstance(workflow_data, dict) and 'viewport' in workflow_data:
+        # viewport（panX/panY/zoom）是各端本地视图状态：不同用户的缩放/平移
+        # 必然不同，参与哈希会导致「内容没变、仅视角不同」也互相 CAS 409
+        # 冲突（双方都觉自己什么都没改）。哈希前剔除，存储/恢复不受影响。
+        workflow_data = {k: v for k, v in workflow_data.items() if k != 'viewport'}
     canonical = json.dumps(
         workflow_data, sort_keys=True, ensure_ascii=False,
         separators=(',', ':'), default=str

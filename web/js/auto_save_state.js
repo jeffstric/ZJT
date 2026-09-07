@@ -215,8 +215,10 @@
 
     /**
      * 最近一次感知到的服务端哈希（GET/poll/409 冲突响应下发）。
-     * 409 熔断后基线已过期，冲突快照的 baseHash 应取该值（服务端最新已知状态），
-     * 刷新重放时据此 CAS：服务器未再变化则恢复本地修改，再变则放弃重放。
+     * 用于去重门失效判断（服务端哈希漂移 → 基线失效 → 重传收敛）。
+     * 注意：409 熔断快照的 baseHash 不得取此值（否则刷新重放 CAS 会通过，
+     * 本地旧内容覆盖他人新内容）；熔断快照应保留过期基线 getConfirmedHash，
+     * 让重放必然 409 放弃，以服务端数据为准。
      */
     function getLastSeenServerHash(workflowId){
       return (lastSeenServerHashRecord

@@ -262,10 +262,11 @@ describe('CAS 409 冲突熔断（noteConflict / isConflictBlocked）', () => {
     expect(s.isConflictBlocked(1)).toBe(false);
   });
 
-  test('熔断快照 baseHash 取 getLastSeenServerHash（409 下发的最新服务端哈希）', () => {
-    // 回归：熔断期间本地修改写入恢复快照，baseHash 必须取服务端最新已知哈希
-    // （409 响应 noteServerHash 的值），而非已过期的基线哈希——刷新重放时
-    // 服务器未再变化则本地修改写回成功，再被改写则重放 409 放弃。
+  test('409 后 getLastSeenServerHash 推进、getConfirmedHash 基线保持过期值', () => {
+    // 回归：熔断期间本地修改写入恢复快照，快照 baseHash 必须保留过期的
+    // 确认基线（getConfirmedHash），使刷新重放 CAS 必然 409 放弃、以服务端
+    // 数据为准；绝不能取 getLastSeenServerHash（409 下发的最新服务端哈希），
+    // 否则重放 CAS 通过会把本地旧内容覆盖到他人已保存的新内容上。
     const s = createState();
     s.setConfirmedBody(1, body('a.png'), 'h-baseline');
     // lastSeen 只由 GET/poll/409 的 noteServerHash 通道推进；仅建基线时为 null
@@ -277,8 +278,8 @@ describe('CAS 409 冲突熔断（noteConflict / isConflictBlocked）', () => {
     s.noteServerHash(1, 'h-server-latest');
     s.noteConflict(1);
     expect(s.isConflictBlocked(1)).toBe(true);
-    expect(s.getConfirmedHash(1)).toBe('h-baseline');          // 基线已过期
-    expect(s.getLastSeenServerHash(1)).toBe('h-server-latest'); // 快照 baseHash 应取此值
+    expect(s.getConfirmedHash(1)).toBe('h-baseline');          // 过期基线：熔断快照 baseHash 取此值
+    expect(s.getLastSeenServerHash(1)).toBe('h-server-latest'); // 仅用于去重门失效判断，不作快照 baseHash
     // 跨工作流隔离与未知时返回 null
     expect(s.getLastSeenServerHash(2)).toBe(null);
     s.reset();

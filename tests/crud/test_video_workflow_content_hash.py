@@ -71,6 +71,26 @@ class TestComputeContentHash(unittest.TestCase):
         wf = VideoWorkflow(workflow_data={'a': 1})
         self.assertEqual(compute_content_hash(wf), compute_content_hash(wf, None))
 
+    def test_viewport_excluded_from_hash(self):
+        """viewport（panX/panY/zoom）是各端本地视图状态，不参与内容哈希：
+        不同用户缩放/平移不同，参与会导致「内容没变仅视角不同」也互相 CAS 409"""
+        h1 = compute_content_hash(VideoWorkflow(
+            workflow_data={'nodes': [{'id': 1}], 'viewport': {'panX': 0, 'panY': 0, 'zoom': 1}}))
+        h2 = compute_content_hash(VideoWorkflow(
+            workflow_data={'nodes': [{'id': 1}], 'viewport': {'panX': 120.5, 'panY': -30, 'zoom': 0.8}}))
+        h3 = compute_content_hash(VideoWorkflow(
+            workflow_data={'nodes': [{'id': 1}]}))
+        self.assertEqual(h1, h2)
+        self.assertEqual(h1, h3)
+
+    def test_non_viewport_change_still_changes_hash(self):
+        """剔除 viewport 不得影响其他字段的敏感性"""
+        base = {'nodes': [{'id': 1}], 'viewport': {'zoom': 1}}
+        h = compute_content_hash(VideoWorkflow(workflow_data=base))
+        changed = compute_content_hash(VideoWorkflow(
+            workflow_data={'nodes': [{'id': 2}], 'viewport': {'zoom': 1}}))
+        self.assertNotEqual(h, changed)
+
 
 if __name__ == '__main__':
     unittest.main()

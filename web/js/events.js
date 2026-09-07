@@ -1289,7 +1289,24 @@
     // 保存按钮点击事件
     document.getElementById('saveBtn').addEventListener('click', (e) => {
       e.stopPropagation();
+      // 409 冲突态（工作流已被其他会话覆盖）：按钮语义切换为打开冲突解决
+      // 对话框，由用户选择「用本地版本覆盖」或「使用服务器版本」
+      if(e.currentTarget.classList.contains('save-conflict')){
+        showSaveConflictDialog();
+        return;
+      }
       saveWorkflow();
+    });
+
+    // 保存冲突对话框：关闭仅隐藏（冲突未解决，按钮保持黄色态，可再次打开）
+    document.getElementById('saveConflictModalClose').addEventListener('click', () => {
+      hideSaveConflictDialog();
+    });
+    document.getElementById('saveConflictUseServerBtn').addEventListener('click', () => {
+      resolveSaveConflict(false);
+    });
+    document.getElementById('saveConflictUseLocalBtn').addEventListener('click', () => {
+      resolveSaveConflict(true);
     });
 
     // 时间轴控制按钮事件
