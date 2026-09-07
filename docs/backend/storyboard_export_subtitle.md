@@ -53,9 +53,10 @@
   超 24 字在句中标点断句、48 字硬断；已有 `.bak_sentences` 备份；
 - 主服务配置：`config.yml` 顶层 `asr.api_url`（未配置时兜底
   `StoryboardAsrConstants.DEFAULT_API_URL` = `http://192.168.10.108:7861`）、
-  `asr.enabled`（**opt-in：缺省 false**，未配置 asr 段的环境一律回退 block 分页，
-  避免对不可达内网地址逐条等 30s 超时及用户音频默认外发；example 默认 false、
-  prod.base 显式 true，现场按实际内网地址覆盖）；
+  `asr.enabled`（代码缺省 **opt-in false**，未知环境不对外发音频；
+  `config_prod.base.yaml` 与 `config_dev.base.yml` 均已预置公网地址
+  `http://150.158.44.98:7860/asr` 且 `enabled: true`——随基线合并后
+  **用户零配置即用**；私有化部署可按需覆盖 `api_url`）；
 - 客户端 `services/asr_sentence_client.py`：同步 urllib（仅导出后台线程调用），
   失败一律返回 `[]`。
 
