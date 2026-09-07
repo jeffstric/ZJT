@@ -477,7 +477,24 @@
       }
     });
 
-    // 劫持鼠标滚轮缩放（在画布区域内）
+    // 归一化滚轮增量：行/页模式换算为像素，保证不同设备平移速度一致
+    function normalizeWheelDelta(e, delta){
+      if(e.deltaMode === 1) return delta * 16;
+      if(e.deltaMode === 2) return delta * 100;
+      return delta;
+    }
+
+    // 滚轮平移画布（屏幕像素）：方向与浏览器滚动直觉一致（下滚=查看下方/右侧内容）
+    // 边界约束与鼠标拖拽平移一致（panX/panY 不超过 0）
+    function panCanvasByWheel(dx, dy){
+      state.panX = Math.min(0, state.panX + dx);
+      state.panY = Math.min(0, state.panY + dy);
+      applyTransform();
+      updateSelectedConnDeleteBtnPos();
+      if(typeof scheduleMinimapRender === 'function') scheduleMinimapRender();
+    }
+
+    // 劫持鼠标滚轮（在画布区域内）：普通滚轮缩放，Shift+滚轮左右平移，Ctrl+滚轮上下平移
     canvasContainer.addEventListener('wheel', (e) => {
       // 仅当鼠标在画布区域内时生效
       // 允许正常滚动页面：当前页面没有滚动条，但仍做限定
@@ -485,6 +502,27 @@
       // ctrl + wheel：浏览器默认会缩放页面，必须阻止
       if(isCtrl){
         e.preventDefault();
+      }
+
+      // Shift + 滚轮：画布左右平移
+      // 注意 Chrome 按住 Shift 时会把滚轮转换为水平滚动（deltaX 有值、deltaY 为 0），需优先取 deltaX
+      if(e.shiftKey && !isCtrl){
+        e.preventDefault();
+        const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+        if(delta !== 0){
+          panCanvasByWheel(-normalizeWheelDelta(e, delta), 0);
+        }
+        return;
+      }
+
+      // Ctrl + 滚轮：画布上下平移
+      if(isCtrl){
+        e.preventDefault();
+        const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+        if(delta !== 0){
+          panCanvasByWheel(0, -normalizeWheelDelta(e, delta));
+        }
+        return;
       }
 
       // 普通滚轮也作为画布缩放（用户需求）
