@@ -23,6 +23,7 @@
   <link rel="stylesheet" href="/css/common.css" />
   <link rel="stylesheet" href="/css/index.css" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
+  <link rel="stylesheet" href="/css/announcement_center.css?v=__VERSION__" />
 
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
@@ -61,6 +62,62 @@
         <div style="display: flex; gap: 10px; align-items: center;">
           <button class="btn secondary" v-if="route.name!=='list'" @click="goHome">{{ $t('back') }}</button>
           <template v-if="isLoggedIn">
+            <div class="ann-panel-anchor">
+              <button class="ann-bell-btn" @click.stop="toggleAnnouncementPanel" :title="$t('ann_bell_title')">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                <span v-if="annBell.count > 0" class="ann-bell-badge">{{ annBell.count > 99 ? '99+' : annBell.count }}</span>
+              </button>
+
+              <!-- 通知面板 -->
+              <div class="ann-panel" v-if="annBell.panelOpen" @click.stop>
+                <div class="ann-panel-header">
+                  <h4>{{ $t('ann_panel_title') }}</h4>
+                  <button class="ann-mark-all" :disabled="annBell.count === 0" @click="markAllAnnouncementsRead">
+                    {{ $t('ann_mark_all_read') }}
+                  </button>
+                </div>
+                <div class="ann-panel-body">
+                  <div v-if="annBell.loading && annBell.items.length === 0" class="ann-loading">{{ $t('loading') || '加载中...' }}</div>
+                  <template v-else>
+                    <p class="ann-section-title" v-if="annBell.items.length">{{ $t('ann_section_announcements') }}</p>
+                    <div v-for="item in annBell.items" :key="'ann-' + item.id"
+                         :class="['ann-item', { unread: !item.is_read }]"
+                         @click="openAnnouncementDetail(item, 'announcement')">
+                      <span class="ann-item-dot"></span>
+                      <div class="ann-item-main">
+                        <div class="ann-item-title-row">
+                          <span class="ann-level-tag" :class="'level-' + item.level">{{ annLevelText(item.level) }}</span>
+                          <span class="ann-item-title">{{ item.title }}</span>
+                        </div>
+                        <div class="ann-item-summary" v-if="item.content">{{ annTruncate(item.content, 60) }}</div>
+                        <div class="ann-item-time">{{ annFormatTime(item.created_at) }}</div>
+                      </div>
+                      <img v-if="item.images && item.images.length" :src="item.images[0]" class="ann-item-thumb" alt="">
+                    </div>
+                    <div v-if="!annBell.items.length && !annBell.systemNotifications.length" class="ann-empty">{{ $t('ann_empty') }}</div>
+
+                    <template v-if="annBell.systemNotifications.length">
+                      <p class="ann-section-title">{{ $t('ann_section_system') }}</p>
+                      <div v-for="item in annBell.systemNotifications" :key="'sys-' + item.id"
+                           :class="['ann-item', { unread: !item.is_read }]"
+                           @click="openAnnouncementDetail(item, 'system')">
+                        <span class="ann-item-dot"></span>
+                        <div class="ann-item-main">
+                          <div class="ann-item-title-row">
+                            <span class="ann-level-tag" :class="'level-' + (item.level || 'info')">{{ annLevelText(item.level || 'info') }}</span>
+                            <span class="ann-item-title">{{ item.title }}</span>
+                          </div>
+                          <div class="ann-item-summary" v-if="item.content">{{ annTruncate(item.content, 60) }}</div>
+                          <div class="ann-item-time">{{ annFormatTime(item.created_at) }}</div>
+                        </div>
+                      </div>
+                    </template>
+                  </template>
+                </div>
+              </div>
+            </div>
             <div class="user-info-wrapper">
               <div class="user-agent-row">
                 <span class="user-phone clickable" @click="openInviteModal" :title="$t('invite_code')">{{ maskedPhone }}</span>
@@ -202,6 +259,34 @@
       <div class="checkin-toast-title">签到成功 +{{ checkinToast.reward }} 算力</div>
       <div class="checkin-toast-sub">已连续签到 {{ checkinToast.streak_days }} 天</div>
       <div v-if="checkinToast.nextRewardText" class="checkin-toast-next">{{ checkinToast.nextRewardText }}</div>
+    </div>
+
+    <!-- 公告/通知详情弹窗 -->
+    <div class="ann-detail-overlay" v-if="annDetail.show" @click.self="closeAnnouncementDetail">
+      <div class="ann-detail-modal">
+        <div class="ann-detail-header">
+          <span class="ann-level-tag" :class="'level-' + (annDetail.item && annDetail.item.level || 'info')"
+                v-if="annDetail.item">{{ annLevelText(annDetail.item.level) }}</span>
+          <h3 class="ann-detail-title">{{ annDetail.item && annDetail.item.title }}</h3>
+          <button class="ann-detail-close" @click="closeAnnouncementDetail">&times;</button>
+        </div>
+        <div class="ann-detail-body" v-if="annDetail.item">
+          <div class="ann-detail-meta">{{ annFormatTime(annDetail.item.created_at) }}</div>
+          <p class="ann-detail-content" v-if="annDetail.item.content">{{ annDetail.item.content }}</p>
+          <div class="ann-detail-images" v-if="annDetail.item.images && annDetail.item.images.length">
+            <img v-for="(img, idx) in annDetail.item.images" :key="idx" :src="img" alt=""
+                 @click="annDetail.imageZoom = img">
+          </div>
+          <a v-if="annDetail.item.link_url" :href="annDetail.item.link_url" target="_blank" class="ann-detail-link">
+            {{ annDetail.item.link_text || $t('ann_view_link') }} →
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- 图片放大遮罩 -->
+    <div class="ann-image-zoom-overlay" v-if="annDetail.imageZoom" @click="annDetail.imageZoom = null">
+      <img :src="annDetail.imageZoom" alt="">
     </div>
 
     <!-- 智能体连接信息弹窗 -->
@@ -1245,6 +1330,7 @@
   <script src="/js/pages/skill_config.js"></script>
   <!-- App 组件、路由配置 -->
   <script src="/js/index_app.js"></script>
+  <script src="/js/announcement_center.js?v=__VERSION__"></script>
   <script>
   // i18n 初始化 - 必须在 Vue 应用创建前执行
   window.__STATIC_VERSION = window.__STATIC_VERSION || '';
@@ -1335,6 +1421,10 @@
     app.use(router);
     // 注册 Vue i18n 插件
     app.use(window.ZJTi18nVue);
+    // 公告中心（铃铛/通知面板/详情弹窗）以 mixin 并入主应用
+    if (window.AnnouncementCenterMixin) {
+      app.mixin(window.AnnouncementCenterMixin);
+    }
     app.mount('#app');
 
     // 全局 ESC 键关闭弹窗：关闭最上层可见的 .modal-overlay。

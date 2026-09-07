@@ -1122,5 +1122,16 @@
   "restoring_history_image": "正在恢复…",
   "restore_image_already_current": "该图已是当前形象图",
   "restore_image_success": "已恢复为当前形象图",
-  "restore_image_failed": "恢复失败: {error}"
+  "restore_image_failed": "恢复失败: {error}",
+  "ann_bell_title": "通知",
+  "ann_panel_title": "通知中心",
+  "ann_mark_all_read": "全部已读",
+  "ann_section_announcements": "公告",
+  "ann_section_system": "系统通知",
+  "ann_empty": "暂无通知",
+  "ann_level_info": "信息",
+  "ann_level_success": "成功",
+  "ann_level_warning": "警告",
+  "ann_level_error": "错误",
+  "ann_view_link": "查看详情"
 }

@@ -3705,3 +3705,109 @@ body {
     max-width: 360px;
     text-align: left;
 }
+
+/* ==================== 公告管理（本站公告） ==================== */
+
+/* 标题下副信息（图片数/链接） */
+.ann-title-sub {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 2px;
+}
+
+/* 级别徽标 */
+.ann-level-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+.ann-level-badge.level-info {
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+.ann-level-badge.level-success {
+    background: #ecfdf5;
+    color: #047857;
+}
+.ann-level-badge.level-warning {
+    background: #fffbeb;
+    color: #b45309;
+}
+.ann-level-badge.level-error {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+
+/* 弹窗内双列（发布时间/失效时间） */
+.form-group.form-row-2 {
+    display: flex;
+    gap: 12px;
+}
+.form-group.form-row-2 > div {
+    flex: 1;
+}
+
+/* 公告图片九宫格 */
+.ann-image-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.ann-image-item {
+    position: relative;
+    width: 88px;
+    height: 88px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+}
+.ann-image-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.ann-image-remove {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(15, 23, 42, 0.65);
+    color: #fff;
+    font-size: 14px;
+    line-height: 18px;
+    text-align: center;
+    cursor: pointer;
+    padding: 0;
+}
+.ann-image-remove:hover {
+    background: rgba(220, 38, 38, 0.9);
+}
+.ann-image-upload {
+    width: 88px;
+    height: 88px;
+    border: 2px dashed #cbd5e1;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+}
+.ann-image-upload:hover {
+    border-color: #3b82f6;
+    color: #3b82f6;
+}
+.ann-image-uploading {
+    font-size: 12px;
+}

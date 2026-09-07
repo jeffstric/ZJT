@@ -2376,6 +2376,29 @@ class NotificationConstants:
     LEVEL_SUCCESS = "success"
 
 
+class AnnouncementConstants:
+    """本站公告（announcements 表）常量"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'STATUS_DRAFT': '草稿',
+        'STATUS_PUBLISHED': '已发布',
+        'STATUS_OFFLINE': '已下线',
+    }
+
+    # 公告状态（draft -> published -> offline，offline/draft 可重新发布）
+    STATUS_DRAFT = "draft"
+    STATUS_PUBLISHED = "published"
+    STATUS_OFFLINE = "offline"
+
+    # 公告图片上传
+    UPLOAD_CATEGORY = "announcement"                              # upload/ 下子目录
+    MAX_IMAGE_SIZE = 10 * 1024 * 1024                             # 单张图片大小上限 10MB
+    ALLOWED_IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.gif', '.webp')
+
+    # 用户侧列表/轮询
+    DEFAULT_LIST_LIMIT = 50                                       # 用户侧单次拉取公告条数上限
+
+
 # ============ 智能插入分镜 ============
 SMART_INSERT_SHOT_TIMEOUT = 30  # 智能体调用超时（秒）
 # 无斜杠形式：DeepSeek 客户端不剥离 'deepseek/' 前缀（_resolve_model_name 为纯字典映射），

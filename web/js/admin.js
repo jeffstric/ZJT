@@ -863,6 +863,32 @@ const AdminApp = {
             },
             notificationsPollTimer: null,
 
+            // 公告管理（本站公告，管理员配置）
+            announcements: {
+                list: [],
+                total: 0,
+                page: 1,
+                pageSize: 20,
+                loading: false
+            },
+            announcementModal: {
+                show: false,
+                isEdit: false,
+                editId: null,
+                loading: false,
+                uploading: false
+            },
+            announcementForm: {
+                title: '',
+                content: '',
+                level: 'info',
+                link_url: '',
+                link_text: '',
+                images: [],
+                publish_at: '',
+                expire_at: ''
+            },
+
             // 常量参考
             constants: {
                 groups: [],
@@ -909,6 +935,10 @@ const AdminApp = {
     computed: {
         totalPages() {
             return Math.ceil(this.users.total / this.users.pageSize);
+        },
+
+        annTotalPages() {
+            return Math.ceil(this.announcements.total / this.announcements.pageSize) || 1;
         },
 
         enterprisePackageAvailable() {
@@ -1593,6 +1623,8 @@ const AdminApp = {
                 }
             } else if (page === 'marketingPublications') {
                 this.loadMarketingPublications();
+            } else if (page === 'announcements') {
+                this.loadAnnouncements();
             } else if (page === 'models') {
                 this.loadModels();
                 this.loadLocalInferenceConfig();
@@ -5080,6 +5112,207 @@ const AdminApp = {
                 }
             } catch (error) {
                 console.error('Mark all read failed:', error);
+            }
+        },
+
+        // ==================== 公告管理（本站公告） ====================
+
+        // 加载公告列表
+        async loadAnnouncements(page = 1) {
+            this.announcements.loading = true;
+            this.announcements.page = page;
+            try {
+                const response = await axios.get('/api/admin/announcements/list', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` },
+                    params: {
+                        page: this.announcements.page,
+                        page_size: this.announcements.pageSize
+                    }
+                });
+                if (response.data.code === 0) {
+                    const data = response.data.data || {};
+                    this.announcements.list = data.items || [];
+                    this.announcements.total = data.total || 0;
+                } else {
+                    this.showToast(response.data.message || this.t('ann_load_failed'), 'error');
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('ann_load_failed'), 'error');
+            } finally {
+                this.announcements.loading = false;
+            }
+        },
+
+        annGoToPage(page) {
+            if (page < 1 || page > this.annTotalPages) return;
+            this.loadAnnouncements(page);
+        },
+
+        // 重置弹窗表单
+        resetAnnouncementForm() {
+            this.announcementForm.title = '';
+            this.announcementForm.content = '';
+            this.announcementForm.level = 'info';
+            this.announcementForm.link_url = '';
+            this.announcementForm.link_text = '';
+            this.announcementForm.images = [];
+            this.announcementForm.publish_at = '';
+            this.announcementForm.expire_at = '';
+        },
+
+        openAnnouncementCreateModal() {
+            this.announcementModal.isEdit = false;
+            this.announcementModal.editId = null;
+            this.resetAnnouncementForm();
+            this.announcementModal.show = true;
+        },
+
+        openAnnouncementEditModal(item) {
+            this.announcementModal.isEdit = true;
+            this.announcementModal.editId = item.id;
+            this.announcementForm.title = item.title || '';
+            this.announcementForm.content = item.content || '';
+            this.announcementForm.level = item.level || 'info';
+            this.announcementForm.link_url = item.link_url || '';
+            this.announcementForm.link_text = item.link_text || '';
+            this.announcementForm.images = Array.isArray(item.images) ? [...item.images] : [];
+            // datetime-local 输入框需要 'YYYY-MM-DDTHH:MM' 格式
+            this.announcementForm.publish_at = this.toDatetimeLocalValue(item.publish_at);
+            this.announcementForm.expire_at = this.toDatetimeLocalValue(item.expire_at);
+            this.announcementModal.show = true;
+        },
+
+        toDatetimeLocalValue(value) {
+            if (!value) return '';
+            return String(value).replace(' ', 'T').slice(0, 16);
+        },
+
+        closeAnnouncementModal() {
+            this.announcementModal.show = false;
+        },
+
+        // 提交公告（action: draft=保存草稿 / published=保存并发布 / save=编辑保存）
+        async submitAnnouncement(action) {
+            const form = this.announcementForm;
+            if (!form.title.trim()) {
+                this.showToast(this.t('ann_title_required'), 'error');
+                return;
+            }
+            this.announcementModal.loading = true;
+            try {
+                const payload = {
+                    title: form.title.trim(),
+                    content: form.content,
+                    level: form.level,
+                    link_url: form.link_url.trim() || null,
+                    link_text: form.link_text.trim() || null,
+                    images: form.images,
+                    publish_at: form.publish_at || null,
+                    expire_at: form.expire_at || null
+                };
+                let response;
+                if (this.announcementModal.isEdit) {
+                    response = await axios.put(`/api/admin/announcements/${this.announcementModal.editId}`, payload, {
+                        headers: { 'Authorization': `Bearer ${this.authToken}` }
+                    });
+                } else {
+                    payload.status = action;
+                    response = await axios.post('/api/admin/announcements', payload, {
+                        headers: { 'Authorization': `Bearer ${this.authToken}` }
+                    });
+                }
+                if (response.data.code === 0) {
+                    this.showToast(this.t('ann_toast_saved'), 'success');
+                    this.closeAnnouncementModal();
+                    this.loadAnnouncements(this.announcementModal.isEdit ? this.announcements.page : 1);
+                } else {
+                    this.showToast(response.data.message || this.t('ann_toast_save_failed'), 'error');
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('ann_toast_save_failed'), 'error');
+            } finally {
+                this.announcementModal.loading = false;
+            }
+        },
+
+        // 上传公告图片（多选，逐张上传）
+        async uploadAnnouncementImages(event) {
+            const files = Array.from(event.target.files || []);
+            event.target.value = '';
+            if (files.length === 0) return;
+            const remaining = 9 - this.announcementForm.images.length;
+            if (files.length > remaining) {
+                this.showToast(this.t('ann_images_max'), 'error');
+                return;
+            }
+            this.announcementModal.uploading = true;
+            try {
+                for (const file of files) {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    const response = await axios.post('/api/admin/announcements/upload-image', formData, {
+                        headers: {
+                            'Authorization': `Bearer ${this.authToken}`,
+                            'Content-Type': 'multipart/form-data'
+                        }
+                    });
+                    if (response.data.code === 0 && response.data.data?.url) {
+                        this.announcementForm.images.push(response.data.data.url);
+                    } else {
+                        this.showToast(response.data.message || this.t('ann_upload_failed'), 'error');
+                    }
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('ann_upload_failed'), 'error');
+            } finally {
+                this.announcementModal.uploading = false;
+            }
+        },
+
+        removeAnnouncementImage(index) {
+            this.announcementForm.images.splice(index, 1);
+        },
+
+        async publishAnnouncement(item) {
+            await this.setAnnouncementStatus(item, 'publish');
+        },
+
+        async offlineAnnouncement(item) {
+            await this.setAnnouncementStatus(item, 'offline');
+        },
+
+        async setAnnouncementStatus(item, action) {
+            try {
+                const response = await axios.post(`/api/admin/announcements/${item.id}/${action}`, {}, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.showToast(this.t(action === 'publish' ? 'ann_toast_published' : 'ann_toast_offlined'), 'success');
+                    this.loadAnnouncements(this.announcements.page);
+                } else {
+                    this.showToast(response.data.message || this.t('ann_toast_save_failed'), 'error');
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('ann_toast_save_failed'), 'error');
+            }
+        },
+
+        async deleteAnnouncement(item) {
+            if (!window.confirm(this.t('ann_delete_confirm', { title: item.title }))) return;
+            try {
+                const response = await axios.delete(`/api/admin/announcements/${item.id}`, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.showToast(this.t('ann_toast_deleted'), 'success');
+                    // 删除后当前页可能为空，回退一页
+                    const maxPage = Math.max(1, Math.ceil((this.announcements.total - 1) / this.announcements.pageSize));
+                    this.loadAnnouncements(Math.min(this.announcements.page, maxPage));
+                } else {
+                    this.showToast(response.data.message || this.t('ann_toast_save_failed'), 'error');
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('ann_toast_save_failed'), 'error');
             }
         },
 

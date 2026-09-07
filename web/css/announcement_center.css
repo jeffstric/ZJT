@@ -1,0 +1,329 @@
+/* ==================== 公告中心（用户端铃铛 + 通知面板 + 详情弹窗） ==================== */
+
+/* 铃铛按钮 */
+.ann-bell-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid #e2e8f0;
+    border-radius: 50%;
+    background: #fff;
+    cursor: pointer;
+    color: #475569;
+    transition: border-color 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+.ann-bell-btn:hover {
+    border-color: #3b82f6;
+    color: #3b82f6;
+}
+.ann-bell-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* 未读徽标 */
+.ann-bell-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    border-radius: 9px;
+    background: #ef4444;
+    color: #fff;
+    font-size: 11px;
+    line-height: 17px;
+    text-align: center;
+    font-weight: 600;
+}
+
+/* 通知面板（铃铛下方弹出） */
+.ann-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: 380px;
+    max-height: 480px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
+    z-index: 1200;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.ann-panel-anchor {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+.ann-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid #f1f5f9;
+}
+.ann-panel-header h4 {
+    margin: 0;
+    font-size: 15px;
+    color: #0f172a;
+}
+.ann-mark-all {
+    border: none;
+    background: none;
+    color: #3b82f6;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 2px 4px;
+}
+.ann-mark-all:hover {
+    text-decoration: underline;
+}
+.ann-mark-all:disabled {
+    color: #cbd5e1;
+    cursor: not-allowed;
+    text-decoration: none;
+}
+
+.ann-panel-body {
+    overflow-y: auto;
+    flex: 1;
+}
+
+/* 分区标题 */
+.ann-section-title {
+    font-size: 12px;
+    color: #94a3b8;
+    padding: 10px 16px 4px;
+    margin: 0;
+}
+
+/* 列表项 */
+.ann-item {
+    display: flex;
+    gap: 10px;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-left: 3px solid transparent;
+}
+.ann-item:hover {
+    background: #f8fafc;
+}
+.ann-item.unread {
+    background: #eff6ff;
+    border-left-color: #3b82f6;
+}
+.ann-item-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #cbd5e1;
+    margin-top: 6px;
+    flex-shrink: 0;
+}
+.ann-item.unread .ann-item-dot {
+    background: #3b82f6;
+}
+.ann-item-main {
+    flex: 1;
+    min-width: 0;
+}
+.ann-item-title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ann-item-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #0f172a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ann-item-summary {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ann-item-time {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-top: 3px;
+}
+.ann-item-thumb {
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+/* 级别徽标（面板/详情共用） */
+.ann-level-tag {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 9px;
+    font-size: 11px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+.ann-level-tag.level-info {
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+.ann-level-tag.level-success {
+    background: #ecfdf5;
+    color: #047857;
+}
+.ann-level-tag.level-warning {
+    background: #fffbeb;
+    color: #b45309;
+}
+.ann-level-tag.level-error {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+
+/* 空态/加载态 */
+.ann-empty,
+.ann-loading {
+    padding: 36px 16px;
+    text-align: center;
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+/* 详情弹窗（复用 index 页 .modal-overlay 体系，独立类名避免冲突） */
+.ann-detail-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    z-index: 1500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.ann-detail-modal {
+    background: #fff;
+    border-radius: 14px;
+    width: 100%;
+    max-width: 640px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+}
+.ann-detail-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 18px 22px 12px;
+}
+.ann-detail-title {
+    flex: 1;
+    margin: 0;
+    font-size: 18px;
+    color: #0f172a;
+    line-height: 1.4;
+}
+.ann-detail-close {
+    border: none;
+    background: none;
+    font-size: 24px;
+    color: #94a3b8;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 2px;
+}
+.ann-detail-close:hover {
+    color: #475569;
+}
+.ann-detail-body {
+    padding: 0 22px 20px;
+    overflow-y: auto;
+}
+.ann-detail-meta {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-bottom: 12px;
+}
+.ann-detail-content {
+    font-size: 14px;
+    color: #334155;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0 0 16px;
+}
+.ann-detail-images {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+}
+.ann-detail-images img {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 8px;
+    cursor: zoom-in;
+    border: 1px solid #f1f5f9;
+}
+.ann-detail-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 18px;
+    border-radius: 8px;
+    background: #3b82f6;
+    color: #fff;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+}
+.ann-detail-link:hover {
+    background: #2563eb;
+}
+
+/* 图片放大遮罩 */
+.ann-image-zoom-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 1600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+}
+.ann-image-zoom-overlay img {
+    max-width: 92vw;
+    max-height: 92vh;
+    object-fit: contain;
+    border-radius: 6px;
+}
+
+/* 窄屏适配：面板改为固定居中 */
+@media (max-width: 640px) {
+    .ann-panel {
+        position: fixed;
+        top: 70px;
+        left: 12px;
+        right: 12px;
+        width: auto;
+    }
+}
