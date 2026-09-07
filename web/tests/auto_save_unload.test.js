@@ -606,6 +606,78 @@ describe('恢复记录 IndexedDB 分区与轮转', () => {
       version: 1, workflowId: 'wf', userId: 'u',
     })).toBeNull();
   });
+
+  test('baseHash 随快照持久化并可读回（重放 CAS 的 X-Base-Hash 来源）', async () => {
+    const meta = {
+      version: 3,
+      workflowId: 'wf-basehash',
+      userId: 'user-basehash',
+      baseHash: 'hash-abc',
+      ...WorkflowRecovery.createWriteIdentity(),
+    };
+    await WorkflowRecovery.saveSnapshot('payload-basehash', meta);
+    const record = await WorkflowRecovery.loadSnapshot(meta);
+    expect(record.baseHash).toBe('hash-abc');
+    expect(await WorkflowRecovery.clearSnapshot(record)).toBe(true);
+
+    // 无 baseHash 的存量快照：读回为 null（重放时退化为强制写，兼容旧记录）
+    const legacy = {
+      version: 1,
+      workflowId: 'wf-basehash-legacy',
+      userId: 'user-basehash',
+      ...WorkflowRecovery.createWriteIdentity(),
+    };
+    await WorkflowRecovery.saveSnapshot('payload-legacy', legacy);
+    expect((await WorkflowRecovery.loadSnapshot(legacy)).baseHash).toBeNull();
+    expect(await WorkflowRecovery.clearSnapshot(legacy)).toBe(true);
+  });
+});
+
+// ========== 去重门命中后的本页残留快照清理（discardOwnSnapshot） ==========
+
+describe('discardOwnSnapshot：门命中后清除本页残留快照', () => {
+  const ctx = { workflowId: 'wf-discard', userId: 'user-discard' };
+
+  test('本页 writer 的残留快照被条件清除（防止下次会话重放复活已撤销内容）', async () => {
+    const meta = {
+      version: 5,
+      ...ctx,
+      ...WorkflowRecovery.createWriteIdentity(), // writerId = 本页 writer
+    };
+    await WorkflowRecovery.saveSnapshot('stale-payload', meta);
+
+    expect(await WorkflowRecovery.discardOwnSnapshot(ctx)).toBe(true);
+    expect(await WorkflowRecovery.loadSnapshot(ctx)).toBeNull();
+  });
+
+  test('其他标签页 writer 的快照不动（可能是其未送达的真实修改）', async () => {
+    const otherTab = {
+      version: 1,
+      workflowId: 'wf-discard-other',
+      userId: 'user-discard',
+      snapshotId: 'snap-other-writer',
+      writerId: 'writer-other-tab',
+      writerSequence: 1,
+      createdAt: 100,
+    };
+    const otherCtx = { workflowId: 'wf-discard-other', userId: 'user-discard' };
+    await WorkflowRecovery.saveSnapshot('other-tab-payload', otherTab);
+
+    expect(await WorkflowRecovery.discardOwnSnapshot(otherCtx)).toBe(false);
+    expect((await WorkflowRecovery.loadSnapshot(otherCtx)).payload).toBe('other-tab-payload');
+    expect(await WorkflowRecovery.clearSnapshot(otherTab)).toBe(true);
+  });
+
+  test('无快照时安全返回 false，不产生异常', async () => {
+    expect(await WorkflowRecovery.discardOwnSnapshot({
+      workflowId: 'wf-discard-none', userId: 'user-discard',
+    })).toBe(false);
+  });
+
+  test('身份不完整时 fail-closed', async () => {
+    expect(await WorkflowRecovery.discardOwnSnapshot({ workflowId: 'wf-x' })).toBe(false);
+    expect(await WorkflowRecovery.discardOwnSnapshot({ userId: 'u-x' })).toBe(false);
+  });
 });
 
 // ========== 跨工作流/跨用户重放门控 ==========

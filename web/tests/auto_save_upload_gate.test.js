@@ -7,10 +7,13 @@
 // 覆盖：
 //  - 基线命中/不命中：内容相同跳过，内容变化（哪怕一个字符）放行
 //  - 跨工作流隔离：A 工作流的基线不能挡 B 工作流的上传
+//  - 服务端权威哈希双条件：noteServerHash 漂移（服务端被其他会话/迟到
+//    请求改写）使门失效重传收敛；哈希未知时退化为纯 body 比较
+//  - getConfirmedHash：PUT CAS（X-Base-Hash）基值随成功响应滚动
 //  - 跳过后状态机推进：confirmSkipped 使 isDirty() 归零——关页补发
 //    （dispatchBeforeUnloadSave）不会误判"有未确认修改"而绕过门重发
 //  - 基线只在确认后建立：setConfirmedBody 之前门不命中（失败不挡重传）
-//  - reset() 清理基线（切工作流/重置场景）
+//  - reset() 清理基线与已知服务端哈希（切工作流/重置场景）
 //  - 关页路径与门的兼容：内容=基线时 planUnloadSend 返回 none
 
 // vitest globals（describe/test/expect/beforeAll/vi）由 vitest.config.js 的
@@ -157,6 +160,106 @@ describe('reset 清理基线', () => {
     s.reset();
     expect(s.isConfirmedBody(1, body('a.png'))).toBe(false);
     expect(s.isDirty()).toBe(false);
+  });
+
+  test('reset 同时清除已知服务端哈希', () => {
+    const s = createState();
+    s.setConfirmedBody(1, body('a.png'), 'h1');
+    s.noteServerHash(1, 'h1');
+    s.reset();
+    expect(s.getConfirmedHash(1)).toBe(null);
+    // 哈希记录已清，门退化为纯 body 比较也不会命中（基线已清）
+    expect(s.isConfirmedBody(1, body('a.png'))).toBe(false);
+  });
+});
+
+describe('服务端权威哈希双条件（noteServerHash / getConfirmedHash）', () => {
+  test('哈希一致时门正常命中', () => {
+    const s = createState();
+    s.setConfirmedBody(1, body('a.png'), 'h1');
+    s.noteServerHash(1, 'h1');
+    expect(s.isConfirmedBody(1, body('a.png'))).toBe(true);
+    expect(s.getConfirmedHash(1)).toBe('h1');
+  });
+
+  test('哈希漂移（服务端被其他会话/迟到请求改写）→ 门失效，重传收敛', () => {
+    const s = createState();
+    s.setConfirmedBody(1, body('a.png'), 'h1');
+    s.noteServerHash(1, 'h1');
+    expect(s.isConfirmedBody(1, body('a.png'))).toBe(true);
+    // 下轮 poll 看到新哈希：即使 body 与基线逐字节一致也必须放行
+    s.noteServerHash(1, 'h2');
+    expect(s.isConfirmedBody(1, body('a.png'))).toBe(false);
+  });
+
+  test('其他工作流的哈希漂移不影响本工作流的门', () => {
+    const s = createState();
+    s.setConfirmedBody(1, body('a.png'), 'h1');
+    s.noteServerHash(1, 'h1');
+    s.noteServerHash(2, 'h-other'); // 另一个工作流的 poll 结果
+    expect(s.isConfirmedBody(1, body('a.png'))).toBe(true);
+  });
+
+  test('哈希未知时退化为纯 body 比较（旧服务端/滚动发布兼容）', () => {
+    // 基线无哈希（旧 PUT 响应）+ poll 无哈希 → 维持 24a4fc18 行为
+    const s = createState();
+    s.setConfirmedBody(1, body('a.png'));
+    expect(s.isConfirmedBody(1, body('a.png'))).toBe(true);
+    expect(s.getConfirmedHash(1)).toBe(null);
+
+    // 基线有哈希但尚未收到任何 poll 哈希 → 不误挡
+    const s2 = createState();
+    s2.setConfirmedBody(1, body('a.png'), 'h1');
+    expect(s2.isConfirmedBody(1, body('a.png'))).toBe(true);
+  });
+
+  test('noteServerHash 忽略空值，getConfirmedHash 对其他工作流返回 null', () => {
+    const s = createState();
+    s.setConfirmedBody(1, body('a.png'), 'h1');
+    s.noteServerHash(1, null);
+    s.noteServerHash(1, undefined);
+    s.noteServerHash(1, '');
+    expect(s.isConfirmedBody(1, body('a.png'))).toBe(true); // 未被空值污染
+    expect(s.getConfirmedHash(2)).toBe(null);
+  });
+
+  test('新基线覆盖旧哈希：PUT 成功后 CAS 基值随响应滚动', () => {
+    const s = createState();
+    s.setConfirmedBody(1, body('a.png'), 'h1');
+    s.noteServerHash(1, 'h1');
+    // 真实修改后保存成功，服务端返回新哈希
+    s.setConfirmedBody(1, body('b.png'), 'h2');
+    expect(s.getConfirmedHash(1)).toBe('h2');
+    // 旧 body/旧哈希组合不再命中
+    expect(s.isConfirmedBody(1, body('a.png'))).toBe(false);
+    // 新 body 在 poll 追上（h2）后命中
+    expect(s.isConfirmedBody(1, body('b.png'))).toBe(false); // lastSeen 仍是 h1
+    s.noteServerHash(1, 'h2');
+    expect(s.isConfirmedBody(1, body('b.png'))).toBe(true);
+  });
+});
+
+describe('CAS 409 冲突熔断（noteConflict / isConflictBlocked）', () => {
+  test('冲突后熔断，成功保存解除', () => {
+    const s = createState();
+    s.setConfirmedBody(1, body('a.png'), 'h1');
+    expect(s.isConflictBlocked(1)).toBe(false);
+    s.noteConflict(1);
+    expect(s.isConflictBlocked(1)).toBe(true);
+    // 熔断期间保持 dirty（本地修改有恢复快照兜底，等用户刷新）
+    s.markDirty();
+    expect(s.isDirty()).toBe(true);
+    // 用户刷新后以服务端最新内容为基保存成功 → 解除熔断
+    s.setConfirmedBody(1, body('c.png'), 'h3');
+    expect(s.isConflictBlocked(1)).toBe(false);
+  });
+
+  test('跨工作流隔离与 reset 清理', () => {
+    const s = createState();
+    s.noteConflict(1);
+    expect(s.isConflictBlocked(2)).toBe(false);
+    s.reset();
+    expect(s.isConflictBlocked(1)).toBe(false);
   });
 });
 
