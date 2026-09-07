@@ -372,7 +372,9 @@
                 for (const task of failedTasks) {
                     const raw = task && (task.reason || task.error || '');
                     if (!raw || !cv.isViolation(raw)) continue;
-                    const friendly = (cv.describe && cv.describe(raw)) || window.t('generation_violation');
+                    // 文案进入 v-html 渲染通道，必须整体转义（违规标签可能
+                    // 透传上游错误消息里的原文，不能拼进 HTML）
+                    const friendly = escapeHtml((cv.describe && cv.describe(raw)) || window.t('generation_violation'));
                     return `<span style="color:#dc2626;">${friendly}</span>`;
                 }
                 return fallback;
@@ -382,7 +384,8 @@
             function describeSubmitViolation(raw, type) {
                 const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
                 if (!cv || !cv.isViolation || !raw || !cv.isViolation(raw)) return null;
-                const friendly = (cv.describe && cv.describe(raw)) || window.t('generation_violation');
+                // 同 describeFailedTasks：v-html 通道，先转义再拼 span
+                const friendly = escapeHtml((cv.describe && cv.describe(raw)) || window.t('generation_violation'));
                 return `<span style="color:#dc2626;">${friendly}</span>`;
             }
 

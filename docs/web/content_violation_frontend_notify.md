@@ -94,6 +94,11 @@
   `checkVideoStatus`、Agent 图片/视频轮询（`allDone` 且无结果 URL）；
 - `describeSubmitViolation(raw, type)`：提交阶段 catch 用。图片提交 catch、视频提交 catch、
   `sendMessageToApi` catch 命中违规时返回气泡红色违规文案，否则返回 `null` 走原通用文案；
+- **XSS 防护（两层）**：上述两个函数的文案最终经 `v-html`（`renderMarkdown`）渲染，
+  拼接 `<span>` 前必须 `escapeHtml` 整体转义；来源侧 `content_violation.js`
+  `extractLabels` 对白名单外的未知标签做字符净化（仅保留字母/数字/-/_/空格），
+  防止上游错误消息中的 HTML 片段透传进 innerHTML 通道（回归用例见
+  `web/tests/content_violation.test.js`「未知标签净化」）；
 - i18n：`zh-CN/en marketing_agent.json` 新增 `generation_violation` 键（describe 缺失时的违规兜底文案）。
 
 ### 3.4 弹窗策略（2026-09-03 起）

@@ -11,7 +11,7 @@ import json
 logger = logging.getLogger(__name__)
 
 
-def compute_content_hash(workflow) -> str:
+def compute_content_hash(workflow, workflow_data=None) -> str:
     """
     计算工作流内容的权威哈希（服务端唯一计算方）。
 
@@ -22,8 +22,15 @@ def compute_content_hash(workflow) -> str:
 
     覆盖 PUT 可写的全部内容字段：workflow_data / style /
     style_reference_image / default_world_id / workflow_ratio。
+
+    Args:
+        workflow: 工作流行对象
+        workflow_data: 调用方已解析的 workflow_data（dict）。GET/poll 端点
+            本就要 json.loads 一次，传入可避免对 9~18MB 大 JSON 的二次解析；
+            缺省时从 workflow.workflow_data 自行解析（str/dict 均可）。
     """
-    workflow_data = getattr(workflow, 'workflow_data', None)
+    if workflow_data is None:
+        workflow_data = getattr(workflow, 'workflow_data', None)
     if isinstance(workflow_data, str):
         try:
             workflow_data = json.loads(workflow_data)

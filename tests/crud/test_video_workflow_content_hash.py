@@ -59,6 +59,18 @@ class TestComputeContentHash(unittest.TestCase):
         h2 = compute_content_hash(VideoWorkflow(workflow_data={}, default_world_id=1))
         self.assertNotEqual(h1, h2)
 
+    def test_pre_parsed_workflow_data_same_hash(self):
+        """调用方传入已解析 dict 与自行从 str 解析结果一致（避免大 JSON 二次解析的优化不得改口径）"""
+        wd = {'nodes': [{'id': 1, 'pos': {'x': 0.5}}], 'version': 'v2'}
+        wf_str = VideoWorkflow(workflow_data='{"version": "v2", "nodes": [{"id": 1, "pos": {"x": 0.5}}]}',
+                               style='写实', workflow_ratio='16:9')
+        self.assertEqual(compute_content_hash(wf_str), compute_content_hash(wf_str, wd))
+
+    def test_pre_parsed_none_falls_back_to_workflow_field(self):
+        """workflow_data=None 缺省时从 workflow.workflow_data 取值（向后兼容）"""
+        wf = VideoWorkflow(workflow_data={'a': 1})
+        self.assertEqual(compute_content_hash(wf), compute_content_hash(wf, None))
+
 
 if __name__ == '__main__':
     unittest.main()

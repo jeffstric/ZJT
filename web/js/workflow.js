@@ -840,12 +840,34 @@
           return;
         }
 
-        // CAS 409 冲突熔断：冲突未解决前自动保存静默跳过——base_hash 不变
-        // 必然再冲突，周期性全量 PUT 重试会重新打满带宽。保持 dirty +
-        // 恢复快照兜底（本地修改不丢），等用户刷新以服务端最新内容继续。
+        // CAS 409 冲突熔断：冲突未解决前不再发 PUT——base_hash 不变必然再冲突，
+        // 周期性全量重试会重新打满带宽。本地修改必须落 IndexedDB 恢复快照兜底
+        // （不 PUT）：快照 baseHash 取 409 响应下发的最新服务端哈希，刷新后由
+        // 重放路径 CAS 恢复——服务器未再变化则本地修改写回成功，再被他人改写
+        // 则重放 409、按既有语义放弃（toast 告知）。仅不写快照的旧实现会在
+        // 关页/刷新时丢失熔断期间的全部编辑。
         if(typeof autoSaveState !== 'undefined'
             && autoSaveState.isConflictBlocked(workflowId)){
-          console.warn('[自动保存] 存在未解决的内容冲突，暂停自动保存，请刷新页面');
+          console.warn('[自动保存] 存在未解决的内容冲突，暂停自动保存（本地修改已写入恢复快照，刷新后自动恢复）');
+          if(typeof WorkflowRecovery !== 'undefined'){
+            const conflictMeta = {
+              workflowId: workflowId,
+              userId: getUserId(),
+              baseHash: (autoSaveState.getLastSeenServerHash
+                && autoSaveState.getLastSeenServerHash(workflowId))
+                || null,
+              ...WorkflowRecovery.createWriteIdentity()
+            };
+            // beforeunload 同步上下文不能等 IDB 事务：先 best-effort 同步排队，
+            // 未就绪再异步补写（与 startUnloadSend 同哲学）
+            if(opts.unload === true){
+              if(!WorkflowRecovery.saveSnapshotSync(body, conflictMeta)){
+                WorkflowRecovery.saveSnapshot(body, conflictMeta).catch(() => null);
+              }
+            } else {
+              await WorkflowRecovery.saveSnapshot(body, conflictMeta).catch(() => null);
+            }
+          }
           return;
         }
 
@@ -957,7 +979,7 @@
             }
             autoSaveState.noteConflict(workflowId);
             if(!alreadyBlocked){
-              showToast(result.message || '工作流内容已被其他会话修改，自动保存已暂停，请刷新页面', 'warning');
+              showToast(result.message || '工作流内容已被其他会话修改，自动保存已暂停；本地修改已保留，刷新页面后将自动恢复', 'warning');
             }
           }
         } else {

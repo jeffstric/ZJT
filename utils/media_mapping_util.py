@@ -58,6 +58,34 @@ def extract_local_path_from_url(url: str) -> Optional[str]:
     return path.lstrip("/")
 
 
+def upload_local_path(file_path: str) -> str:
+    """
+    计算上传目录内文件的规范 local_path（注册 CDN mapping 与中间件查询的统一格式）。
+
+    格式：相对项目根、带 upload/ 前缀的 POSIX 路径，如 "upload/workflow/12/xxx.png"。
+    cdn_redirect_middleware 以请求路径 lstrip("/") 后的值查库、trigger_cdn_upload 以
+    项目根拼接该值定位文件，两处都要求此前缀——曾有用 upload 根做 relpath 基准导致
+    前缀缺失、注册永不命中且不可上传的事故，故收敛到本函数单一出口。
+
+    Args:
+        file_path: upload 目录下文件的绝对路径（应在 get_upload_dir() 之内）
+
+    Returns:
+        规范 local_path；file_path 不在 upload 目录内时返回其相对项目根的 POSIX 路径。
+    """
+    from config.constant import UploadPathConstants
+    from utils.project_path import get_upload_dir, get_project_root
+
+    try:
+        rel = os.path.relpath(file_path, get_upload_dir()).replace(os.sep, "/")
+    except ValueError:
+        # Windows 跨盘符等场景 relpath 抛 ValueError，退回相对项目根口径
+        return os.path.relpath(file_path, get_project_root()).replace(os.sep, "/")
+    if rel.startswith(".."):
+        return os.path.relpath(file_path, get_project_root()).replace(os.sep, "/")
+    return f"{UploadPathConstants.UPLOAD_ROOT}/{rel}"
+
+
 def register_uploaded_file_mapping(
     user_id: Optional[int],
     local_path: str,
@@ -76,7 +104,8 @@ def register_uploaded_file_mapping(
 
     Args:
         user_id: 上传用户 ID（可为 None）
-        local_path: 相对 upload 根目录的 POSIX 路径，如 "upload/workflow/12/xxx.png"
+        local_path: 相对项目根、含 upload/ 前缀的 POSIX 路径，
+            如 "upload/workflow/12/xxx.png"（统一用 upload_local_path() 生成）
         entity_type: MediaFileEntity 枚举值（如 WORKFLOW / TTS）
         policy_code: MediaFilePolicy 策略（用户长期资产用 NEVER_EXPIRE）
         source_id: 关联业务记录 ID（可选）

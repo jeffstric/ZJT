@@ -1212,9 +1212,11 @@ class StoryboardSubtitleConstants:
 class StoryboardAsrConstants:
     """整片导出 smart 字幕：句级 ASR（SenseVoice）调用约束。
 
-    ASR 服务地址在 config.yml 的 asr.api_url（如 http://192.168.10.108:7861），
-    由 services/asr_sentence_client 读取；服务不可达/失败时逐条回退 block 分页，
-    不影响导出。
+    ASR 服务地址在 config.yml 的 asr.api_url（内网 SenseVoice 服务，如
+    http://192.168.10.108:7861）；**缺省不启用**（opt-in）：未配置 asr 段的
+    环境一律回退 block 分页字幕，避免对不可达内网地址每条对白等 30s 连接
+    超时、以及用户音频被默认外发到未知地址。由 services/asr_sentence_client
+    读取；服务不可达/失败时逐条回退 block 分页，不影响导出。
     """
     _CONSTANT_GROUP = True
 
@@ -1224,6 +1226,9 @@ class StoryboardAsrConstants:
     SENTENCES_TOTAL_BUDGET_SECONDS = 300
     # ASR 服务返回句级时间轴时允许的最小句数（0 表示不限制）
     SENTENCES_MIN_COUNT = 1
+    # asr.api_url 未配置时的兜底地址（l3 内网 SenseVoice；仅 asr.enabled 显式
+    # 开启后才会用到，见 is_asr_enabled 的 opt-in 语义）
+    DEFAULT_API_URL = "http://192.168.10.108:7861"
 
 
 class ScriptParserConstants:

@@ -22,23 +22,23 @@ from config.constant import StoryboardAsrConstants
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_API_URL = "http://192.168.10.108:7861"
-
 
 def is_asr_enabled() -> bool:
+    """opt-in：未配置 asr 段的环境默认关闭（避免对不可达内网地址逐条等
+    30s 连接超时拖慢导出，以及用户音频被默认外发到未知地址）。"""
     try:
-        enabled = get_config_value("asr", "enabled", default=True)
+        enabled = get_config_value("asr", "enabled", default=False)
         return bool(enabled)
     except Exception:
-        return True
+        return False
 
 
 def get_asr_api_url() -> str:
     try:
         url = str(get_config_value("asr", "api_url", default="") or "").strip()
-        return url or _DEFAULT_API_URL
+        return url or StoryboardAsrConstants.DEFAULT_API_URL
     except Exception:
-        return _DEFAULT_API_URL
+        return StoryboardAsrConstants.DEFAULT_API_URL
 
 
 def transcribe_sentences(

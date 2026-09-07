@@ -36,6 +36,33 @@ def test_disabled_config_returns_empty(tmp_path):
         assert transcribe_sentences(str(wav)) == []
 
 
+def test_missing_asr_section_defaults_to_disabled(tmp_path):
+    """opt-in 回归：未配置 asr 段的环境必须默认关闭（避免对不可达内网地址
+    逐条等 30s 超时、用户音频默认外发），显式 enabled: true 才启用"""
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF")
+    # 模拟 config.yml 无 asr 段：get_config_value 返回 default 值
+    with mock.patch.object(
+        client, "get_config_value", lambda s, k, default=None: default
+    ):
+        assert client.is_asr_enabled() is False
+        assert transcribe_sentences(str(wav)) == []
+    # 显式开启后 is_asr_enabled 为 True
+    with mock.patch.object(
+        client, "get_config_value", lambda s, k, default=None: True
+    ):
+        assert client.is_asr_enabled() is True
+
+
+def test_default_api_url_falls_back_to_constant():
+    """asr.api_url 未配置时兜底地址来自 StoryboardAsrConstants（不再散落服务文件）"""
+    from config.constant import StoryboardAsrConstants
+    with mock.patch.object(
+        client, "get_config_value", lambda s, k, default=None: default
+    ):
+        assert client.get_asr_api_url() == StoryboardAsrConstants.DEFAULT_API_URL
+
+
 def test_success_parses_sentences(tmp_path):
     wav = tmp_path / "a.wav"
     wav.write_bytes(b"RIFF")

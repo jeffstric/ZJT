@@ -261,6 +261,29 @@ describe('CAS 409 冲突熔断（noteConflict / isConflictBlocked）', () => {
     s.reset();
     expect(s.isConflictBlocked(1)).toBe(false);
   });
+
+  test('熔断快照 baseHash 取 getLastSeenServerHash（409 下发的最新服务端哈希）', () => {
+    // 回归：熔断期间本地修改写入恢复快照，baseHash 必须取服务端最新已知哈希
+    // （409 响应 noteServerHash 的值），而非已过期的基线哈希——刷新重放时
+    // 服务器未再变化则本地修改写回成功，再被改写则重放 409 放弃。
+    const s = createState();
+    s.setConfirmedBody(1, body('a.png'), 'h-baseline');
+    // lastSeen 只由 GET/poll/409 的 noteServerHash 通道推进；仅建基线时为 null
+    expect(s.getLastSeenServerHash(1)).toBe(null);
+    // GET/poll 感知到基线哈希 → 已知
+    s.noteServerHash(1, 'h-baseline');
+    expect(s.getLastSeenServerHash(1)).toBe('h-baseline');
+    // PUT 409：响应携带服务端当前哈希
+    s.noteServerHash(1, 'h-server-latest');
+    s.noteConflict(1);
+    expect(s.isConflictBlocked(1)).toBe(true);
+    expect(s.getConfirmedHash(1)).toBe('h-baseline');          // 基线已过期
+    expect(s.getLastSeenServerHash(1)).toBe('h-server-latest'); // 快照 baseHash 应取此值
+    // 跨工作流隔离与未知时返回 null
+    expect(s.getLastSeenServerHash(2)).toBe(null);
+    s.reset();
+    expect(s.getLastSeenServerHash(1)).toBe(null);
+  });
 });
 
 // dispatchBeforeUnloadSave 的薄封装：从模块取 WorkflowRecovery

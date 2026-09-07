@@ -213,6 +213,18 @@
         : null;
     }
 
+    /**
+     * 最近一次感知到的服务端哈希（GET/poll/409 冲突响应下发）。
+     * 409 熔断后基线已过期，冲突快照的 baseHash 应取该值（服务端最新已知状态），
+     * 刷新重放时据此 CAS：服务器未再变化则恢复本地修改，再变则放弃重放。
+     */
+    function getLastSeenServerHash(workflowId){
+      return (lastSeenServerHashRecord
+        && lastSeenServerHashRecord.workflowId === String(workflowId))
+        ? lastSeenServerHashRecord.serverHash
+        : null;
+    }
+
     /** 记录一次 CAS 409 冲突，熔断后续自动保存（见 conflictBlockRecord 注释）。 */
     function noteConflict(workflowId){
       conflictBlockRecord = { workflowId: String(workflowId) };
@@ -282,6 +294,7 @@
       isConfirmedBody: isConfirmedBody,
       noteServerHash: noteServerHash,
       getConfirmedHash: getConfirmedHash,
+      getLastSeenServerHash: getLastSeenServerHash,
       noteConflict: noteConflict,
       isConflictBlocked: isConflictBlocked,
       confirmSkipped: confirmSkipped,

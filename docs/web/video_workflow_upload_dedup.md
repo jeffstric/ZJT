@@ -30,6 +30,12 @@
   PUT 可写标量字段，sha256）；前端本地比对仍用字符串 `===`
   （http 非 secure context 下 `crypto.subtle` 不可用，且零碰撞零依赖）。
 - 哈希实时计算，**无 schema 变更**；poll-status 每轮搭车返回，不增加请求。
+- **非阻塞**：`workflow_data` 单工作流可达 9~18MB，解析+序列化+sha256 是
+  数百毫秒级 CPU——GET/poll/PUT 全部经 `asyncio.to_thread` 在工作线程计算
+  （`server.py` 的 `_content_hash_of` 辅助函数；GET/poll 复用已解析的 dict，
+  避免大 JSON 二次解析；PUT 的 CAS 校验与写后回读哈希在单个线程跳转内完成）。
+  `compute_content_hash(workflow, workflow_data=None)` 支持调用方传入已解析
+  dict 复用，口径不变。
 
 ### 服务端（`server.py`）
 
@@ -47,6 +53,7 @@
 | `isConfirmedBody(workflowId, body)` | 去重门：body 逐字节一致 **且**（双方哈希已知时）最近一次 poll 哈希 == 基线哈希；任一侧哈希未知退化为纯 body 比较（滚动发布兼容） |
 | `noteServerHash(workflowId, hash)` | 每轮 poll-status/GET/PUT 响应刷新「服务端当前哈希」——服务端被改写的唯一感知通道 |
 | `getConfirmedHash(workflowId)` | PUT 的 `X-Base-Hash` 取值（CAS 基值） |
+| `getLastSeenServerHash(workflowId)` | 最近感知到的服务端哈希；409 熔断后基线已过期，冲突快照的 `baseHash` 取此值 |
 | `noteConflict(workflowId)` / `isConflictBlocked(workflowId)` | 409 冲突熔断：自动保存静默跳过直到成功保存/reset 解除 |
 | `confirmSkipped()` | 门命中跳过上传后推进 `confirmedVersion`，保证关页 `isDirty()` 归零、不会触发 keepalive 补发绕过门 |
 | `reset()` | 同时清理基线与已知服务端哈希 |
@@ -75,9 +82,13 @@ JSON body，正是为了避免改变 body 使基线永不命中。
   不静默丢失。
 - **409 后熔断自动保存**（`noteConflict`/`isConflictBlocked`）：base_hash 不变
   必然再冲突，若无熔断，dirty 状态会让每轮 poll 都全量 PUT 重试，重新打满
-  带宽。熔断后自动保存静默跳过（保持 dirty + 恢复快照兜底），toast 仅首次
-  提示；手动保存每次点击仍照常尝试并提示（用户显式动作）；成功保存或
-  reset 解除熔断。
+  带宽。熔断后自动保存不再 PUT，但**每轮把最新本地内容写入 IndexedDB 恢复
+  快照**（`baseHash` 取 `getLastSeenServerHash`——409 响应下发的最新服务端
+  哈希，而非已过期的基线哈希），关页/刷新不丢编辑；toast 仅首次提示；手动
+  保存每次点击仍照常尝试并提示（用户显式动作）；成功保存或 reset 解除熔断。
+- **熔断快照刷新后的恢复语义**：刷新 → 重放携带 409 时的服务端哈希做 CAS——
+  服务器未再变化 → 本地修改写回成功（最后写者胜，用户在冲突提示后仍继续
+  编辑属显式意图）；服务器又被推进 → 重放 409，按既有语义放弃并 toast 告知。
 - **恢复快照重放也走 CAS**：快照 meta 记录写入时的 `baseHash`，重放携带
   `X-Base-Hash`；冲突说明服务端已有更新版本 → 放弃重放并清除快照（避免
   兜底机制覆盖他人内容）。无 `baseHash` 的存量快照维持强制重放兼容。

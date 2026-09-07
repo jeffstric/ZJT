@@ -30,15 +30,30 @@ frp 隧道全量吐出，挤占 ECS 5~8.3Mbps 出带宽）：
 
 ### 3. `server.py` `_save_user_asset()`
 
-workflow 素材写盘后计算相对路径（`os.path.relpath` + `os.sep` 归一为 `/`，三平台兼容），
+workflow 素材写盘后用 `utils/media_mapping_util.upload_local_path()` 计算规范相对路径
+（**相对项目根、带 `upload/` 前缀的 POSIX 路径**，如 `upload/workflow/12/xxx.png`），
 注册 `entity_type=WORKFLOW`、`policy_code=NEVER_EXPIRE`（用户长期资产）。
 该函数经 `asyncio.to_thread` 在工作线程执行，同步 DB 调用不阻塞事件循环。
 
+> **路径前缀约定（事故教训）**：中间件查询（请求 path `lstrip("/")`）与
+> `trigger_cdn_upload`（项目根拼接定位文件）都要求 `upload/` 前缀。曾因用 upload 根
+> 做 `relpath` 基准导致前缀缺失，注册永不命中、CDN 上传定位不到文件，整条卸载链路
+> 静默失效。该口径已收敛到 `upload_local_path()` 单一出口，
+> `tests/cdn/test_upload_local_path.py` 用真实文件系统做三方约定回归。
+
 ### 4. `task/audio_task.py` TTS 结果
 
-`result_url` 拼好后用 `extract_local_path_from_url()` 提取 `upload/tts/result_audio/xxx`，
-以 `entity_type=TTS`、`policy_code=NEVER_EXPIRE` 注册；async 上下文用
-`asyncio.to_thread` 包裹。source_id 记录 ai_audio 的 task_id。
+`result_url` 拼好后用 `extract_local_path_from_url()` 提取 `upload/tts/result_audio/xxx`
+（`tts.upload_url` 配置为 `/upload/` 形式 URL 时才非空），以 `entity_type=TTS`、
+`policy_code=NEVER_EXPIRE` 注册；async 上下文用 `asyncio.to_thread` 包裹。
+source_id 记录 ai_audio 的 task_id。
+
+> **部署前提（共享卷）**：配音音频由远端 TTS 服务落盘（`audio_task.py` 的
+> `UPLOAD_DIR`），本服务须经共享卷/符号链接让 `<项目根>/upload/tts/result_audio/`
+> 读到同一批文件，`trigger_cdn_upload` 才能上传成功。本地文件不存在时注册被跳过
+> （避免产出 `cloud_path` 永远为 NULL 的死记录），日志输出
+> `TTS 音频本地不可读...跳过 CDN 注册` 提示检查共享卷配置；播放仍走本地直出回退，
+> 不影响配音任务。
 
 ## 生效链路
 

@@ -48,8 +48,11 @@
 - 实现：FunASR VAD 切段 → 每段 SenseVoice 推理带 `output_timestamp=True`
   （字级时间戳 `[token, t0, t1]`，与文本一一对应）→ 段内按句末标点切句、
   超 24 字在句中标点断句、48 字硬断；已有 `.bak_sentences` 备份；
-- 主服务配置：`config.yml` 顶层 `asr.api_url`（默认 `http://192.168.10.108:7861`）、
-  `asr.enabled`（example/prod.base 已加，现场按实际内网地址覆盖）；
+- 主服务配置：`config.yml` 顶层 `asr.api_url`（未配置时兜底
+  `StoryboardAsrConstants.DEFAULT_API_URL` = `http://192.168.10.108:7861`）、
+  `asr.enabled`（**opt-in：缺省 false**，未配置 asr 段的环境一律回退 block 分页，
+  避免对不可达内网地址逐条等 30s 超时及用户音频默认外发；example 默认 false、
+  prod.base 显式 true，现场按实际内网地址覆盖）；
 - 客户端 `services/asr_sentence_client.py`：同步 urllib（仅导出后台线程调用），
   失败一律返回 `[]`。
 

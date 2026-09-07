@@ -29,6 +29,7 @@ from task.async_drivers.runninghub_audio_driver import RunningHubAudioConfig
 from utils.index_tts_util import generate_audio, validate_emotion_vector
 from utils.audio_duration_util import probe_audio_duration
 from utils.media_mapping_util import extract_local_path_from_url, register_uploaded_file_mapping
+from utils.project_path import resolve_upload_url_to_local_path
 import os
 from config.config_util import get_dynamic_config_value
 
@@ -299,14 +300,29 @@ async def _submit_new_task(ai_audio):
         # 工作线程避免阻塞事件循环；register 内部吞异常，注册失败不影响配音任务。
         tts_local_rel = extract_local_path_from_url(result_url)
         if tts_local_rel:
-            await asyncio.to_thread(
-                register_uploaded_file_mapping,
-                None,
-                tts_local_rel,
-                MediaFileEntity.TTS,
-                MediaFilePolicy.NEVER_EXPIRE,
-                task_id,
-            )
+            # 部署前提：音频由远端 TTS 服务落盘，本服务需通过共享卷/符号链接
+            # 让 <项目根>/upload/tts/result_audio/ 可读到同一批文件（见
+            # docs/backend/upload_cdn_mapping.md）。本地不存在时跳过注册，
+            # 避免产出 cloud_path 永远为 NULL 的死记录（播放仍走本地直出回退）。
+            def _tts_file_exists(rel_path: str) -> bool:
+                try:
+                    return os.path.isfile(resolve_upload_url_to_local_path(rel_path))
+                except Exception:
+                    return False
+            if await asyncio.to_thread(_tts_file_exists, tts_local_rel):
+                await asyncio.to_thread(
+                    register_uploaded_file_mapping,
+                    None,
+                    tts_local_rel,
+                    MediaFileEntity.TTS,
+                    MediaFilePolicy.NEVER_EXPIRE,
+                    task_id,
+                )
+            else:
+                logger.info(
+                    "Task %s: TTS 音频本地不可读（%s），跳过 CDN 注册——请检查 TTS 落盘目录"
+                    "与本服务 upload 目录的共享卷配置", task_id, tts_local_rel
+                )
 
         # Update database with result
         AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_COMPLETED, result_url=result_url, message="音频生成成功")
