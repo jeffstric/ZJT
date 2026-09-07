@@ -162,7 +162,7 @@ tts:
 
 # SenseVoice ASR（句级字幕用），公网地址开箱即用；自建服务可覆盖 api_url
 asr:
-  api_url: "http://150.158.44.98:7860/asr"
+  api_url: "http://47.98.190.124:60000"
   enabled: true
 
 test_mode:

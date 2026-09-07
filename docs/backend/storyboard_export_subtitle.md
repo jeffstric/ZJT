@@ -43,7 +43,7 @@
 
 - 位置：`jeffS3(l3)` GPU1，`/content/SenseVoice/asr_server.py`（7861 端口，内网），
   启动脚本 `start_asr.sh`（systemd 外的 nohup 常驻）；
-- **公网入口**：`http://150.158.44.98:7860/asr`，任何网络环境可达。将
+- **公网入口**：`http://47.98.190.124:60000`，任何网络环境可达。将
   `asr.api_url` 配置为该地址即可（客户端会自动拼 `/api/v1/asr_sentences`）。
   注意该入口无鉴权，仅作直连地址不可达环境的回退通道，自建部署优先用私有地址；
 - **新增端点** `POST /api/v1/asr_sentences`：`file`(音频) + `lang`(默认 auto)，返回
@@ -55,7 +55,7 @@
   `StoryboardAsrConstants.DEFAULT_API_URL` = `http://192.168.10.108:7861`）、
   `asr.enabled`（代码缺省 **opt-in false**，未知环境不对外发音频；
   `config_prod.base.yaml` 与 `config_dev.base.yml` 均已预置公网地址
-  `http://150.158.44.98:7860/asr` 且 `enabled: true`——随基线合并后
+  `http://47.98.190.124:60000` 且 `enabled: true`——随基线合并后
   **用户零配置即用**；私有化部署可按需覆盖 `api_url`）；
 - 客户端 `services/asr_sentence_client.py`：同步 urllib（仅导出后台线程调用），
   失败一律返回 `[]`。

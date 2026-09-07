@@ -260,7 +260,7 @@ tts:
 # 服务不可达时自动回退为整条对白分页字幕（block 模式），不影响导出。
 # 默认公网地址任何环境可达；自建 SenseVoice 服务时可覆盖为私有部署地址
 asr:
-  api_url: "http://150.158.44.98:7860/asr"  # SenseVoice ASR 服务地址
+  api_url: "http://47.98.190.124:60000"  # SenseVoice ASR 服务地址
   enabled: false  # true 时启用句级 smart 字幕（需 asr 服务可达）
 
 
