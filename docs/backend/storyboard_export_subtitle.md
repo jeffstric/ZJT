@@ -43,6 +43,9 @@
 
 - 位置：`jeffS3(l3)` GPU1，`/content/SenseVoice/asr_server.py`（7861 端口，内网），
   启动脚本 `start_asr.sh`（systemd 外的 nohup 常驻）；
+- **公网入口**：`http://150.158.44.98:7860/asr`，任何网络环境可达。将
+  `asr.api_url` 配置为该地址即可（客户端会自动拼 `/api/v1/asr_sentences`）。
+  注意该入口无鉴权，仅作直连地址不可达环境的回退通道，自建部署优先用私有地址；
 - **新增端点** `POST /api/v1/asr_sentences`：`file`(音频) + `lang`(默认 auto)，返回
   `{"result": [{start, end, text}...], "count": n}`（秒，相对音频起点）；
 - 实现：FunASR VAD 切段 → 每段 SenseVoice 推理带 `output_timestamp=True`

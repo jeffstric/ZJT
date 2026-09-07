@@ -257,10 +257,10 @@ tts:
 # ASR (SenseVoice 句级转写) configuration
 # 用于故事板导出完整视频时生成"按语音时间轴逐句显示"的字幕（smart 模式）。
 # opt-in：未配置 asr 段（或 enabled 缺省）时默认关闭，导出字幕使用 block 分页模式。
-# 启用需内网可达的 SenseVoice 服务；服务不可达时自动回退为整条对白分页字幕
-# （block 模式），不影响导出。
+# 服务不可达时自动回退为整条对白分页字幕（block 模式），不影响导出。
+# 默认公网地址任何环境可达；自建 SenseVoice 服务时可覆盖为私有部署地址
 asr:
-  api_url: "http://192.168.10.108:7861"  # SenseVoice ASR 服务地址（l3 内网）
+  api_url: "http://150.158.44.98:7860/asr"  # SenseVoice ASR 服务地址
   enabled: false  # true 时启用句级 smart 字幕（需 asr 服务可达）
 
 
