@@ -93,7 +93,11 @@
 
 ## 设计要点
 
-- **防 XSS**：正文/标题一律 Vue 文本插值渲染（不使用 v-html）；图片 URL 仅接受 `/`、`http(s)://` 开头（服务端校验）。
+- **防 XSS**：正文/标题一律 Vue 文本插值渲染（不使用 v-html）；图片 URL 仅接受 `/`、`http(s)://` 开头（服务端校验）；详情弹窗外链 `target="_blank"` 一律带 `rel="noopener noreferrer"`（后端已滤 `javascript:`，前端隔离 window.opener 为纵深防御第二层）。
 - **幂等已读**：`INSERT IGNORE` + 唯一键，重复标记不报错。
-- **定时发布/过期**：不依赖定时任务，查询条件实时过滤（`publish_at <= NOW()` / `expire_at > NOW()`）。
+- **定时发布/过期**：不依赖定时任务，查询条件实时过滤（`publish_at <= NOW()` / `expire_at > NOW()`）。时间为 **naive datetime**：与 MySQL `NOW()` 同以部署时区为准，要求应用容器与数据库时区保持一致（跨时区部署需显式对齐，如同时设为 `Asia/Shanghai`）。
+- **时间格式校验**：`publish_at`/`expire_at` 在服务层校验格式（`YYYY-MM-DD HH:MM(:SS)`，常量 `AnnouncementConstants.DATETIME_FORMATS`），不合法值返回友好错误；API 异常分支只回统一话术，SQL 报错原文仅进日志不透出客户端。
+- **更新成功语义**：不以 `affected > 0` 判定成功——pymysql 默认 affected rows 只计「值变化」的行，同值保存（含对已发布公告再次点发布）会 affected=0 被误报失败；入口已确认公告存在，UPDATE 未抛异常即成功。
+- **删除事务性**：删除公告与级联清理已读记录在同一 `transaction()` 内（`AnnouncementsModel.delete_with_reads`），任一步失败整体回滚，不留孤儿 reads。
+- **常量集中**：公告状态/级别/时间格式的值统一定义在 `config/constant.py:AnnouncementConstants`；`model/announcements.py` 的 `AnnouncementStatus`/`VALID_LEVELS` 仅作引用别名，避免双处定义漂移。
 - **防误伤既有体系**：表名/接口/前端类名均与现有 notifications 体系隔离；远程公告的展示与已读逻辑未改动。

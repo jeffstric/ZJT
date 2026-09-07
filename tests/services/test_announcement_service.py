@@ -52,6 +52,18 @@ class TestNormalizeDatetime:
         assert AnnouncementService._normalize_datetime_str('') is None
         assert AnnouncementService._normalize_datetime_str(None) is None
 
+    def test_valid_formats_accepted(self):
+        for value in ('2026-09-06 10:30', '2026-09-06 10:30:59'):
+            assert AnnouncementService._validate_datetime_str(value, '定时发布时间') is None
+
+    def test_invalid_format_rejected(self):
+        for value in ('not-a-date', '2026/09/06 10:30', '2026-09-06', '10:30'):
+            assert AnnouncementService._validate_datetime_str(value, '定时发布时间') is not None
+
+    def test_none_and_empty_pass(self):
+        assert AnnouncementService._validate_datetime_str(None, '失效时间') is None
+        assert AnnouncementService._validate_datetime_str('', '失效时间') is None
+
 
 class TestCreate:
     def test_create_as_draft(self):
@@ -95,6 +107,13 @@ class TestUpdateStatus:
         result = AnnouncementService.update_status(1, 'archived')
         assert not result['success']
 
+    def test_same_status_save_reports_success(self):
+        """对已发布状态再次发布：affected=0 不误报失败"""
+        with patch('services.announcement_service.AnnouncementsModel.get_by_id', return_value=_announcement()):
+            with patch('services.announcement_service.AnnouncementsModel.update_status', return_value=0):
+                result = AnnouncementService.update_status(1, AnnouncementStatus.PUBLISHED)
+        assert result['success']
+
 
 class TestUpdate:
     def test_update_keeps_status(self):
@@ -108,6 +127,20 @@ class TestUpdate:
         # update 不触碰 status
         assert 'status' not in kwargs
 
+    def test_same_value_save_reports_success(self):
+        """pymysql 默认 affected rows 只计值变化行：同值保存 affected=0 不得误报失败"""
+        existing = _announcement(id=3)
+        with patch('services.announcement_service.AnnouncementsModel.get_by_id', return_value=existing):
+            with patch('services.announcement_service.AnnouncementsModel.update', return_value=0):
+                result = AnnouncementService.update(3, {'title': existing.title})
+        assert result['success']
+
+    def test_update_rejects_invalid_datetime(self):
+        existing = _announcement(id=3)
+        with patch('services.announcement_service.AnnouncementsModel.get_by_id', return_value=existing):
+            result = AnnouncementService.update(3, {'title': 'T', 'publish_at': 'not-a-date'})
+        assert not result['success'] and '格式无效' in result['message']
+
     def test_update_not_found(self):
         with patch('services.announcement_service.AnnouncementsModel.get_by_id', return_value=None):
             result = AnnouncementService.update(999, {'title': 'T'})
@@ -117,12 +150,10 @@ class TestUpdate:
 class TestDelete:
     def test_delete_cascades_reads(self):
         with patch('services.announcement_service.AnnouncementsModel.get_by_id', return_value=_announcement()):
-            with patch('services.announcement_service.AnnouncementsModel.delete_by_id', return_value=1) as m_del:
-                with patch('services.announcement_service.AnnouncementReadsModel.delete_by_announcement', return_value=4) as m_reads:
-                    result = AnnouncementService.delete(admin_user_id=1, announcement_id=1)
+            with patch('services.announcement_service.AnnouncementsModel.delete_with_reads') as m_del:
+                result = AnnouncementService.delete(admin_user_id=1, announcement_id=1)
         assert result['success']
         m_del.assert_called_once_with(1)
-        m_reads.assert_called_once_with(1)
 
     def test_delete_not_found(self):
         with patch('services.announcement_service.AnnouncementsModel.get_by_id', return_value=None):

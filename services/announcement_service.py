@@ -5,12 +5,13 @@ AnnouncementService 本站公告服务 - 公告发布/已读等业务逻辑
        展开通知面板拉取公告列表（带 per-user 已读标记）-> 点击标记已读。
 与 services/notification_service.py（远程拉取的全局公告）相互独立。
 """
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 import logging
 
+from config.constant import AnnouncementConstants
 from model.announcements import (
     AnnouncementsModel,
-    AnnouncementEntity,
     AnnouncementStatus,
     VALID_LEVELS,
 )
@@ -59,11 +60,31 @@ class AnnouncementService:
         return value.strip().replace('T', ' ') or None
 
     @staticmethod
+    def _validate_datetime_str(value: Optional[str], field_label: str) -> Optional[str]:
+        """校验归一化后的时间字符串格式，返回错误信息或 None。
+
+        不合法值直接在服务层拒绝（而非落库时让 SQL 报错原文透出客户端）。
+        naive datetime 语义：与 MySQL NOW() 同以部署时区为准，要求应用与
+        数据库时区保持一致（见 docs/backend/announcements.md）。
+        """
+        if not value:
+            return None
+        for fmt in AnnouncementConstants.DATETIME_FORMATS:
+            try:
+                datetime.strptime(value, fmt)
+                return None
+            except ValueError:
+                continue
+        return f"{field_label} 格式无效: {value}，应为 YYYY-MM-DD HH:MM(:SS)"
+
+    @staticmethod
     def _validate_payload(
         title: str,
         level: str,
         link_url: Optional[str],
         images: Optional[List[str]],
+        publish_at: Optional[str] = None,
+        expire_at: Optional[str] = None,
     ) -> Optional[str]:
         """创建/编辑公共字段校验，返回错误信息或 None"""
         if not title or not title.strip():
@@ -75,6 +96,10 @@ class AnnouncementService:
         for url in (images or []):
             if not isinstance(url, str) or not url.startswith(('/', 'http://', 'https://')):
                 return '图片地址无效'
+        for value, label in ((publish_at, '定时发布时间'), (expire_at, '失效时间')):
+            error = AnnouncementService._validate_datetime_str(value, label)
+            if error:
+                return error
         return None
 
     @staticmethod
@@ -84,8 +109,12 @@ class AnnouncementService:
         level = payload.get('level') or 'info'
         link_url = (payload.get('link_url') or '').strip() or None
         images = payload.get('images') or []
+        publish_at = AnnouncementService._normalize_datetime_str(payload.get('publish_at'))
+        expire_at = AnnouncementService._normalize_datetime_str(payload.get('expire_at'))
 
-        error = AnnouncementService._validate_payload(title, level, link_url, images)
+        error = AnnouncementService._validate_payload(
+            title, level, link_url, images, publish_at, expire_at
+        )
         if error:
             return {'success': False, 'message': error}
 
@@ -101,8 +130,8 @@ class AnnouncementService:
             images=images,
             level=level,
             status=status,
-            publish_at=AnnouncementService._normalize_datetime_str(payload.get('publish_at')),
-            expire_at=AnnouncementService._normalize_datetime_str(payload.get('expire_at')),
+            publish_at=publish_at,
+            expire_at=expire_at,
             created_by=admin_user_id,
         )
         return {'success': True, 'id': announcement_id}
@@ -118,12 +147,16 @@ class AnnouncementService:
         level = payload.get('level') or announcement.level
         link_url = (payload.get('link_url') or '').strip() or None
         images = payload.get('images') if payload.get('images') is not None else announcement.images
+        publish_at = AnnouncementService._normalize_datetime_str(payload.get('publish_at'))
+        expire_at = AnnouncementService._normalize_datetime_str(payload.get('expire_at'))
 
-        error = AnnouncementService._validate_payload(title, level, link_url, images)
+        error = AnnouncementService._validate_payload(
+            title, level, link_url, images, publish_at, expire_at
+        )
         if error:
             return {'success': False, 'message': error}
 
-        affected = AnnouncementsModel.update(
+        AnnouncementsModel.update(
             announcement_id,
             title=title,
             content=payload.get('content') if payload.get('content') is not None else announcement.content,
@@ -131,10 +164,15 @@ class AnnouncementService:
             link_text=(payload.get('link_text') or '').strip() or None,
             images=images,
             level=level,
-            publish_at=AnnouncementService._normalize_datetime_str(payload.get('publish_at')),
-            expire_at=AnnouncementService._normalize_datetime_str(payload.get('expire_at')),
+            publish_at=publish_at,
+            expire_at=expire_at,
         )
-        return {'success': affected > 0}
+        # 不以 affected>0 判定成功：pymysql 默认只计"值变化"的行，同值保存
+        # 会 affected=0 被误报失败。入口已确认公告存在，UPDATE 未抛异常即成功；
+        # 极小概率的并发删除由二次确认兜底。
+        if not AnnouncementsModel.get_by_id(announcement_id):
+            return {'success': False, 'message': '公告不存在'}
+        return {'success': True}
 
     @staticmethod
     def update_status(announcement_id: int, status: str) -> Dict[str, Any]:
@@ -146,17 +184,19 @@ class AnnouncementService:
         if not announcement:
             return {'success': False, 'message': '公告不存在'}
 
-        affected = AnnouncementsModel.update_status(announcement_id, status)
-        return {'success': affected > 0}
+        AnnouncementsModel.update_status(announcement_id, status)
+        # 同上：同值状态保存（如对已发布公告再点发布）不以 affected>0 误报失败
+        if not AnnouncementsModel.get_by_id(announcement_id):
+            return {'success': False, 'message': '公告不存在'}
+        return {'success': True}
 
     @staticmethod
     def delete(admin_user_id: int, announcement_id: int) -> Dict[str, Any]:
-        """管理员删除公告，级联清理已读记录"""
+        """管理员删除公告，事务内级联清理已读记录（不留孤儿）"""
         announcement = AnnouncementsModel.get_by_id(announcement_id)
         if not announcement:
             return {'success': False, 'message': '公告不存在'}
 
-        AnnouncementsModel.delete_by_id(announcement_id)
-        AnnouncementReadsModel.delete_by_announcement(announcement_id)
+        AnnouncementsModel.delete_with_reads(announcement_id)
         logger.info(f"Admin {admin_user_id} deleted announcement {announcement_id}")
         return {'success': True}

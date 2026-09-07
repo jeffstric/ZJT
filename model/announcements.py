@@ -6,20 +6,28 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 import json
 
-from .database import execute_query, execute_update, execute_insert
+from config.constant import AnnouncementConstants
+from .database import (
+    execute_query,
+    execute_update,
+    execute_insert,
+    execute_update_in_transaction,
+    transaction,
+)
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 class AnnouncementStatus:
-    """公告状态常量"""
-    DRAFT = 'draft'
-    PUBLISHED = 'published'
-    OFFLINE = 'offline'
+    """公告状态常量（值集中维护于 config/constant.py:AnnouncementConstants，
+    此处仅作引用别名，供 model/service 层按历史命名使用）"""
+    DRAFT = AnnouncementConstants.STATUS_DRAFT
+    PUBLISHED = AnnouncementConstants.STATUS_PUBLISHED
+    OFFLINE = AnnouncementConstants.STATUS_OFFLINE
 
 
-VALID_LEVELS = ('info', 'success', 'warning', 'error')
+VALID_LEVELS = AnnouncementConstants.VALID_LEVELS
 
 
 class AnnouncementEntity:
@@ -237,12 +245,30 @@ class AnnouncementsModel:
 
     @staticmethod
     def delete_by_id(announcement_id: int) -> int:
-        """Delete an announcement by ID (reads 由 service 层一并清理)"""
+        """Delete an announcement by ID（不清理 reads，仅独立删除场景使用；
+        管理删除请走 delete_with_reads 事务级联）"""
         sql = "DELETE FROM announcements WHERE id = %s"
         try:
             return execute_update(sql, (announcement_id,))
         except Exception as e:
             logger.error(f"Failed to delete announcement {announcement_id}: {e}")
+            raise
+
+    @staticmethod
+    def delete_with_reads(announcement_id: int) -> None:
+        """事务内删除公告及其全部已读记录（任一步失败整体回滚，不留孤儿 reads）"""
+        try:
+            with transaction() as conn:
+                execute_update_in_transaction(
+                    conn, "DELETE FROM announcements WHERE id = %s", (announcement_id,)
+                )
+                execute_update_in_transaction(
+                    conn,
+                    "DELETE FROM announcement_reads WHERE announcement_id = %s",
+                    (announcement_id,),
+                )
+        except Exception as e:
+            logger.error(f"Failed to delete announcement {announcement_id} with reads: {e}")
             raise
 
 
