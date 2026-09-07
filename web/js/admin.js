@@ -686,6 +686,7 @@ const AdminApp = {
                 testLoading: {},         // { providerId: boolean }
                 testResults: {},         // { providerId: { success: boolean, message: string } }
                 saveLoading: {},         // { providerId: boolean }
+                secretRevealed: {},      // { baseName::fieldId: boolean } 密钥毛玻璃是否已揭开
                 leftPanelOpen: true
             },
 
@@ -3389,6 +3390,7 @@ const AdminApp = {
             this.quickConfigModal.testLoading = {};
             this.quickConfigModal.testResults = {};
             this.quickConfigModal.saveLoading = {};
+            this.quickConfigModal.secretRevealed = {};
             this.quickConfigModal.leftPanelOpen = true;
             this.quickConfigModal.quickSelected = false;
 
@@ -3466,6 +3468,7 @@ const AdminApp = {
             this.quickConfigModal.testLoading = {};
             this.quickConfigModal.testResults = {};
             this.quickConfigModal.saveLoading = {};
+            this.quickConfigModal.secretRevealed = {};
         },
 
         // 打开/关闭字段示例图灯箱
@@ -3606,6 +3609,43 @@ const AdminApp = {
                 if (!formData) return false;
                 return Object.values(formData).some(v => v && String(v).trim());
             });
+        },
+
+        // 密钥类字段判定：这类字段默认覆盖毛玻璃遮罩，点击眼睛按钮才显示完整密钥
+        isSecretField(field) {
+            return !field.readOnly && (field.id === 'api_key' || field.id === 'token');
+        },
+
+        // 密钥字段是否应自动上玻璃遮罩：仅当值来自已保存配置（与打开弹窗时加载的原始值一致，
+        // 保存成功后 originalValues 会同步更新）时遮罩；用户正在输入的新值不遮，避免输入被玻璃挡住
+        isSecretAutoMasked(providerId, fieldId) {
+            const val = String(this.getFormField(providerId, fieldId) || '');
+            if (!val.trim()) return false;
+            const base = this.getProviderBaseName(providerId);
+            return this.getProviderIdsByBaseName(base).some(id => {
+                const orig = (this.quickConfigModal.originalValues[id] || {})[fieldId];
+                return orig !== undefined && orig !== null && String(orig) === val;
+            });
+        },
+
+        // 密钥显示状态 key：按 baseName 分组（同组兄弟项共用同一份密钥，眼睛状态保持同步）
+        secretStateKey(providerId, fieldId) {
+            return `${this.getProviderBaseName(providerId)}::${fieldId}`;
+        },
+
+        isSecretRevealed(providerId, fieldId) {
+            return !!this.quickConfigModal.secretRevealed[this.secretStateKey(providerId, fieldId)];
+        },
+
+        // 切换密钥毛玻璃遮罩：点击眼睛按钮显示完整密钥 / 重新遮住
+        toggleSecretReveal(providerId, fieldId) {
+            const key = this.secretStateKey(providerId, fieldId);
+            this.quickConfigModal.secretRevealed[key] = !this.quickConfigModal.secretRevealed[key];
+        },
+
+        // 用户编辑密钥时退出遮罩机制（清掉眼睛状态；值改回原始值后玻璃会自动恢复）
+        clearSecretReveal(providerId, fieldId) {
+            delete this.quickConfigModal.secretRevealed[this.secretStateKey(providerId, fieldId)];
         },
 
         // 判断服务商"密钥"（api_key/token 必填字段）是否有值，
