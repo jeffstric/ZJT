@@ -92,8 +92,11 @@ from utils.project_path import (
     generate_upload_filename, build_upload_url, resolve_upload_url_to_local_path,
 )
 from config.constant import Edition, Action, StoryType
+from config.media_file_policy import MediaFilePolicy
+from model.media_file_mapping import MediaFileEntity
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from utils.image_grid_merger import ImageGridMerger
+from utils.media_mapping_util import register_uploaded_file_mapping
 from utils.sentry_util import SentryUtil
 from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
@@ -1076,6 +1079,19 @@ def _save_user_asset(
     with open(file_path, "wb") as f:
         content = upload_file.file.read()
         f.write(content)
+
+    # 素材落盘即注册 CDN mapping 并触发异步上传七牛：
+    # 此前 workflow 素材从不建 mapping，所有 /upload/workflow/ 访问都从本机经
+    # frp 隧道全量吐出（打满 ECS 出带宽）。注册后 cdn_redirect_middleware 会
+    # 对后续访问 302 到七牛。本函数经 asyncio.to_thread 在工作线程执行，
+    # 这里的同步 DB 调用不会阻塞事件循环。
+    local_rel = os.path.relpath(file_path, get_upload_dir()).replace(os.sep, "/")
+    register_uploaded_file_mapping(
+        user_id=user_id,
+        local_path=local_rel,
+        entity_type=MediaFileEntity.WORKFLOW,
+        policy_code=MediaFilePolicy.NEVER_EXPIRE,
+    )
 
     host = (base_host or SERVER_HOST).rstrip("/")
     return build_upload_url(category, str(user_id), info.filename, host=host)

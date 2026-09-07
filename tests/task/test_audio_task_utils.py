@@ -43,6 +43,11 @@ with stub_modules({
         'model.storyboard_dialogue_audio',
         StoryboardDialogueAudioModel=MagicMock(),
     ),
+    # audio_task 引入 CDN mapping 后新增依赖；其模块内部依赖真实 DB 层，只能 mock
+    'model.media_file_mapping': module_stub(
+        'model.media_file_mapping',
+        MediaFileEntity=MagicMock(),
+    ),
     'utils.audio_duration_util': module_stub(
         'utils.audio_duration_util',
         probe_audio_duration=MagicMock(),
