@@ -4,6 +4,7 @@ E2E 测试核心 fixtures。
 """
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -83,17 +84,61 @@ def get_worlds_list(api_client) -> list:
     return inner if isinstance(inner, list) else []
 
 
+def _skip_or_fail(message: str):
+    """本地缺少外部环境时允许跳过；CI 必须失败，避免产生假绿。"""
+    if os.getenv("E2E_STRICT", "").lower() in {"1", "true", "yes"}:
+        pytest.fail(message)
+    pytest.skip(message)
+
+
 # ──────────────────────────── 配置 ────────────────────────────
 
 
 @pytest.fixture(scope="session")
 def e2e_config():
-    """读取 test_config.json 配置文件"""
+    """读取本地配置，并允许 CI 通过环境变量覆盖。
+
+    CI 使用临时数据库中的一次性账号，不需要生成或提交 test_config.json。
+    """
     config_path = AUTO_TEST_DIR / "test_config.json"
-    if not config_path.exists():
-        pytest.skip(f"配置文件不存在: {config_path}")
-    with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    config = {}
+    if config_path.exists():
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+
+    base_url = os.getenv("E2E_BASE_URL") or config.get("base_url")
+    if not base_url:
+        _skip_or_fail("未配置 E2E_BASE_URL，且本地 test_config.json 不存在或缺少 base_url")
+    config["base_url"] = base_url
+
+    credentials = config.setdefault("credentials", {})
+    credential_envs = {
+        "primary": ("E2E_TEST_PHONE", "E2E_TEST_PASSWORD"),
+        "secondary": ("E2E_SECONDARY_PHONE", "E2E_SECONDARY_PASSWORD"),
+    }
+    for credential_name, (phone_env, password_env) in credential_envs.items():
+        phone = os.getenv(phone_env)
+        password = os.getenv(password_env)
+        if phone or password:
+            credentials[credential_name] = {
+                "phone": phone or "",
+                "password": password or "",
+            }
+
+    asset_dir_override = os.getenv("E2E_TEST_ASSET_DIR")
+    asset_dir = Path(asset_dir_override or str(AUTO_TEST_DIR / "test_assets"))
+    test_assets = config.setdefault("test_assets", {})
+    asset_paths = {
+        "test_image": str(asset_dir / "test_image.jpg"),
+        "test_video": str(asset_dir / "test_video.mp4"),
+        "test_voice": str(asset_dir / "test_voice.wav"),
+    }
+    for asset_name, asset_path in asset_paths.items():
+        if asset_dir_override:
+            test_assets[asset_name] = asset_path
+        else:
+            test_assets.setdefault(asset_name, asset_path)
+    return config
 
 
 @pytest.fixture(scope="session")
@@ -105,14 +150,11 @@ def base_url(e2e_config):
 # ──────────────────────────── 认证 ────────────────────────────
 
 
-@pytest.fixture(scope="session")
-def _login_data(e2e_config, base_url):
-    """内部 fixture：一次登录获取 token 和 user_id。
-
-    注意：登录接口会删除该用户所有旧 token 再创建新 token，
-    因此必须只登录一次，避免多次登录导致 token 失效。
-    """
-    creds = e2e_config["credentials"]["primary"]
+def _login_with_credentials(e2e_config, base_url, credential_name):
+    """使用指定账号登录；每个账号在整轮测试中只能调用一次。"""
+    creds = e2e_config.get("credentials", {}).get(credential_name, {})
+    if not creds.get("phone") or not creds.get("password"):
+        _skip_or_fail(f"未配置 E2E {credential_name} 测试账号")
     try:
         resp = httpx.post(
             f"{base_url}/api/auth/login",
@@ -120,18 +162,30 @@ def _login_data(e2e_config, base_url):
             timeout=10,
         )
     except (httpx.ConnectError, httpx.ReadError, httpx.ConnectTimeout) as e:
-        pytest.skip(f"服务器不可用，跳过测试: {e}")
+        _skip_or_fail(f"服务器不可用: {e}")
     if resp.status_code != 200:
-        pytest.skip(f"登录失败，状态码: {resp.status_code}, 响应: {resp.text}")
+        _skip_or_fail(f"登录失败，状态码: {resp.status_code}, 响应: {resp.text}")
     data = resp.json()
     inner = data.get("data", data)
     token = inner.get("token") or data.get("token") or data.get("access_token")
     uid = inner.get("user_id") or data.get("user_id")
     if not token:
-        pytest.skip(f"登录响应中未找到 token: {data}")
+        _skip_or_fail(f"登录响应中未找到 token: {data}")
     if not uid:
-        pytest.skip(f"登录响应中未找到 user_id: {data}")
+        _skip_or_fail(f"登录响应中未找到 user_id: {data}")
     return {"token": token, "user_id": str(uid)}
+
+
+@pytest.fixture(scope="session")
+def _login_data(e2e_config, base_url):
+    """主账号认证信息：session 期间只登录一次。"""
+    return _login_with_credentials(e2e_config, base_url, "primary")
+
+
+@pytest.fixture(scope="session")
+def _secondary_login_data(e2e_config, base_url):
+    """次账号认证信息：供登出等破坏 token 的测试独立使用。"""
+    return _login_with_credentials(e2e_config, base_url, "secondary")
 
 
 @pytest.fixture(scope="session")
@@ -144,6 +198,16 @@ def auth_token(_login_data):
 def user_id(_login_data):
     """通过 API 登录获取 user_id"""
     return _login_data["user_id"]
+
+
+@pytest.fixture(scope="session")
+def secondary_auth_token(_secondary_login_data):
+    return _secondary_login_data["token"]
+
+
+@pytest.fixture(scope="session")
+def secondary_user_id(_secondary_login_data):
+    return _secondary_login_data["user_id"]
 
 
 @pytest.fixture(scope="session")
@@ -193,35 +257,82 @@ def api_client_with_refresh(base_url, auth_headers, e2e_config):
 
 @pytest.fixture(scope="session")
 def browser():
-    """Playwright chromium 浏览器实例（session scope）"""
+    """Playwright chromium 浏览器实例（CI 使用无头模式且关闭 slow_mo）。"""
+    is_ci = os.getenv("CI", "").lower() in {"1", "true", "yes"}
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=500)
+        browser = p.chromium.launch(
+            headless=is_ci,
+            slow_mo=0 if is_ci else 500,
+        )
         yield browser
         browser.close()
 
 
 @pytest.fixture
-def browser_context(browser, auth_token, user_id, base_url):
+def browser_context(browser, auth_token, user_id, base_url, request):
     """浏览器上下文，注入 localStorage 认证信息"""
     context = browser.new_context(
         viewport={"width": 1280, "height": 720},
         locale="zh-CN",
     )
+    results_dir = os.getenv("E2E_RESULTS_DIR")
+    if results_dir:
+        context.tracing.start(screenshots=True, snapshots=True, sources=True)
     # 注入 localStorage 认证信息，跳过 UI 登录
     context.add_init_script(f"""
         localStorage.setItem('auth_token', '{auth_token}');
         localStorage.setItem('user_id', '{user_id}');
     """)
     yield context
+    if results_dir:
+        try:
+            trace_path = None
+            report = getattr(request.node, "rep_call", None)
+            if report and report.failed:
+                trace_path = _artifact_path(
+                    request.node.nodeid,
+                    results_dir,
+                    "trace.zip",
+                )
+            context.tracing.stop(path=trace_path)
+        except Exception as e:
+            print(f"[e2e artifacts] 保存 Trace 失败: {e}")
     context.close()
 
 
 @pytest.fixture
-def page(browser_context):
+def page(browser_context, request):
     """每个测试独立的页面实例"""
     p = browser_context.new_page()
     yield p
+    results_dir = os.getenv("E2E_RESULTS_DIR")
+    report = getattr(request.node, "rep_call", None)
+    if results_dir and report and report.failed:
+        try:
+            screenshot_path = _artifact_path(
+                request.node.nodeid,
+                results_dir,
+                "failure.png",
+            )
+            p.screenshot(path=screenshot_path, full_page=True)
+        except Exception as e:
+            print(f"[e2e artifacts] 保存失败截图失败: {e}")
     p.close()
+
+
+def _artifact_path(nodeid: str, results_dir: str, filename: str) -> str:
+    safe_nodeid = re.sub(r"[^A-Za-z0-9_.-]+", "_", nodeid).strip("_")
+    artifact_dir = Path(results_dir) / safe_nodeid
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    return str(artifact_dir / filename)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """把执行结果暴露给 fixture teardown，以便仅在失败时保存产物。"""
+    outcome = yield
+    report = outcome.get_result()
+    setattr(item, f"rep_{report.when}", report)
 
 
 @pytest.fixture

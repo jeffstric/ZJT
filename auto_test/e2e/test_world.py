@@ -13,7 +13,7 @@ import time
 import pytest
 
 
-pytestmark = [pytest.mark.e2e, pytest.mark.world]
+pytestmark = [pytest.mark.e2e, pytest.mark.world, pytest.mark.ci_smoke]
 
 
 def _world_id_from_create(resp_json):
