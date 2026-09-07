@@ -2086,13 +2086,23 @@ button {
     cursor: not-allowed;
 }
 
-/* 时间轴预览播放：对白字幕层 */
+/* 时间轴预览播放：对白字幕层。
+   外层按 --sb-side-margin 左右留白（与导出 ASS MarginL/R 对应，字幕设置面板实时可调），
+   内层 span 承载文字与背景胶囊，保证盒子宽度随内容收缩 */
 .preview-subtitle {
     position: absolute;
-    left: 50%;
+    left: var(--sb-side-margin, 7%);
+    right: var(--sb-side-margin, 7%);
     bottom: 56px;
-    transform: translateX(-50%);
-    max-width: min(86%, 640px);
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+    z-index: 3;
+    pointer-events: none;
+}
+
+.preview-subtitle .preview-subtitle-text {
+    max-width: 100%;
     padding: 8px 14px;
     border-radius: 8px;
     background: rgba(0, 0, 0, 0.62);
@@ -2100,14 +2110,102 @@ button {
     font-size: 14px;
     line-height: 1.45;
     text-align: center;
-    z-index: 3;
-    pointer-events: none;
     white-space: pre-wrap;
     word-break: break-word;
 }
 
 .preview-subtitle[hidden] {
     display: none !important;
+}
+
+/* 字幕设置（预览控制条齿轮按钮 + 小面板） */
+.subtitle-settings {
+    position: relative;
+    display: inline-flex;
+}
+
+.subtitle-settings-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary, #64748b);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.subtitle-settings-btn:hover,
+.subtitle-settings-btn.active {
+    color: var(--text-primary, #0f172a);
+    background: var(--bg-hover, rgba(100, 116, 139, 0.14));
+}
+
+.subtitle-settings-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 30;
+    width: 280px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color, rgba(100, 116, 139, 0.28));
+    border-radius: 10px;
+    background: var(--bg-card, #fff);
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+    text-align: left;
+}
+
+.subtitle-settings-panel .ss-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.subtitle-settings-panel .ss-row:last-of-type {
+    margin-bottom: 6px;
+}
+
+.subtitle-settings-panel .ss-label {
+    flex: none;
+    font-size: 12px;
+    color: var(--text-secondary, #64748b);
+}
+
+.subtitle-settings-panel .ss-radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.subtitle-settings-panel .ss-radio input {
+    margin: 0;
+    cursor: pointer;
+}
+
+.subtitle-settings-panel input[type="range"] {
+    flex: 1;
+    min-width: 0;
+}
+
+.subtitle-settings-panel .ss-value {
+    flex: none;
+    min-width: 34px;
+    text-align: right;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary, #0f172a);
+}
+
+.subtitle-settings-panel .ss-hint {
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-tertiary, #94a3b8);
 }
 
 /* 预览播放：本镜媒体预加载遮罩（时钟未走） */

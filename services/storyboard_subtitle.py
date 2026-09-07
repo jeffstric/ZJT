@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, List, Optional, Protocol, Sequence
+from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
 
 from config.constant import StoryboardSubtitleConstants
 
@@ -235,6 +235,121 @@ def _escape_ass(text: str) -> str:
 # Cue 构建
 # ---------------------------------------------------------------------------
 
+# smart 模式：原文切点可吸附的标点（含句末与句中标点）
+_SNAP_PUNCT = set("，。！？；、,.!?;:：…—")
+# ASR 句字符占比统计时忽略的字符（标点与空白）
+_STRIP_FOR_COUNT = _SNAP_PUNCT | set(" \n\r\t")
+
+
+def _index_of_nth_content(chars: List[str], is_punct: List[bool], n_content: int) -> int:
+    """返回原文中第 n_content 个非标点字符之后的位置（0 → 切点 0）。"""
+    if n_content <= 0:
+        return 0
+    count = 0
+    for i, p in enumerate(is_punct):
+        if not p:
+            count += 1
+            if count >= n_content:
+                return i + 1
+    return len(chars)
+
+
+def _snap_to_punct(chars: List[str], is_punct: List[bool], idx: int) -> int:
+    """把切点向最近的标点吸附（切点落在标点之后），找不到就近标点则原样返回。"""
+    window = StoryboardSubtitleConstants.ASR_SPLIT_SNAP_WINDOW
+    best = idx
+    best_dist = window + 1
+    for j in range(max(1, idx - window), min(len(chars), idx + window + 1)):
+        if is_punct[j]:
+            d = abs(j - idx)
+            if d < best_dist:
+                best_dist = d
+                best = j + 1
+    return best
+
+
+def split_text_by_asr_sentences(
+    original_text: str,
+    asr_sents: Sequence[dict],
+    *,
+    window_start: float,
+    window_dur: float,
+) -> Optional[List[Tuple[float, float, str]]]:
+    """smart 字幕核心：把对白原文按 ASR 句级时间轴切分。
+
+    ASR 句提供时间窗与字符占比；字幕显示原文（避免 ASR 同音字错字），
+    原文按各句"去标点字符占比"找切点，切点向就近标点吸附。
+    ASR 时间相对音频起点，先按 window_dur / ASR末句end 等比缩放到实际窗口。
+
+    Returns:
+        [(abs_start, abs_end, text), ...]；无法对齐（无句/超时窗/比例异常）返回 None，
+        调用方回退为整条对白分页（block）。
+    """
+    text = normalize_subtitle_text(original_text)
+    if not text or not asr_sents:
+        return None
+    window_dur = float(window_dur or 0)
+    window_start = float(window_start or 0)
+    if window_dur <= 1e-6:
+        return None
+
+    spans: List[Tuple[float, float, str]] = []
+    for s in asr_sents:
+        if not isinstance(s, dict):
+            continue
+        try:
+            st, en = float(s.get("start")), float(s.get("end"))
+        except (TypeError, ValueError):
+            continue
+        stext = str(s.get("text") or "").strip()
+        if stext and en > st:
+            spans.append((st, en, stext))
+    if not spans:
+        return None
+
+    last_end = max(en for _, en, _ in spans)
+    if last_end <= 0.1:
+        return None
+    scale = window_dur / last_end
+    if not (
+        StoryboardSubtitleConstants.ASR_SENTS_SCALE_MIN
+        <= scale
+        <= StoryboardSubtitleConstants.ASR_SENTS_SCALE_MAX
+    ):
+        logger.debug("asr scale out of range scale=%.3f last_end=%.3f dur=%.3f", scale, last_end, window_dur)
+        return None
+
+    chars = list(text)
+    is_punct = [c in _SNAP_PUNCT for c in chars]
+    total_content = sum(1 for p in is_punct if not p)
+    total_asr = sum(len([c for c in stext if c not in _STRIP_FOR_COUNT]) for _, _, stext in spans)
+    if total_content <= 0 or total_asr <= 0:
+        return None
+
+    n = len(spans)
+    # n-1 个内部切点；非标点累计占比找位置，再向标点吸附，并保持单调不减
+    bounds: List[int] = []
+    acc_asr = 0
+    for st, en, stext in spans[:-1]:
+        acc_asr += len([c for c in stext if c not in _STRIP_FOR_COUNT])
+        target = round(total_content * acc_asr / total_asr)
+        idx = _index_of_nth_content(chars, is_punct, target)
+        idx = _snap_to_punct(chars, is_punct, idx)
+        bounds.append(min(max(idx, bounds[-1] if bounds else 0), len(chars)))
+
+    cuts = [0] + bounds + [len(chars)]
+    segs = ["".join(chars[cuts[i]: cuts[i + 1]]).strip() for i in range(n)]
+
+    out: List[Tuple[float, float, str]] = []
+    for i, (st, en, _stext) in enumerate(spans):
+        seg_text = segs[i]
+        s = window_start + st * scale
+        e = window_start + en * scale
+        if seg_text and e > s + 1e-3:
+            out.append((s, e, seg_text))
+    return out or None
+
+
 def build_subtitle_cues(
     plan: _PlanLike,
     *,
@@ -242,11 +357,21 @@ def build_subtitle_cues(
     height: int,
     max_lines: Optional[int] = None,
     min_page_duration: Optional[float] = None,
+    subtitle_mode: Optional[str] = None,
+    asr_sents_by_dialogue: Optional[Dict[int, List[dict]]] = None,
 ) -> List[SubtitleCue]:
     """
     从导出 plan 生成全局时间轴字幕 cues。
     仅处理有 text 的对白；时长用 audio.duration，缺省 DEFAULT_CUE_DURATION。
+
+    subtitle_mode:
+        - smart（默认）：有 ASR 句级时间轴的对白按句显示（逐句短字幕），
+          无 ASR 数据的对白回退 block 分页；
+        - block：整条对白折行分页（旧行为）。
+    asr_sents_by_dialogue: dialogue_id -> [{start, end, text}]（秒，相对该条音频）。
     """
+    mode = subtitle_mode or StoryboardSubtitleConstants.SUBTITLE_MODE_DEFAULT
+    asr_map = asr_sents_by_dialogue or {}
     max_lines = max_lines or StoryboardSubtitleConstants.MAX_LINES
     min_page = (
         min_page_duration
@@ -285,6 +410,39 @@ def build_subtitle_cues(
 
             window_start = t_global + t_local
             window_end = t_global + t_local + dur
+
+            # smart 模式：优先用 ASR 句级时间轴逐句出 cue
+            if mode == StoryboardSubtitleConstants.SUBTITLE_MODE_SMART:
+                dialogue_id = getattr(audio, "dialogue_id", None)
+                asr_sents = asr_map.get(int(dialogue_id)) if dialogue_id is not None else None
+                if asr_sents:
+                    segs = split_text_by_asr_sentences(
+                        text, asr_sents, window_start=window_start, window_dur=dur
+                    )
+                    if segs:
+                        for s, e, seg_text in segs:
+                            seg_lines = wrap_subtitle_lines(seg_text, max_chars)
+                            pages = paginate_lines(seg_lines, max_lines)
+                            if not pages:
+                                continue
+                            if len(pages) == 1:
+                                if e > s + 1e-3:
+                                    cues.append(SubtitleCue(start=s, end=e, text=lines_to_ass_text(pages[0])))
+                                continue
+                            # 单句仍超长：句内按字数加权分页
+                            durations = allocate_page_durations(pages, e - s, min_page=min_page)
+                            t = s
+                            for page, pd in zip(pages, durations):
+                                pe = min(e, t + max(pd, 0.05))
+                                body = lines_to_ass_text(page)
+                                if body and pe > t + 1e-3:
+                                    cues.append(SubtitleCue(start=t, end=pe, text=body))
+                                t = pe
+                        t_local += dur
+                        if t_local >= span - 1e-9:
+                            break
+                        continue
+                    # 无法对齐 → 落到下方 block 逻辑
 
             lines = wrap_subtitle_lines(text, max_chars)
             pages = paginate_lines(lines, max_lines)
@@ -391,14 +549,29 @@ def write_ass_file(
     height: int,
     *,
     font_name: Optional[str] = None,
+    side_margin_ratio: Optional[float] = None,
 ) -> str:
-    """写入 ASS 文件，返回 path。"""
+    """写入 ASS 文件，返回 path。
+
+    side_margin_ratio: 字幕距画面左右边缘的边距比例（0~SIDE_MARGIN_RATIO_MAX），
+    缺省用 SIDE_MARGIN_RATIO；由前端字幕设置透传。
+    """
     if not font_name:
         # 内置字体优先，缺失时回退系统字体探测
         builtin_family, _ = resolve_builtin_font()
         font_name = builtin_family or resolve_cjk_font_name()
     font_size = resolve_font_size(height)
-    margin_l = max(8, int(width * StoryboardSubtitleConstants.SIDE_MARGIN_RATIO))
+    margin_ratio = StoryboardSubtitleConstants.SIDE_MARGIN_RATIO
+    if side_margin_ratio is not None:
+        try:
+            margin_ratio = float(side_margin_ratio)
+        except (TypeError, ValueError):
+            margin_ratio = StoryboardSubtitleConstants.SIDE_MARGIN_RATIO
+        margin_ratio = max(
+            StoryboardSubtitleConstants.SIDE_MARGIN_RATIO_MIN,
+            min(StoryboardSubtitleConstants.SIDE_MARGIN_RATIO_MAX, margin_ratio),
+        )
+    margin_l = max(8, int(width * margin_ratio))
     margin_r = margin_l
     margin_v = max(12, int(height * StoryboardSubtitleConstants.BOTTOM_MARGIN_RATIO))
 

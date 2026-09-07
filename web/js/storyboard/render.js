@@ -599,9 +599,9 @@ export function mediaFrame(scene) {
     return `<div class="preview-empty preview-empty-${displayStatus}">${escapeHtml(getFirstFrameStatusLabel(displayStatus) || '当前分镜还没有画面')}</div>`;
 }
 
-/** 主预览字幕层 HTML（播放引擎写入文本） */
+/** 主预览字幕层 HTML（播放引擎写入文本）；内层 span 承载文字与背景胶囊 */
 export function previewSubtitleHtml() {
-    return '<div class="preview-subtitle" hidden></div>';
+    return '<div class="preview-subtitle" hidden><span class="preview-subtitle-text"></span></div>';
 }
 
 function renderFirstFrameStatusMark(scene) {
@@ -1655,6 +1655,26 @@ function sceneThumbMediaSig(scene) {
     return `${firstFrameUrl}|${firstFrameStatus}|${scene?.durationLabel || ''}|${videoType}`;
 }
 
+/** 字幕设置小面板（预览控制条上）：显示方式 + 左右边距 */
+function renderSubtitleSettingsPanel() {
+    const pct = Math.round((Number(state.subtitleSideMarginRatio) || 0) * 100);
+    const smart = state.subtitleMode !== 'block';
+    return `
+        <div class="subtitle-settings-panel" role="dialog" aria-label="字幕设置">
+            <div class="ss-row">
+                <span class="ss-label">显示方式</span>
+                <label class="ss-radio"><input type="radio" name="subtitle-mode" value="smart" data-action="subtitle-mode" ${smart ? 'checked' : ''}>逐句</label>
+                <label class="ss-radio"><input type="radio" name="subtitle-mode" value="block" data-action="subtitle-mode" ${smart ? '' : 'checked'}>整段</label>
+            </div>
+            <div class="ss-row">
+                <span class="ss-label">左右边距</span>
+                <input type="range" min="0" max="18" step="1" value="${pct}" data-subtitle-margin aria-label="字幕左右边距">
+                <span class="ss-value" data-subtitle-margin-value>${pct}%</span>
+            </div>
+            <div class="ss-hint">逐句：按配音语音时间轴逐句显示；整段：整条对白折行分页。边距即导出视频里字幕距画面两侧的留白，可在预览中直观查看。</div>
+        </div>`;
+}
+
 export function renderTimeline() {
     return `
         <section class="timeline-controls">
@@ -1662,6 +1682,10 @@ export function renderTimeline() {
                 <button class="play-btn" data-action="toggle-play" aria-label="${state.isPlaying ? '暂停' : '播放'}">${icon(state.isPlaying ? 'pause' : 'play', 18)}</button>
                 <span class="timeline-time">${formatDuration(state.currentTime)} / ${formatDuration(getTotalDuration())}</span>
                 <label class="subtitle-toggle"><input type="checkbox" data-action="toggle-subtitle" ${state.subtitleEnabled ? 'checked' : ''}> 字幕</label>
+                <div class="subtitle-settings">
+                    <button class="subtitle-settings-btn${state.showSubtitleSettings ? ' active' : ''}" data-action="toggle-subtitle-settings" title="字幕设置" aria-label="字幕设置">${icon('settings', 15)}</button>
+                    ${state.showSubtitleSettings ? renderSubtitleSettingsPanel() : ''}
+                </div>
                 <button class="timeline-view-toggle" data-action="toggle-view">${icon('grid', 16)}</button>
             </div>
             <div class="scene-timeline">
@@ -3249,7 +3273,8 @@ function clearPreviewMediaLayers(wrapper) {
     const sub = wrapper.querySelector('.preview-subtitle');
     if (sub) {
         sub.hidden = true;
-        sub.textContent = '';
+        const inner = sub.querySelector('.preview-subtitle-text') || sub;
+        inner.textContent = '';
     }
 }
 
@@ -3294,7 +3319,8 @@ export function patchPreview(scene, options = {}) {
         const sub = wrapper.querySelector('.preview-subtitle');
         if (sub) {
             sub.hidden = true;
-            sub.textContent = '';
+            const inner = sub.querySelector('.preview-subtitle-text') || sub;
+            inner.textContent = '';
         }
     }
 
@@ -3346,6 +3372,7 @@ export function patchPreview(scene, options = {}) {
         const sub = document.createElement('div');
         sub.className = 'preview-subtitle';
         sub.hidden = true;
+        sub.innerHTML = '<span class="preview-subtitle-text"></span>';
         mount.appendChild(sub);
     }
     if (!wrapper.querySelector('.preview-caption')) {

@@ -160,6 +160,10 @@ tts:
   api_url: "http://47.98.190.124"
   upload_url: "http://47.98.190.124/result_audio/"
 
+asr:
+  api_url: "http://192.168.10.108:7861"  # SenseVoice ASR 服务（l3 内网），句级字幕用
+  enabled: true
+
 test_mode:
   enabled: false
   mock_videos:

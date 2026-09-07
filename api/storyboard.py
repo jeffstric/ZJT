@@ -5704,7 +5704,9 @@ async def export_full_video(
     前端轮询 GET /api/storyboard/export-job/{job_id} 获取 download_url。
 
     Body 可选:
-        include_subtitles: bool  默认 true，硬烧对白字幕（ASS，超长分页）
+        include_subtitles: bool  默认 true，硬烧对白字幕
+        subtitle_mode: str       "smart"（默认，按语音时间轴逐句显示）| "block"（整条对白分页）
+        subtitle_side_margin: float  字幕左右边距比例 0~0.18（前端字幕设置透传，缺省用默认值）
     """
     user_id = get_user_id_from_header(user_id)
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
@@ -5714,10 +5716,19 @@ async def export_full_video(
     ensure_resource_access(sb, user_id, Action.VIEW, "故事板")
 
     include_subtitles = True
+    subtitle_mode = None
+    subtitle_side_margin = None
     try:
         body = await request.json()
-        if isinstance(body, dict) and 'include_subtitles' in body:
-            include_subtitles = bool(body.get('include_subtitles'))
+        if isinstance(body, dict):
+            if 'include_subtitles' in body:
+                include_subtitles = bool(body.get('include_subtitles'))
+            if 'subtitle_mode' in body:
+                subtitle_mode = str(body.get('subtitle_mode') or '').strip().lower() or None
+            if body.get('subtitle_side_margin') is not None:
+                subtitle_side_margin = float(body.get('subtitle_side_margin'))
+    except (TypeError, ValueError):
+        pass
     except Exception:
         pass
 
@@ -5751,8 +5762,13 @@ async def export_full_video(
                 update_job(job_id, progress=15)
                 materialize_package_files(plan, os.path.join(work, "package"))
                 update_job(job_id, progress=45)
+                subtitle_options = {
+                    "mode": subtitle_mode,
+                    "side_margin_ratio": subtitle_side_margin,
+                }
                 local_path = build_merged_video(
-                    plan, work, burn_subtitles=include_subtitles
+                    plan, work, burn_subtitles=include_subtitles,
+                    subtitle_options=subtitle_options,
                 )
                 update_job(job_id, progress=80, filename=os.path.basename(local_path))
                 return local_path

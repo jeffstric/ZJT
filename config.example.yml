@@ -254,6 +254,13 @@ tts:
   api_url: "http://47.98.190.124"  # TTS API 服务地址
   upload_url: "http://47.98.190.124/result_audio/"
 
+# ASR (SenseVoice 句级转写) configuration
+# 用于故事板导出完整视频时生成"按语音时间轴逐句显示"的字幕（smart 模式）。
+# 服务不可达时自动回退为整条对白分页字幕（block 模式），不影响导出。
+asr:
+  api_url: "http://192.168.10.108:7861"  # SenseVoice ASR 服务地址（l3）
+  enabled: true  # false 时导出字幕一律使用 block 分页模式
+
 
 # User registration configuration
 user_registration:
