@@ -1699,6 +1699,15 @@ function renderSubtitleSettingsPanel() {
         </div>`;
 }
 
+/** 控制条上的字幕设置区：齿轮按钮 + 可开合小面板（timelineChrome 局部刷新的最小单元） */
+function renderSubtitleSettingsHtml() {
+    return `
+        <div class="subtitle-settings">
+            <button class="subtitle-settings-btn${state.showSubtitleSettings ? ' active' : ''}" data-action="toggle-subtitle-settings" title="字幕设置" aria-label="字幕设置">${icon('settings', 15)}</button>
+            ${state.showSubtitleSettings ? renderSubtitleSettingsPanel() : ''}
+        </div>`;
+}
+
 export function renderTimeline() {
     return `
         <section class="timeline-controls">
@@ -1706,10 +1715,7 @@ export function renderTimeline() {
                 <button class="play-btn" data-action="toggle-play" aria-label="${state.isPlaying ? '暂停' : '播放'}">${icon(state.isPlaying ? 'pause' : 'play', 18)}</button>
                 <span class="timeline-time">${formatDuration(state.currentTime)} / ${formatDuration(getTotalDuration())}</span>
                 <label class="subtitle-toggle"><input type="checkbox" data-action="toggle-subtitle" ${state.subtitleEnabled ? 'checked' : ''}> 字幕</label>
-                <div class="subtitle-settings">
-                    <button class="subtitle-settings-btn${state.showSubtitleSettings ? ' active' : ''}" data-action="toggle-subtitle-settings" title="字幕设置" aria-label="字幕设置">${icon('settings', 15)}</button>
-                    ${state.showSubtitleSettings ? renderSubtitleSettingsPanel() : ''}
-                </div>
+                ${renderSubtitleSettingsHtml()}
                 <button class="timeline-view-toggle" data-action="toggle-view">${icon('grid', 16)}</button>
             </div>
             <div class="scene-timeline">
@@ -3448,6 +3454,10 @@ export function syncModals() {
 
 function patchTimelineChrome() {
     updateTimelineProgress();
+    // 字幕设置区（齿轮 + 面板）整体重挂：面板开合只走 timelineChrome，
+    // 不重挂的话 state 已翻转但 DOM 不变，表现为点击齿轮无反应
+    const settings = document.querySelector('.timeline-progress-row .subtitle-settings');
+    if (settings) settings.outerHTML = renderSubtitleSettingsHtml();
     // 字幕勾选（action 名称为 toggle-subtitle）
     const cb = document.querySelector(
         '.timeline-progress-row input[type="checkbox"][data-action="toggle-subtitle"]'

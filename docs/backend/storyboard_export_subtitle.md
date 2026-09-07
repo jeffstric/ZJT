@@ -34,7 +34,10 @@
 - 边距随 UI 配置持久化（`serializeUiConfig/restoreUiConfig`：
   `subtitleMode`、`subtitleSideMarginRatio`）；
 - 一键转视频时透传 `subtitle_mode`、`subtitle_side_margin` 到后端，
-  写入 ASS `MarginL/MarginR`（`write_ass_file(side_margin_ratio=)`，夹取 0~0.18）。
+  写入 ASS `MarginL/MarginR`（`write_ass_file(side_margin_ratio=)`，夹取 0~0.18）；
+- 面板开合走预览控制条局部刷新（`patchTimelineChrome` 重挂 `.subtitle-settings`）。
+  曾因该局部刷新不重建此区域导致"点击齿轮无反应"（state 已翻转但 DOM 不变），
+  已修复，回归测试 `web/tests/storyboard_subtitle_settings_panel.test.js`。
 
 ## 三、l3 ASR 服务（新增句级端点）
 
