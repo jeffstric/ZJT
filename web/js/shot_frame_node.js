@@ -66,10 +66,15 @@
       delete filteredShotData.db_location_pic;
       delete filteredShotData.characters_present;
       delete filteredShotData.db_location_id;
-      
+      // scriptData（整份剧本数据）不参与视频提示词文本生成，剔除避免 JSON 冗余
+      delete filteredShotData.scriptData;
+
       const videoPromptJson = JSON.stringify(filteredShotData, null, 2);
-      
-      // 将JSON转换为可读文本格式
+
+      // 将JSON转换为可读文本格式。
+      // videoPrompt（JSON 美化版）不再存储：它是 shotJson 的纯重复拷贝，展示/生成一律用
+      // videoPromptText（用户可编辑；各消费点均为 videoPromptText || videoPrompt 兜底），
+      // 缺失时可由 shotJson 现场重新格式化。
       const videoPromptText = convertVideoPromptToText(videoPromptJson);
       
       const node = {
@@ -81,7 +86,7 @@
         data: {
           shotId: shotData.shot_id || '',
           imagePrompt: imagePrompt,
-          videoPrompt: videoPromptJson,
+          // videoPrompt 与 shotJson 二选一存储：JSON 版可由 shotJson 重新格式化，不落库
           videoPromptText: videoPromptText,
           duration: shotData.duration || 0,
           shotType: shotData.shot_type || '',

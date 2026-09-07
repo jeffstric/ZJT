@@ -1122,7 +1122,8 @@
         prev_shot: prevShot,
         next_shot: nextShot,
         group_id: node.data.groupId || node.data.group_id || '',
-        script_data: node.data.scriptData || node.data.script_data || {},
+        // 后端只取 title/genre/synopsis 元信息，发送轻量版避免整份剧本数据上行
+        script_data: buildSlimScriptData(node.data.scriptData || node.data.script_data || {}),
         script_content: node.data.scriptContent || '',  // 原始剧本内容
         world_id: state.defaultWorldId || ''  // 从工作流状态获取世界 ID
       };
@@ -3593,7 +3594,8 @@
           const shotDataWithLocation = {
             ...shot,
             allLocationInfo: shotLocationInfo,
-            scriptData: shotGroupNode.data.scriptData
+            // 轻量 scriptData：只带本分镜用到的 props/characters 引用，不嵌整份剧本数据
+            scriptData: buildSlimScriptData(shotGroupNode.data.scriptData, shot)
           };
           const shotFrameNodeId = createShotFrameNode({
             x: targetX,
@@ -3745,6 +3747,45 @@
         console.error('Failed to convert video prompt to text:', e);
         return jsonString;
       }
+    }
+
+    // 瘦身 workflow_data：scriptData（剧本解析结果）含全量 locations/shot_groups/世界数据，
+    // 原实现被逐字拷贝进每个 shot_group.data.scriptData 与每个 shot_frame 的 shotJson.scriptData
+    //（同一工作流内几十份相同拷贝，占 workflow_data 绝大部分体积）。
+    // 各消费点实际只用：props（id/name/props_db_id/description/category）、characters（id/name）、
+    // 剧本元信息（title/genre/synopsis，smart-insert 后端取用）。本函数只保留这些轻量引用，
+    // 世界数据由 state.worldCharacters/worldProps/worldLocations 全局加载兜底。
+    // 不可变实现：返回新对象，不修改传入的 scriptData（serializeWorkflow 依赖此性质）。
+    // shot 传分镜对象时按该分镜的 props_present/characters_present 过滤；不传则保留全量轻量映射。
+    function buildSlimScriptData(scriptData, shot){
+      if(!scriptData || typeof scriptData !== 'object') return scriptData || {};
+      const slim = {};
+      ['title', 'genre', 'synopsis'].forEach(k => {
+        if(scriptData[k]) slim[k] = scriptData[k];
+      });
+      const rawProps = Array.isArray(scriptData.props) ? scriptData.props : [];
+      const rawChars = Array.isArray(scriptData.characters) ? scriptData.characters : [];
+      const slimProps = rawProps
+        .filter(p => p && (p.id || p.name))
+        .map(p => ({ id: p.id, name: p.name, props_db_id: p.props_db_id || null, description: p.description || '', category: p.category || '' }));
+      const slimChars = rawChars
+        .filter(c => c && (c.id || c.name))
+        .map(c => ({ id: c.id, name: c.name }));
+      if(shot){
+        // 按分镜可见性过滤；present 字段缺失时保守回退全量，避免旧数据匹配不到
+        const propsPresent = Array.isArray(shot.props_present) ? shot.props_present : null;
+        const charsPresent = Array.isArray(shot.characters_present) ? shot.characters_present : null;
+        slim.props = propsPresent
+          ? propsPresent.map(pid => slimProps.find(p => p.id === pid || p.name === pid)).filter(Boolean)
+          : slimProps;
+        slim.characters = charsPresent
+          ? charsPresent.map(cid => slimChars.find(c => c.id === cid || c.name === cid)).filter(Boolean)
+          : slimChars;
+      } else {
+        slim.props = slimProps;
+        slim.characters = slimChars;
+      }
+      return slim;
     }
 
     // 角色图片选择下拉的全局追踪（跨节点共享，确保同时只有一个实例）
