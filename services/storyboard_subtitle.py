@@ -350,6 +350,78 @@ def split_text_by_asr_sentences(
     return out or None
 
 
+def split_long_seg_by_inner_punct(
+    seg_text: str,
+    seg_start: float,
+    seg_end: float,
+    *,
+    max_lines: int,
+    max_chars: int,
+) -> Optional[List[Tuple[float, float, str]]]:
+    """smart 二级细分：单条 ASR 句折行超过 max_lines 时按标点再切成多条 cue。
+
+    背景：SenseVoice 可能把句末感叹号转写成逗号（同音/语气归并），句末标点丢失
+    导致 ASR 句粒度过粗——一句 30+ 字在竖屏折 3 行同屏，观感回到 block 整段堆积。
+    做法：按可断标点（_SNAP_PUNCT，句末+句中）切成原子片段后贪心合并到
+    ≤ max_lines 行，各条时长按"去标点字符占比"内插（与 ASR 切句口径一致）。
+
+    Returns:
+        [(start, end, text), ...]（至少 2 条）；标点太稀（存在单片段自身就超行）
+        或无需细分时返回 None，调用方沿用原样单 cue / 多页分页。
+    """
+    text = normalize_subtitle_text(seg_text)
+    dur = float(seg_end) - float(seg_start)
+    if not text or dur <= 1e-6:
+        return None
+    max_lines = max(1, int(max_lines))
+
+    atoms: List[str] = []
+    buf = ""
+    for ch in text:
+        buf += ch
+        if ch in _SNAP_PUNCT:
+            atoms.append(buf.strip())
+            buf = ""
+    if buf.strip():
+        atoms.append(buf.strip())
+    atoms = [a for a in atoms if a]
+    if len(atoms) < 2:
+        return None
+
+    # 贪心合并：在不超过 max_lines 行的前提下让每条尽量长（条数最少）
+    groups: List[List[str]] = []
+    cur: List[str] = [atoms[0]]
+    for atom in atoms[1:]:
+        if len(wrap_subtitle_lines("".join(cur + [atom]), max_chars)) <= max_lines:
+            cur.append(atom)
+        else:
+            groups.append(cur)
+            cur = [atom]
+    groups.append(cur)
+    # 单片段自身就超行（标点太稀）→ 细分无意义，交回原分页逻辑
+    if any(len(wrap_subtitle_lines("".join(g), max_chars)) > max_lines for g in groups):
+        return None
+    if len(groups) < 2:
+        return None
+
+    weights = [
+        max(1, len([c for c in "".join(g) if c not in _STRIP_FOR_COUNT]))
+        for g in groups
+    ]
+    total = sum(weights)
+    out: List[Tuple[float, float, str]] = []
+    t = float(seg_start)
+    acc = 0
+    for i, group in enumerate(groups):
+        acc += weights[i]
+        end = float(seg_end) if i == len(groups) - 1 else float(seg_start) + dur * acc / total
+        piece_text = "".join(group)
+        if piece_text and end > t + 1e-3:
+            out.append((t, end, piece_text))
+        t = end
+    return out if len(out) >= 2 else None
+
+
 def build_subtitle_cues(
     plan: _PlanLike,
     *,
@@ -380,10 +452,30 @@ def build_subtitle_cues(
     )
     font_size = resolve_font_size(height)
     max_chars = estimate_max_chars_per_line(width, font_size)
+    smart_max_lines = max(1, int(StoryboardSubtitleConstants.SMART_CUE_MAX_LINES))
 
     cues: List[SubtitleCue] = []
     t_global = 0.0
     fallback_span = 2.0
+
+    def _emit_seg_cues(seg_text: str, s: float, e: float) -> None:
+        """把一个时间片段转成 cue：单页直出；多页按字数加权轮播。"""
+        seg_lines = wrap_subtitle_lines(seg_text, max_chars)
+        pages = paginate_lines(seg_lines, max_lines)
+        if not pages:
+            return
+        if len(pages) == 1:
+            if e > s + 1e-3:
+                cues.append(SubtitleCue(start=s, end=e, text=lines_to_ass_text(pages[0])))
+            return
+        durations = allocate_page_durations(pages, e - s, min_page=min_page)
+        t = s
+        for page, pd in zip(pages, durations):
+            pe = min(e, t + max(pd, 0.05))
+            body = lines_to_ass_text(page)
+            if body and pe > t + 1e-3:
+                cues.append(SubtitleCue(start=t, end=pe, text=body))
+            t = pe
 
     for scene in plan.scenes or []:
         span = float(getattr(scene, "duration", 0) or 0) or fallback_span
@@ -421,23 +513,19 @@ def build_subtitle_cues(
                     )
                     if segs:
                         for s, e, seg_text in segs:
-                            seg_lines = wrap_subtitle_lines(seg_text, max_chars)
-                            pages = paginate_lines(seg_lines, max_lines)
-                            if not pages:
-                                continue
-                            if len(pages) == 1:
-                                if e > s + 1e-3:
-                                    cues.append(SubtitleCue(start=s, end=e, text=lines_to_ass_text(pages[0])))
-                                continue
-                            # 单句仍超长：句内按字数加权分页
-                            durations = allocate_page_durations(pages, e - s, min_page=min_page)
-                            t = s
-                            for page, pd in zip(pages, durations):
-                                pe = min(e, t + max(pd, 0.05))
-                                body = lines_to_ass_text(page)
-                                if body and pe > t + 1e-3:
-                                    cues.append(SubtitleCue(start=t, end=pe, text=body))
-                                t = pe
+                            # 单条 ASR 句折行超过 smart 行数上限时按标点二级细分
+                            #（治 ASR 句末标点转写丢失导致的长句多行同屏）
+                            pieces = None
+                            if len(wrap_subtitle_lines(seg_text, max_chars)) > smart_max_lines:
+                                pieces = split_long_seg_by_inner_punct(
+                                    seg_text, s, e,
+                                    max_lines=smart_max_lines, max_chars=max_chars,
+                                )
+                            if pieces:
+                                for ps, pe, piece_text in pieces:
+                                    _emit_seg_cues(piece_text, ps, pe)
+                            else:
+                                _emit_seg_cues(seg_text, s, e)
                         t_local += dur
                         if t_local >= span - 1e-9:
                             break

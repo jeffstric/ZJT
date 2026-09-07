@@ -1201,6 +1201,10 @@ class StoryboardSubtitleConstants:
     ASR_SENTS_SCALE_MAX = 2.0
     # 原文按 ASR 句占比切分时，切点向就近标点吸附的搜索窗口（字符）
     ASR_SPLIT_SNAP_WINDOW = 3
+    # smart 单条 cue 最大行数：单条 ASR 句折行超过该行数时按标点二级细分。
+    # 场景：SenseVoice 把句末感叹号转写成逗号导致 ASR 句粒度过粗（一句 30+ 字），
+    # 竖屏折 3 行同屏，观感回到 block 整段堆积
+    SMART_CUE_MAX_LINES = 2
 
     # ---- 左右边距（用户可在前端调整，导出时透传）----
     SIDE_MARGIN_RATIO_MIN = 0.0
