@@ -6486,6 +6486,7 @@ async def parse_script(
                 )
         
         # 导入剧本解析模块
+        from llm.llm_client_factory import resolve_composite_model_ref
         from model.vendor_model import VendorModelModel
 
         # 获取真实的 vendor_id
@@ -6497,11 +6498,29 @@ async def parse_script(
             except (ValueError, TypeError):
                 logger.warning(f"Invalid vendor_id: {vendor_id}, will try to get from model_id")
 
-        if real_vendor_id == 1 and model_id:
+        # 归一化 model_id：本地服务模型（ollama/vllm）在 /api/models 下发的 id 是
+        # "vendor:模型名" 复合串（见 get_available_models），历史版本前端会把它
+        # 当作 model_id 回传，直接 int() 会 ValueError 导致整个接口 500。
+        numeric_model_id = None
+        if model_id:
             try:
-                real_vendor_id = VendorModelModel.get_vendor_id_by_model_id(int(model_id)) or 1
+                numeric_model_id = int(model_id)
+            except (TypeError, ValueError):
+                resolved_vendor_id, numeric_model_id = await asyncio.to_thread(
+                    resolve_composite_model_ref, str(model_id)
+                )
+                if resolved_vendor_id and real_vendor_id == 1:
+                    real_vendor_id = resolved_vendor_id
+                if not numeric_model_id:
+                    logger.warning(f"无法解析复合模型标识: {model_id}，拆分任务将回退默认模型")
+
+        if real_vendor_id == 1 and numeric_model_id:
+            try:
+                real_vendor_id = await asyncio.to_thread(
+                    VendorModelModel.get_vendor_id_by_model_id, numeric_model_id
+                ) or 1
             except Exception as e:
-                logger.warning(f"Failed to get vendor_id for model {model_id}: {e}")
+                logger.warning(f"Failed to get vendor_id for model {numeric_model_id}: {e}")
 
         # 改为异步任务：创建持久化拆分任务后立即返回 202，前端轮询状态。
         # 见 docs/script/script_parser_incremental_split_design.md §10 §13.1。
@@ -6519,7 +6538,7 @@ async def parse_script(
             "dialogue_language": dialogue_language,
             "prompt_language": prompt_language,
             "vendor_id": real_vendor_id,
-            "model_id": int(model_id) if model_id else 1,
+            "model_id": numeric_model_id or 1,
             "enable_thinking": enable_thinking,
             "thinking_effort": thinking_effort,
             "sequence_mode": sequence_mode,

@@ -377,6 +377,17 @@ pip 全量下载依赖（runner 机器出口带宽仅 ~100-200KB/s，全量约 4
    源码通过 compose 卷 `..:/app` 挂载进容器运行，纯代码改动零构建。
 3. **超时兜底**：job `timeout: 2 hours`，依赖变化触发全量重建时也不会被默认 1h 限制误杀。
 
+### MySQL 健康检查预算（防 DinD 冷初始化超时）
+
+CI 每个 job 末尾 `down -v`，MySQL 每次都是全新数据卷完整冷初始化；在 DinD（overlay2 套
+overlay2）中实测 `ready for connections` 可达 ~110s，runner 并发 4 时 I/O 争抢还会更久。
+`docker-compose-test.yml` 的 `mysql_test` 健康检查原预算仅约 76s（`start_period: 30s +
+interval: 10s × retries: 5`），负载高时被判 unhealthy 导致 `dependency failed to start`，
+表现为流水线时好时坏。现已放宽到约 180s（`start_period: 30s + interval: 5s × retries: 30`，
+healthy 后最多 5s 放行，正常情况不变慢），并对测试库追加
+`--innodb-flush-log-at-trx-commit=0 --sync-binlog=0 --innodb-doublewrite=0` 减少 fsync
+停顿（数据可靠性由每次全新卷保证）。
+
 ---
 
 ## 相关文档

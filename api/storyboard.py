@@ -3316,12 +3316,29 @@ async def generate_storyboard_from_script(
 
     real_vendor_id = data.get('vendor_id')
     model_id = data.get('model_id')
-    if not real_vendor_id and model_id:
+    # 归一化 model_id：本地服务模型（ollama/vllm）在 /api/models 下发的 id 是
+    # "vendor:模型名" 复合串（见 get_available_models），直接 int() 会 ValueError
+    # 导致发布拆分 500，与 /api/parse-script 同规则还原为数值库 ID。
+    numeric_model_id = None
+    if model_id:
+        try:
+            numeric_model_id = int(model_id)
+        except (TypeError, ValueError):
+            from llm.llm_client_factory import resolve_composite_model_ref
+            resolved_vendor_id, numeric_model_id = await asyncio.to_thread(
+                resolve_composite_model_ref,
+                str(model_id),
+            )
+            if resolved_vendor_id and not real_vendor_id:
+                real_vendor_id = resolved_vendor_id
+            if not numeric_model_id:
+                logger.warning(f"无法解析复合模型标识: {model_id}，发布拆分任务将回退默认模型")
+    if not real_vendor_id and numeric_model_id:
         try:
             from model.vendor_model import VendorModelModel
             real_vendor_id = await asyncio.to_thread(
                 VendorModelModel.get_vendor_id_by_model_id,
-                int(model_id),
+                numeric_model_id,
             )
         except Exception as e:
             logger.warning(f"Failed to resolve vendor for model {model_id}: {e}")
@@ -3365,7 +3382,7 @@ async def generate_storyboard_from_script(
         'dialogue_language': dialogue_language,
         'prompt_language': prompt_language,
         'vendor_id': real_vendor_id,
-        'model_id': int(model_id) if model_id else 1,
+        'model_id': numeric_model_id or 1,
         'enable_thinking': enable_thinking,
         'thinking_effort': thinking_effort,
         # 故事板发布专用配置
