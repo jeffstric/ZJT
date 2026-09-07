@@ -62,4 +62,18 @@ describe('storyboard subtitle settings panel', () => {
         expect(document.querySelectorAll('.timeline-progress-row').length).toBe(1);
         expect(document.querySelector('.timeline-progress-row .timeline-view-toggle')).toBeTruthy();
     });
+
+    it('逐句默认选中并带限免徽章；整段禁用且不可勾选', () => {
+        state.subtitleMode = 'smart';
+        state.showSubtitleSettings = true;
+        refresh(Region.TIMELINE_CHROME);
+        const smart = document.querySelector('input[data-action="subtitle-mode"][value="smart"]');
+        const block = document.querySelector('input[data-action="subtitle-mode"][value="block"]');
+        expect(smart.checked).toBe(true);
+        expect(smart.disabled).toBe(false);
+        expect(smart.closest('.ss-radio').textContent).toContain('限免');
+        expect(block.disabled).toBe(true);
+        expect(block.closest('.ss-radio').classList.contains('disabled')).toBe(true);
+        expect(block.closest('.ss-radio').textContent).toContain('暂不可用');
+    });
 });

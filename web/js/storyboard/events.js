@@ -2948,12 +2948,13 @@ export function bindEvents() {
         }
     });
 
-    // 字幕显示方式 radio（smart 逐句 / block 整段）
+    // 字幕显示方式 radio（smart 逐句；block 整段已禁用，禁用态不触发 change，此处兜底防御）
     document.addEventListener('change', async (event) => {
         const target = event.target;
         if (!target || typeof target.matches !== 'function') return;
         if (!target.matches('input[type="radio"][data-action="subtitle-mode"]')) return;
-        state.subtitleMode = target.value === 'block' ? 'block' : 'smart';
+        if (target.disabled || target.value === 'block') return;
+        state.subtitleMode = 'smart';
         try {
             await persistUiConfig();
         } catch {

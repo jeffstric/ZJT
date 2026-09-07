@@ -1428,9 +1428,8 @@ export function restoreUiConfig(config = {}) {
     }
     state.aiOptimize = config.aiOptimize !== false;
     state.subtitleEnabled = config.subtitleEnabled !== false;
-    if (config.subtitleMode === 'block' || config.subtitleMode === 'smart') {
-        state.subtitleMode = config.subtitleMode;
-    }
+    // 整段模式已下线（面板禁用整段选项），存量 block 配置归一为逐句
+    state.subtitleMode = 'smart';
     {
         const margin = Number(config.subtitleSideMarginRatio);
         if (Number.isFinite(margin) && margin >= 0 && margin <= 0.18) {

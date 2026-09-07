@@ -20,7 +20,9 @@ import {
     ensurePreviewStage,
     applyPreviewCanvas,
     getPreviewMediaMountParent,
+    resolveSubtitleMaxChars,
 } from './preview_canvas.js';
+import { createSubtitlePager, wrapSubtitleLines } from './subtitle_wrap.js';
 
 const EMPTY_HOLD_FALLBACK = 2;
 const TICK_MS = 50;
@@ -498,7 +500,9 @@ export function showSubtitleSample() {
     if (!el || isPlaybackActive()) return;
     applySubtitleMargin();
     const inner = el.querySelector('.preview-subtitle-text') || el;
-    inner.textContent = SUBTITLE_SAMPLE_TEXT;
+    // 示例字幕同样按烧录折行算法换行，所见即所得
+    const lines = wrapSubtitleLines(SUBTITLE_SAMPLE_TEXT, resolveSubtitleMaxChars());
+    inner.textContent = lines.length ? lines.join('\n') : SUBTITLE_SAMPLE_TEXT;
     el.hidden = !state.subtitleEnabled;
 }
 
@@ -541,7 +545,7 @@ function ensurePreviewShell() {
         const sub = document.createElement('div');
         sub.className = 'preview-subtitle';
         sub.hidden = true;
-        // 内层 span 承载文字与背景胶囊；外层负责左右边距定位
+        // 内层 span 承载文字（无背景盒，对齐导出 ASS）；外层负责左右边距定位
         sub.innerHTML = '<span class="preview-subtitle-text"></span>';
         mount.appendChild(sub);
     }
@@ -708,7 +712,11 @@ function stopActiveMedia() {
 async function playOneAudio(item, gen, preloadedEl) {
     await checkpoint(gen);
     state.playback.audioDialogueId = item.dialogueId;
-    setSubtitle(item.text || '');
+    // 字幕分页与导出 ASS 硬烧一致（折行算法见 subtitle_wrap.js），随音频进度翻页；
+    // 逐句/整段与字幕设置（state.subtitleMode）联动
+    const subtitlePager = createSubtitlePager(item.text || '', resolveSubtitleMaxChars(), {
+        mode: state.subtitleMode === 'block' ? 'block' : 'smart',
+    });
 
     const audio = preloadedEl || new Audio();
     activeAudioEl = audio;
@@ -717,6 +725,19 @@ async function playOneAudio(item, gen, preloadedEl) {
         audio.src = item.url;
     }
     audio.volume = item.volume;
+
+    let lastSubtitleText = null;
+    const syncSubtitle = () => {
+        if (Number.isFinite(audio.duration) && audio.duration > 0) {
+            subtitlePager.setDuration(audio.duration);
+        }
+        const next = subtitlePager.textAt(audio.currentTime || 0);
+        if (next !== lastSubtitleText) {
+            lastSubtitleText = next;
+            setSubtitle(next);
+        }
+    };
+    syncSubtitle();
 
     try {
         // 预载实例从 0 起播
@@ -748,6 +769,7 @@ async function playOneAudio(item, gen, preloadedEl) {
                 }
             }
             if (audio.error) break;
+            syncSubtitle();
             await sleep(TICK_MS);
         }
     } finally {

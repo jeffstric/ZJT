@@ -618,7 +618,7 @@ export function mediaFrame(scene) {
     return `<div class="preview-empty preview-empty-${displayStatus}"${titleAttr}>${escapeHtml(emptyText)}</div>`;
 }
 
-/** 主预览字幕层 HTML（播放引擎写入文本）；内层 span 承载文字与背景胶囊 */
+/** 主预览字幕层 HTML（播放引擎写入文本）；内层 span 承载文字（无背景盒，对齐导出 ASS） */
 export function previewSubtitleHtml() {
     return '<div class="preview-subtitle" hidden><span class="preview-subtitle-text"></span></div>';
 }
@@ -1687,15 +1687,15 @@ function renderSubtitleSettingsPanel() {
         <div class="subtitle-settings-panel" role="dialog" aria-label="字幕设置">
             <div class="ss-row">
                 <span class="ss-label">显示方式</span>
-                <label class="ss-radio"><input type="radio" name="subtitle-mode" value="smart" data-action="subtitle-mode" ${smart ? 'checked' : ''}>逐句</label>
-                <label class="ss-radio"><input type="radio" name="subtitle-mode" value="block" data-action="subtitle-mode" ${smart ? '' : 'checked'}>整段</label>
+                <label class="ss-radio"><input type="radio" name="subtitle-mode" value="smart" data-action="subtitle-mode" ${smart ? 'checked' : ''}>逐句<span class="ss-badge ss-badge-free">限免</span></label>
+                <label class="ss-radio disabled" title="整段模式展示效果不佳，暂不可用"><input type="radio" name="subtitle-mode" value="block" data-action="subtitle-mode" disabled ${smart ? '' : 'checked'}>整段<span class="ss-badge ss-badge-off">暂不可用</span></label>
             </div>
             <div class="ss-row">
                 <span class="ss-label">左右边距</span>
                 <input type="range" min="0" max="18" step="1" value="${pct}" data-subtitle-margin aria-label="字幕左右边距">
                 <span class="ss-value" data-subtitle-margin-value>${pct}%</span>
             </div>
-            <div class="ss-hint">逐句：按配音语音时间轴逐句显示；整段：整条对白折行分页。边距即导出视频里字幕距画面两侧的留白，可在预览中直观查看。</div>
+            <div class="ss-hint">逐句：按配音语音时间轴逐句显示。边距即导出视频里字幕距画面两侧的留白，可在预览中直观查看。</div>
         </div>`;
 }
 

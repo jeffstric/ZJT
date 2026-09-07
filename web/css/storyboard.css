@@ -19,6 +19,16 @@
 
 * { box-sizing: border-box; }
 
+/* 预览字幕字体：与导出烧录内置字体一致（config/constant.py BUILTIN_FONT_*，
+   files/ 目录经 server.py /files 静态挂载；回退顺序对齐后端 resolve_cjk_font_name） */
+@font-face {
+    font-family: 'Noto Sans SC';
+    src: url('/files/fonts/NotoSansSC-Regular.otf') format('opentype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
 html,
 body {
     height: 100%;
@@ -2086,14 +2096,16 @@ button {
     cursor: not-allowed;
 }
 
-/* 时间轴预览播放：对白字幕层。
+/* 时间轴预览播放：对白字幕层（与导出 ASS 硬烧一致：无背景盒、白字黑描边+投影）。
    外层按 --sb-side-margin 左右留白（与导出 ASS MarginL/R 对应，字幕设置面板实时可调），
-   内层 span 承载文字与背景胶囊，保证盒子宽度随内容收缩 */
+   底部边距 --sb-bottom、字号 --sb-font-size、描边 --sb-stroke、投影 --sb-shadow 由
+   applyPreviewCanvas 按 stage 显示高度等比写入（对应导出 MarginV=8%、字号 clamp(H/28,28,56)、
+   Outline=2、Shadow=1），随窗口缩放保持比例；折行由 JS 按烧录算法完成（subtitle_wrap.js） */
 .preview-subtitle {
     position: absolute;
     left: var(--sb-side-margin, 7%);
     right: var(--sb-side-margin, 7%);
-    bottom: 56px;
+    bottom: var(--sb-bottom, 56px);
     display: flex;
     justify-content: center;
     align-items: flex-end;
@@ -2103,15 +2115,17 @@ button {
 
 .preview-subtitle .preview-subtitle-text {
     max-width: 100%;
-    padding: 8px 14px;
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.62);
     color: #fff;
-    font-size: 14px;
-    line-height: 1.45;
+    font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-size: var(--sb-font-size, 14px);
+    line-height: normal;
     text-align: center;
     white-space: pre-wrap;
     word-break: break-word;
+    /* paint-order 让描边垫在字形下面，可见描边 ≈ 线宽一半（故 JS 侧线宽按 Outline×2 折算） */
+    -webkit-text-stroke: var(--sb-stroke, 2px) #000;
+    paint-order: stroke fill;
+    text-shadow: var(--sb-shadow, 1px) var(--sb-shadow, 1px) 0 rgba(0, 0, 0, 0.5);
 }
 
 .preview-subtitle[hidden] {
@@ -2147,8 +2161,10 @@ button {
 .subtitle-settings-panel {
     position: absolute;
     top: calc(100% + 8px);
-    right: 0;
-    z-index: 30;
+    /* 从齿轮向右展开：原先 right:0 向左伸出会压到左侧栏底部的分镜助手聊天区 */
+    left: -8px;
+    /* 高于分镜助手聊天区（.ai-chat-section 40 / .agent-chat-log 50），避免被遮挡 */
+    z-index: 60;
     width: 280px;
     padding: 10px 12px;
     border: 1px solid var(--border-color, rgba(100, 116, 139, 0.28));
@@ -2186,6 +2202,39 @@ button {
 .subtitle-settings-panel .ss-radio input {
     margin: 0;
     cursor: pointer;
+}
+
+/* 选项徽章：限免 / 暂不可用 */
+.subtitle-settings-panel .ss-badge {
+    display: inline-block;
+    margin-left: 3px;
+    padding: 0 4px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.5;
+    vertical-align: 1px;
+}
+
+.subtitle-settings-panel .ss-badge-free {
+    border: 1px solid rgba(217, 119, 6, 0.4);
+    background: rgba(217, 119, 6, 0.12);
+    color: var(--warning, #d97706);
+}
+
+.subtitle-settings-panel .ss-badge-off {
+    border: 1px solid var(--border-color, rgba(100, 116, 139, 0.28));
+    background: var(--panel-soft, #f1f4f9);
+    color: var(--text-tertiary, #94a3b8);
+}
+
+.subtitle-settings-panel .ss-radio.disabled {
+    cursor: not-allowed;
+    color: var(--text-tertiary, #94a3b8);
+}
+
+.subtitle-settings-panel .ss-radio.disabled input {
+    cursor: not-allowed;
 }
 
 .subtitle-settings-panel input[type="range"] {
