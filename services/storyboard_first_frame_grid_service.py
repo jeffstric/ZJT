@@ -1373,10 +1373,13 @@ class StoryboardFirstFrameGridService:
             model = str(selected or "").strip()
             model_id = None
             vendor_id = None
+        # model_id 宽容归一：历史存储可能存 "vendor:模型名" 复合串，裸 int()
+        # 会 ValueError；无法还原返回 None（走模型名 + 默认 vendor）
+        from llm.llm_client_factory import coerce_model_id_or_none
         return (
             model or StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL,
-            int(model_id) if model_id else None,
-            int(vendor_id) if vendor_id else None,
+            coerce_model_id_or_none(model_id),
+            coerce_model_id_or_none(vendor_id),
         )
 
     def _parse_llm_json(self, content: str) -> Dict[str, Any]:
