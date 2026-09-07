@@ -275,6 +275,16 @@ function hasAsset(scene, kind) {
     return false;
 }
 
+// 首帧失败态的内容违规判定：命中违禁/内容安全特征时返回友好提示文案（hover title），未命中返回 ''
+// （判定规则与 renderCandidatePlaceholder 的违规变体一致，见 web/js/content_violation.js）
+function getFirstFrameViolationTitle(error) {
+    const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+    if (!cv || typeof cv.isViolation !== 'function' || !error || !cv.isViolation(error)) return '';
+    return typeof cv.describe === 'function'
+        ? (cv.describe(error) || '内容审核未通过：请检查提示词和参考图后重试')
+        : '';
+}
+
 function assetBadge(scene, kind, label) {
     if (kind === 'first_frame') {
         const status = getFirstFrameDisplayStatus(scene);
@@ -283,7 +293,11 @@ function assetBadge(scene, kind, label) {
             return `<span class="status running">${label}${getFirstFrameStatusLabel(status)}</span>`;
         }
         if (status === 'failed' || status === 'regenerate_failed') {
-            return `<span class="status failed">${label}${getFirstFrameStatusLabel(status)}</span>`;
+            // 内容违规变体：角标直接显示「内容违规」，hover 展示友好原因
+            const violationTitle = getFirstFrameViolationTitle(scene?.firstFrameError);
+            const text = violationTitle ? '内容违规' : getFirstFrameStatusLabel(status);
+            const titleAttr = violationTitle ? ` title="${escapeHtml(violationTitle)}"` : '';
+            return `<span class="status failed${violationTitle ? ' violation' : ''}"${titleAttr}>${label}${text}</span>`;
         }
         return `<span class="status idle">${label}待生成</span>`;
     }
@@ -596,7 +610,12 @@ export function mediaFrame(scene) {
         </div>`;
     }
     const displayStatus = getFirstFrameDisplayStatus(scene);
-    return `<div class="preview-empty preview-empty-${displayStatus}">${escapeHtml(getFirstFrameStatusLabel(displayStatus) || '当前分镜还没有画面')}</div>`;
+    // 内容违规变体：失败态且错误命中违规特征时，文案改为「内容违规」，hover 展示友好原因
+    const violationTitle = ['failed', 'regenerate_failed'].includes(displayStatus)
+        ? getFirstFrameViolationTitle(scene.firstFrameError) : '';
+    const emptyText = violationTitle ? '内容违规' : (getFirstFrameStatusLabel(displayStatus) || '当前分镜还没有画面');
+    const titleAttr = violationTitle ? ` title="${escapeHtml(violationTitle)}"` : '';
+    return `<div class="preview-empty preview-empty-${displayStatus}"${titleAttr}>${escapeHtml(emptyText)}</div>`;
 }
 
 /** 主预览字幕层 HTML（播放引擎写入文本）；内层 span 承载文字与背景胶囊 */
@@ -620,12 +639,17 @@ function renderVideoTypeBadge(scene) {
 function renderTimelineMediaFrame(scene) {
     const status = getFirstFrameDisplayStatus(scene);
     const label = getFirstFrameStatusLabel(status);
+    // 内容违规变体：失败态且错误命中违规特征时，占位文案改为「内容违规」，hover 展示友好原因
+    const violationTitle = ['failed', 'regenerate_failed'].includes(status)
+        ? getFirstFrameViolationTitle(scene?.firstFrameError) : '';
+    const fallbackText = violationTitle ? '内容违规' : (label || '无画面');
+    const fallbackAttrs = violationTitle ? ` class="violation" title="${escapeHtml(violationTitle)}"` : '';
     return `<span class="scene-timeline-media-frame first-frame-${status}">
         ${renderFirstFrameStatusMark(scene)}
         ${renderVideoTypeBadge(scene)}
         ${scene.firstFrameUrl
             ? `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}">`
-            : `<span>${escapeHtml(label || '无画面')}</span>`}
+            : `<span${fallbackAttrs}>${escapeHtml(fallbackText)}</span>`}
     </span>`;
 }
 

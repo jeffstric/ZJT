@@ -979,7 +979,8 @@ async function sendStoryboardAgentMessage(current) {
                 } else if (data.type === 'message') {
                     pushAgentMessageForScene(streamSceneId, data.role || 'assistant', getAgentContent(data));
                 } else if (data.type === 'error') {
-                    pushAgentMessageForScene(streamSceneId, 'assistant', getAgentContent(data) || (isVideo ? '分镜视频智能体执行失败' : '分镜图片智能体执行失败'));
+                    const errContent = getAgentContent(data) || (isVideo ? '分镜视频智能体执行失败' : '分镜图片智能体执行失败');
+                    pushAgentMessageForScene(streamSceneId, 'assistant', errContent);
                     finishSceneAgentRun(streamSceneId, streamTaskId);
                 } else if (data.type === 'done') {
                     const content = getAgentContent(data);
@@ -1090,12 +1091,8 @@ async function sendDirectVideo(current) {
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
     } catch (error) {
-        // 提交阶段即被内容安全拒绝时，弹「内容违规提醒」弹框（带冷却去重）
+        // 提交阶段即被内容安全拒绝时，错误文案经 notify 直接展示（不弹违规弹窗）
         const submitMsg = (error && error.message != null && error.message !== '') ? String(error.message) : (error ? String(error) : '');
-        const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
-        if (cv && typeof cv.notify === 'function') {
-            try { cv.notify(`sb:${sceneId}:video-submit`, submitMsg); } catch (e) { /* 提醒异常不影响主流程 */ }
-        }
         notify(`视频生成失败：${submitMsg}`);
     } finally {
         finishSceneAgentRun(sceneId);
@@ -1423,10 +1420,6 @@ async function handleAction(action, target) {
             state.videoBatchConfirm.submitting = false;
             rerenderModals();
             const errMsg = error && error.message ? String(error.message) : '';
-            const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
-            if (cv && typeof cv.notify === 'function') {
-                try { cv.notify('sb:video-batch-submit', errMsg || String(error)); } catch (e) { /* 提醒异常不影响主流程 */ }
-            }
             notify(errMsg || '批量生成视频失败');
         }
         return;

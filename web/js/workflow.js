@@ -2131,6 +2131,8 @@
         // 恢复图片模式和参考图
         node.data.imageMode = nodeData.data.imageMode || 'first_last_frame';
         node.data.referenceUrls = nodeData.data.referenceUrls || [];
+        // 恢复上次失败原因（失败状态持久化）
+        node.data.lastError = nodeData.data.lastError || '';
 
         // 恢复音频/视频列表（兼容旧格式单值）
         if(Array.isArray(nodeData.data.audioUrls)){
@@ -2463,6 +2465,16 @@
               }
             });
           }
+
+          // 恢复上次失败原因（失败状态持久化，重载后重新渲染）
+          if(node.data.lastError){
+            const genStatus = el.querySelector('.gen-status');
+            if(genStatus){
+              genStatus.style.display = 'block';
+              genStatus.style.color = '#dc2626';
+              genStatus.textContent = node.data.lastError;
+            }
+          }
         }
       }
 
@@ -2489,6 +2501,8 @@
         node.data.name = nodeData.data.name || '';
         node.data.duration = nodeData.data.duration || 0;
         node.data.project_id = nodeData.data.project_id !== undefined ? nodeData.data.project_id : null;
+        // 恢复上次失败原因（失败状态持久化）
+        node.data.lastError = nodeData.data.lastError || '';
         // 如果有URL，显示预览
         if(node.data.url){
           const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
@@ -2517,6 +2531,19 @@
                   }
                 }, { once: true });
               }
+            }
+          }
+        }
+
+        // 恢复上次失败原因（失败状态持久化，重载后重新渲染）
+        if(node.data.lastError){
+          const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+          if(el){
+            const statusField = el.querySelector('.video-status-field');
+            const statusEl = el.querySelector('.video-status');
+            if(statusField && statusEl){
+              statusField.style.display = 'block';
+              setStatusEl(statusEl, `✗ 生成失败: ${node.data.lastError}`, '#dc2626');
             }
           }
         }
@@ -2591,6 +2618,15 @@
               const raw = node.data.url || node.data.preview;
               previewImg.src = proxyImageUrl(raw);
               if(previewRow) previewRow.style.display = 'flex';
+            }
+          }
+
+          // 恢复上次失败原因（失败状态持久化，重载后重新渲染）
+          if(node.data.lastError){
+            const statusEl = el.querySelector('.image-edit-status');
+            if(statusEl){
+              statusEl.style.display = 'block';
+              setStatusEl(statusEl, node.data.lastError, '#dc2626');
             }
           }
         }

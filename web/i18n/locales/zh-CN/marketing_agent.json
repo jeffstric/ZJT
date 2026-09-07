@@ -134,6 +134,7 @@
   "video_generated": "视频已生成：",
   "image_generation_failed": "图片生成失败，请稍后重试。",
   "video_generation_failed": "视频生成失败，请稍后重试。",
+  "generation_violation": "生成失败：内容审核未通过，请检查提示词和参考图后重试。",
   "image_generating_progress": "图片生成中... ({done}/{total})",
   "video_generating_progress": "视频生成中... ({done}/{total})",
   "image_task_submitted": "已提交图片生成任务",

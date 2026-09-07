@@ -870,6 +870,8 @@
         editBtn.disabled = true;
         statusEl.style.display = 'block';
         setStatusEl(statusEl, '正在提交任务...');
+        // 新一轮生成开始，清除上次失败原因（避免重载后误显示过期错误）
+        node.data.lastError = '';
 
         try{
           const resolved = resolveImageEditSubmitData(node.data);
@@ -981,6 +983,17 @@
               }
 
               if(imageUrls.length === 0){
+                // 任务失败时优先展示真实失败原因（含内容违规），避免误报"生成成功"
+                const failedTasks = (statusResult.tasks || []).filter(t => t.status === 'FAILED');
+                const failReason = failedTasks.map(t => t.error || t.reason).find(Boolean);
+                if(failReason){
+                  const displayError = truncateErrorMessage(failReason) || '生成失败';
+                  setStatusEl(statusEl, displayError, '#dc2626');
+                  node.data.lastError = String(displayError);
+                  editBtn.disabled = false;
+                  showToast(displayError, 'error');
+                  return;
+                }
                 setStatusEl(statusEl, '生成成功，但未获取到图片地址', '#dc2626');
                 editBtn.disabled = false;
                 showToast('生成成功但未返回图片地址', 'error');
@@ -1022,12 +1035,16 @@
             },
             (errMsg) => {
               setStatusEl(statusEl, errMsg, '#dc2626');
+              // 持久化失败原因，工作流重载后可恢复显示
+              node.data.lastError = String(truncateErrorMessage(errMsg) || '');
               editBtn.disabled = false;
               showToast(errMsg || '图片编辑失败', 'error');
             }
           );
         } catch(err){
           setStatusEl(statusEl, err.message || '提交失败', '#dc2626');
+          // 持久化失败原因，工作流重载后可恢复显示
+          node.data.lastError = String(err.message || '提交失败');
           editBtn.disabled = false;
           showToast('提交失败: ' + (err.message || ''), 'error');
         }

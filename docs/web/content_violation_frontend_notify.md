@@ -68,8 +68,9 @@
 ### 3.1 video_workflow.html（工作流页）
 
 - `video_workflow.html`：在 `api.js` 之前加载 `<script src="/js/content_violation.js">`；
-- `web/js/api.js` `checkVideoStatus`（所有图/视频节点的统一状态轮询收口：图生视频 / 图像 / 视频 / 全景 / 剧本 / 分镜帧 / 数字人 / 运镜）：
-  多任务与单任务两个分支中，任一任务 `FAILED` 且 `error` 命中违规 → `notify('wf:{project_id}', error)`；
+- **2026-09-03 起本页不再弹「内容违规提醒」弹框**：节点上的行内失败文案已能完整展示违规原因，
+  弹框属重复打扰。`web/js/api.js` `checkVideoStatus` 中的 `notifyContentViolations` 及
+  `image_node.js` / `image_to_video_node.js` 提交 catch 中的 `notify` 调用均已移除；
 - `web/js/nodes.js` `friendlyContentModerationMessage`：委托 `window.ContentViolation.describe`（特征表更完整、文案与后端严格对齐），
   模块不存在时（如 Vitest 环境）回退本地规则。节点上的 `✗ 生成失败: …` 行内文案因此也自动获得新特征覆盖。
 
@@ -77,11 +78,30 @@
 
 - `storyboard.html`：module 引导前加载 `content_violation.js` 普通 script；
 - `web/js/storyboard/polling.js` `applyTaskStatus`（4s 分镜任务轮询）：
-  - 记录 `scene.firstFrameError / lastFrameError / videoError`，候选项 `upsertSceneCandidateFromTask` 记录 `candidate.error`；
-  - 资产 `status === -1` 且 `error` 命中违规 → `notify('sb:{scene_id}:{first_frame|last_frame|video}', error)`；
+  记录 `scene.firstFrameError / lastFrameError / videoError`，候选项 `upsertSceneCandidateFromTask` 记录 `candidate.error`；
 - `web/js/storyboard/render.js` `renderCandidatePlaceholder(status, kind, error)`：
   失败且命中违规时占位符文案为「生成失败：内容违规」，`title` 悬浮展示友好原因；
-- `web/js/storyboard/events.js`：单条视频生成提交 catch、批量视频生成提交 catch —— 提交阶段即被内容安全拒绝时弹框提醒。
+  `assetBadge` / `mediaFrame` / `renderTimelineMediaFrame` 失败态命中违规时显示「内容违规」红色变体；
+- 提交/智能体流错误经 `notify()`（alert）或聊天气泡直接展示错误文案。
+
+### 3.3 marketing_agent.html（营销助手页）
+
+- `marketing_agent.html`：在 `task_config.js` 之后加载 `content_violation.js`（早于 `marketing_agent.js`）；
+- `web/js/marketing_agent.js` `describeFailedTasks(tasks, type)`：任务失败收口。取失败任务的 `reason/error`，
+  命中违规时返回红色气泡文案（`ContentViolation.describe` 友好文案，缺失时回退 i18n `generation_violation`），
+  否则返回通用失败文案。
+  覆盖 5 个失败分支：`checkDirectGenerationStatus`（直出图/视频 anyFailed）、`checkImageStatus`、
+  `checkVideoStatus`、Agent 图片/视频轮询（`allDone` 且无结果 URL）；
+- `describeSubmitViolation(raw, type)`：提交阶段 catch 用。图片提交 catch、视频提交 catch、
+  `sendMessageToApi` catch 命中违规时返回气泡红色违规文案，否则返回 `null` 走原通用文案；
+- i18n：`zh-CN/en marketing_agent.json` 新增 `generation_violation` 键（describe 缺失时的违规兜底文案）。
+
+### 3.4 弹窗策略（2026-09-03 起）
+
+三个页面均**不再弹出「内容违规提醒」模态框**——违规信息已通过节点行内文案 / 分镜候选占位符与角标 /
+聊天气泡红色文案展示，弹窗属重复打扰。`content_violation.js` 的 `notify/showModal` 能力保留在模块中
+（含冷却去重与单测），页面侧全部改为行内展示；模态框在原文与友好文案相同（后端已归一改写）时
+也不再重复展示「查看原始错误信息」。
 
 ## 4. 后端规则补齐（`utils/content_moderation_error.py`）
 
@@ -112,3 +132,16 @@
 - 不改动失败任务本身的展示逻辑（行内错误文案、候选占位符的既有行为保留）；
 - 不处理 `web/js/pages/*`（index.html 页面，非本次范围）；
 - 弹框纯展示，不内嵌「降低违规」改写入口（方案 D 入口在既有节点/分镜降低违规联动中）。
+
+## 7. video_workflow 失败原因持久化（lastError）
+
+行内失败文案（含违规友好文案）此前重载工作流后丢失。现失败时把 `truncateErrorMessage(...)`
+结果写入节点 `node.data.lastError`（`serializeWorkflow` 全量序列化 `node.data`，无需额外字段），
+重载时恢复逻辑检测到 `lastError` 非空即以红色重新渲染状态行：
+
+- `image_to_video_node.js`：提交 catch / 轮询失败回调写入图生视频节点；onTaskUpdate 逐任务
+  FAILED 分支写入对应视频节点；新一轮生成开始时清空；
+- `image_node.js`：图片编辑轮询失败回调 / 提交 catch 写入图片节点；重新提交时清空；
+- `workflow.js` `createImageToVideoNodeWithData` / `createVideoNodeWithData` 显式拷贝
+  `lastError` 并恢复 `.gen-status` / `.video-status` 显示；`createImageNodeWithData`
+  经 `Object.assign` 自动携带，仅补 `.image-edit-status` 恢复渲染。

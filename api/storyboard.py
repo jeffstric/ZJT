@@ -57,6 +57,7 @@ from utils.project_path import (
 )
 from utils.video_compressor import get_video_info
 from utils.computing_power import get_computing_power_for_task
+from utils.content_moderation_error import is_content_moderation_user_message
 from model.storyboard import (
     StoryboardModel, StoryboardSceneModel,
     StoryboardDialogueModel, StoryboardDialogueAudioModel,
@@ -1348,6 +1349,8 @@ async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
         if tool:
             info['status'] = tool.status
             info['error'] = tool.message
+            # 失败原因是否命中内容审核违规（前端 ContentViolation 识别用）
+            info['is_content_violation'] = is_content_moderation_user_message(tool.message)
             # 仅在 asset 自身没有 result_url 时，才用 ai_tool.result_url 兜底。
             # 宫格拆分场景下，多个 asset 共享同一个 ai_tool，而 ai_tool.result_url
             # 存的是整张宫格图（如 upload/storyboard/temp/xxx.png），asset.result_url

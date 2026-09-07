@@ -7,6 +7,7 @@ import traceback
 from .base_video_driver import BaseVideoDriver
 from config.config_util import get_config, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
+from utils.content_moderation_error import build_user_error_from_api_error
 
 
 class GptImageDuomiV1Driver(BaseVideoDriver):
@@ -304,6 +305,20 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
             self.logger.error(f"Unexpected exception in GPT Image 2 submit_task: {str(e)}")
             self.logger.error(traceback.format_exc())
 
+            # HTTP 4xx/5xx 时响应体已挂到异常上（base_video_driver._request），
+            # 优先解析其中的业务错误（内容审核/额度不足等），避免被笼统的"服务异常"掩盖
+            response_body = getattr(e, "response_body", None)
+            http_error_info = response_body.get("error") if isinstance(response_body, dict) else None
+            if http_error_info:
+                user_error = build_user_error_from_api_error(http_error_info, fallback_prefix="任务提交失败")
+                self.logger.warning(f"GPT Image 2 API HTTP error: {http_error_info} -> {user_error}")
+                return {
+                    "success": False,
+                    "error": user_error,
+                    "error_type": "USER",
+                    "retry": False
+                }
+
             self._send_alert(
                 alert_type="UNEXPECTED_EXCEPTION",
                 message=f"GPT Image 2 submit_task 发生未预期异常: {str(e)}",
@@ -390,10 +405,12 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
                         "error_type": "SYSTEM"
                     }
             elif state == "error":
-                # 失败
+                # 失败：透传上游失败原因（若有），内容审核特征由下游 _normalize_failure_reason 统一归一
+                upstream_message = raw_result.get("message") or ""
+                error_text = f"图片生成失败: {upstream_message}" if upstream_message else "图片生成失败"
                 return {
                     "status": "FAILED",
-                    "error": "图片生成失败",
+                    "error": error_text,
                     "error_type": "USER"
                 }
             elif state in ["pending", "running"]:
