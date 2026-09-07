@@ -3706,6 +3706,111 @@ body {
     text-align: left;
 }
 
+/* 模型管理页：推荐模型档位（性价比/效果）配置框 */
+.reco-box {
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    border: 1px solid #f59e0b;
+    border-left: 4px solid #d97706;
+    border-radius: 8px;
+}
+
+.reco-title {
+    color: #92400e;
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.reco-desc {
+    margin: 0 0 12px;
+    color: #78350f;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.reco-scene {
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid #fcd34d;
+    border-radius: 6px;
+}
+
+.reco-scene-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.reco-scene-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #92400e;
+}
+
+.reco-scene-key {
+    font-size: 12px;
+    color: #b45309;
+    background: #fef3c7;
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+.reco-tag {
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 999px;
+}
+
+.reco-tag.custom {
+    color: #b45309;
+    background: #fde68a;
+}
+
+.reco-tag.default {
+    color: #64748b;
+    background: #e2e8f0;
+}
+
+.reco-track-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.reco-track-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #92400e;
+    min-width: 44px;
+}
+
+.reco-select {
+    min-width: 220px;
+    text-align: left;
+}
+
+.reco-vendors {
+    min-width: 180px;
+    text-align: left;
+}
+
+.reco-reason {
+    flex: 1;
+    min-width: 180px;
+    text-align: left;
+}
+
+.reco-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+}
+
 /* ==================== 公告管理（本站公告） ==================== */
 
 /* 标题下副信息（图片数/链接） */

@@ -1156,6 +1156,15 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'editable': True,
         'is_sensitive': False
     },
+
+    # ==================== 模型目录推荐配置 ====================
+    {
+        'key': 'model_catalog.scene_recos',
+        'value_type': 'json',
+        'description': '各场景推荐模型（性价比/效果双档）管理员覆盖，格式: {"llm.chat": {"value": {"canonical": "deepseek-v4-flash", "preferred_vendors": ["deepseek"], "reason": "..."}, "quality": {...}}}；未覆盖的场景/档位使用 config/model_catalog.py 的 SCENE_RECOS 代码默认值',
+        'editable': True,
+        'is_sensitive': False
+    },
 ]
 
 

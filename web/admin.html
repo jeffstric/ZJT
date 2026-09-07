@@ -1445,6 +1445,54 @@
                     </div>
                 </div>
 
+                <!-- 推荐模型档位（性价比/效果）：写 system_config model_catalog.scene_recos，未配置场景用系统默认 -->
+                <div class="reco-box">
+                    <div class="reco-title">
+                        <strong>⭐ {{ t('reco_title') }}</strong>
+                    </div>
+                    <p class="reco-desc">{{ t('reco_desc') }}</p>
+                    <div class="reco-track-row" v-if="modelRecos.loading">
+                        <span class="reco-track-label">{{ t('loading') }}</span>
+                    </div>
+                    <template v-else>
+                        <div class="reco-scene" v-for="scene in modelRecos.scenes" :key="scene.scene">
+                            <div class="reco-scene-head">
+                                <span class="reco-scene-name">{{ recoSceneName(scene.scene) }}</span>
+                                <code class="reco-scene-key">{{ scene.scene }}</code>
+                                <span class="reco-tag" :class="(scene.overridden.value || scene.overridden.quality) ? 'custom' : 'default'">
+                                    {{ (scene.overridden.value || scene.overridden.quality) ? t('reco_tag_custom') : t('reco_tag_default') }}
+                                </span>
+                            </div>
+                            <div class="reco-track-row" v-for="track in ['value', 'quality']" :key="track">
+                                <label class="reco-track-label">{{ track === 'value' ? t('reco_value_track') : t('reco_quality_track') }}</label>
+                                <select class="filter-select reco-select" v-model="scene.draft[track].canonical"
+                                    @change="onRecoCanonicalChange(scene, track)">
+                                    <option v-for="opt in recoOptions(scene, track)" :key="opt.canonical" :value="opt.canonical">
+                                        {{ opt.label }}
+                                    </option>
+                                </select>
+                                <select v-if="scene.kind === 'llm'" class="filter-select reco-vendors"
+                                    v-model="scene.draft[track].vendor">
+                                    <option value="">{{ t('reco_vendor_auto') }}</option>
+                                    <option v-for="v in recoVendorOptions(scene, track)" :key="v" :value="v">{{ v }}</option>
+                                </select>
+                                <input type="text" class="filter-select reco-reason"
+                                    v-model="scene.draft[track].reason" :placeholder="t('reco_reason_ph')" />
+                            </div>
+                            <div class="reco-actions">
+                                <button class="action-btn primary small" @click="saveModelReco(scene)"
+                                    :disabled="modelRecos.saving === scene.scene">
+                                    {{ modelRecos.saving === scene.scene ? t('um_processing') : t('reco_save') }}
+                                </button>
+                                <button class="action-btn small" @click="resetModelReco(scene)"
+                                    :disabled="modelRecos.saving === scene.scene">
+                                    {{ t('reco_reset') }}
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
                 <div class="table-container">
                     <div class="table-header">
                         <h3>{{ t('models_title') }}</h3>

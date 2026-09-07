@@ -765,6 +765,13 @@ const AdminApp = {
                 targetMode: 'normal'
             },
 
+            // 推荐模型档位（各场景性价比/效果），对应 system_config: model_catalog.scene_recos
+            modelRecos: {
+                loading: false,
+                saving: null,   // 正在保存的场景 key
+                scenes: []      // 每项含 draft.value/draft.quality 编辑态
+            },
+
             // 实现方编辑弹窗
             implEditModal: {
                 show: false,
@@ -1628,6 +1635,7 @@ const AdminApp = {
             } else if (page === 'models') {
                 this.loadModels();
                 this.loadLocalInferenceConfig();
+                this.loadModelRecos();
             } else if (page === 'constants') {
                 this.loadConstants();
             } else if (page === 'commission') {
@@ -3882,6 +3890,116 @@ const AdminApp = {
                 this.showToast(this.t('models_local_inference_save_failed'), 'error');
             } finally {
                 this.localInference.saving = false;
+            }
+        },
+
+        async loadModelRecos() {
+            this.modelRecos.loading = true;
+            try {
+                const response = await axios.get('/api/admin/model-recos', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.modelRecos.scenes = (response.data.data.scenes || []).map((s) => ({
+                        ...s,
+                        draft: {
+                            value: this._recoSlotDraft(s.value),
+                            quality: this._recoSlotDraft(s.quality),
+                        },
+                    }));
+                }
+            } catch (error) {
+                console.error('加载推荐模型配置失败:', error);
+                this.showToast(this.t('reco_load_failed'), 'error');
+            } finally {
+                this.modelRecos.loading = false;
+            }
+        },
+        _recoSlotDraft(slot) {
+            return {
+                canonical: slot && slot.canonical || '',
+                vendor: (slot && slot.preferred_vendors || [])[0] || '',
+                reason: slot && slot.reason || '',
+            };
+        },
+        _recoSlotPayload(draft) {
+            return {
+                canonical: (draft.canonical || '').trim(),
+                preferred_vendors: draft.vendor ? [draft.vendor] : [],
+                reason: (draft.reason || '').trim(),
+            };
+        },
+        recoVendorOptions(scene, track) {
+            // 供应商选项跟随所选模型联动，避免管理员手输出错
+            const current = scene.draft[track].canonical;
+            const hit = (scene.candidates || []).find(o => o.canonical === current);
+            return (hit && hit.vendors) || [];
+        },
+        onRecoCanonicalChange(scene, track) {
+            const opts = this.recoVendorOptions(scene, track);
+            if (scene.draft[track].vendor && !opts.includes(scene.draft[track].vendor)) {
+                scene.draft[track].vendor = '';
+            }
+        },
+        recoSceneName(scene) {
+            const key = 'reco_scene_' + String(scene).replace(/\./g, '_');
+            const translated = this.t(key);
+            return translated === key ? scene : translated;
+        },
+        recoOptions(scene, track) {
+            // 当前生效值可能已下线（不在候选中），补一个选项避免下拉显示空白
+            const options = [...(scene.candidates || [])];
+            const current = scene.draft[track].canonical;
+            if (current && !options.some(o => o.canonical === current)) {
+                options.unshift({ canonical: current, label: `${current} (${this.t('reco_offline_option')})` });
+            }
+            return options;
+        },
+        async saveModelReco(scene) {
+            const value = this._recoSlotPayload(scene.draft.value);
+            const quality = this._recoSlotPayload(scene.draft.quality);
+            if (!value.canonical || !quality.canonical) {
+                this.showToast(this.t('reco_canonical_required'), 'error');
+                return;
+            }
+            this.modelRecos.saving = scene.scene;
+            try {
+                const response = await axios.put('/api/admin/model-recos',
+                    { scene: scene.scene, value, quality },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } },
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('reco_saved'), 'success');
+                    await this.loadModelRecos();
+                } else {
+                    this.showToast(response.data.message || this.t('reco_save_failed'), 'error');
+                }
+            } catch (error) {
+                const detail = error.response && error.response.data && error.response.data.detail;
+                this.showToast(detail || this.t('reco_save_failed'), 'error');
+            } finally {
+                this.modelRecos.saving = null;
+            }
+        },
+        async resetModelReco(scene) {
+            if (!confirm(this.t('reco_reset_confirm'))) return;
+            this.modelRecos.saving = scene.scene;
+            try {
+                const response = await axios.put('/api/admin/model-recos',
+                    { scene: scene.scene, reset: true },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } },
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('reco_saved'), 'success');
+                    await this.loadModelRecos();
+                } else {
+                    this.showToast(response.data.message || this.t('reco_save_failed'), 'error');
+                }
+            } catch (error) {
+                const detail = error.response && error.response.data && error.response.data.detail;
+                this.showToast(detail || this.t('reco_save_failed'), 'error');
+            } finally {
+                this.modelRecos.saving = null;
             }
         },
 
