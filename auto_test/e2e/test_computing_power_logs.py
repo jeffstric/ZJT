@@ -15,15 +15,20 @@ import pytest
 # ═══════════════════════════════════════════════════════════════
 
 
-def _setup_logs_page(browser, auth_token, user_id, base_url, mock_data=None):
-    """创建算力日志页面实例，注入认证信息并 mock API"""
+def _setup_logs_page(browser, live_auth, base_url, mock_data=None):
+    """创建算力日志页面实例，注入认证信息并 mock API。
+
+    用 session 级 live_auth：建 context 前 ensure() 一次，token 被顶掉时
+    自动重登，注入到 localStorage 的始终是有效凭证。
+    """
+    live_auth.ensure()
     context = browser.new_context(
         viewport={"width": 1280, "height": 720},
         locale="zh-CN",
     )
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
     """)
     p = context.new_page()
 
@@ -81,9 +86,9 @@ def _setup_logs_page(browser, auth_token, user_id, base_url, mock_data=None):
 
 @pytest.mark.p0
 @pytest.mark.computing_power
-def test_power_logs_page_loads(browser, auth_token, user_id, base_url):
+def test_power_logs_page_loads(browser, live_auth, base_url):
     """cpl_001 - 算力日志页面加载成功。"""
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url)
+    p, context = _setup_logs_page(browser, live_auth, base_url)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(2000)
 
@@ -97,9 +102,9 @@ def test_power_logs_page_loads(browser, auth_token, user_id, base_url):
 
 @pytest.mark.p0
 @pytest.mark.computing_power
-def test_power_logs_display_entries(browser, auth_token, user_id, base_url):
+def test_power_logs_display_entries(browser, live_auth, base_url):
     """cpl_002 - 页面显示日志条目。"""
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url)
+    p, context = _setup_logs_page(browser, live_auth, base_url)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(3000)
 
@@ -116,9 +121,9 @@ def test_power_logs_display_entries(browser, auth_token, user_id, base_url):
 
 @pytest.mark.p0
 @pytest.mark.computing_power
-def test_power_logs_filter_tabs(browser, auth_token, user_id, base_url):
+def test_power_logs_filter_tabs(browser, live_auth, base_url):
     """cpl_003 - 筛选标签存在（全部/增加/扣除）。"""
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url)
+    p, context = _setup_logs_page(browser, live_auth, base_url)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(2000)
 
@@ -138,7 +143,7 @@ def test_power_logs_filter_tabs(browser, auth_token, user_id, base_url):
 
 @pytest.mark.p1
 @pytest.mark.computing_power
-def test_power_logs_pagination(browser, auth_token, user_id, base_url):
+def test_power_logs_pagination(browser, live_auth, base_url):
     """cpl_004 - 分页控件存在。"""
     # 使用大量数据的 mock
     logs = [
@@ -157,7 +162,7 @@ def test_power_logs_pagination(browser, auth_token, user_id, base_url):
         "success": True,
         "data": {"logs": logs, "total": 50, "limit": 20, "offset": 0},
     }
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url, mock_data)
+    p, context = _setup_logs_page(browser, live_auth, base_url, mock_data)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(3000)
 
@@ -196,10 +201,10 @@ def test_power_logs_no_auth_shows_error(browser, base_url):
 
 @pytest.mark.p1
 @pytest.mark.computing_power
-def test_power_logs_empty_state(browser, auth_token, user_id, base_url):
+def test_power_logs_empty_state(browser, live_auth, base_url):
     """cpl_006 - 无日志数据时显示空状态。"""
     mock_data = {"success": True, "data": {"logs": [], "total": 0, "limit": 20, "offset": 0}}
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url, mock_data)
+    p, context = _setup_logs_page(browser, live_auth, base_url, mock_data)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(3000)
 
@@ -215,7 +220,7 @@ def test_power_logs_empty_state(browser, auth_token, user_id, base_url):
 
 @pytest.mark.p0
 @pytest.mark.computing_power
-def test_power_logs_deduct_shows_refund_hint(browser, auth_token, user_id, base_url):
+def test_power_logs_deduct_shows_refund_hint(browser, live_auth, base_url):
     """cpl_009 - 已退回的扣减行显示退回金额和退回单号摘要。"""
     mock_data = {
         "success": True,
@@ -251,7 +256,7 @@ def test_power_logs_deduct_shows_refund_hint(browser, auth_token, user_id, base_
             "offset": 0,
         },
     }
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url, mock_data)
+    p, context = _setup_logs_page(browser, live_auth, base_url, mock_data)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(3000)
 
@@ -275,33 +280,27 @@ def test_power_logs_deduct_shows_refund_hint(browser, auth_token, user_id, base_
 
 @pytest.mark.p0
 @pytest.mark.computing_power
-def test_power_logs_pagination_returns_different_pages(api_client, e2e_config, base_url):
+def test_power_logs_pagination_returns_different_pages(api_client):
     """cpl_007 - 分页接口第1页和第2页返回不同数据。
 
     验证后端 offset 计算正确（此前 client.py 用不存在的字段重新计算
     offset 导致恒为 0，永远返回第一页）。
     """
-    import time
-    from conftest import refresh_login
-
-    # 请求第1页（带重试和 token 刷新）
-    resp1 = None
-    for attempt in range(3):
-        resp1 = api_client.get(
-            "/api/user/computing_power_logs",
-            params={"page": 1, "page_size": 20},
+    # 请求第1页
+    resp1 = api_client.get(
+        "/api/user/computing_power_logs",
+        params={"page": 1, "page_size": 20},
+    )
+    if resp1.status_code == 400 and "认证" in resp1.text:
+        # session token 已被顶掉（登录删旧 token，如手动脚本/其它 e2e 并发登录主账号）。
+        # 严禁在此 refresh_login 重登主账号：会进一步顶掉 session 级 auth_token，
+        # 使后续所有注入该 token 的浏览器用例 401 跳登录页、连环超时
+        #（见 conftest._login_data "session 期间只登录一次" 约定）。
+        pytest.fail(
+            "session token 已失效（400 认证），中止本用例以保护后续浏览器用例，"
+            "请检查主账号是否在别处并发登录。响应: "
+            f"{resp1.text[:200]}"
         )
-        if resp1.status_code == 200:
-            break
-        # token 失效，重新登录
-        if resp1.status_code == 400 and "认证" in resp1.text:
-            login_data = refresh_login(e2e_config, base_url)
-            if login_data:
-                api_client.headers.update({
-                    "Authorization": f"Bearer {login_data['token']}",
-                    "X-User-Id": login_data["user_id"],
-                })
-        time.sleep(1)
     assert resp1.status_code == 200, (
         f"第1页请求失败: {resp1.status_code}, 响应: {resp1.text[:200]}"
     )
@@ -336,26 +335,20 @@ def test_power_logs_pagination_returns_different_pages(api_client, e2e_config, b
 
 @pytest.mark.p1
 @pytest.mark.computing_power
-def test_power_logs_pagination_with_behavior_filter(api_client, e2e_config, base_url):
+def test_power_logs_pagination_with_behavior_filter(api_client):
     """cpl_008 - 带 behavior 筛选的分页也应正确工作。"""
-    from conftest import refresh_login
-
     for behavior in ("increase", "deduct"):
         resp = api_client.get(
             "/api/user/computing_power_logs",
             params={"page": 1, "page_size": 10, "behavior": behavior},
         )
-        # token 失效时重新登录
+        # token 失效时禁止 refresh_login 重登主账号（会顶掉 session 级 auth_token，
+        # 连环 401 后续浏览器用例），直接 fail 并提示排查并发登录。
         if resp.status_code == 400 and "认证" in resp.text:
-            login_data = refresh_login(e2e_config, base_url)
-            if login_data:
-                api_client.headers.update({
-                    "Authorization": f"Bearer {login_data['token']}",
-                    "X-User-Id": login_data["user_id"],
-                })
-            resp = api_client.get(
-                "/api/user/computing_power_logs",
-                params={"page": 1, "page_size": 10, "behavior": behavior},
+            pytest.fail(
+                f"behavior={behavior}: session token 已失效（400 认证），"
+                "中止以保护后续浏览器用例，请检查主账号是否在别处并发登录。响应: "
+                f"{resp.text[:200]}"
             )
         assert resp.status_code == 200, f"behavior={behavior} 请求失败: {resp.status_code}"
         data = resp.json()

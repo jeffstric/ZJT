@@ -17,13 +17,14 @@ stages:
   - e2e
 
 # 同一分支已经创建 MR 后只保留 MR Pipeline，避免一次 push 重复跑两套测试。
+# schedule 规则必须放最前：定时流水线同样带 CI_COMMIT_BRANCH，放后面会被分支规则拦截（有开放 MR 时甚至被整条抑制）。
 workflow:
   rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
       when: never
     - if: $CI_COMMIT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "schedule"
 
 # 变量配置
 variables:
@@ -426,7 +427,6 @@ frontend_tests:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
-
 
 # =============================================================================
 # 分支级 E2E 冒烟测试

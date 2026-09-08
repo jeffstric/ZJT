@@ -1,6 +1,8 @@
 """
 Page Object 基类和通用页面对象，用于 Playwright 浏览器测试。
 """
+import json
+
 from playwright.sync_api import Page, expect
 
 
@@ -155,11 +157,52 @@ class WorkflowEditorPage(BasePage):
 class MarketingAgentPage(BasePage):
     """营销智能体页面"""
 
+    def mock_bootstrap_apis(self, power: int = 9999):
+        """隔离页面初始化时与本用例无关的用户偏好接口。
+
+        营销页会在挂载阶段读取算力和算力确认阈值。它们返回 401 时，前端会
+        立即跳转登录页，导致后续 UI 用例全部在错误页面等待。页面行为测试不
+        需要验证这两个接口的后端实现，因此以稳定响应隔离；接口本身由 API 用例
+        单独覆盖。
+        """
+
+        def power_handler(route):
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {"success": True, "data": {"computing_power": power}}
+                ),
+            )
+
+        def power_confirm_handler(route):
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "code": 0,
+                        "data": {
+                            "threshold": 35,
+                            "default_threshold": 35,
+                            "is_custom": False,
+                        },
+                    }
+                ),
+            )
+
+        self.page.route("**/api/user/computing_power", power_handler)
+        self.page.route("**/api/user/power-confirm", power_confirm_handler)
+
     def navigate(self):
+        self.mock_bootstrap_apis()
         super().navigate("/marketing-agent")
 
     def is_loaded(self) -> bool:
-        return self.is_element_visible("body", timeout=10000)
+        return (
+            "/marketing-agent" in self.page.url
+            and self.is_element_visible(".sidebar, main.main-content", timeout=10000)
+        )
 
     def has_sidebar(self) -> bool:
         return self.is_element_visible(
@@ -175,10 +218,18 @@ class MarketingAgentPage(BasePage):
         """等待侧边栏会话列表加载
 
         30s：全量套件长跑时浏览器负载高，页面渲染可能超过 10s（曾造成 flake）。
+        超时诊断附带当前页面 URL：若已跳登录页，说明 session token 被顶掉/失效（401）。
         """
-        self.page.wait_for_selector(
-            ".sidebar-history-item, .new-chat-btn", timeout=30000
-        )
+        try:
+            self.page.wait_for_selector(
+                ".sidebar-history-item, .new-chat-btn", timeout=30000
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"等待侧边栏加载超时: {e}; 当前页面 URL: {self.page.url}"
+                "（若已跳转登录页，说明 session token 被顶掉/失效，"
+                "请检查主账号是否在别处并发登录）"
+            ) from e
 
     def send_message(self, text: str):
         """发送消息（处理 Vue v-model 和遮挡问题）"""

@@ -32,8 +32,8 @@ RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
     default-mysql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency manifest first so the pip layer stays cached
-# when only source code changes (CI DinD 依赖 save/load 层缓存复用该层)
+# Copy dependency manifests before source code. BuildKit can then reuse the
+# expensive dependency layer when a commit only changes application code.
 COPY requirements.txt pyproject.toml ./
 
 # Configure pip to use Aliyun mirror for faster downloads in China

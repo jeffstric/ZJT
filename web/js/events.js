@@ -516,8 +516,15 @@
       }
 
       // Ctrl + 滚轮：画布上下平移
+      // 例外：触控板双指捏合会被 Chrome/Edge 翻译成 ctrlKey=true 的 wheel 事件
+      // （deltaMode=0 且 deltaY 为连续小数，真鼠标滚轮是整数值），此时仍应缩放而非平移
       if(isCtrl){
         e.preventDefault();
+        const isPinch = e.deltaMode === 0 && !Number.isInteger(e.deltaY);
+        if(isPinch){
+          if(e.deltaY < 0) zoomIn(); else if(e.deltaY > 0) zoomOut();
+          return;
+        }
         const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
         if(delta !== 0){
           panCanvasByWheel(0, -normalizeWheelDelta(e, delta));
