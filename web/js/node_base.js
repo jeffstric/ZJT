@@ -617,11 +617,16 @@ window.addEventListener('beforeunload', () => {
     if(typeof WorkflowRecovery === 'undefined' || typeof autoSaveState === 'undefined') return;
     WorkflowRecovery.dispatchBeforeUnloadSave({
       saveState: autoSaveState,
-      serializeBody: () => JSON.stringify({
-        workflow_data: serializeWorkflow(),
-        default_world_id: state.defaultWorldId,
-        workflow_ratio: state.ratio
-      }),
+      // 复用 workflow.js 的 buildAutoSaveBody（body 构造的唯一权威实现）：
+      // 自动/手动保存与去重门按 body 全文比较，人肉双写两处构造一旦失同步，
+      // 基线将永不命中（退化为总是上传）。兜底内联仅防脚本加载顺序异常。
+      serializeBody: () => (typeof buildAutoSaveBody === 'function'
+        ? buildAutoSaveBody()
+        : JSON.stringify({
+            workflow_data: serializeWorkflow(),
+            default_world_id: state.defaultWorldId,
+            workflow_ratio: state.ratio
+          })),
       measureBodyBytes: (body) => new Blob([body]).size,
       cancelPending: cancelPendingAutoSave,
       warnLargeBody: () => console.warn(

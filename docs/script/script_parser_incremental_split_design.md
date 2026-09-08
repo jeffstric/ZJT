@@ -103,7 +103,7 @@
 
 规划提示词同时给出“单段最大输出 token”和“原文不超过 1500 字”。模型仍必须优先保持语义完整。后端在还原原文时执行最终硬检查：多 block 超限段优先沿 block 边界继续切细，单 block 超限时依次寻找空行、换行和句末标点，最后才按字符上限兜底。该后处理只收紧模型已经确定的段内范围，不跨模型语义边界重新组合文本。规划阶段不预估镜头数量，实际镜头数完全由后续分镜生成模型决定。
 
-**非正文 block 排除（2026-09-04 起）**：剧本头部的剧名/集标题、爽点/概要/风格/基调等元信息说明、`---` 分隔线、创作备注不构成剧情，由规划模型在分段的同时输出顶层 `excluded_block_ids` 一并排除——这些 block 不进入任何 segment、不生成分镜。判定指引由 `llm/script_segment_planner.py:build_exclusion_instruction` 统一维护：speed 模式内嵌于默认提示词；quality 等策略自定义提示词（`prompt_override`）在 `plan_segments` 必经点统一追加注入（enterprise 代码不进 git，无法也无需单独修改）。对白、旁白、括号动作描述、`[场景 …]` 声明行、`场景编号：` 行属于正文，提示词明确禁止排除。背景：此类“纯标题段”曾导致阶段二拆分模型为无剧情段落凭空编造分镜、与后续段落内容重复（线上事故，工作流 1646 / 任务 656）。被排除 block 中首个 `#{1,3}` 标题行由 `extract_script_title_from_excluded` 提取，持久化于 `plan.metadata.script_title`，合并阶段 `_merge_segments` 未取到剧名时回填。
+**非正文 block 排除（2026-09-04 起）**：剧本头部的剧名/集标题、爽点/概要/风格/基调等元信息说明、`---` 分隔线、创作备注不构成剧情，由规划模型在分段的同时输出顶层 `excluded_block_ids` 一并排除——这些 block 不进入任何 segment、不生成分镜。判定指引由 `llm/script_segment_planner.py:build_exclusion_instruction` 统一维护：speed 模式内嵌于默认提示词；quality 等策略自定义提示词（`prompt_override`）在 `plan_segments` 必经点统一追加注入（enterprise 代码不进 git，无法也无需单独修改）。对白、旁白、括号动作描述、`[场景 …]` 声明行、`场景编号：` 行属于正文，提示词明确禁止排除。背景：此类“纯标题段”曾导致阶段二拆分模型为无剧情段落凭空编造分镜、与后续段落内容重复（线上事故，工作流 1646 / 任务 656）。被排除 block 中首个 `#{1,3}` 标题行由 `extract_script_title_from_excluded` 提取，持久化于 `plan.metadata.script_title`，合并阶段 `_merge_segments` 未取到剧名时回填。`plan.metadata` 非 dict（模型输出 `null`/`[]` 等）时按缺省重置为 `{}`（`_ensure_metadata_dict` 兜底，规划/合并/发布阶段统一走该函数），不会把已成功的规划拖成 failed——`setdefault` 不会覆盖已存在的非 dict 值，直接对 `null` 赋键会 TypeError。
 
 ### 6.3 分段计划协议
 

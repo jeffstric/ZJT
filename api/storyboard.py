@@ -2115,8 +2115,14 @@ class StoryboardImageAgentRunner:
         if not model_id:
             return default_model
         try:
+            # 宽容归一：历史会话可能存 "vendor:模型名" 复合串，裸 int() 会
+            # ValueError 直接走默认模型；还原失败也优雅回退
+            from llm.llm_client_factory import coerce_model_id_or_none
+            numeric_model_id = coerce_model_id_or_none(model_id)
+            if not numeric_model_id:
+                return default_model
             from model.model import ModelModel
-            task_model = ModelModel.get_by_id(int(model_id))
+            task_model = ModelModel.get_by_id(numeric_model_id)
             if task_model and task_model.model_name:
                 return task_model.model_name
         except Exception as e:
@@ -3302,34 +3308,17 @@ async def generate_storyboard_from_script(
             content={'error': 'enterprise_only', 'message': '效果模式仅商业版支持'},
         )
 
-    real_vendor_id = data.get('vendor_id')
-    model_id = data.get('model_id')
-    # 归一化 model_id：本地服务模型（ollama/vllm）在 /api/models 下发的 id 是
-    # "vendor:模型名" 复合串（见 get_available_models），直接 int() 会 ValueError
-    # 导致发布拆分 500，与 /api/parse-script 同规则还原为数值库 ID。
-    numeric_model_id = None
-    if model_id:
-        try:
-            numeric_model_id = int(model_id)
-        except (TypeError, ValueError):
-            from llm.llm_client_factory import resolve_composite_model_ref
-            resolved_vendor_id, numeric_model_id = await asyncio.to_thread(
-                resolve_composite_model_ref,
-                str(model_id),
-            )
-            if resolved_vendor_id and not real_vendor_id:
-                real_vendor_id = resolved_vendor_id
-            if not numeric_model_id:
-                logger.warning(f"无法解析复合模型标识: {model_id}，发布拆分任务将回退默认模型")
-    if not real_vendor_id and numeric_model_id:
-        try:
-            from model.vendor_model import VendorModelModel
-            real_vendor_id = await asyncio.to_thread(
-                VendorModelModel.get_vendor_id_by_model_id,
-                numeric_model_id,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to resolve vendor for model {model_id}: {e}")
+    # 归一化 model_id / vendor_id（统一规则见 normalize_model_selection_refs）：
+    # 数字串直接转 int；"vendor:模型名" 复合串还原为数值库 ID，与 /api/parse-script
+    # 同规则，避免裸 int() ValueError 导致发布拆分 500。
+    from llm.llm_client_factory import normalize_model_selection_refs
+    numeric_model_id, real_vendor_id = await asyncio.to_thread(
+        normalize_model_selection_refs,
+        data.get('model_id'),
+        data.get('vendor_id'),
+    )
+    if data.get('model_id') and not numeric_model_id:
+        logger.warning(f"无法解析模型标识: {data.get('model_id')}，发布拆分任务将回退默认模型")
 
     from config.constant import ScriptSplitQcConstants
     from llm.script_split_qc_agent import run_script_split_qc
@@ -4566,27 +4555,17 @@ async def scene_ai_chat(
     if not model or model_id in (None, ''):
         return JSONResponse(status_code=400, content={'success': False, 'error': '请先选择对话模型'})
 
-    try:
-        model_id = int(model_id)
-    except (TypeError, ValueError):
-        return JSONResponse(status_code=400, content={'success': False, 'error': 'model_id 必须为数字'})
-
-    vendor_id = data.get('vendor_id') or 1
-    try:
-        vendor_id = int(vendor_id)
-    except (TypeError, ValueError):
-        vendor_id = 1
-    if vendor_id == 1:
-        try:
-            from model.vendor_model import VendorModelModel
-            resolved_vendor_id = await asyncio.to_thread(
-                VendorModelModel.get_vendor_id_by_model_id,
-                model_id,
-            )
-            if resolved_vendor_id:
-                vendor_id = int(resolved_vendor_id)
-        except Exception as e:
-            logger.warning(f"Failed to resolve vendor for storyboard agent model {model_id}: {e}")
+    # 归一化 model_id / vendor_id（统一规则见 normalize_model_selection_refs）：
+    # 数字串直接转 int；"vendor:模型名" 复合串还原为数值库 ID，与 /api/parse-script
+    # 同规则，避免复合串被 400 拒绝（其他拆分入口行为分叉）。
+    from llm.llm_client_factory import normalize_model_selection_refs
+    numeric_model_id, vendor_id = await asyncio.to_thread(
+        normalize_model_selection_refs,
+        model_id,
+        data.get('vendor_id'),
+    )
+    if not numeric_model_id:
+        return JSONResponse(status_code=400, content={'success': False, 'error': 'model_id 无效，请重新选择对话模型'})
 
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
     first_frame = await _asset_task_info(scene, 'first_frame')
@@ -4894,7 +4873,7 @@ async def scene_ai_chat(
         world_id=str(sb.world_id if sb else scene.storyboard_id),
         auth_token=token,
         vendor_id=vendor_id,
-        model_id=model_id,
+        model_id=numeric_model_id,
         enable_thinking=enable_thinking,
         thinking_effort=thinking_effort,
         image_urls=task_image_urls,

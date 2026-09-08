@@ -2399,6 +2399,13 @@ class AnnouncementConstants:
     STATUS_PUBLISHED = "published"
     STATUS_OFFLINE = "offline"
 
+    # 公告级别（model/announcements.py 的 VALID_LEVELS 引用此处，避免双处定义）
+    VALID_LEVELS = ('info', 'success', 'warning', 'error')
+
+    # publish_at/expire_at 归一化后允许的 datetime 格式（datetime-local 前端值
+    # 秒位可选）；不合法值在服务层拒绝，避免 SQL 报错原文透出客户端
+    DATETIME_FORMATS = ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M')
+
     # 公告图片上传
     UPLOAD_CATEGORY = "announcement"                              # upload/ 下子目录
     MAX_IMAGE_SIZE = 10 * 1024 * 1024                             # 单张图片大小上限 10MB

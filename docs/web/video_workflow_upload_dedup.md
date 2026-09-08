@@ -46,7 +46,24 @@
 |------|------|
 | GET `/api/video-workflow/{id}` | 响应 `data.content_hash` |
 | GET `/poll-status` | 响应 `data.content_hash`（含无节点早退分支），每轮刷新前端「最近一次看到的服务端哈希」 |
-| PUT `/api/video-workflow/{id}` | 携带 `X-Base-Hash` 头时做 CAS：当前哈希不一致 → **拒绝写入**，返回 `{"code": 409, data: {content_hash}}`；成功返回 `data.content_hash`（写入后最新值）。头部缺省 = 不做 CAS（兼容旧客户端） |
+| PUT `/api/video-workflow/{id}` | 携带 `X-Base-Hash` 头时做 CAS：当前哈希不一致 → **拒绝写入**，返回 **HTTP 409** + `{"code": 409, data: {content_hash}}`（以真实 HTTP 状态码返回，网关/监控才能统计冲突率；前端按 `result.code === 409` 判断不受影响）；成功返回 `data.content_hash`（写入后最新值）。头部缺省 = 不做 CAS（兼容旧客户端） |
+
+#### 原子性：content_version 列（迁移 no_130）
+
+读哈希（`asyncio.to_thread`，含 await 点）与 UPDATE 之间仍可能并发写入，
+check-then-act 在多 worker 部署下会互相覆盖。因此 UPDATE 追加乐观锁条件：
+
+```sql
+UPDATE video_workflow SET ..., content_version = content_version + 1
+WHERE id = ? AND content_version = ?   -- 读哈希时读到的版本号
+```
+
+affected = 0（版本竞争失败，并发写已抢先）同样按 HTTP 409 拒绝并返回当前
+哈希——校验与写入收敛为单条原子 CAS，不再依赖「近似串行」。版本号为服务端
+内部状态，客户端仍只交互 `X-Base-Hash`/`content_hash`，协议不变。强制覆盖
+路径（不带 `X-Base-Hash`）不加版本条件，但仍自增版本号，使并发 CAS 写立刻
+失效。副作用修复：版本号自增使同值保存也稳定 affected=1，不再受 pymysql
+「只计值变化行」口径影响。
 
 ### 前端状态机（`web/js/auto_save_state.js`）
 
@@ -77,7 +94,10 @@
 自动保存与手动保存共用 `buildAutoSaveBody()`（`{workflow_data,
 default_world_id, workflow_ratio}`）保证 body 严格同构——构造不一致会导致
 基线永不命中（退化为总是上传，安全方向）。`X-Base-Hash` 走 HTTP 头而非
-JSON body，正是为了避免改变 body 使基线永不命中。
+JSON body，正是为了避免改变 body 使基线永不命中。beforeunload 补发路径
+（`node_base.js`）同样**复用** `buildAutoSaveBody()`（仅保留加载顺序异常时
+的内联兜底），不再人肉双写第二份构造——两处失同步会让关页补发永远过不了
+去重门基线。
 
 ### 并发与乱序的收敛保证
 

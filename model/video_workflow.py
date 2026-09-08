@@ -73,6 +73,8 @@ class VideoWorkflow:
         self.workflow_ratio = kwargs.get('workflow_ratio')
         self.create_time = kwargs.get('create_time')
         self.update_time = kwargs.get('update_time')
+        # 内容乐观锁版本号（迁移 no_130 新增；迁移前的行 SELECT 不含该列，取默认 0）
+        self.content_version = kwargs.get('content_version', 0)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -331,37 +333,56 @@ class VideoWorkflowModel:
     @staticmethod
     def update(
         record_id: int,
+        expected_content_version: Optional[int] = None,
         **kwargs
     ) -> int:
         """
         Update video workflow record
-        
+
+        每次更新原子自增 content_version（乐观锁版本号）。传入
+        expected_content_version 时为条件更新（WHERE content_version = %s）：
+        版本不匹配（并发写入已抢先/行已删除）返回 0 行，调用方据此走 409
+        冲突路径——把原 check-then-act（读哈希与 UPDATE 之间存在 await 点，
+        多 worker/并发下互相覆盖）收敛为单条原子 CAS UPDATE。
+
         Args:
             record_id: Record ID
+            expected_content_version: 期望的乐观锁版本号；None = 无条件更新
+                （强制覆盖路径），仍会自增版本号
             **kwargs: Fields to update (name, description, cover_image, status, workflow_data, style, style_reference_image)
-        
+
         Returns:
             Number of affected rows
         """
         allowed_fields = ['name', 'description', 'cover_image', 'status', 'workflow_data', 'style', 'style_reference_image', 'default_world_id', 'workflow_ratio']
-        
+
         update_fields = []
         params = []
-        
+
         for field, value in kwargs.items():
             if field in allowed_fields:
                 if field == 'workflow_data' and isinstance(value, dict):
                     value = json.dumps(value)
                 update_fields.append(f"{field} = %s")
                 params.append(value)
-        
+
         if not update_fields:
             logger.warning("No valid fields to update")
             return 0
-        
+
+        # 版本号始终自增：pymysql 默认 affected rows 只计"值变化"的行，
+        # 自增列同时保证同值保存也稳定返回 1（与 CAS 判定解耦）
+        update_fields.append("content_version = content_version + 1")
+        where_clauses = ["id = %s"]
         params.append(record_id)
-        sql = f"UPDATE video_workflow SET {', '.join(update_fields)} WHERE id = %s"
-        
+        if expected_content_version is not None:
+            where_clauses.append("content_version = %s")
+            params.append(int(expected_content_version))
+        sql = (
+            f"UPDATE video_workflow SET {', '.join(update_fields)} "
+            f"WHERE {' AND '.join(where_clauses)}"
+        )
+
         try:
             affected_rows = execute_update(sql, tuple(params))
             logger.info(f"Updated video workflow record {record_id}, affected rows: {affected_rows}")
@@ -446,6 +467,7 @@ CREATE TABLE IF NOT EXISTS `video_workflow` (
   `user_id` int unsigned NOT NULL COMMENT '创建者用户ID',
   `status` tinyint NOT NULL DEFAULT '1' COMMENT '状态: 0-禁用, 1-启用, 2-草稿',
   `workflow_data` json DEFAULT NULL COMMENT '工作流配置数据(JSON格式)',
+  `content_version` int NOT NULL DEFAULT 0 COMMENT '内容乐观锁版本号：PUT 条件更新 WHERE 用，每次内容写入 +1',
   `style` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '画风',
   `style_reference_image` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '画风参考图URL',
   `workflow_ratio` varchar(10) DEFAULT NULL COMMENT '工作流宽高比: 16:9 (横屏) | 9:16 (竖屏)',

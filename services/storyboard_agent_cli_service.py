@@ -3210,6 +3210,16 @@ class StoryboardAgentCliService:
     def _storyboard_config(self, storyboard: Any) -> Dict[str, Any]:
         return _parse_json(_get_field(storyboard, "config_json"), {}) or {}
 
+    @staticmethod
+    def _coerce_split_model_id(model_id: Any) -> Optional[int]:
+        """把存储/入参里的 model_id 宽容归一为数值 ID。
+
+        历史存储可能把 "vendor:模型名" 复合串当 model_id 存下，裸 int() 会
+        ValueError 使接口 500；无法还原时返回 None（走模型名 + 默认 vendor）。
+        """
+        from llm.llm_client_factory import coerce_model_id_or_none
+        return coerce_model_id_or_none(model_id)
+
     def _normalize_script_split_model_selection(
         self,
         model: Optional[Any],
@@ -3233,7 +3243,7 @@ class StoryboardAgentCliService:
             return model_name
         return {
             "model": model_name,
-            "model_id": int(model_id) if model_id not in (None, "") else None,
+            "model_id": self._coerce_split_model_id(model_id),
             "vendor_id": int(vendor_id) if vendor_id not in (None, "") else None,
         }
 
@@ -3320,7 +3330,7 @@ class StoryboardAgentCliService:
             resolved_model = StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL
         return (
             resolved_model,
-            int(model_id) if model_id not in (None, "") else None,
+            self._coerce_split_model_id(model_id),
             int(vendor_id) if vendor_id not in (None, "") else None,
         )
 
