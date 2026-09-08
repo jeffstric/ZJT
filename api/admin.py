@@ -7,6 +7,7 @@ from typing import Optional, List, Union, Dict
 import logging
 import httpx
 import asyncio
+import json
 from datetime import datetime
 
 from model.users import UsersModel, User
@@ -20,7 +21,7 @@ from model.implementation_attempts import ImplementationAttemptModel
 from config.unified_config import UnifiedConfigRegistry, TaskCategory, get_implementation_name
 from model.system_config import SystemConfigModel
 from model.system_config_history import SystemConfigHistoryModel
-from config.config_util import get_current_env, invalidate_dynamic_cache, normalize_aliyun_bailian_base_url
+from config.config_util import get_current_env, get_dynamic_config_value, invalidate_dynamic_cache, normalize_aliyun_bailian_base_url
 from config.default_configs import init_default_configs
 from utils.log_sanitizer import mask_phone
 from config.constant import (
@@ -31,6 +32,18 @@ from config.constant import (
 from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
 from services.system_config_batch_service import batch_update_system_configs
 from services.queue_backlog import collect_queue_backlog
+from config.model_catalog import (
+    ModelScene,
+    SCENE_RECOS,
+    SCENE_RECOS_CONFIG_KEY,
+    TRACK_QUALITY,
+    TRACK_VALUE,
+    get_scene_recos_merged,
+    get_scene_recos_override,
+    llm_canonical,
+    reco_slot_payload,
+)
+from llm.llm_client_factory import get_available_models as get_available_llm_models
 
 logger = logging.getLogger(__name__)
 
@@ -1098,6 +1111,191 @@ async def admin_list_config_history(
     except Exception as e:
         logger.error(f"Failed to list config history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 推荐模型（场景性价比/效果档位）配置 ====================
+
+# 任务类场景 → 统一配置分类（候选 canonical 来源）
+_SCENE_TASK_CATEGORY = {
+    ModelScene.IMAGE_TEXT_TO_IMAGE: TaskCategory.TEXT_TO_IMAGE,
+    ModelScene.IMAGE_SCRIPT_WRITER: TaskCategory.TEXT_TO_IMAGE,
+    ModelScene.IMAGE_GRID: TaskCategory.TEXT_TO_IMAGE,
+    ModelScene.IMAGE_IMAGE_EDIT: TaskCategory.IMAGE_EDIT,
+    ModelScene.VIDEO_TEXT_TO_VIDEO: TaskCategory.TEXT_TO_VIDEO,
+    ModelScene.VIDEO_IMAGE_TO_VIDEO: TaskCategory.IMAGE_TO_VIDEO,
+    ModelScene.VIDEO_REFERENCE_TO_VIDEO: TaskCategory.IMAGE_TO_VIDEO,
+    ModelScene.VIDEO_DIGITAL_HUMAN: TaskCategory.DIGITAL_HUMAN,
+}
+
+
+def _task_scene_candidates(category: str) -> List[Dict[str, str]]:
+    """统一配置中该分类下启用模型的候选（canonical = short_key/key）。"""
+    seen = set()
+    candidates: List[Dict[str, str]] = []
+    for c in UnifiedConfigRegistry.get_by_category(category):
+        if not c.enabled:
+            continue
+        canonical = str(getattr(c, "short_key", None) or c.key or "").strip()
+        if not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        candidates.append({"canonical": canonical, "label": c.name or canonical})
+    return candidates
+
+
+async def _llm_scene_candidates() -> List[Dict[str, object]]:
+    """LLM 场景候选：可用模型按 canonical 聚合，附带可选供应商列表。"""
+    try:
+        result = await get_available_llm_models()
+    except Exception as exc:
+        logger.warning("model-recos: 获取 LLM 模型列表失败 %s", type(exc).__name__)
+        return []
+    grouped: Dict[str, Dict[str, object]] = {}
+    for m in result.get("models") or []:
+        canonical = llm_canonical(m)
+        if not canonical:
+            continue
+        entry = grouped.setdefault(
+            canonical.lower(),
+            {"canonical": canonical, "label": canonical, "vendors": []},
+        )
+        vendor = str(m.get("vendor_name") or "").strip()
+        if vendor and vendor not in entry["vendors"]:
+            entry["vendors"].append(vendor)
+    return list(grouped.values())
+
+
+async def _scene_candidates(scene: str) -> List[Dict[str, object]]:
+    category = _SCENE_TASK_CATEGORY.get(scene)
+    if category:
+        return await asyncio.to_thread(_task_scene_candidates, category)
+    return await _llm_scene_candidates()
+
+
+@router.get("/model-recos")
+async def admin_get_model_recos(
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取各场景推荐模型（性价比/效果档位）当前生效值 + 候选列表。
+    生效值 = 代码默认 SCENE_RECOS 与 system_config 覆盖（model_catalog.scene_recos）的合并。
+    """
+    await require_admin(auth_token)
+
+    merged = await asyncio.to_thread(get_scene_recos_merged)
+    overrides = await asyncio.to_thread(get_scene_recos_override)
+
+    scenes = []
+    for scene, reco in merged.items():
+        scene_override = overrides.get(scene) or {}
+        scenes.append({
+            "scene": scene,
+            "kind": "task" if scene in _SCENE_TASK_CATEGORY else "llm",
+            "value": reco_slot_payload(reco.value),
+            "quality": reco_slot_payload(reco.quality),
+            "overridden": {
+                TRACK_VALUE: TRACK_VALUE in scene_override,
+                TRACK_QUALITY: TRACK_QUALITY in scene_override,
+            },
+            "candidates": await _scene_candidates(scene),
+        })
+
+    return {"code": 0, "data": {"scenes": scenes}}
+
+
+class ModelRecoSlotPayload(BaseModel):
+    canonical: str
+    preferred_vendors: Optional[List[str]] = None
+    reason: Optional[str] = ""
+
+
+class ModelRecoUpdateRequest(BaseModel):
+    scene: str
+    value: Optional[ModelRecoSlotPayload] = None
+    quality: Optional[ModelRecoSlotPayload] = None
+    reset: bool = False
+
+
+@router.put("/model-recos")
+async def admin_update_model_recos(
+    request: ModelRecoUpdateRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    更新单个场景的推荐模型覆盖（写入 system_config 键 model_catalog.scene_recos）。
+    - value/quality 至少提供一个；未提供的档位保留已有覆盖或代码默认
+    - reset=true 时删除该场景的全部覆盖，回退代码默认
+    """
+    admin = await require_admin(auth_token)
+    env = get_current_env()
+
+    scene = (request.scene or "").strip()
+    if scene not in SCENE_RECOS:
+        raise HTTPException(status_code=400, detail=f"未知场景: {scene}")
+    if not request.reset and request.value is None and request.quality is None:
+        raise HTTPException(status_code=400, detail="value/quality 至少提供一个")
+
+    # 候选校验：有候选列表时 canonical 必须命中（忽略大小写），防止手误写进不存在的模型
+    if not request.reset:
+        candidates = await _scene_candidates(scene)
+        if candidates:
+            valid = {str(c["canonical"]).lower() for c in candidates}
+            for track, slot in ((TRACK_VALUE, request.value), (TRACK_QUALITY, request.quality)):
+                if slot is not None and slot.canonical.strip().lower() not in valid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{track} 档模型 {slot.canonical} 不在场景 {scene} 的候选列表中",
+                    )
+
+    # 读取当前原始覆盖（DB 值），在其上按场景合并
+    try:
+        raw_override = await asyncio.to_thread(
+            get_dynamic_config_value, "model_catalog", "scene_recos", default=None,
+        )
+    except Exception as exc:
+        logger.error("model-recos: 读取现有覆盖失败 %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="读取现有推荐配置失败")
+    override_dict: Dict[str, object] = dict(raw_override) if isinstance(raw_override, dict) else {}
+
+    if request.reset:
+        override_dict.pop(scene, None)
+    else:
+        scene_slots = dict(override_dict.get(scene) or {})
+        for track, slot in ((TRACK_VALUE, request.value), (TRACK_QUALITY, request.quality)):
+            if slot is None:
+                continue
+            scene_slots[track] = {
+                "canonical": slot.canonical.strip(),
+                "preferred_vendors": slot.preferred_vendors or [],
+                "reason": slot.reason or "",
+            }
+        override_dict[scene] = scene_slots
+
+    try:
+        batch_result = await asyncio.to_thread(
+            batch_update_system_configs,
+            env=env,
+            configs=[(SCENE_RECOS_CONFIG_KEY, json.dumps(override_dict, ensure_ascii=False))],
+            updated_by=admin.id,
+        )
+    except Exception as exc:
+        logger.error("model-recos: 写入配置失败 %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="推荐模型配置写入失败")
+    if batch_result["errors"]:
+        raise HTTPException(status_code=400, detail="; ".join(batch_result["errors"]))
+
+    effective = await asyncio.to_thread(get_scene_recos_merged)
+    effective_reco = effective.get(scene)
+    return {
+        "code": 0,
+        "message": "推荐模型配置已更新",
+        "data": {
+            "scene": scene,
+            "value": reco_slot_payload(effective_reco.value),
+            "quality": reco_slot_payload(effective_reco.quality),
+        },
+    }
+
 
 
 class TestGoogleRequest(BaseModel):

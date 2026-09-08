@@ -151,6 +151,23 @@ describe('describe', () => {
       '内容审核未通过（色情、暴力）：请求被安全系统拦截，请检查提示词和参考图后重试'
     );
   });
+
+  test('未知标签净化：HTML 片段不得透传进 describe 文案（v-html/innerHTML 通道防注入）', () => {
+    const out = cv.describe(
+      'Your request was rejected by the safety system. (safety_violations=[<img src=x onerror=alert(1)>])'
+    );
+    expect(out).not.toMatch(/[<>]/);
+    // 尖括号内容被替换为空白，不再构成可执行标签
+    expect(out).toContain('内容审核未通过');
+  });
+
+  test('未知标签净化：保留安全的字母数字标签（新后端标签可读展示）', () => {
+    const out = cv.describe(
+      'Your request was rejected by the safety system. (safety_violations=[cyber_crime])'
+    );
+    expect(out).toContain('cyber_crime');
+    expect(out).not.toMatch(/[<>]/);
+  });
 });
 
 describe('notify', () => {

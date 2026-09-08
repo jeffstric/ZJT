@@ -450,6 +450,8 @@ python -m scripts.storyboard_agent_cli storyboard-task-status --storyboard-id 10
 
 After submitting generation, poll status every 3-5 seconds. Stop when no selected asset has status `0` or `1`, or after a reasonable cap such as 5 minutes. Return `project_ids`, `asset_ids`, selected asset IDs, result URLs, and failures to the user.
 
+**Deferred selection (2026-09):** submitting generation (generate-image / generate-video / bind-projects) creates candidate assets but does **not** switch the scene's selected pointer. Selected assets only move to a newly generated asset after the task completes successfully — the per-scene `task-status` and `storyboard-scene-task-status` responses auto-switch the selection on success and additionally return a `generating` map (`{first_frame,last_frame,video}`) describing the newest in-flight asset per type. Poll until neither a selected asset is running nor a `generating` entry exists. During generation the previously selected asset stays selected, so exports and follow-up video generation always see a usable asset.
+
 ## Error Handling
 
 - `missing_auth_token` or `invalid_auth_token`: ask for a valid agent token or auth_token.

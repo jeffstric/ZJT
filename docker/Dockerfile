@@ -66,6 +66,8 @@ COPY web/ ./web/
 COPY server.py ./
 COPY config.example.yml ./
 COPY config_unit.base.yml ./
+# 生产基类配置：entrypoint 生成 config_prod.yml 及运行时兜底合并都依赖它
+COPY config_prod.base.yaml ./
 
 # Copy entrypoint script and fix line endings for Windows compatibility
 COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

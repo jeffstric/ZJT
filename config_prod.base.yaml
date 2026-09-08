@@ -147,6 +147,9 @@ llm:
   agnes:
     api_key: ""  # Agnes AI API Key
     base_url: "https://api.agnes-ai.cn/v1"
+  mimo:
+    api_key: ""  # 小米 MiMo API Key（Token Plan 套餐）
+    base_url: "https://token-plan-cn.xiaomimimo.com/v1"
 
 # Wan3.0 视频模型（阿里云百炼 DashScope，API Key 复用上面的 llm.qwen.api_key）
 wan3:
@@ -156,6 +159,11 @@ wan3:
 tts:
   api_url: "http://47.98.190.124"
   upload_url: "http://47.98.190.124/result_audio/"
+
+# SenseVoice ASR（句级字幕用），公网地址开箱即用；自建服务可覆盖 api_url
+asr:
+  api_url: "http://47.98.190.124:60000"
+  enabled: true
 
 test_mode:
   enabled: false

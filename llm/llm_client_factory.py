@@ -21,6 +21,7 @@ from .claude_customer_client import ClaudeCustomerClient, get_claude_customer_cl
 from .zjt_openai_client import ZJTOpenAIClient, get_zjt_openai_client
 from .openai_deepseek import DeepSeekOpenAIClient, get_deepseek_openai_client
 from .openai_agnes import AgnesOpenAIClient, get_agnes_openai_client
+from .openai_mimo import MimoOpenAIClient, get_mimo_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class LLMClientFactory:
         LLMVendor.ZJT_API: get_zjt_openai_client,
         LLMVendor.DEEPSEEK: get_deepseek_openai_client,
         LLMVendor.AGNES: get_agnes_openai_client,
+        LLMVendor.MIMO: get_mimo_openai_client,
     }
 
     # 历史数据中 Gemini 供应商（LLMVendor.JIEKOU）可能被命名为 google；
@@ -72,23 +74,43 @@ class LLMClientFactory:
             model: 模型名称（如 gemini-3-flash-preview, qwen3.5-plus）
             vendor_id: 可选的供应商 ID。若提供，优先使用该 ID 直接路由，
                       不再依赖模型名称前缀匹配。
+                      例外：model 为 "vendor:模型名" 显式本地格式（vllm:/ollama:）时，
+                      前缀优先于 vendor_id，避免本地模型名被透传给云端 API。
 
         Returns:
             对应的 LLM 客户端实例
         """
-        # 如果提供了 vendor_id，优先从数据库查询 vendor_name 直接路由
+        # 防御层：本地服务显式前缀（vllm:/ollama:）优先于 vendor_id 路由
+        local_prefix = None
+        if isinstance(model, str) and ':' in model:
+            prefix = model.split(':', 1)[0].lower()
+            if prefix in _LOCAL_SERVICE_VENDORS:
+                local_prefix = prefix
+
         if vendor_id is not None:
             try:
                 from model.vendor import VendorDAO
                 vendor_obj = VendorDAO.get_by_id(vendor_id)
                 if vendor_obj and vendor_obj.vendor_name:
                     vendor = vendor_obj.vendor_name
-                    getter = cls._VENDOR_CLIENT_MAP.get(vendor, get_gemini_client)
-                    client = getter()
-                    logger.debug(f"模型 {model} (vendor_id={vendor_id}, vendor={vendor}) -> {type(client).__name__}")
-                    return client
+                    if local_prefix and local_prefix != vendor:
+                        logger.warning(
+                            f"模型 {model} 的本地前缀 {local_prefix} 与 vendor_id={vendor_id} "
+                            f"解析的供应商 {vendor} 冲突，按前缀路由到本地服务"
+                        )
+                    else:
+                        getter = cls._VENDOR_CLIENT_MAP.get(vendor, get_gemini_client)
+                        client = getter()
+                        logger.debug(f"模型 {model} (vendor_id={vendor_id}, vendor={vendor}) -> {type(client).__name__}")
+                        return client
             except Exception as e:
                 logger.warning(f"根据 vendor_id={vendor_id} 查询供应商失败，回退到前缀匹配: {e}")
+
+        if local_prefix:
+            getter = cls._VENDOR_CLIENT_MAP[local_prefix]
+            client = getter()
+            logger.debug(f"模型 {model} 按本地前缀 {local_prefix} 路由 -> {type(client).__name__}")
+            return client
 
         # 回退：根据模型名称前缀匹配
         vendor = cls._get_vendor_by_model(model)
@@ -186,6 +208,7 @@ def _get_available_models_sync() -> dict:
             'zjt_api': ('api_aggregator', 'site_0', 'api_key'),
             'deepseek': ('llm', 'deepseek', 'api_key'),
             'agnes': ('llm', 'agnes', 'api_key'),
+            'mimo': ('llm', 'mimo', 'api_key'),
         }
         if vendor_name not in vendor_config_map:
             return True  # 未知 vendor 默认放行
@@ -276,3 +299,42 @@ async def get_available_models() -> dict:
         dict: { 'success': bool, 'models': [...] }
     """
     return await asyncio.to_thread(_get_available_models_sync)
+
+
+def resolve_composite_model_ref(model_ref: str) -> tuple:
+    """
+    将 "vendor:模型名" 复合模型标识还原为 (vendor_id, model_db_id)。
+
+    本地服务供应商（Ollama/vLLM）的模型经 /api/models 下发时 id 字段使用
+    "vendor:模型名" 前缀格式（见 _get_available_models_sync），历史版本前端
+    会把该复合串当作 model_id 回传（如剧本节点拆分请求）。按首个冒号拆分后
+    查库还原数值 ID；vendor/model/关联任一缺失或查询异常时返回 (None, None)。
+
+    同步查库函数，async 接口调用方须用 asyncio.to_thread 包裹。
+    """
+    ref = str(model_ref or '').strip()
+    if not ref or ':' not in ref:
+        return None, None
+    vendor_name, _, model_name = ref.partition(':')
+    vendor_name = vendor_name.strip()
+    model_name = model_name.strip()
+    if not vendor_name or not model_name:
+        return None, None
+    try:
+        from model.model import ModelModel
+        from model.vendor import VendorDAO
+        from model.vendor_model import VendorModelModel
+
+        vendor = VendorDAO.get_by_name(vendor_name)
+        if not vendor:
+            return None, None
+        local_model = ModelModel.get_by_name(model_name)
+        if not local_model:
+            return None, None
+        # 复合串由 vendor_model 关联生成，关联缺失说明供应商或模型已下架，拒绝猜测
+        if not VendorModelModel.get_by_vendor_model(vendor.id, local_model.id):
+            return None, None
+        return vendor.id, local_model.id
+    except Exception as e:
+        logger.warning(f"解析复合模型标识失败: {model_ref}: {e}")
+        return None, None

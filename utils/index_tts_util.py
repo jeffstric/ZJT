@@ -12,6 +12,21 @@ from utils.project_path import resolve_upload_url_to_local_path
 
 logger = logging.getLogger(__name__)
 
+
+def speed_to_duration_factor(speed) -> float:
+    """语速 → IndexTTS-2.5 duration_factor（时长因子，>1 变慢）。
+
+    换算 duration_factor = 1/speed：语速 >1 更快 → 因子 <1。
+    非法值（非数值/≤0）按 1.0 处理；结果夹取到接口上限 [0.5, 2.0]。
+    """
+    try:
+        safe_speed = float(speed)
+    except (TypeError, ValueError):
+        safe_speed = 1.0
+    if safe_speed <= 0 or safe_speed != safe_speed:  # ≤0 或 NaN
+        safe_speed = 1.0
+    return round(min(2.0, max(0.5, 1.0 / safe_speed)), 4)
+
 def get_tts_api_url() -> str:
     """
     从配置文件获取 TTS API URL
@@ -37,11 +52,12 @@ async def generate_audio(
     emo_text: Optional[str] = None,
     result_path: str = "",
     max_text_tokens_per_sentence: int = 120,
-    timeout: int = 300
+    timeout: int = 300,
+    speed: float = 1.0
 ) -> tuple[bool, str]:
     """
     Generate audio using TTS API
-    
+
     Args:
         text: Text to convert to speech
         spk_audio_path: Path or URL to speaker reference audio
@@ -57,7 +73,9 @@ async def generate_audio(
         result_path: Absolute path where the generated audio should be saved
         max_text_tokens_per_sentence: Maximum text tokens per sentence (default: 120)
         timeout: Request timeout in seconds (default: 300)
-    
+        speed: 语速（1.0 正常，>1 更快，<1 更慢）。请求体换算为 IndexTTS-2.5 的
+            duration_factor = 1/speed（时长因子，>1 变慢），范围 0.5~2.0。
+
     Returns:
         tuple: (success: bool, audio_path_or_error: str)
             - success: True if generation succeeded, False otherwise
@@ -154,7 +172,7 @@ async def generate_audio(
         # Step 3: Prepare request data with uploaded paths
         if emo_vec is None:
             emo_vec = [0] * 8
-        
+
         data = {
             "text": text,
             "spk_audio_path": uploaded_spk_audio_path,
@@ -164,7 +182,8 @@ async def generate_audio(
             "emo_vec": emo_vec,
             "emo_text": emo_text,
             "result_path": result_path,
-            "max_text_tokens_per_sentence": max_text_tokens_per_sentence
+            "max_text_tokens_per_sentence": max_text_tokens_per_sentence,
+            "duration_factor": speed_to_duration_factor(speed)
         }
         
         # Step 4: Make POST request to TTS API

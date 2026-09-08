@@ -35,6 +35,7 @@ from config.constant import (
     TASK_STATUS_QUEUED,
     StoryboardAudioGenerateConstants,
     StoryboardAutoGenerateConstants,
+    normalize_dialogue_tts_speed,
 )
 from model.ai_audio import AIAudioModel
 from model.character import CharacterModel
@@ -120,7 +121,11 @@ class StoryboardVoiceoverBootstrapService:
         from services.dialogue_emotion import resolve_tts_emotion_kwargs
         extra_audio_kwargs = resolve_tts_emotion_kwargs(
             dialogue=dialogue, config=config,
-        ) or None
+        ) or {}
+        # 语速取自对话（0.5~2.0，>1 更快），随任务落 ai_audio.speed 供 TTS 换算 duration_factor
+        extra_audio_kwargs['speed'] = normalize_dialogue_tts_speed(
+            getattr(dialogue, 'speed', None),
+        )
         logger.info(
             "[dialogue-emotion][voiceover-bootstrap] ensure dialogue_id=%s scene_id=%s "
             "emo_control_method=%s emo_vec=%r text_preview=%r",

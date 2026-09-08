@@ -24,6 +24,7 @@ class ChatSessionEntity:
         self.auth_token = kwargs.get('auth_token', '')
         self.model = kwargs.get('model', 'deepseek-v4-flash')
         self.model_id = kwargs.get('model_id')
+        self.vendor_id = kwargs.get('vendor_id')
         self.text_to_image_model_id = kwargs.get('text_to_image_model_id')
 
         # Deserialize conversation_history from JSON
@@ -59,6 +60,7 @@ class ChatSessionEntity:
             'auth_token': self.auth_token,
             'model': self.model,
             'model_id': self.model_id,
+            'vendor_id': self.vendor_id,
             'text_to_image_model_id': self.text_to_image_model_id,
             'conversation_history': json.dumps(self.conversation_history, ensure_ascii=False),
             'created_at': self.created_at.isoformat() if self.created_at else None,
@@ -83,6 +85,7 @@ class ChatSessionsModel:
         auth_token: str = '',
         model: str = 'deepseek-v4-flash',
         model_id: Optional[int] = None,
+        vendor_id: Optional[int] = None,
         text_to_image_model_id: Optional[int] = None,
         conversation_history: list = None,
         expires_at: Optional[datetime] = None,
@@ -98,6 +101,7 @@ class ChatSessionsModel:
             auth_token: Authentication token
             model: AI model name
             model_id: Model ID from vendor
+            vendor_id: Vendor ID for the selected model
             text_to_image_model_id: Text-to-image model task ID
             conversation_history: Initial conversation history (default: empty list)
             expires_at: Session expiration time (None = never expires)
@@ -109,12 +113,12 @@ class ChatSessionsModel:
         sql = """
             INSERT INTO chat_sessions
             (session_id, user_id, world_id, session_type, auth_token, model, model_id,
-             text_to_image_model_id, conversation_history, expires_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             vendor_id, text_to_image_model_id, conversation_history, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         history_json = json.dumps(conversation_history or [], ensure_ascii=False)
         params = (session_id, user_id, world_id, session_type, auth_token, model,
-                  model_id, text_to_image_model_id, history_json, expires_at)
+                  model_id, vendor_id, text_to_image_model_id, history_json, expires_at)
 
         try:
             record_id = execute_insert(sql, params)
@@ -311,7 +315,7 @@ class ChatSessionsModel:
             raise
 
     @staticmethod
-    def update_model(session_id: str, model: Optional[str] = None, model_id: Optional[int] = None, text_to_image_model_id: Optional[int] = None, expires_at: Optional[datetime] = None) -> int:
+    def update_model(session_id: str, model: Optional[str] = None, model_id: Optional[int] = None, vendor_id: Optional[int] = None, text_to_image_model_id: Optional[int] = None, expires_at: Optional[datetime] = None) -> int:
         """
         Update session model
 
@@ -319,6 +323,7 @@ class ChatSessionsModel:
             session_id: Session identifier
             model: New model name (optional, if None keeps existing value)
             model_id: New model ID (optional)
+            vendor_id: New vendor ID (optional)
             text_to_image_model_id: New text-to-image model task ID (optional)
             expires_at: New expiration time (optional, updates if provided)
 
@@ -336,6 +341,10 @@ class ChatSessionsModel:
         if model_id is not None:
             update_fields.append("model_id = %s")
             params.append(model_id)
+
+        if vendor_id is not None:
+            update_fields.append("vendor_id = %s")
+            params.append(vendor_id)
 
         if text_to_image_model_id is not None:
             update_fields.append("text_to_image_model_id = %s")
@@ -739,6 +748,7 @@ CREATE TABLE IF NOT EXISTS `chat_sessions` (
   `auth_token` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Authentication token',
   `model` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'deepseek-v4-flash' COMMENT 'AI model name',
   `model_id` int DEFAULT NULL COMMENT 'Model ID from vendor',
+  `vendor_id` int DEFAULT NULL COMMENT 'Vendor ID for the selected model',
   `text_to_image_model_id` int DEFAULT NULL COMMENT 'Text-to-image model task ID',
   `conversation_history` longtext COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Serialized conversation history (JSON array)',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Session creation time',

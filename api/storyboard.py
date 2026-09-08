@@ -33,6 +33,7 @@ from config.constant import (
     StoryboardAudioGenerateConstants,
     StoryboardDigitalHumanConstants,
     StoryboardAgentCommandConstants,
+    normalize_dialogue_tts_speed,
     SceneDifficulty,
     MediaConstants,
     MediaGenerationMode,
@@ -45,6 +46,7 @@ from config.unified_config import (
     UnifiedConfigRegistry,
     TaskTypeId,
     TaskCategory,
+    ImageMode,
     SEEDANCE_FACE_MASK_DRIVER_KEYS,
 )
 from utils.project_path import (
@@ -54,6 +56,8 @@ from utils.project_path import (
     resolve_upload_url_to_local_path,
 )
 from utils.video_compressor import get_video_info
+from utils.computing_power import get_computing_power_for_task
+from utils.content_moderation_error import is_content_moderation_user_message
 from model.storyboard import (
     StoryboardModel, StoryboardSceneModel,
     StoryboardDialogueModel, StoryboardDialogueAudioModel,
@@ -83,6 +87,7 @@ from services.storyboard_asset_service import (
     StoryboardAssetDeleteError,
     StoryboardAssetSelectError,
     delete_storyboard_scene_asset,
+    resolve_scene_generation_bindings,
     select_storyboard_scene_asset,
 )
 from services.storyboard_voiceover_bootstrap_service import (
@@ -1174,6 +1179,8 @@ def submit_storyboard_dialogue_voiceover(
     transaction_id = str(uuid.uuid4())
     extra_audio_kwargs = {'transaction_id': transaction_id}
     extra_audio_kwargs.update(emo_kwargs)
+    # 语速取自对话（前端滑杆 0.5~2.0，>1 更快），随任务落 ai_audio.speed 供 TTS 换算 duration_factor
+    extra_audio_kwargs['speed'] = normalize_dialogue_tts_speed(getattr(dialogue, 'speed', None))
     # 手动点「生成配音」默认强制重跑（改情感/改台词后可覆盖选中配音）；
     # 自动补缺路径传 skip_existing=True，不会走到 force。
     force_regenerate = bool(config.get('force_regenerate', not config.get('skip_existing')))
@@ -1342,6 +1349,8 @@ async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
         if tool:
             info['status'] = tool.status
             info['error'] = tool.message
+            # 失败原因是否命中内容审核违规（前端 ContentViolation 识别用）
+            info['is_content_violation'] = is_content_moderation_user_message(tool.message)
             # 仅在 asset 自身没有 result_url 时，才用 ai_tool.result_url 兜底。
             # 宫格拆分场景下，多个 asset 共享同一个 ai_tool，而 ai_tool.result_url
             # 存的是整张宫格图（如 upload/storyboard/temp/xxx.png），asset.result_url
@@ -1350,6 +1359,22 @@ async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
             if tool.result_url and not info.get('result_url'):
                 info['result_url'] = tool.result_url
     return info
+
+
+def _generating_row_task_info(row: Optional[dict], asset_type: str) -> Optional[dict]:
+    """生成中资产的轮询信息（延迟选中：选中指针在成功前不指向生成中任务）。
+
+    row 来自 resolve_scene_generation_bindings（已 LEFT JOIN ai_tools 状态与结果）。
+    """
+    if not row:
+        return None
+    return {
+        'asset_id': row.get('id'),
+        'asset_type': asset_type,
+        'result_url': str(row.get('asset_result_url') or row.get('tool_result_url') or '').strip(),
+        'status': row.get('status'),
+        'error': None,
+    }
 
 
 def _enrich_scene_asset_result_urls(assets: list) -> list:
@@ -1439,21 +1464,6 @@ def _enrich_scene_location_props(scenes: list) -> list:
             if pr:
                 sc['props'] = pr
     return scenes
-
-
-def _compose_image_prompt(scene) -> str:
-    """从 scene.prompt_json 组合图片提示词（视角/风格/场景/角色描述）"""
-    prompt = scene.prompt_json
-    if isinstance(prompt, str):
-        try:
-            prompt = json.loads(prompt)
-        except Exception:
-            prompt = {}
-    if not isinstance(prompt, dict):
-        return ''
-    parts = [prompt.get('perspective'), prompt.get('style'),
-             prompt.get('scene_desc'), prompt.get('character_desc')]
-    return '，'.join([p for p in parts if p])
 
 
 def _scene_prompt_dict(scene) -> Dict[str, Any]:
@@ -2248,6 +2258,8 @@ class StoryboardImageAgentRunner:
                 "project_ids": project_ids,
                 "asset_type": "video" if is_video else "first_frame",
                 "already_bound": already_bound,
+                # 生成工具累计消耗的算力（expert 聚合），前端写入左下角算力提示行
+                "computing_power": result.get("computing_power") or 0,
                 "message": f"已提交 {len(project_ids)} 个分镜{'视频' if is_video else '图片'}生成任务",
             })
 
@@ -2715,6 +2727,9 @@ async def get_storyboard_models(
                 'computing_power': (list(eff_cp.values())[0] if isinstance(eff_cp, dict) and eff_cp else (eff_cp or 0)),
                 'computing_power_mode': 'by_duration' if isinstance(eff_cp, dict) else 'fixed',
                 'computing_power_range': _computing_power_range(eff_cp),
+                # 按时长的完整档位表（{时长秒: 算力}，fixed 时为 None）：
+                # 前端提交前预估消耗用，取值口径与 get_computing_power(duration=...) 一致
+                'computing_power_map': (eff_cp if isinstance(eff_cp, dict) else None),
                 'supported_durations': c.supported_durations or [],
                 'default_duration': c.default_duration,
                 'supported_ratios': c.supported_ratios or [],
@@ -3289,12 +3304,29 @@ async def generate_storyboard_from_script(
 
     real_vendor_id = data.get('vendor_id')
     model_id = data.get('model_id')
-    if not real_vendor_id and model_id:
+    # 归一化 model_id：本地服务模型（ollama/vllm）在 /api/models 下发的 id 是
+    # "vendor:模型名" 复合串（见 get_available_models），直接 int() 会 ValueError
+    # 导致发布拆分 500，与 /api/parse-script 同规则还原为数值库 ID。
+    numeric_model_id = None
+    if model_id:
+        try:
+            numeric_model_id = int(model_id)
+        except (TypeError, ValueError):
+            from llm.llm_client_factory import resolve_composite_model_ref
+            resolved_vendor_id, numeric_model_id = await asyncio.to_thread(
+                resolve_composite_model_ref,
+                str(model_id),
+            )
+            if resolved_vendor_id and not real_vendor_id:
+                real_vendor_id = resolved_vendor_id
+            if not numeric_model_id:
+                logger.warning(f"无法解析复合模型标识: {model_id}，发布拆分任务将回退默认模型")
+    if not real_vendor_id and numeric_model_id:
         try:
             from model.vendor_model import VendorModelModel
             real_vendor_id = await asyncio.to_thread(
                 VendorModelModel.get_vendor_id_by_model_id,
-                int(model_id),
+                numeric_model_id,
             )
         except Exception as e:
             logger.warning(f"Failed to resolve vendor for model {model_id}: {e}")
@@ -3338,7 +3370,7 @@ async def generate_storyboard_from_script(
         'dialogue_language': dialogue_language,
         'prompt_language': prompt_language,
         'vendor_id': real_vendor_id,
-        'model_id': int(model_id) if model_id else 1,
+        'model_id': numeric_model_id or 1,
         'enable_thinking': enable_thinking,
         'thinking_effort': thinking_effort,
         # 故事板发布专用配置
@@ -3923,7 +3955,8 @@ async def generate_scene_image(
     生成分镜图片（首帧/尾帧）。
 
     数据链路：预扣算力 → 创建 ai_tools（文生图）+ TasksModel(GENERATE_VIDEO) 由 scheduler 处理
-    → 插入 storyboard_scene_asset(first_frame/last_frame) → 设为当前选中 → 前端轮询 task-status。
+    → 插入 storyboard_scene_asset(first_frame/last_frame，延迟选中：不切换选中指针)
+    → 前端轮询 task-status（生成中任务经 generating 字段返回；成功后自动切换选中）。
     任务完成后 scheduler 回填 ai_tools.result_url（task-status 优先返回 ai_tools.result_url）。
 
     Body:
@@ -4200,7 +4233,14 @@ async def generate_scene_video(
     except Exception as e:
         logger.warning(f"Failed to persist video_config_json on generate-video scene {scene_id}: {e}")
 
-    computing_power = config.get_computing_power(duration=video_duration) if config else 0
+    # 预扣口径与估价接口/结算一致：时长档位基价 × 分辨率/图模式修饰符（向上取整）
+    computing_power = config.get_computing_power(
+        duration=video_duration,
+        context={
+            'image_mode': 'first_last_frame',
+            **({'resolution': video_resolution} if video_resolution else {}),
+        },
+    ) if config else 0
     transaction_id = str(uuid.uuid4())
     ok, msg = await _deduct_computing_power(request, computing_power, transaction_id)
     if not ok:
@@ -4300,7 +4340,8 @@ async def generate_scene_video(
         StoryboardSceneAssetModel.create,
         scene_id=scene_id, asset_type='video', ai_tool_id=ai_tool_id,
     )
-    await asyncio.to_thread(StoryboardSceneAssetModel.set_selected, scene_id, 'video', asset_id)
+    # 延迟选中：生成成功前不切换选中视频（否则生成期间导出/再生成会读到空资产，
+    # 失败导致原视频落空）；选中在轮询 task-status 检测到成功后自动切换。
     await asyncio.to_thread(StoryboardSceneModel.update, scene_id, last_modified_user_id=user_id)
 
     return JSONResponse({
@@ -4310,6 +4351,104 @@ async def generate_scene_video(
         'video_type': video_type,
         'computing_power': computing_power,
         'status': 'submitted',
+    })
+
+
+@router.post('/scene/{scene_id}/estimate-video-power')
+@require_permission("storyboard:view")
+async def estimate_scene_video_power(
+    request: Request,
+    scene_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """单分镜视频生成预计算力（提交前左下角预估行）。
+
+    口径与扣费一致：时长档位基价 × 修饰符（分辨率/图模式，DB 可热更新）向上取整，
+    即 get_computing_power_for_task(context={resolution, image_mode})——前端不复刻
+    倍率表，一律经本接口取值。纯只读，不写偏好不建任务。
+
+    Body:
+        task_type: 视频模型 task_id（普通视频必传）
+        duration_mode: 'auto' | 数字时长档（默认 auto，与提交同参）
+        resolution: '480P'/'720P'/...（缺省取模型默认，与 generate-video 同规则）
+        image_mode: 首尾帧/多参考（缺省 first_last_frame）
+    """
+    user_id = get_user_id_from_header(user_id)
+    scene, err = await _ensure_scene_access(scene_id, user_id, Action.VIEW)
+    if err:
+        return err
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    video_type = scene.video_type or SceneVideoType.VIDEO
+    if video_type == SceneVideoType.DIGITAL_HUMAN:
+        # 对口型：与 generate-video 相同的服务端规划（只读），按 plan 精确计价
+        from services.storyboard_digital_human_service import (
+            StoryboardDigitalHumanError,
+            compute_digital_human_power,
+            orchestrate_digital_human_generation,
+        )
+        try:
+            plan, _segments, _scene, _sb = await asyncio.to_thread(
+                orchestrate_digital_human_generation,
+                scene_id,
+                resolution=data.get('resolution'),
+            )
+        except StoryboardDigitalHumanError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+        power = compute_digital_human_power(plan)
+        return JSONResponse({
+            'success': True,
+            'computing_power': int(math.ceil(float(power or 0))),
+            'duration': int(plan.billable_duration) if plan.billable_duration else None,
+            'resolution': plan.resolution,
+            'task_type': plan.task_type,
+            'digital_human': True,
+        })
+
+    try:
+        task_type = int(data.get('task_type'))
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={'success': False, 'error': 'task_type 必须为整数'})
+    config = UnifiedConfigRegistry.get_by_id(task_type)
+    if not config:
+        return JSONResponse(status_code=400, content={'success': False, 'error': f'未知视频模型 task_type={task_type}'})
+
+    supported_durations = list(getattr(config, 'supported_durations', None) or [])
+    duration = _resolve_storyboard_video_duration_seconds(
+        scene.duration,
+        supported_durations,
+        duration_mode=data.get('duration_mode', 'auto'),
+        explicit_duration=data.get('duration'),
+    )
+    # 分辨率与 generate-video 同规则：白名单校验，缺省取模型默认
+    res_opts, default_res = _video_resolution_options_from_task(config)
+    allowed_res = {str(o.get('value')) for o in res_opts if o.get('value')}
+    raw_res = data.get('resolution')
+    resolution = str(raw_res) if raw_res and str(raw_res) in allowed_res else (str(default_res) if default_res else None)
+
+    image_mode = data.get('image_mode') or ImageMode.FIRST_LAST_FRAME
+    context = {'image_mode': image_mode}
+    if resolution:
+        context['resolution'] = resolution
+    # get_computing_power_for_task 内部查 DB（实现方倍率热更新），to_thread 避免阻塞事件循环
+    computing_power = await asyncio.to_thread(
+        get_computing_power_for_task,
+        task_type,
+        duration=duration,
+        user_id=user_id,
+        context=context,
+    )
+    return JSONResponse({
+        'success': True,
+        'computing_power': int(computing_power or 0),
+        'duration': duration,
+        'resolution': resolution,
+        'task_type': task_type,
+        'digital_human': False,
     })
 
 
@@ -4881,7 +5020,7 @@ async def bind_agent_image_task(
     scene_id: int,
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
-    """Bind agent-submitted ai_tools project_ids to current storyboard scene assets."""
+    """Bind agent-submitted ai_tools project_ids to current storyboard scene assets (延迟选中，不切换选中指针)."""
     user_id = get_user_id_from_header(user_id)
     scene, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
     if err:
@@ -4915,19 +5054,16 @@ async def bind_agent_image_task(
     if not asset_ids:
         return JSONResponse(status_code=400, content={'success': False, 'error': '未提供有效 project_ids'})
 
-    await asyncio.to_thread(
-        StoryboardSceneAssetModel.set_selected,
-        scene_id,
-        asset_type,
-        asset_ids[0],
-    )
+    # 延迟选中：绑定只建资产、不切换选中指针——生成中的空资产不得成为选中项，
+    # 否则生成期间导出/再生成视频会读到空资产（丢片段），失败还会导致原画面落空。
+    # 选中在轮询 task-status 时检测到生成成功后自动切换（resolve_scene_generation_bindings）。
     await asyncio.to_thread(StoryboardSceneModel.update, scene_id, last_modified_user_id=user_id)
 
     return JSONResponse({
         'success': True,
         'asset_type': asset_type,
         'asset_ids': asset_ids,
-        'selected_asset_id': asset_ids[0],
+        'selected_asset_id': None,
     })
 
 
@@ -4950,6 +5086,30 @@ async def get_scene_task_status(
     first_frame = await _asset_task_info(scene, 'first_frame')
     last_frame = await _asset_task_info(scene, 'last_frame')
     video = await _asset_task_info(scene, 'video')
+
+    # 延迟选中解析：提交生成不再立即切换选中指针；此处检测到「更新成功资产」时
+    # 自动切换选中（最新成功者胜出），并返回各类型最新的生成中任务供前端维持进度展示。
+    binding = await asyncio.to_thread(
+        resolve_scene_generation_bindings,
+        scene_id,
+        {
+            'first_frame': scene.selected_first_frame_id,
+            'last_frame': scene.selected_last_frame_id,
+            'video': scene.selected_video_id,
+        },
+    )
+    generating = {}
+    for bind_type, bind_info in binding.items():
+        gen_row = bind_info.get('generating')
+        generating[bind_type] = _generating_row_task_info(gen_row, bind_type) if gen_row else None
+        if bind_info.get('switched'):
+            # 选中已自动切换到最新成功资产，重算该类型的选中 info 供本轮响应直接生效
+            if bind_type == 'first_frame':
+                first_frame = await _asset_task_info(scene, 'first_frame')
+            elif bind_type == 'last_frame':
+                last_frame = await _asset_task_info(scene, 'last_frame')
+            else:
+                video = await _asset_task_info(scene, 'video')
 
     # 对话配音状态
     dialogues = await asyncio.to_thread(StoryboardDialogueModel.list_by_scene, scene_id)
@@ -4981,6 +5141,7 @@ async def get_scene_task_status(
         'first_frame': first_frame,
         'last_frame': last_frame,
         'video': video,
+        'generating': generating,
         'dialogues': voice_items,
         # 分镜当前时长（音频全部完成时由后端自动同步为选中配音求和，浮点秒）。
         # 前端轮询据此即时刷新时间线/MM:SS 标签与进度行总时长。
@@ -5049,7 +5210,7 @@ async def add_dialogue(
         sort_order=sort_order,
         character_id=data.get('character_id'),
         text=data.get('text'),
-        speed=data.get('speed', 1.0),
+        speed=normalize_dialogue_tts_speed(data.get('speed')),
         volume=data.get('volume', 100),
         emo_vec=emo_vec,
         last_modified_user_id=user_id,
@@ -5073,6 +5234,8 @@ async def update_dialogue(
 
     data = await request.json()
     update_data = {k: v for k, v in data.items() if k in ALLOWED_DIALOGUE_UPDATE_FIELDS}
+    if 'speed' in update_data:
+        update_data['speed'] = normalize_dialogue_tts_speed(update_data.get('speed'))
     if 'emo_vec' in update_data:
         # 全版本可编辑；空串/非法 → 清空为 NULL
         try:
@@ -5529,7 +5692,9 @@ async def export_full_video(
     前端轮询 GET /api/storyboard/export-job/{job_id} 获取 download_url。
 
     Body 可选:
-        include_subtitles: bool  默认 true，硬烧对白字幕（ASS，超长分页）
+        include_subtitles: bool  默认 true，硬烧对白字幕
+        subtitle_mode: str       "smart"（默认，按语音时间轴逐句显示）| "block"（整条对白分页）
+        subtitle_side_margin: float  字幕左右边距比例 0~0.18（前端字幕设置透传，缺省用默认值）
     """
     user_id = get_user_id_from_header(user_id)
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
@@ -5539,10 +5704,19 @@ async def export_full_video(
     ensure_resource_access(sb, user_id, Action.VIEW, "故事板")
 
     include_subtitles = True
+    subtitle_mode = None
+    subtitle_side_margin = None
     try:
         body = await request.json()
-        if isinstance(body, dict) and 'include_subtitles' in body:
-            include_subtitles = bool(body.get('include_subtitles'))
+        if isinstance(body, dict):
+            if 'include_subtitles' in body:
+                include_subtitles = bool(body.get('include_subtitles'))
+            if 'subtitle_mode' in body:
+                subtitle_mode = str(body.get('subtitle_mode') or '').strip().lower() or None
+            if body.get('subtitle_side_margin') is not None:
+                subtitle_side_margin = float(body.get('subtitle_side_margin'))
+    except (TypeError, ValueError):
+        pass
     except Exception:
         pass
 
@@ -5576,8 +5750,13 @@ async def export_full_video(
                 update_job(job_id, progress=15)
                 materialize_package_files(plan, os.path.join(work, "package"))
                 update_job(job_id, progress=45)
+                subtitle_options = {
+                    "mode": subtitle_mode,
+                    "side_margin_ratio": subtitle_side_margin,
+                }
                 local_path = build_merged_video(
-                    plan, work, burn_subtitles=include_subtitles
+                    plan, work, burn_subtitles=include_subtitles,
+                    subtitle_options=subtitle_options,
                 )
                 update_job(job_id, progress=80, filename=os.path.basename(local_path))
                 return local_path

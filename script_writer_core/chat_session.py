@@ -37,6 +37,7 @@ class ChatSession:
         auth_token: str = "",
         model: Optional[str] = None,
         model_id: Optional[int] = None,
+        vendor_id: Optional[int] = None,
         text_to_image_model_id: Optional[int] = None,
         session_type: int = 1
     ):
@@ -152,6 +153,9 @@ class ChatSession:
         # 设置模型（默认使用 DeepSeek V4 Flash；原 Gemini 3 Flash Preview 已下线）。
         self.model = model or "deepseek-v4-flash"
         self.model_id = model_id  # 存储模型ID
+        self.vendor_id = vendor_id  # 供应商ID（随会话持久化）
+        if vendor_id is not None and self.pm_agent:
+            self.pm_agent._vendor_id = vendor_id
 
         self.created_at = datetime.now()
         self.updated_at = datetime.now()
@@ -204,13 +208,14 @@ class ChatSession:
             self.pm_agent._ask_fail_count = 0  # 重置 ask_user 连续失败计数
         self.updated_at = datetime.now()
 
-    def set_model(self, model: str, model_id: Optional[int] = None) -> bool:
+    def set_model(self, model: str, model_id: Optional[int] = None, vendor_id: Optional[int] = None) -> bool:
         """
         切换 AI 模型
 
         Args:
             model: 模型名称
             model_id: 模型ID（可选）
+            vendor_id: 供应商ID（可选）
 
         Returns:
             bool: 切换是否成功
@@ -218,11 +223,16 @@ class ChatSession:
         self.model = model
         if model_id is not None:
             self.model_id = model_id
+        if vendor_id is not None:
+            self.vendor_id = vendor_id
 
         # 同时更新 pm_agent 的模型，确保 API 调用使用正确的模型
         if hasattr(self, "pm_agent") and self.pm_agent:
             self.pm_agent.model = model
-            logger.info(f"Session {self.session_id}: 已更新 PM Agent 模型为 {model}")
+            # 同步 vendor_id，使运行中的 PM 循环下一轮即使用新供应商路由
+            if vendor_id is not None:
+                self.pm_agent._vendor_id = vendor_id
+            logger.info(f"Session {self.session_id}: 已更新 PM Agent 模型为 {model} (vendor_id={vendor_id})")
 
         self.updated_at = datetime.now()
         return True

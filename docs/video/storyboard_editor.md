@@ -218,6 +218,21 @@
 - 候选按分镜隔离，切换分镜不会丢失已选候选
 - 生成新的候选不会覆盖已有的，可累积挑选
 
+### 延迟选中（2026-09 起）
+
+提交生成（直填生图/直连视频/智能体生图生视频/批量补图）只创建候选资产，**不再立即切换选中指针**：
+
+- 生成期间选中的仍是上一个成功资产——主预览持续显示旧画面；此间导出整片、再生成视频读到的都是可用素材，不会因生成中/失败而丢失片段
+- 右栏候选区新增「生成中」占位卡片（旧选中卡保持选中高亮），进度由 `GET /scene/{id}/task-status` 响应新增的 `generating` 字段驱动。占位卡若拿到可播 `result_url` 会直接渲染媒体——此为防御性支持，当前后端在生成/下载阶段不写 `result_url`，正常流程占位卡在任务完成前始终显示「生成中」
+- **生成成功后**后端在轮询中自动把选中切换到最新成功资产（多次重新生成时最新成功者胜出），前端画面随之替换
+- 生成失败无需回滚（选中从未离开旧资产），失败候选卡显示失败占位
+- 轮询收尾（`hasRunning` 为假）会 `await` 刷新候选列表并用选中候选 URL 回写主预览后局部重绘——占位卡不会停留在最后一轮的中间状态（用户改选/失败收尾场景），无需刷新页面
+- 轮询继续/占位口径：DOWNLOADING(6) 与 PENDING/PROCESSING 同视为进行中（`polling.js hasRunning`、`render.js isCandidateTaskRunning` 一致）
+- 闩锁语义：仅当资产完成时间晚于分镜 `update_at` 才自动切换——用户在生成完成后的手动改选不会被轮询覆盖
+- 上传候选（`POST /scene/{id}/asset/upload` 的 `set_selected`）与手动选中接口行为不变
+
+核心实现：`services/storyboard_asset_service.py` 的 `resolve_scene_generation_bindings`（api/storyboard.py task-status 路由与 CLI `task_status` 共用）；提交侧不再 `set_selected` 的点：`bind_projects`、bind 路由、直连 generate-video、数字人计划提交。
+
 ---
 
 ## 预览分辨率与逻辑画布

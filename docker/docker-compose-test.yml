@@ -23,15 +23,27 @@ services:
       - "3307:3306"
     volumes:
       # MySQL 配置文件
-      - ./mysql/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+      # 注意必须挂载到 /etc/mysql/my.cnf 而非镜像默认的 /etc/my.cnf 链：
+      # CI DinD 场景下宿主机 AppArmor usr.sbin.mysqld profile 会附加到容器内
+      # mysqld 进程，/etc/my.cnf 读取被拒（EACCES），profile 只允许 /etc/mysql/**。
+      # mysqld 默认搜索路径包含 /etc/mysql/my.cnf，可正常读取。
+      - ./mysql/my.cnf:/etc/mysql/my.cnf:ro
       # 初始化 SQL 脚本（首次启动时自动执行）
       - ../model/sql:/docker-entrypoint-initdb.d:ro
-    command: --default-authentication-plugin=mysql_native_password
+    # --innodb-flush-log-at-trx-commit=0 等：测试库不要求崩溃持久性，
+    # 关闭 fsync 以规避 DinD(overlay2 套 overlay2) 下冷初始化极慢导致健康检查超时
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --innodb-flush-log-at-trx-commit=0
+      --sync-binlog=0
+      --innodb-doublewrite=0
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_test_pass"]
-      interval: 10s
+      # 走 TCP(127.0.0.1) 而非 localhost socket，避免 socket 路径不一致导致误判
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "3306", "-u", "root", "-proot_test_pass"]
+      # DinD 冷初始化实测约 110s，且随并发负载波动；预算放宽到约 180s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 30
       start_period: 30s
     networks:
       - zjt_test_network

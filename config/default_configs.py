@@ -940,6 +940,25 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== 小米 MiMo 配置（Token Plan 套餐） ====================
+    {
+        'key': 'llm.mimo.api_key',
+        'value_type': 'string',
+        'description': '小米 MiMo API Key（Token Plan 套餐）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True,
+        'user_module_grantable': True
+    },
+    {
+        'key': 'llm.mimo.base_url',
+        'value_type': 'string',
+        'description': '小米 MiMo API 基础URL（默认 https://token-plan-cn.xiaomimimo.com/v1）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== 七牛云存储配置 ====================
     {
         'key': 'file_storage.qiniu.access_key',
@@ -1134,6 +1153,15 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'key': 'checkin.streak_bonus_config',
         'value_type': 'json',
         'description': '连续签到奖励配置，格式: {"3": 5, "7": 15, "14": 30, "30": 50}',
+        'editable': True,
+        'is_sensitive': False
+    },
+
+    # ==================== 模型目录推荐配置 ====================
+    {
+        'key': 'model_catalog.scene_recos',
+        'value_type': 'json',
+        'description': '各场景推荐模型（性价比/效果双档）管理员覆盖，格式: {"llm.chat": {"value": {"canonical": "deepseek-v4-flash", "preferred_vendors": ["deepseek"], "reason": "..."}, "quality": {...}}}；未覆盖的场景/档位使用 config/model_catalog.py 的 SCENE_RECOS 代码默认值',
         'editable': True,
         'is_sensitive': False
     },

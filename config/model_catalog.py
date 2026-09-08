@@ -8,11 +8,20 @@
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import logging
+
+from config.config_util import get_dynamic_config_value
+
+logger = logging.getLogger(__name__)
+
 TRACK_VALUE = "value"
 TRACK_QUALITY = "quality"
 TRACK_CUSTOM = "custom"
 
 VALID_TRACKS = (TRACK_VALUE, TRACK_QUALITY, TRACK_CUSTOM)
+
+# 管理员可热更新的推荐模型覆盖配置键（system_config 表，json 类型）
+SCENE_RECOS_CONFIG_KEY = "model_catalog.scene_recos"
 
 
 class ModelScene:
@@ -209,7 +218,96 @@ def get_scene_reco(scene: Optional[str]) -> Optional[SceneReco]:
     key = normalize_scene(scene)
     if not key:
         return None
-    return SCENE_RECOS.get(key)
+    return get_scene_recos_merged().get(key)
+
+
+def _parse_reco_slot(data: Any) -> Optional[RecoSlot]:
+    """解析单个推荐档位配置；结构非法返回 None。"""
+    if not isinstance(data, dict):
+        return None
+    canonical = str(data.get("canonical") or "").strip()
+    if not canonical:
+        return None
+    vendors_raw = data.get("preferred_vendors") or ()
+    if isinstance(vendors_raw, str):
+        vendors = tuple(v.strip() for v in vendors_raw.split(",") if v.strip())
+    elif isinstance(vendors_raw, (list, tuple)):
+        vendors = tuple(str(v).strip() for v in vendors_raw if str(v).strip())
+    else:
+        vendors = ()
+    return RecoSlot(
+        canonical=canonical,
+        preferred_vendors=vendors,
+        reason=str(data.get("reason") or ""),
+    )
+
+
+def parse_scene_recos_override(raw: Any) -> Dict[str, Dict[str, RecoSlot]]:
+    """解析管理员配置的场景推荐覆盖。
+
+    返回 {scene: {track: RecoSlot}}；未知场景、非法档位跳过并告警，
+    不让坏配置影响接口可用性。
+    """
+    overrides: Dict[str, Dict[str, RecoSlot]] = {}
+    if not isinstance(raw, dict):
+        return overrides
+    for scene, slots in raw.items():
+        if scene not in SCENE_RECOS:
+            logger.warning("[model_catalog] 忽略未知场景推荐配置: %s", scene)
+            continue
+        if not isinstance(slots, dict):
+            logger.warning("[model_catalog] 场景 %s 推荐配置不是对象，已忽略", scene)
+            continue
+        parsed: Dict[str, RecoSlot] = {}
+        for track in (TRACK_VALUE, TRACK_QUALITY):
+            if track not in slots:
+                continue
+            slot = _parse_reco_slot(slots.get(track))
+            if slot:
+                parsed[track] = slot
+            else:
+                logger.warning(
+                    "[model_catalog] 场景 %s 的 %s 档配置非法（缺 canonical），该档回退代码默认",
+                    scene, track,
+                )
+        if parsed:
+            overrides[scene] = parsed
+    return overrides
+
+
+def get_scene_recos_override() -> Dict[str, Dict[str, RecoSlot]]:
+    """读取管理员在 system_config 中配置的场景推荐覆盖（DB 优先，失败回退空）。"""
+    try:
+        raw = get_dynamic_config_value("model_catalog", "scene_recos", default=None)
+    except Exception as exc:
+        # DB 不可用（启动/迁移期）或配置文件缺失等场景兜底
+        logger.warning("[model_catalog] 读取推荐模型动态配置失败: %s", type(exc).__name__)
+        return {}
+    return parse_scene_recos_override(raw)
+
+
+def get_scene_recos_merged() -> Dict[str, SceneReco]:
+    """代码默认 SCENE_RECOS 与管理员覆盖的合并视图（按档位覆盖）。"""
+    overrides = get_scene_recos_override()
+    if not overrides:
+        return SCENE_RECOS
+    merged = dict(SCENE_RECOS)
+    for scene, slots in overrides.items():
+        base = SCENE_RECOS[scene]
+        merged[scene] = SceneReco(
+            scene,
+            value=slots.get(TRACK_VALUE) or base.value,
+            quality=slots.get(TRACK_QUALITY) or base.quality,
+        )
+    return merged
+
+
+def reco_slot_payload(slot: RecoSlot) -> Dict[str, Any]:
+    return {
+        "canonical": slot.canonical,
+        "preferred_vendors": list(slot.preferred_vendors),
+        "reason": slot.reason,
+    }
 
 
 def get_model_family(canonical: Optional[str]) -> str:
@@ -459,7 +557,7 @@ def tracks_message(catalog: Dict[str, Any]) -> str:
 def scene_catalog_map() -> Dict[str, Dict[str, Any]]:
     """给前端的静态目录（不含可用性）。"""
     result = {}
-    for scene, reco in SCENE_RECOS.items():
+    for scene, reco in get_scene_recos_merged().items():
         result[scene] = {
             "scene": scene,
             "default_track": TRACK_VALUE,

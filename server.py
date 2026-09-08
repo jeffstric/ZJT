@@ -28,6 +28,7 @@ from config.config_util import resolve_bin_path
 from config.version import get_app_version
 from perseids_server.client import make_perseids_request, get_device_uuid, async_make_perseids_request, async_call_external_auth_server
 from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel
+from model.video_workflow import compute_content_hash
 from model.ai_tools_log import AIToolsLogModel
 from model.users import UsersModel
 from model.user_tokens import UserTokensModel
@@ -91,8 +92,11 @@ from utils.project_path import (
     generate_upload_filename, build_upload_url, resolve_upload_url_to_local_path,
 )
 from config.constant import Edition, Action, StoryType
+from config.media_file_policy import MediaFilePolicy
+from model.media_file_mapping import MediaFileEntity
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from utils.image_grid_merger import ImageGridMerger
+from utils.media_mapping_util import register_uploaded_file_mapping, upload_local_path
 from utils.sentry_util import SentryUtil
 from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
@@ -103,6 +107,7 @@ from utils.computing_power import (
     BILLING_DURATION_SOURCE_REFERENCE_VIDEO,
 )
 from utils.video_resolution import validate_video_resolution
+from utils.content_moderation_error import is_content_moderation_user_message
 from utils.resource_access import (
     get_user_id_from_header,
     check_resource_permission,
@@ -519,6 +524,11 @@ app.include_router(marketing_publications_router)
 # 导入并注册通知系统 API 路由
 from api.notifications import router as notifications_router
 app.include_router(notifications_router)
+
+# 导入并注册本站公告 API 路由（用户侧 + 管理侧）
+from api.announcements import router as announcements_router, admin_router as announcements_admin_router
+app.include_router(announcements_router)
+app.include_router(announcements_admin_router)
 
 # 用户模块（接口模块）属商业版能力：路由挂载、Supervisor 启动验证与实现方绑定加载
 # 由 enterprise.register(app) 注入（见 enterprise 仓），社区版核心不引用。
@@ -1070,6 +1080,18 @@ def _save_user_asset(
         content = upload_file.file.read()
         f.write(content)
 
+    # 素材落盘即注册 CDN mapping 并触发异步上传七牛：
+    # 此前 workflow 素材从不建 mapping，所有 /upload/workflow/ 访问都从本机经
+    # frp 隧道全量吐出（打满 ECS 出带宽）。注册后 cdn_redirect_middleware 会
+    # 对后续访问 302 到七牛。本函数经 asyncio.to_thread 在工作线程执行，
+    # 这里的同步 DB 调用不会阻塞事件循环。
+    register_uploaded_file_mapping(
+        user_id=user_id,
+        local_path=upload_local_path(file_path),
+        entity_type=MediaFileEntity.WORKFLOW,
+        policy_code=MediaFilePolicy.NEVER_EXPIRE,
+    )
+
     host = (base_host or SERVER_HOST).rstrip("/")
     return build_upload_url(category, str(user_id), info.filename, host=host)
 
@@ -1089,6 +1111,23 @@ def _normalize_origin(origin: Optional[str]) -> Optional[str]:
         return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
     except Exception:
         return None
+
+
+async def _content_hash_of(workflow, workflow_data=None) -> Optional[str]:
+    """
+    在事件循环外计算工作流内容哈希（红线：web 接口禁止阻塞调用）。
+
+    workflow_data 单工作流可达 9~18MB，json 解析 + 规范化序列化 + sha256 是
+    数百毫秒级 CPU 操作，直接在事件循环执行会拖慢所有并发接口；poll 端点
+    每个挂机页面每 60s 调用一次，必须移入工作线程。
+
+    Args:
+        workflow: 工作流行对象（None 时返回 None）
+        workflow_data: 调用方已解析的 workflow_data dict（可选，避免二次解析）
+    """
+    if workflow is None:
+        return None
+    return await asyncio.to_thread(compute_content_hash, workflow, workflow_data)
 
 
 def _get_local_upload_file(asset_url: Optional[str], origin: Optional[str]) -> Optional[str]:
@@ -2015,7 +2054,9 @@ async def get_status(
                 "project_id": ai_tool_id,
                 "status": status_str,
                 "results": results_payload,
-                "reason": reason_payload
+                "reason": reason_payload,
+                # 失败原因是否命中内容审核违规（前端 ContentViolation 识别用）
+                "is_content_violation": is_content_moderation_user_message(reason_payload)
             })
 
         # Multiple project_ids: return list
@@ -5450,10 +5491,14 @@ async def get_video_workflow(
                 content={"code": -1, "message": "无权限访问该工作流"}
             )
         
+        data = workflow.to_dict()
+        # 服务端权威内容哈希：前端上传去重门与 PUT CAS（X-Base-Hash）的依据。
+        # to_dict 已解析 workflow_data，复用避免大 JSON 二次解析；哈希计算移出事件循环。
+        data['content_hash'] = await _content_hash_of(workflow, data['workflow_data'])
         return JSONResponse({
             "code": 0,
             "message": "success",
-            "data": workflow.to_dict()
+            "data": data
         })
     except Exception as e:
         logger.error(f"Failed to get video workflow {workflow_id}: {str(e)}")
@@ -5503,10 +5548,12 @@ async def poll_workflow_node_status(
                 workflow_data = {}
         
         if not workflow_data or 'nodes' not in workflow_data:
+            # 空/损坏数据分支不传预解析值：poll 解析失败时置 {}，而哈希口径
+            # 需与 GET/PUT 一致（损坏 JSON → None），让 compute 自行从原始值解析
             return JSONResponse({
                 "code": 0,
                 "message": "success",
-                "data": {"updated_nodes": []}
+                "data": {"updated_nodes": [], "content_hash": await _content_hash_of(workflow)}
             })
         
         # 查找有 project_id 但结果为空的节点
@@ -5624,7 +5671,11 @@ async def poll_workflow_node_status(
                 "total": len(updated_nodes),
                 "characters": characters,
                 "props": props_list,
-                "locations": locations
+                "locations": locations,
+                # 服务端权威内容哈希：前端去重门据此感知服务端内容是否
+                # 被其他会话/迟到请求改变（此时放弃跳过、重传收敛）。
+                # 复用上面已解析的 workflow_data，哈希计算移出事件循环
+                "content_hash": await _content_hash_of(workflow, workflow_data)
             }
         })
         
@@ -6486,6 +6537,7 @@ async def parse_script(
                 )
         
         # 导入剧本解析模块
+        from llm.llm_client_factory import resolve_composite_model_ref
         from model.vendor_model import VendorModelModel
 
         # 获取真实的 vendor_id
@@ -6497,11 +6549,29 @@ async def parse_script(
             except (ValueError, TypeError):
                 logger.warning(f"Invalid vendor_id: {vendor_id}, will try to get from model_id")
 
-        if real_vendor_id == 1 and model_id:
+        # 归一化 model_id：本地服务模型（ollama/vllm）在 /api/models 下发的 id 是
+        # "vendor:模型名" 复合串（见 get_available_models），历史版本前端会把它
+        # 当作 model_id 回传，直接 int() 会 ValueError 导致整个接口 500。
+        numeric_model_id = None
+        if model_id:
             try:
-                real_vendor_id = VendorModelModel.get_vendor_id_by_model_id(int(model_id)) or 1
+                numeric_model_id = int(model_id)
+            except (TypeError, ValueError):
+                resolved_vendor_id, numeric_model_id = await asyncio.to_thread(
+                    resolve_composite_model_ref, str(model_id)
+                )
+                if resolved_vendor_id and real_vendor_id == 1:
+                    real_vendor_id = resolved_vendor_id
+                if not numeric_model_id:
+                    logger.warning(f"无法解析复合模型标识: {model_id}，拆分任务将回退默认模型")
+
+        if real_vendor_id == 1 and numeric_model_id:
+            try:
+                real_vendor_id = await asyncio.to_thread(
+                    VendorModelModel.get_vendor_id_by_model_id, numeric_model_id
+                ) or 1
             except Exception as e:
-                logger.warning(f"Failed to get vendor_id for model {model_id}: {e}")
+                logger.warning(f"Failed to get vendor_id for model {numeric_model_id}: {e}")
 
         # 改为异步任务：创建持久化拆分任务后立即返回 202，前端轮询状态。
         # 见 docs/script/script_parser_incremental_split_design.md §10 §13.1。
@@ -6519,7 +6589,7 @@ async def parse_script(
             "dialogue_language": dialogue_language,
             "prompt_language": prompt_language,
             "vendor_id": real_vendor_id,
-            "model_id": int(model_id) if model_id else 1,
+            "model_id": numeric_model_id or 1,
             "enable_thinking": enable_thinking,
             "thinking_effort": thinking_effort,
             "sequence_mode": sequence_mode,
@@ -6798,11 +6868,41 @@ async def update_video_workflow(
                         del update_fields['workflow_data']
 
         if update_fields:
+            # CAS（乐观并发控制）：客户端在 X-Base-Hash 头携带本次编辑所基于的
+            # 服务端内容哈希。不一致说明内容已被其他会话/迟到请求改写，
+            # 拒绝写入（避免静默覆盖丢失），并返回当前哈希供前端收敛。
+            # 头部缺省 = 不做 CAS（兼容旧前端、恢复重放等强制写路径）。
+            base_hash = request.headers.get('x-base-hash')
+            if base_hash:
+                # 在同一工作线程内重读 + 哈希：既把 9~18MB 大 JSON 的解析/序列化
+                # 移出事件循环（红线），也让校验基于当下最新行而非请求开始时
+                # 加载的旧快照（收窄 check-then-act 窗口；原子性仍需版本号列，见 docs）
+                def _cas_current_hash():
+                    fresh = VideoWorkflowModel.get_by_id(workflow_id)
+                    return compute_content_hash(fresh) if fresh else None
+                current_hash = await asyncio.to_thread(_cas_current_hash)
+                if current_hash is not None and current_hash != base_hash:
+                    logger.warning(
+                        f"[CAS] 拒绝更新工作流 {workflow_id}："
+                        f"base_hash={base_hash[:12]}... != current={current_hash[:12]}..."
+                    )
+                    return JSONResponse({
+                        "code": 409,
+                        "message": "工作流内容已被其他会话修改，本次保存被拒绝",
+                        "data": {"content_hash": current_hash}
+                    })
             VideoWorkflowModel.update(workflow_id, **update_fields)
 
+        # 返回写入后的最新内容哈希（未写字段时哈希即当前值），
+        # 前端据此滚动上传去重门基线与下一次 CAS 的 base_hash。
+        # 回读 + 哈希整体放入工作线程：大 JSON 序列化不占事件循环
+        def _post_update_hash():
+            latest = VideoWorkflowModel.get_by_id(workflow_id)
+            return compute_content_hash(latest) if latest else None
         return JSONResponse({
             "code": 0,
-            "message": "更新成功"
+            "message": "更新成功",
+            "data": {"content_hash": await asyncio.to_thread(_post_update_hash)}
         })
     except Exception as e:
         logger.error(f"Failed to update video workflow {workflow_id}: {str(e)}")

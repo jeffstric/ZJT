@@ -95,10 +95,10 @@ delay_seconds = calculate_next_retry_delay(new_try_count)
 next_trigger = datetime.now() + timedelta(seconds=delay_seconds)
 ```
 
-**重试延迟策略**（指数退避）：
+**重试延迟策略**（指数退避，RUNNING 轮询与失败重试共用）：
 - 基础延迟：3秒
 - 延迟计算：`delay = 3 * (2 ^ (try_count - 1))`
-- 最大延迟：360秒（6分钟）
+- 最大延迟：`VIDEO_TASK_RETRY_DELAY_MAX_SECONDS` = 96秒（`config/constant.py`）
 
 | 重试次数 | 延迟时间 |
 |---------|---------|
@@ -107,9 +107,13 @@ next_trigger = datetime.now() + timedelta(seconds=delay_seconds)
 | 3       | 12秒    |
 | 4       | 24秒    |
 | 5       | 48秒    |
-| 6       | 96秒    |
-| 7       | 192秒   |
-| 8+      | 360秒   |
+| 6+      | 96秒    |
+
+> 封顶从 360s 降为 96s 的原因：上游轮询返回 RUNNING 时 `process_func` 返回 False，
+> 同样走本退避。360s 封顶时代，上游任务完成到被调度器发现之间的空窗最坏达数分钟
+> （实测 MiniMax H3 Task 104 成片 19:55 跑完、19:57:35 才被发现，轮询间隔已爬到 195s），
+> 分镜长时间停在「生成中」。封顶 96s 后完成发现延迟 ≤96s，代价是 30 次重试约 48 分钟
+> 耗尽（原约 2.9 小时），终态失败与退费更快。
 
 ## 任务状态说明
 

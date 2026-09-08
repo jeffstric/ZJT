@@ -107,6 +107,13 @@
     return false;
   }
 
+  // 未知标签净化：白名单外的标签只保留安全字符（字母/数字/-/_/空格），
+  // 防止上游错误消息中的 HTML 片段经 describe() 文案进入 innerHTML/v-html 通道
+  function sanitizeUnknownLabel(label) {
+    var safe = String(label || '').replace(/[^a-z0-9_\- ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return safe || null;
+  }
+
   // 提取违规标签（safety_violations=[...] / Gemini [REASON]）
   function extractLabels(msg) {
     var labels = [];
@@ -118,7 +125,7 @@
       violMatch[1].split(',')
         .map(function (s) { return s.trim().replace(/["']/g, '').toLowerCase(); })
         .filter(Boolean)
-        .forEach(function (v) { push(VIOLATION_LABELS[v] || v); });
+        .forEach(function (v) { push(VIOLATION_LABELS[v] || sanitizeUnknownLabel(v)); });
     }
     var blockMatch = msg.match(/(?:gemini\s+)?image\s+generation\s+blocked\s*\[([^\]]+)\]/i);
     if (blockMatch) {
@@ -240,7 +247,8 @@
     card.appendChild(titleEl);
     card.appendChild(bodyEl);
 
-    if (raw) {
+    // 后端已归一改写时原文与友好文案相同，不再展示重复的"原始错误信息"
+    if (raw && raw !== String(friendly || '').trim()) {
       var details = document.createElement('details');
       details.className = 'cv-raw';
       var summary = document.createElement('summary');

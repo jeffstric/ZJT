@@ -31,6 +31,59 @@
     return String(aTitle || '').localeCompare(String(bTitle || ''), 'zh-CN', { numeric: true, sensitivity: 'base' });
   }
 
+  // 分镜的权威顺序是父幕 data.shots 的数组顺序（与 syncShotFramesToShots 一致）。
+  // 节点标题只是显示用途（shot_id / shot_number / 兜底文案混用），不能作为布局顺序键。
+  function getShotFrameShotId(node){
+    return String(node.data.shotId || (node.data.shotJson && node.data.shotJson.shot_id) || '');
+  }
+
+  function sortShotEntriesByShotsOrder(entries, groupNode){
+    const shotEntries = entries.filter(entry => entry.node.type === 'shot_frame');
+    const shots = groupNode && groupNode.data ? (groupNode.data.shots || []) : [];
+    const orderByShotId = new Map();
+    shots.forEach((shot, index) => {
+      if(shot && shot.shot_id !== undefined && shot.shot_id !== null && !orderByShotId.has(String(shot.shot_id))){
+        orderByShotId.set(String(shot.shot_id), index);
+      }
+    });
+
+    if(!orderByShotId.size){
+      return shotEntries.sort((a, b) => naturalCompareTitles(a.node.title, b.node.title));
+    }
+
+    const matched = [];
+    const unmatched = [];
+    shotEntries.forEach(entry => {
+      const shotId = getShotFrameShotId(entry.node);
+      if(shotId && orderByShotId.has(shotId)){
+        matched.push({ entry, index: orderByShotId.get(shotId) });
+      } else {
+        unmatched.push(entry);
+      }
+    });
+    matched.sort((a, b) => a.index - b.index);
+    unmatched.sort((a, b) => naturalCompareTitles(a.node.title, b.node.title));
+    return matched.map(item => item.entry).concat(unmatched);
+  }
+
+  // 幕簇堆叠顺序按其首个分镜的全局 shot_number（后端拆分时已按 shot_number 排序，
+  // 且 shot_number 为跨幕连续编号）；幕标题是 LLM 生成的 group_name，拼音序与剧情顺序不一致。
+  function getFirstShotNumber(groupNode){
+    const shots = groupNode && groupNode.data ? (groupNode.data.shots || []) : [];
+    for(const shot of shots){
+      const num = Number(shot && shot.shot_number);
+      if(Number.isFinite(num)) return num;
+    }
+    return null;
+  }
+
+  function compareShotGroups(a, b){
+    const aNum = getFirstShotNumber(a);
+    const bNum = getFirstShotNumber(b);
+    if(aNum !== null && bNum !== null && aNum !== bNum) return aNum - bNum;
+    return naturalCompareTitles(a.title, b.title);
+  }
+
   function getNodeDimensions(nodeId){
     // 性能优化：走尺寸缓存，布局排序/碰撞检测循环中的高频读取不再触发强制布局
     const node = state.nodes.find(n => n.id === nodeId);
@@ -180,9 +233,7 @@
     });
     const totalWidth = Math.max(0, columnCursor - COLUMN_GAP - startX);
 
-    const shotEntries = entries
-      .filter(entry => entry.node.type === 'shot_frame')
-      .sort((a, b) => naturalCompareTitles(a.node.title, b.node.title));
+    const shotEntries = sortShotEntriesByShotsOrder(entries, nodeMap.get(cluster.rootId));
 
     if(!shotEntries.length){
       let maxBottom = baseY;
@@ -403,7 +454,7 @@
     const scriptRowCenters = new Map(); // scriptId -> { sum, count }
     const referencedScriptIds = new Set();
     const { adjacency, reverseAdjacency } = buildGraph();
-    const shotGroupNodes = state.nodes.filter(node => node.type === 'shot_group').sort((a, b) => naturalCompareTitles(a.title, b.title));
+    const shotGroupNodes = state.nodes.filter(node => node.type === 'shot_group').sort(compareShotGroups);
     const assigned = new Set();
     let currentY = BASE_PADDING_Y;
 

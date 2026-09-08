@@ -854,6 +854,71 @@ select{
   opacity: 0.6;
   cursor: not-allowed;
 }
+/*
+ * 保存按钮 loading：亮点沿按钮自身 border 路径绕行（参考剧本页提交按钮）。
+ * 只旋转 conic-gradient 的起始角，按钮外形固定不动。
+ */
+@property --save-btn-border-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+#saveBtn{
+  position: relative;
+  overflow: visible;
+}
+#saveBtn .save-btn-ring{
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  box-sizing: border-box;
+  /* 仅露出约 2px 的边框路径 = 按钮的 border 轨迹 */
+  padding: 2px;
+  background: conic-gradient(
+    from var(--save-btn-border-angle),
+    rgba(255, 255, 255, 0.2) 0deg,
+    rgba(255, 255, 255, 0.2) 300deg,
+    rgba(255, 255, 255, 0.55) 330deg,
+    #ffffff 348deg,
+    rgba(255, 255, 255, 0.75) 355deg,
+    rgba(255, 255, 255, 0.2) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+}
+#saveBtn.is-saving .save-btn-ring{
+  opacity: 1;
+  animation: save-btn-border-spin 1.2s linear infinite;
+}
+@keyframes save-btn-border-spin {
+  to { --save-btn-border-angle: 360deg; }
+}
+/* 409 冲突：工作流已被其他会话覆盖，按钮变黄提示刷新页面读取最新数据 */
+#saveBtn.save-conflict{
+  background: #f59e0b;
+  color: #fff;
+  animation: save-conflict-pulse 1.6s ease-in-out infinite;
+}
+#saveBtn.save-conflict:hover{
+  opacity: 0.9;
+}
+#saveBtn.save-conflict:disabled{
+  opacity: 0.9;
+  cursor: pointer;
+}
+@keyframes save-conflict-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5); }
+  50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+}
 .toast{
   position: fixed;
   bottom: 24px;
@@ -1760,6 +1825,111 @@ textarea:focus{ border-color: var(--primary); }
 }
 #shotGroupEditModal .modal-body{
   background: #ffffff;
+}
+
+/* 保存冲突对话框：浅色主题显式白底（深色主题由全局 html.theme-dark 规则接管），
+ * 底部为大号双选项按钮，标题 + 说明两行 */
+#saveConflictModal .modal-card{
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 14px 40px rgba(0,0,0,0.16);
+  max-width: 540px;
+}
+#saveConflictModal .modal-header{
+  background: #f8fafc;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 12px 16px;
+}
+#saveConflictModal .modal-title{
+  color: #0f172a;
+  font-size: 15px;
+}
+#saveConflictModal .modal-close{
+  background: #eef2f7;
+  color: #475569;
+}
+#saveConflictModal .modal-close:hover{
+  background: #e2e8f0;
+}
+#saveConflictModal .modal-body{
+  background: #ffffff;
+  color: var(--text);
+  padding: 24px 24px 8px;
+}
+#saveConflictModal .conflict-icon{
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #fef3c7;
+  color: #d97706;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  margin-bottom: 14px;
+}
+#saveConflictModal .conflict-lead{
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text);
+}
+#saveConflictModal .conflict-hint{
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+#saveConflictModal .modal-footer{
+  display: flex;
+  gap: 12px;
+  padding: 18px 24px 24px;
+  border-top: none;
+}
+#saveConflictModal .conflict-btn{
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+}
+#saveConflictModal .conflict-btn-title{
+  font-size: 15px;
+  font-weight: 700;
+}
+#saveConflictModal .conflict-btn-desc{
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  opacity: 0.78;
+}
+#saveConflictModal .conflict-btn-server{
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+}
+#saveConflictModal .conflict-btn-server:hover{
+  background: var(--panel-hover);
+  border-color: var(--primary);
+}
+#saveConflictModal .conflict-btn-local{
+  background: #ef4444;
+  color: #ffffff;
+  border: 1px solid #dc2626;
+}
+#saveConflictModal .conflict-btn-local:hover{
+  background: #dc2626;
+  border-color: #b91c1c;
+}
+#saveConflictModal .conflict-btn:disabled{
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 #shotGroupModalContent,

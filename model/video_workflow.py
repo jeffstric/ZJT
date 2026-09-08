@@ -4,10 +4,56 @@ Video Workflow Model - Database operations for video_workflow table
 from typing import Optional, Dict, Any
 from .database import execute_query, execute_update, execute_insert
 from config.constant import Edition
+import hashlib
 import logging
 import json
 
 logger = logging.getLogger(__name__)
+
+
+def compute_content_hash(workflow, workflow_data=None) -> str:
+    """
+    计算工作流内容的权威哈希（服务端唯一计算方）。
+
+    workflow_data 是 MySQL json 列，入库会被规范化（key 排序/空白/数字格式），
+    因此必须对解析后的 Python 对象做规范化序列化再哈希，保证同一库存内容
+    任意时刻计算结果稳定。前端只持有/比较/透传该值，绝不自行计算
+    （JS/Python 序列化差异无法对齐）。
+
+    覆盖 PUT 可写的全部内容字段：workflow_data / style /
+    style_reference_image / default_world_id / workflow_ratio。
+    例外：workflow_data.viewport（各端本地视口状态）不参与哈希。
+
+    Args:
+        workflow: 工作流行对象
+        workflow_data: 调用方已解析的 workflow_data（dict）。GET/poll 端点
+            本就要 json.loads 一次，传入可避免对 9~18MB 大 JSON 的二次解析；
+            缺省时从 workflow.workflow_data 自行解析（str/dict 均可）。
+    """
+    if workflow_data is None:
+        workflow_data = getattr(workflow, 'workflow_data', None)
+    if isinstance(workflow_data, str):
+        try:
+            workflow_data = json.loads(workflow_data)
+        except Exception:
+            workflow_data = None
+    if isinstance(workflow_data, dict) and 'viewport' in workflow_data:
+        # viewport（panX/panY/zoom）是各端本地视图状态：不同用户的缩放/平移
+        # 必然不同，参与哈希会导致「内容没变、仅视角不同」也互相 CAS 409
+        # 冲突（双方都觉自己什么都没改）。哈希前剔除，存储/恢复不受影响。
+        workflow_data = {k: v for k, v in workflow_data.items() if k != 'viewport'}
+    canonical = json.dumps(
+        workflow_data, sort_keys=True, ensure_ascii=False,
+        separators=(',', ':'), default=str
+    )
+    parts = [
+        canonical,
+        str(getattr(workflow, 'style', None)),
+        str(getattr(workflow, 'style_reference_image', None)),
+        str(getattr(workflow, 'default_world_id', None)),
+        str(getattr(workflow, 'workflow_ratio', None)),
+    ]
+    return hashlib.sha256('\x1f'.join(parts).encode('utf-8')).hexdigest()
 
 
 class VideoWorkflow:

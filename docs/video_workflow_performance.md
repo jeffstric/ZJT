@@ -64,6 +64,21 @@
 - 对世界数据（characters/props/locations）做 JSON 指纹比对（`state._lastWorldFingerprint`），指纹未变且无节点状态更新时，跳过对所有分镜节点 `updateReferences()` 的调用（原实现每 60s 触发每节点 3 组 innerHTML 重建）。
 - 节点恢复路径（`restoreNode`）不受影响，工作流重载/undo 后引用显示照常全量刷新。
 
+### 6. workflow_data 去重瘦身（2026-09，`nodes.js`、`shot_frame_node.js`、`script_node.js`、`workflow.js`）
+
+实测大工作流（39 个分镜/分镜组节点，DB 存储 17.96MB）中约 96% 的字节是逐字相同的重复拷贝，去重后内容仅剩 1~1.5MB。三类重复与处理：
+
+| 重复源 | 原大小 | 处理 |
+|---|---|---|
+| `shot_frame.data.videoPrompt`（28 份） | 8.77MB | **不再存储**。它就是本节点 `shotJson` 的 `JSON.stringify(..., null, 2)` 美化版（26/26 字段值逐字一致）。展示/生成视频一律读 `videoPromptText`（用户可编辑、体量小、继续保存），所有消费点均为 `videoPromptText \|\| videoPrompt` 兜底，缺失时可由 `shotJson` 现场经 `convertVideoPromptToText` 重新格式化 |
+| `shot_frame.data.shotJson.scriptData`（28 份） | 4.27MB | **精简为轻量引用**：只保留该分镜消费点实际读取的字段——按本分镜 `props_present`/`characters_present` 过滤的 props（id/name/props_db_id/description/category）与 characters（id/name） |
+| `shot_group.data.scriptData`（11 份） | 1.68MB | 同上（无分镜上下文时保留全量轻量映射），另保留 `title/genre/synopsis` 元信息（`smart-insert-shot` 后端仅取这三项） |
+
+- 核心辅助函数 `buildSlimScriptData(scriptData, shot)`（`nodes.js`，全局）：不可变实现（返回新对象），`shot` 传入分镜对象时按可见性列表过滤，present 字段缺失时保守回退全量；世界数据本就由 `state.worldCharacters/worldProps/worldLocations` 全局轮询加载，无需逐节点冗余。
+- 触点收敛：`syncShotFramesToShots` 新建 shot_frame、`script_node.js` 两处创建 shot_group、`requestSmartInsertShot` 上行 payload 均改传/发送轻量版。
+- **兜底精简在 `workflow.js serializeWorkflow`**：对 `shot_frame` 删除 `videoPrompt`、对两类节点的 `scriptData` 现场精简后再序列化。旧工作流（含历史完整数据）加载后内存不变、行为不变，任何一次自动/手动保存即完成瘦身；undo 历史快照同步变小（快照与保存共用序列化）。
+- 兼容性确认（改造前逐点核对）：`scriptData` 的全部消费点只用 `props`/`characters`（`shot_frame_node.js` 引用初始化与角色回查、`nodes.js` 宫格生图收图、分镜组编辑表格）与 smart-insert 的剧本元信息；`videoPrompt` 的全部消费点均为 `videoPromptText` 优先的兜底读。
+
 ## 三、涉及文件
 
 `web/js/connection_base.js`、`events.js`、`canvas.js`、`nodes.js`、`workflow.js`、`node_base.js`、`state.js`、`workflow_layout.js`、`video_node.js`、`image_to_video_node.js`、`auto_save_state.js`；`web/video_workflow.html`（自动保存相关脚本版本参数 `?v=__VERSION__`（跟随版本发布））。
@@ -91,5 +106,4 @@
 
 - **连线 DOM 复用**：`renderConnections` 仍为全删全建模式（已通过 rAF 合帧大幅降频）；可进一步改为 path 元素池 diff，端点不变时只更新 `d` 属性。
 - **视口外节点虚拟化**：`content-visibility` / IntersectionObserver 对视口外节点做渲染裁剪与媒体卸载，适合节点规模长期上几百个的场景。
-- **shot_frame 数据去重**：`videoPrompt`（JSON 字符串）、`videoPromptText`、`shotJson` 三份重复大文本可考虑去重（需先确认恢复逻辑的字段消费关系）。
 - 端口相对偏移缓存（消除拖拽连线时的 `getBoundingClientRect`）——收益/风险比一般，暂缓。

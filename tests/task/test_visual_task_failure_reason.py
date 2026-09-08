@@ -56,6 +56,7 @@ with purged_modules('task.visual_task'), stub_modules({
         TASK_STATUS_WAITING_BEFORE_FINISH=5,
         RUNNINGHUB_TASK_TYPES=[],
         RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT=30,
+        VIDEO_TASK_RETRY_DELAY_MAX_SECONDS=96,
         # f668 孤儿宽限：0 = 禁用（本测试只关注失败原因归一化，不涉及孤儿恢复）
         get_sync_orphan_grace_seconds=MagicMock(return_value=0),
     ),
@@ -68,7 +69,7 @@ with purged_modules('task.visual_task'), stub_modules({
         make_perseids_request=MagicMock(),
     ),
 }):
-    from task.visual_task import _normalize_failure_reason
+    from task.visual_task import _normalize_failure_reason, _resolve_submit_failure_reason
 
 
 class TestNormalizeFailureReason(unittest.TestCase):
@@ -95,6 +96,45 @@ class TestNormalizeFailureReason(unittest.TestCase):
 
     def test_none_uses_default_message(self):
         self.assertEqual(_normalize_failure_reason(None), '任务失败')
+
+
+class TestResolveSubmitFailureReason(unittest.TestCase):
+    """提交失败原因计算：SYSTEM 归类不得屏蔽内容审核违规信息"""
+
+    def test_user_error_keeps_original(self):
+        self.assertEqual(
+            _resolve_submit_failure_reason('普通用户错误', 'USER'),
+            '普通用户错误'
+        )
+
+    def test_system_error_shielded_by_default(self):
+        self.assertEqual(
+            _resolve_submit_failure_reason('Redis connection timeout', 'SYSTEM'),
+            '服务异常，请联系技术支持'
+        )
+
+    def test_system_moderation_error_keeps_original(self):
+        error = (
+            'Your request was rejected by the safety system. '
+            'safety_violations=[sexual]. (request id: xxx)'
+        )
+        self.assertEqual(
+            _resolve_submit_failure_reason(error, 'SYSTEM'),
+            error
+        )
+
+    def test_system_friendly_message_kept(self):
+        error = '内容审核未通过：提示词包含敏感/违禁内容，请修改提示词后重试'
+        self.assertEqual(
+            _resolve_submit_failure_reason(error, 'SYSTEM'),
+            error
+        )
+
+    def test_none_error_shielded(self):
+        self.assertEqual(
+            _resolve_submit_failure_reason(None, 'SYSTEM'),
+            '服务异常，请联系技术支持'
+        )
 
 
 if __name__ == '__main__':

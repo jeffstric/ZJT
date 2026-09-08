@@ -65,6 +65,7 @@ from model.script import ScriptModel
 from model.character import CharacterModel
 from model.location import LocationModel
 from model.props import PropsModel
+from model.vendor_model import VendorModelModel
 
 # 导入服务
 from perseids_server.client import async_make_perseids_request
@@ -1135,6 +1136,7 @@ def sync_agent_image_preferences(user_id: str, world_id: str, prefs: Dict[str, A
 class ModelChangeRequest(BaseModel):
     model: str
     model_id: Optional[int] = None
+    vendor_id: Optional[int] = None
     auth_token: str = ""
 
 class SyncFilesRequest(BaseModel):
@@ -1856,7 +1858,31 @@ async def set_session_model(request: Request, session_id: str, model_request: Mo
                     'error': 'model_id 必须为数字'
                 }, status_code=400)
 
-        session.set_model(model_request.model, model_id)
+        # vendor_id 随切换链路一起保存，避免 PM 循环用旧 vendor 路由新模型
+        vendor_id = None
+        if model_request.vendor_id is not None:
+            try:
+                vendor_id = int(model_request.vendor_id)
+            except (TypeError, ValueError):
+                return JSONResponse({
+                    'success': False,
+                    'error': 'vendor_id 必须为数字'
+                }, status_code=400)
+
+        # 校验 vendor_id 与 model_id 的 DB 关联一致性：不一致时以用户显式选择为准，
+        # 仅告警（vendor_model 关联存在缺失/重复，不可靠）
+        if vendor_id is not None and model_id is not None:
+            try:
+                db_vendor_id = VendorModelModel.get_vendor_id_by_model_id(model_id)
+                if db_vendor_id and db_vendor_id != vendor_id:
+                    logger.warning(
+                        f'模型切换 vendor_id 与 DB 关联不一致 - session_id: {session_id}, '
+                        f'model_id: {model_id}, 请求 vendor_id: {vendor_id}, DB vendor_id: {db_vendor_id}，以请求为准'
+                    )
+            except Exception as e:
+                logger.warning(f'校验 vendor_id 与 model_id 关联失败 - model_id: {model_id}: {e}')
+
+        session.set_model(model_request.model, model_id, vendor_id)
 
         # 持久化到数据库 - 同时更新过期时间以延长 session 有效期
         from datetime import datetime, timedelta
@@ -1873,6 +1899,7 @@ async def set_session_model(request: Request, session_id: str, model_request: Mo
             session_id=session_id,
             model=model_request.model,
             model_id=model_id,
+            vendor_id=vendor_id,
             expires_at=expires_at
         )
 
@@ -3912,13 +3939,17 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
 
         # 根据 model_id 查询真实的 vendor_id（而不是使用 task_request 中的默认值 1）
         vendor_id = task_request.vendor_id
-        if vendor_id == 1:  # 如果是默认值，尝试从数据库获取真实值
-            try:
-                real_vendor_id = VendorModelModel.get_vendor_id_by_model_id(model_id)
-                if real_vendor_id:
-                    vendor_id = real_vendor_id
-            except Exception as e:
-                logger.warning(f"Failed to get vendor_id for model {model_id}: {e}")
+        if vendor_id == 1:  # 如果是默认值，优先用会话中保存的 vendor_id，再从数据库反查兜底
+            session_vendor_id = getattr(session, 'vendor_id', None)
+            if session_vendor_id:
+                vendor_id = session_vendor_id
+            else:
+                try:
+                    real_vendor_id = VendorModelModel.get_vendor_id_by_model_id(model_id)
+                    if real_vendor_id:
+                        vendor_id = real_vendor_id
+                except Exception as e:
+                    logger.warning(f"Failed to get vendor_id for model {model_id}: {e}")
         
         # 强制同步模型到 pm_agent：确保切换模型后实际使用正确的 LLM client
         # 前端传来的 model 是最新的用户选择，优先使用
