@@ -39,7 +39,7 @@ from services.voice_replace.ffmpeg_util import (
     slice_audio,
     stretch_to_duration,
 )
-from services.voice_replace.seedvc_driver import SeedVcDriver, SeedVcError
+from services.voice_replace.vevo2_driver import Vevo2Driver, Vevo2Error
 from services.voice_replace.uvr_driver import UvrDriver, UvrError
 from utils.project_path import (
     build_upload_url,
@@ -172,11 +172,11 @@ class VoiceReplaceWorker:
     def __init__(
         self,
         asr: Optional[SenseVoiceAsrDriver] = None,
-        vc: Optional[SeedVcDriver] = None,
+        vc: Optional[Vevo2Driver] = None,
         uvr: Optional[UvrDriver] = None,
     ):
         self.asr = asr or SenseVoiceAsrDriver()
-        self.vc = vc or SeedVcDriver()
+        self.vc = vc or Vevo2Driver()
         self.uvr = uvr or UvrDriver()
 
     async def process_job(self, job: VideoVoiceReplaceJob, force: bool = False) -> str:
@@ -338,7 +338,7 @@ class VoiceReplaceWorker:
                 stretched = os.path.join(work_dir, f"vc_{i}_fit.wav")
                 await stretch_to_duration(cropped, stretched, seg.end - seg.start)
                 pieces.append(stretched)
-            except SeedVcError as exc:
+            except Vevo2Error as exc:
                 logger.warning("[voice-replace] vc failed seg=%s: %s keep original", i, exc)
                 clip = os.path.join(work_dir, f"src_{i}.wav")
                 await slice_audio(source_wav, clip, seg.start, seg.end)

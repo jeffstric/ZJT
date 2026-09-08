@@ -1596,11 +1596,16 @@ class VoiceReplaceConstants:
     ASR_SEGMENTS_PATH = "/api/v1/asr_segments"
     UVR_BASE_URL = "http://127.0.0.1:7862"
     UVR_SEPARATE_PATH = "/api/v1/uvr"
+    # VC 后端：Vevo2（Amphion style-preserved VC，效果优于 Seed-VC，主力）。
+    VEVO2_BASE_URL = "http://127.0.0.1:7863"
+    VEVO2_CONVERT_PATH = "/api/v1/convert"
+    # Seed-VC（Gradio）保留作回退。
     SEEDVC_BASE_URL = "http://127.0.0.1:7860"
     SEEDVC_PREDICT_PATH = "/gradio_api/call/predict"
 
     ASR_TIMEOUT = 60
     UVR_TIMEOUT = 180
+    VEVO2_TIMEOUT = 300
     SEEDVC_TIMEOUT = 180
     FFMPEG_TIMEOUT = 120
     HTTP_CONNECT_TIMEOUT = 10
@@ -1613,6 +1618,8 @@ class VoiceReplaceConstants:
     SCHEDULER_INTERVAL_SECONDS = 8
     JOB_BATCH_LIMIT = 1
 
+    # Vevo2 flow-matching 采样步数（官方默认 32）。
+    VEVO2_FM_STEPS = 32
     SEEDVC_STEPS = 30
     SEEDVC_LENGTH = 1.0
     SEEDVC_CLARITY = 0.5

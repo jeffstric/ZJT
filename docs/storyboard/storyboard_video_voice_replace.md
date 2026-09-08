@@ -1,8 +1,10 @@
 # 成片对白音色替换
 
-成片（Seedance / Kling / MiniMax H3 / Veo 等）里的说话音色是随机的，和角色库无关。本功能在成片之后做 **Seed-VC 音色转换**，保住口型，不用 TTS 盖掉原声。
+成片（Seedance / Kling / MiniMax H3 / Veo 等）里的说话音色是随机的，和角色库无关。本功能在成片之后做 **音色转换（VC）**，保住口型，不用 TTS 盖掉原声。
 
-送进 Seed-VC 之前必须先 **UVR 人声/环境声分离**，只对人声做音色替换，再把原环境声叠回去。整段带 BGM/风声/底噪一起转，效果会明显变差。
+VC 后端当前主力为 **Vevo2**（Amphion style-preserved VC，FM-only 推理，音质/相似度优于 Seed-VC）；Seed-VC 保留作回退。
+
+送进 VC 之前必须先 **UVR 人声/环境声分离**，只对人声做音色替换，再把原环境声叠回去。整段带 BGM/风声/底噪一起转，效果会明显变差。
 
 相关入口：`storyboard.html`、`video_workflow.html` 分镜节点。
 
@@ -55,7 +57,7 @@
 
 ## 基础设施
 
-推理服务（SenseVoice ASR / UVR 人声分离 / Seed-VC VC）部署在独立的 GPU 推理服务器上，具体地址与部署方式不入库：worker 通过 yaml `voice_replace.*_base_url` 或环境变量（`SENSEVOICE_ASR_URL` / `UVR_URL` / `SEEDVC_URL`）获取地址，未配置时回落 `VoiceReplaceConstants` 占位地址。前端禁止直连这些服务。
+推理服务（SenseVoice ASR / UVR 人声分离 / Vevo2 VC，Seed-VC 保留作回退）部署在独立的 GPU 推理服务器上，具体地址与部署方式不入库：worker 通过 yaml `voice_replace.*_base_url` 或环境变量（`SENSEVOICE_ASR_URL` / `UVR_URL` / `VEVO2_URL` / `SEEDVC_URL`）获取地址，未配置时回落 `VoiceReplaceConstants` 占位地址。前端禁止直连这些服务。
 
 一期不做说话人分离（cam++）。内容切分优先。
 
@@ -73,7 +75,7 @@
 - **分镜页手动触发（当前）**：对话页签「音频来源」下的「替换音色」→ `POST /api/storyboard/scene/{id}/voice-replace`。只处理**当前选中成片**，不自动入队、不做批量。
 - 跳过：对口型、无视频、无对白、角色全无 `default_voice`。同一成片已 `completed` 再点会带 `force` 重跑；进行中再次点击复用原任务。
 - `GET /api/storyboard/scene/{id}/voice-replace` 给按钮轮询状态。
-- scheduler `process_voice_replace_jobs` 拾取 `queued` → UVR 分离人声/环境声 → 对人声 ASR → 对齐 →（低置信则 `wait_confirm`）→ 只对人声 Seed-VC → 叠回环境声 → mux。
+- scheduler `process_voice_replace_jobs` 拾取 `queued` → UVR 分离人声/环境声 → 对人声 ASR → 对齐 →（低置信则 `wait_confirm`）→ 只对人声 Vevo2 → 叠回环境声 → mux。
 - UVR 失败时回退成片混音（旧行为），并打 warning，不把任务直接打挂。
 - `Kim_Vocal_2` 等 karaoke 模型有时把对白分到 Instrumental。worker 会对两条 stem 都做 ASR，选有字的那条当人声。
 - 产物写 `upload/voice_replace/{job_id}/result.mp4`，并挂成新的分镜视频 candidate；成功后 `audio_embedded=1`。
@@ -85,7 +87,8 @@
 - `services/voice_replace/aligner.py`
 - `services/voice_replace/asr_driver.py`：`SenseVoiceAsrDriver`（httpx 异步 `POST /api/v1/asr_segments`）
 - `services/voice_replace/uvr_driver.py`：`UvrDriver`（httpx 异步 `POST /api/v1/uvr`，zip 内 `vocals.wav` / `instrumental.wav`）
-- `services/voice_replace/seedvc_driver.py`：Seed-VC Gradio `/gradio_api/call/predict`（取非流式 wav）。**只转 UVR 人声**；对白窗口前后各留 1.5s 上下文。切太短（~1.5s）会把字转糊；带环境声整段转会把底噪变成胡话。
+- `services/voice_replace/vevo2_driver.py`：**主力 VC 驱动**。`Vevo2Driver.convert(source, reference, dest)` → `POST /api/v1/convert`（multipart，zip 内 `converted.wav`）。flow-matching 步数 `VEVO2_FM_STEPS=32`，超时 `VEVO2_TIMEOUT=300`。**只转 UVR 人声**；对白窗口前后各留 1.5s 上下文。切太短（~1.5s）会把字转糊；带环境声整段转会把底噪变成胡话。
+- `services/voice_replace/seedvc_driver.py`：Seed-VC Gradio `/gradio_api/call/predict`（取非流式 wav），回退保留，worker 不再引用。
 - `services/voice_replace/ffmpeg_util.py`：抽音 / 切片 / atempo / concat / 人声+环境声 `amix` / mux（`asyncio.create_subprocess_exec` + 超时）。Seed-VC 输出常为 22050Hz，所有片段先 `aresample=44100` 再拼接；混流按**视频时长** `apad`，禁止 `-shortest` 把成片截短。
 - `services/voice_replace/enqueue.py`：分镜入队（`enqueue_scene_job`）
 - `services/voice_replace/worker.py`：单任务编排
@@ -93,10 +96,11 @@
 - `web/js/storyboard/render.js`：对话页「替换音色」按钮
 - `task/voice_replace_task.py`：scheduler 每 8s 拾取 `queued` 任务（`max_instances=1`）
 - `config/constant.py`：`VoiceReplaceConstants`、`VoiceReplaceJobStatus`
-- YAML：`voice_replace.asr_base_url` / `uvr_base_url` / `seedvc_base_url`（可用 `SENSEVOICE_ASR_URL`、`UVR_URL`、`SEEDVC_URL` 覆盖）
+- YAML：`voice_replace.asr_base_url` / `uvr_base_url` / `vevo2_base_url` / `seedvc_base_url`（可用 `SENSEVOICE_ASR_URL`、`UVR_URL`、`VEVO2_URL`、`SEEDVC_URL` 覆盖）
 - `tests/services/test_voice_replace_aligner.py`
 - `tests/services/test_voice_replace_asr_driver.py`
 - `tests/services/test_voice_replace_uvr_driver.py`
+- `tests/services/test_voice_replace_vevo2_driver.py`
 - `tests/services/test_voice_replace_enqueue.py`
 
 `SenseVoiceAsrDriver.transcribe_segments(audio)` 接受本地路径、bytes 或 http(s) URL，返回 `List[AsrSegment]`，可直接交给 `align_dialogues`。超时 `ASR_TIMEOUT` / `HTTP_CONNECT_TIMEOUT`。禁止在 API 协程里用 `requests`。
