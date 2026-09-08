@@ -307,6 +307,7 @@ sequenceDiagram
 | WAITING_BEFORE_FINISH 恢复 | 每次调度 | `process_task_with_retry()` 末尾检测卡在 WAITING_BEFORE_FINISH 的任务，根据 ai_tools.status 修复 tasks.status |
 | 流水线步骤完成检测 | 13s | `_check_ai_tool_stage_completion()` 检测所有步骤完成后推进 ai_tools 状态 |
 | 同步任务兜底 | 5s | `check_results()` 异常时强制标记 FAILED，防止永久卡住 |
+| worker 初始化看门狗 | 90s | initializer 超时未完成则 worker 自杀，`submit()` 清理死进程并补 fork（见 9.2） |
 | 无 project_id 的 PROCESSING 任务 | 5s | `_check_task_status()` 检测孤儿任务并重置；**带 300s 宽限保护**（见 9.1） |
 
 ### 9.1 同步任务终态落库时序红线（f668）
@@ -336,6 +337,45 @@ tick 的结果逐个处理）会把窗口拉长到秒级，与 5s 主调度周�
 **回归测试**：`tests/task/test_sync_task_stale_recovery.py::test_cleanup_happens_only_after_result_persisted`
 （落库期间 `is_task_running()` 必须为 True）、
 `tests/task/test_visual_task_orphan_grace.py`（宽限跳过/到期重置/禁用/脏数据四个分支）。
+
+### 9.2 池 worker 初始化死锁防护（看门狗 + 死进程清理）
+
+**背景事故**：2026-09-08 19:20 服务重启后，19:50 任务洪峰触发 `ProcessPoolExecutor`
+一次性 fork 12 个 worker，其中 11 个死锁。根因是 fork 的固有缺陷：**只复制调用线程，
+但复制所有锁的当前状态**——fork 瞬间调度主进程的任何线程正持有某把锁（日志 handler、
+DB 连接池、第三方 SDK 内部锁等），子进程就继承一把永远无人释放的锁。死锁 worker 卡在
+initializer 阶段从未领取任务，但一直占用进程池名额；存活 worker 独木支撑，
+所有 sync_mode 任务（seedream5 等）退化为串行，且卡死线程内的七牛上传连 HTTP 请求
+都未发出（`_sync_upload_file` 第一行日志即阻塞），上层 `asyncio.wait_for` 只能等
+`IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT=120s` 超时，表现为连环
+「图片上传到CDN超时」任务失败（详见事故日志 19:52~20:01 两波，波及 6 个任务）。
+
+**防护机制（两层，代码位于 `task/sync_task_executor.py`）**：
+
+1. **主动重置**：initializer 第一步调用 `_reset_inherited_logging_locks()` 重建
+   logging 模块锁与全部 handler 锁（必须先于任何日志调用）。
+2. **看门狗兜底**：`_start_init_watchdog()` 启动 daemon 线程，initializer 超过
+   `SYNC_WORKER_INIT_WATCHDOG_TIMEOUT=90s`（`config/constant.py`）未完成即
+   `os._exit(70)` 自杀——fork 继承的死锁无法逐一枚举，任何未知锁卡死都由此兜底。
+   父进程 `submit()` 路径每次先经 `_purge_dead_workers_locked()` 清理死亡 worker
+   （3.10 的 ProcessPoolExecutor 不回收死亡进程名额），使原生
+   `_adjust_process_count` 按存活数自动补 fork；若活 worker 清零则走既有
+   `_pool_broken → _rebuild_pool_locked` 全量重建。由此形成自愈闭环：
+   fork 撞锁 → 看门狗自杀 → 清理补 fork → 直至 fork 出健康 worker。
+
+**改动约束（修改相关代码时必须保持）**：
+
+1. `_reset_inherited_logging_locks()` 必须是 initializer 内**第一行**，先于一切
+   日志调用（包括 `logger.info`），否则防护自身会先被死锁卡死。
+2. `_start_init_watchdog()` 必须先于一切可能阻塞的初始化步骤（enterprise
+   bootstrap、DB 访问等），且 initializer 无论正常/短路/异常路径都必须
+   `set()` 完成事件（现为 `finally` 保证），否则健康 worker 会被误杀。
+3. `_purge_dead_workers_locked()` 只移除 `is_alive()` 为假的进程；对状态未知
+   （`is_alive()` 抛异常）的进程保守视为存活，避免误触发会取消队列任务的
+   全量重建。
+
+**回归测试**：`tests/task/test_sync_task_worker_init.py`（锁重建去重、initializer
+完成事件、看门狗超时自杀、死进程清理/全死标记 broken/空池容错）。
 
 ## 10. 监控 SQL
 

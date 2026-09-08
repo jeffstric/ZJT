@@ -305,6 +305,14 @@ SYNC_TASK_STALE_TIMEOUT_BY_DRIVER = {
     DriverImplementation.SEEDREAM5_VOLCENGINE_OVERSEA_V1: 180,
 }
 
+# ProcessPool worker initializer 看门狗超时（秒）。
+# fork 只复制调用线程，但会复制所有锁的当前状态：若 fork 瞬间父进程其他线程
+# 正持有某把锁，子进程会继承一把永远无人释放的锁，initializer 卡死后该 worker
+# 永久占用进程池名额（事故 2026-09-08：19:20 重启后 19:50 任务洪峰一次性 fork
+# 的 12 个 worker 中 11 个死锁，全部同步任务退化为单 worker 串行）。
+# 超时未完成初始化的 worker 强制退出，由父进程 submit 路径清理死亡进程并补 fork。
+SYNC_WORKER_INIT_WATCHDOG_TIMEOUT = 90
+
 
 def _parse_optional_timeout(value) -> Optional[int]:
     if value is None:
