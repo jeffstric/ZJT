@@ -445,6 +445,8 @@ def test_sw_breadcrumb(sw_page):
 @pytest.mark.script_writer
 def test_sw_world_name_display(sw_page):
     """sw_022 - header 显示当前世界名称。"""
+    # 该信息在产品的 ≤1400px 响应式布局中会被隐藏；本用例验证宽屏展示。
+    sw_page.page.set_viewport_size({"width": 1440, "height": 900})
     _navigate_sw(sw_page)
     page = sw_page.page
 
@@ -525,21 +527,20 @@ def test_sw_import_script_modal(sw_page):
 @pytest.mark.script_writer
 def test_sw_feedback_modal(sw_page):
     """sw_026 - 反馈按钮打开联系弹窗。"""
+    # 反馈浮标在产品的 ≤1400px 响应式布局中会被隐藏；本用例验证宽屏交互。
+    sw_page.page.set_viewport_size({"width": 1440, "height": 900})
     _navigate_sw(sw_page)
     page = sw_page.page
 
     fab = page.locator(".feedback-fab")
-    if fab.count() == 0:
-        pytest.skip("反馈按钮不存在")
+    fab.wait_for(state="visible", timeout=10000)
 
     fab.first.click()
     page.wait_for_timeout(500)
 
     modal = page.locator("#feedback-modal")
-    if modal.count() > 0:
-        # 模态框应可见
-        page.wait_for_timeout(300)
-        page.keyboard.press("Escape")
+    modal.wait_for(state="visible", timeout=10000)
+    page.keyboard.press("Escape")
 
 
 @pytest.mark.p2

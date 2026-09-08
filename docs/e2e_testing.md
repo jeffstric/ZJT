@@ -36,8 +36,15 @@ auto_test/
 ### 1. 安装依赖
 
 ```bash
-pip install playwright pytest-html pytest-timeout pytest-asyncio
+pip install -r requirements_e2e.txt
 playwright install chromium
+```
+
+若本机已有 Chromium 内核浏览器但未下载 Playwright Chromium，可显式指定其可执行文件；
+CI 不设置此变量，仍使用 Playwright 管理的 Chromium：
+
+```powershell
+$env:E2E_BROWSER_EXECUTABLE = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 ```
 
 ## GitLab CI 分支触发
@@ -211,9 +218,18 @@ python -m pytest -v -m world
 # 运行所有测试
 python -m pytest -v
 
+# 保留失败截图和 Playwright Trace，便于定位页面跳转或 UI 超时
+$env:E2E_RESULTS_DIR = "e2e-results"
+python -m pytest -v
+
 # 生成 HTML 报告
 python -m pytest -v --html=reports/report.html --self-contained-html
 ```
+
+> 本地运行时需让 pytest 进程与被测服务读同一份配置：`comfyui_env` 未设置时
+> 默认找 `config_dev.yml`（本机通常只有 `config_prod.yml`），`mock_mode` fixture
+> 等需要直连数据库动态配置的步骤会失败（现为非致命告警，但挡板实际不生效）。
+> 与被测服务保持一致，例如：`comfyui_env=prod python -m pytest -v`。
 
 建议第一次不要直接跑全量，先跑无生成链路和小范围生成链路：
 

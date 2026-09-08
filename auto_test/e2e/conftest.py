@@ -259,11 +259,20 @@ def api_client_with_refresh(base_url, auth_headers, e2e_config):
 def browser():
     """Playwright chromium 浏览器实例（CI 使用无头模式且关闭 slow_mo）。"""
     is_ci = os.getenv("CI", "").lower() in {"1", "true", "yes"}
+    launch_options = {
+        "headless": is_ci,
+        "slow_mo": 0 if is_ci else 500,
+    }
+    browser_executable = os.getenv("E2E_BROWSER_EXECUTABLE")
+    if browser_executable:
+        executable_path = Path(browser_executable)
+        if not executable_path.is_file():
+            pytest.fail(
+                f"E2E_BROWSER_EXECUTABLE 指向的浏览器不存在: {executable_path}"
+            )
+        launch_options["executable_path"] = str(executable_path)
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=is_ci,
-            slow_mo=0 if is_ci else 500,
-        )
+        browser = p.chromium.launch(**launch_options)
         yield browser
         browser.close()
 
@@ -831,7 +840,12 @@ def mock_mode(user_id):
         invalidate_dynamic_cache,
     )
 
-    saved_enabled = get_dynamic_config_value("test_mode", "enabled", default=False)
+    try:
+        saved_enabled = get_dynamic_config_value("test_mode", "enabled", default=False)
+    except Exception as e:
+        # 配置不可用（如 config_dev.yml 缺失）时不阻断，按未开启处理（§14 只告警原则）
+        print(f"[mock_mode] 读取 test_mode.enabled 失败（非致命，按 False 处理）: {e}")
+        saved_enabled = False
 
     # 1) 开启挡板并写入完整 mock URL，避免只开开关时部分通道回落到真实外部服务
     try:
@@ -841,8 +855,12 @@ def mock_mode(user_id):
         invalidate_dynamic_cache()
     except Exception as e:
         print(f"[mock_mode] 写入 mock 配置失败（非致命）: {e}")
-        set_dynamic_config_value("test_mode", "enabled", value=True, value_type="bool")
-        invalidate_dynamic_cache("test_mode.enabled")
+        try:
+            set_dynamic_config_value("test_mode", "enabled", value=True, value_type="bool")
+            invalidate_dynamic_cache("test_mode.enabled")
+        except Exception as e2:
+            # 兜底写库同样可能不可用（如 config 文件缺失导致 model 层 import 失败），不阻断
+            print(f"[mock_mode] 兜底写入 test_mode.enabled 也失败（非致命）: {e2}")
 
     # 2) 重置测试账户算力
     try:

@@ -57,7 +57,7 @@ def _fill_and_dispatch(page, text):
 
 
 def _mock_computing_power(page, power=9999):
-    """拦截算力 API 防止重定向到登录页"""
+    """隔离营销页初始化的用户偏好 API，防止无关 401 重定向登录页。"""
 
     def handler(route):
         route.fulfill(
@@ -66,7 +66,24 @@ def _mock_computing_power(page, power=9999):
             body=_json.dumps({"success": True, "data": {"computing_power": power}}),
         )
 
+    def power_confirm_handler(route):
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=_json.dumps(
+                {
+                    "code": 0,
+                    "data": {
+                        "threshold": 35,
+                        "default_threshold": 35,
+                        "is_custom": False,
+                    },
+                }
+            ),
+        )
+
     page.route("**/api/user/computing_power", handler)
+    page.route("**/api/user/power-confirm", power_confirm_handler)
 
 
 def _navigate_and_wait(page, base_url, path="/marketing-agent"):
@@ -75,13 +92,8 @@ def _navigate_and_wait(page, base_url, path="/marketing-agent"):
     page.goto(f"{base_url}{path}", wait_until="domcontentloaded")
     page.wait_for_timeout(3000)
 
-    # 检查是否被重定向到登录页
-    current_url = page.url
-    if "login=1" in current_url or "index.html" in current_url:
-        # 等待 localStorage 注入生效并重新加载
-        page.wait_for_timeout(2000)
-        page.reload(wait_until="domcontentloaded")
-        page.wait_for_timeout(3000)
+    # 认证失败会跳转登录页。直接报出最终 URL，避免 30 秒后才以“元素缺失”失败。
+    assert "/marketing-agent" in page.url, f"营销页被重定向: {page.url}"
 
     # 30s：全量套件长跑时浏览器负载高（headless=False + slow_mo=500 + 多上下文），
     # 页面渲染可能超过 15s（曾造成 new_chat/switch_session 连锁超时 flake）
@@ -376,7 +388,8 @@ def test_marketing_agent_restores_verification_option_after_session_switch(page,
     state = _mock_marketing_verification_restore_flow(page)
 
     page.goto(f"{base_url}/marketing-agent", wait_until="domcontentloaded")
-    page.locator(".sidebar-history-item").first.wait_for(state="visible", timeout=10000)
+    # 30s：全量套件长跑时浏览器负载高，页面渲染可能超过 10s（曾造成 flake）
+    page.locator(".sidebar-history-item").first.wait_for(state="visible", timeout=30000)
 
     option = page.get_by_role("button", name="方案A").first
     option.wait_for(state="visible", timeout=10000)
@@ -406,7 +419,8 @@ def test_marketing_agent_restores_verification_text_input_after_session_switch(p
     state = _mock_marketing_verification_restore_flow(page)
 
     page.goto(f"{base_url}/marketing-agent", wait_until="domcontentloaded")
-    page.locator(".sidebar-history-item").first.wait_for(state="visible", timeout=10000)
+    # 30s：全量套件长跑时浏览器负载高，页面渲染可能超过 10s（曾造成 flake）
+    page.locator(".sidebar-history-item").first.wait_for(state="visible", timeout=30000)
     page.get_by_role("button", name="方案A").first.wait_for(state="visible", timeout=10000)
 
     page.locator(".sidebar-history-item").nth(1).click()
@@ -436,7 +450,8 @@ def test_marketing_agent_timeout_verification_does_not_block_input_after_session
     state = _mock_marketing_verification_restore_flow(page, verification_status="cancelled")
 
     page.goto(f"{base_url}/marketing-agent", wait_until="domcontentloaded")
-    page.locator(".sidebar-history-item").first.wait_for(state="visible", timeout=10000)
+    # 30s：全量套件长跑时浏览器负载高，页面渲染可能超过 10s（曾造成 flake）
+    page.locator(".sidebar-history-item").first.wait_for(state="visible", timeout=30000)
     page.get_by_text("切换会话回来后仍应可以回答这个问题。").first.wait_for(
         state="visible",
         timeout=10000,
@@ -745,8 +760,8 @@ def test_marketing_agent_computing_power_display(page, base_url):
 
     # 验证算力显示元素存在
     power_display = page.locator(".computing-power-display")
-    if power_display.count() > 0:
-        assert power_display.first.is_visible(), "算力余额显示不可见"
+    power_display.wait_for(state="visible", timeout=10000)
+    assert "5,000" in (power_display.first.text_content() or ""), "算力余额未使用 mock 值"
 
 
 @pytest.mark.p1
