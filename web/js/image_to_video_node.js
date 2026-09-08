@@ -427,7 +427,10 @@
         // 显示/隐藏参考音频字段（仅在多参考图模式下显示）
         const audioField = el.querySelector('.audio-field');
         if(audioField) audioField.style.display = mode === 'multi_reference' ? '' : 'none';
-        // 参考视频字段在所有模式下都显示（支持视频节点连线）
+        // 参考视频字段（含 video-ref 端口）：仅在多参考图模式下显示（只有该模式消费参考视频），
+        // 文生视频模式无任何素材输入；与 workflow.js 恢复路径的显隐逻辑保持一致
+        const videoField = el.querySelector('.video-field');
+        if(videoField) videoField.style.display = mode === 'multi_reference' ? '' : 'none';
 
         // 根据 supports_last_frame 控制尾帧输入框的可用性
         const endFileInput = el.querySelector('.end-file');

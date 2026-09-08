@@ -268,20 +268,27 @@ QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES = 1800
 # 前端直传 key 前缀，便于后台批量清理与统计。
 WORLD_IMPORT_KEY_PREFIX = "world_import"
 
-# ===== 大世界导入：后端限速下载与内存任务 =====
+# ===== 大世界导入：后端限速下载与共享文件任务 =====
 # 限速下载速率上限（字节/秒）：避免拉取大 zip 打满服务器出口带宽影响其他接口/用户。
 WORLD_IMPORT_DOWNLOAD_RATE_BPS = 20 * 1024 * 1024   # 默认 20 MB/s
 # 限速下载单 chunk 大小（字节）
 WORLD_IMPORT_DOWNLOAD_CHUNK_BYTES = 256 * 1024       # 256 KB / chunk
 # 限速下载总超时（秒）：asyncio.wait_for 保护，遵守超时红线。
 WORLD_IMPORT_DOWNLOAD_TIMEOUT = 1800
-# 导入任务进度刷新粒度（百分比），避免高频更新 job 字典
+# 导入任务进度刷新粒度（百分比），避免高频重写 job 文件
 WORLD_IMPORT_PROGRESS_STEP = 5
-# 内存 job 保留时长（秒），过期由后台清理协程淘汰
+# job 状态文件目录名，位于项目根 UploadPathConstants.TEMP_DIR 下。
+# gunicorn 多 worker 进程共享同一目录，任一 worker 都能查到其他 worker 创建的 job；
+# 若改用进程内存字典，轮询请求落到别的 worker 会 404（前端误报"导入失败"）。
+WORLD_IMPORT_JOB_DIR_NAME = "world_import_jobs"
+# 读取 job 文件恰好撞上原子替换瞬间（JSON 不完整 / Windows 上 PermissionError）时的重试次数与间隔（秒）
+WORLD_IMPORT_JOB_READ_RETRIES = 3
+WORLD_IMPORT_JOB_READ_RETRY_INTERVAL = 0.02
+# job 文件保留时长（秒），过期由后台清理协程淘汰；统计并发上限时超过该时长未更新的 job 也不再计入
 WORLD_IMPORT_JOB_TTL = 3600
-# 内存 job 清理协程轮询间隔（秒）
+# job 清理协程轮询间隔（秒）
 WORLD_IMPORT_JOB_CLEANUP_INTERVAL = 300
-# 同时进行的导入任务上限，超限返回 429
+# 同时进行的导入任务上限（跨 worker 统计），超限返回 429
 WORLD_IMPORT_JOB_MAX_CONCURRENT = 2
 
 # ===== 图片 URL 过期保护（签名 URL 自动刷新/转存）=====
@@ -759,6 +766,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,       # 标准版（默认）
         DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,  # 加速版
     ],
+    DriverKey.MINIMAX_H3_TEXT_TO_VIDEO: DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 文生视频（复用参考生工作流）
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,  # 使用 RunningHub 的数字人 v1 版本
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本

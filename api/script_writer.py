@@ -34,6 +34,12 @@ from config.constant import (
     IMAGE_STYLE_PREFERRED_VENDOR,
     USER_MODULE_DB_OPERATION_TIMEOUT_SECONDS,
     VL_MODEL_PREFERRED_DEFAULT,
+    UploadPathConstants,
+    WORLD_IMPORT_JOB_DIR_NAME,
+    WORLD_IMPORT_JOB_READ_RETRIES,
+    WORLD_IMPORT_JOB_READ_RETRY_INTERVAL,
+    WORLD_IMPORT_JOB_TTL,
+    WORLD_IMPORT_JOB_CLEANUP_INTERVAL,
 )
 from api.auth_identity import resolve_authorization_user_id
 from config.model_catalog import ModelScene, annotate_llm_models, build_tracks_payload
@@ -6254,64 +6260,161 @@ async def import_world(
 #   4) 后端    ：asyncio.create_task 后台限速下载 zip → to_thread 解包
 #   5) 浏览器 ──> GET  /api/world-import-status       轮询 job 进度
 #
-# job 状态仅存内存（进程重启会丢失，前端会把 404 当作"任务丢失，请重试"）。
+# job 状态落在共享文件 <项目根>/temp/world_import_jobs/<job_id>.json，而不是进程内存字典：
+# gunicorn 多 worker 下，前端轮询请求会被分到任意 worker，内存字典只有创建 job 的那个 worker 能查到，
+# 其他 worker 一律 404，前端就会误报"导入失败"（实际后台已导入成功）。
+# 每个 job 只有创建它的后台协程一个写者；写入走 tmp + os.replace 原子替换，读者不会读到半截 JSON。
+# 进程重启后 job 文件仍在（进行中的 job 不会续跑，前端拿到的是最后一次落盘的进度）。
 
-# 内存任务表：{ job_id: {status, progress, stage, message, result, error, started_at, updated_at} }
-_world_import_jobs: Dict[str, Dict[str, Any]] = {}
-_world_import_jobs_lock = asyncio.Lock()
 _world_import_cleanup_started = False
+_WORLD_IMPORT_ACTIVE_STATUSES = ('pending', 'downloading', 'unpacking')
+
+
+def _world_import_jobs_dir() -> str:
+    """job 状态文件目录（项目根 temp/world_import_jobs），与限速下载的 zip 临时文件同层"""
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(project_root, UploadPathConstants.TEMP_DIR, WORLD_IMPORT_JOB_DIR_NAME)
+
+
+def _world_import_job_path(job_id: str) -> Optional[str]:
+    """job_id 来自前端 query 参数，只接受 uuid，避免拼路径读到目录外的任意文件"""
+    try:
+        normalized = str(uuid.UUID(str(job_id)))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return os.path.join(_world_import_jobs_dir(), f'{normalized}.json')
+
+
+def _read_world_import_job_sync(path: str) -> Optional[Dict[str, Any]]:
+    """同步读 job 文件。撞上原子替换瞬间可能读到不完整 JSON 或（Windows）PermissionError，短暂重试"""
+    for attempt in range(WORLD_IMPORT_JOB_READ_RETRIES):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError):
+            if attempt == WORLD_IMPORT_JOB_READ_RETRIES - 1:
+                return None
+            time.sleep(WORLD_IMPORT_JOB_READ_RETRY_INTERVAL)
+    return None
+
+
+def _write_world_import_job_sync(path: str, job: Dict[str, Any]) -> None:
+    """同步原子写：先写 .tmp 再 os.replace（Windows 上同样原子覆盖已存在的目标）"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f'{path}.tmp'
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        json.dump(job, f, ensure_ascii=False)
+    os.replace(tmp_path, path)
+
+
+def _list_world_import_jobs_sync() -> List[Dict[str, Any]]:
+    """扫描目录读取全部 job（文件数受 TTL 清理约束，量很小）"""
+    jobs_dir = _world_import_jobs_dir()
+    if not os.path.isdir(jobs_dir):
+        return []
+    jobs = []
+    for name in os.listdir(jobs_dir):
+        if not name.endswith('.json'):
+            continue
+        job = _read_world_import_job_sync(os.path.join(jobs_dir, name))
+        if job is not None:
+            jobs.append(job)
+    return jobs
+
+
+def _cleanup_expired_world_import_jobs_sync() -> int:
+    """删除 mtime 超过 TTL 的 job 文件及写入中断残留的 .tmp，返回删除数"""
+    jobs_dir = _world_import_jobs_dir()
+    if not os.path.isdir(jobs_dir):
+        return 0
+    now = time.time()
+    removed = 0
+    for name in os.listdir(jobs_dir):
+        if not (name.endswith('.json') or name.endswith('.json.tmp')):
+            continue
+        path = os.path.join(jobs_dir, name)
+        try:
+            if now - os.path.getmtime(path) > WORLD_IMPORT_JOB_TTL:
+                os.remove(path)
+                removed += 1
+        except FileNotFoundError:
+            # 其他 worker 的清理协程抢先删掉了
+            continue
+        except OSError:
+            logger.warning(f'[world_import] 清理 job 文件失败: {path}', exc_info=True)
+    return removed
 
 
 async def _ensure_world_import_cleanup_task():
-    """惰性启动 job 清理协程（首次有任务时起，周期淘汰 TTL 过期 job）"""
+    """惰性启动 job 清理协程（本进程首次创建任务时起，周期淘汰 TTL 过期 job 文件）"""
     global _world_import_cleanup_started
     if _world_import_cleanup_started:
         return
-    async with _world_import_jobs_lock:
-        if not _world_import_cleanup_started:
-            asyncio.create_task(_world_import_jobs_cleanup_loop())
-            _world_import_cleanup_started = True
+    _world_import_cleanup_started = True
+    asyncio.create_task(_world_import_jobs_cleanup_loop())
 
 
 async def _world_import_jobs_cleanup_loop():
-    """周期清理超过 WORLD_IMPORT_JOB_TTL 的 job，防止内存无限增长"""
-    from config.constant import WORLD_IMPORT_JOB_TTL, WORLD_IMPORT_JOB_CLEANUP_INTERVAL
+    """周期清理超过 WORLD_IMPORT_JOB_TTL 的 job 文件，防止目录无限增长"""
     while True:
         try:
             await asyncio.sleep(WORLD_IMPORT_JOB_CLEANUP_INTERVAL)
-            now = time.time()
-            expired = []
-            async with _world_import_jobs_lock:
-                for jid, job in list(_world_import_jobs.items()):
-                    if now - job.get('updated_at', job.get('started_at', now)) > WORLD_IMPORT_JOB_TTL:
-                        expired.append(jid)
-                for jid in expired:
-                    _world_import_jobs.pop(jid, None)
-            if expired:
-                logger.info(f'[world_import] 清理过期 job: {len(expired)} 个')
+            removed = await asyncio.to_thread(_cleanup_expired_world_import_jobs_sync)
+            if removed:
+                logger.info(f'[world_import] 清理过期 job: {removed} 个')
         except asyncio.CancelledError:
             break
         except Exception:
             logger.exception('[world_import] cleanup loop error')
 
 
+async def _get_world_import_job(job_id: str) -> Optional[Dict[str, Any]]:
+    """读取 job 快照；job_id 非法或文件不存在返回 None"""
+    path = _world_import_job_path(job_id)
+    if path is None:
+        return None
+    return await asyncio.to_thread(_read_world_import_job_sync, path)
+
+
+async def _create_world_import_job(job_id: str, job: Dict[str, Any]) -> None:
+    """落盘新 job（job_id 由服务端 uuid4 生成）"""
+    path = _world_import_job_path(job_id)
+    if path is None:
+        raise ValueError(f'invalid world import job_id: {job_id}')
+    await asyncio.to_thread(_write_world_import_job_sync, path, job)
+
+
 async def _set_world_import_job(job_id: str, **fields):
-    """更新 job 字段（线程安全）"""
-    async with _world_import_jobs_lock:
-        job = _world_import_jobs.get(job_id)
+    """更新 job 字段。job 文件已被清理时静默跳过"""
+    path = _world_import_job_path(job_id)
+    if path is None:
+        return
+
+    def _update():
+        job = _read_world_import_job_sync(path)
         if job is None:
             return
         job.update(fields)
         job['updated_at'] = time.time()
+        _write_world_import_job_sync(path, job)
+
+    await asyncio.to_thread(_update)
 
 
 async def _count_active_world_import_jobs() -> int:
-    """统计处于 pending/downloading/unpacking 状态的 job 数"""
-    async with _world_import_jobs_lock:
-        return sum(
-            1 for j in _world_import_jobs.values()
-            if j.get('status') in ('pending', 'downloading', 'unpacking')
-        )
+    """统计处于 pending/downloading/unpacking 的 job 数（跨 worker）。
+
+    超过 TTL 未更新的 job 视为宿主进程已死的僵尸，不再占用并发名额。
+    """
+    jobs = await asyncio.to_thread(_list_world_import_jobs_sync)
+    now = time.time()
+    return sum(
+        1 for j in jobs
+        if j.get('status') in _WORLD_IMPORT_ACTIVE_STATUSES
+        and now - j.get('updated_at', j.get('started_at', now)) <= WORLD_IMPORT_JOB_TTL
+    )
 
 
 async def _download_world_zip_with_rate_limit(
@@ -6518,19 +6621,18 @@ async def import_world_from_cloud(
 
         job_id = str(uuid.uuid4())
         now = time.time()
-        async with _world_import_jobs_lock:
-            _world_import_jobs[job_id] = {
-                'status': 'pending',
-                'stage': 'pending',
-                'progress': 0,
-                'message': '任务已创建',
-                'result': None,
-                'error': None,
-                'started_at': now,
-                'updated_at': now,
-                'user_id': user_id,
-                'world_id': world_id,
-            }
+        await _create_world_import_job(job_id, {
+            'status': 'pending',
+            'stage': 'pending',
+            'progress': 0,
+            'message': '任务已创建',
+            'result': None,
+            'error': None,
+            'started_at': now,
+            'updated_at': now,
+            'user_id': user_id,
+            'world_id': world_id,
+        })
 
         await _ensure_world_import_cleanup_task()
         # 后台执行，不阻塞响应
@@ -6548,22 +6650,21 @@ async def world_import_status(
     request: Request,
     job_id: str = QueryParam(...),
 ):
-    """查询世界导入任务进度（前端轮询）"""
-    async with _world_import_jobs_lock:
-        job = _world_import_jobs.get(job_id)
-        if not job:
-            return JSONResponse(
-                {'success': False, 'error': '任务不存在或已过期（可能进程已重启），请重试'},
-                status_code=404,
-            )
-        # 返回快照，不暴露内部字段
-        return JSONResponse({
-            'success': True,
-            'job_id': job_id,
-            'status': job.get('status'),
-            'stage': job.get('stage'),
-            'progress': job.get('progress', 0),
-            'message': job.get('message'),
-            'result': job.get('result'),
-            'error': job.get('error'),
-        })
+    """查询世界导入任务进度（前端轮询）。job 文件跨 worker 共享，任一 worker 都能应答"""
+    job = await _get_world_import_job(job_id)
+    if not job:
+        return JSONResponse(
+            {'success': False, 'error': '任务不存在或已过期，请重试'},
+            status_code=404,
+        )
+    # 返回快照，不暴露内部字段
+    return JSONResponse({
+        'success': True,
+        'job_id': job_id,
+        'status': job.get('status'),
+        'stage': job.get('stage'),
+        'progress': job.get('progress', 0),
+        'message': job.get('message'),
+        'result': job.get('result'),
+        'error': job.get('error'),
+    })

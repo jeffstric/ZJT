@@ -32,7 +32,7 @@
     'image.image_edit': { value: 'gpt-image-2', quality: 'gpt-image-2' },
     'image.grid': { value: 'gpt-image-2', quality: 'gpt-image-2' },
     'image.script_writer': { value: 'gpt-image-2', quality: 'seedream-5.0-pro' },
-    'video.text_to_video': { value: 'minimax_h3', quality: 'seedance_2_0' },
+    'video.text_to_video': { value: 'minimax_h3_t2v', quality: 'seedance_2_0' },
     'video.image_to_video': { value: 'minimax_h3', quality: 'seedance_2_0' },
     'video.reference_to_video': { value: 'minimax_h3_r2v', quality: 'seedance_2_0' },
     'video.digital_human': { value: 'digital_human_ltx2_3_voice', quality: 'digital_human_minimax_h3' },

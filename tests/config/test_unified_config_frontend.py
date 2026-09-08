@@ -736,6 +736,37 @@ class TestVideoCloneDriverKeys(unittest.TestCase):
         self.assertEqual(picked['task_id'], seedance.id)
         self.assertEqual(picked['model_key'], seedance.key)
 
+    def test_minimax_h3_text_to_video_frontend_dict(self):
+        """H3 文生视频：主分类 TEXT_TO_VIDEO、无素材字段下发、分类列表不含 image_to_video。"""
+        from config.unified_config import UnifiedConfigRegistry, TaskCategory, TaskTypeId
+
+        t2v = UnifiedConfigRegistry.get_by_key('minimax_h3_text_to_video')
+        self.assertIsNotNone(t2v)
+        self.assertEqual(t2v.id, TaskTypeId.MINIMAX_H3_TEXT_TO_VIDEO)
+        self.assertEqual(t2v.category, TaskCategory.TEXT_TO_VIDEO)
+
+        frontend = t2v.to_frontend_dict()
+        self.assertEqual(frontend['categories'], ['text_to_video'])
+        # 文生视频无素材输入：不下发图片模式相关字段，不支持参考音视频
+        self.assertNotIn('supported_image_modes', frontend)
+        self.assertNotIn('supports_last_frame', frontend)
+        self.assertFalse(frontend['supports_ref_audio_video'])
+        self.assertFalse(frontend['supports_video_clone'])
+        self.assertFalse(frontend['needs_face_mask'])
+
+    def test_minimax_h3_image_to_video_not_in_text_to_video_category(self):
+        """防回归（ai_tools 12307）：H3 图生视频不得再挂载 TEXT_TO_VIDEO 额外分类。
+
+        该模型驱动强制要求首帧图，挂载文生分类会导致纯文字提交在驱动层报"服务异常"。
+        """
+        from config.unified_config import UnifiedConfigRegistry
+
+        h3 = UnifiedConfigRegistry.get_by_key('minimax_h3_image_to_video')
+        self.assertIsNotNone(h3)
+        frontend = h3.to_frontend_dict()
+        self.assertNotIn('text_to_video', frontend['categories'])
+        self.assertIn('image_to_video', frontend['categories'])
+
 
 if __name__ == '__main__':
     unittest.main()

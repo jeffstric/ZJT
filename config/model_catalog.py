@@ -113,7 +113,7 @@ SCENE_RECOS: Dict[str, SceneReco] = {
     ),
     ModelScene.VIDEO_TEXT_TO_VIDEO: SceneReco(
         ModelScene.VIDEO_TEXT_TO_VIDEO,
-        RecoSlot("minimax_h3", reason="文生视频更快更便宜"),
+        RecoSlot("minimax_h3_t2v", reason="文生视频更快更便宜"),
         RecoSlot("seedance_2_0", reason="画质和运动更稳，适合正式成片"),
     ),
     ModelScene.VIDEO_IMAGE_TO_VIDEO: SceneReco(

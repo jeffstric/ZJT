@@ -164,7 +164,7 @@ class TestModelCatalog(unittest.TestCase):
         self.assertEqual(DEFAULT_TEXT_TO_IMAGE_TASK_ID, TaskTypeId.GPT_IMAGE_2_EDIT)
         self.assertEqual(catalog[ModelScene.VIDEO_IMAGE_TO_VIDEO]["tracks"]["value"]["canonical"], "minimax_h3")
         self.assertEqual(catalog[ModelScene.VIDEO_IMAGE_TO_VIDEO]["tracks"]["quality"]["canonical"], "seedance_2_0")
-        self.assertEqual(catalog[ModelScene.VIDEO_TEXT_TO_VIDEO]["tracks"]["value"]["canonical"], "minimax_h3")
+        self.assertEqual(catalog[ModelScene.VIDEO_TEXT_TO_VIDEO]["tracks"]["value"]["canonical"], "minimax_h3_t2v")
         self.assertEqual(catalog[ModelScene.VIDEO_TEXT_TO_VIDEO]["tracks"]["quality"]["canonical"], "seedance_2_0")
         self.assertEqual(catalog[ModelScene.VIDEO_REFERENCE_TO_VIDEO]["tracks"]["value"]["canonical"], "minimax_h3_r2v")
         self.assertEqual(catalog[ModelScene.VIDEO_REFERENCE_TO_VIDEO]["tracks"]["quality"]["canonical"], "seedance_2_0")

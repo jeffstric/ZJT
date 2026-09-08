@@ -3925,8 +3925,8 @@
                     continue;
                 }
                 if (resp.status === 404) {
-                    // 任务丢失（进程重启等），让用户重试
-                    throw new Error('导入任务已丢失（服务可能重启过），请重试');
+                    // job 文件已过 TTL 被清理，或 job_id 不存在
+                    throw new Error('导入任务不存在或已过期，请重试');
                 }
                 const data = await resp.json().catch(() => ({}));
                 if (!resp.ok || !data.success) {
