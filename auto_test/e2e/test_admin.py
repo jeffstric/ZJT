@@ -583,17 +583,18 @@ def test_admin_i18n_switcher(admin_browser_page):
 
 @pytest.mark.p2
 @pytest.mark.admin
-def test_admin_responsive_layout(browser, auth_token, user_id, base_url):
+def test_admin_responsive_layout(browser, live_auth, base_url):
     """admin_028 - 窄屏下页面仍可用。"""
     import json as _json
 
+    live_auth.ensure()
     context = browser.new_context(
         viewport={"width": 375, "height": 667},
         locale="zh-CN",
     )
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
     """)
     p = context.new_page()
 

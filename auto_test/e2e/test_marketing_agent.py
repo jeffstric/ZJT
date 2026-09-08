@@ -294,8 +294,13 @@ def test_marketing_agent_mode_switch(marketing_agent_page):
 
 @pytest.mark.p0
 @pytest.mark.marketing_agent
-def test_marketing_agent_create_session(api_client, auth_token, user_id):
-    """ma_003 - 通过 API 创建 session_type=2 的营销会话。"""
+def test_marketing_agent_create_session(api_client, live_auth):
+    """ma_003 - 通过 API 创建 session_type=2 的营销会话。
+
+    body 内 auth_token/user_id 取自 session 级 live_auth（api_client 已 ensure
+    过），token 被顶掉时自愈，不用可能已失效的原始 session token。
+    """
+    live_auth.ensure()
     worlds_resp = api_client.get("/api/worlds")
     worlds_data = worlds_resp.json()
     inner = worlds_data.get("data", worlds_data)
@@ -305,9 +310,9 @@ def test_marketing_agent_create_session(api_client, auth_token, user_id):
     resp = api_client.post(
         "/api/session/create",
         json={
-            "user_id": str(user_id),
+            "user_id": str(live_auth.user_id),
             "world_id": str(world_id),
-            "auth_token": auth_token,
+            "auth_token": live_auth.token,
             "session_type": 2,
         },
     )
@@ -481,15 +486,15 @@ def test_marketing_agent_timeout_verification_does_not_block_input_after_session
 
 @pytest.mark.p0
 @pytest.mark.marketing_agent
-def test_marketing_agent_send_message(browser, base_url, auth_token, user_id):
+def test_marketing_agent_send_message(browser, base_url, live_auth):
     """ma_010 - 发送消息后用户消息出现在聊天区域。
 
-    复用 session 级 auth_token/user_id，不在此重新登录：登录接口会删除该用户
-    所有旧 token，一旦 refresh_login 会使后续依赖 page/browser_context fixture
-    （注入 session token）的用例全部 401 跳登录页（见 _login_data 注释"必须只登录一次"）。
+    使用 session 级 live_auth：不在此重新登录（登录接口是单会话策略会删除
+    主账号全部旧 token），token 被顶掉时由 live_auth.ensure() 统一自愈。
     """
     from conftest import MarketingAgentPage
 
+    live_auth.ensure()
     # 创建新的浏览器上下文
     context = browser.new_context(
         viewport={"width": 1280, "height": 720},
@@ -497,8 +502,8 @@ def test_marketing_agent_send_message(browser, base_url, auth_token, user_id):
     )
     # 注入 localStorage 认证信息
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
     """)
     page = context.new_page()
 
@@ -519,10 +524,12 @@ def test_marketing_agent_send_message(browser, base_url, auth_token, user_id):
         # 检查是否被重定向到登录页
         current_url = page.url
         if "login=1" in current_url or "index.html" in current_url:
+            # 可能 token 刚被顶掉：先自愈再注入新 token 并重新加载
+            live_auth.ensure()
             # 直接注入 token 并重新加载
             page.evaluate(f"""() => {{
-                localStorage.setItem('auth_token', '{auth_token}');
-                localStorage.setItem('user_id', '{user_id}');
+                localStorage.setItem('auth_token', '{live_auth.token}');
+                localStorage.setItem('user_id', '{live_auth.user_id}');
             }}""")
             page.reload(wait_until="domcontentloaded")
             page.wait_for_timeout(3000)
@@ -796,19 +803,20 @@ def test_marketing_agent_feedback_modal(marketing_agent_page, page, base_url):
 
 @pytest.mark.p1
 @pytest.mark.marketing_agent
-def test_marketing_agent_title_auto_update(browser, base_url, auth_token, user_id):
+def test_marketing_agent_title_auto_update(browser, base_url, live_auth):
     """ma_019 - 发送第一条消息后会话标题自动更新。
 
-    复用 session 级 token，不重新登录（登录会删旧 token，破坏后续 page fixture 用例）。
+    用 session 级 live_auth（token 被顶掉时自动重登），不在此单独重登。
     """
     from conftest import MarketingAgentPage
 
+    live_auth.ensure()
     context = browser.new_context(
         viewport={"width": 1280, "height": 720}, locale="zh-CN"
     )
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
     """)
     p = context.new_page()
     _mock_computing_power(p)
@@ -851,19 +859,20 @@ def test_marketing_agent_title_auto_update(browser, base_url, auth_token, user_i
 
 @pytest.mark.p2
 @pytest.mark.marketing_agent
-def test_marketing_agent_message_scroll(browser, base_url, auth_token, user_id):
+def test_marketing_agent_message_scroll(browser, base_url, live_auth):
     """ma_011 - 消息较多时聊天区域可滚动。
 
-    复用 session 级 token，不重新登录（登录会删旧 token，破坏后续 page fixture 用例）。
+    用 session 级 live_auth（token 被顶掉时自动重登），不在此单独重登。
     """
     from conftest import MarketingAgentPage
 
+    live_auth.ensure()
     context = browser.new_context(
         viewport={"width": 1280, "height": 720}, locale="zh-CN"
     )
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
     """)
     p = context.new_page()
     _mock_computing_power(p)

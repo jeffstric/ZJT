@@ -56,12 +56,13 @@ def test_sw_page_loads(sw_page):
 
 @pytest.mark.p0
 @pytest.mark.script_writer
-def test_sw_no_world_shows_prompt(browser, auth_token, user_id, base_url):
+def test_sw_no_world_shows_prompt(browser, live_auth, base_url):
     """sw_002 - 不带 world_id 时显示世界选择提示。"""
+    live_auth.ensure()
     context = browser.new_context(viewport={"width": 1280, "height": 720}, locale="zh-CN")
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
     """)
     p = context.new_page()
 
@@ -72,7 +73,7 @@ def test_sw_no_world_shows_prompt(browser, auth_token, user_id, base_url):
         )
     p.route("**/api/user/computing_power", handler)
 
-    p.goto(f"{base_url}/script-writer?user_id={user_id}", wait_until="domcontentloaded")
+    p.goto(f"{base_url}/script-writer?user_id={live_auth.user_id}", wait_until="domcontentloaded")
     p.wait_for_function("""() => {
         const input = document.querySelector('#message-input');
         return document.querySelector('.world-sidebar.open')
@@ -597,8 +598,9 @@ def test_sw_new_prop_modal(sw_page):
 
 @pytest.mark.p2
 @pytest.mark.script_writer
-def test_sw_responsive_layout(browser, auth_token, user_id, base_url, api_client):
+def test_sw_responsive_layout(browser, live_auth, base_url, api_client):
     """sw_030 - 窄屏下页面仍可用。"""
+    live_auth.ensure()
     # 获取 world_id
     worlds_resp = api_client.get("/api/worlds")
     worlds_data = worlds_resp.json()
@@ -608,8 +610,8 @@ def test_sw_responsive_layout(browser, auth_token, user_id, base_url, api_client
 
     context = browser.new_context(viewport={"width": 375, "height": 667}, locale="zh-CN")
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
     """)
     p = context.new_page()
 
@@ -620,7 +622,7 @@ def test_sw_responsive_layout(browser, auth_token, user_id, base_url, api_client
         )
     p.route("**/api/user/computing_power", handler)
 
-    p.goto(f"{base_url}/script-writer?user_id={user_id}&world_id={world_id}", wait_until="domcontentloaded")
+    p.goto(f"{base_url}/script-writer?user_id={live_auth.user_id}&world_id={world_id}", wait_until="domcontentloaded")
     p.wait_for_timeout(3000)
 
     assert p.locator(".app-container").count() > 0, "移动端应有 .app-container"

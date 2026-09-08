@@ -15,15 +15,20 @@ import pytest
 # ═══════════════════════════════════════════════════════════════
 
 
-def _setup_logs_page(browser, auth_token, user_id, base_url, mock_data=None):
-    """创建算力日志页面实例，注入认证信息并 mock API"""
+def _setup_logs_page(browser, live_auth, base_url, mock_data=None):
+    """创建算力日志页面实例，注入认证信息并 mock API。
+
+    用 session 级 live_auth：建 context 前 ensure() 一次，token 被顶掉时
+    自动重登，注入到 localStorage 的始终是有效凭证。
+    """
+    live_auth.ensure()
     context = browser.new_context(
         viewport={"width": 1280, "height": 720},
         locale="zh-CN",
     )
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
     """)
     p = context.new_page()
 
@@ -81,9 +86,9 @@ def _setup_logs_page(browser, auth_token, user_id, base_url, mock_data=None):
 
 @pytest.mark.p0
 @pytest.mark.computing_power
-def test_power_logs_page_loads(browser, auth_token, user_id, base_url):
+def test_power_logs_page_loads(browser, live_auth, base_url):
     """cpl_001 - 算力日志页面加载成功。"""
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url)
+    p, context = _setup_logs_page(browser, live_auth, base_url)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(2000)
 
@@ -97,9 +102,9 @@ def test_power_logs_page_loads(browser, auth_token, user_id, base_url):
 
 @pytest.mark.p0
 @pytest.mark.computing_power
-def test_power_logs_display_entries(browser, auth_token, user_id, base_url):
+def test_power_logs_display_entries(browser, live_auth, base_url):
     """cpl_002 - 页面显示日志条目。"""
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url)
+    p, context = _setup_logs_page(browser, live_auth, base_url)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(3000)
 
@@ -116,9 +121,9 @@ def test_power_logs_display_entries(browser, auth_token, user_id, base_url):
 
 @pytest.mark.p0
 @pytest.mark.computing_power
-def test_power_logs_filter_tabs(browser, auth_token, user_id, base_url):
+def test_power_logs_filter_tabs(browser, live_auth, base_url):
     """cpl_003 - 筛选标签存在（全部/增加/扣除）。"""
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url)
+    p, context = _setup_logs_page(browser, live_auth, base_url)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(2000)
 
@@ -138,7 +143,7 @@ def test_power_logs_filter_tabs(browser, auth_token, user_id, base_url):
 
 @pytest.mark.p1
 @pytest.mark.computing_power
-def test_power_logs_pagination(browser, auth_token, user_id, base_url):
+def test_power_logs_pagination(browser, live_auth, base_url):
     """cpl_004 - 分页控件存在。"""
     # 使用大量数据的 mock
     logs = [
@@ -157,7 +162,7 @@ def test_power_logs_pagination(browser, auth_token, user_id, base_url):
         "success": True,
         "data": {"logs": logs, "total": 50, "limit": 20, "offset": 0},
     }
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url, mock_data)
+    p, context = _setup_logs_page(browser, live_auth, base_url, mock_data)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(3000)
 
@@ -196,10 +201,10 @@ def test_power_logs_no_auth_shows_error(browser, base_url):
 
 @pytest.mark.p1
 @pytest.mark.computing_power
-def test_power_logs_empty_state(browser, auth_token, user_id, base_url):
+def test_power_logs_empty_state(browser, live_auth, base_url):
     """cpl_006 - 无日志数据时显示空状态。"""
     mock_data = {"success": True, "data": {"logs": [], "total": 0, "limit": 20, "offset": 0}}
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url, mock_data)
+    p, context = _setup_logs_page(browser, live_auth, base_url, mock_data)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(3000)
 
@@ -215,7 +220,7 @@ def test_power_logs_empty_state(browser, auth_token, user_id, base_url):
 
 @pytest.mark.p0
 @pytest.mark.computing_power
-def test_power_logs_deduct_shows_refund_hint(browser, auth_token, user_id, base_url):
+def test_power_logs_deduct_shows_refund_hint(browser, live_auth, base_url):
     """cpl_009 - 已退回的扣减行显示退回金额和退回单号摘要。"""
     mock_data = {
         "success": True,
@@ -251,7 +256,7 @@ def test_power_logs_deduct_shows_refund_hint(browser, auth_token, user_id, base_
             "offset": 0,
         },
     }
-    p, context = _setup_logs_page(browser, auth_token, user_id, base_url, mock_data)
+    p, context = _setup_logs_page(browser, live_auth, base_url, mock_data)
     p.goto(f"{base_url}/computing_power_logs.html", wait_until="domcontentloaded")
     p.wait_for_timeout(3000)
 

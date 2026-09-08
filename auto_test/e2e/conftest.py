@@ -188,16 +188,24 @@ def _secondary_login_data(e2e_config, base_url):
     return _login_with_credentials(e2e_config, base_url, "secondary")
 
 
-@pytest.fixture(scope="session")
-def auth_token(_login_data):
-    """通过 API 登录获取 token（session scope，只登录一次）"""
-    return _login_data["token"]
+@pytest.fixture
+def auth_token(live_auth):
+    """当前有效的主账号 token（function scope，经 live_auth 自愈）。
+
+    实际登录只发生一次（_login_data，session scope）；这里每用例返回
+    live_auth 的当前 token：若中途被新登录顶掉（单会话策略），ensure()
+    重登后本 fixture 自动给出新 token，用例里直接放 body/URL 的
+    auth_token 也随之更新，无需逐处改用 live_auth。
+    """
+    live_auth.ensure()
+    return live_auth.token
 
 
-@pytest.fixture(scope="session")
-def user_id(_login_data):
-    """通过 API 登录获取 user_id"""
-    return _login_data["user_id"]
+@pytest.fixture
+def user_id(live_auth):
+    """当前有效的主账号 user_id（经 live_auth；user_id 不随重登变化）"""
+    live_auth.ensure()
+    return live_auth.user_id
 
 
 @pytest.fixture(scope="session")
@@ -210,13 +218,72 @@ def secondary_user_id(_secondary_login_data):
     return _secondary_login_data["user_id"]
 
 
+class _LiveAuth:
+    """会话级"活"凭证：session token 被顶掉时自动重登一次。
+
+    登录接口是单会话策略：同用户任何一次新登录都会删除其全部旧 token
+    （auth_service.py `delete_by_user_id`）。长跑全量时 token 可能被顶掉：
+    - 套件内：test_auth 的登录端点用例（用主账号 POST /api/auth/login）；
+    - 套件外：手动 UI 登录、另一个 e2e/脚本并发登录主账号。
+    token 失效后，注入旧 token 的浏览器用例 401 跳登录页、API 用例 400，
+    连环超时/失败。ensure() 在每个用例前校验（一次轻量 GET），失效则重登
+    （只顶掉已失效的旧 token，是净收益）并同步更新共享的 auth_headers dict，
+    使所有已创建的 api_client（headers 传的是该 dict 引用）自动用上新 token。
+    """
+
+    def __init__(self, e2e_config, base_url, initial):
+        self._e2e_config = e2e_config
+        self._base_url = base_url
+        self.token = initial["token"]
+        self.user_id = initial["user_id"]
+        self._headers = None
+
+    def attach_headers(self, headers):
+        self._headers = headers
+
+    def _is_valid(self):
+        try:
+            resp = httpx.get(
+                f"{self._base_url}/api/user/computing_power",
+                headers={
+                    "Authorization": f"Bearer {self.token}",
+                    "X-User-Id": self.user_id,
+                },
+                timeout=10,
+            )
+        except httpx.HTTPError:
+            return True  # 网络异常不误判为 token 失效，避免无谓重登
+        return resp.status_code == 200
+
+    def ensure(self):
+        if self._is_valid():
+            return
+        print("[e2e] session token 已失效（可能被新登录顶掉），重新登录主账号以保护后续用例")
+        fresh = _login_with_credentials(self._e2e_config, self._base_url, "primary")
+        self.token = fresh["token"]
+        self.user_id = fresh["user_id"]
+        if self._headers is not None:
+            self._headers["Authorization"] = f"Bearer {self.token}"
+            self._headers["X-User-Id"] = self.user_id
+
+
 @pytest.fixture(scope="session")
-def auth_headers(auth_token, user_id):
-    """构造认证 headers"""
-    return {
-        "Authorization": f"Bearer {auth_token}",
-        "X-User-Id": str(user_id),
+def live_auth(e2e_config, base_url, _login_data):
+    """活凭证：token 被顶掉时自动重登（见 _LiveAuth 文档）。所有注入
+    token 的 fixture/用例在创建请求或浏览器上下文前调 live_auth.ensure()。"""
+    return _LiveAuth(e2e_config, base_url, _login_data)
+
+
+@pytest.fixture(scope="session")
+def auth_headers(live_auth, _login_data):
+    """构造认证 headers（dict 引用被 api_client 共享；live_auth 重登后
+    原地更新，所有已创建客户端自动用上新 token）"""
+    headers = {
+        "Authorization": f"Bearer {_login_data['token']}",
+        "X-User-Id": str(_login_data["user_id"]),
     }
+    live_auth.attach_headers(headers)
+    return headers
 
 
 def refresh_login(e2e_config, base_url):
@@ -239,10 +306,11 @@ def refresh_login(e2e_config, base_url):
 
 
 @pytest.fixture
-def api_client_with_refresh(base_url, auth_headers, e2e_config):
+def api_client_with_refresh(base_url, auth_headers, e2e_config, live_auth):
     """httpx API 客户端，支持 token 失效时自动刷新"""
     import time
 
+    live_auth.ensure()
     client = httpx.Client(
         base_url=base_url,
         headers=auth_headers,
@@ -278,8 +346,9 @@ def browser():
 
 
 @pytest.fixture
-def browser_context(browser, auth_token, user_id, base_url, request):
-    """浏览器上下文，注入 localStorage 认证信息"""
+def browser_context(browser, live_auth, base_url, request):
+    """浏览器上下文，注入 localStorage 认证信息（活凭证：token 被顶掉时已重登）"""
+    live_auth.ensure()
     context = browser.new_context(
         viewport={"width": 1280, "height": 720},
         locale="zh-CN",
@@ -289,8 +358,8 @@ def browser_context(browser, auth_token, user_id, base_url, request):
         context.tracing.start(screenshots=True, snapshots=True, sources=True)
     # 注入 localStorage 认证信息，跳过 UI 登录
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
     """)
     yield context
     if results_dir:
@@ -345,20 +414,21 @@ def pytest_runtest_makereport(item, call):
 
 
 @pytest.fixture
-def editor_page(browser, auth_token, user_id, base_url):
-    """工作流编辑器专用页面，已注入认证信息。
+def editor_page(browser, live_auth, base_url):
+    """工作流编辑器专用页面，已注入认证信息（活凭证：token 被顶掉时已重登）。
 
     复用 session-scoped browser 实例，避免创建多个 sync_playwright 上下文导致 asyncio 冲突。
     通过 add_init_script 在页面脚本运行前注入 localStorage。
     """
+    live_auth.ensure()
     context = browser.new_context(
         viewport={"width": 1280, "height": 720},
         locale="zh-CN",
     )
     # 在页面脚本运行前注入认证信息
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
     """)
     page = context.new_page()
 
@@ -371,8 +441,9 @@ def editor_page(browser, auth_token, user_id, base_url):
 
 
 @pytest.fixture
-def api_client(base_url, auth_headers):
-    """httpx 异步 API 客户端（非阻塞）"""
+def api_client(base_url, auth_headers, live_auth):
+    """httpx API 客户端（非阻塞；token 被顶掉时先重登再建客户端）"""
+    live_auth.ensure()
     client = httpx.Client(
         base_url=base_url,
         headers=auth_headers,
@@ -396,12 +467,13 @@ def script_writer_page(page, base_url):
 
 
 @pytest.fixture
-def sw_page(browser, auth_token, user_id, base_url, api_client):
-    """剧本编辑器专用页面，URL 带 user_id 和 world_id。
+def sw_page(browser, live_auth, base_url, api_client):
+    """剧本编辑器专用页面，URL 带 user_id 和 world_id（活凭证：token 被顶掉时已重登）。
 
     复用 session-scoped browser，注入认证信息，
     并自动获取 world_id 传入 URL 参数。
     """
+    live_auth.ensure()
     # 获取 world_id
     worlds_resp = api_client.get("/api/worlds")
     worlds_data = worlds_resp.json()
@@ -414,8 +486,8 @@ def sw_page(browser, auth_token, user_id, base_url, api_client):
         locale="zh-CN",
     )
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
     """)
     p = context.new_page()
     # 拦截算力 API 防止重定向到登录页
@@ -429,8 +501,8 @@ def sw_page(browser, auth_token, user_id, base_url, api_client):
     page_obj = ScriptWriterPage(p, base_url)
     # 将 world_id 附加到 page_obj 供测试使用
     page_obj.world_id = world_id
-    page_obj.user_id = str(user_id)
-    page_obj.auth_token = auth_token
+    page_obj.user_id = str(live_auth.user_id)
+    page_obj.auth_token = live_auth.token
     yield page_obj
     p.close()
     context.close()
@@ -457,7 +529,7 @@ def admin_page(page, base_url):
 
 
 @pytest.fixture
-def admin_browser_page(browser, auth_token, user_id, base_url):
+def admin_browser_page(browser, live_auth, base_url):
     """管理后台专用页面，注入认证信息并 mock 所有 admin API。
 
     admin.js 使用 axios + Bearer token 认证，但 pytest 环境下
@@ -466,13 +538,14 @@ def admin_browser_page(browser, auth_token, user_id, base_url):
     """
     import json as _json
 
+    live_auth.ensure()
     context = browser.new_context(
         viewport={"width": 1280, "height": 720},
         locale="zh-CN",
     )
     context.add_init_script(f"""
-        localStorage.setItem('auth_token', '{auth_token}');
-        localStorage.setItem('user_id', '{user_id}');
+        localStorage.setItem('auth_token', '{live_auth.token}');
+        localStorage.setItem('user_id', '{live_auth.user_id}');
         localStorage.setItem('phone', '15088613226');
     """)
     p = context.new_page()
@@ -820,7 +893,7 @@ def marketing_session(api_client, auth_token, user_id):
 
 
 @pytest.fixture(scope="session")
-def mock_mode(user_id):
+def mock_mode(_login_data):
     """开启 E2E 媒体生成挡板（opt-in）。
 
     需要在 mock 模式下跑的 E2E 用例声明本 fixture（作为参数，或
@@ -862,9 +935,10 @@ def mock_mode(user_id):
             # 兜底写库同样可能不可用（如 config 文件缺失导致 model 层 import 失败），不阻断
             print(f"[mock_mode] 兜底写入 test_mode.enabled 也失败（非致命）: {e2}")
 
-    # 2) 重置测试账户算力
+    # 2) 重置测试账户算力（user_id 不随重登变化，直接取 session 级 _login_data，
+    # 避免 session fixture 依赖 function 级 user_id 触发 ScopeMismatch）
     try:
-        uid = int(user_id)
+        uid = int(_login_data["user_id"])
         from model.computing_power import ComputingPowerModel
         ComputingPowerModel.create_or_update(user_id=uid, computing_power=1_000_000)
     except Exception as e:
