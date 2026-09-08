@@ -877,6 +877,19 @@ button {
   line-height: 1.45;
 }
 
+/* 与 web/css/index.css 的 .beta-tag 保持一致（storyboard 页面不引 index.css） */
+.dialogue-audio-source-replace .beta-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--primary);
+  color: #fff;
+  margin-left: 2px;
+  line-height: 1.5;
+}
+
 .dialogue-audio-source-replace {
   display: flex;
   align-items: center;

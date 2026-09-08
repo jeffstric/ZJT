@@ -1136,7 +1136,7 @@ function renderVoiceReplaceControl(scene, hasVideo) {
             class="dialogue-audio-source-replace"
             data-action="replace-scene-voice"
             ${disabled ? 'disabled' : ''}
-            title="${escapeHtml(title)}">${icon('mic', 14)} ${voiceReplaceStatusLabel(job)}</button>
+            title="${escapeHtml(title)}">${icon('mic', 14)} ${voiceReplaceStatusLabel(job)}<span class="beta-tag">Beta</span></button>
         ${extraHtml}`;
 }
 

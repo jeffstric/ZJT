@@ -29,6 +29,7 @@ assert.match(eventsSource, /action === 'set-scene-audio-source'/);
 assert.match(eventsSource, /audio_embedded:\s*scene\.audioEmbedded \? 1 : 0/);
 assert.match(renderSource, /data-action="replace-scene-voice"/);
 assert.match(renderSource, /替换音色/);
+assert.match(renderSource, /dialogue-audio-source-replace[\s\S]*?<span class="beta-tag">Beta<\/span>/);
 assert.match(eventsSource, /action === 'replace-scene-voice'/);
 assert.match(eventsSource, /submitSceneVoiceReplace/);
 
