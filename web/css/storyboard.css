@@ -876,6 +876,32 @@ button {
   font-size: 10px;
   line-height: 1.45;
 }
+
+.dialogue-audio-source-replace {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.dialogue-audio-source-replace:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.dialogue-audio-source-replace:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
 .assets-row {
   display: flex;
   align-items: center;

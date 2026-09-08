@@ -114,6 +114,7 @@
 | [参考音频指南](audio/reference_audio_guide.md) | 参考音频使用方法 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Fgq0dyTP1oA7hxxMV6FcUGMOnRb) |
 | [对话组节点实现](audio/dialogue_group_node_implementation.md) | 对话组技术实现 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/UUcmd9v2MoJPkbx0ztCcZlW7nef) |
 | [TTS 节点实现](audio/text_to_speech_node_implementation.md) | TTS 技术实现 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/YcehdCoeKoJ7DHxityzcBRRLnqd) |
+| [成片对白音色替换](storyboard/storyboard_video_voice_replace.md) | UVR 分离人声后 ASR 有序切分 + Seed-VC 替换成片随机音色 | 待补充 |
 
 ---
 

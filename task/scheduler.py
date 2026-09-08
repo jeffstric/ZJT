@@ -9,7 +9,7 @@ from task.audio_task import generate_audio_task
 from task.token_task import process_token_task
 from task.download_queue_task import process_download_queue
 from functools import partial
-from config.constant import StoryboardAutoGenerateConstants
+from config.constant import StoryboardAutoGenerateConstants, VoiceReplaceConstants
 
 from config.constant import DOWNLOAD_POLL_INTERVAL
 
@@ -340,6 +340,23 @@ def init_scheduler(app):
         replace_existing=True,
         max_instances=1,
         coalesce=True
+    )
+
+    from task.voice_replace_task import process_voice_replace_jobs
+    task_voice_replace = partial(_run_async_task, process_voice_replace_jobs)
+    logger.info(
+        '启用成片音色替换任务，每%s秒执行一次',
+        VoiceReplaceConstants.SCHEDULER_INTERVAL_SECONDS,
+    )
+    scheduler.add_job(
+        func=task_voice_replace,
+        trigger=IntervalTrigger(seconds=VoiceReplaceConstants.SCHEDULER_INTERVAL_SECONDS),
+        id='process_voice_replace_jobs',
+        name=f'Process voice replace jobs every {VoiceReplaceConstants.SCHEDULER_INTERVAL_SECONDS} seconds',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=30,
     )
 
     # Token日志处理任务

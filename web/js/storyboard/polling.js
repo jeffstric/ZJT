@@ -17,6 +17,8 @@ import {
     updateDigitalHumanAudioHint,
     updateDialogueRow,
     updateTimelineProgress,
+    refresh,
+    Region,
 } from './render.js';
 
 const POLL_INTERVAL = 4000;
@@ -315,6 +317,69 @@ export function resumePollingTasks() {
     for (const scene of state.scenes) {
         pollSceneTaskStatus(scene.id);
     }
+    if (state.currentSceneId) {
+        hydrateVoiceReplace(state.currentSceneId);
+    }
+}
+
+const VOICE_REPLACE_IN_FLIGHT = ['queued', 'asr', 'matching', 'converting', 'muxing'];
+const voiceReplaceTimers = {};
+
+export function isVoiceReplaceInFlight(job) {
+    return !!(job && VOICE_REPLACE_IN_FLIGHT.includes(String(job.status || '')));
+}
+
+export function setVoiceReplaceJob(sceneId, job) {
+    if (!state.voiceReplaceBySceneId) state.voiceReplaceBySceneId = {};
+    state.voiceReplaceBySceneId[sceneId] = job || null;
+}
+
+export async function hydrateVoiceReplace(sceneId) {
+    if (!sceneId) return;
+    try {
+        const data = await api.getSceneVoiceReplace(sceneId);
+        setVoiceReplaceJob(sceneId, data.job || null);
+        if (state.currentSceneId === sceneId) {
+            refresh([Region.LEFT_TAB_BODY]);
+        }
+        if (isVoiceReplaceInFlight(data.job)) {
+            pollVoiceReplace(sceneId);
+        }
+    } catch (_) { /* 音色替换状态失败不阻断主流程 */ }
+}
+
+export function pollVoiceReplace(sceneId) {
+    if (!sceneId || voiceReplaceTimers[sceneId]) return;
+    const tick = async () => {
+        try {
+            const data = await api.getSceneVoiceReplace(sceneId);
+            const job = data.job || null;
+            const prev = state.voiceReplaceBySceneId?.[sceneId] || null;
+            setVoiceReplaceJob(sceneId, job);
+            if (state.currentSceneId === sceneId) {
+                refresh([Region.LEFT_TAB_BODY]);
+            }
+            if (isVoiceReplaceInFlight(job)) {
+                voiceReplaceTimers[sceneId] = setTimeout(tick, POLL_INTERVAL);
+                return;
+            }
+            delete voiceReplaceTimers[sceneId];
+            if (job && job.status === 'completed' && prev && prev.status !== 'completed') {
+                await loadSceneCandidates(sceneId);
+                const scene = state.scenes.find(item => item.id === sceneId);
+                const selected = (state.sceneCandidates[sceneId]?.videos || []).find(item => item.selected);
+                if (scene && selected?.url) {
+                    scene.videoUrl = selected.url;
+                    scene.audioEmbedded = true;
+                    if (selected.id) scene.selectedVideoId = selected.id;
+                }
+                if (scene) applySceneUpdate(scene);
+            }
+        } catch (e) {
+            voiceReplaceTimers[sceneId] = setTimeout(tick, POLL_INTERVAL * 2);
+        }
+    };
+    tick();
 }
 
 // 剧本分段拆分任务轮询：见 docs/script/script_parser_incremental_split_design.md §13.3 §15。

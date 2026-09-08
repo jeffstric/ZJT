@@ -68,6 +68,8 @@ const state = {
     currentSceneId: null,
     /** 按分镜缓存右侧图片/视频候选列表。 */
     sceneCandidates: {},
+    /** 按分镜缓存音色替换任务（GET/POST /voice-replace）。 */
+    voiceReplaceBySceneId: {},
     /** 按分镜、资产类型隔离候选上传状态，避免切换分镜后串台。 */
     candidateUploadsBySceneId: {},
     /** 按分镜和 asset id 隔离候选删除状态。 */

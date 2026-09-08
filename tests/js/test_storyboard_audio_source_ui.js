@@ -27,6 +27,10 @@ assert.match(renderSource, /dialogue-audio-source-auto-badge/);
 assert.match(renderSource, /已自动使用视频原声/);
 assert.match(eventsSource, /action === 'set-scene-audio-source'/);
 assert.match(eventsSource, /audio_embedded:\s*scene\.audioEmbedded \? 1 : 0/);
+assert.match(renderSource, /data-action="replace-scene-voice"/);
+assert.match(renderSource, /替换音色/);
+assert.match(eventsSource, /action === 'replace-scene-voice'/);
+assert.match(eventsSource, /submitSceneVoiceReplace/);
 
 assert.match(
     playbackSource,
