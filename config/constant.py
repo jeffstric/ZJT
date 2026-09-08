@@ -1591,7 +1591,7 @@ class VoiceReplaceConstants:
         VoiceReplaceJobStatus.MUXING,
     )
 
-    # 推理服务兜底地址（本机占位）。生产经 yaml voice_replace.* 或环境变量覆盖；禁止前端直连。
+    # 推理服务兜底地址（本机占位）。worker 经公网入口访问；生产经 yaml voice_replace.* 或环境变量覆盖，禁止前端直连。
     ASR_BASE_URL = "http://127.0.0.1:7861"
     ASR_SEGMENTS_PATH = "/api/v1/asr_segments"
     UVR_BASE_URL = "http://127.0.0.1:7862"

@@ -264,7 +264,7 @@ asr:
   enabled: false  # true 时启用句级 smart 字幕（需 asr 服务可达）
 
 # 成片对白音色替换：SenseVoice ASR + UVR 人声分离 + Vevo2 音色转换（回退 Seed-VC）。
-# 推理服务地址按实际部署配置（前端禁止直连），实际地址不入库。
+# worker 经公网入口访问推理服务，地址按实际部署配置（前端禁止直连），实际地址不入库。
 voice_replace:
   asr_base_url: ""
   uvr_base_url: ""

@@ -80,7 +80,7 @@ VC 后端当前主力为 **Vevo2**（Amphion style-preserved VC，FM-only 推理
 - `Kim_Vocal_2` 等 karaoke 模型有时把对白分到 Instrumental。worker 会对两条 stem 都做 ASR，选有字的那条当人声。
 - 产物写 `upload/voice_replace/{job_id}/result.mp4`，并挂成新的分镜视频 candidate；成功后 `audio_embedded=1`。
 - 低置信默认 `wait_confirm`。工作流节点一期 skip（`workflow_not_supported`）。数字人 skip。
-- worker 默认打 `voice_replace.seedvc_base_url` 配置的地址（服务若只绑 127.0.0.1，需改成局域网可达，或让 worker 跑在同一台机）。
+- worker 默认打公网入口地址（经 yaml `voice_replace.*_base_url` 配置下发），未配置时回落 `VoiceReplaceConstants` 占位常量。
 
 ## 相关代码
 
