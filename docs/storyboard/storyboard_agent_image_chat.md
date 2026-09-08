@@ -1,12 +1,21 @@
 # 分镜助手对话生图
 
-`web/storyboard.html` 的左侧「分镜助手」支持三种模式：
+`web/storyboard.html` 的左侧「分镜助手」支持四种模式：
 
 | 模式 | chatMode | 路径 | 社区版 |
 |------|----------|------|--------|
 | 对话改图 | `dialogue` | 智能体生图/改图 | ✅ |
+| 直填生图 | `image` | **直连** `/scene/{id}/generate-image`（用户提示词透传，不走智能体，零 LLM 消耗） | ✅ |
 | 视频生成 | `video` | **直连** `/scene/{id}/generate-video`（首帧图 + `scene.video_prompt`，不走智能体） | ✅ |
 | AI生视频 | `aivideo` | 智能体生视频（`storyboard-video` skill） | ❌（禁用，商业版特权） |
+
+「直填生图」模式（2026-09 新增）：用户直接输入生图提示词，前端调 `api.generateSceneImage`（`{ asset_type: 'first_frame', prompt, task_type, ratio, mode: 'auto' }`），`prompt` 透传且优先级最高（`storyboard_agent_cli_service.py` 中 `prompt or context["image_prompt"]`），`mode='auto'` 时保留角色/场景参考图注入；不经过任何 LLM 调用。
+
+交互约定（直填生图与直连视频一致）：点击发送**不弹任何确认/提示 alert**，直接提交；左下角提示行**提交前常驻显示预估**（`estimateScenePower`，随模式/所选模型/时长档变化，如「⚡ 预计生图消耗 2 算力」），提交成功后切换为实际消耗（`state.lastPowerSpend`，如「⚡ 本次生图消耗 2 算力」），同时异步刷新右上角算力余额。模式切换、分镜切换、模型/时长选择变化会清除实际值、回到预估显示。预估口径：**图片/编辑模型为固定单价**（直填生图提交走 `getSelectedImageTaskId(true)` 图生图/编辑槽位，预估同槽位）；**视频一律经后端单镜估价接口** `POST /scene/{id}/estimate-video-power`（纯只读，`storyboard:view`）——口径与扣费完全一致：时长档位基价 × 分辨率/图模式修饰符倍率（DB 可热更新）向上取整，即 `get_computing_power_for_task(context={resolution, image_mode})`；前端不复刻倍率表。对口型分镜由接口内数字人服务端规划（billable_duration）精确计价。前端以「分镜+模型+时长档+分辨率+图模式」为缓存键，参数变化自动重拉；估价未返回时短暂显示「正在预估消耗…」。弹窗内 select、「性价比/效果」档位按钮、分辨率切换三条换模型路径都会即时重算预估。直连 generate-video 的预扣也已对齐同口径（带 resolution/image_mode context，此前漏乘分辨率倍率）。生图路径响应顶层 `computing_power` 由 `_finalize_submission` 从 `submission.computing_power_required/total` 提升而来（与 generate-video 路径字段对齐）；提交/生成失败仍走 alert 与「内容违规提醒」弹框。
+
+智能体路径（对话改图 / AI生视频）同样计入左下角提示行：`expert_agent` 在聚合 `project_ids` 的同点累加生成工具的算力消耗（`pending_computing_power`），`image_task_submitted` / `video_task_submitted` 流式事件携带 `computing_power`，前端 `recordPowerSpend` 写入提示行（label 为「AI生图」/「AI生视频」）。0/缺失不覆盖上次显示（`already_bound` 等无新扣费场景）。
+
+文本框预填基线：切换到该模式、刷新页面恢复 `chatMode=image`、**切换分镜**时，前端用 `state.js` 的 `composeSceneImagePrompt` 预填当前分镜画面提示词——由 `scene.prompt_json` 的 `perspective` / `style` / `scene_desc` 按序以中文逗号组合；**不拼 `character_desc`**（该字段只是「、」连接的角色名列表，实际生图链路 `services/storyboard_agent_cli_service.py:_compose_image_prompt` 不使用它——角色外貌由参考图 + 参考图说明注入，拼进文本只会污染提示词；此前版本曾错误对齐 `api/storyboard.py` 的同名死函数导致预填末尾出现「，角色A、角色B」尾巴，该死函数已删除）；用户可直接编辑后提交，编辑值仅本次使用、不回写 `prompt_json`。旧分镜 `prompt_json` 为空时预填为空，需手填。
 
 「视频生成」直连模式复用现成的社区版路由 `POST /scene/{id}/generate-video`，不经 `ToolExecutor`/企业版工具，社区版可用；「AI生视频」走智能体，社区版下视频工具未注册会报"未知工具"，故禁用并提示商业版特权。
 

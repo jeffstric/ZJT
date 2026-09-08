@@ -119,6 +119,9 @@ async function generateShotFrameVideo(nodeId, node){
   try {
     generateBtn.disabled = true;
     generateBtn.textContent = '生成中...';
+    // 新一轮生成开始，清除上次失败原因（避免生成成功后重载，过期错误与新视频同显；
+    // 与 image_node.js / image_to_video_node.js 同约定）
+    if(node) node.data.lastError = '';
 
     // 使用节点中用户编辑的视频提示词文本，而不是JSON格式
     let videoPrompt = node.data.videoPromptText || node.data.videoPrompt || '';

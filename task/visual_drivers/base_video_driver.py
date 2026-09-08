@@ -270,7 +270,13 @@ class BaseVideoDriver(ABC):
 
             api_logger.info(f"========== API 请求结束 ==========")
 
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                # 4xx/5xx 时把已解析的响应体挂到异常上，便于下游识别内容审核/额度不足等业务错误
+                # （否则响应原文在此丢失，驱动只能返回笼统的“服务异常”）
+                e.response_body = result if isinstance(result, dict) else {}
+                raise
             return result
 
         except Exception as e:

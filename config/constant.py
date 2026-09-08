@@ -268,20 +268,27 @@ QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES = 1800
 # 前端直传 key 前缀，便于后台批量清理与统计。
 WORLD_IMPORT_KEY_PREFIX = "world_import"
 
-# ===== 大世界导入：后端限速下载与内存任务 =====
+# ===== 大世界导入：后端限速下载与共享文件任务 =====
 # 限速下载速率上限（字节/秒）：避免拉取大 zip 打满服务器出口带宽影响其他接口/用户。
 WORLD_IMPORT_DOWNLOAD_RATE_BPS = 20 * 1024 * 1024   # 默认 20 MB/s
 # 限速下载单 chunk 大小（字节）
 WORLD_IMPORT_DOWNLOAD_CHUNK_BYTES = 256 * 1024       # 256 KB / chunk
 # 限速下载总超时（秒）：asyncio.wait_for 保护，遵守超时红线。
 WORLD_IMPORT_DOWNLOAD_TIMEOUT = 1800
-# 导入任务进度刷新粒度（百分比），避免高频更新 job 字典
+# 导入任务进度刷新粒度（百分比），避免高频重写 job 文件
 WORLD_IMPORT_PROGRESS_STEP = 5
-# 内存 job 保留时长（秒），过期由后台清理协程淘汰
+# job 状态文件目录名，位于项目根 UploadPathConstants.TEMP_DIR 下。
+# gunicorn 多 worker 进程共享同一目录，任一 worker 都能查到其他 worker 创建的 job；
+# 若改用进程内存字典，轮询请求落到别的 worker 会 404（前端误报"导入失败"）。
+WORLD_IMPORT_JOB_DIR_NAME = "world_import_jobs"
+# 读取 job 文件恰好撞上原子替换瞬间（JSON 不完整 / Windows 上 PermissionError）时的重试次数与间隔（秒）
+WORLD_IMPORT_JOB_READ_RETRIES = 3
+WORLD_IMPORT_JOB_READ_RETRY_INTERVAL = 0.02
+# job 文件保留时长（秒），过期由后台清理协程淘汰；统计并发上限时超过该时长未更新的 job 也不再计入
 WORLD_IMPORT_JOB_TTL = 3600
-# 内存 job 清理协程轮询间隔（秒）
+# job 清理协程轮询间隔（秒）
 WORLD_IMPORT_JOB_CLEANUP_INTERVAL = 300
-# 同时进行的导入任务上限，超限返回 429
+# 同时进行的导入任务上限（跨 worker 统计），超限返回 429
 WORLD_IMPORT_JOB_MAX_CONCURRENT = 2
 
 # ===== 图片 URL 过期保护（签名 URL 自动刷新/转存）=====
@@ -759,6 +766,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,       # 标准版（默认）
         DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,  # 加速版
     ],
+    DriverKey.MINIMAX_H3_TEXT_TO_VIDEO: DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 文生视频（复用参考生工作流）
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,  # 使用 RunningHub 的数字人 v1 版本
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本
@@ -1041,6 +1049,13 @@ AI_TOOL_STATUS_WAITING_BEFORE_FINISH = AIToolStatus.WAITING_BEFORE_FINISH
 AI_TOOL_STATUS_DOWNLOADING = AIToolStatus.DOWNLOADING
 
 
+# ===== 视觉任务调度退避封顶 =====
+# calculate_next_retry_delay 按 3 * 2^(try_count-1) 爬坡，封顶此值。
+# RUNNING 轮询与失败重试共用：上游任务完成到被调度器发现之间的空窗最坏 = 此封顶值
+# （360s 时代实测成片跑完后最久 195s+ 才被发现，分镜长时间停在「生成中」）。
+VIDEO_TASK_RETRY_DELAY_MAX_SECONDS = 96
+
+
 # ===== 下载队列（download_queue）解耦配置 =====
 # visual_task 主循环检测到上游生成完成后，不再同步 await 分钟级下载，而是把下载意图
 # 写入 download_queue 表、状态置 DOWNLOADING，由独立 job download_queue_worker 异步消费。
@@ -1174,13 +1189,58 @@ class StoryboardSubtitleConstants:
     # 无探测时长时的单条对白默认秒数
     DEFAULT_CUE_DURATION_SECONDS = 2.0
     # 内置 CJK 字体（相对项目根），烧录时拷贝到 work_dir 并传 fontsdir=
-    # 规避宿主机无中文字体 / Windows fontconfig 解析失败导致字幕渲染为豆腐块（蚂蚁文）
+    # 规避宿主机无中文字体 / Windows fontconfig 解析失败导致中文渲染为豆腐块（蚂蚁文）
     # 字体放 files/（非 web 公开目录，避免被外部下载），程序通过文件系统直接读取
     BUILTIN_FONT_SUBDIR = "files/fonts"
     BUILTIN_FONT_FILENAME = "NotoSansSC-Regular.otf"
     BUILTIN_FONT_FAMILY = "Noto Sans SC"
     # 烧录时拷贝到 work_dir 下的子目录名（相对路径规避 Windows 盘符冒号转义）
     WORK_FONT_SUBDIR = "fonts"
+
+    # ---- 字幕模式 ----
+    # smart: 按语音时间轴逐句显示（ASR 句级时间戳，见 asr_sentence_client）；
+    # block: 整条对白折行分页（旧行为）。
+    SUBTITLE_MODE_SMART = "smart"
+    SUBTITLE_MODE_BLOCK = "block"
+    SUBTITLE_MODE_DEFAULT = SUBTITLE_MODE_SMART
+    # smart 模式下单句 ASR 时间轴与对白 audio.duration 的比例缩放下限：
+    # ASR 识别时长与 TTS 音频实际时长偏差超过该比例时按比例缩放对齐
+    ASR_SENTS_SCALE_MIN = 0.5
+    ASR_SENTS_SCALE_MAX = 2.0
+    # 原文按 ASR 句占比切分时，切点向就近标点吸附的搜索窗口（字符）
+    ASR_SPLIT_SNAP_WINDOW = 3
+    # smart 单条 cue 最大行数：单条 ASR 句折行超过该行数时按标点二级细分。
+    # 场景：SenseVoice 把句末感叹号转写成逗号导致 ASR 句粒度过粗（一句 30+ 字），
+    # 竖屏折 3 行同屏，观感回到 block 整段堆积
+    SMART_CUE_MAX_LINES = 2
+
+    # ---- 左右边距（用户可在前端调整，导出时透传）----
+    SIDE_MARGIN_RATIO_MIN = 0.0
+    SIDE_MARGIN_RATIO_MAX = 0.18
+    # 前端可选档位（画面宽比例），与前端滑杆保持一致
+    SIDE_MARGIN_RATIO_STEP = 0.01
+
+
+class StoryboardAsrConstants:
+    """整片导出 smart 字幕：句级 ASR（SenseVoice）调用约束。
+
+    ASR 服务地址在 config.yml 的 asr.api_url（内网 SenseVoice 服务，如
+    http://192.168.10.108:7861）；**缺省不启用**（opt-in）：未配置 asr 段的
+    环境一律回退 block 分页字幕，避免对不可达内网地址每条对白等 30s 连接
+    超时、以及用户音频被默认外发到未知地址。由 services/asr_sentence_client
+    读取；服务不可达/失败时逐条回退 block 分页，不影响导出。
+    """
+    _CONSTANT_GROUP = True
+
+    # 单条对白音频的 ASR 超时
+    SENTENCES_TIMEOUT_SECONDS = 30
+    # 一次导出全片 ASR 总预算：超预算后剩余对白直接回退 block 分页，避免导出被拖死
+    SENTENCES_TOTAL_BUDGET_SECONDS = 300
+    # ASR 服务返回句级时间轴时允许的最小句数（0 表示不限制）
+    SENTENCES_MIN_COUNT = 1
+    # asr.api_url 未配置时的兜底地址（l3 内网 SenseVoice；仅 asr.enabled 显式
+    # 开启后才会用到，见 is_asr_enabled 的 opt-in 语义）
+    DEFAULT_API_URL = "http://192.168.10.108:7861"
 
 
 class ScriptParserConstants:
@@ -1237,8 +1297,15 @@ class ScriptSplitConstants:
     PLANNER_DIAGNOSTIC_LOG_DIR = "logs/script_parser"
 
     # ---- 重试与上界 ----
-    # 阶段一规划失败的最大重试次数（同一边界重试规划）
+    # 阶段一规划失败的最大重试次数（同一边界重试规划）。
+    # 规划同样遵守「一个 tick 最多一次 LLM 调用」：失败尝试的轮次与错误
+    # 持久化到 request_config[PLAN_CHECKPOINT_CONFIG_KEY]，下一 tick 携带
+    # feedback 重试，避免多轮调用共享 WORKER_STEP_TIMEOUT_SECONDS 看门狗
+    # 预算（效果模式 + thinking 模型单次规划可达数分钟，二次重试必然撞
+    # 540s 看门狗被误杀为 step_watchdog_timeout）。
     PLAN_MAX_RETRIES = 3
+    # 规划重试检查点在 request_config 中的保留键：{"attempt": N, "last_errors": [...]}
+    PLAN_CHECKPOINT_CONFIG_KEY = "_plan_checkpoint"
     # 单段拆分失败的最大重试次数（同一边界重试当前段）
     SEGMENT_MAX_RETRIES = 3
     # 角色名称/图片提示词/视频提示词硬契约失败后的当前段定向修复次数。
@@ -1553,6 +1620,31 @@ class StoryboardAgentCommandConstants:
     MAX_GROUP_DURATION_DEFAULT = 15
     MAX_GROUP_DURATION_MIN = 10
     MAX_GROUP_DURATION_MAX = 15
+
+
+class DialogueTtsSpeedConstants:
+    """对话配音语速常量。
+
+    speed 为「语速」语义：1.0 正常，>1 更快，<1 更慢。
+    IndexTTS-2.5 POST /tts_url 的 duration_factor（时长因子，>1 变慢）取值范围
+    0.5~2.0；换算 duration_factor = 1/speed 后两者范围恰好对称，不会越界。
+    """
+    DEFAULT = 1.0
+    MIN = 0.5
+    MAX = 2.0
+
+
+def normalize_dialogue_tts_speed(value) -> float:
+    """语速归一化：非法/越界值收敛到 [MIN, MAX]，非法输入返回 DEFAULT。"""
+    try:
+        speed = float(value)
+    except (TypeError, ValueError):
+        return DialogueTtsSpeedConstants.DEFAULT
+    if speed != speed:  # NaN
+        return DialogueTtsSpeedConstants.DEFAULT
+    return round(min(DialogueTtsSpeedConstants.MAX,
+                     max(DialogueTtsSpeedConstants.MIN, speed)), 2)
+
 
 # 向后兼容别名 - Tasks 状态
 TASK_STATUS_QUEUED = TaskStatus.QUEUED
@@ -2065,6 +2157,7 @@ class LLMVendor:
         'ZJT_API': 'ZJT API 供应商（Qwen3.5/3.6 模型）',
         'DEEPSEEK': 'DeepSeek 供应商（DeepSeek-V4 模型）',
         'AGNES': 'Agnes 供应商（Agnes 2.5 对话模型）',
+        'MIMO': '小米 MiMo 供应商（mimo-v2.5 系列，Token Plan 套餐）',
         'VLLM': '本地推理供应商（vLLM 模型）',
     }
     JIEKOU = 'jiekou'
@@ -2075,6 +2168,7 @@ class LLMVendor:
     ZJT_API = 'zjt_api'
     DEEPSEEK = 'deepseek'
     AGNES = 'agnes'
+    MIMO = 'mimo'
     VLLM = 'vllm'
 
 
@@ -2098,6 +2192,8 @@ class LLMModel:
         'DEEPSEEK_V4_PRO': 'DeepSeek V4 Pro',
         'AGNES_2_5_FLASH': 'Agnes 2.5 Flash',
         'AGNES_2_5_PRO': 'Agnes 2.5 Pro',
+        'MIMO_V2_5': '小米 MiMo V2.5',
+        'MIMO_V2_5_PRO': '小米 MiMo V2.5 Pro',
         'REDUCE_VIOLATION_DEFAULT': '内容安全提示词改写默认模型（reduce-violation 兜底）',
     }
     # Gemini 模型
@@ -2134,6 +2230,10 @@ class LLMModel:
     AGNES_2_5_FLASH = 'agnes-2.5-flash'
     AGNES_2_5_PRO = 'agnes-2.5-pro'
 
+    # 小米 MiMo 模型（Token Plan 套餐，OpenAI 兼容端点 token-plan-cn.xiaomimimo.com/v1）
+    MIMO_V2_5 = 'mimo-v2.5'
+    MIMO_V2_5_PRO = 'mimo-v2.5-pro'
+
     # 内容安全提示词改写（reduce-violation）的默认兜底模型
     # 前端未传/所选拆分模型供应商未配置时使用；复用剧本拆分默认模型，走 DEEPSEEK 供应商独立 key
     # （2026-08：原默认 gemini-3-flash-preview 已下线）
@@ -2160,6 +2260,7 @@ VENDOR_ICONS = {
     'zjt_api': '🚀',
     'deepseek': '🔍',
     'agnes': '✨',
+    'mimo': '📱',
     'vllm': '⚡',
 }
 
@@ -2176,6 +2277,7 @@ MODEL_PREFIX_VENDOR_MAP = {
     'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
     'deepseek': LLMVendor.DEEPSEEK,  # DeepSeek 的 DeepSeek-V4 模型
     'agnes': LLMVendor.AGNES,  # Agnes AI 对话模型
+    'mimo': LLMVendor.MIMO,  # 小米 MiMo 的 mimo-v2.5 系列模型
 }
 
 
@@ -2289,6 +2391,36 @@ class NotificationConstants:
     LEVEL_WARNING = "warning"
     LEVEL_ERROR = "error"
     LEVEL_SUCCESS = "success"
+
+
+class AnnouncementConstants:
+    """本站公告（announcements 表）常量"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'STATUS_DRAFT': '草稿',
+        'STATUS_PUBLISHED': '已发布',
+        'STATUS_OFFLINE': '已下线',
+    }
+
+    # 公告状态（draft -> published -> offline，offline/draft 可重新发布）
+    STATUS_DRAFT = "draft"
+    STATUS_PUBLISHED = "published"
+    STATUS_OFFLINE = "offline"
+
+    # 公告级别（model/announcements.py 的 VALID_LEVELS 引用此处，避免双处定义）
+    VALID_LEVELS = ('info', 'success', 'warning', 'error')
+
+    # publish_at/expire_at 归一化后允许的 datetime 格式（datetime-local 前端值
+    # 秒位可选）；不合法值在服务层拒绝，避免 SQL 报错原文透出客户端
+    DATETIME_FORMATS = ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M')
+
+    # 公告图片上传
+    UPLOAD_CATEGORY = "announcement"                              # upload/ 下子目录
+    MAX_IMAGE_SIZE = 10 * 1024 * 1024                             # 单张图片大小上限 10MB
+    ALLOWED_IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.gif', '.webp')
+
+    # 用户侧列表/轮询
+    DEFAULT_LIST_LIMIT = 50                                       # 用户侧单次拉取公告条数上限
 
 
 # ============ 智能插入分镜 ============

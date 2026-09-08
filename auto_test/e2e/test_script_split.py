@@ -17,12 +17,53 @@ import time
 
 import pytest
 
+from conftest import _skip_or_fail
+
 
 SPLIT_API = "/api/script-split"
 # 终态：拆分任务最终落到这三种之一
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 # 交互态：需用户介入（继续 / 刷新鉴权）
 INTERACTIVE_STATUSES = {"paused", "waiting_auth"}
+
+
+def _submit_split(api_client, user_id, auth_token, world_id, script_content):
+    """POST /api/parse-script 提交拆分任务。
+
+    mock_mode 只挡图/视频/音频，不挡 LLM 文本生成（见文件头说明），这些用例
+    依赖测试环境有可用 LLM / 外部平台集成。以下 4xx 均属环境问题而非代码回归，
+    本地 skip 而不是 fail，避免污染整轮全量结果；但 CI（E2E_STRICT）下必须
+    fail（走 conftest._skip_or_fail），否则代码改动打断 LLM 调用路径时会被
+    当作"环境问题"跳过、产生假绿：
+    - "算力检查失败: {外部错误}"：parse-script 前置调用外部平台 check_computing_power
+      失败（如平台侧 "无效的认证信息"，测试环境平台集成凭证失效）；
+    - "剧本解析失败: {外部错误}"：LLM 侧调用失败（如 "Gemini API Key 或 Base URL 未配置"）。
+    不吞 "算力不足"（测试环境配置问题，mock_mode 会重置算力，出现即该 fail）
+    与用户鉴权失败（走其它前缀，照常 fail）。
+    """
+    resp = api_client.post(
+        "/api/parse-script",
+        json={
+            "user_id": user_id,
+            "auth_token": auth_token,
+            "world_id": world_id,
+            "script_content": script_content,
+            "model": "gemini-2.5-flash",
+            "sequence_mode": "speed",
+        },
+        headers={"X-User-Id": str(user_id), "Authorization": f"Bearer {auth_token}"},
+        timeout=30,
+    )
+    if resp.status_code >= 400:
+        # 用 resp.json() 取 message（而非 resp.text 子串匹配），避免终端/日志
+        # GBK 显示干扰判断。
+        try:
+            msg = str(resp.json().get("message", ""))
+        except Exception:
+            msg = ""
+        if "算力检查失败" in msg or "剧本解析失败" in msg:
+            _skip_or_fail(f"外部 LLM/平台集成不可用（环境问题），跳过依赖真实 LLM 的拆分用例: {msg[:200]}")
+    return resp
 
 
 def _poll_until(api_client, task_id, timeout=180, interval=3):
@@ -129,11 +170,20 @@ def test_owner_isolation_query_task(api_client, user_id):
     但不存在的任务 owner 也校验失败。这里验证权限路径不泄露任务存在性需 owner 匹配。
     实际行为：task 不存在 → 404；若 task 存在但 owner 不匹配 → 403。
     本用例验证用错误 user_id 不会拿到 200 数据。
+
+    注意：api_client 默认带 session 的 Authorization 头，服务端 _resolve_request_identity
+    优先用 token 解析身份（会覆盖 X-User-Id）。若不显式覆写为一个失效 token，
+    session token 有效时本用例会以 owner 身份拿到 200 而失败（此前"通过"是
+    session token 恰好失效的巧合）。此处强制走 X-User-Id 兜底路径，结果确定。
     """
     resp = api_client.get(
         f"{SPLIT_API}/tasks/1",  # 任意 id
         # user_id fixture 为字符串，先转 int 再偏移，避免 str + int 报错
-        headers={"X-User-Id": str(int(user_id) + 100000)},  # 几乎不可能匹配的 user_id
+        headers={
+            "X-User-Id": str(int(user_id) + 100000),  # 几乎不可能匹配的 user_id
+            # 失效 token：服务端解析不到 token 用户，回退到 X-User-Id 头
+            "Authorization": "Bearer e2e-isolation-test-invalid-token",
+        },
     )
     # 不存在 → 404；存在但非 owner → 403；绝不应是 200 且带数据
     assert resp.status_code in (403, 404), f"期望 403/404，实际 {resp.status_code}: {resp.text}"
@@ -156,19 +206,7 @@ def test_submit_split_returns_202_with_task_id(
         "第一幕：清晨，小明走进客厅，阳光洒在地板上。\n\n"
         "第二幕：小红推门而入，两人相视而笑。"
     )
-    resp = api_client.post(
-        "/api/parse-script",
-        json={
-            "user_id": user_id,
-            "auth_token": auth_token,
-            "world_id": test_world["id"],
-            "script_content": script_content,
-            "model": "gemini-2.5-flash",
-            "sequence_mode": "speed",
-        },
-        headers={"X-User-Id": str(user_id), "Authorization": f"Bearer {auth_token}"},
-        timeout=30,
-    )
+    resp = _submit_split(api_client, user_id, auth_token, test_world["id"], script_content)
     # 接受 202（异步任务已创建）或 200（兼容旧版）；拒绝 500
     assert resp.status_code in (200, 202), f"提交失败: {resp.status_code} {resp.text}"
     body = resp.json()
@@ -189,19 +227,7 @@ def test_split_full_flow_completes(
     端点行为正确：completed 时 result 可取，非 completed 时 409。
     """
     script_content = "短剧本：小明说你好，小红说再见。"
-    submit = api_client.post(
-        "/api/parse-script",
-        json={
-            "user_id": user_id,
-            "auth_token": auth_token,
-            "world_id": test_world["id"],
-            "script_content": script_content,
-            "model": "gemini-2.5-flash",
-            "sequence_mode": "speed",
-        },
-        headers={"X-User-Id": str(user_id), "Authorization": f"Bearer {auth_token}"},
-        timeout=30,
-    )
+    submit = _submit_split(api_client, user_id, auth_token, test_world["id"], script_content)
     assert submit.status_code in (200, 202), f"提交失败: {submit.status_code} {submit.text}"
     data = submit.json().get("data") or submit.json()
     task_id = data.get("task_id")
@@ -238,19 +264,7 @@ def test_active_task_recovers_after_refresh(
     模拟页面刷新场景：提交任务后立即查 active-task，应返回该任务（status 非终态）。
     """
     script_content = "刷新测试剧本：小明出门买早餐。"
-    submit = api_client.post(
-        "/api/parse-script",
-        json={
-            "user_id": user_id,
-            "auth_token": auth_token,
-            "world_id": test_world["id"],
-            "script_content": script_content,
-            "model": "gemini-2.5-flash",
-            "sequence_mode": "speed",
-        },
-        headers={"X-User-Id": str(user_id), "Authorization": f"Bearer {auth_token}"},
-        timeout=30,
-    )
+    submit = _submit_split(api_client, user_id, auth_token, test_world["id"], script_content)
     assert submit.status_code in (200, 202)
     task_id = (submit.json().get("data") or submit.json()).get("task_id")
 
@@ -276,19 +290,7 @@ def test_cancel_submitted_task(api_client, user_id, auth_token, test_world, mock
     否则应进 cancelling → cancelled。
     """
     script_content = "取消测试剧本：小明发呆。"
-    submit = api_client.post(
-        "/api/parse-script",
-        json={
-            "user_id": user_id,
-            "auth_token": auth_token,
-            "world_id": test_world["id"],
-            "script_content": script_content,
-            "model": "gemini-2.5-flash",
-            "sequence_mode": "speed",
-        },
-        headers={"X-User-Id": str(user_id), "Authorization": f"Bearer {auth_token}"},
-        timeout=30,
-    )
+    submit = _submit_split(api_client, user_id, auth_token, test_world["id"], script_content)
     assert submit.status_code in (200, 202)
     task_id = (submit.json().get("data") or submit.json()).get("task_id")
 

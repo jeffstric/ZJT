@@ -47,6 +47,12 @@ const state = {
     computingPower: null,
 
     /**
+     * 左下角算力消耗提示（直填生图/直连视频提交成功后写入）。
+     * 形如 { power: 5, label: '生图' }；null 时不渲染提示行。
+     */
+    lastPowerSpend: null,
+
+    /**
      * 比例门禁：世界内首个故事板创建前为 true。
      * 为 true 时禁止拆分/生图/生视频/导出等一切业务操作。
      */
@@ -120,6 +126,18 @@ const state = {
     agentChatFontStep: 0,
     aiOptimize: true,
     subtitleEnabled: true,
+    /**
+     * 导出字幕显示方式：'smart' 按配音语音时间轴逐句显示（默认），
+     * 'block' 整条对白折行分页（旧行为）。随 UI 配置持久化。
+     */
+    subtitleMode: 'smart',
+    /**
+     * 导出字幕左右边距（画面宽比例 0~0.18，默认 0.07）。
+     * 预览字幕实时应用，导出时透传后端写入 ASS MarginL/MarginR。
+     */
+    subtitleSideMarginRatio: 0.07,
+    /** 预览控制条上的字幕设置小面板开关 */
+    showSubtitleSettings: false,
     isPlaying: false,
     currentTime: 0,
     // 时间轴预览播放细粒度状态（由 playback.js 维护）
@@ -909,6 +927,21 @@ export function getSelectedImageTaskId(hasReferences = true) {
     return hasReferences ? state.selectedImageEditTaskId : state.selectedTextToImageTaskId;
 }
 
+/**
+ * 组合当前分镜的画面提示词（「直填生图」模式的文本框预填基线）。
+ * 与实际生图链路 services/storyboard_agent_cli_service.py:_compose_image_prompt
+ * 对齐：scene_desc 为主体，辅以 perspective / style；不拼 character_desc
+ * （该字段只是「、」连接的角色名列表，实际链路中角色外貌由参考图注入，
+ * 拼进文本只会污染画面提示词）。
+ */
+export function composeSceneImagePrompt(scene = null) {
+    const pj = scene?.promptJson || {};
+    return [pj.perspective, pj.style, pj.scene_desc]
+        .map((part) => String(part || '').trim())
+        .filter(Boolean)
+        .join('，');
+}
+
 export function getSelectedVideoTaskId({ hasInputs = true, imageMode = state.videoImageMode } = {}) {
     if (!hasInputs) return state.selectedTextToVideoTaskId;
     if (imageMode === 'multi_reference' || imageMode === 'first_last_with_ref') {
@@ -1232,6 +1265,96 @@ export function buildVideoGenerationPayloadExtras(scene = null) {
     };
 }
 
+/**
+ * 按档位表解析按时长计费的算力（口径与后端 get_computing_power 一致：
+ * 精确匹配时长档，无匹配取首档/固定值）。map 来自 /models 的 computing_power_map，
+ * JSON 序列化后键为字符串。
+ */
+function resolvePowerFromModel(model, durationSeconds = null) {
+    if (!model) return null;
+    const map = model.computing_power_map;
+    if (map && typeof map === 'object' && Number.isFinite(Number(durationSeconds))) {
+        const hit = map[String(Math.round(Number(durationSeconds)))];
+        if (hit != null && Number(hit) > 0) return Number(hit);
+    }
+    const cp = Number(model.computing_power) || 0;
+    return cp > 0 ? cp : null;
+}
+
+/**
+ * 视频预估缓存（键含分镜/模型/时长档/分辨率/图模式，参数变化自动 miss 重拉）。
+ * 倍率表（分辨率/图模式修饰符，DB 可热更新）前端不复刻，一律走后端估价接口。
+ */
+const videoPowerEstimates = new Map();
+const videoPowerEstimateInflight = new Set();
+const powerEstimateListeners = new Set();
+
+/** 预估价回填后通知（events.js 注册 → 重渲助手面板的预估行） */
+export function onPowerEstimateUpdated(fn) {
+    if (typeof fn === 'function') powerEstimateListeners.add(fn);
+    return () => powerEstimateListeners.delete(fn);
+}
+
+function requestVideoPowerEstimate(key, sceneId, payload) {
+    if (videoPowerEstimateInflight.has(key)) return;
+    videoPowerEstimateInflight.add(key);
+    import('./api.js').then(({ estimateSceneVideoPower }) =>
+        estimateSceneVideoPower(sceneId, payload),
+    ).then((res) => {
+        if (res && res.success !== false && Number(res.computing_power) > 0) {
+            videoPowerEstimates.set(key, Number(res.computing_power));
+            powerEstimateListeners.forEach((fn) => {
+                try { fn(); } catch (e) { /* 监听异常不影响缓存 */ }
+            });
+        }
+    }).catch(() => {}).finally(() => {
+        videoPowerEstimateInflight.delete(key);
+    });
+}
+
+/**
+ * 提交前的预计算力消耗（左下角提示行的预估基线，随模式/模型/时长/分辨率变化）。
+ * 返回 { power, label }；无可用计费信息时返回 null（异步估价未返回时本轮不显示）。
+ * - image（直填生图）：图生图/编辑模型固定单价（单张）
+ * - video/aivideo：后端估价接口（与扣费同口径：时长档位 × 分辨率/图模式修饰符）；
+ *   对口型分镜由服务端按数字人规划精确计价
+ * - dialogue（对话改图）：编辑模型单价（LLM 消耗小额，不预估）
+ */
+export function estimateScenePower(scene = null) {
+    const sc = scene || getCurrentScene();
+    const mode = state.chatMode;
+    if (mode === 'image' || mode === 'dialogue') {
+        const model = (state.imageEditModels || []).find(m => String(m.task_id) === String(state.selectedImageEditTaskId));
+        const power = resolvePowerFromModel(model);
+        return power == null ? null : { power, label: mode === 'image' ? '生图' : 'AI生图' };
+    }
+    if (mode === 'video' || mode === 'aivideo') {
+        const sceneId = sc?.id;
+        if (sceneId == null) return null;
+        const isDh = String(sc?.videoType || sc?.video_type || '').toLowerCase() === 'digital_human';
+        const imageMode = isDh ? '' : (state.videoImageMode || 'first_last_frame');
+        const taskId = isDh ? 'dh' : getSelectedVideoTaskId({ hasInputs: true, imageMode: state.videoImageMode });
+        const extras = isDh ? {} : buildVideoGenerationPayloadExtras(sc);
+        const key = [
+            sceneId, taskId, extras.duration_mode, extras.duration, extras.resolution, imageMode, isDh ? 'dh' : '',
+        ].join('|');
+        if (videoPowerEstimates.has(key)) {
+            return { power: videoPowerEstimates.get(key), label: mode === 'aivideo' ? 'AI生视频' : (isDh ? '数字人视频' : '视频') };
+        }
+        // 异步估价：结果回填缓存后经 onPowerEstimateUpdated 通知重渲
+        requestVideoPowerEstimate(key, sceneId, isDh ? {
+            resolution: state.videoResolution || undefined,
+        } : {
+            task_type: taskId,
+            duration_mode: extras.duration_mode,
+            resolution: extras.resolution,
+            image_mode: imageMode,
+        });
+        return null;
+    }
+    return null;
+}
+
 export function serializeUiConfig() {
     return {
         activeTab: state.activeTab,
@@ -1245,6 +1368,8 @@ export function serializeUiConfig() {
         enableFaceMask: state.enableFaceMask === true,
         aiOptimize: state.aiOptimize,
         subtitleEnabled: state.subtitleEnabled,
+        subtitleMode: state.subtitleMode,
+        subtitleSideMarginRatio: state.subtitleSideMarginRatio,
         selectedImageTaskId: state.selectedImageTaskId,
         selectedVideoTaskId: state.selectedVideoTaskId,
         selectedTextToImageTaskId: state.selectedTextToImageTaskId,
@@ -1273,7 +1398,7 @@ export function serializeUiConfig() {
 export function restoreUiConfig(config = {}) {
     state.activeTab = config.activeTab === 'dialogue' ? 'dialogue' : (config.activeTab || state.activeTab);
     state.viewMode = config.viewMode === 'grid' ? 'grid' : (config.viewMode || state.viewMode);
-    state.chatMode = ['dialogue', 'video', 'aivideo'].includes(config.chatMode) ? config.chatMode : 'dialogue';
+    state.chatMode = ['dialogue', 'image', 'video', 'aivideo'].includes(config.chatMode) ? config.chatMode : 'dialogue';
     if (config.videoImageMode === 'multi_reference' || config.videoImageMode === 'first_last_frame') {
         state.videoImageMode = config.videoImageMode;
     }
@@ -1305,6 +1430,14 @@ export function restoreUiConfig(config = {}) {
     }
     state.aiOptimize = config.aiOptimize !== false;
     state.subtitleEnabled = config.subtitleEnabled !== false;
+    // 整段模式已下线（面板禁用整段选项），存量 block 配置归一为逐句
+    state.subtitleMode = 'smart';
+    {
+        const margin = Number(config.subtitleSideMarginRatio);
+        if (Number.isFinite(margin) && margin >= 0 && margin <= 0.18) {
+            state.subtitleSideMarginRatio = margin;
+        }
+    }
     if (config.selectedImageTaskId !== undefined && config.selectedImageTaskId !== null) {
         state.selectedImageTaskId = config.selectedImageTaskId;
     }

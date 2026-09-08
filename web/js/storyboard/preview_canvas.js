@@ -3,6 +3,7 @@
  * 媒体 object-fit:scale-down（仅缩不放）。
  */
 import state from './state.js';
+import { estimateMaxCharsPerLine, resolveExportFontSize } from './subtitle_wrap.js';
 
 /** 预览分辨率档位（短边像素） */
 export const PREVIEW_RESOLUTION_OPTIONS = [
@@ -18,6 +19,13 @@ const SHORT_SIDE_MAP = {
 };
 
 const DEFAULT_PREVIEW_RESOLUTION = '720p';
+
+/** 与后端 StoryboardSubtitleConstants（config/constant.py）对齐的导出字幕版式常量 */
+const SUBTITLE_BOTTOM_MARGIN_RATIO = 0.08;
+const SUBTITLE_BOTTOM_MARGIN_MIN = 12;
+/* ASS Style: Outline=2（描边）、Shadow=1（投影），单位是视频像素，预览按显示比例折算 */
+const SUBTITLE_OUTLINE_PX = 2;
+const SUBTITLE_SHADOW_PX = 1;
 
 let resizeObserver = null;
 let observedWrapper = null;
@@ -108,6 +116,57 @@ export function applyTimelineRatioVars(listEl, ratio) {
 }
 
 /**
+ * 导出字幕所依据的视频画布：与后端 storyboard_export_service._ratio_size 一致——
+ * 固定长边 1920，仅由画幅比例决定（与 videoResolution / previewResolution 均无关）。
+ */
+const EXPORT_LONG_SIDE = 1920;
+
+function resolveExportCanvas(canvas) {
+    const { rw, rh } = parseWorkflowRatio(canvas.ratio);
+    if (rh >= rw) {
+        const width = Math.max(2, Math.floor(Math.round((EXPORT_LONG_SIDE * rw) / rh) / 2) * 2);
+        return { width, height: EXPORT_LONG_SIDE };
+    }
+    const height = Math.max(2, Math.floor(Math.round((EXPORT_LONG_SIDE * rh) / rw) / 2) * 2);
+    return { width: EXPORT_LONG_SIDE, height };
+}
+
+/** 当前配置下导出字幕的每行最大字符数（折行算法见 subtitle_wrap.js） */
+export function resolveSubtitleMaxChars() {
+    const ratio = state.workflowRatio || '16:9';
+    const canvas = resolveLogicalCanvas(ratio, normalizePreviewResolution(state.previewResolution));
+    const exportCanvas = resolveExportCanvas(canvas);
+    return estimateMaxCharsPerLine(exportCanvas.width, resolveExportFontSize(exportCanvas.height));
+}
+
+/**
+ * 预览字幕版式与导出 ASS 对齐（见 services/storyboard_subtitle.py）：
+ * 底部边距 / 字号 / 描边 / 投影按导出分辨率等比，再折算到 stage 的屏幕显示高度，
+ * 避免固定 px 随窗口缩放导致预览与成片对不上。
+ */
+function applySubtitleLayoutVars(stage, canvas, cssH) {
+    if (!stage || !canvas?.height || cssH <= 0) return;
+    const exportCanvas = resolveExportCanvas(canvas);
+    const exportH = exportCanvas.height;
+    if (!exportH) return;
+    const ratio = cssH / exportH;
+    const fontLogical = resolveExportFontSize(exportH);
+    const marginV = Math.max(
+        SUBTITLE_BOTTOM_MARGIN_MIN,
+        Math.round(exportH * SUBTITLE_BOTTOM_MARGIN_RATIO)
+    );
+    stage.style.setProperty('--sb-bottom', `${Math.max(1, Math.round(marginV * ratio))}px`);
+    stage.style.setProperty('--sb-font-size', `${Math.max(1, Math.round(fontLogical * ratio))}px`);
+    // -webkit-text-stroke 以字形边缘为中心向两侧各画一半，paint-order:stroke fill 后
+    // 可见描边 ≈ 线宽一半，故线宽取 ASS Outline 的 2 倍
+    stage.style.setProperty('--sb-stroke', `${(SUBTITLE_OUTLINE_PX * 2 * ratio).toFixed(2)}px`);
+    stage.style.setProperty('--sb-shadow', `${(SUBTITLE_SHADOW_PX * ratio).toFixed(2)}px`);
+    stage.dataset.subtitleMaxChars = String(
+        estimateMaxCharsPerLine(exportCanvas.width, fontLogical)
+    );
+}
+
+/**
  * 确保 .preview-stage 存在；字幕移入 stage，caption 留在 wrapper。
  */
 export function ensurePreviewStage(wrapper) {
@@ -159,6 +218,7 @@ export function applyPreviewCanvas(root = document) {
         const cssH = Math.max(1, Math.floor(canvas.height * scale));
         stage.style.width = `${cssW}px`;
         stage.style.height = `${cssH}px`;
+        applySubtitleLayoutVars(stage, canvas, cssH);
     }
 
     // 同步时间轴拇指

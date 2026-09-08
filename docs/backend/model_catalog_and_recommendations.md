@@ -16,10 +16,14 @@
 | `image.image_edit` | 改图 | GPT Image 2 | GPT Image 2 |
 | `image.script_writer` | 剧本创作生图 | GPT Image 2 | Seedream 5.0 Pro（口中的 seedance2.0 pro；系统无同名生图模型） |
 | `video.image_to_video` | 图生视频、工作流视频（首尾帧） | MiniMax H3 | Seedance 2.0 |
-| `video.text_to_video` | 文生视频 | MiniMax H3 | Seedance 2.0 |
+| `video.text_to_video` | 文生视频 | MiniMax H3 (文生)（`minimax_h3_t2v`） | Seedance 2.0 |
 | `video.reference_to_video` | 参考生视频、多参考图模式 | MiniMax H3 参考生视频（`minimax_h3_r2v`） | Seedance 2.0 |
 
-定义在 `config/model_catalog.py`。营销档位不要套到剧本拆分，deepseek 档位不要套到营销智能体。
+代码默认值定义在 `config/model_catalog.py` 的 `SCENE_RECOS`。营销档位不要套到剧本拆分，deepseek 档位不要套到营销智能体。
+
+**管理员可热更新覆盖（2026-09 起）**：`system_config` 键 `model_catalog.scene_recos`（json，已在 `config/default_configs.py` 注册）按场景/档位覆盖代码默认；读取走 `get_scene_recos_merged()`（DB 优先，缺失/非法条目回退代码默认并告警）。管理端入口：管理后台「模型管理」页顶部「推荐模型档位」区块（`GET/PUT /api/admin/model-recos`，候选来自统一配置/LLM 可用模型，保存时校验 canonical 必须命中候选；LLM 供应商为跟随模型联动的单选下拉，留空则自动选路），也可在「系统配置」页直接编辑该 JSON。
+
+剧本创作页模型选择的恢复优先级：LLM 为 **localStorage 上次选择（`lastSelectedLlmModel`）→ 世界默认 → 系统推荐**（世界默认仅作新会话种子，不覆盖用户显式选择）；生图为 **会话草稿 → localStorage 上次选择（`lastSelectedImageModel`）→ 世界默认**。
 
 剧本创作无偏好时的硬兜底是 `config/constant.py` 的 `DEFAULT_TEXT_TO_IMAGE_TASK_ID`（GPT Image 2，`task_id=26`），不再回落到 nano-banana-Pro。
 

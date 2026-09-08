@@ -50,7 +50,7 @@
 - 权限：`script:create`
 - 入参（query）：`job_id`
 - 返回：
-  - 404：任务不存在或已过期（进程重启会丢失内存 job，前端应提示「任务丢失，请重试」）
+  - 404：`job_id` 不是合法 uuid、对应 job 文件不存在、或已超过 `WORLD_IMPORT_JOB_TTL` 被清理（前端提示「导入任务不存在或已过期，请重试」）
   - 200：`{ success, job_id, status, stage, progress, message, result, error }`
     - `status` ∈ `pending / downloading / unpacking / done / failed`
     - `stage` 与 `status` 基本一致，用于前端文案
@@ -60,7 +60,7 @@
 
 - `web/js/script_writer.js` 的 `importWorldFromFile(file)` 重写为四步链路。
 - `uploadWorldZipToQiniu()`：用 `XMLHttpRequest`（非 fetch，因为需要 `xhr.upload.onprogress`）直传七牛，form 字段为 `token / key / file`。
-- `pollWorldImportStatus(jobId)`：每 1.5s 轮询 `/api/world-import-status`，直到 `done` 或 `failed`；404 抛「任务丢失」。
+- `pollWorldImportStatus(jobId)`：每 1.5s 轮询 `/api/world-import-status`，直到 `done` 或 `failed`；404 抛「导入任务不存在或已过期，请重试」。
 - 进度条 UI：`web/script_writer.html` 的 `#worldImportProgress`（位于文件 tabs 下方），样式见 `web/css/script_writer.css` 的 `.world-import-progress*`。
 
 ## 相关常量（`config/constant.py`）
@@ -74,9 +74,12 @@
 | `WORLD_IMPORT_DOWNLOAD_CHUNK_BYTES` | `256 * 1024` | 限速下载单 chunk 大小 |
 | `WORLD_IMPORT_DOWNLOAD_TIMEOUT` | `1800` | 限速下载总超时（秒，`asyncio.wait_for` 保护） |
 | `WORLD_IMPORT_PROGRESS_STEP` | `5` | 进度刷新粒度（百分比） |
-| `WORLD_IMPORT_JOB_TTL` | `3600` | 内存 job 保留时长（秒） |
+| `WORLD_IMPORT_JOB_DIR_NAME` | `world_import_jobs` | job 状态文件目录名（位于项目根 `temp/` 下，多 worker 共享） |
+| `WORLD_IMPORT_JOB_READ_RETRIES` | `3` | 读 job 文件撞上原子替换瞬间时的重试次数 |
+| `WORLD_IMPORT_JOB_READ_RETRY_INTERVAL` | `0.02` | 上述重试间隔（秒） |
+| `WORLD_IMPORT_JOB_TTL` | `3600` | job 文件保留时长（秒）；超过该时长未更新的 active job 也不再计入并发上限 |
 | `WORLD_IMPORT_JOB_CLEANUP_INTERVAL` | `300` | job 清理协程轮询间隔（秒） |
-| `WORLD_IMPORT_JOB_MAX_CONCURRENT` | `2` | 同时进行的导入任务上限 |
+| `WORLD_IMPORT_JOB_MAX_CONCURRENT` | `2` | 同时进行的导入任务上限（跨 worker 统计） |
 
 ## 非阻塞 / 超时红线合规
 
@@ -101,6 +104,36 @@
 
 `QINIU_UPLOAD_REGION_URL` 默认为华东 `https://upload.qiniup.com`。如 bucket 位于其他区域，请按 [七牛区域域名文档](https://developer.qiniu.com/kodo/1671/region-endpoint-fq) 修改 `config/constant.py`，或改为 DB 动态配置（经 `get_dynamic_config_value` 读取）。
 
-## 进程重启行为
+## job 状态存储：共享文件而非进程内存（多 worker 事故复盘）
 
-job 状态仅存内存（`api/script_writer.py` 的 `_world_import_jobs` 字典）。进程重启后，进行中的任务会丢失，前端轮询将拿到 404，按「任务丢失，请重试」提示用户。如需进程重启后可恢复，后续可落 DB 表（届时按 `AGENTS.md` 规则 7 补 alembic 迁移）。
+### 事故现象（2026-09-08）
+
+用户在 `script-writer` 页面导入世界 zip，后端两次都成功解包（日志 `世界导入完成 ... 'errors': []`，文件已落到 `files/script_writer/<user>/<world>/`），但前端进度条跑到一半报「导入任务已丢失（服务可能重启过），请重试」。access.log 轨迹：
+
+```
+POST /api/import-world-from-cloud            200
+GET  /api/world-import-status?job_id=e4de…   200
+GET  /api/world-import-status?job_id=e4de…   200
+GET  /api/world-import-status?job_id=e4de…   200
+GET  /api/world-import-status?job_id=e4de…   404   ← 前端据此报失败
+```
+
+### 根因
+
+job 状态原本是 `api/script_writer.py` 模块级字典 `_world_import_jobs`，**只存在于创建它的那个进程的内存里**。而服务用 gunicorn 多 worker 部署（`-w 4` / `-w 10`），每个请求由操作系统随机分给某个 worker：`POST` 落到 worker A 后 job 只在 A 的内存里，随后的 `GET` 轮询一旦落到 worker B/C/D 就查不到，返回 404。轮询恰好落回 A 就 200，落到别处就 404——这正是上面「先 200 后 404」的轨迹。用户误以为失败又导了一次，第二次的同名文件覆盖了第一次的。
+
+### 现方案
+
+job 状态落盘到 `<项目根>/temp/world_import_jobs/<job_id>.json`（目录名 `WORLD_IMPORT_JOB_DIR_NAME`），所有 worker 读写同一目录：
+
+- **单写者**：每个 job 只有创建它的后台协程写入；写入先落 `<job_id>.json.tmp` 再 `os.replace()` 原子替换，读者永远读到完整 JSON（`os.replace` 在 Windows 上同样原子覆盖）。
+- **读容错**：读到半截 JSON / Windows `PermissionError` 时按 `WORLD_IMPORT_JOB_READ_RETRIES` × `WORLD_IMPORT_JOB_READ_RETRY_INTERVAL` 短暂重试，仍失败返回 None（前端拿 404，重试即可）。
+- **安全**：`job_id` 来自 query 参数，只接受能被 `uuid.UUID()` 解析的值并归一化为标准 36 字符文件名，杜绝 `../` 拼路径读取目录外文件。
+- **并发上限跨 worker 生效**：`_count_active_world_import_jobs` 扫描目录统计；`updated_at` 超过 `WORLD_IMPORT_JOB_TTL` 仍为 active 的视为宿主进程已死的僵尸，不占名额。
+- **清理**：每个 worker 首次创建 job 时惰性启动清理协程，按文件 mtime 删除超过 TTL 的 `.json` 及写入中断残留的 `.json.tmp`；不同 worker 的清理协程抢先删除同一文件时忽略 `FileNotFoundError`。
+- **所有文件 IO 均在 `asyncio.to_thread` 中执行**，不阻塞事件循环（AGENTS.md 规则 1）。
+- 该目录**不受** `media_cache.cleanup_temp_dir` 影响：它只清理 `upload/temp/` 下按 `YYYYMMDD` 命名的子目录，与项目根 `temp/` 是两个路径。
+
+进程重启后 job 文件仍在，前端不会再拿到 404；但进行中的 job 不会被续跑，前端看到的是最后一次落盘的进度（重启后的导入需用户重新发起）。
+
+单测：`tests/api/test_world_import_job_store.py`（含「独立 Python 进程写入、本进程能读到」的跨 worker 用例，以及路径穿越、TTL 清理、并发计数）。

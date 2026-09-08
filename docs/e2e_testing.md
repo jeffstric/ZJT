@@ -36,8 +36,15 @@ auto_test/
 ### 1. 安装依赖
 
 ```bash
-pip install playwright pytest-html pytest-timeout pytest-asyncio
+pip install -r requirements_e2e.txt
 playwright install chromium
+```
+
+若本机已有 Chromium 内核浏览器但未下载 Playwright Chromium，可显式指定其可执行文件；
+CI 不设置此变量，仍使用 Playwright 管理的 Chromium：
+
+```powershell
+$env:E2E_BROWSER_EXECUTABLE = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 ```
 
 ## GitLab CI 分支触发
@@ -211,9 +218,18 @@ python -m pytest -v -m world
 # 运行所有测试
 python -m pytest -v
 
+# 保留失败截图和 Playwright Trace，便于定位页面跳转或 UI 超时
+$env:E2E_RESULTS_DIR = "e2e-results"
+python -m pytest -v
+
 # 生成 HTML 报告
 python -m pytest -v --html=reports/report.html --self-contained-html
 ```
+
+> 本地运行时需让 pytest 进程与被测服务读同一份配置：`comfyui_env` 未设置时
+> 默认找 `config_dev.yml`（本机通常只有 `config_prod.yml`），`mock_mode` fixture
+> 等需要直连数据库动态配置的步骤会失败（现为非致命告警，但挡板实际不生效）。
+> 与被测服务保持一致，例如：`comfyui_env=prod python -m pytest -v`。
 
 建议第一次不要直接跑全量，先跑无生成链路和小范围生成链路：
 
@@ -225,9 +241,26 @@ python -m pytest test_audio.py test_grid_image.py -v
 
 ## E2E 运行前检查清单
 
-### 认证会话约束
+### 认证会话约束（单会话策略与 live_auth 自愈）
 
-`auto_test/e2e/conftest.py` 的 `auth_token` 和 `user_id` 均为 session 级 fixture。测试账户的登录接口会使同一用户此前签发的 token 失效，因此单次 pytest 运行中不得调用 `refresh_login`；需要独立浏览器上下文的用例应复用这两个 fixture 注入认证信息。
+登录接口是**单会话策略**：同一用户任何一次新登录都会删除该用户全部旧 token
+（`auth_service.py` `delete_by_user_id`）。因此：
+
+- 套件内所有会真正登录主账号的用例都必须避免。`test_auth.py` 的
+  `test_login_success` / `test_logout_success` 已改用**次账号**（`credentials.secondary`）
+  做登录/登出验证，主账号的登录负向用例（错误密码、空手机号等）不会真正登录、不会顶号。
+- 单次 pytest 运行中不得调用 `refresh_login`；需要独立浏览器上下文的用例应复用
+  `auth_token`/`user_id`/`live_auth` fixture 注入认证信息。
+- 若 token 仍被套件外的新登录顶掉（手动 UI 登录、另一个 e2e/脚本并发登录主账号），
+  `conftest.py` 的 `live_auth`（session 级"活凭证"）会在每个用例创建请求/浏览器
+  上下文前 `ensure()` 校验一次：失效则自动重登主账号，并原地更新共享的
+  `auth_headers` dict（已创建的 api_client 自动用上新 token）。`auth_token`/`user_id`
+  两个 fixture 已改为 function 级、返回 `live_auth` 的当前值，用例里直接放
+  body/URL 的 token 也随之自愈。实际登录仍只发生在 `_login_data`（session 级）一次，
+  自愈重登只顶掉已失效的旧 token。
+  注意：探活接口仅 **401 或响应体 `error_code=invalid_auth_token`** 才判定 token 失效
+  触发重登；其余非 200（400/500 等）视为接口自身问题，不重登——避免接口回归被
+  反复重登掩盖成假绿。
 
 - [ ] `auto_test/test_config.json` 的 `base_url` 指向当前后端服务。
 - [ ] `auto_test/test_assets/test_image.jpg` 存在。
@@ -281,9 +314,11 @@ python -m pytest test_audio.py test_grid_image.py -v
 
 ```
 e2e_config (session) ─── 读取 test_config.json
-├── auth_token (session) ─── API 登录获取 token
-├── user_id (session) ─── 登录返回的 user_id
-├── auth_headers (session) ─── Authorization + X-User-Id
+├── _login_data (session) ─── 主账号只登录一次
+├── live_auth (session) ─── 活凭证：token 失效时自动重登（ensure()）
+├── auth_token (function) ─── 返回 live_auth 当前 token
+├── user_id (function) ─── 返回 live_auth 当前 user_id
+├── auth_headers (session) ─── Authorization + X-User-Id（dict 被 live_auth 原地更新）
 ├── browser (session) ─── Playwright chromium 实例
 │   └── browser_context (function) ─── 注入 localStorage 认证
 │       └── page (function) ─── 独立页面实例

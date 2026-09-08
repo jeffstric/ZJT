@@ -21,6 +21,7 @@ import state, {
     AGENT_CHAT_FONT_STEP_MAX,
     getSelectedLlmMeta,
     isSceneAgentRunning,
+    estimateScenePower,
 } from './state.js';
 import { characterReferenceSelectionKey, formatDuration, mapAssetAvatar } from './adapters.js';
 import { icon } from './icons.js';
@@ -274,6 +275,16 @@ function hasAsset(scene, kind) {
     return false;
 }
 
+// 首帧失败态的内容违规判定：命中违禁/内容安全特征时返回友好提示文案（hover title），未命中返回 ''
+// （判定规则与 renderCandidatePlaceholder 的违规变体一致，见 web/js/content_violation.js）
+function getFirstFrameViolationTitle(error) {
+    const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
+    if (!cv || typeof cv.isViolation !== 'function' || !error || !cv.isViolation(error)) return '';
+    return typeof cv.describe === 'function'
+        ? (cv.describe(error) || '内容审核未通过：请检查提示词和参考图后重试')
+        : '';
+}
+
 function assetBadge(scene, kind, label) {
     if (kind === 'first_frame') {
         const status = getFirstFrameDisplayStatus(scene);
@@ -282,7 +293,11 @@ function assetBadge(scene, kind, label) {
             return `<span class="status running">${label}${getFirstFrameStatusLabel(status)}</span>`;
         }
         if (status === 'failed' || status === 'regenerate_failed') {
-            return `<span class="status failed">${label}${getFirstFrameStatusLabel(status)}</span>`;
+            // 内容违规变体：角标直接显示「内容违规」，hover 展示友好原因
+            const violationTitle = getFirstFrameViolationTitle(scene?.firstFrameError);
+            const text = violationTitle ? '内容违规' : getFirstFrameStatusLabel(status);
+            const titleAttr = violationTitle ? ` title="${escapeHtml(violationTitle)}"` : '';
+            return `<span class="status failed${violationTitle ? ' violation' : ''}"${titleAttr}>${label}${text}</span>`;
         }
         return `<span class="status idle">${label}待生成</span>`;
     }
@@ -595,12 +610,17 @@ export function mediaFrame(scene) {
         </div>`;
     }
     const displayStatus = getFirstFrameDisplayStatus(scene);
-    return `<div class="preview-empty preview-empty-${displayStatus}">${escapeHtml(getFirstFrameStatusLabel(displayStatus) || '当前分镜还没有画面')}</div>`;
+    // 内容违规变体：失败态且错误命中违规特征时，文案改为「内容违规」，hover 展示友好原因
+    const violationTitle = ['failed', 'regenerate_failed'].includes(displayStatus)
+        ? getFirstFrameViolationTitle(scene.firstFrameError) : '';
+    const emptyText = violationTitle ? '内容违规' : (getFirstFrameStatusLabel(displayStatus) || '当前分镜还没有画面');
+    const titleAttr = violationTitle ? ` title="${escapeHtml(violationTitle)}"` : '';
+    return `<div class="preview-empty preview-empty-${displayStatus}"${titleAttr}>${escapeHtml(emptyText)}</div>`;
 }
 
-/** 主预览字幕层 HTML（播放引擎写入文本） */
+/** 主预览字幕层 HTML（播放引擎写入文本）；内层 span 承载文字（无背景盒，对齐导出 ASS） */
 export function previewSubtitleHtml() {
-    return '<div class="preview-subtitle" hidden></div>';
+    return '<div class="preview-subtitle" hidden><span class="preview-subtitle-text"></span></div>';
 }
 
 function renderFirstFrameStatusMark(scene) {
@@ -619,12 +639,17 @@ function renderVideoTypeBadge(scene) {
 function renderTimelineMediaFrame(scene) {
     const status = getFirstFrameDisplayStatus(scene);
     const label = getFirstFrameStatusLabel(status);
+    // 内容违规变体：失败态且错误命中违规特征时，占位文案改为「内容违规」，hover 展示友好原因
+    const violationTitle = ['failed', 'regenerate_failed'].includes(status)
+        ? getFirstFrameViolationTitle(scene?.firstFrameError) : '';
+    const fallbackText = violationTitle ? '内容违规' : (label || '无画面');
+    const fallbackAttrs = violationTitle ? ` class="violation" title="${escapeHtml(violationTitle)}"` : '';
     return `<span class="scene-timeline-media-frame first-frame-${status}">
         ${renderFirstFrameStatusMark(scene)}
         ${renderVideoTypeBadge(scene)}
         ${scene.firstFrameUrl
             ? `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}">`
-            : `<span>${escapeHtml(label || '无画面')}</span>`}
+            : `<span${fallbackAttrs}>${escapeHtml(fallbackText)}</span>`}
     </span>`;
 }
 
@@ -1133,8 +1158,8 @@ function renderDialoguePanel(scene) {
                 <select class="dialogue-character" data-dialogue-field="characterId">${characterOptions}</select>
                 <textarea class="dialogue-text" data-dialogue-field="text" placeholder="台词">${escapeHtml(d.text)}</textarea>
                 <div class="dialogue-meta">
-                    <label class="meta-field">语速<input type="number" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
-                    <label class="meta-field">音量<input type="number" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
+                    <label class="meta-field"><span class="meta-field-head">语速<span class="field-value" data-field-display="speed">${Number(d.speed ?? 1).toFixed(1)}</span></span><input type="range" min="0.5" max="2" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
+                    <label class="meta-field"><span class="meta-field-head">音量<span class="field-value" data-field-display="volume">${parseInt(d.volume ?? 100, 10)}</span></span><input type="range" min="0" max="100" step="1" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
                 </div>
                 ${renderDialogueAudioBlock(d)}
                 <div class="dialogue-actions">
@@ -1391,6 +1416,7 @@ function renderMediaStack(disabled) {
 function renderAiPanel() {
     const modes = [
         ['dialogue', '对话改图', '选择对话模型后，可让智能体基于当前画面提示词生成或调整首帧'],
+        ['image', '直填生图', '直接输入提示词生成首帧图片，不经过智能体润色（零 LLM 消耗）'],
         ['video', '视频生成', '基于当前分镜首帧直接生成视频（不走智能体）'],
         ['aivideo', 'AI生视频', '由智能体基于当前分镜生成视频（商业版）'],
     ].map(([key, label, title]) => `<option value="${key}" ${state.chatMode === key ? 'selected' : ''} title="${title}">${label}</option>`).join('');
@@ -1408,9 +1434,11 @@ function renderAiPanel() {
         ? 'AI生视频为商业版特权，请切换到「视频生成」模式'
         : (state.chatMode === 'dialogue'
             ? '和智能体描述要如何调整当前分镜画面'
-            : (state.chatMode === 'video'
-                ? '描述视频的运动方式、镜头变化与角色动作（预填当前分镜视频提示词，可直接编辑）'
-                : '和智能体描述要如何生成当前分镜视频'));
+            : (state.chatMode === 'image'
+                ? '已预填当前分镜画面提示词，可直接编辑后生成（不经过 AI 润色）'
+                : (state.chatMode === 'video'
+                    ? '描述视频的运动方式、镜头变化与角色动作（预填当前分镜视频提示词，可直接编辑）'
+                    : '和智能体描述要如何生成当前分镜视频')));
 
     const isVideo = isVideoMode;
     const isDhScene = isDigitalHumanScene(currentScene);
@@ -1479,9 +1507,27 @@ function renderAiPanel() {
                         <button class="tool-button" data-action="mention">@</button>
                         <button class="chat-send-btn" data-action="send-ai" title="${isDhDirectVideo ? '生成数字人对口型视频（台词/口型以配音为准）' : '发送'}" ${sendDisabled}>${icon('send', 16)}</button>
                     </div>
+                    ${renderPowerSpendHint()}
                 </div>
             </div>
         </section>`;
+}
+
+/**
+ * 左下角算力提示行：
+ * - 提交成功后显示实际消耗（recordPowerSpend 写入 lastPowerSpend）
+ * - 提交前常驻显示预估（estimateScenePower；视频经后端估价接口，未返回时短暂显示「预估中」）
+ */
+function renderPowerSpendHint() {
+    const spend = state.lastPowerSpend || estimateScenePower();
+    if (!spend) {
+        if (!state.lastPowerSpend && (state.chatMode === 'video' || state.chatMode === 'aivideo')) {
+            return `<div class="chat-power-spend" style="flex:0 0 auto;font-size:11px;color:var(--text-secondary);line-height:1.4;margin-top:4px;"><span class="power-icon">⚡</span> 正在预估消耗…</div>`;
+        }
+        return '';
+    }
+    const isActual = state.lastPowerSpend != null;
+    return `<div class="chat-power-spend" style="flex:0 0 auto;font-size:11px;color:var(--text-secondary);line-height:1.4;margin-top:4px;"><span class="power-icon">⚡</span> ${isActual ? `本次${spend.label || '生成'}消耗 ${spend.power} 算力` : `预计${spend.label || '生成'}消耗 ${spend.power} 算力`}</div>`;
 }
 
 function agentMessageKey(message, index) {
@@ -1633,6 +1679,35 @@ function sceneThumbMediaSig(scene) {
     return `${firstFrameUrl}|${firstFrameStatus}|${scene?.durationLabel || ''}|${videoType}`;
 }
 
+/** 字幕设置小面板（预览控制条上）：显示方式 + 左右边距 */
+function renderSubtitleSettingsPanel() {
+    const pct = Math.round((Number(state.subtitleSideMarginRatio) || 0) * 100);
+    const smart = state.subtitleMode !== 'block';
+    return `
+        <div class="subtitle-settings-panel" role="dialog" aria-label="字幕设置">
+            <div class="ss-row">
+                <span class="ss-label">显示方式</span>
+                <label class="ss-radio"><input type="radio" name="subtitle-mode" value="smart" data-action="subtitle-mode" ${smart ? 'checked' : ''}>逐句<span class="ss-badge ss-badge-free">限免</span></label>
+                <label class="ss-radio disabled" title="整段模式展示效果不佳，暂不可用"><input type="radio" name="subtitle-mode" value="block" data-action="subtitle-mode" disabled ${smart ? '' : 'checked'}>整段<span class="ss-badge ss-badge-off">暂不可用</span></label>
+            </div>
+            <div class="ss-row">
+                <span class="ss-label">左右边距</span>
+                <input type="range" min="0" max="18" step="1" value="${pct}" data-subtitle-margin aria-label="字幕左右边距">
+                <span class="ss-value" data-subtitle-margin-value>${pct}%</span>
+            </div>
+            <div class="ss-hint">逐句：按配音语音时间轴逐句显示。边距即导出视频里字幕距画面两侧的留白，可在预览中直观查看。</div>
+        </div>`;
+}
+
+/** 控制条上的字幕设置区：齿轮按钮 + 可开合小面板（timelineChrome 局部刷新的最小单元） */
+function renderSubtitleSettingsHtml() {
+    return `
+        <div class="subtitle-settings">
+            <button class="subtitle-settings-btn${state.showSubtitleSettings ? ' active' : ''}" data-action="toggle-subtitle-settings" title="字幕设置" aria-label="字幕设置">${icon('settings', 15)}</button>
+            ${state.showSubtitleSettings ? renderSubtitleSettingsPanel() : ''}
+        </div>`;
+}
+
 export function renderTimeline() {
     return `
         <section class="timeline-controls">
@@ -1640,6 +1715,7 @@ export function renderTimeline() {
                 <button class="play-btn" data-action="toggle-play" aria-label="${state.isPlaying ? '暂停' : '播放'}">${icon(state.isPlaying ? 'pause' : 'play', 18)}</button>
                 <span class="timeline-time">${formatDuration(state.currentTime)} / ${formatDuration(getTotalDuration())}</span>
                 <label class="subtitle-toggle"><input type="checkbox" data-action="toggle-subtitle" ${state.subtitleEnabled ? 'checked' : ''}> 字幕</label>
+                ${renderSubtitleSettingsHtml()}
                 <button class="timeline-view-toggle" data-action="toggle-view">${icon('grid', 16)}</button>
             </div>
             <div class="scene-timeline">
@@ -1665,10 +1741,12 @@ function isCandidateTaskFailed(status) {
 }
 
 function isCandidateTaskRunning(status) {
-    // ai_tools: 0=PENDING, 1=PROCESSING；也兼容字符串态
-    return status === 0 || status === 1
+    // ai_tools: 0=PENDING, 1=PROCESSING, 6=DOWNLOADING；也兼容字符串态。
+    // 口径与 polling.js hasRunning 一致：下载中仍算进行中
+    return status === 0 || status === 1 || status === 6
         || status === 'pending' || status === 'running'
-        || status === 'queued' || status === 'processing';
+        || status === 'queued' || status === 'processing'
+        || status === 'downloading';
 }
 
 function renderCandidatePlaceholder(status, kind = 'image', error) {
@@ -2238,8 +2316,9 @@ function renderModelConfigModal() {
     if (!state.showModelConfigModal) return '';
 
     const currentMode = state.chatMode;
-    const modeLabel = currentMode === 'video' ? '视频生成' : '对话改图';
-    const activeTab = state.currentConfigTab || (currentMode === 'video' ? 'video' : 'dialogue');
+    const modeLabel = currentMode === 'video' ? '视频生成' : (currentMode === 'image' ? '直填生图' : '对话改图');
+    const activeTab = state.currentConfigTab
+        || (currentMode === 'video' ? 'video' : (currentMode === 'image' ? 'image' : 'dialogue'));
 
     const dialogueContent = renderDialogueModelConfig();
     const imageContent = renderImageModelConfig();
@@ -3224,7 +3303,8 @@ function clearPreviewMediaLayers(wrapper) {
     const sub = wrapper.querySelector('.preview-subtitle');
     if (sub) {
         sub.hidden = true;
-        sub.textContent = '';
+        const inner = sub.querySelector('.preview-subtitle-text') || sub;
+        inner.textContent = '';
     }
 }
 
@@ -3269,7 +3349,8 @@ export function patchPreview(scene, options = {}) {
         const sub = wrapper.querySelector('.preview-subtitle');
         if (sub) {
             sub.hidden = true;
-            sub.textContent = '';
+            const inner = sub.querySelector('.preview-subtitle-text') || sub;
+            inner.textContent = '';
         }
     }
 
@@ -3321,6 +3402,7 @@ export function patchPreview(scene, options = {}) {
         const sub = document.createElement('div');
         sub.className = 'preview-subtitle';
         sub.hidden = true;
+        sub.innerHTML = '<span class="preview-subtitle-text"></span>';
         mount.appendChild(sub);
     }
     if (!wrapper.querySelector('.preview-caption')) {
@@ -3372,6 +3454,10 @@ export function syncModals() {
 
 function patchTimelineChrome() {
     updateTimelineProgress();
+    // 字幕设置区（齿轮 + 面板）整体重挂：面板开合只走 timelineChrome，
+    // 不重挂的话 state 已翻转但 DOM 不变，表现为点击齿轮无反应
+    const settings = document.querySelector('.timeline-progress-row .subtitle-settings');
+    if (settings) settings.outerHTML = renderSubtitleSettingsHtml();
     // 字幕勾选（action 名称为 toggle-subtitle）
     const cb = document.querySelector(
         '.timeline-progress-row input[type="checkbox"][data-action="toggle-subtitle"]'
@@ -3617,8 +3703,8 @@ function renderDialogueRowOuter(d) {
                 <select class="dialogue-character" data-dialogue-field="characterId">${characterOptions}</select>
                 <textarea class="dialogue-text" data-dialogue-field="text" placeholder="台词">${escapeHtml(d.text)}</textarea>
                 <div class="dialogue-meta">
-                    <label class="meta-field">语速<input type="number" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
-                    <label class="meta-field">音量<input type="number" step="0.1" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
+                    <label class="meta-field"><span class="meta-field-head">语速<span class="field-value" data-field-display="speed">${Number(d.speed ?? 1).toFixed(1)}</span></span><input type="range" min="0.5" max="2" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
+                    <label class="meta-field"><span class="meta-field-head">音量<span class="field-value" data-field-display="volume">${parseInt(d.volume ?? 100, 10)}</span></span><input type="range" min="0" max="100" step="1" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
                 </div>
                 ${renderDialogueAudioBlock(d)}
                 <div class="dialogue-actions">

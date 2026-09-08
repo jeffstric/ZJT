@@ -167,6 +167,29 @@ llm:
 
 `--served-model-name` 与数据库 `model_name` 不一致，重启 vLLM 并修正参数
 
+## 路由与 vendor_id（2026-09-04 修复）
+
+本地模型（vLLM/Ollama）在系统中的模型 ID 为 `vllm:qwen3.8:27b` 这种 `vendor:模型名` 显式前缀格式。路由规则：
+
+1. **会话切换模型时 vendor_id 随链路保存**：前端 `changeModel()` 在 `POST /api/session/{id}/model` 中携带 `vendor_id`；`chat_sessions` 表新增 `vendor_id` 列持久化（迁移 `no_126_20260904_add_vendor_id_to_chat_sessions`），`ChatSession.set_model()` 同步更新运行中 PM Agent 的 `_vendor_id`，下一轮 PM 循环即生效。
+2. **PM 循环路由**：`pm_agent` 中所有以 `self.model` 发起的 LLM 调用使用 `getattr(self, '_vendor_id', None) or task.vendor_id`，保证模型字符串与供应商同源。
+3. **工厂防御层**：`llm/llm_client_factory.py` 的 `get_client` 中，`vllm:`/`ollama:` 显式前缀优先于 `vendor_id` 路由；若 `vendor_id` 解析出的供应商与前缀冲突，记录 warning 并按前缀路由。云端模型（如 zjt_api 的 `qwen3.5-plus`）仍是 `vendor_id` 优先，不受此前缀规则影响。
+4. **任务创建兜底**：`create_agent_task` 在 `vendor_id` 为默认值 1 时，优先使用会话保存的 `vendor_id`，其次才用 `vendor_model` 表反查（反查为 `LIMIT 1` 且关联可能缺失，不可靠）。
+
+历史事故参见 `docs/backend/incidents/2026-09-04-session-vendor-id.md`。
+
+## 拆分链路 model_id 归一化（2026-09-06 修复）
+
+`/api/models` 下发的本地服务模型对象中，`id` 是 `vllm:qwen3.8:27b` 复合串（供工厂按前缀路由），数值库 ID 在同对象的 `model_id` 字段。历史版本剧本节点把复合串当 `model_id` 提交，后端 `int()` 转换抛 `ValueError`，拆分接口整体 500。修复分三层：
+
+1. **前端（根治）**：`web/js/script_node.js` 的 `appendSplitOption` 改为数值库 ID 优先（`model.model_id ?? model.id`），且含 `:` 的值不写入 `data-model-id`；工作流重载按 `option.value`（模型名）恢复选择并重写 `splitModelId`，存量复合串会被自动纠正。
+2. **后端（兼容存量请求）**：`llm/llm_client_factory.py` 新增 `resolve_composite_model_ref()`，按首个冒号拆分后经 `vendor` / `model` / `vendor_model` 三表查库还原 `(vendor_id, model_db_id)`（任一缺失即返回 `(None, None)`，拒绝猜测）。
+3. **归一化收敛（2026-09-08）**：新增 `normalize_model_selection_refs()` 统一 model_id/vendor_id 归一化（vendor 优先级：显式非默认 vendor > 复合串 vendor > 数值模型反查 > 默认值），接入 `/api/parse-script`、故事板发布拆分、`scene_ai_chat` 全部入口；偏好解析等同步路径用 `coerce_model_id_or_none()` 宽容归一（失败返回 None 走默认模型，不抛异常）。
+4. **复合串废弃（2026-09-08 治理）**：`/api/models` 的 `id` 字段对全部供应商（含 Ollama/vLLM）统一为数值库 ID 字符串，不再生成 `vendor:模型名` 复合串——工厂已支持 vendor_id 优先路由（`get_client` 的 vendor_id → vendor_name → 客户端类路径），前缀匹配降级为兜底，复合串失去存在理由（且 vendor_name 无唯一索引，复合串自身有歧义隐患）。调用方未传 vendor_id 且模型名无前缀时，`_get_vendor_by_model` 按 `model_name → vendor_model` 查库反查兜底（替代原前缀路由）。存量复合串由 `resolve_composite_model_ref` 读路径继续兼容（命中打 warning 观察清零），`get_client` 的本地前缀防御层保留（兼容旧客户端在途请求）。相关测试：`tests/llm/test_model_id_numeric_routing.py`。
+5. **回归测试**：`tests/llm/test_resolve_composite_model_ref.py`。
+
+事故记录参见 `docs/backend/incidents/2026-09-06-script-split-composite-model-id.md`。
+
 ## 相关文件
 
 | 文件 | 说明 |

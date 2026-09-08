@@ -20,7 +20,9 @@ import {
     ensurePreviewStage,
     applyPreviewCanvas,
     getPreviewMediaMountParent,
+    resolveSubtitleMaxChars,
 } from './preview_canvas.js';
+import { createSubtitlePager, wrapSubtitleLines } from './subtitle_wrap.js';
 
 const EMPTY_HOLD_FALLBACK = 2;
 const TICK_MS = 50;
@@ -465,12 +467,52 @@ export function updatePlayheadPosition(options = {}) {
     return true;
 }
 
+/** 字幕设置面板打开时用于预览边距效果的示例字幕文本 */
+const SUBTITLE_SAMPLE_TEXT = '字幕左右边距预览示例，拖动滑杆可实时调整画面两侧留白';
+
+/** 归一化字幕左右边距（画面宽比例，0~0.18），非法值回退默认 0.07 */
+export function normalizedSubtitleMarginRatio() {
+    const n = Number(state.subtitleSideMarginRatio);
+    if (!Number.isFinite(n) || n < 0) return 0.07;
+    return Math.min(0.18, n);
+}
+
+/** 把当前边距应用到预览字幕元素（CSS 变量），设置滑杆/初始化时调用 */
+export function applySubtitleMargin() {
+    const el = document.querySelector('.preview-subtitle');
+    if (!el) return;
+    el.style.setProperty('--sb-side-margin', `${Math.round(normalizedSubtitleMarginRatio() * 100)}%`);
+}
+
 function setSubtitle(text) {
     const el = document.querySelector('.preview-subtitle');
     if (!el) return;
+    const inner = el.querySelector('.preview-subtitle-text') || el;
     const show = Boolean(state.subtitleEnabled && text);
     el.hidden = !show;
-    el.textContent = show ? text : '';
+    if (show) inner.textContent = text;
+    else inner.textContent = '';
+}
+
+/** 字幕设置面板打开：非播放态显示示例字幕，边距变化直观可见 */
+export function showSubtitleSample() {
+    const el = document.querySelector('.preview-subtitle');
+    if (!el || isPlaybackActive()) return;
+    applySubtitleMargin();
+    const inner = el.querySelector('.preview-subtitle-text') || el;
+    // 示例字幕同样按烧录折行算法换行，所见即所得
+    const lines = wrapSubtitleLines(SUBTITLE_SAMPLE_TEXT, resolveSubtitleMaxChars());
+    inner.textContent = lines.length ? lines.join('\n') : SUBTITLE_SAMPLE_TEXT;
+    el.hidden = !state.subtitleEnabled;
+}
+
+/** 字幕设置面板关闭：清掉示例字幕（播放/暂停中的真实字幕不受影响） */
+export function clearSubtitleSample() {
+    const el = document.querySelector('.preview-subtitle');
+    if (!el || isPlaybackActive()) return;
+    const inner = el.querySelector('.preview-subtitle-text') || el;
+    inner.textContent = '';
+    el.hidden = true;
 }
 
 function updateTimelineActive(sceneId) {
@@ -503,6 +545,8 @@ function ensurePreviewShell() {
         const sub = document.createElement('div');
         sub.className = 'preview-subtitle';
         sub.hidden = true;
+        // 内层 span 承载文字（无背景盒，对齐导出 ASS）；外层负责左右边距定位
+        sub.innerHTML = '<span class="preview-subtitle-text"></span>';
         mount.appendChild(sub);
     }
     if (!wrapper.querySelector('.preview-caption')) {
@@ -511,6 +555,7 @@ function ensurePreviewShell() {
         cap.innerHTML = '<strong></strong><span></span>';
         wrapper.appendChild(cap);
     }
+    applySubtitleMargin();
     applyPreviewCanvas(wrapper);
     return wrapper;
 }
@@ -667,7 +712,11 @@ function stopActiveMedia() {
 async function playOneAudio(item, gen, preloadedEl) {
     await checkpoint(gen);
     state.playback.audioDialogueId = item.dialogueId;
-    setSubtitle(item.text || '');
+    // 字幕分页与导出 ASS 硬烧一致（折行算法见 subtitle_wrap.js），随音频进度翻页；
+    // 逐句/整段与字幕设置（state.subtitleMode）联动
+    const subtitlePager = createSubtitlePager(item.text || '', resolveSubtitleMaxChars(), {
+        mode: state.subtitleMode === 'block' ? 'block' : 'smart',
+    });
 
     const audio = preloadedEl || new Audio();
     activeAudioEl = audio;
@@ -676,6 +725,19 @@ async function playOneAudio(item, gen, preloadedEl) {
         audio.src = item.url;
     }
     audio.volume = item.volume;
+
+    let lastSubtitleText = null;
+    const syncSubtitle = () => {
+        if (Number.isFinite(audio.duration) && audio.duration > 0) {
+            subtitlePager.setDuration(audio.duration);
+        }
+        const next = subtitlePager.textAt(audio.currentTime || 0);
+        if (next !== lastSubtitleText) {
+            lastSubtitleText = next;
+            setSubtitle(next);
+        }
+    };
+    syncSubtitle();
 
     try {
         // 预载实例从 0 起播
@@ -707,6 +769,7 @@ async function playOneAudio(item, gen, preloadedEl) {
                 }
             }
             if (audio.error) break;
+            syncSubtitle();
             await sleep(TICK_MS);
         }
     } finally {

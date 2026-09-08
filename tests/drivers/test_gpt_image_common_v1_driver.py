@@ -92,15 +92,25 @@ def test_build_edit_request_logs_portrait_size_context_without_rewriting_image()
 
     request = driver.build_edit_request(ai_tool)
 
-    assert request["data"]["size"] == "1024x1536"
+    assert request["data"]["size"] == "864x1536"
     assert request["request_context"] == {
         "mode": "edit",
         "ratio": "9:16",
         "image_size": "1K",
-        "mapped_size": "1024x1536",
+        "mapped_size": "864x1536",
         "image_count": 1,
     }
     assert request["files"] == [("image", ("input.png", b"image-bytes", "image/png"))]
+
+
+def test_map_size_1k_widescreen_and_portrait_use_true_ratio():
+    """1k 档位 16:9 / 9:16 映射为真比例自定义尺寸，2:3 / 3:2 保持预设尺寸。"""
+    driver = make_driver()
+
+    assert driver._map_size("1k", "9:16") == "864x1536"
+    assert driver._map_size("1k", "16:9") == "1536x864"
+    assert driver._map_size("1k", "2:3") == "1024x1536"
+    assert driver._map_size("1k", "3:2") == "1536x1024"
 
 
 def test_resolve_local_path_maps_upload_web_relative_path(tmp_path, monkeypatch):
@@ -174,3 +184,67 @@ def test_prepare_image_file_reads_upload_web_relative_path(tmp_path, monkeypatch
     assert content == b"png-bytes"
     assert filename == "scene.png"
     assert mime_type == "image/png"
+
+
+def _make_submit_driver():
+    """构造可调用 submit_task 的驱动：跳过真实请求构建，只留 _request 桩。"""
+    driver = make_driver()
+    driver._timeout = 30
+    driver._send_alert = lambda **kwargs: None
+    driver.build_create_request = lambda ai_tool: {"url": "https://yunwu.ai/v1/images/generations", "method": "POST"}
+    return driver
+
+
+def _http_error_with_body(body):
+    import requests
+
+    err = requests.exceptions.HTTPError("403 Client Error: Forbidden for url: https://yunwu.ai")
+    err.response_body = body
+    return err
+
+
+def test_submit_task_http_error_surfaces_quota_message():
+    """HTTP 4xx 响应体中的业务错误（如额度不足）不再被"服务异常"掩盖。"""
+    driver = _make_submit_driver()
+    driver._request = lambda **kwargs: (_ for _ in ()).throw(_http_error_with_body({
+        "error": {"message": "user quota is not enough", "type": "new_api_error", "code": "local:insufficient_quota"}
+    }))
+
+    ai_tool = SimpleNamespace(id=1, prompt="test", image_path="", ratio="1:1", image_size="1k", extra_config={})
+    result = driver.submit_task(ai_tool)
+
+    assert result["success"] is False
+    assert result["error_type"] == "USER"
+    assert "user quota is not enough" in result["error"]
+
+
+def test_submit_task_http_error_surfaces_moderation_friendly_message():
+    """HTTP 4xx 响应体命中内容审核特征时返回中文友好文案。"""
+    driver = _make_submit_driver()
+    driver._request = lambda **kwargs: (_ for _ in ()).throw(_http_error_with_body({
+        "error": {"message": "Your request was rejected by the safety system", "type": "invalid_request_error", "code": "moderation_blocked"}
+    }))
+
+    ai_tool = SimpleNamespace(id=1, prompt="test", image_path="", ratio="1:1", image_size="1k", extra_config={})
+    result = driver.submit_task(ai_tool)
+
+    assert result["success"] is False
+    assert result["error_type"] == "USER"
+    assert result["error"].startswith("内容审核未通过")
+
+
+def test_submit_task_http_error_without_body_keeps_generic_system_error():
+    """异常未携带响应体时保持原有 SYSTEM 兜底行为。"""
+    import requests
+
+    driver = _make_submit_driver()
+    driver._request = lambda **kwargs: (_ for _ in ()).throw(
+        requests.exceptions.HTTPError("500 Server Error")
+    )
+
+    ai_tool = SimpleNamespace(id=1, prompt="test", image_path="", ratio="1:1", image_size="1k", extra_config={})
+    result = driver.submit_task(ai_tool)
+
+    assert result["success"] is False
+    assert result["error_type"] == "SYSTEM"
+    assert result["error"] == "服务异常，请联系技术支持"

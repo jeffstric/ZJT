@@ -39,6 +39,7 @@ const mockConfigData = {
       short_key: 'gpt-image-2',
       name: 'GPT Image 2',
       category: 'image_edit',
+      supported_sizes: ['1k', '2k', '4k'],
       computing_power: 50,
       hidden: false
     },
@@ -225,6 +226,18 @@ describe('TaskConfig - 选项查询', () => {
     expect(TaskConfig.getSizeOptions('qwen-image-edit')).toEqual([]);
     expect(TaskConfig.getModelConfigs()['qwen-image-edit'].ratios).toEqual([]);
     expect(TaskConfig.getModelConfigs()['qwen-image-edit'].image_sizes).toEqual([]);
+  });
+
+  test('getMaxSupportedSize 返回最高分辨率档位（大小写归一）', () => {
+    // 后端各模型 supported_sizes 大小写不统一（gpt-image-2 小写、gemini 大写），统一按数字取最大输出大写
+    expect(TaskConfig.getMaxSupportedSize('gpt-image-2')).toBe('4K');
+  });
+
+  test('getMaxSupportedSize 非 <N>K 格式 / 空列表 / 未知模型返回 null', () => {
+    // sora2 为 1080p/720p 视频档位，非 K 格式，不应臆造档位
+    expect(TaskConfig.getMaxSupportedSize('sora2')).toBeNull();
+    expect(TaskConfig.getMaxSupportedSize('qwen-image-edit')).toBeNull();
+    expect(TaskConfig.getMaxSupportedSize('nonexistent')).toBeNull();
   });
 });
 

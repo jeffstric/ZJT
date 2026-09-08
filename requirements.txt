@@ -1,8 +1,9 @@
-fastapi==0.111.0
+fastapi==0.121.0
+starlette==0.49.3
 uvicorn[standard]==0.30.1
 gunicorn>=21.2.0
 requests==2.32.3
-python-multipart==0.0.9
+python-multipart>=0.0.18,<1.0.0
 pyyaml==6.0.1
 openai>=1.0.0
 httpx>=0.24.0
@@ -24,8 +25,10 @@ DBUtils>=3.1.0
 qiniu>=7.17.0
 anthropic>=0.40.0
 litellm>=1.35.0,<1.92
-# FastAPI 0.111.0 / Starlette 0.37.x 当前可兼容的解析结果。
-# 固定版本避免 pip 从 mcp 2.x 一直回溯到 1.12.x，慢速网络下会显著拖长 CI 构建。
+# 固定版本：mcp 2.x 要求 uvicorn>=0.31.1（与本项目 uvicorn==0.30.1 冲突）且
+# pydantic>=2.12/sse-starlette>=3.0，pip 每次都从 2.x 回溯解析到 1.x——正是
+# 慢构建的根源，且实际装到的版本随时间漂移。1.12.4 仅约束 starlette>=0.27 /
+# uvicorn>=0.23.1，与当前 fastapi 0.121.0 + starlette 0.49.3 栈兼容。
 mcp==1.12.4
 filetype>=1.2.0
 opencv-python>=4.8.0

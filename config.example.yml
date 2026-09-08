@@ -240,6 +240,9 @@ llm:
   agnes:
     api_key: ""  # Agnes AI API Key
     base_url: "https://api.agnes-ai.cn/v1"
+  mimo:
+    api_key: ""  # 小米 MiMo API Key（Token Plan 套餐）
+    base_url: "https://token-plan-cn.xiaomimimo.com/v1"
 
 # Wan3.0 视频模型（阿里云百炼 DashScope，API Key 复用上面的 llm.qwen.api_key）
 wan3:
@@ -250,6 +253,15 @@ wan3:
 tts:
   api_url: "http://47.98.190.124"  # TTS API 服务地址
   upload_url: "http://47.98.190.124/result_audio/"
+
+# ASR (SenseVoice 句级转写) configuration
+# 用于故事板导出完整视频时生成"按语音时间轴逐句显示"的字幕（smart 模式）。
+# opt-in：未配置 asr 段（或 enabled 缺省）时默认关闭，导出字幕使用 block 分页模式。
+# 服务不可达时自动回退为整条对白分页字幕（block 模式），不影响导出。
+# 默认公网地址任何环境可达；自建 SenseVoice 服务时可覆盖为私有部署地址
+asr:
+  api_url: "http://47.98.190.124:60000"  # SenseVoice ASR 服务地址
+  enabled: false  # true 时启用句级 smart 字幕（需 asr 服务可达）
 
 
 # User registration configuration

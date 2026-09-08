@@ -122,6 +122,14 @@
                     </a>
                 </li>
                 <li>
+                    <a href="#" :class="{ active: currentPage === 'announcements' }" @click.prevent="switchPage('announcements')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317" />
+                        </svg>
+                        <span>{{ t('nav_announcements') }}</span>
+                    </a>
+                </li>
+                <li>
                     <a href="#" :class="{ active: currentPage === 'constants' }" @click.prevent="switchPage('constants')">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
@@ -178,6 +186,7 @@
                 <h2 v-else-if="currentPage === 'runninghubKeyPool'">{{ t('nav_runninghub_key_pool') }}</h2>
                 <h2 v-else-if="currentPage === 'checkin'">{{ t('nav_checkin') }}</h2>
                 <h2 v-else-if="currentPage === 'notifications'">{{ t('nav_notifications') }}</h2>
+                <h2 v-else-if="currentPage === 'announcements'">{{ t('nav_announcements') }}</h2>
                 <h2 v-else-if="currentPage === 'constants'">{{ t('nav_constants') }}</h2>
                 <h2 v-else-if="currentPage === 'marketingPublications'">{{ t('nav_marketing_publications') }}</h2>
                 <h2 v-else-if="currentPage === 'commission'">{{ t('nav_commission') }}</h2>
@@ -1436,6 +1445,54 @@
                     </div>
                 </div>
 
+                <!-- 推荐模型档位（性价比/效果）：写 system_config model_catalog.scene_recos，未配置场景用系统默认 -->
+                <div class="reco-box">
+                    <div class="reco-title">
+                        <strong>⭐ {{ t('reco_title') }}</strong>
+                    </div>
+                    <p class="reco-desc">{{ t('reco_desc') }}</p>
+                    <div class="reco-track-row" v-if="modelRecos.loading">
+                        <span class="reco-track-label">{{ t('loading') }}</span>
+                    </div>
+                    <template v-else>
+                        <div class="reco-scene" v-for="scene in modelRecos.scenes" :key="scene.scene">
+                            <div class="reco-scene-head">
+                                <span class="reco-scene-name">{{ recoSceneName(scene.scene) }}</span>
+                                <code class="reco-scene-key">{{ scene.scene }}</code>
+                                <span class="reco-tag" :class="(scene.overridden.value || scene.overridden.quality) ? 'custom' : 'default'">
+                                    {{ (scene.overridden.value || scene.overridden.quality) ? t('reco_tag_custom') : t('reco_tag_default') }}
+                                </span>
+                            </div>
+                            <div class="reco-track-row" v-for="track in ['value', 'quality']" :key="track">
+                                <label class="reco-track-label">{{ track === 'value' ? t('reco_value_track') : t('reco_quality_track') }}</label>
+                                <select class="filter-select reco-select" v-model="scene.draft[track].canonical"
+                                    @change="onRecoCanonicalChange(scene, track)">
+                                    <option v-for="opt in recoOptions(scene, track)" :key="opt.canonical" :value="opt.canonical">
+                                        {{ opt.label }}
+                                    </option>
+                                </select>
+                                <select v-if="scene.kind === 'llm'" class="filter-select reco-vendors"
+                                    v-model="scene.draft[track].vendor">
+                                    <option value="">{{ t('reco_vendor_auto') }}</option>
+                                    <option v-for="v in recoVendorOptions(scene, track)" :key="v" :value="v">{{ v }}</option>
+                                </select>
+                                <input type="text" class="filter-select reco-reason"
+                                    v-model="scene.draft[track].reason" :placeholder="t('reco_reason_ph')" />
+                            </div>
+                            <div class="reco-actions">
+                                <button class="action-btn primary small" @click="saveModelReco(scene)"
+                                    :disabled="modelRecos.saving === scene.scene">
+                                    {{ modelRecos.saving === scene.scene ? t('um_processing') : t('reco_save') }}
+                                </button>
+                                <button class="action-btn small" @click="resetModelReco(scene)"
+                                    :disabled="modelRecos.saving === scene.scene">
+                                    {{ t('reco_reset') }}
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
                 <div class="table-container">
                     <div class="table-header">
                         <h3>{{ t('models_title') }}</h3>
@@ -1810,6 +1867,146 @@
                     </div>
                 </div>
             </section>
+
+            <!-- 公告管理页面（本站公告，管理员配置；区别于上方远程拉取的通知中心） -->
+            <section v-if="currentPage === 'announcements'">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>{{ t('ann_list_title') }}</h3>
+                        <div class="table-actions">
+                            <button class="action-btn" @click="openAnnouncementCreateModal">＋ {{ t('ann_create_btn') }}</button>
+                        </div>
+                    </div>
+
+                    <div v-if="announcements.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>{{ t('loading') }}</p>
+                    </div>
+                    <template v-else>
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>{{ t('col_id') }}</th>
+                                    <th>{{ t('ann_col_title') }}</th>
+                                    <th>{{ t('ann_col_level') }}</th>
+                                    <th>{{ t('ann_col_status') }}</th>
+                                    <th>{{ t('ann_col_publish_window') }}</th>
+                                    <th>{{ t('ann_col_created_at') }}</th>
+                                    <th>{{ t('col_actions') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-if="announcements.list.length === 0">
+                                    <td colspan="7" style="text-align:center;color:#64748b;">{{ t('no_data') }}</td>
+                                </tr>
+                                <tr v-for="item in announcements.list" :key="item.id">
+                                    <td>{{ item.id }}</td>
+                                    <td style="max-width:360px;">
+                                        <div style="font-weight:600;">{{ item.title }}</div>
+                                        <div class="ann-title-sub">
+                                            <span v-if="item.images && item.images.length">&#128444; {{ t('ann_images_count', { n: item.images.length }) }}</span>
+                                            <span v-if="item.link_url">&#128279; {{ item.link_text || item.link_url }}</span>
+                                        </div>
+                                    </td>
+                                    <td><span class="ann-level-badge" :class="'level-' + item.level">{{ t('ann_level_' + item.level) }}</span></td>
+                                    <td>
+                                        <span class="status-badge" :class="{ active: item.status === 'published', pending: item.status === 'draft', inactive: item.status === 'offline' }">
+                                            {{ t('ann_status_' + item.status) }}
+                                        </span>
+                                    </td>
+                                    <td style="font-size:12px;color:#64748b;">
+                                        <div>{{ t('ann_publish_at') }}: {{ item.publish_at ? formatDate(item.publish_at) : t('ann_immediately') }}</div>
+                                        <div>{{ t('ann_expire_at') }}: {{ item.expire_at ? formatDate(item.expire_at) : t('ann_never_expire') }}</div>
+                                    </td>
+                                    <td style="font-size:12px;color:#64748b;">{{ formatDate(item.created_at) }}</td>
+                                    <td>
+                                        <button class="action-btn" @click="openAnnouncementEditModal(item)">{{ t('ann_edit_btn') }}</button>
+                                        <button v-if="item.status !== 'published'" class="action-btn success" @click="publishAnnouncement(item)">{{ t('ann_publish_btn') }}</button>
+                                        <button v-if="item.status === 'published'" class="action-btn warning" @click="offlineAnnouncement(item)">{{ t('ann_offline_btn') }}</button>
+                                        <button class="action-btn danger" @click="deleteAnnouncement(item)">{{ t('ann_delete_btn') }}</button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div class="pagination" v-if="announcements.total > 0">
+                            <button class="page-btn" @click="annGoToPage(1)" :disabled="announcements.page === 1">{{ t('page_first') }}</button>
+                            <button class="page-btn" @click="annGoToPage(announcements.page - 1)" :disabled="announcements.page === 1">{{ t('page_prev') }}</button>
+                            <span class="page-info">{{ t('page_info', { current: announcements.page, total: annTotalPages, count: announcements.total }) }}</span>
+                            <button class="page-btn" @click="annGoToPage(announcements.page + 1)" :disabled="announcements.page >= annTotalPages">{{ t('page_next') }}</button>
+                            <button class="page-btn" @click="annGoToPage(annTotalPages)" :disabled="announcements.page >= annTotalPages">{{ t('page_last') }}</button>
+                        </div>
+                    </template>
+                </div>
+            </section>
+
+            <!-- 公告新建/编辑弹窗 -->
+            <div class="modal-overlay" v-if="announcementModal.show" @click.self="closeAnnouncementModal">
+                <div class="modal modal-wide">
+                    <div class="modal-header">
+                        <h3>{{ announcementModal.isEdit ? t('ann_modal_edit_title') : t('ann_modal_create_title') }}</h3>
+                        <button class="modal-close" @click="closeAnnouncementModal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label>{{ t('ann_form_title') }} <span style="color: red;">*</span></label>
+                            <input type="text" v-model="announcementForm.title" :placeholder="t('ann_form_title_placeholder')" maxlength="200">
+                        </div>
+                        <div class="form-group">
+                            <label>{{ t('ann_form_content') }}</label>
+                            <textarea v-model="announcementForm.content" rows="5" :placeholder="t('ann_form_content_placeholder')"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>{{ t('ann_form_level') }}</label>
+                            <select v-model="announcementForm.level">
+                                <option value="info">{{ t('ann_level_info') }}</option>
+                                <option value="success">{{ t('ann_level_success') }}</option>
+                                <option value="warning">{{ t('ann_level_warning') }}</option>
+                                <option value="error">{{ t('ann_level_error') }}</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>{{ t('ann_form_link_url') }}</label>
+                            <input type="url" v-model="announcementForm.link_url" placeholder="https://...">
+                            <input type="text" v-model="announcementForm.link_text" :placeholder="t('ann_form_link_text_placeholder')" maxlength="100" style="margin-top: 6px;">
+                        </div>
+                        <div class="form-group">
+                            <label>{{ t('ann_form_images') }}</label>
+                            <div class="ann-image-grid">
+                                <div v-for="(img, idx) in announcementForm.images" :key="img" class="ann-image-item">
+                                    <img :src="img" alt="">
+                                    <button class="ann-image-remove" @click="removeAnnouncementImage(idx)">&times;</button>
+                                </div>
+                                <label class="ann-image-upload" v-if="announcementForm.images.length < 9">
+                                    <span v-if="!announcementModal.uploading">＋</span>
+                                    <span v-else class="ann-image-uploading">{{ t('ann_form_uploading') }}</span>
+                                    <input type="file" accept="image/*" multiple style="display: none;"
+                                           @change="uploadAnnouncementImages($event)" :disabled="announcementModal.uploading">
+                                </label>
+                            </div>
+                            <p class="form-hint">{{ t('ann_form_images_hint') }}</p>
+                        </div>
+                        <div class="form-group form-row-2">
+                            <div>
+                                <label>{{ t('ann_form_publish_at') }}</label>
+                                <input type="datetime-local" v-model="announcementForm.publish_at">
+                            </div>
+                            <div>
+                                <label>{{ t('ann_form_expire_at') }}</label>
+                                <input type="datetime-local" v-model="announcementForm.expire_at">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="modal-btn cancel" @click="closeAnnouncementModal">{{ t('cancel_btn') }}</button>
+                        <button v-if="!announcementModal.isEdit" class="modal-btn cancel" @click="submitAnnouncement('draft')" :disabled="announcementModal.loading">
+                            {{ announcementModal.loading ? t('btn_submit_loading') : t('ann_form_save_draft') }}
+                        </button>
+                        <button class="modal-btn confirm" @click="submitAnnouncement(announcementModal.isEdit ? 'save' : 'published')" :disabled="announcementModal.loading">
+                            {{ announcementModal.loading ? t('btn_submit_loading') : (announcementModal.isEdit ? t('ann_form_save') : t('ann_form_publish_now')) }}
+                        </button>
+                    </div>
+                </div>
+            </div>
 
             <!-- 常量参考页面 -->
             <section v-if="currentPage === 'constants'">
@@ -2614,7 +2811,33 @@
                                             {{ field.label }}
                                             <span v-if="field.required" style="color: red;">*</span>
                                         </label>
-                                        <input :type="field.type"
+                                        <!-- 密钥字段：已保存的密钥默认覆盖毛玻璃遮罩，点击眼睛按钮后才显示完整密钥 -->
+                                        <div v-if="isSecretField(field)" class="qc-secret-wrap">
+                                            <input type="text"
+                                                   :value="getFormField(provider.id, field.id)"
+                                                   @input="updateFormField(provider.id, field.id, $event.target.value); clearSecretReveal(provider.id, field.id)"
+                                                   :placeholder="field.placeholder">
+                                            <div v-if="isSecretAutoMasked(provider.id, field.id) && !isSecretRevealed(provider.id, field.id)"
+                                                 class="qc-secret-glass">
+                                                <span class="qc-secret-glass-text">{{ t('qc_secret_masked_hint') }}</span>
+                                            </div>
+                                            <button v-if="isSecretAutoMasked(provider.id, field.id) || isSecretRevealed(provider.id, field.id)"
+                                                    type="button"
+                                                    class="qc-secret-eye"
+                                                    :class="{ revealed: isSecretRevealed(provider.id, field.id) }"
+                                                    :title="isSecretRevealed(provider.id, field.id) ? t('qc_secret_hide') : t('qc_secret_reveal')"
+                                                    @click="toggleSecretReveal(provider.id, field.id)">
+                                                <svg v-if="!isSecretRevealed(provider.id, field.id)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                                                    <path d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"/>
+                                                    <circle cx="12" cy="12" r="3"/>
+                                                </svg>
+                                                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15">
+                                                    <path d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88"/>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                        <input v-else
+                                               :type="field.type"
                                                :value="getFormField(provider.id, field.id)"
                                                @input="!field.readOnly && updateFormField(provider.id, field.id, $event.target.value)"
                                                :placeholder="field.placeholder"

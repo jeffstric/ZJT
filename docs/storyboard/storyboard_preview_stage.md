@@ -51,7 +51,25 @@
   - 1:1：96×96。
 - 缩略图媒体：`object-fit: scale-down`，与主预览一致。
 
-## 5. UI 入口
+## 5. 字幕版式与导出成片对齐（所见即所得）
+
+预览字幕（`.preview-subtitle`）逐项复刻导出 ASS 硬烧字幕（`services/storyboard_subtitle.py`），避免「预览与播放器对不上」：
+
+| 维度 | 预览 | 导出（ASS） |
+|------|------|------|
+| 左右边距 | `--sb-side-margin`（默认 7%，设置面板 0~18% 可调） | `MarginL/R = width × ratio` |
+| 底部边距 | `--sb-bottom` = `max(12, H×8%) × (stage 显示高/H)` | `MarginV = max(12, height×8%)` |
+| 字号 | `--sb-font-size` = `clamp(H/28,28,56) × (stage 显示高/H)` | `clamp(height/28, 28, 56)` |
+| 字体 | `@font-face` 加载 `/files/fonts/NotoSansSC-Regular.otf`（同一内置字体文件） | libass 直接读该文件 |
+| 样式 | 无背景盒；`-webkit-text-stroke` + `paint-order:stroke fill` 模拟描边（`--sb-stroke` = Outline×2 折算），`text-shadow` 模拟投影（`--sb-shadow`） | BorderStyle=1（描边+投影，无盒）、Outline=2、Shadow=1、白字黑边 |
+| 折行 | `subtitle_wrap.js` 逐行移植后端折行算法（标点优先 + 字数硬切，每行最大字符数 = `width×0.86/字号`，单行省略规则一致） | `wrap_subtitle_lines` |
+| 分页 | 播放时每条对白按音频时长做页时长分配并随进度翻页（`createSubtitlePager`）；block 整段 ≤3 行/页，smart 逐句 ≤2 行/页（标点切句 + 贪心合并，移植 `split_long_seg_by_inner_punct`） | `paginate_lines` + `fit_pages_to_duration` + `allocate_page_durations` / smart 逐句 cue |
+
+- H 取导出视频分辨率：固定长边 1920，仅由 `workflow_ratio` 决定（与后端 `_ratio_size` 一致，与 `videoResolution`/`previewResolution` 无关）。
+- 由 `applyPreviewCanvas` → `applySubtitleLayoutVars` 在每次 stage 重算（含 ResizeObserver）时刷新，窗口缩放不改变字幕相对画面的位置/大小。
+- 已知差异：导出 smart 模式的句界/切换时机来自导出时 ASR（SenseVoice）句级时间轴；预览侧无此数据，用标点切句近似句界、按去标点字符占比分配各页时长——行数、断行位置、内容分组与烧录一致，翻页时机为近似值。
+
+## 6. UI 入口
 
 Header 比例下拉旁新增 **预览分辨率** 下拉：
 
@@ -61,7 +79,7 @@ Header 比例下拉旁新增 **预览分辨率** 下拉：
 
 改 **画面比例** 时：`rerender([HEADER, CENTER], { forcePreview: true })`，主预览 + 时间轴同步。
 
-## 6. 关键文件
+## 7. 关键文件
 
 | 文件 | 职责 |
 |------|------|
@@ -72,7 +90,7 @@ Header 比例下拉旁新增 **预览分辨率** 下拉：
 | `web/js/storyboard/events.js` | 比例 / 预览分辨率 change |
 | `web/css/storyboard.css` | stage 布局、scale-down、时间轴变量尺寸 |
 
-## 7. 验收
+## 8. 验收
 
 1. 默认 9:16 逻辑画布为 720×1280；16:9 为 1280×720。
 2. 同一窗口下切换 1K/2K 分镜，**stage 外框像素不变**。

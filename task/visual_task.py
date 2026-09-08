@@ -51,11 +51,13 @@ from config.constant import (
     TASK_STATUS_WAITING_BEFORE_FINISH,
     RUNNINGHUB_TASK_TYPES,
     RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT,
+    VIDEO_TASK_RETRY_DELAY_MAX_SECONDS,
     get_sync_orphan_grace_seconds
 )
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
+from utils.content_moderation_error import classify_content_moderation
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -130,6 +132,17 @@ def _normalize_failure_reason(reason):
     except (TypeError, ValueError):
         return rewrite_failure_reason_if_moderation(str(reason))
 
+
+def _resolve_submit_failure_reason(error, error_type):
+    """提交失败时计算写入 ai_tools.message 的失败原因。
+
+    驱动归类为 SYSTEM 时也可能命中内容审核特征（部分供应商把审核拒绝归为系统错误），
+    此时同样保留原文，避免违规信息被「服务异常」屏蔽导致前端无法识别。
+    """
+    if error_type == "USER" or classify_content_moderation(error_message=error or ""):
+        return error
+    return "服务异常，请联系技术支持"
+
 if _is_test_mode_enabled():
     logger.info("=" * 60)
     logger.info("TEST MODE ENABLED - Using mock API responses")
@@ -139,17 +152,20 @@ if _is_test_mode_enabled():
 def calculate_next_retry_delay(try_count):
     """
     Calculate next retry delay time
-    
+
+    RUNNING 轮询与失败重试共用此退避；封顶 VIDEO_TASK_RETRY_DELAY_MAX_SECONDS，
+    保证上游任务完成到被调度器发现之间的空窗不超过该封顶值
+    （360s 封顶时代实测成片跑完后最久 195s+ 才被发现，分镜长时间停在「生成中」）。
+
     Args:
         try_count: Number of attempts made
-    
+
     Returns:
-        Delay in seconds, maximum 360 seconds
+        Delay in seconds, maximum VIDEO_TASK_RETRY_DELAY_MAX_SECONDS
     """
     base_delay = 3
-    max_delay = 360
     delay_seconds = base_delay * (2 ** (try_count - 1))
-    return min(delay_seconds, max_delay)
+    return min(delay_seconds, VIDEO_TASK_RETRY_DELAY_MAX_SECONDS)
 
 
 def _refund_computing_power(ai_tool, reason: str):
@@ -457,7 +473,7 @@ async def _submit_new_task(ai_tool):
             # 因为不同供应商的审核策略、网络状况、API 行为都不同
             return _handle_task_failure(
                 task_id=task_id, ai_tool_type=ai_tool_type,
-                reason=error if error_type == "USER" else "服务异常，请联系技术支持",
+                reason=_resolve_submit_failure_reason(error, error_type),
                 user_id=ai_tool.user_id
             )
         
@@ -1489,18 +1505,32 @@ def process_task_with_retry(task_type, process_func):
                     new_try_count = (task.try_count or 0) + 1
                     delay_seconds = calculate_next_retry_delay(new_try_count)
                     next_trigger = datetime.now() + timedelta(seconds=delay_seconds)
-                    
+
                     TasksModel.update_by_task_id(
                         task.task_id,
                         try_count=new_try_count,
                         next_trigger=next_trigger
+                    )
+
+                    # 轮询中（RUNNING）的处理函数同样返回 False（见 _check_task_status_with_driver），
+                    # 与真实失败区分文案，避免任务时间线误报"处理失败"
+                    latest_ai_tool = AIToolsModel.get_by_id(task.task_id)
+                    still_polling = bool(
+                        latest_ai_tool
+                        and latest_ai_tool.status == AI_TOOL_STATUS_PROCESSING
+                        and latest_ai_tool.project_id
+                    )
+                    retry_message = (
+                        f"任务处理中，安排下次轮询（第 {new_try_count} 次）"
+                        if still_polling
+                        else f"处理失败，安排重试（第 {new_try_count} 次）"
                     )
                     logger.info(f"Task failed: {task.task_id}, retry count: {new_try_count}, next trigger: {next_trigger}")
                     AIToolsLogModel.log(task.task_id, AIToolsLogEvent.RETRY_SCHEDULED,
                                        user_id=ai_tool.user_id if ai_tool else None,
                                        project_id=ai_tool.project_id if ai_tool else None,
                                        try_count=new_try_count,
-                                       message=f"处理失败，安排重试（第 {new_try_count} 次）",
+                                       message=retry_message,
                                        detail={'try_count': new_try_count,
                                                'delay_seconds': delay_seconds,
                                                'next_trigger': next_trigger.isoformat() if next_trigger else None})

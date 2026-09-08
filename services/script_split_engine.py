@@ -24,6 +24,7 @@ from llm.script_split_qc_agent import create_qc_log_context, run_script_split_qc
 from services.script_split_planner import (
     anchorize_script,
     validate_segment_plan,
+    extract_script_title_from_excluded,
     plan_to_segments,
 )
 from services.script_split_registry import (
@@ -87,6 +88,21 @@ class WaitingAuth(EngineError):
 
     def __init__(self, message: str = "鉴权失效，请刷新页面后继续"):
         super().__init__("waiting_auth", message)
+
+
+def _ensure_metadata_dict(holder: Dict[str, Any]) -> Dict[str, Any]:
+    """确保 holder['metadata'] 是 dict，返回该 dict。
+
+    模型输出 metadata: null/[] 等非 dict 值时按"缺省"重置为 {}（与旧模型
+    无该字段的行为一致）。setdefault 不会覆盖已存在的非 dict 值，直接对
+    其赋值/取键会 TypeError/AttributeError，把本已成功的规划/发布拖成
+    failed，故统一走本函数兜底。
+    """
+    metadata = holder.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        holder["metadata"] = metadata
+    return metadata
 
 
 async def _load_current_db_locations(config: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -328,11 +344,50 @@ def _build_plan_call_failure_payload(
 
 # ---- 单步：阶段一规划 ----
 
+def _load_plan_checkpoint(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """从 request_config 读取规划重试检查点（无则返回空 dict）。"""
+    checkpoint = cfg.get(ScriptSplitConstants.PLAN_CHECKPOINT_CONFIG_KEY)
+    return checkpoint if isinstance(checkpoint, dict) else {}
+
+
+def _save_plan_checkpoint(
+    task: ScriptSplitTask,
+    cfg: Dict[str, Any],
+    checkpoint: Optional[Dict[str, Any]],
+) -> None:
+    """把规划重试检查点写回 request_config（None 表示清除）。
+
+    request_config 整体覆盖保存；cfg 必须是 task.get_request_config() 的
+    返回值，避免携带内存态兼容快照（如 legacy character contract）。
+    """
+    cfg = dict(cfg)
+    if checkpoint is None:
+        cfg.pop(ScriptSplitConstants.PLAN_CHECKPOINT_CONFIG_KEY, None)
+    else:
+        cfg[ScriptSplitConstants.PLAN_CHECKPOINT_CONFIG_KEY] = checkpoint
+    task.request_config = cfg
+    ScriptSplitTaskModel.save_field(task.id, request_config=cfg)
+
+
+def _raise_plan_retry_exhausted(
+    last_errors: List[Dict[str, Any]],
+    attempt: int,
+) -> None:
+    """规划重试预算耗尽：以首个错误为因暂停（对齐段级 max_retries 语义）。"""
+    first = (last_errors[0] if last_errors else {}) or {}
+    detail = str(first.get("message") or f"规划失败，已重试 {attempt} 次")
+    raise TaskPaused(
+        str(first.get("code") or "plan_failed"),
+        detail,
+    )
+
+
 async def step_plan(task: ScriptSplitTask) -> None:
     """执行阶段一语义分段规划（仅在无计划时执行一次）。
 
     成功后持久化分段计划到 task 和 segment 表。
-    失败重试上界 PLAN_MAX_RETRIES；超过则 paused。
+    校验失败的重试跨 tick 持久化（request_config 检查点）：一个 tick 最多
+    一次 LLM 调用，重试上界 PLAN_MAX_RETRIES；超过则 paused。
     """
     from llm.script_segment_planner import (
         create_plan_log_context,
@@ -370,6 +425,9 @@ async def step_plan(task: ScriptSplitTask) -> None:
             total_segment_count=0,
             completed_segment_count=0,
         )
+        # 重新规划给满重试预算：清掉可能残留的上一轮规划检查点
+        if _load_plan_checkpoint(cfg):
+            _save_plan_checkpoint(task, cfg, None)
 
     anchors = anchorize_script(script)
     if not anchors:
@@ -382,107 +440,139 @@ async def step_plan(task: ScriptSplitTask) -> None:
         ScriptSplitConstants.SEGMENT_MAX_OUTPUT_TOKENS,
         db_locations=db_locations,
     )
-    last_errors: List[Dict[str, Any]] = []
-    for attempt in range(1, ScriptSplitConstants.PLAN_MAX_RETRIES + 1):
-        if _is_cancelled(task.id):
-            raise CancelledByUser()
-        feedback = None
-        if last_errors:
-            feedback = _format_plan_errors(last_errors)
-        log_context = create_plan_log_context(task.id, "initial", attempt)
-        try:
-            raw_plan, finish_reason = await plan_segments(
-                anchors=anchors,
-                model=cfg.get("model") or "deepseek-v4-flash",
-                auth_token=task.auth_token,
-                vendor_id=cfg.get("vendor_id"),
-                model_id=cfg.get("model_id"),
-                enable_thinking=cfg.get("enable_thinking", False),
-                thinking_effort=cfg.get("thinking_effort", "medium"),
-                timeout_seconds=ScriptSplitConstants.LLM_TIMEOUT_SECONDS,
-                feedback=feedback,
-                log_context=log_context,
-                prompt_override=planning_prompt,
-            )
-        except asyncio.TimeoutError:
-            await write_plan_validation_log(
-                log_context,
-                _build_plan_call_failure_payload(
-                    task.id,
-                    "initial",
-                    attempt,
-                    "plan_timeout",
-                    "规划模型调用超时",
-                ),
-            )
-            raise EngineError("plan_timeout", "规划模型调用超时")
-        except Exception as e:
-            msg = str(e)
-            await write_plan_validation_log(
-                log_context,
-                _build_plan_call_failure_payload(
-                    task.id,
-                    "initial",
-                    attempt,
-                    "plan_call_failed",
-                    "规划模型调用失败",
-                ),
-            )
-            if _is_auth_error(msg):
-                raise WaitingAuth()
-            raise EngineError("plan_call_failed", msg)
+    # 规划与段级生成遵守同一约束：一个 tick 最多一次 LLM 调用（设计文档 §8）。
+    # 效果模式 + thinking 模型单次规划可达数分钟，若本 tick 内连续重试，
+    # 多轮调用共享 WORKER_STEP_TIMEOUT_SECONDS 看门狗预算，第二次调用会
+    # 被 540s 看门狗误杀为 step_watchdog_timeout 且丢失全部规划进度。
+    checkpoint = _load_plan_checkpoint(cfg)
+    attempt = int(checkpoint.get("attempt") or 0)
+    last_errors: List[Dict[str, Any]] = [
+        error for error in (checkpoint.get("last_errors") or [])
+        if isinstance(error, dict)
+    ]
+    if attempt >= ScriptSplitConstants.PLAN_MAX_RETRIES:
+        _raise_plan_retry_exhausted(last_errors, attempt)
 
-        ok, errors = validate_segment_plan(raw_plan, anchors)
-        compiled_plan = raw_plan
-        if ok:
-            try:
-                compiled_plan = strategy.compile_plan(
-                    raw_plan,
-                    anchors,
-                    db_locations=db_locations,
-                )
-            except ValueError as exc:
-                ok = False
-                message = str(exc)
-                code = "quality_plan_invalid"
-                if "new_root_location_forbidden" in message:
-                    code = "new_root_location_forbidden"
-                elif "location_parent" in message:
-                    code = "location_parent_invalid"
-                elif "planned_space_unit_location_unbound" in message:
-                    code = "planned_space_unit_location_unbound"
-                errors = [{
-                    "code": code,
-                    "message": message,
-                    "_hard_gate": code != "quality_plan_invalid",
-                }]
+    if _is_cancelled(task.id):
+        raise CancelledByUser()
+
+    feedback = None
+    if last_errors:
+        feedback = _format_plan_errors(last_errors)
+    log_context = create_plan_log_context(task.id, "initial", attempt + 1)
+    try:
+        raw_plan, finish_reason = await plan_segments(
+            anchors=anchors,
+            model=cfg.get("model") or "deepseek-v4-flash",
+            auth_token=task.auth_token,
+            vendor_id=cfg.get("vendor_id"),
+            model_id=cfg.get("model_id"),
+            enable_thinking=cfg.get("enable_thinking", False),
+            thinking_effort=cfg.get("thinking_effort", "medium"),
+            timeout_seconds=ScriptSplitConstants.LLM_TIMEOUT_SECONDS,
+            feedback=feedback,
+            log_context=log_context,
+            prompt_override=planning_prompt,
+        )
+    except asyncio.TimeoutError:
         await write_plan_validation_log(
             log_context,
-            _build_plan_validation_payload(
+            _build_plan_call_failure_payload(
                 task.id,
                 "initial",
-                attempt,
-                raw_plan,
-                finish_reason,
-                ok,
-                errors,
-                log_context,
+                attempt + 1,
+                "plan_timeout",
+                "规划模型调用超时",
             ),
         )
-        if ok:
-            plan = compiled_plan
-            break
-        last_errors = errors
-        logger.warning("task %s 规划第 %d 次失败: %s", task.id, attempt, errors)
-
-    if plan is None:
-        first = (last_errors[0] if last_errors else {}) or {}
-        detail = first.get("message") or (
-            f"规划失败，已重试 {ScriptSplitConstants.PLAN_MAX_RETRIES} 次"
+        raise EngineError("plan_timeout", "规划模型调用超时")
+    except Exception as e:
+        msg = str(e)
+        await write_plan_validation_log(
+            log_context,
+            _build_plan_call_failure_payload(
+                task.id,
+                "initial",
+                attempt + 1,
+                "plan_call_failed",
+                "规划模型调用失败",
+            ),
         )
-        raise TaskPaused(
-            str(first.get("code") or "plan_failed"),
-            str(detail),
+        if _is_auth_error(msg):
+            raise WaitingAuth()
+        raise EngineError("plan_call_failed", msg)
+
+    ok, errors = validate_segment_plan(raw_plan, anchors)
+    compiled_plan = raw_plan
+    if ok:
+        try:
+            compiled_plan = strategy.compile_plan(
+                raw_plan,
+                anchors,
+                db_locations=db_locations,
+            )
+        except ValueError as exc:
+            ok = False
+            message = str(exc)
+            code = "quality_plan_invalid"
+            if "new_root_location_forbidden" in message:
+                code = "new_root_location_forbidden"
+            elif "location_parent" in message:
+                code = "location_parent_invalid"
+            elif "planned_space_unit_location_unbound" in message:
+                code = "planned_space_unit_location_unbound"
+            errors = [{
+                "code": code,
+                "message": message,
+                "_hard_gate": code != "quality_plan_invalid",
+            }]
+    await write_plan_validation_log(
+        log_context,
+        _build_plan_validation_payload(
+            task.id,
+            "initial",
+            attempt + 1,
+            raw_plan,
+            finish_reason,
+            ok,
+            errors,
+            log_context,
+        ),
+    )
+    if ok:
+        plan = compiled_plan
+    else:
+        attempt += 1
+        _save_plan_checkpoint(task, cfg, {
+            "attempt": attempt,
+            "last_errors": errors,
+        })
+        logger.warning("task %s 规划第 %d 次失败: %s", task.id, attempt, errors)
+        if attempt >= ScriptSplitConstants.PLAN_MAX_RETRIES:
+            _raise_plan_retry_exhausted(errors, attempt)
+        # 检查点已持久化，正常结束本 tick；下个 tick 携带 feedback 重试
+        return
+
+    # 规划成功：清除重试检查点（若存在），再持久化计划
+    if checkpoint:
+        _save_plan_checkpoint(task, cfg, None)
+
+    # 非正文排除区：记录被排除 block，并提取剧名供合并阶段回填 script_title
+    raw_excluded = plan.get("excluded_block_ids")
+    if not isinstance(raw_excluded, list):
+        raw_excluded = []
+    anchor_map = {b["block_id"]: b for b in anchors}
+    excluded_blocks = [anchor_map[bid] for bid in raw_excluded if bid in anchor_map]
+    if excluded_blocks:
+        excluded_title = extract_script_title_from_excluded(excluded_blocks)
+        plan_metadata = _ensure_metadata_dict(plan)
+        if excluded_title:
+            plan_metadata["script_title"] = excluded_title
+        logger.info(
+            "task %s 规划排除非正文 block %s，提取剧名: %s",
+            task.id,
+            [b.get("block_id") for b in excluded_blocks],
+            excluded_title or "（无标题行）",
         )
 
     # 持久化计划
@@ -1324,6 +1414,15 @@ async def step_merge(task: ScriptSplitTask) -> None:
         )
 
     merged = _merge_segments(completed)
+    # 标题 block 在规划阶段被排除后，拆分模型看不到剧名；
+    # script_title 为空时用排除区提取的剧名回填。
+    if not merged.get("script_title"):
+        plan_metadata = (task.get_segment_plan() or {}).get("metadata")
+        plan_title = ""
+        if isinstance(plan_metadata, dict):
+            plan_title = str(plan_metadata.get("script_title") or "").strip()
+        if plan_title:
+            merged["script_title"] = plan_title
     # 全局资产清理 + 空间修复 + 分组重排（复用 script_parser 后处理）
     from llm.script_parser import (
         sanitize_parsed_prop_references,
@@ -1563,7 +1662,7 @@ async def step_publish(task: ScriptSplitTask) -> None:
             )
             return
         if int(variant_summary.get("total") or 0) > 0:
-            final_result.setdefault("metadata", {})[SUMMARY_METADATA_KEY] = (
+            _ensure_metadata_dict(final_result)[SUMMARY_METADATA_KEY] = (
                 build_character_variant_summary(final_result)
             )
             ScriptSplitTaskModel.save_field(task.id, final_result_json=final_result)
@@ -1699,7 +1798,7 @@ async def _reconcile_voiceover_and_finalize(task: ScriptSplitTask, final_result:
     for item in (summary.get("skipped") or []):
         reason = item.get("reason") or "unknown"
         skip_reason_counts[reason] = skip_reason_counts.get(reason, 0) + 1
-    final_result.setdefault("metadata", {})["voiceover_bootstrap"] = {
+    _ensure_metadata_dict(final_result)["voiceover_bootstrap"] = {
         "enabled": bool(summary.get("enabled")),
         "eligible": int(summary.get("eligible_count") or 0),
         "submitted": int(summary.get("submitted_count") or 0),

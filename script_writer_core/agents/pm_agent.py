@@ -366,15 +366,17 @@ class PMAgent(BaseAgent, AskUserMixin):
 
                 # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
                 # 传入 vendor_id 确保正确路由到目标供应商（如 zjt_api）
+                # 优先用会话切换模型时同步的 _vendor_id，与 self.model 保持同源，避免旧 vendor 误路由新模型
+                effective_vendor_id = getattr(self, '_vendor_id', None) or task.vendor_id
                 history_len = len(self.conversation_history)  # 记录调用前的历史长度，用于异常时截断
-                response = get_llm_client(self.model, vendor_id=task.vendor_id).call_api(
+                response = get_llm_client(self.model, vendor_id=effective_vendor_id).call_api(
                     model=self.model,
                     messages=messages,
                     tools=tool_definitions,
                     temperature=1,
                     max_tokens=max_output_tokens,
                     auth_token=task.auth_token,
-                    vendor_id=task.vendor_id,
+                    vendor_id=effective_vendor_id,
                     model_id=task.model_id,
                     enable_thinking=task.enable_thinking,
                     thinking_effort=task.thinking_effort,
@@ -584,7 +586,7 @@ class PMAgent(BaseAgent, AskUserMixin):
                     auth_token=self.auth_token,
                     language=getattr(self, 'current_language', 'zh-CN'),
                     model=self.model,
-                    vendor_id=task.vendor_id,
+                    vendor_id=getattr(self, '_vendor_id', None) or task.vendor_id,
                 )
         except InsufficientComputingPowerError:
             raise
@@ -1179,7 +1181,7 @@ class PMAgent(BaseAgent, AskUserMixin):
             expert_conversation=expert_conversation,
             expert_name="script-orchestrator",
             model=self.model,
-            vendor_id=task.vendor_id,
+            vendor_id=getattr(self, '_vendor_id', None) or task.vendor_id,
             auth_token=task.auth_token,
             model_id=task.model_id,
             enable_thinking=task.enable_thinking,
@@ -1232,7 +1234,7 @@ class PMAgent(BaseAgent, AskUserMixin):
                 parent_summary_ids=parent_summary_ids,
                 raw_message_count=len(compressible),
                 model_id=task.model_id,
-                vendor_id=task.vendor_id,
+                vendor_id=getattr(self, '_vendor_id', None) or task.vendor_id,
             )
         except Exception as e:
             logger.warning(f"{self.agent_id}: Failed to create chat history summary record: {e}")
@@ -1275,7 +1277,7 @@ class PMAgent(BaseAgent, AskUserMixin):
                 expert_conversation=compressible,
                 expert_name="script-orchestrator",
                 model=self.model,
-                vendor_id=task.vendor_id,
+                vendor_id=getattr(self, '_vendor_id', None) or task.vendor_id,
                 auth_token=task.auth_token,
                 model_id=task.model_id,
                 enable_thinking=task.enable_thinking,

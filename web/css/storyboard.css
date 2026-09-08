@@ -19,6 +19,16 @@
 
 * { box-sizing: border-box; }
 
+/* 预览字幕字体：与导出烧录内置字体一致（config/constant.py BUILTIN_FONT_*，
+   files/ 目录经 server.py /files 静态挂载；回退顺序对齐后端 resolve_cjk_font_name） */
+@font-face {
+    font-family: 'Noto Sans SC';
+    src: url('/files/fonts/NotoSansSC-Regular.otf') format('opentype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
 html,
 body {
     height: 100%;
@@ -2086,28 +2096,165 @@ button {
     cursor: not-allowed;
 }
 
-/* 时间轴预览播放：对白字幕层 */
+/* 时间轴预览播放：对白字幕层（与导出 ASS 硬烧一致：无背景盒、白字黑描边+投影）。
+   外层按 --sb-side-margin 左右留白（与导出 ASS MarginL/R 对应，字幕设置面板实时可调），
+   底部边距 --sb-bottom、字号 --sb-font-size、描边 --sb-stroke、投影 --sb-shadow 由
+   applyPreviewCanvas 按 stage 显示高度等比写入（对应导出 MarginV=8%、字号 clamp(H/28,28,56)、
+   Outline=2、Shadow=1），随窗口缩放保持比例；折行由 JS 按烧录算法完成（subtitle_wrap.js） */
 .preview-subtitle {
     position: absolute;
-    left: 50%;
-    bottom: 56px;
-    transform: translateX(-50%);
-    max-width: min(86%, 640px);
-    padding: 8px 14px;
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.62);
-    color: #fff;
-    font-size: 14px;
-    line-height: 1.45;
-    text-align: center;
+    left: var(--sb-side-margin, 7%);
+    right: var(--sb-side-margin, 7%);
+    bottom: var(--sb-bottom, 56px);
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
     z-index: 3;
     pointer-events: none;
+}
+
+.preview-subtitle .preview-subtitle-text {
+    max-width: 100%;
+    color: #fff;
+    font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-size: var(--sb-font-size, 14px);
+    line-height: normal;
+    text-align: center;
     white-space: pre-wrap;
     word-break: break-word;
+    /* paint-order 让描边垫在字形下面，可见描边 ≈ 线宽一半（故 JS 侧线宽按 Outline×2 折算） */
+    -webkit-text-stroke: var(--sb-stroke, 2px) #000;
+    paint-order: stroke fill;
+    text-shadow: var(--sb-shadow, 1px) var(--sb-shadow, 1px) 0 rgba(0, 0, 0, 0.5);
 }
 
 .preview-subtitle[hidden] {
     display: none !important;
+}
+
+/* 字幕设置（预览控制条齿轮按钮 + 小面板） */
+.subtitle-settings {
+    position: relative;
+    display: inline-flex;
+}
+
+.subtitle-settings-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary, #64748b);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.subtitle-settings-btn:hover,
+.subtitle-settings-btn.active {
+    color: var(--text-primary, #0f172a);
+    background: var(--bg-hover, rgba(100, 116, 139, 0.14));
+}
+
+.subtitle-settings-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    /* 从齿轮向右展开：原先 right:0 向左伸出会压到左侧栏底部的分镜助手聊天区 */
+    left: -8px;
+    /* 高于分镜助手聊天区（.ai-chat-section 40 / .agent-chat-log 50），避免被遮挡 */
+    z-index: 60;
+    width: 280px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color, rgba(100, 116, 139, 0.28));
+    border-radius: 10px;
+    background: var(--bg-card, #fff);
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+    text-align: left;
+}
+
+.subtitle-settings-panel .ss-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.subtitle-settings-panel .ss-row:last-of-type {
+    margin-bottom: 6px;
+}
+
+.subtitle-settings-panel .ss-label {
+    flex: none;
+    font-size: 12px;
+    color: var(--text-secondary, #64748b);
+}
+
+.subtitle-settings-panel .ss-radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.subtitle-settings-panel .ss-radio input {
+    margin: 0;
+    cursor: pointer;
+}
+
+/* 选项徽章：限免 / 暂不可用 */
+.subtitle-settings-panel .ss-badge {
+    display: inline-block;
+    margin-left: 3px;
+    padding: 0 4px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.5;
+    vertical-align: 1px;
+}
+
+.subtitle-settings-panel .ss-badge-free {
+    border: 1px solid rgba(217, 119, 6, 0.4);
+    background: rgba(217, 119, 6, 0.12);
+    color: var(--warning, #d97706);
+}
+
+.subtitle-settings-panel .ss-badge-off {
+    border: 1px solid var(--border-color, rgba(100, 116, 139, 0.28));
+    background: var(--panel-soft, #f1f4f9);
+    color: var(--text-tertiary, #94a3b8);
+}
+
+.subtitle-settings-panel .ss-radio.disabled {
+    cursor: not-allowed;
+    color: var(--text-tertiary, #94a3b8);
+}
+
+.subtitle-settings-panel .ss-radio.disabled input {
+    cursor: not-allowed;
+}
+
+.subtitle-settings-panel input[type="range"] {
+    flex: 1;
+    min-width: 0;
+}
+
+.subtitle-settings-panel .ss-value {
+    flex: none;
+    min-width: 34px;
+    text-align: right;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary, #0f172a);
+}
+
+.subtitle-settings-panel .ss-hint {
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-tertiary, #94a3b8);
 }
 
 /* 预览播放：本镜媒体预加载遮罩（时钟未走） */
@@ -2331,6 +2478,8 @@ button {
 .scene-timeline-media-frame.first-frame-pending { background: #eff6ff; color: #2563eb; }
 .scene-timeline-media-frame.first-frame-running { background: #2f6df6; color: #fff; }
 .scene-timeline-media-frame.first-frame-failed { background: #fee2e2; color: var(--danger); }
+/* 内容违规占位文案：醒目红色（沿用 .candidate-failed 的红色系） */
+.scene-timeline-media-frame .violation { color: #c2410c; font-weight: 600; }
 .scene-timeline-media-frame.first-frame-missing { background: #f8fafc; color: #64748b; }
 .first-frame-status-mark {
     position: absolute;
@@ -3258,6 +3407,8 @@ button {
 .status.ready { color: var(--success); }
 .status.running { color: var(--warning); }
 .status.failed { color: var(--danger); }
+/* 内容违规角标：浅红底 + 醒目红色文字（沿用 .candidate-failed 的红色系） */
+.status.failed.violation { background: #fee2e2; color: #c2410c; font-weight: 600; }
 /* 分镜难度 badge：易=绿 / 中=橙 / 难=红（浅底 + 同色系文字） */
 .difficulty-badge { padding: 2px 6px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.4; flex-shrink: 0; }
 .difficulty-badge.diff-easy { background: #d1fae5; color: var(--success); }
@@ -4154,6 +4305,25 @@ button {
 }
 
 .meta-field input[type="number"]:focus { border-color: var(--primary); }
+
+/* 对话行语速/音量滑杆：头部一行放标签与实时数值，下方为拖动条 */
+.meta-field-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.meta-field .field-value {
+    color: var(--primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.meta-field input[type="range"] {
+    width: 100%;
+    margin: 4px 0 2px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
 
 .dialogue-audio {
     width: 100%;

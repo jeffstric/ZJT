@@ -17,13 +17,14 @@ stages:
   - e2e
 
 # 同一分支已经创建 MR 后只保留 MR Pipeline，避免一次 push 重复跑两套测试。
+# schedule 规则必须放最前：定时流水线同样带 CI_COMMIT_BRANCH，放后面会被分支规则拦截（有开放 MR 时甚至被整条抑制）。
 workflow:
   rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
       when: never
     - if: $CI_COMMIT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "schedule"
 
 # 变量配置
 variables:
@@ -202,15 +203,38 @@ unit_tests:
       fi
 
     # 启动测试环境（MySQL + 测试容器）。注意不带 --build
-    - docker compose -f docker-compose-test.yml up -d
+    # 失败时输出 MySQL 日志与健康检查记录，便于定位 unhealthy 根因
+    - |
+      if ! docker compose -f docker-compose-test.yml up -d; then
+        echo "===== compose up 失败，输出诊断信息 ====="
+        docker compose -f docker-compose-test.yml ps -a || true
+        docker inspect -f '{{json .State.Health}}' zjt_mysql_test || true
+        echo "===== zjt_mysql_test 日志 ====="
+        docker logs zjt_mysql_test 2>&1 | tail -100 || true
+        exit 1
+      fi
 
     # 仅在发生过重建时更新镜像缓存。
     # 必须连同基础镜像一起保存：否则下次 FROM 重新拉取，tag 上游重建后 ID 变化会导致缓存失配
+    # 先写临时文件并校验（gzip -t + 非空 tar）：管道会掩盖 docker save 失败，
+    # 曾导致 20 字节空压缩包被上传为共享缓存，所有 job 加载失败被迫全量重建
     - |
       if [ "$REBUILT" = "1" ]; then
         mkdir -p ../docker-image-cache
         BASE_IMAGE=$(grep -m1 '^FROM ' Dockerfile | awk '{print $2}')
-        docker save "zjt_test_image:$TEST_IMAGE_TAG" "$BASE_IMAGE" m.daocloud.io/docker.io/library/mysql:8.0 | gzip > ../docker-image-cache/zjt_test_image.tar.gz || echo "镜像缓存保存失败，忽略"
+        # buildkit 构建不会把 FROM 基础镜像落到本地镜像库，直接 save 会报
+        # "reference does not exist" 导致缓存为空，需先显式 pull
+        docker pull "$BASE_IMAGE" || echo "基础镜像拉取失败，仅保存已有镜像"
+        docker image inspect "$BASE_IMAGE" > /dev/null 2>&1 || BASE_IMAGE=""
+        TMP=../docker-image-cache/zjt_test_image.tar.gz.tmp
+        if docker save "zjt_test_image:$TEST_IMAGE_TAG" $BASE_IMAGE m.daocloud.io/docker.io/library/mysql:8.0 | gzip > "$TMP" \
+           && gzip -t "$TMP" && [ "$(stat -c%s "$TMP")" -gt 1000000 ]; then
+          mv "$TMP" ../docker-image-cache/zjt_test_image.tar.gz
+          echo "镜像缓存已更新 ($(stat -c%s ../docker-image-cache/zjt_test_image.tar.gz) 字节)"
+        else
+          echo "镜像缓存保存失败（校验未通过），保留旧缓存"
+          rm -f "$TMP"
+        fi
       else
         echo "镜像未重建，缓存保持不变"
       fi
@@ -218,7 +242,7 @@ unit_tests:
     # 等待 MySQL 就绪
     - |
       for i in {1..30}; do
-        docker exec zjt_mysql_test mysqladmin ping -h localhost -u root -proot_test_pass && break
+        docker exec zjt_mysql_test mysqladmin ping -h 127.0.0.1 -P 3306 -u root -proot_test_pass && break
         echo "等待 MySQL 启动..."
         sleep 2
       done
@@ -284,47 +308,6 @@ unit_tests:
   rules:
     - if: $CI_COMMIT_BRANCH
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-
-# =============================================================================
-# 前端 JS 单元测试 job（Vitest）
-# =============================================================================
-frontend_tests:
-  stage: test
-
-  # 不依赖 DinD，直接在 node 镜像里跑，比后端 unit_tests 轻量很多
-  image: m.daocloud.io/docker.io/library/node:20-slim
-
-  # npm 缓存，加速后续构建
-  cache:
-    key:
-      files:
-        - package-lock.json
-      prefix: npm-${CI_COMMIT_REF_SLUG}
-    paths:
-      - .npm/
-    policy: pull-push
-
-  before_script:
-    - npm config set cache .npm
-    - npm ci --no-audit --no-fund
-
-  script:
-    - npm run test:ci
-
-  artifacts:
-    when: always
-    paths:
-      - frontend-test-results.xml
-    reports:
-      junit: frontend-test-results.xml
-    expire_in: 7 days
-
-  tags:
-    - docker
-
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH
 
 # =============================================================================
 # 分支级 E2E 冒烟测试
@@ -404,3 +387,123 @@ e2e_smoke:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH
 
+# =============================================================================
+# 前端 JS 单元测试 job（Vitest）
+# =============================================================================
+frontend_tests:
+  stage: test
+
+  # 不依赖 DinD，直接在 node 镜像里跑，比后端 unit_tests 轻量很多
+  image: m.daocloud.io/docker.io/library/node:20-slim
+
+  # npm 缓存，加速后续构建
+  cache:
+    key:
+      files:
+        - package-lock.json
+      prefix: npm-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .npm/
+    policy: pull-push
+
+  before_script:
+    - npm config set cache .npm
+    - npm ci --no-audit --no-fund
+
+  script:
+    - npm run test:ci
+
+  artifacts:
+    when: always
+    paths:
+      - frontend-test-results.xml
+    reports:
+      junit: frontend-test-results.xml
+    expire_in: 7 days
+
+  tags:
+    - docker
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+# =============================================================================
+# 分支级 E2E 冒烟测试
+# 每条 Pipeline 在独立 Compose project 中启动 MySQL、当前 commit 的应用和 Playwright。
+# （自 master 278bbc01 移植回 develop；mysql 服务同步套用 docker-compose-test.yml
+#   在本 runner 上验证过的 DinD 修复：my.cnf 挂载路径 / TCP 健康检查 / 关 fsync）
+# =============================================================================
+e2e_smoke:
+  stage: e2e
+  image: m.daocloud.io/docker.io/library/docker:24-cli
+
+  services:
+    - name: m.daocloud.io/docker.io/library/docker:24-dind
+      alias: docker
+      variables:
+        DOCKER_TLS_CERTDIR: ""
+      command: ["--registry-mirror=https://docker.1ms.run", "--registry-mirror=https://docker.mirrors.ustc.edu.cn"]
+
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+    COMPOSE_PROJECT_NAME: e2e-${CI_PIPELINE_ID}-${CI_JOB_ID}
+    E2E_COMPOSE_FILE: docker/docker-compose-e2e.yml
+    E2E_RESULT_CONTAINER: e2e-result-${CI_JOB_ID}
+
+  before_script:
+    - |
+      echo "等待 Docker daemon..."
+      for i in $(seq 1 30); do
+        if docker info > /dev/null 2>&1; then
+          echo "Docker daemon 已就绪"
+          break
+        fi
+        if [ "$i" -eq 30 ]; then
+          echo "Docker daemon 在 60 秒内未就绪"
+          exit 1
+        fi
+        sleep 2
+      done
+    - docker version
+    - docker compose version
+
+  script:
+    - docker compose -f "$E2E_COMPOSE_FILE" build app e2e
+    - docker compose -f "$E2E_COMPOSE_FILE" up -d mysql
+    - docker compose -f "$E2E_COMPOSE_FILE" run --rm prepare
+    - docker compose -f "$E2E_COMPOSE_FILE" up -d app
+    - docker compose -f "$E2E_COMPOSE_FILE" run --name "$E2E_RESULT_CONTAINER" e2e
+
+  after_script:
+    - mkdir -p e2e-results
+    - docker cp "$E2E_RESULT_CONTAINER:/results/." e2e-results/ || true
+    - docker compose -f "$E2E_COMPOSE_FILE" logs --no-color mysql app > e2e-results/services.log 2>&1 || true
+    - docker rm -f "$E2E_RESULT_CONTAINER" > /dev/null 2>&1 || true
+    - docker compose -f "$E2E_COMPOSE_FILE" down -v --remove-orphans || true
+
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - e2e-results/
+    reports:
+      junit: e2e-results/junit.xml
+
+  interruptible: true
+  # 首次执行需要构建应用和拉取 Playwright 浏览器镜像；代理缓存未命中时预留足够时间。
+  timeout: 90m
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+  tags:
+    - docker
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH

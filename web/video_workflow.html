@@ -102,6 +102,7 @@
       </div>
       <div class="ratio-floating">
         <button class="btn save-btn" id="saveBtn" data-i18n="save_workflow:title">
+          <span class="save-btn-ring" aria-hidden="true"></span>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
             <polyline points="17 21 17 13 7 13 7 21"></polyline>
@@ -348,6 +349,30 @@
       <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
         <button class="mini-btn secondary" id="shotGroupEditCancelBtn" type="button" data-i18n="cancel">取消</button>
         <button class="mini-btn" id="shotGroupEditSaveBtn" type="button" data-i18n="save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="saveConflictModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div class="modal-title">保存冲突</div>
+        <button class="modal-close" id="saveConflictModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="conflict-icon">⚠</div>
+        <p class="conflict-lead">该工作流已被其他会话（或浏览器标签页）修改并保存，你的本地修改与服务器上的最新版本冲突。</p>
+        <p class="conflict-hint">选择处理方式前，你的本地修改已安全保留在本地，不会丢失。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="conflict-btn conflict-btn-server" id="saveConflictUseServerBtn" type="button">
+          <span class="conflict-btn-title">使用服务器版本</span>
+          <span class="conflict-btn-desc">加载对方最新内容，丢弃本地未保存的修改</span>
+        </button>
+        <button class="conflict-btn conflict-btn-local" id="saveConflictUseLocalBtn" type="button">
+          <span class="conflict-btn-title">用本地版本覆盖</span>
+          <span class="conflict-btn-desc">以当前画布内容强制覆盖服务器</span>
+        </button>
       </div>
     </div>
   </div>
@@ -1377,7 +1402,7 @@
   <script src="/assets/vendor/three.min.js?v=__VERSION__"></script>
   <script src="/js/director_stage_editor.js?v=__VERSION__"></script>
   <script src="/js/director_stage_node.js?v=__VERSION__"></script>
-  <script src="/js/shot_frame_generator.js"></script>
+  <script src="/js/shot_frame_generator.js?v=__VERSION__"></script>
   <script src="/js/video_prompt_suffix.js"></script>
   <script src="/js/shot_frame_video_generator.js"></script>
   <script src="/js/events.js?v=__VERSION__"></script>

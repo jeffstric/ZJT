@@ -157,7 +157,10 @@ async function generateShotFrameImage(nodeId, node){
   
   generateBtn.disabled = true;
   generateBtn.textContent = '处理中...';
-  
+  // 新一轮生成开始，清除上次失败原因（避免生成成功后重载，过期错误与新图同显；
+  // 与 image_node.js / image_to_video_node.js 同约定）
+  if(node) node.data.lastError = '';
+
   try {
     let imagePrompt = node.data.imagePrompt || '';
     console.log('[生成分镜图] 图片提示词:', imagePrompt);
@@ -194,76 +197,24 @@ async function generateShotFrameImage(nodeId, node){
       finalPrompt = `${imagePrompt}\n\n${promptSuffix.join('，')}。`;
     }
     
-    // 4.5. 添加相机视角描述（从连接的图片节点或相机控制节点读取，使用多角度 API）
-    const connectedImageNode = state.connections
-      .filter(c => c.from === nodeId)
-      .map(c => state.nodes.find(n => n.id === c.to))
-      .find(n => n && n.type === 'image');
-
-    let cameraParams = null;
-    // 优先从图片节点的旧 camera 数据读取（兼容旧工作流）
-    if(connectedImageNode && connectedImageNode.data.camera){
-      cameraParams = convertCameraToQwenMultiAngleParams(connectedImageNode.data.camera);
-    }
-    // 其次查找连接到该图片节点的 camera_control 节点
-    if(!cameraParams && connectedImageNode){
-      const cameraCtrlNode = state.nodes.find(n => {
-        if(n.type !== 'camera_control') return false;
-        return state.connections.some(c => c.from === connectedImageNode.id && c.to === n.id);
-      });
-      if(cameraCtrlNode && cameraCtrlNode.data.camera){
-        cameraParams = convertCameraToQwenMultiAngleParams(cameraCtrlNode.data.camera);
-      }
-    }
-    
-    // 4.6. 添加画风文字描述
+    // 4.5. 添加画风文字描述
     if(state.style && state.style.name){
       finalPrompt = `${finalPrompt}\n\n图片风格：${state.style.name}`;
     }
 
-    // 4.7. 添加构图倾向
+    // 4.6. 添加构图倾向
     if(state.style && state.style.compositionPreference){
       finalPrompt = `${finalPrompt}\n构图倾向：${state.style.compositionPreference}`;
     }
 
-    // 5. 确定使用哪个API（图片编辑、多角度或文生图）
+    // 5. 确定使用哪个API（图片编辑或文生图）
     const userId = localStorage.getItem('user_id');
     const authToken = localStorage.getItem('auth_token') || '';
     const canvasRatio = state.ratio || '16:9';
     const ratio = canvasRatio;
 
     let res;
-    if(cameraParams && referenceImageUrls.length > 0){
-      // 有相机参数且有参考图，使用多角度 API
-      generateBtn.textContent = '生成中...';
-      showToast(`找到${referenceImageUrls.length}张参考图，使用多角度模式生成...`, 'info');
-
-      const form = new FormData();
-      form.append('ref_image_urls', referenceImageUrls.join(','));
-      form.append('prompt', finalPrompt);
-      form.append('ratio', ratio);
-      form.append('count', node.data.drawCount || 1);
-
-      // 使用多角度 API 的 task_id
-      const multiAngleTaskId = TaskConfig.getTaskIdByKey('qwen-multi-angle', 'image_edit');
-      if(!multiAngleTaskId){
-        throw new Error('未找到多角度图片编辑的任务配置');
-      }
-      form.append('task_id', multiAngleTaskId);
-      form.append('extra_config', JSON.stringify(cameraParams));
-
-      if(userId){
-        form.append('user_id', userId);
-      }
-      if(authToken){
-        form.append('auth_token', authToken);
-      }
-
-      res = await fetch('/api/image-edit', {
-        method: 'POST',
-        body: form
-      });
-    } else if(referenceImageUrls.length === 0){
+    if(referenceImageUrls.length === 0){
       // 没有参考图，使用文生图API
       generateBtn.textContent = '生成中...';
       showToast('未找到参考图，使用文生图模式生成...', 'info');
@@ -293,7 +244,7 @@ async function generateShotFrameImage(nodeId, node){
         body: form
       });
     } else {
-      // 有参考图但无相机参数，使用普通图片编辑API
+      // 有参考图，使用普通图片编辑API（使用用户所选模型）
       // 5.5. 根据模型限制参考图数量
       const modelKey2 = node.data.model || 'gemini-2.5-flash-image-preview';
       const MAX_REFERENCE_IMAGES = modelKey2 === 'nano-banana' ? 5 : 14;
