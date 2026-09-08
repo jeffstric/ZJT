@@ -27,6 +27,8 @@
         return {
             script_content: scriptNodeData.scriptContent,
             max_group_duration: scriptNodeData.maxGroupDuration || 15,
+            // 总分镜时长控制：倍率×剧本估算时长=分镜总时长目标；0=不限制
+            total_duration_multiplier: Number(scriptNodeData.totalDurationMultiplier) || 0,
             world_id: defaultWorldId,
             force_medium_shot: scriptNodeData.forceMediumShot || false,
             no_bg_music: scriptNodeData.noBgMusic || false,

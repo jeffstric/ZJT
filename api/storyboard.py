@@ -3349,6 +3349,9 @@ async def generate_storyboard_from_script(
     from config.constant import ScriptSplitConstants
     request_config = {
         'max_group_duration': max_group_duration,
+        # 总分镜时长控制：倍率×剧本基准时长=分镜总时长目标；0=不限制
+        #（见 docs/script/script_split_total_duration_control.md）
+        'total_duration_multiplier': data.get('total_duration_multiplier', 0),
         'world_id': sb.world_id,
         'model': data.get('model') or 'deepseek-v4-flash',
         'temperature': 0.5,
