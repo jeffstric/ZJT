@@ -224,6 +224,11 @@ const state = {
     },
     // 剧本拆分参数（与 video_workflow 剧本节点保持一致：true/true/false/15）
     maxGroupDuration: 15,
+    /** 总分镜时长控制倍率：0=不限制，N=分镜总时长上限为剧本估算时长×N（1/2/3） */
+    totalDurationMultiplier: 0,
+    /** 拆分弹窗展示估算用的剧本正文（打开弹窗时懒加载，仅在估算 hint 中使用） */
+    scriptContentForEstimate: '',
+    scriptContentEstimateLoading: false,
     forceMediumShot: true,
     noBgMusic: true,
     splitMultiDialogue: false,
@@ -1384,6 +1389,7 @@ export function serializeUiConfig() {
         selectedScriptSplitLlmModel: state.selectedScriptSplitLlmModel,
         // 剧本拆分参数
         maxGroupDuration: state.maxGroupDuration,
+        totalDurationMultiplier: state.totalDurationMultiplier,
         forceMediumShot: state.forceMediumShot,
         noBgMusic: state.noBgMusic,
         splitMultiDialogue: state.splitMultiDialogue,
@@ -1464,6 +1470,9 @@ export function restoreUiConfig(config = {}) {
     // 剧本拆分参数恢复（含取值合法性校验）
     if ([5, 8, 10, 15].includes(Number(config.maxGroupDuration))) {
         state.maxGroupDuration = Number(config.maxGroupDuration);
+    }
+    if ([0, 1, 2, 3].includes(Number(config.totalDurationMultiplier))) {
+        state.totalDurationMultiplier = Number(config.totalDurationMultiplier);
     }
     if (typeof config.forceMediumShot === 'boolean') {
         state.forceMediumShot = config.forceMediumShot;

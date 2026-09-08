@@ -1627,6 +1627,7 @@ async function handleAction(action, target) {
             const thinking = getThinkingParams();
             const submitResp = await api.generateFromScript(state.storyboardId, {
                 max_group_duration: state.maxGroupDuration || 15,
+                total_duration_multiplier: Number(state.totalDurationMultiplier) || 0,
                 force_medium_shot: state.forceMediumShot !== false,
                 no_bg_music: state.noBgMusic !== false,
                 split_multi_dialogue: state.splitMultiDialogue === true,
@@ -3320,6 +3321,13 @@ export function bindEvents() {
             } else if (type === 'maxGroupDuration') {
                 const d = parseInt(val, 10);
                 if ([5, 8, 10, 15].includes(d)) state.maxGroupDuration = d;
+            } else if (type === 'totalDurationMultiplier') {
+                const m = parseFloat(val);
+                if ([0, 1, 2, 3].includes(m)) {
+                    state.totalDurationMultiplier = m;
+                    persistUiConfig().catch(() => {});
+                    rerenderModals();
+                }
             } else if (type === 'scriptDialogueLanguage') {
                 const useCustom = val === '**custom**';
                 state.scriptDialogueLanguageCustom = useCustom;

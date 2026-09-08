@@ -24,6 +24,7 @@ import state, {
     estimateScenePower,
 } from './state.js';
 import { characterReferenceSelectionKey, formatDuration, mapAssetAvatar } from './adapters.js';
+import * as api from './api.js';
 import { icon } from './icons.js';
 import {
     t as i18nT,
@@ -2106,6 +2107,20 @@ function renderScriptSplitDuration(disabled = false) {
     const durationOptions = durations.map(d =>
         `<option value="${d}" ${d === curDuration ? 'selected' : ''}>${d}秒</option>`
     ).join('');
+    // 总分镜时长控制：倍率×剧本估算时长=分镜总时长上限（0=不限制）
+    const multipliers = [0, 1, 2, 3];
+    const curMultiplier = multipliers.includes(Number(state.totalDurationMultiplier))
+        ? Number(state.totalDurationMultiplier) : 0;
+    const multiplierOptions = multipliers.map(m =>
+        `<option value="${m}" ${m === curMultiplier ? 'selected' : ''}>${m === 0 ? '不限制' : `${m}倍`}</option>`
+    ).join('');
+    const estimate = estimateScriptDurationSeconds(state.scriptContentForEstimate);
+    let totalDurationHint = '限制全部分镜的总时长：按剧本字数估算基准时长（朗读速率），N倍=基准时长×N';
+    if (curMultiplier > 0) {
+        totalDurationHint = estimate > 0
+            ? `剧本估算约 ${formatDurationLabel(estimate)} × ${curMultiplier}倍 → 目标总分镜时长约 ${formatDurationLabel(estimate * curMultiplier)}`
+            : '正在按剧本字数估算基准时长...';
+    }
     return `
         <div class="generate-from-script-model">
             <label class="config-label">镜头组时长</label>
@@ -2113,7 +2128,44 @@ function renderScriptSplitDuration(disabled = false) {
             <div class="config-select-wrapper">
                 <select class="chat-mode-select" data-config-select="maxGroupDuration" ${disabled ? 'disabled' : ''}>${durationOptions}</select>
             </div>
+        </div>
+        <div class="generate-from-script-model">
+            <label class="config-label">总分镜时长</label>
+            <div class="config-hint">${escapeHtml(totalDurationHint)}</div>
+            <div class="config-select-wrapper">
+                <select class="chat-mode-select" data-config-select="totalDurationMultiplier" ${disabled ? 'disabled' : ''}>${multiplierOptions}</select>
+            </div>
         </div>`;
+}
+
+/** 秒 → “X分Y秒”展示（估算 hint 用） */
+function formatDurationLabel(seconds) {
+    const total = Math.round(Number(seconds) || 0);
+    if (total < 60) return `${total}秒`;
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return s ? `${m}分${s}秒` : `${m}分钟`;
+}
+
+/**
+ * 按剧本字数估算基准时长（秒）。
+ * 与后端 llm/script_parser.py estimate_script_duration_seconds 同公式：
+ * CJK 4.5 字/秒、拉丁 11 字符/秒按占比混合，下限 10 秒（修改时两处同步）。
+ */
+export function estimateScriptDurationSeconds(text) {
+    const chars = String(text || '').replace(/\s+/g, '');
+    if (!chars.length) return 0;
+    let cjk = 0;
+    for (let i = 0; i < chars.length; i++) {
+        const code = chars.charCodeAt(i);
+        if ((code >= 0x4e00 && code <= 0x9fff) || (code >= 0x3400 && code <= 0x4dbf)
+            || (code >= 0xf900 && code <= 0xfaff) || (code >= 0x3040 && code <= 0x30ff)) {
+            cjk++;
+        }
+    }
+    const ratio = cjk / chars.length;
+    const rate = ratio * 4.5 + (1 - ratio) * 11.0;
+    return Math.max(10, Math.round((chars.length / rate) * 10) / 10);
 }
 
 // 渲染剧本拆分的高级选项：语言 + 拆分开关（与 video_workflow 剧本节点保持一致）
@@ -2204,6 +2256,21 @@ function renderScriptSplitOptions(disabled = false) {
 
 function renderGenerateFromScriptDialog() {
     if (!state.showGenerateFromScriptDialog) return '';
+    // 懒加载剧本正文供「总分镜时长」估算 hint 使用（守卫式一次性触发，
+    // 覆盖所有打开路径；失败时 hint 退化为通用说明）
+    if (state.scriptId && !state.scriptContentEstimateLoading && !state.scriptContentForEstimate) {
+        state.scriptContentEstimateLoading = true;
+        api.fetchScriptContent(state.scriptId)
+            .then((content) => {
+                state.scriptContentForEstimate = content || '';
+            })
+            .finally(() => {
+                state.scriptContentEstimateLoading = false;
+                if (state.showGenerateFromScriptDialog) {
+                    refresh([Region.MODAL]);
+                }
+            });
+    }
     const busy = state.isGeneratingFromScript;
     const splitModelConfig = renderScriptSplitModelConfig(busy);
     const imageModelConfig = renderImageModelConfig(busy, { collapseTextToImage: true });

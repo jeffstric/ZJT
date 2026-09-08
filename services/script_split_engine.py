@@ -105,6 +105,23 @@ def _ensure_metadata_dict(holder: Dict[str, Any]) -> Dict[str, Any]:
     return metadata
 
 
+def _safe_duration_multiplier(cfg: Dict[str, Any]) -> float:
+    """读取总分镜时长倍率；0 或非法值表示不限制。
+
+    见 docs/script/script_split_total_duration_control.md。
+    """
+    try:
+        value = float(cfg.get("total_duration_multiplier") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if value <= 0:
+        return 0.0
+    return max(
+        ScriptSplitConstants.TOTAL_DURATION_MULTIPLIER_MIN,
+        min(ScriptSplitConstants.TOTAL_DURATION_MULTIPLIER_MAX, value),
+    )
+
+
 async def _load_current_db_locations(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     """异步读取当前世界场景树，供独立结构硬门禁使用。"""
     world_id = config.get("world_id")
@@ -787,6 +804,17 @@ async def step_generate_segment(
     generation_attempt = attempt_count + 1
     qc_feedback = _build_qc_feedback(last_errors, seg) if last_errors else None
 
+    # 总分镜时长控制：按段字符占比下发本段时长预算（各段预算之和≈倍率×剧本基准时长）
+    duration_budget = None
+    duration_multiplier = _safe_duration_multiplier(cfg)
+    if duration_multiplier > 0:
+        from llm.script_parser import compute_segment_duration_budget_seconds
+        duration_budget = compute_segment_duration_budget_seconds(
+            task.script_content or "",
+            seg.source_content or "",
+            duration_multiplier,
+        )
+
     try:
         parsed = await asyncio.wait_for(
             parse_script_to_shots(
@@ -818,6 +846,7 @@ async def step_generate_segment(
                         ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
                     )
                 ),
+                duration_budget=duration_budget,
             ),
             timeout=ScriptSplitConstants.LLM_CALL_TIMEOUT_SECONDS,
         )
@@ -1519,6 +1548,34 @@ async def step_merge(task: ScriptSplitTask) -> None:
 
     merged = reorganize_shot_groups(
         merged, cfg.get("max_group_duration", 15))
+
+    # 总分镜时长控制：把全部分镜总时长压到 倍率×剧本基准时长 的容差上限内。
+    # 必须位于 reorganize（组上限）之后、renumber_global 之前：归一化只减不加，
+    # 不会破坏组内上限；兜底合并会减少镜头数，renumber 随后重排编号。
+    duration_multiplier = _safe_duration_multiplier(cfg)
+    if duration_multiplier > 0:
+        from llm.script_parser import (
+            enforce_total_duration_limit,
+            estimate_script_duration_seconds,
+        )
+        estimated_seconds = estimate_script_duration_seconds(task.script_content or "")
+        target_seconds = round(estimated_seconds * duration_multiplier, 1)
+        control_report = enforce_total_duration_limit(merged, target_seconds)
+        control_report["multiplier"] = duration_multiplier
+        control_report["estimated_script_seconds"] = estimated_seconds
+        merged.setdefault("metadata", {})["total_duration_control"] = control_report
+        logger.info(
+            "task %s 总分镜时长控制: 剧本估算 %.1fs × %s倍 → 目标 %.1fs，"
+            "实际 %.1fs → %.1fs（等比压缩=%s，兜底合并镜头=%d）",
+            task.id,
+            estimated_seconds,
+            duration_multiplier,
+            target_seconds,
+            control_report.get("total_before", 0),
+            control_report.get("total_after", 0),
+            control_report.get("scaled"),
+            int(control_report.get("merged_shots", 0) or 0),
+        )
 
     merged = renumber_global(merged)
     # 角色形象变化：清洗 LLM 变化点标记并向前传播持续状态（必须在

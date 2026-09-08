@@ -6555,6 +6555,9 @@ async def parse_script(
         #（_enrich_shot_location_fields 回填 shot 级场景字段，见设计文档 §9）。
         request_config = {
             "max_group_duration": max_group_duration,
+            # 总分镜时长控制：倍率×剧本基准时长=分镜总时长目标；0=不限制
+            #（见 docs/script/script_split_total_duration_control.md）
+            "total_duration_multiplier": body.get('total_duration_multiplier', 0),
             "world_id": world_id,
             "model": model,
             "temperature": 0.5,

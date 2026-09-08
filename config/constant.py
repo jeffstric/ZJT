@@ -1387,6 +1387,25 @@ class ScriptSplitConstants:
     # 上下文携带的上一段尾部镜头摘要数量
     HISTORY_TAIL_SHOTS = 2
 
+    # ---- 总分镜时长控制（见 docs/script/script_split_total_duration_control.md）----
+    # 剧本基准时长估算：中文旁白/对话朗读速率（字/秒）
+    SCRIPT_DURATION_CJK_CHARS_PER_SECOND = 4.5
+    # 拉丁字符朗读速率（字符/秒，统计不含空格）
+    SCRIPT_DURATION_LATIN_CHARS_PER_SECOND = 11.0
+    # 剧本基准时长下限（秒），避免短文本估出过小预算
+    SCRIPT_DURATION_MIN_SECONDS = 10.0
+    # total_duration_multiplier 合法范围；0/缺省表示不限制总时长
+    TOTAL_DURATION_MULTIPLIER_MIN = 0.5
+    TOTAL_DURATION_MULTIPLIER_MAX = 10.0
+    # 归一化允许超出目标的容差比例（LLM 结果在容差内不干预）
+    TOTAL_DURATION_TOLERANCE = 0.15
+    # 归一化按比例压缩时单镜头时长下限（秒）
+    TOTAL_DURATION_SHOT_MIN_SECONDS = 1.5
+    # 单段时长预算下限（秒）：至少容纳 2 个最短镜头，避免短段预算被压到无法拆分
+    TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS = 3.0
+    # 归一化兜底合并相邻镜头的迭代上限（防极端情况死循环）
+    TOTAL_DURATION_MERGE_MAX_ITERATIONS = 200
+
     # ---- 来源类型 ----
     SOURCE_TYPE_VIDEO_WORKFLOW = "video_workflow"
     SOURCE_TYPE_STORYBOARD = "storyboard"
