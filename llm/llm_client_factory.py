@@ -52,7 +52,11 @@ class LLMClientFactory:
 
     @classmethod
     def _get_vendor_by_model(cls, model: str) -> str:
-        """根据模型名称获取对应的 vendor"""
+        """根据模型名称获取对应的 vendor
+
+        优先级：模型名前缀匹配 > 按模型名查库反查 vendor_model（本地服务等
+        无前缀约定的模型）> 默认 Gemini（兼容现有逻辑）。
+        """
         if not model:
             return LLMVendor.JIEKOU
 
@@ -60,6 +64,27 @@ class LLMClientFactory:
         for prefix, vendor in MODEL_PREFIX_VENDOR_MAP.items():
             if model_lower.startswith(prefix):
                 return vendor
+
+        # 前缀未命中：按模型名查库反查所属供应商（模型名全局唯一）。历史版本
+        # 依赖本地服务模型 id 携带 "vendor:模型名" 前缀路由；id 数值化后，
+        # 调用方不传 vendor_id 的场景由此兜底，避免误路由到默认 JIEKOU。
+        try:
+            from model.model import ModelModel
+            from model.vendor import VendorDAO
+            from model.vendor_model import VendorModelModel
+
+            local_model = ModelModel.get_by_name(str(model).strip())
+            if local_model:
+                vendor_id = VendorModelModel.get_vendor_id_by_model_id(local_model.id)
+                if vendor_id:
+                    vendor_obj = VendorDAO.get_by_id(vendor_id)
+                    if vendor_obj and vendor_obj.vendor_name:
+                        logger.debug(
+                            f"模型 {model} 前缀未命中，按库反查路由到 vendor={vendor_obj.vendor_name}"
+                        )
+                        return vendor_obj.vendor_name
+        except Exception as e:
+            logger.debug(f"模型 {model} 按库反查 vendor 失败，回退默认: {e}")
 
         # 默认使用 Gemini（兼容现有逻辑）
         logger.debug(f"模型 {model} 未匹配到特定 vendor，使用默认 {LLMVendor.JIEKOU}")
@@ -261,13 +286,12 @@ def _get_available_models_sync() -> dict:
         except Exception as vm_err:
             logger.warning(f"获取模型 {model_id} 的 billing 配置失败: {vm_err}")
 
-        # 本地服务供应商（Ollama / vLLM）模型 ID 使用 "vendor:模型名" 特殊格式，
-        # 供 LLMClientFactory 按前缀路由
-        model_id_str = (
-            f"{vendor_name}:{local_model.model_name}"
-            if vendor_name in _LOCAL_SERVICE_VENDORS
-            else str(model_id)
-        )
+        # id 统一下发数值库 ID 字符串。历史版本对本地服务供应商（Ollama/vLLM）
+        # 曾下发 "vendor:模型名" 复合串供工厂按前缀路由——工厂现已支持 vendor_id
+        # 优先路由，前端也统一以 model_id + vendor_id 数值对选择模型，复合串
+        # 失去存在理由（且 vendor_name 无唯一索引，复合串本身有歧义隐患）。
+        # 存量数据中的历史复合串由 resolve_composite_model_ref 读路径兼容。
+        model_id_str = str(model_id)
 
         models.append({
             'id': model_id_str,
@@ -315,6 +339,10 @@ def resolve_composite_model_ref(model_ref: str) -> tuple:
     ref = str(model_ref or '').strip()
     if not ref or ':' not in ref:
         return None, None
+    # /api/models 的 id 已数值化（不再产出复合串）；此处命中说明请求/存储里
+    # 仍是历史复合串（存量 workflow_data、config_json、旧客户端在途请求），
+    # 兼容还原但告警观察，清零后可移除本兼容层
+    logger.warning(f"[复合模型标识] 收到历史复合串并兼容还原: {ref}（/api/models 已数值化，请排查数据来源）")
     vendor_name, _, model_name = ref.partition(':')
     vendor_name = vendor_name.strip()
     model_name = model_name.strip()

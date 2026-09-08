@@ -35,6 +35,16 @@ POST /api/parse-script
 - 接入全部入口：`/api/parse-script`（server.py）、故事板发布拆分与 `scene_ai_chat`（api/storyboard.py，后者原为裸 int 400）。
 - 偏好/配置解析类同步路径（`storyboard_agent_cli_service` 的 `_normalize_script_split_model_selection`/`_resolve_split_model_context`、`storyboard_first_frame_grid_service._llm_model_context`、`api/storyboard.py._resolve_storyboard_agent_model`）改用 `coerce_model_id_or_none`：复合串尽力还原、失败返回 None 走默认模型，不再抛 ValueError。
 
+## 2026-09-08 后续：复合串彻底废弃（治本）
+
+归一化收敛后复合串已不参与任何运行时决策，仅剩兼容还原角色。本日完成源头治理：
+
+- `/api/models`（`_get_available_models_sync`）的 `id` 字段对全部供应商统一为 `str(model_id)`，不再生成 `vendor:模型名`——泄漏源头消失。旧前端读 `model.id ?? model.model_id` 拿到数值反而更正确。
+- `LLMClientFactory._get_vendor_by_model` 在前缀未命中时新增 `model_name → vendor_model` 查库反查兜底（替代原前缀路由），调用方未传 vendor_id 的场景不再误路由到默认 JIEKOU。
+- 存量复合串（workflow_data 节点 data、config_json、localStorage）由 `resolve_composite_model_ref` 兼容还原，命中打 `[复合模型标识]` warning 观察清零；`get_client` 的本地前缀防御层保留。兼容层计划在 warning 清零后（约 2~3 个版本周期）移除。
+- 前端存储格式统一为数值对：script_writer 的 `lastSelectedLlmModel` 从 `{model, vendorId}` 升级为 `{model, model_id, vendor_id}`（读端兼容旧格式，storyboard 回退读取不受影响）。video_workflow（分离字段已数值优先）与 storyboard（`{model, model_id, vendor_id}` 对象）无需改动。
+- 测试：`tests/llm/test_model_id_numeric_routing.py`（id 数值化断言、反查兜底路由、兼容层 warning）。
+
 ## 遗留
 
 - ~~model 1011 的 note 文案误导~~（已处理）：2026-09-06 按产品决策清除线上库 `model` 表全部 7 行 note（含 model 1011），备份见 `model_note_backup_20260906.json`（未入库）；前端下拉随之只展示模型名。代码读取处均为 `note or ''` 兜底，无需改动。
