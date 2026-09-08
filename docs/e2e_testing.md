@@ -40,6 +40,59 @@ pip install playwright pytest-html pytest-timeout pytest-asyncio
 playwright install chromium
 ```
 
+## GitLab CI 分支触发
+
+仓库的 `e2e_smoke` job 会在分支 push 或 Merge Request Pipeline 中自动运行。已有 Merge Request 的源分支只创建 MR Pipeline，避免同一次 push 重复执行 branch 与 MR 两条流水线。
+
+每个 job 以 `e2e-${CI_PIPELINE_ID}-${CI_JOB_ID}` 作为 Docker Compose project 名，启动一套临时环境：
+
+| 服务 | 职责 | 隔离方式 |
+|------|------|----------|
+| `mysql` | 当前 Pipeline 的 E2E 数据库 | 独立数据卷，结束后删除 |
+| `prepare` | 执行 Alembic 迁移、创建两个一次性账号、开启测试挡板 | 一次性容器，执行后退出 |
+| `app` | 运行当前 commit 的 FastAPI 服务 | 不暴露宿主机端口，只加入 Compose 网络 |
+| `e2e` | 运行 pytest、Playwright 和 Chromium | 通过 `http://app:9003` 访问被测服务 |
+
+当前自动门禁是 `ci_smoke and p0`，覆盖认证、会话、世界、工作流 API 和工作流页面。需要媒体样本或外部模型的全量 E2E 暂不在每次 push 中执行，后续可作为定时或手动 job 接入。
+
+流水线结束时，无论成功或失败都会：
+
+1. 将 JUnit、HTML 报告以及失败测试的截图和 Playwright Trace 复制到 `e2e-results/`。
+2. 将 MySQL 与应用日志写入 `e2e-results/services.log`。
+3. 删除本次 Pipeline 创建的容器、网络及数据卷。
+
+CI 使用临时数据库中的固定一次性凭据，不依赖生产账号或 GitLab Secret。可通过同名 CI/CD Variables 覆盖 `E2E_TEST_PHONE`、`E2E_TEST_PASSWORD`、`E2E_SECONDARY_PHONE` 和 `E2E_SECONDARY_PASSWORD`，但不得配置生产凭据。
+
+E2E Runner 默认通过 DaoCloud 公共镜像代理拉取 Playwright 基础镜像，避免国内 Runner 直连 `mcr.microsoft.com` 时因约 800 MB 浏览器镜像下载过慢而耗尽 Job 时间。
+
+应用镜像先复制依赖清单并安装依赖，再复制源码，支持在具有 Docker layer cache 的环境中复用依赖层。镜像内使用 `uv` 并发解析和下载 Python 包；在 jeffNas1 Runner 的全新 `python:3.10-slim` 容器中，完整解析、下载及安装实测约 1 分钟，而原先的 pip 串行下载在慢速连接下会持续数十分钟。
+
+`mcp` 固定为与 `fastapi==0.111.0` / Starlette 0.37.x 兼容的 `1.12.4`，避免 pip 在 CI 中从 2.x 向下尝试大量历史版本。`e2e_smoke` 声明了 90 分钟 job timeout，但 GitLab 实例或项目的最大超时仍可能将其限制为 60 分钟；依赖安装加速用于确保正常构建不依赖放宽该上限。
+
+需要切换其他镜像仓库时，可覆盖 Dockerfile 的构建参数：
+
+```bash
+docker build \
+  --build-arg PLAYWRIGHT_BASE_IMAGE=<registry>/playwright/python:v1.60.0-noble \
+  -f docker/Dockerfile.e2e \
+  -t zjt-e2e-runner:local \
+  .
+```
+
+### 本地复现 CI 冒烟测试
+
+```bash
+docker compose -p zjt-e2e-local -f docker/docker-compose-e2e.yml build app e2e
+docker compose -p zjt-e2e-local -f docker/docker-compose-e2e.yml up -d mysql
+docker compose -p zjt-e2e-local -f docker/docker-compose-e2e.yml run --rm prepare
+docker compose -p zjt-e2e-local -f docker/docker-compose-e2e.yml up -d app
+docker compose -p zjt-e2e-local -f docker/docker-compose-e2e.yml run --name zjt-e2e-result e2e
+docker cp zjt-e2e-result:/results/. e2e-results/
+docker compose -p zjt-e2e-local -f docker/docker-compose-e2e.yml down -v --remove-orphans
+```
+
+本地中断后再次执行前，应先运行最后一条 `down` 命令清理该固定 project 名对应的临时资源。
+
 ### 2. 配置
 
 复制 `test_config.example.json` 为 `test_config.json`，填写：

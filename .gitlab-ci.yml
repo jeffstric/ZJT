@@ -14,6 +14,16 @@
 stages:
   - lint
   - test
+  - e2e
+
+# 同一分支已经创建 MR 后只保留 MR Pipeline，避免一次 push 重复跑两套测试。
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
 
 # 变量配置
 variables:
@@ -339,3 +349,83 @@ frontend_tests:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
 
+
+# =============================================================================
+# 分支级 E2E 冒烟测试
+# 每条 Pipeline 在独立 Compose project 中启动 MySQL、当前 commit 的应用和 Playwright。
+# （自 master 278bbc01 移植回 develop；mysql 服务同步套用 docker-compose-test.yml
+#   在本 runner 上验证过的 DinD 修复：my.cnf 挂载路径 / TCP 健康检查 / 关 fsync）
+# =============================================================================
+e2e_smoke:
+  stage: e2e
+  image: m.daocloud.io/docker.io/library/docker:24-cli
+
+  services:
+    - name: m.daocloud.io/docker.io/library/docker:24-dind
+      alias: docker
+      variables:
+        DOCKER_TLS_CERTDIR: ""
+      command: ["--registry-mirror=https://docker.1ms.run", "--registry-mirror=https://docker.mirrors.ustc.edu.cn"]
+
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
+    COMPOSE_PROJECT_NAME: e2e-${CI_PIPELINE_ID}-${CI_JOB_ID}
+    E2E_COMPOSE_FILE: docker/docker-compose-e2e.yml
+    E2E_RESULT_CONTAINER: e2e-result-${CI_JOB_ID}
+
+  before_script:
+    - |
+      echo "等待 Docker daemon..."
+      for i in $(seq 1 30); do
+        if docker info > /dev/null 2>&1; then
+          echo "Docker daemon 已就绪"
+          break
+        fi
+        if [ "$i" -eq 30 ]; then
+          echo "Docker daemon 在 60 秒内未就绪"
+          exit 1
+        fi
+        sleep 2
+      done
+    - docker version
+    - docker compose version
+
+  script:
+    - docker compose -f "$E2E_COMPOSE_FILE" build app e2e
+    - docker compose -f "$E2E_COMPOSE_FILE" up -d mysql
+    - docker compose -f "$E2E_COMPOSE_FILE" run --rm prepare
+    - docker compose -f "$E2E_COMPOSE_FILE" up -d app
+    - docker compose -f "$E2E_COMPOSE_FILE" run --name "$E2E_RESULT_CONTAINER" e2e
+
+  after_script:
+    - mkdir -p e2e-results
+    - docker cp "$E2E_RESULT_CONTAINER:/results/." e2e-results/ || true
+    - docker compose -f "$E2E_COMPOSE_FILE" logs --no-color mysql app > e2e-results/services.log 2>&1 || true
+    - docker rm -f "$E2E_RESULT_CONTAINER" > /dev/null 2>&1 || true
+    - docker compose -f "$E2E_COMPOSE_FILE" down -v --remove-orphans || true
+
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - e2e-results/
+    reports:
+      junit: e2e-results/junit.xml
+
+  interruptible: true
+  # 首次执行需要构建应用和拉取 Playwright 浏览器镜像；代理缓存未命中时预留足够时间。
+  timeout: 90m
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+  tags:
+    - docker
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH
