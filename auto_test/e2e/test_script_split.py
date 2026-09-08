@@ -17,6 +17,8 @@ import time
 
 import pytest
 
+from conftest import _skip_or_fail
+
 
 SPLIT_API = "/api/script-split"
 # 终态：拆分任务最终落到这三种之一
@@ -30,7 +32,9 @@ def _submit_split(api_client, user_id, auth_token, world_id, script_content):
 
     mock_mode 只挡图/视频/音频，不挡 LLM 文本生成（见文件头说明），这些用例
     依赖测试环境有可用 LLM / 外部平台集成。以下 4xx 均属环境问题而非代码回归，
-    skip 而不是 fail，避免污染整轮全量结果：
+    本地 skip 而不是 fail，避免污染整轮全量结果；但 CI（E2E_STRICT）下必须
+    fail（走 conftest._skip_or_fail），否则代码改动打断 LLM 调用路径时会被
+    当作"环境问题"跳过、产生假绿：
     - "算力检查失败: {外部错误}"：parse-script 前置调用外部平台 check_computing_power
       失败（如平台侧 "无效的认证信息"，测试环境平台集成凭证失效）；
     - "剧本解析失败: {外部错误}"：LLM 侧调用失败（如 "Gemini API Key 或 Base URL 未配置"）。
@@ -58,7 +62,7 @@ def _submit_split(api_client, user_id, auth_token, world_id, script_content):
         except Exception:
             msg = ""
         if "算力检查失败" in msg or "剧本解析失败" in msg:
-            pytest.skip(f"外部 LLM/平台集成不可用（环境问题），跳过依赖真实 LLM 的拆分用例: {msg[:200]}")
+            _skip_or_fail(f"外部 LLM/平台集成不可用（环境问题），跳过依赖真实 LLM 的拆分用例: {msg[:200]}")
     return resp
 
 

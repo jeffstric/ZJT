@@ -253,7 +253,17 @@ class _LiveAuth:
             )
         except httpx.HTTPError:
             return True  # 网络异常不误判为 token 失效，避免无谓重登
-        return resp.status_code == 200
+        if resp.status_code == 200:
+            return True
+        # 仅确证的认证失败才触发重登：401，或响应体带 error_code=invalid_auth_token。
+        # 其余非 200（400/500 等）可能是接口自身回归——重登（会删掉该用户全部旧
+        # token）既治不了本又掩盖真实失败，应让用例如实暴露。
+        if resp.status_code == 401:
+            return False
+        try:
+            return resp.json().get("error_code") != "invalid_auth_token"
+        except Exception:
+            return True
 
     def ensure(self):
         if self._is_valid():

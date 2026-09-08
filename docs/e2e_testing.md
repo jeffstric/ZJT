@@ -258,6 +258,9 @@ python -m pytest test_audio.py test_grid_image.py -v
   两个 fixture 已改为 function 级、返回 `live_auth` 的当前值，用例里直接放
   body/URL 的 token 也随之自愈。实际登录仍只发生在 `_login_data`（session 级）一次，
   自愈重登只顶掉已失效的旧 token。
+  注意：探活接口仅 **401 或响应体 `error_code=invalid_auth_token`** 才判定 token 失效
+  触发重登；其余非 200（400/500 等）视为接口自身问题，不重登——避免接口回归被
+  反复重登掩盖成假绿。
 
 - [ ] `auto_test/test_config.json` 的 `base_url` 指向当前后端服务。
 - [ ] `auto_test/test_assets/test_image.jpg` 存在。
