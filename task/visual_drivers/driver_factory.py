@@ -730,6 +730,13 @@ def register_all_drivers():
         logger.warning(f"Failed to import MinimaxH3ReferenceRunninghubV1Driver: {e}")
 
     try:
+        from .minimax_h3_text_runninghub_v1_driver import MinimaxH3TextRunninghubV1Driver
+        # 注册 MiniMax H3 文生视频 RunningHub v1 版本（复用参考生工作流，素材槽位全空）
+        VideoDriverFactory.register_driver(DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1, MinimaxH3TextRunninghubV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import MinimaxH3TextRunninghubV1Driver: {e}")
+
+    try:
         from .digital_human_minimax_h3_runninghub_v1_driver import DigitalHumanMinimaxH3RunninghubV1Driver
         # 注册 MiniMax H3 数字人 RunningHub v1 版本
         VideoDriverFactory.register_driver(

@@ -72,7 +72,7 @@ sceneSpan = scene.duration > 0 ? scene.duration : EMPTY_HOLD_FALLBACK(2s)
 1. **起点**：点击分镜选中后点播放 → **从该分镜**播到最后；`ended` 后再点播放仍跟**当前选中镜**，不强制回片头。  
 2. **选中分镜**：`stopPlayback` + `syncSelectionToTimeline`（`currentTime` = 该镜起点，`status=idle`）。  
 3. **暂停 / 继续**：同一按钮；冻结 video + 当前 audio。  
-4. **字幕**：勾选「字幕」时显示当前对白文本。时间轴 `.subtitle-toggle` 的 checkbox 由原生 `change` 同步 `state.subtitleEnabled`（全局 click 委托不对 `input[type=checkbox]` 调用 `preventDefault`，否则勾选会被锁死无法撤销）。  
+4. **字幕**：勾选「字幕」时显示当前对白文本。时间轴 `.subtitle-toggle` 的 checkbox 由原生 `change` 同步 `state.subtitleEnabled`（全局 click 委托不对 `input[type=checkbox]` 调用 `preventDefault`，否则勾选会被锁死无法撤销）。字幕层与导出 ASS 硬烧逐项对齐：字体（Noto Sans SC，经 `/files/fonts/` @font-face）、字号/底部边距/描边/投影（CSS 变量按比例折算）、折行与分页（`subtitle_wrap.js` 移植后端算法，随音频进度翻页）；逐句（smart，默认，设置面板带「限免」徽章）预览 ≤2 行/页；整段（block，≤3 行/页）因展示效果不佳已在设置面板禁用（存量 block 配置加载时归一为 smart，仅后端保留兼容）。smart 的句界/时机在预览侧为标点切分近似（ASR 句级时间轴仅导出期可得）。  
 5. **停播**：点其他分镜、键盘左右切镜、切 grid、全量 `renderApp`、页面隐藏/卸载。  
 6. **播放头**：`.scene-timeline-playhead` 按 **当前分镜索引 + 镜内 `sceneLocalTime/sceneSpan` 比例** 定位到对应卡片；水平坐标用 `getBoundingClientRect` 相对 list 换算（不可用 thumb.offsetLeft，因 item/thumb 为 `position:relative` 会导致恒为 0 而钉在第一镜）；播放中/选中时自动滚入视口。  
 
@@ -92,6 +92,7 @@ sceneSpan = scene.duration > 0 ? scene.duration : EMPTY_HOLD_FALLBACK(2s)
 | 文件 | 职责 |
 |------|------|
 | `web/js/storyboard/playback.js` | 播放状态机、音画编排、playhead |
+| `web/js/storyboard/subtitle_wrap.js` | 预览字幕折行/分页（移植后端 storyboard_subtitle.py 算法） |
 | `web/js/storyboard/playback_audio.js` | 单镜音轨来源纯函数（video / tts / silence） |
 | `web/js/storyboard/state.js` | `isPlaying` / `currentTime` / `playback.*` |
 | `web/js/storyboard/events.js` | `toggle-play`、选镜/切视图停播与时间对齐 |

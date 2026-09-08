@@ -103,15 +103,18 @@
 
 规划提示词同时给出“单段最大输出 token”和“原文不超过 1500 字”。模型仍必须优先保持语义完整。后端在还原原文时执行最终硬检查：多 block 超限段优先沿 block 边界继续切细，单 block 超限时依次寻找空行、换行和句末标点，最后才按字符上限兜底。该后处理只收紧模型已经确定的段内范围，不跨模型语义边界重新组合文本。规划阶段不预估镜头数量，实际镜头数完全由后续分镜生成模型决定。
 
+**非正文 block 排除（2026-09-04 起）**：剧本头部的剧名/集标题、爽点/概要/风格/基调等元信息说明、`---` 分隔线、创作备注不构成剧情，由规划模型在分段的同时输出顶层 `excluded_block_ids` 一并排除——这些 block 不进入任何 segment、不生成分镜。判定指引由 `llm/script_segment_planner.py:build_exclusion_instruction` 统一维护：speed 模式内嵌于默认提示词；quality 等策略自定义提示词（`prompt_override`）在 `plan_segments` 必经点统一追加注入（enterprise 代码不进 git，无法也无需单独修改）。对白、旁白、括号动作描述、`[场景 …]` 声明行、`场景编号：` 行属于正文，提示词明确禁止排除。背景：此类“纯标题段”曾导致阶段二拆分模型为无剧情段落凭空编造分镜、与后续段落内容重复（线上事故，工作流 1646 / 任务 656）。被排除 block 中首个 `#{1,3}` 标题行由 `extract_script_title_from_excluded` 提取，持久化于 `plan.metadata.script_title`，合并阶段 `_merge_segments` 未取到剧名时回填。`plan.metadata` 非 dict（模型输出 `null`/`[]` 等）时按缺省重置为 `{}`（`_ensure_metadata_dict` 兜底，规划/合并/发布阶段统一走该函数），不会把已成功的规划拖成 failed——`setdefault` 不会覆盖已存在的非 dict 值，直接对 `null` 赋键会 TypeError。
+
 ### 6.3 分段计划协议
 
 ```json
 {
   "schema_version": 1,
+  "excluded_block_ids": ["block_0001", "block_0002"],
   "segments": [
     {
       "segment_id": "seg_0001",
-      "block_ids": ["block_0001", "block_0002", "block_0003"],
+      "block_ids": ["block_0003", "block_0004"],
       "title": "主卧清晨",
       "summary": "苏晚醒来观察熟睡的林诚",
       "continuity_notes": "结束时两人仍位于主卧"
@@ -120,18 +123,23 @@
 }
 ```
 
+`excluded_block_ids` 为非正文 block（头部元信息），与 `segments` 的 `block_ids` 合计覆盖全部锚点；整个剧本都是正文时输出空数组（旧模型输出无该字段，后端按空集处理，行为不变）。
+
 ### 6.4 后端计划校验
 
 后端不替模型重新分段，只验证：
 
 1. `segment_id` 唯一且顺序稳定。
 2. 所有 `block_id` 均来自原始锚点集合。
-3. 每个锚点恰好出现一次。
+3. 每个锚点恰好出现一次（归属某个 segment 或 `excluded_block_ids`）。
 4. 分段顺序与原文一致。
 5. 单个分段的 `block_id` 连续，不允许跨过未包含的文本。
 6. 不允许空分段。
+7. `excluded_block_ids` 只做结构校验：id 合法、不重复、不与分段重复包含；合计与 segments 覆盖全部锚点。block 是否属于非正文由规划模型判断，后端不做内容审核。
 
 如果计划 JSON 或覆盖校验失败，只重试阶段一。规划成功后将计划持久化，正常执行路径不重复调用规划模型。1500 字硬限制在计划持久化之前完成，因此阶段二不再自动触发局部再规划，也不会删除并重建已经存在的 segment 检查点。
+
+**规划重试跨 tick 检查点（2026-09-04 起）**：阶段一规划同样严格遵守"一次 scheduler tick 最多一次 LLM 调用"。效果模式（v3 空间连续性规划）+ thinking 模型单次规划调用可达数分钟，若在同一个 `step_plan()` 内循环重试，多轮调用会共享 `WORKER_STEP_TIMEOUT_SECONDS`（540s）看门狗预算：第 1 次尝试校验失败后，第 2 次尝试会在看门狗到点时被整体取消，任务被误标为 `step_watchdog_timeout` 暂停且丢失全部规划进度（历史事故：2800 字剧本 + 效果模式 + 深度思考反复命中该误杀）。现在每次校验失败后将 `{"attempt": N, "last_errors": [...]}` 检查点持久化到 `request_config[_plan_checkpoint]`（常量 `PLAN_CHECKPOINT_CONFIG_KEY`）并正常结束当前 tick、释放租约；下一 tick 携带 feedback 定向重试。达到 `PLAN_MAX_RETRIES` 上限后以最后一轮首个错误进入 `paused(plan_failed 或具体校验码)`。用户显式 resume（恢复目标为 `queued`，即无已持久化计划）时清除该检查点给满重试预算，与段级 `reset_retry_budget` 语义一致；`step_plan` 的 L0 复检清空旧计划重规划时同样重置检查点。
 
 阶段二发生 `MAX_TOKENS`、重复截断或调用失败时，只在当前分段的有限重试范围内处理。调用重试达到上限时，如果检查点中已经存在最近一次成功解析的完整 `parsed_result_json`，则强制保存该候选为 `completed`，并在最后一次错误上保留 `_forced_accept=true` 后继续合并发布；只有从未得到任何可解析候选时，当前段才保留为 `failed`、根任务进入 `paused`。质检失败采用相同的可用候选优先原则：拆分与质检最多循环 `qc_max_rounds` 次，仍不通过时采用最后一轮完整 JSON。该线性失败路径避免 `planning/replan → generating → planning` 循环和检查点重建复杂度，同时不会让非致命质检问题或后续修正调用异常永久阻塞拆分。
 
@@ -717,6 +725,7 @@ UNIQUE KEY uk_storyboard_scene_split_source(script_split_task_id, source_shot_ke
 
 ```text
 SCRIPT_SPLIT_PLAN_MAX_RETRIES
+SCRIPT_SPLIT_PLAN_CHECKPOINT_CONFIG_KEY
 SCRIPT_SPLIT_SEGMENT_MAX_RETRIES
 SCRIPT_SPLIT_SEGMENT_MAX_OUTPUT_TOKENS
 SCRIPT_SPLIT_LLM_TIMEOUT_SECONDS
@@ -836,7 +845,7 @@ web/js/storyboard/state.js
 - APScheduler 每个 tick 只推进一个有限步骤，`max_instances=1/coalesce=True` 不发生重叠。
 - 调度器中断后通过 `worker_id/lease_until` 从第一个未完成段恢复。
 - 达到重试上限且没有任何可解析候选时进入 `paused`；已有候选时标记 `_forced_accept=true` 并继续。
-- 同一生成 tick 最多调用一次 LLM；QC 失败候选在下一 tick 作为修复上下文恢复。
+- 同一生成 tick 最多调用一次 LLM；QC 失败候选在下一 tick 作为修复上下文恢复（阶段一规划重试同样跨 tick 检查点恢复，见 §6.4）。
 - 单次调用超时先于 worker watchdog；watchdog 触发后任务进入可继续的 `paused`。
 - 执行中取消先进入 `cancelling`，当前 LLM 调用结束后丢弃响应并进入 `cancelled`。
 - 新 token 可以恢复 `waiting_auth` 任务。

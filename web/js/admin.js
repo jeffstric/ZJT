@@ -154,6 +154,25 @@ const PROVIDER_DEFINITIONS = [
         configKeyMap: { api_key: 'llm.agnes.api_key', base_url: 'llm.agnes.base_url' },
         testEndpoint: null
     },
+    {
+        id: 'mimo',
+        nameKey: 'provider_mimo_name',
+        descKey: 'provider_mimo_desc',
+        category: 'llm',
+        icon: '📱',
+        docUrl: 'https://platform.xiaomimimo.com?ref=WGMLTN',
+        lazyRecommended: false,
+        displayOrder: 8,
+        baseName: 'mimo',
+        isOfficialAPI: false,
+        impactsKey: 'provider_mimo_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_mimo', required: true },
+            { id: 'base_url', labelKey: 'field_base_url_label_optional', type: 'url', placeholder: 'https://token-plan-cn.xiaomimimo.com/v1', required: false, helpTextKey: 'field_base_url_placeholder' }
+        ],
+        configKeyMap: { api_key: 'llm.mimo.api_key', base_url: 'llm.mimo.base_url' },
+        testEndpoint: null
+    },
 
     // ===== 生图/生视频共享键供应商 =====
     // 多米、火山引擎（多媒体）、火山引擎海外版、阿里云百炼（多媒体）、聚合站 1-5 的生图与生视频共用同一配置键，
@@ -667,6 +686,7 @@ const AdminApp = {
                 testLoading: {},         // { providerId: boolean }
                 testResults: {},         // { providerId: { success: boolean, message: string } }
                 saveLoading: {},         // { providerId: boolean }
+                secretRevealed: {},      // { baseName::fieldId: boolean } 密钥毛玻璃是否已揭开
                 leftPanelOpen: true
             },
 
@@ -744,6 +764,13 @@ const AdminApp = {
                 targetModelId: null,
                 // AI 改档目标计费模式：normal=通用价格 / peak_valley=高峰低谷
                 targetMode: 'normal'
+            },
+
+            // 推荐模型档位（各场景性价比/效果），对应 system_config: model_catalog.scene_recos
+            modelRecos: {
+                loading: false,
+                saving: null,   // 正在保存的场景 key
+                scenes: []      // 每项含 draft.value/draft.quality 编辑态
             },
 
             // 实现方编辑弹窗
@@ -844,6 +871,32 @@ const AdminApp = {
             },
             notificationsPollTimer: null,
 
+            // 公告管理（本站公告，管理员配置）
+            announcements: {
+                list: [],
+                total: 0,
+                page: 1,
+                pageSize: 20,
+                loading: false
+            },
+            announcementModal: {
+                show: false,
+                isEdit: false,
+                editId: null,
+                loading: false,
+                uploading: false
+            },
+            announcementForm: {
+                title: '',
+                content: '',
+                level: 'info',
+                link_url: '',
+                link_text: '',
+                images: [],
+                publish_at: '',
+                expire_at: ''
+            },
+
             // 常量参考
             constants: {
                 groups: [],
@@ -890,6 +943,10 @@ const AdminApp = {
     computed: {
         totalPages() {
             return Math.ceil(this.users.total / this.users.pageSize);
+        },
+
+        annTotalPages() {
+            return Math.ceil(this.announcements.total / this.announcements.pageSize) || 1;
         },
 
         enterprisePackageAvailable() {
@@ -1574,9 +1631,12 @@ const AdminApp = {
                 }
             } else if (page === 'marketingPublications') {
                 this.loadMarketingPublications();
+            } else if (page === 'announcements') {
+                this.loadAnnouncements();
             } else if (page === 'models') {
                 this.loadModels();
                 this.loadLocalInferenceConfig();
+                this.loadModelRecos();
             } else if (page === 'constants') {
                 this.loadConstants();
             } else if (page === 'commission') {
@@ -3330,6 +3390,7 @@ const AdminApp = {
             this.quickConfigModal.testLoading = {};
             this.quickConfigModal.testResults = {};
             this.quickConfigModal.saveLoading = {};
+            this.quickConfigModal.secretRevealed = {};
             this.quickConfigModal.leftPanelOpen = true;
             this.quickConfigModal.quickSelected = false;
 
@@ -3407,6 +3468,7 @@ const AdminApp = {
             this.quickConfigModal.testLoading = {};
             this.quickConfigModal.testResults = {};
             this.quickConfigModal.saveLoading = {};
+            this.quickConfigModal.secretRevealed = {};
         },
 
         // 打开/关闭字段示例图灯箱
@@ -3547,6 +3609,43 @@ const AdminApp = {
                 if (!formData) return false;
                 return Object.values(formData).some(v => v && String(v).trim());
             });
+        },
+
+        // 密钥类字段判定：这类字段默认覆盖毛玻璃遮罩，点击眼睛按钮才显示完整密钥
+        isSecretField(field) {
+            return !field.readOnly && (field.id === 'api_key' || field.id === 'token');
+        },
+
+        // 密钥字段是否应自动上玻璃遮罩：仅当值来自已保存配置（与打开弹窗时加载的原始值一致，
+        // 保存成功后 originalValues 会同步更新）时遮罩；用户正在输入的新值不遮，避免输入被玻璃挡住
+        isSecretAutoMasked(providerId, fieldId) {
+            const val = String(this.getFormField(providerId, fieldId) || '');
+            if (!val.trim()) return false;
+            const base = this.getProviderBaseName(providerId);
+            return this.getProviderIdsByBaseName(base).some(id => {
+                const orig = (this.quickConfigModal.originalValues[id] || {})[fieldId];
+                return orig !== undefined && orig !== null && String(orig) === val;
+            });
+        },
+
+        // 密钥显示状态 key：按 baseName 分组（同组兄弟项共用同一份密钥，眼睛状态保持同步）
+        secretStateKey(providerId, fieldId) {
+            return `${this.getProviderBaseName(providerId)}::${fieldId}`;
+        },
+
+        isSecretRevealed(providerId, fieldId) {
+            return !!this.quickConfigModal.secretRevealed[this.secretStateKey(providerId, fieldId)];
+        },
+
+        // 切换密钥毛玻璃遮罩：点击眼睛按钮显示完整密钥 / 重新遮住
+        toggleSecretReveal(providerId, fieldId) {
+            const key = this.secretStateKey(providerId, fieldId);
+            this.quickConfigModal.secretRevealed[key] = !this.quickConfigModal.secretRevealed[key];
+        },
+
+        // 用户编辑密钥时退出遮罩机制（清掉眼睛状态；值改回原始值后玻璃会自动恢复）
+        clearSecretReveal(providerId, fieldId) {
+            delete this.quickConfigModal.secretRevealed[this.secretStateKey(providerId, fieldId)];
         },
 
         // 判断服务商"密钥"（api_key/token 必填字段）是否有值，
@@ -3831,6 +3930,116 @@ const AdminApp = {
                 this.showToast(this.t('models_local_inference_save_failed'), 'error');
             } finally {
                 this.localInference.saving = false;
+            }
+        },
+
+        async loadModelRecos() {
+            this.modelRecos.loading = true;
+            try {
+                const response = await axios.get('/api/admin/model-recos', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.modelRecos.scenes = (response.data.data.scenes || []).map((s) => ({
+                        ...s,
+                        draft: {
+                            value: this._recoSlotDraft(s.value),
+                            quality: this._recoSlotDraft(s.quality),
+                        },
+                    }));
+                }
+            } catch (error) {
+                console.error('加载推荐模型配置失败:', error);
+                this.showToast(this.t('reco_load_failed'), 'error');
+            } finally {
+                this.modelRecos.loading = false;
+            }
+        },
+        _recoSlotDraft(slot) {
+            return {
+                canonical: slot && slot.canonical || '',
+                vendor: (slot && slot.preferred_vendors || [])[0] || '',
+                reason: slot && slot.reason || '',
+            };
+        },
+        _recoSlotPayload(draft) {
+            return {
+                canonical: (draft.canonical || '').trim(),
+                preferred_vendors: draft.vendor ? [draft.vendor] : [],
+                reason: (draft.reason || '').trim(),
+            };
+        },
+        recoVendorOptions(scene, track) {
+            // 供应商选项跟随所选模型联动，避免管理员手输出错
+            const current = scene.draft[track].canonical;
+            const hit = (scene.candidates || []).find(o => o.canonical === current);
+            return (hit && hit.vendors) || [];
+        },
+        onRecoCanonicalChange(scene, track) {
+            const opts = this.recoVendorOptions(scene, track);
+            if (scene.draft[track].vendor && !opts.includes(scene.draft[track].vendor)) {
+                scene.draft[track].vendor = '';
+            }
+        },
+        recoSceneName(scene) {
+            const key = 'reco_scene_' + String(scene).replace(/\./g, '_');
+            const translated = this.t(key);
+            return translated === key ? scene : translated;
+        },
+        recoOptions(scene, track) {
+            // 当前生效值可能已下线（不在候选中），补一个选项避免下拉显示空白
+            const options = [...(scene.candidates || [])];
+            const current = scene.draft[track].canonical;
+            if (current && !options.some(o => o.canonical === current)) {
+                options.unshift({ canonical: current, label: `${current} (${this.t('reco_offline_option')})` });
+            }
+            return options;
+        },
+        async saveModelReco(scene) {
+            const value = this._recoSlotPayload(scene.draft.value);
+            const quality = this._recoSlotPayload(scene.draft.quality);
+            if (!value.canonical || !quality.canonical) {
+                this.showToast(this.t('reco_canonical_required'), 'error');
+                return;
+            }
+            this.modelRecos.saving = scene.scene;
+            try {
+                const response = await axios.put('/api/admin/model-recos',
+                    { scene: scene.scene, value, quality },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } },
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('reco_saved'), 'success');
+                    await this.loadModelRecos();
+                } else {
+                    this.showToast(response.data.message || this.t('reco_save_failed'), 'error');
+                }
+            } catch (error) {
+                const detail = error.response && error.response.data && error.response.data.detail;
+                this.showToast(detail || this.t('reco_save_failed'), 'error');
+            } finally {
+                this.modelRecos.saving = null;
+            }
+        },
+        async resetModelReco(scene) {
+            if (!confirm(this.t('reco_reset_confirm'))) return;
+            this.modelRecos.saving = scene.scene;
+            try {
+                const response = await axios.put('/api/admin/model-recos',
+                    { scene: scene.scene, reset: true },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } },
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('reco_saved'), 'success');
+                    await this.loadModelRecos();
+                } else {
+                    this.showToast(response.data.message || this.t('reco_save_failed'), 'error');
+                }
+            } catch (error) {
+                const detail = error.response && error.response.data && error.response.data.detail;
+                this.showToast(detail || this.t('reco_save_failed'), 'error');
+            } finally {
+                this.modelRecos.saving = null;
             }
         },
 
@@ -5061,6 +5270,207 @@ const AdminApp = {
                 }
             } catch (error) {
                 console.error('Mark all read failed:', error);
+            }
+        },
+
+        // ==================== 公告管理（本站公告） ====================
+
+        // 加载公告列表
+        async loadAnnouncements(page = 1) {
+            this.announcements.loading = true;
+            this.announcements.page = page;
+            try {
+                const response = await axios.get('/api/admin/announcements/list', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` },
+                    params: {
+                        page: this.announcements.page,
+                        page_size: this.announcements.pageSize
+                    }
+                });
+                if (response.data.code === 0) {
+                    const data = response.data.data || {};
+                    this.announcements.list = data.items || [];
+                    this.announcements.total = data.total || 0;
+                } else {
+                    this.showToast(response.data.message || this.t('ann_load_failed'), 'error');
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('ann_load_failed'), 'error');
+            } finally {
+                this.announcements.loading = false;
+            }
+        },
+
+        annGoToPage(page) {
+            if (page < 1 || page > this.annTotalPages) return;
+            this.loadAnnouncements(page);
+        },
+
+        // 重置弹窗表单
+        resetAnnouncementForm() {
+            this.announcementForm.title = '';
+            this.announcementForm.content = '';
+            this.announcementForm.level = 'info';
+            this.announcementForm.link_url = '';
+            this.announcementForm.link_text = '';
+            this.announcementForm.images = [];
+            this.announcementForm.publish_at = '';
+            this.announcementForm.expire_at = '';
+        },
+
+        openAnnouncementCreateModal() {
+            this.announcementModal.isEdit = false;
+            this.announcementModal.editId = null;
+            this.resetAnnouncementForm();
+            this.announcementModal.show = true;
+        },
+
+        openAnnouncementEditModal(item) {
+            this.announcementModal.isEdit = true;
+            this.announcementModal.editId = item.id;
+            this.announcementForm.title = item.title || '';
+            this.announcementForm.content = item.content || '';
+            this.announcementForm.level = item.level || 'info';
+            this.announcementForm.link_url = item.link_url || '';
+            this.announcementForm.link_text = item.link_text || '';
+            this.announcementForm.images = Array.isArray(item.images) ? [...item.images] : [];
+            // datetime-local 输入框需要 'YYYY-MM-DDTHH:MM' 格式
+            this.announcementForm.publish_at = this.toDatetimeLocalValue(item.publish_at);
+            this.announcementForm.expire_at = this.toDatetimeLocalValue(item.expire_at);
+            this.announcementModal.show = true;
+        },
+
+        toDatetimeLocalValue(value) {
+            if (!value) return '';
+            return String(value).replace(' ', 'T').slice(0, 16);
+        },
+
+        closeAnnouncementModal() {
+            this.announcementModal.show = false;
+        },
+
+        // 提交公告（action: draft=保存草稿 / published=保存并发布 / save=编辑保存）
+        async submitAnnouncement(action) {
+            const form = this.announcementForm;
+            if (!form.title.trim()) {
+                this.showToast(this.t('ann_title_required'), 'error');
+                return;
+            }
+            this.announcementModal.loading = true;
+            try {
+                const payload = {
+                    title: form.title.trim(),
+                    content: form.content,
+                    level: form.level,
+                    link_url: form.link_url.trim() || null,
+                    link_text: form.link_text.trim() || null,
+                    images: form.images,
+                    publish_at: form.publish_at || null,
+                    expire_at: form.expire_at || null
+                };
+                let response;
+                if (this.announcementModal.isEdit) {
+                    response = await axios.put(`/api/admin/announcements/${this.announcementModal.editId}`, payload, {
+                        headers: { 'Authorization': `Bearer ${this.authToken}` }
+                    });
+                } else {
+                    payload.status = action;
+                    response = await axios.post('/api/admin/announcements', payload, {
+                        headers: { 'Authorization': `Bearer ${this.authToken}` }
+                    });
+                }
+                if (response.data.code === 0) {
+                    this.showToast(this.t('ann_toast_saved'), 'success');
+                    this.closeAnnouncementModal();
+                    this.loadAnnouncements(this.announcementModal.isEdit ? this.announcements.page : 1);
+                } else {
+                    this.showToast(response.data.message || this.t('ann_toast_save_failed'), 'error');
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('ann_toast_save_failed'), 'error');
+            } finally {
+                this.announcementModal.loading = false;
+            }
+        },
+
+        // 上传公告图片（多选，逐张上传）
+        async uploadAnnouncementImages(event) {
+            const files = Array.from(event.target.files || []);
+            event.target.value = '';
+            if (files.length === 0) return;
+            const remaining = 9 - this.announcementForm.images.length;
+            if (files.length > remaining) {
+                this.showToast(this.t('ann_images_max'), 'error');
+                return;
+            }
+            this.announcementModal.uploading = true;
+            try {
+                for (const file of files) {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    const response = await axios.post('/api/admin/announcements/upload-image', formData, {
+                        headers: {
+                            'Authorization': `Bearer ${this.authToken}`,
+                            'Content-Type': 'multipart/form-data'
+                        }
+                    });
+                    if (response.data.code === 0 && response.data.data?.url) {
+                        this.announcementForm.images.push(response.data.data.url);
+                    } else {
+                        this.showToast(response.data.message || this.t('ann_upload_failed'), 'error');
+                    }
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('ann_upload_failed'), 'error');
+            } finally {
+                this.announcementModal.uploading = false;
+            }
+        },
+
+        removeAnnouncementImage(index) {
+            this.announcementForm.images.splice(index, 1);
+        },
+
+        async publishAnnouncement(item) {
+            await this.setAnnouncementStatus(item, 'publish');
+        },
+
+        async offlineAnnouncement(item) {
+            await this.setAnnouncementStatus(item, 'offline');
+        },
+
+        async setAnnouncementStatus(item, action) {
+            try {
+                const response = await axios.post(`/api/admin/announcements/${item.id}/${action}`, {}, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.showToast(this.t(action === 'publish' ? 'ann_toast_published' : 'ann_toast_offlined'), 'success');
+                    this.loadAnnouncements(this.announcements.page);
+                } else {
+                    this.showToast(response.data.message || this.t('ann_toast_save_failed'), 'error');
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('ann_toast_save_failed'), 'error');
+            }
+        },
+
+        async deleteAnnouncement(item) {
+            if (!window.confirm(this.t('ann_delete_confirm', { title: item.title }))) return;
+            try {
+                const response = await axios.delete(`/api/admin/announcements/${item.id}`, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                if (response.data.code === 0) {
+                    this.showToast(this.t('ann_toast_deleted'), 'success');
+                    // 删除后当前页可能为空，回退一页
+                    const maxPage = Math.max(1, Math.ceil((this.announcements.total - 1) / this.announcements.pageSize));
+                    this.loadAnnouncements(Math.min(this.announcements.page, maxPage));
+                } else {
+                    this.showToast(response.data.message || this.t('ann_toast_save_failed'), 'error');
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('ann_toast_save_failed'), 'error');
             }
         },
 

@@ -86,18 +86,20 @@ def _mock_db_locations(monkeypatch, locations=None):
 
 
 def test_step_plan_correlates_retry_attempts_and_validation_logs(monkeypatch):
+    """规划重试跨 tick：一次 step_plan 只调一次 LLM，失败检查点持久化后让出 tick。"""
+    # plan_segments / write_plan_validation_log 均被 mock，开启诊断开关只为
+    # 拿到真实 log_context 上下文，不会产生文件写入。
+    monkeypatch.setattr(ScriptSplitConstants, "PLANNER_DIAGNOSTIC_LOGGING_ENABLED", True)
     task = _planning_task()
-    plan_results = iter([{}, _segment_plan()])
-    validation_results = iter([
-        (False, [{"code": "segment_gap", "message": "未覆盖全部 block"}]),
-        (True, []),
-    ])
     plan_calls = []
     validation_logs = []
+    saved_fields = []
 
     async def fake_plan_segments(**kwargs):
         plan_calls.append(kwargs)
-        return next(plan_results), "stop"
+        if len(plan_calls) == 1:
+            return {}, "stop"
+        return _segment_plan(), "stop"
 
     async def fake_write_validation(context, payload):
         validation_logs.append((context, payload))
@@ -111,6 +113,10 @@ def test_step_plan_correlates_retry_attempts_and_validation_logs(monkeypatch):
     monkeypatch.setattr(script_split_engine, "anchorize_script", lambda _script: PLAN_ANCHORS)
     monkeypatch.setattr(script_split_engine, "_is_cancelled", lambda _task_id: False)
     _mock_db_locations(monkeypatch, [])
+    validation_results = iter([
+        (False, [{"code": "segment_gap", "message": "未覆盖全部 block"}]),
+        (True, []),
+    ])
     monkeypatch.setattr(
         script_split_engine,
         "validate_segment_plan",
@@ -122,15 +128,128 @@ def test_step_plan_correlates_retry_attempts_and_validation_logs(monkeypatch):
         lambda _plan, _anchors: [{"segment_index": 1}],
     )
     _disable_plan_persistence(monkeypatch)
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "save_field",
+        lambda task_id, **fields: saved_fields.append((task_id, fields)),
+    )
 
+    # tick 1：首次尝试校验失败，检查点持久化，本 tick 正常返回
     asyncio.run(script_split_engine.step_plan(task))
 
-    assert [call["log_context"].attempt for call in plan_calls] == [1, 2]
-    assert [call["log_context"].plan_kind for call in plan_calls] == ["initial", "initial"]
-    assert "segment_gap" in plan_calls[1]["feedback"]
-    assert [payload["passed"] for _, payload in validation_logs] == [False, True]
+    assert len(plan_calls) == 1
+    assert plan_calls[0]["log_context"].attempt == 1
+    assert validation_logs[0][1]["passed"] is False
     assert validation_logs[0][1]["errors"][0]["code"] == "segment_gap"
+    checkpoint_fields = [
+        fields for _task_id, fields in saved_fields
+        if "request_config" in fields
+    ]
+    assert len(checkpoint_fields) == 1
+    checkpoint = checkpoint_fields[0]["request_config"][
+        ScriptSplitConstants.PLAN_CHECKPOINT_CONFIG_KEY
+    ]
+    assert checkpoint["attempt"] == 1
+    assert checkpoint["last_errors"][0]["code"] == "segment_gap"
+
+    # tick 2：从检查点恢复，带 feedback 重试并成功，检查点被清除
+    task2 = _planning_task(request_config=dict(checkpoint_fields[0]["request_config"]))
+    saved_fields.clear()
+
+    asyncio.run(script_split_engine.step_plan(task2))
+
+    assert len(plan_calls) == 2
+    assert plan_calls[1]["log_context"].attempt == 2
+    assert "segment_gap" in plan_calls[1]["feedback"]
+    assert validation_logs[1][1]["passed"] is True
     assert validation_logs[1][1]["segments"][0]["segment_id"] == "seg_0001"
+    cleared = [
+        fields for _task_id, fields in saved_fields
+        if "request_config" in fields
+    ]
+    assert len(cleared) == 1
+    assert (
+        ScriptSplitConstants.PLAN_CHECKPOINT_CONFIG_KEY
+        not in cleared[0]["request_config"]
+    )
+
+
+def test_step_plan_pauses_when_retry_budget_exhausted(monkeypatch):
+    """第 PLAN_MAX_RETRIES 次尝试仍失败：持久化检查点后立即 TaskPaused。"""
+    task = _planning_task()
+    plan_calls = []
+
+    async def fake_plan_segments(**kwargs):
+        plan_calls.append(kwargs)
+        return {}, "stop"
+
+    async def fake_write_validation(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(script_segment_planner, "plan_segments", fake_plan_segments)
+    monkeypatch.setattr(
+        script_segment_planner,
+        "write_plan_validation_log",
+        fake_write_validation,
+    )
+    monkeypatch.setattr(script_split_engine, "anchorize_script", lambda _script: PLAN_ANCHORS)
+    monkeypatch.setattr(script_split_engine, "_is_cancelled", lambda _task_id: False)
+    _mock_db_locations(monkeypatch, [])
+    monkeypatch.setattr(
+        script_split_engine,
+        "validate_segment_plan",
+        lambda _plan, _anchors: (
+            False,
+            [{"code": "segment_gap", "message": "未覆盖全部 block"}],
+        ),
+    )
+    _disable_plan_persistence(monkeypatch)
+    saved_fields = []
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "save_field",
+        lambda task_id, **fields: saved_fields.append((task_id, fields)),
+    )
+
+    # 前两次失败让出 tick；第三次（本轮首次调用即达到上限）应 TaskPaused
+    for attempt_index in range(ScriptSplitConstants.PLAN_MAX_RETRIES - 1):
+        asyncio.run(script_split_engine.step_plan(task))
+        cfg = task.get_request_config()
+        task = _planning_task(request_config=cfg)
+
+    with pytest.raises(script_split_engine.TaskPaused) as exc_info:
+        asyncio.run(script_split_engine.step_plan(task))
+
+    assert exc_info.value.code == "segment_gap"
+    assert exc_info.value.message == "未覆盖全部 block"
+    assert len(plan_calls) == ScriptSplitConstants.PLAN_MAX_RETRIES
+
+
+def test_step_plan_immediately_pauses_when_checkpoint_exhausted(monkeypatch):
+    """检查点已达上限：不再调用 LLM，直接以持久化的首个错误暂停。"""
+    task = _planning_task(request_config={
+        ScriptSplitConstants.PLAN_CHECKPOINT_CONFIG_KEY: {
+            "attempt": ScriptSplitConstants.PLAN_MAX_RETRIES,
+            "last_errors": [
+                {"code": "segment_gap", "message": "未覆盖全部 block"},
+            ],
+        },
+    })
+    plan_calls = []
+
+    async def fake_plan_segments(**kwargs):
+        plan_calls.append(kwargs)
+        return _segment_plan(), "stop"
+
+    monkeypatch.setattr(script_segment_planner, "plan_segments", fake_plan_segments)
+    monkeypatch.setattr(script_split_engine, "anchorize_script", lambda _script: PLAN_ANCHORS)
+    _mock_db_locations(monkeypatch, [])
+
+    with pytest.raises(script_split_engine.TaskPaused) as exc_info:
+        asyncio.run(script_split_engine.step_plan(task))
+
+    assert exc_info.value.code == "segment_gap"
+    assert plan_calls == []
 
 
 def test_step_plan_logs_timeout_without_auth_token(monkeypatch):
@@ -1007,12 +1126,24 @@ def test_step_plan_retries_on_new_root_from_compile(monkeypatch):
         script_split_engine, "plan_to_segments", lambda _p, _a: [{"segment_index": 1}],
     )
     _disable_plan_persistence(monkeypatch)
+    saved_configs = []
+
+    def fake_save_field(_task_id, **fields):
+        if "request_config" in fields:
+            saved_configs.append(fields["request_config"])
+
     monkeypatch.setattr(
         script_split_engine.ScriptSplitTaskModel,
         "save_field",
-        lambda *a, **k: None,
+        fake_save_field,
     )
 
+    # tick 1：compile 因新顶层失败，检查点持久化后让出 tick
+    asyncio.run(script_split_engine.step_plan(task))
+    assert attempts["n"] == 1
+
+    # tick 2：携带反馈重试并成功
+    task = _planning_task(request_config=saved_configs[0])
     asyncio.run(script_split_engine.step_plan(task))
 
     assert attempts["n"] == 2
@@ -1996,3 +2127,25 @@ def test_persist_realigned_plan_locations_updates_accepted_registry_by_id(monkey
     assert locations_by_id["loc_002"]["parent_id"] is None
     assert "loc_900" in locations_by_id  # 段级新实体不被覆盖
     assert accepted_calls[0]["characters"] == [{"id": "char_001", "name": "张三"}]
+
+
+class TestEnsureMetadataDict:
+    """metadata 非 dict（模型输出 null/[]）防御：按缺省重置，不把成功规划拖成 failed。"""
+
+    @pytest.mark.parametrize("bad_value", [None, [], "x", 3])
+    def test_non_dict_values_reset_to_empty_dict(self, bad_value):
+        holder = {"metadata": bad_value}
+        result = script_split_engine._ensure_metadata_dict(holder)
+        assert result == {}
+        assert holder["metadata"] == {}
+
+    def test_existing_dict_kept_in_place(self):
+        meta = {"script_title": "剧名"}
+        holder = {"metadata": meta}
+        assert script_split_engine._ensure_metadata_dict(holder) is meta
+
+    def test_missing_key_initialized(self):
+        holder = {}
+        result = script_split_engine._ensure_metadata_dict(holder)
+        assert result == {}
+        assert holder["metadata"] == {}

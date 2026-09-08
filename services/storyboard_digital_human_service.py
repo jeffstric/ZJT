@@ -660,7 +660,8 @@ def submit_digital_human_plan(
         asset_type="video",
         ai_tool_id=ai_tool_id,
     )
-    StoryboardSceneAssetModel.set_selected(int(scene_id), "video", asset_id)
+    # 延迟选中：生成成功前不切换选中视频（否则生成期间导出/再生成会读到空资产，
+    # 失败导致原视频落空）；选中在轮询 task-status 检测到成功后自动切换。
     StoryboardSceneModel.update(int(scene_id), last_modified_user_id=int(user_id))
 
     return {

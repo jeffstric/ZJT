@@ -134,6 +134,7 @@ class SessionStorage:
             auth_token=entity.auth_token or '',
             model=entity.model,
             model_id=entity.model_id,
+            vendor_id=getattr(entity, 'vendor_id', None),
             text_to_image_model_id=entity.text_to_image_model_id,
             session_type=entity.session_type
         )
@@ -262,6 +263,7 @@ class SessionStorage:
                     session_id=session.session_id,
                     model=session.model,
                     model_id=session.model_id,
+                    vendor_id=getattr(session, 'vendor_id', None),
                     expires_at=expires_at
                 )
 
@@ -287,6 +289,7 @@ class SessionStorage:
                     auth_token=session.auth_token,
                     model=session.model,
                     model_id=session.model_id,
+                    vendor_id=getattr(session, 'vendor_id', None),
                     text_to_image_model_id=session.text_to_image_model_id,
                     conversation_history=[],  # 新路径：不再用旧字段存历史，消息在 chat_messages 表中
                     expires_at=expires_at,

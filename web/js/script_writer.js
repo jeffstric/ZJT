@@ -2449,62 +2449,81 @@
                     defaultModel.selected = true;
                 }
 
-                // 选中优先级：世界默认 LLM → localStorage 上次选择 → 系统推荐
+                // 选中优先级：localStorage 上次选择 → 世界默认 LLM → 系统推荐
+                // （世界默认仅作为"新会话种子"，不应覆盖用户在本页的显式选择）
                 let appliedPreferred = false;
-                const worldLlm = worldDefaultModels.llm;
-                if (worldLlm && worldLlm.model) {
-                    const options = selector.querySelectorAll('option');
-                    for (let i = 0; i < options.length; i++) {
-                        const opt = options[i];
-                        if (opt.disabled || opt.value !== worldLlm.model) continue;
-                        if (worldLlm.vendor_id != null && worldLlm.vendor_id !== '' && opt.dataset.vendorId
-                            && String(opt.dataset.vendorId) !== String(worldLlm.vendor_id)) {
-                            continue;
-                        }
-                        selector.selectedIndex = i;
-                        appliedPreferred = true;
-                        console.log('[模型选择] 使用世界默认对话模型:', worldLlm.model);
-                        break;
-                    }
-                }
-                if (!appliedPreferred) {
-                    const savedModelRaw = localStorage.getItem('lastSelectedLlmModel');
-                    if (savedModelRaw) {
-                        try {
-                            const saved = JSON.parse(savedModelRaw);
-                            const savedModelName = saved.model || saved;
-                            const savedVendorId = saved.vendorId || '';
-                            const options = selector.querySelectorAll('option');
-                            let matched = false;
-                            if (savedVendorId) {
-                                for (let i = 0; i < options.length; i++) {
-                                    if (options[i].value === savedModelName && !options[i].disabled
-                                        && options[i].dataset.vendorId === String(savedVendorId)) {
-                                        selector.selectedIndex = i;
-                                        console.log(`[模型记忆] 自动选中上次模型: ${savedModelName} (vendor_id: ${savedVendorId})`);
-                                        matched = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!matched) {
-                                for (let i = 0; i < options.length; i++) {
-                                    if (options[i].value === savedModelName && !options[i].disabled) {
-                                        selector.selectedIndex = i;
-                                        console.log(`[模型记忆] 自动选中上次模型(回退匹配): ${savedModelName}`);
-                                        break;
-                                    }
-                                }
-                            }
-                        } catch (e) {
-                            const options = selector.querySelectorAll('option');
+                const savedModelRaw = localStorage.getItem('lastSelectedLlmModel');
+                if (savedModelRaw) {
+                    try {
+                        const saved = JSON.parse(savedModelRaw);
+                        const savedModelName = saved.model || saved;
+                        // 新格式 {model, model_id, vendor_id}；兼容旧 {model, vendorId}
+                        const savedModelId = saved.model_id ?? saved.modelId ?? '';
+                        const savedVendorId = saved.vendor_id ?? saved.vendorId ?? '';
+                        const options = selector.querySelectorAll('option');
+                        let matched = false;
+                        // 数值 ID 对精确匹配（model_id + vendor_id 同中才命中）
+                        if (savedModelId) {
                             for (let i = 0; i < options.length; i++) {
-                                if (options[i].value === savedModelRaw && !options[i].disabled) {
+                                if (!options[i].disabled
+                                    && options[i].dataset.modelId === String(savedModelId)
+                                    && (!savedVendorId || options[i].dataset.vendorId === String(savedVendorId))) {
                                     selector.selectedIndex = i;
-                                    console.log(`[模型记忆] 自动选中上次模型(旧格式): ${savedModelRaw}`);
+                                    console.log(`[模型记忆] 自动选中上次模型: ${savedModelName} (model_id: ${savedModelId})`);
+                                    matched = true;
                                     break;
                                 }
                             }
+                        }
+                        if (!matched && savedVendorId) {
+                            for (let i = 0; i < options.length; i++) {
+                                if (options[i].value === savedModelName && !options[i].disabled
+                                    && options[i].dataset.vendorId === String(savedVendorId)) {
+                                    selector.selectedIndex = i;
+                                    console.log(`[模型记忆] 自动选中上次模型: ${savedModelName} (vendor_id: ${savedVendorId})`);
+                                    matched = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!matched) {
+                            for (let i = 0; i < options.length; i++) {
+                                if (options[i].value === savedModelName && !options[i].disabled) {
+                                    selector.selectedIndex = i;
+                                    console.log(`[模型记忆] 自动选中上次模型(回退匹配): ${savedModelName}`);
+                                    matched = true;
+                                    break;
+                                }
+                            }
+                        }
+                        appliedPreferred = matched;
+                    } catch (e) {
+                        const options = selector.querySelectorAll('option');
+                        for (let i = 0; i < options.length; i++) {
+                            if (options[i].value === savedModelRaw && !options[i].disabled) {
+                                selector.selectedIndex = i;
+                                console.log(`[模型记忆] 自动选中上次模型(旧格式): ${savedModelRaw}`);
+                                appliedPreferred = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!appliedPreferred) {
+                    const worldLlm = worldDefaultModels.llm;
+                    if (worldLlm && worldLlm.model) {
+                        const options = selector.querySelectorAll('option');
+                        for (let i = 0; i < options.length; i++) {
+                            const opt = options[i];
+                            if (opt.disabled || opt.value !== worldLlm.model) continue;
+                            if (worldLlm.vendor_id != null && worldLlm.vendor_id !== '' && opt.dataset.vendorId
+                                && String(opt.dataset.vendorId) !== String(worldLlm.vendor_id)) {
+                                continue;
+                            }
+                            selector.selectedIndex = i;
+                            appliedPreferred = true;
+                            console.log('[模型选择] 使用世界默认对话模型:', worldLlm.model);
+                            break;
                         }
                     }
                 }
@@ -3113,22 +3132,29 @@
 
 
         async function changeModel() {
-            if (!sessionId) {
-                showError(window.t ? window.t('error_create_session_first') : '请先创建会话');
-                return;
-            }
             const selector = document.getElementById('model-selector');
             const selectedOption = selector.options[selector.selectedIndex];
             const model = selector.value;
             const modelId = selectedOption?.dataset?.modelId;
 
-            // 保存选中的模型和供应商到 localStorage
+            // 保存选中的模型和供应商到 localStorage（无论会话是否已创建，先记住用户选择）。
+            // 格式与 storyboard / world-defaults 对齐：{model, model_id, vendor_id}（snake_case），
+            // 读端兼容旧 {model, vendorId}（无 model_id）
             const vendorId = selectedOption?.dataset?.vendorId || '';
-            localStorage.setItem('lastSelectedLlmModel', JSON.stringify({ model, vendorId }));
+            localStorage.setItem('lastSelectedLlmModel', JSON.stringify({
+                model,
+                model_id: modelId !== '' && modelId !== undefined && !isNaN(Number(modelId)) ? Number(modelId) : null,
+                vendor_id: vendorId !== '' && !isNaN(Number(vendorId)) ? Number(vendorId) : null,
+            }));
 
             updateModelTooltip();
             updateLlmModelIcon();
             updateThinkingModeUI();
+
+            if (!sessionId) {
+                showError(window.t ? window.t('error_create_session_first') : '请先创建会话');
+                return;
+            }
 
             // 本地模型（Ollama / vLLM）检测和警告
             const vendorName = selectedOption?.dataset?.vendorName || '';
@@ -3159,6 +3185,7 @@
                     body: JSON.stringify({ 
                         model: model,
                         model_id: modelId,
+                        vendor_id: selectedOption?.dataset?.vendorId ? parseInt(selectedOption.dataset.vendorId, 10) : null,
                         auth_token: AUTH_TOKEN
                     })
                 });
@@ -3295,8 +3322,9 @@
         async function restoreSavedImageModel(targetSessionId) {
             /** 从后端恢复生图模型选中状态。
 
-            读取优先级：会话草稿（targetSessionId 对应）> 世界默认。
+            读取优先级：会话草稿（targetSessionId 对应）> localStorage 上次选择 > 世界默认。
             返回 'session' 表示从会话草稿恢复（说明用户已在本对话设置过，无需 auto-set 覆盖），
+            返回 'local' 表示采用 localStorage 记忆，
             返回 'world_default' 或 null 表示读取的是世界默认/未恢复。
             */
             const selector = document.getElementById('text-to-image-model-selector');
@@ -3312,6 +3340,32 @@
                     { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
                 );
                 const currentData = await currentResp.json();
+                if (currentData.success && currentData.scope === 'session' && currentData.task_id != null) {
+                    const savedId = String(currentData.task_id);
+                    const matchOption = Array.from(selector.options).find(
+                        (opt) => opt.value === savedId && !opt.disabled
+                    );
+                    if (matchOption) {
+                        selector.value = savedId;
+                        updateImageModelDisplay();
+                        updateImageModelIcon();
+                        return 'session';
+                    }
+                }
+                // 无会话草稿：优先采用 localStorage 上次选择（用户显式切换过）
+                const savedLocal = localStorage.getItem('lastSelectedImageModel');
+                if (savedLocal) {
+                    const matchLocal = Array.from(selector.options).find(
+                        (opt) => opt.value === savedLocal && !opt.disabled
+                    );
+                    if (matchLocal) {
+                        selector.value = savedLocal;
+                        updateImageModelDisplay();
+                        updateImageModelIcon();
+                        console.log('[生图模型] 使用 localStorage 上次选择:', savedLocal);
+                        return 'local';
+                    }
+                }
                 if (currentData.success && currentData.task_id != null) {
                     const savedId = String(currentData.task_id);
                     const matchOption = Array.from(selector.options).find(
@@ -3506,7 +3560,8 @@
             };
             localStorage.setItem('lastSelectedLlmModel', JSON.stringify({
                 model: worldDefaultModels.llm.model,
-                vendorId: worldDefaultModels.llm.vendor_id || '',
+                model_id: worldDefaultModels.llm.model_id ?? null,
+                vendor_id: worldDefaultModels.llm.vendor_id || null,
             }));
             showSuccess(tOr(
                 'success_set_default_llm',
@@ -3555,16 +3610,21 @@
 
 
         async function changeTextToImageModel() {
-            if (!sessionId) {
-                showError(window.t ? window.t('error_create_session_first') : '请先创建会话');
-                return;
-            }
-
             const selector = document.getElementById('text-to-image-model-selector');
             const model = selector.value;
 
             if (!model) {
                 showError(window.t ? window.t('error_select_image_model') : '请选择生图模型');
+                return;
+            }
+
+            // 无论会话是否已创建，先记住用户选择（localStorage），避免刷新丢失
+            localStorage.setItem('lastSelectedImageModel', String(model));
+            updateImageModelIcon();
+            updateImageModelDisplay();
+
+            if (!sessionId) {
+                showError(window.t ? window.t('error_create_session_first') : '请先创建会话');
                 return;
             }
 
@@ -3865,8 +3925,8 @@
                     continue;
                 }
                 if (resp.status === 404) {
-                    // 任务丢失（进程重启等），让用户重试
-                    throw new Error('导入任务已丢失（服务可能重启过），请重试');
+                    // job 文件已过 TTL 被清理，或 job_id 不存在
+                    throw new Error('导入任务不存在或已过期，请重试');
                 }
                 const data = await resp.json().catch(() => ({}));
                 if (!resp.ok || !data.success) {

@@ -1,0 +1,134 @@
+# 每条 GitLab Pipeline 使用独立的 COMPOSE_PROJECT_NAME，容器、网络和卷互不共享。
+
+x-app-build: &app-build
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  image: zjt-e2e-app:${CI_PIPELINE_ID:-local}
+
+x-app-environment: &app-environment
+  comfyui_env: unit
+  DB_HOST: mysql
+  DB_PORT: "3306"
+  DB_USER: root
+  DB_PASSWORD: e2e_mysql_pass
+  DB_NAME: zjt_e2e
+  TZ: Asia/Shanghai
+  E2E_TEST_PHONE: ${E2E_TEST_PHONE:-13900002799}
+  E2E_TEST_PASSWORD: ${E2E_TEST_PASSWORD:-E2eOnly_2799}
+  E2E_TEST_INVITE_CODE: ${E2E_TEST_INVITE_CODE:-E2E2799PRIMARY}
+  E2E_SECONDARY_PHONE: ${E2E_SECONDARY_PHONE:-13900002800}
+  E2E_SECONDARY_PASSWORD: ${E2E_SECONDARY_PASSWORD:-E2eOnly_2800}
+  E2E_SECONDARY_INVITE_CODE: ${E2E_SECONDARY_INVITE_CODE:-E2E2799SECONDARY}
+  E2E_TEST_POWER: ${E2E_TEST_POWER:-1000000}
+
+services:
+  mysql:
+    image: m.daocloud.io/docker.io/library/mysql:8.0
+    restart: "no"
+    environment:
+      MYSQL_ROOT_PASSWORD: e2e_mysql_pass
+      MYSQL_DATABASE: zjt_e2e
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_unicode_ci
+    # --innodb-flush-log-at-trx-commit=0 等：测试库不要求崩溃持久性，
+    # 关闭 fsync 以规避 DinD(overlay2 套 overlay2) 下冷初始化极慢导致健康检查超时
+    # （与 docker-compose-test.yml 同款修复，见 45492825 / 7abd52c8）
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --innodb-flush-log-at-trx-commit=0
+      --sync-binlog=0
+      --innodb-doublewrite=0
+    volumes:
+      - e2e_mysql_data:/var/lib/mysql
+      - ../model/sql/baseline.sql:/docker-entrypoint-initdb.d/01-baseline.sql:ro
+      # 必须挂载到 /etc/mysql/my.cnf：CI DinD 下宿主机 AppArmor usr.sbin.mysqld
+      # profile 会附加到容器内 mysqld，/etc/my.cnf 读取被拒（EACCES），
+      # profile 只允许 /etc/mysql/**（与 docker-compose-test.yml 同款修复）
+      - ./mysql/my.cnf:/etc/mysql/my.cnf:ro
+    healthcheck:
+      # 走 TCP(127.0.0.1) 而非 localhost socket，避免 AppArmor 场景 socket
+      # 路径不一致导致误判；预算约 180s（DinD 冷初始化实测约 110s）
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-P", "3306", "-u", "root", "-pe2e_mysql_pass"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  prepare:
+    <<: *app-build
+    restart: "no"
+    environment: *app-environment
+    command: ["python", "scripts/testing/prepare_e2e_environment.py"]
+    volumes:
+      - e2e_upload:/app/upload
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  app:
+    <<: *app-build
+    restart: "no"
+    environment: *app-environment
+    command:
+      - python
+      - -m
+      - uvicorn
+      - server:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9003"
+      - --timeout-keep-alive
+      - "600"
+    volumes:
+      - e2e_upload:/app/upload
+      - e2e_data:/app/data
+      - e2e_files:/app/files
+      - e2e_logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:9003/api/system/health', timeout=3).read()
+      interval: 5s
+      timeout: 5s
+      retries: 36
+      start_period: 30s
+
+  e2e:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.e2e
+    image: zjt-e2e-runner:${CI_PIPELINE_ID:-local}
+    restart: "no"
+    init: true
+    environment:
+      CI: "true"
+      E2E_STRICT: "true"
+      E2E_BASE_URL: http://app:9003
+      E2E_TEST_PHONE: ${E2E_TEST_PHONE:-13900002799}
+      E2E_TEST_PASSWORD: ${E2E_TEST_PASSWORD:-E2eOnly_2799}
+      E2E_SECONDARY_PHONE: ${E2E_SECONDARY_PHONE:-13900002800}
+      E2E_SECONDARY_PASSWORD: ${E2E_SECONDARY_PASSWORD:-E2eOnly_2800}
+      E2E_TEST_ASSET_DIR: /workspace/auto_test/test_assets
+      E2E_RESULTS_DIR: /results
+    volumes:
+      - e2e_results:/results
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  e2e_mysql_data:
+  e2e_upload:
+  e2e_data:
+  e2e_files:
+  e2e_logs:
+  e2e_results:

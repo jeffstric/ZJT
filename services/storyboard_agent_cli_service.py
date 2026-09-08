@@ -50,6 +50,10 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceError,
     MediaGenerationPreferenceService,
 )
+from services.storyboard_asset_service import (
+    asset_result_url as _asset_row_result_url,
+    resolve_scene_generation_bindings,
+)
 from utils.computing_power import get_computing_power_for_task
 
 
@@ -792,7 +796,7 @@ class StoryboardAgentCliService:
         count: int = 1,
         sequence_mode: Optional[str] = None,
         force_bypass: bool = False,
-        select_result: bool = True,
+        select_result: bool = False,
         task_type: Optional[int] = None,
         generation_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
         preference_surface: str = MediaGenerationSurface.STORYBOARD_CLI,
@@ -1070,8 +1074,15 @@ class StoryboardAgentCliService:
         user_id: Optional[int],
         asset_type: str,
         project_ids: Sequence[int],
-        select_result: bool = True,
+        select_result: bool = False,
     ) -> Dict[str, Any]:
+        """绑定生成任务资产。
+
+        延迟选中（默认 select_result=False）：提交生成只建 storyboard_scene_asset，
+        不切换选中指针——生成中的空资产不得成为选中项，否则生成期间导出整片、
+        再生成视频会读到空首帧/空视频（丢片段），失败还会导致原画面落空。
+        选中在轮询期由 resolve_scene_generation_bindings 检测到生成成功后自动切换。
+        """
         if asset_type not in VALID_ASSET_TYPES:
             raise StoryboardCliError("invalid_asset_type", f"invalid asset_type: {asset_type}")
         if not project_ids:
@@ -1086,15 +1097,14 @@ class StoryboardAgentCliService:
             )
             asset_ids.append(int(asset_id))
 
-        selected_asset_id = asset_ids[0]
         if select_result:
-            StoryboardSceneAssetModel.set_selected(int(scene_id), asset_type, selected_asset_id)
+            StoryboardSceneAssetModel.set_selected(int(scene_id), asset_type, asset_ids[0])
         if user_id is not None:
             StoryboardSceneModel.update(int(scene_id), last_modified_user_id=int(user_id))
 
         return {
             "asset_ids": asset_ids,
-            "selected_asset_id": selected_asset_id,
+            "selected_asset_id": asset_ids[0] if select_result else None,
             "asset_type": asset_type,
         }
 
@@ -1105,12 +1115,47 @@ class StoryboardAgentCliService:
         asset_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         context = self.scene_context(scene_id)
-        selected = context["selected_assets"]
+        selected = dict(context["selected_assets"])
+        scene_dict = context.get("scene") or {}
+        # 延迟选中解析：提交生成不再立即选中；此处检测到生成成功后自动切换选中，
+        # 并附带各类型最新的生成中任务（CLI 轮询方据此展示进度并等待完成）。
+        binding = resolve_scene_generation_bindings(int(scene_id), {
+            "first_frame": scene_dict.get("selected_first_frame_id"),
+            "last_frame": scene_dict.get("selected_last_frame_id"),
+            "video": scene_dict.get("selected_video_id"),
+        })
+        generating: Dict[str, Optional[Dict[str, Any]]] = {}
+        for atype in ("first_frame", "last_frame", "video"):
+            info = binding.get(atype) or {}
+            gen_row = info.get("generating")
+            generating[atype] = self._generating_asset_info(gen_row, atype) if gen_row else None
+            if info.get("switched"):
+                new_id = info.get("selected_asset_id")
+                selected[atype] = self._asset_info(new_id) if new_id else None
         if asset_type:
             if asset_type not in VALID_ASSET_TYPES:
                 raise StoryboardCliError("invalid_asset_type", f"invalid asset_type: {asset_type}")
             selected = {asset_type: selected.get(asset_type)}
-        return {"success": True, "scene_id": int(scene_id), "selected_assets": selected}
+            generating = {asset_type: generating.get(asset_type)}
+        return {
+            "success": True,
+            "scene_id": int(scene_id),
+            "selected_assets": selected,
+            "generating": generating,
+        }
+
+    @staticmethod
+    def _generating_asset_info(row: Optional[Dict[str, Any]], asset_type: str) -> Optional[Dict[str, Any]]:
+        """生成中资产的轮询信息（延迟选中：选中指针在成功前不指向生成中任务）。"""
+        if not row:
+            return None
+        return {
+            "asset_id": row.get("id"),
+            "asset_type": asset_type,
+            "result_url": _asset_row_result_url(row),
+            "status": row.get("status"),
+            "error": None,
+        }
 
     def list_scenes(
         self,
@@ -1279,12 +1324,27 @@ class StoryboardAgentCliService:
         scenes = StoryboardSceneModel.list_by_storyboard(int(storyboard_id)) or []
         items: List[Dict[str, Any]] = []
         for scene in scenes:
+            scene_id = int(_get_field(scene, "id"))
+            # 延迟选中解析：检测「更新成功资产」自动切换选中，并附带生成中任务信息，
+            # 使组级轮询与单分镜 task-status 行为一致（提交生成不再立即选中）。
+            binding = resolve_scene_generation_bindings(scene_id, {
+                "first_frame": _get_field(scene, "selected_first_frame_id"),
+                "last_frame": _get_field(scene, "selected_last_frame_id"),
+                "video": _get_field(scene, "selected_video_id"),
+            })
+            if any(info.get("switched") for info in binding.values()):
+                scene = StoryboardSceneModel.get_by_id(scene_id) or scene
             selected_assets = self._selected_assets(scene)
+            generating = {
+                atype: self._generating_asset_info((binding.get(atype) or {}).get("generating"), atype)
+                for atype in ("first_frame", "last_frame", "video")
+            }
             item = {
-                "scene_id": int(_get_field(scene, "id")),
+                "scene_id": scene_id,
                 "title": _get_field(scene, "title") or "",
                 "sort_order": _get_field(scene, "sort_order"),
                 "selected_assets": selected_assets,
+                "generating": generating,
             }
             if asset_type:
                 item[asset_type] = selected_assets.get(asset_type)
@@ -2310,7 +2370,6 @@ class StoryboardAgentCliService:
             if int(item.get("status") or 0) != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING:
                 continue
             item_extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
-            is_regeneration = item_extra.get("plan_status") == "regenerate_pending"
             dependency = by_id.get(int(item.get("dependency_item_id") or 0))
             reference_url = None
             reference_item_id = None
@@ -2373,7 +2432,7 @@ class StoryboardAgentCliService:
                     image_size=job.get("image_size"),
                     count=int(job.get("count") or 1),
                     sequence_mode=job.get("sequence_mode"),
-                    select_result=not is_regeneration,
+                    # 延迟选中：生成成功前不切换选中资产（task-status 轮询成功后自动切换）
                     generation_snapshots=generation_snapshots,
                 )
             except StoryboardCliError as exc:
@@ -2439,7 +2498,7 @@ class StoryboardAgentCliService:
                             count=int(job.get("count") or 1),
                             sequence_mode=job.get("sequence_mode"),
                             force_bypass=True,
-                            select_result=not is_regeneration,
+                            # 延迟选中：生成成功前不切换选中资产
                         )
                         degraded_project_ids = degraded_result.get("project_ids") or []
                         degraded_asset_ids = degraded_result.get("asset_ids") or []
@@ -3151,6 +3210,16 @@ class StoryboardAgentCliService:
     def _storyboard_config(self, storyboard: Any) -> Dict[str, Any]:
         return _parse_json(_get_field(storyboard, "config_json"), {}) or {}
 
+    @staticmethod
+    def _coerce_split_model_id(model_id: Any) -> Optional[int]:
+        """把存储/入参里的 model_id 宽容归一为数值 ID。
+
+        历史存储可能把 "vendor:模型名" 复合串当 model_id 存下，裸 int() 会
+        ValueError 使接口 500；无法还原时返回 None（走模型名 + 默认 vendor）。
+        """
+        from llm.llm_client_factory import coerce_model_id_or_none
+        return coerce_model_id_or_none(model_id)
+
     def _normalize_script_split_model_selection(
         self,
         model: Optional[Any],
@@ -3174,7 +3243,7 @@ class StoryboardAgentCliService:
             return model_name
         return {
             "model": model_name,
-            "model_id": int(model_id) if model_id not in (None, "") else None,
+            "model_id": self._coerce_split_model_id(model_id),
             "vendor_id": int(vendor_id) if vendor_id not in (None, "") else None,
         }
 
@@ -3261,7 +3330,7 @@ class StoryboardAgentCliService:
             resolved_model = StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL
         return (
             resolved_model,
-            int(model_id) if model_id not in (None, "") else None,
+            self._coerce_split_model_id(model_id),
             int(vendor_id) if vendor_id not in (None, "") else None,
         )
 
@@ -3433,7 +3502,7 @@ class StoryboardAgentCliService:
         mode: str,
         result: Dict[str, Any],
         reference_images: Optional[Sequence[str]] = None,
-        select_result: bool = True,
+        select_result: bool = False,
     ) -> Dict[str, Any]:
         if not isinstance(result, dict):
             raise StoryboardCliError("submit_failed", "submitter returned invalid result")
@@ -3458,6 +3527,8 @@ class StoryboardAgentCliService:
             "project_ids": project_ids,
             "status": result.get("status") or "submitted",
             "model_used": result.get("model_used"),
+            # 顶层对齐 generate-video 路径的 computing_power 字段，前端直读无需挖 submission
+            "computing_power": result.get("computing_power_total") or result.get("computing_power_required"),
             "reference_images": list(reference_images or []),
             **bind_result,
             "submission": result,

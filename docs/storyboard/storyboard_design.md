@@ -445,7 +445,7 @@ class SceneDifficulty:
 | sort_order | DOUBLE | 对话顺序（浮点二分，同 2.3.2） |
 | character_id | INT UNSIGNED NULL | → `character.id`；**NULL = 旁白/画外音** |
 | text | TEXT | 台词 |
-| speed | DECIMAL(4,2) | 语速，默认 1.00 |
+| speed | DECIMAL(4,2) | 语速，范围 0.50~2.00（>1 更快，<1 更慢），默认 1.00；生成配音时随任务写入 `ai_audio.speed`，由 TTS 调用层换算为 IndexTTS-2.5 的 `duration_factor = 1/speed`（见 3.5.1） |
 | volume | INT | 音量 0-100，默认 100 |
 | selected_audio_id | INT UNSIGNED NULL | 当前选中配音 → `storyboard_dialogue_audio.id`（见 2.5） |
 | last_modified_user_id | INT UNSIGNED | 最后修改人 |
@@ -803,7 +803,7 @@ async def create_storyboard(request: Request):
 | PUT | `/api/storyboard/dialogue/{dialogue_id}` | `storyboard:update` | 更新对话（角色/台词/语速/音量） |
 | DELETE | `/api/storyboard/dialogue/{dialogue_id}` | `storyboard:update` | 删除对话（CASCADE 删除配音历史） |
 | PUT | `/api/storyboard/scene/{scene_id}/dialogue/reorder` | `storyboard:update` | 移动单个对话（浮点二分，Body: `{dialogue_id, prev_id, next_id}`） |
-| POST | `/api/storyboard/dialogue/{dialogue_id}/generate-voiceover` | `storyboard:generate` | 生成配音：取 `character.default_voice` 作参考音频→`ai_audio`+`TasksModel`→`dialogue_audio`+设选中。**不消耗算力** |
+| POST | `/api/storyboard/dialogue/{dialogue_id}/generate-voiceover` | `storyboard:generate` | 生成配音：取 `character.default_voice` 作参考音频→`ai_audio`+`TasksModel`→`dialogue_audio`+设选中。**不消耗算力**。2026-09-05 起对话 `speed`（0.5~2.0，后端 clamp）随任务落 `ai_audio.speed`，TTS 执行时换算 `duration_factor = 1/speed` 传给 IndexTTS-2.5（`POST /tts_url`，接口上限 0.5~2.0），改语速后需重新生成配音才生效 |
 | POST | `/api/storyboard/dialogue/{dialogue_id}/audio/select` | `storyboard:update` | 设置对话当前选中配音（Body: `{dialogue_audio_id}`） |
 
 ### 3.5.2 资产与选中（storyboard_scene_asset）
@@ -995,7 +995,7 @@ await ZJTi18n.init(['common', 'storyboard']);
 | Tab | 内容 |
 |-----|------|
 | 🖼 画面 | 画面提示词卡片（perspective/style/scene_desc/character_desc）+ 编辑按钮 + 视频提示词编辑 + 当前选中首帧预览 |
-| 🎤 对话 | 对话列表：每行「角色下拉（取自 `state.characters`，空=旁白）+ 台词 + 语速/音量 + 试听 + 生成配音/保存/删除」；一个分镜多句对话 |
+| 🎤 对话 | 对话列表：每行「角色下拉（取自 `state.characters`，空=旁白）+ 台词 + 语速/音量滑杆（拖动实时显示数值，松手自动保存；语速 0.5~2.0、音量 0~100）+ 试听 + 生成配音/保存/删除」；一个分镜多句对话 |
 
 **底部 AI 智能助手区域**（模型列表统一从 `GET /api/storyboard/models` 获取，按模式渲染 `<select>`，选中 `task_id` 作为 `task_type`）：
 - 对话改图模式：文本输入（LLM 模型待接入）。**不显示 AI 优化标识**。

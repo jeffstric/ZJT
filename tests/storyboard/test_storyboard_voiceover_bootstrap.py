@@ -150,11 +150,11 @@ def _ctx_mgr(store):
 # 测试：_submit_dialogue_voiceover_atomically
 # ---------------------------------------------------------------------------
 
-def _setup_dialogue(monkeypatch, svc, *, selected_audio_id=None, text="你好", character_id=17):
+def _setup_dialogue(monkeypatch, svc, *, selected_audio_id=None, text="你好", character_id=17, speed=None):
     """mock StoryboardDialogueModel.get_by_id + CharacterModel.get_by_id。"""
     dialogue = SimpleNamespace(
         id=101, scene_id=201, character_id=character_id, text=text,
-        selected_audio_id=selected_audio_id,
+        selected_audio_id=selected_audio_id, speed=speed,
     )
     character = SimpleNamespace(id=17, default_voice="/upload/voice/a.wav")
     monkeypatch.setattr(
@@ -196,6 +196,38 @@ def test_submit_atomically_creates_full_task_chain(voiceover_service, monkeypatc
     # 事务提交，未回滚
     assert calls["committed"] is True
     assert calls["rolled_back"] is False
+
+
+def test_ensure_dialogue_voiceover_passes_speed_to_audio(voiceover_service, monkeypatch):
+    """语速透传：dialogue.speed 规范化后随 extra_audio_kwargs 写入 ai_audio 创建参数。"""
+    svc, calls = voiceover_service
+    _setup_dialogue(monkeypatch, svc, speed=1.5)
+
+    calls["fetchone_result"] = {"id": 101, "selected_audio_id": None}
+
+    result = svc.ensure_dialogue_voiceover(101, 7)
+
+    assert result["decision"] == "submitted"
+    assert len(calls["audio_create"]) == 1
+    assert calls["audio_create"][0]["speed"] == 1.5
+
+
+def test_ensure_dialogue_voiceover_clamps_out_of_range_speed(voiceover_service, monkeypatch):
+    """语速越界兜底：dialogue.speed=5.0 收敛到上限 2.0。"""
+    svc, calls = voiceover_service
+    _setup_dialogue(monkeypatch, svc, speed=5.0)
+    calls["fetchone_result"] = {"id": 101, "selected_audio_id": None}
+    assert svc.ensure_dialogue_voiceover(101, 7)["decision"] == "submitted"
+    assert calls["audio_create"][0]["speed"] == 2.0
+
+
+def test_ensure_dialogue_voiceover_defaults_missing_speed(voiceover_service, monkeypatch):
+    """语速缺省兜底：dialogue.speed=None 回落默认 1.0。"""
+    svc, calls = voiceover_service
+    _setup_dialogue(monkeypatch, svc, speed=None)
+    calls["fetchone_result"] = {"id": 101, "selected_audio_id": None}
+    assert svc.ensure_dialogue_voiceover(101, 7)["decision"] == "submitted"
+    assert calls["audio_create"][0]["speed"] == 1.0
 
 
 def test_submit_atomically_idempotent_when_already_selected(voiceover_service, monkeypatch):

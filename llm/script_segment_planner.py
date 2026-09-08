@@ -101,6 +101,20 @@ async def write_plan_validation_log(
     await _write_json_log(context, "05_validation.json", payload)
 
 
+def build_exclusion_instruction() -> str:
+    """非正文 block 排除指引（与规划输出顶层 excluded_block_ids 字段配套）。
+
+    speed / quality 两种规划提示词共用，文案只此一份，避免双处漂移。
+    背景：剧本头部的标题/爽点/分隔线等元信息一旦被切成独立分段，
+    阶段二拆分模型会为这段「无米之炊」凭空编造分镜（线上事故：分镜重复）。
+    """
+    return """【非正文 block 排除（excluded_block_ids）】
+- 顶层输出 `excluded_block_ids`：列出**不属于剧情正文**的 block——剧名/集标题、爽点/概要/风格/基调/时长等元信息说明、`---` 分隔线、创作备注等。这些 block 不参与分段、不生成任何分镜。
+- 对白、旁白、括号动作描述、`[场景 …]` 场景声明行、`场景编号：` 行都属于正文，一律不得排除。
+- 整个剧本都是正文时输出空数组 `[]`。
+- `excluded_block_ids` 与 segments 的 block_ids 合起来必须覆盖全部 block：每个 block 恰好属于二者其一，不得重复、不得遗漏。"""
+
+
 def build_planning_prompt(
     anchors: List[Dict[str, Any]],
     max_output_tokens: int = ScriptSplitConstants.SEGMENT_MAX_OUTPUT_TOKENS,
@@ -120,9 +134,12 @@ def build_planning_prompt(
 - 优先保证语义完整，但避免把大量高复杂度 spatial_layout 内容堆在同一段导致输出超限。
 - 单段预估输出 token 不应超过 {max_output_tokens}。
 
+{build_exclusion_instruction()}
+
 【输出格式】只输出纯 JSON，不要 markdown 标记，不要解释文字：
 {{
   "schema_version": 1,
+  "excluded_block_ids": [],
   "segments": [
     {{
       "segment_id": "seg_0001",
@@ -135,7 +152,7 @@ def build_planning_prompt(
 }}
 
 【约束】
-- segments 必须覆盖全部 block，每个 block 恰好属于一个 segment。
+- segments 与 excluded_block_ids 合起来覆盖全部 block，每个 block 恰好属于其一。
 - segment 顺序必须与原文一致。
 - block_ids 必须来自下方锚点列表，连续不跳越。
 - segment_id 全局唯一，按顺序编号 seg_0001、seg_0002……
@@ -180,6 +197,10 @@ async def plan_segments(
         finish_reason 用于判断是否 MAX_TOKENS 截断。
     """
     prompt = prompt_override or build_planning_prompt(anchors)
+    if prompt_override:
+        # 策略自定义提示词（如 enterprise quality 模式）同样需要非正文排除指引。
+        # enterprise 代码不进 git，在核心仓库的必经点统一注入，避免双处维护。
+        prompt = f"{prompt}\n\n{build_exclusion_instruction()}"
     if feedback:
         prompt = f"{prompt}\n\n【上轮规划反馈，请修正】\n{feedback}\n\n请重新输出完整分段计划 JSON。"
 
@@ -230,6 +251,7 @@ async def plan_segments(
 
 __all__ = [
     "SegmentPlanLogContext",
+    "build_exclusion_instruction",
     "build_planning_prompt",
     "create_plan_log_context",
     "plan_segments",

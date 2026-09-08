@@ -286,6 +286,17 @@ async def _resume_task_from_checkpoint(task, auth_token: Optional[str] = None) -
             ScriptSplitSegmentModel.reset_retry_budget,
             task.id,
         )
+    if target_status == ScriptSplitConstants.STATUS_QUEUED:
+        # 显式恢复视为新的规划重试周期：清掉 request_config 中的规划检查点，
+        # 与段级 reset_retry_budget 语义一致，避免恢复后立即再次 plan_failed。
+        cfg = task.get_request_config()
+        if ScriptSplitConstants.PLAN_CHECKPOINT_CONFIG_KEY in cfg:
+            cfg.pop(ScriptSplitConstants.PLAN_CHECKPOINT_CONFIG_KEY, None)
+            await asyncio.to_thread(
+                ScriptSplitTaskModel.save_field,
+                task.id,
+                request_config=cfg,
+            )
 
     if auth_token:
         await asyncio.to_thread(

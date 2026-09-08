@@ -40,6 +40,7 @@ class _FakeTask:
 
     def __init__(self, **overrides):
         self.id = 1
+        self.user_id = 7
         self.status = "planning"
         self.script_content = "场景一：清晨，小明走进客厅。\n\n场景二：黄昏，小红到来。"
         self.auth_token = "tok"
@@ -65,6 +66,10 @@ class _FakeTask:
 
     def get_final_result(self):
         return self._final
+
+    def get_accepted_registry(self):
+        # step_publish 的角色契约校验需要该接口；本套测试不关注注册表内容
+        return {}
 
 
 def _task(**overrides):
@@ -180,7 +185,7 @@ class TestStepPlan:
             _run(step_plan(task))
 
     def test_plan_retries_exhausted_raises_task_paused(self, patch_models, monkeypatch):
-        """连续 PLAN_MAX_RETRIES 次返回非法 plan → TaskPaused（保留检查点）。"""
+        """重试预算跨 tick 耗尽（每次失败持久化检查点）→ TaskPaused。"""
         async def fake_plan_segments(**kw):
             # 返回一个不合法的 plan（缺 segments）
             return {"segments": []}, "stop"
@@ -191,7 +196,15 @@ class TestStepPlan:
         task = _task()
 
         with pytest.raises(TaskPaused) as exc_info:
-            _run(step_plan(task))
+            for _attempt in range(ScriptSplitConstants.PLAN_MAX_RETRIES):
+                _run(step_plan(task))
+                # 模拟下一 tick：用持久化的 request_config 检查点重建任务
+                cfg = task.get_request_config()
+                for _tid, fields in reversed(patch_models["save_field"]):
+                    if "request_config" in fields:
+                        cfg = fields["request_config"]
+                        break
+                task = _task(request_config=dict(cfg))
         # 耗尽后 pause；具体 code 优先取最后一轮校验错误（如 plan_no_segments）
         assert exc_info.value.code in {"plan_failed", "plan_no_segments", "quality_plan_invalid"}
 

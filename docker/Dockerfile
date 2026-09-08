@@ -40,9 +40,12 @@ COPY requirements.txt pyproject.toml ./
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
     pip config set global.trusted-host mirrors.aliyun.com
 
-# Upgrade pip and install Python dependencies
+# uv 并行解析/下载依赖。串行 pip 在镜像源抖动时会把一次构建拖成 60 分钟级
+# job（CI 实测），uv 并发下载可显著收敛构建时间；uv 仅构建期使用，装完即卸载。
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir uv==0.12.9 && \
+    uv pip install --system --no-cache -r requirements.txt && \
+    pip uninstall -y uv
 
 # Copy project files
 COPY agents/ ./agents/
@@ -64,6 +67,8 @@ COPY web/ ./web/
 COPY server.py ./
 COPY config.example.yml ./
 COPY config_unit.base.yml ./
+# 生产基类配置：entrypoint 生成 config_prod.yml 及运行时兜底合并都依赖它
+COPY config_prod.base.yaml ./
 
 # Copy entrypoint script and fix line endings for Windows compatibility
 COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

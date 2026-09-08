@@ -134,6 +134,7 @@
   "video_generated": "Video generated: ",
   "image_generation_failed": "Image generation failed. Please try again later.",
   "video_generation_failed": "Video generation failed. Please try again later.",
+  "generation_violation": "Generation failed: content did not pass the safety review. Please check your prompt and reference images and try again.",
   "image_generating_progress": "Generating image... ({done}/{total})",
   "video_generating_progress": "Generating video... ({done}/{total})",
   "image_task_submitted": "Image generation task submitted",

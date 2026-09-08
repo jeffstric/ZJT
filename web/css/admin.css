@@ -2507,6 +2507,69 @@ body {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
+/* 密钥字段：毛玻璃遮罩 + 眼睛按钮 */
+.qc-secret-wrap {
+    position: relative;
+    max-width: 420px;
+}
+
+.qc-secret-wrap input[type="text"] {
+    width: 100%;
+    padding-right: 36px;
+}
+
+.qc-secret-glass {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: linear-gradient(135deg, rgba(241, 245, 249, 0.82), rgba(226, 232, 240, 0.94));
+    backdrop-filter: blur(10px) saturate(120%);
+    -webkit-backdrop-filter: blur(10px) saturate(120%);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65), inset 0 1px 6px rgba(15, 23, 42, 0.08);
+    pointer-events: none; /* 遮罩不拦截鼠标：点击落到输入框，查看密钥须通过眼睛按钮 */
+}
+
+.qc-secret-glass-text {
+    font-size: 11px;
+    color: #64748b;
+    letter-spacing: 0.05em;
+    user-select: none;
+    pointer-events: none;
+}
+
+.qc-secret-eye {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.85);
+    color: #64748b;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+    z-index: 2;
+}
+
+.qc-secret-eye:hover {
+    color: #3b82f6;
+    background: #ffffff;
+}
+
+.qc-secret-eye.revealed {
+    background: transparent;
+    color: #94a3b8;
+}
+
 .qc-config-fields .form-hint {
     font-size: 11px;
     color: #94a3b8;
@@ -3704,4 +3767,215 @@ body {
     min-width: 260px;
     max-width: 360px;
     text-align: left;
+}
+
+/* 模型管理页：推荐模型档位（性价比/效果）配置框 */
+.reco-box {
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    border: 1px solid #f59e0b;
+    border-left: 4px solid #d97706;
+    border-radius: 8px;
+}
+
+.reco-title {
+    color: #92400e;
+    font-size: 14px;
+    margin-bottom: 6px;
+}
+
+.reco-desc {
+    margin: 0 0 12px;
+    color: #78350f;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.reco-scene {
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid #fcd34d;
+    border-radius: 6px;
+}
+
+.reco-scene-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.reco-scene-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #92400e;
+}
+
+.reco-scene-key {
+    font-size: 12px;
+    color: #b45309;
+    background: #fef3c7;
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+.reco-tag {
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 999px;
+}
+
+.reco-tag.custom {
+    color: #b45309;
+    background: #fde68a;
+}
+
+.reco-tag.default {
+    color: #64748b;
+    background: #e2e8f0;
+}
+
+.reco-track-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.reco-track-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #92400e;
+    min-width: 44px;
+}
+
+.reco-select {
+    min-width: 220px;
+    text-align: left;
+}
+
+.reco-vendors {
+    min-width: 180px;
+    text-align: left;
+}
+
+.reco-reason {
+    flex: 1;
+    min-width: 180px;
+    text-align: left;
+}
+
+.reco-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+/* ==================== 公告管理（本站公告） ==================== */
+
+/* 标题下副信息（图片数/链接） */
+.ann-title-sub {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 2px;
+}
+
+/* 级别徽标 */
+.ann-level-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+.ann-level-badge.level-info {
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+.ann-level-badge.level-success {
+    background: #ecfdf5;
+    color: #047857;
+}
+.ann-level-badge.level-warning {
+    background: #fffbeb;
+    color: #b45309;
+}
+.ann-level-badge.level-error {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+
+/* 弹窗内双列（发布时间/失效时间） */
+.form-group.form-row-2 {
+    display: flex;
+    gap: 12px;
+}
+.form-group.form-row-2 > div {
+    flex: 1;
+}
+
+/* 公告图片九宫格 */
+.ann-image-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.ann-image-item {
+    position: relative;
+    width: 88px;
+    height: 88px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+}
+.ann-image-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.ann-image-remove {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(15, 23, 42, 0.65);
+    color: #fff;
+    font-size: 14px;
+    line-height: 18px;
+    text-align: center;
+    cursor: pointer;
+    padding: 0;
+}
+.ann-image-remove:hover {
+    background: rgba(220, 38, 38, 0.9);
+}
+.ann-image-upload {
+    width: 88px;
+    height: 88px;
+    border: 2px dashed #cbd5e1;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+}
+.ann-image-upload:hover {
+    border-color: #3b82f6;
+    color: #3b82f6;
+}
+.ann-image-uploading {
+    font-size: 12px;
 }

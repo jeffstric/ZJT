@@ -11,6 +11,8 @@ from model import TasksModel, AIAudioModel
 from model.storyboard import StoryboardModel, StoryboardSceneModel
 from model.storyboard_dialogue_audio import StoryboardDialogueAudioModel
 from model.storyboard_dialogue import StoryboardDialogueModel
+from config.media_file_policy import MediaFilePolicy
+from model.media_file_mapping import MediaFileEntity
 from config.constant import (
     TASK_TYPE_GENERATE_AUDIO,
     AI_AUDIO_STATUS_PENDING,
@@ -20,11 +22,14 @@ from config.constant import (
     TASK_STATUS_QUEUED,
     TASK_STATUS_PROCESSING,
     TASK_STATUS_COMPLETED,
-    TASK_STATUS_FAILED
+    TASK_STATUS_FAILED,
+    normalize_dialogue_tts_speed
 )
 from task.async_drivers.runninghub_audio_driver import RunningHubAudioConfig
 from utils.index_tts_util import generate_audio, validate_emotion_vector
 from utils.audio_duration_util import probe_audio_duration
+from utils.media_mapping_util import extract_local_path_from_url, register_uploaded_file_mapping
+from utils.project_path import resolve_upload_url_to_local_path
 import os
 from config.config_util import get_dynamic_config_value
 
@@ -212,6 +217,8 @@ async def _submit_new_task(ai_audio):
         emo_weight = ai_audio.emo_weight if ai_audio.emo_weight is not None else 1.0
         emo_vec = None
         emo_text = ai_audio.emo_text
+        # 语速（1.0 正常，>1 更快），由 generate_audio 内换算为 IndexTTS duration_factor
+        speed = normalize_dialogue_tts_speed(getattr(ai_audio, 'speed', None))
         
         # Handle emotion reference audio path
         if emo_control_method == 1 and ai_audio.emo_ref_path:
@@ -271,7 +278,8 @@ async def _submit_new_task(ai_audio):
             emo_weight=emo_weight,
             emo_vec=emo_vec,
             emo_text=emo_text,
-            result_path=result_path
+            result_path=result_path,
+            speed=speed
         )
         
         if not success:
@@ -285,6 +293,37 @@ async def _submit_new_task(ai_audio):
         logger.info(f"Task {task_id}: Audio saved to {audio_file_path}")
         upload_url = get_dynamic_config_value("tts", "upload_url")
         result_url = f"{upload_url}{audio_filename}"
+
+        # 配音结果注册 CDN mapping 并异步上传七牛：此前 /upload/tts/ 从不建
+        # mapping，音频播放全部从本机经 frp 隧道全量吐出。注册后
+        # cdn_redirect_middleware 会把后续访问 302 到七牛。同步 DB 调用放入
+        # 工作线程避免阻塞事件循环；register 内部吞异常，注册失败不影响配音任务。
+        tts_local_rel = extract_local_path_from_url(result_url)
+        if tts_local_rel:
+            # 部署前提：音频由远端 TTS 服务落盘，本服务需通过共享卷/符号链接
+            # 让 <项目根>/upload/tts/result_audio/ 可读到同一批文件（见
+            # docs/backend/upload_cdn_mapping.md）。本地不存在时跳过注册，
+            # 避免产出 cloud_path 永远为 NULL 的死记录（播放仍走本地直出回退）。
+            def _tts_file_exists(rel_path: str) -> bool:
+                try:
+                    return os.path.isfile(resolve_upload_url_to_local_path(rel_path))
+                except Exception:
+                    return False
+            if await asyncio.to_thread(_tts_file_exists, tts_local_rel):
+                await asyncio.to_thread(
+                    register_uploaded_file_mapping,
+                    None,
+                    tts_local_rel,
+                    MediaFileEntity.TTS,
+                    MediaFilePolicy.NEVER_EXPIRE,
+                    task_id,
+                )
+            else:
+                logger.info(
+                    "Task %s: TTS 音频本地不可读（%s），跳过 CDN 注册——请检查 TTS 落盘目录"
+                    "与本服务 upload 目录的共享卷配置", task_id, tts_local_rel
+                )
+
         # Update database with result
         AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_COMPLETED, result_url=result_url, message="音频生成成功")
         StoryboardDialogueAudioModel.update_audio_url_by_ai_audio_id(task_id, result_url)

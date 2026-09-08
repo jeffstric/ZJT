@@ -15,6 +15,7 @@ import state, {
     applyThinkingDefaultsForModel,
     applyGenerateProgressStatus,
     applyMediaPreferenceProfiles,
+    composeSceneImagePrompt,
 } from './state.js';
 import * as api from './api.js';
 import { handleAuthError } from './api.js';
@@ -290,11 +291,14 @@ export async function finishBootstrapAfterStoryboardReady(data) {
         ensureVideoGenerationPrefsSupported();
         syncVideoMediaFromScene(getCurrentScene(), { resetUploads: true });
     }
-    // 直连「视频生成」模式：文本框预填当前分镜视频提示词（对口型分镜无文本框，置空）
+    // 直连「视频生成」模式：文本框预填当前分镜视频提示词（对口型分镜无文本框，置空）；
+    // 直连「直填生图」模式：预填当前分镜画面提示词
     if (state.chatMode === 'video') {
         const bootScene = getCurrentScene();
         const bootIsDh = String(bootScene?.videoType || bootScene?.video_type || '').toLowerCase() === 'digital_human';
         state.inputMessage = bootIsDh ? '' : (bootScene?.videoPrompt || '');
+    } else if (state.chatMode === 'image') {
+        state.inputMessage = composeSceneImagePrompt(getCurrentScene());
     }
     renderApp();
     loadSceneAgentMessages(state.currentSceneId).catch(() => {});

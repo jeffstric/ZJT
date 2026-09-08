@@ -21,6 +21,8 @@ from .location_multi_angle_tasks import LocationMultiAngleTasksModel, LocationMu
 from .media_file_mapping import MediaFileMappingModel, MediaFileMapping
 from .skill_definitions import SkillDefinitionsModel, SkillDefinition
 from .notifications import NotificationsModel, NotificationEntity
+from .announcements import AnnouncementsModel, AnnouncementEntity, AnnouncementStatus
+from .announcement_reads import AnnouncementReadsModel, AnnouncementReadEntity
 from .async_tasks import AsyncTasksModel, AsyncTask, AsyncTaskStatus
 from .ai_tool_pipeline_steps import PipelineStepModel, PipelineStep, PipelineStepStatus, PipelineStage, PipelineStepType
 from .implementation_attempts import ImplementationAttemptModel, ImplementationAttempt
@@ -84,6 +86,11 @@ __all__ = [
     'SkillDefinition',
     'NotificationsModel',
     'NotificationEntity',
+    'AnnouncementsModel',
+    'AnnouncementEntity',
+    'AnnouncementStatus',
+    'AnnouncementReadsModel',
+    'AnnouncementReadEntity',
     'AsyncTasksModel',
     'AsyncTask',
     'AsyncTaskStatus',

@@ -1,0 +1,20 @@
+ARG PLAYWRIGHT_BASE_IMAGE=m.daocloud.io/mcr.microsoft.com/playwright/python:v1.60.0-noble
+FROM ${PLAYWRIGHT_BASE_IMAGE}
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUTF8=1 \
+    CI=true
+
+WORKDIR /workspace
+
+COPY requirements_e2e.txt ./
+
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com && \
+    pip install --no-cache-dir -r requirements_e2e.txt
+
+# E2E 容器仅需要测试代码；被测应用由 app 容器从同一 commit 单独构建。
+COPY auto_test/e2e/ ./auto_test/e2e/
+
+CMD ["python", "-m", "pytest", "auto_test/e2e", "-m", "ci_smoke and p0", "--junitxml=/results/junit.xml", "--html=/results/report.html", "--self-contained-html"]

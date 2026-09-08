@@ -427,7 +427,10 @@
         // 显示/隐藏参考音频字段（仅在多参考图模式下显示）
         const audioField = el.querySelector('.audio-field');
         if(audioField) audioField.style.display = mode === 'multi_reference' ? '' : 'none';
-        // 参考视频字段在所有模式下都显示（支持视频节点连线）
+        // 参考视频字段（含 video-ref 端口）：仅在多参考图模式下显示（只有该模式消费参考视频），
+        // 文生视频模式无任何素材输入；与 workflow.js 恢复路径的显隐逻辑保持一致
+        const videoField = el.querySelector('.video-field');
+        if(videoField) videoField.style.display = mode === 'multi_reference' ? '' : 'none';
 
         // 根据 supports_last_frame 控制尾帧输入框的可用性
         const endFileInput = el.querySelector('.end-file');
@@ -1225,6 +1228,8 @@
         genStatus.style.color = '';
         genStatus.style.display = 'block';
         genStatus.textContent = '正在提交任务...';
+        // 新一轮生成开始，清除上次失败原因（避免重载后误显示过期错误）
+        node.data.lastError = '';
 
         try {
           const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
@@ -1430,6 +1435,8 @@
               genStatus.style.color = '#dc2626';
               genStatus.textContent = truncatedError;
               setBtnReady(genBtnMain, '生成视频');
+              // 持久化失败原因，工作流重载后可恢复显示
+              node.data.lastError = truncatedError || '';
               
               // 更新所有视频节点状态为失败
               allVideoNodeIds.forEach((videoNodeId) => {
@@ -1469,6 +1476,9 @@
                 if(task.status === 'FAILED'){
                   statusField.style.display = 'block';
                   setStatusEl(statusEl, `✗ 生成失败: ${truncateErrorMessage(task.error) || '未知错误'}`, '#dc2626');
+                  // 持久化失败原因，工作流重载后可恢复显示
+                  const videoNode = state.nodes.find(n => n.id === videoNodeId);
+                  if(videoNode) videoNode.data.lastError = truncateErrorMessage(task.error) || '未知错误';
                 } else if(task.status === 'SUCCESS' && task.result){
                   // 成功的任务在这里只更新状态文本，视频加载留给onComplete处理
                   statusField.style.display = 'block';
@@ -1488,6 +1498,8 @@
           genStatus.style.color = '#dc2626';
           genStatus.textContent = truncatedErr || '生成失败';
           setBtnReady(genBtnMain, '生成视频');
+          // 持久化失败原因，工作流重载后可恢复显示
+          node.data.lastError = truncatedErr || '生成失败';
           showToast('视频生成失败: ' + truncatedErr, 'error');
         }
       });

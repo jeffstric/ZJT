@@ -1265,6 +1265,7 @@ class DriverImplementation:
     MINIMAX_H3_RUNNINGHUB_V1 = 'minimax_h3_runninghub_v1'
     MINIMAX_H3_TURBO_RUNNINGHUB_V1 = 'minimax_h3_turbo_runninghub_v1'
     MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 'minimax_h3_reference_runninghub_v1'
+    MINIMAX_H3_TEXT_RUNNINGHUB_V1 = 'minimax_h3_text_runninghub_v1'
 
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 'digital_human_minimax_h3_runninghub_v1'
@@ -1453,6 +1454,9 @@ class DriverImplementationId:
     VIDU_Q3_T2V_TURBO_V1 = 82
     VIDU_Q3_T2V_PRO_V1 = 83
 
+    # MiniMax H3 文生视频（复用参考生视频工作流，素材槽位全空）
+    MINIMAX_H3_TEXT_RUNNINGHUB_V1 = 84
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1525,6 +1529,7 @@ IMPLEMENTATION_TO_ID = {
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
     'minimax_h3_turbo_runninghub_v1': DriverImplementationId.MINIMAX_H3_TURBO_RUNNINGHUB_V1,
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
+    'minimax_h3_text_runninghub_v1': DriverImplementationId.MINIMAX_H3_TEXT_RUNNINGHUB_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
     'wan3_video_dashscope_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_V1,
     'wan3_video_dashscope_r2v_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_R2V_V1,
@@ -1607,6 +1612,7 @@ class DriverKey:
     # MiniMax H3 相关
     MINIMAX_H3_IMAGE_TO_VIDEO = 'minimax_h3_image_to_video'
     MINIMAX_H3_REFERENCE_TO_VIDEO = 'minimax_h3_reference_to_video'
+    MINIMAX_H3_TEXT_TO_VIDEO = 'minimax_h3_text_to_video'
 
     # Wan22 相关
     WAN22_IMAGE_TO_VIDEO = 'wan22_image_to_video'
@@ -1805,6 +1811,7 @@ class TaskTypeId:
         'DIGITAL_HUMAN_MINIMAX_H3': '数字人 MiniMax H3',
         'MINIMAX_H3_IMAGE_TO_VIDEO': 'MiniMax H3 图生视频',
         'MINIMAX_H3_REFERENCE_TO_VIDEO': 'MiniMax H3 参考生视频',
+        'MINIMAX_H3_TEXT_TO_VIDEO': 'MiniMax H3 文生视频',
         'WAN3_IMAGE_TO_VIDEO': '万相3.0 图生视频',
         'WAN3_REFERENCE_TO_VIDEO': '万相3.0 参考生视频',
         'WAN3_TEXT_TO_VIDEO': '万相3.0 文生视频',
@@ -1853,6 +1860,7 @@ class TaskTypeId:
     VIDU_Q3_TEXT_TO_VIDEO = 42
     VIDU_Q3_IMAGE_TO_VIDEO = 43
     VIDU_Q3_REFERENCE_TO_VIDEO = 44
+    MINIMAX_H3_TEXT_TO_VIDEO = 45
 
 
     # 图片/视频 增强
@@ -2215,7 +2223,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         model_name='MiniMax H3',
         variant_label='首尾帧',
         category=TaskCategory.IMAGE_TO_VIDEO,
-        categories=[TaskCategory.TEXT_TO_VIDEO],
+        # 注意：H3 图生视频只有首尾帧图生模式（驱动强制要求首帧图），
+        # 不得挂载 TEXT_TO_VIDEO 额外分类——纯文字提交会在驱动层报"服务异常"（事故 ai_tools 12307）。
+        # 文生视频请使用 minimax_h3_text_to_video。
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,
@@ -2264,6 +2274,38 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supports_last_frame=False,
         max_multi_ref_images=9,  # 最多 9 张参考图
         supports_ref_audio_video=True,  # 支持参考音频（≤2）和参考视频（≤2）
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: MINIMAX_H3_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.MINIMAX_H3_TEXT_TO_VIDEO,
+        key='minimax_h3_text_to_video',
+        short_key='minimax_h3_t2v',
+        name='MiniMax H3 (文生)',
+        model_name='MiniMax H3',
+        variant_label='文生',
+        legacy_names=['MiniMax H3 文生视频'],
+        category=TaskCategory.TEXT_TO_VIDEO,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.MINIMAX_H3_TEXT_TO_VIDEO,
+        implementation=DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1,
+        computing_power=0,
+        supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4', '2:3', '3:2', '21:9'],
+        supported_durations=[4, 5, 6, 7, 8, 9, 10],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=37,
+        supported_image_modes=[],  # 文生视频不需要任何图片/音频/视频输入（复用参考生工作流，素材槽位全空）
+        supports_last_frame=False,
+        supports_ref_audio_video=False,
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
@@ -3472,6 +3514,21 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='RunningHub MiniMax H3 参考生视频接口（多参考图，最多9张）',
         sort_order=5205.0,
+        required_config_keys=['runninghub.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='minimax_h3_text_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='MinimaxH3TextRunninghubV1Driver',
+        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},  # 复用 H3 首尾帧版算力表
+        enabled=True,
+        description='RunningHub MiniMax H3 文生视频接口（复用参考生工作流，素材槽位全空）',
+        sort_order=5206.0,
         required_config_keys=['runninghub.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},

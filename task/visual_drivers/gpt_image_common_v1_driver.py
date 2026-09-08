@@ -22,6 +22,7 @@ from utils.media_mapping_util import extract_local_path_from_url
 from utils.project_path import get_project_root, resolve_upload_url_to_local_path
 from utils.media_cache import get_cache_manager
 from .exceptions import ImageExpiredError
+from utils.content_moderation_error import build_user_error_from_api_error
 
 
 class GptImageCommonV1Driver(BaseVideoDriver):
@@ -44,8 +45,10 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             '1:1': '1024x1024',
             '3:2': '1536x1024',
             '2:3': '1024x1536',
-            '16:9': '1536x1024',
-            '9:16': '1024x1536',
+            # 官方 Image API 支持任意 16 倍数自定义尺寸（宽高比 1:3~3:1），
+            # 16:9 / 9:16 使用真比例自定义尺寸，不再复用 3:2 / 2:3 预设
+            '16:9': '1536x864',
+            '9:16': '864x1536',
         },
         '2k': {
             '1:1': '2048x2048',
@@ -692,8 +695,6 @@ class GptImageCommonV1Driver(BaseVideoDriver):
 
             # 检查是否有错误
             if "error" in result:
-                from utils.content_moderation_error import build_user_error_from_api_error
-
                 error_info = result.get("error", {})
                 error_msg = error_info.get("message", "未知错误") if isinstance(error_info, dict) else str(error_info)
                 user_error = build_user_error_from_api_error(error_info, fallback_prefix="任务提交失败")
@@ -760,6 +761,20 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         except Exception as e:
             self.logger.error(f"Unexpected exception in GPT Image 2 submit_task: {str(e)}")
             self.logger.error(traceback.format_exc())
+
+            # HTTP 4xx/5xx 时响应体已挂到异常上（base_video_driver._request），
+            # 优先解析其中的业务错误（内容审核/额度不足等），避免被笼统的"服务异常"掩盖
+            response_body = getattr(e, "response_body", None)
+            http_error_info = response_body.get("error") if isinstance(response_body, dict) else None
+            if http_error_info:
+                user_error = build_user_error_from_api_error(http_error_info, fallback_prefix="任务提交失败")
+                self.logger.warning(f"GPT Image 2 API HTTP error: {http_error_info} -> {user_error}")
+                return {
+                    "success": False,
+                    "error": user_error,
+                    "error_type": "USER",
+                    "retry": False
+                }
 
             self._send_alert(
                 alert_type="UNEXPECTED_EXCEPTION",

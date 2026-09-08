@@ -312,6 +312,10 @@ export async function estimateMissingVideosPower(storyboardId, config = {}) {
 export async function generateSceneVideo(sceneId, config = {}) {
     return request(`/scene/${sceneId}/generate-video`, { method: 'POST', body: JSON.stringify(config) });
 }
+/** 单分镜视频预计算力（提交前预估行；口径与扣费一致：时长档位 × 分辨率/图模式修饰符） */
+export async function estimateSceneVideoPower(sceneId, config = {}) {
+    return request(`/scene/${sceneId}/estimate-video-power`, { method: 'POST', body: JSON.stringify(config) });
+}
 export async function getSceneTaskStatus(sceneId) {
     return request(`/scene/${sceneId}/task-status`);
 }
@@ -405,6 +409,13 @@ export async function exportFullVideo(storyboardId, options = {}) {
     const body = {
         include_subtitles: options.include_subtitles !== false,
     };
+    // 字幕设置：显示方式（smart 逐句 / block 整段）与左右边距（画面宽比例）
+    if (options.subtitle_mode) {
+        body.subtitle_mode = options.subtitle_mode;
+    }
+    if (Number.isFinite(Number(options.subtitle_side_margin))) {
+        body.subtitle_side_margin = Number(options.subtitle_side_margin);
+    }
     return request(`/${storyboardId}/export-full-video`, {
         method: 'POST',
         body: JSON.stringify(body),
