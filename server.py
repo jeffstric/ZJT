@@ -6537,41 +6537,17 @@ async def parse_script(
                 )
         
         # 导入剧本解析模块
-        from llm.llm_client_factory import resolve_composite_model_ref
-        from model.vendor_model import VendorModelModel
+        from llm.llm_client_factory import normalize_model_selection_refs
 
-        # 获取真实的 vendor_id
-        # 优先使用前端发送的 vendor_id（用户选择的供应商），其次根据 model_id 查询
-        real_vendor_id = 1  # 默认值
-        if vendor_id:
-            try:
-                real_vendor_id = int(vendor_id)
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid vendor_id: {vendor_id}, will try to get from model_id")
-
-        # 归一化 model_id：本地服务模型（ollama/vllm）在 /api/models 下发的 id 是
-        # "vendor:模型名" 复合串（见 get_available_models），历史版本前端会把它
-        # 当作 model_id 回传，直接 int() 会 ValueError 导致整个接口 500。
-        numeric_model_id = None
-        if model_id:
-            try:
-                numeric_model_id = int(model_id)
-            except (TypeError, ValueError):
-                resolved_vendor_id, numeric_model_id = await asyncio.to_thread(
-                    resolve_composite_model_ref, str(model_id)
-                )
-                if resolved_vendor_id and real_vendor_id == 1:
-                    real_vendor_id = resolved_vendor_id
-                if not numeric_model_id:
-                    logger.warning(f"无法解析复合模型标识: {model_id}，拆分任务将回退默认模型")
-
-        if real_vendor_id == 1 and numeric_model_id:
-            try:
-                real_vendor_id = await asyncio.to_thread(
-                    VendorModelModel.get_vendor_id_by_model_id, numeric_model_id
-                ) or 1
-            except Exception as e:
-                logger.warning(f"Failed to get vendor_id for model {numeric_model_id}: {e}")
+        # 归一化 model_id / vendor_id（统一规则见 normalize_model_selection_refs）：
+        # 数字串直接转 int；"vendor:模型名" 复合串（本地服务模型在 /api/models
+        # 下发的 id 格式，历史版本前端会当作 model_id 回传）查库还原，避免
+        # 裸 int() ValueError 导致整个接口 500。
+        numeric_model_id, real_vendor_id = await asyncio.to_thread(
+            normalize_model_selection_refs, model_id, vendor_id
+        )
+        if model_id and not numeric_model_id:
+            logger.warning(f"无法解析模型标识: {model_id}，拆分任务将回退默认模型")
 
         # 改为异步任务：创建持久化拆分任务后立即返回 202，前端轮询状态。
         # 见 docs/script/script_parser_incremental_split_design.md §10 §13.1。
@@ -6872,26 +6848,60 @@ async def update_video_workflow(
             # 服务端内容哈希。不一致说明内容已被其他会话/迟到请求改写，
             # 拒绝写入（避免静默覆盖丢失），并返回当前哈希供前端收敛。
             # 头部缺省 = 不做 CAS（兼容旧前端、恢复重放等强制写路径）。
+            #
+            # 原子性：读哈希（线程池，含 await 点）与 UPDATE 之间仍可能并发写入，
+            # 因此 UPDATE 追加 content_version 条件（WHERE content_version = 读到的
+            # 版本号，迁移 no_130）：版本不匹配 affected=0，同样按 409 拒绝——
+            # check-then-act 收敛为单条原子 CAS，多 worker 部署不再互相覆盖。
             base_hash = request.headers.get('x-base-hash')
+            expected_version = None
             if base_hash:
                 # 在同一工作线程内重读 + 哈希：既把 9~18MB 大 JSON 的解析/序列化
                 # 移出事件循环（红线），也让校验基于当下最新行而非请求开始时
-                # 加载的旧快照（收窄 check-then-act 窗口；原子性仍需版本号列，见 docs）
+                # 加载的旧快照
                 def _cas_current_hash():
                     fresh = VideoWorkflowModel.get_by_id(workflow_id)
-                    return compute_content_hash(fresh) if fresh else None
-                current_hash = await asyncio.to_thread(_cas_current_hash)
+                    if not fresh:
+                        return None, None
+                    return compute_content_hash(fresh), getattr(fresh, 'content_version', 0)
+                current_hash, expected_version = await asyncio.to_thread(_cas_current_hash)
                 if current_hash is not None and current_hash != base_hash:
                     logger.warning(
                         f"[CAS] 拒绝更新工作流 {workflow_id}："
                         f"base_hash={base_hash[:12]}... != current={current_hash[:12]}..."
                     )
-                    return JSONResponse({
+                    return JSONResponse(
+                        status_code=409,
+                        content={
+                            "code": 409,
+                            "message": "工作流内容已被其他会话修改，本次保存被拒绝",
+                            "data": {"content_hash": current_hash}
+                        }
+                    )
+            affected = await asyncio.to_thread(
+                VideoWorkflowModel.update,
+                workflow_id,
+                expected_content_version=expected_version,
+                **update_fields
+            )
+            if expected_version is not None and affected == 0:
+                # 哈希比对通过但版本竞争失败：读哈希与 UPDATE 之间有并发写入抢先
+                def _conflict_hash():
+                    fresh = VideoWorkflowModel.get_by_id(workflow_id)
+                    return compute_content_hash(fresh) if fresh else None
+                current_hash = await asyncio.to_thread(_conflict_hash)
+                logger.warning(
+                    f"[CAS] 工作流 {workflow_id} 版本竞争失败"
+                    f"（expected_version={expected_version}），拒绝写入"
+                )
+                return JSONResponse(
+                    status_code=409,
+                    content={
                         "code": 409,
                         "message": "工作流内容已被其他会话修改，本次保存被拒绝",
                         "data": {"content_hash": current_hash}
-                    })
-            VideoWorkflowModel.update(workflow_id, **update_fields)
+                    }
+                )
 
         # 返回写入后的最新内容哈希（未写字段时哈希即当前值），
         # 前端据此滚动上传去重门基线与下一次 CAS 的 base_hash。

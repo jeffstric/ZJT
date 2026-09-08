@@ -90,6 +90,21 @@ class WaitingAuth(EngineError):
         super().__init__("waiting_auth", message)
 
 
+def _ensure_metadata_dict(holder: Dict[str, Any]) -> Dict[str, Any]:
+    """确保 holder['metadata'] 是 dict，返回该 dict。
+
+    模型输出 metadata: null/[] 等非 dict 值时按"缺省"重置为 {}（与旧模型
+    无该字段的行为一致）。setdefault 不会覆盖已存在的非 dict 值，直接对
+    其赋值/取键会 TypeError/AttributeError，把本已成功的规划/发布拖成
+    failed，故统一走本函数兜底。
+    """
+    metadata = holder.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        holder["metadata"] = metadata
+    return metadata
+
+
 async def _load_current_db_locations(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     """异步读取当前世界场景树，供独立结构硬门禁使用。"""
     world_id = config.get("world_id")
@@ -550,9 +565,9 @@ async def step_plan(task: ScriptSplitTask) -> None:
     excluded_blocks = [anchor_map[bid] for bid in raw_excluded if bid in anchor_map]
     if excluded_blocks:
         excluded_title = extract_script_title_from_excluded(excluded_blocks)
-        plan.setdefault("metadata", {})
+        plan_metadata = _ensure_metadata_dict(plan)
         if excluded_title:
-            plan["metadata"]["script_title"] = excluded_title
+            plan_metadata["script_title"] = excluded_title
         logger.info(
             "task %s 规划排除非正文 block %s，提取剧名: %s",
             task.id,
@@ -1402,10 +1417,10 @@ async def step_merge(task: ScriptSplitTask) -> None:
     # 标题 block 在规划阶段被排除后，拆分模型看不到剧名；
     # script_title 为空时用排除区提取的剧名回填。
     if not merged.get("script_title"):
-        plan_title = str(
-            ((task.get_segment_plan() or {}).get("metadata") or {}).get("script_title")
-            or ""
-        ).strip()
+        plan_metadata = (task.get_segment_plan() or {}).get("metadata")
+        plan_title = ""
+        if isinstance(plan_metadata, dict):
+            plan_title = str(plan_metadata.get("script_title") or "").strip()
         if plan_title:
             merged["script_title"] = plan_title
     # 全局资产清理 + 空间修复 + 分组重排（复用 script_parser 后处理）
@@ -1647,7 +1662,7 @@ async def step_publish(task: ScriptSplitTask) -> None:
             )
             return
         if int(variant_summary.get("total") or 0) > 0:
-            final_result.setdefault("metadata", {})[SUMMARY_METADATA_KEY] = (
+            _ensure_metadata_dict(final_result)[SUMMARY_METADATA_KEY] = (
                 build_character_variant_summary(final_result)
             )
             ScriptSplitTaskModel.save_field(task.id, final_result_json=final_result)
@@ -1783,7 +1798,7 @@ async def _reconcile_voiceover_and_finalize(task: ScriptSplitTask, final_result:
     for item in (summary.get("skipped") or []):
         reason = item.get("reason") or "unknown"
         skip_reason_counts[reason] = skip_reason_counts.get(reason, 0) + 1
-    final_result.setdefault("metadata", {})["voiceover_bootstrap"] = {
+    _ensure_metadata_dict(final_result)["voiceover_bootstrap"] = {
         "enabled": bool(summary.get("enabled")),
         "eligible": int(summary.get("eligible_count") or 0),
         "submitted": int(summary.get("submitted_count") or 0),

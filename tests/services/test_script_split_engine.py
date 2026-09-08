@@ -2127,3 +2127,25 @@ def test_persist_realigned_plan_locations_updates_accepted_registry_by_id(monkey
     assert locations_by_id["loc_002"]["parent_id"] is None
     assert "loc_900" in locations_by_id  # 段级新实体不被覆盖
     assert accepted_calls[0]["characters"] == [{"id": "char_001", "name": "张三"}]
+
+
+class TestEnsureMetadataDict:
+    """metadata 非 dict（模型输出 null/[]）防御：按缺省重置，不把成功规划拖成 failed。"""
+
+    @pytest.mark.parametrize("bad_value", [None, [], "x", 3])
+    def test_non_dict_values_reset_to_empty_dict(self, bad_value):
+        holder = {"metadata": bad_value}
+        result = script_split_engine._ensure_metadata_dict(holder)
+        assert result == {}
+        assert holder["metadata"] == {}
+
+    def test_existing_dict_kept_in_place(self):
+        meta = {"script_title": "剧名"}
+        holder = {"metadata": meta}
+        assert script_split_engine._ensure_metadata_dict(holder) is meta
+
+    def test_missing_key_initialized(self):
+        holder = {}
+        result = script_split_engine._ensure_metadata_dict(holder)
+        assert result == {}
+        assert holder["metadata"] == {}

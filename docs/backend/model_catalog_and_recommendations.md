@@ -16,7 +16,7 @@
 | `image.image_edit` | 改图 | GPT Image 2 | GPT Image 2 |
 | `image.script_writer` | 剧本创作生图 | GPT Image 2 | Seedream 5.0 Pro（口中的 seedance2.0 pro；系统无同名生图模型） |
 | `video.image_to_video` | 图生视频、工作流视频（首尾帧） | MiniMax H3 | Seedance 2.0 |
-| `video.text_to_video` | 文生视频 | MiniMax H3 | Seedance 2.0 |
+| `video.text_to_video` | 文生视频 | MiniMax H3 (文生)（`minimax_h3_t2v`） | Seedance 2.0 |
 | `video.reference_to_video` | 参考生视频、多参考图模式 | MiniMax H3 参考生视频（`minimax_h3_r2v`） | Seedance 2.0 |
 
 代码默认值定义在 `config/model_catalog.py` 的 `SCENE_RECOS`。营销档位不要套到剧本拆分，deepseek 档位不要套到营销智能体。

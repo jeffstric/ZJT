@@ -2457,10 +2457,25 @@
                     try {
                         const saved = JSON.parse(savedModelRaw);
                         const savedModelName = saved.model || saved;
-                        const savedVendorId = saved.vendorId || '';
+                        // 新格式 {model, model_id, vendor_id}；兼容旧 {model, vendorId}
+                        const savedModelId = saved.model_id ?? saved.modelId ?? '';
+                        const savedVendorId = saved.vendor_id ?? saved.vendorId ?? '';
                         const options = selector.querySelectorAll('option');
                         let matched = false;
-                        if (savedVendorId) {
+                        // 数值 ID 对精确匹配（model_id + vendor_id 同中才命中）
+                        if (savedModelId) {
+                            for (let i = 0; i < options.length; i++) {
+                                if (!options[i].disabled
+                                    && options[i].dataset.modelId === String(savedModelId)
+                                    && (!savedVendorId || options[i].dataset.vendorId === String(savedVendorId))) {
+                                    selector.selectedIndex = i;
+                                    console.log(`[模型记忆] 自动选中上次模型: ${savedModelName} (model_id: ${savedModelId})`);
+                                    matched = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!matched && savedVendorId) {
                             for (let i = 0; i < options.length; i++) {
                                 if (options[i].value === savedModelName && !options[i].disabled
                                     && options[i].dataset.vendorId === String(savedVendorId)) {
@@ -3122,9 +3137,15 @@
             const model = selector.value;
             const modelId = selectedOption?.dataset?.modelId;
 
-            // 保存选中的模型和供应商到 localStorage（无论会话是否已创建，先记住用户选择）
+            // 保存选中的模型和供应商到 localStorage（无论会话是否已创建，先记住用户选择）。
+            // 格式与 storyboard / world-defaults 对齐：{model, model_id, vendor_id}（snake_case），
+            // 读端兼容旧 {model, vendorId}（无 model_id）
             const vendorId = selectedOption?.dataset?.vendorId || '';
-            localStorage.setItem('lastSelectedLlmModel', JSON.stringify({ model, vendorId }));
+            localStorage.setItem('lastSelectedLlmModel', JSON.stringify({
+                model,
+                model_id: modelId !== '' && modelId !== undefined && !isNaN(Number(modelId)) ? Number(modelId) : null,
+                vendor_id: vendorId !== '' && !isNaN(Number(vendorId)) ? Number(vendorId) : null,
+            }));
 
             updateModelTooltip();
             updateLlmModelIcon();
@@ -3539,7 +3560,8 @@
             };
             localStorage.setItem('lastSelectedLlmModel', JSON.stringify({
                 model: worldDefaultModels.llm.model,
-                vendorId: worldDefaultModels.llm.vendor_id || '',
+                model_id: worldDefaultModels.llm.model_id ?? null,
+                vendor_id: worldDefaultModels.llm.vendor_id || null,
             }));
             showSuccess(tOr(
                 'success_set_default_llm',
@@ -3903,8 +3925,8 @@
                     continue;
                 }
                 if (resp.status === 404) {
-                    // 任务丢失（进程重启等），让用户重试
-                    throw new Error('导入任务已丢失（服务可能重启过），请重试');
+                    // job 文件已过 TTL 被清理，或 job_id 不存在
+                    throw new Error('导入任务不存在或已过期，请重试');
                 }
                 const data = await resp.json().catch(() => ({}));
                 if (!resp.ok || !data.success) {

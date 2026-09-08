@@ -277,7 +277,7 @@
             <img v-for="(img, idx) in annDetail.item.images" :key="idx" :src="img" alt=""
                  @click="annDetail.imageZoom = img">
           </div>
-          <a v-if="annDetail.item.link_url" :href="annDetail.item.link_url" target="_blank" class="ann-detail-link">
+          <a v-if="annDetail.item.link_url" :href="annDetail.item.link_url" target="_blank" rel="noopener noreferrer" class="ann-detail-link">
             {{ annDetail.item.link_text || $t('ann_view_link') }} →
           </a>
         </div>

@@ -102,7 +102,7 @@ async def list_announcements(
         return {"code": 0, "data": {"items": items}}
     except Exception as e:
         logger.error(f"List announcements failed: {e}")
-        return {"code": 1, "message": str(e)}
+        return {"code": 1, "message": "服务器内部错误，请稍后重试"}
 
 
 @router.get("/unread-count")
@@ -116,7 +116,7 @@ async def get_unread_count(authorization: str = Header(None, alias="Authorizatio
         return {"code": 0, "data": {"count": count}}
     except Exception as e:
         logger.error(f"Get unread count failed: {e}")
-        return {"code": 1, "message": str(e)}
+        return {"code": 1, "message": "服务器内部错误，请稍后重试"}
 
 
 @router.post("/read-all")
@@ -130,7 +130,7 @@ async def mark_all_read(authorization: str = Header(None, alias="Authorization")
         return {"code": 0, "data": {"updated_count": affected}}
     except Exception as e:
         logger.error(f"Mark all announcements read failed: {e}")
-        return {"code": 1, "message": str(e)}
+        return {"code": 1, "message": "服务器内部错误，请稍后重试"}
 
 
 @router.post("/{announcement_id}/read")
@@ -149,7 +149,7 @@ async def mark_read(
         return {"code": 0, "data": {"updated": True}}
     except Exception as e:
         logger.error(f"Mark announcement {announcement_id} read failed: {e}")
-        return {"code": 1, "message": str(e)}
+        return {"code": 1, "message": "服务器内部错误，请稍后重试"}
 
 
 # ============ 管理侧接口 ============
@@ -170,7 +170,7 @@ async def admin_create_announcement(
         return {"code": 1, "message": str(e)}
     except Exception as e:
         logger.error(f"Admin create announcement failed: {e}")
-        return {"code": 1, "message": str(e)}
+        return {"code": 1, "message": "服务器内部错误，请稍后重试"}
 
 
 @admin_router.get("/list")
@@ -198,7 +198,7 @@ async def admin_list_announcements(
         return {"code": 1, "message": str(e)}
     except Exception as e:
         logger.error(f"Admin list announcements failed: {e}")
-        return {"code": 1, "message": str(e)}
+        return {"code": 1, "message": "服务器内部错误，请稍后重试"}
 
 
 @admin_router.put("/{announcement_id}")
@@ -220,7 +220,7 @@ async def admin_update_announcement(
         return {"code": 1, "message": str(e)}
     except Exception as e:
         logger.error(f"Admin update announcement {announcement_id} failed: {e}")
-        return {"code": 1, "message": str(e)}
+        return {"code": 1, "message": "服务器内部错误，请稍后重试"}
 
 
 @admin_router.post("/{announcement_id}/publish")
@@ -259,7 +259,7 @@ async def admin_delete_announcement(
         return {"code": 1, "message": str(e)}
     except Exception as e:
         logger.error(f"Admin delete announcement {announcement_id} failed: {e}")
-        return {"code": 1, "message": str(e)}
+        return {"code": 1, "message": "服务器内部错误，请稍后重试"}
 
 
 @admin_router.post("/upload-image")
@@ -276,7 +276,7 @@ async def admin_upload_announcement_image(
         return {"code": 1, "message": str(e)}
     except Exception as e:
         logger.error(f"Admin upload announcement image failed: {e}")
-        return {"code": 1, "message": str(e)}
+        return {"code": 1, "message": "服务器内部错误，请稍后重试"}
 
 
 async def _admin_set_status(announcement_id: int, status: str, authorization: str):
@@ -293,7 +293,7 @@ async def _admin_set_status(announcement_id: int, status: str, authorization: st
         return {"code": 1, "message": str(e)}
     except Exception as e:
         logger.error(f"Admin set announcement {announcement_id} status {status} failed: {e}")
-        return {"code": 1, "message": str(e)}
+        return {"code": 1, "message": "服务器内部错误，请稍后重试"}
 
 
 def _save_announcement_image(file: UploadFile) -> str:
