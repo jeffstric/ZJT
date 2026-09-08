@@ -88,11 +88,61 @@ def test_segment_budget_floor_and_zero_multiplier():
 # ---- enforce_total_duration_limit ----
 
 def test_enforce_noop_when_within_tolerance():
-    parsed = {"shot_groups": [_group("g1", [_shot(1, 8.0), _shot(2, 8.0)])], "total_duration": 16}
+    # 90s 在 目标100s × (1±0.15) = 85~115s 区间内 → 不干预
+    parsed = {"shot_groups": [_group("g1", [_shot(1, 45.0), _shot(2, 45.0)])], "total_duration": 90}
     report = enforce_total_duration_limit(parsed, 100.0)
     assert report["applied"] is False
-    assert parsed["shot_groups"][0]["shots"][0]["duration"] == 8.0
-    assert parsed["total_duration"] == 16
+    assert report["direction"] == "none"
+    assert parsed["shot_groups"][0]["shots"][0]["duration"] == 45.0
+    assert parsed["total_duration"] == 90
+
+
+def test_enforce_expands_proportionally_to_target():
+    # LLM 只拆出 56s（远低于 2 倍目标 161.6s）→ 必须等比放大到目标区间
+    shots = [_shot(i, d) for i, d in enumerate([5, 3, 6, 4, 6, 3, 5, 6, 10, 8], start=1)]
+    parsed = {"shot_groups": [_group("g1", shots)], "total_duration": 56}
+    report = enforce_total_duration_limit(parsed, 161.6)
+    assert report["applied"] is True
+    assert report["direction"] == "expand"
+    assert report["scaled"] is True
+    total = sum(s["duration"] for s in parsed["shot_groups"][0]["shots"])
+    floor = 161.6 * (1 - ScriptSplitConstants.TOTAL_DURATION_TOLERANCE)
+    cap = 161.6 * (1 + ScriptSplitConstants.TOTAL_DURATION_TOLERANCE)
+    assert floor <= total <= cap
+    assert parsed["total_duration"] == int(round(total))
+
+
+def test_enforce_expand_caps_single_shot_at_max():
+    # 放大后单镜头超过上限 → 截断（增加总时长靠增加镜头数，不拉长单镜头）
+    shots = [_shot(1, 20.0), _shot(2, 10.0)]  # 30s → 目标 120s
+    parsed = {"shot_groups": [_group("g1", shots)], "total_duration": 30}
+    report = enforce_total_duration_limit(
+        parsed, 120.0,
+        max_shot_seconds=ScriptSplitConstants.TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS,
+    )
+    assert report["direction"] == "expand"
+    durations = [s["duration"] for s in parsed["shot_groups"][0]["shots"]]
+    assert max(durations) <= ScriptSplitConstants.TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS
+    # 20s 超上限被预截断；镜头数不足全部顶格仍低于下限 → shortfall 如实汇报
+    assert report["shot_max_capped"] == 2
+    assert report["shortfall_seconds"] > 0
+
+
+def test_enforce_expand_no_shortfall_when_enough_shots():
+    # 镜头数充足时放大应无差额达到目标（30 × 5s = 150s → 目标 300s）
+    shots = [_shot(i, 5.0) for i in range(1, 31)]
+    parsed = {"shot_groups": [_group("g1", shots)], "total_duration": 150}
+    report = enforce_total_duration_limit(
+        parsed, 300.0,
+        max_shot_seconds=ScriptSplitConstants.TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS,
+    )
+    assert report["direction"] == "expand"
+    durations = [s["duration"] for s in parsed["shot_groups"][0]["shots"]]
+    assert all(d == ScriptSplitConstants.TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS for d in durations)
+    total = sum(durations)
+    floor = 300.0 * (1 - ScriptSplitConstants.TOTAL_DURATION_TOLERANCE)
+    assert total >= floor
+    assert report["shortfall_seconds"] == 0.0
 
 
 def test_enforce_scales_down_proportionally():

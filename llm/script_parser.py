@@ -940,80 +940,137 @@ def _merge_shot_into(target: Dict[str, Any], absorbed: Dict[str, Any]) -> None:
 def enforce_total_duration_limit(
     parsed_data: Dict[str, Any],
     target_seconds: float,
+    max_shot_seconds: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """把全部分镜总时长压到 target_seconds×(1+容差) 以内（确定性兜底）。
+    """把全部分镜总时长双向归一到 target_seconds×(1±容差) 内（确定性兜底）。
 
-    在 reorganize_shot_groups 之后、renumber_global 之前调用：
-    1. 总时长未超容差上限 → 不干预
-    2. 超限 → 按比例压缩每镜头时长（单镜头下限 TOTAL_DURATION_SHOT_MIN_SECONDS）
-    3. 压缩后仍超限（镜头过多触发下限）→ 逐个把全局最短镜头并入同组相邻镜头
+    在 reorganize_shot_groups 之前、renumber_global 之前调用：
+    1. 总时长在容差区间内 → 不干预
+    2. 超上限 → 按比例压缩每镜头时长（单镜头下限 TOTAL_DURATION_SHOT_MIN_SECONDS）；
+       压缩后仍超限（镜头过多触发下限）→ 逐个把全局最短镜头并入同组相邻镜头
        （合并后 duration 取 max），直到达标或无可合并镜头
+    3. 低于下限（LLM 拆得比目标短，如 2 倍节奏）→ 按比例放大每镜头时长；
+       放大后单镜头超过 max_shot_seconds（engine 传放大上限常量
+       TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS=10s：增加总时长靠增加镜头数
+       而非拉长单镜头）时截断，保证后续 reorganize_shot_groups 能按组上限
+       重新拆组；镜头数不足、全顶上限仍低于下限时接受差额并写入
+       shortfall_seconds（镜头数量只能靠 LLM 拆出，prompt 预算块会给出
+       建议镜头数区间引导）
 
-    只减不加，不会破坏 reorganize_shot_groups 已满足的组内时长上限。
-    返回报告 dict（含 total_before/total_after/merged_shots 等）写入
-    parsed_data["metadata"]["total_duration_control"]。
+    归一化必须先于 reorganize_shot_groups：放大后组内总时长会超组上限，
+    由 reorganize 拆组恢复；压缩只减时长不会破坏组上限。
+    返回报告 dict（含 direction/total_before/total_after/merged_shots 等）
+    写入 parsed_data["metadata"]["total_duration_control"]。
     """
     report: Dict[str, Any] = {
         "target_seconds": round(float(target_seconds), 1),
         "applied": False,
+        "direction": "none",
         "scaled": False,
         "merged_shots": 0,
+        "shot_max_capped": 0,
     }
     groups = parsed_data.get("shot_groups") or []
     shots = [s for g in groups for s in (g.get("shots") or [])]
     total_before = sum(_safe_float(s.get("duration", 0)) for s in shots)
     report["total_before"] = round(total_before, 1)
-    cap = float(target_seconds) * (1 + ScriptSplitConstants.TOTAL_DURATION_TOLERANCE)
-    if total_before <= cap or target_seconds <= 0 or not shots:
+    if target_seconds <= 0 or not shots:
+        report["total_after"] = round(total_before, 1)
+        return report
+    tolerance = ScriptSplitConstants.TOTAL_DURATION_TOLERANCE
+    cap = float(target_seconds) * (1 + tolerance)
+    floor = float(target_seconds) * (1 - tolerance)
+    if floor <= total_before <= cap:
         report["total_after"] = round(total_before, 1)
         return report
 
     report["applied"] = True
-
-    # 第一步：等比压缩（单镜头下限保护）
-    scale = float(target_seconds) / total_before
     min_shot = float(ScriptSplitConstants.TOTAL_DURATION_SHOT_MIN_SECONDS)
-    for s in shots:
-        s["duration"] = round(max(min_shot, _safe_float(s.get("duration", 0)) * scale), 1)
-    total = sum(_safe_float(s.get("duration", 0)) for s in shots)
-    report["scaled"] = total < total_before
-    if total <= cap:
+    shot_cap = float(max_shot_seconds) if max_shot_seconds and max_shot_seconds > 0 else None
+
+    if total_before > cap:
+        report["direction"] = "compress"
+        # 等比压缩（单镜头下限保护）
+        scale = float(target_seconds) / total_before
+        for s in shots:
+            s["duration"] = round(max(min_shot, _safe_float(s.get("duration", 0)) * scale), 1)
+        report["scaled"] = True
+        total = sum(_safe_float(s.get("duration", 0)) for s in shots)
+        if total <= cap:
+            report["total_after"] = round(total, 1)
+            parsed_data["total_duration"] = int(round(total))
+            return report
+
+        # 第二步：仍超限说明镜头数量过多（大量镜头触到下限）。
+        # 逐个把全局最短镜头并入同组相邻镜头，duration 取 max，
+        # 每次迭代减少 min(d) 的总时长并减少一个镜头。
+        for _ in range(ScriptSplitConstants.TOTAL_DURATION_MERGE_MAX_ITERATIONS):
+            shortest = None
+            for g in groups:
+                g_shots = g.get("shots") or []
+                for idx, s in enumerate(g_shots):
+                    if len(g_shots) < 2:
+                        continue
+                    d = _safe_float(s.get("duration", 0))
+                    if shortest is None or d < shortest[0]:
+                        shortest = (d, g, g_shots, idx)
+            if shortest is None:
+                break
+            _, g, g_shots, idx = shortest
+            if idx > 0:
+                target_shot, absorbed = g_shots[idx - 1], g_shots[idx]
+            else:
+                target_shot, absorbed = g_shots[idx], g_shots[idx + 1]
+            _merge_shot_into(target_shot, absorbed)
+            g_shots.remove(absorbed)
+            report["merged_shots"] += 1
+            total -= shortest[0]
+            if total <= cap:
+                break
+
+        # 清理空组并重算总时长
+        parsed_data["shot_groups"] = [g for g in groups if g.get("shots")]
+        shots = [s for g in parsed_data["shot_groups"] for s in (g.get("shots") or [])]
+        total = sum(_safe_float(s.get("duration", 0)) for s in shots)
         report["total_after"] = round(total, 1)
         parsed_data["total_duration"] = int(round(total))
         return report
 
-    # 第二步：仍超限说明镜头数量过多（大量镜头触到下限）。
-    # 逐个把全局最短镜头并入同组相邻镜头，duration 取 max，
-    # 每次迭代减少 min(d) 的总时长并减少一个镜头。
-    for _ in range(ScriptSplitConstants.TOTAL_DURATION_MERGE_MAX_ITERATIONS):
-        shortest = None
-        for g in groups:
-            g_shots = g.get("shots") or []
-            for idx, s in enumerate(g_shots):
-                if len(g_shots) < 2:
-                    continue
-                d = _safe_float(s.get("duration", 0))
-                if shortest is None or d < shortest[0]:
-                    shortest = (d, g, g_shots, idx)
-        if shortest is None:
+    # 放大方向：等比放大到目标，单镜头上限截断（超上限会让随后的
+    # reorganize_shot_groups 无法拆组恢复组内时长约束）。截断产生缺口时，
+    # 迭代把缺口按比例再分配给未顶格的镜头（水床补齐），直到总时长进入
+    # 容差下限、或全部镜头顶格（镜头数不足，无法凭空增加镜头）。
+    report["direction"] = "expand"
+    report["scaled"] = True
+    if shot_cap is not None:
+        # 预截断：LLM 输出本身超上限的镜头先压到上限
+        for s in shots:
+            d = _safe_float(s.get("duration", 0))
+            if d > shot_cap:
+                s["duration"] = round(shot_cap, 1)
+    for _ in range(ScriptSplitConstants.TOTAL_DURATION_EXPAND_MAX_ITERATIONS):
+        total = sum(_safe_float(s.get("duration", 0)) for s in shots)
+        if total >= floor:
             break
-        _, g, g_shots, idx = shortest
-        if idx > 0:
-            target_shot, absorbed = g_shots[idx - 1], g_shots[idx]
-        else:
-            target_shot, absorbed = g_shots[idx], g_shots[idx + 1]
-        _merge_shot_into(target_shot, absorbed)
-        g_shots.remove(absorbed)
-        report["merged_shots"] += 1
-        total -= shortest[0]
-        if total <= cap:
+        scale_i = float(target_seconds) / total
+        changed = False
+        for s in shots:
+            d = _safe_float(s.get("duration", 0))
+            if shot_cap is not None and d >= shot_cap - 0.05:
+                continue
+            new_d = d * scale_i
+            if shot_cap is not None and new_d >= shot_cap:
+                new_d = shot_cap
+            s["duration"] = round(new_d, 1)
+            changed = True
+        if not changed:
             break
-
-    # 清理空组并重算总时长
-    parsed_data["shot_groups"] = [g for g in groups if g.get("shots")]
-    shots = [s for g in parsed_data["shot_groups"] for s in (g.get("shots") or [])]
+    if shot_cap is not None:
+        report["shot_max_capped"] = sum(
+            1 for s in shots if _safe_float(s.get("duration", 0)) >= shot_cap - 0.05)
     total = sum(_safe_float(s.get("duration", 0)) for s in shots)
     report["total_after"] = round(total, 1)
+    report["shortfall_seconds"] = round(max(0.0, floor - total), 1)
     parsed_data["total_duration"] = int(round(total))
     return report
 
@@ -1943,12 +2000,16 @@ async def parse_script_to_shots(
         if duration_budget and duration_budget > 0:
             budget_value = float(duration_budget)
             budget_cap = budget_value * (1 + ScriptSplitConstants.TOTAL_DURATION_TOLERANCE)
-            budget_max_shots = max(1, int(budget_value // 3))
+            budget_floor = budget_value * (1 - ScriptSplitConstants.TOTAL_DURATION_TOLERANCE)
+            budget_min_shots = max(1, int(budget_value // 6))
+            budget_max_shots = max(budget_min_shots, int(budget_value // 3))
             duration_budget_block = f"""
 **【本段总时长预算·硬性约束（优先级高于镜头数量偏好）】**
-本段剧本的目标分镜总时长约为{budget_value:.0f}秒：本段所有shots的duration总和必须接近{budget_value:.0f}秒，绝对不得超过{budget_cap:.0f}秒。
-- 先按预算规划镜头数量（平均每镜头3~8秒，本段镜头总数不应超过约{budget_max_shots}个），再在镜头之间分配时长
-- 预算不足时必须合并或省略次要反应镜头，优先保证对白与关键动作有足够时长；禁止把大量镜头压到1~2秒来塞进超额镜头数
+本段剧本的目标分镜总时长约为{budget_value:.0f}秒：本段所有shots的duration总和必须落在{budget_floor:.0f}~{budget_cap:.0f}秒之间（目标{budget_value:.0f}秒），既不得明显低于下限，也不得超过上限。
+- 【达成方式·最重要】增加总时长的正确方式是拆出更多镜头，而不是拉长单个镜头：把连续动作/情绪变化/剧情节拍拆细，增加反应镜头、细节特写、过渡镜头、氛围空镜与视角切换
+- 单镜头时长必须保持在3~8秒的正常叙事节奏（平均约5秒），禁止为凑预算把镜头拉长到10秒以上；预算越充裕，镜头数量越多，而不是镜头越长
+- 按此节奏本段建议拆分约{budget_min_shots}~{budget_max_shots}个镜头（下限按平均6秒/镜头、上限按平均3秒/镜头估算）；禁止只拆少量长镜头导致总时长远低于预算
+- 只有按正常节奏拆分后仍难以达到下限时，才允许适当放慢关键动作与对白节奏，并优先保证对白与关键动作完整；禁止把大量镜头压到1~2秒来塞进超额镜头数
 - 该预算与下方「镜头组时长限制」同时生效：组内总时长仍不得超过{max_group_duration}秒
 """
 

@@ -1401,10 +1401,15 @@ class ScriptSplitConstants:
     TOTAL_DURATION_TOLERANCE = 0.15
     # 归一化按比例压缩时单镜头时长下限（秒）
     TOTAL_DURATION_SHOT_MIN_SECONDS = 1.5
+    # 归一化放大时单镜头时长上限（秒）：增加总时长靠增加镜头数而非拉长
+    # 单镜头（与 prompt 引导的 3~8 秒正常叙事节奏配套，留少量余量）
+    TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS = 10.0
     # 单段时长预算下限（秒）：至少容纳 2 个最短镜头，避免短段预算被压到无法拆分
     TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS = 3.0
     # 归一化兜底合并相邻镜头的迭代上限（防极端情况死循环）
     TOTAL_DURATION_MERGE_MAX_ITERATIONS = 200
+    # 归一化放大方向缺口再分配（水床补齐）的迭代上限
+    TOTAL_DURATION_EXPAND_MAX_ITERATIONS = 8
 
     # ---- 来源类型 ----
     SOURCE_TYPE_VIDEO_WORKFLOW = "video_workflow"

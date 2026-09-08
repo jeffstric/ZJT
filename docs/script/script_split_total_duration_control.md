@@ -25,6 +25,8 @@
 `SCRIPT_DURATION_CJK_CHARS_PER_SECOND`、`SCRIPT_DURATION_LATIN_CHARS_PER_SECOND`、
 `SCRIPT_DURATION_MIN_SECONDS`（估算下限 10s）、`TOTAL_DURATION_MULTIPLIER_MIN/MAX`（0.5~10）、
 `TOTAL_DURATION_TOLERANCE`（容差 0.15）、`TOTAL_DURATION_SHOT_MIN_SECONDS`（压缩下限 1.5s）、
+`TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS`（放大单镜头上限 10s）、
+`TOTAL_DURATION_EXPAND_MAX_ITERATIONS`（放大缺口再分配迭代上限）、
 `TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS`（段预算下限 3s）、`TOTAL_DURATION_MERGE_MAX_ITERATIONS`。
 
 ## 参数流转
@@ -45,29 +47,43 @@
 `services/script_split_engine.py::step_generate_segment` 在倍率 > 0 时计算
 `compute_segment_duration_budget_seconds(script, segment, multiplier)`，传给
 `parse_script_to_shots(duration_budget=...)`。user prompt 顶部注入
-「本段总时长预算·硬性约束」块：预算值、±15% 上限、镜头数量上限（`预算÷3`）、
-预算不足时合并/省略次要镜头的要求。镜头组时长上限（`max_group_duration`）同时生效。
+「本段总时长预算·硬性约束」块：预算值、±15% 目标区间（上下限）、
+建议镜头数量区间（`预算÷6 ~ 预算÷3`，按平均 6~3 秒/镜头估算）、
+**达成方式引导（最重要）**：增加总时长靠拆出更多镜头（反应/细节特写/过渡/
+氛围空镜/视角切换，把动作与剧情节拍拆细），而不是拉长单个镜头——单镜头
+保持 3~8 秒正常叙事节奏，禁止为凑预算拉长到 10 秒以上；只有按正常节奏拆分
+后仍难达下限时才允许适当放慢关键动作与对白节奏。镜头组时长上限
+（`max_group_duration`）同时生效。
 
-### 2. 合并后确定性归一化（硬兜底）
+### 2. 合并后确定性归一化（硬兜底，双向）
 
-`llm/script_parser.py::enforce_total_duration_limit(parsed, target_seconds)`，
-在 `step_merge` 中 `reorganize_shot_groups` 之后、`renumber_global` 之前调用：
+`llm/script_parser.py::enforce_total_duration_limit(parsed, target_seconds, max_shot_seconds)`，
+在 `step_merge` 中 `reorganize_shot_groups` **之前**、`renumber_global` 之前调用：
 
-1. 总时长 ≤ `target × (1+15%)` → 不干预；
-2. 超限 → 所有镜头 duration 等比压缩，单镜头下限 1.5s；
-3. 压缩后仍超限（镜头过多触发下限）→ 迭代把全局最短镜头并入同组相邻镜头
+1. 总时长在 `target × (1±15%)` 区间内 → 不干预；
+2. 超上限 → 所有镜头 duration 等比压缩，单镜头下限 1.5s；压缩后仍超限
+   （镜头过多触发下限）→ 迭代把全局最短镜头并入同组相邻镜头
    （`_merge_shot_into`：视频侧文本与 dialogue 追加合并、首帧保留在前镜头、
-   duration 取 max），直到达标或无可合并镜头。
+   duration 取 max），直到达标或无可合并镜头；
+3. 低于下限（LLM 拆得比目标短，实测 2 倍节奏下 LLM 往往只拆出 0.7 倍左右，
+   见 task 8 复盘）→ 所有镜头 duration 等比放大；单镜头超过 `max_shot_seconds`
+   （= `TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS` 10s，与 prompt 的 3~8 秒
+   正常节奏配套：**增加总时长靠增加镜头数而非拉长单镜头**，不再放宽到
+   `max_group_duration`）时截断，保证随后 `reorganize_shot_groups` 能按
+   组上限重新拆组恢复组内约束；镜头数不足、全顶上限仍低于下限时接受差额，
+   报告 `shortfall_seconds` 如实记录（镜头数量只能由 LLM 拆出，由第 1 层
+   建议镜头数区间引导）。
 
-归一化只减不加，不会破坏 reorganize 已满足的组内上限；兜底合并减少镜头数后由
-`renumber_global` 重排编号。**不向上拉伸**：低于目标时保持 LLM 结果
-（避免与组上限/QC 冲突），仅控制上限。
+归一化必须先于 reorganize：放大后组内总时长会超组上限，由 reorganize 拆组恢复；
+压缩方向只减时长不会破坏组上限。兜底合并减少镜头数、拆组增加组数后均由
+`renumber_global` 重排编号。
 
 ### 3. 结果汇报
 
 归一化报告写入 `final_result.metadata.total_duration_control`：
 `{multiplier, estimated_script_seconds, target_seconds, total_before, total_after,
-applied, scaled, merged_shots}`，并记录 engine info 日志。
+applied, direction(none/compress/expand), scaled, merged_shots, shot_max_capped,
+shortfall_seconds}`，并记录 engine info 日志。
 
 ## 前端界面
 
@@ -83,5 +99,6 @@ applied, scaled, merged_shots}`，并记录 engine info 日志。
 
 - `tests/llm/test_script_split_total_duration.py`：估算（中/英/空文本/空白忽略）、
   段预算分解与下限、归一化（容差内不干预/等比压缩/下限保护/兜底合并保内容/
-  单镜头组只压缩/零目标 no-op）、倍率归一化（engine + api）。
+  单镜头组只压缩/零目标 no-op/等比放大到目标区间/放大单镜头截断与差额汇报/
+  镜头充足时放大无差额）、倍率归一化（engine + api）。
 - `tests/js/test_storyboard_script_split_static.js` §10：前后端接入点静态断言。
