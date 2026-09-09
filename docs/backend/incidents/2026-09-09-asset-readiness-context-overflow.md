@@ -43,10 +43,18 @@ context length is 1048576 tokens. However, you requested 1128825 tokens
 ## 修复（develop_f809）
 
 - `config/constant.py` 新增：
-  - `AGENT_LLM_MAX_OUTPUT_TOKENS_CAP = 32768`：Agent 链路 max_tokens 硬上限。
+  - `AGENT_LLM_MAX_OUTPUT_TOKENS_CAP = 32768`：Agent 链路 max_tokens 静态保险丝（只降不升，防 DB 脏数据）。
+  - `AGENT_LLM_CONTEXT_SAFETY_MARGIN_TOKENS = 65536`：动态收缩的安全余量（覆盖估算到实际调用之间单轮新增的输入）。
+  - `AGENT_LLM_MIN_OUTPUT_TOKENS = 4096`：动态收缩下限（上下文接近占满时仍保证短回复）。
   - `EXPERT_HISTORY_MAX_IMAGES = 6`：专家对话历史保留的最大图片数。
-- `expert_agent.py` / `pm_agent.py`：DB 读出的 `max_output_tokens` 超过
-  `AGENT_LLM_MAX_OUTPUT_TOKENS_CAP` 时封顶（含默认值 65536 一并封顶）。
+- `script_writer_core/agents/output_token_budget.py`（新增，`resolve_max_output_tokens`）：
+  Agent 调用 max_tokens 统一按 `min(DB 值, 静态上限, context_window - 估算输入 - 安全余量)`
+  动态计算——小上下文模型不会因固定上限残留超限风险，大输出模型也不被一刀切。
+  估算输入取"上次 API 真实 input_tokens"与"本轮消息字符估算"的较大值
+  （文本约 1.5 字符/token，图片按 base64 体量约 1.3 字符/token）。
+- `expert_agent.py` / `pm_agent.py`：接入 `resolve_max_output_tokens`；
+  expert 侧新增 `last_api_input_tokens` 记录与 `_estimate_input_tokens()`
+  （pm 侧复用已有 `_estimate_current_tokens()`）。
 - `expert_agent.py` 新增 `_prune_history_images()`：每次 LLM 调用前裁剪
   `conversation_history`，仅保留最近 N 张图片，被裁掉的 `image_url` 片段替换为
   文本占位（URL 仍留在相邻的「[系统注入]」文案中），LLM 需要重新查看时可再次调用

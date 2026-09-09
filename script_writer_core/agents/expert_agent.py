@@ -11,7 +11,8 @@ from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from model.model import ModelModel
-from config.constant import AGENT_LLM_MAX_OUTPUT_TOKENS_CAP, EXPERT_HISTORY_MAX_IMAGES
+from config.constant import EXPERT_HISTORY_MAX_IMAGES
+from .output_token_budget import resolve_max_output_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,8 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         self.max_consecutive_no_progress = max_consecutive_no_progress
         self.max_consecutive_errors = max_consecutive_errors
         self.max_total_errors = max_total_errors
+        # 上次 API 调用的真实输入 tokens，用于动态收缩 max_tokens（见 output_token_budget）
+        self.last_api_input_tokens = 0
 
         # 显式初始化 ask_user 失败计数器，确保每个新实例从 0 开始
         self._ask_fail_count = 0
@@ -274,19 +277,13 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             check_computing_power_sync(self.auth_token, self.agent_id)
 
             try:
-                # 从数据库获取模型的最大输出 token 数（封顶防止 prompt+completion 超上下文）
-                max_output_tokens = 65536  # 默认值
+                # 从数据库获取模型配置，按剩余上下文动态计算本次调用的 max_tokens
+                model_row = None
                 try:
                     if self.model_id:
-                        model = ModelModel.get_by_id(self.model_id)
-                        if model and model.max_output_tokens:
-                            max_output_tokens = model.max_output_tokens
-                            logger.info(f"{self.agent_id}: Using model max_output_tokens: {max_output_tokens}")
+                        model_row = ModelModel.get_by_id(self.model_id)
                 except Exception as e:
                     logger.warning(f"{self.agent_id}: Failed to get model info for max_output_tokens: {e}")
-                if max_output_tokens > AGENT_LLM_MAX_OUTPUT_TOKENS_CAP:
-                    logger.info(f"{self.agent_id}: max_output_tokens {max_output_tokens} 封顶为 {AGENT_LLM_MAX_OUTPUT_TOKENS_CAP}")
-                    max_output_tokens = AGENT_LLM_MAX_OUTPUT_TOKENS_CAP
 
                 # 历史图片裁剪：防止 fetch_image_as_base64 注入的图片无上限累积击穿上下文
                 self._prune_history_images()
@@ -294,9 +291,13 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                 # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
                 # 传入 vendor_id 确保正确路由到目标供应商（如 zjt_api）
                 history_len = len(self.conversation_history)  # 记录调用前的历史长度，用于异常时截断
+                messages = self._format_messages_for_api()
+                max_output_tokens = resolve_max_output_tokens(
+                    model_row, self._estimate_input_tokens(messages), agent_id=self.agent_id
+                )
                 response = get_llm_client(self.model, vendor_id=self.vendor_id).call_api(
                     model=self.model,
-                    messages=self._format_messages_for_api(),
+                    messages=messages,
                     tools=self._get_tool_definitions(),
                     temperature=1,
                     max_tokens=max_output_tokens,
@@ -308,6 +309,10 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                     agent_id=self.agent_id,
                     agent_scope="expert"
                 )
+
+                # 记录本次真实输入 tokens，供下一轮动态收缩 max_tokens
+                if getattr(response, "usage", None):
+                    self.last_api_input_tokens = response.usage.get("input_token", 0) or response.usage.get("prompt_tokens", 0) or 0
 
                 message = response.choices[0].message
 
@@ -654,6 +659,31 @@ class ExpertAgent(BaseAgent, AskUserMixin):
     def _is_deepseek_model(self) -> bool:
         """判断当前模型是否为 DeepSeek 模型"""
         return 'deepseek' in (self.model or '').lower()
+
+    def _estimate_input_tokens(self, messages: List[Dict[str, Any]]) -> int:
+        """估算本次调用的输入 tokens，供动态收缩 max_tokens 使用。
+
+        取"上次 API 真实 input_tokens"与"本轮消息字符估算"的较大值：
+        文本按约 1.5 字符/token；图片按 base64 字符体量计（实测
+        deepseek-v4-flash-vision-exp 对图片按数据量计费，约 1.3 字符/token）。
+        tool schema 等未计入部分由安全余量覆盖。
+        """
+        text_chars = 0
+        image_chars = 0
+        for m in messages:
+            content = m.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    if part.get("type") == "image_url":
+                        image_chars += len(str(part.get("image_url", {}).get("url", "")))
+                    else:
+                        text_chars += len(str(part.get("text", "")))
+            elif content:
+                text_chars += len(str(content))
+        estimate = text_chars * 2 // 3 + int(image_chars / 1.3)
+        return max(self.last_api_input_tokens, estimate)
 
     def _prune_history_images(self, max_images: int = EXPERT_HISTORY_MAX_IMAGES) -> None:
         """裁剪对话历史中 fetch_image_as_base64 注入的图片，仅保留最近 max_images 张。

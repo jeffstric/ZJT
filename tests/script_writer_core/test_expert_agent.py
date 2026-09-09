@@ -241,6 +241,32 @@ class TestPruneHistoryImages(TestExpertAgent):
         self.assertEqual(agent.conversation_history[0]["content"], snapshot)
 
 
+class TestEstimateInputTokens(TestExpertAgent):
+    """测试 _estimate_input_tokens：文本按 1.5 字符/token、图片按 base64 体量估算"""
+
+    def test_text_only(self):
+        agent = self._create_agent()
+        messages = [{"role": "user", "content": "x" * 150}]
+        self.assertEqual(agent._estimate_input_tokens(messages), 100)
+
+    def test_image_counted_by_base64_volume(self):
+        agent = self._create_agent()
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": "看图"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + "A" * 1300}},
+        ]}]
+        # 图片 1300 字符 / 1.3 = 1000 tokens，文本 2 字符约 1 token
+        estimate = agent._estimate_input_tokens(messages)
+        self.assertGreaterEqual(estimate, 1000)
+        self.assertLess(estimate, 1100)
+
+    def test_floor_is_last_api_input_tokens(self):
+        agent = self._create_agent()
+        agent.last_api_input_tokens = 500000
+        messages = [{"role": "user", "content": "hi"}]
+        self.assertEqual(agent._estimate_input_tokens(messages), 500000)
+
+
 class TestPowerConfirmSwitch(TestExpertAgent):
     """算力确认门开关：script_writer 链路关闭（不拦截/不注入提示），marketing 链路默认开启"""
 

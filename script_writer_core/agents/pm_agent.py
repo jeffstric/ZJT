@@ -13,7 +13,7 @@ from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from agents.skill_loader import SopLoader
 from model.model import ModelModel
-from config.constant import AGENT_LLM_MAX_OUTPUT_TOKENS_CAP
+from .output_token_budget import resolve_max_output_tokens
 import json
 import uuid
 
@@ -354,19 +354,16 @@ class PMAgent(BaseAgent, AskUserMixin):
                 else:
                     tool_definitions = self._get_tool_definitions()
 
-                # 从数据库获取模型的最大输出 token 数（封顶防止 prompt+completion 超上下文）
-                max_output_tokens = 65536  # 默认值
+                # 从数据库获取模型配置，按剩余上下文动态计算本次调用的 max_tokens
+                model_row = None
                 try:
                     if task.model_id:
-                        model = ModelModel.get_by_id(task.model_id)
-                        if model and model.max_output_tokens:
-                            max_output_tokens = model.max_output_tokens
-                            logger.info(f"{self.agent_id}: Using model max_output_tokens: {max_output_tokens}")
+                        model_row = ModelModel.get_by_id(task.model_id)
                 except Exception as e:
                     logger.warning(f"{self.agent_id}: Failed to get model info for max_output_tokens: {e}")
-                if max_output_tokens > AGENT_LLM_MAX_OUTPUT_TOKENS_CAP:
-                    logger.info(f"{self.agent_id}: max_output_tokens {max_output_tokens} 封顶为 {AGENT_LLM_MAX_OUTPUT_TOKENS_CAP}")
-                    max_output_tokens = AGENT_LLM_MAX_OUTPUT_TOKENS_CAP
+                max_output_tokens = resolve_max_output_tokens(
+                    model_row, self._estimate_current_tokens(messages=messages), agent_id=self.agent_id
+                )
 
                 # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
                 # 传入 vendor_id 确保正确路由到目标供应商（如 zjt_api）
@@ -1069,9 +1066,10 @@ class PMAgent(BaseAgent, AskUserMixin):
             return 128000
         return None
 
-    def _estimate_current_tokens(self, extra_buffer: int = 2000) -> int:
+    def _estimate_current_tokens(self, extra_buffer: int = 2000, messages: Optional[List[Dict[str, Any]]] = None) -> int:
         """估算当前上下文 token 数：上次真实 input_token + 本次新增消息的字符估算 + 缓冲"""
-        messages = self._build_messages_for_api()
+        if messages is None:
+            messages = self._build_messages_for_api()
         # 极简字符估算：每 3 个字符约 1 个 token（对中英混合偏保守）
         char_count = sum(len(str(m.get("content", ""))) for m in messages)
         delta = char_count // 3
