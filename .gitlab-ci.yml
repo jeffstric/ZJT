@@ -71,6 +71,27 @@ lint:storyboard_render:
         - web/js/storyboard/**/*
         - scripts/lint_storyboard_render.py
 
+# 迁移命名/单头 lint（M1/M2/M3）。注意：分支级检查只能保证本分支单头，
+# 两个并行分支各自单头、合并后双头（merge skew）仍需目标分支流水线兜底。
+lint:migration_names:
+  stage: lint
+  image: m.daocloud.io/docker.io/library/python:3.10-slim
+  script:
+    - python scripts/lint_migration_names.py
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+# execute_tool 鸭子类型签名一致性 lint（T1）
+lint:tool_executor_signature:
+  stage: lint
+  image: m.daocloud.io/docker.io/library/python:3.10-slim
+  script:
+    - python scripts/lint_tool_executor_signature.py --allow-file scripts/lint_tool_executor_signature_allowlist.txt
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
 # =============================================================================
 # 单元测试 job
 # =============================================================================

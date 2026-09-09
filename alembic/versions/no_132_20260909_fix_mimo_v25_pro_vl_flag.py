@@ -1,7 +1,7 @@
 """修正 mimo-v2.5-pro 的 supports_vl 错误标记并清理指向它的 VL 偏好
 
 Revision ID: 20260909_fix_mimo_v25_pro_vl_fla
-Revises: 20260908_add_video_workflow_cont
+Revises: 20260904_video_voice_replace_tab
 Create Date: 2026-09-09
 
 背景：no_127 接入小米 MiMo 时把 mimo-v2.5-pro 误标 supports_vl=1（note 还写着
@@ -11,6 +11,10 @@ Create Date: 2026-09-09
 误标后果：/style-models 下拉会把 pro 列为可选 VL 模型；若用户保存为 VL 偏好，
 _get_vl_model_for_expert 不校验 supports_vl，会把 asset-readiness-checker 等
 看图专家路由到纯文本模型，注入图片后 API 直接 400。
+
+注：本迁移原编号 no_131、原挂 20260908_add_video_workflow_cont；与并行分支的
+no_131_20260904_video_voice_replace_tables 撞号形成双 head，合入 develop 后
+改编号 no_132 并改挂对方 head（revision id 不变，已应用过的库不受影响）。
 """
 from typing import Sequence, Union
 
@@ -24,7 +28,7 @@ logger = logging.getLogger(__name__)
 # revision identifiers, used by Alembic.
 # ⚠️ revision 长度必须 <= 32 字符 (alembic_version.version_num 为 varchar(32))
 revision: str = '20260909_fix_mimo_v25_pro_vl_fla'
-down_revision: Union[str, None] = '20260908_add_video_workflow_cont'
+down_revision: Union[str, None] = '20260904_video_voice_replace_tab'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
