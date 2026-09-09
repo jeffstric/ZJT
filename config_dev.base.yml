@@ -35,3 +35,10 @@ llm:
 asr:
   api_url: "http://47.98.190.124:60000"
   enabled: true
+
+# 成片对白音色替换推理服务（公网入口，前端禁止直连；环境变量可覆盖）
+voice_replace:
+  asr_base_url: "http://47.98.190.124:60000"
+  uvr_base_url: "http://47.98.190.124:60001"
+  vevo2_base_url: "http://47.98.190.124:60002"
+  seedvc_base_url: "http://150.158.44.98:17860"

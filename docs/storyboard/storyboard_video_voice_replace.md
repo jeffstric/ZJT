@@ -57,7 +57,7 @@ VC 后端当前主力为 **Vevo2**（Amphion style-preserved VC，FM-only 推理
 
 ## 基础设施
 
-推理服务（SenseVoice ASR / UVR 人声分离 / Vevo2 VC，Seed-VC 保留作回退）部署在独立的 GPU 推理服务器上，具体地址与部署方式不入库：worker 通过 yaml `voice_replace.*_base_url` 或环境变量（`SENSEVOICE_ASR_URL` / `UVR_URL` / `VEVO2_URL` / `SEEDVC_URL`）获取地址，未配置时回落 `VoiceReplaceConstants` 占位地址。前端禁止直连这些服务。
+推理服务（SenseVoice ASR / UVR 人声分离 / Vevo2 VC，Seed-VC 保留作回退）部署在独立的 GPU 推理服务器上，worker 经公网入口访问。地址优先级：环境变量（`SENSEVOICE_ASR_URL` / `UVR_URL` / `VEVO2_URL` / `SEEDVC_URL`）> yaml `voice_replace.*_base_url`（`config_prod.base.yaml` / `config_dev.base.yml` 已带公网入口默认值）> `VoiceReplaceConstants` 兜底。前端禁止直连这些服务。
 
 一期不做说话人分离（cam++）。内容切分优先。
 
@@ -80,7 +80,7 @@ VC 后端当前主力为 **Vevo2**（Amphion style-preserved VC，FM-only 推理
 - `Kim_Vocal_2` 等 karaoke 模型有时把对白分到 Instrumental。worker 会对两条 stem 都做 ASR，选有字的那条当人声。
 - 产物写 `upload/voice_replace/{job_id}/result.mp4`，并挂成新的分镜视频 candidate；成功后 `audio_embedded=1`。
 - 低置信默认 `wait_confirm`。工作流节点一期 skip（`workflow_not_supported`）。数字人 skip。
-- worker 默认打公网入口地址（经 yaml `voice_replace.*_base_url` 配置下发），未配置时回落 `VoiceReplaceConstants` 占位常量。
+- worker 默认打公网入口地址（yaml `voice_replace.*_base_url` 未配置时回落 `VoiceReplaceConstants` 兜底常量）。
 
 ## 相关代码
 

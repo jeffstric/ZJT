@@ -1591,16 +1591,16 @@ class VoiceReplaceConstants:
         VoiceReplaceJobStatus.MUXING,
     )
 
-    # 推理服务兜底地址（本机占位）。worker 经公网入口访问；生产经 yaml voice_replace.* 或环境变量覆盖，禁止前端直连。
-    ASR_BASE_URL = "http://127.0.0.1:7861"
+    # 推理服务兜底地址（公网入口）。生产可经 yaml voice_replace.* 或环境变量覆盖；禁止前端直连。
+    ASR_BASE_URL = "http://47.98.190.124:60000"
     ASR_SEGMENTS_PATH = "/api/v1/asr_segments"
-    UVR_BASE_URL = "http://127.0.0.1:7862"
+    UVR_BASE_URL = "http://47.98.190.124:60001"
     UVR_SEPARATE_PATH = "/api/v1/uvr"
     # VC 后端：Vevo2（Amphion style-preserved VC，效果优于 Seed-VC，主力）。
-    VEVO2_BASE_URL = "http://127.0.0.1:7863"
+    VEVO2_BASE_URL = "http://47.98.190.124:60002"
     VEVO2_CONVERT_PATH = "/api/v1/convert"
     # Seed-VC（Gradio）保留作回退。
-    SEEDVC_BASE_URL = "http://127.0.0.1:7860"
+    SEEDVC_BASE_URL = "http://150.158.44.98:17860"
     SEEDVC_PREDICT_PATH = "/gradio_api/call/predict"
 
     ASR_TIMEOUT = 60
