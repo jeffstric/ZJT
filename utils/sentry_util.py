@@ -8,6 +8,7 @@ import threading
 from typing import Dict, Any, Optional
 from enum import Enum
 from config.config_util import get_dynamic_config_value
+from config.version import get_app_version
 
 logger = logging.getLogger(__name__)
 
@@ -34,65 +35,95 @@ class SentryUtil:
     def init_from_env(cls):
         """
         从配置文件初始化 Sentry
-        
+
         配置项：
             sentry.dsn: Sentry DSN URL（必需）
             sentry.environment: 环境名称，默认 "production"
+
+        额外随事件上报：
+            release: 应用版本号（读取 pyproject.toml [project].version）
+            mode: 运行模式 tag（community / enterprise，来自 edition.mode）
         """
         sentry_dsn = get_dynamic_config_value('sentry', 'dsn', default=None)
         environment = get_dynamic_config_value('sentry', 'environment', default='production')
-        
+
+        # 版本号作为 release 上报（Sentry 后台按版本聚合 issue）；读取失败不阻断初始化
+        release = None
+        try:
+            release = get_app_version()
+        except Exception as e:
+            logger.warning(f"Failed to read app version for Sentry release: {e}")
+
+        # 运行模式（community/enterprise）作为全局 tag 随所有事件上报
+        # Edition 延迟导入以避免循环导入（同 unified_config.py 既有模式）
+        mode = None
+        try:
+            from config.constant import Edition
+            mode = Edition.get_mode()
+        except Exception as e:
+            logger.warning(f"Failed to read edition mode for Sentry tag: {e}")
+
         # 初始化
         cls.init(
             dsn=sentry_dsn,
-            environment=environment
+            environment=environment,
+            release=release,
+            mode=mode
         )
-        
+
         # 输出初始化状态
         if cls.is_enabled():
-            logger.info(f"✓ Sentry initialized (environment={environment})")
+            logger.info(f"✓ Sentry initialized (environment={environment}, release={release}, mode={mode})")
         else:
             logger.warning("✗ Sentry disabled (SENTRY_DSN not configured)")
-    
+
     @classmethod
-    def init(cls, dsn: Optional[str] = None, environment: str = "production"):
+    def init(cls, dsn: Optional[str] = None, environment: str = "production",
+             release: Optional[str] = None, mode: Optional[str] = None):
         """
         初始化 Sentry SDK
-        
+
         Args:
             dsn: Sentry DSN URL，如果为 None 则从环境变量 SENTRY_DSN 读取
             environment: 环境名称，如 "production", "staging", "development"
+            release: 应用版本号（如 "2.3.8"），用于 Sentry 后台按版本聚合问题
+            mode: 运行模式（community / enterprise），设置后随所有事件作为 tag 上报
         """
         if cls._initialized:
             logger.warning("Sentry already initialized")
             return
-        
+
         # 从环境变量或参数获取 DSN
         sentry_dsn = dsn or os.getenv("SENTRY_DSN")
-        
+
         if not sentry_dsn:
             logger.warning("Sentry DSN not provided, Sentry will be disabled")
             cls._enabled = False
             cls._initialized = True
             return
-        
+
         try:
             import sentry_sdk
-            
+
             # 初始化 Sentry（不启用自动日志捕获）
             sentry_sdk.init(
                 dsn=sentry_dsn,
                 environment=environment,
+                release=release,
                 # 禁用所有自动集成，只保留手动调用
                 default_integrations=False,
                 # 在发送前过滤敏感信息
                 before_send=cls._before_send,
             )
-            
+
+            # 全局 tag：之后所有 capture_exception / capture_message 事件自动携带
+            if mode:
+                sentry_sdk.set_tag("mode", mode)
+
             cls._enabled = True
             cls._initialized = True
             logger.info(f"Sentry initialized successfully (environment={environment})")
-            
+
         except ImportError:
             logger.error("sentry-sdk not installed, please run: pip install sentry-sdk")
             cls._enabled = False
