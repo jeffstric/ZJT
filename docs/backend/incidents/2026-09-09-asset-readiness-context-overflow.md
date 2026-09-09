@@ -60,7 +60,14 @@ context length is 1048576 tokens. However, you requested 1128825 tokens
   文本占位（URL 仍留在相邻的「[系统注入]」文案中），LLM 需要重新查看时可再次调用
   `fetch_image_as_base64`。裁剪作用于内存历史，持久化的任务状态同步受益，
   恢复会话不会重新引入已裁掉的图片。
-- 测试：`tests/script_writer_core/test_expert_agent.py::TestPruneHistoryImages`。
+- `expert_agent.py` 修复 base64 二次泄漏：`fetch_image_as_base64` 的 result 含
+  完整 `base64_data_url`，此前被 `json.dumps(result)` 原样写入 tool 消息历史，
+  每张图的 base64 以纯文本形式永久驻留、每轮请求重发（图片裁剪管不到 tool 消息，
+  实测 17 条 tool 结果 ≈ 100 万字符，检查后期单次输入仍涨到 74 万 tokens）。
+  现在落历史前先 `pop("base64_data_url")`，图片仅通过多模态注入通道送达
+  （符合工具 message 自身"图片将自动注入到你的对话中"的设计意图）。
+- 测试：`tests/script_writer_core/test_expert_agent.py::TestPruneHistoryImages`、
+  `TestFetchImageResultStripped`。
 
 ## 备注
 

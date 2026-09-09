@@ -470,6 +470,15 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                 if user_input:
                     deferred_user_inputs.append((user_input, meta.get("verification_id")))
 
+            # fetch_image_as_base64 成功时，先取出 base64 数据（图片通过多模态 user 消息注入，
+            # base64 不落 tool 历史——否则每张图的全文会永久留在历史里，每轮请求重发，
+            # 输入 token 随检查进度线性膨胀）
+            deferred_image = None
+            if tool_name == "fetch_image_as_base64" and isinstance(result, dict) and result.get("success"):
+                base64_data_url = result.pop("base64_data_url", None)
+                if base64_data_url:
+                    deferred_image = (tool_args.get('image_url', ''), base64_data_url)
+
             # 将result转换为JSON字符串以便后续解析，而不是Python dict的字符串表示
             self.add_to_history("tool", {
                 "tool_call_id": tool_call.id,
@@ -477,18 +486,16 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                 "content": json.dumps(result, ensure_ascii=False)
             })
 
-            # fetch_image_as_base64 成功时，将 base64 数据存入延迟多模态列表
-            if tool_name == "fetch_image_as_base64" and isinstance(result, dict) and result.get("success"):
-                base64_data_url = result.get("base64_data_url")
-                if base64_data_url:
-                    deferred_multimodal_content.append({
-                        "type": "text",
-                        "text": f"[系统注入] 以下是工具成功获取的图片（URL: {tool_args.get('image_url', '')}）："
-                    })
-                    deferred_multimodal_content.append({
-                        "type": "image_url",
-                        "image_url": {"url": base64_data_url}
-                    })
+            if deferred_image:
+                image_url, base64_data_url = deferred_image
+                deferred_multimodal_content.append({
+                    "type": "text",
+                    "text": f"[系统注入] 以下是工具成功获取的图片（URL: {image_url}）："
+                })
+                deferred_multimodal_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": base64_data_url}
+                })
 
         # 将用户的回答作为 user 消息写入历史，放在所有 tool 消息之后
         # 避免在 assistant(tool_calls) 和 tool 之间插入 user 消息导致 API 报错

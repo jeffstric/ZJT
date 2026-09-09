@@ -5,6 +5,7 @@ ExpertAgent 单元测试
 """
 import os
 import sys
+import json
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -239,6 +240,62 @@ class TestPruneHistoryImages(TestExpertAgent):
         snapshot = [dict(p) for p in agent.conversation_history[0]["content"]]
         agent._prune_history_images(max_images=6)
         self.assertEqual(agent.conversation_history[0]["content"], snapshot)
+
+
+class TestFetchImageResultStripped(TestExpertAgent):
+    """fetch_image_as_base64 的 base64 不落 tool 历史，仅通过多模态 user 消息注入"""
+
+    def test_base64_stripped_from_tool_history(self):
+        agent = self._create_agent(allowed_tools=["fetch_image_as_base64"])
+        agent.tool_executor.execute_tool = MagicMock(return_value={
+            "success": True,
+            "base64_data_url": "data:image/jpeg;base64," + "A" * 5000,
+            "size_kb": 4,
+            "message": "图片已成功加载",
+        })
+
+        tool_call = MagicMock()
+        tool_call.id = "tc1"
+        tool_call.function.name = "fetch_image_as_base64"
+        tool_call.function.arguments = json.dumps({"image_url": "/upload/x.png"})
+        message = MagicMock()
+        message.tool_calls = [tool_call]
+        message.reasoning_content = None
+
+        agent._handle_tool_calls(message)
+
+        tool_msgs = [m for m in agent.conversation_history if m["role"] == "tool"]
+        self.assertEqual(len(tool_msgs), 1)
+        self.assertNotIn("base64_data_url", tool_msgs[0]["content"]["content"])
+        self.assertNotIn("AAAA", tool_msgs[0]["content"]["content"])
+        self.assertIn('"success": true', tool_msgs[0]["content"]["content"])
+
+        # 图片仍通过多模态 user 消息注入
+        multimodal = [m for m in agent.conversation_history
+                      if m["role"] == "user" and isinstance(m["content"], list)]
+        self.assertEqual(len(multimodal), 1)
+        types = [p["type"] for p in multimodal[0]["content"]]
+        self.assertEqual(types, ["text", "image_url"])
+
+    def test_failed_fetch_no_multimodal(self):
+        agent = self._create_agent(allowed_tools=["fetch_image_as_base64"])
+        agent.tool_executor.execute_tool = MagicMock(return_value={
+            "success": False, "error": "本地文件不存在"
+        })
+
+        tool_call = MagicMock()
+        tool_call.id = "tc1"
+        tool_call.function.name = "fetch_image_as_base64"
+        tool_call.function.arguments = json.dumps({"image_url": "/upload/x.png"})
+        message = MagicMock()
+        message.tool_calls = [tool_call]
+        message.reasoning_content = None
+
+        agent._handle_tool_calls(message)
+
+        multimodal = [m for m in agent.conversation_history
+                      if m["role"] == "user" and isinstance(m["content"], list)]
+        self.assertEqual(len(multimodal), 0)
 
 
 class TestEstimateInputTokens(TestExpertAgent):
