@@ -208,3 +208,43 @@ def test_api_admin_edition(api_client):
     assert resp.status_code == 200, f"获取版本信息失败: {resp.status_code} {resp.text}"
     data = resp.json()
     assert data.get("code") == 0, f"响应异常: {data}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 推荐模型档位 API（commit d6e57884：管理员可配场景推荐模型）
+# ═══════════════════════════════════════════════════════════════
+
+
+@pytest.mark.admin
+def test_api_admin_model_recos_get(api_client):
+    """admin_api_019 - GET /api/admin/model-recos 返回各场景双档推荐+候选"""
+    resp = api_client.get("/api/admin/model-recos")
+    assert resp.status_code == 200, f"获取推荐模型档位失败: {resp.status_code} {resp.text}"
+    data = resp.json()
+    assert data.get("code") == 0, f"响应异常: {data}"
+    scenes = data.get("data", {}).get("scenes", [])
+    assert isinstance(scenes, list) and len(scenes) > 0, f"scenes 不应为空: {data}"
+    for s in scenes:
+        assert s.get("scene"), f"scene 缺少场景标识: {s}"
+        assert "value" in s and "quality" in s, f"scene 应含 value/quality 双档: {s}"
+        assert "overridden" in s and "candidates" in s, f"scene 应含 overridden/candidates: {s}"
+
+
+@pytest.mark.admin
+def test_api_admin_model_recos_reset_roundtrip(api_client):
+    """admin_api_020 - PUT /api/admin/model-recos reset 回退代码默认（净变更为零）"""
+    data = api_client.get("/api/admin/model-recos").json()
+    assert data.get("code") == 0
+    scenes = data.get("data", {}).get("scenes", [])
+    assert scenes, "scenes 不应为空"
+    scene = scenes[0]["scene"]
+
+    resp = api_client.put("/api/admin/model-recos", json={"scene": scene, "reset": True})
+    assert resp.status_code == 200, f"reset 推荐档位失败: {resp.status_code} {resp.text}"
+    assert resp.json().get("code") == 0, f"reset 业务失败: {resp.text}"
+
+    # 非法场景应 400
+    resp = api_client.put(
+        "/api/admin/model-recos", json={"scene": "not_a_scene", "reset": True}
+    )
+    assert resp.status_code == 400, f"未知场景应 400，实际 {resp.status_code}"
