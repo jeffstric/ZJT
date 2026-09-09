@@ -76,7 +76,7 @@
               <div class="feature-card-header">
                 <div class="feature-card-icon storyboard">▦</div>
                 <div class="feature-card-info">
-                  <div class="feature-card-title">{{ $t('storyboard_system') }} <span class="beta-tag">Beta</span></div>
+                  <div class="feature-card-title">{{ $t('storyboard_system') }}</div>
                   <div class="feature-card-subtitle">{{ $t('storyboard_system_desc') }}</div>
                 </div>
               </div>

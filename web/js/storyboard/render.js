@@ -1100,7 +1100,45 @@ function renderDialogueAudioSource(scene) {
                     ${!hasVideo ? 'disabled' : ''}>${videoLabel}</button>
             </div>
             <p class="dialogue-audio-source-hint">${escapeHtml(hint)}</p>
+            ${renderVoiceReplaceControl(scene, hasVideo)}
         </section>`;
+}
+
+const VOICE_REPLACE_IN_FLIGHT = ['queued', 'asr', 'matching', 'converting', 'muxing'];
+
+function voiceReplaceStatusLabel(job) {
+    const status = String(job?.status || '');
+    if (VOICE_REPLACE_IN_FLIGHT.includes(status)) return '替换中…';
+    if (status === 'wait_confirm') return '待确认';
+    if (status === 'failed') return '替换失败，重试';
+    if (status === 'completed') return '再次替换';
+    if (status === 'skipped') return '替换音色';
+    return '替换音色';
+}
+
+function renderVoiceReplaceControl(scene, hasVideo) {
+    const dh = isDigitalHumanScene(scene);
+    const job = state.voiceReplaceBySceneId?.[scene.id] || null;
+    const running = VOICE_REPLACE_IN_FLIGHT.includes(String(job?.status || ''));
+    const disabled = dh || !hasVideo || running;
+    let title = '把当前成片对白换成角色参考音色（保留口型）';
+    if (dh) title = '对口型分镜不需要替换音色';
+    else if (!hasVideo) title = '请先生成或选中分镜视频';
+    else if (running) title = '正在替换音色';
+    let extra = '';
+    if (job?.error_message) extra = job.error_message;
+    else if (job?.skip_reason && job.status === 'skipped') extra = job.skip_reason;
+    else if (running) extra = '正在抽音并替换角色音色，完成后会自动切到新视频';
+    const extraHtml = extra
+        ? `<p class="dialogue-audio-source-hint">${escapeHtml(String(extra))}</p>`
+        : '';
+    return `
+        <button type="button"
+            class="dialogue-audio-source-replace"
+            data-action="replace-scene-voice"
+            ${disabled ? 'disabled' : ''}
+            title="${escapeHtml(title)}">${icon('mic', 14)} ${voiceReplaceStatusLabel(job)}<span class="beta-tag">Beta</span></button>
+        ${extraHtml}`;
 }
 
 function renderDialogueEmoSummary(d) {

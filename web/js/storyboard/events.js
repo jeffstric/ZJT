@@ -55,6 +55,7 @@ import {
     Region,
     syncSequenceModeIntroCards,
     patchHeaderPower,
+    isDigitalHumanScene,
 } from './render.js';
 import {
     REGIONS_ON_SCENE_CHANGE,
@@ -62,7 +63,7 @@ import {
     REGIONS_AGENT_STREAM,
     REGIONS_MODAL,
 } from './ui_regions.js';
-import { pollSceneTaskStatus, pollScriptSplitTask, stopScriptSplitTaskPolling } from './polling.js';
+import { pollSceneTaskStatus, pollScriptSplitTask, stopScriptSplitTaskPolling, pollVoiceReplace, hydrateVoiceReplace } from './polling.js';
 import {
     togglePlayback,
     stopPlayback,
@@ -2346,6 +2347,39 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'replace-scene-voice') {
+        const scene = getCurrentScene();
+        if (!scene) return;
+        if (isDigitalHumanScene(scene)) {
+            showToast('对口型分镜不需要替换音色');
+            return;
+        }
+        if (!String(scene.videoUrl || '').trim()) {
+            showToast('请先生成或选中分镜视频');
+            return;
+        }
+        const prev = state.voiceReplaceBySceneId?.[scene.id];
+        const force = ['completed', 'failed', 'skipped', 'wait_confirm'].includes(String(prev?.status || ''));
+        try {
+            const data = await api.submitSceneVoiceReplace(scene.id, { force });
+            if (data.job) {
+                if (!state.voiceReplaceBySceneId) state.voiceReplaceBySceneId = {};
+                state.voiceReplaceBySceneId[scene.id] = data.job;
+            }
+            if (!data.success) {
+                showToast(data.message || '无法替换音色');
+                rerender([Region.LEFT_TAB_BODY]);
+                return;
+            }
+            showToast(data.reused ? '已在替换中' : '已开始替换音色');
+            rerender([Region.LEFT_TAB_BODY]);
+            pollVoiceReplace(scene.id);
+        } catch (error) {
+            showToast(error.message || '替换音色失败');
+        }
+        return;
+    }
+
     if (action === 'open-model-config') {
         state.showModelConfigModal = true;
         // 默认根据当前助手模式
@@ -2858,6 +2892,7 @@ export function bindEvents() {
             state.lastPowerSpend = null;
             // 分区刷新：左栏+预览+候选+时间轴，禁止整页 renderApp
             rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
+            hydrateVoiceReplace(sceneId);
             // 布局稳定后滚到当前缩略图（点击切镜与键盘一致）
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => scrollTimelineToScene(sceneId));
@@ -3118,6 +3153,7 @@ export function bindEvents() {
         // 切分镜（时长/模型上下文变化）→ 左下角提示行回到预估显示
         state.lastPowerSpend = null;
         rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
+        hydrateVoiceReplace(nextScene.id);
 
         // 双 rAF：等区域 patch 完成布局后再滚，避免 scrollLeft 算错 / 不滚动
         const targetId = nextScene.id;

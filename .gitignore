@@ -39,6 +39,9 @@ enterprise/pyarmor_runtime_*/
 scripts/build_enterprise.py
 *.lock
 
+# 部署脚本不入库
+/deploy/
+
 # Node modules
 node_modules/
 
