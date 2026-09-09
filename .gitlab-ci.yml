@@ -27,12 +27,9 @@ workflow:
     - if: $CI_COMMIT_BRANCH
 
 # 变量配置
+# 注意：Docker-in-Docker 相关变量（DOCKER_HOST/DOCKER_TLS_CERTDIR/DOCKER_DRIVER）
+# 已随 socket 直连改造移除，docker job 不再使用 dind service。
 variables:
-  # Docker 配置 - DinD
-  DOCKER_HOST: tcp://docker:2375
-  DOCKER_TLS_CERTDIR: ""
-  DOCKER_DRIVER: overlay2
-
   # 测试数据库配置
   DB_HOST: mysql_test
   DB_PORT: "3306"
@@ -80,206 +77,111 @@ lint:storyboard_render:
 unit_tests:
   stage: test
 
-  # 使用 Docker-in-Docker (DinD) 来运行 docker-compose
+  # 直连宿主机 dockerd（jeffnas1-socket runner 已挂载 /var/run/docker.sock），
+  # 不再使用 dind service。层缓存持久保留在宿主机：依赖不变跳过构建，
+  # 依赖变化仅重建变化层（pip/uv wheel 走 BuildKit cache mount）。
   image: m.daocloud.io/docker.io/library/docker:24-cli
 
-  services:
-    - name: m.daocloud.io/docker.io/library/docker:24-dind
-      alias: docker
-      variables:
-        DOCKER_TLS_CERTDIR: ""
-      command: ["--registry-mirror=https://docker.1ms.run", "--registry-mirror=https://docker.mirrors.ustc.edu.cn"]
-
-
-  # 缓存配置（加速后续构建）
-  # 注意：DinD 每个 job 都是全新守护进程，镜像层缓存无法保留（实测 docker
-  # save/load 后 builder 缓存元数据丢失，无法增量重建）。因此改为把构建出的
-  # 环境镜像整体 docker save 到 CI cache，下次 job docker load 后按
-  # requirements.txt+Dockerfile 指纹复用镜像、跳过构建，源码经 ..:/app
-  # 挂载进容器运行——纯代码改动零构建（pip 全量下载是 1h 超时的主因）。
-  # key 固定为全局共享，让所有分支都能复用同一份镜像缓存。
-  cache:
-    key: zjt-unit-test-shared
-    paths:
-      - cache/pip
-      - .cache/pip
-      - docker-image-cache/
-
-  # job 超时兜底：依赖变化触发全量重建时可能接近 1h，放宽到 2h 避免误杀
+  # 无需 CI cache：镜像层缓存在宿主机 dockerd 中，源码经 bind mount 进容器，
+  # 纯代码改动零构建。
+  # 冷缓存首跑（全量构建+测试）可达 40~70 分钟，先保留 2h；缓存稳定后收紧到 1h
   timeout: 2 hours
 
+  variables:
+    # 共享宿主 daemon，compose 资源按 job 隔离（容器/网络/卷名自动带前缀）
+    COMPOSE_PROJECT_NAME: zjt-test-${CI_JOB_ID}
+
   before_script:
-    # 使用国内 Alpine 镜像源加速
-    - sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
-
-    # 安装必要工具
-    - apk add --no-cache python3 py3-pip mysql-client netcat-openbsd bind-tools
-
-    # ===== 深度调试 =====
-    - echo "===== 环境变量 ====="
-    - echo "DOCKER_HOST=$DOCKER_HOST"
-    - echo "DOCKER_TLS_CERTDIR=$DOCKER_TLS_CERTDIR"
-    
-    - echo "===== DNS 解析测试 ====="
-    - cat /etc/hosts | grep -i docker || echo "No docker in /etc/hosts"
-    - getent hosts docker || echo "Cannot resolve 'docker' via getent"
-    - nslookup docker 2>/dev/null || echo "Cannot resolve 'docker' via nslookup"
-    
-    - echo "===== 网络连通性测试 ====="
-    - nc -zv docker 2375 2>&1 || echo "Port 2375 NOT reachable on 'docker'"
-    - nc -zv docker 2376 2>&1 || echo "Port 2376 NOT reachable on 'docker'"
-    - nc -zv localhost 2375 2>&1 || echo "Port 2375 NOT reachable on localhost"
-    
-    - echo "===== 尝试多种 DOCKER_HOST ====="
-    # ===== 深度调试结束 =====
-
-    # 等待 Docker daemon 就绪（尝试多种连接方式）
-    - |
-      echo "Waiting for Docker daemon..."
-      max_attempts=30
-      for i in $(seq 1 $max_attempts); do
-        # 尝试默认 DOCKER_HOST
-        if docker info > /dev/null 2>&1; then
-          echo "Docker daemon is ready via $DOCKER_HOST!"
-          break
-        fi
-        # 尝试 localhost
-        if DOCKER_HOST=tcp://localhost:2375 docker info > /dev/null 2>&1; then
-          echo "Docker daemon is ready via localhost:2375!"
-          export DOCKER_HOST=tcp://localhost:2375
-          break
-        fi
-        # 尝试 127.0.0.1
-        if DOCKER_HOST=tcp://127.0.0.1:2375 docker info > /dev/null 2>&1; then
-          echo "Docker daemon is ready via 127.0.0.1:2375!"
-          export DOCKER_HOST=tcp://127.0.0.1:2375
-          break
-        fi
-        if [ $i -eq $max_attempts ]; then
-          echo "ERROR: Docker daemon failed to start after $max_attempts attempts"
-          echo "===== 最终诊断 ====="
-          echo "检查所有容器进程:"
-          ps aux
-          echo "检查网络接口:"
-          ip addr 2>/dev/null || ifconfig 2>/dev/null || echo "No network tools"
-          exit 1
-        fi
-        echo "Attempt $i/$max_attempts - waiting..."
-        sleep 3
-      done
-
-    # 验证 Docker 是否可用
-    - docker --version
-    - docker-compose --version
-
-    # 加载上一次流水线保存的环境镜像（含基础镜像与 MySQL 镜像），首次运行为空则跳过
-    - |
-      if [ -f docker-image-cache/zjt_test_image.tar.gz ]; then
-        echo "加载环境镜像缓存..."
-        docker load -i docker-image-cache/zjt_test_image.tar.gz || echo "镜像缓存加载失败，按全量构建继续"
-      else
-        echo "无镜像缓存，本次为全量构建"
-      fi
+    - docker info   # 直连 socket，无需等待 daemon（dind 时代的探测/调试代码已全部移除）
+    # bind mount 路径翻译：宿主 daemon 需要宿主侧绝对路径。
+    # 依赖 runner 的固定挂载 /srv/gitlab-builds:/builds，调整 builds_dir 时需同步修改。
+    - export HOST_SRC_DIR="/srv/gitlab-builds${CI_PROJECT_DIR#/builds}"
+    - echo "HOST_SRC_DIR=$HOST_SRC_DIR"
 
   script:
     # 进入 docker 目录
     - cd docker
 
-    # 环境镜像指纹：requirements.txt 或 Dockerfile 变化才需要重建。
-    # 源码通过 ..:/app 挂载进容器运行，纯代码改动复用缓存镜像即可
+    # 环境镜像指纹：requirements.txt 或 Dockerfile 变化才重建
     - DEPS_HASH=$(cat ../requirements.txt Dockerfile | sha256sum | cut -c1-16)
     - export TEST_IMAGE_TAG=$DEPS_HASH
     - 'echo "环境镜像标签: zjt_test_image:$TEST_IMAGE_TAG"'
 
-    # 缓存已加载且依赖未变则跳过构建（这是防 1h 超时的核心：避免每次 pip 全量下载）
+    # 强制重建逃生通道：手动流水线带 FORCE_REBUILD=1 时丢弃指纹镜像
     - |
-      export REBUILT=0
-      if docker image inspect "zjt_test_image:$TEST_IMAGE_TAG" > /dev/null 2>&1; then
-        echo "依赖未变化且镜像缓存已加载，跳过构建"
-      else
-        echo "依赖变化或无缓存，执行全量构建（首次约 40-60 分钟）"
-        docker compose -f docker-compose-test.yml build test
-        export REBUILT=1
+      if [ "$FORCE_REBUILD" = "1" ]; then
+        echo "FORCE_REBUILD=1，删除指纹镜像强制重建"
+        docker image rm "zjt_test_image:$TEST_IMAGE_TAG" 2>/dev/null || true
       fi
 
+    # 命中即跳过构建；未命中时构建也只重做变化层
+    - |
+      if docker image inspect "zjt_test_image:$TEST_IMAGE_TAG" > /dev/null 2>&1; then
+        echo "镜像缓存命中，跳过构建"
+      else
+        echo "未命中，执行构建"
+        docker compose -f docker-compose-test.yml build test
+      fi
+
+    # 冒烟验证：镜像可用且依赖自洽（--entrypoint 覆盖 docker-entrypoint.sh，
+    # 否则 "pip check" 只是入口脚本的参数）
+    - docker run --rm --entrypoint pip "zjt_test_image:$TEST_IMAGE_TAG" check
+
     # 启动测试环境（MySQL + 测试容器）。注意不带 --build
-    # 失败时输出 MySQL 日志与健康检查记录，便于定位 unhealthy 根因
+    # 失败时输出 MySQL 日志，便于定位 unhealthy 根因
     - |
       if ! docker compose -f docker-compose-test.yml up -d; then
         echo "===== compose up 失败，输出诊断信息 ====="
         docker compose -f docker-compose-test.yml ps -a || true
-        docker inspect -f '{{json .State.Health}}' zjt_mysql_test || true
-        echo "===== zjt_mysql_test 日志 ====="
-        docker logs zjt_mysql_test 2>&1 | tail -100 || true
+        docker compose -f docker-compose-test.yml logs mysql_test 2>&1 | tail -100 || true
         exit 1
       fi
 
-    # 仅在发生过重建时更新镜像缓存。
-    # 必须连同基础镜像一起保存：否则下次 FROM 重新拉取，tag 上游重建后 ID 变化会导致缓存失配
-    # 先写临时文件并校验（gzip -t + 非空 tar）：管道会掩盖 docker save 失败，
-    # 曾导致 20 字节空压缩包被上传为共享缓存，所有 job 加载失败被迫全量重建
+    # 等 MySQL 就绪（healthcheck 兜底；socket 模式冷启动预期 <60s）
     - |
-      if [ "$REBUILT" = "1" ]; then
-        mkdir -p ../docker-image-cache
-        BASE_IMAGE=$(grep -m1 '^FROM ' Dockerfile | awk '{print $2}')
-        # buildkit 构建不会把 FROM 基础镜像落到本地镜像库，直接 save 会报
-        # "reference does not exist" 导致缓存为空，需先显式 pull
-        docker pull "$BASE_IMAGE" || echo "基础镜像拉取失败，仅保存已有镜像"
-        docker image inspect "$BASE_IMAGE" > /dev/null 2>&1 || BASE_IMAGE=""
-        TMP=../docker-image-cache/zjt_test_image.tar.gz.tmp
-        if docker save "zjt_test_image:$TEST_IMAGE_TAG" $BASE_IMAGE m.daocloud.io/docker.io/library/mysql:8.0 | gzip > "$TMP" \
-           && gzip -t "$TMP" && [ "$(stat -c%s "$TMP")" -gt 1000000 ]; then
-          mv "$TMP" ../docker-image-cache/zjt_test_image.tar.gz
-          echo "镜像缓存已更新 ($(stat -c%s ../docker-image-cache/zjt_test_image.tar.gz) 字节)"
-        else
-          echo "镜像缓存保存失败（校验未通过），保留旧缓存"
-          rm -f "$TMP"
-        fi
-      else
-        echo "镜像未重建，缓存保持不变"
-      fi
-
-    # 等待 MySQL 就绪
-    - |
-      for i in {1..30}; do
-        docker exec zjt_mysql_test mysqladmin ping -h 127.0.0.1 -P 3306 -u root -proot_test_pass && break
-        echo "等待 MySQL 启动..."
+      for i in $(seq 1 90); do
+        docker exec "$(docker compose -f docker-compose-test.yml ps -q mysql_test)" \
+          mysqladmin ping -h 127.0.0.1 -P 3306 -u root -proot_test_pass >/dev/null 2>&1 && break
+        echo "等待 MySQL 启动... ($i)"
         sleep 2
       done
 
-    # 等待测试容器完成并获取日志
+    # 测试容器句柄（container_name 已删，按 project + service 取 ID）
+    - TEST_CID=$(docker compose -f docker-compose-test.yml ps -q test)
+    - 'echo "测试容器: $TEST_CID"'
+
+    # 等待测试完成：1s 轮询（原 10s 轮询平均多等 5s）。
     # run_unit_tests.py 默认进程隔离执行（每测试模块一个子进程），
     # 启动开销使整轮耗时增加约 3~8 分钟，等待上限相应放宽到 1800s
     - |
-      echo "等待测试执行完成..."
-      timeout=1800
-      elapsed=0
+      timeout=1800; elapsed=0
       while [ $elapsed -lt $timeout ]; do
-        status=$(docker inspect -f '{{.State.Status}}' zjt_test 2>/dev/null || echo "not_found")
-        if [ "$status" == "exited" ]; then
-          break
-        fi
-        echo "测试进行中... (${elapsed}s)"
-        sleep 10
-        elapsed=$((elapsed + 10))
+        status=$(docker inspect -f '{{.State.Status}}' "$TEST_CID" 2>/dev/null || echo "not_found")
+        [ "$status" = "exited" ] && break
+        sleep 1; elapsed=$((elapsed + 1))
       done
 
-    # 获取容器退出码
-    - exit_code=$(docker inspect -f '{{.State.ExitCode}}' zjt_test 2>/dev/null || echo "1")
-
-    # 显示测试日志
-    - docker logs zjt_test || true
-
-    # 获取测试结果
+    # 获取容器退出码并展示日志
+    - exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$TEST_CID" || echo "1")
+    - docker logs --tail 500 "$TEST_CID" || true
     - |
-      if docker cp zjt_test:/app/test-results.xml ../test-results.xml 2>/dev/null; then
+      if docker cp "$TEST_CID:/app/test-results.xml" ../test-results.xml 2>/dev/null; then
         echo "测试结果已保存"
       else
         echo "注意：无法获取 test-results.xml，查看上方日志了解测试情况"
       fi
 
     # 停止测试环境
-    - docker-compose -f docker-compose-test.yml down -v || true
+    - docker compose -f docker-compose-test.yml down -v || true
+
+    # 镜像治理：指纹 tag 只保留 5 个，防磁盘膨胀（每 tag ~1GB+）。
+    # 必须排除当前 job 使用的指纹：BuildKit 全缓存命中时新 tag 是对旧镜像的
+    # retag，CreatedAt 不更新，docker images 默认排序无法区分新旧，
+    # 并发 job 的 GC 可能把刚构建/正在使用的 tag 误删（e2e 镜像曾实际踩中）。
+    # docker rmi 对使用中的镜像自动拒绝，不影响并发中的其他 job。
+    - |
+      docker images zjt_test_image --format '{{.Tag}}' | grep -v "^$TEST_IMAGE_TAG$" | grep -v '<none>' \
+        | tail -n +6 | xargs -r -n1 sh -c 'docker image rm "zjt_test_image:$0" 2>/dev/null' || true
 
     # 根据退出码决定 CI 结果
     - |
@@ -292,62 +194,39 @@ unit_tests:
   # 测试 artifacts
   artifacts:
     when: always
-    paths:
-      - test-results.xml
-      - docker/*.log
-      - docker/logs/
     reports:
       junit: test-results.xml
     expire_in: 7 days
 
-  # 标签（根据实际 Runner 配置调整）
-  tags:
-    - docker
+  # socket 直连专用 runner（jeffnas1-socket，挂载 /var/run/docker.sock）
+  tags: [docker-socket]
 
   # 规则：推送和 MR 时触发
   rules:
-    - if: $CI_COMMIT_BRANCH
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
 
 # =============================================================================
 # 分支级 E2E 冒烟测试
-# 每条 Pipeline 在独立 Compose project 中启动 MySQL、当前 commit 的应用和 Playwright。
+# socket 直连宿主 daemon：app/e2e 镜像构建命中宿主机层缓存（依赖未变时仅重做
+# COPY 代码层），Playwright 基础镜像与 mysql:8.0 驻留宿主机，不再每 pipeline 重拉。
+# 每条 Pipeline 使用独立的 COMPOSE_PROJECT_NAME，容器、网络和卷互不共享。
 # =============================================================================
 e2e_smoke:
   stage: e2e
   image: m.daocloud.io/docker.io/library/docker:24-cli
 
-  services:
-    - name: m.daocloud.io/docker.io/library/docker:24-dind
-      alias: docker
-      variables:
-        DOCKER_TLS_CERTDIR: ""
-      command: ["--registry-mirror=https://docker.1ms.run", "--registry-mirror=https://docker.mirrors.ustc.edu.cn"]
-
   variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_DRIVER: overlay2
     COMPOSE_PROJECT_NAME: e2e-${CI_PIPELINE_ID}-${CI_JOB_ID}
     E2E_COMPOSE_FILE: docker/docker-compose-e2e.yml
     E2E_RESULT_CONTAINER: e2e-result-${CI_JOB_ID}
 
   before_script:
-    - |
-      echo "等待 Docker daemon..."
-      for i in $(seq 1 30); do
-        if docker info > /dev/null 2>&1; then
-          echo "Docker daemon 已就绪"
-          break
-        fi
-        if [ "$i" -eq 30 ]; then
-          echo "Docker daemon 在 60 秒内未就绪"
-          exit 1
-        fi
-        sleep 2
-      done
-    - docker version
+    - docker info   # 直连 socket，无需等待 daemon
     - docker compose version
+    # bind mount 路径翻译（与 unit_tests 同理，依赖 /srv/gitlab-builds:/builds 固定挂载）
+    - export HOST_SRC_DIR="/srv/gitlab-builds${CI_PROJECT_DIR#/builds}"
+    - echo "HOST_SRC_DIR=$HOST_SRC_DIR"
 
   script:
     - docker compose -f "$E2E_COMPOSE_FILE" build app e2e
@@ -362,6 +241,17 @@ e2e_smoke:
     - docker compose -f "$E2E_COMPOSE_FILE" logs --no-color mysql app > e2e-results/services.log 2>&1 || true
     - docker rm -f "$E2E_RESULT_CONTAINER" > /dev/null 2>&1 || true
     - docker compose -f "$E2E_COMPOSE_FILE" down -v --remove-orphans || true
+    # 镜像治理：per-pipeline tag 按 pipeline ID 数值降序只保留 8 条。
+    # 不能用 docker images 默认排序：全缓存构建的新 tag 是旧镜像的 retag，
+    # CreatedAt 不更新，最新 tag 会被排到队尾——并发流水线的 GC 曾因此把
+    # 刚构建完的 tag 误删，导致下个步骤 No such image（MR !594 pipeline 2028）。
+    # pipeline ID 单调递增，数值排序即时间序；保留数 8 覆盖 concurrent=4 的
+    # 最大并发流水线数（docker rmi 对使用中的镜像自动拒绝，双重保护）。
+    - |
+      for repo in zjt-e2e-app zjt-e2e-runner; do
+        docker images "$repo" --format '{{.Tag}}' | grep -v '<none>' | sort -rn \
+          | tail -n +9 | xargs -r -n1 sh -c "docker image rm $repo:\$0 2>/dev/null" || true
+      done
 
   artifacts:
     when: always
@@ -372,7 +262,7 @@ e2e_smoke:
       junit: e2e-results/junit.xml
 
   interruptible: true
-  # 首次执行需要构建应用和拉取 Playwright 浏览器镜像；代理缓存未命中时预留足够时间。
+  # 切换初期宿主机缓存尚冷时首次构建仍可能较慢，保留 90m；稳定后可收紧到 45m
   timeout: 90m
   retry:
     max: 1
@@ -380,8 +270,8 @@ e2e_smoke:
       - runner_system_failure
       - stuck_or_timeout_failure
 
-  tags:
-    - docker
+  # socket 直连专用 runner（jeffnas1-socket，挂载 /var/run/docker.sock）
+  tags: [docker-socket]
 
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -427,83 +317,3 @@ frontend_tests:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
-
-# =============================================================================
-# 分支级 E2E 冒烟测试
-# 每条 Pipeline 在独立 Compose project 中启动 MySQL、当前 commit 的应用和 Playwright。
-# （自 master 278bbc01 移植回 develop；mysql 服务同步套用 docker-compose-test.yml
-#   在本 runner 上验证过的 DinD 修复：my.cnf 挂载路径 / TCP 健康检查 / 关 fsync）
-# =============================================================================
-e2e_smoke:
-  stage: e2e
-  image: m.daocloud.io/docker.io/library/docker:24-cli
-
-  services:
-    - name: m.daocloud.io/docker.io/library/docker:24-dind
-      alias: docker
-      variables:
-        DOCKER_TLS_CERTDIR: ""
-      command: ["--registry-mirror=https://docker.1ms.run", "--registry-mirror=https://docker.mirrors.ustc.edu.cn"]
-
-  variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_DRIVER: overlay2
-    COMPOSE_PROJECT_NAME: e2e-${CI_PIPELINE_ID}-${CI_JOB_ID}
-    E2E_COMPOSE_FILE: docker/docker-compose-e2e.yml
-    E2E_RESULT_CONTAINER: e2e-result-${CI_JOB_ID}
-
-  before_script:
-    - |
-      echo "等待 Docker daemon..."
-      for i in $(seq 1 30); do
-        if docker info > /dev/null 2>&1; then
-          echo "Docker daemon 已就绪"
-          break
-        fi
-        if [ "$i" -eq 30 ]; then
-          echo "Docker daemon 在 60 秒内未就绪"
-          exit 1
-        fi
-        sleep 2
-      done
-    - docker version
-    - docker compose version
-
-  script:
-    - docker compose -f "$E2E_COMPOSE_FILE" build app e2e
-    - docker compose -f "$E2E_COMPOSE_FILE" up -d mysql
-    - docker compose -f "$E2E_COMPOSE_FILE" run --rm prepare
-    - docker compose -f "$E2E_COMPOSE_FILE" up -d app
-    - docker compose -f "$E2E_COMPOSE_FILE" run --name "$E2E_RESULT_CONTAINER" e2e
-
-  after_script:
-    - mkdir -p e2e-results
-    - docker cp "$E2E_RESULT_CONTAINER:/results/." e2e-results/ || true
-    - docker compose -f "$E2E_COMPOSE_FILE" logs --no-color mysql app > e2e-results/services.log 2>&1 || true
-    - docker rm -f "$E2E_RESULT_CONTAINER" > /dev/null 2>&1 || true
-    - docker compose -f "$E2E_COMPOSE_FILE" down -v --remove-orphans || true
-
-  artifacts:
-    when: always
-    expire_in: 7 days
-    paths:
-      - e2e-results/
-    reports:
-      junit: e2e-results/junit.xml
-
-  interruptible: true
-  # 首次执行需要构建应用和拉取 Playwright 浏览器镜像；代理缓存未命中时预留足够时间。
-  timeout: 90m
-  retry:
-    max: 1
-    when:
-      - runner_system_failure
-      - stuck_or_timeout_failure
-
-  tags:
-    - docker
-
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH
