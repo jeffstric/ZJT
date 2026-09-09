@@ -8,7 +8,7 @@ services:
   # MySQL 8.0 数据库服务（测试专用）
   mysql_test:
     image: m.daocloud.io/docker.io/library/mysql:8.0
-    container_name: zjt_mysql_test
+    # CI 共享宿主 dockerd 后按 COMPOSE_PROJECT_NAME 隔离，不再固定 container_name
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root_test_pass
@@ -19,17 +19,18 @@ services:
       MYSQL_COLLATION: utf8mb4_unicode_ci
       # 禁用 strict mode 以兼容旧版 SQL
       MYSQL_SQL_MODE: "STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO"
-    ports:
-      - "3307:3306"
     volumes:
+      # HOST_SRC_DIR：socket 直连宿主 dockerd（CI）时注入的宿主侧源码绝对路径；
+      # 本地 compose 不设置该变量，回退原相对路径
+      # （路径翻译依赖 runner 的 /srv/gitlab-builds:/builds 固定挂载）
       # MySQL 配置文件
       # 注意必须挂载到 /etc/mysql/my.cnf 而非镜像默认的 /etc/my.cnf 链：
-      # CI DinD 场景下宿主机 AppArmor usr.sbin.mysqld profile 会附加到容器内
+      # 宿主机 AppArmor usr.sbin.mysqld profile 会附加到容器内
       # mysqld 进程，/etc/my.cnf 读取被拒（EACCES），profile 只允许 /etc/mysql/**。
       # mysqld 默认搜索路径包含 /etc/mysql/my.cnf，可正常读取。
-      - ./mysql/my.cnf:/etc/mysql/my.cnf:ro
+      - ${HOST_SRC_DIR:-.}/mysql/my.cnf:/etc/mysql/my.cnf:ro
       # 初始化 SQL 脚本（首次启动时自动执行）
-      - ../model/sql:/docker-entrypoint-initdb.d:ro
+      - ${HOST_SRC_DIR:-..}/model/sql:/docker-entrypoint-initdb.d:ro
     # --innodb-flush-log-at-trx-commit=0 等：测试库不要求崩溃持久性，
     # 关闭 fsync 以规避 DinD(overlay2 套 overlay2) 下冷初始化极慢导致健康检查超时
     command: >
@@ -53,11 +54,10 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    # 显式镜像名：CI 中用于 docker save/load 缓存环境镜像，避免 DinD 每次全量重建。
-    # tag 由 CI 按 requirements.txt + Dockerfile 指纹注入（TEST_IMAGE_TAG），
-    # 依赖未变化时直接复用缓存镜像跳过构建；本地默认 latest 行为不变。
+    # 显式镜像名：CI 按 requirements.txt + Dockerfile 指纹打 tag（TEST_IMAGE_TAG），
+    # 镜像长期驻留宿主机 dockerd，命中指纹即跳过构建；本地默认 latest 行为不变。
     image: zjt_test_image:${TEST_IMAGE_TAG:-latest}
-    container_name: zjt_test
+    # CI 共享宿主 dockerd 后按 COMPOSE_PROJECT_NAME 隔离，不再固定 container_name
     restart: "no"
     environment:
       # 环境配置
@@ -79,15 +79,16 @@ services:
       TZ: Asia/Shanghai
     volumes:
       # 源码挂载：容器内直接运行当前检出的代码，
-      # 代码改动无需重建镜像（镜像只提供 Python 依赖等运行环境）
-      - ..:/app
+      # 代码改动无需重建镜像（镜像只提供 Python 依赖等运行环境）。
+      # ${HOST_SRC_DIR:-..}：CI socket 直连时为宿主侧绝对路径，本地为相对路径
+      - ${HOST_SRC_DIR:-..}:/app
       # 数据持久化
-      - ../data:/app/data
-      - ../logs:/app/logs
-      - ../upload:/app/upload
-      - ../files:/app/files
+      - ${HOST_SRC_DIR:-..}/data:/app/data
+      - ${HOST_SRC_DIR:-..}/logs:/app/logs
+      - ${HOST_SRC_DIR:-..}/upload:/app/upload
+      - ${HOST_SRC_DIR:-..}/files:/app/files
       # ffmpeg 和其他二进制文件
-      - ../bin/ffmpeg:/app/bin/ffmpeg:ro
+      - ${HOST_SRC_DIR:-..}/bin/ffmpeg:/app/bin/ffmpeg:ro
     depends_on:
       mysql_test:
         condition: service_healthy

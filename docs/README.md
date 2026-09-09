@@ -362,31 +362,43 @@ docker-compose -f docker-compose-test.yml logs
 docker-compose -f docker-compose-test.yml down -v
 ```
 
-### GitLab CI 环境镜像缓存（防 1h 超时）
+### GitLab CI 镜像缓存（socket 直连宿主 dockerd）
 
-CI `unit_tests` job 运行在 DinD 中，每个 job 都是全新 Docker 守护进程，构建缓存无法保留
-（实测 docker save/load 后 builder 缓存元数据丢失，无法增量重建），历史上每次全量重建时
-pip 全量下载依赖（runner 机器出口带宽仅 ~100-200KB/s，全量约 40-60 分钟）是 1h 超时的主因。
-为此 `.gitlab-ci.yml` 与 `docker-compose-test.yml` 配套做了三件事：
+CI `unit_tests` / `e2e_smoke` job 运行在 `jeffnas1-socket` runner（tag `docker-socket`）上，
+build 容器挂载 `/var/run/docker.sock` 直连宿主机 dockerd，不再使用 DinD service。
+镜像层缓存持久保留在宿主机 daemon 中，配套机制：
 
-1. **环境镜像整体复用**：构建出的 `zjt_test_image` 连同基础镜像、MySQL 镜像通过
-   `docker save | gzip` 存入 GitLab cache（`docker-image-cache/`，全局共享 key
-   `zjt-unit-test-shared`），下次 job `docker load` 整体恢复。
-2. **依赖指纹跳过构建**：job 按 `requirements.txt + Dockerfile` 的 sha256 前 16 位作为
-   镜像 tag（`TEST_IMAGE_TAG`）。指纹未变且镜像已从缓存加载时直接跳过构建；
-   源码通过 compose 卷 `..:/app` 挂载进容器运行，纯代码改动零构建。
-3. **超时兜底**：job `timeout: 2 hours`，依赖变化触发全量重建时也不会被默认 1h 限制误杀。
+1. **依赖指纹跳过构建**：`unit_tests` 按 `requirements.txt + Dockerfile` 的 sha256 前 16 位
+   作为镜像 tag（`TEST_IMAGE_TAG`，镜像名 `zjt_test_image`）。指纹镜像长期驻留宿主机，
+   命中 `docker image inspect` 即跳过构建；源码通过 compose 卷 `${HOST_SRC_DIR:-..}:/app`
+   挂载进容器运行，纯代码改动零构建。
+2. **BuildKit cache mount**：`docker/Dockerfile`、`docker/Dockerfile.e2e` 的 pip/uv 安装层
+   挂载 `/root/.cache` 缓存目录，依赖层因 requirements 变化重建时绝大多数 wheel 命中
+   本地缓存，仅新增/升级的包走网络。
+3. **bind mount 路径翻译**：compose CLI 跑在 build 容器内（源码位于 `/builds/...`），
+   宿主 daemon 需要宿主侧绝对路径，CI 注入
+   `HOST_SRC_DIR="/srv/gitlab-builds${CI_PROJECT_DIR#/builds}"`
+   （依赖 runner 的 `/srv/gitlab-builds:/builds` 固定挂载）；本地 compose 不设置该变量，
+   回退原相对路径，行为不变。
+4. **并发隔离**：共享宿主 daemon 后，compose 通过 `COMPOSE_PROJECT_NAME`（按
+   `CI_JOB_ID`/`CI_PIPELINE_ID` 命名）隔离容器/网络/卷；`docker-compose-test.yml` 已移除
+   `container_name` 与 `ports`，容器句柄统一按 `docker compose ps -q <service>` 获取。
+5. **镜像治理与逃生通道**：指纹 tag 与 e2e 的 per-pipeline tag 各只保留最近 3 个防磁盘
+   膨胀；手动流水线带 `FORCE_REBUILD=1` 时丢弃指纹镜像强制重建；镜像使用前
+   `docker run --rm --entrypoint pip <镜像> check` 冒烟验证依赖自洽。
 
-### MySQL 健康检查预算（防 DinD 冷初始化超时）
+旧的 DinD 时代方案（每 job 全新 daemon、`docker save/load` 搬运 664MB 镜像包经 GitLab
+cache 中转）已废弃——曾两次出现 20 字节坏包导致全量重建连锁，socket 直连后不再有
+搬运式缓存。超时兜底 `timeout: 2 hours` 保留（冷缓存首跑全量构建仍可能 40-70 分钟）。
 
-CI 每个 job 末尾 `down -v`，MySQL 每次都是全新数据卷完整冷初始化；在 DinD（overlay2 套
-overlay2）中实测 `ready for connections` 可达 ~110s，runner 并发 4 时 I/O 争抢还会更久。
-`docker-compose-test.yml` 的 `mysql_test` 健康检查原预算仅约 76s（`start_period: 30s +
-interval: 10s × retries: 5`），负载高时被判 unhealthy 导致 `dependency failed to start`，
-表现为流水线时好时坏。现已放宽到约 180s（`start_period: 30s + interval: 5s × retries: 30`，
-healthy 后最多 5s 放行，正常情况不变慢），并对测试库追加
+### MySQL 健康检查预算
+
+CI 每个 job 末尾 `down -v`，MySQL 每次都是全新数据卷完整冷初始化。socket 直连后不再有
+DinD overlay2 套 overlay2 的写放大，冷初始化预期 <60s；健康检查预算仍保留约 180s
+（`start_period: 30s + interval: 5s × retries: 30`，healthy 后最多 5s 放行），并对测试库追加
 `--innodb-flush-log-at-trx-commit=0 --sync-binlog=0 --innodb-doublewrite=0` 减少 fsync
-停顿（数据可靠性由每次全新卷保证）。
+停顿（数据可靠性由每次全新卷保证）。`./mysql/my.cnf` 挂载到 `/etc/mysql/my.cnf` 的
+AppArmor 修复依旧保留：容器与宿主共享同一内核，`usr.sbin.mysqld` profile 约束仍在。
 
 ---
 

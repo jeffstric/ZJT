@@ -10,9 +10,12 @@ WORKDIR /workspace
 
 COPY requirements_e2e.txt ./
 
-RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+# BuildKit cache mount 保留 pip wheel 缓存（宿主 dockerd 直连模式下跨构建持久），
+# 依赖层重建时绝大多数 wheel 直接命中本地缓存。
+RUN --mount=type=cache,target=/root/.cache \
+    pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
     pip config set global.trusted-host mirrors.aliyun.com && \
-    pip install --no-cache-dir -r requirements_e2e.txt
+    pip install -r requirements_e2e.txt
 
 # E2E 容器仅需要测试代码；被测应用由 app 容器从同一 commit 单独构建。
 COPY auto_test/e2e/ ./auto_test/e2e/
