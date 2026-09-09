@@ -334,6 +334,12 @@ export async function estimateSceneVideoPower(sceneId, config = {}) {
 export async function getSceneTaskStatus(sceneId) {
     return request(`/scene/${sceneId}/task-status`);
 }
+export async function submitSceneVoiceReplace(sceneId, data = {}) {
+    return request(`/scene/${sceneId}/voice-replace`, { method: 'POST', body: JSON.stringify(data) });
+}
+export async function getSceneVoiceReplace(sceneId) {
+    return request(`/scene/${sceneId}/voice-replace`);
+}
 export async function getStoryboardTaskStatus(storyboardId, assetType = 'first_frame') {
     const qs = assetType ? `?asset_type=${encodeURIComponent(assetType)}` : '';
     return request(`/${storyboardId}/task-status${qs}`);

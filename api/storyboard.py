@@ -72,6 +72,8 @@ from model.world import WorldModel
 from model.script import ScriptModel
 from model.user_tokens import UserTokensModel
 from model.user_preferences import UserPreferencesModel
+from model.video_voice_replace import VideoVoiceReplaceJobModel
+from services.voice_replace.enqueue import enqueue_scene_job
 from utils.resource_access import (
     get_user_id_from_header,
     ensure_resource_access,
@@ -5128,6 +5130,54 @@ async def get_scene_task_status(
         # 分镜当前时长（音频全部完成时由后端自动同步为选中配音求和，浮点秒）。
         # 前端轮询据此即时刷新时间线/MM:SS 标签与进度行总时长。
         'scene_duration': float(scene.duration) if scene and scene.duration is not None else None,
+    })
+
+
+@router.post('/scene/{scene_id}/voice-replace')
+@require_permission("storyboard:update")
+async def submit_scene_voice_replace(
+    request: Request,
+    scene_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """为当前分镜选中成片入队音色替换（UVR + 角色 default_voice）。"""
+    user_id = get_user_id_from_header(user_id)
+    _scene, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
+    if err:
+        return err
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    force = bool(data.get("force")) if isinstance(data, dict) else False
+    result = await asyncio.to_thread(enqueue_scene_job, user_id, scene_id, force)
+    skipped = bool(result.get("skipped"))
+    return JSONResponse({
+        "success": (not skipped) and bool(result.get("queued") or result.get("reused")),
+        "queued": result.get("queued"),
+        "reused": result.get("reused"),
+        "skip_reason": result.get("skip_reason"),
+        "message": result.get("message"),
+        "job": result.get("job"),
+    })
+
+
+@router.get('/scene/{scene_id}/voice-replace')
+@require_permission("storyboard:view")
+async def get_scene_voice_replace(
+    request: Request,
+    scene_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """当前分镜最新一条音色替换任务。"""
+    user_id = get_user_id_from_header(user_id)
+    _scene, err = await _ensure_scene_access(scene_id, user_id, Action.VIEW)
+    if err:
+        return err
+    job = await asyncio.to_thread(VideoVoiceReplaceJobModel.get_latest_by_scene, scene_id)
+    return JSONResponse({
+        "success": True,
+        "job": job.to_dict() if job else None,
     })
 
 

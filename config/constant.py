@@ -1587,6 +1587,107 @@ class StoryboardAudioGenerateConstants:
     SKIP_REASON_USES_VIDEO_AUDIO = "uses_video_audio"
 
 
+class VoiceReplaceJobStatus:
+    """video_voice_replace_job.status 取值。"""
+    QUEUED = "queued"
+    ASR = "asr"
+    MATCHING = "matching"
+    WAIT_CONFIRM = "wait_confirm"
+    CONVERTING = "converting"
+    MUXING = "muxing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class VoiceReplaceConstants:
+    """成片对白音色替换：对齐阈值、超时、本机推理地址。"""
+    _CONSTANT_GROUP = True
+
+    SCORE_AUTO = 0.45
+    SCORE_LLM = 0.25
+    UNMATCHED_ASR_RATIO_CONFIRM = 0.40
+    SUBSTRING_SCORE = 1.0
+    WEIGHT_RECALL = 0.4
+    WEIGHT_PRECISION = 0.4
+    WEIGHT_PINYIN_RECALL = 0.2
+    WINDOW_GAP_PENALTY = 0.01
+
+    METHOD_SINGLE_SPEAKER = "single_speaker"
+    METHOD_TEXT = "text"
+    METHOD_PINYIN = "pinyin"
+    METHOD_ORDER = "order"
+    METHOD_SKIPPED = "skipped"
+
+    STATUS_AUTO = "auto"
+    STATUS_NEEDS_LLM = "needs_llm"
+    STATUS_WAIT_CONFIRM = "wait_confirm"
+    STATUS_SKIP = "skip"
+
+    SKIP_NO_DIALOGUE = "no_dialogue"
+    SKIP_NO_SPEECH = "no_speech"
+    SKIP_NO_VIDEO = "no_video"
+    SKIP_DIGITAL_HUMAN = "digital_human"
+    SKIP_MISSING_REFERENCE_AUDIO = "missing_reference_audio"
+    SKIP_ALREADY_COMPLETED = "already_completed"
+
+    SOURCE_STORYBOARD_SCENE = "storyboard_scene"
+    SOURCE_WORKFLOW_NODE = "workflow_node"
+
+    IN_FLIGHT_STATUSES = (
+        VoiceReplaceJobStatus.QUEUED,
+        VoiceReplaceJobStatus.ASR,
+        VoiceReplaceJobStatus.MATCHING,
+        VoiceReplaceJobStatus.CONVERTING,
+        VoiceReplaceJobStatus.MUXING,
+    )
+
+    # 推理服务兜底地址（公网入口）。生产可经 yaml voice_replace.* 或环境变量覆盖；禁止前端直连。
+    ASR_BASE_URL = "http://47.98.190.124:60000"
+    ASR_SEGMENTS_PATH = "/api/v1/asr_segments"
+    UVR_BASE_URL = "http://47.98.190.124:60001"
+    UVR_SEPARATE_PATH = "/api/v1/uvr"
+    # VC 后端：Vevo2（Amphion style-preserved VC，效果优于 Seed-VC，主力）。
+    VEVO2_BASE_URL = "http://47.98.190.124:60002"
+    VEVO2_CONVERT_PATH = "/api/v1/convert"
+    # Seed-VC（Gradio）保留作回退。
+    SEEDVC_BASE_URL = "http://150.158.44.98:17860"
+    SEEDVC_PREDICT_PATH = "/gradio_api/call/predict"
+
+    ASR_TIMEOUT = 60
+    UVR_TIMEOUT = 180
+    VEVO2_TIMEOUT = 300
+    SEEDVC_TIMEOUT = 180
+    FFMPEG_TIMEOUT = 120
+    HTTP_CONNECT_TIMEOUT = 10
+    DOWNLOAD_TIMEOUT = 120
+    SEEDVC_MAX_CONCURRENCY = 1
+
+    CROSSFADE_MS = 60
+    # 切段送 VC 时前后各留的上下文（秒）。~1.5s 纯对白会转糊；整段含静音又会把环境声变成胡话。
+    VC_CONTEXT_PAD_SECONDS = 1.5
+    SCHEDULER_INTERVAL_SECONDS = 8
+    JOB_BATCH_LIMIT = 1
+
+    # Vevo2 flow-matching 采样步数（官方默认 32）。
+    VEVO2_FM_STEPS = 32
+    SEEDVC_STEPS = 30
+    SEEDVC_LENGTH = 1.0
+    SEEDVC_CLARITY = 0.5
+    SEEDVC_SIMILARITY = 0.5
+    SEEDVC_TOP_P = 0.9
+    SEEDVC_TEMPERATURE = 1.0
+    SEEDVC_REPETITION = 1.0
+
+    AUDIO_SAMPLE_RATE = 44100
+    AUDIO_CHANNELS = 1
+    WORK_SUBDIR = "voice_replace"
+    RESULT_FILENAME = "result.mp4"
+    EXTRACTED_WAV = "source.wav"
+    UVR_VOCALS_FILENAME = "vocals.wav"
+    UVR_INSTRUMENTAL_FILENAME = "instrumental.wav"
+
+
 class EmotionVectorConstants:
     """IndexTTS 情感向量维度约定（与 web/js/pages/audio_generate.js 对齐）。
 
