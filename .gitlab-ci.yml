@@ -148,7 +148,7 @@ unit_tests:
 
     # 测试容器句柄（container_name 已删，按 project + service 取 ID）
     - TEST_CID=$(docker compose -f docker-compose-test.yml ps -q test)
-    - echo "测试容器: $TEST_CID"
+    - 'echo "测试容器: $TEST_CID"'
 
     # 等待测试完成：1s 轮询（原 10s 轮询平均多等 5s）。
     # run_unit_tests.py 默认进程隔离执行（每测试模块一个子进程），
