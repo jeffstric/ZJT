@@ -1018,12 +1018,17 @@ async function sendStoryboardAgentMessage(current) {
  * 「视频生成」模式（直连）：完全绕过智能体，直接用选中首帧 + 文本框提示词调
  * POST /scene/{id}/generate-video（社区版可用）。文本框预填 scene.videoPrompt，
  * 用户可编辑；编辑值仅本次使用，不回写 scene.videoPrompt。
- * 不往助手聊天区 push 任何消息、不弹框，消耗计入左下角算力提示行；
- * 视频结果直接出现在右侧候选区。提交后复用 pollSceneTaskStatus 轮询并回填候选区。
+ * 提交后聊天区 push 用户气泡与「已提交」状态气泡（对齐智能体模式的反馈链），
+ * 消耗计入左下角算力提示行；视频结果直接出现在右侧候选区。
+ * 提交后复用 pollSceneTaskStatus 轮询并回填候选区。
  */
 async function sendDirectVideo(current) {
     const sceneId = current.id;
-    if (!sceneId || isSceneAgentRunning(sceneId)) return;
+    if (!sceneId) return;
+    if (isSceneAgentRunning(sceneId)) {
+        showToast('当前分镜有任务正在处理中，请稍候', 'info');
+        return;
+    }
     // 必须有选中首帧（后端 generate-video 图生视频/对口型分支均强制校验）
     const firstFrameUrl = current.firstFrameUrl || current.first_frame_url;
     if (!firstFrameUrl) {
@@ -1061,8 +1066,9 @@ async function sendDirectVideo(current) {
         }
     }
 
-    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息，不弹框直接提交
+    // 占用 running 态（禁用发送按钮防重复提交）；聊天区 push 用户气泡让提交动作即时可见
     startSceneAgentRun(sceneId);
+    pushAgentMessageForScene(sceneId, 'user', isDh ? '[视频生成] 一键提交对口型视频生成' : `[视频生成] ${prompt}`);
     if (!isDh) {
         // 编辑值仅本次使用：提交前先重置文本框回 scene.videoPrompt 基线
         state.inputMessage = current?.videoPrompt || '';
@@ -1088,12 +1094,16 @@ async function sendDirectVideo(current) {
             throw new Error(result.error || '提交失败');
         }
         recordPowerSpend(result, isDh ? '数字人视频' : '视频');
+        // 提交成功的明确说明：与右侧候选区稍后出现的「生成中」占位卡衔接
+        pushAgentMessageForScene(sceneId, 'status', '视频生成任务已提交，右侧候选区将显示生成进度');
+        rerenderAgentPanelForScene(sceneId);
         // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
     } catch (error) {
         // 提交阶段即被内容安全拒绝时，错误文案经 notify 直接展示（不弹违规弹窗）
         const submitMsg = (error && error.message != null && error.message !== '') ? String(error.message) : (error ? String(error) : '');
+        pushAgentMessageForScene(sceneId, 'status', `视频生成提交失败：${submitMsg}`);
         notify(`视频生成失败：${submitMsg}`);
     } finally {
         finishSceneAgentRun(sceneId);
@@ -1122,12 +1132,17 @@ function recordPowerSpend(result, label) {
  * POST /scene/{id}/generate-image（零 LLM 消耗）。mode='auto' 保留角色/场景参考图注入；
  * prompt 透传且后端优先采用（prompt or context['image_prompt']）。
  * 文本框预填当前分镜画面提示词（composeSceneImagePrompt，用户可编辑）。
- * 不往助手聊天区 push 任何消息、不弹框，消耗计入左下角算力提示行；
- * 图片结果直接出现在右侧候选区。提交后复用 pollSceneTaskStatus 轮询并回填候选区。
+ * 提交后聊天区 push 用户气泡与「已提交」状态气泡（对齐智能体模式的反馈链），
+ * 消耗计入左下角算力提示行；图片结果直接出现在右侧候选区。
+ * 提交后复用 pollSceneTaskStatus 轮询并回填候选区。
  */
 async function sendDirectImage(current) {
     const sceneId = current.id;
-    if (!sceneId || isSceneAgentRunning(sceneId)) return;
+    if (!sceneId) return;
+    if (isSceneAgentRunning(sceneId)) {
+        showToast('当前分镜有任务正在处理中，请稍候', 'info');
+        return;
+    }
     // 生图提示词不能为空（文本框预填分镜画面提示词，预填为空时需手填）
     const prompt = (state.inputMessage || '').trim();
     if (!prompt) {
@@ -1144,8 +1159,9 @@ async function sendDirectImage(current) {
         return;
     }
 
-    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息，不弹框直接提交
+    // 占用 running 态（禁用发送按钮防重复提交）；聊天区 push 用户气泡让提交动作即时可见
     startSceneAgentRun(sceneId);
+    pushAgentMessageForScene(sceneId, 'user', `[直填生图] ${prompt}`);
     state.inputMessage = '';
     rerenderAgentPanel();
 
@@ -1161,12 +1177,16 @@ async function sendDirectImage(current) {
             throw new Error(result.error || '提交失败');
         }
         recordPowerSpend(result, '生图');
+        // 提交成功的明确说明：与右侧候选区稍后出现的「生成中」占位卡衔接
+        pushAgentMessageForScene(sceneId, 'status', '生图任务已提交，右侧候选区将显示生成进度');
+        rerenderAgentPanelForScene(sceneId);
         // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
     } catch (error) {
         // 提交阶段即被内容安全拒绝时，弹「内容违规提醒」弹框（带冷却去重）
         const submitMsg = (error && error.message != null && error.message !== '') ? String(error.message) : (error ? String(error) : '');
+        pushAgentMessageForScene(sceneId, 'status', `生图提交失败：${submitMsg}`);
         const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
         if (cv && typeof cv.notify === 'function') {
             try { cv.notify(`sb:${sceneId}:image-submit`, submitMsg); } catch (e) { /* 提醒异常不影响主流程 */ }
