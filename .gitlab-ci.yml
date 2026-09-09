@@ -174,11 +174,14 @@ unit_tests:
     # 停止测试环境
     - docker compose -f docker-compose-test.yml down -v || true
 
-    # 镜像治理：指纹 tag 只保留最近 3 个，防磁盘膨胀
-    # （docker rmi 对使用中的镜像自动拒绝，不影响并发中的其他 job）
+    # 镜像治理：指纹 tag 只保留 5 个，防磁盘膨胀（每 tag ~1GB+）。
+    # 必须排除当前 job 使用的指纹：BuildKit 全缓存命中时新 tag 是对旧镜像的
+    # retag，CreatedAt 不更新，docker images 默认排序无法区分新旧，
+    # 并发 job 的 GC 可能把刚构建/正在使用的 tag 误删（e2e 镜像曾实际踩中）。
+    # docker rmi 对使用中的镜像自动拒绝，不影响并发中的其他 job。
     - |
-      docker images zjt_test_image --format '{{.Tag}}' \
-        | tail -n +4 | xargs -r -n1 sh -c 'docker image rm "zjt_test_image:$0" 2>/dev/null' || true
+      docker images zjt_test_image --format '{{.Tag}}' | grep -v "^$TEST_IMAGE_TAG$" | grep -v '<none>' \
+        | tail -n +6 | xargs -r -n1 sh -c 'docker image rm "zjt_test_image:$0" 2>/dev/null' || true
 
     # 根据退出码决定 CI 结果
     - |
@@ -238,12 +241,16 @@ e2e_smoke:
     - docker compose -f "$E2E_COMPOSE_FILE" logs --no-color mysql app > e2e-results/services.log 2>&1 || true
     - docker rm -f "$E2E_RESULT_CONTAINER" > /dev/null 2>&1 || true
     - docker compose -f "$E2E_COMPOSE_FILE" down -v --remove-orphans || true
-    # 镜像治理：per-pipeline tag 只保留最近 3 条 pipeline 的镜像
-    # （docker rmi 对使用中的镜像自动拒绝，不影响并发中的其他 job）
+    # 镜像治理：per-pipeline tag 按 pipeline ID 数值降序只保留 8 条。
+    # 不能用 docker images 默认排序：全缓存构建的新 tag 是旧镜像的 retag，
+    # CreatedAt 不更新，最新 tag 会被排到队尾——并发流水线的 GC 曾因此把
+    # 刚构建完的 tag 误删，导致下个步骤 No such image（MR !594 pipeline 2028）。
+    # pipeline ID 单调递增，数值排序即时间序；保留数 8 覆盖 concurrent=4 的
+    # 最大并发流水线数（docker rmi 对使用中的镜像自动拒绝，双重保护）。
     - |
       for repo in zjt-e2e-app zjt-e2e-runner; do
-        docker images "$repo" --format '{{.Tag}}' \
-          | tail -n +4 | xargs -r -n1 sh -c "docker image rm $repo:\$0 2>/dev/null" || true
+        docker images "$repo" --format '{{.Tag}}' | grep -v '<none>' | sort -rn \
+          | tail -n +9 | xargs -r -n1 sh -c "docker image rm $repo:\$0 2>/dev/null" || true
       done
 
   artifacts:

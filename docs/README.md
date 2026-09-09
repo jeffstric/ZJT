@@ -383,9 +383,13 @@ build 容器挂载 `/var/run/docker.sock` 直连宿主机 dockerd，不再使用
 4. **并发隔离**：共享宿主 daemon 后，compose 通过 `COMPOSE_PROJECT_NAME`（按
    `CI_JOB_ID`/`CI_PIPELINE_ID` 命名）隔离容器/网络/卷；`docker-compose-test.yml` 已移除
    `container_name` 与 `ports`，容器句柄统一按 `docker compose ps -q <service>` 获取。
-5. **镜像治理与逃生通道**：指纹 tag 与 e2e 的 per-pipeline tag 各只保留最近 3 个防磁盘
-   膨胀；手动流水线带 `FORCE_REBUILD=1` 时丢弃指纹镜像强制重建；镜像使用前
+5. **镜像治理与逃生通道**：指纹 tag 保留 5 个（排除当前 job 使用的指纹）、e2e 的
+   per-pipeline tag 按 pipeline ID 数值降序保留 8 条，防磁盘膨胀；手动流水线带
+   `FORCE_REBUILD=1` 时丢弃指纹镜像强制重建；镜像使用前
    `docker run --rm --entrypoint pip <镜像> check` 冒烟验证依赖自洽。
+   注意 GC 不能用 `docker images` 默认排序——全缓存构建的新 tag 是旧镜像的 retag，
+   `CreatedAt` 不更新，最新 tag 会排到队尾被并发流水线的 GC 误删
+   （MR !594 的 pipeline 2028 曾因此 `No such image`）。
 
 旧的 DinD 时代方案（每 job 全新 daemon、`docker save/load` 搬运 664MB 镜像包经 GitLab
 cache 中转）已废弃——曾两次出现 20 字节坏包导致全量重建连锁，socket 直连后不再有
