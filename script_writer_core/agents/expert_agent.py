@@ -11,6 +11,7 @@ from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from model.model import ModelModel
+from config.constant import AGENT_LLM_MAX_OUTPUT_TOKENS_CAP, EXPERT_HISTORY_MAX_IMAGES
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +274,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             check_computing_power_sync(self.auth_token, self.agent_id)
 
             try:
-                # 从数据库获取模型的最大输出 token 数
+                # 从数据库获取模型的最大输出 token 数（封顶防止 prompt+completion 超上下文）
                 max_output_tokens = 65536  # 默认值
                 try:
                     if self.model_id:
@@ -283,6 +284,12 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                             logger.info(f"{self.agent_id}: Using model max_output_tokens: {max_output_tokens}")
                 except Exception as e:
                     logger.warning(f"{self.agent_id}: Failed to get model info for max_output_tokens: {e}")
+                if max_output_tokens > AGENT_LLM_MAX_OUTPUT_TOKENS_CAP:
+                    logger.info(f"{self.agent_id}: max_output_tokens {max_output_tokens} 封顶为 {AGENT_LLM_MAX_OUTPUT_TOKENS_CAP}")
+                    max_output_tokens = AGENT_LLM_MAX_OUTPUT_TOKENS_CAP
+
+                # 历史图片裁剪：防止 fetch_image_as_base64 注入的图片无上限累积击穿上下文
+                self._prune_history_images()
 
                 # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
                 # 传入 vendor_id 确保正确路由到目标供应商（如 zjt_api）
@@ -647,6 +654,34 @@ class ExpertAgent(BaseAgent, AskUserMixin):
     def _is_deepseek_model(self) -> bool:
         """判断当前模型是否为 DeepSeek 模型"""
         return 'deepseek' in (self.model or '').lower()
+
+    def _prune_history_images(self, max_images: int = EXPERT_HISTORY_MAX_IMAGES) -> None:
+        """裁剪对话历史中 fetch_image_as_base64 注入的图片，仅保留最近 max_images 张。
+
+        被裁掉的 image_url 片段替换为文本占位（URL 仍留在相邻的注入文案中），
+        LLM 需要重新查看时可再次调用 fetch_image_as_base64。
+        """
+        image_positions = []
+        for msg_idx, msg in enumerate(self.conversation_history):
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            for part_idx, part in enumerate(content):
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    image_positions.append((msg_idx, part_idx))
+
+        excess = len(image_positions) - max_images
+        if excess <= 0:
+            return
+
+        for msg_idx, part_idx in image_positions[:excess]:
+            self.conversation_history[msg_idx]["content"][part_idx] = {
+                "type": "text",
+                "text": "[系统提示] 此前注入的历史图片已从上下文中移除以控制 token 消耗；如需再次查看，请重新调用 fetch_image_as_base64。"
+            }
+        logger.info(f"{self.agent_id}: 已从历史中移除 {excess} 张旧图片（保留最近 {max_images} 张）")
 
     def _format_messages_for_api(self) -> List[Dict[str, Any]]:
         """格式化消息用于 API 调用"""

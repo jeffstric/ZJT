@@ -13,6 +13,7 @@ from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from agents.skill_loader import SopLoader
 from model.model import ModelModel
+from config.constant import AGENT_LLM_MAX_OUTPUT_TOKENS_CAP
 import json
 import uuid
 
@@ -353,7 +354,7 @@ class PMAgent(BaseAgent, AskUserMixin):
                 else:
                     tool_definitions = self._get_tool_definitions()
 
-                # 从数据库获取模型的最大输出 token 数
+                # 从数据库获取模型的最大输出 token 数（封顶防止 prompt+completion 超上下文）
                 max_output_tokens = 65536  # 默认值
                 try:
                     if task.model_id:
@@ -363,6 +364,9 @@ class PMAgent(BaseAgent, AskUserMixin):
                             logger.info(f"{self.agent_id}: Using model max_output_tokens: {max_output_tokens}")
                 except Exception as e:
                     logger.warning(f"{self.agent_id}: Failed to get model info for max_output_tokens: {e}")
+                if max_output_tokens > AGENT_LLM_MAX_OUTPUT_TOKENS_CAP:
+                    logger.info(f"{self.agent_id}: max_output_tokens {max_output_tokens} 封顶为 {AGENT_LLM_MAX_OUTPUT_TOKENS_CAP}")
+                    max_output_tokens = AGENT_LLM_MAX_OUTPUT_TOKENS_CAP
 
                 # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
                 # 传入 vendor_id 确保正确路由到目标供应商（如 zjt_api）

@@ -239,6 +239,17 @@ CHARACTER_IMAGE_HISTORY_MAX_ENTRIES = 20
 # （与 LLMModel.DEEPSEEK_V4_FLASH_VISION_EXP 同值；此处用字面量避免前向引用）
 VL_MODEL_PREFERRED_DEFAULT = 'deepseek-v4-flash-vision-exp'
 
+# ===== Agent LLM 调用 token 控制 =====
+# max_tokens 硬上限：DB model.max_output_tokens 可能写入接近 context_window 量级的数值
+# （如 deepseek-v4-flash-vision-exp 为 384000），全量透传会使 prompt+completion 超过模型
+# 上下文上限报 400（事故：messages 744825 + completion 384000 > 1048576）。
+AGENT_LLM_MAX_OUTPUT_TOKENS_CAP = 32768
+# 专家对话历史中保留的最大图片数（fetch_image_as_base64 注入的多模态 user 消息）。
+# VL 模型对图片 token 计费很高（实测 deepseek-v4-flash-vision-exp 单图约 4~5 万 tokens），
+# 无上限累积会击穿上下文（事故：16 张图 messages 达 74 万 tokens）。
+# 超出后最旧图片替换为文本占位，LLM 需要时可重新调用 fetch_image_as_base64 获取。
+EXPERT_HISTORY_MAX_IMAGES = 6
+
 # 剧本创作等入口无偏好时的默认生图模型：GPT Image 2（short_key=gpt-image-2）
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = TaskTypeId.GPT_IMAGE_2_EDIT
 
