@@ -231,6 +231,11 @@ file_storage:
 zjt:
   token: ""
 
+# Sentry 错误监控（统一 DSN，所有生产部署共用；用户配置 config_prod.yml 可覆盖）
+sentry:
+  dsn: "https://b78e7bd086738180e4714333d8f8a88a@sentry.perseids.cn/6"
+  environment: "production"
+
 # 每日签到配置
 checkin:
   enabled: false                     # 是否启用每日签到功能
