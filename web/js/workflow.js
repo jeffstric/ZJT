@@ -2898,6 +2898,11 @@
         node.data.forceMediumShot = nodeData.data.forceMediumShot !== undefined ? nodeData.data.forceMediumShot : true;
         node.data.noBgMusic = nodeData.data.noBgMusic !== undefined ? nodeData.data.noBgMusic : true;
         node.data.splitMultiDialogue = nodeData.data.splitMultiDialogue !== undefined ? nodeData.data.splitMultiDialogue : false;
+        // 总分镜时长控制倍率（旧工作流缺省 0=不限制）
+        const savedTotalDurationMultiplier = Number(nodeData.data.totalDurationMultiplier);
+        node.data.totalDurationMultiplier = [0, 1, 2, 3].includes(savedTotalDurationMultiplier)
+          ? savedTotalDurationMultiplier
+          : 0;
         // 分镜拆分模式 + 质检（与故事板对齐；旧工作流缺省 balanced / 关闭质检）
         const savedSequenceMode = nodeData.data.sequenceMode;
         node.data.sequenceMode = ['speed', 'balanced', 'quality'].includes(savedSequenceMode)
@@ -2951,6 +2956,9 @@
 
           if(textareaEl) textareaEl.value = node.data.scriptContent;
           if(durationSelectEl) durationSelectEl.value = String(node.data.maxGroupDuration);
+          const totalDurationSelectRestoreEl = el.querySelector('.script-total-duration-select');
+          if(totalDurationSelectRestoreEl) totalDurationSelectRestoreEl.value = String(node.data.totalDurationMultiplier);
+          if(typeof node.updateTotalDurationHint === 'function') node.updateTotalDurationHint();
           if(forceMediumShotEl) forceMediumShotEl.checked = node.data.forceMediumShot;
           if(noBgMusicEl) noBgMusicEl.checked = node.data.noBgMusic;
           if(splitMultiDialogueEl) splitMultiDialogueEl.checked = node.data.splitMultiDialogue;

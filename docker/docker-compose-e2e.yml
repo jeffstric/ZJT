@@ -41,11 +41,13 @@ services:
       --innodb-doublewrite=0
     volumes:
       - e2e_mysql_data:/var/lib/mysql
-      - ../model/sql/baseline.sql:/docker-entrypoint-initdb.d/01-baseline.sql:ro
-      # 必须挂载到 /etc/mysql/my.cnf：CI DinD 下宿主机 AppArmor usr.sbin.mysqld
+      # ${HOST_SRC_DIR:-..}：socket 直连宿主 dockerd（CI）时注入宿主侧源码绝对路径，
+      # 本地 compose 不设置该变量，回退原相对路径（与 docker-compose-test.yml 同理）
+      - ${HOST_SRC_DIR:-..}/model/sql/baseline.sql:/docker-entrypoint-initdb.d/01-baseline.sql:ro
+      # 必须挂载到 /etc/mysql/my.cnf：宿主机 AppArmor usr.sbin.mysqld
       # profile 会附加到容器内 mysqld，/etc/my.cnf 读取被拒（EACCES），
       # profile 只允许 /etc/mysql/**（与 docker-compose-test.yml 同款修复）
-      - ./mysql/my.cnf:/etc/mysql/my.cnf:ro
+      - ${HOST_SRC_DIR:-.}/mysql/my.cnf:/etc/mysql/my.cnf:ro
     healthcheck:
       # 走 TCP(127.0.0.1) 而非 localhost socket，避免 AppArmor 场景 socket
       # 路径不一致导致误判；预算约 180s（DinD 冷初始化实测约 110s）

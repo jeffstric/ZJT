@@ -263,6 +263,14 @@ asr:
   api_url: "http://47.98.190.124:60000"  # SenseVoice ASR 服务地址
   enabled: false  # true 时启用句级 smart 字幕（需 asr 服务可达）
 
+# 成片对白音色替换：SenseVoice ASR + UVR 人声分离 + Vevo2 音色转换（回退 Seed-VC）。
+# 以下为推理服务公网入口地址（前端禁止直连），可经环境变量 SENSEVOICE_ASR_URL / UVR_URL / VEVO2_URL / SEEDVC_URL 覆盖。
+voice_replace:
+  asr_base_url: "http://47.98.190.124:60000"
+  uvr_base_url: "http://47.98.190.124:60001"
+  vevo2_base_url: "http://47.98.190.124:60002"
+  seedvc_base_url: "http://150.158.44.98:17860"
+
 
 # User registration configuration
 user_registration:

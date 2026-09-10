@@ -471,6 +471,23 @@ def _normalize_request_config(request_config: dict) -> dict:
         cfg["enable_character_variant"] = variant_value.strip().lower() in ("1", "true", "yes", "on")
     else:
         cfg["enable_character_variant"] = bool(variant_value)
+    # 总分镜时长倍率统一为 float（0=不限制），并夹紧到常量范围，
+    # 避免 active_key 因 "2"/2/2.0 漂移（见 docs/script/script_split_total_duration_control.md）
+    try:
+        duration_multiplier = float(cfg.get("total_duration_multiplier") or 0)
+    except (TypeError, ValueError):
+        duration_multiplier = 0.0
+    if duration_multiplier <= 0:
+        duration_multiplier = 0.0
+    else:
+        duration_multiplier = max(
+            ScriptSplitConstants.TOTAL_DURATION_MULTIPLIER_MIN,
+            min(
+                ScriptSplitConstants.TOTAL_DURATION_MULTIPLIER_MAX,
+                duration_multiplier,
+            ),
+        )
+    cfg["total_duration_multiplier"] = round(duration_multiplier, 2)
     return cfg
 
 

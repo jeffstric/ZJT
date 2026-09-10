@@ -74,4 +74,21 @@ assert.match(cssSrc, /\.generate-progress-fill/, 'storyboard.css 应有 .generat
 const nodeClientPath = path.join(repoRoot, 'web/js/script_split_task.js');
 assert.ok(fs.existsSync(nodeClientPath), 'web/js/script_split_task.js（视频工作流拆分节点客户端）应存在');
 
+// 10. 总分镜时长控制（见 docs/script/script_split_total_duration_control.md）
+const nodeSrc = readSrc('web/js/script_node.js');
+const nodeClientSrc = readSrc('web/js/script_split_task.js');
+const workflowSrc = readSrc('web/js/workflow.js');
+// 故事板拆分弹窗：倍率下拉 + 估算 hint + 请求透传 + 状态持久化
+assert.match(renderSrc, /data-config-select="totalDurationMultiplier"/, 'render.js 应渲染总分镜时长倍率下拉');
+assert.match(renderSrc, /estimateScriptDurationSeconds/, 'render.js 应实现剧本基准时长估算（与后端同公式）');
+assert.match(eventsSrc, /total_duration_multiplier: Number\(state\.totalDurationMultiplier\)/, 'events.js 拆分请求应透传总分镜时长倍率');
+assert.match(stateSrc, /totalDurationMultiplier: state\.totalDurationMultiplier/, 'state.js 应持久化总分镜时长倍率');
+assert.match(stateSrc, /\[0, 1, 2, 3\]\.includes\(Number\(config\.totalDurationMultiplier\)\)/, 'state.js 恢复时应校验倍率取值');
+// 视频工作流剧本节点：倍率下拉 + 估算 hint + 请求透传 + 重载恢复
+assert.match(nodeSrc, /script-total-duration-select/, 'script_node.js 应渲染总分镜时长倍率下拉');
+assert.match(nodeSrc, /node\.data\.totalDurationMultiplier/, 'script_node.js 应把倍率写入节点数据（随工作流序列化）');
+assert.match(nodeSrc, /estimateScriptDurationSeconds/, 'script_node.js 应实现剧本基准时长估算（与后端同公式）');
+assert.match(nodeClientSrc, /total_duration_multiplier: Number\(scriptNodeData\.totalDurationMultiplier\)/, 'script_split_task.js 请求应透传总分镜时长倍率');
+assert.match(workflowSrc, /totalDurationMultiplier/, 'workflow.js 重载时应恢复总分镜时长倍率');
+
 console.log('storyboard script split static tests passed');

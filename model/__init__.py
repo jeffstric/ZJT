@@ -36,6 +36,12 @@ from .storyboard_scene_asset import StoryboardSceneAssetModel, StoryboardSceneAs
 from .storyboard_image_batch import StoryboardImageBatchJobModel, StoryboardImageBatchItemModel
 from .script_split_task import ScriptSplitTaskModel, ScriptSplitTask
 from .script_split_segment import ScriptSplitSegmentModel, ScriptSplitSegment
+from .video_voice_replace import (
+    VideoVoiceReplaceJob,
+    VideoVoiceReplaceJobModel,
+    VideoVoiceReplaceSegment,
+    VideoVoiceReplaceSegmentModel,
+)
 # 用户模块实体（user_modules/user_module_binding）随商业版 enterprise 包提供。
 
 __all__ = [
@@ -124,4 +130,8 @@ __all__ = [
     'ScriptSplitTask',
     'ScriptSplitSegmentModel',
     'ScriptSplitSegment',
+    'VideoVoiceReplaceJob',
+    'VideoVoiceReplaceJobModel',
+    'VideoVoiceReplaceSegment',
+    'VideoVoiceReplaceSegmentModel',
 ]

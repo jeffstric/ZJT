@@ -1,3 +1,31 @@
+    // 按剧本字数估算基准时长（秒）。与后端 llm/script_parser.py
+    // estimate_script_duration_seconds 同公式：CJK 4.5 字/秒、拉丁 11 字符/秒
+    // 按占比混合，下限 10 秒（修改时前后端同步）。
+    function estimateScriptDurationSeconds(text) {
+      const chars = String(text || '').replace(/\s+/g, '');
+      if (!chars.length) return 0;
+      let cjk = 0;
+      for (let i = 0; i < chars.length; i++) {
+        const code = chars.charCodeAt(i);
+        if ((code >= 0x4e00 && code <= 0x9fff) || (code >= 0x3400 && code <= 0x4dbf)
+          || (code >= 0xf900 && code <= 0xfaff) || (code >= 0x3040 && code <= 0x30ff)) {
+          cjk++;
+        }
+      }
+      const ratio = cjk / chars.length;
+      const rate = ratio * 4.5 + (1 - ratio) * 11.0;
+      return Math.max(10, Math.round((chars.length / rate) * 10) / 10);
+    }
+
+    // 秒 → “X分Y秒”展示（总分镜时长 hint 用）
+    function formatDurationLabel(seconds) {
+      const total = Math.round(Number(seconds) || 0);
+      if (total < 60) return total + '秒';
+      const m = Math.floor(total / 60);
+      const s = total % 60;
+      return s ? m + '分' + s + '秒' : m + '分钟';
+    }
+
     function createScriptNode(opts){
       // i18n：缺失 key 时 window.t 常回退为 key 本身，需再用中文 fallback
       const st = (key, fallback) => {
@@ -121,6 +149,16 @@
                   <option value="10" data-i18n="duration_10s">${st('duration_10s', '10秒')}</option>
                   <option value="15" selected data-i18n="duration_15s">${st('duration_15s', '15秒')}</option>
                 </select>
+              </div>
+              <div class="field field-always-visible">
+                <div class="label" data-i18n="script_total_duration_label">${st('script_total_duration_label', '总分镜时长')}</div>
+                <select class="script-total-duration-select" title="${st('script_total_duration_hint', '限制全部分镜的总时长：按剧本字数估算基准时长（朗读速率），N倍=基准时长×N作为分镜总时长上限')}" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                  <option value="0">${st('script_total_duration_unlimited', '不限制')}</option>
+                  <option value="1">1${st('script_total_duration_unit', '倍')}</option>
+                  <option value="2">2${st('script_total_duration_unit', '倍')}</option>
+                  <option value="3">3${st('script_total_duration_unit', '倍')}</option>
+                </select>
+                <div class="gen-meta script-total-duration-hint" style="margin-top: 4px; font-size: 11px; color: #666;"></div>
               </div>
               <div class="script-checkbox-group script-checkbox-group-compact">
                 <label class="script-inline-check">
@@ -269,6 +307,8 @@
       const loadBtn = el.querySelector('.script-load-btn');
       const expandBtn = el.querySelector('.script-expand-btn');
       const durationSelectEl = el.querySelector('.script-duration-select');
+      const totalDurationSelectEl = el.querySelector('.script-total-duration-select');
+      const totalDurationHintEl = el.querySelector('.script-total-duration-hint');
       const forceMediumShotEl = el.querySelector('.script-force-medium-shot');
       const noBgMusicEl = el.querySelector('.script-no-bg-music');
       const splitMultiDialogueEl = el.querySelector('.script-split-multi-dialogue');
@@ -765,6 +805,15 @@
       
       // 初始化节点数据中的最大时长和选项（仅设置默认值，不覆盖已保存的值）
       if(node.data.maxGroupDuration === undefined) node.data.maxGroupDuration = 15;
+      // 总分镜时长控制倍率：0=不限制（工作流重载后从此恢复选中项）
+      if(![0, 1, 2, 3].includes(Number(node.data.totalDurationMultiplier))) {
+        node.data.totalDurationMultiplier = 0;
+      } else {
+        node.data.totalDurationMultiplier = Number(node.data.totalDurationMultiplier);
+      }
+      if(totalDurationSelectEl) {
+        totalDurationSelectEl.value = String(node.data.totalDurationMultiplier);
+      }
       if(node.data.forceMediumShot === undefined) node.data.forceMediumShot = true;
       if(node.data.noBgMusic === undefined) node.data.noBgMusic = true;
       if(node.data.splitMultiDialogue === undefined) node.data.splitMultiDialogue = false;
@@ -906,6 +955,7 @@
       // 暴露给重载逻辑
       node.setParamGroupOpen = setParamGroupOpen;
       node.updateParamGroupSummaries = updateParamGroupSummaries;
+      node.updateTotalDurationHint = updateTotalDurationHint;
 
       if(sequenceModeSelectEl) {
         syncSequenceModeUi();
@@ -967,10 +1017,24 @@
         }
       }
 
+      // 总分镜时长 hint：展示按当前剧本估算的基准时长与目标总时长
+      function updateTotalDurationHint() {
+        if(!totalDurationHintEl) return;
+        const fallback = st('script_total_duration_hint', '限制全部分镜的总时长：按剧本字数估算基准时长（朗读速率），N倍=基准时长×N');
+        const m = Number(node.data.totalDurationMultiplier) || 0;
+        const estimate = estimateScriptDurationSeconds(node.data.scriptContent);
+        if(m <= 0 || estimate <= 0) {
+          totalDurationHintEl.textContent = fallback;
+          return;
+        }
+        totalDurationHintEl.textContent = st('script_total_duration_estimate_summary', `剧本估算约 ${formatDurationLabel(estimate)} × ${m}倍 → 目标总分镜时长约 ${formatDurationLabel(estimate * m)}`);
+      }
+
       // 更新剧本内容和按钮状态
       function updateScriptContent(content, source) {
         node.data.scriptContent = content;
         updateCharCount(content.length);
+        updateTotalDurationHint();
         
         if(content && content.trim().length > 0) {
           splitBtn.disabled = false;
@@ -1015,6 +1079,15 @@
       durationSelectEl.addEventListener('change', () => {
         node.data.maxGroupDuration = parseInt(durationSelectEl.value);
       });
+
+      // 总分镜时长倍率监听
+      if(totalDurationSelectEl) {
+        totalDurationSelectEl.addEventListener('change', () => {
+          const m = parseInt(totalDurationSelectEl.value, 10);
+          node.data.totalDurationMultiplier = [0, 1, 2, 3].includes(m) ? m : 0;
+          updateTotalDurationHint();
+        });
+      }
 
       // 对话强制中景选项监听
       forceMediumShotEl.addEventListener('change', () => {
@@ -2570,7 +2643,10 @@
 
       // 添加调试按钮
       addDebugButtonToNode(el, node);
-      
+
+      // 初始渲染总分镜时长 hint（重载恢复在 workflow.js 中再次调用）
+      updateTotalDurationHint();
+
       canvasEl.appendChild(el);
       setSelected(id);
       return id;

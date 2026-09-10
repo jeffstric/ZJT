@@ -25,7 +25,7 @@ Token Plan 为包月套餐（月费买断 credits 额度），按量 API 为按 
 |---|---|---|
 | 上下文窗口 | 1,000,000 | 1,000,000 |
 | 最大输出 | 128,000 | 128,000 |
-| 工具调用 / 思考 / 视觉 | 1 / 1 / 1 | 1 / 1 / 1 |
+| 工具调用 / 思考 / 视觉 | 1 / 1 / 1 | 1 / 1 / **0**（Pro 为纯文本模型，官方页标明输入/输出模态均为文本；no_127 误标视觉=1，no_132_20260909_fix_mimo_v25_pro_vl_flag 已修正并清理指向它的 VL 偏好） |
 | 思考参数格式 | `extra_body={"thinking": {"type": "enabled"/"disabled"}}`（与 DeepSeek 客户端同款） | 同左 |
 | 限速 | RPM 100 / TPM 10M | RPM 100 / TPM 10M |
 
@@ -49,6 +49,8 @@ normal 时段、不分段（`raw_token_threshold = NULL`）。
 - `llm/openai_mimo.py`：新增客户端（单例 `get_mimo_openai_client`）
 - `llm/llm_client_factory.py`：`_VENDOR_CLIENT_MAP` + `vendor_config_map` 两处注册
 - `alembic/versions/no_127_20260905_add_mimo_models.py`：vendor + model + vendor_model 计费档位
+- `alembic/versions/no_132_20260909_fix_mimo_v25_pro_vl_flag.py`：修正 mimo-v2.5-pro
+  `supports_vl` 误标（1→0）与 note，并删除 `user_preferences` 中指向它的 `vl_model` 偏好
 - `config.example.yml` / `config_prod.base.yaml` / `config_dev.base.yml`：`llm.mimo` 配置段
   （dev.base 为本地开发兜底默认值，完整模板见 example，按项目约定三处同步维护）
 - `config/default_configs.py`：`llm.mimo.api_key` / `llm.mimo.base_url` 热更新项

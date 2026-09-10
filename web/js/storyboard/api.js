@@ -140,6 +140,21 @@ export async function generateFromScript(storyboardId, data = {}) {
 }
 
 /**
+ * 拉取剧本正文（拆分弹窗「总分镜时长」估算 hint 用）。
+ * 失败静默返回空串：估算展示是增强信息，不应阻塞拆分弹窗。
+ */
+export async function fetchScriptContent(scriptId) {
+    if (!scriptId) return '';
+    try {
+        const resp = await fetch(`/api/scripts/${scriptId}`, { headers: authHeaders(false) });
+        const data = await readJson(resp);
+        return String((data && data.data && data.data.content) || '');
+    } catch {
+        return '';
+    }
+}
+
+/**
  * 智能插入分镜：调用 LLM 根据前后分镜上下文自动生成分镜内容，
  * 后端直接创建完整字段的分镜（幕/视角景别/场景/角色从相邻分镜继承）
  * @param {number} storyboardId - 故事板 ID
@@ -318,6 +333,12 @@ export async function estimateSceneVideoPower(sceneId, config = {}) {
 }
 export async function getSceneTaskStatus(sceneId) {
     return request(`/scene/${sceneId}/task-status`);
+}
+export async function submitSceneVoiceReplace(sceneId, data = {}) {
+    return request(`/scene/${sceneId}/voice-replace`, { method: 'POST', body: JSON.stringify(data) });
+}
+export async function getSceneVoiceReplace(sceneId) {
+    return request(`/scene/${sceneId}/voice-replace`);
 }
 export async function getStoryboardTaskStatus(storyboardId, assetType = 'first_frame') {
     const qs = assetType ? `?asset_type=${encodeURIComponent(assetType)}` : '';

@@ -20,6 +20,8 @@
 |------|------|
 | [script_auto_split_improvement.md](./script_auto_split_improvement.md) | 剧本节点自动拆分分镜功能改进 |
 | [script_parser_incremental_split_design.md](./script_parser_incremental_split_design.md) | 模型语义分段、逐段拆分、断点续传与异步轮询设计 |
+| [script_split_total_duration_control.md](./script_split_total_duration_control.md) | 总分镜时长控制：倍率×剧本估算时长限制分镜总时长（段级预算 + 合并归一化） |
+| [script_split_total_duration_control_test_plan.md](./script_split_total_duration_control_test_plan.md) | 总分镜时长控制测试文档（智能体移交版：L1~L4 分层步骤/验收标准/存量失败基线） |
 | [shot_frame_references.md](./shot_frame_references.md) | 分镜节点引用显示功能（场景/道具/角色） |
 | [auto_submit_feature.md](./auto_submit_feature.md) | 自动提交数据库功能（定时自动保存）与提交按钮环绕 Loading |
 | [world_export_import.md](./world_export_import.md) | 世界导出与导入接口说明 |

@@ -42,9 +42,12 @@ RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
 
 # uv 并行解析/下载依赖。串行 pip 在镜像源抖动时会把一次构建拖成 60 分钟级
 # job（CI 实测），uv 并发下载可显著收敛构建时间；uv 仅构建期使用，装完即卸载。
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir uv==0.12.9 && \
-    uv pip install --system --no-cache -r requirements.txt && \
+# BuildKit cache mount 保留 pip/uv wheel 缓存（宿主 dockerd 直连模式下跨构建持久），
+# 依赖层因 requirements.txt 变化重建时绝大多数 wheel 直接命中本地缓存。
+RUN --mount=type=cache,target=/root/.cache \
+    pip install --upgrade pip && \
+    pip install uv==0.12.9 && \
+    uv pip install --system -r requirements.txt && \
     pip uninstall -y uv
 
 # Copy project files
