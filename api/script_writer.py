@@ -26,7 +26,6 @@ from config.constant import (
     MediaGenerationType,
     DEFAULT_TEXT_TO_IMAGE_TASK_ID,
     PERSEIDS_ERR_INVALID_AUTH_TOKEN,
-    PERSEIDS_ERR_NO_VALID_TOKEN,
     ERROR_CODE_TOKEN_EXPIRED,
     ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
     IMAGE_STYLE_LLM_TIMEOUT,
@@ -42,6 +41,13 @@ from config.constant import (
     WORLD_IMPORT_JOB_CLEANUP_INTERVAL,
 )
 from api.auth_identity import resolve_authorization_user_id
+from model.user_tokens import UserTokensModel
+from perseids_server.utils.auth_identity import (
+    get_auth_user_id,
+    ensure_owner,
+    check_claimed_user_id,
+    normalize_authorization_token,
+)
 from config.model_catalog import ModelScene, annotate_llm_models, build_tracks_payload
 from utils.resource_access import get_user_id_from_header, ensure_world_access
 from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
@@ -419,52 +425,31 @@ except Exception as e:
 
 async def verify_auth_token(user_id: str, auth_token: str) -> tuple[bool, Optional[dict]]:
     """
-    验证用户的 auth_token
-    
+    验证 auth_token 是否属于指定用户（本地强校验）
+
+    - token 缺失/为空 → 拒绝（不再放行）
+    - token 无效/过期/被顶号（user_tokens 单会话，旧 token 被删即查不到）→ TOKEN_EXPIRED(401)
+    - token 属主与 user_id 不符 → TOKEN_EXPIRED(401)
+
     Args:
-        user_id: 用户ID
-        auth_token: 用户的认证令牌
-        
+        user_id: 声明的用户ID
+        auth_token: 认证令牌
+
     Returns:
         tuple: (success: bool, error_response: dict or None)
     """
-    if not auth_token:
-        return True, None
-    
+    token = str(auth_token or '').strip()
+    if not token:
+        logger.warning(f"Token验证失败 - user_id: {user_id}, 缺少认证令牌")
+        return False, {
+            'success': False,
+            'error': '登录已过期，请重新登录',
+            'error_code': ERROR_CODE_TOKEN_EXPIRED,
+            'token_expired': True
+        }
+
     try:
-        # 调用认证服务器验证 token
-        success, message, auth_data = await async_make_perseids_request(
-            endpoint='get_auth_token_by_user_id',
-            data={
-                'user_id': int(user_id),
-                'authentication_id': os.environ.get('SYSTEM_AUTH_ID', '')
-            },
-            method='POST'
-        )
-        
-        if not success:
-            # 依据源头 error_code 精确分类（不做 message 文案匹配）：
-            # NO_VALID_TOKEN = 该用户确证无有效 token（被顶号/登出/重置密码），按 token 失效处理；
-            # 其余失败（服务故障/DB 异常等）一律视为认证服务不可用，不得误报 token 失效。
-            if isinstance(auth_data, dict) and auth_data.get('error_code') == PERSEIDS_ERR_NO_VALID_TOKEN:
-                logger.warning(f"Token确证失效 - user_id: {user_id}, 错误: {message}")
-                return False, {
-                    'success': False,
-                    'error': '登录已过期，请重新登录',
-                    'error_code': ERROR_CODE_TOKEN_EXPIRED,
-                    'token_expired': True
-                }
-            logger.warning(f"Token验证服务故障 - user_id: {user_id}, 错误: {message}")
-            return False, {
-                'success': False,
-                'error': '认证服务暂时不可用，请稍后重试',
-                'error_code': ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
-                'message': message
-            }
-        
-        logger.info(f"Token验证成功 - user_id: {user_id}")
-        return True, None
-        
+        token_user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, token)
     except Exception as e:
         logger.error(f"Token验证异常 - user_id: {user_id}, 错误: {str(e)}")
         return False, {
@@ -473,6 +458,27 @@ async def verify_auth_token(user_id: str, auth_token: str) -> tuple[bool, Option
             'error_code': ERROR_CODE_AUTH_SERVICE_UNAVAILABLE,
             'message': f'验证服务异常: {str(e)}'
         }
+
+    if not token_user_id:
+        logger.warning(f"Token确证失效 - user_id: {user_id}")
+        return False, {
+            'success': False,
+            'error': '登录已过期，请重新登录',
+            'error_code': ERROR_CODE_TOKEN_EXPIRED,
+            'token_expired': True
+        }
+
+    if str(token_user_id) != str(user_id).strip():
+        logger.warning(f"Token属主不匹配 - token user: {token_user_id}, claimed user: {user_id}")
+        return False, {
+            'success': False,
+            'error': '登录已过期，请重新登录',
+            'error_code': ERROR_CODE_TOKEN_EXPIRED,
+            'token_expired': True
+        }
+
+    logger.info(f"Token验证成功 - user_id: {user_id}")
+    return True, None
 
 def _auth_error_status_code(error_response: dict) -> int:
     """按 error_code 分流：认证服务自身故障 → 502；token 确证失效 → 401。"""
@@ -1210,13 +1216,23 @@ class SessionMessageAppendRequest(BaseModel):
 async def create_session(request: Request, session_request: SessionCreateRequest):
     """创建新会话"""
     try:
-        # 验证 auth_token
-        is_valid, error_response = await verify_auth_token(session_request.user_id, session_request.auth_token)
+        # 身份一致性校验：body 中的 user_id 必须与登录身份一致（缺省时以登录身份为准）
+        auth_user_id = get_auth_user_id(request)
+        claimed_error = check_claimed_user_id(session_request.user_id, auth_user_id)
+        if claimed_error:
+            return claimed_error
+        effective_user_id = str(auth_user_id)
+
+        # 验证 auth_token（header 优先，body 兜底；须与 user_id 匹配）
+        header_token = normalize_authorization_token(request.headers.get('authorization'))
+        is_valid, error_response = await verify_auth_token(
+            effective_user_id, header_token or session_request.auth_token
+        )
         if not is_valid:
             return JSONResponse(error_response, status_code=_auth_error_status_code(error_response))
-        
+
         # 从数据库同步数据到文件系统（不强制覆盖，有差异时跳过）
-        sync_result = sync_database_to_files(session_request.user_id, session_request.world_id, session_request.auth_token, force_overwrite=False)
+        sync_result = sync_database_to_files(effective_user_id, session_request.world_id, header_token or session_request.auth_token, force_overwrite=False)
         if sync_result['skipped_files']:
             logger.info(f"create_session: 以下文件存在差异，已跳过: {sync_result['skipped_files']}")
         
@@ -1231,9 +1247,9 @@ async def create_session(request: Request, session_request: SessionCreateRequest
             tool_executor=tool_executor,
             agents_config=agents_config,
             system_prompt=None,  # 使用 PMAgent 的默认构建逻辑
-            user_id=session_request.user_id,
+            user_id=effective_user_id,
             world_id=session_request.world_id,
-            auth_token=session_request.auth_token,
+            auth_token=header_token or session_request.auth_token,
             model=session_request.model,
             model_id=session_request.model_id,
             session_type=session_request.session_type
@@ -1310,6 +1326,18 @@ async def create_session(request: Request, session_request: SessionCreateRequest
 async def get_session_history(request: Request, session_id: str):
     """获取会话历史"""
     try:
+        # 属主断言：会话不存在或非本人会话一律 404（防枚举）
+        from model.chat_sessions import ChatSessionsModel
+        owner_session = await asyncio.to_thread(ChatSessionsModel.get_by_session_id, session_id)
+        if not owner_session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+        owner_error = ensure_owner(owner_session.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
+
         # 优先从 chat_messages 读取（新路径）
         try:
             from model.chat_messages import ChatMessagesModel
@@ -1388,6 +1416,11 @@ async def clear_session_history(request: Request, session_id: str):
                 'error': '会话不存在'
             }, status_code=404)
 
+        # 属主断言：非本人会话一律 404（防枚举）
+        owner_error = ensure_owner(entity.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
+
         # 清空旧 conversation_history（兼容过渡期）
         await asyncio.to_thread(ChatSessionsModel.clear_history, session_id)
 
@@ -1437,6 +1470,11 @@ async def compress_session_history(request: Request, session_id: str):
                 'success': False,
                 'error': '会话不存在'
             }, status_code=404)
+
+        # 属主断言：非本人会话一律 404（防枚举）
+        owner_error = ensure_owner(session_entity.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
 
         # 获取最近的任务信息（用于模型配置）
         task_entity = await asyncio.to_thread(AgentTasksModel.get_latest_by_session, session_id)
@@ -1513,15 +1551,6 @@ async def compress_session_history(request: Request, session_id: str):
             'error': str(e)
         }, status_code=500)
 
-@router.post('/session/clear-directory')
-async def clear_user_directory(request: SyncFilesRequest):
-    """清空用户世界目录"""
-    # TODO: 实现清空目录逻辑
-    return JSONResponse({
-        'success': True,
-        'message': '目录已清空'
-    })
-
 @router.put('/session/{session_id}/history')
 @require_permission("script_session:update")
 async def update_session_history(request: Request, session_id: str, history_request: SessionHistoryUpdateRequest):
@@ -1536,6 +1565,11 @@ async def update_session_history(request: Request, session_id: str, history_requ
                 'success': False,
                 'error': '会话不存在'
             }, status_code=404)
+
+        # 属主断言：非本人会话一律 404（防枚举）
+        owner_error = ensure_owner(session_entity.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
 
         # 过滤 system 消息
         filtered_messages = [msg for msg in history_request.messages if msg.get('role') != 'system']
@@ -1602,6 +1636,11 @@ async def append_session_message(request: Request, session_id: str, message_requ
                 'success': False,
                 'error': '会话不存在'
             }, status_code=404)
+
+        # 属主断言：非本人会话一律 404（防枚举）
+        owner_error = ensure_owner(session_entity.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
 
         role = message_request.role
         content = message_request.content
@@ -2818,14 +2857,40 @@ async def list_models_endpoint(scene: Optional[str] = None):
 
 # ==================== 文件同步 API ====================
 
+async def _ensure_world_owner(world_id, auth_user_id: Optional[int]) -> Optional[JSONResponse]:
+    """隔离空间下校验 world 属主（与 sync_database_to_files 的 filter_by_user 语义一致）。
+
+    共享空间（社区版）下 world 多人可见，跳过属主校验。
+    """
+    from config.constant import Edition
+    if not Edition.is_space_isolated():
+        return None
+    try:
+        from model.world import WorldModel
+        world = await asyncio.to_thread(WorldModel.get_by_id, int(world_id))
+    except (TypeError, ValueError):
+        from perseids_server.utils.auth_identity import owner_mismatch_response
+        return owner_mismatch_response()
+    return ensure_owner(world.user_id if world else None, auth_user_id)
+
 @router.post('/sync-files')
-async def sync_files(request: SyncFilesRequest):
+@require_permission("world:sync_files")
+async def sync_files(request: Request, sync_request: SyncFilesRequest):
     """同步数据库到文件系统"""
     try:
-        user_id = request.user_id
-        world_id = request.world_id
-        auth_token = getattr(request, 'auth_token', '')
-        
+        # user_id 一律以登录身份为准；body 携带值不一致时拒绝
+        auth_user_id = get_auth_user_id(request)
+        claimed_error = check_claimed_user_id(sync_request.user_id, auth_user_id)
+        if claimed_error:
+            return claimed_error
+        owner_error = await _ensure_world_owner(sync_request.world_id, auth_user_id)
+        if owner_error:
+            return owner_error
+
+        user_id = str(auth_user_id)
+        world_id = sync_request.world_id
+        auth_token = normalize_authorization_token(request.headers.get('authorization'))
+
         # 调用同步函数（强制覆盖）
         sync_result = sync_database_to_files(user_id, world_id, auth_token, force_overwrite=True)
         
@@ -2849,11 +2914,21 @@ async def sync_files(request: SyncFilesRequest):
         }, status_code=500)
 
 @router.post('/submit-to-database')
-async def submit_to_database(request: SubmitDatabaseRequest):
+@require_permission("world:submit_database")
+async def submit_to_database(request: Request, submit_request: SubmitDatabaseRequest):
     """批量将所有文件提交到数据库"""
     try:
-        user_id = int(request.user_id)
-        world_id = int(request.world_id)
+        # user_id 一律以登录身份为准；body 携带值不一致时拒绝
+        auth_user_id = get_auth_user_id(request)
+        claimed_error = check_claimed_user_id(submit_request.user_id, auth_user_id)
+        if claimed_error:
+            return claimed_error
+        owner_error = await _ensure_world_owner(submit_request.world_id, auth_user_id)
+        if owner_error:
+            return owner_error
+
+        user_id = int(auth_user_id)
+        world_id = int(submit_request.world_id)
         
         from model.world import WorldModel
         from model.character import CharacterModel
@@ -3918,6 +3993,11 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 'error': '会话不存在'
             }, status_code=404)
 
+        # 属主断言：非本人会话一律 404（防枚举）
+        owner_error = ensure_owner(session.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
+
         user_id = session.user_id
         world_id = session.world_id
         auth_token = task_request.auth_token or session.auth_token
@@ -4268,12 +4348,13 @@ async def stream_task_messages(request: Request, task_id: str):
     from model.agent_task_messages import AgentTaskMessagesModel
     from model.agent_tasks import AgentTasksModel
 
-    # 检查任务是否存在（从数据库，支持跨 worker）
-    if not task_manager.task_exists(task_id):
-        return JSONResponse({
-            'success': False,
-            'error': '任务不存在'
-        }, status_code=404)
+    # 属主断言：任务不存在或非本人任务一律 404（防枚举）
+    task_entity = await asyncio.to_thread(AgentTasksModel.get_by_task_id, task_id)
+    owner_error = ensure_owner(
+        task_entity.user_id if task_entity else None, get_auth_user_id(request)
+    )
+    if owner_error:
+        return owner_error
 
     async def event_generator():
         try:
@@ -4362,8 +4443,17 @@ async def stream_task_messages(request: Request, task_id: str):
 async def get_task_status(request: Request, task_id: str):
     """获取任务状态"""
     try:
+        # 属主断言：任务不存在或非本人任务一律 404（防枚举）
+        from model.agent_tasks import AgentTasksModel
+        task_entity = await asyncio.to_thread(AgentTasksModel.get_by_task_id, task_id)
+        owner_error = ensure_owner(
+            task_entity.user_id if task_entity else None, get_auth_user_id(request)
+        )
+        if owner_error:
+            return owner_error
+
         task = task_manager.get_task(task_id)
-        
+
         if not task:
             return JSONResponse({
                 'success': False,

@@ -3,6 +3,10 @@
 `web/script_writer.html` 在发送剧本创作消息后，会先创建后台任务，再通过
 `/api/task/{task_id}/stream` 监听 SSE 流式响应。
 
+> 底层实现说明：因该端点已启用 Bearer 鉴权而原生 EventSource 无法携带
+> Authorization 头，前端已改用 `web/js/sse_client.js`（fetch + ReadableStream）
+> 建立流连接；事件语义与断线兜底路径不变（`onError` 回调对应原 `onerror`）。
+
 ## 前端状态约定
 
 - 发送开始时，`#send-btn` 会设置 `disabled = true` 并添加 `sending` class。

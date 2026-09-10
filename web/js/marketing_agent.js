@@ -1443,7 +1443,7 @@
                     });
                     const response = await fetch(`/api/ai-tools/history?${params.toString()}`, {
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         }
                     });
@@ -1872,7 +1872,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value || '',
+                            'Authorization': 'Bearer ' + (authToken.value || ''),
                             'X-User-Id': userId.value || ''
                         },
                         body: JSON.stringify({
@@ -2024,7 +2024,7 @@
                 try {
                     const response = await fetch('/api/worlds?page=1&page_size=100', {
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         }
                     });
@@ -2047,7 +2047,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify({ name, description })
@@ -2069,7 +2069,10 @@
                 try {
                     const response = await fetch('/api/session/create', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + authToken.value
+                        },
                         body: JSON.stringify({
                             user_id: userId.value,
                             world_id: worldId.value,
@@ -2105,7 +2108,7 @@
                 try {
                     const response = await fetch(`/api/session/${sessionId}/history`, {
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         }
                     });
@@ -3168,7 +3171,10 @@
 
                     const taskResponse = await fetch(`/api/session/${sessionId}/task`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + authToken.value
+                        },
                         body: JSON.stringify({
                             message: text,
                             auth_token: authToken.value,
@@ -3251,8 +3257,8 @@
             // 处理流式响应
             async function handleStream(taskId) {
                 return new Promise((resolve, reject) => {
-                    const eventSource = new EventSource(`/api/task/${taskId}/stream`);
-                    currentEventSource = eventSource;
+                    const eventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
+                    onMessage: async (data) => {
                     const streamSessionId = currentSessionId.value;
                     const streamErrorKey = getTaskErrorKey('stream', taskId);
                     let fullContent = '';
@@ -3288,10 +3294,7 @@
                         return messages.value.findIndex(m => m._uid === uid);
                     }
 
-                    eventSource.onmessage = (event) => {
-                        try {
-                            const data = JSON.parse(event.data);
-                            if (data.id && processedSseMessageIds.has(data.id)) {
+                        if (data.id && processedSseMessageIds.has(data.id)) {
                                 console.log('[SSE] 跳过重复消息:', data.id, data.type);
                                 return;
                             }
@@ -3390,18 +3393,8 @@
                                 // Agent 文本回复由任务完成回调保存 PM 历史，避免前端再次追加造成重复历史记录。
                                 resolve();
                             }
-                        } catch (e) {
-                            // 非 JSON 数据，直接追加
-                            hasReceivedData = true;
-                            fullContent += event.data;
-                            const uid = ensurePlaceholder();
-                            const idx = findMsgByIdx(uid);
-                            if (idx !== -1) messages.value[idx].content = fullContent;
-                            scrollToBottom();
-                        }
-                    };
-
-                    eventSource.onerror = (e) => {
+                    },
+                    onError: (e) => {
                         if (streamSettled) return;
                         console.log('[Loading] handleStream onerror, hasReceivedData=', hasReceivedData);
                         settleStream();
@@ -3430,7 +3423,8 @@
                             resetTaskErrorCount(streamErrorKey);
                             resolve();
                         }
-                    };
+                    }
+                    });
 
                     // 超时处理
                     streamTimeoutId = setTimeout(() => {
@@ -3689,7 +3683,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value
+                            'Authorization': 'Bearer ' + authToken.value
                         },
                         body: JSON.stringify({
                             approved: true,
@@ -3964,7 +3958,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify({
@@ -3995,7 +3989,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify(body)
@@ -4015,7 +4009,7 @@
                         method: 'PUT',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify(body)
@@ -4037,7 +4031,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify({
@@ -4144,7 +4138,9 @@
                 const activeTaskId = sessionActiveTaskId[sessionId];
                 if (activeTaskId) {
                     try {
-                        const statusRes = await fetch(`/api/task/${activeTaskId}/status`);
+                        const statusRes = await fetch(`/api/task/${activeTaskId}/status`, {
+                            headers: { 'Authorization': 'Bearer ' + authToken.value }
+                        });
                         if (!checkAuthResponse(statusRes)) return;
                         const statusData = await statusRes.json();
                         const taskStatus = statusData.success && statusData.task ? statusData.task.status : null;
@@ -4203,7 +4199,7 @@
                 try {
                     const response = await fetch(`/api/sessions?user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}&session_type=2&limit=50`, {
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         }
                     });
@@ -4265,7 +4261,7 @@
                     const response = await fetch(`/api/session/${sessionId}`, {
                         method: 'DELETE',
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         }
                     });
@@ -4312,7 +4308,7 @@
                     const response = await fetch(`/api/session/${session.id}/title`, {
                         method: 'PUT',
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value,
                             'Content-Type': 'application/json'
                         },
@@ -4697,7 +4693,7 @@
                         try {
                             if (!restoredT2VModel && userId.value && worldId.value) {
                                 const resp = await fetch(`/api/video-model?category=text_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
-                                    headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
+                                    headers: { 'Authorization': 'Bearer ' + authToken.value, 'X-User-Id': userId.value }
                                 });
                                 if (!checkAuthResponse(resp)) return;
                                 if (resp.ok) {
@@ -4741,7 +4737,7 @@
                         try {
                             if (!preferredI2VModel && userId.value && worldId.value) {
                                 const resp = await fetch(`/api/video-model?category=image_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
-                                    headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
+                                    headers: { 'Authorization': 'Bearer ' + authToken.value, 'X-User-Id': userId.value }
                                 });
                                 if (!checkAuthResponse(resp)) return;
                                 if (resp.ok) {
@@ -6446,7 +6442,7 @@
                 if (!userId.value || !worldId.value) return;
                 try {
                     const resp = await fetch(`/api/marketing/media-preferences?user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
-                        headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
+                        headers: { 'Authorization': 'Bearer ' + authToken.value, 'X-User-Id': userId.value }
                     });
                     if (!checkAuthResponse(resp)) return;
                     const data = await resp.json();
@@ -6521,7 +6517,7 @@
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': authToken.value,
+                        'Authorization': 'Bearer ' + authToken.value,
                         'X-User-Id': userId.value
                     },
                     body: JSON.stringify({
@@ -6564,7 +6560,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify({
@@ -6621,7 +6617,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify({
@@ -6786,7 +6782,7 @@
                     try {
                         if (!m && userId.value && worldId.value) {
                             const resp = await fetch(`/api/video-model?category=image_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
-                                headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
+                                headers: { 'Authorization': 'Bearer ' + authToken.value, 'X-User-Id': userId.value }
                             });
                             if (!checkAuthResponse(resp)) return;
                             if (resp.ok) {
