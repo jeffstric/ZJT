@@ -451,6 +451,10 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 
 ### 会话管理
 
+> 统一鉴权（P0 安全修复）：会话端点均要求 `Authorization: Bearer <auth_token>`，
+> 服务端以 token 解析出的 user_id 做属主校验；请求体中的 user_id 仅做一致性
+> 校验（与登录身份不一致返回 403）。详见 `docs/backend/auth_unification.md`。
+
 | 端点 | 方法 | 说明 | 请求参数 |
 |------|------|------|----------|
 | `/api/session/create` | POST | 创建新会话 | `{ user_id, world_id, auth_token, session_type: 2 }` |

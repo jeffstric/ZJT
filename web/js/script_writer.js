@@ -643,7 +643,10 @@
                 
                 const response = await fetch('/api/session/create', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + AUTH_TOKEN
+                    },
                     body: JSON.stringify({
                         system_prompt: systemPrompt,
                         user_id: USER_ID,
@@ -708,7 +711,10 @@
                     updateStatus(window.t ? window.t('status_syncing_from_db') : '正在从数据库同步文件...');
                     const response = await fetch('/api/sync-files', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + AUTH_TOKEN
+                        },
                         body: JSON.stringify({ user_id: USER_ID, world_id: WORLD_ID })
                     });
                     
@@ -924,7 +930,10 @@
                 updateStatus(window.t ? window.t('status_submitting_data') : '正在提交数据...');
                 const response = await fetch('/api/submit-to-database', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + AUTH_TOKEN
+                    },
                     body: JSON.stringify({ user_id: USER_ID, world_id: WORLD_ID })
                 });
 
@@ -1379,7 +1388,10 @@
 
                 const taskResponse = await fetch(`/api/session/${sessionId}/task`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + AUTH_TOKEN
+                    },
                     body: JSON.stringify({
                         message,
                         auth_token: AUTH_TOKEN,
@@ -1422,7 +1434,8 @@
                 }
                 const taskId = taskData.task_id;
                 
-                const eventSource = new EventSource(`/api/task/${taskId}/stream`);
+                const eventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
+                    onMessage: async (data) => {
                 // 保持打字指示器，直到收到第一个消息
                 const messageDiv = addMessage('assistant', '');
                 let contentDiv = messageDiv.querySelector('.message-content');
@@ -1431,10 +1444,6 @@
                 fullText = '';
                 let startTime = Date.now();
 
-                eventSource.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        
                         if (!hasStartedReceiving) {
                             hasStartedReceiving = true;
                             hideTypingIndicator(); // 收到第一个消息时才移除打字指示器
@@ -1533,14 +1542,10 @@
                         } else if (data.type === 'status') {
                             if (data.status) updateStatus(data.status);
                         }
-                    } catch (e) {
-                        console.error('[SSE-CLIENT] 解析失败:', e);
-                    }
-                };
-                
-                eventSource.onerror = (error) => {
-                    // 关闭当前连接
-                    eventSource.close();
+                    },
+                    onError: (error) => {
+                        // 关闭当前连接
+                        eventSource.close();
 
                     // 检查后端任务状态，确认是否真的完成
                     checkTaskStatus(taskId).then(taskStatus => {
@@ -1566,7 +1571,8 @@
                         updateStatus(window.t ? window.t('status_connection_lost') : '连接中断，请刷新页面后重试');
                         showError(window.t ? window.t('error_connection_lost') : '连接中断，无法确认任务状态，请刷新页面后重试');
                     });
-                };
+                    }
+                });
 
                 updateStatus(window.t ? window.t('status_ready') : '就绪');
             } catch (error) {
@@ -1587,7 +1593,9 @@
 
         // 检查任务状态
         async function checkTaskStatus(taskId) {
-            const response = await fetch(`/api/task/${taskId}/status`);
+            const response = await fetch(`/api/task/${taskId}/status`, {
+                headers: { 'Authorization': 'Bearer ' + AUTH_TOKEN }
+            });
             if (!response.ok) throw new Error('Failed to check task status');
             const data = await response.json();
             return data.task?.status;
@@ -1620,13 +1628,8 @@
                 return null;
             }
 
-            const newEventSource = new EventSource(`/api/task/${taskId}/stream`);
-            let hasStartedReceiving = false;
-
-            newEventSource.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-
+            const newEventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
+                onMessage: async (data) => {
                     if (!hasStartedReceiving) {
                         hasStartedReceiving = true;
                         hideTypingIndicator();
@@ -1698,13 +1701,9 @@
                     } else if (data.type === 'status') {
                         if (data.status) updateStatus(data.status);
                     }
-                } catch (e) {
-                    console.error('[SSE-CLIENT] 解析失败:', e);
-                }
-            };
-
-            newEventSource.onerror = (error) => {
-                newEventSource.close();
+                },
+                onError: (error) => {
+                    newEventSource.close();
                 checkTaskStatus(taskId).then(taskStatus => {
                     if (taskStatus === 'completed' || taskStatus === 'failed' || taskStatus === 'cancelled') {
                         resetProcessingState();
@@ -1721,7 +1720,8 @@
                     updateStatus(window.t ? window.t('status_reconnect_final') : '重连失败，请刷新页面');
                     showError(window.t ? window.t('error_connection_lost') : '重连失败，无法确认任务状态，请刷新页面后重试');
                 });
-            };
+                }
+            });
 
             return newEventSource;
         }
@@ -8539,14 +8539,11 @@
                 alert('✅ ' + (window.t ? window.t('alert_test_created', {taskId: taskResp.task_id}) : `测试任务已创建！\n\n📋 任务ID: ${taskResp.task_id}\n\n现在 LLM 将向你提问，请在前端回答，然后观察 LLM 的回复。\n\n💡 提示：打开浏览器控制台（F12）可以看到更详细的 SSE 消息日志。`));
 
                 // 2. 监听 SSE
-                const es = new EventSource(`/api/task/${taskResp.task_id}/stream`);
-
                 let hasQuestion = false;
                 let hasReply = false;
 
-                es.onmessage = (e) => {
-                    try {
-                        const data = JSON.parse(e.data);
+                const es = SSEClient.createEventStream(`/api/task/${taskResp.task_id}/stream`, {
+                    onMessage: async (data) => {
                         console.log('📨 SSE消息:', data.type, data);
 
                         if (data.type === 'human_verification_required') {
@@ -8576,15 +8573,12 @@
                                 console.warn('⚠️ 链路验证不完整:', { hasQuestion, hasReply });
                             }
                         }
-                    } catch (err) {
-                        console.error('❌ 解析 SSE 消息失败:', err);
+                    },
+                    onError: (e) => {
+                        console.error('❌ SSE 连接错误:', e);
+                        es.close();
                     }
-                };
-
-                es.onerror = (e) => {
-                    console.error('❌ SSE 连接错误:', e);
-                    es.close();
-                };
+                });
 
             } catch (error) {
                 console.error('❌ 测试过程发生错误:', error);

@@ -1368,7 +1368,7 @@
             const userId = localStorage.getItem('user_id');
             const authToken = localStorage.getItem('auth_token');
             const res = await axios.get(`/api/ai-tools/${this.aiToolId}/timeline`, {
-              params: { user_id: userId ? parseInt(userId, 10) : undefined, auth_token: authToken || undefined }
+              headers: { Authorization: 'Bearer ' + (authToken || '') }
             });
             if (res.data.success) { this.timeline = (res.data.data && res.data.data.timeline) || []; }
             else { this.error = res.data.message || '获取失败'; }

@@ -22,7 +22,9 @@
 - `perseids_server/client.py`：所有 `verify_token` 失败的返回，第三元素携带 `{'error_code': INVALID_AUTH_TOKEN}`。
 - `perseids_server/services/auth_service.py` `get_auth_token_by_user_id`：`'未找到有效的token'` 时产出 `NO_VALID_TOKEN`，由 `client.py` 透传；`'查询token失败'`（DB 异常）不打标，归服务故障。
 
-**下游判定只查 `error_code`，禁止再做 message 文案匹配**（`api/script_writer.py` 的 `verify_auth_token` / `check_computing_power`、`server.py` `/api/user/computing_power` 均已改为该模式）。
+**下游判定只查 `error_code`，禁止再做 message 文案匹配**（`api/script_writer.py` 的 `check_computing_power`、`server.py` `/api/user/computing_power` 均已改为该模式）。
+
+> 安全修复（统一鉴权）后，`verify_auth_token` 不再走 `get_auth_token_by_user_id` 本地路由查询，改为**纯本地属主校验**：空 token 拒绝；`UserTokensModel.get_user_id_by_token(token)` 查不到（无效/过期/被顶号）→ 401 `TOKEN_EXPIRED`；**token 属主 ≠ 声明 user_id** → 401 `TOKEN_EXPIRED`；本地 DB 异常 → 502 `AUTH_SERVICE_UNAVAILABLE`。详见 `docs/backend/auth_unification.md`。
 
 ## 对外 401/502 语义分级
 

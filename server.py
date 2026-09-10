@@ -87,6 +87,10 @@ from config.constant import (
     DS_ENV_FIT_DEFAULT_SCALE,
 )
 from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
+from perseids_server.utils.auth_identity import (
+    get_auth_user_id,
+    ensure_owner,
+)
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
     get_upload_dir, get_upload_subdir, get_upload_temp_dir,
@@ -3703,19 +3707,22 @@ async def reset_password(request: Request, reset_request: ResetPasswordRequest):
 @require_permission("ai_tools:view_history")
 async def get_ai_tools_history(
     request: Request,
-    user_id: int = Query(..., description="User ID"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
     type: Optional[int] = Query(None, description="Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频)"),
-    types: Optional[str] = Query(None, description="Multiple tool types filter, comma-separated (e.g., '3,10,11,12')"),
+    types: Optional[str] = Query(None, description="Multiple tool types filter, comma-separated (e.g. '3,10,11,12')"),
     has_image_path: Optional[bool] = Query(None, description="Filter by image_path presence: true=图片编辑, false=文生图"),
     has_result_url: Optional[bool] = Query(None, description="Filter by result_url presence: true=has result asset"),
 ):
     """
-    获取用户的 AI 工具历史记录
+    获取当前登录用户的 AI 工具历史记录
     任务状态由后台 scheduler (visual_task.py / runninghub_async_task.py) 定时更新
+    user_id 一律从 Authorization token 解析，不再信任客户端自报
     """
     try:
+        # 登录身份即查询主体（require_permission 装饰器已校验 token）
+        user_id = get_auth_user_id(request)
+
         # Parse types parameter if provided
         type_list_param = None
         if types:
@@ -3839,28 +3846,28 @@ async def get_computing_power_config(request: Request):
 async def get_ai_tool_detail(
     request: Request,
     record_id: int,
-    user_id: int = Header(None, alias="X-User-Id"),
-    auth_token: str = Header(None, alias="Authorization")
 ):
     """
-    获取单个 AI 工具记录的详情
+    获取单个 AI 工具记录的详情（仅本人记录，非本人一律 404 防枚举）
     """
     try:
         # 查询数据库记录
         record = AIToolsModel.get_by_id(record_id)
-        
+
         if not record:
             raise HTTPException(status_code=404, detail="记录不存在")
-        
-        # 检查权限（可选）
-        if user_id and record.user_id != user_id:
-            raise HTTPException(status_code=403, detail="无权访问该记录")
-        
+
+        # 属主断言：当前登录用户必须为记录所有者（user_id 一律从 token 解析，
+        # 不再接受可缺省的 X-User-Id 头，防止缺省时跳过检查）
+        owner_error = ensure_owner(record.user_id, get_auth_user_id(request))
+        if owner_error:
+            raise HTTPException(status_code=404, detail="记录不存在")
+
         return JSONResponse({
             'success': True,
             'data': record.to_dict()
         })
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -3880,14 +3887,13 @@ async def get_ai_tool_detail(
 async def get_ai_tool_timeline(
     request: Request,
     ai_tool_id: int,
-    user_id: int = Query(None, description="User ID（弱信任回退）"),
-    auth_token: str = Query(None, description="Authentication token")
 ):
     """
     获取某个 AI 工具任务的事件时间线（用于排查任务耗时/卡点/轮询节奏）
 
     访问控制：管理员可查看任意任务；非管理员仅能查看本人任务。
-    优先以 auth_token 解析真实身份；无 token 时回退到 user_id。
+    用户身份一律从 Authorization token 解析（require_permission 已校验），
+    不再接受 query 弱信任回退。
     """
     try:
         record = AIToolsModel.get_by_id(ai_tool_id)
@@ -3895,33 +3901,22 @@ async def get_ai_tool_timeline(
         if not record:
             raise HTTPException(status_code=404, detail="记录不存在")
 
-        # 解析真实身份 + 管理员判定
-        viewer_id = None
-        is_admin = False
-        token = (auth_token or '').strip()
-        if token.startswith('Bearer '):
-            token = token[7:]
-        if token:
-            try:
-                from model.user_tokens import UserTokensModel
-                from model.users import UsersModel
-                token_uid = UserTokensModel.get_user_id_by_token(token)
-                if token_uid:
-                    viewer_id = token_uid
-                    viewer = UsersModel.get_by_id(token_uid)
-                    is_admin = bool(viewer and getattr(viewer, 'role', None) == 'admin')
-            except Exception as e:
-                logger.warning(f'timeline auth token resolve failed: {e}')
-        # 无 token 时回退到客户端传入的 user_id（保持与 history 一致的弱信任）
-        if viewer_id is None:
-            viewer_id = user_id
+        viewer_id = get_auth_user_id(request)
 
-        # 归属校验：管理员放行；否则必须为本人
+        # 管理员判定
+        is_admin = False
+        try:
+            from model.users import UsersModel
+            viewer = await asyncio.to_thread(UsersModel.get_by_id, viewer_id)
+            is_admin = bool(viewer and getattr(viewer, 'role', None) == 'admin')
+        except Exception as e:
+            logger.warning(f'timeline admin resolve failed: {e}')
+
+        # 归属校验：管理员放行；否则必须为本人（非本人一律 404 防枚举）
         if not is_admin:
-            if viewer_id is None:
-                raise HTTPException(status_code=401, detail="请先登录")
-            if record.user_id != viewer_id:
-                raise HTTPException(status_code=403, detail="无权访问该记录")
+            owner_error = ensure_owner(record.user_id, viewer_id)
+            if owner_error:
+                raise HTTPException(status_code=404, detail="记录不存在")
 
         logs = AIToolsLogModel.list_by_ai_tool(ai_tool_id)
         return JSONResponse({

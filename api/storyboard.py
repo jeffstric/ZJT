@@ -23,6 +23,10 @@ from api.auth_identity import (
     normalize_authorization_token as _auth_header_token,
     resolve_authorization_user_id as _resolve_auth_user_id,
 )
+from perseids_server.utils.auth_identity import (
+    get_auth_user_id,
+    ensure_owner,
+)
 
 from config.constant import (
     Edition, Action,
@@ -4945,6 +4949,14 @@ async def stream_storyboard_agent_task(request: Request, task_id: str):
     """SSE stream for storyboard image agent task."""
     from model.agent_task_messages import AgentTaskMessagesModel
     from model.agent_tasks import AgentTasksModel
+
+    # 属主断言：任务不存在或非本人任务一律 404（防枚举）
+    task_entity = await asyncio.to_thread(AgentTasksModel.get_by_task_id, task_id)
+    owner_error = ensure_owner(
+        task_entity.user_id if task_entity else None, get_auth_user_id(request)
+    )
+    if owner_error:
+        return owner_error
 
     async def event_generator():
         last_message_id = 0
