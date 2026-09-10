@@ -844,14 +844,24 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.GPT_IMAGE_COMMON_SITE5_V1,  # ZJT API 站点5
     ],
 
-    # GPT Image 2.5 相关驱动（sunburst / flare 两个独立模型，各两个实现方）
+    # GPT Image 2.5 相关驱动（sunburst / flare 两个独立模型，各 7 个实现方：多米 + site_0~5）
     DriverKey.GPT_IMAGE_2_5_SUNBURST: [
         DriverImplementation.DUOMI_GPT_IMAGE_2_5_SUNBURST_V1,  # 多米（默认）
         DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE0_V1,  # ZJT API 官方站点
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE1_V1,  # 聚合站点1
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE2_V1,  # 聚合站点2
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE3_V1,  # 聚合站点3
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE4_V1,  # 聚合站点4
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE5_V1,  # 聚合站点5
     ],
     DriverKey.GPT_IMAGE_2_5_FLARE: [
         DriverImplementation.DUOMI_GPT_IMAGE_2_5_FLARE_V1,  # 多米（默认）
         DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE0_V1,  # ZJT API 官方站点
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE1_V1,  # 聚合站点1
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE2_V1,  # 聚合站点2
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE3_V1,  # 聚合站点3
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1,  # 聚合站点4
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1,  # 聚合站点5
     ],
 
     # Grok 相关驱动

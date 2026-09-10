@@ -28,19 +28,21 @@ GPT Image 2.5 拆分为 **Sunburst** 与 **Flare** 两个独立模型（前端�
 
 ## 实现方
 
-每个模型两个实现方（多米优先，用户可在实现方切换器中切换供应商）：
+每个模型 7 个实现方（多米优先；聚合站点 site_0~site_5 与 GPT Image 2 对齐，未配置密钥的站点自动隐藏）：
 
 | 实现方名称 | 所属模型 | 显示名 | 驱动类 | 接口类型 |
 |-----------|---------|--------|--------|---------|
 | `duomi_gpt_image_2_5_sunburst_v1`（默认） | Sunburst | 多米 | `GptImage25DuomiSunburstV1Driver` | 异步轮询 |
 | `gpt_image_2_5_common_sunburst_site0_v1` | Sunburst | ZJTapi | `GptImage25CommonSunburstSite0V1Driver` | 同步 |
+| `gpt_image_2_5_common_sunburst_site1_v1` ~ `site5_v1` | Sunburst | gpt_site1~5 | `GptImage25CommonSunburstSite1V1Driver` ~ `Site5V1Driver` | 同步 |
 | `duomi_gpt_image_2_5_flare_v1`（默认） | Flare | 多米 | `GptImage25DuomiFlareV1Driver` | 异步轮询 |
 | `gpt_image_2_5_common_flare_site0_v1` | Flare | ZJTapi | `GptImage25CommonFlareSite0V1Driver` | 同步 |
+| `gpt_image_2_5_common_flare_site1_v1` ~ `site5_v1` | Flare | gpt_site1~5 | `GptImage25CommonFlareSite1V1Driver` ~ `Site5V1Driver` | 同步 |
 
 - 多米驱动文件: `task/visual_drivers/gpt_image_2_5_duomi_v1_driver.py`
   （复用 `GptImageDuomiV1Driver` 的提交/查询/尺寸映射逻辑，仅覆盖 `DEFAULT_MODEL` 与 `driver_name`）
 - 站点驱动: `task/visual_drivers/gpt_image_common_v1_driver.py`
-  （基类 `GptImage25CommonSunburstV1Driver` / `GptImage25CommonFlareV1Driver`，站点类固定 site_0）
+  （基类 `GptImage25CommonSunburstV1Driver` / `GptImage25CommonFlareV1Driver`，站点类 site_0 ~ site_5）
 
 ### 多米 API 接口
 
@@ -79,9 +81,15 @@ api_aggregator:
     base_url: "https://yw.perseids.cn"
     api_key: "your_api_key"
     name: "智剧通官方API"
+  # site_1 ~ site_5 按需配置
 ```
 
-实现方是否对用户可见由 `required_config_keys` 运行时校验：`duomi.token` 有值时显示多米实现方，`api_aggregator.site_0.api_key` 有值时显示 ZJT 站点。
+配置可走 YAML 或后台系统配置（数据库 `system_config`，热更新，键名如 `api_aggregator.site_1.api_key`），数据库优先。
+
+实现方是否对用户可见由运行时校验决定：
+- 多米实现方：`duomi.token` 有值即显示
+- site_0：`api_aggregator.site_0.api_key` 有值即显示（base_url 固定）
+- site_1 ~ site_5：`api_aggregator.site_X.api_key` 与 `api_aggregator.site_X.base_url` **都**有值才显示；实现方管理后台同样按此规则过滤，未配置的站点不会出现
 
 ## 使用方式
 

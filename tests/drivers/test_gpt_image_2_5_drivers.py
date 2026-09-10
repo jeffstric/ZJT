@@ -65,8 +65,8 @@ def test_sunburst_and_flare_are_two_independent_models():
         assert cfg.computing_power == 2
 
 
-def test_each_model_has_two_implementations_with_duomi_default():
-    """每个模型两个实现方：多米（默认）+ ZJT 官方站点 site_0。"""
+def test_each_model_has_seven_implementations_with_duomi_default():
+    """每个模型 7 个实现方：多米（默认）+ 聚合站点 site_0~site_5。"""
     sunburst_cfg = UnifiedConfigRegistry.get_by_id(TaskTypeId.GPT_IMAGE_2_5_SUNBURST)
     flare_cfg = UnifiedConfigRegistry.get_by_id(TaskTypeId.GPT_IMAGE_2_5_FLARE)
 
@@ -74,11 +74,21 @@ def test_each_model_has_two_implementations_with_duomi_default():
     assert sunburst_cfg.implementations == [
         'duomi_gpt_image_2_5_sunburst_v1',
         'gpt_image_2_5_common_sunburst_site0_v1',
+        'gpt_image_2_5_common_sunburst_site1_v1',
+        'gpt_image_2_5_common_sunburst_site2_v1',
+        'gpt_image_2_5_common_sunburst_site3_v1',
+        'gpt_image_2_5_common_sunburst_site4_v1',
+        'gpt_image_2_5_common_sunburst_site5_v1',
     ]
     assert flare_cfg.implementation == 'duomi_gpt_image_2_5_flare_v1'
     assert flare_cfg.implementations == [
         'duomi_gpt_image_2_5_flare_v1',
         'gpt_image_2_5_common_flare_site0_v1',
+        'gpt_image_2_5_common_flare_site1_v1',
+        'gpt_image_2_5_common_flare_site2_v1',
+        'gpt_image_2_5_common_flare_site3_v1',
+        'gpt_image_2_5_common_flare_site4_v1',
+        'gpt_image_2_5_common_flare_site5_v1',
     ]
 
 
@@ -112,12 +122,22 @@ def test_common_site_driver_uses_model_names():
 
 
 def test_all_25_implementations_have_unique_ids():
-    """4 个新实现方均有唯一数字 ID，静态映射与 ID 类常量一致。"""
+    """14 个新实现方均有唯一数字 ID，静态映射与 ID 类常量一致。"""
     names = {
         'duomi_gpt_image_2_5_sunburst_v1': 85,
         'duomi_gpt_image_2_5_flare_v1': 86,
         'gpt_image_2_5_common_sunburst_site0_v1': 87,
+        'gpt_image_2_5_common_sunburst_site1_v1': 89,
+        'gpt_image_2_5_common_sunburst_site2_v1': 90,
+        'gpt_image_2_5_common_sunburst_site3_v1': 91,
+        'gpt_image_2_5_common_sunburst_site4_v1': 92,
+        'gpt_image_2_5_common_sunburst_site5_v1': 93,
         'gpt_image_2_5_common_flare_site0_v1': 88,
+        'gpt_image_2_5_common_flare_site1_v1': 94,
+        'gpt_image_2_5_common_flare_site2_v1': 95,
+        'gpt_image_2_5_common_flare_site3_v1': 96,
+        'gpt_image_2_5_common_flare_site4_v1': 97,
+        'gpt_image_2_5_common_flare_site5_v1': 98,
     }
     for name, impl_id in names.items():
         assert IMPLEMENTATION_TO_ID[name] == impl_id
