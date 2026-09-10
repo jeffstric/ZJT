@@ -18,6 +18,7 @@ import tempfile
 import hashlib
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional, Any, Dict
 from urllib.parse import urlparse
 from pydantic import BaseModel
@@ -728,6 +729,39 @@ def _extract_filename_from_url(url: str) -> Optional[str]:
     return None
 
 
+def _resolve_local_upload_path(url: str, prefix: str) -> Optional[Path]:
+    """
+    安全解析 /upload/... 形式的本地路径，防止路径穿越（未认证任意文件读取）。
+
+    项目 upload 目录是指向数据盘的符号链接，字符串拼接 + exists() 会按物理
+    路径解析 ../，沿符号链接跳出项目目录，因此必须双重防护：
+    1. 相对部分拒绝 `..` 目录段（含 Windows 反斜杠变体）与盘符/斜杠开头的绝对形式；
+    2. 以 resolve 后的真实上传根为基准做前缀约束（normcase 兼容 Windows 大小写）。
+
+    Args:
+        url: 请求中的本地路径，如 /upload/cache/2026-08-10/xxx.mp4
+        prefix: 允许的目录前缀，如 /upload/cache/ 或 /upload/
+
+    Returns:
+        resolve 后的绝对路径；前缀不符或疑似穿越时返回 None（调用方按原降级逻辑处理）
+    """
+    if not url.startswith(prefix):
+        return None
+    rel = url[len(prefix):]
+    # 空路径、盘符/斜杠开头的绝对形式一律拒绝
+    if not rel or re.match(r'^([a-zA-Z]:)?[\\/]', rel):
+        return None
+    # 拒绝任何 .. 目录段（分隔符兼容 / 与 \）
+    if re.search(r'(^|[\\/])\.\.($|[\\/])', rel):
+        return None
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = (Path(project_dir) / prefix.lstrip('/')).resolve()
+    file_path = (base_dir / rel).resolve()
+    if not os.path.normcase(str(file_path)).startswith(os.path.normcase(str(base_dir)) + os.sep):
+        return None
+    return file_path
+
+
 @app.get("/api/download")
 @require_permission("file:download")
 async def download_image(
@@ -742,21 +776,14 @@ async def download_image(
     3. 其他外部 URL → 代理下载 StreamingResponse
     """
     try:
-        # 检查是否为本地缓存文件路径
-        if url.startswith('/upload/cache/'):
-            # 本地缓存文件，直接返回
-            import os
-            from pathlib import Path
-            
-            # 获取项目根目录
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            file_path = Path(current_dir) / url.lstrip('/')
-            
-            if file_path.exists() and file_path.is_file():
+        # 检查是否为本地缓存文件路径（安全解析，防路径穿越）
+        file_path = _resolve_local_upload_path(url, '/upload/cache/')
+        if file_path is not None:
+            if file_path.is_file():
                 # 确定文件名
                 if not filename:
                     filename = file_path.name
-                
+
                 # 确定 content type
                 ext = file_path.suffix.lower()
                 if ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv']:
@@ -765,7 +792,7 @@ async def download_image(
                     content_type = f'image/{ext[1:]}'
                 else:
                     content_type = 'application/octet-stream'
-                
+
                 # 返回本地文件
                 return FileResponse(
                     path=str(file_path),
@@ -853,13 +880,10 @@ async def proxy_image(request: Request, url: str = Query(..., description="Image
     3. 其他外部 URL → 代理请求 StreamingResponse
     """
     try:
-        # ========== 模式1: 本地缓存文件 ==========
-        if url.startswith('/upload/cache/'):
-            from pathlib import Path
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            file_path = Path(current_dir) / url.lstrip('/')
-
-            if file_path.exists() and file_path.is_file():
+        # ========== 模式1: 本地缓存文件（安全解析，防路径穿越） ==========
+        file_path = _resolve_local_upload_path(url, '/upload/cache/')
+        if file_path is not None:
+            if file_path.is_file():
                 ext = file_path.suffix.lower()
                 content_type = f'image/{ext[1:]}' if ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp'] else 'application/octet-stream'
                 return FileResponse(
@@ -934,26 +958,21 @@ async def get_thumbnail(
             headers={"Cache-Control": "public, max-age=31536000, immutable"}
         )
 
-    # 解析源文件路径
+    # 解析源文件路径（安全解析，防路径穿越）
     source_path = None
-    base_dir = os.path.dirname(__file__)
 
-    # 处理相对路径（如 /upload/character/pic/123/avatar.png）
-    if url.startswith('/upload/'):
-        local_path = os.path.join(base_dir, url.lstrip('/'))
-        if os.path.exists(local_path):
-            source_path = local_path
-    elif url.startswith('upload/'):
-        local_path = os.path.join(base_dir, url)
-        if os.path.exists(local_path):
-            source_path = local_path
-    else:
+    # 归一化为 /upload/... 形式：支持带/不带前导斜杠，以及同源完整 URL
+    local_url = url
+    parsed = urlparse(url)
+    if parsed.scheme in ('http', 'https') and parsed.path.startswith('/upload/'):
         # 处理完整URL（同源）
-        parsed = urlparse(url)
-        if parsed.path.startswith('/upload/'):
-            local_path = os.path.join(base_dir, parsed.path.lstrip('/'))
-            if os.path.exists(local_path):
-                source_path = local_path
+        local_url = parsed.path
+    elif local_url.startswith('upload/'):
+        local_url = '/' + local_url
+
+    safe_path = _resolve_local_upload_path(local_url, '/upload/')
+    if safe_path is not None and safe_path.is_file():
+        source_path = str(safe_path)
 
     if not source_path:
         raise HTTPException(status_code=404, detail="Source image not found")
@@ -4122,18 +4141,14 @@ async def video_enhance(
         local_video_url = None
         
         if video_url:
-            # 检查是否为本地缓存文件路径
-            if video_url.startswith('/upload/cache/'):
+            # 检查是否为本地缓存文件路径（安全解析，防路径穿越）
+            local_file_path = _resolve_local_upload_path(video_url, '/upload/cache/')
+            if local_file_path is not None:
                 # 本地缓存文件，需要上传到 RunningHub
-                from pathlib import Path
                 from utils.file_storage import RunningHubFileStorage
                 from config.config_util import get_config, get_dynamic_config_value
-                
-                # 获取项目根目录
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                local_file_path = Path(current_dir) / video_url.lstrip('/')
-                
-                if not local_file_path.exists() or not local_file_path.is_file():
+
+                if not local_file_path.is_file():
                     raise HTTPException(
                         status_code=404,
                         detail="本地缓存文件不存在"
