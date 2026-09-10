@@ -488,8 +488,10 @@ export async function fetchServerConfig() {
 
 /** 充值套餐列表 */
 export async function fetchRechargePackages() {
+    // token 走 Authorization 头，不再拼进 URL（防 Referer/日志/历史记录泄漏）
     const token = state.authToken || localStorage.getItem('auth_token') || '';
-    const resp = await fetch(`/api/recharge/packages?auth_token=${encodeURIComponent(token)}`);
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const resp = await fetch('/api/recharge/packages', { headers });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
         const err = new Error(data.error || data.message || `HTTP ${resp.status}`);

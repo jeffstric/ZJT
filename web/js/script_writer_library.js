@@ -171,12 +171,16 @@
     }
 
     function escapeHtmlLocal(s) {
-        if (typeof escapeHtml === 'function') return escapeHtml(s);
+        // 转义统一收敛到 web/js/escape.js；escape.js 未加载时保守降级为纯文本转义
+        if (typeof window !== 'undefined' && typeof window.escapeHtml === 'function') {
+            return window.escapeHtml(s);
+        }
         return String(s == null ? '' : s)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function escapeAttr(s) {
@@ -575,7 +579,7 @@
         if (!fileName || !apiMap[fileType]) return;
         try {
             await fetch(apiMap[fileType] + '/' + encodeURIComponent(fileName) +
-                '?user_id=' + USER_ID + '&world_id=' + WORLD_ID + '&auth_token=' + encodeURIComponent(AUTH_TOKEN), {
+                '?user_id=' + USER_ID + '&world_id=' + WORLD_ID, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

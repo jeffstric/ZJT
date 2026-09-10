@@ -1103,6 +1103,7 @@
 
   <div id="workflowTourPortal" aria-hidden="true"></div>
 
+  <script src="/js/escape.js"></script>
   <script src="/js/state.js?v=__VERSION__"></script>
   <script src="/js/utils.js"></script>
   <script src="/js/node_registry.js"></script>
@@ -1210,19 +1211,14 @@
     
     // 打开算力日志弹窗
     function openComputingPowerLogs() {
-      const authToken = localStorage.getItem('auth_token');
-      if (!authToken) {
-        alert('请先登录');
-        return;
-      }
-      
       const modal = document.getElementById('computingPowerLogsModal');
       const iframe = document.getElementById('computingPowerLogsIframe');
       if (!iframe) return;
 
-      // 设置 iframe 的 src
-      iframe.src = `/computing_power_logs.html?auth_token=${encodeURIComponent(authToken)}`;
-      
+      // iframe 与主页面同源，凭据由子页面自行获取（localStorage/HttpOnly cookie），
+      // 不再把 auth_token 拼进 URL（防 Referer/浏览器历史/服务端日志泄漏）
+      iframe.src = '/computing_power_logs.html';
+
       // 显示弹窗
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
@@ -1267,8 +1263,10 @@
       body.innerHTML = '<div style="text-align: center; padding: 40px;"><div class="loading-spinner"></div><p style="margin-top: 16px; color: #6b7280;">' + (window.t ? window.t('recharge_loading') : '加载套餐中...') + '</p></div>';
 
       try {
+        // token 走 Authorization 头，不再拼进 URL（防 Referer/日志/历史记录泄漏）
         const authToken = localStorage.getItem('auth_token');
-        const response = await fetch(`/api/recharge/packages?auth_token=${encodeURIComponent(authToken)}`);
+        const reqHeaders = authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+        const response = await fetch('/api/recharge/packages', { headers: reqHeaders });
         const data = await response.json();
 
         if (data.packages && data.packages.length > 0) {

@@ -1294,16 +1294,11 @@ const AdminApp = {
 
         // 初始化认证
         initAuth() {
+            // token 存 localStorage 属旧版流程（HttpOnly cookie 双通道后新登录不再写入）。
+            // 本地无 token 时不再直接跳登录——cookie 会话下由服务端中间件自动解出身份，
+            // 统一以 verifyAdmin 的结果为准。
             this.authToken = localStorage.getItem('auth_token') || '';
-            
-            if (!this.authToken) {
-                this.showToast(this.t('toast_login_required'), 'error');
-                setTimeout(() => {
-                    window.location.href = '/?login=1&redirect_url=/admin';
-                }, 1500);
-                return;
-            }
-            
+
             // 验证管理员权限
             this.verifyAdmin();
         },

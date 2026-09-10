@@ -93,6 +93,16 @@ class UserTokensModel:
         except Exception as e:
             logger.error(f"Failed to get user_id by token: {e}")
             raise
+
+    @staticmethod
+    def touch(token: str, expire_time: datetime) -> int:
+        """滑动续期：顺延指定 token 的过期时间（仅校验通过后的活跃 token 会触发）"""
+        sql = "UPDATE user_tokens SET expire_time = %s WHERE token = %s"
+        try:
+            return execute_update(sql, (expire_time, token))
+        except Exception as e:
+            logger.error(f"Failed to touch user token: {e}")
+            raise
     
     @staticmethod
     def delete_by_token(token: str) -> int:

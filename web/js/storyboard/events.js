@@ -3789,11 +3789,16 @@ function closeAllDropdowns() {
     document.querySelectorAll('.asset-dropdown').forEach(d => d.remove());
 }
 
-function escapeHtml(s) {
-    return String(s || '').replace(/[&<>"']/g, function(m) {
-        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
-    });
-}
+// 转义统一收敛到 web/js/escape.js（window.escapeHtml，经典 script 先于本 module 执行）。
+// Node/Vitest 直接 import 本模块时降级为等价实现。
+const escapeHtml = (typeof window !== 'undefined' && typeof window.escapeHtml === 'function')
+    ? window.escapeHtml
+    : (s) => String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 
 function insertAssetTag(textarea, name, kind) {
     const start = textarea.selectionStart || 0;

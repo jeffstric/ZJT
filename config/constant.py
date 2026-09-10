@@ -526,6 +526,19 @@ ERROR_CODE_TOKEN_EXPIRED = 'TOKEN_EXPIRED'
 ERROR_CODE_AUTH_SERVICE_UNAVAILABLE = 'AUTH_SERVICE_UNAVAILABLE'
 
 
+# ===== 用户登录 token 生命周期（docs/security/xss_stored_chain_fix_plan.md 阶段 3b）=====
+# 有效期：由旧 30 天缩短；滑动续期：校验通过且剩余有效期低于阈值时顺延到完整有效期，
+# 持续活跃的用户免登录，闲置 token 自然过期淘汰。
+USER_TOKEN_EXPIRE_DAYS = 7
+USER_TOKEN_RENEW_THRESHOLD_DAYS = 2
+
+# ===== HttpOnly 认证 cookie（阶段 3c）=====
+# 登录成功后以 HttpOnly cookie 下发 token，浏览器会话凭据不再进 JS 可读存储
+# （localStorage 仅为旧版本兼容的过渡读取通道）。SameSite=Strict 兼防 CSRF。
+AUTH_COOKIE_NAME = 'auth_token'
+AUTH_COOKIE_MAX_AGE_SECONDS = USER_TOKEN_EXPIRE_DAYS * 86400
+
+
 # ============ 向后兼容：使用 UnifiedConfigRegistry 提供旧 API ============
 
 class TaskTypeRegistry:

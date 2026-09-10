@@ -146,6 +146,7 @@
     </div>
   </div>
 
+  <script src="/js/escape.js"></script>
   <script>
     const state = {
       params: new URLSearchParams(window.location.search),
@@ -172,10 +173,8 @@
       state.payBtn.textContent = '正在拉起支付...';
     }
 
-    function escapeHtml(value) {
-      if (value === null || value === undefined) return '';
-      return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    // 转义统一收敛到 web/js/escape.js（window.escapeHtml，页面 head 已引入）
+    const escapeHtml = window.escapeHtml;
 
     function renderSummary() {
       const pkgName = decodeURIComponent(state.params.get('package_name') || '算力套餐');
