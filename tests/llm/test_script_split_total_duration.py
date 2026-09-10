@@ -22,12 +22,15 @@ if str(PROJECT_ROOT) not in sys.path:
 from config.constant import ScriptSplitConstants
 from llm.script_parser import (
     apply_dialogue_matched_shot_durations,
+    compute_segment_content_seconds,
+    compute_segment_declared_budget_seconds,
     compute_segment_duration_budget_seconds,
     compute_shot_dialogue_seconds,
     compute_total_duration_target_seconds,
     enforce_total_duration_limit,
     estimate_script_dialogue_seconds,
     estimate_script_duration_seconds,
+    extract_script_declared_duration_seconds,
     extract_script_dialogue_text,
 )
 
@@ -226,6 +229,116 @@ def test_total_target_full_text_fallback():
     target, source = compute_total_duration_target_seconds(script, 0.0, 2.0)
     assert source == "full_text"
     assert target == round(estimate_script_duration_seconds(script) * 2.0, 1)
+
+
+# ---- extract_script_declared_duration_seconds（剧本自述标注总时长）----
+
+def test_declared_duration_from_title_parentheses():
+    assert extract_script_declared_duration_seconds("# 第1集：《贱婢》（30秒）\n正文……") == 30.0
+    assert extract_script_declared_duration_seconds("第1集 (1.5分钟)") == 90.0
+
+
+def test_declared_duration_keyword_variants():
+    assert extract_script_declared_duration_seconds("时长：30秒") == 30.0
+    assert extract_script_declared_duration_seconds("总时长： 90s") == 90.0
+    assert extract_script_declared_duration_seconds("预计1分钟") == 60.0
+    assert extract_script_declared_duration_seconds("片长： 2 min") == 120.0
+    assert extract_script_declared_duration_seconds("预计时长：1.5分钟") == 90.0
+    assert extract_script_declared_duration_seconds("成片时长：45秒") == 45.0
+
+
+def test_declared_duration_ignores_body_time_descriptions():
+    # 正文/台词里的时间描述没有关键词引导、也不是纯括号标注 → 不误判
+    assert extract_script_declared_duration_seconds("他等了30秒，终于开口。") is None
+    assert extract_script_declared_duration_seconds("（他等了30秒。）") is None
+    assert extract_script_declared_duration_seconds("林深：再等1分钟就走。") is None
+    assert extract_script_declared_duration_seconds("") is None
+    assert extract_script_declared_duration_seconds(None) is None
+
+
+def test_declared_duration_sanity_window():
+    # 超出有效区间的标注视为误识别
+    assert extract_script_declared_duration_seconds("时长：2秒") is None
+    assert extract_script_declared_duration_seconds("时长：400分钟") is None
+    # 第一个标注无效时取下一处有效标注
+    text = "时长：2秒\n总时长：60秒"
+    assert extract_script_declared_duration_seconds(text) == 60.0
+
+
+def test_declared_duration_first_match_wins():
+    # 两处都有效时按文本位置取第一个
+    assert extract_script_declared_duration_seconds("（45秒）\n时长：60秒") == 45.0
+    assert extract_script_declared_duration_seconds("时长：60秒\n（45秒）") == 60.0
+
+
+def test_total_target_declared_overrides_shots():
+    # 标注总时长优先级最高：倍率 × 标注秒数（不除以对白占比）
+    target, source = compute_total_duration_target_seconds(
+        "任何剧本", 74.0, 2.0, declared_duration_seconds=30.0)
+    assert source == "declared"
+    assert target == 60.0
+
+
+# ---- 标注口径段预算分摊 ----
+
+def test_segment_content_seconds_units():
+    script = "他走进房间看了看四周" * 100  # 纯 CJK，速率 4.5
+    # 台词 45 字 → 45/4.5/0.6 ≈ 16.67（1 倍口径，不含倍率与段下限）
+    assert abs(compute_segment_content_seconds(script, "x", 45) - 45 / 4.5 / 0.6) < 0.01
+    # 无台词段 → 段字符数 ÷ 速率（旧口径 1 倍值）
+    assert abs(compute_segment_content_seconds(script, "他" * 90, 0) - 90 / 4.5) < 0.01
+    # 空段 → 0
+    assert compute_segment_content_seconds(script, "", None) == 0.0
+
+
+def test_segment_declared_budget_allocates_by_content_share():
+    # 标注口径：各段预算按内容量占比分摊，预算之和 ≈ 倍率 × 标注秒数
+    budget_a = compute_segment_declared_budget_seconds(60.0, 1.0, 10.0, 40.0)
+    budget_b = compute_segment_declared_budget_seconds(60.0, 1.0, 30.0, 40.0)
+    assert budget_a == 15.0
+    assert budget_b == 45.0
+    assert abs(budget_a + budget_b - 60.0) < 0.2
+
+
+def test_segment_declared_budget_floor_and_empty():
+    floor = ScriptSplitConstants.TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS
+    # 极小占比段托底到段下限
+    assert compute_segment_declared_budget_seconds(60.0, 1.0, 0.1, 100.0) == floor
+    # 空段 / 零总量 / 零倍率 → 0
+    assert compute_segment_declared_budget_seconds(60.0, 1.0, 0.0, 100.0) == 0.0
+    assert compute_segment_declared_budget_seconds(60.0, 1.0, 10.0, 0.0) == 0.0
+    assert compute_segment_declared_budget_seconds(60.0, 0, 10.0, 100.0) == 0.0
+
+
+def test_plan_prompt_and_validation_tolerate_declared_duration():
+    # 规划 prompt 要求输出 declared_duration_seconds；plan 校验容忍该顶层字段
+    from llm.script_segment_planner import build_planning_prompt
+    from services.script_split_planner import validate_segment_plan
+    anchors = [{"block_id": "block_0001", "start_line": 1, "end_line": 1,
+                "content_sha256": "x", "content": "内容"}]
+    prompt = build_planning_prompt(anchors)
+    assert "declared_duration_seconds" in prompt
+    plan = {
+        "schema_version": 1,
+        "declared_duration_seconds": 30,
+        "segments": [{"segment_id": "seg_0001", "block_ids": ["block_0001"]}],
+    }
+    ok, errors = validate_segment_plan(plan, anchors)
+    assert ok, errors
+
+
+def test_plan_declared_duration_seconds_lookup():
+    from services.script_split_engine import _plan_declared_duration_seconds
+    # 规划提炼值优先
+    assert _plan_declared_duration_seconds({"declared_duration_seconds": 30}, "剧本") == 30.0
+    # plan 值超出 sanity 区间视为无效，回退正则
+    assert _plan_declared_duration_seconds({"declared_duration_seconds": 2}, "时长：60秒") == 60.0
+    # 字段缺失回退正则
+    assert _plan_declared_duration_seconds({}, "# 第1集（30秒）") == 30.0
+    assert _plan_declared_duration_seconds({"declared_duration_seconds": None}, "片长：1分钟") == 60.0
+    # 均无 → None
+    assert _plan_declared_duration_seconds({}, "他等了30秒") is None
+    assert _plan_declared_duration_seconds({"declared_duration_seconds": "abc"}, "无标注剧本") is None
 
 
 # ---- enforce_total_duration_limit ----

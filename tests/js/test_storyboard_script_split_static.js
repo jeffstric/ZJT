@@ -93,6 +93,11 @@ assert.match(renderSrc, /extractScriptDialogueText/, 'render.js 应实现启发�
 assert.match(renderSrc, /剧本对白估算约/, 'render.js 对白口径 hint 应显示「剧本对白估算约」');
 assert.match(nodeSrc, /extractScriptDialogueText/, 'script_node.js 应实现启发式台词过滤');
 assert.match(nodeSrc, /剧本对白估算约/, 'script_node.js 对白口径 hint 应显示「剧本对白估算约」');
+// 标注时长口径（最高优先级）：前端两处提取规则与后端 extract_script_declared_duration_seconds 一致
+assert.match(renderSrc, /extractScriptDeclaredDurationSeconds/, 'render.js 应实现标注时长提取');
+assert.match(renderSrc, /剧本标注时长约/, 'render.js 标注口径 hint 应显示「剧本标注时长约」');
+assert.match(nodeSrc, /extractScriptDeclaredDurationSeconds/, 'script_node.js 应实现标注时长提取');
+assert.match(nodeSrc, /剧本标注时长约/, 'script_node.js 标注口径 hint 应显示「剧本标注时长约」');
 assert.match(nodeClientSrc, /total_duration_multiplier: Number\(scriptNodeData\.totalDurationMultiplier\)/, 'script_split_task.js 请求应透传总分镜时长倍率');
 assert.match(workflowSrc, /totalDurationMultiplier/, 'workflow.js 重载时应恢复总分镜时长倍率');
 

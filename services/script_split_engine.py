@@ -22,11 +22,14 @@ from typing import Dict, Any, List, Optional, Tuple
 from config.constant import ScriptSplitConstants, ScriptSplitQcConstants
 from llm.script_parser import (
     apply_dialogue_matched_shot_durations,
+    compute_segment_content_seconds,
+    compute_segment_declared_budget_seconds,
     compute_segment_duration_budget_seconds,
     compute_shot_dialogue_seconds,
     compute_total_duration_target_seconds,
     enforce_total_duration_limit,
     estimate_script_duration_seconds,
+    extract_script_declared_duration_seconds,
 )
 from llm.script_split_qc_agent import create_qc_log_context, run_script_split_qc
 from services.script_split_planner import (
@@ -178,6 +181,30 @@ def _segment_plan_dialogue_chars(
     if base_content_chars <= 0:
         return dialogue_chars
     return max(1, round(dialogue_chars * part_chars / base_content_chars))
+
+
+def _plan_declared_duration_seconds(
+    plan: Dict[str, Any],
+    script_content: str,
+) -> Optional[float]:
+    """取剧本自述的标注总时长（秒）：优先阶段一规划提炼值，缺失时正则兜底。
+
+    两侧都按 ScriptSplitConstants.SCRIPT_DURATION_DECLARED_MIN/MAX_SECONDS
+    sanity 区间过滤；无效/缺失返回 None。
+    """
+    raw = plan.get("declared_duration_seconds")
+    if raw is not None:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = None
+        if value is not None and (
+            ScriptSplitConstants.SCRIPT_DURATION_DECLARED_MIN_SECONDS
+            <= value
+            <= ScriptSplitConstants.SCRIPT_DURATION_DECLARED_MAX_SECONDS
+        ):
+            return value
+    return extract_script_declared_duration_seconds(script_content)
 
 
 async def _load_current_db_locations(config: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -862,19 +889,40 @@ async def step_generate_segment(
     generation_attempt = attempt_count + 1
     qc_feedback = _build_qc_feedback(last_errors, seg) if last_errors else None
 
-    # 总分镜时长控制：按段台词量下发本段时长预算（台词锚定，各段预算之和
-    # ≈ 倍率×台词总时长÷对白占比）
+    # 总分镜时长控制：有剧本标注总时长时按各段内容量占比分摊
+    # （各段预算之和 ≈ 倍率×标注秒数）；无标注时按段台词量下发预算
+    # （台词锚定，各段预算之和 ≈ 倍率×台词总时长÷对白占比）
     duration_budget = None
     duration_multiplier = _safe_duration_multiplier(cfg)
     if duration_multiplier > 0:
-        duration_budget = compute_segment_duration_budget_seconds(
-            task.script_content or "",
-            seg.source_content or "",
-            duration_multiplier,
-            dialogue_chars=_segment_plan_dialogue_chars(
-                plan, seg, task.script_content or "",
-            ),
-        )
+        script_content = task.script_content or ""
+        dialogue_chars = _segment_plan_dialogue_chars(plan, seg, script_content)
+        declared_seconds = _plan_declared_duration_seconds(plan, script_content)
+        if declared_seconds:
+            all_segments = (
+                _all_segments
+                if _all_segments is not None
+                else ScriptSplitSegmentModel.get_all(task.id)
+            )
+            total_content_seconds = 0.0
+            for other in all_segments:
+                other_chars = _segment_plan_dialogue_chars(plan, other, script_content)
+                total_content_seconds += compute_segment_content_seconds(
+                    script_content, other.source_content or "", other_chars)
+            duration_budget = compute_segment_declared_budget_seconds(
+                declared_seconds,
+                duration_multiplier,
+                compute_segment_content_seconds(
+                    script_content, seg.source_content or "", dialogue_chars),
+                total_content_seconds,
+            )
+        else:
+            duration_budget = compute_segment_duration_budget_seconds(
+                script_content,
+                seg.source_content or "",
+                duration_multiplier,
+                dialogue_chars=dialogue_chars,
+            )
 
     try:
         parsed = await asyncio.wait_for(
@@ -1608,11 +1656,12 @@ async def step_merge(task: ScriptSplitTask) -> None:
         _pause_for_hard_gate(hard_structure_errors)
 
     # 总分镜时长控制：先把有对白镜头的时长锚定到台词朗读时长（无对白镜头
-    # 保留 LLM 预估），再把全部分镜总时长双向归一到
-    # 倍率×台词总时长÷对白占比 的 ±15% 容差区间内（LLM 拆得超长则压缩合并，
-    # 拆得过短则等比放大——例如 2 倍节奏下 LLM 往往只拆出 0.7 倍左右的短镜头）。
-    # 台词缺失时目标口径逐级回退：结构化 dialogue → 启发式行过滤 → 旧口径
-    # （倍率×整篇剧本基准时长）。
+    # 保留 LLM 预估），再把全部分镜总时长双向归一到目标的 ±15% 容差区间内
+    # （LLM 拆得超长则压缩合并，拆得过短则等比放大——例如 2 倍节奏下 LLM
+    # 往往只拆出 0.7 倍左右的短镜头）。
+    # 目标口径优先级：剧本自述标注总时长（倍率×标注秒数，不除以对白占比）
+    # → 结构化 dialogue（倍率×台词总时长÷对白占比）→ 启发式行过滤
+    # → 旧口径（倍率×整篇剧本基准时长）。
     # 必须位于 reorganize_shot_groups 之前：放大后组内总时长会超组上限，
     # 由随后的 reorganize 拆组恢复；单镜头放大受 max_group_duration 截断，
     # 保证 reorganize 能拆。renumber_global 在最后重排编号。
@@ -1627,10 +1676,13 @@ async def step_merge(task: ScriptSplitTask) -> None:
         dialogue_seconds_total = round(
             sum(compute_shot_dialogue_seconds(s) for s in merged_shots), 1)
         estimated_seconds = estimate_script_duration_seconds(task.script_content or "")
+        declared_seconds = _plan_declared_duration_seconds(
+            plan, task.script_content or "")
         target_seconds, target_source = compute_total_duration_target_seconds(
             task.script_content or "",
             dialogue_seconds_total,
             duration_multiplier,
+            declared_duration_seconds=declared_seconds,
         )
         control_report = enforce_total_duration_limit(
             merged,
@@ -1644,6 +1696,8 @@ async def step_merge(task: ScriptSplitTask) -> None:
         control_report["dialogue_matched_shots"] = dialogue_matched_shots
         control_report["dialogue_seconds_total"] = dialogue_seconds_total
         control_report["target_source"] = target_source
+        if target_source == "declared" and declared_seconds:
+            control_report["declared_duration_seconds"] = declared_seconds
         _ensure_metadata_dict(merged)["total_duration_control"] = control_report
         logger.info(
             "task %s 总分镜时长控制: 台词总时长 %.1fs（锚定镜头=%d，口径=%s）"

@@ -115,6 +115,19 @@ def build_exclusion_instruction() -> str:
 - `excluded_block_ids` 与 segments 的 block_ids 合起来必须覆盖全部 block：每个 block 恰好属于二者其一，不得重复、不得遗漏。"""
 
 
+def build_declared_duration_instruction() -> str:
+    """剧本自述标注总时长的提炼指引（输出顶层 declared_duration_seconds 字段）。
+
+    与 build_exclusion_instruction 同理：speed / quality 两种规划提示词共用，
+    文案只此一份，避免双处漂移。
+    """
+    return """【标注总时长提炼（declared_duration_seconds）】
+- 顶层输出 `declared_duration_seconds`：剧本自述的成片预计总时长，统一换算成秒的数字。
+- 在标题/头部元信息里找这类标注：「（30秒）」「时长：30秒 / 时长：30s」「预计1分钟」「总时长X秒」「片长X分钟」等；剧本没有标注总时长时输出 null。
+- 正文/台词里的时间描述（如"他等了30秒"）不是总时长标注，不得提炼。
+- 该标注常位于将被 excluded_block_ids 排除的元信息块（剧名/集标题行等）中，仍需正常提炼。"""
+
+
 def build_planning_prompt(
     anchors: List[Dict[str, Any]],
     max_output_tokens: int = ScriptSplitConstants.SEGMENT_MAX_OUTPUT_TOKENS,
@@ -136,9 +149,12 @@ def build_planning_prompt(
 
 {build_exclusion_instruction()}
 
+{build_declared_duration_instruction()}
+
 【输出格式】只输出纯 JSON，不要 markdown 标记，不要解释文字：
 {{
   "schema_version": 1,
+  "declared_duration_seconds": 30,
   "excluded_block_ids": [],
   "segments": [
     {{
@@ -253,6 +269,7 @@ async def plan_segments(
 
 __all__ = [
     "SegmentPlanLogContext",
+    "build_declared_duration_instruction",
     "build_exclusion_instruction",
     "build_planning_prompt",
     "create_plan_log_context",

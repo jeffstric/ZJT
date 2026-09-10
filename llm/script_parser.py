@@ -992,18 +992,73 @@ def apply_dialogue_matched_shot_durations(parsed_data: Dict[str, Any]) -> int:
     return matched
 
 
+# ---- 剧本自述标注总时长（最高优先级口径，与前端两处 JS 同规则，三处同步）----
+# 关键词 + 数字 + 单位：「时长：30秒」「总时长 90s」「预计1分钟」「片长： 2 min」
+_DECLARED_DURATION_KEYWORD_RE = re.compile(
+    r"(?:预计时长|总时长|成片时长|片长|时长|预计)\s*[:：]?\s*"
+    r"(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)",
+    re.IGNORECASE,
+)
+# 括号包裹的纯时长标注：「（30秒）」「(1.5分钟)」（括号内只有数字+单位）
+_DECLARED_DURATION_PAREN_RE = re.compile(
+    r"[（(]\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)\s*[）)]",
+    re.IGNORECASE,
+)
+_DECLARED_DURATION_MINUTE_UNITS = {"分钟", "分鐘", "minute", "minutes", "min", "mins"}
+
+
+def extract_script_declared_duration_seconds(text: str) -> Optional[float]:
+    """从剧本文本中提取自述的预计总时长（秒），无标注返回 None。
+
+    识别「时长/预计时长/总时长/成片时长/片长/预计」关键词后接的
+    N秒/N分钟/N s/N min，以及括号包裹的（N秒）/（N分钟）；分钟换算为秒；
+    取文本中第一个有效匹配。结果须落在
+    SCRIPT_DURATION_DECLARED_MIN/MAX_SECONDS 区间内，否则视为误识别。
+    正文/台词里的时间描述（如「他等了30秒」）无关键词引导，不会命中。
+    """
+    if not text:
+        return None
+    best: Optional[Tuple[int, float]] = None
+    for pattern in (_DECLARED_DURATION_KEYWORD_RE, _DECLARED_DURATION_PAREN_RE):
+        for match in pattern.finditer(text):
+            try:
+                value = float(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            seconds = (
+                value * 60
+                if match.group(2).lower() in _DECLARED_DURATION_MINUTE_UNITS
+                else value
+            )
+            if not (
+                ScriptSplitConstants.SCRIPT_DURATION_DECLARED_MIN_SECONDS
+                <= seconds
+                <= ScriptSplitConstants.SCRIPT_DURATION_DECLARED_MAX_SECONDS
+            ):
+                continue
+            if best is None or match.start() < best[0]:
+                best = (match.start(), seconds)
+            break  # 每个模式只取第一个有效匹配，再按文本位置取更早者
+    return best[1] if best else None
+
+
 def compute_total_duration_target_seconds(
     script_content: str,
     dialogue_seconds_total: float,
     multiplier: float,
+    declared_duration_seconds: Optional[float] = None,
 ) -> Tuple[float, str]:
     """计算总时长归一化目标（秒）与口径来源。
 
     优先级：
-    1. 拆分产出的结构化对白总时长 > 0 → 倍率 × 台词总时长 ÷ 对白占比（"shots"）；
-    2. 启发式从剧本提取到台词 → 倍率 × 启发式台词时长 ÷ 对白占比（"heuristic"）；
-    3. 仍无台词 → 倍率 × 剧本基准时长（旧口径，"full_text"）。
+    1. 剧本自述标注总时长（"declared"）→ 倍率 × 标注秒数
+       （标注本身就是成片总时长，不再除以对白占比）；
+    2. 拆分产出的结构化对白总时长 > 0 → 倍率 × 台词总时长 ÷ 对白占比（"shots"）；
+    3. 启发式从剧本提取到台词 → 倍率 × 启发式台词时长 ÷ 对白占比（"heuristic"）；
+    4. 仍无台词 → 倍率 × 剧本基准时长（旧口径，"full_text"）。
     """
+    if declared_duration_seconds and declared_duration_seconds > 0:
+        return round(multiplier * declared_duration_seconds, 1), "declared"
     share = float(ScriptSplitConstants.TOTAL_DURATION_DIALOGUE_SHARE)
     if dialogue_seconds_total > 0:
         return round(multiplier * dialogue_seconds_total / share, 1), "shots"
@@ -1016,6 +1071,30 @@ def compute_total_duration_target_seconds(
     return round(estimated * multiplier, 1), "full_text"
 
 
+def compute_segment_content_seconds(
+    script_content: str,
+    segment_content: str,
+    dialogue_chars: Optional[int] = None,
+) -> float:
+    """段内容量的 1 倍口径估算（秒）：段台词字数 ÷ 混合速率 ÷ 对白占比。
+
+    dialogue_chars 为 None 时启发式从段文本过滤台词行；段无台词
+    （dialogue_chars<=0 或启发式零匹配）回退为段字符数 ÷ 速率。
+    不含倍率与段预算下限，供标注时长口径下按内容量占比分摊总预算。
+    """
+    rate = _script_duration_rate_per_second(script_content)
+    if dialogue_chars is None:
+        dialogue_text = extract_script_dialogue_text(segment_content)
+        dialogue_chars = len([ch for ch in dialogue_text if not ch.isspace()])
+    if dialogue_chars > 0:
+        share = float(ScriptSplitConstants.TOTAL_DURATION_DIALOGUE_SHARE)
+        return dialogue_chars / rate / share
+    chars = len([ch for ch in (segment_content or "") if not ch.isspace()])
+    if chars <= 0:
+        return 0.0
+    return chars / rate
+
+
 def compute_segment_duration_budget_seconds(
     script_content: str,
     segment_content: str,
@@ -1024,7 +1103,7 @@ def compute_segment_duration_budget_seconds(
 ) -> float:
     """计算单段的目标分镜时长预算（秒）。
 
-    台词锚定口径：每段预算 = 倍率 × 段台词字数 ÷ 混合速率 ÷ 对白占比。
+    台词锚定口径：每段预算 = 倍率 × 段内容量（compute_segment_content_seconds）。
     段台词字数由 engine 从阶段一规划的 dialogue_text 提炼传入：
     - dialogue_chars > 0 → 按台词锚定公式；
     - dialogue_chars 为 None（规划未输出该字段，如企业版自定义提示词）
@@ -1035,18 +1114,31 @@ def compute_segment_duration_budget_seconds(
     """
     if multiplier <= 0:
         return 0.0
-    rate = _script_duration_rate_per_second(script_content)
-    if dialogue_chars is None:
-        dialogue_text = extract_script_dialogue_text(segment_content)
-        dialogue_chars = len([ch for ch in dialogue_text if not ch.isspace()])
-    if dialogue_chars > 0:
-        share = float(ScriptSplitConstants.TOTAL_DURATION_DIALOGUE_SHARE)
-        budget = multiplier * dialogue_chars / rate / share
-        return round(max(ScriptSplitConstants.TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS, budget), 1)
-    chars = len([ch for ch in (segment_content or "") if not ch.isspace()])
-    if chars <= 0:
+    content_seconds = compute_segment_content_seconds(
+        script_content, segment_content, dialogue_chars)
+    if content_seconds <= 0:
         return 0.0
-    budget = multiplier * chars / rate
+    budget = multiplier * content_seconds
+    return round(max(ScriptSplitConstants.TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS, budget), 1)
+
+
+def compute_segment_declared_budget_seconds(
+    declared_seconds: float,
+    multiplier: float,
+    segment_content_seconds: float,
+    total_content_seconds: float,
+) -> float:
+    """标注总时长口径的段预算：倍率 × 标注秒数 × 段内容量占比。
+
+    各段预算之和 ≈ 倍率 × 标注秒数（段下限
+    TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS 托底导致的轻微超出属预期）。
+    段内容量为 0 时返回 0.0（与空段旧口径一致）。
+    """
+    if multiplier <= 0 or declared_seconds <= 0:
+        return 0.0
+    if segment_content_seconds <= 0 or total_content_seconds <= 0:
+        return 0.0
+    budget = multiplier * declared_seconds * segment_content_seconds / total_content_seconds
     return round(max(ScriptSplitConstants.TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS, budget), 1)
 
 

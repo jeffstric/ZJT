@@ -2153,11 +2153,13 @@ function renderScriptSplitDuration(disabled = false) {
         `<option value="${m}" ${m === curMultiplier ? 'selected' : ''}>${m === 0 ? '不限制' : `${m}倍`}</option>`
     ).join('');
     const estimateInfo = estimateScriptDurationInfo(state.scriptContentForEstimate);
-    let totalDurationHint = '限制全部分镜的总时长：按剧本对白估算基准时长（朗读速率÷对白占比），N倍=基准时长×N';
+    let totalDurationHint = '限制全部分镜的总时长：优先按剧本标注时长，其次按对白估算基准时长（朗读速率÷对白占比），N倍=基准时长×N';
     if (curMultiplier > 0) {
         if (estimateInfo.seconds > 0) {
-            const label = estimateInfo.dialogueMatched ? '剧本对白估算约' : '剧本估算约';
-            const targetSeconds = estimateInfo.dialogueMatched
+            // 标注口径不除以对白占比（标注本身就是成片总时长）
+            const label = estimateInfo.source === 'declared' ? '剧本标注时长约'
+                : estimateInfo.source === 'dialogue' ? '剧本对白估算约' : '剧本估算约';
+            const targetSeconds = estimateInfo.source === 'dialogue'
                 ? estimateInfo.seconds * curMultiplier / DIALOGUE_SHARE_OF_TOTAL
                 : estimateInfo.seconds * curMultiplier;
             totalDurationHint = `${label} ${formatDurationLabel(estimateInfo.seconds)} × ${curMultiplier}倍 → 目标总分镜时长约 ${formatDurationLabel(targetSeconds)}`;
@@ -2194,6 +2196,33 @@ function formatDurationLabel(seconds) {
 // 台词占成片总时长的经验比例，与后端 config/constant.py
 // ScriptSplitConstants.TOTAL_DURATION_DIALOGUE_SHARE 同值（修改时同步）
 const DIALOGUE_SHARE_OF_TOTAL = 0.6;
+
+// 剧本自述标注总时长（最高优先级口径）：与后端 llm/script_parser.py
+// extract_script_declared_duration_seconds 同规则（修改时三处同步）——
+// 「时长/预计时长/总时长/成片时长/片长/预计」关键词 + N秒/N分钟/N s/N min，
+// 或括号包裹的纯时长标注（30秒）/(1.5分钟)；取第一个有效匹配
+const DECLARED_DURATION_MIN_SECONDS = 5;
+const DECLARED_DURATION_MAX_SECONDS = 10800;
+const DECLARED_DURATION_KEYWORD_RE = /(?:预计时长|总时长|成片时长|片长|时长|预计)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)/gi;
+const DECLARED_DURATION_PAREN_RE = /[（(]\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)\s*[）)]/gi;
+const DECLARED_DURATION_MINUTE_UNITS = ['分钟', '分鐘', 'minute', 'minutes', 'min', 'mins'];
+
+/** 提取剧本自述的预计总时长（秒），无标注/超出有效区间返回 null */
+function extractScriptDeclaredDurationSeconds(text) {
+    if (!text) return null;
+    let best = null;
+    for (const re of [DECLARED_DURATION_KEYWORD_RE, DECLARED_DURATION_PAREN_RE]) {
+        for (const match of String(text).matchAll(re)) {
+            const value = parseFloat(match[1]);
+            if (!Number.isFinite(value)) continue;
+            const seconds = DECLARED_DURATION_MINUTE_UNITS.includes(match[2].toLowerCase()) ? value * 60 : value;
+            if (seconds < DECLARED_DURATION_MIN_SECONDS || seconds > DECLARED_DURATION_MAX_SECONDS) continue;
+            if (best === null || match.index < best.index) best = { index: match.index, seconds };
+            break;
+        }
+    }
+    return best ? best.seconds : null;
+}
 
 // 启发式台词行过滤规则，与后端 llm/script_parser.py extract_script_dialogue_text
 // 及 web/js/script_node.js 同一套规则（修改时三处同步）
@@ -2247,17 +2276,21 @@ function scriptTextDurationSeconds(text) {
 }
 
 /**
- * 按台词口径估算剧本基准时长（秒）：启发式过滤台词/旁白后按朗读速率换算；
- * 整篇提取不到台词时回退为整篇估算（dialogueMatched=false）。
- * 与后端 llm/script_parser.py estimate_script_dialogue_seconds 同规则。
+ * 估算剧本基准时长：返回 {seconds, source}。
+ * source 优先级：declared（剧本自述标注总时长）→ dialogue（启发式台词口径）
+ * → fulltext（整篇估算回退），与后端 compute_total_duration_target_seconds
+ * 的口径顺序一致。
  */
 function estimateScriptDurationInfo(text) {
+    const declared = extractScriptDeclaredDurationSeconds(text);
+    if (declared !== null) {
+        return { seconds: declared, source: 'declared' };
+    }
     const dialogue = extractScriptDialogueText(text);
-    const matched = dialogue.trim().length > 0;
-    return {
-        seconds: scriptTextDurationSeconds(matched ? dialogue : text),
-        dialogueMatched: matched,
-    };
+    if (dialogue.trim().length > 0) {
+        return { seconds: scriptTextDurationSeconds(dialogue), source: 'dialogue' };
+    }
+    return { seconds: scriptTextDurationSeconds(text), source: 'fulltext' };
 }
 
 /**
