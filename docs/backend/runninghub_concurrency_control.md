@@ -491,7 +491,8 @@ print(f"Cleaned {cleaned_count} stale slots")
 企业模块加载器成功注册的商业 Provider 才能开启管理 API 和运行时能力；修改
 `edition.mode`、创建空 `enterprise/` 目录或写入多密钥数据库配置均不会启用该功能。
 
-管理入口位于 admin 后台「RH密钥池」。社区版访问管理 API 返回 403。商业版的
+管理入口位于 admin 后台「RH密钥池」。社区版访问管理 API 返回 403；商业版部署
+但许可证未激活时同样 403 并显示锁定卡片（须先在许可证管理页激活）。商业版的
 配置格式、选择策略、故障隔离和运维说明位于私有企业包文档中。
 
 ### 拥堵冷却（Congestion Cooldown）

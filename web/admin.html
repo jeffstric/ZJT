@@ -994,21 +994,27 @@
                         </ul>
                     </div>
 
-                    <!-- 供应商自动切换总开关 -->
-                    <div class="info-box" style="margin-bottom: 16px; padding: 12px 16px; background: #f0fdf4; border-left: 4px solid #22c55e; border-radius: 4px;">
+                    <!-- 供应商自动切换总开关（商业版特权：许可证未激活时锁定） -->
+                    <div class="info-box" style="margin-bottom: 16px; padding: 12px 16px; background: #f0fdf4; border-left: 4px solid #22c55e; border-radius: 4px;" :style="vendorAutoSwitchAvailable ? {} : { background: '#fffbeb', borderLeft: '4px solid #f59e0b' }">
                         <div style="display:flex; align-items:center; justify-content:space-between;">
                             <div>
-                                <p style="margin: 0; color: #166534; font-size: 13px;">
+                                <p style="margin: 0; color: #166534; font-size: 13px;" :style="vendorAutoSwitchAvailable ? {} : { color: '#92400e' }">
                                     <strong>🔄 {{ t('impl_retry_global_title') }}</strong>
                                     &nbsp;{{ t('impl_retry_global_desc') }}
                                 </p>
+                                <p v-if="!vendorAutoSwitchAvailable" style="margin: 6px 0 0; color: #b45309; font-size: 12px;">
+                                    🔒 {{ t('impl_retry_global_locked_hint') }}
+                                </p>
                             </div>
-                            <label class="switch">
+                            <label v-if="vendorAutoSwitchAvailable" class="switch">
                                 <input type="checkbox"
                                     v-model="implementations.retryGlobalEnabled"
                                     @change="toggleRetryGlobal">
                                 <span class="slider"></span>
                             </label>
+                            <span v-else style="flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border: 1px solid #fcd34d; background: #fffbeb; color: #b45309; border-radius: 9999px; font-size: 12px;">
+                                {{ t('commercial_feature_badge') }}
+                            </span>
                         </div>
                     </div>
 
@@ -2094,8 +2100,8 @@
 
             <!-- 佣金管理页面 -->
             <section v-if="currentPage === 'commission'">
-                <!-- 社区版锁定提示 -->
-                <div v-if="isCommunityEdition" class="table-container" style="max-width: 600px; margin: 60px auto; text-align: center;">
+                <!-- 未激活商业许可证锁定提示（社区版同形态） -->
+                <div v-if="!commissionAvailable" class="table-container" style="max-width: 600px; margin: 60px auto; text-align: center;">
                     <div style="padding: 60px 30px;">
                         <svg xmlns="http://www.w3.org/2000/svg" style="width: 64px; height: 64px; margin: 0 auto 20px; display: block; color: #f59e0b;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />

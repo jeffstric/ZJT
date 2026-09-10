@@ -85,6 +85,21 @@ def _is_user_module_license_active() -> bool:
         return False
 
 
+def _is_commercial_base_license_active() -> bool:
+    """commercial.base 商业能力检查（密钥池/佣金/供应商自动切换等共用）。
+
+    跟随许可证运行时的执行模式；enterprise 缺席或注册闩锁未开恒 False。
+    """
+    try:
+        from enterprise.services.license.runtime import (
+            is_commercial_license_allowed,
+        )
+
+        return bool(is_commercial_license_allowed())
+    except Exception:
+        return False
+
+
 async def require_admin(auth_token: str = Header(None, alias="Authorization")) -> User:
     """
     管理员权限校验中间件
@@ -141,7 +156,11 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
                 ),
                 "enterprise": enterprise_status,
                 "features": {
-                    "runninghub_key_pool": is_runninghub_key_pool_available(),
+                    # 密钥池/佣金/供应商自动切换均为 commercial.base 商业能力：
+                    # 许可证未激活（enforce）时前端显示锁定卡片，接口本身另有 403 守卫。
+                    "runninghub_key_pool": is_runninghub_key_pool_available() and _is_commercial_base_license_active(),
+                    "commission": _is_commercial_base_license_active(),
+                    "vendor_auto_switch": _is_commercial_base_license_active(),
                     "commercial_license_admin": bool(
                         enterprise_status["license_control_available"]
                     ),
@@ -3528,7 +3547,7 @@ async def admin_update_retry_global_enabled(
     """
     更新供应商自动切换总开关
 
-    企业版可用，社区版返回 403
+    商业版且许可证已激活可用；社区版或未激活返回 403
     """
     from config.strategy.edition_strategy import IS_COMMUNITY_EDITION
 
@@ -3536,6 +3555,12 @@ async def admin_update_retry_global_enabled(
 
     if IS_COMMUNITY_EDITION:
         raise HTTPException(status_code=403, detail="此功能仅商业版本可用，请购买商业版本后解锁该功能")
+
+    if not _is_commercial_base_license_active():
+        raise HTTPException(
+            status_code=403,
+            detail="此功能为商业版功能，请先激活商业许可证后再使用",
+        )
 
     try:
         from config.config_util import set_dynamic_config_value
@@ -3561,10 +3586,15 @@ async def admin_update_retry_global_enabled(
 
 
 def _require_enterprise_for_key_pool():
-    """以企业 Provider 是否成功注册作为唯一能力判断。"""
+    """以企业 Provider 注册 + 商业许可证激活作为能力判断。"""
     from task.runninghub_key_pool import is_available
     if not is_available():
         raise HTTPException(status_code=403, detail="此功能仅商业版本可用")
+    if not _is_commercial_base_license_active():
+        raise HTTPException(
+            status_code=403,
+            detail="此功能为商业版功能，请先激活商业许可证后再使用",
+        )
 
 
 class RunningHubKeyRequest(BaseModel):
