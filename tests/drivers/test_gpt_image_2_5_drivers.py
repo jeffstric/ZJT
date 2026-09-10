@@ -1,4 +1,4 @@
-"""GPT Image 2.5 驱动（多米 / 通用站点，sunburst / flare 变体）测试。"""
+"""GPT Image 2.5 拆分模型驱动（多米 / 通用站点 site_0，sunburst / flare 各一个模型）测试。"""
 import logging
 import os
 from types import SimpleNamespace
@@ -6,7 +6,6 @@ from types import SimpleNamespace
 os.environ.setdefault("comfyui_env", "prod")
 
 from config.unified_config import (
-    DriverImplementation,
     DriverImplementationId,
     IMPLEMENTATION_TO_ID,
     UnifiedConfigRegistry,
@@ -43,25 +42,52 @@ def _make_common_driver(cls):
     return driver
 
 
-def test_duomi_sunburst_driver_uses_2_5_model_name():
-    """多米 sunburst 驱动沿用 GPT Image 2 接口，仅上游模型名不同。"""
-    assert issubclass(GptImage25DuomiSunburstV1Driver, GptImageDuomiV1Driver)
+def test_sunburst_and_flare_are_two_independent_models():
+    """sunburst / flare 拆分为两个独立任务类型（46 / 47），各自挂图片编辑 + 文生图类目。"""
     assert GptImage25DuomiSunburstV1Driver.DEFAULT_MODEL == "gpt-image-2.5-sunburst"
-
-
-def test_duomi_flare_driver_only_differs_in_model_name():
-    """多米 flare 驱动与 sunburst 仅上游模型名不同。"""
-    assert issubclass(GptImage25DuomiFlareV1Driver, GptImage25DuomiSunburstV1Driver)
     assert GptImage25DuomiFlareV1Driver.DEFAULT_MODEL == "gpt-image-2.5-flare"
 
+    sunburst_cfg = UnifiedConfigRegistry.get_by_id(TaskTypeId.GPT_IMAGE_2_5_SUNBURST)
+    flare_cfg = UnifiedConfigRegistry.get_by_id(TaskTypeId.GPT_IMAGE_2_5_FLARE)
 
-def test_duomi_create_request_carries_2_5_model():
-    """文生图请求体 model 字段使用 2.5 模型名，其余结构与 GPT Image 2 一致。"""
-    driver = _make_duomi_driver(GptImage25DuomiSunburstV1Driver)
+    assert sunburst_cfg.key == 'gpt-image-2.5-sunburst-edit'
+    assert sunburst_cfg.short_key == 'gpt-image-2.5-sunburst'
+    assert sunburst_cfg.model_name == 'GPT Image 2.5 Sunburst'
+    assert sunburst_cfg.driver_name == 'gpt_image_2_5_sunburst'
+    assert flare_cfg.key == 'gpt-image-2.5-flare-edit'
+    assert flare_cfg.short_key == 'gpt-image-2.5-flare'
+    assert flare_cfg.model_name == 'GPT Image 2.5 Flare'
+    assert flare_cfg.driver_name == 'gpt_image_2_5_flare'
+
+    for cfg in (sunburst_cfg, flare_cfg):
+        assert cfg.category == 'image_edit'
+        assert 'text_to_image' in cfg.categories
+        assert cfg.computing_power == 2
+
+
+def test_each_model_has_two_implementations_with_duomi_default():
+    """每个模型两个实现方：多米（默认）+ ZJT 官方站点 site_0。"""
+    sunburst_cfg = UnifiedConfigRegistry.get_by_id(TaskTypeId.GPT_IMAGE_2_5_SUNBURST)
+    flare_cfg = UnifiedConfigRegistry.get_by_id(TaskTypeId.GPT_IMAGE_2_5_FLARE)
+
+    assert sunburst_cfg.implementation == 'duomi_gpt_image_2_5_sunburst_v1'
+    assert sunburst_cfg.implementations == [
+        'duomi_gpt_image_2_5_sunburst_v1',
+        'gpt_image_2_5_common_sunburst_site0_v1',
+    ]
+    assert flare_cfg.implementation == 'duomi_gpt_image_2_5_flare_v1'
+    assert flare_cfg.implementations == [
+        'duomi_gpt_image_2_5_flare_v1',
+        'gpt_image_2_5_common_flare_site0_v1',
+    ]
+
+
+def test_duomi_create_request_carries_model_name():
+    """多米驱动文生图请求体使用对应模型名，其余结构与 GPT Image 2 一致。"""
+    assert issubclass(GptImage25DuomiSunburstV1Driver, GptImageDuomiV1Driver)
     ai_tool = SimpleNamespace(id=1, prompt="a cat", image_path="", ratio="16:9", image_size="2k")
 
-    request = driver.build_create_request(ai_tool)
-
+    request = _make_duomi_driver(GptImage25DuomiSunburstV1Driver).build_create_request(ai_tool)
     assert request["url"] == "https://duomi.example.com/v1/images/generations?async=true"
     assert request["json"]["model"] == "gpt-image-2.5-sunburst"
     assert request["json"]["size"] == "2048x1152"
@@ -70,8 +96,8 @@ def test_duomi_create_request_carries_2_5_model():
     assert flare_request["json"]["model"] == "gpt-image-2.5-flare"
 
 
-def test_common_site_driver_uses_2_5_model_names():
-    """通用站点 sunburst/flare 驱动文生图与编辑请求均使用 2.5 模型名。"""
+def test_common_site_driver_uses_model_names():
+    """通用站点 sunburst/flare 驱动文生图请求使用对应模型名。"""
     assert issubclass(GptImage25CommonSunburstSite0V1Driver, GptImage25CommonSunburstV1Driver)
     assert GptImage25CommonSunburstV1Driver.DEFAULT_MODEL == "gpt-image-2.5-sunburst"
     assert GptImage25CommonSunburstV1Driver.EDIT_MODEL == "gpt-image-2.5-sunburst"
@@ -85,38 +111,15 @@ def test_common_site_driver_uses_2_5_model_names():
     assert request["json"]["model"] == "gpt-image-2.5-sunburst"
 
 
-def test_task_config_wiring():
-    """任务配置：id=46、同时挂图片编辑与文生图类目、默认实现方为多米 Sunburst。"""
-    cfg = UnifiedConfigRegistry.get_by_id(TaskTypeId.GPT_IMAGE_2_5)
-    assert cfg is not None
-    assert cfg.key == 'gpt-image-2.5-edit'
-    assert cfg.driver_name == 'gpt_image_2_5'
-    assert cfg.category == 'image_edit'
-    assert 'text_to_image' in cfg.categories
-    assert cfg.implementation == 'duomi_gpt_image_2_5_sunburst_v1'
-    assert len(cfg.implementations) == 14
-
-
 def test_all_25_implementations_have_unique_ids():
-    """14 个新实现方均有唯一数字 ID，静态映射与 ID 类常量一致。"""
-    names = [
-        'duomi_gpt_image_2_5_sunburst_v1',
-        'duomi_gpt_image_2_5_flare_v1',
-        'gpt_image_2_5_common_sunburst_site0_v1',
-        'gpt_image_2_5_common_sunburst_site1_v1',
-        'gpt_image_2_5_common_sunburst_site2_v1',
-        'gpt_image_2_5_common_sunburst_site3_v1',
-        'gpt_image_2_5_common_sunburst_site4_v1',
-        'gpt_image_2_5_common_sunburst_site5_v1',
-        'gpt_image_2_5_common_flare_site0_v1',
-        'gpt_image_2_5_common_flare_site1_v1',
-        'gpt_image_2_5_common_flare_site2_v1',
-        'gpt_image_2_5_common_flare_site3_v1',
-        'gpt_image_2_5_common_flare_site4_v1',
-        'gpt_image_2_5_common_flare_site5_v1',
-    ]
-    ids = [IMPLEMENTATION_TO_ID[name] for name in names]
-    assert len(ids) == len(set(ids))
-    for name in names:
+    """4 个新实现方均有唯一数字 ID，静态映射与 ID 类常量一致。"""
+    names = {
+        'duomi_gpt_image_2_5_sunburst_v1': 85,
+        'duomi_gpt_image_2_5_flare_v1': 86,
+        'gpt_image_2_5_common_sunburst_site0_v1': 87,
+        'gpt_image_2_5_common_flare_site0_v1': 88,
+    }
+    for name, impl_id in names.items():
+        assert IMPLEMENTATION_TO_ID[name] == impl_id
         assert IMPLEMENTATION_TO_ID[name] == getattr(DriverImplementationId, name.upper())
         assert UnifiedConfigRegistry.get_implementation(name) is not None

@@ -2,25 +2,25 @@
 
 ## 概述
 
-GPT Image 2.5 通过多米（Duomi）API 平台或 zjt api（通用聚合站点）提供服务。
-接口与 GPT Image 2 完全一致，**仅上游模型名称不同**，支持文生图和图片编辑（图生图）。
+GPT Image 2.5 拆分为 **Sunburst** 与 **Flare** 两个独立模型（前端模型列表中各一个条目），
+通过多米（Duomi）API 平台或 zjt api（通用聚合站点）提供服务。
+接口与 GPT Image 2 完全一致，**仅上游模型名称不同**，均支持文生图和图片编辑（图生图）。
 
-上游提供两个模型变体（仅模型名不同，接口相同）：
-
-| 变体 | 上游模型名 | 默认实现方 |
-|------|-----------|-----------|
-| Sunburst | `gpt-image-2.5-sunburst` | 是（多米） |
-| Flare | `gpt-image-2.5-flare` | 否 |
+| 模型 | 上游模型名 | 任务类型 ID | 实现方 |
+|------|-----------|------------|--------|
+| GPT Image 2.5 Sunburst | `gpt-image-2.5-sunburst` | 46 | 多米（默认）+ ZJT官方站点 |
+| GPT Image 2.5 Flare | `gpt-image-2.5-flare` | 47 | 多米（默认）+ ZJT官方站点 |
 
 ## 任务类型
 
-系统提供一个任务类型，同时挂在「图片编辑」与「文生图」两个类目下（与 GPT Image 2 模式一致）：
+每个模型一个任务类型，同时挂在「图片编辑」与「文生图」两个类目下（与 GPT Image 2 模式一致）：
 
-| 任务类型 | ID | Key | 功能说明 |
-|----------|-----|-----|----------|
-| GPT Image 2.5 图片编辑 | 46 | `gpt-image-2.5-edit`（short_key: `gpt-image-2.5`） | 文生图 + 基于参考图编辑图片 |
+| 任务类型 | ID | Key | short_key |
+|----------|-----|-----|-----------|
+| GPT Image 2.5 Sunburst 图片编辑 | 46 | `gpt-image-2.5-sunburst-edit` | `gpt-image-2.5-sunburst` |
+| GPT Image 2.5 Flare 图片编辑 | 47 | `gpt-image-2.5-flare-edit` | `gpt-image-2.5-flare` |
 
-- 业务驱动名称（DriverKey）: `gpt_image_2_5`
+- 业务驱动名称（DriverKey）: `gpt_image_2_5_sunburst` / `gpt_image_2_5_flare`
 - 算力: 2 点（可在管理后台按实现方覆盖）
 - 支持比例: `1:1`、`2:3`、`3:2`、`16:9`、`9:16`
 - 支持分辨率: `1k`、`2k`、`4k`
@@ -28,14 +28,21 @@ GPT Image 2.5 通过多米（Duomi）API 平台或 zjt api（通用聚合站点�
 
 ## 实现方
 
-### 多米（Duomi）— 异步接口
+每个模型两个实现方（多米优先，用户可在实现方切换器中切换供应商）：
 
-- `duomi_gpt_image_2_5_sunburst_v1`（默认，多米·Sunburst）：`GptImage25DuomiSunburstV1Driver`
-- `duomi_gpt_image_2_5_flare_v1`（多米·Flare）：`GptImage25DuomiFlareV1Driver`
-- 驱动文件: `task/visual_drivers/gpt_image_2_5_duomi_v1_driver.py`
-- 复用 `GptImageDuomiV1Driver` 的提交/查询/尺寸映射逻辑，仅覆盖 `DEFAULT_MODEL`
+| 实现方名称 | 所属模型 | 显示名 | 驱动类 | 接口类型 |
+|-----------|---------|--------|--------|---------|
+| `duomi_gpt_image_2_5_sunburst_v1`（默认） | Sunburst | 多米 | `GptImage25DuomiSunburstV1Driver` | 异步轮询 |
+| `gpt_image_2_5_common_sunburst_site0_v1` | Sunburst | ZJTapi | `GptImage25CommonSunburstSite0V1Driver` | 同步 |
+| `duomi_gpt_image_2_5_flare_v1`（默认） | Flare | 多米 | `GptImage25DuomiFlareV1Driver` | 异步轮询 |
+| `gpt_image_2_5_common_flare_site0_v1` | Flare | ZJTapi | `GptImage25CommonFlareSite0V1Driver` | 同步 |
 
-#### API 接口
+- 多米驱动文件: `task/visual_drivers/gpt_image_2_5_duomi_v1_driver.py`
+  （复用 `GptImageDuomiV1Driver` 的提交/查询/尺寸映射逻辑，仅覆盖 `DEFAULT_MODEL` 与 `driver_name`）
+- 站点驱动: `task/visual_drivers/gpt_image_common_v1_driver.py`
+  （基类 `GptImage25CommonSunburstV1Driver` / `GptImage25CommonFlareV1Driver`，站点类固定 site_0）
+
+### 多米 API 接口
 
 1. 提交任务: `POST https://duomiapi.com/v1/images/generations?async=true`
    - Header: `Authorization: {duomi.token}`
@@ -53,16 +60,8 @@ GPT Image 2.5 通过多米（Duomi）API 平台或 zjt api（通用聚合站点�
    - 状态映射: `pending`/`running` → RUNNING，`succeeded` → SUCCESS，`error` → FAILED
    - 成功结果: `data.images[0].url`
 
-### zjt api 通用聚合站点 — 同步接口
+### zjt api 站点接口
 
-sunburst / flare 各覆盖 site_0 ~ site_5 共 12 个实现方：
-
-| 实现方名称 | 驱动类 |
-|-----------|--------|
-| `gpt_image_2_5_common_sunburst_site{0..5}_v1` | `GptImage25CommonSunburstSite{0..5}V1Driver` |
-| `gpt_image_2_5_common_flare_site{0..5}_v1` | `GptImage25CommonFlareSite{0..5}V1Driver` |
-
-- 基类: `GptImage25CommonSunburstV1Driver` / `GptImage25CommonFlareV1Driver`（位于 `task/visual_drivers/gpt_image_common_v1_driver.py`）
 - 文生图: `POST {base_url}/v1/images/generations`（JSON，`model` 为对应 2.5 模型名）
 - 图片编辑: `POST {base_url}/v1/images/edits`（multipart/form-data，`model`/`n`/`size`/`quality` 等与 GPT Image 2 相同）
 - 接口格式细节（尺寸映射、extra_config 透传、响应兼容）与 [GPT Image 2 集成说明](./gpt_image_2_integration.md) 完全一致
@@ -80,14 +79,13 @@ api_aggregator:
     base_url: "https://yw.perseids.cn"
     api_key: "your_api_key"
     name: "智剧通官方API"
-  # site_1 ~ site_5 按需配置
 ```
 
-实现方是否对用户可见由 `required_config_keys` 运行时校验：`duomi.token` 有值时显示多米实现方，`api_aggregator.site_X.api_key` 有值时显示对应站点。
+实现方是否对用户可见由 `required_config_keys` 运行时校验：`duomi.token` 有值时显示多米实现方，`api_aggregator.site_0.api_key` 有值时显示 ZJT 站点。
 
 ## 使用方式
 
-通过标准 AI 工具接口提交任务，指定 `type=46`：
+通过标准 AI 工具接口提交任务，指定 `type=46`（Sunburst）或 `type=47`（Flare）：
 
 ```json
 {
@@ -100,13 +98,12 @@ api_aggregator:
 
 图生图（图片编辑）额外传入 `image_path`（单张 URL、逗号分隔多张或本地路径）。
 
-模型变体（Sunburst / Flare）通过实现方偏好切换（与供应商站点切换同一机制）。
-
 ## 相关文件
 
-- 配置文件: `config/unified_config.py`（`TaskTypeId.GPT_IMAGE_2_5`、`DriverKey.GPT_IMAGE_2_5`、`ALL_TASK_CONFIGS`、`ALL_IMPLEMENTATIONS`）
-- 常量映射: `config/constant.py`（`DRIVER_IMPLEMENTATION_MAPPING[DriverKey.GPT_IMAGE_2_5]`）
+- 配置文件: `config/unified_config.py`（`TaskTypeId.GPT_IMAGE_2_5_SUNBURST/FLARE`、`DriverKey.GPT_IMAGE_2_5_SUNBURST/FLARE`、`ALL_TASK_CONFIGS`、`ALL_IMPLEMENTATIONS`）
+- 常量映射: `config/constant.py`（`DRIVER_IMPLEMENTATION_MAPPING`）
 - 多米驱动: `task/visual_drivers/gpt_image_2_5_duomi_v1_driver.py`
 - 通用站点驱动: `task/visual_drivers/gpt_image_common_v1_driver.py`（文件末尾 2.5 站点类）
 - 工厂注册: `task/visual_drivers/driver_factory.py`
+- 算力种子迁移: `alembic/versions/no_133_20260910_add_gpt_image_2_5_power.py`
 - 单元测试: `tests/drivers/test_gpt_image_2_5_drivers.py`
