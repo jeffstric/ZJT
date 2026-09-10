@@ -107,6 +107,8 @@ Agent 模式为默认推荐模式，走 LLM 对话流程，后端 PM Agent 可�
 
 Agent 模式中的视频生成能力由 `enterprise/` 模块提供。企业版加载后，`enterprise/sops/sop-video-generation.md` 和 `enterprise/skills/marketing-video/SKILL.md` 会覆盖开源目录中的同名占位 SOP/skill，并注册 `generate_text_to_video`、`image_to_video` 工具。社区版没有视频生成工具，开源目录中的 `sop-video-generation` 只负责提示用户视频生成功能为商业版专属。
 
+企业版通过 `SopLoader.add_sops_dir()` 注册的 SOP 目录（含 `sop-video-clone`）**仅注入营销链路（session_type=2）**：营销 PM 的 `SopLoader` 默认合并额外目录，而剧本创作链路（script_writer.html，session_type=1）初始化 `SopLoader` 时传入 `include_extra_sops=False`，其 system prompt 的 `{{SOP_INDEX}}` 与 `load_sop` 工具均不可见企业版营销 SOP。否则剧本 PM 会向用户宣称"可生成营销视频/视频克隆"，实际却在 `call_agent` 阶段被 `allowed_expert_types=["script"]` 拦截（修复前事故：剧本会话 2a19d838 的欢迎语错误承诺营销视频能力）。
+
 企业版 Agent 模式中的视频请求分为普通视频和营销视频：
 
 - **普通视频**：用户只描述主体、动作、场景或镜头，例如"生成一个视频，一个女孩在跳舞"、"赛博城市航拍镜头"。这类请求应直接进入视频生成流程，不应询问商品展示、广告宣传、品牌宣传等营销用途。

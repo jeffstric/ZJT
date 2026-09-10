@@ -75,8 +75,13 @@ class ChatSession:
             logger.info(f"[ChatSession] 初始化剧本智能体 session {session_id}")
 
             # 为剧本智能体初始化 SOP 加载器，将工作流拆分为按需加载的 SOP
+            # include_extra_sops=False：剧本链路不合并企业版营销 SOP（sop-video-clone 等），
+            # 避免剧本 PM 的 system prompt 宣称其不具备的营销视频/视频克隆能力
             from agents.skill_loader import SopLoader
-            sop_loader = SopLoader(os.path.join(PROJECT_ROOT, 'script_writer_core', 'skills', 'script-orchestrator', 'sops'))
+            sop_loader = SopLoader(
+                os.path.join(PROJECT_ROOT, 'script_writer_core', 'skills', 'script-orchestrator', 'sops'),
+                include_extra_sops=False
+            )
 
             # 加载 SKILL.md 内容，替换 {{SOP_INDEX}} 为自动扫描的 SOP 索引表
             script_skill_loader = SkillLoader(user_id=int(user_id) if user_id else None)
