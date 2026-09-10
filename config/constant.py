@@ -309,6 +309,10 @@ WORLD_IMPORT_JOB_TTL = 3600
 WORLD_IMPORT_JOB_CLEANUP_INTERVAL = 300
 # 同时进行的导入任务上限（跨 worker 统计），超限返回 429
 WORLD_IMPORT_JOB_MAX_CONCURRENT = 2
+# zip 内所有 entry 声明的未压缩总大小上限，超过直接拒绝导入（防 zip 炸弹写满磁盘）
+WORLD_IMPORT_MAX_TOTAL_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024   # 2 GB
+# 单个 entry 声明的未压缩大小上限
+WORLD_IMPORT_MAX_ENTRY_UNCOMPRESSED_BYTES = 512 * 1024 * 1024        # 512 MB
 
 # ===== 图片 URL 过期保护（签名 URL 自动刷新/转存）=====
 # 探测只针对「非自有 CDN」的第三方 URL（自有 CDN 走重签名，不探测）。

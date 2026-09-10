@@ -80,6 +80,21 @@
 | `WORLD_IMPORT_JOB_TTL` | `3600` | job 文件保留时长（秒）；超过该时长未更新的 active job 也不再计入并发上限 |
 | `WORLD_IMPORT_JOB_CLEANUP_INTERVAL` | `300` | job 清理协程轮询间隔（秒） |
 | `WORLD_IMPORT_JOB_MAX_CONCURRENT` | `2` | 同时进行的导入任务上限（跨 worker 统计） |
+| `WORLD_IMPORT_MAX_TOTAL_UNCOMPRESSED_BYTES` | `2 * 1024 * 1024 * 1024` | zip 解压总量上限（2 GB），超过直接拒绝导入（防 zip 炸弹） |
+| `WORLD_IMPORT_MAX_ENTRY_UNCOMPRESSED_BYTES` | `512 * 1024 * 1024` | 单 entry 未压缩大小上限（512 MB），超过直接拒绝导入 |
+
+## Zip Slip 防护（2026-09 安全修复）
+
+`file_manager.import_world` 曾存在 Zip Slip 任意路径写入漏洞（安全审计 P0）：zip entry 名携带 `../` 时可越过目标目录写任意文件（图片/音频通道内容任意二进制，JSON 通道内容任意 JSON 文本），叠加 `/upload` StaticFiles 直出可造成存储型 XSS。现有防护：
+
+1. **user_id / world_id 校验**：导入入口用 `_is_safe_path_component` 拒绝含 `/`、`\`、`..`、绝对路径、Windows 盘符前缀的分量（在创建任何目录之前拦截）。
+2. **entry 文件名校验**：图片 / 音频通道经 `_safe_zip_entry_file` 校验目标文件名——拒绝空名、目录名（`/` 结尾）、反斜杠分隔（zip 规范分隔符为 `/`，出现 `\` 一律拒绝）、绝对路径、含 `..` 段、盘符前缀；并通过 `realpath + commonpath` 做最终边界校验（参照 `api/storyboard.py` 的实现）。
+3. **JSON 通道收敛**：entry 文件名先 `os.path.basename()` 截断目录部分，再走同一校验；`characters/../evil.json` 会被收敛写入 `characters/evil.json`，不会逃逸。
+4. **zip 炸弹防护**：解包前按 zip 声明的未压缩大小预检——总量超 `WORLD_IMPORT_MAX_TOTAL_UNCOMPRESSED_BYTES` 或单 entry 超 `WORLD_IMPORT_MAX_ENTRY_UNCOMPRESSED_BYTES` 直接拒绝导入。
+
+被拦截的 entry 会记入返回结果 `result["errors"]`（含"非法文件路径"字样），其余合法内容继续正常导入。
+
+单测：`tests/utils/test_file_manager_zip_slip.py`（三条通道穿越用例、反斜杠变体、`user_id`/`world_id` 注入、zip 炸弹上限、正常导入回归）。
 
 ## 非阻塞 / 超时红线合规
 
