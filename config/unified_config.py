@@ -1657,6 +1657,7 @@ class DriverKey:
     GPT_IMAGE_2 = 'gpt_image_2'
     GPT_IMAGE_2_5_SUNBURST = 'gpt_image_2_5_sunburst'
     GPT_IMAGE_2_5_FLARE = 'gpt_image_2_5_flare'
+    Z_INDEX_IMAGE_EDIT = 'z_index_image_edit'
 
     # Seedance 图生视频
     SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO = 'seedance_1_5_pro_image_to_video'
@@ -1805,6 +1806,7 @@ class TaskTypeId:
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
         'GPT_IMAGE_2_5_SUNBURST': 'GPT Image 2.5 Sunburst 图片编辑',
         'GPT_IMAGE_2_5_FLARE': 'GPT Image 2.5 Flare 图片编辑',
+        'Z_INDEX_IMAGE_EDIT': 'Z-index 图片编辑',
         'SORA2_TEXT_TO_VIDEO': 'Sora2 文生视频',
         'SORA2_IMAGE_TO_VIDEO': 'Sora2 图生视频',
         'LTX2_IMAGE_TO_VIDEO': 'LTX2.0 图生视频',
@@ -1853,6 +1855,7 @@ class TaskTypeId:
     GPT_IMAGE_2_EDIT = 26
     GPT_IMAGE_2_5_SUNBURST = 46
     GPT_IMAGE_2_5_FLARE = 47
+    Z_INDEX_IMAGE_EDIT = 48
 
     # 文生视频
     SORA2_TEXT_TO_VIDEO = 2
@@ -2184,6 +2187,25 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=7,
         supports_grid_image=True,
         supports_grid_merge=False,
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.Z_INDEX_IMAGE_EDIT,
+        key='z-index-image-edit',
+        short_key='z-index',
+        name='Z-index 图片编辑',
+        model_name='Z-index',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.LOCAL,  # 占位，接入供应商后再改
+        driver_name=DriverKey.Z_INDEX_IMAGE_EDIT,
+        implementation='z_index_pending',  # 仅满足校验，未注册驱动
+        implementations=[],  # 空壳模型，接入实现方后再配置
+        computing_power=1,  # 扣费不能为 0；接入供应商后再按实际定价调整
+        supported_ratios=[],
+        supported_sizes=[],
+        default_ratio='',
+        default_size=None,
+        sort_order=8,
     ),
 
     # ==================== 文生视频 ====================

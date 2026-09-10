@@ -902,6 +902,9 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     # Qwen Image Edit（空壳任务，待接入实现方）
     DriverKey.QWEN_IMAGE_EDIT: [],
 
+    # Z-index（空壳任务，待接入实现方）
+    DriverKey.Z_INDEX_IMAGE_EDIT: [],
+
 }
 
 # 视频模型时长选项配置
