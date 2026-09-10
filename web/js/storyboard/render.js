@@ -2152,12 +2152,18 @@ function renderScriptSplitDuration(disabled = false) {
     const multiplierOptions = multipliers.map(m =>
         `<option value="${m}" ${m === curMultiplier ? 'selected' : ''}>${m === 0 ? '不限制' : `${m}倍`}</option>`
     ).join('');
-    const estimate = estimateScriptDurationSeconds(state.scriptContentForEstimate);
-    let totalDurationHint = '限制全部分镜的总时长：按剧本字数估算基准时长（朗读速率），N倍=基准时长×N';
+    const estimateInfo = estimateScriptDurationInfo(state.scriptContentForEstimate);
+    let totalDurationHint = '限制全部分镜的总时长：按剧本对白估算基准时长（朗读速率÷对白占比），N倍=基准时长×N';
     if (curMultiplier > 0) {
-        totalDurationHint = estimate > 0
-            ? `剧本估算约 ${formatDurationLabel(estimate)} × ${curMultiplier}倍 → 目标总分镜时长约 ${formatDurationLabel(estimate * curMultiplier)}`
-            : '正在按剧本字数估算基准时长...';
+        if (estimateInfo.seconds > 0) {
+            const label = estimateInfo.dialogueMatched ? '剧本对白估算约' : '剧本估算约';
+            const targetSeconds = estimateInfo.dialogueMatched
+                ? estimateInfo.seconds * curMultiplier / DIALOGUE_SHARE_OF_TOTAL
+                : estimateInfo.seconds * curMultiplier;
+            totalDurationHint = `${label} ${formatDurationLabel(estimateInfo.seconds)} × ${curMultiplier}倍 → 目标总分镜时长约 ${formatDurationLabel(targetSeconds)}`;
+        } else {
+            totalDurationHint = '正在按剧本字数估算基准时长...';
+        }
     }
     return `
         <div class="generate-from-script-model">
@@ -2185,12 +2191,46 @@ function formatDurationLabel(seconds) {
     return s ? `${m}分${s}秒` : `${m}分钟`;
 }
 
+// 台词占成片总时长的经验比例，与后端 config/constant.py
+// ScriptSplitConstants.TOTAL_DURATION_DIALOGUE_SHARE 同值（修改时同步）
+const DIALOGUE_SHARE_OF_TOTAL = 0.6;
+
+// 启发式台词行过滤规则，与后端 llm/script_parser.py extract_script_dialogue_text
+// 及 web/js/script_node.js 同一套规则（修改时三处同步）
+const DIALOGUE_HEADER_KEYWORD_RE = /^(?:时间|地点|人物|场景|幕|场|章节|备注|BGM|音效)\s*[:：]/i;
+const DIALOGUE_QUOTED_RE = /[“"「『]([^”"」』]*)[”"」』]/g;
+const DIALOGUE_PAREN_WRAPPED_RE = /^[（(][\s\S]*[）)]$/;
+
 /**
- * 按剧本字数估算基准时长（秒）。
- * 与后端 llm/script_parser.py estimate_script_duration_seconds 同公式：
- * CJK 4.5 字/秒、拉丁 11 字符/秒按占比混合，下限 10 秒（修改时两处同步）。
+ * 启发式从剧本文本过滤台词/旁白：跳过空行、[ / 【 / # / 场景编号 开头行、
+ * 整行括号包裹行、头部关键词+冒号元信息行；「角色：台词」行只取第一个冒号
+ * 后的正文；无冒号非括号行只取成对引号（“”、"…"、「」、『』）内的文字，
+ * 无引号则整行计入。整篇零匹配时返回空串（调用方回退整篇估算）。
  */
-export function estimateScriptDurationSeconds(text) {
+function extractScriptDialogueText(text) {
+    const parts = [];
+    for (const rawLine of String(text || '').split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        if ('[【#'.includes(line[0]) || line.startsWith('场景编号')) continue;
+        if (DIALOGUE_PAREN_WRAPPED_RE.test(line)) continue;
+        if (DIALOGUE_HEADER_KEYWORD_RE.test(line)) continue;
+        const colonPositions = [line.indexOf(':'), line.indexOf('：')].filter(p => p >= 0);
+        if (colonPositions.length) {
+            const body = line.slice(Math.min(...colonPositions) + 1).trim();
+            if (body) parts.push(body);
+            continue;
+        }
+        const quoted = (line.match(DIALOGUE_QUOTED_RE) || [])
+            .map(item => item.slice(1, -1).trim())
+            .filter(Boolean);
+        if (quoted.length) parts.push(...quoted); else parts.push(line);
+    }
+    return parts.join('\n');
+}
+
+/** 非空白字符数 ÷ 语种混合朗读速率（CJK 4.5 字/秒、拉丁 11 字符/秒），下限 10 秒 */
+function scriptTextDurationSeconds(text) {
     const chars = String(text || '').replace(/\s+/g, '');
     if (!chars.length) return 0;
     let cjk = 0;
@@ -2204,6 +2244,30 @@ export function estimateScriptDurationSeconds(text) {
     const ratio = cjk / chars.length;
     const rate = ratio * 4.5 + (1 - ratio) * 11.0;
     return Math.max(10, Math.round((chars.length / rate) * 10) / 10);
+}
+
+/**
+ * 按台词口径估算剧本基准时长（秒）：启发式过滤台词/旁白后按朗读速率换算；
+ * 整篇提取不到台词时回退为整篇估算（dialogueMatched=false）。
+ * 与后端 llm/script_parser.py estimate_script_dialogue_seconds 同规则。
+ */
+function estimateScriptDurationInfo(text) {
+    const dialogue = extractScriptDialogueText(text);
+    const matched = dialogue.trim().length > 0;
+    return {
+        seconds: scriptTextDurationSeconds(matched ? dialogue : text),
+        dialogueMatched: matched,
+    };
+}
+
+/**
+ * 按台词估算剧本基准时长（秒）。
+ * 与后端 llm/script_parser.py estimate_script_dialogue_seconds 同公式：
+ * 启发式过滤台词后按 CJK 4.5 字/秒、拉丁 11 字符/秒混合速率换算，下限 10 秒；
+ * 整篇零匹配回退整篇估算（修改时与 web/js/script_node.js、后端三处同步）。
+ */
+export function estimateScriptDurationSeconds(text) {
+    return estimateScriptDurationInfo(text).seconds;
 }
 
 // 渲染剧本拆分的高级选项：语言 + 拆分开关（与 video_workflow 剧本节点保持一致）

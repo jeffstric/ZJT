@@ -146,7 +146,8 @@ def build_planning_prompt(
       "block_ids": ["block_0001", "block_0002"],
       "title": "该段简短标题",
       "summary": "该段发生了什么（一句话）",
-      "continuity_notes": "结束时人物位置/空间状态（供下段参考）"
+      "continuity_notes": "结束时人物位置/空间状态（供下段参考）",
+      "dialogue_text": "该段全部台词/旁白的逐字原文拼接（不含角色名/语气标注/画面描写）；无台词的段输出空字符串"
     }}
   ]
 }}
@@ -156,6 +157,7 @@ def build_planning_prompt(
 - segment 顺序必须与原文一致。
 - block_ids 必须来自下方锚点列表，连续不跳越。
 - segment_id 全局唯一，按顺序编号 seg_0001、seg_0002……
+- dialogue_text 仅用于后端估算时长：必须逐字摘录原文台词，不要改写、概括或补写。
 
 【锚点化剧本】
 ```json

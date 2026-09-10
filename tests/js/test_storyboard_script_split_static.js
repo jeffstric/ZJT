@@ -88,6 +88,11 @@ assert.match(stateSrc, /\[0, 1, 2, 3\]\.includes\(Number\(config\.totalDurationM
 assert.match(nodeSrc, /script-total-duration-select/, 'script_node.js 应渲染总分镜时长倍率下拉');
 assert.match(nodeSrc, /node\.data\.totalDurationMultiplier/, 'script_node.js 应把倍率写入节点数据（随工作流序列化）');
 assert.match(nodeSrc, /estimateScriptDurationSeconds/, 'script_node.js 应实现剧本基准时长估算（与后端同公式）');
+// 台词锚定口径：前端两处估算内部为启发式台词过滤（与后端 extract_script_dialogue_text 同规则）
+assert.match(renderSrc, /extractScriptDialogueText/, 'render.js 应实现启发式台词过滤');
+assert.match(renderSrc, /剧本对白估算约/, 'render.js 对白口径 hint 应显示「剧本对白估算约」');
+assert.match(nodeSrc, /extractScriptDialogueText/, 'script_node.js 应实现启发式台词过滤');
+assert.match(nodeSrc, /剧本对白估算约/, 'script_node.js 对白口径 hint 应显示「剧本对白估算约」');
 assert.match(nodeClientSrc, /total_duration_multiplier: Number\(scriptNodeData\.totalDurationMultiplier\)/, 'script_split_task.js 请求应透传总分镜时长倍率');
 assert.match(workflowSrc, /totalDurationMultiplier/, 'workflow.js 重载时应恢复总分镜时长倍率');
 
