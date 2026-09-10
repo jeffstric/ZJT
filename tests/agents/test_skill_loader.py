@@ -377,5 +377,68 @@ class TestLoadSkillWithIndex(unittest.TestCase):
         self.assertIn('结束', result)
 
 
+class TestIncludeExtraSopsSwitch(unittest.TestCase):
+    """测试 include_extra_sops 开关：剧本链路（False）与企业版额外 SOP 目录完全隔离"""
+
+    def setUp(self):
+        """每个测试前重置类级别状态"""
+        from agents.skill_loader import SopLoader
+        SopLoader._extra_sops_dirs = []
+
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+        base = Path(self._tmp.name)
+        self.main_dir = base / 'main_sops'
+        self.extra_dir = base / 'extra_sops'
+        self.main_dir.mkdir()
+        self.extra_dir.mkdir()
+
+        (self.main_dir / 'sop-a.md').write_text(
+            '---\nname: sop-a\ndescription: 主目录A\n---\n\n# 主目录A\n', encoding='utf-8'
+        )
+        # 额外目录：新增 sop-b + 覆盖同名 sop-a（模拟企业版）
+        (self.extra_dir / 'sop-a.md').write_text(
+            '---\nname: sop-a\ndescription: 企业版A\n---\n\n# 企业版A\n', encoding='utf-8'
+        )
+        (self.extra_dir / 'sop-b.md').write_text(
+            '---\nname: sop-b\ndescription: 企业版B\n---\n\n# 企业版B\n', encoding='utf-8'
+        )
+
+        from agents.skill_loader import SopLoader
+        SopLoader.add_sops_dir(str(self.extra_dir))
+
+    def test_isolated_loader_excludes_extra_sops(self):
+        """include_extra_sops=False 时不合并额外目录：索引/列表/内容均不可见"""
+        from agents.skill_loader import SopLoader
+        loader = SopLoader(str(self.main_dir), include_extra_sops=False)
+
+        self.assertEqual(loader.list_sops(), ['sop-a'])
+        self.assertNotIn('sop-b', loader.build_sops_index())
+        self.assertIsNone(loader.get_sop_content('sop-b'))
+        # 同名覆盖也不生效，保留主目录版本
+        self.assertIn('主目录A', loader.get_sop_content('sop-a'))
+
+    def test_default_loader_merges_extra_sops(self):
+        """默认 include_extra_sops=True 保持原行为：额外目录新增与同名覆盖均生效"""
+        from agents.skill_loader import SopLoader
+        loader = SopLoader(str(self.main_dir))
+
+        self.assertEqual(set(loader.list_sops()), {'sop-a', 'sop-b'})
+        index = loader.build_sops_index()
+        self.assertIn('sop-b', index)
+        self.assertIn('企业版A', loader.get_sop_content('sop-a'))
+
+    def test_isolated_loader_load_skill_with_index(self):
+        """include_extra_sops=False 时 {{SOP_INDEX}} 不含额外目录 SOP"""
+        from agents.skill_loader import SopLoader
+        loader = SopLoader(str(self.main_dir), include_extra_sops=False)
+
+        result = loader.load_skill_with_index('| SOP 名称 |\n{{SOP_INDEX}}')
+        self.assertIn('sop-a', result)
+        self.assertNotIn('sop-b', result)
+
+
 if __name__ == '__main__':
     unittest.main()
