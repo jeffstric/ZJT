@@ -827,6 +827,10 @@ const AdminApp = {
             runninghubKeyPoolAvailable: false,
             userModulesAvailable: false,
             brandingAvailable: false,
+            // 佣金管理/供应商自动切换为 commercial.base 商业能力：
+            // 许可证未激活时显示锁定 UI（与密钥池同源 features 上报）。
+            commissionAvailable: false,
+            vendorAutoSwitchAvailable: false,
 
             // 商业包状态与许可证状态分离：包成功导入决定是否展示卡片，
             // 完整注册决定是否允许提交 Token、刷新、恢复或注销。
@@ -1328,6 +1332,13 @@ const AdminApp = {
                     this.runninghubKeyPoolAvailable = Boolean(
                         response.data.data.features?.runninghub_key_pool
                     );
+                    // 佣金管理与供应商自动切换跟随许可证激活状态
+                    this.commissionAvailable = Boolean(
+                        response.data.data.features?.commission
+                    );
+                    this.vendorAutoSwitchAvailable = Boolean(
+                        response.data.data.features?.vendor_auto_switch
+                    );
                     // 接口模块（用户模块）随商业版 enterprise 包提供，社区版显示锁定卡片
                     this.userModulesAvailable = Boolean(
                         response.data.data.features?.user_modules
@@ -1640,7 +1651,7 @@ const AdminApp = {
             } else if (page === 'constants') {
                 this.loadConstants();
             } else if (page === 'commission') {
-                if (!this.isCommunityEdition) {
+                if (this.commissionAvailable) {
                     this.loadCommissionWithdrawals();
                     this.loadCommissionMaxRate();
                 }
@@ -4671,8 +4682,8 @@ const AdminApp = {
 
         // 切换供应商自动切换总开关
         async toggleRetryGlobal() {
-            // 社区版限制
-            if (this.isCommunityEdition) {
+            // 商业版特权：社区版或许可证未激活均锁定
+            if (!this.vendorAutoSwitchAvailable) {
                 this.showToast(this.t('toast_community_feature_locked'), 'warning');
                 this.implementations.retryGlobalEnabled = false;
                 return;
