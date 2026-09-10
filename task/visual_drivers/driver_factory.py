@@ -600,6 +600,48 @@ def register_all_drivers():
     except ImportError as e:
         logger.warning(f"Failed to import GptImageDuomiV1Driver: {e}")
 
+    # GPT Image 2.5 多米供应商驱动注册（sunburst / flare，仅上游模型名不同）
+    try:
+        from .gpt_image_2_5_duomi_v1_driver import GptImage25DuomiSunburstV1Driver, GptImage25DuomiFlareV1Driver
+        VideoDriverFactory.register_driver(DriverImplementation.DUOMI_GPT_IMAGE_2_5_SUNBURST_V1, GptImage25DuomiSunburstV1Driver)
+        VideoDriverFactory.register_driver(DriverImplementation.DUOMI_GPT_IMAGE_2_5_FLARE_V1, GptImage25DuomiFlareV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import GPT Image 2.5 Duomi drivers: {e}")
+
+    # GPT Image 2.5 通用聚合站点驱动注册（无条件注册，配置检查在运行时进行）
+    try:
+        from .gpt_image_common_v1_driver import (
+            GptImage25CommonSunburstSite0V1Driver,
+            GptImage25CommonSunburstSite1V1Driver,
+            GptImage25CommonSunburstSite2V1Driver,
+            GptImage25CommonSunburstSite3V1Driver,
+            GptImage25CommonSunburstSite4V1Driver,
+            GptImage25CommonSunburstSite5V1Driver,
+            GptImage25CommonFlareSite0V1Driver,
+            GptImage25CommonFlareSite1V1Driver,
+            GptImage25CommonFlareSite2V1Driver,
+            GptImage25CommonFlareSite3V1Driver,
+            GptImage25CommonFlareSite4V1Driver,
+            GptImage25CommonFlareSite5V1Driver,
+        )
+        for impl_name, driver_class in [
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE0_V1, GptImage25CommonSunburstSite0V1Driver),
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE1_V1, GptImage25CommonSunburstSite1V1Driver),
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE2_V1, GptImage25CommonSunburstSite2V1Driver),
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE3_V1, GptImage25CommonSunburstSite3V1Driver),
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE4_V1, GptImage25CommonSunburstSite4V1Driver),
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE5_V1, GptImage25CommonSunburstSite5V1Driver),
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE0_V1, GptImage25CommonFlareSite0V1Driver),
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE1_V1, GptImage25CommonFlareSite1V1Driver),
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE2_V1, GptImage25CommonFlareSite2V1Driver),
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE3_V1, GptImage25CommonFlareSite3V1Driver),
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1, GptImage25CommonFlareSite4V1Driver),
+            (DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1, GptImage25CommonFlareSite5V1Driver),
+        ]:
+            VideoDriverFactory.register_driver(impl_name, driver_class)
+    except ImportError as e:
+        logger.warning(f"Failed to import GPT Image 2.5 Common site drivers: {e}")
+
     # GPT Image 2 通用聚合站点驱动注册（无条件注册，配置检查在运行时进行）
     try:
         from .gpt_image_common_v1_driver import (

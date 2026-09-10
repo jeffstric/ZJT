@@ -864,3 +864,103 @@ class GptImageCommonSite5V1Driver(GptImageCommonV1Driver):
 
     def __init__(self):
         super().__init__(site_id="site_5", impl_name=DriverImplementation.GPT_IMAGE_COMMON_SITE5_V1)
+
+
+# ============ GPT Image 2.5 具体站点实现类（仅上游模型名不同） ============
+
+class GptImage25CommonSunburstV1Driver(GptImageCommonV1Driver):
+    """GPT Image 2.5（sunburst）通用供应商驱动基类，复用 OpenAI 标准格式，仅替换上游模型名"""
+
+    DEFAULT_MODEL = "gpt-image-2.5-sunburst"
+    EDIT_MODEL = "gpt-image-2.5-sunburst"
+
+
+class GptImage25CommonFlareV1Driver(GptImageCommonV1Driver):
+    """GPT Image 2.5（flare）通用供应商驱动基类，复用 OpenAI 标准格式，仅替换上游模型名"""
+
+    DEFAULT_MODEL = "gpt-image-2.5-flare"
+    EDIT_MODEL = "gpt-image-2.5-flare"
+
+
+class GptImage25CommonSunburstSite0V1Driver(GptImage25CommonSunburstV1Driver):
+    """GPT Image 2.5 Sunburst Site 0 v1 版本驱动（固定YWAPI官方站点）"""
+
+    def __init__(self):
+        super().__init__(site_id="site_0", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE0_V1)
+
+
+class GptImage25CommonSunburstSite1V1Driver(GptImage25CommonSunburstV1Driver):
+    """GPT Image 2.5 Sunburst Site 1 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_1", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE1_V1)
+
+
+class GptImage25CommonSunburstSite2V1Driver(GptImage25CommonSunburstV1Driver):
+    """GPT Image 2.5 Sunburst Site 2 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_2", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE2_V1)
+
+
+class GptImage25CommonSunburstSite3V1Driver(GptImage25CommonSunburstV1Driver):
+    """GPT Image 2.5 Sunburst Site 3 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_3", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE3_V1)
+
+
+class GptImage25CommonSunburstSite4V1Driver(GptImage25CommonSunburstV1Driver):
+    """GPT Image 2.5 Sunburst Site 4 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_4", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE4_V1)
+
+
+class GptImage25CommonSunburstSite5V1Driver(GptImage25CommonSunburstV1Driver):
+    """GPT Image 2.5 Sunburst Site 5 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_5", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE5_V1)
+
+
+class GptImage25CommonFlareSite0V1Driver(GptImage25CommonFlareV1Driver):
+    """GPT Image 2.5 Flare Site 0 v1 版本驱动（固定YWAPI官方站点）"""
+
+    def __init__(self):
+        super().__init__(site_id="site_0", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE0_V1)
+
+
+class GptImage25CommonFlareSite1V1Driver(GptImage25CommonFlareV1Driver):
+    """GPT Image 2.5 Flare Site 1 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_1", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE1_V1)
+
+
+class GptImage25CommonFlareSite2V1Driver(GptImage25CommonFlareV1Driver):
+    """GPT Image 2.5 Flare Site 2 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_2", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE2_V1)
+
+
+class GptImage25CommonFlareSite3V1Driver(GptImage25CommonFlareV1Driver):
+    """GPT Image 2.5 Flare Site 3 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_3", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE3_V1)
+
+
+class GptImage25CommonFlareSite4V1Driver(GptImage25CommonFlareV1Driver):
+    """GPT Image 2.5 Flare Site 4 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_4", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1)
+
+
+class GptImage25CommonFlareSite5V1Driver(GptImage25CommonFlareV1Driver):
+    """GPT Image 2.5 Flare Site 5 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_5", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1)
