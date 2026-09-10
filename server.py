@@ -90,6 +90,7 @@ from api.auth_identity import normalize_authorization_token, resolve_authorizati
 from perseids_server.utils.auth_identity import (
     get_auth_user_id,
     ensure_owner,
+    check_claimed_user_id,
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
@@ -118,6 +119,11 @@ from utils.resource_access import (
     check_resource_permission,
     ensure_resource_access,
     ensure_world_access,
+)
+from utils.media_upload import (
+    UploadValidationError,
+    resolve_media_extension,
+    save_upload_chunked,
 )
 from services.asset_library import (
     attach_usage,
@@ -585,13 +591,14 @@ _MEDIA_EXTENSIONS = frozenset({'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',
 @app.middleware("http")
 async def cdn_redirect_middleware(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/upload/"):
-        ext = os.path.splitext(path)[1].lower()
-        if ext in _MEDIA_EXTENSIONS:
-            try:
-                from config.config_util import get_config
-                if not get_config().get("server", {}).get("auto_upload_to_cdn", False):
-                    return await call_next(request)
+    if not path.startswith("/upload/"):
+        return await call_next(request)
+
+    ext = os.path.splitext(path)[1].lower()
+    if ext in _MEDIA_EXTENSIONS:
+        try:
+            from config.config_util import get_config
+            if get_config().get("server", {}).get("auto_upload_to_cdn", False):
                 # local_path 在数据库中不带前导 /，如 "upload/temp/xxx.mp4"
                 local_path = path.lstrip("/")
                 from model.media_file_mapping import MediaFileMappingModel
@@ -603,9 +610,14 @@ async def cdn_redirect_middleware(request: Request, call_next):
                     cdn_url = CDNUtil.get_cdn_url(mapping.id)
                     if cdn_url:
                         return RedirectResponse(url=cdn_url, status_code=302)
-            except Exception as e:
-                logger.warning(f"CDN 重定向查找失败: {e}")
-    return await call_next(request)
+        except Exception as e:
+            logger.warning(f"CDN 重定向查找失败: {e}")
+
+    # 静态回源兜底：禁止浏览器对 /upload/ 内容做 MIME 嗅探（纵深防御；
+    # 主防线在上传端的扩展名白名单 + 魔数校验，见 utils/media_upload.py）
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 # API 路径前缀守卫中间件：对拼错前缀的"疑似 API 请求"返回友好 JSON 提示，
@@ -1056,17 +1068,18 @@ def _generate_thumbnail_safe(source_path: str, thumb_path: str, size: int):
 def _save_uploaded_image(upload_file: UploadFile) -> str:
     """
     Save uploaded image to upload/temp/date directory and return the file URL
+
+    安全校验：扩展名白名单 + 魔数校验 + 分块大小上限（防伪造扩展名落盘
+    可执行文档与超大文件打满磁盘），由 utils/media_upload.py 统一实现。
     """
     date_str = datetime.now().strftime("%Y%m%d")
     temp_dir = get_upload_temp_dir(date_str)
 
-    file_extension = os.path.splitext(upload_file.filename or "image.png")[1]
+    file_extension = resolve_media_extension(upload_file.filename or "image.png")
     info = generate_upload_filename(UploadPathConstants.UPLOAD_PREFIX, file_extension)
 
     file_path = os.path.join(temp_dir, info.filename)
-    with open(file_path, "wb") as f:
-        content = upload_file.file.read()
-        f.write(content)
+    save_upload_chunked(upload_file, file_path, file_extension)
 
     return build_upload_url(UploadPathConstants.TEMP_DIR, date_str, info.filename, host=SERVER_HOST)
 
@@ -1091,17 +1104,18 @@ def _save_user_asset(
 ) -> str:
     """
     Save a user-specific asset (image/video) under a scoped directory.
+
+    安全校验：扩展名白名单 + 魔数校验 + 分块大小上限，超限抛
+    UploadValidationError（端点层映射 400），半成品文件自动清理。
     """
     asset_dir = get_upload_subdir(category, str(user_id))
 
     original_name = upload_file.filename or "asset"
-    file_extension = os.path.splitext(original_name)[1] or ".bin"
+    file_extension = resolve_media_extension(original_name)
     info = generate_upload_filename(category, file_extension)
 
     file_path = os.path.join(asset_dir, info.filename)
-    with open(file_path, "wb") as f:
-        content = upload_file.file.read()
-        f.write(content)
+    save_upload_chunked(upload_file, file_path, file_extension)
 
     # 素材落盘即注册 CDN mapping 并触发异步上传七牛：
     # 此前 workflow 素材从不建 mapping，所有 /upload/workflow/ 访问都从本机经
@@ -5703,17 +5717,32 @@ async def poll_workflow_node_status(
 async def upload_workflow_asset(
     request: Request,
     file: UploadFile = File(..., description="要上传的图片、视频或音频文件"),
-    auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
     上传工作流素材（图片、视频或音频）
     返回可访问的永久URL
+
+    安全校验：身份以登录态为准（X-User-Id 客户端可伪造，仅用于一致性比对）、
+    扩展名白名单 + 魔数校验 + 大小上限（防伪造 Content-Type 落盘 .html/.svg
+    形成同域存储型 XSS，详见 utils/media_upload.py）。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        # 登录身份即资源归属（require_permission 已完成 token 校验并注入）：
+        # 落盘目录按 uid 隔离且文件永久保留（NEVER_EXPIRE + CDN 上传），
+        # 不能拿客户端自报的 X-User-Id 作为目录依据
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse(
+                status_code=401,
+                content={"code": -1, "message": "未获取到登录身份，请重新登录"}
+            )
+        mismatch = check_claimed_user_id(user_id, auth_user_id)
+        if mismatch is not None:
+            return mismatch
 
-        # 验证文件类型
+        # 验证文件类型（Content-Type 仅作初筛，真实防线在保存时的
+        # 扩展名白名单 + 魔数校验，二者客户端均可伪造）
         content_type = file.content_type or ""
         if not (content_type.startswith("image/") or content_type.startswith("video/") or content_type.startswith("audio/")):
             return JSONResponse(
@@ -5723,13 +5752,20 @@ async def upload_workflow_asset(
 
         # 保存文件并获取URL（用户隔离目录）
         request_host = _get_request_host(request)
-        file_url = await asyncio.to_thread(_save_user_asset, file, user_id, "workflow", request_host)
+        file_url = await asyncio.to_thread(_save_user_asset, file, auth_user_id, "workflow", request_host)
 
         return JSONResponse({
             "code": 0,
             "message": "上传成功",
             "data": {"url": file_url}
         })
+    except UploadValidationError as e:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": str(e)}
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to upload workflow asset: {str(e)}")
         logger.error(traceback.format_exc())
@@ -6041,15 +6077,26 @@ async def upload_image_to_video_media(
     request: Request,
     file: UploadFile = File(..., description="要上传的媒体文件（图片、视频或音频）"),
     media_type: str = Form(..., description="媒体类型: image, video, audio"),
-    auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
     图生视频页面上传媒体文件，自动生成缩略图。
     返回文件URL和缩略图URL。
+
+    落盘目录以登录身份（require_permission 注入）为准，X-User-Id 仅用于
+    一致性比对；文件类型经扩展名白名单 + 魔数校验 + 分块大小上限。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        # 登录身份即资源归属（X-User-Id 客户端可伪造，不能作为目录依据）
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse(
+                status_code=401,
+                content={"code": -1, "message": "未获取到登录身份，请重新登录"}
+            )
+        mismatch = check_claimed_user_id(user_id, auth_user_id)
+        if mismatch is not None:
+            return mismatch
 
         # 验证 media_type
         if media_type not in ("image", "video", "audio"):
@@ -6067,15 +6114,14 @@ async def upload_image_to_video_media(
         # 保存原始文件
         request_host = _get_request_host(request)
         date_str = datetime.now().strftime("%Y%m%d")
-        asset_dir = get_upload_subdir(upload_subdir, str(user_id), date_str)
+        asset_dir = get_upload_subdir(upload_subdir, str(auth_user_id), date_str)
 
-        original_ext = os.path.splitext(file.filename or "file")[1] or ".bin"
+        original_ext = resolve_media_extension(file.filename or "file")
         info = generate_upload_filename(UploadPathConstants.MEDIA_PREFIX, original_ext)
         file_path = os.path.join(asset_dir, info.filename)
 
-        content = await file.read()
-        # 异步写入文件（避免在 async 函数中执行同步 I/O 阻塞事件循环）
-        await asyncio.to_thread(_sync_write_file, file_path, content)
+        # 安全校验（魔数）+ 分块限流保存（工作线程中执行，避免阻塞事件循环）
+        await asyncio.to_thread(save_upload_chunked, file, file_path, original_ext)
 
         # 生成缩略图
         thumb_filename = f"thumb_{info.timestamp}_{info.unique_id}.jpg"
@@ -6084,10 +6130,10 @@ async def upload_image_to_video_media(
         )
 
         # 构建返回 URL
-        file_url = build_upload_url(upload_subdir, str(user_id), date_str, info.filename, host=request_host)
+        file_url = build_upload_url(upload_subdir, str(auth_user_id), date_str, info.filename, host=request_host)
         thumbnail_url = None
         if thumb_path and os.path.exists(thumb_path):
-            thumbnail_url = build_upload_url(upload_subdir, str(user_id), date_str, thumb_filename, host=request_host)
+            thumbnail_url = build_upload_url(upload_subdir, str(auth_user_id), date_str, thumb_filename, host=request_host)
 
         return JSONResponse({
             "code": 0,
@@ -6097,6 +6143,10 @@ async def upload_image_to_video_media(
                 "thumbnail_url": thumbnail_url
             }
         })
+    except UploadValidationError as e:
+        return JSONResponse(status_code=400, content={"code": -1, "message": str(e)})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to upload image-to-video media: {str(e)}")
         logger.error(traceback.format_exc())

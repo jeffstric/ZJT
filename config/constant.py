@@ -2602,6 +2602,44 @@ class AnnouncementConstants:
     DEFAULT_LIST_LIMIT = 50                                       # 用户侧单次拉取公告条数上限
 
 
+class MediaUploadSafetyConstants:
+    """上传媒体文件安全校验常量（防存储型 XSS / 内存磁盘滥用）
+
+    背景：/upload/ 由 StaticFiles 直接对外提供，若放任 .html/.svg 等落盘，
+    会以 text/html 同域返回形成存储型 XSS。所有接收用户上传媒体文件的
+    端点必须走 utils/media_upload.py 的扩展名白名单 + 魔数校验 + 大小上限。
+    """
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'BLOCKED_EXTS': '显式拒绝的危险扩展名（浏览器可执行/可渲染）',
+        'IMAGE_EXTS': '图片扩展名白名单',
+        'VIDEO_EXTS': '视频扩展名白名单',
+        'AUDIO_EXTS': '音频扩展名白名单',
+        'MAX_IMAGE_SIZE': '单张图片大小上限',
+        'MAX_VIDEO_SIZE': '单个视频大小上限',
+        'MAX_AUDIO_SIZE': '单个音频大小上限',
+        'CHUNK_SIZE': '分块读取块大小',
+        'MAGIC_SCAN_BYTES': '魔数校验读取的头部字节数',
+    }
+
+    # 显式拒绝：命中时返回针对性错误信息（白名单本身已排除，这里用于精确提示）
+    BLOCKED_EXTS = ('.html', '.htm', '.svg', '.xhtml', '.xml', '.js', '.mjs', '.css')
+
+    # 扩展名白名单（与 _MEDIA_EXTENSIONS / StaticFiles 服务范围保持媒体类型）
+    IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp')
+    VIDEO_EXTS = ('.mp4', '.mov', '.webm', '.avi', '.mkv')
+    AUDIO_EXTS = ('.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac')
+
+    # 大小上限（按媒体类别分档；分块读取累计校验，超限即中断并清理半成品）
+    MAX_IMAGE_SIZE = 10 * 1024 * 1024                             # 图片 10MB（与公告上传一致）
+    MAX_VIDEO_SIZE = 200 * 1024 * 1024                            # 视频 200MB
+    MAX_AUDIO_SIZE = 50 * 1024 * 1024                             # 音频 50MB
+
+    # 分块读取参数
+    CHUNK_SIZE = 1024 * 1024                                      # 每块 1MB
+    MAGIC_SCAN_BYTES = 32                                         # 头部魔数扫描字节数
+
+
 # ============ 智能插入分镜 ============
 SMART_INSERT_SHOT_TIMEOUT = 30  # 智能体调用超时（秒）
 # 无斜杠形式：DeepSeek 客户端不剥离 'deepseek/' 前缀（_resolve_model_name 为纯字典映射），
