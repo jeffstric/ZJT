@@ -23,6 +23,25 @@ scheduler = None
 # 文件锁
 _lock_fd = None
 _LOCK_FILE = None
+# at_fork 钩子只注册一次
+_atfork_hook_installed = False
+
+
+def _close_lock_fd_in_child():
+    """fork 出的子进程立即关闭继承的锁 fd。
+
+    flock 绑定在 open file description 上：ProcessPool/线程池等 fork 出的
+    worker 若继承锁 fd，调度器主进程被强杀后锁仍被存活的 worker 持有，
+    新调度器将永远无法获取（只能人工清理）。关闭后锁的存活期与主进程
+    严格同步——主进程死亡锁必然由内核自动释放，重启自愈。
+    """
+    global _lock_fd
+    if _lock_fd is not None:
+        try:
+            _lock_fd.close()
+        except Exception:
+            pass
+        _lock_fd = None
 
 
 def _run_async_task(async_func, *args, **kwargs):
@@ -62,8 +81,11 @@ def _is_lock_holder_alive(lock_file: str) -> bool:
         try:
             os.kill(pid, 0)
             return True
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError:
             return False
+        except PermissionError:
+            # 无权限发信号不代表进程已死（如不同用户的进程），不能误判
+            return True
     except (ValueError, OSError):
         return False
 
@@ -79,36 +101,47 @@ def _acquire_scheduler_lock(lock_file: Optional[str] = None) -> bool:
       - flock 随持有进程死亡由内核自动释放：持有者已死时重试 flock 必然成功，
         无需任何"残留强抢"逻辑。
     """
-    global _lock_fd, _LOCK_FILE
+    global _lock_fd, _LOCK_FILE, _atfork_hook_installed
 
     current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     _LOCK_FILE = lock_file or os.path.join(current_dir, "scheduler.lock")
 
     for _ in range(2):
-        _lock_fd = open(_LOCK_FILE, 'a')
+        # 先用局部变量持 fd：若本进程已持锁，覆盖 _lock_fd 会令旧 fd 被 GC
+        # 关闭、旧锁随之释放，flock 的排他语义就永远不会拒绝同进程重复获取
+        new_fd = open(_LOCK_FILE, 'a')
         try:
             if sys.platform == 'win32':
                 import msvcrt
                 # 锁文件远端字节（1MB 处），避免与 pid 内容重叠导致自身读取被拒
-                _lock_fd.seek(1048576)
-                msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-                _lock_fd.seek(0)
-                _lock_fd.truncate(0)
-                _lock_fd.write(str(os.getpid()))
-                _lock_fd.flush()
+                new_fd.seek(1048576)
+                msvcrt.locking(new_fd.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
-                fcntl.flock(_lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                _lock_fd.seek(0)
-                _lock_fd.truncate(0)
-                _lock_fd.write(str(os.getpid()))
-                _lock_fd.flush()
+                fcntl.flock(new_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # 加锁成功后才接管 _lock_fd（旧 fd 保持打开直到此刻）
+            if _lock_fd is not None:
+                try:
+                    _lock_fd.close()
+                except Exception:
+                    pass
+            _lock_fd = new_fd
+            _lock_fd.seek(0)
+            _lock_fd.truncate(0)
+            _lock_fd.write(str(os.getpid()))
+            _lock_fd.flush()
+            # 阻断 fork 继承：worker 子进程不持有锁 fd，锁与主进程同生共死
+            if hasattr(os, "register_at_fork") and not _atfork_hook_installed:
+                os.register_at_fork(after_in_child=_close_lock_fd_in_child)
+                _atfork_hook_installed = True
             logger.info(f"Scheduler lock acquired. PID: {os.getpid()}")
             return True
         except (IOError, OSError):
-            if _lock_fd:
-                _lock_fd.close()
-                _lock_fd = None
+            # 只关闭本次试探的新 fd；_lock_fd 是本进程已持有的锁，不能动
+            try:
+                new_fd.close()
+            except Exception:
+                pass
             if _is_lock_holder_alive(_LOCK_FILE):
                 logger.warning("Another scheduler instance is already running. Skipping scheduler initialization.")
                 return False

@@ -9,6 +9,7 @@
 import os
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -113,7 +114,7 @@ def test_live_holder_blocks_acquire(lock_file, lock_file2):
         line = holder.stdout.readline().strip()
         assert line == 'OK', '持有者子进程获取失败: ' + line
         assert _is_lock_holder_alive(lock_file2) is True
-        assert _acquire_scheduler_lock(lock_file=lock_file) is False
+        assert _acquire_scheduler_lock(lock_file=lock_file2) is False
     finally:
         holder.kill()
         holder.wait()
@@ -131,3 +132,58 @@ def test_concurrent_acquirers_exactly_one_wins(lock_file):
     outs = [p.communicate(timeout=60)[0].strip() for p in procs]
     wins = [o for o in outs if o == 'OK']
     assert len(wins) == 1, '应恰好 1 个成功: ' + repr(outs)
+
+
+def test_lock_holder_alive_detection(lock_file):
+    """_is_lock_holder_alive：活 PID → True；死 PID / 非法内容 → False"""
+    with open(lock_file, "w", encoding="utf-8") as f:
+        f.write("not-a-pid")
+    assert _is_lock_holder_alive(lock_file) is False
+
+    with open(lock_file, "w", encoding="utf-8") as f:
+        f.write(str(os.getpid()))
+    assert _is_lock_holder_alive(lock_file) is True
+
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    with open(lock_file, "w", encoding="utf-8") as f:
+        f.write(str(p.pid))
+    assert _is_lock_holder_alive(lock_file) is False
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork 仅 POSIX 平台可用")
+def test_forked_child_does_not_hold_lock_after_parent_death(lock_file, lock_file2):
+    """回归：调度器 fork 的 worker 子进程不得继承锁 fd。
+
+    主进程被强杀后，锁必须立即可被新实例获取（at_fork 阻断继承生效）。
+    修复前：worker 继承 open file description，主进程死后锁仍被持有，
+    新调度器永远无法启动，只能人工清理。
+    """
+    helper_path = os.path.join(_make_temp_dir("lock_helper_fork_"), "lock_helper_fork.py")
+    fork_extra = "\n".join([
+        "import os",
+        "c = os.fork()",
+        "if c == 0:",
+        "    time.sleep(15)",
+        "    os._exit(0)",
+        "time.sleep(15)",
+    ])
+    _write_helper(helper_path, lock_file2, extra=fork_extra)
+    holder = subprocess.Popen(
+        [sys.executable, helper_path],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    )
+    try:
+        line = holder.stdout.readline().strip()
+        assert line == 'OK', '持有者子进程获取失败: ' + line
+        time.sleep(0.5)  # 等 fork 出 worker
+        holder.kill()
+        holder.wait()
+        time.sleep(0.3)  # 等内核回收
+        # worker 仍存活（15s sleep），但不应再持有锁
+        assert _acquire_scheduler_lock(lock_file=lock_file2) is True, \
+            'worker 继承了锁 fd，主进程死后锁未释放（at_fork 阻断未生效）'
+        _release_scheduler_lock()
+    finally:
+        # 清理孤儿 worker（15s sleep 自然退出前的兜底）
+        subprocess.run(["pkill", "-f", "lock_helper_fork.py"], capture_output=True)

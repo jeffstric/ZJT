@@ -28,6 +28,25 @@ def cleanup(signum=None, frame=None):
         sys.exit(0)
 
 
+def parent_process_dead(initial_ppid):
+    """防孤儿看门狗：判断启动时的父进程是否已死亡。
+
+    - Linux/macOS：父进程死后子进程被 re-parent，getppid() 必然改变；
+    - Windows：无 re-parent 机制（getppid 恒不变），改为探活父进程。
+      必须用 OpenProcess 而非 os.kill(pid, 0)——Windows 上后者对普通
+      信号会调用 TerminateProcess，等于把父进程直接杀掉。
+    """
+    if sys.platform == 'win32':
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x100000, False, initial_ppid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return False
+        return True
+    return os.getppid() != initial_ppid
+
+
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, cleanup)
     signal.signal(signal.SIGINT, cleanup)
@@ -80,7 +99,7 @@ if __name__ == "__main__":
         while True:
             time.sleep(60)
             # b) 父进程已死亡（被 SIGKILL/断电强杀）→ 本进程成为孤儿，立即退出
-            if os.getppid() != initial_ppid:
+            if parent_process_dead(initial_ppid):
                 print("[Scheduler] Parent process died, exiting to avoid becoming an orphan...")
                 cleanup()
             # 健康检查：如果 APScheduler 内部线程崩溃，及时退出
