@@ -3291,8 +3291,8 @@
         this.paymentError = '';
         this.nativeCodeUrl = '';
         this.rechargePackages = [];
-        // 重置月度订阅状态
-        this.rechargeTab = 'power';
+        // 重置月度订阅状态（下次打开默认落在月度订阅 Tab）
+        this.rechargeTab = 'subscription';
         this.selectedSubPlan = null;
         this.subAgreed = false;
         this.subAgreementError = false;

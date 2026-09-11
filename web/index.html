@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/index.css" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
   <link rel="stylesheet" href="/css/announcement_center.css?v=__VERSION__" />
-  <link rel="stylesheet" href="/css/subscription.css?v=__VERSION__" />
+  <link rel="stylesheet" href="/css/subscription.css?v=f716" />
 
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
@@ -1132,9 +1132,13 @@
 
         <!-- ==================== 月度订阅 Tab ==================== -->
         <div v-if="rechargeTab === 'subscription'" style="padding: 20px;">
-          <div class="package-intro" v-if="!subscriptionStatus || !subscriptionStatus.subscribed">
+          <div class="package-intro" v-if="!subscriptionStatus || (!subscriptionStatus.subscribed && subscriptionStatus.status !== 'terminated')">
             <p class="package-intro-text">会员订阅</p>
             <p class="package-intro-subtext">选择适合您的月度创作套餐，自动续费可随时取消</p>
+          </div>
+          <div class="package-intro" v-if="subscriptionStatus && subscriptionStatus.status === 'terminated'">
+            <p class="package-intro-text">您已取消订阅，当期权益保留至 {{ formatDateStr(subscriptionStatus.current_period_end) }}</p>
+            <p class="package-intro-subtext">重新订阅立即生效并重新计算周期；解约后重新订阅视为新订阅，可再次享受首订赠送</p>
           </div>
 
           <div v-if="subscriptionPlansLoading" style="text-align: center; padding: 40px;">
@@ -1142,8 +1146,8 @@
             <p style="margin-top: 16px; color: var(--muted);">加载订阅套餐中...</p>
           </div>
 
-          <!-- 我的订阅管理（生效中/已解约待到期） -->
-          <template v-else-if="subscriptionStatus && subscriptionStatus.subscribed">
+          <!-- 我的订阅管理（仅生效中显示；已取消待到期走下方套餐列表，可重新订阅） -->
+          <template v-else-if="subscriptionStatus && subscriptionStatus.subscribed && subscriptionStatus.status === 'active'">
             <div class="sub-status-card">
               <div class="sub-status-title">
                 <div class="sub-status-plan-name">{{ (subscriptionStatus.plan && subscriptionStatus.plan.name) || '月度会员' }}</div>
@@ -1463,7 +1467,7 @@
   <script src="/js/pages/ai_script_gen.js"></script>
   <script src="/js/pages/skill_config.js"></script>
   <!-- App 组件、路由配置 -->
-  <script src="/js/index_app.js"></script>
+  <script src="/js/index_app.js?v=f716"></script>
   <script src="/js/announcement_center.js?v=__VERSION__"></script>
   <script>
   // i18n 初始化 - 必须在 Vue 应用创建前执行
