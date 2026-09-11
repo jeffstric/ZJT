@@ -1197,7 +1197,6 @@
                 :class="{ selected: selectedSubPlan && selectedSubPlan.plan_id === plan.plan_id }"
                 @click="selectSubPlan(plan)"
               >
-                <div v-if="plan.badge" class="sub-plan-badge">{{ plan.badge }}</div>
                 <div v-if="selectedSubPlan && selectedSubPlan.plan_id === plan.plan_id" class="sub-plan-selected-tag">✓ 已选择</div>
                 <div class="sub-plan-name">{{ plan.name }}</div>
                 <div class="sub-plan-price">

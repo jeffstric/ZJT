@@ -44,7 +44,7 @@ MONTHLY_SUBSCRIPTION_PLANS: List[Dict] = [
         "granted_after_commission": 808,
         "first_period_bonus": 200,
         "template_id": "223102",   # 模板2：智剧通-标准版 ¥59.9/期（2026-09-10 审核通过）
-        "badge": "推荐",
+        "badge": None,
     },
     {
         "plan_id": 103,
