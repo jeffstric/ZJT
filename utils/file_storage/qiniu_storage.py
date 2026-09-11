@@ -15,6 +15,7 @@ from config.constant import (
     QINIU_HTTP_CONNECTION_TIMEOUT,
     QINIU_UPLOAD_HARD_TIMEOUT,
 )
+from config.config_util import get_config_value
 
 from .base import BaseFileStorage, UploadResult
 
@@ -289,6 +290,9 @@ class QiniuFileStorage(BaseFileStorage):
         """
         获取文件公开URL（不带签名）
 
+        协议跟随 server.https.enabled：HTTPS 站点若仍下发 http:// 下载链接，
+        浏览器会按混合内容下载拦截（表现为点击导出/下载后看不到文件）。
+
         Args:
             key: 文件在存储中的唯一标识
 
@@ -298,7 +302,8 @@ class QiniuFileStorage(BaseFileStorage):
         # 确保域名不以/结尾，key不以/开头
         domain = self.cdn_domain.rstrip("/")
         key = key.lstrip("/")
-        return f"http://{domain}/{key}"
+        scheme = "https" if get_config_value("server", "https", "enabled", default=False) else "http"
+        return f"{scheme}://{domain}/{key}"
 
     def _sync_list_by_prefix(self, prefix: str, limit: int = 1000) -> list:
         """同步列出指定前缀下的所有文件 key"""
