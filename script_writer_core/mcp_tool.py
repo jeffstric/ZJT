@@ -1827,6 +1827,72 @@ def create_world_json(user_id: str, world_id: str, auth_token: str, name: str, d
         }
 
 
+# 旁白解说剧（story_type=narration）世界中必须存在的旁白角色名
+NARRATOR_CHARACTER_NAME = "旁白"
+
+# 旁白角色默认设定（与 skills/character-creator/SKILL.md 中的建议设定保持一致）
+NARRATOR_CHARACTER_DEFAULTS = {
+    'age': '不限',
+    'identity': '叙事旁白/解说者',
+    'personality': '性格稳定清晰，客观中立，叙事节奏从容。',
+    'behavior': '以简洁、有画面感的语言解说全部剧情和台词说明，推进剧情发展；不与剧中其他角色对话互动。',
+    'other_info': '本角色为旁白解说剧（narration）的固定叙事角色，承担全剧台词；其余角色仅通过动作、表情、画面行为参与剧情。',
+}
+
+
+def ensure_narrator_character(user_id: str, world_id: str, auth_token: str) -> Dict[str, Any]:
+    """
+    确保旁白解说剧（story_type=narration）的世界中存在名为"旁白"的角色卡 - 代码层硬保证。
+
+    智能体通过 read_world / list_character_jsons 获知世界故事类型或角色列表时触发：
+    若"旁白"角色卡缺失，则按默认设定自动补建。幂等，已存在时不做任何修改；
+    任何异常只记录日志并跳过，不影响调用方工具的正常返回。
+
+    Args:
+        user_id: 用户ID（必填）
+        world_id: 世界ID（必填）
+        auth_token: 认证令牌（必填）
+
+    Returns:
+        dict: {'triggered': 是否为旁白解说剧, 'created': 是否本次创建了旁白角色卡, 'reason': 说明}
+    """
+    result = {'triggered': False, 'created': False, 'reason': ''}
+    try:
+        file_manager = get_file_manager()
+        world_data = file_manager.get_world_json(user_id, world_id)
+        if not world_data:
+            result['reason'] = '未找到世界信息，跳过旁白角色检查'
+            return result
+
+        story_type = StoryType.normalize(world_data.get('story_type'))
+        if story_type != StoryType.NARRATION:
+            result['reason'] = f'故事类型为 {story_type}，无需旁白角色'
+            return result
+
+        result['triggered'] = True
+        if file_manager.resolve_character_file_path(NARRATOR_CHARACTER_NAME, user_id, world_id):
+            result['reason'] = '旁白角色卡已存在'
+            return result
+
+        create_result = create_character_json(
+            user_id, world_id, auth_token,
+            name=NARRATOR_CHARACTER_NAME,
+            **NARRATOR_CHARACTER_DEFAULTS,
+        )
+        if create_result.get('success'):
+            result['created'] = True
+            result['reason'] = '旁白角色卡缺失，已按默认设定自动创建'
+            print(f"✓ 旁白解说剧自动补建旁白角色卡: {create_result.get('file_path', '')}")
+        else:
+            result['reason'] = f"自动创建旁白角色卡失败: {create_result.get('error', '')}"
+            print(f"✗ {result['reason']}")
+        return result
+    except Exception as e:
+        result['reason'] = f'确保旁白角色时异常: {e}'
+        print(f"✗ {result['reason']}")
+        return result
+
+
 def _truncate_content(content: str, limit: Optional[int] = None) -> str:
     """
     根据limit参数截断内容
@@ -1877,7 +1943,15 @@ def read_world(user_id: str, world_id: str, auth_token: str, limit: Optional[int
                 'success': False,
                 'error': '未找到世界信息文件'
             }
-        
+
+        # 旁白解说剧硬保证：智能体获知故事类型时，确保"旁白"角色卡存在。
+        # 局部兜底：保障失败只记日志，绝不影响世界信息读取。
+        if StoryType.normalize(world_data.get('story_type')) == StoryType.NARRATION:
+            try:
+                ensure_narrator_character(user_id, world_id, auth_token)
+            except Exception as ensure_error:
+                print(f"✗ 旁白角色保障异常（不影响世界信息读取）: {ensure_error}")
+
         return {
             'success': True,
             'world_id': world_id,
@@ -2525,6 +2599,9 @@ def list_character_jsons(user_id: str, world_id: str, auth_token: str) -> Dict[s
         dict: 包含success状态和角色文件列表的结果
     """
     try:
+        # 旁白解说剧硬保证：智能体查看角色列表前，确保"旁白"角色卡存在并纳入列表
+        ensure_narrator_character(user_id, world_id, auth_token)
+
         # 使用FileManager统一路径管理
         file_manager = get_file_manager()
         characters_dir = file_manager.get_content_dir_path(user_id, world_id, "characters")
