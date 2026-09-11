@@ -81,14 +81,16 @@ export { Region } from './ui_regions.js';
 
 // 确保 i18n 在首次 render 前已初始化（bootstrap 中已调用 initI18n）
 
-function escapeHtml(value) {
-    return String(value || '')
+// 转义统一收敛到 web/js/escape.js（window.escapeHtml，经典 script 先于本 module 执行）。
+// Node/Vitest 直接 import 本模块时降级为等价实现。
+const escapeHtml = (typeof window !== 'undefined' && typeof window.escapeHtml === 'function')
+    ? window.escapeHtml
+    : (value) => String(value ?? '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
-}
 
 /** Map scene.videoType to Chinese label for UI. */
 export function videoTypeLabel(videoType) {

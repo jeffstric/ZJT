@@ -49,6 +49,8 @@ from config.constant import (
     TaskTypeRegistry,
     TaskCategory,
     TaskTypeId,
+    AUTH_COOKIE_NAME,
+    AUTH_COOKIE_MAX_AGE_SECONDS,
     TASK_TYPE_GENERATE_VIDEO, 
     TASK_TYPE_GENERATE_AUDIO, 
     RECHARGE_PACKAGES, 
@@ -575,14 +577,117 @@ logger.info("Video drivers registered successfully")
 
 # 用户模块实现方绑定加载由 enterprise.register 注入（商业版）。
 
-# Allow CORS for local dev if needed
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# CORS（docs/security/xss_stored_chain_fix_plan.md 阶段 4b）：
+# allow_origins=["*"] 与 allow_credentials=True 组合无效且危险（任意站点可携凭据跨源）。
+# 收紧策略：server.cors_allow_origins 配置了白名单 → 精确 origins + 凭据；
+# 未配置 → 默认放开无凭据跨源（本地开发/纯 API 客户端不受影响），凭据类请求只允许同源。
+def _build_cors_middleware():
+    try:
+        from config.config_util import get_config
+        origins = get_config().get("server", {}).get("cors_allow_origins") or []
+    except Exception:
+        origins = []
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(origins),
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    else:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+_build_cors_middleware()
+
+
+# ===== 认证 cookie 双通道（docs/security/xss_stored_chain_fix_plan.md 阶段 3c）=====
+# 浏览器会话凭据走 HttpOnly cookie（XSS 不可读），程序客户端走 Authorization 头。
+# 翻译中间件把 cookie 换成 Authorization 头，下游 27 处 token 校验点零改动。
+
+def extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
+    """从 Authorization 头提取 Bearer token（兼容不带前缀的裸 token）。
+
+    注意 "Bearer "（空 token）须返回 None：前端在 localStorage 无 token 时会发送
+    'Bearer ' 空值头（admin.js/旧流程），此情形应走 cookie 翻译而非当作有效头。
+    """
+    if not authorization:
+        return None
+    value = authorization.strip()
+    if re.match(r"^bearer\b\s*$", value, re.IGNORECASE):
+        return None
+    if value.lower().startswith("bearer "):
+        value = value[7:].strip()
+    return value or None
+
+
+def _request_is_https(request: Request) -> bool:
+    """按请求 scheme（含反代头）判断是否 HTTPS，决定 cookie Secure 属性"""
+    if request.url.scheme == "https":
+        return True
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    return forwarded_proto.split(",")[0].strip().lower() == "https"
+
+
+def set_auth_cookie(response: Response, token: str, request: Request) -> None:
+    """登录成功后下发 HttpOnly 认证 cookie"""
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=AUTH_COOKIE_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=_request_is_https(request),
+        samesite="strict",
+        path="/",
+    )
+
+
+@app.middleware("http")
+async def auth_cookie_translation_middleware(request: Request, call_next):
+    """HttpOnly cookie → Authorization 头翻译。
+
+    对 /api/ 下请求：未携带（或携带空的）Authorization 头但存在认证 cookie 时，
+    把 token 注入请求头再放行。浏览器自动带 cookie、各接口继续从标准 Authorization
+    头取 token；SameSite=Strict 保证 cookie 不会被跨站请求携带（CSRF 防线）。
+    """
+    path = request.url.path
+    if path == "/api" or path.startswith("/api/"):
+        current = extract_bearer_token(request.headers.get("authorization"))
+        cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+        if not current and cookie_token:
+            headers = [
+                (k, v) for k, v in request.scope.get("headers", [])
+                if k != b"authorization"
+            ]
+            headers.append((b"authorization", f"Bearer {cookie_token}".encode("latin-1")))
+            request.scope["headers"] = headers
+    return await call_next(request)
+
+
+# 安全响应头中间件（docs/security/xss_stored_chain_fix_plan.md 阶段 4a 第一步）：
+# 只加与现有前端兼容的指令，不改 script-src（全站内联 script/事件改造完成后再收紧，
+# 先以 Content-Security-Policy-Report-Only 过渡）。
+#   - object-src 'none'       禁 <object>/<embed> 插件型载荷
+#   - base-uri 'none'         禁 <base href> 劫持页面相对 URL
+#   - frame-ancestors 'self'  防被第三方页面嵌套（computing_power_logs 同源 iframe 不受影响）
+#   - form-action 'self'      禁表单被提交到外部域
+_CSP_FIRST_STEP = (
+    "object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'"
 )
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", _CSP_FIRST_STEP)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
 
 
 # CDN 重定向中间件：当 /upload/ 下的媒体文件有 CDN 映射时，自动 302 到新鲜 CDN 签名 URL
@@ -3499,15 +3604,18 @@ class LoginRequest(BaseModel):
     terms_agreed: Optional[int] = 0
 
 @app.post('/api/auth/login')
-async def login(request: LoginRequest):
+async def login(request: Request, login_request: LoginRequest):
     """
     用户登录接口（支持手机号和邮箱）
+
+    注意：request 是 Starlette Request（下发 HttpOnly cookie 需要），
+    请求体是 login_request，勿混用。
     """
     try:
-        phone = request.phone
-        email = request.email
-        password = request.password
-        terms_agreed = request.terms_agreed
+        phone = login_request.phone
+        email = login_request.email
+        password = login_request.password
+        terms_agreed = login_request.terms_agreed
         
         identifier = email if email else phone
         logger.info("收到登录请求 - 标识: %s", mask_identifier(identifier))
@@ -3555,13 +3663,19 @@ async def login(request: LoginRequest):
                 "用户登录成功 - 标识: %s",
                 mask_identifier(identifier),
             )
-            return JSONResponse(
+            response = JSONResponse(
                 content={
                     'success': True,
                     'message': '登录成功',
                     'data': auth_data
                 }
             )
+            # 浏览器会话凭据进 HttpOnly cookie（XSS 不可读）；响应体里的 token
+            # 保留供程序客户端使用，前端已不再写入 localStorage
+            auth_data_token = (auth_data or {}).get('token')
+            if auth_data_token:
+                set_auth_cookie(response, auth_data_token, request)
+            return response
         else:
             return JSONResponse(
                 status_code=400,
@@ -3595,6 +3709,10 @@ async def logout(request: Request, logout_request: LogoutRequest):
         auth_token = logout_request.auth_token
 
         if not auth_token:
+            # HttpOnly cookie 会话：body 无 token，从中间件翻译出的 Authorization 头取
+            auth_token = extract_bearer_token(request.headers.get("Authorization")) or ''
+
+        if not auth_token:
             return JSONResponse(
                 status_code=400,
                 content={
@@ -3611,20 +3729,26 @@ async def logout(request: Request, logout_request: LogoutRequest):
         )
 
         if success:
-            return JSONResponse(
+            response = JSONResponse(
                 content={
                     'success': True,
                     'message': '登出成功'
                 }
             )
+            # 同步清除 HttpOnly 认证 cookie
+            response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+            return response
         else:
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=400,
                 content={
                     'success': False,
                     'message': message or '登出失败'
                 }
             )
+            # 即使后端登出失败也清掉本地 cookie，避免僵尸会话
+            response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+            return response
 
     except Exception as e:
         logger.error(f"登出失败: {str(e)}")
@@ -4972,20 +5096,30 @@ async def _update_first_recharge_status(auth_token: str) -> None:
 
 @app.get("/api/recharge/packages")
 @require_permission("computing:view_packages")
-async def get_recharge_packages(request: Request, auth_token: str):
+async def get_recharge_packages(
+    request: Request,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    auth_token: Optional[str] = Query(None, description="legacy：query 传 token 已废弃，仅兼容旧客户端"),
+):
     """
     获取算力充值套餐列表
-    
+
     Args:
-        auth_token: 用户认证token
-    
+        authorization: Authorization: Bearer <token>（推荐）
+        auth_token: query 传 token（legacy 兼容，优先级低于 header）
+
     Returns:
         List of recharge packages with computing power and pricing
         If user has already recharged before, the first package (首充福利) will be filtered out
     """
     try:
+        # token 优先取 Authorization 头；query 传参已废弃（防 URL 泄漏），仅为旧客户端兜底
+        resolved_token = extract_bearer_token(authorization) or auth_token
+        if not resolved_token:
+            raise HTTPException(status_code=401, detail="未提供认证信息")
+
         # 查询用户是否已经首充
-        has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
+        has_completed_first_recharge = await _has_completed_first_recharge(resolved_token)
 
         # 如果用户已经充值过，过滤掉首充福利套餐（第一个套餐）
         # 用 dict(pkg) 浅拷贝每个套餐，避免污染模块级常量 RECHARGE_PACKAGES

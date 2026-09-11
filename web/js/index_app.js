@@ -25,6 +25,9 @@
         {name:'小红书笔记修改', path:'http://ssh.perseids.cn:15678/form/8cd1955c-5cf6-4111-a3a4-406001d7e3b2'}
       ],
       authToken: '',
+      // HttpOnly cookie 双通道：token 在 cookie 中、JS 不可读时置 true。
+      // 登录态判定统一用「authToken || cookieSession」，不要只看 authToken。
+      cookieSession: false,
       userPhone: '',
       userEmail: '',
       inviteCode: '',
@@ -345,17 +348,21 @@
         this.fetchComputingPower();
         this.fetchUserRole();
         this.fetchCheckinStatus();
+      } else if (localStorage.getItem('logged_in') === '1') {
+        // 新登录方式：token 在 HttpOnly cookie 中（JS 不可读）。带登录态标记时
+        // 探测 cookie 会话，成功则恢复已登录 UI（算力/角色/签到等随之拉取）
+        this.probeCookieSession();
       }
       
       // 检查是否需要自动弹出登录窗口
       // 方式1: 从工作流页面跳转过来（localStorage标记）
       const redirectAfterLogin = localStorage.getItem('redirect_after_login');
-      if (redirectAfterLogin && !this.authToken) {
+      if (redirectAfterLogin && !this.authToken && !this.cookieSession) {
         this.showLoginModal = true;
       }
       
       // 方式2: 通过URL参数触发登录框（支持跨域跳转）
-      if (urlParams.get('login') === '1' && !this.authToken) {
+      if (urlParams.get('login') === '1' && !this.authToken && !this.cookieSession) {
         this.showLoginModal = true;
       }
       
@@ -516,7 +523,7 @@
       },
 
       async generateAgentConnection() {
-        if (!this.authToken) {
+        if (!this.authToken && !this.cookieSession) {
           this.agentConnectionError = '请先登录后再生成智能体连接信息';
           return;
         }
@@ -635,7 +642,7 @@
       },
 
       async ensureCliMediaPreferencesLoaded() {
-        if (!this.authToken) {
+        if (!this.authToken && !this.cookieSession) {
           this.cliMediaPrefError = '请先登录后再配置 CLI 模型偏好';
           return;
         }
@@ -887,6 +894,7 @@
         localStorage.removeItem('email');
         localStorage.removeItem('user_id');
         localStorage.removeItem('invite_code');
+        localStorage.removeItem('logged_in');
       },
 
       // login=1 进入时的主动 token 校验：确证失效才清登录态，误报/网络异常一律保留
@@ -920,24 +928,49 @@
         if (detail.includes('无效或已过期的认证信息')) {
           // 清除本地存储的认证信息
           this.clearLocalAuthInfo();
-          
+
           // 清除当前状态
           this.authToken = '';
+          this.cookieSession = false;
           this.userPhone = '';
           this.userEmail = '';
           this.userId = '';
           this.inviteCode = '';
           this.computingPower = null;
           this.userRole = '';
-          
+
           // 设置错误信息并显示登录框
           this.loginError = '登录已过期，请重新登录';
           this.showLoginModal = true;
           this.authMode = 'login';
-          
+
           return true; // 表示已处理该错误
         }
         return false; // 表示不是认证错误
+      },
+
+      // HttpOnly cookie 会话探测：本地无 token 但带登录态标记（logged_in）时调用。
+      // cookie 会话由服务端中间件翻译成 Authorization 头，JS 永远拿不到凭据本体。
+      async probeCookieSession() {
+        try {
+          const response = await axios.get('/api/user/role');
+          if (response.data && response.data.code === 0) {
+            this.cookieSession = true;
+            await Promise.all([
+              this.fetchComputingPower(),
+              this.fetchUserRole(),
+              this.fetchCheckinStatus()
+            ]);
+          } else {
+            // cookie 已失效/登出：清除登录态标记
+            localStorage.removeItem('logged_in');
+          }
+        } catch (error) {
+          // 401/未登录：静默保持未登录态（不弹登录框）
+          if (error?.response?.status === 401) {
+            localStorage.removeItem('logged_in');
+          }
+        }
       },
       
       switchAuthMode(mode) {
@@ -1027,13 +1060,17 @@
               localStorage.removeItem('phone');
               localStorage.removeItem('user_id');
               localStorage.removeItem('invite_code');
-              
+
               this.authToken = response.data.data.token;
               this.userPhone = response.data.data.phone || '';
               this.userEmail = response.data.data.email || '';
               this.userId = response.data.data.user_id;
               this.inviteCode = response.data.data.invite_code;
-              localStorage.setItem('auth_token', this.authToken);
+              // 安全（docs/security/xss_stored_chain_fix_plan.md 阶段 3c）：
+              // token 由后端以 HttpOnly cookie 下发，不再写入 localStorage——
+              // 任何 XSS 都无法再读取长期凭据。后续请求不带 Authorization 头时，
+              // 服务端中间件会自动从 cookie 解出身份。
+              localStorage.setItem('logged_in', '1');
               localStorage.setItem('phone', this.userPhone);
               localStorage.setItem('email', this.userEmail);
               localStorage.setItem('user_id', this.userId);
@@ -1280,6 +1317,8 @@
             localStorage.removeItem('user_id');
             localStorage.removeItem('invite_code');
             localStorage.removeItem('admin_mode');
+            localStorage.removeItem('logged_in');
+            this.cookieSession = false;
             this.isAdminMode = false;
           } else {
             // 即使后端登出失败，也清除本地状态
@@ -1296,6 +1335,8 @@
             localStorage.removeItem('user_id');
             localStorage.removeItem('invite_code');
             localStorage.removeItem('admin_mode');
+            localStorage.removeItem('logged_in');
+            this.cookieSession = false;
             this.isAdminMode = false;
           }
         } catch (error) {
@@ -1312,6 +1353,8 @@
           localStorage.removeItem('user_id');
           localStorage.removeItem('invite_code');
           localStorage.removeItem('admin_mode');
+          localStorage.removeItem('logged_in');
+          this.cookieSession = false;
           this.isAdminMode = false;
         }
       },
@@ -1372,7 +1415,7 @@
       },
 
       async ensureCreationDefaultsLoaded() {
-        if (!this.authToken) {
+        if (!this.authToken && !this.cookieSession) {
           this.creationDefaultsError = '请先登录后再配置创作默认偏好';
           return;
         }
@@ -2055,7 +2098,7 @@
       },
       
       async fetchComputingPower() {
-        if (!this.authToken) {
+        if (!this.authToken && !this.cookieSession) {
           return;
         }
         
@@ -2086,7 +2129,7 @@
       },
       
       async fetchCheckinStatus() {
-        if (!this.authToken) return;
+        if (!this.authToken && !this.cookieSession) return;
         try {
           const response = await axios.get('/api/user/checkin/status', {
             headers: { 'Authorization': `Bearer ${this.authToken}` }
@@ -2103,7 +2146,7 @@
       },
 
       async performCheckin() {
-        if (!this.authToken || this.checkinLoading) return;
+        if (!this.authToken && !this.cookieSession || this.checkinLoading) return;
         this.checkinLoading = true;
         try {
           const response = await axios.post('/api/user/checkin', {}, {
@@ -2146,7 +2189,7 @@
       },
 
       async fetchUserRole() {
-        if (!this.authToken) {
+        if (!this.authToken && !this.cookieSession) {
           this.userRole = '';
           return;
         }
@@ -2167,7 +2210,7 @@
       },
       
       async fetchInvitationInfo() {
-        if (!this.authToken) {
+        if (!this.authToken && !this.cookieSession) {
           return;
         }
         
@@ -2191,7 +2234,7 @@
 
       // ===== 佣金中心（商业版）=====
       async fetchCommissionInfo() {
-        if (!this.authToken) return;
+        if (!this.authToken && !this.cookieSession) return;
         await Promise.all([
           this.fetchCommissionSummary(),
           this.fetchCommissionRate(),
@@ -2201,7 +2244,7 @@
       },
 
       async fetchCommissionSummary() {
-        if (!this.authToken) return;
+        if (!this.authToken && !this.cookieSession) return;
         try {
           const response = await axios.get('/api/commission/summary', {
             headers: { 'Authorization': `Bearer ${this.authToken}` }
@@ -2219,7 +2262,7 @@
       },
 
       async fetchCommissionRecords() {
-        if (!this.authToken) return;
+        if (!this.authToken && !this.cookieSession) return;
         try {
           const response = await axios.get('/api/commission/records?page=1&page_size=20', {
             headers: { 'Authorization': `Bearer ${this.authToken}` }
@@ -2233,7 +2276,7 @@
       },
 
       async fetchCommissionWithdrawals() {
-        if (!this.authToken) return;
+        if (!this.authToken && !this.cookieSession) return;
         try {
           const response = await axios.get('/api/commission/withdrawals?page=1&page_size=20', {
             headers: { 'Authorization': `Bearer ${this.authToken}` }
@@ -2247,7 +2290,7 @@
       },
 
       async fetchCommissionRate() {
-        if (!this.authToken) return;
+        if (!this.authToken && !this.cookieSession) return;
         try {
           const response = await axios.get('/api/commission/rate', {
             headers: { 'Authorization': `Bearer ${this.authToken}` }
@@ -2266,7 +2309,7 @@
       },
 
       async saveCommissionRate() {
-        if (!this.authToken) return;
+        if (!this.authToken && !this.cookieSession) return;
         // 确保不超过上限
         if (this.commissionRateInput > this.maxCommissionRate) {
           this.commissionRateInput = this.maxCommissionRate;
@@ -2301,7 +2344,7 @@
       },
 
       async submitWithdraw() {
-        if (!this.authToken) return;
+        if (!this.authToken && !this.cookieSession) return;
         const f = this.withdrawForm;
         // 前端基础校验（后端也会校验）
         if (f.method === 'alipay' && !f.alipay_account) { alert('请填写支付宝账号'); return; }
@@ -2516,7 +2559,7 @@
       },
       
       openComputingPowerLogs() {
-        if (!this.authToken) {
+        if (!this.authToken && !this.cookieSession) {
           alert('请先登录');
           return;
         }
@@ -2602,7 +2645,7 @@
       },
       
       async selectPackage(pkg) {
-        if (!this.authToken || !this.userId) {
+        if (!this.authToken && !this.cookieSession || !this.userId) {
           alert('请先登录');
           this.showRechargePowerModal = false;
           this.showLoginModal = true;

@@ -73,15 +73,8 @@
     }
   }
 
-  function escapeHtmlSafe(str) {
-    if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-    return String(str == null ? '' : str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  // 转义统一收敛到 web/js/escape.js（window.escapeHtml）
+  const escapeHtmlSafe = window.escapeHtml;
 
   /**
    * 打开新建画布弹窗

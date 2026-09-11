@@ -99,9 +99,13 @@ function truncateRefCollection(urls, suffix, maxCount) {
   if (Array.isArray(suffix) && suffix.length > max) suffix.length = max;
 }
 
-// 浏览器环境：挂载到 window
+// 浏览器环境：挂载到 window。
+// escapeHtml 的浏览器端权威实现由 web/js/escape.js 提供（本文件仅保留本地定义
+// 供 Node/Vitest 导出使用）；escape.js 未引入时保留兜底挂载，避免调用点报 undefined。
 if (typeof window !== 'undefined') {
-  window.escapeHtml = escapeHtml;
+  if (typeof window.escapeHtml !== 'function') {
+    window.escapeHtml = escapeHtml;
+  }
   window.IMAGE_SOURCE_NODE_TYPES = IMAGE_SOURCE_NODE_TYPES;
   window.getNodeImageUrl = getNodeImageUrl;
   window.isImageSourceNodeType = isImageSourceNodeType;

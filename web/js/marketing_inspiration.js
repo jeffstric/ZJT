@@ -4,22 +4,10 @@
 
 'use strict';
 
-function escapeHtmlAttr(value) {
-    return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/"/g, '&quot;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-}
-
-function escapeHtml(value) {
-    return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+// 转义统一收敛到 web/js/escape.js（window.escapeHtml / window.escapeHtmlAttr）。
+// 旧本地副本的 escapeHtmlAttr 不转义单引号，在属性上下文可被逃逸，已废弃。
+const escapeHtml = window.escapeHtml;
+const escapeHtmlAttr = window.escapeHtmlAttr;
 
 let publishedInspirationData = [];
 let inspirationPage = 1;
