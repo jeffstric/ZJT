@@ -72,12 +72,12 @@ assert.match(
 );
 assert.match(
   imageToVideoNodeJs,
-  /generateVideoFromText\(prompt,\s*duration,\s*desiredCount,\s*ratio,\s*videoModel,\s*node\.data\.videoResolution\)/,
+  /generateVideoFromText\(\w+,\s*duration,\s*desiredCount,\s*ratio,\s*videoModel,\s*node\.data\.videoResolution\)/,
   'image-to-video node should submit selected resolution for text-to-video mode'
 );
 assert.match(
   imageToVideoNodeJs,
-  /generateVideoFromImage\([\s\S]*node\.data\.videoResolution\)/,
+  /generateVideoFromImage\([\s\S]*node\.data\.videoResolution\s*[,)]/,
   'image-to-video node should submit selected resolution for image-to-video modes'
 );
 assert.match(

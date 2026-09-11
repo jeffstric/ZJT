@@ -766,7 +766,7 @@ def test_generate_image_auto_falls_back_to_text_without_references(patched_story
     service = patched_storyboard_cli.module.StoryboardAgentCliService(
         submitter=patched_storyboard_cli.submitter
     )
-    monkeypatch.setattr(service, "_collect_reference_image_items", lambda *args: [])
+    monkeypatch.setattr(service, "_collect_reference_image_items", lambda *args, **kwargs: [])
 
     result = service.generate_image(
         scene_id=11,
@@ -797,7 +797,7 @@ def test_generate_image_auto_converts_upload_paths_to_public_urls(patched_storyb
     monkeypatch.setattr(
         service,
         "_collect_reference_image_items",
-        lambda *args: [
+        lambda *args, **kwargs: [
             {
                 "url": "upload/location/pic/room.png",
                 "source_type": "location",

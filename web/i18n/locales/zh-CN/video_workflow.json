@@ -372,7 +372,7 @@
   "duration_10s": "10秒",
   "duration_15s": "15秒",
   "image_to_video_output_port": "输出（连接到视频节点）",
-  "image_mode_label": "图片模式",
+  "image_mode_label": "生成模式",
   "image_mode_first_last": "首尾帧模式",
   "image_mode_multi_ref": "多参考图模式",
   "image_mode_text_to_video": "文生视频",

@@ -125,6 +125,15 @@
           </svg>
           <span data-i18n="suffix">后缀</span>
         </button>
+        <button class="btn secondary save-btn" id="shortcutHelpBtn" type="button" title="查看画布快捷键">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+            <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01"></path>
+            <path d="M6 14h.01M18 14h.01"></path>
+            <path d="M9 14h6"></path>
+          </svg>
+          <span>快捷键</span>
+        </button>
         <div class="ratio-label" data-i18n="video_ratio">视频比例</div>
         <select id="ratioSelect">
           <option value="9:16">9:16</option>
@@ -239,6 +248,13 @@
               </svg>
               <span class="add-menu-text" data-i18n="digital_human">数字人</span>
             </div>
+            <div class="add-menu-item" id="menuAddGroup">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3"/>
+                <rect x="8" y="8" width="8" height="8" rx="1.5" fill="currentColor" opacity="0.35"/>
+              </svg>
+              <span class="add-menu-text">分组</span>
+            </div>
           </div>
           <div class="add-menu-group">
             <div class="add-menu-label"><span data-i18n="add_materials">添加素材</span> <a href="javascript:void(0)" id="agentBtnMaterial" style="color: #3b82f6; text-decoration: none; font-size: 12px; font-weight: 600; margin-left: 8px; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'" data-i18n="one_click_generate ai_generate_materials:title">一键生成素材</a></div>
@@ -349,6 +365,49 @@
       <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
         <button class="mini-btn secondary" id="shotGroupEditCancelBtn" type="button" data-i18n="cancel">取消</button>
         <button class="mini-btn" id="shotGroupEditSaveBtn" type="button" data-i18n="save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="shortcutHelpModal" aria-hidden="true">
+    <div class="modal-card shortcut-help-card" role="dialog" aria-modal="true" aria-label="画布快捷键">
+      <div class="modal-header shortcut-help-header">
+        <div class="modal-title">
+          <svg class="shortcut-help-title-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+            <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01"></path>
+            <path d="M6 14h.01M18 14h.01"></path>
+            <path d="M9 14h6"></path>
+          </svg>
+          画布快捷键
+        </div>
+        <button class="modal-close" id="shortcutHelpModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body shortcut-help-body">
+        <div class="shortcut-section">
+          <div class="shortcut-section-title">编辑</div>
+          <div class="shortcut-row"><span class="shortcut-desc">复制选中节点（分镜 / 分镜组 / 剧本节点不支持复制）</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>C</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">在鼠标位置粘贴，连续粘贴自动向右下错开</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>V</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">再制（在原位置附近直接复制一份）</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>D</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">撤销上一步操作</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>Z</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">删除选中（依次作用：连接线 → 时间轴片段 → 节点）；作用于分组框时解散分组（保留节点）</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Delete</kbd></span><span class="shortcut-or">/</span><span class="shortcut-combo"><kbd>Backspace</kbd></span></span></div>
+        </div>
+        <div class="shortcut-section">
+          <div class="shortcut-section-title">分组</div>
+          <div class="shortcut-row"><span class="shortcut-desc">把选中的多个节点编为一组</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>G</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">解散选中的分组，或把选中节点移出所在分组</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>Shift</kbd><span class="plus">+</span><kbd>G</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">重命名分组</span><span class="shortcut-keys"><span class="shortcut-mouse">双击分组标题栏</span></span></div>
+        </div>
+        <div class="shortcut-section">
+          <div class="shortcut-section-title">画布视图</div>
+          <div class="shortcut-row"><span class="shortcut-desc">放大 / 缩小</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>=</kbd></span><span class="shortcut-or">/</span><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>-</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">缩放画布（以鼠标位置为中心）</span><span class="shortcut-keys"><span class="shortcut-mouse">滚轮</span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">画布左右平移</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Shift</kbd><span class="plus">+</span><span class="shortcut-mouse">滚轮</span></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">画布上下平移</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><span class="shortcut-mouse">滚轮</span></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">框选多选节点（按住后拖拽）</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><span class="shortcut-mouse">空白处拖拽</span></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">平移画布</span><span class="shortcut-keys"><span class="shortcut-mouse">拖动空白区域</span></span></div>
+        </div>
+        <div class="shortcut-tip">在画布上点击右键可随时打开「复制 / 粘贴 / 再制 / 编组 / 解散编组 / 删除」菜单；把节点拖入分组框会自动加入分组，拖出分组框自动移出。</div>
       </div>
     </div>
   </div>
@@ -1403,6 +1462,10 @@
   <script src="/js/shot_frame_generator.js?v=__VERSION__"></script>
   <script src="/js/video_prompt_suffix.js"></script>
   <script src="/js/shot_frame_video_generator.js"></script>
+  <script src="/js/canvas_groups.js?v=__VERSION__"></script>
+  <script src="/js/canvas_clipboard.js?v=__VERSION__"></script>
+  <script src="/js/canvas_context_menu.js?v=__VERSION__"></script>
+  <script src="/js/canvas_shortcuts.js?v=__VERSION__"></script>
   <script src="/js/events.js?v=__VERSION__"></script>
   <script src="/js/workflow_layout.js?v=__VERSION__"></script>
 
