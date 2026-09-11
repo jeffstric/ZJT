@@ -3782,6 +3782,36 @@
             }
         }
 
+        async function exportWorldDoc() {
+            try {
+                updateStatus(window.t ? window.t('status_packing_world_doc') : '正在生成并上传 Word 文档...');
+                const response = await fetch(`/api/export-world-doc?user_id=${USER_ID}&world_id=${WORLD_ID}`);
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    showError((window.t ? window.t('error_export_failed', {error: result.error || response.statusText}) : '导出失败: ' + (result.error || response.statusText)));
+                    updateStatus(window.t ? window.t('status_export_failed') : '导出失败');
+                    return;
+                }
+                if (!result.success || !result.download_url) {
+                    showError((window.t ? window.t('error_export_failed', {error: result.error || (window.t ? window.t('error_no_download_link') : '未获取到下载链接')}) : '导出失败: ' + (result.error || '未获取到下载链接')));
+                    updateStatus(window.t ? window.t('status_export_failed') : '导出失败');
+                    return;
+                }
+                const a = document.createElement('a');
+                a.href = result.download_url;
+                a.download = result.filename || `world_doc_${WORLD_ID}_${new Date().toISOString().slice(0,19).replace(/[-T:]/g, '')}.docx`;
+                a.target = '_blank';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                showSuccess(window.t ? window.t('success_world_doc_exported') : '✓ Word 文档导出成功，已生成下载链接');
+                updateStatus(window.t ? window.t('status_export_done') : '导出完成，可通过图床链接下载');
+            } catch (error) {
+                showError((window.t ? window.t('error_export_failed', {error: error.message}) : '导出失败: ' + error.message));
+                updateStatus(window.t ? window.t('status_export_failed') : '导出失败');
+            }
+        }
+
         function triggerImportWorld() {
             document.getElementById('import-world-file').click();
         }
