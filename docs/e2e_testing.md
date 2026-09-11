@@ -20,8 +20,9 @@ auto_test/
 │   ├── test_world.py          # 世界 CRUD（5 个 P0）
 │   ├── test_character.py      # 角色 CRUD（4 个 P0）
 │   ├── test_location.py       # 场景 CRUD（5 个 P0）
-│   ├── test_workflow.py       # 工作流 CRUD（5 个 P0）
+│   ├── test_workflow.py       # 工作流 CRUD（5 个 P0）+ 保存 CAS 乐观锁 409（4 个 P1）
 │   ├── test_workflow_page.py  # 工作流前端页面（3 个 P0）
+│   ├── test_announcements.py  # 本站公告：用户侧已读/未读 + 管理侧生命周期/图片上传（10 个 P1）
 │   ├── test_audio.py          # 音频模块（2 个 P0）
 │   ├── test_script_writer.py  # 剧本编辑器页面（2 个 P0）
 │   ├── test_marketing_agent.py# 营销智能体页面（3 个 P0）
@@ -36,8 +37,15 @@ auto_test/
 ### 1. 安装依赖
 
 ```bash
-pip install playwright pytest-html pytest-timeout pytest-asyncio
+pip install -r requirements_e2e.txt
 playwright install chromium
+```
+
+若本机已有 Chromium 内核浏览器但未下载 Playwright Chromium，可显式指定其可执行文件；
+CI 不设置此变量，仍使用 Playwright 管理的 Chromium：
+
+```powershell
+$env:E2E_BROWSER_EXECUTABLE = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 ```
 
 ## GitLab CI 分支触发
@@ -211,9 +219,18 @@ python -m pytest -v -m world
 # 运行所有测试
 python -m pytest -v
 
+# 保留失败截图和 Playwright Trace，便于定位页面跳转或 UI 超时
+$env:E2E_RESULTS_DIR = "e2e-results"
+python -m pytest -v
+
 # 生成 HTML 报告
 python -m pytest -v --html=reports/report.html --self-contained-html
 ```
+
+> 本地运行时需让 pytest 进程与被测服务读同一份配置：`comfyui_env` 未设置时
+> 默认找 `config_dev.yml`（本机通常只有 `config_prod.yml`），`mock_mode` fixture
+> 等需要直连数据库动态配置的步骤会失败（现为非致命告警，但挡板实际不生效）。
+> 与被测服务保持一致，例如：`comfyui_env=prod python -m pytest -v`。
 
 建议第一次不要直接跑全量，先跑无生成链路和小范围生成链路：
 
@@ -225,9 +242,26 @@ python -m pytest test_audio.py test_grid_image.py -v
 
 ## E2E 运行前检查清单
 
-### 认证会话约束
+### 认证会话约束（单会话策略与 live_auth 自愈）
 
-`auto_test/e2e/conftest.py` 的 `auth_token` 和 `user_id` 均为 session 级 fixture。测试账户的登录接口会使同一用户此前签发的 token 失效，因此单次 pytest 运行中不得调用 `refresh_login`；需要独立浏览器上下文的用例应复用这两个 fixture 注入认证信息。
+登录接口是**单会话策略**：同一用户任何一次新登录都会删除该用户全部旧 token
+（`auth_service.py` `delete_by_user_id`）。因此：
+
+- 套件内所有会真正登录主账号的用例都必须避免。`test_auth.py` 的
+  `test_login_success` / `test_logout_success` 已改用**次账号**（`credentials.secondary`）
+  做登录/登出验证，主账号的登录负向用例（错误密码、空手机号等）不会真正登录、不会顶号。
+- 单次 pytest 运行中不得调用 `refresh_login`；需要独立浏览器上下文的用例应复用
+  `auth_token`/`user_id`/`live_auth` fixture 注入认证信息。
+- 若 token 仍被套件外的新登录顶掉（手动 UI 登录、另一个 e2e/脚本并发登录主账号），
+  `conftest.py` 的 `live_auth`（session 级"活凭证"）会在每个用例创建请求/浏览器
+  上下文前 `ensure()` 校验一次：失效则自动重登主账号，并原地更新共享的
+  `auth_headers` dict（已创建的 api_client 自动用上新 token）。`auth_token`/`user_id`
+  两个 fixture 已改为 function 级、返回 `live_auth` 的当前值，用例里直接放
+  body/URL 的 token 也随之自愈。实际登录仍只发生在 `_login_data`（session 级）一次，
+  自愈重登只顶掉已失效的旧 token。
+  注意：探活接口仅 **401 或响应体 `error_code=invalid_auth_token`** 才判定 token 失效
+  触发重登；其余非 200（400/500 等）视为接口自身问题，不重登——避免接口回归被
+  反复重登掩盖成假绿。
 
 - [ ] `auto_test/test_config.json` 的 `base_url` 指向当前后端服务。
 - [ ] `auto_test/test_assets/test_image.jpg` 存在。
@@ -281,9 +315,11 @@ python -m pytest test_audio.py test_grid_image.py -v
 
 ```
 e2e_config (session) ─── 读取 test_config.json
-├── auth_token (session) ─── API 登录获取 token
-├── user_id (session) ─── 登录返回的 user_id
-├── auth_headers (session) ─── Authorization + X-User-Id
+├── _login_data (session) ─── 主账号只登录一次
+├── live_auth (session) ─── 活凭证：token 失效时自动重登（ensure()）
+├── auth_token (function) ─── 返回 live_auth 当前 token
+├── user_id (function) ─── 返回 live_auth 当前 user_id
+├── auth_headers (session) ─── Authorization + X-User-Id（dict 被 live_auth 原地更新）
 ├── browser (session) ─── Playwright chromium 实例
 │   └── browser_context (function) ─── 注入 localStorage 认证
 │       └── page (function) ─── 独立页面实例
@@ -339,6 +375,21 @@ auth (无依赖)
 ├── error_handling
 └── marketing_agent
 ```
+
+## 近期功能 e2e 覆盖补充（2026-09，develop_f804）
+
+针对近一个月功能提交补齐的端到端用例：
+
+| 功能 | 提交 | 覆盖位置 | 说明 |
+|------|------|----------|------|
+| 本站公告（用户侧铃铛 + 管理侧配置） | ee890760 / 6a3c0400 | `test_announcements.py`（10 个 P1） | 用户侧列表/未读数/单条已读/read-all；管理侧创建-发布-下线-删除全生命周期、编辑、非法 publish_at 拒绝、非管理员权限负向、图片上传与拒非图片 |
+| 工作流保存 CAS 乐观锁（409） | 719e0032 / 2ff48436 | `test_workflow.py::TestWorkflowSaveCAS`（4 个 P1） | 详情返回 `content_hash`；正确 `X-Base-Hash` 保存成功；过期基线被 409 拒绝并回传当前哈希且内容不被覆盖；不带基线的强制写路径兼容 |
+| 推荐模型档位管理员可配 | d6e57884 | `test_admin_api.py`（admin_api_019/020） | GET 各场景 value/quality 双档 + 候选；PUT reset 回退与未知场景 400 |
+| `/api/models` id 数值化 | 1619353a / e4d54994 | `test_script_writer_api.py::test_api_get_models` 增强 | 断言 id 为数值库 ID 字符串（无 `vendor:` 复合串），且条目含 `name`/`vendor_id`（前端模型记忆契约） |
+
+注意：CAS 内容哈希只覆盖 `workflow_data`/`style`/`style_reference_image`/`default_world_id`/`workflow_ratio`（`name` 与 `viewport` 不参与），测试中推进哈希需用参与哈希的字段。
+
+不建议 e2e 覆盖（依赖外部服务/真实触发条件，本测试环境不可达）：内容审核违规原文透出（4db4491c）、TTS 语速滑杆（93224407）、MiniMax H3 文生视频驱动（c28003b2）、小米 MiMo 供应商（432f9cb5）——相关行为由 `tests/` 单测与前端 vitest 覆盖。
 
 ## 两种测试方案对比
 

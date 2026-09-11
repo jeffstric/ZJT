@@ -55,6 +55,7 @@ import {
     Region,
     syncSequenceModeIntroCards,
     patchHeaderPower,
+    isDigitalHumanScene,
 } from './render.js';
 import {
     REGIONS_ON_SCENE_CHANGE,
@@ -62,7 +63,7 @@ import {
     REGIONS_AGENT_STREAM,
     REGIONS_MODAL,
 } from './ui_regions.js';
-import { pollSceneTaskStatus, pollScriptSplitTask, stopScriptSplitTaskPolling } from './polling.js';
+import { pollSceneTaskStatus, pollScriptSplitTask, stopScriptSplitTaskPolling, pollVoiceReplace, hydrateVoiceReplace } from './polling.js';
 import {
     togglePlayback,
     stopPlayback,
@@ -1017,12 +1018,17 @@ async function sendStoryboardAgentMessage(current) {
  * 「视频生成」模式（直连）：完全绕过智能体，直接用选中首帧 + 文本框提示词调
  * POST /scene/{id}/generate-video（社区版可用）。文本框预填 scene.videoPrompt，
  * 用户可编辑；编辑值仅本次使用，不回写 scene.videoPrompt。
- * 不往助手聊天区 push 任何消息、不弹框，消耗计入左下角算力提示行；
- * 视频结果直接出现在右侧候选区。提交后复用 pollSceneTaskStatus 轮询并回填候选区。
+ * 提交反馈不走聊天区：底部 toast 就近确认「已提交」，右侧候选区立即插入
+ * 「视频生成中」乐观占位卡，成功后由真实资产接管；消耗计入左下角算力提示行。
+ * 提交后复用 pollSceneTaskStatus 轮询并回填候选区。
  */
 async function sendDirectVideo(current) {
     const sceneId = current.id;
-    if (!sceneId || isSceneAgentRunning(sceneId)) return;
+    if (!sceneId) return;
+    if (isSceneAgentRunning(sceneId)) {
+        showToast('当前分镜有任务正在处理中，请稍候', 'info');
+        return;
+    }
     // 必须有选中首帧（后端 generate-video 图生视频/对口型分支均强制校验）
     const firstFrameUrl = current.firstFrameUrl || current.first_frame_url;
     if (!firstFrameUrl) {
@@ -1060,8 +1066,10 @@ async function sendDirectVideo(current) {
         }
     }
 
-    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息，不弹框直接提交
+    // 占用 running 态（禁用发送按钮防重复提交）；toast 就近确认 + 候选区乐观占位卡即时反馈
     startSceneAgentRun(sceneId);
+    const optimisticId = insertOptimisticGeneratingCandidate(sceneId, 'videos');
+    showToast(isDh ? '对口型视频已提交，右侧候选区生成中' : '视频生成任务已提交，右侧候选区生成中', 'info');
     if (!isDh) {
         // 编辑值仅本次使用：提交前先重置文本框回 scene.videoPrompt 基线
         state.inputMessage = current?.videoPrompt || '';
@@ -1086,12 +1094,15 @@ async function sendDirectVideo(current) {
         if (result && result.success === false) {
             throw new Error(result.error || '提交失败');
         }
+        // 提交响应自带真实资产 id：乐观占位卡原地接管，后续轮询按同 id 去重不重复
+        adoptOptimisticCandidate(sceneId, 'videos', optimisticId, result?.asset_id);
         recordPowerSpend(result, isDh ? '数字人视频' : '视频');
         // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
     } catch (error) {
         // 提交阶段即被内容安全拒绝时，错误文案经 notify 直接展示（不弹违规弹窗）
+        removeOptimisticCandidate(sceneId, 'videos', optimisticId);
         const submitMsg = (error && error.message != null && error.message !== '') ? String(error.message) : (error ? String(error) : '');
         notify(`视频生成失败：${submitMsg}`);
     } finally {
@@ -1117,16 +1128,58 @@ function recordPowerSpend(result, label) {
 }
 
 /**
+ * 直连模式（直填生图/视频生成）乐观占位卡：点击发送后立即在候选区顶部插入
+ * 「生成中/视频生成中」占位（url 为空即触发占位渲染，render 层零改动），
+ * 不等提交接口返回。非数字临时 id 下占位卡天然不可点选、无删除按钮。
+ * 提交成功用 adoptOptimisticCandidate 换成真实资产 id（轮询按 id 去重不重复），
+ * 失败用 removeOptimisticCandidate 移除；整体覆盖式 loadSceneCandidates 兜底。
+ */
+function insertOptimisticGeneratingCandidate(sceneId, listKey) {
+    if (!state.sceneCandidates) state.sceneCandidates = {};
+    if (!state.sceneCandidates[sceneId]) state.sceneCandidates[sceneId] = { images: [], videos: [] };
+    const list = state.sceneCandidates[sceneId][listKey] || [];
+    const tempId = `optimistic-${Date.now()}`;
+    list.unshift({ id: tempId, url: '', status: 0, selected: false, optimistic: true });
+    state.sceneCandidates[sceneId][listKey] = list;
+    rerender([Region.CANDIDATES]);
+    return tempId;
+}
+
+function adoptOptimisticCandidate(sceneId, listKey, tempId, realAssetId) {
+    if (realAssetId == null || realAssetId === '') return;
+    const list = state.sceneCandidates?.[sceneId]?.[listKey] || [];
+    const entry = list.find(item => item.id === tempId);
+    if (entry) {
+        entry.id = String(realAssetId);  // upsertGeneratingCandidate 按 String(id) 去重
+        entry.optimistic = false;
+    }
+}
+
+function removeOptimisticCandidate(sceneId, listKey, tempId) {
+    const bucket = state.sceneCandidates?.[sceneId];
+    if (!bucket || !Array.isArray(bucket[listKey])) return;
+    const next = bucket[listKey].filter(item => item.id !== tempId);
+    if (next.length === bucket[listKey].length) return;
+    bucket[listKey] = next;
+    rerender([Region.CANDIDATES]);
+}
+
+/**
  * 「直填生图」模式（直连）：完全绕过智能体，直接用文本框提示词调
  * POST /scene/{id}/generate-image（零 LLM 消耗）。mode='auto' 保留角色/场景参考图注入；
  * prompt 透传且后端优先采用（prompt or context['image_prompt']）。
  * 文本框预填当前分镜画面提示词（composeSceneImagePrompt，用户可编辑）。
- * 不往助手聊天区 push 任何消息、不弹框，消耗计入左下角算力提示行；
- * 图片结果直接出现在右侧候选区。提交后复用 pollSceneTaskStatus 轮询并回填候选区。
+ * 提交反馈不走聊天区：底部 toast 就近确认「已提交」，右侧候选区立即插入
+ * 「生成中」乐观占位卡，成功后由真实资产接管；消耗计入左下角算力提示行。
+ * 提交后复用 pollSceneTaskStatus 轮询并回填候选区。
  */
 async function sendDirectImage(current) {
     const sceneId = current.id;
-    if (!sceneId || isSceneAgentRunning(sceneId)) return;
+    if (!sceneId) return;
+    if (isSceneAgentRunning(sceneId)) {
+        showToast('当前分镜有任务正在处理中，请稍候', 'info');
+        return;
+    }
     // 生图提示词不能为空（文本框预填分镜画面提示词，预填为空时需手填）
     const prompt = (state.inputMessage || '').trim();
     if (!prompt) {
@@ -1143,8 +1196,10 @@ async function sendDirectImage(current) {
         return;
     }
 
-    // 仅占用 running 态（禁用发送按钮防重复提交），不往聊天区 push 任何消息，不弹框直接提交
+    // 占用 running 态（禁用发送按钮防重复提交）；toast 就近确认 + 候选区乐观占位卡即时反馈
     startSceneAgentRun(sceneId);
+    const optimisticId = insertOptimisticGeneratingCandidate(sceneId, 'images');
+    showToast('生图任务已提交，右侧候选区生成中', 'info');
     state.inputMessage = '';
     rerenderAgentPanel();
 
@@ -1159,12 +1214,15 @@ async function sendDirectImage(current) {
         if (result && result.success === false) {
             throw new Error(result.error || '提交失败');
         }
+        // 提交响应自带真实资产 id：乐观占位卡原地接管，后续轮询按同 id 去重不重复
+        adoptOptimisticCandidate(sceneId, 'images', optimisticId, result?.asset_ids?.[0]);
         recordPowerSpend(result, '生图');
         // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
     } catch (error) {
         // 提交阶段即被内容安全拒绝时，弹「内容违规提醒」弹框（带冷却去重）
+        removeOptimisticCandidate(sceneId, 'images', optimisticId);
         const submitMsg = (error && error.message != null && error.message !== '') ? String(error.message) : (error ? String(error) : '');
         const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
         if (cv && typeof cv.notify === 'function') {
@@ -1627,6 +1685,7 @@ async function handleAction(action, target) {
             const thinking = getThinkingParams();
             const submitResp = await api.generateFromScript(state.storyboardId, {
                 max_group_duration: state.maxGroupDuration || 15,
+                total_duration_multiplier: Number(state.totalDurationMultiplier) || 0,
                 force_medium_shot: state.forceMediumShot !== false,
                 no_bg_music: state.noBgMusic !== false,
                 split_multi_dialogue: state.splitMultiDialogue === true,
@@ -2345,6 +2404,39 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'replace-scene-voice') {
+        const scene = getCurrentScene();
+        if (!scene) return;
+        if (isDigitalHumanScene(scene)) {
+            showToast('对口型分镜不需要替换音色');
+            return;
+        }
+        if (!String(scene.videoUrl || '').trim()) {
+            showToast('请先生成或选中分镜视频');
+            return;
+        }
+        const prev = state.voiceReplaceBySceneId?.[scene.id];
+        const force = ['completed', 'failed', 'skipped', 'wait_confirm'].includes(String(prev?.status || ''));
+        try {
+            const data = await api.submitSceneVoiceReplace(scene.id, { force });
+            if (data.job) {
+                if (!state.voiceReplaceBySceneId) state.voiceReplaceBySceneId = {};
+                state.voiceReplaceBySceneId[scene.id] = data.job;
+            }
+            if (!data.success) {
+                showToast(data.message || '无法替换音色');
+                rerender([Region.LEFT_TAB_BODY]);
+                return;
+            }
+            showToast(data.reused ? '已在替换中' : '已开始替换音色');
+            rerender([Region.LEFT_TAB_BODY]);
+            pollVoiceReplace(scene.id);
+        } catch (error) {
+            showToast(error.message || '替换音色失败');
+        }
+        return;
+    }
+
     if (action === 'open-model-config') {
         state.showModelConfigModal = true;
         // 默认根据当前助手模式
@@ -2857,6 +2949,7 @@ export function bindEvents() {
             state.lastPowerSpend = null;
             // 分区刷新：左栏+预览+候选+时间轴，禁止整页 renderApp
             rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
+            hydrateVoiceReplace(sceneId);
             // 布局稳定后滚到当前缩略图（点击切镜与键盘一致）
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => scrollTimelineToScene(sceneId));
@@ -3117,6 +3210,7 @@ export function bindEvents() {
         // 切分镜（时长/模型上下文变化）→ 左下角提示行回到预估显示
         state.lastPowerSpend = null;
         rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
+        hydrateVoiceReplace(nextScene.id);
 
         // 双 rAF：等区域 patch 完成布局后再滚，避免 scrollLeft 算错 / 不滚动
         const targetId = nextScene.id;
@@ -3320,6 +3414,13 @@ export function bindEvents() {
             } else if (type === 'maxGroupDuration') {
                 const d = parseInt(val, 10);
                 if ([5, 8, 10, 15].includes(d)) state.maxGroupDuration = d;
+            } else if (type === 'totalDurationMultiplier') {
+                const m = parseFloat(val);
+                if ([0, 1, 2, 3].includes(m)) {
+                    state.totalDurationMultiplier = m;
+                    persistUiConfig().catch(() => {});
+                    rerenderModals();
+                }
             } else if (type === 'scriptDialogueLanguage') {
                 const useCustom = val === '**custom**';
                 state.scriptDialogueLanguageCustom = useCustom;

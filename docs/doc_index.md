@@ -75,6 +75,7 @@
 | [分镜组视频生成](video/shot_group_video_generation.md) | 拼接分镜提示词生成视频 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/IdjGdKPYQo1dzHx3jVecRI1znle) |
 | [分镜帧视频模式](video/shot_frame_video_mode.md) | 首帧模式 / 参考图模式 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Nskzd1JTiotAZ4xDgZIc0QEVnph) |
 | [网格合并视频生成](video/grid_merge_video_generation.md) | 多宫格图片合并后生成视频 | 待补充 |
+| [MiniMax H3 分镜一直生成中](video/minimax_h3_generating_stuck.md) | 完成信号看错接口 + DOWNLOADING 不切选中 + 前端占位卡/停轮询不重绘；回滚后按此文重做 | 待补充 |
 
 ---
 
@@ -114,6 +115,7 @@
 | [参考音频指南](audio/reference_audio_guide.md) | 参考音频使用方法 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Fgq0dyTP1oA7hxxMV6FcUGMOnRb) |
 | [对话组节点实现](audio/dialogue_group_node_implementation.md) | 对话组技术实现 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/UUcmd9v2MoJPkbx0ztCcZlW7nef) |
 | [TTS 节点实现](audio/text_to_speech_node_implementation.md) | TTS 技术实现 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/YcehdCoeKoJ7DHxityzcBRRLnqd) |
+| [成片对白音色替换](storyboard/storyboard_video_voice_replace.md) | UVR 分离人声后 ASR 有序切分 + Vevo2 替换成片随机音色 | 待补充 |
 
 ---
 

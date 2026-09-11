@@ -107,6 +107,8 @@ Agent 模式为默认推荐模式，走 LLM 对话流程，后端 PM Agent 可�
 
 Agent 模式中的视频生成能力由 `enterprise/` 模块提供。企业版加载后，`enterprise/sops/sop-video-generation.md` 和 `enterprise/skills/marketing-video/SKILL.md` 会覆盖开源目录中的同名占位 SOP/skill，并注册 `generate_text_to_video`、`image_to_video` 工具。社区版没有视频生成工具，开源目录中的 `sop-video-generation` 只负责提示用户视频生成功能为商业版专属。
 
+企业版通过 `SopLoader.add_sops_dir()` 注册的 SOP 目录（含 `sop-video-clone`）**仅注入营销链路（session_type=2）**：营销 PM 的 `SopLoader` 默认合并额外目录，而剧本创作链路（script_writer.html，session_type=1）初始化 `SopLoader` 时传入 `include_extra_sops=False`，其 system prompt 的 `{{SOP_INDEX}}` 与 `load_sop` 工具均不可见企业版营销 SOP。否则剧本 PM 会向用户宣称"可生成营销视频/视频克隆"，实际却在 `call_agent` 阶段被 `allowed_expert_types=["script"]` 拦截（修复前事故：剧本会话 2a19d838 的欢迎语错误承诺营销视频能力）。
+
 企业版 Agent 模式中的视频请求分为普通视频和营销视频：
 
 - **普通视频**：用户只描述主体、动作、场景或镜头，例如"生成一个视频，一个女孩在跳舞"、"赛博城市航拍镜头"。这类请求应直接进入视频生成流程，不应询问商品展示、广告宣传、品牌宣传等营销用途。
@@ -673,7 +675,7 @@ Agent 模式的消息通过 PM Agent（`pm_agent.py`）处理：
 - PM Agent 根据用户意图委托专家（如 `marketing-image` 专家生图）
 - 专家返回结果后，PM Agent 自动提取图片 URL 并注入对话历史（多模态消息）
 - PM Agent 通过 `call_agent` 委托专家时会透传本次任务的 `image_urls`、`audio_urls`、`video_urls`；专家会以 `[图片N]`、`[音频N]`、`[视频N]` 标签注入上下文，避免数字人等任务只知道"用户已提供音频"但拿不到真实 URL
-- **图片标签不等于图片内容**：注入专家上下文的 `[图片N]（URL: ...，注意：此为图片地址文本，不包含图片内容）` 只是地址文本，LLM 看不到图片本身。需要看图的专家（`image-understanding`）必须先调用 `fetch_image_as_base64(image_url)`，工具成功后 base64 图片才会作为多模态 user 消息注入对话（`expert_agent.py` 的 deferred 多模态注入机制）。2026-09-01 修复：此前 `image-understanding/SKILL.md` 残留旧设计的"正常情况下你能直接看到图片内容"表述（旧版曾直接注入 base64，2026-05-19 提交 20ef0a68 改为按需工具获取），导致模型不调工具就编造图片描述（实际为大虾面被描述成"红烧牛肉面"）；现 SKILL.md、工具描述与标签文案三处均已明确"分析前必须先获取图片数据"
+- **图片标签不等于图片内容**：注入专家上下文的 `[图片N]（URL: ...，注意：此为图片地址文本，不包含图片内容）` 只是地址文本，LLM 看不到图片本身。需要看图的专家（`image-understanding`）必须先调用 `fetch_image_as_base64(image_url)`，工具成功后 base64 图片才会作为多模态 user 消息注入对话（`expert_agent.py` 的 deferred 多模态注入机制）。2026-09-01 修复：此前 `image-understanding/SKILL.md` 残留旧设计的"正常情况下你能直接看到图片内容"表述（旧版曾直接注入 base64，2026-05-19 提交 20ef0a68 改为按需工具获取），导致模型不调工具就编造图片描述（实际为大虾面被描述成"红烧牛肉面"）；现 SKILL.md、工具描述与标签文案三处均已明确"分析前必须先获取图片数据"。2026-09-09 起，注入历史的图片只保留最近 `EXPERT_HISTORY_MAX_IMAGES`（默认 6）张，更旧的 `image_url` 会被 `ExpertAgent._prune_history_images()` 替换为文本占位（防止多图累积击穿 VL 模型上下文，事故见 `docs/backend/incidents/2026-09-09-asset-readiness-context-overflow.md`）
 - Agent 前端发送任务前会等待音频上传完成，并只把真实 HTTP 音频 URL 写入 `audio_urls`；上传完成后会同步更新 `mediaItems.serverUrl` 和 `mediaItems.fileUrl`
 - 数字人 RunningHub v1 驱动提交 node 185 的音频前会检查音频地址：`localhost`、内网地址和本地文件路径会先上传到 RunningHub 文件存储，并改用返回的 `openapi/...` fileName；已经是 `openapi/...` 的 RunningHub 文件名会直接复用，公网 URL 保持原值
 - 通过 `ask_user` 工具实现向用户提问的交互

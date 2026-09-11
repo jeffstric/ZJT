@@ -239,6 +239,25 @@ CHARACTER_IMAGE_HISTORY_MAX_ENTRIES = 20
 # （与 LLMModel.DEEPSEEK_V4_FLASH_VISION_EXP 同值；此处用字面量避免前向引用）
 VL_MODEL_PREFERRED_DEFAULT = 'deepseek-v4-flash-vision-exp'
 
+# ===== Agent LLM 调用 token 控制 =====
+# max_tokens 静态保险丝：DB model.max_output_tokens 可能写入接近 context_window 量级的
+# 数值（如 deepseek-v4-flash-vision-exp 为 384000），全量透传会使 prompt+completion
+# 超模型上下文上限报 400（事故：messages 744825 + completion 384000 > 1048576）。
+# 该上限只降不升；真正的防超限由动态收缩完成（见 agents/output_token_budget.py）：
+# max_tokens = min(DB 值, 本上限, context_window - 估算输入 - 安全余量)。
+AGENT_LLM_MAX_OUTPUT_TOKENS_CAP = 32768
+# 动态收缩的安全余量：覆盖"估算输入"到实际调用之间单轮新增的输入
+# （工具结果、新注入图片、tool schema 等未计入字符估算的部分）。
+AGENT_LLM_CONTEXT_SAFETY_MARGIN_TOKENS = 65536
+# 动态收缩的输出下限：上下文接近占满时仍保证模型能短回复（如 ask_user / 收尾），
+# 避免算出 0 或负数导致 API 直接拒绝。
+AGENT_LLM_MIN_OUTPUT_TOKENS = 4096
+# 专家对话历史中保留的最大图片数（fetch_image_as_base64 注入的多模态 user 消息）。
+# VL 模型对图片 token 计费很高（实测 deepseek-v4-flash-vision-exp 单图约 4~5 万 tokens），
+# 无上限累积会击穿上下文（事故：16 张图 messages 达 74 万 tokens）。
+# 超出后最旧图片替换为文本占位，LLM 需要时可重新调用 fetch_image_as_base64 获取。
+EXPERT_HISTORY_MAX_IMAGES = 6
+
 # 剧本创作等入口无偏好时的默认生图模型：GPT Image 2（short_key=gpt-image-2）
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = TaskTypeId.GPT_IMAGE_2_EDIT
 
@@ -290,6 +309,10 @@ WORLD_IMPORT_JOB_TTL = 3600
 WORLD_IMPORT_JOB_CLEANUP_INTERVAL = 300
 # 同时进行的导入任务上限（跨 worker 统计），超限返回 429
 WORLD_IMPORT_JOB_MAX_CONCURRENT = 2
+# zip 内所有 entry 声明的未压缩总大小上限，超过直接拒绝导入（防 zip 炸弹写满磁盘）
+WORLD_IMPORT_MAX_TOTAL_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024   # 2 GB
+# 单个 entry 声明的未压缩大小上限
+WORLD_IMPORT_MAX_ENTRY_UNCOMPRESSED_BYTES = 512 * 1024 * 1024        # 512 MB
 
 # ===== 图片 URL 过期保护（签名 URL 自动刷新/转存）=====
 # 探测只针对「非自有 CDN」的第三方 URL（自有 CDN 走重签名，不探测）。
@@ -304,6 +327,14 @@ SYNC_TASK_STALE_TIMEOUT_BY_DRIVER = {
     DriverImplementation.SEEDREAM5_VOLCENGINE_V1: 180,
     DriverImplementation.SEEDREAM5_VOLCENGINE_OVERSEA_V1: 180,
 }
+
+# ProcessPool worker initializer 看门狗超时（秒）。
+# fork 只复制调用线程，但会复制所有锁的当前状态：若 fork 瞬间父进程其他线程
+# 正持有某把锁，子进程会继承一把永远无人释放的锁，initializer 卡死后该 worker
+# 永久占用进程池名额（事故 2026-09-08：19:20 重启后 19:50 任务洪峰一次性 fork
+# 的 12 个 worker 中 11 个死锁，全部同步任务退化为单 worker 串行）。
+# 超时未完成初始化的 worker 强制退出，由父进程 submit 路径清理死亡进程并补 fork。
+SYNC_WORKER_INIT_WATCHDOG_TIMEOUT = 90
 
 
 def _parse_optional_timeout(value) -> Optional[int]:
@@ -817,6 +848,26 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.GPT_IMAGE_COMMON_SITE5_V1,  # ZJT API 站点5
     ],
 
+    # GPT Image 2.5 相关驱动（sunburst / flare 两个独立模型，各 7 个实现方：多米 + site_0~5）
+    DriverKey.GPT_IMAGE_2_5_SUNBURST: [
+        DriverImplementation.DUOMI_GPT_IMAGE_2_5_SUNBURST_V1,  # 多米（默认）
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE0_V1,  # ZJT API 官方站点
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE1_V1,  # 聚合站点1
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE2_V1,  # 聚合站点2
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE3_V1,  # 聚合站点3
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE4_V1,  # 聚合站点4
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_SUNBURST_SITE5_V1,  # 聚合站点5
+    ],
+    DriverKey.GPT_IMAGE_2_5_FLARE: [
+        DriverImplementation.DUOMI_GPT_IMAGE_2_5_FLARE_V1,  # 多米（默认）
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE0_V1,  # ZJT API 官方站点
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE1_V1,  # 聚合站点1
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE2_V1,  # 聚合站点2
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE3_V1,  # 聚合站点3
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1,  # 聚合站点4
+        DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1,  # 聚合站点5
+    ],
+
     # Grok 相关驱动
     DriverKey.GROK_IMAGE_TO_VIDEO: [
         DriverImplementation.GROK_DUOMI_V1,         # 使用多米供应商的 Grok 版本
@@ -864,6 +915,9 @@ DRIVER_IMPLEMENTATION_MAPPING = {
 
     # Qwen Image Edit（空壳任务，待接入实现方）
     DriverKey.QWEN_IMAGE_EDIT: [],
+
+    # Z-index（空壳任务，待接入实现方）
+    DriverKey.Z_INDEX_IMAGE_EDIT: [],
 
 }
 
@@ -1387,6 +1441,30 @@ class ScriptSplitConstants:
     # 上下文携带的上一段尾部镜头摘要数量
     HISTORY_TAIL_SHOTS = 2
 
+    # ---- 总分镜时长控制（见 docs/script/script_split_total_duration_control.md）----
+    # 剧本基准时长估算：中文旁白/对话朗读速率（字/秒）
+    SCRIPT_DURATION_CJK_CHARS_PER_SECOND = 4.5
+    # 拉丁字符朗读速率（字符/秒，统计不含空格）
+    SCRIPT_DURATION_LATIN_CHARS_PER_SECOND = 11.0
+    # 剧本基准时长下限（秒），避免短文本估出过小预算
+    SCRIPT_DURATION_MIN_SECONDS = 10.0
+    # total_duration_multiplier 合法范围；0/缺省表示不限制总时长
+    TOTAL_DURATION_MULTIPLIER_MIN = 0.5
+    TOTAL_DURATION_MULTIPLIER_MAX = 10.0
+    # 归一化允许超出目标的容差比例（LLM 结果在容差内不干预）
+    TOTAL_DURATION_TOLERANCE = 0.15
+    # 归一化按比例压缩时单镜头时长下限（秒）
+    TOTAL_DURATION_SHOT_MIN_SECONDS = 1.5
+    # 归一化放大时单镜头时长上限（秒）：增加总时长靠增加镜头数而非拉长
+    # 单镜头（与 prompt 引导的 3~8 秒正常叙事节奏配套，留少量余量）
+    TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS = 10.0
+    # 单段时长预算下限（秒）：至少容纳 2 个最短镜头，避免短段预算被压到无法拆分
+    TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS = 3.0
+    # 归一化兜底合并相邻镜头的迭代上限（防极端情况死循环）
+    TOTAL_DURATION_MERGE_MAX_ITERATIONS = 200
+    # 归一化放大方向缺口再分配（水床补齐）的迭代上限
+    TOTAL_DURATION_EXPAND_MAX_ITERATIONS = 8
+
     # ---- 来源类型 ----
     SOURCE_TYPE_VIDEO_WORKFLOW = "video_workflow"
     SOURCE_TYPE_STORYBOARD = "storyboard"
@@ -1534,6 +1612,107 @@ class StoryboardAudioGenerateConstants:
     SKIP_REASON_NARRATION_WITHOUT_VOICE = "narration_without_voice"
     SKIP_REASON_NO_DIALOGUE = "no_dialogue"
     SKIP_REASON_USES_VIDEO_AUDIO = "uses_video_audio"
+
+
+class VoiceReplaceJobStatus:
+    """video_voice_replace_job.status 取值。"""
+    QUEUED = "queued"
+    ASR = "asr"
+    MATCHING = "matching"
+    WAIT_CONFIRM = "wait_confirm"
+    CONVERTING = "converting"
+    MUXING = "muxing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class VoiceReplaceConstants:
+    """成片对白音色替换：对齐阈值、超时、本机推理地址。"""
+    _CONSTANT_GROUP = True
+
+    SCORE_AUTO = 0.45
+    SCORE_LLM = 0.25
+    UNMATCHED_ASR_RATIO_CONFIRM = 0.40
+    SUBSTRING_SCORE = 1.0
+    WEIGHT_RECALL = 0.4
+    WEIGHT_PRECISION = 0.4
+    WEIGHT_PINYIN_RECALL = 0.2
+    WINDOW_GAP_PENALTY = 0.01
+
+    METHOD_SINGLE_SPEAKER = "single_speaker"
+    METHOD_TEXT = "text"
+    METHOD_PINYIN = "pinyin"
+    METHOD_ORDER = "order"
+    METHOD_SKIPPED = "skipped"
+
+    STATUS_AUTO = "auto"
+    STATUS_NEEDS_LLM = "needs_llm"
+    STATUS_WAIT_CONFIRM = "wait_confirm"
+    STATUS_SKIP = "skip"
+
+    SKIP_NO_DIALOGUE = "no_dialogue"
+    SKIP_NO_SPEECH = "no_speech"
+    SKIP_NO_VIDEO = "no_video"
+    SKIP_DIGITAL_HUMAN = "digital_human"
+    SKIP_MISSING_REFERENCE_AUDIO = "missing_reference_audio"
+    SKIP_ALREADY_COMPLETED = "already_completed"
+
+    SOURCE_STORYBOARD_SCENE = "storyboard_scene"
+    SOURCE_WORKFLOW_NODE = "workflow_node"
+
+    IN_FLIGHT_STATUSES = (
+        VoiceReplaceJobStatus.QUEUED,
+        VoiceReplaceJobStatus.ASR,
+        VoiceReplaceJobStatus.MATCHING,
+        VoiceReplaceJobStatus.CONVERTING,
+        VoiceReplaceJobStatus.MUXING,
+    )
+
+    # 推理服务兜底地址（公网入口）。生产可经 yaml voice_replace.* 或环境变量覆盖；禁止前端直连。
+    ASR_BASE_URL = "http://47.98.190.124:60000"
+    ASR_SEGMENTS_PATH = "/api/v1/asr_segments"
+    UVR_BASE_URL = "http://47.98.190.124:60001"
+    UVR_SEPARATE_PATH = "/api/v1/uvr"
+    # VC 后端：Vevo2（Amphion style-preserved VC，效果优于 Seed-VC，主力）。
+    VEVO2_BASE_URL = "http://47.98.190.124:60002"
+    VEVO2_CONVERT_PATH = "/api/v1/convert"
+    # Seed-VC（Gradio）保留作回退。
+    SEEDVC_BASE_URL = "http://150.158.44.98:17860"
+    SEEDVC_PREDICT_PATH = "/gradio_api/call/predict"
+
+    ASR_TIMEOUT = 60
+    UVR_TIMEOUT = 180
+    VEVO2_TIMEOUT = 300
+    SEEDVC_TIMEOUT = 180
+    FFMPEG_TIMEOUT = 120
+    HTTP_CONNECT_TIMEOUT = 10
+    DOWNLOAD_TIMEOUT = 120
+    SEEDVC_MAX_CONCURRENCY = 1
+
+    CROSSFADE_MS = 60
+    # 切段送 VC 时前后各留的上下文（秒）。~1.5s 纯对白会转糊；整段含静音又会把环境声变成胡话。
+    VC_CONTEXT_PAD_SECONDS = 1.5
+    SCHEDULER_INTERVAL_SECONDS = 8
+    JOB_BATCH_LIMIT = 1
+
+    # Vevo2 flow-matching 采样步数（官方默认 32）。
+    VEVO2_FM_STEPS = 32
+    SEEDVC_STEPS = 30
+    SEEDVC_LENGTH = 1.0
+    SEEDVC_CLARITY = 0.5
+    SEEDVC_SIMILARITY = 0.5
+    SEEDVC_TOP_P = 0.9
+    SEEDVC_TEMPERATURE = 1.0
+    SEEDVC_REPETITION = 1.0
+
+    AUDIO_SAMPLE_RATE = 44100
+    AUDIO_CHANNELS = 1
+    WORK_SUBDIR = "voice_replace"
+    RESULT_FILENAME = "result.mp4"
+    EXTRACTED_WAV = "source.wav"
+    UVR_VOCALS_FILENAME = "vocals.wav"
+    UVR_INSTRUMENTAL_FILENAME = "instrumental.wav"
 
 
 class EmotionVectorConstants:

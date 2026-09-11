@@ -11,7 +11,7 @@ import zipfile
 import tempfile
 import logging
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import List, Dict, Optional, Any, Set, Tuple
 from config.constant import (
     FilePathConstants,
@@ -20,6 +20,8 @@ from config.constant import (
     ENTITY_PROTECTED_META_FIELDS,
     CHARACTER_IMAGE_HISTORY_FIELD,
     CHARACTER_IMAGE_HISTORY_MAX_ENTRIES,
+    WORLD_IMPORT_MAX_TOTAL_UNCOMPRESSED_BYTES,
+    WORLD_IMPORT_MAX_ENTRY_UNCOMPRESSED_BYTES,
 )
 from utils.project_path import get_project_root
 
@@ -1599,6 +1601,60 @@ class FileManager:
         else:
             return data
 
+    @staticmethod
+    def _is_safe_path_component(value: str) -> bool:
+        """
+        校验路径分量（user_id / world_id 等）是否安全。
+
+        拒绝空值、"."、".."、含目录分隔符（/ 或 \\）、绝对路径及 Windows 盘符前缀，
+        防止将分量拼入路径时发生目录位移。
+        """
+        if not value or value in ('.', '..'):
+            return False
+        if '/' in value or '\\' in value:
+            return False
+        if PurePosixPath(value).is_absolute():
+            return False
+        if re.match(r'^[A-Za-z]:', value):
+            return False
+        return True
+
+    @staticmethod
+    def _safe_zip_entry_file(dest_dir: Path, entry_filename: str) -> Optional[Path]:
+        """
+        校验 zip entry 文件名并返回目标文件路径（Zip Slip 防护）。
+
+        拒绝空名、目录名（/ 结尾）、反斜杠分隔（zip 规范分隔符为 /）、
+        绝对路径、含 ".." 段及 Windows 盘符前缀的文件名；
+        解析 realpath 后用 commonpath 做最终边界校验
+        （参照 api/storyboard.py _remove_deleted_storyboard_asset_file 的实现）。
+
+        Args:
+            dest_dir: 预期落盘目录
+            entry_filename: zip entry 中剥离前缀后的文件名
+
+        Returns:
+            安全的目标文件路径；非法时返回 None
+        """
+        if not entry_filename or entry_filename.endswith('/'):
+            return None
+        if '\\' in entry_filename:
+            return None
+        p = PurePosixPath(entry_filename)
+        if p.is_absolute() or '..' in p.parts:
+            return None
+        if re.match(r'^[A-Za-z]:', entry_filename):
+            return None
+        dest_file = dest_dir / entry_filename
+        try:
+            resolved = Path(os.path.realpath(dest_file))
+            allowed_dir = Path(os.path.realpath(dest_dir))
+            if os.path.commonpath([str(resolved), str(allowed_dir)]) != str(allowed_dir):
+                return None
+        except (ValueError, OSError):
+            return None
+        return dest_file
+
     def import_world(self, user_id: str, world_id: str, zip_path: str) -> Dict[str, Any]:
         """
         从 zip 包导入世界数据
@@ -1611,16 +1667,43 @@ class FileManager:
         Returns:
             导入结果统计
         """
-        base_path = self._get_user_world_path(user_id, world_id)
-        self._ensure_directories(user_id, world_id)
-
-        upload_base = self.base_dir / UploadPathConstants.UPLOAD_ROOT
         result = {
             "scripts": 0, "characters": 0, "locations": 0, "props": 0,
             "worlds": 0, "images": 0, "audios": 0, "errors": []
         }
 
+        # 0. 安全预检：user_id / world_id 不允许携带路径分量（须在创建目录前拦截）
+        if not self._is_safe_path_component(str(user_id)) or not self._is_safe_path_component(str(world_id)):
+            result["errors"].append(f"非法的 user_id/world_id: {user_id!r}/{world_id!r}")
+            logger.warning(f"世界导入拒绝：非法 user_id/world_id {user_id!r}/{world_id!r}")
+            return result
+
+        base_path = self._get_user_world_path(user_id, world_id)
+        self._ensure_directories(user_id, world_id)
+
+        upload_base = self.base_dir / UploadPathConstants.UPLOAD_ROOT
+
         with zipfile.ZipFile(zip_path, 'r') as zipf:
+            # 0.5 安全预检：解压总量与单 entry 上限（防 zip 炸弹写满磁盘）
+            infolist = zipf.infolist()
+            total_uncompressed = sum(zi.file_size for zi in infolist)
+            if total_uncompressed > WORLD_IMPORT_MAX_TOTAL_UNCOMPRESSED_BYTES:
+                result["errors"].append(
+                    f"zip 解压总量 {total_uncompressed} 字节超过上限 "
+                    f"{WORLD_IMPORT_MAX_TOTAL_UNCOMPRESSED_BYTES} 字节，已拒绝导入"
+                )
+                logger.warning(f"世界导入拒绝：zip 解压总量超限 {total_uncompressed}")
+                return result
+            oversized = [zi.filename for zi in infolist
+                         if zi.file_size > WORLD_IMPORT_MAX_ENTRY_UNCOMPRESSED_BYTES]
+            if oversized:
+                result["errors"].append(
+                    f"zip 内 {len(oversized)} 个 entry 超过单文件上限 "
+                    f"{WORLD_IMPORT_MAX_ENTRY_UNCOMPRESSED_BYTES} 字节: {oversized[:5]}，已拒绝导入"
+                )
+                logger.warning(f"世界导入拒绝：单 entry 超限 {oversized[:5]}")
+                return result
+
             # 1. 读取 image_mapping.json
             image_mapping = {}
             if "image_mapping.json" in zipf.namelist():
@@ -1643,8 +1726,6 @@ class FileManager:
                 if not zip_name.startswith('images/'):
                     continue
                 filename = zip_name[len('images/'):]
-                if not filename or filename.endswith('/'):
-                    continue
                 if filename not in image_mapping:
                     continue
 
@@ -1655,8 +1736,12 @@ class FileManager:
                     continue
                 image_type = match.group(1)
                 dest_dir = upload_base / image_type / "pic"
+                # Zip Slip 防护：拒绝越界文件名
+                dest_file = self._safe_zip_entry_file(dest_dir, filename)
+                if dest_file is None:
+                    result["errors"].append(f"图片导入失败 {filename}: 非法文件路径")
+                    continue
                 dest_dir.mkdir(parents=True, exist_ok=True)
-                dest_file = dest_dir / filename
 
                 if not dest_file.exists():
                     try:
@@ -1673,14 +1758,16 @@ class FileManager:
                 if not zip_name.startswith('audios/'):
                     continue
                 audio_filename = zip_name[len('audios/'):]
-                if not audio_filename or audio_filename.endswith('/'):
-                    continue
                 if audio_filename not in audio_mapping:
                     continue
 
                 dest_dir = upload_base / UploadPathConstants.CHARACTER_VOICE_DIR
+                # Zip Slip 防护：拒绝越界文件名
+                dest_file = self._safe_zip_entry_file(dest_dir, audio_filename)
+                if dest_file is None:
+                    result["errors"].append(f"音频导入失败 {audio_filename}: 非法文件路径")
+                    continue
                 dest_dir.mkdir(parents=True, exist_ok=True)
-                dest_file = dest_dir / audio_filename
 
                 if not dest_file.exists():
                     try:
@@ -1720,12 +1807,17 @@ class FileManager:
 
                     # 写入文件
                     dest_dir = base_path / subdir
-                    dest_dir.mkdir(parents=True, exist_ok=True)
                     # 对于 worlds 子目录，重写文件名为目标世界 ID
                     actual_filename = filename
                     if subdir == 'worlds':
                         actual_filename = f"world_{world_id}.json"
-                    dest_file = dest_dir / actual_filename
+                    # Zip Slip 防护：basename 强制截断目录部分，再校验越界
+                    actual_filename = os.path.basename(actual_filename.replace('\\', '/'))
+                    dest_file = self._safe_zip_entry_file(dest_dir, actual_filename)
+                    if dest_file is None:
+                        result["errors"].append(f"导入失败 {zip_name}: 非法文件路径")
+                        continue
+                    dest_dir.mkdir(parents=True, exist_ok=True)
                     dest_file.write_text(
                         json.dumps(data, ensure_ascii=False, indent=2),
                         encoding='utf-8'

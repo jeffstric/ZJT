@@ -21,11 +21,18 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Any
 from multiprocessing import Manager
 
-from config.constant import get_sync_task_stale_timeout
+from config.constant import (
+    SYNC_WORKER_INIT_WATCHDOG_TIMEOUT,
+    get_sync_task_stale_timeout,
+)
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# worker 子进程内：initializer 完成标志，看门狗据此判断初始化是否卡死。
+# 父进程从不 set 它，fork 继承的是未触发状态，子进程内无死锁风险。
+_sync_worker_init_done = threading.Event()
 
 
 @dataclass
@@ -40,12 +47,63 @@ class SyncTaskResult:
 
 
 
+def _reset_inherited_logging_locks() -> None:
+    """重建 fork 继承的 logging 锁。必须在子进程任何日志调用之前执行。
+
+    fork 只复制调用线程，但会复制所有锁的当前状态：若 fork 瞬间父进程其他
+    线程正持有某把锁，子进程会继承一把永远无人释放的锁。CPython 仅对
+    logging 自身注册了 at-fork 重置，覆盖不了其他基础设施的锁；这里防御性
+    重建模块锁与全部 handler 锁，保证 initializer 内的日志调用永不因继承锁
+    卡死（事故 2026-09-08：池 worker fork 后大面积死锁，卡死的七牛上传连
+    HTTP 请求都未发出，上层只能等 120s 超时）。
+    """
+    logging._lock = threading.RLock()
+    seen = set()
+    handlers = list(logging.getLogger().handlers)
+    for name in list(logging.root.manager.loggerDict):
+        handlers.extend(getattr(logging.getLogger(name), "handlers", []))
+    for handler in handlers:
+        if id(handler) in seen:
+            continue
+        seen.add(id(handler))
+        try:
+            handler.createLock()
+        except Exception:
+            # 个别 handler 重建失败不阻断初始化；真正的卡死由看门狗兜底
+            pass
+
+
+def _start_init_watchdog() -> None:
+    """initializer 看门狗：超时未完成初始化则强制退出当前 worker 进程。
+
+    fork 继承的死锁无法逐一枚举重置（DB 连接池、第三方 SDK 内部锁等）。
+    卡死的 worker 会永久占用进程池名额且自愈无门；看门狗超时自杀后，
+    父进程 submit 路径的 _purge_dead_workers_locked() 会清理死亡进程，
+    原生 _adjust_process_count 随即补 fork，形成自愈闭环。
+    """
+
+    def _watchdog() -> None:
+        if not _sync_worker_init_done.wait(timeout=SYNC_WORKER_INIT_WATCHDOG_TIMEOUT):
+            os._exit(70)
+
+    threading.Thread(
+        target=_watchdog,
+        name="sync-worker-init-watchdog",
+        daemon=True,
+    ).start()
+
+
 def _enterprise_sync_worker_init() -> None:
     """ProcessPool 子进程 initializer：注入商业 Provider + 许可证 runtime。
 
     子进程不继承父进程的 register_provider / _manager 等模块全局状态。
     未初始化时 face_mask 会静默走社区 skip，多密钥池也会退化为单密钥。
+
+    顺序约束：锁重建必须先于一切日志调用；看门狗必须先于一切可能卡死的
+    初始化步骤——fork 继承的死锁只有两种出口：主动重置 / 超时自杀。
     """
+    _reset_inherited_logging_locks()
+    _start_init_watchdog()
     try:
         from config.constant import Edition
         if Edition.is_community():
@@ -66,6 +124,8 @@ def _enterprise_sync_worker_init() -> None:
             "[SyncTaskExecutor] enterprise background bootstrap failed (pid=%s)",
             os.getpid(),
         )
+    finally:
+        _sync_worker_init_done.set()
 
 
 def _execute_sync_task(task_id: int, ai_tool_type: int, worker_pids=None) -> SyncTaskResult:
@@ -473,6 +533,41 @@ class SyncTaskExecutor:
         self._handle_result_then_cleanup(result)
         return True
 
+    def _purge_dead_workers_locked(self) -> None:
+        """清理已死亡的池 worker（须持 _state_lock 调用）。
+
+        Python 3.10 的 ProcessPoolExecutor 不会回收死亡 worker 的名额：
+        submit 只按 len(_processes) < max_workers 补 fork。initializer 看门狗
+        自杀（或其他原因退出）的 worker 若不清理，池容量会永久缩水、任务
+        逐渐堆积。清理后若一个活 worker 都不剩，设 _pool_broken 走既有
+        _rebuild_pool_locked 全量重建（rebuild 会取消队列任务，不能轻动）。
+        """
+        executor = self._executor
+        if executor is None:
+            return
+        processes = getattr(executor, "_processes", None)
+        if not processes:
+            return
+        dead_pids = []
+        for pid, proc in list(processes.items()):
+            try:
+                alive = proc.is_alive()
+            except Exception:
+                # 状态未知时保守视为存活，避免误触发全量重建
+                alive = True
+            if not alive:
+                dead_pids.append(pid)
+        for pid in dead_pids:
+            processes.pop(pid, None)
+        if dead_pids:
+            logger.warning(
+                "[SyncTaskExecutor] Purged %d dead pool worker(s): %s",
+                len(dead_pids),
+                dead_pids,
+            )
+            if not processes:
+                self._pool_broken = True
+
     def submit(self, task_id: int, ai_tool_type: int, implementation_name: str = None) -> bool:
         """
         提交同步任务到进程池
@@ -486,6 +581,10 @@ class SyncTaskExecutor:
             bool: 是否提交成功
         """
         with self._state_lock:
+            if self._running:
+                # 先清理死亡 worker，保证下方补 fork / rebuild 判断基于活进程数
+                self._purge_dead_workers_locked()
+
             if self._pool_broken and self._running:
                 self._rebuild_pool_locked()
 

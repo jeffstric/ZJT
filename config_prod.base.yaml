@@ -165,6 +165,13 @@ asr:
   api_url: "http://47.98.190.124:60000"
   enabled: true
 
+# 成片对白音色替换推理服务（公网入口，前端禁止直连；环境变量可覆盖）
+voice_replace:
+  asr_base_url: "http://47.98.190.124:60000"
+  uvr_base_url: "http://47.98.190.124:60001"
+  vevo2_base_url: "http://47.98.190.124:60002"
+  seedvc_base_url: "http://150.158.44.98:17860"
+
 test_mode:
   enabled: false
   mock_videos:
@@ -230,6 +237,11 @@ file_storage:
 
 zjt:
   token: ""
+
+# Sentry 错误监控（统一 DSN，所有生产部署共用；用户配置 config_prod.yml 可覆盖）
+sentry:
+  dsn: "https://b78e7bd086738180e4714333d8f8a88a@sentry.perseids.cn/6"
+  environment: "production"
 
 # 每日签到配置
 checkin:

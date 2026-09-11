@@ -5,6 +5,7 @@ ExpertAgent 单元测试
 """
 import os
 import sys
+import json
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -182,6 +183,145 @@ class TestFormatMessagesForApi(TestExpertAgent):
         messages = agent._format_messages_for_api()
         self.assertEqual(messages[1]["role"], "assistant")
         self.assertEqual(messages[1]["content"], "None")
+
+
+class TestPruneHistoryImages(TestExpertAgent):
+    """测试 _prune_history_images：历史中图片只保留最近 N 张，旧图替换为文本占位"""
+
+    def _multimodal_msg(self, urls):
+        content = []
+        for url in urls:
+            content.append({"type": "text", "text": f"[系统注入] 以下是工具成功获取的图片（URL: {url}）："})
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{url}"}})
+        return {"role": "user", "content": content}
+
+    def test_below_limit_noop(self):
+        agent = self._create_agent()
+        agent.conversation_history = [self._multimodal_msg(["a.png", "b.png"])]
+        agent._prune_history_images(max_images=6)
+        parts = agent.conversation_history[0]["content"]
+        self.assertEqual([p["type"] for p in parts], ["text", "image_url", "text", "image_url"])
+
+    def test_prune_oldest_beyond_limit(self):
+        agent = self._create_agent()
+        # 两条多模态消息共 8 张图（4+4），保留最近 6 张 → 最旧 2 张被替换
+        agent.conversation_history = [
+            self._multimodal_msg(["1.png", "2.png", "3.png", "4.png"]),
+            {"role": "assistant", "content": "ok"},
+            self._multimodal_msg(["5.png", "6.png", "7.png", "8.png"]),
+        ]
+        agent._prune_history_images(max_images=6)
+
+        first = agent.conversation_history[0]["content"]
+        self.assertEqual(first[1]["type"], "text")  # 1.png 已移除
+        self.assertIn("fetch_image_as_base64", first[1]["text"])
+        self.assertEqual(first[3]["type"], "text")  # 2.png 已移除
+        self.assertEqual(first[5]["type"], "image_url")  # 3.png 保留
+        self.assertEqual(first[7]["type"], "image_url")  # 4.png 保留
+
+        second = agent.conversation_history[2]["content"]
+        self.assertTrue(all(p["type"] == ("text" if i % 2 == 0 else "image_url")
+                            for i, p in enumerate(second)))
+
+    def test_non_user_and_string_content_untouched(self):
+        agent = self._create_agent()
+        agent.conversation_history = [
+            {"role": "assistant", "content": [{"type": "image_url", "image_url": {"url": "x"}}]},
+            {"role": "user", "content": "plain text"},
+        ]
+        agent._prune_history_images(max_images=0)
+        self.assertEqual(agent.conversation_history[0]["content"][0]["type"], "image_url")
+        self.assertEqual(agent.conversation_history[1]["content"], "plain text")
+
+    def test_idempotent(self):
+        agent = self._create_agent()
+        agent.conversation_history = [self._multimodal_msg([f"{i}.png" for i in range(8)])]
+        agent._prune_history_images(max_images=6)
+        snapshot = [dict(p) for p in agent.conversation_history[0]["content"]]
+        agent._prune_history_images(max_images=6)
+        self.assertEqual(agent.conversation_history[0]["content"], snapshot)
+
+
+class TestFetchImageResultStripped(TestExpertAgent):
+    """fetch_image_as_base64 的 base64 不落 tool 历史，仅通过多模态 user 消息注入"""
+
+    def test_base64_stripped_from_tool_history(self):
+        agent = self._create_agent(allowed_tools=["fetch_image_as_base64"])
+        agent.tool_executor.execute_tool = MagicMock(return_value={
+            "success": True,
+            "base64_data_url": "data:image/jpeg;base64," + "A" * 5000,
+            "size_kb": 4,
+            "message": "图片已成功加载",
+        })
+
+        tool_call = MagicMock()
+        tool_call.id = "tc1"
+        tool_call.function.name = "fetch_image_as_base64"
+        tool_call.function.arguments = json.dumps({"image_url": "/upload/x.png"})
+        message = MagicMock()
+        message.tool_calls = [tool_call]
+        message.reasoning_content = None
+
+        agent._handle_tool_calls(message)
+
+        tool_msgs = [m for m in agent.conversation_history if m["role"] == "tool"]
+        self.assertEqual(len(tool_msgs), 1)
+        self.assertNotIn("base64_data_url", tool_msgs[0]["content"]["content"])
+        self.assertNotIn("AAAA", tool_msgs[0]["content"]["content"])
+        self.assertIn('"success": true', tool_msgs[0]["content"]["content"])
+
+        # 图片仍通过多模态 user 消息注入
+        multimodal = [m for m in agent.conversation_history
+                      if m["role"] == "user" and isinstance(m["content"], list)]
+        self.assertEqual(len(multimodal), 1)
+        types = [p["type"] for p in multimodal[0]["content"]]
+        self.assertEqual(types, ["text", "image_url"])
+
+    def test_failed_fetch_no_multimodal(self):
+        agent = self._create_agent(allowed_tools=["fetch_image_as_base64"])
+        agent.tool_executor.execute_tool = MagicMock(return_value={
+            "success": False, "error": "本地文件不存在"
+        })
+
+        tool_call = MagicMock()
+        tool_call.id = "tc1"
+        tool_call.function.name = "fetch_image_as_base64"
+        tool_call.function.arguments = json.dumps({"image_url": "/upload/x.png"})
+        message = MagicMock()
+        message.tool_calls = [tool_call]
+        message.reasoning_content = None
+
+        agent._handle_tool_calls(message)
+
+        multimodal = [m for m in agent.conversation_history
+                      if m["role"] == "user" and isinstance(m["content"], list)]
+        self.assertEqual(len(multimodal), 0)
+
+
+class TestEstimateInputTokens(TestExpertAgent):
+    """测试 _estimate_input_tokens：文本按 1.5 字符/token、图片按 base64 体量估算"""
+
+    def test_text_only(self):
+        agent = self._create_agent()
+        messages = [{"role": "user", "content": "x" * 150}]
+        self.assertEqual(agent._estimate_input_tokens(messages), 100)
+
+    def test_image_counted_by_base64_volume(self):
+        agent = self._create_agent()
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": "看图"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + "A" * 1300}},
+        ]}]
+        # 图片 1300 字符 / 1.3 = 1000 tokens，文本 2 字符约 1 token
+        estimate = agent._estimate_input_tokens(messages)
+        self.assertGreaterEqual(estimate, 1000)
+        self.assertLess(estimate, 1100)
+
+    def test_floor_is_last_api_input_tokens(self):
+        agent = self._create_agent()
+        agent.last_api_input_tokens = 500000
+        messages = [{"role": "user", "content": "hi"}]
+        self.assertEqual(agent._estimate_input_tokens(messages), 500000)
 
 
 class TestPowerConfirmSwitch(TestExpertAgent):

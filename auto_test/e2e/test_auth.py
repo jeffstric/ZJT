@@ -9,8 +9,14 @@ class TestAuth:
 
     @pytest.mark.p0
     def test_login_success(self, base_url, e2e_config):
-        """正确手机号+密码登录成功，返回 token 和 user_id"""
-        creds = e2e_config["credentials"]["primary"]
+        """正确手机号+密码登录成功，返回 token 和 user_id。
+
+        必须用次账号：登录接口是单会话策略，主账号任何一次新登录都会删除
+        主账号全部旧 token（auth_service.py delete_by_user_id），会顶掉
+        session 级 auth_token fixture，使后续所有用例 401/400 连环失败。
+        与 test_logout_success 同理（避免破坏后续用例共用的凭证）。
+        """
+        creds = e2e_config["credentials"]["secondary"]
         try:
             resp = httpx.post(
                 f"{base_url}/api/auth/login",

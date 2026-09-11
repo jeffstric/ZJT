@@ -11,6 +11,8 @@ from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from model.model import ModelModel
+from config.constant import EXPERT_HISTORY_MAX_IMAGES
+from .output_token_budget import resolve_max_output_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +100,8 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         self.max_consecutive_no_progress = max_consecutive_no_progress
         self.max_consecutive_errors = max_consecutive_errors
         self.max_total_errors = max_total_errors
+        # 上次 API 调用的真实输入 tokens，用于动态收缩 max_tokens（见 output_token_budget）
+        self.last_api_input_tokens = 0
 
         # 显式初始化 ask_user 失败计数器，确保每个新实例从 0 开始
         self._ask_fail_count = 0
@@ -273,23 +277,27 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             check_computing_power_sync(self.auth_token, self.agent_id)
 
             try:
-                # 从数据库获取模型的最大输出 token 数
-                max_output_tokens = 65536  # 默认值
+                # 从数据库获取模型配置，按剩余上下文动态计算本次调用的 max_tokens
+                model_row = None
                 try:
                     if self.model_id:
-                        model = ModelModel.get_by_id(self.model_id)
-                        if model and model.max_output_tokens:
-                            max_output_tokens = model.max_output_tokens
-                            logger.info(f"{self.agent_id}: Using model max_output_tokens: {max_output_tokens}")
+                        model_row = ModelModel.get_by_id(self.model_id)
                 except Exception as e:
                     logger.warning(f"{self.agent_id}: Failed to get model info for max_output_tokens: {e}")
+
+                # 历史图片裁剪：防止 fetch_image_as_base64 注入的图片无上限累积击穿上下文
+                self._prune_history_images()
 
                 # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
                 # 传入 vendor_id 确保正确路由到目标供应商（如 zjt_api）
                 history_len = len(self.conversation_history)  # 记录调用前的历史长度，用于异常时截断
+                messages = self._format_messages_for_api()
+                max_output_tokens = resolve_max_output_tokens(
+                    model_row, self._estimate_input_tokens(messages), agent_id=self.agent_id
+                )
                 response = get_llm_client(self.model, vendor_id=self.vendor_id).call_api(
                     model=self.model,
-                    messages=self._format_messages_for_api(),
+                    messages=messages,
                     tools=self._get_tool_definitions(),
                     temperature=1,
                     max_tokens=max_output_tokens,
@@ -301,6 +309,10 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                     agent_id=self.agent_id,
                     agent_scope="expert"
                 )
+
+                # 记录本次真实输入 tokens，供下一轮动态收缩 max_tokens
+                if getattr(response, "usage", None):
+                    self.last_api_input_tokens = response.usage.get("input_token", 0) or response.usage.get("prompt_tokens", 0) or 0
 
                 message = response.choices[0].message
 
@@ -458,6 +470,15 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                 if user_input:
                     deferred_user_inputs.append((user_input, meta.get("verification_id")))
 
+            # fetch_image_as_base64 成功时，先取出 base64 数据（图片通过多模态 user 消息注入，
+            # base64 不落 tool 历史——否则每张图的全文会永久留在历史里，每轮请求重发，
+            # 输入 token 随检查进度线性膨胀）
+            deferred_image = None
+            if tool_name == "fetch_image_as_base64" and isinstance(result, dict) and result.get("success"):
+                base64_data_url = result.pop("base64_data_url", None)
+                if base64_data_url:
+                    deferred_image = (tool_args.get('image_url', ''), base64_data_url)
+
             # 将result转换为JSON字符串以便后续解析，而不是Python dict的字符串表示
             self.add_to_history("tool", {
                 "tool_call_id": tool_call.id,
@@ -465,18 +486,16 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                 "content": json.dumps(result, ensure_ascii=False)
             })
 
-            # fetch_image_as_base64 成功时，将 base64 数据存入延迟多模态列表
-            if tool_name == "fetch_image_as_base64" and isinstance(result, dict) and result.get("success"):
-                base64_data_url = result.get("base64_data_url")
-                if base64_data_url:
-                    deferred_multimodal_content.append({
-                        "type": "text",
-                        "text": f"[系统注入] 以下是工具成功获取的图片（URL: {tool_args.get('image_url', '')}）："
-                    })
-                    deferred_multimodal_content.append({
-                        "type": "image_url",
-                        "image_url": {"url": base64_data_url}
-                    })
+            if deferred_image:
+                image_url, base64_data_url = deferred_image
+                deferred_multimodal_content.append({
+                    "type": "text",
+                    "text": f"[系统注入] 以下是工具成功获取的图片（URL: {image_url}）："
+                })
+                deferred_multimodal_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": base64_data_url}
+                })
 
         # 将用户的回答作为 user 消息写入历史，放在所有 tool 消息之后
         # 避免在 assistant(tool_calls) 和 tool 之间插入 user 消息导致 API 报错
@@ -647,6 +666,59 @@ class ExpertAgent(BaseAgent, AskUserMixin):
     def _is_deepseek_model(self) -> bool:
         """判断当前模型是否为 DeepSeek 模型"""
         return 'deepseek' in (self.model or '').lower()
+
+    def _estimate_input_tokens(self, messages: List[Dict[str, Any]]) -> int:
+        """估算本次调用的输入 tokens，供动态收缩 max_tokens 使用。
+
+        取"上次 API 真实 input_tokens"与"本轮消息字符估算"的较大值：
+        文本按约 1.5 字符/token；图片按 base64 字符体量计（实测
+        deepseek-v4-flash-vision-exp 对图片按数据量计费，约 1.3 字符/token）。
+        tool schema 等未计入部分由安全余量覆盖。
+        """
+        text_chars = 0
+        image_chars = 0
+        for m in messages:
+            content = m.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    if part.get("type") == "image_url":
+                        image_chars += len(str(part.get("image_url", {}).get("url", "")))
+                    else:
+                        text_chars += len(str(part.get("text", "")))
+            elif content:
+                text_chars += len(str(content))
+        estimate = text_chars * 2 // 3 + int(image_chars / 1.3)
+        return max(self.last_api_input_tokens, estimate)
+
+    def _prune_history_images(self, max_images: int = EXPERT_HISTORY_MAX_IMAGES) -> None:
+        """裁剪对话历史中 fetch_image_as_base64 注入的图片，仅保留最近 max_images 张。
+
+        被裁掉的 image_url 片段替换为文本占位（URL 仍留在相邻的注入文案中），
+        LLM 需要重新查看时可再次调用 fetch_image_as_base64。
+        """
+        image_positions = []
+        for msg_idx, msg in enumerate(self.conversation_history):
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            for part_idx, part in enumerate(content):
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    image_positions.append((msg_idx, part_idx))
+
+        excess = len(image_positions) - max_images
+        if excess <= 0:
+            return
+
+        for msg_idx, part_idx in image_positions[:excess]:
+            self.conversation_history[msg_idx]["content"][part_idx] = {
+                "type": "text",
+                "text": "[系统提示] 此前注入的历史图片已从上下文中移除以控制 token 消耗；如需再次查看，请重新调用 fetch_image_as_base64。"
+            }
+        logger.info(f"{self.agent_id}: 已从历史中移除 {excess} 张旧图片（保留最近 {max_images} 张）")
 
     def _format_messages_for_api(self) -> List[Dict[str, Any]]:
         """格式化消息用于 API 调用"""

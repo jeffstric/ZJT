@@ -6,6 +6,8 @@
     python scripts/migration/change_media_path.py --new-host ssh.perseids.cn:13000
     python scripts/migration/change_media_path.py --old-host localhost:9003 --new-host ssh.perseids.cn:13000
     python scripts/migration/change_media_path.py --old-host localhost:9003 --new-host ssh.perseids.cn:13000 --dry-run
+    # http -> https：host 参数支持 http:// 或 https:// 前缀（不带前缀时默认 http）
+    python scripts/migration/change_media_path.py --old-host http://ailive.perseids.cn --new-host https://ailive.perseids.cn --dry-run
 """
 import os
 import sys
@@ -39,10 +41,24 @@ JSON_FIELDS = [
 ]
 
 
-def replace_host_in_text(old_host, new_host):
-    """处理简单文本字段，使用 SQL REPLACE 直接替换"""
-    old_prefix = f"http://{old_host}"
-    new_prefix = f"http://{new_host}"
+def _parse_host(value):
+    """解析 --old-host/--new-host 参数：支持可选的 http:// 或 https:// 前缀，默认 http。
+
+    返回 (scheme, host)，例如 "https://ailive.perseids.cn" -> ("https", "ailive.perseids.cn")。
+    """
+    if value.startswith("https://"):
+        return "https", value[len("https://"):]
+    if value.startswith("http://"):
+        return "http", value[len("http://"):]
+    return "http", value
+
+
+def replace_host_in_text(old_prefix, new_prefix):
+    """处理简单文本字段，使用 SQL REPLACE 直接替换。
+
+    old_prefix/new_prefix 为含 scheme 的完整前缀（如 "http://ailive.perseids.cn"），
+    因此可以表达 http -> https 的替换；LIKE 匹配同样带前缀，避免误统计已是新前缀的行。
+    """
     stats = {}
 
     for table, field in TEXT_FIELDS:
@@ -52,7 +68,7 @@ def replace_host_in_text(old_host, new_host):
                 # 先统计匹配行数
                 cursor.execute(
                     f"SELECT COUNT(*) as cnt FROM `{table}` WHERE `{field}` LIKE %s",
-                    (f"%{old_host}%",)
+                    (f"%{old_prefix}%",)
                 )
                 count = cursor.fetchone()["cnt"]
 
@@ -66,7 +82,7 @@ def replace_host_in_text(old_host, new_host):
                 # 执行替换
                 cursor.execute(
                     f"UPDATE `{table}` SET `{field}` = REPLACE(`{field}`, %s, %s) WHERE `{field}` LIKE %s",
-                    (old_prefix, new_prefix, f"%{old_host}%")
+                    (old_prefix, new_prefix, f"%{old_prefix}%")
                 )
                 affected = cursor.rowcount
                 conn.commit()
@@ -79,20 +95,18 @@ def replace_host_in_text(old_host, new_host):
     return stats
 
 
-def replace_host_in_json(old_host, new_host, dry_run=False):
-    """处理 JSON 字段，Python 解析后替换 URL 中的 host"""
-    old_prefix = f"http://{old_host}"
-    new_prefix = f"http://{new_host}"
+def replace_host_in_json(old_prefix, new_prefix, dry_run=False):
+    """处理 JSON 字段，Python 解析后替换 URL 中的前缀"""
     stats = {}
 
     for table, field, json_type in JSON_FIELDS:
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                # 查询包含旧 host 的行
+                # 查询包含旧前缀的行
                 cursor.execute(
                     f"SELECT id, `{field}` FROM `{table}` WHERE `{field}` LIKE %s",
-                    (f"%{old_host}%",)
+                    (f"%{old_prefix}%",)
                 )
                 rows = cursor.fetchall()
 
@@ -160,7 +174,7 @@ def replace_host_in_json(old_host, new_host, dry_run=False):
 
 
 def _replace_ref_in_obj(obj, old_prefix, new_prefix):
-    """递归遍历 JSON 对象，替换所有 reference_image 字段中的 host。返回是否修改。"""
+    """递归遍历 JSON 对象，替换所有 reference_image 字段中的前缀。返回是否修改。"""
     changed = False
     if isinstance(obj, dict):
         for key, val in obj.items():
@@ -198,7 +212,7 @@ def _replace_ref_in_obj(obj, old_prefix, new_prefix):
 
 
 def _replace_all_strings_in_obj(obj, old_prefix, new_prefix):
-    """递归遍历 JSON 对象，替换所有字符串值中的 host。用于 workflow_data 等深层嵌套 JSON。"""
+    """递归遍历 JSON 对象，替换所有字符串值中的前缀。用于 workflow_data 等深层嵌套 JSON。"""
     changed = False
     if isinstance(obj, dict):
         for key, val in list(obj.items()):
@@ -226,11 +240,9 @@ NESTED_JSON_FIELDS = [
 ]
 
 
-def replace_host_in_nested_json(old_host, new_host, dry_run=False):
-    """处理深层嵌套 JSON 字段（如 video_workflow.workflow_data），递归替换所有字符串中的 host"""
-    old_prefix = f"http://{old_host}"
-    new_prefix = f"http://{new_host}"
-    # URL 编码形式: http%3A%2F%2Fssh.perseids.cn%3A13000 → http%3A%2F%2Fyiliao.perseids.cn
+def replace_host_in_nested_json(old_prefix, new_prefix, old_host, dry_run=False):
+    """处理深层嵌套 JSON 字段（如 video_workflow.workflow_data），递归替换所有字符串中的前缀"""
+    # URL 编码形式: http%3A%2F%2Fssh.perseids.cn%3A13000 → https%3A%2F%2Fyiliao.perseids.cn
     old_prefix_encoded = quote(old_prefix, safe='')
     new_prefix_encoded = quote(new_prefix, safe='')
     stats = {}
@@ -239,7 +251,9 @@ def replace_host_in_nested_json(old_host, new_host, dry_run=False):
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                # 查询包含旧 host 的行（明文或编码形式）
+                # 查询包含旧 host 的行：用不带 scheme 的 host 匹配，
+                # 才能同时命中明文（http://host）与 URL 编码（http%3A%2F%2Fhost）两种形式；
+                # 替换阶段的两遍 REPLACE 只会动旧前缀，已是新前缀的行不受影响
                 cursor.execute(
                     f"SELECT `{pk_field}`, `{field}` FROM `{table}` WHERE `{field}` LIKE %s",
                     (f"%{old_host}%",)
@@ -307,10 +321,8 @@ def replace_host_in_nested_json(old_host, new_host, dry_run=False):
     return stats
 
 
-def replace_host_in_files(old_host, new_host, dry_run=False):
-    """遍历 files/script_writer 目录，替换 JSON 文件中 reference_image 的 host"""
-    old_prefix = f"http://{old_host}"
-    new_prefix = f"http://{new_host}"
+def replace_host_in_files(old_prefix, new_prefix, dry_run=False):
+    """遍历 files/script_writer 目录，替换 JSON 文件中 reference_image 的前缀"""
     stats = {}
 
     base_dir = os.path.join(project_root, "files", "script_writer")
@@ -363,12 +375,12 @@ def main():
     parser.add_argument(
         "--old-host",
         default="localhost:9003",
-        help="旧 host 地址 (默认: localhost:9003)"
+        help="旧 host 地址，支持 http:// 或 https:// 前缀，不带前缀时默认 http (默认: localhost:9003)"
     )
     parser.add_argument(
         "--new-host",
         required=True,
-        help="新 host 地址 (必填)"
+        help="新 host 地址 (必填)，支持 http:// 或 https:// 前缀，不带前缀时默认 http"
     )
     parser.add_argument(
         "--dry-run",
@@ -377,27 +389,29 @@ def main():
     )
     args = parser.parse_args()
 
-    old_host = args.old_host
-    new_host = args.new_host
+    old_scheme, old_host = _parse_host(args.old_host)
+    new_scheme, new_host = _parse_host(args.new_host)
+    old_prefix = f"{old_scheme}://{old_host}"
+    new_prefix = f"{new_scheme}://{new_host}"
 
     print(f"=" * 60)
     print(f"替换媒体路径 Host")
-    print(f"  旧 Host: {old_host}")
-    print(f"  新 Host: {new_host}")
+    print(f"  旧前缀: {old_prefix}")
+    print(f"  新前缀: {new_prefix}")
     print(f"  预览模式: {'是' if args.dry_run else '否'}")
     print(f"=" * 60)
 
     print("\n[1/4] 处理简单文本字段...")
-    text_stats = replace_host_in_text(old_host, new_host) if not args.dry_run else _dry_run_text(old_host, new_host)
+    text_stats = replace_host_in_text(old_prefix, new_prefix) if not args.dry_run else _dry_run_text(old_prefix)
 
     print("\n[2/4] 处理 JSON 字段...")
-    json_stats = replace_host_in_json(old_host, new_host, dry_run=args.dry_run)
+    json_stats = replace_host_in_json(old_prefix, new_prefix, dry_run=args.dry_run)
 
     print("\n[3/4] 处理深层嵌套 JSON 字段（workflow_data 等）...")
-    nested_stats = replace_host_in_nested_json(old_host, new_host, dry_run=args.dry_run)
+    nested_stats = replace_host_in_nested_json(old_prefix, new_prefix, old_host, dry_run=args.dry_run)
 
     print("\n[4/4] 处理磁盘 JSON 文件...")
-    file_stats = replace_host_in_files(old_host, new_host, dry_run=args.dry_run)
+    file_stats = replace_host_in_files(old_prefix, new_prefix, dry_run=args.dry_run)
 
     # 汇总
     print(f"\n{'=' * 60}")
@@ -412,10 +426,10 @@ def main():
     print(f"  总计更新: {total} 条")
     if args.dry_run:
         print("  (预览模式，未实际修改数据)")
-    print(f"{'=' * 60}")
+    print(f"=" * 60)
 
 
-def _dry_run_text(old_host, new_host):
+def _dry_run_text(old_prefix):
     """预览模式：统计文本字段匹配数"""
     stats = {}
     for table, field in TEXT_FIELDS:
@@ -424,7 +438,7 @@ def _dry_run_text(old_host, new_host):
                 cursor = conn.cursor()
                 cursor.execute(
                     f"SELECT COUNT(*) as cnt FROM `{table}` WHERE `{field}` LIKE %s",
-                    (f"%{old_host}%",)
+                    (f"%{old_prefix}%",)
                 )
                 count = cursor.fetchone()["cnt"]
                 print(f"  [{table}.{field}] 匹配 {count} 条记录")
