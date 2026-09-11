@@ -90,32 +90,46 @@ def _force_acquire_lock(lock_file):
 
 
 def _acquire_worker_lock(worker_index):
-    """获取本 worker index 的文件锁，防止同 index 重复启动。"""
+    """获取本 worker index 的文件锁，防止同 index 重复启动。
+
+    与 scheduler 锁同款修复：'a' 模式打开（不截断）、flock 排他、永不删除重建锁文件；
+    持有者死亡时内核自动释放文件锁（重试 flock 即可获取），无需强制抢占。
+    """
     global _lock_fd, _LOCK_FILE
     _LOCK_FILE = os.path.join(project_root, f"script_split_worker_{worker_index}.lock")
-    try:
-        _lock_fd = open(_LOCK_FILE, 'w')
-        if sys.platform == 'win32':
-            import msvcrt
-            _lock_fd.write(str(os.getpid()))
-            _lock_fd.flush()
-            msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            _lock_fd.write(str(os.getpid()))
-            _lock_fd.flush()
-        logger.info("worker lock acquired: %s (PID %s)", _LOCK_FILE, os.getpid())
-        return True
-    except (IOError, OSError):
-        _lock_fd.close()
-        _lock_fd = None
-        if _is_stale_lock(_LOCK_FILE):
-            logger.warning("detected stale worker lock, clearing and retrying: %s", _LOCK_FILE)
-            _force_acquire_lock(_LOCK_FILE)
+
+    for _ in range(2):
+        _lock_fd = open(_LOCK_FILE, 'a')
+        try:
+            if sys.platform == 'win32':
+                import msvcrt
+                _lock_fd.seek(1048576)
+                msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+                _lock_fd.seek(0)
+                _lock_fd.truncate(0)
+                _lock_fd.write(str(os.getpid()))
+                _lock_fd.flush()
+            else:
+                import fcntl
+                fcntl.flock(_lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _lock_fd.seek(0)
+                _lock_fd.truncate(0)
+                _lock_fd.write(str(os.getpid()))
+                _lock_fd.flush()
+            logger.info("worker lock acquired: %s (PID %s)", _LOCK_FILE, os.getpid())
             return True
-        logger.error("worker index %d already running (lock held): %s", worker_index, _LOCK_FILE)
-        return False
+        except (IOError, OSError):
+            if _lock_fd:
+                _lock_fd.close()
+                _lock_fd = None
+            if _is_stale_lock(_LOCK_FILE):
+                # 持有者仍存活：诚实退出（不抢占）。函数名沿用，语义=检查持有者死活
+                logger.error("worker index %d already running (lock held): %s", worker_index, _LOCK_FILE)
+                return False
+            # 持有者已死亡：内核文件锁已随进程释放，重试一次即可获取
+            logger.info("worker %s lock was held by dead process, retrying...", worker_index)
+    logger.error("worker index %d lock could not be acquired", worker_index)
+    return False
 
 
 def _release_worker_lock():
@@ -232,6 +246,13 @@ def main():
 
     # 主循环：每 tick 推进一个任务的一个步骤，单次异常不拖垮进程
     try:
+        # 防孤儿化（与 run_scheduler 同款）：父进程死亡时退出，避免残留孤儿调度进程
+        if sys.platform.startswith('linux'):
+            import ctypes
+            libc = ctypes.CDLL("libc.so.6", use_errno=True)
+            libc.prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG = 1
+        initial_ppid = os.getppid()
+
         while True:
             try:
                 _run_one_tick(process_script_split_tasks)
@@ -239,6 +260,9 @@ def main():
                 # process_script_split_tasks 内部已有完整异常处理并写库，
                 # 这里兜底防止单次未知异常导致 worker 整体退出。
                 logger.exception("worker tick 未捕获异常，跳过本轮")
+            if os.getppid() != initial_ppid:
+                print("[Worker] Parent process died, exiting to avoid becoming an orphan...")
+                cleanup()
             time.sleep(interval)
     except KeyboardInterrupt:
         cleanup()

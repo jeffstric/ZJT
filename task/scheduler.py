@@ -3,6 +3,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 import logging
 import asyncio
 import os
+from typing import Optional
 import sys
 from task.visual_task import generate_video_task
 from task.audio_task import generate_audio_task
@@ -42,90 +43,80 @@ def _run_async_task(async_func, *args, **kwargs):
         logger.error(traceback.format_exc())
 
 
-def _is_stale_lock():
-    """检查锁文件是否来自已死亡的进程"""
-    if not _LOCK_FILE or not os.path.exists(_LOCK_FILE):
-        return False
+def _is_lock_holder_alive(lock_file: str) -> bool:
+    """读取锁文件中的 pid，判断持有进程是否存活（仅用于日志诊断）"""
     try:
-        with open(_LOCK_FILE, 'r') as f:
+        with open(lock_file, 'r', encoding='utf-8') as f:
             pid_str = f.read().strip()
-        if not pid_str:
-            # 空文件 = 锁写入失败残留
-            return True
+        if not pid_str.isdigit():
+            return False
         pid = int(pid_str)
-        # 检查 PID 是否存活
         if sys.platform == 'win32':
             import ctypes
             kernel32 = ctypes.windll.kernel32
             handle = kernel32.OpenProcess(0x100000, False, pid)
             if handle:
                 kernel32.CloseHandle(handle)
-                return False
+                return True
+            return False
+        try:
+            os.kill(pid, 0)
             return True
-        else:
-            # Linux: os.kill(pid, 0) 不发送信号，只检查进程是否存在
-            try:
-                os.kill(pid, 0)
-                return False  # 进程存活，锁有效
-            except (ProcessLookupError, PermissionError):
-                return True   # 进程已死，锁无效
+        except (ProcessLookupError, PermissionError):
+            return False
     except (ValueError, OSError):
-        return True  # 文件内容异常，视为残留
-
-
-def _force_acquire_lock():
-    """强制获取锁（清除残留锁后重新获取）"""
-    global _lock_fd, _LOCK_FILE
-    # 删除残留锁文件
-    if os.path.exists(_LOCK_FILE):
-        os.remove(_LOCK_FILE)
-    # 重新创建
-    _lock_fd = open(_LOCK_FILE, 'w')
-    if sys.platform == 'win32':
-        import msvcrt
-        _lock_fd.write(str(os.getpid()))
-        _lock_fd.flush()
-        msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        _lock_fd.write(str(os.getpid()))
-        _lock_fd.flush()
-    logger.info(f"Scheduler lock force-acquired after clearing stale lock. PID: {os.getpid()}")
-
-
-def _acquire_scheduler_lock():
-    """获取调度器文件锁，防止多个进程重复运行"""
-    global _lock_fd, _LOCK_FILE
-
-    # 获取项目根目录
-    current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _LOCK_FILE = os.path.join(current_dir, "scheduler.lock")
-
-    try:
-        _lock_fd = open(_LOCK_FILE, 'w')
-        if sys.platform == 'win32':
-            import msvcrt
-            _lock_fd.write(str(os.getpid()))
-            _lock_fd.flush()
-            msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            _lock_fd.write(str(os.getpid()))
-            _lock_fd.flush()
-        logger.info(f"Scheduler lock acquired. PID: {os.getpid()}")
-        return True
-    except (IOError, OSError):
-        # 锁获取失败，检查是否为残留死锁
-        _lock_fd.close()
-        _lock_fd = None
-        if _is_stale_lock():
-            logger.warning("Detected stale scheduler lock from dead process. Clearing and retrying...")
-            _force_acquire_lock()
-            return True
-        logger.warning("Another scheduler instance is already running. Skipping scheduler initialization.")
         return False
+
+
+def _acquire_scheduler_lock(lock_file: Optional[str] = None) -> bool:
+    """获取调度器文件锁，防止多个进程重复运行。
+
+    正确性要点（修复历史缺陷：生产曾积累 31 个调度器进程）：
+      - 锁文件用 'a' 模式打开（不清空、不删除持有者的 pid 记录）；
+      - 只依赖 flock/msvcrt 文件锁排他，**永不删除重建锁文件**——
+        旧实现的 'w' 截断 + 失败后删除重建，会让新实例抢到新 inode 的锁、
+        旧持有者的锁名存实亡（批量启动/重启时必然多实例同时"持锁"）；
+      - flock 随持有进程死亡由内核自动释放：持有者已死时重试 flock 必然成功，
+        无需任何"残留强抢"逻辑。
+    """
+    global _lock_fd, _LOCK_FILE
+
+    current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _LOCK_FILE = lock_file or os.path.join(current_dir, "scheduler.lock")
+
+    for _ in range(2):
+        _lock_fd = open(_LOCK_FILE, 'a')
+        try:
+            if sys.platform == 'win32':
+                import msvcrt
+                # 锁文件远端字节（1MB 处），避免与 pid 内容重叠导致自身读取被拒
+                _lock_fd.seek(1048576)
+                msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+                _lock_fd.seek(0)
+                _lock_fd.truncate(0)
+                _lock_fd.write(str(os.getpid()))
+                _lock_fd.flush()
+            else:
+                import fcntl
+                fcntl.flock(_lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _lock_fd.seek(0)
+                _lock_fd.truncate(0)
+                _lock_fd.write(str(os.getpid()))
+                _lock_fd.flush()
+            logger.info(f"Scheduler lock acquired. PID: {os.getpid()}")
+            return True
+        except (IOError, OSError):
+            if _lock_fd:
+                _lock_fd.close()
+                _lock_fd = None
+            if _is_lock_holder_alive(_LOCK_FILE):
+                logger.warning("Another scheduler instance is already running. Skipping scheduler initialization.")
+                return False
+            # 文件中的 pid 已死亡：内核文件锁随进程死亡自动释放，重试一次即可获取
+            logger.info("Scheduler lock was held by a dead process, retrying acquire...")
+
+    logger.error("Scheduler lock could not be acquired after retries.")
+    return False
 
 
 def _release_scheduler_lock():
@@ -256,7 +247,7 @@ def init_scheduler(app):
     # 尝试获取文件锁
     if not _acquire_scheduler_lock():
         logger.info("Scheduler not started due to lock conflict.")
-        return
+        return False
 
     # 重置孤儿同步任务（服务重启后进程池队列丢失）
     _reset_orphan_sync_tasks()
@@ -591,6 +582,7 @@ def init_scheduler(app):
     # 启动调度器
     scheduler.start()
     logger.info("定时任务启动成功")
+    return True
 
 def shutdown_scheduler():
     """
