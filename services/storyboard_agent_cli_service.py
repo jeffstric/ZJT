@@ -741,11 +741,12 @@ class StoryboardAgentCliService:
         video_prompt_raw = _get_field(scene, "video_prompt") or ""
         # 角色参考以提示词【【名】】为真源：每个标记独立查世界库（含用户后加的新引用）。
         # 对白角色仍合并进 characters 供上下文展示，但不单独扩展参考图。
+        prompt_characters, missing_characters = self._resolve_prompt_characters_ex(
+            prompt_json, world_id, scene=scene, video_prompt=video_prompt_raw
+        )
         characters = self._merge_named_items(
             self._load_dialogue_characters(dialogues),
-            self._resolve_prompt_characters(
-                prompt_json, world_id, scene=scene, video_prompt=video_prompt_raw
-            ),
+            prompt_characters,
         )
         location = self._resolve_location(prompt_json)
         props = self._resolve_props(prompt_json, world_id, scene=scene)
@@ -763,6 +764,21 @@ class StoryboardAgentCliService:
         )
         reference_images = reference_urls(reference_image_items)
 
+        # 提示词标记了【【角色】】但参考图未生效的名单（供前端可见提示，
+        # 不再静默降级）：区分"未入库"与"在库但缺参考图"两种原因。
+        tagged_character_names = _dedupe(
+            list(extract_storyboard_reference_names(prompt_json, video_prompt).get("characters") or [])
+        )
+        characters_with_reference = {
+            str(item.get("name") or "").strip()
+            for item in reference_image_items
+            if item.get("source_type") == "character"
+        }
+        characters_without_reference = [
+            name for name in tagged_character_names
+            if name not in characters_with_reference and name not in set(missing_characters)
+        ]
+
         return {
             "success": True,
             "scene": _to_dict(scene),
@@ -778,6 +794,8 @@ class StoryboardAgentCliService:
             "selected_assets": selected_assets,
             "reference_images": reference_images,
             "reference_image_items": reference_image_items,
+            "missing_characters": missing_characters,
+            "characters_without_reference": characters_without_reference,
             "user_id": user_id,
         }
 
@@ -886,7 +904,7 @@ class StoryboardAgentCliService:
                     task_type=(generation_snapshot or {}).get('task_id'),
                 )
 
-        return self._finalize_submission(
+        submission = self._finalize_submission(
             scene_id=scene_id,
             user_id=user_id,
             asset_type=asset_type,
@@ -895,6 +913,12 @@ class StoryboardAgentCliService:
             reference_images=reference_urls if mode == "image_edit" else [],
             select_result=select_result,
         )
+        # 参考图未生效名单回传前端做可见提示（未入库/缺参考图不再静默降级）
+        if context.get("missing_characters"):
+            submission["missing_characters"] = list(context["missing_characters"])
+        if context.get("characters_without_reference"):
+            submission["characters_without_reference"] = list(context["characters_without_reference"])
+        return submission
 
     def generate_video(
         self,
@@ -3657,9 +3681,28 @@ class StoryboardAgentCliService:
         `【【新角色】】` is looked up the same way as original tags (mirrors
         video_workflow collectShotFrameRefImages per-tag lookup).
         """
+        characters, _missing = self._resolve_prompt_characters_ex(
+            prompt_json, world_id, scene=scene, video_prompt=video_prompt
+        )
+        return characters
+
+    def _resolve_prompt_characters_ex(
+        self,
+        prompt_json: Dict[str, Any],
+        world_id: Any,
+        scene: Any = None,
+        video_prompt: str = "",
+    ) -> tuple:
+        """同 _resolve_prompt_characters，但额外返回未在角色库中命中的标记名单。
+
+        Returns:
+            (characters, missing_names)：missing_names 为提示词携带【【】】标记
+            但世界角色库查不到的角色名（此前仅静默跳过，现回传前端提示）。
+        """
         if not world_id:
-            return []
+            return [], []
         characters: List[Dict[str, Any]] = []
+        missing_names: List[str] = []
         for name in self._extract_character_names_from_prompt(
             prompt_json, scene=scene, video_prompt=video_prompt
         ):
@@ -3682,7 +3725,8 @@ class StoryboardAgentCliService:
                     name,
                     world_id,
                 )
-        return characters
+                missing_names.append(name)
+        return characters, missing_names
 
     def _extract_prop_names_from_prompt_text(self, prompt_text: str) -> List[str]:
         names: List[str] = []

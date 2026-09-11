@@ -215,14 +215,21 @@ export function renderPromptWithInlineRoles(text, usedChars, usedProps, scene = 
             continue;
         }
         const avatarUrl = asset && (asset.avatar || asset.reference_image || mapAssetAvatar(asset.raw || asset));
+        // 角色 chip：不在世界角色库（幽灵角色）时用警示样式标识，
+        // 不再伪装成可正常选参考图的角色（点击由选择器提示先入库）。
+        const isMissingRole = !isProp && !asset;
         const chip = document.createElement('span');
-        chip.className = isProp ? 'prop-chip' : 'role-chip';
-        chip.title = assetName;
+        chip.className = isProp ? 'prop-chip' : (isMissingRole ? 'role-chip is-missing' : 'role-chip');
+        chip.title = isMissingRole
+            ? `${assetName}（未在角色库中，生成分镜图将跳过其参考图；请先在角色管理中创建或改名对齐）`
+            : assetName;
         if (!isProp) {
             const selectionKey = characterReferenceSelectionKey(asset || { name: assetName });
             const selection = scene?.referenceSelections?.characters?.[selectionKey];
             chip.dataset.referenceVariant = 'character';
-            chip.dataset.action = 'select-character-reference';
+            if (!isMissingRole) {
+                chip.dataset.action = 'select-character-reference';
+            }
             chip.dataset.characterName = assetName;
             if (asset?.id != null) chip.dataset.characterId = String(asset.id);
             if (selection?.url) {
@@ -361,6 +368,10 @@ function resolveSceneLocation(scene) {
 /**
  * 角色列表（去重保序）：
  * 1) 对话 characterId  2) referenceSelections.characters  3) 提示词【【角色】】
+ *
+ * missing=true 表示角色不在世界角色库（幽灵角色，点击/生图会报"角色不存在"）；
+ * missingRef=true 表示在库但无任何参考图（生图参考图不生效）。
+ * 两者均保留展示（便于用户发现），由渲染层用警示样式区分。
  */
 function resolveSceneCharacters(scene) {
     if (!scene) return [];
@@ -373,15 +384,26 @@ function resolveSceneCharacters(scene) {
         if (!n) return null;
         return worldChars.find((c) => String(c.name || '').trim().replace(/\s+/g, '') === n);
     };
+    const hasReference = (c) => Boolean(
+        c && (c.reference_image
+            || (Array.isArray(c.reference_images) && c.reference_images.length)
+            || (c.raw && (c.raw.reference_image || (Array.isArray(c.raw.reference_images) && c.raw.reference_images.length))))
+    );
     const avatarOf = (c, fallback = '') =>
         (c && (c.avatar || c.reference_image || mapAssetAvatar(c.raw || c))) || fallback || '';
 
-    const add = (id, name, avatar) => {
+    const add = (id, name, avatar, missing = false) => {
         const nm = String(name || '').trim();
         if (!nm) return;
         const key = id != null && id !== '' ? `id:${id}` : `name:${nm.replace(/\s+/g, '')}`;
         if (byKey.has(key)) return;
-        byKey.set(key, { id: id ?? null, name: nm, avatar: avatar || '' });
+        byKey.set(key, {
+            id: id ?? null,
+            name: nm,
+            avatar: avatar || '',
+            missing,
+            missingRef: !missing && !avatar && !hasReference(id != null ? findById(id) : findByName(nm)),
+        });
     };
 
     (scene.dialogues || []).forEach((d) => {
@@ -397,7 +419,7 @@ function resolveSceneCharacters(scene) {
         const name = (item?.name || nameFromKey || '').trim();
         const c = (id != null ? findById(id) : null) || findByName(name);
         if (c) add(c.id, c.name, avatarOf(c, item?.url || ''));
-        else if (name) add(id, name, item?.url || '');
+        else if (name) add(id, name, item?.url || '', true);
     });
 
     const texts = [
@@ -411,7 +433,7 @@ function resolveSceneCharacters(scene) {
         const name = String(match[1] || '').trim();
         const c = findByName(name);
         if (c) add(c.id, c.name, avatarOf(c));
-        else if (name) add(null, name, '');
+        else if (name) add(null, name, '', true);
     }
 
     return Array.from(byKey.values());
@@ -519,17 +541,22 @@ function renderGridCharactersRow(scene) {
     const shown = chars.slice(0, maxShow);
     const rest = chars.length - maxShow;
     const avatars = shown.map((c) => {
+        const stateCls = c.missing ? ' is-missing' : (c.missingRef ? ' is-no-ref' : '');
+        const tip = c.missing
+            ? `${c.name}（未在角色库中，生成分镜图将跳过该角色参考）`
+            : (c.missingRef ? `${c.name}（缺参考图，生成分镜图不使用该角色参考）` : c.name);
         if (c.avatar) {
-            return `<img class="card-char-avatar" src="${escapeHtml(getThumbnailUrl(c.avatar, 24))}" alt="${escapeHtml(c.name)}" title="${escapeHtml(c.name)}">`;
+            return `<img class="card-char-avatar${stateCls}" src="${escapeHtml(getThumbnailUrl(c.avatar, 24))}" alt="${escapeHtml(c.name)}" title="${escapeHtml(tip)}">`;
         }
         const initial = (c.name || '?').slice(0, 1);
-        return `<span class="card-char-avatar is-placeholder" title="${escapeHtml(c.name)}">${escapeHtml(initial)}</span>`;
+        return `<span class="card-char-avatar is-placeholder${stateCls}" title="${escapeHtml(tip)}">${escapeHtml(initial)}</span>`;
     }).join('');
-    const nameParts = shown.map((c) => c.name);
+    const nameParts = shown.map((c) => c.name + (c.missing ? '?' : ''));
     if (rest > 0) nameParts.push(`+${rest}`);
     const nameText = nameParts.join(' · ');
-    const fullTitle = chars.map((c) => c.name).join('、');
-    return `<div class="card-meta-row card-characters" title="${escapeHtml(fullTitle)}">
+    const hasAbnormal = chars.some((c) => c.missing || c.missingRef);
+    const fullTitle = chars.map((c) => c.name + (c.missing ? '（未入库）' : (c.missingRef ? '（缺参考图）' : ''))).join('、');
+    return `<div class="card-meta-row card-characters${hasAbnormal ? ' has-abnormal' : ''}" title="${escapeHtml(fullTitle)}">
         <span class="card-char-stack">${avatars}</span>
         <span class="card-meta-text">${escapeHtml(truncateText(nameText, 18))}</span>
     </div>`;

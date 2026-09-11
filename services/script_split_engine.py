@@ -1884,12 +1884,38 @@ async def step_publish(task: ScriptSplitTask) -> None:
     if publish_hard_errors:
         _pause_for_hard_gate(publish_hard_errors)
 
+    # 0. 角色资产化（character bootstrap）：剧本新角色自动入库并回填
+    #     character_db_id（短名归一化到库内完整名 + 提示词标记同步改写），
+    #     避免 scene 提示词携带【【角色】】标记但库中无此角色（幽灵角色），
+    #     导致分镜生图参考图静默丢失、点击角色框报"角色不存在"。
+    #     单角色失败仅 warning；整体异常放行（角色按未入库处理，不阻塞发布）。
+    world_id = cfg.get("world_id")
+    if world_id:
+        from services.storyboard_character_bootstrap_service import (
+            StoryboardCharacterBootstrapService,
+        )
+        try:
+            character_bootstrap_result = await asyncio.to_thread(
+                StoryboardCharacterBootstrapService().bootstrap,
+                final_result, int(world_id), int(task.user_id),
+            )
+            final_result.setdefault("metadata", {})["character_bootstrap"] = {
+                "created": int(character_bootstrap_result.get("created_character_count") or 0),
+                "reused": int(character_bootstrap_result.get("reused_character_count") or 0),
+                "renamed": character_bootstrap_result.get("renamed") or {},
+                "warnings": character_bootstrap_result.get("warnings") or [],
+            }
+        except Exception as exc:
+            logger.warning(
+                "task %s 角色资产化失败（放行，库外角色按未入库处理）: %s",
+                task.id, exc, exc_info=True,
+            )
+
     # 1. 场景资产化（location bootstrap）
     from services.storyboard_location_bootstrap_service import (
         LocationBootstrapStructureError,
         StoryboardLocationBootstrapService,
     )
-    world_id = cfg.get("world_id")
     bootstrap_result = None
     if world_id:
         try:

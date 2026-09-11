@@ -9,6 +9,7 @@ import state, {
     resolveSelectedScriptSplitLlmModel,
     serializeUiConfig,
     loadStoryboardData,
+    setAssets,
     applyThinkingDefaultsForModel,
     applyGenerateProgressStatus,
     saveThinkingStateToStorage,
@@ -203,6 +204,16 @@ function attachGenerateFromScriptPolling(taskId) {
             try {
                 const sbResp = await api.getStoryboard(state.storyboardId);
                 loadStoryboardData(sbResp);
+                // 发布阶段可能自动创建了新角色（character bootstrap），且用户可能
+                // 在拆分期间改动过角色库：同步刷新资产缓存，避免新角色被误标"未入库"
+                if (state.worldId) {
+                    const [characters, locations, props] = await Promise.all([
+                        api.fetchCharacters(state.worldId),
+                        api.fetchLocations(state.worldId),
+                        api.fetchProps(state.worldId),
+                    ]);
+                    setAssets({ characters, locations, props });
+                }
             } catch (e) { /* ignore */ }
             state.showGenerateProgressDialog = false;
             state.isGeneratingFromScript = false;
@@ -1173,6 +1184,25 @@ function removeOptimisticCandidate(sceneId, listKey, tempId) {
  * 「生成中」乐观占位卡，成功后由真实资产接管；消耗计入左下角算力提示行。
  * 提交后复用 pollSceneTaskStatus 轮询并回填候选区。
  */
+/**
+ * 生成分镜图响应中带回了"参考图未生效"的角色名单（后端不再静默降级）：
+ * - missing_characters：提示词标记了【【角色】】但角色库查不到（幽灵角色）
+ * - characters_without_reference：角色在库但没有任何可用参考图
+ * 提示用户处理，避免生成的画面缺少角色参考导致形象不一致。
+ */
+function notifyMissingCharacterReferences(result) {
+    if (!result || typeof result !== 'object') return;
+    const missing = Array.isArray(result.missing_characters)
+        ? result.missing_characters.filter(Boolean) : [];
+    const noRef = Array.isArray(result.characters_without_reference)
+        ? result.characters_without_reference.filter(Boolean) : [];
+    if (!missing.length && !noRef.length) return;
+    const parts = [];
+    if (missing.length) parts.push(`「${missing.join('、')}」未在角色库中`);
+    if (noRef.length) parts.push(`「${noRef.join('、')}」缺参考图`);
+    notify(`部分角色参考未生效：${parts.join('；')}，本次生成已跳过，请到角色管理中处理`);
+}
+
 async function sendDirectImage(current) {
     const sceneId = current.id;
     if (!sceneId) return;
@@ -1217,6 +1247,7 @@ async function sendDirectImage(current) {
         // 提交响应自带真实资产 id：乐观占位卡原地接管，后续轮询按同 id 去重不重复
         adoptOptimisticCandidate(sceneId, 'images', optimisticId, result?.asset_ids?.[0]);
         recordPowerSpend(result, '生图');
+        notifyMissingCharacterReferences(result);
         // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);

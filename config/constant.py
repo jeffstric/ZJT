@@ -1551,6 +1551,17 @@ class ScriptSplitConstants:
     )
 
 
+class CharacterConstants:
+    """角色资产常量（model/character 与剧本拆分角色自动入库共用）。"""
+    _CONSTANT_GROUP = True
+
+    # 角色来源：用户手动创建（历史存量与角色卡提交，默认值）
+    SOURCE_MANUAL = "manual"
+    # 角色来源：剧本拆分发布时自动入库（见 services/storyboard_character_bootstrap_service.py，
+    # 该类角色缺参考图，前端需提示用户补充）
+    SOURCE_SCRIPT_SPLIT = "script_split"
+
+
 class StoryboardAutoGenerateConstants:
     """Storyboard auto frame generation limits."""
     # 总览批量操作一次允许携带的最大分镜数。生成任务仍由调度器分 tick 推进，

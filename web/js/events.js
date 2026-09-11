@@ -331,6 +331,14 @@
       startNodePlacing(nodeId);
     });
 
+    // 新建空分组框（拖动节点进框即成为成员）
+    document.getElementById('menuAddGroup').addEventListener('click', () => {
+      if(typeof createEmptyGroup === 'function'){
+        createEmptyGroup();
+      }
+      addMenu.classList.remove('show');
+    });
+
     // 点击其他地方关闭菜单
     document.addEventListener('click', (e) => {
       if(!e.target.closest('#addBtnContainer')){
@@ -443,6 +451,11 @@
 
         if(deleteSelectedConnection()){
           e.preventDefault();
+        } else if(state.selectedGroupId != null && typeof dissolveGroup === 'function'){
+          // Delete 作用于选中的分组框：解散分组（保留节点）
+          e.preventDefault();
+          dissolveGroup(state.selectedGroupId);
+          showToast('已解散分组（节点已保留）', 'info');
         } else if(state.timeline.selectedClipId !== null){
           e.preventDefault();
           removeFromTimeline(state.timeline.selectedClipId);
@@ -474,6 +487,42 @@
       } else if(e.key === '-'){
         e.preventDefault();
         zoomOut();
+      }
+    });
+
+    // 复制/粘贴/再制/编组快捷键
+    window.addEventListener('keydown', (e) => {
+      const isCtrl = e.ctrlKey || e.metaKey;
+      if(!isCtrl) return;
+      // 不在输入框/可编辑区域内时才响应（保证输入框内 Ctrl+C/V 仍是原生文本复制粘贴）
+      if(document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA' || document.activeElement.isContentEditable)) return;
+      // 涂鸦编辑弹窗打开时由弹窗自行处理
+      if(window.imageDoodleEditor && typeof window.imageDoodleEditor.isOpen === 'function' && window.imageDoodleEditor.isOpen()){
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+      if(key === 'c'){
+        if(typeof copySelectedNodes === 'function' && copySelectedNodes()){
+          e.preventDefault();
+        }
+      } else if(key === 'v'){
+        if(typeof pasteClipboard === 'function'){
+          e.preventDefault();
+          pasteClipboard();
+        }
+      } else if(key === 'd'){
+        if(typeof duplicateSelectedNodes === 'function'){
+          e.preventDefault();
+          duplicateSelectedNodes();
+        }
+      } else if(key === 'g'){
+        e.preventDefault();
+        if(e.shiftKey){
+          if(typeof ungroupSelection === 'function') ungroupSelection();
+        } else if(typeof groupSelectedNodes === 'function'){
+          groupSelectedNodes();
+        }
       }
     });
 
@@ -554,6 +603,14 @@
     }, true);
 
     window.addEventListener('mousemove', (e) => {
+      // 记录最近鼠标所在画布坐标（供粘贴/再制定位锚点）
+      {
+        const containerRect = canvasContainer.getBoundingClientRect();
+        state.lastMouseWorldPos = {
+          x: (e.clientX - containerRect.left - state.panX) / state.zoom,
+          y: (e.clientY - containerRect.top - state.panY) / state.zoom
+        };
+      }
       // 放置新节点跟随鼠标
       if(state.placing){
         const containerRect = canvasContainer.getBoundingClientRect();
@@ -616,14 +673,30 @@
         // 仅需重新定位挂在屏幕坐标系上的删除按钮
         updateSelectedConnDeleteBtnPos();
       }
-      // 拖动节点（支持批量拖动）
+      // 拖动节点（支持批量拖动 / 分组整体拖动）
       if(state.drag){
         const zoom = state.zoom || 1;
         const dx = (e.clientX - state.drag.startX) / zoom;
         const dy = (e.clientY - state.drag.startY) / zoom;
-        
-        // 如果拖动的节点在选中列表中，批量移动所有选中的节点
-        if(state.selectedNodeIds.includes(state.drag.nodeId)){
+
+        // 分组整体拖动：按标题栏记录的成员初始位置平移（不经过选中集）
+        if(state.drag.groupId){
+          Object.keys(state.drag.nodePositions).forEach(key => {
+            const nodeId = Number(key);
+            const n = state.nodes.find(x => x.id === nodeId);
+            if(!n) return;
+            const origPos = state.drag.nodePositions[nodeId];
+            if(!origPos) return;
+            n.x = Math.max(20, origPos.x + dx);
+            n.y = Math.max(MIN_NODE_Y, origPos.y + dy);
+            const el = canvasEl.querySelector(`.node[data-node-id="${n.id}"]`);
+            if(el){
+              el.style.left = n.x + 'px';
+              el.style.top = n.y + 'px';
+            }
+          });
+        } else if(state.selectedNodeIds.includes(state.drag.nodeId)){
+          // 如果拖动的节点在选中列表中，批量移动所有选中的节点
           state.selectedNodeIds.forEach(nodeId => {
             const n = state.nodes.find(x => x.id === nodeId);
             if(!n) return;
@@ -650,6 +723,10 @@
           }
         }
         state.drag.moved = true;
+        // 组框跟随成员实时移动
+        if(typeof updateGroupFramesDuringDrag === 'function'){
+          updateGroupFramesDuringDrag(state.drag, dx, dy);
+        }
         // 性能优化：rAF 合帧渲染 + 拖拽期间跳过画布尺寸重算（mouseup 时统一补偿）
         scheduleConnectionsRender({ skipSizeUpdate: true });
       }
@@ -925,11 +1002,21 @@
       
       if(state.drag){
         const moved = state.drag.moved;
+        const dragGroupId = state.drag.groupId;
+        // 先记录本次拖动涉及的节点，供松开后重新判定分组归属
+        const draggedIds = state.drag.nodeId != null && state.selectedNodeIds.includes(state.drag.nodeId)
+          ? [...state.selectedNodeIds]
+          : (state.drag.nodeId != null ? [state.drag.nodeId] : []);
         state.drag = null;
         // 拖拽期间跳过了画布尺寸重算与即时渲染，这里同步补偿最终状态
         flushConnectionsRender();
         renderMinimap();
         if(moved){
+          // 分组整体拖动不改变成员归属；普通拖动先按落点重新判定进/出组再拍快照，
+          // 使「移动+进出组」合并为同一个撤销点（safeAutoSave 内部会补拍快照，重复内容自动去重）
+          if(!dragGroupId && typeof updateNodeGroupMembership === 'function'){
+            draggedIds.forEach(nodeId => updateNodeGroupMembership(nodeId));
+          }
           captureHistorySnapshot();
         }
       }

@@ -167,7 +167,7 @@
               <button class="gen-btn shot-frame-generate-dialogue-btn" type="button" style="background: #3b82f6; color: white; width: 100%; padding: 8px; border-radius: 6px; margin-top: auto;" disabled data-i18n="shot_frame_generate_dialogue_audio_btn">${window.t ? window.t('shot_frame_generate_dialogue_audio_btn') : '生成对话音频'}</button>
             </div>
             <!-- 第2列: 提示词编辑 -->
-            <div class="script-section" style="background: #fcfcfc;">
+            <div class="script-section">
               <div class="script-section-header">
                 <div class="script-section-number">2</div>
                 <div class="script-section-title" data-i18n="shot_frame_prompt_edit_section">${window.t ? window.t('shot_frame_prompt_edit_section') : '提示词编辑'}</div>
@@ -188,7 +188,7 @@
               </div>
             </div>
             <!-- 第3列: 模型与生成 -->
-            <div class="script-section" style="background: #f9fafb;">
+            <div class="script-section">
               <div class="script-section-header">
                 <div class="script-section-number">3</div>
                 <div class="script-section-title" data-i18n="shot_frame_model_generation_section">${window.t ? window.t('shot_frame_model_generation_section') : '模型与生成'}</div>
@@ -212,9 +212,9 @@
               </div>
               <div class="field field-always-visible shot-frame-video-mode-field" style="margin-top: 8px;">
                 <div class="label" data-i18n="video_gen_mode_label">${window.t ? window.t('video_gen_mode_label') : '视频生成模式'}</div>
-                <div class="shot-frame-video-mode-toggle" style="display:flex; border:1px solid #ddd; border-radius:6px; overflow:hidden;">
-                  <button type="button" class="video-mode-btn" data-mode="first_last_frame" data-i18n="video_mode_first_frame" style="flex:1; padding:6px 8px; font-size:12px; border:none; cursor:pointer; background:#3b82f6; color:white;">${window.t ? window.t('video_mode_first_frame') : '首帧模式'}</button>
-                  <button type="button" class="video-mode-btn" data-mode="multi_reference" data-i18n="video_mode_reference" style="flex:1; padding:6px 8px; font-size:12px; border:none; cursor:pointer; background:#f3f4f6; color:#666;">${window.t ? window.t('video_mode_reference') : '参考模式'}</button>
+                <div class="shot-frame-video-mode-toggle">
+                  <button type="button" class="video-mode-btn is-active" data-mode="first_last_frame" data-i18n="video_mode_first_frame">${window.t ? window.t('video_mode_first_frame') : '首帧模式'}</button>
+                  <button type="button" class="video-mode-btn" data-mode="multi_reference" data-i18n="video_mode_reference">${window.t ? window.t('video_mode_reference') : '参考模式'}</button>
                 </div>
                 <div class="video-mode-hint" data-i18n="video_mode_hint_first_frame" style="font-size:11px; color:#6b7280; margin-top:4px;">${window.t ? window.t('video_mode_hint_first_frame') : '先生成分镜图作为视频首帧'}</div>
               </div>
@@ -526,6 +526,15 @@
         updateProcessFaceVisibility();
 
         // ============ 模式切换事件 ============
+        function syncVideoModeButtons(mode) {
+          const current = mode || node.data.videoMode || 'first_last_frame';
+          el.querySelectorAll('.video-mode-btn').forEach(btn => {
+            btn.classList.toggle('is-active', btn.dataset.mode === current);
+          });
+        }
+        el._syncVideoModeButtons = syncVideoModeButtons;
+        syncVideoModeButtons();
+
         const modeBtns = el.querySelectorAll('.video-mode-btn');
         modeBtns.forEach(btn => {
           btn.addEventListener('click', (e) => {
@@ -534,12 +543,7 @@
             if(newMode === node.data.videoMode) return;
             node.data.videoMode = newMode;
 
-            // 更新切换按钮样式
-            modeBtns.forEach(b => {
-              const isActive = b === btn;
-              b.style.background = isActive ? '#3b82f6' : '#f3f4f6';
-              b.style.color = isActive ? 'white' : '#666';
-            });
+            syncVideoModeButtons(newMode);
 
             // 重新填充视频模型列表
             populateVideoModelOptions();

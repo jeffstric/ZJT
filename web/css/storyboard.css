@@ -762,6 +762,13 @@ button {
 .asset-chip[data-action="select-location-reference"] {
   cursor: pointer;
 }
+/* 幽灵角色 chip（未在角色库）：橙色警示样式，不可点击选参考 */
+.role-chip.is-missing {
+  background-color: #fff7ed;
+  color: #c2410c;
+  border: 1px dashed #f97316;
+  cursor: help;
+}
 .role-chip.has-reference-selection,
 .asset-chip.has-reference-selection {
   border: 1px solid rgba(47, 109, 246, 0.45);
@@ -3514,6 +3521,22 @@ button {
 .card-char-avatar.is-placeholder {
     display: inline-block;
     background: #e2e8f0;
+}
+/* 幽灵角色（提示词标记但不在角色库）：橙色警示，与正常角色区分 */
+.card-char-avatar.is-missing {
+    background: #fff7ed;
+    border: 1.5px dashed #f97316;
+    color: #c2410c;
+    font-weight: 700;
+}
+/* 在库但缺参考图：黄色提示（生图不注入该角色参考） */
+.card-char-avatar.is-no-ref {
+    background: #fefce8;
+    border: 1.5px dashed #eab308;
+    color: #a16207;
+}
+img.card-char-avatar.is-missing {
+    opacity: 0.55;
 }
 .card-perspective {
     font-size: 11px;

@@ -61,10 +61,10 @@
       const shotsHtml = node.data.shots.map((shot, idx) => {
         const duration = shot.duration ? `${shot.duration}秒` : '未知';
         return `
-          <div style="padding: 8px; background: #f8f9fa; border-radius: 6px; margin-bottom: 6px; font-size: 12px;">
-            <div style="font-weight: 700; margin-bottom: 4px;">${escapeHtml(shot.shot_id || `镜头${idx+1}`)} - ${escapeHtml(shot.description || '')}</div>
-            <div style="color: #666; font-size: 11px;">时长: ${escapeHtml(duration)} | ${escapeHtml(shot.shot_type || '')} | ${escapeHtml(shot.camera_movement || '')}</div>
-            <div style="color: #666; font-size: 11px; margin-top: 2px;">图片提示词: ${escapeHtml((shot.opening_frame_description || '').slice(0, 60))}...</div>
+          <div class="shot-group-shot-item">
+            <div class="shot-group-shot-title">${escapeHtml(shot.shot_id || `镜头${idx+1}`)} - ${escapeHtml(shot.description || '')}</div>
+            <div class="shot-group-shot-meta">时长: ${escapeHtml(duration)} | ${escapeHtml(shot.shot_type || '')} | ${escapeHtml(shot.camera_movement || '')}</div>
+            <div class="shot-group-shot-meta">图片提示词: ${escapeHtml((shot.opening_frame_description || '').slice(0, 60))}...</div>
           </div>
         `;
       }).join('');
@@ -115,11 +115,11 @@
               </div>
               <div class="field field-always-visible">
                 <div class="label" data-i18n="shot_group_grid_model_label">${window.t ? window.t('shot_group_grid_model_label') : '宫格生图模型'}</div>
-                <select class="shot-group-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
+                <select class="shot-group-grid-model"></select>
               </div>
               <div class="field field-always-visible">
                 <div class="label" style="margin-top:5px" data-i18n="shot_group_grid_type_label">${window.t ? window.t('shot_group_grid_type_label') : '宫格类型'}</div>
-                <select class="shot-group-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                <select class="shot-group-grid-layout">
                   <option value="auto" data-i18n="shot_group_grid_auto">${window.t ? window.t('shot_group_grid_auto') : '自动选择'}</option>
                   <option value="4" data-i18n="shot_group_grid_4">${window.t ? window.t('shot_group_grid_4') : '4宫格 (2x2)'}</option>
                   <option value="9" data-i18n="shot_group_grid_9">${window.t ? window.t('shot_group_grid_9') : '9宫格 (3x3)'}</option>
@@ -131,7 +131,7 @@
               <div class="gen-meta shot-group-grid-status" style="display:none; margin-top: 8px;"></div>
             </div>
             <!-- 第3列: 视频生成 -->
-            <div class="script-section" style="background: #f9fafb;">
+            <div class="script-section">
               <div class="script-section-header">
                 <div class="script-section-number">3</div>
                 <div class="script-section-title" data-i18n="shot_group_video_section">${window.t ? window.t('shot_group_video_section') : '视频生成'}</div>
