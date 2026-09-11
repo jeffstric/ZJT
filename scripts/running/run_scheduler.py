@@ -14,7 +14,7 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 sys.path.insert(0, project_root)
 
 from server import app
-from task.scheduler import init_scheduler, shutdown_scheduler
+from task.scheduler import init_scheduler, shutdown_scheduler, parent_process_dead
 
 
 def cleanup(signum=None, frame=None):
@@ -60,14 +60,29 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[Scheduler] Warning: commercial license bootstrap failed: {e}")
     
-    # init_scheduler 内部会检查文件锁
-    init_scheduler(app)
+    # init_scheduler 内部会检查文件锁；锁被其他实例持有时直接退出
+    if not init_scheduler(app):
+        print("[Scheduler] Another scheduler instance holds the lock. Exiting.")
+        sys.exit(0)
     
     # 保持进程运行，并监控 scheduler 健康状态
     from task.scheduler import scheduler as _scheduler
+
+    # 防孤儿化（生产曾积累 31 个调度器孤儿进程）：
+    #   a) Linux 内核保证父进程死亡时自动向本进程发送 SIGTERM
+    if sys.platform.startswith('linux'):
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG = 1
+    initial_ppid = os.getppid()
+
     try:
         while True:
             time.sleep(60)
+            # b) 父进程已死亡（被 SIGKILL/断电强杀）→ 本进程成为孤儿，立即退出
+            if parent_process_dead(initial_ppid):
+                print("[Scheduler] Parent process died, exiting to avoid becoming an orphan...")
+                cleanup()
             # 健康检查：如果 APScheduler 内部线程崩溃，及时退出
             if _scheduler and not _scheduler.running:
                 print("[Scheduler] Scheduler stopped unexpectedly, exiting...")

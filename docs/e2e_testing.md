@@ -20,8 +20,9 @@ auto_test/
 │   ├── test_world.py          # 世界 CRUD（5 个 P0）
 │   ├── test_character.py      # 角色 CRUD（4 个 P0）
 │   ├── test_location.py       # 场景 CRUD（5 个 P0）
-│   ├── test_workflow.py       # 工作流 CRUD（5 个 P0）
+│   ├── test_workflow.py       # 工作流 CRUD（5 个 P0）+ 保存 CAS 乐观锁 409（4 个 P1）
 │   ├── test_workflow_page.py  # 工作流前端页面（3 个 P0）
+│   ├── test_announcements.py  # 本站公告：用户侧已读/未读 + 管理侧生命周期/图片上传（10 个 P1）
 │   ├── test_audio.py          # 音频模块（2 个 P0）
 │   ├── test_script_writer.py  # 剧本编辑器页面（2 个 P0）
 │   ├── test_marketing_agent.py# 营销智能体页面（3 个 P0）
@@ -374,6 +375,21 @@ auth (无依赖)
 ├── error_handling
 └── marketing_agent
 ```
+
+## 近期功能 e2e 覆盖补充（2026-09，develop_f804）
+
+针对近一个月功能提交补齐的端到端用例：
+
+| 功能 | 提交 | 覆盖位置 | 说明 |
+|------|------|----------|------|
+| 本站公告（用户侧铃铛 + 管理侧配置） | ee890760 / 6a3c0400 | `test_announcements.py`（10 个 P1） | 用户侧列表/未读数/单条已读/read-all；管理侧创建-发布-下线-删除全生命周期、编辑、非法 publish_at 拒绝、非管理员权限负向、图片上传与拒非图片 |
+| 工作流保存 CAS 乐观锁（409） | 719e0032 / 2ff48436 | `test_workflow.py::TestWorkflowSaveCAS`（4 个 P1） | 详情返回 `content_hash`；正确 `X-Base-Hash` 保存成功；过期基线被 409 拒绝并回传当前哈希且内容不被覆盖；不带基线的强制写路径兼容 |
+| 推荐模型档位管理员可配 | d6e57884 | `test_admin_api.py`（admin_api_019/020） | GET 各场景 value/quality 双档 + 候选；PUT reset 回退与未知场景 400 |
+| `/api/models` id 数值化 | 1619353a / e4d54994 | `test_script_writer_api.py::test_api_get_models` 增强 | 断言 id 为数值库 ID 字符串（无 `vendor:` 复合串），且条目含 `name`/`vendor_id`（前端模型记忆契约） |
+
+注意：CAS 内容哈希只覆盖 `workflow_data`/`style`/`style_reference_image`/`default_world_id`/`workflow_ratio`（`name` 与 `viewport` 不参与），测试中推进哈希需用参与哈希的字段。
+
+不建议 e2e 覆盖（依赖外部服务/真实触发条件，本测试环境不可达）：内容审核违规原文透出（4db4491c）、TTS 语速滑杆（93224407）、MiniMax H3 文生视频驱动（c28003b2）、小米 MiMo 供应商（432f9cb5）——相关行为由 `tests/` 单测与前端 vitest 覆盖。
 
 ## 两种测试方案对比
 
