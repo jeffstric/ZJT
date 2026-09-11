@@ -302,3 +302,4 @@ MR1+MR2+MR3 合入后，审计所述「LLM 输出 → 渲染 → 拖库」链即
 3. **CSP 第二步**：`Content-Security-Policy-Report-Only: script-src 'self'` + report-uri，收集内联 script 清单后做 nonce 化改造，再切 enforcement。
 4. **后端 `require_permission` 装饰器为空实现**（perseids_server/utils/permission.py，TODO 标注）：本次调查顺带确认，权限系统落地属独立专项。落地前 story_writer world 文件等接口实际无鉴权。
 5. **登录标记 `logged_in`、phone 等非凭据字段仍在 localStorage**：不含可被利用的凭据；phone 建议后续只存脱敏值。
+6. **剧本创作发消息须 header 优先于会话存档 token**：`POST /api/session/{id}/task` 曾用 `body.auth_token or session.auth_token`。cookie 登录后 body 为空、复用会话里仍是上次登录已顶号作废的 token，历史接口走 header 能打开页面，一发送就误报「登录已过期」。已改为 `resolve_request_auth_token`（header/cookie > body > 会话）。

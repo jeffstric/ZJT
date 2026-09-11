@@ -1411,7 +1411,7 @@
                     },
                     body: JSON.stringify({
                         message,
-                        auth_token: AUTH_TOKEN,
+                        ...(AUTH_TOKEN ? { auth_token: AUTH_TOKEN } : {}),
                         model: selector?.value || '',
                         model_id: modelId,
                         vendor_id: vendorId ? parseInt(vendorId) : 1,
