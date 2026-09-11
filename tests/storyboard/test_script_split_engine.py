@@ -408,7 +408,7 @@ class TestStepPublish:
         monkeypatch.setattr(
             storyboard_api,
             "build_storyboard_scenes_from_parsed_script",
-            lambda parsed, style: [{"title": "分镜1", "source_shot_key": "s1"}],
+            lambda parsed, style, **kwargs: [{"title": "分镜1", "source_shot_key": "s1"}],
         )
 
         class FakeBootstrapService:

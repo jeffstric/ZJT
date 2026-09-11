@@ -42,7 +42,7 @@
 
 ### 准备但禁用 / 弱化（明确标注“待接入”）
 - 图生图 / 图片编辑（IMAGE_EDIT）：后端 `generate_scene_image` 目前**不传 image_path**，无法真正条件生成。
-- 文生视频（TEXT_TO_VIDEO）：后端 `generate_scene_video` 非数字人分支**始终要求首帧 + image_path**。
+- 文生视频（TEXT_TO_VIDEO）：全能参考（`image_mode=multi_reference`）且收集不到任何参考图时，直连 `generate_scene_video` 回退文生视频；首尾帧模式仍要求首帧。详见 `docs/storyboard/storyboard_reference_to_video.md`。
 - 对话改图（LLM 驱动）：后端 `/scene/{scene_id}/ai-chat` 仍是占位，前端已有“正在接入中”提示。
 
 **好处**：后端 `/models` 接口一次扩展全部分类（为 v2 做准备），但前端第一版**不渲染类型切换 toggle**，避免用户点击到 400 错误或误解功能已完成。

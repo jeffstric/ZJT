@@ -602,6 +602,8 @@
   "placeholder_select_or_custom": "Click an option above or select \"Other\" to enter a custom answer",
   "placeholder_enter_answer": "Please enter your answer...",
   "status_waiting_answer": "Waiting for your answer...",
+  "verification_click_hint": "Click an option below to answer",
+  "verification_expired_hint": "This question timed out. Options are disabled.",
   "modal_import_script": "Import Existing Script",
   "label_upload_txt": "Upload TXT File",
   "drop_zone_text": "Drag and drop TXT file here, or <span class=\"drop-zone-link\">click to select</span>",

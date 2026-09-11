@@ -13,6 +13,9 @@ import state, {
     modelNeedsFaceMask,
     isEnterpriseEdition,
     getVideoSupportedDurations,
+    getSplitVideoModel,
+    getSplitMaxShotDurationOptions,
+    clampMaxGroupDurationToSplitModel,
     resolveVideoDurationSeconds,
     getVideoResolutionOptions,
     getDefaultVideoResolution,
@@ -1342,7 +1345,7 @@ function renderVideoModeSelector(disabled) {
         {
             value: 'multi_reference',
             title: '全能参考',
-            desc: '多张图片作为综合参考驱动',
+            desc: '可不生成分镜图，直接用角色/场景/道具参考图生视频；若已有分镜图则一并作为主参考',
             emoji: '🖼',
         },
     ].filter(opt => modes.includes(opt.value));
@@ -1417,11 +1420,15 @@ function renderMediaStack(disabled) {
         : '';
 
     if (!items.length) {
+        const emptyHint = mode === 'multi_reference' && !canRestore
+            ? '<div class="media-stack-hint">将使用分镜角色/场景/道具参考图</div>'
+            : '';
         return `
             <div class="media-stack is-empty">
                 <div class="media-stack-stage">
                     ${addBtn() || `<div class="media-stack-add" style="opacity:.4;pointer-events:none" title="当前模式无法添加图片">${mediaPlusSvg()}</div>`}
                 </div>
+                ${emptyHint}
                 ${restoreBtn}
                 <input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple>
             </div>`;
@@ -2168,9 +2175,34 @@ function renderScriptSplitModelConfig(disabled = false) {
     return html;
 }
 
+function renderSplitVideoGenMode(disabled = false) {
+    const mode = state.videoImageMode === 'multi_reference' ? 'multi_reference' : 'first_last_frame';
+    const options = [
+        { value: 'first_last_frame', title: '首帧生视频', desc: '先生成分镜图再出视频，单镜按构图切开' },
+        { value: 'multi_reference', title: '参考生视频', desc: '不生分镜图；单镜尽量拉满模型时长，下一段会超限才切开' },
+    ];
+    return `
+        <div class="generate-from-script-model">
+            <label class="config-label">视频生成方式</label>
+            <div class="config-hint">${mode === 'multi_reference'
+                ? '参考生：拆完不自动补全首帧，批量用角色/场景/道具直接出视频'
+                : '首帧生：拆完可自动补全分镜图，再按首帧出视频'}</div>
+            <div class="config-chip-row">
+                ${options.map(opt => `
+                    <button type="button" class="config-chip ${mode === opt.value ? 'active' : ''}"
+                        data-action="set-split-video-gen-mode" data-video-image-mode="${opt.value}"
+                        ${disabled ? 'disabled' : ''} title="${escapeHtml(opt.desc)}">${escapeHtml(opt.title)}</button>
+                `).join('')}
+            </div>
+        </div>`;
+}
+
 function renderScriptSplitDuration(disabled = false) {
-    const durations = [5, 8, 10, 15];
-    const curDuration = durations.includes(Number(state.maxGroupDuration)) ? Number(state.maxGroupDuration) : 15;
+    clampMaxGroupDurationToSplitModel();
+    const durations = getSplitMaxShotDurationOptions();
+    const curDuration = durations.includes(Number(state.maxGroupDuration))
+        ? Number(state.maxGroupDuration)
+        : (durations[durations.length - 1] || 15);
     const durationOptions = durations.map(d =>
         `<option value="${d}" ${d === curDuration ? 'selected' : ''}>${d}秒</option>`
     ).join('');
@@ -2198,8 +2230,10 @@ function renderScriptSplitDuration(disabled = false) {
     }
     return `
         <div class="generate-from-script-model">
-            <label class="config-label">镜头组时长</label>
-            <div class="config-hint">每个分镜组的最大总时长，超时会在同一场景内自动拆分</div>
+            <label class="config-label">单镜最长时长</label>
+            <div class="config-hint">${state.videoImageMode === 'multi_reference'
+                ? '参考生视频：每个分镜尽量接近此时长；再并入下一拍会超过才切开（不跨场/跨幕）'
+                : '首帧生视频：单镜与分镜组都不超过此时长，超时在同一场景内拆分'}</div>
             <div class="config-select-wrapper">
                 <select class="chat-mode-select" data-config-select="maxGroupDuration" ${disabled ? 'disabled' : ''}>${durationOptions}</select>
             </div>
@@ -2439,6 +2473,7 @@ function renderGenerateFromScriptDialog() {
     const splitModelConfig = renderScriptSplitModelConfig(busy);
     const imageModelConfig = renderImageModelConfig(busy, { collapseTextToImage: true });
     const videoModelConfig = renderDefaultVideoModelConfig(busy);
+    const splitVideoGenMode = renderSplitVideoGenMode(busy);
     const splitDurationConfig = renderScriptSplitDuration(busy);
     const splitOptionsConfig = renderScriptSplitOptions(busy);
     const isEnterprise = state.editionInfo?.mode === 'enterprise';
@@ -2503,6 +2538,7 @@ function renderGenerateFromScriptDialog() {
                     </div>
                     <div class="gfs-col">
                         ${splitOptionsConfig}
+                        ${splitVideoGenMode}
                         ${splitDurationConfig}
                     </div>
                     <div class="gfs-mode-section">
@@ -2792,16 +2828,29 @@ function renderFaceMaskToggle(disabled = false) {
 
 /** 拆分弹窗：默认视频模型（仅首帧/首尾帧图生视频）+ 分辨率 + 条件人脸遮盖 */
 function renderDefaultVideoModelConfig(disabled = false) {
-    // 分辨率与齿轮弹窗同源：绑定「图生视频模型」，随模型切换自动校正
+    const isRef = state.videoImageMode === 'multi_reference';
+    const model = getSplitVideoModel();
     const resolutionChips = disabled
         ? ''
-        : renderVideoResolutionChips(getSelectedImageToVideoModel(), {
+        : renderVideoResolutionChips(model, {
             label: '分辨率',
-            hint: '分镜生成视频时使用的分辨率偏好；随上方图生视频模型变化',
+            hint: isRef
+                ? '参考生视频分辨率；随上方参考视频模型变化'
+                : '分镜生成视频时使用的分辨率偏好；随上方图生视频模型变化',
         });
+    if (isRef) {
+        return renderMediaModelSelect(
+            '默认视频模型',
+            '参考生视频使用此模型；单镜尽量拉满其最长支持时长',
+            'referenceToVideo',
+            getReferenceToVideoSlotModels(),
+            state.selectedReferenceToVideoTaskId,
+            disabled,
+        ) + resolutionChips + renderFaceMaskToggle(disabled);
+    }
     return renderMediaModelSelect(
         '默认视频模型',
-        '分镜有首帧时用于生成视频；仅列出支持首帧/首尾帧的模型。参考图专用模型请到齿轮「参考视频模型」中选择',
+        '分镜有首帧时用于生成视频；仅列出支持首帧/首尾帧的模型',
         'imageToVideo',
         getImageToVideoSlotModels(),
         state.selectedImageToVideoTaskId,
@@ -3028,7 +3077,7 @@ function renderVideoBatchConfirmDialog() {
         <div class="modal-overlay" data-modal="video-batch-confirm">
             <div class="edit-dialog video-type-switch-dialog" role="dialog" aria-modal="true" aria-labelledby="video-batch-confirm-title">
                 <header>
-                    <h2 id="video-batch-confirm-title">批量生成视频确认</h2>
+                    <h2 id="video-batch-confirm-title">${state.videoImageMode === 'multi_reference' ? '全能参考逐个生成视频确认' : '逐个生成视频确认'}</h2>
                     <button type="button" data-action="cancel-video-batch-submit" ${busy ? 'disabled' : ''}>${icon('close', 18)}</button>
                 </header>
                 <div class="video-type-switch-dialog-body">${bodyHtml}</div>

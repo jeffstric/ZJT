@@ -82,6 +82,33 @@ def test_verify_auth_token_db_failure_is_service_unavailable(monkeypatch):
     assert 'token_expired' not in resp
 
 
+class _DummyRequest:
+    def __init__(self, authorization=""):
+        self.headers = {"authorization": authorization}
+
+
+def test_resolve_request_auth_token_header_wins_over_stale_session():
+    """cookie 翻译后的 header 必须压过会话里已作废的旧 token。"""
+    request = _DummyRequest("Bearer cookie-fresh")
+    assert script_writer.resolve_request_auth_token(
+        request, body_token="", session_token="stale-session-token"
+    ) == "cookie-fresh"
+
+
+def test_resolve_request_auth_token_empty_body_does_not_mask_header():
+    request = _DummyRequest("Bearer cookie-fresh")
+    assert script_writer.resolve_request_auth_token(
+        request, body_token="", session_token=""
+    ) == "cookie-fresh"
+
+
+def test_resolve_request_auth_token_falls_back_to_session():
+    request = _DummyRequest("Bearer ")
+    assert script_writer.resolve_request_auth_token(
+        request, body_token="", session_token="session-tok"
+    ) == "session-tok"
+
+
 def test_auth_error_status_code_routing():
     assert script_writer._auth_error_status_code({'error_code': ERROR_CODE_AUTH_SERVICE_UNAVAILABLE}) == 502
     assert script_writer._auth_error_status_code({'error_code': ERROR_CODE_TOKEN_EXPIRED}) == 401

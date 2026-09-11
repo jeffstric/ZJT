@@ -10,9 +10,11 @@ describe('storyboard video batch confirm dialog with power estimate', () => {
         const eventsSource = readSource('web/js/storyboard/events.js');
 
         // auto-complete-missing-videos：先开弹窗（videoBatchConfirm.open），再试算，
-        // 不得在该分支直接调 autoCompleteMissingVideos() 提交批次
+        // 不得在该分支直接调 autoCompleteMissingVideos() 提交批次。
+        // 用 8 空格缩进的 return + 4 空格闭括号锚定分支结尾，
+        // 避免被分支开头 batchLocked 守卫（12 空格缩进 return）提前截断；\r? 兼容 CRLF 检出
         const branch = eventsSource.match(
-            /action === 'auto-complete-missing-videos'([\s\S]{0,2000}?)return;\n    \}/
+            /action === 'auto-complete-missing-videos'([\s\S]{0,2400}?)\r?\n        return;\r?\n    \}/
         );
         expect(branch).not.toBeNull();
         expect(branch[1]).toContain('videoBatchConfirm');

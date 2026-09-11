@@ -2415,3 +2415,74 @@ def test_plan_video_batch_filters_selection_and_requires_first_frame(patched_sto
     assert items[0]["status"] == "pending"
     assert items[1]["status"] == "missing_first_frame"
     assert items[1]["skip_reason"] == "missing_first_frame"
+
+
+def test_plan_video_batch_multi_reference_allows_missing_first_frame(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    scenes = [
+        {"id": 1, "storyboard_id": 22, "sort_order": 1, "title": "A", "video_type": "video", "prompt_json": {}},
+        {"id": 2, "storyboard_id": 22, "sort_order": 2, "title": "B", "video_type": "video", "prompt_json": {}},
+        {"id": 3, "storyboard_id": 22, "sort_order": 3, "title": "C", "video_type": "video", "prompt_json": {}},
+    ]
+    monkeypatch.setattr(module.StoryboardSceneModel, "list_by_storyboard", lambda _id: scenes)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    monkeypatch.setattr(service, "_selected_asset_for_scene", lambda _scene, _type: None)
+    monkeypatch.setattr(
+        service,
+        "_scene_has_video_reference_inputs",
+        lambda scene_id: int(scene_id) == 1,
+    )
+
+    items = service._plan_video_batch_items(
+        storyboard_id=22,
+        limit=0,
+        scene_ids=[1, 2],
+        image_mode="multi_reference",
+    )
+
+    assert [item["scene_id"] for item in items] == [1, 2]
+    assert items[0]["status"] == "pending"
+    assert items[1]["status"] == "missing_references"
+    assert items[1]["skip_reason"] == "missing_references"
+
+
+def test_generate_video_multi_reference_appends_legend_and_style(patched_storyboard_cli):
+    service = patched_storyboard_cli.module.StoryboardAgentCliService(
+        submitter=patched_storyboard_cli.submitter
+    )
+    result = service.generate_video(
+        scene_id=11,
+        user_id=7,
+        auth_token="token",
+        mode="image_to_video",
+        image_mode="multi_reference",
+    )
+    assert result["project_ids"] == [802]
+    call_name, kwargs = patched_storyboard_cli.submitter.calls[-1]
+    assert call_name == "image_to_video"
+    assert kwargs["image_mode"] == "multi_reference"
+    assert "https://cdn.test/first.png" in kwargs["image_urls"]
+    assert "https://cdn.test/lin.png" in kwargs["image_urls"] or "https://cdn.test/alley.png" in kwargs["image_urls"]
+    assert "图" in kwargs["prompt"]
+    assert "图片风格：cinematic noir" in kwargs["prompt"]
+    assert "构图倾向：rule of thirds" in kwargs["prompt"]
+
+
+def test_generate_video_multi_reference_falls_back_to_text_when_no_images(
+    patched_storyboard_cli, monkeypatch
+):
+    service = patched_storyboard_cli.module.StoryboardAgentCliService(
+        submitter=patched_storyboard_cli.submitter
+    )
+    monkeypatch.setattr(service, "_collect_video_reference_bundle", lambda *args, **kwargs: ([], []))
+    result = service.generate_video(
+        scene_id=11,
+        user_id=7,
+        auth_token="token",
+        mode="image_to_video",
+        image_mode="multi_reference",
+    )
+    assert result["project_ids"] == [801]
+    assert patched_storyboard_cli.submitter.calls[-1][0] == "text_to_video"
+    prompt = patched_storyboard_cli.submitter.calls[-1][1]["prompt"]
+    assert "图片风格：cinematic noir" in prompt
