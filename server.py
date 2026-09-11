@@ -543,6 +543,10 @@ from api.announcements import router as announcements_router, admin_router as an
 app.include_router(announcements_router)
 app.include_router(announcements_admin_router)
 
+# 导入并注册月度订阅 API 路由（微信委托代扣·周期扣费，见 docs/backend/wechat_monthly_subscription.md）
+from api.subscription import router as subscription_router
+app.include_router(subscription_router)
+
 # 用户模块（接口模块）属商业版能力：路由挂载、Supervisor 启动验证与实现方绑定加载
 # 由 enterprise.register(app) 注入（见 enterprise 仓），社区版核心不引用。
 

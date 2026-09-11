@@ -71,3 +71,4 @@ data/runtime/
 
 # CI 镜像层缓存（GitLab cache 解压目录，勿提交）
 docker-image-cache/
+docs/backend/wechat_monthly_subscription.md

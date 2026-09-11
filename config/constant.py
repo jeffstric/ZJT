@@ -2281,6 +2281,70 @@ RECHARGE_PACKAGES = [
 ]
 
 
+# ==================== 月度订阅（微信委托代扣·周期扣费） ====================
+# 商户产品参数（协议模板ID / V2密钥等）见 config/subscription_config.py（临时 hardcode）。
+class SubscriptionConstants:
+    """月度订阅业务常量"""
+    # HTTP 调用微信支付接口的超时（秒）
+    HTTP_TIMEOUT_SECONDS = 30
+    # 订阅周期长度（天）：每月=30天
+    PERIOD_DAYS = 30
+    # 预扣费通知提前量（天）：到期前 N 天下发预扣费通知（第1天通知、第2天等待期、第3天起可扣费）
+    PRE_NOTIFY_LEAD_DAYS = 2
+    # 续期扣款失败重试窗口（天）：到期日起 N 天内每日重试，窗口耗尽则关闭订单（订阅过期）
+    DEDUCT_RETRY_WINDOW_DAYS = 7
+    # 允许发起预扣费通知/申请扣款的时间窗（北京时间，含边界）
+    DEDUCT_ALLOWED_HOUR_START = 7
+    DEDUCT_ALLOWED_HOUR_END = 22
+    # 续期任务调度间隔（分钟）
+    SCHEDULER_INTERVAL_MINUTES = 30
+    # 扣款受理成功后无回调时，主动查单的间隔（小时）
+    DEDUCT_CONFIRM_QUERY_DELAY_HOURS = 26
+    # 订阅订单号 / 签约协议号前缀
+    ORDER_ID_PREFIX = "SUB"
+    CONTRACT_CODE_PREFIX = "SUBC"
+    # 签约中状态的超时清理（小时）：超过视为签约失败
+    PENDING_SIGN_EXPIRE_HOURS = 2
+    # 扣费模式（必须与商户平台模板的「扣费模式」一致）：
+    #   direct     延迟24小时扣费（模板默认，无需额外权限）
+    #   pre_notify 预扣费通知（需另行开通微信侧权限）
+    DEDUCT_MODE = 'direct'
+    # 签约页「开通账号」展示前缀（后接用户标识；不支持表情符号）
+    CONTRACT_DISPLAY_ACCOUNT_PREFIX = '会员'
+    # 委托代扣商品描述前缀
+    BODY_PREFIX = '智剧通会员订阅'
+
+
+class WxContractStatus:
+    """微信委托代扣签约关系状态"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'PENDING': '签约中',
+        'ACTIVE': '已签约',
+        'TERMINATED': '已解约',
+    }
+    PENDING = 0     # 签约中（已下发支付中签约，等待微信回调）
+    ACTIVE = 1      # 已签约
+    TERMINATED = 2  # 已解约
+
+
+class SubscriptionOrderStatus:
+    """订阅订单状态（每周期一条）"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'PENDING_PAY': '待支付/待扣款',
+        'PAID': '已支付(算力已发放)',
+        'CONFIRMING': '已受理待确认(24小时自动扣费模式)',
+        'FAILED': '扣款失败(待重试)',
+        'CLOSED': '已关闭',
+    }
+    PENDING_PAY = 0   # 待支付/待扣款
+    PAID = 1          # 已支付（算力已发放）
+    CONFIRMING = 4    # 已受理待确认（direct 模式受理成功，等回调/查单）
+    FAILED = 2        # 扣款失败（待重试）
+    CLOSED = 3        # 已关闭（重试窗口耗尽 / 手动关闭）
+
+
 # ==================== 邀请佣金相关（商业版） ====================
 class Commission:
     """邀请佣金配置（仅商业版启用；社区版由代码层 IS_COMMUNITY_EDITION 守卫跳过）"""

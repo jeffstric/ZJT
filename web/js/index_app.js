@@ -112,6 +112,20 @@
       paymentQrCode: '',
       paymentOrderId: '',
       paymentError: '',
+      // 月度订阅（微信委托代扣·周期扣费）
+      rechargeTab: 'power',            // 'power' 算力充值 | 'subscription' 月度订阅
+      subscriptionPlans: [],
+      subscriptionPlansLoading: false,
+      subscriptionStatus: null,        // {subscribed, status, plan, current_period_end, next_deduct_date}
+      selectedSubPlan: null,
+      subAgreed: false,
+      subAgreementError: false,
+      subPaymentLoading: false,
+      subPaymentError: '',
+      subQrCode: '',
+      subNativeCodeUrl: '',
+      subOrderId: '',
+      subCancelling: false,
       wechatOpenid: '',
       userIp: '',
       nativeCodeUrl: '',
@@ -2953,6 +2967,201 @@
         } else {
           this.showRechargePowerModal = true;
           this.fetchRechargePackages();
+          this.fetchSubscriptionPlans();
+        }
+      },
+
+      // ==================== 月度订阅（微信委托代扣·周期扣费） ====================
+
+      switchRechargeTab(tab) {
+        this.rechargeTab = tab;
+      },
+
+      formatDateStr(isoStr) {
+        if (!isoStr) return '--';
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return isoStr;
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      },
+
+      async fetchSubscriptionPlans() {
+        this.subscriptionPlansLoading = true;
+        try {
+          const response = await axios.get('/api/subscription/plans', {
+            params: { auth_token: this.authToken }
+          });
+          if (response.data.success) {
+            this.subscriptionPlans = response.data.plans || [];
+            this.subscriptionStatus = response.data.subscription || null;
+          } else {
+            console.error('Failed to fetch subscription plans:', response.data);
+          }
+        } catch (error) {
+          console.error('Error fetching subscription plans:', error);
+          this.handleAuthError(error);
+        } finally {
+          this.subscriptionPlansLoading = false;
+        }
+      },
+
+      async refreshSubscriptionStatus() {
+        if (!this.authToken || !this.userId) return;
+        this.subCancelling = true;
+        try {
+          const response = await axios.get('/api/subscription/status', {
+            params: { user_id: parseInt(this.userId, 10), auth_token: this.authToken }
+          });
+          if (response.data.success) {
+            this.subscriptionStatus = response.data.subscription || null;
+          }
+        } catch (error) {
+          console.error('Error refreshing subscription status:', error);
+        } finally {
+          this.subCancelling = false;
+        }
+      },
+
+      selectSubPlan(plan) {
+        this.selectedSubPlan = plan;
+        this.subAgreed = false;
+        this.subAgreementError = false;
+        this.subPaymentError = '';
+        this.subQrCode = '';
+        this.subNativeCodeUrl = '';
+        this.subOrderId = '';
+      },
+
+      backToSubPlanSelection() {
+        this.selectedSubPlan = null;
+        this.subQrCode = '';
+        this.subNativeCodeUrl = '';
+        this.subPaymentError = '';
+        this.subOrderId = '';
+      },
+
+      showSubscriptionAgreement() {
+        alert('自动续费服务协议（摘要）：\n\n' +
+          '1. 订阅周期为 30 天，每期发放对应档位算力，到期前自动扣费续期。\n' +
+          '2. 首次订阅赠送算力仅首期发放一次；解约后重新订阅视为新订阅，可再次享受。\n' +
+          '3. 扣款前微信将向您下发预扣费通知，扣费当日及次日为等待期，期间可随时取消。\n' +
+          '4. 您可随时在本页取消订阅，取消后当期权益保留至周期结束，之后不再扣费。\n' +
+          '5. 也可在微信「服务-钱包-支付设置-自动续费」中管理或解约。');
+      },
+
+      async createSubscriptionOrder() {
+        if (!this.selectedSubPlan) return;
+        if (!this.authToken || !this.userId) {
+          alert('请先登录');
+          this.showRechargePowerModal = false;
+          this.showLoginModal = true;
+          return;
+        }
+        if (!this.subAgreed) {
+          this.subAgreementError = true;
+          return;
+        }
+
+        this.subPaymentLoading = true;
+        this.subPaymentError = '';
+        this.subQrCode = '';
+        this.subNativeCodeUrl = '';
+
+        const isWechat = this.isWechatBrowser();
+        if (!this.userIp) {
+          await this.fetchUserIp();
+        }
+
+        try {
+          const requestData = {
+            subscription_plan_id: this.selectedSubPlan.plan_id,
+            user_id: parseInt(this.userId, 10),
+            auth_token: this.authToken,
+            is_wechat_browser: isWechat,
+            payment_ip: this.userIp || '0.0.0.0',
+            display_name: this.userPhone ? this.userPhone.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2') : ''
+          };
+          if (isWechat && this.wechatOpenid) {
+            requestData.openid = this.wechatOpenid;
+          }
+
+          const response = await axios.post('/api/subscription/wechat-sign-pay', requestData);
+          if (response.data.success) {
+            this.subOrderId = response.data.order_id;
+            if (response.data.payment_type === 'JSAPI') {
+              // 微信内：调起支付（支付+签约在同一流程完成）
+              this.invokeWechatSubscriptionJSAPI(response.data.jsapi_params);
+            } else {
+              const codeUrl = response.data.code_url;
+              if (!codeUrl) {
+                this.subPaymentError = '未获取到支付二维码，请重试';
+              } else {
+                this.subNativeCodeUrl = codeUrl;
+                this.subQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(codeUrl)}`;
+              }
+            }
+          } else {
+            this.subPaymentError = response.data.message || '创建订阅订单失败';
+          }
+        } catch (error) {
+          console.error('Error creating subscription order:', error);
+          this.subPaymentError = error?.response?.data?.detail || '创建订阅订单失败，请重试';
+        } finally {
+          this.subPaymentLoading = false;
+        }
+      },
+
+      invokeWechatSubscriptionJSAPI(jsapiParams) {
+        if (typeof WeixinJSBridge === 'undefined') {
+          this.subPaymentError = '请在微信中打开';
+          return;
+        }
+        WeixinJSBridge.invoke(
+          'getBrandWCPayRequest',
+          {
+            appId: jsapiParams.appId,
+            timeStamp: jsapiParams.timeStamp,
+            nonceStr: jsapiParams.nonceStr,
+            package: jsapiParams.package,
+            signType: jsapiParams.signType,
+            paySign: jsapiParams.paySign
+          },
+          (res) => {
+            if (res.err_msg === 'get_brand_wcpay_request:ok') {
+              alert('支付成功！订阅将在确认后生效，算力稍后到账');
+              this.refreshSubscriptionStatus();
+              this.selectedSubPlan = null;
+              setTimeout(() => { this.fetchComputingPower(); }, 2000);
+            } else if (res.err_msg === 'get_brand_wcpay_request:cancel') {
+              this.subPaymentError = '支付已取消';
+            } else {
+              this.subPaymentError = '支付失败: ' + res.err_msg;
+            }
+          }
+        );
+      },
+
+      async cancelSubscription() {
+        if (!confirm('确定取消月度订阅吗？\n取消后当期权益保留至周期结束，之后不再自动扣费。')) {
+          return;
+        }
+        this.subCancelling = true;
+        try {
+          const response = await axios.post('/api/subscription/cancel', {
+            user_id: parseInt(this.userId, 10),
+            auth_token: this.authToken
+          });
+          if (response.data.success) {
+            alert('订阅已取消');
+            await this.refreshSubscriptionStatus();
+          } else {
+            alert(response.data.message || '取消订阅失败');
+          }
+        } catch (error) {
+          console.error('Error cancelling subscription:', error);
+          alert(error?.response?.data?.detail || '取消订阅失败，请稍后重试');
+        } finally {
+          this.subCancelling = false;
         }
       },
 
@@ -3082,6 +3291,15 @@
         this.paymentError = '';
         this.nativeCodeUrl = '';
         this.rechargePackages = [];
+        // 重置月度订阅状态
+        this.rechargeTab = 'power';
+        this.selectedSubPlan = null;
+        this.subAgreed = false;
+        this.subAgreementError = false;
+        this.subPaymentError = '';
+        this.subQrCode = '';
+        this.subNativeCodeUrl = '';
+        this.subOrderId = '';
       },
       
       // 检查创作模式

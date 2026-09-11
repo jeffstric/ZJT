@@ -1,0 +1,353 @@
+/*
+ * 月度订阅（充值弹窗-月度订阅 Tab）样式
+ * 主题适配深色 + 绿色主色（与 package-list 一致）
+ */
+
+/* ===== 充值弹窗顶部 Tab 切换 ===== */
+.recharge-tabs {
+  display: flex;
+  gap: 0;
+  margin: 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.recharge-tab {
+  flex: 1;
+  padding: 12px 20px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.2s ease;
+}
+
+.recharge-tab:hover {
+  color: var(--text);
+}
+
+.recharge-tab.active {
+  color: var(--text);
+}
+
+.recharge-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 42px;
+  height: 3px;
+  background: var(--primary);
+  border-radius: 2px;
+}
+
+/* ===== 订阅套餐卡片 ===== */
+.sub-plans-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 16px 0;
+}
+
+@media (max-width: 640px) {
+  .sub-plans-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.sub-plan-card {
+  position: relative;
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(34, 197, 94, 0.03) 100%);
+  border: 1.5px solid rgba(34, 197, 94, 0.25);
+  border-radius: 12px;
+  padding: 18px 12px 14px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  text-align: center;
+}
+
+.sub-plan-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(34, 197, 94, 0.2);
+}
+
+.sub-plan-card.selected {
+  background: linear-gradient(145deg, rgba(34, 197, 94, 0.16), rgba(34, 197, 94, 0.05));
+  border-color: var(--primary);
+  box-shadow: 0 0 16px rgba(34, 197, 94, 0.28);
+}
+
+.sub-plan-badge {
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 9px;
+  white-space: nowrap;
+}
+
+.sub-plan-selected-tag {
+  position: absolute;
+  top: -9px;
+  right: 8px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 8px;
+}
+
+.sub-plan-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.sub-plan-price {
+  margin-bottom: 6px;
+}
+
+.sub-plan-price .symbol {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sub-plan-price .amount {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--primary);
+  line-height: 1;
+}
+
+.sub-plan-price .unit {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sub-plan-power {
+  font-size: 11px;
+  color: var(--primary);
+  font-weight: 500;
+}
+
+/* ===== 订阅支付面板 ===== */
+.sub-payment-panel {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 20px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 8px;
+}
+
+@media (max-width: 640px) {
+  .sub-payment-panel {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sub-qr-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.sub-qr-box {
+  width: 180px;
+  height: 180px;
+  background: #fff;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.sub-qr-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.sub-qr-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.sub-info-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sub-method-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.sub-method-tag {
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--primary);
+}
+
+.sub-amount-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.sub-amount-row .symbol {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sub-amount-row .value {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+}
+
+.sub-amount-row .per-month {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sub-agreement {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1.6;
+}
+
+.sub-agreement input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  cursor: pointer;
+}
+
+.sub-agreement .sub-agreement-error {
+  color: var(--danger, #ef4444);
+}
+
+.sub-action-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.sub-action-row .btn {
+  flex: 1;
+}
+
+.sub-order-info {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  word-break: break-all;
+}
+
+.sub-error-text {
+  color: var(--danger, #ef4444);
+  font-size: 13px;
+}
+
+/* ===== 我的订阅（管理）卡片 ===== */
+.sub-status-card {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(34, 197, 94, 0.03) 100%);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: 12px;
+  padding: 18px;
+  margin: 16px 0;
+}
+
+.sub-status-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.sub-status-plan-name {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.sub-status-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 10px;
+  background: rgba(34, 197, 94, 0.18);
+  color: var(--primary);
+}
+
+.sub-status-badge.inactive {
+  background: rgba(156, 163, 175, 0.15);
+  color: var(--muted);
+}
+
+.sub-status-rows div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.sub-status-rows .label {
+  color: var(--muted);
+}
+
+.sub-status-rows .value {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.sub-status-note {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin-top: 12px;
+}
+
+/* 首期加赠角标行 */
+.sub-plan-bonus {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #f59e0b;
+  font-weight: 600;
+}

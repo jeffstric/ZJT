@@ -39,11 +39,47 @@ class WechatPayUtil:
     def generate_order_id(self) -> str:
         """
         生成订单ID
-        
+
         Returns:
             订单ID，格式: ORDER_时间戳_随机字符串
         """
         return f"ORDER_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+
+    def generate_v3_authorization(
+        self,
+        http_method: str,
+        url_path: str,
+        request_body: str
+    ) -> str:
+        """
+        生成微信支付V3 Authorization请求头（供委托代扣等 V3 混用接口复用）
+
+        Args:
+            http_method: HTTP请求方法（POST/GET）
+            url_path: URL路径（如 /v3/papay/contracts/xxx/notify）
+            request_body: 请求报文主体（JSON字符串，GET传空串）
+
+        Returns:
+           完整的 Authorization 头字符串
+        """
+        timestamp = str(int(time.time()))
+        nonce_str = uuid.uuid4().hex
+        signature = self._generate_sign(
+            http_method=http_method,
+            url_path=url_path,
+            timestamp=timestamp,
+            nonce_str=nonce_str,
+            request_body=request_body
+        )
+        return (
+            f'WECHATPAY2-SHA256-RSA2048 '
+            f'mchid="{self.mch_id}",'
+            f'nonce_str="{nonce_str}",'
+            f'timestamp="{timestamp}",'
+            f'serial_no="{self.api_key}",'
+            f'signature="{signature}"'
+        )
+
     
     def create_jsapi_payment(
         self,

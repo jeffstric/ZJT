@@ -10,8 +10,9 @@ from task.visual_task import generate_video_task
 from task.audio_task import generate_audio_task
 from task.token_task import process_token_task
 from task.download_queue_task import process_download_queue
+from task.subscription_renewal_task import process_subscription_renewals
 from functools import partial
-from config.constant import StoryboardAutoGenerateConstants, VoiceReplaceConstants, Edition
+from config.constant import StoryboardAutoGenerateConstants, VoiceReplaceConstants, Edition, SubscriptionConstants
 
 from config.constant import DOWNLOAD_POLL_INTERVAL
 from config.constant import LICENSE_REBOOTSTRAP_INTERVAL_SECONDS
@@ -728,6 +729,22 @@ def init_scheduler(app):
             coalesce=True,
             misfire_grace_time=30,
         )
+
+    # 月度订阅续期（微信委托代扣·周期扣费：预扣费通知→申请扣款→失败重试→窗口耗尽关单）
+    # 内部遵守微信 7:00~22:00 扣费时间窗，窗口外 tick 直接跳过。
+    _sub_interval = SubscriptionConstants.SCHEDULER_INTERVAL_MINUTES
+    task_with_app_subscription = partial(_run_async_task, process_subscription_renewals)
+    logger.info('启用月度订阅续期任务，每%d分钟执行一次', _sub_interval)
+    scheduler.add_job(
+        func=task_with_app_subscription,
+        trigger=IntervalTrigger(minutes=_sub_interval),
+        id='process_subscription_renewals',
+        name=f'Process subscription renewals every {_sub_interval} minutes',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=60,
+    )
 
     # 启动调度器
     scheduler.start()
