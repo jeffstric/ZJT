@@ -929,6 +929,8 @@ async def step_generate_segment(
             parse_script_to_shots(
                 script_content=seg.source_content,
                 max_group_duration=cfg.get("max_group_duration", 15),
+                video_gen_mode=cfg.get("video_gen_mode"),
+                max_shot_duration=cfg.get("max_shot_duration") or cfg.get("max_group_duration"),
                 world_id=cfg.get("world_id"),
                 model=cfg.get("model"),
                 temperature=cfg.get("temperature", 0.7),
@@ -1927,6 +1929,8 @@ async def step_publish(task: ScriptSplitTask) -> None:
         build_storyboard_scenes_from_parsed_script,
         final_result, style,
         character_variants=collect_ready_variant_map(final_result),
+        video_gen_mode=str(cfg.get("video_gen_mode") or ""),
+        max_shot_duration=cfg.get("max_shot_duration") or cfg.get("max_group_duration"),
     )
 
     # 3. 幂等创建分镜（带 script_split_task_id + source_shot_key）

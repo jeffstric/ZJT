@@ -1645,6 +1645,9 @@ async def parse_script_to_shots(
     # 本段分镜总时长预算（秒）：总分镜时长控制开启时由 engine 按段字符占比
     # 下发（见 docs/script/script_split_total_duration_control.md）；None 不限制
     duration_budget: Optional[float] = None,
+    # 故事板拆分：first_last_frame | multi_reference。参考生时尽量把单镜拉满上限。
+    video_gen_mode: Optional[str] = None,
+    max_shot_duration: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     将剧本内容解析为结构化的人物、场景和分镜数据
@@ -2258,6 +2261,25 @@ async def parse_script_to_shots(
 - 只有按正常节奏拆分后仍难以达到下限时，才允许适当放慢关键动作与对白节奏，并优先保证对白与关键动作完整；禁止把大量镜头压到1~2秒来塞进超额镜头数
 - 该预算与下方「镜头组时长限制」同时生效：组内总时长仍不得超过{max_group_duration}秒
 """
+        ref_max = max_shot_duration or max_group_duration
+        reference_pack_block = ""
+        if str(video_gen_mode or "").strip().lower() == "multi_reference":
+            reference_pack_block = f"""
+**【参考生视频·单镜拉满（覆盖上方「拆更多短镜头」偏好）】**
+本集按参考生视频生成，每个 shot 就是一次视频生成，应尽量接近{ref_max}秒连续表演。
+- 同一场景/同一幕/同一场内：把能放进{ref_max}秒的相邻动作、对白、反应并进同一个 shot
+- 只有「再写入下一拍会超过{ref_max}秒」或换场/换幕/换地点时，才新开下一个 shot
+- 禁止为了镜头数量把连续表演拆成大量 2~5 秒碎镜
+- 单个 shot 的 duration 不得超过{ref_max}秒（单拍内容本身超过上限时保持完整、不要截对白）
+"""
+            duration_budget_block = duration_budget_block.replace(
+                "增加总时长的正确方式是拆出更多镜头，而不是拉长单个镜头：把连续动作/情绪变化/剧情节拍拆细，增加反应镜头、细节特写、过渡镜头、氛围空镜与视角切换",
+                f"增加总时长时优先把相邻表演并进同一个接近{ref_max}秒的 shot，而不是拆成大量碎镜",
+            )
+            duration_budget_block = duration_budget_block.replace(
+                "单镜头时长必须保持在3~8秒的正常叙事节奏（平均约5秒），禁止为凑预算把镜头拉长到10秒以上；预算越充裕，镜头数量越多，而不是镜头越长",
+                f"单镜头时长尽量接近{ref_max}秒；预算充裕时用更多满时长镜头覆盖剧情，而不是把镜头拆碎",
+            )
 
         # 构建用户提示词
         user_prompt = f"""请将以下剧本内容解析为结构化的JSON数据。
@@ -2273,7 +2295,7 @@ async def parse_script_to_shots(
 
 数据库中的角色列表：
 ```{db_characters_text} ```
-{character_variant_text}{duration_budget_block}
+{character_variant_text}{duration_budget_block}{reference_pack_block}
 **【核心要求 - 必须严格遵守】**
 
 1. **镜头组时长限制与分组规则（最重要）**：

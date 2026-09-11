@@ -1504,6 +1504,13 @@ button {
     gap: 6px;
     min-height: 56px;
 }
+.media-stack-hint {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--muted, #888);
+    max-width: 160px;
+    line-height: 1.4;
+}
 .media-stack-thumbs {
     position: relative;
     width: 56px;
