@@ -351,3 +351,21 @@
   color: #f59e0b;
   font-weight: 600;
 }
+
+/* 档位定位词与倍数标注 */
+.sub-plan-tagline {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.sub-plan-mult {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary);
+  background: rgba(34, 197, 94, 0.12);
+  border-radius: 8px;
+  padding: 3px 8px;
+  display: inline-block;
+}

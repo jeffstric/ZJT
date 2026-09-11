@@ -3022,6 +3022,24 @@
         }
       },
 
+      planTagline(plan) {
+        // 档位定位词：按算力升序赋予（数据驱动，套餐变化自适应）
+        const lines = ['日常使用', '效率升级', '专业创作', '全能尊享'];
+        const sorted = [...(this.subscriptionPlans || [])].sort((a, b) => (a.computing_power || 0) - (b.computing_power || 0));
+        const idx = sorted.findIndex(p => p.plan_id === plan.plan_id);
+        return idx >= 0 ? (lines[idx] || '') : '';
+      },
+
+      planMultipleText(plan) {
+        // 相对最低档的算力倍数（Kimi 式直观标注）
+        const powers = (this.subscriptionPlans || []).map(p => Number(p.computing_power) || 0).filter(x => x > 0);
+        if (!powers.length) return '';
+        const base = Math.min.apply(null, powers);
+        if (!base || !plan.computing_power || plan.computing_power <= base) return '基础档';
+        const m = Math.round((plan.computing_power / base) * 10) / 10;
+        return '≈ 基础档 ' + m + ' 倍算力';
+      },
+
       selectSubPlan(plan) {
         this.selectedSubPlan = plan;
         this.subAgreed = false;

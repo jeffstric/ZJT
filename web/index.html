@@ -1199,10 +1199,12 @@
               >
                 <div v-if="selectedSubPlan && selectedSubPlan.plan_id === plan.plan_id" class="sub-plan-selected-tag">✓ 已选择</div>
                 <div class="sub-plan-name">{{ plan.name }}</div>
+                <div class="sub-plan-tagline">{{ planTagline(plan) }}</div>
                 <div class="sub-plan-price">
                   <span class="symbol">¥</span><span class="amount">{{ plan.price }}</span><span class="unit">/月</span>
                 </div>
                 <div class="sub-plan-power">⚡ {{ plan.computing_power }} 算力/期</div>
+                <div class="sub-plan-mult">{{ planMultipleText(plan) }}</div>
                 <div v-if="plan.first_period_bonus" class="sub-plan-bonus">首期加赠 {{ plan.first_period_bonus }}</div>
               </div>
             </div>
