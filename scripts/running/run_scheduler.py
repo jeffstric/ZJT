@@ -14,7 +14,7 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 sys.path.insert(0, project_root)
 
 from server import app
-from task.scheduler import init_scheduler, shutdown_scheduler
+from task.scheduler import init_scheduler, shutdown_scheduler, parent_process_dead
 
 
 def cleanup(signum=None, frame=None):
@@ -26,25 +26,6 @@ def cleanup(signum=None, frame=None):
         print(f"[Scheduler] Cleanup error: {e}")
     finally:
         sys.exit(0)
-
-
-def parent_process_dead(initial_ppid):
-    """防孤儿看门狗：判断启动时的父进程是否已死亡。
-
-    - Linux/macOS：父进程死后子进程被 re-parent，getppid() 必然改变；
-    - Windows：无 re-parent 机制（getppid 恒不变），改为探活父进程。
-      必须用 OpenProcess 而非 os.kill(pid, 0)——Windows 上后者对普通
-      信号会调用 TerminateProcess，等于把父进程直接杀掉。
-    """
-    if sys.platform == 'win32':
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(0x100000, False, initial_ppid)
-        if handle:
-            kernel32.CloseHandle(handle)
-            return False
-        return True
-    return os.getppid() != initial_ppid
 
 
 if __name__ == "__main__":

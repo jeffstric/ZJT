@@ -34,6 +34,9 @@ sys.path.insert(0, project_root)
 # 日志：import 时自动配置 root logger 写入 logs/app.YYYY-MM-DD.log + 控制台
 import utils.logger_config  # noqa: F401
 
+# 防孤儿看门狗与 scheduler 同源：Windows 无 re-parent，需探活而非比较 getppid
+from task.scheduler import parent_process_dead
+
 logger = logging.getLogger(__name__)
 
 # 本 worker 的 per-index 文件锁句柄与路径
@@ -260,7 +263,8 @@ def main():
                 # process_script_split_tasks 内部已有完整异常处理并写库，
                 # 这里兜底防止单次未知异常导致 worker 整体退出。
                 logger.exception("worker tick 未捕获异常，跳过本轮")
-            if os.getppid() != initial_ppid:
+            if parent_process_dead(initial_ppid):
+                # Windows 上 getppid() 恒不变，parent_process_dead 内部改用探活
                 print("[Worker] Parent process died, exiting to avoid becoming an orphan...")
                 cleanup()
             time.sleep(interval)

@@ -164,9 +164,31 @@ def _release_scheduler_lock():
                 import fcntl
                 fcntl.flock(_lock_fd, fcntl.LOCK_UN)
             _lock_fd.close()
+            _lock_fd = None
             logger.info("Scheduler lock released.")
         except Exception as e:
             logger.error(f"Error releasing scheduler lock: {e}")
+
+
+def parent_process_dead(initial_ppid: int) -> bool:
+    """防孤儿看门狗：判断启动时记录的父进程是否已死亡。
+
+    - Linux/macOS：父进程死后子进程被 re-parent，getppid() 必然改变；
+    - Windows：无 re-parent 机制（getppid 恒不变），改为探活父进程。
+      必须用 OpenProcess 而非 os.kill(pid, 0)——Windows 上后者对普通
+      信号会调用 TerminateProcess，等于把父进程直接杀掉。
+
+    供 run_scheduler / run_script_split_worker 等独立进程入口共用。
+    """
+    if sys.platform == 'win32':
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x100000, False, initial_ppid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return False
+        return True
+    return os.getppid() != initial_ppid
 
 
 def _reset_orphan_sync_tasks():
