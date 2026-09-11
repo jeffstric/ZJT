@@ -612,10 +612,16 @@ _build_cors_middleware()
 # 翻译中间件把 cookie 换成 Authorization 头，下游 27 处 token 校验点零改动。
 
 def extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
-    """从 Authorization 头提取 Bearer token（兼容不带前缀的裸 token）"""
+    """从 Authorization 头提取 Bearer token（兼容不带前缀的裸 token）。
+
+    注意 "Bearer "（空 token）须返回 None：前端在 localStorage 无 token 时会发送
+    'Bearer ' 空值头（admin.js/旧流程），此情形应走 cookie 翻译而非当作有效头。
+    """
     if not authorization:
         return None
     value = authorization.strip()
+    if re.match(r"^bearer\b\s*$", value, re.IGNORECASE):
+        return None
     if value.lower().startswith("bearer "):
         value = value[7:].strip()
     return value or None
@@ -3598,15 +3604,18 @@ class LoginRequest(BaseModel):
     terms_agreed: Optional[int] = 0
 
 @app.post('/api/auth/login')
-async def login(request: LoginRequest):
+async def login(request: Request, login_request: LoginRequest):
     """
     用户登录接口（支持手机号和邮箱）
+
+    注意：request 是 Starlette Request（下发 HttpOnly cookie 需要），
+    请求体是 login_request，勿混用。
     """
     try:
-        phone = request.phone
-        email = request.email
-        password = request.password
-        terms_agreed = request.terms_agreed
+        phone = login_request.phone
+        email = login_request.email
+        password = login_request.password
+        terms_agreed = login_request.terms_agreed
         
         identifier = email if email else phone
         logger.info("收到登录请求 - 标识: %s", mask_identifier(identifier))
