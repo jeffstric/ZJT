@@ -2262,21 +2262,27 @@ JIANYING_DEFAULT_RATIO = '16:9'
 RECHARGE_PACKAGES = [
     {
         "package_id": 1,
-        "computing_power": 100,
-        "price": 0.1,
-        "description": "首充福利"
+        "computing_power": 88,
+        "price": 9.9,
+        "description": "体验包 88"
     },
     {
         "package_id": 2,
-        "computing_power": 200,
-        "price": 9.9,
-        "description": "标准套餐"
+        "computing_power": 508,
+        "price": 49.9,
+        "description": "算力包 508"
     },
     {
         "package_id": 3,
-        "computing_power": 1250,
-        "price": 49.9,
-        "description": "进阶套餐"
+        "computing_power": 1358,
+        "price": 109.0,
+        "description": "算力包 1358"
+    },
+    {
+        "package_id": 4,
+        "computing_power": 2988,
+        "price": 209.0,
+        "description": "算力包 2988"
     }
 ]
 

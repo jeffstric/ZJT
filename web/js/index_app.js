@@ -113,7 +113,7 @@
       paymentOrderId: '',
       paymentError: '',
       // 月度订阅（微信委托代扣·周期扣费）
-      rechargeTab: 'power',            // 'power' 算力充值 | 'subscription' 月度订阅
+      rechargeTab: 'subscription',     // 'power' 算力充值 | 'subscription' 月度订阅（默认月度订阅）
       subscriptionPlans: [],
       subscriptionPlansLoading: false,
       subscriptionStatus: null,        // {subscribed, status, plan, current_period_end, next_deduct_date}
