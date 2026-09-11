@@ -116,12 +116,18 @@ class WxPapayUtil:
 
     # ==================== HTTP 基础 ====================
 
-    def _post_xml(self, url_path: str, params: Dict) -> Dict:
-        """发送 V2 XML 请求并解析响应（含签名注入）"""
+    def _post_xml(self, url_path: str, params: Dict, with_nonce: bool = True) -> Dict:
+        """发送 V2 XML 请求并解析响应（含签名注入）
+
+        with_nonce=False 用于 /papay/* 接口族（querycontract/deletecontract）：
+        该族接口校验签名时只认固定字段，携带 nonce_str 会返回 -1 SIGN ERROR
+        （实测 2026-09-11，与官方请求示例一致——示例中亦无 nonce_str）。
+        """
         params = dict(params)
         params.setdefault("appid", self.app_id)
         params.setdefault("mch_id", self.mch_id)
-        params.setdefault("nonce_str", uuid.uuid4().hex[:32])
+        if with_nonce:
+            params.setdefault("nonce_str", uuid.uuid4().hex[:32])
         params["sign"] = self._sign_v2(params)
 
         url = f"{WX_API_BASE}{url_path}"
@@ -262,7 +268,7 @@ class WxPapayUtil:
         else:
             params["plan_id"] = self.plan_template_id
             params["contract_code"] = contract_code
-        return self._post_xml("/papay/querycontract", params)
+        return self._post_xml("/papay/querycontract", params, with_nonce=False)
 
     def delete_contract(
         self,
@@ -283,7 +289,7 @@ class WxPapayUtil:
         else:
             params["plan_id"] = self.plan_template_id
             params["contract_code"] = contract_code
-        return self._post_xml("/papay/deletecontract", params)
+        return self._post_xml("/papay/deletecontract", params, with_nonce=False)
 
     def query_order(self, out_trade_no: Optional[str] = None, transaction_id: Optional[str] = None) -> Dict:
         """
