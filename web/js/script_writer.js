@@ -18,6 +18,14 @@
         // auth_token 从 localStorage 读取，不再从 URL 获取，避免敏感信息暴露
         const AUTH_TOKEN = localStorage.getItem('auth_token') || '';
 
+        // 纯转义走 web/js/escape.js。必须用 const 包一层，禁止 function 声明：
+        // 非 module 脚本里 function escapeHtml 会挂到 window，覆盖权威实现并自递归爆栈。
+        const escapeHtmlShared = window.escapeHtml;
+        const escapeHtml = function (text) {
+            return escapeHtmlShared(text).replace(/\n/g, '<br>');
+        };
+        const escapeHtmlAttr = window.escapeHtmlAttr;
+
         // 角度常量类 - 统一管理多角度图片的角度定义
         const AngleKey = {
             RIGHT_90: 'right',
@@ -3707,15 +3715,6 @@
             updateImageModelIcon();
             updateImageModelDisplay();
         }
-
-        // 纯转义已统一收敛到 web/js/escape.js（window.escapeHtml）。
-        // 此函数保留历史行为：在统一转义基础上把换行渲染为 <br>（调用点依赖该行为）。
-        function escapeHtml(text) {
-            return window.escapeHtml(text).replace(/\n/g, '<br>');
-        }
-
-        // HTML 属性转义统一收敛到 web/js/escape.js。
-        const escapeHtmlAttr = window.escapeHtmlAttr;
 
         function getScriptEpisodeNumber(file) {
             if (!file) return '';

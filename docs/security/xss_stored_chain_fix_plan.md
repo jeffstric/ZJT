@@ -274,6 +274,7 @@ MR1+MR2+MR3 合入后，审计所述「LLM 输出 → 渲染 → 拖库」链即
 | 13 文件副本全部删为薄别名 | 12 处收敛；`agent_message_dedupe.js`、`script_writer_library.js`、storyboard 三个 ES module 保留「优先 window.escapeHtml，Node/Vitest 环境降级」的实现 | 这些文件会被 vitest 在无 window 环境直接 import（tests 已验证）；降级实现与权威版逐字等价，CI X1 规则锁定只减不增 |
 | — | `marketing_agent.js` 的 `escapeHtmlAttr` 保留（JS 字符串字面量转义器，与 HTML 属性转义语义不同），已加注释防混用 | 它往内联 JS 上下文嵌值，额外转义反斜杠/换行 |
 | — | `script_writer.js` 的 `escapeHtml` 保留 `\n → <br>` 历史行为，函数体改为统一转义后再替换 | 调用点依赖该行为 |
+| — | 该包装必须是 `const escapeHtml = function`，禁止 `function escapeHtml` | 非 module 脚本的 function 声明会写成 `window.escapeHtml`，覆盖 escape.js 后自递归爆栈（加载历史消息 `Maximum call stack size exceeded`） |
 | cookie 双通道后端改 27 处校验点 | **零改动校验点**：新增 `auth_cookie_translation_middleware` 把 cookie 翻译成 Authorization 头 | 中间件是唯一咽喉，风险与工作量大幅降低 |
 | CSP 第一步仅 3 指令 | 加了 `form-action 'self'` | 同为无副作用的强指令，一并收下 |
 | — | 登录态 UI 一致性：`index_app.js` 新增 `cookieSession` 状态 + `probeCookieSession()`（登录标记 `logged_in` + `/api/user/role` 探测），19 处 `!this.authToken` gating 统一改为「authToken 或 cookieSession」 | cookie 会话下若只看 localStorage 会误判为未登录 |

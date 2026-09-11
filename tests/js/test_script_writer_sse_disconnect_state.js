@@ -8,6 +8,17 @@ const js = fs.readFileSync(
   'utf8'
 );
 
+assert.equal(
+  /\bfunction\s+escapeHtml\s*\(/.test(js),
+  false,
+  'script_writer.js must not declare function escapeHtml (it overwrites window.escapeHtml and recurses)'
+);
+assert.match(
+  js,
+  /const escapeHtml = function/,
+  'script_writer.js must wrap window.escapeHtml with a const alias'
+);
+
 const mainDisconnectHandlerStart = js.indexOf('status_connection_lost');
 assert.notEqual(mainDisconnectHandlerStart, -1, 'main SSE status-check failure branch should exist');
 const mainDisconnectHandler = js.slice(
