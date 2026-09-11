@@ -43,21 +43,82 @@ assert.equal(
 );
 
 // ask_user 出现后必须恢复发送按钮，避免长期 disabled+sending 看起来像“消失”
+const restoreSendButtonIdleStart = js.indexOf('function restoreSendButtonIdle');
+assert.notEqual(restoreSendButtonIdleStart, -1, 'restoreSendButtonIdle should exist');
+const restoreSendButtonIdleBody = js.slice(
+  restoreSendButtonIdleStart,
+  restoreSendButtonIdleStart + 400
+);
+assert.match(
+  restoreSendButtonIdleBody,
+  /sendBtn\.disabled\s*=\s*false/,
+  'restoreSendButtonIdle must re-enable the send button'
+);
+assert.match(
+  restoreSendButtonIdleBody,
+  /sendBtn\.classList\.remove\(['"]sending['"]\)/,
+  'restoreSendButtonIdle must clear the sending class'
+);
+
 const handleHumanVerificationStart = js.indexOf('function handleHumanVerification');
 assert.notEqual(handleHumanVerificationStart, -1, 'handleHumanVerification should exist');
 const handleHumanVerificationBody = js.slice(
   handleHumanVerificationStart,
-  handleHumanVerificationStart + 3500
+  handleHumanVerificationStart + 4500
 );
 assert.match(
   handleHumanVerificationBody,
-  /sendBtn\.disabled\s*=\s*false/,
-  'handleHumanVerification must re-enable the send button when ask_user is shown'
+  /restoreSendButtonIdle\s*\(/,
+  'handleHumanVerification must idle the send button when ask_user is shown'
 );
 assert.match(
   handleHumanVerificationBody,
-  /sendBtn\.classList\.remove\(['"]sending['"]\)/,
-  'handleHumanVerification must clear the sending class when ask_user is shown'
+  /data-verification-id/,
+  'handleHumanVerification must stamp data-verification-id on the question card'
+);
+assert.match(
+  handleHumanVerificationBody,
+  /isVerificationCardActive/,
+  'option clicks must ignore expired / non-pending verification cards'
+);
+
+const expireVerificationUIStart = js.indexOf('function expireVerificationUI');
+assert.notEqual(expireVerificationUIStart, -1, 'expireVerificationUI should exist');
+const expireVerificationUIBody = js.slice(
+  expireVerificationUIStart,
+  expireVerificationUIStart + 1200
+);
+assert.match(
+  expireVerificationUIBody,
+  /is-expired/,
+  'expireVerificationUI must mark the question card as expired'
+);
+assert.match(
+  expireVerificationUIBody,
+  /btn\.disabled\s*=\s*true/,
+  'expireVerificationUI must disable option buttons'
+);
+
+const handleVerificationTimeoutStart = js.indexOf('function handleVerificationTimeout');
+assert.notEqual(handleVerificationTimeoutStart, -1, 'handleVerificationTimeout should exist');
+const handleVerificationTimeoutBody = js.slice(
+  handleVerificationTimeoutStart,
+  handleVerificationTimeoutStart + 1200
+);
+assert.match(
+  handleVerificationTimeoutBody,
+  /expireVerificationUI\s*\(/,
+  'verification_timeout must grey out the question card'
+);
+assert.match(
+  handleVerificationTimeoutBody,
+  /isProcessing\s*=\s*false/,
+  'verification_timeout must clear isProcessing so the user can resend'
+);
+assert.match(
+  handleVerificationTimeoutBody,
+  /restoreSendButtonIdle\s*\(/,
+  'verification_timeout must stop the send-button spinner'
 );
 
 // verification_timeout 后必须允许用户重新发送
@@ -74,16 +135,11 @@ assert.ok(
   'verification_timeout should be handled in main SSE and reconnect SSE paths'
 );
 for (const idx of timeoutOccurrences) {
-  const snippet = js.slice(idx, idx + 1400);
+  const snippet = js.slice(idx, idx + 400);
   assert.match(
     snippet,
-    /isProcessing\s*=\s*false/,
-    'verification_timeout must clear isProcessing so the user can resend'
-  );
-  assert.match(
-    snippet,
-    /sendBtn\.disabled\s*=\s*false/,
-    'verification_timeout must re-enable the send button'
+    /handleVerificationTimeout\s*\(/,
+    'verification_timeout SSE branches must call handleVerificationTimeout'
   );
 }
 

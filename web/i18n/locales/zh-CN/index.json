@@ -593,6 +593,8 @@
   "placeholder_select_or_custom": "点击上方选项或选择\"其他\"输入自定义答案",
   "placeholder_enter_answer": "请输入您的回答...",
   "status_waiting_answer": "等待您的回答...",
+  "verification_click_hint": "请点击下方选项作答",
+  "verification_expired_hint": "提问已超时，选项已失效",
   "modal_import_script": "导入已有剧本",
   "label_upload_txt": "上传 TXT 文件",
   "drop_zone_text": "拖拽 TXT 文件到此处，或<span class=\"drop-zone-link\">点击选择文件</span>",

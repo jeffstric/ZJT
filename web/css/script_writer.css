@@ -4186,51 +4186,99 @@ body {
 .verification-description {
     font-size: 14px;
     line-height: 1.5;
-    margin-bottom: 15px;
+    margin-bottom: 8px;
+}
+
+.verification-click-hint {
+    font-size: 12px;
+    line-height: 1.4;
+    margin: 0 0 12px;
+    color: rgba(255, 255, 255, 0.92);
 }
 
 .verification-options {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 12px;
+    gap: 10px;
+    margin-top: 4px;
 }
 
 .option-btn {
-    padding: 6px 12px;
-    background: rgba(255, 255, 255, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.4);
-    border-radius: 6px;
-    color: white;
+    padding: 8px 16px;
+    background: #fff;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: #5b21b6;
     cursor: pointer;
-    font-size: 12px;
-    transition: all 0.3s ease;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.18);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
-.option-btn:hover {
-    background: rgba(255, 255, 255, 0.3);
-    border-color: rgba(255, 255, 255, 0.6);
+.option-btn:hover:not(:disabled) {
+    background: #f5f3ff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.22);
 }
 
-.option-btn:active {
-    background: rgba(255, 255, 255, 0.4);
+.option-btn:active:not(:disabled) {
+    transform: translateY(0);
+    background: #ede9fe;
 }
 
-/* "其他"按钮特殊样式 */
+.option-btn:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+
+.option-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    box-shadow: none;
+    transform: none;
+}
+
+/* "其他"按钮：描边次要操作 */
 .option-other-btn {
-    font-style: italic;
-    opacity: 0.9;
+    background: transparent;
+    border: 1px dashed rgba(255, 255, 255, 0.85);
+    color: #fff;
+    font-weight: 500;
+    box-shadow: none;
 }
 
-.option-other-btn:hover {
-    opacity: 1;
+.option-other-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+    box-shadow: none;
+}
+
+.verification-expired-badge {
+    margin: 12px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.92);
+}
+
+.verification-question.is-expired {
+    filter: grayscale(0.35);
+    opacity: 0.78;
+}
+
+.verification-question.is-expired .option-btn,
+.verification-question.is-answered .option-btn {
+    cursor: not-allowed;
+    pointer-events: none;
+    opacity: 0.55;
+    box-shadow: none;
 }
 
 /* 历史记录中的 verification 问题（复用对话样式，仅禁用交互） */
 .verification-question.history-mode .option-btn {
     cursor: default;
     pointer-events: none;
-    opacity: 0.85;
 }
 
 /* 历史记录中的 verification 问题（旧版样式，保留兼容） */

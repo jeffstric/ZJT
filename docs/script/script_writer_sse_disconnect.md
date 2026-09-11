@@ -28,8 +28,11 @@ AI 通过 `ask_user` 弹出询问选项时，底部 `#message-input` 可能已�
 - 原始 `sendMessage` 发起任务时会禁用发送按钮；收到 `human_verification_required` 后，
   `handleHumanVerification` **必须**立刻 `disabled=false` 并移除 `sending`，以便用户点选项、
   或聚焦输入框后用 Enter / 发送按钮作答。
-- `verification_timeout`：清除 `pendingVerificationId`，将 `isProcessing=false`，并恢复发送按钮，
-  允许用户重新发消息（超时处理不得清空用户草稿）。
+- `verification_timeout`：调用 `handleVerificationTimeout`——给对应提问卡片加 `.is-expired`、
+  `disabled` 选项按钮并展示「提问已超时，选项已失效」；清除 `pendingVerificationId`，将
+  `isProcessing=false`，并调用 `restoreSendButtonIdle()` 去掉 `#send-btn.sending` 旋转，
+  允许用户重新发消息（超时处理不得清空用户草稿）。超时后点击选项必须直接 return，不得再加
+  `sending`。提交 404/410 走同一套置灰 + idle 发送钮兜底。
 
 ## SSE 断线兜底
 
