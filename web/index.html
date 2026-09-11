@@ -1212,7 +1212,7 @@
             <!-- 支付面板 -->
             <div class="sub-payment-panel" v-if="selectedSubPlan">
               <div class="sub-qr-section">
-                <div class="sub-qr-box">
+                <div class="sub-qr-box" :class="{ 'has-qr': subQrCode }">
                   <div v-if="subPaymentLoading" style="display:flex; flex-direction:column; align-items:center; gap:8px; color:#64748b; font-size:12px;">
                     <div class="loading-spinner"></div>
                     <span>生成二维码中...</span>

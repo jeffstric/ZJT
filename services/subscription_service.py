@@ -143,12 +143,20 @@ async def create_sign_pay_order(
     if not plan:
         raise SubscriptionServiceError("无效的订阅套餐")
 
-    # 同一用户只允许一条进行中（签约中/已签约）的订阅
+    # 同一用户只允许一条进行中（签约中/已签约）的订阅。
+    # 存在未支付完成的 PENDING 签约（用户换了套餐重新发起）：自动放弃旧签约并关闭旧待支付订单，
+    # 让用户可以无缝更换套餐；若旧订单用户已付款，回调仍会正常结算（资金不受影响）。
     existing = WxPapayContractsModel.get_active_by_user(user_id)
     if existing:
         if existing.status == WxContractStatus.PENDING:
-            raise SubscriptionServiceError("您有一笔订阅正在签约中，请稍后再试或先完成/取消该签约")
-        raise SubscriptionServiceError("您已订阅月度会员，请先取消当前订阅再重新订阅")
+            WxPapayContractsModel.mark_terminated(
+                existing.contract_code, termination_remark='用户重新发起订阅(自动放弃旧签约)')
+            old_order = SubscriptionOrdersModel.get_latest_by_contract(existing.contract_code)
+            if old_order and old_order.status == SubscriptionOrderStatus.PENDING_PAY:
+                SubscriptionOrdersModel.close(old_order.order_id, 'USER_ABANDONED', '用户重新发起订阅')
+            logger.info(f"自动放弃未完成签约 {existing.contract_code}（用户 {user_id} 重新发起订阅）")
+        else:
+            raise SubscriptionServiceError("您已订阅月度会员，请先取消当前订阅再重新订阅")
 
     if is_wechat_browser and not openid:
         raise SubscriptionServiceError("微信内订阅需要用户openid，请先进行微信授权")
