@@ -1,5 +1,10 @@
 # 剧本拆分 · 总分镜时长控制 测试文档（移交版）
 
+> ⚠️ 时效说明：本文档按「整篇字数 ÷ 朗读速率」旧口径编写。现行方案已改为**台词锚定**
+> （阶段一 dialogue_text ÷ 速率 ÷ 对白占比，启发式行过滤兜底，逐镜锚定有对白镜头时长），
+> 公式与回退链以 [script_split_total_duration_control.md](./script_split_total_duration_control.md) 为准；
+> 本文 §1/§2/§6.2 中的旧公式描述仅作历史参考。
+>
 > 移交对象：负责本功能测试的智能体。
 > 被测功能设计文档：[script_split_total_duration_control.md](./script_split_total_duration_control.md)
 > 实现分支：`develop_duration_control`（基于 origin/develop）

@@ -1448,6 +1448,13 @@ class ScriptSplitConstants:
     SCRIPT_DURATION_LATIN_CHARS_PER_SECOND = 11.0
     # 剧本基准时长下限（秒），避免短文本估出过小预算
     SCRIPT_DURATION_MIN_SECONDS = 10.0
+    # 有对白镜头的时长下限（秒）：台词锚定时不得低于该值，防止台词念不完
+    SCRIPT_DURATION_DIALOGUE_SHOT_MIN_SECONDS = 2.0
+    # 台词占成片总时长的经验比例：总时长目标 = 台词总时长 ÷ 该值
+    TOTAL_DURATION_DIALOGUE_SHARE = 0.6
+    # 剧本自述标注总时长的有效区间（秒）：超出视为误识别（如正文里的时间描述）
+    SCRIPT_DURATION_DECLARED_MIN_SECONDS = 5.0
+    SCRIPT_DURATION_DECLARED_MAX_SECONDS = 10800.0
     # total_duration_multiplier 合法范围；0/缺省表示不限制总时长
     TOTAL_DURATION_MULTIPLIER_MIN = 0.5
     TOTAL_DURATION_MULTIPLIER_MAX = 10.0

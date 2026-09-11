@@ -879,7 +879,7 @@ def _script_duration_rate_per_second(text: str) -> float:
 def estimate_script_duration_seconds(text: str) -> float:
     """估算剧本基准时长（秒）：非空白字符数 ÷ 语种混合朗读速率。
 
-    该值即「1倍」总时长；用户选择的倍率 × 该值 = 分镜总时长目标。
+    该值即旧口径的「1倍」总时长，现仅作无台词时的最终回退。
     """
     chars = [ch for ch in (text or "") if not ch.isspace()]
     if not chars:
@@ -888,22 +888,257 @@ def estimate_script_duration_seconds(text: str) -> float:
     return round(max(ScriptSplitConstants.SCRIPT_DURATION_MIN_SECONDS, len(chars) / rate), 1)
 
 
+# ---- 台词锚定：启发式行过滤兜底（与前端两处 JS 同规则，三处同步）----
+# 头部关键词 + 冒号的行视为元信息（时间/地点/人物/场景/幕/场/章节/备注/BGM/音效）
+_DIALOGUE_HEADER_KEYWORD_RE = re.compile(
+    r"^(?:时间|地点|人物|场景|幕|场|章节|备注|BGM|音效)\s*[:：]",
+    re.IGNORECASE,
+)
+# 成对引号内的内容视为台词
+_DIALOGUE_QUOTED_RE = re.compile(r"[“\"「『]([^”\"」』]*)[”\"」』]")
+# 整行被括号包裹的视为舞台提示/动作说明，不计入台词
+_DIALOGUE_PAREN_WRAPPED_RE = re.compile(r"^[（(].*[）)]$")
+
+
+def extract_script_dialogue_text(text: str) -> str:
+    """启发式从剧本文本中过滤出台词/旁白（兜底口径）。
+
+    逐行规则：跳过空行；跳过以 [、【、# 开头或以「场景编号」开头的行；
+    跳过整行被（）/() 包裹的行；跳过头部关键词 + 冒号的元信息行；
+    「角色：台词」行只数第一个冒号后的正文；无冒号非括号行只数成对引号
+    （“”、"…"、「」、『』）内的文字，该行无引号则整行计入。
+    整篇零匹配时返回空串，由调用方决定回退口径。
+    """
+    parts: List[str] = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line[0] in "[【#" or line.startswith("场景编号"):
+            continue
+        if _DIALOGUE_PAREN_WRAPPED_RE.match(line):
+            continue
+        if _DIALOGUE_HEADER_KEYWORD_RE.match(line):
+            continue
+        colon_positions = [
+            pos for pos in (line.find(":"), line.find("：")) if pos >= 0
+        ]
+        if colon_positions:
+            body = line[min(colon_positions) + 1:].strip()
+            if body:
+                parts.append(body)
+            continue
+        quoted = [q for q in _DIALOGUE_QUOTED_RE.findall(line) if q.strip()]
+        parts.extend(quoted if quoted else [line])
+    return "\n".join(parts)
+
+
+def estimate_script_dialogue_seconds(text: str) -> float:
+    """估算剧本台词（对白/旁白）朗读时长（秒），启发式行过滤兜底口径。
+
+    整篇零匹配时回退 estimate_script_duration_seconds（整篇估算）。
+    与前端 web/js/storyboard/render.js、web/js/script_node.js 中的
+    estimateScriptDurationSeconds 保持同一套规则（修改时三处同步）。
+    """
+    dialogue_text = extract_script_dialogue_text(text)
+    if not dialogue_text.strip():
+        return estimate_script_duration_seconds(text)
+    chars = [ch for ch in dialogue_text if not ch.isspace()]
+    rate = _script_duration_rate_per_second(dialogue_text)
+    return round(max(ScriptSplitConstants.SCRIPT_DURATION_MIN_SECONDS, len(chars) / rate), 1)
+
+
+def compute_shot_dialogue_seconds(shot: Dict[str, Any]) -> float:
+    """按结构化 dialogue 估算单镜头台词朗读时长（秒）。
+
+    拼接 dialogue[*].text 的非空白字符 ÷ 混合速率；异常/无对白返回 0.0。
+    """
+    try:
+        dialogue = shot.get("dialogue")
+        if not isinstance(dialogue, list):
+            return 0.0
+        text = "".join(
+            str(item.get("text") or "")
+            for item in dialogue
+            if isinstance(item, dict)
+        )
+        chars = [ch for ch in text if not ch.isspace()]
+        if not chars:
+            return 0.0
+        return len(chars) / _script_duration_rate_per_second(text)
+    except Exception:
+        return 0.0
+
+
+def apply_dialogue_matched_shot_durations(parsed_data: Dict[str, Any]) -> int:
+    """把有对白镜头的时长锚定到台词朗读时长，返回锚定的镜头数。
+
+    有台词镜头：duration = round(max(台词秒数, SCRIPT_DURATION_DIALOGUE_SHOT_MIN_SECONDS), 1)；
+    无对白镜头保留 LLM 预估，不动。
+    """
+    floor = float(ScriptSplitConstants.SCRIPT_DURATION_DIALOGUE_SHOT_MIN_SECONDS)
+    matched = 0
+    for group in parsed_data.get("shot_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        for shot in group.get("shots") or []:
+            if not isinstance(shot, dict):
+                continue
+            seconds = compute_shot_dialogue_seconds(shot)
+            if seconds <= 0:
+                continue
+            shot["duration"] = round(max(seconds, floor), 1)
+            matched += 1
+    return matched
+
+
+# ---- 剧本自述标注总时长（最高优先级口径，与前端两处 JS 同规则，三处同步）----
+# 关键词 + 数字 + 单位：「时长：30秒」「总时长 90s」「预计1分钟」「片长： 2 min」
+_DECLARED_DURATION_KEYWORD_RE = re.compile(
+    r"(?:预计时长|总时长|成片时长|片长|时长|预计)\s*[:：]?\s*"
+    r"(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)",
+    re.IGNORECASE,
+)
+# 括号包裹的纯时长标注：「（30秒）」「(1.5分钟)」（括号内只有数字+单位）
+_DECLARED_DURATION_PAREN_RE = re.compile(
+    r"[（(]\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)\s*[）)]",
+    re.IGNORECASE,
+)
+_DECLARED_DURATION_MINUTE_UNITS = {"分钟", "分鐘", "minute", "minutes", "min", "mins"}
+
+
+def extract_script_declared_duration_seconds(text: str) -> Optional[float]:
+    """从剧本文本中提取自述的预计总时长（秒），无标注返回 None。
+
+    识别「时长/预计时长/总时长/成片时长/片长/预计」关键词后接的
+    N秒/N分钟/N s/N min，以及括号包裹的（N秒）/（N分钟）；分钟换算为秒；
+    取文本中第一个有效匹配。结果须落在
+    SCRIPT_DURATION_DECLARED_MIN/MAX_SECONDS 区间内，否则视为误识别。
+    正文/台词里的时间描述（如「他等了30秒」）无关键词引导，不会命中。
+    """
+    if not text:
+        return None
+    best: Optional[Tuple[int, float]] = None
+    for pattern in (_DECLARED_DURATION_KEYWORD_RE, _DECLARED_DURATION_PAREN_RE):
+        for match in pattern.finditer(text):
+            try:
+                value = float(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            seconds = (
+                value * 60
+                if match.group(2).lower() in _DECLARED_DURATION_MINUTE_UNITS
+                else value
+            )
+            if not (
+                ScriptSplitConstants.SCRIPT_DURATION_DECLARED_MIN_SECONDS
+                <= seconds
+                <= ScriptSplitConstants.SCRIPT_DURATION_DECLARED_MAX_SECONDS
+            ):
+                continue
+            if best is None or match.start() < best[0]:
+                best = (match.start(), seconds)
+            break  # 每个模式只取第一个有效匹配，再按文本位置取更早者
+    return best[1] if best else None
+
+
+def compute_total_duration_target_seconds(
+    script_content: str,
+    dialogue_seconds_total: float,
+    multiplier: float,
+    declared_duration_seconds: Optional[float] = None,
+) -> Tuple[float, str]:
+    """计算总时长归一化目标（秒）与口径来源。
+
+    优先级：
+    1. 剧本自述标注总时长（"declared"）→ 倍率 × 标注秒数
+       （标注本身就是成片总时长，不再除以对白占比）；
+    2. 拆分产出的结构化对白总时长 > 0 → 倍率 × 台词总时长 ÷ 对白占比（"shots"）；
+    3. 启发式从剧本提取到台词 → 倍率 × 启发式台词时长 ÷ 对白占比（"heuristic"）；
+    4. 仍无台词 → 倍率 × 剧本基准时长（旧口径，"full_text"）。
+    """
+    if declared_duration_seconds and declared_duration_seconds > 0:
+        return round(multiplier * declared_duration_seconds, 1), "declared"
+    share = float(ScriptSplitConstants.TOTAL_DURATION_DIALOGUE_SHARE)
+    if dialogue_seconds_total > 0:
+        return round(multiplier * dialogue_seconds_total / share, 1), "shots"
+    dialogue_text = extract_script_dialogue_text(script_content)
+    dialogue_chars = [ch for ch in dialogue_text if not ch.isspace()]
+    if dialogue_chars:
+        seconds = len(dialogue_chars) / _script_duration_rate_per_second(dialogue_text)
+        return round(multiplier * seconds / share, 1), "heuristic"
+    estimated = estimate_script_duration_seconds(script_content)
+    return round(estimated * multiplier, 1), "full_text"
+
+
+def compute_segment_content_seconds(
+    script_content: str,
+    segment_content: str,
+    dialogue_chars: Optional[int] = None,
+) -> float:
+    """段内容量的 1 倍口径估算（秒）：段台词字数 ÷ 混合速率 ÷ 对白占比。
+
+    dialogue_chars 为 None 时启发式从段文本过滤台词行；段无台词
+    （dialogue_chars<=0 或启发式零匹配）回退为段字符数 ÷ 速率。
+    不含倍率与段预算下限，供标注时长口径下按内容量占比分摊总预算。
+    """
+    rate = _script_duration_rate_per_second(script_content)
+    if dialogue_chars is None:
+        dialogue_text = extract_script_dialogue_text(segment_content)
+        dialogue_chars = len([ch for ch in dialogue_text if not ch.isspace()])
+    if dialogue_chars > 0:
+        share = float(ScriptSplitConstants.TOTAL_DURATION_DIALOGUE_SHARE)
+        return dialogue_chars / rate / share
+    chars = len([ch for ch in (segment_content or "") if not ch.isspace()])
+    if chars <= 0:
+        return 0.0
+    return chars / rate
+
+
 def compute_segment_duration_budget_seconds(
     script_content: str,
     segment_content: str,
     multiplier: float,
+    dialogue_chars: Optional[int] = None,
 ) -> float:
     """计算单段的目标分镜时长预算（秒）。
 
-    每段预算 = 倍率 × 该段字符数 ÷ 全剧本混合速率。各段预算之和
-    ≈ 倍率 × 剧本基准时长（分段源文本拼接≈全剧本），从而把全局
-    总时长目标分解到逐段 LLM 调用（每段只看到自己的文本）。
+    台词锚定口径：每段预算 = 倍率 × 段内容量（compute_segment_content_seconds）。
+    段台词字数由 engine 从阶段一规划的 dialogue_text 提炼传入：
+    - dialogue_chars > 0 → 按台词锚定公式；
+    - dialogue_chars 为 None（规划未输出该字段，如企业版自定义提示词）
+      → 启发式从段文本过滤台词行后按台词锚定公式；
+    - dialogue_chars <= 0（规划明确该段无台词）或启发式也匹配不到台词
+      → 回退旧公式（倍率 × 段字符数 ÷ 速率）。
+    段下限 TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS 不变。
     """
-    rate = _script_duration_rate_per_second(script_content)
-    chars = len([ch for ch in (segment_content or "") if not ch.isspace()])
-    if chars <= 0 or multiplier <= 0:
+    if multiplier <= 0:
         return 0.0
-    budget = multiplier * chars / rate
+    content_seconds = compute_segment_content_seconds(
+        script_content, segment_content, dialogue_chars)
+    if content_seconds <= 0:
+        return 0.0
+    budget = multiplier * content_seconds
+    return round(max(ScriptSplitConstants.TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS, budget), 1)
+
+
+def compute_segment_declared_budget_seconds(
+    declared_seconds: float,
+    multiplier: float,
+    segment_content_seconds: float,
+    total_content_seconds: float,
+) -> float:
+    """标注总时长口径的段预算：倍率 × 标注秒数 × 段内容量占比。
+
+    各段预算之和 ≈ 倍率 × 标注秒数（段下限
+    TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS 托底导致的轻微超出属预期）。
+    段内容量为 0 时返回 0.0（与空段旧口径一致）。
+    """
+    if multiplier <= 0 or declared_seconds <= 0:
+        return 0.0
+    if segment_content_seconds <= 0 or total_content_seconds <= 0:
+        return 0.0
+    budget = multiplier * declared_seconds * segment_content_seconds / total_content_seconds
     return round(max(ScriptSplitConstants.TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS, budget), 1)
 
 
@@ -946,9 +1181,11 @@ def enforce_total_duration_limit(
 
     在 reorganize_shot_groups 之前、renumber_global 之前调用：
     1. 总时长在容差区间内 → 不干预
-    2. 超上限 → 按比例压缩每镜头时长（单镜头下限 TOTAL_DURATION_SHOT_MIN_SECONDS）；
-       压缩后仍超限（镜头过多触发下限）→ 逐个把全局最短镜头并入同组相邻镜头
-       （合并后 duration 取 max），直到达标或无可合并镜头
+    2. 超上限 → 按比例压缩每镜头时长（单镜头下限 = max(TOTAL_DURATION_SHOT_MIN_SECONDS,
+       该镜头台词朗读秒数)，台词必须念完）；压缩后仍超限（镜头过多触发下限）→
+       逐个把全局最短镜头并入同组相邻镜头（合并后 duration 取 max），直到达标或
+       无可合并镜头；因台词下限压不到目标时接受超出，报告
+       dialogue_floor_exceeded_seconds
     3. 低于下限（LLM 拆得比目标短，如 2 倍节奏）→ 按比例放大每镜头时长；
        放大后单镜头超过 max_shot_seconds（engine 传放大上限常量
        TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS=10s：增加总时长靠增加镜头数
@@ -990,10 +1227,12 @@ def enforce_total_duration_limit(
 
     if total_before > cap:
         report["direction"] = "compress"
-        # 等比压缩（单镜头下限保护）
+        # 等比压缩（单镜头下限保护；有对白的镜头不得低于其台词朗读时长，
+        # 否则台词念不完）
         scale = float(target_seconds) / total_before
         for s in shots:
-            s["duration"] = round(max(min_shot, _safe_float(s.get("duration", 0)) * scale), 1)
+            shot_floor = max(min_shot, compute_shot_dialogue_seconds(s))
+            s["duration"] = round(max(shot_floor, _safe_float(s.get("duration", 0)) * scale), 1)
         report["scaled"] = True
         total = sum(_safe_float(s.get("duration", 0)) for s in shots)
         if total <= cap:
@@ -1032,6 +1271,13 @@ def enforce_total_duration_limit(
         parsed_data["shot_groups"] = [g for g in groups if g.get("shots")]
         shots = [s for g in parsed_data["shot_groups"] for s in (g.get("shots") or [])]
         total = sum(_safe_float(s.get("duration", 0)) for s in shots)
+        if total > cap:
+            # 台词朗读下限导致压不到目标：接受超出并上报差额（台词必须念完）
+            dialogue_floor_sum = sum(
+                max(min_shot, compute_shot_dialogue_seconds(s)) for s in shots
+            )
+            if dialogue_floor_sum > cap:
+                report["dialogue_floor_exceeded_seconds"] = round(total - cap, 1)
         report["total_after"] = round(total, 1)
         parsed_data["total_duration"] = int(round(total))
         return report
@@ -2005,7 +2251,7 @@ async def parse_script_to_shots(
             budget_max_shots = max(budget_min_shots, int(budget_value // 3))
             duration_budget_block = f"""
 **【本段总时长预算·硬性约束（优先级高于镜头数量偏好）】**
-本段剧本的目标分镜总时长约为{budget_value:.0f}秒：本段所有shots的duration总和必须落在{budget_floor:.0f}~{budget_cap:.0f}秒之间（目标{budget_value:.0f}秒），既不得明显低于下限，也不得超过上限。
+本段剧本的目标分镜总时长约为{budget_value:.0f}秒（按本段台词量估算，所有台词必须逐字完整呈现）：本段所有shots的duration总和必须落在{budget_floor:.0f}~{budget_cap:.0f}秒之间（目标{budget_value:.0f}秒），既不得明显低于下限，也不得超过上限。
 - 【达成方式·最重要】增加总时长的正确方式是拆出更多镜头，而不是拉长单个镜头：把连续动作/情绪变化/剧情节拍拆细，增加反应镜头、细节特写、过渡镜头、氛围空镜与视角切换
 - 单镜头时长必须保持在3~8秒的正常叙事节奏（平均约5秒），禁止为凑预算把镜头拉长到10秒以上；预算越充裕，镜头数量越多，而不是镜头越长
 - 按此节奏本段建议拆分约{budget_min_shots}~{budget_max_shots}个镜头（下限按平均6秒/镜头、上限按平均3秒/镜头估算）；禁止只拆少量长镜头导致总时长远低于预算
