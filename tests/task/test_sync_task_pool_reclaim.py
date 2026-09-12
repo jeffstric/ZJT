@@ -85,7 +85,6 @@ def make_executor():
     executor._submit_times = {}
     executor._task_drivers = {}
     executor._task_types = {}
-    executor._worker_pids = {}
     executor._pool_broken = True
     return executor
 
@@ -221,3 +220,17 @@ def test_shutdown_skips_when_not_running():
 
     assert pool.shutdown_calls == []
     assert executor._executor is pool
+
+
+def test_execute_sync_task_signature_has_no_proxy_params():
+    """守护：_execute_sync_task 的参数不得引入需要连接池外进程的对象。
+
+    multiprocessing.Manager 代理（DictProxy 等）作为 submit 参数时，worker 端
+    unpickle 必须连接 Manager 服务进程——Manager 单点死亡会使所有任务在
+    反序列化阶段崩溃（2026-09-12 20:43 事故：生图任务 100% 失败，
+    ConnectionRefusedError @ RebuildProxy._incref）。
+    """
+    import inspect
+
+    params = inspect.signature(ste._execute_sync_task).parameters
+    assert list(params) == ["task_id", "ai_tool_type"]
