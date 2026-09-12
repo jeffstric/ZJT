@@ -65,6 +65,8 @@ def _run_async_task(async_func, *args, **kwargs):
         # 调度器长期运行下与其他 FD 泄漏叠加打满上限（2026-09-12 EMFILE 事故伴生缺陷）
         if loop is not None and not loop.is_closed():
             loop.close()
+        # 线程上不留已关闭的 loop 引用（下次调用会 new + set，此处仅为卫生）
+        asyncio.set_event_loop(None)
 
 
 def _is_lock_holder_alive(lock_file: str) -> bool:

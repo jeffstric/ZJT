@@ -31,7 +31,7 @@
 
 | 位置 | 修复 |
 |------|------|
-| `task/sync_task_executor.py` | 新增 `_terminate_pool_workers_locked`：替换/关停旧池时对全部 worker 逐个 `Process.terminate() → join(宽限) → kill → join`（用 Process 对象而非 `os.kill`+轮询探活——后者对"已死未收尸"的僵尸误判为存活，白等整个宽限期；join 走 waitpid 能正确收尸）。`_rebuild_pool_locked` 与 `shutdown` 均接入，切断"卡死 worker 进程 + 旧池队列管道"两条泄漏路径。不 clear `_processes` 字典：旧池管理线程可能仍在异步遍历，有迭代竞态；executor 对象随替换整体丢弃即可 |
+| `task/sync_task_executor.py` | 新增 `_reclaim_workers_locked`（并行两段式：全员 SIGTERM → 共享宽限 deadline join → 顽固者 SIGKILL → join，最坏持锁 ~2s 而非串行 24s）。用 Process 对象的 join（waitpid）收尸而非 `os.kill(pid,0)` 轮询探活——后者对"已死未收尸"的僵尸误判为存活，白等整个宽限期。**关键实现约束：必须在 `executor.shutdown()` 之前快照 `_processes`**——CPython 的 `shutdown()` 无条件把它置 None（源码注释 "To reduce the risk of opening too many files"），shutdown 后再取就是空引用、回收变空操作。`_rebuild_pool_locked` 与 `shutdown` 均为「快照 → shutdown → 回收快照」顺序。管道闭环：杀掉卡死 worker → 旧池管理线程 join 返回 → 线程退出释放 result_queue 引用 → GC 关闭管道 FD |
 | `task/sync_task_executor.py` | `shutdown()` 对 **broken 池改走非阻塞路径**：`shutdown(wait=True)` 会永久阻塞在 join 卡死 worker 上（worker 收不到退出通知），后续回收代码执行不到，调度器 SIGTERM cleanup 将挂死。健康池保持 `wait=True` 优雅语义不变 |
 | `config/constant.py` | 新增 `SYNC_WORKER_RECLAIM_GRACE_SECONDS = 1.0`、`SYNC_WORKER_RECLAIM_JOIN_TIMEOUT = 1.0`（超时常量统一维护） |
 | `task/scheduler.py` | `_run_async_task` 的 `loop.close()` 移入 `finally`：异常路径不再泄漏 epoll fd + 自管道 socketpair（每失败一次泄漏 3 个 FD） |
