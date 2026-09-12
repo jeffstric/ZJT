@@ -206,42 +206,89 @@ def is_llm_client_configured(client: BaseLLMClient) -> bool:
     return bool(getattr(client, 'api_key', ''))
 
 
+# 供应商 -> 凭据配置键（system_config 动态配置）。本地服务供应商用 enabled 开关，
+# 其余为 api_key。新增供应商时同步维护，否则该供应商默认放行（视为已配置）。
+_VENDOR_CREDENTIAL_CONFIG_KEYS = {
+    'google': ('llm', 'google', 'api_key'),
+    'claude': ('llm', 'claude', 'api_key'),
+    'aliyun': ('llm', 'qwen', 'api_key'),
+    'ollama': ('llm', 'ollama', 'enabled'),
+    'vllm': ('llm', 'vllm', 'enabled'),
+    'volcengine': ('volcengine', 'api_key'),
+    'zjt_api': ('api_aggregator', 'site_0', 'api_key'),
+    'deepseek': ('llm', 'deepseek', 'api_key'),
+    'agnes': ('llm', 'agnes', 'api_key'),
+    'mimo': ('llm', 'mimo', 'api_key'),
+}
+
+
+def is_vendor_configured(vendor_name: str) -> bool:
+    """检查供应商凭据是否已配置（根据 vendor 类型检查对应的配置键）。"""
+    from config.config_util import get_dynamic_config_value
+
+    keys = _VENDOR_CREDENTIAL_CONFIG_KEYS.get(vendor_name)
+    if keys is None:
+        return True  # 未知 vendor 默认放行
+    value = get_dynamic_config_value(*keys, default='')
+    if isinstance(value, bool):
+        return value
+    return bool(value and len(str(value).strip()) > 0)
+
+
+def get_vendor_model_unusable_reason(vendor_id, model_id) -> Optional[str]:
+    """校验显式 (vendor_id, model_id) 路由是否可用；可用返回 None，否则返回中文原因。
+
+    供任务创建入口前置拦截：模型列表接口只会下发「vendor_model 关联存在 +
+    供应商凭据已配置」的组合，前端显式传了不可用组合说明是过期选择或手工
+    请求；放行只会把失败推迟到 LLM 调用期（PM 链路还曾把失败吞成
+    completed），不如在创建时直接 400。
+    注意「凭据已配置但平台侧未开通该模型」（如火山账号未开 deepseek-v4-flash）
+    入口无法判断，由调用期 InvalidEndpointOrModel.NotFound 的明确报错兜底。
+
+    同步查库函数，async 接口调用方须用 asyncio.to_thread 包裹。
+    校验自身异常时不阻塞任务创建（与工厂路由的容错口径一致），返回 None 放行。
+    """
+    try:
+        vendor_id_int = int(vendor_id)
+    except (TypeError, ValueError):
+        return None
+    try:
+        from model.vendor import VendorDAO
+        from model.vendor_model import VendorModelModel
+
+        vendor = VendorDAO.get_by_id(vendor_id_int)
+        if not vendor or not vendor.vendor_name:
+            return f"供应商 vendor_id={vendor_id_int} 不存在，请重新选择模型"
+        try:
+            model_id_int = int(model_id)
+        except (TypeError, ValueError):
+            return None
+        if not VendorModelModel.get_by_vendor_model(vendor_id_int, model_id_int):
+            return (
+                f"模型未关联供应商 {vendor.vendor_name}，请重新选择对话模型"
+            )
+        if not is_vendor_configured(vendor.vendor_name):
+            return (
+                f"供应商 {vendor.vendor_name} 的 API Key 未配置，请重新选择对话模型"
+            )
+        return None
+    except Exception as e:
+        logger.warning(
+            f"校验供应商模型路由失败（放行）: vendor_id={vendor_id}, model_id={model_id}: {e}"
+        )
+        return None
+
+
 def _get_available_models_sync() -> dict:
     """同步实现：获取可用的 AI 模型列表（在 asyncio.to_thread 线程池中调用）。"""
-    from config.config_util import get_dynamic_config_value
     from model.model import ModelModel
     from model.vendor import VendorDAO
     from model.vendor_model import VendorModelModel
-    import logging
-
-    logger = logging.getLogger(__name__)
 
     # 获取所有供应商信息
     vendors = {v.id: v for v in VendorDAO.get_all()}
     # 获取所有 vendor_model 关联
     all_vendor_models = VendorModelModel.get_all()
-
-    # 辅助函数：检查 vendor 是否已配置（根据 vendor 类型检查对应的配置键）
-    def is_vendor_configured(vendor_name):
-        vendor_config_map = {
-            'google': ('llm', 'google', 'api_key'),
-            'claude': ('llm', 'claude', 'api_key'),
-            'aliyun': ('llm', 'qwen', 'api_key'),
-            'ollama': ('llm', 'ollama', 'enabled'),
-            'vllm': ('llm', 'vllm', 'enabled'),
-            'volcengine': ('volcengine', 'api_key'),
-            'zjt_api': ('api_aggregator', 'site_0', 'api_key'),
-            'deepseek': ('llm', 'deepseek', 'api_key'),
-            'agnes': ('llm', 'agnes', 'api_key'),
-            'mimo': ('llm', 'mimo', 'api_key'),
-        }
-        if vendor_name not in vendor_config_map:
-            return True  # 未知 vendor 默认放行
-        keys = vendor_config_map[vendor_name]
-        value = get_dynamic_config_value(*keys, default='')
-        if isinstance(value, bool):
-            return value
-        return bool(value and len(str(value).strip()) > 0)
 
     models = []
     added_model_vendor_pairs = set()  # 用于去重：跟踪 (model_id, vendor_id) 对

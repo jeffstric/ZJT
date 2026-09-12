@@ -44,7 +44,44 @@ Error code: 404 - {'error': {'code': 'InvalidEndpointOrModel.NotFound',
 - `zjt_api` 等中转供应商有独立客户端（`llm/llm_client_factory.py` 路由），模型名体系不受影响。
 - 计费单价、上下文窗口等元数据仍按 `model` 表中友好名对应的记录扣减，行为不变。
 
+## 火山方舟托管 DeepSeek 同步下线（2026-09-12 补充）
+
+火山方舟托管的 DeepSeek 为官方同源模型，模型名跟随官方体系：官方下线
+`deepseek-v4-flash` 旧名后，方舟同步下线，`VolcengineOpenAIClient` 的恒等
+映射（`deepseek-v4-flash` → `deepseek-v4-flash`）随之失效，调用报
+`404 InvalidEndpointOrModel.NotFound`。
+
+线上表现（vendor_model 关联 model 1005 同时挂在 volcengine / zjt_api /
+deepseek 三家，2026-08-07 起配置）：
+
+- `vendor=deepseek`（已修映射）：正常；
+- `vendor=zjt_api`（中转站自有模型名体系）：正常；
+- `vendor=volcengine`（恒等映射透传旧名）：**100% 404**，且 PM 智能体循环
+  吞错重试 3 次后任务曾被标成 `completed`（error 未落库），用户侧只见 SSE
+  error 事件。
+
+本次修复（`llm/volcengine_openai_client.py`）：
+
+1. `_MODEL_NAME_MAP` 与官方客户端同步：`deepseek-v4-flash` /
+   `deepseek-v4-flash-vision-exp` → `deepseek-flash`（`deepseek-v4-pro` 不变）。
+2. 新增 `_humanize_api_error` 钩子（`llm/openai_base_client.py` 基类提供默认
+   不翻译实现）：方舟返回 `InvalidEndpointOrModel.NotFound` 时上抛中文提示
+   「火山方舟账号未开通模型/接入点「xxx」……请改用其他供应商，或在火山方舟
+   控制台开通该模型」，原始错误保留为 `__cause__`。
+3. 任务创建入口前置校验（`llm/llm_client_factory.py`
+   `get_vendor_model_unusable_reason`）：显式 (vendor_id, model_id) 的
+   vendor_model 关联缺失或供应商凭据未配置时直接 400，不再把必败路由放进
+   任务队列（`api/script_writer.py` `/session/{id}/task`、
+   `api/storyboard.py` `/scene/{id}/ai-chat` 两个入口生效）。注意「凭据已
+   配置但平台未开通该模型」入口无法判断，由上述调用期 404 明确报错兜底。
+4. PM 连续失败达上限终止时，任务状态落库为 `failed` 并记录最后一次错误
+   （`script_writer_core/agents/task_manager.py` `run_task` +
+   `script_writer_core/agents/pm_agent.py` `last_loop_error`），不再出现
+   「前端已报错、库里 completed」。
+
 ## 关联
 
-- 代码：`llm/openai_deepseek.py` `_MODEL_NAME_MAP`
+- 代码：`llm/openai_deepseek.py` `_MODEL_NAME_MAP`、`llm/volcengine_openai_client.py` `_MODEL_NAME_MAP`
 - 测试：`tests/script_writer_core/test_vision_model_registration.py::test_deepseek_client_maps_vision_model`
+- 测试：`tests/llm/test_volcengine_humanize_error.py`（映射同步 + 404 翻译）
+- 测试：`tests/llm/test_vendor_model_unusable_reason.py`（路由前置校验）

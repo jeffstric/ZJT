@@ -4563,7 +4563,7 @@ async def scene_ai_chat(
     # 归一化 model_id / vendor_id（统一规则见 normalize_model_selection_refs）：
     # 数字串直接转 int；"vendor:模型名" 复合串还原为数值库 ID，与 /api/parse-script
     # 同规则，避免复合串被 400 拒绝（其他拆分入口行为分叉）。
-    from llm.llm_client_factory import normalize_model_selection_refs
+    from llm.llm_client_factory import get_vendor_model_unusable_reason, normalize_model_selection_refs
     numeric_model_id, vendor_id = await asyncio.to_thread(
         normalize_model_selection_refs,
         model_id,
@@ -4571,6 +4571,14 @@ async def scene_ai_chat(
     )
     if not numeric_model_id:
         return JSONResponse(status_code=400, content={'success': False, 'error': 'model_id 无效，请重新选择对话模型'})
+
+    # 显式路由前置校验：模型未关联该供应商 / 供应商凭据未配置时直接 400，
+    # 避免任务创建成功后 LLM 调用期才失败（如选到平台未开通模型的供应商）
+    unusable_reason = await asyncio.to_thread(
+        get_vendor_model_unusable_reason, vendor_id, numeric_model_id
+    )
+    if unusable_reason:
+        return JSONResponse(status_code=400, content={'success': False, 'error': unusable_reason})
 
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
     first_frame = await _asset_task_info(scene, 'first_frame')
