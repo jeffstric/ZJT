@@ -37,10 +37,19 @@
 | 平台 | 机制 | 反应速度 |
 |---|---|---|
 | Linux | `prctl(PR_SET_PDEATHSIG)`，父死内核立即发 SIGTERM（fork 的 worker 链式继承） | 秒级 |
-| 全平台 | 60s 轮询看门狗：Linux/macOS 检测 `getppid()` 变化（re-parent）；Windows 探活初始父 PID（ctypes `OpenProcess`） | ≤60s |
+| 全平台 | 60s 轮询看门狗：Linux/macOS 检测 `getppid()` 变化（re-parent）；Windows 探活初始父 PID（`task/scheduler._win_process_alive`） | ≤60s |
 
-⚠️ Windows 探活必须用 `OpenProcess`，**不能用 `os.kill(pid, 0)`**——Windows 上后者
-对普通信号会调用 `TerminateProcess`，等于把父进程直接杀掉。
+⚠️ Windows 探活（`_win_process_alive`）的实现约束：
+
+1. **不能用 `os.kill(pid, 0)`**——Windows 上后者对普通信号会调用
+   `TerminateProcess`，等于把父进程直接杀掉；
+2. **OpenProcess 成功 ≠ 存活**——进程已退出但句柄尚未被回收（父进程仍持有，
+   如 `Popen.wait()` 后对象未销毁）时 OpenProcess 照样成功，直接当存活会把
+   看门狗和锁探活一起卡死在"永远等不到死"。必须再用
+   `GetExitCodeProcess == STILL_ACTIVE(259)` 判真死；权限用
+   `PROCESS_QUERY_LIMITED_INFORMATION`（`SYNCHRONIZE` 不足以调
+   GetExitCodeProcess）；ctypes 需声明 argtypes/restype（默认 c_int 会
+   截断 64 位 HANDLE）。
 
 ## 各异常场景的行为（对用户的可预期性）
 
