@@ -74,3 +74,31 @@ deepseek 三家，2026-08-07 起配置）：
 - 代码：`llm/openai_deepseek.py` `_MODEL_NAME_MAP`、`llm/volcengine_openai_client.py` `_MODEL_NAME_MAP`
 - 测试：`tests/script_writer_core/test_vision_model_registration.py::test_deepseek_client_maps_vision_model`
 - 测试：`tests/llm/test_volcengine_humanize_error.py`（映射同步 + 404 翻译）
+
+## 2026-09-12 修正：方舟（volcengine）侧映射目标错误，已实测修正
+
+上文"修复方案"对 **DeepSeek 官方 API**（api.deepseek.com）可能仍然成立（未持官方
+key 复测），但 `65d02f83` 把同一映射（→ `deepseek-flash`）套到了**火山方舟**客户端
+`llm/volcengine_openai_client.py`，并注释"方舟同步下线旧名（实测 404）"——此判断
+经真实调用证伪：
+
+1. `GET /api/v3/models`（方舟模型目录，131 个模型）中 DeepSeek 共 13 个，**全部带
+   版本后缀**，且**不存在任何裸名**（`deepseek-v4-flash` / `deepseek-v4-pro` /
+   `deepseek-flash` 均无）——`deepseek-flash` 是 DeepSeek 官方 API 的命名，方舟从未有。
+   当时的"实测 404"对不存在的名字必然发生，不能证明"下线/改名"。
+2. 错误码可区分两种 404：`InvalidEndpointOrModel.NotFound` = 名字不存在；
+   `ModelNotOpen` = 名字正确但账号未开通。裸名全部报前者。
+3. 生产 key + 开通账号实测：`deepseek-v4-flash-ga-260731`（GA 版，支持图片输入）、
+   `deepseek-v4-pro-260425`、`deepseek-v4-pro-ga-260813` 全部 200；
+   `deepseek-v4-flash-260425` 已 Retiring。
+
+方舟侧正确映射（已修正进 `volcengine_openai_client._MODEL_NAME_MAP`）：
+
+| model 表友好名 | 方舟实际 model ID | 说明 |
+| --- | --- | --- |
+| `deepseek-v4-flash` | `deepseek-v4-flash-ga-260731` | GA 在役版 |
+| `deepseek-v4-flash-vision-exp` | `deepseek-v4-flash-ga-260731` | 方舟无 vision 变体，ga 版实测支持图片输入 |
+| `deepseek-v4-pro` | `deepseek-v4-pro-260425` | ga-260813 亦可用（需账号开通） |
+
+**教训**：vendor=volcengine 的"路由修复"当时仅经 mock 测试验证，从未真实调用方舟；
+跨供应商套用模型名映射（官方 API 命名 ≠ 方舟命名）是本次误判根源。
