@@ -43,12 +43,12 @@ if __name__ == "__main__":
         import ctypes
         libc = ctypes.CDLL("libc.so.6", use_errno=True)
         libc.prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG = 1
+    # 注意：不能加"ppid==1 即孤儿退出"判断——官方 Docker 入口（docker-entrypoint.sh
+    # `exec python3 run_prod.py`，无 init: true）里 run_prod 就是 PID 1，scheduler
+    # 的 getppid() 恒为 1，该判断会让容器里的 scheduler 启动即退、run_prod 随即
+    # cleanup 拆掉整栈（restart: unless-stopped 反复崩）。父为 PID 1 时父死意味着
+    # 容器销毁、整组进程被内核带走，无需也无法在此提前退出。
     initial_ppid = os.getppid()
-    if initial_ppid == 1 and sys.platform != 'win32':
-        # fork/exec 间隙父进程已死（PDEATHSIG 尚未安装、无法补发），立即退出防孤儿。
-        # 本进程仅由 run_prod/run_dev 拉起（父为 manager），ppid==1 只意味着已成孤儿。
-        print("[Scheduler] Parent process died before watchdog install, exiting.")
-        sys.exit(0)
 
     print("[Scheduler] Starting scheduler...")
     print(f"[Scheduler] PID: {os.getpid()}")
@@ -87,6 +87,12 @@ if __name__ == "__main__":
     # 场景：run_prod 被 SIGKILL 后立刻重启，旧 scheduler 处理 SIGTERM 释放锁前，
     # 新 scheduler 会短暂抢锁失败；dev+prod 双开时第二套持续空转保活。
     while not init_scheduler(app):
+        # 空转期间同样探活父进程：Linux 有 PDEATHSIG 兜底，Windows/macOS 无
+        # prctl——不检查的话，双开的第二套在 manager 被杀后成为永久孤儿，
+        # 且会在持有者退出后接管调度（正是防孤儿要堵的残留）
+        if parent_process_dead(initial_ppid):
+            print("[Scheduler] Parent process died while waiting for lock, exiting...")
+            cleanup()
         print("[Scheduler] Another scheduler instance holds the lock. "
               "Staying alive (web unaffected); retrying in 30s...")
         time.sleep(30)

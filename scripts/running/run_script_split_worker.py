@@ -172,11 +172,9 @@ def main():
         import ctypes
         libc = ctypes.CDLL("libc.so.6", use_errno=True)
         libc.prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG = 1
+    # 注意：不能加"ppid==1 即孤儿退出"判断——官方 Docker 入口里 run_prod 是
+    # PID 1，本 worker 的 getppid() 恒为 1，会启动即退（见 run_scheduler 同款注释）
     initial_ppid = os.getppid()
-    if initial_ppid == 1 and sys.platform != 'win32':
-        # fork/exec 间隙父进程已死，立即退出防孤儿（本进程仅由 run_prod/run_dev 拉起）
-        print("[Worker] Parent process died before watchdog install, exiting.")
-        sys.exit(0)
 
     parser = argparse.ArgumentParser(description='剧本分段拆分独立 worker 进程')
     parser.add_argument('index', type=int, help='本进程分片下标（0-based）')
