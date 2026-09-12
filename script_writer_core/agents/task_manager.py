@@ -432,43 +432,6 @@ class TaskManager:
                     result = pm_agent.execute(task, session_data)
                 logger.warning(f"[DEBUG] pm_agent.execute() 执行完成")
 
-                # PM 循环吞错重试：连续失败达上限而终止时 execute 正常返回，
-                # 但任务实为失败——必须标 failed 并落库 error，否则前端已收
-                # 到 error 消息、库里却是 completed，排查时自相矛盾。
-                # 仅 PMAgent 有这些属性；其他 runner（如 storyboard 的
-                # ExpertAgent adapter，内部自行兜底标 failed）getattr 后跳过。
-                final_loop_error = getattr(pm_agent, 'last_loop_error', None)
-                failed_by_loop = bool(final_loop_error) and (
-                    int(getattr(pm_agent, 'consecutive_failures', 0) or 0)
-                    >= int(getattr(pm_agent, 'max_consecutive_failures', 3) or 3)
-                )
-                if failed_by_loop:
-                    task.status = TaskStatus.FAILED
-                    task.completed_at = datetime.now()
-                    task.error = final_loop_error
-                    task.result = result
-
-                    try:
-                        AgentTasksModel.update_status(
-                            task_id=task.task_id,
-                            status='failed',
-                            completed_at=task.completed_at,
-                            error=final_loop_error,
-                            result=result if isinstance(result, dict) else None
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to update task status in database: {e}")
-
-                    # 流端点对 error/done 都会结束；pm 循环内已逐次推过 error，
-                    # 这里再推一条 failed 收尾兜底（轮询侧按任务状态也会终止）
-                    self.push_message(task.task_id, 'done', {
-                        'status': 'failed',
-                        'result': result
-                    })
-
-                    logger.error(f"Task {task.task_id} failed by consecutive loop failures: {final_loop_error}")
-                    return
-
                 task.status = TaskStatus.COMPLETED
                 task.completed_at = datetime.now()
                 task.result = result

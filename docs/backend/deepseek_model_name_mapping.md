@@ -68,20 +68,9 @@ deepseek 三家，2026-08-07 起配置）：
    不翻译实现）：方舟返回 `InvalidEndpointOrModel.NotFound` 时上抛中文提示
    「火山方舟账号未开通模型/接入点「xxx」……请改用其他供应商，或在火山方舟
    控制台开通该模型」，原始错误保留为 `__cause__`。
-3. 任务创建入口前置校验（`llm/llm_client_factory.py`
-   `get_vendor_model_unusable_reason`）：显式 (vendor_id, model_id) 的
-   vendor_model 关联缺失或供应商凭据未配置时直接 400，不再把必败路由放进
-   任务队列（`api/script_writer.py` `/session/{id}/task`、
-   `api/storyboard.py` `/scene/{id}/ai-chat` 两个入口生效）。注意「凭据已
-   配置但平台未开通该模型」入口无法判断，由上述调用期 404 明确报错兜底。
-4. PM 连续失败达上限终止时，任务状态落库为 `failed` 并记录最后一次错误
-   （`script_writer_core/agents/task_manager.py` `run_task` +
-   `script_writer_core/agents/pm_agent.py` `last_loop_error`），不再出现
-   「前端已报错、库里 completed」。
 
 ## 关联
 
 - 代码：`llm/openai_deepseek.py` `_MODEL_NAME_MAP`、`llm/volcengine_openai_client.py` `_MODEL_NAME_MAP`
 - 测试：`tests/script_writer_core/test_vision_model_registration.py::test_deepseek_client_maps_vision_model`
 - 测试：`tests/llm/test_volcengine_humanize_error.py`（映射同步 + 404 翻译）
-- 测试：`tests/llm/test_vendor_model_unusable_reason.py`（路由前置校验）

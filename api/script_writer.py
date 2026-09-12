@@ -45,7 +45,7 @@ from api.auth_identity import resolve_authorization_user_id
 from config.model_catalog import ModelScene, annotate_llm_models, build_tracks_payload
 from utils.resource_access import get_user_id_from_header, ensure_world_access
 from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
-from llm.llm_client_factory import get_available_models, get_llm_client, get_vendor_model_unusable_reason
+from llm.llm_client_factory import get_available_models, get_llm_client
 
 # ==================== 加载 API 配置 ====================
 def _load_api_config():
@@ -3956,19 +3956,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                         vendor_id = real_vendor_id
                 except Exception as e:
                     logger.warning(f"Failed to get vendor_id for model {model_id}: {e}")
-
-        # 显式路由前置校验：模型未关联该供应商 / 供应商凭据未配置时直接 400。
-        # 放行只会把失败推迟到 LLM 调用期（PM 循环吞错重试，任务还曾被标成
-        # completed），用户只见 404 却不知路由选错了供应商。
-        unusable_reason = await asyncio.to_thread(
-            get_vendor_model_unusable_reason, vendor_id, model_id
-        )
-        if unusable_reason:
-            return JSONResponse({
-                'success': False,
-                'error': unusable_reason
-            }, status_code=400)
-
+        
         # 强制同步模型到 pm_agent：确保切换模型后实际使用正确的 LLM client
         # 前端传来的 model 是最新的用户选择，优先使用
         request_model = task_request.model

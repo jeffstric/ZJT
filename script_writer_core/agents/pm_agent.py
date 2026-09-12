@@ -128,9 +128,6 @@ class PMAgent(BaseAgent, AskUserMixin):
 
         self.consecutive_failures = 0
         self.total_failures = 0
-        # 最近一次循环失败的原因：连续失败达上限终止时，task_manager 据此把
-        # 任务标为 failed 并落库 error（否则异常被循环吞掉后任务仍标 completed）
-        self.last_loop_error: Optional[str] = None
         self.max_consecutive_failures = max_consecutive_failures
         self.max_total_failures = max_total_failures
         self.context_window = context_window
@@ -247,7 +244,6 @@ class PMAgent(BaseAgent, AskUserMixin):
         # 重置失败计数器，确保每个新任务独立（避免算力不足停止后残留计数导致新任务立即失败）
         self.consecutive_failures = 0
         self.total_failures = 0
-        self.last_loop_error = None
 
         try:
             # 记录当前任务的介入程度档位（指令已由 API 层拼入 task.user_message，
@@ -416,7 +412,6 @@ class PMAgent(BaseAgent, AskUserMixin):
                     })
 
                     logger.info(f"{self.agent_id}: PM completed with response")
-                    self.last_loop_error = None
                     return content
 
             except InsufficientComputingPowerError as e:
@@ -437,7 +432,6 @@ class PMAgent(BaseAgent, AskUserMixin):
                 logger.error(f"{self.agent_id}: Error in PM loop - {e}", exc_info=True)
                 self.total_failures += 1
                 self.consecutive_failures += 1
-                self.last_loop_error = str(e)
 
                 self.task_manager.push_message(task.task_id, 'error', {
                     'error': str(e)
@@ -601,7 +595,6 @@ class PMAgent(BaseAgent, AskUserMixin):
             logger.error(f"{self.agent_id}: Tool execution failed - {e}", exc_info=True)
             self.total_failures += 1
             self.consecutive_failures += 1
-            self.last_loop_error = str(e)
             return {"error": str(e)}
 
     def _handle_load_sop(self, tool_args: Dict[str, Any]) -> Dict[str, Any]:
@@ -763,7 +756,6 @@ class PMAgent(BaseAgent, AskUserMixin):
         if result.get("success"):
             logger.info(f"{self.agent_id}: Expert {skill_name} succeeded")
             self.consecutive_failures = 0
-            self.last_loop_error = None
 
             # 推送生成任务的 project_ids 到前端，前端自动轮询
             project_ids = result.get("project_ids", [])
@@ -805,7 +797,6 @@ class PMAgent(BaseAgent, AskUserMixin):
         else:
             self.total_failures += 1
             self.consecutive_failures += 1
-            self.last_loop_error = str(result.get('error') or '专家执行失败')
 
             # 即使 Expert 失败，如果已提交生成任务，仍通知前端轮询
             project_ids = result.get("project_ids", [])
