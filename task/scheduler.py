@@ -52,22 +52,18 @@ def _reset_forked_child_signals():
 def _os_close_inherited_lock_fd(lock_fd):
     """关闭继承的锁 fd。返回 None 供调用方写回 _lock_fd。
 
-    不用 file.close()：fork 后可能抢到父进程其他线程持有的 IO 锁。
-    os.close(fileno) 后作废 Python 对象的 close，避免 __del__ 二次
-    close 已复用的 fd。
+    用普通 file.close()（flush + close fd，对象状态一致）。此前版本改用
+    os.close(fileno) 并试图 patch 对象 close 为空操作——但 _io 对象禁止
+    属性赋值，patch 静默失败：覆盖 _lock_fd 引用触发 __del__ 时对已关 fd
+    二次 close，必抛 OSError(EBADF)（GC 噪音 + fd 复用后误关风险）。
+    os.close 方案担心的"继承 IO 锁死锁"在本项目时序下不存在：锁文件的
+    写入（acquire 时写 pid）只发生在主线程，fork 亦由工作线程发起，
+    写锁在 fork 瞬间必然空闲。
     """
     if lock_fd is None:
         return None
     try:
-        fd = lock_fd.fileno()
-    except Exception:
-        return None
-    try:
-        os.close(fd)
-    except OSError:
-        pass
-    try:
-        lock_fd.close = lambda *a, **k: None
+        lock_fd.close()
     except Exception:
         pass
     return None

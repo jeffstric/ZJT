@@ -163,10 +163,19 @@ def test_forked_child_sigterm_uses_default_disposition(clean_lock_state):
     try:
         signal.signal(signal.SIGTERM, inherited_cleanup)
         assert worker._acquire_worker_lock(TEST_INDEX) is True
+        ready_r, ready_w = os.pipe()
         child_pid = os.fork()
         if child_pid == 0:
+            os.close(ready_r)
+            # 就绪握手：确认钩子已把 SIGTERM 重置为 DFL 后再等杀
+            if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
+                os.write(ready_w, b"RDY")
+            os.close(ready_w)
             time.sleep(30)
             os._exit(99)
+        os.close(ready_w)
+        with os.fdopen(ready_r, "rb") as reader:
+            assert reader.read() == b"RDY", "子进程就绪握手失败"
         os.kill(child_pid, signal.SIGTERM)
         _, status = os.waitpid(child_pid, 0)
         child_pid = None

@@ -191,8 +191,12 @@ def test_forked_child_does_not_hold_lock_after_parent_death(lock_file, lock_file
         subprocess.run(["pkill", "-f", "lock_helper_fork.py"], capture_output=True)
 
 
-def test_os_close_inherited_lock_fd_does_not_use_file_close():
-    """os.close(fileno) 后 Python 对象 close 必须是空操作，避免二次 close。"""
+def test_os_close_inherited_lock_fd_closes_cleanly():
+    """file.close() 正常关闭：fd 失效、对象状态一致，GC 无二次 close 噪音。
+
+    回归：曾用 os.close(fd) + 给 _io 对象 patch close（属性赋值被静默拒绝），
+    覆盖引用触发 __del__ 时对已关 fd 二次 close 必抛 EBADF。
+    """
     d = _make_temp_dir("inherited_lock_fd_")
     path = os.path.join(d, "inherited.lock")
     handle = open(path, "a", encoding="utf-8")
@@ -201,6 +205,7 @@ def test_os_close_inherited_lock_fd_does_not_use_file_close():
         assert scheduler_mod._os_close_inherited_lock_fd(handle) is None
         with pytest.raises(OSError):
             os.fstat(fd)
+        # 对象可被反复 close（幂等），不抛 EBADF
         handle.close()
     finally:
         import shutil
@@ -280,10 +285,19 @@ def test_forked_child_sigterm_uses_default_disposition(lock_file):
     try:
         signal.signal(signal.SIGTERM, inherited_cleanup)
         assert _acquire_scheduler_lock(lock_file=lock_file) is True
+        ready_r, ready_w = os.pipe()
         child_pid = os.fork()
         if child_pid == 0:
+            os.close(ready_r)
+            # 就绪信号：确认钩子已把 SIGTERM 重置为 DFL 后再等杀
+            if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
+                os.write(ready_w, b"RDY")
+            os.close(ready_w)
             time.sleep(30)
             os._exit(99)
+        os.close(ready_w)
+        with os.fdopen(ready_r, "rb") as reader:
+            assert reader.read() == b"RDY", "子进程就绪握手失败"
         os.kill(child_pid, signal.SIGTERM)
         _, status = os.waitpid(child_pid, 0)
         child_pid = None
