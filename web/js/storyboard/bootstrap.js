@@ -188,11 +188,13 @@ export async function finishBootstrapAfterStoryboardReady(data) {
     }
 
     // LLM 模型恢复：优先 config_json（通过 restoreUiConfig），否则回退 localStorage
-    // 使用专用 key 避免与 script_writer 冲突
+    // V2 key（2026-09-13）：旧 key 存在 vendor_id=4（volcengine）历史脏数据
+    // （同名模型多供应商路由误选），换 key 使存量脏缓存失效；不再回退读
+    // script_writer 的 lastSelectedLlmModel——两页供应商体系不同，跨页共享
+    // 曾把 volcengine 路由带进故事板
     if (!state.selectedLlmModel) {
         try {
-            const raw = localStorage.getItem('storyboard_lastSelectedLlmModel')
-                || localStorage.getItem('lastSelectedLlmModel');
+            const raw = localStorage.getItem('storyboard_lastSelectedLlmModelV2');
             if (raw) {
                 state.selectedLlmModel = JSON.parse(raw);
             }
@@ -200,7 +202,7 @@ export async function finishBootstrapAfterStoryboardReady(data) {
     }
     if (!state.selectedScriptSplitLlmModel) {
         try {
-            const raw = localStorage.getItem('storyboard_lastScriptSplitLlmModel');
+            const raw = localStorage.getItem('storyboard_lastScriptSplitLlmModelV2');
             if (raw) {
                 state.selectedScriptSplitLlmModel = JSON.parse(raw);
             }
@@ -264,7 +266,7 @@ export async function finishBootstrapAfterStoryboardReady(data) {
             } : val;
             resolveSelectedLlmModel();
             try {
-                localStorage.setItem('storyboard_lastSelectedLlmModel', JSON.stringify(state.selectedLlmModel));
+                localStorage.setItem('storyboard_lastSelectedLlmModelV2', JSON.stringify(state.selectedLlmModel));
             } catch (e) {}
         }
     }
@@ -276,7 +278,7 @@ export async function finishBootstrapAfterStoryboardReady(data) {
     if (state.selectedScriptSplitLlmModel) {
         resolveSelectedScriptSplitLlmModel();
         try {
-            localStorage.setItem('storyboard_lastScriptSplitLlmModel', JSON.stringify(state.selectedScriptSplitLlmModel));
+            localStorage.setItem('storyboard_lastScriptSplitLlmModelV2', JSON.stringify(state.selectedScriptSplitLlmModel));
         } catch (e) {}
     }
 

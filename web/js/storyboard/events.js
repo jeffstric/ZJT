@@ -1544,13 +1544,13 @@ async function handleAction(action, target) {
             state.selectedScriptSplitLlmModel = payload;
             resolveSelectedScriptSplitLlmModel();
             try {
-                localStorage.setItem('storyboard_lastScriptSplitLlmModel', JSON.stringify(payload));
+                localStorage.setItem('storyboard_lastScriptSplitLlmModelV2', JSON.stringify(payload));
             } catch {}
         } else {
             state.selectedLlmModel = payload;
             resolveSelectedLlmModel();
             try {
-                localStorage.setItem('storyboard_lastSelectedLlmModel', JSON.stringify(payload));
+                localStorage.setItem('storyboard_lastSelectedLlmModelV2', JSON.stringify(payload));
             } catch {}
         }
         applyThinkingDefaultsForModel(state.selectedScriptSplitLlmModel || state.selectedLlmModel);
@@ -3331,7 +3331,7 @@ export function bindEvents() {
                 applyThinkingDefaultsForModel(state.selectedLlmModel);
                 saveThinkingStateToStorage(false);
                 try {
-                    localStorage.setItem('storyboard_lastSelectedLlmModel', JSON.stringify(state.selectedLlmModel));
+                    localStorage.setItem('storyboard_lastSelectedLlmModelV2', JSON.stringify(state.selectedLlmModel));
                 } catch {}
             } else if (type === 'scriptSplit') {
                 const selected = target.selectedOptions[0];
@@ -3346,7 +3346,7 @@ export function bindEvents() {
                 applyThinkingDefaultsForModel(state.selectedScriptSplitLlmModel || state.selectedLlmModel);
                 saveThinkingStateToStorage(false);
                 try {
-                    localStorage.setItem('storyboard_lastScriptSplitLlmModel', JSON.stringify(state.selectedScriptSplitLlmModel));
+                    localStorage.setItem('storyboard_lastScriptSplitLlmModelV2', JSON.stringify(state.selectedScriptSplitLlmModel));
                 } catch {}
             } else if (type === 'thinkingEffort') {
                 if (['low', 'medium', 'high'].includes(val)) {
