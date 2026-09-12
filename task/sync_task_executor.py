@@ -408,6 +408,10 @@ class SyncTaskExecutor:
         self._running = False
 
         if self._executor:
+            # 必须先快照 _processes：CPython 的 shutdown() 无论 wait 与否都会
+            # 把 _processes 置 None（源码注释"To reduce the risk of opening
+            # too many files"），shutdown 后再取就是 None，回收会变空操作
+            processes = list((getattr(self._executor, "_processes", None) or {}).items())
             if wait and not self._pool_broken:
                 # 健康池：等任务跑完、worker 随 shutdown 正常退出
                 self._executor.shutdown(wait=True)
@@ -422,7 +426,7 @@ class SyncTaskExecutor:
             # 健康池的 worker 已随 shutdown 退出，这里仅收尸兜底；broken 池的
             # 卡死 worker 必须显式终止，否则进程与管道 FD 泄漏
             with self._state_lock:
-                reclaimed = self._terminate_pool_workers_locked(self._executor)
+                reclaimed = self._reclaim_workers_locked(processes)
             if reclaimed:
                 logger.warning(
                     "[SyncTaskExecutor] Reclaimed %d worker(s) on shutdown",
@@ -456,6 +460,9 @@ class SyncTaskExecutor:
     def _rebuild_pool_locked(self) -> None:
         old_executor = self._executor
         if old_executor:
+            # 必须先快照 _processes：CPython 的 shutdown() 无论 wait 与否都会
+            # 把 _processes 置 None，shutdown 后再取就是 None，回收会变空操作
+            processes = list((getattr(old_executor, "_processes", None) or {}).items())
             try:
                 old_executor.shutdown(wait=False, cancel_futures=True)
             except TypeError:
@@ -465,7 +472,7 @@ class SyncTaskExecutor:
             # shutdown(wait=False) 依赖管理线程通知 worker 退出，broken 池做不到
             # （worker 卡死在废弃 call queue 上），必须显式回收旧 worker，
             # 否则进程与管道 FD 随每次重建累积（2026-09-12 EMFILE 事故根因之一）
-            reclaimed = self._terminate_pool_workers_locked(old_executor)
+            reclaimed = self._reclaim_workers_locked(processes)
             if reclaimed:
                 logger.warning(
                     "[SyncTaskExecutor] Reclaimed %d worker(s) from the replaced pool",
@@ -598,7 +605,7 @@ class SyncTaskExecutor:
             if not processes:
                 self._pool_broken = True
 
-    def _terminate_pool_workers_locked(self, executor) -> int:
+    def _reclaim_workers_locked(self, processes) -> int:
         """显式终止并回收进程池的全部 worker（须持 _state_lock 调用）。
 
         ProcessPoolExecutor.shutdown 依赖池管理线程通知 worker 退出；池一旦
@@ -608,50 +615,75 @@ class SyncTaskExecutor:
         都会完整继承这些 FD（2026-09-12 事故：一天重建 46 次，累积 360 个卡死
         worker、996 根管道，打满 1024 FD 上限后全进程 EMFILE 崩溃）。
 
-        直接用 Process 对象 terminate/kill/join（而非 os.kill+轮询探活）：
-        join 走 waitpid 能正确 reap 僵尸——轮询 os.kill(pid,0) 对"已死未收尸"
-        的 worker 误判为存活，会白等整个宽限期。不修改 _processes 字典本身：
-        旧池管理线程可能仍在异步遍历它，clear 有迭代竞态；executor 对象随
-        替换被整体丢弃，无需清空。
+        Args:
+            processes: shutdown **之前**快照的 [(pid, Process)]。CPython 的
+                shutdown() 无条件把 executor._processes 置 None，必须先握住
+                Process 对象再关池，否则此处拿到空引用、回收变空操作。
+
+        回收为并行两段式（持锁时长 workers 串行最坏 24s → 约 grace+join 2s）：
+        全员 SIGTERM → 共享宽限 deadline 逐个 join → 顽固者 SIGKILL → join。
+        用 Process 对象的 join（waitpid）收尸而非 os.kill(pid,0) 轮询探活——
+        后者对"已死未收尸"的僵尸误判为存活，会白等整个宽限期。
 
         权衡：被终止 worker 上仍在运行的任务以 BrokenProcessPool 终态落库退款
-        （与 stale 超时强杀同一路径），不会留下 PROCESSING 孤儿。持锁执行，
-        最坏 workers×(grace+join) 秒；卡死 worker 对 SIGTERM 走默认处置即刻
-        退出，通常整体 <1s。
+        （与 stale 超时强杀同一路径），不会留下 PROCESSING 孤儿。
 
         Returns:
             实际终止的存活 worker 数（已死亡 worker 仅收尸，不计数）
         """
-        processes = getattr(executor, "_processes", None)
         if not processes:
             return 0
-        terminated = 0
-        for pid, proc in list(processes.items()):
+        dead = []
+        alive = []
+        for _pid, proc in processes:
+            try:
+                (alive if proc.is_alive() else dead).append(proc)
+            except Exception:
+                # 状态未知保守视为存活，宁可多终止一次
+                alive.append(proc)
+
+        # 1) 全员 SIGTERM（Windows 上 terminate 即硬杀）
+        for proc in alive:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+        # 2) 共享宽限 deadline：卡死 worker 对 SIGTERM 走内核默认处置即刻退出，
+        #    通常全部 join 在远小于 grace 内返回；deadline 保证最坏总时长有界
+        deadline = time.monotonic() + SYNC_WORKER_RECLAIM_GRACE_SECONDS
+        stubborn = []
+        for proc in alive:
+            try:
+                proc.join(timeout=max(0.0, deadline - time.monotonic()))
+            except Exception:
+                pass
             try:
                 if proc.is_alive():
-                    # SIGTERM（Windows 上 terminate 即硬杀）→ 宽限 → SIGKILL 兜底
-                    try:
-                        proc.terminate()
-                    except Exception:
-                        pass
-                    proc.join(timeout=SYNC_WORKER_RECLAIM_GRACE_SECONDS)
-                    if proc.is_alive():
-                        try:
-                            proc.kill()
-                        except Exception:
-                            pass
-                        proc.join(timeout=SYNC_WORKER_RECLAIM_JOIN_TIMEOUT)
-                    terminated += 1
-                else:
-                    # is_alive 的 waitpid(WNOHANG) 已收尸，这里防御性 join 兜底
-                    proc.join(timeout=SYNC_WORKER_RECLAIM_JOIN_TIMEOUT)
-            except Exception as exc:
-                logger.warning(
-                    "[SyncTaskExecutor] Error reclaiming old pool worker pid=%s: %s",
-                    pid,
-                    exc,
-                )
-        return terminated
+                    stubborn.append(proc)
+            except Exception:
+                stubborn.append(proc)
+
+        # 3) 顽固者 SIGKILL 兜底
+        for proc in stubborn:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        for proc in stubborn:
+            try:
+                proc.join(timeout=SYNC_WORKER_RECLAIM_JOIN_TIMEOUT)
+            except Exception:
+                pass
+
+        # 4) 已死 worker 防御性收尸（is_alive 的 waitpid 通常已 reap，此步兜底）
+        for proc in dead:
+            try:
+                proc.join(timeout=SYNC_WORKER_RECLAIM_JOIN_TIMEOUT)
+            except Exception:
+                pass
+
+        return len(alive)
 
     def submit(self, task_id: int, ai_tool_type: int, implementation_name: str = None) -> bool:
         """

@@ -50,7 +50,13 @@ class FakeWorkerProcess:
 
 
 class FakePoolExecutor:
-    """仅暴露 _processes / shutdown / submit 的最小 Executor 替身。"""
+    """模拟 CPython ProcessPoolExecutor 的关键行为。
+
+    shutdown() 后 _processes 置 None——CPython 源码无条件如此（wait=False 也
+    置空，注释 "To reduce the risk of opening too many files"）。回收逻辑必须
+    在 shutdown 前快照 _processes，否则拿到 None 变空操作；本 Fake 保持与
+    真实实现一致，回退快照逻辑时测试会变红。
+    """
 
     def __init__(self, processes=None, *args, **kwargs):
         self._processes = processes if processes is not None else {}
@@ -59,6 +65,7 @@ class FakePoolExecutor:
 
     def shutdown(self, wait=True, cancel_futures=False):
         self.shutdown_calls.append((wait, cancel_futures))
+        self._processes = None
 
     def submit(self, *args):
         self.submitted.append(args)
@@ -96,17 +103,20 @@ def test_rebuild_terminates_and_reaps_workers(monkeypatch):
 
     executor._rebuild_pool_locked()
 
-    # 合作 worker：SIGTERM 生效，join 宽限收尸，无需 SIGKILL
+    # shutdown 已把 _processes 置 None——回收靠的是调用前的快照（本测试存在即守护）
+    assert old._processes is None
+    # 合作 worker：SIGTERM 生效，无需 SIGKILL；宽限 join 的 timeout 受共享
+    # deadline 约束（并行回收），区间断言而非精确值
     assert cooperative.terminate_calls == 1
     assert cooperative.kill_calls == 0
-    assert cooperative.joined_with == [SYNC_WORKER_RECLAIM_GRACE_SECONDS]
+    assert len(cooperative.joined_with) == 1
+    assert 0 < cooperative.joined_with[0] <= SYNC_WORKER_RECLAIM_GRACE_SECONDS
     # 顽固 worker：SIGTERM 无效后 SIGKILL 兜底，两次 join
     assert stubborn.terminate_calls == 1
     assert stubborn.kill_calls == 1
-    assert stubborn.joined_with == [
-        SYNC_WORKER_RECLAIM_GRACE_SECONDS,
-        SYNC_WORKER_RECLAIM_JOIN_TIMEOUT,
-    ]
+    assert len(stubborn.joined_with) == 2
+    assert 0 < stubborn.joined_with[0] <= SYNC_WORKER_RECLAIM_GRACE_SECONDS
+    assert stubborn.joined_with[1] == SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
     # 已死 worker：不终止，仅防御性 join 收尸
     assert dead.terminate_calls == 0
     assert dead.joined_with == [SYNC_WORKER_RECLAIM_JOIN_TIMEOUT]
