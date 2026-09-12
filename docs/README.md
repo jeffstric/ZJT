@@ -134,6 +134,10 @@ python3 scripts/running/run_dev.py
 - `bucket_name` - 存储空间名称
 - `cdn_domain` - CDN 加速域名
 
+生成下载/公开链接的协议跟随 `server.https.enabled`：开启时生成 `https://` 链接，
+否则 `http://`。HTTPS 站点若下发 `http://` 下载链接，浏览器会按混合内容下载
+拦截（表现为点击导出/下载后看不到文件），站点启用 HTTPS 后务必同步置位该项。
+
 ---
 
 ## 数据库迁移

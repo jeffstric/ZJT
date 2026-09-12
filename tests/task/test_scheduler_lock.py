@@ -305,6 +305,7 @@ def test_kill9_holder_then_immediate_acquire(lock_file):
             holder.wait()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上 send_signal(SIGTERM) 走 TerminateProcess，Python 信号 handler 不执行，无法验证优雅释放路径")
 def test_graceful_terminated_holder_then_next_acquires(lock_file):
     """正常重启场景：持有者收到 SIGTERM 优雅释放后，新实例立即获取成功"""
     helper_path = os.path.join(_make_temp_dir("lock_helper_"), "lock_helper_sigterm.py")
@@ -327,6 +328,7 @@ def test_graceful_terminated_holder_then_next_acquires(lock_file):
             holder.wait()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上 send_signal(SIGTERM) 走 TerminateProcess，Python 信号 handler 不执行，无法验证优雅释放路径")
 def test_waiter_acquires_after_holder_releases(lock_file):
     """交接场景：等待者循环重试期间被持续拒绝；持有者一释放即无缝接手"""
     holder_path = os.path.join(_make_temp_dir("lock_helper_"), "lock_helper_sigterm.py")
@@ -364,3 +366,25 @@ def test_parent_process_dead_detection():
     from task.scheduler import parent_process_dead
     assert parent_process_dead(os.getppid()) is False
     assert parent_process_dead(os.getppid() + 1000000) is True
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="仅 Windows 可验证 _win_process_alive 的句柄未回收路径")
+def test_win_process_alive_false_for_exited_child_with_open_handle():
+    """子进程已退出、但父进程仍持有其句柄（Popen.wait() 后对象未销毁）时，
+    OpenProcess 照样成功——旧实现（OpenProcess 成功即存活）在此误判为活，
+    会把看门狗和锁探活一起卡死在"永远等不到死"。
+
+    新实现必须经 GetExitCodeProcess == STILL_ACTIVE 判真死。
+    本用例是守护该修复的唯一真实路径：PID 不存在或句柄已回收的场景
+    旧实现也能通过，无法暴露回归。
+    """
+    from task.scheduler import _win_process_alive
+
+    proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+    try:
+        proc.wait()
+        # proc 对象保持引用：其 _handle 仍打开，模拟"已退出但句柄未回收"
+        assert proc.returncode == 0
+        assert _win_process_alive(proc.pid) is False
+    finally:
+        proc.poll()

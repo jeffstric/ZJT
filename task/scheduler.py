@@ -51,15 +51,65 @@ def _run_async_task(async_func, *args, **kwargs):
     ⚠️ 每次调用创建新的事件循环，不复用。loop.close() 会释放所有关联资源。
     仅适用于短生命周期的异步任务，不要在此运行持续性连接池或后台任务。
     """
+    loop = None
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(async_func(*args, **kwargs))
-        loop.close()
     except Exception as e:
         logger.error(f"Error running async task: {e}")
         import traceback
         logger.error(traceback.format_exc())
+    finally:
+        # close 必须在 finally：异常路径不关闭会泄漏 epoll fd + 自管道 socketpair，
+        # 调度器长期运行下与其他 FD 泄漏叠加打满上限（2026-09-12 EMFILE 事故伴生缺陷）
+        if loop is not None and not loop.is_closed():
+            loop.close()
+        # 线程上不留已关闭的 loop 引用（下次调用会 new + set，此处仅为卫生）
+        asyncio.set_event_loop(None)
+
+
+def _win_process_alive(pid: int) -> bool:
+    """Windows 进程探活：OpenProcess + GetExitCodeProcess。
+
+    两处历史缺陷（Windows 本机实测抓到）：
+    1. ctypes 不设 argtypes/restype 时默认按 c_int 截断——64 位 HANDLE
+       返回值被截断，判断不可靠；
+    2. 进程已退出但句柄尚未被回收（父进程仍持有）时 OpenProcess 照样
+       成功 → 误判存活。对防孤儿看门狗意味着"父已死却永远等不到退出"，
+       对锁探活意味着持有者已死却诚实拒锁。必须用 GetExitCodeProcess
+       区分 STILL_ACTIVE。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = (
+        wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD),
+    )
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    # PROCESS_QUERY_LIMITED_INFORMATION：GetExitCodeProcess 所需最小权限
+    # （原用的 SYNCHRONIZE=0x100000 不足以调用 GetExitCodeProcess）
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+
+    handle = kernel32.OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+    )
+    if not handle:
+        return False
+    try:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _is_lock_holder_alive(lock_file: str) -> bool:
@@ -71,13 +121,7 @@ def _is_lock_holder_alive(lock_file: str) -> bool:
             return False
         pid = int(pid_str)
         if sys.platform == 'win32':
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.OpenProcess(0x100000, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return True
-            return False
+            return _win_process_alive(pid)
         try:
             os.kill(pid, 0)
             return True
@@ -159,6 +203,10 @@ def _release_scheduler_lock():
         try:
             if sys.platform == 'win32':
                 import msvcrt
+                # 加锁时锁的是 1MB 处的字节；解锁前必须 seek 回同一位置，
+                # 否则 msvcrt.locking 解的是当前文件位置的 1 字节，解锁必然失败
+                # （优雅释放必打 error；进程内 shutdown 而退出时还会漏锁）
+                _lock_fd.seek(1048576)
                 msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
@@ -174,20 +222,15 @@ def parent_process_dead(initial_ppid: int) -> bool:
     """防孤儿看门狗：判断启动时记录的父进程是否已死亡。
 
     - Linux/macOS：父进程死后子进程被 re-parent，getppid() 必然改变；
-    - Windows：无 re-parent 机制（getppid 恒不变），改为探活父进程。
-      必须用 OpenProcess 而非 os.kill(pid, 0)——Windows 上后者对普通
-      信号会调用 TerminateProcess，等于把父进程直接杀掉。
+    - Windows：无 re-parent 机制（getppid 恒不变），改为探活父进程
+      （_win_process_alive：进程已退出但句柄未回收时不算存活，否则
+      看门狗会永远等不到"父死"）。不能用 os.kill(pid, 0)——Windows 上
+      后者对普通信号会调用 TerminateProcess，等于把父进程直接杀掉。
 
     供 run_scheduler / run_script_split_worker 等独立进程入口共用。
     """
     if sys.platform == 'win32':
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(0x100000, False, initial_ppid)
-        if handle:
-            kernel32.CloseHandle(handle)
-            return False
-        return True
+        return not _win_process_alive(initial_ppid)
     return os.getppid() != initial_ppid
 
 
