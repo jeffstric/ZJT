@@ -44,30 +44,42 @@ Error code: 404 - {'error': {'code': 'InvalidEndpointOrModel.NotFound',
 - `zjt_api` 等中转供应商有独立客户端（`llm/llm_client_factory.py` 路由），模型名体系不受影响。
 - 计费单价、上下文窗口等元数据仍按 `model` 表中友好名对应的记录扣减，行为不变。
 
-## 火山方舟托管 DeepSeek 同步下线（2026-09-12 补充）
-
-火山方舟托管的 DeepSeek 为官方同源模型，模型名跟随官方体系：官方下线
-`deepseek-v4-flash` 旧名后，方舟同步下线，`VolcengineOpenAIClient` 的恒等
-映射（`deepseek-v4-flash` → `deepseek-v4-flash`）随之失效，调用报
-`404 InvalidEndpointOrModel.NotFound`。
+## 火山方舟托管 DeepSeek（2026-09-12/13 补充，含 2026-09-13 实测勘误）
 
 线上表现（vendor_model 关联 model 1005 同时挂在 volcengine / zjt_api /
 deepseek 三家，2026-08-07 起配置）：
 
-- `vendor=deepseek`（已修映射）：正常；
+- `vendor=deepseek`（已修映射 → `deepseek-flash`）：正常；
 - `vendor=zjt_api`（中转站自有模型名体系）：正常；
-- `vendor=volcengine`（恒等映射透传旧名）：**100% 404**，且 PM 智能体循环
-  吞错重试 3 次后任务曾被标成 `completed`（error 未落库），用户侧只见 SSE
-  error 事件。
+- `vendor=volcengine`：**100% 404**，且 PM 智能体循环吞错重试 3 次后任务
+  曾被标成 `completed`（error 未落库），用户侧只见 SSE error 事件。
+
+**勘误（2026-09-13 生产 key 实测）**：此前"方舟同步官方下线旧名，映射
+`deepseek-flash` 即可修复"的判断是错的。方舟目录（GET /api/v3/models，
+131 个模型）中 DeepSeek 共 13 个，**ID 全部带版本后缀，不存在任何裸名**
+（`deepseek-v4-flash` / `deepseek-v4-pro` / `deepseek-flash` 均无）——
+`deepseek-flash` 是 DeepSeek 官方 API 的命名，方舟从来没有；裸名调用必然
+`InvalidEndpointOrModel.NotFound`，与账号开通状态无关（错误码
+`ModelNotOpen` 才是未开通）。
+
+实测 200 的方舟 ID（生产 key，2026-09-13）：`deepseek-v4-flash-ga-260731`
+（GA 版，实测支持图片输入）、`deepseek-v4-pro-ga-260813`、
+`deepseek-v4-pro-260425`；`deepseek-v4-flash-260425` 已 Retiring。
 
 本次修复（`llm/volcengine_openai_client.py`）：
 
-1. `_MODEL_NAME_MAP` 与官方客户端同步：`deepseek-v4-flash` /
-   `deepseek-v4-flash-vision-exp` → `deepseek-flash`（`deepseek-v4-pro` 不变）。
+1. `_MODEL_NAME_MAP` 映射到方舟实测可用的带版本 ID：
+   `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` →
+   `deepseek-v4-flash-ga-260731`（方舟无 vision 变体，ga 版实测支持图片
+   输入，作为 vision-exp 的替代）；`deepseek-v4-pro` →
+   `deepseek-v4-pro-ga-260813`。
 2. 新增 `_humanize_api_error` 钩子（`llm/openai_base_client.py` 基类提供默认
    不翻译实现）：方舟返回 `InvalidEndpointOrModel.NotFound` 时上抛中文提示
    「火山方舟账号未开通模型/接入点「xxx」……请改用其他供应商，或在火山方舟
    控制台开通该模型」，原始错误保留为 `__cause__`。
+
+教训：跨供应商套用模型名映射（DeepSeek 官方的改名不等于方舟的改名），
+mock 测试掩盖了从未真实调用过方舟的事实——映射修复必须用真实 key 实测。
 
 ## 前端 localStorage 脏缓存治理（2026-09-13 补充）
 
