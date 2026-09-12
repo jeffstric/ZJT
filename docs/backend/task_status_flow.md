@@ -368,7 +368,7 @@ initializer 阶段从未领取任务，但一直占用进程池名额；存活 w
    `BrokenProcessPool → _rebuild_pool_locked`；而 `shutdown(wait=False)` 无法
    通知卡死在废弃 call queue 上的 worker 退出，旧池 worker 进程与队列管道随
    每次重建累积（生产实测一天重建 46 次 → 996 根管道 → 打满 1024 FD 全进程
-   EMFILE）。`_rebuild_pool_locked`/`shutdown` 现经 `_terminate_pool_workers_locked()`
+   EMFILE）。`_rebuild_pool_locked`/`shutdown` 现经 `_reclaim_workers_locked()`
    对旧池全部 worker 显式 `terminate → join(宽限) → kill → join`（常量
    `SYNC_WORKER_RECLAIM_*`，`config/constant.py`），进程与管道均被回收；
    `shutdown(wait=True)` 对 broken 池改走非阻塞路径，避免 cleanup 永久挂死

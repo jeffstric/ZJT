@@ -166,6 +166,10 @@ def _release_scheduler_lock():
         try:
             if sys.platform == 'win32':
                 import msvcrt
+                # 加锁时锁的是 1MB 处的字节；解锁前必须 seek 回同一位置，
+                # 否则 msvcrt.locking 解的是当前文件位置的 1 字节，解锁必然失败
+                # （优雅释放必打 error；进程内 shutdown 而退出时还会漏锁）
+                _lock_fd.seek(1048576)
                 msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl

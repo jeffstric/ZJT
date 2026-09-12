@@ -116,10 +116,11 @@ def test_rebuild_terminates_and_reaps_workers(monkeypatch):
     assert stubborn.kill_calls == 1
     assert len(stubborn.joined_with) == 2
     assert 0 < stubborn.joined_with[0] <= SYNC_WORKER_RECLAIM_GRACE_SECONDS
-    assert stubborn.joined_with[1] == SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
+    assert 0 < stubborn.joined_with[1] <= SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
     # 已死 worker：不终止，仅防御性 join 收尸
     assert dead.terminate_calls == 0
-    assert dead.joined_with == [SYNC_WORKER_RECLAIM_JOIN_TIMEOUT]
+    assert len(dead.joined_with) == 1
+    assert 0 < dead.joined_with[0] <= SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
     assert executor._pool_broken is False
     assert executor._executor is not old
 
@@ -205,7 +206,8 @@ def test_shutdown_healthy_pool_keeps_graceful_wait():
 
     assert pool.shutdown_calls == [(True, False)]
     assert exited.terminate_calls == 0
-    assert exited.joined_with == [SYNC_WORKER_RECLAIM_JOIN_TIMEOUT]
+    assert len(exited.joined_with) == 1
+    assert 0 < exited.joined_with[0] <= SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
     assert executor._executor is None
 
 

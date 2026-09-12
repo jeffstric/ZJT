@@ -620,10 +620,12 @@ class SyncTaskExecutor:
                 shutdown() 无条件把 executor._processes 置 None，必须先握住
                 Process 对象再关池，否则此处拿到空引用、回收变空操作。
 
-        回收为并行两段式（持锁时长 workers 串行最坏 24s → 约 grace+join 2s）：
-        全员 SIGTERM → 共享宽限 deadline 逐个 join → 顽固者 SIGKILL → join。
-        用 Process 对象的 join（waitpid）收尸而非 os.kill(pid,0) 轮询探活——
-        后者对"已死未收尸"的僵尸误判为存活，会白等整个宽限期。
+        回收为并行两段式（两段 join 均共享 deadline，持锁最坏 ≈ grace+join
+        ≈ 2s，与 worker 数量无关；卡死 worker 对 SIGTERM 走内核默认处置即刻
+        退出，通常整体 <1s）：全员 SIGTERM → 共享宽限 deadline 逐个 join →
+        顽固者 SIGKILL → join。用 Process 对象的 join（waitpid）收尸而非
+        os.kill(pid,0) 轮询探活——后者对"已死未收尸"的僵尸误判为存活，
+        会白等整个宽限期。
 
         权衡：被终止 worker 上仍在运行的任务以 BrokenProcessPool 终态落库退款
         （与 stale 超时强杀同一路径），不会留下 PROCESSING 孤儿。
@@ -664,22 +666,25 @@ class SyncTaskExecutor:
             except Exception:
                 stubborn.append(proc)
 
-        # 3) 顽固者 SIGKILL 兜底
+        # 3) 顽固者 SIGKILL 兜底（join 同样共享 deadline：串行每人 join_timeout
+        #    会在全员顽固时把持锁时间放大到 workers×join_timeout）
         for proc in stubborn:
             try:
                 proc.kill()
             except Exception:
                 pass
+        kill_deadline = time.monotonic() + SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
         for proc in stubborn:
             try:
-                proc.join(timeout=SYNC_WORKER_RECLAIM_JOIN_TIMEOUT)
+                proc.join(timeout=max(0.0, kill_deadline - time.monotonic()))
             except Exception:
                 pass
 
         # 4) 已死 worker 防御性收尸（is_alive 的 waitpid 通常已 reap，此步兜底）
+        reap_deadline = time.monotonic() + SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
         for proc in dead:
             try:
-                proc.join(timeout=SYNC_WORKER_RECLAIM_JOIN_TIMEOUT)
+                proc.join(timeout=max(0.0, reap_deadline - time.monotonic()))
             except Exception:
                 pass
 

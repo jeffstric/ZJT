@@ -35,61 +35,16 @@ sys.path.insert(0, project_root)
 import utils.logger_config  # noqa: F401
 
 # 防孤儿看门狗与 scheduler 同源：Windows 无 re-parent，需探活而非比较 getppid
-from task.scheduler import parent_process_dead
+# 锁持有者探活复用 scheduler.py 的实现——曾在此处拷贝出语义相反的 _is_stale_lock
+# （True=已死，却在 True 分支"诚实退出"）：持有者已死不重试、持有者活着反重试；
+# PermissionError（进程存在但无权限发信号）也被误判为已死。单一实现杜绝再抄错。
+from task.scheduler import parent_process_dead, _is_lock_holder_alive
 
 logger = logging.getLogger(__name__)
 
 # 本 worker 的 per-index 文件锁句柄与路径
 _lock_fd = None
 _LOCK_FILE = None
-
-
-def _is_stale_lock(lock_file):
-    """检查锁文件是否来自已死亡的进程（复用 scheduler.py 同款逻辑）。"""
-    if not lock_file or not os.path.exists(lock_file):
-        return False
-    try:
-        with open(lock_file, 'r') as f:
-            pid_str = f.read().strip()
-        if not pid_str:
-            # 空文件 = 锁写入失败残留
-            return True
-        pid = int(pid_str)
-        if sys.platform == 'win32':
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.OpenProcess(0x100000, False, pid)  # SYNCHRONIZE
-            if handle:
-                kernel32.CloseHandle(handle)
-                return False
-            return True
-        else:
-            try:
-                os.kill(pid, 0)
-                return False  # 进程存活，锁有效
-            except (ProcessLookupError, PermissionError):
-                return True  # 进程已死，锁无效
-    except (ValueError, OSError):
-        return True  # 文件内容异常，视为残留
-
-
-def _force_acquire_lock(lock_file):
-    """强制获取锁（清除残留锁后重新获取）。"""
-    global _lock_fd
-    if os.path.exists(lock_file):
-        os.remove(lock_file)
-    _lock_fd = open(lock_file, 'w')
-    if sys.platform == 'win32':
-        import msvcrt
-        _lock_fd.write(str(os.getpid()))
-        _lock_fd.flush()
-        msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        _lock_fd.write(str(os.getpid()))
-        _lock_fd.flush()
-    logger.info("worker lock force-acquired after clearing stale lock: %s", lock_file)
 
 
 def _acquire_worker_lock(worker_index):
@@ -125,8 +80,8 @@ def _acquire_worker_lock(worker_index):
             if _lock_fd:
                 _lock_fd.close()
                 _lock_fd = None
-            if _is_stale_lock(_LOCK_FILE):
-                # 持有者仍存活：诚实退出（不抢占）。函数名沿用，语义=检查持有者死活
+            if _is_lock_holder_alive(_LOCK_FILE):
+                # 持有者仍存活：诚实退出（不抢占），由 run_prod 决定后续
                 logger.error("worker index %d already running (lock held): %s", worker_index, _LOCK_FILE)
                 return False
             # 持有者已死亡：内核文件锁已随进程释放，重试一次即可获取
@@ -142,6 +97,9 @@ def _release_worker_lock():
         try:
             if sys.platform == 'win32':
                 import msvcrt
+                # 加锁时锁的是 1MB 处的字节；解锁前必须 seek 回同一位置，
+                # 否则 msvcrt.locking 解的是当前文件位置的 1 字节，解锁必然失败
+                _lock_fd.seek(1048576)
                 msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
@@ -150,6 +108,8 @@ def _release_worker_lock():
             logger.info("worker lock released: %s", _LOCK_FILE)
         except Exception as e:
             logger.error("error releasing worker lock: %s", e)
+        finally:
+            _lock_fd = None
 
 
 def cleanup(signum=None, frame=None):
@@ -171,6 +131,8 @@ def _run_one_tick(coro_func):
         loop.run_until_complete(coro_func())
     finally:
         loop.close()
+        # 线程上不留已关闭的 loop 引用（与 scheduler._run_async_task 同款卫生）
+        asyncio.set_event_loop(None)
 
 
 # 模块级，供 cleanup 日志引用
@@ -180,6 +142,19 @@ WORKER_TOTAL = 0
 
 def main():
     global WORKER_INDEX, WORKER_TOTAL
+
+    # 防孤儿看门狗必须最先安装（与 run_scheduler 同理）：拿锁 / enterprise
+    # bootstrap 可达数秒，PDEATHSIG 不补发安装前已发生的父死亡，装晚了
+    # 窗口内父死就永久孤儿
+    if sys.platform.startswith('linux'):
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG = 1
+    initial_ppid = os.getppid()
+    if initial_ppid == 1 and sys.platform != 'win32':
+        # fork/exec 间隙父进程已死，立即退出防孤儿（本进程仅由 run_prod/run_dev 拉起）
+        print("[Worker] Parent process died before watchdog install, exiting.")
+        sys.exit(0)
 
     parser = argparse.ArgumentParser(description='剧本分段拆分独立 worker 进程')
     parser.add_argument('index', type=int, help='本进程分片下标（0-based）')
@@ -248,14 +223,8 @@ def main():
     )
 
     # 主循环：每 tick 推进一个任务的一个步骤，单次异常不拖垮进程
+    # （防孤儿看门狗已提前到 main 开头安装，这里只做轮询判定）
     try:
-        # 防孤儿化（与 run_scheduler 同款）：父进程死亡时退出，避免残留孤儿调度进程
-        if sys.platform.startswith('linux'):
-            import ctypes
-            libc = ctypes.CDLL("libc.so.6", use_errno=True)
-            libc.prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG = 1
-        initial_ppid = os.getppid()
-
         while True:
             try:
                 _run_one_tick(process_script_split_tasks)
