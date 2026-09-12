@@ -362,6 +362,17 @@ initializer 阶段从未领取任务，但一直占用进程池名额；存活 w
    `_adjust_process_count` 按存活数自动补 fork；若活 worker 清零则走既有
    `_pool_broken → _rebuild_pool_locked` 全量重建。由此形成自愈闭环：
    fork 撞锁 → 看门狗自杀 → 清理补 fork → 直至 fork 出健康 worker。
+3. **旧池回收**（2026-09-12 EMFILE 事故补全，详见
+   `docs/backend/incidents/2026-09-12-scheduler-emfile-pool-leak.md`）：
+   上述闭环的看门狗自杀会把卡死 worker 变成猝死，频繁触发
+   `BrokenProcessPool → _rebuild_pool_locked`；而 `shutdown(wait=False)` 无法
+   通知卡死在废弃 call queue 上的 worker 退出，旧池 worker 进程与队列管道随
+   每次重建累积（生产实测一天重建 46 次 → 996 根管道 → 打满 1024 FD 全进程
+   EMFILE）。`_rebuild_pool_locked`/`shutdown` 现经 `_terminate_pool_workers_locked()`
+   对旧池全部 worker 显式 `terminate → join(宽限) → kill → join`（常量
+   `SYNC_WORKER_RECLAIM_*`，`config/constant.py`），进程与管道均被回收；
+   `shutdown(wait=True)` 对 broken 池改走非阻塞路径，避免 cleanup 永久挂死
+   在 join 卡死 worker 上。回归测试：`tests/task/test_sync_task_pool_reclaim.py`。
 
 **改动约束（修改相关代码时必须保持）**：
 

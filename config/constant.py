@@ -336,6 +336,15 @@ SYNC_TASK_STALE_TIMEOUT_BY_DRIVER = {
 # 超时未完成初始化的 worker 强制退出，由父进程 submit 路径清理死亡进程并补 fork。
 SYNC_WORKER_INIT_WATCHDOG_TIMEOUT = 90
 
+# 旧进程池 worker 回收宽限（秒）。池 broken 后 rebuild/关停时，shutdown(wait=False)
+# 无法通知卡死在废弃 call queue 上的 worker 退出，必须显式 SIGTERM→宽限等待→SIGKILL
+# 并 join 回收；否则 worker 进程与旧池队列管道随每次重建累积，最终打满 FD 上限
+# （事故 2026-09-12：scheduler 重建 46 次后累积 996 根管道，EMFILE 全进程崩溃）。
+# 仅影响「已判定 broken 被替换的池」的 worker 回收速度，正常任务路径不触及。
+SYNC_WORKER_RECLAIM_GRACE_SECONDS = 1.0
+# 回收时对单个 worker 的 join 上限（秒），用于 reap 僵尸进程，避免 test/CI 卡死
+SYNC_WORKER_RECLAIM_JOIN_TIMEOUT = 1.0
+
 
 def _parse_optional_timeout(value) -> Optional[int]:
     if value is None:
