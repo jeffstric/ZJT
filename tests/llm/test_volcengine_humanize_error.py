@@ -26,28 +26,21 @@ ARK_404 = Exception(
 
 
 class TestVolcengineModelNameMap(unittest.TestCase):
-    """方舟模型 ID 全部带版本后缀，裸名（deepseek-v4-flash / deepseek-flash 等）
-    在方舟目录从未存在（2026-09-12 GET /api/v3/models 实测 + 生产 key 调用验证），
-    必须映射到目录内在役的带后缀 ID。曾映射 deepseek-flash（DeepSeek 官方 API
-    命名）属误判——volcengine 路由从未被真正修复过。
+    """方舟托管的 DeepSeek 为官方同源模型，模型名跟随官方体系。
+
+    2026-09 官方下线 deepseek-v4-flash 旧名（由 deepseek-flash 提供服务），
+    方舟同步下线旧名；火山客户端映射必须与官方客户端（openai_deepseek.py）
+    同步，否则调用 404（本次事故根因）。
     """
 
-    def test_flash_maps_to_ga_suffixed_id(self):
+    def test_flash_maps_to_official_new_name(self):
         client = VolcengineOpenAIClient.__new__(VolcengineOpenAIClient)
-        self.assertEqual(
-            client._resolve_model_name("deepseek-v4-flash"), "deepseek-v4-flash-ga-260731"
-        )
-        # 方舟无 vision 变体，ga 版支持图片输入（实测）
-        self.assertEqual(
-            client._resolve_model_name("deepseek-v4-flash-vision-exp"),
-            "deepseek-v4-flash-ga-260731",
-        )
+        self.assertEqual(client._resolve_model_name("deepseek-v4-flash"), "deepseek-flash")
+        self.assertEqual(client._resolve_model_name("deepseek-v4-flash-vision-exp"), "deepseek-flash")
 
-    def test_pro_maps_to_suffixed_id(self):
+    def test_pro_name_unchanged(self):
         client = VolcengineOpenAIClient.__new__(VolcengineOpenAIClient)
-        self.assertEqual(
-            client._resolve_model_name("deepseek-v4-pro"), "deepseek-v4-pro-260425"
-        )
+        self.assertEqual(client._resolve_model_name("deepseek-v4-pro"), "deepseek-v4-pro")
 
     def test_doubao_version_suffix_mapping_kept(self):
         client = VolcengineOpenAIClient.__new__(VolcengineOpenAIClient)

@@ -13,24 +13,16 @@ class VolcengineOpenAIClient(OpenAIBaseClient):
     """火山引擎（Doubao / DeepSeek）OpenAI 兼容格式 LLM 客户端"""
 
     # model 表友好名称 -> 实际 API endpoint model ID 映射
-    # 方舟的 DeepSeek 模型 ID 全部带版本后缀（2026-09-12 经 GET /api/v3/models
-    # 实测核实，目录 131 个模型中 DeepSeek 共 13 个，无一裸名）：
-    # deepseek-v4-flash / deepseek-v4-pro / deepseek-flash 等裸名在方舟
-    # **从未存在过**（调用必然 InvalidEndpointOrModel.NotFound），与账号开通
-    # 无关——错误码可区分：InvalidEndpointOrModel.NotFound=名字不存在，
-    # ModelNotOpen=名字正确但账号未开通。曾把 v4-flash 映射到 deepseek-flash
-    # （DeepSeek 官方 API 命名）是误判，路由从未真正修复。
-    # 2026-09-12 生产 key 实测以下 ID 全部 200：
-    #   deepseek-v4-flash-ga-260731（GA 版，支持图片输入，实测）
-    #   deepseek-v4-pro-260425
-    # deepseek-v4-flash-260425 已 Retiring（退役中），勿用。
+    # 方舟托管的 DeepSeek 为官方同源模型，模型名跟随官方体系：
+    # 2026-09 官方下线 deepseek-v4-flash（见 docs/backend/deepseek_model_name_mapping.md），
+    # 方舟同步下线旧名（实测 404 InvalidEndpointOrModel.NotFound），统一映射 deepseek-flash。
+    # deepseek-v4-pro 官方继续提供，模型 ID 不变。
     _MODEL_NAME_MAP = {
         'doubao-seed-2-0-pro': 'doubao-seed-2-0-pro-260215',
         'doubao-seed-2-0-lite': 'doubao-seed-2-0-lite-260215',
-        'deepseek-v4-flash': 'deepseek-v4-flash-ga-260731',
-        # 方舟目录无 vision 变体，ga 版支持图片输入（实测），作为视觉默认的替代
-        'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-ga-260731',
-        'deepseek-v4-pro': 'deepseek-v4-pro-260425',
+        'deepseek-v4-flash': 'deepseek-flash',
+        'deepseek-v4-flash-vision-exp': 'deepseek-flash',
+        'deepseek-v4-pro': 'deepseek-v4-pro',
     }
 
     def _refresh_config(self):
