@@ -51,15 +51,22 @@ def _run_async_task(async_func, *args, **kwargs):
     ⚠️ 每次调用创建新的事件循环，不复用。loop.close() 会释放所有关联资源。
     仅适用于短生命周期的异步任务，不要在此运行持续性连接池或后台任务。
     """
+    loop = None
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(async_func(*args, **kwargs))
-        loop.close()
     except Exception as e:
         logger.error(f"Error running async task: {e}")
         import traceback
         logger.error(traceback.format_exc())
+    finally:
+        # close 必须在 finally：异常路径不关闭会泄漏 epoll fd + 自管道 socketpair，
+        # 调度器长期运行下与其他 FD 泄漏叠加打满上限（2026-09-12 EMFILE 事故伴生缺陷）
+        if loop is not None and not loop.is_closed():
+            loop.close()
+        # 线程上不留已关闭的 loop 引用（下次调用会 new + set，此处仅为卫生）
+        asyncio.set_event_loop(None)
 
 
 def _is_lock_holder_alive(lock_file: str) -> bool:
