@@ -81,25 +81,6 @@ deepseek 三家，2026-08-07 起配置）：
 教训：跨供应商套用模型名映射（DeepSeek 官方的改名不等于方舟的改名），
 mock 测试掩盖了从未真实调用过方舟的事实——映射修复必须用真实 key 实测。
 
-## 前端 localStorage 脏缓存治理（2026-09-13 补充）
-
-误选 volcengine 路由的用户浏览器里，`lastSelectedLlmModel` 等 key 存有
-`{model_id: 1005, vendor_id: 4}`；页面每次加载由恢复逻辑自动选回 volcengine
-条目，而下拉收起只显示纯模型名（不带供应商），用户无从发现，重选动作从未
-发生 → 脏值永不被覆盖 → 每次发送仍走 volcengine。
-
-处理：换 key 使全部存量脏缓存一次性失效，不动数据库——
-
-- `lastSelectedLlmModel` → `lastSelectedLlmModelV2`（script_writer.js）
-- `storyboard_lastSelectedLlmModel` → `storyboard_lastSelectedLlmModelV2`
-- `storyboard_lastScriptSplitLlmModel` → `storyboard_lastScriptSplitLlmModelV2`
-- storyboard 恢复逻辑不再回退读 script_writer 的旧公共 key（两页供应商
-  体系不同，跨页共享会互相带入坏路由）
-
-所有保存点结构统一为 `{model, model_id, vendor_id}`（vendor_id 必带）。
-新 key 首次读取为空 → 恢复逻辑落到场景默认路由（deepseek 官方），存量
-中招用户自动治愈，无需任何手动清理。
-
 ## 关联
 
 - 代码：`llm/openai_deepseek.py` `_MODEL_NAME_MAP`、`llm/volcengine_openai_client.py` `_MODEL_NAME_MAP`

@@ -2452,10 +2452,7 @@
                 // 选中优先级：localStorage 上次选择 → 世界默认 LLM → 系统推荐
                 // （世界默认仅作为"新会话种子"，不应覆盖用户在本页的显式选择）
                 let appliedPreferred = false;
-                // V2 key（2026-09-13）：旧 lastSelectedLlmModel 中存在 vendor_id=4（volcengine）
-                // 的历史脏数据（同名模型多供应商路由，收起显示不区分供应商导致误选），
-                // 换 key 使全部存量脏缓存失效，恢复逻辑落到官方默认路由
-                const savedModelRaw = localStorage.getItem('lastSelectedLlmModelV2');
+                const savedModelRaw = localStorage.getItem('lastSelectedLlmModel');
                 if (savedModelRaw) {
                     try {
                         const saved = JSON.parse(savedModelRaw);
@@ -3141,10 +3138,10 @@
             const modelId = selectedOption?.dataset?.modelId;
 
             // 保存选中的模型和供应商到 localStorage（无论会话是否已创建，先记住用户选择）。
-            // 结构必须含 vendor_id：同名模型存在多供应商路由（deepseek 官方 / zjt_api / volcengine），
-            // 缺 vendor_id 时恢复会落到错误路由（V2 key，2026-09-13）。
+            // 格式与 storyboard / world-defaults 对齐：{model, model_id, vendor_id}（snake_case），
+            // 读端兼容旧 {model, vendorId}（无 model_id）
             const vendorId = selectedOption?.dataset?.vendorId || '';
-            localStorage.setItem('lastSelectedLlmModelV2', JSON.stringify({
+            localStorage.setItem('lastSelectedLlmModel', JSON.stringify({
                 model,
                 model_id: modelId !== '' && modelId !== undefined && !isNaN(Number(modelId)) ? Number(modelId) : null,
                 vendor_id: vendorId !== '' && !isNaN(Number(vendorId)) ? Number(vendorId) : null,
@@ -3561,7 +3558,7 @@
                 vendor_id: data.default?.vendor_id ?? payload.vendor_id,
                 name: data.default?.name || payload.name,
             };
-            localStorage.setItem('lastSelectedLlmModelV2', JSON.stringify({
+            localStorage.setItem('lastSelectedLlmModel', JSON.stringify({
                 model: worldDefaultModels.llm.model,
                 model_id: worldDefaultModels.llm.model_id ?? null,
                 vendor_id: worldDefaultModels.llm.vendor_id || null,
