@@ -45,6 +45,24 @@ logger = logging.getLogger(__name__)
 # 本 worker 的 per-index 文件锁句柄与路径
 _lock_fd = None
 _LOCK_FILE = None
+_atfork_hook_installed = False
+
+
+def _close_lock_fd_in_child():
+    """fork 出的子进程立即关闭继承的锁 fd（与 task.scheduler 同款防护）。
+
+    worker 进程内 fork 的子进程（进程池 / ffmpeg 等）若继承锁 fd，worker
+    被强杀后锁仍被存活的子进程持有，同 index 的 worker 将无法重启
+    （scheduler 侧 50c6a4f1 已修，此处补齐）。关闭后锁的存活期与
+    worker 主进程严格同步。
+    """
+    global _lock_fd
+    if _lock_fd is not None:
+        try:
+            _lock_fd.close()
+        except Exception:
+            pass
+        _lock_fd = None
 
 
 def _acquire_worker_lock(worker_index):
@@ -53,7 +71,7 @@ def _acquire_worker_lock(worker_index):
     与 scheduler 锁同款修复：'a' 模式打开（不截断）、flock 排他、永不删除重建锁文件；
     持有者死亡时内核自动释放文件锁（重试 flock 即可获取），无需强制抢占。
     """
-    global _lock_fd, _LOCK_FILE
+    global _lock_fd, _LOCK_FILE, _atfork_hook_installed
     _LOCK_FILE = os.path.join(project_root, f"script_split_worker_{worker_index}.lock")
 
     for _ in range(2):
@@ -74,6 +92,10 @@ def _acquire_worker_lock(worker_index):
                 _lock_fd.truncate(0)
                 _lock_fd.write(str(os.getpid()))
                 _lock_fd.flush()
+            # 阻断 fork 继承：worker 内 fork 的子进程不持有锁 fd（见上方函数注释）
+            if hasattr(os, "register_at_fork") and not _atfork_hook_installed:
+                os.register_at_fork(after_in_child=_close_lock_fd_in_child)
+                _atfork_hook_installed = True
             logger.info("worker lock acquired: %s (PID %s)", _LOCK_FILE, os.getpid())
             return True
         except (IOError, OSError):
@@ -168,7 +190,6 @@ def main():
         print(f"[ERROR] index 必须满足 0 <= index < total，收到 index={args.index} total={args.total}")
         sys.exit(2)
 
-    global WORKER_INDEX, WORKER_TOTAL
     WORKER_INDEX = args.index
     WORKER_TOTAL = args.total
 

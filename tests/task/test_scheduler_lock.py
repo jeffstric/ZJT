@@ -305,6 +305,7 @@ def test_kill9_holder_then_immediate_acquire(lock_file):
             holder.wait()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上 send_signal(SIGTERM) 走 TerminateProcess，Python 信号 handler 不执行，无法验证优雅释放路径")
 def test_graceful_terminated_holder_then_next_acquires(lock_file):
     """正常重启场景：持有者收到 SIGTERM 优雅释放后，新实例立即获取成功"""
     helper_path = os.path.join(_make_temp_dir("lock_helper_"), "lock_helper_sigterm.py")
@@ -327,6 +328,7 @@ def test_graceful_terminated_holder_then_next_acquires(lock_file):
             holder.wait()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上 send_signal(SIGTERM) 走 TerminateProcess，Python 信号 handler 不执行，无法验证优雅释放路径")
 def test_waiter_acquires_after_holder_releases(lock_file):
     """交接场景：等待者循环重试期间被持续拒绝；持有者一释放即无缝接手"""
     holder_path = os.path.join(_make_temp_dir("lock_helper_"), "lock_helper_sigterm.py")

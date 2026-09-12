@@ -6,7 +6,6 @@ PermissionError（进程存在但无权限）被误判为已死。现已复用 s
 _is_lock_holder_alive 单一实现。本组测试守护分支方向不再抄反。
 """
 
-import fcntl
 import os
 import sys
 
@@ -40,6 +39,7 @@ def clean_lock_state():
 @pytest.mark.skipif(sys.platform == "win32", reason="依赖 fcntl，Windows 走 msvcrt 分支")
 def test_lock_held_by_alive_process_returns_false(clean_lock_state, caplog):
     """持有者存活（pid=当前进程，flock 被另一 fd 持有）→ 诚实退出。"""
+    import fcntl
     lock_path = clean_lock_state
     with open(lock_path, "a") as holder:
         holder.write(str(os.getpid()))
@@ -56,6 +56,7 @@ def test_lock_held_by_dead_pid_takes_retry_branch(clean_lock_state, caplog):
 
     回归守护：修复前语义写反，此场景会走 "already running"（已死却不重试）。
     """
+    import fcntl
     lock_path = clean_lock_state
     # 找一个确定不存在的 pid：进程号上限默认约 4M，取超大值
     dead_pid = 4194304
@@ -73,6 +74,7 @@ def test_lock_held_by_dead_pid_takes_retry_branch(clean_lock_state, caplog):
 @pytest.mark.skipif(sys.platform == "win32", reason="依赖 fcntl，Windows 走 msvcrt 分支")
 def test_lock_free_acquires_and_releases(clean_lock_state):
     """无人持锁 → 成功获取；释放后他人可再获取。"""
+    import fcntl
     assert worker._acquire_worker_lock(TEST_INDEX) is True
     assert worker._lock_fd is not None
 
@@ -87,3 +89,25 @@ def test_lock_free_acquires_and_releases(clean_lock_state):
     # 释放后他人可获取
     with open(worker._LOCK_FILE, "a") as rival:
         fcntl.flock(rival.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork 仅 POSIX 平台可用")
+@pytest.mark.skipif(sys.platform == "win32", reason="依赖 fcntl，Windows 走 msvcrt 分支")
+def test_forked_child_closes_inherited_lock_fd(clean_lock_state):
+    """at-fork 阻断：worker 内 fork 的子进程必须自动关闭继承的锁 fd。
+
+    守护场景：子进程（进程池/ffmpeg 等）若持有锁 fd，worker 被强杀后
+    锁仍被存活子进程持有，同 index worker 将无法重启（Finding 5）。
+    """
+    assert worker._acquire_worker_lock(TEST_INDEX) is True
+    assert worker._lock_fd is not None
+
+    pid = os.fork()
+    if pid == 0:
+        # 子进程：at-fork 钩子应已关闭锁 fd；用退出码传递结果
+        os._exit(0 if worker._lock_fd is None else 1)
+    _, status = os.waitpid(pid, 0)
+    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, \
+        "fork 子进程未关闭继承的锁 fd（at-fork 钩子未生效）"
+    # 父进程仍持有锁
+    assert worker._lock_fd is not None
