@@ -3,6 +3,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 import logging
 import asyncio
 import os
+import signal
 from typing import Optional
 import sys
 from task.visual_task import generate_video_task
@@ -27,21 +28,56 @@ _LOCK_FILE = None
 _atfork_hook_installed = False
 
 
-def _close_lock_fd_in_child():
-    """fork 出的子进程立即关闭继承的锁 fd。
+def _reset_forked_child_signals():
+    """fork 子进程丢掉父进程装的 cleanup handler。
 
-    flock 绑定在 open file description 上：ProcessPool/线程池等 fork 出的
-    worker 若继承锁 fd，调度器主进程被强杀后锁仍被存活的 worker 持有，
-    新调度器将永远无法获取（只能人工清理）。关闭后锁的存活期与主进程
-    严格同步——主进程死亡锁必然由内核自动释放，重启自愈。
+    run_scheduler / run_script_split_worker 把 SIGTERM 接到 cleanup()->sys.exit(0)。
+    该处理器随 fork 继承；SyncManager / ProcessPool worker 收到 SIGTERM 时
+    会跑调度器 cleanup 而非默认终止（无 traceback、unix socket 文件残留）。
+    PR_SET_PDEATHSIG 在 fork 时被内核清除，不会链式传到子进程。
     """
-    global _lock_fd
-    if _lock_fd is not None:
+    for sig in (signal.SIGTERM, signal.SIGINT):
         try:
-            _lock_fd.close()
-        except Exception:
+            signal.signal(sig, signal.SIG_DFL)
+        except (ValueError, OSError):
             pass
-        _lock_fd = None
+    sighup = getattr(signal, "SIGHUP", None)
+    if sighup is not None:
+        try:
+            signal.signal(sighup, signal.SIG_DFL)
+        except (ValueError, OSError):
+            pass
+
+
+def _os_close_inherited_lock_fd(lock_fd):
+    """关闭继承的锁 fd。返回 None 供调用方写回 _lock_fd。
+
+    不用 file.close()：fork 后可能抢到父进程其他线程持有的 IO 锁。
+    os.close(fileno) 后作废 Python 对象的 close，避免 __del__ 二次
+    close 已复用的 fd。
+    """
+    if lock_fd is None:
+        return None
+    try:
+        fd = lock_fd.fileno()
+    except Exception:
+        return None
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        lock_fd.close = lambda *a, **k: None
+    except Exception:
+        pass
+    return None
+
+
+def _after_fork_in_child():
+    """at_fork after_in_child：关锁 fd + 重置继承的信号处理器。"""
+    global _lock_fd
+    _reset_forked_child_signals()
+    _lock_fd = _os_close_inherited_lock_fd(_lock_fd)
 
 
 def _run_async_task(async_func, *args, **kwargs):
@@ -174,9 +210,9 @@ def _acquire_scheduler_lock(lock_file: Optional[str] = None) -> bool:
             _lock_fd.truncate(0)
             _lock_fd.write(str(os.getpid()))
             _lock_fd.flush()
-            # 阻断 fork 继承：worker 子进程不持有锁 fd，锁与主进程同生共死
+            # 阻断 fork 继承：子进程不持锁 fd，也不继承 SIGTERM cleanup
             if hasattr(os, "register_at_fork") and not _atfork_hook_installed:
-                os.register_at_fork(after_in_child=_close_lock_fd_in_child)
+                os.register_at_fork(after_in_child=_after_fork_in_child)
                 _atfork_hook_installed = True
             logger.info(f"Scheduler lock acquired. PID: {os.getpid()}")
             return True

@@ -89,9 +89,12 @@ socket 文件残留 `/tmp/pymp-*/listener-*`，连接得 `ConnectionRefusedError
 （`call_queue.get() → unpickle → connect → refused`），**所有 sync_mode 生图
 任务 100% 失败**（已自动退款降级）。journal 全天此类崩溃仅出现在新实例，
 16:18 旧实例 4 小时 0 次；干净进程最小复现（Manager+Pool+submit 传代理）
-不崩——Manager 死因与 scheduler 完整启动状态的组合相关，未定位。
+不崩——Manager 死因与 scheduler 完整启动状态的组合相关。最吻合的差异是本分支
+新增的 `register_at_fork` 与 fork 前安装的 `SIGTERM → cleanup() → sys.exit(0)`：
+子进程继承该处理器后，收到 SIGTERM 会跑调度器 cleanup 而非默认终止（无 traceback、
+socket 文件残留）。`PR_SET_PDEATHSIG` 内核在 fork 时清除，不会链式传到 Manager。
 
-**修复（去单点依赖，死因不再重要）**：
+**修复（去单点依赖 + 收口 fork 信号继承）**：
 - `submit` 不再传 DictProxy：`_execute_sync_task(task_id, ai_tool_type)`，
   任务参数只剩两个 int，unpickle 无任何外部连接。worker pid 改由
   `[SyncTask] Starting task ... worker pid=N` 日志观测；
@@ -101,7 +104,10 @@ socket 文件残留 `/tmp/pymp-*/listener-*`，连接得 `ConnectionRefusedError
   其他在跑任务走 BrokenProcessPool 退款终态（与原单杀同语义）；
 - `status()` 的 `worker_pids` 改为上报当前池 `_processes` 的 pid；
 - 守护测试：`test_execute_sync_task_signature_has_no_proxy_params` 锁死签名，
-  防止将来把代理参数加回。
+  防止将来把代理参数加回；
+- at_fork `after_in_child` 把 SIGTERM/SIGINT/SIGHUP 重置为 `SIG_DFL`，锁 fd
+  改 `os.close(fileno)`（不用 Python `file.close()`）。Manager 已去掉后，
+  这套副作用仍会打到 ProcessPool worker / resource_tracker。
 
 **教训**：跨进程共享对象（Manager 代理）作为任务参数传递 = 把 Manager 单点
 写进每个任务的执行路径；进程池任务参数应只含可独立 pickle 的值。

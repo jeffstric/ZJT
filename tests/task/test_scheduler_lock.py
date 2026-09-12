@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+from task import scheduler as scheduler_mod
 from task.scheduler import (
     _acquire_scheduler_lock,
     _is_lock_holder_alive,
@@ -188,6 +189,115 @@ def test_forked_child_does_not_hold_lock_after_parent_death(lock_file, lock_file
     finally:
         # 清理孤儿 worker（15s sleep 自然退出前的兜底）
         subprocess.run(["pkill", "-f", "lock_helper_fork.py"], capture_output=True)
+
+
+def test_os_close_inherited_lock_fd_does_not_use_file_close():
+    """os.close(fileno) 后 Python 对象 close 必须是空操作，避免二次 close。"""
+    d = _make_temp_dir("inherited_lock_fd_")
+    path = os.path.join(d, "inherited.lock")
+    handle = open(path, "a", encoding="utf-8")
+    fd = handle.fileno()
+    try:
+        assert scheduler_mod._os_close_inherited_lock_fd(handle) is None
+        with pytest.raises(OSError):
+            os.fstat(fd)
+        handle.close()
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_reset_forked_child_signals_sets_sigterm_to_dfl():
+    previous = {
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+    }
+    if hasattr(signal, "SIGHUP"):
+        previous[signal.SIGHUP] = signal.getsignal(signal.SIGHUP)
+
+    def dummy(signum, frame):
+        pass
+
+    try:
+        signal.signal(signal.SIGTERM, dummy)
+        scheduler_mod._reset_forked_child_signals()
+        assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL
+    finally:
+        for sig, handler in previous.items():
+            try:
+                signal.signal(sig, handler)
+            except (ValueError, OSError):
+                pass
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork 仅 POSIX 平台可用")
+@pytest.mark.skipif(not hasattr(os, "register_at_fork"), reason="需要 os.register_at_fork")
+def test_forked_child_resets_inherited_sigterm_handler(lock_file):
+    """fork 子进程必须丢掉父进程的 SIGTERM cleanup，回到 SIG_DFL。
+
+    否则 SyncManager / ProcessPool worker 收到 SIGTERM 会跑调度器 cleanup
+    而非默认终止（无 traceback、socket 文件残留）。
+    """
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def inherited_cleanup(signum, frame):
+        os._exit(42)
+
+    try:
+        signal.signal(signal.SIGTERM, inherited_cleanup)
+        assert _acquire_scheduler_lock(lock_file=lock_file) is True
+        r, w = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            os.close(r)
+            handler = signal.getsignal(signal.SIGTERM)
+            os.write(w, b"DFL" if handler == signal.SIG_DFL else b"INH")
+            os.close(w)
+            os._exit(0)
+        os.close(w)
+        with os.fdopen(r, "rb") as reader:
+            msg = reader.read()
+        _, status = os.waitpid(pid, 0)
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+        assert msg == b"DFL"
+        assert signal.getsignal(signal.SIGTERM) is inherited_cleanup
+        assert scheduler_mod._lock_fd is not None
+    finally:
+        _release_scheduler_lock()
+        signal.signal(signal.SIGTERM, previous)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork 仅 POSIX 平台可用")
+@pytest.mark.skipif(not hasattr(os, "register_at_fork"), reason="需要 os.register_at_fork")
+def test_forked_child_sigterm_uses_default_disposition(lock_file):
+    """子进程收到 SIGTERM 必须按默认处置被杀（WIFSIGNALED），不能走继承的 cleanup。"""
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def inherited_cleanup(signum, frame):
+        os._exit(42)
+
+    child_pid = None
+    try:
+        signal.signal(signal.SIGTERM, inherited_cleanup)
+        assert _acquire_scheduler_lock(lock_file=lock_file) is True
+        child_pid = os.fork()
+        if child_pid == 0:
+            time.sleep(30)
+            os._exit(99)
+        os.kill(child_pid, signal.SIGTERM)
+        _, status = os.waitpid(child_pid, 0)
+        child_pid = None
+        assert os.WIFSIGNALED(status), status
+        assert os.WTERMSIG(status) == signal.SIGTERM
+    finally:
+        if child_pid:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+                os.waitpid(child_pid, 0)
+            except OSError:
+                pass
+        _release_scheduler_lock()
+        signal.signal(signal.SIGTERM, previous)
 
 
 # ---------------------------------------------------------------------------

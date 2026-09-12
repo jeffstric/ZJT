@@ -7,7 +7,9 @@ _is_lock_holder_alive 单一实现。本组测试守护分支方向不再抄反�
 """
 
 import os
+import signal
 import sys
+import time
 
 import pytest
 
@@ -111,3 +113,71 @@ def test_forked_child_closes_inherited_lock_fd(clean_lock_state):
         "fork 子进程未关闭继承的锁 fd（at-fork 钩子未生效）"
     # 父进程仍持有锁
     assert worker._lock_fd is not None
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork 仅 POSIX 平台可用")
+@pytest.mark.skipif(not hasattr(os, "register_at_fork"), reason="需要 os.register_at_fork")
+@pytest.mark.skipif(sys.platform == "win32", reason="依赖 fcntl，Windows 走 msvcrt 分支")
+def test_forked_child_resets_inherited_sigterm_handler(clean_lock_state):
+    """worker 内 fork 的子进程同样必须丢掉 SIGTERM cleanup。"""
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def inherited_cleanup(signum, frame):
+        os._exit(42)
+
+    try:
+        signal.signal(signal.SIGTERM, inherited_cleanup)
+        assert worker._acquire_worker_lock(TEST_INDEX) is True
+        r, w = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            os.close(r)
+            handler = signal.getsignal(signal.SIGTERM)
+            os.write(w, b"DFL" if handler == signal.SIG_DFL else b"INH")
+            os.close(w)
+            os._exit(0)
+        os.close(w)
+        with os.fdopen(r, "rb") as reader:
+            msg = reader.read()
+        _, status = os.waitpid(pid, 0)
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+        assert msg == b"DFL"
+        assert signal.getsignal(signal.SIGTERM) is inherited_cleanup
+        assert worker._lock_fd is not None
+    finally:
+        worker._release_worker_lock()
+        signal.signal(signal.SIGTERM, previous)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork 仅 POSIX 平台可用")
+@pytest.mark.skipif(not hasattr(os, "register_at_fork"), reason="需要 os.register_at_fork")
+@pytest.mark.skipif(sys.platform == "win32", reason="依赖 fcntl，Windows 走 msvcrt 分支")
+def test_forked_child_sigterm_uses_default_disposition(clean_lock_state):
+    """worker fork 出的子进程收到 SIGTERM 应按默认处置被杀。"""
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def inherited_cleanup(signum, frame):
+        os._exit(42)
+
+    child_pid = None
+    try:
+        signal.signal(signal.SIGTERM, inherited_cleanup)
+        assert worker._acquire_worker_lock(TEST_INDEX) is True
+        child_pid = os.fork()
+        if child_pid == 0:
+            time.sleep(30)
+            os._exit(99)
+        os.kill(child_pid, signal.SIGTERM)
+        _, status = os.waitpid(child_pid, 0)
+        child_pid = None
+        assert os.WIFSIGNALED(status), status
+        assert os.WTERMSIG(status) == signal.SIGTERM
+    finally:
+        if child_pid:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+                os.waitpid(child_pid, 0)
+            except OSError:
+                pass
+        worker._release_worker_lock()
+        signal.signal(signal.SIGTERM, previous)

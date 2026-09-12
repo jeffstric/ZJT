@@ -38,7 +38,12 @@ import utils.logger_config  # noqa: F401
 # 锁持有者探活复用 scheduler.py 的实现——曾在此处拷贝出语义相反的 _is_stale_lock
 # （True=已死，却在 True 分支"诚实退出"）：持有者已死不重试、持有者活着反重试；
 # PermissionError（进程存在但无权限发信号）也被误判为已死。单一实现杜绝再抄错。
-from task.scheduler import parent_process_dead, _is_lock_holder_alive
+from task.scheduler import (
+    parent_process_dead,
+    _is_lock_holder_alive,
+    _reset_forked_child_signals,
+    _os_close_inherited_lock_fd,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,21 +53,11 @@ _LOCK_FILE = None
 _atfork_hook_installed = False
 
 
-def _close_lock_fd_in_child():
-    """fork 出的子进程立即关闭继承的锁 fd（与 task.scheduler 同款防护）。
-
-    worker 进程内 fork 的子进程（进程池 / ffmpeg 等）若继承锁 fd，worker
-    被强杀后锁仍被存活的子进程持有，同 index 的 worker 将无法重启
-    （scheduler 侧 50c6a4f1 已修，此处补齐）。关闭后锁的存活期与
-    worker 主进程严格同步。
-    """
+def _after_fork_in_child():
+    """at_fork after_in_child：关锁 fd + 重置继承的 SIGTERM cleanup（与 scheduler 同款）。"""
     global _lock_fd
-    if _lock_fd is not None:
-        try:
-            _lock_fd.close()
-        except Exception:
-            pass
-        _lock_fd = None
+    _reset_forked_child_signals()
+    _lock_fd = _os_close_inherited_lock_fd(_lock_fd)
 
 
 def _acquire_worker_lock(worker_index):
@@ -92,9 +87,9 @@ def _acquire_worker_lock(worker_index):
                 _lock_fd.truncate(0)
                 _lock_fd.write(str(os.getpid()))
                 _lock_fd.flush()
-            # 阻断 fork 继承：worker 内 fork 的子进程不持有锁 fd（见上方函数注释）
+            # 阻断 fork 继承：子进程不持锁 fd，也不继承 SIGTERM cleanup
             if hasattr(os, "register_at_fork") and not _atfork_hook_installed:
-                os.register_at_fork(after_in_child=_close_lock_fd_in_child)
+                os.register_at_fork(after_in_child=_after_fork_in_child)
                 _atfork_hook_installed = True
             logger.info("worker lock acquired: %s (PID %s)", _LOCK_FILE, os.getpid())
             return True
