@@ -26,6 +26,7 @@ from config.constant import (
     SYNC_WORKER_RECLAIM_JOIN_TIMEOUT,
     get_sync_task_stale_timeout,
 )
+from utils.file_storage.factory import reset_file_storage
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -105,6 +106,23 @@ def _enterprise_sync_worker_init() -> None:
     """
     _reset_inherited_logging_locks()
     _start_init_watchdog()
+    # fork 继承的 QiniuFileStorage 单例线程池在子进程必然失效：父进程用过的
+    # ThreadPoolExecutor，其空闲信号量假 token 与 _threads 死对象一并被 fork
+    # 快照，子进程首个 submit 消费假 token 后跳过建线程，任务入队无人消费，
+    # 上层只能等 120s 假超时（事故 2026-09-08 任务 45498 / 2026-09-13 任务
+    # 47603，均报"图片上传到CDN超时"且七牛日志无"开始上传文件"）。清理工厂
+    # 单例缓存，子进程首次 get_file_storage() 时新建干净线程池。必须放在社区版
+    # early-return 之前，两版通吃。
+    #
+    # 【已知盲区（本重置不覆盖，升级 spawn 或统一 fork 状态重置时可一并解决）】
+    # 1. utils/media_cache.get_cache_manager() 模块级单例在父进程启动时已持有
+    #    旧 storage 引用（self._storage），reset 工厂缓存救不了它；当前
+    #    qiniu_long_term 执行器在父进程从未上传过（token=0）故未爆，若调度器
+    #    进程日后经 media_cache 上传过文件，子进程缓存上传将同样假超时。
+    # 2. utils/image_upload_utils._SYNC_WRAPPER_EXECUTOR（模块级线程池）同样
+    #    被 fork 继承；子进程无 running loop 时走 asyncio.run 直跑分支暂不经
+    #    过它，但父进程在异步上下文调过 _run_coro_sync 后它即毒化。
+    reset_file_storage()
     try:
         from config.constant import Edition
         if Edition.is_community():
