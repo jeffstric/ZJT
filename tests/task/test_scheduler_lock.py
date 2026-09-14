@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+from task import scheduler as scheduler_mod
 from task.scheduler import (
     _acquire_scheduler_lock,
     _is_lock_holder_alive,
@@ -190,6 +191,129 @@ def test_forked_child_does_not_hold_lock_after_parent_death(lock_file, lock_file
         subprocess.run(["pkill", "-f", "lock_helper_fork.py"], capture_output=True)
 
 
+def test_os_close_inherited_lock_fd_closes_cleanly():
+    """file.close() 正常关闭：fd 失效、对象状态一致，GC 无二次 close 噪音。
+
+    回归：曾用 os.close(fd) + 给 _io 对象 patch close（属性赋值被静默拒绝），
+    覆盖引用触发 __del__ 时对已关 fd 二次 close 必抛 EBADF。
+    """
+    d = _make_temp_dir("inherited_lock_fd_")
+    path = os.path.join(d, "inherited.lock")
+    handle = open(path, "a", encoding="utf-8")
+    fd = handle.fileno()
+    try:
+        assert scheduler_mod._os_close_inherited_lock_fd(handle) is None
+        with pytest.raises(OSError):
+            os.fstat(fd)
+        # 对象可被反复 close（幂等），不抛 EBADF
+        handle.close()
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_reset_forked_child_signals_sets_sigterm_to_dfl():
+    previous = {
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+    }
+    if hasattr(signal, "SIGHUP"):
+        previous[signal.SIGHUP] = signal.getsignal(signal.SIGHUP)
+
+    def dummy(signum, frame):
+        pass
+
+    try:
+        signal.signal(signal.SIGTERM, dummy)
+        scheduler_mod._reset_forked_child_signals()
+        assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL
+    finally:
+        for sig, handler in previous.items():
+            try:
+                signal.signal(sig, handler)
+            except (ValueError, OSError):
+                pass
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork 仅 POSIX 平台可用")
+@pytest.mark.skipif(not hasattr(os, "register_at_fork"), reason="需要 os.register_at_fork")
+def test_forked_child_resets_inherited_sigterm_handler(lock_file):
+    """fork 子进程必须丢掉父进程的 SIGTERM cleanup，回到 SIG_DFL。
+
+    否则 SyncManager / ProcessPool worker 收到 SIGTERM 会跑调度器 cleanup
+    而非默认终止（无 traceback、socket 文件残留）。
+    """
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def inherited_cleanup(signum, frame):
+        os._exit(42)
+
+    try:
+        signal.signal(signal.SIGTERM, inherited_cleanup)
+        assert _acquire_scheduler_lock(lock_file=lock_file) is True
+        r, w = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            os.close(r)
+            handler = signal.getsignal(signal.SIGTERM)
+            os.write(w, b"DFL" if handler == signal.SIG_DFL else b"INH")
+            os.close(w)
+            os._exit(0)
+        os.close(w)
+        with os.fdopen(r, "rb") as reader:
+            msg = reader.read()
+        _, status = os.waitpid(pid, 0)
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+        assert msg == b"DFL"
+        assert signal.getsignal(signal.SIGTERM) is inherited_cleanup
+        assert scheduler_mod._lock_fd is not None
+    finally:
+        _release_scheduler_lock()
+        signal.signal(signal.SIGTERM, previous)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork 仅 POSIX 平台可用")
+@pytest.mark.skipif(not hasattr(os, "register_at_fork"), reason="需要 os.register_at_fork")
+def test_forked_child_sigterm_uses_default_disposition(lock_file):
+    """子进程收到 SIGTERM 必须按默认处置被杀（WIFSIGNALED），不能走继承的 cleanup。"""
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def inherited_cleanup(signum, frame):
+        os._exit(42)
+
+    child_pid = None
+    try:
+        signal.signal(signal.SIGTERM, inherited_cleanup)
+        assert _acquire_scheduler_lock(lock_file=lock_file) is True
+        ready_r, ready_w = os.pipe()
+        child_pid = os.fork()
+        if child_pid == 0:
+            os.close(ready_r)
+            # 就绪信号：确认钩子已把 SIGTERM 重置为 DFL 后再等杀
+            if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
+                os.write(ready_w, b"RDY")
+            os.close(ready_w)
+            time.sleep(30)
+            os._exit(99)
+        os.close(ready_w)
+        with os.fdopen(ready_r, "rb") as reader:
+            assert reader.read() == b"RDY", "子进程就绪握手失败"
+        os.kill(child_pid, signal.SIGTERM)
+        _, status = os.waitpid(child_pid, 0)
+        child_pid = None
+        assert os.WIFSIGNALED(status), status
+        assert os.WTERMSIG(status) == signal.SIGTERM
+    finally:
+        if child_pid:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+                os.waitpid(child_pid, 0)
+            except OSError:
+                pass
+        _release_scheduler_lock()
+        signal.signal(signal.SIGTERM, previous)
+
+
 # ---------------------------------------------------------------------------
 # 补充场景：锁文件完整性、陈旧残留自愈、强杀/优雅重启交接、防孤儿看门狗
 # ---------------------------------------------------------------------------
@@ -305,6 +429,7 @@ def test_kill9_holder_then_immediate_acquire(lock_file):
             holder.wait()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上 send_signal(SIGTERM) 走 TerminateProcess，Python 信号 handler 不执行，无法验证优雅释放路径")
 def test_graceful_terminated_holder_then_next_acquires(lock_file):
     """正常重启场景：持有者收到 SIGTERM 优雅释放后，新实例立即获取成功"""
     helper_path = os.path.join(_make_temp_dir("lock_helper_"), "lock_helper_sigterm.py")
@@ -327,6 +452,7 @@ def test_graceful_terminated_holder_then_next_acquires(lock_file):
             holder.wait()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 上 send_signal(SIGTERM) 走 TerminateProcess，Python 信号 handler 不执行，无法验证优雅释放路径")
 def test_waiter_acquires_after_holder_releases(lock_file):
     """交接场景：等待者循环重试期间被持续拒绝；持有者一释放即无缝接手"""
     holder_path = os.path.join(_make_temp_dir("lock_helper_"), "lock_helper_sigterm.py")
@@ -364,3 +490,25 @@ def test_parent_process_dead_detection():
     from task.scheduler import parent_process_dead
     assert parent_process_dead(os.getppid()) is False
     assert parent_process_dead(os.getppid() + 1000000) is True
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="仅 Windows 可验证 _win_process_alive 的句柄未回收路径")
+def test_win_process_alive_false_for_exited_child_with_open_handle():
+    """子进程已退出、但父进程仍持有其句柄（Popen.wait() 后对象未销毁）时，
+    OpenProcess 照样成功——旧实现（OpenProcess 成功即存活）在此误判为活，
+    会把看门狗和锁探活一起卡死在"永远等不到死"。
+
+    新实现必须经 GetExitCodeProcess == STILL_ACTIVE 判真死。
+    本用例是守护该修复的唯一真实路径：PID 不存在或句柄已回收的场景
+    旧实现也能通过，无法暴露回归。
+    """
+    from task.scheduler import _win_process_alive
+
+    proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+    try:
+        proc.wait()
+        # proc 对象保持引用：其 _handle 仍打开，模拟"已退出但句柄未回收"
+        assert proc.returncode == 0
+        assert _win_process_alive(proc.pid) is False
+    finally:
+        proc.poll()

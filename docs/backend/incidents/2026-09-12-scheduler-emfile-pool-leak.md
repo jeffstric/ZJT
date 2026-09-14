@@ -71,3 +71,43 @@
 - fork 继承未知锁导致的 worker 卡死/猝死本身仍在（无法穷举重置）。现有防线：initializer 锁重置 + 90s 看门狗 + 死进程清理 + 本次补的旧池回收 = 自愈闭环，泄漏不再累积。结构性根治见 spawn 方案。
 - `refresh_runtime_now/deactivate/reactivate` 直接使用 `get_runtime_manager()` 无归属检查——仅 Web API 路由调用（进程内单事件循环），scheduler/worker 路径不触及；worker 内商业能力判定（`require_commercial_license` 等）为纯内存读，无网络调用。
 - 健康池但个别 worker 卡死（未触发 broken 标记）时 `shutdown(wait=True)` 仍可能阻塞——需 stale 检测先把池标记 broken 才会走非阻塞路径；窗口极窄（stale 超时会强杀并标记），维持现状。
+
+## 追加事故（当晚 20:43）：SyncManager 死亡 → 生图任务 100% 失败
+
+EMFILE 修复上线（master_0912 合入 master，20:40 重启）后当日验证：
+
+**有效的部分**：FD 稳定 49/1024、管道 28 根不涨（EMFILE 根治）；旧孤儿清零；
+worker `bootstrap done`（enterprise 跨 loop 修复生效）；broken→rebuild 回路实战
+正常触发。
+
+**新事故**：`SyncTaskExecutor` 的 `submit(_execute_sync_task, task_id, type,
+self._worker_pids)` 把 `multiprocessing.Manager().dict()` 的 **DictProxy** 作为
+任务参数传给进程池。worker 端 unpickle 参数时 `RebuildProxy._incref` 必须连接
+Manager 服务进程；本实例的 SyncManager 启动后 3 分钟内死亡（无 traceback，
+socket 文件残留 `/tmp/pymp-*/listener-*`，连接得 `ConnectionRefusedError`），
+导致 20:43 任务 47524、20:51 任务 47525 均在领取任务瞬间崩溃
+（`call_queue.get() → unpickle → connect → refused`），**所有 sync_mode 生图
+任务 100% 失败**（已自动退款降级）。journal 全天此类崩溃仅出现在新实例，
+16:18 旧实例 4 小时 0 次；干净进程最小复现（Manager+Pool+submit 传代理）
+不崩——Manager 死因与 scheduler 完整启动状态的组合相关。最吻合的差异是本分支
+新增的 `register_at_fork` 与 fork 前安装的 `SIGTERM → cleanup() → sys.exit(0)`：
+子进程继承该处理器后，收到 SIGTERM 会跑调度器 cleanup 而非默认终止（无 traceback、
+socket 文件残留）。`PR_SET_PDEATHSIG` 内核在 fork 时清除，不会链式传到 Manager。
+
+**修复（去单点依赖 + 收口 fork 信号继承）**：
+- `submit` 不再传 DictProxy：`_execute_sync_task(task_id, ai_tool_type)`，
+  任务参数只剩两个 int，unpickle 无任何外部连接。worker pid 改由
+  `[SyncTask] Starting task ... worker pid=N` 日志观测；
+- 删除 `multiprocessing.Manager` 全部依赖（start/shutdown/`_worker_pids`）；
+- stale 强杀从"按 pid 单杀"（依赖 worker_pids）改为"标记 broken + 立即
+  整池重建"，由 `_reclaim_workers_locked` 终止全部旧 worker（最坏 ~2s），
+  其他在跑任务走 BrokenProcessPool 退款终态（与原单杀同语义）；
+- `status()` 的 `worker_pids` 改为上报当前池 `_processes` 的 pid；
+- 守护测试：`test_execute_sync_task_signature_has_no_proxy_params` 锁死签名，
+  防止将来把代理参数加回；
+- at_fork `after_in_child` 把 SIGTERM/SIGINT/SIGHUP 重置为 `SIG_DFL`，锁 fd
+  改 `os.close(fileno)`（不用 Python `file.close()`）。Manager 已去掉后，
+  这套副作用仍会打到 ProcessPool worker / resource_tracker。
+
+**教训**：跨进程共享对象（Manager 代理）作为任务参数传递 = 把 Manager 单点
+写进每个任务的执行路径；进程池任务参数应只含可独立 pickle 的值。

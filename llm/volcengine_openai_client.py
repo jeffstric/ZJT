@@ -13,13 +13,20 @@ class VolcengineOpenAIClient(OpenAIBaseClient):
     """火山引擎（Doubao / DeepSeek）OpenAI 兼容格式 LLM 客户端"""
 
     # model 表友好名称 -> 实际 API endpoint model ID 映射
-    # DeepSeek 在方舟控制台展示为 DeepSeek-V4-flash / DeepSeek-V4-pro，
-    # 兼容 API 使用 deepseek-v4-flash / deepseek-v4-pro 模型名（可与接入点 ID 混用）。
+    # 方舟目录的 DeepSeek 模型 ID 全部带版本后缀，不存在任何裸名
+    # （deepseek-v4-flash / deepseek-flash 等裸名调用必然 404
+    # InvalidEndpointOrModel.NotFound，与账号开通状态无关——错误码
+    # ModelNotOpen 才是未开通）。以下映射目标均为生产 key 实测 200
+    # （2026-09-13）：
+    # - deepseek-v4-flash-ga-260731：GA 版，实测支持图片输入（方舟无 vision
+    #   变体，作为 vision-exp 的替代）
+    # - deepseek-v4-pro-ga-260813：pro GA 版
     _MODEL_NAME_MAP = {
         'doubao-seed-2-0-pro': 'doubao-seed-2-0-pro-260215',
         'doubao-seed-2-0-lite': 'doubao-seed-2-0-lite-260215',
-        'deepseek-v4-flash': 'deepseek-v4-flash',
-        'deepseek-v4-pro': 'deepseek-v4-pro',
+        'deepseek-v4-flash': 'deepseek-v4-flash-ga-260731',
+        'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-ga-260731',
+        'deepseek-v4-pro': 'deepseek-v4-pro-ga-260813',
     }
 
     def _refresh_config(self):
@@ -43,6 +50,21 @@ class VolcengineOpenAIClient(OpenAIBaseClient):
         if actual != model:
             logger.debug(f"VolcengineOpenAIClient model mapping: {model} -> {actual}")
         return actual
+
+    def _humanize_api_error(self, e, model=None):
+        """把方舟「模型/接入点不存在」404 翻译成可操作的中文错误。
+
+        InvalidEndpointOrModel.NotFound 表示当前 api_key 所属账号没有开通
+        该模型名/接入点，重试必然复现；不翻译的话上层只见英文 404，用户
+        无从知道该换供应商还是去方舟控制台开通。
+        """
+        if 'InvalidEndpointOrModel.NotFound' not in str(e):
+            return None
+        target = model or '未知模型'
+        return (
+            f"火山方舟账号未开通模型/接入点「{target}」（InvalidEndpointOrModel.NotFound）。"
+            f"请改用其他供应商，或在火山方舟控制台开通该模型；原始错误: {e}"
+        )
 
 
 _volcengine_client = None

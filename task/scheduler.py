@@ -3,6 +3,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 import logging
 import asyncio
 import os
+import signal
 from typing import Optional
 import sys
 from task.visual_task import generate_video_task
@@ -27,21 +28,52 @@ _LOCK_FILE = None
 _atfork_hook_installed = False
 
 
-def _close_lock_fd_in_child():
-    """fork 出的子进程立即关闭继承的锁 fd。
+def _reset_forked_child_signals():
+    """fork 子进程丢掉父进程装的 cleanup handler。
 
-    flock 绑定在 open file description 上：ProcessPool/线程池等 fork 出的
-    worker 若继承锁 fd，调度器主进程被强杀后锁仍被存活的 worker 持有，
-    新调度器将永远无法获取（只能人工清理）。关闭后锁的存活期与主进程
-    严格同步——主进程死亡锁必然由内核自动释放，重启自愈。
+    run_scheduler / run_script_split_worker 把 SIGTERM 接到 cleanup()->sys.exit(0)。
+    该处理器随 fork 继承；SyncManager / ProcessPool worker 收到 SIGTERM 时
+    会跑调度器 cleanup 而非默认终止（无 traceback、unix socket 文件残留）。
+    PR_SET_PDEATHSIG 在 fork 时被内核清除，不会链式传到子进程。
     """
-    global _lock_fd
-    if _lock_fd is not None:
+    for sig in (signal.SIGTERM, signal.SIGINT):
         try:
-            _lock_fd.close()
-        except Exception:
+            signal.signal(sig, signal.SIG_DFL)
+        except (ValueError, OSError):
             pass
-        _lock_fd = None
+    sighup = getattr(signal, "SIGHUP", None)
+    if sighup is not None:
+        try:
+            signal.signal(sighup, signal.SIG_DFL)
+        except (ValueError, OSError):
+            pass
+
+
+def _os_close_inherited_lock_fd(lock_fd):
+    """关闭继承的锁 fd。返回 None 供调用方写回 _lock_fd。
+
+    用普通 file.close()（flush + close fd，对象状态一致）。此前版本改用
+    os.close(fileno) 并试图 patch 对象 close 为空操作——但 _io 对象禁止
+    属性赋值，patch 静默失败：覆盖 _lock_fd 引用触发 __del__ 时对已关 fd
+    二次 close，必抛 OSError(EBADF)（GC 噪音 + fd 复用后误关风险）。
+    os.close 方案担心的"继承 IO 锁死锁"在本项目时序下不存在：锁文件的
+    写入（acquire 时写 pid）只发生在主线程，fork 亦由工作线程发起，
+    写锁在 fork 瞬间必然空闲。
+    """
+    if lock_fd is None:
+        return None
+    try:
+        lock_fd.close()
+    except Exception:
+        pass
+    return None
+
+
+def _after_fork_in_child():
+    """at_fork after_in_child：关锁 fd + 重置继承的信号处理器。"""
+    global _lock_fd
+    _reset_forked_child_signals()
+    _lock_fd = _os_close_inherited_lock_fd(_lock_fd)
 
 
 def _run_async_task(async_func, *args, **kwargs):
@@ -69,6 +101,49 @@ def _run_async_task(async_func, *args, **kwargs):
         asyncio.set_event_loop(None)
 
 
+def _win_process_alive(pid: int) -> bool:
+    """Windows 进程探活：OpenProcess + GetExitCodeProcess。
+
+    两处历史缺陷（Windows 本机实测抓到）：
+    1. ctypes 不设 argtypes/restype 时默认按 c_int 截断——64 位 HANDLE
+       返回值被截断，判断不可靠；
+    2. 进程已退出但句柄尚未被回收（父进程仍持有）时 OpenProcess 照样
+       成功 → 误判存活。对防孤儿看门狗意味着"父已死却永远等不到退出"，
+       对锁探活意味着持有者已死却诚实拒锁。必须用 GetExitCodeProcess
+       区分 STILL_ACTIVE。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = (
+        wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD),
+    )
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    # PROCESS_QUERY_LIMITED_INFORMATION：GetExitCodeProcess 所需最小权限
+    # （原用的 SYNCHRONIZE=0x100000 不足以调用 GetExitCodeProcess）
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+
+    handle = kernel32.OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+    )
+    if not handle:
+        return False
+    try:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _is_lock_holder_alive(lock_file: str) -> bool:
     """读取锁文件中的 pid，判断持有进程是否存活（仅用于日志诊断）"""
     try:
@@ -78,13 +153,7 @@ def _is_lock_holder_alive(lock_file: str) -> bool:
             return False
         pid = int(pid_str)
         if sys.platform == 'win32':
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.OpenProcess(0x100000, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return True
-            return False
+            return _win_process_alive(pid)
         try:
             os.kill(pid, 0)
             return True
@@ -137,9 +206,9 @@ def _acquire_scheduler_lock(lock_file: Optional[str] = None) -> bool:
             _lock_fd.truncate(0)
             _lock_fd.write(str(os.getpid()))
             _lock_fd.flush()
-            # 阻断 fork 继承：worker 子进程不持有锁 fd，锁与主进程同生共死
+            # 阻断 fork 继承：子进程不持锁 fd，也不继承 SIGTERM cleanup
             if hasattr(os, "register_at_fork") and not _atfork_hook_installed:
-                os.register_at_fork(after_in_child=_close_lock_fd_in_child)
+                os.register_at_fork(after_in_child=_after_fork_in_child)
                 _atfork_hook_installed = True
             logger.info(f"Scheduler lock acquired. PID: {os.getpid()}")
             return True
@@ -166,6 +235,10 @@ def _release_scheduler_lock():
         try:
             if sys.platform == 'win32':
                 import msvcrt
+                # 加锁时锁的是 1MB 处的字节；解锁前必须 seek 回同一位置，
+                # 否则 msvcrt.locking 解的是当前文件位置的 1 字节，解锁必然失败
+                # （优雅释放必打 error；进程内 shutdown 而退出时还会漏锁）
+                _lock_fd.seek(1048576)
                 msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
@@ -181,20 +254,15 @@ def parent_process_dead(initial_ppid: int) -> bool:
     """防孤儿看门狗：判断启动时记录的父进程是否已死亡。
 
     - Linux/macOS：父进程死后子进程被 re-parent，getppid() 必然改变；
-    - Windows：无 re-parent 机制（getppid 恒不变），改为探活父进程。
-      必须用 OpenProcess 而非 os.kill(pid, 0)——Windows 上后者对普通
-      信号会调用 TerminateProcess，等于把父进程直接杀掉。
+    - Windows：无 re-parent 机制（getppid 恒不变），改为探活父进程
+      （_win_process_alive：进程已退出但句柄未回收时不算存活，否则
+      看门狗会永远等不到"父死"）。不能用 os.kill(pid, 0)——Windows 上
+      后者对普通信号会调用 TerminateProcess，等于把父进程直接杀掉。
 
     供 run_scheduler / run_script_split_worker 等独立进程入口共用。
     """
     if sys.platform == 'win32':
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(0x100000, False, initial_ppid)
-        if handle:
-            kernel32.CloseHandle(handle)
-            return False
-        return True
+        return not _win_process_alive(initial_ppid)
     return os.getppid() != initial_ppid
 
 

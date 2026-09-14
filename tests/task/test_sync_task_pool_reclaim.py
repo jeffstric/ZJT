@@ -85,7 +85,6 @@ def make_executor():
     executor._submit_times = {}
     executor._task_drivers = {}
     executor._task_types = {}
-    executor._worker_pids = {}
     executor._pool_broken = True
     return executor
 
@@ -116,10 +115,11 @@ def test_rebuild_terminates_and_reaps_workers(monkeypatch):
     assert stubborn.kill_calls == 1
     assert len(stubborn.joined_with) == 2
     assert 0 < stubborn.joined_with[0] <= SYNC_WORKER_RECLAIM_GRACE_SECONDS
-    assert stubborn.joined_with[1] == SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
+    assert 0 < stubborn.joined_with[1] <= SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
     # 已死 worker：不终止，仅防御性 join 收尸
     assert dead.terminate_calls == 0
-    assert dead.joined_with == [SYNC_WORKER_RECLAIM_JOIN_TIMEOUT]
+    assert len(dead.joined_with) == 1
+    assert 0 < dead.joined_with[0] <= SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
     assert executor._pool_broken is False
     assert executor._executor is not old
 
@@ -205,7 +205,8 @@ def test_shutdown_healthy_pool_keeps_graceful_wait():
 
     assert pool.shutdown_calls == [(True, False)]
     assert exited.terminate_calls == 0
-    assert exited.joined_with == [SYNC_WORKER_RECLAIM_JOIN_TIMEOUT]
+    assert len(exited.joined_with) == 1
+    assert 0 < exited.joined_with[0] <= SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
     assert executor._executor is None
 
 
@@ -219,3 +220,17 @@ def test_shutdown_skips_when_not_running():
 
     assert pool.shutdown_calls == []
     assert executor._executor is pool
+
+
+def test_execute_sync_task_signature_has_no_proxy_params():
+    """守护：_execute_sync_task 的参数不得引入需要连接池外进程的对象。
+
+    multiprocessing.Manager 代理（DictProxy 等）作为 submit 参数时，worker 端
+    unpickle 必须连接 Manager 服务进程——Manager 单点死亡会使所有任务在
+    反序列化阶段崩溃（2026-09-12 20:43 事故：生图任务 100% 失败，
+    ConnectionRefusedError @ RebuildProxy._incref）。
+    """
+    import inspect
+
+    params = inspect.signature(ste._execute_sync_task).parameters
+    assert list(params) == ["task_id", "ai_tool_type"]
