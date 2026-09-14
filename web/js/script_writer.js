@@ -6382,6 +6382,21 @@
             updateRecognizeStyleBtn();
         }
 
+        // 「查看更多画风」：跳转前提示进入后查看「其他」分类（即梦分类不落 URL，
+        // 同源策略也禁止操控跨域页面，无法自动选中）。取消则不跳转，
+        // 确认后按链接默认行为（target="_blank"）新标签页打开。
+        function confirmJimengExplore(event) {
+            const ok = confirm(
+                '即将打开即梦AI探索页。\n\n' +
+                '提示：进入后点击顶部「其他」标签，即可看到可参考的画风。'
+            );
+            if (!ok) {
+                if (event) event.preventDefault();
+                return false;
+            }
+            return true;
+        }
+
         // 上传/拖入成功后：确保模型列表就绪，再自动识别并弹确认框
         async function autoRecognizeStyleAfterUpload() {
             if (!cachedStyleModels.length) {
