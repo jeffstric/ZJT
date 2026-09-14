@@ -180,6 +180,15 @@
             setupVideoThumbnail(thumbVideo, permanentUrl);
             showToast(window.t ? window.t('video_upload_success') : '视频上传成功', 'success');
 
+            // 上传完成前已加入时间轴的片段持有 blob: 临时地址（服务端无法下载），同步为永久地址
+            if (state.timeline && Array.isArray(state.timeline.clips)) {
+              state.timeline.clips.forEach(clip => {
+                if (clip.nodeId === node.id && typeof clip.url === 'string' && clip.url.startsWith('blob:')) {
+                  clip.url = permanentUrl;
+                }
+              });
+            }
+
             // 自动保存工作流
             safeAutoSave()
           }

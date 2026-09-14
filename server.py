@@ -9898,6 +9898,7 @@ async def export_timeline_draft(
         from core import JianyingMultiTrackLibrary
         from draft_generator import DraftGenerator
         from jianying.utils import seconds_to_microseconds
+        from utils.cdn_util import CDNUtil
         
         # 生成唯一的草稿名称（使用工作流名称作为前缀）
         # 清理工作流名称，移除不适合文件名的字符
@@ -9956,9 +9957,28 @@ async def export_timeline_draft(
                     else:
                         logger.info(f"正在下载视频 {idx + 1}/{len(payload.video_clips)}: {video_name}")
 
+                        # 无协议头的地址无法交给 httpx 下载。media_cache 到期清理时本地文件
+                        # 与七牛云端副本、映射记录是同步删除的，/upload/ 地址本地缺失即素材
+                        # 已被彻底清理、无法恢复，直接给出可行动的报错
+                        if not video_url.lower().startswith(('http://', 'https://')):
+                            if video_url.startswith('/upload/'):
+                                hint = ('该素材的源文件已被服务器到期清理'
+                                        '（生成视频缓存只保留有限天数），'
+                                        '请重新生成或重新上传后再导出')
+                            else:
+                                hint = ('该地址是页面上传前的本地临时地址（blob:）或已失效，'
+                                        '请刷新页面后重新上传该素材，再重新导出')
+                            return JSONResponse(
+                                status_code=400,
+                                content={
+                                    'success': False,
+                                    'error': f'素材 {video_name} 无法导出（{video_url[:80]}）：{hint}'
+                                }
+                            )
+
                         # 刷新 CDN URL 签名（防止 token 过期导致 403）
-                        from utils.cdn_util import CDNUtil
-                        download_url = CDNUtil.refresh_cdn_signed_url(video_url)
+                        download_url = await asyncio.to_thread(
+                            CDNUtil.refresh_cdn_signed_url, video_url)
 
                         # 下载视频 (异步)
                         async with httpx.AsyncClient(timeout=300.0) as http_client:
@@ -10033,9 +10053,27 @@ async def export_timeline_draft(
                     else:
                         logger.info(f"正在下载音频 {idx + 1}/{len(payload.audio_clips)}: {audio_name}")
 
+                        # 无协议头的地址无法交给 httpx 下载，给出可行动的报错（与视频分支同理：
+                        # /upload/ 本地缺失即源文件已随云端副本一起被到期清理，无法恢复）
+                        if not audio_url.lower().startswith(('http://', 'https://')):
+                            if audio_url.startswith('/upload/'):
+                                hint = ('该素材的源文件已被服务器到期清理'
+                                        '（生成结果缓存只保留有限天数），'
+                                        '请重新生成或重新上传后再导出')
+                            else:
+                                hint = ('该地址是页面上传前的本地临时地址（blob:）或已失效，'
+                                        '请刷新页面后重新上传该素材，再重新导出')
+                            return JSONResponse(
+                                status_code=400,
+                                content={
+                                    'success': False,
+                                    'error': f'素材 {audio_name} 无法导出（{audio_url[:80]}）：{hint}'
+                                }
+                            )
+
                         # 刷新 CDN URL 签名（防止 token 过期导致 403）
-                        from utils.cdn_util import CDNUtil
-                        download_url = CDNUtil.refresh_cdn_signed_url(audio_url)
+                        download_url = await asyncio.to_thread(
+                            CDNUtil.refresh_cdn_signed_url, audio_url)
 
                         # 下载音频 (异步)
                         async with httpx.AsyncClient(timeout=300.0) as http_client:
