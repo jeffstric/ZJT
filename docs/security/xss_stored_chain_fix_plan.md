@@ -386,6 +386,12 @@ MR1+MR2+MR3 合入后，审计所述「LLM 输出 → 渲染 → 拖库」链即
 
 验证：UI 真实登录后 `code=0`（role=admin）、`logged_in` 标记写回、banner 显示登出按钮、点击「剧本智能创作系统」正常进入 `/script-writer?user_id=1`；`verify_token` 简化前后行为一致（临期续期/过期拒绝三场景断言）；vitest 49 文件 569 用例通过；CI lint 全家桶（R4-R7/M/T/X）通过。
 
+### 七次深挖：admin 页登出不吊销服务端 token（develop_f858 补记，2026-09-15）
+
+六轮排查后仍有第 27 处遗漏：管理后台（`web/js/admin.js`）的「退出」只做 `localStorage.removeItem(...)` 后跳转首页，**不调 `/api/auth/logout`**——服务端 `user_tokens` 行未删除、HttpOnly cookie 未清除。实测登出后用原 token 调 `/api/user/checkin/status` 仍 200，token 在剩余有效期内（最长 7 天）持续可用；cookie 会话用户换回带 cookie 的入口仍是登录态。首页 `index_app.js` 的 `handleLogout` 是完整实现（调后端删 token + 清 cookie），admin 页是改造时漏掉的独立登出入口。
+
+修复（develop_f858）：`admin.js logout()` 改为先 `axios.post('/api/auth/logout', { auth_token }, { headers: Authorization, timeout: 3000 })`（与 admin.js 其余调用一致显式带 Bearer；cookie-only 会话由服务端翻译兜底），**无论成败**（网络/超时不阻塞）都保留原本地清理并跳转首页。防回归：`web/tests/admin_logout_revokes_server_token.test.js` 静态断言 admin logout 必须含 `/api/auth/logout` 调用，且后端 `auth_service.logout` 删 token 行、`server.py` 清 `AUTH_COOKIE_NAME`。
+
 ## 兼容期双写（A 方案，develop_f833）
 
 阶段 3c 冷切「停写 localStorage」后，前端仍有大量入口读 `localStorage.auth_token` 再塞进 Form/JSON；后端不少接口用 body/form token 做出站校验/任务快照，cookie 翻译中间件管不到。一天内无法完成全站回归，因此进入兼容期：

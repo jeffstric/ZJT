@@ -2740,11 +2740,28 @@ const AdminApp = {
         },
 
         // 退出登录
-        logout() {
+        async logout() {
             if (!confirm(this.t('confirm_logout'))) {
                 return;
             }
-            
+
+            // 先吊销服务端 token 并清除 HttpOnly cookie——只清本地会让 token
+            // 在有效期内仍可调用接口（cookie 双通道改造的配套收口）。
+            // body 无 token 时（cookie-only 会话）服务端从 Authorization/cookie 取。
+            try {
+                await axios.post(
+                    '/api/auth/logout',
+                    { auth_token: this.authToken },
+                    {
+                        headers: { 'Authorization': `Bearer ${this.authToken}` },
+                        timeout: 3000,
+                    },
+                );
+            } catch (error) {
+                // 后端登出失败（网络/超时）也不阻塞本地清理，避免把用户困在管理页
+                console.error('Logout error:', error);
+            }
+
             localStorage.removeItem('auth_token');
             localStorage.removeItem('phone');
             localStorage.removeItem('user_id');
