@@ -655,11 +655,16 @@ async def auth_cookie_translation_middleware(request: Request, call_next):
     对 /api/ 下请求：未携带（或携带空的）Authorization 头但存在认证 cookie 时，
     把 token 注入请求头再放行。浏览器自动带 cookie、各接口继续从标准 Authorization
     头取 token；SameSite=Strict 保证 cookie 不会被跨站请求携带（CSRF 防线）。
+
+    滑动续期：带认证 cookie 的 /api/ 请求在响应阶段顺延 cookie 有效期。
+    DB token 侧由 UserTokensModel.get_user_id_by_token 统一续期；若只续 DB 不续
+    cookie，持续活跃用户的 cookie 仍会在固定 max_age 后消失，"活跃免登录"不生效。
     """
     path = request.url.path
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+    translated = False
     if path == "/api" or path.startswith("/api/"):
         current = extract_bearer_token(request.headers.get("authorization"))
-        cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
         if not current and cookie_token:
             headers = [
                 (k, v) for k, v in request.scope.get("headers", [])
@@ -667,7 +672,14 @@ async def auth_cookie_translation_middleware(request: Request, call_next):
             ]
             headers.append((b"authorization", f"Bearer {cookie_token}".encode("latin-1")))
             request.scope["headers"] = headers
-    return await call_next(request)
+            translated = True
+    response = await call_next(request)
+    # 登录/登出/注册端点自己管理 cookie（login 种新值、logout 删除），
+    # 不能用请求带来的旧值覆盖它们的 Set-Cookie——否则登录成功后浏览器
+    # 拿回的仍是被顶号的旧 token，永远无法重新登录
+    if translated and cookie_token and not path.startswith("/api/auth/"):
+        set_auth_cookie(response, cookie_token, request)
+    return response
 
 
 # 安全响应头中间件（docs/security/xss_stored_chain_fix_plan.md 阶段 4a 第一步）：
@@ -1685,6 +1697,9 @@ async def image_edit(
     2. URL list (ref_image_urls parameter, comma separated)
     """
     try:
+        # cookie 会话（阶段 3c）下前端 form 传不到 token 本体，为空时从 Authorization
+        # 头取（cookie 翻译中间件已注入），保证算力检查/扣费正常执行
+        auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''
         # 通过 task_id 获取任务配置
         task_config = UnifiedConfigRegistry.get_by_id(task_id)
         if not task_config:
@@ -1855,6 +1870,9 @@ async def text_to_image(
     Submit text-to-image task
     """
     try:
+        # cookie 会话（阶段 3c）下前端 form 传不到 token 本体，为空时从 Authorization
+        # 头取（cookie 翻译中间件已注入），保证算力检查/扣费正常执行
+        auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''
         # 通过 task_id 获取任务配置
         task_config = UnifiedConfigRegistry.get_by_id(task_id)
         if not task_config:
@@ -1995,6 +2013,9 @@ async def runninghub_status(
     If task fails, will refund computing power
     """
     try:
+        # cookie 会话（阶段 3c）下前端 query 传不到 token 本体；失败退款依赖 token，
+        # 为空时从 Authorization 头取（cookie 翻译中间件已注入）
+        auth_token = auth_token or extract_bearer_token(request.headers.get("authorization"))
         task_record = AIToolsModel.get_by_project_id(project_id)
         if task_record is None:
             raise HTTPException(status_code=404, detail="未找到对应的图片记录")
@@ -2232,6 +2253,9 @@ async def ai_app_run(
     文生视频任务提交接口。
     """
     try:
+        # cookie 会话（阶段 3c）下前端 form 传不到 token 本体，为空时从 Authorization
+        # 头取（cookie 翻译中间件已注入），保证算力检查/扣费正常执行
+        auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''
         # 通过 task_id 获取任务配置
         task_config = UnifiedConfigRegistry.get_by_id(task_id)
         if not task_config:
@@ -2407,6 +2431,9 @@ async def ai_app_run_image(
     - For reference video, use 'video' parameter
     """
     try:
+        # cookie 会话（阶段 3c）下前端 form 传不到 token 本体，为空时从 Authorization
+        # 头取（cookie 翻译中间件已注入），保证算力检查/扣费正常执行
+        auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''
         # 通过 task_id 获取任务配置
         task_config = UnifiedConfigRegistry.get_by_id(task_id)
         if not task_config:
@@ -5180,19 +5207,23 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
     - 支付成功后增加用户算力
     """
     try:
-        # 验证用户token
-        if not payment_request.auth_token:
+        # 解析本次请求的有效 token：body 优先；cookie 会话（阶段 3c）下前端拿不到
+        # token 本体、body 为空，改用 Authorization 头（cookie 翻译中间件已注入）
+        auth_token = normalize_authorization_token(payment_request.auth_token)
+        if not auth_token:
+            auth_token = normalize_authorization_token(request.headers.get("authorization"))
+        if not auth_token:
             raise HTTPException(
                 status_code=400,
                 detail="Authentication token is required"
             )
-        
+
         # 验证用户登录状态：通过查询算力判断token是否有效
         try:
             success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
-                headers={'Authorization': f'Bearer {payment_request.auth_token}'}
+                headers={'Authorization': f'Bearer {auth_token}'}
             )
             
             if not success:
@@ -5225,7 +5256,7 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
 
         # 首充套餐校验：如果package_id为1且用户已首充，禁止再次购买
         if payment_request.package_id == 1:
-            has_completed_first_recharge = await _has_completed_first_recharge(payment_request.auth_token)
+            has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
             if has_completed_first_recharge:
                 logger.warning(f"User {payment_request.user_id} attempted to purchase first-charge package again")
                 raise HTTPException(

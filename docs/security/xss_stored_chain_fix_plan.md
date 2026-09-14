@@ -303,3 +303,85 @@ MR1+MR2+MR3 合入后，审计所述「LLM 输出 → 渲染 → 拖库」链即
 4. **后端 `require_permission` 装饰器为空实现**（perseids_server/utils/permission.py，TODO 标注）：本次调查顺带确认，权限系统落地属独立专项。落地前 story_writer world 文件等接口实际无鉴权。
 5. **登录标记 `logged_in`、phone 等非凭据字段仍在 localStorage**：不含可被利用的凭据；phone 建议后续只存脱敏值。
 6. **剧本创作发消息须 header 优先于会话存档 token**：`POST /api/session/{id}/task` 曾用 `body.auth_token or session.auth_token`。cookie 登录后 body 为空、复用会话里仍是上次登录已顶号作废的 token，历史接口走 header 能打开页面，一发送就误报「登录已过期」。已改为 `resolve_request_auth_token`（header/cookie > body > 会话）。
+
+## 后续修复记录（develop_f833，2026-09-14）
+
+阶段 3c 落地后端到端回归发现：首页「剧本智能创作系统」入口在 cookie 会话登录成功后仍弹「请先登录」，无法进入 `/script-writer`。根因是部分入口仍以 `localStorage.auth_token`（cookie 会话下恒为空）作为登录判据，属阶段 3c 漏网点，本次一并修复：
+
+| 文件 | 问题 | 修复 |
+|---|---|---|
+| `web/js/pages/list_page.js` `handleScriptWriterClick` | 登录判据只看 `auth_token`，cookie 会话用户被拦截（用户报告的症状） | 判据改为 `logged_in === '1' || auth_token`，与「authToken 或 cookieSession」约定一致 |
+| `web/js/index_app.js` `isLoggedIn` | computed 漏改，banner 对 cookie 会话用户显示「登录」按钮 | 判据补上 `cookieSession`（userPhone/userEmail 在 mounted 时已无条件从 localStorage 恢复，探测成功后即可正确显示） |
+| `web/js/script_writer.js` `LOGIN_URL` | `redirect_url` 硬编码 `video-workflow-list`，登录过期后被带去视频工作流列表而非原页 | 改为带回当前 `pathname + search`（含 user_id/world_id/workflow_id），登录后还原完整上下文 |
+| `web/js/video_workflow_list.js` `handleAgentClick` | 把读不到的空 `auth_token` 写回 localStorage（`setItem(k, '')` 会存入空串脏数据，干扰其他页面登录判断） | 删除写回与无用变量，凭据仅由 HttpOnly cookie 携带 |
+
+验证方式：真实登录后点击首页卡片可正常进入 `/script-writer`；直接访问该页不再被踢回 `/?login=1&redirect_url=video-workflow-list`。
+
+### 二次全面排查（同日）
+
+按同一根因对 `web/` 全量 `auth_token` 引用点（79 处）分类复查：登录拦截类、请求凭据类（header/body/query）、写入点、页面初始化跳转。后端 `resolve_request_auth_token`（header/cookie > body > 会话，空 body token 不压过 cookie）与「有 token 才附加」类调用点确认无害；另发现并修复 8 处漏网：
+
+| 文件 | 问题（cookie 会话用户受影响） | 修复 |
+|---|---|---|
+| `web/js/pages/list_page.js` `handleStoryboardListClick` | 首页「故事板」卡片误弹「请先登录」（与剧本创作卡片同款） | 判据改 `logged_in === '1' \|\| auth_token` |
+| `web/js/storyboard_list.js` `init` | 故事板列表页加载即被踢回 `/?login=1` | 同上 |
+| `web/js/workflow.js` `fetchComputingPower` | 无 token 即踢登录页，画布页对 cookie 会话用户整页不可用 | `logged_in` 也算已登录；无 token 时不带 Authorization 头走 cookie 翻译 |
+| `web/js/workflow.js` poll-status 轮询 | 判据 `!userId \|\| !authToken` 静默 return，画布状态轮询失效 | 改 `logged_in` 判据 |
+| `web/js/events.js` 世界/角色/场景/道具选择器（4 处） | 弹「请先登录后再操作」，弹窗功能全废 | 判据补 `logged_in`（空头由中间件翻译） |
+| `web/js/marketing_agent.js` 初始化 | `!authToken.value` 即 `redirectToLogin()`，营销智能体整页不可用；算力日志弹窗同被拦 | 补 `logged_in` 会话标记 |
+| `web/js/storyboard/events.js` 算力日志弹窗 | 误拦 cookie 会话用户 | 判据补 `logged_in === '1'` |
+| `web/js/storyboard/api.js` `handleAuthError` | 无 error_code 的 401：旧 token 用户受「不清不跳」误报保护，cookie 会话用户反而立即跳登录 | 本地凭据判定补 `logged_in`，两类用户同等保护 |
+
+审查确认无需改动：`external_recharge.html`（支付回调 URL token 属遗留事项 1 同类白名单）、`computing_power_logs.html`（已按双通道注释实现）、`web/js/pages/*` AI 工具箱子页（仅查 `user_id`）、`video_workflow.html` 充值套餐等「条件附加」类调用。
+
+回归验证（真实登录态）：首页四张卡片全部可进；`/script-writer`、`/storyboard-list`、`/marketing-agent`、`/video-workflow` 均正常加载且算力显示正确；vitest 49 文件 569 用例通过（含 `handleAuthError` 新增 cookie 会话误报保护用例）。
+
+### 三次深挖：服务端出站校验与任务快照链（同日）
+
+前端入口清完后继续深挖，发现**中间件翻译不了的场景**：cookie 翻译中间件只作用于「进入本服务的请求」，而服务端业务逻辑里把 body/form/query 中的 token 拿去做**内部算力校验/扣费/快照存档**时，若前端传空（cookie 会话下必然为空），内部校验同样失败。修复：
+
+| 位置 | 问题 | 修复 |
+|---|---|---|
+| `server.py` `/api/recharge/wechat-pay` | body 无 token 直接 400「Authentication token is required」，**充值功能对 cookie 会话用户完全不可用**；首页/剧本页/营销页/视频页四处前端调用全部受累 | body 为空时从 Authorization 头解析（`normalize_authorization_token`），后续 `check_computing_power`、首充校验统一用解析结果 |
+| `server.py` `/api/image-edit`、`/api/text-to-image`、`/api/ai-app-run`、`/api/ai-app-run-image` | form token 为空 → 内部 `check_computing_power` 携空 Bearer 调用失败 → **图片编辑/文生视频等核心生成功能对 cookie 会话用户报错** | 四端点开头统一 `auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''` |
+| `server.py` `/api/runninghub-status/{id}` | 失败退款用 query token，cookie 会话下为空 → 退款环节静默跳过 | 同上兜底（query 优先，空头兜底） |
+| `api/script_writer.py` `/location-multi-angle-tasks` | 任务表快照存 body token（空）→ 后台 worker 调 `/api/image-edit` 时认证失败，任务执行失败 | 创建时 body 为空则快照 Authorization 头 token |
+| `api/script_writer.py` `/recognize-style` | body token 传 `_vl_call` 做用量计费上报，cookie 会话下漏报 | 空时从 Authorization 头解析 |
+
+审查确认无需改动：`api/script_writer.py` 的 session/task 消息链（已有 `resolve_request_auth_token` header>body>会话）、`/api/parse-script` 与 `/storyboard/{id}/generate-from-script`（token 走 Header，翻译后有效）、`/api/auth/logout`（已有 cookie 兜底）、storyboard agent CLI 链（agent_token 换发凭据，非浏览器会话）、`sse_client.js`（有 token 才带头，空头由中间件翻译）。
+
+**排查方法论沉淀**：此类漏网共三层——①前端登录判据读 `auth_token`（localStorage）；②前端把空 token 放进请求凭据；③后端拿 body/query token 做内部校验/快照（出站调用不经中间件）。前两层翻前端引用即可覆盖，第三层需查「token 进入业务流后的消费点」——凡 token 被存库快照或用于服务端出站鉴权调用处，都需显式兜底。
+
+### 四次深挖：?login=1 弹框时序（同日）
+
+`index_app.js` mounted 里 `?login=1`（401 跳回）与 `redirect_after_login` 两个弹登录框的分支是**同步判断**，而 `probeCookieSession` 是异步的——cookie 会话用户被 401 踢回首页时，即使 cookie 仍有效（误报场景），`cookieSession` 此刻还是初始 `false`，登录框会弹出且 probe 成功后不会自动关闭。
+
+修复：`?login=1` 且带 `logged_in` 标记时不做同步弹框，弹框决策交给 probe 结果——`probeCookieSession` 新增 `onInvalid` 回调，会话确证失效（非 2xx / 401）才弹框。与旧 token 流程 `verifyAuthTokenOnLoginEntry`（确证失效才清理并弹框）语义对称。
+
+同时确认无需改动：`/upload-image`、`/upload-character-audio`（token 仅签名占位，函数体不消费）、`marketing_inspiration.js`、`script_split_task.js`、`announcement_center.js`、`admin/user_modules.js`、storyboard 充值调用（后端已兜底）。
+
+### 五次深挖：滑动续期对 cookie 会话失效（同日）
+
+阶段 3b 的滑动续期只挂在 `AuthService.verify_token` 一条校验路径上；而 cookie 会话下大多数请求走 `resolve_authorization_user_id` / `UserTokensModel.get_user_id_by_token`（纯 SELECT，不续期）。结果：持续活跃的 cookie 会话用户 token 也永不续期，7 天后必然过期——「活跃免登录」名存实亡。且 cookie 的 `max_age` 固定 7 天，即使 DB token 续了，cookie 也会先死。
+
+修复（两处配套）：
+| 位置 | 改动 |
+|---|---|
+| `model/user_tokens.py` `get_user_id_by_token` | 滑动续期统一收口到此（所有校验路径的公共咽喉）：剩余有效期 < `USER_TOKEN_RENEW_THRESHOLD_DAYS` 时 touch 顺延到完整有效期；续期失败只记日志不影响校验 |
+| `server.py` `auth_cookie_translation_middleware` | 带认证 cookie 的 `/api/` 请求在响应阶段重设 cookie（顺延 max_age），与 DB 侧续期同步；`/api/auth/logout` 例外（避免把刚删的 cookie 种回去） |
+
+验证（连 3313 真实 DB 的三场景断言 + curl 响应头检查）：临期 token（1 天）经一次请求顺延到 7 天（168h）；非临期（6 天）不被误续（144h）；过期 token 仍被拒绝（自然淘汰保留）；`/api/user/role` 响应带 `set-cookie: Max-Age=604800` 刷新，`/api/auth/logout` 响应只删不种。
+
+### 六次深挖：登录 Set-Cookie 被中间件旧值覆盖（同日，严重）
+
+滑动续期的 cookie 刷新落地后端到端回归暴露连锁 bug：中间件响应阶段刷新 cookie 时**无条件使用请求带来的旧值**——用户带着无效旧 cookie 调 `/api/auth/login` 时，handler 登录成功种下新 token、随后中间件又用旧 cookie 值覆盖之。由于登录采用「单会话顶号」（新 token 落库、旧 token 删除），浏览器最终持有的旧值在服务端已不存在——**带旧 cookie 的用户永远无法重新登录**，且无效 cookie 被每次请求「续命」，形成死循环。
+
+修复与配套：
+| 位置 | 改动 |
+|---|---|
+| `server.py` 中间件 | cookie 刷新排除 `/api/auth/*`（login/logout/register 自己管理 cookie）；刷新前提保持「翻译发生 + 有 cookie」 |
+| `web/js/index_app.js` 登录/登出/`clearLocalAuthInfo`/登出异常分支 | 清理列表补上更早版本的旧 key `token`（`storyboard/state.js` 仍兜底读取，残留会使请求带作废 Bearer 绕过 cookie 翻译）与 `email` |
+| `web/js/index_app.js` mounted + `probeCookieSession` | 自愈闭环：无 token 一律探测 cookie 会话（不再依赖 `logged_in` 标记），成功则写回标记并恢复登录 UI；标记被误清后访问任意页自动恢复 |
+| `perseids_server/services/auth_service.py` `verify_token` | 简化：滑动续期已收口到 `get_user_id_by_token`，删除重复的过期查询与续期写（每次校验省 2 次 DB 操作） |
+
+验证：UI 真实登录后 `code=0`（role=admin）、`logged_in` 标记写回、banner 显示登出按钮、点击「剧本智能创作系统」正常进入 `/script-writer?user_id=1`；`verify_token` 简化前后行为一致（临期续期/过期拒绝三场景断言）；vitest 49 文件 569 用例通过；CI lint 全家桶（R4-R7/M/T/X）通过。

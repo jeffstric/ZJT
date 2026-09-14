@@ -17,7 +17,10 @@
 
     async function fetchComputingPower(){
       const token = getAuthToken();
-      if(!token){
+      // cookie 会话（阶段 3c）下 JS 读不到 token 本体，本地有 logged_in 标记即视为已登录，
+      // 请求不带 Authorization 头（或空值）由服务端中间件从 cookie 翻译，不再误踢登录页
+      const hasSession = !!token || localStorage.getItem('logged_in') === '1';
+      if(!hasSession){
         updateComputingPowerLabel('未登录');
         computingPowerRefreshBtn?.setAttribute('disabled', 'true');
         redirectToLogin();
@@ -29,9 +32,9 @@
 
       try{
         const response = await fetch('/api/user/computing_power', {
-          headers: {
+          headers: token ? {
             'Authorization': `Bearer ${token}`
-          }
+          } : {}
         });
         
         if(!response.ok){
@@ -3092,17 +3095,21 @@
         if(!workflowId) return;
         
         const userId = localStorage.getItem('user_id');
-        const authToken = localStorage.getItem('auth_token');
-        
-        if(!userId || !authToken){
+        // 登录判据兼容 HttpOnly cookie 会话（logged_in）：token 本体在 cookie 中 JS 读不到，
+        // 无 token 时 Authorization 为空值，由服务端中间件从 cookie 解出身份
+        const loggedIn = userId && (
+          localStorage.getItem('logged_in') === '1' || !!localStorage.getItem('auth_token')
+        );
+
+        if(!loggedIn){
           return;
         }
-        
+
         const response = await fetch(`/api/video-workflow/${workflowId}/poll-status`, {
           method: 'GET',
           headers: {
             'X-User-Id': userId,
-            'Authorization': `Bearer ${authToken}`
+            'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}`
           }
         });
         

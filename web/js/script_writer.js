@@ -63,7 +63,10 @@
             '左侧': { angle: 270, angleKey: AngleKey.LEFT_270 }
         };
 
-        const LOGIN_URL = window.location.origin + '/?login=1&redirect_url=video-workflow-list';
+        // 登录后带回当前页（含 user_id/world_id/workflow_id 参数），
+        // 不再硬编码 video-workflow-list——那会把用户带去视频工作流列表而非原目标
+        const LOGIN_URL = window.location.origin + '/?login=1&redirect_url='
+            + encodeURIComponent(window.location.pathname + window.location.search);
 
         // LLM 供应商常量（从 /api/vendors 动态加载）
         const LLMVendor = {};

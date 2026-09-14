@@ -348,21 +348,29 @@
         this.fetchComputingPower();
         this.fetchUserRole();
         this.fetchCheckinStatus();
-      } else if (localStorage.getItem('logged_in') === '1') {
-        // 新登录方式：token 在 HttpOnly cookie 中（JS 不可读）。带登录态标记时
-        // 探测 cookie 会话，成功则恢复已登录 UI（算力/角色/签到等随之拉取）
-        this.probeCookieSession();
+      } else {
+        // 无 token（含 logged_in 标记丢失/被误清的 cookie 会话）：一律探测 cookie
+        // 会话并自愈——有效则恢复登录 UI 并写回标记；未登录则静默 401。
+        // ?login=1 进入（401 跳回）时弹框决策交给 probe 结果：会话仍有效则不弹，
+        // 确证失效才弹——与旧 token 的 verifyAuthTokenOnLoginEntry 语义对称
+        const isLoginEntry = urlParams.get('login') === '1';
+        this.probeCookieSession(isLoginEntry ? () => { this.showLoginModal = true; } : null);
       }
-      
+
       // 检查是否需要自动弹出登录窗口
-      // 方式1: 从工作流页面跳转过来（localStorage标记）
+      // 方式1: 从工作流页面跳转过来（localStorage标记）。
+      // cookie 会话用户同样交给 probe 决策，不在此同步弹框
       const redirectAfterLogin = localStorage.getItem('redirect_after_login');
-      if (redirectAfterLogin && !this.authToken && !this.cookieSession) {
+      if (redirectAfterLogin && !this.authToken && !this.cookieSession
+          && localStorage.getItem('logged_in') !== '1') {
         this.showLoginModal = true;
       }
-      
-      // 方式2: 通过URL参数触发登录框（支持跨域跳转）
-      if (urlParams.get('login') === '1' && !this.authToken && !this.cookieSession) {
+
+      // 方式2: 通过URL参数触发登录框（支持跨域跳转）。
+      // cookie 会话用户（logged_in 标记）不在此同步弹框——probe 异步进行中
+      // cookieSession 还是初始 false，直接弹会让会话有效也看到登录框且不会自动关
+      if (urlParams.get('login') === '1' && !this.authToken && !this.cookieSession
+          && localStorage.getItem('logged_in') !== '1') {
         this.showLoginModal = true;
       }
       
@@ -418,7 +426,9 @@
         return this.$t('page_title_ai_tools');
       },
       isLoggedIn() {
-        return !!(this.authToken && (this.userPhone || this.userEmail));
+        // 登录态判定统一用「authToken || cookieSession」（见 data 注释）：
+        // cookie 会话下 JS 读不到 token 本体，只看 authToken 会把已登录用户误判为未登录
+        return !!((this.authToken || this.cookieSession) && (this.userPhone || this.userEmail));
       },
       /**
        * 实际用于 <img src> 的二维码地址：
@@ -887,9 +897,11 @@
         return local.substring(0, 2) + '***@' + domain;
       },
       
-      // 统一清理本地登录态（各清除点的 key 集合保持一致）
+      // 统一清理本地登录态（各清除点的 key 集合保持一致；token 为更早版本的
+      // 旧 key，残留会使请求带上作废 Bearer 而绕过 cookie 翻译）
       clearLocalAuthInfo() {
         localStorage.removeItem('auth_token');
+        localStorage.removeItem('token');
         localStorage.removeItem('phone');
         localStorage.removeItem('email');
         localStorage.removeItem('user_id');
@@ -949,13 +961,18 @@
         return false; // 表示不是认证错误
       },
 
-      // HttpOnly cookie 会话探测：本地无 token 但带登录态标记（logged_in）时调用。
-      // cookie 会话由服务端中间件翻译成 Authorization 头，JS 永远拿不到凭据本体。
-      async probeCookieSession() {
+      // HttpOnly cookie 会话探测：本地无 token 时调用（不再依赖 logged_in 标记，
+      // 标记可能被误清——探测成功即自愈写回）。cookie 会话由服务端中间件翻译成
+      // Authorization 头，JS 永远拿不到凭据本体。
+      // onInvalid：会话确证失效后的回调（如 ?login=1 进入时弹出登录框）
+      async probeCookieSession(onInvalid = null) {
         try {
           const response = await axios.get('/api/user/role');
           if (response.data && response.data.code === 0) {
             this.cookieSession = true;
+            // 写回标记：其他读 localStorage 判断登录态的入口（列表页卡片等）
+            // 依赖它，探测成功即自愈恢复
+            localStorage.setItem('logged_in', '1');
             await Promise.all([
               this.fetchComputingPower(),
               this.fetchUserRole(),
@@ -964,11 +981,13 @@
           } else {
             // cookie 已失效/登出：清除登录态标记
             localStorage.removeItem('logged_in');
+            if (onInvalid) onInvalid();
           }
         } catch (error) {
           // 401/未登录：静默保持未登录态（不弹登录框）
           if (error?.response?.status === 401) {
             localStorage.removeItem('logged_in');
+            if (onInvalid) onInvalid();
           }
         }
       },
@@ -1055,9 +1074,12 @@
           if (response.data.success) {
             // 登录成功，先清除旧数据，再保存新 token
             if (response.data.data && response.data.data.token) {
-              // 清除旧的登录数据
+              // 清除旧的登录数据（token 为更早版本的 key，storyboard/state.js 仍兜底读取，
+              // 残留会使请求带上已作废的 Bearer 而绕过 cookie 翻译，导致 401）
               localStorage.removeItem('auth_token');
+              localStorage.removeItem('token');
               localStorage.removeItem('phone');
+              localStorage.removeItem('email');
               localStorage.removeItem('user_id');
               localStorage.removeItem('invite_code');
 
@@ -1312,6 +1334,7 @@
             this.userRole = '';
             this.inviteCode = '';
             localStorage.removeItem('auth_token');
+            localStorage.removeItem('token');
             localStorage.removeItem('phone');
             localStorage.removeItem('email');
             localStorage.removeItem('user_id');
@@ -1330,6 +1353,7 @@
             this.userRole = '';
             this.inviteCode = '';
             localStorage.removeItem('auth_token');
+            localStorage.removeItem('token');
             localStorage.removeItem('phone');
             localStorage.removeItem('email');
             localStorage.removeItem('user_id');
@@ -1348,6 +1372,7 @@
           this.computingPower = null;
           this.userRole = '';
           localStorage.removeItem('auth_token');
+          localStorage.removeItem('token');
           localStorage.removeItem('phone');
           localStorage.removeItem('email');
           localStorage.removeItem('user_id');

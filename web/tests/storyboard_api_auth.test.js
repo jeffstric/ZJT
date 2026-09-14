@@ -50,6 +50,13 @@ describe('storyboard handleAuthError 分级处理', () => {
         expect(handled).toBe(true);
     });
 
+    it('401 且本地无 token 但有 cookie 会话标记（logged_in）：不清不跳（误报保护）', () => {
+        localStorage.setItem('logged_in', '1');
+        const handled = handleAuthError(401, { message: 'some error' });
+        expect(handled).toBe(false);
+        expect(localStorage.getItem('logged_in')).toBe('1');
+    });
+
     it('非 401 且无失效标记：不处理，返回 false', () => {
         localStorage.setItem('auth_token', 't1');
         expect(handleAuthError(500, {})).toBe(false);

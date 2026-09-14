@@ -1444,7 +1444,7 @@ const AdminApp = {
         // 显式加载一次许可证状态（用于切到 dashboard 时刷新卡片）。
         async loadLicenseStatus() {
             if (!this.licenseControlAvailable) return;
-            if (!this.authToken) return;
+            if (!this.authToken && localStorage.getItem('logged_in') !== '1') return;
             this.licenseStatus.loading = true;
             try {
                 const response = await axios.get(
@@ -1471,7 +1471,7 @@ const AdminApp = {
             // 许可证控制面未完整注册时跳过，避免社区版和注册失败状态打 404。
             if (!this.licenseControlAvailable) return;
             if (this.licenseStatusInFlight) return;
-            if (!this.authToken) return;
+            if (!this.authToken && localStorage.getItem('logged_in') !== '1') return;
             this.licenseStatusInFlight = true;
             try {
                 const response = await axios.get(
@@ -1513,7 +1513,7 @@ const AdminApp = {
         // 三个操作的公共实现：POST 后用最新 status 覆盖本地状态并提示。
         async _postLicenseAction(url, actionKey) {
             if (!this.licenseControlAvailable) return;
-            if (!this.authToken || this.licenseStatusInFlight) return;
+            if ((!this.authToken && localStorage.getItem('logged_in') !== '1') || this.licenseStatusInFlight) return;
             this.licenseStatusInFlight = true;
             try {
                 const response = await axios.post(url, null, {
@@ -1547,7 +1547,7 @@ const AdminApp = {
                 this.showToast(this.t('license_activate_empty'), 'warning');
                 return;
             }
-            if (!this.authToken || this.licenseStatusInFlight) return;
+            if ((!this.authToken && localStorage.getItem('logged_in') !== '1') || this.licenseStatusInFlight) return;
             this.licenseStatusInFlight = true;
             try {
                 const response = await axios.post(

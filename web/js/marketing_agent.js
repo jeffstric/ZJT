@@ -1050,7 +1050,9 @@
             });
 
             function openComputingPowerLogs() {
-                if (!authToken.value) { showError(window.t('auth_missing')); return; }
+                // cookie 会话下 token 本体不可读，以本地会话标记为准（凭据由 cookie 携带）
+                const hasSession = !!authToken.value || localStorage.getItem('logged_in') === '1';
+                if (!hasSession) { showError(window.t('auth_missing')); return; }
                 showPowerLogsModal.value = true;
             }
 
@@ -4417,7 +4419,10 @@
                 userPhone.value = localStorage.getItem('phone') || '';
                 userEmail.value = localStorage.getItem('email') || '';
 
-                if (!userId.value || !authToken.value) {
+                // cookie 会话（阶段 3c）下 JS 读不到 token 本体，本地有 logged_in 标记即视为已登录，
+                // 请求凭据由服务端中间件从 cookie 翻译，不再整页重定向到登录页
+                const hasLocalSession = !!authToken.value || localStorage.getItem('logged_in') === '1';
+                if (!userId.value || !hasLocalSession) {
                     isInitializing.value = false;
                     redirectToLogin();
                     return;

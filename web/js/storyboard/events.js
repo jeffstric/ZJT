@@ -2520,7 +2520,9 @@ async function handleAction(action, target) {
     }
 
     if (action === 'open-power-logs') {
-        if (!state.authToken && !localStorage.getItem('auth_token')) {
+        // cookie 会话（阶段 3c）下 JS 读不到 token 本体，本地有 logged_in 标记即视为已登录
+        if (!state.authToken && !localStorage.getItem('auth_token')
+            && localStorage.getItem('logged_in') !== '1') {
             notify('请先登录后再查看算力日志');
             return;
         }
