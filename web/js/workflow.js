@@ -1351,6 +1351,11 @@
 
         if(result.code === 0 && result.data){
           const workflow = result.data;
+          // 基线哈希从 GET 返回值起步；加载期内任何本页自写 PUT（世界同步/
+          // 画风继承）成功后都必须用其响应哈希滚动此值——这些字段参与服务端
+          // 内容哈希计算，若基线停留在旧值，下一次自动保存必被 CAS 409 误判
+          // 为"被其他会话覆盖"（用户零操作也会弹冲突框）
+          let baselineHash = workflow.content_hash;
 
           // 更新页面标题
           if(workflow.name){
@@ -1382,8 +1387,9 @@
           // 如果工作流没有配置世界，且从剧本智能体跳转过来带有世界ID，则自动同步
           if(!hasWorldConfigured && fromWorldId){
             console.log('[加载工作流] 工作流未配置世界，从剧本智能体同步世界ID:', fromWorldId);
-            // 更新工作流的默认世界
-            await saveDefaultWorld(workflowId, parseInt(fromWorldId, 10));
+            // 更新工作流的默认世界；saveDefaultWorld 返回落库后的最新内容哈希
+            const syncedWorldHash = await saveDefaultWorld(workflowId, parseInt(fromWorldId, 10));
+            if(syncedWorldHash) baselineHash = syncedWorldHash;
             workflow.default_world_id = parseInt(fromWorldId, 10);
           }
 
@@ -1446,9 +1452,10 @@
                 if(world.composition_preference){
                   state.style.compositionPreference = world.composition_preference;
                 }
-                // 保存继承的画风到工作流
+                // 保存继承的画风到工作流；PUT 改变服务端内容哈希，
+                // 用响应哈希滚动基线，避免下一次保存被 CAS 误拒
                 try {
-                  await fetch(`/api/video-workflow/${workflowId}`, {
+                  const response = await fetch(`/api/video-workflow/${workflowId}`, {
                     method: 'PUT',
                     headers: {
                       'Content-Type': 'application/json',
@@ -1462,7 +1469,13 @@
                       workflow_ratio: state.ratio
                     })
                   });
-                  console.log('[加载工作流] 已将世界画风保存到工作流');
+                  const styleResult = await response.json();
+                  if(styleResult.code === 0){
+                    console.log('[加载工作流] 已将世界画风保存到工作流');
+                    if(styleResult.data && styleResult.data.content_hash){
+                      baselineHash = styleResult.data.content_hash;
+                    }
+                  }
                 } catch(e){
                   console.error('[加载工作流] 保存世界画风失败:', e);
                 }
@@ -1472,15 +1485,18 @@
           success = true;
 
           // 加载成功即建立上传去重基线：此刻的序列化 == 服务端已确认内容，
-          // 基线同时记录服务端权威内容哈希（GET 返回），供去重门双条件比对
+          // 基线同时记录服务端权威内容哈希，供去重门双条件比对
           // 与后续 PUT 的 CAS（X-Base-Hash）使用。
+          // baselineHash 已随加载期自写 PUT（世界同步/画风继承）的响应滚动到
+          // 最新值；若直接用 GET 的 content_hash，这些自写 PUT 之后基线即过期，
+          // 下一次自动保存必被 CAS 409 误判为冲突。
           // 恢复重放（maybeRecoverPendingAutoSave）成功后会重新 loadWorkflow，
           // 基线随重放后的最新服务端内容重建，语义保持一致。
           try {
             if(typeof autoSaveState !== 'undefined'){
               autoSaveState.setConfirmedBody(
-                workflowId, buildAutoSaveBody(), workflow.content_hash);
-              autoSaveState.noteServerHash(workflowId, workflow.content_hash);
+                workflowId, buildAutoSaveBody(), baselineHash);
+              autoSaveState.noteServerHash(workflowId, baselineHash);
             }
           } catch(e) {
             console.warn('[加载工作流] 建立保存去重基线失败:', e);
@@ -2166,6 +2182,13 @@
           state.style.name = styleName;
           state.style.referenceImageUrl = styleImageUrl;
           state.style.compositionPreference = compositionPreference;
+          // 旁路 PUT 写了参与内容哈希的字段：用响应哈希滚动基线，
+          // 否则下一次自动保存携带过期 X-Base-Hash 会被 CAS 误判为冲突
+          if(typeof autoSaveState !== 'undefined' && typeof buildAutoSaveBody === 'function'
+              && result.data && result.data.content_hash){
+            autoSaveState.setConfirmedBody(
+              workflowId, buildAutoSaveBody(), result.data.content_hash);
+          }
           showToast('画风设置已保存', 'success');
           closeStyleModal();
         } else {

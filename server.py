@@ -29,7 +29,7 @@ from config.config_util import resolve_bin_path
 from config.version import get_app_version
 from perseids_server.client import make_perseids_request, get_device_uuid, async_make_perseids_request, async_call_external_auth_server
 from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel
-from model.video_workflow import compute_content_hash
+from model.video_workflow import compute_content_hash, content_hashes_for_cas
 from model.ai_tools_log import AIToolsLogModel
 from model.users import UsersModel
 from model.user_tokens import UserTokensModel
@@ -7055,14 +7055,28 @@ async def update_video_workflow(
             if base_hash:
                 # 在同一工作线程内重读 + 哈希：既把 9~18MB 大 JSON 的解析/序列化
                 # 移出事件循环（红线），也让校验基于当下最新行而非请求开始时
-                # 加载的旧快照
+                # 加载的旧快照。顺带算「叠上本次字段后的哈希」：基线过期但
+                # 内容没变（本页旁路自写 / 只改 viewport / 同内容重放）不当 409。
                 def _cas_current_hash():
                     fresh = VideoWorkflowModel.get_by_id(workflow_id)
                     if not fresh:
-                        return None, None
-                    return compute_content_hash(fresh), getattr(fresh, 'content_version', 0)
-                current_hash, expected_version = await asyncio.to_thread(_cas_current_hash)
+                        return None, None, None
+                    current, incoming = content_hashes_for_cas(fresh, update_fields)
+                    return current, getattr(fresh, 'content_version', 0), incoming
+                current_hash, expected_version, incoming_hash = await asyncio.to_thread(
+                    _cas_current_hash
+                )
                 if current_hash is not None and current_hash != base_hash:
+                    if incoming_hash == current_hash:
+                        logger.info(
+                            f"[CAS] 工作流 {workflow_id} 基线过期但内容未变，"
+                            f"视为成功 base={base_hash[:12]}... current={current_hash[:12]}..."
+                        )
+                        return JSONResponse({
+                            "code": 0,
+                            "message": "更新成功",
+                            "data": {"content_hash": current_hash}
+                        })
                     logger.warning(
                         f"[CAS] 拒绝更新工作流 {workflow_id}："
                         f"base_hash={base_hash[:12]}... != current={current_hash[:12]}..."
@@ -7082,11 +7096,24 @@ async def update_video_workflow(
                 **update_fields
             )
             if expected_version is not None and affected == 0:
-                # 哈希比对通过但版本竞争失败：读哈希与 UPDATE 之间有并发写入抢先
+                # 哈希比对通过但版本竞争失败：读哈希与 UPDATE 之间有并发写入抢先。
+                # 若抢先写入后库存内容已与本次 PUT 合成结果相同，同样视为成功。
                 def _conflict_hash():
                     fresh = VideoWorkflowModel.get_by_id(workflow_id)
-                    return compute_content_hash(fresh) if fresh else None
-                current_hash = await asyncio.to_thread(_conflict_hash)
+                    if not fresh:
+                        return None, None
+                    return content_hashes_for_cas(fresh, update_fields)
+                current_hash, incoming_hash = await asyncio.to_thread(_conflict_hash)
+                if current_hash is not None and incoming_hash == current_hash:
+                    logger.info(
+                        f"[CAS] 工作流 {workflow_id} 版本竞争但内容未变，视为成功"
+                        f"（expected_version={expected_version}）"
+                    )
+                    return JSONResponse({
+                        "code": 0,
+                        "message": "更新成功",
+                        "data": {"content_hash": current_hash}
+                    })
                 logger.warning(
                     f"[CAS] 工作流 {workflow_id} 版本竞争失败"
                     f"（expected_version={expected_version}），拒绝写入"

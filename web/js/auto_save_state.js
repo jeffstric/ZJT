@@ -175,7 +175,9 @@
      * 记录服务端已确认的 body 基线。调用点：
      * - PUT 返回 code===0（服务端已落库该 body，含手动保存）
      * - loadWorkflow 成功后（当前序列化即服务端内容）
+     * - 旁路 PUT（切世界 / 画风继承 / 画风弹窗）成功后滚动基线
      * serverHash 为响应对应的服务端权威内容哈希（可空：旧服务端不下发）。
+     * 传入 serverHash 时同步 lastSeen，避免去重门第二条件因未 poll 而失效。
      */
     function setConfirmedBody(workflowId, body, serverHash){
       if(typeof body !== 'string') return;
@@ -189,6 +191,9 @@
           && conflictBlockRecord.workflowId === String(workflowId)){
         conflictBlockRecord = null;
       }
+      // 旁路 PUT / 加载期自写滚基线时往往不会再 noteServerHash。
+      // lastSeen 若仍停在旧值，去重门第二条件立刻失效，下一拍全量 PUT。
+      if(serverHash) noteServerHash(workflowId, serverHash);
     }
 
     /**
@@ -214,7 +219,8 @@
     }
 
     /**
-     * 最近一次感知到的服务端哈希（GET/poll/409 冲突响应下发）。
+     * 最近一次感知到的服务端哈希（GET/poll/409 冲突响应下发，
+     * 以及 setConfirmedBody 带 serverHash 时同步写入）。
      * 用于去重门失效判断（服务端哈希漂移 → 基线失效 → 重传收敛）。
      * 注意：409 熔断快照的 baseHash 不得取此值（否则刷新重放 CAS 会通过，
      * 本地旧内容覆盖他人新内容）；熔断快照应保留过期基线 getConfirmedHash，

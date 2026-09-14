@@ -9,7 +9,9 @@ compute_content_hash 单元测试（无数据库依赖）。
 """
 import unittest
 
-from model.video_workflow import VideoWorkflow, compute_content_hash
+from model.video_workflow import (
+    VideoWorkflow, compute_content_hash, content_hashes_for_cas,
+)
 
 
 class TestComputeContentHash(unittest.TestCase):
@@ -90,6 +92,46 @@ class TestComputeContentHash(unittest.TestCase):
         changed = compute_content_hash(VideoWorkflow(
             workflow_data={'nodes': [{'id': 2}], 'viewport': {'zoom': 1}}))
         self.assertNotEqual(h, changed)
+
+
+class TestContentHashesForCas(unittest.TestCase):
+    """基线过期时：合成后哈希不变 → 不当 409；内容变了 → 仍冲突。"""
+
+    def test_same_content_partial_put_incoming_equals_current(self):
+        wf = VideoWorkflow(
+            workflow_data={'nodes': [{'id': 1}]},
+            style='写实',
+            default_world_id=7,
+            workflow_ratio='16:9',
+        )
+        current, incoming = content_hashes_for_cas(wf, {'style': '写实'})
+        self.assertEqual(current, incoming)
+        current2, incoming2 = content_hashes_for_cas(wf, {'default_world_id': 7})
+        self.assertEqual(current2, incoming2)
+
+    def test_viewport_only_change_incoming_equals_current(self):
+        wf = VideoWorkflow(
+            workflow_data={'nodes': [{'id': 1}], 'viewport': {'panX': 0, 'zoom': 1}})
+        current, incoming = content_hashes_for_cas(wf, {
+            'workflow_data': {'nodes': [{'id': 1}], 'viewport': {'panX': 80, 'zoom': 0.5}},
+        })
+        self.assertEqual(current, incoming)
+
+    def test_real_content_change_incoming_differs(self):
+        wf = VideoWorkflow(workflow_data={'nodes': [{'id': 1}]}, style='写实')
+        current, incoming = content_hashes_for_cas(wf, {'style': '动漫'})
+        self.assertNotEqual(current, incoming)
+        current2, incoming2 = content_hashes_for_cas(wf, {
+            'workflow_data': {'nodes': [{'id': 2}]},
+        })
+        self.assertNotEqual(current2, incoming2)
+
+    def test_empty_update_fields_incoming_equals_current(self):
+        wf = VideoWorkflow(workflow_data={'a': 1}, style='写实')
+        current, incoming = content_hashes_for_cas(wf, {})
+        self.assertEqual(current, incoming)
+        current2, incoming2 = content_hashes_for_cas(wf, None)
+        self.assertEqual(current2, incoming2)
 
 
 if __name__ == '__main__':

@@ -226,16 +226,21 @@ describe('服务端权威哈希双条件（noteServerHash / getConfirmedHash）'
   test('新基线覆盖旧哈希：PUT 成功后 CAS 基值随响应滚动', () => {
     const s = createState();
     s.setConfirmedBody(1, body('a.png'), 'h1');
-    s.noteServerHash(1, 'h1');
     // 真实修改后保存成功，服务端返回新哈希
     s.setConfirmedBody(1, body('b.png'), 'h2');
     expect(s.getConfirmedHash(1)).toBe('h2');
     // 旧 body/旧哈希组合不再命中
     expect(s.isConfirmedBody(1, body('a.png'))).toBe(false);
-    // 新 body 在 poll 追上（h2）后命中
-    expect(s.isConfirmedBody(1, body('b.png'))).toBe(false); // lastSeen 仍是 h1
-    s.noteServerHash(1, 'h2');
+    // setConfirmedBody 同步 lastSeen，无需再等 poll 的 noteServerHash
+    expect(s.getLastSeenServerHash(1)).toBe('h2');
     expect(s.isConfirmedBody(1, body('b.png'))).toBe(true);
+  });
+
+  test('setConfirmedBody 带哈希时同步 lastSeen，未 poll 也命中去重门', () => {
+    const s = createState();
+    s.setConfirmedBody(1, body('a.png'), 'h1');
+    expect(s.getLastSeenServerHash(1)).toBe('h1');
+    expect(s.isConfirmedBody(1, body('a.png'))).toBe(true);
   });
 });
 
@@ -269,10 +274,7 @@ describe('CAS 409 冲突熔断（noteConflict / isConflictBlocked）', () => {
     // 否则重放 CAS 通过会把本地旧内容覆盖到他人已保存的新内容上。
     const s = createState();
     s.setConfirmedBody(1, body('a.png'), 'h-baseline');
-    // lastSeen 只由 GET/poll/409 的 noteServerHash 通道推进；仅建基线时为 null
-    expect(s.getLastSeenServerHash(1)).toBe(null);
-    // GET/poll 感知到基线哈希 → 已知
-    s.noteServerHash(1, 'h-baseline');
+    // setConfirmedBody 同步 lastSeen；409 后再 noteServerHash 只推进 lastSeen
     expect(s.getLastSeenServerHash(1)).toBe('h-baseline');
     // PUT 409：响应携带服务端当前哈希
     s.noteServerHash(1, 'h-server-latest');

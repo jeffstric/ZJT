@@ -56,6 +56,34 @@ def compute_content_hash(workflow, workflow_data=None) -> str:
     return hashlib.sha256('\x1f'.join(parts).encode('utf-8')).hexdigest()
 
 
+def apply_content_update_fields(workflow, update_fields: Optional[Dict[str, Any]] = None):
+    """把 PUT 可写的内容字段叠到当前行上，返回只含哈希相关字段的 VideoWorkflow。
+
+    CAS 用它比较「这次 PUT 若落地，内容哈希会不会变」：基线过期但合成后
+    哈希不变（本页自写 / 只改 viewport / 同内容重放）应视为成功，而不是 409。
+    只读取 hashed 列；name/description 等不参与。显式传入 None 也覆盖原值。
+    """
+    update_fields = update_fields or {}
+
+    def _pick(field):
+        return update_fields[field] if field in update_fields else getattr(workflow, field, None)
+
+    return VideoWorkflow(
+        workflow_data=_pick('workflow_data'),
+        style=_pick('style'),
+        style_reference_image=_pick('style_reference_image'),
+        default_world_id=_pick('default_world_id'),
+        workflow_ratio=_pick('workflow_ratio'),
+    )
+
+
+def content_hashes_for_cas(workflow, update_fields: Optional[Dict[str, Any]] = None):
+    """返回 (当前内容哈希, 叠上本次 PUT 字段后的内容哈希)。"""
+    current = compute_content_hash(workflow)
+    incoming = compute_content_hash(apply_content_update_fields(workflow, update_fields))
+    return current, incoming
+
+
 class VideoWorkflow:
     """Video Workflow model class"""
     
