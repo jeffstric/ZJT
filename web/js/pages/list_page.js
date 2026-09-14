@@ -185,10 +185,11 @@
         window.location.href = '/video-workflow-list';
       },
       handleStoryboardListClick() {
-        const authToken = localStorage.getItem('auth_token');
         const userId = localStorage.getItem('user_id');
 
-        if (!authToken || !userId) {
+        // 兼容期双写：登录态以 localStorage.auth_token 为准
+        const loggedIn = !!localStorage.getItem('auth_token');
+        if (!loggedIn || !userId) {
           alert(this.$t('need_login') || '请先登录');
           return;
         }
@@ -196,15 +197,15 @@
         window.location.href = '/storyboard-list';
       },
       handleScriptWriterClick() {
-        const authToken = localStorage.getItem('auth_token');
         const userId = localStorage.getItem('user_id');
 
-        if (!authToken || !userId) {
+        // 兼容期双写：登录态以 localStorage.auth_token 为准
+        const loggedIn = !!localStorage.getItem('auth_token');
+        if (!loggedIn || !userId) {
           alert(this.$t('need_login') || '请先登录');
           return;
         }
 
-        // auth_token 已在 localStorage 中，无需通过 URL 传递
         const url = `/script-writer?user_id=${encodeURIComponent(userId)}`;
         window.location.href = url;
       },

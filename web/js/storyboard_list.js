@@ -167,7 +167,9 @@ async function deleteStoryboard(id) {
 
 async function init() {
   const container = document.getElementById('storyboardFolderContainer');
-  if (!getAuthToken() || !getUserId()) {
+  // 兼容期双写：登录态以 localStorage.auth_token 为准
+  const loggedIn = !!getAuthToken();
+  if (!loggedIn || !getUserId()) {
     window.location.href = '/?login=1&redirect_url=storyboard-list';
     return;
   }

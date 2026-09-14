@@ -17,7 +17,9 @@
 
     async function fetchComputingPower(){
       const token = getAuthToken();
-      if(!token){
+      // 兼容期双写：登录态以 localStorage.auth_token 为准
+      const hasSession = !!token;
+      if(!hasSession){
         updateComputingPowerLabel('未登录');
         computingPowerRefreshBtn?.setAttribute('disabled', 'true');
         redirectToLogin();
@@ -29,9 +31,9 @@
 
       try{
         const response = await fetch('/api/user/computing_power', {
-          headers: {
+          headers: token ? {
             'Authorization': `Bearer ${token}`
-          }
+          } : {}
         });
         
         if(!response.ok){
@@ -3092,17 +3094,18 @@
         if(!workflowId) return;
         
         const userId = localStorage.getItem('user_id');
-        const authToken = localStorage.getItem('auth_token');
-        
-        if(!userId || !authToken){
+        // 兼容期双写：登录态以 localStorage.auth_token 为准
+        const loggedIn = userId && !!localStorage.getItem('auth_token');
+
+        if(!loggedIn){
           return;
         }
-        
+
         const response = await fetch(`/api/video-workflow/${workflowId}/poll-status`, {
           method: 'GET',
           headers: {
             'X-User-Id': userId,
-            'Authorization': `Bearer ${authToken}`
+            'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}`
           }
         });
         

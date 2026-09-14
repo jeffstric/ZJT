@@ -1050,7 +1050,9 @@
             });
 
             function openComputingPowerLogs() {
-                if (!authToken.value) { showError(window.t('auth_missing')); return; }
+                // 兼容期双写：登录态以 localStorage.auth_token 为准
+                const hasSession = !!authToken.value;
+                if (!hasSession) { showError(window.t('auth_missing')); return; }
                 showPowerLogsModal.value = true;
             }
 
@@ -4417,7 +4419,9 @@
                 userPhone.value = localStorage.getItem('phone') || '';
                 userEmail.value = localStorage.getItem('email') || '';
 
-                if (!userId.value || !authToken.value) {
+                // 兼容期双写：登录态以 localStorage.auth_token 为准
+                const hasLocalSession = !!authToken.value;
+                if (!userId.value || !hasLocalSession) {
                     isInitializing.value = false;
                     redirectToLogin();
                     return;

@@ -1518,7 +1518,8 @@
     async function loadWorldsToSelect(selectElement) {
       const authToken = getAuthToken();
       const userId = getUserId();
-      
+
+      // 兼容期双写：登录态以 localStorage.auth_token 为准
       if (!authToken || !userId) {
         showToast('请先登录后再操作', 'error');
         return;
@@ -1555,7 +1556,8 @@
     async function loadCharacters(worldId, keyword = '') {
       const authToken = getAuthToken();
       const userId = getUserId();
-      
+
+      // 兼容期双写：登录态以 localStorage.auth_token 为准
       if (!authToken || !userId) {
         showToast('请先登录后再操作', 'error');
         document.getElementById('characterModal')?.classList.remove('show');
@@ -1628,7 +1630,8 @@
     async function loadLocations(worldId, keyword = '') {
       const authToken = getAuthToken();
       const userId = getUserId();
-      
+
+      // 兼容期双写：登录态以 localStorage.auth_token 为准
       if (!authToken || !userId) {
         showToast('请先登录后再操作', 'error');
         document.getElementById('locationModal')?.classList.remove('show');
@@ -1709,7 +1712,8 @@
     async function loadProps(worldId, keyword = '') {
       const authToken = getAuthToken();
       const userId = getUserId();
-      
+
+      // 兼容期双写：登录态以 localStorage.auth_token 为准
       if (!authToken || !userId) {
         showToast('请先登录后再操作', 'error');
         document.getElementById('propsModal')?.classList.remove('show');

@@ -2520,6 +2520,7 @@ async function handleAction(action, target) {
     }
 
     if (action === 'open-power-logs') {
+        // 兼容期双写：登录态以 localStorage.auth_token 为准
         if (!state.authToken && !localStorage.getItem('auth_token')) {
             notify('请先登录后再查看算力日志');
             return;

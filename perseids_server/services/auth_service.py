@@ -536,9 +536,8 @@ class AuthService:
         """
         验证token并返回用户ID
 
-        滑动续期：token 有效且剩余有效期低于 USER_TOKEN_RENEW_THRESHOLD_DAYS 时，
-        顺延到完整有效期。持续活跃的用户免登录，闲置 token 自然过期淘汰。
-        续期失败只记日志，不影响本次校验结果。
+        滑动续期已统一收口到 UserTokensModel.get_user_id_by_token（所有校验路径
+        的公共咽喉，见其 docstring），此处直接透传，避免重复的过期查询与续期写。
 
         Args:
             token: 用户token
@@ -546,18 +545,7 @@ class AuthService:
         Returns:
             用户ID或None
         """
-        user_id = UserTokensModel.get_user_id_by_token(token)
-        if not user_id:
-            return None
-        try:
-            record = UserTokensModel.get_valid_token(token)
-            if record and record.expire_time:
-                threshold = datetime.now() + timedelta(days=AuthService.TOKEN_RENEW_THRESHOLD_DAYS)
-                if record.expire_time < threshold:
-                    UserTokensModel.touch(token, datetime.now() + timedelta(days=AuthService.TOKEN_EXPIRE_DAYS))
-        except Exception as e:
-            logger.warning(f"token 滑动续期失败（不影响校验结果）: {e}")
-        return user_id
+        return UserTokensModel.get_user_id_by_token(token)
     
     @staticmethod
     def get_user_by_token(token: str) -> Optional[User]:

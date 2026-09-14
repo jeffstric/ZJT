@@ -18,6 +18,7 @@
   "logout": "Logout",
   "login": "Login",
   "need_login": "Please login first",
+  "auth_compat_relogin": "Sign-in has been updated, please log in again",
   "version": "v",
   "loading": "Loading...",
   "success": "Success",

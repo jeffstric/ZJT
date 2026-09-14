@@ -1294,9 +1294,8 @@ const AdminApp = {
 
         // 初始化认证
         initAuth() {
-            // token 存 localStorage 属旧版流程（HttpOnly cookie 双通道后新登录不再写入）。
-            // 本地无 token 时不再直接跳登录——cookie 会话下由服务端中间件自动解出身份，
-            // 统一以 verifyAdmin 的结果为准。
+            // 兼容期双写：优先读 localStorage.auth_token；无 token 时 verifyAdmin
+            // 仍可走 cookie 翻译（管理接口走 Authorization 头）。
             this.authToken = localStorage.getItem('auth_token') || '';
 
             // 验证管理员权限
@@ -1444,7 +1443,7 @@ const AdminApp = {
         // 显式加载一次许可证状态（用于切到 dashboard 时刷新卡片）。
         async loadLicenseStatus() {
             if (!this.licenseControlAvailable) return;
-            if (!this.authToken) return;
+            if (!this.authToken && localStorage.getItem('logged_in') !== '1') return;
             this.licenseStatus.loading = true;
             try {
                 const response = await axios.get(
@@ -1471,7 +1470,7 @@ const AdminApp = {
             // 许可证控制面未完整注册时跳过，避免社区版和注册失败状态打 404。
             if (!this.licenseControlAvailable) return;
             if (this.licenseStatusInFlight) return;
-            if (!this.authToken) return;
+            if (!this.authToken && localStorage.getItem('logged_in') !== '1') return;
             this.licenseStatusInFlight = true;
             try {
                 const response = await axios.get(
@@ -1513,7 +1512,7 @@ const AdminApp = {
         // 三个操作的公共实现：POST 后用最新 status 覆盖本地状态并提示。
         async _postLicenseAction(url, actionKey) {
             if (!this.licenseControlAvailable) return;
-            if (!this.authToken || this.licenseStatusInFlight) return;
+            if ((!this.authToken && localStorage.getItem('logged_in') !== '1') || this.licenseStatusInFlight) return;
             this.licenseStatusInFlight = true;
             try {
                 const response = await axios.post(url, null, {
@@ -1547,7 +1546,7 @@ const AdminApp = {
                 this.showToast(this.t('license_activate_empty'), 'warning');
                 return;
             }
-            if (!this.authToken || this.licenseStatusInFlight) return;
+            if ((!this.authToken && localStorage.getItem('logged_in') !== '1') || this.licenseStatusInFlight) return;
             this.licenseStatusInFlight = true;
             try {
                 const response = await axios.post(

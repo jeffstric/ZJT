@@ -3913,7 +3913,10 @@ async def recognize_style(request: Request, body: RecognizeStyleRequest):
             llm_timeout=IMAGE_STYLE_LLM_TIMEOUT,
             vendor_id=body.vendor_id,
             model_id=body.model_id,
-            auth_token=body.auth_token,
+            # cookie 会话（阶段 3c）下前端 body 传不到 token 本体，为空时从
+            # Authorization 头取（cookie 翻译中间件已注入），保证用量计费上报不缺失
+            auth_token=normalize_authorization_token(body.auth_token)
+            or normalize_authorization_token(request.headers.get("authorization")),
             temperature=0.4,
             max_tokens=400,
         )
@@ -5096,6 +5099,15 @@ async def create_location_multi_angle_task(
         import uuid
         from model import LocationMultiAngleTasksModel
 
+        # 任务快照会存 auth_token 供后台 worker 调用生图接口使用；cookie 会话
+        # （阶段 3c）下前端 body 传不到 token 本体，为空时从 Authorization 头取
+        # （cookie 翻译中间件已注入），避免快照为空导致任务执行期认证失败
+        snapshot_auth_token = normalize_authorization_token(task_request.auth_token)
+        if not snapshot_auth_token:
+            snapshot_auth_token = normalize_authorization_token(
+                request.headers.get("authorization")
+            )
+
         # 检查是否存在正在执行中的任务
         running_task = LocationMultiAngleTasksModel.has_running_task(
             user_id=task_request.user_id,
@@ -5124,7 +5136,7 @@ async def create_location_multi_angle_task(
             description=task_request.description,
             angles=task_request.angles,
             model=task_request.model,
-            auth_token=task_request.auth_token
+            auth_token=snapshot_auth_token
         )
 
         logger.info(f"创建场景多角度生图任务: {task_key}, location={task_request.location_name}, angles={len(task_request.angles)}")
