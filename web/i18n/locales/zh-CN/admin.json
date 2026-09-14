@@ -833,6 +833,7 @@
   "um_requirement_placeholder": "示例：接入 Acme 图片生成 API。POST /v1/images 创建任务，Bearer Token 从 ACME_API_KEY 读取；成功返回 task_id；每 2 秒异步轮询 GET /v1/images/{task_id}，完成后返回图片 URL。支持文生图和图生图……",
   "um_requirement_hint": "建议附上请求/响应 JSON、错误码、回调或轮询规则及官方文档链接。",
   "um_requirement_comfyui_hint": "工作流 JSON 和地址已作为附件提交。这里只需补充要对接的能力，例如「Qwen Image Edit 图生图」。",
+  "um_requirement_over_limit": "需求文档已超出 {max} 字上限（超出 {count} 字），请精简后再开始生成。",
   "um_generation_ack": "我理解智能体生成的代码不会自动发布；我会检查外部域名、密钥名称、能力声明、代码和校验结果后再批准。",
   "um_starting": "正在启动...",
   "um_start_agent": "开始生成",

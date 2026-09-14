@@ -62,6 +62,7 @@ class UserModuleRuntimeConfig:
     generation_max_file_bytes: int = 512 * 1024
     generation_max_total_bytes: int = 5 * 1024 * 1024
     generation_max_search_results: int = 200
+    requirement_max_length: int = 50_000  # 生成任务需求文档上限（字符），会逐字注入智能体提示词
     agent_task_result_max_chars: int = 100_000
     agent_task_max_concurrency: int = 2
     agent_task_heartbeat_interval_seconds: float = 5.0
