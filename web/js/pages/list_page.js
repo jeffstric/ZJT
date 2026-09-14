@@ -187,8 +187,8 @@
       handleStoryboardListClick() {
         const userId = localStorage.getItem('user_id');
 
-        // 登录判据与 handleScriptWriterClick 一致：cookie 会话（logged_in）或旧 token
-        const loggedIn = localStorage.getItem('logged_in') === '1' || !!localStorage.getItem('auth_token');
+        // 兼容期双写：登录态以 localStorage.auth_token 为准
+        const loggedIn = !!localStorage.getItem('auth_token');
         if (!loggedIn || !userId) {
           alert(this.$t('need_login') || '请先登录');
           return;
@@ -199,10 +199,8 @@
       handleScriptWriterClick() {
         const userId = localStorage.getItem('user_id');
 
-        // 登录判据与 index_app 的「authToken || cookieSession」一致：
-        // 阶段 3c 后 token 本体只在 HttpOnly cookie 中（JS 不可读），本地仅有 logged_in 标记，
-        // 不能再用 auth_token 判断登录，否则 cookie 会话用户会被误判为未登录
-        const loggedIn = localStorage.getItem('logged_in') === '1' || !!localStorage.getItem('auth_token');
+        // 兼容期双写：登录态以 localStorage.auth_token 为准
+        const loggedIn = !!localStorage.getItem('auth_token');
         if (!loggedIn || !userId) {
           alert(this.$t('need_login') || '请先登录');
           return;

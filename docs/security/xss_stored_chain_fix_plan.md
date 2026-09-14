@@ -198,7 +198,7 @@ async def resolve_request_identity(request: Request) -> Optional[int]:
 
 ### 兼容期策略
 
-cookie 与 header 双读后，旧版本前端（localStorage 模式）继续用 header 正常工作，前端发版后可观察一段时间再考虑在 localStorage 写入处加 deprecation 日志。
+cookie 与 header 双读后，旧版本前端（localStorage 模式）继续用 header 正常工作。当前实施为 **A 方案双写**（见文末）：登录同时种 HttpOnly cookie 并把同一 token 写入 localStorage，存量 Form/JSON 调用点继续工作。3c 收口（停写 localStorage）必须等前端判据、请求凭据、后端出站/快照三层都扫完。
 
 ---
 
@@ -385,3 +385,15 @@ MR1+MR2+MR3 合入后，审计所述「LLM 输出 → 渲染 → 拖库」链即
 | `perseids_server/services/auth_service.py` `verify_token` | 简化：滑动续期已收口到 `get_user_id_by_token`，删除重复的过期查询与续期写（每次校验省 2 次 DB 操作） |
 
 验证：UI 真实登录后 `code=0`（role=admin）、`logged_in` 标记写回、banner 显示登出按钮、点击「剧本智能创作系统」正常进入 `/script-writer?user_id=1`；`verify_token` 简化前后行为一致（临期续期/过期拒绝三场景断言）；vitest 49 文件 569 用例通过；CI lint 全家桶（R4-R7/M/T/X）通过。
+
+## 兼容期双写（A 方案，develop_f833）
+
+阶段 3c 冷切「停写 localStorage」后，前端仍有大量入口读 `localStorage.auth_token` 再塞进 Form/JSON；后端不少接口用 body/form token 做出站校验/任务快照，cookie 翻译中间件管不到。一天内无法完成全站回归，因此进入兼容期：
+
+1. **双写同一 token**：登录成功响应体的 `data.token` 写入 `localStorage.auth_token`，同时服务端 `Set-Cookie`（同一字符串）。权威在 DB `user_tokens`。注册走自动登录，复用同一路径。
+2. **cookie-only 旧会话强制重新登录**：JS 读不到 HttpOnly cookie，无法补写 localStorage。`probeCookieSession` 发现 cookie 有效但本地无 token 时，清掉 `logged_in` 并弹「登录方式已更新，请重新登录」。重新登录后两份副本对齐。
+3. **门禁以 localStorage token 为准**：`logged_in` 单独不算完整登录，避免 cookie-only 用户进得了页面、生成/扣费空 token。
+4. **作废 Bearer 优先于 cookie**：中间件「有 Authorization 就不看 cookie」。登录/登出仍清旧 key `token`；确证失效（`invalid_auth_token` / `TOKEN_EXPIRED`）时清本地 token，避免旧头压过新 cookie。
+5. **cookie 在兼容期是备份**：前端带头后中间件不会刷新 cookie（刷新只在翻译发生时）。身份以 localStorage + header 为准，行为回到 3c 之前。
+
+3c 真正收口（删除 `persistBrowserAuth` 里的 localStorage 写入）前，必须扫完：前端登录判据、请求是否还带空 token、后端 body/query token 出站校验与任务快照。

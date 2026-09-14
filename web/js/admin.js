@@ -1294,9 +1294,8 @@ const AdminApp = {
 
         // 初始化认证
         initAuth() {
-            // token 存 localStorage 属旧版流程（HttpOnly cookie 双通道后新登录不再写入）。
-            // 本地无 token 时不再直接跳登录——cookie 会话下由服务端中间件自动解出身份，
-            // 统一以 verifyAdmin 的结果为准。
+            // 兼容期双写：优先读 localStorage.auth_token；无 token 时 verifyAdmin
+            // 仍可走 cookie 翻译（管理接口走 Authorization 头）。
             this.authToken = localStorage.getItem('auth_token') || '';
 
             // 验证管理员权限

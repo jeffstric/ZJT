@@ -3698,7 +3698,7 @@ async def login(request: Request, login_request: LoginRequest):
                 }
             )
             # 浏览器会话凭据进 HttpOnly cookie（XSS 不可读）；响应体里的 token
-            # 保留供程序客户端使用，前端已不再写入 localStorage
+            # 保留供程序客户端与兼容期前端双写 localStorage（同一 token）
             auth_data_token = (auth_data or {}).get('token')
             if auth_data_token:
                 set_auth_cookie(response, auth_data_token, request)

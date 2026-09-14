@@ -1519,9 +1519,8 @@
       const authToken = getAuthToken();
       const userId = getUserId();
 
-      // cookie 会话（阶段 3c）下 JS 读不到 token 本体，本地有 logged_in 标记即视为已登录，
-      // 空 Authorization 头由服务端中间件从 cookie 翻译，不再误拦
-      if ((!authToken && localStorage.getItem('logged_in') !== '1') || !userId) {
+      // 兼容期双写：登录态以 localStorage.auth_token 为准
+      if (!authToken || !userId) {
         showToast('请先登录后再操作', 'error');
         return;
       }
@@ -1558,9 +1557,8 @@
       const authToken = getAuthToken();
       const userId = getUserId();
 
-      // cookie 会话（阶段 3c）下 JS 读不到 token 本体，本地有 logged_in 标记即视为已登录，
-      // 空 Authorization 头由服务端中间件从 cookie 翻译，不再误拦
-      if ((!authToken && localStorage.getItem('logged_in') !== '1') || !userId) {
+      // 兼容期双写：登录态以 localStorage.auth_token 为准
+      if (!authToken || !userId) {
         showToast('请先登录后再操作', 'error');
         document.getElementById('characterModal')?.classList.remove('show');
         return;
@@ -1633,9 +1631,8 @@
       const authToken = getAuthToken();
       const userId = getUserId();
 
-      // cookie 会话（阶段 3c）下 JS 读不到 token 本体，本地有 logged_in 标记即视为已登录，
-      // 空 Authorization 头由服务端中间件从 cookie 翻译，不再误拦
-      if ((!authToken && localStorage.getItem('logged_in') !== '1') || !userId) {
+      // 兼容期双写：登录态以 localStorage.auth_token 为准
+      if (!authToken || !userId) {
         showToast('请先登录后再操作', 'error');
         document.getElementById('locationModal')?.classList.remove('show');
         return;
@@ -1716,9 +1713,8 @@
       const authToken = getAuthToken();
       const userId = getUserId();
 
-      // cookie 会话（阶段 3c）下 JS 读不到 token 本体，本地有 logged_in 标记即视为已登录，
-      // 空 Authorization 头由服务端中间件从 cookie 翻译，不再误拦
-      if ((!authToken && localStorage.getItem('logged_in') !== '1') || !userId) {
+      // 兼容期双写：登录态以 localStorage.auth_token 为准
+      if (!authToken || !userId) {
         showToast('请先登录后再操作', 'error');
         document.getElementById('propsModal')?.classList.remove('show');
         return;

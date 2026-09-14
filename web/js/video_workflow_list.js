@@ -521,8 +521,7 @@ async function handleAgentClick() {
   try {
     const userId = getUserId();
 
-    // token 由 HttpOnly cookie 携带（阶段 3c），页面凭 cookie 会话访问；
-    // 不再把（本已读不到的空）token 写回 localStorage，避免污染登录态判断
+    // 兼容期凭据在 localStorage.auth_token + HttpOnly cookie；不要把空 token 写回
     const url = `/script-writer?user_id=${encodeURIComponent(userId)}`;
 
     // 打开新窗口
