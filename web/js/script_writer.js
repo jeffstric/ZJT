@@ -18,6 +18,14 @@
         // auth_token 从 localStorage 读取，不再从 URL 获取，避免敏感信息暴露
         const AUTH_TOKEN = localStorage.getItem('auth_token') || '';
 
+        // 纯转义走 web/js/escape.js。必须用 const 包一层，禁止 function 声明：
+        // 非 module 脚本里 function escapeHtml 会挂到 window，覆盖权威实现并自递归爆栈。
+        const escapeHtmlShared = window.escapeHtml;
+        const escapeHtml = function (text) {
+            return escapeHtmlShared(text).replace(/\n/g, '<br>');
+        };
+        const escapeHtmlAttr = window.escapeHtmlAttr;
+
         // 角度常量类 - 统一管理多角度图片的角度定义
         const AngleKey = {
             RIGHT_90: 'right',
@@ -104,11 +112,11 @@
         }
 
         function checkTokenExpired(data, response) {
-            if (data & (data.token_expired || data.error_code === 'TOKEN_EXPIRED')) {
+            if (data && (data.token_expired || data.error_code === 'TOKEN_EXPIRED')) {
                 handleTokenExpired();
                 return true;
             }
-            if (response & response.status === 401) {
+            if (response && response.status === 401) {
                 handleTokenExpired();
                 return true;
             }
@@ -252,7 +260,7 @@
                 }
 
                 // 扫描并翻译所有 data-i18n 属性的 DOM 元素
-                if (window.ZJTi18nDOM & window.ZJTi18nDOM.scanDOM) {
+                if (window.ZJTi18nDOM && window.ZJTi18nDOM.scanDOM) {
                     window.ZJTi18nDOM.scanDOM(document);
                 }
                 // 初始化语言切换器
@@ -281,7 +289,7 @@
             try {
                 const editionResp = await fetch('/api/edition');
                 const editionResult = await editionResp.json();
-                if (editionResult.code === 0 & editionResult.data) {
+                if (editionResult.code === 0 && editionResult.data) {
                     isCommunityEdition = editionResult.data.mode === 'community';
                 }
             } catch (e) {
@@ -342,7 +350,7 @@
                 });
 
                 messageInput.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter' & !e.shiftKey) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         sendMessage();
                     }
@@ -372,7 +380,7 @@
             } catch (error) {
                 // 快速刷新时 fetch 会被页面导航取消，抛出 TypeError: Failed to fetch
                 // 这是正常行为，不需要创建新会话或做其他处理
-                if (error.name === 'AbortError' || (error.message & error.message.includes('Failed to fetch'))) {
+                if (error.name === 'AbortError' || (error.message && error.message.includes('Failed to fetch'))) {
                     console.log('[初始化] 页面导航取消了正在进行的请求，忽略此次初始化');
                 } else {
                     console.error('[初始化] 核心初始化流程出错:', error);
@@ -407,7 +415,7 @@
                     return;
                 }
                 
-                if (data.success & data.history & data.history.length > 0) {
+                if (data.success && data.history && data.history.length > 0) {
                     console.log(`加载历史消息: ${data.history.length} 条`);
                     
                     // 显示历史消息
@@ -427,7 +435,7 @@
                             const content = msg.content;
                             if (typeof content === 'object') {
                                 // 检查是否是 ask_user 工具的结果
-                                if (content.name === 'ask_user' & content.content) {
+                                if (content.name === 'ask_user' && content.content) {
                                     // 尝试解析 content
                                     let result;
                                     try {
@@ -460,8 +468,14 @@
                             const vContent = msg.content;
                             const desc = vContent.description || '';
                             const options = vContent.options || [];
+                            const vStatus = msg.verification_status || vContent.status || '';
+                            const expired = vStatus === 'cancelled' || vStatus === 'timeout';
+                            const vId = vContent.verification_id || '';
+                            const vIdAttr = vId && window.escapeHtmlAttr
+                                ? ` data-verification-id="${window.escapeHtmlAttr(vId)}"`
+                                : '';
 
-                            let vHtml = `<div class="verification-question history-mode">`;
+                            let vHtml = `<div class="verification-question history-mode${expired ? ' is-expired' : ''}"${vIdAttr}>`;
                             vHtml += `<strong class="verification-title">${escapeHtml(vContent.title || (window.t ? window.t('ai_question') : 'AI 提问'))}</strong>`;
                             vHtml += `<p class="verification-description">${escapeHtml(desc)}</p>`;
                             if (options.length > 0) {
@@ -470,6 +484,9 @@
                                     vHtml += `<span class="option-btn">${escapeHtml(opt)}</span>`;
                                 });
                                 vHtml += `</div>`;
+                            }
+                            if (expired) {
+                                vHtml += `<p class="verification-expired-badge">${escapeHtml(window.t ? window.t('verification_expired_hint') : '提问已超时，选项已失效')}</p>`;
                             }
                             vHtml += `</div>`;
                             addMessage('assistant', vHtml);
@@ -482,13 +499,13 @@
 
                         if (typeof content === 'object') {
                             // 检查是否包含函数调用
-                            if (content.tool_calls & Array.isArray(content.tool_calls)) {
+                            if (content.tool_calls && Array.isArray(content.tool_calls)) {
                                 hasToolCalls = true;
                                 // 检查是否有 ask_user 调用
                                 const hasAskUser = content.tool_calls.some(tc => tc.function?.name === 'ask_user');
 
                                 // 如果只有函数调用，没有文本内容，显示图标
-                                if (!content.text & content.tool_calls.length > 0) {
+                                if (!content.text && content.tool_calls.length > 0) {
                                     const icon = hasAskUser ? '❓' : '🔧';
                                     const desc = hasAskUser ? '提出了一个问题' : `执行了 ${content.tool_calls.length} 个操作`;
                                     content = `<span class="tool-call-icon" title="调用了 ${content.tool_calls.length} 个工具">${icon} ${desc}</span>`;
@@ -544,7 +561,7 @@
          */
         function syncSendBtnLayout() {
             const input = document.getElementById('message-input');
-            const container = input & input.closest
+            const container = input && input.closest
                 ? input.closest('.input-container')
                 : document.querySelector('.input-container');
             if (!input || !container) return;
@@ -565,14 +582,14 @@
                 input.disabled = false;
             }
             // 仅当当前没有进行中的任务/验证时恢复发送按钮，避免打断流式回复
-            if (sendBtn & !isProcessing & !pendingVerificationId) {
+            if (sendBtn && !isProcessing && !pendingVerificationId) {
                 sendBtn.disabled = false;
                 sendBtn.classList.remove('sending');
             }
             syncSendBtnLayout();
             // 窄屏：输入区应始终在聊天列底部；极端布局下再 scrollIntoView 兜底
             const inputSection = document.querySelector('.input-section');
-            if (inputSection & typeof inputSection.scrollIntoView === 'function') {
+            if (inputSection && typeof inputSection.scrollIntoView === 'function') {
                 try {
                     inputSection.scrollIntoView({ block: 'end', behavior: 'instant' });
                 } catch (_) {
@@ -597,7 +614,7 @@
                     return;
                 }
                 
-                if (data.success & data.sessions & data.sessions.length > 0) {
+                if (data.success && data.sessions && data.sessions.length > 0) {
                     // 找到活跃会话，复用它
                     const latestSession = data.sessions[0];
                     sessionId = latestSession.session_id;
@@ -625,7 +642,7 @@
             } catch (error) {
                 // 快速刷新时 fetch 会被页面导航取消，抛出 TypeError: Failed to fetch
                 // 这种情况下不应该创建新会话，直接向上抛出让外层 try-catch 处理
-                if (error.name === 'AbortError' || (error.message & error.message.includes('Failed to fetch'))) {
+                if (error.name === 'AbortError' || (error.message && error.message.includes('Failed to fetch'))) {
                     console.log('[初始化] 会话初始化请求被页面导航取消，跳过');
                     return; // 不创建新会话
                 }
@@ -670,8 +687,8 @@
                     }
 
                     // 显示差异文件警告
-                    const hasSkippedFiles = data.skipped_files & data.skipped_files.length > 0;
-                    const hasLocalOnlyFiles = data.local_only_files & data.local_only_files.length > 0;
+                    const hasSkippedFiles = data.skipped_files && data.skipped_files.length > 0;
+                    const hasLocalOnlyFiles = data.local_only_files && data.local_only_files.length > 0;
                     
                     if (hasSkippedFiles || hasLocalOnlyFiles) {
                         let warningMsg = window.t ? window.t('alert_file_diff_warning') : '⚠️ 检测到本地文件与数据库存在差异：\n\n';
@@ -1023,7 +1040,7 @@
                     console.error('[自动提交] 提交出错:', error);
                 } finally {
                     // 无论成功失败，只要开关仍然开启，继续调度下一次
-                    if (switchEl & switchEl.checked) {
+                    if (switchEl && switchEl.checked) {
                         scheduleNextSubmit();
                     }
                 }
@@ -1280,7 +1297,7 @@
                 // 保持 isProcessing = true，Expert 仍在处理中
                 await submitVerificationAnswer(message, { fromInput });
                 // 提交失败时恢复发送按钮，便于用户重试
-                if (sendBtn & pendingVerificationId) {
+                if (sendBtn && pendingVerificationId) {
                     sendBtn.disabled = false;
                     sendBtn.classList.remove('sending');
                 }
@@ -1379,7 +1396,7 @@
                 const imageModelName = imageModelSelector?.options?.[imageModelSelector.selectedIndex]?.dataset?.conciseName
                     || imageModelSelector?.options?.[imageModelSelector.selectedIndex]?.textContent || '';
                 const imagePreferences = {};
-                if (imageModelTaskId & !Number.isNaN(imageModelTaskId)) {
+                if (imageModelTaskId && !Number.isNaN(imageModelTaskId)) {
                     imagePreferences.task_id = imageModelTaskId;
                 }
                 if (imageModelName) {
@@ -1394,7 +1411,7 @@
                     },
                     body: JSON.stringify({
                         message,
-                        auth_token: AUTH_TOKEN,
+                        ...(AUTH_TOKEN ? { auth_token: AUTH_TOKEN } : {}),
                         model: selector?.value || '',
                         model_id: modelId,
                         vendor_id: vendorId ? parseInt(vendorId) : 1,
@@ -1470,7 +1487,7 @@
                             updateStatus(window.t ? window.t('status_executing', {step: data.step || ''}) : `执行中: ${data.step || ''}`);
                         } else if (data.type === 'tool_call') {
                             // 实时显示工具调用
-                            if (data.tool_names & data.tool_names.length > 0) {
+                            if (data.tool_names && data.tool_names.length > 0) {
                                 showToolCalls(data.tool_names);
                                 markGeneratingOnImageTools(data.tool_names);
                             }
@@ -1521,24 +1538,7 @@
                             handleHumanVerification(verification);
                         } else if (data.type === 'verification_timeout') {
                             console.log('[SSE] Received verification_timeout:', data);
-                            if (pendingVerificationId === data.verification_id) {
-                                pendingVerificationId = null;
-                                pendingVerificationData = null;
-                                const input = document.getElementById('message-input');
-                                if (input) {
-                                    input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
-                                }
-                                // 超时后需允许用户重新发送，恢复发送按钮与处理状态
-                                isProcessing = false;
-                                const sendBtn = document.getElementById('send-btn');
-                                if (sendBtn) {
-                                    sendBtn.disabled = false;
-                                    sendBtn.classList.remove('sending');
-                                }
-                                clearAllImageGenerating();
-                                schedulePendingDrain();
-                            }
-                            showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
+                            handleVerificationTimeout(data.verification_id);
                         } else if (data.type === 'status') {
                             if (data.status) updateStatus(data.status);
                         }
@@ -1606,11 +1606,7 @@
             isProcessing = false;
             pendingVerificationId = null;
             pendingVerificationData = null;
-            const sendBtn = document.getElementById('send-btn');
-            if (sendBtn) {
-                sendBtn.disabled = false;
-                sendBtn.classList.remove('sending');
-            }
+            restoreSendButtonIdle();
             updateStatus(window.t ? window.t('status_ready') : '就绪');
             // 终态兜底：清除图片生成中标识 + 尝试排空排队消息（幂等）
             clearAllImageGenerating();
@@ -1653,7 +1649,7 @@
                     } else if (data.type === 'progress') {
                         updateStatus(window.t ? window.t('status_executing', {step: data.step || ''}) : `执行中: ${data.step || ''}`);
                     } else if (data.type === 'tool_call') {
-                        if (data.tool_names & data.tool_names.length > 0) {
+                        if (data.tool_names && data.tool_names.length > 0) {
                             showToolCalls(data.tool_names);
                             markGeneratingOnImageTools(data.tool_names);
                         }
@@ -1680,24 +1676,7 @@
                         const verification = data.verification || {};
                         handleHumanVerification(verification);
                     } else if (data.type === 'verification_timeout') {
-                        if (pendingVerificationId === data.verification_id) {
-                            pendingVerificationId = null;
-                            pendingVerificationData = null;
-                            const input = document.getElementById('message-input');
-                            if (input) {
-                                input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
-                            }
-                            // 超时后需允许用户重新发送，恢复发送按钮与处理状态
-                            isProcessing = false;
-                            const sendBtn = document.getElementById('send-btn');
-                            if (sendBtn) {
-                                sendBtn.disabled = false;
-                                sendBtn.classList.remove('sending');
-                            }
-                            clearAllImageGenerating();
-                            schedulePendingDrain();
-                        }
-                        showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
+                        handleVerificationTimeout(data.verification_id);
                     } else if (data.type === 'status') {
                         if (data.status) updateStatus(data.status);
                     }
@@ -1746,7 +1725,7 @@
                 marked.setOptions({
                     renderer: renderer,
                     highlight: function(code, lang) {
-                        if (typeof hljs !== 'undefined' & lang & hljs.getLanguage(lang)) {
+                        if (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang)) {
                             try {
                                 return hljs.highlight(code, { language: lang }).value;
                             } catch (err) {}
@@ -1768,7 +1747,7 @@
         // 旧的正则版 sanitizeHtml 存在多处绕过（无引号 javascript:、实体编码、
         // "/" 属性分隔绕过 on* 移除等），已删除，勿再恢复。
         function renderMarkdown(content) {
-            if (typeof marked !== 'undefined' & typeof window.secureSanitize === 'function' & typeof window.DOMPurify !== 'undefined') {
+            if (typeof marked !== 'undefined' && typeof window.secureSanitize === 'function' && typeof window.DOMPurify !== 'undefined') {
                 try {
                     return window.secureSanitize(marked.parse(content));
                 } catch (error) {
@@ -1885,6 +1864,67 @@
             }
         }
 
+        function restoreSendButtonIdle() {
+            const sendBtn = document.getElementById('send-btn');
+            if (sendBtn) {
+                sendBtn.disabled = false;
+                sendBtn.classList.remove('sending');
+            }
+        }
+
+        function findVerificationCard(verificationId) {
+            if (verificationId) {
+                const escaped = (window.CSS && typeof CSS.escape === 'function')
+                    ? CSS.escape(String(verificationId))
+                    : String(verificationId).replace(/["\\]/g, '\\$&');
+                const card = document.querySelector(`.verification-question[data-verification-id="${escaped}"]`);
+                if (card) return card;
+            }
+            const cards = document.querySelectorAll('.verification-question:not(.is-expired)');
+            return cards.length ? cards[cards.length - 1] : null;
+        }
+
+        function expireVerificationUI(verificationId) {
+            const card = findVerificationCard(verificationId);
+            if (!card) return;
+            card.classList.add('is-expired');
+            card.querySelectorAll('.option-btn').forEach((btn) => {
+                btn.disabled = true;
+                btn.setAttribute('aria-disabled', 'true');
+            });
+            if (!card.querySelector('.verification-expired-badge')) {
+                const badge = document.createElement('p');
+                badge.className = 'verification-expired-badge';
+                badge.textContent = window.t ? window.t('verification_expired_hint') : '提问已超时，选项已失效';
+                card.appendChild(badge);
+            }
+        }
+
+        function handleVerificationTimeout(verificationId) {
+            expireVerificationUI(verificationId || pendingVerificationId);
+            if (!pendingVerificationId || !verificationId || pendingVerificationId === verificationId) {
+                pendingVerificationId = null;
+                pendingVerificationData = null;
+                const input = document.getElementById('message-input');
+                if (input) {
+                    input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                }
+                isProcessing = false;
+                restoreSendButtonIdle();
+                clearAllImageGenerating();
+                schedulePendingDrain();
+                updateStatus(window.t ? window.t('status_ready') : '就绪');
+            }
+            showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
+        }
+
+        function isVerificationCardActive(card, verificationId) {
+            if (!pendingVerificationId) return false;
+            if (verificationId && pendingVerificationId !== verificationId) return false;
+            if (card && card.classList.contains('is-expired')) return false;
+            return true;
+        }
+
         function handleHumanVerification(verification) {
             // 隐藏 typing indicator
             hideTypingIndicator();
@@ -1899,22 +1939,26 @@
             // 显示验证问题
             const messageDiv = addMessage('assistant', '');
             const contentDiv = messageDiv.querySelector('.message-content');
+            const verificationIdAttr = window.escapeHtmlAttr
+                ? window.escapeHtmlAttr(verification.verification_id || '')
+                : String(verification.verification_id || '');
 
-            // 构造 HTML
-            let html = `<div class="verification-question">`;
+            // 构造 HTML（innerHTML 直写以保留 button；文案均已转义）
+            let html = `<div class="verification-question" data-verification-id="${verificationIdAttr}">`;
             html += `<strong class="verification-title">${escapeHtml(verification.title)}</strong>`;
             html += `<p class="verification-description">${escapeHtml(verification.description)}</p>`;
 
             // 如果有选项，显示选择按钮
-            if (verification.options & verification.options.length > 0) {
+            if (verification.options && verification.options.length > 0) {
+                html += `<p class="verification-click-hint">${escapeHtml(window.t ? window.t('verification_click_hint') : '请点击下方选项作答')}</p>`;
                 html += `<div class="verification-options">`;
                 verification.options.forEach((option, index) => {
                     const escapedOption = escapeHtml(option);
-                    html += `<button class="option-btn" data-option-index="${index}">`;
+                    html += `<button type="button" class="option-btn" data-option-index="${index}">`;
                     html += `${escapedOption}</button>`;
                 });
                 // 添加"其他"按钮
-                html += `<button class="option-btn option-other-btn" data-option-other="true">`;
+                html += `<button type="button" class="option-btn option-other-btn" data-option-other="true">`;
                 html += `${window.t ? window.t('btn_other') : '其他'}</button>`;
                 html += `</div>`;
             }
@@ -1927,26 +1971,27 @@
             const optionBtns = contentDiv.querySelectorAll('.option-btn');
             const input = document.getElementById('message-input');
             const sendBtn = document.getElementById('send-btn');
+            const card = contentDiv.querySelector('.verification-question');
 
             optionBtns.forEach(btn => {
                 btn.addEventListener('click', (e) => {
-                    const isOther = e.target.dataset.optionOther === 'true';
+                    const target = e.currentTarget;
+                    if (!isVerificationCardActive(card, verification.verification_id)) {
+                        return;
+                    }
+                    const isOther = target.dataset.optionOther === 'true';
 
                     if (isOther) {
                         // 点击"其他"按钮，焦点转移到下方的消息输入框
                         input.placeholder = window.t ? window.t('placeholder_custom_answer') : '请输入您的自定义答案...';
                         input.focus();
-                        // 等待自定义输入时保持发送按钮可用
-                        if (sendBtn) {
-                            sendBtn.disabled = false;
-                            sendBtn.classList.remove('sending');
-                        }
+                        restoreSendButtonIdle();
                         updateStatus('💬 ' + (window.t ? window.t('status_custom_answer') : '请在下方输入框中输入您的自定义答案'));
                         console.log('[VERIFICATION] 用户选择"其他"，等待自定义输入');
                     } else {
                         // 点击预设选项，直接提交（无需用户再输入）
                         // fromInput=false：不清理输入框草稿
-                        const index = e.target.dataset.optionIndex;
+                        const index = target.dataset.optionIndex;
                         const option = verification.options[index];
                         if (option) {
                             console.log('[VERIFICATION] 用户选择选项:', option);
@@ -1956,11 +2001,9 @@
                                 sendBtn.classList.add('sending');
                             }
                             submitVerificationAnswer(option, { fromInput: false }).finally(() => {
-                                // 失败仍 pending 时 submitVerificationAnswer 外层/调用方会恢复；
-                                // 成功则保持 disabled，等待 SSE 继续；失败由下方 pending 恢复兜底
-                                if (sendBtn & pendingVerificationId) {
-                                    sendBtn.disabled = false;
-                                    sendBtn.classList.remove('sending');
+                                // 失败仍 pending：恢复以便重试；成功保持 sending 等 AI 继续
+                                if (pendingVerificationId) {
+                                    restoreSendButtonIdle();
                                 }
                             });
                         }
@@ -1972,14 +2015,11 @@
             // ask_user 出现后若不恢复，按钮会一直半透明，选中输入框后看起来像“消失”
             if (input) {
                 input.disabled = false;
-                input.placeholder = verification.options & verification.options.length > 0
+                input.placeholder = verification.options && verification.options.length > 0
                     ? (window.t ? window.t('placeholder_select_or_custom') : '点击上方选项或选择"其他"输入自定义答案')
                     : (window.t ? window.t('placeholder_enter_answer') : '请输入您的回答...');
             }
-            if (sendBtn) {
-                sendBtn.disabled = false;
-                sendBtn.classList.remove('sending');
-            }
+            restoreSendButtonIdle();
 
             updateStatus(window.t ? window.t('status_waiting_answer') : '等待您的回答...');
         }
@@ -1994,8 +2034,11 @@
         async function submitVerificationAnswer(userInput, { fromInput = false } = {}) {
             if (!pendingVerificationId) {
                 console.error('No pending verification');
+                restoreSendButtonIdle();
                 return;
             }
+
+            const submittedVerificationId = pendingVerificationId;
 
             try {
                 const response = await axios.post(
@@ -2014,6 +2057,14 @@
 
                 if (response.data.success) {
                     console.log('[VERIFICATION] Answer submitted successfully');
+
+                    const answeredCard = findVerificationCard(submittedVerificationId);
+                    if (answeredCard) {
+                        answeredCard.classList.add('is-answered');
+                        answeredCard.querySelectorAll('.option-btn').forEach((btn) => {
+                            btn.disabled = true;
+                        });
+                    }
 
                     // 清除验证状态
                     pendingVerificationId = null;
@@ -2045,7 +2096,7 @@
                 const input = document.getElementById('message-input');
 
                 // 401: token 过期
-                if (error.response & error.response.status === 401) {
+                if (error.response && error.response.status === 401) {
                     pendingVerificationId = null;
                     pendingVerificationData = null;
                     handleTokenExpired();
@@ -2053,9 +2104,10 @@
                 }
 
                 // 400 算力不足：清除验证状态，提醒用户充值（保留输入框内容便于后续使用）
-                if (error.response & error.response.status === 400 & error.response.data?.error_code === 'INSUFFICIENT_POWER') {
+                if (error.response && error.response.status === 400 && error.response.data?.error_code === 'INSUFFICIENT_POWER') {
                     pendingVerificationId = null;
                     pendingVerificationData = null;
+                    restoreSendButtonIdle();
                     if (input) {
                         input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
                     }
@@ -2064,9 +2116,12 @@
                 }
 
                 // 如果是 404/410，说明验证已过期（超时/已完成/已取消），清除状态让用户继续对话
-                if (error.response & (error.response.status === 404 || error.response.status === 410)) {
+                if (error.response && (error.response.status === 404 || error.response.status === 410)) {
+                    expireVerificationUI(submittedVerificationId);
                     pendingVerificationId = null;
                     pendingVerificationData = null;
+                    isProcessing = false;
+                    restoreSendButtonIdle();
                     if (input) {
                         input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
                     }
@@ -2109,7 +2164,7 @@
             try {
                 const res = await fetch('/api/system/server-config');
                 const data = await res.json();
-                if (data & data.code === 0 & data.data) {
+                if (data && data.code === 0 && data.data) {
                     if (data.data.show_feedback_qr === false) enabled = false;
                     if (data.data.feedback_qr_url) qrUrl = data.data.feedback_qr_url;
                 }
@@ -2126,7 +2181,7 @@
                 }
                 return;
             }
-            if (img & qrUrl) img.setAttribute('src', qrUrl);
+            if (img && qrUrl) img.setAttribute('src', qrUrl);
         }
 
         function showError(message) {
@@ -2183,7 +2238,7 @@
                 }
                 
                 const powerValue = document.getElementById('power-value');
-                if (data.success & powerValue) {
+                if (data.success && powerValue) {
                     const power = data.data?.computing_power || 0;
                     powerValue.textContent = power.toLocaleString();
                     
@@ -2216,7 +2271,7 @@
             try {
                 const response = await fetch('/api/vendors');
                 const data = await response.json();
-                if (data.success & data.vendors) {
+                if (data.success && data.vendors) {
                     data.vendors.forEach(v => {
                         const key = v.vendor_name.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
                         LLMVendor[key] = v.vendor_name;
@@ -2285,7 +2340,7 @@
                 // 计算 input_token_threshold 倍数（threshold 越小越贵，以最大的 threshold 为基准 x1）
                 const validThresholds = data.models
                     .map(m => m.input_token_threshold)
-                    .filter(v => v & v > 0);
+                    .filter(v => v && v > 0);
                 const maxThreshold = validThresholds.length > 0 ? Math.max(...validThresholds) : null;
 
                 // 调试日志：输出所有模型的费用信息
@@ -2294,7 +2349,7 @@
                 console.log('  最大 threshold (基准):', maxThreshold);
                 data.models.forEach(m => {
                     const threshold = m.input_token_threshold;
-                    const multiplier = maxThreshold & threshold & threshold > 0
+                    const multiplier = maxThreshold && threshold && threshold > 0
                         ? (maxThreshold / threshold).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
                         : '不可用';
                     console.log(`  ${m.model_name} (vendor: ${m.vendor_name}): threshold=${threshold}, multiplier=${multiplier}x`);
@@ -2318,7 +2373,7 @@
 
                     let displayName = modelName;
                     // 改进费用倍率显示：确保有效数据时必须显示倍率
-                    if (maxThreshold & model.input_token_threshold & model.input_token_threshold > 0) {
+                    if (maxThreshold && model.input_token_threshold && model.input_token_threshold > 0) {
                         const multiplier = (maxThreshold / model.input_token_threshold)
                             .toFixed(2)
                             .replace(/\.00$/, '')
@@ -2352,7 +2407,7 @@
                         const option = createModelOption(item.defaultRoute || item.routes[0]);
                         const badge = item.track === 'value' ? '性价比' : '效果';
                         option.textContent = `${item.name}（${badge}）`;
-                        if (!option.disabled & !firstEnabledModel) firstEnabledModel = option;
+                        if (!option.disabled && !firstEnabledModel) firstEnabledModel = option;
                         recommendedGroup.appendChild(option);
                     });
                     if (recommendedGroup.children.length) selector.appendChild(recommendedGroup);
@@ -2369,7 +2424,7 @@
                         optGroup.label = family;
                         familyGroups[family].forEach((item) => {
                             const option = createModelOption(item.defaultRoute || item.routes[0]);
-                            if (!option.disabled & !firstEnabledModel) firstEnabledModel = option;
+                            if (!option.disabled && !firstEnabledModel) firstEnabledModel = option;
                             optGroup.appendChild(option);
                         });
                         selector.appendChild(optGroup);
@@ -2381,7 +2436,7 @@
                         item.routes.forEach((route) => {
                             if (!def) return;
                             if (String(route.vendor_id) === String(def.vendor_id)
-                                & String(route.model_id || route.id) === String(def.model_id || def.id)) {
+                                && String(route.model_id || route.id) === String(def.model_id || def.id)) {
                                 return;
                             }
                             extraRoutes.push(route);
@@ -2404,11 +2459,11 @@
                             const optGroup = document.createElement('optgroup');
                             const icon = vendorIcons[group.vendorName.toLowerCase()] || '📦';
                             const isOllamaGroup = group.vendorName.toLowerCase() === 'ollama';
-                            const suffix = (isOllamaGroup & isCommunityEdition) ? '（限时免费）' : '';
+                            const suffix = (isOllamaGroup && isCommunityEdition) ? '（限时免费）' : '';
                             optGroup.label = `${icon} ${group.vendorName}${suffix}`;
                             group.models.forEach(model => {
                                 const option = createModelOption(model);
-                                if (!option.disabled & !firstEnabledModel) {
+                                if (!option.disabled && !firstEnabledModel) {
                                     firstEnabledModel = option;
                                 }
                                 optGroup.appendChild(option);
@@ -2419,20 +2474,20 @@
                 }
 
                 let defaultModel = null;
-                if (catalogApi & collapsed.length) {
+                if (catalogApi && collapsed.length) {
                     const valueItem = catalogApi.findCollapsedByTrack(collapsed, 'value');
-                    if (valueItem & valueItem.defaultRoute) {
+                    if (valueItem && valueItem.defaultRoute) {
                         const wantedVendor = String(valueItem.defaultRoute.vendor_id || '');
                         const wantedName = valueItem.canonical;
                         defaultModel = Array.from(selector.querySelectorAll('option')).find((option) => (
                             !option.disabled
-                            & option.value
-                            & option.value.includes(wantedName)
-                            & String(option.dataset.vendorId || '') === wantedVendor
+                            && option.value
+                            && option.value.includes(wantedName)
+                            && String(option.dataset.vendorId || '') === wantedVendor
                         )) || null;
                     }
                 }
-                if (!defaultModel & firstEnabledModel) {
+                if (!defaultModel && firstEnabledModel) {
                     defaultModel = firstEnabledModel;
                     console.log(`[模型选择] 未找到推荐模型，选择第一个启用的模型: ${firstEnabledModel.value}`);
                 }
@@ -2458,8 +2513,8 @@
                         if (savedModelId) {
                             for (let i = 0; i < options.length; i++) {
                                 if (!options[i].disabled
-                                    & options[i].dataset.modelId === String(savedModelId)
-                                    & (!savedVendorId || options[i].dataset.vendorId === String(savedVendorId))) {
+                                    && options[i].dataset.modelId === String(savedModelId)
+                                    && (!savedVendorId || options[i].dataset.vendorId === String(savedVendorId))) {
                                     selector.selectedIndex = i;
                                     console.log(`[模型记忆] 自动选中上次模型: ${savedModelName} (model_id: ${savedModelId})`);
                                     matched = true;
@@ -2467,10 +2522,10 @@
                                 }
                             }
                         }
-                        if (!matched & savedVendorId) {
+                        if (!matched && savedVendorId) {
                             for (let i = 0; i < options.length; i++) {
-                                if (options[i].value === savedModelName & !options[i].disabled
-                                    & options[i].dataset.vendorId === String(savedVendorId)) {
+                                if (options[i].value === savedModelName && !options[i].disabled
+                                    && options[i].dataset.vendorId === String(savedVendorId)) {
                                     selector.selectedIndex = i;
                                     console.log(`[模型记忆] 自动选中上次模型: ${savedModelName} (vendor_id: ${savedVendorId})`);
                                     matched = true;
@@ -2480,7 +2535,7 @@
                         }
                         if (!matched) {
                             for (let i = 0; i < options.length; i++) {
-                                if (options[i].value === savedModelName & !options[i].disabled) {
+                                if (options[i].value === savedModelName && !options[i].disabled) {
                                     selector.selectedIndex = i;
                                     console.log(`[模型记忆] 自动选中上次模型(回退匹配): ${savedModelName}`);
                                     matched = true;
@@ -2492,7 +2547,7 @@
                     } catch (e) {
                         const options = selector.querySelectorAll('option');
                         for (let i = 0; i < options.length; i++) {
-                            if (options[i].value === savedModelRaw & !options[i].disabled) {
+                            if (options[i].value === savedModelRaw && !options[i].disabled) {
                                 selector.selectedIndex = i;
                                 console.log(`[模型记忆] 自动选中上次模型(旧格式): ${savedModelRaw}`);
                                 appliedPreferred = true;
@@ -2503,13 +2558,13 @@
                 }
                 if (!appliedPreferred) {
                     const worldLlm = worldDefaultModels.llm;
-                    if (worldLlm & worldLlm.model) {
+                    if (worldLlm && worldLlm.model) {
                         const options = selector.querySelectorAll('option');
                         for (let i = 0; i < options.length; i++) {
                             const opt = options[i];
                             if (opt.disabled || opt.value !== worldLlm.model) continue;
-                            if (worldLlm.vendor_id != null & worldLlm.vendor_id !== '' & opt.dataset.vendorId
-                                & String(opt.dataset.vendorId) !== String(worldLlm.vendor_id)) {
+                            if (worldLlm.vendor_id != null && worldLlm.vendor_id !== '' && opt.dataset.vendorId
+                                && String(opt.dataset.vendorId) !== String(worldLlm.vendor_id)) {
                                 continue;
                             }
                             selector.selectedIndex = i;
@@ -2543,7 +2598,7 @@
 
             const selectedOption = selector.options[selector.selectedIndex];
             // 当前选中项可用，清除红色样式
-            if (selectedOption & !selectedOption.disabled) {
+            if (selectedOption && !selectedOption.disabled) {
                 selector.style.borderColor = '';
                 selector.title = '选择 AI 模型';
                 updateModelTooltip();
@@ -2553,7 +2608,7 @@
             // 当前选中项被禁用，尝试切换到第一个可用模型
             let firstEnabled = null;
             for (let i = 0; i < selector.options.length; i++) {
-                if (!selector.options[i].disabled & selector.options[i].value) {
+                if (!selector.options[i].disabled && selector.options[i].value) {
                     firstEnabled = i;
                     break;
                 }
@@ -2612,14 +2667,14 @@
                 const d = worldDefaultModels.llm;
                 if (!d || !d.model) return false;
                 if (option.value !== d.model) return false;
-                if (d.vendor_id != null & d.vendor_id !== '' & option.dataset.vendorId) {
+                if (d.vendor_id != null && d.vendor_id !== '' && option.dataset.vendorId) {
                     return String(option.dataset.vendorId) === String(d.vendor_id);
                 }
                 return true;
             }
             if (scope === 'image') {
                 const d = worldDefaultModels.image;
-                return !!(d & d.task_id != null & String(option.value) === String(d.task_id));
+                return !!(d && d.task_id != null && String(option.value) === String(d.task_id));
             }
             return false;
         }
@@ -2646,7 +2701,7 @@
             if (!window.t) return fallback;
             const translated = params ? window.t(key, params) : window.t(key);
             if (translated == null || translated === '' || translated === key) {
-                if (params & typeof fallback === 'string') {
+                if (params && typeof fallback === 'string') {
                     return fallback.replace(/\{(\w+)\}/g, (_, k) => (
                         params[k] != null ? String(params[k]) : ''
                     ));
@@ -2718,7 +2773,7 @@
             btn.type = 'button';
             btn.className = 'set-default-model-btn';
             const already = isCurrentSelectionWorldDefault(selector);
-            const hasValue = !!(selector.value & !selector.options[selector.selectedIndex]?.disabled);
+            const hasValue = !!(selector.value && !selector.options[selector.selectedIndex]?.disabled);
             if (scope === 'llm') {
                 btn.textContent = already
                     ? tOr('already_default', '✓ 已是默认')
@@ -2754,7 +2809,7 @@
         function openCustomModelSelectMenu(selector) {
             const wrapper = selector.closest('.model-select-wrapper');
             if (!wrapper) return;
-            if (activeCustomModelSelect & activeCustomModelSelect.selector === selector) {
+            if (activeCustomModelSelect && activeCustomModelSelect.selector === selector) {
                 closeCustomModelSelectMenu();
                 return;
             }
@@ -2922,7 +2977,7 @@
             const isDeepSeek = vendorName === 'deepseek' ||
                 modelValue.includes('deepseek') ||
                 conciseName.includes('deepseek') ||
-                (LLMVendor.DEEPSEEK & vendorName === LLMVendor.DEEPSEEK.toLowerCase());
+                (LLMVendor.DEEPSEEK && vendorName === LLMVendor.DEEPSEEK.toLowerCase());
 
             console.log('[思考模式] restoreThinkingState:', {
                 savedStateRaw,
@@ -2939,13 +2994,13 @@
                     const state = JSON.parse(savedStateRaw);
                     // 对于 DeepSeek 模型，如果用户没有明确设置过不开启思考模式，默认开启
                     // 只有当 state.explicitlyDisabled 为 true 时，才保持关闭
-                    if (isDeepSeek & !state.explicitlyDisabled) {
+                    if (isDeepSeek && !state.explicitlyDisabled) {
                         toggle.checked = true;
                         console.log('[思考模式] DeepSeek 模型默认开启思考模式');
                     } else {
                         toggle.checked = state.enabled || false;
                     }
-                    if (effortSelect & state.effort) {
+                    if (effortSelect && state.effort) {
                         effortSelect.value = state.effort;
                     }
                     updateThinkingEffortVisibility();
@@ -2983,7 +3038,7 @@
             const isDoubao = vendorName === 'volcengine' || (selectedOption?.value || '').startsWith('doubao');
 
             // 只在开关打开且是 Doubao 模型时显示 effort 选择
-            effortSelect.style.display = (toggle.checked & isDoubao) ? 'inline-block' : 'none';
+            effortSelect.style.display = (toggle.checked && isDoubao) ? 'inline-block' : 'none';
         }
 
         function onThinkingEffortChange() {
@@ -3034,7 +3089,7 @@
             const saved = localStorage.getItem('lastInterventionLevel');
             const selector = document.getElementById('intervention-level-selector');
             if (!selector) return;
-            if (saved & ['balanced', 'concise', 'detailed'].includes(saved)) {
+            if (saved && ['balanced', 'concise', 'detailed'].includes(saved)) {
                 selector.value = saved;
             } else {
                 selector.value = 'balanced';
@@ -3086,7 +3141,7 @@
 
         function toggleModelSettingsPanel() {
             const card = document.getElementById('model-selector-card');
-            if (card & card.classList.contains('compact-open')) {
+            if (card && card.classList.contains('compact-open')) {
                 closeModelSettingsPanel();
             } else {
                 openModelSettingsPanel();
@@ -3135,8 +3190,8 @@
             const vendorId = selectedOption?.dataset?.vendorId || '';
             localStorage.setItem('lastSelectedLlmModel', JSON.stringify({
                 model,
-                model_id: modelId !== '' & modelId !== undefined & !isNaN(Number(modelId)) ? Number(modelId) : null,
-                vendor_id: vendorId !== '' & !isNaN(Number(vendorId)) ? Number(vendorId) : null,
+                model_id: modelId !== '' && modelId !== undefined && !isNaN(Number(modelId)) ? Number(modelId) : null,
+                vendor_id: vendorId !== '' && !isNaN(Number(vendorId)) ? Number(vendorId) : null,
             }));
 
             updateModelTooltip();
@@ -3186,7 +3241,7 @@
                     showSuccess(window.t ? window.t('success_switched_to', {name: selector.options[selector.selectedIndex].text}) : `已切换到 ${selector.options[selector.selectedIndex].text}`);
                 } else {
                     // 如果返回了有效模型列表，显示更详细的错误信息
-                    if (data.valid_models & data.valid_models.length > 0) {
+                    if (data.valid_models && data.valid_models.length > 0) {
                         showError(window.t ? window.t('error_switch_model_detail', {error: data.error, models: data.valid_models.join(', ')}) : `切换模型失败: ${data.error}
 可用模型: ${data.valid_models.join(', ')}`);
                     } else {
@@ -3204,7 +3259,7 @@
                     headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
                 });
                 const data = await response.json();
-                if (data.success & data.data) {
+                if (data.success && data.data) {
                     driverStatus = data.data.driver_status || {};
                 }
             } catch (error) {
@@ -3259,7 +3314,7 @@
                 const valueTask = catalogApi
                     ? catalogApi.findTaskByTrack(ordered, 'image.script_writer', imageModelCatalog, 'value')
                     : null;
-                if (valueTask & valueTask.task_id != null) defaultTaskId = valueTask.task_id;
+                if (valueTask && valueTask.task_id != null) defaultTaskId = valueTask.task_id;
 
                 ordered.forEach((model) => {
                     const option = document.createElement('option');
@@ -3332,10 +3387,10 @@
                     { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
                 );
                 const currentData = await currentResp.json();
-                if (currentData.success & currentData.scope === 'session' & currentData.task_id != null) {
+                if (currentData.success && currentData.scope === 'session' && currentData.task_id != null) {
                     const savedId = String(currentData.task_id);
                     const matchOption = Array.from(selector.options).find(
-                        (opt) => opt.value === savedId & !opt.disabled
+                        (opt) => opt.value === savedId && !opt.disabled
                     );
                     if (matchOption) {
                         selector.value = savedId;
@@ -3348,7 +3403,7 @@
                 const savedLocal = localStorage.getItem('lastSelectedImageModel');
                 if (savedLocal) {
                     const matchLocal = Array.from(selector.options).find(
-                        (opt) => opt.value === savedLocal & !opt.disabled
+                        (opt) => opt.value === savedLocal && !opt.disabled
                     );
                     if (matchLocal) {
                         selector.value = savedLocal;
@@ -3358,10 +3413,10 @@
                         return 'local';
                     }
                 }
-                if (currentData.success & currentData.task_id != null) {
+                if (currentData.success && currentData.task_id != null) {
                     const savedId = String(currentData.task_id);
                     const matchOption = Array.from(selector.options).find(
-                        (opt) => opt.value === savedId & !opt.disabled
+                        (opt) => opt.value === savedId && !opt.disabled
                     );
                     if (matchOption) {
                         selector.value = savedId;
@@ -3394,10 +3449,10 @@
                     { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
                 );
                 const data = await resp.json();
-                if (data.success & data.scope === 'session' & data.task_id != null) {
+                if (data.success && data.scope === 'session' && data.task_id != null) {
                     const savedId = String(data.task_id);
                     const matchOption = Array.from(selector.options).find(
-                        (opt) => opt.value === savedId & !opt.disabled
+                        (opt) => opt.value === savedId && !opt.disabled
                     );
                     if (matchOption) {
                         selector.value = savedId;
@@ -3421,7 +3476,7 @@
                 let firstAvailableOption = null;
 
                 for (const option of selector.options) {
-                    if (option.value & !option.disabled) {
+                    if (option.value && !option.disabled) {
                         if (!firstAvailableOption) {
                             firstAvailableOption = option;
                         }
@@ -3492,7 +3547,7 @@
                 ]);
                 const llmData = await llmResp.json().catch(() => ({}));
                 const imageData = await imageResp.json().catch(() => ({}));
-                if (llmData.success & llmData.default) {
+                if (llmData.success && llmData.default) {
                     worldDefaultModels.llm = {
                         model: llmData.default.model,
                         model_id: llmData.default.model_id,
@@ -3500,7 +3555,7 @@
                         name: llmData.default.name || llmData.default.model,
                     };
                 }
-                if (imageData.success & imageData.task_id != null) {
+                if (imageData.success && imageData.task_id != null) {
                     worldDefaultModels.image = {
                         task_id: imageData.task_id,
                         name: imageData.model_name || String(imageData.task_id),
@@ -3661,15 +3716,6 @@
             updateImageModelDisplay();
         }
 
-        // 纯转义已统一收敛到 web/js/escape.js（window.escapeHtml）。
-        // 此函数保留历史行为：在统一转义基础上把换行渲染为 <br>（调用点依赖该行为）。
-        function escapeHtml(text) {
-            return window.escapeHtml(text).replace(/\n/g, '<br>');
-        }
-
-        // HTML 属性转义统一收敛到 web/js/escape.js。
-        const escapeHtmlAttr = window.escapeHtmlAttr;
-
         function getScriptEpisodeNumber(file) {
             if (!file) return '';
             const direct = file.episode_number || file.json_data?.episode_number;
@@ -3698,7 +3744,7 @@
             const locCount = assetsStatus.location_image_count || 0;
             if (charCount === 0 || locCount === 0) {
                 let message = '';
-                if (charCount === 0 & locCount === 0) {
+                if (charCount === 0 && locCount === 0) {
                     message = window.t ? window.t('storyboard_entry_no_character_and_location_image') : '⚠️ 当前世界还没有角色参考图和场景参考图';
                 } else if (charCount === 0) {
                     message = window.t ? window.t('storyboard_entry_no_character_image') : '⚠️ 当前世界还没有角色参考图';
@@ -3730,7 +3776,7 @@
             // 新建按钮：世界标签页 / 已入库模式不显示
             const addBtn = document.getElementById('add-file-btn');
             if (addBtn) {
-                if (fileType === 'worlds' || (window.ScriptWriterLibrary & window.ScriptWriterLibrary.isLibrary())) {
+                if (fileType === 'worlds' || (window.ScriptWriterLibrary && window.ScriptWriterLibrary.isLibrary())) {
                     addBtn.style.display = 'none';
                 } else {
                     addBtn.style.display = 'flex';
@@ -3905,7 +3951,7 @@
                 };
 
                 xhr.onload = () => {
-                    if (xhr.status >= 200 & xhr.status < 300) {
+                    if (xhr.status >= 200 && xhr.status < 300) {
                         // 七牛 form 上传成功响应体：{"key":"...","hash":"..."}（取决于 token returnBody）
                         // key 以我们传入的为准
                         resolve(key);
@@ -4018,7 +4064,7 @@
             ['dragleave', 'drop'].forEach(eventName => {
                 dropZone.addEventListener(eventName, (e) => {
                     // dragleave 仅在真正离开 dropZone 时移除高亮，避免进入子元素时闪烁
-                    if (eventName === 'dragleave' & dropZone.contains(e.relatedTarget)) {
+                    if (eventName === 'dragleave' && dropZone.contains(e.relatedTarget)) {
                         return;
                     }
                     dropZone.classList.remove('drag-over');
@@ -4032,7 +4078,7 @@
         }
 
         async function loadFiles(fileType) {
-            if (window.ScriptWriterLibrary & window.ScriptWriterLibrary.isLibrary()) {
+            if (window.ScriptWriterLibrary && window.ScriptWriterLibrary.isLibrary()) {
                 return window.ScriptWriterLibrary.loadLibraryFiles(fileType);
             }
             const fileItemsContainer = document.getElementById('file-items-container');
@@ -4096,7 +4142,7 @@
                         if (['characters', 'locations', 'props'].includes(fileType)) {
                             // reference_image 在 json_data 对象里
                             const referenceImage = file.json_data?.reference_image || file.reference_image;
-                            const hasImage = referenceImage & referenceImage.trim() !== '';
+                            const hasImage = referenceImage && referenceImage.trim() !== '';
                             const iconClass = hasImage ? 'has-image' : 'no-image';
                             const iconTitle = hasImage ? '预览图片' : '暂无参考图';
                             imageIconHtml = `
@@ -4113,7 +4159,7 @@
                         // 角色显示音色播放按钮
                         if (fileType === 'characters') {
                             const defaultVoice = file.json_data?.default_voice || '';
-                            const hasVoice = defaultVoice & defaultVoice.trim() !== '';
+                            const hasVoice = defaultVoice && defaultVoice.trim() !== '';
                             const voiceClass = hasVoice ? 'has-voice' : 'no-voice';
                             const voiceTitle = hasVoice ? '播放音色' : '暂无音色';
                             const voiceDisabled = hasVoice ? '' : 'disabled';
@@ -4173,9 +4219,9 @@
                         }
 
                         // 剧本使用 display_name 展示，其他类型使用 name
-                        const displayName = (fileType === 'scripts' & file.display_name) ? file.display_name : file.name;
+                        const displayName = (fileType === 'scripts' && file.display_name) ? file.display_name : file.name;
                         // 剧本使用 file_name 作为 API 键，其他类型使用 name
-                        const fileKey = (fileType === 'scripts' & file.file_name) ? file.file_name : file.name;
+                        const fileKey = (fileType === 'scripts' && file.file_name) ? file.file_name : file.name;
 
                         fileItem.innerHTML = `
                             <div class="file-name">${escapeHtml(displayName)}</div>
@@ -4367,9 +4413,9 @@
             const pidStr = String(pid).trim();
             if (!pidStr) return null;
             // 纯数字：尝试在列表中用 id 反查 name（历史同步残留）
-            if (/^\d+$/.test(pidStr) & Array.isArray(allLocs)) {
+            if (/^\d+$/.test(pidStr) && Array.isArray(allLocs)) {
                 const byId = allLocs.find((l) => String(l.id) === pidStr || String(l.db_id) === pidStr);
-                if (byId & byId.name) return String(byId.name).trim();
+                if (byId && byId.name) return String(byId.name).trim();
             }
             // 非纯数字或反查失败：当作名称
             if (!/^\d+$/.test(pidStr)) return pidStr;
@@ -4385,7 +4431,7 @@
                 const data = await response.json();
                 const locs = data.locations || data.data?.data || [];
                 cachedLocationJsonList = locs.map((l) => {
-                    const jd = l.json_data & typeof l.json_data === 'object' ? l.json_data : l;
+                    const jd = l.json_data && typeof l.json_data === 'object' ? l.json_data : l;
                     return {
                         name: jd.name || l.name || '',
                         parent_name: jd.parent_name ?? null,
@@ -4412,7 +4458,7 @@
             const excludeName = (opts.excludeName || '').trim();
             const selectedParentName = (opts.selectedParentName || '').trim();
             const list = await fetchLocationJsonList();
-            const tops = list.filter((l) => isTopLevelLocation(l) & l.name !== excludeName);
+            const tops = list.filter((l) => isTopLevelLocation(l) && l.name !== excludeName);
 
             selectEl.innerHTML = '';
             const emptyOpt = document.createElement('option');
@@ -4424,14 +4470,14 @@
                 const opt = document.createElement('option');
                 opt.value = loc.name;
                 opt.textContent = loc.name;
-                if (selectedParentName & loc.name === selectedParentName) {
+                if (selectedParentName && loc.name === selectedParentName) {
                     opt.selected = true;
                 }
                 selectEl.appendChild(opt);
             });
 
             // 历史父级已非顶级或已删除：保留可见但禁用，避免静默丢失
-            if (selectedParentName & !tops.some((t) => t.name === selectedParentName)) {
+            if (selectedParentName && !tops.some((t) => t.name === selectedParentName)) {
                 const stale = document.createElement('option');
                 stale.value = selectedParentName;
                 stale.textContent = `${selectedParentName}（已非顶级或已删除，请重选）`;
@@ -4642,7 +4688,7 @@
             // 填充多服装参考图
             const multiImageList = document.getElementById('char-multi-image-list');
             multiImageList.innerHTML = '';
-            if (data.reference_images & Array.isArray(data.reference_images)) {
+            if (data.reference_images && Array.isArray(data.reference_images)) {
                 data.reference_images.forEach(img => {
                     addCharMultiImageItem(multiImageList, img.label || '服装', img.url, img.id);
                 });
@@ -4804,7 +4850,7 @@
             // 填充多角度参考图
             const multiImageList = document.getElementById('loc-multi-image-list');
             multiImageList.innerHTML = '';
-            if (data.reference_images & Array.isArray(data.reference_images)) {
+            if (data.reference_images && Array.isArray(data.reference_images)) {
                 data.reference_images.forEach(img => {
                     addLocMultiImageItem(multiImageList, img.label || img.angle || '正面', img.url, img.angle || 'front', img.id);
                 });
@@ -4813,7 +4859,7 @@
             // 如果切换到的场景不是正在生成的场景，清除生成状态
             const statusSpan = document.getElementById('generate-multi-angle-status');
             const btn = document.getElementById('generate-loc-multi-angle-btn');
-            if (generatingLocationName & generatingLocationName !== data.name) {
+            if (generatingLocationName && generatingLocationName !== data.name) {
                 if (statusSpan) statusSpan.textContent = '';
                 if (btn) {
                     btn.disabled = false;
@@ -4967,7 +5013,7 @@
                 item.onclick = () => selectPreviewImage(idx);
 
                 // 非主图且是场景类型，显示单独生成按钮
-                const showGenerateBtn = idx > 0 & previewImageFileType === 'locations';
+                const showGenerateBtn = idx > 0 && previewImageFileType === 'locations';
 
                 item.innerHTML = `
                     <img src="${escapeHtml(img.url)}" alt="${escapeHtml(img.label || '')}">
@@ -4979,7 +5025,7 @@
 
             // 显示/隐藏生成多角度按钮区域
             const generateSection = document.getElementById('preview-generate-section');
-            if (previewImageFileType === 'locations' & previewMainImage) {
+            if (previewImageFileType === 'locations' && previewMainImage) {
                 generateSection.style.display = 'block';
                 // 根据 runninghub 配置状态更新预览按钮
                 checkRunningHubForMultiAngle();
@@ -4996,7 +5042,7 @@
             // 显示/隐藏「设为当前形象图」恢复区（仅角色历史视图；恢复的是当前选中大图）
             const restoreSection = document.getElementById('preview-restore-section');
             if (restoreSection) {
-                restoreSection.style.display = previewViewingHistory & previewImageFileType === 'characters' ? 'block' : 'none';
+                restoreSection.style.display = previewViewingHistory && previewImageFileType === 'characters' ? 'block' : 'none';
             }
         }
 
@@ -5049,23 +5095,23 @@
                     }
 
                     // 主图
-                    if (jsonData.reference_image & jsonData.reference_image.trim() !== '') {
+                    if (jsonData.reference_image && jsonData.reference_image.trim() !== '') {
                         previewImages.push({ url: jsonData.reference_image, label: '主图' });
                     }
 
                     // 多角度/多服装参考图（场景和角色）
-                    if (fileType === 'locations' & jsonData.reference_images & Array.isArray(jsonData.reference_images)) {
+                    if (fileType === 'locations' && jsonData.reference_images && Array.isArray(jsonData.reference_images)) {
                         jsonData.reference_images.forEach(img => {
-                            if (img.url & img.url.trim() !== '') {
+                            if (img.url && img.url.trim() !== '') {
                                 previewImages.push({
                                     url: img.url,
                                     label: img.label || img.angle || '角度图'
                                 });
                             }
                         });
-                    } else if (fileType === 'characters' & jsonData.reference_images & Array.isArray(jsonData.reference_images)) {
+                    } else if (fileType === 'characters' && jsonData.reference_images && Array.isArray(jsonData.reference_images)) {
                         jsonData.reference_images.forEach((img, idx) => {
-                            if (img.url & img.url.trim() !== '') {
+                            if (img.url && img.url.trim() !== '') {
                                 previewImages.push({
                                     url: img.url,
                                     label: img.label || `服装${idx + 1}`
@@ -5306,7 +5352,7 @@
                     }
                 }
                 const history = Array.isArray(jsonData.image_history) ? jsonData.image_history : [];
-                const urls = history.filter(u => typeof u === 'string' & u.trim() !== '');
+                const urls = history.filter(u => typeof u === 'string' && u.trim() !== '');
                 if (urls.length === 0) {
                     showInfo(window.t ? window.t('image_history_empty') : '该角色暂无历史形象图（替换形象图后会自动归档到历史）');
                     return;
@@ -5383,7 +5429,7 @@
 
         // 检测 runninghub 配置状态，禁用/启用生成多角度图按钮
         function checkRunningHubForMultiAngle() {
-            if(window.TaskConfig & !window.TaskConfig.isLoaded()) {
+            if(window.TaskConfig && !window.TaskConfig.isLoaded()) {
                 window.TaskConfig.onLoaded(() => checkRunningHubForMultiAngle());
                 return;
             }
@@ -5393,7 +5439,7 @@
             const previewBtn = document.getElementById('preview-generate-multi-angle-btn');
             const previewStatusSpan = document.getElementById('preview-generate-status');
 
-            const isConfigured = window.TaskConfig & window.TaskConfig.isRunningHubConfigured();
+            const isConfigured = window.TaskConfig && window.TaskConfig.isRunningHubConfigured();
 
             // 编辑表单按钮
             if (btn) {
@@ -5743,7 +5789,7 @@
                     const currentIndex = task.current_angle_index;
 
                     if (task.status === 1) {  // PROCESSING
-                        if (currentIndex !== undefined & currentIndex < angles.length) {
+                        if (currentIndex !== undefined && currentIndex < angles.length) {
                             const currentAngle = angles[currentIndex];
                             if (currentAngle) {
                                 statusSpan.textContent = `正在生成 ${currentAngle.label}... (${currentIndex}/${angles.length})`;
@@ -5944,19 +5990,19 @@
             angle = parseInt(angle);
             if (angle >= 337.5 || angle < 22.5) {
                 return 'front view';
-            } else if (angle >= 22.5 & angle < 67.5) {
+            } else if (angle >= 22.5 && angle < 67.5) {
                 return 'front-right quarter view';
-            } else if (angle >= 67.5 & angle < 112.5) {
+            } else if (angle >= 67.5 && angle < 112.5) {
                 return 'right side view';
-            } else if (angle >= 112.5 & angle < 157.5) {
+            } else if (angle >= 112.5 && angle < 157.5) {
                 return 'back-right quarter view';
-            } else if (angle >= 157.5 & angle < 202.5) {
+            } else if (angle >= 157.5 && angle < 202.5) {
                 return 'back view';
-            } else if (angle >= 202.5 & angle < 247.5) {
+            } else if (angle >= 202.5 && angle < 247.5) {
                 return 'back-left quarter view';
-            } else if (angle >= 247.5 & angle < 292.5) {
+            } else if (angle >= 247.5 && angle < 292.5) {
                 return 'left side view';
-            } else if (angle >= 292.5 & angle < 337.5) {
+            } else if (angle >= 292.5 && angle < 337.5) {
                 return 'front-left quarter view';
             }
             return 'front view';
@@ -6026,7 +6072,7 @@
         }
 
         async function handleImageUpload(event, inputId, itemType) {
-            const file = event.target.files & event.target.files[0];
+            const file = event.target.files && event.target.files[0];
             if (!file) return;
             await uploadImageFile(file, inputId, itemType);
             event.target.value = '';
@@ -6077,14 +6123,14 @@
         function updateStyleRecognizeVisibility(fileType) {
             const section = document.getElementById('styleRecognizeSection');
             if (!section) return;
-            if (window.ScriptWriterLibrary & window.ScriptWriterLibrary.isLibrary()) {
+            if (window.ScriptWriterLibrary && window.ScriptWriterLibrary.isLibrary()) {
                 section.setAttribute('hidden', '');
                 return;
             }
             if (fileType === 'worlds') {
                 section.removeAttribute('hidden');
                 updateStyleRecognizeEditionBadge();
-                if (!cachedStyleModels.length & !styleModelsLoading) {
+                if (!cachedStyleModels.length && !styleModelsLoading) {
                     loadStyleModels();
                 }
             } else {
@@ -6146,12 +6192,12 @@
             styleModelsLoading = true;
             select.innerHTML = `<option value="">${window.t ? window.t('style_recognize_loading_models') : '加载模型中…'}</option>`;
             try {
-                const qs = (typeof WORLD_ID !== 'undefined' & WORLD_ID) ? `?world_id=${encodeURIComponent(WORLD_ID)}` : '';
+                const qs = (typeof WORLD_ID !== 'undefined' && WORLD_ID) ? `?world_id=${encodeURIComponent(WORLD_ID)}` : '';
                 const response = await fetch(`/api/style-models${qs}`, {
                     headers: { 'Authorization': AUTH_TOKEN, 'X-User-Id': USER_ID }
                 });
                 const data = await response.json();
-                if (data.success & Array.isArray(data.models) & data.models.length) {
+                if (data.success && Array.isArray(data.models) && data.models.length) {
                     cachedStyleModels = data.models;
                     select.innerHTML = '';
 
@@ -6177,7 +6223,7 @@
                         const group = vendorGroups[vendorId];
                         if (!group || !group.models.length) return;
                         const optGroup = document.createElement('optgroup');
-                        const icon = (typeof vendorIcons !== 'undefined' & vendorIcons[group.vendorName.toLowerCase()])
+                        const icon = (typeof vendorIcons !== 'undefined' && vendorIcons[group.vendorName.toLowerCase()])
                             ? vendorIcons[group.vendorName.toLowerCase()]
                             : '📦';
                         optGroup.label = `${icon} ${group.vendorName}`;
@@ -6197,9 +6243,9 @@
                             const isPreferred = model.recommended
                                 || (
                                     (model.vendor_name || '').toLowerCase() === prefVendor
-                                    & name.toLowerCase().includes(prefModel)
+                                    && name.toLowerCase().includes(prefModel)
                                 );
-                            if (isPreferred & !preferredOption) {
+                            if (isPreferred && !preferredOption) {
                                 preferredOption = option;
                             }
                         });
@@ -6208,12 +6254,12 @@
 
                     // 默认选中优先级：用户已存 VL 偏好 > VL_MODEL_PREFERRED_DEFAULT（须在列表中）
                     // > 推荐⭐/preferred 匹配 > 第一个可用
-                    const savedModel = (data.saved_preference & data.saved_preference.model) ? String(data.saved_preference.model).toLowerCase() : '';
+                    const savedModel = (data.saved_preference && data.saved_preference.model) ? String(data.saved_preference.model).toLowerCase() : '';
                     const defaultVlModel = (data.vl_model_default || '').toLowerCase();
                     const savedOption = (savedModel || defaultVlModel)
                         ? Array.from(select.querySelectorAll('option')).find(opt => {
                             const name = (opt.value || '').toLowerCase();
-                            return (savedModel & name === savedModel) || (!savedModel & name === defaultVlModel);
+                            return (savedModel && name === savedModel) || (!savedModel && name === defaultVlModel);
                         }) || null
                         : null;
                     const defaultOpt = savedOption || preferredOption || firstOption;
@@ -6239,9 +6285,9 @@
             const select = document.getElementById('style-model-select');
             const imgInput = document.getElementById('style-image');
             if (!btn || !select || !imgInput) return;
-            const hasModel = !!select.value & !!cachedStyleModels.length;
-            const hasImage = !!(imgInput.value & imgInput.value.trim());
-            btn.disabled = !(hasModel & hasImage);
+            const hasModel = !!select.value && !!cachedStyleModels.length;
+            const hasImage = !!(imgInput.value && imgInput.value.trim());
+            btn.disabled = !(hasModel && hasImage);
         }
 
         // 切换识别模型：保存为用户 VL 偏好（画风识别与资产检查专家共用同一模型）
@@ -6285,11 +6331,11 @@
 
         // 拖放区：点击空白处上传；已有图时点击空白不重新弹窗（用 × 移除后再点）
         function onStyleDropZoneClick(event) {
-            if (event & event.target & event.target.closest & event.target.closest('.preview-remove-btn')) {
+            if (event && event.target && event.target.closest && event.target.closest('.preview-remove-btn')) {
                 return;
             }
             const imgInput = document.getElementById('style-image');
-            if (imgInput & imgInput.value & imgInput.value.trim()) {
+            if (imgInput && imgInput.value && imgInput.value.trim()) {
                 // 已有预览图时，再次点击允许替换
             }
             triggerImageUpload('style-image', 4);
@@ -6315,7 +6361,7 @@
 
             ['dragleave', 'drop'].forEach(eventName => {
                 zone.addEventListener(eventName, (e) => {
-                    if (eventName === 'dragleave' & zone.contains(e.relatedTarget)) {
+                    if (eventName === 'dragleave' && zone.contains(e.relatedTarget)) {
                         return;
                     }
                     zone.classList.remove('drag-over');
@@ -6323,7 +6369,7 @@
             });
 
             zone.addEventListener('drop', async (e) => {
-                const files = e.dataTransfer & e.dataTransfer.files;
+                const files = e.dataTransfer && e.dataTransfer.files;
                 if (!files || !files.length) return;
                 const file = files[0];
                 await uploadImageFile(file, 'style-image', 4);
@@ -6355,8 +6401,8 @@
             const select = document.getElementById('style-model-select');
             const imgInput = document.getElementById('style-image');
             const btn = document.getElementById('recognizeStyleBtn');
-            const model = select & select.value;
-            const imageUrl = imgInput & imgInput.value.trim();
+            const model = select && select.value;
+            const imageUrl = imgInput && imgInput.value.trim();
             if (!model) {
                 showError(window.t ? window.t('style_recognize_no_models') : '请先选择识别模型');
                 return;
@@ -6373,7 +6419,7 @@
                 vendor_id: selectedOption ? (selectedOption.getAttribute('data-vendor-id') || null) : null,
             };
             // 防止连点 / 上传与手动识别并发
-            if (btn & btn.dataset.recognizing === '1') return;
+            if (btn && btn.dataset.recognizing === '1') return;
             const prevText = btn ? btn.textContent : '';
             if (btn) {
                 btn.dataset.recognizing = '1';
@@ -6462,7 +6508,7 @@
                     closeStyleConfirmModal();
                     showSuccess(data.message || (window.t ? window.t('style_recognize_success') : '✓ 已更新世界画风设定，本次识别已记录'));
                     // 刷新暂存区世界列表，让 world.json 文件变化可见
-                    if (typeof loadFiles === 'function' & currentFileType === 'worlds') {
+                    if (typeof loadFiles === 'function' && currentFileType === 'worlds') {
                         loadFiles('worlds');
                     }
                     // 通知剧本智能体：画风已更新（对齐角色/世界设定编辑后的系统通知）
@@ -6586,7 +6632,7 @@
         }
 
         async function saveEditedFile() {
-            if (window.ScriptWriterLibrary & currentEditFile & currentEditFile.source === 'database') {
+            if (window.ScriptWriterLibrary && currentEditFile && currentEditFile.source === 'database') {
                 await window.ScriptWriterLibrary.saveLibraryAsset();
                 return;
             }
@@ -7032,7 +7078,7 @@
 
             if (worlds.length === 0) {
                 const searchInput = document.getElementById('world-search-input');
-                const hasKeyword = searchInput & searchInput.value.trim();
+                const hasKeyword = searchInput && searchInput.value.trim();
                 let emptyText;
                 if (isDeletedMode) {
                     emptyText = hasKeyword
@@ -7051,7 +7097,7 @@
             worlds.forEach(world => {
                 const worldItem = document.createElement('div');
                 worldItem.className = 'world-item'
-                    + (world.id == WORLD_ID & !isDeletedMode ? ' active' : '')
+                    + (world.id == WORLD_ID && !isDeletedMode ? ' active' : '')
                     + (isDeletedMode ? ' deleted' : '');
 
                 const worldInfo = document.createElement('div');
@@ -7333,7 +7379,7 @@
                     const currentWorld = worlds.find(w => w.id == WORLD_ID);
                     const worldNameDisplay = document.getElementById('world-name-display');
                     
-                    if (currentWorld & worldNameDisplay) {
+                    if (currentWorld && worldNameDisplay) {
                         worldNameDisplay.textContent = currentWorld.name;
                     } else if (worldNameDisplay) {
                         worldNameDisplay.textContent = '';
@@ -7367,7 +7413,7 @@
         function clearNewWorldFormError() {
             const nameInput = document.getElementById('new-world-name');
             const errorEl = document.getElementById('new-world-error');
-            if (errorEl & errorEl.style.display !== 'none') {
+            if (errorEl && errorEl.style.display !== 'none') {
                 errorEl.style.display = 'none';
                 errorEl.textContent = '';
             }
@@ -7455,7 +7501,7 @@
                     updateStatus(window.t ? window.t('status_world_created') : '世界创建完成');
 
                     // 自动选中新创建的世界
-                    if (data.data & data.data.id) {
+                    if (data.data && data.data.id) {
                         switchWorld(data.data.id);
                     }
                 } else {
@@ -7465,7 +7511,7 @@
                     updateStatus(window.t ? window.t('status_create_failed') : '创建失败');
                 }
             } catch (error) {
-                showNewWorldFormError(error & error.message ? error.message : '网络异常，创建世界失败');
+                showNewWorldFormError(error && error.message ? error.message : '网络异常，创建世界失败');
                 updateStatus(window.t ? window.t('status_create_failed') : '创建失败');
             } finally {
                 if (createBtn) { createBtn.disabled = false; createBtn.textContent = originText || '创建世界'; }
@@ -7906,7 +7952,7 @@
             try {
                 const response = await fetch('/api/system/server-config');
                 const data = await response.json();
-                if (data.data & data.data.is_local) {
+                if (data.data && data.data.is_local) {
                     alert(window.t ? window.t('alert_cloud_only_payment') : '只有云端环境才能开启二维码支付。本地模式下，管理员用户请进入后台增加算力，非管理员用户请通知管理员。');
                     return;
                 }
@@ -7940,7 +7986,7 @@
                 const response = await fetch('/api/recharge/packages', { headers: reqHeaders });
                 const data = await response.json();
 
-                if (data.packages & data.packages.length > 0) {
+                if (data.packages && data.packages.length > 0) {
                     let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
                     data.packages.forEach(pkg => {
                         // 优先展示扣邀请佣金后的实际到账算力（与 index.html / 后端 settle 口径一致）
@@ -8094,7 +8140,7 @@
         // 键盘事件处理
         document.addEventListener('keydown', function(e) {
             // 新建世界弹窗中按 Enter 键创建世界
-            if (e.key === 'Enter' & document.getElementById('new-world-modal').classList.contains('show')) {
+            if (e.key === 'Enter' && document.getElementById('new-world-modal').classList.contains('show')) {
                 if (e.target.id === 'new-world-name' || e.target.id === 'new-world-description') {
                     e.preventDefault();
                     createNewWorld();
@@ -8102,7 +8148,7 @@
             }
             
             // 编辑世界弹窗中按 Enter 键保存
-            if (e.key === 'Enter' & document.getElementById('edit-world-modal').classList.contains('show')) {
+            if (e.key === 'Enter' && document.getElementById('edit-world-modal').classList.contains('show')) {
                 if (e.target.id === 'edit-world-name' || e.target.id === 'edit-world-description') {
                     e.preventDefault();
                     saveEditedWorld();
@@ -8200,7 +8246,7 @@
             `;
 
             // 翻译新添加的 data-i18n 元素
-            if (window.ZJTi18nDOM & window.ZJTi18nDOM.scanDOM) {
+            if (window.ZJTi18nDOM && window.ZJTi18nDOM.scanDOM) {
                 window.ZJTi18nDOM.scanDOM(chatMessages);
             }
 
@@ -8276,7 +8322,7 @@
                 }
 
                 // 检查资产图片
-                if (missingAssets & missingAssets.length > 0) {
+                if (missingAssets && missingAssets.length > 0) {
                     message += window.t ? window.t('asset_confirm_missing_images') : '\n以下资产图片尚未生成：\n';
                     missingAssets.forEach(asset => {
                         const typeLabel = window.t ? window.t(`label_${asset.type}`) || asset.type : asset.type;
@@ -8370,7 +8416,7 @@
 
             let episodeNumber = 1;
             const episodeInput = document.getElementById('script-episode');
-            if (episodeInput & episodeInput.value) {
+            if (episodeInput && episodeInput.value) {
                 episodeNumber = parseInt(episodeInput.value, 10) || 1;
             }
 
@@ -8404,7 +8450,7 @@
         // 跳转到工作流画布
         async function goToWorkflowCanvas() {
             // 如果没有WORKFLOW_ID，尝试从当前世界获取关联的工作流
-            if (!WORKFLOW_ID & window.currentWorldId) {
+            if (!WORKFLOW_ID && window.currentWorldId) {
                 // 可以在这里添加获取世界关联工作流的逻辑
                 console.log('当前世界ID:', window.currentWorldId);
             }
@@ -8589,7 +8635,7 @@
                             console.log('✅ 测试完成！');
 
                             // 验证链路
-                            if (hasQuestion & hasReply) {
+                            if (hasQuestion && hasReply) {
                                 console.log('🎉 完整链路验证成功：LLM 成功提问并基于回答生成了内容！');
                                 showSuccess(window.t ? window.t('success_test_passed') : '🎉 测试成功！LLM 完整链路验证通过！');
                             } else {
@@ -8616,7 +8662,7 @@
             if (e.key === 'Escape') {
                 const sidebar = document.getElementById('file-sidebar');
                 const overlay = document.getElementById('file-sidebar-overlay');
-                if (sidebar & sidebar.classList.contains('open')) {
+                if (sidebar && sidebar.classList.contains('open')) {
                     sidebar.classList.remove('open');
                     overlay.classList.remove('active');
                     document.body.style.overflow = '';
@@ -8629,7 +8675,7 @@
             const dropZone = document.getElementById('script-drop-zone');
             const fileInput = document.getElementById('import-script-file');
 
-            if (dropZone & fileInput) {
+            if (dropZone && fileInput) {
                 fileInput.addEventListener('change', (e) => {
                     readScriptFile(e.target.files[0]);
                     e.target.value = '';
@@ -8701,7 +8747,7 @@
                 btn.innerHTML = newLocale === 'en' ? '中文' : 'English';
                 btn.title = newLocale === 'en' ? '切换为中文' : 'Switch to English';
                 // 重新扫描并翻译 DOM
-                if (window.ZJTi18nDOM & window.ZJTi18nDOM.scanDOM) {
+                if (window.ZJTi18nDOM && window.ZJTi18nDOM.scanDOM) {
                     window.ZJTi18nDOM.scanDOM(document);
                 }
                 // 重新渲染轮播卡片
@@ -8719,7 +8765,7 @@
                 // 如果没有选择世界，更新占位符和状态文本
                 if (!window.WORLD_ID) {
                     const messageInput = document.getElementById('message-input');
-                    if (messageInput & messageInput.disabled) {
+                    if (messageInput && messageInput.disabled) {
                         messageInput.placeholder = window.t('world_placeholder');
                     }
                     // 更新状态显示

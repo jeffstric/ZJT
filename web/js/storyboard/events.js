@@ -9,6 +9,7 @@ import state, {
     resolveSelectedScriptSplitLlmModel,
     serializeUiConfig,
     loadStoryboardData,
+    setAssets,
     applyThinkingDefaultsForModel,
     applyGenerateProgressStatus,
     saveThinkingStateToStorage,
@@ -17,6 +18,7 @@ import state, {
     refreshSceneFirstFrameSlot,
     ensureVideoImageModeSupported,
     ensureVideoGenerationPrefsSupported,
+    clampMaxGroupDurationToSplitModel,
     buildVideoSlotUrls,
     buildVideoGenerationPayloadExtras,
     canAddVideoMedia,
@@ -203,6 +205,16 @@ function attachGenerateFromScriptPolling(taskId) {
             try {
                 const sbResp = await api.getStoryboard(state.storyboardId);
                 loadStoryboardData(sbResp);
+                // 发布阶段可能自动创建了新角色（character bootstrap），且用户可能
+                // 在拆分期间改动过角色库：同步刷新资产缓存，避免新角色被误标"未入库"
+                if (state.worldId) {
+                    const [characters, locations, props] = await Promise.all([
+                        api.fetchCharacters(state.worldId),
+                        api.fetchLocations(state.worldId),
+                        api.fetchProps(state.worldId),
+                    ]);
+                    setAssets({ characters, locations, props });
+                }
             } catch (e) { /* ignore */ }
             state.showGenerateProgressDialog = false;
             state.isGeneratingFromScript = false;
@@ -925,7 +937,7 @@ async function sendStoryboardAgentMessage(current) {
             // 图片模式由后端按最终参考图清单判定，并从对应 Storyboard 槽位锁定模型。
             image_task_id: null,
             video_task_id: getSelectedVideoTaskId({
-                hasInputs: referenceImageUrls.length > 0,
+                hasInputs: referenceImageUrls.length > 0 || state.videoImageMode === 'multi_reference',
                 imageMode: state.videoImageMode,
             }),
             language: localStorage.getItem('zjt_locale') || 'zh-CN',
@@ -1029,15 +1041,16 @@ async function sendDirectVideo(current) {
         showToast('当前分镜有任务正在处理中，请稍候', 'info');
         return;
     }
-    // 必须有选中首帧（后端 generate-video 图生视频/对口型分支均强制校验）
-    const firstFrameUrl = current.firstFrameUrl || current.first_frame_url;
-    if (!firstFrameUrl) {
-        notify('请先生成并选中首帧图片后再生成视频');
-        return;
-    }
     // 对口型分镜：提示词/模型由服务端规划（默认动作句、固定 MiniMax H3），
     // 前端不校验提示词与图生视频模型，点发送即一键提交；但必须先有成片配音
     const isDh = String(current?.videoType || current?.video_type || '').toLowerCase() === 'digital_human';
+    const firstFrameUrl = current.firstFrameUrl || current.first_frame_url;
+    const imageMode = state.videoImageMode || 'first_last_frame';
+    // 对口型 / 首尾帧必须有选中首帧；全能参考可直接用角色/场景/道具参考图。
+    if ((isDh || imageMode === 'first_last_frame') && !firstFrameUrl) {
+        notify('请先生成并选中首帧图片后再生成视频');
+        return;
+    }
     let prompt = '';
     let videoTaskId = null;
     if (isDh) {
@@ -1056,7 +1069,7 @@ async function sendDirectVideo(current) {
             return;
         }
         // 必须已选视频模型
-        videoTaskId = getSelectedVideoTaskId({ hasInputs: true, imageMode: state.videoImageMode });
+        videoTaskId = getSelectedVideoTaskId({ hasInputs: true, imageMode });
         if (videoTaskId == null || videoTaskId === '') {
             notify('请先在模型配置中选择视频模型');
             state.showModelConfigModal = true;
@@ -1069,7 +1082,14 @@ async function sendDirectVideo(current) {
     // 占用 running 态（禁用发送按钮防重复提交）；toast 就近确认 + 候选区乐观占位卡即时反馈
     startSceneAgentRun(sceneId);
     const optimisticId = insertOptimisticGeneratingCandidate(sceneId, 'videos');
-    showToast(isDh ? '对口型视频已提交，右侧候选区生成中' : '视频生成任务已提交，右侧候选区生成中', 'info');
+    showToast(
+        isDh
+            ? '对口型视频已提交，右侧候选区生成中'
+            : (!firstFrameUrl && imageMode === 'multi_reference'
+                ? '已按参考图提交视频，右侧候选区生成中'
+                : '视频生成任务已提交，右侧候选区生成中'),
+        'info',
+    );
     if (!isDh) {
         // 编辑值仅本次使用：提交前先重置文本框回 scene.videoPrompt 基线
         state.inputMessage = current?.videoPrompt || '';
@@ -1089,6 +1109,10 @@ async function sendDirectVideo(current) {
         if (!isDh) {
             config.task_type = videoTaskId;
             config.prompt = prompt;  // 用户编辑后的提示词（基于 scene.videoPrompt）；后端 data.get('prompt') 优先采用
+            config.image_mode = imageMode;
+            config.enable_face_mask = getEffectiveEnableFaceMask();
+            const extraUrls = buildVideoSlotUrls();
+            if (extraUrls.length) config.reference_image_urls = extraUrls;
         }
         const result = await api.generateSceneVideo(sceneId, config);
         if (result && result.success === false) {
@@ -1173,6 +1197,25 @@ function removeOptimisticCandidate(sceneId, listKey, tempId) {
  * 「生成中」乐观占位卡，成功后由真实资产接管；消耗计入左下角算力提示行。
  * 提交后复用 pollSceneTaskStatus 轮询并回填候选区。
  */
+/**
+ * 生成分镜图响应中带回了"参考图未生效"的角色名单（后端不再静默降级）：
+ * - missing_characters：提示词标记了【【角色】】但角色库查不到（幽灵角色）
+ * - characters_without_reference：角色在库但没有任何可用参考图
+ * 提示用户处理，避免生成的画面缺少角色参考导致形象不一致。
+ */
+function notifyMissingCharacterReferences(result) {
+    if (!result || typeof result !== 'object') return;
+    const missing = Array.isArray(result.missing_characters)
+        ? result.missing_characters.filter(Boolean) : [];
+    const noRef = Array.isArray(result.characters_without_reference)
+        ? result.characters_without_reference.filter(Boolean) : [];
+    if (!missing.length && !noRef.length) return;
+    const parts = [];
+    if (missing.length) parts.push(`「${missing.join('、')}」未在角色库中`);
+    if (noRef.length) parts.push(`「${noRef.join('、')}」缺参考图`);
+    notify(`部分角色参考未生效：${parts.join('；')}，本次生成已跳过，请到角色管理中处理`);
+}
+
 async function sendDirectImage(current) {
     const sceneId = current.id;
     if (!sceneId) return;
@@ -1217,6 +1260,7 @@ async function sendDirectImage(current) {
         // 提交响应自带真实资产 id：乐观占位卡原地接管，后续轮询按同 id 去重不重复
         adoptOptimisticCandidate(sceneId, 'images', optimisticId, result?.asset_ids?.[0]);
         recordPowerSpend(result, '生图');
+        notifyMissingCharacterReferences(result);
         // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
@@ -1685,6 +1729,8 @@ async function handleAction(action, target) {
             const thinking = getThinkingParams();
             const submitResp = await api.generateFromScript(state.storyboardId, {
                 max_group_duration: state.maxGroupDuration || 15,
+                max_shot_duration: state.maxGroupDuration || 15,
+                video_gen_mode: state.videoImageMode === 'multi_reference' ? 'multi_reference' : 'first_last_frame',
                 total_duration_multiplier: Number(state.totalDurationMultiplier) || 0,
                 force_medium_shot: state.forceMediumShot !== false,
                 no_bg_music: state.noBgMusic !== false,
@@ -2316,6 +2362,17 @@ async function handleAction(action, target) {
             if (row) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
             if (map[key]) log.scrollTop = Math.min(log.scrollHeight, row ? row.offsetTop : log.scrollHeight);
         });
+        return;
+    }
+
+    if (action === 'set-split-video-gen-mode') {
+        if (state.isGeneratingFromScript) return;
+        const mode = target.dataset.videoImageMode;
+        if (mode !== 'first_last_frame' && mode !== 'multi_reference') return;
+        state.videoImageMode = mode;
+        clampMaxGroupDurationToSplitModel();
+        persistUiConfig().catch(() => {});
+        rerenderModals();
         return;
     }
 
@@ -3413,7 +3470,7 @@ export function bindEvents() {
                 state.lastPowerSpend = null;
             } else if (type === 'maxGroupDuration') {
                 const d = parseInt(val, 10);
-                if ([5, 8, 10, 15].includes(d)) state.maxGroupDuration = d;
+                if (Number.isFinite(d) && d >= 1 && d <= 60) state.maxGroupDuration = d;
             } else if (type === 'totalDurationMultiplier') {
                 const m = parseFloat(val);
                 if ([0, 1, 2, 3].includes(m)) {

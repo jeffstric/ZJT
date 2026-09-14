@@ -134,7 +134,8 @@ get-or-create 命中已有故事板时**不改** title。历史空 title 不自�
 
 | 参数 | 控件 | 默认值 | 说明 |
 |------|------|--------|------|
-| `max_group_duration` | 镜头组时长 select | 15 | 每个分镜组的最大总时长（可选 5/8/10/15 秒），超时会在同一场景内自动拆分 |
+| `video_gen_mode` | 视频生成方式 | `first_last_frame` | `first_last_frame` 首帧生视频；`multi_reference` 参考生视频（不生分镜图，单镜尽量拉满模型时长） |
+| `max_group_duration` / `max_shot_duration` | 单镜最长时长 | 模型 max | 随拆分弹窗所选视频模型 `supported_durations`；参考生时组上限与单镜上限相同 |
 | `force_medium_shot` | 对话禁止全景 开关 | 开 | 对话镜头强制使用近景/中景，避免全景对话效果不佳 |
 | `no_bg_music` | 不生成背景音乐 开关 | 开 | 所有分镜的 background_music 置空，方便后期调音 |
 | `split_multi_dialogue` | 拆分多人对话镜头 开关 | 关 | 多人对话镜头按对话顺序拆成多个单人镜头，遵守 180 度轴线原则 |

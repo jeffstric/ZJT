@@ -3,6 +3,8 @@ from apscheduler.triggers.interval import IntervalTrigger
 import logging
 import asyncio
 import os
+import signal
+from typing import Optional
 import sys
 from task.visual_task import generate_video_task
 from task.audio_task import generate_audio_task
@@ -22,6 +24,56 @@ scheduler = None
 # 文件锁
 _lock_fd = None
 _LOCK_FILE = None
+# at_fork 钩子只注册一次
+_atfork_hook_installed = False
+
+
+def _reset_forked_child_signals():
+    """fork 子进程丢掉父进程装的 cleanup handler。
+
+    run_scheduler / run_script_split_worker 把 SIGTERM 接到 cleanup()->sys.exit(0)。
+    该处理器随 fork 继承；SyncManager / ProcessPool worker 收到 SIGTERM 时
+    会跑调度器 cleanup 而非默认终止（无 traceback、unix socket 文件残留）。
+    PR_SET_PDEATHSIG 在 fork 时被内核清除，不会链式传到子进程。
+    """
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, signal.SIG_DFL)
+        except (ValueError, OSError):
+            pass
+    sighup = getattr(signal, "SIGHUP", None)
+    if sighup is not None:
+        try:
+            signal.signal(sighup, signal.SIG_DFL)
+        except (ValueError, OSError):
+            pass
+
+
+def _os_close_inherited_lock_fd(lock_fd):
+    """关闭继承的锁 fd。返回 None 供调用方写回 _lock_fd。
+
+    用普通 file.close()（flush + close fd，对象状态一致）。此前版本改用
+    os.close(fileno) 并试图 patch 对象 close 为空操作——但 _io 对象禁止
+    属性赋值，patch 静默失败：覆盖 _lock_fd 引用触发 __del__ 时对已关 fd
+    二次 close，必抛 OSError(EBADF)（GC 噪音 + fd 复用后误关风险）。
+    os.close 方案担心的"继承 IO 锁死锁"在本项目时序下不存在：锁文件的
+    写入（acquire 时写 pid）只发生在主线程，fork 亦由工作线程发起，
+    写锁在 fork 瞬间必然空闲。
+    """
+    if lock_fd is None:
+        return None
+    try:
+        lock_fd.close()
+    except Exception:
+        pass
+    return None
+
+
+def _after_fork_in_child():
+    """at_fork after_in_child：关锁 fd + 重置继承的信号处理器。"""
+    global _lock_fd
+    _reset_forked_child_signals()
+    _lock_fd = _os_close_inherited_lock_fd(_lock_fd)
 
 
 def _run_async_task(async_func, *args, **kwargs):
@@ -31,101 +83,149 @@ def _run_async_task(async_func, *args, **kwargs):
     ⚠️ 每次调用创建新的事件循环，不复用。loop.close() 会释放所有关联资源。
     仅适用于短生命周期的异步任务，不要在此运行持续性连接池或后台任务。
     """
+    loop = None
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(async_func(*args, **kwargs))
-        loop.close()
     except Exception as e:
         logger.error(f"Error running async task: {e}")
         import traceback
         logger.error(traceback.format_exc())
+    finally:
+        # close 必须在 finally：异常路径不关闭会泄漏 epoll fd + 自管道 socketpair，
+        # 调度器长期运行下与其他 FD 泄漏叠加打满上限（2026-09-12 EMFILE 事故伴生缺陷）
+        if loop is not None and not loop.is_closed():
+            loop.close()
+        # 线程上不留已关闭的 loop 引用（下次调用会 new + set，此处仅为卫生）
+        asyncio.set_event_loop(None)
 
 
-def _is_stale_lock():
-    """检查锁文件是否来自已死亡的进程"""
-    if not _LOCK_FILE or not os.path.exists(_LOCK_FILE):
+def _win_process_alive(pid: int) -> bool:
+    """Windows 进程探活：OpenProcess + GetExitCodeProcess。
+
+    两处历史缺陷（Windows 本机实测抓到）：
+    1. ctypes 不设 argtypes/restype 时默认按 c_int 截断——64 位 HANDLE
+       返回值被截断，判断不可靠；
+    2. 进程已退出但句柄尚未被回收（父进程仍持有）时 OpenProcess 照样
+       成功 → 误判存活。对防孤儿看门狗意味着"父已死却永远等不到退出"，
+       对锁探活意味着持有者已死却诚实拒锁。必须用 GetExitCodeProcess
+       区分 STILL_ACTIVE。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = (
+        wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD),
+    )
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    # PROCESS_QUERY_LIMITED_INFORMATION：GetExitCodeProcess 所需最小权限
+    # （原用的 SYNCHRONIZE=0x100000 不足以调用 GetExitCodeProcess）
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+
+    handle = kernel32.OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+    )
+    if not handle:
         return False
     try:
-        with open(_LOCK_FILE, 'r') as f:
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return exit_code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _is_lock_holder_alive(lock_file: str) -> bool:
+    """读取锁文件中的 pid，判断持有进程是否存活（仅用于日志诊断）"""
+    try:
+        with open(lock_file, 'r', encoding='utf-8') as f:
             pid_str = f.read().strip()
-        if not pid_str:
-            # 空文件 = 锁写入失败残留
-            return True
+        if not pid_str.isdigit():
+            return False
         pid = int(pid_str)
-        # 检查 PID 是否存活
         if sys.platform == 'win32':
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.OpenProcess(0x100000, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return False
+            return _win_process_alive(pid)
+        try:
+            os.kill(pid, 0)
             return True
-        else:
-            # Linux: os.kill(pid, 0) 不发送信号，只检查进程是否存在
-            try:
-                os.kill(pid, 0)
-                return False  # 进程存活，锁有效
-            except (ProcessLookupError, PermissionError):
-                return True   # 进程已死，锁无效
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # 无权限发信号不代表进程已死（如不同用户的进程），不能误判
+            return True
     except (ValueError, OSError):
-        return True  # 文件内容异常，视为残留
-
-
-def _force_acquire_lock():
-    """强制获取锁（清除残留锁后重新获取）"""
-    global _lock_fd, _LOCK_FILE
-    # 删除残留锁文件
-    if os.path.exists(_LOCK_FILE):
-        os.remove(_LOCK_FILE)
-    # 重新创建
-    _lock_fd = open(_LOCK_FILE, 'w')
-    if sys.platform == 'win32':
-        import msvcrt
-        _lock_fd.write(str(os.getpid()))
-        _lock_fd.flush()
-        msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        _lock_fd.write(str(os.getpid()))
-        _lock_fd.flush()
-    logger.info(f"Scheduler lock force-acquired after clearing stale lock. PID: {os.getpid()}")
-
-
-def _acquire_scheduler_lock():
-    """获取调度器文件锁，防止多个进程重复运行"""
-    global _lock_fd, _LOCK_FILE
-
-    # 获取项目根目录
-    current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _LOCK_FILE = os.path.join(current_dir, "scheduler.lock")
-
-    try:
-        _lock_fd = open(_LOCK_FILE, 'w')
-        if sys.platform == 'win32':
-            import msvcrt
-            _lock_fd.write(str(os.getpid()))
-            _lock_fd.flush()
-            msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            _lock_fd.write(str(os.getpid()))
-            _lock_fd.flush()
-        logger.info(f"Scheduler lock acquired. PID: {os.getpid()}")
-        return True
-    except (IOError, OSError):
-        # 锁获取失败，检查是否为残留死锁
-        _lock_fd.close()
-        _lock_fd = None
-        if _is_stale_lock():
-            logger.warning("Detected stale scheduler lock from dead process. Clearing and retrying...")
-            _force_acquire_lock()
-            return True
-        logger.warning("Another scheduler instance is already running. Skipping scheduler initialization.")
         return False
+
+
+def _acquire_scheduler_lock(lock_file: Optional[str] = None) -> bool:
+    """获取调度器文件锁，防止多个进程重复运行。
+
+    正确性要点（修复历史缺陷：生产曾积累 31 个调度器进程）：
+      - 锁文件用 'a' 模式打开（不清空、不删除持有者的 pid 记录）；
+      - 只依赖 flock/msvcrt 文件锁排他，**永不删除重建锁文件**——
+        旧实现的 'w' 截断 + 失败后删除重建，会让新实例抢到新 inode 的锁、
+        旧持有者的锁名存实亡（批量启动/重启时必然多实例同时"持锁"）；
+      - flock 随持有进程死亡由内核自动释放：持有者已死时重试 flock 必然成功，
+        无需任何"残留强抢"逻辑。
+    """
+    global _lock_fd, _LOCK_FILE, _atfork_hook_installed
+
+    current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _LOCK_FILE = lock_file or os.path.join(current_dir, "scheduler.lock")
+
+    for _ in range(2):
+        # 先用局部变量持 fd：若本进程已持锁，覆盖 _lock_fd 会令旧 fd 被 GC
+        # 关闭、旧锁随之释放，flock 的排他语义就永远不会拒绝同进程重复获取
+        new_fd = open(_LOCK_FILE, 'a')
+        try:
+            if sys.platform == 'win32':
+                import msvcrt
+                # 锁文件远端字节（1MB 处），避免与 pid 内容重叠导致自身读取被拒
+                new_fd.seek(1048576)
+                msvcrt.locking(new_fd.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(new_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # 加锁成功后才接管 _lock_fd（旧 fd 保持打开直到此刻）
+            if _lock_fd is not None:
+                try:
+                    _lock_fd.close()
+                except Exception:
+                    pass
+            _lock_fd = new_fd
+            _lock_fd.seek(0)
+            _lock_fd.truncate(0)
+            _lock_fd.write(str(os.getpid()))
+            _lock_fd.flush()
+            # 阻断 fork 继承：子进程不持锁 fd，也不继承 SIGTERM cleanup
+            if hasattr(os, "register_at_fork") and not _atfork_hook_installed:
+                os.register_at_fork(after_in_child=_after_fork_in_child)
+                _atfork_hook_installed = True
+            logger.info(f"Scheduler lock acquired. PID: {os.getpid()}")
+            return True
+        except (IOError, OSError):
+            # 只关闭本次试探的新 fd；_lock_fd 是本进程已持有的锁，不能动
+            try:
+                new_fd.close()
+            except Exception:
+                pass
+            if _is_lock_holder_alive(_LOCK_FILE):
+                logger.warning("Another scheduler instance is already running. Skipping scheduler initialization.")
+                return False
+            # 文件中的 pid 已死亡：内核文件锁随进程死亡自动释放，重试一次即可获取
+            logger.info("Scheduler lock was held by a dead process, retrying acquire...")
+
+    logger.error("Scheduler lock could not be acquired after retries.")
+    return False
 
 
 def _release_scheduler_lock():
@@ -135,14 +235,35 @@ def _release_scheduler_lock():
         try:
             if sys.platform == 'win32':
                 import msvcrt
+                # 加锁时锁的是 1MB 处的字节；解锁前必须 seek 回同一位置，
+                # 否则 msvcrt.locking 解的是当前文件位置的 1 字节，解锁必然失败
+                # （优雅释放必打 error；进程内 shutdown 而退出时还会漏锁）
+                _lock_fd.seek(1048576)
                 msvcrt.locking(_lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
                 fcntl.flock(_lock_fd, fcntl.LOCK_UN)
             _lock_fd.close()
+            _lock_fd = None
             logger.info("Scheduler lock released.")
         except Exception as e:
             logger.error(f"Error releasing scheduler lock: {e}")
+
+
+def parent_process_dead(initial_ppid: int) -> bool:
+    """防孤儿看门狗：判断启动时记录的父进程是否已死亡。
+
+    - Linux/macOS：父进程死后子进程被 re-parent，getppid() 必然改变；
+    - Windows：无 re-parent 机制（getppid 恒不变），改为探活父进程
+      （_win_process_alive：进程已退出但句柄未回收时不算存活，否则
+      看门狗会永远等不到"父死"）。不能用 os.kill(pid, 0)——Windows 上
+      后者对普通信号会调用 TerminateProcess，等于把父进程直接杀掉。
+
+    供 run_scheduler / run_script_split_worker 等独立进程入口共用。
+    """
+    if sys.platform == 'win32':
+        return not _win_process_alive(initial_ppid)
+    return os.getppid() != initial_ppid
 
 
 def _reset_orphan_sync_tasks():
@@ -256,7 +377,7 @@ def init_scheduler(app):
     # 尝试获取文件锁
     if not _acquire_scheduler_lock():
         logger.info("Scheduler not started due to lock conflict.")
-        return
+        return False
 
     # 重置孤儿同步任务（服务重启后进程池队列丢失）
     _reset_orphan_sync_tasks()
@@ -591,6 +712,7 @@ def init_scheduler(app):
     # 启动调度器
     scheduler.start()
     logger.info("定时任务启动成功")
+    return True
 
 def shutdown_scheduler():
     """

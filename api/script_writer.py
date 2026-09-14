@@ -480,6 +480,25 @@ async def verify_auth_token(user_id: str, auth_token: str) -> tuple[bool, Option
     logger.info(f"Token验证成功 - user_id: {user_id}")
     return True, None
 
+
+def resolve_request_auth_token(
+    request: Request,
+    body_token: str = "",
+    session_token: str = "",
+) -> str:
+    """解析本次请求应使用的 auth_token。
+
+    优先级：Authorization 头（含 cookie 翻译中间件注入）> body > 会话存档。
+    登录改为 HttpOnly cookie 后，复用会话时 chat_sessions.auth_token 仍是
+    上次登录的旧值；单会话顶号会删掉旧 token，若发消息仍用会话存档会误报
+    「登录已过期」。历史接口只走 header，所以页面能打开、一发送就过期。
+    """
+    header_token = normalize_authorization_token(request.headers.get("authorization"))
+    if not header_token or header_token.lower() == "bearer":
+        header_token = ""
+    return header_token or str(body_token or "").strip() or str(session_token or "").strip()
+
+
 def _auth_error_status_code(error_response: dict) -> int:
     """按 error_code 分流：认证服务自身故障 → 502；token 确证失效 → 401。"""
     if isinstance(error_response, dict) and error_response.get('error_code') == ERROR_CODE_AUTH_SERVICE_UNAVAILABLE:
@@ -4000,7 +4019,11 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
 
         user_id = session.user_id
         world_id = session.world_id
-        auth_token = task_request.auth_token or session.auth_token
+        auth_token = resolve_request_auth_token(
+            request, task_request.auth_token, getattr(session, "auth_token", "") or ""
+        )
+        if auth_token and getattr(session, "auth_token", None) != auth_token:
+            session.auth_token = auth_token
 
         # 验证 auth_token
         is_valid, error_response = await verify_auth_token(user_id, auth_token)

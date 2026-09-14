@@ -638,6 +638,16 @@
         nextReferenceConnId: state.nextReferenceConnId,
         nextAudioConnId: state.nextAudioConnId,
         nextScriptId: state.nextScriptId,
+        groups: state.groups.map(g => ({
+          id: g.id,
+          title: g.title,
+          x: g.x,
+          y: g.y,
+          w: g.w,
+          h: g.h,
+          nodeIds: g.nodeIds.slice()
+        })),
+        nextGroupId: state.nextGroupId,
         nodes: serializableNodes,
         connections: state.connections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         imageConnections: state.imageConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType })),
@@ -1907,6 +1917,14 @@
           });
         }
         
+        // 恢复分组（重算包围盒依赖节点尺寸，需在节点恢复之后执行）
+        if(typeof restoreGroups === 'function'){
+          restoreGroups(data.groups || [], data.nextGroupId);
+        } else {
+          state.groups = [];
+          if(data.nextGroupId) state.nextGroupId = data.nextGroupId;
+        }
+
         // 恢复时间轴
         if(data.timeline){
           state.timeline.clips = data.timeline.clips || [];
@@ -1971,6 +1989,11 @@
         state.videoConnections = [];
         state.referenceConnections = [];
         state.audioConnections = [];
+        if(typeof restoreGroups === 'function'){
+          restoreGroups([], 1);
+        } else {
+          state.groups = [];
+        }
         showToast('工作流恢复失败，请刷新页面重试', 'error');
         throw error;  // 重新抛出，让 loadWorkflow 感知恢复失败
       } finally {
@@ -2363,20 +2386,9 @@
           const genCountLabel = el.querySelector('.gen-count-label');
           if(genCountLabel) { const _t = window.t ? window.t('draw_count_x', { count: node.data.drawCount }) : null; genCountLabel.textContent = (_t && _t !== 'draw_count_x') ? _t : `抽卡次数：X${node.data.drawCount}`; }
           
-          // 更新算力显示
-          const computingPowerValue = el.querySelector('.computing-power-value');
-          const computingPowerDetail = el.querySelector('.computing-power-detail');
-          if(computingPowerValue && computingPowerDetail) {
-            // 计算算力
-            const videoModel = node.data.videoModel || 'sora2';
-            const duration = node.data.duration || 10;
-            const singlePower = calculateVideoGenerationPower(videoModel, duration);
-            const count = node.data.drawCount || 1;
-            const totalPower = singlePower * count;
-            computingPowerValue.textContent = window.t ? window.t('computing_power_value', { power: totalPower }) : `${totalPower} 算力`;
-            computingPowerValue.setAttribute('data-i18n-params', JSON.stringify({ power: totalPower }));
-            computingPowerDetail.textContent = window.t ? window.t('computing_power_detail', { individual: singlePower, count: count, total: totalPower }) : `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
-            computingPowerDetail.setAttribute('data-i18n-params', JSON.stringify({ individual: singlePower, count: count, total: totalPower }));
+          // 更新算力显示（复用节点内实时计算，感知生成模式/分辨率等算力上下文）
+          if(typeof el._updateComputingPowerDisplay === 'function'){
+            el._updateComputingPowerDisplay();
           }
           
           // 更新首帧图片
@@ -2415,74 +2427,19 @@
           if(_startImg) _startImg.style.maxHeight = _maxH;
           if(_endImg) _endImg.style.maxHeight = _maxH;
 
-          // 更新图片模式UI
+          // 更新图片模式UI：复用节点内暴露的同一份实现（updateImageModeUI），
+          // 统一处理 首尾帧容器/端口/参考图/参考音频 显隐、提示文案与尾帧可用性。
+          // 历史教训：此处曾手写复制一份显隐逻辑，选择器写错（.first-last-fields 不存在）
+          // 且与节点内行为漂移（video 字段显隐不一致），导致刷新后 UI 错乱。
           const imageModeSelect = el.querySelector('.image-mode-select');
-          const imageModeHint = el.querySelector('.image-mode-hint');
-          const firstLastFields = el.querySelectorAll('.first-last-fields');
-          const referenceFields = el.querySelector('.reference-fields');
-          const startImagePort = el.querySelector('.start-image-port');
-          const endImagePort2 = el.querySelector('.end-image-port');
-          const referencePreviewList = el.querySelector('.reference-preview-list');
-          
           const imageMode = node.data.imageMode || 'first_last_frame';
-          const imageModeHints = {
-            'first_last_frame': '第一张为首帧，第二张（可选）为尾帧',
-            'multi_reference': '所有图片作为风格参考',
-            'text_to_video': '纯文本生成视频，无需上传图片'
-          };
-          
           if(imageModeSelect) imageModeSelect.value = imageMode;
-          if(imageModeHint) imageModeHint.textContent = imageModeHints[imageMode] || '';
-          
-          // 显示/隐藏对应的上传区域
-          firstLastFields.forEach(field => {
-            field.style.display = imageMode === 'first_last_frame' ? '' : 'none';
-          });
-          if(referenceFields) referenceFields.style.display = imageMode === 'multi_reference' ? '' : 'none';
-
-          // 显示/隐藏端口
-          if(startImagePort) startImagePort.style.display = imageMode === 'first_last_frame' ? '' : 'none';
-          if(endImagePort2) endImagePort2.style.display = imageMode === 'first_last_frame' ? '' : 'none';
-
-          // 显示/隐藏参考音频和参考视频字段（仅在多参考图模式下显示）
-          const audioField = el.querySelector('.audio-field');
-          const videoField = el.querySelector('.video-field');
-          if(audioField) audioField.style.display = imageMode === 'multi_reference' ? '' : 'none';
-          if(videoField) videoField.style.display = imageMode === 'multi_reference' ? '' : 'none';
-
-          // 根据 supports_last_frame 控制尾帧输入框的可用性
-          if(imageMode === 'first_last_frame') {
-            const modelConfigs = getModelConfigs();
-            const config = modelConfigs[node.data.videoModel];
-            const supportsLastFrame = config?.supports_last_frame !== false;
-
-            const endFileInput = el.querySelector('.end-file');
-            const endClearBtn = el.querySelector('.end-clear');
-            const endPreviewRow = el.querySelector('.end-preview-row');
-            // 尾帧字段是 first-last-fields 中的第二个（索引1）
-            const endField = firstLastFields.length > 1 ? firstLastFields[1] : null;
-            const endLabel = endField ? endField.querySelector('.label') : null;
-
-            if (!supportsLastFrame) {
-              // 禁用尾帧输入
-              if (endFileInput) endFileInput.disabled = true;
-              if (endClearBtn) endClearBtn.disabled = true;
-              if (endPreviewRow) endPreviewRow.style.opacity = '0.5';
-              if (endImagePort2) endImagePort2.classList.add('disabled');
-              // 修改提示文字
-              if (endLabel) endLabel.textContent = '尾帧画面（该模型不支持）';
-            } else {
-              // 启用尾帧输入
-              if (endFileInput) endFileInput.disabled = false;
-              if (endClearBtn) endClearBtn.disabled = false;
-              if (endPreviewRow) endPreviewRow.style.opacity = '1';
-              if (endImagePort2) endImagePort2.classList.remove('disabled');
-              // 恢复提示文字
-              if (endLabel) endLabel.textContent = '尾帧画面（可选）';
-            }
+          if(typeof el._updateImageModeUI === 'function'){
+            el._updateImageModeUI();
           }
 
           // 渲染参考图预览
+          const referencePreviewList = el.querySelector('.reference-preview-list');
           if(referencePreviewList && node.data.referenceUrls && node.data.referenceUrls.length > 0) {
             referencePreviewList.innerHTML = '';
             node.data.referenceUrls.forEach((url, idx) => {
@@ -3524,12 +3481,14 @@
           // 恢复视频生成模式（先恢复模式，再填充模型列表）
           if(nodeData.data.videoMode) {
             node.data.videoMode = nodeData.data.videoMode;
-            const modeBtns = nodeEl.querySelectorAll('.video-mode-btn');
-            modeBtns.forEach(btn => {
-              const isActive = btn.dataset.mode === nodeData.data.videoMode;
-              btn.style.background = isActive ? '#3b82f6' : '#f3f4f6';
-              btn.style.color = isActive ? 'white' : '#666';
-            });
+            if (typeof nodeEl._syncVideoModeButtons === 'function') {
+              nodeEl._syncVideoModeButtons(nodeData.data.videoMode);
+            } else {
+              const modeBtns = nodeEl.querySelectorAll('.video-mode-btn');
+              modeBtns.forEach(btn => {
+                btn.classList.toggle('is-active', btn.dataset.mode === nodeData.data.videoMode);
+              });
+            }
           }
 
           // 恢复分镜模型选择器（确保已保存的值在下拉框中可见）

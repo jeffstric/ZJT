@@ -38,7 +38,9 @@ return f"{scheme}://{domain}/{key}"
 
 - 与 `script_writer_core/mcp_tool.py` 既有 `server.https.enabled` 读取方式一致；
 - `get_download_url()`（私有签名链接）复用 `get_public_url()`，一处修改全部生效；
-- 运行时读取（`get_config()` 带内存缓存，无磁盘 IO），配置修改后新生成链接即时生效。
+- 生效时机：`get_config()` 为文件级内存缓存（**无 TTL，进程启动后读一次**），
+  修改 `config_prod.yml` 后需重启服务进程（gunicorn 各 worker + scheduler +
+  script split worker）才生效，**不是即时生效**。
 
 ## 影响面（同一修复覆盖的所有 http:// 链接出口）
 
@@ -51,7 +53,13 @@ return f"{scheme}://{domain}/{key}"
 
 ## 运维注意
 
-生产环境启用 HTTPS 后，`config_prod.yml` 必须置位：
+`server.https.enabled` 的语义是**用户浏览器访问站点所用的协议**，与 gunicorn
+自身是否监听 HTTPS 无关。两种 TLS 架构都必须置位：
+
+- **gunicorn/uvicorn 直接监听 HTTPS**：置位；
+- **nginx / CDN 终止 TLS（最常见）**：gunicorn 仍是 HTTP，但浏览器侧是
+  HTTPS 页面——不置位则 `download_url` 仍为 `http://`，混合内容拦截依旧
+  （该项默认 `false`，上线 HTTPS 后容易漏配）。
 
 ```yaml
 server:
@@ -59,7 +67,8 @@ server:
     enabled: true
 ```
 
-否则下载链接仍为 `http://`，继续被浏览器拦截。
+否则下载链接仍为 `http://`，继续被浏览器拦截。修改后需重启全部服务进程
+（见上文生效时机）。
 
 ## 测试
 

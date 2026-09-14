@@ -19,12 +19,14 @@ from concurrent.futures import ProcessPoolExecutor, Future
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from typing import Dict, Optional, Any
-from multiprocessing import Manager
 
 from config.constant import (
     SYNC_WORKER_INIT_WATCHDOG_TIMEOUT,
+    SYNC_WORKER_RECLAIM_GRACE_SECONDS,
+    SYNC_WORKER_RECLAIM_JOIN_TIMEOUT,
     get_sync_task_stale_timeout,
 )
+from utils.file_storage.factory import reset_file_storage
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -104,6 +106,23 @@ def _enterprise_sync_worker_init() -> None:
     """
     _reset_inherited_logging_locks()
     _start_init_watchdog()
+    # fork 继承的 QiniuFileStorage 单例线程池在子进程必然失效：父进程用过的
+    # ThreadPoolExecutor，其空闲信号量假 token 与 _threads 死对象一并被 fork
+    # 快照，子进程首个 submit 消费假 token 后跳过建线程，任务入队无人消费，
+    # 上层只能等 120s 假超时（事故 2026-09-08 任务 45498 / 2026-09-13 任务
+    # 47603，均报"图片上传到CDN超时"且七牛日志无"开始上传文件"）。清理工厂
+    # 单例缓存，子进程首次 get_file_storage() 时新建干净线程池。必须放在社区版
+    # early-return 之前，两版通吃。
+    #
+    # 【已知盲区（本重置不覆盖，升级 spawn 或统一 fork 状态重置时可一并解决）】
+    # 1. utils/media_cache.get_cache_manager() 模块级单例在父进程启动时已持有
+    #    旧 storage 引用（self._storage），reset 工厂缓存救不了它；当前
+    #    qiniu_long_term 执行器在父进程从未上传过（token=0）故未爆，若调度器
+    #    进程日后经 media_cache 上传过文件，子进程缓存上传将同样假超时。
+    # 2. utils/image_upload_utils._SYNC_WRAPPER_EXECUTOR（模块级线程池）同样
+    #    被 fork 继承；子进程无 running loop 时走 asyncio.run 直跑分支暂不经
+    #    过它，但父进程在异步上下文调过 _run_coro_sync 后它即毒化。
+    reset_file_storage()
     try:
         from config.constant import Edition
         if Edition.is_community():
@@ -128,17 +147,22 @@ def _enterprise_sync_worker_init() -> None:
         _sync_worker_init_done.set()
 
 
-def _execute_sync_task(task_id: int, ai_tool_type: int, worker_pids=None) -> SyncTaskResult:
+def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
     """
     子进程入口函数 - 执行同步任务
 
     ⚠️ 关键设计：此函数运行在独立子进程中（ProcessPoolExecutor），不能引用主进程的
     数据库连接、锁、或任何可变全局状态。每次调用都需要重新导入模块和初始化连接。
 
+    ⚠️ 禁止把 multiprocessing.Manager 代理（或任何需要连接池外进程的对象）
+    作为本函数参数传入：worker 端 unpickle 参数时必须连接 Manager 服务进程，
+    Manager 一死所有任务在反序列化阶段就崩溃（2026-09-12 20:43 事故：
+    SyncManager 启动后 3 分钟内死亡，生图任务 100% 失败，
+    ConnectionRefusedError @ RebuildProxy._incref）。worker pid 靠下方日志观测。
+
     Args:
         task_id: AI工具ID
         ai_tool_type: AI工具类型
-        worker_pids: 工作进程PID字典（可选）
 
     Returns:
         SyncTaskResult: 任务执行结果
@@ -155,12 +179,9 @@ def _execute_sync_task(task_id: int, ai_tool_type: int, worker_pids=None) -> Syn
         TASK_STATUS_FAILED,
     )
 
-    logger.info(f"[SyncTask] Starting task {task_id} (type: {ai_tool_type})")
-    if worker_pids is not None:
-        try:
-            worker_pids[task_id] = os.getpid()
-        except Exception as exc:
-            logger.warning(f"[SyncTask] Failed to record worker pid for task {task_id}: {exc}")
+    logger.info(
+        f"[SyncTask] Starting task {task_id} (type: {ai_tool_type}, worker pid: {os.getpid()})"
+    )
 
     try:
         # 更新状态为处理中
@@ -327,8 +348,6 @@ class SyncTaskExecutor:
         self._submit_times: Dict[int, float] = {}
         self._task_drivers: Dict[int, str] = {}
         self._task_types: Dict[int, int] = {}
-        self._manager = None
-        self._worker_pids: Dict[int, int] = {}
         self._pool_broken = False
         self._running = False
         self._state_lock = threading.RLock()
@@ -384,8 +403,9 @@ class SyncTaskExecutor:
             return True
 
         try:
-            self._manager = Manager()
-            self._worker_pids = self._manager.dict()
+            # 不再使用 multiprocessing.Manager 共享 worker_pids：Manager 服务进程
+            # 是单点，死亡后所有任务在 worker 端 unpickle 参数（RebuildProxy 连接）
+            # 阶段崩溃（2026-09-12 20:43 事故，生图任务 100% 失败）。
             self._executor = ProcessPoolExecutor(
                 max_workers=self._max_workers,
                 initializer=_enterprise_sync_worker_init,
@@ -406,20 +426,36 @@ class SyncTaskExecutor:
         self._running = False
 
         if self._executor:
-            self._executor.shutdown(wait=wait)
+            # 必须先快照 _processes：CPython 的 shutdown() 无论 wait 与否都会
+            # 把 _processes 置 None（源码注释"To reduce the risk of opening
+            # too many files"），shutdown 后再取就是 None，回收会变空操作
+            processes = list((getattr(self._executor, "_processes", None) or {}).items())
+            if wait and not self._pool_broken:
+                # 健康池：等任务跑完、worker 随 shutdown 正常退出
+                self._executor.shutdown(wait=True)
+            else:
+                # broken 池：shutdown(wait=True) 会永久阻塞在 join 卡死 worker
+                # 的路径上（worker 收不到退出通知），必须非阻塞关闭 + 显式回收，
+                # 否则调度器 SIGTERM cleanup 挂死、进程与 FD 同样泄漏
+                try:
+                    self._executor.shutdown(wait=False, cancel_futures=True)
+                except TypeError:
+                    self._executor.shutdown(wait=False)
+            # 健康池的 worker 已随 shutdown 退出，这里仅收尸兜底；broken 池的
+            # 卡死 worker 必须显式终止，否则进程与管道 FD 泄漏
+            with self._state_lock:
+                reclaimed = self._reclaim_workers_locked(processes)
+            if reclaimed:
+                logger.warning(
+                    "[SyncTaskExecutor] Reclaimed %d worker(s) on shutdown",
+                    reclaimed,
+                )
             self._executor = None
 
         self._futures.clear()
         self._submit_times.clear()
         self._task_drivers.clear()
         self._task_types.clear()
-        self._worker_pids.clear()
-        if self._manager:
-            try:
-                self._manager.shutdown()
-            except Exception as exc:
-                logger.warning(f"[SyncTaskExecutor] Failed to shutdown manager: {exc}")
-            self._manager = None
         self._pool_broken = False
         logger.info("[SyncTaskExecutor] Shutdown complete")
 
@@ -435,12 +471,24 @@ class SyncTaskExecutor:
     def _rebuild_pool_locked(self) -> None:
         old_executor = self._executor
         if old_executor:
+            # 必须先快照 _processes：CPython 的 shutdown() 无论 wait 与否都会
+            # 把 _processes 置 None，shutdown 后再取就是 None，回收会变空操作
+            processes = list((getattr(old_executor, "_processes", None) or {}).items())
             try:
                 old_executor.shutdown(wait=False, cancel_futures=True)
             except TypeError:
                 old_executor.shutdown(wait=False)
             except Exception as exc:
                 logger.warning(f"[SyncTaskExecutor] Error shutting down broken pool: {exc}")
+            # shutdown(wait=False) 依赖管理线程通知 worker 退出，broken 池做不到
+            # （worker 卡死在废弃 call queue 上），必须显式回收旧 worker，
+            # 否则进程与管道 FD 随每次重建累积（2026-09-12 EMFILE 事故根因之一）
+            reclaimed = self._reclaim_workers_locked(processes)
+            if reclaimed:
+                logger.warning(
+                    "[SyncTaskExecutor] Reclaimed %d worker(s) from the replaced pool",
+                    reclaimed,
+                )
 
         self._executor = ProcessPoolExecutor(
             max_workers=self._max_workers,
@@ -454,19 +502,6 @@ class SyncTaskExecutor:
         self._submit_times.pop(task_id, None)
         self._task_drivers.pop(task_id, None)
         self._task_types.pop(task_id, None)
-        self._worker_pids.pop(task_id, None)
-
-    def _terminate_worker_for_task(self, task_id: int) -> bool:
-        pid = self._worker_pids.get(task_id)
-        if not pid:
-            return False
-        try:
-            from utils.process_utils import terminate_worker_process
-
-            return terminate_worker_process(pid, grace_seconds=2.0)
-        except Exception as exc:
-            logger.error(f"[SyncTaskExecutor] Failed to terminate worker pid={pid} task={task_id}: {exc}")
-            return False
 
     def _kill_stale_worker(
         self,
@@ -475,32 +510,27 @@ class SyncTaskExecutor:
         elapsed: float,
         refund: bool = True,
     ) -> Optional[SyncTaskResult]:
+        """卡死超时任务的处理：标记 broken + 立即整池重建。
+
+        旧实现经 multiprocessing.Manager 共享的 worker_pids 按 pid 精确单杀
+        worker；Manager 服务进程是单点，死亡后所有任务在 worker unpickle 参数
+        阶段即崩（2026-09-12 20:43 事故），已去除该依赖。stale 场景改为
+        立即整池重建：_reclaim_workers_locked 终止全部旧 worker（含卡死任务
+        所在 worker，SIGTERM→SIGKILL 最坏 ~2s），池内其他在跑任务以
+        BrokenProcessPool 终态走退款路径——与原单杀路径同语义，
+        且不再有"单杀失败保留 future"的悬挂分支。
+        """
         ai_tool_type = self._task_types.get(task_id)
         logger.error(
-            "[SyncTaskExecutor] Killing stale sync task task_id=%s driver=%s elapsed=%.0fs refund=%s",
+            "[SyncTaskExecutor] Stale sync task task_id=%s driver=%s elapsed=%.0fs refund=%s",
             task_id,
             driver,
             elapsed,
             refund,
         )
-        future = self._futures.get(task_id)
-        terminated = self._terminate_worker_for_task(task_id)
-        cancelled = False
-        if future is not None:
-            try:
-                cancelled = future.cancel()
-            except Exception as exc:
-                logger.warning("[SyncTaskExecutor] Failed to cancel stale future task_id=%s: %s", task_id, exc)
-
-        if not terminated and not cancelled:
-            logger.error(
-                "[SyncTaskExecutor] Stale task task_id=%s was not released; keep future for next check",
-                task_id,
-            )
-            return None
-
-        if terminated:
-            self._pool_broken = True
+        self._pool_broken = True
+        if self._running and self._executor is not None:
+            self._rebuild_pool_locked()
 
         if not refund:
             # 无失败结果可写终态，直接清理避免元数据泄漏
@@ -568,6 +598,91 @@ class SyncTaskExecutor:
             if not processes:
                 self._pool_broken = True
 
+    def _reclaim_workers_locked(self, processes) -> int:
+        """显式终止并回收进程池的全部 worker（须持 _state_lock 调用）。
+
+        ProcessPoolExecutor.shutdown 依赖池管理线程通知 worker 退出；池一旦
+        broken（BrokenProcessPool / stale 强杀），卡死在废弃 call queue 上的
+        worker 永远收不到退出通知，管理线程自身也随之无法结束，executor 对象
+        无法被 GC——旧池的队列管道在父进程永久泄漏，且后续每次 fork 新 worker
+        都会完整继承这些 FD（2026-09-12 事故：一天重建 46 次，累积 360 个卡死
+        worker、996 根管道，打满 1024 FD 上限后全进程 EMFILE 崩溃）。
+
+        Args:
+            processes: shutdown **之前**快照的 [(pid, Process)]。CPython 的
+                shutdown() 无条件把 executor._processes 置 None，必须先握住
+                Process 对象再关池，否则此处拿到空引用、回收变空操作。
+
+        回收为并行两段式（两段 join 均共享 deadline，持锁最坏 ≈ grace+join
+        ≈ 2s，与 worker 数量无关；卡死 worker 对 SIGTERM 走内核默认处置即刻
+        退出，通常整体 <1s）：全员 SIGTERM → 共享宽限 deadline 逐个 join →
+        顽固者 SIGKILL → join。用 Process 对象的 join（waitpid）收尸而非
+        os.kill(pid,0) 轮询探活——后者对"已死未收尸"的僵尸误判为存活，
+        会白等整个宽限期。
+
+        权衡：被终止 worker 上仍在运行的任务以 BrokenProcessPool 终态落库退款
+        （与 stale 超时强杀同一路径），不会留下 PROCESSING 孤儿。
+
+        Returns:
+            实际终止的存活 worker 数（已死亡 worker 仅收尸，不计数）
+        """
+        if not processes:
+            return 0
+        dead = []
+        alive = []
+        for _pid, proc in processes:
+            try:
+                (alive if proc.is_alive() else dead).append(proc)
+            except Exception:
+                # 状态未知保守视为存活，宁可多终止一次
+                alive.append(proc)
+
+        # 1) 全员 SIGTERM（Windows 上 terminate 即硬杀）
+        for proc in alive:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+        # 2) 共享宽限 deadline：卡死 worker 对 SIGTERM 走内核默认处置即刻退出，
+        #    通常全部 join 在远小于 grace 内返回；deadline 保证最坏总时长有界
+        deadline = time.monotonic() + SYNC_WORKER_RECLAIM_GRACE_SECONDS
+        stubborn = []
+        for proc in alive:
+            try:
+                proc.join(timeout=max(0.0, deadline - time.monotonic()))
+            except Exception:
+                pass
+            try:
+                if proc.is_alive():
+                    stubborn.append(proc)
+            except Exception:
+                stubborn.append(proc)
+
+        # 3) 顽固者 SIGKILL 兜底（join 同样共享 deadline：串行每人 join_timeout
+        #    会在全员顽固时把持锁时间放大到 workers×join_timeout）
+        for proc in stubborn:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        kill_deadline = time.monotonic() + SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
+        for proc in stubborn:
+            try:
+                proc.join(timeout=max(0.0, kill_deadline - time.monotonic()))
+            except Exception:
+                pass
+
+        # 4) 已死 worker 防御性收尸（is_alive 的 waitpid 通常已 reap，此步兜底）
+        reap_deadline = time.monotonic() + SYNC_WORKER_RECLAIM_JOIN_TIMEOUT
+        for proc in dead:
+            try:
+                proc.join(timeout=max(0.0, reap_deadline - time.monotonic()))
+            except Exception:
+                pass
+
+        return len(alive)
+
     def submit(self, task_id: int, ai_tool_type: int, implementation_name: str = None) -> bool:
         """
         提交同步任务到进程池
@@ -597,7 +712,7 @@ class SyncTaskExecutor:
                 return False
 
             try:
-                future = self._executor.submit(_execute_sync_task, task_id, ai_tool_type, self._worker_pids)
+                future = self._executor.submit(_execute_sync_task, task_id, ai_tool_type)
                 self._futures[task_id] = future
                 self._submit_times[task_id] = time.time()
                 self._task_drivers[task_id] = implementation_name or "unknown"
@@ -822,7 +937,9 @@ class SyncTaskExecutor:
             "pending_count": len(self._futures),
             "pool_broken": self._pool_broken,
             "oldest_submit_age": oldest_submit_age,
-            "worker_pids": dict(self._worker_pids),
+            "worker_pids": sorted(
+                (getattr(self._executor, "_processes", None) or {}).keys()
+            ),
         }
 
 

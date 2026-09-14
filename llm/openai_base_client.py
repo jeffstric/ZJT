@@ -57,6 +57,16 @@ class OpenAIBaseClient(BaseLLMClient):
         """将 model 表中的友好名称解析为实际 API model ID（子类可重写）"""
         return model
 
+    def _humanize_api_error(self, e: Exception, model: Optional[str] = None) -> Optional[str]:
+        """供应商特定错误翻译钩子（子类可重写）。
+
+        返回中文提示字符串时，call_api 会以该提示替换原始异常上抛；
+        返回 None 表示不处理，异常原样上抛。供把平台特定错误码
+        （如火山方舟 InvalidEndpointOrModel.NotFound）转为可操作的
+        提示，避免用户只见英文 404。
+        """
+        return None
+
     def _build_openai_client(self) -> OpenAI:
         """构建并返回 openai.OpenAI 实例。
 
@@ -273,6 +283,12 @@ class OpenAIBaseClient(BaseLLMClient):
             return self._create_response(content, tool_calls, usage_info, reasoning_content, finish_reason)
 
         except Exception as e:
+            # 供应商特定错误（如方舟 404 模型未开通）翻译成可操作的提示后上抛，
+            # 保留原始异常为 __cause__ 便于日志排查
+            humanized = self._humanize_api_error(e, model=model)
+            if humanized:
+                logger.error(f"{self.vendor_name} API call failed: {humanized}")
+                raise Exception(humanized) from e
             if suppress_payload_logging:
                 status_code = getattr(e, "status_code", None)
                 if status_code is None:

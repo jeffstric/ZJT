@@ -59,14 +59,16 @@ def make_executor(monkeypatch):
     executor._submit_times = {}
     executor._task_drivers = {}
     executor._task_types = {}
-    executor._worker_pids = {}
     executor._pool_broken = False
-    monkeypatch.setattr(executor, "_terminate_worker_for_task", lambda task_id: True)
     return executor
 
 
-def test_stale_whitelisted_future_is_failed_and_pool_marked_broken(monkeypatch):
+def test_stale_whitelisted_future_triggers_pool_rebuild_and_refund(monkeypatch):
+    """stale 超时的新语义：不再按 pid 单杀（Manager 依赖已去除），
+    而是标记 broken + 立即整池重建，任务走退款终态。"""
     executor = make_executor(monkeypatch)
+    rebuild_calls = []
+    monkeypatch.setattr(executor, "_rebuild_pool_locked", lambda: rebuild_calls.append(True))
     handled = []
     executor._futures[101] = PendingFuture()
     executor._submit_times[101] = time.time() - 10
@@ -77,8 +79,8 @@ def test_stale_whitelisted_future_is_failed_and_pool_marked_broken(monkeypatch):
 
     executor.check_results()
 
+    assert rebuild_calls == [True]
     assert 101 not in executor._futures
-    assert executor._pool_broken is True
     assert len(handled) == 1
     assert handled[0].task_id == 101
     assert handled[0].success is False
@@ -146,22 +148,27 @@ def test_completed_result_handler_exception_falls_back_to_failure(monkeypatch):
     assert fallback_calls == [(105, "cdn update failed", "SYSTEM", 16)]
 
 
-def test_stale_worker_not_released_when_termination_and_cancel_fail(monkeypatch):
+def test_stale_skips_rebuild_when_executor_not_running(monkeypatch):
+    """防御分支：stale 触发时 executor 已停止（无池可重建），只置 broken + 退款，
+    不抛异常。"""
     executor = make_executor(monkeypatch)
+    executor._running = False
+    rebuild_calls = []
+    monkeypatch.setattr(executor, "_rebuild_pool_locked", lambda: rebuild_calls.append(True))
     handled = []
     executor._futures[106] = PendingFuture()
     executor._submit_times[106] = time.time() - 10
     executor._task_drivers[106] = "seedream5_volcengine_v1"
     executor._task_types[106] = 16
     monkeypatch.setattr(ste, "get_sync_task_stale_timeout", lambda driver: 1)
-    monkeypatch.setattr(executor, "_terminate_worker_for_task", lambda task_id: False)
     monkeypatch.setattr(executor, "_handle_task_result", handled.append)
 
     executor.check_results()
 
-    assert 106 in executor._futures
-    assert executor._pool_broken is False
-    assert handled == []
+    assert rebuild_calls == []
+    assert executor._pool_broken is True
+    assert len(handled) == 1
+    assert "stale timeout" in handled[0].error
 
 
 def test_stale_detection_string_false_disables_kill(monkeypatch):

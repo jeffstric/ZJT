@@ -16,6 +16,17 @@ def test_api_get_models(api_client):
     models = data.get("models", [])
     assert isinstance(models, list), f"models 应为列表: {data}"
     assert len(models) > 0, "模型列表不应为空"
+    # commit 1619353a：/api/models 的 id 已统一为数值库 ID 字符串，
+    # 不再对本地服务供应商（ollama/vllm）下发 "vendor:模型名" 复合串
+    for m in models:
+        mid = m.get("id")
+        assert isinstance(mid, str) and mid, f"模型 id 应为非空字符串: {m}"
+        assert ":" not in mid, f"模型 id 不应再为复合串: {m}"
+        assert mid.isdigit(), f"模型 id 应为数值库 ID 字符串: {m}"
+    # 前端模型记忆契约 {model, model_id, vendor_id}（commit e4d54994）所需字段
+    for m in models:
+        assert m.get("name") is not None, f"模型条目缺模型名: {m}"
+        assert "vendor_id" in m and m["vendor_id"] is not None, f"模型条目缺 vendor_id: {m}"
 
 
 @pytest.mark.marketing_agent

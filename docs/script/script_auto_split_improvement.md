@@ -132,6 +132,7 @@ max_group_duration = 15秒
 
 - “Clip 4~15 秒”在系统中表现为尽量让分镜组达到 4 秒以上，但 `max_group_duration` 仍是硬上限。
 - “短镜必须合并”改为“短镜优先并入同一场景或同一幕内的相邻镜头”，不得跨场景、跨幕强行合并。
+- 故事板 **参考生视频**（`video_gen_mode=multi_reference`）另有确定性打包：同一 `shot_group` 内贪婪合并镜头，直到再并入下一拍会超过模型单段上限（如 Seedance 2.0 的 15 秒）。不跨组。见 `llm/shot_pack.py`。
 
 ### 6. 新增异步生成函数
 

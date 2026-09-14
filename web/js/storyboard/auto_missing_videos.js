@@ -107,7 +107,12 @@ async function submitMissingVideoBatch({ manual = false, sceneIds = null } = {})
         }
         if (manual && !requested) {
             const noFrame = !(state.scenes || []).some(s => s.firstFrameUrl);
-            throw new Error(noFrame ? '请先补全分镜首帧，再批量生成视频' : '当前没有待生成视频的分镜');
+            const isMultiRef = state.videoImageMode === 'multi_reference';
+            throw new Error(
+                (!isMultiRef && noFrame)
+                    ? '请先补全分镜首帧，或切换到全能参考模式直接生成视频'
+                    : '当前没有待生成视频的分镜',
+            );
         }
         return null;
     }
