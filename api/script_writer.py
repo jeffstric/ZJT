@@ -6294,6 +6294,19 @@ async def export_world(
     world_id: str = QueryParam(...)
 ):
     """导出世界完整数据（含图片）为 zip 包，上传到图床后返回下载链接"""
+    # 属主断言：user_id 必须与登录身份一致，且对该世界有 VIEW 权限（防跨用户越权导出）
+    auth_uid = get_auth_user_id(request)
+    if auth_uid is not None and str(auth_uid) != str(user_id):
+        return JSONResponse(status_code=403, content={'success': False, 'error': 'user_id 与登录用户不一致'})
+    try:
+        world_id_int, user_id_int = int(world_id), int(user_id)
+    except (TypeError, ValueError):
+        return JSONResponse({'success': False, 'error': 'user_id/world_id 格式错误'}, status_code=400)
+    try:
+        await asyncio.to_thread(ensure_world_access, world_id_int, user_id_int, Action.VIEW)
+    except HTTPException as e:
+        return JSONResponse({'success': False, 'error': e.detail}, status_code=e.status_code)
+
     zip_path = None
     try:
         zip_path = await asyncio.to_thread(file_manager.export_world, user_id, world_id)
@@ -6320,6 +6333,58 @@ async def export_world(
                 os.remove(zip_path)
             except Exception:
                 logger.warning(f'清理导出临时文件失败: {zip_path}', exc_info=True)
+
+
+@router.get('/export-world-doc')
+@require_permission("script:list")
+async def export_world_doc(
+    request: Request,
+    user_id: str = QueryParam(...),
+    world_id: str = QueryParam(...)
+):
+    """导出世界完整数据（大纲/剧本/角色/场景/道具 + 图片）为 Word 文档，上传到图床后返回下载链接"""
+    # 属主断言：user_id 必须与登录身份一致，且对该世界有 VIEW 权限（与其他世界端点一致，防跨用户越权导出）
+    auth_uid = get_auth_user_id(request)
+    if auth_uid is not None and str(auth_uid) != str(user_id):
+        return JSONResponse(status_code=403, content={'success': False, 'error': 'user_id 与登录用户不一致'})
+    try:
+        world_id_int, user_id_int = int(world_id), int(user_id)
+    except (TypeError, ValueError):
+        return JSONResponse({'success': False, 'error': 'user_id/world_id 格式错误'}, status_code=400)
+    try:
+        await asyncio.to_thread(ensure_world_access, world_id_int, user_id_int, Action.VIEW)
+    except HTTPException as e:
+        return JSONResponse({'success': False, 'error': e.detail}, status_code=e.status_code)
+
+    doc_path = None
+    try:
+        doc_path = await asyncio.to_thread(file_manager.export_world_docx, user_id, world_id)
+        filename = os.path.basename(doc_path)
+        storage = get_file_storage(get_config())
+        storage_key = storage.generate_key_with_datetime(filename)
+        upload_result = await storage.upload_file(
+            storage_key, doc_path,
+            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        )
+        if not upload_result.success:
+            return JSONResponse({'success': False, 'error': upload_result.error or '上传导出文件失败'}, status_code=500)
+        download_url = storage.get_download_url(upload_result.key, attname=filename)
+        return JSONResponse({
+            'success': True,
+            'download_url': download_url,
+            'filename': filename
+        })
+    except FileNotFoundError as e:
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=404)
+    except Exception as e:
+        logger.error(f'导出世界 Word 文档失败: {str(e)}', exc_info=True)
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+    finally:
+        if doc_path and os.path.exists(doc_path):
+            try:
+                os.remove(doc_path)
+            except Exception:
+                logger.warning(f'清理导出临时文件失败: {doc_path}', exc_info=True)
 
 
 @router.post('/import-world')
