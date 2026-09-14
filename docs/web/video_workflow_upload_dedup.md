@@ -87,9 +87,54 @@ affected = 0（版本竞争失败，并发写已抢先）同样按 HTTP 409 拒�
 
 1. **自动/手动 PUT 返回 `code === 0`**——以响应 `data.content_hash` 滚动基线
    （失败不记录，下次照常重传，不存在假确认丢数据）；
-2. **`loadWorkflow` 成功后**——加载即基线（GET 返回的哈希一并记录）；
+2. **`loadWorkflow` 成功后**——加载即基线；哈希取 `baselineHash`：从 GET
+   返回值起步，加载期内本页自写 PUT（`from_world_id` 世界同步、世界画风
+   自动继承）每成功一次就用其响应 `data.content_hash` 滚动一次（见下节）；
 3. 恢复重放（`maybeRecoverPendingAutoSave`）成功后重新 `loadWorkflow`，
    基线随重放后的最新服务端内容重建。
+
+### 旁路 PUT 必须滚动基线（「零操作也被提示冲突」误报修复）
+
+**约定：任何绕过 `autoSaveWorkflow()` 的直连 PUT，只要写了参与内容哈希的
+字段（`workflow_data` / `style` / `style_reference_image` /
+`default_world_id` / `workflow_ratio`），成功后必须用响应
+`data.content_hash` 滚动基线（`setConfirmedBody`），否则本页自己的写入会让
+自己的 CAS 基线过期。**
+
+误报链（修复前）：`loadWorkflow` 用 GET 时的哈希 H0 建基线，但建基线**之前**
+有两处无 CAS 且丢弃响应的自写 PUT——① `from_world_id` 跳转时
+`saveDefaultWorld` 写 `default_world_id`；② 工作流画风为空且关联世界有画风
+时自动继承并 PUT `style + workflow_data + workflow_ratio`。PUT 后服务端哈希
+变 H1，基线仍是 H0 → 60s 轮询感知 H1 → 去重门失效 → 下一次自动保存（3 分钟
+定时器 / poll 发现节点完成 / 任何交互防抖 1.5s）全量 PUT 携带
+`X-Base-Hash: H0` → 服务端 409 → 前端自动弹出「已被其他会话覆盖」冲突框。
+全程用户零操作，且服务端内容与本页内容完全一致（CAS 拒绝的是自己刚写的
+相同内容），属纯误报。同类变体：手动切换世界下拉
+（`world.js` `handleWorldSelectionChange`）触发 `saveDefaultWorld` +
+`_saveWorldStyleToWorkflow` 两次旁路 PUT，切完世界后下一次自动保存必 409。
+
+修复（`web/js/world.js` / `web/js/workflow.js`）：`saveDefaultWorld` 与
+`_saveWorldStyleToWorkflow` 成功后返回 `data.content_hash`；后者额外直接
+`setConfirmedBody` 滚动基线。`loadWorkflow` 引入 `baselineHash` 变量贯穿：
+GET 起步 → 世界同步/画风继承 PUT 各自滚动 → 最终以 `baselineHash` 建基线
+（同时 `noteServerHash` 对齐，避免首轮门即失效）。`handleWorldSelectionChange`
+接住哈希后同样滚动基线。`setConfirmedBody` 带 `serverHash` 时同步
+`noteServerHash`（否则去重门第二条件立刻失效）。画风弹窗
+`saveStyleSettings` 同样滚基线。**新增旁路 PUT 时必须遵守此约定**，
+否则回归为「零操作弹冲突框」。
+
+### 服务端同内容不报 409（漏网兜底）
+
+CAS 在 `X-Base-Hash != 当前哈希`（以及 `content_version` 竞争 affected=0）
+时，先把本次 PUT 字段叠到当前行上算 `incoming_hash`
+（`content_hashes_for_cas`，viewport 仍不参与）：
+
+- `incoming_hash == 当前哈希` → **当成功**（不写库），返回 `code=0` +
+  当前 `content_hash`，前端按普通成功滚基线。覆盖：本页旁路自写导致基线
+  过期、只改视口、同内容恢复重放、两请求抢版本但内容没变。
+- `incoming_hash != 当前哈希` → 仍 HTTP 409，弹冲突框（真的两份内容）。
+
+前端漏滚基线时用户也不会再看到假冲突框。
 
 自动保存与手动保存共用 `buildAutoSaveBody()`（`{workflow_data,
 default_world_id, workflow_ratio}`）保证 body 严格同构——构造不一致会导致
@@ -142,12 +187,13 @@ JSON body，正是为了避免改变 body 使基线永不命中。beforeunload �
 
 - `web/tests/auto_save_upload_gate.test.js`：基线命中/不命中、跨工作流隔离、
   哈希漂移使门失效、哈希未知退化、409 冲突熔断/解除、`confirmSkipped`
-  与关页决策兼容等 22 用例；
+  与关页决策兼容、`setConfirmedBody` 同步 lastSeen 等用例；
 - `web/tests/auto_save_unload.test.js`：`discardOwnSnapshot`（本页清除/他页
   不动/无快照）、`baseHash` 持久化等，复用 fake IndexedDB；
 - `tests/crud/test_video_workflow_content_hash.py`：`compute_content_hash`
-  纯函数 6 用例（dict/str 一致、key 序不敏感、任一内容字段变化即变、
-  None/损坏 JSON 健壮）。
+  纯函数用例（dict/str 一致、key 序不敏感、任一内容字段变化即变、
+  None/损坏 JSON 健壮、viewport 不参与）+ `content_hashes_for_cas`
+  （同内容/仅视口 incoming==current，内容变化则不等）。
 
 ## 后续优化（未包含在本改动）
 
