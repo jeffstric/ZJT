@@ -3297,8 +3297,8 @@
             // 处理流式响应
             async function handleStream(taskId) {
                 return new Promise((resolve, reject) => {
-                    const eventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
-                    onMessage: async (data) => {
+                    // 流式状态必须声明在 SSE 回调之外：下方 onError 与超时清理都要访问这些
+                    // 变量；且声明在 onMessage 内会被每条 SSE 事件重复执行（重置 fullContent/msgUid）。
                     const streamSessionId = currentSessionId.value;
                     const streamErrorKey = getTaskErrorKey('stream', taskId);
                     let fullContent = '';
@@ -3334,6 +3334,8 @@
                         return messages.value.findIndex(m => m._uid === uid);
                     }
 
+                    const eventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
+                    onMessage: async (data) => {
                         if (data.id && processedSseMessageIds.has(data.id)) {
                                 console.log('[SSE] 跳过重复消息:', data.id, data.type);
                                 return;

@@ -84,6 +84,15 @@
   - `workflow.js`：`GET /api/computing-power-config`（驱动状态，TaskConfig 主路径与回退路径共 2 处）裸 `fetch` 无头，401 导致驱动状态/模型选项加载失败（e2e `test_node_operations.py` 模型/时长选项为空）。已补 `Authorization: Bearer`（`getAuthToken()`）。
   - `events.js`：`GET /api/config/upload`（上传大小配置）裸 `fetch` 无头。已补 `Authorization: Bearer`（`getAuthToken()`）。
 
+### 服务端内部回环调用适配（script_writer Agent 工具）
+
+`script_writer_core/mcp_tool.py` 的 Agent 工具用 httpx 回环调用本服务受保护端点，原实现只把 `auth_token` 放 form 字段，而 `require_permission` 只认 header/query，导致鉴权真实现上线后稳定 401（典型表现：角色形象设计反复报 "401 Unauthorized" 并向用户提问）。已在 4 处 `httpx.post` 补 `Authorization: Bearer <token>` 头（token 为空则不加头，保持原行为；红线禁止 token 拼 URL，不走 query 兜底）：
+
+- `generate_text_to_image` → `POST /api/text-to-image`
+- `edit_image` → `POST /api/image-edit`
+- `generate_digital_human` → `POST /api/digital-human`
+- `submit_grid_image_task`（宫格 i2i）→ `POST /api/image-edit`
+
 ## 五、发布与兼容注意
 
 1. **前后端需一起发布**：后端先上会以 401 打断旧前端（EventSource 裸连、无 header 请求）。
