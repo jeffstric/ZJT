@@ -1453,10 +1453,10 @@
                     throw new Error(taskData.message || taskData.error || `HTTP ${taskResponse.status}: ${taskResponse.statusText}`);
                 }
                 const taskId = taskData.task_id;
-                
-                const eventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
-                    onMessage: async (data) => {
-                // 保持打字指示器，直到收到第一个消息
+
+                // 本轮回复的气泡容器：整次任务只创建一次，message 事件向其中累加。
+                // 不可移入下方 onMessage 回调——progress/tool_call/heartbeat 等每条
+                // SSE 事件都会触发回调，误建气泡会堆积空白白点并顶走提问选项卡片。
                 const messageDiv = addMessage('assistant', '');
                 let contentDiv = messageDiv.querySelector('.message-content');
 
@@ -1464,6 +1464,8 @@
                 fullText = '';
                 let startTime = Date.now();
 
+                const eventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
+                    onMessage: async (data) => {
                         if (!hasStartedReceiving) {
                             hasStartedReceiving = true;
                             hideTypingIndicator(); // 收到第一个消息时才移除打字指示器
@@ -1639,7 +1641,8 @@
                     if (data.type === 'message') {
                         hideToolCalls();
                         if (data.content) {
-                            if (needsNewMessageDiv) {
+                            // 首连尚未收到任何消息就断线时 contentDiv 为空，同样需要新建气泡
+                            if (!contentDiv || needsNewMessageDiv) {
                                 const newDiv = addMessage('assistant', '');
                                 contentDiv = newDiv.querySelector('.message-content');
                                 fullText = '';
