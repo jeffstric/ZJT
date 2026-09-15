@@ -91,7 +91,56 @@ affected = 0（版本竞争失败，并发写已抢先）同样按 HTTP 409 拒�
    返回值起步，加载期内本页自写 PUT（`from_world_id` 世界同步、世界画风
    自动继承）每成功一次就用其响应 `data.content_hash` 滚动一次（见下节）；
 3. 恢复重放（`maybeRecoverPendingAutoSave`）成功后重新 `loadWorkflow`，
-   基线随重放后的最新服务端内容重建。
+   基线随重放后的最新服务端内容重建；
+4. **`loadWorkflow` 建基线 3s 后延迟重建一次**（用户无编辑 `isDirty()` 为
+   false、基线哈希未被重放/保存滚动时）——吸收还原期异步回填（见下下节），
+   回填值与服务端等价，不落库、只对齐基线。
+
+### 还原期幽灵修改必须消灭（「多会话零操作互判冲突」根因修复）
+
+**约定：`restoreWorkflow` 的节点还原必须保证 serialize/restore 往返一致
+——还原后的序列化结果必须与 GET 到的服务端内容逐字节等价；任何"打开页面
+就改内容"的代码都会转化为零操作自动保存落库，并使其他在线会话的 CAS 基线
+过期（409 冲突框）。**
+
+事故链（修复前，双标签页实测复现）：同一工作流开两个标签页 A/B。A 打开时
+还原缺陷把 `splitModel*` 清空后又回填、8 个分镜节点 `videoResolution`
+被强制纠正 `480P→720P`、视频节点标题 `分镜视频→视频`、`duration/lastError`
+被 `|| 默认值` 改变类型——这些幽灵修改使去重门失效，A 的自动保存全量落库，
+服务端哈希从 H0 变 H1；B（基线 H0，body 带自己的幽灵修改）3 分钟后自动保存，
+`X-Base-Hash: H0` 过期且 incoming≠current → 409 → 弹「已被其他会话覆盖」
+冲突框。**全程无任何真实用户编辑**；`content_hashes_for_cas` 的同内容兜底
+救不了它，因为两份 body 本身就不同。
+
+修复点（三类）：
+
+1. **同步还原被异步回写清空**（`web/js/script_node.js`）：`restoreWorkflow`
+   还原 splitModel select 的 UI 后会 `dispatchEvent('change')`
+   （workflow.js），但模型目录是异步加载的，此刻选中项没有
+   `dataset.vendorId/modelId`，change 处理器把刚恢复的
+   `splitModelId/splitModelVendorId/splitModelVendorName` 全部覆盖为空串
+   （~500ms 后目录加载完成又回填，值碰巧相同，但基线已建在空值窗口期）。
+   修复：change 处理器遇到无 `dataset.vendorId` 的选中项（目录未加载）直接
+   return，不覆盖已恢复字段。**目录选项由 `appendSplitOption` 填充，必有
+   `dataset.vendorId`（默认 1）；新增占位 option 时注意保持该判定成立。**
+2. **还原丢字段 / 归一化改类型**（`web/js/workflow.js`
+   `createVideoNodeWithData`）：① `node.title` 从不恢复——历史标题
+   （"分镜视频"）每次打开都被默认标题（"视频"）覆盖；已补恢复并同步 header
+   DOM（保留图标 svg，仅替换文本节点）。② `duration/lastError` 用
+   `|| 默认值` 归一，把服务端的缺 key/空串改写为 0/空串——
+   `createVideoNode` 初始 data 不含这两个字段，改用严格 `!== undefined`
+   判断保持服务端原值（含缺 key 状态），保证往返一致。
+3. **防御性纠正在写回 node.data**（`web/js/shot_group_node.js`
+   `updateShotGroupResolutionOptions`）：保存的分辨率不在当前模型支持列表
+   时纠正为默认值并写回——该纠正合理但属真实数据变更，必须 `markDirty()`
+   让它尽快正常落库（一次性，落库后不再触发）；否则它既没被服务端确认也没
+   被标记，落库后同样使其他会话基线过期，且刷新后会重复纠正。
+   **区分原则：值与服务端等价的回填（splitModel 回写）不落库、由延迟基线
+   吸收；值与服务端不同的纠正（分辨率纠正）必须 markDirty 落库。**
+
+**新增节点类型 / 还原逻辑时必须自检往返一致**：打开页面 → Network 无任何
+PUT（3 分钟内）→ `autoSaveState.isConfirmedBody(id, buildAutoSaveBody())`
+在异步初始化稳定后为 true。违反即回归「零操作 409」。
 
 ### 旁路 PUT 必须滚动基线（「零操作也被提示冲突」误报修复）
 
