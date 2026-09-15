@@ -1330,10 +1330,14 @@ function videoRoleLabel(role, mode, index = 0) {
     return `图${index + 1}`;
 }
 
+/** 参考生视频（multi_reference）仍处 Beta 期，所有入口统一带此标识 */
+const REF_VIDEO_BETA_TAG = '<span class="beta-tag">Beta</span>';
+
 function renderVideoModeSelector(disabled) {
     const modes = getSupportedVideoImageModes();
     const mode = modes.includes(state.videoImageMode) ? state.videoImageMode : (modes[0] || 'first_last_frame');
     const modeLabel = mode === 'multi_reference' ? '全能参考' : '首尾帧';
+    const betaTag = mode === 'multi_reference' ? REF_VIDEO_BETA_TAG : '';
     const panelOpen = state.showVideoModePanel && !disabled;
     const options = [
         {
@@ -1347,6 +1351,7 @@ function renderVideoModeSelector(disabled) {
             title: '全能参考',
             desc: '可不生成分镜图，直接用角色/场景/道具参考图生视频；若已有分镜图则一并作为主参考',
             emoji: '🖼',
+            beta: true,
         },
     ].filter(opt => modes.includes(opt.value));
 
@@ -1357,7 +1362,7 @@ function renderVideoModeSelector(disabled) {
                         data-action="set-video-image-mode" data-video-image-mode="${opt.value}" ${disabled ? 'disabled' : ''}>
                     <span class="video-mode-emoji">${opt.emoji}</span>
                     <span class="video-mode-texts">
-                        <strong>${opt.title}</strong>
+                        <strong>${escapeHtml(opt.title)}${opt.beta ? REF_VIDEO_BETA_TAG : ''}</strong>
                         <small>${opt.desc}</small>
                     </span>
                     ${mode === opt.value ? '<span class="video-mode-check">✓</span>' : ''}
@@ -1368,7 +1373,7 @@ function renderVideoModeSelector(disabled) {
     if (options.length <= 1) {
         return `
             <div class="video-mode-dropdown is-static" title="${escapeHtml(options[0]?.desc || '')}">
-                <span class="video-mode-static-label">${escapeHtml(modeLabel)}</span>
+                <span class="video-mode-static-label">${escapeHtml(modeLabel)}${betaTag}</span>
             </div>`;
     }
 
@@ -1378,6 +1383,7 @@ function renderVideoModeSelector(disabled) {
                     ${disabled ? 'disabled' : ''} title="视频图片模式">
                 ${icon('video', 14)}
                 <span>${escapeHtml(modeLabel)}</span>
+                ${betaTag}
             </button>
             ${panel}
         </div>`;
@@ -2179,7 +2185,7 @@ function renderSplitVideoGenMode(disabled = false) {
     const mode = state.videoImageMode === 'multi_reference' ? 'multi_reference' : 'first_last_frame';
     const options = [
         { value: 'first_last_frame', title: '首帧生视频', desc: '先生成分镜图再出视频，单镜按构图切开' },
-        { value: 'multi_reference', title: '参考生视频', desc: '不生分镜图；单镜尽量拉满模型时长，下一段会超限才切开' },
+        { value: 'multi_reference', title: '参考生视频', beta: true, desc: '不生分镜图；单镜尽量拉满模型时长，下一段会超限才切开' },
     ];
     return `
         <div class="generate-from-script-model">
@@ -2191,7 +2197,7 @@ function renderSplitVideoGenMode(disabled = false) {
                 ${options.map(opt => `
                     <button type="button" class="config-chip ${mode === opt.value ? 'active' : ''}"
                         data-action="set-split-video-gen-mode" data-video-image-mode="${opt.value}"
-                        ${disabled ? 'disabled' : ''} title="${escapeHtml(opt.desc)}">${escapeHtml(opt.title)}</button>
+                        ${disabled ? 'disabled' : ''} title="${escapeHtml(opt.desc)}">${escapeHtml(opt.title)}${opt.beta ? REF_VIDEO_BETA_TAG : ''}</button>
                 `).join('')}
             </div>
         </div>`;

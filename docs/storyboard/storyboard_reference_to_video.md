@@ -32,6 +32,15 @@
 
 批量文案用「逐个生成」。剧本拆分若锁定参考生视频，会在发布前把同一场内的短镜头合并成接近模型上限的单条分镜（`pack_shots_for_reference_video`），因此一镜仍对应一条视频，导出不用 clip 窗口。
 
+## Beta 标识
+
+参考生视频仍在灰度验证期，所有 UI 入口统一带 `Beta` 徽标（`web/js/storyboard/render.js` 的 `REF_VIDEO_BETA_TAG`，样式 `web/css/storyboard.css` 的 `.beta-tag`，与 `web/css/index.css` 同名样式保持一致）：
+
+- 「从剧本拆分」弹窗 → 视频生成方式 →「参考生视频」chip
+- 分镜智能体面板 → 视频图片模式下拉 →「全能参考」选项 / 收起态按钮
+
+功能转正时删除该常量与两处 `beta: true` 声明即可（有 `web/tests/storyboard_split_video_gen_mode.test.js` 断言兜底）。
+
 ## 回退
 
 - 单镜全能参考且一张图都没有 → `text_to_video`，使用文生视频槽模型

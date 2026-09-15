@@ -33,4 +33,15 @@ describe('storyboard reference-to-video without first frame', () => {
         expect(renderSource).toContain('可不生成分镜图，直接用角色/场景/道具参考图生视频');
         expect(renderSource).toContain('将使用分镜角色/场景/道具参考图');
     });
+
+    it('mode selector shows a Beta tag on the reference option', () => {
+        const renderSource = readSource('web/js/storyboard/render.js');
+        // 下拉面板选项、收起态按钮、静态标签三处都按当前模式拼接 Beta 标识
+        expect(renderSource).toContain("<strong>${escapeHtml(opt.title)}${opt.beta ? REF_VIDEO_BETA_TAG : ''}</strong>");
+        expect(renderSource).toContain('${escapeHtml(modeLabel)}${betaTag}');
+        // storyboard.css 提供按钮/选项内字号覆盖，保证徽标尺寸一致
+        const cssSource = readSource('web/css/storyboard.css');
+        expect(cssSource).toContain('.video-mode-btn .beta-tag');
+        expect(cssSource).toContain('.video-mode-texts .beta-tag');
+    });
 });

@@ -17,6 +17,16 @@ describe('storyboard split video gen mode', () => {
         expect(eventsSource).toContain("action === 'set-split-video-gen-mode'");
     });
 
+    it('reference-video chip carries the unified Beta tag', () => {
+        const renderSource = readSource('web/js/storyboard/render.js');
+        // 拆分弹窗与分镜视频模式下拉共用同一 Beta 标识常量
+        expect(renderSource).toContain("const REF_VIDEO_BETA_TAG = '<span class=\"beta-tag\">Beta</span>'");
+        // 两处 multi_reference 选项（拆分弹窗 chip、模式下拉）都声明 beta: true
+        expect(renderSource.match(/beta: true/g)?.length).toBeGreaterThanOrEqual(2);
+        expect(renderSource).toMatch(/value: 'multi_reference',[^}]*beta: true/);
+        expect(renderSource).toContain("${opt.beta ? REF_VIDEO_BETA_TAG : ''}");
+    });
+
     it('skips auto first-frame completion in reference mode', () => {
         const source = readSource('web/js/storyboard/auto_missing_images.js');
         expect(source).toMatch(
