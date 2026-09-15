@@ -1509,6 +1509,25 @@
           } catch(e) {
             console.warn('[加载工作流] 建立保存去重基线失败:', e);
           }
+
+          // 还原期异步回填（模型目录加载后回写 splitModel 元数据等）会在
+          // 建基线之后继续微调节点字段，且回填值与服务端等价、不应落库。
+          // 若不处理，基线与真实序列化错位 → 去重门失效 → 每次打开页面后
+          // 第一次自动保存都全量 PUT → 其他会话 CAS 基线过期（零操作 409）。
+          // 稳定后（用户尚无编辑时）用当前序列化重建基线，吸收这类回填；
+          // isDirty() 为 true 说明用户已有真实编辑，不得覆盖其未确认状态。
+          const rebuiltBaselineHash = baselineHash;
+          setTimeout(() => {
+            if(!state.workflowReady || getWorkflowIdFromUrl() !== workflowId) return;
+            if(typeof autoSaveState === 'undefined' || autoSaveState.isDirty()) return;
+            // 基线已被重放/保存滚动过（hash 不一致）说明本次回调已过期，
+            // 不得用过期哈希覆盖新基线
+            if(autoSaveState.getConfirmedHash(workflowId) !== rebuiltBaselineHash) return;
+            try {
+              autoSaveState.setConfirmedBody(
+                workflowId, buildAutoSaveBody(), rebuiltBaselineHash);
+            } catch(e) { /* 基线重建失败不影响主流程，下次保存照常收敛 */ }
+          }, 3000);
         } else {
           showToast(result.message || '加载工作流失败', 'error');
         }
@@ -2682,10 +2701,28 @@
       if(node && nodeData.data){
         node.data.url = nodeData.data.url || '';
         node.data.name = nodeData.data.name || '';
-        node.data.duration = nodeData.data.duration || 0;
+        // duration/lastError 必须保持服务端原值（含类型与"缺 key"状态）：
+        // createVideoNode 初始 data 不含这两个字段，旧数据可能缺 key 或存
+        // 空串；用 `|| 默认值` 归一会让还原后的序列化与 GET 内容不一致，
+        // 每次打开页面都产生幽灵修改（自动保存全量落库 → 其他会话 CAS 409）
+        node.data.duration = nodeData.data.duration !== undefined ? nodeData.data.duration : node.data.duration;
         node.data.project_id = nodeData.data.project_id !== undefined ? nodeData.data.project_id : null;
         // 恢复上次失败原因（失败状态持久化）
-        node.data.lastError = nodeData.data.lastError || '';
+        node.data.lastError = nodeData.data.lastError !== undefined ? nodeData.data.lastError : node.data.lastError;
+        // 恢复节点标题：createVideoNode 渲染的是默认标题"视频"，历史数据的
+        // 标题（如"分镜视频"）不恢复的话，每次打开页面标题都会被改写一次，
+        // 属于零操作幽灵修改（落库后使其他会话 CAS 基线过期 → 409 冲突框）
+        if(nodeData.title && nodeData.title !== node.title){
+          node.title = nodeData.title;
+          const titleEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"] .node-title`);
+          if(titleEl){
+            // header 内含图标 svg，只替换文本部分
+            const svg = titleEl.querySelector('svg');
+            titleEl.textContent = '';
+            if(svg) titleEl.appendChild(svg);
+            titleEl.appendChild(document.createTextNode(node.title));
+          }
+        }
         // 如果有URL，显示预览
         if(node.data.url){
           const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);

@@ -854,6 +854,15 @@
       if(splitModelSelect) {
         splitModelSelect.addEventListener('change', () => {
           const selected = splitModelSelect.options[splitModelSelect.selectedIndex];
+          // 模型目录异步加载完成前（如 restoreWorkflow 还原 UI 时提前触发的
+          // change），选中项没有 dataset；此时不能用空值覆盖刚从工作流数据
+          // 恢复的 splitModelId/splitModelVendorId/splitModelVendorName，
+          // 否则每次打开页面都产生一次幽灵修改：去重门失效 → 自动保存全量
+          // 落库 → 其他会话 CAS 基线过期，零操作也弹保存冲突框。
+          // appendSplitOption 填充的目录选项必有 dataset.vendorId（默认 1）。
+          if(!selected || !selected.dataset || !selected.dataset.vendorId){
+            return;
+          }
           node.data.splitModel = splitModelSelect.value;
           node.data.splitModelId = selected.dataset.modelId || '';
           node.data.splitModelVendorId = selected.dataset.vendorId || '';

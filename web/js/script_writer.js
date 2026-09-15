@@ -109,7 +109,41 @@
         let currentEditWorld = { id: '', name: '', description: '', story_type: 'dialogue' };
         let driverStatus = {};  // 驱动可用状态
 
-        function handleTokenExpired() {
+        // 登录过期只处理一次：页面 init 并发 7+ 个请求，token 失效时会同时收到多份
+        // 401——不设防重入会连环 alert，且反复重设跳转目标，会把刚登录成功的用户
+        // 又拽回登录页（表现为"登录后进页面仍提示过期"的回环）。
+        let tokenExpiredHandled = false;
+
+        async function handleTokenExpired() {
+            if (tokenExpiredHandled) {
+                return;
+            }
+            tokenExpiredHandled = true;
+
+            // localStorage 残留的失效 token 会以非空 Bearer 发出，压住服务端 cookie
+            // 翻译（该中间件仅在 Authorization 为空时注入 cookie token）。先清掉它再
+            // 探测 HttpOnly cookie 会话：cookie 仍有效则刷新页面即可无感自愈（重载后
+            // AUTH_TOKEN 为空，空 Bearer 头走 cookie 翻译）；cookie 也失效才提示并
+            // 跳登录页。
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('token');
+            try {
+                // 60 秒内只自愈一次，避免 cookie 半失效等极端情况下 reload 循环
+                const lastHealAt = parseInt(sessionStorage.getItem('script_writer_cookie_heal_at') || '0', 10);
+                const now = Date.now();
+                if (now - lastHealAt > 60 * 1000) {
+                    const probeResp = await fetch('/api/user/role', { credentials: 'same-origin' });
+                    const probeData = await probeResp.json().catch(() => null);
+                    if (probeResp.ok && probeData && probeData.code === 0) {
+                        sessionStorage.setItem('script_writer_cookie_heal_at', String(now));
+                        window.location.reload();
+                        return;
+                    }
+                }
+            } catch (e) {
+                // 探测失败（网络异常等）：按登录已过期正常引导重新登录
+            }
+            localStorage.removeItem('logged_in');
             alert('⚠️ ' + (window.t ? window.t('alert_login_expired') : '登录已过期\n\n您的登录信息已过期，请重新登录。'));
             window.location.href = LOGIN_URL;
         }
