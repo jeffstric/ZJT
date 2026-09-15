@@ -3,8 +3,9 @@ UserTokens Model - Database operations for user_tokens table
 对应Go的models/user_tokens.go
 """
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from .database import execute_query, execute_update, execute_insert
+from config.constant import USER_TOKEN_EXPIRE_DAYS, USER_TOKEN_RENEW_THRESHOLD_DAYS
 import logging
 
 logger = logging.getLogger(__name__)
@@ -85,13 +86,42 @@ class UserTokensModel:
     
     @staticmethod
     def get_user_id_by_token(token: str) -> Optional[int]:
-        """根据token获取用户ID（验证token有效性）"""
-        sql = "SELECT user_id FROM user_tokens WHERE token = %s AND expire_time > NOW()"
+        """根据token获取用户ID（验证token有效性）
+
+        滑动续期统一收口在此：本方法是所有 token 校验路径（resolve_authorization_user_id /
+        resolve_request_auth_token / AuthService.verify_token）的公共咽喉。此前仅
+        verify_token 一条路径续期，cookie 会话（阶段 3c）下的纯浏览/查询请求走其他
+        路径时 token 永不续期，7 天后必然过期。剩余有效期低于
+        USER_TOKEN_RENEW_THRESHOLD_DAYS 时顺延到完整有效期，续期失败只记日志，
+        不影响本次校验结果。
+        """
+        sql = "SELECT user_id, expire_time FROM user_tokens WHERE token = %s AND expire_time > NOW()"
         try:
             result = execute_query(sql, (token,), fetch_one=True)
-            return result['user_id'] if result else None
+            if not result:
+                return None
+            expire_time = result.get('expire_time')
+            threshold = datetime.now() + timedelta(days=USER_TOKEN_RENEW_THRESHOLD_DAYS)
+            if expire_time and expire_time < threshold:
+                try:
+                    UserTokensModel.touch(
+                        token, datetime.now() + timedelta(days=USER_TOKEN_EXPIRE_DAYS)
+                    )
+                except Exception as e:
+                    logger.warning(f"token 滑动续期失败（不影响校验结果）: {e}")
+            return result['user_id']
         except Exception as e:
             logger.error(f"Failed to get user_id by token: {e}")
+            raise
+
+    @staticmethod
+    def touch(token: str, expire_time: datetime) -> int:
+        """滑动续期：顺延指定 token 的过期时间（仅校验通过后的活跃 token 会触发）"""
+        sql = "UPDATE user_tokens SET expire_time = %s WHERE token = %s"
+        try:
+            return execute_update(sql, (expire_time, token))
+        except Exception as e:
+            logger.error(f"Failed to touch user token: {e}")
             raise
     
     @staticmethod

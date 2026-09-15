@@ -24,7 +24,12 @@
     return selectedType !== 'agent';
   }
 
+  // 转义实现统一收敛到 web/js/escape.js（window.escapeHtml）；UMD 在 Node/测试
+  // 环境无 window 时降级为等价的本地实现（勿在此新增差异逻辑）
   function escapeHtml(value) {
+    if (typeof window !== 'undefined' && typeof window.escapeHtml === 'function') {
+      return window.escapeHtml(value);
+    }
     return String(value || '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')

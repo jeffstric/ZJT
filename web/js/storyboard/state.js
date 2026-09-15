@@ -1164,6 +1164,30 @@ export function createVideoMediaItem(opts) {
     return makeVideoMediaItem(opts);
 }
 
+/** 拆分弹窗当前应绑定的视频模型（首帧→图生视频槽，参考生→参考视频槽） */
+export function getSplitVideoModel() {
+    if (state.videoImageMode === 'multi_reference') {
+        const models = getReferenceToVideoSlotModels();
+        return models.find(m => String(m.task_id) === String(state.selectedReferenceToVideoTaskId))
+            || models[0]
+            || null;
+    }
+    return getSelectedImageToVideoModel();
+}
+
+/** 拆分「单镜最长」可选秒数：跟当前拆分视频模型走，缺省 5/8/10/15 */
+export function getSplitMaxShotDurationOptions() {
+    const durs = getVideoSupportedDurations(getSplitVideoModel());
+    return durs.length ? durs : [5, 8, 10, 15];
+}
+
+export function clampMaxGroupDurationToSplitModel() {
+    const opts = getSplitMaxShotDurationOptions();
+    if (!opts.includes(Number(state.maxGroupDuration))) {
+        state.maxGroupDuration = opts[opts.length - 1] || 15;
+    }
+}
+
 /** 当前模型支持的视频时长列表（升序整数秒） */
 export function getVideoSupportedDurations(model = null) {
     const m = model || getSelectedVideoModel();
@@ -1470,8 +1494,9 @@ export function restoreUiConfig(config = {}) {
         }
     }
     // 剧本拆分参数恢复（含取值合法性校验）
-    if ([5, 8, 10, 15].includes(Number(config.maxGroupDuration))) {
-        state.maxGroupDuration = Number(config.maxGroupDuration);
+    const restoredMax = Number(config.maxGroupDuration);
+    if (Number.isFinite(restoredMax) && restoredMax >= 1 && restoredMax <= 60) {
+        state.maxGroupDuration = restoredMax;
     }
     if ([0, 1, 2, 3].includes(Number(config.totalDurationMultiplier))) {
         state.totalDurationMultiplier = Number(config.totalDurationMultiplier);

@@ -11,7 +11,11 @@ from model.verify_codes import VerifyCodesModel
 from model.computing_power import ComputingPowerModel
 from model.computing_power_log import ComputingPowerLogModel
 from model.login_log import LoginLogModel
-from config.constant import PERSEIDS_ERR_NO_VALID_TOKEN
+from config.constant import (
+    PERSEIDS_ERR_NO_VALID_TOKEN,
+    USER_TOKEN_EXPIRE_DAYS,
+    USER_TOKEN_RENEW_THRESHOLD_DAYS,
+)
 from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 
 from ..utils.token import generate_token, hash_password, verify_password, generate_secret_key
@@ -22,13 +26,16 @@ logger = logging.getLogger(__name__)
 
 class AuthService:
     """认证服务 - 登录、注册、重置密码等"""
-    
+
     # 常量
     DEFAULT_COMPUTING_POWER = 50  # 默认算力
     INVITE_BONUS_POWER = 38  # 邀请人奖励算力
     INVITED_USER_POWER = 75  # 被邀请人算力
     FIRST_ADMIN_POWER = 100000  # 首个管理员算力
-    TOKEN_EXPIRE_DAYS = 30  # Token过期天数
+    # Token 过期天数（config/constant.py 统一维护；由旧 30 天缩短为 7 天 +
+    # 滑动续期，持续活跃用户免登录，闲置 token 自然过期）
+    TOKEN_EXPIRE_DAYS = USER_TOKEN_EXPIRE_DAYS
+    TOKEN_RENEW_THRESHOLD_DAYS = USER_TOKEN_RENEW_THRESHOLD_DAYS
     
     @staticmethod
     def login(
@@ -528,10 +535,13 @@ class AuthService:
     def verify_token(token: str) -> Optional[int]:
         """
         验证token并返回用户ID
-        
+
+        滑动续期已统一收口到 UserTokensModel.get_user_id_by_token（所有校验路径
+        的公共咽喉，见其 docstring），此处直接透传，避免重复的过期查询与续期写。
+
         Args:
             token: 用户token
-            
+
         Returns:
             用户ID或None
         """

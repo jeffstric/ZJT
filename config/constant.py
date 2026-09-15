@@ -79,6 +79,8 @@ USER_MODULE_AGENT_TASK_MAX_QUESTIONS_COMFYUI = (
 )
 USER_MODULE_COMFYUI_CONNECTOR = "local_comfyui"
 USER_MODULE_HTTP_CONNECTOR = "http"
+USER_MODULE_REQUIREMENT_MIN_LENGTH = 10
+USER_MODULE_REQUIREMENT_MAX_LENGTH = USER_MODULE_RUNTIME_CONFIG.requirement_max_length
 USER_MODULE_AGENT_TASK_QUESTION_POLL_INTERVAL_SECONDS = USER_MODULE_RUNTIME_CONFIG.agent_task_question_poll_interval_seconds
 USER_MODULE_AGENT_TASK_MAX_PROGRESS_EVENTS = USER_MODULE_RUNTIME_CONFIG.agent_task_max_progress_events
 USER_MODULE_AGENT_TASK_PROGRESS_CONTENT_MAX_CHARS = USER_MODULE_RUNTIME_CONFIG.agent_task_progress_content_max_chars
@@ -336,6 +338,15 @@ SYNC_TASK_STALE_TIMEOUT_BY_DRIVER = {
 # 超时未完成初始化的 worker 强制退出，由父进程 submit 路径清理死亡进程并补 fork。
 SYNC_WORKER_INIT_WATCHDOG_TIMEOUT = 90
 
+# 旧进程池 worker 回收宽限（秒）。池 broken 后 rebuild/关停时，shutdown(wait=False)
+# 无法通知卡死在废弃 call queue 上的 worker 退出，必须显式 SIGTERM→宽限等待→SIGKILL
+# 并 join 回收；否则 worker 进程与旧池队列管道随每次重建累积，最终打满 FD 上限
+# （事故 2026-09-12：scheduler 重建 46 次后累积 996 根管道，EMFILE 全进程崩溃）。
+# 仅影响「已判定 broken 被替换的池」的 worker 回收速度，正常任务路径不触及。
+SYNC_WORKER_RECLAIM_GRACE_SECONDS = 1.0
+# 回收时对单个 worker 的 join 上限（秒），用于 reap 僵尸进程，避免 test/CI 卡死
+SYNC_WORKER_RECLAIM_JOIN_TIMEOUT = 1.0
+
 
 def _parse_optional_timeout(value) -> Optional[int]:
     if value is None:
@@ -524,6 +535,19 @@ PERSEIDS_ERR_NO_VALID_TOKEN = 'NO_VALID_TOKEN'
 ERROR_CODE_TOKEN_EXPIRED = 'TOKEN_EXPIRED'
 # 对前端响应：认证服务自身故障（非 token 问题，前端按普通服务异常处理，不清登录态）
 ERROR_CODE_AUTH_SERVICE_UNAVAILABLE = 'AUTH_SERVICE_UNAVAILABLE'
+
+
+# ===== 用户登录 token 生命周期（docs/security/xss_stored_chain_fix_plan.md 阶段 3b）=====
+# 有效期：由旧 30 天缩短；滑动续期：校验通过且剩余有效期低于阈值时顺延到完整有效期，
+# 持续活跃的用户免登录，闲置 token 自然过期淘汰。
+USER_TOKEN_EXPIRE_DAYS = 7
+USER_TOKEN_RENEW_THRESHOLD_DAYS = 2
+
+# ===== HttpOnly 认证 cookie（阶段 3c）=====
+# 登录成功后以 HttpOnly cookie 下发 token，浏览器会话凭据不再进 JS 可读存储
+# （localStorage 仅为旧版本兼容的过渡读取通道）。SameSite=Strict 兼防 CSRF。
+AUTH_COOKIE_NAME = 'auth_token'
+AUTH_COOKIE_MAX_AGE_SECONDS = USER_TOKEN_EXPIRE_DAYS * 86400
 
 
 # ============ 向后兼容：使用 UnifiedConfigRegistry 提供旧 API ============
@@ -1130,6 +1154,21 @@ DOWNLOAD_IO_POOL_MAX_WORKERS = 8              # 下载写盘线程池大小（�
 #   + DOWNLOAD_COMPLETION_MARGIN_SECONDS
 DOWNLOAD_COMPLETION_MARGIN_SECONDS = 60
 
+# 下载已成功但写库阶段被商业许可证拦截（许可证校验失败的非瞬态错误）时的长退避（秒）。
+# 此类错误非瞬态：租约回收重试只会按 DOWNLOAD_LEASE_SECONDS 周期循环失败
+# 并重复下载（2026-09-15 事故：许可证租约过期后 31 个任务 20 分钟一次循环卡死）。
+# 长退避置回 pending，待商业许可证续租后自然消费；不计入 try_count（非下载本身的过错）。
+# 错误是否为许可证类由续租门面（task/license_rebootstrap_task）判定。
+LICENSE_DENIED_RESCHEDULE_SECONDS = 600
+
+# ===== 商业许可证周期续租（scheduler job 触发间隔） =====
+# scheduler 等非 ASGI 进程的事件循环是短生命周期的，无法常驻后台续租任务；
+# 进程启动时获取的短期许可证租约（约 24h）到期后，进程内商业能力校验会全部
+# 失败（2026-09-15 生产事故：结果交付链路被卡、任务积压，每天租约到期时刻复发，
+# 只能人工重启恢复）。由 scheduler job（commercial_license_rebootstrap）按本间隔
+# 触发续租门面。续租的具体实现在商业版仓库注册，主仓门面在社区版为空操作。
+LICENSE_REBOOTSTRAP_INTERVAL_SECONDS = 6 * 3600   # 续租触发间隔（秒），远小于租约有效期，留足失败重试余量
+
 
 class QueueBacklogConstants:
     """管理后台首页队列积压看板阈值。
@@ -1448,6 +1487,13 @@ class ScriptSplitConstants:
     SCRIPT_DURATION_LATIN_CHARS_PER_SECOND = 11.0
     # 剧本基准时长下限（秒），避免短文本估出过小预算
     SCRIPT_DURATION_MIN_SECONDS = 10.0
+    # 有对白镜头的时长下限（秒）：台词锚定时不得低于该值，防止台词念不完
+    SCRIPT_DURATION_DIALOGUE_SHOT_MIN_SECONDS = 2.0
+    # 台词占成片总时长的经验比例：总时长目标 = 台词总时长 ÷ 该值
+    TOTAL_DURATION_DIALOGUE_SHARE = 0.6
+    # 剧本自述标注总时长的有效区间（秒）：超出视为误识别（如正文里的时间描述）
+    SCRIPT_DURATION_DECLARED_MIN_SECONDS = 5.0
+    SCRIPT_DURATION_DECLARED_MAX_SECONDS = 10800.0
     # total_duration_multiplier 合法范围；0/缺省表示不限制总时长
     TOTAL_DURATION_MULTIPLIER_MIN = 0.5
     TOTAL_DURATION_MULTIPLIER_MAX = 10.0
@@ -1529,6 +1575,17 @@ class ScriptSplitConstants:
         STATUS_WAITING_AUTH,
         STATUS_CANCELLING,
     )
+
+
+class CharacterConstants:
+    """角色资产常量（model/character 与剧本拆分角色自动入库共用）。"""
+    _CONSTANT_GROUP = True
+
+    # 角色来源：用户手动创建（历史存量与角色卡提交，默认值）
+    SOURCE_MANUAL = "manual"
+    # 角色来源：剧本拆分发布时自动入库（见 services/storyboard_character_bootstrap_service.py，
+    # 该类角色缺参考图，前端需提示用户补充）
+    SOURCE_SCRIPT_SPLIT = "script_split"
 
 
 class StoryboardAutoGenerateConstants:
@@ -2600,6 +2657,44 @@ class AnnouncementConstants:
 
     # 用户侧列表/轮询
     DEFAULT_LIST_LIMIT = 50                                       # 用户侧单次拉取公告条数上限
+
+
+class MediaUploadSafetyConstants:
+    """上传媒体文件安全校验常量（防存储型 XSS / 内存磁盘滥用）
+
+    背景：/upload/ 由 StaticFiles 直接对外提供，若放任 .html/.svg 等落盘，
+    会以 text/html 同域返回形成存储型 XSS。所有接收用户上传媒体文件的
+    端点必须走 utils/media_upload.py 的扩展名白名单 + 魔数校验 + 大小上限。
+    """
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'BLOCKED_EXTS': '显式拒绝的危险扩展名（浏览器可执行/可渲染）',
+        'IMAGE_EXTS': '图片扩展名白名单',
+        'VIDEO_EXTS': '视频扩展名白名单',
+        'AUDIO_EXTS': '音频扩展名白名单',
+        'MAX_IMAGE_SIZE': '单张图片大小上限',
+        'MAX_VIDEO_SIZE': '单个视频大小上限',
+        'MAX_AUDIO_SIZE': '单个音频大小上限',
+        'CHUNK_SIZE': '分块读取块大小',
+        'MAGIC_SCAN_BYTES': '魔数校验读取的头部字节数',
+    }
+
+    # 显式拒绝：命中时返回针对性错误信息（白名单本身已排除，这里用于精确提示）
+    BLOCKED_EXTS = ('.html', '.htm', '.svg', '.xhtml', '.xml', '.js', '.mjs', '.css')
+
+    # 扩展名白名单（与 _MEDIA_EXTENSIONS / StaticFiles 服务范围保持媒体类型）
+    IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp')
+    VIDEO_EXTS = ('.mp4', '.mov', '.webm', '.avi', '.mkv')
+    AUDIO_EXTS = ('.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac')
+
+    # 大小上限（按媒体类别分档；分块读取累计校验，超限即中断并清理半成品）
+    MAX_IMAGE_SIZE = 10 * 1024 * 1024                             # 图片 10MB（与公告上传一致）
+    MAX_VIDEO_SIZE = 200 * 1024 * 1024                            # 视频 200MB
+    MAX_AUDIO_SIZE = 50 * 1024 * 1024                             # 音频 50MB
+
+    # 分块读取参数
+    CHUNK_SIZE = 1024 * 1024                                      # 每块 1MB
+    MAGIC_SCAN_BYTES = 32                                         # 头部魔数扫描字节数
 
 
 # ============ 智能插入分镜 ============

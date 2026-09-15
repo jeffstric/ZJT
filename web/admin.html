@@ -3327,7 +3327,8 @@
                     <div class="form-group">
                         <label>{{ userModuleCreateModal.connector === 'local_comfyui' ? t('um_requirement_optional') : t('um_requirement') }} <span class="um-required" v-if="userModuleCreateModal.connector !== 'local_comfyui'">*</span></label>
                         <textarea v-model="userModuleCreateModal.requirement" rows="10" :placeholder="t('um_requirement_placeholder')"></textarea>
-                        <div class="um-field-meta"><span>{{ userModuleCreateModal.connector === 'local_comfyui' ? t('um_requirement_comfyui_hint') : t('um_requirement_hint') }}</span><span>{{ userModuleCreateModal.requirement.length }}/20000</span></div>
+                        <div class="um-field-meta"><span>{{ userModuleCreateModal.connector === 'local_comfyui' ? t('um_requirement_comfyui_hint') : t('um_requirement_hint') }}</span><span :class="{ 'um-count-danger': userModuleRequirementOverLimit }">{{ userModuleCreateModal.requirement.length }}/{{ userModuleRequirementMax }}</span></div>
+                        <p class="um-field-error" v-if="userModuleRequirementOverLimit">{{ t('um_requirement_over_limit', { max: userModuleRequirementMax, count: userModuleRequirementOverCount }) }}</p>
                     </div>
                     <label class="um-checkbox"><input type="checkbox" v-model="userModuleCreateModal.confirmed"><span>{{ t('um_generation_ack') }}</span></label>
                 </div>

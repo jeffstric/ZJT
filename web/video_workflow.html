@@ -125,6 +125,15 @@
           </svg>
           <span data-i18n="suffix">后缀</span>
         </button>
+        <button class="btn secondary save-btn" id="shortcutHelpBtn" type="button" title="查看画布快捷键">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+            <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01"></path>
+            <path d="M6 14h.01M18 14h.01"></path>
+            <path d="M9 14h6"></path>
+          </svg>
+          <span>快捷键</span>
+        </button>
         <div class="ratio-label" data-i18n="video_ratio">视频比例</div>
         <select id="ratioSelect">
           <option value="9:16">9:16</option>
@@ -238,6 +247,13 @@
                 <path d="M6 21C6 17.6863 8.68629 15 12 15C15.3137 15 18 17.6863 18 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
               </svg>
               <span class="add-menu-text" data-i18n="digital_human">数字人</span>
+            </div>
+            <div class="add-menu-item" id="menuAddGroup">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="2" stroke-dasharray="4 3"/>
+                <rect x="8" y="8" width="8" height="8" rx="1.5" fill="currentColor" opacity="0.35"/>
+              </svg>
+              <span class="add-menu-text">分组</span>
             </div>
           </div>
           <div class="add-menu-group">
@@ -353,16 +369,58 @@
     </div>
   </div>
 
+  <div class="modal" id="shortcutHelpModal" aria-hidden="true">
+    <div class="modal-card shortcut-help-card" role="dialog" aria-modal="true" aria-label="画布快捷键">
+      <div class="modal-header shortcut-help-header">
+        <div class="modal-title">
+          <svg class="shortcut-help-title-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+            <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01"></path>
+            <path d="M6 14h.01M18 14h.01"></path>
+            <path d="M9 14h6"></path>
+          </svg>
+          画布快捷键
+        </div>
+        <button class="modal-close" id="shortcutHelpModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body shortcut-help-body">
+        <div class="shortcut-section">
+          <div class="shortcut-section-title">编辑</div>
+          <div class="shortcut-row"><span class="shortcut-desc">复制选中节点（分镜 / 分镜组 / 剧本节点不支持复制）</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>C</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">在鼠标位置粘贴，连续粘贴自动向右下错开</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>V</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">再制（在原位置附近直接复制一份）</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>D</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">撤销上一步操作</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>Z</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">删除选中（依次作用：连接线 → 时间轴片段 → 节点）；作用于分组框时解散分组（保留节点）</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Delete</kbd></span><span class="shortcut-or">/</span><span class="shortcut-combo"><kbd>Backspace</kbd></span></span></div>
+        </div>
+        <div class="shortcut-section">
+          <div class="shortcut-section-title">分组</div>
+          <div class="shortcut-row"><span class="shortcut-desc">把选中的多个节点编为一组</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>G</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">解散选中的分组，或把选中节点移出所在分组</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>Shift</kbd><span class="plus">+</span><kbd>G</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">重命名分组</span><span class="shortcut-keys"><span class="shortcut-mouse">双击分组标题栏</span></span></div>
+        </div>
+        <div class="shortcut-section">
+          <div class="shortcut-section-title">画布视图</div>
+          <div class="shortcut-row"><span class="shortcut-desc">放大 / 缩小</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>=</kbd></span><span class="shortcut-or">/</span><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>-</kbd></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">缩放画布（以鼠标位置为中心）</span><span class="shortcut-keys"><span class="shortcut-mouse">滚轮</span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">画布左右平移</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Shift</kbd><span class="plus">+</span><span class="shortcut-mouse">滚轮</span></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">画布上下平移</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><span class="shortcut-mouse">滚轮</span></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">框选多选节点（按住后拖拽）</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><span class="shortcut-mouse">空白处拖拽</span></span></span></div>
+          <div class="shortcut-row"><span class="shortcut-desc">平移画布</span><span class="shortcut-keys"><span class="shortcut-mouse">拖动空白区域</span></span></div>
+        </div>
+        <div class="shortcut-tip">在画布上点击右键可随时打开「复制 / 粘贴 / 再制 / 编组 / 解散编组 / 删除」菜单；把节点拖入分组框会自动加入分组，拖出分组框自动移出。</div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal" id="saveConflictModal" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true">
       <div class="modal-header">
         <div class="modal-title">保存冲突</div>
-        <button class="modal-close" id="saveConflictModalClose" type="button" aria-label="关闭">×</button>
       </div>
       <div class="modal-body">
         <div class="conflict-icon">⚠</div>
         <p class="conflict-lead">该工作流已被其他会话（或浏览器标签页）修改并保存，你的本地修改与服务器上的最新版本冲突。</p>
-        <p class="conflict-hint">选择处理方式前，你的本地修改已安全保留在本地，不会丢失。</p>
+        <p class="conflict-hint">数据只能二选一，请谨慎选择。</p>
       </div>
       <div class="modal-footer">
         <button class="conflict-btn conflict-btn-server" id="saveConflictUseServerBtn" type="button">
@@ -371,7 +429,7 @@
         </button>
         <button class="conflict-btn conflict-btn-local" id="saveConflictUseLocalBtn" type="button">
           <span class="conflict-btn-title">用本地版本覆盖</span>
-          <span class="conflict-btn-desc">以当前画布内容强制覆盖服务器</span>
+          <span class="conflict-btn-desc">以当前画布内容强制覆盖服务器，服务器上的最新更新将丢失</span>
         </button>
       </div>
     </div>
@@ -1103,6 +1161,7 @@
 
   <div id="workflowTourPortal" aria-hidden="true"></div>
 
+  <script src="/js/escape.js"></script>
   <script src="/js/state.js?v=__VERSION__"></script>
   <script src="/js/utils.js"></script>
   <script src="/js/node_registry.js"></script>
@@ -1210,19 +1269,14 @@
     
     // 打开算力日志弹窗
     function openComputingPowerLogs() {
-      const authToken = localStorage.getItem('auth_token');
-      if (!authToken) {
-        alert('请先登录');
-        return;
-      }
-      
       const modal = document.getElementById('computingPowerLogsModal');
       const iframe = document.getElementById('computingPowerLogsIframe');
       if (!iframe) return;
 
-      // 设置 iframe 的 src
-      iframe.src = `/computing_power_logs.html?auth_token=${encodeURIComponent(authToken)}`;
-      
+      // iframe 与主页面同源，凭据由子页面自行获取（localStorage/HttpOnly cookie），
+      // 不再把 auth_token 拼进 URL（防 Referer/浏览器历史/服务端日志泄漏）
+      iframe.src = '/computing_power_logs.html';
+
       // 显示弹窗
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
@@ -1267,8 +1321,10 @@
       body.innerHTML = '<div style="text-align: center; padding: 40px;"><div class="loading-spinner"></div><p style="margin-top: 16px; color: #6b7280;">' + (window.t ? window.t('recharge_loading') : '加载套餐中...') + '</p></div>';
 
       try {
+        // token 走 Authorization 头，不再拼进 URL（防 Referer/日志/历史记录泄漏）
         const authToken = localStorage.getItem('auth_token');
-        const response = await fetch(`/api/recharge/packages?auth_token=${encodeURIComponent(authToken)}`);
+        const reqHeaders = authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+        const response = await fetch('/api/recharge/packages', { headers: reqHeaders });
         const data = await response.json();
 
         if (data.packages && data.packages.length > 0) {
@@ -1405,6 +1461,10 @@
   <script src="/js/shot_frame_generator.js?v=__VERSION__"></script>
   <script src="/js/video_prompt_suffix.js"></script>
   <script src="/js/shot_frame_video_generator.js"></script>
+  <script src="/js/canvas_groups.js?v=__VERSION__"></script>
+  <script src="/js/canvas_clipboard.js?v=__VERSION__"></script>
+  <script src="/js/canvas_context_menu.js?v=__VERSION__"></script>
+  <script src="/js/canvas_shortcuts.js?v=__VERSION__"></script>
   <script src="/js/events.js?v=__VERSION__"></script>
   <script src="/js/workflow_layout.js?v=__VERSION__"></script>
 

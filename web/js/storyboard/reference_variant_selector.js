@@ -10,14 +10,16 @@ import { getThumbnailUrl, refresh, Region } from './render.js';
 let activePopover = null;
 let saving = false;
 
-function escapeHtml(value) {
-    return String(value || '')
+// 转义统一收敛到 web/js/escape.js（window.escapeHtml，经典 script 先于本 module 执行）。
+// Node/Vitest 直接 import 本模块时降级为等价实现。
+const escapeHtml = (typeof window !== 'undefined' && typeof window.escapeHtml === 'function')
+    ? window.escapeHtml
+    : (value) => String(value ?? '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
-}
 
 function urlFromReferenceImage(item) {
     if (!item) return '';

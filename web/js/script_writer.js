@@ -18,6 +18,14 @@
         // auth_token 从 localStorage 读取，不再从 URL 获取，避免敏感信息暴露
         const AUTH_TOKEN = localStorage.getItem('auth_token') || '';
 
+        // 纯转义走 web/js/escape.js。必须用 const 包一层，禁止 function 声明：
+        // 非 module 脚本里 function escapeHtml 会挂到 window，覆盖权威实现并自递归爆栈。
+        const escapeHtmlShared = window.escapeHtml;
+        const escapeHtml = function (text) {
+            return escapeHtmlShared(text).replace(/\n/g, '<br>');
+        };
+        const escapeHtmlAttr = window.escapeHtmlAttr;
+
         // 角度常量类 - 统一管理多角度图片的角度定义
         const AngleKey = {
             RIGHT_90: 'right',
@@ -55,7 +63,10 @@
             '左侧': { angle: 270, angleKey: AngleKey.LEFT_270 }
         };
 
-        const LOGIN_URL = window.location.origin + '/?login=1&redirect_url=video-workflow-list';
+        // 登录后带回当前页（含 user_id/world_id/workflow_id 参数），
+        // 不再硬编码 video-workflow-list——那会把用户带去视频工作流列表而非原目标
+        const LOGIN_URL = window.location.origin + '/?login=1&redirect_url='
+            + encodeURIComponent(window.location.pathname + window.location.search);
 
         // LLM 供应商常量（从 /api/vendors 动态加载）
         const LLMVendor = {};
@@ -98,7 +109,41 @@
         let currentEditWorld = { id: '', name: '', description: '', story_type: 'dialogue' };
         let driverStatus = {};  // 驱动可用状态
 
-        function handleTokenExpired() {
+        // 登录过期只处理一次：页面 init 并发 7+ 个请求，token 失效时会同时收到多份
+        // 401——不设防重入会连环 alert，且反复重设跳转目标，会把刚登录成功的用户
+        // 又拽回登录页（表现为"登录后进页面仍提示过期"的回环）。
+        let tokenExpiredHandled = false;
+
+        async function handleTokenExpired() {
+            if (tokenExpiredHandled) {
+                return;
+            }
+            tokenExpiredHandled = true;
+
+            // localStorage 残留的失效 token 会以非空 Bearer 发出，压住服务端 cookie
+            // 翻译（该中间件仅在 Authorization 为空时注入 cookie token）。先清掉它再
+            // 探测 HttpOnly cookie 会话：cookie 仍有效则刷新页面即可无感自愈（重载后
+            // AUTH_TOKEN 为空，空 Bearer 头走 cookie 翻译）；cookie 也失效才提示并
+            // 跳登录页。
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('token');
+            try {
+                // 60 秒内只自愈一次，避免 cookie 半失效等极端情况下 reload 循环
+                const lastHealAt = parseInt(sessionStorage.getItem('script_writer_cookie_heal_at') || '0', 10);
+                const now = Date.now();
+                if (now - lastHealAt > 60 * 1000) {
+                    const probeResp = await fetch('/api/user/role', { credentials: 'same-origin' });
+                    const probeData = await probeResp.json().catch(() => null);
+                    if (probeResp.ok && probeData && probeData.code === 0) {
+                        sessionStorage.setItem('script_writer_cookie_heal_at', String(now));
+                        window.location.reload();
+                        return;
+                    }
+                }
+            } catch (e) {
+                // 探测失败（网络异常等）：按登录已过期正常引导重新登录
+            }
+            localStorage.removeItem('logged_in');
             alert('⚠️ ' + (window.t ? window.t('alert_login_expired') : '登录已过期\n\n您的登录信息已过期，请重新登录。'));
             window.location.href = LOGIN_URL;
         }
@@ -460,8 +505,14 @@
                             const vContent = msg.content;
                             const desc = vContent.description || '';
                             const options = vContent.options || [];
+                            const vStatus = msg.verification_status || vContent.status || '';
+                            const expired = vStatus === 'cancelled' || vStatus === 'timeout';
+                            const vId = vContent.verification_id || '';
+                            const vIdAttr = vId && window.escapeHtmlAttr
+                                ? ` data-verification-id="${window.escapeHtmlAttr(vId)}"`
+                                : '';
 
-                            let vHtml = `<div class="verification-question history-mode">`;
+                            let vHtml = `<div class="verification-question history-mode${expired ? ' is-expired' : ''}"${vIdAttr}>`;
                             vHtml += `<strong class="verification-title">${escapeHtml(vContent.title || (window.t ? window.t('ai_question') : 'AI 提问'))}</strong>`;
                             vHtml += `<p class="verification-description">${escapeHtml(desc)}</p>`;
                             if (options.length > 0) {
@@ -470,6 +521,9 @@
                                     vHtml += `<span class="option-btn">${escapeHtml(opt)}</span>`;
                                 });
                                 vHtml += `</div>`;
+                            }
+                            if (expired) {
+                                vHtml += `<p class="verification-expired-badge">${escapeHtml(window.t ? window.t('verification_expired_hint') : '提问已超时，选项已失效')}</p>`;
                             }
                             vHtml += `</div>`;
                             addMessage('assistant', vHtml);
@@ -643,7 +697,10 @@
                 
                 const response = await fetch('/api/session/create', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + AUTH_TOKEN
+                    },
                     body: JSON.stringify({
                         system_prompt: systemPrompt,
                         user_id: USER_ID,
@@ -708,7 +765,10 @@
                     updateStatus(window.t ? window.t('status_syncing_from_db') : '正在从数据库同步文件...');
                     const response = await fetch('/api/sync-files', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + AUTH_TOKEN
+                        },
                         body: JSON.stringify({ user_id: USER_ID, world_id: WORLD_ID })
                     });
                     
@@ -924,7 +984,10 @@
                 updateStatus(window.t ? window.t('status_submitting_data') : '正在提交数据...');
                 const response = await fetch('/api/submit-to-database', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + AUTH_TOKEN
+                    },
                     body: JSON.stringify({ user_id: USER_ID, world_id: WORLD_ID })
                 });
 
@@ -1379,10 +1442,13 @@
 
                 const taskResponse = await fetch(`/api/session/${sessionId}/task`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + AUTH_TOKEN
+                    },
                     body: JSON.stringify({
                         message,
-                        auth_token: AUTH_TOKEN,
+                        ...(AUTH_TOKEN ? { auth_token: AUTH_TOKEN } : {}),
                         model: selector?.value || '',
                         model_id: modelId,
                         vendor_id: vendorId ? parseInt(vendorId) : 1,
@@ -1421,9 +1487,10 @@
                     throw new Error(taskData.message || taskData.error || `HTTP ${taskResponse.status}: ${taskResponse.statusText}`);
                 }
                 const taskId = taskData.task_id;
-                
-                const eventSource = new EventSource(`/api/task/${taskId}/stream`);
-                // 保持打字指示器，直到收到第一个消息
+
+                // 本轮回复的气泡容器：整次任务只创建一次，message 事件向其中累加。
+                // 不可移入下方 onMessage 回调——progress/tool_call/heartbeat 等每条
+                // SSE 事件都会触发回调，误建气泡会堆积空白白点并顶走提问选项卡片。
                 const messageDiv = addMessage('assistant', '');
                 let contentDiv = messageDiv.querySelector('.message-content');
 
@@ -1431,10 +1498,8 @@
                 fullText = '';
                 let startTime = Date.now();
 
-                eventSource.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        
+                const eventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
+                    onMessage: async (data) => {
                         if (!hasStartedReceiving) {
                             hasStartedReceiving = true;
                             hideTypingIndicator(); // 收到第一个消息时才移除打字指示器
@@ -1512,35 +1577,14 @@
                             handleHumanVerification(verification);
                         } else if (data.type === 'verification_timeout') {
                             console.log('[SSE] Received verification_timeout:', data);
-                            if (pendingVerificationId === data.verification_id) {
-                                pendingVerificationId = null;
-                                pendingVerificationData = null;
-                                const input = document.getElementById('message-input');
-                                if (input) {
-                                    input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
-                                }
-                                // 超时后需允许用户重新发送，恢复发送按钮与处理状态
-                                isProcessing = false;
-                                const sendBtn = document.getElementById('send-btn');
-                                if (sendBtn) {
-                                    sendBtn.disabled = false;
-                                    sendBtn.classList.remove('sending');
-                                }
-                                clearAllImageGenerating();
-                                schedulePendingDrain();
-                            }
-                            showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
+                            handleVerificationTimeout(data.verification_id);
                         } else if (data.type === 'status') {
                             if (data.status) updateStatus(data.status);
                         }
-                    } catch (e) {
-                        console.error('[SSE-CLIENT] 解析失败:', e);
-                    }
-                };
-                
-                eventSource.onerror = (error) => {
-                    // 关闭当前连接
-                    eventSource.close();
+                    },
+                    onError: (error) => {
+                        // 关闭当前连接
+                        eventSource.close();
 
                     // 检查后端任务状态，确认是否真的完成
                     checkTaskStatus(taskId).then(taskStatus => {
@@ -1566,7 +1610,8 @@
                         updateStatus(window.t ? window.t('status_connection_lost') : '连接中断，请刷新页面后重试');
                         showError(window.t ? window.t('error_connection_lost') : '连接中断，无法确认任务状态，请刷新页面后重试');
                     });
-                };
+                    }
+                });
 
                 updateStatus(window.t ? window.t('status_ready') : '就绪');
             } catch (error) {
@@ -1587,7 +1632,9 @@
 
         // 检查任务状态
         async function checkTaskStatus(taskId) {
-            const response = await fetch(`/api/task/${taskId}/status`);
+            const response = await fetch(`/api/task/${taskId}/status`, {
+                headers: { 'Authorization': 'Bearer ' + AUTH_TOKEN }
+            });
             if (!response.ok) throw new Error('Failed to check task status');
             const data = await response.json();
             return data.task?.status;
@@ -1598,11 +1645,7 @@
             isProcessing = false;
             pendingVerificationId = null;
             pendingVerificationData = null;
-            const sendBtn = document.getElementById('send-btn');
-            if (sendBtn) {
-                sendBtn.disabled = false;
-                sendBtn.classList.remove('sending');
-            }
+            restoreSendButtonIdle();
             updateStatus(window.t ? window.t('status_ready') : '就绪');
             // 终态兜底：清除图片生成中标识 + 尝试排空排队消息（幂等）
             clearAllImageGenerating();
@@ -1620,13 +1663,8 @@
                 return null;
             }
 
-            const newEventSource = new EventSource(`/api/task/${taskId}/stream`);
-            let hasStartedReceiving = false;
-
-            newEventSource.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-
+            const newEventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
+                onMessage: async (data) => {
                     if (!hasStartedReceiving) {
                         hasStartedReceiving = true;
                         hideTypingIndicator();
@@ -1637,7 +1675,8 @@
                     if (data.type === 'message') {
                         hideToolCalls();
                         if (data.content) {
-                            if (needsNewMessageDiv) {
+                            // 首连尚未收到任何消息就断线时 contentDiv 为空，同样需要新建气泡
+                            if (!contentDiv || needsNewMessageDiv) {
                                 const newDiv = addMessage('assistant', '');
                                 contentDiv = newDiv.querySelector('.message-content');
                                 fullText = '';
@@ -1677,34 +1716,13 @@
                         const verification = data.verification || {};
                         handleHumanVerification(verification);
                     } else if (data.type === 'verification_timeout') {
-                        if (pendingVerificationId === data.verification_id) {
-                            pendingVerificationId = null;
-                            pendingVerificationData = null;
-                            const input = document.getElementById('message-input');
-                            if (input) {
-                                input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
-                            }
-                            // 超时后需允许用户重新发送，恢复发送按钮与处理状态
-                            isProcessing = false;
-                            const sendBtn = document.getElementById('send-btn');
-                            if (sendBtn) {
-                                sendBtn.disabled = false;
-                                sendBtn.classList.remove('sending');
-                            }
-                            clearAllImageGenerating();
-                            schedulePendingDrain();
-                        }
-                        showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
+                        handleVerificationTimeout(data.verification_id);
                     } else if (data.type === 'status') {
                         if (data.status) updateStatus(data.status);
                     }
-                } catch (e) {
-                    console.error('[SSE-CLIENT] 解析失败:', e);
-                }
-            };
-
-            newEventSource.onerror = (error) => {
-                newEventSource.close();
+                },
+                onError: (error) => {
+                    newEventSource.close();
                 checkTaskStatus(taskId).then(taskStatus => {
                     if (taskStatus === 'completed' || taskStatus === 'failed' || taskStatus === 'cancelled') {
                         resetProcessingState();
@@ -1721,7 +1739,8 @@
                     updateStatus(window.t ? window.t('status_reconnect_final') : '重连失败，请刷新页面');
                     showError(window.t ? window.t('error_connection_lost') : '重连失败，无法确认任务状态，请刷新页面后重试');
                 });
-            };
+                }
+            });
 
             return newEventSource;
         }
@@ -1764,21 +1783,13 @@
             }
         }
 
-        function sanitizeHtml(html) {
-            // 移除危险标签及其内容
-            var result = html.replace(/<(script|iframe|object|embed|form|style)[^>]*>[\s\S]*?<\/\1>/gi, '');
-            result = result.replace(/<(script|iframe|object|embed|form|style)[^>]*\/?\s*>/gi, '');
-            // 移除 on* 事件处理器属性
-            result = result.replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-            // 移除 javascript: URL（在 href/src/action 中）
-            result = result.replace(/(href|src|action)\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/gi, '$1="#"');
-            return result;
-        }
-
+        // 净化统一走 window.secureSanitize（web/js/security.js，DOMPurify 白名单）。
+        // 旧的正则版 sanitizeHtml 存在多处绕过（无引号 javascript:、实体编码、
+        // "/" 属性分隔绕过 on* 移除等），已删除，勿再恢复。
         function renderMarkdown(content) {
-            if (typeof marked !== 'undefined') {
+            if (typeof marked !== 'undefined' && typeof window.secureSanitize === 'function' && typeof window.DOMPurify !== 'undefined') {
                 try {
-                    return sanitizeHtml(marked.parse(content));
+                    return window.secureSanitize(marked.parse(content));
                 } catch (error) {
                     return escapeHtml(content);
                 }
@@ -1893,6 +1904,67 @@
             }
         }
 
+        function restoreSendButtonIdle() {
+            const sendBtn = document.getElementById('send-btn');
+            if (sendBtn) {
+                sendBtn.disabled = false;
+                sendBtn.classList.remove('sending');
+            }
+        }
+
+        function findVerificationCard(verificationId) {
+            if (verificationId) {
+                const escaped = (window.CSS && typeof CSS.escape === 'function')
+                    ? CSS.escape(String(verificationId))
+                    : String(verificationId).replace(/["\\]/g, '\\$&');
+                const card = document.querySelector(`.verification-question[data-verification-id="${escaped}"]`);
+                if (card) return card;
+            }
+            const cards = document.querySelectorAll('.verification-question:not(.is-expired)');
+            return cards.length ? cards[cards.length - 1] : null;
+        }
+
+        function expireVerificationUI(verificationId) {
+            const card = findVerificationCard(verificationId);
+            if (!card) return;
+            card.classList.add('is-expired');
+            card.querySelectorAll('.option-btn').forEach((btn) => {
+                btn.disabled = true;
+                btn.setAttribute('aria-disabled', 'true');
+            });
+            if (!card.querySelector('.verification-expired-badge')) {
+                const badge = document.createElement('p');
+                badge.className = 'verification-expired-badge';
+                badge.textContent = window.t ? window.t('verification_expired_hint') : '提问已超时，选项已失效';
+                card.appendChild(badge);
+            }
+        }
+
+        function handleVerificationTimeout(verificationId) {
+            expireVerificationUI(verificationId || pendingVerificationId);
+            if (!pendingVerificationId || !verificationId || pendingVerificationId === verificationId) {
+                pendingVerificationId = null;
+                pendingVerificationData = null;
+                const input = document.getElementById('message-input');
+                if (input) {
+                    input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                }
+                isProcessing = false;
+                restoreSendButtonIdle();
+                clearAllImageGenerating();
+                schedulePendingDrain();
+                updateStatus(window.t ? window.t('status_ready') : '就绪');
+            }
+            showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
+        }
+
+        function isVerificationCardActive(card, verificationId) {
+            if (!pendingVerificationId) return false;
+            if (verificationId && pendingVerificationId !== verificationId) return false;
+            if (card && card.classList.contains('is-expired')) return false;
+            return true;
+        }
+
         function handleHumanVerification(verification) {
             // 隐藏 typing indicator
             hideTypingIndicator();
@@ -1907,22 +1979,26 @@
             // 显示验证问题
             const messageDiv = addMessage('assistant', '');
             const contentDiv = messageDiv.querySelector('.message-content');
+            const verificationIdAttr = window.escapeHtmlAttr
+                ? window.escapeHtmlAttr(verification.verification_id || '')
+                : String(verification.verification_id || '');
 
-            // 构造 HTML
-            let html = `<div class="verification-question">`;
+            // 构造 HTML（innerHTML 直写以保留 button；文案均已转义）
+            let html = `<div class="verification-question" data-verification-id="${verificationIdAttr}">`;
             html += `<strong class="verification-title">${escapeHtml(verification.title)}</strong>`;
             html += `<p class="verification-description">${escapeHtml(verification.description)}</p>`;
 
             // 如果有选项，显示选择按钮
             if (verification.options && verification.options.length > 0) {
+                html += `<p class="verification-click-hint">${escapeHtml(window.t ? window.t('verification_click_hint') : '请点击下方选项作答')}</p>`;
                 html += `<div class="verification-options">`;
                 verification.options.forEach((option, index) => {
                     const escapedOption = escapeHtml(option);
-                    html += `<button class="option-btn" data-option-index="${index}">`;
+                    html += `<button type="button" class="option-btn" data-option-index="${index}">`;
                     html += `${escapedOption}</button>`;
                 });
                 // 添加"其他"按钮
-                html += `<button class="option-btn option-other-btn" data-option-other="true">`;
+                html += `<button type="button" class="option-btn option-other-btn" data-option-other="true">`;
                 html += `${window.t ? window.t('btn_other') : '其他'}</button>`;
                 html += `</div>`;
             }
@@ -1935,26 +2011,27 @@
             const optionBtns = contentDiv.querySelectorAll('.option-btn');
             const input = document.getElementById('message-input');
             const sendBtn = document.getElementById('send-btn');
+            const card = contentDiv.querySelector('.verification-question');
 
             optionBtns.forEach(btn => {
                 btn.addEventListener('click', (e) => {
-                    const isOther = e.target.dataset.optionOther === 'true';
+                    const target = e.currentTarget;
+                    if (!isVerificationCardActive(card, verification.verification_id)) {
+                        return;
+                    }
+                    const isOther = target.dataset.optionOther === 'true';
 
                     if (isOther) {
                         // 点击"其他"按钮，焦点转移到下方的消息输入框
                         input.placeholder = window.t ? window.t('placeholder_custom_answer') : '请输入您的自定义答案...';
                         input.focus();
-                        // 等待自定义输入时保持发送按钮可用
-                        if (sendBtn) {
-                            sendBtn.disabled = false;
-                            sendBtn.classList.remove('sending');
-                        }
+                        restoreSendButtonIdle();
                         updateStatus('💬 ' + (window.t ? window.t('status_custom_answer') : '请在下方输入框中输入您的自定义答案'));
                         console.log('[VERIFICATION] 用户选择"其他"，等待自定义输入');
                     } else {
                         // 点击预设选项，直接提交（无需用户再输入）
                         // fromInput=false：不清理输入框草稿
-                        const index = e.target.dataset.optionIndex;
+                        const index = target.dataset.optionIndex;
                         const option = verification.options[index];
                         if (option) {
                             console.log('[VERIFICATION] 用户选择选项:', option);
@@ -1964,11 +2041,9 @@
                                 sendBtn.classList.add('sending');
                             }
                             submitVerificationAnswer(option, { fromInput: false }).finally(() => {
-                                // 失败仍 pending 时 submitVerificationAnswer 外层/调用方会恢复；
-                                // 成功则保持 disabled，等待 SSE 继续；失败由下方 pending 恢复兜底
-                                if (sendBtn && pendingVerificationId) {
-                                    sendBtn.disabled = false;
-                                    sendBtn.classList.remove('sending');
+                                // 失败仍 pending：恢复以便重试；成功保持 sending 等 AI 继续
+                                if (pendingVerificationId) {
+                                    restoreSendButtonIdle();
                                 }
                             });
                         }
@@ -1984,10 +2059,7 @@
                     ? (window.t ? window.t('placeholder_select_or_custom') : '点击上方选项或选择"其他"输入自定义答案')
                     : (window.t ? window.t('placeholder_enter_answer') : '请输入您的回答...');
             }
-            if (sendBtn) {
-                sendBtn.disabled = false;
-                sendBtn.classList.remove('sending');
-            }
+            restoreSendButtonIdle();
 
             updateStatus(window.t ? window.t('status_waiting_answer') : '等待您的回答...');
         }
@@ -2002,8 +2074,11 @@
         async function submitVerificationAnswer(userInput, { fromInput = false } = {}) {
             if (!pendingVerificationId) {
                 console.error('No pending verification');
+                restoreSendButtonIdle();
                 return;
             }
+
+            const submittedVerificationId = pendingVerificationId;
 
             try {
                 const response = await axios.post(
@@ -2022,6 +2097,14 @@
 
                 if (response.data.success) {
                     console.log('[VERIFICATION] Answer submitted successfully');
+
+                    const answeredCard = findVerificationCard(submittedVerificationId);
+                    if (answeredCard) {
+                        answeredCard.classList.add('is-answered');
+                        answeredCard.querySelectorAll('.option-btn').forEach((btn) => {
+                            btn.disabled = true;
+                        });
+                    }
 
                     // 清除验证状态
                     pendingVerificationId = null;
@@ -2064,6 +2147,7 @@
                 if (error.response && error.response.status === 400 && error.response.data?.error_code === 'INSUFFICIENT_POWER') {
                     pendingVerificationId = null;
                     pendingVerificationData = null;
+                    restoreSendButtonIdle();
                     if (input) {
                         input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
                     }
@@ -2073,8 +2157,11 @@
 
                 // 如果是 404/410，说明验证已过期（超时/已完成/已取消），清除状态让用户继续对话
                 if (error.response && (error.response.status === 404 || error.response.status === 410)) {
+                    expireVerificationUI(submittedVerificationId);
                     pendingVerificationId = null;
                     pendingVerificationData = null;
+                    isProcessing = false;
+                    restoreSendButtonIdle();
                     if (input) {
                         input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
                     }
@@ -3669,16 +3756,6 @@
             updateImageModelDisplay();
         }
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML.replace(/\n/g, '<br>');
-        }
-
-        function escapeHtmlAttr(str) {
-            return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        }
-
         function getScriptEpisodeNumber(file) {
             if (!file) return '';
             const direct = file.episode_number || file.json_data?.episode_number;
@@ -3764,7 +3841,7 @@
         async function exportWorld() {
             try {
                 updateStatus(window.t ? window.t('status_packing_world') : '正在打包并上传世界数据...');
-                const response = await fetch(`/api/export-world?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`);
+                const response = await fetch(`/api/export-world?user_id=${USER_ID}&world_id=${WORLD_ID}`);
                 const result = await response.json().catch(() => ({}));
                 if (!response.ok) {
                     showError((window.t ? window.t('error_export_failed', {error: result.error || response.statusText}) : '导出失败: ' + (result.error || response.statusText)));
@@ -3791,6 +3868,36 @@
             }
         }
 
+        async function exportWorldDoc() {
+            try {
+                updateStatus(window.t ? window.t('status_packing_world_doc') : '正在生成并上传 Word 文档...');
+                const response = await fetch(`/api/export-world-doc?user_id=${USER_ID}&world_id=${WORLD_ID}`);
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    showError((window.t ? window.t('error_export_failed', {error: result.error || response.statusText}) : '导出失败: ' + (result.error || response.statusText)));
+                    updateStatus(window.t ? window.t('status_export_failed') : '导出失败');
+                    return;
+                }
+                if (!result.success || !result.download_url) {
+                    showError((window.t ? window.t('error_export_failed', {error: result.error || (window.t ? window.t('error_no_download_link') : '未获取到下载链接')}) : '导出失败: ' + (result.error || '未获取到下载链接')));
+                    updateStatus(window.t ? window.t('status_export_failed') : '导出失败');
+                    return;
+                }
+                const a = document.createElement('a');
+                a.href = result.download_url;
+                a.download = result.filename || `world_doc_${WORLD_ID}_${new Date().toISOString().slice(0,19).replace(/[-T:]/g, '')}.docx`;
+                a.target = '_blank';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                showSuccess(window.t ? window.t('success_world_doc_exported') : '✓ Word 文档导出成功，已生成下载链接');
+                updateStatus(window.t ? window.t('status_export_done') : '导出完成，可通过图床链接下载');
+            } catch (error) {
+                showError((window.t ? window.t('error_export_failed', {error: error.message}) : '导出失败: ' + error.message));
+                updateStatus(window.t ? window.t('status_export_failed') : '导出失败');
+            }
+        }
+
         function triggerImportWorld() {
             document.getElementById('import-world-file').click();
         }
@@ -3810,7 +3917,7 @@
                 showWorldImportProgress(window.t ? window.t('world_import_stage_uploading') : '上传中…', 0);
 
                 // 1) 颁发上传 token
-                const tokenResp = await fetch(`/api/world-upload-token?auth_token=${AUTH_TOKEN}`, {
+                const tokenResp = await fetch(`/api/world-upload-token`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
                     body: new URLSearchParams({
@@ -3833,7 +3940,7 @@
                 );
 
                 // 3) 触发后端导入（立即返回 job_id）
-                const importResp = await fetch(`/api/import-world-from-cloud?auth_token=${AUTH_TOKEN}`, {
+                const importResp = await fetch(`/api/import-world-from-cloud`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
                     body: new URLSearchParams({
@@ -3919,7 +4026,7 @@
                 await new Promise(r => setTimeout(r, 1500));
                 let resp;
                 try {
-                    resp = await fetch(`/api/world-import-status?job_id=${encodeURIComponent(jobId)}&auth_token=${AUTH_TOKEN}`);
+                    resp = await fetch(`/api/world-import-status?job_id=${encodeURIComponent(jobId)}`);
                 } catch (e) {
                     // 网络抖动：继续重试
                     continue;
@@ -4025,7 +4132,9 @@
                 };
 
                 // 添加 raw_json=true 参数以获取完整的JSON数据（包括reference_image）
-                const response = await fetch(`${apiMap[fileType]}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const response = await fetch(`${apiMap[fileType]}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
 
                 if (checkTokenExpired(data, response)) {
@@ -4223,7 +4332,9 @@
                     'props': '/api/props-files'
                 };
                 
-                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 
                 if (checkTokenExpired(data, response)) {
@@ -4359,7 +4470,8 @@
         async function fetchLocationJsonList() {
             try {
                 const response = await fetch(
-                    `/api/locations-files?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`
+                    `/api/locations-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`,
+                    { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
                 );
                 const data = await response.json();
                 const locs = data.locations || data.data?.data || [];
@@ -4541,7 +4653,9 @@
                     'props': '/api/props-files'
                 };
                 
-                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 
                 if (checkTokenExpired(data, response)) {
@@ -4987,7 +5101,9 @@
                     'props': '/api/props-files'
                 };
 
-                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
 
                 if (checkTokenExpired(data, response)) {
@@ -5268,7 +5384,9 @@
                 return;
             }
             try {
-                const response = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const response = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 if (checkTokenExpired(data, response)) return;
                 if (!data.success) {
@@ -5312,7 +5430,9 @@
             try {
                 if (statusEl) statusEl.textContent = window.t ? window.t('restoring_history_image') : '正在恢复…';
                 // 读取角色完整 JSON
-                const resp = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const resp = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await resp.json();
                 if (checkTokenExpired(data, resp)) return;
                 if (!data.success) {
@@ -5328,9 +5448,9 @@
                     return;
                 }
                 jsonData.reference_image = url;
-                const saveResp = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`, {
+                const saveResp = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({
                         content: JSON.stringify(jsonData),
                         user_id: USER_ID,
@@ -6315,6 +6435,21 @@
             updateRecognizeStyleBtn();
         }
 
+        // 「查看更多画风」：跳转前提示进入后查看「其他」分类（即梦分类不落 URL，
+        // 同源策略也禁止操控跨域页面，无法自动选中）。取消则不跳转，
+        // 确认后按链接默认行为（target="_blank"）新标签页打开。
+        function confirmJimengExplore(event) {
+            const ok = confirm(
+                '即将打开即梦AI探索页。\n\n' +
+                '提示：进入后点击顶部「其他」标签，即可看到可参考的画风。'
+            );
+            if (!ok) {
+                if (event) event.preventDefault();
+                return false;
+            }
+            return true;
+        }
+
         // 上传/拖入成功后：确保模型列表就绪，再自动识别并弹确认框
         async function autoRecognizeStyleAfterUpload() {
             if (!cachedStyleModels.length) {
@@ -6460,7 +6595,9 @@
 
         async function playCharacterVoice(characterName) {
             try {
-                const response = await fetch(`/api/characters-files/${encodeURIComponent(characterName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const response = await fetch(`/api/characters-files/${encodeURIComponent(characterName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
 
                 if (checkTokenExpired(data, response)) {
@@ -6542,7 +6679,7 @@
             try {
                 showInfo('正在删除...');
                 
-                const response = await fetch(`/api/staging-file?user_id=${USER_ID}&world_id=${WORLD_ID}&relative_path=${encodeURIComponent(relativePath)}&auth_token=${AUTH_TOKEN}`, {
+                const response = await fetch(`/api/staging-file?user_id=${USER_ID}&world_id=${WORLD_ID}&relative_path=${encodeURIComponent(relativePath)}`, {
                     method: 'DELETE',
                     headers: {
                         'Authorization': AUTH_TOKEN,
@@ -6599,9 +6736,9 @@
                     'props': '/api/props-files'
                 };
                 
-                const response = await fetch(`${apiMap[currentEditFile.fileType]}/${encodeURIComponent(currentEditFile.fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`, {
+                const response = await fetch(`${apiMap[currentEditFile.fileType]}/${encodeURIComponent(currentEditFile.fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({
                         content: newContent,
                         user_id: USER_ID,
@@ -7479,7 +7616,9 @@
 
         async function fetchExistingEpisodes() {
             try {
-                const response = await fetch(`/api/scripts-files?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const response = await fetch(`/api/scripts-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 const scripts = data.scripts || data.data?.data || [];
                 existingEpisodes = scripts
@@ -7552,9 +7691,9 @@
                     update_time: now
                 }, null, 2);
 
-                const response = await fetch(`/api/scripts-files/${encodeURIComponent(episode)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`, {
+                const response = await fetch(`/api/scripts-files/${encodeURIComponent(episode)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({
                         content: scriptData,
                         user_id: USER_ID,
@@ -7584,7 +7723,9 @@
 
         async function fetchExistingCharacters() {
             try {
-                const response = await fetch(`/api/characters-files?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const response = await fetch(`/api/characters-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 const chars = data.characters || data.data?.data || [];
                 existingCharacters = chars.map(c => c.name).filter(Boolean);
@@ -7649,9 +7790,9 @@
                     create_time: now,
                     update_time: now
                 };
-                const response = await fetch(`/api/characters-files/${encodeURIComponent(name)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`, {
+                const response = await fetch(`/api/characters-files/${encodeURIComponent(name)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({ content: JSON.stringify(data, null, 2), user_id: USER_ID, world_id: WORLD_ID, auth_token: AUTH_TOKEN })
                 });
                 const result = await response.json();
@@ -7735,9 +7876,9 @@
                     create_time: now,
                     update_time: now
                 };
-                const response = await fetch(`/api/locations-files/${encodeURIComponent(name)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`, {
+                const response = await fetch(`/api/locations-files/${encodeURIComponent(name)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({ content: JSON.stringify(data, null, 2), user_id: USER_ID, world_id: WORLD_ID, auth_token: AUTH_TOKEN })
                 });
                 const result = await response.json();
@@ -7758,7 +7899,9 @@
 
         async function fetchExistingProps() {
             try {
-                const response = await fetch(`/api/props-files?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const response = await fetch(`/api/props-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 const props = data.props || data.data?.data || [];
                 existingProps = props.map(p => p.name).filter(Boolean);
@@ -7817,9 +7960,9 @@
                     create_time: now,
                     update_time: now
                 };
-                const response = await fetch(`/api/props-files/${encodeURIComponent(name)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`, {
+                const response = await fetch(`/api/props-files/${encodeURIComponent(name)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({ content: JSON.stringify(data, null, 2), user_id: USER_ID, world_id: WORLD_ID, auth_token: AUTH_TOKEN })
                 });
                 const result = await response.json();
@@ -7913,8 +8056,10 @@
             body.innerHTML = '<div style="text-align: center; padding: 40px;"><div class="loading-spinner"></div><p style="margin-top: 16px; color: #6b7280;">加载套餐中...</p></div>';
 
             try {
+                // token 走 Authorization 头，不再拼进 URL（防 Referer/日志/历史记录泄漏）
                 const authToken = localStorage.getItem('auth_token') || '';
-                const response = await fetch(`/api/recharge/packages?auth_token=${encodeURIComponent(authToken)}`);
+                const reqHeaders = authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+                const response = await fetch('/api/recharge/packages', { headers: reqHeaders });
                 const data = await response.json();
 
                 if (data.packages && data.packages.length > 0) {
@@ -8539,14 +8684,11 @@
                 alert('✅ ' + (window.t ? window.t('alert_test_created', {taskId: taskResp.task_id}) : `测试任务已创建！\n\n📋 任务ID: ${taskResp.task_id}\n\n现在 LLM 将向你提问，请在前端回答，然后观察 LLM 的回复。\n\n💡 提示：打开浏览器控制台（F12）可以看到更详细的 SSE 消息日志。`));
 
                 // 2. 监听 SSE
-                const es = new EventSource(`/api/task/${taskResp.task_id}/stream`);
-
                 let hasQuestion = false;
                 let hasReply = false;
 
-                es.onmessage = (e) => {
-                    try {
-                        const data = JSON.parse(e.data);
+                const es = SSEClient.createEventStream(`/api/task/${taskResp.task_id}/stream`, {
+                    onMessage: async (data) => {
                         console.log('📨 SSE消息:', data.type, data);
 
                         if (data.type === 'human_verification_required') {
@@ -8576,15 +8718,12 @@
                                 console.warn('⚠️ 链路验证不完整:', { hasQuestion, hasReply });
                             }
                         }
-                    } catch (err) {
-                        console.error('❌ 解析 SSE 消息失败:', err);
+                    },
+                    onError: (e) => {
+                        console.error('❌ SSE 连接错误:', e);
+                        es.close();
                     }
-                };
-
-                es.onerror = (e) => {
-                    console.error('❌ SSE 连接错误:', e);
-                    es.close();
-                };
+                });
 
             } catch (error) {
                 console.error('❌ 测试过程发生错误:', error);

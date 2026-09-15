@@ -29,7 +29,7 @@ from config.config_util import resolve_bin_path
 from config.version import get_app_version
 from perseids_server.client import make_perseids_request, get_device_uuid, async_make_perseids_request, async_call_external_auth_server
 from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel
-from model.video_workflow import compute_content_hash
+from model.video_workflow import compute_content_hash, content_hashes_for_cas
 from model.ai_tools_log import AIToolsLogModel
 from model.users import UsersModel
 from model.user_tokens import UserTokensModel
@@ -49,6 +49,8 @@ from config.constant import (
     TaskTypeRegistry,
     TaskCategory,
     TaskTypeId,
+    AUTH_COOKIE_NAME,
+    AUTH_COOKIE_MAX_AGE_SECONDS,
     TASK_TYPE_GENERATE_VIDEO, 
     TASK_TYPE_GENERATE_AUDIO, 
     RECHARGE_PACKAGES, 
@@ -87,6 +89,11 @@ from config.constant import (
     DS_ENV_FIT_DEFAULT_SCALE,
 )
 from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
+from perseids_server.utils.auth_identity import (
+    get_auth_user_id,
+    ensure_owner,
+    check_claimed_user_id,
+)
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
     get_upload_dir, get_upload_subdir, get_upload_temp_dir,
@@ -114,6 +121,11 @@ from utils.resource_access import (
     check_resource_permission,
     ensure_resource_access,
     ensure_world_access,
+)
+from utils.media_upload import (
+    UploadValidationError,
+    resolve_media_extension,
+    save_upload_chunked,
 )
 from services.asset_library import (
     attach_usage,
@@ -565,14 +577,129 @@ logger.info("Video drivers registered successfully")
 
 # 用户模块实现方绑定加载由 enterprise.register 注入（商业版）。
 
-# Allow CORS for local dev if needed
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# CORS（docs/security/xss_stored_chain_fix_plan.md 阶段 4b）：
+# allow_origins=["*"] 与 allow_credentials=True 组合无效且危险（任意站点可携凭据跨源）。
+# 收紧策略：server.cors_allow_origins 配置了白名单 → 精确 origins + 凭据；
+# 未配置 → 默认放开无凭据跨源（本地开发/纯 API 客户端不受影响），凭据类请求只允许同源。
+def _build_cors_middleware():
+    try:
+        from config.config_util import get_config
+        origins = get_config().get("server", {}).get("cors_allow_origins") or []
+    except Exception:
+        origins = []
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(origins),
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    else:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+_build_cors_middleware()
+
+
+# ===== 认证 cookie 双通道（docs/security/xss_stored_chain_fix_plan.md 阶段 3c）=====
+# 浏览器会话凭据走 HttpOnly cookie（XSS 不可读），程序客户端走 Authorization 头。
+# 翻译中间件把 cookie 换成 Authorization 头，下游 27 处 token 校验点零改动。
+
+def extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
+    """从 Authorization 头提取 Bearer token（兼容不带前缀的裸 token）。
+
+    注意 "Bearer "（空 token）须返回 None：前端在 localStorage 无 token 时会发送
+    'Bearer ' 空值头（admin.js/旧流程），此情形应走 cookie 翻译而非当作有效头。
+    """
+    if not authorization:
+        return None
+    value = authorization.strip()
+    if re.match(r"^bearer\b\s*$", value, re.IGNORECASE):
+        return None
+    if value.lower().startswith("bearer "):
+        value = value[7:].strip()
+    return value or None
+
+
+def _request_is_https(request: Request) -> bool:
+    """按请求 scheme（含反代头）判断是否 HTTPS，决定 cookie Secure 属性"""
+    if request.url.scheme == "https":
+        return True
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    return forwarded_proto.split(",")[0].strip().lower() == "https"
+
+
+def set_auth_cookie(response: Response, token: str, request: Request) -> None:
+    """登录成功后下发 HttpOnly 认证 cookie"""
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=AUTH_COOKIE_MAX_AGE_SECONDS,
+        httponly=True,
+        secure=_request_is_https(request),
+        samesite="strict",
+        path="/",
+    )
+
+
+@app.middleware("http")
+async def auth_cookie_translation_middleware(request: Request, call_next):
+    """HttpOnly cookie → Authorization 头翻译。
+
+    对 /api/ 下请求：未携带（或携带空的）Authorization 头但存在认证 cookie 时，
+    把 token 注入请求头再放行。浏览器自动带 cookie、各接口继续从标准 Authorization
+    头取 token；SameSite=Strict 保证 cookie 不会被跨站请求携带（CSRF 防线）。
+
+    滑动续期：带认证 cookie 的 /api/ 请求在响应阶段顺延 cookie 有效期。
+    DB token 侧由 UserTokensModel.get_user_id_by_token 统一续期；若只续 DB 不续
+    cookie，持续活跃用户的 cookie 仍会在固定 max_age 后消失，"活跃免登录"不生效。
+    """
+    path = request.url.path
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+    translated = False
+    if path == "/api" or path.startswith("/api/"):
+        current = extract_bearer_token(request.headers.get("authorization"))
+        if not current and cookie_token:
+            headers = [
+                (k, v) for k, v in request.scope.get("headers", [])
+                if k != b"authorization"
+            ]
+            headers.append((b"authorization", f"Bearer {cookie_token}".encode("latin-1")))
+            request.scope["headers"] = headers
+            translated = True
+    response = await call_next(request)
+    # 登录/登出/注册端点自己管理 cookie（login 种新值、logout 删除），
+    # 不能用请求带来的旧值覆盖它们的 Set-Cookie——否则登录成功后浏览器
+    # 拿回的仍是被顶号的旧 token，永远无法重新登录
+    if translated and cookie_token and not path.startswith("/api/auth/"):
+        set_auth_cookie(response, cookie_token, request)
+    return response
+
+
+# 安全响应头中间件（docs/security/xss_stored_chain_fix_plan.md 阶段 4a 第一步）：
+# 只加与现有前端兼容的指令，不改 script-src（全站内联 script/事件改造完成后再收紧，
+# 先以 Content-Security-Policy-Report-Only 过渡）。
+#   - object-src 'none'       禁 <object>/<embed> 插件型载荷
+#   - base-uri 'none'         禁 <base href> 劫持页面相对 URL
+#   - frame-ancestors 'self'  防被第三方页面嵌套（computing_power_logs 同源 iframe 不受影响）
+#   - form-action 'self'      禁表单被提交到外部域
+_CSP_FIRST_STEP = (
+    "object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'self'"
 )
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", _CSP_FIRST_STEP)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
 
 
 # CDN 重定向中间件：当 /upload/ 下的媒体文件有 CDN 映射时，自动 302 到新鲜 CDN 签名 URL
@@ -581,13 +708,14 @@ _MEDIA_EXTENSIONS = frozenset({'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',
 @app.middleware("http")
 async def cdn_redirect_middleware(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/upload/"):
-        ext = os.path.splitext(path)[1].lower()
-        if ext in _MEDIA_EXTENSIONS:
-            try:
-                from config.config_util import get_config
-                if not get_config().get("server", {}).get("auto_upload_to_cdn", False):
-                    return await call_next(request)
+    if not path.startswith("/upload/"):
+        return await call_next(request)
+
+    ext = os.path.splitext(path)[1].lower()
+    if ext in _MEDIA_EXTENSIONS:
+        try:
+            from config.config_util import get_config
+            if get_config().get("server", {}).get("auto_upload_to_cdn", False):
                 # local_path 在数据库中不带前导 /，如 "upload/temp/xxx.mp4"
                 local_path = path.lstrip("/")
                 from model.media_file_mapping import MediaFileMappingModel
@@ -599,9 +727,14 @@ async def cdn_redirect_middleware(request: Request, call_next):
                     cdn_url = CDNUtil.get_cdn_url(mapping.id)
                     if cdn_url:
                         return RedirectResponse(url=cdn_url, status_code=302)
-            except Exception as e:
-                logger.warning(f"CDN 重定向查找失败: {e}")
-    return await call_next(request)
+        except Exception as e:
+            logger.warning(f"CDN 重定向查找失败: {e}")
+
+    # 静态回源兜底：禁止浏览器对 /upload/ 内容做 MIME 嗅探（纵深防御；
+    # 主防线在上传端的扩展名白名单 + 魔数校验，见 utils/media_upload.py）
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 # API 路径前缀守卫中间件：对拼错前缀的"疑似 API 请求"返回友好 JSON 提示，
@@ -1052,17 +1185,18 @@ def _generate_thumbnail_safe(source_path: str, thumb_path: str, size: int):
 def _save_uploaded_image(upload_file: UploadFile) -> str:
     """
     Save uploaded image to upload/temp/date directory and return the file URL
+
+    安全校验：扩展名白名单 + 魔数校验 + 分块大小上限（防伪造扩展名落盘
+    可执行文档与超大文件打满磁盘），由 utils/media_upload.py 统一实现。
     """
     date_str = datetime.now().strftime("%Y%m%d")
     temp_dir = get_upload_temp_dir(date_str)
 
-    file_extension = os.path.splitext(upload_file.filename or "image.png")[1]
+    file_extension = resolve_media_extension(upload_file.filename or "image.png")
     info = generate_upload_filename(UploadPathConstants.UPLOAD_PREFIX, file_extension)
 
     file_path = os.path.join(temp_dir, info.filename)
-    with open(file_path, "wb") as f:
-        content = upload_file.file.read()
-        f.write(content)
+    save_upload_chunked(upload_file, file_path, file_extension)
 
     return build_upload_url(UploadPathConstants.TEMP_DIR, date_str, info.filename, host=SERVER_HOST)
 
@@ -1087,17 +1221,18 @@ def _save_user_asset(
 ) -> str:
     """
     Save a user-specific asset (image/video) under a scoped directory.
+
+    安全校验：扩展名白名单 + 魔数校验 + 分块大小上限，超限抛
+    UploadValidationError（端点层映射 400），半成品文件自动清理。
     """
     asset_dir = get_upload_subdir(category, str(user_id))
 
     original_name = upload_file.filename or "asset"
-    file_extension = os.path.splitext(original_name)[1] or ".bin"
+    file_extension = resolve_media_extension(original_name)
     info = generate_upload_filename(category, file_extension)
 
     file_path = os.path.join(asset_dir, info.filename)
-    with open(file_path, "wb") as f:
-        content = upload_file.file.read()
-        f.write(content)
+    save_upload_chunked(upload_file, file_path, file_extension)
 
     # 素材落盘即注册 CDN mapping 并触发异步上传七牛：
     # 此前 workflow 素材从不建 mapping，所有 /upload/workflow/ 访问都从本机经
@@ -1562,6 +1697,9 @@ async def image_edit(
     2. URL list (ref_image_urls parameter, comma separated)
     """
     try:
+        # cookie 会话（阶段 3c）下前端 form 传不到 token 本体，为空时从 Authorization
+        # 头取（cookie 翻译中间件已注入），保证算力检查/扣费正常执行
+        auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''
         # 通过 task_id 获取任务配置
         task_config = UnifiedConfigRegistry.get_by_id(task_id)
         if not task_config:
@@ -1732,6 +1870,9 @@ async def text_to_image(
     Submit text-to-image task
     """
     try:
+        # cookie 会话（阶段 3c）下前端 form 传不到 token 本体，为空时从 Authorization
+        # 头取（cookie 翻译中间件已注入），保证算力检查/扣费正常执行
+        auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''
         # 通过 task_id 获取任务配置
         task_config = UnifiedConfigRegistry.get_by_id(task_id)
         if not task_config:
@@ -1872,6 +2013,9 @@ async def runninghub_status(
     If task fails, will refund computing power
     """
     try:
+        # cookie 会话（阶段 3c）下前端 query 传不到 token 本体；失败退款依赖 token，
+        # 为空时从 Authorization 头取（cookie 翻译中间件已注入）
+        auth_token = auth_token or extract_bearer_token(request.headers.get("authorization"))
         task_record = AIToolsModel.get_by_project_id(project_id)
         if task_record is None:
             raise HTTPException(status_code=404, detail="未找到对应的图片记录")
@@ -2109,6 +2253,9 @@ async def ai_app_run(
     文生视频任务提交接口。
     """
     try:
+        # cookie 会话（阶段 3c）下前端 form 传不到 token 本体，为空时从 Authorization
+        # 头取（cookie 翻译中间件已注入），保证算力检查/扣费正常执行
+        auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''
         # 通过 task_id 获取任务配置
         task_config = UnifiedConfigRegistry.get_by_id(task_id)
         if not task_config:
@@ -2284,6 +2431,9 @@ async def ai_app_run_image(
     - For reference video, use 'video' parameter
     """
     try:
+        # cookie 会话（阶段 3c）下前端 form 传不到 token 本体，为空时从 Authorization
+        # 头取（cookie 翻译中间件已注入），保证算力检查/扣费正常执行
+        auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''
         # 通过 task_id 获取任务配置
         task_config = UnifiedConfigRegistry.get_by_id(task_id)
         if not task_config:
@@ -3481,15 +3631,18 @@ class LoginRequest(BaseModel):
     terms_agreed: Optional[int] = 0
 
 @app.post('/api/auth/login')
-async def login(request: LoginRequest):
+async def login(request: Request, login_request: LoginRequest):
     """
     用户登录接口（支持手机号和邮箱）
+
+    注意：request 是 Starlette Request（下发 HttpOnly cookie 需要），
+    请求体是 login_request，勿混用。
     """
     try:
-        phone = request.phone
-        email = request.email
-        password = request.password
-        terms_agreed = request.terms_agreed
+        phone = login_request.phone
+        email = login_request.email
+        password = login_request.password
+        terms_agreed = login_request.terms_agreed
         
         identifier = email if email else phone
         logger.info("收到登录请求 - 标识: %s", mask_identifier(identifier))
@@ -3537,13 +3690,19 @@ async def login(request: LoginRequest):
                 "用户登录成功 - 标识: %s",
                 mask_identifier(identifier),
             )
-            return JSONResponse(
+            response = JSONResponse(
                 content={
                     'success': True,
                     'message': '登录成功',
                     'data': auth_data
                 }
             )
+            # 浏览器会话凭据进 HttpOnly cookie（XSS 不可读）；响应体里的 token
+            # 保留供程序客户端与兼容期前端双写 localStorage（同一 token）
+            auth_data_token = (auth_data or {}).get('token')
+            if auth_data_token:
+                set_auth_cookie(response, auth_data_token, request)
+            return response
         else:
             return JSONResponse(
                 status_code=400,
@@ -3577,6 +3736,10 @@ async def logout(request: Request, logout_request: LogoutRequest):
         auth_token = logout_request.auth_token
 
         if not auth_token:
+            # HttpOnly cookie 会话：body 无 token，从中间件翻译出的 Authorization 头取
+            auth_token = extract_bearer_token(request.headers.get("Authorization")) or ''
+
+        if not auth_token:
             return JSONResponse(
                 status_code=400,
                 content={
@@ -3593,20 +3756,26 @@ async def logout(request: Request, logout_request: LogoutRequest):
         )
 
         if success:
-            return JSONResponse(
+            response = JSONResponse(
                 content={
                     'success': True,
                     'message': '登出成功'
                 }
             )
+            # 同步清除 HttpOnly 认证 cookie
+            response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+            return response
         else:
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=400,
                 content={
                     'success': False,
                     'message': message or '登出失败'
                 }
             )
+            # 即使后端登出失败也清掉本地 cookie，避免僵尸会话
+            response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+            return response
 
     except Exception as e:
         logger.error(f"登出失败: {str(e)}")
@@ -3703,19 +3872,22 @@ async def reset_password(request: Request, reset_request: ResetPasswordRequest):
 @require_permission("ai_tools:view_history")
 async def get_ai_tools_history(
     request: Request,
-    user_id: int = Query(..., description="User ID"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
     type: Optional[int] = Query(None, description="Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频)"),
-    types: Optional[str] = Query(None, description="Multiple tool types filter, comma-separated (e.g., '3,10,11,12')"),
+    types: Optional[str] = Query(None, description="Multiple tool types filter, comma-separated (e.g. '3,10,11,12')"),
     has_image_path: Optional[bool] = Query(None, description="Filter by image_path presence: true=图片编辑, false=文生图"),
     has_result_url: Optional[bool] = Query(None, description="Filter by result_url presence: true=has result asset"),
 ):
     """
-    获取用户的 AI 工具历史记录
+    获取当前登录用户的 AI 工具历史记录
     任务状态由后台 scheduler (visual_task.py / runninghub_async_task.py) 定时更新
+    user_id 一律从 Authorization token 解析，不再信任客户端自报
     """
     try:
+        # 登录身份即查询主体（require_permission 装饰器已校验 token）
+        user_id = get_auth_user_id(request)
+
         # Parse types parameter if provided
         type_list_param = None
         if types:
@@ -3839,28 +4011,28 @@ async def get_computing_power_config(request: Request):
 async def get_ai_tool_detail(
     request: Request,
     record_id: int,
-    user_id: int = Header(None, alias="X-User-Id"),
-    auth_token: str = Header(None, alias="Authorization")
 ):
     """
-    获取单个 AI 工具记录的详情
+    获取单个 AI 工具记录的详情（仅本人记录，非本人一律 404 防枚举）
     """
     try:
         # 查询数据库记录
         record = AIToolsModel.get_by_id(record_id)
-        
+
         if not record:
             raise HTTPException(status_code=404, detail="记录不存在")
-        
-        # 检查权限（可选）
-        if user_id and record.user_id != user_id:
-            raise HTTPException(status_code=403, detail="无权访问该记录")
-        
+
+        # 属主断言：当前登录用户必须为记录所有者（user_id 一律从 token 解析，
+        # 不再接受可缺省的 X-User-Id 头，防止缺省时跳过检查）
+        owner_error = ensure_owner(record.user_id, get_auth_user_id(request))
+        if owner_error:
+            raise HTTPException(status_code=404, detail="记录不存在")
+
         return JSONResponse({
             'success': True,
             'data': record.to_dict()
         })
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -3880,14 +4052,13 @@ async def get_ai_tool_detail(
 async def get_ai_tool_timeline(
     request: Request,
     ai_tool_id: int,
-    user_id: int = Query(None, description="User ID（弱信任回退）"),
-    auth_token: str = Query(None, description="Authentication token")
 ):
     """
     获取某个 AI 工具任务的事件时间线（用于排查任务耗时/卡点/轮询节奏）
 
     访问控制：管理员可查看任意任务；非管理员仅能查看本人任务。
-    优先以 auth_token 解析真实身份；无 token 时回退到 user_id。
+    用户身份一律从 Authorization token 解析（require_permission 已校验），
+    不再接受 query 弱信任回退。
     """
     try:
         record = AIToolsModel.get_by_id(ai_tool_id)
@@ -3895,33 +4066,22 @@ async def get_ai_tool_timeline(
         if not record:
             raise HTTPException(status_code=404, detail="记录不存在")
 
-        # 解析真实身份 + 管理员判定
-        viewer_id = None
-        is_admin = False
-        token = (auth_token or '').strip()
-        if token.startswith('Bearer '):
-            token = token[7:]
-        if token:
-            try:
-                from model.user_tokens import UserTokensModel
-                from model.users import UsersModel
-                token_uid = UserTokensModel.get_user_id_by_token(token)
-                if token_uid:
-                    viewer_id = token_uid
-                    viewer = UsersModel.get_by_id(token_uid)
-                    is_admin = bool(viewer and getattr(viewer, 'role', None) == 'admin')
-            except Exception as e:
-                logger.warning(f'timeline auth token resolve failed: {e}')
-        # 无 token 时回退到客户端传入的 user_id（保持与 history 一致的弱信任）
-        if viewer_id is None:
-            viewer_id = user_id
+        viewer_id = get_auth_user_id(request)
 
-        # 归属校验：管理员放行；否则必须为本人
+        # 管理员判定
+        is_admin = False
+        try:
+            from model.users import UsersModel
+            viewer = await asyncio.to_thread(UsersModel.get_by_id, viewer_id)
+            is_admin = bool(viewer and getattr(viewer, 'role', None) == 'admin')
+        except Exception as e:
+            logger.warning(f'timeline admin resolve failed: {e}')
+
+        # 归属校验：管理员放行；否则必须为本人（非本人一律 404 防枚举）
         if not is_admin:
-            if viewer_id is None:
-                raise HTTPException(status_code=401, detail="请先登录")
-            if record.user_id != viewer_id:
-                raise HTTPException(status_code=403, detail="无权访问该记录")
+            owner_error = ensure_owner(record.user_id, viewer_id)
+            if owner_error:
+                raise HTTPException(status_code=404, detail="记录不存在")
 
         logs = AIToolsLogModel.list_by_ai_tool(ai_tool_id)
         return JSONResponse({
@@ -4963,20 +5123,30 @@ async def _update_first_recharge_status(auth_token: str) -> None:
 
 @app.get("/api/recharge/packages")
 @require_permission("computing:view_packages")
-async def get_recharge_packages(request: Request, auth_token: str):
+async def get_recharge_packages(
+    request: Request,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    auth_token: Optional[str] = Query(None, description="legacy：query 传 token 已废弃，仅兼容旧客户端"),
+):
     """
     获取算力充值套餐列表
-    
+
     Args:
-        auth_token: 用户认证token
-    
+        authorization: Authorization: Bearer <token>（推荐）
+        auth_token: query 传 token（legacy 兼容，优先级低于 header）
+
     Returns:
         List of recharge packages with computing power and pricing
         If user has already recharged before, the first package (首充福利) will be filtered out
     """
     try:
+        # token 优先取 Authorization 头；query 传参已废弃（防 URL 泄漏），仅为旧客户端兜底
+        resolved_token = extract_bearer_token(authorization) or auth_token
+        if not resolved_token:
+            raise HTTPException(status_code=401, detail="未提供认证信息")
+
         # 查询用户是否已经首充
-        has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
+        has_completed_first_recharge = await _has_completed_first_recharge(resolved_token)
 
         # 如果用户已经充值过，过滤掉首充福利套餐（第一个套餐）
         # 用 dict(pkg) 浅拷贝每个套餐，避免污染模块级常量 RECHARGE_PACKAGES
@@ -5037,19 +5207,23 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
     - 支付成功后增加用户算力
     """
     try:
-        # 验证用户token
-        if not payment_request.auth_token:
+        # 解析本次请求的有效 token：body 优先；cookie 会话（阶段 3c）下前端拿不到
+        # token 本体、body 为空，改用 Authorization 头（cookie 翻译中间件已注入）
+        auth_token = normalize_authorization_token(payment_request.auth_token)
+        if not auth_token:
+            auth_token = normalize_authorization_token(request.headers.get("authorization"))
+        if not auth_token:
             raise HTTPException(
                 status_code=400,
                 detail="Authentication token is required"
             )
-        
+
         # 验证用户登录状态：通过查询算力判断token是否有效
         try:
             success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
-                headers={'Authorization': f'Bearer {payment_request.auth_token}'}
+                headers={'Authorization': f'Bearer {auth_token}'}
             )
             
             if not success:
@@ -5082,7 +5256,7 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
 
         # 首充套餐校验：如果package_id为1且用户已首充，禁止再次购买
         if payment_request.package_id == 1:
-            has_completed_first_recharge = await _has_completed_first_recharge(payment_request.auth_token)
+            has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
             if has_completed_first_recharge:
                 logger.warning(f"User {payment_request.user_id} attempted to purchase first-charge package again")
                 raise HTTPException(
@@ -5708,17 +5882,32 @@ async def poll_workflow_node_status(
 async def upload_workflow_asset(
     request: Request,
     file: UploadFile = File(..., description="要上传的图片、视频或音频文件"),
-    auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
     上传工作流素材（图片、视频或音频）
     返回可访问的永久URL
+
+    安全校验：身份以登录态为准（X-User-Id 客户端可伪造，仅用于一致性比对）、
+    扩展名白名单 + 魔数校验 + 大小上限（防伪造 Content-Type 落盘 .html/.svg
+    形成同域存储型 XSS，详见 utils/media_upload.py）。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        # 登录身份即资源归属（require_permission 已完成 token 校验并注入）：
+        # 落盘目录按 uid 隔离且文件永久保留（NEVER_EXPIRE + CDN 上传），
+        # 不能拿客户端自报的 X-User-Id 作为目录依据
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse(
+                status_code=401,
+                content={"code": -1, "message": "未获取到登录身份，请重新登录"}
+            )
+        mismatch = check_claimed_user_id(user_id, auth_user_id)
+        if mismatch is not None:
+            return mismatch
 
-        # 验证文件类型
+        # 验证文件类型（Content-Type 仅作初筛，真实防线在保存时的
+        # 扩展名白名单 + 魔数校验，二者客户端均可伪造）
         content_type = file.content_type or ""
         if not (content_type.startswith("image/") or content_type.startswith("video/") or content_type.startswith("audio/")):
             return JSONResponse(
@@ -5728,13 +5917,20 @@ async def upload_workflow_asset(
 
         # 保存文件并获取URL（用户隔离目录）
         request_host = _get_request_host(request)
-        file_url = await asyncio.to_thread(_save_user_asset, file, user_id, "workflow", request_host)
+        file_url = await asyncio.to_thread(_save_user_asset, file, auth_user_id, "workflow", request_host)
 
         return JSONResponse({
             "code": 0,
             "message": "上传成功",
             "data": {"url": file_url}
         })
+    except UploadValidationError as e:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": str(e)}
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to upload workflow asset: {str(e)}")
         logger.error(traceback.format_exc())
@@ -6046,15 +6242,26 @@ async def upload_image_to_video_media(
     request: Request,
     file: UploadFile = File(..., description="要上传的媒体文件（图片、视频或音频）"),
     media_type: str = Form(..., description="媒体类型: image, video, audio"),
-    auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
     图生视频页面上传媒体文件，自动生成缩略图。
     返回文件URL和缩略图URL。
+
+    落盘目录以登录身份（require_permission 注入）为准，X-User-Id 仅用于
+    一致性比对；文件类型经扩展名白名单 + 魔数校验 + 分块大小上限。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        # 登录身份即资源归属（X-User-Id 客户端可伪造，不能作为目录依据）
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse(
+                status_code=401,
+                content={"code": -1, "message": "未获取到登录身份，请重新登录"}
+            )
+        mismatch = check_claimed_user_id(user_id, auth_user_id)
+        if mismatch is not None:
+            return mismatch
 
         # 验证 media_type
         if media_type not in ("image", "video", "audio"):
@@ -6072,15 +6279,14 @@ async def upload_image_to_video_media(
         # 保存原始文件
         request_host = _get_request_host(request)
         date_str = datetime.now().strftime("%Y%m%d")
-        asset_dir = get_upload_subdir(upload_subdir, str(user_id), date_str)
+        asset_dir = get_upload_subdir(upload_subdir, str(auth_user_id), date_str)
 
-        original_ext = os.path.splitext(file.filename or "file")[1] or ".bin"
+        original_ext = resolve_media_extension(file.filename or "file")
         info = generate_upload_filename(UploadPathConstants.MEDIA_PREFIX, original_ext)
         file_path = os.path.join(asset_dir, info.filename)
 
-        content = await file.read()
-        # 异步写入文件（避免在 async 函数中执行同步 I/O 阻塞事件循环）
-        await asyncio.to_thread(_sync_write_file, file_path, content)
+        # 安全校验（魔数）+ 分块限流保存（工作线程中执行，避免阻塞事件循环）
+        await asyncio.to_thread(save_upload_chunked, file, file_path, original_ext)
 
         # 生成缩略图
         thumb_filename = f"thumb_{info.timestamp}_{info.unique_id}.jpg"
@@ -6089,10 +6295,10 @@ async def upload_image_to_video_media(
         )
 
         # 构建返回 URL
-        file_url = build_upload_url(upload_subdir, str(user_id), date_str, info.filename, host=request_host)
+        file_url = build_upload_url(upload_subdir, str(auth_user_id), date_str, info.filename, host=request_host)
         thumbnail_url = None
         if thumb_path and os.path.exists(thumb_path):
-            thumbnail_url = build_upload_url(upload_subdir, str(user_id), date_str, thumb_filename, host=request_host)
+            thumbnail_url = build_upload_url(upload_subdir, str(auth_user_id), date_str, thumb_filename, host=request_host)
 
         return JSONResponse({
             "code": 0,
@@ -6102,6 +6308,10 @@ async def upload_image_to_video_media(
                 "thumbnail_url": thumbnail_url
             }
         })
+    except UploadValidationError as e:
+        return JSONResponse(status_code=400, content={"code": -1, "message": str(e)})
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to upload image-to-video media: {str(e)}")
         logger.error(traceback.format_exc())
@@ -6876,14 +7086,28 @@ async def update_video_workflow(
             if base_hash:
                 # 在同一工作线程内重读 + 哈希：既把 9~18MB 大 JSON 的解析/序列化
                 # 移出事件循环（红线），也让校验基于当下最新行而非请求开始时
-                # 加载的旧快照
+                # 加载的旧快照。顺带算「叠上本次字段后的哈希」：基线过期但
+                # 内容没变（本页旁路自写 / 只改 viewport / 同内容重放）不当 409。
                 def _cas_current_hash():
                     fresh = VideoWorkflowModel.get_by_id(workflow_id)
                     if not fresh:
-                        return None, None
-                    return compute_content_hash(fresh), getattr(fresh, 'content_version', 0)
-                current_hash, expected_version = await asyncio.to_thread(_cas_current_hash)
+                        return None, None, None
+                    current, incoming = content_hashes_for_cas(fresh, update_fields)
+                    return current, getattr(fresh, 'content_version', 0), incoming
+                current_hash, expected_version, incoming_hash = await asyncio.to_thread(
+                    _cas_current_hash
+                )
                 if current_hash is not None and current_hash != base_hash:
+                    if incoming_hash == current_hash:
+                        logger.info(
+                            f"[CAS] 工作流 {workflow_id} 基线过期但内容未变，"
+                            f"视为成功 base={base_hash[:12]}... current={current_hash[:12]}..."
+                        )
+                        return JSONResponse({
+                            "code": 0,
+                            "message": "更新成功",
+                            "data": {"content_hash": current_hash}
+                        })
                     logger.warning(
                         f"[CAS] 拒绝更新工作流 {workflow_id}："
                         f"base_hash={base_hash[:12]}... != current={current_hash[:12]}..."
@@ -6903,11 +7127,24 @@ async def update_video_workflow(
                 **update_fields
             )
             if expected_version is not None and affected == 0:
-                # 哈希比对通过但版本竞争失败：读哈希与 UPDATE 之间有并发写入抢先
+                # 哈希比对通过但版本竞争失败：读哈希与 UPDATE 之间有并发写入抢先。
+                # 若抢先写入后库存内容已与本次 PUT 合成结果相同，同样视为成功。
                 def _conflict_hash():
                     fresh = VideoWorkflowModel.get_by_id(workflow_id)
-                    return compute_content_hash(fresh) if fresh else None
-                current_hash = await asyncio.to_thread(_conflict_hash)
+                    if not fresh:
+                        return None, None
+                    return content_hashes_for_cas(fresh, update_fields)
+                current_hash, incoming_hash = await asyncio.to_thread(_conflict_hash)
+                if current_hash is not None and incoming_hash == current_hash:
+                    logger.info(
+                        f"[CAS] 工作流 {workflow_id} 版本竞争但内容未变，视为成功"
+                        f"（expected_version={expected_version}）"
+                    )
+                    return JSONResponse({
+                        "code": 0,
+                        "message": "更新成功",
+                        "data": {"content_hash": current_hash}
+                    })
                 logger.warning(
                     f"[CAS] 工作流 {workflow_id} 版本竞争失败"
                     f"（expected_version={expected_version}），拒绝写入"
@@ -9719,6 +9956,7 @@ async def export_timeline_draft(
         from core import JianyingMultiTrackLibrary
         from draft_generator import DraftGenerator
         from jianying.utils import seconds_to_microseconds
+        from utils.cdn_util import CDNUtil
         
         # 生成唯一的草稿名称（使用工作流名称作为前缀）
         # 清理工作流名称，移除不适合文件名的字符
@@ -9777,9 +10015,28 @@ async def export_timeline_draft(
                     else:
                         logger.info(f"正在下载视频 {idx + 1}/{len(payload.video_clips)}: {video_name}")
 
+                        # 无协议头的地址无法交给 httpx 下载。media_cache 到期清理时本地文件
+                        # 与七牛云端副本、映射记录是同步删除的，/upload/ 地址本地缺失即素材
+                        # 已被彻底清理、无法恢复，直接给出可行动的报错
+                        if not video_url.lower().startswith(('http://', 'https://')):
+                            if video_url.startswith('/upload/'):
+                                hint = ('该素材的源文件已被服务器到期清理'
+                                        '（生成视频缓存只保留有限天数），'
+                                        '请重新生成或重新上传后再导出')
+                            else:
+                                hint = ('该地址是页面上传前的本地临时地址（blob:）或已失效，'
+                                        '请刷新页面后重新上传该素材，再重新导出')
+                            return JSONResponse(
+                                status_code=400,
+                                content={
+                                    'success': False,
+                                    'error': f'素材 {video_name} 无法导出（{video_url[:80]}）：{hint}'
+                                }
+                            )
+
                         # 刷新 CDN URL 签名（防止 token 过期导致 403）
-                        from utils.cdn_util import CDNUtil
-                        download_url = CDNUtil.refresh_cdn_signed_url(video_url)
+                        download_url = await asyncio.to_thread(
+                            CDNUtil.refresh_cdn_signed_url, video_url)
 
                         # 下载视频 (异步)
                         async with httpx.AsyncClient(timeout=300.0) as http_client:
@@ -9854,9 +10111,27 @@ async def export_timeline_draft(
                     else:
                         logger.info(f"正在下载音频 {idx + 1}/{len(payload.audio_clips)}: {audio_name}")
 
+                        # 无协议头的地址无法交给 httpx 下载，给出可行动的报错（与视频分支同理：
+                        # /upload/ 本地缺失即源文件已随云端副本一起被到期清理，无法恢复）
+                        if not audio_url.lower().startswith(('http://', 'https://')):
+                            if audio_url.startswith('/upload/'):
+                                hint = ('该素材的源文件已被服务器到期清理'
+                                        '（生成结果缓存只保留有限天数），'
+                                        '请重新生成或重新上传后再导出')
+                            else:
+                                hint = ('该地址是页面上传前的本地临时地址（blob:）或已失效，'
+                                        '请刷新页面后重新上传该素材，再重新导出')
+                            return JSONResponse(
+                                status_code=400,
+                                content={
+                                    'success': False,
+                                    'error': f'素材 {audio_name} 无法导出（{audio_url[:80]}）：{hint}'
+                                }
+                            )
+
                         # 刷新 CDN URL 签名（防止 token 过期导致 403）
-                        from utils.cdn_util import CDNUtil
-                        download_url = CDNUtil.refresh_cdn_signed_url(audio_url)
+                        download_url = await asyncio.to_thread(
+                            CDNUtil.refresh_cdn_signed_url, audio_url)
 
                         # 下载音频 (异步)
                         async with httpx.AsyncClient(timeout=300.0) as http_client:

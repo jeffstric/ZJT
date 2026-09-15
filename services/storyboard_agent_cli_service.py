@@ -741,11 +741,12 @@ class StoryboardAgentCliService:
         video_prompt_raw = _get_field(scene, "video_prompt") or ""
         # 角色参考以提示词【【名】】为真源：每个标记独立查世界库（含用户后加的新引用）。
         # 对白角色仍合并进 characters 供上下文展示，但不单独扩展参考图。
+        prompt_characters, missing_characters = self._resolve_prompt_characters_ex(
+            prompt_json, world_id, scene=scene, video_prompt=video_prompt_raw
+        )
         characters = self._merge_named_items(
             self._load_dialogue_characters(dialogues),
-            self._resolve_prompt_characters(
-                prompt_json, world_id, scene=scene, video_prompt=video_prompt_raw
-            ),
+            prompt_characters,
         )
         location = self._resolve_location(prompt_json)
         props = self._resolve_props(prompt_json, world_id, scene=scene)
@@ -763,6 +764,21 @@ class StoryboardAgentCliService:
         )
         reference_images = reference_urls(reference_image_items)
 
+        # 提示词标记了【【角色】】但参考图未生效的名单（供前端可见提示，
+        # 不再静默降级）：区分"未入库"与"在库但缺参考图"两种原因。
+        tagged_character_names = _dedupe(
+            list(extract_storyboard_reference_names(prompt_json, video_prompt).get("characters") or [])
+        )
+        characters_with_reference = {
+            str(item.get("name") or "").strip()
+            for item in reference_image_items
+            if item.get("source_type") == "character"
+        }
+        characters_without_reference = [
+            name for name in tagged_character_names
+            if name not in characters_with_reference and name not in set(missing_characters)
+        ]
+
         return {
             "success": True,
             "scene": _to_dict(scene),
@@ -778,6 +794,8 @@ class StoryboardAgentCliService:
             "selected_assets": selected_assets,
             "reference_images": reference_images,
             "reference_image_items": reference_image_items,
+            "missing_characters": missing_characters,
+            "characters_without_reference": characters_without_reference,
             "user_id": user_id,
         }
 
@@ -886,7 +904,7 @@ class StoryboardAgentCliService:
                     task_type=(generation_snapshot or {}).get('task_id'),
                 )
 
-        return self._finalize_submission(
+        submission = self._finalize_submission(
             scene_id=scene_id,
             user_id=user_id,
             asset_type=asset_type,
@@ -895,6 +913,12 @@ class StoryboardAgentCliService:
             reference_images=reference_urls if mode == "image_edit" else [],
             select_result=select_result,
         )
+        # 参考图未生效名单回传前端做可见提示（未入库/缺参考图不再静默降级）
+        if context.get("missing_characters"):
+            submission["missing_characters"] = list(context["missing_characters"])
+        if context.get("characters_without_reference"):
+            submission["characters_without_reference"] = list(context["characters_without_reference"])
+        return submission
 
     def generate_video(
         self,
@@ -909,11 +933,14 @@ class StoryboardAgentCliService:
         count: int = 1,
         image_mode: str = "first_last_frame",
         image_urls: Optional[str] = None,
+        extra_image_urls: Optional[Sequence[str]] = None,
         video_urls: Optional[str] = None,
         audio_urls: Optional[str] = None,
         task_type: Optional[int] = None,
         generation_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
         preference_surface: str = MediaGenerationSurface.STORYBOARD_CLI,
+        resolution: Optional[str] = None,
+        enable_face_mask: bool = False,
     ) -> Dict[str, Any]:
         if mode not in VALID_VIDEO_MODES:
             raise StoryboardCliError("invalid_mode", f"invalid video mode: {mode}")
@@ -981,6 +1008,7 @@ class StoryboardAgentCliService:
         world_id = str(storyboard.get("world_id") or "")
         prompt_text = prompt or context["video_prompt"] or context["image_prompt"]
         ratio_value = ratio or storyboard.get("workflow_ratio") or "16:9"
+        image_mode = self._normalize_video_image_mode(image_mode)
         # 时长兜底刷新：TTS 完成回写 scene.duration 是 best-effort，存在「音频已生成但
         # duration 仍是 LLM 估算整数秒」的窗口。CLI 批量路径在此同步刷新：有已完成配音
         # 则用真实音频求和覆盖 scene dict 的 duration，否则保持原值。best-effort，失败不阻断。
@@ -995,25 +1023,61 @@ class StoryboardAgentCliService:
         # 用 ceil 向上取整，确保视频时长不短于音频（避免丢帧/音画不同步）；下限 1 秒。
         duration_value = max(1, math.ceil(float(duration_seconds or scene.get("duration") or 5)))
 
+        if isinstance(extra_image_urls, str):
+            extra_urls = [part.strip() for part in extra_image_urls.split(",") if part.strip()]
+        else:
+            extra_urls = [str(url).strip() for url in (extra_image_urls or []) if str(url or "").strip()]
+        if image_urls:
+            resolved_urls = [part.strip() for part in str(image_urls).split(",") if part.strip()]
+            _, legend_items = self._collect_video_reference_bundle(context, image_mode)
+        else:
+            resolved_urls, legend_items = self._collect_video_reference_bundle(
+                context, image_mode, extra_urls=extra_urls,
+            )
+
+        # 全能参考无任何图时回退文生视频（对齐工作流分镜节点）；首尾帧仍要求至少一张图。
+        if mode == "image_to_video" and not resolved_urls:
+            if image_mode in ("multi_reference", "first_last_with_ref"):
+                mode = "text_to_video"
+            else:
+                raise StoryboardCliError(
+                    "source_image_missing",
+                    "image_to_video requires at least one image url",
+                )
+
+        if image_mode in ("multi_reference", "first_last_with_ref"):
+            if mode == "image_to_video" and legend_items:
+                prompt_text = self._append_reference_prompt_suffix(prompt_text, legend_items)
+            prompt_text = append_storyboard_visual_suffix(
+                prompt_text,
+                style=_get_field(storyboard, "style"),
+                composition_preference=_get_field(storyboard, "composition_preference"),
+            )
+
         actual_media_mode = MediaGenerationPreferenceService.determine_mode(
             MediaGenerationType.VIDEO,
-            image_urls=(image_urls or self._resolve_video_image_urls(context, image_mode)) if mode != 'text_to_video' else None,
+            image_urls=",".join(resolved_urls) if mode != "text_to_video" else None,
             video_urls=video_urls,
             audio_urls=audio_urls,
-            image_mode=image_mode if mode != 'text_to_video' else None,
+            image_mode=image_mode if mode != "text_to_video" else None,
         )
+        snapshot_task_type = None if mode == "text_to_video" else task_type
+        profile_values = {
+            "ratio": ratio_value,
+            "duration_seconds": duration_value,
+            "image_mode": image_mode if mode != "text_to_video" else None,
+            "enable_face_mask": bool(enable_face_mask),
+        }
+        if resolution:
+            profile_values["resolution"] = str(resolution)
         if not generation_snapshots:
             generation_snapshots = _build_cli_generation_snapshots(
                 int(user_id),
                 int(world_id),
                 media_type=MediaGenerationType.VIDEO,
                 modes=[actual_media_mode],
-                explicit_task_id=task_type,
-                profile_values={
-                    'ratio': ratio_value,
-                    'duration_seconds': duration_value,
-                    'image_mode': image_mode if mode != 'text_to_video' else None,
-                },
+                explicit_task_id=snapshot_task_type,
+                profile_values=profile_values,
                 surface=preference_surface,
             )
         generation_snapshot = None
@@ -1044,13 +1108,12 @@ class StoryboardAgentCliService:
                     task_type=task_type,
                 )
             else:
-                resolved_image_urls = image_urls or self._resolve_video_image_urls(context, image_mode)
                 result = self.submitter.image_to_video(
                     user_id=str(user_id),
                     world_id=world_id,
                     auth_token=auth_token or "",
                     prompt=prompt_text,
-                    image_urls=resolved_image_urls,
+                    image_urls=",".join(str(url) for url in resolved_urls),
                     ratio=ratio_value,
                     duration_seconds=duration_value,
                     count=int(count or 1),
@@ -1730,6 +1793,7 @@ class StoryboardAgentCliService:
                 storyboard_id=int(storyboard_id),
                 limit=batch_limit,
                 scene_ids=requested_scene_ids,
+                image_mode=image_mode,
             )
             job_id = StoryboardImageBatchJobModel.create(
                 storyboard_id=int(storyboard_id),
@@ -1860,6 +1924,7 @@ class StoryboardAgentCliService:
             storyboard_id=int(storyboard_id),
             limit=batch_limit,
             scene_ids=requested_scene_ids,
+            image_mode=image_mode,
         )
         pending_items = [item for item in planned_items if item.get("status") == "pending"]
         scenes_by_id = {
@@ -1939,15 +2004,19 @@ class StoryboardAgentCliService:
         storyboard_id: int,
         limit: int,
         scene_ids: Optional[Sequence[int]] = None,
+        image_mode: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """规划缺失视频的分镜。
 
-        - video：已有首帧且无完成视频 → pending
+        - video + first_last_frame：已有首帧且无完成视频 → pending
+        - video + multi_reference：无完成视频即可 pending（不要求首帧）；无首帧也无角色/场景/道具参考图 → missing_references
         - digital_human：已有成片配音 + 形象/首帧且无完成视频 → pending；缺配音 skip
         """
         from config.constant import StoryboardDigitalHumanConstants
         from services.storyboard_digital_human_service import plan_digital_human_ready
 
+        image_mode = self._normalize_video_image_mode(image_mode)
+        allow_without_first = image_mode in ("multi_reference", "first_last_with_ref")
         scenes = StoryboardSceneModel.list_by_storyboard(int(storyboard_id)) or []
         requested = set(scene_ids) if scene_ids is not None else None
         items: List[Dict[str, Any]] = []
@@ -1972,6 +2041,7 @@ class StoryboardAgentCliService:
             ai_tool_id = selected_video.get("ai_tool_id") if selected_video else None
             project_ids = [ai_tool_id] if ai_tool_id else []
             skip_reason = ""
+            can_skip_first = allow_without_first and not is_digital_human
 
             if selected_video and selected_video.get("result_url"):
                 status = "already_ready"
@@ -1980,10 +2050,14 @@ class StoryboardAgentCliService:
             elif selected_video and selected_video.get("status") in StoryboardAutoGenerateConstants.RUNNING_STATUSES:
                 status = "already_running"
                 batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
-            elif not has_first:
+            elif not has_first and not can_skip_first:
                 status = "missing_first_frame"
                 batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED
                 skip_reason = "missing_first_frame"
+            elif not has_first and can_skip_first and not self._scene_has_video_reference_inputs(scene_id):
+                status = "missing_references"
+                batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED
+                skip_reason = "missing_references"
             elif is_digital_human:
                 dh_status, dh_skip = plan_digital_human_ready(scene_id)
                 if dh_status != "ready":
@@ -3030,6 +3104,8 @@ class StoryboardAgentCliService:
         model_id: Optional[int] = None,
         vendor_id: Optional[int] = None,
         max_group_duration: int = 15,
+        video_gen_mode: str = "first_last_frame",
+        max_shot_duration: Optional[int] = None,
         force_medium_shot: bool = False,
         no_bg_music: bool = False,
         split_multi_dialogue: bool = False,
@@ -3085,8 +3161,28 @@ class StoryboardAgentCliService:
         # 构造 request_config，对齐 generate-from-script 路由的字段集。
         # worker 的 _normalize_request_config 会兜底 model 为 dict 的情况，但这里已解包成三元组。
         from config.constant import ScriptSplitConstants
+        mode = str(video_gen_mode or "first_last_frame").strip().lower()
+        if mode not in ("first_last_frame", "multi_reference"):
+            mode = "first_last_frame"
+        shot_cap = max_shot_duration if max_shot_duration not in (None, "") else max_group_duration
+        try:
+            shot_cap = int(shot_cap)
+        except (TypeError, ValueError):
+            shot_cap = int(max_group_duration)
+        shot_cap = max(1, min(60, shot_cap))
+        if mode == "multi_reference":
+            max_group_duration = shot_cap
+        try:
+            StoryboardModel.patch_config_json(int(storyboard_id), {
+                "videoImageMode": mode,
+                "maxGroupDuration": shot_cap,
+            })
+        except Exception:
+            logger.warning("split_from_script persist video_gen_mode failed storyboard=%s", storyboard_id)
         request_config = {
             "max_group_duration": int(max_group_duration),
+            "video_gen_mode": mode,
+            "max_shot_duration": shot_cap,
             "world_id": _get_field(storyboard, "world_id"),
             "model": resolved_model,
             "temperature": 0.5,
@@ -3657,9 +3753,28 @@ class StoryboardAgentCliService:
         `【【新角色】】` is looked up the same way as original tags (mirrors
         video_workflow collectShotFrameRefImages per-tag lookup).
         """
+        characters, _missing = self._resolve_prompt_characters_ex(
+            prompt_json, world_id, scene=scene, video_prompt=video_prompt
+        )
+        return characters
+
+    def _resolve_prompt_characters_ex(
+        self,
+        prompt_json: Dict[str, Any],
+        world_id: Any,
+        scene: Any = None,
+        video_prompt: str = "",
+    ) -> tuple:
+        """同 _resolve_prompt_characters，但额外返回未在角色库中命中的标记名单。
+
+        Returns:
+            (characters, missing_names)：missing_names 为提示词携带【【】】标记
+            但世界角色库查不到的角色名（此前仅静默跳过，现回传前端提示）。
+        """
         if not world_id:
-            return []
+            return [], []
         characters: List[Dict[str, Any]] = []
+        missing_names: List[str] = []
         for name in self._extract_character_names_from_prompt(
             prompt_json, scene=scene, video_prompt=video_prompt
         ):
@@ -3682,7 +3797,8 @@ class StoryboardAgentCliService:
                     name,
                     world_id,
                 )
-        return characters
+                missing_names.append(name)
+        return characters, missing_names
 
     def _extract_prop_names_from_prompt_text(self, prompt_text: str) -> List[str]:
         names: List[str] = []
@@ -4131,34 +4247,103 @@ class StoryboardAgentCliService:
         suffix = "\n".join(fallback_lines)
         return f"{prompt}\n\n参考图说明：\n{suffix}"
 
-    def _resolve_video_image_urls(self, context: Dict[str, Any], image_mode: str) -> str:
-        selected = context["selected_assets"]
-        first_url = (selected.get("first_frame") or {}).get("result_url")
-        last_url = (selected.get("last_frame") or {}).get("result_url")
-        # 拒绝宫格整图作为图生视频输入（应使用选中分镜单格 first_frame）
+    def _scene_has_video_reference_inputs(self, scene_id: int) -> bool:
+        """全能参考规划：无首帧时，是否仍有角色/场景/道具/画风参考图可提交。"""
+        try:
+            context = self.scene_context(int(scene_id))
+            urls, _items = self._collect_video_reference_bundle(context, "multi_reference")
+            return bool(urls)
+        except StoryboardCliError:
+            return False
+        except Exception as exc:
+            logger.warning(
+                "_scene_has_video_reference_inputs: scene=%s 检查参考图失败: %s",
+                scene_id,
+                exc,
+            )
+            return False
+
+    def _collect_video_reference_bundle(
+        self,
+        context: Dict[str, Any],
+        image_mode: str,
+        extra_urls: Optional[Sequence[str]] = None,
+    ) -> Tuple[List[str], List[Dict[str, Any]]]:
+        """收集图生视频 URL 与对齐的图例项。空列表表示当前模式没有可用图片。
+
+        全能参考顺序（去重保序，供 V2 多镜收集复用）：
+        选中首帧（可选）→ 角色/场景/道具 → 全局画风 → 用户额外上传。
+        """
+        image_mode = self._normalize_video_image_mode(image_mode)
+        selected = context.get("selected_assets") or {}
+        first_url = _public_upload_url((selected.get("first_frame") or {}).get("result_url"))
+        last_url = _public_upload_url((selected.get("last_frame") or {}).get("result_url"))
         if first_url and self._is_storyboard_grid_composite_url(first_url):
             raise StoryboardCliError(
                 "invalid_first_frame_for_video",
                 "选中首帧指向宫格整图，请确认分镜已拆分并选中单格 first_frame 资产",
                 payload={"first_frame_url": first_url},
             )
+
+        urls: List[str] = []
+        items: List[Dict[str, Any]] = []
+        seen = set()
+
+        def _add(url: Any, item: Optional[Dict[str, Any]] = None) -> None:
+            public = _public_upload_url(url)
+            if not public or public in seen:
+                return
+            seen.add(public)
+            urls.append(public)
+            if item:
+                packed = dict(item)
+                packed["url"] = public
+                items.append(packed)
+
         if image_mode == "first_last_frame":
-            urls = [first_url, last_url]
+            _add(first_url)
+            _add(last_url)
         elif image_mode == "first_last_with_ref":
-            urls = [first_url, last_url] + context.get("reference_images", [])
+            _add(first_url)
+            _add(last_url)
+            for ref_item in context.get("reference_image_items") or []:
+                if isinstance(ref_item, dict):
+                    _add(ref_item.get("url"), ref_item)
+            for extra in extra_urls or []:
+                _add(extra)
         elif image_mode == "multi_reference":
-            # 全能参考：首帧优先作为主参考，叠加角色/场景/道具参考图与全局画风参考图。
-            urls = []
             if first_url:
-                urls.append(first_url)
-            urls.extend(context.get("reference_images", []))
+                _add(first_url, {
+                    "type": "分镜图",
+                    "source_type": "asset",
+                    "name": "",
+                    "label": "分镜图",
+                })
+            for ref_item in context.get("reference_image_items") or []:
+                if isinstance(ref_item, dict):
+                    _add(ref_item.get("url"), ref_item)
             storyboard = context.get("storyboard")
             style_ref = _get_field(storyboard, "style_reference_image") if storyboard else None
             if style_ref:
-                urls.append(_public_upload_url(style_ref))
+                _add(style_ref, {
+                    "type": "全局画风参考图",
+                    "source_type": "style",
+                    "name": "",
+                    "label": "全局画风参考图",
+                })
+            for extra in extra_urls or []:
+                _add(extra, {
+                    "type": "参考图",
+                    "source_type": "reference",
+                    "name": "",
+                    "label": "用户上传参考图",
+                })
         else:
             raise StoryboardCliError("invalid_image_mode", f"invalid image_mode: {image_mode}")
-        urls = _dedupe(urls)
+        return urls, items
+
+    def _resolve_video_image_urls(self, context: Dict[str, Any], image_mode: str) -> str:
+        urls, _items = self._collect_video_reference_bundle(context, image_mode)
         if not urls:
             raise StoryboardCliError("source_image_missing", "image_to_video requires at least one image url")
         return ",".join(str(url) for url in urls)

@@ -5,15 +5,8 @@
 
 (function() {
 
-  function escapeHtml(value) {
-    if (value === null || value === undefined) return '';
-    return String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
+  // 转义统一收敛到 web/js/escape.js（window.escapeHtml，经 utils.js/escape.js 提供）
+  const escapeHtml = window.escapeHtml;
 
   // 截断过长的角色名称，超过 maxLen 只显示首尾
   function truncateName(name, maxLen) {

@@ -197,7 +197,14 @@ function handleWorldSelectionChange(worldId) {
   // Persist default world to workflow
   const workflowId = typeof getWorkflowIdFromUrl === 'function' ? getWorkflowIdFromUrl() : null;
   if (workflowId && typeof saveDefaultWorld === 'function') {
-    saveDefaultWorld(workflowId, state.defaultWorldId);
+    saveDefaultWorld(workflowId, state.defaultWorldId).then(function(savedHash){
+      // 切世界是一次旁路 PUT 且已落库：用响应哈希滚动自动保存基线，
+      // 防止下一次自动保存携带过期 X-Base-Hash 被 CAS 409 误判为冲突
+      if(savedHash && typeof autoSaveState !== 'undefined'
+          && typeof buildAutoSaveBody === 'function'){
+        autoSaveState.setConfirmedBody(workflowId, buildAutoSaveBody(), savedHash);
+      }
+    });
   }
 
   // 新建工作流（画风为空）时，自动继承世界的画风和构图倾向
@@ -220,6 +227,9 @@ function handleWorldSelectionChange(worldId) {
 }
 
 // Save default world to workflow
+// 成功时返回服务端最新内容哈希（供调用方滚动自动保存 CAS 基线），失败/异常返回 null。
+// default_world_id 参与服务端内容哈希计算：本 PUT 落库后服务端哈希即变化，
+// 调用方若不滚动基线，下一次自动保存会携带过期 X-Base-Hash 被 CAS 409 误判为冲突。
 async function saveDefaultWorld(workflowId, worldId) {
   try {
     const response = await fetch(`/api/video-workflow/${workflowId}`, {
@@ -233,16 +243,19 @@ async function saveDefaultWorld(workflowId, worldId) {
         default_world_id: worldId
       })
     });
-    
+
     const result = await response.json();
-    
+
     if (result.code === 0) {
       console.log('Default world saved successfully');
+      return (result.data && result.data.content_hash) || null;
     } else {
       console.warn('Failed to save default world:', result.message);
+      return null;
     }
   } catch (error) {
     console.error('Error saving default world:', error);
+    return null;
   }
 }
 
@@ -271,11 +284,22 @@ async function _saveWorldStyleToWorkflow(workflowId) {
     const result = await response.json();
     if (result.code === 0) {
       console.log('[世界画风] 已将世界画风同步到工作流');
+      // 本次旁路 PUT 改变了参与内容哈希的字段（style/workflow_data），
+      // 用响应返回的最新哈希滚动自动保存基线，否则下一次自动保存会携带
+      // 过期 X-Base-Hash 被服务端 CAS 409 误判为"被其他会话覆盖"
+      if (typeof autoSaveState !== 'undefined' && typeof buildAutoSaveBody === 'function'
+          && result.data && result.data.content_hash) {
+        autoSaveState.setConfirmedBody(
+          workflowId, buildAutoSaveBody(), result.data.content_hash);
+      }
+      return (result.data && result.data.content_hash) || null;
     } else {
       console.warn('[世界画风] 同步失败:', result.message);
+      return null;
     }
   } catch (error) {
     console.error('[世界画风] 同步出错:', error);
+    return null;
   }
 }
 

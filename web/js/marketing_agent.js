@@ -313,19 +313,16 @@
                     .replace(/\r/g, '\\r');
             }
 
-            function escapeHtml(value) {
-                return String(value || '')
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;')
-                    .replace(/'/g, '&#39;');
-            }
+            // 纯 HTML 转义已统一收敛到 web/js/escape.js（window.escapeHtml）。
+            // 注意：上方 escapeHtmlAttr 是「JS 字符串字面量」转义器（额外转义反斜杠/
+            // 换行，用于往内联 JS 上下文嵌值），语义与 window.escapeHtmlAttr 不同，勿混用。
+            const escapeHtml = window.escapeHtml;
 
+            // 内联 onclick 已被 secureSanitize 白名单剥离（防 XSS），点击行为统一改由
+            // data-* 属性 + 容器级事件委托驱动（委托注册见 bindGeneratedMediaDelegation）。
             function buildPublishButton(aiToolId, title) {
                 if (!aiToolId) return '';
-                const safeTitle = escapeHtmlAttr(title || '');
-                return `<button class="publish-result-btn" onclick="event.stopPropagation(); window.publishGeneratedResult && window.publishGeneratedResult(${escapeHtmlAttr(JSON.stringify(String(aiToolId)))}, '${safeTitle}')">发布</button>`;
+                return `<button class="publish-result-btn" data-publish-tool-id="${escapeHtml(aiToolId)}" data-publish-title="${escapeHtml(title || '')}">发布</button>`;
             }
 
             function buildGeneratedMediaRowsHtml(type, rows) {
@@ -334,15 +331,14 @@
                         const url = row.result_url || '';
                         const displayUrl = proxyImageUrl(url);
                         const aiToolId = row.ai_tool_id || '';
-                        const safeTitle = escapeHtmlAttr(inputText.value || '');
-                        return `<div class="generated-image-wrapper generated-result-card" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(displayUrl)}';window.setModalImageInfo && window.setModalImageInfo('${aiToolId}', '${safeTitle}')"><img src="${escapeHtmlAttr(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
+                        return `<div class="generated-image-wrapper generated-result-card" data-modal-src="${escapeHtml(displayUrl)}" data-tool-id="${escapeHtml(aiToolId)}" data-tool-title="${escapeHtml(inputText.value || '')}"><img src="${escapeHtml(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
                     }).join('');
                 }
                 if (type === 'video') {
                     return rows.map(row => {
                         const url = row.result_url || '';
                         const displayUrl = proxyDownloadUrl(url);
-                        return `<div class="generated-result-card"><video src="${escapeHtmlAttr(displayUrl)}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video><div class="generated-result-actions">${buildPublishButton(row.ai_tool_id, inputText.value)}</div></div>`;
+                        return `<div class="generated-result-card"><video src="${escapeHtml(displayUrl)}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video><div class="generated-result-actions">${buildPublishButton(row.ai_tool_id, inputText.value)}</div></div>`;
                     }).join('');
                 }
                 return '';
@@ -1054,7 +1050,9 @@
             });
 
             function openComputingPowerLogs() {
-                if (!authToken.value) { showError(window.t('auth_missing')); return; }
+                // 兼容期双写：登录态以 localStorage.auth_token 为准
+                const hasSession = !!authToken.value;
+                if (!hasSession) { showError(window.t('auth_missing')); return; }
                 showPowerLogsModal.value = true;
             }
 
@@ -1098,7 +1096,10 @@
             async function loadRechargePackages() {
                 rechargeState.value = 'loading';
                 try {
-                    const response = await fetch(`/api/recharge/packages?auth_token=${encodeURIComponent(authToken.value)}`);
+                    // token 走 Authorization 头，不再拼进 URL（防 Referer/日志/历史记录泄漏）
+                    const reqHeaders = authToken.value
+                        ? { 'Authorization': `Bearer ${authToken.value}` } : {};
+                    const response = await fetch('/api/recharge/packages', { headers: reqHeaders });
                     if (!checkAuthResponse(response)) return;
                     const data = await response.json();
                     rechargePackages.value = data.packages || [];
@@ -1320,7 +1321,7 @@
                 if (media.type === 'image') {
                     const displayUrl = proxyImageUrl(media.thumbnailUrl || media.url);  // 显示用缩略图
                     const fullUrl = proxyImageUrl(media.url);  // 点击查看原图
-                    return `${label} <img src="${escapeHtmlAttr(displayUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(fullUrl)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${label}">`;
+                    return `${label} <img src="${escapeHtml(displayUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" data-full-src="${escapeHtml(fullUrl)}" alt="${label}">`;
                 }
                 if (media.type === 'video') {
                     return `${label} <video src="${escapeHtmlAttr(proxyDownloadUrl(media.url))}" style="max-height:160px;border-radius:8px;" controls muted></video>`;
@@ -1443,7 +1444,7 @@
                     });
                     const response = await fetch(`/api/ai-tools/history?${params.toString()}`, {
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         }
                     });
@@ -1661,9 +1662,24 @@
                 // 解析 Markdown
                 let html = marked.parse(text);
 
+                // 净化前迁移：历史存量消息（commit 0bf53fe 之前生成结果以已渲染 HTML
+                // 入库）的内联 onclick 携带点击放大/发布行为，secureSanitize 的白名单
+                // 会剥掉全部 on* 属性，先把已知模式改写为 data-* 属性，未知模式删除。
+                if (typeof window.migrateLegacyOnclick === 'function') {
+                    html = window.migrateLegacyOnclick(html);
+                }
+
+                // 强制净化：DOMPurify 白名单（web/js/security.js），剥离事件属性、
+                // javascript:/data: URI 与 script/iframe/base 等危险标签。
+                // 库缺失时降级为纯文本，绝不放行未净化 HTML。
+                if (typeof window.DOMPurify === 'undefined' || typeof window.secureSanitize !== 'function') {
+                    return escapeHtml(text);
+                }
+                html = window.secureSanitize(html);
+
                 // 为图片添加样式和点击事件（跳过已由 buildGeneratedMediaRowsHtml 处理的图片）
                 html = html.replace(/<img([^>]*)>/g, (match, attrs) => {
-                    // 跳过已有 generated-image class 的图片，它们由父级 div 的 onclick 处理
+                    // 跳过已有 generated-image class 的图片，它们由父级 div 的 data-modal-src 委托处理
                     if (attrs.includes('generated-image')) return match;
                     // 提取 src 属性
                     const srcMatch = attrs.match(/src="([^"]*)"/);
@@ -1673,20 +1689,17 @@
                         ? attrs.replace(/src="[^"]*"/, `src="${displaySrc}"`)
                         : attrs;
 
-                    // 添加样式和点击事件
-                    return `<img${proxiedAttrs} style="max-width:300px;max-height:200px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(displaySrc)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('image_alt')}">`;
+                    // 添加样式；点击放大由 data-full-src + 事件委托驱动
+                    return `<img${proxiedAttrs} style="max-width:300px;max-height:200px;border-radius:8px;cursor:zoom-in;" data-full-src="${escapeHtml(displaySrc)}" alt="${window.t('image_alt')}">`;
                 });
 
 
-                // 兜底重新签名：内容中所有「点击放大」设置 imgModalImg.src 的 onclick，
-                // 无论挂在 <img> 还是 <div>（如 generated-image-wrapper）等元素上，都统一
-                // 重新走代理。解决历史已存库图片消息：commit 0bf53fe 之前生成结果以已渲染
-                // HTML 入库，onclick 直接写的是会过期的图床原始 URL，reload 后点击放大仍用过期
-                // 地址。proxyImageUrl 对已是代理 URL（同源）幂等，故新生成内容不受影响。
-                html = html.replace(/imgModalImg'\)\.src='([^']*)'/g, (_m, u) => {
-                    const proxied = proxyImageUrl(u).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-                    return `imgModalImg').src='${proxied}'`;
-                });
+                // 兜底重新签名：历史已存库消息中「点击放大」目标地址
+                // （data-full-src/data-modal-src 可能来自会过期的图床原始 URL）。
+                // proxyImageUrl 对已是代理 URL（同源）幂等，新生成内容不受影响。
+                html = html.replace(/\sdata-(full|modal)-src="([^"]*)"/g, (_m, kind, u) =>
+                    ` data-${kind}-src="${escapeHtml(proxyImageUrl(u))}"`
+                );
                 html = html.replace(/(<img\b(?=[^>]*\bgenerated-image\b)(?=[^>]*\ssrc="))([^>]*?)\ssrc="([^"]*)"/gi, (_m, prefix, attrs, src) =>
                     `${prefix}${attrs} src="${proxyImageUrl(src)}"`
                 );
@@ -1719,6 +1732,33 @@
                         resetModalImageInfo();
                     }
                 }
+            }
+
+            // 生成结果点击行为的事件委托（全局只绑一次）。
+            // 背景：内联 onclick 会被 secureSanitize 的白名单剥离（XSS 防护），
+            // 新生成的「点击放大/发布」内容与净化迁移后的历史存量消息统一通过
+            // data-full-src / data-modal-src / data-publish-tool-id 属性驱动。
+            function bindGeneratedMediaDelegation() {
+                if (window.__generatedMediaDelegationBound) return;
+                window.__generatedMediaDelegationBound = true;
+                document.addEventListener('click', (e) => {
+                    if (!e.target || typeof e.target.closest !== 'function') return;
+                    // 发布按钮在 wrapper 内部，先于「点击放大」分支处理以避免冒泡误触
+                    const publishBtn = e.target.closest('[data-publish-tool-id]');
+                    if (publishBtn) {
+                        publishGeneratedResult(
+                            publishBtn.getAttribute('data-publish-tool-id') || '',
+                            publishBtn.getAttribute('data-publish-title') || ''
+                        );
+                        return;
+                    }
+                    const zoomTarget = e.target.closest('img[data-full-src], [data-modal-src]');
+                    if (!zoomTarget) return;
+                    const src = zoomTarget.getAttribute('data-full-src')
+                        || zoomTarget.getAttribute('data-modal-src') || '';
+                    const toolId = zoomTarget.getAttribute('data-tool-id');
+                    showImageModal(src, toolId || null, zoomTarget.getAttribute('data-tool-title') || '');
+                });
             }
 
             function previewMedia(src, mediaType) {
@@ -1872,7 +1912,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value || '',
+                            'Authorization': 'Bearer ' + (authToken.value || ''),
                             'X-User-Id': userId.value || ''
                         },
                         body: JSON.stringify({
@@ -2024,7 +2064,7 @@
                 try {
                     const response = await fetch('/api/worlds?page=1&page_size=100', {
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         }
                     });
@@ -2047,7 +2087,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify({ name, description })
@@ -2069,7 +2109,10 @@
                 try {
                     const response = await fetch('/api/session/create', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + authToken.value
+                        },
                         body: JSON.stringify({
                             user_id: userId.value,
                             world_id: worldId.value,
@@ -2105,7 +2148,7 @@
                 try {
                     const response = await fetch(`/api/session/${sessionId}/history`, {
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         }
                     });
@@ -3168,7 +3211,10 @@
 
                     const taskResponse = await fetch(`/api/session/${sessionId}/task`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + authToken.value
+                        },
                         body: JSON.stringify({
                             message: text,
                             auth_token: authToken.value,
@@ -3251,8 +3297,8 @@
             // 处理流式响应
             async function handleStream(taskId) {
                 return new Promise((resolve, reject) => {
-                    const eventSource = new EventSource(`/api/task/${taskId}/stream`);
-                    currentEventSource = eventSource;
+                    // 流式状态必须声明在 SSE 回调之外：下方 onError 与超时清理都要访问这些
+                    // 变量；且声明在 onMessage 内会被每条 SSE 事件重复执行（重置 fullContent/msgUid）。
                     const streamSessionId = currentSessionId.value;
                     const streamErrorKey = getTaskErrorKey('stream', taskId);
                     let fullContent = '';
@@ -3288,10 +3334,9 @@
                         return messages.value.findIndex(m => m._uid === uid);
                     }
 
-                    eventSource.onmessage = (event) => {
-                        try {
-                            const data = JSON.parse(event.data);
-                            if (data.id && processedSseMessageIds.has(data.id)) {
+                    const eventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
+                    onMessage: async (data) => {
+                        if (data.id && processedSseMessageIds.has(data.id)) {
                                 console.log('[SSE] 跳过重复消息:', data.id, data.type);
                                 return;
                             }
@@ -3390,18 +3435,8 @@
                                 // Agent 文本回复由任务完成回调保存 PM 历史，避免前端再次追加造成重复历史记录。
                                 resolve();
                             }
-                        } catch (e) {
-                            // 非 JSON 数据，直接追加
-                            hasReceivedData = true;
-                            fullContent += event.data;
-                            const uid = ensurePlaceholder();
-                            const idx = findMsgByIdx(uid);
-                            if (idx !== -1) messages.value[idx].content = fullContent;
-                            scrollToBottom();
-                        }
-                    };
-
-                    eventSource.onerror = (e) => {
+                    },
+                    onError: (e) => {
                         if (streamSettled) return;
                         console.log('[Loading] handleStream onerror, hasReceivedData=', hasReceivedData);
                         settleStream();
@@ -3430,7 +3465,8 @@
                             resetTaskErrorCount(streamErrorKey);
                             resolve();
                         }
-                    };
+                    }
+                    });
 
                     // 超时处理
                     streamTimeoutId = setTimeout(() => {
@@ -3689,7 +3725,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value
+                            'Authorization': 'Bearer ' + authToken.value
                         },
                         body: JSON.stringify({
                             approved: true,
@@ -3894,7 +3930,8 @@
                         // 优先使用原始 HTTP URL，避免传递 base64 data URL
                         const fullUrl = proxyImageUrl(originalUrlMap[imgUrl] || imgUrl);
                         const displayUrl = proxyImageUrl(thumbnailMap[imgIdx] || originalUrlMap[imgUrl] || imgUrl);
-                        finalContent += `\n\n<img src="${escapeHtml(displayUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(fullUrl)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('reference_image_alt')}">`;
+                        // 点击放大走 data-full-src 委托（内联 onclick 会被 secureSanitize 剥离）
+                        finalContent += `\n\n<img src="${escapeHtml(displayUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" data-full-src="${escapeHtml(fullUrl)}" alt="${window.t('reference_image_alt')}">`;
                     }
                     if (h.role === 'user' && window.AgentMessageDedupe?.formatAgentUserMessageForDisplay) {
                         finalContent = window.AgentMessageDedupe.formatAgentUserMessageForDisplay(finalContent);
@@ -3917,7 +3954,8 @@
                     for (const m of imageUrlMatches) {
                         const fullUrl = proxyImageUrl(m[1]);
                         const thumbUrl = proxyImageUrl(m[2] || m[1]);
-                        renderedContent += `\n\n<img src="${escapeHtml(thumbUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(fullUrl)}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('reference_image_alt')}">`;
+                        // 点击放大走 data-full-src 委托（内联 onclick 会被 secureSanitize 剥离）
+                        renderedContent += `\n\n<img src="${escapeHtml(thumbUrl)}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" data-full-src="${escapeHtml(fullUrl)}" alt="${window.t('reference_image_alt')}">`;
                     }
                 }
 
@@ -3964,7 +4002,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify({
@@ -3995,7 +4033,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify(body)
@@ -4015,7 +4053,7 @@
                         method: 'PUT',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify(body)
@@ -4037,7 +4075,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify({
@@ -4144,7 +4182,9 @@
                 const activeTaskId = sessionActiveTaskId[sessionId];
                 if (activeTaskId) {
                     try {
-                        const statusRes = await fetch(`/api/task/${activeTaskId}/status`);
+                        const statusRes = await fetch(`/api/task/${activeTaskId}/status`, {
+                            headers: { 'Authorization': 'Bearer ' + authToken.value }
+                        });
                         if (!checkAuthResponse(statusRes)) return;
                         const statusData = await statusRes.json();
                         const taskStatus = statusData.success && statusData.task ? statusData.task.status : null;
@@ -4203,7 +4243,7 @@
                 try {
                     const response = await fetch(`/api/sessions?user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}&session_type=2&limit=50`, {
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         }
                     });
@@ -4265,7 +4305,7 @@
                     const response = await fetch(`/api/session/${sessionId}`, {
                         method: 'DELETE',
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         }
                     });
@@ -4312,7 +4352,7 @@
                     const response = await fetch(`/api/session/${session.id}/title`, {
                         method: 'PUT',
                         headers: {
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value,
                             'Content-Type': 'application/json'
                         },
@@ -4352,6 +4392,9 @@
                 // 点击空白处关闭菜单
                 document.addEventListener('click', _closeMenuHandler);
 
+                // 生成结果点击放大/发布按钮的事件委托（内联 onclick 已被净化剥离）
+                bindGeneratedMediaDelegation();
+
                 // 获取服务器配置（图片大小限制 / 意见反馈等）
                 try {
                     const resp = await fetch('/api/system/server-config');
@@ -4378,7 +4421,9 @@
                 userPhone.value = localStorage.getItem('phone') || '';
                 userEmail.value = localStorage.getItem('email') || '';
 
-                if (!userId.value || !authToken.value) {
+                // 兼容期双写：登录态以 localStorage.auth_token 为准
+                const hasLocalSession = !!authToken.value;
+                if (!userId.value || !hasLocalSession) {
                     isInitializing.value = false;
                     redirectToLogin();
                     return;
@@ -4420,7 +4465,9 @@
                 // 检查是否有活跃的 Agent 任务（页面刷新恢复）— 不阻塞页面
                 if (currentSessionId.value) {
                     try {
-                        const taskRes = await fetch(`/api/session/${currentSessionId.value}/latest-task`);
+                        const taskRes = await fetch(`/api/session/${currentSessionId.value}/latest-task`, {
+                            headers: { 'Authorization': 'Bearer ' + authToken.value }
+                        });
                         if (!checkAuthResponse(taskRes)) return;
                         const taskData = await taskRes.json();
                         if (taskData.success && taskData.task) {
@@ -4697,7 +4744,7 @@
                         try {
                             if (!restoredT2VModel && userId.value && worldId.value) {
                                 const resp = await fetch(`/api/video-model?category=text_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
-                                    headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
+                                    headers: { 'Authorization': 'Bearer ' + authToken.value, 'X-User-Id': userId.value }
                                 });
                                 if (!checkAuthResponse(resp)) return;
                                 if (resp.ok) {
@@ -4741,7 +4788,7 @@
                         try {
                             if (!preferredI2VModel && userId.value && worldId.value) {
                                 const resp = await fetch(`/api/video-model?category=image_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
-                                    headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
+                                    headers: { 'Authorization': 'Bearer ' + authToken.value, 'X-User-Id': userId.value }
                                 });
                                 if (!checkAuthResponse(resp)) return;
                                 if (resp.ok) {
@@ -5284,7 +5331,8 @@
                 if (authToken.value) formData.append('auth_token', authToken.value);
                 fetch('/api/upload-agent-image', {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
                 }).then(resp => resp.json()).then(data => {
                     if (data.success && data.url) {
                         uploadedImageServerUrl.value = data.url;
@@ -5323,7 +5371,8 @@
                     if (authToken.value) formData.append('auth_token', authToken.value);
                     const resp = await fetch('/api/upload-agent-image', {
                         method: 'POST',
-                        body: formData
+                        body: formData,
+                        headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
                     });
                     if (!checkAuthResponse(resp)) return;
                     const data = await resp.json();
@@ -5469,7 +5518,8 @@
 
                     const resp = await fetch('/api/upload-agent-audio', {
                         method: 'POST',
-                        body: formData
+                        body: formData,
+                        headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
                     });
                     if (!checkAuthResponse(resp)) return;
                     const data = await resp.json();
@@ -5587,7 +5637,8 @@
                     if (authToken.value) formData.append('auth_token', authToken.value);
                     const resp = await fetch('/api/upload-agent-video', {
                         method: 'POST',
-                        body: formData
+                        body: formData,
+                        headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
                     });
                     if (!checkAuthResponse(resp)) return;
                     const data = await resp.json();
@@ -6329,7 +6380,8 @@
                 if (authToken.value) fd.append('auth_token', authToken.value);
                 fetch('/api/upload-agent-image', {
                     method: 'POST',
-                    body: fd
+                    body: fd,
+                    headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
                 }).then(resp => resp.json()).then(data => {
                     if (data.success && data.url) {
                         uploadedImageServerUrl.value = data.url;
@@ -6446,7 +6498,7 @@
                 if (!userId.value || !worldId.value) return;
                 try {
                     const resp = await fetch(`/api/marketing/media-preferences?user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
-                        headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
+                        headers: { 'Authorization': 'Bearer ' + authToken.value, 'X-User-Id': userId.value }
                     });
                     if (!checkAuthResponse(resp)) return;
                     const data = await resp.json();
@@ -6521,7 +6573,7 @@
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': authToken.value,
+                        'Authorization': 'Bearer ' + authToken.value,
                         'X-User-Id': userId.value
                     },
                     body: JSON.stringify({
@@ -6564,7 +6616,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify({
@@ -6621,7 +6673,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': authToken.value,
+                            'Authorization': 'Bearer ' + authToken.value,
                             'X-User-Id': userId.value
                         },
                         body: JSON.stringify({
@@ -6786,7 +6838,7 @@
                     try {
                         if (!m && userId.value && worldId.value) {
                             const resp = await fetch(`/api/video-model?category=image_to_video&user_id=${encodeURIComponent(userId.value)}&world_id=${encodeURIComponent(worldId.value)}`, {
-                                headers: { 'Authorization': authToken.value, 'X-User-Id': userId.value }
+                                headers: { 'Authorization': 'Bearer ' + authToken.value, 'X-User-Id': userId.value }
                             });
                             if (!checkAuthResponse(resp)) return;
                             if (resp.ok) {

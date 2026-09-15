@@ -17,8 +17,11 @@ def test_vision_model_constant_consistency():
 
 def test_deepseek_client_maps_vision_model():
     from llm.openai_deepseek import DeepSeekOpenAIClient
+    # 2026-09 官方下线 v4-flash 系模型名，vision-exp 与 flash 统一映射为 deepseek-flash
     assert DeepSeekOpenAIClient._MODEL_NAME_MAP["deepseek-v4-flash-vision-exp"] \
-        == "deepseek-v4-flash-vision-exp"
+        == "deepseek-flash"
+    assert DeepSeekOpenAIClient._MODEL_NAME_MAP["deepseek-v4-flash"] == "deepseek-flash"
+    assert DeepSeekOpenAIClient._MODEL_NAME_MAP["deepseek-v4-pro"] == "deepseek-v4-pro"
 
 
 def test_model_get_by_name_returns_none_for_empty():

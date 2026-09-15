@@ -21,12 +21,13 @@ export function handleAuthError(status, data = {}) {
 
     if (!isConfirmedInvalid) {
         // 缺 token / 无可识别 code 的 401：本地仍有 token 时不清不跳
-        // （可能是多标签页他处重登录、或误报），按普通错误交给调用方处理；
-        // 本地也没有 token 才跳登录（本来就没有可清的东西）。
+        // （多标签页/误报保护）。兼容期 logged_in 单独不算完整登录。
         if (status === 401) {
-            let hasLocalToken = false;
-            try { hasLocalToken = !!localStorage.getItem('auth_token'); } catch (_) { /* ignore */ }
-            if (!hasLocalToken) {
+            let hasLocalCredentials = false;
+            try {
+                hasLocalCredentials = !!localStorage.getItem('auth_token');
+            } catch (_) { /* ignore */ }
+            if (!hasLocalCredentials) {
                 const target = window.location.pathname + window.location.search;
                 window.location.href = '/?login=1&redirect_url=' + encodeURIComponent(target);
                 return true;
@@ -488,8 +489,10 @@ export async function fetchServerConfig() {
 
 /** 充值套餐列表 */
 export async function fetchRechargePackages() {
+    // token 走 Authorization 头，不再拼进 URL（防 Referer/日志/历史记录泄漏）
     const token = state.authToken || localStorage.getItem('auth_token') || '';
-    const resp = await fetch(`/api/recharge/packages?auth_token=${encodeURIComponent(token)}`);
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const resp = await fetch('/api/recharge/packages', { headers });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
         const err = new Error(data.error || data.message || `HTTP ${resp.status}`);

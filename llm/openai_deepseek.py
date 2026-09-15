@@ -1,6 +1,7 @@
 """
 DeepSeek OpenAI 兼容格式 LLM 客户端
 支持 deepseek-v4-flash / deepseek-v4-pro 系列模型
+官方 API 实际模型 ID 见 _MODEL_NAME_MAP（deepseek-v4-flash 系已下线，统一映射为 deepseek-flash）
 """
 import logging
 from .openai_base_client import OpenAIBaseClient
@@ -13,12 +14,15 @@ class DeepSeekOpenAIClient(OpenAIBaseClient):
     """DeepSeek OpenAI 兼容格式 LLM 客户端"""
 
     # model 表友好名称 -> 实际 API endpoint model ID 映射
+    # 2026-09 官方公告：deepseek-v4-flash / deepseek-v4-flash-vision-exp 对应模型已下线，
+    # 请求应由 DeepSeek-V4.1-Flash（model ID: deepseek-flash）提供服务；
+    # deepseek-v4-pro 继续按原名提供调用服务。
     _MODEL_NAME_MAP = {
-        'deepseek-v4-flash': 'deepseek-v4-flash',
+        'deepseek-v4-flash': 'deepseek-flash',
         'deepseek-v4-pro': 'deepseek-v4-pro',
-        'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp',
-        # 兼容即将弃用的旧模型名
-        'deepseek-chat': 'deepseek-v4-flash',
+        'deepseek-v4-flash-vision-exp': 'deepseek-flash',
+        # 兼容即将弃用的旧模型名（映射为单级，不链式传递，需直接指向最终 API model ID）
+        'deepseek-chat': 'deepseek-flash',
         'deepseek-reasoner': 'deepseek-v4-pro',
     }
 

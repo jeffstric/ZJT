@@ -23,6 +23,10 @@ from api.auth_identity import (
     normalize_authorization_token as _auth_header_token,
     resolve_authorization_user_id as _resolve_auth_user_id,
 )
+from perseids_server.utils.auth_identity import (
+    get_auth_user_id,
+    ensure_owner,
+)
 
 from config.constant import (
     Edition, Action,
@@ -39,6 +43,7 @@ from config.constant import (
     MediaGenerationMode,
     MediaGenerationSurface,
     MediaGenerationType,
+    IMAGE_MODE_EXTRA_CONFIG_KEY,
 )
 from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import (
@@ -74,6 +79,7 @@ from model.user_tokens import UserTokensModel
 from model.user_preferences import UserPreferencesModel
 from model.video_voice_replace import VideoVoiceReplaceJobModel
 from services.voice_replace.enqueue import enqueue_scene_job
+from services.storyboard_reference_prompt_service import append_storyboard_visual_suffix
 from utils.resource_access import (
     get_user_id_from_header,
     ensure_resource_access,
@@ -835,6 +841,8 @@ def build_storyboard_scenes_from_parsed_script(
     parsed_data: dict,
     style: str = '',
     character_variants: Optional[Dict[str, Dict[str, str]]] = None,
+    video_gen_mode: Optional[str] = None,
+    max_shot_duration: Optional[float] = None,
 ) -> List[dict]:
     """
     Convert llm.script_parser output into StoryboardModel.create_scenes payload.
@@ -857,6 +865,14 @@ def build_storyboard_scenes_from_parsed_script(
     from services.dialogue_emotion import is_enabled as dialogue_emotion_enabled
     from services.dialogue_emotion import normalize_emo_vec
     emotion_on = dialogue_emotion_enabled()
+
+    mode = str(video_gen_mode or '').strip().lower()
+    if mode == 'multi_reference':
+        from llm.shot_pack import pack_parsed_for_reference_video
+        cap = max_shot_duration
+        if cap in (None, ''):
+            cap = 15
+        parsed_data = pack_parsed_for_reference_video(parsed_data, cap)
 
     for group in parsed_data.get('shot_groups') or []:
         group_name = group.get('group_name') or ''
@@ -3338,6 +3354,16 @@ async def generate_storyboard_from_script(
         max_rounds = 1
 
     max_group_duration = data.get('max_group_duration', 15)
+    video_gen_mode = str(data.get('video_gen_mode') or data.get('image_mode') or '').strip().lower()
+    if video_gen_mode not in ('first_last_frame', 'multi_reference'):
+        video_gen_mode = 'first_last_frame'
+    try:
+        max_shot_duration = int(data.get('max_shot_duration') or max_group_duration or 15)
+    except (TypeError, ValueError):
+        max_shot_duration = int(max_group_duration or 15)
+    max_shot_duration = max(1, min(60, max_shot_duration))
+    if video_gen_mode == 'multi_reference':
+        max_group_duration = max_shot_duration
     dialogue_language = data.get('dialogue_language') or data.get('language') or ''
     prompt_language = data.get('prompt_language') or data.get('language') or ''
     enable_thinking = _json_bool(data.get('enable_thinking'), False)
@@ -3351,6 +3377,8 @@ async def generate_storyboard_from_script(
     from config.constant import ScriptSplitConstants
     request_config = {
         'max_group_duration': max_group_duration,
+        'video_gen_mode': video_gen_mode,
+        'max_shot_duration': max_shot_duration,
         # 总分镜时长控制：倍率×剧本基准时长=分镜总时长目标；0=不限制
         #（见 docs/script/script_split_total_duration_control.md）
         'total_duration_multiplier': data.get('total_duration_multiplier', 0),
@@ -3379,6 +3407,17 @@ async def generate_storyboard_from_script(
             ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
         ),
     }
+    try:
+        await asyncio.to_thread(
+            StoryboardModel.patch_config_json,
+            int(storyboard_id),
+            {
+                'videoImageMode': video_gen_mode,
+                'maxGroupDuration': max_shot_duration,
+            },
+        )
+    except Exception as e:
+        logger.warning("persist split video_gen_mode failed storyboard=%s: %s", storyboard_id, e)
     try:
         task_id, is_new = await create_split_task(
             user_id=user_id,
@@ -4009,15 +4048,19 @@ async def generate_scene_video(
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
     """
-    生成分镜视频（按 scene.video_type：图生视频 / 对口型 MiniMax H3）。
+    生成分镜视频（按 scene.video_type：图生视频 / 参考生视频 / 对口型 MiniMax H3）。
 
-    - 图生视频：需已选中首帧图片。
+    - 首尾帧（image_mode=first_last_frame，默认）：需已选中首帧图片。
+    - 全能参考（image_mode=multi_reference）：不强制首帧，自动收集角色/场景/道具
+      参考图；无任何参考图时回退文生视频。
     - 对口型（digital_human）：**必须先有成片配音**；固定 MiniMax H3 数字人
       （image=选中首帧，audio=TTS 说话音频，prompt=动作描述，
       duration clamp 4–10s，resolution→max_edge）。
 
     Body:
-        task_type: 可选；图生视频用；对口型固定 MiniMax H3（忽略其他）
+        task_type: 可选；图生/参考生用；对口型固定 MiniMax H3（忽略其他）
+        image_mode: first_last_frame | multi_reference | first_last_with_ref
+        reference_image_urls: 可选，用户媒体槽额外上传的参考图
         prompt / duration / ratio / character_id / resolution / clip_to_audio_duration
     """
     user_id = get_user_id_from_header(user_id)
@@ -4112,27 +4155,69 @@ async def generate_scene_video(
             return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
         return JSONResponse(result)
 
-    # 图生视频：必须选中首帧
+    # 图生视频 / 参考生视频
     requested_task_type = data.get('task_type')
     audio_path = None
-    if not scene.selected_first_frame_id:
-        return JSONResponse(status_code=400, content={'error': '请先生成并选中首帧图片'})
-    ff = await asyncio.to_thread(StoryboardSceneAssetModel.get_by_id, scene.selected_first_frame_id)
-    if not ff:
-        return JSONResponse(status_code=400, content={'error': '首帧图片尚未生成完成'})
-    # asset.result_url 是冗余字段，宫格拆分等场景下可能为 NULL；
-    # 与 assets 接口一致，用 ai_tool.result_url 兜底（前端显示首帧也靠此兜底）。
-    image_path = ff.result_url
-    if not image_path and ff.ai_tool_id:
-        ff_tool = await asyncio.to_thread(AIToolsModel.get_by_id, ff.ai_tool_id)
-        if ff_tool and ff_tool.result_url:
-            image_path = ff_tool.result_url
-    if not image_path:
-        return JSONResponse(status_code=400, content={'error': '首帧图片尚未生成完成'})
+    image_mode = str(data.get('image_mode') or ImageMode.FIRST_LAST_FRAME).strip().lower()
+    if image_mode not in (
+        ImageMode.FIRST_LAST_FRAME,
+        ImageMode.MULTI_REFERENCE,
+        ImageMode.FIRST_LAST_WITH_REF,
+    ):
+        image_mode = ImageMode.FIRST_LAST_FRAME
+    raw_extra_refs = data.get('reference_image_urls') or []
+    if isinstance(raw_extra_refs, str):
+        extra_ref_urls = [part.strip() for part in raw_extra_refs.split(',') if part.strip()]
+    elif isinstance(raw_extra_refs, list):
+        extra_ref_urls = [str(url).strip() for url in raw_extra_refs if str(url).strip()]
+    else:
+        extra_ref_urls = []
+
+    from services.storyboard_agent_cli_service import StoryboardAgentCliService, StoryboardCliError
+    cli = StoryboardAgentCliService()
+    image_path = None
+    reference_images_json = None
+    collected_urls: List[str] = []
+    legend_items: List[Dict[str, Any]] = []
+
+    if image_mode == ImageMode.FIRST_LAST_FRAME:
+        if not scene.selected_first_frame_id:
+            return JSONResponse(status_code=400, content={'error': '请先生成并选中首帧图片'})
+        ff = await asyncio.to_thread(StoryboardSceneAssetModel.get_by_id, scene.selected_first_frame_id)
+        if not ff:
+            return JSONResponse(status_code=400, content={'error': '首帧图片尚未生成完成'})
+        # asset.result_url 是冗余字段，宫格拆分等场景下可能为 NULL；
+        # 与 assets 接口一致，用 ai_tool.result_url 兜底（前端显示首帧也靠此兜底）。
+        image_path = ff.result_url
+        if not image_path and ff.ai_tool_id:
+            ff_tool = await asyncio.to_thread(AIToolsModel.get_by_id, ff.ai_tool_id)
+            if ff_tool and ff_tool.result_url:
+                image_path = ff_tool.result_url
+        if not image_path:
+            return JSONResponse(status_code=400, content={'error': '首帧图片尚未生成完成'})
+        collected_urls = [image_path]
+    else:
+        try:
+            context = await asyncio.to_thread(cli.scene_context, scene_id, user_id)
+            collected_urls, legend_items = cli._collect_video_reference_bundle(
+                context, image_mode, extra_urls=extra_ref_urls,
+            )
+        except StoryboardCliError as exc:
+            return JSONResponse(status_code=400, content=exc.to_dict())
+        if collected_urls:
+            reference_images_json = json.dumps(collected_urls, ensure_ascii=False)
 
     prompt = data.get('prompt') or scene.video_prompt or ''
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
     ratio = data.get('ratio') or (sb.workflow_ratio if sb else None)
+    if image_mode in (ImageMode.MULTI_REFERENCE, ImageMode.FIRST_LAST_WITH_REF):
+        if collected_urls and legend_items:
+            prompt = cli._append_reference_prompt_suffix(prompt, legend_items)
+        prompt = append_storyboard_visual_suffix(
+            prompt,
+            style=getattr(sb, 'style', None) if sb else None,
+            composition_preference=getattr(sb, 'composition_preference', None) if sb else None,
+        )
 
     # 时长兜底刷新：TTS 完成回写 scene.duration 是 best-effort 联动，存在「音频已生成
     # 但 duration 仍是剧本拆分阶段 LLM 估算的整数秒」的窗口。视频生成据此量化时长，
@@ -4145,21 +4230,33 @@ async def generate_scene_video(
     except Exception as e:
         logger.warning(f"generate_scene_video: scene={scene_id} 兜底刷新 duration 失败: {e}")
 
+    if collected_urls:
+        media_mode = (
+            MediaGenerationMode.IMAGE_TO_VIDEO
+            if image_mode == ImageMode.FIRST_LAST_FRAME
+            else MediaGenerationMode.REFERENCE_TO_VIDEO
+        )
+        snapshot_task_id = requested_task_type
+        snapshot_image_mode = image_mode
+    else:
+        media_mode = MediaGenerationMode.TEXT_TO_VIDEO
+        snapshot_task_id = None
+        snapshot_image_mode = None
     try:
         generation_snapshot = await asyncio.to_thread(
             _resolve_storyboard_generation_snapshot_sync,
             sb,
             user_id=user_id,
             media_type=MediaGenerationType.VIDEO,
-            mode=MediaGenerationMode.IMAGE_TO_VIDEO,
+            mode=media_mode,
             explicit_task_id=(
-                int(requested_task_type)
-                if requested_task_type not in (None, '')
+                int(snapshot_task_id)
+                if snapshot_task_id not in (None, '')
                 else None
             ),
             profile_values={
                 'ratio': ratio,
-                'image_mode': 'first_last_frame',
+                'image_mode': snapshot_image_mode,
                 'enable_face_mask': _coerce_enable_face_mask(data.get('enable_face_mask')),
             },
         )
@@ -4196,7 +4293,7 @@ async def generate_scene_video(
         'ratio': ratio,
         'duration_seconds': video_duration,
         'resolution': video_resolution,
-        'image_mode': 'first_last_frame',
+        'image_mode': snapshot_image_mode,
         'enable_face_mask': effective_face_mask,
     })
     clip_to_audio_duration = bool(data.get('clip_to_audio_duration', True))
@@ -4228,12 +4325,14 @@ async def generate_scene_video(
         logger.warning(f"Failed to persist video_config_json on generate-video scene {scene_id}: {e}")
 
     # 预扣口径与估价接口/结算一致：时长档位基价 × 分辨率/图模式修饰符（向上取整）
+    power_context = {}
+    if snapshot_image_mode:
+        power_context['image_mode'] = snapshot_image_mode
+    if video_resolution:
+        power_context['resolution'] = video_resolution
     computing_power = config.get_computing_power(
         duration=video_duration,
-        context={
-            'image_mode': 'first_last_frame',
-            **({'resolution': video_resolution} if video_resolution else {}),
-        },
+        context=power_context,
     ) if config else 0
     transaction_id = str(uuid.uuid4())
     ok, msg = await _deduct_computing_power(request, computing_power, transaction_id)
@@ -4269,7 +4368,7 @@ async def generate_scene_video(
     need_pipeline_steps = _storyboard_needs_face_mask_pipeline(
         task_type=task_type,
         enable_face_mask=effective_face_mask,
-        has_image_input=bool(image_path),
+        has_image_input=bool(image_path or collected_urls),
         user_id=user_id,
     ) or needs_h3_optimize
 
@@ -4292,6 +4391,8 @@ async def generate_scene_video(
         'generation_snapshot': generation_snapshot,
         'enable_face_mask': effective_face_mask,
     }
+    if snapshot_image_mode:
+        extra_payload[IMAGE_MODE_EXTRA_CONFIG_KEY] = snapshot_image_mode
     if video_resolution:
         extra_payload['resolution'] = video_resolution
     if human_review:
@@ -4309,6 +4410,7 @@ async def generate_scene_video(
         transaction_id=transaction_id,
         extra_config=extra_config,
         implementation=impl_id,
+        reference_images=reference_images_json,
     )
     if need_pipeline_steps:
         ai_tool_id = await asyncio.to_thread(
@@ -4654,8 +4756,17 @@ async def scene_ai_chat(
         except Exception as e:
             logger.warning(f"scene_ai_chat: scene={scene_id} 兜底刷新 duration 失败: {e}")
 
-        # 视频：image_to_video 只使用前端槽位有序图；角色/场景参考仅作文案说明
-        video_input_urls = ordered_slot_urls
+        # 视频：首尾帧只用前端槽位；全能参考自动补角色/场景/道具/画风参考图。
+        video_input_urls = list(ordered_slot_urls)
+        if image_mode in (ImageMode.MULTI_REFERENCE, ImageMode.FIRST_LAST_WITH_REF):
+            try:
+                from services.storyboard_agent_cli_service import StoryboardAgentCliService
+                auto_urls, _auto_items = StoryboardAgentCliService()._collect_video_reference_bundle(
+                    scene_generation_context, image_mode, extra_urls=ordered_slot_urls,
+                )
+                video_input_urls = list(auto_urls)
+            except Exception as e:
+                logger.warning(f"Failed to collect storyboard video reference urls: {e}")
         reference_images_for_msg = list(reference_images or ([first_frame_url_for_prompt] if first_frame_url_for_prompt else []))
         reference_image_items_for_msg = list(reference_image_items or [])
         task_image_urls = video_input_urls or None
@@ -4945,6 +5056,14 @@ async def stream_storyboard_agent_task(request: Request, task_id: str):
     """SSE stream for storyboard image agent task."""
     from model.agent_task_messages import AgentTaskMessagesModel
     from model.agent_tasks import AgentTasksModel
+
+    # 属主断言：任务不存在或非本人任务一律 404（防枚举）
+    task_entity = await asyncio.to_thread(AgentTasksModel.get_by_task_id, task_id)
+    owner_error = ensure_owner(
+        task_entity.user_id if task_entity else None, get_auth_user_id(request)
+    )
+    if owner_error:
+        return owner_error
 
     async def event_generator():
         last_message_id = 0

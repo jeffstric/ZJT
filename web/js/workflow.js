@@ -17,7 +17,9 @@
 
     async function fetchComputingPower(){
       const token = getAuthToken();
-      if(!token){
+      // 兼容期双写：登录态以 localStorage.auth_token 为准
+      const hasSession = !!token;
+      if(!hasSession){
         updateComputingPowerLabel('未登录');
         computingPowerRefreshBtn?.setAttribute('disabled', 'true');
         redirectToLogin();
@@ -29,9 +31,9 @@
 
       try{
         const response = await fetch('/api/user/computing_power', {
-          headers: {
+          headers: token ? {
             'Authorization': `Bearer ${token}`
-          }
+          } : {}
         });
         
         if(!response.ok){
@@ -148,7 +150,10 @@
           updateAllImageToVideoNodesSelects();
 
           // 驱动状态仍从原接口获取（暂未迁移）
-          const response = await fetch('/api/computing-power-config');
+          const _cfgToken = getAuthToken();
+          const response = await fetch('/api/computing-power-config', {
+            headers: _cfgToken ? { 'Authorization': `Bearer ${_cfgToken}` } : {}
+          });
           if(response.ok){
             const data = await response.json();
             if(data.success && data.data && data.data.driver_status){
@@ -161,7 +166,10 @@
         }
         
         // 回退：使用旧接口
-        const response = await fetch('/api/computing-power-config');
+        const _fbToken = getAuthToken();
+        const response = await fetch('/api/computing-power-config', {
+          headers: _fbToken ? { 'Authorization': `Bearer ${_fbToken}` } : {}
+        });
         if(response.ok){
           const data = await response.json();
           if(data.success && data.data){
@@ -638,6 +646,16 @@
         nextReferenceConnId: state.nextReferenceConnId,
         nextAudioConnId: state.nextAudioConnId,
         nextScriptId: state.nextScriptId,
+        groups: state.groups.map(g => ({
+          id: g.id,
+          title: g.title,
+          x: g.x,
+          y: g.y,
+          w: g.w,
+          h: g.h,
+          nodeIds: g.nodeIds.slice()
+        })),
+        nextGroupId: state.nextGroupId,
         nodes: serializableNodes,
         connections: state.connections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         imageConnections: state.imageConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType })),
@@ -1341,6 +1359,11 @@
 
         if(result.code === 0 && result.data){
           const workflow = result.data;
+          // 基线哈希从 GET 返回值起步；加载期内任何本页自写 PUT（世界同步/
+          // 画风继承）成功后都必须用其响应哈希滚动此值——这些字段参与服务端
+          // 内容哈希计算，若基线停留在旧值，下一次自动保存必被 CAS 409 误判
+          // 为"被其他会话覆盖"（用户零操作也会弹冲突框）
+          let baselineHash = workflow.content_hash;
 
           // 更新页面标题
           if(workflow.name){
@@ -1372,8 +1395,9 @@
           // 如果工作流没有配置世界，且从剧本智能体跳转过来带有世界ID，则自动同步
           if(!hasWorldConfigured && fromWorldId){
             console.log('[加载工作流] 工作流未配置世界，从剧本智能体同步世界ID:', fromWorldId);
-            // 更新工作流的默认世界
-            await saveDefaultWorld(workflowId, parseInt(fromWorldId, 10));
+            // 更新工作流的默认世界；saveDefaultWorld 返回落库后的最新内容哈希
+            const syncedWorldHash = await saveDefaultWorld(workflowId, parseInt(fromWorldId, 10));
+            if(syncedWorldHash) baselineHash = syncedWorldHash;
             workflow.default_world_id = parseInt(fromWorldId, 10);
           }
 
@@ -1436,9 +1460,10 @@
                 if(world.composition_preference){
                   state.style.compositionPreference = world.composition_preference;
                 }
-                // 保存继承的画风到工作流
+                // 保存继承的画风到工作流；PUT 改变服务端内容哈希，
+                // 用响应哈希滚动基线，避免下一次保存被 CAS 误拒
                 try {
-                  await fetch(`/api/video-workflow/${workflowId}`, {
+                  const response = await fetch(`/api/video-workflow/${workflowId}`, {
                     method: 'PUT',
                     headers: {
                       'Content-Type': 'application/json',
@@ -1452,7 +1477,13 @@
                       workflow_ratio: state.ratio
                     })
                   });
-                  console.log('[加载工作流] 已将世界画风保存到工作流');
+                  const styleResult = await response.json();
+                  if(styleResult.code === 0){
+                    console.log('[加载工作流] 已将世界画风保存到工作流');
+                    if(styleResult.data && styleResult.data.content_hash){
+                      baselineHash = styleResult.data.content_hash;
+                    }
+                  }
                 } catch(e){
                   console.error('[加载工作流] 保存世界画风失败:', e);
                 }
@@ -1462,19 +1493,41 @@
           success = true;
 
           // 加载成功即建立上传去重基线：此刻的序列化 == 服务端已确认内容，
-          // 基线同时记录服务端权威内容哈希（GET 返回），供去重门双条件比对
+          // 基线同时记录服务端权威内容哈希，供去重门双条件比对
           // 与后续 PUT 的 CAS（X-Base-Hash）使用。
+          // baselineHash 已随加载期自写 PUT（世界同步/画风继承）的响应滚动到
+          // 最新值；若直接用 GET 的 content_hash，这些自写 PUT 之后基线即过期，
+          // 下一次自动保存必被 CAS 409 误判为冲突。
           // 恢复重放（maybeRecoverPendingAutoSave）成功后会重新 loadWorkflow，
           // 基线随重放后的最新服务端内容重建，语义保持一致。
           try {
             if(typeof autoSaveState !== 'undefined'){
               autoSaveState.setConfirmedBody(
-                workflowId, buildAutoSaveBody(), workflow.content_hash);
-              autoSaveState.noteServerHash(workflowId, workflow.content_hash);
+                workflowId, buildAutoSaveBody(), baselineHash);
+              autoSaveState.noteServerHash(workflowId, baselineHash);
             }
           } catch(e) {
             console.warn('[加载工作流] 建立保存去重基线失败:', e);
           }
+
+          // 还原期异步回填（模型目录加载后回写 splitModel 元数据等）会在
+          // 建基线之后继续微调节点字段，且回填值与服务端等价、不应落库。
+          // 若不处理，基线与真实序列化错位 → 去重门失效 → 每次打开页面后
+          // 第一次自动保存都全量 PUT → 其他会话 CAS 基线过期（零操作 409）。
+          // 稳定后（用户尚无编辑时）用当前序列化重建基线，吸收这类回填；
+          // isDirty() 为 true 说明用户已有真实编辑，不得覆盖其未确认状态。
+          const rebuiltBaselineHash = baselineHash;
+          setTimeout(() => {
+            if(!state.workflowReady || getWorkflowIdFromUrl() !== workflowId) return;
+            if(typeof autoSaveState === 'undefined' || autoSaveState.isDirty()) return;
+            // 基线已被重放/保存滚动过（hash 不一致）说明本次回调已过期，
+            // 不得用过期哈希覆盖新基线
+            if(autoSaveState.getConfirmedHash(workflowId) !== rebuiltBaselineHash) return;
+            try {
+              autoSaveState.setConfirmedBody(
+                workflowId, buildAutoSaveBody(), rebuiltBaselineHash);
+            } catch(e) { /* 基线重建失败不影响主流程，下次保存照常收敛 */ }
+          }, 3000);
         } else {
           showToast(result.message || '加载工作流失败', 'error');
         }
@@ -1907,6 +1960,14 @@
           });
         }
         
+        // 恢复分组（重算包围盒依赖节点尺寸，需在节点恢复之后执行）
+        if(typeof restoreGroups === 'function'){
+          restoreGroups(data.groups || [], data.nextGroupId);
+        } else {
+          state.groups = [];
+          if(data.nextGroupId) state.nextGroupId = data.nextGroupId;
+        }
+
         // 恢复时间轴
         if(data.timeline){
           state.timeline.clips = data.timeline.clips || [];
@@ -1971,6 +2032,11 @@
         state.videoConnections = [];
         state.referenceConnections = [];
         state.audioConnections = [];
+        if(typeof restoreGroups === 'function'){
+          restoreGroups([], 1);
+        } else {
+          state.groups = [];
+        }
         showToast('工作流恢复失败，请刷新页面重试', 'error');
         throw error;  // 重新抛出，让 loadWorkflow 感知恢复失败
       } finally {
@@ -2143,6 +2209,13 @@
           state.style.name = styleName;
           state.style.referenceImageUrl = styleImageUrl;
           state.style.compositionPreference = compositionPreference;
+          // 旁路 PUT 写了参与内容哈希的字段：用响应哈希滚动基线，
+          // 否则下一次自动保存携带过期 X-Base-Hash 会被 CAS 误判为冲突
+          if(typeof autoSaveState !== 'undefined' && typeof buildAutoSaveBody === 'function'
+              && result.data && result.data.content_hash){
+            autoSaveState.setConfirmedBody(
+              workflowId, buildAutoSaveBody(), result.data.content_hash);
+          }
           showToast('画风设置已保存', 'success');
           closeStyleModal();
         } else {
@@ -2363,20 +2436,9 @@
           const genCountLabel = el.querySelector('.gen-count-label');
           if(genCountLabel) { const _t = window.t ? window.t('draw_count_x', { count: node.data.drawCount }) : null; genCountLabel.textContent = (_t && _t !== 'draw_count_x') ? _t : `抽卡次数：X${node.data.drawCount}`; }
           
-          // 更新算力显示
-          const computingPowerValue = el.querySelector('.computing-power-value');
-          const computingPowerDetail = el.querySelector('.computing-power-detail');
-          if(computingPowerValue && computingPowerDetail) {
-            // 计算算力
-            const videoModel = node.data.videoModel || 'sora2';
-            const duration = node.data.duration || 10;
-            const singlePower = calculateVideoGenerationPower(videoModel, duration);
-            const count = node.data.drawCount || 1;
-            const totalPower = singlePower * count;
-            computingPowerValue.textContent = window.t ? window.t('computing_power_value', { power: totalPower }) : `${totalPower} 算力`;
-            computingPowerValue.setAttribute('data-i18n-params', JSON.stringify({ power: totalPower }));
-            computingPowerDetail.textContent = window.t ? window.t('computing_power_detail', { individual: singlePower, count: count, total: totalPower }) : `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
-            computingPowerDetail.setAttribute('data-i18n-params', JSON.stringify({ individual: singlePower, count: count, total: totalPower }));
+          // 更新算力显示（复用节点内实时计算，感知生成模式/分辨率等算力上下文）
+          if(typeof el._updateComputingPowerDisplay === 'function'){
+            el._updateComputingPowerDisplay();
           }
           
           // 更新首帧图片
@@ -2415,74 +2477,19 @@
           if(_startImg) _startImg.style.maxHeight = _maxH;
           if(_endImg) _endImg.style.maxHeight = _maxH;
 
-          // 更新图片模式UI
+          // 更新图片模式UI：复用节点内暴露的同一份实现（updateImageModeUI），
+          // 统一处理 首尾帧容器/端口/参考图/参考音频 显隐、提示文案与尾帧可用性。
+          // 历史教训：此处曾手写复制一份显隐逻辑，选择器写错（.first-last-fields 不存在）
+          // 且与节点内行为漂移（video 字段显隐不一致），导致刷新后 UI 错乱。
           const imageModeSelect = el.querySelector('.image-mode-select');
-          const imageModeHint = el.querySelector('.image-mode-hint');
-          const firstLastFields = el.querySelectorAll('.first-last-fields');
-          const referenceFields = el.querySelector('.reference-fields');
-          const startImagePort = el.querySelector('.start-image-port');
-          const endImagePort2 = el.querySelector('.end-image-port');
-          const referencePreviewList = el.querySelector('.reference-preview-list');
-          
           const imageMode = node.data.imageMode || 'first_last_frame';
-          const imageModeHints = {
-            'first_last_frame': '第一张为首帧，第二张（可选）为尾帧',
-            'multi_reference': '所有图片作为风格参考',
-            'text_to_video': '纯文本生成视频，无需上传图片'
-          };
-          
           if(imageModeSelect) imageModeSelect.value = imageMode;
-          if(imageModeHint) imageModeHint.textContent = imageModeHints[imageMode] || '';
-          
-          // 显示/隐藏对应的上传区域
-          firstLastFields.forEach(field => {
-            field.style.display = imageMode === 'first_last_frame' ? '' : 'none';
-          });
-          if(referenceFields) referenceFields.style.display = imageMode === 'multi_reference' ? '' : 'none';
-
-          // 显示/隐藏端口
-          if(startImagePort) startImagePort.style.display = imageMode === 'first_last_frame' ? '' : 'none';
-          if(endImagePort2) endImagePort2.style.display = imageMode === 'first_last_frame' ? '' : 'none';
-
-          // 显示/隐藏参考音频和参考视频字段（仅在多参考图模式下显示）
-          const audioField = el.querySelector('.audio-field');
-          const videoField = el.querySelector('.video-field');
-          if(audioField) audioField.style.display = imageMode === 'multi_reference' ? '' : 'none';
-          if(videoField) videoField.style.display = imageMode === 'multi_reference' ? '' : 'none';
-
-          // 根据 supports_last_frame 控制尾帧输入框的可用性
-          if(imageMode === 'first_last_frame') {
-            const modelConfigs = getModelConfigs();
-            const config = modelConfigs[node.data.videoModel];
-            const supportsLastFrame = config?.supports_last_frame !== false;
-
-            const endFileInput = el.querySelector('.end-file');
-            const endClearBtn = el.querySelector('.end-clear');
-            const endPreviewRow = el.querySelector('.end-preview-row');
-            // 尾帧字段是 first-last-fields 中的第二个（索引1）
-            const endField = firstLastFields.length > 1 ? firstLastFields[1] : null;
-            const endLabel = endField ? endField.querySelector('.label') : null;
-
-            if (!supportsLastFrame) {
-              // 禁用尾帧输入
-              if (endFileInput) endFileInput.disabled = true;
-              if (endClearBtn) endClearBtn.disabled = true;
-              if (endPreviewRow) endPreviewRow.style.opacity = '0.5';
-              if (endImagePort2) endImagePort2.classList.add('disabled');
-              // 修改提示文字
-              if (endLabel) endLabel.textContent = '尾帧画面（该模型不支持）';
-            } else {
-              // 启用尾帧输入
-              if (endFileInput) endFileInput.disabled = false;
-              if (endClearBtn) endClearBtn.disabled = false;
-              if (endPreviewRow) endPreviewRow.style.opacity = '1';
-              if (endImagePort2) endImagePort2.classList.remove('disabled');
-              // 恢复提示文字
-              if (endLabel) endLabel.textContent = '尾帧画面（可选）';
-            }
+          if(typeof el._updateImageModeUI === 'function'){
+            el._updateImageModeUI();
           }
 
           // 渲染参考图预览
+          const referencePreviewList = el.querySelector('.reference-preview-list');
           if(referencePreviewList && node.data.referenceUrls && node.data.referenceUrls.length > 0) {
             referencePreviewList.innerHTML = '';
             node.data.referenceUrls.forEach((url, idx) => {
@@ -2694,10 +2701,28 @@
       if(node && nodeData.data){
         node.data.url = nodeData.data.url || '';
         node.data.name = nodeData.data.name || '';
-        node.data.duration = nodeData.data.duration || 0;
+        // duration/lastError 必须保持服务端原值（含类型与"缺 key"状态）：
+        // createVideoNode 初始 data 不含这两个字段，旧数据可能缺 key 或存
+        // 空串；用 `|| 默认值` 归一会让还原后的序列化与 GET 内容不一致，
+        // 每次打开页面都产生幽灵修改（自动保存全量落库 → 其他会话 CAS 409）
+        node.data.duration = nodeData.data.duration !== undefined ? nodeData.data.duration : node.data.duration;
         node.data.project_id = nodeData.data.project_id !== undefined ? nodeData.data.project_id : null;
         // 恢复上次失败原因（失败状态持久化）
-        node.data.lastError = nodeData.data.lastError || '';
+        node.data.lastError = nodeData.data.lastError !== undefined ? nodeData.data.lastError : node.data.lastError;
+        // 恢复节点标题：createVideoNode 渲染的是默认标题"视频"，历史数据的
+        // 标题（如"分镜视频"）不恢复的话，每次打开页面标题都会被改写一次，
+        // 属于零操作幽灵修改（落库后使其他会话 CAS 基线过期 → 409 冲突框）
+        if(nodeData.title && nodeData.title !== node.title){
+          node.title = nodeData.title;
+          const titleEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"] .node-title`);
+          if(titleEl){
+            // header 内含图标 svg，只替换文本部分
+            const svg = titleEl.querySelector('svg');
+            titleEl.textContent = '';
+            if(svg) titleEl.appendChild(svg);
+            titleEl.appendChild(document.createTextNode(node.title));
+          }
+        }
         // 如果有URL，显示预览
         if(node.data.url){
           const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
@@ -3135,17 +3160,18 @@
         if(!workflowId) return;
         
         const userId = localStorage.getItem('user_id');
-        const authToken = localStorage.getItem('auth_token');
-        
-        if(!userId || !authToken){
+        // 兼容期双写：登录态以 localStorage.auth_token 为准
+        const loggedIn = userId && !!localStorage.getItem('auth_token');
+
+        if(!loggedIn){
           return;
         }
-        
+
         const response = await fetch(`/api/video-workflow/${workflowId}/poll-status`, {
           method: 'GET',
           headers: {
             'X-User-Id': userId,
-            'Authorization': `Bearer ${authToken}`
+            'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}`
           }
         });
         
@@ -3524,12 +3550,14 @@
           // 恢复视频生成模式（先恢复模式，再填充模型列表）
           if(nodeData.data.videoMode) {
             node.data.videoMode = nodeData.data.videoMode;
-            const modeBtns = nodeEl.querySelectorAll('.video-mode-btn');
-            modeBtns.forEach(btn => {
-              const isActive = btn.dataset.mode === nodeData.data.videoMode;
-              btn.style.background = isActive ? '#3b82f6' : '#f3f4f6';
-              btn.style.color = isActive ? 'white' : '#666';
-            });
+            if (typeof nodeEl._syncVideoModeButtons === 'function') {
+              nodeEl._syncVideoModeButtons(nodeData.data.videoMode);
+            } else {
+              const modeBtns = nodeEl.querySelectorAll('.video-mode-btn');
+              modeBtns.forEach(btn => {
+                btn.classList.toggle('is-active', btn.dataset.mode === nodeData.data.videoMode);
+              });
+            }
           }
 
           // 恢复分镜模型选择器（确保已保存的值在下拉框中可见）
