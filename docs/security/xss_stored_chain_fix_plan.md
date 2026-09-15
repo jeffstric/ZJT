@@ -403,3 +403,17 @@ MR1+MR2+MR3 合入后，审计所述「LLM 输出 → 渲染 → 拖库」链即
 5. **cookie 在兼容期是备份**：前端带头后中间件不会刷新 cookie（刷新只在翻译发生时）。身份以 localStorage + header 为准，行为回到 3c 之前。
 
 3c 真正收口（删除 `persistBrowserAuth` 里的 localStorage 写入）前，必须扫完：前端登录判据、请求是否还带空 token、后端 body/query token 出站校验与任务快照。
+
+### 八次深挖：script-writer 登录过期连环弹窗回环（develop_f862，2026-09-15）
+
+兼容期双写第 4 条「确证失效时清本地 token」只在 `index_app.js`（`handleAuthError` / `verifyAuthTokenOnLoginEntry`）落地，`script_writer.js` 的 `handleTokenExpired` 漏掉了。dev 环境（192.168.10.101:9003）实测复现回环：用户 localStorage 残留失效 token（单会话顶号/过期被删）→ 页面以快照携带非空失效 Bearer，压住 cookie 翻译中间件 → `world-files` 等 init 请求集体 401 → `handleTokenExpired` 裸 `alert + location.href = LOGIN_URL`，**无防重入**，页面 init 并发 7+ 请求各自触发 → 连环弹窗、反复重设跳转目标。access.log 实录：登录成功（`POST /api/auth/login` 200）后用户仍被残留 401 弹窗拽回 `/?login=1`，被迫二次登录才恢复——「登录后进页面仍提示过期」。
+
+修复（develop_f862，`web/js/script_writer.js`）：
+| 改动 | 说明 |
+|---|---|
+| `tokenExpiredHandled` 防重入 | 多份并发 401 只处理第一份，杜绝连环 alert 与跳转目标反复重置 |
+| 先清 `localStorage.auth_token` / 旧 key `token` 再探测 | 失效 Bearer 不再压住 cookie 翻译；与 `clearLocalAuthInfo` 的 key 集合对齐 |
+| cookie 会话自愈 | 无 Authorization 头探测 `/api/user/role`，cookie 有效则 `reload()`——重载后 `AUTH_TOKEN` 为空，空 Bearer 走 cookie 翻译，无感恢复；`sessionStorage` 记录自愈时间，60 秒内只自愈一次防 reload 循环 |
+| cookie 也失效才提示 | 单次 alert（沿用 `alert_login_expired` i18n key）+ 跳 `LOGIN_URL`（已带回当前页） |
+
+防回归：`web/tests/script_writer_token_expired_self_heal.test.js` 静态断言防重入标志、清 token、无 Authorization 头探测、reload 自愈与 60 秒节流、单次 alert 回退。其余以「快照 token + 裸 401 弹窗」模式工作的独立页面（marketing_agent 等）可复制同构方案，待后续批次收口。
