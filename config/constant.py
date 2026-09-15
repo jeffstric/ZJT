@@ -1154,6 +1154,21 @@ DOWNLOAD_IO_POOL_MAX_WORKERS = 8              # 下载写盘线程池大小（�
 #   + DOWNLOAD_COMPLETION_MARGIN_SECONDS
 DOWNLOAD_COMPLETION_MARGIN_SECONDS = 60
 
+# 下载已成功但写库阶段被商业许可证拦截（许可证校验失败的非瞬态错误）时的长退避（秒）。
+# 此类错误非瞬态：租约回收重试只会按 DOWNLOAD_LEASE_SECONDS 周期循环失败
+# 并重复下载（2026-09-15 事故：许可证租约过期后 31 个任务 20 分钟一次循环卡死）。
+# 长退避置回 pending，待商业许可证续租后自然消费；不计入 try_count（非下载本身的过错）。
+# 错误是否为许可证类由续租门面（task/license_rebootstrap_task）判定。
+LICENSE_DENIED_RESCHEDULE_SECONDS = 600
+
+# ===== 商业许可证周期续租（scheduler job 触发间隔） =====
+# scheduler 等非 ASGI 进程的事件循环是短生命周期的，无法常驻后台续租任务；
+# 进程启动时获取的短期许可证租约（约 24h）到期后，进程内商业能力校验会全部
+# 失败（2026-09-15 生产事故：结果交付链路被卡、任务积压，每天租约到期时刻复发，
+# 只能人工重启恢复）。由 scheduler job（commercial_license_rebootstrap）按本间隔
+# 触发续租门面。续租的具体实现在商业版仓库注册，主仓门面在社区版为空操作。
+LICENSE_REBOOTSTRAP_INTERVAL_SECONDS = 6 * 3600   # 续租触发间隔（秒），远小于租约有效期，留足失败重试余量
+
 
 class QueueBacklogConstants:
     """管理后台首页队列积压看板阈值。

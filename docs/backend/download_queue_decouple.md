@@ -66,6 +66,7 @@ download_queue_worker（每 DOWNLOAD_POLL_INTERVAL=5s，独立 job，max_instanc
 | **P4** | job 内 while 持续满载 | `process_download_queue` |
 | **P6** | connector 泄漏修复（原成功 return 跳过 close） | 每 attempt 独立 connector，session 退出自动关闭 |
 | **P8** | 下载环节日志挪到 worker + 记录 queue_wait_ms | `_process_one` 的 DOWNLOAD_COMPLETED/RETRY_SCHEDULED/MAX_RETRY_EXCEEDED |
+| **M4** | 下载成功但写库阶段被商业许可证拦截（许可证类非瞬态错误，经续租门面 `is_non_transient_error` 判定）：长退避置回 pending（`LICENSE_DENIED_RESCHEDULE_SECONDS=600`），**不计 try_count**；许可证续租后自然消费。不走租约回收重试（非瞬态错误只会每 20 分钟循环失败并重复下载，2026-09-15 事故） | `_process_one` 成功分支经 `task/license_rebootstrap_task.is_non_transient_error` 判定 |
 
 ## 扩散面（status=6 的已知影响）
 
@@ -172,4 +173,49 @@ for dirpath, _, files in os.walk('task'):
                 if imports and any(u < min(imports) for u in usages):
                     print(f'{dirpath}/{f}:{node.lineno} {node.name}')
 ```
+
+## 事故记录（2026-09-15）：scheduler 许可证租约过期，任务卡 DOWNLOADING 死循环
+
+**症状**：每天租约到期时刻（约 15:06）起，新完成的上游任务全部卡在 `ai_tools.status=6`
+（DOWNLOADING）：图片/视频实际已下载成功，但 `result_url` 始终为空。`download_queue`
+31 行 `status=1` 每 20 分钟（= 租约周期）被回收重试一次、全部失败，日志循环刷
+`success-but-update-failed: 商业授权租约已经过期`。前一天同一时刻发生过完全相同的
+故障，靠人工重启 scheduler 恢复。
+
+**根因**：商业许可证是短期租约（约 24h）。scheduler 进程的事件循环是短生命周期的，
+只在进程启动时获取一次租约、没有后台续租能力；租约到期后进程内商业能力校验全部
+失败。下载成功路径会经过商业版的人脸网格前缀裁剪后处理（执行前先做许可证校验），
+图片任务也照样被拦；异常被成功分支的兜底 `except` 吞掉后只留日志，行保持
+`status=1` 等待租约回收 → 无限循环。Web 进程自带后台续租不受影响，所以网站接口
+正常、只有 scheduler 侧任务出问题，具有强迷惑性。
+
+**修复**（三层）：
+1. **续租**：scheduler 新增 `commercial_license_rebootstrap` job（间隔
+   `LICENSE_REBOOTSTRAP_INTERVAL_SECONDS=6h`，仅商业版注册），周期触发续租门面
+   （`task/license_rebootstrap_task.py`），具体续租实现由商业版仓库注册；
+   续租失败或续租后许可证仍不可用会发 Sentry 告警 `LICENSE_REBOOTSTRAP_FAILED`
+   （30 分钟限频）。
+2. **降级（不让队列卡住）**：商业版人脸网格前缀裁剪入口（async + sync）在许可证
+   校验失败时不再抛出——返回 `FAILED_OPEN` 原样交付未后处理的结果（裁剪只是成品
+   美化）。download_queue / visual_task / sync_task 三个完成路径都只消费
+   `result_url`，任务直接完成，当前任务与后续队列均不受影响。其余商业能力
+   （裁剪算法本体、按幕串行等）维持许可证到期即显式失败，不做降级。
+3. **止血**：`_process_one` 成功分支经续租门面判定"许可证类非瞬态错误"→ 长退避
+   （600s，`LICENSE_DENIED_RESCHEDULE_SECONDS`）置回 pending、不计 try_count（M4），
+   不再每 20 分钟循环失败 + 重复下载。作为降级之外的纵深防御（未来新增其他许可证
+   校验点时仍不会死循环）。
+
+**排查 SQL**：
+
+```sql
+-- 许可证类卡死特征：processing 行错误信息为 license denied
+SELECT id, ai_tool_id, error_message, update_at FROM download_queue
+ WHERE status IN (0,1) AND error_message LIKE 'license denied%';
+```
+
+**教训**：非瞬态错误（许可证/凭据/权限类）禁止依赖租约回收重试——必须有独立的退避
+路径或失败兜底，否则就是"每 20 分钟一次的死循环"。周期续租类 job 必须只在需要的
+进程注册（商业版 scheduler），执行实现必须自身判重（Web 进程自带续租能力须跳过），
+并在续租后校验许可证可用性、不可用即告警。
+
 
