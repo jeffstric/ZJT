@@ -4129,7 +4129,9 @@
                 };
 
                 // 添加 raw_json=true 参数以获取完整的JSON数据（包括reference_image）
-                const response = await fetch(`${apiMap[fileType]}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`);
+                const response = await fetch(`${apiMap[fileType]}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
 
                 if (checkTokenExpired(data, response)) {
@@ -4327,7 +4329,9 @@
                     'props': '/api/props-files'
                 };
                 
-                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`);
+                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 
                 if (checkTokenExpired(data, response)) {
@@ -4463,7 +4467,8 @@
         async function fetchLocationJsonList() {
             try {
                 const response = await fetch(
-                    `/api/locations-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`
+                    `/api/locations-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`,
+                    { headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` } }
                 );
                 const data = await response.json();
                 const locs = data.locations || data.data?.data || [];
@@ -4645,7 +4650,9 @@
                     'props': '/api/props-files'
                 };
                 
-                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`);
+                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 
                 if (checkTokenExpired(data, response)) {
@@ -5091,7 +5098,9 @@
                     'props': '/api/props-files'
                 };
 
-                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`);
+                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
 
                 if (checkTokenExpired(data, response)) {
@@ -5372,7 +5381,9 @@
                 return;
             }
             try {
-                const response = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`);
+                const response = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 if (checkTokenExpired(data, response)) return;
                 if (!data.success) {
@@ -5416,7 +5427,9 @@
             try {
                 if (statusEl) statusEl.textContent = window.t ? window.t('restoring_history_image') : '正在恢复…';
                 // 读取角色完整 JSON
-                const resp = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`);
+                const resp = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await resp.json();
                 if (checkTokenExpired(data, resp)) return;
                 if (!data.success) {
@@ -5434,7 +5447,7 @@
                 jsonData.reference_image = url;
                 const saveResp = await fetch(`/api/characters-files/${encodeURIComponent(previewImageFileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({
                         content: JSON.stringify(jsonData),
                         user_id: USER_ID,
@@ -6579,7 +6592,9 @@
 
         async function playCharacterVoice(characterName) {
             try {
-                const response = await fetch(`/api/characters-files/${encodeURIComponent(characterName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`);
+                const response = await fetch(`/api/characters-files/${encodeURIComponent(characterName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
 
                 if (checkTokenExpired(data, response)) {
@@ -6720,7 +6735,7 @@
                 
                 const response = await fetch(`${apiMap[currentEditFile.fileType]}/${encodeURIComponent(currentEditFile.fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({
                         content: newContent,
                         user_id: USER_ID,
@@ -7598,7 +7613,9 @@
 
         async function fetchExistingEpisodes() {
             try {
-                const response = await fetch(`/api/scripts-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`);
+                const response = await fetch(`/api/scripts-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 const scripts = data.scripts || data.data?.data || [];
                 existingEpisodes = scripts
@@ -7673,7 +7690,7 @@
 
                 const response = await fetch(`/api/scripts-files/${encodeURIComponent(episode)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({
                         content: scriptData,
                         user_id: USER_ID,
@@ -7703,7 +7720,9 @@
 
         async function fetchExistingCharacters() {
             try {
-                const response = await fetch(`/api/characters-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`);
+                const response = await fetch(`/api/characters-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 const chars = data.characters || data.data?.data || [];
                 existingCharacters = chars.map(c => c.name).filter(Boolean);
@@ -7770,7 +7789,7 @@
                 };
                 const response = await fetch(`/api/characters-files/${encodeURIComponent(name)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({ content: JSON.stringify(data, null, 2), user_id: USER_ID, world_id: WORLD_ID, auth_token: AUTH_TOKEN })
                 });
                 const result = await response.json();
@@ -7856,7 +7875,7 @@
                 };
                 const response = await fetch(`/api/locations-files/${encodeURIComponent(name)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({ content: JSON.stringify(data, null, 2), user_id: USER_ID, world_id: WORLD_ID, auth_token: AUTH_TOKEN })
                 });
                 const result = await response.json();
@@ -7877,7 +7896,9 @@
 
         async function fetchExistingProps() {
             try {
-                const response = await fetch(`/api/props-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`);
+                const response = await fetch(`/api/props-files?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
                 const data = await response.json();
                 const props = data.props || data.data?.data || [];
                 existingProps = props.map(p => p.name).filter(Boolean);
@@ -7938,7 +7959,7 @@
                 };
                 const response = await fetch(`/api/props-files/${encodeURIComponent(name)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({ content: JSON.stringify(data, null, 2), user_id: USER_ID, world_id: WORLD_ID, auth_token: AUTH_TOKEN })
                 });
                 const result = await response.json();

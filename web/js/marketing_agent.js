@@ -4463,7 +4463,9 @@
                 // 检查是否有活跃的 Agent 任务（页面刷新恢复）— 不阻塞页面
                 if (currentSessionId.value) {
                     try {
-                        const taskRes = await fetch(`/api/session/${currentSessionId.value}/latest-task`);
+                        const taskRes = await fetch(`/api/session/${currentSessionId.value}/latest-task`, {
+                            headers: { 'Authorization': 'Bearer ' + authToken.value }
+                        });
                         if (!checkAuthResponse(taskRes)) return;
                         const taskData = await taskRes.json();
                         if (taskData.success && taskData.task) {
@@ -5327,7 +5329,8 @@
                 if (authToken.value) formData.append('auth_token', authToken.value);
                 fetch('/api/upload-agent-image', {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
                 }).then(resp => resp.json()).then(data => {
                     if (data.success && data.url) {
                         uploadedImageServerUrl.value = data.url;
@@ -5366,7 +5369,8 @@
                     if (authToken.value) formData.append('auth_token', authToken.value);
                     const resp = await fetch('/api/upload-agent-image', {
                         method: 'POST',
-                        body: formData
+                        body: formData,
+                        headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
                     });
                     if (!checkAuthResponse(resp)) return;
                     const data = await resp.json();
@@ -5512,7 +5516,8 @@
 
                     const resp = await fetch('/api/upload-agent-audio', {
                         method: 'POST',
-                        body: formData
+                        body: formData,
+                        headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
                     });
                     if (!checkAuthResponse(resp)) return;
                     const data = await resp.json();
@@ -5630,7 +5635,8 @@
                     if (authToken.value) formData.append('auth_token', authToken.value);
                     const resp = await fetch('/api/upload-agent-video', {
                         method: 'POST',
-                        body: formData
+                        body: formData,
+                        headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
                     });
                     if (!checkAuthResponse(resp)) return;
                     const data = await resp.json();
@@ -6372,7 +6378,8 @@
                 if (authToken.value) fd.append('auth_token', authToken.value);
                 fetch('/api/upload-agent-image', {
                     method: 'POST',
-                    body: fd
+                    body: fd,
+                    headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
                 }).then(resp => resp.json()).then(data => {
                     if (data.success && data.url) {
                         uploadedImageServerUrl.value = data.url;
