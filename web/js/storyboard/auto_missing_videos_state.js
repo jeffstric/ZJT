@@ -141,7 +141,8 @@ export function getMissingVideoScenes() {
             // MiniMax 对口型：必须先有 TTS 成片音频；形象图由服务端解析（选中首帧）
             return sceneHasReadyDialogueAudio(scene);
         }
-        if (!scene.firstFrameUrl) return false;
+        const isMultiRef = state.videoImageMode === 'multi_reference';
+        if (!isMultiRef && !scene.firstFrameUrl) return false;
         return true;
     });
 }
@@ -202,10 +203,10 @@ export function getAutoVideoCompleteButtonViewModel() {
         // 根据当前视频图片模式调整文案与提示。
         const isMultiRef = state.videoImageMode === 'multi_reference';
         const modeSupported = !isMultiRef || getSupportedVideoImageModes().includes('multi_reference');
-        const labelPrefix = isMultiRef ? '全能参考批量生成视频' : '批量生成视频';
+        const labelPrefix = isMultiRef ? '全能参考逐个生成视频' : '逐个生成视频';
         const modeHint = isMultiRef
             ? (modeSupported
-                ? '（全能参考：首帧+角色/场景参考+画风参考）'
+                ? '（全能参考：可不生成分镜图，用角色/场景/道具参考图）'
                 : '（当前模型不支持全能参考，将使用首尾帧模式）')
             : '';
         return {

@@ -509,7 +509,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'api_aggregator.site_0.api_key',
         'value_type': 'string',
-        'description': 'YWAPI 官方站点 API Key',
+        'description': 'API 聚合站站点0 API Key（预留槽位，未启用）',
         'editable': True,
         'is_sensitive': True,
         'quick_config': True,

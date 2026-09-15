@@ -519,8 +519,8 @@
               page: this.historyPage,
               page_size: 20,
               types: typesStr,  // 使用后端配置的所有文生视频类型
-              auth_token: authToken || undefined
-            }
+            },
+            headers: { Authorization: 'Bearer ' + (authToken || '') }
           });
           
           if (response.data.success) {

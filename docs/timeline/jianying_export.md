@@ -245,6 +245,22 @@
   - 刷新签名有效期为 28 小时（100800 秒），使用七牛云 `private_download_url` 重新签名
   - 视频和音频下载流程均增加了此步骤
 
+### 2026-09-14 修复
+
+**问题：导出剪映草稿报 500「Request URL is missing an 'http://' or 'https://' protocol.」**
+
+- **现象**：`POST /api/export_timeline_draft` 返回 `处理视频失败: xxx.mp4 - Request URL is missing an 'http://' or 'https://' protocol.`（httpx `UnsupportedProtocol`），导出中断。
+- **根因**（两类地址都会触发同一报错）：
+  1. **时间轴片段携带 `blob:` 临时地址**：前端选择本地文件后先给节点 `URL.createObjectURL` 的 `blob:` 地址，上传完成才替换为服务器永久地址；若用户在上传完成前把视频加入时间轴，片段会固化 `blob:` 地址（只在本浏览器会话有效，服务端无法下载，且随自动保存持久化）。
+  2. **`/upload/...` 相对地址本地文件已被清理**：生成视频以 `/upload/cache/...` 相对地址存进节点，`media_cache` 到期清理（线上 `max_days: 50`）后本地文件不存在，导出时后端把该相对地址直接交给 httpx 下载。
+- **解决**：
+  - 前端导出（`web/js/timeline.js`）：导出前校验片段地址，`blob:` 等失效地址自动回退为所属节点（`clip.nodeId`）的当前地址（`resolveClipExportUrl`）。
+  - 前端上传（`web/js/video_node.js`）：上传拿到永久地址后，同步更新时间轴中该节点已存在的 `blob:` 片段地址。
+  - 后端（`server.py` `/api/export_timeline_draft`）：无协议头的地址不再交给 httpx 抛晦涩异常，直接返回 400，并按地址类型给出可行动的提示：
+    - `/upload/...` 本地文件缺失 → **素材已被彻底清理，无法恢复**。`media_cache` 到期清理（线上 `max_days: 50`，且 `auto_upload_to_cdn: true`）会**同步删除**本地文件、七牛云端副本和 `media_file_mapping` 记录，因此不存在可回源的云端副本，只能重新生成或重新上传；
+    - 其他无协议头地址（`blob:` 等）→ 提示刷新页面后重新上传该素材。
+  - `http(s)` 地址仍走原有的 CDN 签名刷新后下载。
+
 ## 注意事项
 
 1. **路径格式**：Windows路径使用反斜杠（`\`），需要在输入时正确转义

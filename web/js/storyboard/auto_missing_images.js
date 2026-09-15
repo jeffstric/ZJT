@@ -268,6 +268,7 @@ export function resetAutoMissingImagesFlag(storyboardId = state.storyboardId) {
 }
 
 export async function autoGenerateMissingFirstFrames() {
+    if (state.videoImageMode === 'multi_reference') return;
     if (!state.storyboardId || !state.authToken || !state.scenes.length) return;
     const recoverable = readAutoImageBatchSession(state.storyboardId);
     if (recoverable?.batchId) {

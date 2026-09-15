@@ -361,8 +361,8 @@
               page: this.historyPage,
               page_size: 20,
               types: typesStr,
-              auth_token: authToken || undefined
-            }
+            },
+            headers: { Authorization: 'Bearer ' + (authToken || '') }
           });
           
           if (response.data.success) {

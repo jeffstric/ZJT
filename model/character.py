@@ -4,7 +4,7 @@ Character Model - Database operations for character table
 import json
 from typing import Optional, Dict, Any, List
 from .database import execute_query, execute_update, execute_insert
-from config.constant import Edition
+from config.constant import CharacterConstants, Edition
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ class Character:
         self.default_voice = kwargs.get('default_voice')
         self.emotion_voices = kwargs.get('emotion_voices')
         self.sora_character = kwargs.get('sora_character')
+        self.source = kwargs.get('source')
         self.user_id = kwargs.get('user_id')
         self.create_time = kwargs.get('create_time')
         self.update_time = kwargs.get('update_time')
@@ -63,6 +64,7 @@ class Character:
             'default_voice': self.default_voice,
             'emotion_voices': emotion_voices,
             'sora_character': self.sora_character,
+            'source': self.source,
             'user_id': self.user_id,
             'create_time': self.create_time.isoformat() if self.create_time else None,
             'update_time': self.update_time.isoformat() if self.update_time else None
@@ -100,7 +102,8 @@ class CharacterModel:
         reference_images: Optional[List[Dict]] = None,
         default_voice: Optional[str] = None,
         emotion_voices: Optional[Dict] = None,
-        sora_character: Optional[str] = None
+        sora_character: Optional[str] = None,
+        source: Optional[str] = None
     ) -> int:
         """
         Create a new character record
@@ -120,6 +123,7 @@ class CharacterModel:
             default_voice: Default voice file path (optional)
             emotion_voices: Emotion voices dict (optional)
             sora_character: Sora character ID (optional)
+            source: 角色来源（CharacterConstants.SOURCE_*，缺省 manual）
 
         Returns:
             Inserted record ID
@@ -129,20 +133,22 @@ class CharacterModel:
             logger.warning(f"Character name truncated from {len(name)} to 255 chars: {name[:50]}...")
             name = name[:255]
         if age and len(age) > 50:
-            logger.warning(f"Character age truncated from {len(age)} to 50 chars: {age}")
+            logger.warning(f"Character age truncated from {len(age)} to {len(age)} chars")
             age = age[:50]
-        
+
         sql = """
             INSERT INTO `character`
             (world_id, name, age, identity, appearance, personality, behavior, other_info,
-             reference_image, reference_images, default_voice, emotion_voices, sora_character, user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             reference_image, reference_images, default_voice, emotion_voices, sora_character,
+             source, user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         emotion_voices_str = json.dumps(emotion_voices, ensure_ascii=False) if emotion_voices else None
         reference_images_str = json.dumps(reference_images, ensure_ascii=False) if reference_images else None
         params = (world_id, name, age, identity, appearance, personality, behavior, other_info, reference_image,
-                 reference_images_str, default_voice, emotion_voices_str, sora_character, user_id)
-        
+                 reference_images_str, default_voice, emotion_voices_str, sora_character,
+                 source or CharacterConstants.SOURCE_MANUAL, user_id)
+
         try:
             record_id = execute_insert(sql, params)
             logger.info(f"Created character record with ID: {record_id}")
@@ -166,7 +172,8 @@ class CharacterModel:
         reference_images: Optional[List[Dict]] = None,
         default_voice: Optional[str] = None,
         emotion_voices: Optional[Dict] = None,
-        sora_character: Optional[str] = None
+        sora_character: Optional[str] = None,
+        source: Optional[str] = None
     ) -> int:
         """
         Create a new character record or update if exists (based on world_id, name unique constraint)
@@ -188,8 +195,9 @@ class CharacterModel:
         sql = """
             INSERT INTO `character`
             (world_id, name, age, identity, appearance, personality, behavior, other_info,
-             reference_image, reference_images, default_voice, emotion_voices, sora_character, user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             reference_image, reference_images, default_voice, emotion_voices, sora_character,
+             source, user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 age = VALUES(age),
                 identity = VALUES(identity),
@@ -205,7 +213,8 @@ class CharacterModel:
                 user_id = VALUES(user_id)
         """
         params = (world_id, name, age, identity, appearance, personality, behavior, other_info, reference_image,
-                 reference_images_str, default_voice, emotion_voices_str, sora_character, user_id)
+                 reference_images_str, default_voice, emotion_voices_str, sora_character,
+                 source or CharacterConstants.SOURCE_MANUAL, user_id)
         
         try:
             record_id = execute_insert(sql, params)
@@ -418,7 +427,8 @@ class CharacterModel:
         """
         allowed_fields = ['world_id', 'name', 'age', 'identity',
                          'appearance', 'personality', 'behavior', 'other_info',
-                         'reference_image', 'reference_images', 'default_voice', 'emotion_voices', 'sora_character']
+                         'reference_image', 'reference_images', 'default_voice', 'emotion_voices', 'sora_character',
+                         'source']
         
         update_fields = []
         params = []
@@ -484,6 +494,7 @@ CREATE TABLE IF NOT EXISTS `character` (
   `default_voice` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '默认声音文件路径',
   `emotion_voices` json DEFAULT NULL COMMENT '感情色彩声音(JSON格式)',
   `sora_character` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Sora角色卡任务ID',
+  `source` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'manual' COMMENT '角色来源: manual=手动创建, script_split=剧本拆分自动入库',
   `user_id` int unsigned NOT NULL COMMENT '创建者用户ID',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',

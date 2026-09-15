@@ -8,10 +8,10 @@
 
 - 位置：时间轴 `auto-complete-header` 右侧，补全按钮之后
 - 文案示例：
-  - 空闲有待生成（首尾帧模式）：`批量生成视频 (N)`
-  - 空闲有待生成（全能参考模式）：`全能参考批量生成视频 (N)`
+  - 空闲有待生成（首尾帧模式）：`逐个生成视频 (N)`
+  - 空闲有待生成（全能参考模式）：`全能参考逐个生成视频 (N)`
   - 进行中：`视频生成中 x/y`
-  - 无首帧：`需先补全画面`（disabled）
+  - 首尾帧且无首帧：`需先补全画面`（disabled）；全能参考下无首帧仍可提交
   - 已齐：`视频已全部生成`（disabled）
 
 ## 确认弹窗（含算力预估）
@@ -95,7 +95,8 @@ GET /api/storyboard/image-batches/{batch_id}/status
 
 - 命令：`auto-generate-missing-videos` → `StoryboardAgentCliService.auto_generate_missing_videos`
 - 规划：
-  - `video_type=video`：无完成视频且有首帧 → pending；无首帧 → skipped
+  - `video_type=video` + `first_last_frame`：无完成视频且有首帧 → pending；无首帧 → skipped（`missing_first_frame`）
+  - `video_type=video` + `multi_reference`：无完成视频即可 pending（**不要求首帧**）；无首帧且无角色/场景/道具/画风参考图 → skipped（`missing_references`）
   - `video_type=digital_human`：无完成视频且**成片配音就绪** + 有形象/首帧 → pending；缺配音 → skipped（`missing_audio` / `audio_pending`）
   - 已有视频 → completed；生成中 → running
 - 调度：`_process_one_video_batch_job` 按分镜类型分支：
@@ -128,7 +129,7 @@ GET /api/storyboard/image-batches/{batch_id}/status
 
 - 适用：多张参考图综合驱动，需要统一画风/角色/场景一致性的场景
 - 模型要求：`supported_image_modes` 含 `multi_reference`（如 Seedance 2.0 系列、VEO3、Grok）
-- 注意：批量 multi_reference **不再要求尾帧**，但**仍要求选中首帧**（首帧是主参考，保证视频与分镜画面相关）
+- 注意：批量 multi_reference **不要求首帧/尾帧**。有选中首帧时仍作为图1主参考；没有首帧则只用角色/场景/道具/画风参考图。一张参考图都没有的分镜记 `missing_references` 跳过（不在批次内回退文生，避免混用两种模型）
 
 ### 模型能力约束
 
@@ -169,8 +170,8 @@ GET /api/storyboard/image-batches/{batch_id}/status
 
 ## 与「补全首帧」关系
 
-| | 补全首帧 | 批量视频 |
+| | 补全首帧 | 逐个生成视频 |
 |--|----------|----------|
-| 对象 | 无首帧分镜 | 有首帧、无视频分镜 |
+| 对象 | 无首帧分镜 | 首尾帧：有首帧且无视频；全能参考：无视频即可（无参考图则跳过） |
 | 按钮 | 蓝色补全 | 绿色视频按钮 |
-| 前置 | 无 | 建议先补全首帧 |
+| 前置 | 无 | 首尾帧建议先补全首帧；全能参考可不生成分镜图 |

@@ -1,18 +1,18 @@
 .model-track-toggle {
   display: inline-flex;
   align-items: stretch;
-  border: 1px solid var(--border-color, #d8dce3);
+  border: 1px solid var(--border, var(--border-color, #d8dce3));
   border-radius: 8px;
   overflow: hidden;
   flex-shrink: 0;
-  background: var(--bg-primary, #fff);
+  background: var(--surface, var(--bg-primary, #fff));
 }
 
 .model-track-btn {
   appearance: none;
   border: 0;
   background: transparent;
-  color: var(--text-secondary, #667085);
+  color: var(--muted, var(--text-secondary, #667085));
   font-size: 12px;
   line-height: 1;
   padding: 6px 8px;
@@ -21,12 +21,12 @@
 }
 
 .model-track-btn + .model-track-btn {
-  border-left: 1px solid var(--border-color, #d8dce3);
+  border-left: 1px solid var(--border, var(--border-color, #d8dce3));
 }
 
 .model-track-btn.is-active {
-  background: var(--bg-tertiary, #eef2ff);
-  color: var(--text-primary, #1f2937);
+  background: var(--info-bg, var(--bg-tertiary, #eef2ff));
+  color: var(--info-text, var(--text-primary, #1f2937));
   font-weight: 600;
 }
 

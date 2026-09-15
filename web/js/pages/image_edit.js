@@ -465,8 +465,8 @@
               page_size: 20,
               types: typesStr,
               has_image_path: true,
-              auth_token: authToken || undefined
-            }
+            },
+            headers: { Authorization: 'Bearer ' + (authToken || '') }
           });
 
           if (response.data.success) {

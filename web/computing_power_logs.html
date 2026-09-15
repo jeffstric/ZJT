@@ -412,13 +412,10 @@
       mounted() {
         // 初始化 i18n
         this.initI18n().then(() => {
-          // 从 localStorage 获取 auth_token（与父页面同源，共享 localStorage）
+          // localStorage token 属旧版流程（HttpOnly cookie 双通道后新登录不再写入）。
+          // 本地无 token 时也尝试加载——cookie 会话由服务端中间件自动解出身份，
+          // 认证失败在 fetchLogs 的错误分支里统一提示。
           this.authToken = localStorage.getItem('auth_token') || '';
-
-          if (!this.authToken) {
-            this.error = this.$t('missing_auth') || '缺少认证信息，请从主页面打开';
-            return;
-          }
 
           // 加载数据
           this.fetchLogs();

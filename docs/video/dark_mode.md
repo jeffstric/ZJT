@@ -37,6 +37,7 @@ WorkflowTheme.initToggle({ target: '.ratio-floating' });
 - **浅色默认**：无存储或值为 `light` 时不添加 `theme-dark`，视觉与改造前一致。
 - **Token 优先**：核心面（画布、节点、浮层、时间轴、表单）使用 CSS 变量。
 - **覆盖兜底**：HTML 内联白底弹窗、节点内 `background: white` 表单、部分硬编码通过 `html.theme-dark` 选择器覆盖（`!important` 仅用于压过 inline）。
+- **节点分区走 token**：分镜 / 分镜组 `.script-section` 列背景、场景/道具 `.shot-ref-section`、性价比开关 `.model-track-toggle`、视频模式 `.video-mode-btn` 均使用 `--surface` / `--border` / `--text`，禁止再写死 `#fcfcfc` / `#f9fafb` / `#fff`。JS 切模式时只切换 `.is-active`，不要写 `style.background`（浏览器会序列化成 `rgb()`，hex 属性选择器失效）。
 - **节点表单可读性**：暗色下 select/input/textarea、剧本参数折叠组、次级白底按钮强制深色面 + 浅色字，避免白底白字。
 - **资产选择列表 hover**：角色/场景/道具/剧本列表项 hover 使用 CSS token（`--primary-light` + `--primary`），禁止 JS 写死浅色 `#f8fafc` / `#f3f4f6` / `white`。
 - **媒体不反色**：图片、视频、二维码等保持原样。
@@ -45,6 +46,8 @@ WorkflowTheme.initToggle({ target: '.ratio-floating' });
 
 - `web/js/theme.js`
 - `web/css/video_workflow.css`
+- `web/css/model_catalog.css`（性价比 / 效果开关走 `--surface` / `--info-bg`）
 - `web/css/image_coloring_editor.css`（暗色下涂色弹窗）
+- `web/js/shot_frame_node.js` / `web/js/shot_group_node.js`（节点分区不再内联浅色底）
 - `web/video_workflow.html`
 - i18n：`theme_toggle_to_dark` / `theme_toggle_to_light`

@@ -439,3 +439,47 @@ def test_build_scenes_without_variants_keeps_prompt_unchanged():
         _variant_parsed(), style="", character_variants={},
     )
     assert all("reference_selections" not in scene["prompt"] for scene in scenes)
+
+
+def test_build_scenes_packs_shots_in_reference_mode():
+    parsed = {
+        "shot_groups": [
+            {
+                "group_id": "grp_001",
+                "group_name": "客厅",
+                "shots": [
+                    {
+                        "shot_id": "s1",
+                        "duration": 5,
+                        "description": "进门",
+                        "dialogue": [{"character_id": "c1", "text": "我回来了"}],
+                    },
+                    {
+                        "shot_id": "s2",
+                        "duration": 5,
+                        "description": "放钥匙",
+                        "dialogue": [{"character_id": "c1", "text": "钥匙在这"}],
+                    },
+                    {
+                        "shot_id": "s3",
+                        "duration": 6,
+                        "description": "坐下",
+                        "dialogue": [],
+                    },
+                ],
+            }
+        ]
+    }
+    packed = storyboard_api.build_storyboard_scenes_from_parsed_script(
+        parsed, video_gen_mode="multi_reference", max_shot_duration=15,
+    )
+    assert len(packed) == 2
+    assert packed[0]["duration"] == 10
+    assert "镜头1：0~5S" in packed[0]["video_prompt"]
+    assert packed[1]["duration"] == 6
+
+    first_frame = storyboard_api.build_storyboard_scenes_from_parsed_script(
+        parsed, video_gen_mode="first_last_frame", max_shot_duration=15,
+    )
+    assert len(first_frame) == 3
+

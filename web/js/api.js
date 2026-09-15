@@ -233,9 +233,11 @@
 
       const authToken = getAuthToken();
       const projectIdsStr = projectIds.join(',');
-      
-      const url = `/api/get-status/${projectIdsStr}` + (authToken ? `?auth_token=${encodeURIComponent(authToken)}` : '');
-      const res = await fetch(url);
+
+      // token 走 Authorization 头，不再拼进 URL（防 Referer/日志/历史记录泄漏）
+      const url = `/api/get-status/${projectIdsStr}`;
+      const reqHeaders = authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+      const res = await fetch(url, { headers: reqHeaders });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
 
@@ -331,9 +333,10 @@
         attempts++;
 
         try {
+          // token 走 Authorization 头，不再拼进 URL（防 Referer/日志/历史记录泄漏）
           var authToken = getAuthToken();
-          var params = authToken ? '?auth_token=' + encodeURIComponent(authToken) : '';
-          var res = await fetch(opts.statusUrl + params, { method: 'GET' });
+          var reqHeaders = authToken ? { 'Authorization': 'Bearer ' + authToken } : {};
+          var res = await fetch(opts.statusUrl, { method: 'GET', headers: reqHeaders });
           var text = await res.text();
           var payload = text ? JSON.parse(text) : null;
 

@@ -69,7 +69,7 @@
             <!-- 左栏：输入源 -->
             <div class="video-section">
               <div class="field field-collapsible image-mode-field">
-                <div class="label" data-i18n="image_mode_label">${tOr('image_mode_label', '图片模式')}</div>
+                <div class="label" data-i18n="image_mode_label">${tOr('image_mode_label', '生成模式')}</div>
                 <select class="image-mode-select">
                   <option value="first_last_frame" data-i18n="image_mode_first_last">${tOr('image_mode_first_last', '首尾帧模式')}</option>
                   <option value="multi_reference" data-i18n="image_mode_multi_ref">${tOr('image_mode_multi_ref', '多参考图模式')}</option>
@@ -817,6 +817,11 @@
       // 保存更新函数的引用到元素上，便于外部调用
       if(!el._updateComputingPowerDisplay) {
         el._updateComputingPowerDisplay = updateComputingPowerDisplay;
+      }
+      // 工作流恢复逻辑（workflow.js createImageToVideoNodeWithData）复用同一份模式显隐实现，
+      // 避免复制一份后选择器与行为漂移（历史上曾因复制品选择器写错导致刷新后显隐错乱）
+      if(!el._updateImageModeUI) {
+        el._updateImageModeUI = updateImageModeUI;
       }
       node.updateResolutionOptions = updateResolutionOptions;
 

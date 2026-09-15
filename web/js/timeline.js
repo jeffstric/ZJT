@@ -1874,21 +1874,37 @@
         
         closeDialog();
         
+        // 片段可能携带已失效的 blob: 临时地址（在上传完成前添加到时间轴所致），
+        // blob: 地址只在浏览器会话内有效，服务端无法下载，导出时回退到所属节点的当前地址
+        const isValidMediaUrl = (u) => typeof u === 'string'
+          && (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('/upload/'));
+        const resolveClipExportUrl = (clip) => {
+          if (isValidMediaUrl(clip.url)) return clip.url;
+          const node = (clip.nodeId !== undefined && clip.nodeId !== null)
+            ? state.nodes.find(n => n.id === clip.nodeId)
+            : null;
+          if (node && isValidMediaUrl(node.data.url)) {
+            console.warn('[导出草稿] 片段地址已失效，回退节点当前地址:', clip.name, clip.url, '->', node.data.url);
+            return node.data.url;
+          }
+          return clip.url;
+        };
+
         // 准备时间轴数据 - 包含视频和音频
         const sortedClips = [...state.timeline.clips].sort((a, b) => a.order - b.order);
         const videoClipsData = sortedClips.map(clip => ({
-          url: clip.url,
+          url: resolveClipExportUrl(clip),
           name: clip.name,
           duration: clip.duration,
           startTime: clip.startTime || 0,
           endTime: clip.endTime || clip.duration,
           pillarId: clip.pillarId || null
         }));
-        
+
         // 准备音频数据
         const sortedAudioClips = [...state.timeline.audioClips].sort((a, b) => a.order - b.order);
         const audioClipsData = sortedAudioClips.map(clip => ({
-          url: clip.url,
+          url: resolveClipExportUrl(clip),
           name: clip.name,
           duration: clip.duration,
           startTime: clip.startTime || 0,

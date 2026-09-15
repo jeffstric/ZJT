@@ -153,7 +153,11 @@
 
 1. 进入「世界」tab → 区块 `#styleRecognizeSection` 显示 → 首次懒加载模型列表（`loadStyleModels`）。
    - 标题旁角标「限时免费」：仅开源/社区版（`/api/edition` 的 `mode === 'community'`）显示；商业版不展示（`updateStyleRecognizeEditionBadge`）。
-   - 标题行右侧提供外链「查看更多画风」→ `https://jimeng.jianying.com/ai-tool/home/`（`target="_blank"` 新开标签页，`rel="noopener noreferrer"`）。
+   - 标题行右侧提供外链「查看更多画风」→ `https://jimeng.jianying.com/ai-tool/explore`（`target="_blank"`
+     新开标签页，`rel="noopener noreferrer"`）。点击走 `confirmJimengExplore`（`web/js/script_writer.js`）：
+     跳转前原生 `confirm` 提示「进入后点击顶部『其他』标签，即可看到可参考的画风」，取消则不跳转。
+     链接 `title` 也带同样的 hover 提示。注意：即梦探索页分类不落在 URL 上，且浏览器同源策略禁止操控
+     跨域页面 DOM，**无法自动选中「其他」分类**，只能提示用户手动点击。
 2. **拖入图片**到 `#styleDropZone`，或**点击**拖放区打开文件选择（`item_type=4`）→ 上传成功后显示预览，并**自动**调用 `autoRecognizeStyleAfterUpload` → `recognizeStyle`。
 3. 识别模型下拉按供应商分组；默认优先选中 **火山引擎 `doubao-seed-2-0-lite`**（须已配置密钥，否则列表中不会出现）。
 4. 识别成功后直接弹出确认框（**仅画面风格一个可编辑字段**）。换模型后仍可手动点「识别画风」重跑。

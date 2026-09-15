@@ -485,7 +485,7 @@ python -m scripts.storyboard_agent_cli task-status --scene-id 123 --user-id 1
 
 第一阶段只做可测试的核心闭环：
 
-- 新增 `doc/storyboard/storyboard_agent_cli_design.md`
+- 新增 `docs/storyboard/storyboard_agent_cli_design.md`
 - 新增 `services/ai_tool_submission_service.py`
 - 新增 `services/storyboard_agent_cli_service.py`
 - 新增 `scripts/storyboard_agent_cli.py`

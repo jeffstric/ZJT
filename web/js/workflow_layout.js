@@ -506,6 +506,10 @@
     renderAllConnections();
     renderMinimap();
     updateCanvasSize();
+    // 自动排列移动了节点，组框需跟随成员重算（先于保存，保证落库的包围盒是最新值）
+    if(typeof recalcAllGroupsBounds === 'function'){
+      recalcAllGroupsBounds();
+    }
     safeAutoSave();
     showToast('自动排列完成', 'success');
   }

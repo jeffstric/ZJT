@@ -8,17 +8,28 @@ const readSource = (relativePath) => fs.readFileSync(path.join(root, relativePat
 describe('index login=1 主动校验 token（误报不再清登录态）', () => {
     const appSource = readSource('web/js/index_app.js');
 
-    it('login=1 分支不再无条件清除 localStorage', () => {
-        // 截取 login=1 处理块（到 redirect_after_login 记录结束）
-        const match = appSource.match(/if \(urlParams\.get\('login'\) === '1'\) \{[\s\S]*?\n      \}/);
-        expect(match).not.toBeNull();
-        expect(match[0]).not.toContain("localStorage.removeItem('auth_token')");
-        expect(match[0]).toContain('redirect_after_login');
-    });
-
-    it('本地有 token 时触发主动校验', () => {
+    it('login=1 且有 token 时走主动校验，不在 mounted 无条件清 localStorage', () => {
         expect(appSource).toContain("if (urlParams.get('login') === '1' && this.authToken)");
         expect(appSource).toContain('this.verifyAuthTokenOnLoginEntry()');
+        const mountedMatch = appSource.match(/if \(urlParams\.get\('login'\) === '1' && this\.authToken\) \{[\s\S]*?\n      \}/);
+        expect(mountedMatch).not.toBeNull();
+        expect(mountedMatch[0]).not.toContain("localStorage.removeItem('auth_token')");
+    });
+
+    it('兼容期登录双写同一 token 到 localStorage', () => {
+        expect(appSource).toContain('persistBrowserAuth');
+        const persistMatch = appSource.match(/persistBrowserAuth\(data\) \{[\s\S]*?\n      \}/);
+        expect(persistMatch).not.toBeNull();
+        expect(persistMatch[0]).toContain("localStorage.setItem('auth_token', token)");
+        expect(appSource).toContain('this.persistBrowserAuth(response.data.data)');
+    });
+
+    it('cookie 有效但无 localStorage token 时强制重新登录', () => {
+        const probeMatch = appSource.match(/async probeCookieSession\(onInvalid = null\) \{[\s\S]*?\n      \}/);
+        expect(probeMatch).not.toBeNull();
+        expect(probeMatch[0]).toContain('auth_compat_relogin');
+        expect(probeMatch[0]).toContain("localStorage.removeItem('logged_in')");
+        expect(probeMatch[0]).not.toContain("localStorage.setItem('logged_in', '1')");
     });
 
     it('主动校验只在确证失效（401 + error_code）时清理', () => {

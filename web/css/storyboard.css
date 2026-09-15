@@ -762,6 +762,13 @@ button {
 .asset-chip[data-action="select-location-reference"] {
   cursor: pointer;
 }
+/* 幽灵角色 chip（未在角色库）：橙色警示样式，不可点击选参考 */
+.role-chip.is-missing {
+  background-color: #fff7ed;
+  color: #c2410c;
+  border: 1px dashed #f97316;
+  cursor: help;
+}
 .role-chip.has-reference-selection,
 .asset-chip.has-reference-selection {
   border: 1px solid rgba(47, 109, 246, 0.45);
@@ -1504,6 +1511,13 @@ button {
     gap: 6px;
     min-height: 56px;
 }
+.media-stack-hint {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--muted, #888);
+    max-width: 160px;
+    line-height: 1.4;
+}
 .media-stack-thumbs {
     position: relative;
     width: 56px;
@@ -1868,6 +1882,31 @@ button {
     margin-left: auto;
     color: #00a8e6;
     font-weight: 700;
+}
+/* 参考生视频等 Beta 功能入口的标识；与 web/css/index.css 的 .beta-tag 保持一致
+   （storyboard 页面不引 index.css）。须置于 .video-mode-btn span / .video-mode-static-label
+   之后，靠源顺序在同特异性竞争中胜出 */
+.beta-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--primary);
+    color: #fff;
+    margin-left: 4px;
+    vertical-align: middle;
+    line-height: 1.5;
+    flex-shrink: 0;
+}
+.video-mode-btn .beta-tag {
+    /* 按钮内 gap 已提供间距，且覆盖 .video-mode-btn span 的 12px 字号 */
+    margin-left: 0;
+    font-size: 10px;
+}
+.video-mode-texts .beta-tag {
+    /* 覆盖 .video-mode-texts strong 的 13px 字号 */
+    font-size: 10px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .agent-chat-empty {
@@ -3514,6 +3553,22 @@ button {
 .card-char-avatar.is-placeholder {
     display: inline-block;
     background: #e2e8f0;
+}
+/* 幽灵角色（提示词标记但不在角色库）：橙色警示，与正常角色区分 */
+.card-char-avatar.is-missing {
+    background: #fff7ed;
+    border: 1.5px dashed #f97316;
+    color: #c2410c;
+    font-weight: 700;
+}
+/* 在库但缺参考图：黄色提示（生图不注入该角色参考） */
+.card-char-avatar.is-no-ref {
+    background: #fefce8;
+    border: 1.5px dashed #eab308;
+    color: #a16207;
+}
+img.card-char-avatar.is-missing {
+    opacity: 0.55;
 }
 .card-perspective {
     font-size: 11px;

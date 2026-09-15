@@ -13,6 +13,9 @@ import state, {
     modelNeedsFaceMask,
     isEnterpriseEdition,
     getVideoSupportedDurations,
+    getSplitVideoModel,
+    getSplitMaxShotDurationOptions,
+    clampMaxGroupDurationToSplitModel,
     resolveVideoDurationSeconds,
     getVideoResolutionOptions,
     getDefaultVideoResolution,
@@ -81,14 +84,16 @@ export { Region } from './ui_regions.js';
 
 // 确保 i18n 在首次 render 前已初始化（bootstrap 中已调用 initI18n）
 
-function escapeHtml(value) {
-    return String(value || '')
+// 转义统一收敛到 web/js/escape.js（window.escapeHtml，经典 script 先于本 module 执行）。
+// Node/Vitest 直接 import 本模块时降级为等价实现。
+const escapeHtml = (typeof window !== 'undefined' && typeof window.escapeHtml === 'function')
+    ? window.escapeHtml
+    : (value) => String(value ?? '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
-}
 
 /** Map scene.videoType to Chinese label for UI. */
 export function videoTypeLabel(videoType) {
@@ -213,14 +218,21 @@ export function renderPromptWithInlineRoles(text, usedChars, usedProps, scene = 
             continue;
         }
         const avatarUrl = asset && (asset.avatar || asset.reference_image || mapAssetAvatar(asset.raw || asset));
+        // 角色 chip：不在世界角色库（幽灵角色）时用警示样式标识，
+        // 不再伪装成可正常选参考图的角色（点击由选择器提示先入库）。
+        const isMissingRole = !isProp && !asset;
         const chip = document.createElement('span');
-        chip.className = isProp ? 'prop-chip' : 'role-chip';
-        chip.title = assetName;
+        chip.className = isProp ? 'prop-chip' : (isMissingRole ? 'role-chip is-missing' : 'role-chip');
+        chip.title = isMissingRole
+            ? `${assetName}（未在角色库中，生成分镜图将跳过其参考图；请先在角色管理中创建或改名对齐）`
+            : assetName;
         if (!isProp) {
             const selectionKey = characterReferenceSelectionKey(asset || { name: assetName });
             const selection = scene?.referenceSelections?.characters?.[selectionKey];
             chip.dataset.referenceVariant = 'character';
-            chip.dataset.action = 'select-character-reference';
+            if (!isMissingRole) {
+                chip.dataset.action = 'select-character-reference';
+            }
             chip.dataset.characterName = assetName;
             if (asset?.id != null) chip.dataset.characterId = String(asset.id);
             if (selection?.url) {
@@ -359,6 +371,10 @@ function resolveSceneLocation(scene) {
 /**
  * 角色列表（去重保序）：
  * 1) 对话 characterId  2) referenceSelections.characters  3) 提示词【【角色】】
+ *
+ * missing=true 表示角色不在世界角色库（幽灵角色，点击/生图会报"角色不存在"）；
+ * missingRef=true 表示在库但无任何参考图（生图参考图不生效）。
+ * 两者均保留展示（便于用户发现），由渲染层用警示样式区分。
  */
 function resolveSceneCharacters(scene) {
     if (!scene) return [];
@@ -371,15 +387,26 @@ function resolveSceneCharacters(scene) {
         if (!n) return null;
         return worldChars.find((c) => String(c.name || '').trim().replace(/\s+/g, '') === n);
     };
+    const hasReference = (c) => Boolean(
+        c && (c.reference_image
+            || (Array.isArray(c.reference_images) && c.reference_images.length)
+            || (c.raw && (c.raw.reference_image || (Array.isArray(c.raw.reference_images) && c.raw.reference_images.length))))
+    );
     const avatarOf = (c, fallback = '') =>
         (c && (c.avatar || c.reference_image || mapAssetAvatar(c.raw || c))) || fallback || '';
 
-    const add = (id, name, avatar) => {
+    const add = (id, name, avatar, missing = false) => {
         const nm = String(name || '').trim();
         if (!nm) return;
         const key = id != null && id !== '' ? `id:${id}` : `name:${nm.replace(/\s+/g, '')}`;
         if (byKey.has(key)) return;
-        byKey.set(key, { id: id ?? null, name: nm, avatar: avatar || '' });
+        byKey.set(key, {
+            id: id ?? null,
+            name: nm,
+            avatar: avatar || '',
+            missing,
+            missingRef: !missing && !avatar && !hasReference(id != null ? findById(id) : findByName(nm)),
+        });
     };
 
     (scene.dialogues || []).forEach((d) => {
@@ -395,7 +422,7 @@ function resolveSceneCharacters(scene) {
         const name = (item?.name || nameFromKey || '').trim();
         const c = (id != null ? findById(id) : null) || findByName(name);
         if (c) add(c.id, c.name, avatarOf(c, item?.url || ''));
-        else if (name) add(id, name, item?.url || '');
+        else if (name) add(id, name, item?.url || '', true);
     });
 
     const texts = [
@@ -409,7 +436,7 @@ function resolveSceneCharacters(scene) {
         const name = String(match[1] || '').trim();
         const c = findByName(name);
         if (c) add(c.id, c.name, avatarOf(c));
-        else if (name) add(null, name, '');
+        else if (name) add(null, name, '', true);
     }
 
     return Array.from(byKey.values());
@@ -517,17 +544,22 @@ function renderGridCharactersRow(scene) {
     const shown = chars.slice(0, maxShow);
     const rest = chars.length - maxShow;
     const avatars = shown.map((c) => {
+        const stateCls = c.missing ? ' is-missing' : (c.missingRef ? ' is-no-ref' : '');
+        const tip = c.missing
+            ? `${c.name}（未在角色库中，生成分镜图将跳过该角色参考）`
+            : (c.missingRef ? `${c.name}（缺参考图，生成分镜图不使用该角色参考）` : c.name);
         if (c.avatar) {
-            return `<img class="card-char-avatar" src="${escapeHtml(getThumbnailUrl(c.avatar, 24))}" alt="${escapeHtml(c.name)}" title="${escapeHtml(c.name)}">`;
+            return `<img class="card-char-avatar${stateCls}" src="${escapeHtml(getThumbnailUrl(c.avatar, 24))}" alt="${escapeHtml(c.name)}" title="${escapeHtml(tip)}">`;
         }
         const initial = (c.name || '?').slice(0, 1);
-        return `<span class="card-char-avatar is-placeholder" title="${escapeHtml(c.name)}">${escapeHtml(initial)}</span>`;
+        return `<span class="card-char-avatar is-placeholder${stateCls}" title="${escapeHtml(tip)}">${escapeHtml(initial)}</span>`;
     }).join('');
-    const nameParts = shown.map((c) => c.name);
+    const nameParts = shown.map((c) => c.name + (c.missing ? '?' : ''));
     if (rest > 0) nameParts.push(`+${rest}`);
     const nameText = nameParts.join(' · ');
-    const fullTitle = chars.map((c) => c.name).join('、');
-    return `<div class="card-meta-row card-characters" title="${escapeHtml(fullTitle)}">
+    const hasAbnormal = chars.some((c) => c.missing || c.missingRef);
+    const fullTitle = chars.map((c) => c.name + (c.missing ? '（未入库）' : (c.missingRef ? '（缺参考图）' : ''))).join('、');
+    return `<div class="card-meta-row card-characters${hasAbnormal ? ' has-abnormal' : ''}" title="${escapeHtml(fullTitle)}">
         <span class="card-char-stack">${avatars}</span>
         <span class="card-meta-text">${escapeHtml(truncateText(nameText, 18))}</span>
     </div>`;
@@ -1298,10 +1330,14 @@ function videoRoleLabel(role, mode, index = 0) {
     return `图${index + 1}`;
 }
 
+/** 参考生视频（multi_reference）仍处 Beta 期，所有入口统一带此标识 */
+const REF_VIDEO_BETA_TAG = '<span class="beta-tag">Beta</span>';
+
 function renderVideoModeSelector(disabled) {
     const modes = getSupportedVideoImageModes();
     const mode = modes.includes(state.videoImageMode) ? state.videoImageMode : (modes[0] || 'first_last_frame');
     const modeLabel = mode === 'multi_reference' ? '全能参考' : '首尾帧';
+    const betaTag = mode === 'multi_reference' ? REF_VIDEO_BETA_TAG : '';
     const panelOpen = state.showVideoModePanel && !disabled;
     const options = [
         {
@@ -1313,8 +1349,9 @@ function renderVideoModeSelector(disabled) {
         {
             value: 'multi_reference',
             title: '全能参考',
-            desc: '多张图片作为综合参考驱动',
+            desc: '可不生成分镜图，直接用角色/场景/道具参考图生视频；若已有分镜图则一并作为主参考',
             emoji: '🖼',
+            beta: true,
         },
     ].filter(opt => modes.includes(opt.value));
 
@@ -1325,7 +1362,7 @@ function renderVideoModeSelector(disabled) {
                         data-action="set-video-image-mode" data-video-image-mode="${opt.value}" ${disabled ? 'disabled' : ''}>
                     <span class="video-mode-emoji">${opt.emoji}</span>
                     <span class="video-mode-texts">
-                        <strong>${opt.title}</strong>
+                        <strong>${escapeHtml(opt.title)}${opt.beta ? REF_VIDEO_BETA_TAG : ''}</strong>
                         <small>${opt.desc}</small>
                     </span>
                     ${mode === opt.value ? '<span class="video-mode-check">✓</span>' : ''}
@@ -1336,7 +1373,7 @@ function renderVideoModeSelector(disabled) {
     if (options.length <= 1) {
         return `
             <div class="video-mode-dropdown is-static" title="${escapeHtml(options[0]?.desc || '')}">
-                <span class="video-mode-static-label">${escapeHtml(modeLabel)}</span>
+                <span class="video-mode-static-label">${escapeHtml(modeLabel)}${betaTag}</span>
             </div>`;
     }
 
@@ -1346,6 +1383,7 @@ function renderVideoModeSelector(disabled) {
                     ${disabled ? 'disabled' : ''} title="视频图片模式">
                 ${icon('video', 14)}
                 <span>${escapeHtml(modeLabel)}</span>
+                ${betaTag}
             </button>
             ${panel}
         </div>`;
@@ -1388,11 +1426,15 @@ function renderMediaStack(disabled) {
         : '';
 
     if (!items.length) {
+        const emptyHint = mode === 'multi_reference' && !canRestore
+            ? '<div class="media-stack-hint">将使用分镜角色/场景/道具参考图</div>'
+            : '';
         return `
             <div class="media-stack is-empty">
                 <div class="media-stack-stage">
                     ${addBtn() || `<div class="media-stack-add" style="opacity:.4;pointer-events:none" title="当前模式无法添加图片">${mediaPlusSvg()}</div>`}
                 </div>
+                ${emptyHint}
                 ${restoreBtn}
                 <input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple>
             </div>`;
@@ -2139,9 +2181,34 @@ function renderScriptSplitModelConfig(disabled = false) {
     return html;
 }
 
+function renderSplitVideoGenMode(disabled = false) {
+    const mode = state.videoImageMode === 'multi_reference' ? 'multi_reference' : 'first_last_frame';
+    const options = [
+        { value: 'first_last_frame', title: '首帧生视频', desc: '先生成分镜图再出视频，单镜按构图切开' },
+        { value: 'multi_reference', title: '参考生视频', beta: true, desc: '不生分镜图；单镜尽量拉满模型时长，下一段会超限才切开' },
+    ];
+    return `
+        <div class="generate-from-script-model">
+            <label class="config-label">视频生成方式</label>
+            <div class="config-hint">${mode === 'multi_reference'
+                ? '参考生：拆完不自动补全首帧，批量用角色/场景/道具直接出视频'
+                : '首帧生：拆完可自动补全分镜图，再按首帧出视频'}</div>
+            <div class="config-chip-row">
+                ${options.map(opt => `
+                    <button type="button" class="config-chip ${mode === opt.value ? 'active' : ''}"
+                        data-action="set-split-video-gen-mode" data-video-image-mode="${opt.value}"
+                        ${disabled ? 'disabled' : ''} title="${escapeHtml(opt.desc)}">${escapeHtml(opt.title)}${opt.beta ? REF_VIDEO_BETA_TAG : ''}</button>
+                `).join('')}
+            </div>
+        </div>`;
+}
+
 function renderScriptSplitDuration(disabled = false) {
-    const durations = [5, 8, 10, 15];
-    const curDuration = durations.includes(Number(state.maxGroupDuration)) ? Number(state.maxGroupDuration) : 15;
+    clampMaxGroupDurationToSplitModel();
+    const durations = getSplitMaxShotDurationOptions();
+    const curDuration = durations.includes(Number(state.maxGroupDuration))
+        ? Number(state.maxGroupDuration)
+        : (durations[durations.length - 1] || 15);
     const durationOptions = durations.map(d =>
         `<option value="${d}" ${d === curDuration ? 'selected' : ''}>${d}秒</option>`
     ).join('');
@@ -2152,17 +2219,27 @@ function renderScriptSplitDuration(disabled = false) {
     const multiplierOptions = multipliers.map(m =>
         `<option value="${m}" ${m === curMultiplier ? 'selected' : ''}>${m === 0 ? '不限制' : `${m}倍`}</option>`
     ).join('');
-    const estimate = estimateScriptDurationSeconds(state.scriptContentForEstimate);
-    let totalDurationHint = '限制全部分镜的总时长：按剧本字数估算基准时长（朗读速率），N倍=基准时长×N';
+    const estimateInfo = estimateScriptDurationInfo(state.scriptContentForEstimate);
+    let totalDurationHint = '限制全部分镜的总时长：优先按剧本标注时长，其次按对白估算基准时长（朗读速率÷对白占比），N倍=基准时长×N';
     if (curMultiplier > 0) {
-        totalDurationHint = estimate > 0
-            ? `剧本估算约 ${formatDurationLabel(estimate)} × ${curMultiplier}倍 → 目标总分镜时长约 ${formatDurationLabel(estimate * curMultiplier)}`
-            : '正在按剧本字数估算基准时长...';
+        if (estimateInfo.seconds > 0) {
+            // 标注口径不除以对白占比（标注本身就是成片总时长）
+            const label = estimateInfo.source === 'declared' ? '剧本标注时长约'
+                : estimateInfo.source === 'dialogue' ? '剧本对白估算约' : '剧本估算约';
+            const targetSeconds = estimateInfo.source === 'dialogue'
+                ? estimateInfo.seconds * curMultiplier / DIALOGUE_SHARE_OF_TOTAL
+                : estimateInfo.seconds * curMultiplier;
+            totalDurationHint = `${label} ${formatDurationLabel(estimateInfo.seconds)} × ${curMultiplier}倍 → 目标总分镜时长约 ${formatDurationLabel(targetSeconds)}`;
+        } else {
+            totalDurationHint = '正在按剧本字数估算基准时长...';
+        }
     }
     return `
         <div class="generate-from-script-model">
-            <label class="config-label">镜头组时长</label>
-            <div class="config-hint">每个分镜组的最大总时长，超时会在同一场景内自动拆分</div>
+            <label class="config-label">单镜最长时长</label>
+            <div class="config-hint">${state.videoImageMode === 'multi_reference'
+                ? '参考生视频：每个分镜尽量接近此时长；再并入下一拍会超过才切开（不跨场/跨幕）'
+                : '首帧生视频：单镜与分镜组都不超过此时长，超时在同一场景内拆分'}</div>
             <div class="config-select-wrapper">
                 <select class="chat-mode-select" data-config-select="maxGroupDuration" ${disabled ? 'disabled' : ''}>${durationOptions}</select>
             </div>
@@ -2185,12 +2262,73 @@ function formatDurationLabel(seconds) {
     return s ? `${m}分${s}秒` : `${m}分钟`;
 }
 
+// 台词占成片总时长的经验比例，与后端 config/constant.py
+// ScriptSplitConstants.TOTAL_DURATION_DIALOGUE_SHARE 同值（修改时同步）
+const DIALOGUE_SHARE_OF_TOTAL = 0.6;
+
+// 剧本自述标注总时长（最高优先级口径）：与后端 llm/script_parser.py
+// extract_script_declared_duration_seconds 同规则（修改时三处同步）——
+// 「时长/预计时长/总时长/成片时长/片长/预计」关键词 + N秒/N分钟/N s/N min，
+// 或括号包裹的纯时长标注（30秒）/(1.5分钟)；取第一个有效匹配
+const DECLARED_DURATION_MIN_SECONDS = 5;
+const DECLARED_DURATION_MAX_SECONDS = 10800;
+const DECLARED_DURATION_KEYWORD_RE = /(?:预计时长|总时长|成片时长|片长|时长|预计)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)/gi;
+const DECLARED_DURATION_PAREN_RE = /[（(]\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)\s*[）)]/gi;
+const DECLARED_DURATION_MINUTE_UNITS = ['分钟', '分鐘', 'minute', 'minutes', 'min', 'mins'];
+
+/** 提取剧本自述的预计总时长（秒），无标注/超出有效区间返回 null */
+function extractScriptDeclaredDurationSeconds(text) {
+    if (!text) return null;
+    let best = null;
+    for (const re of [DECLARED_DURATION_KEYWORD_RE, DECLARED_DURATION_PAREN_RE]) {
+        for (const match of String(text).matchAll(re)) {
+            const value = parseFloat(match[1]);
+            if (!Number.isFinite(value)) continue;
+            const seconds = DECLARED_DURATION_MINUTE_UNITS.includes(match[2].toLowerCase()) ? value * 60 : value;
+            if (seconds < DECLARED_DURATION_MIN_SECONDS || seconds > DECLARED_DURATION_MAX_SECONDS) continue;
+            if (best === null || match.index < best.index) best = { index: match.index, seconds };
+            break;
+        }
+    }
+    return best ? best.seconds : null;
+}
+
+// 启发式台词行过滤规则，与后端 llm/script_parser.py extract_script_dialogue_text
+// 及 web/js/script_node.js 同一套规则（修改时三处同步）
+const DIALOGUE_HEADER_KEYWORD_RE = /^(?:时间|地点|人物|场景|幕|场|章节|备注|BGM|音效)\s*[:：]/i;
+const DIALOGUE_QUOTED_RE = /[“"「『]([^”"」』]*)[”"」』]/g;
+const DIALOGUE_PAREN_WRAPPED_RE = /^[（(][\s\S]*[）)]$/;
+
 /**
- * 按剧本字数估算基准时长（秒）。
- * 与后端 llm/script_parser.py estimate_script_duration_seconds 同公式：
- * CJK 4.5 字/秒、拉丁 11 字符/秒按占比混合，下限 10 秒（修改时两处同步）。
+ * 启发式从剧本文本过滤台词/旁白：跳过空行、[ / 【 / # / 场景编号 开头行、
+ * 整行括号包裹行、头部关键词+冒号元信息行；「角色：台词」行只取第一个冒号
+ * 后的正文；无冒号非括号行只取成对引号（“”、"…"、「」、『』）内的文字，
+ * 无引号则整行计入。整篇零匹配时返回空串（调用方回退整篇估算）。
  */
-export function estimateScriptDurationSeconds(text) {
+function extractScriptDialogueText(text) {
+    const parts = [];
+    for (const rawLine of String(text || '').split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        if ('[【#'.includes(line[0]) || line.startsWith('场景编号')) continue;
+        if (DIALOGUE_PAREN_WRAPPED_RE.test(line)) continue;
+        if (DIALOGUE_HEADER_KEYWORD_RE.test(line)) continue;
+        const colonPositions = [line.indexOf(':'), line.indexOf('：')].filter(p => p >= 0);
+        if (colonPositions.length) {
+            const body = line.slice(Math.min(...colonPositions) + 1).trim();
+            if (body) parts.push(body);
+            continue;
+        }
+        const quoted = (line.match(DIALOGUE_QUOTED_RE) || [])
+            .map(item => item.slice(1, -1).trim())
+            .filter(Boolean);
+        if (quoted.length) parts.push(...quoted); else parts.push(line);
+    }
+    return parts.join('\n');
+}
+
+/** 非空白字符数 ÷ 语种混合朗读速率（CJK 4.5 字/秒、拉丁 11 字符/秒），下限 10 秒 */
+function scriptTextDurationSeconds(text) {
     const chars = String(text || '').replace(/\s+/g, '');
     if (!chars.length) return 0;
     let cjk = 0;
@@ -2204,6 +2342,34 @@ export function estimateScriptDurationSeconds(text) {
     const ratio = cjk / chars.length;
     const rate = ratio * 4.5 + (1 - ratio) * 11.0;
     return Math.max(10, Math.round((chars.length / rate) * 10) / 10);
+}
+
+/**
+ * 估算剧本基准时长：返回 {seconds, source}。
+ * source 优先级：declared（剧本自述标注总时长）→ dialogue（启发式台词口径）
+ * → fulltext（整篇估算回退），与后端 compute_total_duration_target_seconds
+ * 的口径顺序一致。
+ */
+function estimateScriptDurationInfo(text) {
+    const declared = extractScriptDeclaredDurationSeconds(text);
+    if (declared !== null) {
+        return { seconds: declared, source: 'declared' };
+    }
+    const dialogue = extractScriptDialogueText(text);
+    if (dialogue.trim().length > 0) {
+        return { seconds: scriptTextDurationSeconds(dialogue), source: 'dialogue' };
+    }
+    return { seconds: scriptTextDurationSeconds(text), source: 'fulltext' };
+}
+
+/**
+ * 按台词估算剧本基准时长（秒）。
+ * 与后端 llm/script_parser.py estimate_script_dialogue_seconds 同公式：
+ * 启发式过滤台词后按 CJK 4.5 字/秒、拉丁 11 字符/秒混合速率换算，下限 10 秒；
+ * 整篇零匹配回退整篇估算（修改时与 web/js/script_node.js、后端三处同步）。
+ */
+export function estimateScriptDurationSeconds(text) {
+    return estimateScriptDurationInfo(text).seconds;
 }
 
 // 渲染剧本拆分的高级选项：语言 + 拆分开关（与 video_workflow 剧本节点保持一致）
@@ -2313,6 +2479,7 @@ function renderGenerateFromScriptDialog() {
     const splitModelConfig = renderScriptSplitModelConfig(busy);
     const imageModelConfig = renderImageModelConfig(busy, { collapseTextToImage: true });
     const videoModelConfig = renderDefaultVideoModelConfig(busy);
+    const splitVideoGenMode = renderSplitVideoGenMode(busy);
     const splitDurationConfig = renderScriptSplitDuration(busy);
     const splitOptionsConfig = renderScriptSplitOptions(busy);
     const isEnterprise = state.editionInfo?.mode === 'enterprise';
@@ -2377,6 +2544,7 @@ function renderGenerateFromScriptDialog() {
                     </div>
                     <div class="gfs-col">
                         ${splitOptionsConfig}
+                        ${splitVideoGenMode}
                         ${splitDurationConfig}
                     </div>
                     <div class="gfs-mode-section">
@@ -2666,16 +2834,29 @@ function renderFaceMaskToggle(disabled = false) {
 
 /** 拆分弹窗：默认视频模型（仅首帧/首尾帧图生视频）+ 分辨率 + 条件人脸遮盖 */
 function renderDefaultVideoModelConfig(disabled = false) {
-    // 分辨率与齿轮弹窗同源：绑定「图生视频模型」，随模型切换自动校正
+    const isRef = state.videoImageMode === 'multi_reference';
+    const model = getSplitVideoModel();
     const resolutionChips = disabled
         ? ''
-        : renderVideoResolutionChips(getSelectedImageToVideoModel(), {
+        : renderVideoResolutionChips(model, {
             label: '分辨率',
-            hint: '分镜生成视频时使用的分辨率偏好；随上方图生视频模型变化',
+            hint: isRef
+                ? '参考生视频分辨率；随上方参考视频模型变化'
+                : '分镜生成视频时使用的分辨率偏好；随上方图生视频模型变化',
         });
+    if (isRef) {
+        return renderMediaModelSelect(
+            '默认视频模型',
+            '参考生视频使用此模型；单镜尽量拉满其最长支持时长',
+            'referenceToVideo',
+            getReferenceToVideoSlotModels(),
+            state.selectedReferenceToVideoTaskId,
+            disabled,
+        ) + resolutionChips + renderFaceMaskToggle(disabled);
+    }
     return renderMediaModelSelect(
         '默认视频模型',
-        '分镜有首帧时用于生成视频；仅列出支持首帧/首尾帧的模型。参考图专用模型请到齿轮「参考视频模型」中选择',
+        '分镜有首帧时用于生成视频；仅列出支持首帧/首尾帧的模型',
         'imageToVideo',
         getImageToVideoSlotModels(),
         state.selectedImageToVideoTaskId,
@@ -2902,7 +3083,7 @@ function renderVideoBatchConfirmDialog() {
         <div class="modal-overlay" data-modal="video-batch-confirm">
             <div class="edit-dialog video-type-switch-dialog" role="dialog" aria-modal="true" aria-labelledby="video-batch-confirm-title">
                 <header>
-                    <h2 id="video-batch-confirm-title">批量生成视频确认</h2>
+                    <h2 id="video-batch-confirm-title">${state.videoImageMode === 'multi_reference' ? '全能参考逐个生成视频确认' : '逐个生成视频确认'}</h2>
                     <button type="button" data-action="cancel-video-batch-submit" ${busy ? 'disabled' : ''}>${icon('close', 18)}</button>
                 </header>
                 <div class="video-type-switch-dialog-body">${bodyHtml}</div>

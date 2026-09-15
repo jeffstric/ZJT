@@ -1326,6 +1326,10 @@ class FileManager:
         if not match:
             return None
         filename = match.group(1)
+        # 路径穿越防护：只允许纯文件名，拒绝目录分隔符/父目录引用/空字节，
+        # 否则导出时可借此读取项目内任意文件
+        if any(s in filename for s in ('/', '\\', '..', '\x00')):
+            return None
         ext = os.path.splitext(filename)[1].lower()
         if ext not in self._AUDIO_EXTENSIONS:
             return None
@@ -1351,6 +1355,10 @@ class FileManager:
             return None
         image_type = match.group(1)  # character / location / props
         filename = match.group(2)    # uuid.png
+        # 路径穿越防护：只允许纯文件名，拒绝目录分隔符/父目录引用/空字节，
+        # 否则导出时可借此读取项目内任意文件（如 /upload/character/pic/../../config/xxx）
+        if any(s in filename for s in ('/', '\\', '..', '\x00')):
+            return None
         file_path = self.base_dir / UploadPathConstants.UPLOAD_ROOT / image_type / "pic" / filename
         if file_path.exists():
             return (image_type, filename, file_path)
@@ -1534,6 +1542,92 @@ class FileManager:
 
         logger.info(f"世界导出完成: {zip_path} (图片 {len(collected_images)} 张, 音频 {len(collected_audios)} 个)")
         return str(zip_path)
+
+    def export_world_docx(self, user_id: str, world_id: str) -> str:
+        """
+        将世界完整数据（大纲/剧本/角色/场景/道具 + 图片）生成为 Word 文档
+
+        与 export_world 共用同一套磁盘 JSON 数据源；图片通过
+        _collect_image_from_url 解析到本地路径后直接嵌入 docx。
+
+        Args:
+            user_id: 用户ID
+            world_id: 世界ID
+
+        Returns:
+            docx 文件的临时路径
+        """
+        base_path = self._get_user_world_path(user_id, world_id)
+        if not base_path.exists():
+            raise FileNotFoundError(f"世界目录不存在: {base_path}")
+
+        # 延迟导入：python-docx 仅导出 Word 时需要，避免影响 file_manager 主链路
+        from script_writer_core.world_docx import build_world_docx
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        world_data = self.get_world_json(user_id, world_id)
+        world_name = (world_data.get('name') or '').strip() if world_data else ''
+        if world_name:
+            safe_name = re.sub(r'[<>:"/\\|?*]', '_', world_name)
+            safe_name = re.sub(r'\s+', '_', safe_name).strip('._')
+            if len(safe_name) > 50:
+                safe_name = safe_name[:50]
+            doc_name = f"{safe_name}_{timestamp}.docx" if safe_name else f"world_doc_{world_id}_{timestamp}.docx"
+        else:
+            doc_name = f"world_doc_{world_id}_{timestamp}.docx"
+        doc_path = Path(tempfile.gettempdir()) / doc_name
+
+        def _read_subdir(subdir: str) -> List[dict]:
+            subdir_path = base_path / subdir
+            items: List[dict] = []
+            if not subdir_path.exists():
+                return items
+            for json_file in sorted(subdir_path.glob('*.json')):
+                try:
+                    items.append(json.loads(json_file.read_text(encoding='utf-8')))
+                except Exception as e:
+                    logger.warning(f"读取 {json_file} 失败: {e}")
+            return items
+
+        characters = _read_subdir('characters')
+        locations = _read_subdir('locations')
+        props = _read_subdir('props')
+        scripts = _read_subdir('scripts')
+
+        # 收集各实体的图片 URL → 本地路径
+        images: Dict[str, str] = {}
+
+        def _entity_image_urls(entity: dict) -> List[str]:
+            urls: List[str] = []
+            ref = entity.get('reference_image')
+            if isinstance(ref, str) and ref:
+                urls.append(ref)
+            rimgs = entity.get('reference_images')
+            if isinstance(rimgs, list):
+                for ri in rimgs:
+                    if isinstance(ri, dict) and isinstance(ri.get('url'), str) and ri['url']:
+                        urls.append(ri['url'])
+            return urls
+
+        for entity in characters + locations + props:
+            for url in _entity_image_urls(entity):
+                if url in images:
+                    continue
+                collected = self._collect_image_from_url(url)
+                if collected:
+                    images[url] = str(collected[2])
+
+        build_world_docx({
+            "world": world_data,
+            "characters": characters,
+            "locations": locations,
+            "props": props,
+            "scripts": scripts,
+            "images": images,
+        }, str(doc_path))
+
+        logger.info(f"世界 Word 文档导出完成: {doc_path} (图片 {len(images)} 张)")
+        return str(doc_path)
 
     def _restore_image_urls(self, data: Any, reverse_mapping: Dict[str, str],
                               uploaded: Dict[str, str], upload_base: Path,

@@ -11,9 +11,10 @@ from task.audio_task import generate_audio_task
 from task.token_task import process_token_task
 from task.download_queue_task import process_download_queue
 from functools import partial
-from config.constant import StoryboardAutoGenerateConstants, VoiceReplaceConstants
+from config.constant import StoryboardAutoGenerateConstants, VoiceReplaceConstants, Edition
 
 from config.constant import DOWNLOAD_POLL_INTERVAL
+from config.constant import LICENSE_REBOOTSTRAP_INTERVAL_SECONDS
 
 
 logging.basicConfig(level=logging.INFO)
@@ -451,6 +452,25 @@ def init_scheduler(app):
         max_instances=1,
         coalesce=True,
     )
+
+    # 商业许可证周期续租（仅商业版注册；开源版无商业许可证概念，注册亦被跳过）：
+    # scheduler 等非 ASGI 进程的事件循环是短生命周期的，无法常驻后台续租任务，
+    # 进程启动时获取的短期许可证租约（约 24h）到期后商业能力全部失效
+    # （2026-09-15 生产事故：结果交付链路被卡、任务积压，每天租约到期时刻复发），
+    # 必须由本 job 周期触发续租门面。具体续租实现由商业版仓库注册，
+    # 主仓门面在社区版为空操作。
+    if not Edition.is_community():
+        from task.license_rebootstrap_task import rebootstrap_commercial_license
+        logger.info(f'启用商业许可证周期重 bootstrap（间隔 {LICENSE_REBOOTSTRAP_INTERVAL_SECONDS} 秒）')
+        scheduler.add_job(
+            func=rebootstrap_commercial_license,
+            trigger=IntervalTrigger(seconds=LICENSE_REBOOTSTRAP_INTERVAL_SECONDS),
+            id='commercial_license_rebootstrap',
+            name=f'Rebootstrap commercial license every {LICENSE_REBOOTSTRAP_INTERVAL_SECONDS} seconds',
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
 
     logger.info('启用音频生成任务')
     scheduler.add_job(

@@ -197,8 +197,10 @@ Split linked script into storyboard scenes:
 ```bash
 curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/split-from-script" \
   -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"storyboard_id":10,"model":"deepseek-v4-flash","model_id":11,"vendor_id":4,"max_group_duration":15}'
+  -d '{"storyboard_id":10,"model":"deepseek-v4-flash","model_id":11,"vendor_id":4,"max_group_duration":15,"video_gen_mode":"multi_reference","max_shot_duration":15}'
 ```
+
+`video_gen_mode`：`first_last_frame`（默认，先画分镜图）或 `multi_reference`（参考生视频：不生分镜图，同一场短镜打包到 `max_shot_duration`，默认与 `max_group_duration` 相同）。参考生拆完不要再跑 `auto-generate-missing-images`，直接 `generate-video` + `image_mode=multi_reference`。
 
 `model` is **required** on the CLI/agent path (the server no longer falls back to a default model here). Call `list-llm-models` first to pick a reachable model, and pass `model_id` + `vendor_id` to pin the exact route when the same name is served by multiple vendors. If the storyboard already has scenes, the command returns `scenes_exist` (re-splitting an already-populated storyboard is not allowed) — create a new storyboard from the script, or clear existing scenes first.
 
@@ -398,6 +400,14 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/generate-video" \
   -d '{"scene_id":123,"mode":"image_to_video","image_mode":"first_last_frame","duration_seconds":5}'
 ```
 
+`image_mode=multi_reference` 不要求已有首帧：后端自动收集角色/场景/道具/画风参考图。无任何参考图时该命令回退 `text_to_video`。
+
+```bash
+curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/generate-video" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"scene_id":123,"mode":"image_to_video","image_mode":"multi_reference","duration_seconds":5}'
+```
+
 Query one scene status:
 
 ```bash
@@ -437,6 +447,7 @@ python -m scripts.storyboard_agent_cli list-worlds --user-id 1
 python -m scripts.storyboard_agent_cli world-context --world-id 1 --user-id 1
 python -m scripts.storyboard_agent_cli world-context --world-id 1 --user-id 1 --include-full-story-outline
 python -m scripts.storyboard_agent_cli get-script --script-id 20 --user-id 1
+python -m scripts.storyboard_agent_cli split-from-script --storyboard-id 10 --user-id 1 --auth-token "<auth_token>" --model deepseek-v4-flash --video-gen-mode multi_reference --max-shot-duration 15
 python -m scripts.storyboard_agent_cli list-scenes --storyboard-id 10 --user-id 1
 python -m scripts.storyboard_agent_cli insert-scene --storyboard-id 10 --user-id 1 --after-scene-id 123 --title "Reaction shot" --duration 4 --prompt-json '{"scene_desc":"A quiet reaction shot."}'
 python -m scripts.storyboard_agent_cli update-scene --scene-id 123 --user-id 1 --duration 8 --title "Reaction shot"

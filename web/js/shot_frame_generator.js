@@ -76,17 +76,17 @@ async function collectShotFrameRefImages(node) {
             const result = await response.json();
             if (result.code === 0 && result.data && Array.isArray(result.data.data)) {
               const characters = result.data.data;
-              if (characters.length > 0) {
-                const matchedChar = characters.find(c => c.name === characterName) || characters[0];
-                const userSelectedCharUrl = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[characterName]);
-                const charRefUrl = userSelectedCharUrl || (matchedChar && matchedChar.reference_image);
-                if (charRefUrl) {
-                  referenceImageUrls.push(charRefUrl);
-                  const labelDesc = userSelectedCharUrl && userSelectedCharUrl !== matchedChar?.reference_image
-                    ? `的${(node.data.selectedCharRefImageLabels && node.data.selectedCharRefImageLabels[characterName]) || '已选择'}` : '';
-                  promptSuffix.push(`图${imageIndex}是${characterName}${labelDesc}`);
-                  imageIndex++;
-                }
+              // 只按全名精确匹配。keyword 是 LIKE 模糊搜索，禁止拿第一条命中
+              // 兜底（会挂错参考图）；匹配不到的角色按"不存在"处理，保留用户手选图。
+              const matchedChar = characters.find(c => c.name === characterName) || null;
+              const userSelectedCharUrl = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[characterName]);
+              const charRefUrl = userSelectedCharUrl || (matchedChar && matchedChar.reference_image);
+              if (charRefUrl) {
+                referenceImageUrls.push(charRefUrl);
+                const labelDesc = userSelectedCharUrl && userSelectedCharUrl !== matchedChar?.reference_image
+                  ? `的${(node.data.selectedCharRefImageLabels && node.data.selectedCharRefImageLabels[characterName]) || '已选择'}` : '';
+                promptSuffix.push(`图${imageIndex}是${characterName}${labelDesc}`);
+                imageIndex++;
               } else {
                 missingCharacters.add(characterName);
               }
@@ -178,6 +178,12 @@ async function generateShotFrameImage(nodeId, node){
     }
 
     const { referenceImageUrls, promptSuffix, missingCharacters } = await collectShotFrameRefImages(node);
+
+    // 提示词中的角色在角色库查不到：可见提示（不再静默剥标记），
+    // 引导用户先入库/改名，避免生成的画面缺少该角色参考导致形象不一致
+    if (missingCharacters.size > 0) {
+      showToast(`角色 ${Array.from(missingCharacters).join('、')} 不在角色库中，已移除其标记并将跳过对应参考图`, 'warning');
+    }
 
     // 移除不存在角色的标记
     const sanitizedPrompt = removeMissingCharacterMarkers(imagePrompt, missingCharacters);

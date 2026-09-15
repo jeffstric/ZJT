@@ -519,13 +519,9 @@ async function handleAgentClick() {
   if (!ensureLoggedIn()) return;
 
   try {
-    const authToken = getAuthToken();
     const userId = getUserId();
 
-    // 将 auth_token 存储到 localStorage，避免在 URL 中暴露
-    localStorage.setItem('auth_token', authToken);
-
-    // 直接跳转到内部路由（不传递 auth_token）
+    // 兼容期凭据在 localStorage.auth_token + HttpOnly cookie；不要把空 token 写回
     const url = `/script-writer?user_id=${encodeURIComponent(userId)}`;
 
     // 打开新窗口

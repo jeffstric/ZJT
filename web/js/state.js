@@ -56,6 +56,11 @@
       selectionMode: false,
       selecting: null,
       selectedNodeIds: [],
+      groups: [],               // 画布视觉分组 [{id, title, x, y, w, h, nodeIds}]，随 workflow_data 持久化
+      nextGroupId: 1,
+      selectedGroupId: null,    // 当前选中的组（与节点选中互斥）
+      clipboard: null,          // 页面内存剪贴板 {nodes, connections, pasteCount}
+      lastMouseWorldPos: null,  // 最近鼠标所在画布坐标（粘贴定位锚点）
       topZIndex: 21,
       history: [],
       historyPointer: -1,

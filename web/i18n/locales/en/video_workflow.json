@@ -372,7 +372,7 @@
   "duration_10s": "10 seconds",
   "duration_15s": "15 seconds",
   "image_to_video_output_port": "Output (Connect to Video node)",
-  "image_mode_label": "Image Mode",
+  "image_mode_label": "Generation Mode",
   "image_mode_first_last": "First & Last Frame Mode",
   "image_mode_multi_ref": "Multi-Reference Mode",
   "image_mode_text_to_video": "Text to Video",

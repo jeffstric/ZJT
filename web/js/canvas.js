@@ -111,6 +111,7 @@
     function setSelected(id){
       state.selectedNodeId = id;
       state.selectedNodeIds = id ? [id] : [];
+      if(typeof deselectGroup === 'function' && state.selectedGroupId != null) deselectGroup();
       for(const nodeEl of canvasEl.querySelectorAll('.node')){
         const nid = Number(nodeEl.dataset.nodeId);
         nodeEl.classList.toggle('selected', nid === id);
@@ -161,6 +162,7 @@
     function clearSelection(){
       setSelected(null);
       state.selectedNodeIds = [];
+      if(typeof deselectGroup === 'function' && state.selectedGroupId != null) deselectGroup();
       for(const nodeEl of canvasEl.querySelectorAll('.node')){
         nodeEl.classList.remove('selected');
       }
@@ -172,6 +174,7 @@
     function setMultipleSelected(nodeIds){
       state.selectedNodeIds = nodeIds;
       state.selectedNodeId = nodeIds.length === 1 ? nodeIds[0] : null;
+      if(typeof deselectGroup === 'function' && state.selectedGroupId != null) deselectGroup();
       for(const nodeEl of canvasEl.querySelectorAll('.node')){
         const nid = Number(nodeEl.dataset.nodeId);
         nodeEl.classList.toggle('selected', nodeIds.includes(nid));
@@ -250,9 +253,14 @@
 
     function finalizeNodePlacing(){
       if(!state.placing) return;
+      const placedNodeId = state.placing.nodeId;
       state.placing = null;
       canvasContainer.classList.remove('placing');
       renderMinimap();
+      // 放置落点在分组框内时自动加入该组
+      if(typeof updateNodeGroupMembership === 'function'){
+        updateNodeGroupMembership(placedNodeId);
+      }
       captureHistorySnapshot();
     }
 
@@ -492,6 +500,10 @@
       // 删除节点
       state.nodes = state.nodes.filter(n => n.id !== id);
       state.connections = state.connections.filter(c => c.from !== id && c.to !== id);
+      // 同步清理该节点在各分组中的成员归属（组内无成员时组框保留）
+      if(typeof removeNodeIdFromGroups === 'function'){
+        removeNodeIdFromGroups(id, { skipSave: true });
+      }
       // 节点自定义资源清理钩子（如全景查看器的 WebGL 上下文销毁）
       if(node && typeof node.onDestroy === 'function'){
         try{ node.onDestroy(); }catch(e){ console.warn('节点 onDestroy 钩子执行失败:', e); }

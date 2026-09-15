@@ -10,6 +10,8 @@
     const API_ROOT = '/api/admin/user-modules';
     const POLL_INTERVAL_MS = 1500;
     const DEFAULT_COMFYUI_BASE_URL = 'http://localhost:8188/';
+    // 与后端 USER_MODULE_REQUIREMENT_MAX_LENGTH（config/unified_config.py）保持一致
+    const USER_MODULE_REQUIREMENT_MAX = 50000;
     const TERMINAL_AGENT_STATES = new Set(['completed', 'failed', 'cancelled', 'done', 'succeeded']);
     const WRITABLE_GENERATION_STATES = new Set(['draft', 'validation_failed', 'validated', 'runtime_validation_failed']);
 
@@ -164,9 +166,18 @@
                 if (form.connector === 'local_comfyui') {
                     return Boolean(form.comfyuiBaseUrl.trim())
                         && Boolean(form.workflowJson)
-                        && form.requirement.length <= 20000;
+                        && form.requirement.length <= USER_MODULE_REQUIREMENT_MAX;
                 }
-                return form.requirement.trim().length >= 10 && form.requirement.length <= 20000;
+                return form.requirement.trim().length >= 10 && form.requirement.length <= USER_MODULE_REQUIREMENT_MAX;
+            },
+            userModuleRequirementMax() {
+                return USER_MODULE_REQUIREMENT_MAX;
+            },
+            userModuleRequirementOverLimit() {
+                return this.userModuleCreateModal.requirement.length > USER_MODULE_REQUIREMENT_MAX;
+            },
+            userModuleRequirementOverCount() {
+                return Math.max(0, this.userModuleCreateModal.requirement.length - USER_MODULE_REQUIREMENT_MAX);
             },
             userModuleAgentTerminal() {
                 return TERMINAL_AGENT_STATES.has(String(this.userModuleAgentModal.status || '').toLowerCase());

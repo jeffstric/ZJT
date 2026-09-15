@@ -23,19 +23,21 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-# ==================== verify_auth_token ====================
+# ==================== verify_auth_token（本地强校验） ====================
 
-def test_verify_auth_token_empty_token_passes():
+def test_verify_auth_token_empty_token_rejected():
+    """安全修复：空 token 不再放行，一律拒绝"""
     ok, resp = _run(script_writer.verify_auth_token("1", ""))
-    assert ok is True
-    assert resp is None
+    assert ok is False
+    assert resp['error_code'] == ERROR_CODE_TOKEN_EXPIRED
+    assert resp['token_expired'] is True
 
 
-def test_verify_auth_token_no_valid_token_is_confirmed_expired(monkeypatch):
-    async def fake_request(endpoint=None, data=None, method='POST', headers=None):
-        return False, '未找到有效的token', {'error_code': PERSEIDS_ERR_NO_VALID_TOKEN}
-
-    monkeypatch.setattr(script_writer, 'async_make_perseids_request', fake_request)
+def test_verify_auth_token_invalid_token_is_expired(monkeypatch):
+    monkeypatch.setattr(
+        script_writer.UserTokensModel, 'get_user_id_by_token',
+        staticmethod(lambda token: None),
+    )
 
     ok, resp = _run(script_writer.verify_auth_token("1", "tok"))
     assert ok is False
@@ -43,12 +45,36 @@ def test_verify_auth_token_no_valid_token_is_confirmed_expired(monkeypatch):
     assert resp['token_expired'] is True
 
 
-def test_verify_auth_token_service_failure_is_not_token_expired(monkeypatch):
-    """无 error_code 的失败（服务故障）不得误报 token 失效"""
-    async def fake_request(endpoint=None, data=None, method='POST', headers=None):
-        return False, '查询token失败', {}
+def test_verify_auth_token_owner_mismatch_rejected(monkeypatch):
+    """安全修复：token 属主与声明 user_id 不一致必须拒绝（原实现仅查 user 是否有 token）"""
+    monkeypatch.setattr(
+        script_writer.UserTokensModel, 'get_user_id_by_token',
+        staticmethod(lambda token: 999),
+    )
 
-    monkeypatch.setattr(script_writer, 'async_make_perseids_request', fake_request)
+    ok, resp = _run(script_writer.verify_auth_token("1", "tok-of-user-999"))
+    assert ok is False
+    assert resp['error_code'] == ERROR_CODE_TOKEN_EXPIRED
+
+
+def test_verify_auth_token_owner_match_passes(monkeypatch):
+    monkeypatch.setattr(
+        script_writer.UserTokensModel, 'get_user_id_by_token',
+        staticmethod(lambda token: 1),
+    )
+
+    ok, resp = _run(script_writer.verify_auth_token("1", "tok-of-user-1"))
+    assert ok is True
+    assert resp is None
+
+
+def test_verify_auth_token_db_failure_is_service_unavailable(monkeypatch):
+    """本地 DB 异常视为服务不可用（502），不得误报 token 失效"""
+    def boom(token):
+        raise RuntimeError('db down')
+
+    monkeypatch.setattr(script_writer.UserTokensModel, 'get_user_id_by_token',
+                        staticmethod(boom))
 
     ok, resp = _run(script_writer.verify_auth_token("1", "tok"))
     assert ok is False
@@ -56,15 +82,31 @@ def test_verify_auth_token_service_failure_is_not_token_expired(monkeypatch):
     assert 'token_expired' not in resp
 
 
-def test_verify_auth_token_exception_is_service_unavailable(monkeypatch):
-    async def fake_request(endpoint=None, data=None, method='POST', headers=None):
-        raise RuntimeError('db down')
+class _DummyRequest:
+    def __init__(self, authorization=""):
+        self.headers = {"authorization": authorization}
 
-    monkeypatch.setattr(script_writer, 'async_make_perseids_request', fake_request)
 
-    ok, resp = _run(script_writer.verify_auth_token("1", "tok"))
-    assert ok is False
-    assert resp['error_code'] == ERROR_CODE_AUTH_SERVICE_UNAVAILABLE
+def test_resolve_request_auth_token_header_wins_over_stale_session():
+    """cookie 翻译后的 header 必须压过会话里已作废的旧 token。"""
+    request = _DummyRequest("Bearer cookie-fresh")
+    assert script_writer.resolve_request_auth_token(
+        request, body_token="", session_token="stale-session-token"
+    ) == "cookie-fresh"
+
+
+def test_resolve_request_auth_token_empty_body_does_not_mask_header():
+    request = _DummyRequest("Bearer cookie-fresh")
+    assert script_writer.resolve_request_auth_token(
+        request, body_token="", session_token=""
+    ) == "cookie-fresh"
+
+
+def test_resolve_request_auth_token_falls_back_to_session():
+    request = _DummyRequest("Bearer ")
+    assert script_writer.resolve_request_auth_token(
+        request, body_token="", session_token="session-tok"
+    ) == "session-tok"
 
 
 def test_auth_error_status_code_routing():

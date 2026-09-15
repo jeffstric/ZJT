@@ -36,11 +36,9 @@ export function buildStoryboardUrl(folder) {
   return `/storyboard?${params.toString()}`;
 }
 
-function escapeHtml(value) {
-  const div = document.createElement('div');
-  div.textContent = value == null ? '' : String(value);
-  return div.innerHTML;
-}
+// 转义统一收敛到 web/js/escape.js（window.escapeHtml）。
+// 旧 textContent→innerHTML 实现不转义引号，在属性上下文可被逃逸，已废弃。
+const escapeHtml = window.escapeHtml;
 
 function formatDate(value) {
   if (!value) return '-';
@@ -169,7 +167,9 @@ async function deleteStoryboard(id) {
 
 async function init() {
   const container = document.getElementById('storyboardFolderContainer');
-  if (!getAuthToken() || !getUserId()) {
+  // 兼容期双写：登录态以 localStorage.auth_token 为准
+  const loggedIn = !!getAuthToken();
+  if (!loggedIn || !getUserId()) {
     window.location.href = '/?login=1&redirect_url=storyboard-list';
     return;
   }

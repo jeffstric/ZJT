@@ -389,6 +389,21 @@ auth (无依赖)
 
 注意：CAS 内容哈希只覆盖 `workflow_data`/`style`/`style_reference_image`/`default_world_id`/`workflow_ratio`（`name` 与 `viewport` 不参与），测试中推进哈希需用参与哈希的字段。
 
+## e2e 全量失败排查记录（2026-09-15）
+
+一次 `python -m pytest auto_test/e2e -v` 大面积失败（401 跳登录页 / 502）的根因与修复：
+
+| 现象 | 根因 | 修复 |
+|------|------|------|
+| 全部用例 502/ERR_CONNECTION_REFUSED | `test_config.json` 的 `base_url` 指向已停止的 9003 实例；本仓库实例在 **19003**（`config_prod.yml`） | `base_url` 改 `http://127.0.0.1:19003` |
+| `test_script_writer.py` 批量跳 `?login=1` | 真鉴权上线（58e459fb）后，`script_writer.js` 约 13 处 `-files` 接口 `fetch` 未带 `Authorization`（POST 仅 body 里带 `auth_token`，装饰器不读 body）→ 401 → `checkTokenExpired` 整页跳登录 | 全部补 `Authorization: Bearer`（见 `docs/backend/auth_unification.md` 四） |
+| `test_marketing_agent.py` 29 例跳登录 | `marketing_agent.js` 裸 `fetch` `GET /api/session/{id}/latest-task`（已挂 `require_permission`）无头 → 401 跳登录 | 补 `Authorization: Bearer` |
+| `test_node_operations.py` 6 例节点创建/选项失败 | 两个独立 bug 叠加：① `workflow.js`/`events.js` 裸 `fetch` `/api/computing-power-config`、`/api/config/upload`（已挂 `require_permission`）无头 → 401，驱动状态/模型选项加载失败；② **CSS 层叠 bug**：`.add-btn-container`(z-45) 低于 `.brand-floating`(z-46)，添加菜单顶部条目被顶栏 `worldSearchTrigger` 遮挡无法点击（真实用户也可复现） | ①补 `Authorization: Bearer`（`getAuthToken()`）；② `.add-btn-container` z-index 45→47（`web/css/video_workflow.css`） |
+| `test_marketing_agent_image_upload` 跳登录 | `marketing_agent.js`（5 处）/`marketing_inspiration.js`（1 处）`upload-agent-*` 上传 `fetch` 仅把 `auth_token` 放 FormData，未带 `Authorization` 头 → 401 跳登录 | 全部补 `Authorization: Bearer` 头 |
+| `test_auth.py::test_logout_success` 401 | 单会话策略：`test_login_success` 的次账号登录顶掉了 session 级 `secondary_auth_token` | 该用例改为用例内新登录拿 fresh token 再登出 |
+
+经验：e2e 期间**不要手动登录**测试账号（单会话策略会顶掉 pytest 持有的 token）；401 跳登录页先区分"token 真失效"与"前端漏带 Authorization 头"（headless 复现 + 抓 4xx 响应即可定位）。
+
 不建议 e2e 覆盖（依赖外部服务/真实触发条件，本测试环境不可达）：内容审核违规原文透出（4db4491c）、TTS 语速滑杆（93224407）、MiniMax H3 文生视频驱动（c28003b2）、小米 MiMo 供应商（432f9cb5）——相关行为由 `tests/` 单测与前端 vitest 覆盖。
 
 ## 两种测试方案对比

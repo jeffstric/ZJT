@@ -1294,16 +1294,10 @@ const AdminApp = {
 
         // 初始化认证
         initAuth() {
+            // 兼容期双写：优先读 localStorage.auth_token；无 token 时 verifyAdmin
+            // 仍可走 cookie 翻译（管理接口走 Authorization 头）。
             this.authToken = localStorage.getItem('auth_token') || '';
-            
-            if (!this.authToken) {
-                this.showToast(this.t('toast_login_required'), 'error');
-                setTimeout(() => {
-                    window.location.href = '/?login=1&redirect_url=/admin';
-                }, 1500);
-                return;
-            }
-            
+
             // 验证管理员权限
             this.verifyAdmin();
         },
@@ -1449,7 +1443,7 @@ const AdminApp = {
         // 显式加载一次许可证状态（用于切到 dashboard 时刷新卡片）。
         async loadLicenseStatus() {
             if (!this.licenseControlAvailable) return;
-            if (!this.authToken) return;
+            if (!this.authToken && localStorage.getItem('logged_in') !== '1') return;
             this.licenseStatus.loading = true;
             try {
                 const response = await axios.get(
@@ -1476,7 +1470,7 @@ const AdminApp = {
             // 许可证控制面未完整注册时跳过，避免社区版和注册失败状态打 404。
             if (!this.licenseControlAvailable) return;
             if (this.licenseStatusInFlight) return;
-            if (!this.authToken) return;
+            if (!this.authToken && localStorage.getItem('logged_in') !== '1') return;
             this.licenseStatusInFlight = true;
             try {
                 const response = await axios.get(
@@ -1518,7 +1512,7 @@ const AdminApp = {
         // 三个操作的公共实现：POST 后用最新 status 覆盖本地状态并提示。
         async _postLicenseAction(url, actionKey) {
             if (!this.licenseControlAvailable) return;
-            if (!this.authToken || this.licenseStatusInFlight) return;
+            if ((!this.authToken && localStorage.getItem('logged_in') !== '1') || this.licenseStatusInFlight) return;
             this.licenseStatusInFlight = true;
             try {
                 const response = await axios.post(url, null, {
@@ -1552,7 +1546,7 @@ const AdminApp = {
                 this.showToast(this.t('license_activate_empty'), 'warning');
                 return;
             }
-            if (!this.authToken || this.licenseStatusInFlight) return;
+            if ((!this.authToken && localStorage.getItem('logged_in') !== '1') || this.licenseStatusInFlight) return;
             this.licenseStatusInFlight = true;
             try {
                 const response = await axios.post(
@@ -2746,11 +2740,28 @@ const AdminApp = {
         },
 
         // 退出登录
-        logout() {
+        async logout() {
             if (!confirm(this.t('confirm_logout'))) {
                 return;
             }
-            
+
+            // 先吊销服务端 token 并清除 HttpOnly cookie——只清本地会让 token
+            // 在有效期内仍可调用接口（cookie 双通道改造的配套收口）。
+            // body 无 token 时（cookie-only 会话）服务端从 Authorization/cookie 取。
+            try {
+                await axios.post(
+                    '/api/auth/logout',
+                    { auth_token: this.authToken },
+                    {
+                        headers: { 'Authorization': `Bearer ${this.authToken}` },
+                        timeout: 3000,
+                    },
+                );
+            } catch (error) {
+                // 后端登出失败（网络/超时）也不阻塞本地清理，避免把用户困在管理页
+                console.error('Logout error:', error);
+            }
+
             localStorage.removeItem('auth_token');
             localStorage.removeItem('phone');
             localStorage.removeItem('user_id');

@@ -65,11 +65,12 @@
 ### 用户端（仅本人）
 
 ```
-GET /api/ai-tools/{ai_tool_id}/timeline?user_id=&auth_token=
+GET /api/ai-tools/{ai_tool_id}/timeline
+Authorization: Bearer <auth_token>
 ```
 
-- 鉴权：`@require_permission("ai_tools:view_history")`，与 `/api/ai-tools/history` 一致。
-- 归属校验：`user_id` 与 `record.user_id` 不符返回 403；记录不存在返回 404。
+- 鉴权：`@require_permission("ai_tools:view_history")`，与 `/api/ai-tools/history` 一致；用户身份一律从 Authorization token 解析（不再接受 query `user_id`/`auth_token` 弱信任回退）。
+- 归属校验：管理员（`role == 'admin'`）可查看任意任务；非管理员且 `record.user_id` 与登录身份不符返回 404（防枚举）；记录不存在返回 404。
 - 返回：`{success, data:{ai_tool_id, project_id, status, timeline:[...]}}`，时间升序。
 
 ### 管理端（不限用户）

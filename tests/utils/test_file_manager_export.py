@@ -84,6 +84,31 @@ class TestCollectImageFromUrl(unittest.TestCase):
         self.assertIsNone(self.fm._collect_image_from_url(""))
         self.assertIsNone(self.fm._collect_image_from_url(None))
 
+    def test_path_traversal_rejected(self):
+        """测试路径穿越 URL 被拒绝（即使目标文件真实存在也不返回）"""
+        # 在 upload 目录之外放一个真实文件，证明不是靠"文件不存在"蒙混过关
+        outside = Path(self.tmp_dir) / "secrets" / "leak.png"
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        outside.write_bytes(b'\x89PNG\r\n\x1a\n')
+
+        traversal_urls = [
+            "http://localhost:9003/upload/character/pic/../../secrets/leak.png",
+            "http://localhost:9003/upload/character/pic/..%2F..%2Fsecrets%2Fleak.png",  # 编码形式仍含 .. 与 /
+            "http://localhost:9003/upload/character/pic/..\\..\\secrets\\leak.png",
+            "http://localhost:9003/upload/character/pic/sub/inner.png",  # 多级目录同样拒绝
+        ]
+        for url in traversal_urls:
+            self.assertIsNone(self.fm._collect_image_from_url(url), f"应拒绝: {url}")
+
+    def test_path_traversal_voice_rejected(self):
+        """测试音频 URL 路径穿越被拒绝"""
+        outside = Path(self.tmp_dir) / "secrets" / "leak.mp3"
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        outside.write_bytes(b"ID3")
+        self.assertIsNone(
+            self.fm._collect_voice_from_url("http://localhost:9003/upload/character/voice/../../secrets/leak.mp3")
+        )
+
     def test_url_with_query_params(self):
         """测试带查询参数的 URL（文件名包含查询参数，文件不存在返回 None）"""
         # 当前正则会将查询参数作为 filename 的一部分

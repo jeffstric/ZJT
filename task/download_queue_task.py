@@ -30,9 +30,11 @@ from config.constant import (
     DOWNLOAD_MAX_TRY,
     DOWNLOAD_BACKOFF_SECONDS,
     DOWNLOAD_COMPLETION_MARGIN_SECONDS,
+    LICENSE_DENIED_RESCHEDULE_SECONDS,
     AI_TOOL_STATUS_COMPLETED,
     GeneratedVideoFaceGridTrimConstants,
 )
+from task.license_rebootstrap_task import is_non_transient_error
 from model.download_queue import DownloadQueueModel
 from model.ai_tools import AIToolsModel
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
@@ -157,8 +159,28 @@ async def _process_one(row: dict) -> None:
             logger.info(f"download_queue id={row_id} ai_tool={ai_tool_id} OK: {remote_url} -> {final_url} "
                         f"({download_ms}ms, queue_wait={queue_wait_ms}ms)")
         except Exception as e:
-            # 更新 ai_tools 失败：保留 status=processing，租约过期后由下个 tick 回收重试
-            logger.error(f"download_queue id={row_id} success-but-update-failed: {e}")
+            if is_non_transient_error(e):
+                # 许可证类非瞬态错误（典型：商业许可证租约到期，交付链路许可证
+                # 校验失败）：租约回收重试只会按 DOWNLOAD_LEASE_SECONDS 周期循环
+                # 失败并重复下载（2026-09-15 事故：31 个任务 20 分钟一次循环卡死），
+                # 改为长退避置回 pending，待商业许可证续租后自然消费。
+                # 不计 try_count——不是下载本身的过错。
+                backoff_until = datetime.now() + timedelta(
+                    seconds=LICENSE_DENIED_RESCHEDULE_SECONDS
+                )
+                DownloadQueueModel.reschedule(
+                    row_id, try_count, backoff_until, f"license denied: {e}"
+                )
+                _log(task_id, AIToolsLogEvent.RETRY_SCHEDULED, project_id=project_id,
+                     message=f"商业许可证校验失败，{LICENSE_DENIED_RESCHEDULE_SECONDS}s 后重试",
+                     detail={'source_url': remote_url, 'error': str(e)})
+                logger.error(
+                    f"download_queue id={row_id} ai_tool={ai_tool_id} LICENSE DENIED, "
+                    f"reschedule +{LICENSE_DENIED_RESCHEDULE_SECONDS}s: {e}"
+                )
+            else:
+                # 更新 ai_tools 失败：保留 status=processing，租约过期后由下个 tick 回收重试
+                logger.error(f"download_queue id={row_id} success-but-update-failed: {e}")
     else:
         # 失败：重试或兜底
         next_try = try_count + 1

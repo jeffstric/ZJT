@@ -33,7 +33,11 @@ describe('storyboard direct submit feedback (toast + optimistic candidate)', () 
     });
 
     it('shows a nearby submit toast instead of staying silent', () => {
-        expect(videoBody).toMatch(/showToast\((isDh \? '对口型视频已提交，右侧候选区生成中' : '视频生成任务已提交，右侧候选区生成中')/);
+        // showToast 为多行三元：对口型 / 无首帧按参考图直提 / 常规视频三种文案分支
+        expect(videoBody).toMatch(/showToast\(\s*isDh\s*\?/);
+        expect(videoBody).toContain("'对口型视频已提交，右侧候选区生成中'");
+        expect(videoBody).toContain("'已按参考图提交视频，右侧候选区生成中'");
+        expect(videoBody).toContain("'视频生成任务已提交，右侧候选区生成中'");
         expect(imageBody).toContain("showToast('生图任务已提交，右侧候选区生成中', 'info')");
     });
 

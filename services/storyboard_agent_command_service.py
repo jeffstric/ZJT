@@ -209,6 +209,8 @@ class StoryboardAgentCommandService:
                         "model_id",
                         "vendor_id",
                         "max_group_duration",
+                        "video_gen_mode",
+                        "max_shot_duration",
                         "language",
                         "force_overwrite_subscene_grids",
                     ],
@@ -534,6 +536,8 @@ class StoryboardAgentCommandService:
                     StoryboardAgentCommandConstants.MAX_GROUP_DURATION_MIN,
                     StoryboardAgentCommandConstants.MAX_GROUP_DURATION_MAX,
                 ),
+                video_gen_mode=data.get("video_gen_mode") or data.get("image_mode") or "first_last_frame",
+                max_shot_duration=_to_int(data.get("max_shot_duration"), "max_shot_duration"),
                 force_medium_shot=_to_bool(data.get("force_medium_shot")),
                 no_bg_music=_to_bool(data.get("no_bg_music")),
                 split_multi_dialogue=_to_bool(data.get("split_multi_dialogue")),
@@ -627,9 +631,12 @@ class StoryboardAgentCommandService:
                 count=_to_int(data.get("count"), "count", 1) or 1,
                 image_mode=data.get("image_mode") or "first_last_frame",
                 image_urls=data.get("image_urls"),
+                extra_image_urls=data.get("extra_image_urls") or data.get("reference_image_urls"),
                 video_urls=data.get("video_urls"),
                 audio_urls=data.get("audio_urls"),
                 task_type=_to_int(data.get("task_type"), "task_type"),
+                resolution=data.get("resolution"),
+                enable_face_mask=_to_bool(data.get("enable_face_mask")),
             )
 
         if command == "task-status":

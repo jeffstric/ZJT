@@ -833,6 +833,7 @@
   "um_requirement_placeholder": "Example: Integrate the Acme image API. POST /v1/images creates a job using a Bearer token from ACME_API_KEY; it returns task_id. Poll GET /v1/images/{task_id} every 2 seconds until an image URL is returned...",
   "um_requirement_hint": "Include request/response JSON, error codes, callback or polling rules, and official documentation links.",
   "um_requirement_comfyui_hint": "The workflow JSON and ComfyUI URL are already attached. Add only extra notes, such as “Qwen Image Edit, image-to-image”.",
+  "um_requirement_over_limit": "The requirement exceeds the {max}-character limit by {count}. Please shorten it before generating.",
   "um_generation_ack": "I understand generated code is never published automatically. I will inspect hosts, secret names, capabilities, source code, and validation results before approval.",
   "um_starting": "Starting...",
   "um_start_agent": "Start Generation",

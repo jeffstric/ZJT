@@ -185,6 +185,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-group-duration", type=int, default=15,
         help="每幕最长时长（秒，仅接受 10~15，默认 15 以最大限度保留画风一致）",
     )
+    split_script.add_argument(
+        "--video-gen-mode",
+        choices=["first_last_frame", "multi_reference"],
+        default="first_last_frame",
+        help="首帧生视频或参考生视频（参考生会把同场短镜打包到单镜最长时长）",
+    )
+    split_script.add_argument(
+        "--max-shot-duration", type=int,
+        help="参考生视频单镜最长秒数，默认与 --max-group-duration 相同",
+    )
     split_script.add_argument("--force-medium-shot", action="store_true")
     split_script.add_argument("--no-bg-music", action="store_true")
     split_script.add_argument("--split-multi-dialogue", action="store_true")
