@@ -65,6 +65,8 @@ class TestAuth:
             token = (login_data.get("data") or login_data).get("token")
             user_id = (login_data.get("data") or login_data).get("user_id")
             assert token, f"登录响应中未找到 token: {login_data}"
+            # 防 user_id 缺失时发出 X-User-Id: "None"
+            assert user_id, f"登录响应中未找到 user_id: {login_data}"
             resp = httpx.post(
                 f"{base_url}/api/auth/logout",
                 json={"auth_token": token},
