@@ -494,7 +494,7 @@
   "ready": "Ready",
   "session": "Session",
   "session_not_created": "Not created",
-  "file_management": "📁 Staging File Management",
+  "file_management": "📁 Staging",
   "library_management": "World Assets",
   "asset_source_staging": "Staging",
   "asset_source_database": "In Database",

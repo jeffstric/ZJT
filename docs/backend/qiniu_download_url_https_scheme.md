@@ -2,7 +2,7 @@
 
 ## 问题现象
 
-剧本创作页（`/script-writer`）「暂存文件管理 → 导出世界数据」点击后：
+剧本创作页（`/script-writer`）「暂存 → 导出世界数据」点击后：
 
 1. 前端 `exportWorld()`（`web/js/script_writer.js`）请求 `/api/export-world`；
 2. 后端打包上传七牛后返回 `download_url`；

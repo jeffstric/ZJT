@@ -56,7 +56,7 @@
         if (title) {
             title.textContent = isLib
                 ? t('library_management', '世界资产')
-                : t('file_management', '📁 暂存文件管理');
+                : t('file_management', '📁 暂存');
         }
         document.querySelectorAll('.asset-source-btn').forEach(function (btn) {
             btn.classList.toggle('active', btn.getAttribute('data-source') === assetSource);

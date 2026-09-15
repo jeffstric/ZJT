@@ -485,7 +485,7 @@
   "ready": "就绪",
   "session": "会话",
   "session_not_created": "未创建",
-  "file_management": "📁 暂存文件管理",
+  "file_management": "📁 暂存",
   "library_management": "世界资产",
   "asset_source_staging": "暂存草稿",
   "asset_source_database": "已入库",
