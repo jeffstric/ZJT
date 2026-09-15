@@ -93,6 +93,8 @@
 - `generate_digital_human` → `POST /api/digital-human`
 - `submit_grid_image_task`（宫格 i2i）→ `POST /api/image-edit`
 
+视频工具同根因（marketing_agent / storyboard 视频生成 401）：`enterprise/tools/video_tools.py` 的 `generate_text_to_video` → `POST /api/ai-app-run`、`image_to_video` → `POST /api/ai-app-run-image`，同样只把 `auth_token` 放 form 字段，已补 Bearer 头。
+
 ## 五、发布与兼容注意
 
 1. **前后端需一起发布**：后端先上会以 401 打断旧前端（EventSource 裸连、无 header 请求）。
