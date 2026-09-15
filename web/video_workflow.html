@@ -416,12 +416,11 @@
     <div class="modal-card" role="dialog" aria-modal="true">
       <div class="modal-header">
         <div class="modal-title">保存冲突</div>
-        <button class="modal-close" id="saveConflictModalClose" type="button" aria-label="关闭">×</button>
       </div>
       <div class="modal-body">
         <div class="conflict-icon">⚠</div>
         <p class="conflict-lead">该工作流已被其他会话（或浏览器标签页）修改并保存，你的本地修改与服务器上的最新版本冲突。</p>
-        <p class="conflict-hint">选择处理方式前，你的本地修改已安全保留在本地，不会丢失。</p>
+        <p class="conflict-hint">数据只能二选一，请谨慎选择。</p>
       </div>
       <div class="modal-footer">
         <button class="conflict-btn conflict-btn-server" id="saveConflictUseServerBtn" type="button">
@@ -430,7 +429,7 @@
         </button>
         <button class="conflict-btn conflict-btn-local" id="saveConflictUseLocalBtn" type="button">
           <span class="conflict-btn-title">用本地版本覆盖</span>
-          <span class="conflict-btn-desc">以当前画布内容强制覆盖服务器</span>
+          <span class="conflict-btn-desc">以当前画布内容强制覆盖服务器，服务器上的最新更新将丢失</span>
         </button>
       </div>
     </div>

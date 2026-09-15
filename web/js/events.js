@@ -1395,10 +1395,8 @@
       saveWorkflow();
     });
 
-    // 保存冲突对话框：关闭仅隐藏（冲突未解决，按钮保持黄色态，可再次打开）
-    document.getElementById('saveConflictModalClose').addEventListener('click', () => {
-      hideSaveConflictDialog();
-    });
+    // 保存冲突对话框不提供关闭入口（无 × 按钮、无遮罩/ESC 关闭），
+    // 必须二选一解决冲突，防止用户误关导致本地未保存修改丢失
     document.getElementById('saveConflictUseServerBtn').addEventListener('click', () => {
       resolveSaveConflict(false);
     });

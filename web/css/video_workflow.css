@@ -1847,13 +1847,6 @@ textarea:focus{ border-color: var(--primary); }
   color: #0f172a;
   font-size: 15px;
 }
-#saveConflictModal .modal-close{
-  background: #eef2f7;
-  color: #475569;
-}
-#saveConflictModal .modal-close:hover{
-  background: #e2e8f0;
-}
 #saveConflictModal .modal-body{
   background: #ffffff;
   color: var(--text);
