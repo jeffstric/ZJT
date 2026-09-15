@@ -440,7 +440,10 @@
         resolutionSelect.innerHTML = '';
         if(!options.length) {
           resolutionField.style.display = 'none';
-          node.data.videoResolution = '';
+          if(node.data.videoResolution) {
+            node.data.videoResolution = '';
+            markGhostFixDirty();
+          }
           return;
         }
 
@@ -459,8 +462,21 @@
               ? TaskConfig.getDefaultVideoResolution(videoModel)
               : null
           ) || options[0].value;
+          // 保存值不在当前模型支持列表，已纠正为默认值：这是对服务端过时
+          // 数据的一次性修正，必须标记 dirty 让它尽快正常落库。否则还原期
+          // 的这次写回既没被服务端确认、也没被标记，自动保存落库后会使其他
+          // 会话的 CAS 基线过期（零操作 409）；而刷新后又会重复同样的纠正。
+          markGhostFixDirty();
         }
         resolutionSelect.value = node.data.videoResolution;
+      }
+
+      // 分辨率纠正属于需要落库的真实数据修正：标记未确认修改（区别于
+      // splitModel 回填等"还原期无害回写"，后者值与服务端等价、不应落库）
+      function markGhostFixDirty(){
+        if(typeof autoSaveState !== 'undefined' && autoSaveState.markDirty){
+          autoSaveState.markDirty();
+        }
       }
 
       node.updateShotGroupResolutionOptions = updateShotGroupResolutionOptions;
