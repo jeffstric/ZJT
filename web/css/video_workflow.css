@@ -1100,7 +1100,9 @@ svg.connections path.reference-line.selected{
   left: 72px;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 45;
+  /* 需高于 .brand-floating(z-46)：添加菜单位于画布中部且很高，
+     顶部条目会伸入顶栏区域，z 低于顶栏时条目被 world-search-trigger 遮挡无法点击 */
+  z-index: 47;
 }
 .add-btn{
   width: 44px;

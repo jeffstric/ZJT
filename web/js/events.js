@@ -168,7 +168,10 @@
     // 获取上传配置
     async function fetchUploadConfig() {
       try {
-        const response = await fetch('/api/config/upload');
+        const _upToken = getAuthToken();
+        const response = await fetch('/api/config/upload', {
+          headers: _upToken ? { 'Authorization': `Bearer ${_upToken}` } : {}
+        });
         const result = await response.json();
         if (result.code === 0 && result.data) {
           uploadConfig = result.data;

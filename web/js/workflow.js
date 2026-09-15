@@ -150,7 +150,10 @@
           updateAllImageToVideoNodesSelects();
 
           // 驱动状态仍从原接口获取（暂未迁移）
-          const response = await fetch('/api/computing-power-config');
+          const _cfgToken = getAuthToken();
+          const response = await fetch('/api/computing-power-config', {
+            headers: _cfgToken ? { 'Authorization': `Bearer ${_cfgToken}` } : {}
+          });
           if(response.ok){
             const data = await response.json();
             if(data.success && data.data && data.data.driver_status){
@@ -163,7 +166,10 @@
         }
         
         // 回退：使用旧接口
-        const response = await fetch('/api/computing-power-config');
+        const _fbToken = getAuthToken();
+        const response = await fetch('/api/computing-power-config', {
+          headers: _fbToken ? { 'Authorization': `Bearer ${_fbToken}` } : {}
+        });
         if(response.ok){
           const data = await response.json();
           if(data.success && data.data){

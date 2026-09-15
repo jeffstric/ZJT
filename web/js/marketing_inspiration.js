@@ -1061,7 +1061,11 @@ async function uploadMediaFile(file) {
       const token = localStorage.getItem('auth_token');
       if (token) formData.append('auth_token', token);
 
-      const resp = await fetch('/api/upload-agent-image', { method: 'POST', body: formData });
+      const resp = await fetch('/api/upload-agent-image', {
+        method: 'POST',
+        body: formData,
+        headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+      });
       if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
       const result = await resp.json();
       if (result.url) {
