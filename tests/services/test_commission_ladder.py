@@ -13,7 +13,19 @@ from decimal import Decimal
 
 import pytest
 
-from enterprise.services import commission_service as cs
+# enterprise/ 被 .gitignore，社区 CI 不检出该包。
+# 模块级 ImportError 会被 unittest 记为 ERROR（_FailedTest）而非 skip，必须在导入处吞掉。
+try:
+    from enterprise.services import commission_service as cs
+    _HAS_ENTERPRISE_COMMISSION = True
+except (ModuleNotFoundError, ImportError):
+    cs = None
+    _HAS_ENTERPRISE_COMMISSION = False
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_ENTERPRISE_COMMISSION,
+    reason="enterprise.services.commission_service 未打包（社区 CI 不检出 enterprise/）",
+)
 
 
 class _FakeLog:
