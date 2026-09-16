@@ -484,3 +484,215 @@ class TestSubscriptionStatus:
         status = svc.get_subscription_status(1)
         assert status["subscribed"] is False
         assert status["status"] == "expired"
+
+
+# ==================== 套餐升级（无需退订，低→高） ====================
+
+class _FakeContract:
+    def __init__(self, **kw):
+        self.contract_code = "SUBC_OLD"
+        self.contract_id = "WxOLD"
+        self.user_id = 1
+        self.subscription_plan_id = 101
+        self.status = WxContractStatus.ACTIVE
+        self.current_period_end = datetime.now() + timedelta(days=10)
+        self.__dict__.update(kw)
+
+
+class TestCreateSignPayOrderUpgrade:
+    """生效中用户发起更高套餐签约：放行并记录被替换合约；同档/降级仍拒绝"""
+
+    def _patch_models(self, svc, monkeypatch, existing):
+        calls = {"create": [], "terminated": [], "closed": []}
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_active_by_user",
+            staticmethod(lambda user_id: existing),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "create",
+            staticmethod(lambda **kw: calls.setdefault("contract_created", []).append(kw) or 1),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "mark_terminated",
+            staticmethod(lambda code, mode=None, remark=None: calls["terminated"].append(code) or 1),
+        )
+        monkeypatch.setattr(
+            svc.SubscriptionOrdersModel, "get_latest_by_contract",
+            staticmethod(lambda code: None),
+        )
+        monkeypatch.setattr(
+            svc.SubscriptionOrdersModel, "create",
+            staticmethod(lambda **kw: calls["create"].append(kw) or 1),
+        )
+        monkeypatch.setattr(
+            svc.SubscriptionOrdersModel, "close",
+            staticmethod(lambda oid, c=None, m=None: calls["closed"].append(oid) or 1),
+        )
+        return calls
+
+    def _patch_pay(self, svc, monkeypatch, result=None):
+        util = make_util()
+        monkeypatch.setattr(svc, "get_papay_util", lambda *a, **kw: util)
+        monkeypatch.setattr(
+            util, "create_contract_order",
+            lambda **kw: result or {
+                "return_code": "SUCCESS", "result_code": "SUCCESS",
+                "code_url": "weixin://wxpay/abc",
+            },
+        )
+        return util
+
+    def _create(self, svc, plan_id):
+        return asyncio.run(svc.create_sign_pay_order(
+            user_id=1, subscription_plan_id=plan_id, is_wechat_browser=False,
+            openid=None, payment_ip=None, display_name="138****0000",
+        ))
+
+    def test_upgrade_allowed_and_records_source(self, monkeypatch):
+        from services import subscription_service as svc
+        existing = _FakeContract(subscription_plan_id=101)  # 入门版生效中
+        calls = self._patch_models(svc, monkeypatch, existing)
+        self._patch_pay(svc, monkeypatch)
+
+        result = self._create(svc, 102)  # 升级到标准版
+        assert result["upgrade"] is True
+        assert result["current_plan"]["plan_id"] == 101
+        assert calls["create"][0]["upgrade_from_contract_code"] == "SUBC_OLD"
+        assert calls["create"][0]["subscription_plan_id"] == 102
+        # 旧合约保持不动，等待支付成功回调再解约
+        assert calls["terminated"] == []
+
+    def test_same_or_lower_plan_rejected(self, monkeypatch):
+        from services import subscription_service as svc
+        existing = _FakeContract(subscription_plan_id=103)  # 专业版生效中
+        self._patch_models(svc, monkeypatch, existing)
+
+        with pytest.raises(svc.SubscriptionServiceError):
+            self._create(svc, 102)
+        with pytest.raises(svc.SubscriptionServiceError):
+            self._create(svc, 103)
+
+    def test_upgrade_api_failure_aborts_before_persist(self, monkeypatch):
+        """微信签约下单失败时不落库，旧合约不受影响"""
+        from services import subscription_service as svc
+        existing = _FakeContract(subscription_plan_id=101)
+        calls = self._patch_models(svc, monkeypatch, existing)
+        self._patch_pay(svc, monkeypatch, result={
+            "return_code": "SUCCESS", "result_code": "FAIL", "err_code": "INVALID_REQUEST",
+        })
+
+        with pytest.raises(svc.SubscriptionServiceError):
+            self._create(svc, 102)
+        assert calls["create"] == []
+
+
+class TestUpgradePayCallback:
+    def test_upgrade_settlement_terminates_source_without_bonus(self, patched_service, monkeypatch):
+        """升级单支付成功：解约被替换旧合约；不发首期加赠"""
+        svc, calls = patched_service
+
+        def _upgrade_order(order_id):
+            return _FakeOrder(order_id=order_id, period_index=1, computing_power=1000,
+                              upgrade_from_contract_code="SUBC_OLD")
+        svc.SubscriptionOrdersModel.get_by_order_id = staticmethod(_upgrade_order)
+        terminated = []
+
+        async def fake_terminate(code):
+            terminated.append(code)
+        monkeypatch.setattr(svc, "_terminate_replaced_contract", fake_terminate)
+
+        ok = asyncio.run(svc.handle_pay_callback(_signed_pay_success_params(make_util())))
+        assert ok is True
+        assert terminated == ["SUBC_OLD"]
+        # 升级单：抽佣后 2400，无首期加赠
+        assert calls["grant"] == [(1, 2400, "4200001234")]
+
+
+class TestUpgradeTerminateReplacedContract:
+    def test_local_terminate_then_wechat_api(self, monkeypatch):
+        from services import subscription_service as svc
+        calls = {"terminated": [], "remark": []}
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_by_contract_code",
+            staticmethod(lambda code: _FakeContract(contract_code=code)),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "mark_terminated",
+            staticmethod(lambda code, mode=None, remark=None: calls["terminated"].append((code, remark)) or 1),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "update_termination_remark",
+            staticmethod(lambda code, remark: calls["remark"].append((code, remark)) or 1),
+        )
+        util = make_util()
+        monkeypatch.setattr(svc, "get_papay_util", lambda *a, **kw: util)
+        monkeypatch.setattr(
+            util, "delete_contract",
+            lambda **kw: {"return_code": "SUCCESS", "result_code": "SUCCESS"},
+        )
+        asyncio.run(svc._terminate_replaced_contract("SUBC_OLD"))
+        assert calls["terminated"][0][1] == svc.SubscriptionConstants.UPGRADE_TERMINATE_REMARK
+        assert calls["remark"] == [("SUBC_OLD", svc.SubscriptionConstants.UPGRADE_TERMINATE_REMARK_CONFIRMED)]
+
+    def test_wechat_api_failure_keeps_pending_confirm(self, monkeypatch):
+        from services import subscription_service as svc
+        calls = {"remark": []}
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_by_contract_code",
+            staticmethod(lambda code: _FakeContract(contract_code=code)),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "mark_terminated",
+            staticmethod(lambda code, mode=None, remark=None: 1),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "update_termination_remark",
+            staticmethod(lambda code, remark: calls["remark"].append((code, remark)) or 1),
+        )
+        util = make_util()
+        monkeypatch.setattr(svc, "get_papay_util", lambda *a, **kw: util)
+        monkeypatch.setattr(
+            util, "delete_contract",
+            lambda **kw: {"return_code": "SUCCESS", "result_code": "FAIL", "err_code": "SYSTEMERROR"},
+        )
+        asyncio.run(svc._terminate_replaced_contract("SUBC_OLD"))
+        # API 失败：备注保持待确认，由补偿任务重试
+        assert calls["remark"] == []
+
+
+class TestUpgradeStatus:
+    def test_upgrading_view(self, monkeypatch):
+        from services import subscription_service as svc
+        pending = _FakeContract(status=WxContractStatus.PENDING, subscription_plan_id=103,
+                                contract_code="SUBC_NEW", current_period_end=None)
+        active_old = _FakeContract(subscription_plan_id=101)
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_latest_by_user",
+            staticmethod(lambda uid: pending),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_active_signed_by_user",
+            staticmethod(lambda uid: active_old),
+        )
+        status = svc.get_subscription_status(1)
+        assert status["status"] == "upgrading"
+        assert status["subscribed"] is True
+        assert status["plan"]["plan_id"] == 101
+        assert status["pending_plan"]["plan_id"] == 103
+        assert status["next_deduct_date"] == active_old.current_period_end.date().isoformat()
+
+    def test_pending_without_active_stays_signing(self, monkeypatch):
+        from services import subscription_service as svc
+        pending = _FakeContract(status=WxContractStatus.PENDING, subscription_plan_id=103,
+                                contract_code="SUBC_NEW", current_period_end=None)
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_latest_by_user",
+            staticmethod(lambda uid: pending),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_active_signed_by_user",
+            staticmethod(lambda uid: None),
+        )
+        status = svc.get_subscription_status(1)
+        assert status["status"] == "signing"
+        assert status["subscribed"] is False

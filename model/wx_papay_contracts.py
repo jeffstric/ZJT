@@ -123,6 +123,23 @@ class WxPapayContractsModel:
             raise
 
     @staticmethod
+    def get_active_signed_by_user(user_id: int) -> Optional[WxPapayContract]:
+        """取用户最新一条已签约（ACTIVE）记录，无则 None（与 get_active_by_user 区分：不含签约中）"""
+        sql = """
+            SELECT * FROM wx_papay_contracts
+            WHERE user_id = %s AND status = %s
+            ORDER BY id DESC LIMIT 1
+        """
+        try:
+            result = execute_query(sql, (
+                user_id, WxContractStatus.ACTIVE,
+            ), fetch_one=True)
+            return WxPapayContract(**result) if result else None
+        except Exception as e:
+            logger.error(f"Failed to get active signed contract for user {user_id}: {e}")
+            raise
+
+    @staticmethod
     def get_latest_by_user(user_id: int) -> Optional[WxPapayContract]:
         """取用户最近一条签约记录（任意状态，用于展示订阅状态）"""
         sql = "SELECT * FROM wx_papay_contracts WHERE user_id = %s ORDER BY id DESC LIMIT 1"
@@ -194,22 +211,61 @@ class WxPapayContractsModel:
 
     @staticmethod
     def get_renewal_due_contracts(lead_days: int) -> List[WxPapayContract]:
-        """取需要处理续期的已签约合约：当前周期在提前量窗口内到期"""
+        """取需要处理续期的已签约合约：当前周期在提前量窗口内到期。
+
+        排除已有签约中（PENDING，含套餐升级签约）记录的用户：升级支付结果未知前
+        暂停旧合约续期，避免升级过渡期内旧套餐又下发预扣费通知/扣款。
+        """
         sql = """
             SELECT * FROM wx_papay_contracts
             WHERE status = %s
               AND current_period_end IS NOT NULL
               AND current_period_end > NOW()
               AND current_period_end <= DATE_ADD(NOW(), INTERVAL %s DAY)
+              AND user_id NOT IN (
+                  SELECT user_id FROM wx_papay_contracts WHERE status = %s
+              )
             ORDER BY current_period_end ASC
         """
         try:
             results = execute_query(sql, (
-                WxContractStatus.ACTIVE, lead_days,
+                WxContractStatus.ACTIVE, lead_days, WxContractStatus.PENDING,
             ), fetch_all=True)
             return [WxPapayContract(**row) for row in results] if results else []
         except Exception as e:
             logger.error(f"Failed to get renewal due contracts: {e}")
+            raise
+
+    @staticmethod
+    def get_upgrade_terminated_pending_confirm(remark: str, limit: int = 50) -> List[WxPapayContract]:
+        """取套餐升级被替换、本地已终止但微信侧解约结果未确认的合约（补偿任务用）"""
+        sql = """
+            SELECT * FROM wx_papay_contracts
+            WHERE status = %s AND termination_remark = %s
+            ORDER BY update_at ASC
+            LIMIT %s
+        """
+        try:
+            results = execute_query(sql, (
+                WxContractStatus.TERMINATED, remark, limit,
+            ), fetch_all=True)
+            return [WxPapayContract(**row) for row in results] if results else []
+        except Exception as e:
+            logger.error(f"Failed to get upgrade terminated contracts: {e}")
+            raise
+
+    @staticmethod
+    def update_termination_remark(contract_code: str, termination_remark: str) -> int:
+        """更新解约备注（补偿任务确认微信侧解约完成后调用）"""
+        sql = """
+            UPDATE wx_papay_contracts
+            SET termination_remark = %s, update_at = NOW()
+            WHERE contract_code = %s
+        """
+        try:
+            return execute_update(sql, (termination_remark, contract_code))
+        except Exception as e:
+            logger.error(f"Failed to update termination remark for {contract_code}: {e}")
             raise
 
 

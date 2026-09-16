@@ -2319,6 +2319,12 @@ class SubscriptionConstants:
     CONTRACT_DISPLAY_ACCOUNT_PREFIX = '会员'
     # 委托代扣商品描述前缀
     BODY_PREFIX = '智剧通会员订阅'
+    # ==================== 套餐升级（无需退订，低→高） ====================
+    # 升级签约单结算时是否发放首期加赠（first_period_bonus）：默认关闭，防止"升级/退订重订薅首赠"套利
+    UPGRADE_GRANT_FIRST_BONUS = False
+    # 升级支付成功后被替换旧合约的解约备注（精确匹配，补偿任务据此识别待确认解约）
+    UPGRADE_TERMINATE_REMARK = '套餐升级自动解约'
+    UPGRADE_TERMINATE_REMARK_CONFIRMED = '套餐升级自动解约(微信侧已解除)'
 
 
 

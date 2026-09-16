@@ -31,7 +31,7 @@ from config.constant import (
     WxContractStatus,
     SubscriptionOrderStatus,
 )
-from config.subscription_config import get_subscription_plan
+from config.subscription_config import get_subscription_plan, is_upgrade_plan
 from model.database import execute_update
 from model.wx_papay_contracts import WxPapayContractsModel
 from model.subscription_orders import SubscriptionOrdersModel
@@ -146,6 +146,8 @@ async def create_sign_pay_order(
     # 同一用户只允许一条进行中（签约中/已签约）的订阅。
     # 存在未支付完成的 PENDING 签约（用户换了套餐重新发起）：自动放弃旧签约并关闭旧待支付订单，
     # 让用户可以无缝更换套餐；若旧订单用户已付款，回调仍会正常结算（资金不受影响）。
+    # 存在已签约生效的 ACTIVE 签约：仅允许升级到更高套餐（无需退订，新单支付成功后自动解约旧约）。
+    upgrade_from_contract_code = None
     existing = WxPapayContractsModel.get_active_by_user(user_id)
     if existing:
         if existing.status == WxContractStatus.PENDING:
@@ -155,8 +157,14 @@ async def create_sign_pay_order(
             if old_order and old_order.status == SubscriptionOrderStatus.PENDING_PAY:
                 SubscriptionOrdersModel.close(old_order.order_id, 'USER_ABANDONED', '用户重新发起订阅')
             logger.info(f"自动放弃未完成签约 {existing.contract_code}（用户 {user_id} 重新发起订阅）")
+        elif is_upgrade_plan(existing.subscription_plan_id, plan["plan_id"]):
+            upgrade_from_contract_code = existing.contract_code
+            logger.info(
+                f"Upgrade sign-pay: user {user_id} plan {existing.subscription_plan_id}"
+                f" -> {plan['plan_id']}, source contract {existing.contract_code}"
+            )
         else:
-            raise SubscriptionServiceError("您已订阅月度会员，请先取消当前订阅再重新订阅")
+            raise SubscriptionServiceError("您已订阅月度会员，如需更换为更低套餐请先取消当前订阅")
 
     if is_wechat_browser and not openid:
         raise SubscriptionServiceError("微信内订阅需要用户openid，请先进行微信授权")
@@ -228,6 +236,7 @@ async def create_sign_pay_order(
         period_start=None,
         period_end=None,
         status=SubscriptionOrderStatus.PENDING_PAY,
+        upgrade_from_contract_code=upgrade_from_contract_code,
     )
 
     response = {
@@ -236,7 +245,12 @@ async def create_sign_pay_order(
         "payment_type": trade_type,
         "price": plan["price"],
         "computing_power": plan["computing_power"],
+        "upgrade": bool(upgrade_from_contract_code),
     }
+    if upgrade_from_contract_code:
+        current_plan = get_subscription_plan(existing.subscription_plan_id)
+        if current_plan:
+            response["current_plan"] = current_plan
     if trade_type == "JSAPI":
         prepay_id = result.get("prepay_id")
         if not prepay_id:
@@ -315,6 +329,71 @@ async def _settle_order_paid(order, transaction_id: str) -> None:
         f"Subscription order {order.order_id} settled: user={order.user_id}, "
         f"power={order.computing_power}, granted={granted}, period={period_start}~{period_end}"
     )
+
+    # 套餐升级单：支付成功即切换，解约被替换的旧合约（本地立即终止防双扣，微信侧尽力而为，
+    # 未完成部分由续期调度中的补偿任务重试）
+    source_contract_code = getattr(order, 'upgrade_from_contract_code', None)
+    if source_contract_code:
+        try:
+            await _terminate_replaced_contract(source_contract_code)
+        except Exception:
+            logger.exception(
+                f"Terminate replaced contract failed: order={order.order_id}, "
+                f"source={source_contract_code} (补偿任务会重试)"
+            )
+
+
+async def _terminate_replaced_contract(source_contract_code: str) -> None:
+    """套餐升级：终止被替换的旧合约。
+
+    顺序上先本地终止（续期调度只看本地状态，杜绝升级过渡期双扣），再调微信解约 API；
+    API 失败仅记录，备注保持 UPGRADE_TERMINATE_REMARK，由补偿任务重试直至微信侧确认。
+    """
+    contract = WxPapayContractsModel.get_by_contract_code(source_contract_code)
+    if not contract or contract.status != WxContractStatus.ACTIVE:
+        return
+
+    WxPapayContractsModel.mark_terminated(
+        contract.contract_code,
+        3,
+        SubscriptionConstants.UPGRADE_TERMINATE_REMARK,
+    )
+    logger.info(f"Upgrade replaced contract terminated locally: {source_contract_code}")
+
+    if not contract.contract_id:
+        logger.error(
+            f"Upgrade replaced contract {source_contract_code} has no wechat contract_id, "
+            f"需人工在商户平台解约"
+        )
+        return
+
+    ok, err = await _delete_wechat_contract(contract)
+    if ok:
+        WxPapayContractsModel.update_termination_remark(
+            contract.contract_code, SubscriptionConstants.UPGRADE_TERMINATE_REMARK_CONFIRMED)
+    else:
+        logger.error(
+            f"Upgrade wechat delete_contract failed for {source_contract_code}: {err} "
+            f"(补偿任务会重试)"
+        )
+
+
+async def _delete_wechat_contract(contract) -> tuple:
+    """调微信解约 API。Returns: (是否成功, 错误描述)"""
+    papay = get_papay_util()
+    result = await asyncio.to_thread(
+        papay.delete_contract,
+        remark=SubscriptionConstants.UPGRADE_TERMINATE_REMARK,
+        contract_id=contract.contract_id,
+        contract_code=contract.contract_code,
+    )
+    if result.get("return_code") == "SUCCESS" and result.get("result_code") == "SUCCESS":
+        return True, None
+    detail = (
+        result.get("err_code_des") or result.get("err_code")
+        or result.get("return_msg") or "微信接口失败"
+    )
+    return False, detail
 
 
 async def handle_contract_callback(xml_params: Dict) -> bool:
@@ -399,7 +478,22 @@ def get_subscription_status(user_id: int) -> Dict:
     }
 
     if contract.status == WxContractStatus.PENDING:
-        base.update({"subscribed": False, "status": "signing"})
+        # 升级签约中：存在仍生效的旧合约（且新约套餐更高）→ upgrading，当前套餐继续可用
+        active_old = WxPapayContractsModel.get_active_signed_by_user(user_id)
+        if active_old and is_upgrade_plan(active_old.subscription_plan_id, contract.subscription_plan_id):
+            old_plan = get_subscription_plan(active_old.subscription_plan_id) or {}
+            pending_plan = get_subscription_plan(contract.subscription_plan_id) or {}
+            old_period_end = active_old.current_period_end
+            base.update({
+                "subscribed": True,
+                "status": "upgrading",
+                "plan": old_plan,
+                "pending_plan": pending_plan,
+                "current_period_end": old_period_end.isoformat() if old_period_end else None,
+                "next_deduct_date": old_period_end.date().isoformat() if old_period_end else None,
+            })
+        else:
+            base.update({"subscribed": False, "status": "signing"})
     elif contract.status == WxContractStatus.TERMINATED:
         base.update({
             "subscribed": bool(period_end and period_end > now),
@@ -444,6 +538,7 @@ async def process_renewals() -> None:
     await _apply_due_deductions()
     await _confirm_stale_orders()
     await _cleanup_stale_pending_signs()
+    await _retry_upgrade_terminations()
     await process_settlement_retry()
 
 
@@ -616,6 +711,32 @@ async def _cleanup_stale_pending_signs() -> None:
         logger.exception("Cleanup stale pending signs failed")
 
 
+async def _retry_upgrade_terminations() -> None:
+    """补偿：升级单支付成功后被替换的旧合约，微信侧解约尚未确认的持续重试直至成功"""
+    pending = WxPapayContractsModel.get_upgrade_terminated_pending_confirm(
+        SubscriptionConstants.UPGRADE_TERMINATE_REMARK
+    )
+    for contract in pending:
+        try:
+            if not contract.contract_id:
+                logger.error(
+                    f"Upgrade replaced contract {contract.contract_code} has no wechat contract_id, "
+                    f"需人工在商户平台解约"
+                )
+                continue
+            ok, err = await _delete_wechat_contract(contract)
+            if ok:
+                WxPapayContractsModel.update_termination_remark(
+                    contract.contract_code, SubscriptionConstants.UPGRADE_TERMINATE_REMARK_CONFIRMED)
+                logger.info(f"Upgrade replaced contract wechat termination confirmed: {contract.contract_code}")
+            else:
+                logger.warning(
+                    f"Upgrade wechat delete_contract retry failed for {contract.contract_code}: {err}"
+                )
+        except Exception:
+            logger.exception(f"Retry upgrade termination failed: {contract.contract_code}")
+
+
 async def process_settlement_retry() -> None:
     """补偿发放：已收款但算力未发放完成（GRANT_PENDING/GRANT_FAILED）的订单重试发放"""
     orders = SubscriptionOrdersModel.get_grant_pending_orders(limit=50)
@@ -654,6 +775,9 @@ async def _settle_and_grant(order, transaction_id: str) -> bool:
     plan = get_subscription_plan(order.subscription_plan_id) or {}
     base = order.computing_power
     bonus = int(plan.get("first_period_bonus", 0)) if order.period_index == 1 else 0
+    # 升级单默认不发首期加赠（防止"升级/退订重订薅首赠"套利；常量可开）
+    if getattr(order, 'upgrade_from_contract_code', None) and not SubscriptionConstants.UPGRADE_GRANT_FIRST_BONUS:
+        bonus = 0
 
     granted = base
     try:

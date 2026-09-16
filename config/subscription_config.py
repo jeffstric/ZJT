@@ -77,3 +77,8 @@ def get_subscription_plan(plan_id: int) -> Optional[Dict]:
     return None
 
 
+def is_upgrade_plan(current_plan_id: int, new_plan_id: int) -> bool:
+    """判断 new 是否为高于 current 的升级套餐（套餐按 plan_id 与价格单调递增）"""
+    return int(new_plan_id) > int(current_plan_id)
+
+

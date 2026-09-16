@@ -120,8 +120,9 @@
       rechargeTab: 'subscription',     // 'power' 算力充值 | 'subscription' 月度订阅（默认月度订阅）
       subscriptionPlans: [],
       subscriptionPlansLoading: false,
-      subscriptionStatus: null,        // {subscribed, status, plan, current_period_end, next_deduct_date}
+      subscriptionStatus: null,        // {subscribed, status, plan, current_period_end, next_deduct_date, pending_plan}
       selectedSubPlan: null,
+      lastOrderIsUpgrade: false,       // 最近一笔订阅订单是否为套餐升级单（支付成功提示用）
       subAgreed: false,
       subAgreementError: false,
       subPaymentLoading: false,
@@ -3077,6 +3078,21 @@
         return '≈ 基础档 ' + m + ' 倍算力';
       },
 
+      // 生效中/升级中可升级的更高套餐（无需退订，低→高）
+      upgradePlans() {
+        const status = this.subscriptionStatus;
+        if (!status || !['active', 'upgrading'].includes(status.status)) return [];
+        const currentPlanId = status.plan && status.plan.plan_id;
+        if (!currentPlanId) return [];
+        return (this.subscriptionPlans || []).filter(p => Number(p.plan_id) > Number(currentPlanId));
+      },
+
+      // 当前选中的套餐是否为升级单（高于当前生效套餐）
+      isUpgradeMode() {
+        const currentPlanId = this.subscriptionStatus && this.subscriptionStatus.plan && this.subscriptionStatus.plan.plan_id;
+        return !!(this.selectedSubPlan && currentPlanId && Number(this.selectedSubPlan.plan_id) > Number(currentPlanId));
+      },
+
       selectSubPlan(plan) {
         this.selectedSubPlan = plan;
         this.subAgreed = false;
@@ -3143,6 +3159,7 @@
           const response = await axios.post('/api/subscription/wechat-sign-pay', requestData);
           if (response.data.success) {
             this.subOrderId = response.data.order_id;
+            this.lastOrderIsUpgrade = !!response.data.upgrade;
             if (response.data.payment_type === 'JSAPI') {
               // 微信内：调起支付（支付+签约在同一流程完成）
               this.invokeWechatSubscriptionJSAPI(response.data.jsapi_params);
@@ -3183,7 +3200,9 @@
           },
           (res) => {
             if (res.err_msg === 'get_brand_wcpay_request:ok') {
-              alert('支付成功！订阅将在确认后生效，算力稍后到账');
+              alert(this.lastOrderIsUpgrade
+                ? '支付成功！套餐升级将在确认后生效，新套餐算力稍后到账'
+                : '支付成功！订阅将在确认后生效，算力稍后到账');
               this.refreshSubscriptionStatus();
               this.selectedSubPlan = null;
               setTimeout(() => { this.fetchComputingPower(); }, 2000);

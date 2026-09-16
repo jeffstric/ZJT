@@ -27,6 +27,7 @@ class SubscriptionOrder:
         self.period_end = kwargs.get('period_end')
         self.status = kwargs.get('status', SubscriptionOrderStatus.PENDING_PAY)
         self.transaction_id = kwargs.get('transaction_id')
+        self.upgrade_from_contract_code = kwargs.get('upgrade_from_contract_code')
         self.err_code = kwargs.get('err_code')
         self.err_msg = kwargs.get('err_msg')
         self.prenotify_sent_at = kwargs.get('prenotify_sent_at')
@@ -50,6 +51,7 @@ class SubscriptionOrder:
             'period_end': self.period_end.isoformat() if self.period_end else None,
             'status': self.status,
             'transaction_id': self.transaction_id,
+            'upgrade_from_contract_code': self.upgrade_from_contract_code,
             'err_code': self.err_code,
             'err_msg': self.err_msg,
             'retry_count': self.retry_count,
@@ -73,18 +75,21 @@ class SubscriptionOrdersModel:
         period_start,
         period_end,
         status: int = SubscriptionOrderStatus.PENDING_PAY,
+        upgrade_from_contract_code: Optional[str] = None,
     ) -> int:
-        """创建订阅订单（一个扣款周期一条）"""
+        """创建订阅订单（一个扣款周期一条；upgrade_from_contract_code 非空表示套餐升级单）"""
         sql = """
             INSERT INTO subscription_orders
             (order_id, contract_code, user_id, subscription_plan_id, period_index,
-             amount, computing_power, period_start, period_end, status, retry_count, create_at, update_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, NOW(), NOW())
+             amount, computing_power, period_start, period_end, status,
+             upgrade_from_contract_code, retry_count, create_at, update_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, NOW(), NOW())
         """
         try:
             record_id = execute_insert(sql, (
                 order_id, contract_code, user_id, subscription_plan_id, period_index,
                 amount, computing_power, period_start, period_end, status,
+                upgrade_from_contract_code,
             ))
             logger.info(f"Created subscription order {order_id}, period={period_index}, record_id={record_id}")
             return record_id
@@ -303,6 +308,7 @@ CREATE TABLE IF NOT EXISTS `subscription_orders` (
   `period_end` datetime DEFAULT NULL COMMENT '本期覆盖周期结束',
   `status` tinyint NOT NULL DEFAULT 0 COMMENT '0-待支付/待扣款 1-已支付 2-扣款失败 3-已关闭 4-已受理待确认',
   `transaction_id` varchar(64) DEFAULT NULL COMMENT '微信支付订单号',
+  `upgrade_from_contract_code` varchar(64) DEFAULT NULL COMMENT '套餐升级单：被替换的旧签约协议号(支付成功后自动解约)',
   `err_code` varchar(64) DEFAULT NULL COMMENT '最近一次失败错误码',
   `err_msg` varchar(255) DEFAULT NULL COMMENT '最近一次失败描述',
   `prenotify_sent_at` datetime DEFAULT NULL COMMENT '预扣费通知下发时间',

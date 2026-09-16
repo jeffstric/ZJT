@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/index.css" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
   <link rel="stylesheet" href="/css/announcement_center.css?v=__VERSION__" />
-  <link rel="stylesheet" href="/css/subscription.css?v=f7163" />
+  <link rel="stylesheet" href="/css/subscription.css?v=f7164" />
 
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
@@ -1184,13 +1184,13 @@
             <p style="margin-top: 16px; color: var(--muted);">加载订阅套餐中...</p>
           </div>
 
-          <!-- 我的订阅管理（仅生效中显示；已取消待到期走下方套餐列表，可重新订阅） -->
-          <template v-else-if="subscriptionStatus && subscriptionStatus.subscribed && subscriptionStatus.status === 'active'">
+          <!-- 我的订阅管理（生效中/升级开通中显示；支持无需退订直接升级更高套餐；已取消待到期走下方套餐列表） -->
+          <template v-else-if="subscriptionStatus && subscriptionStatus.subscribed && (subscriptionStatus.status === 'active' || subscriptionStatus.status === 'upgrading')">
             <div class="sub-status-card">
               <div class="sub-status-title">
                 <div class="sub-status-plan-name">{{ (subscriptionStatus.plan && subscriptionStatus.plan.name) || '月度会员' }}</div>
                 <span class="sub-status-badge" :class="{ inactive: subscriptionStatus.status !== 'active' }">
-                  {{ subscriptionStatus.status === 'active' ? '生效中' : '已取消待到期' }}
+                  {{ subscriptionStatus.status === 'upgrading' ? '升级开通中' : '生效中' }}
                 </span>
               </div>
               <div class="sub-status-rows">
@@ -1199,7 +1199,10 @@
                 <div v-if="subscriptionStatus.current_period_end"><span class="label">当前周期至</span><span class="value">{{ formatDateStr(subscriptionStatus.current_period_end) }}</span></div>
                 <div v-if="subscriptionStatus.next_deduct_date"><span class="label">下次扣款日</span><span class="value">{{ subscriptionStatus.next_deduct_date }}</span></div>
               </div>
-              <p class="sub-status-note">取消订阅后当期权益保留至周期结束，之后不再自动扣款。</p>
+              <p class="sub-status-note" v-if="subscriptionStatus.status === 'upgrading' && subscriptionStatus.pending_plan">
+                正在升级至「{{ subscriptionStatus.pending_plan.name }}」：完成微信支付后立即切换为新套餐，当前套餐在升级完成前继续可用。
+              </p>
+              <p class="sub-status-note" v-else>取消订阅后当期权益保留至周期结束，之后不再自动扣款；也可直接升级到更高套餐，无需退订。</p>
               <div style="margin-top: 12px; display: flex; gap: 10px;">
                 <button class="btn secondary" :disabled="subCancelling" @click="refreshSubscriptionStatus">
                   {{ subCancelling ? '刷新中...' : '刷新状态' }}
@@ -1207,6 +1210,77 @@
                 <button v-if="subscriptionStatus.status === 'active'" class="btn secondary" style="color: var(--danger, #ef4444); border-color: var(--danger, #ef4444);" :disabled="subCancelling" @click="cancelSubscription">
                   {{ subCancelling ? '处理中...' : '取消订阅' }}
                 </button>
+              </div>
+            </div>
+
+            <!-- 升级到更高套餐（无需退订：新约支付成功后自动解约旧约并切换新套餐） -->
+            <div class="sub-upgrade-section" v-if="upgradePlans.length">
+              <p class="sub-upgrade-title">升级到更高套餐（无需退订，支付成功立即切换）</p>
+              <div class="sub-plans-grid">
+                <div
+                  v-for="plan in upgradePlans"
+                  :key="plan.plan_id"
+                  class="sub-plan-card"
+                  :class="{ selected: selectedSubPlan && selectedSubPlan.plan_id === plan.plan_id }"
+                  @click="selectSubPlan(plan)"
+                >
+                  <div v-if="selectedSubPlan && selectedSubPlan.plan_id === plan.plan_id" class="sub-plan-selected-tag">✓ 已选择</div>
+                  <div class="sub-plan-name">{{ plan.name }}</div>
+                  <div class="sub-plan-tagline">{{ planTagline(plan) }}</div>
+                  <div class="sub-plan-price">
+                    <span class="symbol">¥</span><span class="amount">{{ plan.price }}</span><span class="unit">/月</span>
+                  </div>
+                  <div class="sub-plan-power">⚡ {{ plan.computing_power }} 算力/期</div>
+                  <div class="sub-plan-mult">{{ planMultipleText(plan) }}</div>
+                </div>
+              </div>
+
+              <!-- 升级支付面板 -->
+              <div class="sub-payment-panel" v-if="selectedSubPlan && isUpgradeMode">
+                <div class="sub-qr-section">
+                  <div class="sub-qr-box" :class="{ 'has-qr': subQrCode }">
+                    <div v-if="subPaymentLoading" style="display:flex; flex-direction:column; align-items:center; gap:8px; color:#64748b; font-size:12px;">
+                      <div class="loading-spinner"></div>
+                      <span>生成二维码中...</span>
+                    </div>
+                    <img v-else-if="subQrCode" :src="subQrCode" alt="微信支付二维码" />
+                    <div v-else-if="subPaymentError" class="sub-error-text" style="padding: 0 12px; text-align: center;">{{ subPaymentError }}</div>
+                    <div v-else style="color:#94a3b8; font-size:12px; text-align:center; padding: 0 20px;">
+                      勾选协议并点击右侧<br/>「升级并支付」生成二维码
+                    </div>
+                  </div>
+                  <div v-if="subQrCode" class="sub-qr-tip">请使用微信扫码<br/>支付完成套餐升级</div>
+                </div>
+
+                <div class="sub-info-section">
+                  <div class="sub-method-row">
+                    <span>使用</span>
+                    <span class="sub-method-tag">💬 微信</span>
+                    <span>扫码支付并签约</span>
+                  </div>
+
+                  <div class="sub-amount-row">
+                    <span class="symbol">¥</span>
+                    <span class="value">{{ selectedSubPlan.price }}</span>
+                    <span class="per-month">/月 · 每期 {{ selectedSubPlan.computing_power }} 算力</span>
+                  </div>
+
+                  <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError }">
+                    <input type="checkbox" v-model="subAgreed" @change="subAgreementError = false" />
+                    <span>同意 <a href="javascript:void(0)" @click.stop="showSubscriptionAgreement" style="color: var(--primary);">《自动续费服务协议》</a>，升级立即生效，原套餐的自动续费将自动解除</span>
+                  </label>
+
+                  <p class="sub-upgrade-note">升级支付成功后立即切换为新套餐并发放整期算力，新周期自支付成功起算 30 天；本期剩余天数不折算、不退差价，升级档位不重复享首期加赠。</p>
+
+                  <div class="sub-action-row">
+                    <button v-if="subPaymentError" class="btn secondary" @click="backToSubPlanSelection">返回</button>
+                    <button class="btn" :disabled="!subAgreed || subPaymentLoading" @click="createSubscriptionOrder">
+                      {{ subPaymentLoading ? '生成中...' : '升级并支付' }}
+                    </button>
+                  </div>
+
+                  <div v-if="subQrCode" class="sub-order-info">订单号：{{ subOrderId }}</div>
+                </div>
               </div>
             </div>
           </template>
@@ -1506,7 +1580,7 @@
   <script src="/js/pages/ai_script_gen.js"></script>
   <script src="/js/pages/skill_config.js"></script>
   <!-- App 组件、路由配置 -->
-  <script src="/js/index_app.js?v=f7163"></script>
+  <script src="/js/index_app.js?v=f7164"></script>
   <script src="/js/announcement_center.js?v=__VERSION__"></script>
   <script>
   // i18n 初始化 - 必须在 Vue 应用创建前执行
