@@ -2259,7 +2259,7 @@ async def parse_script_to_shots(
 - 单镜头时长必须保持在3~8秒的正常叙事节奏（平均约5秒），禁止为凑预算把镜头拉长到10秒以上；预算越充裕，镜头数量越多，而不是镜头越长
 - 按此节奏本段建议拆分约{budget_min_shots}~{budget_max_shots}个镜头（下限按平均6秒/镜头、上限按平均3秒/镜头估算）；禁止只拆少量长镜头导致总时长远低于预算
 - 只有按正常节奏拆分后仍难以达到下限时，才允许适当放慢关键动作与对白节奏，并优先保证对白与关键动作完整；禁止把大量镜头压到1~2秒来塞进超额镜头数
-- 该预算与下方「镜头组时长限制」同时生效：组内总时长仍不得超过{max_group_duration}秒
+- 该预算与上方「镜头组时长限制」同时生效：组内总时长仍不得超过{max_group_duration}秒
 """
         ref_max = max_shot_duration or max_group_duration
         reference_pack_block = ""
@@ -2281,21 +2281,15 @@ async def parse_script_to_shots(
                 f"单镜头时长尽量接近{ref_max}秒；预算充裕时用更多满时长镜头覆盖剧情，而不是把镜头拆碎",
             )
 
-        # 构建用户提示词
-        user_prompt = f"""请将以下剧本内容解析为结构化的JSON数据。
-{qc_retry_block}{segment_context_block}
-剧本内容：
-```{script_content} ```
+        # 构建用户提示词。
+        # 【输入缓存优化】消息内容按"稳定 → 易变"排序：DeepSeek 等供应商按前缀
+        # 精确匹配命中上下文缓存。核心规则/输出格式/数据库资产列表在同一任务
+        # 的全部分段调用中不变，放在最前；每段不同的 segment_context、剧本内容、
+        # 时长预算放在末尾，使分段拆分的后续调用能命中大部分输入前缀。
+        # （原版剧本内容在最前，缓存实际只能命中 system prompt，
+        # 实测输入缓存命中率不足 12%。）
+        user_prompt = f"""请将提供的剧本内容解析为结构化的JSON数据。
 
-数据库中的场景列表：
-```{db_locations_text} ```
-
-数据库中的道具列表：
-```{db_props_text} ```
-
-数据库中的角色列表：
-```{db_characters_text} ```
-{character_variant_text}{duration_budget_block}{reference_pack_block}
 **【核心要求 - 必须严格遵守】**
 
 1. **镜头组时长限制与分组规则（最重要）**：
@@ -2425,6 +2419,21 @@ JSON格式示例：
 ```
 {json_format_example}
 ```
+
+数据库中的场景列表：
+```{db_locations_text} ```
+
+数据库中的道具列表：
+```{db_props_text} ```
+
+数据库中的角色列表：
+```{db_characters_text} ```
+{character_variant_text}{reference_pack_block}
+【以下为本次待解析的剧本内容】
+{qc_retry_block}{segment_context_block}
+剧本内容：
+```{script_content} ```
+{duration_budget_block}
 下面请开始解析："""
 
         # 加载 system prompt（skill 优先，支持用户自定义；同步 IO 放线程避免堵事件循环）
