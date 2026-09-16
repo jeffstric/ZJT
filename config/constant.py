@@ -2321,6 +2321,7 @@ class SubscriptionConstants:
     BODY_PREFIX = '智剧通会员订阅'
 
 
+
 class WxContractStatus:
     """微信委托代扣签约关系状态"""
     _CONSTANT_GROUP = True
@@ -2359,6 +2360,29 @@ class Commission:
     STEP = 0.01                   # 比例设置步长（1%）
     MIN_WITHDRAW_AMOUNT = 10.0    # 最低提现金额（元）
     FIRST_RECHARGE_PACKAGE_ID = 1  # 首充福利套餐ID（首充不抽佣）
+    # ==================== 抽佣档位阶梯（新价目方案写死，2026-09-11） ====================
+    # 渠道（邀请人）佣金按订单档位写死，不再由邀请人自调。
+    #   ladder_rate   渠道比例（对外说明；= 渠道算力占不抽成到账的比例）
+    #   channel_cash  渠道现金佣金（元）= 渠道算力 × 0.04 元/算力成本
+    #   full_power    不抽成到账（无渠道时用户到账）
+    #   invited_power 渠道存在时用户到账（尾数8口径）
+    COMMISSION_TIERS = {
+        # 直充（一次性）
+        1:   dict(ladder_rate=0.30, full_power=122,  invited_power=88,   channel_cash=1.46,  name='体验包 88'),
+        2:   dict(ladder_rate=0.27, full_power=700,  invited_power=508,  channel_cash=7.56,  name='算力包 508'),
+        3:   dict(ladder_rate=0.22, full_power=1741, invited_power=1358, channel_cash=15.32, name='算力包 1358'),
+        4:   dict(ladder_rate=0.18, full_power=3647, invited_power=2988, channel_cash=26.26, name='算力包 2988'),
+        # 订阅（月付）
+        101: dict(ladder_rate=0.25, full_power=428,  invited_power=328,  channel_cash=4.28,  name='订阅入门版'),
+        102: dict(ladder_rate=0.19, full_power=1000, invited_power=808,  channel_cash=7.60,  name='订阅标准版'),
+        103: dict(ladder_rate=0.15, full_power=2524, invited_power=2148, channel_cash=15.15, name='订阅专业版'),
+        104: dict(ladder_rate=0.10, full_power=6216, invited_power=5598, channel_cash=24.86, name='订阅旗舰版'),
+    }
+    # 订阅佣金提现冻结天数（自佣金产生起）
+    WITHDRAW_FREEZE_DAYS = 30
+    # 订阅套餐 plan_id 下限（>= 该值视为订阅来源）
+    SUBSCRIPTION_PLAN_ID_MIN = 100
+
 
 
 class CommissionLogStatus:

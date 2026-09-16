@@ -129,7 +129,7 @@ class TestIdGeneration:
 class TestPlans:
     def test_get_plan_found(self):
         plan = get_subscription_plan(102)
-        assert plan and plan["computing_power"] == 1000
+        assert plan and plan["computing_power"] == 808
         assert plan["first_period_bonus"] == 200
 
     def test_get_plan_not_found(self):

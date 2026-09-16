@@ -2332,29 +2332,8 @@
       },
 
       async saveCommissionRate() {
-        if (!this.authToken && !this.cookieSession) return;
-        // 确保不超过上限
-        if (this.commissionRateInput > this.maxCommissionRate) {
-          this.commissionRateInput = this.maxCommissionRate;
-        }
-        this.commissionSaving = true;
-        try {
-          const rate = (Number(this.commissionRateInput) / 100).toFixed(2);
-          const response = await axios.put('/api/commission/rate?rate=' + rate, null, {
-            headers: { 'Authorization': `Bearer ${this.authToken}` }
-          });
-          if (response.data.code === 0) {
-            this.commissionRate = response.data.data.rate;
-            this.commissionRateInput = Math.round(this.commissionRate * 100);
-            alert('佣金比例已保存：' + this.commissionRateInput + '%');
-          } else {
-            alert(response.data.detail || response.data.message || '保存失败');
-          }
-        } catch (error) {
-          alert(error?.response?.data?.detail || '保存失败');
-        } finally {
-          this.commissionSaving = false;
-        }
+        // 比例已按订阅档位由平台统一设定（新价目），自调入口关闭
+        alert('佣金比例由平台按订阅档位统一设定，暂不支持自定义调整');
       },
 
       openWithdrawForm() {

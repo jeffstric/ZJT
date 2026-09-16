@@ -1007,6 +1007,9 @@
                   <strong>¥{{ Number(commissionSummary.withdrawn || 0).toFixed(2) }}</strong>
                 </div>
               </div>
+              <div class="commission-hint" style="margin-top: 8px;" v-if="Number(commissionSummary.subscription_frozen || 0) > 0">
+                月付佣金冻结中：¥{{ Number(commissionSummary.subscription_frozen || 0).toFixed(2) }}（满 30 天自动可提现）
+              </div>
             </div>
 
             <!-- 提现按钮 / 提现表单 -->
@@ -1043,19 +1046,17 @@
               </button>
             </div>
 
-            <!-- 抽佣比例 -->
+            <!-- 渠道佣金说明（比例按档位写死） -->
             <div class="commission-rate-card">
               <div class="commission-section-head">
-                <span>我的抽佣比例</span>
-                <strong>{{ commissionRateInput }}%</strong>
+                <span>渠道佣金说明</span>
               </div>
-              <input class="commission-rate-range" type="range" min="0" :max="maxCommissionRate" step="1" v-model.number="commissionRateInput" />
               <div class="commission-hint">
-                你邀请的用户充值时，按此比例给你抽佣（0%=关闭，范围 0%~{{ maxCommissionRate }}%）
+                渠道（邀请）佣金按好友购买的档位固定发放，比例由平台统一设定：<br/>
+                订阅：入门 25% · 标准 19% · 专业 15% · 旗舰 10%<br/>
+                直充：体验包/入门 30% · 标准 27% · 专业 22% · 旗舰 18%<br/>
+                月付订阅的佣金自产生起满 30 天后方可提现。
               </div>
-              <button class="btn secondary commission-save-btn" :disabled="commissionSaving" @click="saveCommissionRate">
-                {{ commissionSaving ? '保存中...' : '保存比例' }}
-              </button>
             </div>
 
             <!-- 佣金明细 -->

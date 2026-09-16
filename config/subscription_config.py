@@ -12,8 +12,8 @@
 
 套餐与赠送规则来源：《智剧通算力定价_新价目方案.html》（2026-09-09）
   - 每档一个微信协议模板（共 4 个：智剧通-入门版/标准版/专业版/旗舰版），固定金额按月扣费；
-  - computing_power 为「不抽成每期到账」；有邀请人抽佣时按佣金比例打折（commission/settle），
-    赠送算力不参与抽成；
+  - computing_power 为用户实际到账（尾数统一为 8 的口径，与文档"抽成后"一致，所有用户统一）；
+  - first_period_bonus 仅每份新签约的首期发放（解约后重新订阅视为新订阅，可再次享受）。
   - first_period_bonus 仅每份新签约的首期发放（解约后重新订阅视为新订阅，可再次享受）。
 """
 from typing import Dict, List, Optional
@@ -30,7 +30,7 @@ MONTHLY_SUBSCRIPTION_PLANS: List[Dict] = [
         "plan_id": 101,
         "name": "入门版",
         "price": 29.9,
-        "computing_power": 428,
+        "computing_power": 328,
         "granted_after_commission": 328,
         "first_period_bonus": 100,
         "template_id": "223101",   # 模板1：智剧通-入门版 ¥29.9/期（2026-09-10 审核通过）
@@ -40,7 +40,7 @@ MONTHLY_SUBSCRIPTION_PLANS: List[Dict] = [
         "plan_id": 102,
         "name": "标准版",
         "price": 59.9,
-        "computing_power": 1000,
+        "computing_power": 808,
         "granted_after_commission": 808,
         "first_period_bonus": 200,
         "template_id": "223102",   # 模板2：智剧通-标准版 ¥59.9/期（2026-09-10 审核通过）
@@ -50,7 +50,7 @@ MONTHLY_SUBSCRIPTION_PLANS: List[Dict] = [
         "plan_id": 103,
         "name": "专业版",
         "price": 129.0,
-        "computing_power": 2524,
+        "computing_power": 2148,
         "granted_after_commission": 2148,
         "first_period_bonus": 300,
         "template_id": "223103",   # 模板3：智剧通-专业版 ¥129/期（2026-09-10 审核通过）
@@ -60,7 +60,7 @@ MONTHLY_SUBSCRIPTION_PLANS: List[Dict] = [
         "plan_id": 104,
         "name": "旗舰版",
         "price": 299.0,
-        "computing_power": 6216,
+        "computing_power": 5598,
         "granted_after_commission": 5598,
         "first_period_bonus": 500,
         "template_id": "223104",   # 模板4：智剧通-旗舰版 ¥299/期（2026-09-10 审核通过）
