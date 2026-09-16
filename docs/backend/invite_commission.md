@@ -139,6 +139,7 @@
 - **邀请中心**（`showInviteModal` 弹窗）：所有登录用户可见，入口为顶部手机号/邮箱（点击打开）。复制带 host 的注册链接 `{origin}{pathname}?invite_code=XXX`。host 取运行时 `window.location.origin`。
 - **申请开通渠道推广**（商业版且 `channel_level < 2` 且非 `is_local`）：邀请中心内按钮。点击弹出客服微信二维码（`/api/system/server-config` 的 `customer_service_qr_url`，默认 `/files/二维码.jpg`），微信扫码添加客服开通。
 - **渠道等级预取**：`fetchServerConfig` 完成后（商业版且已登录）即调用 `/api/commission/summary` 拉取 `channel_level` 与佣金汇总，避免页面刷新后 `channelLevel` 停留在初始值 0，导致「申请开通渠道推广」按钮/佣金面板状态滞后。
+- **佣金说明金额**：`get_summary` 的 `data.tiers`（`recharge`/`subscription` 两组 `[{name, cash}]`，来自 `Commission.COMMISSION_TIERS`，按档位排序）下发各档位单笔渠道佣金金额，前端佣金说明卡片展示具体金额（元）而非比例。
 - **佣金中心**（商业版且 `channel_level >= 2`）：可提现/累计/冻结/已提现、提现申请、档位佣金说明、佣金明细。社区版或未开通时隐藏。
 - **邀请码弹窗样式**：弹窗结构在 `web/index.html`，视觉样式在 `web/css/index.css` 的 `Invite Code Styles` 段。
 - **充值页算力显示**：优先展示 `pkg.granted_computing_power ?? pkg.computing_power`。覆盖入口：`web/index.html`、`web/js/storyboard/render.js`、`web/js/script_writer.js`、`web/video_workflow.html`、`web/marketing_agent.html`。
