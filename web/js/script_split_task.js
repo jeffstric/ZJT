@@ -111,6 +111,84 @@
         return result.data;
     }
 
+    // ===== paused 态 UI 辅助（继续拆分 / 放弃并重新拆分） =====
+
+    /** t() 缺键或 i18n 未加载时返回键名本身，这里统一兜底到中文默认文案。 */
+    function tt(key, fallback) {
+        if (!window.t) return fallback;
+        const value = window.t(key);
+        return (!value || value === key) ? fallback : value;
+    }
+
+    /**
+     * 按任务是否暂停切换拆分按钮文案。
+     * paused: 「继续拆分」（点击后同配置提交，后端幂等命中并从断点恢复）；
+     * 非 paused: 恢复默认文案。
+     */
+    function applyPausedSplitButtonUI(splitBtn, splitGridBtn, paused) {
+        if (splitBtn) {
+            splitBtn.textContent = paused
+                ? tt('script_split_continue_btn', '继续拆分')
+                : tt('script_split_btn', '拆分幕');
+        }
+        if (splitGridBtn) {
+            const labelEl = splitGridBtn.querySelector('.script-split-grid-btn-label');
+            if (labelEl) {
+                labelEl.textContent = paused
+                    ? tt('script_split_grid_continue_btn', '继续拆分 + 宫格生图')
+                    : tt('script_split_grid_btn', '拆分幕 + 宫格生图');
+            }
+        }
+    }
+
+    /** 在状态行内挂一个「放弃并重新拆分」小按钮（幂等）。 */
+    function attachResplitButton(statusEl, onClick) {
+        if (!statusEl || statusEl.querySelector('.script-resplit-btn')) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'script-resplit-btn';
+        btn.textContent = tt('script_resplit_btn', '放弃并重新拆分');
+        btn.style.cssText = 'margin-left:8px;padding:1px 8px;font-size:12px;border-radius:6px;'
+            + 'border:1px solid #d97706;background:#fffbeb;color:#b45309;cursor:pointer;';
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onClick();
+        });
+        statusEl.appendChild(btn);
+    }
+
+    /** 移除状态行内的「放弃并重新拆分」按钮。 */
+    function removeResplitButton(statusEl) {
+        if (!statusEl) return;
+        const btn = statusEl.querySelector('.script-resplit-btn');
+        if (btn) btn.remove();
+    }
+
+    /**
+     * 取消任务并轮询等待其进入终态。
+     * active_key 唯一索引在终态时才释放（update_status 置 NULL），
+     * 释放前同配置无法创建新任务，因此「重新拆分」必须先等旧任务终态。
+     *
+     * @returns 终态字符串（'cancelled' 等）
+     * @throws 超时未终态 / 取消接口失败
+     */
+    async function cancelAndWaitTerminal(taskId, opts) {
+        opts = opts || {};
+        const timeoutMs = opts.timeoutMs || 30000; // 调度 tick 5s，30s 足够
+        await cancelTask(taskId);
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const status = await getTaskStatus(taskId);
+            if (TERMINAL_STATUSES.indexOf(status.status) >= 0) {
+                return status.status;
+            }
+            if (opts.onStatus) opts.onStatus();
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+        throw new Error(tt('script_resplit_cancel_timeout', '取消原任务超时，请稍后重试'));
+    }
+
     /**
      * 轮询任务直到终态。
      *
@@ -186,6 +264,11 @@
         resumeTask,
         cancelTask,
         pollScriptSplitTask,
+        applyPausedSplitButtonUI,
+        attachResplitButton,
+        removeResplitButton,
+        cancelAndWaitTerminal,
+        tt,
         TERMINAL_STATUSES,
         INTERACTIVE_STATUSES,
     };

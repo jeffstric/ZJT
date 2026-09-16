@@ -98,3 +98,16 @@ QC 重试调用同样受益。规则先于内容、内容紧邻「开始解析�
 - `tests/llm/` 全量 202 passed（`test_script_parser_spatial_layout_prompt` 中 3 个用例
   在 origin/develop 上即为存量失败，已用 git stash 验证与本次改动无关）
 - `scripts/lint_blocking_calls.py` 对改动文件无 error 级违例
+
+## 欠费后用户的恢复入口（前端）
+
+拆分任务被熔断后进入 `paused`（段级调用失败重试 3 次耗尽 → `segment_max_retries`），
+前端在 2026-09-16 补齐了显式入口（见 `docs/script/script_parser_incremental_split_design.md` §14.1）：
+
+- **继续拆分**：paused 时「拆分幕」「拆分幕 + 宫格生图」按钮文案自动切换为
+  「继续拆分…」。点击后同配置重提，后端幂等命中原任务并从检查点自动恢复，
+  已完成分段不重跑、不重复计费。用户充值后点一次即可续跑。
+- **放弃并重新拆分**：状态行追加的小按钮。取消旧任务并轮询至终态
+  （active_key 唯一索引终态释放）后，重新触发完整拆分（全新任务、重新计费）。
+- 页面刷新恢复路径（`workflow.js` createScriptNodeWithData）同享以上入口；
+  故事板侧进度弹窗原已有「重试」按钮（走同一 create 幂等恢复路径）。
