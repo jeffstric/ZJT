@@ -131,6 +131,7 @@
       subNativeCodeUrl: '',
       subOrderId: '',
       subCancelling: false,
+      subStatusPolling: false,         // 订阅状态轻量轮询进行中（支付/签约确认后状态翻转即停）
       wechatOpenid: '',
       userIp: '',
       nativeCodeUrl: '',
@@ -3032,6 +3033,11 @@
           if (response.data.success) {
             this.subscriptionPlans = response.data.plans || [];
             this.subscriptionStatus = response.data.subscription || null;
+            // 已有签约在进行中（如重新打开充值中心）：自动轮询等待状态落定
+            const st = this.subscriptionStatus && this.subscriptionStatus.status;
+            if (st === 'signing' || st === 'upgrading') {
+              this.startSubStatusPolling();
+            }
           } else {
             console.error('Failed to fetch subscription plans:', response.data);
           }
@@ -3057,6 +3063,71 @@
           console.error('Error refreshing subscription status:', error);
         } finally {
           this.subCancelling = false;
+        }
+      },
+
+      // ==================== 订阅状态轻量轮询 ====================
+      // 支付二维码展示/签约进行中期间，每 5 秒查一次 /api/subscription/status，
+      // 状态翻转为「生效中」（或签约失败回落）即自动停止并刷新界面，
+      // 无需用户手动点「刷新状态」等微信回调确认。
+      startSubStatusPolling() {
+        this.stopSubStatusPolling();
+        this._subStatusPrev = this.subscriptionStatus ? this.subscriptionStatus.status : '';
+        this._subStatusSawPending = false;
+        this.subStatusPolling = true;
+        this._subStatusTimer = setInterval(() => { this.pollSubStatusOnce(); }, 5000);
+        this.pollSubStatusOnce();
+      },
+
+      stopSubStatusPolling() {
+        if (this._subStatusTimer) {
+          clearInterval(this._subStatusTimer);
+          this._subStatusTimer = null;
+        }
+        this._subStatusPollingInFlight = false;
+        this.subStatusPolling = false;
+      },
+
+      async pollSubStatusOnce() {
+        if (this._subStatusPollingInFlight) return;
+        if (!this.authToken || !this.userId) { this.stopSubStatusPolling(); return; }
+        this._subStatusPollingInFlight = true;
+        try {
+          const response = await axios.get('/api/subscription/status', {
+            params: { user_id: parseInt(this.userId, 10), auth_token: this.authToken }
+          });
+          if (!response.data.success) return;
+          const sub = response.data.subscription || null;
+          this.subscriptionStatus = sub;
+          const status = sub ? sub.status : 'none';
+          const prev = this._subStatusPrev || '';
+          this._subStatusPrev = status;
+          if (status === 'signing' || status === 'upgrading') this._subStatusSawPending = true;
+          if (status === 'active' && ((prev && prev !== 'active') || this._subStatusSawPending)) {
+            // 签约/升级落定：刷新套餐卡片与算力，清理支付面板并提示
+            const wasUpgrade = this.lastOrderIsUpgrade;
+            this.stopSubStatusPolling();
+            this.selectedSubPlan = null;
+            this.subQrCode = '';
+            this.subNativeCodeUrl = '';
+            this.subOrderId = '';
+            this.fetchSubscriptionPlans();
+            this.fetchComputingPower();
+            alert(wasUpgrade
+              ? '升级成功！已切换为新套餐，整期算力稍后到账'
+              : '订阅成功！套餐已生效，算力稍后到账');
+          } else if (['terminated', 'none', 'expired'].includes(status)
+              && (prev === 'signing' || prev === 'upgrading')) {
+            // 签约失败/超时清理：回落到套餐列表，停止轮询
+            this.stopSubStatusPolling();
+            this.fetchSubscriptionPlans();
+            this.subPaymentError = '签约未完成（可能超时或已取消），如需订阅请重新发起';
+          }
+        } catch (error) {
+          this.stopSubStatusPolling();
+          this.handleAuthError(error);
+        } finally {
+          this._subStatusPollingInFlight = false;
         }
       },
 
@@ -3160,12 +3231,15 @@
           if (response.data.success) {
             this.subOrderId = response.data.order_id;
             this.lastOrderIsUpgrade = !!response.data.upgrade;
+            // 支付/签约确认由微信回调驱动，前端轻量轮询状态，翻转后自动刷新并提示
+            this.startSubStatusPolling();
             if (response.data.payment_type === 'JSAPI') {
               // 微信内：调起支付（支付+签约在同一流程完成）
               this.invokeWechatSubscriptionJSAPI(response.data.jsapi_params);
             } else {
               const codeUrl = response.data.code_url;
               if (!codeUrl) {
+                this.stopSubStatusPolling();
                 this.subPaymentError = '未获取到支付二维码，请重试';
               } else {
                 this.subNativeCodeUrl = codeUrl;
@@ -3207,8 +3281,10 @@
               this.selectedSubPlan = null;
               setTimeout(() => { this.fetchComputingPower(); }, 2000);
             } else if (res.err_msg === 'get_brand_wcpay_request:cancel') {
+              this.stopSubStatusPolling();
               this.subPaymentError = '支付已取消';
             } else {
+              this.stopSubStatusPolling();
               this.subPaymentError = '支付失败: ' + res.err_msg;
             }
           }
@@ -3227,6 +3303,7 @@
           });
           if (response.data.success) {
             alert('订阅已取消');
+            this.stopSubStatusPolling();
             await this.refreshSubscriptionStatus();
           } else {
             alert(response.data.message || '取消订阅失败');
@@ -3359,6 +3436,7 @@
       
       closeRechargeModal() {
         this.showRechargePowerModal = false;
+        this.stopSubStatusPolling();
         this.selectedPackage = null;
         this.paymentQrCode = '';
         this.paymentOrderId = '';
