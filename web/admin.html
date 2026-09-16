@@ -2122,26 +2122,6 @@
 
                 <!-- 商业版：佣金提现管理 -->
                 <div v-else class="table-container">
-                    <div class="table-header">
-                        <h3>{{ t('commission_title') }}</h3>
-                    </div>
-
-                    <!-- 佣金比例上限配置 -->
-                    <div style="margin-bottom: 20px; padding: 16px 20px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
-                        <div style="display: flex; align-items: center; justify-content: space-between;">
-                            <div>
-                                <div style="font-weight: 600; color: #1e293b; margin-bottom: 4px;">{{ t('commission_max_rate_title') }}</div>
-                                <div style="font-size: 13px; color: #64748b;">{{ t('commission_max_rate_desc') }}</div>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 16px;">
-                                <div style="text-align: right;">
-                                    <div style="font-size: 12px; color: #94a3b8;">{{ t('commission_max_rate_current') }}</div>
-                                    <div style="font-size: 24px; font-weight: 700; color: #059669;">{{ (commissionMaxRate * 100).toFixed(0) }}%</div>
-                                </div>
-                                <button class="action-btn primary" @click="openCommissionMaxRateModal">{{ t('commission_max_rate_edit') }}</button>
-                            </div>
-                        </div>
-                    </div>
 
                     <!-- 状态筛选 -->
                     <div class="table-filters" style="margin-bottom: 16px;">
@@ -3266,45 +3246,6 @@
                     <button class="modal-btn cancel" @click="commissionReviewModal.show = false">{{ t('cancel_btn') }}</button>
                     <button class="modal-btn confirm" :class="commissionReviewModal.action === 'reject' ? 'danger' : ''" @click="submitCommissionReview" :disabled="commissionReviewModal.loading">
                         {{ commissionReviewModal.loading ? t('btn_submit_loading') : (commissionReviewModal.action === 'approve' ? t('btn_commission_approve') : t('btn_commission_reject')) }}
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- 佣金比例上限修改弹窗 -->
-        <div class="modal-overlay" v-if="commissionMaxRateModal.show" @click.self="commissionMaxRateModal.show = false">
-            <div class="modal">
-                <div class="modal-header">
-                    <h3>{{ t('commission_max_rate_edit') }}</h3>
-                    <button class="modal-close" @click="commissionMaxRateModal.show = false">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label>{{ t('commission_max_rate_current') }}</label>
-                        <input type="text" :value="(commissionMaxRate * 100).toFixed(0) + '%'" disabled>
-                    </div>
-                    <div class="form-group">
-                        <label>{{ t('commission_max_rate_new') }} <span style="color: red;">*</span></label>
-                        <input type="number" v-model.number="commissionMaxRateModal.newRate" min="1" max="100" step="1" placeholder="1-100">
-                        <p class="form-hint">{{ t('commission_max_rate_desc') }}</p>
-                    </div>
-                    <div style="padding: 12px 16px; background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 4px; margin-top: 8px;">
-                        <p style="margin: 0; color: #92400e; font-size: 13px;">⚠️ {{ t('commission_max_rate_warning') }}</p>
-                    </div>
-                    <!-- 修改结果显示 -->
-                    <div v-if="commissionMaxRateModal.affectedCount !== null" style="margin-top: 12px; padding: 12px 16px; background: #f0fdf4; border-left: 4px solid #22c55e; border-radius: 4px;">
-                        <p v-if="commissionMaxRateModal.affectedCount > 0" style="margin: 0; color: #166534; font-size: 13px;">
-                            ✅ {{ t('commission_max_rate_affected', { count: commissionMaxRateModal.affectedCount }) }}
-                        </p>
-                        <p v-else style="margin: 0; color: #166534; font-size: 13px;">
-                            ✅ {{ t('commission_max_rate_no_affected') }}
-                        </p>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="modal-btn cancel" @click="commissionMaxRateModal.show = false">{{ t('close_btn') }}</button>
-                    <button class="modal-btn confirm" @click="submitCommissionMaxRate" :disabled="commissionMaxRateModal.loading">
-                        {{ commissionMaxRateModal.loading ? t('btn_submit_loading') : t('save_btn') }}
                     </button>
                 </div>
             </div>
