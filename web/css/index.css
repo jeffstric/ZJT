@@ -428,6 +428,11 @@ header {
   gap: 4px;
 }
 
+.user-phone {
+  font-size: 14px;
+  color: var(--muted);
+}
+
 .agent-connect-btn {
   position: relative;
   width: 52px;

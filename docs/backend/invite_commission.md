@@ -136,7 +136,7 @@
 
 用户侧入口位于 `web/index.html`：
 
-- **邀请中心**（`showInviteModal` 弹窗）：所有登录用户可见；复制带 host 的注册链接 `{origin}{pathname}?invite_code=XXX`。host 取运行时 `window.location.origin`。（原顶部账号点击入口已随 `user-agent-row` 移除，弹窗当前无页面入口。）
+- **邀请中心**（`showInviteModal` 弹窗）：所有登录用户可见，入口为顶部手机号/邮箱（点击打开）。复制带 host 的注册链接 `{origin}{pathname}?invite_code=XXX`。host 取运行时 `window.location.origin`。
 - **申请开通渠道推广**（商业版且 `channel_level < 2` 且非 `is_local`）：邀请中心内按钮。点击弹出客服微信二维码（`/api/system/server-config` 的 `customer_service_qr_url`，默认 `/files/二维码.jpg`），微信扫码添加客服开通。
 - **佣金中心**（商业版且 `channel_level >= 2`）：可提现/累计/冻结/已提现、提现申请、档位佣金说明、佣金明细。社区版或未开通时隐藏。
 - **邀请码弹窗样式**：弹窗结构在 `web/index.html`，视觉样式在 `web/css/index.css` 的 `Invite Code Styles` 段。
