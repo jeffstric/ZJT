@@ -46,6 +46,19 @@
   响应新增 `upgrade: true` 与 `current_plan`（原套餐）；同档/降级报错文案调整为
   "如需更换为更低套餐请先取消当前订阅"。
 - `GET /api/subscription/plans` / `status`：`subscription` 可能返回 `upgrading`。
+- `GET /api/subscription/order-status`（新增）：`order_id`/`user_id`/`auth_token` 查询单笔
+  订阅订单，`{status, paid}`（`status=1` 即 `SubscriptionOrderStatus.PAID`）。Native 扫码支付后
+  前端每 3s 轮询，支付成功自动 alert 并刷新订阅状态与算力（JSAPI 微信内走 WeixinJSBridge
+  回调，无需轮询）；弹窗关闭/返回/重新发起时自动停止轮询。
+
+## 支付密钥安全闸（生产强制）
+
+- `POST /api/recharge/wechat-pay`：统一下单前检查 `secret/wechat/apiclient_key.pem`，
+  缺失直接 503「微信支付商户密钥未配置，无法发起支付」——不允许展示二维码
+  （缺失时签名降级为 `mock_signature`，微信必拒；同时杜绝验签旁路被伪造回调利用）。
+- `POST /api/subscription/wechat-sign-pay`：检查 `pay.wxpay.api_v2_key` 非空，缺失同样 503。
+- 验签降级（`verify_callback_signature` 缺公钥 `return True`、`verify_v2_sign` 缺 V2 密钥
+  `return True`）仅限密钥齐备以外的开发联调场景；生产必须以密钥存在性检查兜底。
 
 ## 业务规则
 

@@ -5276,6 +5276,12 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
                     detail="首充福利仅限首次充值，您已领取过该套餐"
                 )
         
+        # 生产安全闸：商户私钥缺失时禁止发起支付/展示二维码
+        # （缺失时签名降级为 mock_signature 微信必拒；验签旁路也仅限密钥齐备时可防伪造回调）
+        if not wechat_pay_util.has_signing_key():
+            logger.error("Wechat merchant private key (secret/wechat/apiclient_key.pem) missing; refuse to create payment order")
+            raise HTTPException(status_code=503, detail="微信支付商户密钥未配置，无法发起支付，请联系管理员")
+
         # 生成订单ID
         order_id = wechat_pay_util.generate_order_id()
         

@@ -5,10 +5,12 @@
   - GET  /api/subscription/plans           订阅套餐列表（附当前用户订阅状态）
   - POST /api/subscription/wechat-sign-pay 创建「支付中签约」订单（首期）
   - GET  /api/subscription/status          我的订阅状态
+  - GET  /api/subscription/order-status    单笔订阅订单支付状态（Native 扫码后轮询感知支付成功）
   - POST /api/subscription/cancel          解约（当期权益保留至周期结束）
   - POST /api/subscription/pay-callback    支付/扣款结果通知（微信→商户，V2 XML）
   - POST /api/subscription/contract-callback 签约/解约结果通知（微信→商户，V2 XML）
 """
+import asyncio
 import logging
 import traceback
 from typing import Optional
@@ -17,7 +19,10 @@ from fastapi import APIRouter, Request, Query, HTTPException
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+from config.config_util import get_dynamic_config_value
+from config.constant import SubscriptionOrderStatus
 from config.subscription_config import MONTHLY_SUBSCRIPTION_PLANS
+from model.subscription_orders import SubscriptionOrdersModel
 from perseids_server.client import async_make_perseids_request
 from perseids_server.utils.permission import require_permission
 from services import subscription_service
@@ -102,6 +107,12 @@ async def create_subscription_sign_pay(request: Request, payload: SubscriptionSi
             raise HTTPException(status_code=400, detail="Authentication token is required")
         await _verify_auth_token(payload.auth_token, payload.user_id)
 
+        # 生产安全闸：V2 密钥（api_v2_key）缺失时 V2 签名/验签会降级（验签旁路仅限开发），
+        # 不允许发起签约支付/展示二维码
+        if not (get_dynamic_config_value("pay", "wxpay", "api_v2_key", default="") or "").strip():
+            logger.error("pay.wxpay.api_v2_key missing; refuse to create subscription sign-pay order")
+            raise HTTPException(status_code=503, detail="微信支付密钥未配置，无法发起订阅支付，请联系管理员")
+
         result = await subscription_service.create_sign_pay_order(
             user_id=payload.user_id,
             subscription_plan_id=payload.subscription_plan_id,
@@ -135,6 +146,39 @@ async def get_subscription_status(request: Request, user_id: int, auth_token: st
         logger.error(f"Failed to get subscription status: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取订阅状态失败: {e}")
+
+
+@router.get("/order-status")
+@require_permission("order:create")
+async def get_subscription_order_status(
+    request: Request,
+    order_id: str = Query(...),
+    user_id: int = Query(...),
+    auth_token: str = Query(...),
+):
+    """单笔订阅订单支付状态：Native 扫码支付后前端轮询，感知支付成功并刷新订阅状态。
+
+    仅允许查询本人订单；status 见 SubscriptionOrderStatus（1=PAID 已支付）。
+    """
+    try:
+        await _verify_auth_token(auth_token, user_id)
+        order = await asyncio.to_thread(SubscriptionOrdersModel.get_by_order_id, order_id)
+        if not order or int(order.user_id) != int(user_id):
+            raise HTTPException(status_code=404, detail="订单不存在")
+        return JSONResponse({
+            "success": True,
+            "order_id": order_id,
+            "status": int(order.status),
+            "paid": int(order.status) == SubscriptionOrderStatus.PAID,
+        })
+    except SubscriptionServiceError as e:
+        raise _http_error(e)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get subscription order status: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"获取订单状态失败: {e}")
 
 
 @router.post("/cancel")

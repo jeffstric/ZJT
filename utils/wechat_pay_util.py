@@ -485,6 +485,18 @@ class WechatPayUtil:
             logger.error(f"Failed to generate signature: {str(e)}")
             logger.warning("Using mock signature for development")
             return "mock_signature"
+
+    def has_signing_key(self) -> bool:
+        """商户私钥（secret/wechat/apiclient_key.pem）是否已配置。
+
+        统一下单签名依赖该私钥；缺失时签名降级为 mock_signature（微信必拒）。
+        生产环境必须在展示支付二维码前用本方法拦截，不允许发起支付。
+        """
+        private_key_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "secret/wechat/apiclient_key.pem"
+        )
+        return os.path.isfile(private_key_path)
     
     def verify_callback_signature(
         self,

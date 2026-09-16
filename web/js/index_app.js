@@ -130,6 +130,7 @@
       subQrCode: '',
       subNativeCodeUrl: '',
       subOrderId: '',
+      _subPayTimer: null,   // Native 扫码支付轮询定时器（支付成功自动提示用）
       subCancelling: false,
       wechatOpenid: '',
       userIp: '',
@@ -3104,11 +3105,49 @@
       },
 
       backToSubPlanSelection() {
+        this.stopSubPayPolling();
         this.selectedSubPlan = null;
         this.subQrCode = '';
         this.subNativeCodeUrl = '';
         this.subPaymentError = '';
         this.subOrderId = '';
+      },
+
+      // Native 扫码支付后轮询订单状态，支付成功自动提示并刷新订阅状态/算力
+      startSubPayPolling() {
+        this.stopSubPayPolling();
+        this._subPayTimer = setInterval(async () => {
+          // 弹窗关闭或订单已重置（返回/重新发起）时自动停止
+          if (!this.subOrderId || !this.showRechargePowerModal) {
+            this.stopSubPayPolling();
+            return;
+          }
+          try {
+            const resp = await axios.get('/api/subscription/order-status', {
+              params: { order_id: this.subOrderId, user_id: this.userId, auth_token: this.authToken }
+            });
+            if (resp.data && resp.data.success && resp.data.paid) {
+              this.stopSubPayPolling();
+              this.subOrderId = '';
+              const isUpgrade = this.lastOrderIsUpgrade;
+              alert(isUpgrade
+                ? '支付成功！套餐升级已生效，新套餐算力稍后到账'
+                : '支付成功！订阅已生效，算力稍后到账');
+              this.refreshSubscriptionStatus();
+              this.selectedSubPlan = null;
+              setTimeout(() => { this.fetchComputingPower(); }, 2000);
+            }
+          } catch (e) {
+            // 单次轮询失败（网络抖动/登录过期）不打断，下一轮继续
+          }
+        }, 3000);
+      },
+
+      stopSubPayPolling() {
+        if (this._subPayTimer) {
+          clearInterval(this._subPayTimer);
+          this._subPayTimer = null;
+        }
       },
 
       showSubscriptionAgreement() {
@@ -3137,6 +3176,7 @@
         this.subPaymentError = '';
         this.subQrCode = '';
         this.subNativeCodeUrl = '';
+        this.stopSubPayPolling();
 
         const isWechat = this.isWechatBrowser();
         if (!this.userIp) {
@@ -3170,6 +3210,8 @@
               } else {
                 this.subNativeCodeUrl = codeUrl;
                 this.subQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(codeUrl)}`;
+                // Native 扫码：轮询订单状态，支付成功自动提示（JSAPI 走 WeixinJSBridge 回调，无需轮询）
+                this.startSubPayPolling();
               }
             }
           } else {
@@ -3358,6 +3400,7 @@
       },
       
       closeRechargeModal() {
+        this.stopSubPayPolling();
         this.showRechargePowerModal = false;
         this.selectedPackage = null;
         this.paymentQrCode = '';
