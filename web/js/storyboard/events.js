@@ -2580,10 +2580,11 @@ async function handleAction(action, target) {
 
     if (action === 'export-full') {
         try {
-            // 固定烧录字幕：内置 CJK 字体已解决 Windows fontconfig 豆腐块问题。
+            // 是否烧录字幕跟随预览区「字幕」勾选（所见即所得）；
+            // 内置 CJK 字体已解决 Windows fontconfig 豆腐块问题。
             // 显示方式与左右边距来自字幕设置（预览所见即所得）。
             const response = await api.exportFullVideo(state.storyboardId, {
-                include_subtitles: true,
+                include_subtitles: Boolean(state.subtitleEnabled),
                 subtitle_mode: state.subtitleMode === 'block' ? 'block' : 'smart',
                 subtitle_side_margin: normalizedSubtitleMarginRatio(),
             });
