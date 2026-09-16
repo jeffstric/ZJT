@@ -49,6 +49,8 @@
       commissionWithdrawing: false,
       showLoginModal: false,
       showInviteModal: false,
+      channelLevel: 0,
+      showChannelApplyModal: false,
       showComputingPowerLogsModal: false,
       showRechargePowerModal: false,
       showFeedbackModal: false,
@@ -363,6 +365,7 @@
         this.fetchComputingPower();
         this.fetchUserRole();
         this.fetchCheckinStatus();
+        this.fetchChannelLevel();
       } else {
         // 无 localStorage token：即使 HttpOnly cookie 仍有效，也无法填 Form/JSON
         // 调用点。probe 若发现 cookie 有效则强制重新登录以完成双写；
@@ -2266,6 +2269,22 @@
         ]);
       },
 
+      async fetchChannelLevel() {
+        // 渠道推广等级：0-未开通 1-推广链接(算力奖励) 2-渠道佣金(现金)
+        if (!this.authToken && !this.cookieSession) return;
+        try {
+          const response = await axios.get('/api/commission/summary', {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data.code === 0) {
+            this.channelLevel = Number(response.data.data.channel_level || 0);
+            this.commissionSummary = response.data.data;
+          }
+        } catch (error) {
+          console.warn('Failed to fetch channel level:', error?.message);
+        }
+      },
+
       async fetchCommissionSummary() {
         if (!this.authToken && !this.cookieSession) return;
         try {
@@ -2274,7 +2293,8 @@
           });
           if (response.data.code === 0) {
             this.commissionSummary = response.data.data;
-            this.showCommission = true;
+            this.channelLevel = Number(response.data.data.channel_level || 0);
+            this.showCommission = this.channelLevel >= 2;
           } else {
             this.showCommission = false;
           }

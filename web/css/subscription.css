@@ -378,3 +378,19 @@
   padding: 3px 8px;
   display: inline-block;
 }
+
+/* 头部「申请开通渠道推广」按钮 */
+.channel-apply-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.08);
+  color: var(--primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.channel-apply-btn:hover {
+  background: rgba(34, 197, 94, 0.18);
+}

@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/index.css" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
   <link rel="stylesheet" href="/css/announcement_center.css?v=__VERSION__" />
-  <link rel="stylesheet" href="/css/subscription.css?v=f7162" />
+  <link rel="stylesheet" href="/css/subscription.css?v=f7163" />
 
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
@@ -121,7 +121,8 @@
             </div>
             <div class="user-info-wrapper">
               <div class="user-agent-row">
-                <span class="user-phone clickable" @click="openInviteModal" :title="$t('invite_code')">{{ maskedPhone }}</span>
+                <span v-if="channelLevel >= 1" class="user-phone clickable" @click="openInviteModal" :title="$t('invite_code')">{{ maskedPhone }}</span>
+                <button v-else class="btn channel-apply-btn" @click="showChannelApplyModal = true">申请开通渠道推广</button>
               </div>
               <div class="computing-power-display">
                 <template v-if="checkinStatus.checkin_enabled">
@@ -928,6 +929,30 @@
       </div>
     </div>
     
+    <!-- 渠道推广申请弹窗（未开通用户） -->
+    <div class="modal-overlay" v-if="showChannelApplyModal" @click.self="showChannelApplyModal = false">
+      <div class="modal channel-apply-modal">
+        <button class="modal-close" @click="showChannelApplyModal = false">×</button>
+        <div class="invite-modal-header">
+          <div>
+            <div class="invite-modal-eyebrow">渠道推广合作</div>
+            <div class="invite-modal-title">申请开通渠道推广</div>
+          </div>
+        </div>
+        <div class="invite-modal-body">
+          <div class="invite-user-card" style="text-align: left; line-height: 2;">
+            <p><strong>渠道推广权益说明：</strong></p>
+            <p>· 通过你的专属链接邀请好友注册、充值或订阅会员</p>
+            <p>· 好友消费后，你可获得相应奖励</p>
+            <p style="margin-top: 8px;"><strong>开通方式：</strong></p>
+            <p>· 联系客服开通渠道推广资格（客服电话：15088613226）</p>
+            <p>· 开通后即可在「邀请中心」获取专属推广链接与奖励</p>
+          </div>
+          <button class="btn primary" style="width: 100%; margin-top: 8px;" @click="showChannelApplyModal = false">我知道了</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Invite Code Modal -->
     <div class="modal-overlay" v-if="showInviteModal" @click.self="showInviteModal = false">
       <div class="modal invite-modal">
@@ -1469,7 +1494,7 @@
   <script src="/js/pages/ai_script_gen.js"></script>
   <script src="/js/pages/skill_config.js"></script>
   <!-- App 组件、路由配置 -->
-  <script src="/js/index_app.js?v=f7162"></script>
+  <script src="/js/index_app.js?v=f7163"></script>
   <script src="/js/announcement_center.js?v=__VERSION__"></script>
   <script>
   // i18n 初始化 - 必须在 Vue 应用创建前执行

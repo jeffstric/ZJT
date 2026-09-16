@@ -3724,3 +3724,54 @@ async def admin_reset_runninghub_circuit(
     except Exception as e:
         logger.error(f"Failed to reset runninghub circuit {index}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 渠道推广等级管理 ====================
+
+class ChannelLevelRequest(BaseModel):
+    target_user_id: int
+    level: int  # 0-未开通 1-推广链接(算力奖励) 2-渠道佣金(现金)
+
+
+@router.put("/users/channel-level")
+async def set_user_channel_level(
+    payload: ChannelLevelRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+):
+    """设置用户渠道推广等级（仅管理员）。
+
+    等级：0-未开通（隐藏推广入口） 1-推广链接（仅算力奖励） 2-渠道佣金（现金佣金）。
+    """
+    admin = await require_admin(auth_token)
+    if payload.level not in (0, 1, 2):
+        raise HTTPException(status_code=400, detail="无效的渠道推广等级（0/1/2）")
+
+    target = UsersModel.get_by_id(payload.target_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="目标用户不存在")
+
+    affected = UsersModel.set_channel_level(payload.target_user_id, payload.level)
+    logging.info(
+        f"[Admin] 渠道推广等级变更: user={payload.target_user_id} level={payload.level} "
+        f"by admin={admin.id} affected={affected}"
+    )
+    return {
+        "code": 0,
+        "data": {
+            "target_user_id": payload.target_user_id,
+            "channel_level": payload.level,
+        },
+    }
+
+
+@router.get("/users/channel-level")
+async def get_user_channel_level(
+    target_user_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+):
+    """查询用户渠道推广等级（仅管理员）。"""
+    await require_admin(auth_token)
+    target = UsersModel.get_by_id(target_user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="目标用户不存在")
+    return {"code": 0, "data": {"target_user_id": target_user_id, "channel_level": getattr(target, 'channel_level', 0) or 0}}

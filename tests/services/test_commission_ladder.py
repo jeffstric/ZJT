@@ -6,6 +6,7 @@
   - 无邀请人：不抽佣、不写账本，用户到账 = 不抽成值
   - 未知档位：不抽佣全额到账（向后兼容）
   - 幂等：同交易号回放历史 granted
+  - 渠道未开通佣金资质：用户仍按档位到账，但不产生渠道佣金
   - set_commission_rate 已停用
 """
 from decimal import Decimal
@@ -18,6 +19,12 @@ from enterprise.services import commission_service as cs
 class _FakeLog:
     def __init__(self, granted):
         self.granted_computing_power = granted
+
+
+class _FakeUser:
+    def __init__(self, inviter, channel_level=2):
+        self.inviter_id = inviter
+        self.channel_level = channel_level  # 邀请人的渠道推广等级（>=2 才产生现金佣金）
 
 
 @pytest.fixture
@@ -36,15 +43,20 @@ def commission_env(monkeypatch):
             calls["create"].append(kw)
             logs[kw["transaction_id"]] = _FakeLog(kw["granted_computing_power"])
 
-    class _FakeUser:
-        def __init__(self, inviter):
-            self.inviter_id = inviter
-
-    users = {2: _FakeUser(9), 3: _FakeUser(None)}  # user2 有邀请人
+    # user2 有邀请人(9，已开通渠道佣金)；user3 无邀请人；user4 有邀请人但未开通渠道
+    users = {
+        2: _FakeUser(9, 2),
+        3: _FakeUser(None, 2),
+        4: _FakeUser(9, 0),
+        9: _FakeUser(None, 2),  # 邀请人本人
+    }
 
     monkeypatch.setattr(cs, "IS_COMMUNITY_EDITION", False)
     monkeypatch.setattr(cs, "CommissionLogModel", _FakeLogModel)
-    monkeypatch.setattr(cs, "UsersModel", type("UM", (), {"get_by_id": staticmethod(lambda uid: users.get(uid))}))
+    monkeypatch.setattr(
+        cs, "UsersModel",
+        type("UM", (), {"get_by_id": staticmethod(lambda uid: users.get(uid))}),
+    )
     return cs, calls
 
 
@@ -77,18 +89,28 @@ class TestSettleLadder:
         assert row["commission_rate"] == Decimal("0.30")
 
     @pytest.mark.parametrize("pid,full,after,cash", [
+        (101, 428, 328, "4.28"),
+        (102, 1000, 808, "7.60"),
         (103, 2524, 2148, "15.15"),
         (104, 6216, 5598, "24.86"),
+        (1, 122, 88, "1.46"),
         (2, 700, 508, "7.56"),
+        (3, 1741, 1358, "15.32"),
         (4, 3647, 2988, "26.26"),
     ])
-    def test_all_tiers_ladder_table(self, commission_env, pid, full, after, cash):
+    def test_all_tiers_ladder_table(self, commission_env, monkeypatch, pid, full, after, cash):
         """八个档位的固定值与配置表逐一一致"""
         cs, calls = commission_env
+        users = {2: _FakeUser(9, 2), 9: _FakeUser(None, 2)}
+        monkeypatch.setattr(
+            cs, "UsersModel",
+            type("UM", (), {"get_by_id": staticmethod(lambda uid: users.get(uid))}),
+        )
         r = cs.CommissionService.settle(
-            invitee_id=2, order_id="O", transaction_id=f"T_{pid}_{full}",
+            invitee_id=2, order_id=f"O_{pid}", transaction_id=f"T_{pid}",
             package_id=pid, order_amount=1, computing_power=full,
         )
+        assert r["success"] is True
         assert r["granted_computing_power"] == after
         row = calls["create"][-1]
         assert row["commission_amount"] == Decimal(cash)
@@ -130,28 +152,31 @@ class TestSettleLadder:
         assert r["granted_computing_power"] == 808
         assert len(calls["create"]) == before
 
+    def test_channel_not_enabled_skips_commission(self, commission_env, monkeypatch):
+        """渠道未开通佣金资质（channel_level<2）：用户仍按档位到账，但不产生渠道佣金"""
+        cs, calls = commission_env
 
-def make_util():
-    from utils.wx_papay_util import WxPapayUtil
-    return WxPapayUtil(app_id="wx", mch_id="m", api_v2_key="k" * 32, plan_template_id="1")
+        class _U:
+            inviter_id = 9
+            channel_level = 0
+
+        monkeypatch.setattr(
+            cs, "UsersModel",
+            type("UM", (), {"get_by_id": staticmethod(lambda uid: _U())}),
+        )
+        r = cs.CommissionService.settle(
+            invitee_id=2, order_id="SUB_z", transaction_id="T4",
+            package_id=102, order_amount=59.9, computing_power=1000,
+        )
+        assert r["success"] is True
+        # 渠道未开通：用户到账 = 不抽成值（1000）
+        assert r["granted_computing_power"] == 1000
+        assert calls["create"] == []
 
 
 class TestSetRateDisabled:
     def test_set_rate_disabled(self):
         """比例自调已停用：一律失败且不抛异常"""
-        r = _svc().CommissionService.set_commission_rate(9, 0.19)
-        assert r["success"] is False
-        assert "不支持自定义" in r["message"]
-
-
-def _svc():
-    from enterprise.services import commission_service as svc
-    return svc
-
-
-class TestSetRateDisabled:
-    def test_set_rate_disabled(self):
-        """比例自调已停用：一律失败且不抛异常"""
-        r = _svc().CommissionService.set_commission_rate(9, 0.19)
+        r = cs.CommissionService.set_commission_rate(9, 0.19)
         assert r["success"] is False
         assert "不支持自定义" in r["message"]
