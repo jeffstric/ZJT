@@ -449,6 +449,17 @@
       wxGroupQrDisplayUrl() {
         return this.resolveWxGroupQrDisplayUrl(this.wxGroupQrUrl);
       },
+      // 渠道佣金说明：把 /api/commission/summary 下发的 tiers 拼成「名称 ¥金额」文本
+      commissionTierText() {
+        const tiers = (this.commissionSummary && this.commissionSummary.tiers) || {};
+        const fmt = (list) => (list || [])
+          .map(t => `${t.name} ¥${Number(t.cash || 0).toFixed(2)}`)
+          .join(' · ');
+        return {
+          subscription: fmt(tiers.subscription),
+          recharge: fmt(tiers.recharge),
+        };
+      },
       maskedPhone() {
         // 邮箱用户显示掩码后的邮箱
         if (!this.userPhone && this.userEmail) {
