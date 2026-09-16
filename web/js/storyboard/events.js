@@ -26,7 +26,7 @@ import state, {
     syncReferenceImagesCompat,
     getMaxVideoMediaCount,
     videoModelSupportsLastFrame,
-    getSupportedVideoImageModes,
+    getAvailableVideoImageModes,
     setAgentChatFontStep,
     isSceneAgentRunning,
     startSceneAgentRun,
@@ -2379,7 +2379,9 @@ async function handleAction(action, target) {
     if (action === 'set-video-image-mode') {
         if (isSceneAgentRunning(current?.id)) return;
         const mode = target.dataset.videoImageMode;
-        const supported = getSupportedVideoImageModes();
+        // 与 renderVideoModeSelector 同口径：按全部视频模型能力并集校验，
+        // 不能用当前模式选中模型的能力（首帧模式下会错误拒绝参考生视频）
+        const supported = getAvailableVideoImageModes();
         if (!supported.includes(mode)) return;
         state.videoImageMode = mode;
         state.showVideoModePanel = false;

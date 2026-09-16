@@ -40,6 +40,8 @@ class _StubConfig:
     """模拟 UnifiedConfigRegistry.get_by_id 返回的 task 配置。"""
 
     name = "TestVideoModel"
+    key = 'test-video'
+    id = 999
     supported_durations = [5, 10, 15]
     supported_image_modes = ['first_last_frame']
     supports_ref_audio_video = False
@@ -136,6 +138,7 @@ def patched_video_flow(monkeypatch, video_impl):
         'prefs': {'resolution': '480P'},   # 测试可改写
         'request_data': None,
         'api_url': None,
+        'headers': None,
     }
     stub_config = _StubConfig()
 
@@ -159,6 +162,9 @@ def patched_video_flow(monkeypatch, video_impl):
     )
     # image_to_video 的媒体 URL 校验放行
     monkeypatch.setattr(video_tools, '_validate_real_media_urls', lambda *a, **k: None)
+    # 单元环境无签名商业租约，许可门控放行（同 test_storyboard_first_frame_grid_service 的处置）
+    import enterprise.services.license.runtime as license_runtime_module
+    monkeypatch.setattr(license_runtime_module, 'require_commercial_license', lambda *a, **k: None)
 
     class _FakeResp:
         def raise_for_status(self):
@@ -170,6 +176,7 @@ def patched_video_flow(monkeypatch, video_impl):
     def fake_post(url, data=None, **kwargs):
         captured['request_data'] = dict(data or {})
         captured['api_url'] = url
+        captured['headers'] = dict(kwargs.get('headers') or {})
         return _FakeResp()
 
     monkeypatch.setattr(video_tools.httpx, 'post', fake_post)
@@ -239,6 +246,52 @@ def test_image_to_video_forwards_resolution(patched_video_flow):
     assert captured['request_data']['resolution'] == '1080P'
     assert captured['api_url'].endswith('/api/ai-app-run-image')
     assert captured['stub_config'].last_power_context == {'resolution': '1080P'}
+
+
+# -----------------------------
+# 回归：内部回环调用必须携带 Authorization Bearer 头
+# -----------------------------
+
+def test_generate_text_to_video_sends_bearer_header(patched_video_flow):
+    """require_permission 只认 Authorization 头 / ?auth_token= query，form 字段不过鉴权；
+    缺头会被 401 拦截（storyboard/marketing 智能体视频生成 401 同族修复）。"""
+    from enterprise.tools.video_tools import generate_text_to_video
+
+    captured = patched_video_flow
+    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat', task_type=999)
+
+    assert result['success'] is True
+    assert captured['headers'].get('Authorization') == 'Bearer t'
+    assert captured['api_url'].endswith('/api/ai-app-run')
+
+
+def test_image_to_video_sends_bearer_header(patched_video_flow):
+    from enterprise.tools.video_tools import image_to_video
+
+    captured = patched_video_flow
+    result = image_to_video(
+        user_id='u1',
+        world_id='w1',
+        auth_token='t',
+        prompt='run',
+        image_urls='http://example.com/a.jpg',
+        task_type=999,
+    )
+
+    assert result['success'] is True
+    assert captured['headers'].get('Authorization') == 'Bearer t'
+    assert captured['api_url'].endswith('/api/ai-app-run-image')
+
+
+def test_video_tools_omits_auth_header_when_token_empty(patched_video_flow):
+    """token 为空时不加 Authorization 头，保持原行为。"""
+    from enterprise.tools.video_tools import generate_text_to_video
+
+    captured = patched_video_flow
+    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='', prompt='a cat', task_type=999)
+
+    assert result['success'] is True
+    assert captured['headers'].get('Authorization') is None
 
 
 def test_image_to_video_uses_reference_snapshot_for_more_than_two_images(patched_video_flow):
