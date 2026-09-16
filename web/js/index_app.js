@@ -51,6 +51,8 @@
       showInviteModal: false,
       channelLevel: 0,
       showChannelApplyModal: false,
+      // 渠道推广申请弹窗中的客服微信二维码（server-config 下发，可配置覆盖）
+      customerServiceQrUrl: '/files/二维码.jpg',
       showComputingPowerLogsModal: false,
       showRechargePowerModal: false,
       showFeedbackModal: false,
@@ -430,6 +432,14 @@
         // 兼容期：完整登录必须有 JS 可读 token（双写后的 localStorage）。
         // cookieSession 不再单独放行——否则入口能进、生成/扣费空 token。
         return !!(this.authToken && (this.userPhone || this.userEmail));
+      },
+      // 商业版且管理员未开启渠道佣金时，展示「申请开通渠道推广」；本地部署（is_local）不展示
+      showChannelApplyEntry() {
+        return this.isEditionLoaded && !this.isCommunityEdition && !this.isLocal && Number(this.channelLevel || 0) < 2;
+      },
+      // 佣金中心仅管理员开启渠道佣金后可见
+      showCommissionPanel() {
+        return !this.isCommunityEdition && this.showCommission && Number(this.channelLevel || 0) >= 2;
       },
       /**
        * 实际用于 <img src> 的二维码地址：
@@ -1000,6 +1010,10 @@
         this.userEmail = (data && data.email) || '';
         this.userId = (data && data.user_id) || '';
         this.inviteCode = (data && data.invite_code) || '';
+        if (data && data.channel_level != null) {
+          this.channelLevel = Number(data.channel_level || 0);
+          this.showCommission = this.channelLevel >= 2 && !this.isCommunityEdition;
+        }
         this.cookieSession = false;
         localStorage.removeItem('token');
         if (token) {
@@ -1255,7 +1269,8 @@
             code: this.registerForm.code,
             password: this.registerForm.password,
             agent: 'default',
-            invite_code: this.registerForm.inviteCode || undefined
+            // 本地部署注册页不展示邀请码输入框，不带入 URL/本地存储中的邀请码，避免本地库报「无效邀请码」
+            invite_code: this.isLocal ? undefined : (this.registerForm.inviteCode || undefined)
           };
           if (this.registerType === 'email') {
             registerPayload.email = this.registerForm.email;
@@ -2270,7 +2285,7 @@
       },
 
       async fetchChannelLevel() {
-        // 渠道推广等级：0-未开通 1-推广链接(算力奖励) 2-渠道佣金(现金)
+        // 渠道推广等级：0/1-邀请仅算力 2-渠道佣金(现金)。社区版接口 403 时保持默认 0。
         if (!this.authToken && !this.cookieSession) return;
         try {
           const response = await axios.get('/api/commission/summary', {
@@ -2279,9 +2294,10 @@
           if (response.data.code === 0) {
             this.channelLevel = Number(response.data.data.channel_level || 0);
             this.commissionSummary = response.data.data;
+            this.showCommission = this.channelLevel >= 2;
           }
         } catch (error) {
-          console.warn('Failed to fetch channel level:', error?.message);
+          this.showCommission = false;
         }
       },
 
@@ -2744,6 +2760,7 @@
             this.showSocialIcons = response.data.data.show_social_icons !== false;
             this.showFeedbackQr = response.data.data.show_feedback_qr !== false;
             this.feedbackQrUrl = response.data.data.feedback_qr_url || '/files/二维码.jpg';
+            this.customerServiceQrUrl = response.data.data.customer_service_qr_url || '/files/二维码.jpg';
             if (response.data.data.footer) {
               this.footerConfig = response.data.data.footer;
             }

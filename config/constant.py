@@ -2384,6 +2384,25 @@ class Commission:
     SUBSCRIPTION_PLAN_ID_MIN = 100
 
 
+class ChannelLevel:
+    """用户渠道推广等级。
+
+    默认用户始终可以使用邀请链接获取算力奖励；渠道现金佣金必须由管理员开启。
+    社区版抽佣整体跳过，本字段仅商业版结算读取。
+    """
+    NONE = 0          # 默认：邀请链接仅算力奖励，不展示渠道佣金
+    INVITE = 1        # 兼容历史：推广链接（仅算力奖励）
+    COMMISSION = 2    # 管理员开启后：渠道现金佣金
+    VALID = (0, 1, 2)
+    CUSTOMER_SERVICE_WECHAT = 'jeffstric'
+
+    @classmethod
+    def is_commission_enabled(cls, level) -> bool:
+        try:
+            return int(level or 0) >= cls.COMMISSION
+        except (TypeError, ValueError):
+            return False
+
 
 class CommissionLogStatus:
     """佣金明细状态"""
@@ -2463,6 +2482,9 @@ class ExternalLinks:
     # 意见反馈个人微信二维码（右下角 FAB / 弹窗；与官方群二维码无关）
     # 可通过 frontend.feedback_qr_url 覆盖；支持 /files/... 同源路径或可公网访问的图片 URL
     FEEDBACK_QR_URL = '/files/二维码.jpg'
+    # 渠道推广申请弹窗中的客服微信二维码（扫码添加客服，申请开通渠道佣金）
+    # 可通过 frontend.customer_service_qr_url 覆盖；支持 /files/... 同源路径或可公网访问的图片 URL
+    CUSTOMER_SERVICE_QR_URL = '/files/二维码.jpg'
 
 
 # 阿里云百炼（DashScope）BaseURL 常量

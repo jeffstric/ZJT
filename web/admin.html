@@ -716,6 +716,15 @@
                                     </button>
                                     <button
                                         v-if="!isCommunityEdition"
+                                        class="action-btn"
+                                        :class="(user.channel_level || 0) >= 2 ? 'warning' : 'success'"
+                                        @click="toggleChannelCommission(user)"
+                                        :title="(user.channel_level || 0) >= 2 ? t('btn_channel_commission_on') : t('btn_channel_commission_off')"
+                                    >
+                                        {{ (user.channel_level || 0) >= 2 ? t('btn_channel_commission_short_on') : t('btn_channel_commission_short') }}
+                                    </button>
+                                    <button
+                                        v-if="!isCommunityEdition"
                                         class="action-btn zjt-token-btn"
                                         :class="user.zjt_token_enabled ? 'warning' : 'default'"
                                         @click="toggleZjtToken(user)"
@@ -2538,6 +2547,21 @@
                         <div class="form-group">
                             <label>{{ t('modal_invite_code') }}</label>
                             <input type="text" :value="userDetailModal.user.invite_code || '-'" disabled>
+                        </div>
+                        <div class="form-group" v-if="!isCommunityEdition">
+                            <label>{{ t('modal_channel_level') }}</label>
+                            <div class="role-config-row">
+                                <span class="status-badge" :class="{ active: (userDetailModal.user.channel_level || 0) >= 2 }">
+                                    {{ (userDetailModal.user.channel_level || 0) >= 2 ? t('channel_level_commission') : t('channel_level_power_only') }}
+                                </span>
+                                <button
+                                    class="action-btn"
+                                    :class="(userDetailModal.user.channel_level || 0) >= 2 ? 'warning' : 'success'"
+                                    @click="toggleChannelCommission(userDetailModal.user)"
+                                >
+                                    {{ (userDetailModal.user.channel_level || 0) >= 2 ? t('btn_channel_commission_disable') : t('btn_channel_commission_enable') }}
+                                </button>
+                            </div>
                         </div>
                         <div class="form-group">
                             <label>{{ t('modal_register_time') }}</label>

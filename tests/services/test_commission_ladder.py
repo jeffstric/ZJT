@@ -153,25 +153,47 @@ class TestSettleLadder:
         assert len(calls["create"]) == before
 
     def test_channel_not_enabled_skips_commission(self, commission_env, monkeypatch):
-        """渠道未开通佣金资质（channel_level<2）：用户仍按档位到账，但不产生渠道佣金"""
+        """邀请人 channel_level<2：用户仍按档位到账，但不产生渠道佣金"""
         cs, calls = commission_env
-
-        class _U:
-            inviter_id = 9
-            channel_level = 0
-
+        users = {2: _FakeUser(9, 0), 9: _FakeUser(None, 0)}
         monkeypatch.setattr(
             cs, "UsersModel",
-            type("UM", (), {"get_by_id": staticmethod(lambda uid: _U())}),
+            type("UM", (), {"get_by_id": staticmethod(lambda uid: users.get(uid))}),
         )
         r = cs.CommissionService.settle(
             invitee_id=2, order_id="SUB_z", transaction_id="T4",
             package_id=102, order_amount=59.9, computing_power=1000,
         )
         assert r["success"] is True
-        # 渠道未开通：用户到账 = 不抽成值（1000）
         assert r["granted_computing_power"] == 1000
         assert calls["create"] == []
+
+    def test_channel_level_invite_only_skips_commission(self, commission_env, monkeypatch):
+        """邀请人仅开通推广链接（level=1）：不产生现金佣金"""
+        cs, calls = commission_env
+        users = {2: _FakeUser(9, 0), 9: _FakeUser(None, 1)}
+        monkeypatch.setattr(
+            cs, "UsersModel",
+            type("UM", (), {"get_by_id": staticmethod(lambda uid: users.get(uid))}),
+        )
+        r = cs.CommissionService.settle(
+            invitee_id=2, order_id="SUB_l1", transaction_id="T_L1",
+            package_id=102, order_amount=59.9, computing_power=1000,
+        )
+        assert r["success"] is True
+        assert r["granted_computing_power"] == 1000
+        assert calls["create"] == []
+
+    def test_invitee_level_does_not_gate_inviter_commission(self, commission_env):
+        """被邀请人未开通佣金不影响邀请人：邀请人 level>=2 仍结算佣金"""
+        cs, calls = commission_env
+        r = cs.CommissionService.settle(
+            invitee_id=4, order_id="SUB_u4", transaction_id="T_U4",
+            package_id=102, order_amount=59.9, computing_power=1000,
+        )
+        assert r["success"] is True
+        assert r["granted_computing_power"] == 808
+        assert calls["create"][-1]["commission_amount"] == Decimal("7.60")
 
 
 class TestSetRateDisabled:
@@ -180,3 +202,13 @@ class TestSetRateDisabled:
         r = cs.CommissionService.set_commission_rate(9, 0.19)
         assert r["success"] is False
         assert "不支持自定义" in r["message"]
+
+
+class TestChannelLevelHelper:
+    def test_commission_enabled_threshold(self):
+        from config.constant import ChannelLevel
+        assert ChannelLevel.is_commission_enabled(0) is False
+        assert ChannelLevel.is_commission_enabled(1) is False
+        assert ChannelLevel.is_commission_enabled(2) is True
+        assert ChannelLevel.is_commission_enabled(None) is False
+        assert ChannelLevel.CUSTOMER_SERVICE_WECHAT == 'jeffstric'

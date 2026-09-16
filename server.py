@@ -3527,6 +3527,14 @@ async def register(request: RegisterRequest):
                 }
             )
 
+        # 本地部署（server.is_local=true）注册页不展示邀请码输入框，
+        # 忽略 URL/浏览器本地存储带入的邀请码，避免本地库查无此码时报「无效邀请码」阻断注册
+        invite_code = request.invite_code
+        if invite_code:
+            from config.config_util import get_config_value
+            if get_config_value('server', 'is_local', default=False):
+                invite_code = None
+
         # 邮箱注册
         if email and not phone:
             # 检查邮箱功能是否启用
@@ -3554,7 +3562,7 @@ async def register(request: RegisterRequest):
                 phone=None,
                 password=password,
                 auth_type='register',
-                extra_data={'code': verify_code, 'invite_code': request.invite_code},
+                extra_data={'code': verify_code, 'invite_code': invite_code},
                 email=email
             )
             
@@ -3595,7 +3603,7 @@ async def register(request: RegisterRequest):
             phone=phone,
             password=password,
             auth_type='register',
-            extra_data={'code': verify_code, 'invite_code': request.invite_code}
+            extra_data={'code': verify_code, 'invite_code': invite_code}
         )
         
         if success:

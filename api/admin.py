@@ -28,6 +28,7 @@ from config.constant import (
     ADMIN_CONFIG_BATCH_MAX_ITEMS,
     DRIVER_IMPLEMENTATION_MAPPING,
     GEMINI_URL_FORMATS,
+    ChannelLevel,
 )
 from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
 from services.system_config_batch_service import batch_update_system_configs
@@ -3729,49 +3730,59 @@ async def admin_reset_runninghub_circuit(
 # ==================== 渠道推广等级管理 ====================
 
 class ChannelLevelRequest(BaseModel):
-    target_user_id: int
-    level: int  # 0-未开通 1-推广链接(算力奖励) 2-渠道佣金(现金)
+    level: int  # 0-未开通佣金 1-推广链接(算力) 2-渠道佣金(现金)
 
 
-@router.put("/users/channel-level")
+@router.put("/users/{user_id}/channel-level")
 async def set_user_channel_level(
-    payload: ChannelLevelRequest,
+    user_id: int = Path(...),
+    payload: ChannelLevelRequest = None,
     auth_token: str = Header(None, alias="Authorization"),
 ):
     """设置用户渠道推广等级（仅管理员）。
 
-    等级：0-未开通（隐藏推广入口） 1-推广链接（仅算力奖励） 2-渠道佣金（现金佣金）。
+    等级：0-默认（邀请链接仅算力） 1-兼容推广链接（仅算力） 2-渠道佣金（现金）。
+    默认用户始终可用邀请链接获取算力；仅 level=2 才产生渠道现金佣金。
     """
     admin = await require_admin(auth_token)
-    if payload.level not in (0, 1, 2):
+    if payload is None or payload.level not in ChannelLevel.VALID:
         raise HTTPException(status_code=400, detail="无效的渠道推广等级（0/1/2）")
 
-    target = UsersModel.get_by_id(payload.target_user_id)
+    target = await asyncio.to_thread(UsersModel.get_by_id, user_id)
     if not target:
         raise HTTPException(status_code=404, detail="目标用户不存在")
 
-    affected = UsersModel.set_channel_level(payload.target_user_id, payload.level)
+    affected = await asyncio.to_thread(UsersModel.set_channel_level, user_id, payload.level)
     logging.info(
-        f"[Admin] 渠道推广等级变更: user={payload.target_user_id} level={payload.level} "
+        f"[Admin] 渠道推广等级变更: user={user_id} level={payload.level} "
         f"by admin={admin.id} affected={affected}"
     )
     return {
         "code": 0,
         "data": {
-            "target_user_id": payload.target_user_id,
+            "target_user_id": user_id,
             "channel_level": payload.level,
+            "commission_enabled": ChannelLevel.is_commission_enabled(payload.level),
         },
     }
 
 
-@router.get("/users/channel-level")
+@router.get("/users/{user_id}/channel-level")
 async def get_user_channel_level(
-    target_user_id: int,
+    user_id: int = Path(...),
     auth_token: str = Header(None, alias="Authorization"),
 ):
     """查询用户渠道推广等级（仅管理员）。"""
     await require_admin(auth_token)
-    target = UsersModel.get_by_id(target_user_id)
+    target = await asyncio.to_thread(UsersModel.get_by_id, user_id)
     if not target:
         raise HTTPException(status_code=404, detail="目标用户不存在")
-    return {"code": 0, "data": {"target_user_id": target_user_id, "channel_level": getattr(target, 'channel_level', 0) or 0}}
+    level = getattr(target, 'channel_level', ChannelLevel.NONE) or ChannelLevel.NONE
+    return {
+        "code": 0,
+        "data": {
+            "target_user_id": user_id,
+            "channel_level": level,
+            "commission_enabled": ChannelLevel.is_commission_enabled(level),
+        },
+    }

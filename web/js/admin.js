@@ -2548,6 +2548,35 @@ const AdminApp = {
             }
         },
         
+        // 开启/关闭渠道现金佣金（level 2 <-> 0）
+        async toggleChannelCommission(user) {
+            if (!user || !user.user_id) return;
+            const enabled = (user.channel_level || 0) >= 2;
+            const newLevel = enabled ? 0 : 2;
+            const actionKey = enabled ? 'btn_channel_commission_disable' : 'btn_channel_commission_enable';
+            if (!confirm(this.t('confirm_channel_commission', { action: this.t(actionKey) }))) {
+                return;
+            }
+            try {
+                const response = await axios.put(
+                    `/api/admin/users/${user.user_id}/channel-level`,
+                    { level: newLevel },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_channel_commission_updated'), 'success');
+                    if (this.userDetailModal.user && this.userDetailModal.user.user_id === user.user_id) {
+                        this.userDetailModal.user.channel_level = newLevel;
+                    }
+                    await this.loadUsers();
+                }
+            } catch (error) {
+                console.error('Update channel level failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_operation_failed');
+                this.showToast(detail, 'error');
+            }
+        },
+
         // 打开算力调整弹窗
         openPowerModal(user) {
             this.powerModal.userId = user.user_id;

@@ -10,6 +10,7 @@ import string
 import json
 
 from utils.log_sanitizer import mask_email, mask_phone
+from config.constant import ChannelLevel
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ class User:
         self.invite_code = kwargs.get('invite_code')
         self.inviter_id = kwargs.get('inviter_id')
         self.commission_rate = kwargs.get('commission_rate')
-        self.channel_level = kwargs.get('channel_level', 0)
+        self.channel_level = kwargs.get('channel_level', ChannelLevel.NONE)
         self.first_recharge = kwargs.get('first_recharge', 0)
         self.zjt_token_enabled = kwargs.get('zjt_token_enabled', 0)
         self.zjt_token_expire_at = kwargs.get('zjt_token_expire_at')
@@ -108,6 +109,7 @@ class User:
             'invite_code': self.invite_code,
             'inviter_id': self.inviter_id,
             'commission_rate': float(self.commission_rate) if self.commission_rate is not None else None,
+            'channel_level': int(self.channel_level or 0),
             'first_recharge': self.first_recharge,
             'implementation_preferences': self.implementation_preferences,
             'active_preference_group': self.active_preference_group,
@@ -346,20 +348,20 @@ class UsersModel:
     
     @staticmethod
     def get_channel_level(user_id: int) -> int:
-        """渠道推广等级：0-未开通 1-推广链接(算力奖励) 2-渠道佣金(现金)"""
+        """渠道推广等级：0-未开通佣金 1-推广链接(算力) 2-渠道佣金(现金)"""
         try:
             result = execute_query(
                 "SELECT channel_level FROM users WHERE id = %s", (user_id,), fetch_one=True
             )
-            return int(result['channel_level']) if result and result.get('channel_level') is not None else 0
+            return int(result['channel_level']) if result and result.get('channel_level') is not None else ChannelLevel.NONE
         except Exception as e:
             logger.error(f"Failed to get channel level for user {user_id}: {e}")
-            return 0
+            return ChannelLevel.NONE
     
     @staticmethod
     def set_channel_level(user_id: int, level: int) -> int:
         """设置渠道推广等级（仅管理员后台调用）"""
-        if level not in (0, 1, 2):
+        if level not in ChannelLevel.VALID:
             raise ValueError(f"无效的渠道推广等级: {level}")
         sql = "UPDATE users SET channel_level = %s, updated_at = NOW() WHERE id = %s"
         try:
@@ -450,7 +452,7 @@ class UsersModel:
         offset = (page - 1) * page_size
         data_sql = f"""
             SELECT id, phone, email, status, role, created_at, updated_at, invite_code, inviter_id, first_recharge,
-                   zjt_token_enabled, zjt_token_expire_at
+                   zjt_token_enabled, zjt_token_expire_at, channel_level
             FROM users
             WHERE {where_clause}
             ORDER BY id DESC
@@ -890,7 +892,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `invite_code` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '邀请码',
   `inviter_id` int DEFAULT NULL COMMENT '邀请人id',
   `commission_rate` decimal(5,4) NOT NULL DEFAULT '0.0000' COMMENT '邀请人佣金比例(0~0.5；0=关闭抽佣)',
-  `channel_level` tinyint NOT NULL DEFAULT '0' COMMENT '渠道推广等级 0-未开通 1-推广链接(算力奖励) 2-渠道佣金(现金)',
+  `channel_level` tinyint NOT NULL DEFAULT '0' COMMENT '渠道推广等级 0-未开通佣金 1-推广链接(算力) 2-渠道佣金(现金)',
   `first_recharge` tinyint DEFAULT '0' COMMENT '是否首次充值',
   `implementation_preferences` json DEFAULT NULL COMMENT '用户实现方偏好配置（groups.preferences / groups.locks）',
   `active_preference_group` int DEFAULT NULL COMMENT '当前激活的偏好组',

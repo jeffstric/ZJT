@@ -120,10 +120,6 @@
               </div>
             </div>
             <div class="user-info-wrapper">
-              <div class="user-agent-row">
-                <span v-if="channelLevel >= 1" class="user-phone clickable" @click="openInviteModal" :title="$t('invite_code')">{{ maskedPhone }}</span>
-                <button v-else class="btn channel-apply-btn" @click="showChannelApplyModal = true">申请开通渠道推广</button>
-              </div>
               <div class="computing-power-display">
                 <template v-if="checkinStatus.checkin_enabled">
                   <button class="checkin-badge" v-if="!checkinStatus.checked_in_today" @click="performCheckin" :disabled="checkinLoading" :title="$t('check_in_tip')">
@@ -743,9 +739,9 @@
       </div>
     </div>
 
-    <!-- Login/Register Modal -->
-    <div class="modal-overlay" v-if="showLoginModal" @click.self="closeModal">
-      <div class="modal" style="position: relative;">
+    <!-- Login/Register Modal（不加 @click.self 关闭：遮罩区域大，误触点击会丢失已填内容，仅通过 × 按钮关闭） -->
+    <div class="modal-overlay" v-if="showLoginModal">
+      <div class="modal auth-modal" style="position: relative;">
         <button class="modal-close" @click="closeModal">×</button>
         <div class="modal-title">{{ authMode === 'login' ? $t('user_login') : (authMode === 'register' ? $t('user_register') : $t('reset_password')) }}</div>
 
@@ -929,26 +925,34 @@
       </div>
     </div>
     
-    <!-- 渠道推广申请弹窗（未开通用户） -->
+    <!-- 渠道推广申请弹窗（未开通佣金的用户） -->
     <div class="modal-overlay" v-if="showChannelApplyModal" @click.self="showChannelApplyModal = false">
-      <div class="modal channel-apply-modal">
+      <div class="modal invite-modal channel-apply-modal">
         <button class="modal-close" @click="showChannelApplyModal = false">×</button>
         <div class="invite-modal-header">
           <div>
-            <div class="invite-modal-eyebrow">渠道推广合作</div>
-            <div class="invite-modal-title">申请开通渠道推广</div>
+            <div class="invite-modal-eyebrow">{{ $t('channel_apply_eyebrow') }}</div>
+            <div class="invite-modal-title">{{ $t('channel_apply_title') }}</div>
           </div>
         </div>
         <div class="invite-modal-body">
-          <div class="invite-user-card" style="text-align: left; line-height: 2;">
-            <p><strong>渠道推广权益说明：</strong></p>
-            <p>· 通过你的专属链接邀请好友注册、充值或订阅会员</p>
-            <p>· 好友消费后，你可获得相应奖励</p>
-            <p style="margin-top: 8px;"><strong>开通方式：</strong></p>
-            <p>· 联系客服开通渠道推广资格（客服电话：15088613226）</p>
-            <p>· 开通后即可在「邀请中心」获取专属推广链接与奖励</p>
+          <div class="invite-user-card channel-apply-copy">
+            <p>{{ $t('channel_apply_desc') }}</p>
+            <p>{{ $t('channel_apply_power_only') }}</p>
           </div>
-          <button class="btn primary" style="width: 100%; margin-top: 8px;" @click="showChannelApplyModal = false">我知道了</button>
+          <div class="channel-wechat-card">
+            <div class="channel-wechat-label">{{ $t('channel_apply_wechat_label') }}</div>
+            <div class="channel-wechat-qr-row">
+              <img
+                v-if="customerServiceQrUrl"
+                :src="customerServiceQrUrl"
+                class="channel-wechat-qr"
+                :alt="$t('channel_apply_wechat_label')"
+              >
+            </div>
+            <div class="channel-wechat-hint">{{ $t('channel_apply_wechat_hint') }}</div>
+          </div>
+          <button class="btn primary" style="width: 100%; margin-top: 8px;" @click="showChannelApplyModal = false">{{ $t('channel_apply_ok') }}</button>
         </div>
       </div>
     </div>
@@ -1004,10 +1008,17 @@
             </div>
           </div>
 
-          <button class="btn invite-copy-btn" @click="copyInviteCode">复制邀请链接</button>
+          <button class="btn invite-copy-btn" @click="copyInviteCode">{{ $t('invite_copy_link') }}</button>
 
-          <!-- 佣金中心（商业版，社区版自动隐藏） -->
-          <div v-if="showCommission" class="commission-panel">
+          <button
+            v-if="showChannelApplyEntry"
+            class="btn channel-apply-btn"
+            style="width: 100%; margin-top: 10px;"
+            @click="showInviteModal = false; showChannelApplyModal = true"
+          >{{ $t('channel_apply_btn') }}</button>
+
+          <!-- 佣金中心：仅管理员开启渠道佣金后可见 -->
+          <div v-if="showCommissionPanel" class="commission-panel">
             <div class="commission-divider">
               <span>佣金中心</span>
             </div>
