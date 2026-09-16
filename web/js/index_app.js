@@ -467,6 +467,23 @@
           recharge: fmt(tiers.recharge, ''),
         };
       },
+      // 生效中/升级中可升级的更高套餐（无需退订，低→高）
+      // ⚠️ 必须留在 computed：模板以属性方式引用（upgradePlans.length / v-for="plan in upgradePlans"），
+      // 放 methods 时引用得到函数对象，.length 为形参个数恒为 0（falsy），升级区块永不渲染
+      upgradePlans() {
+        const status = this.subscriptionStatus;
+        if (!status || !['active', 'upgrading'].includes(status.status)) return [];
+        const currentPlanId = status.plan && status.plan.plan_id;
+        if (!currentPlanId) return [];
+        return (this.subscriptionPlans || []).filter(p => Number(p.plan_id) > Number(currentPlanId));
+      },
+
+      // 当前选中的套餐是否为升级单（高于当前生效套餐）
+      isUpgradeMode() {
+        const currentPlanId = this.subscriptionStatus && this.subscriptionStatus.plan && this.subscriptionStatus.plan.plan_id;
+        return !!(this.selectedSubPlan && currentPlanId && Number(this.selectedSubPlan.plan_id) > Number(currentPlanId));
+      },
+
       maskedPhone() {
         // 邮箱用户显示掩码后的邮箱
         if (!this.userPhone && this.userEmail) {
@@ -3077,21 +3094,6 @@
         if (!base || !plan.computing_power || plan.computing_power <= base) return '基础档';
         const m = Math.round((plan.computing_power / base) * 10) / 10;
         return '≈ 基础档 ' + m + ' 倍算力';
-      },
-
-      // 生效中/升级中可升级的更高套餐（无需退订，低→高）
-      upgradePlans() {
-        const status = this.subscriptionStatus;
-        if (!status || !['active', 'upgrading'].includes(status.status)) return [];
-        const currentPlanId = status.plan && status.plan.plan_id;
-        if (!currentPlanId) return [];
-        return (this.subscriptionPlans || []).filter(p => Number(p.plan_id) > Number(currentPlanId));
-      },
-
-      // 当前选中的套餐是否为升级单（高于当前生效套餐）
-      isUpgradeMode() {
-        const currentPlanId = this.subscriptionStatus && this.subscriptionStatus.plan && this.subscriptionStatus.plan.plan_id;
-        return !!(this.selectedSubPlan && currentPlanId && Number(this.selectedSubPlan.plan_id) > Number(currentPlanId));
       },
 
       selectSubPlan(plan) {
