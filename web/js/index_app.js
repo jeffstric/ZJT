@@ -2748,6 +2748,11 @@
               this.isCommunityEdition = !response.data.data.is_enterprise;
               this.isEditionLoaded = true;
             }
+            // 商业版且已登录：提前拉取渠道等级/佣金汇总，
+            // 避免邀请中心「申请开通渠道推广」按钮与佣金面板在页面刷新后状态滞后（channelLevel 默认 0）
+            if (!this.isCommunityEdition && (this.authToken || this.cookieSession)) {
+              this.fetchCommissionSummary();
+            }
             this.emailEnabled = response.data.data.email_enabled || false;
             this.captchaEnabled = response.data.data.captcha_enabled || false;
             this.captchaPrefix = response.data.data.captcha_prefix || '';
