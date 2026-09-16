@@ -449,15 +449,20 @@
       wxGroupQrDisplayUrl() {
         return this.resolveWxGroupQrDisplayUrl(this.wxGroupQrUrl);
       },
-      // 渠道佣金说明：把 /api/commission/summary 下发的 tiers 拼成「名称 ¥金额」文本
+      // 渠道佣金说明：把 /api/commission/summary 下发的 tiers 拼成「名称 付¥实付→¥佣金」文本
       commissionTierText() {
         const tiers = (this.commissionSummary && this.commissionSummary.tiers) || {};
-        const fmt = (list) => (list || [])
-          .map(t => `${t.name} ¥${Number(t.cash || 0).toFixed(2)}`)
+        const fmt = (list, stripPrefix) => (list || [])
+          .map(t => {
+            const name = stripPrefix ? String(t.name || '').replace(stripPrefix, '') : (t.name || '');
+            const cash = `¥${Number(t.cash || 0).toFixed(2)}`;
+            // price = 下线实际付款金额；旧后端无该字段时只显示佣金金额
+            return t.price != null ? `${name} 付¥${Number(t.price)}→${cash}` : `${name} ${cash}`;
+          })
           .join(' · ');
         return {
-          subscription: fmt(tiers.subscription),
-          recharge: fmt(tiers.recharge),
+          subscription: fmt(tiers.subscription, /^订阅/),
+          recharge: fmt(tiers.recharge, ''),
         };
       },
       maskedPhone() {
