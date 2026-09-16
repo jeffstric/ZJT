@@ -1816,6 +1816,12 @@ def pick_request_video_clone_snapshot(snapshots: Optional[Dict[str, Any]], deter
 # ============ Agent 相关常量 ============
 ASK_USER_MAX_CONSECUTIVE_FAILS = 3  # ask_user 连续失败上限（不含超时），超过则终止任务
 COMPUTING_POWER_CHECK_THRESHOLD = 1  # Agent 循环算力检查阈值，低于此值停止任务
+# LLM 欠费熔断：每次付费 LLM 调用前检查用户算力余额，低于阈值直接拒绝本次调用。
+# 背景：token 计费是后付费（task/token_task.py 扣减无下限），余额可被长任务
+# （分段拆分/Agent 循环）扣穿为负。在 LLM 客户端统一入口拦截后，
+# 损失被限制在"熔断前最后一次在途调用"，不会再无限穿透。
+LLM_ARREARS_BREAKER_ENABLED = True
+LLM_ARREARS_BREAKER_THRESHOLD = 1  # 余额低于该值时拒绝发起新的 LLM 调用（与 Agent 循环阈值一致）
 AGENT_POWER_CONFIRM_THRESHOLD = 35  # 用户未自定义时的软阈值：本次/本轮累计超过才确认
 AGENT_POWER_CONFIRM_HARD_THRESHOLD = 200  # 「本次对话不再询问」后仍强制确认的硬阈值
 
