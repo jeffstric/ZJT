@@ -24,18 +24,39 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """订阅套餐升级：subscription_orders 增加 upgrade_from_contract_code（记录被替换的旧签约）"""
     conn = op.get_bind()
+    # MySQL 不支持 ADD COLUMN IF NOT EXISTS（MariaDB 语法），用 information_schema 预检保证幂等
+    exists = conn.execute(text("""
+        SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'subscription_orders'
+          AND COLUMN_NAME = 'upgrade_from_contract_code'
+    """)).scalar()
+    if exists:
+        logger.info("[Migration] subscription_orders.upgrade_from_contract_code already exists, skip")
+        return
     conn.execute(text("""
         ALTER TABLE subscription_orders
-        ADD COLUMN IF NOT EXISTS `upgrade_from_contract_code` varchar(64) DEFAULT NULL
+        ADD COLUMN `upgrade_from_contract_code` varchar(64) DEFAULT NULL
         COMMENT '套餐升级单：被替换的旧签约协议号(支付成功后自动解约)'
         AFTER `transaction_id`
     """))
+    logger.info("[Migration] added subscription_orders.upgrade_from_contract_code")
 
 
 def downgrade() -> None:
     """回滚：删除升级来源协议号字段（升级单的追溯信息将丢失，仅结构调整）"""
     conn = op.get_bind()
+    # MySQL 不支持 DROP COLUMN IF EXISTS，同样用 information_schema 预检
+    exists = conn.execute(text("""
+        SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'subscription_orders'
+          AND COLUMN_NAME = 'upgrade_from_contract_code'
+    """)).scalar()
+    if not exists:
+        return
     conn.execute(text("""
         ALTER TABLE subscription_orders
-        DROP COLUMN IF EXISTS `upgrade_from_contract_code`
+        DROP COLUMN `upgrade_from_contract_code`
     """))
+    logger.info("[Migration] dropped subscription_orders.upgrade_from_contract_code")
