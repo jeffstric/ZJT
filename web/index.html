@@ -413,6 +413,12 @@
                 <p v-if="cliMediaPrefRowError[slot.key]" class="cli-media-pref-row-error">
                   {{ cliMediaPrefRowError[slot.key] }}
                 </p>
+                <p
+                  v-if="cliMediaPrefInvalidValue[slot.key]"
+                  class="cli-media-pref-row-warning"
+                >
+                  ⚠ 当前生效的模型「{{ cliMediaPrefInvalidValue[slot.key].model_name || ('任务 #' + cliMediaPrefInvalidValue[slot.key].task_id) }}」暂不可用（驱动未配置或已停用），下拉显示的是推荐替代，实际仍以保存值为准；请重新选择保存以生效
+                </p>
               </div>
             </div>
           </template>

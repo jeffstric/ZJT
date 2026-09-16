@@ -205,6 +205,9 @@
       cliMediaPrefSaving: {},
       cliMediaPrefSaved: {},
       cliMediaPrefRowError: {},
+      // 已保存生效值不在当前可用模型列表（驱动未配置/被停用）时的警示：
+      // 下拉会回退展示推荐模型，但该回退值并未保存，必须提示用户重新选择
+      cliMediaPrefInvalidValue: {},
       cliMediaPrefModelsLoaded: false,
       _cliMediaPrefModelsCache: null,
       _cliMediaPrefSuccessTimer: null,
@@ -607,14 +610,23 @@
 
       applyCliMediaPrefProfiles(profiles) {
         const selected = {};
+        const invalid = {};
         for (const group of this.cliMediaPrefGroups) {
           for (const slot of group.slots) {
             const profile = profiles?.[slot.key] || {};
             const models = this.cliMediaPrefModels[slot.key] || [];
             let taskId = profile.task_id;
+            let invalidValue = null;
             if (taskId != null && taskId !== '') {
               const exists = models.some((m) => String(m.task_id) === String(taskId));
               if (!exists && models.length) {
+                // 存储的生效值已不在可用列表（如 vidu_q2 驱动未配置被模型列表过滤）：
+                // 下拉回退展示目录默认/首个可用模型，但该回退值并未保存——
+                // 不回写、只警示，避免「显示 37 实际生效 19」的静默错位
+                invalidValue = {
+                  task_id: taskId,
+                  model_name: profile.model_name || '',
+                };
                 const catalogHit = window.ModelCatalog
                   ? window.ModelCatalog.findTaskByTrack(models, slot.key, null, 'value')
                   : null;
@@ -629,10 +641,12 @@
               taskId = '';
             }
             selected[slot.key] = taskId === '' || taskId == null ? '' : String(taskId);
+            invalid[slot.key] = invalidValue;
           }
         }
         this.cliMediaPrefProfiles = profiles || {};
         this.cliMediaPrefSelected = selected;
+        this.cliMediaPrefInvalidValue = invalid;
       },
 
       async ensureCliMediaPreferencesLoaded() {
@@ -716,6 +730,7 @@
         }
         this.applyCliMediaPrefProfiles(response.data.profiles || {});
         this.cliMediaPrefRowError = {};
+        this.cliMediaPrefInvalidValue = {};
         this.cliMediaPrefSaved = {};
       },
 
@@ -730,6 +745,7 @@
           localStorage.removeItem('cli_media_pref_world_id');
           this.cliMediaPrefProfiles = {};
           this.cliMediaPrefSelected = {};
+          this.cliMediaPrefInvalidValue = {};
           return;
         }
         this.cliMediaPrefLoading = true;
@@ -757,6 +773,7 @@
         };
         this.cliMediaPrefSaving = { ...this.cliMediaPrefSaving, [slot.key]: true };
         this.cliMediaPrefRowError = { ...this.cliMediaPrefRowError, [slot.key]: '' };
+        this.cliMediaPrefInvalidValue = { ...this.cliMediaPrefInvalidValue, [slot.key]: null };
         this.cliMediaPrefSaved = { ...this.cliMediaPrefSaved, [slot.key]: false };
         try {
           const response = await axios.put(

@@ -878,12 +878,19 @@ export function toAbsoluteMediaUrl(url) {
 export function getSelectedVideoModel() {
     const hasInputs = state.videoMediaItems?.some(item => item?.url);
     const isReference = state.videoImageMode === 'multi_reference' || state.videoImageMode === 'first_last_with_ref';
-    const taskId = !hasInputs
-        ? state.selectedTextToVideoTaskId
-        : (isReference ? state.selectedReferenceToVideoTaskId : state.selectedImageToVideoTaskId);
-    const models = !hasInputs
-        ? state.textToVideoModels
-        : (isReference ? getReferenceToVideoSlotModels() : getImageToVideoSlotModels());
+    // 参考模式固定解析「参考视频槽」模型（与提交链路 getSelectedVideoTaskId 口径一致）：
+    // 不能因「尚无输入图」落到文生视频模型，否则模式能力判断（supported_image_modes/
+    // 最大参考图数/分辨率档位）会与实际提交模型错位
+    const taskId = isReference
+        ? state.selectedReferenceToVideoTaskId
+        : (!hasInputs
+            ? state.selectedTextToVideoTaskId
+            : state.selectedImageToVideoTaskId);
+    const models = isReference
+        ? getReferenceToVideoSlotModels()
+        : (!hasInputs
+            ? state.textToVideoModels
+            : getImageToVideoSlotModels());
     return models.find(m => String(m.task_id) === String(taskId)) || models[0] || null;
 }
 
@@ -987,6 +994,31 @@ export function getSupportedVideoImageModes(model = null) {
         ));
     }
     return ['first_last_frame'];
+}
+
+/**
+ * 视频图片模式下拉的可选项：全部图生/参考视频模型支持模式的并集。
+ *
+ * 不能复用 getSupportedVideoImageModes()（单个「当前模式选中模型」）——
+ * 那是鸡生蛋：首帧模式 + 无输入图时会解析到文生视频模型（后端不下发
+ * supported_image_modes），并集退化为只剩首尾帧，参考生视频入口永远消失。
+ */
+export function getAvailableVideoImageModes() {
+    const modes = new Set();
+    allImageToVideoModels().forEach((m) => {
+        const list = m?.supported_image_modes || m?.supportedImageModes;
+        if (Array.isArray(list)) {
+            list.forEach((mode) => {
+                const key = String(mode);
+                if (key === 'first_last_frame' || key === 'multi_reference' || key === 'first_last_with_ref') {
+                    modes.add(key);
+                }
+            });
+        }
+    });
+    // 后端对图生视频模型缺省下发 ['first_last_frame']；一个模型都没有时保守回退
+    if (!modes.size) return ['first_last_frame'];
+    return [...modes];
 }
 
 export function videoModelSupportsLastFrame(model = null) {

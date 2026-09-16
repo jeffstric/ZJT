@@ -37,4 +37,20 @@ describe('index CLI media preferences UI', () => {
         // 下拉展示不含 task_id 技术字段
         expect(appSource).not.toContain('task_id=${model.task_id}');
     });
+
+    it('warns when the saved model is missing from the available list instead of silent fallback', () => {
+        const htmlSource = readSource('web/index.html');
+        const cssSource = readSource('web/css/index.css');
+        const appSource = readSource('web/js/index_app.js');
+
+        // 存储的生效值不在可用模型列表（驱动未配置/停用）时，必须给出警示：
+        // 下拉回退值只是展示替代，并未保存，不回写、不静默
+        expect(appSource).toContain('cliMediaPrefInvalidValue');
+        expect(appSource).toMatch(
+            /invalidValue = \{\s*task_id: taskId,\s*model_name: profile\.model_name \|\| '',\s*\};/
+        );
+        expect(htmlSource).toContain('cli-media-pref-row-warning');
+        expect(htmlSource).toContain('cliMediaPrefInvalidValue[slot.key].model_name');
+        expect(cssSource).toContain('.cli-media-pref-row-warning');
+    });
 });

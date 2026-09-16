@@ -718,6 +718,13 @@ header {
   line-height: 1.4;
 }
 
+.cli-media-pref-row-warning {
+  margin: 0;
+  color: #d97706;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 @media (max-width: 640px) {
   header {
     flex-direction: column;

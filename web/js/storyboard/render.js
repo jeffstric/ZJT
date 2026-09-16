@@ -1,7 +1,7 @@
 import state, {
     getCurrentScene,
     getTotalDuration,
-    getSupportedVideoImageModes,
+    getAvailableVideoImageModes,
     videoModelSupportsLastFrame,
     getMaxVideoMediaCount,
     canAddVideoMedia,
@@ -311,6 +311,10 @@ function assetBadge(scene, kind, label) {
             const text = violationTitle ? '内容违规' : getFirstFrameStatusLabel(status);
             const titleAttr = violationTitle ? ` title="${escapeHtml(violationTitle)}"` : '';
             return `<span class="status failed${violationTitle ? ' violation' : ''}"${titleAttr}>${label}${text}</span>`;
+        }
+        // 参考生视频模式下分镜图非必需：缺失不展示「待生成」，避免误导用户必须补图
+        if (status === 'missing' && state.videoImageMode === 'multi_reference') {
+            return '<span class="status idle">免分镜图</span>';
         }
         return `<span class="status idle">${label}待生成</span>`;
     }
@@ -762,6 +766,10 @@ function renderAutoCompleteHeader(title, actionsHtml = '') {
     const videoHint = videoSummary.missingCount > 0
         ? ` · 视频 ${videoSummary.missingCount} 待生成`
         : '';
+    // 参考生视频模式下分镜图非必需：不展示图片「N 个待生成」，避免误导用户必须补图
+    const isRefVideoMode = state.videoImageMode === 'multi_reference';
+    const imageHint = isRefVideoMode ? '' : ` · ${summary.missingCount} 个待生成`;
+    const refModeHint = isRefVideoMode ? ' · 参考生视频免分镜图' : '';
     const gate = state.autoImageLocationGate || {};
     const parentNames = (gate.blockers || [])
         .map(item => item.parent_location_name)
@@ -777,7 +785,7 @@ function renderAutoCompleteHeader(title, actionsHtml = '') {
         : '';
     return `
         <div class="auto-complete-header" data-auto-complete-header>
-            <span class="auto-complete-title">${escapeHtml(title)} · ${summary.totalScenes} 个分镜 · ${summary.missingCount} 个待生成${videoHint}</span>
+            <span class="auto-complete-title">${escapeHtml(title)} · ${summary.totalScenes} 个分镜${imageHint}${videoHint}${refModeHint}</span>
             ${gateMessage}
             <div class="auto-complete-actions" aria-live="polite">
                 ${renderAutoCompleteControl()}
@@ -1330,14 +1338,16 @@ function videoRoleLabel(role, mode, index = 0) {
     return `图${index + 1}`;
 }
 
-/** 参考生视频（multi_reference）仍处 Beta 期，所有入口统一带此标识 */
+/** 参考生视频（multi_reference）仍处 Beta 期：标识只放在空间充足的入口（拆分弹窗 chip、
+ *  模式下拉面板选项）；收起态按钮/静态标签区域狭小，带徽标冗余（截图反馈优化） */
 const REF_VIDEO_BETA_TAG = '<span class="beta-tag">Beta</span>';
 
 function renderVideoModeSelector(disabled) {
-    const modes = getSupportedVideoImageModes();
+    // 可选项取「全部视频模型支持模式」的并集，而非当前模式选中模型的能力，
+    // 否则首帧模式下永远只剩首尾帧，参考生视频入口无法切换出来
+    const modes = getAvailableVideoImageModes();
     const mode = modes.includes(state.videoImageMode) ? state.videoImageMode : (modes[0] || 'first_last_frame');
     const modeLabel = mode === 'multi_reference' ? '全能参考' : '首尾帧';
-    const betaTag = mode === 'multi_reference' ? REF_VIDEO_BETA_TAG : '';
     const panelOpen = state.showVideoModePanel && !disabled;
     const options = [
         {
@@ -1373,7 +1383,7 @@ function renderVideoModeSelector(disabled) {
     if (options.length <= 1) {
         return `
             <div class="video-mode-dropdown is-static" title="${escapeHtml(options[0]?.desc || '')}">
-                <span class="video-mode-static-label">${escapeHtml(modeLabel)}${betaTag}</span>
+                <span class="video-mode-static-label">${escapeHtml(modeLabel)}</span>
             </div>`;
     }
 
@@ -1383,7 +1393,6 @@ function renderVideoModeSelector(disabled) {
                     ${disabled ? 'disabled' : ''} title="视频图片模式">
                 ${icon('video', 14)}
                 <span>${escapeHtml(modeLabel)}</span>
-                ${betaTag}
             </button>
             ${panel}
         </div>`;
@@ -1406,7 +1415,9 @@ function renderMediaStack(disabled) {
     const canAdd = canAddVideoMedia();
     const addTitle = mode === 'first_last_frame'
         ? (videoModelSupportsLastFrame() ? '上传首帧/尾帧' : '上传首帧')
-        : '上传参考图';
+        // 空态只保留 + 按钮（与首尾帧模式同宽，避免挤窄提示词输入框），
+        // 参考图的自动收集说明收纳到悬浮提示里
+        : '上传参考图；不上传时将使用分镜角色/场景/道具参考图';
     const canRestore = scene
         && isRenderableMediaUrl(scene.firstFrameUrl)
         && !items.some(item => item.role === 'first_frame');
@@ -1426,15 +1437,11 @@ function renderMediaStack(disabled) {
         : '';
 
     if (!items.length) {
-        const emptyHint = mode === 'multi_reference' && !canRestore
-            ? '<div class="media-stack-hint">将使用分镜角色/场景/道具参考图</div>'
-            : '';
         return `
             <div class="media-stack is-empty">
                 <div class="media-stack-stage">
                     ${addBtn() || `<div class="media-stack-add" style="opacity:.4;pointer-events:none" title="当前模式无法添加图片">${mediaPlusSvg()}</div>`}
                 </div>
-                ${emptyHint}
                 ${restoreBtn}
                 <input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple>
             </div>`;
