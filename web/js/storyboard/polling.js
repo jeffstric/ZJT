@@ -85,6 +85,10 @@ function upsertSceneCandidateFromTask(sceneId, assetType, taskInfo) {
     if (taskInfo.status !== undefined && taskInfo.status !== null) {
         candidate.status = taskInfo.status;
     }
+    // 关联任务 ID：候选卡「查看生成状态时间轴」
+    if (taskInfo.ai_tool_id) {
+        candidate.aiToolId = taskInfo.ai_tool_id;
+    }
     // 失败原因（如内容违规）随候选保留，供占位符展示违规变体
     if (taskInfo.error) {
         candidate.error = taskInfo.error;
@@ -157,6 +161,9 @@ function applyTaskStatus(scene, data, requestSelection) {
         first_frame: firstFrameCurrent && data.first_frame ? data.first_frame.status : scene.taskStatus?.first_frame ?? null,
         last_frame: data.last_frame ? data.last_frame.status : null,
         video: videoCurrent && data.video ? data.video.status : scene.taskStatus?.video ?? null,
+        // 关联任务 ID：候选列表未加载时的回退占位卡也要能查看生成状态时间轴
+        first_frame_ai_tool_id: data.first_frame?.ai_tool_id ?? scene.taskStatus?.first_frame_ai_tool_id ?? null,
+        video_ai_tool_id: data.video?.ai_tool_id ?? scene.taskStatus?.video_ai_tool_id ?? null,
     };
     // 后端在分镜下所有配音完成后，会把 scene.duration 同步为音频求和（浮点秒），
     // 此处即时同步到本地 state，并标记 _durationChanged 供 applySceneUpdate 刷新进度行。
@@ -204,6 +211,10 @@ function upsertGeneratingCandidate(sceneId, assetType, genInfo) {
         list.unshift(candidate);
     } else if (genInfo.status !== undefined && genInfo.status !== null) {
         candidate.status = genInfo.status;
+    }
+    // 关联任务 ID：生成中占位卡「查看生成状态时间轴」
+    if (genInfo.ai_tool_id) {
+        candidate.aiToolId = genInfo.ai_tool_id;
     }
     // generating 行带可播 URL 时填入候选卡（防御性：当前后端在生成/下载阶段不写
     // result_url，此路径正常不触发，占位卡仍显示「生成中」）；仅可渲染才写，

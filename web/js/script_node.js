@@ -1786,6 +1786,8 @@
                     gridImageNode.data.isSplit = true;
                     gridImageNode.data.status = 'pending';
                     gridImageNode.title = gridImageNode.data.name;
+                    // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+                    if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(gridImageNodeId);
                     
                     const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
                     if(nodeEl) {
@@ -2216,6 +2218,8 @@
                 gridImageNode.data.isSplit = true;
                 gridImageNode.data.status = 'pending';
                 gridImageNode.title = gridImageNode.data.name;
+                // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+                if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(gridImageNodeId);
                 
                 const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
                 if(nodeEl) {
@@ -2657,6 +2661,8 @@
                 gridImageNode.data.isSplit = true;
                 gridImageNode.data.status = 'pending';
                 gridImageNode.title = gridImageNode.data.name;
+                // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+                if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(gridImageNodeId);
                 
                 const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
                 if(nodeEl) {

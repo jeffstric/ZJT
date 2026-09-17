@@ -2785,6 +2785,9 @@
               setStatusEl(statusEl, `✗ 生成失败: ${node.data.lastError}`, '#dc2626');
             }
           }
+        } else if(node.data.project_id && !node.data.url && window.AiToolTimeline){
+          // 重载恢复：绑定了任务且尚无结果的视频节点恢复「生成中」状态行（含时间轴按钮）
+          window.AiToolTimeline.markNodeGenerating(node.id);
         }
       }
     }
@@ -2892,6 +2895,17 @@
             if(statusEl){
               statusEl.style.display = 'block';
               setStatusEl(statusEl, node.data.lastError, '#dc2626');
+            }
+          }
+
+          // 重载恢复：绑定了任务且尚无结果的图片节点恢复「生成中」占位（含时间轴按钮）；
+          // 失败任务恢复失败态占位（按钮保留，可回看时间轴）
+          if(node.data.project_id && !node.data.url && window.AiToolTimeline){
+            const failureReason = node.data.lastError || node.data.error;
+            if(failureReason){
+              window.AiToolTimeline.failNode(node.id, failureReason);
+            } else {
+              window.AiToolTimeline.markNodeGenerating(node.id);
             }
           }
         }
@@ -3406,18 +3420,24 @@
       }
       
       errorEl.innerHTML = `<strong>生成失败:</strong> ${escapeHtml(errorMessage)}`;
-      
+
       // 给节点添加错误样式
       nodeEl.style.borderColor = '#f44';
+
+      // 状态行/占位同步标记失败（保留查看时间轴按钮）
+      if(window.AiToolTimeline) window.AiToolTimeline.failNode(node.id, errorMessage);
     }
     
     // 更新节点预览显示
     function updateNodePreview(node, url){
       const canvasEl = document.getElementById('canvas');
       const nodeEl = canvasEl ? canvasEl.querySelector(`.node[data-node-id="${node.id}"]`) : null;
-      
+
       if(!nodeEl) return;
-      
+
+      // url 到位：隐藏「生成中」占位 / 状态行标记成功（按钮保留可回看时间轴）
+      if(window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(node);
+
       if(node.type === 'video'){
         // 更新视频节点预览
         const previewField = nodeEl.querySelector('.video-preview-field');

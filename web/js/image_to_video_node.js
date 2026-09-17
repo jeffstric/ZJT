@@ -1306,6 +1306,8 @@
             const newVideoNode = state.nodes.find(n => n.id === newVideoId);
             if(newVideoNode && result.projectIds){
               newVideoNode.data.project_id = result.projectIds[i] || result.projectIds[0];
+              // 视频节点显示「生成中」状态行（含查看状态时间轴按钮）
+              if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newVideoId);
               console.log(`[图生视频] 新建视频节点 ${newVideoId} 绑定 project_id:`, newVideoNode.data.project_id);
             }
           }

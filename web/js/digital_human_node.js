@@ -452,6 +452,8 @@
                 newVideoNode.data.name = vName;
                 newVideoNode.title = vName;
                 newVideoNode.data.project_id = projectIds[i];
+                // 视频节点显示「生成中」状态行（含查看状态时间轴按钮）
+                if (window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newVideoId);
 
                 // 更新节点标题显示
                 var newNodeEl = canvasEl.querySelector('.node[data-node-id="' + newVideoId + '"]');
