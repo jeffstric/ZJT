@@ -992,6 +992,7 @@
         const code = error?.response?.data?.error_code;
         const isAuthFail = (typeof detail === 'string' && detail.includes('无效或已过期的认证信息'))
           || code === 'invalid_auth_token'
+          || code === 'missing_auth_token'
           || code === 'TOKEN_EXPIRED';
         if (isAuthFail) {
           // 清除本地存储的认证信息（含作废 Bearer，避免压过仍有效的 cookie）
@@ -3200,7 +3201,11 @@
             requestData.openid = this.wechatOpenid;
           }
 
-          const response = await axios.post('/api/subscription/wechat-sign-pay', requestData);
+          // require_permission 只认 Authorization 头 / ?auth_token=，不读 body；
+          // 浏览器认证 cookie 可能已过期，必须显式带头，否则 401（missing_auth_token）
+          const response = await axios.post('/api/subscription/wechat-sign-pay', requestData, {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
           if (response.data.success) {
             this.subOrderId = response.data.order_id;
             this.lastOrderIsUpgrade = !!response.data.upgrade;
@@ -3223,7 +3228,10 @@
           }
         } catch (error) {
           console.error('Error creating subscription order:', error);
-          this.subPaymentError = error?.response?.data?.detail || '创建订阅订单失败，请重试';
+          // 401 由全局响应拦截器统一处理（识别 missing_auth_token 后弹登录框）
+          if (error?.response?.status === 401) return;
+          const errData = error?.response?.data || {};
+          this.subPaymentError = errData.detail || errData.error || errData.message || '创建订阅订单失败，请重试';
         } finally {
           this.subPaymentLoading = false;
         }
@@ -3270,6 +3278,8 @@
           const response = await axios.post('/api/subscription/cancel', {
             user_id: parseInt(this.userId, 10),
             auth_token: this.authToken
+          }, {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
           });
           if (response.data.success) {
             alert('订阅已取消');
@@ -3279,7 +3289,9 @@
           }
         } catch (error) {
           console.error('Error cancelling subscription:', error);
-          alert(error?.response?.data?.detail || '取消订阅失败，请稍后重试');
+          if (error?.response?.status === 401) return;
+          const errData = error?.response?.data || {};
+          alert(errData.detail || errData.error || errData.message || '取消订阅失败，请稍后重试');
         } finally {
           this.subCancelling = false;
         }
