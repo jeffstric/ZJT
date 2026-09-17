@@ -248,6 +248,11 @@ header {
   box-shadow: 0 20px 60px rgba(0,0,0,0.8);
 }
 
+/* 登录/注册/重置密码弹窗：桌面端加宽，减少周围遮罩误触区域 */
+.auth-modal {
+  max-width: 520px;
+}
+
 .modal-title {
   font-size: 20px;
   font-weight: 700;
@@ -421,13 +426,6 @@ header {
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
-}
-
-.user-agent-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .user-phone {
@@ -761,10 +759,6 @@ header {
     width: 100%;
   }
 
-  .user-agent-row {
-    gap: 6px;
-  }
-
   .computing-power-display {
     gap: 6px;
     font-size: 12px;
@@ -1009,6 +1003,54 @@ header {
 
 .invite-modal-body {
   padding: 20px 24px 24px;
+}
+
+.channel-apply-copy {
+  display: block;
+  text-align: left;
+  line-height: 1.7;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.channel-apply-copy p + p {
+  margin-top: 6px;
+}
+
+.channel-wechat-card {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(34, 197, 94, 0.10);
+  border: 1px solid rgba(34, 197, 94, 0.28);
+}
+
+.channel-wechat-label {
+  font-size: 12px;
+  color: #86efac;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.channel-wechat-qr-row {
+  display: flex;
+  justify-content: center;
+}
+
+.channel-wechat-qr {
+  width: 180px;
+  max-width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(34, 197, 94, 0.28);
+  background: #fff;
+  padding: 6px;
+}
+
+.channel-wechat-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.5;
 }
 
 .invite-user-card,
@@ -1608,6 +1650,23 @@ header {
   font-size: 14px;
   color: var(--muted);
   margin: 0;
+}
+
+/* 「支付成功但签约未生效」引导横幅：提醒重新开通自动续费订阅，持续享受优惠 */
+.package-intro-warning {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(245, 158, 11, 0.05) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.package-intro-warning .package-intro-text {
+  color: var(--text);
+}
+
+.package-intro-warning .package-intro-subtext {
+  color: #b45309;
 }
 
 .package-list {

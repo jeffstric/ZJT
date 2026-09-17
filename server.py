@@ -543,6 +543,10 @@ from api.announcements import router as announcements_router, admin_router as an
 app.include_router(announcements_router)
 app.include_router(announcements_admin_router)
 
+# 导入并注册月度订阅 API 路由（微信委托代扣·周期扣费，见 docs/backend/wechat_monthly_subscription.md）
+from api.subscription import router as subscription_router
+app.include_router(subscription_router)
+
 # 用户模块（接口模块）属商业版能力：路由挂载、Supervisor 启动验证与实现方绑定加载
 # 由 enterprise.register(app) 注入（见 enterprise 仓），社区版核心不引用。
 
@@ -3523,6 +3527,14 @@ async def register(request: RegisterRequest):
                 }
             )
 
+        # 本地部署（server.is_local=true）注册页不展示邀请码输入框，
+        # 忽略 URL/浏览器本地存储带入的邀请码，避免本地库查无此码时报「无效邀请码」阻断注册
+        invite_code = request.invite_code
+        if invite_code:
+            from config.config_util import get_config_value
+            if get_config_value('server', 'is_local', default=False):
+                invite_code = None
+
         # 邮箱注册
         if email and not phone:
             # 检查邮箱功能是否启用
@@ -3550,7 +3562,7 @@ async def register(request: RegisterRequest):
                 phone=None,
                 password=password,
                 auth_type='register',
-                extra_data={'code': verify_code, 'invite_code': request.invite_code},
+                extra_data={'code': verify_code, 'invite_code': invite_code},
                 email=email
             )
             
@@ -3591,7 +3603,7 @@ async def register(request: RegisterRequest):
             phone=phone,
             password=password,
             auth_type='register',
-            extra_data={'code': verify_code, 'invite_code': request.invite_code}
+            extra_data={'code': verify_code, 'invite_code': invite_code}
         )
         
         if success:
@@ -5264,6 +5276,12 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
                     detail="首充福利仅限首次充值，您已领取过该套餐"
                 )
         
+        # 生产安全闸：商户私钥缺失时禁止发起支付/展示二维码
+        # （缺失时签名降级为 mock_signature 微信必拒；验签旁路也仅限密钥齐备时可防伪造回调）
+        if not wechat_pay_util.has_signing_key():
+            logger.error("Wechat merchant private key (secret/wechat/apiclient_key.pem) missing; refuse to create payment order")
+            raise HTTPException(status_code=503, detail="微信支付商户密钥未配置，无法发起支付，请联系管理员")
+
         # 生成订单ID
         order_id = wechat_pay_util.generate_order_id()
         

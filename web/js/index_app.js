@@ -49,6 +49,10 @@
       commissionWithdrawing: false,
       showLoginModal: false,
       showInviteModal: false,
+      channelLevel: 0,
+      showChannelApplyModal: false,
+      // 渠道推广申请弹窗中的客服微信二维码（server-config 下发，可配置覆盖）
+      customerServiceQrUrl: '/files/二维码.jpg',
       showComputingPowerLogsModal: false,
       showRechargePowerModal: false,
       showFeedbackModal: false,
@@ -112,6 +116,22 @@
       paymentQrCode: '',
       paymentOrderId: '',
       paymentError: '',
+      // 月度订阅（微信委托代扣·周期扣费）
+      rechargeTab: 'subscription',     // 'power' 算力充值 | 'subscription' 月度订阅（默认月度订阅）
+      subscriptionPlans: [],
+      subscriptionPlansLoading: false,
+      subscriptionStatus: null,        // {subscribed, status, plan, current_period_end, next_deduct_date, pending_plan}
+      selectedSubPlan: null,
+      lastOrderIsUpgrade: false,       // 最近一笔订阅订单是否为套餐升级单（支付成功提示用）
+      subAgreed: false,
+      subAgreementError: false,
+      subPaymentLoading: false,
+      subPaymentError: '',
+      subQrCode: '',
+      subNativeCodeUrl: '',
+      subOrderId: '',
+      _subPayTimer: null,   // Native 扫码支付轮询定时器（支付成功自动提示用）
+      subCancelling: false,
       wechatOpenid: '',
       userIp: '',
       nativeCodeUrl: '',
@@ -352,6 +372,7 @@
         this.fetchComputingPower();
         this.fetchUserRole();
         this.fetchCheckinStatus();
+        this.fetchChannelLevel();
       } else {
         // 无 localStorage token：即使 HttpOnly cookie 仍有效，也无法填 Form/JSON
         // 调用点。probe 若发现 cookie 有效则强制重新登录以完成双写；
@@ -417,6 +438,14 @@
         // cookieSession 不再单独放行——否则入口能进、生成/扣费空 token。
         return !!(this.authToken && (this.userPhone || this.userEmail));
       },
+      // 商业版且管理员未开启渠道佣金时，展示「申请开通渠道推广」；本地部署（is_local）不展示
+      showChannelApplyEntry() {
+        return this.isEditionLoaded && !this.isCommunityEdition && !this.isLocal && Number(this.channelLevel || 0) < 2;
+      },
+      // 佣金中心仅管理员开启渠道佣金后可见
+      showCommissionPanel() {
+        return !this.isCommunityEdition && this.showCommission && Number(this.channelLevel || 0) >= 2;
+      },
       /**
        * 实际用于 <img src> 的二维码地址：
        * - 页面为 HTTPS 且配置为 http:// 外链时，走后端同源代理，避免混合内容拦截
@@ -425,6 +454,45 @@
       wxGroupQrDisplayUrl() {
         return this.resolveWxGroupQrDisplayUrl(this.wxGroupQrUrl);
       },
+      // 渠道佣金说明：把 /api/commission/summary 下发的 tiers 拼成「名称 付¥实付→¥佣金」文本
+      commissionTierText() {
+        const tiers = (this.commissionSummary && this.commissionSummary.tiers) || {};
+        const fmt = (list, stripPrefix) => (list || [])
+          .map(t => {
+            const name = stripPrefix ? String(t.name || '').replace(stripPrefix, '') : (t.name || '');
+            const cash = `¥${Number(t.cash || 0).toFixed(2)}`;
+            // price = 下线实际付款金额；旧后端无该字段时只显示佣金金额
+            return t.price != null ? `${name} 付¥${Number(t.price)}→${cash}` : `${name} ${cash}`;
+          })
+          .join(' · ');
+        return {
+          subscription: fmt(tiers.subscription, /^订阅/),
+          recharge: fmt(tiers.recharge, ''),
+        };
+      },
+      // 生效中/升级中可升级的更高套餐（无需退订，低→高）
+      // ⚠️ 必须留在 computed：模板以属性方式引用（upgradePlans.length / v-for="plan in upgradePlans"），
+      // 放 methods 时引用得到函数对象，.length 为形参个数恒为 0（falsy），升级区块永不渲染
+      upgradePlans() {
+        const status = this.subscriptionStatus;
+        if (!status || !['active', 'upgrading'].includes(status.status)) return [];
+        const currentPlanId = status.plan && status.plan.plan_id;
+        if (!currentPlanId) return [];
+        return (this.subscriptionPlans || []).filter(p => Number(p.plan_id) > Number(currentPlanId));
+      },
+
+      // 当前选中的套餐是否为升级单（高于当前生效套餐）
+      isUpgradeMode() {
+        const currentPlanId = this.subscriptionStatus && this.subscriptionStatus.plan && this.subscriptionStatus.plan.plan_id;
+        return !!(this.selectedSubPlan && currentPlanId && Number(this.selectedSubPlan.plan_id) > Number(currentPlanId));
+      },
+
+      // 首订加赠资格（后端按"无历史成功签约合约"判定）：false 时套餐卡片/支付面板不展示「首期订阅加赠」
+      subFirstBonusEligible() {
+        const status = this.subscriptionStatus;
+        return !status || status.first_bonus_eligible !== false;
+      },
+
       maskedPhone() {
         // 邮箱用户显示掩码后的邮箱
         if (!this.userPhone && this.userEmail) {
@@ -1000,6 +1068,10 @@
         this.userEmail = (data && data.email) || '';
         this.userId = (data && data.user_id) || '';
         this.inviteCode = (data && data.invite_code) || '';
+        if (data && data.channel_level != null) {
+          this.channelLevel = Number(data.channel_level || 0);
+          this.showCommission = this.channelLevel >= 2 && !this.isCommunityEdition;
+        }
         this.cookieSession = false;
         localStorage.removeItem('token');
         if (token) {
@@ -1255,7 +1327,8 @@
             code: this.registerForm.code,
             password: this.registerForm.password,
             agent: 'default',
-            invite_code: this.registerForm.inviteCode || undefined
+            // 本地部署注册页不展示邀请码输入框，不带入 URL/本地存储中的邀请码，避免本地库报「无效邀请码」
+            invite_code: this.isLocal ? undefined : (this.registerForm.inviteCode || undefined)
           };
           if (this.registerType === 'email') {
             registerPayload.email = this.registerForm.email;
@@ -2269,6 +2342,23 @@
         ]);
       },
 
+      async fetchChannelLevel() {
+        // 渠道推广等级：0/1-邀请仅算力 2-渠道佣金(现金)。社区版接口 403 时保持默认 0。
+        if (!this.authToken && !this.cookieSession) return;
+        try {
+          const response = await axios.get('/api/commission/summary', {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data.code === 0) {
+            this.channelLevel = Number(response.data.data.channel_level || 0);
+            this.commissionSummary = response.data.data;
+            this.showCommission = this.channelLevel >= 2;
+          }
+        } catch (error) {
+          this.showCommission = false;
+        }
+      },
+
       async fetchCommissionSummary() {
         if (!this.authToken && !this.cookieSession) return;
         try {
@@ -2277,7 +2367,8 @@
           });
           if (response.data.code === 0) {
             this.commissionSummary = response.data.data;
-            this.showCommission = true;
+            this.channelLevel = Number(response.data.data.channel_level || 0);
+            this.showCommission = this.channelLevel >= 2;
           } else {
             this.showCommission = false;
           }
@@ -2335,29 +2426,8 @@
       },
 
       async saveCommissionRate() {
-        if (!this.authToken && !this.cookieSession) return;
-        // 确保不超过上限
-        if (this.commissionRateInput > this.maxCommissionRate) {
-          this.commissionRateInput = this.maxCommissionRate;
-        }
-        this.commissionSaving = true;
-        try {
-          const rate = (Number(this.commissionRateInput) / 100).toFixed(2);
-          const response = await axios.put('/api/commission/rate?rate=' + rate, null, {
-            headers: { 'Authorization': `Bearer ${this.authToken}` }
-          });
-          if (response.data.code === 0) {
-            this.commissionRate = response.data.data.rate;
-            this.commissionRateInput = Math.round(this.commissionRate * 100);
-            alert('佣金比例已保存：' + this.commissionRateInput + '%');
-          } else {
-            alert(response.data.detail || response.data.message || '保存失败');
-          }
-        } catch (error) {
-          alert(error?.response?.data?.detail || '保存失败');
-        } finally {
-          this.commissionSaving = false;
-        }
+        // 比例已按订阅档位由平台统一设定（新价目），自调入口关闭
+        alert('佣金比例由平台按订阅档位统一设定，暂不支持自定义调整');
       },
 
       openWithdrawForm() {
@@ -2736,6 +2806,11 @@
               this.isCommunityEdition = !response.data.data.is_enterprise;
               this.isEditionLoaded = true;
             }
+            // 商业版且已登录：提前拉取渠道等级/佣金汇总，
+            // 避免邀请中心「申请开通渠道推广」按钮与佣金面板在页面刷新后状态滞后（channelLevel 默认 0）
+            if (!this.isCommunityEdition && (this.authToken || this.cookieSession)) {
+              this.fetchCommissionSummary();
+            }
             this.emailEnabled = response.data.data.email_enabled || false;
             this.captchaEnabled = response.data.data.captcha_enabled || false;
             this.captchaPrefix = response.data.data.captcha_prefix || '';
@@ -2748,6 +2823,7 @@
             this.showSocialIcons = response.data.data.show_social_icons !== false;
             this.showFeedbackQr = response.data.data.show_feedback_qr !== false;
             this.feedbackQrUrl = response.data.data.feedback_qr_url || '/files/二维码.jpg';
+            this.customerServiceQrUrl = response.data.data.customer_service_qr_url || '/files/二维码.jpg';
             if (response.data.data.footer) {
               this.footerConfig = response.data.data.footer;
             }
@@ -2970,6 +3046,259 @@
         } else {
           this.showRechargePowerModal = true;
           this.fetchRechargePackages();
+          this.fetchSubscriptionPlans();
+        }
+      },
+
+      // ==================== 月度订阅（微信委托代扣·周期扣费） ====================
+
+      switchRechargeTab(tab) {
+        this.rechargeTab = tab;
+      },
+
+      formatDateStr(isoStr) {
+        if (!isoStr) return '--';
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return isoStr;
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      },
+
+      async fetchSubscriptionPlans() {
+        this.subscriptionPlansLoading = true;
+        try {
+          const response = await axios.get('/api/subscription/plans', {
+            params: { auth_token: this.authToken }
+          });
+          if (response.data.success) {
+            this.subscriptionPlans = response.data.plans || [];
+            this.subscriptionStatus = response.data.subscription || null;
+          } else {
+            console.error('Failed to fetch subscription plans:', response.data);
+          }
+        } catch (error) {
+          console.error('Error fetching subscription plans:', error);
+          this.handleAuthError(error);
+        } finally {
+          this.subscriptionPlansLoading = false;
+        }
+      },
+
+      async refreshSubscriptionStatus() {
+        if (!this.authToken || !this.userId) return;
+        this.subCancelling = true;
+        try {
+          const response = await axios.get('/api/subscription/status', {
+            params: { user_id: parseInt(this.userId, 10), auth_token: this.authToken }
+          });
+          if (response.data.success) {
+            this.subscriptionStatus = response.data.subscription || null;
+          }
+        } catch (error) {
+          console.error('Error refreshing subscription status:', error);
+        } finally {
+          this.subCancelling = false;
+        }
+      },
+
+      planTagline(plan) {
+        // 档位定位词：按算力升序赋予（数据驱动，套餐变化自适应）
+        const lines = ['日常使用', '效率升级', '专业创作', '全能尊享'];
+        const sorted = [...(this.subscriptionPlans || [])].sort((a, b) => (a.computing_power || 0) - (b.computing_power || 0));
+        const idx = sorted.findIndex(p => p.plan_id === plan.plan_id);
+        return idx >= 0 ? (lines[idx] || '') : '';
+      },
+
+      planMultipleText(plan) {
+        // 相对最低档的算力倍数（Kimi 式直观标注）
+        const powers = (this.subscriptionPlans || []).map(p => Number(p.computing_power) || 0).filter(x => x > 0);
+        if (!powers.length) return '';
+        const base = Math.min.apply(null, powers);
+        if (!base || !plan.computing_power || plan.computing_power <= base) return '基础档';
+        const m = Math.round((plan.computing_power / base) * 10) / 10;
+        return '≈ 基础档 ' + m + ' 倍算力';
+      },
+
+      selectSubPlan(plan) {
+        this.selectedSubPlan = plan;
+        this.subAgreed = false;
+        this.subAgreementError = false;
+        this.subPaymentError = '';
+        this.subQrCode = '';
+        this.subNativeCodeUrl = '';
+        this.subOrderId = '';
+      },
+
+      backToSubPlanSelection() {
+        this.stopSubPayPolling();
+        this.selectedSubPlan = null;
+        this.subQrCode = '';
+        this.subNativeCodeUrl = '';
+        this.subPaymentError = '';
+        this.subOrderId = '';
+      },
+
+      // Native 扫码支付后轮询订单状态，支付成功自动提示并刷新订阅状态/算力
+      startSubPayPolling() {
+        this.stopSubPayPolling();
+        this._subPayTimer = setInterval(async () => {
+          // 弹窗关闭或订单已重置（返回/重新发起）时自动停止
+          if (!this.subOrderId || !this.showRechargePowerModal) {
+            this.stopSubPayPolling();
+            return;
+          }
+          try {
+            const resp = await axios.get('/api/subscription/order-status', {
+              params: { order_id: this.subOrderId, user_id: this.userId, auth_token: this.authToken }
+            });
+            if (resp.data && resp.data.success && resp.data.paid) {
+              this.stopSubPayPolling();
+              this.subOrderId = '';
+              const isUpgrade = this.lastOrderIsUpgrade;
+              alert(isUpgrade
+                ? '支付成功！套餐升级已生效，新套餐算力稍后到账'
+                : '支付成功！订阅已生效，算力稍后到账');
+              this.refreshSubscriptionStatus();
+              this.selectedSubPlan = null;
+              setTimeout(() => { this.fetchComputingPower(); }, 2000);
+            }
+          } catch (e) {
+            // 单次轮询失败（网络抖动/登录过期）不打断，下一轮继续
+          }
+        }, 3000);
+      },
+
+      stopSubPayPolling() {
+        if (this._subPayTimer) {
+          clearInterval(this._subPayTimer);
+          this._subPayTimer = null;
+        }
+      },
+
+      showSubscriptionAgreement() {
+        // 独立协议页（含首订加赠/持续订阅规则），见 web/auto_renewal_agreement.html
+        window.open('/auto_renewal_agreement.html', '_blank');
+      },
+
+      async createSubscriptionOrder() {
+        if (!this.selectedSubPlan) return;
+        if (!this.authToken || !this.userId) {
+          alert('请先登录');
+          this.showRechargePowerModal = false;
+          this.showLoginModal = true;
+          return;
+        }
+        if (!this.subAgreed) {
+          this.subAgreementError = true;
+          return;
+        }
+
+        this.subPaymentLoading = true;
+        this.subPaymentError = '';
+        this.subQrCode = '';
+        this.subNativeCodeUrl = '';
+        this.stopSubPayPolling();
+
+        const isWechat = this.isWechatBrowser();
+        if (!this.userIp) {
+          await this.fetchUserIp();
+        }
+
+        try {
+          const requestData = {
+            subscription_plan_id: this.selectedSubPlan.plan_id,
+            user_id: parseInt(this.userId, 10),
+            auth_token: this.authToken,
+            is_wechat_browser: isWechat,
+            payment_ip: this.userIp || '0.0.0.0',
+            display_name: this.userPhone ? this.userPhone.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2') : ''
+          };
+          if (isWechat && this.wechatOpenid) {
+            requestData.openid = this.wechatOpenid;
+          }
+
+          const response = await axios.post('/api/subscription/wechat-sign-pay', requestData);
+          if (response.data.success) {
+            this.subOrderId = response.data.order_id;
+            this.lastOrderIsUpgrade = !!response.data.upgrade;
+            if (response.data.payment_type === 'JSAPI') {
+              // 微信内：调起支付（支付+签约在同一流程完成）
+              this.invokeWechatSubscriptionJSAPI(response.data.jsapi_params);
+            } else {
+              const codeUrl = response.data.code_url;
+              if (!codeUrl) {
+                this.subPaymentError = '未获取到支付二维码，请重试';
+              } else {
+                this.subNativeCodeUrl = codeUrl;
+                this.subQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(codeUrl)}`;
+                // Native 扫码：轮询订单状态，支付成功自动提示（JSAPI 走 WeixinJSBridge 回调，无需轮询）
+                this.startSubPayPolling();
+              }
+            }
+          } else {
+            this.subPaymentError = response.data.message || '创建订阅订单失败';
+          }
+        } catch (error) {
+          console.error('Error creating subscription order:', error);
+          this.subPaymentError = error?.response?.data?.detail || '创建订阅订单失败，请重试';
+        } finally {
+          this.subPaymentLoading = false;
+        }
+      },
+
+      invokeWechatSubscriptionJSAPI(jsapiParams) {
+        if (typeof WeixinJSBridge === 'undefined') {
+          this.subPaymentError = '请在微信中打开';
+          return;
+        }
+        WeixinJSBridge.invoke(
+          'getBrandWCPayRequest',
+          {
+            appId: jsapiParams.appId,
+            timeStamp: jsapiParams.timeStamp,
+            nonceStr: jsapiParams.nonceStr,
+            package: jsapiParams.package,
+            signType: jsapiParams.signType,
+            paySign: jsapiParams.paySign
+          },
+          (res) => {
+            if (res.err_msg === 'get_brand_wcpay_request:ok') {
+              alert(this.lastOrderIsUpgrade
+                ? '支付成功！套餐升级将在确认后生效，新套餐算力稍后到账'
+                : '支付成功！订阅将在确认后生效，算力稍后到账');
+              this.refreshSubscriptionStatus();
+              this.selectedSubPlan = null;
+              setTimeout(() => { this.fetchComputingPower(); }, 2000);
+            } else if (res.err_msg === 'get_brand_wcpay_request:cancel') {
+              this.subPaymentError = '支付已取消';
+            } else {
+              this.subPaymentError = '支付失败: ' + res.err_msg;
+            }
+          }
+        );
+      },
+
+      async cancelSubscription() {
+        if (!confirm('确定取消月度订阅吗？\n取消后当期权益保留至周期结束，之后不再自动扣费。')) {
+          return;
+        }
+        this.subCancelling = true;
+        try {
+          const response = await axios.post('/api/subscription/cancel', {
+            user_id: parseInt(this.userId, 10),
+            auth_token: this.authToken
+          });
+          if (response.data.success) {
+            alert('订阅已取消');
+            await this.refreshSubscriptionStatus();
+          } else {
+            alert(response.data.message || '取消订阅失败');
+          }
+        } catch (error) {
+          console.error('Error cancelling subscription:', error);
+          alert(error?.response?.data?.detail || '取消订阅失败，请稍后重试');
+        } finally {
+          this.subCancelling = false;
         }
       },
 
@@ -3092,6 +3421,7 @@
       },
       
       closeRechargeModal() {
+        this.stopSubPayPolling();
         this.showRechargePowerModal = false;
         this.selectedPackage = null;
         this.paymentQrCode = '';
@@ -3099,6 +3429,15 @@
         this.paymentError = '';
         this.nativeCodeUrl = '';
         this.rechargePackages = [];
+        // 重置月度订阅状态（下次打开默认落在月度订阅 Tab）
+        this.rechargeTab = 'subscription';
+        this.selectedSubPlan = null;
+        this.subAgreed = false;
+        this.subAgreementError = false;
+        this.subPaymentError = '';
+        this.subQrCode = '';
+        this.subNativeCodeUrl = '';
+        this.subOrderId = '';
       },
       
       // 检查创作模式
