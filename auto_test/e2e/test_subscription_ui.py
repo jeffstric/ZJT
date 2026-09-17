@@ -127,3 +127,22 @@ class TestSubscriptionSignNotEffectiveGuide:
 
         assert page.locator(".package-intro-warning").count() == 0
         assert "您已取消订阅" in page.locator(".package-intro").inner_text()
+
+
+STATUS_SIGNING = {"subscribed": False, "status": "signing", "first_bonus_eligible": True}
+
+
+@pytest.mark.subscription
+@pytest.mark.p2
+class TestSubscriptionSigningShowsPlans:
+    """签约进行中：提示条不阻塞套餐列表，用户可直接重新发起（后端自动作废旧签约）"""
+
+    def test_signing_shows_notice_and_plan_list(self, browser_context, base_url):
+        page = browser_context.new_page()
+        _open_subscription_tab(page, base_url, STATUS_SIGNING)
+
+        notice = page.locator(".sub-status-card", has_text="签约进行中")
+        assert notice.is_visible(), "签约中提示条应展示"
+        assert "重新发起" in notice.inner_text(), "提示应引导可直接重新发起"
+        # 套餐列表不被 signing 状态隐藏，用户无需等 2 小时清理
+        assert page.locator(".sub-plan-card").count() == 4, "签约中仍应展示全部套餐可选"
