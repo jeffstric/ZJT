@@ -945,3 +945,86 @@ class TestReconcilePendingSigns:
         })
         asyncio.run(svc._reconcile_pending_signs())
         assert calls["signed"] == [] and calls["terminated"] == []
+
+
+# ==================== 首订加赠发放入口与幂等 ====================
+
+class TestFirstPeriodBonusEntryPoints:
+    """加赠经"签约结果回调（ADD）"入口补发、重复触发幂等、补偿重试补发"""
+
+    @staticmethod
+    def _activate_contract(svc):
+        svc.WxPapayContractsModel.get_by_contract_code = staticmethod(
+            lambda code: _FakeContract(status=WxContractStatus.ACTIVE, contract_code=code)
+        )
+
+    def _signed_add_params(self, util):
+        params = {
+            "return_code": "SUCCESS", "result_code": "SUCCESS",
+            "mch_id": "1900000109", "contract_code": "SUBC1",
+            "openid": "oX1", "change_type": "ADD",
+            "operate_time": "2026-09-17 10:00:00",
+            "contract_id": "Wx154abc", "request_serial": "100",
+        }
+        params["sign"] = util._sign_v2(params)
+        return params
+
+    def test_add_callback_grants_pending_bonus(self, patched_service):
+        """ADD 回调到达（支付已先行结算基础算力）：经回调入口补发首订加赠"""
+        svc, calls = patched_service
+        self._activate_contract(svc)
+        order = _FakeOrder(order_id="SUB_1_a", period_index=1, computing_power=1000,
+                           status=SubscriptionOrderStatus.PAID, transaction_id="4200001234")
+        svc.SubscriptionOrdersModel.get_latest_by_contract = staticmethod(lambda code: order)
+
+        ok = asyncio.run(svc.handle_contract_callback(self._signed_add_params(make_util())))
+        assert ok is True
+        assert calls["mark_signed"] == [("SUBC1", "Wx154abc")]
+        # 仅补发加赠（基础算力已由支付回调发放）
+        assert calls["grant"] == [(1, 200, "4200001234_FIRST_BONUS")]
+        assert calls["bonus_flag"] == ["SUB_1_a"]
+
+    def test_add_callback_before_pay_settles_bonus_later(self, patched_service):
+        """ADD 回调先于支付回调：订单未支付不加赠；支付结算时合约已 ACTIVE 再发"""
+        svc, calls = patched_service
+        self._activate_contract(svc)
+        unpaid = _FakeOrder(order_id="SUB_1_a", period_index=1, computing_power=1000,
+                            status=SubscriptionOrderStatus.PENDING_PAY, transaction_id=None)
+        svc.SubscriptionOrdersModel.get_latest_by_contract = staticmethod(lambda code: unpaid)
+        ok = asyncio.run(svc.handle_contract_callback(self._signed_add_params(make_util())))
+        assert ok is True
+        assert calls["grant"] == []  # 订单未支付，顺延
+
+        # 支付回调随后到达：合约已 ACTIVE → 结算时一并发放加赠
+        svc.SubscriptionOrdersModel.get_by_order_id = staticmethod(
+            lambda order_id: _FakeOrder(order_id=order_id, period_index=1, computing_power=1000)
+        )
+        ok = asyncio.run(svc.handle_pay_callback(_signed_pay_success_params(make_util())))
+        assert ok is True
+        assert calls["grant"] == [(1, 2400, "4200001234"), (1, 200, "4200001234_FIRST_BONUS")]
+
+    def test_bonus_double_trigger_grants_once(self, patched_service):
+        """支付结算与 ADD 回调重复触发（或事件重投）：加赠只发一次（first_bonus_granted 幂等）"""
+        svc, calls = patched_service
+        self._activate_contract(svc)
+        order = _FakeOrder(period_index=1, computing_power=1000,
+                           status=SubscriptionOrderStatus.PAID, transaction_id="4200001234")
+        assert asyncio.run(svc._grant_first_period_bonus(order)) is True
+        # 模拟已落库后再触发（迟到的重复事件/补偿重试）
+        order.first_bonus_granted = 1
+        assert asyncio.run(svc._grant_first_period_bonus(order)) is True
+        assert calls["grant"] == [(1, 200, "4200001234_FIRST_BONUS")]
+        assert calls["bonus_flag"] == ["SUB_1_a"]
+
+    def test_settlement_retry_grants_missed_bonus(self, patched_service):
+        """补偿重试：基础算力重发成功后，补发首次失败漏掉的首订加赠"""
+        svc, calls = patched_service
+        self._activate_contract(svc)
+        order = _FakeOrder(period_index=1, computing_power=1000,
+                           status=SubscriptionOrderStatus.PAID, transaction_id="4200001234")
+        svc.SubscriptionOrdersModel.get_grant_pending_orders = staticmethod(lambda limit=50: [order])
+        asyncio.run(svc.process_settlement_retry())
+        assert calls["grant"] == [
+            (1, 1000, "4200001234"),           # 补偿重试：按订单基础算力重发
+            (1, 200, "4200001234_FIRST_BONUS"),  # 顺带补发漏掉的加赠
+        ]
