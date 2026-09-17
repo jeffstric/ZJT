@@ -149,6 +149,24 @@ async def create_sign_pay_order(
     # 让用户可以无缝更换套餐；若旧订单用户已付款，回调仍会正常结算（资金不受影响）。
     # 存在已签约生效的 ACTIVE 签约：仅允许升级到更高套餐（无需退订，新单支付成功后自动解约旧约）。
     upgrade_from_contract_code = None
+    # 历史残留/竞态可能导致同一用户多条已签约合约（微信侧双订阅），先清理只留最新一条，
+    # 再走后续单签约逻辑，确保微信侧最终只保留一个订阅
+    active_signed = WxPapayContractsModel.get_active_contracts_by_user(user_id)
+    if len(active_signed) > 1:
+        logger.warning(
+            f"User {user_id} has {len(active_signed)} active contracts { [c.contract_code for c in active_signed] }, "
+            f"keep latest, terminate others"
+        )
+        for stale_contract in active_signed[1:]:
+            try:
+                await _terminate_replaced_contract(
+                    stale_contract.contract_code, SubscriptionConstants.DEDUP_TERMINATE_REMARK
+                )
+            except Exception:
+                logger.exception(
+                    f"Terminate stale active contract failed: user={user_id}, "
+                    f"contract={stale_contract.contract_code}"
+                )
     existing = WxPapayContractsModel.get_active_by_user(user_id)
     if existing:
         if existing.status == WxContractStatus.PENDING:
@@ -351,11 +369,14 @@ async def _settle_order_paid(order, transaction_id: str) -> None:
             )
 
 
-async def _terminate_replaced_contract(source_contract_code: str) -> None:
-    """套餐升级：终止被替换的旧合约。
+async def _terminate_replaced_contract(
+    source_contract_code: str,
+    remark: str = SubscriptionConstants.UPGRADE_TERMINATE_REMARK,
+) -> None:
+    """终止被替换/被清理的旧合约（套餐升级、新约生效去重、双签约兜底共用）。
 
-    顺序上先本地终止（续期调度只看本地状态，杜绝升级过渡期双扣），再调微信解约 API；
-    API 失败仅记录，备注保持 UPGRADE_TERMINATE_REMARK，由补偿任务重试直至微信侧确认。
+    顺序上先本地终止（续期调度只看本地状态，杜绝过渡期双扣），再调微信解约 API；
+    API 失败仅记录，备注保持传入值，由补偿任务重试直至微信侧确认。
     """
     contract = WxPapayContractsModel.get_by_contract_code(source_contract_code)
     if not contract or contract.status != WxContractStatus.ACTIVE:
@@ -364,34 +385,34 @@ async def _terminate_replaced_contract(source_contract_code: str) -> None:
     WxPapayContractsModel.mark_terminated(
         contract.contract_code,
         3,
-        SubscriptionConstants.UPGRADE_TERMINATE_REMARK,
+        remark,
     )
-    logger.info(f"Upgrade replaced contract terminated locally: {source_contract_code}")
+    logger.info(f"Replaced contract terminated locally: {source_contract_code} ({remark})")
 
     if not contract.contract_id:
         logger.error(
-            f"Upgrade replaced contract {source_contract_code} has no wechat contract_id, "
+            f"Replaced contract {source_contract_code} has no wechat contract_id, "
             f"需人工在商户平台解约"
         )
         return
 
-    ok, err = await _delete_wechat_contract(contract)
+    ok, err = await _delete_wechat_contract(contract, remark)
     if ok:
         WxPapayContractsModel.update_termination_remark(
-            contract.contract_code, SubscriptionConstants.UPGRADE_TERMINATE_REMARK_CONFIRMED)
+            contract.contract_code, f"{remark}(微信侧已解除)")
     else:
         logger.error(
-            f"Upgrade wechat delete_contract failed for {source_contract_code}: {err} "
+            f"Wechat delete_contract failed for {source_contract_code}: {err} "
             f"(补偿任务会重试)"
         )
 
 
-async def _delete_wechat_contract(contract) -> tuple:
+async def _delete_wechat_contract(contract, remark: str = SubscriptionConstants.UPGRADE_TERMINATE_REMARK) -> tuple:
     """调微信解约 API。Returns: (是否成功, 错误描述)"""
     papay = get_papay_util()
     result = await asyncio.to_thread(
         papay.delete_contract,
-        remark=SubscriptionConstants.UPGRADE_TERMINATE_REMARK,
+        remark=remark,
         contract_id=contract.contract_id,
         contract_code=contract.contract_code,
     )
@@ -402,6 +423,28 @@ async def _delete_wechat_contract(contract) -> tuple:
         or result.get("return_msg") or "微信接口失败"
     )
     return False, detail
+
+
+async def _terminate_other_contracts(user_id: int, keep_contract_code: str) -> None:
+    """新订阅签约生效后调用：解约该用户除 keep 外的所有已签约合约，
+    确保微信侧只保留一个生效订阅（系统与微信侧一致，杜绝双份扣款）。
+
+    覆盖场景：套餐更换（升级/先解后订之外的残留）、PENDING 放弃后 ADD 迟到复活、
+    历史竞态产生的多签约残留。逐个 best-effort，单个失败不影响其余。
+    """
+    others = WxPapayContractsModel.get_active_contracts_by_user(user_id)
+    for contract in others:
+        if contract.contract_code == keep_contract_code:
+            continue
+        try:
+            await _terminate_replaced_contract(
+                contract.contract_code, SubscriptionConstants.DEDUP_TERMINATE_REMARK
+            )
+        except Exception:
+            logger.exception(
+                f"Terminate other contract failed: user={user_id}, "
+                f"contract={contract.contract_code} (补偿任务会重试)"
+            )
 
 
 async def handle_contract_callback(xml_params: Dict) -> bool:
@@ -426,8 +469,29 @@ async def handle_contract_callback(xml_params: Dict) -> bool:
         return False
 
     if change_type == "ADD":
+        # 注意：mark_signed 无状态保护会复活已终止合约，必须先用当前状态分流
+        was_terminated = contract.status == WxContractStatus.TERMINATED
         WxPapayContractsModel.mark_signed(contract_code, contract_id, xml_params.get("openid"))
         logger.info(f"Contract signed: code={contract_code}, wechat_id={contract_id}")
+        if was_terminated:
+            # 已终止合约又收到签约成功：此前被"重新发起订阅自动放弃"等路径本地终止，
+            # 但微信侧签约实际已生效（ADD 迟到/丢失后重推）。若用户已有其它生效签约，
+            # 本合约是残留签约，立即解约保持"只保留一个订阅"；若无其它生效签约则保留
+            # （视为误终止自愈）。微信重复推送时两种分支终态一致，幂等。
+            others = WxPapayContractsModel.get_active_contracts_by_user(contract.user_id)
+            others = [c for c in others if c.contract_code != contract_code]
+            if others:
+                logger.warning(
+                    f"Resurrected contract {contract_code} terminated again: user={contract.user_id} "
+                    f"已有其它生效签约 {[c.contract_code for c in others]}"
+                )
+                await _terminate_replaced_contract(
+                    contract_code, SubscriptionConstants.DEDUP_TERMINATE_REMARK
+                )
+        else:
+            # 正常新约生效：清理该用户其它所有生效签约（升级旧约/历史残留），
+            # 确保系统与微信侧都只剩这一个订阅
+            await _terminate_other_contracts(contract.user_id, contract_code)
         # 签约成功：补发首订加赠（支付回调已先行结算基础算力/权益；幂等，未满足条件自动跳过）
         order = SubscriptionOrdersModel.get_latest_by_contract(contract_code)
         if order:
@@ -551,7 +615,8 @@ async def process_renewals() -> None:
       2. 可扣费窗口内：对失败/待扣款订单发起申请扣款
       3. 受理超时未回调：主动查单确认
       4. 重试窗口耗尽：关闭订单（订阅自然过期）
-      5. 签约中超时清理
+      5. 签约中超时清理、签约结果对账自愈
+      6. 微信侧解约未确认重试、多签约残留去重（只保留一个订阅）
     """
     # 微信约束：预扣费通知与申请扣款仅北京时间 7:00~22:00
     if not _in_deduct_window():
@@ -564,6 +629,7 @@ async def process_renewals() -> None:
     await _reconcile_pending_signs()
     await _cleanup_stale_pending_signs()
     await _retry_upgrade_terminations()
+    await _dedup_signed_contracts()
     await process_settlement_retry()
 
 
@@ -754,7 +820,9 @@ async def _reconcile_pending_signs() -> None:
                 logger.info(
                     f"Pending sign reconciled as signed: {contract.contract_code}, wechat_id={contract_id}"
                 )
-                # 签约成功（ADD 回调丢失后自愈）：补发首订加赠（幂等，未满足条件自动跳过）
+                # 签约成功（ADD 回调丢失后自愈）：确保只保留这一个生效订阅，解约其它残留旧约
+                await _terminate_other_contracts(contract.user_id, contract.contract_code)
+                # 补发首订加赠（幂等，未满足条件自动跳过）
                 order = SubscriptionOrdersModel.get_latest_by_contract(contract.contract_code)
                 if order:
                     await _grant_first_period_bonus(order)
@@ -801,10 +869,15 @@ async def _cleanup_stale_pending_signs() -> None:
 
 
 async def _retry_upgrade_terminations() -> None:
-    """补偿：升级单支付成功后被替换的旧合约，微信侧解约尚未确认的持续重试直至成功"""
-    pending = WxPapayContractsModel.get_upgrade_terminated_pending_confirm(
-        SubscriptionConstants.UPGRADE_TERMINATE_REMARK
-    )
+    """补偿：本地已终止但微信侧解约未确认的合约（套餐升级替换、新约生效去重），持续重试直至成功"""
+    pending = []
+    for remark in (
+        SubscriptionConstants.UPGRADE_TERMINATE_REMARK,
+        SubscriptionConstants.DEDUP_TERMINATE_REMARK,
+    ):
+        pending.extend(
+            WxPapayContractsModel.get_upgrade_terminated_pending_confirm(remark)
+        )
     for contract in pending:
         try:
             if not contract.contract_id:
@@ -813,17 +886,39 @@ async def _retry_upgrade_terminations() -> None:
                     f"需人工在商户平台解约"
                 )
                 continue
-            ok, err = await _delete_wechat_contract(contract)
+            ok, err = await _delete_wechat_contract(contract, contract.termination_remark)
             if ok:
                 WxPapayContractsModel.update_termination_remark(
-                    contract.contract_code, SubscriptionConstants.UPGRADE_TERMINATE_REMARK_CONFIRMED)
-                logger.info(f"Upgrade replaced contract wechat termination confirmed: {contract.contract_code}")
+                    contract.contract_code, f"{contract.termination_remark}(微信侧已解除)")
+                logger.info(f"Replaced contract wechat termination confirmed: {contract.contract_code}")
             else:
                 logger.warning(
-                    f"Upgrade wechat delete_contract retry failed for {contract.contract_code}: {err}"
+                    f"Wechat delete_contract retry failed for {contract.contract_code}: {err}"
                 )
         except Exception:
             logger.exception(f"Retry upgrade termination failed: {contract.contract_code}")
+
+
+async def _dedup_signed_contracts() -> None:
+    """兜底清理：同一用户存在多条已签约合约（微信侧双订阅残留）时，保留最新一条，解约其余。
+
+    双订阅可能由 ADD 回调丢失/迟到、用户连续发起多笔签约等竞态产生；
+    各实时路径（签约回调/自愈查单/重新发起）已逐一清理，本任务兜底历史与遗漏。
+    """
+    try:
+        user_ids = WxPapayContractsModel.get_users_with_multiple_active_contracts()
+    except Exception:
+        logger.exception("Dedup signed contracts: query users failed")
+        return
+    for user_id in user_ids:
+        try:
+            contracts = WxPapayContractsModel.get_active_contracts_by_user(user_id)
+            for stale_contract in contracts[1:]:
+                await _terminate_replaced_contract(
+                    stale_contract.contract_code, SubscriptionConstants.DEDUP_TERMINATE_REMARK
+                )
+        except Exception:
+            logger.exception(f"Dedup signed contracts failed: user={user_id}")
 
 
 async def process_settlement_retry() -> None:

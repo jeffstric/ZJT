@@ -58,6 +58,39 @@ class WxPapayContractsModel:
     """委托代扣签约关系数据库操作"""
 
     @staticmethod
+    def get_active_contracts_by_user(user_id: int) -> List[WxPapayContract]:
+        """取用户所有已签约（ACTIVE）记录，id 降序（同一用户理论上只有一条，
+        历史残留/竞态可能多条，调用方需自行决定保留哪条）"""
+        sql = """
+            SELECT * FROM wx_papay_contracts
+            WHERE user_id = %s AND status = %s
+            ORDER BY id DESC
+        """
+        try:
+            result = execute_query(sql, (user_id, WxContractStatus.ACTIVE), fetch_all=True)
+            return [WxPapayContract(**row) for row in result] if result else []
+        except Exception as e:
+            logger.error(f"Failed to get active contracts for user {user_id}: {e}")
+            raise
+
+    @staticmethod
+    def get_users_with_multiple_active_contracts(limit: int = 100) -> List[int]:
+        """取拥有多条已签约合约的用户ID（微信侧双订阅残留兜底清理用）"""
+        sql = """
+            SELECT user_id FROM wx_papay_contracts
+            WHERE status = %s
+            GROUP BY user_id
+            HAVING COUNT(*) > 1
+            LIMIT %s
+        """
+        try:
+            result = execute_query(sql, (WxContractStatus.ACTIVE, limit), fetch_all=True)
+            return [int(row['user_id']) for row in result] if result else []
+        except Exception as e:
+            logger.error(f"Failed to get users with multiple active contracts: {e}")
+            raise
+
+    @staticmethod
     def create(
         contract_code: str,
         user_id: int,

@@ -2333,6 +2333,9 @@ class SubscriptionConstants:
     # 升级支付成功后被替换旧合约的解约备注（精确匹配，补偿任务据此识别待确认解约）
     UPGRADE_TERMINATE_REMARK = '套餐升级自动解约'
     UPGRADE_TERMINATE_REMARK_CONFIRMED = '套餐升级自动解约(微信侧已解除)'
+    # 新订阅签约生效后解约其它旧签约的备注（含残留签约清理；精确匹配，补偿任务据此重试）
+    DEDUP_TERMINATE_REMARK = '新订阅生效自动解约旧签约'
+    DEDUP_TERMINATE_REMARK_CONFIRMED = '新订阅生效自动解约旧签约(微信侧已解除)'
 
 
 
