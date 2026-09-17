@@ -1645,6 +1645,23 @@ header {
   margin: 0;
 }
 
+/* 「支付成功但签约未生效」引导横幅：提醒重新开通自动续费订阅，持续享受优惠 */
+.package-intro-warning {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(245, 158, 11, 0.05) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.package-intro-warning .package-intro-text {
+  color: var(--text);
+}
+
+.package-intro-warning .package-intro-subtext {
+  color: #b45309;
+}
+
 .package-list {
   display: flex;
   flex-direction: column;

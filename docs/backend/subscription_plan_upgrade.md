@@ -62,8 +62,14 @@
 
 ## 业务规则
 
-- **首期加赠**：升级单默认**不发** `first_period_bonus`（`SubscriptionConstants.UPGRADE_GRANT_FIRST_BONUS = false`），
-  防止"升级/退订重订薅首赠"套利；解约后重新订阅仍按既有规则视为新订阅。
+- **首期加赠**：全局规则为"仅「签约成功」后发放、且仅限用户首份成功签约合约的首期一次"——
+  `subscription_service._grant_first_period_bonus` 在合约 ACTIVE 后发放（订单首期已支付、
+  非升级单、`exists_signed_contract` 判定为首份成功签约、`first_bonus_granted` 幂等）；
+  **用户只付款但签约未生效（订阅被关闭）时不加赠**，只付款未签约的历史合约不消耗资格。
+  发放时机：支付结算时合约多半仍签约中 → 由签约结果回调（ADD）或补偿查单
+  （`_reconcile_pending_signs`）成功后补发；两事件先到后到的任一顺序均可覆盖。
+  幂等键为 `transaction_id + '_FIRST_BONUS'`（基础算力占用原 transaction_id）；
+  升级单默认亦**不发**（`SubscriptionConstants.UPGRADE_GRANT_FIRST_BONUS = false`，独立兜底）。
 - **剩余天数**：升级立即切换，旧套餐本期剩余天数不折算、不退差价（产品决策，文案已展示）。
 - **升级算力**：按新套餐整期发放（档位固定值口径与首期一致，抽佣规则相同）。
 
@@ -71,12 +77,12 @@
 
 | 文件 | 内容 |
 |---|---|
-| `config/constant.py` | `SubscriptionConstants` 新增 `UPGRADE_GRANT_FIRST_BONUS` / `UPGRADE_TERMINATE_REMARK(_CONFIRMED)` |
+| `config/constant.py` | `SubscriptionConstants` 新增 `UPGRADE_GRANT_FIRST_BONUS` / `UPGRADE_TERMINATE_REMARK(_CONFIRMED)` / `PENDING_SIGN_CONFIRM_GRACE_MINUTES` / `SIGN_FAILED_TERMINATE_REMARK` |
 | `config/subscription_config.py` | 新增 `is_upgrade_plan()`（plan_id 单调递增即档位高低） |
-| `model/subscription_orders.py` | 新增 `upgrade_from_contract_code` 字段（建表 SQL 同步） |
-| `model/wx_papay_contracts.py` | `get_renewal_due_contracts` 排除有 PENDING 签约的用户；新增 `get_active_signed_by_user` / `get_upgrade_terminated_pending_confirm` / `update_termination_remark` |
-| `services/subscription_service.py` | `create_sign_pay_order` 升级放行；`_settle_order_paid` 结算后解约旧约；`_terminate_replaced_contract` / `_delete_wechat_contract` / `_retry_upgrade_terminations`；`get_subscription_status` 升级视图；`_settle_and_grant` 升级单不发首赠 |
-| `web/index.html` + `web/js/index_app.js` + `web/css/subscription.css` | 生效中/升级中展示"升级到更高套餐"区块与升级支付面板；`upgradePlans` / `isUpgradeMode` |
+| `model/subscription_orders.py` | 新增 `upgrade_from_contract_code` 字段（建表 SQL 同步）；新增 `first_bonus_granted` 标记列（no_138 迁移）与 `mark_first_bonus_granted()` |
+| `model/wx_papay_contracts.py` | `get_renewal_due_contracts` 排除有 PENDING 签约的用户；新增 `get_active_signed_by_user` / `get_upgrade_terminated_pending_confirm` / `update_termination_remark` / `get_paid_pending_signs`（支付成功但签约未收尾的签约中合约）/ `exists_signed_contract`（首订加赠资格判定） |
+| `services/subscription_service.py` | `create_sign_pay_order` 升级放行；`_settle_order_paid` 结算后解约旧约；`_terminate_replaced_contract` / `_delete_wechat_contract` / `_retry_upgrade_terminations`；`get_subscription_status` 升级视图 + `first_bonus_eligible`；`_settle_and_grant` 升级单不发首赠、首订加赠仅限首次订阅；`_reconcile_pending_signs` 支付成功但签约通知未到的查单收尾 |
+| `web/index.html` + `web/js/index_app.js` + `web/css/subscription.css` | 生效中/升级中展示"升级到更高套餐"区块与升级支付面板；`upgradePlans` / `isUpgradeMode`；`subFirstBonusEligible` 控制「首期加赠」标签按首订资格展示，已解约重新订阅文案同步修正；签约未生效（`sign_not_effective`）引导横幅提醒重新开通订阅 |
 | `alembic/versions/no_137_20260916_add_subscription_upgrade_from_contract.py` | 订单表加列迁移（幂等） |
 | `tests/services/test_subscription_service.py` | 新增升级场景用例 |
 
@@ -89,6 +95,17 @@
 - **用户在微信自助解约旧约**：DELETE 回调幂等标记旧约终止，升级流程不受影响。
 - **支付成功但签约 ADD 回调丢失**：新合约停留 PENDING 被超时清理——既有风险
   （首期同样存在），结算幂等靠订单状态，算力不重复发放。
+- **支付成功但签约结果通知（ADD 回调）未到**：用户已支付（订单 PAID、算力已发、周期已顺延）而合约停留
+  签约中时，续期调度的 `_reconcile_pending_signs` 在宽限时间
+  （`PENDING_SIGN_CONFIRM_GRACE_MINUTES = 10` 分钟）后主动调微信 `querycontract` 收尾：
+  已签约（contract_state=0）补 `mark_signed` 激活（自愈）；未签约（1）或查无记录
+  （-25 RESULT NULL）终止合约，备注固定为 `SIGN_FAILED_TERMINATE_REMARK`。
+  **单期已付权益保留**（用户本月钱已付：算力照发、周期照顺延，不退款、不回收算力），
+  只是没有自动续费；状态视图对该备注返回 `sign_not_effective=true`，前端展示
+  "本月会员已付费…重新开通订阅持续享受优惠"的引导横幅（区别于用户主动解约的文案）。
+  签约进行中（9）或查询异常则等下一周期。
+  真实案例：用户在收银台支付但未完成「开通自动续费」确认（截图中的开关未开），
+  微信侧支付成功且不退款、但无签约关系，故永远等不到 ADD 回调，前端表现为一直「签约进行中」。
 - **微信侧残留旧签约**（解约 API 持续失败）：不影响资金（商户不发起扣款），
   补偿任务持续重试并告警日志，必要时商户平台人工解约。
 

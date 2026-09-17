@@ -28,6 +28,7 @@ class SubscriptionOrder:
         self.status = kwargs.get('status', SubscriptionOrderStatus.PENDING_PAY)
         self.transaction_id = kwargs.get('transaction_id')
         self.upgrade_from_contract_code = kwargs.get('upgrade_from_contract_code')
+        self.first_bonus_granted = kwargs.get('first_bonus_granted', 0)
         self.err_code = kwargs.get('err_code')
         self.err_msg = kwargs.get('err_msg')
         self.prenotify_sent_at = kwargs.get('prenotify_sent_at')
@@ -52,6 +53,7 @@ class SubscriptionOrder:
             'status': self.status,
             'transaction_id': self.transaction_id,
             'upgrade_from_contract_code': self.upgrade_from_contract_code,
+            'first_bonus_granted': self.first_bonus_granted,
             'err_code': self.err_code,
             'err_msg': self.err_msg,
             'retry_count': self.retry_count,
@@ -116,6 +118,20 @@ class SubscriptionOrdersModel:
             return SubscriptionOrder(**result) if result else None
         except Exception as e:
             logger.error(f"Failed to get latest order for contract {contract_code}: {e}")
+            raise
+
+    @staticmethod
+    def mark_first_bonus_granted(order_id: str) -> int:
+        """标记首订加赠已发放（签约成功后发加赠时调用，幂等防重 + 审计）"""
+        sql = """
+            UPDATE subscription_orders
+            SET first_bonus_granted = 1, update_at = NOW()
+            WHERE order_id = %s AND first_bonus_granted = 0
+        """
+        try:
+            return execute_update(sql, (order_id,))
+        except Exception as e:
+            logger.error(f"Failed to mark first bonus granted for {order_id}: {e}")
             raise
 
     @staticmethod
@@ -309,6 +325,7 @@ CREATE TABLE IF NOT EXISTS `subscription_orders` (
   `status` tinyint NOT NULL DEFAULT 0 COMMENT '0-待支付/待扣款 1-已支付 2-扣款失败 3-已关闭 4-已受理待确认',
   `transaction_id` varchar(64) DEFAULT NULL COMMENT '微信支付订单号',
   `upgrade_from_contract_code` varchar(64) DEFAULT NULL COMMENT '套餐升级单：被替换的旧签约协议号(支付成功后自动解约)',
+  `first_bonus_granted` tinyint(1) NOT NULL DEFAULT 0 COMMENT '首订加赠是否已发放(1=已发放；仅签约成功后发放，幂等防重)',
   `err_code` varchar(64) DEFAULT NULL COMMENT '最近一次失败错误码',
   `err_msg` varchar(255) DEFAULT NULL COMMENT '最近一次失败描述',
   `prenotify_sent_at` datetime DEFAULT NULL COMMENT '预扣费通知下发时间',

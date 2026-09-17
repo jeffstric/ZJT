@@ -1174,9 +1174,13 @@
             <p class="package-intro-text">会员订阅</p>
             <p class="package-intro-subtext">选择适合您的月度创作套餐，自动续费可随时取消</p>
           </div>
-          <div class="package-intro" v-if="subscriptionStatus && subscriptionStatus.status === 'terminated'">
+          <div class="package-intro package-intro-warning" v-if="subscriptionStatus && subscriptionStatus.status === 'terminated' && subscriptionStatus.sign_not_effective">
+            <p class="package-intro-text">本月会员已付费，算力权益保留至 {{ formatDateStr(subscriptionStatus.current_period_end) }}</p>
+            <p class="package-intro-subtext">您尚未开通「每月自动续费」，到期后订阅优惠将中断；重新开通订阅即可持续享受会员优惠</p>
+          </div>
+          <div class="package-intro" v-else-if="subscriptionStatus && subscriptionStatus.status === 'terminated'">
             <p class="package-intro-text">您已取消订阅，当期权益保留至 {{ formatDateStr(subscriptionStatus.current_period_end) }}</p>
-            <p class="package-intro-subtext">重新订阅立即生效并重新计算周期；解约后重新订阅视为新订阅，可再次享受首订赠送</p>
+            <p class="package-intro-subtext">重新订阅立即生效并重新计算周期；首订加赠仅限首次订阅享受，重新订阅不再加赠</p>
           </div>
 
           <div v-if="subscriptionPlansLoading" style="text-align: center; padding: 40px;">
@@ -1317,7 +1321,7 @@
                 </div>
                 <div class="sub-plan-power">⚡ {{ plan.computing_power }} 算力/期</div>
                 <div class="sub-plan-mult">{{ planMultipleText(plan) }}</div>
-                <div v-if="plan.first_period_bonus" class="sub-plan-bonus">首期加赠 {{ plan.first_period_bonus }}</div>
+                <div v-if="plan.first_period_bonus && subFirstBonusEligible" class="sub-plan-bonus">首期订阅加赠 {{ plan.first_period_bonus }} 算力</div>
               </div>
             </div>
 
@@ -1348,7 +1352,7 @@
                 <div class="sub-amount-row">
                   <span class="symbol">¥</span>
                   <span class="value">{{ selectedSubPlan.price }}</span>
-                  <span class="per-month">/月 · 每期 {{ selectedSubPlan.computing_power }} 算力<span v-if="selectedSubPlan.first_period_bonus">，首期加赠 {{ selectedSubPlan.first_period_bonus }}</span></span>
+                  <span class="per-month">/月 · 每期 {{ selectedSubPlan.computing_power }} 算力<span v-if="selectedSubPlan.first_period_bonus && subFirstBonusEligible">，首期订阅加赠 {{ selectedSubPlan.first_period_bonus }} 算力</span></span>
                 </div>
 
                 <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError }">

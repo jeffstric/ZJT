@@ -2311,6 +2311,12 @@ class SubscriptionConstants:
     CONTRACT_CODE_PREFIX = "SUBC"
     # 签约中状态的超时清理（小时）：超过视为签约失败
     PENDING_SIGN_EXPIRE_HOURS = 2
+    # "支付成功但签约结果通知未到"的合约，主动查询微信签约关系的宽限时间（分钟）：
+    # 首期订单已支付超过该时长合约仍签约中 → 查单收尾（已签约则补激活/未签约则终止），先于上面的超时清理
+    PENDING_SIGN_CONFIRM_GRACE_MINUTES = 10
+    # 查单确认"支付成功但签约未生效"后的合约终止备注（单期已付权益保留，无自动续费）；
+    # 订阅状态视图据此返回 sign_not_effective，前端展示"重新开通订阅"引导
+    SIGN_FAILED_TERMINATE_REMARK = '支付成功但签约未生效(查询微信确认)，无自动续费'
     # 扣费模式（必须与商户平台模板的「扣费模式」一致）：
     #   direct     延迟24小时扣费（模板默认，无需额外权限）
     #   pre_notify 预扣费通知（需另行开通微信侧权限）
@@ -2320,7 +2326,9 @@ class SubscriptionConstants:
     # 委托代扣商品描述前缀
     BODY_PREFIX = '智剧通会员订阅'
     # ==================== 套餐升级（无需退订，低→高） ====================
-    # 升级签约单结算时是否发放首期加赠（first_period_bonus）：默认关闭，防止"升级/退订重订薅首赠"套利
+    # 升级签约单结算时是否发放首期加赠（first_period_bonus）：默认关闭。
+    # 注：首订加赠全局仅限首次订阅（无历史已支付订阅订单，见 subscription_service._settle_and_grant），
+    # 升级单本身必有历史已支付订单、天然不发；此开关仅作升级单独立兜底
     UPGRADE_GRANT_FIRST_BONUS = False
     # 升级支付成功后被替换旧合约的解约备注（精确匹配，补偿任务据此识别待确认解约）
     UPGRADE_TERMINATE_REMARK = '套餐升级自动解约'

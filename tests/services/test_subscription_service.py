@@ -166,6 +166,8 @@ class _FakeOrder:
         self.period_end = datetime(2026, 10, 10)
         self.status = SubscriptionOrderStatus.CONFIRMING
         self.transaction_id = None
+        self.upgrade_from_contract_code = None
+        self.first_bonus_granted = 0
         self.prenotify_sent_at = datetime(2026, 9, 7, 10, 0)
         self.__dict__.update(kw)
 
@@ -179,6 +181,7 @@ def patched_service(monkeypatch):
         "mark_paid": [], "grant": [], "update_period": [],
         "mark_failed": [], "close": [], "mark_confirming": [],
         "mark_signed": [], "mark_terminated": [], "settle": [],
+        "bonus_flag": [],
     }
 
     monkeypatch.setattr(svc, "get_papay_util", lambda *a, **kw: make_util())
@@ -192,6 +195,23 @@ def patched_service(monkeypatch):
     monkeypatch.setattr(
         svc.SubscriptionOrdersModel, "get_by_order_id",
         staticmethod(lambda order_id: _FakeOrder(order_id=order_id)),
+    )
+    monkeypatch.setattr(
+        svc.SubscriptionOrdersModel, "get_latest_by_contract",
+        staticmethod(lambda contract_code: None),
+    )
+    monkeypatch.setattr(
+        svc.SubscriptionOrdersModel, "mark_first_bonus_granted",
+        staticmethod(lambda order_id: calls["bonus_flag"].append(order_id) or 1),
+    )
+    # 默认合约仍签约中（PENDING）：模拟支付回调先于签约回调的典型时序，首赠顺延
+    monkeypatch.setattr(
+        svc.WxPapayContractsModel, "get_by_contract_code",
+        staticmethod(lambda code: _FakeContract(status=WxContractStatus.PENDING, contract_code=code)),
+    )
+    monkeypatch.setattr(
+        svc.WxPapayContractsModel, "exists_signed_contract",
+        staticmethod(lambda user_id, exclude_contract_code=None: False),
     )
     monkeypatch.setattr(
         svc.SubscriptionOrdersModel, "mark_paid",
@@ -260,22 +280,83 @@ class TestPayCallback:
         # 续期单：周期用订单预生成区间
         assert calls["update_period"] == [("SUBC1", datetime(2026, 9, 10), datetime(2026, 10, 10))]
 
-    def test_first_period_grants_bonus(self, patched_service):
-        """首期（period_index=1）：抽成后到账 + 首订赠送，赠送不参与抽佣"""
+    def test_first_period_grants_bonus_after_signed(self, patched_service):
+        """首期签约成功后发放首订加赠：基础算力 + 加赠分开发放（加赠幂等键带 _FIRST_BONUS 后缀）"""
         svc, calls = patched_service
         util = make_util()
         params = _signed_pay_success_params(util)
-        # 构造首期订单：套餐 102 基础 1000，赠送 200
         import services.subscription_service as real_svc
 
         def _first_order(order_id):
             return _FakeOrder(order_id=order_id, period_index=1, computing_power=1000)
         svc.SubscriptionOrdersModel.get_by_order_id = staticmethod(_first_order)
+        # 签约回调先于支付回调到达：合约已 ACTIVE，且为用户首份成功签约合约
+        svc.WxPapayContractsModel.get_by_contract_code = staticmethod(
+            lambda code: _FakeContract(status=WxContractStatus.ACTIVE, contract_code=code)
+        )
         ok = asyncio.run(real_svc.handle_pay_callback(params))
         assert ok is True
         assert calls["settle"][0]["computing_power"] == 1000
-        # 抽佣后 2400（fake settle 固定返回值）+ 赠送 200 = 2600
-        assert calls["grant"] == [(1, 2400 + 200, "4200001234")]
+        # 基础算力 2400（抽佣后）与加赠 200 分两笔发放，加赠使用独立幂等键
+        assert calls["grant"] == [
+            (1, 2400, "4200001234"),
+            (1, 200, "4200001234_FIRST_BONUS"),
+        ]
+        assert calls["bonus_flag"] == ["SUB_1_a"]
+
+    def test_bonus_deferred_until_contract_signed(self, patched_service):
+        """支付时合约仍签约中（典型时序）：本次只发基础算力，加赠顺延到签约成功后补发"""
+        svc, calls = patched_service
+        util = make_util()
+        params = _signed_pay_success_params(util)
+
+        def _first_order(order_id):
+            return _FakeOrder(order_id=order_id, period_index=1, computing_power=1000)
+        svc.SubscriptionOrdersModel.get_by_order_id = staticmethod(_first_order)
+        # fixture 默认合约 PENDING → 不加赠
+        ok = asyncio.run(svc.handle_pay_callback(params))
+        assert ok is True
+        assert calls["grant"] == [(1, 2400, "4200001234")]
+
+        # 签约结果（ADD 回调）到达后：签约成功，首份成功签约合约 → 补发加赠
+        order = _FakeOrder(order_id="SUB_1_a", period_index=1, computing_power=1000,
+                           status=SubscriptionOrderStatus.PAID, transaction_id="4200001234")
+        svc.WxPapayContractsModel.get_by_contract_code = staticmethod(
+            lambda code: _FakeContract(status=WxContractStatus.ACTIVE, contract_code=code)
+        )
+        bonus_ok = asyncio.run(svc._grant_first_period_bonus(order))
+        assert bonus_ok is True
+        assert calls["grant"][-1] == (1, 200, "4200001234_FIRST_BONUS")
+
+    def test_paid_but_not_signed_no_bonus(self, patched_service):
+        """只付款但签约未生效（订阅被关闭）：合约非 ACTIVE，永远不发首订加赠"""
+        svc, calls = patched_service
+        order = _FakeOrder(period_index=1, computing_power=1000,
+                           status=SubscriptionOrderStatus.PAID, transaction_id="4200001234")
+        # 查询微信确认签约不存在后已终止合约
+        svc.WxPapayContractsModel.get_by_contract_code = staticmethod(
+            lambda code: _FakeContract(status=WxContractStatus.TERMINATED, contract_code=code)
+        )
+        bonus_ok = asyncio.run(svc._grant_first_period_bonus(order))
+        assert bonus_ok is True  # 无需发放（非失败）
+        assert calls["grant"] == []
+        assert calls["bonus_flag"] == []
+
+    def test_resubscribe_after_signed_contract_no_bonus(self, patched_service):
+        """已有历史成功签约合约（老用户重新订阅）：首份成功签约判定不通过，不加赠"""
+        svc, calls = patched_service
+        order = _FakeOrder(period_index=1, computing_power=1000,
+                           status=SubscriptionOrderStatus.PAID, transaction_id="4200001234")
+        svc.WxPapayContractsModel.get_by_contract_code = staticmethod(
+            lambda code: _FakeContract(status=WxContractStatus.ACTIVE, contract_code=code)
+        )
+        svc.WxPapayContractsModel.exists_signed_contract = staticmethod(
+            lambda user_id, exclude_contract_code=None: True
+        )
+        bonus_ok = asyncio.run(svc._grant_first_period_bonus(order))
+        assert bonus_ok is True
+        assert calls["grant"] == []
+        assert calls["bonus_flag"] == []
 
     def test_sign_verification_failure_rejected(self, patched_service):
         svc, _ = patched_service
@@ -452,7 +533,26 @@ class TestSubscriptionStatus:
             svc.WxPapayContractsModel, "get_latest_by_user",
             staticmethod(lambda user_id: None),
         )
-        assert svc.get_subscription_status(1) == {"subscribed": False, "status": "none"}
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "exists_signed_contract",
+            staticmethod(lambda user_id, exclude_contract_code=None: False),
+        )
+        assert svc.get_subscription_status(1) == {
+            "subscribed": False, "status": "none", "first_bonus_eligible": True,
+        }
+
+    def test_none_after_historical_signed_contract(self, monkeypatch):
+        """老用户（有历史成功签约合约）解约后查询：无合约 → 仍无首订加赠资格"""
+        from services import subscription_service as svc
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_latest_by_user",
+            staticmethod(lambda user_id: None),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "exists_signed_contract",
+            staticmethod(lambda user_id, exclude_contract_code=None: True),
+        )
+        assert svc.get_subscription_status(1)["first_bonus_eligible"] is False
 
     def test_active(self, monkeypatch):
         from services import subscription_service as svc
@@ -465,10 +565,16 @@ class TestSubscriptionStatus:
             svc.WxPapayContractsModel, "get_latest_by_user",
             staticmethod(lambda user_id: C()),
         )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "exists_signed_contract",
+            staticmethod(lambda user_id, exclude_contract_code=None: True),
+        )
         status = svc.get_subscription_status(1)
         assert status["subscribed"] is True
         assert status["status"] == "active"
         assert status["next_deduct_date"] == C.current_period_end.date().isoformat()
+        # 生效中用户已有历史已支付订单 → 无首订加赠资格
+        assert status["first_bonus_eligible"] is False
 
     def test_active_but_period_expired(self, monkeypatch):
         from services import subscription_service as svc
@@ -480,6 +586,10 @@ class TestSubscriptionStatus:
         monkeypatch.setattr(
             svc.WxPapayContractsModel, "get_latest_by_user",
             staticmethod(lambda user_id: C()),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "exists_signed_contract",
+            staticmethod(lambda user_id, exclude_contract_code=None: True),
         )
         status = svc.get_subscription_status(1)
         assert status["subscribed"] is False
@@ -674,6 +784,10 @@ class TestUpgradeStatus:
             svc.WxPapayContractsModel, "get_active_signed_by_user",
             staticmethod(lambda uid: active_old),
         )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "exists_signed_contract",
+            staticmethod(lambda user_id, exclude_contract_code=None: True),
+        )
         status = svc.get_subscription_status(1)
         assert status["status"] == "upgrading"
         assert status["subscribed"] is True
@@ -693,6 +807,141 @@ class TestUpgradeStatus:
             svc.WxPapayContractsModel, "get_active_signed_by_user",
             staticmethod(lambda uid: None),
         )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "exists_signed_contract",
+            staticmethod(lambda user_id, exclude_contract_code=None: False),
+        )
         status = svc.get_subscription_status(1)
         assert status["status"] == "signing"
         assert status["subscribed"] is False
+
+    def test_terminated_sign_not_effective_flagged(self, monkeypatch):
+        """支付成功但签约未生效的已终止合约：返回 sign_not_effective（区别于用户主动解约）"""
+        from services import subscription_service as svc
+        terminated = _FakeContract(
+            status=WxContractStatus.TERMINATED, subscription_plan_id=101,
+            termination_remark=svc.SubscriptionConstants.SIGN_FAILED_TERMINATE_REMARK,
+            current_period_end=datetime.now() + timedelta(days=20),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_latest_by_user",
+            staticmethod(lambda uid: terminated),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "exists_signed_contract",
+            staticmethod(lambda user_id, exclude_contract_code=None: True),
+        )
+        status = svc.get_subscription_status(1)
+        assert status["status"] == "terminated"
+        assert status["subscribed"] is True  # 单期已付权益保留至周期结束
+        assert status["sign_not_effective"] is True
+
+    def test_terminated_user_cancel_not_flagged(self, monkeypatch):
+        """用户主动解约：不返回 sign_not_effective"""
+        from services import subscription_service as svc
+        terminated = _FakeContract(
+            status=WxContractStatus.TERMINATED, subscription_plan_id=101,
+            termination_remark="用户主动取消订阅",
+            current_period_end=datetime.now() + timedelta(days=20),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_latest_by_user",
+            staticmethod(lambda uid: terminated),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "exists_signed_contract",
+            staticmethod(lambda user_id, exclude_contract_code=None: True),
+        )
+        status = svc.get_subscription_status(1)
+        assert status["status"] == "terminated"
+        assert "sign_not_effective" not in status
+
+
+# ==================== 支付成功但签约通知未到的补偿查询 ====================
+
+class TestReconcilePendingSigns:
+    """首期已支付但合约仍签约中：按微信 querycontract 结果收尾（补激活/终止/等待）"""
+
+    def _setup(self, monkeypatch, query_result):
+        from services import subscription_service as svc
+        contract = _FakeContract(
+            status=WxContractStatus.PENDING, contract_code="SUBC_NEW",
+            plan_template_id="223101", openid="oX1",
+        )
+        calls = {"signed": [], "terminated": []}
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_paid_pending_signs",
+            staticmethod(lambda grace, limit=50: [contract]),
+        )
+        monkeypatch.setattr(
+            svc.SubscriptionOrdersModel, "get_latest_by_contract",
+            staticmethod(lambda contract_code: None),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "mark_signed",
+            staticmethod(lambda code, cid, openid=None: calls["signed"].append((code, cid, openid)) or 1),
+        )
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "mark_terminated",
+            staticmethod(lambda code, mode=None, remark=None: calls["terminated"].append((code, remark)) or 1),
+        )
+        util = make_util()
+        monkeypatch.setattr(svc, "get_papay_util", lambda *a, **kw: util)
+        monkeypatch.setattr(util, "query_contract", lambda **kw: query_result)
+        return svc, calls
+
+    def test_signed_at_wechat_activates(self, monkeypatch):
+        """微信侧已签约（ADD 回调丢失）：补 mark_signed 激活"""
+        svc, calls = self._setup(monkeypatch, {
+            "return_code": "SUCCESS", "result_code": "SUCCESS",
+            "contract_state": "0", "contract_id": "20260917WX", "openid": "oX1",
+        })
+        asyncio.run(svc._reconcile_pending_signs())
+        assert calls["signed"] == [("SUBC_NEW", "20260917WX", "oX1")]
+        assert calls["terminated"] == []
+
+    def test_unsigned_terminates_with_remark(self, monkeypatch):
+        """微信侧未签约（contract_state=1）：终止合约留痕，不激活"""
+        svc, calls = self._setup(monkeypatch, {
+            "return_code": "SUCCESS", "result_code": "SUCCESS", "contract_state": "1",
+        })
+        asyncio.run(svc._reconcile_pending_signs())
+        assert calls["signed"] == []
+        assert len(calls["terminated"]) == 1
+        # 备注为约定常量：状态视图据此区分"签约未生效"，单期已付权益保留、不退款不回收算力
+        assert calls["terminated"][0][1] == svc.SubscriptionConstants.SIGN_FAILED_TERMINATE_REMARK
+
+    def test_not_found_terminates_with_remark(self, monkeypatch):
+        """微信侧查无记录（err_code=-25 RESULT NULL）：同样视为签约未生效，终止留痕"""
+        svc, calls = self._setup(monkeypatch, {
+            "return_code": "SUCCESS", "result_code": "FAIL",
+            "err_code": "-25", "err_code_des": "RESULT NULL",
+        })
+        asyncio.run(svc._reconcile_pending_signs())
+        assert calls["signed"] == []
+        assert len(calls["terminated"]) == 1
+
+    def test_signing_in_progress_waits(self, monkeypatch):
+        """微信侧签约进行中（contract_state=9）：不动，等下一周期"""
+        svc, calls = self._setup(monkeypatch, {
+            "return_code": "SUCCESS", "result_code": "SUCCESS", "contract_state": "9",
+        })
+        asyncio.run(svc._reconcile_pending_signs())
+        assert calls["signed"] == [] and calls["terminated"] == []
+
+    def test_query_error_waits(self, monkeypatch):
+        """查询接口异常（SYSTEMERROR）：不误终止，等下一周期重试"""
+        svc, calls = self._setup(monkeypatch, {
+            "return_code": "SUCCESS", "result_code": "FAIL", "err_code": "SYSTEMERROR",
+        })
+        asyncio.run(svc._reconcile_pending_signs())
+        assert calls["signed"] == [] and calls["terminated"] == []
+
+    def test_signed_without_contract_id_skips(self, monkeypatch):
+        """已签约但响应缺 contract_id：不激活（无协议ID无法续期），等下一周期"""
+        svc, calls = self._setup(monkeypatch, {
+            "return_code": "SUCCESS", "result_code": "SUCCESS",
+            "contract_state": "0", "contract_id": "",
+        })
+        asyncio.run(svc._reconcile_pending_signs())
+        assert calls["signed"] == [] and calls["terminated"] == []

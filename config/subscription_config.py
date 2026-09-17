@@ -13,8 +13,9 @@
 套餐与赠送规则来源：《智剧通算力定价_新价目方案.html》（2026-09-09）
   - 每档一个微信协议模板（共 4 个：智剧通-入门版/标准版/专业版/旗舰版），固定金额按月扣费；
   - computing_power 为用户实际到账（尾数统一为 8 的口径，与文档"抽成后"一致，所有用户统一）；
-  - first_period_bonus 仅每份新签约的首期发放（解约后重新订阅视为新订阅，可再次享受）。
-  - first_period_bonus 仅每份新签约的首期发放（解约后重新订阅视为新订阅，可再次享受）。
+  - first_period_bonus 为首订加赠，仅在「签约成功」后发放：用户只付款但签约未生效（订阅被关闭）
+    时不加赠；且仅限用户首份「成功签约」合约的首期发放一次（只付款未签约的历史合约不消耗资格，
+    之后签约成功仍可享受；已有历史成功签约的重新订阅不再享受）。
 """
 from typing import Dict, List, Optional
 
@@ -22,7 +23,7 @@ from typing import Dict, List, Optional
 # plan_id: 本地套餐ID（subscription_orders.subscription_plan_id / 合约表关联用）
 # computing_power: 每周期（30天）常规到账算力（不抽成口径）
 # granted_after_commission: 邀请抽成后参考值（仅展示，实际以 commission/settle 计算为准）
-# first_period_bonus: 首次订阅加送算力（仅首期，随首月一并发放）
+# first_period_bonus: 首次订阅加送算力（仅签约成功后发放；仅首份成功签约合约的首期一次，随首月一并发放）
 # template_id: 该档位对应的微信商户平台「委托代扣协议模板」ID（⚠️ 待填，共 4 个模板）
 # badge: 前端角标（可选）
 MONTHLY_SUBSCRIPTION_PLANS: List[Dict] = [

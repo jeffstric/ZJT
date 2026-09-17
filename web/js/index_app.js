@@ -484,6 +484,12 @@
         return !!(this.selectedSubPlan && currentPlanId && Number(this.selectedSubPlan.plan_id) > Number(currentPlanId));
       },
 
+      // 首订加赠资格（后端按"无历史成功签约合约"判定）：false 时套餐卡片/支付面板不展示「首期订阅加赠」
+      subFirstBonusEligible() {
+        const status = this.subscriptionStatus;
+        return !status || status.first_bonus_eligible !== false;
+      },
+
       maskedPhone() {
         // 邮箱用户显示掩码后的邮箱
         if (!this.userPhone && this.userEmail) {
@@ -3153,12 +3159,8 @@
       },
 
       showSubscriptionAgreement() {
-        alert('自动续费服务协议（摘要）：\n\n' +
-          '1. 订阅周期为 30 天，每期发放对应档位算力，到期前自动扣费续期。\n' +
-          '2. 首次订阅赠送算力仅首期发放一次；解约后重新订阅视为新订阅，可再次享受。\n' +
-          '3. 扣款前微信将向您下发预扣费通知，扣费当日及次日为等待期，期间可随时取消。\n' +
-          '4. 您可随时在本页取消订阅，取消后当期权益保留至周期结束，之后不再扣费。\n' +
-          '5. 也可在微信「服务-钱包-支付设置-自动续费」中管理或解约。');
+        // 独立协议页（含首订加赠/持续订阅规则），见 web/auto_renewal_agreement.html
+        window.open('/auto_renewal_agreement.html', '_blank');
       },
 
       async createSubscriptionOrder() {
