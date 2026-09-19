@@ -29,6 +29,23 @@
 物理下限约 6 分钟）时，declared 生效后仍会因台词朗读下限超出目标并上报
 `dialogue_floor_exceeded_seconds`，源头治理需剧本生成侧按片长约束口播字数。
 
+### 后续事故与修复：合并路径 floor 上报假达标 + 生成端预算（2026-09-19）
+
+乌灵胶囊科普验证（storyboard 14）：declared 修复后拆分落库 198.8s（口径
+declared、目标 180s，表面达标），但 34 条台词 TTS 真实朗读 393.8s，配音回填
+后成片 6 分 34 秒。两处跟进：
+
+1. **合并路径 floor 上报假达标**：兜底合并循环把 total 压进容差
+   （`total <= cap`）后，旧实现直接跳过 floor 检查——台词物理下限 346.3s
+   未上报。修复：`total <= cap` 但 `dialogue_floor_sum > target_seconds` 时
+   上报 `dialogue_floor_exceeded_seconds = dialogue_floor_sum - total`；
+   `total > cap` 的旧语义（报 `total - cap`）不变。注意 `_merge_shot_into`
+   对 dialogue 按 JSON 去重，完全相同文本的镜头合并后不重复累计。
+2. **生成端源头治理落地**：story-writer 按目标片长 × 朗读速率约束台词字数，
+   速率常量收敛到 `ScriptDurationRateConstants`（`config/constant.py`），
+   共享函数在 `utils/script_duration.py`，详见
+   [story_writer_duration_budget.md](./story_writer_duration_budget.md)。
+
 ## 概念与公式
 
 | 概念 | 定义 |
@@ -51,6 +68,10 @@
 `TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS`（放大单镜头上限 10s）、
 `TOTAL_DURATION_EXPAND_MAX_ITERATIONS`、`TOTAL_DURATION_SEGMENT_BUDGET_MIN_SECONDS`（段预算下限 3s）、
 `TOTAL_DURATION_MERGE_MAX_ITERATIONS`。
+其中朗读速率与对白占比的数值已收敛到同文件 `ScriptDurationRateConstants`
+（生成端 story-writer 预算共用，见 `utils/script_duration.py` 与
+[story_writer_duration_budget.md](./story_writer_duration_budget.md)），
+`ScriptSplitConstants` 保留旧名引用。
 
 ## 时长来源与四级回退
 

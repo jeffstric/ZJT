@@ -1375,6 +1375,28 @@ class ScriptSplitQcConstants:
     PREVIOUS_RESULT_MAX_CHARS = 120000
 
 
+class ScriptDurationRateConstants:
+    """剧本朗读速率常量（生成端预算 / 拆分端锚定 / 前端估算三端共用）。
+
+    见 docs/script/story_writer_duration_budget.md。修改任一数值必须同步：
+    - web/js/storyboard/render.js（estimateScriptDurationSeconds 附近）
+    - web/js/script_node.js（同公式副本）
+    - tests/js/test_storyboard_script_split_static.js 静态防漂移断言
+    """
+    _CONSTANT_GROUP = True
+
+    # CJK（含假名）朗读速率（字/秒），每分钟 270 字
+    CJK_CHARS_PER_SECOND = 4.5
+    # 拉丁朗读速率（字符/秒，统计不含空格），每分钟 660 字符
+    LATIN_CHARS_PER_SECOND = 11.0
+    # 台词占成片总时长经验比例：台词预算秒数 = 片长 × 该值
+    # （成片其余时长为画面描写/动作/停顿/转场；与拆分端
+    # ScriptSplitConstants.TOTAL_DURATION_DIALOGUE_SHARE 同源同值）
+    DIALOGUE_SHARE = 0.6
+    # 生成端允许超出台词字数预算的比例（超过即要求 story-writer 删减）
+    DIALOGUE_BUDGET_TOLERANCE = 0.2
+
+
 class ScriptSplitConstants:
     """剧本分段拆分与断点续传（持久化任务）相关常量。
 
@@ -1481,16 +1503,19 @@ class ScriptSplitConstants:
     HISTORY_TAIL_SHOTS = 2
 
     # ---- 总分镜时长控制（见 docs/script/script_split_total_duration_control.md）----
-    # 剧本基准时长估算：中文旁白/对话朗读速率（字/秒）
-    SCRIPT_DURATION_CJK_CHARS_PER_SECOND = 4.5
+    # 剧本基准时长估算：中文旁白/对话朗读速率（字/秒）。
+    # 速率数值统一收敛到 ScriptDurationRateConstants（生成/拆分/前端三端共用），
+    # 此处保留旧名引用，避免散落引用漏改。
+    SCRIPT_DURATION_CJK_CHARS_PER_SECOND = ScriptDurationRateConstants.CJK_CHARS_PER_SECOND
     # 拉丁字符朗读速率（字符/秒，统计不含空格）
-    SCRIPT_DURATION_LATIN_CHARS_PER_SECOND = 11.0
+    SCRIPT_DURATION_LATIN_CHARS_PER_SECOND = ScriptDurationRateConstants.LATIN_CHARS_PER_SECOND
     # 剧本基准时长下限（秒），避免短文本估出过小预算
     SCRIPT_DURATION_MIN_SECONDS = 10.0
     # 有对白镜头的时长下限（秒）：台词锚定时不得低于该值，防止台词念不完
     SCRIPT_DURATION_DIALOGUE_SHOT_MIN_SECONDS = 2.0
     # 台词占成片总时长的经验比例：总时长目标 = 台词总时长 ÷ 该值
-    TOTAL_DURATION_DIALOGUE_SHARE = 0.6
+    # （同 ScriptDurationRateConstants.DIALOGUE_SHARE，保留旧名引用）
+    TOTAL_DURATION_DIALOGUE_SHARE = ScriptDurationRateConstants.DIALOGUE_SHARE
     # 剧本自述标注总时长的有效区间（秒）：超出视为误识别（如正文里的时间描述）
     SCRIPT_DURATION_DECLARED_MIN_SECONDS = 5.0
     SCRIPT_DURATION_DECLARED_MAX_SECONDS = 10800.0
