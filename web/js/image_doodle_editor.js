@@ -271,7 +271,7 @@
     open: false,
     busy: false,
     bound: false,
-    tool: 'select',
+    tool: 'pen',
     color: DEFAULT_COLOR,
     lineWidth: DEFAULT_LINE_WIDTH,
     opacity: DEFAULT_OPACITY_PERCENT / 100,
@@ -1515,7 +1515,8 @@
     S.undoStack = [];
     S.redoStack = [];
     S.drag = null;
-    S.tool = 'select';
+    // 默认进入画笔状态，直接可涂鸦（用户仍可切到选择工具移动元素）
+    S.tool = 'pen';
     S.color = DEFAULT_COLOR;
     S.lineWidth = DEFAULT_LINE_WIDTH;
     S.opacity = DEFAULT_OPACITY_PERCENT / 100;

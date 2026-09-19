@@ -42,7 +42,7 @@
 本地选图后会先展示预览并异步上传到 `/api/video-workflow/upload`。在此期间：
 
 - `node.data.uploading = true`，并暂时清空 `node.data.url`（避免误用旧图）
-- 「编辑图片」「涂色编辑」按钮 `disabled`
+- 「编辑图片」「涂鸦编辑」按钮 `disabled`
 - 门禁函数 `canEditImageNode` / `resolveImageEditSubmitData`（`web/js/image_node.js`）要求 **存在非空服务器 `url` 且未在 uploading**
 - 禁止仅凭本地 `File` 提交 `/api/image-edit`（大图上传中途点编辑的历史缺陷）
 

@@ -2,7 +2,7 @@
 // director_stage_editor.js - 导演台 3D 编辑器
 // 类似 liblib 导演台：创建人偶 / 移动人偶 / 控制人偶姿态 / 设置镜头
 // 依赖: /assets/vendor/three.min.js (r128 UMD)
-// DOM 由本模块自注入（参考 image_coloring_editor.js 模式），样式在 /css/director_stage.css
+// DOM 由本模块自注入（与 image_doodle_editor.js 同模式），样式在 /css/director_stage.css
 // ============================
 
 (function () {

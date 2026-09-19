@@ -3201,6 +3201,10 @@ export function bindEvents() {
     }, true);
 
     document.addEventListener('keydown', (event) => {
+        // 涂鸦编辑弹窗打开期间让位（弹窗自身拦截快捷键），避免左右键切镜干扰
+        if (window.imageDoodleEditor && typeof window.imageDoodleEditor.isOpen === 'function' && window.imageDoodleEditor.isOpen()) {
+            return;
+        }
         const target = event.target;
         if (target.id === 'chat-textarea' && event.key === 'Enter' && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {
             event.preventDefault();
