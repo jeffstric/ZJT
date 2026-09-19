@@ -164,6 +164,8 @@
     let uploadConfig = {
       max_image_size_mb: 10 // 默认值
     };
+    // 共享给画布拖放模块（canvas_drop.js）做大小预检
+    window.__wfUploadConfig = uploadConfig;
 
     // 获取上传配置
     async function fetchUploadConfig() {
@@ -175,6 +177,7 @@
         const result = await response.json();
         if (result.code === 0 && result.data) {
           uploadConfig = result.data;
+          window.__wfUploadConfig = uploadConfig;
         }
       } catch (error) {
         console.error('获取上传配置失败:', error);

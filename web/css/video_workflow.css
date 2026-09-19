@@ -950,6 +950,12 @@ select{
 .canvas-container.placing .node{
   pointer-events: none;
 }
+/* 文件拖入画布时的高亮提示（见 canvas_drop.js） */
+.canvas-container.drag-over{
+  outline: 2px dashed var(--primary);
+  outline-offset: -4px;
+  background: rgba(34, 197, 94, 0.05);
+}
 .canvas-world{
   position: absolute;
   top: 0;
