@@ -88,7 +88,7 @@ class TestSettleLadder:
         assert row["granted_computing_power"] == 808
 
     def test_direct_trial_invited_fixed_values(self, commission_env):
-        """直充体验包（1）：用户到账 = 88；渠道现金 = 1.46（体验包参与抽佣）"""
+        """直充算力包（1）：用户到账 = 88；渠道现金 = 1.46（算力包参与抽佣）"""
         cs, calls = commission_env
         r = cs.CommissionService.settle(
             invitee_id=2, order_id="R_x", transaction_id="T2",

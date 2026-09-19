@@ -2270,7 +2270,7 @@ RECHARGE_PACKAGES = [
         "package_id": 1,
         "computing_power": 88,
         "price": 9.9,
-        "description": "体验包 88"
+        "description": "算力包 88"
     },
     {
         "package_id": 2,
@@ -2382,7 +2382,7 @@ class Commission:
     MAX_RATE = 0.5                # 最高佣金比例（50%）
     STEP = 0.01                   # 比例设置步长（1%）
     MIN_WITHDRAW_AMOUNT = 10.0    # 最低提现金额（元）
-    FIRST_RECHARGE_PACKAGE_ID = 5  # 首充福利套餐ID（0.1元/99算力，首充不抽佣；体验包9.9已常规化，不占首充资格）
+    FIRST_RECHARGE_PACKAGE_ID = 5  # 首充福利套餐ID（0.1元/99算力，首充不抽佣；算力包9.9(原体验包)已常规化，不占首充资格）
     # ==================== 抽佣档位阶梯（新价目方案写死，2026-09-11） ====================
     # 渠道（邀请人）佣金按订单档位写死，不再由邀请人自调。
     #   ladder_rate   渠道比例（对外说明；= 渠道算力占不抽成到账的比例）
@@ -2393,7 +2393,7 @@ class Commission:
     #   settle() 走「档位未定义→不抽佣全额到账」分支，与首充不抽佣语义一致。
     COMMISSION_TIERS = {
         # 直充（一次性）
-        1:   dict(ladder_rate=0.30, full_power=122,  invited_power=88,   channel_cash=1.46,  name='体验包 88'),
+        1:   dict(ladder_rate=0.30, full_power=122,  invited_power=88,   channel_cash=1.46,  name='算力包 88'),
         2:   dict(ladder_rate=0.27, full_power=700,  invited_power=508,  channel_cash=7.56,  name='算力包 508'),
         3:   dict(ladder_rate=0.22, full_power=1741, invited_power=1358, channel_cash=15.32, name='算力包 1358'),
         4:   dict(ladder_rate=0.18, full_power=3647, invited_power=2988, channel_cash=26.26, name='算力包 2988'),
