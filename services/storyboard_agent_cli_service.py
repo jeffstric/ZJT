@@ -38,7 +38,9 @@ from model.grid_image_tasks import GridImageTasksModel, GridImageTaskStatus
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
     append_storyboard_visual_suffix,
+    append_voice_reference_note,
     build_storyboard_reference_items,
+    collect_character_voice_references,
     extract_storyboard_reference_names,
     reference_urls,
 )
@@ -1093,6 +1095,23 @@ class StoryboardAgentCliService:
                     f'批次快照未锁定视频模式 {actual_media_mode}',
                 )
             task_type = int(generation_snapshot['task_id'])
+
+        # 角色音色注入（参考生 + 模型 supports_voice_input）：批量补视频与单发同权，
+        # 角色音色克隆源音频并入参考音频、提示词追加音色说明。在 determine_mode 与
+        # 快照解析之后注入，避免改变媒体模式/槽位判定；grok 等不支持模型不注入。
+        if mode == "image_to_video":
+            _config = UnifiedConfigRegistry.get_by_id(int(task_type))
+            _voice_items, _ = collect_character_voice_references(
+                supports_voice_input=bool(getattr(_config, 'supports_voice_input', False)),
+                characters=context.get('characters'),
+                image_mode=image_mode,
+                existing_audio_urls=audio_urls,
+            )
+            if _voice_items:
+                merged = [url for url in str(audio_urls or '').split(',') if url.strip()]
+                merged.extend(item['url'] for item in _voice_items)
+                audio_urls = ','.join(merged)
+                prompt_text = append_voice_reference_note(prompt_text, _voice_items)
 
         from script_writer_core.mcp_tool import scoped_video_preferences
         with scoped_video_preferences(generation_snapshot):

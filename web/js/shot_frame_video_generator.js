@@ -161,7 +161,7 @@ async function generateShotFrameVideo(nodeId, node){
       // === 参考图模式 ===
       // 收集角色/场景/道具参考图
       showToast('正在收集参考图...', 'info');
-      const { referenceImageUrls, promptSuffix } = await collectShotFrameRefImages(node);
+      const { referenceImageUrls, promptSuffix, voiceCharacters } = await collectShotFrameRefImages(node);
 
       // 将 promptSuffix 追加到视频提示词
       if(promptSuffix.length > 0) {
@@ -187,6 +187,17 @@ async function generateShotFrameVideo(nodeId, node){
         form.append('task_id', taskId);
         form.append('image_urls', referenceImageUrls.join(','));
         form.append('image_mode', 'multi_reference');
+
+        // 参考生 + 模型支持音色输入时，自动带入分镜角色的默认音色；
+        // grok 等不支持模型 collectVoiceReferences 返回空，不注入
+        if(typeof collectVoiceReferences === 'function'){
+          const voiceRefs = collectVoiceReferences(videoModel, voiceCharacters || [], '');
+          if(voiceRefs.enabled){
+            form.append('audio_urls', voiceRefs.voiceUrls.join(','));
+            form.set('prompt', appendVoiceReferencePrompt(videoPrompt, voiceRefs.promptNote));
+            notifyVoiceReferences(voiceRefs.voiceUrls.length);
+          }
+        }
 
         showToast(`使用 ${referenceImageUrls.length} 张参考图生成视频...`, 'info');
         res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });

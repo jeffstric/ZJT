@@ -58,6 +58,24 @@
 
 功能转正时删除该常量与两处 `beta: true` 声明即可（有 `web/tests/storyboard_split_video_gen_mode.test.js` 断言兜底）。
 
+## 角色音色参考（音色保持）
+
+参考生视频支持音色参考的视频模型（能力位 `supports_voice_input`）会在提交时**自动**把分镜角色的默认音色（`character.default_voice` 克隆源音频）带入生成请求，让生成视频里角色说话保持与角色库同音色：
+
+- **注入内容**：① 参考音频——角色 `default_voice` 并入参考音频通道（seedance 走 `reference_audio` 自动上传 CDN，MiniMax H3 走 LoadAudio 槽位）；② 提示词说明——尾部追加「参考音频说明：音频N是角色：XX的音色样本，角色说话时请保持相同音色。」（与参考图图例同构，幂等追加）
+- **注入条件**（全部满足）：`multi_reference` 模式 + 模型 `supports_voice_input=True` + 角色有默认音色；无音色角色跳过，与用户手动携带音频按 URL 去重，最多注入 2 条（`MAX_VOICE_REFERENCE_AUDIOS`，受 MiniMax H3 LoadAudio 硬上限约束）
+- **不支持的模型**（grok / kling / vidu / veo3 / wan3 等默认 False）：不注入音频也不追加文字，行为零变化
+- **能力位配置**：`config/unified_config.py` `UnifiedTaskConfig.supports_voice_input`（`to_frontend_dict` 同步下发前端）；当前 True：`seedance_2_0` / `seedance_2_0_fast` / `seedance_2_0_mini` / `seedance_2_5` / `minimax_h3_r2v`
+
+注入点分两条链路：
+
+| 链路 | 入口 | 注入位置 |
+| --- | --- | --- |
+| storyboard.html（分镜直连 / 批量补视频 / 智能体） | `api/storyboard.py` generate-video；`storyboard_agent_cli_service.generate_video` | 后端：`collect_character_voice_references`（`services/storyboard_reference_prompt_service.py`），在 generation_snapshot/媒体模式判定**之后**注入，避免改变模式与槽位判定 |
+| video_workflow 画布（生视频节点 / 分镜节点 / 分镜组节点） | `/api/ai-app-run-image` | 前端：`web/js/voice_reference.js` 的 `collectVoiceReferences`（角色数据只存在于前端节点/查询结果）；`audio_urls` 通道复用后端现有透传 |
+
+MiniMax H3 的提示词优化 pipeline（ref2va）改写时会统计 `ai_tool.audio_path` 参考音频数量并写为 `<audio_N>` 引用，注入的音色自然进入最终提示词。注入为提交期行为，不产生节点持久化状态，工作流重载复原不受影响。
+
 ## 回退
 
 - 单镜全能参考且一张图都没有 → `text_to_video`，使用文生视频槽模型
@@ -65,7 +83,8 @@
 
 ## 相关文件
 
-- `services/storyboard_agent_cli_service.py` — 收集、图例、批量规划、CLI `generate_video`
-- `api/storyboard.py` — 直连 generate-video、智能体上下文
+- `services/storyboard_agent_cli_service.py` — 收集、图例、批量规划、CLI `generate_video`（音色注入）
+- `api/storyboard.py` — 直连 generate-video、智能体上下文（音色注入）
+- `web/js/voice_reference.js` — 画布三类节点共用的角色音色注入工具（能力位门控）
 - `web/js/storyboard/events.js` / `auto_missing_videos_state.js` / `render.js`
 - `web/js/storyboard/state.js` — `getAvailableVideoImageModes`（模式下拉可选项并集）、`getSelectedVideoModel`（参考模式固定解析参考视频槽）

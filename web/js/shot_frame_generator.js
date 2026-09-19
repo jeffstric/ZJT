@@ -30,6 +30,8 @@ async function collectShotFrameRefImages(node) {
   const referenceImageUrls = [];
   const promptSuffix = [];
   const missingCharacters = new Set();
+  // 精确匹配到的角色对象（含 default_voice）：供参考生视频提交时自动带入角色音色
+  const voiceCharacters = [];
   let imageIndex = 1;
 
   // 1. 提取角色名：图片提示词 ∪ 生视频提示词中的 【【角色名】】（去重，图片提示词优先）
@@ -79,6 +81,9 @@ async function collectShotFrameRefImages(node) {
               // 只按全名精确匹配。keyword 是 LIKE 模糊搜索，禁止拿第一条命中
               // 兜底（会挂错参考图）；匹配不到的角色按"不存在"处理，保留用户手选图。
               const matchedChar = characters.find(c => c.name === characterName) || null;
+              if(matchedChar && matchedChar.default_voice){
+                voiceCharacters.push(matchedChar);
+              }
               const userSelectedCharUrl = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[characterName]);
               const charRefUrl = userSelectedCharUrl || (matchedChar && matchedChar.reference_image);
               if (charRefUrl) {
@@ -141,7 +146,7 @@ async function collectShotFrameRefImages(node) {
     if (promptSuffix.length > maxRefImages) promptSuffix.length = maxRefImages;
   }
 
-  return { referenceImageUrls, promptSuffix, missingCharacters };
+  return { referenceImageUrls, promptSuffix, missingCharacters, voiceCharacters };
 }
 
 // 生成分镜图功能

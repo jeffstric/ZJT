@@ -1260,6 +1260,24 @@
             }
           });
 
+          // 参考生 + 模型支持音色输入时，自动带入连线角色节点的默认音色（角色节点数据
+          // 即 /api/characters 完整对象，含 default_voice）；grok 等不支持模型不注入
+          if(currentImageMode === 'multi_reference' && typeof collectVoiceReferences === 'function'){
+            const voiceCharacters = [];
+            state.imageConnections.filter(c => c.to === id && c.portType === 'ref-image').forEach(c => {
+              const fromNode = state.nodes.find(n => n.id === c.from);
+              if(fromNode && fromNode.type === 'character' && fromNode.data){
+                voiceCharacters.push(fromNode.data);
+              }
+            });
+            const voiceRefs = collectVoiceReferences(videoModel, voiceCharacters, allAudioUrls.join(','));
+            if(voiceRefs.enabled){
+              allAudioUrls = allAudioUrls.concat(voiceRefs.voiceUrls);
+              submitPrompt = appendVoiceReferencePrompt(submitPrompt, voiceRefs.promptNote);
+              notifyVoiceReferences(voiceRefs.voiceUrls.length);
+            }
+          }
+
           // 收集所有视频URL（上传 + 连接节点）
           let allVideoUrls = [...(node.data.videoUrls || []).map(v => v.url)];
           state.videoConnections.filter(c => c.to === id && c.portType === 'video-ref').forEach(c => {
