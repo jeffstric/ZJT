@@ -82,6 +82,7 @@ from config.constant import (
     ASSET_MUTATION_DB_TIMEOUT,
     ASSET_STAGING_IO_TIMEOUT,
     BrandingConstants,
+    MediaUploadSafetyConstants,
     SMART_INSERT_SHOT_TIMEOUT,
     SMART_INSERT_SHOT_DEFAULT_MODEL,
     ScriptSplitConstants,
@@ -125,6 +126,7 @@ from utils.resource_access import (
 )
 from utils.media_upload import (
     UploadValidationError,
+    convert_tiff_file_to_png,
     resolve_media_extension,
     save_upload_chunked,
 )
@@ -1193,6 +1195,9 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
 
     安全校验：扩展名白名单 + 魔数校验 + 分块大小上限（防伪造扩展名落盘
     可执行文档与超大文件打满磁盘），由 utils/media_upload.py 统一实现。
+
+    TIFF 归一化：tif/tiff 落盘后立即转 PNG 并删除原文件（浏览器 <img>
+    不解码 TIFF，/upload/ 目录不得残留 tif），对外 URL 恒为 png。
     """
     date_str = datetime.now().strftime("%Y%m%d")
     temp_dir = get_upload_temp_dir(date_str)
@@ -1203,7 +1208,12 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     file_path = os.path.join(temp_dir, info.filename)
     save_upload_chunked(upload_file, file_path, file_extension)
 
-    return build_upload_url(UploadPathConstants.TEMP_DIR, date_str, info.filename, host=SERVER_HOST)
+    saved_name = info.filename
+    if file_extension in MediaUploadSafetyConstants.TIFF_EXTS:
+        file_path = convert_tiff_file_to_png(file_path)
+        saved_name = os.path.basename(file_path)
+
+    return build_upload_url(UploadPathConstants.TEMP_DIR, date_str, saved_name, host=SERVER_HOST)
 
 def _get_request_host(request: Request) -> str:
     """
@@ -1239,6 +1249,13 @@ def _save_user_asset(
     file_path = os.path.join(asset_dir, info.filename)
     save_upload_chunked(upload_file, file_path, file_extension)
 
+    # TIFF 归一化：转 PNG 后再注册 CDN mapping / 构建对外 URL，
+    # /upload/ 目录不得残留 tif 文件
+    saved_name = info.filename
+    if file_extension in MediaUploadSafetyConstants.TIFF_EXTS:
+        file_path = convert_tiff_file_to_png(file_path)
+        saved_name = os.path.basename(file_path)
+
     # 素材落盘即注册 CDN mapping 并触发异步上传七牛：
     # 此前 workflow 素材从不建 mapping，所有 /upload/workflow/ 访问都从本机经
     # frp 隧道全量吐出（打满 ECS 出带宽）。注册后 cdn_redirect_middleware 会
@@ -1252,7 +1269,7 @@ def _save_user_asset(
     )
 
     host = (base_host or SERVER_HOST).rstrip("/")
-    return build_upload_url(category, str(user_id), info.filename, host=host)
+    return build_upload_url(category, str(user_id), saved_name, host=host)
 
 
 def _normalize_origin(origin: Optional[str]) -> Optional[str]:
@@ -6306,6 +6323,12 @@ async def upload_image_to_video_media(
         # 安全校验（魔数）+ 分块限流保存（工作线程中执行，避免阻塞事件循环）
         await asyncio.to_thread(save_upload_chunked, file, file_path, original_ext)
 
+        # TIFF 归一化：转 PNG（浏览器 <img> 不解码 TIFF），缩略图与 URL 均基于转码后文件
+        saved_name = info.filename
+        if original_ext in MediaUploadSafetyConstants.TIFF_EXTS:
+            file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+            saved_name = os.path.basename(file_path)
+
         # 生成缩略图
         thumb_filename = f"thumb_{info.timestamp}_{info.unique_id}.jpg"
         thumb_path = await asyncio.to_thread(
@@ -6313,7 +6336,7 @@ async def upload_image_to_video_media(
         )
 
         # 构建返回 URL
-        file_url = build_upload_url(upload_subdir, str(auth_user_id), date_str, info.filename, host=request_host)
+        file_url = build_upload_url(upload_subdir, str(auth_user_id), date_str, saved_name, host=request_host)
         thumbnail_url = None
         if thumb_path and os.path.exists(thumb_path):
             thumbnail_url = build_upload_url(upload_subdir, str(auth_user_id), date_str, thumb_filename, host=request_host)
@@ -8262,6 +8285,10 @@ async def create_character(
                 content = await reference_image.read()
                 f.write(content)
 
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/character/pic/{filename}"
 
         # 处理多参考图上传
@@ -8292,6 +8319,10 @@ async def create_character(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
+                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                    filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/character/pic/{filename}"
                 reference_images_list.append({
                     'id': str(uuid.uuid4()),
@@ -8418,6 +8449,10 @@ async def update_character(
                 content = await reference_image.read()
                 f.write(content)
             
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/character/pic/{filename}"
         
         # 处理音频上传
@@ -8482,6 +8517,10 @@ async def update_character(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
+                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                    filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/character/pic/{filename}"
                 reference_images_list.append({
                     'id': str(uuid.uuid4()),
@@ -8898,6 +8937,10 @@ async def create_location(
                 content = await reference_image.read()
                 f.write(content)
 
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/location/pic/{filename}"
 
         # 处理多角度参考图上传
@@ -8936,6 +8979,10 @@ async def create_location(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
+                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                    filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/location/pic/{filename}"
                 angle = angles[idx] if idx < len(angles) else 'front'
                 reference_images_list.append({
@@ -9050,6 +9097,10 @@ async def update_location(
                 content = await reference_image.read()
                 f.write(content)
 
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             update_data['reference_image'] = f"{SERVER_HOST}/upload/location/pic/{filename}"
 
         # 处理多角度参考图上传
@@ -9087,6 +9138,10 @@ async def update_location(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
+                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                    filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/location/pic/{filename}"
                 angle = angles[idx] if idx < len(angles) else 'front'
                 reference_images_list.append({
@@ -9262,6 +9317,10 @@ async def add_character_reference_images(
             with open(file_path, "wb") as f:
                 content = await img_file.read()
                 f.write(content)
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             url = f"{SERVER_HOST}/upload/character/pic/{filename}"
             reference_images_list.append({
                 'id': str(uuid.uuid4()),
@@ -9410,6 +9469,10 @@ async def add_location_reference_images(
             with open(file_path, "wb") as f:
                 content = await img_file.read()
                 f.write(content)
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             url = f"{SERVER_HOST}/upload/location/pic/{filename}"
             angle = angles[idx] if idx < len(angles) else 'front'
             reference_images_list.append({
@@ -9730,6 +9793,10 @@ async def create_props(
                 content_data = await reference_image.read()
                 f.write(content_data)
             
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/props/{filename}"
 
         props_id = PropsModel.create(
@@ -9828,6 +9895,10 @@ async def update_props(
                 content_data = await reference_image.read()
                 f.write(content_data)
             
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/props/{filename}"
         
         # 更新道具

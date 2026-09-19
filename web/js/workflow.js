@@ -2234,6 +2234,25 @@
     styleImageInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if(file){
+        // 浏览器 <img> 不解码 TIFF：本地 base64 预览会裂图，改显占位；
+        // 保存时后端会把 tif 归一化为 PNG，回显走服务器 URL
+        if(window.isTiffFile && window.isTiffFile(file)){
+          styleImagePreviewImg.src = '';
+          const parent = styleImagePreviewImg.parentElement || styleImagePreview;
+          let holder = parent.querySelector('.tiff-preview-holder');
+          if(!holder){
+            holder = document.createElement('div');
+            holder.className = 'tiff-preview-holder';
+            holder.style.cssText = 'width:100%;max-width:200px;height:120px;position:relative;border-radius:8px;overflow:hidden;';
+            styleImagePreviewImg.insertAdjacentElement('afterend', holder);
+          }
+          holder.innerHTML = (window.tiffPlaceholderHtml ? window.tiffPlaceholderHtml(file.name) : '<div style="width:100%;height:100%;background:#e5e7eb;"></div>')
+            + '<div style="position:absolute;bottom:4px;left:0;right:0;color:#6b7280;font-size:11px;text-align:center;">TIF 图片，保存时自动转为 PNG</div>';
+          styleImagePreview.style.display = 'block';
+          return;
+        }
+        const holder = styleImagePreview.querySelector('.tiff-preview-holder');
+        if(holder) holder.remove();
         const reader = new FileReader();
         reader.onload = (e) => {
           styleImagePreviewImg.src = e.target.result;
