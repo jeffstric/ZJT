@@ -1670,9 +1670,15 @@
               videoModelEl.appendChild(optEl);
             });
             if (!videoOptions.find(o => o.value === node.data.videoModel)) {
-              if (node.data.videoModel && typeof ensureSelectHasSavedOption === 'function') {
-                ensureSelectHasSavedOption(videoModelEl, node.data.videoModel);
-                videoModelEl.value = node.data.videoModel;
+              // 已保存模型不支持当前模式时必须迁移（如 minimax_h3 首尾帧专属模型
+              // 残留在参考模式，提交会被后端 MODEL_INPUT_UNSUPPORTED 拒绝）；
+              // 仅模式兼容（可能被驱动状态过滤）或未知模型才保留原值
+              const keepSaved = typeof resolveSavedVideoModelForMode === 'function'
+                ? resolveSavedVideoModelForMode(filteredByDriver.length ? filteredByDriver : allVideoOptions, mode, node.data.videoModel)
+                : node.data.videoModel;
+              if (keepSaved && typeof ensureSelectHasSavedOption === 'function') {
+                ensureSelectHasSavedOption(videoModelEl, keepSaved);
+                videoModelEl.value = keepSaved;
               } else {
                 node.data.videoModel = videoOptions[0].value;
                 videoModelEl.value = node.data.videoModel;
@@ -1751,9 +1757,15 @@
               videoModelEl.appendChild(optEl);
             });
             if (!videoOptions.find(o => o.value === currentVideoModel)) {
-              if (currentVideoModel && typeof ensureSelectHasSavedOption === 'function') {
-                ensureSelectHasSavedOption(videoModelEl, currentVideoModel);
-                videoModelEl.value = currentVideoModel;
+              // 已保存模型不支持当前模式时必须迁移（如 minimax_h3 首尾帧专属模型
+              // 残留在参考模式，提交会被后端 MODEL_INPUT_UNSUPPORTED 拒绝）；
+              // 仅模式兼容（可能被驱动状态过滤）或未知模型才保留原值
+              const keepSaved = typeof resolveSavedVideoModelForMode === 'function'
+                ? resolveSavedVideoModelForMode(filteredByDriver.length ? filteredByDriver : allVideoOptions, mode, currentVideoModel)
+                : currentVideoModel;
+              if (keepSaved && typeof ensureSelectHasSavedOption === 'function') {
+                ensureSelectHasSavedOption(videoModelEl, keepSaved);
+                videoModelEl.value = keepSaved;
               } else {
                 node.data.videoModel = videoOptions[0].value;
                 videoModelEl.value = node.data.videoModel;
