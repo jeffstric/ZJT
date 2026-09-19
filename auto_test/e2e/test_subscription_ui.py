@@ -13,15 +13,16 @@ import json as _json
 import pytest
 
 # 与 config/subscription_config.py MONTHLY_SUBSCRIPTION_PLANS 保持一致
+# （2026-09-19 首订加赠全档翻倍：100/200/300/500 → 200/400/600/1000）
 SUBSCRIPTION_PLANS = [
     {"plan_id": 101, "name": "入门版", "price": 29.9, "computing_power": 328,
-     "granted_after_commission": 328, "first_period_bonus": 100, "template_id": "223101", "badge": None},
+     "granted_after_commission": 328, "first_period_bonus": 200, "template_id": "223101", "badge": None},
     {"plan_id": 102, "name": "标准版", "price": 59.9, "computing_power": 808,
-     "granted_after_commission": 808, "first_period_bonus": 200, "template_id": "223102", "badge": None},
+     "granted_after_commission": 808, "first_period_bonus": 400, "template_id": "223102", "badge": None},
     {"plan_id": 103, "name": "专业版", "price": 129.0, "computing_power": 2148,
-     "granted_after_commission": 2148, "first_period_bonus": 300, "template_id": "223103", "badge": None},
+     "granted_after_commission": 2148, "first_period_bonus": 600, "template_id": "223103", "badge": None},
     {"plan_id": 104, "name": "旗舰版", "price": 299.0, "computing_power": 5598,
-     "granted_after_commission": 5598, "first_period_bonus": 500, "template_id": "223104", "badge": None},
+     "granted_after_commission": 5598, "first_period_bonus": 1000, "template_id": "223104", "badge": None},
 ]
 
 # 各场景订阅状态（对应 services.subscription_service.get_subscription_status 返回）
@@ -80,7 +81,7 @@ class TestSubscriptionBonusDisplay:
 
         tags = page.locator(".sub-plan-bonus")
         assert tags.count() == 4, "新用户应看到全部 4 档的首期加赠标签"
-        assert "首期订阅加赠 100 算力" in tags.first.inner_text()
+        assert "首期订阅加赠 200 算力" in tags.first.inner_text()
 
     def test_returning_user_no_bonus_tag(self, browser_context, base_url):
         page = browser_context.new_page()
@@ -95,7 +96,7 @@ class TestSubscriptionBonusDisplay:
 
         page.locator(".sub-plan-card").first.click()
         panel_text = page.locator(".sub-payment-panel").inner_text()
-        assert "首期订阅加赠 100 算力" in panel_text
+        assert "首期订阅加赠 200 算力" in panel_text
 
 
 @pytest.mark.subscription
