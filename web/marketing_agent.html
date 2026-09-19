@@ -409,7 +409,7 @@
                                                 :placeholder="$t('output_language_custom_placeholder')"
                                                 v-model="outputLanguageCustom"
                                                 @click.stop
-                                                @change="onOutputLanguageChange" />
+                                                @input="onOutputLanguageChange" />
                                             <div class="output-language-hint">{{ $t('output_language_hint') }}</div>
                                         </div>
                                         <!-- 生成偏好 -->
