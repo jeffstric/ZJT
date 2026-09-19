@@ -152,6 +152,10 @@ class OpenAIBaseClient(BaseLLMClient):
         if not self.api_key:
             raise Exception(f"供应商 {self.vendor_name} 的 API Key 未配置")
 
+        # 欠费熔断：余额低于阈值的用户直接拒绝发起新调用（后付费扣减无下限，
+        # 不在调用前拦截会被长任务把余额扣穿为负）
+        self._enforce_arrears_breaker(auth_token, vendor_id, model_id, agent_id=agent_id)
+
         try:
             client = self._build_openai_client()
             actual_model = self._resolve_model_name(model)

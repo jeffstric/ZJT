@@ -358,8 +358,15 @@
   "script_no_bg_music": "No Background Music",
   "script_split_multi_dialogue": "Split Multi-Character Dialogue",
   "script_split_btn": "Split Acts",
+  "script_split_continue_btn": "Resume Split",
+  "script_resplit_btn": "Abandon & Re-split",
+  "script_resplit_confirm": "This will abandon the paused split task and re-split from scratch: completed segments will not be kept, and re-splitting will consume computing power again. Continue?",
+  "script_resplit_cancelling": "Cancelling the previous task, please wait…",
+  "script_resplit_cancel_failed": "Failed to cancel the previous task",
+  "script_resplit_cancel_timeout": "Cancel timed out, please try again later",
   "script_grid_only_btn": "Grid Generation Only",
   "script_split_grid_btn": "Split Acts + Grid Generate",
+  "script_split_grid_continue_btn": "Resume Split + Grid Generate",
   "script_batch_generate_btn": "Generate Videos One by One",
   "script_batch_info": "Supports all models, may waste duration when generating individually",
   "duration_5s": "5 seconds",
@@ -834,4 +841,3 @@
   "toast_ratio_required": "Please select an aspect ratio",
   "toast_operation_failed": "Operation failed, please try again later"
 }
-

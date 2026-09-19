@@ -358,8 +358,15 @@
   "script_no_bg_music": "不生成背景音乐",
   "script_split_multi_dialogue": "拆分多人对话镜头",
   "script_split_btn": "拆分幕",
+  "script_split_continue_btn": "继续拆分",
+  "script_resplit_btn": "放弃并重新拆分",
+  "script_resplit_confirm": "将放弃当前已暂停的拆分任务并从头重新拆分：已拆好的分段不会保留，重新拆分会重新消耗算力。确认继续？",
+  "script_resplit_cancelling": "正在取消原任务，请稍候…",
+  "script_resplit_cancel_failed": "取消原任务失败",
+  "script_resplit_cancel_timeout": "取消原任务超时，请稍后重试",
   "script_grid_only_btn": "宫格生图",
   "script_split_grid_btn": "拆分幕 + 宫格生图",
+  "script_split_grid_continue_btn": "继续拆分 + 宫格生图",
   "script_batch_generate_btn": "逐个生成视频",
   "script_batch_info": "支持所有模型，逐个生成可能浪费时长",
   "duration_5s": "5秒",
@@ -834,4 +841,3 @@
   "toast_ratio_required": "请选择画幅比例",
   "toast_operation_failed": "操作失败，请稍后重试"
 }
-

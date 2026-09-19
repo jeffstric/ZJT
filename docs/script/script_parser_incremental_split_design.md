@@ -655,6 +655,23 @@ web/js/script_split_task.js
 
 “拆分幕 + 宫格生图”必须等拆分结果全部应用后才启动宫格任务，并通过 `postActionStarted` 防止刷新后重复提交。
 
+### 14.1 paused 态按钮：继续拆分 / 放弃并重新拆分（2026-09-16 实现）
+
+任务进入 `paused / waiting_auth` 时（典型根因：LLM 欠费熔断，见
+`docs/backend/llm_arrears_breaker_and_input_cache.md`）：
+
+- 两个拆分按钮文案动态改为「继续拆分」「继续拆分 + 宫格生图」。点击后原样重提请求，
+  后端 `create_or_get_active` 按 active_key 幂等命中原任务并从持久化检查点自动恢复
+  （`_resume_task_from_checkpoint`），已完成分段不重跑、不重复计费。
+- 对应状态行追加「放弃并重新拆分」小按钮：确认后调用 `/tasks/{id}/cancel` 并轮询至
+  终态（active_key 唯一索引在 `update_status` 终态分支置 NULL 后才释放），随后重新
+  触发原按钮完整流程，创建全新任务重新计费。页面刷新恢复路径（workflow.js）同享该入口。
+
+辅助函数收敛在 `web/js/script_split_task.js`：`applyPausedSplitButtonUI` /
+`attachResplitButton` / `removeResplitButton` / `cancelAndWaitTerminal` / `tt`。
+文案键：`script_split_continue_btn`、`script_split_grid_continue_btn`、`script_resplit_*`
+（`web/i18n/locales/{zh-CN,en}/video_workflow.json`）。
+
 ## 15. 故事板入口适配
 
 故事板任务完成前不创建任何 `storyboard_scene`。前端轮询真实状态，不再使用固定 5 秒推进的模拟进度。

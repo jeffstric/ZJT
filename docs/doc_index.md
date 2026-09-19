@@ -166,6 +166,7 @@
 | [流水线步骤](backend/pipeline_steps.md) | 流水线处理流程 | 待补充 |
 | [图片压缩](backend/image_compression.md) | 后端图片压缩方案 | 待补充 |
 | [算力多维度计算](backend/算力多维度计算方案.md) | 算力计算方案 | 待补充 |
+| [LLM 欠费熔断与输入缓存优化](backend/llm_arrears_breaker_and_input_cache.md) | 欠费熔断 + 剧本拆分 prompt 缓存命中优化 | 待补充 |
 | [邀请佣金系统](backend/invite_commission.md) | 邀请算力奖励、渠道佣金门控与提现 | 已更新 |
 | [Agent 消息持久化](backend/agent_chat_message_persistence_design.md) | Agent 消息存储 | 待补充 |
 | [驱动配置要求](backend/driver_config_requirements.md) | 驱动配置规范 | 待补充 |

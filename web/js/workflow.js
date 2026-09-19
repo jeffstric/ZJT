@@ -3162,10 +3162,62 @@
             const gridStatusEl2 = el.querySelector('.script-grid-status');
             if (splitBtn2) splitBtn2.disabled = true;
             if (splitGridBtn2) splitGridBtn2.disabled = true;
+
+            const restoreTargetEl = () => (node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2);
+
+            // 刷新恢复路径的「放弃并重新拆分」：取消旧任务 → 等终态（active_key 释放）→ 重新提交并恢复轮询。
+            // 注意：此路径下宫格 onComplete 走降级逻辑（applyParsedData 不自动生成帧），与原恢复行为一致。
+            async function resplitFromPausedRestore() {
+              const oldTaskId = node.data.splitTaskId;
+              if (!oldTaskId) return;
+              const confirmed = await showConfirmModal(
+                window.ScriptSplitTask.tt('script_resplit_confirm', '将放弃当前已暂停的拆分任务并从头重新拆分：已拆好的分段不会保留，重新拆分会重新消耗算力。确认继续？'),
+                { title: window.ScriptSplitTask.tt('script_resplit_btn', '放弃并重新拆分') }
+              );
+              if (!confirmed) return;
+              if (splitBtn2) splitBtn2.disabled = true;
+              if (splitGridBtn2) splitGridBtn2.disabled = true;
+              window.ScriptSplitTask.removeResplitButton(statusEl2);
+              window.ScriptSplitTask.removeResplitButton(gridStatusEl2);
+              try {
+                await window.ScriptSplitTask.cancelAndWaitTerminal(oldTaskId, {
+                  onStatus: () => {
+                    const targetEl = restoreTargetEl();
+                    if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#666'; targetEl.textContent = window.ScriptSplitTask.tt('script_resplit_cancelling', '正在取消原任务，请稍候…'); }
+                  },
+                });
+              } catch (error) {
+                const targetEl = restoreTargetEl();
+                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#dc2626'; targetEl.textContent = window.ScriptSplitTask.tt('script_resplit_cancel_failed', '取消原任务失败') + ': ' + (error.message || ''); }
+                if (splitBtn2) splitBtn2.disabled = false;
+                if (splitGridBtn2) splitGridBtn2.disabled = false;
+                return;
+              }
+              node.data.splitTaskId = null;
+              try {
+                const submitData = await window.ScriptSplitTask.submitSplitTask(node.data, state.defaultWorldId);
+                node.data.splitTaskId = submitData.task_id;
+                node.data.splitTaskMode = node.data.splitTaskMode || 'split';
+                node.data.splitTaskResultApplied = false;
+                node.data.splitTaskPostActionStarted = false;
+                if (window.safeAutoSave) window.safeAutoSave();
+                startRestorePolling();
+              } catch (error) {
+                const targetEl = restoreTargetEl();
+                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#dc2626'; targetEl.textContent = '重新拆分失败: ' + (error.message || ''); }
+                if (splitBtn2) splitBtn2.disabled = false;
+                if (splitGridBtn2) splitGridBtn2.disabled = false;
+              }
+            }
+
+            function startRestorePolling() {
             window.ScriptSplitTask.pollScriptSplitTask(node.data.splitTaskId, {
               onUpdate: (status) => {
                 const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
                 if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#666'; targetEl.textContent = status.message || '拆分中…'; }
+                window.ScriptSplitTask.applyPausedSplitButtonUI(splitBtn2, splitGridBtn2, false);
+                window.ScriptSplitTask.removeResplitButton(statusEl2);
+                window.ScriptSplitTask.removeResplitButton(gridStatusEl2);
               },
               onComplete: async (parsedData) => {
                 if (node.data.splitTaskMode === 'split_and_generate_grid') {
@@ -3180,22 +3232,37 @@
                   node.data.splitTaskResultApplied = true;
                   if (window.safeAutoSave) window.safeAutoSave();
                 }
+                window.ScriptSplitTask.applyPausedSplitButtonUI(splitBtn2, splitGridBtn2, false);
+                window.ScriptSplitTask.removeResplitButton(statusEl2);
+                window.ScriptSplitTask.removeResplitButton(gridStatusEl2);
                 if (splitBtn2) splitBtn2.disabled = false;
                 if (splitGridBtn2) splitGridBtn2.disabled = false;
               },
               onPaused: (status) => {
                 const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
-                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#d97706'; targetEl.textContent = status.message || '任务暂停'; }
+                if (targetEl) {
+                  targetEl.style.display = 'block';
+                  targetEl.style.color = '#d97706';
+                  targetEl.textContent = status.error_message || status.message || '任务暂停';
+                  window.ScriptSplitTask.attachResplitButton(targetEl, resplitFromPausedRestore);
+                }
+                window.ScriptSplitTask.applyPausedSplitButtonUI(splitBtn2, splitGridBtn2, true);
                 if (splitBtn2) splitBtn2.disabled = false;
                 if (splitGridBtn2) splitGridBtn2.disabled = false;
               },
               onError: (error) => {
                 const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
                 if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#dc2626'; targetEl.textContent = '拆分失败: ' + (error.message || ''); }
+                window.ScriptSplitTask.applyPausedSplitButtonUI(splitBtn2, splitGridBtn2, false);
+                window.ScriptSplitTask.removeResplitButton(statusEl2);
+                window.ScriptSplitTask.removeResplitButton(gridStatusEl2);
                 if (splitBtn2) splitBtn2.disabled = false;
                 if (splitGridBtn2) splitGridBtn2.disabled = false;
               },
             });
+            }
+
+            startRestorePolling();
           }
         }
       }
