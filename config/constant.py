@@ -2878,6 +2878,34 @@ LANGUAGE_INSTRUCTIONS = {
 }
 
 
+# ============ 素材输出语言（marketing_agent 输出语言设置） ============
+# 前端 marketing_agent.html「输出语言」下拉，随 /api/session/{id}/task 请求体的
+# output_language 字段传入，由 API 层拼成 [输出语言要求] 指令块注入任务 user_message，
+# 经 PM Agent 传导给图片/视频/数字人/文案等专家智能体，控制素材中呈现文字与口播的语言。
+# 与 TaskCreateRequest.language（UI 界面语言，控制 agent 对话回复语言）语义分离。
+# - 前端默认「自动」：不传该字段，由后端按界面语言回落（MATERIAL_LANGUAGE_LOCALE_FALLBACK）
+# - zh 系/未知界面语言不注入任何指令，维持现状默认中文语境，对存量用户零影响
+
+# 「自动」档按 UI locale 回落的素材语言表；未命中的 locale（含 zh 系）返回空 = 不注入
+MATERIAL_LANGUAGE_LOCALE_FALLBACK = {
+    'en': 'English',
+}
+# 自定义语言名长度上限（防止超长/恶意文本塞进 user_message）
+MATERIAL_OUTPUT_LANGUAGE_MAX_LENGTH = 50
+# 输出语言指令块模板（注入任务 user_message，PM 与专家智能体均可见）
+OUTPUT_LANGUAGE_INSTRUCTION_TEMPLATE = (
+    "\n\n[输出语言要求]\n"
+    "用户指定本次生成素材的输出语言为：{language}。请遵守：\n"
+    "1. 生成的图片/视频素材中呈现给观众的所有文字（海报文案、店招、字幕、包装、招牌等）必须使用{language}\n"
+    "2. 视频口播旁白、数字人播报文案必须使用{language}\n"
+    "3. 营销文案类交付物（带货脚本、广告创意、产品文案）使用{language}\n"
+    "4. 品牌名、店名等专有名词按用户提供的原文保留，不翻译\n"
+    "5. 本要求优先级高于技能文件中「提示词用英文」的默认规则：提示词可继续用英文编写，"
+    "但其中引用的画面文字与口播内容必须按{language}原样书写\n"
+    "6. PM 委托专家智能体时，必须在 task_description 中明确传达本输出语言要求"
+)
+
+
 # ============ 供应商切换差价结算（"贵扣便宜用"修复） ============
 # 任务按供应商A价格扣费、失败切换到供应商B后成功时，按B的实际价格双向结算差价：
 #   多扣 → 退差  diff-refund-{原扣费流水号}（behavior=increase）

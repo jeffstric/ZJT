@@ -385,6 +385,33 @@
                                             </div>
                                             <div class="power-confirm-hint">{{ $t('power_confirm_hint', { value: powerConfirmDefault }) }}</div>
                                         </div>
+                                        <!-- 输出语言（对图片/视频/数字人/文案素材生效） -->
+                                        <div class="output-language-field">
+                                            <div class="output-language-field-head">
+                                                <span class="output-language-field-title">{{ $t('output_language_label') }}</span>
+                                            </div>
+                                            <select class="output-language-select"
+                                                v-model="outputLanguage"
+                                                @click.stop
+                                                @change="onOutputLanguageChange">
+                                                <option value="auto">{{ $t('output_language_auto') }}</option>
+                                                <option value="中文">中文</option>
+                                                <option value="English">English</option>
+                                                <option value="日本語">日本語</option>
+                                                <option value="한국어">한국어</option>
+                                                <option value="Español">Español</option>
+                                                <option value="__custom__">{{ $t('output_language_custom') }}</option>
+                                            </select>
+                                            <input v-if="outputLanguage === '__custom__'"
+                                                type="text"
+                                                class="output-language-custom-input"
+                                                maxlength="50"
+                                                :placeholder="$t('output_language_custom_placeholder')"
+                                                v-model="outputLanguageCustom"
+                                                @click.stop
+                                                @change="onOutputLanguageChange" />
+                                            <div class="output-language-hint">{{ $t('output_language_hint') }}</div>
+                                        </div>
                                         <!-- 生成偏好 -->
                                         <div style="margin-bottom: 20px;">
                                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">

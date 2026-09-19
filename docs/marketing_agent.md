@@ -365,6 +365,29 @@ Agent 模式下，如果用户没有在本轮偏好、历史对话或明确指�
 | 首尾帧 | `first_last_frame` | 第一张为首帧，第二张为尾帧（可选） |
 | 全能参考 | `multi_reference` | 所有图片作为风格参考，最多 5 张 |
 
+### 素材输出语言（output_language）
+
+自定义设置面板提供「输出语言」下拉，控制生成素材中呈现给观众的文字与口播语言（图片中的海报文案/招牌/包装文字、视频口播旁白/字幕、数字人播报文案、营销文案交付物）。选项：`自动（跟随界面语言）` / `中文` / `English` / `日本語` / `한국어` / `Español` / `自定义…`（自由输入，≤50 字符），选择持久化在 localStorage（`marketing_output_language` / `marketing_output_language_custom`）。
+
+仅 Agent 模式生效：`sendMessageToApi()` 随 `/api/session/{session_id}/task` 请求体携带 `output_language`（`auto` 不传）；直连模式下用户自己编写提示词，语言自控。
+
+后端 `create_agent_task`（`api/script_writer.py`）解析规则（`resolve_material_output_language`）：
+
+| 场景 | 结果 |
+|------|------|
+| 显式选择语言 | 注入该语言（最高优先级） |
+| `auto` + 界面语言 `en` | 回落注入 `English`（`MATERIAL_LANGUAGE_LOCALE_FALLBACK`） |
+| `auto` + zh 系/未知界面语言 | 不注入，维持现状默认中文语境 |
+
+命中后以 `OUTPUT_LANGUAGE_INSTRUCTION_TEMPLATE`（`config/constant.py`）拼成 `[输出语言要求]` 指令块追加到任务 user_message，随 `agent_tasks.user_message` 天然持久化（无需数据库迁移），由 PM Agent 在 `call_agent` 的 `task_description` 中传导给各专家。
+
+注意与请求体 `language` 字段的语义分离：`language` 是 UI 界面语言（`zjt_locale`），控制 agent 对话回复语言；`output_language` 只控制素材语言。
+
+Prompt 侧配套规则（`[输出语言要求]` 优先于「提示词用英文」默认规则；提示词可继续用英文编写，但其中引用的画面文字与口播内容须按指定语言原样书写）：
+
+- 主仓库：`agents/skills/marketing-video/SKILL.md`（占位版）、`agents/skills/marketing-image/SKILL.md`、`agents/skills/marketing-pm/SKILL.md`（PM 传导要求）、`script_writer_core/mcp_tool.py` 的 `generate_text_to_video` 工具 schema
+- enterprise（实际生效，独立一份）：`enterprise/skills/marketing-video/SKILL.md`（含本地生活口播旁白语言跟随输出语言）、`enterprise/sops/sop-video-generation.md`（需求收集与委托模板）、`enterprise/sops/sop-video-clone.md`（克隆中文指令模板保持不变，输出语言仅影响口播/字幕文案）
+
 ### 文件上传
 
 #### Agent 对话模式
