@@ -100,7 +100,7 @@
 | 文档 | 说明 | 飞书链接 |
 |------|------|----------|
 | [图片模式指南](image/image_mode_guide.md) | 图片生成模式说明 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Rq8Jd9xzMoCkBWx6Vj3cRiypnDh) |
-| [图片上色编辑](image/image_coloring_edit.md) | 图片上色和编辑功能 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Nmo8dup7HoIY2rxGmE0cTKD9nwe) |
+| [图片涂鸦编辑](image/doodle_editor/涂鸦编辑功能开发方案.md) | 图片涂鸦编辑功能（画笔/橡皮/文字/矩形，旧版涂色编辑已下线） | 待补充 |
 | [网格图片生成](image/grid_image_generation.md) | 多宫格图片生成逻辑 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Y5SydIR1LoKxQ6xFHiNcCnODncY) |
 | [图片节点参考连接](image/image_node_reference_connections.md) | 图片节点的参考图连接 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/WOnIdUz7cou3l9xV801c6GEnnde) |
 | [GPT Image 2 集成](image/gpt_image_2_integration.md) | GPT Image 2 图片生成 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/J2zAdNXRyoStpkxgVXQc523xn6c) |

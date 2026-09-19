@@ -2773,8 +2773,6 @@ textarea:focus{ border-color: var(--primary); }
   line-height: 1.6;
 }
 
-/* 涂色编辑样式已抽至 /css/image_coloring_editor.css（跨页面共享） */
-
 /* 文本节点样式 */
 .node[data-type="text"] {
   min-width: 240px;

@@ -1,6 +1,7 @@
 /**
- * 故事板分镜首帧涂色适配层。
- * 复用全局 window.imageColoringEditor；上传/落库走 storyboard asset API。
+ * 故事板分镜首帧涂鸦编辑适配层。
+ * 复用全局 window.imageDoodleEditor（涂鸦编辑器，open() 时自注入 DOM）；
+ * 上传/落库走 storyboard asset API。
  */
 import state, {
     getCurrentScene,
@@ -12,7 +13,7 @@ import { choosePreviewMedia } from './candidate_selection_state.js';
 import { Region } from './ui_regions.js';
 
 /**
- * 是否允许对当前分镜首帧涂色。
+ * 是否允许对当前分镜首帧涂鸦。
  * @param {object|null|undefined} scene
  * @param {{ isPlaying?: boolean }} [opts]
  * @returns {{ allowed: boolean, reason: string, url?: string }}
@@ -38,42 +39,37 @@ export function canColorFirstFrame(scene, opts = {}) {
 export function getColorFirstFrameBlockMessage(reason) {
     switch (reason) {
         case 'playing':
-            return '请先停止预览播放再涂色';
+            return '请先停止预览播放再编辑';
         case 'not_image':
             return '当前预览不是分镜图，请先切换到首帧图';
         case 'no_image':
         case 'no_scene':
             return '请先生成或选择分镜图';
         default:
-            return '当前无法涂色编辑';
+            return '当前无法涂鸦编辑';
     }
 }
 
 /**
- * dataURL → Blob（供 FormData 上传）
- * @param {string} dataUrl
- * @returns {Blob}
+ * 跨域图片 URL 转同源代理地址，避免涂鸦编辑器 canvas 跨域污染
+ * （storyboard 页无全局 proxyImageUrl，逻辑与 video_workflow state.js 一致）。
+ * @param {string} url
+ * @returns {string}
  */
-export function dataUrlToBlob(dataUrl) {
-    const parts = String(dataUrl || '').split(',');
-    if (parts.length < 2) {
-        throw new Error('无效的图片数据');
+function toSameOriginImageUrl(url) {
+    const str = String(url || '');
+    if (!str || str.startsWith('data:') || str.startsWith('blob:')) return str;
+    try {
+        const u = new URL(str, window.location.href);
+        if (u.origin === window.location.origin) return str;
+    } catch (e) {
+        return str;
     }
-    const header = parts[0] || '';
-    const base64 = parts[1] || '';
-    const mimeMatch = header.match(/data:([^;]+);/);
-    const mime = (mimeMatch && mimeMatch[1]) || 'image/png';
-    const binary = atob(base64);
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return new Blob([bytes], { type: mime });
+    return `/api/proxy-image?url=${encodeURIComponent(str)}`;
 }
 
 /**
- * 将涂色结果写入场景 state + 候选列表（不请求网络）。
+ * 将涂鸦结果写入场景 state + 候选列表（不请求网络）。
  */
 export function applyColoredAssetToScene(scene, {
     assetId,
@@ -96,7 +92,7 @@ export function applyColoredAssetToScene(scene, {
             url: resultUrl,
             status: null,
             selected: true,
-            label: '涂色',
+            label: '涂鸦',
         });
         state.sceneCandidates[scene.id] = {
             ...bucket,
@@ -106,7 +102,7 @@ export function applyColoredAssetToScene(scene, {
 }
 
 /**
- * 打开涂色编辑器；确认后上传并刷新 UI。
+ * 打开涂鸦编辑器；确认后上传并刷新 UI。
  * @param {(regions: any, options?: object) => void} rerender
  */
 export async function openFirstFrameColoring(rerender) {
@@ -117,14 +113,10 @@ export async function openFirstFrameColoring(rerender) {
         return;
     }
 
-    const editor = window.imageColoringEditor;
+    const editor = window.imageDoodleEditor;
     if (!editor || typeof editor.open !== 'function') {
-        showToast('涂色编辑器未加载', 'error');
+        showToast('涂鸦编辑器未加载', 'error');
         return;
-    }
-
-    if (typeof editor.init === 'function') {
-        editor.init();
     }
 
     const context = {
@@ -133,45 +125,47 @@ export async function openFirstFrameColoring(rerender) {
         assetId: scene.selectedFirstFrameId || null,
     };
 
-    await editor.open(gate.url, context, async (result) => {
-        try {
-            showToast('正在保存涂色结果…', 'info');
-            const blob = dataUrlToBlob(result.coloredImage);
-            const file = new File([blob], `colored_scene_${scene.id}.png`, { type: 'image/png' });
-            const resp = await api.uploadSceneAsset(scene.id, file, {
-                assetType: 'first_frame',
-                setSelected: true,
-            });
-            if (!resp || resp.success === false) {
-                throw new Error(resp?.error || resp?.message || '上传失败');
-            }
-            const assetId = resp.asset_id;
-            const resultUrl = resp.result_url;
-            if (!resultUrl) {
-                throw new Error('上传成功但未返回图片地址');
-            }
+    await editor.open(toSameOriginImageUrl(gate.url), {
+        context,
+        onComplete: async ({ blob }) => {
+            try {
+                showToast('正在保存涂鸦结果…', 'info');
+                const file = new File([blob], `doodle_scene_${scene.id}.png`, { type: 'image/png' });
+                const resp = await api.uploadSceneAsset(scene.id, file, {
+                    assetType: 'first_frame',
+                    setSelected: true,
+                });
+                if (!resp || resp.success === false) {
+                    throw new Error(resp?.error || resp?.message || '上传失败');
+                }
+                const assetId = resp.asset_id;
+                const resultUrl = resp.result_url;
+                if (!resultUrl) {
+                    throw new Error('上传成功但未返回图片地址');
+                }
 
-            // 若用户已切到别的分镜，仍写对应 scene 对象
-            const target = (state.scenes || []).find((s) => String(s.id) === String(scene.id)) || scene;
-            applyColoredAssetToScene(target, {
-                assetId,
-                resultUrl,
-                assetType: 'first_frame',
-            });
-            if (state.chatMode === 'video' || state.chatMode === 'aivideo') {
-                refreshSceneFirstFrameSlot(target);
-            }
+                // 若用户已切到别的分镜，仍写对应 scene 对象
+                const target = (state.scenes || []).find((s) => String(s.id) === String(scene.id)) || scene;
+                applyColoredAssetToScene(target, {
+                    assetId,
+                    resultUrl,
+                    assetType: 'first_frame',
+                });
+                if (state.chatMode === 'video' || state.chatMode === 'aivideo') {
+                    refreshSceneFirstFrameSlot(target);
+                }
 
-            if (typeof rerender === 'function') {
-                rerender(
-                    [Region.PREVIEW, Region.CANDIDATES, Region.TIMELINE_LIST, Region.AGENT_PANEL],
-                    { forcePreview: true },
-                );
+                if (typeof rerender === 'function') {
+                    rerender(
+                        [Region.PREVIEW, Region.CANDIDATES, Region.TIMELINE_LIST, Region.AGENT_PANEL],
+                        { forcePreview: true },
+                    );
+                }
+                showToast('已保存为新的分镜图候选', 'success');
+            } catch (err) {
+                console.error('first frame doodle save failed', err);
+                showToast(err?.message || '涂鸦保存失败', 'error');
             }
-            showToast('已保存为新的分镜图候选', 'success');
-        } catch (err) {
-            console.error('first frame coloring save failed', err);
-            showToast(err?.message || '涂色保存失败', 'error');
-        }
+        },
     });
 }

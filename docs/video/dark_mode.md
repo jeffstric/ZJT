@@ -47,7 +47,7 @@ WorkflowTheme.initToggle({ target: '.ratio-floating' });
 - `web/js/theme.js`
 - `web/css/video_workflow.css`
 - `web/css/model_catalog.css`（性价比 / 效果开关走 `--surface` / `--info-bg`）
-- `web/css/image_coloring_editor.css`（暗色下涂色弹窗）
+- `web/css/image_doodle_editor.css`（暗色下涂鸦编辑弹窗）
 - `web/js/shot_frame_node.js` / `web/js/shot_group_node.js`（节点分区不再内联浅色底）
 - `web/video_workflow.html`
 - i18n：`theme_toggle_to_dark` / `theme_toggle_to_light`

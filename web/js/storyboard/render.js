@@ -623,8 +623,8 @@ function renderFirstFrameColoringToolbar(scene) {
                 type="button"
                 class="preview-tool-btn"
                 data-action="color-first-frame"
-                title="涂色编辑分镜图"
-            >${icon('edit', 14)} 涂色编辑</button>
+                title="涂鸦编辑分镜图"
+            >${icon('edit', 14)} 涂鸦编辑</button>
         </div>`;
 }
 

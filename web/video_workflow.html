@@ -21,7 +21,6 @@
   <link rel="stylesheet" href="/css/common.css" />
   <link rel="stylesheet" href="/css/video_workflow.css" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
-  <link rel="stylesheet" href="/css/image_coloring_editor.css" />
   <link rel="stylesheet" href="/css/image_doodle_editor.css?v=__VERSION__" />
   <link rel="stylesheet" href="/css/pannellum.css" />
   <link rel="stylesheet" href="/css/director_stage.css" />
@@ -1116,8 +1115,7 @@
     </div>
   </div>
 
-  <!-- 涂色编辑模态框：可由 image_coloring_editor.js 自注入；此处保留兼容旧缓存页面 -->
-  <!-- 实际 DOM 优先使用脚本 ensureModalDom 注入的结构 -->
+  <!-- 涂鸦编辑模态框：由 image_doodle_editor.js 在 open() 时动态注入 -->
 
   <!-- 时间轴面板 -->
   <div class="timeline-container" id="timelineContainer" style="display:none;">
@@ -1435,7 +1433,6 @@
     }
   </script>
 
-  <script src="/js/image_coloring_editor.js"></script>
   <script src="/js/image_doodle_editor.js?v=__VERSION__"></script>
   <script src="/js/nodes.js?v=__VERSION__"></script>
   <script src="/js/video_node.js?v=__VERSION__"></script>
