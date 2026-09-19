@@ -88,6 +88,7 @@
           preview: '',
           prompt: '',
           ratio: defaultRatio,
+          imageSize: '',
           model: defaultImageModel,
           drawCount: 1,
           project_id: null,
@@ -155,6 +156,10 @@
               <option value="3:4" data-i18n="image_ratio_portrait_3_4">${window.t ? window.t('image_ratio_portrait_3_4') : '竖屏 (3:4)'}</option>
               <option value="4:3" data-i18n="image_ratio_landscape_4_3">${window.t ? window.t('image_ratio_landscape_4_3') : '横屏 (4:3)'}</option>
             </select>
+          </div>
+          <div class="field field-collapsible image-size-field" style="display:none;">
+            <div class="label" data-i18n="image_node_size_label">${window.t ? window.t('image_node_size_label') : '分辨率'}</div>
+            <select class="image-size"></select>
           </div>
           <div class="field field-collapsible">
             <button class="mini-btn image-camera-control-btn" type="button" style="width:100%;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;" data-i18n="image_node_camera_control_btn">${window.t ? window.t('image_node_camera_control_btn') : '相机控制'}</button>
@@ -499,10 +504,43 @@
           ratioEl.value = currentRatio || '9:16';
         }
       }
-      
+
+      // 根据模型更新分辨率选项（image_size 档位，与首页图片编辑一致；模型未配置时隐藏）
+      function updateImageSizeOptions(model) {
+        const sizeEl = el.querySelector('.image-size');
+        if(!sizeEl) return;
+        const sizeField = el.querySelector('.image-size-field') || sizeEl.closest('.field');
+        const config = getModelConfigs()[model];
+
+        if(!config || !Array.isArray(config.image_sizes) || config.image_sizes.length === 0) {
+          if(sizeField) sizeField.style.display = 'none';
+          return;
+        }
+        if(sizeField) sizeField.style.display = '';
+
+        const current = node.data.imageSize || config.default_image_size || '';
+        sizeEl.innerHTML = '';
+        config.image_sizes.forEach(size => {
+          sizeEl.innerHTML += `<option value="${size}">${size}</option>`;
+        });
+        if(current && config.image_sizes.includes(current)) {
+          sizeEl.value = current;
+          // 默认值也显式落盘，保证 UI 显示与提交/序列化的数据一致
+          if(!node.data.imageSize) node.data.imageSize = current;
+        } else {
+          const fallbackDefault = config.default_image_size && config.image_sizes.includes(config.default_image_size)
+            ? config.default_image_size
+            : config.image_sizes[0];
+          sizeEl.value = fallbackDefault;
+          node.data.imageSize = fallbackDefault;
+        }
+      }
+
       // 初始化比例选项
       updateImageRatioOptions(node.data.model);
       if(ratioEl) ratioEl.value = node.data.ratio;
+      // 初始化分辨率选项
+      updateImageSizeOptions(node.data.model);
       
       // 应用驱动状态禁用未配置的图片模型选项
       if(modelEl) applyDriverStatusToSelect(modelEl);
@@ -721,19 +759,43 @@
       ratioEl.addEventListener('change', () => {
         node.data.ratio = ratioEl.value;
       });
+      const imageSizeEl = el.querySelector('.image-size');
+      if(imageSizeEl) {
+        imageSizeEl.addEventListener('change', () => {
+          node.data.imageSize = imageSizeEl.value;
+        });
+      }
       modelEl.addEventListener('change', () => {
         node.data.model = modelEl.value;
         // 模型切换时更新比例选项
         updateImageRatioOptions(modelEl.value);
+        // 模型切换时更新分辨率选项
+        updateImageSizeOptions(modelEl.value);
       });
 
       imageFileEl.addEventListener('change', async () => {
-        const file = imageFileEl.files && imageFileEl.files[0];
+        let file = imageFileEl.files && imageFileEl.files[0];
         if(!file) return;
         if(!file.type.startsWith('image/')){
           showToast(window.t ? window.t('image_node_select_image') : '请选择图片文件', 'error');
           imageFileEl.value = '';
           return;
+        }
+
+        // 超过大小上限：先在前端压缩再上传（GIF 等不可压缩格式原样返回，由服务端兜底）
+        const _sizeCfg = window.__wfUploadConfig;
+        const _limitMb = _sizeCfg && typeof _sizeCfg.max_image_size_mb === 'number' ? _sizeCfg.max_image_size_mb : 10;
+        if (file.size > _limitMb * 1024 * 1024 && typeof compressImageFile === 'function') {
+          try {
+            const compressed = await compressImageFile(file, _limitMb * 1024 * 1024);
+            if (compressed && compressed !== file) {
+              file = compressed;
+              const _sizeMb = Math.max(0.1, compressed.size / 1024 / 1024).toFixed(1);
+              showToast(window.t ? window.t('image_auto_compressed', { max: _limitMb, size: _sizeMb }) : `原图超过${_limitMb}MB，已自动压缩至${_sizeMb}MB`, 'success');
+            }
+          } catch (err) {
+            console.warn('图片压缩失败，按原图上传:', err);
+          }
         }
 
         const previousUrl = node.data.url || '';
@@ -923,7 +985,7 @@
           }
 
           const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
-          const submitRes = await generateEditedImage(submitData, finalPrompt, node.data.ratio, node.data.model, desiredCount, referenceImageUrls);
+          const submitRes = await generateEditedImage(submitData, finalPrompt, node.data.ratio, node.data.model, desiredCount, referenceImageUrls, node.data.imageSize);
           statusEl.textContent = '任务已提交，正在生成图片...';
           node.data.projectIds = submitRes.projectIds;
 

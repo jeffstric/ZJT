@@ -72,6 +72,24 @@
 - 入口绑定：`world.js` 的 `initWorldSelector()` 内统一绑定 `#createWorkflowBtn` click，调用 `window.openCreateWorkflowModal()`
 - 注意：左上角原有的「新建/编辑/删除世界」三个按钮（`#createWorldBtn` / `#editWorldBtn` / `#deleteWorldBtn`）已移除，世界增删改走剧本创作系统或世界管理入口
 
+#### 画布文件拖放
+- 从文件夹拖拽图片/视频文件到画布任意位置，松开即在落点直接创建对应的图片节点或视频节点，并自动上传（复用节点内 file input 的 change 上传逻辑，上传成功后触发自动保存）
+- 多文件批量拖入：按落点依次偏移创建多个节点（碰撞避让走 `findNearestAvailablePosition`）
+- 类型白名单与后端 `utils/media_upload.py` 一致：图片 jpg/jpeg/png/webp/gif/bmp，视频 mp4/mov/webm/avi/mkv；其他类型 toast 提示不支持
+- 图片大小预检读取 `window.__wfUploadConfig`（`events.js` 拉取的 `/api/config/upload` 配置）；**超限图片自动在前端压缩后上传**（GIF 会丢动画帧不压缩，保持拒绝提示）；视频与节点内上传行为一致，由后端兜底校验
+- 拖到已有图片/视频节点的 file input 上：补派 change 事件让原生 drop 填充的文件生效
+- 实现文件：`web/js/canvas_drop.js`（`events.js` 之后加载），高亮样式 `.canvas-container.drag-over`（`css/video_workflow.css`）
+
+#### 图片上传自动压缩（仅 video_workflow 页面）
+- 图片超过 `max_image_size_mb`（默认 10MB）时自动在前端压缩后再上传，覆盖两条路径：画布拖放（`canvas_drop.js`）与图片节点「上传图片」input（`image_node.js`）
+- 压缩函数 `compressImageFile` 位于 `web/js/utils.js`：优先原格式缩放重编码（png/webp 保留透明），不达标依次尝试 webp 0.9 → jpeg 0.9/0.75/0.6（白底），仍未达标边长减半再跑一轮，返回最优结果（可能仍略超上限，由服务端兜底）；GIF 会丢动画帧不压缩
+- 压缩成功 toast 提示（i18n key `image_auto_compressed`），输出文件按实际编码格式改扩展名（如 png → .webp/.jpg）
+
+#### 图片节点分辨率档位
+- 图片节点新增「分辨率」下拉（`data.imageSize`，如 1K/2K/4K），选项来自模型统一配置的 `image_sizes` / `default_image_size`（`TaskConfig.getModelConfigs()`），模型未配置时隐藏该字段（与首页图片编辑行为一致）
+- 生成走 `/api/image-edit` 的 `image_size` 参数（后端按档位计费）；未选择/旧工作流无该字段时不传参，由后端取默认值
+- 模型切换时若当前档位不被新模型支持，自动回落到 `default_image_size`；工作流保存/重载后档位随 `data` 序列化复原（`createImageNodeWithData` 回填）
+
 ## URL参数
 
 ### 剧本创作系统

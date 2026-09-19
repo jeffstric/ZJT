@@ -2293,7 +2293,7 @@
     
     // ============ 画风管理功能结束 ============
 
-    async function generateEditedImage(fileOrUrl, prompt, ratio, model, count, referenceImageUrls){
+    async function generateEditedImage(fileOrUrl, prompt, ratio, model, count, referenceImageUrls, imageSize){
       const userId = localStorage.getItem('user_id');
       const authToken = getAuthToken();
       const form = new FormData();
@@ -2319,6 +2319,10 @@
       form.append('prompt', prompt || '');
       form.append('ratio', ratio || '9:16');
       form.append('count', count || 1);
+      // 分辨率档位（1K/2K/4K 等，与首页图片编辑一致）；空则不传，由后端取默认值
+      if(imageSize){
+        form.append('image_size', imageSize);
+      }
       
       // 根据 model 获取 task_id
       const taskId = TaskConfig.getTaskIdByKey(model || 'gemini-2.5-pro-image-preview', 'image_edit');
@@ -2828,6 +2832,32 @@
             }
           }
           if(ratioEl) ratioEl.value = node.data.ratio;
+          // 恢复分辨率档位选项（image_size，与模型配置联动；旧工作流无该字段时回落默认值）
+          const imageSizeEl = el.querySelector('.image-size');
+          if(imageSizeEl){
+            const config = modelConfigs[node.data.model];
+            if(config && Array.isArray(config.image_sizes) && config.image_sizes.length > 0){
+              const sizeField = el.querySelector('.image-size-field') || imageSizeEl.closest('.field');
+              if(sizeField) sizeField.style.display = '';
+              imageSizeEl.innerHTML = '';
+              config.image_sizes.forEach(size => {
+                imageSizeEl.innerHTML += `<option value="${size}">${size}</option>`;
+              });
+              const savedSize = node.data.imageSize;
+              if(savedSize && config.image_sizes.includes(savedSize)){
+                imageSizeEl.value = savedSize;
+              } else {
+                const defaultSize = config.default_image_size && config.image_sizes.includes(config.default_image_size)
+                  ? config.default_image_size
+                  : config.image_sizes[0];
+                imageSizeEl.value = defaultSize;
+                node.data.imageSize = defaultSize;
+              }
+            } else {
+              const sizeField = el.querySelector('.image-size-field') || imageSizeEl.closest('.field');
+              if(sizeField) sizeField.style.display = 'none';
+            }
+          }
           if(drawCountLabel) { const _t = window.t ? window.t('draw_count_x', { count: node.data.drawCount }) : null; drawCountLabel.textContent = (_t && _t !== 'draw_count_x') ? _t : `抽卡次数：X${node.data.drawCount}`; }
           if(titleEl && nodeData.title) titleEl.textContent = nodeData.title;
 

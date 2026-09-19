@@ -80,6 +80,13 @@
 - `saveDefaultWorld(workflowId, worldId)` - 保存默认世界到工作流
 - `initWorldSelector()` - 初始化世界选择器
 
+### canvas_drop.js (画布增强模块)
+**功能**: 画布文件拖放（`events.js` 之后加载）
+- 对 `#canvasContainer` 绑定 dragenter/dragover/dragleave/drop
+- 从文件夹拖入图片/视频文件，在落点创建对应节点并把 File 注入节点 file input 派发 change，复用既有上传/预览/自动保存逻辑
+- 类型白名单与后端 `utils/media_upload.py` 一致，图片大小预检读 `window.__wfUploadConfig`
+- 高亮样式 `.canvas-container.drag-over` 见 `css/video_workflow.css`
+
 ## 加载顺序
 
 HTML 中按以下顺序加载模块（依赖关系）：
