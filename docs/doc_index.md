@@ -166,7 +166,7 @@
 | [流水线步骤](backend/pipeline_steps.md) | 流水线处理流程 | 待补充 |
 | [图片压缩](backend/image_compression.md) | 后端图片压缩方案 | 待补充 |
 | [算力多维度计算](backend/算力多维度计算方案.md) | 算力计算方案 | 待补充 |
-| [邀请佣金系统](backend/invite_commission.md) | 邀请返佣机制 | 待补充 |
+| [邀请佣金系统](backend/invite_commission.md) | 邀请算力奖励、渠道佣金门控与提现 | 已更新 |
 | [Agent 消息持久化](backend/agent_chat_message_persistence_design.md) | Agent 消息存储 | 待补充 |
 | [驱动配置要求](backend/driver_config_requirements.md) | 驱动配置规范 | 待补充 |
 | [推理内容透传](backend/reasoning_content_passthrough.md) | LLM 推理内容透传 | 待补充 |

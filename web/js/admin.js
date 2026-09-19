@@ -931,15 +931,6 @@ const AdminApp = {
                 account: '',
                 rejectReason: '',
                 loading: false
-            },
-
-            // 佣金比例上限
-            commissionMaxRate: 0.5,
-            commissionMaxRateModal: {
-                show: false,
-                newRate: 50,
-                loading: false,
-                affectedCount: null
             }
         };
     },
@@ -1647,7 +1638,6 @@ const AdminApp = {
             } else if (page === 'commission') {
                 if (this.commissionAvailable) {
                     this.loadCommissionWithdrawals();
-                    this.loadCommissionMaxRate();
                 }
             } else if (page === 'taskTimeline') {
                 // 任务时间线：按需手动查询，不自动加载
@@ -2548,6 +2538,35 @@ const AdminApp = {
             }
         },
         
+        // 开启/关闭渠道现金佣金（level 2 <-> 0）
+        async toggleChannelCommission(user) {
+            if (!user || !user.user_id) return;
+            const enabled = (user.channel_level || 0) >= 2;
+            const newLevel = enabled ? 0 : 2;
+            const actionKey = enabled ? 'btn_channel_commission_disable' : 'btn_channel_commission_enable';
+            if (!confirm(this.t('confirm_channel_commission', { action: this.t(actionKey) }))) {
+                return;
+            }
+            try {
+                const response = await axios.put(
+                    `/api/admin/users/${user.user_id}/channel-level`,
+                    { level: newLevel },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_channel_commission_updated'), 'success');
+                    if (this.userDetailModal.user && this.userDetailModal.user.user_id === user.user_id) {
+                        this.userDetailModal.user.channel_level = newLevel;
+                    }
+                    await this.loadUsers();
+                }
+            } catch (error) {
+                console.error('Update channel level failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_operation_failed');
+                this.showToast(detail, 'error');
+            }
+        },
+
         // 打开算力调整弹窗
         openPowerModal(user) {
             this.powerModal.userId = user.user_id;
@@ -5611,59 +5630,6 @@ const AdminApp = {
                 return parts.length > 0 ? parts.join(' / ') : this.t('commission_no_account');
             }
             return this.t('commission_no_account');
-        },
-
-        // ==================== 佣金比例上限 ====================
-
-        // 加载佣金比例上限
-        async loadCommissionMaxRate() {
-            try {
-                const response = await axios.get('/api/admin/commission/max-rate', {
-                    headers: { 'Authorization': `Bearer ${this.authToken}` }
-                });
-                if (response.data.code === 0) {
-                    this.commissionMaxRate = response.data.data.max_rate;
-                }
-            } catch (error) {
-                console.error('Load commission max rate failed:', error);
-                this.showToast(this.t('toast_max_rate_load_failed'), 'error');
-            }
-        },
-
-        // 打开修改上限弹窗
-        openCommissionMaxRateModal() {
-            this.commissionMaxRateModal.show = true;
-            this.commissionMaxRateModal.newRate = Math.round(this.commissionMaxRate * 100);
-            this.commissionMaxRateModal.affectedCount = null;
-            this.commissionMaxRateModal.loading = false;
-        },
-
-        // 提交修改上限
-        async submitCommissionMaxRate() {
-            const newRate = this.commissionMaxRateModal.newRate;
-            if (!newRate || newRate < 1 || newRate > 100) {
-                this.showToast('请输入 1-100 之间的整数', 'error');
-                return;
-            }
-
-            this.commissionMaxRateModal.loading = true;
-            try {
-                const response = await axios.put(`/api/admin/commission/max-rate?rate=${(newRate / 100).toFixed(2)}`, {}, {
-                    headers: { 'Authorization': `Bearer ${this.authToken}` }
-                });
-                if (response.data.code === 0) {
-                    this.commissionMaxRate = response.data.data.max_rate;
-                    this.commissionMaxRateModal.affectedCount = response.data.data.affected_count;
-                    this.showToast(this.t('toast_max_rate_updated'), 'success');
-                } else {
-                    this.showToast(response.data.detail || '设置失败', 'error');
-                }
-            } catch (error) {
-                console.error('Set commission max rate failed:', error);
-                this.showToast(error.response?.data?.detail || '设置失败', 'error');
-            } finally {
-                this.commissionMaxRateModal.loading = false;
-            }
         }
     }
 };

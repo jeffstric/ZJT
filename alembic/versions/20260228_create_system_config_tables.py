@@ -19,11 +19,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """升级数据库：创建 system_config 和 system_config_history 表"""
-    
-    # 创建 system_config 表（主配置表）
+    """升级数据库：创建 system_config 和 system_config_history 表。
+
+    使用 IF NOT EXISTS：MySQL DDL 会隐式提交，上次中断重跑时表可能已存在。
+    """
     op.execute("""
-        CREATE TABLE `system_config` (
+        CREATE TABLE IF NOT EXISTS `system_config` (
             `id` INT PRIMARY KEY AUTO_INCREMENT,
             `env` VARCHAR(32) NOT NULL DEFAULT 'dev' COMMENT '环境标识：dev/prod/test',
             `config_key` VARCHAR(256) NOT NULL COMMENT '配置键，点号分隔，如 task_queue.max_retry_count',
@@ -39,10 +40,8 @@ def upgrade() -> None:
             INDEX `idx_env` (`env`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统配置表'
     """)
-    
-    # 创建 system_config_history 表（修改历史表）
     op.execute("""
-        CREATE TABLE `system_config_history` (
+        CREATE TABLE IF NOT EXISTS `system_config_history` (
             `id` INT PRIMARY KEY AUTO_INCREMENT,
             `config_id` INT NOT NULL COMMENT '关联 system_config.id',
             `env` VARCHAR(32) NOT NULL COMMENT '环境标识',

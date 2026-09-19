@@ -148,6 +148,7 @@ class AuthService:
                 "invite_code": user.invite_code,
                 "role": user.role,
                 "terms_agreed": user.terms_agreed,
+                "channel_level": getattr(user, 'channel_level', 0) or 0,
             }
         }
     

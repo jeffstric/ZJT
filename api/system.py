@@ -15,7 +15,7 @@ from config.unified_config import UnifiedConfigRegistry
 from config.config_util import get_config_value, get_dynamic_config_value
 from config.version import get_app_version
 from config.strategy.edition_strategy import IS_COMMUNITY_EDITION
-from config.constant import Edition, ExternalLinks
+from config.constant import Edition, ExternalLinks, ChannelLevel
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,24 @@ def _get_feedback_qr_url() -> str:
         return ExternalLinks.FEEDBACK_QR_URL
     url = str(raw).strip()
     return url or ExternalLinks.FEEDBACK_QR_URL
+
+
+def _get_customer_service_qr_url() -> str:
+    """
+    渠道推广申请弹窗中的客服微信二维码 URL。
+
+    读取 frontend.customer_service_qr_url；空值回退为默认本地静态图。
+    与 feedback_qr_url（意见反馈二维码）相互独立，可分别配置。
+    """
+    raw = get_config_value(
+        'frontend',
+        'customer_service_qr_url',
+        default=ExternalLinks.CUSTOMER_SERVICE_QR_URL,
+    )
+    if raw is None:
+        return ExternalLinks.CUSTOMER_SERVICE_QR_URL
+    url = str(raw).strip()
+    return url or ExternalLinks.CUSTOMER_SERVICE_QR_URL
 
 
 @router.get("/status")
@@ -203,6 +221,8 @@ async def get_server_config():
         show_social_icons = _is_show_social_icons()
         show_feedback_qr = _is_show_feedback_qr()
         feedback_qr_url = _get_feedback_qr_url()
+        # 渠道推广申请弹窗：客服微信二维码
+        customer_service_qr_url = _get_customer_service_qr_url()
 
         # CAPTCHA 配置（仅暴露前端需要的公开字段，不暴露 access_key_secret）
         captcha_enabled = get_dynamic_config_value('captcha', 'enabled', default=False)
@@ -242,6 +262,8 @@ async def get_server_config():
                 # 意见反馈 FAB / 弹窗（个人微信二维码，非官方群）
                 "show_feedback_qr": show_feedback_qr,
                 "feedback_qr_url": feedback_qr_url,
+                "customer_service_wechat": ChannelLevel.CUSTOMER_SERVICE_WECHAT,
+                "customer_service_qr_url": customer_service_qr_url,
                 "footer": {
                     "copyright": footer.get('copyright', ''),
                     "icp_number": footer.get('icp_number', ''),

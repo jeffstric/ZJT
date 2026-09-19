@@ -141,6 +141,8 @@ Storyboard CLI：
 
 已配置模型不存在、禁用、隐藏或不兼容时，偏好解析路径直接失败或在偏好界面回落并写入第一个兼容模型；只有从未配置过或已失效的槽位可以按场景目录性价比档（`config/model_catalog.py`）初始化，再回退 `sort_order`。直接生成 API 在请求已显式传入 `task_id` 时允许 `hidden=True` 的内部模型（例如相机控制 / 场景多角度使用的 `qwen-multi-angle`），但仍拒绝 disabled。已提交任务的可信快照同样允许模型后来变为 `hidden=True` 后继续执行，disabled 仍拒绝。
 
+默认模型解析（`MediaGenerationPreferenceService.default_model`）自 2026-09-16 起与模型列表接口同口径过滤**驱动不可用**的模型（`VideoDriverFactory.get_driver_availability`，如 Vidu Token 未配置），避免智能体/CLI 首次默认选中永远跑不通的模型（事故：storyboard_cli 参考视频默认解析为 vidu_q2，提交扣费后 worker 才失败退款）；驱动未注册的进程（单测/脚本）保持原不过滤行为。「智能体模型偏好」面板在已保存值不在可用列表时展示警示条（橙色的 `.cli-media-pref-row-warning`）而非静默回落——下拉里显示的目录默认只是推荐替代，并未保存，重新选择保存后才生效。
+
 ## Storyboard 项目配置
 
 新字段为：

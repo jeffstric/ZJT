@@ -22,6 +22,9 @@ frontend:
   # 意见反馈弹窗中的个人微信二维码地址（与官方微信群 wx_group_guide 无关）
   # 默认 /files/二维码.jpg；可改为 /files/你的图.jpg 或可公网访问的图片 URL
   feedback_qr_url: "/files/二维码.jpg"
+  # 渠道推广申请弹窗中的客服微信二维码地址（与意见反馈二维码相互独立）
+  # 默认 /files/二维码.jpg；可改为 /files/你的图.jpg 或可公网访问的图片 URL
+  customer_service_qr_url: "/files/二维码.jpg"
 ```
 
 | 键 | 类型 | 默认 | 含义 |
@@ -29,6 +32,7 @@ frontend:
 | `frontend.show_social_icons` | bool | `true` | 是否展示 index 页脚 `.local-footer` 社交图标区 |
 | `frontend.show_feedback_qr` | bool | `true` | 是否展示意见反馈 FAB 及其个人 QR 弹窗 |
 | `frontend.feedback_qr_url` | string | `/files/二维码.jpg` | 反馈弹窗中二维码图片地址 |
+| `frontend.customer_service_qr_url` | string | `/files/二维码.jpg` | 渠道推广申请弹窗中客服微信二维码图片地址 |
 
 修改后需**重启服务**（或走现有配置重载流程）后生效。
 
@@ -76,6 +80,7 @@ frontend:
 |------|------|------|
 | 页脚社交图标 | `frontend.show_social_icons` + `server.is_local` | HTML 硬编码外链 |
 | 意见反馈个人微信 | `frontend.show_feedback_qr` / `feedback_qr_url` | 默认 `/files/二维码.jpg` |
+| 渠道推广客服微信二维码 | `frontend.customer_service_qr_url` | 默认 `/files/二维码.jpg`（申请弹窗，见 invite_commission.md） |
 | 官方微信群引导 | `wx_group_guide.*` / branding | 远端群图 / 品牌定制 |
 
 **禁止混用**：关闭 `wx_group_guide` 不会隐藏意见反馈；关闭 `show_feedback_qr` 不影响官方群引导。
@@ -95,9 +100,10 @@ GET /api/system/server-config
 | `show_social_icons` | boolean | `true` |
 | `show_feedback_qr` | boolean | `true` |
 | `feedback_qr_url` | string | `/files/二维码.jpg` |
+| `customer_service_qr_url` | string | `/files/二维码.jpg` |
 
-实现位置：`api/system.py`（`_is_show_social_icons` / `_is_show_feedback_qr` / `_get_feedback_qr_url`）。  
-默认图常量：`config/constant.py` → `ExternalLinks.FEEDBACK_QR_URL`。
+实现位置：`api/system.py`（`_is_show_social_icons` / `_is_show_feedback_qr` / `_get_feedback_qr_url` / `_get_customer_service_qr_url`）。  
+默认图常量：`config/constant.py` → `ExternalLinks.FEEDBACK_QR_URL` / `ExternalLinks.CUSTOMER_SERVICE_QR_URL`。
 
 前端失败或旧后端缺字段时：**回退为开启 + 默认图**，避免社区入口意外消失。
 

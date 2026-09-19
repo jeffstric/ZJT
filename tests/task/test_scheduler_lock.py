@@ -92,6 +92,7 @@ def _write_helper(path, lock_path, extra=""):
     lines = [
         'import sys, time',
         'sys.path.insert(0, r"@ROOT@")',
+        'import tests.conftest  # noqa: F401  配置 stub（本机缺 config_dev.yml 时）',
         'from task.scheduler import _acquire_scheduler_lock',
         'ok = _acquire_scheduler_lock(lock_file=r"@LOCK@")',
         "print('OK' if ok else 'FAIL', flush=True)",
@@ -99,7 +100,7 @@ def _write_helper(path, lock_path, extra=""):
     if extra:
         lines.append(extra)
     code = chr(10).join(lines)
-    code = code.replace('@ROOT@', PROJECT_ROOT.replace(BS, BS + BS)).replace('@LOCK@', lock_path.replace(BS, BS + BS))
+    code = code.replace('@ROOT@', PROJECT_ROOT.replace(BS, BS + BS)).replace('@LOCK@', lock_path.replace(BS, BS + BS)).replace('@TESTS@', os.path.join(os.path.dirname(os.path.abspath(__file__))).replace(BS, BS + BS))
     with open(path, 'w', encoding='utf-8') as f:
         f.write(code)
 

@@ -95,6 +95,8 @@
 
 视频工具同根因（marketing_agent / storyboard 视频生成 401）：`enterprise/tools/video_tools.py` 的 `generate_text_to_video` → `POST /api/ai-app-run`、`image_to_video` → `POST /api/ai-app-run-image`，同样只把 `auth_token` 放 form 字段，已补 Bearer 头。
 
+> 注（2026-09-16 落地确认）：上文对 video_tools 的修补实际从未提交进 enterprise 仓库（当时仅改了 `script_writer_core/mcp_tool.py` 4 处），storyboard 智能体批量/单场视频生成因此持续 401（`require_permission` 只认 Authorization 头 / query，form 字段不过鉴权）。本次已真正补上两处 `httpx.post` 的 `Authorization: Bearer` 头（token 为空不加头），并同步加 `trust_env=False` 防代理环境变量劫持内部回环；回归见 `tests/agents/test_video_tools_resolution.py::test_*_sends_bearer_header`。
+
 ## 五、发布与兼容注意
 
 1. **前后端需一起发布**：后端先上会以 401 打断旧前端（EventSource 裸连、无 header 请求）。

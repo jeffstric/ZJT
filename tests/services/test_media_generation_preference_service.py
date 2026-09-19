@@ -223,3 +223,84 @@ def test_save_profile_writes_only_its_surface_slot(monkeypatch):
     assert saved["task_id"] == config.id
     assert "ignored" not in saved
     assert writes[0][2] == "media_pref.storyboard_cli.image.text_to_image"
+
+
+def test_default_model_skips_unavailable_driver(monkeypatch):
+    """默认模型解析必须过滤驱动不可用的模型。
+
+    事故：storyboard_cli 参考视频无偏好时 default_model 按 (sort_order, id) 选中
+    vidu_q2（sort 与 grok/minimax_h3_reference 并列 36，id 19 最小），但该环境
+    vidu.token 未配置、驱动永远实例化失败，导致智能体提交扣费后 worker 才失败退款。
+    """
+    multi_ref = [ImageMode.MULTI_REFERENCE]
+    unavailable = _config(
+        19,
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        supported_image_modes=multi_ref,
+    )
+    available = _config(
+        27,
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        supported_image_modes=multi_ref,
+    )
+    monkeypatch.setattr(
+        "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_category",
+        lambda category: [unavailable, available],
+    )
+    monkeypatch.setattr(
+        "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_id",
+        lambda task_id: {19: unavailable, 27: available}[task_id],
+    )
+    driver_status = {"19": {"available": False, "missing_configs": ["Vidu API Token"]}}
+    fake_factory = SimpleNamespace(
+        _registered_drivers={"x": object()},
+        get_driver_availability=lambda: driver_status,
+        is_task_available=staticmethod(
+            lambda task_id, status: (status or {}).get(str(task_id), {}).get("available") is not False
+        ),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "task.visual_drivers.driver_factory",
+        SimpleNamespace(VideoDriverFactory=fake_factory),
+    )
+
+    config = MediaGenerationPreferenceService.default_model(
+        MediaGenerationType.VIDEO,
+        MediaGenerationMode.REFERENCE_TO_VIDEO,
+    )
+    assert config.id == 27
+
+
+def test_default_model_keeps_legacy_order_when_drivers_unregistered(monkeypatch):
+    """驱动未注册（单测/脚本等非 server 进程）时保持原行为：不过滤、按排序取第一个。"""
+    first = _config(
+        19,
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        supported_image_modes=[ImageMode.MULTI_REFERENCE],
+    )
+    second = _config(
+        27,
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        supported_image_modes=[ImageMode.MULTI_REFERENCE],
+    )
+    monkeypatch.setattr(
+        "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_category",
+        lambda category: [first, second],
+    )
+    monkeypatch.setattr(
+        "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_id",
+        lambda task_id: {19: first, 27: second}[task_id],
+    )
+    fake_factory = SimpleNamespace(_registered_drivers={})
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "task.visual_drivers.driver_factory",
+        SimpleNamespace(VideoDriverFactory=fake_factory),
+    )
+
+    config = MediaGenerationPreferenceService.default_model(
+        MediaGenerationType.VIDEO,
+        MediaGenerationMode.REFERENCE_TO_VIDEO,
+    )
+    assert config.id == 19

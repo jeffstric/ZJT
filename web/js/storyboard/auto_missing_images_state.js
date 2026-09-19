@@ -319,9 +319,11 @@ export function getAutoCompleteButtonViewModel() {
         };
     }
     if (summary.missingCount > 0) {
+        // 参考生视频模式下分镜图非必需，补全仅为可选增强（有图会作为主参考）
+        const isRefVideoMode = state.videoImageMode === 'multi_reference';
         return {
             icon: 'wand',
-            label: '自动补全未生成分镜',
+            label: isRefVideoMode ? '补全分镜图（可选）' : '自动补全未生成分镜',
             locked: false,
             disabled: false,
             busy: false,
@@ -339,6 +341,10 @@ export function getAutoCompleteButtonViewModel() {
 }
 
 export function getFirstFrameStatusLabel(status) {
+    // 参考生视频模式下分镜图非必需：缺失不视为「待生成」，避免误导用户必须补图
+    if (status === 'missing' && state.videoImageMode === 'multi_reference') {
+        return '免分镜图';
+    }
     return {
         missing: '待生成',
         pending: '排队中',

@@ -357,6 +357,19 @@ class MediaGenerationPreferenceService:
             UnifiedConfigRegistry.get_by_category(category),
             key=lambda config: (config.sort_order, config.id),
         )
+        # 默认模型必须驱动可用（如 Vidu Token 未配置则跳过）：曾 storyboard_cli 参考视频
+        # 无偏好时默认解析为 vidu_q2（sort 并列取最小 id），该模型在此环境永远跑不通，
+        # 导致提交扣费后 worker 才失败退款。与模型列表接口 get_driver_availability 同口径；
+        # 可用性读取失败时不过滤（与列表接口「读取失败列表不过滤」行为一致）。
+        availability = None
+        try:
+            from task.visual_drivers.driver_factory import VideoDriverFactory
+            # 驱动未注册（单测/脚本等非 server 进程）时不可用性字典会把所有模型
+            # 误判为不可用，此时退化为不过滤，保持原行为
+            if VideoDriverFactory._registered_drivers:
+                availability = VideoDriverFactory.get_driver_availability()
+        except Exception:
+            availability = None
         for config in candidates:
             if not config.enabled or config.hidden:
                 continue
@@ -371,9 +384,13 @@ class MediaGenerationPreferenceService:
                         else None
                     ),
                 )
-                return config
             except MediaGenerationPreferenceError:
                 continue
+            if availability is not None and not VideoDriverFactory.is_task_available(
+                config.id, availability
+            ):
+                continue
+            return config
         return None
 
     @classmethod

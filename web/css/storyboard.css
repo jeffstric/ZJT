@@ -1511,13 +1511,6 @@ button {
     gap: 6px;
     min-height: 56px;
 }
-.media-stack-hint {
-    margin-top: 4px;
-    font-size: 11px;
-    color: var(--muted, #888);
-    max-width: 160px;
-    line-height: 1.4;
-}
 .media-stack-thumbs {
     position: relative;
     width: 56px;
@@ -1626,9 +1619,6 @@ button {
 }
 
 /* 空态 */
-.media-stack.is-empty .media-stack-stage {
-    width: 56px;
-}
 .media-stack.is-empty .media-stack-thumbs {
     display: none;
 }
@@ -1884,8 +1874,8 @@ button {
     font-weight: 700;
 }
 /* 参考生视频等 Beta 功能入口的标识；与 web/css/index.css 的 .beta-tag 保持一致
-   （storyboard 页面不引 index.css）。须置于 .video-mode-btn span / .video-mode-static-label
-   之后，靠源顺序在同特异性竞争中胜出 */
+   （storyboard 页面不引 index.css）。须置于 .video-mode-static-label /
+   .video-mode-texts strong 之后，靠源顺序在同特异性竞争中胜出 */
 .beta-tag {
     display: inline-block;
     font-size: 10px;
@@ -1898,11 +1888,6 @@ button {
     vertical-align: middle;
     line-height: 1.5;
     flex-shrink: 0;
-}
-.video-mode-btn .beta-tag {
-    /* 按钮内 gap 已提供间距，且覆盖 .video-mode-btn span 的 12px 字号 */
-    margin-left: 0;
-    font-size: 10px;
 }
 .video-mode-texts .beta-tag {
     /* 覆盖 .video-mode-texts strong 的 13px 字号 */
