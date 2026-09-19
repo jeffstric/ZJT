@@ -2399,8 +2399,11 @@
         // 恢复图片模式和参考图
         node.data.imageMode = nodeData.data.imageMode || 'first_last_frame';
         node.data.referenceUrls = nodeData.data.referenceUrls || [];
-        // 恢复上次失败原因（失败状态持久化）
-        node.data.lastError = nodeData.data.lastError || '';
+        // 恢复上次失败原因（失败状态持久化）。lastError 必须保持服务端原值
+        // （含缺 key 状态）：createImageToVideoNode 初始 data 不含该字段，
+        // `|| ''` 会把缺 key 归一为空串，还原后序列化多出 key，每次打开页面
+        // 都产生幽灵修改（自动保存全量落库 → 其他会话 CAS 基线过期 409）
+        node.data.lastError = nodeData.data.lastError !== undefined ? nodeData.data.lastError : node.data.lastError;
 
         // 恢复音频/视频列表（兼容旧格式单值）
         if(Array.isArray(nodeData.data.audioUrls)){
@@ -2709,6 +2712,10 @@
         node.data.project_id = nodeData.data.project_id !== undefined ? nodeData.data.project_id : null;
         // 恢复上次失败原因（失败状态持久化）
         node.data.lastError = nodeData.data.lastError !== undefined ? nodeData.data.lastError : node.data.lastError;
+        // 存量兼容:旧版 poll 曾把失败原因写入 data.error(无渲染/还原消费的
+        // 死字段)。严格保持服务端原值与缺 key 状态,既不丢数据也不再漂移;
+        // 新写入统一走 lastError(见 pollWorkflowNodeStatus 失败分支)
+        node.data.error = nodeData.data.error !== undefined ? nodeData.data.error : node.data.error;
         // 恢复节点标题：createVideoNode 渲染的是默认标题"视频"，历史数据的
         // 标题（如"分镜视频"）不恢复的话，每次打开页面标题都会被改写一次，
         // 属于零操作幽灵修改（落库后使其他会话 CAS 基线过期 → 409 冲突框）
@@ -2748,6 +2755,14 @@
                 thumbVideo.addEventListener('loadedmetadata', () => {
                   if(thumbVideo.duration && isFinite(thumbVideo.duration)){
                     node.data.duration = Math.round(thumbVideo.duration);
+                    // 元数据回填是对服务端数据的一次真实修正,标记 dirty 让它
+                    // 尽快正常落库。否则这次写回既没被服务端确认也没被标记:
+                    // 加载成败/时序不同会让各会话产出不同 body(非确定性幽灵
+                    // 修改),自动保存落库后使其他会话 CAS 基线过期(409),
+                    // 且下次打开还会重复同样的回填
+                    if(typeof autoSaveState !== 'undefined' && autoSaveState.markDirty){
+                      autoSaveState.markDirty();
+                    }
                   }
                 }, { once: true });
               }
@@ -3220,9 +3235,12 @@
                   node.data.url = updatedNode.url;
                   updateNodePreview(node, updatedNode.url);
                 } else if(updatedNode.status === -1){
-                  // 失败状态:显示错误信息
+                  // 失败状态:显示错误信息。错误必须写入 lastError——它是唯一
+                  // 被渲染(还原后重绘)且被各还原函数恢复的字段;此前写入的
+                  // data.error 无任何渲染/还原消费点,每次还原都会丢失,产生
+                  // 幽灵修改(自动保存全量落库 → 其他会话 CAS 基线过期 409)
                   const errorMessage = updatedNode.message || '生成失败';
-                  node.data.error = errorMessage;
+                  node.data.lastError = errorMessage;
                   updateNodeErrorDisplay(node, errorMessage);
                 }
               }
