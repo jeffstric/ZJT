@@ -16,11 +16,24 @@
 则**标注时长优先于一切估算口径**：标注本身就是成片总时长，目标 = 倍率 × 标注秒数，
 不再除以对白占比。
 
+### 事故记录：quality 模式 declared 口径丢失（2026-09）
+
+生产事故（storyboard 596）：剧本自述「片长：约3分钟」，实际拆出 531.985 秒（8.9 分钟）。
+两层同时失守——① enterprise quality 模式的 `prompt_override` 自定义提示词在
+`plan_segments` 只被注入排除指引、漏注入标注总时长提炼指引，规划从不输出
+`declared_duration_seconds`；② 正则兜底 `_DECLARED_DURATION_KEYWORD_RE` 不支持
+数字前的「约」字。declared 口径彻底丢失后回退台词锚定口径，目标被放大到
+台词总时长 ÷ 0.6。修复：`compose_planning_prompt` 对 prompt_override 统一注入
+两段共享指引；三处正则（Python + 两处 JS）支持「约/大约/大概/近」前缀与
+「左右/上下」后缀。注意：剧本自述时长本身虚标（3 分钟标注配 1842 字口播，
+物理下限约 6 分钟）时，declared 生效后仍会因台词朗读下限超出目标并上报
+`dialogue_floor_exceeded_seconds`，源头治理需剧本生成侧按片长约束口播字数。
+
 ## 概念与公式
 
 | 概念 | 定义 |
 |------|------|
-| 标注总时长 | 剧本自述的成片预计总时长（「（30秒）」「时长：30秒」「预计1分钟」等标注），由阶段一规划提炼为 plan 顶层 `declared_duration_seconds`；**最高优先级口径，本身就是成片总时长，不除以对白占比** |
+| 标注总时长 | 剧本自述的成片预计总时长（「（30秒）」「时长：30秒」「预计1分钟」「片长：约3分钟」「总时长45秒左右」等标注，支持数字前「约/大约/大概/近」与单位后「左右/上下」近似修饰），由阶段一规划提炼为 plan 顶层 `declared_duration_seconds`；**最高优先级口径，本身就是成片总时长，不除以对白占比** |
 | 段台词时长 | 阶段一规划输出的该段 `dialogue_text` 非空白字符数 ÷ 混合朗读速率 |
 | 混合朗读速率 | CJK 4.5 字/秒、拉丁 11 字符/秒，按 CJK 字符占比线性混合（`_script_duration_rate_per_second`） |
 | 对白占比 | 台词占成片总时长的经验比例（`TOTAL_DURATION_DIALOGUE_SHARE = 0.6`，可配） |
@@ -46,9 +59,12 @@
    declared_duration_seconds（秒；无标注输出 null。prompt 指引见
    llm/script_segment_planner.py build_declared_duration_instruction，
    正文/台词里的时间描述不算；标注常位于被 excluded_block_ids 排除的
-   元信息块中，仍需提炼）。plan 字段缺失/超 sanity 区间时，回退
+   元信息块中，仍需提炼。speed 内置提示词与 enterprise quality 等
+   prompt_override 自定义提示词均由 compose_planning_prompt 统一注入
+   该指引与排除指引）。plan 字段缺失/超 sanity 区间时，回退
    extract_script_declared_duration_seconds 正则兜底（供无 plan 标注时
-   与前端 hint 对齐）
+   与前端 hint 对齐；支持「约/大约/大概/近」前缀与「左右/上下」后缀，
+   如「片长：约3分钟」）
    ↓ 无标注
 ② 阶段一规划 segments[].dialogue_text（该段全部台词/旁白逐字原文拼接，
    不含角色名/语气标注/画面描写；无台词段输出空字符串。
@@ -153,9 +169,12 @@ shortfall_seconds, dialogue_floor_exceeded_seconds}`，并记录 engine info 日
 
 标注提取的正则规则与后端 `extract_script_declared_duration_seconds` 保持一致
 （关键词 时长/预计时长/总时长/成片时长/片长/预计 + N秒/N分钟/N s/N min、
-括号包裹纯时长标注、取第一个有效匹配、sanity 区间 5s~3h）。
+括号包裹纯时长标注、数字前「约/大约/大概/近」与单位后「左右/上下」近似修饰、
+取第一个有效匹配、sanity 区间 5s~3h）。
 三处人工保持同步：`web/js/storyboard/render.js`、`web/js/script_node.js`、
-`llm/script_parser.py`，修改规则或速率常量时需三处同改。
+`llm/script_parser.py`，修改规则或速率常量时需三处同改
+（`tests/js/test_storyboard_script_split_static.js` 对两处 JS 的近似修饰
+正则片段做静态防漂移断言）。
 
 ## 测试
 
@@ -168,5 +187,11 @@ shortfall_seconds, dialogue_floor_exceeded_seconds}`，并记录 engine info 日
   归一化（容差内不干预/等比压缩/台词下限不穿透/超限差额上报/兜底合并保内容/
   单镜头组只压缩/零目标 no-op/等比放大/放大截断与差额汇报）、
   engine 段台词字数与标注时长查找（含 part 分摊、plan 缺失回退正则）、
-  倍率归一化（engine + api）。
-- `tests/js/test_storyboard_script_split_static.js` §10：前后端接入点静态断言。
+  倍率归一化（engine + api）、标注时长近似修饰（约/大约/大概/近/左右/上下，
+  含「片长：约3分钟」事故原文回归）。
+- `tests/services/test_script_split_planner.py`：`compose_planning_prompt` 对
+  prompt_override（enterprise quality 等）统一注入排除 + 标注总时长两段共享指引
+  （回归：曾漏注入 declared 指引致 quality 模式 declared 口径丢失）、
+  默认提示词保留、反馈拼接顺序。
+- `tests/js/test_storyboard_script_split_static.js` §10：前后端接入点静态断言
+  （含两处 JS 标注正则近似修饰片段防漂移）。

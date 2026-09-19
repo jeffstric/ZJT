@@ -993,15 +993,20 @@ def apply_dialogue_matched_shot_durations(parsed_data: Dict[str, Any]) -> int:
 
 
 # ---- 剧本自述标注总时长（最高优先级口径，与前端两处 JS 同规则，三处同步）----
-# 关键词 + 数字 + 单位：「时长：30秒」「总时长 90s」「预计1分钟」「片长： 2 min」
+# 关键词 + 数字 + 单位：「时长：30秒」「总时长 90s」「预计1分钟」「片长： 2 min」；
+# 数字前允许「约/大约/大概/近」、单位后允许「左右/上下」近似修饰：
+# 「片长：约3分钟」「总时长45秒左右」（线上事故：约字挡住匹配致 declared 口径丢失）
 _DECLARED_DURATION_KEYWORD_RE = re.compile(
     r"(?:预计时长|总时长|成片时长|片长|时长|预计)\s*[:：]?\s*"
-    r"(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)",
+    r"(?:约|大约|大概|近)?\s*"
+    r"(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)(?:左右|上下)?",
     re.IGNORECASE,
 )
-# 括号包裹的纯时长标注：「（30秒）」「(1.5分钟)」（括号内只有数字+单位）
+# 括号包裹的纯时长标注：「（30秒）」「(1.5分钟)」「（约3分钟）」（括号内只有
+# 可选近似修饰 + 数字 + 单位 + 可选左右/上下后缀）
 _DECLARED_DURATION_PAREN_RE = re.compile(
-    r"[（(]\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)\s*[）)]",
+    r"[（(]\s*(?:约|大约|大概|近)?\s*(\d+(?:\.\d+)?)\s*"
+    r"(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)(?:左右|上下)?\s*[）)]",
     re.IGNORECASE,
 )
 _DECLARED_DURATION_MINUTE_UNITS = {"分钟", "分鐘", "minute", "minutes", "min", "mins"}
@@ -1011,7 +1016,8 @@ def extract_script_declared_duration_seconds(text: str) -> Optional[float]:
     """从剧本文本中提取自述的预计总时长（秒），无标注返回 None。
 
     识别「时长/预计时长/总时长/成片时长/片长/预计」关键词后接的
-    N秒/N分钟/N s/N min，以及括号包裹的（N秒）/（N分钟）；分钟换算为秒；
+    N秒/N分钟/N s/N min，以及括号包裹的（N秒）/（N分钟）；数字前后的
+    「约/大约/大概/近」「左右/上下」近似修饰不影响识别；分钟换算为秒；
     取文本中第一个有效匹配。结果须落在
     SCRIPT_DURATION_DECLARED_MIN/MAX_SECONDS 区间内，否则视为误识别。
     正文/台词里的时间描述（如「他等了30秒」）无关键词引导，不会命中。
