@@ -3444,6 +3444,8 @@
               gridImageNode.data.isSplit = true;
               gridImageNode.data.status = 'pending';
               gridImageNode.title = gridImageNode.data.name;
+              // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+              if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(gridImageNodeId);
               
               const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
               if(nodeEl) {
@@ -4286,6 +4288,8 @@
             newVideoNode.data.name = videoCount > 1 ? `幕视频${i + 1}` : '幕视频';
             newVideoNode.data.project_id = projectIds[i] || projectIds[0];
             newVideoNode.title = newVideoNode.data.name;
+            // 视频节点显示「生成中」状态行（含查看状态时间轴按钮）
+            if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newVideoNodeId);
             
             // 更新节点标题显示
             const canvasEl = document.getElementById('canvas');
@@ -4370,8 +4374,10 @@
                   }
                   const previewActionsField = videoNodeEl.querySelector('.video-preview-actions-field');
                   if(previewActionsField) previewActionsField.style.display = 'block';
+                  // 视频已到位：状态行标记成功
+                  if(window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(videoNode);
                 }
-                
+
                 console.log(`[分镜组视频] 视频节点 ${videoNodeId} 更新URL:`, videoUrls[index]);
               }
             });

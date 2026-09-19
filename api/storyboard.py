@@ -1361,6 +1361,8 @@ async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
         'result_url': asset.result_url,
         'status': None,
         'error': None,
+        # 关联任务 ID：前端候选卡「查看生成状态时间轴」（GET /api/ai-tools/{id}/timeline）
+        'ai_tool_id': asset.ai_tool_id,
     }
     if asset.ai_tool_id:
         tool = await asyncio.to_thread(AIToolsModel.get_by_id, asset.ai_tool_id)
@@ -1392,6 +1394,8 @@ def _generating_row_task_info(row: Optional[dict], asset_type: str) -> Optional[
         'result_url': str(row.get('asset_result_url') or row.get('tool_result_url') or '').strip(),
         'status': row.get('status'),
         'error': None,
+        # 关联任务 ID：前端生成中占位卡「查看生成状态时间轴」
+        'ai_tool_id': row.get('ai_tool_id'),
     }
 
 

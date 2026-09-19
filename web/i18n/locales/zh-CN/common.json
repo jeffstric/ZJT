@@ -76,5 +76,18 @@
   "nav_generate": "生成",
   "nav_assets": "资产",
   "back_to_home": "返回首页",
-  "in_development": "开发中"
+  "in_development": "开发中",
+  "view_timeline": "查看生成状态时间轴",
+  "timeline_btn_status": "状态",
+  "task_timeline": "任务时间轴",
+  "no_timeline_records": "暂无事件记录",
+  "timeline_loading": "加载中...",
+  "timeline_task_status": "当前状态",
+  "timeline_auto_refresh": "生成中，自动刷新中…",
+  "timeline_detail": "详情",
+  "timeline_detail_collapse": "收起",
+  "timeline_fetch_failed": "获取时间线失败",
+  "timeline_generating": "生成中...",
+  "timeline_generate_success": "生成成功",
+  "timeline_generate_failed": "生成失败"
 }

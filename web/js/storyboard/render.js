@@ -1837,7 +1837,14 @@ function isCandidateTaskRunning(status) {
         || status === 'downloading';
 }
 
-function renderCandidatePlaceholder(status, kind = 'image', error) {
+function renderCandidateTimelineButton(aiToolId, extraClass = '') {
+    // 关联生成任务的时间轴入口（window.AiToolTimeline 弹窗，click 委托在 ai_tool_timeline.js）
+    if (!aiToolId) return '';
+    return `<button type="button" class="ai-task-timeline-btn${extraClass ? ' ' + extraClass : ''}"
+            data-task-ids="${escapeHtml(String(aiToolId))}" title="查看生成状态时间轴">状态</button>`;
+}
+
+function renderCandidatePlaceholder(status, kind = 'image', error, aiToolId) {
     if (isCandidateTaskFailed(status)) {
         // 内容违规变体：文案更醒目，hover 展示友好原因（web/js/content_violation.js）
         const cv = typeof window !== 'undefined' ? window.ContentViolation : null;
@@ -1848,6 +1855,7 @@ function renderCandidatePlaceholder(status, kind = 'image', error) {
         return `<div class="candidate-placeholder candidate-failed"${titleAttr}>
             ${icon('error', 16)}
             <span>${label}</span>
+            ${renderCandidateTimelineButton(aiToolId)}
         </div>`;
     }
     // 无合法 URL：生成中 / 排队中 / 绑定后等待首轮轮询
@@ -1855,6 +1863,7 @@ function renderCandidatePlaceholder(status, kind = 'image', error) {
     return `<div class="candidate-placeholder candidate-loading">
         ${icon('loading', 18)}
         <span>${label}</span>
+        ${renderCandidateTimelineButton(aiToolId)}
     </div>`;
 }
 
@@ -1884,7 +1893,7 @@ function renderCandidateMedia(item, kind = 'image') {
         }
         return `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.label || '分镜图')}">`;
     }
-    return renderCandidatePlaceholder(item?.status, kind, item?.error);
+    return renderCandidatePlaceholder(item?.status, kind, item?.error, item?.aiToolId);
 }
 
 function renderCandidateUploadControl(scene, assetType) {
@@ -1950,10 +1959,11 @@ export function renderRightSidebar(scene) {
             <div class="candidate-thumb ${img.selected ? 'selected' : ''}${!isRenderableCandidateUrl(img.url) ? ' is-loading' : ''}${state.candidateDeletesBySceneId?.[scene?.id]?.[img.id] ? ' is-deleting' : ''}" data-candidate-id="${img.id}" data-candidate-type="image">
                 ${renderCandidateMedia(img, 'image')}
                 ${renderCandidateDeleteButton(scene, img, 'first_frame')}
+                ${isRenderableCandidateUrl(img.url) ? renderCandidateTimelineButton(img.aiToolId, 'candidate-status-button') : ''}
                 ${img.label ? `<span class="candidate-label">${escapeHtml(img.label)}</span>` : ''}
             </div>`).join('')}</div>`
         : (imageRunning
-            ? `<div class="candidate-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.first_frame, 'image', scene?.firstFrameError)}</div></div>`
+            ? `<div class="candidate-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.first_frame, 'image', scene?.firstFrameError, scene?.taskStatus?.first_frame_ai_tool_id)}</div></div>`
             : '<div class="candidate-empty">暂无分镜图候选</div>');
 
     const videoGrid = displayVideos.length
@@ -1962,10 +1972,11 @@ export function renderRightSidebar(scene) {
                  data-candidate-id="${vid.id}" data-candidate-type="video" title="点击选中该视频">
                 ${renderCandidateMedia(vid, 'video')}
                 ${renderCandidateDeleteButton(scene, vid, 'video')}
+                ${isRenderableCandidateUrl(vid.url) ? renderCandidateTimelineButton(vid.aiToolId, 'candidate-status-button') : ''}
                 ${vid.label ? `<span class="candidate-label">${escapeHtml(vid.label)}</span>` : ''}
             </div>`).join('')}</div>`
         : (videoRunning
-            ? `<div class="candidate-grid candidate-video-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.video, 'video', scene?.videoError)}</div></div>`
+            ? `<div class="candidate-grid candidate-video-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.video, 'video', scene?.videoError, scene?.taskStatus?.video_ai_tool_id)}</div></div>`
             : '<div class="candidate-empty">暂无视频候选</div>');
 
     return `

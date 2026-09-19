@@ -34,6 +34,8 @@ export function mapSceneAssetCandidates(response, assetType) {
         status: asset.status ?? asset.ai_tool?.status ?? asset.tool?.status ?? null,
         // 失败原因（如内容违规）随候选保留，供占位符展示违规变体
         error: asset.message ?? asset.ai_tool?.message ?? asset.tool?.message ?? null,
+        // 关联生成任务 ID：候选卡「查看生成状态时间轴」（window.AiToolTimeline）
+        aiToolId: asset.ai_tool_id ?? null,
         selected: selectedId !== null && selectedId !== undefined && String(asset.id) === String(selectedId),
     }));
 }

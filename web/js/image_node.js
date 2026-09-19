@@ -121,6 +121,11 @@
             <div class="preview-row image-preview-row" style="display:none;">
               <img class="preview image-preview" />
             </div>
+            <div class="image-generating-placeholder">
+              <span class="image-generating-spinner"></span>
+              <span class="image-generating-label">生成中...</span>
+              <button type="button" class="ai-task-timeline-btn" title="${window.t ? window.t('view_timeline') : '查看生成状态时间轴'}">${window.t ? window.t('timeline_btn_status') : '状态'}</button>
+            </div>
           </div>
           <div class="reference-images-section" style="display:none;">
             <div class="reference-images-header">
@@ -130,7 +135,7 @@
           </div>
           <div class="field field-collapsible">
             <div class="label" data-i18n="image_node_upload_label">${window.t ? window.t('image_node_upload_label') : '上传图片'}</div>
-            <input class="image-file" type="file" accept="image/*" />
+            <input class="image-file" type="file" accept="image/*,.tif,.tiff" />
             <div style="display: flex; gap: 8px; margin-top: 8px;">
               <button class="mini-btn image-clear" type="button" data-i18n="image_node_clear_btn">${window.t ? window.t('image_node_clear_btn') : '清除'}</button>
               <button class="mini-btn image-download-icon-btn" type="button" data-i18n="image_node_download_btn">${window.t ? window.t('image_node_download_btn') : '下载'}</button>
@@ -689,7 +694,9 @@
       imageFileEl.addEventListener('change', async () => {
         let file = imageFileEl.files && imageFileEl.files[0];
         if(!file) return;
-        if(!file.type.startsWith('image/')){
+        // 部分环境 tif 无 image/* MIME，按扩展名兜底放行（后端会归一化为 PNG）
+        const isTiff = window.isTiffFile && window.isTiffFile(file);
+        if(!file.type.startsWith('image/') && !isTiff){
           showToast(window.t ? window.t('image_node_select_image') : '请选择图片文件', 'error');
           imageFileEl.value = '';
           return;
@@ -730,8 +737,12 @@
         }
 
         try {
-          const localPreview = await readFileAsDataUrl(file);
-          imagePreviewImg.src = localPreview;
+          // 浏览器 <img> 不解码 TIFF：tif 跳过本地 base64 预览，
+          // 上传成功后直接显示后端转码出的 PNG URL
+          if(!isTiff){
+            const localPreview = await readFileAsDataUrl(file);
+            imagePreviewImg.src = localPreview;
+          }
           imagePreviewRow.style.display = 'flex';
 
           const uploadedUrl = await uploadFile(file);
@@ -920,6 +931,8 @@
             if(newNode){
               newNode.data.name = imageCount > 1 ? `编辑结果${i + 1}` : '编辑结果';
               newNode.data.project_id = projectIds[i] || projectIds[0];
+              // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+              if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newNodeId);
               createdImageNodeIds.push(newNodeId);
               
               // 创建从原节点到新节点的连接
@@ -988,13 +1001,15 @@
                   const normalizedUrl = normalizeImageUrl(imageUrl);
                   imageNode.data.url = normalizedUrl;
                   imageNode.data.preview = normalizedUrl;
-                  
+
                   const nodeEl = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
                   if(nodeEl){
                     const imgEl = nodeEl.querySelector('.image-preview');
                     const rowEl = nodeEl.querySelector('.image-preview-row');
                     if(imgEl) imgEl.src = proxyImageUrl(imageUrl);
                     if(rowEl) rowEl.style.display = 'flex';
+                    // 图片已到位：隐藏「生成中」占位
+                    if(window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(imageNode);
                   }
                 }
               });

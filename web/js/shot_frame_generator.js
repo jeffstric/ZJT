@@ -322,6 +322,8 @@ async function generateShotFrameImage(nodeId, node){
         newNode.data.name = imageCount > 1 ? `分镜图${i + 1}` : '分镜图';
         newNode.data.project_id = projectIds[i] || projectIds[0];
         newNode.title = newNode.data.name;
+        // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+        if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newNodeId);
         
         // 更新节点标题显示
         const canvasEl = document.getElementById('canvas');
@@ -404,6 +406,8 @@ async function generateShotFrameImage(nodeId, node){
                 previewImg.src = proxyImageUrl(imageUrl);
                 previewRow.style.display = 'flex';
               }
+              // 图片已到位：隐藏「生成中」占位
+              if(window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(imageNode);
             }
             
             console.log(`[分镜图] 更新图片节点 ${imageNodeId} URL:`, imageUrl);

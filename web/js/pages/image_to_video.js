@@ -1217,7 +1217,7 @@
           <!-- 首尾帧/主图片上传 -->
           <div class="field">
             <label class="label">{{ filesLabel }}</label>
-            <input class="input" type="file" accept="image/*" multiple @change="onFile" />
+            <input class="input" type="file" accept="image/*,.tif,.tiff" multiple @change="onFile" />
             <div class="muted" v-if="videoModel === 'sora2'" style="margin-top:6px; color: #fca5a5;">⚠️ {{ $t('sora2_warning_images') || '注意：请勿上传真人图片' }}</div>
             <div class="muted" style="margin-top:6px; color: var(--muted);">{{ filesHint }}</div>
             <div v-if="imageMediaItems.length > 0" style="margin-top: 10px;">
@@ -1293,7 +1293,7 @@
           <!-- 参考图上传（仅 first_last_with_ref 模式显示） -->
           <div class="field" v-if="imageMode === 'first_last_with_ref'">
             <label class="label">{{ $t('reference_images_label') || '上传参考图 (0-3张，用于风格参考)' }}</label>
-            <input class="input" type="file" accept="image/*" multiple @change="onReferenceFile" />
+            <input class="input" type="file" accept="image/*,.tif,.tiff" multiple @change="onReferenceFile" />
             <div class="muted" style="margin-top:6px; color: var(--muted);">{{ $t('reference_images_desc') || '参考图用于控制视频风格，可选' }}</div>
             <div v-if="referenceFiles.length > 0" style="margin-top: 10px;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">

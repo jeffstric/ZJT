@@ -14,11 +14,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import pytest
+from PIL import Image
 from starlette.datastructures import UploadFile
 
 from config.constant import MediaUploadSafetyConstants
 from utils.media_upload import (
     UploadValidationError,
+    convert_tiff_file_to_png,
     max_upload_size_for_ext,
     resolve_media_extension,
     save_upload_chunked,
@@ -37,6 +39,9 @@ WAV_BYTES = b'RIFF\x24\x08\x00\x00WAVEfmt ' + b'\x00' * 64
 MP3_ID3_BYTES = b'ID3\x04\x00\x00\x00\x00\x00\x00' + b'\x00' * 64
 MP3_FRAME_BYTES = b'\xff\xfb\x90\x00' + b'\x00' * 64
 HTML_BYTES = b'<!DOCTYPE html><html><script>alert(1)</script></html>'
+# TIFF 头两种字节序：II（小端）与 MM（大端）
+TIFF_LE_BYTES = b'II*\x00' + b'\x00' * 64
+TIFF_BE_BYTES = b'MM\x00*' + b'\x00' * 64
 
 
 # ============ resolve_media_extension ============
@@ -49,6 +54,8 @@ class TestResolveMediaExtension:
         ("c.webp", ".webp"),
         ("d.gif", ".gif"),
         ("e.bmp", ".bmp"),
+        ("scan.tif", ".tif"),
+        ("scan.TIFF", ".tiff"),
         ("v.mp4", ".mp4"),
         ("v.mov", ".mov"),
         ("v.webm", ".webm"),
@@ -156,3 +163,91 @@ class TestSaveUploadChunked:
         assert size == len(content)
         with open(target, "rb") as f:
             assert f.read() == content
+
+
+# ============ TIFF：白名单放行 + 落盘归一化为 PNG ============
+
+def _make_tiff(path, mode="RGB", size=(8, 6), frames=1):
+    """用 PIL 生成真实 TIFF 测试文件（覆盖 RGB/CMYK/16bit/多帧）。"""
+    first = Image.new(mode, size, (128, 64, 32) if mode == "RGB" else 0)
+    if frames > 1:
+        extras = [Image.new(mode, size, 200)] * (frames - 1)
+        first.save(path, format="TIFF", save_all=True, append_images=extras)
+    else:
+        first.save(path, format="TIFF")
+    return path
+
+
+class TestTiffUpload:
+    @pytest.mark.parametrize("filename,content", [
+        ("a.tif", TIFF_LE_BYTES),
+        ("a.tiff", TIFF_LE_BYTES),
+        ("a.tif", TIFF_BE_BYTES),   # 大端字节序魔数
+    ])
+    def test_valid_tiff_magic_saved(self, tmp_path, filename, content):
+        target, size = self._save_tiff(tmp_path, content, filename)
+        assert os.path.exists(target)
+        assert size == len(content)
+
+    def _save_tiff(self, tmp_path, content, filename):
+        target = os.path.join(tmp_path, "out" + os.path.splitext(filename)[1])
+        upload = _upload(content, filename)
+        size = save_upload_chunked(upload, target, os.path.splitext(filename)[1].lower())
+        return target, size
+
+    def test_forged_tiff_rejected(self, tmp_path):
+        # poc.html 改名 poc.tif：魔数校验拒绝且不留半成品
+        target = os.path.join(tmp_path, "out.tif")
+        with pytest.raises(UploadValidationError, match="魔数校验失败"):
+            save_upload_chunked(_upload(HTML_BYTES, "poc.tif"), target, ".tif")
+        assert not os.path.exists(target)
+
+    def test_tiff_image_size_tier(self):
+        # tif 沿用图片档 10MB 上限（未单独放宽）
+        assert max_upload_size_for_ext(".tif") == MediaUploadSafetyConstants.MAX_IMAGE_SIZE
+        assert max_upload_size_for_ext(".tiff") == MediaUploadSafetyConstants.MAX_IMAGE_SIZE
+
+
+class TestConvertTiffToPng:
+    def _converted(self, tmp_path, name, **kwargs):
+        src = _make_tiff(os.path.join(tmp_path, name), **kwargs)
+        return src, convert_tiff_file_to_png(src)
+
+    def test_rgb_tiff_converted(self, tmp_path):
+        src, dst = self._converted(tmp_path, "a.tif")
+        assert dst.endswith(".png") and dst != src
+        assert not os.path.exists(src), "原 tif 必须删除，upload 目录不得残留 tif"
+        with Image.open(dst) as img:
+            assert img.format == "PNG"
+            assert img.size == (8, 6)
+            assert img.mode in ("RGB", "RGBA")
+
+    def test_cmyk_tiff_converted_to_rgb(self, tmp_path):
+        src, dst = self._converted(tmp_path, "cmyk.tif", mode="CMYK")
+        with Image.open(dst) as img:
+            assert img.mode in ("RGB", "RGBA")
+
+    def test_multiframe_tiff_takes_first_frame(self, tmp_path):
+        src, dst = self._converted(tmp_path, "multi.tif", frames=3)
+        with Image.open(dst) as img:
+            assert getattr(img, "n_frames", 1) == 1, "多帧 TIFF 只保留第一帧"
+
+    def test_corrupted_tiff_rejected_and_cleaned(self, tmp_path):
+        # 魔数合法但内容损坏：转码失败时原 tif 与半成品一并清理
+        src = os.path.join(tmp_path, "bad.tif")
+        with open(src, "wb") as f:
+            f.write(TIFF_LE_BYTES + b"\x00" * 200)
+        with pytest.raises(UploadValidationError, match="解码失败"):
+            convert_tiff_file_to_png(src)
+        assert not os.path.exists(src), "转码失败时原 tif 必须清理"
+        assert not os.path.exists(os.path.splitext(src)[0] + ".png")
+
+    def test_save_then_convert_full_flow(self, tmp_path):
+        # 端点真实链路：save_upload_chunked 落盘 → 转 png → 原扩展名文件消失
+        buf = io.BytesIO()
+        Image.new("RGB", (10, 10), (1, 2, 3)).save(buf, format="TIFF")
+        content = buf.getvalue()
+        target = os.path.join(tmp_path, "upload_x.tif")
+        save_upload_chunked(_upload(content, "x.tif"), target, ".tif")
+        dst = convert_tiff_file_to_png(target)
+        assert os.path.exists(dst) and not os.path.exists(target)

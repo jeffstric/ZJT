@@ -427,7 +427,7 @@
         <div class="dh-tab-body">
         <div class="field">
           <label class="label">{{ $t('digital_human_image') }} <span style="color: red;">*</span></label>
-          <input class="input" type="file" accept="image/*" @change="onImageFile" :disabled="loading" />
+          <input class="input" type="file" accept="image/*,.tif,.tiff" @change="onImageFile" :disabled="loading" />
           <div class="muted" style="margin-top: 4px;">{{ $t('digital_human_image_tip') }}</div>
         </div>
 

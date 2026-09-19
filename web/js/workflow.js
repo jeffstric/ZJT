@@ -2234,6 +2234,25 @@
     styleImageInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if(file){
+        // 浏览器 <img> 不解码 TIFF：本地 base64 预览会裂图，改显占位；
+        // 保存时后端会把 tif 归一化为 PNG，回显走服务器 URL
+        if(window.isTiffFile && window.isTiffFile(file)){
+          styleImagePreviewImg.src = '';
+          const parent = styleImagePreviewImg.parentElement || styleImagePreview;
+          let holder = parent.querySelector('.tiff-preview-holder');
+          if(!holder){
+            holder = document.createElement('div');
+            holder.className = 'tiff-preview-holder';
+            holder.style.cssText = 'width:100%;max-width:200px;height:120px;position:relative;border-radius:8px;overflow:hidden;';
+            styleImagePreviewImg.insertAdjacentElement('afterend', holder);
+          }
+          holder.innerHTML = (window.tiffPlaceholderHtml ? window.tiffPlaceholderHtml(file.name) : '<div style="width:100%;height:100%;background:#e5e7eb;"></div>')
+            + '<div style="position:absolute;bottom:4px;left:0;right:0;color:#6b7280;font-size:11px;text-align:center;">TIF 图片，保存时自动转为 PNG</div>';
+          styleImagePreview.style.display = 'block';
+          return;
+        }
+        const holder = styleImagePreview.querySelector('.tiff-preview-holder');
+        if(holder) holder.remove();
         const reader = new FileReader();
         reader.onload = (e) => {
           styleImagePreviewImg.src = e.target.result;
@@ -2785,6 +2804,9 @@
               setStatusEl(statusEl, `✗ 生成失败: ${node.data.lastError}`, '#dc2626');
             }
           }
+        } else if(node.data.project_id && !node.data.url && window.AiToolTimeline){
+          // 重载恢复：绑定了任务且尚无结果的视频节点恢复「生成中」状态行（含时间轴按钮）
+          window.AiToolTimeline.markNodeGenerating(node.id);
         }
       }
     }
@@ -2892,6 +2914,17 @@
             if(statusEl){
               statusEl.style.display = 'block';
               setStatusEl(statusEl, node.data.lastError, '#dc2626');
+            }
+          }
+
+          // 重载恢复：绑定了任务且尚无结果的图片节点恢复「生成中」占位（含时间轴按钮）；
+          // 失败任务恢复失败态占位（按钮保留，可回看时间轴）
+          if(node.data.project_id && !node.data.url && window.AiToolTimeline){
+            const failureReason = node.data.lastError || node.data.error;
+            if(failureReason){
+              window.AiToolTimeline.failNode(node.id, failureReason);
+            } else {
+              window.AiToolTimeline.markNodeGenerating(node.id);
             }
           }
         }
@@ -3406,18 +3439,24 @@
       }
       
       errorEl.innerHTML = `<strong>生成失败:</strong> ${escapeHtml(errorMessage)}`;
-      
+
       // 给节点添加错误样式
       nodeEl.style.borderColor = '#f44';
+
+      // 状态行/占位同步标记失败（保留查看时间轴按钮）
+      if(window.AiToolTimeline) window.AiToolTimeline.failNode(node.id, errorMessage);
     }
     
     // 更新节点预览显示
     function updateNodePreview(node, url){
       const canvasEl = document.getElementById('canvas');
       const nodeEl = canvasEl ? canvasEl.querySelector(`.node[data-node-id="${node.id}"]`) : null;
-      
+
       if(!nodeEl) return;
-      
+
+      // url 到位：隐藏「生成中」占位 / 状态行标记成功（按钮保留可回看时间轴）
+      if(window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(node);
+
       if(node.type === 'video'){
         // 更新视频节点预览
         const previewField = nodeEl.querySelector('.video-preview-field');
