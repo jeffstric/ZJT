@@ -237,5 +237,11 @@
   "audio_tag": "[音频]",
   "video_label": "[视频{num}]",
   "process_face_label": "是否处理人脸",
-  "process_face_community_hint": "此功能为商业版功能，请联系购买商业版本后使用"
+  "process_face_community_hint": "此功能为商业版功能，请联系购买商业版本后使用",
+  "output_language_label": "输出语言",
+  "output_language_auto": "自动（跟随界面语言）",
+  "output_language_custom": "自定义…",
+  "output_language_custom_placeholder": "输入素材语言，如：Français",
+  "output_language_hint": "控制图片/视频中的文字、口播旁白和营销文案的语言。"
+
 }

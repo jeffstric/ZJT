@@ -237,5 +237,11 @@
   "audio_tag": "[Audio]",
   "video_label": "[Video {num}]",
   "process_face_label": "Process face",
-  "process_face_community_hint": "This is a commercial-edition feature. Please contact us to upgrade."
+  "process_face_community_hint": "This is a commercial-edition feature. Please contact us to upgrade.",
+  "output_language_label": "Output language",
+  "output_language_auto": "Auto (follow UI language)",
+  "output_language_custom": "Custom…",
+  "output_language_custom_placeholder": "e.g. Français",
+  "output_language_hint": "Controls the language of text, voiceover and marketing copy in generated assets."
+
 }
