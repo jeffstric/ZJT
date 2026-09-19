@@ -557,6 +557,10 @@ class UnifiedTaskConfig:
     power_modifiers: List[PowerModifier] = field(default_factory=list)  # 算力修饰符列表
     supports_ref_audio_video: bool = False  # 是否支持参考音频和视频
     max_multi_ref_images: int = 5  # 多参考图模式最大图片数量
+    # 是否支持角色音色参考输入：参考生视频时自动把角色默认音色（克隆源音频）
+    # 作为参考音频下发，并在提示词追加音色说明，让视频模型保持角色同音色。
+    # 不支持的模型（grok/kling 等）完全不注入音频与说明文字。
+    supports_voice_input: bool = False
 
     def get_model_name(self) -> str:
         """获取统一的用户可见模型名。
@@ -747,6 +751,9 @@ class UnifiedTaskConfig:
 
         # 添加参考音频和视频支持标记
         result['supports_ref_audio_video'] = self.supports_ref_audio_video
+
+        # 是否支持角色音色参考输入（参考生视频自动注入角色默认音色）
+        result['supports_voice_input'] = self.supports_voice_input
 
         # 是否走人脸遮盖预处理（seedance 2.0 / 2.5），前端据此显隐「是否处理人脸」选项
         # 单一事实来源：模块级 SEEDANCE_FACE_MASK_DRIVER_KEYS
@@ -2409,6 +2416,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supports_last_frame=False,
         max_multi_ref_images=9,  # 最多 9 张参考图
         supports_ref_audio_video=True,  # 支持参考音频（≤2）和参考视频（≤2）
+        supports_voice_input=True,  # 参考生自动带入角色音色（LoadAudio ≤2）
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
@@ -2632,6 +2640,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=True,  # 支持参考音频和视频
+        supports_voice_input=True,  # 参考生自动带入角色音色
         max_multi_ref_images=9,
         supports_grid_merge=True,
         power_modifiers=[
@@ -2670,6 +2679,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=True,  # 支持参考音频和视频
+        supports_voice_input=True,  # 参考生自动带入角色音色
         max_multi_ref_images=9,
         supports_grid_merge=True,
         power_modifiers=[
@@ -2710,6 +2720,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=True,  # 支持参考音频和视频
+        supports_voice_input=True,  # 参考生自动带入角色音色
         max_multi_ref_images=9,
         supports_grid_merge=True,
         power_modifiers=[
@@ -2746,6 +2757,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=True,  # 支持参考音频和视频（含纯音频输入）
+        supports_voice_input=True,  # 参考生自动带入角色音色
         max_multi_ref_images=30,  # 2.5 支持最多 30 张参考图
         supports_grid_merge=True,
         power_modifiers=[

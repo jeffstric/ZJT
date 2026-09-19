@@ -419,10 +419,12 @@
       const collectedCharacters = new Set();
       const collectedLocations = new Set();
       const collectedProps = new Set();
+      // 精确匹配到的角色对象（含 default_voice）：供参考生视频提交时自动带入角色音色
+      const voiceCharacters = [];
 
       if (!state.defaultWorldId) {
         console.warn('[宫格生图] 未选择世界，无法获取参考图片');
-        return { referenceImageUrls, promptSuffix };
+        return { referenceImageUrls, promptSuffix, voiceCharacters };
       }
 
       const worldId = state.defaultWorldId;
@@ -460,6 +462,9 @@
                 const result = await response.json();
                 if (result.code === 0 && result.data && Array.isArray(result.data.data) && result.data.data.length > 0) {
                   const matchedChar = result.data.data.find(c => c.name === characterName) || result.data.data[0];
+                  if(matchedChar && matchedChar.default_voice){
+                    voiceCharacters.push(matchedChar);
+                  }
                   if (matchedChar && matchedChar.reference_image) {
                     // 优先使用用户为该角色选择的特定图片，否则使用主图
                     const userSelectedUrl = (shotNode.data.selectedCharRefImages && shotNode.data.selectedCharRefImages[characterName]);
@@ -541,7 +546,7 @@
       }
 
       console.log(`[宫格生图] 总共收集到 ${referenceImageUrls.length} 张参考图片URL`);
-      return { referenceImageUrls, promptSuffix };
+      return { referenceImageUrls, promptSuffix, voiceCharacters };
     }
 
 
@@ -4024,6 +4029,7 @@
         let imageUrl; // 首尾帧模式使用
         let referenceImageUrls = []; // 参考模式使用
         let refPromptSuffix = []; // 参考图描述文字
+        let gridVoiceCharacters = []; // 参考模式精确匹配到的角色（含默认音色）
         let useTextToVideo = false; // 降级标记
 
         if(videoGenMode === 'multi_reference') {
@@ -4034,9 +4040,10 @@
           }
           generateBtn.textContent = '收集参考图...';
 
-          const { referenceImageUrls: refUrls, promptSuffix: _refPromptSuffix } = await collectReferenceImagesForGrid(shotFrameNodes);
+          const { referenceImageUrls: refUrls, promptSuffix: _refPromptSuffix, voiceCharacters: _voiceCharacters } = await collectReferenceImagesForGrid(shotFrameNodes);
           referenceImageUrls = refUrls;
           refPromptSuffix = _refPromptSuffix || [];
+          gridVoiceCharacters = _voiceCharacters || [];
 
           if(referenceImageUrls.length > 0) {
             console.log(`[分镜组视频] 参考模式：收集到 ${referenceImageUrls.length} 张参考图`);
@@ -4226,6 +4233,18 @@
           if(shotGroupNode.data.processFace === true) {
             form.append('enable_face_mask', 'true');
           }
+
+          // 参考生 + 模型支持音色输入时，自动带入分镜组角色的默认音色；
+          // grok 等不支持模型 collectVoiceReferences 返回空，不注入
+          if(typeof collectVoiceReferences === 'function' && !useTextToVideo){
+            const voiceRefs = collectVoiceReferences(videoModel || 'wan22', gridVoiceCharacters, '');
+            if(voiceRefs.enabled){
+              form.append('audio_urls', voiceRefs.voiceUrls.join(','));
+              form.set('prompt', appendVoiceReferencePrompt(finalVideoPrompt, voiceRefs.promptNote));
+              notifyVoiceReferences(voiceRefs.voiceUrls.length);
+            }
+          }
+
           appendAuthToForm(form);
 
           res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });

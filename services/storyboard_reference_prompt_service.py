@@ -10,6 +10,8 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from config.constant import MAX_VOICE_REFERENCE_AUDIOS
+
 
 ROLE_TAG_RE = re.compile(r"【【([^】]+)】】")
 PROP_TAG_RE = re.compile(r"〖〖([^〗]+)〗〗")
@@ -444,3 +446,81 @@ def _remove_exact_line_blocks(text: Any, blocks: Iterable[str]) -> str:
 
 def reference_urls(items: List[Dict[str, str]]) -> List[str]:
     return [item["url"] for item in items if item.get("url")]
+
+
+def _normalize_audio_urls(existing: Any) -> List[str]:
+    """接受逗号拼接字符串或列表，归一为去空白、保序去重的 URL 列表。"""
+    if not existing:
+        return []
+    raw = existing.split(",") if isinstance(existing, str) else existing
+    return _dedupe_keep_order(str(url).strip() for url in raw if str(url or "").strip())
+
+
+def collect_character_voice_references(
+    *,
+    supports_voice_input: bool,
+    characters: Optional[List[Dict[str, Any]]] = None,
+    image_mode: str = "",
+    existing_audio_urls: Any = None,
+    max_audios: int = MAX_VOICE_REFERENCE_AUDIOS,
+) -> Tuple[List[Dict[str, str]], str]:
+    """收集参考生视频要注入的角色音色参考（default_voice 克隆源音频）。
+
+    门控：multi_reference 模式 + 模型能力位 supports_voice_input，否则返回空。
+    - 无 default_voice 的角色跳过；
+    - 与已有参考音频（用户手动上传）按 URL 去重，音色排在其后；
+    - 截断到 max_audios（MiniMax H3 LoadAudio 硬上限为 2）。
+
+    Returns:
+        (voice_items, prompt_note)：voice_items 为 [{"name", "url"}]，
+        prompt_note 与参考图图例同构，例如
+        "参考音频说明：音频1是角色：林月的音色样本，角色说话时请保持相同音色。"
+    """
+    if not supports_voice_input:
+        return [], ""
+    if str(image_mode or "").strip().lower() != "multi_reference":
+        return [], ""
+
+    existing_list = _normalize_audio_urls(existing_audio_urls)
+    existing = set(existing_list)
+    voice_items: List[Dict[str, str]] = []
+    seen_urls = set(existing)
+    for character in characters or []:
+        url = str(character.get("default_voice") or "").strip() if isinstance(character, dict) else ""
+        name = _clean_name(character.get("name")) if isinstance(character, dict) else ""
+        if not url or url in seen_urls or not name:
+            continue
+        seen_urls.add(url)
+        voice_items.append({"name": name, "url": url})
+        if len(voice_items) >= max_audios:
+            break
+
+    if not voice_items:
+        return [], ""
+    # 序号按最终合并列表（已有音频在前、音色在后）中的实际位置：与音色 URL
+    # 重复的已有音频不会重复出现在列表里，不计入前缀。
+    voice_urls = {item["url"] for item in voice_items}
+    prefix_count = sum(1 for url in existing_list if url not in voice_urls)
+    note = build_voice_reference_note(voice_items, start_index=prefix_count + 1)
+    return voice_items, note
+
+
+def build_voice_reference_note(voice_items: List[Dict[str, str]], start_index: int = 1) -> str:
+    if not voice_items:
+        return ""
+    parts = [
+        f"音频{index}是角色：{_clean_name(item.get('name'))}的音色样本"
+        for index, item in enumerate(voice_items, start=start_index)
+        if _clean_name(item.get("name"))
+    ]
+    if not parts:
+        return ""
+    return "参考音频说明：" + "，".join(parts) + "，角色说话时请保持相同音色。"
+
+
+def append_voice_reference_note(prompt: str, voice_items: List[Dict[str, str]], start_index: int = 1) -> str:
+    """把音色说明追加到提示词尾部；已包含同一说明时幂等跳过。"""
+    note = build_voice_reference_note(voice_items, start_index=start_index)
+    if not note or note in str(prompt or ""):
+        return str(prompt or "")
+    return f"{str(prompt or '').rstrip()}\n\n{note}"

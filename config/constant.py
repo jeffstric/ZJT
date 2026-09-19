@@ -178,6 +178,11 @@ OMNI_REFERENCE_TASK_TYPE_EDIT = "edit"
 # 计费前 ffprobe 探测单个参考视频时长的超时（秒）
 REFERENCE_VIDEO_DURATION_PROBE_TIMEOUT = 10
 
+# ===== 参考生视频角色音色注入（supports_voice_input 能力位门控）=====
+# 单次生成最多注入的角色音色参考音频数：受 MiniMax H3 LoadAudio 槽位硬上限（2）约束，
+# 注入侧统一截断；驱动层对超限音频另有兜底截断。
+MAX_VOICE_REFERENCE_AUDIOS = 2
+
 # ===== Windows uv 托盘启动器 =====
 # launcher bootstrap 运行在 Web 服务启动之前；所有外部进程仍必须有硬超时，
 # 防止首次安装或损坏的依赖环境让启动窗口永久卡住。
