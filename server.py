@@ -53,7 +53,8 @@ from config.constant import (
     AUTH_COOKIE_MAX_AGE_SECONDS,
     TASK_TYPE_GENERATE_VIDEO, 
     TASK_TYPE_GENERATE_AUDIO, 
-    RECHARGE_PACKAGES, 
+    RECHARGE_PACKAGES,
+    Commission,
     VIDEO_MODEL_DURATION_OPTIONS,
     AI_TOOL_STATUS_PENDING,
     AI_TOOL_STATUS_PROCESSING,
@@ -5160,11 +5161,11 @@ async def get_recharge_packages(
         # 查询用户是否已经首充
         has_completed_first_recharge = await _has_completed_first_recharge(resolved_token)
 
-        # 如果用户已经充值过，过滤掉首充福利套餐（第一个套餐）
+        # 如果用户已经充值过，过滤掉首充福利套餐（FIRST_RECHARGE_PACKAGE_ID）
         # 用 dict(pkg) 浅拷贝每个套餐，避免污染模块级常量 RECHARGE_PACKAGES
         packages = [dict(pkg) for pkg in RECHARGE_PACKAGES]
         if has_completed_first_recharge:
-            packages = [pkg for pkg in packages if pkg.get("package_id") != 1]
+            packages = [pkg for pkg in packages if pkg.get("package_id") != Commission.FIRST_RECHARGE_PACKAGE_ID]
             logger.info(f"已经首充，过滤掉首充福利套餐")
         else:
             logger.info(f"是首充用户，显示所有套餐")
@@ -5175,7 +5176,7 @@ async def get_recharge_packages(
             g_ok, g_msg, g_data = await async_make_perseids_request(
                 endpoint='commission/recharge_grants',
                 method='POST',
-                headers={'Authorization': f'Bearer {auth_token}'}
+                headers={'Authorization': f'Bearer {resolved_token}'}
             )
             if g_ok and g_data:
                 grants = g_data.get('grants', {})
@@ -5266,8 +5267,8 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
                 detail="Invalid package ID"
             )
 
-        # 首充套餐校验：如果package_id为1且用户已首充，禁止再次购买
-        if payment_request.package_id == 1:
+        # 首充套餐校验：如果购买的是首充福利包且用户已首充，禁止再次购买
+        if payment_request.package_id == Commission.FIRST_RECHARGE_PACKAGE_ID:
             has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
             if has_completed_first_recharge:
                 logger.warning(f"User {payment_request.user_id} attempted to purchase first-charge package again")
@@ -5493,7 +5494,7 @@ async def wechat_payment_callback(request: Request):
             computing_power = order.computing_power
             
             # 检查是否为首充福利
-            if order.package_id == 1:
+            if order.package_id == Commission.FIRST_RECHARGE_PACKAGE_ID:
                 has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
                 if has_completed_first_recharge:
                     computing_power = 4

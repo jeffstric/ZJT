@@ -130,7 +130,8 @@ class TestPlans:
     def test_get_plan_found(self):
         plan = get_subscription_plan(102)
         assert plan and plan["computing_power"] == 808
-        assert plan["first_period_bonus"] == 200
+        # 2026-09-19 首订加赠全档翻倍：102 标准版 200 → 400
+        assert plan["first_period_bonus"] == 400
 
     def test_get_plan_not_found(self):
         assert get_subscription_plan(999) is None
@@ -306,10 +307,10 @@ class TestPayCallback:
         ok = asyncio.run(real_svc.handle_pay_callback(params))
         assert ok is True
         assert calls["settle"][0]["computing_power"] == 1000
-        # 基础算力 2400（抽佣后）与加赠 200 分两笔发放，加赠使用独立幂等键
+        # 基础算力 2400（抽佣后）与加赠 400 分两笔发放，加赠使用独立幂等键
         assert calls["grant"] == [
             (1, 2400, "4200001234"),
-            (1, 200, "4200001234_FIRST_BONUS"),
+            (1, 400, "4200001234_FIRST_BONUS"),
         ]
         assert calls["bonus_flag"] == ["SUB_1_a"]
 
@@ -335,7 +336,7 @@ class TestPayCallback:
         )
         bonus_ok = asyncio.run(svc._grant_first_period_bonus(order))
         assert bonus_ok is True
-        assert calls["grant"][-1] == (1, 200, "4200001234_FIRST_BONUS")
+        assert calls["grant"][-1] == (1, 400, "4200001234_FIRST_BONUS")
 
     def test_paid_but_not_signed_no_bonus(self, patched_service):
         """只付款但签约未生效（订阅被关闭）：合约非 ACTIVE，永远不发首订加赠"""
@@ -997,7 +998,7 @@ class TestFirstPeriodBonusEntryPoints:
         assert ok is True
         assert calls["mark_signed"] == [("SUBC1", "Wx154abc")]
         # 仅补发加赠（基础算力已由支付回调发放）
-        assert calls["grant"] == [(1, 200, "4200001234_FIRST_BONUS")]
+        assert calls["grant"] == [(1, 400, "4200001234_FIRST_BONUS")]
         assert calls["bonus_flag"] == ["SUB_1_a"]
 
     def test_add_callback_before_pay_settles_bonus_later(self, patched_service):
@@ -1017,7 +1018,7 @@ class TestFirstPeriodBonusEntryPoints:
         )
         ok = asyncio.run(svc.handle_pay_callback(_signed_pay_success_params(make_util())))
         assert ok is True
-        assert calls["grant"] == [(1, 2400, "4200001234"), (1, 200, "4200001234_FIRST_BONUS")]
+        assert calls["grant"] == [(1, 2400, "4200001234"), (1, 400, "4200001234_FIRST_BONUS")]
 
     def test_bonus_double_trigger_grants_once(self, patched_service):
         """支付结算与 ADD 回调重复触发（或事件重投）：加赠只发一次（first_bonus_granted 幂等）"""
@@ -1029,7 +1030,7 @@ class TestFirstPeriodBonusEntryPoints:
         # 模拟已落库后再触发（迟到的重复事件/补偿重试）
         order.first_bonus_granted = 1
         assert asyncio.run(svc._grant_first_period_bonus(order)) is True
-        assert calls["grant"] == [(1, 200, "4200001234_FIRST_BONUS")]
+        assert calls["grant"] == [(1, 400, "4200001234_FIRST_BONUS")]
         assert calls["bonus_flag"] == ["SUB_1_a"]
 
     def test_settlement_retry_grants_missed_bonus(self, patched_service):
@@ -1042,7 +1043,7 @@ class TestFirstPeriodBonusEntryPoints:
         asyncio.run(svc.process_settlement_retry())
         assert calls["grant"] == [
             (1, 1000, "4200001234"),           # 补偿重试：按订单基础算力重发
-            (1, 200, "4200001234_FIRST_BONUS"),  # 顺带补发漏掉的加赠
+            (1, 400, "4200001234_FIRST_BONUS"),  # 顺带补发漏掉的加赠
         ]
 
 

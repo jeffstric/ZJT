@@ -60,7 +60,7 @@
 ## 三、抽佣流程
 
 被邀请人微信支付成功 → `server.py` 的 `/api/recharge/wechat-callback`：
-1. 查订单、首充特殊处理、`PaymentOrdersModel.update_paid`。
+1. 查订单、首充特殊处理（购买首充福利包 `Commission.FIRST_RECHARGE_PACKAGE_ID`（2026-09-19 起为 package_id=5，0.1 元/99 算力，**不定义抽佣档位**→走"未知档位全额"；体验包 9.9 已常规化，不再触发首充置位/降级）则置 `users.first_recharge=1`，重复购买降级为 4 算力）、`PaymentOrdersModel.update_paid`。
 2. 调用 `commission/settle`（`perseids_server/client.py` 路由 → `CommissionService.settle`）。
 3. 用返回的 `granted_computing_power`（已打折）替换原始算力，调用 `user/calculate_computing_power` 发放。
 
