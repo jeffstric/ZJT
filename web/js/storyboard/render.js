@@ -70,7 +70,6 @@ import {
     isBatchSelectionActive,
     isSceneSelected,
 } from './batch_selection_state.js';
-import { hasSpatialLayout } from './spatial_3d_preview.js';
 import {
     PREVIEW_RESOLUTION_OPTIONS,
     normalizePreviewResolution,
@@ -605,7 +604,6 @@ function renderStoryboardCardCell(scene, nextScene) {
                         ${selecting ? '' : `<div class="storyboard-card-actions">
                             <button data-action="edit-scene" data-id="${scene.id}">${icon('edit', 14)} 编辑</button>
                             <button data-action="duplicate-scene" data-id="${scene.id}"${state.duplicatingSceneId === scene.id ? ' disabled' : ''}>${icon('copy', 14)} 复制</button>
-                            ${hasSpatialLayout(scene) ? `<button data-action="open-spatial-preview" data-id="${scene.id}" title="查看本分镜的角色站位与机位 3D 布局">3D 空间</button>` : ''}
                             <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} 删除</button>
                         </div>`}
                     </div>
