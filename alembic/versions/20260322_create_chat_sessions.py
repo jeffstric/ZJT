@@ -22,7 +22,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Create chat_sessions table"""
     op.execute("""
-        CREATE TABLE `chat_sessions` (
+        CREATE TABLE IF NOT EXISTS `chat_sessions` (
           `id` INT AUTO_INCREMENT PRIMARY KEY COMMENT 'Primary key',
           `session_id` VARCHAR(36) NOT NULL COMMENT 'UUID session identifier',
           `user_id` VARCHAR(50) NOT NULL COMMENT 'User ID',

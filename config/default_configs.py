@@ -670,6 +670,13 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': True
     },
     {
+        'key': 'pay.wxpay.api_v2_key',
+        'value_type': 'string',
+        'description': '微信支付APIv2密钥(委托代扣XML接口签名用)',
+        'editable': True,
+        'is_sensitive': True
+    },
+    {
         'key': 'pay.wxpay.appSecret',
         'value_type': 'string',
         'description': '微信支付appSecret',

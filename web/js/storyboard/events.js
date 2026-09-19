@@ -26,7 +26,7 @@ import state, {
     syncReferenceImagesCompat,
     getMaxVideoMediaCount,
     videoModelSupportsLastFrame,
-    getSupportedVideoImageModes,
+    getAvailableVideoImageModes,
     setAgentChatFontStep,
     isSceneAgentRunning,
     startSceneAgentRun,
@@ -2379,7 +2379,9 @@ async function handleAction(action, target) {
     if (action === 'set-video-image-mode') {
         if (isSceneAgentRunning(current?.id)) return;
         const mode = target.dataset.videoImageMode;
-        const supported = getSupportedVideoImageModes();
+        // 与 renderVideoModeSelector 同口径：按全部视频模型能力并集校验，
+        // 不能用当前模式选中模型的能力（首帧模式下会错误拒绝参考生视频）
+        const supported = getAvailableVideoImageModes();
         if (!supported.includes(mode)) return;
         state.videoImageMode = mode;
         state.showVideoModePanel = false;
@@ -2580,10 +2582,11 @@ async function handleAction(action, target) {
 
     if (action === 'export-full') {
         try {
-            // 固定烧录字幕：内置 CJK 字体已解决 Windows fontconfig 豆腐块问题。
+            // 是否烧录字幕跟随预览区「字幕」勾选（所见即所得）；
+            // 内置 CJK 字体已解决 Windows fontconfig 豆腐块问题。
             // 显示方式与左右边距来自字幕设置（预览所见即所得）。
             const response = await api.exportFullVideo(state.storyboardId, {
-                include_subtitles: true,
+                include_subtitles: Boolean(state.subtitleEnabled),
                 subtitle_mode: state.subtitleMode === 'block' ? 'block' : 'smart',
                 subtitle_side_margin: normalizedSubtitleMarginRatio(),
             });

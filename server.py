@@ -53,7 +53,8 @@ from config.constant import (
     AUTH_COOKIE_MAX_AGE_SECONDS,
     TASK_TYPE_GENERATE_VIDEO, 
     TASK_TYPE_GENERATE_AUDIO, 
-    RECHARGE_PACKAGES, 
+    RECHARGE_PACKAGES,
+    Commission,
     VIDEO_MODEL_DURATION_OPTIONS,
     AI_TOOL_STATUS_PENDING,
     AI_TOOL_STATUS_PROCESSING,
@@ -542,6 +543,10 @@ app.include_router(notifications_router)
 from api.announcements import router as announcements_router, admin_router as announcements_admin_router
 app.include_router(announcements_router)
 app.include_router(announcements_admin_router)
+
+# 导入并注册月度订阅 API 路由（微信委托代扣·周期扣费，见 docs/backend/wechat_monthly_subscription.md）
+from api.subscription import router as subscription_router
+app.include_router(subscription_router)
 
 # 用户模块（接口模块）属商业版能力：路由挂载、Supervisor 启动验证与实现方绑定加载
 # 由 enterprise.register(app) 注入（见 enterprise 仓），社区版核心不引用。
@@ -3523,6 +3528,14 @@ async def register(request: RegisterRequest):
                 }
             )
 
+        # 本地部署（server.is_local=true）注册页不展示邀请码输入框，
+        # 忽略 URL/浏览器本地存储带入的邀请码，避免本地库查无此码时报「无效邀请码」阻断注册
+        invite_code = request.invite_code
+        if invite_code:
+            from config.config_util import get_config_value
+            if get_config_value('server', 'is_local', default=False):
+                invite_code = None
+
         # 邮箱注册
         if email and not phone:
             # 检查邮箱功能是否启用
@@ -3550,7 +3563,7 @@ async def register(request: RegisterRequest):
                 phone=None,
                 password=password,
                 auth_type='register',
-                extra_data={'code': verify_code, 'invite_code': request.invite_code},
+                extra_data={'code': verify_code, 'invite_code': invite_code},
                 email=email
             )
             
@@ -3591,7 +3604,7 @@ async def register(request: RegisterRequest):
             phone=phone,
             password=password,
             auth_type='register',
-            extra_data={'code': verify_code, 'invite_code': request.invite_code}
+            extra_data={'code': verify_code, 'invite_code': invite_code}
         )
         
         if success:
@@ -3795,8 +3808,7 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 @app.post('/api/auth/reset_password')
-@require_permission("user:reset_password")
-async def reset_password(request: Request, reset_request: ResetPasswordRequest):
+async def reset_password(reset_request: ResetPasswordRequest):
     """
     重置密码（支持手机号和邮箱）
     """
@@ -5148,11 +5160,11 @@ async def get_recharge_packages(
         # 查询用户是否已经首充
         has_completed_first_recharge = await _has_completed_first_recharge(resolved_token)
 
-        # 如果用户已经充值过，过滤掉首充福利套餐（第一个套餐）
+        # 如果用户已经充值过，过滤掉首充福利套餐（FIRST_RECHARGE_PACKAGE_ID）
         # 用 dict(pkg) 浅拷贝每个套餐，避免污染模块级常量 RECHARGE_PACKAGES
         packages = [dict(pkg) for pkg in RECHARGE_PACKAGES]
         if has_completed_first_recharge:
-            packages = [pkg for pkg in packages if pkg.get("package_id") != 1]
+            packages = [pkg for pkg in packages if pkg.get("package_id") != Commission.FIRST_RECHARGE_PACKAGE_ID]
             logger.info(f"已经首充，过滤掉首充福利套餐")
         else:
             logger.info(f"是首充用户，显示所有套餐")
@@ -5163,7 +5175,7 @@ async def get_recharge_packages(
             g_ok, g_msg, g_data = await async_make_perseids_request(
                 endpoint='commission/recharge_grants',
                 method='POST',
-                headers={'Authorization': f'Bearer {auth_token}'}
+                headers={'Authorization': f'Bearer {resolved_token}'}
             )
             if g_ok and g_data:
                 grants = g_data.get('grants', {})
@@ -5254,8 +5266,8 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
                 detail="Invalid package ID"
             )
 
-        # 首充套餐校验：如果package_id为1且用户已首充，禁止再次购买
-        if payment_request.package_id == 1:
+        # 首充套餐校验：如果购买的是首充福利包且用户已首充，禁止再次购买
+        if payment_request.package_id == Commission.FIRST_RECHARGE_PACKAGE_ID:
             has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
             if has_completed_first_recharge:
                 logger.warning(f"User {payment_request.user_id} attempted to purchase first-charge package again")
@@ -5264,6 +5276,12 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
                     detail="首充福利仅限首次充值，您已领取过该套餐"
                 )
         
+        # 生产安全闸：商户私钥缺失时禁止发起支付/展示二维码
+        # （缺失时签名降级为 mock_signature 微信必拒；验签旁路也仅限密钥齐备时可防伪造回调）
+        if not wechat_pay_util.has_signing_key():
+            logger.error("Wechat merchant private key (secret/wechat/apiclient_key.pem) missing; refuse to create payment order")
+            raise HTTPException(status_code=503, detail="微信支付商户密钥未配置，无法发起支付，请联系管理员")
+
         # 生成订单ID
         order_id = wechat_pay_util.generate_order_id()
         
@@ -5475,7 +5493,7 @@ async def wechat_payment_callback(request: Request):
             computing_power = order.computing_power
             
             # 检查是否为首充福利
-            if order.package_id == 1:
+            if order.package_id == Commission.FIRST_RECHARGE_PACKAGE_ID:
                 has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
                 if has_completed_first_recharge:
                     computing_power = 4

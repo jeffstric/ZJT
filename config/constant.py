@@ -2261,24 +2261,118 @@ JIANYING_DEFAULT_RATIO = '16:9'
 
 RECHARGE_PACKAGES = [
     {
-        "package_id": 1,
-        "computing_power": 100,
+        "package_id": 5,
+        "computing_power": 99,
         "price": 0.1,
-        "description": "首充福利"
+        "description": "首充福利 99"
+    },
+    {
+        "package_id": 1,
+        "computing_power": 88,
+        "price": 9.9,
+        "description": "算力包 88"
     },
     {
         "package_id": 2,
-        "computing_power": 200,
-        "price": 9.9,
-        "description": "标准套餐"
+        "computing_power": 508,
+        "price": 49.9,
+        "description": "算力包 508"
     },
     {
         "package_id": 3,
-        "computing_power": 1250,
-        "price": 49.9,
-        "description": "进阶套餐"
+        "computing_power": 1358,
+        "price": 109.0,
+        "description": "算力包 1358"
+    },
+    {
+        "package_id": 4,
+        "computing_power": 2988,
+        "price": 209.0,
+        "description": "算力包 2988"
     }
 ]
+
+
+# ==================== 月度订阅（微信委托代扣·周期扣费） ====================
+# 商户产品参数（协议模板ID / V2密钥等）见 config/subscription_config.py（临时 hardcode）。
+class SubscriptionConstants:
+    """月度订阅业务常量"""
+    # HTTP 调用微信支付接口的超时（秒）
+    HTTP_TIMEOUT_SECONDS = 30
+    # 订阅周期长度（天）：每月=30天
+    PERIOD_DAYS = 30
+    # 预扣费通知提前量（天）：到期前 N 天下发预扣费通知（第1天通知、第2天等待期、第3天起可扣费）
+    PRE_NOTIFY_LEAD_DAYS = 2
+    # 续期扣款失败重试窗口（天）：到期日起 N 天内每日重试，窗口耗尽则关闭订单（订阅过期）
+    DEDUCT_RETRY_WINDOW_DAYS = 7
+    # 允许发起预扣费通知/申请扣款的时间窗（北京时间，含边界）
+    DEDUCT_ALLOWED_HOUR_START = 7
+    DEDUCT_ALLOWED_HOUR_END = 22
+    # 续期任务调度间隔（分钟）
+    SCHEDULER_INTERVAL_MINUTES = 30
+    # 扣款受理成功后无回调时，主动查单的间隔（小时）
+    DEDUCT_CONFIRM_QUERY_DELAY_HOURS = 26
+    # 订阅订单号 / 签约协议号前缀
+    ORDER_ID_PREFIX = "SUB"
+    CONTRACT_CODE_PREFIX = "SUBC"
+    # 签约中状态的超时清理（小时）：超过视为签约失败
+    PENDING_SIGN_EXPIRE_HOURS = 2
+    # "支付成功但签约结果通知未到"的合约，主动查询微信签约关系的宽限时间（分钟）：
+    # 首期订单已支付超过该时长合约仍签约中 → 查单收尾（已签约则补激活/未签约则终止），先于上面的超时清理
+    PENDING_SIGN_CONFIRM_GRACE_MINUTES = 10
+    # 查单确认"支付成功但签约未生效"后的合约终止备注（单期已付权益保留，无自动续费）；
+    # 订阅状态视图据此返回 sign_not_effective，前端展示"重新开通订阅"引导
+    SIGN_FAILED_TERMINATE_REMARK = '支付成功但签约未生效(查询微信确认)，无自动续费'
+    # 扣费模式（必须与商户平台模板的「扣费模式」一致）：
+    #   direct     延迟24小时扣费（模板默认，无需额外权限）
+    #   pre_notify 预扣费通知（需另行开通微信侧权限）
+    DEDUCT_MODE = 'direct'
+    # 签约页「开通账号」展示前缀（后接用户标识；不支持表情符号）
+    CONTRACT_DISPLAY_ACCOUNT_PREFIX = '会员'
+    # 委托代扣商品描述前缀
+    BODY_PREFIX = '智剧通会员订阅'
+    # ==================== 套餐升级（无需退订，低→高） ====================
+    # 升级签约单结算时是否发放首期加赠（first_period_bonus）：默认关闭。
+    # 注：首订加赠全局仅限首次订阅（无历史已支付订阅订单，见 subscription_service._settle_and_grant），
+    # 升级单本身必有历史已支付订单、天然不发；此开关仅作升级单独立兜底
+    UPGRADE_GRANT_FIRST_BONUS = False
+    # 升级支付成功后被替换旧合约的解约备注（精确匹配，补偿任务据此识别待确认解约）
+    UPGRADE_TERMINATE_REMARK = '套餐升级自动解约'
+    UPGRADE_TERMINATE_REMARK_CONFIRMED = '套餐升级自动解约(微信侧已解除)'
+    # 新订阅签约生效后解约其它旧签约的备注（含残留签约清理；精确匹配，补偿任务据此重试）
+    DEDUP_TERMINATE_REMARK = '新订阅生效自动解约旧签约'
+    DEDUP_TERMINATE_REMARK_CONFIRMED = '新订阅生效自动解约旧签约(微信侧已解除)'
+
+
+
+class WxContractStatus:
+    """微信委托代扣签约关系状态"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'PENDING': '签约中',
+        'ACTIVE': '已签约',
+        'TERMINATED': '已解约',
+    }
+    PENDING = 0     # 签约中（已下发支付中签约，等待微信回调）
+    ACTIVE = 1      # 已签约
+    TERMINATED = 2  # 已解约
+
+
+class SubscriptionOrderStatus:
+    """订阅订单状态（每周期一条）"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'PENDING_PAY': '待支付/待扣款',
+        'PAID': '已支付(算力已发放)',
+        'CONFIRMING': '已受理待确认(24小时自动扣费模式)',
+        'FAILED': '扣款失败(待重试)',
+        'CLOSED': '已关闭',
+    }
+    PENDING_PAY = 0   # 待支付/待扣款
+    PAID = 1          # 已支付（算力已发放）
+    CONFIRMING = 4    # 已受理待确认（direct 模式受理成功，等回调/查单）
+    FAILED = 2        # 扣款失败（待重试）
+    CLOSED = 3        # 已关闭（重试窗口耗尽 / 手动关闭）
 
 
 # ==================== 邀请佣金相关（商业版） ====================
@@ -2288,7 +2382,51 @@ class Commission:
     MAX_RATE = 0.5                # 最高佣金比例（50%）
     STEP = 0.01                   # 比例设置步长（1%）
     MIN_WITHDRAW_AMOUNT = 10.0    # 最低提现金额（元）
-    FIRST_RECHARGE_PACKAGE_ID = 1  # 首充福利套餐ID（首充不抽佣）
+    FIRST_RECHARGE_PACKAGE_ID = 5  # 首充福利套餐ID（0.1元/99算力，首充不抽佣；算力包9.9(原体验包)已常规化，不占首充资格）
+    # ==================== 抽佣档位阶梯（新价目方案写死，2026-09-11） ====================
+    # 渠道（邀请人）佣金按订单档位写死，不再由邀请人自调。
+    #   ladder_rate   渠道比例（对外说明；= 渠道算力占不抽成到账的比例）
+    #   channel_cash  渠道现金佣金（元）= 渠道算力 × 0.04 元/算力成本
+    #   full_power    不抽成到账（无渠道时用户到账）
+    #   invited_power 渠道存在时用户到账（尾数8口径）
+    #   注：首充福利包（package_id=5，FIRST_RECHARGE_PACKAGE_ID）不定义档位——
+    #   settle() 走「档位未定义→不抽佣全额到账」分支，与首充不抽佣语义一致。
+    COMMISSION_TIERS = {
+        # 直充（一次性）
+        1:   dict(ladder_rate=0.30, full_power=122,  invited_power=88,   channel_cash=1.46,  name='算力包 88'),
+        2:   dict(ladder_rate=0.27, full_power=700,  invited_power=508,  channel_cash=7.56,  name='算力包 508'),
+        3:   dict(ladder_rate=0.22, full_power=1741, invited_power=1358, channel_cash=15.32, name='算力包 1358'),
+        4:   dict(ladder_rate=0.18, full_power=3647, invited_power=2988, channel_cash=26.26, name='算力包 2988'),
+        # 订阅（月付）
+        101: dict(ladder_rate=0.25, full_power=428,  invited_power=328,  channel_cash=4.28,  name='订阅入门版'),
+        102: dict(ladder_rate=0.19, full_power=1000, invited_power=808,  channel_cash=7.60,  name='订阅标准版'),
+        103: dict(ladder_rate=0.15, full_power=2524, invited_power=2148, channel_cash=15.15, name='订阅专业版'),
+        104: dict(ladder_rate=0.10, full_power=6216, invited_power=5598, channel_cash=24.86, name='订阅旗舰版'),
+    }
+    # 订阅佣金提现冻结天数（自佣金产生起）
+    WITHDRAW_FREEZE_DAYS = 30
+    # 订阅套餐 plan_id 下限（>= 该值视为订阅来源）
+    SUBSCRIPTION_PLAN_ID_MIN = 100
+
+
+class ChannelLevel:
+    """用户渠道推广等级。
+
+    默认用户始终可以使用邀请链接获取算力奖励；渠道现金佣金必须由管理员开启。
+    社区版抽佣整体跳过，本字段仅商业版结算读取。
+    """
+    NONE = 0          # 默认：邀请链接仅算力奖励，不展示渠道佣金
+    INVITE = 1        # 兼容历史：推广链接（仅算力奖励）
+    COMMISSION = 2    # 管理员开启后：渠道现金佣金
+    VALID = (0, 1, 2)
+    CUSTOMER_SERVICE_WECHAT = 'jeffstric'
+
+    @classmethod
+    def is_commission_enabled(cls, level) -> bool:
+        try:
+            return int(level or 0) >= cls.COMMISSION
+        except (TypeError, ValueError):
+            return False
 
 
 class CommissionLogStatus:
@@ -2369,6 +2507,9 @@ class ExternalLinks:
     # 意见反馈个人微信二维码（右下角 FAB / 弹窗；与官方群二维码无关）
     # 可通过 frontend.feedback_qr_url 覆盖；支持 /files/... 同源路径或可公网访问的图片 URL
     FEEDBACK_QR_URL = '/files/二维码.jpg'
+    # 渠道推广申请弹窗中的客服微信二维码（扫码添加客服，申请开通渠道佣金）
+    # 可通过 frontend.customer_service_qr_url 覆盖；支持 /files/... 同源路径或可公网访问的图片 URL
+    CUSTOMER_SERVICE_QR_URL = '/files/二维码.jpg'
 
 
 # 阿里云百炼（DashScope）BaseURL 常量

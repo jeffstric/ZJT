@@ -156,8 +156,21 @@ class CommissionLogModel:
 
     @staticmethod
     def sum_available(inviter_id: int) -> float:
-        """可用余额（status=0 且未关联提现单）"""
-        return CommissionLogModel._sum(inviter_id, "status = 0 AND withdraw_no IS NULL")
+        """可提现余额（status=0 且未关联提现单；订阅来源需满 30 天冻结期）"""
+        return CommissionLogModel._sum(
+            inviter_id,
+            "status = 0 AND withdraw_no IS NULL "
+            "AND (package_id < 100 OR create_at <= NOW() - INTERVAL 30 DAY)"
+        )
+
+    @staticmethod
+    def sum_subscription_freezing(inviter_id: int) -> float:
+        """月付（订阅）佣金冻结中：已产生但未满 30 天提现冻结期"""
+        return CommissionLogModel._sum(
+            inviter_id,
+            "status = 0 AND withdraw_no IS NULL "
+            "AND package_id >= 100 AND create_at > NOW() - INTERVAL 30 DAY"
+        )
 
     @staticmethod
     def sum_frozen(inviter_id: int) -> float:
@@ -225,6 +238,7 @@ class CommissionLogModel:
         sql = """
             SELECT id, commission_amount FROM commission_log
             WHERE inviter_id = %s AND status = 0 AND withdraw_no IS NULL
+              AND (package_id < 100 OR create_at <= NOW() - INTERVAL 30 DAY)
             ORDER BY id ASC
             FOR UPDATE
         """

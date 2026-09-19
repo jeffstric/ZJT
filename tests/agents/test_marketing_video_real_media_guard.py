@@ -6,7 +6,11 @@ import httpx
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 
-def test_image_to_video_rejects_placeholder_image_url():
+def test_image_to_video_rejects_placeholder_image_url(monkeypatch):
+    # 单元环境无签名商业租约，许可门控放行后再验证占位 URL 拦截
+    import enterprise.services.license.runtime as license_runtime_module
+    monkeypatch.setattr(license_runtime_module, "require_commercial_license", lambda *a, **k: None)
+
     from enterprise.tools.video_tools import image_to_video
 
     result = image_to_video(
