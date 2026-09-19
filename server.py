@@ -3808,8 +3808,7 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 @app.post('/api/auth/reset_password')
-@require_permission("user:reset_password")
-async def reset_password(request: Request, reset_request: ResetPasswordRequest):
+async def reset_password(request: ResetPasswordRequest):
     """
     重置密码（支持手机号和邮箱）
     """
