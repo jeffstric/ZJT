@@ -157,7 +157,7 @@ def test_user_message_fidelity_note_covers_emphasis_quotes():
 
 
 def test_user_message_no_fidelity_note_for_plain_prompts():
-    """纯英文、无引号中文、空 prompt 均不追加指令，行为与现状一致"""
+    """纯英文、无引号中文、空 prompt 不追加保真点名指令，但追加禁止虚构对白提示"""
     for original in ("walk forward, she smiles", "镜头缓推，女主转头微笑", ""):
         message = build_h3_optimize_user_message(
             original,
@@ -166,6 +166,23 @@ def test_user_message_no_fidelity_note_for_plain_prompts():
             template="GUIDE",
         )
         assert "引号包裹的" not in message
+        assert "严禁虚构" in message
+        assert "不得出现 <d> 标签" in message
+
+
+def test_user_message_no_dialogue_note_for_timbre_only_prompt():
+    """线上案例 ai_tools 231:原文仅音色参考无台词,注入反幻觉提示,禁止 LLM 虚构 <d> 对白"""
+    message = build_h3_optimize_user_message(
+        "参考音频说明：音频1是角色：李卫国的音色样本，角色说话时请保持相同音色。",
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        5,
+        template="GUIDE",
+    )
+    assert "严禁虚构" in message
+    assert "音色参考仅约束" in message
+    assert "不得出现 <d> 标签" in message
+    # 反幻觉提示位于指令区，原文仍完整附在消息末尾
+    assert message.rstrip().endswith("角色说话时请保持相同音色。")
 
 
 def test_fidelity_note_language_tag_japanese_and_korean():
