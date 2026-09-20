@@ -202,6 +202,33 @@ Seedance 2.0 系列与 2.5 支持「无图片、无视频、仅参考音频」�
 
 这个步骤用于规避 Chrome `MediaRecorder` 生成的 WebM 常见问题：文件可播放，但容器 `format.duration` 和 `stream.duration` 为空，Seedance v2 输入适配器会报 `parse media duration: strconv.ParseFloat: parsing "": invalid syntax`。
 
+### 参考音频总时长预算与自动截断
+
+火山 r2v（参考生视频）对参考音频有**总时长与条数**硬限制，超出会被 `InvalidParameter` 拒绝
+（线上报错如 `the parameter audio total duration (seconds) ... must be less than or equal to 15.2 for
+model doubao-seedance-2-0-mini in r2v`）：
+
+| 模型系列 | 音频总时长上限 | 条数上限 |
+| --- | --- | --- |
+| 2.0 系列（含 mini） | 15s（API 容差 15.2s） | 3 段 |
+| 2.5 | 30s | 10 段 |
+
+而角色音色源音频（`character.default_voice`）上传时统一裁剪到 20s（TTS 克隆需要），
+参考生视频最多注入 2 条（叠加可达 40s），因此驱动在提交前做预算控制：
+
+- 条数截断：超出条数上限时仅取前 N 条（`R2V_AUDIO_MAX_COUNT`）。
+- 均分配额截断：`prepare_reference_audio_budget_sync()`（`utils/audio_duration_util.py`）
+  按「每条配额 = (总上限 - 0.5s 安全余量) / 条数」均分。例如 mini 传 3 条时每条配额
+  14.5/3 ≈ 4.83s，2.5 传 3 条时 29.5/3 ≈ 9.83s；超配额的条目用 ffmpeg `-t 配额 -acodec copy`
+  截断到**临时文件**（不修改角色原音频），上传 CDN 后 finally 清理。
+- 降级策略：时长探测失败或截断失败时该条音频**原样放行**（维持无预算时的行为），仅记 warning；
+  均分而非顺序分配，保证多角色场景每条音色样本都有平等露出机会。
+- 预算常量位于 `config/constant.py`（`SEEDANCE_R2V_AUDIO_MAX_TOTAL_DURATION` /
+  `SEEDANCE_2_5_AUDIO_MAX_TOTAL_DURATION` / `SEEDANCE_R2V_AUDIO_TOTAL_DURATION_SAFETY_MARGIN`），
+  由驱动类属性 `R2V_AUDIO_MAX_TOTAL_SECONDS` / `R2V_AUDIO_MAX_COUNT` 引用，2.5 子类覆盖为 30s/10。
+
+海外版（oversea）、kkidc、huimengi 网关驱动的参考音频使用同一套预算逻辑（底层为同一火山 API）。
+
 ## 配置
 
 在 `config.yml` 中添加火山引擎配置：

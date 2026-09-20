@@ -38,6 +38,20 @@ from model.ai_tool_pipeline_steps import PipelineStepStatus
 sys.modules['utils.sentry_util'] = MagicMock()
 sys.modules['utils.image_upload_utils'] = MagicMock()
 
+# 参考音频预算准备依赖 ffprobe/ffmpeg 子进程与文件系统，单测默认直通放行
+# （真实的均分配额/截断/清理逻辑在 tests/utils/test_audio_duration_util.py 覆盖）。
+from task.visual_drivers import seedance_volcengine_v1_driver as _volc_drv_mod  # noqa: E402
+
+
+def _passthrough_reference_audio_budget(paths, max_total_seconds, **kwargs):
+    return [
+        {"source": p, "path": p, "cleanup_path": None, "duration": None, "limit_seconds": 0.0}
+        for p in paths
+    ]
+
+
+_volc_drv_mod.prepare_reference_audio_budget_sync = _passthrough_reference_audio_budget
+
 
 def _create_driver(driver_type=21, model_name='doubao-seedance-1-5-pro-251215',
                    api_key='test_api_key', test_mode=False, mock_video_url=None):
@@ -659,6 +673,143 @@ class TestBuildCreateRequestMultiReference(unittest.TestCase):
         # content 中不应有 image_url（所有图片压缩失败被跳过）
         image_items = [c for c in result['json']['content'] if c.get('type') == 'image_url']
         self.assertEqual(len(image_items), 0)
+
+
+class TestReferenceAudioBudget(unittest.TestCase):
+    """测试 r2v 参考音频总时长预算：条数截断、均分配额截断、临时文件清理
+    （火山 2.0 系列 r2v 音频总时长 ≤15s、≤3 段；2.5 ≤30s、≤10 段）"""
+
+    def setUp(self):
+        self.driver = _create_driver()
+
+    def _run_multi_reference_with_audio(self, ai_tool, mock_upload_cdn, mock_compress,
+                                        budget_items):
+        """在 multi_reference 模式下注入预算 mock 并构建请求"""
+        mock_compress.return_value = (True, 'https://cdn.example.com/ref.jpg', None)
+        with patch(
+            'task.visual_drivers.seedance_volcengine_v1_driver.prepare_reference_audio_budget_sync',
+            return_value=budget_items,
+        ) as mock_budget:
+            result = self.driver.build_create_request(ai_tool)
+        return result, mock_budget
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.cleanup_prepared_reference_audio')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_trimmed_audio_uploaded_and_cleaned(self, mock_compress, mock_upload_cdn, mock_cleanup):
+        """超配额音频：上传的是截断后的 prepared 路径，并在结束后清理临时文件"""
+        budget_items = [
+            {"source": 'http://example.com/a.mp3', "path": '/tmp/trimmed.mp3',
+             "cleanup_path": '/tmp/trimmed.mp3', "duration": 20.0, "limit_seconds": 7.25},
+            {"source": 'http://example.com/b.mp3', "path": 'http://example.com/b.mp3',
+             "cleanup_path": None, "duration": 3.0, "limit_seconds": 7.25},
+        ]
+        mock_upload_cdn.side_effect = lambda path, cfg: (
+            (True, 'https://cdn.example.com/trimmed.mp3', None) if 'trimmed' in path
+            else (True, 'https://cdn.example.com/b.mp3', None)
+        )
+        ai_tool = _make_ai_tool(
+            image_path=None,
+            extra_config={'image_mode': 'multi_reference'},
+            reference_images=json.dumps(['http://example.com/ref1.jpg']),
+            audio_path='http://example.com/a.mp3,http://example.com/b.mp3'
+        )
+
+        result, mock_budget = self._run_multi_reference_with_audio(
+            ai_tool, mock_upload_cdn, mock_compress, budget_items)
+
+        # 预算函数收到全部条目与 2.0 系列总预算 15s
+        mock_budget.assert_called_once()
+        self.assertEqual(mock_budget.call_args[0][0],
+                         ['http://example.com/a.mp3', 'http://example.com/b.mp3'])
+        self.assertEqual(mock_budget.call_args[0][1], 15.0)
+        # 上传的是截断后的临时文件路径
+        uploaded_paths = [c[0][0] for c in mock_upload_cdn.call_args_list
+                          if 'ref.jpg' not in str(c[0][0])]
+        self.assertIn('/tmp/trimmed.mp3', uploaded_paths)
+        self.assertIn('http://example.com/b.mp3', uploaded_paths)
+        # content 两条 audio_url，顺序保持
+        audio_items = [c for c in result['json']['content'] if c['type'] == 'audio_url']
+        self.assertEqual(len(audio_items), 2)
+        self.assertEqual(audio_items[0]['audio_url']['url'], 'https://cdn.example.com/trimmed.mp3')
+        self.assertEqual(audio_items[1]['audio_url']['url'], 'https://cdn.example.com/b.mp3')
+        # 临时文件被清理
+        mock_cleanup.assert_called_once_with(budget_items)
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.cleanup_prepared_reference_audio')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_over_count_truncated_to_three(self, mock_compress, mock_upload_cdn, mock_cleanup):
+        """5 条音频超出 2.0 系列条数上限 3：仅前 3 条进入预算与上传"""
+        five_urls = ','.join(f'http://example.com/a{i}.mp3' for i in range(5))
+        first_three = five_urls.split(',')[:3]
+        budget_items = [
+            {"source": p, "path": p, "cleanup_path": None, "duration": None, "limit_seconds": 0.0}
+            for p in first_three
+        ]
+        mock_upload_cdn.return_value = (True, 'https://cdn.example.com/audio.mp3', None)
+        ai_tool = _make_ai_tool(
+            image_path=None,
+            extra_config={'image_mode': 'multi_reference'},
+            reference_images=json.dumps(['http://example.com/ref1.jpg']),
+            audio_path=five_urls
+        )
+
+        result, mock_budget = self._run_multi_reference_with_audio(
+            ai_tool, mock_upload_cdn, mock_compress, budget_items)
+
+        # 预算函数只收到前 3 条
+        mock_budget.assert_called_once()
+        self.assertEqual(mock_budget.call_args[0][0], first_three)
+        audio_items = [c for c in result['json']['content'] if c['type'] == 'audio_url']
+        self.assertEqual(len(audio_items), 3)
+
+
+class TestSeedance25AudioBudget(unittest.TestCase):
+    """Seedance 2.5 子类预算覆盖：总预算 30s、条数上限 10"""
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.cleanup_prepared_reference_audio')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_seedance_25_uses_30s_budget(self, mock_compress, mock_upload_cdn, mock_cleanup):
+        """Seedance 2.5：预算函数收到 30.0 而非 15.0"""
+        from task.visual_drivers.seedance_volcengine_v1_driver import Seedance25VolcengineV1Driver
+        with patch('task.visual_drivers.seedance_volcengine_v1_driver.get_dynamic_config_value') as mock_config, \
+             patch('task.visual_drivers.seedance_volcengine_v1_driver.get_config', return_value={}):
+
+            def side_effect(*keys, default=None):
+                key_map = {
+                    ('volcengine', 'api_key'): 'test_key',
+                    ('timeout', 'request_timeout'): 30,
+                    ('server', 'is_local'): False,
+                    ('test_mode', 'enabled'): False,
+                    ('test_mode', 'mock_videos'): {},
+                }
+                return key_map.get(keys, default)
+
+            mock_config.side_effect = side_effect
+            driver = Seedance25VolcengineV1Driver()
+
+        self.assertEqual(driver.R2V_AUDIO_MAX_TOTAL_SECONDS, 30.0)
+        self.assertEqual(driver.R2V_AUDIO_MAX_COUNT, 10)
+
+        mock_compress.return_value = (True, 'https://cdn.example.com/ref.jpg', None)
+        mock_upload_cdn.return_value = (True, 'https://cdn.example.com/audio.mp3', None)
+        budget_items = [{"source": 'http://example.com/a.mp3', "path": 'http://example.com/a.mp3',
+                         "cleanup_path": None, "duration": None, "limit_seconds": 0.0}]
+        ai_tool = _make_ai_tool(
+            image_path=None,
+            extra_config={'image_mode': 'multi_reference'},
+            reference_images=json.dumps(['http://example.com/ref1.jpg']),
+            audio_path='http://example.com/a.mp3'
+        )
+        with patch(
+            'task.visual_drivers.seedance_volcengine_v1_driver.prepare_reference_audio_budget_sync',
+            return_value=budget_items,
+        ) as mock_budget:
+            driver.build_create_request(ai_tool)
+
+        self.assertEqual(mock_budget.call_args[0][1], 30.0)
 
 
 class TestBuildCreateRequestFallback(unittest.TestCase):

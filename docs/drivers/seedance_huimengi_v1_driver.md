@@ -148,7 +148,7 @@ Authorization: Bearer hm-xxxxxxxxxxxxxxxx
 | `human_review` | boolean | 否 | 真人审核模式，默认 false |
 | `generate_audio` | boolean | 否 | 是否生成同步音频，默认 true |
 | `last_frame_image` | string | 否 | 尾帧图片 URL（图生视频-首尾帧） |
-| `reference_audios` | array | 否 | 参考音频 URL 列表（0-3 段，总时长不超过 15s） |
+| `reference_audios` | array | 否 | 参考音频 URL 列表（2.0 系列 0-3 段、总时长 ≤15s；2.5 0-10 段、≤30s） |
 | `reference_images` | array | 否 | 参考图片 URL 列表（1-9 张） |
 | `reference_videos` | array | 否 | 参考视频 URL 列表（0-3 个，总时长不超过 15s） |
 | `first_frame_image` | string | 否 | 首帧图片 URL（图生视频-首尾帧） |
@@ -177,6 +177,7 @@ Authorization: Bearer hm-xxxxxxxxxxxxxxxx
 - ✅ 真人审核模式（`human_review` 透传）
 - ✅ **自动处理人脸（`supports_auto_face`）**——详见下方专节
 - ✅ 参考视频规范化（帧率限制，复用 `prepare_seedance_reference_video_sync`）
+- ✅ **参考音频总时长预算**：与火山官方一致（2.0 系列 ≤15s / ≤3 段，2.5 ≤30s / ≤10 段），提交前按「(总上限-0.5s 余量)/条数」均分配额自动截断超长音频（角色音色源音频上传时裁到 20s，直接透传会被 `InvalidParameter` 拒绝），详见火山版驱动文档「参考音频总时长预算与自动截断」
 - ✅ 分辨率小写映射（480p / 720p / 1080p / 4k）
 
 ## 自动处理人脸（supports_auto_face）

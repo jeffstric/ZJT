@@ -497,6 +497,17 @@ CHARACTER_VOICE_MAX_DURATION = 20.0
 # 角色参考音频裁剪时 ffmpeg/ffprobe 单次执行超时（秒）
 CHARACTER_VOICE_TRIM_TIMEOUT = 30
 
+# Seedance r2v 参考音频总时长预算（秒）。官方 2.0 系列（含 mini）r2v 音频总时长 ≤15s
+# （API 容差 15.2s，即线上报错值）；2.5 系列 ≤30s。角色上传侧裁剪到 20s（TTS 需要），
+# 因此驱动提交前需按预算对超长音频自动截断。
+SEEDANCE_R2V_AUDIO_MAX_TOTAL_DURATION = 15.0
+SEEDANCE_2_5_AUDIO_MAX_TOTAL_DURATION = 30.0
+# 总时长预算的安全余量（秒）：均分配额 = (总上限 - 余量) / 音频条数，
+# 用于覆盖 -acodec copy 帧对齐导致的截断点正偏差。
+SEEDANCE_R2V_AUDIO_TOTAL_DURATION_SAFETY_MARGIN = 0.5
+# Seedance 参考音频截断时 ffmpeg 单次执行超时（秒）
+SEEDANCE_R2V_AUDIO_TRIM_TIMEOUT = 30
+
 # MiniMax H3 提交前提示词优化（param_prepare）
 # 单次 LLM 调用外层 wait_for 超时；_call_llm 会把同一值作为底层 request_timeout 传入，
 # 使 httpx 超时与外层对齐，避免超时后底层线程残留空跑到 LLM_HTTP_TIMEOUT_SECONDS。
@@ -2230,6 +2241,12 @@ class FaceMaskPromptConstants:
     HINT_JOINER = "，"
     # 句终符与衔接符集合：基线末尾为其中任一字符时直接拼接还原句，否则加 HINT_JOINER
     TERMINATORS_OR_JOINER = '。！？!?\n\r；;，,'
+    # ai_tools.extra_config 中「允许参与人脸遮盖的参考图 URL 白名单」键。
+    # 参考生视频的参考图含角色/场景/道具/画风等，人脸遮盖只对角色参考图有意义；
+    # 提交方（storyboard generate-video / ai-app-run-image）把角色参考图 URL 列表
+    # 写入该键，create_with_pipeline_steps / _build_seedance_param_prepare_steps 据此
+    # 只给白名单内的参考图建 image_face_mask 步骤。键缺失时保持旧行为（全部参考图遮盖）。
+    REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY = 'face_mask_reference_urls'
 
 
 class RunningHubImageFaceMaskConstants:
