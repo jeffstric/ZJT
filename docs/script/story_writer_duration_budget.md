@@ -133,8 +133,8 @@ def estimate_dialogue_seconds(text: str) -> float: ...   # 台词朗读秒数
 - `enforce_total_duration_limit`（llm/script_parser.py）压缩分支的兜底合并
   循环目前把 total 压进容差后**跳过** `dialogue_floor_exceeded_seconds` 检查
   （2026-09-19 验证实测：floor_sum=346.3s 未上报，报告显示假达标 198.8s）。
-  修复：合并循环结束后无论是否进入容差，只要
-  `dialogue_floor_sum > target_seconds` 即上报差额；
+  修复：合并循环结束后若 `total <= cap` 且 `dialogue_floor_sum > total`
+  （卡片盖不住台词）即上报差额；台词略超 target 但已被 total 覆盖不报；
 - 若剧本携带 `dialogue_stats`，规划阶段可直接给出「物理下限 vs declared」
   预检：矛盾明显（下限 > declared × 1.5）时在任务状态中提前提示
   「剧本标注片长与台词量不匹配」，不再等 TTS 回填后暴露。
@@ -172,9 +172,11 @@ def estimate_dialogue_seconds(text: str) -> float: ...   # 台词朗读秒数
    `dialogue_char_budget` / `budget_tolerance_upper`），
    `llm/script_parser.py` 速率函数改为薄包装。
 2. P1 floor 上报缺口修复：`enforce_total_duration_limit` 压缩分支中，
-   合并把 total 压进容差（`total <= cap`）但 `dialogue_floor_sum > target_seconds`
-   时，上报 `dialogue_floor_exceeded_seconds = dialogue_floor_sum - total`
-   （下限与当前总时长的差额）；`total > cap` 的旧语义保持不变。
+   合并把 total 压进容差（`total <= cap`）且 `dialogue_floor_sum > total`
+   时，上报
+   `dialogue_floor_exceeded_seconds = max(0, dialogue_floor_sum - total)`
+   （卡片秒数盖不住台词才算假达标）；台词下限只是略超 `target`、但已被
+   `total` 覆盖时不报。`total > cap` 的旧语义保持不变。
    注意 `_merge_shot_into` 对 dialogue 按 JSON 去重——完全相同文本的镜头
    合并后台词不重复累计，属正确行为。
 3. P2 提示词层：`story-writer/SKILL.md` 新增「片长与台词字数预算（必须遵守）」

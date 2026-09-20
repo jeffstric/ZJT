@@ -537,6 +537,63 @@ def test_enforce_reports_dialogue_floor_exceeded():
     assert report["dialogue_floor_exceeded_seconds"] == round(total - cap, 1)
 
 
+def test_enforce_merged_floor_exceeded_reports_gap_vs_total():
+    # 同组两段长台词合并：duration 取 max，台词追加，卡片 20s 盖不住 40s 下限
+    parsed = {
+        "shot_groups": [
+            _group("g1", [
+                {**_shot(1, 40.0), "dialogue": [{"text": "甲" * 90}]},
+                {**_shot(2, 40.0), "dialogue": [{"text": "乙" * 90}]},
+            ]),
+        ],
+        "total_duration": 80,
+    }
+    report = enforce_total_duration_limit(parsed, 20.0)
+    total = sum(s["duration"] for g in parsed["shot_groups"] for s in g["shots"])
+    floor_sum = sum(
+        max(
+            ScriptSplitConstants.TOTAL_DURATION_SHOT_MIN_SECONDS,
+            compute_shot_dialogue_seconds(s),
+        )
+        for g in parsed["shot_groups"] for s in g["shots"]
+    )
+    assert report["merged_shots"] == 1
+    assert total <= 20.0 * (1 + ScriptSplitConstants.TOTAL_DURATION_TOLERANCE)
+    assert floor_sum > total
+    assert report["dialogue_floor_exceeded_seconds"] == round(floor_sum - total, 1)
+
+
+def test_enforce_merged_true_success_does_not_report_floor_exceeded():
+    # 合并把 total 压进容差：台词下限略超 target，但已被卡片时长覆盖 → 真达标
+    parsed = {
+        "shot_groups": [
+            _group("g1", [
+                {**_shot(1, 15.0), "dialogue": [{"text": "你" * 45}]},  # 10s
+                _shot(2, 15.0),
+            ]),
+            _group("g2", [
+                {**_shot(3, 50.0), "dialogue": [{"text": "他" * 54}]},  # 12s
+            ]),
+        ],
+        "total_duration": 80,
+    }
+    report = enforce_total_duration_limit(parsed, 20.0)
+    total = sum(s["duration"] for g in parsed["shot_groups"] for s in g["shots"])
+    floor_sum = sum(
+        max(
+            ScriptSplitConstants.TOTAL_DURATION_SHOT_MIN_SECONDS,
+            compute_shot_dialogue_seconds(s),
+        )
+        for g in parsed["shot_groups"] for s in g["shots"]
+    )
+    cap = 20.0 * (1 + ScriptSplitConstants.TOTAL_DURATION_TOLERANCE)
+    assert report["merged_shots"] >= 1
+    assert total <= cap
+    assert floor_sum > 20.0
+    assert floor_sum <= total
+    assert "dialogue_floor_exceeded_seconds" not in report
+
+
 # ---- engine 段台词字数查找（_segment_plan_dialogue_chars）----
 
 def test_segment_plan_dialogue_chars_lookup():

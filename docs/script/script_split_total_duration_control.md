@@ -37,10 +37,13 @@ declared、目标 180s，表面达标），但 34 条台词 TTS 真实朗读 393
 
 1. **合并路径 floor 上报假达标**：兜底合并循环把 total 压进容差
    （`total <= cap`）后，旧实现直接跳过 floor 检查——台词物理下限 346.3s
-   未上报。修复：`total <= cap` 但 `dialogue_floor_sum > target_seconds` 时
-   上报 `dialogue_floor_exceeded_seconds = dialogue_floor_sum - total`；
-   `total > cap` 的旧语义（报 `total - cap`）不变。注意 `_merge_shot_into`
-   对 dialogue 按 JSON 去重，完全相同文本的镜头合并后不重复累计。
+   未上报。修复：`total <= cap` 且 `dialogue_floor_sum > total`（卡片秒数
+   盖不住台词）时上报
+   `dialogue_floor_exceeded_seconds = max(0, dialogue_floor_sum - total)`；
+   台词下限只是略超 `target`、但已被 `total` 覆盖且 `total` 在容差内，视为
+   真达标、不写该字段。`total > cap` 的旧语义（报 `total - cap`）不变。
+   注意 `_merge_shot_into` 对 dialogue 按 JSON 去重，完全相同文本的镜头
+   合并后不重复累计。
 2. **生成端源头治理落地**：story-writer 按目标片长 × 朗读速率约束台词字数，
    速率常量收敛到 `ScriptDurationRateConstants`（`config/constant.py`），
    共享函数在 `utils/script_duration.py`，详见
@@ -151,8 +154,9 @@ declared、目标 180s，表面达标），但 34 条台词 TTS 真实朗读 393
 2. 超上限 → 所有镜头 duration 等比压缩，单镜头下限 = max(1.5s, 该镜头台词朗读秒数)
    （台词必须念完）；压缩后仍超限 → 迭代把全局最短镜头并入同组相邻镜头
    （`_merge_shot_into`：视频侧文本与 dialogue 追加合并、首帧保留在前镜头、
-   duration 取 max），直到达标或无可合并镜头；因台词下限压不到目标时接受超出，
-   报告 `dialogue_floor_exceeded_seconds`；
+   duration 取 max），直到达标或无可合并镜头；因台词下限压不到目标、或合并后
+   卡片 `total` 仍盖不住台词下限时接受超出，报告
+   `dialogue_floor_exceeded_seconds`（对比对象是当前 `total`，不是 `target`）；
 3. 低于下限 → 所有镜头 duration 等比放大；单镜头超过 `max_shot_seconds`
    （= `TOTAL_DURATION_SHOT_EXPAND_MAX_SECONDS` 10s，与 prompt 的 3~8 秒正常节奏配套：
    **增加总时长靠增加镜头数而非拉长单镜头**）时截断，保证随后 `reorganize_shot_groups`
