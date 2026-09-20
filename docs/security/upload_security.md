@@ -41,6 +41,8 @@
   `tiffPlaceholderHtml(label)`；本地 base64/objectURL 预览对 tif 会裂图，
   各上传入口须特判显示占位（video_workflow 画风图/多服装/多角度缩略、
   画布图片/图生视频首尾帧/数字人节点、index 系 ai_script_gen 配图等）。
+  画布拖放（`web/js/canvas_drop.js`）白名单含 tif/tiff，按扩展名放行；
+  超限 TIFF 不走 `compressImageFile`（浏览器 Image 解不出），按体积拒绝。
 - 接入点：`_save_uploaded_image` / `_save_user_asset` /
   `/api/image-to-video/upload-media`（A 类，经 media_upload）与
   characters/locations/props 参考图 12 处落盘点（C 类，写盘后追加转码），

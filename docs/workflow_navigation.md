@@ -75,8 +75,8 @@
 #### 画布文件拖放
 - 从文件夹拖拽图片/视频文件到画布任意位置，松开即在落点直接创建对应的图片节点或视频节点，并自动上传（复用节点内 file input 的 change 上传逻辑，上传成功后触发自动保存）
 - 多文件批量拖入：按落点依次偏移创建多个节点（碰撞避让走 `findNearestAvailablePosition`）
-- 类型白名单与后端 `utils/media_upload.py` 一致：图片 jpg/jpeg/png/webp/gif/bmp，视频 mp4/mov/webm/avi/mkv；其他类型 toast 提示不支持
-- 图片大小预检读取 `window.__wfUploadConfig`（`events.js` 拉取的 `/api/config/upload` 配置）；**超限图片自动在前端压缩后上传**（GIF 会丢动画帧不压缩，保持拒绝提示）；视频与节点内上传行为一致，由后端兜底校验
+- 类型白名单与后端 `utils/media_upload.py` 一致：图片 jpg/jpeg/png/webp/gif/bmp/tif/tiff，视频 mp4/mov/webm/avi/mkv；其他类型 toast 提示不支持。tif/tiff 按扩展名识别（部分 Windows 环境 `file.type` 为空，不能只靠 `image/*` MIME）
+- 图片大小预检读取 `window.__wfUploadConfig`（`events.js` 拉取的 `/api/config/upload` 配置）；**超限图片自动在前端压缩后上传**（GIF 会丢动画帧不压缩，保持拒绝提示；**TIFF 浏览器解不出，超限直接拒绝，不走 `compressImageFile`**）；未超限 TIFF 交给节点上传，由后端转 PNG。视频与节点内上传行为一致，由后端兜底校验
 - 拖到已有图片/视频节点的 file input 上：补派 change 事件让原生 drop 填充的文件生效
 - 实现文件：`web/js/canvas_drop.js`（`events.js` 之后加载），高亮样式 `.canvas-container.drag-over`（`css/video_workflow.css`）
 

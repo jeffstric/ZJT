@@ -1282,12 +1282,14 @@ def enforce_total_duration_limit(
             # 台词朗读下限导致压不到目标：接受超出并上报差额（台词必须念完）
             if dialogue_floor_sum > cap:
                 report["dialogue_floor_exceeded_seconds"] = round(total - cap, 1)
-        elif dialogue_floor_sum > float(target_seconds):
-            # 合并把总时长压进容差，但合并镜头 duration 取 max 不含被并镜头
-            # 台词时长：台词物理下限之和仍超目标，成片时长必然被配音顶回。
-            # 上报「下限与当前总时长的差额」，不让超限在报告里假达标
-            # （线上事故：floor_sum=346.3s 被合并压进容差后未上报）。
-            report["dialogue_floor_exceeded_seconds"] = round(dialogue_floor_sum - total, 1)
+        elif dialogue_floor_sum > total:
+            # 合并把卡片总时长压进容差，但 duration 取 max、台词按 JSON 去重追加：
+            # 只有「台词下限仍大于当前 total」才是假达标（配音会把成片顶回去）。
+            # 台词略超 target 但已被 total 覆盖、且 total 在容差内 → 真达标，不报。
+            # 上报「下限 − 当前 total」，禁止负数（线上事故：floor_sum=346.3s）。
+            report["dialogue_floor_exceeded_seconds"] = round(
+                max(0.0, dialogue_floor_sum - total), 1)
+
         report["total_after"] = round(total, 1)
         parsed_data["total_duration"] = int(round(total))
         return report
