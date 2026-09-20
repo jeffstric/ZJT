@@ -1044,6 +1044,7 @@ start.bat / linux_start_prod.sh
 - **不调用 `init_scheduler`**，绕开全局 `scheduler.lock`；用 per-index 文件锁 `<root>/script_split_worker_<index>.lock` 防止同 index 重复启动（复用 `msvcrt`/`fcntl` + 残留死锁检测，强制 kill 后 OS 锁自动释放）
 - 启动时注入 `ScriptSplitConstants.WORKER_TOTAL/WORKER_INDEX`
 - **商业能力进程初始化**（非社区版）：独立 worker 不 import `server`、不跑 FastAPI lifespan，须在 tick 循环前调用 enterprise 的后台 bootstrap（与主调度器一致）；未初始化时 quality 等商业策略 fail-closed。实现见 `run_script_split_worker.py` / `run_scheduler.py`；细节仅在 enterprise 私有文档维护
+- **商业许可证周期续租**（非社区版，2026-09-20 事故补丁）：worker 不启动 APScheduler，2026-09-15 事故修复的 `commercial_license_rebootstrap` 定时 job 只覆盖 scheduler 进程；worker 进程内 `LicenseStateStore` 在启动 bootstrap 拿到的 24h 租约到期后无人续租，`require_commercial_license` 持续抛「商业授权租约已经过期」——段生成后处理（空间修复）与 quality 策略实例化全部失败，线上表现为「段 N 达到重试上限 3」连续暂停。修复：主循环每 tick 调 `_maybe_rebootstrap_license()`，复用 `task/license_rebootstrap_task` 门面（`license_rebootstrap.enabled` 动态开关、Web 进程判重、异常自吞、Sentry 告警限频均由门面/Provider 内置），按 `license_rebootstrap.interval_seconds`（数据库 system_config 优先 + YAML 兜底，默认 `LICENSE_REBOOTSTRAP_INTERVAL_SECONDS`=6h）节流，社区版直接跳过；dev2 环境在 `config_dev.yml` 配 300s 便于观察验证
 - 主循环：`while True: asyncio.run(process_script_split_tasks()); sleep(SCHEDULER_INTERVAL_SECONDS)`，复用既有单步推进 + 看门狗 + 租约逻辑，单次异常捕获防拖垮进程
 - 日志写入 `logs/app.YYYY-MM-DD.log`（import `utils.logger_config` 自动配置）
 
@@ -1056,6 +1057,7 @@ start.bat / linux_start_prod.sh
 | 同 index 重复启动 | per-index 文件锁拒绝第二个进程（退出码 3） |
 | 进程数变更（N=2→3） | 改配置后重启全部 worker；分片变更期间少数跨片任务靠租约回收兜底 |
 | DB 未就绪读配置 | `get_dynamic_config_value` 安全回退到 YAML |
+| 许可证租约到期（非社区版） | 主循环 tick 节流巡检自动续租（见 25.5）；授权服务器不可达时续租失败仅告警不拖垮循环，租约到期内商业策略 fail-closed，恢复后下一巡检窗口自愈 |
 
 ### 25.7 不依赖关系（已确认）
 
