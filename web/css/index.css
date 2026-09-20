@@ -276,6 +276,31 @@ header {
   color: var(--text);
 }
 
+/* 弹窗滚动条：细窄圆角、贴合深色主题（WebKit 透明描边悬浮样式 + Firefox thin） */
+.modal {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+.modal::-webkit-scrollbar {
+  width: 8px;
+}
+
+.modal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modal::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.modal::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(148, 163, 184, 0.6);
+}
+
 /* 可滚动弹窗（.modal 设 overflow-y:auto）内的粘性头部：
    把关闭按钮（position:absolute）的包裹层从 relative 改为 sticky，
    使头部连同 × 始终吸附在滚动容器顶部，避免滚动时关闭按钮被带出可视区。 */

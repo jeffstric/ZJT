@@ -2,9 +2,11 @@
 月度订阅（充值中心-月度订阅 Tab）UI E2E 测试。
 
 通过 page.route() mock /api/subscription/* 响应，覆盖本次订阅改动的界面表现：
-  - 新用户（first_bonus_eligible=true）：套餐卡片展示「首期订阅加赠 X 算力」
+  - 新用户（first_bonus_eligible=true）：首订加赠并入首期算力展示（328+200=528），
+    小字标注「之后每期 328 算力」，不再独立展示加赠角标
+  - 新用户：套餐卡片展示「比直接购买多约 X 算力」对比角标（数据驱动，按充值包单价折算）
   - 签约未生效（sign_not_effective=true）：展示琥珀色引导横幅（区别于用户主动解约文案）
-  - 老用户（first_bonus_eligible=false）：不展示加赠标签
+  - 老用户（first_bonus_eligible=false）：不展示加赠标签，按每期常规算力展示
 
 需要目标环境的 is_local=false（否则「算力充值」按钮只弹提示不打开弹窗）。
 """
@@ -25,6 +27,17 @@ SUBSCRIPTION_PLANS = [
      "granted_after_commission": 5598, "first_period_bonus": 1000, "template_id": "223104", "badge": None},
 ]
 
+# 算力充值套餐 mock（与 config/constant.py RECHARGE_PACKAGES 结构一致）。
+# 含 0.1 元首充福利包：用于验证对比折算将其排除（否则参考单价被促销包扭曲）。
+RECHARGE_PACKAGES = [
+    {"package_id": 5, "computing_power": 99, "price": 0.1, "description": "首充福利 99",
+     "granted_computing_power": 99},
+    {"package_id": 1, "computing_power": 88, "price": 9.9, "description": "算力包 88",
+     "granted_computing_power": 88},
+    {"package_id": 2, "computing_power": 508, "price": 49.9, "description": "算力包 508",
+     "granted_computing_power": 508},
+]
+
 # 各场景订阅状态（对应 services.subscription_service.get_subscription_status 返回）
 STATUS_NEW_USER = {"subscribed": False, "status": "none", "first_bonus_eligible": True}
 STATUS_SIGN_NOT_EFFECTIVE = {
@@ -34,7 +47,7 @@ STATUS_SIGN_NOT_EFFECTIVE = {
 STATUS_RETURNING_USER = {"subscribed": False, "status": "none", "first_bonus_eligible": False}
 
 
-def _mock_subscription_api(page, subscription):
+def _mock_subscription_api(page, subscription, recharge_packages=None):
     """mock 订阅相关 API；其余请求透传给真实服务（复用 live_auth 注入的登录态）"""
     def _handler(route):
         url = route.request.url
@@ -52,7 +65,7 @@ def _mock_subscription_api(page, subscription):
             route.fulfill(
                 status=200,
                 content_type="application/json",
-                body=_json.dumps({"success": True, "packages": []}),
+                body=_json.dumps({"success": True, "packages": recharge_packages or []}),
             )
         else:
             route.continue_()
@@ -60,9 +73,9 @@ def _mock_subscription_api(page, subscription):
     page.route("**/api/**", _handler)
 
 
-def _open_subscription_tab(page, base_url, subscription):
+def _open_subscription_tab(page, base_url, subscription, recharge_packages=None):
     """打开充值中心（默认落在月度订阅 Tab），等待套餐卡片渲染"""
-    _mock_subscription_api(page, subscription)
+    _mock_subscription_api(page, subscription, recharge_packages)
     page.goto(base_url, wait_until="domcontentloaded")
     # 头部「算力充值」按钮（$t('recharge')）；弹窗未打开时页面唯一匹配
     page.locator("button.btn.secondary", has_text="算力充值").first.click()
@@ -73,15 +86,27 @@ def _open_subscription_tab(page, base_url, subscription):
 @pytest.mark.subscription
 @pytest.mark.p2
 class TestSubscriptionBonusDisplay:
-    """首订加赠标签按资格展示"""
+    """首订加赠并入首期算力展示（不再独立角标）"""
 
-    def test_new_user_sees_first_period_bonus(self, browser_context, base_url):
+    def test_new_user_sees_merged_first_period_power(self, browser_context, base_url):
         page = browser_context.new_page()
         _open_subscription_tab(page, base_url, STATUS_NEW_USER)
 
-        tags = page.locator(".sub-plan-bonus")
-        assert tags.count() == 4, "新用户应看到全部 4 档的首期加赠标签"
-        assert "首期订阅加赠 200 算力" in tags.first.inner_text()
+        # 加赠不再独立展示，而是并入首期算力主数字
+        assert page.locator(".sub-plan-bonus").count() == 0, "不应再出现独立的首期加赠角标"
+        power = page.locator(".sub-plan-power").first.inner_text()
+        assert "528" in power, "入门版首期应为 328+200=528 算力"
+        assert "首期" in power
+        assert "之后每期 328 算力" in power, "小字应标注之后每期的常规到账算力"
+
+    def test_multiple_label_shown_except_base_plan(self, browser_context, base_url):
+        page = browser_context.new_page()
+        _open_subscription_tab(page, base_url, STATUS_NEW_USER)
+
+        # 「≈ 基础档 X 倍算力」保留：除入门版（最低档）外均展示
+        mults = page.locator(".sub-plan-mult")
+        assert mults.count() == 3, "标准/专业/旗舰版应显示倍数标注，入门版不显示"
+        assert "2.5 倍算力" in mults.first.inner_text()
 
     def test_returning_user_no_bonus_tag(self, browser_context, base_url):
         page = browser_context.new_page()
@@ -89,6 +114,11 @@ class TestSubscriptionBonusDisplay:
 
         assert page.locator(".sub-plan-bonus").count() == 0, \
             "已有历史成功签约的老用户不应再看到首期加赠标签"
+        power = page.locator(".sub-plan-power").first.inner_text()
+        # 老用户不再享受首订加赠：按每期常规到账展示，无首期标注
+        assert "328" in power
+        assert "首期" not in power
+        assert "之后每期" not in power
 
     def test_new_user_bonus_text_in_payment_panel(self, browser_context, base_url):
         page = browser_context.new_page()
@@ -96,7 +126,40 @@ class TestSubscriptionBonusDisplay:
 
         page.locator(".sub-plan-card").first.click()
         panel_text = page.locator(".sub-payment-panel").inner_text()
-        assert "首期订阅加赠 200 算力" in panel_text
+        assert "首期到账 528 算力" in panel_text
+        assert "之后每期 328 算力" in panel_text
+
+
+@pytest.mark.subscription
+@pytest.mark.p2
+class TestSubscriptionVsDirectSave:
+    """「比直接购买多约 X 算力」对比角标（参考单价取最低价的常规算力包，排除首充福利）"""
+
+    def test_new_user_sees_save_badge(self, browser_context, base_url):
+        page = browser_context.new_page()
+        _open_subscription_tab(page, base_url, STATUS_NEW_USER, recharge_packages=RECHARGE_PACKAGES)
+
+        badges = page.locator(".sub-plan-save")
+        assert badges.count() == 4, "全部 4 档均应按充值包单价折算出更多算力"
+        # 入门版：首期 528 - round(29.9 × 88/9.9)=266 → 多约 262 算力
+        # （0.1 元首充福利包必须被排除，否则参考单价失真、角标不展示）
+        assert "比直接购买多约 262 算力" in badges.first.inner_text()
+
+    def test_returning_user_save_badge_uses_regular_power(self, browser_context, base_url):
+        page = browser_context.new_page()
+        _open_subscription_tab(page, base_url, STATUS_RETURNING_USER, recharge_packages=RECHARGE_PACKAGES)
+
+        # 老用户无首订加赠：按每期常规算力 328 对比 → 328-266=62，仍展示角标
+        badges = page.locator(".sub-plan-save")
+        assert badges.count() == 4
+        assert "比直接购买多约 62 算力" in badges.first.inner_text()
+
+    def test_no_badge_without_recharge_packages(self, browser_context, base_url):
+        page = browser_context.new_page()
+        # 充值套餐未加载（空列表）时不展示角标，避免出现无参照的失真数字
+        _open_subscription_tab(page, base_url, STATUS_NEW_USER, recharge_packages=[])
+
+        assert page.locator(".sub-plan-save").count() == 0
 
 
 @pytest.mark.subscription

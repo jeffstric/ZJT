@@ -3111,13 +3111,42 @@
       },
 
       planMultipleText(plan) {
-        // 相对最低档的算力倍数（Kimi 式直观标注）
+        // 相对最低档的算力倍数（Kimi 式直观标注）；最低档本身不展示（返回空串）
         const powers = (this.subscriptionPlans || []).map(p => Number(p.computing_power) || 0).filter(x => x > 0);
         if (!powers.length) return '';
         const base = Math.min.apply(null, powers);
-        if (!base || !plan.computing_power || plan.computing_power <= base) return '基础档';
+        if (!base || !plan.computing_power || plan.computing_power <= base) return '';
         const m = Math.round((plan.computing_power / base) * 10) / 10;
         return '≈ 基础档 ' + m + ' 倍算力';
+      },
+
+      // 「直接购买算力」参考单价（算力/元）：取价格最低的常规算力包（与充值 Tab 展示口径一致，
+      // granted_computing_power 优先；排除 1 元以下促销包如首充福利）。无有效套餐时返回 0。
+      rechargeReferenceRate() {
+        const pkgs = (this.rechargePackages || []).filter(p => {
+          const price = Number(p.price) || 0;
+          const power = Number(p.granted_computing_power || p.computing_power) || 0;
+          return price >= 1 && power > 0;
+        });
+        if (!pkgs.length) return 0;
+        const ref = pkgs.reduce((a, b) => (Number(a.price) <= Number(b.price) ? a : b));
+        return (Number(ref.granted_computing_power || ref.computing_power) || 0) / (Number(ref.price) || 1);
+      },
+
+      // 套餐首屏算力：首订加赠并入首期展示（withBonus=true 且套餐配置加赠时 = 每期到账 + 加赠）
+      subPlanHeadlinePower(plan, withBonus) {
+        const base = Number(plan && plan.computing_power) || 0;
+        const bonus = withBonus ? (Number(plan && plan.first_period_bonus) || 0) : 0;
+        return base + bonus;
+      },
+
+      // 相对「同样金额直接购买算力」多出的算力；参考单价缺失时返回 null（不展示），不为正返回 0
+      planExtraVsRecharge(plan, withBonus) {
+        const rate = this.rechargeReferenceRate();
+        if (!rate || !plan) return null;
+        const direct = Math.round((Number(plan.price) || 0) * rate);
+        const extra = this.subPlanHeadlinePower(plan, withBonus) - direct;
+        return extra > 0 ? extra : 0;
       },
 
       selectSubPlan(plan) {
