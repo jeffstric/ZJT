@@ -125,17 +125,17 @@ describe('画布三类节点接线', () => {
   it('分镜节点：参考模式消费 voiceCharacters 并写入 audio_urls', () => {
     const collector = readSource('web/js/shot_frame_generator.js');
     expect(collector).toContain('const voiceCharacters = [];');
-    expect(collector).toContain("return { referenceImageUrls, promptSuffix, missingCharacters, voiceCharacters };");
+    expect(collector).toContain("return { referenceImageUrls, promptSuffix, missingCharacters, voiceCharacters, characterRefUrls };");
 
     const generator = readSource('web/js/shot_frame_video_generator.js');
-    expect(generator).toContain('voiceCharacters } = await collectShotFrameRefImages(node)');
+    expect(generator).toContain('voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node)');
     expect(generator).toContain("collectVoiceReferences(videoModel, voiceCharacters || [], '')");
     expect(generator).toContain("form.append('audio_urls', voiceRefs.voiceUrls.join(','))");
   });
 
   it('分镜组节点：参考模式消费 gridVoiceCharacters 并写入 audio_urls', () => {
     const src = readSource('web/js/nodes.js');
-    expect(src).toContain('voiceCharacters: _voiceCharacters } = await collectReferenceImagesForGrid(shotFrameNodes)');
+    expect(src).toContain('voiceCharacters: _voiceCharacters, characterRefUrls: _characterRefUrls } = await collectReferenceImagesForGrid(shotFrameNodes)');
     expect(src).toContain('collectVoiceReferences(videoModel || \'wan22\', gridVoiceCharacters, \'\')');
   });
 });
