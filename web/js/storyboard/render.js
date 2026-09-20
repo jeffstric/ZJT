@@ -1838,10 +1838,12 @@ function isCandidateTaskRunning(status) {
 }
 
 function renderCandidateTimelineButton(aiToolId, extraClass = '') {
-    // 关联生成任务的时间轴入口（window.AiToolTimeline 弹窗，click 委托在 ai_tool_timeline.js）
+    // 关联生成任务的时间轴入口（window.AiToolTimeline 弹窗，click 委托在 ai_tool_timeline.js）。
+    // 与删除（右上）/播放（居中）角标统一为 20px 圆形图标按钮并固定左上：右栏是 ~104px 窄条、
+    // 候选卡仅约 84×47px，文字 pill 放底部会与居中播放徽标重叠。
     if (!aiToolId) return '';
-    return `<button type="button" class="ai-task-timeline-btn${extraClass ? ' ' + extraClass : ''}"
-            data-task-ids="${escapeHtml(String(aiToolId))}" title="查看生成状态时间轴">状态</button>`;
+    return `<button type="button" class="ai-task-timeline-btn candidate-timeline-icon${extraClass ? ' ' + extraClass : ''}"
+            data-task-ids="${escapeHtml(String(aiToolId))}" title="查看生成状态时间轴" aria-label="查看生成状态时间轴">${icon('timeline', 11)}</button>`;
 }
 
 function renderCandidatePlaceholder(status, kind = 'image', error, aiToolId) {
@@ -1888,7 +1890,7 @@ function renderCandidateMedia(item, kind = 'image') {
             return `
                 <div class="candidate-video-thumb">
                     <video src="${escapeHtml(thumbnailUrl)}"${posterAttr} muted playsinline preload="metadata" tabindex="-1" aria-hidden="true"></video>
-                    <button type="button" class="candidate-video-badge" data-candidate-play aria-label="播放此候选视频">${icon('play', 14)}</button>
+                    <button type="button" class="candidate-video-badge" data-candidate-play aria-label="播放此候选视频">${icon('play', 10)}</button>
                 </div>`;
         }
         return `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.label || '分镜图')}">`;
@@ -1924,7 +1926,7 @@ function renderCandidateDeleteButton(scene, item, assetType) {
                 data-action="delete-scene-candidate" data-candidate-delete-id="${assetId}"
                 data-candidate-delete-type="${assetType}" title="删除${mediaLabel}"
                 aria-label="删除${mediaLabel}" ${deleting ? 'disabled aria-busy="true"' : ''}>
-            ${icon(deleting ? 'loading' : 'delete', 13)}
+            ${icon(deleting ? 'loading' : 'delete', 11)}
         </button>`;
 }
 
