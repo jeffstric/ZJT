@@ -106,6 +106,27 @@ def _enterprise_sync_worker_init() -> None:
     """
     _reset_inherited_logging_locks()
     _start_init_watchdog()
+    # Windows spawn 不继承父进程内存：VideoDriverFactory._registered_drivers
+    # 在 worker 里是空字典，sync_mode 任务必然 "Driver implementation not
+    # registered" 失败（2026-09-20 任务 230，报误导文案"不支持的任务类型: 16"）。
+    # 主进程只在 server.py 启动时 register_all_drivers()，worker 必须自行注册；
+    # Linux/macOS fork 已继承注册表，两个调用均幂等（字典赋值 / 空表保护），重复无害。
+    # 放在社区版 early-return 之前，两版通吃。
+    try:
+        from config.unified_config import init_unified_config
+        from task.visual_drivers import VideoDriverFactory, register_all_drivers
+        init_unified_config()
+        register_all_drivers()
+        logger.info(
+            "[SyncTaskExecutor] video drivers registered in worker (pid=%s, count=%s)",
+            os.getpid(),
+            len(VideoDriverFactory._registered_drivers),
+        )
+    except Exception:
+        logger.exception(
+            "[SyncTaskExecutor] worker driver registration failed (pid=%s)",
+            os.getpid(),
+        )
     # fork 继承的 QiniuFileStorage 单例线程池在子进程必然失效：父进程用过的
     # ThreadPoolExecutor，其空闲信号量假 token 与 _threads 死对象一并被 fork
     # 快照，子进程首个 submit 消费假 token 后跳过建线程，任务入队无人消费，
@@ -229,12 +250,22 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
         if not driver:
             driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
         if not driver:
-            logger.error(f"[SyncTask] Unsupported driver type: {ai_tool_type}")
+            # 取工厂记录的真实失败原因（未注册/配置缺失/无可用实现方等），
+            # 不再硬编码"不支持的任务类型"——任务类型本身往往存在，
+            # 真实原因常在 worker 侧驱动注册/配置（2026-09-20 任务 230）。
+            create_error = VideoDriverFactory.get_last_create_error()
+            error_message = (
+                (create_error or {}).get("message")
+                or f"不支持的任务类型: {ai_tool_type}"
+            )
+            logger.error(
+                f"[SyncTask] Failed to create driver for type {ai_tool_type}: {error_message}"
+            )
             return SyncTaskResult(
                 task_id=task_id,
                 ai_tool_type=ai_tool_type,
                 success=False,
-                error=f"不支持的任务类型: {ai_tool_type}",
+                error=error_message,
                 error_type="SYSTEM"
             )
 
