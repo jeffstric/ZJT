@@ -64,6 +64,7 @@
 
 - **注入内容**：① 参考音频——角色 `default_voice` 并入参考音频通道（seedance 走 `reference_audio` 自动上传 CDN，MiniMax H3 走 LoadAudio 槽位）；② 提示词说明——尾部追加「参考音频说明：音频N是角色：XX的音色样本，角色说话时请保持相同音色。」（与参考图图例同构，幂等追加）
 - **注入条件**（全部满足）：`multi_reference` 模式 + 模型 `supports_voice_input=True` + 角色有默认音色；无音色角色跳过，与用户手动携带音频按 URL 去重，最多注入 2 条（`MAX_VOICE_REFERENCE_AUDIOS`，受 MiniMax H3 LoadAudio 硬上限约束）
+- **时长预算兜底**（seedance 系列）：角色音色源音频上传时裁到 20s（TTS 克隆需要），而火山 r2v 限制音频总时长 2.0 系列 ≤15s / 2.5 ≤30s。seedance 驱动（火山国内/海外/kkidc/huimengi）提交前按「(总上限-0.5s 余量)/条数」均分配额自动截断超长音频到临时文件（不修改角色原音频），详见 `docs/drivers/seedance_volcengine_v1_driver.md`「参考音频总时长预算与自动截断」；MiniMax H3 不受此限制
 - **不支持的模型**（grok / kling / vidu / veo3 / wan3 等默认 False）：不注入音频也不追加文字，行为零变化
 - **能力位配置**：`config/unified_config.py` `UnifiedTaskConfig.supports_voice_input`（`to_frontend_dict` 同步下发前端）；当前 True：`seedance_2_0` / `seedance_2_0_fast` / `seedance_2_0_mini` / `seedance_2_5` / `minimax_h3_r2v`
 
