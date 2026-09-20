@@ -44,6 +44,7 @@ from config.constant import (
     MediaGenerationSurface,
     MediaGenerationType,
     IMAGE_MODE_EXTRA_CONFIG_KEY,
+    FaceMaskPromptConstants,
 )
 from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import (
@@ -4419,6 +4420,16 @@ async def generate_scene_video(
         'generation_snapshot': generation_snapshot,
         'enable_face_mask': effective_face_mask,
     }
+    # 人脸遮盖白名单：参考图（角色/场景/道具/画风/上传图）中只有角色参考图
+    # 参与本地人脸遮盖。legend_items 与 reference_images 同源（去重保序对齐），
+    # 取 source_type=character 的 URL 子集；空列表表示当前分镜没有角色参考图，
+    # 同样写入（明确声明全部参考图都无需遮盖）。
+    if legend_items:
+        extra_payload[FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY] = [
+            str(item.get('url') or '').strip()
+            for item in legend_items
+            if item.get('source_type') == 'character' and str(item.get('url') or '').strip()
+        ]
     if snapshot_image_mode:
         extra_payload[IMAGE_MODE_EXTRA_CONFIG_KEY] = snapshot_image_mode
     if video_resolution:

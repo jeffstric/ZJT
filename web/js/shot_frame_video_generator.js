@@ -161,7 +161,7 @@ async function generateShotFrameVideo(nodeId, node){
       // === 参考图模式 ===
       // 收集角色/场景/道具参考图
       showToast('正在收集参考图...', 'info');
-      const { referenceImageUrls, promptSuffix, voiceCharacters } = await collectShotFrameRefImages(node);
+      const { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node);
 
       // 将 promptSuffix 追加到视频提示词
       if(promptSuffix.length > 0) {
@@ -187,6 +187,12 @@ async function generateShotFrameVideo(nodeId, node){
         form.append('task_id', taskId);
         form.append('image_urls', referenceImageUrls.join(','));
         form.append('image_mode', 'multi_reference');
+
+        // 人脸遮盖白名单：勾选「是否处理人脸」时只对角色参考图做遮盖，
+        // 道具/场景参考图不参与（后端 create_with_pipeline_steps 按白名单建步骤）
+        if(node.data.processFace === true && characterRefUrls && characterRefUrls.length > 0) {
+          form.append('face_mask_reference_urls', characterRefUrls.join(','));
+        }
 
         // 参考生 + 模型支持音色输入时，自动带入分镜角色的默认音色；
         // grok 等不支持模型 collectVoiceReferences 返回空，不注入

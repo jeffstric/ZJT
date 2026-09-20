@@ -353,6 +353,75 @@ class TestCreateParamPrepareSteps(unittest.TestCase):
     @patch('task.pipeline_drivers.PipelineStepModel')
     @patch('task.pipeline_drivers.AIToolsModel')
     @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_seedance_reference_whitelist_limits_face_mask_steps(
+        self, MockRegistry, MockAITools, MockStepModel, mock_config
+    ):
+        """参考图遮盖白名单：只有白名单内（角色）参考图建 image_face_mask 步骤，
+        道具/场景参考图跳过；白名单外的 URL 不产生步骤"""
+        import json as _json
+        mock_task_config = MagicMock()
+        mock_task_config.key = 'seedance_2_0_fast_image_to_video'
+        MockRegistry.get_by_id.return_value = mock_task_config
+        mock_ai_tool = MagicMock()
+        mock_ai_tool.image_path = None
+        mock_ai_tool.reference_images = _json.dumps(
+            ['char_a.png', 'prop_b.png', 'location_c.png', 'char_d.png']
+        )
+        mock_ai_tool.video_path = None
+        mock_ai_tool.extra_config = _json.dumps({
+            'face_mask_reference_urls': ['char_a.png', 'char_d.png'],
+        })
+        MockAITools.get_by_id.return_value = mock_ai_tool
+        mock_config.side_effect = (
+            lambda section, key, default=None:
+            True if (section, key) == ('pipeline', 'seedance_face_mask_enabled') else default
+        )
+        MockStepModel.create.side_effect = [301, 302]
+
+        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=12, ai_tool_type=22)
+
+        self.assertEqual(result, [301, 302])
+        self.assertEqual(MockStepModel.create.call_count, 2)
+        first_call = MockStepModel.create.call_args_list[0].kwargs
+        second_call = MockStepModel.create.call_args_list[1].kwargs
+        # index 保持原始下标（apply_results 按下标写回 reference_images）
+        self.assertEqual(first_call['params']['image_path'], 'char_a.png')
+        self.assertEqual(first_call['params']['index'], 0)
+        self.assertEqual(second_call['params']['image_path'], 'char_d.png')
+        self.assertEqual(second_call['params']['index'], 3)
+
+    @patch('task.pipeline_drivers.get_dynamic_config_value')
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    @patch('task.pipeline_drivers.AIToolsModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_seedance_reference_whitelist_empty_masks_nothing(
+        self, MockRegistry, MockAITools, MockStepModel, mock_config
+    ):
+        """白名单为空列表：明确声明没有参考图需要遮盖（道具-only 场景）"""
+        import json as _json
+        mock_task_config = MagicMock()
+        mock_task_config.key = 'seedance_2_0_fast_image_to_video'
+        MockRegistry.get_by_id.return_value = mock_task_config
+        mock_ai_tool = MagicMock()
+        mock_ai_tool.image_path = None
+        mock_ai_tool.reference_images = _json.dumps(['prop_b.png', 'location_c.png'])
+        mock_ai_tool.video_path = None
+        mock_ai_tool.extra_config = _json.dumps({'face_mask_reference_urls': []})
+        MockAITools.get_by_id.return_value = mock_ai_tool
+        mock_config.side_effect = (
+            lambda section, key, default=None:
+            True if (section, key) == ('pipeline', 'seedance_face_mask_enabled') else default
+        )
+
+        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=13, ai_tool_type=22)
+
+        self.assertEqual(result, [])
+        MockStepModel.create.assert_not_called()
+
+    @patch('task.pipeline_drivers.get_dynamic_config_value')
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    @patch('task.pipeline_drivers.AIToolsModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
     def test_seedance_image_face_mask_switch_off_skips_image_steps(
         self, MockRegistry, MockAITools, MockStepModel, mock_config
     ):
