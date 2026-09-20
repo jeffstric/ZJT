@@ -1740,6 +1740,55 @@ textarea:focus{ border-color: var(--primary); }
   backdrop-filter: blur(6px);
 }
 .video-preview-actions .vp-btn:hover{ background: rgba(0,0,0,0.65); }
+/* ===== 提取帧节点：时间轴选帧 + 关键帧候选网格 ===== */
+.time-picker-field .time-slider{
+  width: 100%;
+  margin: 4px 0 2px;
+  cursor: pointer;
+}
+.time-picker-field .time-display{
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+.keyframe-grid{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.keyframe-cell{
+  position: relative;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #000;
+  aspect-ratio: 1 / 1;
+}
+.keyframe-cell:hover{ border-color: var(--border); }
+.keyframe-cell.selected{ border-color: #22c55e; }
+.keyframe-cell .keyframe-img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.keyframe-cell .keyframe-time{
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 1px 4px;
+  font-size: 10px;
+  color: #fff;
+  background: rgba(0,0,0,0.55);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
 .modal{
   position: fixed;
   inset: 0;

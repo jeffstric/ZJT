@@ -144,6 +144,14 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceService,
 )
 from services.director_stage_env_fit import fit_environment_from_image
+from services.video_frame_extract_service import (
+    FrameExtractError,
+    extract_first_frame,
+    extract_frame_at,
+    extract_keyframe_candidates,
+    extract_last_frame,
+    probe_stream_duration,
+)
 from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
@@ -6039,23 +6047,41 @@ async def extract_video_frame(
     request: Request,
     file: Optional[UploadFile] = File(None, description="视频文件"),
     video_url: Optional[str] = Form(None, description="视频URL（与file二选一）"),
-    frame_type: str = Form("first", description="帧类型: first=首帧, last=尾帧"),
+    frame_type: str = Form("first", description="帧类型: first=首帧, last=尾帧, custom=自定义时间点, keyframes=关键帧候选"),
+    time_sec: Optional[float] = Form(None, description="自定义时间点（秒），frame_type=custom 时必填"),
+    start_time: Optional[float] = Form(None, description="关键帧起始时间（秒），frame_type=keyframes 时生效，只提取该时刻之后的关键帧"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
-    从视频中提取首帧或尾帧图片
+    从视频中提取帧图片
 
-    接收视频文件或视频URL，使用FFmpeg提取指定帧，返回图片URL
+    接收视频文件或视频URL，使用FFmpeg提取指定帧，返回图片URL。
+    frame_type: first=首帧, last=尾帧, custom=自定义时间点（需 time_sec）,
+                keyframes=关键帧候选（场景切换检测+均匀采样，返回多帧供前端选择）
     """
     try:
         user_id = _get_user_id_from_header(user_id)
 
         # 验证帧类型
-        if frame_type not in ["first", "last"]:
+        if frame_type not in ("first", "last", "custom", "keyframes"):
             return JSONResponse(
                 status_code=400,
-                content={"code": -1, "message": "帧类型必须是 first 或 last"}
+                content={"code": -1, "message": "帧类型必须是 first / last / custom / keyframes"}
+            )
+
+        # custom 必须带有效时间点
+        if frame_type == "custom" and (time_sec is None or time_sec < 0):
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "自定义时间点(frame_type=custom)必须提供非负的 time_sec"}
+            )
+
+        # 关键帧起始时间校验
+        if start_time is not None and start_time < 0:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "start_time 必须为非负数"}
             )
 
         # 验证输入：file 或 video_url 必须有一个
@@ -6113,92 +6139,84 @@ async def extract_video_frame(
                 f.write(content)
             need_cleanup = True  # 上传的文件需要清理
 
-        # 2. 使用FFmpeg提取帧
-        ffmpeg_path = resolve_bin_path(get_config_value("bin", "ffmpeg", default="ffmpeg"), APP_DIR)
-        ffmpeg_timeout = get_config_value("bin", "ffmpeg_timeout", default=30)
-
-        # 输出图片文件名
-        frame_name = "first_frame" if frame_type == "first" else "last_frame"
-        image_filename = f"{frame_name}_{timestamp}_{unique_id}.jpg"
-        image_path = os.path.join(temp_dir, image_filename)
-
-        # FFmpeg命令: 根据帧类型选择不同的提取方式
-        if frame_type == "first":
-            # 提取首帧
-            ffmpeg_cmd = [
-                ffmpeg_path,
-                "-i", video_path,
-                "-vframes", "1",      # 只提取1帧
-                "-q:v", "2",          # 高质量（2 = 很好）
-                "-y",                # 覆盖输出文件
-                image_path
-            ]
-        else:
-            # 提取尾帧: 使用 -sseof 从文件末尾开始定位
-            ffmpeg_cmd = [
-                ffmpeg_path,
-                "-sseof", "-0.1",     # 从文件末尾前0.1秒开始
-                "-i", video_path,
-                "-vframes", "1",      # 只提取1帧
-                "-q:v", "2",          # 高质量
-                "-y",                # 覆盖输出文件
-                image_path
-            ]
-
-        # 在线程池中执行FFmpeg命令
         try:
-            process = await asyncio.to_thread(
-                lambda: subprocess.run(
-                    ffmpeg_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=ffmpeg_timeout
-                )
-            )
+            if frame_type == "keyframes":
+                # 关键帧候选：一次返回一批（场景切换+均匀采样），由前端渲染网格供用户选择；
+                # start_time 翻页续批：只提取该时刻之后的候选，响应带 last_time_sec 供前端推进起点
+                kf_start = float(start_time) if start_time is not None else 0.0
+                name_prefix = f"keyframe_{timestamp}_{unique_id}"
+                frames = await extract_keyframe_candidates(video_path, temp_dir, name_prefix, start_time=kf_start)
+                date_dir = datetime.now().strftime('%Y%m%d')
+                logger.info(f"成功提取关键帧候选: {video_filename} -> {len(frames)} 帧 (start={kf_start:.2f}s)")
+                return JSONResponse({
+                    "code": 0,
+                    "message": "提取成功",
+                    "data": {
+                        "frames": [
+                            {
+                                "url": f"{request_host}/upload/temp/{date_dir}/{os.path.basename(fr['path'])}",
+                                "time_sec": fr["time_sec"]
+                            }
+                            for fr in frames
+                        ],
+                        "frame_type": "keyframes",
+                        "start_time": kf_start,
+                        # 末帧时间：前端将其写回起始时间，实现"不断点击、不断向后提取"
+                        "last_time_sec": frames[-1]["time_sec"] if frames else kf_start
+                    }
+                })
 
-            if process.returncode != 0:
-                error_msg = process.stderr or "未知错误"
-                logger.error(f"FFmpeg提取{frame_name}失败: {error_msg}")
-                return JSONResponse(
-                    status_code=500,
-                    content={"code": -1, "message": f"提取{frame_name}失败: {error_msg}"}
-                )
+            # 单帧提取（first / last / custom）
+            if frame_type == "first":
+                image_filename = f"first_frame_{timestamp}_{unique_id}.jpg"
+                image_path = os.path.join(temp_dir, image_filename)
+                await extract_first_frame(video_path, image_path)
+            elif frame_type == "last":
+                image_filename = f"last_frame_{timestamp}_{unique_id}.jpg"
+                image_path = os.path.join(temp_dir, image_filename)
+                await extract_last_frame(video_path, image_path)
+            else:  # custom
+                # 时间点越界校验（视频流时长；probe 失败时跳过校验，由提取链兜底报错）
+                duration = await probe_stream_duration(video_path)
+                if duration is not None and time_sec >= duration:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"code": -1, "message": f"时间点 {time_sec:.2f}s 超出视频时长 {duration:.2f}s"}
+                    )
+                image_filename = f"frame_{time_sec:.2f}s_{timestamp}_{unique_id}.jpg"
+                image_path = os.path.join(temp_dir, image_filename)
+                await extract_frame_at(video_path, image_path, time_sec)
 
-        except subprocess.TimeoutExpired:
-            logger.error(f"FFmpeg提取{frame_name}超时: {video_path}")
-            return JSONResponse(
-                status_code=500,
-                content={"code": -1, "message": f"提取{frame_name}超时，请尝试较小的视频文件"}
-            )
-        except FileNotFoundError:
-            logger.error(f"FFmpeg未找到: {ffmpeg_path}")
-            return JSONResponse(
-                status_code=500,
-                content={"code": -1, "message": "FFmpeg未配置或不可用"}
-            )
+            image_url = f"{request_host}/upload/temp/{datetime.now().strftime('%Y%m%d')}/{image_filename}"
+            logger.info(f"成功提取帧({frame_type}): {video_filename} -> {image_filename}")
 
-        # 3. 验证生成的图片
-        if not os.path.exists(image_path) or os.path.getsize(image_path) == 0:
-            return JSONResponse(
-                status_code=500,
-                content={"code": -1, "message": f"提取{frame_name}失败，生成的图片无效"}
-            )
-
-        # 4. 返回图片URL
-        image_url = f"{request_host}/upload/temp/{datetime.now().strftime('%Y%m%d')}/{image_filename}"
-
-        logger.info(f"成功提取{frame_name}: {video_filename} -> {image_filename}")
-
-        return JSONResponse({
-            "code": 0,
-            "message": "提取成功",
-            "data": {
+            data = {
                 "url": image_url,
                 "filename": image_filename,
                 "frame_type": frame_type
             }
-        })
+            if frame_type == "custom" and time_sec is not None:
+                data["time_sec"] = time_sec
 
+            return JSONResponse({
+                "code": 0,
+                "message": "提取成功",
+                "data": data
+            })
+        finally:
+            # 上传的临时视频文件用完即删（/upload/ URL 引用的服务端文件不删）
+            if need_cleanup and video_path and os.path.exists(video_path):
+                try:
+                    os.remove(video_path)
+                except OSError:
+                    logger.warning(f"临时视频文件清理失败: {video_path}")
+
+    except FrameExtractError as e:
+        logger.error(f"FFmpeg提取帧失败: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": str(e)}
+        )
     except Exception as e:
         logger.error(f"Failed to extract frame: {str(e)}")
         logger.error(traceback.format_exc())
