@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/index.css" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
   <link rel="stylesheet" href="/css/announcement_center.css?v=__VERSION__" />
-  <link rel="stylesheet" href="/css/subscription.css?v=f7165" />
+  <link rel="stylesheet" href="/css/subscription.css?v=20260920b" />
 
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
@@ -1253,7 +1253,8 @@
                     <span class="symbol">¥</span><span class="amount">{{ plan.price }}</span><span class="unit">/月</span>
                   </div>
                   <div class="sub-plan-power">⚡ {{ plan.computing_power }} 算力/期</div>
-                  <div class="sub-plan-mult">{{ planMultipleText(plan) }}</div>
+                  <div class="sub-plan-mult" v-if="planMultipleText(plan)">{{ planMultipleText(plan) }}</div>
+                  <div class="sub-plan-save" v-if="planExtraVsRecharge(plan, false) > 0">🔥 比直接购买多约 {{ planExtraVsRecharge(plan, false) }} 算力</div>
                 </div>
               </div>
 
@@ -1323,9 +1324,12 @@
                 <div class="sub-plan-price">
                   <span class="symbol">¥</span><span class="amount">{{ plan.price }}</span><span class="unit">/月</span>
                 </div>
-                <div class="sub-plan-power">⚡ {{ plan.computing_power }} 算力/期</div>
-                <div class="sub-plan-mult">{{ planMultipleText(plan) }}</div>
-                <div v-if="plan.first_period_bonus && subFirstBonusEligible" class="sub-plan-bonus">首期订阅加赠 {{ plan.first_period_bonus }} 算力</div>
+                <div class="sub-plan-power">
+                  ⚡ {{ subPlanHeadlinePower(plan, subFirstBonusEligible) }} 算力<span v-if="plan.first_period_bonus && subFirstBonusEligible" class="sub-plan-power-first">· 首期</span>
+                  <span v-if="plan.first_period_bonus && subFirstBonusEligible" class="sub-plan-power-sub">之后每期 {{ plan.computing_power }} 算力</span>
+                </div>
+                <div class="sub-plan-mult" v-if="planMultipleText(plan)">{{ planMultipleText(plan) }}</div>
+                <div class="sub-plan-save" v-if="planExtraVsRecharge(plan, subFirstBonusEligible) > 0">🔥 比直接购买多约 {{ planExtraVsRecharge(plan, subFirstBonusEligible) }} 算力</div>
               </div>
             </div>
 
@@ -1356,7 +1360,7 @@
                 <div class="sub-amount-row">
                   <span class="symbol">¥</span>
                   <span class="value">{{ selectedSubPlan.price }}</span>
-                  <span class="per-month">/月 · 每期 {{ selectedSubPlan.computing_power }} 算力<span v-if="selectedSubPlan.first_period_bonus && subFirstBonusEligible">，首期订阅加赠 {{ selectedSubPlan.first_period_bonus }} 算力</span></span>
+                  <span class="per-month">/月<span v-if="selectedSubPlan.first_period_bonus && subFirstBonusEligible"> · 首期到账 {{ subPlanHeadlinePower(selectedSubPlan, true) }} 算力，之后每期 {{ selectedSubPlan.computing_power }} 算力</span><span v-else> · 每期 {{ selectedSubPlan.computing_power }} 算力</span></span>
                 </div>
 
                 <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError }">
@@ -1590,7 +1594,7 @@
   <script src="/js/pages/ai_script_gen.js"></script>
   <script src="/js/pages/skill_config.js"></script>
   <!-- App 组件、路由配置 -->
-  <script src="/js/index_app.js?v=f7165"></script>
+  <script src="/js/index_app.js?v=20260920b"></script>
   <script src="/js/announcement_center.js?v=__VERSION__"></script>
   <script>
   // i18n 初始化 - 必须在 Vue 应用创建前执行

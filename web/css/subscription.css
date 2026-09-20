@@ -137,9 +137,39 @@
 }
 
 .sub-plan-power {
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 700;
   color: var(--primary);
-  font-weight: 500;
+}
+
+/* 首屏算力为「首期合计」时的标注（首订加赠并入首期） */
+.sub-plan-power-first {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--primary);
+  opacity: 0.85;
+  margin-left: 2px;
+}
+
+/* 小字标注之后每期的常规到账算力 */
+.sub-plan-power-sub {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+/* 相对最低档的算力倍数标注（最低档不展示，见 planMultipleText） */
+.sub-plan-mult {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary);
+  background: rgba(34, 197, 94, 0.12);
+  border-radius: 8px;
+  padding: 3px 8px;
+  display: inline-block;
 }
 
 /* ===== 订阅支付面板 ===== */
@@ -353,27 +383,21 @@
   margin-top: 12px;
 }
 
-/* 首期加赠角标行 */
-.sub-plan-bonus {
-  margin-top: 4px;
-  font-size: 11px;
-  color: #f59e0b;
-  font-weight: 600;
-}
-
-/* 档位定位词与倍数标注 */
+/* 档位定位词 */
 .sub-plan-tagline {
   font-size: 11px;
   color: var(--muted);
   margin-top: 2px;
 }
 
-.sub-plan-mult {
-  margin-top: 6px;
+/* 相对直接购买多出的算力（突出展示，数据驱动：仅当折算后确实更多才展示） */
+.sub-plan-save {
+  margin-top: 8px;
   font-size: 11px;
   font-weight: 700;
-  color: var(--primary);
-  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.22) 0%, rgba(34, 197, 94, 0.08) 100%);
+  border: 1px solid rgba(34, 197, 94, 0.4);
   border-radius: 8px;
   padding: 3px 8px;
   display: inline-block;
