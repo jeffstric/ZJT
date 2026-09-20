@@ -150,6 +150,12 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 **触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5 任务类型 + 用户勾选 `enable_face_mask=true` + 商业版（非社区版）+ `pipeline.seedance_face_mask_enabled=true` + 有 `image_path` 或 `reference_images` 输入
 
+**参考图遮盖白名单（仅遮角色参考图）**：参考生视频的 `reference_images` 混合角色/场景/道具/画风/用户上传图，人脸遮盖只对**角色参考图**有意义——道具/场景图被遮盖会白白消耗 RunningHub 配额，且图上误检出的"人脸"（玩偶、海报人像）被打黑框后，还原句会让模型凭空还原。提交方在 `ai_tools.extra_config` 写入 `face_mask_reference_urls`（键常量 `FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY`，URL 数组），`create_with_pipeline_steps` 与 `_build_seedance_param_prepare_steps` 只为白名单内的参考图建 `image_face_mask` 步骤（跳过项的 `params.index` 保持原始下标，保证 `apply_results` 回写对位）；`image_path`（首尾帧）不受白名单影响，始终全量遮盖。键缺失时保持旧行为（全部参考图遮盖）；空列表表示明确声明没有参考图需要遮盖。
+
+写入方：
+- storyboard `generate-video`（`api/storyboard.py`）：从 `_collect_video_reference_bundle` 返回的 `legend_items` 取 `source_type == 'character'` 的 URL 注入；
+- `/api/ai-app-run-image`（`server.py`）：接收 form 字段 `face_mask_reference_urls`（逗号分隔），由 video_workflow 前端在收集参考图时传入（分镜组/分镜节点按角色收集循环、图生视频节点按连线来源 `fromNode.type === 'character'`）。
+
 **配置开关**：`pipeline.seedance_face_mask_enabled`，默认 `true`，是 Seedance 人脸遮盖前置处理的**总开关**（管理员级），同时控制图片（`image_face_mask`）和视频（`face_mask`）两种遮盖步骤。关闭后图片和视频的遮盖步骤均不创建，任务走普通生成流程。其上还有两层用户/版本级门：用户级 `enable_face_mask`（前端「是否处理人脸」勾选，默认不勾选，**opt-in**）与版本级 `NOT Edition.is_community()`（社区版禁止），三者同时满足才会创建步骤（见上文「用户开关与版本门」）。
 
 **处理语义**：调用 RunningHub AI App `2067560129192620033`，将输入图片上传后映射到节点 `3` 的 `image` 字段。RunningHub 返回的矩形黑块图只作为人脸检测中间结果；系统下载原图和黑块图，通过新增黑色区域提取每张脸的独立矩形框，再在原图副本上绘制红色网格。网格内部保留原始像素，不填充色块。

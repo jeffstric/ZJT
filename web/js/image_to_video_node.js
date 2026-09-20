@@ -1278,6 +1278,12 @@
             }
           }
 
+          // 人脸遮盖白名单：勾选「是否处理人脸」时只对角色参考图做遮盖。
+          // 仅连线来源为角色节点的参考图可识别类型（本地上传图无类型信息，不参与）
+          const faceMaskRefUrls = currentImageMode === 'multi_reference'
+            ? collectI2VCharacterRefUrls(id, node.data.referenceUrls || [])
+            : [];
+
           // 收集所有视频URL（上传 + 连接节点）
           let allVideoUrls = [...(node.data.videoUrls || []).map(v => v.url)];
           state.videoConnections.filter(c => c.to === id && c.portType === 'video-ref').forEach(c => {
@@ -1299,7 +1305,7 @@
           if(currentImageMode === 'text_to_video') {
             result = await generateVideoFromText(submitPrompt, duration, desiredCount, ratio, videoModel, node.data.videoResolution);
           } else {
-            result = await generateVideoFromImage(imageUrls, submitPrompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences), node.data.videoResolution, node.data.processFace);
+            result = await generateVideoFromImage(imageUrls, submitPrompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences), node.data.videoResolution, node.data.processFace, faceMaskRefUrls);
           }
           console.log('[DEBUG] API返回:', { projectIds: result.projectIds, count: result.projectIds?.length });
           
@@ -1888,6 +1894,24 @@
         if (url && urls.indexOf(url) === -1) urls.push(url);
       });
       return urls;
+    }
+
+    // 人脸遮盖白名单：参考图中来自角色节点连线的 URL（只有角色图参与人脸遮盖）。
+    // 与 buildI2VAssetPromptSuffix 同一套来源匹配；本地上传图无类型信息，不参与。
+    function collectI2VCharacterRefUrls(nodeId, urls) {
+      var charUrls = [];
+      (urls || []).forEach(function(url) {
+        var conn = (state.imageConnections || []).find(function(c) {
+          if (c.to !== nodeId || c.portType !== 'ref-image') return false;
+          var fromNode = state.nodes.find(function(n) { return n.id === c.from; });
+          var srcUrl = typeof getNodeImageUrl === 'function' ? getNodeImageUrl(fromNode) : (fromNode && fromNode.data && fromNode.data.url);
+          return srcUrl === url;
+        });
+        if (!conn) return;
+        var fromNode = state.nodes.find(function(n) { return n.id === conn.from; });
+        if (fromNode && fromNode.type === 'character' && charUrls.indexOf(url) === -1) charUrls.push(url);
+      });
+      return charUrls;
     }
 
     function buildI2VAssetPromptSuffix(nodeId, urls) {

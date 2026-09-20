@@ -89,6 +89,7 @@ from config.constant import (
     DS_ENV_FIT_DEFAULT_GROUND,
     DS_ENV_FIT_DEFAULT_HORIZON,
     DS_ENV_FIT_DEFAULT_SCALE,
+    FaceMaskPromptConstants,
 )
 from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
 from perseids_server.utils.auth_identity import (
@@ -2443,6 +2444,7 @@ async def ai_app_run_image(
     media_references: Optional[str] = Form(None, description="JSON array of media references for @ mention resolution"),
     resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）"),
     enable_face_mask: bool = Form(False, description="是否启用人脸遮盖预处理（仅 Seedance 2.0 系列商业版生效，默认关闭）"),
+    face_mask_reference_urls: Optional[str] = Form(None, description="允许人脸遮盖的参考图 URL 白名单（逗号分隔，仅角色参考图；未传则全部参考图遮盖）"),
     generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
 ):
     """
@@ -2605,6 +2607,13 @@ async def ai_app_run_image(
         user_wants_face_process = bool(enable_face_mask) and impl_supports_auto_face
 
         base_extra_config = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
+        # 人脸遮盖白名单：参考生视频的参考图混合角色/场景/道具，人脸遮盖只对
+        # 角色参考图有意义；前端（video_workflow 分镜组/分镜/图生视频节点）收集
+        # 参考图时已知类型，把角色图 URL 传入。未传时保持旧行为（全部参考图遮盖）。
+        if enable_face_mask and face_mask_reference_urls:
+            whitelist_urls = [u.strip() for u in face_mask_reference_urls.split(',') if u.strip()]
+            if whitelist_urls:
+                base_extra_config[FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY] = whitelist_urls
         if resolution:
             base_extra_config[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
         # 支持自动处理人脸的网关：用户勾选处理人脸时注入 human_review=true，

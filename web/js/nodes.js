@@ -421,10 +421,12 @@
       const collectedProps = new Set();
       // 精确匹配到的角色对象（含 default_voice）：供参考生视频提交时自动带入角色音色
       const voiceCharacters = [];
+      // 角色参考图 URL（供「是否处理人脸」白名单：只有角色图参与人脸遮盖，道具/场景不处理）
+      const characterRefUrls = [];
 
       if (!state.defaultWorldId) {
         console.warn('[宫格生图] 未选择世界，无法获取参考图片');
-        return { referenceImageUrls, promptSuffix, voiceCharacters };
+        return { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls };
       }
 
       const worldId = state.defaultWorldId;
@@ -470,6 +472,7 @@
                     const userSelectedUrl = (shotNode.data.selectedCharRefImages && shotNode.data.selectedCharRefImages[characterName]);
                     const charRefUrl = userSelectedUrl || matchedChar.reference_image;
                     referenceImageUrls.push(charRefUrl);
+                    characterRefUrls.push(charRefUrl);
                     const labelSuffix = userSelectedUrl && userSelectedUrl !== matchedChar.reference_image
                       ? `的${(shotNode.data.selectedCharRefImageLabels && shotNode.data.selectedCharRefImageLabels[characterName]) || '已选择'}`
                       : '';
@@ -546,7 +549,7 @@
       }
 
       console.log(`[宫格生图] 总共收集到 ${referenceImageUrls.length} 张参考图片URL`);
-      return { referenceImageUrls, promptSuffix, voiceCharacters };
+      return { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls };
     }
 
 
@@ -4030,6 +4033,7 @@
         let referenceImageUrls = []; // 参考模式使用
         let refPromptSuffix = []; // 参考图描述文字
         let gridVoiceCharacters = []; // 参考模式精确匹配到的角色（含默认音色）
+        let gridCharacterRefUrls = []; // 参考模式角色参考图 URL（人脸遮盖白名单）
         let useTextToVideo = false; // 降级标记
 
         if(videoGenMode === 'multi_reference') {
@@ -4040,10 +4044,11 @@
           }
           generateBtn.textContent = '收集参考图...';
 
-          const { referenceImageUrls: refUrls, promptSuffix: _refPromptSuffix, voiceCharacters: _voiceCharacters } = await collectReferenceImagesForGrid(shotFrameNodes);
+          const { referenceImageUrls: refUrls, promptSuffix: _refPromptSuffix, voiceCharacters: _voiceCharacters, characterRefUrls: _characterRefUrls } = await collectReferenceImagesForGrid(shotFrameNodes);
           referenceImageUrls = refUrls;
           refPromptSuffix = _refPromptSuffix || [];
           gridVoiceCharacters = _voiceCharacters || [];
+          gridCharacterRefUrls = _characterRefUrls || [];
 
           if(referenceImageUrls.length > 0) {
             console.log(`[分镜组视频] 参考模式：收集到 ${referenceImageUrls.length} 张参考图`);
@@ -4232,6 +4237,10 @@
           // 是否处理人脸（仅 seedance2.0 商业版生效）
           if(shotGroupNode.data.processFace === true) {
             form.append('enable_face_mask', 'true');
+            // 人脸遮盖白名单：只对角色参考图做遮盖，道具/场景参考图不参与
+            if(gridCharacterRefUrls.length > 0) {
+              form.append('face_mask_reference_urls', gridCharacterRefUrls.join(','));
+            }
           }
 
           // 参考生 + 模型支持音色输入时，自动带入分镜组角色的默认音色；
