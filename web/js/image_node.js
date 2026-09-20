@@ -143,7 +143,7 @@
           </div>
           <div class="field field-collapsible">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <div class="label" style="margin: 0;" data-i18n="image_node_prompt_label">${window.t ? window.t('image_node_prompt_label') : '编辑提示词（可选）'}</div>
+              <div class="label image-prompt-label" style="margin: 0;" data-i18n="image_node_prompt_label">${window.t ? window.t('image_node_prompt_label') : '编辑提示词（可选）'}</div>
               <button class="mini-btn image-prompt-expand-btn" type="button" style="font-size: 11px; padding: 4px 8px;" title="${window.t ? window.t('script_expand_btn') : '放大编辑'}" data-i18n="script_expand_btn:title">⤢</button>
             </div>
             <textarea class="image-prompt" rows="2" placeholder="${window.t ? window.t('image_node_prompt_placeholder') : '输入提示词进行图片编辑'}" data-i18n="image_node_prompt_placeholder:placeholder">${escapeHtml(node.data.prompt || '')}</textarea>
@@ -559,6 +559,43 @@
         if (doodleBtn) doodleBtn.disabled = !!disabled;
       }
 
+      // 文生图/图生图模式切换：无底图时按钮为「生成图片」（纯文生图，
+      // 参考图走 image-edit 无底图路径），有底图为「编辑图片」。
+      // 提示词标签/占位同步切换，i18n 键跟随模式，语言重扫也不会串文案
+      const promptLabelEl = el.querySelector('.image-prompt-label');
+      function updateGenerateModeUI(){
+        const hasBaseImage = !!(node.data.url && String(node.data.url).trim());
+        if(editBtn){
+          if(hasBaseImage){
+            editBtn.setAttribute('data-i18n', 'image_node_edit_btn');
+            editBtn.textContent = window.t ? window.t('image_node_edit_btn') : '编辑图片';
+          } else {
+            editBtn.setAttribute('data-i18n', 'image_node_generate_btn');
+            editBtn.textContent = window.t ? window.t('image_node_generate_btn') : '生成图片';
+          }
+        }
+        if(promptLabelEl){
+          if(hasBaseImage){
+            promptLabelEl.setAttribute('data-i18n', 'image_node_prompt_label');
+            promptLabelEl.textContent = window.t ? window.t('image_node_prompt_label') : '编辑提示词（可选）';
+          } else {
+            promptLabelEl.setAttribute('data-i18n', 'image_node_t2i_prompt_label');
+            promptLabelEl.textContent = window.t ? window.t('image_node_t2i_prompt_label') : '提示词';
+          }
+        }
+        if(promptEl){
+          if(hasBaseImage){
+            promptEl.setAttribute('data-i18n', 'image_node_prompt_placeholder:placeholder');
+            promptEl.setAttribute('placeholder', window.t ? window.t('image_node_prompt_placeholder') : '输入提示词进行图片编辑');
+          } else {
+            promptEl.setAttribute('data-i18n', 'image_node_t2i_prompt_placeholder:placeholder');
+            promptEl.setAttribute('placeholder', window.t ? window.t('image_node_t2i_prompt_placeholder') : '输入提示词生成图片');
+          }
+        }
+      }
+      updateGenerateModeUI();
+      el._updateImageGenerateMode = updateGenerateModeUI;
+
       // 涂鸦编辑按钮：合成底图+涂鸦上传回填
       if(doodleBtn){
         doodleBtn.addEventListener('click', async (e) => {
@@ -750,6 +787,7 @@
             node.data.url = uploadedUrl;
             node.data.name = file.name;
             node.data.preview = uploadedUrl;
+            updateGenerateModeUI();
             // 成功后清掉本地 file，强制后续编辑走服务器 URL
             node.data.file = null;
             imagePreviewImg.src = proxyImageUrl(uploadedUrl);
@@ -814,6 +852,7 @@
                 '#dc2626'
               );
             }
+            updateGenerateModeUI();
           }
         } finally {
           node.data.uploading = false;
@@ -830,26 +869,30 @@
         node.data.preview = '';
         node.data.uploading = false;
         setImageEditActionsDisabled(false);
+        updateGenerateModeUI();
         imagePreviewRow.style.display = 'none';
         imagePreviewImg.removeAttribute('src');
       });
 
       editBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const gate = canEditImageNode(node.data);
-        if(!gate.allowed){
+        // 上传中禁止提交（无论文生图/图生图，都等上传流程结束）
+        if(node.data.uploading){
           statusEl.style.display = 'block';
-          const msg = getImageUploadBlockMessage(gate.reason);
-          setStatusEl(statusEl, msg, gate.reason === 'uploading' ? '#d97706' : '#dc2626');
-          if (gate.reason === 'uploading') {
-            showToast(msg, 'warning');
-          }
+          const msg = getImageUploadBlockMessage('uploading');
+          setStatusEl(statusEl, msg, '#d97706');
+          showToast(msg, 'warning');
           return;
         }
-        
+        // 有服务器底图走图生图；无底图走文生图（参考图由提交函数内部处理）
+        const hasBaseImage = canEditImageNode(node.data).allowed;
+
         if(!node.data.prompt){
           statusEl.style.display = 'block';
-          setStatusEl(statusEl, '请先输入编辑提示词或调整相机参数', '#dc2626');
+          const msg = hasBaseImage
+            ? (window.t ? window.t('image_node_need_edit_prompt') : '请先输入编辑提示词或调整相机参数')
+            : (window.t ? window.t('image_node_need_t2i_prompt') : '请先输入提示词');
+          setStatusEl(statusEl, msg, '#dc2626');
           return;
         }
 
@@ -860,15 +903,18 @@
         node.data.lastError = '';
 
         try{
-          const resolved = resolveImageEditSubmitData(node.data);
-          if (!resolved.ok) {
-            const msg = getImageUploadBlockMessage(resolved.reason);
-            setStatusEl(statusEl, msg, '#dc2626');
-            showToast(msg, 'warning');
-            editBtn.disabled = false;
-            return;
+          let submitData = '';
+          if(hasBaseImage){
+            const resolved = resolveImageEditSubmitData(node.data);
+            if (!resolved.ok) {
+              const msg = getImageUploadBlockMessage(resolved.reason);
+              setStatusEl(statusEl, msg, '#dc2626');
+              showToast(msg, 'warning');
+              editBtn.disabled = false;
+              return;
+            }
+            submitData = resolved.submitData;
           }
-          let submitData = resolved.submitData;
 
           let finalPrompt = node.data.prompt || '';
 
@@ -909,7 +955,9 @@
           }
 
           const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
-          const submitRes = await generateEditedImage(submitData, finalPrompt, node.data.ratio, node.data.model, desiredCount, referenceImageUrls, node.data.imageSize);
+          const submitRes = hasBaseImage
+            ? await generateEditedImage(submitData, finalPrompt, node.data.ratio, node.data.model, desiredCount, referenceImageUrls, node.data.imageSize)
+            : await generateImageFromText(finalPrompt, node.data.ratio, node.data.model, desiredCount, node.data.imageSize, referenceImageUrls);
           statusEl.textContent = '任务已提交，正在生成图片...';
           node.data.projectIds = submitRes.projectIds;
 
@@ -929,7 +977,9 @@
             });
             const newNode = state.nodes.find(n => n.id === newNodeId);
             if(newNode){
-              newNode.data.name = imageCount > 1 ? `编辑结果${i + 1}` : '编辑结果';
+              newNode.data.name = imageCount > 1
+                ? (hasBaseImage ? `编辑结果${i + 1}` : `生成结果${i + 1}`)
+                : (hasBaseImage ? '编辑结果' : '生成结果');
               newNode.data.project_id = projectIds[i] || projectIds[0];
               // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
               if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newNodeId);
@@ -1016,7 +1066,7 @@
 
               safeAutoSave()
               renderMinimap();
-              showToast('图片编辑成功！', 'success');
+              showToast(hasBaseImage ? '图片编辑成功！' : '图片生成成功！', 'success');
               
               // 刷新用户算力显示
               if(typeof fetchComputingPower === 'function'){
