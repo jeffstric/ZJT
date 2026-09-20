@@ -259,6 +259,13 @@
       startNodePlacing(nodeId);
     });
 
+    document.getElementById('menuAddPromptReverse').addEventListener('click', () => {
+      const nodeId = createPromptReverseNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
     document.getElementById('menuAddCameraControl').addEventListener('click', () => {
       const nodeId = createCameraControlNode();
       renderMinimap();

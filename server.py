@@ -5993,11 +5993,13 @@ async def upload_workflow_asset(
 
 
 class DescribeImageRequest(BaseModel):
-    """VL 识图生成场景描述（360 全景节点连入无提示词图片时自动调用）"""
+    """VL 识图生成描述（360 全景节点连入无提示词图片时自动调用）"""
     image_url: str
     model: Optional[str] = None
     model_id: Optional[int] = None
     vendor_id: Optional[int] = None
+    # 业务提示词用途：panorama（360 全景场景描述，默认）/ image_prompt（文生图提示词反推）
+    purpose: Optional[str] = "panorama"
 
 
 @app.post('/api/video-workflow/describe-image')
@@ -6009,10 +6011,11 @@ async def describe_workflow_image(
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
-    任意图片 → VL 模型生成场景描述提示词
+    任意图片 → VL 模型生成描述提示词
 
     360 全景节点连入图片节点且图片无提示词时，前端自动调用本接口识图，
     生成的描述填入全景节点提示词（不覆盖用户已输入内容）。
+    purpose=image_prompt 时反推文生图提示词（提示词反推节点使用）。
     走 LLM token 计费（call_api 内部上报）。
     """
     from services.image_describe import describe_image
@@ -6031,6 +6034,7 @@ async def describe_workflow_image(
             model=body.model,
             model_id=body.model_id,
             vendor_id=body.vendor_id,
+            purpose=body.purpose,
         )
         if not result.get('success'):
             status_code = 504 if '超时' in str(result.get('error') or '') else 400
