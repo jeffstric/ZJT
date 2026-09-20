@@ -2595,7 +2595,7 @@ class LLMVendor:
         'JIEKOU': '接口供应商（Gemini 模型）',
         'ALIYUN': '阿里云百炼（通义千问 Qwen 模型）',
         'OLLAMA': '本地运行供应商（Ollama 模型）',
-        'VOLCENGINE': '火山引擎供应商（Doubao / DeepSeek-V4 模型）',
+        'VOLCENGINE': '火山引擎供应商（Doubao / DeepSeek-V4 / GLM-5.3 模型）',
         'CLAUDE': 'Claude 供应商（Anthropic 模型）',
         'ZJT_API': 'ZJT API 供应商（Qwen3.5/3.6 模型）',
         'DEEPSEEK': 'DeepSeek 供应商（DeepSeek-V4 模型）',
@@ -2630,6 +2630,7 @@ class LLMModel:
         'VLLM_QWEN_3_8_27B': 'vLLM Qwen 3.8 27B',
         'DOUBAO_SEED_2_0_PRO': 'Doubao Seed 2.0 Pro',
         'DOUBAO_SEED_2_0_LITE': 'Doubao Seed 2.0 Lite',
+        'GLM_5_3_FLASH': 'GLM 5.3 Flash（火山方舟）',
         'CLAUDE_HAIKU_4_5': 'Claude Haiku 4.5',
         'DEEPSEEK_V4_FLASH': 'DeepSeek V4 Flash',
         'DEEPSEEK_V4_PRO': 'DeepSeek V4 Pro',
@@ -2659,6 +2660,10 @@ class LLMModel:
     # Doubao 模型
     DOUBAO_SEED_2_0_PRO = 'doubao-seed-2-0-pro'
     DOUBAO_SEED_2_0_LITE = 'doubao-seed-2-0-lite'
+
+    # GLM 模型（火山方舟上架的智谱 GLM-5.3-Flash，API ID 带版本后缀，
+    # 由 volcengine 客户端 _MODEL_NAME_MAP 映射）
+    GLM_5_3_FLASH = 'glm-5.3-flash'
 
     # Claude 模型
     CLAUDE_HAIKU_4_5 = 'claude-haiku-4-5'
@@ -2693,6 +2698,17 @@ class LLMModel:
         'xhigh': 'xhigh',
     }
 
+    # GLM-5.3 思考强度映射：前端 thinking_effort 值 -> 方舟 reasoning_effort。
+    # GLM-5.3 始终启用思考（thinking.type 仅支持 enabled，默认即开，无法关闭），
+    # reasoning_effort 仅支持 low/high/max（无 "medium"，默认 max）；前端沿用
+    # low/medium/high 三档，"medium"→"high"、"high"→"max" 保持强度单调。
+    GLM_REASONING_EFFORT_MAP = {
+        'low': 'low',
+        'medium': 'high',
+        'high': 'max',
+        'max': 'max',
+    }
+
 
 # 供应商图标映射（前端显示用）
 VENDOR_ICONS = {
@@ -2716,6 +2732,7 @@ MODEL_PREFIX_VENDOR_MAP = {
     'ollama': LLMVendor.OLLAMA,
     'vllm': LLMVendor.VLLM,  # 本地 vLLM 推理服务
     'doubao': LLMVendor.VOLCENGINE,
+    'glm': LLMVendor.VOLCENGINE,  # 方舟上架的智谱 GLM-5.3 系列
     'qwen3.5': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.5 Plus 模型
     'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
     'deepseek': LLMVendor.DEEPSEEK,  # DeepSeek 的 DeepSeek-V4 模型

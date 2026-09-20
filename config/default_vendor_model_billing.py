@@ -155,6 +155,21 @@ DEFAULT_VENDOR_MODEL_BILLING: List[Dict[str, Any]] = [
             },
         ],
     },
+    # ---------- 火山引擎 GLM ----------
+    {
+        "vendor_name": "volcengine",
+        "model_name": "glm-5.3-flash",
+        "note": "火山方舟 GLM-5.3-Flash：输入/输出/缓存命中 0.8/2.8/0.23 元/百万",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "input_yuan_per_m": 0.8,
+                "out_yuan_per_m": 2.8,
+                "cache_yuan_per_m": 0.23,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
     # ---------- 阿里云 Qwen 分段 ----------
     {
         "vendor_name": "aliyun",
