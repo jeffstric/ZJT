@@ -9,8 +9,8 @@
       const container = document.getElementById('canvasContainer');
       if (!container) return;
 
-      // 与后端 utils/media_upload.py 白名单保持一致
-      const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'];
+      // 与后端 utils/media_upload.py 白名单保持一致（tif/tiff 为入口格式，落盘转 PNG）
+      const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff'];
       const VIDEO_EXTS = ['mp4', 'mov', 'webm', 'avi', 'mkv'];
 
       function translate(key, fallback, params) {
@@ -23,8 +23,14 @@
         return idx >= 0 ? name.slice(idx + 1).toLowerCase() : '';
       }
 
+      function isTiffUpload(file) {
+        return typeof window.isTiffFile === 'function' && window.isTiffFile(file);
+      }
+
       function isImageFile(file) {
-        return (file.type && file.type.startsWith('image/')) || IMAGE_EXTS.includes(fileExt(file.name));
+        // Windows 上 tif 常无 MIME（file.type 为空），不能只靠 image/* 
+        if (isTiffUpload(file) || IMAGE_EXTS.includes(fileExt(file.name))) return true;
+        return !!(file.type && file.type.startsWith('image/'));
       }
 
       function isVideoFile(file) {
@@ -131,6 +137,12 @@
           if (isImageFile(file)) {
             let uploadTarget = file;
             if (file.size > maxImageBytes) {
+              // 浏览器 Image 解不出 TIFF，compressImageFile 会原样返回再被当成失败拒收
+              if (isTiffUpload(file)) {
+                showToast(translate('canvas_drop_image_too_large', `图片不能超过${maxImageMb}MB：${file.name}`, { max: maxImageMb, name: file.name }), 'error');
+                offset += 40;
+                continue;
+              }
               // 超限图片先在前端压缩（GIF 等不可压缩格式返回 null）
               const compressed = await compressOversizeImage(file, maxImageBytes);
               if (!compressed) {
