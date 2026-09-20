@@ -779,6 +779,7 @@
   "extract_frame_start_label": "Start time",
   "extract_frame_no_more": "Reached the end of the video, no more keyframes",
   "extract_frame_start_advanced": "Keyframes extracted, start time advanced — click Extract for the next batch",
+  "extract_frame_extract_list": "Extract keyframes",
   "camera_control_input_error": "Camera control node can only receive image nodes",
   "camera_control_connect_image": "Please connect image node",
   "camera_control_no_image": "Source image node has no image",
@@ -851,3 +852,4 @@
   "toast_ratio_required": "Please select an aspect ratio",
   "toast_operation_failed": "Operation failed, please try again later"
 }
+

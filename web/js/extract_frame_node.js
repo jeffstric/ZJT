@@ -95,6 +95,7 @@
           '<div class="label time-label" data-i18n="extract_frame_time_label">时间点</div>' +
           '<input class="time-slider" type="range" min="0" max="100" step="0.01" value="0" />' +
           '<div class="time-display"><span class="time-current">00:00.00</span> / <span class="time-total">--:--.--</span></div>' +
+          '<button class="gen-btn keyframe-extract-btn" type="button" style="display:none; margin-top:6px;" data-i18n="extract_frame_extract_list">提取关键帧列表</button>' +
         '</div>' +
         '<div class="field field-always-visible keyframe-grid-field" style="display:none;">' +
           '<div class="label" data-i18n="extract_frame_keyframe_grid_label">候选帧（点击选择）</div>' +
@@ -121,7 +122,9 @@
         var keyframeGridField = el.querySelector('.keyframe-grid-field');
         var keyframeGrid = el.querySelector('.keyframe-grid');
         var useKeyframeBtn = el.querySelector('.use-keyframe-btn');
+        var keyframeExtractBtn = el.querySelector('.keyframe-extract-btn');
         // 注意：use-keyframe-btn 同为 .gen-btn 且在 DOM 中靠前，必须按容器限定才能取到提取按钮
+        var extractActionsField = el.querySelector('.extract-actions-field');
         var extractBtn = el.querySelector('.extract-actions-field .gen-btn');
         var statusField = el.querySelector('.status-field');
         var statusEl = el.querySelector('.status');
@@ -151,6 +154,22 @@
           nameEl.textContent = name || '';
         }
 
+        // 提取动作按钮（通用"提取帧" / 关键帧"提取关键帧列表"）统一置忙/就绪
+        function setActionButtonsBusy(busy, busyLabel) {
+          var busyText = busyLabel || (window.t ? window.t('extract_frame_extracting') : '提取中...');
+          [extractBtn, keyframeExtractBtn].forEach(function(b) {
+            if (!b) return;
+            if (busy) {
+              setBtnLoading(b, busyText);
+            } else {
+              var readyText = (b === keyframeExtractBtn)
+                ? (window.t ? window.t('extract_frame_extract_list') : '提取关键帧列表')
+                : (window.t ? window.t('extract_frame_btn') : '提取帧');
+              setBtnReady(b, readyText);
+            }
+          });
+        }
+
         function clearResult() {
           node.data.extractedImageNodeId = null;
           node.data.candidateFrames = null;
@@ -161,7 +180,7 @@
           keyframeGridField.style.display = 'none';
           keyframeGrid.innerHTML = '';
           useKeyframeBtn.style.display = 'none';
-          setBtnReady(extractBtn, window.t ? window.t('extract_frame_btn') : '提取帧');
+          setActionButtonsBusy(false);
         }
 
         // 视频文件上传
@@ -217,8 +236,18 @@
           var showPicker = isCustom || isKeyframes;
           timePickerField.style.display = showPicker ? '' : 'none';
           thumbVideo.controls = isCustom;
+          // 关键帧专属控件只在该模式下可见（提取列表按钮 / 候选网格 / 使用选中帧）；
+          // 其余模式下通用"提取帧"按钮回归
+          if (keyframeExtractBtn) keyframeExtractBtn.style.display = isKeyframes ? '' : 'none';
+          extractActionsField.style.display = isKeyframes ? 'none' : '';
+          var hasGrid = !!(node.data.candidateFrames && node.data.candidateFrames.length);
+          keyframeGridField.style.display = (isKeyframes && hasGrid) ? '' : 'none';
+          useKeyframeBtn.style.display = (isKeyframes && hasGrid
+            && node.data.selectedFrameTime !== null && node.data.selectedFrameTime !== undefined) ? '' : 'none';
           var timeLabel = el.querySelector('.time-label');
           if (timeLabel) {
+            // 标签文本随模式切换：移除 data-i18n，防止页面 i18n 扫描覆盖动态文本
+            timeLabel.removeAttribute('data-i18n');
             timeLabel.textContent = isCustom
               ? (window.t ? window.t('extract_frame_time_label') : '时间点')
               : (window.t ? window.t('extract_frame_start_label') : '起始时间');
@@ -338,11 +367,19 @@
           safeAutoSave();
         }
 
-        // 提取帧按钮
+        // 提取帧按钮（首帧/尾帧/自定义时间）
         extractBtn.addEventListener('click', async function(e) {
           e.stopPropagation();
           await extractFrame();
         });
+
+        // 提取关键帧列表按钮（关键帧模式专属，基于起始时间提取下一批）
+        if (keyframeExtractBtn) {
+          keyframeExtractBtn.addEventListener('click', async function(e) {
+            e.stopPropagation();
+            await extractFrame();
+          });
+        }
 
         async function extractFrame() {
           var hasVideoFile = node.data.videoFile !== null;
@@ -365,7 +402,7 @@
           statusField.style.display = '';
           statusEl.textContent = '正在提取' + frameTypeName + '...';
           statusEl.style.color = '';
-          setBtnLoading(extractBtn, window.t ? window.t('extract_frame_extracting') : '提取中...');
+          setActionButtonsBusy(true);
 
           try {
             var formData = new FormData();
@@ -377,8 +414,7 @@
               formData.append('video_url', node.data.videoUrl);
             } else {
               showToast('没有可提取的视频', 'error');
-              extractBtn.disabled = false;
-              extractBtn.textContent = window.t ? window.t('extract_frame_btn') : '提取帧';
+              setActionButtonsBusy(false);
               return;
             }
 
@@ -459,8 +495,7 @@
             statusEl.style.color = '#ef4444';
             showToast('提取' + frameTypeName + '失败，请检查网络连接', 'error');
           } finally {
-            extractBtn.disabled = false;
-            extractBtn.textContent = window.t ? window.t('extract_frame_btn') : '提取帧';
+            setActionButtonsBusy(false);
           }
         }
 
@@ -485,26 +520,26 @@
 
       if (node.data.frameType) {
         var frameTypeSelect = el.querySelector('.frame-type-select');
-        if (frameTypeSelect) frameTypeSelect.value = node.data.frameType;
+        if (frameTypeSelect) {
+          frameTypeSelect.value = node.data.frameType;
+          // onCreated 先于数据合并执行，applyFrameTypeUi 当时看到的是默认帧类型；
+          // 数据合并完成后重发 change，让模式相关的显隐（时间轴/关键帧按钮/网格）统一按恢复值刷新。
+          // select 值不匹配任何选项（脏数据）时不动，保持 defaultData
+          if (frameTypeSelect.value) {
+            frameTypeSelect.dispatchEvent(new Event('change'));
+          }
+        }
       }
 
-      // 帧类型 UI（时间轴显隐、controls）由 onCreated 末尾的 applyFrameTypeUi 处理；
-      // timeSec 的恢复在 loadedmetadata 事件里完成（需要先拿到 duration）。
-
-      // 关键帧候选网格恢复
+      // 关键帧候选网格重建（容器显隐已由 applyFrameTypeUi 处理）
       if (node.data.candidateFrames && node.data.candidateFrames.length) {
-        var keyframeGridField = el.querySelector('.keyframe-grid-field');
         var keyframeGrid = el.querySelector('.keyframe-grid');
-        var useBtn = el.querySelector('.use-keyframe-btn');
         renderKeyframeGrid(keyframeGrid, node.data.candidateFrames, node.data.selectedFrameTime, function(fr) {
           node.data.selectedFrameTime = fr.time_sec;
+          var useBtn = el.querySelector('.use-keyframe-btn');
           if (useBtn) useBtn.style.display = '';
           safeAutoSave();
         });
-        if (keyframeGridField) keyframeGridField.style.display = '';
-        if (node.data.selectedFrameTime !== null && node.data.selectedFrameTime !== undefined && useBtn) {
-          useBtn.style.display = '';
-        }
       }
     }
   );

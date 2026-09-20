@@ -779,6 +779,7 @@
   "extract_frame_start_label": "起始时间",
   "extract_frame_no_more": "已到视频末尾，没有更多关键帧",
   "extract_frame_start_advanced": "关键帧提取成功，起始时间已推进，可继续提取下一批",
+  "extract_frame_extract_list": "提取关键帧列表",
   "camera_control_input_error": "相机控制节点只能接收图片节点",
   "camera_control_connect_image": "请连接图片节点",
   "camera_control_no_image": "源图片节点没有图片",
@@ -851,3 +852,4 @@
   "toast_ratio_required": "请选择画幅比例",
   "toast_operation_failed": "操作失败，请稍后重试"
 }
+

@@ -58,6 +58,38 @@ assert.match(
   /var extractBtn = el\.querySelector\('\.extract-actions-field \.gen-btn'\)/,
   'extract button should be scoped to .extract-actions-field (use-keyframe-btn is also .gen-btn)'
 );
+// BUG 修复：关键帧模式专属"提取关键帧列表"按钮，位于起始时间滑杆下方
+assert.match(
+  nodeJs,
+  /class="gen-btn keyframe-extract-btn"[\s\S]*data-i18n="extract_frame_extract_list"/,
+  'dedicated keyframe extract-list button should exist below start-time slider'
+);
+assert.match(
+  nodeJs,
+  /keyframeExtractBtn\.addEventListener\('click'[\s\S]*extractFrame\(\)/,
+  'keyframe extract-list button should trigger extraction'
+);
+assert.match(
+  nodeJs,
+  /keyframeExtractBtn\.style\.display = isKeyframes \? '' : 'none'/,
+  'keyframe extract-list button should only show in keyframes mode'
+);
+// BUG 修复：非关键帧模式下隐藏候选网格与使用选中帧按钮
+assert.match(
+  nodeJs,
+  /keyframeGridField\.style\.display = \(isKeyframes && hasGrid\) \? '' : 'none'/,
+  'candidate grid should hide when leaving keyframes mode'
+);
+assert.match(
+  nodeJs,
+  /useKeyframeBtn\.style\.display = \(isKeyframes && hasGrid/,
+  'use-selected button should hide when leaving keyframes mode'
+);
+assert.match(
+  nodeJs,
+  /frameTypeSelect\.dispatchEvent\(new Event\('change'\)\)/,
+  'workflow reload should re-run applyFrameTypeUi after data merge'
+);
 assert.match(
   nodeJs,
   /frameType === 'keyframes'[\s\S]*showKeyframeGrid\(frames\)/,
@@ -67,13 +99,8 @@ assert.match(
 // 重载恢复：候选帧与选中态在 createWithData 回调中重建
 assert.match(
   nodeJs,
-  /createNodeWithDataFactory[\s\S]*candidateFrames[\s\S]*renderKeyframeGrid\(/,
+  /candidateFrames[\s\S]*renderKeyframeGrid\(/,
   'candidate grid should be restored on workflow reload'
-);
-assert.match(
-  nodeJs,
-  /selectedFrameTime !== null && node\.data\.selectedFrameTime !== undefined && useBtn/,
-  'selected frame restore should re-show use button'
 );
 
 // 持久化字段齐全
@@ -99,6 +126,11 @@ assert.match(
   'time picker should be visible in both custom and keyframes modes'
 );
 assert.match(nodeJs, /extract_frame_start_label/, 'keyframes mode should relabel the slider to start time');
+assert.match(
+  nodeJs,
+  /timeLabel\.removeAttribute\('data-i18n'\)/,
+  'dynamic slider label should opt out of i18n re-scan (page i18n would overwrite mode text)'
+);
 
 // 命名后缀与实际输出格式一致（jpg），custom 带时间戳
 assert.ok(!nodeJs.includes("'.png'") && !/frameTypeName \+ '\.png'/.test(nodeJs), 'frame naming should not use .png (output is jpg)');
@@ -109,8 +141,8 @@ for (const loc of ['zh-CN', 'en']) {
   const i18nPath = path.join(__dirname, `../../web/i18n/locales/${loc}/video_workflow.json`);
   const i18n = JSON.parse(fs.readFileSync(i18nPath, 'utf8'));
   for (const key of ['frame_custom', 'frame_keyframes', 'extract_frame_time_label',
-    'extract_frame_keyframe_grid_label', 'extract_frame_use_selected',
-    'extract_frame_time_required', 'extract_frame_no_keyframes']) {
+    'extract_frame_start_label', 'extract_frame_keyframe_grid_label', 'extract_frame_use_selected',
+    'extract_frame_time_required', 'extract_frame_no_keyframes', 'extract_frame_extract_list']) {
     assert.ok(i18n[key], `i18n ${loc} should define ${key}`);
   }
 }
