@@ -157,6 +157,22 @@ def _build_dialogue_fidelity_note(quoted_spans: list) -> str:
     )
 
 
+def _build_no_dialogue_note() -> str:
+    """原文无引号台词时的反幻觉提示:防止 LLM 仿照模板示例虚构角色对白。
+
+    线上案例(ai_tools 231):原文仅写"音频1是李卫国的音色样本,角色说话时请保持相同音色",
+    Ref2VA 模板的 few-shot 示例(音色参考+角色开口说台词)诱导 LLM 编造
+    "早上好,新的一天开始了。"并提交给视频模型,成片角色凭空开口说话。
+    """
+    return (
+        "原始提示词中没有任何引号标注的台词。"
+        "只有当原文明确写出角色说出或唱出的具体话语时,才把该话语逐字放入 <d> 并标注准确的语言标签;"
+        "除此之外严禁虚构、编造或补充任何对白、歌词或角色开口说话的行为——"
+        "音色参考仅约束角色开口说话时应使用的音色,绝不代表角色必须说话;"
+        "若原文没有任何台词,输出中不得出现 <d> 标签。"
+    )
+
+
 def build_h3_optimize_user_message(
     original_prompt: str,
     variant: str,
@@ -174,6 +190,8 @@ def build_h3_optimize_user_message(
     quoted_spans = _extract_quoted_cjk_spans(original_prompt)
     if quoted_spans:
         instruction = f"{instruction}\n{_build_dialogue_fidelity_note(quoted_spans)}"
+    else:
+        instruction = f"{instruction}\n{_build_no_dialogue_note()}"
     body = (original_prompt or "").strip() or "(empty original prompt)"
     return f"{guide.rstrip()}\n\n{instruction}\n\n{body}\n"
 

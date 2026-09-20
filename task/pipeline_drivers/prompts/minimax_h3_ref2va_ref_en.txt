@@ -82,6 +82,8 @@ When the source dialogue is Chinese (or any non-English language), keep those wo
 
 Never translate Chinese dialogue into English — writing `<d>[English] So that's how it is!</d>` for the line above is wrong.
 
+Only lines that are written in the source prompt may appear inside `<d>`. If the source prompt contains no spoken or sung lines, write no `<d>` spans at all — never invent a line on a character's behalf, no matter how natural it would sound in the scene. A voice-timbre reference only constrains the timbre a character uses if they speak; it never implies the character must speak.
+
 Cite `<audio_N>` in the shot or phase where the audio relationship is active, and state whether the signal is copied or referenced. When only timbre, rhythm, emotion, or delivery is referenced, do not carry the original dialogue from the reference audio into the target video.
 
 ## 6. Example
