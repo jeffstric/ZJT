@@ -281,34 +281,68 @@
   to { transform: rotate(360deg); }
 }
 
-/* storyboard 候选卡角标按钮（生成中/失败占位卡 + 已完成卡片角落）。
+/* storyboard 候选卡「状态」角标：20px 圆形图标按钮，与删除（右上）、播放（居中）
+   角标统一尺寸，固定左上角。背景：右栏是 ~104px 窄条（见 storyboard.css .main-layout
+   注释），候选卡仅约 84×47px，文字 pill 原底部定位会与居中播放徽标重叠。
    生成中/失败候选卡整体是 .candidate-thumb.is-loading { pointer-events: none }
    （禁止点击选中），按钮必须显式恢复 auto 才能点（同 .candidate-delete-button 模式），
    点击由 ai_tool_timeline.js 捕获阶段委托处理并 stopPropagation，不会误触发选中。 */
-.candidate-placeholder .ai-task-timeline-btn {
-  background: rgba(255, 255, 255, 0.85);
+.candidate-timeline-icon {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 5;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  cursor: pointer;
   pointer-events: auto;
 }
 
+.candidate-timeline-icon .sb-icon {
+  width: 11px !important;
+  height: 11px !important;
+  margin: 0;
+}
+
+/* 覆盖 .ai-task-timeline-btn 基类 hover（color/border 切深文字色） */
+.candidate-timeline-icon:hover,
+.candidate-timeline-icon:focus-visible {
+  background: rgba(47, 109, 246, 0.9);
+  border-color: #fff;
+  color: #fff;
+}
+
+/* 已完成候选卡：与删除角标一致，默认隐藏、hover/触屏显现（无 aiToolId 的上传资产不渲染） */
 .candidate-status-button {
-  position: absolute;
-  left: 6px;
-  bottom: 6px;
-  z-index: 3;
-  border: none;
-  background: rgba(255, 255, 255, 0.88);
-  color: #374151;
-  border-radius: 10px;
-  padding: 2px 8px;
-  font-size: 11px;
-  line-height: 1.5;
-  cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s ease;
-  pointer-events: auto;
+  transform: scale(0.92);
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
 }
 
 .candidate-thumb:hover .candidate-status-button,
 .candidate-status-button:focus-visible {
   opacity: 1;
+  transform: scale(1);
+}
+
+/* 生成中/失败占位卡：状态入口是该卡主操作，常显（原文字 pill 也是常显） */
+.candidate-placeholder .candidate-timeline-icon {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* 触屏无 hover：已完成卡角标与删除角标一致常显，避免「看不到」 */
+@media (hover: none) {
+  .candidate-status-button {
+    opacity: 1;
+    transform: scale(1);
+  }
 }

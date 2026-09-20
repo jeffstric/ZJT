@@ -65,7 +65,7 @@ video_workflow.html 与 storyboard.html 中所有「生成中」的图片/视频
 - 前端：
   - `web/js/storyboard/scene_candidates.js`：`mapSceneAssetCandidates` 候选映射新增 `aiToolId`。
   - `web/js/storyboard/polling.js`：`upsertSceneCandidateFromTask` / `upsertGeneratingCandidate` 回填 `aiToolId`；`scene.taskStatus` 增加 `first_frame_ai_tool_id` / `video_ai_tool_id`（候选列表未加载时的回退占位卡也可查看）。
-  - `web/js/storyboard/render.js`：`renderCandidatePlaceholder` 生成中/失败占位卡内渲染「状态」按钮；已完成候选卡 hover 显示 `candidate-status-button` 角标（无 `aiToolId` 的上传资产不显示）。
+  - `web/js/storyboard/render.js`：`renderCandidateTimelineButton` 生成中/失败占位卡（左上常显）与已完成候选卡（左上，hover/触屏显现，无 `aiToolId` 的上传资产不渲染）的「状态」角标。角标为 20px 圆形图标按钮（timeline 图标），与删除（右上）、播放（居中）统一尺寸；背景是右栏 ~104px 窄条、候选卡仅约 84×47px，文字 pill 底部定位会遮挡居中播放徽标，故固定左上（样式见 `web/css/ai_tool_timeline.css` 与 `web/css/storyboard.css`）。
 
 ## 安全说明
 
