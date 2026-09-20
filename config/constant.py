@@ -2141,6 +2141,25 @@ class MediaConstants:
     # 遮罩融合时 resize 回原尺寸。防止 1080p 等大视频在 RH 端全量加载时爆显存。
     FACE_MASK_UPLOAD_MAX_SHORT_SIDE = 512
 
+    # ===== 视频帧提取（video_workflow 提取帧节点，services/video_frame_extract_service.py）=====
+    # 尾帧回退窗口：-sseof -<窗口> 定位后 -update 1 覆盖写，留下窗口内最后一帧。
+    # 旧实现 -sseof -0.1 + -vframes 1 在音轨长于视频轨（容器时长取最长流）或流时长
+    # 元数据虚高时，定位点落在视频流最后一帧之后 → "Output file is empty" → 接口 500。
+    VIDEO_FRAME_TAIL_SEEK_WINDOW_SECONDS = 1.5
+    # 单帧提取兜底超时（秒）：select 滤镜全解码 / 全片尾帧兜底均按帧数全量解码，耗时高于快路径。
+    VIDEO_FRAME_FALLBACK_TIMEOUT_SECONDS = 90
+    # 场景切换检测阈值（ffmpeg select=gt(scene,TH)）。
+    VIDEO_FRAME_SCENE_THRESHOLD = 0.3
+    # 关键帧候选上限（超出均匀抽稀，保首尾）。
+    VIDEO_FRAME_KEYFRAME_MAX_COUNT = 9
+    # 单镜头视频（检不出场景切换）的均匀采样点数（含首尾）。
+    VIDEO_FRAME_KEYFRAME_UNIFORM_SAMPLES = 6
+    # 超过该时长（秒）跳过场景检测（需全片解码），退化为均匀采样。
+    # 实测 720p/30fps 250s 视频全片检测约 2s，600s 上限对应几十秒内可完成，有超时兜底。
+    VIDEO_FRAME_SCENE_DETECT_MAX_DURATION_SECONDS = 600.0
+    # 相邻候选时间点最小间隔（秒），低于该值的点合并。
+    VIDEO_FRAME_MIN_POINT_GAP_SECONDS = 0.2
+
 
 class BrandingConstants:
     """
