@@ -123,7 +123,7 @@ def build_declared_duration_instruction() -> str:
     """
     return """【标注总时长提炼（declared_duration_seconds）】
 - 顶层输出 `declared_duration_seconds`：剧本自述的成片预计总时长，统一换算成秒的数字。
-- 在标题/头部元信息里找这类标注：「（30秒）」「时长：30秒 / 时长：30s」「预计1分钟」「总时长X秒」「片长X分钟」等；剧本没有标注总时长时输出 null。
+- 在标题/头部元信息里找这类标注：「（30秒）」「时长：30秒 / 时长：30s」「预计1分钟」「总时长X秒」「片长X分钟」「片长：约3分钟」「时长90秒左右」等，支持「约/大约/大概」前缀与「左右/上下」后缀等近似写法；剧本没有标注总时长时输出 null。
 - 正文/台词里的时间描述（如"他等了30秒"）不是总时长标注，不得提炼。
 - 该标注常位于将被 excluded_block_ids 排除的元信息块（剧名/集标题行等）中，仍需正常提炼。"""
 
@@ -194,6 +194,31 @@ def _strip_markdown(content: str) -> str:
     return s.strip()
 
 
+def compose_planning_prompt(
+    anchors: List[Dict[str, Any]],
+    prompt_override: Optional[str] = None,
+    feedback: Optional[str] = None,
+) -> str:
+    """组装规划提示词。
+
+    prompt_override（enterprise quality 等自定义提示词）统一追加非正文排除
+    与标注总时长提炼两段共享指引，避免各模式自行维护造成漂移。历史上
+    只注入了排除指引，quality 模式规划从未输出 declared_duration_seconds，
+    总分镜时长控制因此退化为台词锚定口径（线上事故：3 分钟自述剧本拆出
+    8.9 分钟）。feedback 为上轮规划校验失败的修正反馈。
+    """
+    prompt = prompt_override or build_planning_prompt(anchors)
+    if prompt_override:
+        # enterprise 代码不进 git，在核心仓库的必经点统一注入，避免双处维护。
+        prompt = (
+            f"{prompt}\n\n{build_exclusion_instruction()}"
+            f"\n\n{build_declared_duration_instruction()}"
+        )
+    if feedback:
+        prompt = f"{prompt}\n\n【上轮规划反馈，请修正】\n{feedback}\n\n请重新输出完整分段计划 JSON。"
+    return prompt
+
+
 async def plan_segments(
     anchors: List[Dict[str, Any]],
     model: str,
@@ -214,13 +239,7 @@ async def plan_segments(
         (plan, finish_reason): plan 解析失败时返回 ({}, finish_reason)。
         finish_reason 用于判断是否 MAX_TOKENS 截断。
     """
-    prompt = prompt_override or build_planning_prompt(anchors)
-    if prompt_override:
-        # 策略自定义提示词（如 enterprise quality 模式）同样需要非正文排除指引。
-        # enterprise 代码不进 git，在核心仓库的必经点统一注入，避免双处维护。
-        prompt = f"{prompt}\n\n{build_exclusion_instruction()}"
-    if feedback:
-        prompt = f"{prompt}\n\n【上轮规划反馈，请修正】\n{feedback}\n\n请重新输出完整分段计划 JSON。"
+    prompt = compose_planning_prompt(anchors, prompt_override, feedback)
 
     messages = [
         {"role": "user", "content": prompt},
@@ -272,6 +291,7 @@ __all__ = [
     "build_declared_duration_instruction",
     "build_exclusion_instruction",
     "build_planning_prompt",
+    "compose_planning_prompt",
     "create_plan_log_context",
     "plan_segments",
     "write_plan_validation_log",

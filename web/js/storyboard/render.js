@@ -2287,11 +2287,12 @@ const DIALOGUE_SHARE_OF_TOTAL = 0.6;
 // 剧本自述标注总时长（最高优先级口径）：与后端 llm/script_parser.py
 // extract_script_declared_duration_seconds 同规则（修改时三处同步）——
 // 「时长/预计时长/总时长/成片时长/片长/预计」关键词 + N秒/N分钟/N s/N min，
-// 或括号包裹的纯时长标注（30秒）/(1.5分钟)；取第一个有效匹配
+// 或括号包裹的纯时长标注（30秒）/(1.5分钟)；数字前后允许「约/大约/大概/近」
+// 「左右/上下」近似修饰（片长：约3分钟 / 总时长45秒左右）；取第一个有效匹配
 const DECLARED_DURATION_MIN_SECONDS = 5;
 const DECLARED_DURATION_MAX_SECONDS = 10800;
-const DECLARED_DURATION_KEYWORD_RE = /(?:预计时长|总时长|成片时长|片长|时长|预计)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)/gi;
-const DECLARED_DURATION_PAREN_RE = /[（(]\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)\s*[）)]/gi;
+const DECLARED_DURATION_KEYWORD_RE = /(?:预计时长|总时长|成片时长|片长|时长|预计)\s*[:：]?\s*(?:约|大约|大概|近)?\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)(?:左右|上下)?/gi;
+const DECLARED_DURATION_PAREN_RE = /[（(]\s*(?:约|大约|大概|近)?\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)(?:左右|上下)?\s*[）)]/gi;
 const DECLARED_DURATION_MINUTE_UNITS = ['分钟', '分鐘', 'minute', 'minutes', 'min', 'mins'];
 
 /** 提取剧本自述的预计总时长（秒），无标注/超出有效区间返回 null */

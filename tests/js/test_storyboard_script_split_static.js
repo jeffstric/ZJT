@@ -98,6 +98,13 @@ assert.match(renderSrc, /extractScriptDeclaredDurationSeconds/, 'render.js 应�
 assert.match(renderSrc, /剧本标注时长约/, 'render.js 标注口径 hint 应显示「剧本标注时长约」');
 assert.match(nodeSrc, /extractScriptDeclaredDurationSeconds/, 'script_node.js 应实现标注时长提取');
 assert.match(nodeSrc, /剧本标注时长约/, 'script_node.js 标注口径 hint 应显示「剧本标注时长约」');
+// 标注时长「约/左右」近似修饰：前端两处与后端 llm/script_parser.py 同规则（三处同步）
+const DECLARED_APPROX_PREFIX = /\(\?:约\|大约\|大概\|近\)\?\\s\*/;
+const DECLARED_APPROX_SUFFIX = /\(\?:左右\|上下\)\?/;
+for (const [name, src] of [['render.js', renderSrc], ['script_node.js', nodeSrc]]) {
+    assert.match(src, DECLARED_APPROX_PREFIX, `${name} 标注时长正则应支持约/大约/大概/近前缀修饰`);
+    assert.match(src, DECLARED_APPROX_SUFFIX, `${name} 标注时长正则应支持左右/上下后缀修饰`);
+}
 assert.match(nodeClientSrc, /total_duration_multiplier: Number\(scriptNodeData\.totalDurationMultiplier\)/, 'script_split_task.js 请求应透传总分镜时长倍率');
 assert.match(workflowSrc, /totalDurationMultiplier/, 'workflow.js 重载时应恢复总分镜时长倍率');
 

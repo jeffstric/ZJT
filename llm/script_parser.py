@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional, List, Tuple
 from config.constant import ScriptParserConstants, ScriptSplitConstants
 from llm.llm_client_factory import get_llm_client
 from services.storyboard_spatial import repair_spatial_layout_continuity as _repair_spatial_layout_continuity_core
+from utils import script_duration as _script_duration
 
 # ============================================================
 # 日志开关配置
@@ -858,8 +859,10 @@ def reorganize_shot_groups(parsed_data: Dict[str, Any], max_group_duration: int,
 # 总分镜时长控制（见 docs/script/script_split_total_duration_control.md）
 # ============================================================
 
-# CJK 字符（含假名）：按中文朗读速率估算；其余字符按拉丁速率估算
-_CJK_CHAR_RE = re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u30ff]')
+# CJK 字符（含假名）：按中文朗读速率估算；其余字符按拉丁速率估算。
+# 速率常量与混合公式统一收敛到 utils/script_duration.py（三端共用单一实现），
+# 此处保留薄包装与正则别名以兼容既有调用点。
+_CJK_CHAR_RE = _script_duration._CJK_CHAR_RE
 
 
 def _script_duration_rate_per_second(text: str) -> float:
@@ -868,12 +871,7 @@ def _script_duration_rate_per_second(text: str) -> float:
     与前端 web/js/storyboard/render.js、web/js/script_node.js 中的
     estimateScriptDurationSeconds 保持同一公式（修改时三处同步）。
     """
-    chars = [ch for ch in (text or "") if not ch.isspace()]
-    if not chars:
-        return ScriptSplitConstants.SCRIPT_DURATION_CJK_CHARS_PER_SECOND
-    cjk_count = sum(1 for ch in chars if _CJK_CHAR_RE.match(ch))
-    ratio = cjk_count / len(chars)
-    return ratio * ScriptSplitConstants.SCRIPT_DURATION_CJK_CHARS_PER_SECOND + (1 - ratio) * ScriptSplitConstants.SCRIPT_DURATION_LATIN_CHARS_PER_SECOND
+    return _script_duration.rate_per_second(text)
 
 
 def estimate_script_duration_seconds(text: str) -> float:
@@ -993,15 +991,20 @@ def apply_dialogue_matched_shot_durations(parsed_data: Dict[str, Any]) -> int:
 
 
 # ---- 剧本自述标注总时长（最高优先级口径，与前端两处 JS 同规则，三处同步）----
-# 关键词 + 数字 + 单位：「时长：30秒」「总时长 90s」「预计1分钟」「片长： 2 min」
+# 关键词 + 数字 + 单位：「时长：30秒」「总时长 90s」「预计1分钟」「片长： 2 min」；
+# 数字前允许「约/大约/大概/近」、单位后允许「左右/上下」近似修饰：
+# 「片长：约3分钟」「总时长45秒左右」（线上事故：约字挡住匹配致 declared 口径丢失）
 _DECLARED_DURATION_KEYWORD_RE = re.compile(
     r"(?:预计时长|总时长|成片时长|片长|时长|预计)\s*[:：]?\s*"
-    r"(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)",
+    r"(?:约|大约|大概|近)?\s*"
+    r"(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)(?:左右|上下)?",
     re.IGNORECASE,
 )
-# 括号包裹的纯时长标注：「（30秒）」「(1.5分钟)」（括号内只有数字+单位）
+# 括号包裹的纯时长标注：「（30秒）」「(1.5分钟)」「（约3分钟）」（括号内只有
+# 可选近似修饰 + 数字 + 单位 + 可选左右/上下后缀）
 _DECLARED_DURATION_PAREN_RE = re.compile(
-    r"[（(]\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)\s*[）)]",
+    r"[（(]\s*(?:约|大约|大概|近)?\s*(\d+(?:\.\d+)?)\s*"
+    r"(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)(?:左右|上下)?\s*[）)]",
     re.IGNORECASE,
 )
 _DECLARED_DURATION_MINUTE_UNITS = {"分钟", "分鐘", "minute", "minutes", "min", "mins"}
@@ -1011,7 +1014,8 @@ def extract_script_declared_duration_seconds(text: str) -> Optional[float]:
     """从剧本文本中提取自述的预计总时长（秒），无标注返回 None。
 
     识别「时长/预计时长/总时长/成片时长/片长/预计」关键词后接的
-    N秒/N分钟/N s/N min，以及括号包裹的（N秒）/（N分钟）；分钟换算为秒；
+    N秒/N分钟/N s/N min，以及括号包裹的（N秒）/（N分钟）；数字前后的
+    「约/大约/大概/近」「左右/上下」近似修饰不影响识别；分钟换算为秒；
     取文本中第一个有效匹配。结果须落在
     SCRIPT_DURATION_DECLARED_MIN/MAX_SECONDS 区间内，否则视为误识别。
     正文/台词里的时间描述（如「他等了30秒」）无关键词引导，不会命中。
@@ -1271,13 +1275,19 @@ def enforce_total_duration_limit(
         parsed_data["shot_groups"] = [g for g in groups if g.get("shots")]
         shots = [s for g in parsed_data["shot_groups"] for s in (g.get("shots") or [])]
         total = sum(_safe_float(s.get("duration", 0)) for s in shots)
+        dialogue_floor_sum = sum(
+            max(min_shot, compute_shot_dialogue_seconds(s)) for s in shots
+        )
         if total > cap:
             # 台词朗读下限导致压不到目标：接受超出并上报差额（台词必须念完）
-            dialogue_floor_sum = sum(
-                max(min_shot, compute_shot_dialogue_seconds(s)) for s in shots
-            )
             if dialogue_floor_sum > cap:
                 report["dialogue_floor_exceeded_seconds"] = round(total - cap, 1)
+        elif dialogue_floor_sum > float(target_seconds):
+            # 合并把总时长压进容差，但合并镜头 duration 取 max 不含被并镜头
+            # 台词时长：台词物理下限之和仍超目标，成片时长必然被配音顶回。
+            # 上报「下限与当前总时长的差额」，不让超限在报告里假达标
+            # （线上事故：floor_sum=346.3s 被合并压进容差后未上报）。
+            report["dialogue_floor_exceeded_seconds"] = round(dialogue_floor_sum - total, 1)
         report["total_after"] = round(total, 1)
         parsed_data["total_duration"] = int(round(total))
         return report

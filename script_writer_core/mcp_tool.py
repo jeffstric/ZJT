@@ -18,6 +18,12 @@ from script_writer_core.cron_task_manager import get_task_manager
 from script_writer_core.constant import ItemType
 from config.config_util import get_config, get_config_value
 from config.constant import FilePathConstants, StoryType, GridConfig, DEFAULT_TEXT_TO_IMAGE_TASK_ID
+from utils.script_duration import (
+    budget_tolerance_upper,
+    dialogue_char_budget,
+    estimate_dialogue_seconds,
+    rate_per_second,
+)
 
 # 模块级日志
 logger = logging.getLogger(__name__)
@@ -1640,7 +1646,43 @@ def create_character_json(user_id: str, world_id: str, auth_token: str, name: st
         }
 
 
-def create_script_json(user_id: str, world_id: str, auth_token: str, title: str, episode_number: int, content: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
+def _build_dialogue_stats(content: str, target_duration_seconds: Optional[float] = None) -> tuple:
+    """统计剧本口播字数与预估朗读时长，并对照目标片长生成超预算 warning。
+
+    台词过滤与拆分端 extract_script_dialogue_text 同规则（启发式）；
+    过滤结果为空时回退按全文口径统计（如纯旁白解说被误过滤）。
+    返回 (dialogue_stats, duration_warning)，duration_warning 超预算时非 None。
+    见 docs/script/story_writer_duration_budget.md。
+    """
+    from llm.script_parser import extract_script_dialogue_text
+
+    text = content or ""
+    dialogue_text = extract_script_dialogue_text(text)
+    counted_text = dialogue_text if dialogue_text.strip() else text
+    chars = len([ch for ch in counted_text if not ch.isspace()])
+    rate = rate_per_second(counted_text)
+    stats = {
+        "chars": chars,
+        "estimated_seconds": estimate_dialogue_seconds(counted_text),
+    }
+
+    warning = None
+    if target_duration_seconds is not None and float(target_duration_seconds) > 0:
+        target = float(target_duration_seconds)
+        budget = dialogue_char_budget(target, rate=rate)
+        upper = budget_tolerance_upper(target, rate=rate)
+        stats["target_duration_seconds"] = target
+        stats["budget_chars"] = budget
+        if chars > upper:
+            warning = (
+                f"台词口播字数约 {chars} 字，超出目标片长 {target:.0f} 秒的预算上限 "
+                f"{upper} 字（预算 {budget} 字 × 1.2 容差）。台词对话内容的多少决定成片时长，"
+                f"请按「片长与台词字数预算」规则压缩台词后重新保存"
+            )
+    return stats, warning
+
+
+def create_script_json(user_id: str, world_id: str, auth_token: str, title: str, episode_number: int, content: str = None, language: str = "zh-CN", target_duration_seconds: float = None, **additional_fields) -> Dict[str, Any]:
     """
     创建标准格式的剧本JSON文件 - MCP工具函数
 
@@ -1722,6 +1764,14 @@ def create_script_json(user_id: str, world_id: str, auth_token: str, title: str,
             'update_time': datetime.now().isoformat()
         }
 
+        # 口播字数统计与目标片长预算（生成端时长闭环，见
+        # docs/script/story_writer_duration_budget.md）
+        dialogue_stats, duration_warning = _build_dialogue_stats(
+            content, target_duration_seconds
+        )
+        if dialogue_stats['chars'] > 0:
+            script_data['dialogue_stats'] = dialogue_stats
+
         # 添加额外字段
         for key, value in additional_fields.items():
             if key not in script_data and value is not None:
@@ -1735,13 +1785,18 @@ def create_script_json(user_id: str, world_id: str, auth_token: str, title: str,
                 'error': '保存剧本JSON文件失败'
             }
 
-        return {
+        result = {
             'success': True,
             'filename': filename,
             'file_path': file_path,
             'script_data': script_data,
             'message': f'剧本第{episode_number}集 "{title}" 已创建: {filename}'
         }
+        if dialogue_stats['chars'] > 0:
+            result['dialogue_stats'] = dialogue_stats
+        if duration_warning:
+            result['duration_warning'] = duration_warning
+        return result
 
     except Exception as e:
         return {
@@ -2976,7 +3031,7 @@ def update_prop_json(user_id: str, world_id: str, auth_token: str, name: str, pr
         }
 
 
-def update_script_json(user_id: str, world_id: str, auth_token: str, title: str, episode_number: int = None, content: str = None, **additional_fields) -> Dict[str, Any]:
+def update_script_json(user_id: str, world_id: str, auth_token: str, title: str, episode_number: int = None, content: str = None, target_duration_seconds: float = None, **additional_fields) -> Dict[str, Any]:
     """
     更新剧本JSON文件 - MCP工具函数
     
@@ -3053,6 +3108,12 @@ def update_script_json(user_id: str, world_id: str, auth_token: str, title: str,
             existing_data['episode_number'] = episode_number
         if content is not None:
             existing_data['content'] = content
+            # 内容变更时重算口播字数统计（生成端时长闭环）
+            dialogue_stats, duration_warning = _build_dialogue_stats(
+                content, target_duration_seconds
+            )
+            if dialogue_stats['chars'] > 0:
+                existing_data['dialogue_stats'] = dialogue_stats
 
         # 添加额外字段
         for key, value in additional_fields.items():
@@ -3071,13 +3132,18 @@ def update_script_json(user_id: str, world_id: str, auth_token: str, title: str,
                 'error': '保存剧本JSON文件失败'
             }
 
-        return {
+        result = {
             'success': True,
             'filename': filename,
             'file_path': file_path,
             'script_data': existing_data,
             'message': f'剧本第{target_episode}集 "{title}" 已成功更新'
         }
+        if content is not None:
+            result['dialogue_stats'] = existing_data.get('dialogue_stats')
+            if duration_warning:
+                result['duration_warning'] = duration_warning
+        return result
 
     except Exception as e:
         return {
@@ -3281,6 +3347,10 @@ MCP_TOOLS = [
                 "content": {
                     "type": "string",
                     "description": "剧本内容（可选）"
+                },
+                "target_duration_seconds": {
+                    "type": "number",
+                    "description": "目标片长（秒，可选；如 1 分钟传 60）。提供时会统计台词口播字数并对照预算（片长×0.6×4.5字/秒）校验，超出 1.2 倍在返回中给出 duration_warning"
                 }
             },
             "required": ["title"]
@@ -3556,6 +3626,10 @@ MCP_TOOLS = [
                 "content": {
                     "type": "string",
                     "description": "剧本内容（可选）"
+                },
+                "target_duration_seconds": {
+                    "type": "number",
+                    "description": "目标片长（秒，可选；更新 content 时用于口播字数预算校验，超预算在返回中给出 duration_warning）"
                 }
             },
             "required": ["title"]

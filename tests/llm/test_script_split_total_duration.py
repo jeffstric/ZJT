@@ -247,11 +247,31 @@ def test_declared_duration_keyword_variants():
     assert extract_script_declared_duration_seconds("成片时长：45秒") == 45.0
 
 
+def test_declared_duration_approximation_modifiers():
+    # 数字前「约/大约/大概/近」、单位后「左右/上下」近似修饰均应命中
+    # （线上事故：片长：约3分钟 因约字挡住匹配致 declared 口径丢失）
+    assert extract_script_declared_duration_seconds("片长：约3分钟") == 180.0
+    assert extract_script_declared_duration_seconds("片长约3分钟") == 180.0
+    assert extract_script_declared_duration_seconds("时长:大约90s") == 90.0
+    assert extract_script_declared_duration_seconds("预计约40秒") == 40.0
+    assert extract_script_declared_duration_seconds("总时长：45秒左右") == 45.0
+    assert extract_script_declared_duration_seconds("时长：2分钟上下") == 120.0
+    assert extract_script_declared_duration_seconds("（约30秒）") == 30.0
+    assert extract_script_declared_duration_seconds("(约1.5分钟)") == 90.0
+    # 事故剧本头部原文：片长：约3分钟
+    head = (
+        "视频剧本：《熬夜的代价，与大脑的自救》\n"
+        "片长：约3分钟\n风格：偏科普向，快节奏口播"
+    )
+    assert extract_script_declared_duration_seconds(head) == 180.0
+
+
 def test_declared_duration_ignores_body_time_descriptions():
     # 正文/台词里的时间描述没有关键词引导、也不是纯括号标注 → 不误判
     assert extract_script_declared_duration_seconds("他等了30秒，终于开口。") is None
     assert extract_script_declared_duration_seconds("（他等了30秒。）") is None
     assert extract_script_declared_duration_seconds("林深：再等1分钟就走。") is None
+    assert extract_script_declared_duration_seconds("预计近期上线") is None
     assert extract_script_declared_duration_seconds("") is None
     assert extract_script_declared_duration_seconds(None) is None
 
