@@ -800,6 +800,7 @@
       '</div>' +
       '<div class="ds-right" id="dsPropsPanel"></div>' +
     '</div>' +
+    '<div class="ds-timeline" id="dsTimeline"></div>' +
     '<div class="ds-statusbar">' +
       '<span class="ds-status-dot" id="dsStatusDot"></span>' +
       '<span id="dsStatusText">就绪</span>' +
@@ -983,6 +984,9 @@
     var d = this.node.data && this.node.data.directorData;
     var self = this;
 
+    // 时间轴（关键帧/时长）先恢复：后续 serializeData/撤销快照均含 timeline
+    this.restoreTimeline(d);
+
     if (d && d.puppets) {
       d.puppets.forEach(function (pd) { self.addPuppet(pd, true); });
     }
@@ -1016,7 +1020,7 @@
     });
     var env = this.node.data.directorData && this.node.data.directorData.environment;
     return {
-      version: 1,
+      version: 2,
       puppets: puppets,
       environment: (env && env.url) ? {
         url: env.url,
@@ -1032,7 +1036,8 @@
         pos: [round2(this.virtualCamCfg.pos.x), round2(this.virtualCamCfg.pos.y), round2(this.virtualCamCfg.pos.z)],
         target: [round2(this.virtualCamCfg.target.x), round2(this.virtualCamCfg.target.y), round2(this.virtualCamCfg.target.z)],
         fov: Math.round(this.virtualCamCfg.fov)
-      }
+      },
+      timeline: this.serializeTimeline()
     };
   };
 
@@ -1089,6 +1094,9 @@
       this.virtualCamCfg.target.fromArray(snap.camera.target);
       this.virtualCamCfg.fov = snap.camera.fov;
     }
+    // 撤销同步恢复时间轴数据并重绘
+    this.restoreTimeline(snap);
+    if (typeof this.renderTimeline === 'function') this.renderTimeline();
     this.selectedPuppetId = null;
     this.selectedJointKey = null;
     if (snap.environment && snap.environment.url) {
@@ -3009,6 +3017,9 @@
       if (!self.overlay || !self.overlay.classList.contains('show')) return;
       self.rafId = requestAnimationFrame(frame);
 
+      var tNow = (window.performance && performance.now) ? performance.now() / 1000 : Date.now() / 1000;
+      self.tickTimeline(tNow);
+
       // 编辑视角
       var sp = Math.sin(o.phi), cp = Math.cos(o.phi);
       self.viewCam.position.set(
@@ -3027,7 +3038,6 @@
 
       // 对焦十字呼吸动画 + 选中放大
       if (self.focusMarker) {
-        var tNow = (window.performance && performance.now) ? performance.now() / 1000 : Date.now() / 1000;
         var fBase = self.selectedCamTarget === 'focus' ? 0.32 : 0.22;
         var fPulse = 1 + 0.05 * Math.sin(tNow * 3);
         self.focusMarker.scale.set(fBase * fPulse, fBase * fPulse, 1);
@@ -3065,6 +3075,7 @@
     this.setupViewportInteraction();
     this.setupAddPuppet();
     this.bindTopbar();
+    this.setupTimeline();
     this.overlay.classList.add('show');
 
     this.$('dsSubtitle').textContent = this.node.title || '';
@@ -3103,6 +3114,8 @@
 
   DirectorEditor.prototype.close = function (flush) {
     this.abortEnvFit();
+    // 停止时间轴播放并恢复关节姿态，避免步态摆动残留在 rig 上
+    if (typeof this.stopTimelineForClose === 'function') this.stopTimelineForClose();
     // 收尾数据
     this.node.data.directorData = this.serializeData();
     this.updateNodeShell();
@@ -3158,6 +3171,15 @@
   };
 
   // ============ 对外 API ============
+
+  // 时间轴能力（关键帧/播放）由独立模块挂载原型方法（director_stage_timeline.js）
+  if (window.DirectorStageTimelineModule && typeof window.DirectorStageTimelineModule.attach === 'function') {
+    window.DirectorStageTimelineModule.attach(DirectorEditor, {
+      clamp: clamp,
+      round2: round2,
+      deg2rad: deg2rad
+    });
+  }
 
   function openDirectorStageEditor(nodeId) {
     if (ed) ed.close(false);

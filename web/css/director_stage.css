@@ -834,3 +834,153 @@ html.theme-dark .ds-node-preview {
   background: #374151;
   border-radius: 4px;
 }
+
+/* ---------- 时间轴（关键帧调度 + 播放） ---------- */
+.ds-timeline {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: #1b1e27;
+  border-top: 1px solid #2a2e3a;
+  padding: 6px 12px 4px;
+  gap: 4px;
+}
+
+.ds-tl-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.ds-tl-controls .ds-mini-btn.ds-tl-play.active {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #fff;
+}
+
+.ds-tl-time {
+  font-size: 12px;
+  color: #d1d5db;
+  font-variant-numeric: tabular-nums;
+  min-width: 96px;
+  text-align: center;
+}
+
+.ds-tl-dur {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.ds-tl-dur input {
+  width: 52px;
+  padding: 2px 6px;
+  font-size: 11px;
+  border: 1px solid #2a2e3a;
+  border-radius: 4px;
+  background: #14161d;
+  color: #e5e7eb;
+}
+
+.ds-tl-hint {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+/* 轨道 */
+.ds-tl-track {
+  position: relative;
+  height: 44px;
+  background: #14161d;
+  border: 1px solid #2a2e3a;
+  border-radius: 6px;
+  cursor: ew-resize;
+  user-select: none;
+}
+
+.ds-tl-ruler {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 16px;
+  border-bottom: 1px dashed #2a2e3a;
+}
+
+.ds-tl-tick {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-left: 1px solid #2a2e3a;
+}
+
+.ds-tl-tick span {
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  font-size: 9px;
+  color: #6b7280;
+  line-height: 1;
+}
+
+.ds-tl-keys {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 16px;
+  bottom: 0;
+}
+
+/* 关键帧菱形标记 */
+.ds-tl-key {
+  position: absolute;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  margin: -6px 0 0 -6px;
+  background: #38bdf8;
+  border: 1px solid #0ea5e9;
+  transform: rotate(45deg);
+  cursor: grab;
+  border-radius: 2px;
+}
+
+.ds-tl-key:hover {
+  background: #7dd3fc;
+}
+
+.ds-tl-key:active {
+  cursor: grabbing;
+}
+
+/* 播放头 */
+.ds-tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid #f97316;
+  pointer-events: none;
+  margin-left: -1px;
+}
+
+.ds-tl-playhead-cap {
+  position: absolute;
+  top: -1px;
+  left: -5px;
+  width: 8px;
+  height: 8px;
+  background: #f97316;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}

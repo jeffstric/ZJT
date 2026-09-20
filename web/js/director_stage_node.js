@@ -31,6 +31,7 @@
         '<span class="ds-meta-puppets">🧍 ' + (window.t ? window.t('director_stage_puppets_zero') : '人偶 ×0') + '</span>' +
         '<span class="ds-meta-shot">🎥 FOV --</span>' +
         '<span class="ds-meta-env" style="display:none;">🌐 ' + (window.t ? window.t('director_stage_env_badge') : '全景环境') + '</span>' +
+        '<span class="ds-meta-timeline" style="display:none;">⏱ --</span>' +
       '</div>' +
       '<div class="ds-node-hint" style="margin-top:6px; font-size:11px; color:#6b7280; text-align:center;">' +
         (window.t ? window.t('director_stage_export_hint') : '在导演台中「导出快照」会自动生成图片节点') +
@@ -151,6 +152,12 @@
     var envEl = el.querySelector('.ds-meta-env');
     if (envEl) {
       envEl.style.display = (d && d.environment && d.environment.url) ? '' : 'none';
+    }
+    var tlEl = el.querySelector('.ds-meta-timeline');
+    if (tlEl) {
+      var keyCount = d && d.timeline && Array.isArray(d.timeline.keys) ? d.timeline.keys.length : 0;
+      tlEl.style.display = keyCount > 0 ? '' : 'none';
+      tlEl.textContent = '⏱ ×' + keyCount;
     }
   }
 
