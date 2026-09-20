@@ -366,8 +366,17 @@ class SeedanceHuimengiV1Driver(BaseVideoDriver):
 
         # human_review：真人审核模式，从 extra_config 透传（默认 false）
         # 开启后素材将自动上传资产库审核加白，支持含真人人脸的素材
+        # 兜底注入：extra_config 在提交时按"当时解析到的实现方"固化，若当时命中的是
+        # volcengine 等本地遮盖实现方则不会写入 human_review；失败重试切换到本网关后
+        # 该字段缺失，而本驱动会恢复原始（未遮盖）素材，含人脸素材会被网关内容审核拒绝。
+        # 故未显式声明且用户勾选了人脸遮盖时，由驱动侧补注 true（显式 false 不覆盖）。
         if extra_config.get('human_review') is not None:
             params["human_review"] = bool(extra_config['human_review'])
+        elif bool(extra_config.get('enable_face_mask')):
+            params["human_review"] = True
+            self.logger.info(
+                "extra_config 未声明 human_review，按 enable_face_mask=true 补注真人审核模式"
+            )
 
         ratio = extra_config.get('ratio') or ai_tool.ratio
         # Seedance 2.5 带参考视频为视频编辑任务：显式 omni_reference_task_type=edit
