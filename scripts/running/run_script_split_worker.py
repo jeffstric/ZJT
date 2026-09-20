@@ -34,6 +34,13 @@ sys.path.insert(0, project_root)
 # 日志：import 时自动配置 root logger 写入 logs/app.YYYY-MM-DD.log + 控制台
 import utils.logger_config  # noqa: F401
 
+from config.config_util import get_dynamic_config_value
+from config.constant import (
+    Edition,
+    LICENSE_REBOOTSTRAP_INTERVAL_SECONDS,
+)
+from task.license_rebootstrap_task import rebootstrap_commercial_license
+
 # 防孤儿看门狗与 scheduler 同源：Windows 无 re-parent，需探活而非比较 getppid
 # 锁持有者探活复用 scheduler.py 的实现——曾在此处拷贝出语义相反的 _is_stale_lock
 # （True=已死，却在 True 分支"诚实退出"）：持有者已死不重试、持有者活着反重试；
@@ -156,6 +163,52 @@ def _run_one_tick(coro_func):
 WORKER_INDEX = 0
 WORKER_TOTAL = 0
 
+# 上次许可证续租触发时刻（time.monotonic()）；初始 0 使首次 tick 后立即续租一次，
+# 尽早暴露授权服务器不可达等问题
+_last_license_rebootstrap_at = 0.0
+
+
+def _maybe_rebootstrap_license():
+    """主循环周期续租商业许可证（补齐 2026-09-20 事故缺口）。
+
+    scheduler 进程由 task/scheduler.py 的 commercial_license_rebootstrap job
+    周期续租，但本 worker 不启动 APScheduler，进程内 LicenseStateStore 在
+    启动 bootstrap 拿到的 24h 租约到期后无人续租，require_commercial_license
+    持续抛「商业授权租约已经过期」，拆分段生成后处理（空间修复）与 quality
+    策略实例化全部失败（2026-09-20 storyboard 连续拆分失败事故）。
+
+    这里复用 scheduler 同一续租门面（动态开关 license_rebootstrap.enabled、
+    Web 进程判重、异常自吞、Sentry 告警限频均由门面/Provider 内置），按
+    license_rebootstrap.interval_seconds（数据库优先 + YAML 兜底，默认
+    LICENSE_REBOOTSTRAP_INTERVAL_SECONDS=6h）节流触发；社区版直接跳过。
+    """
+    global _last_license_rebootstrap_at
+    if Edition.is_community():
+        return
+    try:
+        interval_seconds = int(get_dynamic_config_value(
+            'license_rebootstrap', 'interval_seconds',
+            default=LICENSE_REBOOTSTRAP_INTERVAL_SECONDS,
+        ))
+    except Exception:
+        interval_seconds = LICENSE_REBOOTSTRAP_INTERVAL_SECONDS
+    now = time.monotonic()
+    if now - _last_license_rebootstrap_at < interval_seconds:
+        return
+    _last_license_rebootstrap_at = now
+    logger.info(
+        "script split worker license rebootstrap triggered (index=%d, interval=%ds)",
+        WORKER_INDEX, interval_seconds,
+    )
+    try:
+        rebootstrap_commercial_license()
+    except Exception:
+        # 门面实现自身异常自吞，此处兜底防续租异常拖垮 worker 主循环
+        logger.exception(
+            "script split worker license rebootstrap failed (index=%d)",
+            WORKER_INDEX,
+        )
+
 
 def main():
     global WORKER_INDEX, WORKER_TOTAL
@@ -246,6 +299,8 @@ def main():
                 # process_script_split_tasks 内部已有完整异常处理并写库，
                 # 这里兜底防止单次未知异常导致 worker 整体退出。
                 logger.exception("worker tick 未捕获异常，跳过本轮")
+            # 许可证周期续租巡检（节流在函数内部，未到间隔直接返回）
+            _maybe_rebootstrap_license()
             if parent_process_dead(initial_ppid):
                 # Windows 上 getppid() 恒不变，parent_process_dead 内部改用探活
                 print("[Worker] Parent process died, exiting to avoid becoming an orphan...")
