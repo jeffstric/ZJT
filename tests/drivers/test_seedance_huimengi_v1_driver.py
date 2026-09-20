@@ -462,6 +462,43 @@ class TestBuildCreateRequest(unittest.TestCase):
         req = driver.build_create_request(ai_tool)
         self.assertNotIn('human_review', req['json']['params'])
 
+    def test_human_review_injected_by_face_mask(self):
+        """未声明 human_review 但 enable_face_mask=true：驱动侧补注 true
+
+        覆盖跨实现方重试场景：提交时按默认实现方（volcengine）固化 extra_config，
+        失败重试切换到本网关后字段缺失，含人脸素材否则会被网关内容审核拒绝。
+        """
+        driver = self._driver()
+        ai_tool = _make_ai_tool(
+            prompt='真人审核兜底',
+            image_path=None,
+            extra_config={'enable_face_mask': True}
+        )
+        req = driver.build_create_request(ai_tool)
+        self.assertIs(req['json']['params']['human_review'], True)
+
+    def test_human_review_explicit_false_not_overridden(self):
+        """显式 human_review=false 优先于 enable_face_mask=true，不被覆盖"""
+        driver = self._driver()
+        ai_tool = _make_ai_tool(
+            prompt='显式关闭',
+            image_path=None,
+            extra_config={'human_review': False, 'enable_face_mask': True}
+        )
+        req = driver.build_create_request(ai_tool)
+        self.assertIs(req['json']['params']['human_review'], False)
+
+    def test_human_review_face_mask_false_not_injected(self):
+        """enable_face_mask=false（用户未勾选）时不注入 human_review"""
+        driver = self._driver()
+        ai_tool = _make_ai_tool(
+            prompt='未勾选遮盖',
+            image_path=None,
+            extra_config={'enable_face_mask': False}
+        )
+        req = driver.build_create_request(ai_tool)
+        self.assertNotIn('human_review', req['json']['params'])
+
     def test_resolution_mapping_lowercase(self):
         """resolution 经 SEEDANCE_DRIVER_VALUES 转为小写（480p/720p/1080p/4k）"""
         from config.constant import VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
