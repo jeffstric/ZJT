@@ -29,6 +29,7 @@ from config.constant import (
     DRIVER_IMPLEMENTATION_MAPPING,
     GEMINI_URL_FORMATS,
     ChannelLevel,
+    UserStatus,
 )
 from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
 from services.system_config_batch_service import batch_update_system_configs
@@ -536,12 +537,12 @@ async def admin_update_user_status(
     """
     admin = await require_admin(auth_token)
 
-    if request.status not in (0, 1, 2):
+    if request.status not in (UserStatus.DISABLED, UserStatus.NORMAL, UserStatus.PENDING):
         raise HTTPException(status_code=400, detail="无效的用户状态值（仅允许 0-禁用, 1-正常, 2-待审核）")
 
     # 禁止管理员禁用自己或将自己设为待审核（登录拒绝 status!=1 的账号，
     # 置为禁用/待审核后将失去重新登录入口）
-    if user_id == admin.id and request.status in (0, 2):
+    if user_id == admin.id and request.status in (UserStatus.DISABLED, UserStatus.PENDING):
         raise HTTPException(status_code=400, detail="不能禁用自己或将自己设为待审核")
 
     try:
@@ -551,7 +552,7 @@ async def admin_update_user_status(
 
         # 激活用户数配额：用户从不活跃状态（禁用/待审核）转为正常时校验
         # （禁用用户不计入配额，管理员可通过禁用释放名额）
-        if request.status == 1 and user.status != 1:
+        if request.status == UserStatus.NORMAL and user.status != UserStatus.NORMAL:
             from services.registration_quota import check_allowed
             allowed, quota_msg = check_allowed(UsersModel.get_active_count())
             if not allowed:
@@ -566,7 +567,7 @@ async def admin_update_user_status(
         UsersModel.update_status(user_id, request.status)
         
         # 如果是禁用操作，删除该用户的所有 token（强制登出）
-        if request.status == 0:
+        if request.status == UserStatus.DISABLED:
             try:
                 UserTokensModel.delete_by_user_id(user_id)
                 logger.info(f"Deleted all tokens for disabled user {user_id}")

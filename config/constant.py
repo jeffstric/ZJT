@@ -673,6 +673,19 @@ class SceneDifficulty:
 COMMUNITY_MAX_ACTIVE_USERS = 1
 
 
+class UserStatus:
+    """用户状态（users.status 取值；登录仅允许 NORMAL，其余状态拒绝登录）"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'DISABLED': '禁用',
+        'NORMAL': '正常',
+        'PENDING': '待审核',
+    }
+    DISABLED = 0    # 禁用（登录拒绝；不计入激活用户数配额）
+    NORMAL = 1      # 正常（唯一允许登录的状态）
+    PENDING = 2     # 待审核（注册后待管理员审批，登录拒绝）
+
+
 class Edition:
     """版本模式"""
     _CONSTANT_GROUP = True

@@ -15,6 +15,7 @@ from config.constant import (
     PERSEIDS_ERR_NO_VALID_TOKEN,
     USER_TOKEN_EXPIRE_DAYS,
     USER_TOKEN_RENEW_THRESHOLD_DAYS,
+    UserStatus,
 )
 from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 
@@ -112,10 +113,10 @@ class AuthService:
             return {"success": False, "message": "密码错误"}
         
         # 检查用户状态
-        if user.status == 2:
+        if user.status == UserStatus.PENDING:
             LoginLogModel.create(user.id, ip_address, user_agent, 0)
             return {"success": False, "message": "账号正在审核中，请等待管理员审批"}
-        if user.status == 0:
+        if user.status == UserStatus.DISABLED:
             LoginLogModel.create(user.id, ip_address, user_agent, 0)
             return {"success": False, "message": "账户已被禁用"}
         
