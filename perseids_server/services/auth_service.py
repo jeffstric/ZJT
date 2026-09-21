@@ -183,11 +183,11 @@ class AuthService:
         if not is_email_registration and not is_phone_registration:
             return {"success": False, "message": "请提供手机号或邮箱进行注册"}
 
-        # 社区版注册人数限制（商业版由 enterprise 注入 Provider 放行，
-        # 见 services/registration_quota.py）。
+        # 激活用户数配额限制（社区版 COMMUNITY_MAX_ACTIVE_USERS；商业版由
+        # enterprise 注入 Provider 按许可证 edition 分档，见 services/registration_quota.py）。
         # 计数必须使用本模块的 UsersModel 引用（测试通过 patch 该引用注入 mock）。
         from services.registration_quota import check_allowed
-        _allowed, _quota_msg = check_allowed(UsersModel.get_total_count())
+        _allowed, _quota_msg = check_allowed(UsersModel.get_active_count())
         if not _allowed:
             logger.warning(
                 "注册被拒绝（配额限制）- 手机号: %s, 邮箱: %s",

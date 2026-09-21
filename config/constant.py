@@ -667,9 +667,10 @@ class SceneDifficulty:
         return normalized if normalized in cls.VALID_VALUES else cls.DEFAULT
 
 
-# 社区版最大注册用户数（商业版由 enterprise 模块注入 Provider 解除限制，
-# 见 services/registration_quota.py）
-COMMUNITY_MAX_REGISTERED_USERS = 10
+# 社区版（开源版）最大激活用户数（users.status = 1 计数；禁用/待审核不计入，
+# 管理员可禁用用户释放名额）。商业版由 enterprise 模块注入 Provider 按许可证
+# edition 分档限制，见 services/registration_quota.py
+COMMUNITY_MAX_ACTIVE_USERS = 1
 
 
 class Edition:
