@@ -14,7 +14,7 @@
 import state from './state.js';
 import { formatDuration } from './adapters.js';
 import { icon } from './icons.js';
-import { showToast } from './utils.js';
+import { showToast, t } from './utils.js';
 import { SCENE_AUDIO_MODE, resolveSceneAudioMode } from './playback_audio.js';
 import {
     ensurePreviewStage,
@@ -207,7 +207,7 @@ function setPlaybackBuffering(on) {
             mask = document.createElement('div');
             mask.className = 'preview-buffering';
             mask.setAttribute('aria-live', 'polite');
-            mask.innerHTML = '<span class="preview-buffering-text">加载中…</span>';
+            mask.innerHTML = `<span class="preview-buffering-text">${t('msg_loading', '加载中…')}</span>`;
             host.appendChild(mask);
         } else if (mask.parentElement !== host) {
             host.appendChild(mask);
@@ -467,8 +467,10 @@ export function updatePlayheadPosition(options = {}) {
     return true;
 }
 
-/** 字幕设置面板打开时用于预览边距效果的示例字幕文本 */
-const SUBTITLE_SAMPLE_TEXT = '字幕左右边距预览示例，拖动滑杆可实时调整画面两侧留白';
+/** 字幕设置面板打开时用于预览边距效果的示例字幕文本（运行时取词，随语言切换更新） */
+function subtitleSampleText() {
+    return t('hint_subtitle_sample', '字幕左右边距预览示例，拖动滑杆可实时调整画面两侧留白');
+}
 
 /** 归一化字幕左右边距（画面宽比例，0~0.18），非法值回退默认 0.07 */
 export function normalizedSubtitleMarginRatio() {
@@ -501,8 +503,9 @@ export function showSubtitleSample() {
     applySubtitleMargin();
     const inner = el.querySelector('.preview-subtitle-text') || el;
     // 示例字幕同样按烧录折行算法换行，所见即所得
-    const lines = wrapSubtitleLines(SUBTITLE_SAMPLE_TEXT, resolveSubtitleMaxChars());
-    inner.textContent = lines.length ? lines.join('\n') : SUBTITLE_SAMPLE_TEXT;
+    const sampleText = subtitleSampleText();
+    const lines = wrapSubtitleLines(sampleText, resolveSubtitleMaxChars());
+    inner.textContent = lines.length ? lines.join('\n') : sampleText;
     el.hidden = !state.subtitleEnabled;
 }
 
@@ -532,7 +535,7 @@ function updatePreviewCaption(plan) {
     if (!caption) return;
     const strong = caption.querySelector('strong');
     const span = caption.querySelector('span');
-    if (strong) strong.textContent = plan.title || '未选择分镜';
+    if (strong) strong.textContent = plan.title || t('status_no_scene_selected', '未选择分镜');
     if (span) span.textContent = plan.durationLabel || '';
 }
 
@@ -607,7 +610,7 @@ function mountVisual(plan) {
 
     const empty = document.createElement('div');
     empty.className = 'preview-empty';
-    empty.textContent = '当前分镜还没有画面';
+    empty.textContent = t('msg_scene_no_visual', '当前分镜还没有画面');
     insertMedia(empty);
     return { videoEl: null, imageEl: null };
 }
@@ -644,7 +647,7 @@ async function runVideoVisual(videoEl, gen, session, options = {}) {
                 await playResult;
             } catch (error) {
                 if (audible) {
-                    showToast('浏览器阻止了视频原声播放，请允许此站点播放声音', 'info');
+                    showToast(t('msg_video_audio_blocked', '浏览器阻止了视频原声播放，请允许此站点播放声音'), 'info');
                 }
             }
         }
@@ -749,7 +752,7 @@ async function playOneAudio(item, gen, preloadedEl) {
         const playResult = audio.play();
         if (playResult && typeof playResult.then === 'function') {
             await playResult.catch((e) => {
-                showToast(`配音播放失败：${e?.message || '未知错误'}`, 'error');
+                showToast(`${t('msg_voiceover_play_failed', '配音播放失败')}：${e?.message || t('msg_unknown_error', '未知错误')}`, 'error');
             });
         }
 
@@ -804,7 +807,7 @@ async function runAudioQueue(audios, gen, preloadedEls = []) {
             await playOneAudio(item, gen, pre);
         } catch (err) {
             if (err?.name === 'PlaybackAbortError') throw err;
-            showToast('跳过一条无法播放的配音', 'info');
+            showToast(t('msg_skip_unplayable_voiceover', '跳过一条无法播放的配音'), 'info');
         }
     }
     state.playback.audioDialogueId = null;
@@ -946,7 +949,7 @@ async function runLoop(startIndex, gen) {
             return;
         }
         console.error('[storyboard playback]', err);
-        showToast(err?.message || '预览播放失败', 'error');
+        showToast(err?.message || t('msg_preview_play_failed', '预览播放失败'), 'error');
         finishPlayback(gen, false);
     }
 }
@@ -968,15 +971,15 @@ export function togglePlayback() {
 
 export function startPlayback(options = {}) {
     if (!state.scenes.length) {
-        showToast('暂无分镜可播放', 'info');
+        showToast(t('msg_no_scenes_to_play', '暂无分镜可播放'), 'info');
         return;
     }
     if (state.viewMode !== 'timeline') {
-        showToast('请切换到时间轴视图再预览', 'info');
+        showToast(t('msg_switch_timeline_preview', '请切换到时间轴视图再预览'), 'info');
         return;
     }
     if (!document.querySelector('.preview-wrapper')) {
-        showToast('预览区域未就绪', 'info');
+        showToast(t('msg_preview_area_not_ready', '预览区域未就绪'), 'info');
         return;
     }
 

@@ -35,8 +35,9 @@ describe('storyboard video batch confirm dialog with power estimate', () => {
         expect(renderSource).toContain('function renderVideoBatchConfirmDialog()');
         // 注册进 modal 聚合渲染
         expect(renderSource).toMatch(/renderModalsHtml\(\)[\s\S]{0,800}?renderVideoBatchConfirmDialog\(\)/);
-        // 弹窗内容包含预计扣减与明细，footer 按钮绑定确认/取消 action
-        expect(renderSource).toContain('预计扣减算力');
+        // 弹窗内容包含预计扣减与明细（i18n：预计扣减 + 算力 词条拼接），footer 按钮绑定确认/取消 action
+        expect(renderSource).toContain("i18nT('label_estimated_deduct', '预计扣减')");
+        expect(renderSource).toContain("i18nT('computing_power_label', '算力')");
         expect(renderSource).toContain('confirm-video-batch-submit');
         expect(renderSource).toContain('cancel-video-batch-submit');
     });

@@ -234,5 +234,6 @@
 | [短信驱动架构](短信驱动架构说明.md) | 短信服务架构 | 待补充 |
 | [数字人节点设计](superpowers/specs/2026-06-14-digital-human-node-power-and-draw-design.md) | 数字人算力与绘制设计 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/T5Cld9mDmoeX0xxAZSWcZGVsnRb) |
 | [前端改进计划](frontend_improvement_plan.md) | 前端架构优化方案 | 待补充 |
+| [故事板多语言接入](storyboard/storyboard_i18n.md) | storyboard.html 接入 i18n：渲染期 t() 求值 + 语言切换整页重渲染，750+ 词条 | 待补充 |
 | [开发者指南](README.md) | 开发者环境搭建与启动 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Gl6mdDADfoqhw6xGvB1cssv7nWd) |
 | [视频功能文档索引](video/README.md) | 视频功能文档索引 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/EjwJdnTK9oCvJtxanPGc1Whtnpf) |
