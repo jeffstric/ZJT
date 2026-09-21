@@ -1,27 +1,26 @@
 """
-注册人数配额公共门面。
+激活用户数配额公共门面。
 
-社区版默认限制注册用户总数上限（COMMUNITY_MAX_REGISTERED_USERS），
-不加载、不执行任何商业配额逻辑。商业版在启动时通过 ``register_provider``
-注入放行实现（见 enterprise/__init__.py）。
+社区版默认限制激活用户数上限（COMMUNITY_MAX_ACTIVE_USERS，
+users.status = 1 计数，禁用/待审核不计入），不加载、不执行任何商业
+配额逻辑。商业版在启动时通过 ``register_provider`` 注入按许可证
+edition 分档的实现（见 enterprise/__init__.py）。
 
-并发说明（社区版）：
-本门面对注册人数为"软上限"——``check_allowed`` 仅做一次计数快照判断，
-不串行化"计数 + 落库"。并发注册时多个请求可能读到相同计数同时放行，
-导致实际人数略超上限。社区版**不**保证注册人数严格不超过上限
-（注册仅影响用户数计数，不涉及权限/支付，超限无安全风险）。如需严格
-上限，请购买商业版（Provider 注入后不再计数）。
-此前曾用 ``threading.Lock`` 做进程内串行化，但生产环境以 gunicorn
-多 worker（多进程）部署时进程间不互斥，进程锁形同虚设反而造成"已解决
-并发"的错觉，故已移除。
+并发说明（软上限）：
+本门面对激活用户数为"软上限"——``check_allowed`` 仅做一次计数快照判断，
+不串行化"计数 + 落库"。并发注册/启用时多个请求可能读到相同计数同时放行，
+导致实际人数略超上限。社区版**不**保证激活人数严格不超过上限
+（人数计数不涉及权限/支付，超限无安全风险）。此前曾用 ``threading.Lock``
+做进程内串行化，但生产环境以 gunicorn 多 worker（多进程）部署时进程间
+不互斥，进程锁形同虚设反而造成"已解决并发"的错觉，故已移除。
 
 计数来源由调用方传入（auth_service 使用其模块级 UsersModel 引用），
 本模块不直接访问数据库，便于测试 mock 与复用。
 """
 import logging
-from typing import Protocol, Tuple
+from typing import Optional, Protocol, Tuple
 
-from config.constant import COMMUNITY_MAX_REGISTERED_USERS
+from config.constant import COMMUNITY_MAX_ACTIVE_USERS
 
 logger = logging.getLogger(__name__)
 
@@ -31,21 +30,27 @@ class RegistrationQuotaProvider(Protocol):
 
     available: bool
 
-    def check_allowed(self, total_count: int) -> Tuple[bool, str]: ...
+    def check_allowed(self, active_count: int) -> Tuple[bool, str]: ...
+
+    def get_max_active_users(self) -> Optional[int]:
+        """返回当前生效的激活用户数上限；None 表示不限。"""
 
 
 class CommunityRegistrationQuotaProvider:
-    """社区版默认实现：注册用户数达到上限后拒绝新注册。"""
+    """社区版默认实现：激活用户数达到上限后拒绝新增激活（注册/启用）。"""
 
     available = False
 
-    def check_allowed(self, total_count: int) -> Tuple[bool, str]:
-        if total_count >= COMMUNITY_MAX_REGISTERED_USERS:
+    def check_allowed(self, active_count: int) -> Tuple[bool, str]:
+        if active_count >= COMMUNITY_MAX_ACTIVE_USERS:
             return False, (
-                f"社区版最多支持 {COMMUNITY_MAX_REGISTERED_USERS} 个注册用户，"
-                "如需更多用户请购买商业版"
+                f"社区版最多支持 {COMMUNITY_MAX_ACTIVE_USERS} 个激活用户，"
+                "如需更多用户请购买商业版（管理员可禁用用户释放名额）"
             )
         return True, ""
+
+    def get_max_active_users(self) -> Optional[int]:
+        return COMMUNITY_MAX_ACTIVE_USERS
 
 
 _community_provider = CommunityRegistrationQuotaProvider()
@@ -71,10 +76,23 @@ def is_available() -> bool:
     return bool(getattr(_provider, 'available', False))
 
 
-def check_allowed(total_count: int) -> Tuple[bool, str]:
-    """检查给定用户总数下是否允许新用户注册，返回 (是否允许, 拒绝原因)。
+def check_allowed(active_count: int) -> Tuple[bool, str]:
+    """检查给定激活用户数下是否允许新增激活（注册/启用），返回 (是否允许, 拒绝原因)。
 
-    社区版为软上限：仅做计数快照判断，不串行化"计数 + 落库"，
-    并发注册下实际人数可能略超上限（见模块 docstring 的并发说明）。
+    软上限：仅做计数快照判断，不串行化"计数 + 落库"，
+    并发下实际人数可能略超上限（见模块 docstring 的并发说明）。
     """
-    return _provider.check_allowed(total_count)
+    return _provider.check_allowed(active_count)
+
+
+def get_max_active_users() -> Optional[int]:
+    """查询当前生效的激活用户数上限；None 表示不限。
+
+    社区版返回 COMMUNITY_MAX_ACTIVE_USERS；商业版由注入的 Provider
+    按许可证 edition 分档计算（许可证不可用时回落社区口径）。
+    供管理端展示（dashboard / 许可证状态卡）复用，不做拒绝判断。
+    """
+    getter = getattr(_provider, 'get_max_active_users', None)
+    if callable(getter):
+        return getter()
+    return COMMUNITY_MAX_ACTIVE_USERS

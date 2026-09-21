@@ -667,9 +667,23 @@ class SceneDifficulty:
         return normalized if normalized in cls.VALID_VALUES else cls.DEFAULT
 
 
-# 社区版最大注册用户数（商业版由 enterprise 模块注入 Provider 解除限制，
-# 见 services/registration_quota.py）
-COMMUNITY_MAX_REGISTERED_USERS = 10
+# 社区版（开源版）最大激活用户数（users.status = 1 计数；禁用/待审核不计入，
+# 管理员可禁用用户释放名额）。商业版由 enterprise 模块注入 Provider 按许可证
+# edition 分档限制，见 services/registration_quota.py
+COMMUNITY_MAX_ACTIVE_USERS = 1
+
+
+class UserStatus:
+    """用户状态（users.status 取值；登录仅允许 NORMAL，其余状态拒绝登录）"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'DISABLED': '禁用',
+        'NORMAL': '正常',
+        'PENDING': '待审核',
+    }
+    DISABLED = 0    # 禁用（登录拒绝；不计入激活用户数配额）
+    NORMAL = 1      # 正常（唯一允许登录的状态）
+    PENDING = 2     # 待审核（注册后待管理员审批，登录拒绝）
 
 
 class Edition:

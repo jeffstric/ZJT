@@ -399,6 +399,18 @@ class UsersModel:
         except Exception as e:
             logger.error(f"Failed to get total user count: {e}")
             raise
+
+    @staticmethod
+    def get_active_count() -> int:
+        """获取激活用户数（status=1 正常状态；禁用/待审核不计入，
+        用于版本激活人数配额统计）"""
+        sql = "SELECT COUNT(*) as count FROM users WHERE status = 1"
+        try:
+            result = execute_query(sql, fetch_one=True)
+            return result['count'] if result else 0
+        except Exception as e:
+            logger.error(f"Failed to get active user count: {e}")
+            raise
     
     @staticmethod
     def list_all(

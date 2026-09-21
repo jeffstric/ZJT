@@ -286,6 +286,10 @@ body {
     color: var(--admin-success);
 }
 
+.stat-card-value.danger {
+    color: var(--admin-danger);
+}
+
 .stat-card-actions {
     margin-top: 8px;
 }
