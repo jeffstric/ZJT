@@ -2391,6 +2391,69 @@
       throw new Error('提交任务失败：未返回项目ID');
     }
 
+    // 图片节点文生图：无底图时按提示词直接生成图片。
+    // 无参考图走 /api/text-to-image（aspect_ratio）；有参考图（角色/场景/道具等）
+    // 走 /api/image-edit 的 ref_image_urls（与宫格生图一致，编辑接口允许仅参考图无底图）。
+    async function generateImageFromText(prompt, ratio, model, count, imageSize, referenceImageUrls){
+      const userId = localStorage.getItem('user_id');
+      const authToken = getAuthToken();
+      const form = new FormData();
+
+      form.append('prompt', prompt || '');
+      form.append('count', count || 1);
+      if(imageSize){
+        form.append('image_size', imageSize);
+      }
+
+      let apiUrl;
+      if(referenceImageUrls && referenceImageUrls.length > 0){
+        const taskId = TaskConfig.getTaskIdByKey(model || 'gpt-image-2', 'image_edit');
+        if(!taskId){
+          throw new Error(`未找到模型 ${model} 对应的任务配置`);
+        }
+        form.append('task_id', taskId);
+        form.append('ref_image_urls', referenceImageUrls.join(','));
+        form.append('ratio', ratio || '9:16');
+        apiUrl = '/api/image-edit';
+      } else {
+        const taskId = TaskConfig.getTaskIdByKey(model || 'gpt-image-2', 'text_to_image');
+        if(!taskId){
+          throw new Error(`未找到模型 ${model} 对应的任务配置`);
+        }
+        form.append('task_id', taskId);
+        form.append('aspect_ratio', ratio || '9:16');
+        apiUrl = '/api/text-to-image';
+      }
+
+      if(userId){
+        form.append('user_id', userId);
+      }
+      if(authToken){
+        form.append('auth_token', authToken);
+      }
+
+      const res = await fetch(apiUrl, {
+        method: 'POST',
+        body: form
+      });
+      const data = await res.json();
+
+      if(!res.ok) {
+        const errorMsg = typeof data.detail === 'string' ? data.detail :
+                         typeof data.message === 'string' ? data.message :
+                         JSON.stringify(data.detail || data.message || '提交任务失败');
+        throw new Error(errorMsg);
+      }
+
+      if(data.project_ids && data.project_ids.length > 0){
+        return {
+          projectIds: data.project_ids,
+          status: data.status
+        };
+      }
+      throw new Error('提交任务失败：未返回项目ID');
+    }
+
     async function fetchFileFromUrl(url){
       const res = await fetch(proxyImageUrl(url));
       if(!res.ok) throw new Error('无法获取图片内容');
@@ -2918,6 +2981,11 @@
               previewImg.src = proxyImageUrl(raw);
               if(previewRow) previewRow.style.display = 'flex';
             }
+          }
+
+          // 重载恢复后按底图状态切换 文生图/图生图 按钮与提示词文案
+          if(typeof el._updateImageGenerateMode === 'function'){
+            el._updateImageGenerateMode();
           }
 
           // 恢复上次失败原因（失败状态持久化，重载后重新渲染）

@@ -15,7 +15,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from services.image_describe import _clean_description, describe_image  # noqa: E402
+from services.image_describe import (  # noqa: E402
+    _clean_description,
+    describe_image,
+    DEFAULT_PURPOSE,
+    IMAGE_PROMPT_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
+)
 
 _PICKED = {"name": "doubao-seed-2-0-lite", "vendor_id": 3, "model_id": 31}
 
@@ -120,6 +126,50 @@ class TestDescribeImage(unittest.TestCase):
         ])
         self.assertFalse(result["success"])
         self.assertIn("无法解析", result["error"])
+
+
+class TestDescribeImagePurpose(unittest.TestCase):
+    """purpose 参数：按用途选择业务提示词，未知值回落默认。"""
+
+    def _run_capturing_system_prompt(self, purpose):
+        captured = {}
+
+        def fake_call_vl(system_prompt, user_text, image_data_url, **kwargs):
+            captured["system_prompt"] = system_prompt
+            captured["user_text"] = user_text
+            return (True, "一段描述", None)
+
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for p in [
+                patch("services.image_describe.pick_vl_model", return_value=_PICKED),
+                patch("services.image_describe.image_url_to_base64",
+                      return_value=(True, "data:image/jpeg;base64,xx", None)),
+                patch("services.image_describe.call_vl", side_effect=fake_call_vl),
+            ]:
+                stack.enter_context(p)
+            result = asyncio.run(
+                describe_image("http://host/upload/a.png", auth_token="tok", purpose=purpose)
+            )
+        return result, captured
+
+    def test_default_purpose_uses_panorama_prompt(self):
+        result, captured = self._run_capturing_system_prompt(None)
+        self.assertTrue(result["success"])
+        self.assertEqual(captured["system_prompt"], SYSTEM_PROMPT)
+
+    def test_image_prompt_purpose(self):
+        result, captured = self._run_capturing_system_prompt("image_prompt")
+        self.assertTrue(result["success"])
+        self.assertEqual(captured["system_prompt"], IMAGE_PROMPT_SYSTEM_PROMPT)
+
+    def test_unknown_purpose_falls_back_to_default(self):
+        result, captured = self._run_capturing_system_prompt("not_a_purpose")
+        self.assertTrue(result["success"])
+        self.assertEqual(captured["system_prompt"], SYSTEM_PROMPT)
+
+    def test_default_purpose_value(self):
+        self.assertEqual(DEFAULT_PURPOSE, "panorama")
 
 
 if __name__ == "__main__":
