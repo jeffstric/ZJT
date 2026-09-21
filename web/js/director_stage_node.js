@@ -121,6 +121,65 @@
     return newNodeId;
   }
 
+  // 在导演台节点右侧创建展示录制视频的视频节点并连线（由编辑器录制导出时调用）
+  // node: 导演台节点；url: 视频服务器地址；name: 文件名
+  function createDirectorStageVideoNode(node, url, name) {
+    if (!node || !url) return null;
+
+    // 已生成的下游节点数（用于纵向错开，避免重叠；与图片节点共用计数）
+    var count = state.connections.filter(function (c) { return c.from === node.id; }).length;
+
+    var newNodeId = createVideoNode({
+      x: node.x + 380,
+      y: node.y + count * 300,
+      checkCollision: true
+    });
+
+    var newNode = state.nodes.find(function (n) { return n.id === newNodeId; });
+    if (!newNode) return null;
+
+    var vidNodeName = (window.t ? window.t('director_stage_video_name') : '导演台视频') + (count > 0 ? ' ' + (count + 1) : '');
+    newNode.data.url = url;
+    newNode.data.name = name || vidNodeName;
+    newNode.title = vidNodeName;
+
+    var newEl = canvasEl.querySelector('.node[data-node-id="' + newNodeId + '"]');
+    if (newEl) {
+      var titleEl = newEl.querySelector('.node-title');
+      if (titleEl) titleEl.textContent = vidNodeName;
+      // 视频预览回填：与 workflow.js createVideoNodeWithData 的恢复逻辑一致
+      var previewField = newEl.querySelector('.video-preview-field');
+      var previewActionsField = newEl.querySelector('.video-preview-actions-field');
+      var thumbVideo = newEl.querySelector('.video-thumb');
+      var nameEl = newEl.querySelector('.video-name');
+      if (previewField && thumbVideo && nameEl) {
+        if (typeof setupVideoThumbnail === 'function') setupVideoThumbnail(thumbVideo, url);
+        var displayName = newNode.data.name.length > 10 ? newNode.data.name.substring(0, 10) + '...' : newNode.data.name;
+        nameEl.textContent = displayName;
+        nameEl.title = newNode.data.name;
+        previewField.style.display = 'block';
+        if (previewActionsField) previewActionsField.style.display = 'block';
+        thumbVideo.addEventListener('loadedmetadata', function () {
+          if (thumbVideo.duration && isFinite(thumbVideo.duration)) {
+            newNode.data.duration = Math.round(thumbVideo.duration);
+            if (typeof safeAutoSave === 'function') safeAutoSave();
+          }
+        }, { once: true });
+      }
+    }
+
+    state.connections.push({
+      id: state.nextConnId++,
+      from: node.id,
+      to: newNodeId
+    });
+
+    renderAllConnections();
+    renderMinimap();
+    if (typeof safeAutoSave === 'function') safeAutoSave();
+    return newNodeId;
+  }
+
   // 编辑器内数据变化时刷新节点壳显示（由 director_stage_editor.js 调用）
   function updateDirectorStageNodeShell(nodeId) {
     var node = state.nodes.find(function (n) { return n.id === nodeId; });
@@ -155,7 +214,17 @@
     }
     var tlEl = el.querySelector('.ds-meta-timeline');
     if (tlEl) {
-      var keyCount = d && d.timeline && Array.isArray(d.timeline.keys) ? d.timeline.keys.length : 0;
+      // 关键帧统计：兼容多轨道 tracks（各轨键数总和）与旧版全局 keys 格式
+      var keyCount = 0;
+      if (d && d.timeline) {
+        if (Array.isArray(d.timeline.tracks)) {
+          d.timeline.tracks.forEach(function (tr) {
+            if (tr && Array.isArray(tr.keys)) keyCount += tr.keys.length;
+          });
+        } else if (Array.isArray(d.timeline.keys)) {
+          keyCount = d.timeline.keys.length;
+        }
+      }
       tlEl.style.display = keyCount > 0 ? '' : 'none';
       tlEl.textContent = '⏱ ×' + keyCount;
     }
@@ -174,6 +243,7 @@
   window.createDirectorStageNodeWithData = createDirectorStageNodeWithData;
   window.updateDirectorStageNodeShell = updateDirectorStageNodeShell;
   window.createDirectorStageImageNode = createDirectorStageImageNode;
+  window.createDirectorStageVideoNode = createDirectorStageVideoNode;
 
   // 注册环境输入端口：接受 360 全景图节点连线，导入全景作为导演台环境
   registerInputPorts('director_stage', [{

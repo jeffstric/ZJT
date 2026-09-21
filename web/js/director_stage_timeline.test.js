@@ -22,7 +22,16 @@ function makeEditorClass(module) {
 
 function createFakeEditor(FakeEditor) {
   const ed = new FakeEditor();
-  ed.puppets = [{ id: 'p1', x: 0, z: 0, rotY: 0, jointDeg: {}, rig: { joints: {} } }];
+  ed.puppets = [
+    { id: 'p1', x: 0, z: 0, rotY: 0, jointDeg: {}, rig: { joints: {} } },
+    { id: 'p2', x: 0, z: 0, rotY: 0, jointDeg: {}, rig: { joints: {} } }
+  ];
+  // 多机位宿主：cam1 / cam2
+  ed.cameras = [
+    { id: 'cam1', name: '镜头 1', pos: [0, 1, 4], target: [0, 1, 0], fov: 35 },
+    { id: 'cam2', name: '镜头 2', pos: [5, 1, 4], target: [5, 1, 0], fov: 50 }
+  ];
+  ed.activeCameraId = 'cam1';
   ed.virtualCamCfg = {
     pos: { x: 0, y: 1, z: 4, set(x, y, z) { this.x = x; this.y = y; this.z = z; } },
     target: { x: 0, y: 1, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; } },
@@ -39,148 +48,315 @@ function createFakeEditor(FakeEditor) {
   return ed;
 }
 
-describe('DirectorStageTimeline', () => {
-  test('restoreTimeline: 旧数据无 timeline 字段时给默认值', () => {
+function camKey(t, px, fov, cut = false, camId = null) {
+  return { t, pos: [px, 1, 4], target: [0, 1, 0], fov, cut, camId };
+}
+
+function getTrack(ed, kind, id) {
+  return ed.tl.tracks.find((tr) => tr.kind === kind && tr.id === id) || null;
+}
+
+function camLane(ed, camId) {
+  return getTrack(ed, 'camera', camId);
+}
+
+describe('DirectorStageTimeline：多轨道数据模型（每机位一轨）', () => {
+  test('restoreTimeline: 无 timeline 字段时给默认值', () => {
     const ed = createFakeEditor(makeEditorClass(loadModule()));
     ed.restoreTimeline({ puppets: [] });
     expect(ed.tl.duration).toBe(6);
-    expect(ed.tl.keys).toEqual([]);
+    expect(ed.tl.tracks).toEqual([]);
     expect(ed.tl.playing).toBe(false);
   });
 
-  test('restoreTimeline: 非法时长/乱序关键帧被清洗排序', () => {
+  test('restoreTimeline: 每机位相机轨按 id 恢复，cut/camId 保留', () => {
     const ed = createFakeEditor(makeEditorClass(loadModule()));
     ed.restoreTimeline({
       timeline: {
         duration: 999,
-        keys: [
-          { t: 3, puppets: { p1: { x: 3, z: 0, rotY: 90 } }, camera: { pos: [3, 1, 3], target: [0, 1, 0], fov: 40 } },
-          { t: 1, puppets: { p1: { x: 1, z: 0, rotY: 0 } }, camera: { pos: [1, 1, 4], target: [0, 1, 0], fov: 35 } },
-          { t: 'bad', puppets: null, camera: null }
+        tracks: [
+          { kind: 'camera', id: 'cam2', keys: [camKey(2, 10, 50, true, 'cam2'), camKey(0, 8, 40)] },
+          { kind: 'camera', id: 'cam1', keys: [camKey(0, 0, 35), camKey(4, 4, 45)] },
+          { kind: 'puppet', id: 'p1', keys: [
+            { t: 3, x: 3, z: 0, rotY: 90 },
+            { t: 1, x: 1, z: 0, rotY: 0 },
+            { t: 'bad', x: 0, z: 0, rotY: 0 }
+          ] }
         ]
       }
     });
     expect(ed.tl.duration).toBe(60);
-    expect(ed.tl.keys.map((k) => k.t)).toEqual([1, 3]);
-    // 缺 camera 的关键帧补全默认结构，避免插值崩溃（排序后第 2 个是 t=3）
-    expect(ed.tl.keys[1].camera.pos).toEqual([3, 1, 3]);
+    const c1 = camLane(ed, 'cam1');
+    expect(c1.keys.map((k) => k.t)).toEqual([0, 4]);
+    const c2 = camLane(ed, 'cam2');
+    expect(c2.keys.map((k) => k.t)).toEqual([0, 2]);
+    expect(c2.keys[1].cut).toBe(true);
+    expect(getTrack(ed, 'puppet', 'p1').keys.map((k) => k.t)).toEqual([1, 3]);
   });
 
-  test('recordTimelineKey: 快照当前位形并在相近时刻覆盖', () => {
+  test('restoreTimeline: v3 无 id 相机轨整体并入激活机位轨（行为不变迁移）', () => {
+    const ed = createFakeEditor(makeEditorClass(loadModule()));
+    ed.activeCameraId = 'cam2';   // 旧数据落轨到激活机位
+    ed.restoreTimeline({
+      timeline: {
+        duration: 6,
+        tracks: [
+          { kind: 'camera', keys: [camKey(0, 0, 30), camKey(2, 10, 50, true), camKey(4, 20, 70)] },
+          { kind: 'puppet', id: 'p1', keys: [{ t: 0, x: 0, z: 0, rotY: 0 }] }
+        ]
+      }
+    });
+    const lane = camLane(ed, 'cam2');
+    expect(lane).toBeTruthy();
+    expect(lane.keys.map((k) => k.t)).toEqual([0, 2, 4]);
+    expect(lane.keys[1].cut).toBe(true);   // 原 cut 语义保留
+    expect(camLane(ed, 'cam1')).toBeNull();
+  });
+
+  test('restoreTimeline: v2 旧格式全局 keys 迁移（相机并入激活机位轨）', () => {
+    const ed = createFakeEditor(makeEditorClass(loadModule()));
+    ed.restoreTimeline({
+      timeline: {
+        duration: 6,
+        keys: [
+          { t: 0, puppets: { p1: { x: 0, z: 0, rotY: 0 }, p2: { x: 5, z: 0, rotY: 0 } }, camera: { pos: [0, 1, 4], target: [0, 1, 0], fov: 35 } },
+          { t: 2, puppets: { p1: { x: 2, z: 0, rotY: 90 } }, camera: { pos: [2, 1, 4], target: [0, 1, 0], fov: 40 } },
+          { t: 'bad', puppets: null, camera: null }
+        ]
+      }
+    });
+    const lane = camLane(ed, 'cam1');   // activeCameraId 默认 cam1
+    expect(lane.keys.map((k) => k.t)).toEqual([0, 2]);
+    const p2 = getTrack(ed, 'puppet', 'p2');
+    expect(p2.keys.map((k) => k.t)).toEqual([0]);
+  });
+
+  test('recordTimelineKey: 记录所有角色 + 相机到激活机位轨，相近时刻覆盖', () => {
     const ed = createFakeEditor(makeEditorClass(loadModule()));
     ed.restoreTimeline(null);
     ed.puppets[0].x = 2.5;
     ed.tl.playhead = 1.0;
     ed.recordTimelineKey();
-    expect(ed.tl.keys.length).toBe(1);
-    expect(ed.tl.keys[0].puppets.p1.x).toBe(2.5);
+    expect(getTrack(ed, 'puppet', 'p1').keys.length).toBe(1);
+    expect(getTrack(ed, 'puppet', 'p1').keys[0].x).toBe(2.5);
+    expect(camLane(ed, 'cam1').keys.length).toBe(1);
+    expect(camLane(ed, 'cam1').keys[0].camId).toBe('cam1');
 
-    // 时刻 1.02 在覆盖窗口内 → 不新增
-    ed.puppets[0].x = 9;
-    ed.tl.playhead = 1.02;
-    ed.recordTimelineKey();
-    expect(ed.tl.keys.length).toBe(1);
-    expect(ed.tl.keys[0].t).toBe(1);
-    expect(ed.tl.keys[0].puppets.p1.x).toBe(9);
-
-    // 时刻 2.0 → 新增并保持排序
+    // 激活机位切到 cam2 → 相机键落到 cam2 轨
+    ed.activeCameraId = 'cam2';
     ed.tl.playhead = 2.0;
     ed.recordTimelineKey();
-    expect(ed.tl.keys.map((k) => k.t)).toEqual([1, 2]);
+    expect(camLane(ed, 'cam2').keys.length).toBe(1);
+    expect(camLane(ed, 'cam2').keys[0].camId).toBe('cam2');
+    // 各轨键数独立
+    expect(camLane(ed, 'cam1').keys.map((k) => k.t)).toEqual([1]);
+    expect(getTrack(ed, 'puppet', 'p1').keys.map((k) => k.t)).toEqual([1, 2]);
   });
 
-  test('applyTimelineAt: 角色位置/相机线性插值，rotY 走最短路径', () => {
+  test('recordTimelineKeyOnTrack: camera:<id> 只写对应机位轨', () => {
+    const ed = createFakeEditor(makeEditorClass(loadModule()));
+    ed.restoreTimeline(null);
+    ed.tl.playhead = 1;
+    ed.recordTimelineKeyOnTrack('camera:cam2');
+    expect(camLane(ed, 'cam2').keys.length).toBe(1);
+    expect(camLane(ed, 'cam2').keys[0].camId).toBe('cam2');
+    expect(camLane(ed, 'cam1')).toBeNull();
+
+    ed.recordTimelineKeyOnTrack('puppet:p1');
+    expect(getTrack(ed, 'puppet', 'p1').keys.length).toBe(1);
+  });
+
+  test('serializeTimeline: 丢弃已删除机位/人偶轨，往返一致', () => {
+    const ed = createFakeEditor(makeEditorClass(loadModule()));
+    ed.restoreTimeline({
+      timeline: {
+        duration: 6,
+        tracks: [
+          { kind: 'camera', id: 'cam1', keys: [camKey(1, 0, 35)] },
+          { kind: 'camera', id: 'dead-cam', keys: [camKey(1, 9, 90)] },
+          { kind: 'puppet', id: 'p1', keys: [{ t: 1, x: 1, z: 2, rotY: 3 }] },
+          { kind: 'puppet', id: 'dead', keys: [{ t: 1, x: 9, z: 9, rotY: 9 }] }
+        ]
+      }
+    });
+    const out = ed.serializeTimeline();
+    expect(out.tracks.length).toBe(2);
+    expect(out.tracks.find((tr) => tr.kind === 'camera').id).toBe('cam1');
+    expect(out.tracks.some((tr) => tr.id === 'dead-cam')).toBe(false);
+    expect(out.tracks.some((tr) => tr.id === 'dead')).toBe(false);
+
+    const ed2 = createFakeEditor(makeEditorClass(loadModule()));
+    ed2.restoreTimeline({ timeline: out });
+    expect(camLane(ed2, 'cam1').keys.length).toBe(1);
+    expect(getTrack(ed2, 'puppet', 'p1').keys[0].x).toBe(1);
+  });
+
+  test('deleteTimelineKeyAtPlayhead: 跨轨取最近；deleteTimelineKeyOnTrack: 只删本轨', () => {
+    const ed = createFakeEditor(makeEditorClass(loadModule()));
+    ed.restoreTimeline({
+      timeline: {
+        duration: 6,
+        tracks: [
+          { kind: 'camera', id: 'cam1', keys: [camKey(3.1, 0, 35)] },
+          { kind: 'puppet', id: 'p1', keys: [{ t: 1, x: 0, z: 0, rotY: 0 }, { t: 3, x: 0, z: 0, rotY: 0 }] },
+          { kind: 'puppet', id: 'p2', keys: [{ t: 1.05, x: 0, z: 0, rotY: 0 }] }
+        ]
+      }
+    });
+    // 播放头 3.0：p1@3(0.0) 与 cam1@3.1(0.1) → 删最近的 p1@3
+    ed.tl.playhead = 3.0;
+    ed.deleteTimelineKeyAtPlayhead();
+    expect(getTrack(ed, 'puppet', 'p1').keys.map((k) => k.t)).toEqual([1]);
+    expect(camLane(ed, 'cam1').keys.length).toBe(1);
+
+    // 单轨删除只影响本轨（删空后轨道对象保留，序列化时剔除）
+    ed.tl.playhead = 1.0;
+    ed.deleteTimelineKeyOnTrack('puppet:p1');
+    expect(getTrack(ed, 'puppet', 'p1').keys.length).toBe(0);
+    expect(getTrack(ed, 'puppet', 'p2').keys.length).toBe(1);
+
+    // 远离任何关键帧时无操作
+    ed.tl.playhead = 5.5;
+    ed.deleteTimelineKeyAtPlayhead();
+    expect(camLane(ed, 'cam1').keys.length).toBe(1);
+  });
+
+  test('toggleCameraCutAtPlayhead: 跨机位轨找最近键切跳切，半径外无操作', () => {
+    const ed = createFakeEditor(makeEditorClass(loadModule()));
+    ed.restoreTimeline({
+      timeline: {
+        duration: 6,
+        tracks: [
+          { kind: 'camera', id: 'cam1', keys: [camKey(1, 0, 35)] },
+          { kind: 'camera', id: 'cam2', keys: [camKey(4, 10, 50)] }
+        ]
+      }
+    });
+    ed.tl.playhead = 1.1;
+    ed.toggleCameraCutAtPlayhead();
+    expect(camLane(ed, 'cam1').keys[0].cut).toBe(true);
+    // 半径外：4.3 距 cam2@4 是 0.3 > 0.2 → 不切换
+    ed.tl.playhead = 4.3;
+    ed.toggleCameraCutAtPlayhead();
+    expect(camLane(ed, 'cam2').keys[0].cut).toBe(false);
+  });
+});
+
+describe('DirectorStageTimeline：多机位求值与播放', () => {
+  test('多机位接管：键落在哪条机位轨，画面就归哪个机位（跨轨=硬切）', () => {
+    const ed = createFakeEditor(makeEditorClass(loadModule()));
+    ed.restoreTimeline({
+      timeline: {
+        duration: 6,
+        tracks: [
+          // cam1：0s 全景位 → 4s 推近（平滑运镜）
+          { kind: 'camera', id: 'cam1', keys: [camKey(0, 0, 30), camKey(4, 4, 50)] },
+          // cam2：2s 切过来（接管），自身只有一个键 → 保持
+          { kind: 'camera', id: 'cam2', keys: [camKey(2, 10, 60, false, 'cam2')] }
+        ]
+      }
+    });
+    // t=1：cam1 轨内平滑
+    ed.applyTimelineAt(1, 0);
+    expect(ed.virtualCamCfg.pos.x).toBeCloseTo(1);
+    expect(ed.virtualCamCfg.fov).toBeCloseTo(35);
+    // t=1.99：仍 cam1（还没到 cam2 的键），轨内线性 pos.x ≈ 1.99
+    ed.applyTimelineAt(1.99, 0);
+    expect(ed.virtualCamCfg.pos.x).toBeCloseTo(1.99);
+    // t=2：cam2 键接管 → 瞬间跳变到 cam2 配置（硬切，不经过中间机位）
+    ed.applyTimelineAt(2, 0);
+    expect(ed.virtualCamCfg.pos.x).toBeCloseTo(10);
+    expect(ed.virtualCamCfg.fov).toBeCloseTo(60);
+    // t=3：cam2 无下一键 → 保持
+    ed.applyTimelineAt(3, 0);
+    expect(ed.virtualCamCfg.pos.x).toBeCloseTo(10);
+    // t=4：cam1@4 接管 → 切回 cam1 末键位形
+    ed.applyTimelineAt(4, 0);
+    expect(ed.virtualCamCfg.pos.x).toBeCloseTo(4);
+    expect(ed.virtualCamCfg.fov).toBeCloseTo(50);
+    // t=5：cam1 轨内末键之后保持
+    ed.applyTimelineAt(5, 0);
+    expect(ed.virtualCamCfg.pos.x).toBeCloseTo(4);
+  });
+
+  test('同轨跳切：cut 键在单轨内也硬切；机位删除后其轨不参与求值', () => {
+    const ed = createFakeEditor(makeEditorClass(loadModule()));
+    ed.restoreTimeline({
+      timeline: {
+        duration: 6,
+        tracks: [
+          { kind: 'camera', id: 'cam1', keys: [camKey(0, 0, 30), camKey(2, 10, 50, true), camKey(4, 20, 70)] },
+          { kind: 'camera', id: 'dead-cam', keys: [camKey(3, 99, 99)] }
+        ]
+      }
+    });
+    // 同轨 cut：t=1 保持 0s 配置，t=2 跳变
+    ed.applyTimelineAt(1, 0);
+    expect(ed.virtualCamCfg.pos.x).toBeCloseTo(0);
+    ed.applyTimelineAt(2, 0);
+    expect(ed.virtualCamCfg.pos.x).toBeCloseTo(10);
+    // dead-cam 不在 editor.cameras 里 → 3s 不会被它劫持，仍 cam1 轨内插值
+    ed.applyTimelineAt(3, 0);
+    expect(ed.virtualCamCfg.pos.x).toBeCloseTo(15);
+  });
+
+  test('逐轨插值（两轨键密度不同互不影响），rotY 走最短路径', () => {
     const ed = createFakeEditor(makeEditorClass(loadModule()));
     ed.restoreTimeline({
       timeline: {
         duration: 4,
-        keys: [
-          { t: 0, puppets: { p1: { x: 0, z: 0, rotY: 350 } }, camera: { pos: [0, 1, 4], target: [0, 1, 0], fov: 30 } },
-          { t: 4, puppets: { p1: { x: 4, z: 8, rotY: 10 } }, camera: { pos: [4, 1, 0], target: [4, 1, 8], fov: 50 } }
+        tracks: [
+          { kind: 'puppet', id: 'p1', keys: [
+            { t: 0, x: 0, z: 0, rotY: 350 },
+            { t: 4, x: 4, z: 8, rotY: 10 }
+          ] },
+          { kind: 'puppet', id: 'p2', keys: [
+            { t: 0, x: 10, z: 0, rotY: 0 },
+            { t: 2, x: 12, z: 0, rotY: 90 },
+            { t: 4, x: 14, z: 0, rotY: 0 }
+          ] },
+          { kind: 'camera', id: 'cam1', keys: [camKey(0, 0, 30), camKey(4, 4, 50)] }
         ]
       }
     });
     ed.applyTimelineAt(2, 0);
-    const p = ed.puppets[0];
-    expect(p.x).toBeCloseTo(2);
-    expect(p.z).toBeCloseTo(4);
+    const p1 = ed.puppets.find((p) => p.id === 'p1');
+    const p2 = ed.puppets.find((p) => p.id === 'p2');
+    expect(p1.x).toBeCloseTo(2);
+    expect(p1.z).toBeCloseTo(4);
     // 350° → 10° 应经 0°（+20°），而非绕 -340°
-    expect(p.rotY).toBeCloseTo(0);
+    expect(p1.rotY).toBeCloseTo(0);
+    // p2 在 t=2 精确落在自己的第二键上
+    expect(p2.x).toBeCloseTo(12);
+    expect(p2.rotY).toBeCloseTo(90);
     expect(ed.virtualCamCfg.pos.x).toBeCloseTo(2);
-    expect(ed.virtualCamCfg.pos.z).toBeCloseTo(2);
     expect(ed.virtualCamCfg.fov).toBeCloseTo(40);
   });
 
-  test('applyTimelineAt: 末关键帧之后保持末帧位形', () => {
+  test('applyTimelineAt: 无轨道的人偶保持当前编辑位形', () => {
     const ed = createFakeEditor(makeEditorClass(loadModule()));
     ed.restoreTimeline({
       timeline: {
         duration: 2,
-        keys: [
-          { t: 0, puppets: { p1: { x: 0, z: 0, rotY: 0 } }, camera: { pos: [0, 1, 4], target: [0, 1, 0], fov: 35 } },
-          { t: 1, puppets: { p1: { x: 1, z: 1, rotY: 45 } }, camera: { pos: [1, 1, 1], target: [1, 1, 1], fov: 45 } }
-        ]
-      }
-    });
-    ed.applyTimelineAt(1.8, 0);
-    expect(ed.puppets[0].x).toBe(1);
-    expect(ed.puppets[0].rotY).toBe(45);
-    expect(ed.virtualCamCfg.fov).toBe(45);
-  });
-
-  test('applyTimelineAt: 关键帧未包含的人偶保持当前编辑位形', () => {
-    const ed = createFakeEditor(makeEditorClass(loadModule()));
-    ed.restoreTimeline({
-      timeline: {
-        duration: 2,
-        keys: [
-          { t: 0, puppets: {}, camera: { pos: [0, 1, 4], target: [0, 1, 0], fov: 35 } },
-          { t: 2, puppets: {}, camera: { pos: [2, 1, 4], target: [0, 1, 0], fov: 35 } }
-        ]
+        tracks: [{ kind: 'puppet', id: 'p2', keys: [{ t: 0, x: 0, z: 0, rotY: 0 }, { t: 2, x: 2, z: 0, rotY: 0 }] }]
       }
     });
     ed.puppets[0].x = 7;
     ed.applyTimelineAt(1, 0);
     expect(ed.puppets[0].x).toBe(7);
-  });
-
-  test('serializeTimeline: 丢弃已删除人偶的关键帧数据', () => {
-    const ed = createFakeEditor(makeEditorClass(loadModule()));
-    ed.restoreTimeline(null);
-    ed.tl.keys = [{
-      t: 1,
-      puppets: { p1: { x: 1, z: 2, rotY: 3 }, dead: { x: 9, z: 9, rotY: 9 } },
-      camera: { pos: [1, 1, 1], target: [0, 0, 0], fov: 35 }
-    }];
-    const out = ed.serializeTimeline();
-    expect(out.keys[0].puppets.p1).toEqual({ x: 1, z: 2, rotY: 3 });
-    expect(out.keys[0].puppets.dead).toBeUndefined();
-  });
-
-  test('deleteTimelineKeyAtPlayhead: 只删吸附半径内的关键帧', () => {
-    const ed = createFakeEditor(makeEditorClass(loadModule()));
-    ed.restoreTimeline({
-      timeline: { duration: 6, keys: [
-        { t: 1, puppets: {}, camera: { pos: [0, 0, 0], target: [0, 0, 0], fov: 35 } },
-        { t: 3, puppets: {}, camera: { pos: [1, 1, 1], target: [0, 0, 0], fov: 35 } }
-      ] }
-    });
-    ed.tl.playhead = 2.9;
-    ed.deleteTimelineKeyAtPlayhead();
-    expect(ed.tl.keys.map((k) => k.t)).toEqual([1]);
-    // 远离任何关键帧时无操作
-    ed.tl.playhead = 5.5;
-    ed.deleteTimelineKeyAtPlayhead();
-    expect(ed.tl.keys.map((k) => k.t)).toEqual([1]);
+    expect(ed.puppets[1].x).toBeCloseTo(1);
   });
 
   test('tickTimeline: 播放推进到时长末尾自动停止', () => {
     const ed = createFakeEditor(makeEditorClass(loadModule()));
     ed.restoreTimeline({
-      timeline: { duration: 1, keys: [
-        { t: 0, puppets: { p1: { x: 0, z: 0, rotY: 0 } }, camera: { pos: [0, 1, 4], target: [0, 1, 0], fov: 35 } },
-        { t: 1, puppets: { p1: { x: 1, z: 0, rotY: 0 } }, camera: { pos: [1, 1, 4], target: [0, 1, 0], fov: 35 } }
-      ] }
+      timeline: {
+        duration: 1,
+        tracks: [
+          { kind: 'puppet', id: 'p1', keys: [{ t: 0, x: 0, z: 0, rotY: 0 }, { t: 1, x: 1, z: 0, rotY: 0 }] },
+          { kind: 'camera', id: 'cam1', keys: [camKey(0, 0, 35), camKey(1, 1, 35)] }
+        ]
+      }
     });
     ed.tl.playing = true;
     ed.tl.lastFrameAt = 10;

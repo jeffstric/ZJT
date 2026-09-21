@@ -22,7 +22,11 @@
       defaultData: {
         reversedPrompt: '',
         generatedImageNodeId: null,
-        lastError: ''
+        lastError: '',
+        // 反推模型选择：空值 = 自动（后端按偏好挑选）；仅保存 VL 视觉模型
+        reverseModelName: '',
+        reverseModelId: null,
+        reverseVendorId: null
       },
       ports: PROMPT_REVERSE_PORTS,
       width: 360,
@@ -40,6 +44,10 @@
             '<textarea class="prompt-reverse-prompt" rows="4" readonly placeholder="' + tr('prompt_reverse_result_placeholder', '反推的文生图提示词将显示在这里') + '" style="resize:vertical; min-height:70px;"></textarea>' +
           '</div>' +
           '<div class="field">' +
+            '<div class="label" data-i18n="prompt_reverse_model_label">' + tr('prompt_reverse_model_label', '反推模型') + '</div>' +
+            '<select class="prompt-reverse-model" style="width:100%; box-sizing:border-box; padding:4px 6px; border:1px solid #e5e7eb; border-radius:6px; background:#fff; font-size:12px;"></select>' +
+          '</div>' +
+          '<div class="field">' +
             '<button type="button" class="gen-btn gen-btn-main prompt-reverse-btn" style="width:100%;" data-i18n="prompt_reverse_btn">' + tr('prompt_reverse_btn', '反推提示词') + '</button>' +
             '<div class="muted prompt-reverse-status" style="display:none; font-size:11px;"></div>' +
           '</div>';
@@ -51,8 +59,11 @@
         var promptEl = el.querySelector('.prompt-reverse-prompt');
         var reverseBtn = el.querySelector('.prompt-reverse-btn');
         var statusEl = el.querySelector('.prompt-reverse-status');
+        var modelSelect = el.querySelector('.prompt-reverse-model');
         // 反推进行中标记：仅运行期状态，不持久化
         var reversing = false;
+        // 模型列表异步加载完成后再恢复选中项的标记
+        var pendingRestoreModel = false;
 
         function updateStatus(text, color) {
           if (!statusEl) return;
@@ -88,6 +99,138 @@
               ? tr('prompt_reverse_source_no_image', '源图片节点没有图片，生成/上传后点击按钮反推')
               : tr('prompt_reverse_source_hint', '连接图片节点后自动反推提示词，也可点击按钮手动反推');
           }
+        }
+
+        // 反推模型列表（仅 VL 视觉模型，参考 marketing_agent 的 /api/models 模式）：
+        // 全局缓存供画布上多个反推节点复用；加载失败时保留下拉默认项（自动模式）
+        function modelListHeaders() {
+          if (typeof getAuthHeaders === 'function') return getAuthHeaders();
+          var headers = { 'Content-Type': 'application/json' };
+          if (typeof getAuthToken === 'function') headers['Authorization'] = getAuthToken();
+          if (typeof getUserId === 'function') headers['X-User-Id'] = getUserId();
+          return headers;
+        }
+
+        function applyModelSelection() {
+          if (!modelSelect) return;
+          var savedName = node.data.reverseModelName || '';
+          var savedId = node.data.reverseModelId;
+          var savedVendorId = node.data.reverseVendorId;
+          var matchOpt = null;
+          var i, opt, optModelId, optVendorId;
+          // 优先按 model_id + vendor_id 双键精确匹配（同名校验归属供应商）
+          if (savedId !== null && savedId !== undefined) {
+            for (i = 0; i < modelSelect.options.length; i++) {
+              opt = modelSelect.options[i];
+              optModelId = parseInt(opt.dataset.modelId || '', 10);
+              optVendorId = parseInt(opt.dataset.vendorId || '', 10);
+              if (isNaN(optModelId) || optModelId !== Number(savedId)) continue;
+              if (savedVendorId !== null && savedVendorId !== undefined &&
+                  !isNaN(optVendorId) && optVendorId !== Number(savedVendorId)) continue;
+              matchOpt = opt;
+              break;
+            }
+          }
+          // 兜底按名称匹配（兼容早期仅存名称的数据）
+          if (!matchOpt && savedName) {
+            for (i = 0; i < modelSelect.options.length; i++) {
+              opt = modelSelect.options[i];
+              if (opt.value && opt.value === savedName) { matchOpt = opt; break; }
+            }
+          }
+          if (matchOpt) {
+            modelSelect.value = matchOpt.value;
+          } else if (savedName || (savedId !== null && savedId !== undefined)) {
+            // 已保存的模型已不在 VL 列表（下架/改配）：回落自动模式并持久化
+            modelSelect.value = '';
+            node.data.reverseModelName = '';
+            node.data.reverseModelId = null;
+            node.data.reverseVendorId = null;
+            safeAutoSave();
+          } else {
+            modelSelect.value = '';
+          }
+        }
+
+        function renderModelOptions(models) {
+          if (!modelSelect) return;
+          modelSelect.innerHTML = '';
+          var autoOpt = document.createElement('option');
+          autoOpt.value = '';
+          autoOpt.textContent = tr('prompt_reverse_model_auto', '自动（后端推荐）');
+          modelSelect.appendChild(autoOpt);
+          (models || []).forEach(function(m) {
+            if (!m || !m.name) return;
+            var opt = document.createElement('option');
+            opt.value = m.name;
+            opt.textContent = m.vendor_name ? (m.vendor_name + ' / ' + m.name) : m.name;
+            if (m.model_id !== undefined && m.model_id !== null) opt.dataset.modelId = String(m.model_id);
+            if (m.vendor_id !== undefined && m.vendor_id !== null) opt.dataset.vendorId = String(m.vendor_id);
+            modelSelect.appendChild(opt);
+          });
+          if (pendingRestoreModel) {
+            pendingRestoreModel = false;
+            applyModelSelection();
+          }
+        }
+
+        function loadVlModelOptions() {
+          pendingRestoreModel = true;
+          // 已有缓存（其他节点加载过）：直接渲染
+          if (window._promptReverseVlModels && window._promptReverseVlModels.length) {
+            renderModelOptions(window._promptReverseVlModels);
+            return;
+          }
+          // 正在加载中：等共享 Promise 完成后渲染
+          if (window._promptReverseVlModelsLoading) {
+            window._promptReverseVlModelsLoading.then(function() {
+              if (window._promptReverseVlModels) renderModelOptions(window._promptReverseVlModels);
+            }).catch(function() {});
+            return;
+          }
+          window._promptReverseVlModelsLoading = fetch('/api/models', { headers: modelListHeaders() })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              // 只保留 VL 视觉模型：非 VL 模型一律不显示
+              var models = (data && data.models) ? data.models.filter(function(m) {
+                return m && m.supports_vl;
+              }) : [];
+              models.sort(function(a, b) {
+                var va = (a.vendor_name || '').toLowerCase();
+                var vb = (b.vendor_name || '').toLowerCase();
+                if (va !== vb) return va < vb ? -1 : 1;
+                var na = (a.name || '').toLowerCase();
+                var nb = (b.name || '').toLowerCase();
+                return na < nb ? -1 : (na > nb ? 1 : 0);
+              });
+              window._promptReverseVlModels = models;
+              renderModelOptions(models);
+            })
+            .catch(function() {
+              window._promptReverseVlModelsLoading = null;
+              if (!node.data.lastError) {
+                updateStatus(tr('prompt_reverse_model_failed', '模型列表加载失败，已使用自动模式'), '#d97706');
+              }
+            });
+        }
+
+        if (modelSelect) {
+          modelSelect.addEventListener('change', function() {
+            var opt = modelSelect.options[modelSelect.selectedIndex];
+            if (opt && opt.value) {
+              node.data.reverseModelName = opt.value;
+              var mid = parseInt(opt.dataset.modelId || '', 10);
+              var vid = parseInt(opt.dataset.vendorId || '', 10);
+              node.data.reverseModelId = isNaN(mid) ? null : mid;
+              node.data.reverseVendorId = isNaN(vid) ? null : vid;
+            } else {
+              node.data.reverseModelName = '';
+              node.data.reverseModelId = null;
+              node.data.reverseVendorId = null;
+            }
+            safeAutoSave();
+          });
+          loadVlModelOptions();
         }
 
         // 查找/更新已生成的图片节点；不存在则新建空的图片节点并填入提示词
@@ -169,10 +312,20 @@
           var headers = { 'Content-Type': 'application/json' };
           if (typeof getAuthToken === 'function') headers['Authorization'] = getAuthToken();
           if (typeof getUserId === 'function') headers['X-User-Id'] = getUserId();
+          var requestBody = { image_url: imgUrl, purpose: 'image_prompt' };
+          if (node.data.reverseModelName) {
+            requestBody.model = node.data.reverseModelName;
+            if (node.data.reverseModelId !== null && node.data.reverseModelId !== undefined) {
+              requestBody.model_id = node.data.reverseModelId;
+            }
+            if (node.data.reverseVendorId !== null && node.data.reverseVendorId !== undefined) {
+              requestBody.vendor_id = node.data.reverseVendorId;
+            }
+          }
           fetch('/api/video-workflow/describe-image', {
             method: 'POST',
             headers: headers,
-            body: JSON.stringify({ image_url: imgUrl, purpose: 'image_prompt' })
+            body: JSON.stringify(requestBody)
           })
             .then(function(r) { return r.json(); })
             .then(function(data) {
@@ -213,6 +366,9 @@
           promptEl.value = node.data.reversedPrompt || '';
           if (node.data.reversedPrompt) promptEl.removeAttribute('readonly');
           updateSourceThumbnail();
+          // 模型列表已加载则立即回填选中项；未加载完成时由 loadVlModelOptions 的
+          // pendingRestoreModel 标记在渲染后补选
+          if (window._promptReverseVlModels) applyModelSelection();
           if (node.data.lastError) {
             updateStatus(tr('prompt_reverse_failed', '反推失败: {error}', { error: node.data.lastError }), '#dc2626');
           }
