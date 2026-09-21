@@ -78,3 +78,6 @@ normal 时段、不分段（`raw_token_threshold = NULL`）。
   （doubao / deepseek 仍在使用）。
 - 若后续方舟替换版本后缀（如 `glm-5-3-flash-26xxxx`），只需更新
   `_MODEL_NAME_MAP` 映射值，model 表友好名保持 `glm-5.3-flash` 不变。
+- 自迁移 no_141 起，本模型同时关联 **glmcn（智谱 BigModel 国内站）** 供应商
+  （官方同价 0.8/2.8/0.23 元每百万），model 记录两供应商共用；详见
+  [glm_5_3_glmcn_model.md](glm_5_3_glmcn_model.md)。

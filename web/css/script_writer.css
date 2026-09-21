@@ -439,7 +439,9 @@ body {
 }
 
 .custom-model-select-option {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     width: 100%;
     padding: 9px 12px;
     border: none;
@@ -453,6 +455,32 @@ body {
     cursor: pointer;
     white-space: normal;
     word-break: break-word;
+}
+
+/* 选项名：占满剩余宽度并单行截断，为右侧供应商标徽让位 */
+.custom-model-select-option .model-option-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 供应商短名徽标（pill），小字号弱化展示，不破坏行高 */
+.custom-model-select-option .model-vendor-badge {
+    flex-shrink: 0;
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 7px;
+    background: rgba(100, 116, 139, 0.12);
+    color: var(--text-secondary);
+}
+
+/* 选中（高亮紫底）状态下徽标反白 */
+.custom-model-select-option.selected .model-vendor-badge {
+    background: rgba(255, 255, 255, 0.25);
+    color: #fff;
 }
 
 .custom-model-select-option:hover,

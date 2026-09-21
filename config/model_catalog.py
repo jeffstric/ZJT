@@ -140,6 +140,7 @@ MODEL_FAMILIES: Dict[str, str] = {
     "doubao-seed-2-0-lite": "Doubao",
     "doubao-seed-2-0-pro": "Doubao",
     "glm-5.3-flash": "GLM",
+    "glm-5.3": "GLM",
     "qwen3.5-plus": "Qwen",
     "qwen3.6-plus": "Qwen",
     "qwen-image-edit": "Qwen",

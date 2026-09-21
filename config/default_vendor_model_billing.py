@@ -170,6 +170,35 @@ DEFAULT_VENDOR_MODEL_BILLING: List[Dict[str, Any]] = [
             },
         ],
     },
+    # ---------- 智谱 BigModel 国内站 GLM ----------
+    {
+        "vendor_name": "glmcn",
+        "model_name": "glm-5.3",
+        "note": "智谱 BigModel 官方 GLM-5.3：输入/输出/缓存命中 8/28/2.3 元/百万",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "input_yuan_per_m": 8.0,
+                "out_yuan_per_m": 28.0,
+                "cache_yuan_per_m": 2.3,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
+    {
+        "vendor_name": "glmcn",
+        "model_name": "glm-5.3-flash",
+        "note": "智谱 BigModel 官方 GLM-5.3-Flash（与火山方舟同价）：输入/输出/缓存命中 0.8/2.8/0.23 元/百万",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "input_yuan_per_m": 0.8,
+                "out_yuan_per_m": 2.8,
+                "cache_yuan_per_m": 0.23,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
     # ---------- 阿里云 Qwen 分段 ----------
     {
         "vendor_name": "aliyun",
