@@ -2595,13 +2595,14 @@ class LLMVendor:
         'JIEKOU': '接口供应商（Gemini 模型）',
         'ALIYUN': '阿里云百炼（通义千问 Qwen 模型）',
         'OLLAMA': '本地运行供应商（Ollama 模型）',
-        'VOLCENGINE': '火山引擎供应商（Doubao / DeepSeek-V4 模型）',
+        'VOLCENGINE': '火山引擎供应商（Doubao / DeepSeek-V4 / GLM-5.3 模型）',
         'CLAUDE': 'Claude 供应商（Anthropic 模型）',
         'ZJT_API': 'ZJT API 供应商（Qwen3.5/3.6 模型）',
         'DEEPSEEK': 'DeepSeek 供应商（DeepSeek-V4 模型）',
         'AGNES': 'Agnes 供应商（Agnes 2.5 对话模型）',
         'MIMO': '小米 MiMo 供应商（mimo-v2.5 系列，Token Plan 套餐）',
         'VLLM': '本地推理供应商（vLLM 模型）',
+        'GLMCN': '智谱 BigModel 国内站供应商（GLM-5.3 模型）',
     }
     JIEKOU = 'jiekou'
     ALIYUN = 'aliyun'
@@ -2613,6 +2614,7 @@ class LLMVendor:
     AGNES = 'agnes'
     MIMO = 'mimo'
     VLLM = 'vllm'
+    GLMCN = 'glmcn'
 
 
 class LLMModel:
@@ -2630,6 +2632,8 @@ class LLMModel:
         'VLLM_QWEN_3_8_27B': 'vLLM Qwen 3.8 27B',
         'DOUBAO_SEED_2_0_PRO': 'Doubao Seed 2.0 Pro',
         'DOUBAO_SEED_2_0_LITE': 'Doubao Seed 2.0 Lite',
+        'GLM_5_3_FLASH': 'GLM 5.3 Flash（火山方舟）',
+        'GLM_5_3': 'GLM 5.3（智谱 BigModel 国内站）',
         'CLAUDE_HAIKU_4_5': 'Claude Haiku 4.5',
         'DEEPSEEK_V4_FLASH': 'DeepSeek V4 Flash',
         'DEEPSEEK_V4_PRO': 'DeepSeek V4 Pro',
@@ -2659,6 +2663,14 @@ class LLMModel:
     # Doubao 模型
     DOUBAO_SEED_2_0_PRO = 'doubao-seed-2-0-pro'
     DOUBAO_SEED_2_0_LITE = 'doubao-seed-2-0-lite'
+
+    # GLM 模型（火山方舟上架的智谱 GLM-5.3-Flash，API ID 带版本后缀，
+    # 由 volcengine 客户端 _MODEL_NAME_MAP 映射）
+    GLM_5_3_FLASH = 'glm-5.3-flash'
+
+    # GLM 模型（智谱 BigModel 国内站官方 GLM-5.3 旗舰，纯文本，
+    # API model ID 即 glm-5.3，无需映射）
+    GLM_5_3 = 'glm-5.3'
 
     # Claude 模型
     CLAUDE_HAIKU_4_5 = 'claude-haiku-4-5'
@@ -2693,6 +2705,17 @@ class LLMModel:
         'xhigh': 'xhigh',
     }
 
+    # GLM-5.3 思考强度映射：前端 thinking_effort 值 -> 方舟 reasoning_effort。
+    # GLM-5.3 始终启用思考（thinking.type 仅支持 enabled，默认即开，无法关闭），
+    # reasoning_effort 仅支持 low/high/max（无 "medium"，默认 max）；前端沿用
+    # low/medium/high 三档，"medium"→"high"、"high"→"max" 保持强度单调。
+    GLM_REASONING_EFFORT_MAP = {
+        'low': 'low',
+        'medium': 'high',
+        'high': 'max',
+        'max': 'max',
+    }
+
 
 # 供应商图标映射（前端显示用）
 VENDOR_ICONS = {
@@ -2705,6 +2728,7 @@ VENDOR_ICONS = {
     'agnes': '✨',
     'mimo': '📱',
     'vllm': '⚡',
+    'glmcn': '🤖',
 }
 
 # 模型前缀 -> 供应商映射（用于 LLMClientFactory 路由）
@@ -2716,6 +2740,10 @@ MODEL_PREFIX_VENDOR_MAP = {
     'ollama': LLMVendor.OLLAMA,
     'vllm': LLMVendor.VLLM,  # 本地 vLLM 推理服务
     'doubao': LLMVendor.VOLCENGINE,
+    # 前缀按插入序先命中先路由：方舟 glm-5.3-flash 必须先于下方 'glm' 通配项，
+    # 否则会被前缀重叠路由到智谱 BigModel（glm-5.3-flash 以 glm-5.3 开头）
+    'glm-5.3-flash': LLMVendor.VOLCENGINE,  # 方舟上架的智谱 GLM-5.3-Flash
+    'glm': LLMVendor.GLMCN,  # 智谱 BigModel 国内站的 GLM 系列（glm-5.3 等）
     'qwen3.5': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.5 Plus 模型
     'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
     'deepseek': LLMVendor.DEEPSEEK,  # DeepSeek 的 DeepSeek-V4 模型

@@ -966,6 +966,25 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== 智谱 BigModel 国内站配置 ====================
+    {
+        'key': 'llm.glmcn.api_key',
+        'value_type': 'string',
+        'description': '智谱 BigModel API Key（国内站 open.bigmodel.cn）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True,
+        'user_module_grantable': True
+    },
+    {
+        'key': 'llm.glmcn.base_url',
+        'value_type': 'string',
+        'description': '智谱 BigModel API 基础URL（默认 https://open.bigmodel.cn/api/paas/v4）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== 七牛云存储配置 ====================
     {
         'key': 'file_storage.qiniu.access_key',
