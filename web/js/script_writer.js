@@ -3111,7 +3111,13 @@
 
             const selectedOption = selector.options[selector.selectedIndex];
             const vendorName = selectedOption?.dataset?.vendorName || '';
-            const isDoubao = vendorName === 'volcengine' || (selectedOption?.value || '').startsWith('doubao');
+            const modelValue = (selectedOption?.value || '').toLowerCase();
+            // effort 档位选择：volcengine（doubao 系）与 glmcn（GLM 系）均支持，
+            // GLM 的 thinking_effort 由后端 GLM_REASONING_EFFORT_MAP 映射
+            const isDoubao = vendorName === 'volcengine'
+                || vendorName === 'glmcn'
+                || modelValue.startsWith('doubao')
+                || modelValue.startsWith('glm-');
 
             // 只在开关打开且是 Doubao 模型时显示 effort 选择
             effortSelect.style.display = (toggle.checked && isDoubao) ? 'inline-block' : 'none';

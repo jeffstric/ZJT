@@ -66,18 +66,20 @@ def _fallback_timeout(timeout: Optional[float]) -> float:
 async def _run_bin(cmd: Sequence[str], timeout: float) -> Tuple[int, bytes, bytes]:
     """执行外部命令并等待退出，返回 (returncode, stdout, stderr)；超时 kill。
     （必须返回 communicate() 的结果：流在 communicate 后已耗尽，proc.stdout 不可再读。）"""
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    proc = None
     try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError as exc:
         proc.kill()
         await proc.wait()
         raise FrameExtractError(f"ffmpeg 超时({timeout}s): {os.path.basename(cmd[0])}") from exc
     except FileNotFoundError as exc:
+        # create_subprocess_exec 找不到可执行文件时抛出；须与 create 同处一个 try 才能接住
         raise FrameExtractError(f"未找到可执行文件: {cmd[0]}") from exc
     return proc.returncode, stdout or b"", stderr or b""
 
@@ -140,7 +142,7 @@ async def probe_stream_duration(video_path: str, timeout: Optional[float] = None
 async def extract_first_frame(video_path: str, image_path: str, timeout: Optional[float] = None) -> None:
     timeout = float(timeout if timeout is not None else _default_timeout())
     ok = await _ffmpeg_ok(["-i", video_path, "-frames:v", "1", "-q:v", "2", "-y", image_path], timeout)
-    if not ok or not _validate_image_file(image_path):
+    if not ok or not await asyncio.to_thread(_validate_image_file, image_path):
         raise FrameExtractError("首帧提取失败，视频可能无法解码")
 
 
@@ -157,14 +159,14 @@ async def extract_last_frame(video_path: str, image_path: str, timeout: Optional
         ["-sseof", f"-{window}", "-i", video_path, "-update", "1", "-q:v", "2", "-y", image_path],
         timeout,
     )
-    if ok and _validate_image_file(image_path):
+    if ok and await asyncio.to_thread(_validate_image_file, image_path):
         return
     logger.warning("[extract-frame] 尾帧快路径空输出，降级全片解码: %s", video_path)
     ok = await _ffmpeg_ok(
         ["-i", video_path, "-update", "1", "-q:v", "2", "-y", image_path],
         _fallback_timeout(timeout),
     )
-    if not ok or not _validate_image_file(image_path):
+    if not ok or not await asyncio.to_thread(_validate_image_file, image_path):
         raise FrameExtractError("尾帧提取失败，视频可能无法解码")
 
 
@@ -182,14 +184,14 @@ async def extract_frame_at(
         ["-ss", f"{t:.3f}", "-i", video_path, "-frames:v", "1", "-update", "1", "-q:v", "2", "-y", image_path],
         timeout,
     )
-    if ok and _validate_image_file(image_path):
+    if ok and await asyncio.to_thread(_validate_image_file, image_path):
         return
     logger.warning("[extract-frame] 时间点 %.3fs 快路径空输出，降级 select 全解码: %s", t, video_path)
     ok = await _ffmpeg_ok(
         ["-i", video_path, "-vf", f"select='gte(t,{t:.3f})'", "-frames:v", "1", "-q:v", "2", "-y", image_path],
         _fallback_timeout(timeout),
     )
-    if not ok or not _validate_image_file(image_path):
+    if not ok or not await asyncio.to_thread(_validate_image_file, image_path):
         raise FrameExtractError(f"时间点 {t:.2f}s 之后没有可解码的视频帧")
 
 
@@ -276,8 +278,12 @@ def build_keyframe_points(
     quota = limit - 1 if not resumed else limit
     taken = cuts[:quota]
     pts = ([0.0] if not resumed else []) + taken
-    # 切换点已取尽 → 补尾帧收尾；还有剩余切换点则留给下一批
+    # 切换点已取尽 → 补尾帧收尾；还有剩余切换点则留给下一批。
+    # 满批时让出最后一格给尾帧：被让出的切换点晚于本批起点，下一批续传
+    # 会重新做场景检测再发现它，不会丢帧，同时保证本批不超过 limit 个。
     if len(taken) == len(cuts) and pts[-1] < end - gap:
+        if len(pts) >= limit:
+            pts.pop()
         pts.append(end)
 
     merged = []

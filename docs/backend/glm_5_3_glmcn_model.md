@@ -96,7 +96,9 @@ glm-5.3-flash（¥0.8/2.8/0.23 每百万）为 glm-5.3 定价的 1/10，可交�
 - glm-5.3-flash 为**双供应商模型**（no_141 起）：`/api/models` 按
   (model_id, vendor_id) 下发两条记录（volcengine / glmcn）。前端选择 glmcn
   条目时按 vendor_id 精确路由到智谱密钥；仅传模型名的历史调用路径按前缀
-  回退到 volcengine（需配置 `volcengine.api_key`）。
+  回退到 volcengine（需配置 `volcengine.api_key`）。无显式供应商的反查
+  `VendorModelModel.get_vendor_id_by_model_id` 以 `ORDER BY vendor_id ASC`
+  取最小的一档（volcengine=1 最早接入），保证双供应商关联下结果确定。
 - script_writer 模型选择器（LLM / 生图）已加供应商标识：下拉菜单每行右侧
   显示短名 pill 徽标（火山 / 智谱 / DeepSeek…，`VENDOR_SHORT_LABELS` 映射），
   闭合态显示「模型名 · 短名」，双供应商模型可直接区分。

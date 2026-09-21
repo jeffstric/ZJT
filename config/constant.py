@@ -2616,7 +2616,7 @@ class LLMVendor:
         'AGNES': 'Agnes 供应商（Agnes 2.5 对话模型）',
         'MIMO': '小米 MiMo 供应商（mimo-v2.5 系列，Token Plan 套餐）',
         'VLLM': '本地推理供应商（vLLM 模型）',
-        'GLMCN': '智谱 BigModel 国内站供应商（GLM-5.3 模型）',
+        'GLMCN': '智谱 BigModel 国内站供应商（GLM-5.3 / GLM-5.3-Flash 模型）',
     }
     JIEKOU = 'jiekou'
     ALIYUN = 'aliyun'
@@ -2646,7 +2646,7 @@ class LLMModel:
         'VLLM_QWEN_3_8_27B': 'vLLM Qwen 3.8 27B',
         'DOUBAO_SEED_2_0_PRO': 'Doubao Seed 2.0 Pro',
         'DOUBAO_SEED_2_0_LITE': 'Doubao Seed 2.0 Lite',
-        'GLM_5_3_FLASH': 'GLM 5.3 Flash（火山方舟）',
+        'GLM_5_3_FLASH': 'GLM 5.3 Flash（火山方舟 / 智谱 BigModel 双供应商）',
         'GLM_5_3': 'GLM 5.3（智谱 BigModel 国内站）',
         'CLAUDE_HAIKU_4_5': 'Claude Haiku 4.5',
         'DEEPSEEK_V4_FLASH': 'DeepSeek V4 Flash',

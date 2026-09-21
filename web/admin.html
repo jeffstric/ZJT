@@ -247,9 +247,10 @@
                             <div class="license-status-item">
                                 <span class="license-status-label">{{ t('license_field_active_users') }}</span>
                                 <span class="license-status-value">
-                                    {{ licenseStatus.user_quota?.active_users ?? '-' }}
+                                    <!-- 企业包未随版提供 user_quota 时回退 dashboard 口径，避免恒显 "- / ∞" -->
+                                    {{ licenseStatus.user_quota?.active_users ?? dashboard.activeUsers ?? '-' }}
                                     /
-                                    {{ licenseStatus.user_quota?.max_active_users == null ? '∞' : licenseStatus.user_quota.max_active_users }}
+                                    {{ (licenseStatus.user_quota?.max_active_users ?? dashboard.maxActiveUsers) == null ? '∞' : (licenseStatus.user_quota?.max_active_users ?? dashboard.maxActiveUsers) }}
                                 </span>
                             </div>
                             <div class="license-status-item">

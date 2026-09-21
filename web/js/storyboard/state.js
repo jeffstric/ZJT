@@ -424,9 +424,14 @@ export function getSelectedLlmMeta(selection = state.selectedLlmModel) {
         supportsThinking,
         isDeepSeek: vendorName === 'deepseek'
             || modelName.includes('deepseek'),
+        // effort 档位选择：volcengine（doubao 系）与 glmcn（GLM 系）。
+        // GLM-5.3 为始终思考模型，thinking_effort 经后端
+        // GLM_REASONING_EFFORT_MAP 映射，volcengine/glmcn 双供应商路径均可用
         isDoubaoEffort: vendorName === 'volcengine'
             || modelName.startsWith('doubao')
-            || modelName.includes('doubao'),
+            || modelName.includes('doubao')
+            || vendorName === 'glmcn'
+            || modelName.startsWith('glm-'),
     };
 }
 

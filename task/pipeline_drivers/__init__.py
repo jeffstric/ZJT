@@ -190,10 +190,12 @@ class PipelineDriverFactory:
                 'target': image_path,
             })
 
+        whitelist_hits = 0
         for idx, image_path in enumerate(cls._get_reference_images(ai_tool)):
             # 参考图遮盖白名单：仅角色参考图需要人脸处理；白名单缺失时保持旧行为（全量遮盖）
             if reference_whitelist is not None and image_path not in reference_whitelist:
                 continue
+            whitelist_hits += 1
             step_configs.append({
                 'step_type': PipelineStepType.IMAGE_FACE_MASK,
                 'params': {
@@ -203,6 +205,20 @@ class PipelineDriverFactory:
                 },
                 'target': image_path,
             })
+
+        # 白名单非空但零命中：两侧 URL 写法不一致（host/编码/尾斜杠）时全部
+        # 参考图会静默跳过遮盖，真人脸素材将以未遮盖状态提交网关——必须可见
+        if reference_whitelist and whitelist_hits == 0:
+            references = cls._get_reference_images(ai_tool)
+            logger.warning(
+                "[face-mask] 参考图白名单非空但零命中，参考图均未做人脸遮盖。"
+                "ai_tool_id=%s 白名单(%d)=%s 参考图(%d)=%s",
+                getattr(ai_tool, 'id', None),
+                len(reference_whitelist),
+                sorted(reference_whitelist)[:5],
+                len(references),
+                list(references)[:5],
+            )
 
         return step_configs
 

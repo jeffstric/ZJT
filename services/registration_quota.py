@@ -95,4 +95,8 @@ def get_max_active_users() -> Optional[int]:
     getter = getattr(_provider, 'get_max_active_users', None)
     if callable(getter):
         return getter()
+    # 未实现分档查询的旧商业 Provider（available=True，语义为"商业版不限"）
+    # 回退 None；若回退社区常量，商业版激活用户数超过 1 时管理端会恒报超限。
+    if is_available():
+        return None
     return COMMUNITY_MAX_ACTIVE_USERS
