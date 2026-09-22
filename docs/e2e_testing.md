@@ -406,6 +406,39 @@ auth (无依赖)
 
 不建议 e2e 覆盖（依赖外部服务/真实触发条件，本测试环境不可达）：内容审核违规原文透出（4db4491c）、TTS 语速滑杆（93224407）、MiniMax H3 文生视频驱动（c28003b2）、小米 MiMo 供应商（432f9cb5）——相关行为由 `tests/` 单测与前端 vitest 覆盖。
 
+## 订阅 UI 用例在本地环境批量超时的排查（2026-09-22）
+
+`test_subscription_ui.py`（develop 新增，10 个 P2）在全量跑中全部失败，统一卡在
+`_open_subscription_tab` 点击「算力充值」按钮超时。两层根因叠加：
+
+| 现象 | 根因 | 修复 |
+|------|------|------|
+| 「算力充值」按钮不存在（click 超时 30s） | index 页 `isLoggedIn` 要求 `authToken && (userPhone \|\| userEmail)`（`web/js/index_app.js` computed）；`browser_context` fixture 只注入 `auth_token`/`user_id`，缺 `phone` → 顶栏渲染未登录态（只有「登录」按钮），已登录 UI 全部不渲染。真实 UI 登录经 `persistBrowserAuth` 必写 `phone`，注入不完整是模拟失真 | `conftest.py::browser_context` 补注入 `localStorage.phone`（取 test_config 主账号手机号；与 `admin_browser_page` 既有做法一致） |
+| 按钮可见后弹窗仍不打开 | 本地部署 `is_local=true`（`config_prod.yml`），`handleRechargeClick` 对本地环境只 `alert` 提示、不打开充值弹窗 | `test_subscription_ui.py::_mock_subscription_api` 补 mock `GET /api/system/server-config` 返回 `is_local=false`，使用例在本地/生产环境行为一致 |
+
+经验：**index.html（index_app.js）是唯一把 `phone` 当作登录态判据的页面**，其他页面（script_writer / marketing_agent / video_workflow / admin）只校验 token。新增依赖 index 顶栏「已登录 UI」的 e2e 用例前，先确认 `browser_context` 注入的 localStorage 与真实登录双写一致。
+
+## 两个 e2e 并发运行互顶 token 的排查（2026-09-22）
+
+全量跑出现 25 个失败（test_admin_api 12、test_marketing_agent 7、
+test_workflow_list 3 等），统一表现为 token 401 / 前端跳登录页，但各模块
+**单独跑全部通过**（如 `pytest test_admin_api.py` → 19 passed）。
+
+根因：排查时误启动**两个全量 pytest 并发运行**（11:25:21 与 11:25:48 各跑
+约 19 分钟，时间窗完全重叠）。登录接口是单会话策略（`auth_service.py`
+`delete_by_user_id`），两边 session 登录互顶主账号 token；各自的
+`live_auth` 探活 401 后自愈重登，又顶掉对方 → 401→重登死循环持续到运行
+结束（服务器日志可见全程每 1~3 秒一次主账号登录）。业务代码无问题。
+
+修复（`auto_test/e2e/conftest.py`）：
+
+| 防护 | 说明 |
+|------|------|
+| e2e 单跑锁（`pytest_sessionstart` 钩子） | 启动时写 `.e2e_run.lock`（pid/时间/主机）；检测到另一**存活**进程持有 <45 分钟的有效锁立即 `pytest.exit` 并提示，避免污染对方运行。退出时按 pid 校验后清理；超 45 分钟视为残留锁直接接管。锁文件已加入 `.gitignore` |
+| `_LiveAuth` 重登熔断 | 60 秒内重登 >=3 次判定为"被并发登录持续顶号"，放弃自愈并打印排查提示，让后续用例如实 401 暴露问题，而不是制造更多登录互相顶号 |
+
+经验：**同一时刻只允许一个 e2e 全量运行**；复跑前先确认上一轮已退出（查锁文件 `auto_test/e2e/.e2e_run.lock` 或进程列表）。"大面积 401 但单模块全过"是并发顶号的典型特征。
+
 ## 两种测试方案对比
 
 | 维度 | JSON 测试 (AI 智能体) | pytest E2E (编程式) |
