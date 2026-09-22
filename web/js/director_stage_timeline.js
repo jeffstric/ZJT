@@ -704,10 +704,49 @@
       if (typeof this.stopRecording === 'function') this.stopRecording();
     };
 
-    // 关闭编辑器前收尾（close 调用）：停播并恢复关节姿态，避免摆动残留在序列化外的 rig 上
+    function writeVec3(target, arr) {
+      if (!target || !arr) return;
+      if (typeof target.fromArray === 'function') {
+        target.fromArray(arr);
+        return;
+      }
+      target.x = arr[0];
+      target.y = arr[1];
+      target.z = arr[2];
+    }
+
+    // 播放/scrub 会改写 puppet 与 virtualCamCfg，但不 markDirty。
+    // 关闭前把位形收回上次提交的 directorData，避免插值结果被写成静态站位。
+    DirectorEditor.prototype.restoreCommittedEditPose = function () {
+      var saved = this.node && this.node.data && this.node.data.directorData;
+      if (!saved) return;
+      var byId = {};
+      (saved.puppets || []).forEach(function (pd) {
+        if (pd && pd.id != null) byId[pd.id] = pd;
+      });
+      (this.puppets || []).forEach(function (p) {
+        var pd = byId[p.id];
+        if (!pd) return;
+        if (typeof pd.x === 'number') p.x = pd.x;
+        if (typeof pd.z === 'number') p.z = pd.z;
+        if (typeof pd.rotY === 'number') p.rotY = pd.rotY;
+      });
+      var cam = saved.camera;
+      if (cam && this.virtualCamCfg) {
+        writeVec3(this.virtualCamCfg.pos, cam.pos);
+        writeVec3(this.virtualCamCfg.target, cam.target);
+        if (typeof cam.fov === 'number') this.virtualCamCfg.fov = cam.fov;
+      }
+      if (typeof this.updateCamHelper === 'function') this.updateCamHelper();
+    };
+
+    // 关闭编辑器前收尾：停播，丢掉未提交的插值位形，再恢复关节姿态。
+    // 播放头不落盘，重开固定为 0；这里把运行时播放头一并归零。
     DirectorEditor.prototype.stopTimelineForClose = function () {
       if (!this.tl) return;
       this.tl.playing = false;
+      this.tl.playhead = 0;
+      this.restoreCommittedEditPose();
       this.restorePoses();
     };
 

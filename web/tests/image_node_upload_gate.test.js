@@ -43,6 +43,8 @@ const {
   canEditImageNode,
   resolveImageEditSubmitData,
   getImageUploadBlockMessage,
+  planImageBatchResults,
+  collectImageReferencePrompt,
 } = require('../js/image_node.js');
 
 describe('canEditImageNode', () => {
@@ -227,5 +229,85 @@ describe('上传生命周期状态机（模拟 change 处理）', () => {
     simulateUploadLifecycle(data, { uploadResult: null });
     expect(data.url).toBe('https://cdn.example.com/old.png');
     expect(canEditImageNode(data).allowed).toBe(true);
+  });
+});
+
+describe('collectImageReferencePrompt', () => {
+  const character = {
+    type: 'character',
+    data: { name: '林月', reference_image: 'https://cdn.example.com/lin.png' },
+  };
+  const scene = {
+    type: 'location',
+    data: { name: '天台', reference_image: 'https://cdn.example.com/roof.png' },
+  };
+
+  test('无底图时第一张参考图是图1', () => {
+    const { referenceImageUrls, finalPrompt } = collectImageReferencePrompt('夜景', [character, scene], false);
+    expect(referenceImageUrls).toEqual([
+      'https://cdn.example.com/lin.png',
+      'https://cdn.example.com/roof.png',
+    ]);
+    expect(finalPrompt).toBe('夜景\n\n图1是林月，图2是天台。');
+  });
+
+  test('有底图时参考图仍从图2起', () => {
+    const { finalPrompt } = collectImageReferencePrompt('改成夜景', [character], true);
+    expect(finalPrompt).toBe('改成夜景\n\n图2是林月。');
+  });
+
+  test('纯图片参考只占序号，下一张命名参考顺延', () => {
+    const image = { type: 'image', data: { url: 'https://cdn.example.com/plain.png' } };
+    const { referenceImageUrls, finalPrompt } = collectImageReferencePrompt('', [image, character], false);
+    expect(referenceImageUrls).toEqual([
+      'https://cdn.example.com/plain.png',
+      'https://cdn.example.com/lin.png',
+    ]);
+    expect(finalPrompt).toBe('\n\n图2是林月。');
+  });
+});
+
+describe('planImageBatchResults', () => {
+  const slots = [
+    { nodeId: 'n1', projectId: 101 },
+    { nodeId: 'n2', projectId: 102 },
+  ];
+
+  test('第一张失败、第二张成功时按任务号对回原格子', () => {
+    const plan = planImageBatchResults([
+      { project_id: 101, status: 'FAILED', result: null, error: '内容审核未通过' },
+      { project_id: 102, status: 'SUCCESS', result: 'https://cdn.example.com/b.png' },
+    ], slots);
+    expect(plan.successCount).toBe(1);
+    expect(plan.failCount).toBe(1);
+    expect(plan.slots[0]).toMatchObject({
+      nodeId: 'n1',
+      outcome: 'failed',
+      error: '内容审核未通过',
+    });
+    expect(plan.slots[1]).toMatchObject({
+      nodeId: 'n2',
+      outcome: 'success',
+      url: 'https://cdn.example.com/b.png',
+    });
+  });
+
+  test('全部成功时顺序不变', () => {
+    const plan = planImageBatchResults([
+      { project_id: 102, status: 'SUCCESS', result: 'https://cdn.example.com/b.png' },
+      { project_id: 101, status: 'SUCCESS', result: 'https://cdn.example.com/a.png' },
+    ], slots);
+    expect(plan.slots.map(slot => slot.url)).toEqual([
+      'https://cdn.example.com/a.png',
+      'https://cdn.example.com/b.png',
+    ]);
+  });
+
+  test('未返回的格子记为失败，刷新后不会再被当成生成中', () => {
+    const plan = planImageBatchResults([
+      { project_id: 101, status: 'SUCCESS', result: 'https://cdn.example.com/a.png' },
+    ], slots);
+    expect(plan.slots[1].outcome).toBe('failed');
+    expect(plan.slots[1].error).toBe('生成失败');
   });
 });

@@ -333,6 +333,45 @@ describe('DirectorStageTimeline：多机位求值与播放', () => {
     expect(ed.virtualCamCfg.fov).toBeCloseTo(40);
   });
 
+  test('stopTimelineForClose: 播放插值不写回已提交站位', () => {
+    const ed = createFakeEditor(makeEditorClass(loadModule()));
+    ed.node = {
+      data: {
+        directorData: {
+          puppets: [
+            { id: 'p1', x: 1, z: 2, rotY: 10 },
+            { id: 'p2', x: 0, z: 0, rotY: 0 }
+          ],
+          camera: { pos: [0, 1, 4], target: [0, 1, 0], fov: 35 }
+        }
+      }
+    };
+    ed.restoreTimeline({
+      timeline: {
+        duration: 4,
+        tracks: [{
+          kind: 'puppet',
+          id: 'p1',
+          keys: [
+            { t: 0, x: 1, z: 2, rotY: 10 },
+            { t: 4, x: 9, z: 8, rotY: 90 }
+          ]
+        }]
+      }
+    });
+    ed.tl.playing = true;
+    ed.applyTimelineAt(4, 0);
+    expect(ed.puppets[0].x).toBeCloseTo(9);
+    ed.stopTimelineForClose();
+    expect(ed.tl.playing).toBe(false);
+    expect(ed.tl.playhead).toBe(0);
+    expect(ed.puppets[0].x).toBeCloseTo(1);
+    expect(ed.puppets[0].z).toBeCloseTo(2);
+    expect(ed.puppets[0].rotY).toBeCloseTo(10);
+    expect(ed.virtualCamCfg.pos.x).toBeCloseTo(0);
+    expect(ed.virtualCamCfg.fov).toBeCloseTo(35);
+  });
+
   test('applyTimelineAt: 无轨道的人偶保持当前编辑位形', () => {
     const ed = createFakeEditor(makeEditorClass(loadModule()));
     ed.restoreTimeline({

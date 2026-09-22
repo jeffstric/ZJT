@@ -461,6 +461,12 @@
         if(window.imageDoodleEditor && typeof window.imageDoodleEditor.isOpen === 'function' && window.imageDoodleEditor.isOpen()){
           return;
         }
+        // 导演台打开时节点仍留在 selectedNodeIds。这里再挡一层：
+        // 编辑器监听若未拦住，确认删除会拆掉节点且不走 close()，录制和 WebGL 泄漏。
+        var directorOverlay = document.getElementById('directorStageOverlay');
+        if(directorOverlay && directorOverlay.classList.contains('show')){
+          return;
+        }
 
         if(deleteSelectedConnection()){
           e.preventDefault();

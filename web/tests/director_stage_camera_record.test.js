@@ -47,6 +47,19 @@ describe('导演台：多机位（接线层源码断言）', () => {
     expect(editorSrc).toContain('data-cam-act="update"');
   });
 
+  it('撤销先恢复机位列表和激活机位，再恢复时间轴', () => {
+    expect(editorSrc).toContain('restoreCamerasFromData');
+    const rebuild = editorSrc.indexOf('DirectorEditor.prototype.rebuildFromSnapshot = function');
+    expect(rebuild).toBeGreaterThan(-1);
+    const block = editorSrc.slice(rebuild, rebuild + 1600);
+    const camAt = block.indexOf('this.restoreCamerasFromData(snap)');
+    const tlAt = block.indexOf('this.restoreTimeline(snap)');
+    expect(camAt).toBeGreaterThan(-1);
+    expect(tlAt).toBeGreaterThan(camAt);
+    // 重开与撤销共用同一恢复函数，避免两套迁移逻辑
+    expect(editorSrc).toContain('this.restoreCamerasFromData(d)');
+  });
+
   it('timeline 相机键记录/保留 camId；相机轨按机位 id 分轨（多机位 lane）', () => {
     expect(timelineSrc).toContain('camId');
     expect(timelineSrc).toContain('editor.activeCameraId');
@@ -66,6 +79,32 @@ describe('导演台：录制视频（接线层源码断言）', () => {
     expect(editorSrc).toContain('discardRecording = function');
     expect(editorSrc).toContain('_uploadRecording = async function');
     expect(editorSrc).toContain('createDirectorStageVideoNode');
+  });
+
+  it('导演台打开时 Delete/Backspace 不冒泡到画布', () => {
+    expect(editorSrc).not.toContain("this.on(document, 'keydown.directorStage'");
+    const idx = editorSrc.indexOf("this.on(document, 'keydown'");
+    expect(idx).toBeGreaterThan(-1);
+    const block = editorSrc.slice(idx, idx + 1200);
+    expect(block).toContain("e.key === 'Delete' || e.key === 'Backspace'");
+    expect(block).toContain('e.stopPropagation()');
+    expect(block).toContain('e.preventDefault()');
+    expect(block).toContain('removePuppet');
+    const eventsSrc = readSource('web/js/events.js');
+    expect(eventsSrc).toContain("getElementById('directorStageOverlay')");
+    expect(eventsSrc).toContain("directorOverlay.classList.contains('show')");
+  });
+
+  it('关闭时收回已提交站位，重开时套用 0 秒位形', () => {
+    expect(timelineSrc).toContain('restoreCommittedEditPose');
+    const closeIdx = timelineSrc.indexOf('DirectorEditor.prototype.stopTimelineForClose = function');
+    expect(closeIdx).toBeGreaterThan(-1);
+    const closeBlock = timelineSrc.slice(closeIdx, closeIdx + 400);
+    expect(closeBlock).toContain('this.tl.playhead = 0');
+    expect(closeBlock).toContain('this.restoreCommittedEditPose()');
+    const restoreIdx = editorSrc.indexOf('this.restoreTimeline(d);');
+    expect(restoreIdx).toBeGreaterThan(-1);
+    expect(editorSrc.slice(restoreIdx, restoreIdx + 500)).toContain('this.applyTimelineAt(0)');
   });
 
   it('播放结束/停止自动结束录制；关闭编辑器丢弃录制', () => {

@@ -6,6 +6,101 @@
      * @param {object|null|undefined} data node.data
      * @returns {{ allowed: boolean, reason: 'ok'|'no_image'|'uploading' }}
      */
+    /**
+     * 把一批抽卡任务对回各自的结果格子。
+     * 必须按 project_id 对齐，不能先滤掉失败再按下标填：
+     * 第一张失败、第二张成功时，成功图会进到第一格，失败格一直停在「生成中」。
+     *
+     * @param {Array<{project_id?: *, status?: string, result?: *, error?: string, reason?: string}>} tasks
+     * @param {Array<{nodeId: *, projectId?: *}>} slots 与提交顺序一致
+     * @returns {{ slots: Array<{nodeId: *, projectId: *, outcome: 'success'|'failed', url: *, error: string}>, successCount: number, failCount: number }}
+     */
+    function planImageBatchResults(tasks, slots) {
+      const list = Array.isArray(tasks) ? tasks : [];
+      const slotList = Array.isArray(slots) ? slots : [];
+      const indexByProject = new Map();
+      slotList.forEach((slot, index) => {
+        const pid = slot && slot.projectId != null && slot.projectId !== '' ? String(slot.projectId) : '';
+        if (pid && !indexByProject.has(pid)) indexByProject.set(pid, index);
+      });
+      const outcomes = slotList.map((slot) => ({
+        nodeId: slot && slot.nodeId,
+        projectId: slot && slot.projectId,
+        outcome: 'failed',
+        url: '',
+        error: '生成失败',
+      }));
+      const claimed = new Set();
+      list.forEach((task, index) => {
+        if (!task || typeof task !== 'object') return;
+        const pid = task.project_id != null && task.project_id !== '' ? String(task.project_id) : '';
+        let slotIndex = pid && indexByProject.has(pid) ? indexByProject.get(pid) : -1;
+        if (slotIndex < 0 && !pid && index < outcomes.length && !claimed.has(index)) {
+          slotIndex = index;
+        }
+        if (slotIndex < 0 || claimed.has(slotIndex)) return;
+        claimed.add(slotIndex);
+        const succeeded = task.status === 'SUCCESS' && task.result;
+        outcomes[slotIndex] = {
+          nodeId: outcomes[slotIndex].nodeId,
+          projectId: outcomes[slotIndex].projectId,
+          outcome: succeeded ? 'success' : 'failed',
+          url: succeeded ? task.result : '',
+          error: succeeded
+            ? ''
+            : (task.error || task.reason || (task.status === 'SUCCESS' ? '生成成功，但未获取到图片地址' : '生成失败')),
+        };
+      });
+      const successCount = outcomes.filter((item) => item.outcome === 'success').length;
+      return {
+        slots: outcomes,
+        successCount,
+        failCount: outcomes.length - successCount,
+      };
+    }
+
+    /**
+     * 收集参考图 URL，并按模型实际看到的顺序写「图N是…」。
+     * 有底图时底图占图1，参考图从 2 起；无底图时参考图自己就是图1。
+     * 纯图片参考只占序号、不写名字。
+     *
+     * @param {string} prompt
+     * @param {Array<{type?: string, data?: object}>} refNodes
+     * @param {boolean} hasBaseImage
+     * @returns {{ referenceImageUrls: string[], finalPrompt: string }}
+     */
+    function collectImageReferencePrompt(prompt, refNodes, hasBaseImage) {
+      const referenceImageUrls = [];
+      const promptSuffix = [];
+      let refImageIndex = hasBaseImage ? 2 : 1;
+      (refNodes || []).forEach((refNode) => {
+        if (!refNode || !refNode.data) return;
+        let url = '';
+        let label = '';
+        if (refNode.type === 'image' && refNode.data.url) {
+          url = refNode.data.url;
+        } else if (refNode.type === 'character' && refNode.data.reference_image) {
+          url = refNode.data.reference_image;
+          label = refNode.data.name || '角色';
+        } else if (refNode.type === 'location' && refNode.data.reference_image) {
+          url = refNode.data.reference_image;
+          label = refNode.data.name || '场景';
+        } else if (refNode.type === 'props' && refNode.data.reference_image) {
+          url = refNode.data.reference_image;
+          label = refNode.data.name || '道具';
+        }
+        if (!url) return;
+        referenceImageUrls.push(url);
+        if (label) promptSuffix.push(`图${refImageIndex}是${label}`);
+        refImageIndex += 1;
+      });
+      let finalPrompt = prompt || '';
+      if (promptSuffix.length > 0) {
+        finalPrompt = `${finalPrompt}\n\n${promptSuffix.join('，')}。`;
+      }
+      return { referenceImageUrls, finalPrompt };
+    }
+
     function canEditImageNode(data) {
       if (!data) {
         return { allowed: false, reason: 'no_image' };
@@ -103,7 +198,7 @@
       state.nodes.push(node);
 
       const el = document.createElement('div');
-      el.className = 'node';
+      el.className = 'node image-node';
       el.dataset.nodeId = String(id);
       el.style.left = node.x + 'px';
       el.style.top = node.y + 'px';
@@ -133,44 +228,44 @@
             </div>
             <div class="reference-images-grid"></div>
           </div>
-          <div class="field field-collapsible">
-            <div class="label" data-i18n="image_node_upload_label">${window.t ? window.t('image_node_upload_label') : '上传图片'}</div>
-            <input class="image-file" type="file" accept="image/*,.tif,.tiff" />
-            <div style="display: flex; gap: 8px; margin-top: 8px;">
-              <button class="mini-btn image-clear" type="button" data-i18n="image_node_clear_btn">${window.t ? window.t('image_node_clear_btn') : '清除'}</button>
-              <button class="mini-btn image-download-icon-btn" type="button" data-i18n="image_node_download_btn">${window.t ? window.t('image_node_download_btn') : '下载'}</button>
+          <div class="image-node-form field-collapsible">
+            <div class="image-form-upload field">
+              <div class="label" data-i18n="image_node_upload_label">${window.t ? window.t('image_node_upload_label') : '上传图片'}</div>
+              <div class="image-form-upload-row">
+                <input class="image-file" type="file" accept="image/*,.tif,.tiff" />
+                <button class="mini-btn image-clear" type="button" data-i18n="image_node_clear_btn">${window.t ? window.t('image_node_clear_btn') : '清除'}</button>
+                <button class="mini-btn image-download-icon-btn" type="button" data-i18n="image_node_download_btn">${window.t ? window.t('image_node_download_btn') : '下载'}</button>
+              </div>
             </div>
-          </div>
-          <div class="field field-collapsible">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <div class="label image-prompt-label" style="margin: 0;" data-i18n="image_node_prompt_label">${window.t ? window.t('image_node_prompt_label') : '编辑提示词（可选）'}</div>
-              <button class="mini-btn image-prompt-expand-btn" type="button" style="font-size: 11px; padding: 4px 8px;" title="${window.t ? window.t('script_expand_btn') : '放大编辑'}" data-i18n="script_expand_btn:title">⤢</button>
+            <div class="image-form-prompt field">
+              <div class="image-form-prompt-head">
+                <div class="label image-prompt-label" data-i18n="image_node_prompt_label">${window.t ? window.t('image_node_prompt_label') : '编辑提示词（可选）'}</div>
+                <button class="mini-btn image-prompt-expand-btn" type="button" title="${window.t ? window.t('script_expand_btn') : '放大编辑'}" data-i18n="script_expand_btn:title">⤢</button>
+              </div>
+              <textarea class="image-prompt" rows="2" placeholder="${window.t ? window.t('image_node_prompt_placeholder') : '输入提示词进行图片编辑'}" data-i18n="image_node_prompt_placeholder:placeholder">${escapeHtml(node.data.prompt || '')}</textarea>
             </div>
-            <textarea class="image-prompt" rows="2" placeholder="${window.t ? window.t('image_node_prompt_placeholder') : '输入提示词进行图片编辑'}" data-i18n="image_node_prompt_placeholder:placeholder">${escapeHtml(node.data.prompt || '')}</textarea>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label" data-i18n="image_node_model_label">${window.t ? window.t('image_node_model_label') : '模型'}</div>
-            <select class="image-model"></select>
-          </div>
-          <div class="field field-collapsible image-ratio-field">
-            <div class="label" data-i18n="image_node_ratio_label">${window.t ? window.t('image_node_ratio_label') : '图片比例'}</div>
-            <select class="image-ratio">
-              <option value="9:16" data-i18n="image_ratio_portrait_9_16">${window.t ? window.t('image_ratio_portrait_9_16') : '竖屏 (9:16)'}</option>
-              <option value="16:9" data-i18n="image_ratio_landscape_16_9">${window.t ? window.t('image_ratio_landscape_16_9') : '横屏 (16:9)'}</option>
-              <option value="1:1" data-i18n="image_ratio_square_1_1">${window.t ? window.t('image_ratio_square_1_1') : '正方形 (1:1)'}</option>
-              <option value="3:4" data-i18n="image_ratio_portrait_3_4">${window.t ? window.t('image_ratio_portrait_3_4') : '竖屏 (3:4)'}</option>
-              <option value="4:3" data-i18n="image_ratio_landscape_4_3">${window.t ? window.t('image_ratio_landscape_4_3') : '横屏 (4:3)'}</option>
-            </select>
-          </div>
-          <div class="field field-collapsible image-size-field" style="display:none;">
-            <div class="label" data-i18n="image_node_size_label">${window.t ? window.t('image_node_size_label') : '分辨率'}</div>
-            <select class="image-size"></select>
-          </div>
-          <div class="field field-collapsible">
-            <button class="mini-btn image-camera-control-btn" type="button" style="width:100%;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;" data-i18n="image_node_camera_control_btn">${window.t ? window.t('image_node_camera_control_btn') : '相机控制'}</button>
-          </div>
-          <div class="field field-collapsible">
-            <div class="btn-row" style="display: flex; gap: 8px;">
+            <div class="image-form-options">
+              <div class="field image-model-field">
+                <div class="label" data-i18n="image_node_model_label">${window.t ? window.t('image_node_model_label') : '模型'}</div>
+                <select class="image-model"></select>
+              </div>
+              <div class="field image-ratio-field">
+                <div class="label" data-i18n="image_node_ratio_label">${window.t ? window.t('image_node_ratio_label') : '图片比例'}</div>
+                <select class="image-ratio">
+                  <option value="9:16" data-i18n="image_ratio_portrait_9_16">${window.t ? window.t('image_ratio_portrait_9_16') : '竖屏 (9:16)'}</option>
+                  <option value="16:9" data-i18n="image_ratio_landscape_16_9">${window.t ? window.t('image_ratio_landscape_16_9') : '横屏 (16:9)'}</option>
+                  <option value="1:1" data-i18n="image_ratio_square_1_1">${window.t ? window.t('image_ratio_square_1_1') : '正方形 (1:1)'}</option>
+                  <option value="3:4" data-i18n="image_ratio_portrait_3_4">${window.t ? window.t('image_ratio_portrait_3_4') : '竖屏 (3:4)'}</option>
+                  <option value="4:3" data-i18n="image_ratio_landscape_4_3">${window.t ? window.t('image_ratio_landscape_4_3') : '横屏 (4:3)'}</option>
+                </select>
+              </div>
+              <div class="field image-size-field" style="display:none;">
+                <div class="label" data-i18n="image_node_size_label">${window.t ? window.t('image_node_size_label') : '分辨率'}</div>
+                <select class="image-size"></select>
+              </div>
+            </div>
+            <div class="image-form-actions">
+              <button class="mini-btn image-camera-control-btn" type="button" data-i18n="image_node_camera_control_btn">${window.t ? window.t('image_node_camera_control_btn') : '相机控制'}</button>
               <div class="gen-container">
                 <button class="gen-btn gen-btn-main image-edit-btn" type="button" data-i18n="image_node_edit_btn">${window.t ? window.t('image_node_edit_btn') : '编辑图片'}</button>
                 <button class="gen-btn gen-btn-caret" type="button" aria-label="${window.t ? window.t('draw_count_menu') : '选择抽卡次数'}" data-i18n="draw_count_menu:aria-label">▾</button>
@@ -182,12 +277,14 @@
                 </div>
               </div>
               <button class="gen-btn image-doodle-btn" type="button" data-i18n="image_node_doodle_btn">${window.t ? window.t('image_node_doodle_btn') : '涂鸦编辑'}</button>
+              <div class="image-confirm-field" style="display:none;">
+                <button class="mini-btn image-confirm-shot-btn" type="button" data-i18n="image_node_confirm_shot_btn">${window.t ? window.t('image_node_confirm_shot_btn') : '确认分镜图'}</button>
+              </div>
             </div>
-            <div class="gen-meta image-draw-count-label"></div>
-            <div class="muted image-edit-status" style="display:none;"></div>
-          </div>
-          <div class="field field-collapsible image-confirm-field" style="display:none;">
-            <button class="mini-btn image-confirm-shot-btn" type="button" style="background: #10b981; color: white; width: 100%;" data-i18n="image_node_confirm_shot_btn">${window.t ? window.t('image_node_confirm_shot_btn') : '确认分镜图'}</button>
+            <div class="image-form-meta">
+              <div class="gen-meta image-draw-count-label"></div>
+              <div class="muted image-edit-status" style="display:none;"></div>
+            </div>
           </div>
         </div>
       `;
@@ -922,37 +1019,14 @@
             finalPrompt = `${finalPrompt}\n\n图片风格：${state.style.name}`;
           }
 
-          // 收集参考图URL和描述后缀
-          // 注意：原图占据图1，参考图从图2开始编号
-          const referenceImageUrls = [];
-          const promptSuffix = [];
-          let refImageIndex = 2;
+          // 有底图时底图占图1；无底图时参考图从 1 起，否则模型会对不上第一张图
           const referenceConns = state.referenceConnections.filter(c => c.to === node.id);
-          for(const conn of referenceConns){
-            const refNode = state.nodes.find(n => n.id === conn.from);
-            if(!refNode || !refNode.data) continue;
-            if(refNode.type === 'image' && refNode.data.url){
-              referenceImageUrls.push(refNode.data.url);
-              refImageIndex++;
-            } else if(refNode.type === 'character' && refNode.data.reference_image){
-              referenceImageUrls.push(refNode.data.reference_image);
-              promptSuffix.push(`图${refImageIndex}是${refNode.data.name || '角色'}`);
-              refImageIndex++;
-            } else if(refNode.type === 'location' && refNode.data.reference_image){
-              referenceImageUrls.push(refNode.data.reference_image);
-              promptSuffix.push(`图${refImageIndex}是${refNode.data.name || '场景'}`);
-              refImageIndex++;
-            } else if(refNode.type === 'props' && refNode.data.reference_image){
-              referenceImageUrls.push(refNode.data.reference_image);
-              promptSuffix.push(`图${refImageIndex}是${refNode.data.name || '道具'}`);
-              refImageIndex++;
-            }
-          }
-
-          // 将参考图描述追加到提示词末尾
-          if(promptSuffix.length > 0){
-            finalPrompt = `${finalPrompt}\n\n${promptSuffix.join('，')}。`;
-          }
+          const refNodes = referenceConns
+            .map(conn => state.nodes.find(n => n.id === conn.from))
+            .filter(Boolean);
+          const collectedRefs = collectImageReferencePrompt(finalPrompt, refNodes, hasBaseImage);
+          const referenceImageUrls = collectedRefs.referenceImageUrls;
+          finalPrompt = collectedRefs.finalPrompt;
 
           const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
           const submitRes = hasBaseImage
@@ -1006,67 +1080,82 @@
             submitRes.projectIds,
             (progressText) => { statusEl.textContent = progressText; },
             (statusResult) => {
-              // 从 tasks 数组中提取结果
-              let imageUrls = [];
-              if(statusResult.tasks && Array.isArray(statusResult.tasks)){
-                imageUrls = statusResult.tasks
-                  .filter(task => task.status === 'SUCCESS' && task.result)
-                  .map(task => normalizeVideoUrl(task.result))
-                  .filter(Boolean);
-              } else {
-                const rawResults = extractResultsArray(statusResult);
-                imageUrls = Array.isArray(rawResults)
-                  ? rawResults.map(normalizeVideoUrl).filter(Boolean)
-                  : [];
-              }
+              const slots = createdImageNodeIds.map((nodeId) => {
+                const created = state.nodes.find(n => n.id === nodeId);
+                return {
+                  nodeId,
+                  projectId: created && created.data ? created.data.project_id : null,
+                };
+              });
+              // 无 tasks 的旧响应没有逐条 project_id，只在张数一致时按原顺序填，避免错位
+              const tasks = (statusResult && Array.isArray(statusResult.tasks))
+                ? statusResult.tasks
+                : (Array.isArray(extractResultsArray(statusResult)) && extractResultsArray(statusResult).length === slots.length
+                  ? extractResultsArray(statusResult).map((item) => ({ status: 'SUCCESS', result: item }))
+                  : []);
+              const plan = planImageBatchResults(tasks, slots);
 
-              if(imageUrls.length === 0){
-                // 任务失败时优先展示真实失败原因（含内容违规），避免误报"生成成功"
-                const failedTasks = (statusResult.tasks || []).filter(t => t.status === 'FAILED');
-                const failReason = failedTasks.map(t => t.error || t.reason).find(Boolean);
-                if(failReason){
-                  const displayError = truncateErrorMessage(failReason) || '生成失败';
-                  setStatusEl(statusEl, displayError, '#dc2626');
-                  node.data.lastError = String(displayError);
-                  editBtn.disabled = false;
-                  showToast(displayError, 'error');
+              const fillSuccess = (nodeId, rawUrl) => {
+                const imageUrl = normalizeVideoUrl(rawUrl);
+                if (!imageUrl) return false;
+                const imageNode = state.nodes.find(n => n.id === nodeId);
+                if (!imageNode) return false;
+                const normalizedUrl = normalizeImageUrl(imageUrl);
+                imageNode.data.url = normalizedUrl;
+                imageNode.data.preview = normalizedUrl;
+                imageNode.data.lastError = '';
+                const nodeEl = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+                if (nodeEl) {
+                  const imgEl = nodeEl.querySelector('.image-preview');
+                  const rowEl = nodeEl.querySelector('.image-preview-row');
+                  const placeholder = nodeEl.querySelector('.image-generating-placeholder');
+                  if (imgEl) imgEl.src = proxyImageUrl(imageUrl);
+                  if (rowEl) rowEl.style.display = 'flex';
+                  if (placeholder) placeholder.classList.remove('is-failed');
+                  if (window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(imageNode);
+                }
+                return true;
+              };
+              const fillFailure = (nodeId, reason) => {
+                const imageNode = state.nodes.find(n => n.id === nodeId);
+                const displayError = truncateErrorMessage(reason) || '生成失败';
+                if (imageNode) {
+                  imageNode.data.lastError = String(displayError);
+                }
+                if (window.AiToolTimeline) window.AiToolTimeline.failNode(nodeId, displayError);
+              };
+
+              let successCount = 0;
+              let failCount = 0;
+              plan.slots.forEach((slot) => {
+                if (slot.outcome === 'success' && fillSuccess(slot.nodeId, slot.url)) {
+                  successCount += 1;
                   return;
                 }
-                setStatusEl(statusEl, '生成成功，但未获取到图片地址', '#dc2626');
-                editBtn.disabled = false;
-                showToast('生成成功但未返回图片地址', 'error');
-                return;
-              }
-
-              setStatusEl(statusEl, `生成完成！共${imageUrls.length}张图片`, '#16a34a');
-              editBtn.disabled = false;
-
-              // 更新已创建的图片节点
-              imageUrls.forEach((imageUrl, index) => {
-                const nodeId = createdImageNodeIds[index];
-                if(!nodeId) return;
-                
-                const imageNode = state.nodes.find(n => n.id === nodeId);
-                if(imageNode){
-                  const normalizedUrl = normalizeImageUrl(imageUrl);
-                  imageNode.data.url = normalizedUrl;
-                  imageNode.data.preview = normalizedUrl;
-
-                  const nodeEl = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
-                  if(nodeEl){
-                    const imgEl = nodeEl.querySelector('.image-preview');
-                    const rowEl = nodeEl.querySelector('.image-preview-row');
-                    if(imgEl) imgEl.src = proxyImageUrl(imageUrl);
-                    if(rowEl) rowEl.style.display = 'flex';
-                    // 图片已到位：隐藏「生成中」占位
-                    if(window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(imageNode);
-                  }
-                }
+                fillFailure(slot.nodeId, slot.outcome === 'success' ? '生成成功，但未获取到图片地址' : slot.error);
+                failCount += 1;
               });
+
+              editBtn.disabled = false;
+              if (successCount === 0) {
+                const failReason = plan.slots.map(slot => slot.error).find(Boolean) || '生成失败';
+                const displayError = truncateErrorMessage(failReason) || '生成失败';
+                setStatusEl(statusEl, displayError, '#dc2626');
+                node.data.lastError = String(displayError);
+                showToast(displayError, 'error');
+              } else if (failCount > 0) {
+                const partialText = `生成完成 ${successCount} 张，失败 ${failCount} 张`;
+                setStatusEl(statusEl, partialText, '#d97706');
+                node.data.lastError = '';
+                showToast(partialText, 'warning');
+              } else {
+                setStatusEl(statusEl, `生成完成！共${successCount}张图片`, '#16a34a');
+                node.data.lastError = '';
+                showToast(hasBaseImage ? '图片编辑成功！' : '图片生成成功！', 'success');
+              }
 
               safeAutoSave()
               renderMinimap();
-              showToast(hasBaseImage ? '图片编辑成功！' : '图片生成成功！', 'success');
               
               // 刷新用户算力显示
               if(typeof fetchComputingPower === 'function'){
@@ -1179,5 +1268,7 @@
         canEditImageNode,
         resolveImageEditSubmitData,
         getImageUploadBlockMessage,
+        planImageBatchResults,
+        collectImageReferencePrompt,
       };
     }

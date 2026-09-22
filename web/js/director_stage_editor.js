@@ -987,12 +987,10 @@
 
   // ---------- 数据恢复 / 序列化 ----------
 
-  DirectorEditor.prototype.restoreFromData = function () {
-    var d = this.node.data && this.node.data.directorData;
-    var self = this;
-
-    // 机位列表先恢复：时间轴恢复要用 activeCameraId 决定旧数据相机键的落轨机位
-    // 机位列表（多机位）：优先 cameras；旧数据仅 camera 时迁移为单镜头
+  // 从快照恢复机位列表和当前编辑机位。撤销与重开共用。
+  // 必须在 restoreTimeline / serializeData 之前调用：序列化会按 this.cameras
+  // 丢掉不在列表里的相机轨，并把 virtualCamCfg 写回「当前」激活机位。
+  DirectorEditor.prototype.restoreCamerasFromData = function (d) {
     if (d && Array.isArray(d.cameras) && d.cameras.length) {
       this.cameras = d.cameras
         .filter(function (c) { return c && Array.isArray(c.pos) && Array.isArray(c.target); })
@@ -1027,6 +1025,19 @@
     this.virtualCamCfg.pos.fromArray(actCam.pos);
     this.virtualCamCfg.target.fromArray(actCam.target);
     this.virtualCamCfg.fov = actCam.fov;
+    if (this.virtualCam) {
+      this.virtualCam.fov = this.virtualCamCfg.fov;
+      this.virtualCam.updateProjectionMatrix();
+    }
+    if (typeof this.updateCamHelper === 'function') this.updateCamHelper();
+  };
+
+  DirectorEditor.prototype.restoreFromData = function () {
+    var d = this.node.data && this.node.data.directorData;
+    var self = this;
+
+    // 机位列表先恢复：时间轴恢复要用 activeCameraId 决定旧数据相机键的落轨机位
+    this.restoreCamerasFromData(d);
 
     if (d && d.puppets) {
       d.puppets.forEach(function (pd) { self.addPuppet(pd, true); });
@@ -1037,6 +1048,12 @@
 
     // 时间轴（关键帧/时长）：机位已就位，旧数据相机键按 activeCameraId 落轨
     this.restoreTimeline(d);
+    // 重开时播放头固定为 0。若上次关闭前停在插值帧，静态站位可能不是 0 秒姿态；
+    // 先套用 0 秒位形，避免一打开就在 0 秒打点、用末帧姿态覆盖起始关键帧。
+    // 只改运行时位形，不 markDirty；无关键帧时 applyTimelineAt 保持当前编辑位形。
+    if (this.camRig && typeof this.applyTimelineAt === 'function') {
+      this.applyTimelineAt(0);
+    }
 
     // 全景环境（来自 360全景图节点连线）
     if (d && d.environment && d.environment.url) {
@@ -1146,14 +1163,12 @@
 
   DirectorEditor.prototype.rebuildFromSnapshot = function (snap) {
     var self = this;
+    // 先恢复机位再恢复时间轴。否则 activeCameraId 仍指向撤销前的镜头，
+    // 随后 serializeData 会把快照里的姿态写进错误机位；已删除机位的相机轨也会被丢掉。
+    this.restoreCamerasFromData(snap);
     this.clearPuppets();
     (snap.puppets || []).forEach(function (pd) { self.addPuppet(pd, true); });
     if (!this.puppets.length) this.addPuppet({ name: '人偶 1' }, true);
-    if (snap.camera) {
-      this.virtualCamCfg.pos.fromArray(snap.camera.pos);
-      this.virtualCamCfg.target.fromArray(snap.camera.target);
-      this.virtualCamCfg.fov = snap.camera.fov;
-    }
     // 撤销同步恢复时间轴数据并重绘
     this.restoreTimeline(snap);
     if (typeof this.renderTimeline === 'function') this.renderTimeline();
@@ -3405,17 +3420,35 @@
       if (self._recorder) self.stopRecording();
       else self.startRecording();
     });
-    this.on(document, 'keydown.directorStage', function (e) {
+    // 必须用原生 'keydown'。'keydown.directorStage' 不会被 addEventListener 识别，
+    // 监听从未挂上，Delete/Backspace 会冒泡到画布并删掉仍处于选中态的导演台节点。
+    this.on(document, 'keydown', function (e) {
       if (!self.overlay || !self.overlay.classList.contains('show')) return;
-      if (e.key === 'Escape') { self.close(true); }
-      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      var tag = document.activeElement && document.activeElement.tagName;
+      var inField = tag === 'INPUT' || tag === 'TEXTAREA' ||
+        (document.activeElement && document.activeElement.isContentEditable);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        self.close(true);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        if (inField) return;
         e.preventDefault();
         e.stopPropagation();
         self.undo();
+        return;
       }
-      else if (e.key.toLowerCase() === 'delete' && self.selectedPuppetId) {
-        var tag = document.activeElement && document.activeElement.tagName;
-        if (tag !== 'INPUT' && tag !== 'TEXTAREA') self.removePuppet(self.selectedPuppetId);
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (inField) return;
+        // 吞掉按键：节点仍在 selectedNodeIds 中，若冒泡到 window，会确认删除画布节点，
+        // close() 不走，录制与两个 WebGLRenderer 都不会释放。
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'Delete' && self.selectedPuppetId) {
+          self.removePuppet(self.selectedPuppetId);
+        }
       }
     });
   };

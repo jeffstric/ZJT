@@ -1565,6 +1565,92 @@ textarea:focus{ border-color: var(--primary); }
 .image-preview-row{
   position: relative;
 }
+
+/* 图片节点选中后表单横排：未选中仍是 300px 卡片，选中加宽给模型/比例/按钮一行 */
+.node.image-node{
+  transition: width 0.2s ease;
+}
+.node.image-node.selected{
+  width: 540px;
+}
+.node.image-node .image-node-form{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.node.image-node.selected .image-node-form.field-collapsible{
+  max-height: 720px;
+}
+.node.image-node .image-form-upload-row,
+.node.image-node .image-form-options,
+.node.image-node .image-form-actions{
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.node.image-node .image-form-upload-row .image-file{
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+.node.image-node .image-form-upload-row .mini-btn{
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.node.image-node .image-form-prompt-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.node.image-node .image-form-prompt-head .label{
+  margin: 0;
+}
+.node.image-node .image-form-options{
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.node.image-node .image-form-options .field{
+  flex: 1 1 0;
+  min-width: 0;
+}
+.node.image-node .image-form-options select{
+  width: 100%;
+  min-width: 0;
+}
+.node.image-node .image-form-actions{
+  align-items: center;
+  flex-wrap: wrap;
+}
+.node.image-node .image-camera-control-btn{
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.node.image-node .image-doodle-btn,
+.node.image-node .image-confirm-shot-btn{
+  border-radius: 10px;
+}
+.node.image-node .image-confirm-shot-btn{
+  background: #10b981;
+  color: #fff;
+  border: 1px solid #10b981;
+  padding: 8px 12px;
+}
+.node.image-node .image-form-meta{
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+html.theme-dark .node.image-node .image-camera-control-btn{
+  background: rgba(16, 185, 129, 0.12);
+  color: #6ee7b7;
+  border-color: rgba(16, 185, 129, 0.35);
+}
 .image-preview-row .mini-btn{
   position: absolute;
   top: 4px;
