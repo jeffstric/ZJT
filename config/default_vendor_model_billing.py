@@ -279,7 +279,7 @@ DEFAULT_VENDOR_MODEL_BILLING: List[Dict[str, Any]] = [
             },
         ],
     },
-    # ---------- 小米 MiMo（Token Plan 套餐，按官方按量价折算，2026-09-05）----------
+    # ---------- 小米 MiMo（Token Plan 套餐，按官方按量价折算，V2.5 2026-09-05 / V2.6 2026-09-22）----------
     {
         "vendor_name": "mimo",
         "model_name": "mimo-v2.5",
@@ -298,6 +298,34 @@ DEFAULT_VENDOR_MODEL_BILLING: List[Dict[str, Any]] = [
         "vendor_name": "mimo",
         "model_name": "mimo-v2.5-pro",
         "note": "小米 MiMo 官方按量价：输入(未命中)3/输出6/缓存命中0.025 元/百万",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "input_yuan_per_m": 3.0,
+                "out_yuan_per_m": 6.0,
+                "cache_yuan_per_m": 0.025,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
+    {
+        "vendor_name": "mimo",
+        "model_name": "mimo-v2.6-flash",
+        "note": "小米 MiMo V2.6 Flash 官方按量价对齐 mimo-v2.5：输入(未命中)1/输出2/缓存命中0.02 元/百万",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "input_yuan_per_m": 1.0,
+                "out_yuan_per_m": 2.0,
+                "cache_yuan_per_m": 0.02,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
+    {
+        "vendor_name": "mimo",
+        "model_name": "mimo-v2.6-pro",
+        "note": "小米 MiMo V2.6 Pro 官方按量价对齐 mimo-v2.5-pro：输入(未命中)3/输出6/缓存命中0.025 元/百万",
         "tiers": [
             {
                 "raw_token_threshold": None,

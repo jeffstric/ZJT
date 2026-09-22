@@ -1,6 +1,6 @@
 """
 小米 MiMo OpenAI 兼容格式 LLM 客户端
-支持 mimo-v2.5 / mimo-v2.5-pro 系列模型
+支持 mimo-v2.5 / mimo-v2.5-pro / mimo-v2.6-flash / mimo-v2.6-pro 系列模型
 接入方式为 Token Plan 套餐（包月 credits），调用协议与按量 API 一致：
 OpenAI 兼容端点 https://token-plan-cn.xiaomimimo.com/v1
 """
@@ -18,6 +18,8 @@ class MimoOpenAIClient(OpenAIBaseClient):
     _MODEL_NAME_MAP = {
         'mimo-v2.5': 'mimo-v2.5',
         'mimo-v2.5-pro': 'mimo-v2.5-pro',
+        'mimo-v2.6-flash': 'mimo-v2.6-flash',
+        'mimo-v2.6-pro': 'mimo-v2.6-pro',
     }
 
     def _refresh_config(self):
