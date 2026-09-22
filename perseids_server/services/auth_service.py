@@ -242,7 +242,7 @@ class AuthService:
             # 根据配置决定初始状态
             from config.config_util import get_dynamic_config_value
             require_approval = get_dynamic_config_value('user_registration', 'require_admin_approval', default=False)
-            initial_status = 2 if require_approval else 1
+            initial_status = UserStatus.PENDING if require_approval else UserStatus.NORMAL
 
             # 创建用户（phone为None，email有值）
             from model.database import execute_insert
@@ -335,10 +335,10 @@ class AuthService:
         user_role = "admin" if is_first_user else "user"
         logger.info(f"注册检查: 当前用户总数={total_count}, 是否首个用户={is_first_user}, 分配角色={user_role}")
 
-        # 根据配置决定初始状态：需要管理员审核时为待审核(2)，否则为正常(1)
+        # 根据配置决定初始状态：需要管理员审核时为待审核，否则为正常
         from config.config_util import get_dynamic_config_value
         require_approval = get_dynamic_config_value('user_registration', 'require_admin_approval', default=False)
-        initial_status = 2 if require_approval else 1
+        initial_status = UserStatus.PENDING if require_approval else UserStatus.NORMAL
 
         # 创建用户
         from model.database import execute_insert

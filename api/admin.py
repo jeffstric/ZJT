@@ -140,9 +140,12 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
     admin = await require_admin(auth_token)
     
     try:
-        total_users = UsersModel.get_total_count()
-        active_users = UsersModel.get_active_count()
-        active_workflows_3d = VideoWorkflowModel.count_active_recent_days(days=3)
+        # 同步 pymysql 查询走 to_thread，避免阻塞事件循环（web 接口红线）
+        total_users, active_users, active_workflows_3d = await asyncio.gather(
+            asyncio.to_thread(UsersModel.get_total_count),
+            asyncio.to_thread(UsersModel.get_active_count),
+            asyncio.to_thread(VideoWorkflowModel.count_active_recent_days, days=3),
+        )
 
         # 激活用户数上限（None=不限）：社区版为常量；商业版由注入的
         # Provider 按许可证 edition 分档（许可证不可用回落社区口径）。
@@ -531,7 +534,7 @@ async def admin_update_user_status(
 ):
     """
     管理员更新用户状态（0-禁用, 1-正常, 2-待审核）
-    禁用用户时会自动删除其所有 token，强制登出
+    禁用/待审核用户时会自动删除其所有 token，强制登出
     将用户置为正常（审核通过/重新启用）时校验激活用户数配额
     管理员不能将自己置为禁用或待审核（会失去重新登录入口）
     """
@@ -546,7 +549,7 @@ async def admin_update_user_status(
         raise HTTPException(status_code=400, detail="不能禁用自己或将自己设为待审核")
 
     try:
-        user = UsersModel.get_by_id(user_id)
+        user = await asyncio.to_thread(UsersModel.get_by_id, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
 
@@ -554,23 +557,25 @@ async def admin_update_user_status(
         # （禁用用户不计入配额，管理员可通过禁用释放名额）
         if request.status == UserStatus.NORMAL and user.status != UserStatus.NORMAL:
             from services.registration_quota import check_allowed
-            allowed, quota_msg = check_allowed(UsersModel.get_active_count())
+            active_count = await asyncio.to_thread(UsersModel.get_active_count)
+            allowed, quota_msg = check_allowed(active_count)
             if not allowed:
                 logger.warning(
                     "用户 %s 启用被拒绝（激活用户数配额限制）- 当前激活数: %s",
                     user_id,
-                    UsersModel.get_active_count(),
+                    active_count,
                 )
                 raise HTTPException(status_code=400, detail=quota_msg)
 
         # 更新用户状态
-        UsersModel.update_status(user_id, request.status)
-        
-        # 如果是禁用操作，删除该用户的所有 token（强制登出）
-        if request.status == UserStatus.DISABLED:
+        await asyncio.to_thread(UsersModel.update_status, user_id, request.status)
+
+        # 禁用/待审核都吊销全部 token 强制登出：两者均不计入激活配额，
+        # 保留 token 会出现"不占名额但仍可调用接口"的口径漏洞
+        if request.status in (UserStatus.DISABLED, UserStatus.PENDING):
             try:
-                UserTokensModel.delete_by_user_id(user_id)
-                logger.info(f"Deleted all tokens for disabled user {user_id}")
+                await asyncio.to_thread(UserTokensModel.delete_by_user_id, user_id)
+                logger.info(f"Deleted all tokens for user {user_id} (status={request.status})")
             except Exception as e:
                 logger.error(f"Failed to delete tokens for user {user_id}: {e}")
                 # 不影响主流程，继续执行

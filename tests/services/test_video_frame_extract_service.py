@@ -104,6 +104,44 @@ class TestBuildKeyframePoints(unittest.TestCase):
         self.assertEqual(svc.build_keyframe_points(20.0, [1.0], start_time=19.98), [])
         self.assertEqual(svc.build_keyframe_points(20.0, [], start_time=25.0), [])
 
+    # ===== 满批且切换点取尽：不补尾帧（防丢帧 + 防超上限） =====
+
+    def test_first_full_batch_keeps_all_cuts_tail_deferred(self):
+        """首批恰好满批（首帧 + 8 个切换点）且切换点取尽：本批不得补尾帧。
+
+        补尾帧必然超上限（10 > 9）；挤掉任一切换点则永久丢帧——下一批从
+        本批末点续传，回不到被挤掉的位置。尾帧由下一批均匀采样天然补上。"""
+        cuts = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]  # 恰好 limit-1 个
+        b1 = svc.build_keyframe_points(30.0, cuts, start_time=0.0)
+        self.assertEqual(len(b1), C.VIDEO_FRAME_KEYFRAME_MAX_COUNT)
+        for c in cuts:
+            self.assertIn(c, b1, f"切换点 {c} 被尾帧挤掉")
+        self.assertLess(b1[-1], 9.0, "满批不应补尾帧")
+        # 续批：从 8.0 起切换点已取尽 → 均匀采样，尾帧在本批补上
+        b2 = svc.build_keyframe_points(30.0, cuts, start_time=b1[-1])
+        self.assertTrue(b2, "续批不应为空（尾帧尚未提取）")
+        self.assertTrue(all(p > b1[-1] for p in b2), f"续批未严格推进: {b2}")
+        self.assertGreater(b2[-1], 29.0, "尾帧应在续批补上")
+
+    def test_resume_full_batch_keeps_all_cuts_tail_deferred(self):
+        """续批恰好满批（9 个切换点取尽）同理：不补尾帧，下一批收尾。"""
+        cuts = [6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0]  # 恰好 limit 个
+        b1 = svc.build_keyframe_points(40.0, cuts, start_time=5.0)
+        self.assertEqual(len(b1), C.VIDEO_FRAME_KEYFRAME_MAX_COUNT)
+        for c in cuts:
+            self.assertIn(c, b1, f"切换点 {c} 被尾帧挤掉")
+        self.assertLess(b1[-1], 15.0, "满批不应补尾帧")
+        b2 = svc.build_keyframe_points(40.0, cuts, start_time=b1[-1])
+        self.assertTrue(b2)
+        self.assertGreater(b2[-1], 39.0, "尾帧应在下一批补上")
+
+    def test_partial_batch_still_appends_tail(self):
+        """切换点取尽但不满批：旧行为保留，本批直接补尾帧收尾。"""
+        b1 = svc.build_keyframe_points(30.0, [5.0], start_time=0.0)
+        self.assertEqual(b1[0], 0.0)
+        self.assertIn(5.0, b1)
+        self.assertGreater(b1[-1], 29.0, "不满批时尾帧仍在本批收尾")
+
 
 @unittest.skipUnless(_HAS_FFMPEG, "bundled ffmpeg not present")
 class TestExtractFrames(unittest.IsolatedAsyncioTestCase):

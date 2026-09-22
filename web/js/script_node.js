@@ -791,8 +791,11 @@
         const vendorName = (option.dataset.vendorName || '').toLowerCase();
         const modelValue = (option.value || '').toLowerCase();
         const textValue = (option.textContent || '').toLowerCase();
-        // 与 script_writer.updateThinkingEffortVisibility / storyboard isDoubaoEffort 一致
+        // 与 script_writer.updateThinkingEffortVisibility / storyboard isDoubaoEffort 一致：
+        // volcengine（doubao 系）与 glmcn（GLM 系）均支持 effort 档位选择
         return vendorName === 'volcengine'
+          || vendorName === 'glmcn'
+          || modelValue.startsWith('glm-')
           || modelValue.startsWith('doubao')
           || modelValue.includes('doubao')
           || textValue.includes('doubao')

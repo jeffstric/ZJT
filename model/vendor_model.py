@@ -218,8 +218,13 @@ class VendorModelModel:
 
     @staticmethod
     def get_vendor_id_by_model_id(model_id: int) -> Optional[int]:
-        """根据 model_id 获取 vendor_id（假设每个 model_id 只关联一个供应商）"""
-        sql = "SELECT vendor_id FROM vendor_model WHERE model_id = %s LIMIT 1"
+        """根据 model_id 获取 vendor_id。
+
+        双供应商模型（如 glm-5.3-flash 同时关联 volcengine 与 glmcn）取
+        vendor_id 最小的一档（volcengine=1 最早接入），保证结果确定：
+        历史会话/一致性校验等无显式供应商的调用方稳定回退到 volcengine。
+        """
+        sql = "SELECT vendor_id FROM vendor_model WHERE model_id = %s ORDER BY vendor_id ASC LIMIT 1"
         try:
             row = execute_query(sql, (model_id,), fetch_one=True)
             return row['vendor_id'] if row else None

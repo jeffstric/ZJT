@@ -76,7 +76,7 @@ def test_register_provider_delegates_and_reset_restores():
 
 def test_get_max_active_users_falls_back_for_legacy_provider():
     # 未实现 get_max_active_users 的 Provider（旧测试 fake）不应导致报错，
-    # 门面回退社区常量。
+    # 门面回退 None（旧商业 Provider 语义为"不限"），否则商业版会误报超限。
     class _Legacy:
         available = True
 
@@ -84,4 +84,4 @@ def test_get_max_active_users_falls_back_for_legacy_provider():
             return True, ""
 
     registration_quota.register_provider(_Legacy())
-    assert registration_quota.get_max_active_users() == COMMUNITY_MAX_ACTIVE_USERS
+    assert registration_quota.get_max_active_users() is None
