@@ -155,6 +155,50 @@ DEFAULT_VENDOR_MODEL_BILLING: List[Dict[str, Any]] = [
             },
         ],
     },
+    # ---------- 火山引擎 GLM ----------
+    {
+        "vendor_name": "volcengine",
+        "model_name": "glm-5.3-flash",
+        "note": "火山方舟 GLM-5.3-Flash：输入/输出/缓存命中 0.8/2.8/0.23 元/百万",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "input_yuan_per_m": 0.8,
+                "out_yuan_per_m": 2.8,
+                "cache_yuan_per_m": 0.23,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
+    # ---------- 智谱 BigModel 国内站 GLM ----------
+    {
+        "vendor_name": "glmcn",
+        "model_name": "glm-5.3",
+        "note": "智谱 BigModel 官方 GLM-5.3：输入/输出/缓存命中 8/28/2.3 元/百万",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "input_yuan_per_m": 8.0,
+                "out_yuan_per_m": 28.0,
+                "cache_yuan_per_m": 2.3,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
+    {
+        "vendor_name": "glmcn",
+        "model_name": "glm-5.3-flash",
+        "note": "智谱 BigModel 官方 GLM-5.3-Flash（与火山方舟同价）：输入/输出/缓存命中 0.8/2.8/0.23 元/百万",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "input_yuan_per_m": 0.8,
+                "out_yuan_per_m": 2.8,
+                "cache_yuan_per_m": 0.23,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
     # ---------- 阿里云 Qwen 分段 ----------
     {
         "vendor_name": "aliyun",
@@ -235,7 +279,7 @@ DEFAULT_VENDOR_MODEL_BILLING: List[Dict[str, Any]] = [
             },
         ],
     },
-    # ---------- 小米 MiMo（Token Plan 套餐，按官方按量价折算，2026-09-05）----------
+    # ---------- 小米 MiMo（Token Plan 套餐，按官方按量价折算，V2.5 2026-09-05 / V2.6 2026-09-22）----------
     {
         "vendor_name": "mimo",
         "model_name": "mimo-v2.5",
@@ -254,6 +298,34 @@ DEFAULT_VENDOR_MODEL_BILLING: List[Dict[str, Any]] = [
         "vendor_name": "mimo",
         "model_name": "mimo-v2.5-pro",
         "note": "小米 MiMo 官方按量价：输入(未命中)3/输出6/缓存命中0.025 元/百万",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "input_yuan_per_m": 3.0,
+                "out_yuan_per_m": 6.0,
+                "cache_yuan_per_m": 0.025,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
+    {
+        "vendor_name": "mimo",
+        "model_name": "mimo-v2.6-flash",
+        "note": "小米 MiMo V2.6 Flash 官方按量价对齐 mimo-v2.5：输入(未命中)1/输出2/缓存命中0.02 元/百万",
+        "tiers": [
+            {
+                "raw_token_threshold": None,
+                "input_yuan_per_m": 1.0,
+                "out_yuan_per_m": 2.0,
+                "cache_yuan_per_m": 0.02,
+                "commission_rate": 0.0,
+            },
+        ],
+    },
+    {
+        "vendor_name": "mimo",
+        "model_name": "mimo-v2.6-pro",
+        "note": "小米 MiMo V2.6 Pro 官方按量价对齐 mimo-v2.5-pro：输入(未命中)3/输出6/缓存命中0.025 元/百万",
         "tiers": [
             {
                 "raw_token_threshold": None,

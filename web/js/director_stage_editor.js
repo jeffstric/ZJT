@@ -2,7 +2,7 @@
 // director_stage_editor.js - 导演台 3D 编辑器
 // 类似 liblib 导演台：创建人偶 / 移动人偶 / 控制人偶姿态 / 设置镜头
 // 依赖: /assets/vendor/three.min.js (r128 UMD)
-// DOM 由本模块自注入（参考 image_coloring_editor.js 模式），样式在 /css/director_stage.css
+// DOM 由本模块自注入（与 image_doodle_editor.js 同模式），样式在 /css/director_stage.css
 // ============================
 
 (function () {
@@ -738,6 +738,12 @@
     this.dragging = null;
     this.orbit = { theta: 0.55, phi: 1.02, radius: 8.5, target: new THREE.Vector3(0, 1.0, 0) };
     this.virtualCamCfg = { pos: new THREE.Vector3(0, 1.5, 4.2), target: new THREE.Vector3(0, 1.05, 0), fov: 35 };
+    // 多机位：机位列表 + 当前激活机位（编辑直接改 virtualCamCfg，落盘时回写激活机位）
+    this.cameras = [];          // [{id, name, pos:[x,y,z], target:[x,y,z], fov}]
+    this.activeCameraId = null;
+    // 录制会话（MediaRecorder 实时录制时间轴播放）
+    this._recorder = null;
+    this._recordStream = null;
     this.rafId = null;
     this.bound = [];            // [target, event, handler] 便于清理
     this.roObserver = null;
@@ -766,6 +772,7 @@
       '<div class="ds-topbar-spacer"></div>' +
       '<button class="ds-btn" id="dsUndoBtn" title="撤销">↶ 撤销</button>' +
       '<button class="ds-btn success" id="dsExportBtn" title="将当前镜头画面保存为快照并更新节点缩略图">📷 导出快照</button>' +
+      '<button class="ds-btn" id="dsRecordBtn" title="从头播放时间轴并实时录制镜头画面为视频">⏺ 录制视频</button>' +
       '<button class="ds-btn primary" id="dsDoneBtn">保存并关闭</button>' +
     '</div>' +
     '<div class="ds-main">' +
@@ -800,6 +807,7 @@
       '</div>' +
       '<div class="ds-right" id="dsPropsPanel"></div>' +
     '</div>' +
+    '<div class="ds-timeline" id="dsTimeline"></div>' +
     '<div class="ds-statusbar">' +
       '<span class="ds-status-dot" id="dsStatusDot"></span>' +
       '<span id="dsStatusText">就绪</span>' +
@@ -979,9 +987,57 @@
 
   // ---------- 数据恢复 / 序列化 ----------
 
+  // 从快照恢复机位列表和当前编辑机位。撤销与重开共用。
+  // 必须在 restoreTimeline / serializeData 之前调用：序列化会按 this.cameras
+  // 丢掉不在列表里的相机轨，并把 virtualCamCfg 写回「当前」激活机位。
+  DirectorEditor.prototype.restoreCamerasFromData = function (d) {
+    if (d && Array.isArray(d.cameras) && d.cameras.length) {
+      this.cameras = d.cameras
+        .filter(function (c) { return c && Array.isArray(c.pos) && Array.isArray(c.target); })
+        .map(function (c, i) {
+          return {
+            id: c.id || ('cam' + (i + 1)),
+            name: c.name || ('镜头 ' + (i + 1)),
+            pos: [num(c.pos[0]), num(c.pos[1]), num(c.pos[2])],
+            target: [num(c.target[0]), num(c.target[1]), num(c.target[2])],
+            fov: clamp(num(c.fov) || 35, 10, 120)
+          };
+        });
+    } else if (d && d.camera) {
+      this.cameras = [{
+        id: 'cam1',
+        name: '镜头 1',
+        pos: (d.camera.pos || [0, 1.5, 4.2]).slice(),
+        target: (d.camera.target || [0, 1.05, 0]).slice(),
+        fov: d.camera.fov || 35
+      }];
+    } else {
+      this.cameras = [{ id: 'cam1', name: '镜头 1', pos: [0, 1.5, 4.2], target: [0, 1.05, 0], fov: 35 }];
+    }
+    if (!this.cameras.length) {
+      this.cameras = [{ id: 'cam1', name: '镜头 1', pos: [0, 1.5, 4.2], target: [0, 1.05, 0], fov: 35 }];
+    }
+    this.activeCameraId = (d && d.activeCameraId && this.cameras.some(function (c) { return c.id === d.activeCameraId; }))
+      ? d.activeCameraId
+      : this.cameras[0].id;
+    // 当前编辑机位 = 激活机位（virtualCamCfg 为运行时唯一编辑对象，渲染链路不变）
+    var actCam = this.getActiveCamera();
+    this.virtualCamCfg.pos.fromArray(actCam.pos);
+    this.virtualCamCfg.target.fromArray(actCam.target);
+    this.virtualCamCfg.fov = actCam.fov;
+    if (this.virtualCam) {
+      this.virtualCam.fov = this.virtualCamCfg.fov;
+      this.virtualCam.updateProjectionMatrix();
+    }
+    if (typeof this.updateCamHelper === 'function') this.updateCamHelper();
+  };
+
   DirectorEditor.prototype.restoreFromData = function () {
     var d = this.node.data && this.node.data.directorData;
     var self = this;
+
+    // 机位列表先恢复：时间轴恢复要用 activeCameraId 决定旧数据相机键的落轨机位
+    this.restoreCamerasFromData(d);
 
     if (d && d.puppets) {
       d.puppets.forEach(function (pd) { self.addPuppet(pd, true); });
@@ -989,11 +1045,16 @@
     if (!this.puppets.length) {
       this.addPuppet({ name: '人偶 1' }, true);
     }
-    if (d && d.camera) {
-      this.virtualCamCfg.pos.fromArray(d.camera.pos || [0, 1.5, 4.2]);
-      this.virtualCamCfg.target.fromArray(d.camera.target || [0, 1.05, 0]);
-      this.virtualCamCfg.fov = d.camera.fov || 35;
+
+    // 时间轴（关键帧/时长）：机位已就位，旧数据相机键按 activeCameraId 落轨
+    this.restoreTimeline(d);
+    // 重开时播放头固定为 0。若上次关闭前停在插值帧，静态站位可能不是 0 秒姿态；
+    // 先套用 0 秒位形，避免一打开就在 0 秒打点、用末帧姿态覆盖起始关键帧。
+    // 只改运行时位形，不 markDirty；无关键帧时 applyTimelineAt 保持当前编辑位形。
+    if (this.camRig && typeof this.applyTimelineAt === 'function') {
+      this.applyTimelineAt(0);
     }
+
     // 全景环境（来自 360全景图节点连线）
     if (d && d.environment && d.environment.url) {
       this.setupEnvironment(d.environment);
@@ -1015,8 +1076,15 @@
       };
     });
     var env = this.node.data.directorData && this.node.data.directorData.environment;
+    // 当前编辑机位回写激活机位（编辑全程直接改 virtualCamCfg，落盘时统一同步）
+    var actCam = this.getActiveCamera();
+    if (actCam) {
+      actCam.pos = [round2(this.virtualCamCfg.pos.x), round2(this.virtualCamCfg.pos.y), round2(this.virtualCamCfg.pos.z)];
+      actCam.target = [round2(this.virtualCamCfg.target.x), round2(this.virtualCamCfg.target.y), round2(this.virtualCamCfg.target.z)];
+      actCam.fov = Math.round(this.virtualCamCfg.fov);
+    }
     return {
-      version: 1,
+      version: 2,
       puppets: puppets,
       environment: (env && env.url) ? {
         url: env.url,
@@ -1028,15 +1096,29 @@
         autoFitDone: !!env.autoFitDone,
         fitVersion: env.fitVersion || 0
       } : null,
+      cameras: this.cameras.map(function (c) {
+        return {
+          id: c.id,
+          name: c.name,
+          pos: [round2(c.pos[0]), round2(c.pos[1]), round2(c.pos[2])],
+          target: [round2(c.target[0]), round2(c.target[1]), round2(c.target[2])],
+          fov: Math.round(c.fov)
+        };
+      }),
+      activeCameraId: this.activeCameraId,
+      // 冗余旧字段：兼容旧版前端读取 camera（= 激活机位快照）
       camera: {
         pos: [round2(this.virtualCamCfg.pos.x), round2(this.virtualCamCfg.pos.y), round2(this.virtualCamCfg.pos.z)],
         target: [round2(this.virtualCamCfg.target.x), round2(this.virtualCamCfg.target.y), round2(this.virtualCamCfg.target.z)],
         fov: Math.round(this.virtualCamCfg.fov)
-      }
+      },
+      timeline: this.serializeTimeline()
     };
   };
 
   function round2(v) { return Math.round(v * 100) / 100; }
+
+  function num(v) { return (typeof v === 'number' && isFinite(v)) ? v : 0; }
 
   function serializeJoints(jointDeg) {
     var out = {};
@@ -1081,14 +1163,15 @@
 
   DirectorEditor.prototype.rebuildFromSnapshot = function (snap) {
     var self = this;
+    // 先恢复机位再恢复时间轴。否则 activeCameraId 仍指向撤销前的镜头，
+    // 随后 serializeData 会把快照里的姿态写进错误机位；已删除机位的相机轨也会被丢掉。
+    this.restoreCamerasFromData(snap);
     this.clearPuppets();
     (snap.puppets || []).forEach(function (pd) { self.addPuppet(pd, true); });
     if (!this.puppets.length) this.addPuppet({ name: '人偶 1' }, true);
-    if (snap.camera) {
-      this.virtualCamCfg.pos.fromArray(snap.camera.pos);
-      this.virtualCamCfg.target.fromArray(snap.camera.target);
-      this.virtualCamCfg.fov = snap.camera.fov;
-    }
+    // 撤销同步恢复时间轴数据并重绘
+    this.restoreTimeline(snap);
+    if (typeof this.renderTimeline === 'function') this.renderTimeline();
     this.selectedPuppetId = null;
     this.selectedJointKey = null;
     if (snap.environment && snap.environment.url) {
@@ -1690,6 +1773,8 @@
       this.renderPuppetList();
       this.renderPropsPanel();
       this.updateSelectionVisuals();
+      // 时间轴补出新的人偶轨道（多轨道 lane 按 this.puppets 渲染）
+      if (typeof this.renderTimeline === 'function') this.renderTimeline();
       this.markDirty();
       this.setStatus('已添加「' + puppet.name + '」');
     }
@@ -1725,6 +1810,8 @@
     this.renderPuppetList();
     this.renderPropsPanel();
     this.updateSelectionVisuals();
+    // 同步移除时间轴上的人偶轨道显示（轨道数据在序列化时剔除）
+    if (typeof this.renderTimeline === 'function') this.renderTimeline();
     this.markDirty();
     this.setStatus('已删除人偶');
   };
@@ -2155,11 +2242,27 @@
     if (s) s.value = val;
   };
 
+  DirectorEditor.prototype.buildCamerasGroupHtml = function () {
+    var self = this;
+    var rows = this.cameras.map(function (c) {
+      var active = c.id === self.activeCameraId;
+      return '<div class="ds-cam-item' + (active ? ' active' : '') + '" data-cam-id="' + esc(c.id) + '" title="点击切换为当前编辑机位">' +
+        '<span class="ds-cam-name">' + (active ? '● ' : '') + esc(c.name) + '</span>' +
+        '<button type="button" class="ds-tl-lane-btn" data-cam-act="update" title="把当前相机配置存入该机位">更新</button>' +
+        '<button type="button" class="ds-tl-lane-btn" data-cam-act="del" title="删除该机位">✕</button>' +
+      '</div>';
+    }).join('');
+    return '<div class="ds-prop-group"><div class="ds-prop-label"><span>机位（多个镜头）</span>' +
+      '<button type="button" class="ds-mini-btn" id="dsAddCamBtn" title="以当前相机配置新建机位">＋添加</button></div>' +
+      '<div class="ds-cam-list">' + rows + '</div></div>';
+  };
+
   DirectorEditor.prototype.buildCameraPropsHtml = function () {
     var c = this.virtualCamCfg;
     var html = '';
     html += '<div class="ds-section-head"><span>镜头设置</span>' +
       '<button class="ds-mini-btn" id="dsSwitchPuppetProps">人偶属性</button></div>';
+    html += this.buildCamerasGroupHtml();
     html += '<div class="ds-prop-group"><div class="ds-prop-label"><span>预设机位</span></div></div>';
     html += '<div class="ds-camera-preset-grid">' +
       Object.keys(CAMERA_PRESETS).map(function (k) {
@@ -2217,6 +2320,20 @@
     bindCam('cam-tx', function (v) { c.target.x = v; });
     bindCam('cam-tz', function (v) { c.target.z = v; });
 
+    // 机位列表：整行点击=切换为当前编辑机位；「更新」= 当前相机存入该机位；✕=删除
+    panel.querySelectorAll('.ds-cam-item').forEach(function (item) {
+      self.on(item, 'click', function (e) {
+        var act = e.target && e.target.dataset ? e.target.dataset.camAct : null;
+        var id = item.dataset.camId;
+        if (act === 'update') self.updateCameraSlot(id);
+        else if (act === 'del') self.removeCameraSlot(id);
+        else self.applyCameraSlot(id);
+      });
+    });
+    this.on(panel.querySelector('#dsAddCamBtn'), 'click', function () {
+      self.addCameraSlot();
+    });
+
     this.on(panel.querySelector('#dsSwitchPuppetProps'), 'click', function () {
       self._panelMode = 'puppet';
       self.renderPropsPanel();
@@ -2235,6 +2352,93 @@
     this.virtualCamCfg.target.fromArray(preset.target);
     this.virtualCamCfg.fov = preset.fov;
     this.setStatus('机位：' + preset.label);
+  };
+
+  // ---------- 多机位（机位列表） ----------
+
+  DirectorEditor.prototype.getActiveCamera = function () {
+    for (var i = 0; i < this.cameras.length; i++) {
+      if (this.cameras[i].id === this.activeCameraId) return this.cameras[i];
+    }
+    return this.cameras[0] || null;
+  };
+
+  // 切换激活机位：把机位配置载入当前编辑相机（PiP/图标/gizmo 立即跟随）
+  DirectorEditor.prototype.applyCameraSlot = function (id) {
+    var cam = null;
+    for (var i = 0; i < this.cameras.length; i++) {
+      if (this.cameras[i].id === id) { cam = this.cameras[i]; break; }
+    }
+    if (!cam) return;
+    this.activeCameraId = cam.id;
+    this.virtualCamCfg.pos.fromArray(cam.pos);
+    this.virtualCamCfg.target.fromArray(cam.target);
+    this.virtualCamCfg.fov = cam.fov;
+    if (typeof this.updateCamHelper === 'function') this.updateCamHelper();
+    if (typeof this.syncCameraPanelSliders === 'function') this.syncCameraPanelSliders();
+    this.renderPropsPanel();
+    this.markDirty();
+    this.setStatus('已切换到「' + cam.name + '」');
+  };
+
+  // 把当前编辑相机配置存进指定机位
+  DirectorEditor.prototype.updateCameraSlot = function (id) {
+    var cam = null;
+    for (var i = 0; i < this.cameras.length; i++) {
+      if (this.cameras[i].id === id) { cam = this.cameras[i]; break; }
+    }
+    if (!cam) return;
+    cam.pos = [round2(this.virtualCamCfg.pos.x), round2(this.virtualCamCfg.pos.y), round2(this.virtualCamCfg.pos.z)];
+    cam.target = [round2(this.virtualCamCfg.target.x), round2(this.virtualCamCfg.target.y), round2(this.virtualCamCfg.target.z)];
+    cam.fov = Math.round(this.virtualCamCfg.fov);
+    this.markDirty();
+    this.setStatus('已把当前相机存入「' + cam.name + '」');
+  };
+
+  DirectorEditor.prototype.addCameraSlot = function () {
+    var id = 'cam' + Date.now().toString(36) + Math.floor(Math.random() * 1000);
+    var cam = {
+      id: id,
+      name: '镜头 ' + (this.cameras.length + 1),
+      pos: [round2(this.virtualCamCfg.pos.x), round2(this.virtualCamCfg.pos.y), round2(this.virtualCamCfg.pos.z)],
+      target: [round2(this.virtualCamCfg.target.x), round2(this.virtualCamCfg.target.y), round2(this.virtualCamCfg.target.z)],
+      fov: Math.round(this.virtualCamCfg.fov)
+    };
+    this.cameras.push(cam);
+    this.activeCameraId = id;
+    this.renderPropsPanel();
+    // 时间轴新增该机位的相机轨 lane
+    if (typeof this.renderTimeline === 'function') this.renderTimeline();
+    this.markDirty();
+    this.setStatus('已添加「' + cam.name + '」（复制当前相机配置）');
+  };
+
+  DirectorEditor.prototype.removeCameraSlot = function (id) {
+    if (this.cameras.length <= 1) {
+      this.setStatus('至少保留一个机位');
+      return;
+    }
+    var idx = -1;
+    for (var i = 0; i < this.cameras.length; i++) {
+      if (this.cameras[i].id === id) { idx = i; break; }
+    }
+    if (idx < 0) return;
+    var removed = this.cameras.splice(idx, 1)[0];
+    // 删除的是激活机位：切到剩余第一个并载入
+    if (this.activeCameraId === id) {
+      var next = this.cameras[0];
+      this.activeCameraId = next.id;
+      this.virtualCamCfg.pos.fromArray(next.pos);
+      this.virtualCamCfg.target.fromArray(next.target);
+      this.virtualCamCfg.fov = next.fov;
+      if (typeof this.updateCamHelper === 'function') this.updateCamHelper();
+      if (typeof this.syncCameraPanelSliders === 'function') this.syncCameraPanelSliders();
+    }
+    this.renderPropsPanel();
+    // 时间轴移除该机位的相机轨 lane
+    if (typeof this.renderTimeline === 'function') this.renderTimeline();
+    this.markDirty();
+    this.setStatus('已删除「' + removed.name + '」');
   };
 
   // 过肩镜头：基于选中人偶（或第一个人偶）动态计算
@@ -2779,7 +2983,12 @@
       self.syncGridBtn();
     });
     this.on(this.$('dsResetViewBtn'), 'click', function () {
-      self.orbit = { theta: 0.55, phi: 1.02, radius: 8.5, target: new THREE.Vector3(0, 1.0, 0) };
+      // 必须原地修改 orbit 对象：startLoop 渲染循环缓存了 this.orbit 引用，
+      // 整体替换对象会导致循环继续渲染旧视角（画面定死、鼠标控制失效）
+      self.orbit.theta = 0.55;
+      self.orbit.phi = 1.02;
+      self.orbit.radius = 8.5;
+      self.orbit.target.set(0, 1.0, 0);
     });
 
     // 尺寸自适应
@@ -2993,6 +3202,124 @@
     }
   };
 
+  // ---------- 录制视频（MediaRecorder 实时录制时间轴播放） ----------
+
+  DirectorEditor.prototype._syncRecordBtn = function () {
+    var btn = this.$('dsRecordBtn');
+    if (!btn) return;
+    var rec = !!this._recorder;
+    btn.textContent = rec ? '⏹ 结束录制' : '⏺ 录制视频';
+    btn.classList.toggle('recording', rec);
+  };
+
+  // 开始录制：时间轴回 0 从头播放，镜头画面（PiP canvas）实时编码；
+  // 播放结束自动停止，也可点「⏹ 结束录制」提前结束（保留已录部分）
+  DirectorEditor.prototype.startRecording = function () {
+    if (this._recorder) return;
+    if (!this.tl || !this.tl.tracks.length || !this.tl.tracks.some(function (tr) { return tr.keys.length; })) {
+      this.setStatus('请先记录关键帧，再录制视频');
+      return;
+    }
+    if (typeof MediaRecorder === 'undefined' || !this.pipRenderer || !this.pipRenderer.domElement.captureStream) {
+      this.setStatus('当前浏览器不支持录制（MediaRecorder/captureStream 不可用）');
+      return;
+    }
+    var canvas = this.pipRenderer.domElement;
+    var stream;
+    try {
+      stream = canvas.captureStream(30);
+    } catch (err) {
+      this.setStatus('录制启动失败: ' + (err && err.message ? err.message : err));
+      return;
+    }
+    var mime = '';
+    ['video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].forEach(function (m) {
+      if (!mime && MediaRecorder.isTypeSupported(m)) mime = m;
+    });
+    var rec;
+    try {
+      rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8000000 } : undefined);
+    } catch (err) {
+      stream.getTracks().forEach(function (t) { t.stop(); });
+      this.setStatus('录制启动失败: ' + (err && err.message ? err.message : err));
+      return;
+    }
+    var chunks = [];
+    var self = this;
+    rec.ondataavailable = function (e) {
+      if (e.data && e.data.size) chunks.push(e.data);
+    };
+    rec.onstop = function () {
+      self._recorder = null;
+      self._recordStream = null;
+      stream.getTracks().forEach(function (t) { t.stop(); });
+      self._syncRecordBtn();
+      var blob = new Blob(chunks, { type: mime || 'video/webm' });
+      if (blob.size < 1000) {
+        self.setStatus('录制已取消（无画面数据）');
+        return;
+      }
+      self._uploadRecording(blob, mime);
+    };
+    // 从头开始播放。注意顺序：先 stopTimeline（此时 _recorder 尚未挂载，
+    // 不会触发 stopRecording），再挂载 recorder 并 start，最后开播。
+    this.stopTimeline();
+    this._recorder = rec;
+    this._recordStream = stream;
+    rec.start(250);
+    this.togglePlay();
+    this._syncRecordBtn();
+    this.setStatus('录制中：播放结束自动停止；也可点「⏹ 结束录制」提前结束');
+  };
+
+  // 结束录制（提前或播完自动调用），在 onstop 中上传
+  DirectorEditor.prototype.stopRecording = function () {
+    if (!this._recorder) return;
+    if (this._recorder.state !== 'inactive') {
+      try { this._recorder.stop(); } catch (e) { /* noop */ }
+    }
+  };
+
+  // 关闭编辑器时丢弃未完成的录制
+  DirectorEditor.prototype.discardRecording = function () {
+    if (!this._recorder) return;
+    var rec = this._recorder;
+    this._recorder = null;
+    rec.onstop = null;
+    rec.ondataavailable = null;
+    try { if (rec.state !== 'inactive') rec.stop(); } catch (e) { /* noop */ }
+    if (this._recordStream) {
+      this._recordStream.getTracks().forEach(function (t) { t.stop(); });
+      this._recordStream = null;
+    }
+    this._syncRecordBtn();
+  };
+
+  DirectorEditor.prototype._uploadRecording = async function (blob, mime) {
+    this.setStatus('录制完成，正在上传…');
+    var ext = (mime || '').indexOf('mp4') >= 0 ? 'mp4' : 'webm';
+    try {
+      var file = new File([blob], 'director_record.' + ext, { type: mime || 'video/webm' });
+      if (typeof uploadFile !== 'function') throw new Error('uploadFile missing');
+      var url = await uploadFile(file);
+      if (!url) throw new Error('上传失败');
+      this.node.data.recordUrl = url;
+      this.updateNodeShell();
+      // 画布上生成视频节点并连线（可接入后续流程/时间轴）
+      var vidNodeId = null;
+      if (typeof window.createDirectorStageVideoNode === 'function') {
+        vidNodeId = window.createDirectorStageVideoNode(this.node, url, file.name);
+      }
+      if (typeof safeAutoSave === 'function') safeAutoSave();
+      this.setStatus(vidNodeId ? '录制已上传，已在画布生成视频节点' : '录制已上传并更新节点数据');
+      if (typeof showToast === 'function') showToast('导演台视频已导出', 'success');
+    } catch (err) {
+      console.error('录制上传失败:', err);
+      this.setStatus('录制上传失败: ' + (err && err.message ? err.message : err));
+      if (typeof showToast === 'function') showToast('录制上传失败', 'error');
+    }
+  };
+
   // 节点壳缩略图/信息更新（由节点模块提供）
   DirectorEditor.prototype.updateNodeShell = function () {
     if (typeof window.updateDirectorStageNodeShell === 'function') {
@@ -3008,6 +3335,9 @@
     function frame() {
       if (!self.overlay || !self.overlay.classList.contains('show')) return;
       self.rafId = requestAnimationFrame(frame);
+
+      var tNow = (window.performance && performance.now) ? performance.now() / 1000 : Date.now() / 1000;
+      self.tickTimeline(tNow);
 
       // 编辑视角
       var sp = Math.sin(o.phi), cp = Math.cos(o.phi);
@@ -3027,7 +3357,6 @@
 
       // 对焦十字呼吸动画 + 选中放大
       if (self.focusMarker) {
-        var tNow = (window.performance && performance.now) ? performance.now() / 1000 : Date.now() / 1000;
         var fBase = self.selectedCamTarget === 'focus' ? 0.32 : 0.22;
         var fPulse = 1 + 0.05 * Math.sin(tNow * 3);
         self.focusMarker.scale.set(fBase * fPulse, fBase * fPulse, 1);
@@ -3065,6 +3394,7 @@
     this.setupViewportInteraction();
     this.setupAddPuppet();
     this.bindTopbar();
+    this.setupTimeline();
     this.overlay.classList.add('show');
 
     this.$('dsSubtitle').textContent = this.node.title || '';
@@ -3086,23 +3416,49 @@
     this.on(this.$('dsDoneBtn'), 'click', function () { self.close(true); });
     this.on(this.$('dsUndoBtn'), 'click', function () { self.undo(); });
     this.on(this.$('dsExportBtn'), 'click', function () { self.exportSnapshot(); });
-    this.on(document, 'keydown.directorStage', function (e) {
+    this.on(this.$('dsRecordBtn'), 'click', function () {
+      if (self._recorder) self.stopRecording();
+      else self.startRecording();
+    });
+    // 必须用原生 'keydown'。'keydown.directorStage' 不会被 addEventListener 识别，
+    // 监听从未挂上，Delete/Backspace 会冒泡到画布并删掉仍处于选中态的导演台节点。
+    this.on(document, 'keydown', function (e) {
       if (!self.overlay || !self.overlay.classList.contains('show')) return;
-      if (e.key === 'Escape') { self.close(true); }
-      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      var tag = document.activeElement && document.activeElement.tagName;
+      var inField = tag === 'INPUT' || tag === 'TEXTAREA' ||
+        (document.activeElement && document.activeElement.isContentEditable);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        self.close(true);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        if (inField) return;
         e.preventDefault();
         e.stopPropagation();
         self.undo();
+        return;
       }
-      else if (e.key.toLowerCase() === 'delete' && self.selectedPuppetId) {
-        var tag = document.activeElement && document.activeElement.tagName;
-        if (tag !== 'INPUT' && tag !== 'TEXTAREA') self.removePuppet(self.selectedPuppetId);
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (inField) return;
+        // 吞掉按键：节点仍在 selectedNodeIds 中，若冒泡到 window，会确认删除画布节点，
+        // close() 不走，录制与两个 WebGLRenderer 都不会释放。
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key === 'Delete' && self.selectedPuppetId) {
+          self.removePuppet(self.selectedPuppetId);
+        }
       }
     });
   };
 
   DirectorEditor.prototype.close = function (flush) {
     this.abortEnvFit();
+    // 录制中关闭：丢弃未完成的录制
+    this.discardRecording();
+    // 停止时间轴播放并恢复关节姿态，避免步态摆动残留在 rig 上
+    if (typeof this.stopTimelineForClose === 'function') this.stopTimelineForClose();
     // 收尾数据
     this.node.data.directorData = this.serializeData();
     this.updateNodeShell();
@@ -3158,6 +3514,15 @@
   };
 
   // ============ 对外 API ============
+
+  // 时间轴能力（关键帧/播放）由独立模块挂载原型方法（director_stage_timeline.js）
+  if (window.DirectorStageTimelineModule && typeof window.DirectorStageTimelineModule.attach === 'function') {
+    window.DirectorStageTimelineModule.attach(DirectorEditor, {
+      clamp: clamp,
+      round2: round2,
+      deg2rad: deg2rad
+    });
+  }
 
   function openDirectorStageEditor(nodeId) {
     if (ed) ed.close(false);

@@ -662,7 +662,7 @@
         <div class="form">
           <div class="field">
             <label class="label">{{ $t('upload_image_max') }}</label>
-            <input class="input" type="file" accept="image/*" multiple @change="onFile" />
+            <input class="input" type="file" accept="image/*,.tif,.tiff" multiple @change="onFile" />
             <div v-if="files.length > 0" style="margin-top: 10px;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <div style="font-size: 13px; color: var(--muted);">{{ $t('selected_images') }} {{ files.length }}/5 {{ $t('upload_image_tips') }}</div>

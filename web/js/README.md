@@ -80,6 +80,27 @@
 - `saveDefaultWorld(workflowId, worldId)` - 保存默认世界到工作流
 - `initWorldSelector()` - 初始化世界选择器
 
+### canvas_drop.js (画布增强模块)
+**功能**: 画布文件拖放（`events.js` 之后加载）
+- 对 `#canvasContainer` 绑定 dragenter/dragover/dragleave/drop
+- 从文件夹拖入图片/视频文件，在落点创建对应节点并把 File 注入节点 file input 派发 change，复用既有上传/预览/自动保存逻辑
+- 类型白名单与后端 `utils/media_upload.py` 一致（含 tif/tiff；Windows 空 MIME 按扩展名放行），图片大小预检读 `window.__wfUploadConfig`；超限 TIFF 不压缩、直接拒绝
+- 高亮样式 `.canvas-container.drag-over` 见 `css/video_workflow.css`
+
+### voice_reference.js (角色音色注入模块)
+**功能**: 参考生视频（multi_reference）提交时自动带入角色默认音色（`shot_frame_generator.js` 之后加载，先于消费方 `shot_frame_video_generator.js`）
+- `modelSupportsVoiceInput(modelKey)`：读 `window.TaskConfig` 能力位 `supports_voice_input`（与后端 `UnifiedTaskConfig` 同源下发）
+- `collectVoiceReferences(modelKey, characterEntries, existingAudioUrls)`：收集角色 `default_voice`（相对路径转绝对 URL），去重、最多 2 条（对齐后端 `MAX_VOICE_REFERENCE_AUDIOS`），返回 `{enabled, voiceUrls, names, promptNote}`
+- `appendVoiceReferencePrompt(prompt, note)`：幂等追加「参考音频说明：音频N是角色：XX的音色样本…」
+- 消费方：生视频节点（`image_to_video_node.js`，ref-image 连线角色）、分镜节点（`shot_frame_video_generator.js`）、分镜组节点（`nodes.js`）；不支持的模型（grok 等）返回空、零行为变化
+- 纯提交期逻辑，不写节点持久化状态，工作流重载复原不受影响；设计文档见 `docs/storyboard/storyboard_reference_to_video.md`「角色音色参考」
+
+### video_model_compat.js (视频模型模式兼容判定模块)
+**功能**: 判定已保存的视频模型是否与当前图片模式兼容，供 TaskConfig 加载后的补偿刷新使用（修复：分镜/分镜组节点把首尾帧专属模型 `minimax_h3` 残留到参考模式，提交被后端 `MODEL_INPUT_UNSUPPORTED` 拒绝）
+- `resolveSavedVideoModelForMode(allVideoOptions, mode, savedValue)`：已知模型不支持当前模式 → 返回 null（调用方迁移到首个可用模型）；模式兼容（含被驱动状态过滤）或未知模型 → 返回原值保留
+- 消费方：`workflow.js` 的 `refreshShotFrameNodesModels` / `refreshShotGroupNodesModels`；存量非法组合在下次页面加载时自动纠正
+- 回归测试：`web/tests/video_model_compat.test.js`
+
 ## 加载顺序
 
 HTML 中按以下顺序加载模块（依赖关系）：

@@ -42,7 +42,7 @@
 本地选图后会先展示预览并异步上传到 `/api/video-workflow/upload`。在此期间：
 
 - `node.data.uploading = true`，并暂时清空 `node.data.url`（避免误用旧图）
-- 「编辑图片」「涂色编辑」按钮 `disabled`
+- 「编辑图片」「涂鸦编辑」按钮 `disabled`
 - 门禁函数 `canEditImageNode` / `resolveImageEditSubmitData`（`web/js/image_node.js`）要求 **存在非空服务器 `url` 且未在 uploading**
 - 禁止仅凭本地 `File` 提交 `/api/image-edit`（大图上传中途点编辑的历史缺陷）
 
@@ -57,7 +57,7 @@
 2. 根据节点类型获取对应的图片URL：
    - 图片节点：`data.url`
    - 角色/场景/道具节点：`data.reference_image`
-3. 同时生成参考图描述后缀（`promptSuffix`），原图占据图1，参考图从图2开始编号。格式如：`图2是赵公子，图3是林枫，图4是顶级西餐厅天瑞阁所在地点，图5是镀金劳斯莱斯。`
+3. 同时生成参考图描述后缀（`promptSuffix`）。有底图时原图占据图1，参考图从图2开始编号，例如：`图2是赵公子，图3是林枫`。无底图时没有原图，参考图从「图1」起，例如：`图1是赵公子，图2是林枫`。纯图片参考只占序号、不写名字。
    - 角色节点：`图N是{角色名}`
    - 场景节点：`图N是{场景名}`
    - 道具节点：`图N是{道具名}`

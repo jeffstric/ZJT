@@ -164,6 +164,8 @@
     let uploadConfig = {
       max_image_size_mb: 10 // 默认值
     };
+    // 共享给画布拖放模块（canvas_drop.js）做大小预检
+    window.__wfUploadConfig = uploadConfig;
 
     // 获取上传配置
     async function fetchUploadConfig() {
@@ -175,6 +177,7 @@
         const result = await response.json();
         if (result.code === 0 && result.data) {
           uploadConfig = result.data;
+          window.__wfUploadConfig = uploadConfig;
         }
       } catch (error) {
         console.error('获取上传配置失败:', error);
@@ -251,6 +254,13 @@
 
     document.getElementById('menuAddImage').addEventListener('click', () => {
       const nodeId = createImageNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
+    document.getElementById('menuAddPromptReverse').addEventListener('click', () => {
+      const nodeId = createPromptReverseNode();
       renderMinimap();
       addMenu.classList.remove('show');
       startNodePlacing(nodeId);
@@ -449,6 +459,12 @@
         if(document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) return;
         // 涂鸦编辑弹窗打开时 Delete/Backspace 由弹窗处理（删除选中涂鸦元素），避免误删工作流节点
         if(window.imageDoodleEditor && typeof window.imageDoodleEditor.isOpen === 'function' && window.imageDoodleEditor.isOpen()){
+          return;
+        }
+        // 导演台打开时节点仍留在 selectedNodeIds。这里再挡一层：
+        // 编辑器监听若未拦住，确认删除会拆掉节点且不走 close()，录制和 WebGL 泄漏。
+        var directorOverlay = document.getElementById('directorStageOverlay');
+        if(directorOverlay && directorOverlay.classList.contains('show')){
           return;
         }
 
@@ -3031,8 +3047,12 @@
         imgWrapper.dataset.label = label;
         imgWrapper._file = file;
         imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+        // 浏览器 <img> 不解码 TIFF：tif 用占位块，提交时后端归一化为 PNG
+        const previewBody = (window.isTiffFile && window.isTiffFile(file))
+          ? (window.tiffPlaceholderHtml ? window.tiffPlaceholderHtml(file.name) : '')
+          : `<img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />`;
         imgWrapper.innerHTML = `
-          <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
+          ${previewBody}
           <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</div>
           <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
         `;
@@ -3974,8 +3994,12 @@
         imgWrapper.dataset.angle = angle;
         imgWrapper._file = file;
         imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+        // 浏览器 <img> 不解码 TIFF：tif 用占位块，提交时后端归一化为 PNG
+        const previewBody = (window.isTiffFile && window.isTiffFile(file))
+          ? (window.tiffPlaceholderHtml ? window.tiffPlaceholderHtml(file.name) : '')
+          : `<img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />`;
         imgWrapper.innerHTML = `
-          <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
+          ${previewBody}
           <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</div>
           <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
         `;
@@ -4063,8 +4087,12 @@
         imgWrapper.dataset.angle = angle;
         imgWrapper._file = file;
         imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+        // 浏览器 <img> 不解码 TIFF：tif 用占位块，提交时后端归一化为 PNG
+        const previewBody = (window.isTiffFile && window.isTiffFile(file))
+          ? (window.tiffPlaceholderHtml ? window.tiffPlaceholderHtml(file.name) : '')
+          : `<img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />`;
         imgWrapper.innerHTML = `
-          <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
+          ${previewBody}
           <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</div>
           <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
         `;
@@ -4383,8 +4411,12 @@
         imgWrapper.dataset.label = label;
         imgWrapper._file = file;
         imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+        // 浏览器 <img> 不解码 TIFF：tif 用占位块，提交时后端归一化为 PNG
+        const previewBody = (window.isTiffFile && window.isTiffFile(file))
+          ? (window.tiffPlaceholderHtml ? window.tiffPlaceholderHtml(file.name) : '')
+          : `<img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />`;
         imgWrapper.innerHTML = `
-          <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
+          ${previewBody}
           <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</div>
           <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
         `;

@@ -148,7 +148,7 @@ Authorization: Bearer hm-xxxxxxxxxxxxxxxx
 | `human_review` | boolean | 否 | 真人审核模式，默认 false |
 | `generate_audio` | boolean | 否 | 是否生成同步音频，默认 true |
 | `last_frame_image` | string | 否 | 尾帧图片 URL（图生视频-首尾帧） |
-| `reference_audios` | array | 否 | 参考音频 URL 列表（0-3 段，总时长不超过 15s） |
+| `reference_audios` | array | 否 | 参考音频 URL 列表（2.0 系列 0-3 段、总时长 ≤15s；2.5 0-10 段、≤30s） |
 | `reference_images` | array | 否 | 参考图片 URL 列表（1-9 张） |
 | `reference_videos` | array | 否 | 参考视频 URL 列表（0-3 个，总时长不超过 15s） |
 | `first_frame_image` | string | 否 | 首帧图片 URL（图生视频-首尾帧） |
@@ -177,6 +177,7 @@ Authorization: Bearer hm-xxxxxxxxxxxxxxxx
 - ✅ 真人审核模式（`human_review` 透传）
 - ✅ **自动处理人脸（`supports_auto_face`）**——详见下方专节
 - ✅ 参考视频规范化（帧率限制，复用 `prepare_seedance_reference_video_sync`）
+- ✅ **参考音频总时长预算**：与火山官方一致（2.0 系列 ≤15s / ≤3 段，2.5 ≤30s / ≤10 段），提交前按「(总上限-0.5s 余量)/条数」均分配额自动截断超长音频（角色音色源音频上传时裁到 20s，直接透传会被 `InvalidParameter` 拒绝），详见火山版驱动文档「参考音频总时长预算与自动截断」
 - ✅ 分辨率小写映射（480p / 720p / 1080p / 4k）
 
 ## 自动处理人脸（supports_auto_face）
@@ -200,9 +201,10 @@ huimengi 网关内置 `human_review` 真人审核能力，与其他 Seedance 网
 1. **标识位置**：`ImplementationConfig.supports_auto_face`（代码静态字段，仿 `sync_mode`，不可后台修改）
 2. **分流闸门**：`server.py` 的 `/api/ai-app-run-image` 接口，`need_pipeline_steps` 判断增加 `not impl_supports_auto_face` 条件
 3. **参数注入**：用户勾选处理人脸 + 实现方支持自动处理 → `base_extra_config['human_review'] = True`（在 `audited_extra_config` 序列化前注入）
-4. **驱动透传**：huimengi 驱动 `build_create_request` 从 `extra_config.human_review` 读取并放入 `params.human_review`，无需改动
-5. **前端无感**：「是否处理人脸」选项不变（仍由任务级 `needs_face_mask` 控制显隐），用户无需感知后端用了哪个网关
-6. **提示词清洗**：huimengi 使用原始素材（画面无黑框），`build_create_request` 会通过 `strip_face_mask_hint`（`task/visual_drivers/face_mask_prompt.py`）按 `FaceMaskPromptConstants.RESTORE_HINT` 常量原文精确移除提示词中残留的还原句——还原句的唯一写入方是 volcengine/oversea/kkidc 侧的 `ensure_face_mask_hint`，跨实现方重试到 huimengi 时由本方法做逆变换恢复基线，避免模型凭空还原不存在的黑框导致生成异常
+4. **驱动透传**：huimengi 驱动 `build_create_request` 从 `extra_config.human_review` 读取并放入 `params.human_review`
+5. **驱动兜底注入**：`extra_config` 在提交时按"当时解析到的实现方"固化（如故事板提交命中 volcengine 则不写 `human_review`），失败重试切换到 huimengi 后字段缺失，而本驱动会恢复原始（未遮盖）素材，含人脸素材会被网关内容审核拒绝。故驱动侧兜底：`extra_config` 未显式声明 `human_review` 且 `enable_face_mask=true` 时自动补注 `params.human_review=true`（显式 `false` 不覆盖）
+6. **前端无感**：「是否处理人脸」选项不变（仍由任务级 `needs_face_mask` 控制显隐），用户无需感知后端用了哪个网关
+7. **提示词清洗**：huimengi 使用原始素材（画面无黑框），`build_create_request` 会通过 `strip_face_mask_hint`（`task/visual_drivers/face_mask_prompt.py`）按 `FaceMaskPromptConstants.RESTORE_HINT` 常量原文精确移除提示词中残留的还原句——还原句的唯一写入方是 volcengine/oversea/kkidc 侧的 `ensure_face_mask_hint`，跨实现方重试到 huimengi 时由本方法做逆变换恢复基线，避免模型凭空还原不存在的黑框导致生成异常
 
 ## 参考视频帧率限制
 

@@ -83,7 +83,7 @@
                 <div class="video-frame-content active" data-frame="start">
                   <div class="label" style="margin-bottom: 4px;" data-i18n="first_frame_label">${window.t ? window.t('first_frame_label') : '首帧'}</div>
                   <div class="port start-image-port port-anchor-start" data-port-type="start" title="${window.t ? window.t('first_frame_port') : '连接图片/角色节点（首帧）'}" style="position: relative; margin-bottom: 4px;"></div>
-                  <input class="start-file" type="file" accept="image/*" />
+                  <input class="start-file" type="file" accept="image/*,.tif,.tiff" />
                   <button class="mini-btn start-clear" type="button" data-i18n="node_clear_btn">${window.t ? window.t('node_clear_btn') : '清除'}</button>
                   <div class="preview-row start-preview-row" style="display:none; margin-top: 8px;">
                     <img class="preview start-preview" />
@@ -93,7 +93,7 @@
                 <div class="video-frame-content active" data-frame="end" style="margin-top: 8px;">
                   <div class="label" style="margin-bottom: 4px;" data-i18n="last_frame_label">${window.t ? window.t('last_frame_label') : '尾帧'}</div>
                   <div class="port end-image-port port-anchor-end" data-port-type="end" title="${window.t ? window.t('last_frame_port') : '连接图片/角色节点（尾帧）'}" style="position: relative; margin-bottom: 4px;"></div>
-                  <input class="end-file" type="file" accept="image/*" />
+                  <input class="end-file" type="file" accept="image/*,.tif,.tiff" />
                   <button class="mini-btn end-clear" type="button" data-i18n="node_clear_btn">${window.t ? window.t('node_clear_btn') : '清除'}</button>
                   <div class="preview-row end-preview-row" style="display:none; margin-top: 8px;">
                     <img class="preview end-preview" />
@@ -104,7 +104,7 @@
               <div class="field field-collapsible reference-fields" style="display:none; position: relative;">
                 <div class="port ref-image-input-port" data-port-type="ref-image" title="${window.t ? window.t('reference_frame_port') : '连接图片/角色节点（参考图）'}"></div>
                 <div class="label ref-images-label" data-i18n="reference_images_label">${window.t ? window.t('reference_images_label') : '参考图片 (1-5张)'}<span class="req">*</span></div>
-                <input class="reference-file" type="file" accept="image/*" multiple />
+                <input class="reference-file" type="file" accept="image/*,.tif,.tiff" multiple />
                 <button class="mini-btn reference-clear" type="button" style="margin-top: 4px;" data-i18n="clear_all_btn">${window.t ? window.t('clear_all_btn') : '清除全部'}</button>
                 <div class="ref-images-counter" style="font-size: 11px; color: var(--muted); margin-top: 4px; display: none;"></div>
                 <div class="reference-preview-list" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;"></div>
@@ -1260,6 +1260,30 @@
             }
           });
 
+          // 参考生 + 模型支持音色输入时，自动带入连线角色节点的默认音色（角色节点数据
+          // 即 /api/characters 完整对象，含 default_voice）；grok 等不支持模型不注入
+          if(currentImageMode === 'multi_reference' && typeof collectVoiceReferences === 'function'){
+            const voiceCharacters = [];
+            state.imageConnections.filter(c => c.to === id && c.portType === 'ref-image').forEach(c => {
+              const fromNode = state.nodes.find(n => n.id === c.from);
+              if(fromNode && fromNode.type === 'character' && fromNode.data){
+                voiceCharacters.push(fromNode.data);
+              }
+            });
+            const voiceRefs = collectVoiceReferences(videoModel, voiceCharacters, allAudioUrls.join(','));
+            if(voiceRefs.enabled){
+              allAudioUrls = allAudioUrls.concat(voiceRefs.voiceUrls);
+              submitPrompt = appendVoiceReferencePrompt(submitPrompt, voiceRefs.promptNote);
+              notifyVoiceReferences(voiceRefs.voiceUrls.length);
+            }
+          }
+
+          // 人脸遮盖白名单：勾选「是否处理人脸」时只对角色参考图做遮盖。
+          // 仅连线来源为角色节点的参考图可识别类型（本地上传图无类型信息，不参与）
+          const faceMaskRefUrls = currentImageMode === 'multi_reference'
+            ? collectI2VCharacterRefUrls(id, node.data.referenceUrls || [])
+            : [];
+
           // 收集所有视频URL（上传 + 连接节点）
           let allVideoUrls = [...(node.data.videoUrls || []).map(v => v.url)];
           state.videoConnections.filter(c => c.to === id && c.portType === 'video-ref').forEach(c => {
@@ -1281,7 +1305,7 @@
           if(currentImageMode === 'text_to_video') {
             result = await generateVideoFromText(submitPrompt, duration, desiredCount, ratio, videoModel, node.data.videoResolution);
           } else {
-            result = await generateVideoFromImage(imageUrls, submitPrompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences), node.data.videoResolution, node.data.processFace);
+            result = await generateVideoFromImage(imageUrls, submitPrompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences), node.data.videoResolution, node.data.processFace, faceMaskRefUrls);
           }
           console.log('[DEBUG] API返回:', { projectIds: result.projectIds, count: result.projectIds?.length });
           
@@ -1306,6 +1330,8 @@
             const newVideoNode = state.nodes.find(n => n.id === newVideoId);
             if(newVideoNode && result.projectIds){
               newVideoNode.data.project_id = result.projectIds[i] || result.projectIds[0];
+              // 视频节点显示「生成中」状态行（含查看状态时间轴按钮）
+              if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newVideoId);
               console.log(`[图生视频] 新建视频节点 ${newVideoId} 绑定 project_id:`, newVideoNode.data.project_id);
             }
           }
@@ -1726,9 +1752,12 @@
         const file = startFileEl.files && startFileEl.files[0];
         if(!file) return;
 
-        // 先显示本地预览
-        const localPreview = await readFileAsDataUrl(file);
-        startPreviewImg.src = localPreview;
+        // 先显示本地预览（tif 跳过：浏览器 <img> 不解码 TIFF，
+        // 上传成功后显示后端转码出的 PNG URL）
+        if(!(window.isTiffFile && window.isTiffFile(file))){
+          const localPreview = await readFileAsDataUrl(file);
+          startPreviewImg.src = localPreview;
+        }
         startPreviewRow.style.display = 'flex';
 
         // 上传到服务器获取永久URL
@@ -1754,9 +1783,12 @@
         const file = endFileEl.files && endFileEl.files[0];
         if(!file) return;
 
-        // 先显示本地预览
-        const localPreview = await readFileAsDataUrl(file);
-        endPreviewImg.src = localPreview;
+        // 先显示本地预览（tif 跳过：浏览器 <img> 不解码 TIFF，
+        // 上传成功后显示后端转码出的 PNG URL）
+        if(!(window.isTiffFile && window.isTiffFile(file))){
+          const localPreview = await readFileAsDataUrl(file);
+          endPreviewImg.src = localPreview;
+        }
         endPreviewRow.style.display = 'flex';
 
         // 上传到服务器获取永久URL
@@ -1862,6 +1894,24 @@
         if (url && urls.indexOf(url) === -1) urls.push(url);
       });
       return urls;
+    }
+
+    // 人脸遮盖白名单：参考图中来自角色节点连线的 URL（只有角色图参与人脸遮盖）。
+    // 与 buildI2VAssetPromptSuffix 同一套来源匹配；本地上传图无类型信息，不参与。
+    function collectI2VCharacterRefUrls(nodeId, urls) {
+      var charUrls = [];
+      (urls || []).forEach(function(url) {
+        var conn = (state.imageConnections || []).find(function(c) {
+          if (c.to !== nodeId || c.portType !== 'ref-image') return false;
+          var fromNode = state.nodes.find(function(n) { return n.id === c.from; });
+          var srcUrl = typeof getNodeImageUrl === 'function' ? getNodeImageUrl(fromNode) : (fromNode && fromNode.data && fromNode.data.url);
+          return srcUrl === url;
+        });
+        if (!conn) return;
+        var fromNode = state.nodes.find(function(n) { return n.id === conn.from; });
+        if (fromNode && fromNode.type === 'character' && charUrls.indexOf(url) === -1) charUrls.push(url);
+      });
+      return charUrls;
     }
 
     function buildI2VAssetPromptSuffix(nodeId, urls) {

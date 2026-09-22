@@ -173,6 +173,25 @@ const PROVIDER_DEFINITIONS = [
         configKeyMap: { api_key: 'llm.mimo.api_key', base_url: 'llm.mimo.base_url' },
         testEndpoint: null
     },
+    {
+        id: 'glmcn',
+        nameKey: 'provider_glmcn_name',
+        descKey: 'provider_glmcn_desc',
+        category: 'llm',
+        icon: '🤖',
+        docUrl: 'https://open.bigmodel.cn/usercenter/apikeys',
+        lazyRecommended: false,
+        displayOrder: 9,
+        baseName: 'glmcn',
+        isOfficialAPI: false,
+        impactsKey: 'provider_glmcn_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_glmcn', required: true },
+            { id: 'base_url', labelKey: 'field_base_url_label_optional', type: 'url', placeholder: 'https://open.bigmodel.cn/api/paas/v4', required: false, helpTextKey: 'field_base_url_placeholder' }
+        ],
+        configKeyMap: { api_key: 'llm.glmcn.api_key', base_url: 'llm.glmcn.base_url' },
+        testEndpoint: null
+    },
 
     // ===== 生图/生视频共享键供应商 =====
     // 多米、火山引擎（多媒体）、火山引擎海外版、阿里云百炼（多媒体）、聚合站 1-5 的生图与生视频共用同一配置键，
@@ -491,6 +510,9 @@ const AdminApp = {
             // 仪表盘数据
             dashboard: {
                 totalUsers: 0,
+                // 激活用户数与上限（maxActiveUsers 为 null 表示不限，∞ 展示）
+                activeUsers: null,
+                maxActiveUsers: null,
                 activeWorkflows3d: 0,
                 loading: true,
                 monthlyActiveUsers: {
@@ -857,6 +879,7 @@ const AdminApp = {
                 enforcement_mode: '',
                 capabilities: null,
                 license: null,
+                user_quota: null,
                 credential_configured: false,
             },
             // 激活表单输入框（激活成功后清空，失败时保留方便重试）。
@@ -938,6 +961,19 @@ const AdminApp = {
     computed: {
         totalPages() {
             return Math.ceil(this.users.total / this.users.pageSize);
+        },
+
+        // 激活用户数超过上限时在仪表盘顶部展示警告条：未激活商业版本（社区版
+        // 上限 1 人）存量超限、或许可证过期回落社区口径后存量仍超上限。
+        // 注意用严格大于：等于上限是"满员"（新增已被注册/启用卡点拦截，
+        // 存量合法），只有超过上限才需要购买商业版或禁用用户。
+        // maxActiveUsers 为 null（企业Pro/显式不限）时不警告。
+        showActiveUsersQuotaWarning() {
+            return (
+                this.dashboard.maxActiveUsers != null &&
+                this.dashboard.activeUsers != null &&
+                this.dashboard.activeUsers > this.dashboard.maxActiveUsers
+            );
         },
 
         annTotalPages() {
@@ -1307,6 +1343,8 @@ const AdminApp = {
                     
                     // 加载仪表盘数据
                     this.dashboard.totalUsers = response.data.data.total_users;
+                    this.dashboard.activeUsers = response.data.data.active_users ?? null;
+                    this.dashboard.maxActiveUsers = response.data.data.max_active_users ?? null;
                     this.dashboard.activeWorkflows3d = response.data.data.active_workflows_3d;
                     this.dashboard.loading = false;
 
@@ -1407,10 +1445,20 @@ const AdminApp = {
                     enforcement_mode: '',
                     capabilities: null,
                     license: null,
+                    user_quota: null,
                     credential_configured: false,
                 };
                 this.applyBrandingAvailability(false);
             }
+        },
+
+        // 许可证 edition 的展示名（i18n key：license_edition_<value>）。
+        // 未知值原样展示，便于排查新 edition 未同步 i18n 的情况。
+        editionLabel(edition) {
+            if (!edition) return '-';
+            const key = 'license_edition_' + edition;
+            const translated = this.t(key);
+            return translated === key ? edition : translated;
         },
 
         // 统一把后端 status 响应应用到本地：同时刷新状态卡片和品牌可用性，
@@ -1423,6 +1471,7 @@ const AdminApp = {
                 enforcement_mode: data?.enforcement_mode || '',
                 capabilities: data?.capabilities || null,
                 license: data?.license || null,
+                user_quota: data?.user_quota || null,
                 credential_configured: Boolean(data?.credential_configured),
             };
             this.applyBrandingAvailability(data?.capabilities?.branding);
@@ -1549,10 +1598,12 @@ const AdminApp = {
                     this.applyLicenseStatus(response.data.data);
                     // 成功后清空输入框（敏感信息不应在前端残留）。
                     this.activateTokenInput = '';
-                    // 按 edition 区分提示，避免 studio 用户以为激活失败。
+                    // 按 edition 区分提示，避免工作室/企业Lite 用户以为激活失败。
                     const edition = response.data.data?.license?.edition;
-                    if (edition === 'studio') {
+                    if (edition === 'studio' || edition === 'studio_lite') {
                         this.showToast(this.t('license_activate_success_studio'), 'warning');
+                    } else if (edition === 'enterprise_lite') {
+                        this.showToast(this.t('license_activate_success_enterprise_lite'), 'warning');
                     } else {
                         this.showToast(this.t('license_activate_success_enterprise'), 'success');
                     }
@@ -1899,6 +1950,8 @@ const AdminApp = {
                     );
                     this.applyEnterpriseStatus(response.data.data.enterprise);
                     this.dashboard.totalUsers = response.data.data.total_users;
+                    this.dashboard.activeUsers = response.data.data.active_users ?? null;
+                    this.dashboard.maxActiveUsers = response.data.data.max_active_users ?? null;
                     this.dashboard.activeWorkflows3d = response.data.data.active_workflows_3d;
                     // dashboard 的 features.branding 由后端动态派生，这里同步一次
                     this.userModulesAvailable = Boolean(

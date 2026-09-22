@@ -419,10 +419,14 @@
       const collectedCharacters = new Set();
       const collectedLocations = new Set();
       const collectedProps = new Set();
+      // 精确匹配到的角色对象（含 default_voice）：供参考生视频提交时自动带入角色音色
+      const voiceCharacters = [];
+      // 角色参考图 URL（供「是否处理人脸」白名单：只有角色图参与人脸遮盖，道具/场景不处理）
+      const characterRefUrls = [];
 
       if (!state.defaultWorldId) {
         console.warn('[宫格生图] 未选择世界，无法获取参考图片');
-        return { referenceImageUrls, promptSuffix };
+        return { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls };
       }
 
       const worldId = state.defaultWorldId;
@@ -460,11 +464,15 @@
                 const result = await response.json();
                 if (result.code === 0 && result.data && Array.isArray(result.data.data) && result.data.data.length > 0) {
                   const matchedChar = result.data.data.find(c => c.name === characterName) || result.data.data[0];
+                  if(matchedChar && matchedChar.default_voice){
+                    voiceCharacters.push(matchedChar);
+                  }
                   if (matchedChar && matchedChar.reference_image) {
                     // 优先使用用户为该角色选择的特定图片，否则使用主图
                     const userSelectedUrl = (shotNode.data.selectedCharRefImages && shotNode.data.selectedCharRefImages[characterName]);
                     const charRefUrl = userSelectedUrl || matchedChar.reference_image;
                     referenceImageUrls.push(charRefUrl);
+                    characterRefUrls.push(charRefUrl);
                     const labelSuffix = userSelectedUrl && userSelectedUrl !== matchedChar.reference_image
                       ? `的${(shotNode.data.selectedCharRefImageLabels && shotNode.data.selectedCharRefImageLabels[characterName]) || '已选择'}`
                       : '';
@@ -541,7 +549,7 @@
       }
 
       console.log(`[宫格生图] 总共收集到 ${referenceImageUrls.length} 张参考图片URL`);
-      return { referenceImageUrls, promptSuffix };
+      return { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls };
     }
 
 
@@ -3444,6 +3452,8 @@
               gridImageNode.data.isSplit = true;
               gridImageNode.data.status = 'pending';
               gridImageNode.title = gridImageNode.data.name;
+              // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+              if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(gridImageNodeId);
               
               const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
               if(nodeEl) {
@@ -4022,6 +4032,8 @@
         let imageUrl; // 首尾帧模式使用
         let referenceImageUrls = []; // 参考模式使用
         let refPromptSuffix = []; // 参考图描述文字
+        let gridVoiceCharacters = []; // 参考模式精确匹配到的角色（含默认音色）
+        let gridCharacterRefUrls = []; // 参考模式角色参考图 URL（人脸遮盖白名单）
         let useTextToVideo = false; // 降级标记
 
         if(videoGenMode === 'multi_reference') {
@@ -4032,9 +4044,11 @@
           }
           generateBtn.textContent = '收集参考图...';
 
-          const { referenceImageUrls: refUrls, promptSuffix: _refPromptSuffix } = await collectReferenceImagesForGrid(shotFrameNodes);
+          const { referenceImageUrls: refUrls, promptSuffix: _refPromptSuffix, voiceCharacters: _voiceCharacters, characterRefUrls: _characterRefUrls } = await collectReferenceImagesForGrid(shotFrameNodes);
           referenceImageUrls = refUrls;
           refPromptSuffix = _refPromptSuffix || [];
+          gridVoiceCharacters = _voiceCharacters || [];
+          gridCharacterRefUrls = _characterRefUrls || [];
 
           if(referenceImageUrls.length > 0) {
             console.log(`[分镜组视频] 参考模式：收集到 ${referenceImageUrls.length} 张参考图`);
@@ -4223,7 +4237,23 @@
           // 是否处理人脸（仅 seedance2.0 商业版生效）
           if(shotGroupNode.data.processFace === true) {
             form.append('enable_face_mask', 'true');
+            // 人脸遮盖白名单：只对角色参考图做遮盖，道具/场景参考图不参与
+            if(gridCharacterRefUrls.length > 0) {
+              form.append('face_mask_reference_urls', gridCharacterRefUrls.join(','));
+            }
           }
+
+          // 参考生 + 模型支持音色输入时，自动带入分镜组角色的默认音色；
+          // grok 等不支持模型 collectVoiceReferences 返回空，不注入
+          if(typeof collectVoiceReferences === 'function' && !useTextToVideo){
+            const voiceRefs = collectVoiceReferences(videoModel || 'wan22', gridVoiceCharacters, '');
+            if(voiceRefs.enabled){
+              form.append('audio_urls', voiceRefs.voiceUrls.join(','));
+              form.set('prompt', appendVoiceReferencePrompt(finalVideoPrompt, voiceRefs.promptNote));
+              notifyVoiceReferences(voiceRefs.voiceUrls.length);
+            }
+          }
+
           appendAuthToForm(form);
 
           res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
@@ -4286,6 +4316,8 @@
             newVideoNode.data.name = videoCount > 1 ? `幕视频${i + 1}` : '幕视频';
             newVideoNode.data.project_id = projectIds[i] || projectIds[0];
             newVideoNode.title = newVideoNode.data.name;
+            // 视频节点显示「生成中」状态行（含查看状态时间轴按钮）
+            if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newVideoNodeId);
             
             // 更新节点标题显示
             const canvasEl = document.getElementById('canvas');
@@ -4370,8 +4402,10 @@
                   }
                   const previewActionsField = videoNodeEl.querySelector('.video-preview-actions-field');
                   if(previewActionsField) previewActionsField.style.display = 'block';
+                  // 视频已到位：状态行标记成功
+                  if(window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(videoNode);
                 }
-                
+
                 console.log(`[分镜组视频] 视频节点 ${videoNodeId} 更新URL:`, videoUrls[index]);
               }
             });

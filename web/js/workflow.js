@@ -1670,9 +1670,15 @@
               videoModelEl.appendChild(optEl);
             });
             if (!videoOptions.find(o => o.value === node.data.videoModel)) {
-              if (node.data.videoModel && typeof ensureSelectHasSavedOption === 'function') {
-                ensureSelectHasSavedOption(videoModelEl, node.data.videoModel);
-                videoModelEl.value = node.data.videoModel;
+              // 已保存模型不支持当前模式时必须迁移（如 minimax_h3 首尾帧专属模型
+              // 残留在参考模式，提交会被后端 MODEL_INPUT_UNSUPPORTED 拒绝）；
+              // 仅模式兼容（可能被驱动状态过滤）或未知模型才保留原值
+              const keepSaved = typeof resolveSavedVideoModelForMode === 'function'
+                ? resolveSavedVideoModelForMode(filteredByDriver.length ? filteredByDriver : allVideoOptions, mode, node.data.videoModel)
+                : node.data.videoModel;
+              if (keepSaved && typeof ensureSelectHasSavedOption === 'function') {
+                ensureSelectHasSavedOption(videoModelEl, keepSaved);
+                videoModelEl.value = keepSaved;
               } else {
                 node.data.videoModel = videoOptions[0].value;
                 videoModelEl.value = node.data.videoModel;
@@ -1751,9 +1757,15 @@
               videoModelEl.appendChild(optEl);
             });
             if (!videoOptions.find(o => o.value === currentVideoModel)) {
-              if (currentVideoModel && typeof ensureSelectHasSavedOption === 'function') {
-                ensureSelectHasSavedOption(videoModelEl, currentVideoModel);
-                videoModelEl.value = currentVideoModel;
+              // 已保存模型不支持当前模式时必须迁移（如 minimax_h3 首尾帧专属模型
+              // 残留在参考模式，提交会被后端 MODEL_INPUT_UNSUPPORTED 拒绝）；
+              // 仅模式兼容（可能被驱动状态过滤）或未知模型才保留原值
+              const keepSaved = typeof resolveSavedVideoModelForMode === 'function'
+                ? resolveSavedVideoModelForMode(filteredByDriver.length ? filteredByDriver : allVideoOptions, mode, currentVideoModel)
+                : currentVideoModel;
+              if (keepSaved && typeof ensureSelectHasSavedOption === 'function') {
+                ensureSelectHasSavedOption(videoModelEl, keepSaved);
+                videoModelEl.value = keepSaved;
               } else {
                 node.data.videoModel = videoOptions[0].value;
                 videoModelEl.value = node.data.videoModel;
@@ -2234,6 +2246,25 @@
     styleImageInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if(file){
+        // 浏览器 <img> 不解码 TIFF：本地 base64 预览会裂图，改显占位；
+        // 保存时后端会把 tif 归一化为 PNG，回显走服务器 URL
+        if(window.isTiffFile && window.isTiffFile(file)){
+          styleImagePreviewImg.src = '';
+          const parent = styleImagePreviewImg.parentElement || styleImagePreview;
+          let holder = parent.querySelector('.tiff-preview-holder');
+          if(!holder){
+            holder = document.createElement('div');
+            holder.className = 'tiff-preview-holder';
+            holder.style.cssText = 'width:100%;max-width:200px;height:120px;position:relative;border-radius:8px;overflow:hidden;';
+            styleImagePreviewImg.insertAdjacentElement('afterend', holder);
+          }
+          holder.innerHTML = (window.tiffPlaceholderHtml ? window.tiffPlaceholderHtml(file.name) : '<div style="width:100%;height:100%;background:#e5e7eb;"></div>')
+            + '<div style="position:absolute;bottom:4px;left:0;right:0;color:#6b7280;font-size:11px;text-align:center;">TIF 图片，保存时自动转为 PNG</div>';
+          styleImagePreview.style.display = 'block';
+          return;
+        }
+        const holder = styleImagePreview.querySelector('.tiff-preview-holder');
+        if(holder) holder.remove();
         const reader = new FileReader();
         reader.onload = (e) => {
           styleImagePreviewImg.src = e.target.result;
@@ -2293,7 +2324,7 @@
     
     // ============ 画风管理功能结束 ============
 
-    async function generateEditedImage(fileOrUrl, prompt, ratio, model, count, referenceImageUrls){
+    async function generateEditedImage(fileOrUrl, prompt, ratio, model, count, referenceImageUrls, imageSize){
       const userId = localStorage.getItem('user_id');
       const authToken = getAuthToken();
       const form = new FormData();
@@ -2319,6 +2350,10 @@
       form.append('prompt', prompt || '');
       form.append('ratio', ratio || '9:16');
       form.append('count', count || 1);
+      // 分辨率档位（1K/2K/4K 等，与首页图片编辑一致）；空则不传，由后端取默认值
+      if(imageSize){
+        form.append('image_size', imageSize);
+      }
       
       // 根据 model 获取 task_id
       const taskId = TaskConfig.getTaskIdByKey(model || 'gemini-2.5-pro-image-preview', 'image_edit');
@@ -2347,6 +2382,69 @@
         throw new Error(errorMsg);
       }
       
+      if(data.project_ids && data.project_ids.length > 0){
+        return {
+          projectIds: data.project_ids,
+          status: data.status
+        };
+      }
+      throw new Error('提交任务失败：未返回项目ID');
+    }
+
+    // 图片节点文生图：无底图时按提示词直接生成图片。
+    // 无参考图走 /api/text-to-image（aspect_ratio）；有参考图（角色/场景/道具等）
+    // 走 /api/image-edit 的 ref_image_urls（与宫格生图一致，编辑接口允许仅参考图无底图）。
+    async function generateImageFromText(prompt, ratio, model, count, imageSize, referenceImageUrls){
+      const userId = localStorage.getItem('user_id');
+      const authToken = getAuthToken();
+      const form = new FormData();
+
+      form.append('prompt', prompt || '');
+      form.append('count', count || 1);
+      if(imageSize){
+        form.append('image_size', imageSize);
+      }
+
+      let apiUrl;
+      if(referenceImageUrls && referenceImageUrls.length > 0){
+        const taskId = TaskConfig.getTaskIdByKey(model || 'gpt-image-2', 'image_edit');
+        if(!taskId){
+          throw new Error(`未找到模型 ${model} 对应的任务配置`);
+        }
+        form.append('task_id', taskId);
+        form.append('ref_image_urls', referenceImageUrls.join(','));
+        form.append('ratio', ratio || '9:16');
+        apiUrl = '/api/image-edit';
+      } else {
+        const taskId = TaskConfig.getTaskIdByKey(model || 'gpt-image-2', 'text_to_image');
+        if(!taskId){
+          throw new Error(`未找到模型 ${model} 对应的任务配置`);
+        }
+        form.append('task_id', taskId);
+        form.append('aspect_ratio', ratio || '9:16');
+        apiUrl = '/api/text-to-image';
+      }
+
+      if(userId){
+        form.append('user_id', userId);
+      }
+      if(authToken){
+        form.append('auth_token', authToken);
+      }
+
+      const res = await fetch(apiUrl, {
+        method: 'POST',
+        body: form
+      });
+      const data = await res.json();
+
+      if(!res.ok) {
+        const errorMsg = typeof data.detail === 'string' ? data.detail :
+                         typeof data.message === 'string' ? data.message :
+                         JSON.stringify(data.detail || data.message || '提交任务失败');
+        throw new Error(errorMsg);
+      }
+
       if(data.project_ids && data.project_ids.length > 0){
         return {
           projectIds: data.project_ids,
@@ -2399,8 +2497,11 @@
         // 恢复图片模式和参考图
         node.data.imageMode = nodeData.data.imageMode || 'first_last_frame';
         node.data.referenceUrls = nodeData.data.referenceUrls || [];
-        // 恢复上次失败原因（失败状态持久化）
-        node.data.lastError = nodeData.data.lastError || '';
+        // 恢复上次失败原因（失败状态持久化）。lastError 必须保持服务端原值
+        // （含缺 key 状态）：createImageToVideoNode 初始 data 不含该字段，
+        // `|| ''` 会把缺 key 归一为空串，还原后序列化多出 key，每次打开页面
+        // 都产生幽灵修改（自动保存全量落库 → 其他会话 CAS 基线过期 409）
+        node.data.lastError = nodeData.data.lastError !== undefined ? nodeData.data.lastError : node.data.lastError;
 
         // 恢复音频/视频列表（兼容旧格式单值）
         if(Array.isArray(nodeData.data.audioUrls)){
@@ -2709,6 +2810,10 @@
         node.data.project_id = nodeData.data.project_id !== undefined ? nodeData.data.project_id : null;
         // 恢复上次失败原因（失败状态持久化）
         node.data.lastError = nodeData.data.lastError !== undefined ? nodeData.data.lastError : node.data.lastError;
+        // 存量兼容:旧版 poll 曾把失败原因写入 data.error(无渲染/还原消费的
+        // 死字段)。严格保持服务端原值与缺 key 状态,既不丢数据也不再漂移;
+        // 新写入统一走 lastError(见 pollWorkflowNodeStatus 失败分支)
+        node.data.error = nodeData.data.error !== undefined ? nodeData.data.error : node.data.error;
         // 恢复节点标题：createVideoNode 渲染的是默认标题"视频"，历史数据的
         // 标题（如"分镜视频"）不恢复的话，每次打开页面标题都会被改写一次，
         // 属于零操作幽灵修改（落库后使其他会话 CAS 基线过期 → 409 冲突框）
@@ -2748,6 +2853,14 @@
                 thumbVideo.addEventListener('loadedmetadata', () => {
                   if(thumbVideo.duration && isFinite(thumbVideo.duration)){
                     node.data.duration = Math.round(thumbVideo.duration);
+                    // 元数据回填是对服务端数据的一次真实修正,标记 dirty 让它
+                    // 尽快正常落库。否则这次写回既没被服务端确认也没被标记:
+                    // 加载成败/时序不同会让各会话产出不同 body(非确定性幽灵
+                    // 修改),自动保存落库后使其他会话 CAS 基线过期(409),
+                    // 且下次打开还会重复同样的回填
+                    if(typeof autoSaveState !== 'undefined' && autoSaveState.markDirty){
+                      autoSaveState.markDirty();
+                    }
                   }
                 }, { once: true });
               }
@@ -2766,6 +2879,9 @@
               setStatusEl(statusEl, `✗ 生成失败: ${node.data.lastError}`, '#dc2626');
             }
           }
+        } else if(node.data.project_id && !node.data.url && window.AiToolTimeline){
+          // 重载恢复：绑定了任务且尚无结果的视频节点恢复「生成中」状态行（含时间轴按钮）
+          window.AiToolTimeline.markNodeGenerating(node.id);
         }
       }
     }
@@ -2828,6 +2944,32 @@
             }
           }
           if(ratioEl) ratioEl.value = node.data.ratio;
+          // 恢复分辨率档位选项（image_size，与模型配置联动；旧工作流无该字段时回落默认值）
+          const imageSizeEl = el.querySelector('.image-size');
+          if(imageSizeEl){
+            const config = modelConfigs[node.data.model];
+            if(config && Array.isArray(config.image_sizes) && config.image_sizes.length > 0){
+              const sizeField = el.querySelector('.image-size-field') || imageSizeEl.closest('.field');
+              if(sizeField) sizeField.style.display = '';
+              imageSizeEl.innerHTML = '';
+              config.image_sizes.forEach(size => {
+                imageSizeEl.innerHTML += `<option value="${size}">${size}</option>`;
+              });
+              const savedSize = node.data.imageSize;
+              if(savedSize && config.image_sizes.includes(savedSize)){
+                imageSizeEl.value = savedSize;
+              } else {
+                const defaultSize = config.default_image_size && config.image_sizes.includes(config.default_image_size)
+                  ? config.default_image_size
+                  : config.image_sizes[0];
+                imageSizeEl.value = defaultSize;
+                node.data.imageSize = defaultSize;
+              }
+            } else {
+              const sizeField = el.querySelector('.image-size-field') || imageSizeEl.closest('.field');
+              if(sizeField) sizeField.style.display = 'none';
+            }
+          }
           if(drawCountLabel) { const _t = window.t ? window.t('draw_count_x', { count: node.data.drawCount }) : null; drawCountLabel.textContent = (_t && _t !== 'draw_count_x') ? _t : `抽卡次数：X${node.data.drawCount}`; }
           if(titleEl && nodeData.title) titleEl.textContent = nodeData.title;
 
@@ -2841,12 +2983,28 @@
             }
           }
 
+          // 重载恢复后按底图状态切换 文生图/图生图 按钮与提示词文案
+          if(typeof el._updateImageGenerateMode === 'function'){
+            el._updateImageGenerateMode();
+          }
+
           // 恢复上次失败原因（失败状态持久化，重载后重新渲染）
           if(node.data.lastError){
             const statusEl = el.querySelector('.image-edit-status');
             if(statusEl){
               statusEl.style.display = 'block';
               setStatusEl(statusEl, node.data.lastError, '#dc2626');
+            }
+          }
+
+          // 重载恢复：绑定了任务且尚无结果的图片节点恢复「生成中」占位（含时间轴按钮）；
+          // 失败任务恢复失败态占位（按钮保留，可回看时间轴）
+          if(node.data.project_id && !node.data.url && window.AiToolTimeline){
+            const failureReason = node.data.lastError || node.data.error;
+            if(failureReason){
+              window.AiToolTimeline.failNode(node.id, failureReason);
+            } else {
+              window.AiToolTimeline.markNodeGenerating(node.id);
             }
           }
         }
@@ -3084,10 +3242,62 @@
             const gridStatusEl2 = el.querySelector('.script-grid-status');
             if (splitBtn2) splitBtn2.disabled = true;
             if (splitGridBtn2) splitGridBtn2.disabled = true;
+
+            const restoreTargetEl = () => (node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2);
+
+            // 刷新恢复路径的「放弃并重新拆分」：取消旧任务 → 等终态（active_key 释放）→ 重新提交并恢复轮询。
+            // 注意：此路径下宫格 onComplete 走降级逻辑（applyParsedData 不自动生成帧），与原恢复行为一致。
+            async function resplitFromPausedRestore() {
+              const oldTaskId = node.data.splitTaskId;
+              if (!oldTaskId) return;
+              const confirmed = await showConfirmModal(
+                window.ScriptSplitTask.tt('script_resplit_confirm', '将放弃当前已暂停的拆分任务并从头重新拆分：已拆好的分段不会保留，重新拆分会重新消耗算力。确认继续？'),
+                { title: window.ScriptSplitTask.tt('script_resplit_btn', '放弃并重新拆分') }
+              );
+              if (!confirmed) return;
+              if (splitBtn2) splitBtn2.disabled = true;
+              if (splitGridBtn2) splitGridBtn2.disabled = true;
+              window.ScriptSplitTask.removeResplitButton(statusEl2);
+              window.ScriptSplitTask.removeResplitButton(gridStatusEl2);
+              try {
+                await window.ScriptSplitTask.cancelAndWaitTerminal(oldTaskId, {
+                  onStatus: () => {
+                    const targetEl = restoreTargetEl();
+                    if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#666'; targetEl.textContent = window.ScriptSplitTask.tt('script_resplit_cancelling', '正在取消原任务，请稍候…'); }
+                  },
+                });
+              } catch (error) {
+                const targetEl = restoreTargetEl();
+                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#dc2626'; targetEl.textContent = window.ScriptSplitTask.tt('script_resplit_cancel_failed', '取消原任务失败') + ': ' + (error.message || ''); }
+                if (splitBtn2) splitBtn2.disabled = false;
+                if (splitGridBtn2) splitGridBtn2.disabled = false;
+                return;
+              }
+              node.data.splitTaskId = null;
+              try {
+                const submitData = await window.ScriptSplitTask.submitSplitTask(node.data, state.defaultWorldId);
+                node.data.splitTaskId = submitData.task_id;
+                node.data.splitTaskMode = node.data.splitTaskMode || 'split';
+                node.data.splitTaskResultApplied = false;
+                node.data.splitTaskPostActionStarted = false;
+                if (window.safeAutoSave) window.safeAutoSave();
+                startRestorePolling();
+              } catch (error) {
+                const targetEl = restoreTargetEl();
+                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#dc2626'; targetEl.textContent = '重新拆分失败: ' + (error.message || ''); }
+                if (splitBtn2) splitBtn2.disabled = false;
+                if (splitGridBtn2) splitGridBtn2.disabled = false;
+              }
+            }
+
+            function startRestorePolling() {
             window.ScriptSplitTask.pollScriptSplitTask(node.data.splitTaskId, {
               onUpdate: (status) => {
                 const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
                 if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#666'; targetEl.textContent = status.message || '拆分中…'; }
+                window.ScriptSplitTask.applyPausedSplitButtonUI(splitBtn2, splitGridBtn2, false);
+                window.ScriptSplitTask.removeResplitButton(statusEl2);
+                window.ScriptSplitTask.removeResplitButton(gridStatusEl2);
               },
               onComplete: async (parsedData) => {
                 if (node.data.splitTaskMode === 'split_and_generate_grid') {
@@ -3102,22 +3312,37 @@
                   node.data.splitTaskResultApplied = true;
                   if (window.safeAutoSave) window.safeAutoSave();
                 }
+                window.ScriptSplitTask.applyPausedSplitButtonUI(splitBtn2, splitGridBtn2, false);
+                window.ScriptSplitTask.removeResplitButton(statusEl2);
+                window.ScriptSplitTask.removeResplitButton(gridStatusEl2);
                 if (splitBtn2) splitBtn2.disabled = false;
                 if (splitGridBtn2) splitGridBtn2.disabled = false;
               },
               onPaused: (status) => {
                 const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
-                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#d97706'; targetEl.textContent = status.message || '任务暂停'; }
+                if (targetEl) {
+                  targetEl.style.display = 'block';
+                  targetEl.style.color = '#d97706';
+                  targetEl.textContent = status.error_message || status.message || '任务暂停';
+                  window.ScriptSplitTask.attachResplitButton(targetEl, resplitFromPausedRestore);
+                }
+                window.ScriptSplitTask.applyPausedSplitButtonUI(splitBtn2, splitGridBtn2, true);
                 if (splitBtn2) splitBtn2.disabled = false;
                 if (splitGridBtn2) splitGridBtn2.disabled = false;
               },
               onError: (error) => {
                 const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
                 if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#dc2626'; targetEl.textContent = '拆分失败: ' + (error.message || ''); }
+                window.ScriptSplitTask.applyPausedSplitButtonUI(splitBtn2, splitGridBtn2, false);
+                window.ScriptSplitTask.removeResplitButton(statusEl2);
+                window.ScriptSplitTask.removeResplitButton(gridStatusEl2);
                 if (splitBtn2) splitBtn2.disabled = false;
                 if (splitGridBtn2) splitGridBtn2.disabled = false;
               },
             });
+            }
+
+            startRestorePolling();
           }
         }
       }
@@ -3220,9 +3445,12 @@
                   node.data.url = updatedNode.url;
                   updateNodePreview(node, updatedNode.url);
                 } else if(updatedNode.status === -1){
-                  // 失败状态:显示错误信息
+                  // 失败状态:显示错误信息。错误必须写入 lastError——它是唯一
+                  // 被渲染(还原后重绘)且被各还原函数恢复的字段;此前写入的
+                  // data.error 无任何渲染/还原消费点,每次还原都会丢失,产生
+                  // 幽灵修改(自动保存全量落库 → 其他会话 CAS 基线过期 409)
                   const errorMessage = updatedNode.message || '生成失败';
-                  node.data.error = errorMessage;
+                  node.data.lastError = errorMessage;
                   updateNodeErrorDisplay(node, errorMessage);
                 }
               }
@@ -3358,18 +3586,24 @@
       }
       
       errorEl.innerHTML = `<strong>生成失败:</strong> ${escapeHtml(errorMessage)}`;
-      
+
       // 给节点添加错误样式
       nodeEl.style.borderColor = '#f44';
+
+      // 状态行/占位同步标记失败（保留查看时间轴按钮）
+      if(window.AiToolTimeline) window.AiToolTimeline.failNode(node.id, errorMessage);
     }
     
     // 更新节点预览显示
     function updateNodePreview(node, url){
       const canvasEl = document.getElementById('canvas');
       const nodeEl = canvasEl ? canvasEl.querySelector(`.node[data-node-id="${node.id}"]`) : null;
-      
+
       if(!nodeEl) return;
-      
+
+      // url 到位：隐藏「生成中」占位 / 状态行标记成功（按钮保留可回看时间轴）
+      if(window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(node);
+
       if(node.type === 'video'){
         // 更新视频节点预览
         const previewField = nodeEl.querySelector('.video-preview-field');

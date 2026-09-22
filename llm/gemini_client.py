@@ -445,6 +445,9 @@ class GeminiClient(BaseLLMClient):
         if not self.api_key or not self.base_url:
             raise Exception("Gemini API Key 或 Base URL 未配置")
 
+        # 欠费熔断：与 OpenAI 兼容客户端一致，余额低于阈值时拒绝发起新调用
+        self._enforce_arrears_breaker(auth_token, vendor_id, model_id, agent_id=agent_id)
+
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"

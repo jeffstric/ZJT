@@ -557,6 +557,10 @@ class UnifiedTaskConfig:
     power_modifiers: List[PowerModifier] = field(default_factory=list)  # 算力修饰符列表
     supports_ref_audio_video: bool = False  # 是否支持参考音频和视频
     max_multi_ref_images: int = 5  # 多参考图模式最大图片数量
+    # 是否支持角色音色参考输入：参考生视频时自动把角色默认音色（克隆源音频）
+    # 作为参考音频下发，并在提示词追加音色说明，让视频模型保持角色同音色。
+    # 不支持的模型（grok/kling 等）完全不注入音频与说明文字。
+    supports_voice_input: bool = False
 
     def get_model_name(self) -> str:
         """获取统一的用户可见模型名。
@@ -747,6 +751,9 @@ class UnifiedTaskConfig:
 
         # 添加参考音频和视频支持标记
         result['supports_ref_audio_video'] = self.supports_ref_audio_video
+
+        # 是否支持角色音色参考输入（参考生视频自动注入角色默认音色）
+        result['supports_voice_input'] = self.supports_voice_input
 
         # 是否走人脸遮盖预处理（seedance 2.0 / 2.5），前端据此显隐「是否处理人脸」选项
         # 单一事实来源：模块级 SEEDANCE_FACE_MASK_DRIVER_KEYS
@@ -1816,6 +1823,12 @@ def pick_request_video_clone_snapshot(snapshots: Optional[Dict[str, Any]], deter
 # ============ Agent 相关常量 ============
 ASK_USER_MAX_CONSECUTIVE_FAILS = 3  # ask_user 连续失败上限（不含超时），超过则终止任务
 COMPUTING_POWER_CHECK_THRESHOLD = 1  # Agent 循环算力检查阈值，低于此值停止任务
+# LLM 欠费熔断：每次付费 LLM 调用前检查用户算力余额，低于阈值直接拒绝本次调用。
+# 背景：token 计费是后付费（task/token_task.py 扣减无下限），余额可被长任务
+# （分段拆分/Agent 循环）扣穿为负。在 LLM 客户端统一入口拦截后，
+# 损失被限制在"熔断前最后一次在途调用"，不会再无限穿透。
+LLM_ARREARS_BREAKER_ENABLED = True
+LLM_ARREARS_BREAKER_THRESHOLD = 1  # 余额低于该值时拒绝发起新的 LLM 调用（与 Agent 循环阈值一致）
 AGENT_POWER_CONFIRM_THRESHOLD = 35  # 用户未自定义时的软阈值：本次/本轮累计超过才确认
 AGENT_POWER_CONFIRM_HARD_THRESHOLD = 200  # 「本次对话不再询问」后仍强制确认的硬阈值
 
@@ -2409,6 +2422,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supports_last_frame=False,
         max_multi_ref_images=9,  # 最多 9 张参考图
         supports_ref_audio_video=True,  # 支持参考音频（≤2）和参考视频（≤2）
+        supports_voice_input=True,  # 参考生自动带入角色音色（LoadAudio ≤2）
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
@@ -2632,6 +2646,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=True,  # 支持参考音频和视频
+        supports_voice_input=True,  # 参考生自动带入角色音色
         max_multi_ref_images=9,
         supports_grid_merge=True,
         power_modifiers=[
@@ -2670,6 +2685,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=True,  # 支持参考音频和视频
+        supports_voice_input=True,  # 参考生自动带入角色音色
         max_multi_ref_images=9,
         supports_grid_merge=True,
         power_modifiers=[
@@ -2710,6 +2726,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=True,  # 支持参考音频和视频
+        supports_voice_input=True,  # 参考生自动带入角色音色
         max_multi_ref_images=9,
         supports_grid_merge=True,
         power_modifiers=[
@@ -2746,6 +2763,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=True,  # 支持参考音频和视频（含纯音频输入）
+        supports_voice_input=True,  # 参考生自动带入角色音色
         max_multi_ref_images=30,  # 2.5 支持最多 30 张参考图
         supports_grid_merge=True,
         power_modifiers=[

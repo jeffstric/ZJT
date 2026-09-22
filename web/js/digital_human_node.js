@@ -64,7 +64,7 @@
           '<div class="field" style="position: relative;">' +
             '<div class="port dh-image-input-port start-image-port" data-port-type="start" title="' + _t('dh_image_port', '连接图片节点') + '"></div>' +
             '<div class="label">' + _t('dh_image_label', '角色图片') + ' <span style="color: red;">*</span></div>' +
-            '<input class="dh-image" type="file" accept="image/*" />' +
+            '<input class="dh-image" type="file" accept="image/*,.tif,.tiff" />' +
             '<button class="mini-btn dh-image-clear" type="button" style="margin-top:4px; display:none;">' + _t('dh_clear_btn', '清除') + '</button>' +
             '<div class="dh-image-preview" style="display:none; margin-top:4px;">' +
               '<img class="dh-image-thumb" style="max-width:100%; max-height:80px; border-radius:4px;" />' +
@@ -241,8 +241,12 @@
           if (!file) return;
           node.data.imageFile = file;
           if (imageThumb.src && imageThumb.src.startsWith('blob:')) URL.revokeObjectURL(imageThumb.src);
-          var localUrl = URL.createObjectURL(file);
-          imageThumb.src = localUrl;
+          // 浏览器 <img> 不解码 TIFF：tif 不做本地 objectURL 预览，
+          // 生成后后端返回的图片 URL 恒为 png
+          if (!(window.isTiffFile && window.isTiffFile(file))) {
+            var localUrl = URL.createObjectURL(file);
+            imageThumb.src = localUrl;
+          }
           imagePreview.style.display = 'block';
           imageClearBtn.style.display = 'inline-block';
         });
@@ -452,6 +456,8 @@
                 newVideoNode.data.name = vName;
                 newVideoNode.title = vName;
                 newVideoNode.data.project_id = projectIds[i];
+                // 视频节点显示「生成中」状态行（含查看状态时间轴按钮）
+                if (window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newVideoId);
 
                 // 更新节点标题显示
                 var newNodeEl = canvasEl.querySelector('.node[data-node-id="' + newVideoId + '"]');

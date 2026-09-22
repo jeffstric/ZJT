@@ -90,6 +90,73 @@ class TestCreateWithPipelineSteps(unittest.TestCase):
     @patch('model.ai_tool_pipeline_steps.PipelineStepModel.create_in_transaction')
     @patch('model.database.execute_insert_in_transaction', return_value=123)
     @patch('model.database.transaction', return_value=_FakeTransaction())
+    def test_reference_whitelist_limits_face_mask_steps(
+        self,
+        mock_transaction,
+        mock_insert,
+        mock_create_step,
+        mock_is_community,
+        mock_config,
+    ):
+        """参考图遮盖白名单：extra_config.face_mask_reference_urls 之外的参考图
+        （道具/场景/画风等）不创建 image_face_mask 步骤，首尾帧 image_path 不受影响"""
+        mock_config.return_value = True
+
+        result = self._call_create(
+            type=23,  # seedance_2_0_image_to_video
+            image_path='start.png',
+            reference_images=json.dumps(['char.png', 'prop.png', 'scene.png']),
+            video_path=None,
+            extra_config=json.dumps({'face_mask_reference_urls': ['char.png']}),
+        )
+
+        self.assertEqual(result, 123)
+        # 首帧 + 仅角色参考图 = 2 个步骤
+        self.assertEqual(mock_create_step.call_count, 2)
+        params = [call.kwargs['params'] for call in mock_create_step.call_args_list]
+        self.assertEqual(params[0]['field'], 'image_path')
+        self.assertEqual(params[0]['image_path'], 'start.png')
+        self.assertEqual(params[1]['field'], 'reference_images')
+        self.assertEqual(params[1]['image_path'], 'char.png')
+        # index 保持原始下标（apply_results 按下标写回 reference_images）
+        self.assertEqual(params[1]['index'], 0)
+
+    @patch('config.config_util.get_dynamic_config_value')
+    @patch('config.constant.Edition.is_community', return_value=False)
+    @patch('model.ai_tool_pipeline_steps.PipelineStepModel.create_in_transaction')
+    @patch('model.database.execute_insert_in_transaction', return_value=123)
+    @patch('model.database.transaction', return_value=_FakeTransaction())
+    def test_reference_whitelist_missing_masks_all(
+        self,
+        mock_transaction,
+        mock_insert,
+        mock_create_step,
+        mock_is_community,
+        mock_config,
+    ):
+        """回归：extra_config 无白名单键时保持旧行为（全部参考图建遮盖步骤）"""
+        mock_config.return_value = True
+
+        result = self._call_create(
+            type=23,
+            image_path=None,
+            reference_images=json.dumps(['char.png', 'prop.png']),
+            video_path=None,
+            extra_config=json.dumps({'image_mode': 'multi_reference'}),
+        )
+
+        self.assertEqual(result, 123)
+        ref_calls = [
+            call for call in mock_create_step.call_args_list
+            if call.kwargs['params'].get('field') == 'reference_images'
+        ]
+        self.assertEqual(len(ref_calls), 2)
+
+    @patch('config.config_util.get_dynamic_config_value')
+    @patch('config.constant.Edition.is_community', return_value=False)
+    @patch('model.ai_tool_pipeline_steps.PipelineStepModel.create_in_transaction')
+    @patch('model.database.execute_insert_in_transaction', return_value=123)
+    @patch('model.database.transaction', return_value=_FakeTransaction())
     def test_image_face_mask_switch_off_skips_image_steps(
         self,
         mock_transaction,

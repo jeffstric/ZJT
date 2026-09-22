@@ -1,5 +1,6 @@
 import state from './state.js';
 import { normalizePagedList } from './adapters.js';
+import { t } from './utils.js';
 
 const API_BASE = '/api/storyboard';
 
@@ -42,7 +43,7 @@ export function handleAuthError(status, data = {}) {
         localStorage.removeItem('user_id');
     } catch (_) { /* ignore */ }
 
-    const message = window.t ? window.t('alert_login_expired') : '登录已过期\n\n您的登录信息已过期，请重新登录。';
+    const message = t('alert_login_expired', '登录已过期\n\n您的登录信息已过期，请重新登录。');
     alert('⚠️ ' + message);
 
     const redirectUrl = window.location.pathname + window.location.search;
@@ -577,5 +578,5 @@ export async function uploadReferenceImage(file) {
         headers: authHeaders(false),
         body: form,
     });
-    return resp.json().catch(() => ({ success: false, error: '上传响应解析失败' }));
+    return resp.json().catch(() => ({ success: false, error: t('msg_upload_response_parse_failed', '上传响应解析失败') }));
 }

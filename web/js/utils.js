@@ -112,6 +112,7 @@ if (typeof window !== 'undefined') {
   window.extractMarkedCharacterNames = extractMarkedCharacterNames;
   window.mergeShotCharacterNames = mergeShotCharacterNames;
   window.truncateRefCollection = truncateRefCollection;
+  window.compressImageFile = compressImageFile;
 }
 
 // Node.js 环境（Vitest）：导出供测试使用
@@ -123,6 +124,119 @@ if (typeof module !== 'undefined') {
     isImageSourceNodeType,
     extractMarkedCharacterNames,
     mergeShotCharacterNames,
-    truncateRefCollection
+    truncateRefCollection,
+    compressImageFile
   };
+}
+
+/**
+ * mime 对应的文件扩展名
+ */
+function extForImageMime(mime) {
+  if (mime === 'image/png') return '.png';
+  if (mime === 'image/webp') return '.webp';
+  return '.jpg';
+}
+
+/**
+ * 用压缩后的 blob 重建 File，保留原文件名主干、按输出格式替换扩展名
+ */
+function fileFromImageBlob(blob, mime, originalName) {
+  const base = String(originalName || 'image').replace(/\.[^.]+$/, '');
+  const name = base + extForImageMime(mime);
+  try {
+    return new File([blob], name, { type: mime });
+  } catch (e) {
+    // 旧浏览器兜底
+    blob.name = name;
+    return blob;
+  }
+}
+
+/**
+ * 将超过大小上限的图片在前端压缩后再上传（仅 video_workflow 页面使用）。
+ *
+ * 策略：优先保持原格式缩放重编码（png/webp，保留透明通道），不达标再依次尝试
+ * webp 0.9 → jpeg 0.9/0.75/0.6（白底填充）；仍未达标则把边长减半再跑一轮。
+ * 全程返回最优结果（可能仍略超上限，由服务端兜底校验）。
+ *
+ * 以下情况原样返回 file，由调用方按超限处理：
+ * - 未超上限 / 非 image/* / GIF（canvas 压缩会丢动画帧）/ 解码失败
+ *
+ * @param {File|Blob} file 待上传图片
+ * @param {number} maxBytes 大小上限（字节）
+ * @returns {Promise<File|Blob>} 原文件或压缩后的新 File
+ */
+async function compressImageFile(file, maxBytes) {
+  if (!file || !maxBytes || file.size <= maxBytes) return file;
+  const type = (file.type || '').toLowerCase();
+  if (!type || type.indexOf('image/') !== 0 || type === 'image/gif') return file;
+
+  const objectUrl = URL.createObjectURL(file);
+  let img;
+  try {
+    img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = function () { resolve(el); };
+      el.onerror = function () { reject(new Error('image decode failed')); };
+      el.src = objectUrl;
+    });
+  } catch (e) {
+    URL.revokeObjectURL(objectUrl);
+    return file;
+  }
+
+  try {
+    const w0 = img.naturalWidth || img.width;
+    const h0 = img.naturalHeight || img.height;
+    if (!w0 || !h0) return file;
+
+    const MAX_DIM = 4096;
+    let scale = Math.min(1, MAX_DIM / Math.max(w0, h0));
+    let best = null; // { blob, mime }
+
+    // 最多两轮：第二轮把边长减半（全页缩略图可接受）
+    for (let round = 0; round < 2; round++) {
+      const w = Math.max(1, Math.round(w0 * scale));
+      const h = Math.max(1, Math.round(h0 * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+
+      const candidates = [];
+      // 同格式优先（png/webp 保留透明；png 无质量参数，仅靠缩放）
+      if (type === 'image/png' || type === 'image/webp') {
+        candidates.push({ mime: type, quality: type === 'image/webp' ? 0.9 : undefined });
+      }
+      candidates.push({ mime: 'image/webp', quality: 0.9 });
+      candidates.push({ mime: 'image/jpeg', quality: 0.9 });
+      candidates.push({ mime: 'image/jpeg', quality: 0.75 });
+      candidates.push({ mime: 'image/jpeg', quality: 0.6 });
+
+      for (let i = 0; i < candidates.length; i++) {
+        const cand = candidates[i];
+        if (cand.mime === 'image/jpeg') {
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, w, h);
+        } else {
+          ctx.clearRect(0, 0, w, h);
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, cand.mime, cand.quality));
+        if (!blob || blob.size === 0) continue;
+        if (!best || blob.size < best.blob.size) best = { blob: blob, mime: cand.mime };
+        if (blob.size <= maxBytes) {
+          return fileFromImageBlob(blob, cand.mime, file.name);
+        }
+      }
+      scale /= 2;
+    }
+
+    // 两轮后仍未达标：返回最优结果，交由服务端校验兜底
+    if (best) return fileFromImageBlob(best.blob, best.mime, file.name);
+    return file;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }

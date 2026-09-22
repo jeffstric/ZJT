@@ -72,6 +72,24 @@
         const LLMVendor = {};
         // 供应商图标映射（从 /api/vendors 动态加载）
         const vendorIcons = {};
+        // 供应商短名映射（模型选择器徽标/闭合态后缀用；未知供应商回退 vendor_name 原文）
+        const VENDOR_SHORT_LABELS = {
+            volcengine: '火山',
+            glmcn: '智谱',
+            aliyun: '阿里',
+            deepseek: 'DeepSeek',
+            claude: 'Claude',
+            agnes: 'Agnes',
+            mimo: 'MiMo',
+            ollama: 'Ollama',
+            vllm: 'vLLM',
+            zjt_api: 'ZJT',
+            jiekou: '接口',
+        };
+        function getVendorShortLabel(vendorName) {
+            const key = String(vendorName || '').toLowerCase();
+            return VENDOR_SHORT_LABELS[key] || vendorName || '';
+        }
         let llmModelCatalog = null;
         let imageModelCatalog = null;
 
@@ -2487,7 +2505,8 @@
                         extraGroup.label = '换供应商';
                         extraRoutes.forEach((route) => {
                             const option = createModelOption(route);
-                            option.textContent = `${route.name || route.model_name}（${route.vendor_name}）`;
+                            // 供应商不内嵌文本，由自定义菜单按 dataset.vendorName 统一渲染徽标
+                            option.textContent = route.name || route.model_name;
                             extraGroup.appendChild(option);
                         });
                         selector.appendChild(extraGroup);
@@ -2678,7 +2697,10 @@
             if (!selectedOption) return;
 
             const conciseName = selectedOption.dataset.conciseName || selectedOption.value || selectedOption.textContent;
-            display.textContent = conciseName;
+            // 闭合态带上供应商短后缀（如「glm-5.3-flash · 智谱」）；display 有
+            // ellipsis，超长自动截断，不会撑破选择器宽度
+            const vendorLabel = getVendorShortLabel(selectedOption.dataset.vendorName);
+            display.textContent = vendorLabel ? `${conciseName} · ${vendorLabel}` : conciseName;
             display.style.color = '';
         }
 
@@ -2757,10 +2779,24 @@
             item.className = 'custom-model-select-option';
             const baseText = option.textContent || option.value;
             const isDefault = isOptionWorldDefault(selector, option);
-            item.textContent = isDefault
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'model-option-name';
+            nameSpan.textContent = isDefault
                 ? `${baseText}（${tOr('default_badge', '默认')}）`
                 : baseText;
-            item.title = baseText;
+            item.appendChild(nameSpan);
+            // 供应商标识：统一由 dataset.vendorName 驱动渲染 pill 徽标，
+            // 选项文本内不再内嵌供应商名（避免与徽标重复）
+            const vendorLabel = getVendorShortLabel(option.dataset.vendorName);
+            if (vendorLabel) {
+                const badge = document.createElement('span');
+                badge.className = 'model-vendor-badge';
+                badge.textContent = vendorLabel;
+                item.appendChild(badge);
+                item.title = `${baseText} · ${vendorLabel}`;
+            } else {
+                item.title = baseText;
+            }
             item.disabled = option.disabled;
             if (option.selected) {
                 item.classList.add('selected');
@@ -3075,7 +3111,13 @@
 
             const selectedOption = selector.options[selector.selectedIndex];
             const vendorName = selectedOption?.dataset?.vendorName || '';
-            const isDoubao = vendorName === 'volcengine' || (selectedOption?.value || '').startsWith('doubao');
+            const modelValue = (selectedOption?.value || '').toLowerCase();
+            // effort 档位选择：volcengine（doubao 系）与 glmcn（GLM 系）均支持，
+            // GLM 的 thinking_effort 由后端 GLM_REASONING_EFFORT_MAP 映射
+            const isDoubao = vendorName === 'volcengine'
+                || vendorName === 'glmcn'
+                || modelValue.startsWith('doubao')
+                || modelValue.startsWith('glm-');
 
             // 只在开关打开且是 Doubao 模型时显示 effort 选择
             effortSelect.style.display = (toggle.checked && isDoubao) ? 'inline-block' : 'none';
@@ -3213,7 +3255,10 @@
             const selectedOption = selector.options[selector.selectedIndex];
             if (!selectedOption) return;
 
-            display.textContent = selectedOption.dataset.conciseName || selectedOption.textContent || selectedOption.value;
+            const conciseName = selectedOption.dataset.conciseName || selectedOption.textContent || selectedOption.value;
+            // 闭合态带上供应商短后缀（与 LLM 模型选择器口径一致）
+            const vendorLabel = getVendorShortLabel(selectedOption.dataset.vendorName);
+            display.textContent = vendorLabel ? `${conciseName} · ${vendorLabel}` : conciseName;
             display.style.color = '';
         }
 

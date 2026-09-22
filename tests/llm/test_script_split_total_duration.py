@@ -247,11 +247,31 @@ def test_declared_duration_keyword_variants():
     assert extract_script_declared_duration_seconds("成片时长：45秒") == 45.0
 
 
+def test_declared_duration_approximation_modifiers():
+    # 数字前「约/大约/大概/近」、单位后「左右/上下」近似修饰均应命中
+    # （线上事故：片长：约3分钟 因约字挡住匹配致 declared 口径丢失）
+    assert extract_script_declared_duration_seconds("片长：约3分钟") == 180.0
+    assert extract_script_declared_duration_seconds("片长约3分钟") == 180.0
+    assert extract_script_declared_duration_seconds("时长:大约90s") == 90.0
+    assert extract_script_declared_duration_seconds("预计约40秒") == 40.0
+    assert extract_script_declared_duration_seconds("总时长：45秒左右") == 45.0
+    assert extract_script_declared_duration_seconds("时长：2分钟上下") == 120.0
+    assert extract_script_declared_duration_seconds("（约30秒）") == 30.0
+    assert extract_script_declared_duration_seconds("(约1.5分钟)") == 90.0
+    # 事故剧本头部原文：片长：约3分钟
+    head = (
+        "视频剧本：《熬夜的代价，与大脑的自救》\n"
+        "片长：约3分钟\n风格：偏科普向，快节奏口播"
+    )
+    assert extract_script_declared_duration_seconds(head) == 180.0
+
+
 def test_declared_duration_ignores_body_time_descriptions():
     # 正文/台词里的时间描述没有关键词引导、也不是纯括号标注 → 不误判
     assert extract_script_declared_duration_seconds("他等了30秒，终于开口。") is None
     assert extract_script_declared_duration_seconds("（他等了30秒。）") is None
     assert extract_script_declared_duration_seconds("林深：再等1分钟就走。") is None
+    assert extract_script_declared_duration_seconds("预计近期上线") is None
     assert extract_script_declared_duration_seconds("") is None
     assert extract_script_declared_duration_seconds(None) is None
 
@@ -515,6 +535,63 @@ def test_enforce_reports_dialogue_floor_exceeded():
     assert total == 60.0
     assert report["merged_shots"] == 0
     assert report["dialogue_floor_exceeded_seconds"] == round(total - cap, 1)
+
+
+def test_enforce_merged_floor_exceeded_reports_gap_vs_total():
+    # 同组两段长台词合并：duration 取 max，台词追加，卡片 20s 盖不住 40s 下限
+    parsed = {
+        "shot_groups": [
+            _group("g1", [
+                {**_shot(1, 40.0), "dialogue": [{"text": "甲" * 90}]},
+                {**_shot(2, 40.0), "dialogue": [{"text": "乙" * 90}]},
+            ]),
+        ],
+        "total_duration": 80,
+    }
+    report = enforce_total_duration_limit(parsed, 20.0)
+    total = sum(s["duration"] for g in parsed["shot_groups"] for s in g["shots"])
+    floor_sum = sum(
+        max(
+            ScriptSplitConstants.TOTAL_DURATION_SHOT_MIN_SECONDS,
+            compute_shot_dialogue_seconds(s),
+        )
+        for g in parsed["shot_groups"] for s in g["shots"]
+    )
+    assert report["merged_shots"] == 1
+    assert total <= 20.0 * (1 + ScriptSplitConstants.TOTAL_DURATION_TOLERANCE)
+    assert floor_sum > total
+    assert report["dialogue_floor_exceeded_seconds"] == round(floor_sum - total, 1)
+
+
+def test_enforce_merged_true_success_does_not_report_floor_exceeded():
+    # 合并把 total 压进容差：台词下限略超 target，但已被卡片时长覆盖 → 真达标
+    parsed = {
+        "shot_groups": [
+            _group("g1", [
+                {**_shot(1, 15.0), "dialogue": [{"text": "你" * 45}]},  # 10s
+                _shot(2, 15.0),
+            ]),
+            _group("g2", [
+                {**_shot(3, 50.0), "dialogue": [{"text": "他" * 54}]},  # 12s
+            ]),
+        ],
+        "total_duration": 80,
+    }
+    report = enforce_total_duration_limit(parsed, 20.0)
+    total = sum(s["duration"] for g in parsed["shot_groups"] for s in g["shots"])
+    floor_sum = sum(
+        max(
+            ScriptSplitConstants.TOTAL_DURATION_SHOT_MIN_SECONDS,
+            compute_shot_dialogue_seconds(s),
+        )
+        for g in parsed["shot_groups"] for s in g["shots"]
+    )
+    cap = 20.0 * (1 + ScriptSplitConstants.TOTAL_DURATION_TOLERANCE)
+    assert report["merged_shots"] >= 1
+    assert total <= cap
+    assert floor_sum > 20.0
+    assert floor_sum <= total
+    assert "dialogue_floor_exceeded_seconds" not in report
 
 
 # ---- engine 段台词字数查找（_segment_plan_dialogue_chars）----

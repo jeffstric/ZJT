@@ -544,6 +544,23 @@
             const selectedDuration = ref('auto');
             const videoImageMode = ref('first_last_frame'); // 'first_last_frame' | 'multi_reference'
 
+            // 素材输出语言：控制图片/视频/数字人/文案素材中的文字与口播语言
+            // 'auto' 跟随界面语言（中文界面不注入，英文界面由后端回落 English）
+            // '__custom__' 使用自定义输入；其余值为语言名原值（中文/English/日本語/한국어/Español）
+            const outputLanguage = ref(localStorage.getItem('marketing_output_language') || 'auto');
+            const outputLanguageCustom = ref(localStorage.getItem('marketing_output_language_custom') || '');
+
+            function onOutputLanguageChange() {
+                localStorage.setItem('marketing_output_language', outputLanguage.value);
+                localStorage.setItem('marketing_output_language_custom', outputLanguageCustom.value.trim());
+            }
+
+            function getEffectiveOutputLanguage() {
+                if (outputLanguage.value === 'auto') return '';
+                if (outputLanguage.value === '__custom__') return outputLanguageCustom.value.trim();
+                return outputLanguage.value;
+            }
+
             // 参考图状态（全能参考模式使用）
             const referenceImageFiles = ref([]);
             const referenceInputRef = ref(null);
@@ -3226,6 +3243,7 @@
                             model_id: selectedLLMModel.value ? selectedLLMModel.value.id : undefined,
                             vendor_id: selectedLLMModel.value ? (selectedLLMModel.value.vendor_id || 1) : 1,
                             language: localStorage.getItem('zjt_locale') || 'zh-CN',
+                            output_language: isAgentMode ? (getEffectiveOutputLanguage() || undefined) : undefined,
                             image_preferences: imagePreferences,
                             video_preferences: isAgentMode ? buildAgentVideoPreferences(validImageUrls, validVideoUrls, validAudioUrls) : undefined
                         }),
@@ -7026,6 +7044,9 @@
                 toggleModelPanel,
                 toggleRatioPanel,
                 toggleSettingsPanel,
+                outputLanguage,
+                outputLanguageCustom,
+                onOutputLanguageChange,
                 powerConfirmThresholdInput,
                 powerConfirmDefault,
                 powerConfirmIsCustom,

@@ -57,6 +57,18 @@
 - 旧工作流无 `videoMode` 字段时，自动使用 `'first_last_frame'`（首帧模式）
 - 序列化/反序列化自动包含 `videoMode` 字段
 
+## 模型与模式兼容性自动迁移
+
+部分模型按模式拆分为多个任务条目（如 MiniMax H3：`minimax_h3` 首尾帧专属 / `minimax_h3_r2v` 多参考专属），跨模式保留旧模型会被后端 `validate_model` 拒绝（`MODEL_INPUT_UNSUPPORTED`「模型 MiniMax H3 不支持多参考图输入」）。历史 BUG：TaskConfig 异步加载完成后的补偿刷新（`workflow.js` `refreshShotFrameNodesModels`）曾把不支持当前模式的已保存模型原样塞回下拉保留，构造出非法组合。
+
+现行为（`web/js/video_model_compat.js` 的 `resolveSavedVideoModelForMode`）：
+
+- 已保存模型**不支持当前模式** → 迁移到当前模式首个可用模型（存量坏组合在下次页面加载时自动纠正）
+- 模型支持当前模式（如仅被驱动状态过滤）→ 保留原值
+- 模型不在配置中（未知）→ 保留原值（沿用历史行为）
+
+回归测试：`web/tests/video_model_compat.test.js`。
+
 ## 批量生成
 
 分镜组节点的"逐个生成视频"功能已兼容混合模式：

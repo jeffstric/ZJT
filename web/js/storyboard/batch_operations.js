@@ -1,5 +1,6 @@
 import state from './state.js';
 import * as api from './api.js';
+import { t } from './utils.js';
 import { autoCompleteMissingFirstFrames } from './auto_missing_images.js';
 import { autoCompleteMissingVideos } from './auto_missing_videos.js';
 import { pollSceneTaskStatus } from './polling.js';
@@ -43,19 +44,21 @@ export async function batchDeleteScenes(sceneIds) {
 }
 
 export function generationResultMessage(kind, result = {}) {
-    if (!result) return `${kind}任务未提交`;
+    if (!result) return t('msg_batch_tasks_not_submitted', '{kind}任务未提交').replace('{kind}', kind);
     if ((result.code || result.error_code) === 'active_batch_exists') {
-        return '当前已有分镜图生成任务进行中，本次未重复提交';
+        return t('msg_batch_already_running', '当前已有分镜图生成任务进行中，本次未重复提交');
     }
     const submitted = Number(result.submitted_count || 0);
     const skipped = Number(result.skipped_count || 0);
     const reused = Number(result.reused_count || 0);
     const regenerated = Number(result.regenerated_count || 0);
     const failed = Number(result.failed_count || 0);
-    const parts = [`${kind}已提交 ${submitted} 项`];
-    if (regenerated) parts.push(`重新生成 ${regenerated} 项`);
-    if (reused) parts.push(`已有 ${reused} 项`);
-    if (skipped) parts.push(`跳过 ${skipped} 项`);
-    if (failed) parts.push(`失败 ${failed} 项`);
-    return parts.join('，');
+    const parts = [
+        t('msg_batch_submitted_n', '{kind}已提交 {n} 项').replace('{kind}', kind).replace('{n}', String(submitted)),
+    ];
+    if (regenerated) parts.push(t('msg_batch_regenerated_n', '重新生成 {n} 项').replace('{n}', String(regenerated)));
+    if (reused) parts.push(t('msg_batch_reused_n', '已有 {n} 项').replace('{n}', String(reused)));
+    if (skipped) parts.push(t('msg_batch_skipped_n', '跳过 {n} 项').replace('{n}', String(skipped)));
+    if (failed) parts.push(t('msg_batch_failed_n', '失败 {n} 项').replace('{n}', String(failed)));
+    return parts.join(t('msg_batch_result_separator', '，'));
 }

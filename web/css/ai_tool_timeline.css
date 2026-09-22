@@ -1,0 +1,348 @@
+/* ai_tool_timeline.css — AI 生成任务事件时间轴弹窗（video_workflow / storyboard 复用）。
+   依赖页面 CSS 变量 --border/--muted/--text/--bg（两页 :root 均有定义，含暗色主题）。 */
+
+.ai-timeline-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 12000;
+}
+
+.ai-timeline-modal {
+  width: min(720px, 92vw);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg, #fff);
+  color: var(--text, #1a1a1a);
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+.ai-timeline-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border, #e0e0e0);
+}
+
+.ai-timeline-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.ai-timeline-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.ai-timeline-tab {
+  border: 1px solid var(--border, #e0e0e0);
+  background: transparent;
+  color: var(--muted, #666);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ai-timeline-tab.is-active {
+  color: var(--text, #1a1a1a);
+  border-color: var(--text, #1a1a1a);
+  font-weight: 600;
+}
+
+.ai-timeline-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-timeline-refresh,
+.ai-timeline-close {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted, #666);
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.ai-timeline-refresh:hover,
+.ai-timeline-close:hover {
+  background: var(--border, #e0e0e0);
+  color: var(--text, #1a1a1a);
+}
+
+.ai-timeline-close {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.ai-timeline-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--muted, #666);
+  border-bottom: 1px solid var(--border, #e0e0e0);
+}
+
+.ai-timeline-badge {
+  display: inline-block;
+  padding: 1px 10px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 12px;
+  background: var(--border, #e0e0e0);
+  color: var(--text, #1a1a1a);
+}
+
+.ai-timeline-badge.is-running { background: #dbeafe; color: #1d4ed8; }
+.ai-timeline-badge.is-pending { background: #fef3c7; color: #b45309; }
+.ai-timeline-badge.is-done { background: #dcfce7; color: #15803d; }
+.ai-timeline-badge.is-failed { background: #fee2e2; color: #b91c1c; }
+
+.ai-timeline-auto-hint {
+  font-size: 11px;
+  color: var(--muted, #666);
+}
+
+.ai-timeline-body {
+  overflow-y: auto;
+  padding: 4px 16px 14px;
+}
+
+.ai-timeline-empty {
+  text-align: center;
+  padding: 30px 0;
+  color: var(--muted, #666);
+  font-size: 13px;
+}
+
+.ai-timeline-error {
+  color: #e53935;
+}
+
+.ai-timeline-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--border, #e0e0e0);
+}
+
+.ai-timeline-item:last-child {
+  border-bottom: none;
+}
+
+.ai-timeline-item-time {
+  width: 96px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-family: Consolas, Menlo, monospace;
+  color: var(--muted, #666);
+}
+
+.ai-timeline-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-timeline-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-timeline-item-label {
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--border, #e0e0e0);
+  color: var(--text, #1a1a1a);
+  padding: 1px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.ai-timeline-item-msg {
+  font-size: 13px;
+  color: var(--text, #1a1a1a);
+  word-break: break-word;
+}
+
+.ai-timeline-item-duration {
+  font-size: 11px;
+  color: var(--muted, #666);
+  white-space: nowrap;
+}
+
+.ai-timeline-item-detail {
+  margin-top: 4px;
+}
+
+.ai-timeline-item-detail a {
+  font-size: 11px;
+  color: var(--muted, #666);
+}
+
+.ai-timeline-item-pre {
+  margin: 4px 0 0;
+  font-size: 11px;
+  background: var(--border, #e0e0e0);
+  color: var(--text, #1a1a1a);
+  padding: 8px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 240px;
+  overflow: auto;
+}
+
+/* ---- 节点 / 候选卡内的「状态」入口按钮 ---- */
+
+.ai-task-timeline-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border, #e0e0e0);
+  background: transparent;
+  color: var(--muted, #666);
+  border-radius: 10px;
+  padding: 1px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ai-task-timeline-btn:hover {
+  color: var(--text, #1a1a1a);
+  border-color: var(--text, #1a1a1a);
+}
+
+/* video_workflow 视频节点状态行内的按钮 */
+.video-status-field .ai-task-timeline-btn {
+  margin-left: 8px;
+}
+
+.video-status-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* video_workflow 图片结果节点「生成中」占位（含状态按钮） */
+.image-generating-placeholder {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border, #e0e0e0);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--muted, #666);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.image-generating-placeholder.is-failed {
+  border-style: solid;
+  border-color: #fcc;
+  background: #fee;
+  color: #c33;
+}
+
+.image-generating-spinner {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 2px solid var(--border, #e0e0e0);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: ai-timeline-spin 0.9s linear infinite;
+}
+
+.image-generating-placeholder.is-failed .image-generating-spinner {
+  display: none;
+}
+
+@keyframes ai-timeline-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* storyboard 候选卡「状态」角标：20px 圆形图标按钮，与删除（右上）、播放（居中）
+   角标统一尺寸，固定左上角。背景：右栏是 ~104px 窄条（见 storyboard.css .main-layout
+   注释），候选卡仅约 84×47px，文字 pill 原底部定位会与居中播放徽标重叠。
+   生成中/失败候选卡整体是 .candidate-thumb.is-loading { pointer-events: none }
+   （禁止点击选中），按钮必须显式恢复 auto 才能点（同 .candidate-delete-button 模式），
+   点击由 ai_tool_timeline.js 捕获阶段委托处理并 stopPropagation，不会误触发选中。 */
+.candidate-timeline-icon {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 5;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.candidate-timeline-icon .sb-icon {
+  width: 11px !important;
+  height: 11px !important;
+  margin: 0;
+}
+
+/* 覆盖 .ai-task-timeline-btn 基类 hover（color/border 切深文字色） */
+.candidate-timeline-icon:hover,
+.candidate-timeline-icon:focus-visible {
+  background: rgba(47, 109, 246, 0.9);
+  border-color: #fff;
+  color: #fff;
+}
+
+/* 已完成候选卡：与删除角标一致，默认隐藏、hover/触屏显现（无 aiToolId 的上传资产不渲染） */
+.candidate-status-button {
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+}
+
+.candidate-thumb:hover .candidate-status-button,
+.candidate-status-button:focus-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* 生成中/失败占位卡：状态入口是该卡主操作，常显（原文字 pill 也是常显） */
+.candidate-placeholder .candidate-timeline-icon {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* 触屏无 hover：已完成卡角标与删除角标一致常显，避免「看不到」 */
+@media (hover: none) {
+  .candidate-status-button {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

@@ -31,6 +31,20 @@ config_util._config_cache["config_unit.yml"] = {
 sys.modules['utils.sentry_util'] = MagicMock()
 sys.modules['utils.image_upload_utils'] = MagicMock()
 
+# 参考音频预算准备依赖 ffprobe/ffmpeg 子进程与文件系统，单测默认直通放行
+# （真实的均分配额/截断/清理逻辑在 tests/utils/test_audio_duration_util.py 覆盖）。
+from task.visual_drivers import seedance_volcengine_v1_driver as _volc_drv_mod  # noqa: E402
+
+
+def _passthrough_reference_audio_budget(paths, max_total_seconds, **kwargs):
+    return [
+        {"source": p, "path": p, "cleanup_path": None, "duration": None, "limit_seconds": 0.0}
+        for p in paths
+    ]
+
+
+_volc_drv_mod.prepare_reference_audio_budget_sync = _passthrough_reference_audio_budget
+
 
 def _create_volcengine_driver(driver_type=23, model_name='doubao-seedance-2-0-260128',
                               api_key='test_api_key'):

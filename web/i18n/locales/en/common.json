@@ -76,5 +76,18 @@
   "nav_generate": "Generate",
   "nav_assets": "Assets",
   "back_to_home": "Back to Home",
-  "in_development": "In Development"
+  "in_development": "In Development",
+  "view_timeline": "View generation timeline",
+  "timeline_btn_status": "Status",
+  "task_timeline": "Task Timeline",
+  "no_timeline_records": "No events yet",
+  "timeline_loading": "Loading...",
+  "timeline_task_status": "Status",
+  "timeline_auto_refresh": "Generating, auto refreshing…",
+  "timeline_detail": "Detail",
+  "timeline_detail_collapse": "Collapse",
+  "timeline_fetch_failed": "Failed to load timeline",
+  "timeline_generating": "Generating...",
+  "timeline_generate_success": "Generated successfully",
+  "timeline_generate_failed": "Generation failed"
 }

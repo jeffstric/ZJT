@@ -139,6 +139,8 @@ MODEL_FAMILIES: Dict[str, str] = {
     "deepseek-v4-pro": "DeepSeek",
     "doubao-seed-2-0-lite": "Doubao",
     "doubao-seed-2-0-pro": "Doubao",
+    "glm-5.3-flash": "GLM",
+    "glm-5.3": "GLM",
     "qwen3.5-plus": "Qwen",
     "qwen3.6-plus": "Qwen",
     "qwen-image-edit": "Qwen",
@@ -324,6 +326,8 @@ def get_model_family(canonical: Optional[str]) -> str:
         return "DeepSeek"
     if "doubao" in lowered or "seed-2-0" in lowered:
         return "Doubao"
+    if "glm" in lowered:
+        return "GLM"
     if "qwen" in lowered:
         return "Qwen"
     if "seedance" in lowered:

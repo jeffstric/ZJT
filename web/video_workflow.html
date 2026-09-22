@@ -20,8 +20,8 @@
   </script>
   <link rel="stylesheet" href="/css/common.css" />
   <link rel="stylesheet" href="/css/video_workflow.css" />
+  <link rel="stylesheet" href="/css/ai_tool_timeline.css?v=__VERSION__" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
-  <link rel="stylesheet" href="/css/image_coloring_editor.css" />
   <link rel="stylesheet" href="/css/image_doodle_editor.css?v=__VERSION__" />
   <link rel="stylesheet" href="/css/pannellum.css" />
   <link rel="stylesheet" href="/css/director_stage.css" />
@@ -188,6 +188,13 @@
                 <path d="M7 15L10 12L13 15L16 11L20 17H4L7 15Z" fill="currentColor" opacity="0.35" />
               </svg>
               <span class="add-menu-text" data-i18n="image">图片</span>
+            </div>
+            <div class="add-menu-item" id="menuAddPromptReverse">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="4" y="5" width="16" height="14" rx="2" stroke="currentColor" stroke-width="2"/>
+                <path d="M8.5 10.5L10 9L11.5 10.5M12.5 15L14 13.5L15.5 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="add-menu-text" data-i18n="prompt_reverse_title">提示词反推</span>
             </div>
             <div class="add-menu-item" id="menuAddCameraControl">
               <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -474,7 +481,7 @@
           </div>
           <div class="field">
             <label class="label" style="color: #0f172a;" data-i18n="style_reference_image">参考图</label>
-            <input type="file" id="styleImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            <input type="file" id="styleImageInput" accept="image/*,.tif,.tiff" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
             <div id="styleImagePreview" style="margin-top: 12px; display: none;">
               <img id="styleImagePreviewImg" style="max-width: 100%; max-height: 200px; border-radius: 8px; border: 1px solid #e5e7eb; object-fit: contain;" />
               <button type="button" id="styleImageRemoveBtn" style="margin-top: 8px; padding: 6px 12px; background: #f3f4f6; color: #111827; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; cursor: pointer;" data-i18n="style_remove_image">移除图片</button>
@@ -602,7 +609,7 @@
           <div class="field-row media-field-row">
             <div class="field">
               <label class="label" style="color: #0f172a;">参考图（主图）</label>
-              <input type="file" id="createCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+              <input type="file" id="createCharacterImageInput" accept="image/*,.tif,.tiff" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
             </div>
             <div class="field">
               <label class="label" style="color: #0f172a;">
@@ -625,7 +632,7 @@
             <div id="createCharacterMultiImages" style="display: flex; flex-direction: column; gap: 8px;">
               <div id="createCharacterMultiImageList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
               <div style="display: flex; gap: 8px; align-items: center;">
-                <input type="file" id="createCharacterMultiImageFile" accept="image/*" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
+                <input type="file" id="createCharacterMultiImageFile" accept="image/*,.tif,.tiff" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
                 <input type="text" id="createCharacterMultiImageLabel" placeholder="标签，如：晚礼服" style="width: 120px; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; font-size: 12px; outline: none;" />
                 <button type="button" id="createCharacterMultiImageAddBtn" style="background: #3b82f6; color: white; border: none; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;" data-i18n="add_image">添加</button>
               </div>
@@ -668,7 +675,7 @@
           </div>
           <div class="field">
             <label class="label" style="color: #0f172a;">参考图（主图）</label>
-            <input type="file" id="createLocationImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            <input type="file" id="createLocationImageInput" accept="image/*,.tif,.tiff" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
           </div>
           <!-- 多角度参考图 -->
           <div class="field" style="margin-top: 8px;">
@@ -679,7 +686,7 @@
             <div id="createLocationMultiImages" style="display: flex; flex-direction: column; gap: 8px;">
               <div id="createLocationMultiImageList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
               <div style="display: flex; gap: 8px; align-items: center;">
-                <input type="file" id="createLocationMultiImageFile" accept="image/*" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
+                <input type="file" id="createLocationMultiImageFile" accept="image/*,.tif,.tiff" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
                 <select id="createLocationMultiImageAngle" style="width: 90px; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px; outline: none;">
                   <option value="front">正面</option>
                   <option value="back">背面</option>
@@ -730,7 +737,7 @@
           </div>
           <div class="field">
             <label class="label" style="color: #0f172a;">参考图</label>
-            <input type="file" id="editLocationImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            <input type="file" id="editLocationImageInput" accept="image/*,.tif,.tiff" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
           </div>
           <!-- 多角度参考图 -->
           <div class="field" style="margin-top: 8px;">
@@ -741,7 +748,7 @@
             <div id="editLocationMultiImages" style="display: flex; flex-direction: column; gap: 12px;">
               <div id="editLocationMultiImageList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
               <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
-                <input type="file" id="editLocationMultiImageFile" accept="image/*" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
+                <input type="file" id="editLocationMultiImageFile" accept="image/*,.tif,.tiff" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
                 <select id="editLocationMultiImageAngle" style="width: 90px; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px; outline: none;">
                   <option value="front">正面</option>
                   <option value="back">背面</option>
@@ -824,7 +831,7 @@
           </div>
           <div class="field">
             <label class="label" style="color: #0f172a;">参考图</label>
-            <input type="file" id="createPropsImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            <input type="file" id="createPropsImageInput" accept="image/*,.tif,.tiff" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
           </div>
         </div>
       </div>
@@ -862,7 +869,7 @@
           </div>
           <div class="field">
             <label class="label" style="color: #0f172a;">参考图</label>
-            <input type="file" id="editPropsImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            <input type="file" id="editPropsImageInput" accept="image/*,.tif,.tiff" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
             <div id="editPropsImagePreview" style="margin-top: 8px; display: none;">
               <img id="editPropsImagePreviewImg" style="max-width: 100%; height: auto; border-radius: 8px;" />
             </div>
@@ -1047,7 +1054,7 @@
           <div class="field-row media-field-row">
             <div class="field">
               <label class="label" style="color: #0f172a;">参考图</label>
-              <input type="file" id="editCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+              <input type="file" id="editCharacterImageInput" accept="image/*,.tif,.tiff" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
               <div id="editCharacterImagePreview" style="margin-top: 8px; display: none;">
                 <img id="editCharacterImagePreviewImg" style="max-width: 100%; height: auto; border-radius: 8px;" />
               </div>
@@ -1073,7 +1080,7 @@
             <div id="editCharacterMultiImages" style="display: flex; flex-direction: column; gap: 12px;">
               <div id="editCharacterMultiImageList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
               <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
-                <input type="file" id="editCharacterMultiImageFile" accept="image/*" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
+                <input type="file" id="editCharacterMultiImageFile" accept="image/*,.tif,.tiff" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
                 <input type="text" id="editCharacterMultiImageLabel" placeholder="标签，如：晚礼服" style="width: 120px; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; font-size: 12px; outline: none;" />
                 <button type="button" id="editCharacterMultiImageAddBtn" style="background: #3b82f6; color: white; border: none; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;" data-i18n="add_image">添加</button>
               </div>
@@ -1116,8 +1123,7 @@
     </div>
   </div>
 
-  <!-- 涂色编辑模态框：可由 image_coloring_editor.js 自注入；此处保留兼容旧缓存页面 -->
-  <!-- 实际 DOM 优先使用脚本 ensureModalDom 注入的结构 -->
+  <!-- 涂鸦编辑模态框：由 image_doodle_editor.js 在 open() 时动态注入 -->
 
   <!-- 时间轴面板 -->
   <div class="timeline-container" id="timelineContainer" style="display:none;">
@@ -1162,6 +1168,8 @@
   <div id="workflowTourPortal" aria-hidden="true"></div>
 
   <script src="/js/escape.js"></script>
+  <script src="/js/tiff_support.js"></script>
+  <script src="/js/ai_tool_timeline.js?v=__VERSION__"></script>
   <script src="/js/state.js?v=__VERSION__"></script>
   <script src="/js/utils.js"></script>
   <script src="/js/node_registry.js"></script>
@@ -1435,13 +1443,13 @@
     }
   </script>
 
-  <script src="/js/image_coloring_editor.js"></script>
   <script src="/js/image_doodle_editor.js?v=__VERSION__"></script>
   <script src="/js/nodes.js?v=__VERSION__"></script>
   <script src="/js/video_node.js?v=__VERSION__"></script>
   <script src="/js/audio_node.js"></script>
   <script src="/js/image_to_video_node.js?v=__VERSION__"></script>
   <script src="/js/image_node.js?v=__VERSION__"></script>
+  <script src="/js/prompt_reverse_node.js?v=__VERSION__"></script>
   <script src="/js/script_split_task.js"></script>
   <script src="/js/script_node.js?v=__VERSION__"></script>
   <script src="/js/shot_group_node.js?v=__VERSION__"></script>
@@ -1456,9 +1464,12 @@
   <script src="/js/vendor/pannellum.min.js"></script>
   <script src="/js/panorama_node.js"></script>
   <script src="/assets/vendor/three.min.js?v=__VERSION__"></script>
+  <script src="/js/director_stage_timeline.js?v=__VERSION__"></script>
   <script src="/js/director_stage_editor.js?v=__VERSION__"></script>
   <script src="/js/director_stage_node.js?v=__VERSION__"></script>
   <script src="/js/shot_frame_generator.js?v=__VERSION__"></script>
+  <script src="/js/voice_reference.js?v=__VERSION__"></script>
+  <script src="/js/video_model_compat.js?v=__VERSION__"></script>
   <script src="/js/video_prompt_suffix.js"></script>
   <script src="/js/shot_frame_video_generator.js"></script>
   <script src="/js/canvas_groups.js?v=__VERSION__"></script>
@@ -1466,6 +1477,7 @@
   <script src="/js/canvas_context_menu.js?v=__VERSION__"></script>
   <script src="/js/canvas_shortcuts.js?v=__VERSION__"></script>
   <script src="/js/events.js?v=__VERSION__"></script>
+  <script src="/js/canvas_drop.js?v=__VERSION__"></script>
   <script src="/js/workflow_layout.js?v=__VERSION__"></script>
 
   <script>
