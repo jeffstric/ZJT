@@ -8,7 +8,9 @@
   - 签约未生效（sign_not_effective=true）：展示琥珀色引导横幅（区别于用户主动解约文案）
   - 老用户（first_bonus_eligible=false）：不展示加赠标签，按每期常规算力展示
 
-需要目标环境的 is_local=false（否则「算力充值」按钮只弹提示不打开弹窗）。
+is_local 由本文件 mock 的 /api/system/server-config 强制为 false：本地部署
+（config is_local=true）时「算力充值」按钮只 alert 提示、不打开弹窗
+（index_app.js handleRechargeClick），不 mock 则本地环境全部用例超时。
 """
 import json as _json
 
@@ -51,7 +53,14 @@ def _mock_subscription_api(page, subscription, recharge_packages=None):
     """mock 订阅相关 API；其余请求透传给真实服务（复用 live_auth 注入的登录态）"""
     def _handler(route):
         url = route.request.url
-        if "/api/subscription/plans" in url or "/api/subscription/status" in url:
+        if "/api/system/server-config" in url:
+            # 本地部署 is_local=true 时「算力充值」只 alert 不开弹窗，强制 false
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=_json.dumps({"code": 0, "data": {"is_local": False}}),
+            )
+        elif "/api/subscription/plans" in url or "/api/subscription/status" in url:
             route.fulfill(
                 status=200,
                 content_type="application/json",
