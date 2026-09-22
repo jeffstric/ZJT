@@ -39,6 +39,20 @@ if _req_mod is None or not hasattr(_req_mod, 'exceptions') or \
 sys.modules['utils.sentry_util'] = MagicMock()
 sys.modules['utils.image_upload_utils'] = MagicMock()
 
+# 参考音频预算准备依赖 ffprobe/ffmpeg 子进程与文件系统，单测默认直通放行
+# （真实的均分配额/截断/清理逻辑在 tests/utils/test_audio_duration_util.py 覆盖）。
+from task.visual_drivers import seedance_kkidc_v1_driver as _kkidc_drv_mod  # noqa: E402
+
+
+def _passthrough_reference_audio_budget(paths, max_total_seconds, **kwargs):
+    return [
+        {"source": p, "path": p, "cleanup_path": None, "duration": None, "limit_seconds": 0.0}
+        for p in paths
+    ]
+
+
+_kkidc_drv_mod.prepare_reference_audio_budget_sync = _passthrough_reference_audio_budget
+
 
 def _ensure_real_requests():
     """确保 requests 是真实模块（而非被其他测试 mock 成的 MagicMock）。
@@ -298,6 +312,70 @@ class TestBuildCreateRequest(unittest.TestCase):
         self.assertEqual(metadata['reference_audios'], ['http://cdn.example.com/a.mp3'])
         self.assertNotIn('reference_images', metadata)
         self.assertNotIn('first_frame_image', metadata)
+
+
+# ============================================================
+# r2v 参考音频预算测试
+# ============================================================
+class TestReferenceAudioBudget(unittest.TestCase):
+    """r2v 参考音频总时长预算：条数截断与均分配额（2.0 系列 ≤15s、≤3 段，与火山一致）"""
+
+    def _driver(self):
+        from task.visual_drivers.seedance_kkidc_v1_driver import Seedance20MiniKkidcV1Driver
+        return _create_driver(Seedance20MiniKkidcV1Driver)
+
+    def test_budget_applied_and_trimmed_uploaded(self):
+        """超配额音频：上传截断后的 prepared 路径，预算函数收到 15.0，临时文件被清理"""
+        from task.visual_drivers import seedance_kkidc_v1_driver as drv_mod
+        driver = self._driver()
+        budget_items = [
+            {"source": 'http://example.com/a.mp3', "path": '/tmp/trimmed.mp3',
+             "cleanup_path": '/tmp/trimmed.mp3', "duration": 20.0, "limit_seconds": 7.25},
+            {"source": 'http://example.com/b.mp3', "path": 'http://example.com/b.mp3',
+             "cleanup_path": None, "duration": 3.0, "limit_seconds": 7.25},
+        ]
+        ai_tool = _make_ai_tool(prompt='预算测试', image_path=None, image_mode_declared=False,
+                                audio_path='http://example.com/a.mp3,http://example.com/b.mp3')
+        with patch.object(drv_mod, 'prepare_reference_audio_budget_sync',
+                          return_value=budget_items) as mock_budget, \
+             patch.object(drv_mod, 'upload_media_to_cdn_sync',
+                          side_effect=lambda path, cfg: (
+                              (True, 'http://cdn.example.com/trimmed.mp3', None)
+                              if 'trimmed' in str(path)
+                              else (True, 'http://cdn.example.com/b.mp3', None))) as mock_upload, \
+             patch.object(drv_mod, 'cleanup_prepared_reference_audio') as mock_cleanup:
+            req = driver.build_create_request(ai_tool)
+
+        mock_budget.assert_called_once()
+        self.assertEqual(mock_budget.call_args[0][1], 15.0)
+        uploaded = [str(c[0][0]) for c in mock_upload.call_args_list]
+        self.assertTrue(any('trimmed' in p for p in uploaded))
+        self.assertEqual(req['json']['metadata']['reference_audios'],
+                         ['http://cdn.example.com/trimmed.mp3', 'http://cdn.example.com/b.mp3'])
+        mock_cleanup.assert_called_once_with(budget_items)
+
+    def test_over_count_truncated_to_three(self):
+        """5 条音频超出条数上限 3：仅前 3 条进入预算"""
+        from task.visual_drivers import seedance_kkidc_v1_driver as drv_mod
+        driver = self._driver()
+        five_urls = ','.join(f'http://example.com/a{i}.mp3' for i in range(5))
+        first_three = five_urls.split(',')[:3]
+        budget_items = [
+            {"source": p, "path": p, "cleanup_path": None, "duration": None, "limit_seconds": 0.0}
+            for p in first_three
+        ]
+        ai_tool = _make_ai_tool(prompt='条数测试', image_path=None, image_mode_declared=False,
+                                audio_path=five_urls)
+        with patch.object(drv_mod, 'prepare_reference_audio_budget_sync',
+                          return_value=budget_items) as mock_budget, \
+             patch.object(drv_mod, 'upload_media_to_cdn_sync',
+                          return_value=(True, 'http://cdn.example.com/a.mp3', None)), \
+             patch.object(drv_mod, 'cleanup_prepared_reference_audio'):
+            req = driver.build_create_request(ai_tool)
+
+        mock_budget.assert_called_once()
+        self.assertEqual(mock_budget.call_args[0][0], first_three)
+        self.assertEqual(len(req['json']['metadata']['reference_audios']), 3)
 
 
 # ============================================================

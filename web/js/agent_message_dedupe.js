@@ -40,7 +40,21 @@
 
   function formatAgentUserMessageForDisplay(content) {
     const preferences = [];
+    // [输出语言要求] 是多行指令块（API 层由 OUTPUT_LANGUAGE_INSTRUCTION_TEMPLATE 追加），
+    // 整块折叠，detail 提取语言名（"输出语言为：X。"）
     let displayContent = normalizeContent(content).replace(
+      /\n*\[输出语言要求\]\s*\n([\s\S]*?)(?=\n\n\[|$)/g,
+      function(_match, body) {
+        const firstLine = (body.split('\n')[0] || '').trim();
+        const langMatch = firstLine.match(/输出语言为：(.+?)。/);
+        preferences.push({
+          label: '输出语言要求',
+          detail: langMatch ? langMatch[1] : firstLine
+        });
+        return '';
+      }
+    );
+    displayContent = displayContent.replace(
       /\n*\[(用户图片偏好|用户视频偏好)]\s*([^\n]*)/g,
       function(_match, label, detail) {
         preferences.push({ label: label, detail: detail });

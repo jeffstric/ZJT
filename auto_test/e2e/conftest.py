@@ -4,8 +4,10 @@ E2E 测试核心 fixtures。
 """
 import json
 import os
+import platform
 import re
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -89,6 +91,94 @@ def _skip_or_fail(message: str):
     if os.getenv("E2E_STRICT", "").lower() in {"1", "true", "yes"}:
         pytest.fail(message)
     pytest.skip(message)
+
+
+# ──────────────────────────── e2e 单跑锁 ────────────────────────────
+
+# 登录接口是单会话策略：同账号任何一次新登录都会删掉该账号全部旧 token。
+# 两个 e2e 并发跑时，各自 session 登录会互顶 token，live_auth 的自愈重登
+# 又顶掉对方，两个进程互相顶号、全程连环 401（实测并发跑各失败 24/25 个
+# 用例，全部为 401/跳登录页）。session 启动时检测到有效锁立即退出。
+_E2E_LOCK_FILE = Path(__file__).resolve().parent / ".e2e_run.lock"
+# 全量一轮约 20 分钟；超过 45 分钟视为残留锁（进程崩溃未清理），直接接管。
+_E2E_LOCK_STALE_SECONDS = 45 * 60
+
+
+def _pid_alive(pid: int) -> bool:
+    """跨平台进程存活判断（Windows 下 signal 0 仅探活）。"""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+class _E2eRunLock:
+    """e2e 单跑文件锁：防并发运行互相顶掉主账号 token。"""
+
+    def acquire(self):
+        lock_path = Path(__file__).resolve().parent / ".e2e_run.lock"
+        info = None
+        if lock_path.exists():
+            try:
+                info = json.loads(lock_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                info = None
+        if isinstance(info, dict):
+            pid = int(info.get("pid") or 0)
+            try:
+                age = time.time() - float(info.get("started_at") or 0)
+            except (TypeError, ValueError):
+                age = 0.0
+            if 0 <= age < _E2E_LOCK_STALE_SECONDS and pid != os.getpid() and _pid_alive(pid):
+                pytest.exit(
+                    "检测到另一个 e2e 运行正在进行（pid=%s，已运行 %d 秒，主机 %s）。\n"
+                    "登录接口为单会话策略，并发运行会互相顶掉主账号 token，导致大面积 401 连环失败。\n"
+                    "请等待其结束后再运行；确认对方已退出可删除锁文件 %s"
+                    % (pid, int(age), info.get("host", "?"), lock_path),
+                    returncode=1,
+                )
+        lock_path.write_text(
+            json.dumps({
+                "pid": os.getpid(),
+                "started_at": time.time(),
+                "host": platform.node(),
+            }),
+            encoding="utf-8",
+        )
+        print(f"[e2e] 单跑锁已获取 pid={os.getpid()}")
+
+    def release(self):
+        lock_path = Path(__file__).resolve().parent / ".e2e_run.lock"
+        try:
+            if lock_path.exists():
+                info = json.loads(lock_path.read_text(encoding="utf-8"))
+                if int(info.get("pid") or 0) == os.getpid():
+                    lock_path.unlink()
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            pass
+
+
+_e2e_run_lock = None
+
+
+def pytest_sessionstart(session):
+    global _e2e_run_lock
+    _e2e_run_lock = _E2eRunLock()
+    _e2e_run_lock.acquire()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    global _e2e_run_lock
+    if _e2e_run_lock is not None:
+        _e2e_run_lock.release()
+        _e2e_run_lock = None
 
 
 # ──────────────────────────── 配置 ────────────────────────────
@@ -223,13 +313,21 @@ class _LiveAuth:
 
     登录接口是单会话策略：同用户任何一次新登录都会删除其全部旧 token
     （auth_service.py `delete_by_user_id`）。长跑全量时 token 可能被顶掉：
-    - 套件内：test_auth 的登录端点用例（用主账号 POST /api/auth/login）；
-    - 套件外：手动 UI 登录、另一个 e2e/脚本并发登录主账号。
+    - 套件外：手动 UI 登录、另一个 e2e/脚本并发登录主账号（两个 e2e 并发
+      运行会互相顶号形成 401 死循环，由模块级 e2e 单跑锁在启动时拦截）。
     token 失效后，注入旧 token 的浏览器用例 401 跳登录页、API 用例 400，
     连环超时/失败。ensure() 在每个用例前校验（一次轻量 GET），失效则重登
     （只顶掉已失效的旧 token，是净收益）并同步更新共享的 auth_headers dict，
     使所有已创建的 api_client（headers 传的是该 dict 引用）自动用上新 token。
+
+    熔断保护：若 60 秒内已重登 >=3 次，说明有并发 e2e 运行或外部进程在持续
+    登录主账号——继续重登只会与对方互相顶号（本次重登顶掉对方、对方下次
+    登录又顶掉我们），形成死循环。此时放弃自愈并提示排查，让后续用例如实
+    以 401 暴露问题，而不是制造更多登录。
     """
+
+    _RELOGIN_WINDOW_SECONDS = 60
+    _RELOGIN_MAX_PER_WINDOW = 3
 
     def __init__(self, e2e_config, base_url, initial):
         self._e2e_config = e2e_config
@@ -237,6 +335,8 @@ class _LiveAuth:
         self.token = initial["token"]
         self.user_id = initial["user_id"]
         self._headers = None
+        self._relogin_times = []
+        self._contended = False
 
     def attach_headers(self, headers):
         self._headers = headers
@@ -266,7 +366,23 @@ class _LiveAuth:
             return True
 
     def ensure(self):
+        if self._contended:
+            # 已进入互顶状态：不再重登（重登只会继续顶号），让用例如实 401
+            return
         if self._is_valid():
+            return
+        now = time.time()
+        self._relogin_times = [
+            t for t in self._relogin_times
+            if now - t < self._RELOGIN_WINDOW_SECONDS
+        ]
+        if len(self._relogin_times) >= self._RELOGIN_MAX_PER_WINDOW:
+            self._contended = True
+            print(
+                f"[e2e] 熔断：{self._RELOGIN_WINDOW_SECONDS} 秒内已重登 "
+                f"{self._RELOGIN_MAX_PER_WINDOW} 次以上，主账号正被并发登录持续顶号"
+                "（常见于另一个 e2e 运行或手动登录）。放弃自动重登，请排查并发来源。"
+            )
             return
         print("[e2e] session token 已失效（可能被新登录顶掉），重新登录主账号以保护后续用例")
         fresh = _login_with_credentials(self._e2e_config, self._base_url, "primary")
@@ -275,6 +391,7 @@ class _LiveAuth:
         if self._headers is not None:
             self._headers["Authorization"] = f"Bearer {self.token}"
             self._headers["X-User-Id"] = self.user_id
+        self._relogin_times.append(now)
 
 
 @pytest.fixture(scope="session")
@@ -356,8 +473,14 @@ def browser():
 
 
 @pytest.fixture
-def browser_context(browser, live_auth, base_url, request):
-    """浏览器上下文，注入 localStorage 认证信息（活凭证：token 被顶掉时已重登）"""
+def browser_context(browser, live_auth, base_url, request, e2e_config):
+    """浏览器上下文，注入 localStorage 认证信息（活凭证：token 被顶掉时已重登）。
+
+    连同 phone 一起模拟真实登录的双写（persistBrowserAuth 必写 phone）：
+    index 页 isLoggedIn 要求 authToken && (phone||email)（index_app.js），
+    缺 phone 时顶栏渲染未登录态——「算力充值」等已登录 UI 不出现，
+    依赖它的用例（test_subscription_ui 等）会点按钮超时。
+    """
     live_auth.ensure()
     context = browser.new_context(
         viewport={"width": 1280, "height": 720},
@@ -367,9 +490,13 @@ def browser_context(browser, live_auth, base_url, request):
     if results_dir:
         context.tracing.start(screenshots=True, snapshots=True, sources=True)
     # 注入 localStorage 认证信息，跳过 UI 登录
+    primary_phone = (
+        e2e_config.get("credentials", {}).get("primary", {}) or {}
+    ).get("phone", "")
     context.add_init_script(f"""
         localStorage.setItem('auth_token', '{live_auth.token}');
         localStorage.setItem('user_id', '{live_auth.user_id}');
+        localStorage.setItem('phone', '{primary_phone}');
     """)
     yield context
     if results_dir:

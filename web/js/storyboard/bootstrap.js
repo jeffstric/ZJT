@@ -25,6 +25,7 @@ import { resumePollingTasks, pollScriptSplitTask, stopScriptSplitTaskPolling } f
 import { autoGenerateMissingFirstFrames } from './auto_missing_images.js';
 import { resumeAutoMissingVideos } from './auto_missing_videos.js';
 import { stopPlayback, updatePlayheadPosition } from './playback.js';
+import { t as i18nT } from './utils.js';
 
 let pageLifecycleBound = false;
 
@@ -38,7 +39,7 @@ async function loadStoryboard() {
     }
 
     if (!state.worldId) {
-        throw new Error('缺少 world_id，无法创建故事板');
+        throw new Error(i18nT('msg_missing_world_id', '缺少 world_id，无法创建故事板'));
     }
 
     const defaults = await api.getStoryboardCreateDefaults(state.worldId);
@@ -73,6 +74,13 @@ async function initI18n() {
     if (window.ZJTi18n && typeof window.ZJTi18n.init === 'function') {
         await window.ZJTi18n.init(['common', 'storyboard']).catch(() => {});
     }
+    // 语言切换后整页重渲染：页面文案经 t() 在渲染期求值，需重建 DOM 才能切换
+    if (window.ZJTi18n && typeof window.ZJTi18n.on === 'function') {
+        window.ZJTi18n.on('locale-changed', () => {
+            document.title = i18nT('storyboard_title', '故事板编辑器');
+            renderApp();
+        });
+    }
     // 可选：扫描 DOM 中的 data-i18n 属性（与其他页面保持一致）
     if (window.ZJTi18nDOM && typeof window.ZJTi18nDOM.scanDOM === 'function') {
         window.ZJTi18nDOM.scanDOM(document);
@@ -96,10 +104,10 @@ async function maybePromptGenerateFromScript() {
             state.showGenerateProgressDialog = true;
             state.generateProgressError = '';
             state.generateProgressSteps = [
-                { name: '规划分段', status: 'pending', phase: 'planning' },
-                { name: '逐段拆分', status: 'pending', phase: 'segment_generation' },
-                { name: '合并校验', status: 'pending', phase: 'merging' },
-                { name: '发布分镜', status: 'pending', phase: 'publishing' },
+                { name: i18nT('step_plan', '规划分段'), status: 'pending', phase: 'planning' },
+                { name: i18nT('step_segment', '逐段拆分'), status: 'pending', phase: 'segment_generation' },
+                { name: i18nT('step_merge', '合并校验'), status: 'pending', phase: 'merging' },
+                { name: i18nT('step_publish', '发布分镜'), status: 'pending', phase: 'publishing' },
             ];
             applyGenerateProgressStatus(activeTask);
             renderApp();
@@ -151,13 +159,13 @@ function pollScriptSplitTaskForRecovery(taskId) {
         },
         onPaused: (statusData) => {
             markRunningFailed();
-            state.generateProgressError = statusData.message || '任务暂停，请刷新页面后继续';
+            state.generateProgressError = statusData.message || i18nT('msg_task_paused_refresh', '任务暂停，请刷新页面后继续');
             state.isGeneratingFromScript = false;
             renderApp();
         },
         onError: (error) => {
             markRunningFailed();
-            state.generateProgressError = error.message || '生成分镜失败';
+            state.generateProgressError = error.message || i18nT('msg_generate_scenes_failed', '生成分镜失败');
             state.isGeneratingFromScript = false;
             renderApp();
         },
@@ -316,12 +324,12 @@ export async function continueCreateWithRatio(ratio) {
     const allowed = new Set(['16:9', '9:16']);
     const workflowRatio = allowed.has(ratio) ? ratio : (state.pendingCreateRatio || '16:9');
     if (!allowed.has(workflowRatio)) {
-        state.ratioConfirmError = '请选择视频比例 16:9 或 9:16';
+        state.ratioConfirmError = i18nT('msg_choose_video_ratio', '请选择视频比例 16:9 或 9:16');
         renderApp();
         return;
     }
     if (!state.worldId) {
-        state.ratioConfirmError = '缺少 world_id，无法创建故事板';
+        state.ratioConfirmError = i18nT('msg_missing_world_id', '缺少 world_id，无法创建故事板');
         renderApp();
         return;
     }
@@ -351,7 +359,7 @@ export async function continueCreateWithRatio(ratio) {
         state.isCreatingStoryboard = false;
         state.ratioGateActive = true;
         state.showRatioConfirmDialog = true;
-        state.ratioConfirmError = error.message || '创建故事板失败，请重试';
+        state.ratioConfirmError = error.message || i18nT('msg_create_storyboard_failed', '创建故事板失败，请重试');
         renderApp();
     }
 }
@@ -367,7 +375,7 @@ async function main() {
     initStateFromUrl();
 
     if (!state.userId) {
-        throw new Error('缺少用户信息，请从剧本策划页面重新进入故事板');
+        throw new Error(i18nT('msg_missing_user_info', '缺少用户信息，请从剧本策划页面重新进入故事板'));
     }
 
     await initI18n();
@@ -402,7 +410,7 @@ main().catch((error) => {
     if (handleAuthError(error.status, error.response || error.payload || {})) {
         return;
     }
-    state.error = error.message || '故事板初始化失败';
+    state.error = error.message || i18nT('msg_storyboard_init_failed', '故事板初始化失败');
     state.ratioGateActive = false;
     state.showRatioConfirmDialog = false;
     renderApp();

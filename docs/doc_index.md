@@ -100,7 +100,7 @@
 | 文档 | 说明 | 飞书链接 |
 |------|------|----------|
 | [图片模式指南](image/image_mode_guide.md) | 图片生成模式说明 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Rq8Jd9xzMoCkBWx6Vj3cRiypnDh) |
-| [图片上色编辑](image/image_coloring_edit.md) | 图片上色和编辑功能 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Nmo8dup7HoIY2rxGmE0cTKD9nwe) |
+| [图片涂鸦编辑](image/doodle_editor/涂鸦编辑功能开发方案.md) | 图片涂鸦编辑功能（画笔/橡皮/文字/矩形，旧版涂色编辑已下线） | 待补充 |
 | [网格图片生成](image/grid_image_generation.md) | 多宫格图片生成逻辑 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Y5SydIR1LoKxQ6xFHiNcCnODncY) |
 | [图片节点参考连接](image/image_node_reference_connections.md) | 图片节点的参考图连接 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/WOnIdUz7cou3l9xV801c6GEnnde) |
 | [GPT Image 2 集成](image/gpt_image_2_integration.md) | GPT Image 2 图片生成 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/J2zAdNXRyoStpkxgVXQc523xn6c) |
@@ -166,6 +166,7 @@
 | [流水线步骤](backend/pipeline_steps.md) | 流水线处理流程 | 待补充 |
 | [图片压缩](backend/image_compression.md) | 后端图片压缩方案 | 待补充 |
 | [算力多维度计算](backend/算力多维度计算方案.md) | 算力计算方案 | 待补充 |
+| [LLM 欠费熔断与输入缓存优化](backend/llm_arrears_breaker_and_input_cache.md) | 欠费熔断 + 剧本拆分 prompt 缓存命中优化 | 待补充 |
 | [邀请佣金系统](backend/invite_commission.md) | 邀请算力奖励、渠道佣金门控与提现 | 已更新 |
 | [Agent 消息持久化](backend/agent_chat_message_persistence_design.md) | Agent 消息存储 | 待补充 |
 | [驱动配置要求](backend/driver_config_requirements.md) | 驱动配置规范 | 待补充 |
@@ -233,5 +234,6 @@
 | [短信驱动架构](短信驱动架构说明.md) | 短信服务架构 | 待补充 |
 | [数字人节点设计](superpowers/specs/2026-06-14-digital-human-node-power-and-draw-design.md) | 数字人算力与绘制设计 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/T5Cld9mDmoeX0xxAZSWcZGVsnRb) |
 | [前端改进计划](frontend_improvement_plan.md) | 前端架构优化方案 | 待补充 |
+| [故事板多语言接入](storyboard/storyboard_i18n.md) | storyboard.html 接入 i18n：渲染期 t() 求值 + 语言切换整页重渲染，750+ 词条 | 待补充 |
 | [开发者指南](README.md) | 开发者环境搭建与启动 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Gl6mdDADfoqhw6xGvB1cssv7nWd) |
 | [视频功能文档索引](video/README.md) | 视频功能文档索引 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/EjwJdnTK9oCvJtxanPGc1Whtnpf) |

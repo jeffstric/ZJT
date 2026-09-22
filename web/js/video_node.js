@@ -64,7 +64,10 @@
             </div>
           </div>
           <div class="field field-always-visible video-status-field" style="display:none;">
-            <div class="gen-meta video-status"></div>
+            <div class="video-status-row">
+              <div class="gen-meta video-status"></div>
+              <button type="button" class="ai-task-timeline-btn" title="${window.t ? window.t('view_timeline') : '查看生成状态时间轴'}">${window.t ? window.t('timeline_btn_status') : '状态'}</button>
+            </div>
           </div>
         </div>
       `;

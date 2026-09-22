@@ -18,7 +18,9 @@ const helperMatch = renderSource.match(
 );
 assert.ok(helperMatch, 'render.js should define digitalHumanAudioHint(scene)');
 
-const context = {};
+// digitalHumanAudioHint 内部使用 i18nT(key, fallback)；vm 沙箱注入兜底 stub，
+// 断言的仍是中文 fallback（与 utils.js t 语义一致）。
+const context = { i18nT: (key, fallback) => (fallback === undefined ? key : fallback) };
 vm.runInNewContext(`${helperMatch[0]}\nresult = digitalHumanAudioHint;`, context);
 const hint = context.result;
 

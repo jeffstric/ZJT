@@ -6,6 +6,7 @@ import {
     sceneToPromptPayload,
 } from './adapters.js';
 import { getThumbnailUrl, refresh, Region } from './render.js';
+import { t } from './utils.js';
 
 let activePopover = null;
 let saving = false;
@@ -37,13 +38,13 @@ function getAssetPrimaryUrl(asset) {
 }
 
 function buildOptions(asset, variantType) {
-    const labelNoun = variantType === 'location' ? '角度' : '服装';
+    const labelNoun = variantType === 'location' ? t('label_angle', '角度') : t('label_outfit', '服装');
     const options = [];
     const primaryUrl = getAssetPrimaryUrl(asset);
     if (primaryUrl) {
         options.push({
             url: primaryUrl,
-            label: '默认',
+            label: t('label_default', '默认'),
             angle: '',
             source: 'reference_image',
         });
@@ -166,7 +167,7 @@ function renderOptions({ title, options, currentUrl, emptyText, onSwitchLocation
         <div class="reference-variant-popover" role="dialog" aria-label="${escapeHtml(title)}">
             <div class="reference-variant-header">
                 <strong>${escapeHtml(title)}</strong>
-                ${onSwitchLocation ? '<button class="reference-variant-switch" data-reference-switch-location>切换场景</button>' : ''}
+                ${onSwitchLocation ? `<button class="reference-variant-switch" data-reference-switch-location>${escapeHtml(t('btn_switch_location', '切换场景'))}</button>` : ''}
             </div>
             <div class="reference-variant-grid">
                 ${options.map((option, index) => `
@@ -174,7 +175,7 @@ function renderOptions({ title, options, currentUrl, emptyText, onSwitchLocation
                         data-reference-option-index="${index}"
                         aria-label="${escapeHtml(option.label)}">
                         <span class="reference-variant-thumb">
-                            ${option.url ? `<img src="${escapeHtml(getThumbnailUrl(option.url, 96))}" alt="">` : '<span>无图</span>'}
+                            ${option.url ? `<img src="${escapeHtml(getThumbnailUrl(option.url, 96))}" alt="">` : `<span>${escapeHtml(t('label_no_image', '无图'))}</span>`}
                         </span>
                         <span class="reference-variant-name">${escapeHtml(option.label)}</span>
                         ${option.url === currentUrl ? '<span class="reference-variant-check">✓</span>' : ''}
@@ -201,7 +202,9 @@ export function openReferenceVariantSelector({
         ? findLocation(scene, locationId)
         : findCharacter({ characterId, characterName });
     if (!asset) {
-        notify(type === 'location' ? '当前分镜还没有可选择的场景' : '未找到该角色资产');
+        notify(type === 'location'
+            ? t('msg_no_location_to_select', '当前分镜还没有可选择的场景')
+            : t('msg_character_asset_not_found', '未找到该角色资产'));
         return false;
     }
 
@@ -212,14 +215,16 @@ export function openReferenceVariantSelector({
     const current = type === 'location' ? selections.location : selections.characters[key];
     const currentUrl = current?.url || getAssetPrimaryUrl(asset);
     const title = type === 'location'
-        ? `选择场景角度 · ${asset.name || scene.location?.name || '场景'}`
-        : `选择角色服装 · ${asset.name || characterName}`;
+        ? t('title_select_location_angle_named', '选择场景角度 · {name}')
+            .replace('{name}', asset.name || scene.location?.name || t('label_location', '场景'))
+        : t('title_select_character_outfit', '选择角色服装 · {name}')
+            .replace('{name}', asset.name || characterName);
     const popover = document.createElement('div');
     popover.innerHTML = renderOptions({
         title,
         options,
         currentUrl,
-        emptyText: type === 'location' ? '暂无其他角度' : '暂无其他服装',
+        emptyText: type === 'location' ? t('hint_no_other_angles', '暂无其他角度') : t('hint_no_other_outfits', '暂无其他服装'),
         onSwitchLocation: type === 'location' && typeof openLocationSwitcher === 'function',
     });
     activePopover = popover.firstElementChild;
@@ -262,7 +267,8 @@ export function openReferenceVariantSelector({
             });
             closePopover();
         } catch (error) {
-            notify(`保存参考图选择失败: ${error.message || error}`);
+            notify(t('msg_save_reference_selection_failed', '保存参考图选择失败: {reason}')
+                .replace('{reason}', String(error.message || error)));
         } finally {
             saving = false;
             if (activePopover) activePopover.classList.remove('saving');

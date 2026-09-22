@@ -178,6 +178,11 @@ OMNI_REFERENCE_TASK_TYPE_EDIT = "edit"
 # 计费前 ffprobe 探测单个参考视频时长的超时（秒）
 REFERENCE_VIDEO_DURATION_PROBE_TIMEOUT = 10
 
+# ===== 参考生视频角色音色注入（supports_voice_input 能力位门控）=====
+# 单次生成最多注入的角色音色参考音频数：受 MiniMax H3 LoadAudio 槽位硬上限（2）约束，
+# 注入侧统一截断；驱动层对超限音频另有兜底截断。
+MAX_VOICE_REFERENCE_AUDIOS = 2
+
 # ===== Windows uv 托盘启动器 =====
 # launcher bootstrap 运行在 Web 服务启动之前；所有外部进程仍必须有硬超时，
 # 防止首次安装或损坏的依赖环境让启动窗口永久卡住。
@@ -492,6 +497,17 @@ CHARACTER_VOICE_MAX_DURATION = 20.0
 # 角色参考音频裁剪时 ffmpeg/ffprobe 单次执行超时（秒）
 CHARACTER_VOICE_TRIM_TIMEOUT = 30
 
+# Seedance r2v 参考音频总时长预算（秒）。官方 2.0 系列（含 mini）r2v 音频总时长 ≤15s
+# （API 容差 15.2s，即线上报错值）；2.5 系列 ≤30s。角色上传侧裁剪到 20s（TTS 需要），
+# 因此驱动提交前需按预算对超长音频自动截断。
+SEEDANCE_R2V_AUDIO_MAX_TOTAL_DURATION = 15.0
+SEEDANCE_2_5_AUDIO_MAX_TOTAL_DURATION = 30.0
+# 总时长预算的安全余量（秒）：均分配额 = (总上限 - 余量) / 音频条数，
+# 用于覆盖 -acodec copy 帧对齐导致的截断点正偏差。
+SEEDANCE_R2V_AUDIO_TOTAL_DURATION_SAFETY_MARGIN = 0.5
+# Seedance 参考音频截断时 ffmpeg 单次执行超时（秒）
+SEEDANCE_R2V_AUDIO_TRIM_TIMEOUT = 30
+
 # MiniMax H3 提交前提示词优化（param_prepare）
 # 单次 LLM 调用外层 wait_for 超时；_call_llm 会把同一值作为底层 request_timeout 传入，
 # 使 httpx 超时与外层对齐，避免超时后底层线程残留空跑到 LLM_HTTP_TIMEOUT_SECONDS。
@@ -651,9 +667,23 @@ class SceneDifficulty:
         return normalized if normalized in cls.VALID_VALUES else cls.DEFAULT
 
 
-# 社区版最大注册用户数（商业版由 enterprise 模块注入 Provider 解除限制，
-# 见 services/registration_quota.py）
-COMMUNITY_MAX_REGISTERED_USERS = 10
+# 社区版（开源版）最大激活用户数（users.status = 1 计数；禁用/待审核不计入，
+# 管理员可禁用用户释放名额）。商业版由 enterprise 模块注入 Provider 按许可证
+# edition 分档限制，见 services/registration_quota.py
+COMMUNITY_MAX_ACTIVE_USERS = 1
+
+
+class UserStatus:
+    """用户状态（users.status 取值；登录仅允许 NORMAL，其余状态拒绝登录）"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'DISABLED': '禁用',
+        'NORMAL': '正常',
+        'PENDING': '待审核',
+    }
+    DISABLED = 0    # 禁用（登录拒绝；不计入激活用户数配额）
+    NORMAL = 1      # 正常（唯一允许登录的状态）
+    PENDING = 2     # 待审核（注册后待管理员审批，登录拒绝）
 
 
 class Edition:
@@ -1375,6 +1405,28 @@ class ScriptSplitQcConstants:
     PREVIOUS_RESULT_MAX_CHARS = 120000
 
 
+class ScriptDurationRateConstants:
+    """剧本朗读速率常量（生成端预算 / 拆分端锚定 / 前端估算三端共用）。
+
+    见 docs/script/story_writer_duration_budget.md。修改任一数值必须同步：
+    - web/js/storyboard/render.js（estimateScriptDurationSeconds 附近）
+    - web/js/script_node.js（同公式副本）
+    - tests/js/test_storyboard_script_split_static.js 静态防漂移断言
+    """
+    _CONSTANT_GROUP = True
+
+    # CJK（含假名）朗读速率（字/秒），每分钟 270 字
+    CJK_CHARS_PER_SECOND = 4.5
+    # 拉丁朗读速率（字符/秒，统计不含空格），每分钟 660 字符
+    LATIN_CHARS_PER_SECOND = 11.0
+    # 台词占成片总时长经验比例：台词预算秒数 = 片长 × 该值
+    # （成片其余时长为画面描写/动作/停顿/转场；与拆分端
+    # ScriptSplitConstants.TOTAL_DURATION_DIALOGUE_SHARE 同源同值）
+    DIALOGUE_SHARE = 0.6
+    # 生成端允许超出台词字数预算的比例（超过即要求 story-writer 删减）
+    DIALOGUE_BUDGET_TOLERANCE = 0.2
+
+
 class ScriptSplitConstants:
     """剧本分段拆分与断点续传（持久化任务）相关常量。
 
@@ -1481,16 +1533,19 @@ class ScriptSplitConstants:
     HISTORY_TAIL_SHOTS = 2
 
     # ---- 总分镜时长控制（见 docs/script/script_split_total_duration_control.md）----
-    # 剧本基准时长估算：中文旁白/对话朗读速率（字/秒）
-    SCRIPT_DURATION_CJK_CHARS_PER_SECOND = 4.5
+    # 剧本基准时长估算：中文旁白/对话朗读速率（字/秒）。
+    # 速率数值统一收敛到 ScriptDurationRateConstants（生成/拆分/前端三端共用），
+    # 此处保留旧名引用，避免散落引用漏改。
+    SCRIPT_DURATION_CJK_CHARS_PER_SECOND = ScriptDurationRateConstants.CJK_CHARS_PER_SECOND
     # 拉丁字符朗读速率（字符/秒，统计不含空格）
-    SCRIPT_DURATION_LATIN_CHARS_PER_SECOND = 11.0
+    SCRIPT_DURATION_LATIN_CHARS_PER_SECOND = ScriptDurationRateConstants.LATIN_CHARS_PER_SECOND
     # 剧本基准时长下限（秒），避免短文本估出过小预算
     SCRIPT_DURATION_MIN_SECONDS = 10.0
     # 有对白镜头的时长下限（秒）：台词锚定时不得低于该值，防止台词念不完
     SCRIPT_DURATION_DIALOGUE_SHOT_MIN_SECONDS = 2.0
     # 台词占成片总时长的经验比例：总时长目标 = 台词总时长 ÷ 该值
-    TOTAL_DURATION_DIALOGUE_SHARE = 0.6
+    # （同 ScriptDurationRateConstants.DIALOGUE_SHARE，保留旧名引用）
+    TOTAL_DURATION_DIALOGUE_SHARE = ScriptDurationRateConstants.DIALOGUE_SHARE
     # 剧本自述标注总时长的有效区间（秒）：超出视为误识别（如正文里的时间描述）
     SCRIPT_DURATION_DECLARED_MIN_SECONDS = 5.0
     SCRIPT_DURATION_DECLARED_MAX_SECONDS = 10800.0
@@ -2111,6 +2166,25 @@ class MediaConstants:
     # 遮罩融合时 resize 回原尺寸。防止 1080p 等大视频在 RH 端全量加载时爆显存。
     FACE_MASK_UPLOAD_MAX_SHORT_SIDE = 512
 
+    # ===== 视频帧提取（video_workflow 提取帧节点，services/video_frame_extract_service.py）=====
+    # 尾帧回退窗口：-sseof -<窗口> 定位后 -update 1 覆盖写，留下窗口内最后一帧。
+    # 旧实现 -sseof -0.1 + -vframes 1 在音轨长于视频轨（容器时长取最长流）或流时长
+    # 元数据虚高时，定位点落在视频流最后一帧之后 → "Output file is empty" → 接口 500。
+    VIDEO_FRAME_TAIL_SEEK_WINDOW_SECONDS = 1.5
+    # 单帧提取兜底超时（秒）：select 滤镜全解码 / 全片尾帧兜底均按帧数全量解码，耗时高于快路径。
+    VIDEO_FRAME_FALLBACK_TIMEOUT_SECONDS = 90
+    # 场景切换检测阈值（ffmpeg select=gt(scene,TH)）。
+    VIDEO_FRAME_SCENE_THRESHOLD = 0.3
+    # 关键帧候选上限（超出均匀抽稀，保首尾）。
+    VIDEO_FRAME_KEYFRAME_MAX_COUNT = 9
+    # 单镜头视频（检不出场景切换）的均匀采样点数（含首尾）。
+    VIDEO_FRAME_KEYFRAME_UNIFORM_SAMPLES = 6
+    # 超过该时长（秒）跳过场景检测（需全片解码），退化为均匀采样。
+    # 实测 720p/30fps 250s 视频全片检测约 2s，600s 上限对应几十秒内可完成，有超时兜底。
+    VIDEO_FRAME_SCENE_DETECT_MAX_DURATION_SECONDS = 600.0
+    # 相邻候选时间点最小间隔（秒），低于该值的点合并。
+    VIDEO_FRAME_MIN_POINT_GAP_SECONDS = 0.2
+
 
 class BrandingConstants:
     """
@@ -2181,6 +2255,12 @@ class FaceMaskPromptConstants:
     HINT_JOINER = "，"
     # 句终符与衔接符集合：基线末尾为其中任一字符时直接拼接还原句，否则加 HINT_JOINER
     TERMINATORS_OR_JOINER = '。！？!?\n\r；;，,'
+    # ai_tools.extra_config 中「允许参与人脸遮盖的参考图 URL 白名单」键。
+    # 参考生视频的参考图含角色/场景/道具/画风等，人脸遮盖只对角色参考图有意义；
+    # 提交方（storyboard generate-video / ai-app-run-image）把角色参考图 URL 列表
+    # 写入该键，create_with_pipeline_steps / _build_seedance_param_prepare_steps 据此
+    # 只给白名单内的参考图建 image_face_mask 步骤。键缺失时保持旧行为（全部参考图遮盖）。
+    REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY = 'face_mask_reference_urls'
 
 
 class RunningHubImageFaceMaskConstants:
@@ -2529,13 +2609,14 @@ class LLMVendor:
         'JIEKOU': '接口供应商（Gemini 模型）',
         'ALIYUN': '阿里云百炼（通义千问 Qwen 模型）',
         'OLLAMA': '本地运行供应商（Ollama 模型）',
-        'VOLCENGINE': '火山引擎供应商（Doubao / DeepSeek-V4 模型）',
+        'VOLCENGINE': '火山引擎供应商（Doubao / DeepSeek-V4 / GLM-5.3 模型）',
         'CLAUDE': 'Claude 供应商（Anthropic 模型）',
         'ZJT_API': 'ZJT API 供应商（Qwen3.5/3.6 模型）',
         'DEEPSEEK': 'DeepSeek 供应商（DeepSeek-V4 模型）',
         'AGNES': 'Agnes 供应商（Agnes 2.5 对话模型）',
-        'MIMO': '小米 MiMo 供应商（mimo-v2.5 系列，Token Plan 套餐）',
+        'MIMO': '小米 MiMo 供应商（mimo-v2.5 / mimo-v2.6 系列，Token Plan 套餐）',
         'VLLM': '本地推理供应商（vLLM 模型）',
+        'GLMCN': '智谱 BigModel 国内站供应商（GLM-5.3 / GLM-5.3-Flash 模型）',
     }
     JIEKOU = 'jiekou'
     ALIYUN = 'aliyun'
@@ -2547,6 +2628,7 @@ class LLMVendor:
     AGNES = 'agnes'
     MIMO = 'mimo'
     VLLM = 'vllm'
+    GLMCN = 'glmcn'
 
 
 class LLMModel:
@@ -2564,6 +2646,8 @@ class LLMModel:
         'VLLM_QWEN_3_8_27B': 'vLLM Qwen 3.8 27B',
         'DOUBAO_SEED_2_0_PRO': 'Doubao Seed 2.0 Pro',
         'DOUBAO_SEED_2_0_LITE': 'Doubao Seed 2.0 Lite',
+        'GLM_5_3_FLASH': 'GLM 5.3 Flash（火山方舟 / 智谱 BigModel 双供应商）',
+        'GLM_5_3': 'GLM 5.3（智谱 BigModel 国内站）',
         'CLAUDE_HAIKU_4_5': 'Claude Haiku 4.5',
         'DEEPSEEK_V4_FLASH': 'DeepSeek V4 Flash',
         'DEEPSEEK_V4_PRO': 'DeepSeek V4 Pro',
@@ -2571,6 +2655,8 @@ class LLMModel:
         'AGNES_2_5_PRO': 'Agnes 2.5 Pro',
         'MIMO_V2_5': '小米 MiMo V2.5',
         'MIMO_V2_5_PRO': '小米 MiMo V2.5 Pro',
+        'MIMO_V2_6_FLASH': '小米 MiMo V2.6 Flash',
+        'MIMO_V2_6_PRO': '小米 MiMo V2.6 Pro',
         'REDUCE_VIOLATION_DEFAULT': '内容安全提示词改写默认模型（reduce-violation 兜底）',
     }
     # Gemini 模型
@@ -2594,6 +2680,14 @@ class LLMModel:
     DOUBAO_SEED_2_0_PRO = 'doubao-seed-2-0-pro'
     DOUBAO_SEED_2_0_LITE = 'doubao-seed-2-0-lite'
 
+    # GLM 模型（火山方舟上架的智谱 GLM-5.3-Flash，API ID 带版本后缀，
+    # 由 volcengine 客户端 _MODEL_NAME_MAP 映射）
+    GLM_5_3_FLASH = 'glm-5.3-flash'
+
+    # GLM 模型（智谱 BigModel 国内站官方 GLM-5.3 旗舰，纯文本，
+    # API model ID 即 glm-5.3，无需映射）
+    GLM_5_3 = 'glm-5.3'
+
     # Claude 模型
     CLAUDE_HAIKU_4_5 = 'claude-haiku-4-5'
 
@@ -2610,6 +2704,8 @@ class LLMModel:
     # 小米 MiMo 模型（Token Plan 套餐，OpenAI 兼容端点 token-plan-cn.xiaomimimo.com/v1）
     MIMO_V2_5 = 'mimo-v2.5'
     MIMO_V2_5_PRO = 'mimo-v2.5-pro'
+    MIMO_V2_6_FLASH = 'mimo-v2.6-flash'
+    MIMO_V2_6_PRO = 'mimo-v2.6-pro'
 
     # 内容安全提示词改写（reduce-violation）的默认兜底模型
     # 前端未传/所选拆分模型供应商未配置时使用；复用剧本拆分默认模型，走 DEEPSEEK 供应商独立 key
@@ -2627,6 +2723,17 @@ class LLMModel:
         'xhigh': 'xhigh',
     }
 
+    # GLM-5.3 思考强度映射：前端 thinking_effort 值 -> 方舟 reasoning_effort。
+    # GLM-5.3 始终启用思考（thinking.type 仅支持 enabled，默认即开，无法关闭），
+    # reasoning_effort 仅支持 low/high/max（无 "medium"，默认 max）；前端沿用
+    # low/medium/high 三档，"medium"→"high"、"high"→"max" 保持强度单调。
+    GLM_REASONING_EFFORT_MAP = {
+        'low': 'low',
+        'medium': 'high',
+        'high': 'max',
+        'max': 'max',
+    }
+
 
 # 供应商图标映射（前端显示用）
 VENDOR_ICONS = {
@@ -2639,6 +2746,7 @@ VENDOR_ICONS = {
     'agnes': '✨',
     'mimo': '📱',
     'vllm': '⚡',
+    'glmcn': '🤖',
 }
 
 # 模型前缀 -> 供应商映射（用于 LLMClientFactory 路由）
@@ -2650,11 +2758,15 @@ MODEL_PREFIX_VENDOR_MAP = {
     'ollama': LLMVendor.OLLAMA,
     'vllm': LLMVendor.VLLM,  # 本地 vLLM 推理服务
     'doubao': LLMVendor.VOLCENGINE,
+    # 前缀按插入序先命中先路由：方舟 glm-5.3-flash 必须先于下方 'glm' 通配项，
+    # 否则会被前缀重叠路由到智谱 BigModel（glm-5.3-flash 以 glm-5.3 开头）
+    'glm-5.3-flash': LLMVendor.VOLCENGINE,  # 方舟上架的智谱 GLM-5.3-Flash
+    'glm': LLMVendor.GLMCN,  # 智谱 BigModel 国内站的 GLM 系列（glm-5.3 等）
     'qwen3.5': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.5 Plus 模型
     'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
     'deepseek': LLMVendor.DEEPSEEK,  # DeepSeek 的 DeepSeek-V4 模型
     'agnes': LLMVendor.AGNES,  # Agnes AI 对话模型
-    'mimo': LLMVendor.MIMO,  # 小米 MiMo 的 mimo-v2.5 系列模型
+    'mimo': LLMVendor.MIMO,  # 小米 MiMo 的 mimo-v2.5 / mimo-v2.6 系列模型
 }
 
 
@@ -2818,13 +2930,17 @@ class MediaUploadSafetyConstants:
         'MAX_AUDIO_SIZE': '单个音频大小上限',
         'CHUNK_SIZE': '分块读取块大小',
         'MAGIC_SCAN_BYTES': '魔数校验读取的头部字节数',
+        'TIFF_EXTS': '允许上传但落盘前必须转码的 TIFF 扩展名',
+        'TIFF_CONVERT_TARGET_EXT': 'TIFF 转码目标扩展名（浏览器可解码）',
     }
 
     # 显式拒绝：命中时返回针对性错误信息（白名单本身已排除，这里用于精确提示）
     BLOCKED_EXTS = ('.html', '.htm', '.svg', '.xhtml', '.xml', '.js', '.mjs', '.css')
 
-    # 扩展名白名单（与 _MEDIA_EXTENSIONS / StaticFiles 服务范围保持媒体类型）
-    IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp')
+    # 扩展名白名单（与 _MEDIA_EXTENSIONS / StaticFiles 服务范围保持媒体类型）。
+    # tif/tiff 浏览器 <img> 无法解码、CDN 扩展名表也不认，放行仅用于上传入口，
+    # 落盘前由 utils/media_upload.convert_tiff_file_to_png 统一转 PNG 后再对外服务
+    IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tif', '.tiff')
     VIDEO_EXTS = ('.mp4', '.mov', '.webm', '.avi', '.mkv')
     AUDIO_EXTS = ('.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac')
 
@@ -2836,6 +2952,12 @@ class MediaUploadSafetyConstants:
     # 分块读取参数
     CHUNK_SIZE = 1024 * 1024                                      # 每块 1MB
     MAGIC_SCAN_BYTES = 32                                         # 头部魔数扫描字节数
+
+    # TIFF 专用：上传按 10MB 图片上限校验，但落盘后必须转码（浏览器 <img>
+    # 不解码 TIFF、CDN/proxy 的 MIME 表也不含 tif），upload 目录不得残留 .tif 文件。
+    # 转码取第一帧；16bit 降为 8bit；CMYK 转 RGB；转码产物体积不设上限（限制的是上传原文件）
+    TIFF_EXTS = ('.tif', '.tiff')
+    TIFF_CONVERT_TARGET_EXT = '.png'
 
 
 # ============ 智能插入分镜 ============
@@ -2866,6 +2988,34 @@ LANGUAGE_INSTRUCTIONS = {
           "- The user interface is in English, so ALL communication must be in English\n"
           "="*60,
 }
+
+
+# ============ 素材输出语言（marketing_agent 输出语言设置） ============
+# 前端 marketing_agent.html「输出语言」下拉，随 /api/session/{id}/task 请求体的
+# output_language 字段传入，由 API 层拼成 [输出语言要求] 指令块注入任务 user_message，
+# 经 PM Agent 传导给图片/视频/数字人/文案等专家智能体，控制素材中呈现文字与口播的语言。
+# 与 TaskCreateRequest.language（UI 界面语言，控制 agent 对话回复语言）语义分离。
+# - 前端默认「自动」：不传该字段，由后端按界面语言回落（MATERIAL_LANGUAGE_LOCALE_FALLBACK）
+# - zh 系/未知界面语言不注入任何指令，维持现状默认中文语境，对存量用户零影响
+
+# 「自动」档按 UI locale 回落的素材语言表；未命中的 locale（含 zh 系）返回空 = 不注入
+MATERIAL_LANGUAGE_LOCALE_FALLBACK = {
+    'en': 'English',
+}
+# 自定义语言名长度上限（防止超长/恶意文本塞进 user_message）
+MATERIAL_OUTPUT_LANGUAGE_MAX_LENGTH = 50
+# 输出语言指令块模板（注入任务 user_message，PM 与专家智能体均可见）
+OUTPUT_LANGUAGE_INSTRUCTION_TEMPLATE = (
+    "\n\n[输出语言要求]\n"
+    "用户指定本次生成素材的输出语言为：{language}。请遵守：\n"
+    "1. 生成的图片/视频素材中呈现给观众的所有文字（海报文案、店招、字幕、包装、招牌等）必须使用{language}\n"
+    "2. 视频口播旁白、数字人播报文案必须使用{language}\n"
+    "3. 营销文案类交付物（带货脚本、广告创意、产品文案）使用{language}\n"
+    "4. 品牌名、店名等专有名词按用户提供的原文保留，不翻译\n"
+    "5. 本要求优先级高于技能文件中「提示词用英文」的默认规则：提示词可继续用英文编写，"
+    "但其中引用的画面文字与口播内容必须按{language}原样书写\n"
+    "6. PM 委托专家智能体时，必须在 task_description 中明确传达本输出语言要求"
+)
 
 
 # ============ 供应商切换差价结算（"贵扣便宜用"修复） ============

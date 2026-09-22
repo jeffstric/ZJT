@@ -161,7 +161,7 @@ async function generateShotFrameVideo(nodeId, node){
       // === 参考图模式 ===
       // 收集角色/场景/道具参考图
       showToast('正在收集参考图...', 'info');
-      const { referenceImageUrls, promptSuffix } = await collectShotFrameRefImages(node);
+      const { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node);
 
       // 将 promptSuffix 追加到视频提示词
       if(promptSuffix.length > 0) {
@@ -187,6 +187,23 @@ async function generateShotFrameVideo(nodeId, node){
         form.append('task_id', taskId);
         form.append('image_urls', referenceImageUrls.join(','));
         form.append('image_mode', 'multi_reference');
+
+        // 人脸遮盖白名单：勾选「是否处理人脸」时只对角色参考图做遮盖，
+        // 道具/场景参考图不参与（后端 create_with_pipeline_steps 按白名单建步骤）
+        if(node.data.processFace === true && characterRefUrls && characterRefUrls.length > 0) {
+          form.append('face_mask_reference_urls', characterRefUrls.join(','));
+        }
+
+        // 参考生 + 模型支持音色输入时，自动带入分镜角色的默认音色；
+        // grok 等不支持模型 collectVoiceReferences 返回空，不注入
+        if(typeof collectVoiceReferences === 'function'){
+          const voiceRefs = collectVoiceReferences(videoModel, voiceCharacters || [], '');
+          if(voiceRefs.enabled){
+            form.append('audio_urls', voiceRefs.voiceUrls.join(','));
+            form.set('prompt', appendVoiceReferencePrompt(videoPrompt, voiceRefs.promptNote));
+            notifyVoiceReferences(voiceRefs.voiceUrls.length);
+          }
+        }
 
         showToast(`使用 ${referenceImageUrls.length} 张参考图生成视频...`, 'info');
         res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
@@ -257,6 +274,8 @@ async function generateShotFrameVideo(nodeId, node){
         newVideoNode.data.name = videoCount > 1 ? `分镜视频${i + 1}` : '分镜视频';
         newVideoNode.data.project_id = projectIds[i] || projectIds[0];
         newVideoNode.title = newVideoNode.data.name;
+        // 视频节点显示「生成中」状态行（含查看状态时间轴按钮）
+        if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newVideoNodeId);
         
         // 更新节点标题显示
         const canvasEl = document.getElementById('canvas');
@@ -361,6 +380,8 @@ async function generateShotFrameVideo(nodeId, node){
                 const previewActionsField = videoNodeEl.querySelector('.video-preview-actions-field');
                 if(previewActionsField) previewActionsField.style.display = 'block';
               }
+              // 视频已到位：状态行标记成功
+              if(window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(videoNode);
             }
             
             console.log(`[分镜视频] 更新视频节点 ${videoNodeId} URL:`, videoUrl);

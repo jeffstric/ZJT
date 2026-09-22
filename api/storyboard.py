@@ -44,6 +44,7 @@ from config.constant import (
     MediaGenerationSurface,
     MediaGenerationType,
     IMAGE_MODE_EXTRA_CONFIG_KEY,
+    FaceMaskPromptConstants,
 )
 from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import (
@@ -79,7 +80,11 @@ from model.user_tokens import UserTokensModel
 from model.user_preferences import UserPreferencesModel
 from model.video_voice_replace import VideoVoiceReplaceJobModel
 from services.voice_replace.enqueue import enqueue_scene_job
-from services.storyboard_reference_prompt_service import append_storyboard_visual_suffix
+from services.storyboard_reference_prompt_service import (
+    append_storyboard_visual_suffix,
+    append_voice_reference_note,
+    collect_character_voice_references,
+)
 from utils.resource_access import (
     get_user_id_from_header,
     ensure_resource_access,
@@ -1361,6 +1366,8 @@ async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
         'result_url': asset.result_url,
         'status': None,
         'error': None,
+        # 关联任务 ID：前端候选卡「查看生成状态时间轴」（GET /api/ai-tools/{id}/timeline）
+        'ai_tool_id': asset.ai_tool_id,
     }
     if asset.ai_tool_id:
         tool = await asyncio.to_thread(AIToolsModel.get_by_id, asset.ai_tool_id)
@@ -1392,6 +1399,8 @@ def _generating_row_task_info(row: Optional[dict], asset_type: str) -> Optional[
         'result_url': str(row.get('asset_result_url') or row.get('tool_result_url') or '').strip(),
         'status': row.get('status'),
         'error': None,
+        # 关联任务 ID：前端生成中占位卡「查看生成状态时间轴」
+        'ai_tool_id': row.get('ai_tool_id'),
     }
 
 
@@ -4179,6 +4188,8 @@ async def generate_scene_video(
     reference_images_json = None
     collected_urls: List[str] = []
     legend_items: List[Dict[str, Any]] = []
+    # multi_reference / first_last_with_ref 分支才会加载；音色注入按此判断角色上下文可用性
+    scene_characters_ctx: Optional[Dict[str, Any]] = None
 
     if image_mode == ImageMode.FIRST_LAST_FRAME:
         if not scene.selected_first_frame_id:
@@ -4199,6 +4210,7 @@ async def generate_scene_video(
     else:
         try:
             context = await asyncio.to_thread(cli.scene_context, scene_id, user_id)
+            scene_characters_ctx = context
             collected_urls, legend_items = cli._collect_video_reference_bundle(
                 context, image_mode, extra_urls=extra_ref_urls,
             )
@@ -4266,6 +4278,23 @@ async def generate_scene_video(
     task_type = int(generation_snapshot['task_id'])
     config = UnifiedConfigRegistry.get_by_id(task_type)
     supported_durations = list(getattr(config, 'supported_durations', None) or []) if config else []
+
+    # 角色音色注入（参考生 + 模型 supports_voice_input）：把角色 default_voice 克隆源
+    # 音频并入参考音频通道（驱动自动上传 CDN / LoadAudio），提示词追加音色说明。
+    # 不支持的模型（grok 等）collect 返回空，行为不变。在 generation_snapshot 解析后
+    # 注入，不扰动 IMAGE_TO_VIDEO / REFERENCE_TO_VIDEO 模式判定；参考图全空回退
+    # 文生视频（media_mode=TEXT_TO_VIDEO）时不注入。
+    if scene_characters_ctx is not None and collected_urls:
+        voice_items, _ = collect_character_voice_references(
+            supports_voice_input=bool(getattr(config, 'supports_voice_input', False)),
+            characters=scene_characters_ctx.get('characters'),
+            image_mode=image_mode,
+            existing_audio_urls=audio_path,
+        )
+        if voice_items:
+            audio_path = ','.join([item['url'] for item in voice_items])
+            prompt = append_voice_reference_note(prompt, voice_items)
+
     duration_mode = data.get('duration_mode', data.get('duration', 'auto'))
     video_duration = _resolve_storyboard_video_duration_seconds(
         scene.duration,
@@ -4391,6 +4420,16 @@ async def generate_scene_video(
         'generation_snapshot': generation_snapshot,
         'enable_face_mask': effective_face_mask,
     }
+    # 人脸遮盖白名单：参考图（角色/场景/道具/画风/上传图）中只有角色参考图
+    # 参与本地人脸遮盖。legend_items 与 reference_images 同源（去重保序对齐），
+    # 取 source_type=character 的 URL 子集；空列表表示当前分镜没有角色参考图，
+    # 同样写入（明确声明全部参考图都无需遮盖）。
+    if legend_items:
+        extra_payload[FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY] = [
+            str(item.get('url') or '').strip()
+            for item in legend_items
+            if item.get('source_type') == 'character' and str(item.get('url') or '').strip()
+        ]
     if snapshot_image_mode:
         extra_payload[IMAGE_MODE_EXTRA_CONFIG_KEY] = snapshot_image_mode
     if video_resolution:

@@ -201,6 +201,15 @@
 
             <!-- 仪表盘页面 -->
             <section v-if="currentPage === 'dashboard'">
+                <!-- 激活用户数超限时置顶警告：引导购买商业版本或禁用用户释放名额 -->
+                <div
+                    v-if="showActiveUsersQuotaWarning"
+                    class="binary-deps-warning"
+                    style="display: flex; align-items: center; gap: 10px;"
+                >
+                    <span style="font-size: 18px;">⚠️</span>
+                    <span>{{ t('active_users_quota_warning') }}</span>
+                </div>
                 <!-- 商业包成功导入后显示。注册失败时保留只读诊断，但不显示任何提交按钮。 -->
                 <div
                     v-if="enterprisePackageAvailable"
@@ -229,11 +238,20 @@
                             <div class="license-status-grid">
                             <div class="license-status-item">
                                 <span class="license-status-label">{{ t('license_field_edition') }}</span>
-                                <span class="license-status-value">{{ licenseStatus.license?.edition || '-' }}</span>
+                                <span class="license-status-value">{{ editionLabel(licenseStatus.license?.edition) }}</span>
                             </div>
                             <div class="license-status-item">
                                 <span class="license-status-label">{{ t('license_field_revision') }}</span>
                                 <span class="license-status-value">{{ licenseStatus.license?.license_revision ?? '-' }}</span>
+                            </div>
+                            <div class="license-status-item">
+                                <span class="license-status-label">{{ t('license_field_active_users') }}</span>
+                                <span class="license-status-value">
+                                    <!-- 企业包未随版提供 user_quota 时回退 dashboard 口径，避免恒显 "- / ∞" -->
+                                    {{ licenseStatus.user_quota?.active_users ?? dashboard.activeUsers ?? '-' }}
+                                    /
+                                    {{ (licenseStatus.user_quota?.max_active_users ?? dashboard.maxActiveUsers) == null ? '∞' : (licenseStatus.user_quota?.max_active_users ?? dashboard.maxActiveUsers) }}
+                                </span>
                             </div>
                             <div class="license-status-item">
                                 <span class="license-status-label">{{ t('license_field_branding') }}</span>
@@ -290,6 +308,13 @@
                     <div class="stat-card">
                         <div class="stat-card-label">{{ t('total_users') }}</div>
                         <div class="stat-card-value primary">{{ dashboard.totalUsers }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-label">{{ t('active_users_quota') }}</div>
+                        <div class="stat-card-value" :class="dashboard.maxActiveUsers != null && dashboard.activeUsers >= dashboard.maxActiveUsers ? 'danger' : 'primary'">
+                            {{ dashboard.activeUsers ?? '-' }}
+                            <span style="font-size: 14px; color: #64748b;">/ {{ dashboard.maxActiveUsers == null ? '∞' : dashboard.maxActiveUsers }}</span>
+                        </div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-card-label">{{ t('active_workflows_3d') }}</div>

@@ -3028,8 +3028,8 @@ button {
     z-index: 5;
     top: 4px;
     right: 4px;
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     padding: 0;
     border: 1px solid rgba(255, 255, 255, 0.8);
     border-radius: 50%;
@@ -3103,16 +3103,16 @@ button {
 }
 
 .candidate-video-grid .candidate-placeholder {
-    /* 窄侧栏 + 16:9 时高度很小，缩小转圈与字号，保证仍居中可见 */
-    gap: 4px;
+    /* 窄侧栏 + 16:9 时高度很小（约 84×47），缩小转圈与字号，保证仍居中可见 */
+    gap: 2px;
     font-size: 10px;
     padding: 4px;
 }
 
 .candidate-video-grid .candidate-placeholder .sb-icon {
-    /* 覆盖内联 width/height，避免 18px 图标在扁盒子里视觉偏位 */
-    width: 16px !important;
-    height: 16px !important;
+    /* 覆盖内联 width/height，避免 18px 图标在扁盒子里视觉偏位/溢出 */
+    width: 12px !important;
+    height: 12px !important;
     flex-shrink: 0;
 }
 
@@ -3141,8 +3141,8 @@ button {
     left: 50%;
     top: 50%;
     transform: translate(-50%, -50%);
-    width: 28px;
-    height: 28px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: rgba(15, 23, 42, 0.72);
     border: 1.5px solid rgba(255, 255, 255, 0.9);
@@ -3156,8 +3156,8 @@ button {
 }
 
 .candidate-video-badge .sb-icon {
-    width: 14px !important;
-    height: 14px !important;
+    width: 10px !important;
+    height: 10px !important;
     margin: 0;
 }
 

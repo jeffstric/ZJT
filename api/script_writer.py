@@ -39,6 +39,9 @@ from config.constant import (
     WORLD_IMPORT_JOB_READ_RETRY_INTERVAL,
     WORLD_IMPORT_JOB_TTL,
     WORLD_IMPORT_JOB_CLEANUP_INTERVAL,
+    MATERIAL_LANGUAGE_LOCALE_FALLBACK,
+    MATERIAL_OUTPUT_LANGUAGE_MAX_LENGTH,
+    OUTPUT_LANGUAGE_INSTRUCTION_TEMPLATE,
 )
 from api.auth_identity import resolve_authorization_user_id
 from model.user_tokens import UserTokensModel
@@ -1097,6 +1100,30 @@ class TaskCreateRequest(BaseModel):
     image_preferences: Optional[Dict[str, Any]] = None
     video_preferences: Optional[Dict[str, Any]] = None
     language: Optional[str] = None
+    output_language: Optional[str] = None
+
+
+def resolve_material_output_language(
+    output_language: Optional[str], ui_language: Optional[str],
+) -> str:
+    """解析素材输出语言：显式选择优先；「自动」档按 UI locale 回落。
+
+    返回空串表示不注入指令（zh 系/未知界面语言维持现状默认中文语境）。
+    与 task_language（agent 对话回复语言）语义分离，仅控制素材中的文字/口播语言。
+    """
+    lang = (output_language or '').strip()
+    if lang:
+        return lang[:MATERIAL_OUTPUT_LANGUAGE_MAX_LENGTH]
+    return MATERIAL_LANGUAGE_LOCALE_FALLBACK.get((ui_language or '').strip(), '')
+
+
+def append_output_language_instruction(user_message: str, material_language: str) -> str:
+    """把 [输出语言要求] 指令块追加到任务 user_message（空语言原样返回）。"""
+    if material_language:
+        return user_message + OUTPUT_LANGUAGE_INSTRUCTION_TEMPLATE.format(
+            language=material_language,
+        )
+    return user_message
 
 
 def build_agent_user_message_with_media(
@@ -4247,6 +4274,14 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 v_pref_parts.append("人脸处理: 已开启")
             if v_pref_parts:
                 user_message += f"\n\n[用户视频偏好] {', '.join(v_pref_parts)}"
+
+        # 素材输出语言指令块（显式选择 > 「自动」档按 UI locale 回落）
+        material_language = resolve_material_output_language(
+            task_request.output_language, task_request.language,
+        )
+        user_message = append_output_language_instruction(user_message, material_language)
+        if material_language:
+            logger.info(f'[Agent任务] 已注入素材输出语言: {material_language}')
 
         # 创建任务（返回 task_id 字符串）
         task_language = task_request.language or 'zh-CN'

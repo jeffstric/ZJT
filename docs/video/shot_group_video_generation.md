@@ -123,6 +123,10 @@
 
 重新加载工作流时，这些数据会自动恢复。
 
+### 模型与模式兼容性自动迁移
+
+部分模型按模式拆分为多个任务条目（如 MiniMax H3：`minimax_h3` 首尾帧专属 / `minimax_h3_r2v` 多参考专属），跨模式保留旧模型会被后端 `validate_model` 拒绝（`MODEL_INPUT_UNSUPPORTED`）。历史 BUG：TaskConfig 异步加载完成后的补偿刷新（`workflow.js` `refreshShotGroupNodesModels`）曾把不支持当前模式的已保存 `videoGenMode` 对应模型原样塞回下拉保留，构造出非法组合。现由 `web/js/video_model_compat.js` 的 `resolveSavedVideoModelForMode` 判定：不支持当前模式 → 迁移到首个可用模型（存量坏组合在下次页面加载时自动纠正）；模式兼容（如仅被驱动状态过滤）或未知模型 → 保留原值。回归测试：`web/tests/video_model_compat.test.js`。
+
 ## 技术实现
 
 ### 关键函数

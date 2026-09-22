@@ -18,9 +18,35 @@
 | token 校验 | `server.py` upload 端点 | `Authorization` 必须是有效 token 且归属与 `X-User-Id` 一致（uid 头可伪造，落盘目录按 uid 隔离且文件永久保留） |
 | Content-Type 初筛 | `server.py` upload 端点 | 仅作快速拒绝（image/\|video/\|audio/ 前缀），不作为可信依据 |
 | 扩展名白名单 | `utils/media_upload.py` `resolve_media_extension()` | 白名单见 `config/constant.py` `MediaUploadSafetyConstants`；`.html/.htm/.svg/.xhtml/.xml/.js/.mjs/.css` 显式拒绝并返回针对性提示 |
-| 魔数校验 | `utils/media_upload.py` `save_upload_chunked()` | 按扩展名校验文件头前 32 字节（PNG/JPEG/RIFF 容器/ftyp/EBML/ID3 等），伪造扩展名的 HTML 一律拒绝 |
-| 大小上限 | 同上 | 分块（1MB）读取累计字节数，超限立即中断并清理半成品：图片 10MB、视频 200MB、音频 50MB |
+| 魔数校验 | `utils/media_upload.py` `save_upload_chunked()` | 按扩展名校验文件头前 32 字节（PNG/JPEG/RIFF 容器/ftyp/EBML/ID3/TIFF 双字节序 `II*\x00`/`MM\x00*` 等），伪造扩展名的 HTML 一律拒绝 |
+| TIFF 归一化 | `utils/media_upload.py` `convert_tiff_file_to_png()` | tif/tiff 落盘后立即转 PNG 并删除原文件（见下节），`/upload/` 目录不得残留 `.tif` |
+| 大小上限 | 同上 | 分块（1MB）读取累计字节数，超限立即中断并清理半成品：图片 10MB（tif/tiff 同档）、视频 200MB、音频 50MB |
 | nosniff 兜底 | `server.py` `cdn_redirect_middleware` | `/upload/` 静态响应统一带 `X-Content-Type-Options: nosniff`，禁止浏览器 MIME 嗅探（nginx 侧可再叠加同款头） |
+
+## TIFF 归一化（tif/tiff 仅作为上传入口格式）
+
+浏览器 `<img>` 标签不解码 TIFF（Chrome/Edge/Firefox 均不支持），且 CDN
+重定向扩展名表（`server.py` `_MEDIA_EXTENSIONS`）与 `/api/proxy-image`
+的 MIME 映射均不含 tif。因此 tif/tiff 只允许作为上传入口格式：
+
+- **后端**：`save_upload_chunked` 白名单放行 + TIFF 魔数校验后，
+  `convert_tiff_file_to_png()`（纯同步，经 `asyncio.to_thread` 调用）
+  用 PIL 转为 PNG、删除原 tif。多帧 TIFF 取第一帧；CMYK/16bit 降为
+  8bit RGB/RGBA；解码失败（损坏/超 PIL 像素安全上限）时原文件与半成品
+  一并清理并抛 `UploadValidationError`（端点映射 400）。
+- **对外 URL 恒为 `.png` 后缀**，预览、CDN、proxy、RunningHub/ComfyUI
+  链路零适配。转码产物体积不设上限（10MB 限制约束的是上传原文件，
+  无损 TIFF 转 PNG 后可能变大）。
+- **前端**：`web/js/tiff_support.js` 提供 `isTiffFile(file)` 与
+  `tiffPlaceholderHtml(label)`；本地 base64/objectURL 预览对 tif 会裂图，
+  各上传入口须特判显示占位（video_workflow 画风图/多服装/多角度缩略、
+  画布图片/图生视频首尾帧/数字人节点、index 系 ai_script_gen 配图等）。
+  画布拖放（`web/js/canvas_drop.js`）白名单含 tif/tiff，按扩展名放行；
+  超限 TIFF 不走 `compressImageFile`（浏览器 Image 解不出），按体积拒绝。
+- 接入点：`_save_uploaded_image` / `_save_user_asset` /
+  `/api/image-to-video/upload-media`（A 类，经 media_upload）与
+  characters/locations/props 参考图 12 处落盘点（C 类，写盘后追加转码），
+  常量见 `MediaUploadSafetyConstants.TIFF_EXTS / TIFF_CONVERT_TARGET_EXT`。
 
 ## 接入方式
 
@@ -44,7 +70,9 @@ HTTP 400，message 可直接透出给用户。
 ## 测试
 
 `tests/utils/test_media_upload.py`：覆盖白名单/黑名单/双扩展名、伪造魔数
-（`poc.png` 实为 HTML）、超限清理半成品、多块完整写入等 46 例。
+（`poc.png` 实为 HTML）、超限清理半成品、多块完整写入，以及 TIFF 双字节序
+魔数、伪造 tif 拒绝、RGB/CMYK/多帧 tif 转 PNG、损坏 tif 转码失败清理等
+共 58 例。
 
 ## 运维建议
 

@@ -84,13 +84,13 @@ describe('storyboard reference-to-video without first frame', () => {
     it('reference mode stops showing misleading pending labels for storyboard images', () => {
         const stateSource = readSource('web/js/storyboard/auto_missing_images_state.js');
         const renderSource = readSource('web/js/storyboard/render.js');
-        // 缺失分镜图在参考生视频模式下展示「免分镜图」而非「待生成」
+        // 缺失分镜图在参考生视频模式下展示「免分镜图」而非「待生成」（i18n 化后经 t() 输出）
         expect(stateSource).toContain("if (status === 'missing' && state.videoImageMode === 'multi_reference')");
-        expect(stateSource).toContain("return '免分镜图';");
-        expect(stateSource).toContain("label: isRefVideoMode ? '补全分镜图（可选）' : '自动补全未生成分镜'");
-        expect(renderSource).toContain('return \'<span class="status idle">免分镜图</span>\';');
+        expect(stateSource).toContain("return t('status_scene_image_exempt', '免分镜图');");
+        expect(stateSource).toContain("label: isRefVideoMode ? t('label_complete_scene_images_optional', '补全分镜图（可选）') : t('btn_auto_fill_missing_scenes', '自动补全未生成分镜')");
+        expect(renderSource).toContain("return `<span class=\"status idle\">${i18nT('status_scene_image_exempt', '免分镜图')}</span>`;");
         // 顶部统计：参考生视频模式不再展示图片「N 个待生成」，改为模式说明
-        expect(renderSource).toMatch(/const imageHint = isRefVideoMode \? '' : ` · \$\{summary\.missingCount\} 个待生成`/);
-        expect(renderSource).toContain("const refModeHint = isRefVideoMode ? ' · 参考生视频免分镜图' : '';");
+        expect(renderSource).toMatch(/const imageHint = isRefVideoMode \? '' : ` · \$\{summary\.missingCount\} \$\{i18nT\('label_pending_count', '个待生成'\)\}`/);
+        expect(renderSource).toContain("const refModeHint = isRefVideoMode ? ` · ${i18nT('hint_ref_mode_exempt', '参考生视频免分镜图')}` : '';");
     });
 });

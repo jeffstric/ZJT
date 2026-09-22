@@ -37,9 +37,17 @@ if not hasattr(requests, 'exceptions') or not hasattr(requests.exceptions, 'HTTP
 
 from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
-from config.constant import LEGACY_RESOLUTION_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
+from config.constant import (
+    LEGACY_RESOLUTION_EXTRA_CONFIG_KEY,
+    SEEDANCE_R2V_AUDIO_MAX_TOTAL_DURATION,
+    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
+)
 from config.unified_config import DriverImplementation, VideoResolution
 from utils.sentry_util import SentryUtil, AlertLevel
+from utils.audio_duration_util import (
+    cleanup_prepared_reference_audio,
+    prepare_reference_audio_budget_sync,
+)
 from utils.image_upload_utils import compress_and_upload_image_sync, upload_media_to_cdn_sync
 from utils.video_compressor import prepare_seedance_reference_video_sync
 from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStepType, PipelineStage
@@ -73,6 +81,12 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
 
     注意：不应直接实例化基类，应使用具体的子类。
     """
+
+    # r2v 参考音频限制（与火山官方一致，kkidc 为其网关代理）：
+    # 2.0 系列总时长 ≤15s（API 容差 15.2s）且 ≤3 段。
+    # 提交前按「(总上限-安全余量)/条数」均分配额自动截断，见 prepare_reference_audio_budget_sync。
+    R2V_AUDIO_MAX_TOTAL_SECONDS = SEEDANCE_R2V_AUDIO_MAX_TOTAL_DURATION
+    R2V_AUDIO_MAX_COUNT = 3
 
     def __init__(self, driver_type: int, model_name: str, impl_name: str = DriverImplementation.SEEDANCE_2_0_KKIDC_V1):
         """
@@ -466,16 +480,29 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
                     metadata["reference_videos"] = processed_video_urls
 
             # 参考音频（需上传到 CDN）
+            # 火山 r2v 限制音频总时长与条数（见类属性 R2V_AUDIO_MAX_*），超限自动截断/截条
             reference_audio_raw = self.get_audio_path(ai_tool) or extra_config.get('reference_audio')
             if reference_audio_raw:
                 audio_paths = [a.strip() for a in reference_audio_raw.split(",") if a.strip()]
+                max_count = self.R2V_AUDIO_MAX_COUNT
+                if max_count and len(audio_paths) > max_count:
+                    self.logger.warning(
+                        f"参考音频超出条数上限 {max_count}，忽略多余 {len(audio_paths) - max_count} 条"
+                    )
+                    audio_paths = audio_paths[:max_count]
                 processed_audio_urls = []
-                for audio_path in audio_paths:
-                    success, cdn_url, error = upload_media_to_cdn_sync(audio_path, self._config)
-                    if success and cdn_url:
-                        processed_audio_urls.append(cdn_url)
-                    else:
-                        self.logger.warning(f"参考音频上传 CDN 失败，跳过: {error}")
+                budget_items = prepare_reference_audio_budget_sync(
+                    audio_paths, self.R2V_AUDIO_MAX_TOTAL_SECONDS
+                )
+                try:
+                    for audio_item in budget_items:
+                        success, cdn_url, error = upload_media_to_cdn_sync(audio_item['path'], self._config)
+                        if success and cdn_url:
+                            processed_audio_urls.append(cdn_url)
+                        else:
+                            self.logger.warning(f"参考音频上传 CDN 失败，跳过: {error}")
+                finally:
+                    cleanup_prepared_reference_audio(budget_items)
                 if processed_audio_urls:
                     metadata["reference_audios"] = processed_audio_urls
 

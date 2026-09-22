@@ -388,6 +388,8 @@
         supports_last_frame: task.supports_last_frame !== false,  // 默认为 true
         // 是否支持参考音频和视频
         supports_ref_audio_video: task.supports_ref_audio_video === true,
+        // 是否支持角色音色参考输入（参考生自动注入角色默认音色）
+        supports_voice_input: task.supports_voice_input === true,
         // 是否走人脸遮盖预处理（seedance 2.0 系列），前端据此显隐「是否处理人脸」选项
         needs_face_mask: task.needs_face_mask === true,
         // 是否允许营销视频克隆（单一事实来源：后端 VIDEO_CLONE_DRIVER_KEYS）

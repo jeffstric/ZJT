@@ -80,7 +80,7 @@
     }
 
     // 生成视频API调用
-    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences, resolution, enableFaceMask){
+    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences, resolution, enableFaceMask, faceMaskReferenceUrls){
       // 测试模式：模拟API响应
       if(TEST_MODE){
         console.log('[TEST MODE] 模拟生成视频API调用', { imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences });
@@ -137,6 +137,10 @@
       // 是否处理人脸（仅 seedance2.0 商业版生效）
       if(enableFaceMask){
         form.append('enable_face_mask', 'true');
+        // 人脸遮盖白名单：只对角色参考图做遮盖，道具/场景参考图不参与
+        if(faceMaskReferenceUrls && faceMaskReferenceUrls.length){
+          form.append('face_mask_reference_urls', (Array.isArray(faceMaskReferenceUrls) ? faceMaskReferenceUrls : [faceMaskReferenceUrls]).join(','));
+        }
       }
 
       if(userId){

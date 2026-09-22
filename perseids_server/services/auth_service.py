@@ -15,6 +15,7 @@ from config.constant import (
     PERSEIDS_ERR_NO_VALID_TOKEN,
     USER_TOKEN_EXPIRE_DAYS,
     USER_TOKEN_RENEW_THRESHOLD_DAYS,
+    UserStatus,
 )
 from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 
@@ -112,10 +113,10 @@ class AuthService:
             return {"success": False, "message": "密码错误"}
         
         # 检查用户状态
-        if user.status == 2:
+        if user.status == UserStatus.PENDING:
             LoginLogModel.create(user.id, ip_address, user_agent, 0)
             return {"success": False, "message": "账号正在审核中，请等待管理员审批"}
-        if user.status == 0:
+        if user.status == UserStatus.DISABLED:
             LoginLogModel.create(user.id, ip_address, user_agent, 0)
             return {"success": False, "message": "账户已被禁用"}
         
@@ -183,11 +184,11 @@ class AuthService:
         if not is_email_registration and not is_phone_registration:
             return {"success": False, "message": "请提供手机号或邮箱进行注册"}
 
-        # 社区版注册人数限制（商业版由 enterprise 注入 Provider 放行，
-        # 见 services/registration_quota.py）。
+        # 激活用户数配额限制（社区版 COMMUNITY_MAX_ACTIVE_USERS；商业版由
+        # enterprise 注入 Provider 按许可证 edition 分档，见 services/registration_quota.py）。
         # 计数必须使用本模块的 UsersModel 引用（测试通过 patch 该引用注入 mock）。
         from services.registration_quota import check_allowed
-        _allowed, _quota_msg = check_allowed(UsersModel.get_total_count())
+        _allowed, _quota_msg = check_allowed(UsersModel.get_active_count())
         if not _allowed:
             logger.warning(
                 "注册被拒绝（配额限制）- 手机号: %s, 邮箱: %s",
@@ -241,7 +242,7 @@ class AuthService:
             # 根据配置决定初始状态
             from config.config_util import get_dynamic_config_value
             require_approval = get_dynamic_config_value('user_registration', 'require_admin_approval', default=False)
-            initial_status = 2 if require_approval else 1
+            initial_status = UserStatus.PENDING if require_approval else UserStatus.NORMAL
 
             # 创建用户（phone为None，email有值）
             from model.database import execute_insert
@@ -334,10 +335,10 @@ class AuthService:
         user_role = "admin" if is_first_user else "user"
         logger.info(f"注册检查: 当前用户总数={total_count}, 是否首个用户={is_first_user}, 分配角色={user_role}")
 
-        # 根据配置决定初始状态：需要管理员审核时为待审核(2)，否则为正常(1)
+        # 根据配置决定初始状态：需要管理员审核时为待审核，否则为正常
         from config.config_util import get_dynamic_config_value
         require_approval = get_dynamic_config_value('user_registration', 'require_admin_approval', default=False)
-        initial_status = 2 if require_approval else 1
+        initial_status = UserStatus.PENDING if require_approval else UserStatus.NORMAL
 
         # 创建用户
         from model.database import execute_insert

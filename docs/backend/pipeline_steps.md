@@ -113,7 +113,9 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 4. 原文写入 `extra_config.original_prompt`（只写一次）和 `extra_config.h3_prompt_optimize`
 5. `ai_tool.prompt` 替换为优化结果，H3 驱动提交 RunningHub
 
-**对话保真（防中文台词被译成英文）**：描述性文字输出英文，但 `<d>` 内台词/歌词及画面可见文字必须逐字保留原语言，语言标签按实际语言写（`[Chinese]`/`[Japanese]`/`[Korean]` 等），严禁翻译。三层约束：① system prompt 明确豁免对话/歌词/屏幕文字；② 两个模板补中文对话正反例（正例 `<d>[Chinese] 原来是这样！</d>`，反例禁止译成 `<d>[English] So that's how it is!</d>`）；③ 原文存在"引号包裹的 CJK 片段"时，user message 追加条件式点名指令——点名列出片段，"若是台词/歌词/可见文字则逐字保留，若是动作/氛围/术语等描述性用法则正常转写"，语义判断交给 LLM，不做任何代码级校验拦截。纯英文/无引号/无 CJK 的原文不追加，行为不变。
+**对话保真（防中文台词被译成英文）**：描述性文字输出英文，但 `<d>` 内台词/歌词及画面可见文字必须逐字保留原语言，语言标签按实际语言写（`[Chinese]`/`[Japanese]`/`[Korean]` 等），严禁翻译。三层约束：① system prompt 明确豁免对话/歌词/屏幕文字；② 两个模板补中文对话正反例（正例 `<d>[Chinese] 原来是这样！</d>`，反例禁止译成 `<d>[English] So that's how it is!</d>`）；③ 原文存在"引号包裹的 CJK 片段"时，user message 追加条件式点名指令——点名列出片段，"若是台词/歌词/可见文字则逐字保留，若是动作/氛围/术语等描述性用法则正常转写"，语义判断交给 LLM，不做任何代码级校验拦截。
+
+**对白反幻觉（防 LLM 虚构台词）**：与上条对偶——原文**没有**引号台词时，user message 追加禁止虚构提示：只有原文明确写出的话语才能进入 `<d>`，严禁编造对白/歌词或"角色开口说话"的行为；音色参考仅约束开口时的音色，不代表必须说话，无台词则输出不得出现 `<d>` 标签。两个模板的详细描述规范同步写明该规则。背景：线上事故 ai_tools 231（2026-09-20），原文仅写"音频1是李卫国的音色样本，角色说话时请保持相同音色"，Ref2VA 模板 few-shot 示例（音色参考+角色说台词）诱导 deepseek-v4-flash 编造 `<d>[Chinese] 早上好，新的一天开始了。</d>` 并提交上游，成片角色凭空开口。
 
 **模型回退链**：所用聊天模型按优先级选取，每步校验 api_key 是否已配置，首个可用者胜出：① 故事板步骤参数中的对话模型 → ② `pipeline.h3_prompt_optimize_model`（默认 `deepseek-v4-flash`）→ ③ JIEKOU 在线模型 `gemini-3.5-flash`（最终兜底；2026-08 剧本拆分默认模型切 `deepseek-v4-flash` 后与 ② 重复，故独立为在线模型）。独立图生视频入口无故事板上下文，跳过第 ① 步。全部未配置则直接回退原文，不发起必败调用。
 
@@ -149,6 +151,12 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 用于 `param_prepare` 阶段，在 Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5 的图生视频任务提交前，对 `image_path` 和 `reference_images` 中的人脸绘制红色矩形网格。
 
 **触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5 任务类型 + 用户勾选 `enable_face_mask=true` + 商业版（非社区版）+ `pipeline.seedance_face_mask_enabled=true` + 有 `image_path` 或 `reference_images` 输入
+
+**参考图遮盖白名单（仅遮角色参考图）**：参考生视频的 `reference_images` 混合角色/场景/道具/画风/用户上传图，人脸遮盖只对**角色参考图**有意义——道具/场景图被遮盖会白白消耗 RunningHub 配额，且图上误检出的"人脸"（玩偶、海报人像）被打黑框后，还原句会让模型凭空还原。提交方在 `ai_tools.extra_config` 写入 `face_mask_reference_urls`（键常量 `FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY`，URL 数组），`create_with_pipeline_steps` 与 `_build_seedance_param_prepare_steps` 只为白名单内的参考图建 `image_face_mask` 步骤（跳过项的 `params.index` 保持原始下标，保证 `apply_results` 回写对位）；`image_path`（首尾帧）不受白名单影响，始终全量遮盖。键缺失时保持旧行为（全部参考图遮盖）；空列表表示明确声明没有参考图需要遮盖。
+
+写入方：
+- storyboard `generate-video`（`api/storyboard.py`）：从 `_collect_video_reference_bundle` 返回的 `legend_items` 取 `source_type == 'character'` 的 URL 注入；
+- `/api/ai-app-run-image`（`server.py`）：接收 form 字段 `face_mask_reference_urls`（逗号分隔），由 video_workflow 前端在收集参考图时传入（分镜组/分镜节点按角色收集循环、图生视频节点按连线来源 `fromNode.type === 'character'`）。
 
 **配置开关**：`pipeline.seedance_face_mask_enabled`，默认 `true`，是 Seedance 人脸遮盖前置处理的**总开关**（管理员级），同时控制图片（`image_face_mask`）和视频（`face_mask`）两种遮盖步骤。关闭后图片和视频的遮盖步骤均不创建，任务走普通生成流程。其上还有两层用户/版本级门：用户级 `enable_face_mask`（前端「是否处理人脸」勾选，默认不勾选，**opt-in**）与版本级 `NOT Edition.is_community()`（社区版禁止），三者同时满足才会创建步骤（见上文「用户开关与版本门」）。
 

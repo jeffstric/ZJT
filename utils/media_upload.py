@@ -11,9 +11,15 @@
 所有接收用户上传媒体文件的端点（server.py 的 _save_user_asset /
 _save_uploaded_image / image-to-video upload-media 等）统一走本模块。
 本模块为纯同步实现，供 asyncio.to_thread 在工作线程调用，不阻塞事件循环。
+
+tif/tiff 仅作为上传入口格式放行：浏览器 <img> 不解码 TIFF、CDN/proxy 的
+MIME 表也不含 tif，落盘后必须经 convert_tiff_file_to_png 归一化为 PNG，
+/upload/ 目录不得残留 .tif 文件。
 """
 import os
 from typing import Optional
+
+from PIL import Image
 
 from config.constant import MediaUploadSafetyConstants
 
@@ -39,6 +45,9 @@ _MAGIC_CHECKS = {
     '.gif':  lambda b: b[:6] in (b'GIF87a', b'GIF89a'),
     '.webp': lambda b: len(b) >= 12 and b[:4] == b'RIFF' and b[8:12] == b'WEBP',
     '.bmp':  lambda b: b[:2] == b'BM',
+    # TIFF 头：II*\x00（小端）或 MM\x00*（大端）
+    '.tif':  lambda b: b[:4] in (b'II*\x00', b'MM\x00*'),
+    '.tiff': lambda b: b[:4] in (b'II*\x00', b'MM\x00*'),
     '.mp4':  lambda b: len(b) >= 8 and b[4:8] == b'ftyp',
     '.mov':  lambda b: len(b) >= 8 and b[4:8] == b'ftyp',
     '.m4a':  lambda b: len(b) >= 8 and b[4:8] == b'ftyp',
@@ -79,7 +88,7 @@ def resolve_media_extension(filename: Optional[str]) -> str:
         raise UploadValidationError(f"不允许上传 {ext} 文件（可执行/可渲染文档存在安全风险）")
     if ext not in _ALLOWED_EXTS:
         raise UploadValidationError(
-            "不支持的文件格式，仅支持图片（jpg/png/webp/gif/bmp）、"
+            "不支持的文件格式，仅支持图片（jpg/png/webp/gif/bmp/tif/tiff）、"
             "视频（mp4/mov/webm/avi/mkv）、音频（mp3/wav/m4a/aac/ogg/flac）"
         )
     return ext
@@ -141,3 +150,48 @@ def save_upload_chunked(upload_file, file_path: str, ext: str) -> int:
             logger.warning(f"清理超限上传半成品失败: {file_path}")
         raise
     return total
+
+
+def convert_tiff_file_to_png(file_path: str) -> str:
+    """把已落盘的 TIFF 文件转码为 PNG 并删除原文件，返回新文件路径。
+
+    浏览器 <img> 不解码 TIFF、CDN 扩展名表与 proxy MIME 映射也不含 tif，
+    因此 tif/tiff 只允许作为上传入口格式，落盘后必须归一化为 PNG，
+    /upload/ 目录不得残留 .tif 文件。
+
+    转码规则：多帧 TIFF 取第一帧；CMYK/16bit 等模式降为 8bit RGB/RGBA。
+    与本模块其余函数一致为纯同步实现，供 asyncio.to_thread 在工作线程调用。
+
+    Raises:
+        UploadValidationError: 文件解码失败或像素规模超出 PIL 安全上限，
+            此时原 tif 与转码半成品均已被清理
+    """
+    png_path = os.path.splitext(file_path)[0] + MediaUploadSafetyConstants.TIFF_CONVERT_TARGET_EXT
+    try:
+        with Image.open(file_path) as img:
+            img.load()  # 强制完整解码，截断/损坏文件在此暴露
+            mode = img.mode
+            if mode in ("P", "LA", "PA"):
+                img = img.convert("RGBA")
+            elif mode not in ("RGB", "RGBA"):
+                # CMYK / I;16 / YCbCr 等：带 alpha 信息判断不可靠，统一落 RGB（8bit）
+                img = img.convert("RGB")
+            img.save(png_path, format="PNG")
+    except UploadValidationError:
+        raise
+    except Exception as e:  # DecompressionBombError / 解码失败 / 写盘异常
+        # 转码失败即上传失败：原 tif 与半成品一并清理，避免无效文件残留并被对外服务
+        for stale in (png_path, file_path):
+            try:
+                if os.path.exists(stale):
+                    os.remove(stale)
+            except OSError:
+                logger.warning(f"清理 TIFF 转码残留文件失败: {stale}")
+        raise UploadValidationError(
+            f"TIFF 图片解码失败，无法转换（{type(e).__name__}），请检查文件是否损坏或像素规模过大"
+        ) from e
+    try:
+        os.remove(file_path)
+    except OSError:
+        logger.warning(f"TIFF 转码后删除原文件失败: {file_path}")
+    return png_path

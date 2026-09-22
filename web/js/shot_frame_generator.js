@@ -30,6 +30,10 @@ async function collectShotFrameRefImages(node) {
   const referenceImageUrls = [];
   const promptSuffix = [];
   const missingCharacters = new Set();
+  // 精确匹配到的角色对象（含 default_voice）：供参考生视频提交时自动带入角色音色
+  const voiceCharacters = [];
+  // 角色参考图 URL（供「是否处理人脸」白名单：只有角色图参与人脸遮盖，道具/场景不处理）
+  const characterRefUrls = [];
   let imageIndex = 1;
 
   // 1. 提取角色名：图片提示词 ∪ 生视频提示词中的 【【角色名】】（去重，图片提示词优先）
@@ -79,10 +83,14 @@ async function collectShotFrameRefImages(node) {
               // 只按全名精确匹配。keyword 是 LIKE 模糊搜索，禁止拿第一条命中
               // 兜底（会挂错参考图）；匹配不到的角色按"不存在"处理，保留用户手选图。
               const matchedChar = characters.find(c => c.name === characterName) || null;
+              if(matchedChar && matchedChar.default_voice){
+                voiceCharacters.push(matchedChar);
+              }
               const userSelectedCharUrl = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[characterName]);
               const charRefUrl = userSelectedCharUrl || (matchedChar && matchedChar.reference_image);
               if (charRefUrl) {
                 referenceImageUrls.push(charRefUrl);
+                characterRefUrls.push(charRefUrl);
                 const labelDesc = userSelectedCharUrl && userSelectedCharUrl !== matchedChar?.reference_image
                   ? `的${(node.data.selectedCharRefImageLabels && node.data.selectedCharRefImageLabels[characterName]) || '已选择'}` : '';
                 promptSuffix.push(`图${imageIndex}是${characterName}${labelDesc}`);
@@ -141,7 +149,7 @@ async function collectShotFrameRefImages(node) {
     if (promptSuffix.length > maxRefImages) promptSuffix.length = maxRefImages;
   }
 
-  return { referenceImageUrls, promptSuffix, missingCharacters };
+  return { referenceImageUrls, promptSuffix, missingCharacters, voiceCharacters, characterRefUrls };
 }
 
 // 生成分镜图功能
@@ -322,6 +330,8 @@ async function generateShotFrameImage(nodeId, node){
         newNode.data.name = imageCount > 1 ? `分镜图${i + 1}` : '分镜图';
         newNode.data.project_id = projectIds[i] || projectIds[0];
         newNode.title = newNode.data.name;
+        // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+        if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newNodeId);
         
         // 更新节点标题显示
         const canvasEl = document.getElementById('canvas');
@@ -404,6 +414,8 @@ async function generateShotFrameImage(nodeId, node){
                 previewImg.src = proxyImageUrl(imageUrl);
                 previewRow.style.display = 'flex';
               }
+              // 图片已到位：隐藏「生成中」占位
+              if(window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(imageNode);
             }
             
             console.log(`[分镜图] 更新图片节点 ${imageNodeId} URL:`, imageUrl);

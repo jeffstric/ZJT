@@ -1170,6 +1170,8 @@
                 newNode.data.name = projectIds.length > 1 ? ('全景图' + (i + 1)) : '全景图';
                 newNode.data.project_id = projectIds[i] || projectIds[0];
                 newNode.title = newNode.data.name;
+                // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+                if (window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newNodeId);
                 var newEl = canvasEl.querySelector('.node[data-node-id="' + newNodeId + '"]');
                 if (newEl) {
                   var titleEl = newEl.querySelector('.node-title');
@@ -1219,6 +1221,8 @@
                         previewImg.src = proxyImageUrl(imageUrl);
                         previewRow.style.display = 'flex';
                       }
+                      // 图片已到位：隐藏「生成中」占位
+                      if (window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(imageNode);
                     }
                   }
                 });

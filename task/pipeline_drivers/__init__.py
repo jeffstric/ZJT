@@ -27,6 +27,36 @@ from .h3_prompt_optimize_util import resolve_h3_prompt_variant, resolve_h3_refer
 
 logger = logging.getLogger(__name__)
 
+
+def resolve_face_mask_reference_whitelist(
+    extra_config: Any,
+    key: Optional[str] = None,
+) -> Optional[set]:
+    """从 ai_tools.extra_config 解析「允许参与人脸遮盖的参考图 URL 白名单」。
+
+    参考生视频的参考图混合角色/场景/道具/画风等类型，人脸遮盖只对角色参考图
+    有意义；提交方把角色参考图 URL 列表写入 extra_config[key]。
+
+    返回语义：
+    - 键存在且为列表 → URL 集合（可能为空集：明确声明没有参考图需要遮盖）
+    - 键不存在 / extra_config 非法 → None（调用方保持旧行为：全部参考图遮盖）
+    """
+    from config.constant import FaceMaskPromptConstants
+    if key is None:
+        key = FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY
+    if not extra_config:
+        return None
+    try:
+        parsed = json.loads(extra_config) if isinstance(extra_config, str) else extra_config
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict) or key not in parsed:
+        return None
+    value = parsed.get(key)
+    if not isinstance(value, list):
+        return None
+    return {str(item).strip() for item in value if str(item or '').strip()}
+
 # 驱动注册表
 _DRIVER_MAP = {
     PipelineStepType.FACE_MASK: FaceMaskPipelineDriver,
@@ -136,6 +166,12 @@ class PipelineDriverFactory:
         if not face_mask_enabled:
             return step_configs
 
+        from config.constant import FaceMaskPromptConstants
+        reference_whitelist = resolve_face_mask_reference_whitelist(
+            getattr(ai_tool, 'extra_config', None),
+            key=FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY,
+        )
+
         for video_path in cls._split_paths(getattr(ai_tool, 'video_path', None)):
             step_configs.append({
                 'step_type': PipelineStepType.FACE_MASK,
@@ -154,7 +190,12 @@ class PipelineDriverFactory:
                 'target': image_path,
             })
 
+        whitelist_hits = 0
         for idx, image_path in enumerate(cls._get_reference_images(ai_tool)):
+            # 参考图遮盖白名单：仅角色参考图需要人脸处理；白名单缺失时保持旧行为（全量遮盖）
+            if reference_whitelist is not None and image_path not in reference_whitelist:
+                continue
+            whitelist_hits += 1
             step_configs.append({
                 'step_type': PipelineStepType.IMAGE_FACE_MASK,
                 'params': {
@@ -164,6 +205,20 @@ class PipelineDriverFactory:
                 },
                 'target': image_path,
             })
+
+        # 白名单非空但零命中：两侧 URL 写法不一致（host/编码/尾斜杠）时全部
+        # 参考图会静默跳过遮盖，真人脸素材将以未遮盖状态提交网关——必须可见
+        if reference_whitelist and whitelist_hits == 0:
+            references = cls._get_reference_images(ai_tool)
+            logger.warning(
+                "[face-mask] 参考图白名单非空但零命中，参考图均未做人脸遮盖。"
+                "ai_tool_id=%s 白名单(%d)=%s 参考图(%d)=%s",
+                getattr(ai_tool, 'id', None),
+                len(reference_whitelist),
+                sorted(reference_whitelist)[:5],
+                len(references),
+                list(references)[:5],
+            )
 
         return step_configs
 

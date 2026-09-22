@@ -1,4 +1,5 @@
 import state, { getSupportedVideoImageModes } from './state.js';
+import { t } from './utils.js';
 
 export const AUTO_VIDEO_BATCH_ACTIVE_STATUSES = new Set(['submitting', 'pending', 'running']);
 const AUTO_VIDEO_BATCH_TERMINAL_STATUSES = new Set(['completed', 'partial', 'failed']);
@@ -65,7 +66,7 @@ export function setAutoVideoBatchSubmitting(submitting) {
         ...state.autoVideoBatch,
         status: submitting ? 'submitting' : 'idle',
         submitting: Boolean(submitting),
-        message: submitting ? '正在提交视频任务' : '',
+        message: submitting ? t('status_submitting_video_tasks', '正在提交视频任务') : '',
     };
 }
 
@@ -179,7 +180,7 @@ export function getAutoVideoCompleteButtonViewModel() {
     if (batch.submitting || batch.status === 'submitting') {
         return {
             icon: 'loading',
-            label: '正在提交视频任务',
+            label: t('status_submitting_video_tasks', '正在提交视频任务'),
             locked: true,
             disabled: false,
             busy: true,
@@ -189,7 +190,9 @@ export function getAutoVideoCompleteButtonViewModel() {
     if (summary.active) {
         return {
             icon: 'loading',
-            label: `视频生成中 ${batch.completedCount}/${batch.totalCount || summary.missingCount}`,
+            label: t('status_video_generating_progress', '视频生成中 {done}/{total}')
+                .replace('{done}', String(batch.completedCount))
+                .replace('{total}', String(batch.totalCount || summary.missingCount)),
             locked: true,
             disabled: false,
             busy: true,
@@ -198,16 +201,16 @@ export function getAutoVideoCompleteButtonViewModel() {
     }
     if (summary.missingCount > 0) {
         const audioHint = summary.waitingAudioCount > 0
-            ? `，${summary.waitingAudioCount} 个对口型待配音`
+            ? t('hint_lip_sync_waiting_audio', '，{n} 个对口型待配音').replace('{n}', String(summary.waitingAudioCount))
             : '';
         // 根据当前视频图片模式调整文案与提示。
         const isMultiRef = state.videoImageMode === 'multi_reference';
         const modeSupported = !isMultiRef || getSupportedVideoImageModes().includes('multi_reference');
-        const labelPrefix = isMultiRef ? '全能参考逐个生成视频' : '逐个生成视频';
+        const labelPrefix = isMultiRef ? t('btn_video_multi_reference_generate', '全能参考逐个生成视频') : t('btn_video_generate_one_by_one', '逐个生成视频');
         const modeHint = isMultiRef
             ? (modeSupported
-                ? '（全能参考：可不生成分镜图，用角色/场景/道具参考图）'
-                : '（当前模型不支持全能参考，将使用首尾帧模式）')
+                ? t('hint_video_multi_reference_ok', '（全能参考：可不生成分镜图，用角色/场景/道具参考图）')
+                : t('hint_video_multi_reference_unsupported', '（当前模型不支持全能参考，将使用首尾帧模式）'))
             : '';
         return {
             icon: 'video',
@@ -216,34 +219,37 @@ export function getAutoVideoCompleteButtonViewModel() {
             disabled: false,
             busy: false,
             className: 'auto-complete-button auto-video-button',
-            title: `可提交 ${summary.missingCount} 个${audioHint}${modeHint}`,
+            title: t('hint_video_submittable_n', '可提交 {n} 个{audio}{mode}')
+                .replace('{n}', String(summary.missingCount))
+                .replace('{audio}', audioHint)
+                .replace('{mode}', modeHint),
         };
     }
     if (summary.waitingAudioCount > 0) {
         return {
             icon: 'video',
-            label: `对口型待配音 (${summary.waitingAudioCount})`,
+            label: t('status_lip_sync_waiting_audio', '对口型待配音 ({n})').replace('{n}', String(summary.waitingAudioCount)),
             locked: false,
             disabled: true,
             busy: false,
             className: 'auto-complete-button auto-video-button is-complete',
-            title: '对口型分镜需先生成对话配音，再批量生成视频',
+            title: t('hint_lip_sync_need_audio_first', '对口型分镜需先生成对话配音，再批量生成视频'),
         };
     }
     if (summary.withFirstFrame === 0) {
         return {
             icon: 'video',
-            label: '需先补全画面',
+            label: t('status_need_images_first', '需先补全画面'),
             locked: false,
             disabled: true,
             busy: false,
             className: 'auto-complete-button auto-video-button is-complete',
-            title: '请先生成分镜首帧，再批量生成视频',
+            title: t('hint_generate_first_frames_first', '请先生成分镜首帧，再批量生成视频'),
         };
     }
     return {
         icon: 'success',
-        label: '视频已全部生成',
+        label: t('status_all_videos_generated', '视频已全部生成'),
         locked: false,
         disabled: true,
         busy: false,

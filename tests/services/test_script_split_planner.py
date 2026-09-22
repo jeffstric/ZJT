@@ -13,7 +13,11 @@ from services.script_split_planner import (
     plan_to_segments,
 )
 from config.constant import ScriptSplitConstants
-from llm.script_segment_planner import build_exclusion_instruction, build_planning_prompt
+from llm.script_segment_planner import (
+    build_exclusion_instruction,
+    build_planning_prompt,
+    compose_planning_prompt,
+)
 
 
 # ---- 锚点化 ----
@@ -319,6 +323,40 @@ def test_exclusion_instruction_is_self_contained():
     instruction = build_exclusion_instruction()
     assert "excluded_block_ids" in instruction
     assert "不得排除" in instruction
+
+
+def test_override_prompt_injects_shared_instructions():
+    """自定义提示词（enterprise quality 等）必须同时注入排除与标注总时长提炼指引。
+
+    回归：历史上只注入排除指引，quality 模式规划从不输出
+    declared_duration_seconds，总分镜时长控制退化为台词锚定口径
+    （线上事故：3 分钟自述剧本拆出 8.9 分钟）。
+    """
+    prompt = compose_planning_prompt(
+        _make_script_anchors(), prompt_override="自定义质量模式提示词")
+    assert "自定义质量模式提示词" in prompt
+    assert "excluded_block_ids" in prompt
+    assert "declared_duration_seconds" in prompt
+    assert prompt.index("自定义质量模式提示词") < prompt.index("excluded_block_ids")
+
+
+def test_compose_prompt_without_override_keeps_default():
+    """无 prompt_override 时使用默认 speed 提示词（自身已内嵌两段指引）。"""
+    prompt = compose_planning_prompt(_make_script_anchors())
+    assert "excluded_block_ids" in prompt
+    assert "declared_duration_seconds" in prompt
+
+
+def test_compose_prompt_appends_feedback_last():
+    """上轮规划反馈拼在末尾，不覆盖已注入的共享指引。"""
+    prompt = compose_planning_prompt(
+        _make_script_anchors(),
+        prompt_override="自定义提示词",
+        feedback="segment 覆盖不完整",
+    )
+    assert "上轮规划反馈，请修正" in prompt
+    assert "declared_duration_seconds" in prompt
+    assert prompt.index("declared_duration_seconds") < prompt.index("上轮规划反馈")
 
 
 # ---- plan_to_segments ----

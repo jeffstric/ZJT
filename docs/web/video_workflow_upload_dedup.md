@@ -137,6 +137,26 @@ affected = 0（版本竞争失败，并发写已抢先）同样按 HTTP 409 拒�
    被标记，落库后同样使其他会话基线过期，且刷新后会重复纠正。
    **区分原则：值与服务端等价的回填（splitModel 回写）不落库、由延迟基线
    吸收；值与服务端不同的纠正（分辨率纠正）必须 markDirty 落库。**
+4. **错误字段写读不一致 + 漏网还原点**（第二轮回归实测，wf3 往返 diff 14→4、
+   wf6 3→2、wf7 5→0）：
+   - poll 的任务失败分支（`pollWorkflowNodeStatus`）曾把失败原因写入
+     `data.error`——该字段**没有任何渲染或还原消费点**（"只写不读"的死字段），
+     还原后必然丢失，产生幽灵修改。修复：poll 改写 `lastError`（唯一被渲染、
+     被还原渲染、被持久化的错误字段），`updateNodeErrorDisplay` 的 DOM 提示
+     保留不变；
+   - `createVideoNodeWithData` 补 `error` 严格还原（`!== undefined`），存量
+     数据中已写入的 error 不再丢失、不再漂移；
+   - `createImageToVideoNodeWithData` 的 `lastError || ''` 改严格判断
+     （`createImageToVideoNode` 初始 data 不含该字段，与 video 同理）；
+   - video 节点 `loadedmetadata` 的 `duration` 元数据回填是**非确定性幽灵
+     修改**（视频加载成败/时序不同，各会话产出不同 body），回填后
+     `markDirty()` 尽快落库收敛。duration 的消费点全部带 `|| 10/5` 兜底，
+     `undefined` 与 `0` 行为一致，无 NaN 风险。
+   - **遗留（评估后不修）**：script 节点 `totalDurationMultiplier`、顶层
+     `groups/nextGroupId`、image_to_video `duration || 15`、`scriptData`
+     序列化瘦身（`buildSlimScriptData`）均属**确定性一次性迁移**——落库一次
+     即稳定，两会话同时落库内容相同、服务端同内容兜底可放行；强行保持
+     "缺 key"会让 serialize 的固定结构变成条件省略，维护成本高于收益。
 
 **新增节点类型 / 还原逻辑时必须自检往返一致**：打开页面 → Network 无任何
 PUT（3 分钟内）→ `autoSaveState.isConfirmedBody(id, buildAutoSaveBody())`
