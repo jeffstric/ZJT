@@ -279,12 +279,11 @@ def build_keyframe_points(
     taken = cuts[:quota]
     pts = ([0.0] if not resumed else []) + taken
     # 切换点已取尽 → 补尾帧收尾；还有剩余切换点则留给下一批。
-    # 满批时让出最后一格给尾帧：被让出的切换点晚于本批起点，下一批续传
-    # 会重新做场景检测再发现它，不会丢帧，同时保证本批不超过 limit 个。
+    # 满批时本批不补尾帧：挤掉任一切换点都会永久丢帧（下一批从末点续传，
+    # 回不到被挤掉的位置），剩余段由下一批均匀采样天然含尾帧，同时本批不超上限。
     if len(taken) == len(cuts) and pts[-1] < end - gap:
-        if len(pts) >= limit:
-            pts.pop()
-        pts.append(end)
+        if len(pts) < limit:
+            pts.append(end)
 
     merged = []
     for p in pts:

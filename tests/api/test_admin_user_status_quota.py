@@ -111,3 +111,26 @@ def test_admin_cannot_set_self_pending(monkeypatch):
     assert exc_info.value.status_code == 400
     assert "待审核" in str(exc_info.value.detail)
     admin_api.UsersModel.update_status.assert_not_called()
+
+
+# ===== 状态变更的 token 吊销 =====
+
+def test_set_pending_revokes_all_tokens(monkeypatch):
+    """1→2 待审核必须与禁用一样吊销全部 token：待审核不占激活名额，
+    保留 token 会出现"不占名额但仍可调用接口"的口径漏洞（实测 20260922）"""
+    result = _run(monkeypatch, 2, 2, current_status=1, active_count=0)
+    assert result["code"] == 0
+    admin_api.UserTokensModel.delete_by_user_id.assert_called_once_with(2)
+
+
+def test_disable_revokes_all_tokens(monkeypatch):
+    result = _run(monkeypatch, 2, 0, current_status=1, active_count=0)
+    assert result["code"] == 0
+    admin_api.UserTokensModel.delete_by_user_id.assert_called_once_with(2)
+
+
+def test_enable_does_not_revoke_tokens(monkeypatch):
+    # 启用/审核通过是放行操作，不应误删 token
+    result = _run(monkeypatch, 2, 1, current_status=2, active_count=0)
+    assert result["code"] == 0
+    admin_api.UserTokensModel.delete_by_user_id.assert_not_called()
