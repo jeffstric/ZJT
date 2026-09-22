@@ -107,6 +107,33 @@ def get_papay_util(plan_template_id: Optional[str] = None) -> WxPapayUtil:
     )
 
 
+def _yuan_to_fen(amount) -> int:
+    """元转分，四舍五入。int(29.9 * 100) 会截成 2989，和微信模板金额对不上。"""
+    return int(round(float(amount) * 100))
+
+
+def _is_starter_intro_charge(order, plan: Dict) -> bool:
+    """入门版首月优惠单：实付等于 first_period_price。这一期渠道不分佣。"""
+    intro = plan.get("first_period_price")
+    if intro is None or int(getattr(order, "period_index", 1) or 1) != 1:
+        return False
+    return _yuan_to_fen(order.amount) == _yuan_to_fen(intro)
+
+
+def _first_period_charge_yuan(plan: Dict, user_id: int) -> float:
+    """首期实付（元）。
+
+    套餐带 first_period_price 且用户没有历史成功签约时用优惠价；
+    已成功签约过（含其他档位、含已解约）或套餐没有优惠价时用续费价 price。
+    """
+    intro = plan.get("first_period_price")
+    if intro is None:
+        return float(plan["price"])
+    if WxPapayContractsModel.exists_signed_contract(user_id):
+        return float(plan["price"])
+    return float(intro)
+
+
 class SubscriptionServiceError(Exception):
     """订阅业务异常（message 面向用户可读）"""
 
@@ -188,7 +215,7 @@ async def create_sign_pay_order(
     if is_wechat_browser and not openid:
         raise SubscriptionServiceError("微信内订阅需要用户openid，请先进行微信授权")
 
-    # 每档套餐一个微信协议模板（固定金额），优先取套餐配置，缺省用全局兜底
+    # 每档套餐一个微信协议模板。入门版 224144 同时接受首期优惠价和后续标准价。
     template_id = plan.get("template_id")
     if not template_id:
         raise SubscriptionServiceError(
@@ -200,7 +227,8 @@ async def create_sign_pay_order(
 
     order_id = WxPapayUtil.generate_subscription_order_id()
     contract_code = WxPapayUtil.generate_contract_code()
-    total_fee = int(plan["price"] * 100)
+    charge_yuan = _first_period_charge_yuan(plan, user_id)
+    total_fee = _yuan_to_fen(charge_yuan)
     body = f"{SubscriptionConstants.BODY_PREFIX}-{plan['name']}"
 
     trade_type = "JSAPI" if is_wechat_browser else "NATIVE"
@@ -250,7 +278,7 @@ async def create_sign_pay_order(
         user_id=user_id,
         subscription_plan_id=plan["plan_id"],
         period_index=1,
-        amount=plan["price"],
+        amount=charge_yuan,
         computing_power=plan["computing_power"],
         period_start=None,
         period_end=None,
@@ -262,7 +290,8 @@ async def create_sign_pay_order(
         "order_id": order_id,
         "contract_code": contract_code,
         "payment_type": trade_type,
-        "price": plan["price"],
+        "price": charge_yuan,
+        "renewal_price": plan["price"],
         "computing_power": plan["computing_power"],
         "upgrade": bool(upgrade_from_contract_code),
     }
@@ -677,7 +706,7 @@ async def _create_renewal_orders() -> None:
                 ok, err = await asyncio.to_thread(
                     papay.pre_deduct_notify,
                     contract.contract_id,
-                    int(plan.get("price", 0) * 100),
+                    _yuan_to_fen(plan.get("price", 0)),
                 )
                 if ok:
                     SubscriptionOrdersModel.mark_prenotify_sent(renewal.order_id)
@@ -731,7 +760,7 @@ async def _apply_due_deductions() -> None:
             result = await asyncio.to_thread(
                 papay.apply_deduct,
                 order_id=order.order_id,
-                total_fee=int(order.amount * 100),
+                total_fee=_yuan_to_fen(order.amount),
                 body=body,
                 contract_id=contract.contract_id,
                 notify_url=_callback_url("pay-callback"),
@@ -957,11 +986,18 @@ async def _settle_and_grant(order, transaction_id: str) -> bool:
 
     规则（新价目方案）：
       - 基础算力走邀请抽佣结算（commission/settle），有邀请人时按其佣金比例打折；
+      - 入门版首月优惠（实付 first_period_price）渠道不分佣，按订单上的常规算力发放；
       - 抽佣调用异常时降级为基础算力全额（宁可漏抽佣，不少发用户算力）。
     """
     plan = get_subscription_plan(order.subscription_plan_id) or {}
     base = order.computing_power
     granted = base
+    if _is_starter_intro_charge(order, plan):
+        logger.info(
+            f"Skip channel commission for starter intro order {order.order_id}, "
+            f"amount={order.amount}, grant={base}"
+        )
+        return await _grant_computing_power(order.user_id, base, transaction_id)
     try:
         settle_ok, settle_msg, settle_data = await async_make_perseids_request(
             endpoint='commission/settle',

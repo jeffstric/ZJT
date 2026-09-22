@@ -5182,8 +5182,8 @@ async def get_recharge_packages(
         auth_token: query 传 token（legacy 兼容，优先级低于 header）
 
     Returns:
-        List of recharge packages with computing power and pricing
-        If user has already recharged before, the first package (首充福利) will be filtered out
+        List of recharge packages with computing power and pricing.
+        0.1 元首充福利包已下线，不在 RECHARGE_PACKAGES 中，所有用户都看不到。
     """
     try:
         # token 优先取 Authorization 头；query 传参已废弃（防 URL 泄漏），仅为旧客户端兜底
@@ -5191,17 +5191,8 @@ async def get_recharge_packages(
         if not resolved_token:
             raise HTTPException(status_code=401, detail="未提供认证信息")
 
-        # 查询用户是否已经首充
-        has_completed_first_recharge = await _has_completed_first_recharge(resolved_token)
-
-        # 如果用户已经充值过，过滤掉首充福利套餐（FIRST_RECHARGE_PACKAGE_ID）
         # 用 dict(pkg) 浅拷贝每个套餐，避免污染模块级常量 RECHARGE_PACKAGES
         packages = [dict(pkg) for pkg in RECHARGE_PACKAGES]
-        if has_completed_first_recharge:
-            packages = [pkg for pkg in packages if pkg.get("package_id") != Commission.FIRST_RECHARGE_PACKAGE_ID]
-            logger.info(f"已经首充，过滤掉首充福利套餐")
-        else:
-            logger.info(f"是首充用户，显示所有套餐")
 
         # 计算扣邀请佣金后的实际到账算力（针对当前用户；社区版/无邀请人/首充=>全额）
         grants = {}
@@ -5287,6 +5278,10 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
                 detail="登录过期，请重新登录"
             )
         
+        # 0.1 元首充福利已下线：旧客户端仍可能提交 package_id=5，单独拒绝
+        if payment_request.package_id == Commission.FIRST_RECHARGE_PACKAGE_ID:
+            raise HTTPException(status_code=400, detail="该套餐已下线")
+
         # 验证套餐ID
         package_info = None
         for package in RECHARGE_PACKAGES:
@@ -5299,16 +5294,6 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
                 status_code=400,
                 detail="Invalid package ID"
             )
-
-        # 首充套餐校验：如果购买的是首充福利包且用户已首充，禁止再次购买
-        if payment_request.package_id == Commission.FIRST_RECHARGE_PACKAGE_ID:
-            has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
-            if has_completed_first_recharge:
-                logger.warning(f"User {payment_request.user_id} attempted to purchase first-charge package again")
-                raise HTTPException(
-                    status_code=400,
-                    detail="首充福利仅限首次充值，您已领取过该套餐"
-                )
         
         # 生产安全闸：商户私钥缺失时禁止发起支付/展示二维码
         # （缺失时签名降级为 mock_signature 微信必拒；验签旁路也仅限密钥齐备时可防伪造回调）
