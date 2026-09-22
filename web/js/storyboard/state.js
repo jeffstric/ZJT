@@ -5,6 +5,7 @@ import {
     scenesFromApi,
     dialogueFromApi,
 } from './adapters.js';
+import { t } from './utils.js';
 
 const state = {
     storyboardId: null,
@@ -1107,7 +1108,7 @@ export function syncVideoMediaFromScene(scene, options = {}) {
             source: 'scene',
             url: firstUrl,
             thumbnailUrl: firstUrl,
-            name: '当前首帧',
+            name: t('label_current_first_frame', '当前首帧'),
         }));
     }
 
@@ -1121,7 +1122,7 @@ export function syncVideoMediaFromScene(scene, options = {}) {
                 source: 'scene',
                 url: lastUrl,
                 thumbnailUrl: lastUrl,
-                name: '当前尾帧',
+                name: t('label_current_last_frame', '当前尾帧'),
             }));
         }
     } else {
@@ -1153,7 +1154,7 @@ export function refreshSceneFirstFrameSlot(scene) {
                 source: 'scene',
                 url: firstUrl,
                 thumbnailUrl: firstUrl,
-                name: '当前首帧',
+                name: t('label_current_first_frame', '当前首帧'),
             }));
         }
     } else if (idx >= 0) {
@@ -1389,7 +1390,7 @@ export function estimateScenePower(scene = null) {
     if (mode === 'image' || mode === 'dialogue') {
         const model = (state.imageEditModels || []).find(m => String(m.task_id) === String(state.selectedImageEditTaskId));
         const power = resolvePowerFromModel(model);
-        return power == null ? null : { power, label: mode === 'image' ? '生图' : 'AI生图' };
+        return power == null ? null : { power, label: mode === 'image' ? t('label_power_image', '生图') : t('label_power_ai_image', 'AI生图') };
     }
     if (mode === 'video' || mode === 'aivideo') {
         const sceneId = sc?.id;
@@ -1402,7 +1403,7 @@ export function estimateScenePower(scene = null) {
             sceneId, taskId, extras.duration_mode, extras.duration, extras.resolution, imageMode, isDh ? 'dh' : '',
         ].join('|');
         if (videoPowerEstimates.has(key)) {
-            return { power: videoPowerEstimates.get(key), label: mode === 'aivideo' ? 'AI生视频' : (isDh ? '数字人视频' : '视频') };
+            return { power: videoPowerEstimates.get(key), label: mode === 'aivideo' ? t('label_power_ai_video', 'AI生视频') : (isDh ? t('label_power_digital_human', '数字人视频') : t('label_power_video', '视频')) };
         }
         // 异步估价：结果回填缓存后经 onPowerEstimateUpdated 通知重渲
         requestVideoPowerEstimate(key, sceneId, isDh ? {
@@ -1578,7 +1579,7 @@ export function applyGenerateProgressStatus(statusData = {}) {
     if (Number.isFinite(progress)) {
         state.generateProgressPercent = Math.round(Math.max(0, Math.min(100, progress)));
     }
-    state.generateProgressMessage = String(statusData.message || '正在处理任务');
+    state.generateProgressMessage = String(statusData.message || t('msg_processing_task', '正在处理任务'));
 }
 
 /** 比例门禁是否拦截业务操作（首建未确认比例）。 */

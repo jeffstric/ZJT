@@ -2,6 +2,14 @@
 // 2026-06-24 重构：废弃 demo2 照搬的 thumbnail/previewImageUrl/sceneInfo/charDesc/voiceoverText，
 // 改为 videoType/videoPrompt/selectedFirstFrameId 等；配音拆为 dialogues。
 
+// 本文件被 tests/js/test_storyboard_adapters.js 以 new Function 执行，
+// 不能使用静态 import；t 用带 window 守卫的本地实现（与 utils.js 语义一致：键未命中回落中文兜底）。
+const t = (key, fallback) => (
+    typeof window !== 'undefined' && window.ZJTi18n && window.ZJTi18n.t && window.ZJTi18n.t(key) !== key
+)
+    ? window.ZJTi18n.t(key)
+    : (fallback || key);
+
 // 分镜难易程度规范化（与后端 SceneDifficulty.normalize 对齐：易/中/难，非法值回落"中"）
 export function normalizeDifficulty(value) {
     const v = String(value ?? '').trim();
@@ -202,7 +210,7 @@ export function sceneFromApi(raw = {}) {
         id: raw.id,
         storyboardId: raw.storyboard_id,
         sortOrder: raw.sort_order || 0,
-        title: raw.title || `分镜${raw.sort_order ?? ''}`,
+        title: raw.title || t('title_scene_default', '分镜{n}').replace('{n}', String(raw.sort_order ?? '')),
         // 剧本解析时的分组信息（埋在 prompt_json.source 里），用于左侧栏显示"幕XX"
         groupId: source.group_id || '',
         groupName: source.group_name || '',
@@ -323,5 +331,5 @@ export function dialogueToPayload(dialogue) {
 export function buildStoryboardTitle(storyboard = {}) {
     if (storyboard.title) return storyboard.title;
     const episode = storyboard.episode_number || 1;
-    return `第${episode}集故事板`;
+    return t('title_storyboard_episode', '第{n}集故事板').replace('{n}', String(episode));
 }

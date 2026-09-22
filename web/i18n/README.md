@@ -207,6 +207,7 @@ function loadWorkflow() {
 | video_workflow.html | ✅ | 60+ | 原生 JS，68 个 data-i18n 属性 |
 | index.html | ✅ | 20+ | Vue 3 Options API，已注册插件 |
 | marketing_agent.html | ✅ | 15+ | Vue 3 Composition API |
+| storyboard.html | ✅ | 750 | ES module 动态渲染；t() 渲染期求值 + locale-changed 整页重渲染，详见 docs/storyboard/storyboard_i18n.md |
 
 ## 关键特性
 

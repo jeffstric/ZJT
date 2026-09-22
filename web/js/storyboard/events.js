@@ -46,7 +46,7 @@ import state, {
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
-import { showToast } from './utils.js';
+import { showToast, t } from './utils.js';
 import { downloadAsAttachment } from './download.js';
 import { loadSceneCandidates } from './scene_candidates.js';
 import {
@@ -130,10 +130,10 @@ function notify(message) {
 /** 默认拆分进度步骤（与提交 / 刷新恢复共用） */
 function createGenerateProgressSteps() {
     return [
-        { name: '规划分段', status: 'pending', phase: 'planning' },
-        { name: '逐段拆分', status: 'pending', phase: 'segment_generation' },
-        { name: '合并校验', status: 'pending', phase: 'merging' },
-        { name: '发布分镜', status: 'pending', phase: 'publishing' },
+        { name: t('status_step_planning', '规划分段'), status: 'pending', phase: 'planning' },
+        { name: t('status_step_splitting', '逐段拆分'), status: 'pending', phase: 'segment_generation' },
+        { name: t('status_step_merging', '合并校验'), status: 'pending', phase: 'merging' },
+        { name: t('status_step_publishing', '发布分镜'), status: 'pending', phase: 'publishing' },
     ];
 }
 
@@ -221,12 +221,12 @@ function attachGenerateFromScriptPolling(taskId) {
             state.generateFromScriptTaskId = null;
             resetAutoMissingImagesFlag(state.storyboardId);
             autoGenerateMissingFirstFrames();
-            notify(`已生成 ${state.scenes.length} 个分镜`);
+            notify(t('msg_generated_n_scenes', '已生成 {n} 个分镜').replace('{n}', String(state.scenes.length)));
             rerender('all', { forcePreview: true });
         },
         onPaused: (statusData) => {
             markRunningGenerateStepsFailed();
-            state.generateProgressError = statusData.error_message || statusData.message || '任务暂停，请刷新页面后继续';
+            state.generateProgressError = statusData.error_message || statusData.message || t('msg_task_paused_refresh', '任务暂停，请刷新页面后继续');
             state.isGeneratingFromScript = false;
             // 最小化时不强制弹窗，仅在 Header 徽章显示「拆分待处理」
             if (!state.showGenerateProgressDialog) {
@@ -237,7 +237,7 @@ function attachGenerateFromScriptPolling(taskId) {
         },
         onError: (error) => {
             markRunningGenerateStepsFailed();
-            state.generateProgressError = error.message || '生成分镜失败';
+            state.generateProgressError = error.message || t('msg_generate_scenes_failed', '生成分镜失败');
             state.isGeneratingFromScript = false;
             // 最小化时不强制弹窗，仅在 Header 徽章显示「拆分待处理」
             if (!state.showGenerateProgressDialog) {
@@ -288,7 +288,7 @@ async function loadRechargePackages() {
         state.rechargePackages = packages;
         state.rechargeState = 'packages';
     } catch (error) {
-        state.rechargeError = error.message || '加载套餐失败';
+        state.rechargeError = error.message || t('msg_load_packages_failed', '加载套餐失败');
         state.rechargeState = 'error';
     }
     rerenderModals();
@@ -298,7 +298,7 @@ async function openRechargeModal() {
     try {
         const config = await api.fetchServerConfig();
         if (config && config.is_local) {
-            notify('只有云端环境才能开启二维码支付。本地模式下，管理员用户请进入后台增加算力，非管理员用户请通知管理员。');
+            notify(t('msg_cloud_payment_only', '只有云端环境才能开启二维码支付。本地模式下，管理员用户请进入后台增加算力，非管理员用户请通知管理员。'));
             return;
         }
     } catch (e) {
@@ -333,11 +333,11 @@ async function selectRechargePackage(pkg) {
             state.rechargeQrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.code_url)}`;
             state.rechargeState = 'qrcode';
         } else {
-            throw new Error(data.error || '创建支付订单失败');
+            throw new Error(data.error || t('msg_create_pay_order_failed', '创建支付订单失败'));
         }
     } catch (error) {
         console.error('创建支付订单失败:', error);
-        state.rechargeError = error.message || '创建支付订单失败';
+        state.rechargeError = error.message || t('msg_create_pay_order_failed', '创建支付订单失败');
         state.rechargeState = 'error';
     }
     rerenderModals();
@@ -357,7 +357,9 @@ function handleAutoDialogueAudioPolling(response) {
     const submitted = Number(summary.submitted_count || 0);
     const skipped = Number(summary.skipped_count || 0);
     if (submitted > 0 || skipped > 0) {
-        return `已提交 ${submitted} 条配音任务，${skipped} 条跳过`;
+        return t('msg_voice_tasks_submitted_skipped', '已提交 {n} 条配音任务，{m} 条跳过')
+            .replace('{n}', String(submitted))
+            .replace('{m}', String(skipped));
     }
     return null;
 }
@@ -439,12 +441,12 @@ export function validateCandidateUploadFile(file, assetType) {
     if (assetType === 'video') {
         return ['.mp4', '.webm'].includes(extension)
             ? ''
-            : '视频仅支持 MP4、WebM 格式';
+            : t('msg_video_format_unsupported', '视频仅支持 MP4、WebM 格式');
     }
     const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
     return imageExtensions.includes(extension) || String(file?.type || '').startsWith('image/')
         ? ''
-        : '仅支持 JPG、PNG、GIF、WebP 图片';
+        : t('msg_image_format_unsupported', '仅支持 JPG、PNG、GIF、WebP 图片');
 }
 
 function isSceneCandidateTaskRunning(status) {
@@ -511,9 +513,9 @@ async function handleCandidateUploadFileChange(input) {
                 { forcePreview: true },
             );
         }
-        notify(assetType === 'video' ? '视频已上传并选中' : '分镜图已上传并选中');
+        notify(assetType === 'video' ? t('msg_video_uploaded_selected', '视频已上传并选中') : t('msg_scene_image_uploaded_selected', '分镜图已上传并选中'));
     } catch (error) {
-        notify(error.message || '上传失败，请重试');
+        notify(error.message || t('msg_upload_failed_retry', '上传失败，请重试'));
     } finally {
         setCandidateUploadState(sceneId, assetType, false);
         if (String(state.currentSceneId) === String(sceneId)) {
@@ -535,15 +537,15 @@ async function handleDeleteSceneCandidate(target) {
     const candidates = state.sceneCandidates?.[sceneId]?.[listKey] || [];
     const candidate = candidates.find(item => String(item.id) === String(assetId));
     if (candidate && isSceneCandidateTaskRunning(candidate.status)) {
-        notify('候选仍在生成中，请完成后再删除');
+        notify(t('msg_candidate_generating_no_delete', '候选仍在生成中，请完成后再删除'));
         return;
     }
 
-    const mediaLabel = assetType === 'video' ? '视频候选' : '分镜图候选';
+    const mediaLabel = assetType === 'video' ? t('label_video_candidate', '视频候选') : t('label_scene_image_candidate', '分镜图候选');
     const selectedHint = candidate?.selected
-        ? '\n这是当前选中项，删除后会自动切换到其他可用候选。'
+        ? '\n' + t('msg_candidate_selected_hint', '这是当前选中项，删除后会自动切换到其他可用候选。')
         : '';
-    if (!window.confirm(`确定删除这个${mediaLabel}吗？${selectedHint}\n此操作不可撤销。`)) return;
+    if (!window.confirm(t('confirm_delete_candidate', '确定删除这个{label}吗？').replace('{label}', mediaLabel) + selectedHint + '\n' + t('msg_irreversible', '此操作不可撤销。'))) return;
 
     if (assetType === 'video' && candidate?.selected) stopPlayback();
     setCandidateDeleteState(sceneId, assetId, true);
@@ -577,9 +579,9 @@ async function handleDeleteSceneCandidate(target) {
                 { forcePreview: true },
             );
         }
-        notify(`${mediaLabel}已删除`);
+        notify(t('msg_candidate_deleted', '{label}已删除').replace('{label}', mediaLabel));
     } catch (error) {
-        notify(error.message || '删除候选失败，请重试');
+        notify(error.message || t('msg_delete_candidate_failed_retry', '删除候选失败，请重试'));
     } finally {
         setCandidateDeleteState(sceneId, assetId, false);
         if (String(state.currentSceneId) === String(sceneId)) {
@@ -728,7 +730,7 @@ async function saveDialogueFromRow(row, { silent = false } = {}) {
         ...(voiceChanged ? { audioStale: true } : {}),
     });
     if (!silent) {
-        notify('对话已保存');
+        notify(t('msg_dialogue_saved', '对话已保存'));
     }
     return response;
 }
@@ -809,14 +811,14 @@ async function handleReferenceFileChange(input) {
     if (!files.length) return;
     for (const file of files) {
         if (!canAddVideoMedia()) {
-            notify(`当前模式最多 ${getMaxVideoMediaCount()} 张图片`);
+            notify(t('msg_max_images_for_mode', '当前模式最多 {n} 张图片').replace('{n}', String(getMaxVideoMediaCount())));
             break;
         }
         const role = resolveNextVideoUploadRole();
         if (!role) {
             notify(state.videoImageMode === 'first_last_frame'
-                ? (videoModelSupportsLastFrame() ? '首尾帧已满（最多2张）' : '该模型仅支持1张首帧')
-                : '参考图数量已达上限');
+                ? (videoModelSupportsLastFrame() ? t('msg_first_last_full', '首尾帧已满（最多2张）') : t('msg_model_first_frame_only_one', '该模型仅支持1张首帧'))
+                : t('msg_reference_limit_reached', '参考图数量已达上限'));
             break;
         }
         const tempId = `vm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -854,11 +856,11 @@ async function handleReferenceFileChange(input) {
                 }
             } else {
                 state.videoMediaItems = (state.videoMediaItems || []).filter(r => r.id !== tempId);
-                notify((res && res.error) || '参考图上传失败');
+                notify((res && res.error) || t('msg_reference_upload_failed', '参考图上传失败'));
             }
         } catch (err) {
             state.videoMediaItems = (state.videoMediaItems || []).filter(r => r.id !== tempId);
-            notify('参考图上传失败: ' + (err.message || err));
+            notify(t('msg_reference_upload_failed', '参考图上传失败') + ': ' + (err.message || err));
         }
         syncReferenceImagesCompat();
         rerenderAgentPanel();
@@ -872,13 +874,13 @@ async function sendStoryboardAgentMessage(current) {
     if (!streamSceneId || isSceneAgentRunning(streamSceneId)) return;
     const message = (state.inputMessage || '').trim();
     if (!message) {
-        notify('请输入要调整的内容');
+        notify(t('msg_enter_adjustment', '请输入要调整的内容'));
         return;
     }
     // 社区版下「AI生视频」（智能体）不可用：视频工具未注册到 Agent，调用必报未知工具
     const isCommunity = String(state.editionInfo?.mode || '').toLowerCase() === 'community';
     if (state.chatMode === 'aivideo' && isCommunity) {
-        notify('AI生视频为商业版特权，请切换到「视频生成」模式（直连生成，社区版可用）');
+        notify(t('msg_aivideo_pro_only', 'AI生视频为商业版特权，请切换到「视频生成」模式（直连生成，社区版可用）'));
         return;
     }
     // 对口型分镜生成视频：必须先有成片配音（MiniMax 口型跟音频走）
@@ -886,7 +888,7 @@ async function sendStoryboardAgentMessage(current) {
     if (state.chatMode === 'aivideo' && isDh) {
         const hasAudio = (current.dialogues || []).some(d => String(d.audioUrl || d.audio_url || '').trim());
         if (!hasAudio) {
-            notify('对口型视频需先生成配音：请到「对话」Tab 生成角色配音后再试');
+            notify(t('msg_lipsync_need_voiceover', '对口型视频需先生成配音：请到「对话」Tab 生成角色配音后再试'));
             state.activeTab = 'dialogue';
             rerender([Region.LEFT_SIDEBAR]);
             return;
@@ -897,7 +899,7 @@ async function sendStoryboardAgentMessage(current) {
     const modelId = typeof llm === 'object' ? (llm.model_id || llm.id) : null;
     const vendorId = typeof llm === 'object' ? llm.vendor_id : null;
     if (!model || !modelId) {
-        notify('请先在模型配置中选择对话模型');
+        notify(t('msg_select_dialogue_model', '请先在模型配置中选择对话模型'));
         state.showModelConfigModal = true;
         state.currentConfigTab = 'dialogue';
         rerenderModals();
@@ -908,7 +910,7 @@ async function sendStoryboardAgentMessage(current) {
     if (state.chatMode === 'aivideo') {
         const isDh = String(current?.videoType || current?.video_type || '').toLowerCase() === 'digital_human';
         if (!isDh && (state.selectedVideoTaskId == null || state.selectedVideoTaskId === '')) {
-            notify('请先在模型配置中选择视频模型');
+            notify(t('msg_select_video_model', '请先在模型配置中选择视频模型'));
             state.showModelConfigModal = true;
             state.currentConfigTab = 'video';
             rerenderModals();
@@ -948,51 +950,51 @@ async function sendStoryboardAgentMessage(current) {
         });
         const streamTaskId = response.task_id;
         setSceneAgentTaskId(streamSceneId, streamTaskId);
-        pushAgentMessageForScene(streamSceneId, 'status', isVideo ? '分镜视频智能体已开始处理' : '分镜图片智能体已开始处理');
+        pushAgentMessageForScene(streamSceneId, 'status', isVideo ? t('msg_scene_video_agent_started', '分镜视频智能体已开始处理') : t('msg_scene_image_agent_started', '分镜图片智能体已开始处理'));
         rerenderAgentUiForScene(streamSceneId);
 
         api.streamStoryboardAgentTask(streamTaskId, {
             onMessage: async (data) => {
                 if (data.type === 'connected' || data.type === 'heartbeat') return;
                 if (data.type === 'status') {
-                    pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || data.status || '任务状态已更新');
+                    pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || data.status || t('msg_task_status_updated', '任务状态已更新'));
                 } else if (data.type === 'tool_call') {
                     const names = Array.isArray(data.tool_names) ? data.tool_names.join(', ') : '';
-                    pushAgentMessageForScene(streamSceneId, 'status', names ? `正在调用工具：${names}` : '正在调用生成工具');
+                    pushAgentMessageForScene(streamSceneId, 'status', names ? t('msg_calling_tools', '正在调用工具：{names}').replace('{names}', names) : t('msg_calling_gen_tools', '正在调用生成工具'));
                 } else if (data.type === 'image_task_submitted') {
                     const ids = data.project_ids || data.projectIds || [];
-                    pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || '图片生成任务已提交，正在绑定到当前分镜');
-                    recordPowerSpend(data, 'AI生图');
+                    pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || t('msg_image_task_submitted_binding', '图片生成任务已提交，正在绑定到当前分镜'));
+                    recordPowerSpend(data, t('label_ai_image', 'AI生图'));
                     rerenderAgentPanelForScene(streamSceneId);
                     try {
                         await bindSubmittedAgentTasks(streamSceneId, ids, 'first_frame');
-                        pushAgentMessageForScene(streamSceneId, 'status', '已绑定图片生成任务，右侧资产状态会自动刷新');
+                        pushAgentMessageForScene(streamSceneId, 'status', t('msg_image_task_bound', '已绑定图片生成任务，右侧资产状态会自动刷新'));
                     } catch (error) {
-                        pushAgentMessageForScene(streamSceneId, 'assistant', `图片任务绑定失败：${error.message || error}`);
+                        pushAgentMessageForScene(streamSceneId, 'assistant', t('msg_image_task_bind_failed', '图片任务绑定失败：{msg}').replace('{msg}', String(error.message || error)));
                     }
                 } else if (data.type === 'video_task_submitted') {
                     const ids = data.project_ids || data.projectIds || [];
                     pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || (data.already_bound
-                        ? '数字人视频任务已提交，正在刷新当前分镜'
-                        : '视频生成任务已提交，正在绑定到当前分镜'));
-                    recordPowerSpend(data, 'AI生视频');
+                        ? t('msg_dh_video_task_submitted', '数字人视频任务已提交，正在刷新当前分镜')
+                        : t('msg_video_task_submitted_binding', '视频生成任务已提交，正在绑定到当前分镜')));
+                    recordPowerSpend(data, t('label_ai_video', 'AI生视频'));
                     rerenderAgentPanelForScene(streamSceneId);
                     try {
                         if (data.already_bound) {
                             await loadSceneCandidates(streamSceneId);
                             pollSceneTaskStatus(streamSceneId);
-                            pushAgentMessageForScene(streamSceneId, 'status', '数字人视频任务已关联当前分镜，右侧资产状态会自动刷新');
+                            pushAgentMessageForScene(streamSceneId, 'status', t('msg_dh_video_task_linked', '数字人视频任务已关联当前分镜，右侧资产状态会自动刷新'));
                         } else {
                             await bindSubmittedAgentTasks(streamSceneId, ids, 'video');
-                            pushAgentMessageForScene(streamSceneId, 'status', '已绑定视频生成任务，右侧资产状态会自动刷新');
+                            pushAgentMessageForScene(streamSceneId, 'status', t('msg_video_task_bound', '已绑定视频生成任务，右侧资产状态会自动刷新'));
                         }
                     } catch (error) {
-                        pushAgentMessageForScene(streamSceneId, 'assistant', `视频任务绑定失败：${error.message || error}`);
+                        pushAgentMessageForScene(streamSceneId, 'assistant', t('msg_video_task_bind_failed', '视频任务绑定失败：{msg}').replace('{msg}', String(error.message || error)));
                     }
                 } else if (data.type === 'message') {
                     pushAgentMessageForScene(streamSceneId, data.role || 'assistant', getAgentContent(data));
                 } else if (data.type === 'error') {
-                    const errContent = getAgentContent(data) || (isVideo ? '分镜视频智能体执行失败' : '分镜图片智能体执行失败');
+                    const errContent = getAgentContent(data) || (isVideo ? t('msg_scene_video_agent_failed', '分镜视频智能体执行失败') : t('msg_scene_image_agent_failed', '分镜图片智能体执行失败'));
                     pushAgentMessageForScene(streamSceneId, 'assistant', errContent);
                     finishSceneAgentRun(streamSceneId, streamTaskId);
                 } else if (data.type === 'done') {
@@ -1010,7 +1012,7 @@ async function sendStoryboardAgentMessage(current) {
                 }
             },
             onError: () => {
-                pushAgentMessageForScene(streamSceneId, 'assistant', '任务连接中断，请稍后查看生成结果或重新发送');
+                pushAgentMessageForScene(streamSceneId, 'assistant', t('msg_connection_lost', '任务连接中断，请稍后查看生成结果或重新发送'));
                 finishSceneAgentRun(streamSceneId, streamTaskId);
                 rerenderAgentPanelForScene(streamSceneId);
             },
@@ -1020,7 +1022,7 @@ async function sendStoryboardAgentMessage(current) {
             },
         });
     } catch (error) {
-        pushAgentMessageForScene(streamSceneId, 'assistant', `启动智能体失败：${error.message || error}`);
+        pushAgentMessageForScene(streamSceneId, 'assistant', t('msg_agent_start_failed', '启动智能体失败：{msg}').replace('{msg}', String(error.message || error)));
         finishSceneAgentRun(streamSceneId);
         rerenderAgentPanelForScene(streamSceneId);
     }
@@ -1038,7 +1040,7 @@ async function sendDirectVideo(current) {
     const sceneId = current.id;
     if (!sceneId) return;
     if (isSceneAgentRunning(sceneId)) {
-        showToast('当前分镜有任务正在处理中，请稍候', 'info');
+        showToast(t('msg_scene_task_busy', '当前分镜有任务正在处理中，请稍候'), 'info');
         return;
     }
     // 对口型分镜：提示词/模型由服务端规划（默认动作句、固定 MiniMax H3），
@@ -1048,7 +1050,7 @@ async function sendDirectVideo(current) {
     const imageMode = state.videoImageMode || 'first_last_frame';
     // 对口型 / 首尾帧必须有选中首帧；全能参考可直接用角色/场景/道具参考图。
     if ((isDh || imageMode === 'first_last_frame') && !firstFrameUrl) {
-        notify('请先生成并选中首帧图片后再生成视频');
+        notify(t('msg_select_first_frame_first', '请先生成并选中首帧图片后再生成视频'));
         return;
     }
     let prompt = '';
@@ -1056,7 +1058,7 @@ async function sendDirectVideo(current) {
     if (isDh) {
         const hasAudio = (current.dialogues || []).some(d => String(d.audioUrl || d.audio_url || '').trim());
         if (!hasAudio) {
-            notify('对口型视频需先生成配音：请到「对话」Tab 生成角色配音后再试');
+            notify(t('msg_lipsync_need_voiceover', '对口型视频需先生成配音：请到「对话」Tab 生成角色配音后再试'));
             state.activeTab = 'dialogue';
             rerender([Region.LEFT_SIDEBAR]);
             return;
@@ -1065,13 +1067,13 @@ async function sendDirectVideo(current) {
         // 视频提示词不能为空（文本框预填 scene.videoPrompt，用户可编辑）
         prompt = (state.inputMessage || '').trim();
         if (!prompt) {
-            notify('请输入视频提示词');
+            notify(t('msg_enter_video_prompt', '请输入视频提示词'));
             return;
         }
         // 必须已选视频模型
         videoTaskId = getSelectedVideoTaskId({ hasInputs: true, imageMode });
         if (videoTaskId == null || videoTaskId === '') {
-            notify('请先在模型配置中选择视频模型');
+            notify(t('msg_select_video_model', '请先在模型配置中选择视频模型'));
             state.showModelConfigModal = true;
             state.currentConfigTab = 'video';
             rerenderModals();
@@ -1084,10 +1086,10 @@ async function sendDirectVideo(current) {
     const optimisticId = insertOptimisticGeneratingCandidate(sceneId, 'videos');
     showToast(
         isDh
-            ? '对口型视频已提交，右侧候选区生成中'
+            ? t('msg_lipsync_video_submitted', '对口型视频已提交，右侧候选区生成中')
             : (!firstFrameUrl && imageMode === 'multi_reference'
-                ? '已按参考图提交视频，右侧候选区生成中'
-                : '视频生成任务已提交，右侧候选区生成中'),
+                ? t('msg_video_submitted_from_reference', '已按参考图提交视频，右侧候选区生成中')
+                : t('msg_video_submitted_generating', '视频生成任务已提交，右侧候选区生成中')),
         'info',
     );
     if (!isDh) {
@@ -1116,11 +1118,11 @@ async function sendDirectVideo(current) {
         }
         const result = await api.generateSceneVideo(sceneId, config);
         if (result && result.success === false) {
-            throw new Error(result.error || '提交失败');
+            throw new Error(result.error || t('msg_submit_failed', '提交失败'));
         }
         // 提交响应自带真实资产 id：乐观占位卡原地接管，后续轮询按同 id 去重不重复
         adoptOptimisticCandidate(sceneId, 'videos', optimisticId, result?.asset_id);
-        recordPowerSpend(result, isDh ? '数字人视频' : '视频');
+        recordPowerSpend(result, isDh ? t('label_digital_human_video', '数字人视频') : t('label_video', '视频'));
         // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
         pollSceneTaskStatus(sceneId);
@@ -1128,7 +1130,7 @@ async function sendDirectVideo(current) {
         // 提交阶段即被内容安全拒绝时，错误文案经 notify 直接展示（不弹违规弹窗）
         removeOptimisticCandidate(sceneId, 'videos', optimisticId);
         const submitMsg = (error && error.message != null && error.message !== '') ? String(error.message) : (error ? String(error) : '');
-        notify(`视频生成失败：${submitMsg}`);
+        notify(t('msg_video_gen_failed', '视频生成失败：{msg}').replace('{msg}', submitMsg));
     } finally {
         finishSceneAgentRun(sceneId);
         rerenderAgentPanelForScene(sceneId);
@@ -1211,28 +1213,28 @@ function notifyMissingCharacterReferences(result) {
         ? result.characters_without_reference.filter(Boolean) : [];
     if (!missing.length && !noRef.length) return;
     const parts = [];
-    if (missing.length) parts.push(`「${missing.join('、')}」未在角色库中`);
-    if (noRef.length) parts.push(`「${noRef.join('、')}」缺参考图`);
-    notify(`部分角色参考未生效：${parts.join('；')}，本次生成已跳过，请到角色管理中处理`);
+    if (missing.length) parts.push(t('msg_char_not_in_library', '「{names}」未在角色库中').replace('{names}', missing.join('、')));
+    if (noRef.length) parts.push(t('msg_char_missing_reference', '「{names}」缺参考图').replace('{names}', noRef.join('、')));
+    notify(t('msg_reference_not_applied', '部分角色参考未生效：{details}，本次生成已跳过，请到角色管理中处理').replace('{details}', parts.join('；')));
 }
 
 async function sendDirectImage(current) {
     const sceneId = current.id;
     if (!sceneId) return;
     if (isSceneAgentRunning(sceneId)) {
-        showToast('当前分镜有任务正在处理中，请稍候', 'info');
+        showToast(t('msg_scene_task_busy', '当前分镜有任务正在处理中，请稍候'), 'info');
         return;
     }
     // 生图提示词不能为空（文本框预填分镜画面提示词，预填为空时需手填）
     const prompt = (state.inputMessage || '').trim();
     if (!prompt) {
-        notify('请输入生图提示词');
+        notify(t('msg_enter_image_prompt', '请输入生图提示词'));
         return;
     }
     // 必须已选生图模型（mode='auto' 注入参考图，走图生图/编辑模型槽位）
     const imageTaskId = getSelectedImageTaskId(true);
     if (imageTaskId == null || imageTaskId === '') {
-        notify('请先在模型配置中选择生图模型');
+        notify(t('msg_select_image_model', '请先在模型配置中选择生图模型'));
         state.showModelConfigModal = true;
         state.currentConfigTab = 'image';
         rerenderModals();
@@ -1242,7 +1244,7 @@ async function sendDirectImage(current) {
     // 占用 running 态（禁用发送按钮防重复提交）；toast 就近确认 + 候选区乐观占位卡即时反馈
     startSceneAgentRun(sceneId);
     const optimisticId = insertOptimisticGeneratingCandidate(sceneId, 'images');
-    showToast('生图任务已提交，右侧候选区生成中', 'info');
+    showToast(t('msg_image_submitted_generating', '生图任务已提交，右侧候选区生成中'), 'info');
     state.inputMessage = '';
     rerenderAgentPanel();
 
@@ -1255,11 +1257,11 @@ async function sendDirectImage(current) {
             mode: 'auto',
         });
         if (result && result.success === false) {
-            throw new Error(result.error || '提交失败');
+            throw new Error(result.error || t('msg_submit_failed', '提交失败'));
         }
         // 提交响应自带真实资产 id：乐观占位卡原地接管，后续轮询按同 id 去重不重复
         adoptOptimisticCandidate(sceneId, 'images', optimisticId, result?.asset_ids?.[0]);
-        recordPowerSpend(result, '生图');
+        recordPowerSpend(result, t('label_image_gen', '生图'));
         notifyMissingCharacterReferences(result);
         // 后端已绑定资产（延迟选中：成功后由 task-status 自动切换），刷新候选区并轮询
         await loadSceneCandidates(sceneId).catch(() => {});
@@ -1272,7 +1274,7 @@ async function sendDirectImage(current) {
         if (cv && typeof cv.notify === 'function') {
             try { cv.notify(`sb:${sceneId}:image-submit`, submitMsg); } catch (e) { /* 提醒异常不影响主流程 */ }
         }
-        notify(`生图失败：${submitMsg}`);
+        notify(t('msg_image_gen_failed', '生图失败：{msg}').replace('{msg}', submitMsg));
     } finally {
         finishSceneAgentRun(sceneId);
         rerenderAgentPanelForScene(sceneId);
@@ -1338,12 +1340,17 @@ async function handleAction(action, target) {
         const sceneIds = getSelectedSceneIds();
         if (!sceneIds.length || state.batchSelection?.submittingAction) return;
         const actionLabel = action === 'batch-generate-voiceovers'
-            ? '配音'
-            : (action === 'batch-generate-videos' ? '视频' : '分镜图');
-        let confirmMessage = `确定为已选择的 ${sceneIds.length} 个分镜批量生成${actionLabel}吗？\n不符合条件的分镜会自动跳过。`;
+            ? t('label_kind_voiceover', '配音')
+            : (action === 'batch-generate-videos' ? t('label_video', '视频') : t('label_scene_image', '分镜图'));
+        let confirmMessage = t('confirm_batch_generate', '确定为已选择的 {n} 个分镜批量生成{kind}吗？\n不符合条件的分镜会自动跳过。')
+            .replace('{n}', String(sceneIds.length))
+            .replace('{kind}', actionLabel);
         if (action === 'batch-generate-images') {
             const summary = getBatchImageSelectionSummary(sceneIds);
-            confirmMessage = `已选择 ${summary.selectedCount} 个分镜，其中 ${summary.existingCount} 个已有分镜图、${summary.missingCount} 个尚未生成。\n继续后会为全部已选分镜生成新的候选图；原图片会保留，生成成功后自动选中新图。`;
+            confirmMessage = t('confirm_batch_generate_images', '已选择 {total} 个分镜，其中 {existing} 个已有分镜图、{missing} 个尚未生成。\n继续后会为全部已选分镜生成新的候选图；原图片会保留，生成成功后自动选中新图。')
+                .replace('{total}', String(summary.selectedCount))
+                .replace('{existing}', String(summary.existingCount))
+                .replace('{missing}', String(summary.missingCount));
         }
         if (!window.confirm(confirmMessage)) return;
         setBatchSubmittingAction(action);
@@ -1364,7 +1371,7 @@ async function handleAction(action, target) {
     if (action === 'batch-delete-scenes') {
         const sceneIds = getSelectedSceneIds();
         if (!sceneIds.length || state.batchSelection?.submittingAction) return;
-        if (!window.confirm(`确定删除已选择的 ${sceneIds.length} 个分镜吗？\n相关对话和素材也会被删除，此操作不可撤销。`)) return;
+        if (!window.confirm(t('confirm_batch_delete_scenes', '确定删除已选择的 {n} 个分镜吗？\n相关对话和素材也会被删除，此操作不可撤销。').replace('{n}', String(sceneIds.length)))) return;
         setBatchSubmittingAction(action);
         rerender([Region.CENTER], { forcePreview: true });
         try {
@@ -1382,7 +1389,7 @@ async function handleAction(action, target) {
             } else {
                 rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
             }
-            notify(`已删除 ${Number(result.deleted_count || sceneIds.length)} 个分镜`);
+            notify(t('msg_deleted_n_scenes', '已删除 {n} 个分镜').replace('{n}', String(Number(result.deleted_count || sceneIds.length))));
         } finally {
             setBatchSubmittingAction('');
             if (state.scenes.length) rerender([Region.CENTER], { forcePreview: true });
@@ -1432,11 +1439,11 @@ async function handleAction(action, target) {
                 syncVideoMediaFromScene(current, { resetUploads: false });
             }
             switched = true;
-            notify(targetType === 'video' ? '已切换为视频模式' : '已切换为对口型模式');
+            notify(targetType === 'video' ? t('msg_switched_video_mode', '已切换为视频模式') : t('msg_switched_lipsync_mode', '已切换为对口型模式'));
         } catch (error) {
             notify(error?.status === 409
-                ? '分镜已被其他操作修改，请刷新后重试'
-                : (error.message || '切换失败，当前模式未改变'));
+                ? t('msg_scene_modified_conflict', '分镜已被其他操作修改，请刷新后重试')
+                : (error.message || t('msg_switch_failed_unchanged', '切换失败，当前模式未改变')));
         } finally {
             state.videoTypeSwitch.saving = false;
             if (switched) {
@@ -1460,7 +1467,7 @@ async function handleAction(action, target) {
         if (target.dataset.batchLocked === 'true' || target.getAttribute('aria-disabled') === 'true') {
             const summary = getAutoCompleteSummary();
             const count = summary.batch.totalCount || summary.missingCount || 0;
-            notify(`已有 ${count} 个分镜正在排队或生成，请等待当前任务完成。`);
+            notify(t('msg_scenes_queued_wait', '已有 {n} 个分镜正在排队或生成，请等待当前任务完成。').replace('{n}', String(count)));
             return;
         }
         if (target.disabled) return;
@@ -1470,7 +1477,7 @@ async function handleAction(action, target) {
 
     if (action === 'auto-complete-missing-videos') {
         if (target.dataset.batchLocked === 'true' || target.getAttribute('aria-disabled') === 'true') {
-            notify('视频批量任务进行中，请稍候。');
+            notify(t('msg_video_batch_in_progress', '视频批量任务进行中，请稍候。'));
             return;
         }
         if (target.disabled) return;
@@ -1522,7 +1529,7 @@ async function handleAction(action, target) {
             state.videoBatchConfirm.submitting = false;
             rerenderModals();
             const errMsg = error && error.message ? String(error.message) : '';
-            notify(errMsg || '批量生成视频失败');
+            notify(errMsg || t('msg_batch_video_failed', '批量生成视频失败'));
         }
         return;
     }
@@ -1651,7 +1658,7 @@ async function handleAction(action, target) {
                     state.generateProgressSteps = createGenerateProgressSteps();
                     applyGenerateProgressStatus(activeTask);
                     reopenGenerateProgressDialog();
-                    notify('已恢复拆分进度');
+                    notify(t('msg_split_progress_restored', '已恢复拆分进度'));
                 } else {
                     state.showGenerateFromScriptDialog = true;
                     rerenderModals();
@@ -1686,7 +1693,7 @@ async function handleAction(action, target) {
         const mode = target.dataset.autoImageSequenceMode;
         if (!['speed', 'balanced', 'quality'].includes(mode) || state.isGeneratingFromScript) return;
         if (mode === 'quality' && state.editionInfo?.mode !== 'enterprise') {
-            notify('效果模式仅商业版支持，请购买商业版后使用');
+            notify(t('msg_quality_mode_pro_only', '效果模式仅商业版支持，请购买商业版后使用'));
             return;
         }
         state.autoImageSequenceMode = mode;
@@ -1708,7 +1715,7 @@ async function handleAction(action, target) {
         if (state.isGeneratingFromScript || !state.storyboardId) return;
         const splitModel = resolveSelectedScriptSplitLlmModel();
         if (!splitModel || !splitModel.model || !splitModel.model_id) {
-            state.generateFromScriptError = '请先选择拆分剧本模型';
+            state.generateFromScriptError = t('msg_select_split_model', '请先选择拆分剧本模型');
             rerenderModals();
             return;
         }
@@ -1718,7 +1725,7 @@ async function handleAction(action, target) {
         state.showGenerateProgressDialog = true;
         state.generateProgressError = '';
         state.generateProgressPercent = 0;
-        state.generateProgressMessage = '正在提交任务';
+        state.generateProgressMessage = t('msg_submitting_task', '正在提交任务');
         // 进度步骤对应后端真实阶段（见设计文档 §15 状态流程）。
         // 不再用固定 5 秒 setInterval 假进度，改由轮询真实状态驱动。
         state.generateProgressSteps = createGenerateProgressSteps();
@@ -1750,7 +1757,7 @@ async function handleAction(action, target) {
             // 后端返回 202 + { data: { task_id, status, status_url } }
             const taskId = (submitResp && submitResp.data && submitResp.data.task_id) || submitResp.task_id;
             if (!taskId) {
-                throw new Error('未返回任务 ID');
+                throw new Error(t('msg_no_task_id', '未返回任务 ID'));
             }
             state.generateFromScriptTaskId = taskId;
             attachGenerateFromScriptPolling(taskId);
@@ -1760,7 +1767,7 @@ async function handleAction(action, target) {
             if (idx >= 0 && idx < steps.length) {
                 steps[idx].status = 'failed';
             }
-            state.generateProgressError = error.message || '生成分镜失败';
+            state.generateProgressError = error.message || t('msg_generate_scenes_failed', '生成分镜失败');
             state.isGeneratingFromScript = false;
             rerenderModals();
         }
@@ -1785,7 +1792,7 @@ async function handleAction(action, target) {
         if (state.isSmartInserting) return;
         // 插入前需弹框确认，用户确认后才真正发起请求（与 duplicate-scene 交互一致）；
         // 智能插入会调用 LLM 生成分镜内容，确认一次覆盖智能/普通两条路径
-        if (!window.confirm('确定在此处插入新分镜吗？（将调用 AI 生成分镜内容）')) return;
+        if (!window.confirm(t('confirm_insert_scene', '确定在此处插入新分镜吗？（将调用 AI 生成分镜内容）'))) return;
         const prevId = target.dataset.prevId ? parseInt(target.dataset.prevId, 10) : null;
         const nextId = target.dataset.nextId ? parseInt(target.dataset.nextId, 10) : null;
         
@@ -1798,7 +1805,7 @@ async function handleAction(action, target) {
                 // 显示加载状态
                 state.isSmartInserting = true;
                 rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
-                showToast('AI 正在生成新分镜，请稍候…', 'info', 6000);
+                showToast(t('msg_ai_inserting_scene', 'AI 正在生成新分镜，请稍候…'), 'info', 6000);
                 
                 const smartResponse = await api.smartInsertScene(state.storyboardId, {
                     prev_scene_id: prevId,
@@ -1810,7 +1817,7 @@ async function handleAction(action, target) {
                     // 后端已创建完整字段的分镜（幕/视角景别/场景/角色等从相邻分镜继承）
                     addSceneToState(smartResponse.scene);
                 } else {
-                    throw new Error(smartResponse.error || '智能插入失败');
+                    throw new Error(smartResponse.error || t('msg_smart_insert_failed', '智能插入失败'));
                 }
             } catch (error) {
                 console.error('智能插入失败:', error);
@@ -1850,8 +1857,8 @@ async function handleAction(action, target) {
         // 确认文案带分镜标题，便于用户辨认要复制的是哪一个分镜
         const duplicatingScene = state.scenes.find((s) => s.id === sceneId);
         if (!window.confirm(duplicatingScene
-            ? `确定复制分镜「${duplicatingScene.title}」吗？`
-            : '确定复制这个分镜吗？')) return;
+            ? t('confirm_duplicate_scene_named', '确定复制分镜「{title}」吗？').replace('{title}', duplicatingScene.title)
+            : t('confirm_duplicate_scene', '确定复制这个分镜吗？'))) return;
         state.duplicatingSceneId = sceneId;
         rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
         try {
@@ -1867,7 +1874,7 @@ async function handleAction(action, target) {
 
     if (action === 'delete-scene') {
         const sceneId = parseInt(target.dataset.id, 10);
-        if (!window.confirm('确定删除这个分镜吗？')) return;
+        if (!window.confirm(t('msg_confirm_delete_scene', '确定删除这个分镜吗？'))) return;
         stopPlayback();
         await api.deleteScene(sceneId);
         removeSceneFromState(sceneId);
@@ -1920,7 +1927,7 @@ async function handleAction(action, target) {
         state.showEpisodePicker = !state.showEpisodePicker;
         rerender([Region.HEADER]);
         if (state.showEpisodePicker) {
-            ensureEpisodeFoldersLoaded().catch((e) => notify(e.message || '加载集列表失败'));
+            ensureEpisodeFoldersLoaded().catch((e) => notify(e.message || t('msg_load_episodes_failed', '加载集列表失败')));
         }
         return;
     }
@@ -1941,7 +1948,7 @@ async function handleAction(action, target) {
         const input = document.querySelector('[data-episode-custom-input]');
         const ep = parseInt(input?.value, 10);
         if (!Number.isFinite(ep) || ep < 1) {
-            notify('请输入有效的集数（正整数）');
+            notify(t('msg_invalid_episode', '请输入有效的集数（正整数）'));
             return;
         }
         // 自定义集：若列表中已有则带上 script/storyboard，否则纯新建
@@ -2038,7 +2045,7 @@ async function handleAction(action, target) {
             character_desc: currentPrompt.character_desc || '',
         };
         await api.updateScenePrompt(current.id, sceneToPromptPayload(current));
-        notify('画面提示词已保存');
+        notify(t('msg_prompt_saved', '画面提示词已保存'));
         // 数据已在表单中，无需拆左栏；标题可能影响预览 caption
         rerender([Region.PREVIEW, Region.TIMELINE_LIST]);
         return;
@@ -2050,7 +2057,7 @@ async function handleAction(action, target) {
         if (titleEl) current.title = titleEl.value;
         if (videoPromptEl) current.videoPrompt = videoPromptEl.value;
         await api.updateScene(current.id, sceneToUpdatePayload(current));
-        notify('分镜已保存');
+        notify(t('msg_scene_saved', '分镜已保存'));
         rerender([Region.LEFT_TAB_BODY, Region.SCENE_CHROME, Region.PREVIEW, Region.TIMELINE_LIST, Region.GRID]);
         return;
     }
@@ -2125,7 +2132,7 @@ async function handleAction(action, target) {
 
     if (action === 'delete-dialogue') {
         const dialogueId = parseInt(target.dataset.dialogueId, 10);
-        if (!window.confirm('确定删除这句对话吗？')) return;
+        if (!window.confirm(t('confirm_delete_dialogue', '确定删除这句对话吗？'))) return;
         await api.deleteDialogue(dialogueId);
         removeDialogueFromState(dialogueId);
         rerender([Region.LEFT_TAB_BODY]);
@@ -2158,7 +2165,7 @@ async function handleAction(action, target) {
                 pollSceneTaskStatus(ownerScene.id);
             }
         }
-        notify(response.error || '配音任务已提交');
+        notify(response.error || t('msg_voiceover_submitted', '配音任务已提交'));
         return;
     }
 
@@ -2170,7 +2177,7 @@ async function handleAction(action, target) {
             if (dialogue) break;
         }
         if (!dialogue) {
-            notify('对话不存在');
+            notify(t('msg_dialogue_not_found', '对话不存在'));
             return;
         }
         const { parseEmoVec } = await import('./utils.js');
@@ -2217,7 +2224,7 @@ async function handleAction(action, target) {
         if (sum > EMO_VEC_MAX_SUM + 1e-6) {
             state.emoVecEditor = {
                 ...editor,
-                error: `情感向量总和不能超过 ${EMO_VEC_MAX_SUM}`,
+                error: t('msg_emo_vec_sum_exceed', '情感向量总和不能超过') + ' ' + EMO_VEC_MAX_SUM,
             };
             rerenderModals();
             return;
@@ -2247,15 +2254,15 @@ async function handleAction(action, target) {
             };
             rerenderModals();
             refresh([Region.LEFT_TAB_BODY, Region.MODAL]);
-            notify(emoVec ? '情感向量已保存' : '情感向量已清空');
+            notify(emoVec ? t('msg_emo_vec_saved', '情感向量已保存') : t('msg_emo_vec_cleared', '情感向量已清空'));
         } catch (e) {
             state.emoVecEditor = {
                 ...state.emoVecEditor,
                 saving: false,
-                error: e.message || '保存失败',
+                error: e.message || t('msg_save_failed', '保存失败'),
             };
             rerenderModals();
-            notify(e.message || '保存失败');
+            notify(e.message || t('msg_save_failed', '保存失败'));
         }
         return;
     }
@@ -2270,7 +2277,7 @@ async function handleAction(action, target) {
     if (action === 'add-reference-image') {
         if (state.chatMode !== 'video') return;
         if (!canAddVideoMedia()) {
-            notify(`当前模式最多 ${getMaxVideoMediaCount()} 张图片`);
+            notify(t('msg_max_images_for_mode', '当前模式最多 {n} 张图片').replace('{n}', String(getMaxVideoMediaCount())));
             return;
         }
         const fileInput = document.getElementById('reference-file-input');
@@ -2433,7 +2440,7 @@ async function handleAction(action, target) {
                     },
                 );
             } catch (error) {
-                notify('人脸偏好保存失败: ' + (error.message || error));
+                notify(t('msg_face_pref_save_failed', '人脸偏好保存失败: {msg}').replace('{msg}', String(error.message || error)));
             }
         }
         await persistUiConfig().catch(() => {});
@@ -2467,11 +2474,11 @@ async function handleAction(action, target) {
         const scene = getCurrentScene();
         if (!scene) return;
         if (isDigitalHumanScene(scene)) {
-            showToast('对口型分镜不需要替换音色');
+            showToast(t('msg_lipsync_no_voice_replace', '对口型分镜不需要替换音色'));
             return;
         }
         if (!String(scene.videoUrl || '').trim()) {
-            showToast('请先生成或选中分镜视频');
+            showToast(t('msg_select_scene_video_first', '请先生成或选中分镜视频'));
             return;
         }
         const prev = state.voiceReplaceBySceneId?.[scene.id];
@@ -2483,15 +2490,15 @@ async function handleAction(action, target) {
                 state.voiceReplaceBySceneId[scene.id] = data.job;
             }
             if (!data.success) {
-                showToast(data.message || '无法替换音色');
+                showToast(data.message || t('msg_voice_replace_unavailable', '无法替换音色'));
                 rerender([Region.LEFT_TAB_BODY]);
                 return;
             }
-            showToast(data.reused ? '已在替换中' : '已开始替换音色');
+            showToast(data.reused ? t('msg_voice_replace_in_progress', '已在替换中') : t('msg_voice_replace_started', '已开始替换音色'));
             rerender([Region.LEFT_TAB_BODY]);
             pollVoiceReplace(scene.id);
         } catch (error) {
-            showToast(error.message || '替换音色失败');
+            showToast(error.message || t('msg_voice_replace_failed', '替换音色失败'));
         }
         return;
     }
@@ -2524,7 +2531,7 @@ async function handleAction(action, target) {
     if (action === 'open-power-logs') {
         // 兼容期双写：登录态以 localStorage.auth_token 为准
         if (!state.authToken && !localStorage.getItem('auth_token')) {
-            notify('请先登录后再查看算力日志');
+            notify(t('msg_login_to_view_power_logs', '请先登录后再查看算力日志'));
             return;
         }
         state.showPowerLogsModal = true;
@@ -2596,10 +2603,10 @@ async function handleAction(action, target) {
             }
             const jobId = response.job_id;
             if (!jobId) {
-                notify(response.error || '导出任务提交失败');
+                notify(response.error || t('msg_export_submit_failed', '导出任务提交失败'));
                 return;
             }
-            notify('完整视频导出任务已提交，正在合成并上传…');
+            notify(t('msg_full_video_export_submitted', '完整视频导出任务已提交，正在合成并上传…'));
             // 轮询 job → CDN 链接下载（走 /api/download 代理重签名 + 302，不占本站带宽，不开新 tab）
             const deadline = Date.now() + 30 * 60 * 1000;
             while (Date.now() < deadline) {
@@ -2607,39 +2614,39 @@ async function handleAction(action, target) {
                 const job = await api.getExportJob(jobId);
                 if (job.status === 'completed' && job.download_url) {
                     downloadAsAttachment(job.download_url, job.filename || 'storyboard_full.mp4');
-                    notify('完整视频已生成，已开始下载');
+                    notify(t('msg_full_video_ready_downloading', '完整视频已生成，已开始下载'));
                     return;
                 }
                 if (job.status === 'failed') {
-                    notify(job.error || '完整视频导出失败');
+                    notify(job.error || t('msg_full_video_export_failed', '完整视频导出失败'));
                     return;
                 }
             }
-            notify('导出超时，请稍后重试或联系管理员');
+            notify(t('msg_export_timeout', '导出超时，请稍后重试或联系管理员'));
         } catch (e) {
-            notify(e.message || '完整视频导出失败');
+            notify(e.message || t('msg_full_video_export_failed', '完整视频导出失败'));
         }
         return;
     }
 
     if (action === 'export-scenes') {
         try {
-            notify('正在打包素材并上传图床…');
+            notify(t('msg_packaging_assets', '正在打包素材并上传图床…'));
             const response = await api.exportAllScenes(state.storyboardId);
             if (!response.success || !response.download_url) {
-                notify(response.error || '素材包导出失败');
+                notify(response.error || t('msg_asset_export_failed', '素材包导出失败'));
                 return;
             }
             downloadAsAttachment(response.download_url, response.filename || 'storyboard_assets.zip');
-            notify('素材包导出成功，已开始下载');
+            notify(t('msg_asset_export_success', '素材包导出成功，已开始下载'));
         } catch (e) {
-            notify(e.message || '素材包导出失败');
+            notify(e.message || t('msg_asset_export_failed', '素材包导出失败'));
         }
         return;
     }
 
     if (action === 'placeholder') {
-        notify('该能力正在接入中');
+        notify(t('msg_feature_coming_soon', '该能力正在接入中'));
     }
 
     if (action === 'edit-global-style') {
@@ -2670,9 +2677,9 @@ async function handleAction(action, target) {
             state.compositionPreference = newComp;
             state.showGlobalStyleDialog = false;
             rerender([Region.MODAL, Region.HEADER]);
-            notify('画风和构图倾向已更新');
+            notify(t('msg_style_composition_updated', '画风和构图倾向已更新'));
         } catch (e) {
-            notify('更新失败: ' + (e.message || e));
+            notify(t('msg_update_failed', '更新失败: {msg}').replace('{msg}', String(e.message || e)));
         }
         return;
     }
@@ -2709,7 +2716,7 @@ async function handleAction(action, target) {
         const newActName = actEl ? actEl.value.trim() : (scene.actName || '');
         // 时长校验（非数字或负数）
         if (!Number.isFinite(newDuration) || newDuration < 0) {
-            state.sceneEditError = '时长必须为非负数字';
+            state.sceneEditError = t('msg_duration_non_negative', '时长必须为非负数字');
             rerenderModals();
             return;
         }
@@ -2732,7 +2739,7 @@ async function handleAction(action, target) {
             state.sceneEditTargetId = null;
             state.sceneEditError = '';
             rerender([Region.MODAL, Region.CENTER], { forcePreview: true });
-            notify('分镜已更新');
+            notify(t('msg_scene_updated', '分镜已更新'));
         } catch (e) {
             state.sceneEditSaving = false;
             state.sceneEditError = e.message || String(e);
@@ -2771,7 +2778,7 @@ async function ensureEpisodeFoldersLoaded(force = false) {
 function navigateToEpisode(episodeNumber, options = {}) {
     const ep = parseInt(episodeNumber, 10);
     if (!Number.isFinite(ep) || ep < 1) {
-        notify('集数无效');
+        notify(t('msg_episode_invalid', '集数无效'));
         return;
     }
     if (ep === Number(state.episodeNumber) && !options.force) {
@@ -2780,7 +2787,7 @@ function navigateToEpisode(episodeNumber, options = {}) {
         return;
     }
     if (!state.worldId) {
-        notify('缺少 world_id，无法切换集数');
+        notify(t('msg_missing_world_id_switch', '缺少 world_id，无法切换集数'));
         return;
     }
 
@@ -2874,7 +2881,7 @@ export function bindEvents() {
             }
             if (action === 'cancel-create-ratio') {
                 if (state.isCreatingStoryboard) return;
-                state.ratioConfirmError = '未选择视频比例，无法使用故事板';
+                state.ratioConfirmError = t('msg_ratio_not_selected', '未选择视频比例，无法使用故事板');
                 state.showRatioConfirmDialog = true;
                 state.ratioGateActive = true;
                 rerender('all');
@@ -2886,14 +2893,14 @@ export function bindEvents() {
                 // 触发模块重复求值（HTML 入口带 ?v=，动态 import 解析为无版本号 URL）。
                 const continueFn = state.continueCreateWithRatio;
                 if (typeof continueFn !== 'function') {
-                    state.ratioConfirmError = '初始化未完成，请刷新页面后重试';
+                    state.ratioConfirmError = t('msg_init_incomplete_refresh', '初始化未完成，请刷新页面后重试');
                     rerender('all');
                     return;
                 }
                 try {
                     await continueFn(state.pendingCreateRatio || '16:9');
                 } catch (err) {
-                    state.ratioConfirmError = err.message || '创建故事板失败';
+                    state.ratioConfirmError = err.message || t('msg_create_storyboard_failed', '创建故事板失败');
                     state.ratioGateActive = true;
                     state.showRatioConfirmDialog = true;
                     rerender('all');
@@ -2919,7 +2926,7 @@ export function bindEvents() {
             if (addRefTarget.disabled || addRefTarget.getAttribute('aria-disabled') === 'true') return;
             if (state.chatMode !== 'video') return;
             if (!canAddVideoMedia()) {
-                notify(`当前模式最多 ${getMaxVideoMediaCount()} 张图片`);
+                notify(t('msg_max_images_for_mode', '当前模式最多 {n} 张图片').replace('{n}', String(getMaxVideoMediaCount())));
                 return;
             }
             const fileInput = document.getElementById('reference-file-input');
@@ -2969,7 +2976,7 @@ export function bindEvents() {
                     ),
                 });
             } catch (error) {
-                notify(error.message || '选择候选图失败');
+                notify(error.message || t('msg_select_candidate_failed', '选择候选图失败'));
             }
             return;
         }
@@ -3071,7 +3078,7 @@ export function bindEvents() {
         try {
             await handleAction(actionTarget.dataset.action, actionTarget);
         } catch (error) {
-            notify(error.message || '操作失败');
+            notify(error.message || t('msg_operation_failed', '操作失败'));
         }
     });
 
@@ -3085,7 +3092,7 @@ export function bindEvents() {
         try {
             await handleAction(action, target);
         } catch (error) {
-            notify(error.message || '操作失败');
+            notify(error.message || t('msg_operation_failed', '操作失败'));
         }
     });
 
@@ -3098,7 +3105,7 @@ export function bindEvents() {
         try {
             await saveDialogueFromRow(row, { silent: true });
         } catch (error) {
-            notify(error.message || '自动保存失败');
+            notify(error.message || t('msg_autosave_failed', '自动保存失败'));
         }
     });
 
@@ -3175,7 +3182,7 @@ export function bindEvents() {
                 if (!ok && !warn) {
                     warn = document.createElement('span');
                     warn.className = 'emo-vec-warn';
-                    warn.textContent = ' 超出上限，请调低';
+                    warn.textContent = t('msg_emo_sum_over_limit', ' 超出上限，请调低');
                     sumWrap.appendChild(warn);
                 } else if (ok && warn) {
                     warn.remove();
@@ -3342,8 +3349,8 @@ export function bindEvents() {
             state.workflowRatio = target.value;
             if (state.storyboardId) {
                 api.updateStoryboard(state.storyboardId, { workflow_ratio: state.workflowRatio })
-                    .then(() => notify('画面比例已更新'))
-                    .catch(err => notify('比例更新失败: ' + (err.message || err)));
+                    .then(() => notify(t('msg_ratio_updated', '画面比例已更新')))
+                    .catch(err => notify(t('msg_ratio_update_failed', '比例更新失败: {msg}').replace('{msg}', String(err.message || err))));
             }
             // header 文案 + 主预览 stage + 时间轴拇指尺寸（CENTER 在结构未变时会保留旧 preview，故显式 PREVIEW）
             rerender([Region.HEADER, Region.PREVIEW, Region.TIMELINE_LIST], { forcePreview: true });
@@ -3453,7 +3460,7 @@ export function bindEvents() {
                             state.storyboardId, mediaType, mode, profile,
                         );
                     } catch (error) {
-                        notify('模型偏好保存失败: ' + (error.message || error));
+                        notify(t('msg_model_pref_save_failed', '模型偏好保存失败: {msg}').replace('{msg}', String(error.message || error)));
                     }
                     // 同步 config_json 中的模型选择与 enableFaceMask
                     if (type === 'imageToVideo') {
@@ -3749,7 +3756,7 @@ function showLocationDropdown(sc, anchorEl) {
 
     const locs = state.locations || [];
     if (locs.length === 0) {
-        dropdown.innerHTML = '<div style="padding:8px;">暂无场景</div>';
+        dropdown.innerHTML = `<div style="padding:8px;">${t('msg_no_locations', '暂无场景')}</div>`;
     } else {
         locs.forEach(loc => {
             const isSel = sc.location && sc.location.id === loc.id;
@@ -3794,7 +3801,7 @@ function showPropDropdown(sc, anchorEl) {
     const allProps = state.props || [];
     const selectedIds = (sc.props || []).map(p => p.id);
     if (allProps.length === 0) {
-        dropdown.innerHTML = '<div style="padding:8px;">暂无道具</div>';
+        dropdown.innerHTML = `<div style="padding:8px;">${t('msg_no_props', '暂无道具')}</div>`;
     } else {
         allProps.forEach(prop => {
             const isSel = selectedIds.includes(prop.id);
@@ -3891,8 +3898,8 @@ function showMentionDropdownForPrompt(textarea, container, promptType, scene) {
         tabsDiv.className = 'asset-dropdown-tabs';
         tabsDiv.style.cssText = 'display:flex; gap:2px; padding:4px; border-bottom:1px solid #eee; background:#f8f9fa;';
         const tabs = [
-            { key: 'character', label: '角色' },
-            { key: 'prop', label: '道具' },
+            { key: 'character', label: t('label_character', '角色') },
+            { key: 'prop', label: t('label_prop', '道具') },
         ];
         tabs.forEach(t => {
             const btn = document.createElement('button');
@@ -3919,7 +3926,8 @@ function showMentionDropdownForPrompt(textarea, container, promptType, scene) {
 
         const items = currentTab === 'character' ? (state.characters || []) : (state.props || []);
         if (!items.length) {
-            listDiv.innerHTML = `<div style="padding:8px; color:var(--muted);">暂无${currentTab === 'character' ? '角色' : '道具'}</div>`;
+            const emptyKind = currentTab === 'character' ? t('label_character', '角色') : t('label_prop', '道具');
+            listDiv.innerHTML = `<div style="padding:8px; color:var(--muted);">${t('msg_no_items_yet', '暂无{kind}').replace('{kind}', emptyKind)}</div>`;
         } else {
             items.forEach(item => {
                 const row = document.createElement('div');

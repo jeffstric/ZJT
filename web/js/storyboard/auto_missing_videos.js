@@ -7,6 +7,7 @@ import {
     updateSceneThumb,
 } from './render.js';
 import { pollImageBatchStatus, pollSceneTaskStatus } from './polling.js';
+import { t } from './utils.js';
 import {
     applyVideoBatchStatus,
     clearAutoVideoBatchSession,
@@ -110,8 +111,8 @@ async function submitMissingVideoBatch({ manual = false, sceneIds = null } = {})
             const isMultiRef = state.videoImageMode === 'multi_reference';
             throw new Error(
                 (!isMultiRef && noFrame)
-                    ? '请先补全分镜首帧，或切换到全能参考模式直接生成视频'
-                    : '当前没有待生成视频的分镜',
+                    ? t('msg_need_first_frames_or_multi_reference', '请先补全分镜首帧，或切换到全能参考模式直接生成视频')
+                    : t('msg_no_scenes_waiting_video', '当前没有待生成视频的分镜'),
             );
         }
         return null;

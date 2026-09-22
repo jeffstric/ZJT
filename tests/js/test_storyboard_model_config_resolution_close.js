@@ -25,7 +25,7 @@ const closeActions = modalRenderer.match(/data-action="close-model-config"/g) ||
 assert.equal(closeActions.length, 1, 'model config modal should have only one close action');
 assert.match(
   modalRenderer,
-  /<button type="button" class="model-config-close" data-action="close-model-config" aria-label="关闭模型配置" title="关闭">/,
+  /<button type="button" class="model-config-close" data-action="close-model-config" aria-label="\$\{i18nT\('aria_close_model_config', '关闭模型配置'\)\}" title="\$\{i18nT\('btn_close', '关闭'\)\}">/,
   'top-right close button should be accessible and use the dedicated style class'
 );
 assert.doesNotMatch(

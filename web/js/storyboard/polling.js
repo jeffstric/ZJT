@@ -5,6 +5,7 @@
 import state, { refreshSceneFirstFrameSlot } from './state.js';
 import * as api from './api.js';
 import { formatDuration } from './adapters.js';
+import { t } from './utils.js';
 import { loadSceneCandidates } from './scene_candidates.js';
 import {
     captureAssetSelection,
@@ -417,7 +418,7 @@ export function pollScriptSplitTask(taskId, callbacks = {}) {
                         if (callbacks.onError) callbacks.onError(e);
                     }
                 } else {
-                    if (callbacks.onError) callbacks.onError(new Error(data.message || `任务${data.status}`));
+                    if (callbacks.onError) callbacks.onError(new Error(data.message || `${t('label_task', '任务')} ${data.status}`));
                 }
                 return;
             }

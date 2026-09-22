@@ -12,6 +12,16 @@ import { showToast } from './utils.js';
 import { choosePreviewMedia } from './candidate_selection_state.js';
 import { Region } from './ui_regions.js';
 
+// 本地 t：web/tests/first_frame_coloring.test.js 对 utils.js 做了部分 vi.mock（仅导出 showToast），
+// 静态引入共享 t 会在测试中触发 Vitest 缺导出错误，故内置与 utils.js 等价的实现。
+function t(key, fallback) {
+    if (typeof window !== 'undefined' && window.ZJTi18n && window.ZJTi18n.t) {
+        const translated = window.ZJTi18n.t(key);
+        if (translated !== key) return translated;
+    }
+    return fallback || key;
+}
+
 /**
  * 是否允许对当前分镜首帧涂鸦。
  * @param {object|null|undefined} scene
@@ -39,14 +49,14 @@ export function canColorFirstFrame(scene, opts = {}) {
 export function getColorFirstFrameBlockMessage(reason) {
     switch (reason) {
         case 'playing':
-            return '请先停止预览播放再编辑';
+            return t('msg_coloring_stop_preview_first', '请先停止预览播放再编辑');
         case 'not_image':
-            return '当前预览不是分镜图，请先切换到首帧图';
+            return t('msg_coloring_not_scene_image', '当前预览不是分镜图，请先切换到首帧图');
         case 'no_image':
         case 'no_scene':
-            return '请先生成或选择分镜图';
+            return t('msg_coloring_need_scene_image', '请先生成或选择分镜图');
         default:
-            return '当前无法涂鸦编辑';
+            return t('msg_coloring_unavailable', '当前无法涂鸦编辑');
     }
 }
 
@@ -92,7 +102,7 @@ export function applyColoredAssetToScene(scene, {
             url: resultUrl,
             status: null,
             selected: true,
-            label: '涂鸦',
+            label: t('label_colored', '涂鸦'),
         });
         state.sceneCandidates[scene.id] = {
             ...bucket,
@@ -115,7 +125,7 @@ export async function openFirstFrameColoring(rerender) {
 
     const editor = window.imageDoodleEditor;
     if (!editor || typeof editor.open !== 'function') {
-        showToast('涂鸦编辑器未加载', 'error');
+        showToast(t('msg_coloring_editor_not_loaded', '涂鸦编辑器未加载'), 'error');
         return;
     }
 
@@ -129,19 +139,19 @@ export async function openFirstFrameColoring(rerender) {
         context,
         onComplete: async ({ blob }) => {
             try {
-                showToast('正在保存涂鸦结果…', 'info');
+                showToast(t('msg_saving_coloring_result', '正在保存涂鸦结果…'), 'info');
                 const file = new File([blob], `doodle_scene_${scene.id}.png`, { type: 'image/png' });
                 const resp = await api.uploadSceneAsset(scene.id, file, {
                     assetType: 'first_frame',
                     setSelected: true,
                 });
                 if (!resp || resp.success === false) {
-                    throw new Error(resp?.error || resp?.message || '上传失败');
+                    throw new Error(resp?.error || resp?.message || t('msg_upload_failed', '上传失败'));
                 }
                 const assetId = resp.asset_id;
                 const resultUrl = resp.result_url;
                 if (!resultUrl) {
-                    throw new Error('上传成功但未返回图片地址');
+                    throw new Error(t('msg_upload_no_image_url', '上传成功但未返回图片地址'));
                 }
 
                 // 若用户已切到别的分镜，仍写对应 scene 对象
@@ -161,10 +171,10 @@ export async function openFirstFrameColoring(rerender) {
                         { forcePreview: true },
                     );
                 }
-                showToast('已保存为新的分镜图候选', 'success');
+                showToast(t('msg_coloring_saved_as_candidate', '已保存为新的分镜图候选'), 'success');
             } catch (err) {
                 console.error('first frame doodle save failed', err);
-                showToast(err?.message || '涂鸦保存失败', 'error');
+                showToast(err?.message || t('msg_coloring_save_failed', '涂鸦保存失败'), 'error');
             }
         },
     });
