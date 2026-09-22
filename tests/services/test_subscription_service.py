@@ -136,6 +136,21 @@ class TestPlans:
     def test_get_plan_not_found(self):
         assert get_subscription_plan(999) is None
 
+    def test_starter_intro_offer(self):
+        plan = get_subscription_plan(101)
+        assert plan["template_id"] == "224144"
+        assert plan["price"] == 29.9
+        assert plan["first_period_price"] == 18.8
+        assert plan["first_period_bonus"] == 40
+        assert plan["computing_power"] == 328
+
+
+class TestYuanToFen:
+    def test_rounds_half_up_instead_of_truncating(self):
+        from services.subscription_service import _yuan_to_fen
+        assert _yuan_to_fen(18.8) == 1880
+        assert _yuan_to_fen(29.9) == 2990
+
 
 # ==================== 等待期计算 ====================
 
@@ -712,6 +727,68 @@ class TestCreateSignPayOrderUpgrade:
             self._create(svc, 102)
         assert calls["create"] == []
 
+    def _patch_exists(self, svc, monkeypatch, signed: bool):
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "exists_signed_contract",
+            staticmethod(lambda user_id, exclude_contract_code=None: signed),
+        )
+
+    def test_starter_new_user_charges_intro_price(self, monkeypatch):
+        """无历史成功签约：模板 224144，首期 18.8 元 / 1880 分，续费价仍 29.9"""
+        from services import subscription_service as svc
+        calls = self._patch_models(svc, monkeypatch, None)
+        captured = {}
+
+        def _get_util(template_id=None):
+            util = make_util()
+            util.plan_template_id = template_id or ""
+            monkeypatch.setattr(
+                util, "create_contract_order",
+                lambda **kw: captured.update(kw) or {
+                    "return_code": "SUCCESS", "result_code": "SUCCESS",
+                    "code_url": "weixin://wxpay/abc",
+                },
+            )
+            return util
+
+        monkeypatch.setattr(svc, "get_papay_util", _get_util)
+        self._patch_exists(svc, monkeypatch, False)
+
+        result = self._create(svc, 101)
+        assert captured["total_fee"] == 1880
+        assert calls["create"][0]["amount"] == 18.8
+        assert calls["contract_created"][0]["plan_template_id"] == "224144"
+        assert result["price"] == 18.8
+        assert result["renewal_price"] == 29.9
+
+    def test_starter_returning_user_charges_renewal_price(self, monkeypatch):
+        """已有成功签约：仍用模板 224144，但首期按 29.9 元"""
+        from services import subscription_service as svc
+        calls = self._patch_models(svc, monkeypatch, None)
+        captured = {}
+
+        def _get_util(template_id=None):
+            util = make_util()
+            util.plan_template_id = template_id or ""
+            monkeypatch.setattr(
+                util, "create_contract_order",
+                lambda **kw: captured.update(kw) or {
+                    "return_code": "SUCCESS", "result_code": "SUCCESS",
+                    "code_url": "weixin://wxpay/abc",
+                },
+            )
+            return util
+
+        monkeypatch.setattr(svc, "get_papay_util", _get_util)
+        self._patch_exists(svc, monkeypatch, True)
+
+        result = self._create(svc, 101)
+        assert captured["total_fee"] == 2990
+        assert calls["create"][0]["amount"] == 29.9
+        assert calls["contract_created"][0]["plan_template_id"] == "224144"
+        assert result["price"] == 29.9
+        assert result["renewal_price"] == 29.9
+
 
 class TestUpgradePayCallback:
     def test_upgrade_settlement_terminates_source_without_bonus(self, patched_service, monkeypatch):
@@ -985,6 +1062,29 @@ class TestFirstPeriodBonusEntryPoints:
         }
         params["sign"] = util._sign_v2(params)
         return params
+
+    def test_starter_intro_skips_commission_and_grants_40(self, patched_service, monkeypatch):
+        """18.8 首月渠道不分佣；用户仍到账 328，另发加赠 40"""
+        svc, calls = patched_service
+        self._activate_contract(svc)
+
+        async def fake_perseids(endpoint=None, **kw):
+            if endpoint == 'commission/settle':
+                calls["settle"].append(kw.get("data"))
+                return True, "ok", {"granted_computing_power": 1}
+            return True, "ok", {}
+
+        monkeypatch.setattr(svc, "async_make_perseids_request", fake_perseids)
+        order = _FakeOrder(
+            order_id="SUB_INTRO", period_index=1, subscription_plan_id=101,
+            amount=18.8, computing_power=328,
+            status=SubscriptionOrderStatus.PAID, transaction_id="4200009999",
+        )
+        assert asyncio.run(svc._settle_and_grant(order, "4200009999")) is True
+        assert calls["settle"] == []
+        assert calls["grant"] == [(1, 328, "4200009999")]
+        assert asyncio.run(svc._grant_first_period_bonus(order)) is True
+        assert calls["grant"][-1] == (1, 40, "4200009999_FIRST_BONUS")
 
     def test_add_callback_grants_pending_bonus(self, patched_service):
         """ADD 回调到达（支付已先行结算基础算力）：经回调入口补发首订加赠"""

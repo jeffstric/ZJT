@@ -2341,12 +2341,6 @@ JIANYING_DEFAULT_RATIO = '16:9'
 
 RECHARGE_PACKAGES = [
     {
-        "package_id": 5,
-        "computing_power": 99,
-        "price": 0.1,
-        "description": "首充福利 99"
-    },
-    {
         "package_id": 1,
         "computing_power": 88,
         "price": 9.9,
@@ -2462,7 +2456,7 @@ class Commission:
     MAX_RATE = 0.5                # 最高佣金比例（50%）
     STEP = 0.01                   # 比例设置步长（1%）
     MIN_WITHDRAW_AMOUNT = 10.0    # 最低提现金额（元）
-    FIRST_RECHARGE_PACKAGE_ID = 5  # 首充福利套餐ID（0.1元/99算力，首充不抽佣；算力包9.9(原体验包)已常规化，不占首充资格）
+    FIRST_RECHARGE_PACKAGE_ID = 5  # 已下线的首充福利套餐ID（0.1元/99算力）。不再出现在 RECHARGE_PACKAGES，禁止新下单；历史已付款订单回调仍用它识别
     # ==================== 抽佣档位阶梯（新价目方案写死，2026-09-11） ====================
     # 渠道（邀请人）佣金按订单档位写死，不再由邀请人自调。
     #   ladder_rate   渠道比例（对外说明；= 渠道算力占不抽成到账的比例）

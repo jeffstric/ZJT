@@ -132,6 +132,9 @@
       subOrderId: '',
       _subPayTimer: null,   // Native 扫码支付轮询定时器（支付成功自动提示用）
       subCancelling: false,
+      introDealPhase: '',       // '' | price | slash | power | done；入门版首期优惠动画
+      _introDealTimer: null,
+      _introDealGen: 0,
       wechatOpenid: '',
       userIp: '',
       nativeCodeUrl: '',
@@ -491,6 +494,11 @@
       subFirstBonusEligible() {
         const status = this.subscriptionStatus;
         return !status || status.first_bonus_eligible !== false;
+      },
+
+      // 入门版首期动画进行中（价格砸下 / 算力 +40），用来压暗其他档
+      introDealActive() {
+        return this.introDealPhase === 'price' || this.introDealPhase === 'slash' || this.introDealPhase === 'power';
       },
 
       maskedPhone() {
@@ -3055,6 +3063,9 @@
 
       switchRechargeTab(tab) {
         this.rechargeTab = tab;
+        if (tab === 'subscription') {
+          this.maybePlayIntroDeal();
+        }
       },
 
       formatDateStr(isoStr) {
@@ -3082,6 +3093,7 @@
           this.handleAuthError(error);
         } finally {
           this.subscriptionPlansLoading = false;
+          this.maybePlayIntroDeal();
         }
       },
 
@@ -3100,6 +3112,66 @@
         } finally {
           this.subCancelling = false;
         }
+      },
+
+      _clearIntroDealTimer() {
+        if (this._introDealTimer) {
+          clearTimeout(this._introDealTimer);
+          this._introDealTimer = null;
+        }
+        this._introDealGen += 1;
+      },
+
+      // 有入门版首期优惠资格时，打开月度订阅播一次：29.9 砸到 18.8，328 再 +40。
+      // 关掉弹窗再开再播；刷新订阅状态不调用这里。
+      maybePlayIntroDeal() {
+        this._clearIntroDealTimer();
+        this.introDealPhase = '';
+        if (!this.showRechargePowerModal || this.rechargeTab !== 'subscription') return;
+        if (this.subscriptionPlansLoading) return;
+        const status = this.subscriptionStatus;
+        const managing = status && status.subscribed && (status.status === 'active' || status.status === 'upgrading');
+        if (managing || !this.subFirstBonusEligible) return;
+        const intro = (this.subscriptionPlans || []).find(p => p && p.first_period_price != null && p.first_period_bonus);
+        if (!intro) return;
+        const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (reduceMotion) {
+          this.introDealPhase = 'done';
+          return;
+        }
+        const gen = this._introDealGen;
+        const step = (phase, delay, next) => {
+          this._introDealTimer = setTimeout(() => {
+            if (this._introDealGen !== gen) return;
+            this.introDealPhase = phase;
+            if (next) next();
+          }, delay);
+        };
+        this.introDealPhase = 'price';
+        step('slash', 700, () => step('power', 800, () => step('done', 900, null)));
+      },
+
+      planShowsIntroPrice(plan) {
+        return !!(plan && plan.first_period_price != null && this.subFirstBonusEligible);
+      },
+
+      introPriceCut(plan) {
+        const diff = (Number(plan && plan.price) || 0) - (Number(plan && plan.first_period_price) || 0);
+        return Math.round(diff * 10) / 10;
+      },
+
+      introCardClass(plan) {
+        if (!this.planShowsIntroPrice(plan)) {
+          return { 'sub-intro-dim': this.introDealActive };
+        }
+        return {
+          'sub-intro-card': true,
+          'sub-intro-play': this.introDealActive,
+          'sub-intro-price': this.introDealPhase === 'price',
+          'sub-intro-slash': this.introDealPhase === 'slash',
+          'sub-intro-power': this.introDealPhase === 'power',
+          'sub-intro-done': this.introDealPhase === 'done',
+        };
       },
 
       planTagline(plan) {
@@ -3144,7 +3216,10 @@
       planExtraVsRecharge(plan, withBonus) {
         const rate = this.rechargeReferenceRate();
         if (!rate || !plan) return null;
-        const direct = Math.round((Number(plan.price) || 0) * rate);
+        const price = this.planShowsIntroPrice(plan)
+          ? Number(plan.first_period_price)
+          : (Number(plan.price) || 0);
+        const direct = Math.round(price * rate);
         const extra = this.subPlanHeadlinePower(plan, withBonus) - direct;
         return extra > 0 ? extra : 0;
       },
@@ -3463,6 +3538,8 @@
       
       closeRechargeModal() {
         this.stopSubPayPolling();
+        this._clearIntroDealTimer();
+        this.introDealPhase = '';
         this.showRechargePowerModal = false;
         this.selectedPackage = null;
         this.paymentQrCode = '';
