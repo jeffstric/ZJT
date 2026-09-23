@@ -20,6 +20,7 @@
 | `web/video_workflow.html` | `handleRechargeClick` → `RechargeCenter.open`，支付成功后点算力刷新 |
 | `web/js/storyboard/events.js` | `openRechargeModal` → `RechargeCenter.open`，成功后刷新头部算力。故事板模块入口带 `?v=20260923b`，避免浏览器沿用旧的 `events.js`（旧文件只会打开直付弹窗） |
 | `web/js/marketing_agent.js` | `handleRechargeClick` → `RechargeCenter.open`，成功后 `loadComputingPower` |
+| `web/script_writer.html` + `web/js/script_writer.js` | 算力日志里的「算力充值」打开同一充值中心。`script_writer.js` 带 `?v=__VERSION__-rc20260923c`，避免沿用只有直付的旧脚本 |
 
 首页仍用 Vue（`index.html` + `index_app.js`）。改订阅展示时两处要一起看。页面内旧的直付弹窗只在共用脚本没加载时兜底。
 
