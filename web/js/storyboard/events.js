@@ -295,6 +295,19 @@ async function loadRechargePackages() {
 }
 
 async function openRechargeModal() {
+    if (window.RechargeCenter && typeof window.RechargeCenter.open === 'function') {
+        await window.RechargeCenter.open({
+            onLocalBlocked: (msg) => notify(msg),
+            onPaid: async () => {
+                try {
+                    const power = await api.fetchComputingPower();
+                    state.computingPower = power.computing_power ?? power.balance ?? state.computingPower;
+                    rerender([Region.HEADER_POWER]);
+                } catch (_) { /* 余额刷新失败不影响支付结果 */ }
+            },
+        });
+        return;
+    }
     try {
         const config = await api.fetchServerConfig();
         if (config && config.is_local) {

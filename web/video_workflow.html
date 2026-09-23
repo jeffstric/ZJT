@@ -20,6 +20,7 @@
   </script>
   <link rel="stylesheet" href="/css/common.css" />
   <link rel="stylesheet" href="/css/video_workflow.css" />
+  <link rel="stylesheet" href="/css/subscription.css?v=20260923a" />
   <link rel="stylesheet" href="/css/ai_tool_timeline.css?v=__VERSION__" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
   <link rel="stylesheet" href="/css/image_doodle_editor.css?v=__VERSION__" />
@@ -1168,6 +1169,7 @@
   <div id="workflowTourPortal" aria-hidden="true"></div>
 
   <script src="/js/escape.js"></script>
+  <script src="/js/recharge_center.js?v=20260923a"></script>
   <script src="/js/tiff_support.js"></script>
   <script src="/js/ai_tool_timeline.js?v=__VERSION__"></script>
   <script src="/js/state.js?v=__VERSION__"></script>
@@ -1292,6 +1294,16 @@
 
     // 打开算力充值弹窗
     async function handleRechargeClick() {
+      if (window.RechargeCenter && typeof window.RechargeCenter.open === 'function') {
+        await window.RechargeCenter.open({
+          onPaid: function () {
+            var btn = document.getElementById('computingPowerRefreshBtn');
+            if (btn) btn.click();
+          }
+        });
+        return;
+      }
+      // 脚本未加载时回退到页面内直付弹窗
       // 检查是否本地模式
       try {
         const response = await fetch('/api/system/server-config');
