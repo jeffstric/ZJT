@@ -18,7 +18,7 @@
 | 页面 | 接入点 |
 |---|---|
 | `web/video_workflow.html` | `handleRechargeClick` → `RechargeCenter.open`，支付成功后点算力刷新 |
-| `web/js/storyboard/events.js` | `openRechargeModal` → `RechargeCenter.open`，成功后刷新头部算力 |
+| `web/js/storyboard/events.js` | `openRechargeModal` → `RechargeCenter.open`，成功后刷新头部算力。故事板模块入口带 `?v=20260923b`，避免浏览器沿用旧的 `events.js`（旧文件只会打开直付弹窗） |
 | `web/js/marketing_agent.js` | `handleRechargeClick` → `RechargeCenter.open`，成功后 `loadComputingPower` |
 
 首页仍用 Vue（`index.html` + `index_app.js`）。改订阅展示时两处要一起看。页面内旧的直付弹窗只在共用脚本没加载时兜底。

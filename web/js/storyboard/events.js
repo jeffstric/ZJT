@@ -294,8 +294,22 @@ async function loadRechargePackages() {
     rerenderModals();
 }
 
-async function openRechargeModal() {
+function ensureRechargeCenter() {
     if (window.RechargeCenter && typeof window.RechargeCenter.open === 'function') {
+        return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+        const script = document.createElement('script');
+        script.src = '/js/recharge_center.js?v=20260923b';
+        script.onload = () => resolve(!!(window.RechargeCenter && window.RechargeCenter.open));
+        script.onerror = () => resolve(false);
+        document.head.appendChild(script);
+    });
+}
+
+async function openRechargeModal() {
+    const ready = await ensureRechargeCenter();
+    if (ready) {
         await window.RechargeCenter.open({
             onLocalBlocked: (msg) => notify(msg),
             onPaid: async () => {
