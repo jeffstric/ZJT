@@ -542,3 +542,245 @@
     animation: none;
   }
 }
+
+/* 协议未勾选时标红（class 加在 label 自身上） */
+.sub-agreement.sub-agreement-error,
+.sub-agreement.sub-agreement-error span {
+  color: var(--danger, #ef4444);
+}
+
+/* 工作流 / 故事板 / 营销智能体共用充值中心（浅色卡片，不跟随宿主深色变量） */
+.recharge-center-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 23, 42, 0.65);
+}
+
+.recharge-center-overlay[hidden] {
+  display: none !important;
+}
+
+.recharge-center-root {
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e5e7eb;
+  --primary: #16a34a;
+  --danger: #ef4444;
+  --panel: #ffffff;
+  position: relative;
+  width: min(680px, 100%);
+  max-height: min(88vh, 920px);
+  overflow: auto;
+  background: #ffffff;
+  color: #0f172a;
+  color-scheme: light;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.28);
+  padding: 28px 8px 12px;
+}
+
+.recharge-center-root .rc-title {
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  margin: 0 36px 8px;
+}
+
+.recharge-center-root .rc-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.recharge-center-root .rc-pane {
+  padding: 8px 16px 16px;
+}
+
+.recharge-center-root .rc-center {
+  text-align: center;
+  padding: 12px 0;
+}
+
+.recharge-center-root .rc-muted {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.recharge-center-root .rc-row {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+}
+
+.recharge-center-root .rc-pkg-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.recharge-center-root .btn {
+  background: #16a34a;
+  color: #ffffff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.recharge-center-root .btn.secondary {
+  background: #f8fafc;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+  box-shadow: none;
+}
+
+.recharge-center-root .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.recharge-center-root .rc-btn-danger {
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
+.recharge-center-root .sub-agreement a {
+  color: #16a34a;
+}
+
+.recharge-center-root .sub-qr-box {
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+}
+
+.recharge-center-root .sub-qr-box.has-qr {
+  background: #fff;
+  border: none;
+}
+
+.recharge-center-root .rc-qr-wait,
+.recharge-center-root .rc-qr-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+  text-align: center;
+  padding: 0 12px;
+}
+
+.recharge-center-root .package-intro {
+  border-bottom-color: #e5e7eb;
+}
+
+.recharge-center-root .package-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.recharge-center-root .package-item {
+  position: relative;
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(34, 197, 94, 0.03) 100%);
+  border: 2px solid rgba(34, 197, 94, 0.25);
+  border-radius: 14px;
+  padding: 16px;
+  cursor: pointer;
+}
+
+.recharge-center-root .package-header,
+.recharge-center-root .package-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.recharge-center-root .package-footer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+  align-items: center;
+}
+
+.recharge-center-root .package-title-section,
+.recharge-center-root .package-price-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recharge-center-root .package-price-section {
+  align-items: flex-end;
+}
+
+.recharge-center-root .package-name {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.recharge-center-root .package-computing-power,
+.recharge-center-root .package-price,
+.recharge-center-root .package-arrow {
+  color: #16a34a;
+  font-weight: 700;
+}
+
+.recharge-center-root .package-price {
+  font-size: 22px;
+}
+
+.recharge-center-root .package-unit-price,
+.recharge-center-root .package-select-hint {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.recharge-center-root button.sub-plan-card {
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+
+.recharge-center-root .rc-pay-qr {
+  display: inline-block;
+  background: #fff;
+  padding: 12px;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  margin-bottom: 12px;
+}
+
+.recharge-center-root .rc-spinner {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto 8px;
+  border: 4px solid rgba(34, 197, 94, 0.2);
+  border-top-color: #16a34a;
+  border-radius: 50%;
+  animation: rc-spin 1s linear infinite;
+}
+
+@keyframes rc-spin {
+  to { transform: rotate(360deg); }
+}

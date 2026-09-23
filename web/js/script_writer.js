@@ -8067,8 +8067,16 @@
             modal.classList.remove('show');
         }
 
-        // 打开算力充值弹窗
+        // 打开算力充值弹窗（与首页相同：算力直付 + 月度订阅）
         async function handleRechargeClick() {
+            if (window.RechargeCenter && typeof window.RechargeCenter.open === 'function') {
+                await window.RechargeCenter.open({
+                    onPaid: function () {
+                        if (typeof loadComputingPower === 'function') loadComputingPower();
+                    }
+                });
+                return;
+            }
             // 检查是否本地模式
             try {
                 const response = await fetch('/api/system/server-config');

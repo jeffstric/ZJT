@@ -294,7 +294,34 @@ async function loadRechargePackages() {
     rerenderModals();
 }
 
+function ensureRechargeCenter() {
+    if (window.RechargeCenter && typeof window.RechargeCenter.open === 'function') {
+        return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+        const script = document.createElement('script');
+        script.src = '/js/recharge_center.js?v=20260923b';
+        script.onload = () => resolve(!!(window.RechargeCenter && window.RechargeCenter.open));
+        script.onerror = () => resolve(false);
+        document.head.appendChild(script);
+    });
+}
+
 async function openRechargeModal() {
+    const ready = await ensureRechargeCenter();
+    if (ready) {
+        await window.RechargeCenter.open({
+            onLocalBlocked: (msg) => notify(msg),
+            onPaid: async () => {
+                try {
+                    const power = await api.fetchComputingPower();
+                    state.computingPower = power.computing_power ?? power.balance ?? state.computingPower;
+                    rerender([Region.HEADER_POWER]);
+                } catch (_) { /* 余额刷新失败不影响支付结果 */ }
+            },
+        });
+        return;
+    }
     try {
         const config = await api.fetchServerConfig();
         if (config && config.is_local) {

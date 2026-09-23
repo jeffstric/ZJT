@@ -1078,6 +1078,13 @@
             }
 
             async function handleRechargeClick() {
+                if (window.RechargeCenter && typeof window.RechargeCenter.open === 'function') {
+                    await window.RechargeCenter.open({
+                        onLocalBlocked: (msg) => showError(msg),
+                        onPaid: () => loadComputingPower(),
+                    });
+                    return;
+                }
                 try {
                     const response = await fetch('/api/system/server-config');
                     const data = await response.json();
