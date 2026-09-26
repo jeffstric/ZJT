@@ -65,9 +65,10 @@
 
   function clipModeLabel(clip) {
     var hasRefs = Array.isArray(clip.reference_images) && clip.reference_images.length > 0;
-    if (clip.mode === 'image_to_video' || (clip.mode === undefined && hasRefs)) return '图生视频';
     if (clip.mode === 'text_to_video') return '文生视频';
-    return hasRefs ? '图生视频' : '文生视频';
+    // 有参考图即多图全能参考（reference_to_video / multi_reference），非首尾帧图生
+    if (hasRefs || clip.mode === 'image_to_video') return '参考生视频';
+    return '文生视频';
   }
 
   /** 参考图 <img>，仅接受本系统 /upload/ 路径，防外链注入。兼容 reference_images（对象数组）与 image_urls（字符串数组）。 */
