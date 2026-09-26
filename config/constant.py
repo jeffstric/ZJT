@@ -24,6 +24,7 @@ from config.unified_config import (
     UnifiedTaskConfig,
     AGENT_POWER_CONFIRM_THRESHOLD,
     AGENT_POWER_CONFIRM_HARD_THRESHOLD,
+    AGENT_POWER_BUDGET_DEFAULT,
     USER_MODULE_RUNTIME_CONFIG,
 )
 
@@ -514,6 +515,9 @@ NO_IMPLEMENTATION_AVAILABLE_MESSAGE = (
 # Agent 算力确认：软阈值优先读 user_preferences.power_confirm，
 # 未设置时回退动态配置 agent.power_confirm_threshold，再回退 AGENT_POWER_CONFIRM_THRESHOLD。
 # AGENT_POWER_CONFIRM_THRESHOLD / AGENT_POWER_CONFIRM_HARD_THRESHOLD 从 unified_config 再导出。
+# 单次任务算力上限：优先读 user_preferences.power_budget，
+# 未设置时回退动态配置 agent.power_budget_default，再回退 AGENT_POWER_BUDGET_DEFAULT
+# （AGENT_POWER_BUDGET_DEFAULT 已在文件顶部从 unified_config 导入）。
 PREF_WORLD_ID_GLOBAL = "_global"  # 用户级（非世界级）偏好使用的 sentinel world_id
 
 # ---------------------------------------------------------------------------

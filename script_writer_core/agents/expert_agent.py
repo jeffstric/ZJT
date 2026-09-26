@@ -3,9 +3,10 @@ import json
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
-from .base_agent import BaseAgent, InsufficientComputingPowerError, check_computing_power_sync
+from .base_agent import BaseAgent, InsufficientComputingPowerError
 from .ask_user_mixin import AskUserMixin
 from .history_manager import ExpertHistoryManager
+from .power_budget import PowerBudget, observe_and_check
 from .tool_definitions import ASK_USER_TOOL_DEFINITION
 from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
@@ -71,7 +72,8 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         max_consecutive_errors: int = 3,
         max_total_errors: int = 7,
         max_status_poll_rounds: int = AGENT_STATUS_POLL_MAX_ROUNDS,
-        power_confirm_enabled: bool = True
+        power_confirm_enabled: bool = True,
+        power_budget: Optional[PowerBudget] = None
     ):
         # 使用第一个技能名称作为主要标识
         primary_skill = skill_names[0] if skill_names else "unknown"
@@ -117,6 +119,9 @@ class ExpertAgent(BaseAgent, AskUserMixin):
 
         # 显式初始化 ask_user 失败计数器，确保每个新实例从 0 开始
         self._ask_fail_count = 0
+
+        # 单次任务算力预算（由 PM 随任务透传；独立构造的专家无预算即不启用）
+        self.power_budget = power_budget
 
         self.history_manager = ExpertHistoryManager(
             file_manager=file_manager,
@@ -285,8 +290,9 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         while state.iteration < max_iterations:
             state.iteration += 1
 
-            # 检查算力是否充足
-            check_computing_power_sync(self.auth_token, self.agent_id)
+            # 检查算力是否充足，并核对单次任务算力上限
+            # （超限抛 PowerBudgetExhaustedError，走算力不足链路截断历史上抛给 PM 停止任务）
+            observe_and_check(getattr(self, "power_budget", None), self.auth_token, self.agent_id)
 
             try:
                 # 从数据库获取模型配置，按剩余上下文动态计算本次调用的 max_tokens

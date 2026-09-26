@@ -4866,3 +4866,39 @@ body {
 @keyframes image-generating-spin {
     to { transform: rotate(360deg); }
 }
+
+/* ===== 单次任务算力上限（模型设置卡片内） ===== */
+.power-budget-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.power-budget-input {
+    width: 72px;
+    font-size: 12px;
+    padding: 4px 6px;
+    border: 1px solid var(--border-color, #e0e0e0);
+    border-radius: 6px;
+    background: var(--bg-primary, #fff);
+    color: var(--text-primary, #1f2937);
+}
+
+.power-budget-input:focus {
+    outline: none;
+    border-color: #6366f1;
+}
+
+.power-budget-reset {
+    font-size: 11px;
+    color: #6366f1;
+    background: none;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap;
+    padding: 0;
+}
+
+.power-budget-reset:hover {
+    text-decoration: underline;
+}
