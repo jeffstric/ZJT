@@ -3090,3 +3090,32 @@ DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 # 预览图压缩（asyncio.to_thread 执行）与 VL 请求（wait_for 整体超时 = LLM_TIMEOUT + 10）的超时（秒）
 DS_ENV_FIT_COMPRESS_TIMEOUT = 15
 DS_ENV_FIT_LLM_TIMEOUT = 60
+
+# ── 图文抓取（article_to_video，公众号/小红书 → 营销视频脚本）──
+# 公众号：mp.weixin.qq.com 服务端渲染页免登录可抓（2026-09 实测）；图片 mmbiz.qpic.cn 服务端下载无防盗链拦截，仍统一带 Referer 保险
+# 小红书：免登录纯 HTTP 不可行（WAF 按 TLS 指纹拦截 + PC web 强制登录态），本期仅保留 XhsProvider 抽象接口
+ARTICLE_FETCH_HTTP_TIMEOUT = 20              # 公众号文章页 HTTP 超时（秒）
+ARTICLE_FETCH_IMAGE_TIMEOUT = 30             # 图片下载超时（秒）
+ARTICLE_FETCH_XHS_TIMEOUT = 30               # 小红书抓取超时（秒，下期 provider 实现启用）
+ARTICLE_FETCH_XHS_MIN_INTERVAL = 10          # 同来源两次小红书抓取最小间隔（秒，下期启用）
+ARTICLE_FETCH_MAX_IMAGES = 9                 # 单篇图片上限（对齐 Seedance 2.0 多参考图上限）
+ARTICLE_FETCH_MAX_TEXT_CHARS = 8000          # 正文注入 LLM 的最大字符数
+ARTICLE_FETCH_IMAGE_MAX_BYTES = 15 * 1024 * 1024   # 单图大小上限
+ARTICLE_FETCH_RATE_LIMIT_PER_USER_HOUR = 10  # 每用户每小时抓取次数上限（进程内滑动窗口）
+ARTICLE_FETCH_ALLOWED_HOSTS = (
+    'mp.weixin.qq.com',        # 微信公众号
+    'xiaohongshu.com',         # 小红书（www./探查页）
+    'www.xiaohongshu.com',
+    'xhslink.com',             # 小红书分享短链（下期实现时先跟随跳转再校验最终域名）
+)
+ARTICLE_FETCH_WECHAT_UA = (
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+)
+# 公众号图片下载 Referer（mmbiz.qpic.cn 防盗链白名单域）
+ARTICLE_FETCH_WECHAT_REFERER = 'https://mp.weixin.qq.com/'
+# 微信内置浏览器 UA：部分受限文章仅微信内可见
+ARTICLE_FETCH_WECHAT_INAPP_UA = (
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) '
+    'Chrome/124.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.49.2600(0x28003135) XWEB/1160'
+)

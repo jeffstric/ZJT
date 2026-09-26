@@ -1641,6 +1641,12 @@
             function renderMarkdown(text) {
                 if (!text) return '';
 
+                // 图文转视频：脚本 JSON 渲染为结构化确认卡（article-to-video）
+                if (window.MarketingArticleCard) {
+                    const transformed = window.MarketingArticleCard.transformMessageText(text);
+                    if (transformed !== null) text = transformed;
+                }
+
                 // 步骤1：保护已有的 markdown 图片语法 ![alt](url)，用占位符替换
                 const imgPlaceholders = [];
                 text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, (match) => {
@@ -3588,9 +3594,7 @@
                 if (opt === '确认生成') return 'power-approve';
                 if (opt === '取消本次生成') return 'power-reject';
                 return '';
-            }
-
-            async function loadPowerConfirmSettings() {
+            }            async function loadPowerConfirmSettings() {
                 try {
                     const resp = await fetch('/api/user/power-confirm', {
                         headers: { 'Authorization': `Bearer ${authToken.value}` }
@@ -7012,6 +7016,7 @@
                 formatTime,
                 formatShortDate,
                 renderMarkdown,
+                windowSourceBadge: (window.MarketingArticleCard && window.MarketingArticleCard.sourceBadge) || null,
                 showImageModal,
                 previewMedia,
                 autoResize,
