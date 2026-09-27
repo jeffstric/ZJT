@@ -153,6 +153,10 @@ from services.video_frame_extract_service import (
     extract_last_frame,
     probe_stream_duration,
 )
+from services.video_script_extract_service import (
+    create_extract_task,
+    get_extract_task,
+)
 from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
@@ -6222,6 +6226,98 @@ async def extract_video_frame(
             status_code=500,
             content={"code": -1, "message": f"提取帧失败: {str(e)}"}
         )
+
+
+class ExtractScriptRequest(BaseModel):
+    video_url: str
+
+
+@app.post('/api/video-workflow/extract-script')
+@require_permission("video_workflow:upload")
+async def extract_script_create(
+    request: Request,
+    body: ExtractScriptRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    创建"视频提取剧本"异步任务（剧本提取节点）。
+
+    链路：关键帧多批收集 + 音轨提取 → SenseVoice 分段 ASR →
+    关键帧图片 + 带时间戳转写稿 → 多模态 VL 模型生成文字剧本。
+    立即返回 task_id，前端轮询 GET /api/video-workflow/extract-script/status/{task_id}。
+    只接受本站 /upload/ 路径（前端先经 /api/video-workflow/upload 上传拿永久 URL）。
+    """
+    try:
+        user_id_val = _get_user_id_from_header(user_id)
+        video_url = (body.video_url or "").strip()
+        if not video_url:
+            return JSONResponse(status_code=400, content={"code": -1, "message": "缺少视频 url"})
+
+        if "/upload/" not in video_url:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "不支持外部视频URL，请先上传视频文件"}
+            )
+        video_path = resolve_upload_url_to_local_path(video_url)
+        if not video_path or not os.path.exists(video_path):
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "视频文件不存在，请重新上传"}
+            )
+
+        token = (auth_token or '').strip()
+        if token.lower().startswith('bearer '):
+            token = token[7:].strip()
+
+        task_id, err = await create_extract_task(
+            video_path=video_path,
+            user_id=user_id_val,
+            auth_token=token or None,
+        )
+        if err or not task_id:
+            return JSONResponse(status_code=409, content={"code": -1, "message": err or "任务创建失败"})
+        return JSONResponse({"code": 0, "message": "任务已创建", "data": {"task_id": task_id}})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"创建剧本提取任务失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(status_code=500, content={"code": -1, "message": f"任务创建失败: {str(e)}"})
+
+
+@app.get('/api/video-workflow/extract-script/status/{task_id}')
+@require_permission("video_workflow:upload")
+async def extract_script_status(
+    request: Request,
+    task_id: str,
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """查询剧本提取任务状态（前端轮询，3s 间隔）。任务过期/服务重启后返回 404。"""
+    try:
+        user_id_val = _get_user_id_from_header(user_id)
+        task = get_extract_task(task_id)
+        if task is None or (user_id_val is not None and task.get("user_id") not in (None, user_id_val)):
+            return JSONResponse(
+                status_code=404,
+                content={"code": -1, "message": "任务不存在或已过期，请重新提取"}
+            )
+        return JSONResponse({
+            "code": 0,
+            "data": {
+                "task_id": task["task_id"],
+                "status": task["status"],
+                "stage": task["stage"],
+                "progress": task.get("progress") or {},
+                "error": task.get("error"),
+                "result": task.get("result"),
+            }
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"查询剧本提取任务失败: {str(e)}")
+        return JSONResponse(status_code=500, content={"code": -1, "message": f"查询失败: {str(e)}"})
 
 
 def _generate_thumbnail(file_path: str, media_type: str, thumb_dir: str, thumb_filename: str) -> Optional[str]:

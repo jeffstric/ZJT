@@ -2186,6 +2186,52 @@ class MediaConstants:
     VIDEO_FRAME_MIN_POINT_GAP_SECONDS = 0.2
 
 
+class VideoScriptExtractConstants:
+    """
+    视频提取剧本（video_workflow 剧本提取节点，services/video_script_extract_service.py）。
+
+    链路：视频 → 关键帧多批收集 + 音轨提取 → SenseVoice 分段 ASR →
+    关键帧图片（压缩 base64）+ 带时间戳转写稿 → 多模态 VL 模型一次性生成文字剧本。
+    任务为内存注册表 + 前端轮询（与 extract-frame 的同步接口区分：本链路分钟级耗时）。
+    """
+
+    # 任务执行阶段（前端轮询展示进度）
+    STAGE_FRAMES = "frames"   # 关键帧提取
+    STAGE_AUDIO = "audio"     # 音轨提取
+    STAGE_ASR = "asr"         # 语音转写
+    STAGE_LLM = "llm"         # 剧本生成
+    STAGE_DONE = "done"
+
+    # 支持的视频时长上限（秒）。关键帧按时长取点、音频分段转写，耗时随时长线性增长；
+    # 超长视频建议先剪辑。超出即拒绝创建任务。
+    MAX_VIDEO_DURATION_SECONDS = 900.0
+    # 送入多模态模型的关键帧上限（张）。多批收集（复用 build_keyframe_points 翻页语义），
+    # 与单批上限 VIDEO_FRAME_KEYFRAME_MAX_COUNT 解耦；仍不足时按时间均匀抽稀。
+    MAX_KEYFRAMES = 16
+    # 音频分段转写每段时长（秒）：SenseVoice 单次请求读超时 60s（ASR_TIMEOUT），
+    # 长音频按段切开逐段转写，时间戳加段偏移还原为全片时间。
+    ASR_SLICE_SECONDS = 60.0
+    # 分段转写并发上限（httpx 异步请求，asyncio.Semaphore）。
+    ASR_CONCURRENCY = 3
+    # 帧图压缩上限（MB/像素）：多帧叠加控制多模态 payload 体积
+    # （16 张 × ~1MB base64 ≈ 20MB 内，主流 VL 模型可接受）。
+    FRAME_MAX_SIZE_MB = 1.2
+    FRAME_MAX_PIXELS = 1_200_000
+    # 单帧压缩外层超时（秒）。
+    FRAME_COMPRESS_TIMEOUT = 20
+    # 剧本生成 LLM 超时（秒）与输出 token 上限（多场景长剧本）。
+    LLM_TIMEOUT = 180
+    LLM_MAX_TOKENS = 8000
+    LLM_TEMPERATURE = 0.4
+    # 剧本文本长度上限（字符），超出截断，防止异常输出撑爆 workflow JSON。
+    MAX_SCRIPT_CHARS = 30000
+    # 内存任务记录保留时长（秒），超期惰性清理；服务重启任务即失联（前端提示重新提取）。
+    TASK_TTL_SECONDS = 1800
+    # 默认推荐模型：与图片描述一致的 VL 偏好（须已在模型表配置密钥且 supports_vl）。
+    PREFERRED_VENDOR = "volcengine"
+    PREFERRED_MODEL = "doubao-seed-2-0-lite"
+
+
 class BrandingConstants:
     """
     品牌定制相关常量（仅商业版可用）。

@@ -294,6 +294,13 @@
       startNodePlacing(nodeId);
     });
 
+    document.getElementById('menuAddScriptExtract').addEventListener('click', () => {
+      const nodeId = createScriptExtractNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
     document.getElementById('menuAddCharacter').addEventListener('click', () => {
       openCharacterModal();
       addMenu.classList.remove('show');
