@@ -6235,6 +6235,10 @@ class ExtractScriptRequest(BaseModel):
     video_url: str
     max_frames: int = VideoScriptExtractConstants.DEFAULT_MAX_FRAMES
     frame_height: int = VideoScriptExtractConstants.DEFAULT_FRAME_HEIGHT
+    # 提取模型：空则由后端按 VL 偏好挑选（与 describe-image 同语义）
+    model: Optional[str] = None
+    model_id: Optional[int] = None
+    vendor_id: Optional[int] = None
 
 
 @app.post('/api/video-workflow/extract-script')
@@ -6297,6 +6301,9 @@ async def extract_script_create(
             auth_token=token or None,
             max_frames=body.max_frames,
             frame_height=body.frame_height,
+            model=body.model,
+            model_id=body.model_id,
+            vendor_id=body.vendor_id,
         )
         if err or not task_id:
             return JSONResponse(status_code=409, content={"code": -1, "message": err or "任务创建失败"})

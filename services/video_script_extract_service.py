@@ -373,14 +373,23 @@ async def _generate_script(
     duration: float,
     auth_token: Optional[str],
     frame_height: int = C.DEFAULT_FRAME_HEIGHT,
+    model: Optional[str] = None,
+    vendor_id: Optional[int] = None,
+    model_id: Optional[int] = None,
 ) -> Tuple[str, str, Optional[int]]:
-    """多模态生成剧本。返回 (script, model, vendor_id)。"""
-    picked = await pick_vl_model(C.PREFERRED_VENDOR, C.PREFERRED_MODEL)
+    """多模态生成剧本。返回 (script, model, vendor_id)。
+
+    model/vendor_id 为用户在节点上指定的提取模型；空则按 VL 偏好挑选
+    （pick_vl_model：指定 model 精确匹配 > 偏好 vendor+model > 列表序）。
+    """
+    picked = await pick_vl_model(
+        C.PREFERRED_VENDOR, C.PREFERRED_MODEL, model=model, vendor_id=vendor_id,
+    )
     if not picked:
         raise ScriptExtractError("未配置可用的视觉模型，无法生成剧本")
-    model = picked.get("name")
-    vendor_id = picked.get("vendor_id")
-    model_id = picked.get("model_id")
+    use_model = model or picked.get("name")
+    use_vendor_id = vendor_id if vendor_id is not None else picked.get("vendor_id")
+    use_model_id = model_id if model_id is not None else picked.get("model_id")
 
     budget_pixels, budget_mb = frame_budget(frame_height)
     frame_notes: List[dict] = []
@@ -401,20 +410,20 @@ async def _generate_script(
 
     try:
         client = await asyncio.wait_for(
-            asyncio.to_thread(get_llm_client, model, vendor_id),
+            asyncio.to_thread(get_llm_client, use_model, use_vendor_id),
             timeout=VL_GATEWAY_CLIENT_INIT_TIMEOUT,
         )
     except asyncio.TimeoutError as exc:
         raise ScriptExtractError("视觉模型客户端初始化超时") from exc
 
     call_kwargs: Dict[str, Any] = dict(
-        model=model,
+        model=use_model,
         messages=messages,
         temperature=C.LLM_TEMPERATURE,
         max_tokens=C.LLM_MAX_TOKENS,
         auth_token=auth_token or None,
-        vendor_id=vendor_id,
-        model_id=model_id,
+        vendor_id=use_vendor_id,
+        model_id=use_model_id,
     )
     if "request_timeout" in inspect.signature(client.call_api).parameters:
         call_kwargs["request_timeout"] = C.LLM_TIMEOUT
@@ -426,7 +435,7 @@ async def _generate_script(
     except asyncio.TimeoutError as exc:
         raise ScriptExtractError("剧本生成超时，请稍后重试") from exc
     except Exception as exc:
-        logger.exception("[script-extract] LLM 调用失败 (model=%s)", model)
+        logger.exception("[script-extract] LLM 调用失败 (model=%s)", use_model)
         raise ScriptExtractError(f"剧本生成失败：{exc}") from exc
 
     content = ""
@@ -438,7 +447,7 @@ async def _generate_script(
     script = clean_script_text(content)
     if not script:
         raise ScriptExtractError("视觉模型返回内容为空，无法生成剧本")
-    return script, str(model), vendor_id
+    return script, str(use_model), use_vendor_id
 
 
 def _cleanup_files(paths: List[Optional[str]]) -> None:
@@ -462,6 +471,9 @@ async def _run_extract_task(
     auth_token: Optional[str],
     max_frames: int,
     frame_height: int,
+    model: Optional[str] = None,
+    model_id: Optional[int] = None,
+    vendor_id: Optional[int] = None,
 ) -> None:
     temp_dir = get_upload_temp_dir()
     stamp = _make_stamp()
@@ -496,8 +508,9 @@ async def _run_extract_task(
 
         # 阶段 4：多模态 LLM 生成剧本
         _update_task(task_id, stage=C.STAGE_LLM)
-        script, model, vendor_id = await _generate_script(
+        script, used_model, used_vendor_id = await _generate_script(
             transcript, frames, duration, auth_token, frame_height,
+            model=model, vendor_id=vendor_id, model_id=model_id,
         )
 
         _update_task(task_id, status="success", stage=C.STAGE_DONE, error=None, result={
@@ -508,13 +521,13 @@ async def _run_extract_task(
                 "frame_count": len(frames),
                 "transcript_available": bool(transcript),
                 "transcript_chars": len(transcript),
-                "model": model,
-                "vendor_id": vendor_id,
+                "model": used_model,
+                "vendor_id": used_vendor_id,
             },
         })
         logger.info(
             "[script-extract] 任务完成 task=%s duration=%.1fs frames=%s transcript=%s model=%s",
-            task_id, duration, len(frames), len(transcript), model,
+            task_id, duration, len(frames), len(transcript), used_model,
         )
     except ScriptExtractError as exc:
         logger.warning("[script-extract] 任务失败 task=%s: %s", task_id, exc)
@@ -540,10 +553,14 @@ async def create_extract_task(
     auth_token: Optional[str],
     max_frames: int = C.DEFAULT_MAX_FRAMES,
     frame_height: int = C.DEFAULT_FRAME_HEIGHT,
+    model: Optional[str] = None,
+    model_id: Optional[int] = None,
+    vendor_id: Optional[int] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """创建提取任务。返回 (task_id, None) 或 (None, error)。
 
-    max_frames / frame_height 为节点参数（用户可调），调用方需先做边界校验。"""
+    max_frames / frame_height / model 为节点参数（用户可调），
+    调用方需先做边界校验。"""
     _cleanup_expired_tasks()
     if user_id is not None and user_id in _RUNNING_BY_USER:
         running_id = _RUNNING_BY_USER[user_id]
@@ -568,7 +585,10 @@ async def create_extract_task(
         _RUNNING_BY_USER[user_id] = task_id
 
     bg_task = asyncio.create_task(
-        _run_extract_task(task_id, video_path, auth_token, max_frames, frame_height)
+        _run_extract_task(
+            task_id, video_path, auth_token, max_frames, frame_height,
+            model=model, model_id=model_id, vendor_id=vendor_id,
+        )
     )
     _EXTRACT_TASKS[task_id]["asyncio_task"] = bg_task
     bg_task.add_done_callback(lambda _t: _EXTRACT_TASKS.get(task_id, {}).pop("asyncio_task", None))

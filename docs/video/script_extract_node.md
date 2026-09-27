@@ -25,6 +25,8 @@ Markdown 剧本。结果在节点内展示、可编辑，可一键写入画布�
 1. 左侧菜单点击"剧本提取"创建节点
 2. 输入视频（连接视频节点 或 上传本地视频，上限 15 分钟）
 3. 按需调整**提取参数**（节点内可调，随工作流保存）：
+   - **提取模型**：默认"自动（后端推荐）"，可切换任意已配置密钥的 VL 视觉模型
+     （与提示词反推节点同一模型列表）；选中的模型下架/改配时自动回落自动模式
    - **帧分辨率**：720P（默认，清晰，可读画面字幕）/ 480P（均衡）/ 360P（省量，
      token 与体积按面积下降，可支持更多帧）
    - **最大帧数**：4~200（默认 24），按镜头切换自动取帧，超出均匀抽稀（保留首尾）
@@ -35,7 +37,7 @@ Markdown 剧本。结果在节点内展示、可编辑，可一键写入画布�
 ## 后端链路（services/video_script_extract_service.py）
 
 ```
-POST /api/video-workflow/extract-script        创建任务（video_url / max_frames / frame_height）
+POST /api/video-workflow/extract-script        创建任务（video_url / max_frames / frame_height / model / model_id / vendor_id）
 GET  /api/video-workflow/extract-script/status/{task_id}   轮询状态/结果
 ```
 
@@ -46,7 +48,7 @@ Pipeline 各阶段（全部异步，不阻塞事件循环）：
 | frames | `probe_stream_duration` 时长校验（≤15 分钟）→ `extract_keyframe_candidates` 多批翻页收集（复用提取帧节点的场景检测/翻页语义），不足/超限用 `thin_frames_by_time` 均匀抽稀到用户设定的最大帧数 |
 | audio | `voice_replace/ffmpeg_util.extract_audio` 提取 PCM wav；无音轨时跳过 ASR（画面推断继续） |
 | asr | `build_slice_ranges` 按 60s 切段 → `slice_audio` 切片 → `SenseVoiceAsrDriver.transcribe_segments` 并发转写（≤3 并发）→ `merge_asr_slice_results` 段偏移还原全片时间戳 → `[MM:SS] 文本` 转写稿；单段失败跳过 |
-| llm | `vl_gateway.pick_vl_model` 挑选 `supports_vl` 模型（默认偏好 volcengine/doubao-seed-2-0-lite）→ 帧图 `compress_local_image_to_base64`（按用户选档位的像素/MB 预算压缩）→ 多模态消息（system 剧本提取智能体提示词 + user 文本（任务说明+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护）→ `clean_script_text` 清洗截断 |
+| llm | 模型挑选 `vl_gateway.pick_vl_model`（用户在节点指定的模型优先；未指定时按偏好 volcengine/doubao-seed-2-0-lite）→ 帧图 `compress_local_image_to_base64`（按用户选档位的像素/MB 预算压缩）→ 多模态消息（system 剧本提取智能体提示词 + user 文本（任务说明+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护）→ `clean_script_text` 清洗截断 |
 
 任务为**内存注册表**（单进程 uvicorn）：每用户同时只允许 1 个运行中任务（重复提交
 返回 409）；记录 TTL 30 分钟惰性清理；**服务重启任务失联**，轮询返回 404，前端提示

@@ -45,7 +45,11 @@
         lastError: '',
         meta: null,
         frameHeight: 720,
-        maxFrames: 24
+        maxFrames: 24,
+        // 提取模型选择：空值 = 自动（后端按 VL 偏好挑选）；与提示词反推节点同模式
+        modelName: '',
+        modelId: null,
+        vendorId: null
       },
       ports: SCRIPT_EXTRACT_PORTS,
       width: 360,
@@ -62,6 +66,8 @@
             '</div>' +
           '</div>' +
           '<div class="field">' +
+            '<div class="label" data-i18n="script_extract_model_label">' + tr('script_extract_model_label', '提取模型') + '</div>' +
+            '<select class="script-extract-model" style="width:100%; box-sizing:border-box; padding:4px 6px; border:1px solid #e5e7eb; border-radius:6px; background:#fff; font-size:12px;"></select>' +
             '<div class="label" data-i18n="script_extract_frame_height_label">' + tr('script_extract_frame_height_label', '帧分辨率') + '</div>' +
             '<select class="script-extract-frame-height" style="width:100%; box-sizing:border-box; padding:4px 6px; border:1px solid #e5e7eb; border-radius:6px; background:#fff; font-size:12px;">' +
               '<option value="720" data-i18n="script_extract_frame_height_720">' + tr('script_extract_frame_height_720', '720P（清晰，读清字幕）') + '</option>' +
@@ -100,8 +106,11 @@
         var writeBtn = el.querySelector('.script-extract-write-btn');
         var frameHeightEl = el.querySelector('.script-extract-frame-height');
         var maxFramesEl = el.querySelector('.script-extract-max-frames');
+        var modelSelect = el.querySelector('.script-extract-model');
         var pollTimer = null;
         var uploading = false;
+        // 模型列表异步加载完成后，再恢复已保存选中项的标记
+        var pendingRestoreModel = false;
 
         // 帧分辨率 / 最大帧数：节点参数（用户可调），随工作流持久化
         if (frameHeightEl) {
@@ -120,6 +129,125 @@
             node.data.maxFrames = v;
             safeAutoSave();
           });
+        }
+
+        // ===== 提取模型下拉（仅 VL 视觉模型；与提示词反推节点共享列表缓存）=====
+        // 优先 model_id+vendor_id 双键精确匹配，其次按名称；已保存模型不在列表时回落自动
+        function applyModelSelection() {
+          if (!modelSelect) return;
+          var savedName = node.data.modelName || '';
+          var savedId = node.data.modelId;
+          var savedVendorId = node.data.vendorId;
+          var matchOpt = null;
+          var i, opt, optModelId, optVendorId;
+          if (savedId !== null && savedId !== undefined) {
+            for (i = 0; i < modelSelect.options.length; i++) {
+              opt = modelSelect.options[i];
+              optModelId = parseInt(opt.dataset.modelId || '', 10);
+              optVendorId = parseInt(opt.dataset.vendorId || '', 10);
+              if (isNaN(optModelId) || optModelId !== Number(savedId)) continue;
+              if (savedVendorId !== null && savedVendorId !== undefined &&
+                  !isNaN(optVendorId) && optVendorId !== Number(savedVendorId)) continue;
+              matchOpt = opt;
+              break;
+            }
+          }
+          if (!matchOpt && savedName) {
+            for (i = 0; i < modelSelect.options.length; i++) {
+              opt = modelSelect.options[i];
+              if (opt.value && opt.value === savedName) { matchOpt = opt; break; }
+            }
+          }
+          if (matchOpt) {
+            modelSelect.value = matchOpt.value;
+          } else if (savedName || (savedId !== null && savedId !== undefined)) {
+            modelSelect.value = '';
+            node.data.modelName = '';
+            node.data.modelId = null;
+            node.data.vendorId = null;
+            safeAutoSave();
+          } else {
+            modelSelect.value = '';
+          }
+        }
+
+        function renderModelOptions(models) {
+          if (!modelSelect) return;
+          modelSelect.innerHTML = '';
+          var autoOpt = document.createElement('option');
+          autoOpt.value = '';
+          autoOpt.textContent = tr('script_extract_model_auto', '自动（后端推荐）');
+          modelSelect.appendChild(autoOpt);
+          (models || []).forEach(function(m) {
+            if (!m || !m.name) return;
+            var opt = document.createElement('option');
+            opt.value = m.name;
+            opt.textContent = m.vendor_name ? (m.vendor_name + ' / ' + m.name) : m.name;
+            if (m.model_id !== undefined && m.model_id !== null) opt.dataset.modelId = String(m.model_id);
+            if (m.vendor_id !== undefined && m.vendor_id !== null) opt.dataset.vendorId = String(m.vendor_id);
+            modelSelect.appendChild(opt);
+          });
+          if (pendingRestoreModel) {
+            pendingRestoreModel = false;
+            applyModelSelection();
+          }
+        }
+
+        function loadVlModelOptions() {
+          pendingRestoreModel = true;
+          // 已有缓存（提示词反推节点或本节点加载过）：直接渲染
+          if (window._promptReverseVlModels && window._promptReverseVlModels.length) {
+            renderModelOptions(window._promptReverseVlModels);
+            return;
+          }
+          if (window._promptReverseVlModelsLoading) {
+            window._promptReverseVlModelsLoading.then(function() {
+              if (window._promptReverseVlModels) renderModelOptions(window._promptReverseVlModels);
+            }).catch(function() {});
+            return;
+          }
+          window._promptReverseVlModelsLoading = fetch('/api/models', { headers: authHeaders() })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              var models = (data && data.models) ? data.models.filter(function(m) {
+                return m && m.supports_vl;
+              }) : [];
+              models.sort(function(a, b) {
+                var va = (a.vendor_name || '').toLowerCase();
+                var vb = (b.vendor_name || '').toLowerCase();
+                if (va !== vb) return va < vb ? -1 : 1;
+                var na = (a.name || '').toLowerCase();
+                var nb = (b.name || '').toLowerCase();
+                return na < nb ? -1 : (na > nb ? 1 : 0);
+              });
+              window._promptReverseVlModels = models;
+              renderModelOptions(models);
+            })
+            .catch(function() {
+              window._promptReverseVlModelsLoading = null;
+              if (!node.data.lastError) {
+                updateStatus(tr('script_extract_model_failed', '模型列表加载失败，已使用自动模式'), '#d97706');
+              }
+            });
+        }
+
+        if (modelSelect) {
+          modelSelect.addEventListener('change', function() {
+            var opt = modelSelect.options[modelSelect.selectedIndex];
+            if (opt && opt.value) {
+              node.data.modelName = opt.value;
+              var mid = parseInt(opt.dataset.modelId || '', 10);
+              var vid = parseInt(opt.dataset.vendorId || '', 10);
+              node.data.modelId = isNaN(mid) ? null : mid;
+              node.data.vendorId = isNaN(vid) ? null : vid;
+            } else {
+              node.data.modelName = '';
+              node.data.modelId = null;
+              node.data.vendorId = null;
+            }
+            safeAutoSave();
+          });
+          loadVlModelOptions();
         }
 
         function updateStatus(text, color) {
@@ -310,7 +438,10 @@
               body: JSON.stringify({
                 video_url: url,
                 max_frames: node.data.maxFrames || 24,
-                frame_height: node.data.frameHeight || 720
+                frame_height: node.data.frameHeight || 720,
+                model: node.data.modelName || null,
+                model_id: node.data.modelId,
+                vendor_id: node.data.vendorId
               })
             });
             var result = await resp.json();
@@ -375,54 +506,42 @@
           showToast(tr('script_extract_written', '已写入剧本节点'), 'success');
         });
 
-        // 恢复：上次任务未完成（刷新后回来）→ 继续轮询
-        if (node.data.taskId && !node.data.taskDone && !node.data.scriptContent) {
-          setBusy(true);
-          updateStatus(tr('script_extract_extracting', '提取中...'));
-          pollStatus(node.data.taskId);
-        } else if (node.data.lastError) {
-          updateStatus(tr('script_extract_failed', '提取失败') + '：' + node.data.lastError, '#dc2626');
-        }
+        // 恢复入口：restoreDomFn 在数据合并后调用（onCreated 时 data 还是默认值，
+        // 基于恢复数据的回填必须放在这里——时序见 node_base.createNodeWithDataFactory）
+        el._restoreScriptExtractState = function() {
+          if (node.data.videoUrl) showVideo(node.data.videoUrl, node.data.videoName);
+          if (frameHeightEl) {
+            frameHeightEl.value = String(node.data.frameHeight || 720);
+            if (!frameHeightEl.value) frameHeightEl.value = '720';
+          }
+          if (maxFramesEl) maxFramesEl.value = String(node.data.maxFrames || 24);
+          // 已保存的提取模型：列表已加载则立即回填；未加载完成时由 loadVlModelOptions
+          // 的 pendingRestoreModel 标记在渲染后补选（onCreated 已调用 loadVlModelOptions）
+          if (modelSelect && (node.data.modelName || node.data.modelId !== null) &&
+              window._promptReverseVlModels) {
+            applyModelSelection();
+          }
+          if (contentEl) contentEl.value = node.data.scriptContent || '';
+          updateMeta(node.data.meta);
+          // 上次任务未完成（刷新后回来）→ 接续轮询
+          if (node.data.taskId && !node.data.taskDone && !node.data.scriptContent) {
+            setBusy(true);
+            updateStatus(tr('script_extract_extracting', '提取中...'));
+            pollStatus(node.data.taskId);
+          } else if (node.data.lastError) {
+            updateStatus(tr('script_extract_failed', '提取失败') + '：' + node.data.lastError, '#dc2626');
+          }
+        };
       }
     });
   }
 
-  // 恢复工厂：回填视频预览/结果文本/meta，并接续未完成任务的轮询
+  // 恢复工厂：全部回填逻辑在 el._restoreScriptExtractState（onCreated 闭包内，
+  // 可访问 applyModelSelection/updateMeta/pollStatus 等内部函数）
   var createScriptExtractNodeWithData = createNodeWithDataFactory(
     createScriptExtractNode,
-    function(el, node) {
-      var previewField = el.querySelector('.video-preview-field');
-      var thumbVideo = el.querySelector('.script-extract-thumb');
-      var nameEl = el.querySelector('.script-extract-video-name');
-      var sourceHint = el.querySelector('.script-extract-source-hint');
-      var contentEl = el.querySelector('.script-extract-content');
-      var metaEl = el.querySelector('.script-extract-meta');
-
-      if (node.data.videoUrl) {
-        if (thumbVideo) thumbVideo.src = proxyDownloadUrl(node.data.videoUrl);
-        if (previewField) previewField.style.display = '';
-        if (nameEl) nameEl.textContent = node.data.videoName || '';
-        if (sourceHint) sourceHint.style.display = 'none';
-      }
-      // 参数控件回填（restoreDomFn 在数据合并后执行，直接设值）
-      var frameHeightEl = el.querySelector('.script-extract-frame-height');
-      var maxFramesEl = el.querySelector('.script-extract-max-frames');
-      if (frameHeightEl) {
-        frameHeightEl.value = String(node.data.frameHeight || 720);
-        if (!frameHeightEl.value) frameHeightEl.value = '720';
-      }
-      if (maxFramesEl) maxFramesEl.value = String(node.data.maxFrames || 24);
-      if (contentEl) contentEl.value = node.data.scriptContent || '';
-      if (metaEl && node.data.meta) {
-        var parts = [];
-        var meta = node.data.meta;
-        if (meta.duration_label) parts.push('时长 ' + meta.duration_label);
-        if (meta.frame_count !== undefined) parts.push(meta.frame_count + ' 关键帧');
-        if (meta.transcript_available) parts.push(tr('script_extract_meta_transcript', '含语音转写'));
-        if (meta.model) parts.push(String(meta.model));
-        metaEl.textContent = parts.join(' ｜ ');
-        metaEl.style.display = parts.length ? 'block' : 'none';
-      }
+    function(el) {
+      if (typeof el._restoreScriptExtractState === 'function') el._restoreScriptExtractState();
     }
   );
 
