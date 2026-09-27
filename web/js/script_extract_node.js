@@ -43,7 +43,9 @@
         taskStage: '',
         taskDone: false,
         lastError: '',
-        meta: null
+        meta: null,
+        frameHeight: 720,
+        maxFrames: 24
       },
       ports: SCRIPT_EXTRACT_PORTS,
       width: 360,
@@ -58,6 +60,17 @@
               '<div class="video-preview"><video class="script-extract-thumb" playsinline muted></video></div>' +
               '<div class="gen-meta script-extract-video-name"></div>' +
             '</div>' +
+          '</div>' +
+          '<div class="field">' +
+            '<div class="label" data-i18n="script_extract_frame_height_label">' + tr('script_extract_frame_height_label', '帧分辨率') + '</div>' +
+            '<select class="script-extract-frame-height" style="width:100%; box-sizing:border-box; padding:4px 6px; border:1px solid #e5e7eb; border-radius:6px; background:#fff; font-size:12px;">' +
+              '<option value="720" data-i18n="script_extract_frame_height_720">' + tr('script_extract_frame_height_720', '720P（清晰，读清字幕）') + '</option>' +
+              '<option value="480" data-i18n="script_extract_frame_height_480">' + tr('script_extract_frame_height_480', '480P（均衡）') + '</option>' +
+              '<option value="360" data-i18n="script_extract_frame_height_360">' + tr('script_extract_frame_height_360', '360P（省量，帧多）') + '</option>' +
+            '</select>' +
+            '<div class="label" style="margin-top:6px;" data-i18n="script_extract_max_frames_label">' + tr('script_extract_max_frames_label', '最大帧数') + '</div>' +
+            '<input class="script-extract-max-frames" type="number" min="4" max="200" step="1" value="24" style="width:100%; box-sizing:border-box; padding:4px 6px; border:1px solid #e5e7eb; border-radius:6px; font-size:12px;" />' +
+            '<div class="muted" style="font-size:11px;" data-i18n="script_extract_max_frames_hint">' + tr('script_extract_max_frames_hint', '4~200，按镜头切换自动取帧，超出均匀抽稀') + '</div>' +
           '</div>' +
           '<div class="field">' +
             '<button type="button" class="gen-btn gen-btn-main script-extract-btn" style="width:100%;" data-i18n="script_extract_btn">' + tr('script_extract_btn', '提取剧本') + '</button>' +
@@ -85,8 +98,29 @@
         var metaEl = el.querySelector('.script-extract-meta');
         var copyBtn = el.querySelector('.script-extract-copy-btn');
         var writeBtn = el.querySelector('.script-extract-write-btn');
+        var frameHeightEl = el.querySelector('.script-extract-frame-height');
+        var maxFramesEl = el.querySelector('.script-extract-max-frames');
         var pollTimer = null;
         var uploading = false;
+
+        // 帧分辨率 / 最大帧数：节点参数（用户可调），随工作流持久化
+        if (frameHeightEl) {
+          frameHeightEl.addEventListener('change', function() {
+            var v = parseInt(frameHeightEl.value, 10);
+            node.data.frameHeight = [720, 480, 360].indexOf(v) !== -1 ? v : 720;
+            safeAutoSave();
+          });
+        }
+        if (maxFramesEl) {
+          maxFramesEl.addEventListener('change', function() {
+            var v = parseInt(maxFramesEl.value, 10);
+            if (isNaN(v)) v = 24;
+            v = Math.max(4, Math.min(200, v));
+            maxFramesEl.value = String(v);
+            node.data.maxFrames = v;
+            safeAutoSave();
+          });
+        }
 
         function updateStatus(text, color) {
           if (!statusEl) return;
@@ -273,7 +307,11 @@
             var resp = await fetch('/api/video-workflow/extract-script', {
               method: 'POST',
               headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
-              body: JSON.stringify({ video_url: url })
+              body: JSON.stringify({
+                video_url: url,
+                max_frames: node.data.maxFrames || 24,
+                frame_height: node.data.frameHeight || 720
+              })
             });
             var result = await resp.json();
             if (resp.status === 409 || (result && result.code === -1 && /已有剧本提取任务/.test(result.message || ''))) {
@@ -366,6 +404,14 @@
         if (nameEl) nameEl.textContent = node.data.videoName || '';
         if (sourceHint) sourceHint.style.display = 'none';
       }
+      // 参数控件回填（restoreDomFn 在数据合并后执行，直接设值）
+      var frameHeightEl = el.querySelector('.script-extract-frame-height');
+      var maxFramesEl = el.querySelector('.script-extract-max-frames');
+      if (frameHeightEl) {
+        frameHeightEl.value = String(node.data.frameHeight || 720);
+        if (!frameHeightEl.value) frameHeightEl.value = '720';
+      }
+      if (maxFramesEl) maxFramesEl.value = String(node.data.maxFrames || 24);
       if (contentEl) contentEl.value = node.data.scriptContent || '';
       if (metaEl && node.data.meta) {
         var parts = [];

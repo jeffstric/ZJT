@@ -249,13 +249,20 @@ def clean_script_text(content: str) -> str:
 # Pipeline 各阶段
 # ---------------------------------------------------------------------------
 
-async def _collect_keyframes(video_path: str, temp_dir: str, stamp: str) -> List[dict]:
-    """多批收集关键帧直到取满 MAX_KEYFRAMES 或翻页耗尽，再均匀抽稀。"""
+def frame_budget(frame_height: int) -> Tuple[int, float]:
+    """分辨率档位 → (像素上限, 体积上限 MB)。未知档位回退默认 720p 档。"""
+    return C.FRAME_BUDGET_BY_HEIGHT.get(
+        int(frame_height), C.FRAME_BUDGET_BY_HEIGHT[C.DEFAULT_FRAME_HEIGHT]
+    )
+
+
+async def _collect_keyframes(video_path: str, temp_dir: str, stamp: str, max_frames: int) -> List[dict]:
+    """多批收集关键帧直到取满 max_frames 或翻页耗尽，再均匀抽稀。"""
     prefix = f"scriptframe_{stamp}"
     frames: List[dict] = []
     seen_times = set()
     start = 0.0
-    for _page in range(8):
+    for _page in range(24):
         batch = await extract_keyframe_candidates(
             video_path, temp_dir, prefix, start_time=start,
         )
@@ -267,13 +274,13 @@ async def _collect_keyframes(video_path: str, temp_dir: str, stamp: str) -> List
                 continue
             seen_times.add(t)
             frames.append({"path": item["path"], "time_sec": t})
-        if len(frames) >= C.MAX_KEYFRAMES:
+        if len(frames) >= max_frames:
             break
         start = float(batch[-1]["time_sec"]) + MC.VIDEO_FRAME_MIN_POINT_GAP_SECONDS
     if not frames:
         raise ScriptExtractError("未能从视频中提取到关键帧，视频可能无法解码")
     frames.sort(key=lambda f: f["time_sec"])
-    return thin_frames_by_time(frames, C.MAX_KEYFRAMES)
+    return thin_frames_by_time(frames, max_frames)
 
 
 async def _extract_audio_track(video_path: str, temp_dir: str, stamp: str) -> Optional[str]:
@@ -348,13 +355,13 @@ async def _transcribe_audio(
     return format_asr_transcript(merge_asr_slice_results(ok_results))
 
 
-async def _compress_frame(path: str) -> Tuple[bool, Optional[str], Optional[str]]:
+async def _compress_frame(path: str, max_pixels: int, max_mb: float) -> Tuple[bool, Optional[str], Optional[str]]:
     return await asyncio.wait_for(
         asyncio.to_thread(
             compress_local_image_to_base64,
             path,
-            C.FRAME_MAX_SIZE_MB,
-            C.FRAME_MAX_PIXELS,
+            max_mb,
+            max_pixels,
         ),
         timeout=C.FRAME_COMPRESS_TIMEOUT,
     )
@@ -365,6 +372,7 @@ async def _generate_script(
     frames: List[dict],
     duration: float,
     auth_token: Optional[str],
+    frame_height: int = C.DEFAULT_FRAME_HEIGHT,
 ) -> Tuple[str, str, Optional[int]]:
     """多模态生成剧本。返回 (script, model, vendor_id)。"""
     picked = await pick_vl_model(C.PREFERRED_VENDOR, C.PREFERRED_MODEL)
@@ -374,9 +382,10 @@ async def _generate_script(
     vendor_id = picked.get("vendor_id")
     model_id = picked.get("model_id")
 
+    budget_pixels, budget_mb = frame_budget(frame_height)
     frame_notes: List[dict] = []
     for i, frame in enumerate(frames, start=1):
-        ok, data_url, err = await _compress_frame(frame["path"])
+        ok, data_url, err = await _compress_frame(frame["path"], budget_pixels, budget_mb)
         if not ok or not data_url:
             logger.warning("[script-extract] 帧压缩失败 %s: %s", frame["path"], err)
             continue
@@ -447,7 +456,13 @@ def _cleanup_files(paths: List[Optional[str]]) -> None:
 # 任务入口
 # ---------------------------------------------------------------------------
 
-async def _run_extract_task(task_id: str, video_path: str, auth_token: Optional[str]) -> None:
+async def _run_extract_task(
+    task_id: str,
+    video_path: str,
+    auth_token: Optional[str],
+    max_frames: int,
+    frame_height: int,
+) -> None:
     temp_dir = get_upload_temp_dir()
     stamp = _make_stamp()
     wav_path: Optional[str] = None
@@ -463,7 +478,7 @@ async def _run_extract_task(task_id: str, video_path: str, auth_token: Optional[
                 f"视频时长 {format_time_label(duration)} 超过上限 "
                 f"{format_time_label(C.MAX_VIDEO_DURATION_SECONDS)}，请先剪辑"
             )
-        frames = await _collect_keyframes(video_path, temp_dir, stamp)
+        frames = await _collect_keyframes(video_path, temp_dir, stamp, max_frames)
         frame_paths = [f["path"] for f in frames]
 
         # 阶段 2：音轨提取
@@ -482,7 +497,7 @@ async def _run_extract_task(task_id: str, video_path: str, auth_token: Optional[
         # 阶段 4：多模态 LLM 生成剧本
         _update_task(task_id, stage=C.STAGE_LLM)
         script, model, vendor_id = await _generate_script(
-            transcript, frames, duration, auth_token,
+            transcript, frames, duration, auth_token, frame_height,
         )
 
         _update_task(task_id, status="success", stage=C.STAGE_DONE, error=None, result={
@@ -523,8 +538,12 @@ async def create_extract_task(
     video_path: str,
     user_id: Optional[int],
     auth_token: Optional[str],
+    max_frames: int = C.DEFAULT_MAX_FRAMES,
+    frame_height: int = C.DEFAULT_FRAME_HEIGHT,
 ) -> Tuple[Optional[str], Optional[str]]:
-    """创建提取任务。返回 (task_id, None) 或 (None, error)。"""
+    """创建提取任务。返回 (task_id, None) 或 (None, error)。
+
+    max_frames / frame_height 为节点参数（用户可调），调用方需先做边界校验。"""
     _cleanup_expired_tasks()
     if user_id is not None and user_id in _RUNNING_BY_USER:
         running_id = _RUNNING_BY_USER[user_id]
@@ -548,7 +567,9 @@ async def create_extract_task(
     if user_id is not None:
         _RUNNING_BY_USER[user_id] = task_id
 
-    bg_task = asyncio.create_task(_run_extract_task(task_id, video_path, auth_token))
+    bg_task = asyncio.create_task(
+        _run_extract_task(task_id, video_path, auth_token, max_frames, frame_height)
+    )
     _EXTRACT_TASKS[task_id]["asyncio_task"] = bg_task
     bg_task.add_done_callback(lambda _t: _EXTRACT_TASKS.get(task_id, {}).pop("asyncio_task", None))
     logger.info("[script-extract] 任务创建 task=%s user=%s video=%s", task_id, user_id, video_path)

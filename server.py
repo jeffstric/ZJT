@@ -157,7 +157,10 @@ from services.video_script_extract_service import (
     create_extract_task,
     get_extract_task,
 )
-from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN
+from config.constant import (
+    VideoScriptExtractConstants,
+    MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN,
+)
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
@@ -6230,6 +6233,8 @@ async def extract_video_frame(
 
 class ExtractScriptRequest(BaseModel):
     video_url: str
+    max_frames: int = VideoScriptExtractConstants.DEFAULT_MAX_FRAMES
+    frame_height: int = VideoScriptExtractConstants.DEFAULT_FRAME_HEIGHT
 
 
 @app.post('/api/video-workflow/extract-script')
@@ -6247,12 +6252,28 @@ async def extract_script_create(
     关键帧图片 + 带时间戳转写稿 → 多模态 VL 模型生成文字剧本。
     立即返回 task_id，前端轮询 GET /api/video-workflow/extract-script/status/{task_id}。
     只接受本站 /upload/ 路径（前端先经 /api/video-workflow/upload 上传拿永久 URL）。
+
+    max_frames（4~200，默认 24）与 frame_height（720/480/360，默认 720）为节点
+    参数，用户可按视频内容与目标模型自行调整。
     """
     try:
         user_id_val = _get_user_id_from_header(user_id)
         video_url = (body.video_url or "").strip()
         if not video_url:
             return JSONResponse(status_code=400, content={"code": -1, "message": "缺少视频 url"})
+
+        if body.max_frames < VideoScriptExtractConstants.MIN_FRAMES_LIMIT or \
+                body.max_frames > VideoScriptExtractConstants.MAX_FRAMES_LIMIT:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "max_frames 需在 "
+                         f"{VideoScriptExtractConstants.MIN_FRAMES_LIMIT}~{VideoScriptExtractConstants.MAX_FRAMES_LIMIT} 之间"}
+            )
+        if body.frame_height not in VideoScriptExtractConstants.FRAME_HEIGHT_ALLOWED:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "frame_height 仅支持 720 / 480 / 360"}
+            )
 
         if "/upload/" not in video_url:
             return JSONResponse(
@@ -6274,6 +6295,8 @@ async def extract_script_create(
             video_path=video_path,
             user_id=user_id_val,
             auth_token=token or None,
+            max_frames=body.max_frames,
+            frame_height=body.frame_height,
         )
         if err or not task_id:
             return JSONResponse(status_code=409, content={"code": -1, "message": err or "任务创建失败"})

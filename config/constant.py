@@ -2212,20 +2212,29 @@ class VideoScriptExtractConstants:
     # 支持的视频时长上限（秒）。关键帧按时长取点、音频分段转写，耗时随时长线性增长；
     # 超长视频建议先剪辑。超出即拒绝创建任务。
     MAX_VIDEO_DURATION_SECONDS = 900.0
-    # 送入多模态模型的关键帧上限（张）。多批收集（复用 build_keyframe_points 翻页语义），
-    # 与单批上限 VIDEO_FRAME_KEYFRAME_MAX_COUNT 解耦；仍不足时按时间均匀抽稀。
-    # 上下文余量充足：官方实测每图 ≤1024 token（24 帧 ≈ 2.4 万 token，1M 上下文零头），
-    # 真正的瓶颈是请求 payload 体积与提帧耗时，而非上下文。
-    MAX_KEYFRAMES = 24
+    # 送入多模态模型的关键帧数量与分辨率开放为节点参数（用户自调，默认值按常用场景定，
+    # 后续按使用反馈优化）。这里只定义默认值与防呆边界。
+    # 默认帧数：多批收集（复用 build_keyframe_points 翻页语义）后按时间均匀抽稀；
+    # 帧数防呆上限：官方单请求 ≤600 图，payload 与提帧耗时随帧数线性增长。
+    DEFAULT_MAX_FRAMES = 24
+    MIN_FRAMES_LIMIT = 4
+    MAX_FRAMES_LIMIT = 200
+    # 帧分辨率档位（短边高度）→ (压缩像素上限, 压缩体积上限 MB)。
+    # 对齐目标模型视觉规格：deepseek 缩放上限约 169 万像素、每图 ≤1024 token，
+    # token 随面积线性下降（720p≈1000 / 480p≈520 / 360p≈290），payload 同步下降；
+    # 像素上限即帧高 × 16/9 宽度，实测典型 JPEG q85 体积远低于上限（上限防异常大图）。
+    DEFAULT_FRAME_HEIGHT = 720
+    FRAME_HEIGHT_ALLOWED = (720, 480, 360)
+    FRAME_BUDGET_BY_HEIGHT = {
+        720: (921_600, 0.5),
+        480: (409_600, 0.25),
+        360: (230_400, 0.15),
+    }
     # 音频分段转写每段时长（秒）：SenseVoice 单次请求读超时 60s（ASR_TIMEOUT），
     # 长音频按段切开逐段转写，时间戳加段偏移还原为全片时间。
     ASR_SLICE_SECONDS = 60.0
     # 分段转写并发上限（httpx 异步请求，asyncio.Semaphore）。
     ASR_CONCURRENCY = 3
-    # 帧图压缩上限（MB/像素）：多帧叠加控制多模态 payload 体积
-    # （16 张 × ~1MB base64 ≈ 20MB 内，主流 VL 模型可接受）。
-    FRAME_MAX_SIZE_MB = 1.2
-    FRAME_MAX_PIXELS = 1_200_000
     # 单帧压缩外层超时（秒）。
     FRAME_COMPRESS_TIMEOUT = 20
     # 剧本生成 LLM 超时（秒）与输出 token 上限（多场景长剧本）。

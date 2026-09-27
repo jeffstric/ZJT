@@ -24,14 +24,18 @@ Markdown 剧本。结果在节点内展示、可编辑，可一键写入画布�
 
 1. 左侧菜单点击"剧本提取"创建节点
 2. 输入视频（连接视频节点 或 上传本地视频，上限 15 分钟）
-3. 点击"提取剧本"，状态行依次显示：正在提取关键帧… → 正在提取音轨… →
+3. 按需调整**提取参数**（节点内可调，随工作流保存）：
+   - **帧分辨率**：720P（默认，清晰，可读画面字幕）/ 480P（均衡）/ 360P（省量，
+     token 与体积按面积下降，可支持更多帧）
+   - **最大帧数**：4~200（默认 24），按镜头切换自动取帧，超出均匀抽稀（保留首尾）
+4. 点击"提取剧本"，状态行依次显示：正在提取关键帧… → 正在提取音轨… →
    正在转写语音 (n/m)... → 智能体正在撰写剧本...
-4. 完成后剧本显示在结果区，可编辑、复制，或点"写入剧本节点"
+5. 完成后剧本显示在结果区，可编辑、复制，或点"写入剧本节点"
 
 ## 后端链路（services/video_script_extract_service.py）
 
 ```
-POST /api/video-workflow/extract-script        创建任务（video_url 校验同 extract-frame）
+POST /api/video-workflow/extract-script        创建任务（video_url / max_frames / frame_height）
 GET  /api/video-workflow/extract-script/status/{task_id}   轮询状态/结果
 ```
 
@@ -39,10 +43,10 @@ Pipeline 各阶段（全部异步，不阻塞事件循环）：
 
 | 阶段 | 实现 |
 | --- | --- |
-| frames | `probe_stream_duration` 时长校验（≤15 分钟）→ `extract_keyframe_candidates` 多批翻页收集（复用提取帧节点的场景检测/翻页语义），不足/超限用 `thin_frames_by_time` 均匀抽稀到 ≤24 帧 |
+| frames | `probe_stream_duration` 时长校验（≤15 分钟）→ `extract_keyframe_candidates` 多批翻页收集（复用提取帧节点的场景检测/翻页语义），不足/超限用 `thin_frames_by_time` 均匀抽稀到用户设定的最大帧数 |
 | audio | `voice_replace/ffmpeg_util.extract_audio` 提取 PCM wav；无音轨时跳过 ASR（画面推断继续） |
 | asr | `build_slice_ranges` 按 60s 切段 → `slice_audio` 切片 → `SenseVoiceAsrDriver.transcribe_segments` 并发转写（≤3 并发）→ `merge_asr_slice_results` 段偏移还原全片时间戳 → `[MM:SS] 文本` 转写稿；单段失败跳过 |
-| llm | `vl_gateway.pick_vl_model` 挑选 `supports_vl` 模型（默认偏好 volcengine/doubao-seed-2-0-lite）→ 帧图 `compress_local_image_to_base64`（≤1.2MB/120 万像素）→ 多模态消息（system 剧本提取智能体提示词 + user 文本（任务说明+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护）→ `clean_script_text` 清洗截断 |
+| llm | `vl_gateway.pick_vl_model` 挑选 `supports_vl` 模型（默认偏好 volcengine/doubao-seed-2-0-lite）→ 帧图 `compress_local_image_to_base64`（按用户选档位的像素/MB 预算压缩）→ 多模态消息（system 剧本提取智能体提示词 + user 文本（任务说明+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护）→ `clean_script_text` 清洗截断 |
 
 任务为**内存注册表**（单进程 uvicorn）：每用户同时只允许 1 个运行中任务（重复提交
 返回 409）；记录 TTL 30 分钟惰性清理；**服务重启任务失联**，轮询返回 404，前端提示
@@ -79,10 +83,12 @@ LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLM
 | 常量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `MAX_VIDEO_DURATION_SECONDS` | 900 | 视频时长上限（秒），超出拒绝创建任务 |
-| `MAX_KEYFRAMES` | 24 | 送入多模态模型的关键帧上限（多批收集后均匀抽稀） |
+| `DEFAULT_MAX_FRAMES` / `MIN_FRAMES_LIMIT` / `MAX_FRAMES_LIMIT` | 24 / 4 / 200 | 帧数节点参数的默认值与防呆边界（官方单请求 ≤600 图，payload 与提帧耗时随帧数线性涨） |
+| `DEFAULT_FRAME_HEIGHT` / `FRAME_HEIGHT_ALLOWED` | 720 / (720, 480, 360) | 帧分辨率档位（短边高度），节点参数 |
+| `FRAME_BUDGET_BY_HEIGHT` | 720→(92万, 0.5) 480→(41万, 0.25) 360→(23万, 0.15) | 各档位帧图压缩预算（像素/MB）。对齐模型视觉规格：token 与 payload 随面积线性下降（720p≈1000 / 480p≈520 / 360p≈290 token/图） |
 | `ASR_SLICE_SECONDS` | 60 | 音频分段转写每段时长（SenseVoice 单次读超时 60s） |
 | `ASR_CONCURRENCY` | 3 | 分段转写并发上限 |
-| `FRAME_MAX_SIZE_MB` / `FRAME_MAX_PIXELS` | 1.2 / 1,200,000 | 单帧压缩上限（控制多帧 payload 体积） |
+| `FRAME_COMPRESS_TIMEOUT` | 20 | 单帧压缩外层超时（秒） |
 | `LLM_TIMEOUT` / `LLM_MAX_TOKENS` / `LLM_TEMPERATURE` | 180 / 8000 / 0.4 | 剧本生成调用参数 |
 | `MAX_SCRIPT_CHARS` | 30000 | 剧本文本截断上限（与前端 textarea maxlength 一致） |
 | `TASK_TTL_SECONDS` | 1800 | 内存任务记录保留时长 |
@@ -99,10 +105,10 @@ LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLM
 
 ## 边界与限制
 
-1. 视频时长 ≤15 分钟；24 帧上限对长视频画面覆盖较稀（关键叙事依赖转写稿补充）。
-   上下文不是瓶颈：2026-09-27 官方 API 实测 deepseek-flash 每图约 1000 token
-   （文档上限 1024/图），24 帧 ≈ 2.4 万 token，1M 上下文零头；真正的约束是
-   请求 payload 体积（每图压缩后 ≤1.2MB）与提帧耗时，故未进一步放宽。
+1. 视频时长 ≤15 分钟；帧数上限（默认 24，最高 200）由用户按视频内容自行调整，
+   长视频画面覆盖依赖转写稿补充叙事。上下文不是瓶颈：2026-09-27 官方 API 实测
+   deepseek-flash 每图约 1000 token（文档上限 1024/图，随分辨率按面积线性下降），
+   24 帧 720p ≈ 2.4 万 token；帧多时建议搭配 480P/360P 档位控制 payload 与 token。
 2. SenseVoice ASR 不区分说话人，对白中的"角色名"由智能体从画面与语境推断
 3. 任务状态存内存：重启后进行中任务失联（结果未写入前），需重新提取
 4. 外部视频 URL 不支持（与 extract-frame 一致），必须先上传到本站

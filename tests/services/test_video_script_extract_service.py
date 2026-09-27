@@ -28,6 +28,7 @@ from services.video_script_extract_service import (  # noqa: E402
     create_extract_task,
     format_asr_transcript,
     format_time_label,
+    frame_budget,
     get_extract_task,
     merge_asr_slice_results,
     thin_frames_by_time,
@@ -144,6 +145,21 @@ class TestCleanScriptText(unittest.TestCase):
         self.assertEqual(clean_script_text("# 标题\n正文"), "# 标题\n正文")
 
 
+class TestFrameBudget(unittest.TestCase):
+    """分辨率档位 → 压缩预算（节点参数用），未知档位回退默认档。"""
+
+    def test_known_heights(self):
+        self.assertEqual(frame_budget(720), (921_600, 0.5))
+        self.assertEqual(frame_budget(480), (409_600, 0.25))
+        self.assertEqual(frame_budget(360), (230_400, 0.15))
+
+    def test_unknown_height_falls_back_to_default(self):
+        default = frame_budget(720)
+        self.assertEqual(frame_budget(1080), default)
+        self.assertEqual(frame_budget(0), default)
+        self.assertEqual(frame_budget(-1), default)
+
+
 class TestTaskRegistry(unittest.TestCase):
     def setUp(self):
         _EXTRACT_TASKS.clear()
@@ -152,7 +168,7 @@ class TestTaskRegistry(unittest.TestCase):
     tearDown = setUp
 
     def test_create_and_get_task(self):
-        async def _noop(task_id, video_path, auth_token):
+        async def _noop(task_id, video_path, auth_token, max_frames, frame_height):
             return None
 
         with patch("services.video_script_extract_service._run_extract_task", _noop):
@@ -168,7 +184,7 @@ class TestTaskRegistry(unittest.TestCase):
         self.assertNotIn("created_at", task)
 
     def test_second_task_rejected_while_running(self):
-        async def _pending(task_id, video_path, auth_token):
+        async def _pending(task_id, video_path, auth_token, max_frames, frame_height):
             # 模拟任务仍在运行：不结束事件循环内的注册表状态
             await asyncio.sleep(0)
 
@@ -180,7 +196,7 @@ class TestTaskRegistry(unittest.TestCase):
         self.assertIn("已有剧本提取任务进行中", err)
 
     def test_new_task_allowed_after_failure(self):
-        async def _fail_then_clear(task_id, video_path, auth_token):
+        async def _fail_then_clear(task_id, video_path, auth_token, max_frames, frame_height):
             # 模拟任务立即失败并释放并发位（复用真实 finally 语义）
             task = _EXTRACT_TASKS.get(task_id)
             if task is not None:
@@ -196,7 +212,7 @@ class TestTaskRegistry(unittest.TestCase):
         self.assertIsNone(err)
 
     def test_expired_task_invisible(self):
-        async def _noop(task_id, video_path, auth_token):
+        async def _noop(task_id, video_path, auth_token, max_frames, frame_height):
             return None
 
         with patch("services.video_script_extract_service._run_extract_task", _noop):
