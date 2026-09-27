@@ -20,7 +20,6 @@ import asyncio
 import inspect
 import logging
 import os
-import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -230,7 +229,7 @@ def build_script_llm_messages(
 
 
 def clean_script_text(content: str) -> str:
-    """容错清洗模型回复：去代码块包裹/成对引号包裹/尾部自评句，截断到上限。"""
+    """容错清洗模型回复：去代码块包裹/成对引号包裹/首尾空白，截断到上限。"""
     if not content:
         return ""
     text = str(content).strip()
@@ -246,12 +245,6 @@ def clean_script_text(content: str) -> str:
     _QUOTE_PAIRS = ('"\'“「', '"\'”」')
     if len(text) >= 2 and text[0] in _QUOTE_PAIRS[0] and text[-1] == _QUOTE_PAIRS[1][_QUOTE_PAIRS[0].index(text[0])]:
         text = text[1:-1].strip()
-    # 尾部自评句剔除：部分模型（如 doubao lite）会在剧本结束后追加
-    # "对，这样就对了，符合要求……"式的自我点评，不属于剧本内容。
-    # 仅在末段较短、无 Markdown 结构、且以自评词开头时剔除，避免误删正文。
-    m = re.search(r"\n+([^\n#【]{2,60})$", text)
-    if m and re.match(r"^(对|好的|嗯|以上|这样|希望|那就|完成)", m.group(1).strip()):
-        text = text[:m.start()].rstrip()
     return text[:C.MAX_SCRIPT_CHARS].strip()
 
 

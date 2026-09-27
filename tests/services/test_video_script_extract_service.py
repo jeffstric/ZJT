@@ -144,19 +144,6 @@ class TestCleanScriptText(unittest.TestCase):
     def test_plain_text_untouched(self):
         self.assertEqual(clean_script_text("# 标题\n正文"), "# 标题\n正文")
 
-    def test_strips_trailing_self_comment(self):
-        # doubao lite 实测会在剧本结尾追加自评句（"对，这样就对了……"），不属于剧本
-        text = "# 标题\n## 场景1（时间 00:00-00:35｜走廊）\n【画面】走廊对峙。\n\n对，这样就对了，符合要求，格式正确，内容符合转写和画面信息。"
-        self.assertEqual(
-            clean_script_text(text),
-            "# 标题\n## 场景1（时间 00:00-00:35｜走廊）\n【画面】走廊对峙。",
-        )
-
-    def test_keeps_normal_last_paragraph(self):
-        # 正常结尾（非自评开头词）不动
-        text = "# 标题\n【画面】走廊对峙，气氛紧绷，少女举着燃烧瓶与反派遥遥对峙久久不动。"
-        self.assertEqual(clean_script_text(text), text)
-
 
 class TestFrameBudget(unittest.TestCase):
     """分辨率档位 → 压缩预算（节点参数用），未知档位回退默认档。"""
