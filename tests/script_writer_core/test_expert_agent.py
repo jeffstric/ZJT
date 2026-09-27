@@ -14,6 +14,7 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 sys.path.insert(0, project_root)
 
 from script_writer_core.agents.expert_agent import ExpertAgent
+from config.constant import AGENT_LLM_IMAGE_TOKEN_ESTIMATE
 
 
 class TestExpertAgent(unittest.TestCase):
@@ -299,23 +300,29 @@ class TestFetchImageResultStripped(TestExpertAgent):
 
 
 class TestEstimateInputTokens(TestExpertAgent):
-    """测试 _estimate_input_tokens：文本按 1.5 字符/token、图片按 base64 体量估算"""
+    """测试 _estimate_input_tokens：文本按 1.5 字符/token、图片按固定 token 上限估算"""
 
     def test_text_only(self):
         agent = self._create_agent()
         messages = [{"role": "user", "content": "x" * 150}]
         self.assertEqual(agent._estimate_input_tokens(messages), 100)
 
-    def test_image_counted_by_base64_volume(self):
+    def test_image_counted_by_fixed_estimate_not_base64_volume(self):
+        # 2026-09-27 官方 API 实测：deepseek-flash 每图 ≈ 1000 token（文档上限 1024），
+        # base64 字符量不进入模型上下文，估算按固定 token 计（虚高会过度收缩 max_tokens）
         agent = self._create_agent()
-        messages = [{"role": "user", "content": [
+        base = [{"role": "user", "content": [
             {"type": "text", "text": "看图"},
             {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + "A" * 1300}},
         ]}]
-        # 图片 1300 字符 / 1.3 = 1000 tokens，文本 2 字符约 1 token
-        estimate = agent._estimate_input_tokens(messages)
-        self.assertGreaterEqual(estimate, 1000)
-        self.assertLess(estimate, 1100)
+        bigger = [{"role": "user", "content": [
+            {"type": "text", "text": "看图"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + "A" * 130000}},
+        ]}]
+        expected = AGENT_LLM_IMAGE_TOKEN_ESTIMATE + 1
+        self.assertEqual(agent._estimate_input_tokens(base), expected)
+        # base64 体量变化不影响估算
+        self.assertEqual(agent._estimate_input_tokens(bigger), expected)
 
     def test_floor_is_last_api_input_tokens(self):
         agent = self._create_agent()

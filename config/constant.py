@@ -260,10 +260,17 @@ AGENT_LLM_CONTEXT_SAFETY_MARGIN_TOKENS = 65536
 # 避免算出 0 或负数导致 API 直接拒绝。
 AGENT_LLM_MIN_OUTPUT_TOKENS = 4096
 # 专家对话历史中保留的最大图片数（fetch_image_as_base64 注入的多模态 user 消息）。
-# VL 模型对图片 token 计费很高（实测 deepseek-v4-flash-vision-exp 单图约 4~5 万 tokens），
 # 无上限累积会击穿上下文（事故：16 张图 messages 达 74 万 tokens）。
 # 超出后最旧图片替换为文本占位，LLM 需要时可重新调用 fetch_image_as_base64 获取。
 EXPERT_HISTORY_MAX_IMAGES = 6
+# 单张图片输入 token 的估算值（用于 max_tokens 动态收缩的输入估算，只做保守上界）。
+# 2026-09-27 官方 API 实测（deepseek-flash）：1280×720 单图 prompt 差值 ≈ 1000 tokens，
+# 官方文档明确"每张图片存在 1024 token 上限"（大图缩放至约 1300×1300 后计量）；
+# doubao 系按 tile 计量同量级。历史事故中"单图 4~5 万 tokens"实为 tool 消息
+# base64 文本泄漏 + 旧实验模型计量共同造成（见 docs/backend/incidents/
+# 2026-09-09-asset-readiness-context-overflow.md 复核段），并非图片正常计量。
+# 估算仍取 2 倍安全系数，真实输入以 last_api_input_tokens 兜底（两者取大）。
+AGENT_LLM_IMAGE_TOKEN_ESTIMATE = 2048
 
 # 剧本创作等入口无偏好时的默认生图模型：GPT Image 2（short_key=gpt-image-2）
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = TaskTypeId.GPT_IMAGE_2_EDIT
@@ -2207,7 +2214,9 @@ class VideoScriptExtractConstants:
     MAX_VIDEO_DURATION_SECONDS = 900.0
     # 送入多模态模型的关键帧上限（张）。多批收集（复用 build_keyframe_points 翻页语义），
     # 与单批上限 VIDEO_FRAME_KEYFRAME_MAX_COUNT 解耦；仍不足时按时间均匀抽稀。
-    MAX_KEYFRAMES = 16
+    # 上下文余量充足：官方实测每图 ≤1024 token（24 帧 ≈ 2.4 万 token，1M 上下文零头），
+    # 真正的瓶颈是请求 payload 体积与提帧耗时，而非上下文。
+    MAX_KEYFRAMES = 24
     # 音频分段转写每段时长（秒）：SenseVoice 单次请求读超时 60s（ASR_TIMEOUT），
     # 长音频按段切开逐段转写，时间戳加段偏移还原为全片时间。
     ASR_SLICE_SECONDS = 60.0

@@ -11,7 +11,7 @@ from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from model.model import ModelModel
-from config.constant import EXPERT_HISTORY_MAX_IMAGES
+from config.constant import AGENT_LLM_IMAGE_TOKEN_ESTIMATE, EXPERT_HISTORY_MAX_IMAGES
 from .output_token_budget import resolve_max_output_tokens
 
 logger = logging.getLogger(__name__)
@@ -671,12 +671,13 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         """估算本次调用的输入 tokens，供动态收缩 max_tokens 使用。
 
         取"上次 API 真实 input_tokens"与"本轮消息字符估算"的较大值：
-        文本按约 1.5 字符/token；图片按 base64 字符体量计（实测
-        deepseek-v4-flash-vision-exp 对图片按数据量计费，约 1.3 字符/token）。
-        tool schema 等未计入部分由安全余量覆盖。
+        文本按约 1.5 字符/token；图片按固定 token 上限估算（官方 API 对图片
+        缩放后计量，deepseek-flash 实测每图 ≈ 1000、文档上限 1024，估算取
+        AGENT_LLM_IMAGE_TOKEN_ESTIMATE 保守值，不计 base64 字符量——base64
+        不进入模型上下文）。tool schema 等未计入部分由安全余量覆盖。
         """
         text_chars = 0
-        image_chars = 0
+        image_count = 0
         for m in messages:
             content = m.get("content")
             if isinstance(content, list):
@@ -684,12 +685,12 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                     if not isinstance(part, dict):
                         continue
                     if part.get("type") == "image_url":
-                        image_chars += len(str(part.get("image_url", {}).get("url", "")))
+                        image_count += 1
                     else:
                         text_chars += len(str(part.get("text", "")))
             elif content:
                 text_chars += len(str(content))
-        estimate = text_chars * 2 // 3 + int(image_chars / 1.3)
+        estimate = text_chars * 2 // 3 + image_count * AGENT_LLM_IMAGE_TOKEN_ESTIMATE
         return max(self.last_api_input_tokens, estimate)
 
     def _prune_history_images(self, max_images: int = EXPERT_HISTORY_MAX_IMAGES) -> None:
