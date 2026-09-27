@@ -20,6 +20,7 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -59,7 +60,10 @@ SCRIPT_EXTRACT_SYSTEM_PROMPT = (
     "2. 按「场景」组织：每个场景以「## 场景N（时间 00:00-00:35｜地点/环境）」开头，"
     "时间区间依据关键帧时间点与转写稿时间戳估算。\n"
     "3. 每个场景内依次写：\n"
-    "   - 【画面】镜头与画面描述（依据关键帧：环境、人物、动作、氛围）\n"
+    "   - 【画面】镜头与画面描述（依据关键帧：环境、人物、动作、氛围）。"
+    "若多张关键帧画面高度重复（解说类视频常循环使用同一段背景素材），"
+    "如实写明「重复使用同一/相似镜头」并概括其特征，不要虚构画面变化；"
+    "画面中出现的醒目文字（片头标题、片尾大字、水印）应照实记录\n"
     "   - 【对白】「角色：台词」逐句列出（依据转写稿，注明说话人无法区分时用「 voice 」占位提示）\n"
     "   - 【旁白】画外音（如有）\n"
     "   - 【音效/配乐】（如有明确线索）\n"
@@ -226,7 +230,7 @@ def build_script_llm_messages(
 
 
 def clean_script_text(content: str) -> str:
-    """容错清洗模型回复：去代码块包裹/成对引号包裹/首尾空白，截断到上限。"""
+    """容错清洗模型回复：去代码块包裹/成对引号包裹/尾部自评句，截断到上限。"""
     if not content:
         return ""
     text = str(content).strip()
@@ -242,6 +246,12 @@ def clean_script_text(content: str) -> str:
     _QUOTE_PAIRS = ('"\'“「', '"\'”」')
     if len(text) >= 2 and text[0] in _QUOTE_PAIRS[0] and text[-1] == _QUOTE_PAIRS[1][_QUOTE_PAIRS[0].index(text[0])]:
         text = text[1:-1].strip()
+    # 尾部自评句剔除：部分模型（如 doubao lite）会在剧本结束后追加
+    # "对，这样就对了，符合要求……"式的自我点评，不属于剧本内容。
+    # 仅在末段较短、无 Markdown 结构、且以自评词开头时剔除，避免误删正文。
+    m = re.search(r"\n+([^\n#【]{2,60})$", text)
+    if m and re.match(r"^(对|好的|嗯|以上|这样|希望|那就|完成)", m.group(1).strip()):
+        text = text[:m.start()].rstrip()
     return text[:C.MAX_SCRIPT_CHARS].strip()
 
 
