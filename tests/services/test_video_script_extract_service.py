@@ -22,6 +22,7 @@ from services.video_script_extract_service import (  # noqa: E402
     _EXTRACT_TASKS,
     _RUNNING_BY_USER,
     ScriptExtractError,
+    build_extract_sample_points,
     build_script_llm_messages,
     build_slice_ranges,
     clean_script_text,
@@ -31,7 +32,7 @@ from services.video_script_extract_service import (  # noqa: E402
     frame_budget,
     get_extract_task,
     merge_asr_slice_results,
-    thin_frames_by_time,
+    thin_points_by_time,
 )
 from config.constant import VideoScriptExtractConstants as C  # noqa: E402
 
@@ -83,25 +84,60 @@ class TestFormatTranscript(unittest.TestCase):
         self.assertEqual(text, "[00:00] 你好\n[01:01] 世界")
 
 
-class TestThinFramesByTime(unittest.TestCase):
-    def _frames(self, n):
-        return [{"path": f"f{i}.jpg", "time_sec": float(i)} for i in range(n)]
-
+class TestThinPointsByTime(unittest.TestCase):
     def test_no_thinning_under_limit(self):
-        frames = self._frames(5)
-        self.assertEqual(thin_frames_by_time(frames, 16), frames)
+        self.assertEqual(thin_points_by_time([1.0, 2.0, 3.0], 8), [1.0, 2.0, 3.0])
 
     def test_even_thinning_keeps_first_and_last(self):
-        frames = self._frames(21)
-        picked = thin_frames_by_time(frames, 6)
+        picked = thin_points_by_time([float(i) for i in range(21)], 6)
         self.assertEqual(len(picked), 6)
-        self.assertEqual(picked[0]["time_sec"], 0.0)
-        self.assertEqual(picked[-1]["time_sec"], 20.0)
+        self.assertEqual(picked[0], 0.0)
+        self.assertEqual(picked[-1], 20.0)
 
-    def test_no_duplicates(self):
-        frames = self._frames(3)
-        picked = thin_frames_by_time(frames, 8)
-        self.assertEqual(len(picked), 3)
+    def test_limit_one_keeps_first(self):
+        self.assertEqual(thin_points_by_time([1.0, 2.0, 3.0], 1), [1.0])
+
+
+class TestBuildExtractSamplePoints(unittest.TestCase):
+    """采样计划：切换点为主、不足补均匀点、合并去重、超量抽稀（保首尾）。"""
+
+    def test_dense_scene_points_thinned_to_limit(self):
+        # 96 个切换点 → 抽稀到 24，保首尾
+        pts = build_extract_sample_points(
+            [float(i) for i in range(96)], 250.0, 24, 0.2,
+        )
+        self.assertEqual(len(pts), 24)
+        self.assertEqual(pts[0], 0.05)
+        self.assertEqual(pts[-1], 95.0)
+
+    def test_sparse_scene_points_padded_uniformly(self):
+        # 长视频切换点只有 2 个 → 补均匀点到 10
+        pts = build_extract_sample_points([100.0, 500.0], 871.0, 10, 0.2)
+        self.assertEqual(len(pts), 10)
+        self.assertEqual(pts[0], 0.0)
+        self.assertEqual(pts[-1], 870.95)
+
+    def test_no_scene_points_all_uniform(self):
+        # 无切换点（超检测上限且检测失败）：纯均匀采样
+        pts = build_extract_sample_points([], 871.0, 6, 0.2)
+        self.assertEqual(len(pts), 6)
+        self.assertAlmostEqual(pts[0], 0.0)
+        self.assertAlmostEqual(pts[-1], 870.95)
+
+    def test_min_gap_dedup(self):
+        # 10s 视频要 100 帧：均匀补点后被 min_gap 合并（相邻间隔 ≥1s），不会产出过密帧
+        pts = build_extract_sample_points([0.0, 0.05, 0.1, 5.0], 10.0, 100, 1.0)
+        self.assertEqual(len(pts), 10)
+        self.assertEqual(pts[0], 0.0)
+        self.assertLessEqual(pts[-1], 9.95)
+        gaps = [round(b - a, 2) for a, b in zip(pts, pts[1:])]
+        self.assertTrue(all(g >= 1.0 for g in gaps))
+
+    def test_scene_points_clamped_into_range(self):
+        # 界外切换点 clamp 进 [0.05, duration-0.05]
+        pts = build_extract_sample_points([-5.0, 999.0], 10.0, 10, 0.2)
+        self.assertGreaterEqual(min(pts), 0.0)
+        self.assertLessEqual(max(pts), 9.95)
 
 
 class TestBuildScriptLlmMessages(unittest.TestCase):

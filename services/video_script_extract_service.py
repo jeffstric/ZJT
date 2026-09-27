@@ -32,7 +32,9 @@ from config.constant import (
 from llm.llm_client_factory import get_llm_client
 from services.video_frame_extract_service import (
     FrameExtractError,
-    extract_keyframe_candidates,
+    detect_scene_cut_points,
+    extract_frame_at,
+    extract_last_frame,
     probe_stream_duration,
 )
 from services.voice_replace.ffmpeg_util import FfmpegError, extract_audio, slice_audio
@@ -56,8 +58,8 @@ SCRIPT_EXTRACT_SYSTEM_PROMPT = (
     "\n"
     "输出要求（中文，Markdown 格式）：\n"
     "1. 第一行用「# 」输出剧本标题。\n"
-    "2. 按「场景」组织：每个场景以「## 场景N（时间 00:00-00:35｜地点/环境）」开头，"
-    "时间区间依据关键帧时间点与转写稿时间戳估算。\n"
+    "2. 按「场景」组织：每个场景以「## 场景1（时间 00:00-00:35｜地点/环境）」的格式开头"
+    "（序号依次为 场景1、场景2、场景3……），时间区间依据关键帧时间点与转写稿时间戳估算。\n"
     "3. 每个场景内依次写：\n"
     "   - 【画面】镜头与画面描述（依据关键帧：环境、人物、动作、氛围）。"
     "若多张关键帧画面高度重复（解说类视频常循环使用同一段背景素材），"
@@ -171,26 +173,6 @@ def format_time_label(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
-def thin_frames_by_time(frames: List[dict], limit: int) -> List[dict]:
-    """帧数超上限时按时间均匀抽稀（保留首尾帧），输入须按 time_sec 升序。"""
-    total = len(frames)
-    if limit <= 0 or total <= limit:
-        return list(frames)
-    picked: List[dict] = []
-    for i in range(limit):
-        idx = round(i * (total - 1) / (limit - 1)) if limit > 1 else 0
-        picked.append(frames[idx])
-    # 均匀取点可能重复（极端情况），去重保序
-    seen = set()
-    unique: List[dict] = []
-    for f in picked:
-        key = id(f)
-        if key not in seen:
-            seen.add(key)
-            unique.append(f)
-    return unique
-
-
 def build_script_llm_messages(
     transcript: str,
     frames: List[dict],
@@ -259,31 +241,91 @@ def frame_budget(frame_height: int) -> Tuple[int, float]:
     )
 
 
-async def _collect_keyframes(video_path: str, temp_dir: str, stamp: str, max_frames: int) -> List[dict]:
-    """多批收集关键帧直到取满 max_frames 或翻页耗尽，再均匀抽稀。"""
-    prefix = f"scriptframe_{stamp}"
-    frames: List[dict] = []
-    seen_times = set()
+def thin_points_by_time(points: List[float], limit: int) -> List[float]:
+    """时间点超上限时按序均匀抽稀（保首尾）。"""
+    total = len(points)
+    if limit <= 0 or total <= limit:
+        return list(points)
+    if limit == 1:
+        return [points[0]]
+    idxs = sorted({round(i * (total - 1) / (limit - 1)) for i in range(limit)})
+    return [points[i] for i in idxs]
+
+
+def build_extract_sample_points(
+    scene_points: List[float],
+    duration: float,
+    max_frames: int,
+    min_gap: float,
+) -> List[float]:
+    """采样计划（纯函数）：场景切换点为主、不足 max_frames 时按时间均匀补点，
+    合并去重（相邻间隔 ≥ min_gap）后超量抽稀（保首尾）。
+
+    长视频（超过场景检测单次上限）切换点由调用方分段检测合并后传入，
+    保证 60 帧级别的采样密度不因时长衰减。"""
+    end = max(0.0, float(duration) - 0.05)
+    limit = max(1, int(max_frames))
+    pts = sorted({min(max(float(p), 0.05), end) for p in scene_points})
+    if len(pts) < limit:
+        # 均匀补点：在 [0, end] 上取 limit 个等分点（含首尾），与切换点合并
+        if limit > 1:
+            uniform = [round(end * i / (limit - 1), 2) for i in range(limit)]
+        else:
+            uniform = [0.0]
+        pts = sorted(set(pts) | set(uniform))
+    merged: List[float] = []
+    for p in pts:
+        if not merged or p - merged[-1] >= min_gap:
+            merged.append(p)
+    return thin_points_by_time(merged, limit)
+
+
+async def _detect_scene_points_all(video_path: str, duration: float) -> List[float]:
+    """全片场景切换检测：超过单次解码上限时长时按段多次检测合并。
+
+    原实现直接跳过超长视频的检测（extract_keyframe_candidates 内单次上限），
+    导致长视频翻页采样退化为每批 6 点且首批末点即视频结尾，帧数严重不足
+    （实测 871s 视频设 60 帧只拿到 6 帧）。"""
+    limit = MC.VIDEO_FRAME_SCENE_DETECT_MAX_DURATION_SECONDS
+    points: List[float] = []
     start = 0.0
-    for _page in range(24):
-        batch = await extract_keyframe_candidates(
-            video_path, temp_dir, prefix, start_time=start,
-        )
-        if not batch:
-            break
-        for item in batch:
-            t = round(float(item["time_sec"]), 2)
-            if t in seen_times:
-                continue
-            seen_times.add(t)
-            frames.append({"path": item["path"], "time_sec": t})
-        if len(frames) >= max_frames:
-            break
-        start = float(batch[-1]["time_sec"]) + MC.VIDEO_FRAME_MIN_POINT_GAP_SECONDS
-    if not frames:
+    while start < duration - 0.1:
+        try:
+            pts = await detect_scene_cut_points(
+                video_path, start_time=start if start > 0 else 0.0,
+            )
+        except FrameExtractError:
+            pts = []
+        points.extend(pts)
+        start += limit
+    return sorted(set(round(p, 3) for p in points))
+
+
+async def _collect_keyframes(
+    video_path: str,
+    temp_dir: str,
+    stamp: str,
+    duration: float,
+    max_frames: int,
+) -> List[dict]:
+    """按采样计划逐点提取关键帧：全片场景检测（分段）+ 均匀补点，共 max_frames 上限。"""
+    prefix = f"scriptframe_{stamp}"
+    scene_points = await _detect_scene_points_all(video_path, duration)
+    points = build_extract_sample_points(
+        scene_points, duration, max_frames, MC.VIDEO_FRAME_MIN_POINT_GAP_SECONDS,
+    )
+    if not points:
         raise ScriptExtractError("未能从视频中提取到关键帧，视频可能无法解码")
-    frames.sort(key=lambda f: f["time_sec"])
-    return thin_frames_by_time(frames, max_frames)
+    frames: List[dict] = []
+    for i, t in enumerate(points):
+        image_path = os.path.join(temp_dir, f"{prefix}_{i:03d}.jpg")
+        if i == len(points) - 1 and t >= duration - 0.5:
+            # 尾点走尾帧链：流时长元数据虚高时 -ss 定位可能落在最后一帧之后
+            await extract_last_frame(video_path, image_path)
+        else:
+            await extract_frame_at(video_path, image_path, t)
+        frames.append({"path": image_path, "time_sec": t})
+    return frames
 
 
 async def _extract_audio_track(video_path: str, temp_dir: str, stamp: str) -> Optional[str]:
@@ -493,7 +535,7 @@ async def _run_extract_task(
                 f"视频时长 {format_time_label(duration)} 超过上限 "
                 f"{format_time_label(C.MAX_VIDEO_DURATION_SECONDS)}，请先剪辑"
             )
-        frames = await _collect_keyframes(video_path, temp_dir, stamp, max_frames)
+        frames = await _collect_keyframes(video_path, temp_dir, stamp, duration, max_frames)
         frame_paths = [f["path"] for f in frames]
 
         # 阶段 2：音轨提取

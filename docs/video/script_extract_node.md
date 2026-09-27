@@ -45,7 +45,7 @@ Pipeline 各阶段（全部异步，不阻塞事件循环）：
 
 | 阶段 | 实现 |
 | --- | --- |
-| frames | `probe_stream_duration` 时长校验（≤15 分钟）→ `extract_keyframe_candidates` 多批翻页收集（复用提取帧节点的场景检测/翻页语义），不足/超限用 `thin_frames_by_time` 均匀抽稀到用户设定的最大帧数 |
+| frames | `probe_stream_duration` 时长校验（≤15 分钟）→ 全片场景检测（超过单次解码上限 600s 时**分段检测合并**，长视频不再退化）→ `build_extract_sample_points` 采样计划（场景切换点为主、不足 max_frames 时按时间均匀补点、min_gap 去重、超量抽稀保首尾）→ 逐点 `extract_frame_at` / 尾点走尾帧链 |
 | audio | `voice_replace/ffmpeg_util.extract_audio` 提取 PCM wav；无音轨时跳过 ASR（画面推断继续） |
 | asr | `build_slice_ranges` 按 60s 切段 → `slice_audio` 切片 → `SenseVoiceAsrDriver.transcribe_segments` 并发转写（≤3 并发）→ `merge_asr_slice_results` 段偏移还原全片时间戳 → `[MM:SS] 文本` 转写稿；单段失败跳过 |
 | llm | 模型挑选 `vl_gateway.pick_vl_model`（用户在节点指定的模型优先；未指定时按偏好 volcengine/doubao-seed-2-0-lite）→ 帧图 `compress_local_image_to_base64`（按用户选档位的像素/MB 预算压缩）→ 多模态消息（system 剧本提取智能体提示词 + user 文本（任务说明+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护）→ `clean_script_text` 清洗截断 |
