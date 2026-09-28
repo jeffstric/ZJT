@@ -9,6 +9,7 @@
 本文件保留向后兼容的常量别名，逐步废弃中。
 """
 
+import random
 from datetime import datetime
 from typing import Union, Dict, List, Optional
 
@@ -3090,3 +3091,39 @@ DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 # 预览图压缩（asyncio.to_thread 执行）与 VL 请求（wait_for 整体超时 = LLM_TIMEOUT + 10）的超时（秒）
 DS_ENV_FIT_COMPRESS_TIMEOUT = 15
 DS_ENV_FIT_LLM_TIMEOUT = 60
+
+
+# ============ 用户昵称/备注（model/users.py、api/user.py、api/admin.py） ============
+# 昵称长度上限（DB 列 VARCHAR(50)，用户输入按 UTF-8 字符数校验）
+NICKNAME_MAX_LEN = 30
+# 管理员备注长度上限（DB 列 VARCHAR(500)）
+REMARK_MAX_LEN = 500
+# 默认昵称（随机趣味名，如"机智的熊猫"= 形容词 + 动物，不带数字）去重尝试次数
+NICKNAME_GENERATE_MAX_ATTEMPTS = 10
+
+NICKNAME_ADJECTIVES = (
+    '机智的', '勇敢的', '快乐的', '神秘的', '温柔的', '活泼的', '安静的', '闪亮的',
+    '可爱的', '认真的', '幸运的', '甜甜的', '酷酷的', '呆萌的', '灵巧的', '热情的',
+    '悠闲的', '可靠的', '聪慧的', '好奇的',
+)
+NICKNAME_ANIMALS = (
+    '熊猫', '小猫', '小狗', '兔子', '狐狸', '松鼠', '海豚', '企鹅',
+    '刺猬', '小鹿', '老虎', '狮子', '考拉', '仓鼠', '水獭', '鹦鹉',
+    '浣熊', '柴犬', '北极熊', '小熊',
+)
+
+
+def generate_default_nickname(used_names=None) -> str:
+    """生成随机趣味默认昵称（如"机智的熊猫"，形容词 + 动物，不带数字）。
+
+    纯函数、无 DB 依赖（Alembic 迁移脚本直接 import 使用）。
+    used_names 为调用方已占用的昵称集合（迁移批量回填时传入避免批内重复）；
+    运行时路径由 UsersModel 负责查库去重。组合空间 20*20=400，
+    尝试 NICKNAME_GENERATE_MAX_ATTEMPTS 次仍撞名则直接返回（昵称不要求唯一，重复无碍）。
+    """
+    used = used_names if isinstance(used_names, set) else set()
+    for _ in range(NICKNAME_GENERATE_MAX_ATTEMPTS):
+        name = random.choice(NICKNAME_ADJECTIVES) + random.choice(NICKNAME_ANIMALS)
+        if name not in used:
+            return name
+    return random.choice(NICKNAME_ADJECTIVES) + random.choice(NICKNAME_ANIMALS)

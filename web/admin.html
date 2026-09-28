@@ -682,6 +682,7 @@
                                 <th>{{ t('col_id') }}</th>
                                 <th>{{ t('col_account') }}</th>
                                 <th>{{ t('col_role') }}</th>
+                                <th>{{ t('col_remark') }}</th>
                                 <th>{{ t('col_power') }}</th>
                                 <th>{{ t('col_status') }}</th>
                                 <th>{{ t('col_register_time') }}</th>
@@ -690,7 +691,7 @@
                         </thead>
                         <tbody>
                             <tr v-if="users.list.length === 0">
-                                <td colspan="7" style="text-align: center; color: #64748b;">{{ t('no_data') }}</td>
+                                <td colspan="8" style="text-align: center; color: #64748b;">{{ t('no_data') }}</td>
                             </tr>
                             <tr v-for="user in users.list" :key="user.user_id">
                                 <td>{{ user.user_id }}</td>
@@ -714,11 +715,16 @@
                                         </button>
                                     </span>
                                     <span v-else>-</span>
+                                    <div class="account-nickname" :title="t('col_nickname')">{{ user.display_name }}</div>
                                 </td>
                                 <td>
                                     <span class="status-badge" :class="{ admin: user.role === 'admin' }">
                                         {{ user.role === 'admin' ? t('user_role_admin') : t('user_role_user') }}
                                     </span>
+                                </td>
+                                <td class="remark-cell">
+                                    <span v-if="user.remark" class="remark-text" :title="user.remark">{{ user.remark }}</span>
+                                    <span v-else class="remark-empty">-</span>
                                 </td>
                                 <td>{{ user.computing_power || 0 }}</td>
                                 <td>
@@ -731,6 +737,7 @@
                                 </td>
                                 <td>
                                     <button class="action-btn primary" @click="viewUserDetail(user.user_id)">{{ t('btn_view_detail') }}</button>
+                                    <button class="action-btn" @click="openRemarkModal(user)">{{ t('btn_edit_remark') }}</button>
                                     <button class="action-btn success" @click="openPowerModal(user)">{{ t('btn_adjust_power') }}</button>
                                     <button
                                         v-if="user.status === 2"
@@ -2457,6 +2464,33 @@
             </div>
         </div>
 
+        <!-- 用户备注编辑弹窗 -->
+        <div class="modal-overlay" v-if="remarkModal.show" @click.self="closeRemarkModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>{{ t('modal_remark') }}</h3>
+                    <button class="modal-close" @click="closeRemarkModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>{{ t('modal_user_label') }}</label>
+                        <input type="text" :value="remarkModal.userName" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('modal_remark_content') }}</label>
+                        <textarea v-model="remarkModal.remark" rows="4" maxlength="500" :placeholder="t('modal_remark_placeholder')"></textarea>
+                        <p class="form-hint">{{ remarkModal.remark.length }}/500</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeRemarkModal">{{ t('cancel_btn') }}</button>
+                    <button class="modal-btn confirm" @click="saveUserRemark" :disabled="remarkModal.loading">
+                        {{ remarkModal.loading ? t('btn_save_loading') : t('btn_save') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- 智剧通Token有效期调整弹窗 -->
         <div class="modal-overlay" v-if="zjtExpireModal.show" @click.self="closeZjtExpireModal">
             <div class="modal">
@@ -2527,6 +2561,10 @@
                             </div>
                         </div>
                         <div class="form-group">
+                            <label>{{ t('col_nickname') }}</label>
+                            <input type="text" :value="userDetailModal.user.display_name" disabled>
+                        </div>
+                        <div class="form-group">
                             <label>{{ t('modal_role') }}</label>
                             <div class="role-config-row">
                                 <span class="status-badge" :class="{ admin: userDetailModal.user.role === 'admin' }">
@@ -2571,6 +2609,10 @@
                         <div class="form-group">
                             <label>{{ t('modal_register_time') }}</label>
                             <input type="text" :value="formatDate(userDetailModal.user.created_at)" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label>{{ t('modal_remark') }}</label>
+                            <input type="text" :value="userDetailModal.user.remark || '-'" disabled>
                         </div>
                     </div>
                 </div>

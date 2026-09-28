@@ -157,6 +157,7 @@ from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_E
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
+from api.user import apply_nickname_change
 
 # 向后兼容别名（已有代码可直接使用 _前缀 名称）
 _get_user_id_from_header = get_user_id_from_header
@@ -2869,32 +2870,67 @@ async def ai_app_run_image(
 @app.get('/api/user/role')
 async def get_user_role(auth_token: str = Header(None, alias="Authorization")):
     """
-    获取用户角色
+    获取用户角色（顺带返回昵称，供前台顶栏展示）
     """
     try:
         if not auth_token:
             return {"code": -1, "message": "未提供认证信息"}
-        
+
         if auth_token.startswith("Bearer "):
             auth_token = auth_token[7:]
-        
-        user_id = UserTokensModel.get_user_id_by_token(auth_token)
+
+        user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, auth_token)
         if not user_id:
             return {"code": -1, "message": "无效或已过期的认证信息"}
-        
-        user = UsersModel.get_by_id(user_id)
+
+        user = await asyncio.to_thread(UsersModel.get_by_id, user_id)
         if not user:
             return {"code": -1, "message": "用户不存在"}
-        
+
         return {
             "code": 0,
             "data": {
-                "role": user.role
+                "role": user.role,
+                "nickname": user.nickname,
+                "display_name": user.nickname or f"用户{user.id}",
             }
         }
     except Exception as e:
         logger.error(f'获取用户角色失败: {str(e)}')
         return {"code": -1, "message": "服务器错误"}
+
+
+@app.put('/api/user/nickname')
+async def update_user_nickname(
+    nickname_request: dict,
+    auth_token: str = Header(None, alias="Authorization"),
+):
+    """设置当前用户昵称；空串=清除并重新分配随机趣味默认昵称。
+
+    与 /api/user/role 同样直接定义在 server.py：enterprise 模块 load 失败时
+    api/user.py 的 router 不会挂载（见下方回退逻辑被 load 内部吞异常绕过），
+    业务逻辑复用 api.user.apply_nickname_change 保证行为一致。
+    """
+    try:
+        if not auth_token:
+            raise HTTPException(status_code=401, detail="需要登录")
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+
+        user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, auth_token)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
+
+        nickname = ''
+        if isinstance(nickname_request, dict):
+            nickname = nickname_request.get('nickname') or ''
+        data = await asyncio.to_thread(apply_nickname_change, user_id, nickname)
+        return {"code": 0, "data": data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'更新用户昵称失败: {str(e)}')
+        raise HTTPException(status_code=500, detail="服务器错误")
 
 
 @app.get('/api/user/computing_power')
@@ -3600,7 +3636,7 @@ async def register(request: RegisterRequest):
                 extra_data={'code': verify_code, 'invite_code': invite_code},
                 email=email
             )
-            
+
             if success:
                 logger.info(
                     "邮箱用户注册成功 - 邮箱: %s",

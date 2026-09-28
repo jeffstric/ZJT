@@ -583,6 +583,15 @@ const AdminApp = {
                 loading: false
             },
 
+            // 用户备注编辑弹窗
+            remarkModal: {
+                show: false,
+                userId: null,
+                userName: '',
+                remark: '',
+                loading: false
+            },
+
             // 任务时间线（管理员排查用）
             taskTimeline: {
                 queryType: 'project_id',  // project_id | ai_tool_id
@@ -2676,6 +2685,49 @@ const AdminApp = {
                 this.showToast(detail, 'error');
             } finally {
                 this.powerModal.loading = false;
+            }
+        },
+
+        // 打开用户备注编辑弹窗
+        openRemarkModal(user) {
+            this.remarkModal.userId = user.user_id;
+            this.remarkModal.userName = user.phone || user.email || user.display_name || `用户${user.user_id}`;
+            this.remarkModal.remark = user.remark || '';
+            this.remarkModal.loading = false;
+            this.remarkModal.show = true;
+        },
+
+        // 关闭用户备注编辑弹窗
+        closeRemarkModal() {
+            this.remarkModal.show = false;
+            this.remarkModal.userId = null;
+            this.remarkModal.userName = '';
+            this.remarkModal.remark = '';
+            this.remarkModal.loading = false;
+        },
+
+        // 保存用户备注（传空串即清除备注）
+        async saveUserRemark() {
+            this.remarkModal.loading = true;
+
+            try {
+                const response = await axios.put(
+                    `/api/admin/users/${this.remarkModal.userId}/remark`,
+                    { remark: this.remarkModal.remark.trim() },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_remark_saved'), 'success');
+                    this.closeRemarkModal();
+                    this.loadUsers();
+                }
+            } catch (error) {
+                console.error('Save user remark failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_operation_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.remarkModal.loading = false;
             }
         },
 

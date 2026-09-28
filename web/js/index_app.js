@@ -147,6 +147,8 @@
       adminSwitchSuccess: '',
       isAdminMode: false,
       userRole: '',
+      // 用户昵称（/api/user/role 带出；空=未取到，顶栏回退打码账号）
+      nickname: '',
       // 模式选择相关
       showModeSelectModal: false,
       creationMode: '',
@@ -174,7 +176,12 @@
       userSettingsLoading: false,
       userSettingsError: '',
       userSettingsSuccess: '',
-      userSettingsTab: 'preferences', // 'preferences' | 'creationDefaults' | 'apitoken'
+      userSettingsTab: 'preferences', // 'profile' | 'preferences' | 'creationDefaults' | 'apitoken'
+      // 个人资料（昵称）编辑
+      nicknameInput: '',
+      profileSaving: false,
+      profileError: '',
+      profileSuccess: '',
       // 用户偏好数据
       userPreferences: {},
       userPreferenceLocks: {},
@@ -499,6 +506,11 @@
       // 入门版首期动画进行中（价格砸下 / 算力 +40），用来压暗其他档
       introDealActive() {
         return this.introDealPhase === 'price' || this.introDealPhase === 'slash' || this.introDealPhase === 'power';
+      },
+
+      // 顶栏主显示名：昵称优先，未取到昵称时回退打码账号
+      displayName() {
+        return this.nickname || this.maskedPhone;
       },
 
       maskedPhone() {
@@ -1415,6 +1427,7 @@
             this.userEmail = '';
             this.computingPower = null;
             this.userRole = '';
+            this.nickname = '';
             this.inviteCode = '';
             localStorage.removeItem('auth_token');
             localStorage.removeItem('token');
@@ -1434,6 +1447,7 @@
             this.userEmail = '';
             this.computingPower = null;
             this.userRole = '';
+            this.nickname = '';
             this.inviteCode = '';
             localStorage.removeItem('auth_token');
             localStorage.removeItem('token');
@@ -1473,6 +1487,8 @@
         this.showUserSettingsModalFlag = true;
         this.userSettingsError = '';
         this.userSettingsSuccess = '';
+        this.profileError = '';
+        this.profileSuccess = '';
         this.userSettingsTab = 'preferences';
         this.apiTokenNewToken = '';
         this.apiTokenError = '';
@@ -2310,10 +2326,49 @@
           });
           if (response.data.code === 0) {
             this.userRole = response.data.data.role || '';
+            this.nickname = response.data.data.nickname || '';
           }
         } catch (error) {
           console.error('Fetch user role error:', error);
           this.userRole = '';
+        }
+      },
+
+      // ==================== 个人资料（昵称）方法 ====================
+
+      switchToProfileTab() {
+        this.userSettingsTab = 'profile';
+        this.profileError = '';
+        this.profileSuccess = '';
+        // 回填当前昵称；未设置时留空，提示语已说明留空=随机分配
+        this.nicknameInput = this.nickname || '';
+      },
+
+      async saveNickname() {
+        this.profileSaving = true;
+        this.profileError = '';
+        this.profileSuccess = '';
+        try {
+          const response = await axios.put('/api/user/nickname', {
+            nickname: this.nicknameInput.trim()
+          }, {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+          if (response.data.code === 0) {
+            this.nickname = response.data.data.nickname || '';
+            this.nicknameInput = this.nickname;
+            this.profileSuccess = '昵称已保存';
+          } else {
+            this.profileError = response.data.message || '保存失败，请重试';
+          }
+        } catch (error) {
+          console.error('Save nickname error:', error);
+          const detail = error?.response?.data?.detail || error?.response?.data?.message;
+          this.profileError = detail || '保存失败，请重试';
+        } finally {
+          this.profileSaving = false;
         }
       },
       

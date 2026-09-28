@@ -168,6 +168,7 @@
 | [算力多维度计算](backend/算力多维度计算方案.md) | 算力计算方案 | 待补充 |
 | [LLM 欠费熔断与输入缓存优化](backend/llm_arrears_breaker_and_input_cache.md) | 欠费熔断 + 剧本拆分 prompt 缓存命中优化 | 待补充 |
 | [邀请佣金系统](backend/invite_commission.md) | 邀请算力奖励、渠道佣金门控与提现 | 已更新 |
+| [用户备注与用户昵称](backend/users_remark_nickname.md) | 管理员备注、用户自定义昵称与随机趣味默认昵称 | 本地文档 |
 | [Agent 消息持久化](backend/agent_chat_message_persistence_design.md) | Agent 消息存储 | 待补充 |
 | [驱动配置要求](backend/driver_config_requirements.md) | 驱动配置规范 | 待补充 |
 | [推理内容透传](backend/reasoning_content_passthrough.md) | LLM 推理内容透传 | 待补充 |

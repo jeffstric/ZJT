@@ -120,7 +120,7 @@
               </div>
             </div>
             <div class="user-info-wrapper">
-              <span class="user-phone clickable" @click="openInviteModal" :title="$t('invite_code')">{{ maskedPhone }}</span>
+              <span class="user-phone clickable" @click="openInviteModal" :title="maskedPhone">{{ displayName }}</span>
               <div class="computing-power-display">
                 <template v-if="checkinStatus.checkin_enabled">
                   <button class="checkin-badge" v-if="!checkinStatus.checked_in_today" @click="performCheckin" :disabled="checkinLoading" :title="$t('check_in_tip')">
@@ -462,6 +462,9 @@
 
         <!-- Tab Switcher -->
         <div class="modal-tabs">
+          <button class="modal-tab" :class="{active: userSettingsTab === 'profile'}" @click="switchToProfileTab">
+            个人资料
+          </button>
           <button class="modal-tab" :class="{active: userSettingsTab === 'preferences'}" @click="userSettingsTab = 'preferences'">
             服务商偏好
           </button>
@@ -473,8 +476,34 @@
           </button>
         </div>
 
-        <div v-if="userSettingsLoading && userSettingsTab !== 'creationDefaults'" style="padding: 40px; text-align: center; color: var(--muted);">
+        <div v-if="userSettingsLoading && userSettingsTab !== 'creationDefaults' && userSettingsTab !== 'profile'" style="padding: 40px; text-align: center; color: var(--muted);">
           加载中...
+        </div>
+
+        <!-- 个人资料 Tab：昵称（留空保存=重新随机分配） -->
+        <div v-else-if="userSettingsTab === 'profile'" style="padding: 16px;">
+          <div class="status danger" v-if="profileError" style="margin-bottom: 12px;">{{ profileError }}</div>
+          <div class="status success" v-if="profileSuccess" style="margin-bottom: 12px;">{{ profileSuccess }}</div>
+
+          <h4 style="margin-bottom: 16px; color: var(--text);">个人资料</h4>
+          <div class="settings-item">
+            <label class="label" for="profile-nickname-input">昵称</label>
+            <input
+              id="profile-nickname-input"
+              class="input"
+              type="text"
+              v-model="nicknameInput"
+              maxlength="30"
+              placeholder="留空保存将随机分配一个昵称"
+              :disabled="profileSaving"
+            >
+            <p style="font-size: 12px; color: var(--muted); margin-top: 4px;">
+              {{ nicknameInput.length }}/30；不填则使用系统随机昵称
+            </p>
+          </div>
+          <button class="btn" style="margin-top: 12px;" @click="saveNickname" :disabled="profileSaving">
+            {{ profileSaving ? '保存中...' : '保存昵称' }}
+          </button>
         </div>
 
         <!-- 创作默认偏好 Tab：剧本页/营销页新会话种子（与 CLI 智能体偏好隔离） -->
