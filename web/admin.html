@@ -2846,8 +2846,18 @@
                                             {{ field.label }}
                                             <span v-if="field.required" style="color: red;">*</span>
                                         </label>
+                                        <!-- 下拉选择字段（信息采集通道模式等） -->
+                                        <select v-if="field.type === 'select'"
+                                                class="filter-select"
+                                                style="width:100%;padding:8px 10px;"
+                                                :value="getFormField(provider.id, field.id)"
+                                                @change="updateFormField(provider.id, field.id, $event.target.value)">
+                                            <option v-for="opt in field.options" :key="opt.value" :value="opt.value">
+                                                {{ t(opt.labelKey) }}
+                                            </option>
+                                        </select>
                                         <!-- 密钥字段：已保存的密钥默认覆盖毛玻璃遮罩，点击眼睛按钮后才显示完整密钥 -->
-                                        <div v-if="isSecretField(field)" class="qc-secret-wrap">
+                                        <div v-else-if="isSecretField(field)" class="qc-secret-wrap">
                                             <input type="text"
                                                    :value="getFormField(provider.id, field.id)"
                                                    @input="updateFormField(provider.id, field.id, $event.target.value); clearSecretReveal(provider.id, field.id)"

@@ -58,6 +58,16 @@ class ArticleFetchUpstreamError(ArticleFetchError):
 
 
 @dataclass
+class ArticleComment:
+    """文章精选评论（可选产物，营销脚本的用户声音素材）。"""
+
+    nick_name: str
+    content: str
+    like_num: int
+    is_elected: bool = False
+
+
+@dataclass
 class ArticleImage:
     """单张已本地化的图片。original_url 保留溯源，url 为本系统可访问路径。"""
 
@@ -68,7 +78,7 @@ class ArticleImage:
 
 @dataclass
 class ArticleContent:
-    """抓取产物统一中间结构：正文纯文本 + 已转存图片清单。"""
+    """抓取产物统一中间结构：正文纯文本 + 已转存图片清单 + 可选精选评论。"""
 
     source_type: str            # "wechat" | "xiaohongshu" | ...
     source_url: str
@@ -76,11 +86,12 @@ class ArticleContent:
     author: str
     text: str                   # 纯文本正文（已截断至 ARTICLE_FETCH_MAX_TEXT_CHARS）
     images: List[ArticleImage] = field(default_factory=list)
+    comments: List[ArticleComment] = field(default_factory=list)  # 仅按需抓取（第三方付费接口）
     fetched_at: float = field(default_factory=time.time)
 
     def to_llm_summary(self) -> dict:
         """注入 Agent 上下文的精简视图：图片只进清单不进二进制，控制 token。"""
-        return {
+        summary = {
             "source_type": self.source_type,
             "source_url": self.source_url,
             "title": self.title,
@@ -91,3 +102,11 @@ class ArticleContent:
                 {"index": img.index, "url": img.url} for img in self.images
             ],
         }
+        if self.comments:
+            summary["comment_count"] = len(self.comments)
+            summary["comments"] = [
+                {"nick_name": c.nick_name, "content": c.content, "like_num": c.like_num}
+                for c in self.comments
+            ]
+            summary["comments_note"] = "读者真实评论（按点赞排序），可作为营销脚本的用户声音/痛点素材"
+        return summary

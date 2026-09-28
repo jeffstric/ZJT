@@ -3119,3 +3119,17 @@ ARTICLE_FETCH_WECHAT_INAPP_UA = (
     'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) '
     'Chrome/124.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.49.2600(0x28003135) XWEB/1160'
 )
+
+# ── 信息采集供应商（article_fetch 第三方通道，TikHub）──
+# 按次计费 $0.01/次；官方建议客户端超时 30s（过小会"已扣费但收不到响应"），且禁止自动重试（重试=重复扣费）
+ARTICLE_FETCH_TIKHUB_BASE_URL = 'https://api.tikhub.io'
+ARTICLE_FETCH_TIKHUB_TIMEOUT = 35            # TikHub 官方建议 30s，留 5s 网络余量
+ARTICLE_FETCH_COMMENTS_TOP_N = 10            # 评论抓取保留条数（按点赞排序取首页精选）
+# 公众号抓取通道模式（article_fetch.wechat_provider）：
+#   ''      = 跟随 TikHub key 状态（默认）：配置了 key → auto，未配置 → self（零成本现状）
+#   self    = 仅自研免登录通道（零成本，受限文章不可得）
+#   auto    = 自研优先，命中访问限制/失败时自动走 TikHub 兜底（需配置 key，按次计费）
+#   tikhub  = 全部走 TikHub（最稳，每篇 $0.01）
+ARTICLE_FETCH_WECHAT_PROVIDER = ''
+# 小红书抓取通道（article_fetch.xhs_provider）：空=未开通（默认）；tikhub=启用
+ARTICLE_FETCH_XHS_PROVIDER = ''

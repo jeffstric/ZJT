@@ -53,12 +53,13 @@ def _check_rate_limit(user_id) -> None:
     window.append(now)
 
 
-async def fetch_article(url: str, user_id=None) -> ArticleContent:
+async def fetch_article(url: str, user_id=None, include_comments: bool = False) -> ArticleContent:
     """抓取图文内容统一入口。
 
     Args:
         url: 用户提交的文章/笔记 URL（需在 ARTICLE_FETCH_ALLOWED_HOSTS 白名单内）
         user_id: 用户 ID（限流计数与媒体映射归属）
+        include_comments: 是否附带精选评论（公众号 + 已配置 TikHub 时生效，按次计费）
 
     Returns:
         ArticleContent（图片已转存为本系统 /upload/ 路径）
@@ -76,14 +77,15 @@ async def fetch_article(url: str, user_id=None) -> ArticleContent:
 
     hostname = (parsed.hostname or "").lower()
     if hostname.endswith("weixin.qq.com"):
-        article = await wechat_fetcher.fetch_wechat_article(url, user_id=user_id)
+        article = await wechat_fetcher.fetch_wechat_article(url, user_id=user_id, include_comments=include_comments)
     elif hostname.endswith("xiaohongshu.com") or hostname.endswith("xhslink.com"):
         article = await xhs_fetcher.fetch_xhs_note(url, user_id=user_id)
     else:
         raise ArticleFetchNotAllowed("暂不支持该链接域名。")
 
     logger.info(
-        "[article_fetch] ok user=%s source=%s title=%r images=%d chars=%d",
+        "[article_fetch] ok user=%s source=%s title=%r images=%d chars=%d comments=%d",
         user_id, article.source_type, article.title[:40], len(article.images), len(article.text),
+        len(article.comments),
     )
     return article

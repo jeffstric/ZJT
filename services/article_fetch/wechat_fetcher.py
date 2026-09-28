@@ -43,8 +43,72 @@ def is_wechat_article_url(url: str) -> bool:
     return parsed.path.startswith("/s") or "__biz=" in (parsed.query or "")
 
 
-async def fetch_wechat_article(url: str, user_id=None) -> ArticleContent:
-    """抓取公众号文章，返回含已转存图片的 ArticleContent。"""
+async def fetch_wechat_article(url: str, user_id=None, include_comments: bool = False) -> ArticleContent:
+    """抓取公众号文章，返回含已转存图片的 ArticleContent。
+
+    通道模式（article_fetch.wechat_provider，admin 可配）：
+    - self（默认）：自研免登录，零成本；受限文章抛 Blocked
+    - auto：自研优先，Blocked/上游异常时自动走 TikHub 兜底（按次计费）
+    - tikhub：全部走 TikHub（最稳，每篇 $0.01）
+    include_comments=True 且配置了 TikHub 时附带精选评论（额外 $0.01/次）。
+    """
+    mode = _get_wechat_provider_mode()
+
+    article = None
+    blocked_error = None
+    if mode in ("self", "auto"):
+        try:
+            article = await _fetch_by_self(url, user_id=user_id)
+        except (ArticleFetchBlocked, ArticleFetchUpstreamError) as e:
+            if mode == "self":
+                raise
+            blocked_error = e
+            logger.info("[article_fetch] 自研通道失败，尝试第三方兜底: %s", str(e)[:80])
+
+    if article is None:
+        article = await _fetch_by_tikhub(url, user_id=user_id)
+
+    if include_comments:
+        await _attach_comments(article, url)
+    return article
+
+
+def _get_wechat_provider_mode() -> str:
+    """通道模式：显式配置优先；未配置时配置了 TikHub key 则 auto（自动兜底），否则 self（纯自研）。"""
+    from config.constant import ARTICLE_FETCH_WECHAT_PROVIDER
+
+    try:
+        from config.config_util import get_config_value
+
+        mode = str(get_config_value("article_fetch", "wechat_provider", default=ARTICLE_FETCH_WECHAT_PROVIDER) or "").strip()
+    except Exception:
+        mode = ARTICLE_FETCH_WECHAT_PROVIDER
+    if mode in ("self", "auto", "tikhub"):
+        return mode
+    # 空值/无效值：跟随 TikHub key 状态——配置了 key 自动兜底，没配置纯自研（保持零成本现状）
+    from services.article_fetch.providers.tikhub import is_tikhub_configured
+
+    return "auto" if is_tikhub_configured() else "self"
+
+
+async def _attach_comments(article: ArticleContent, url: str) -> None:
+    """按需抓取精选评论（TikHub 付费接口，自研通道无评论能力）。"""
+    from services.article_fetch.providers.tikhub import TikHubClient, is_tikhub_configured
+    from config.constant import ARTICLE_FETCH_COMMENTS_TOP_N
+
+    if not is_tikhub_configured():
+        logger.info("[article_fetch] 未配置 TikHub，跳过评论抓取")
+        return
+    try:
+        client = TikHubClient()
+        article.comments = await client.fetch_wechat_comments(url, top_n=ARTICLE_FETCH_COMMENTS_TOP_N)
+    except ArticleFetchError as e:
+        # 评论是增强素材，失败不阻断主流程
+        logger.warning("[article_fetch] 评论抓取失败（不影响正文）: %s", str(e)[:80])
+
+
+async def _fetch_by_self(url: str, user_id=None) -> ArticleContent:
+    """自研免登录通道（原有实现）。"""
     html = await _fetch_html(url)
 
     # 解析在 to_thread 中做：bs4 遍历大 HTML 属同步 CPU 操作，避免阻塞事件循环
@@ -63,6 +127,31 @@ async def fetch_wechat_article(url: str, user_id=None) -> ArticleContent:
         images = await download_and_store_images(
             session, parsed["image_urls"][:ARTICLE_FETCH_MAX_IMAGES], user_id=user_id
         )
+
+    return ArticleContent(
+        source_type="wechat",
+        source_url=url,
+        title=parsed["title"],
+        author=parsed["author"],
+        text=parsed["text"],
+        images=images,
+    )
+
+
+async def _fetch_by_tikhub(url: str, user_id=None) -> ArticleContent:
+    """TikHub 第三方通道（详情解析含 bs4 同步操作，放 to_thread）。"""
+    from services.article_fetch.providers import tikhub as tikhub_provider
+    from services.article_fetch.image_store import download_and_store_images
+
+    client = tikhub_provider.TikHubClient()
+    data = await client.fetch_wechat_article_raw(url)
+    parsed = await asyncio.to_thread(tikhub_provider.parse_wechat_article, data, url)
+
+    image_urls = parsed["image_urls"][:ARTICLE_FETCH_MAX_IMAGES]
+    images = []
+    if image_urls:
+        async with AsyncSession() as session:
+            images = await download_and_store_images(session, image_urls, user_id=user_id)
 
     return ArticleContent(
         source_type="wechat",
