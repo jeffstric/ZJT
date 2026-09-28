@@ -462,9 +462,10 @@ const PROVIDER_DEFINITIONS = [
         testEndpoint: null
     },
 
-    // ===== 信息采集供应商（可选）=====
+    // ===== 信息采集供应商（企业版专属，可选）=====
     // 图文转视频的第三方抓取通道：不配置时公众号走自研免登录通道（免费）；
-    // 小红书抓取、受限文章兜底、评论抓取需要配置本供应商（TikHub 按次计费约 $0.01/次）
+    // 小红书抓取、受限文章兜底、评论抓取需要配置本供应商（TikHub 按次计费约 $0.01/次）。
+    // 图文转视频整体为企业版专属（开源/工作室不支持），社区版禁用本配置卡片
     {
         id: 'tikhub',
         nameKey: 'provider_tikhub_name',
@@ -476,6 +477,7 @@ const PROVIDER_DEFINITIONS = [
         displayOrder: 30,
         baseName: 'tikhub',
         isOfficialAPI: false,
+        commercialOnly: true,
         impactsKey: 'provider_tikhub_impacts',
         fields: [
             { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_tikhub', required: true, helpTextKey: 'field_api_key_help_tikhub' },
