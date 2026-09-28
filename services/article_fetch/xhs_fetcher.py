@@ -32,8 +32,12 @@ def _get_xhs_provider_name() -> str:
     return (os.environ.get(ENV_PROVIDER) or "").strip()
 
 
-def _extract_note_id(url: str) -> str:
-    """从小红书 URL 提取 note_id（explore/{id} / discovery/item/{id} / query 的 target 参数）。"""
+def _extract_note_id(url: str):
+    """从 URL 提取 note_id（explore/{id} / discovery/item/{id} / query 的 target 参数）。
+
+    提取不到（如 xhslink 短链）返回 None——短链走 TikHub 的 share_text 参数
+    （支持 xiaohongshu.com / xhslink.com / xhslink.cn，供应商自行解析）。
+    """
     parsed = urlparse(url)
     m = re.search(r"/(?:explore|discovery/item)/([0-9a-f]{16,32})", parsed.path or "")
     if m:
@@ -42,7 +46,7 @@ def _extract_note_id(url: str) -> str:
     for key in ("target", "note_id", "id"):
         if q.get(key):
             return q[key][0]
-    raise ArticleFetchNotSupported("无法从小红书链接中解析笔记 ID，请粘贴完整的分享链接。")
+    return None
 
 
 def _build_providers():
@@ -61,9 +65,11 @@ def _build_providers():
                     from services.article_fetch.image_store import download_and_store_images
                     from services.article_fetch.providers import tikhub as th
 
-                    note_id = _extract_note_id(url)
+                    note_id = _extract_note_id(url) or ""
                     client = TikHubClient()
-                    data = await client.fetch_xhs_note_raw(note_id)
+                    data = await client.fetch_xhs_note_raw(
+                        note_id=note_id, share_text="" if note_id else url
+                    )
                     parsed = await asyncio.to_thread(th.parse_xhs_note, data, url)
 
                     images = []

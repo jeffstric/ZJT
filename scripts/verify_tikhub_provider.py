@@ -19,7 +19,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 WECHAT_URL = "https://mp.weixin.qq.com/s/ofy9nOEcDVYcZvwrZeA3zg"          # 普通文章
 WECHAT_BLOCKED_URL = "https://mp.weixin.qq.com/s/pgP0Y3irfGMmhfct0UuxpQ"  # 受限文章（仅微信内查看）
-XHS_NOTE_URL = "https://www.xiaohongshu.com/discovery/item/6aaccbb80000000011038e0b?xsec_token=ABsWMJV4MjM0fOYnuBIhyJ1EAOn6L0Lt_PNuPjvbQtkao=&xsec_source=pc_share"
+# 小红书：乌灵睡眠王的图文笔记（2026-09-28 TikHub 实测通过，note_id=6a1f827a0000000022026118）
+XHS_NOTE_URL = "https://www.xiaohongshu.com/discovery/item/6a1f827a0000000022026118"
 
 
 async def main():
@@ -59,19 +60,19 @@ async def main():
         print("  %s（赞%d）: %s" % (c.nick_name, c.like_num, c.content[:40]))
     print("[OK] 共取到 %d 条评论" % len(comments))
 
-    # 4. 小红书
+    # 4. 小红书（note_id 优先；短链 xhslink.com 走 share_text 由供应商解析）
     print("\n=== 4. 小红书笔记详情（get_image_note_detail）===")
     try:
         from services.article_fetch.xhs_fetcher import _extract_note_id
 
-        note_id = _extract_note_id(XHS_NOTE_URL)
-        raw = await client.fetch_xhs_note_raw(note_id)
-        print("响应顶层键:", list(raw.keys())[:15])
+        note_id = _extract_note_id(XHS_NOTE_URL) or ""
+        raw = await client.fetch_xhs_note_raw(note_id=note_id, share_text="" if note_id else XHS_NOTE_URL)
         from services.article_fetch.providers.tikhub import parse_xhs_note
 
         parsed3 = parse_xhs_note(raw, XHS_NOTE_URL)
         print("解析 -> title=%r author=%r chars=%d images=%d" % (
             parsed3["title"][:30], parsed3["author"], len(parsed3["text"]), len(parsed3["image_urls"])))
+        print("小红书短链 note_id 提取（应为 None 走 share_text）:", _extract_note_id("http://xhslink.com/o/8GqargIxrko"))
     except Exception as e:
         print("[小红书失败] %s（可能分享链接过期/风控，换新分享链接重试）" % str(e)[:120])
 

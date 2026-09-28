@@ -150,20 +150,17 @@ class TikHubClient:
 
     # ── 小红书 ──────────────────────────────────────────────
 
-    async def fetch_xhs_note_raw(self, note_id: str) -> Dict[str, Any]:
-        """小红书笔记详情（图文优先，404/无图回退视频版）。"""
-        try:
-            return await self._request(
-                "GET",
-                "/api/v1/xiaohongshu/app_v2/get_image_note_detail",
-                params={"note_id": note_id},
-            )
-        except ArticleFetchNotFound:
-            return await self._request(
-                "GET",
-                "/api/v1/xiaohongshu/app_v2/get_video_note_detail",
-                params={"note_id": note_id},
-            )
+    async def fetch_xhs_note_raw(self, note_id: str = "", share_text: str = "") -> Dict[str, Any]:
+        """小红书笔记详情（图文接口，视频笔记仅返回封面）。
+
+        note_id 优先；没有 note_id 时传 share_text（支持 xiaohongshu.com 长链与
+        xhslink.com/.cn 短链，供应商自行解析）。营销场景只需标题/正文/图片，
+        视频笔记不再二次调 get_video_note_detail（省一次计费）。
+        """
+        params = {"note_id": note_id} if note_id else {"share_text": share_text}
+        return await self._request(
+            "GET", "/api/v1/xiaohongshu/app_v2/get_image_note_detail", params=params
+        )
 
 
 def _html_to_text(html: str) -> str:
@@ -229,34 +226,51 @@ def parse_wechat_article(data: Dict[str, Any], url: str) -> Dict[str, Any]:
 
 
 def parse_xhs_note(data: Dict[str, Any], url: str) -> Dict[str, Any]:
-    """TikHub 小红书笔记详情响应 → 标题/作者/纯文本/图片清单。"""
-    note = data.get("note") if isinstance(data.get("note"), dict) else data
-    if not isinstance(note, dict):
-        note = {}
+    """TikHub 小红书响应 → 标题/作者/纯文本/图片清单。
+
+    实测结构（2026-09-28 官方实测响应核对）：
+      data = {"code":0, "success":true, "data":[{"note_list":[{笔记}]}, ...], "msg":"成功"}
+    计费陷阱（官方文档）：错误/不存在的笔记 ID 仍返回 200 并计费，data 内
+    为上游"服务异常"信息——必须按 success/note_list 判定失败。
+    图片取 original（原图）→ url_size_large(1440) → url(576)，
+    CDN 参数 format/webp 替换为 format/jpg（参考图通用性更好）。
+    """
+    # 服务异常 / 笔记不存在检测
+    if not isinstance(data, dict) or data.get("success") is not True or data.get("code") != 0:
+        msg = (data or {}).get("msg") if isinstance(data, dict) else None
+        raise ArticleFetchNotFound(f"小红书笔记抓取失败（{msg or '服务异常'}）。请确认链接有效。")
+
+    try:
+        note = data["data"][0]["note_list"][0]
+    except (KeyError, IndexError, TypeError) as e:
+        raise ArticleFetchNotFound("小红书笔记不存在或已被删除。") from e
 
     title = note.get("title") or note.get("display_title") or ""
-    author = ((note.get("user") or {}).get("nickname")) or (note.get("author") or "")
+    author = ((note.get("user") or {}).get("nickname")) or ""
     text = (note.get("desc") or note.get("content") or "").strip()[:ARTICLE_FETCH_MAX_TEXT_CHARS]
 
-    image_urls: List[str] = []
-    for item in note.get("image_list") or note.get("images") or []:
-        u = ""
+    def _pick_image_url(item: Any) -> str:
         if isinstance(item, str):
-            u = item
-        elif isinstance(item, dict):
-            u = (
-                (item.get("url") or "")
-                or ((item.get("info_list") or [{}])[0].get("url") if item.get("info_list") else "")
-                or (item.get("original") or "")
-            )
+            return item
+        if not isinstance(item, dict):
+            return ""
+        # original(5000 原图) → url_size_large(1440) → url(576) → url_multi_level
+        u = item.get("original") or item.get("url_size_large") or item.get("url") or ""
+        if not u and isinstance(item.get("url_multi_level"), dict):
+            u = item["url_multi_level"].get("high") or item["url_multi_level"].get("medium") or ""
+        # format/webp → format/jpg（小红书 CDN 参数，参考图通用性；替换失败无碍仍可用）
+        return u.replace("format/webp", "format/jpg") if u else ""
+
+    image_urls: List[str] = []
+    for item in note.get("images_list") or note.get("image_list") or note.get("images") or []:
+        u = _pick_image_url(item)
         if u and u not in image_urls:
             image_urls.append(u)
-    # 视频笔记封面兜底
+    # 视频笔记：本接口仅返回封面；取 share_info.image 或视频封面兜底
     if not image_urls:
-        cover = ((note.get("video") or {}).get("cover")) or {}
-        u = cover.get("url") if isinstance(cover, dict) else ""
-        if u:
-            image_urls.append(u)
+        cover = ((note.get("share_info") or {}).get("image")) or ""
+        if cover:
+            image_urls.append(cover)
 
     if not title and not text:
         raise ArticleFetchUpstreamError("供应商返回内容为空，无法解析笔记")
