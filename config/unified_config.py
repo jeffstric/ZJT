@@ -1413,6 +1413,13 @@ class DriverImplementation:
     SEEDANCE_2_0_MINI_HUIMENGI_V1 = 'seedance_2_0_mini_huimengi_v1'
     SEEDANCE_2_5_HUIMENGI_V1 = 'seedance_2_5_huimengi_v1'
 
+    # Seedance TopenRouter（topenrouter.chinadatapay.com，火山方舟同构协议，
+    # 真人素材经平台素材 Action 接口上传加白后以 asset:// 引用）
+    SEEDANCE_2_0_FAST_TOPENROUTER_V1 = 'seedance_2_0_fast_topenrouter_v1'
+    SEEDANCE_2_0_TOPENROUTER_V1 = 'seedance_2_0_topenrouter_v1'
+    SEEDANCE_2_0_MINI_TOPENROUTER_V1 = 'seedance_2_0_mini_topenrouter_v1'
+    SEEDANCE_2_5_TOPENROUTER_V1 = 'seedance_2_5_topenrouter_v1'
+
     # GPT Image
     DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
     GPT_IMAGE_COMMON_SITE0_V1 = 'gpt_image_common_site0_v1'
@@ -1610,6 +1617,12 @@ class DriverImplementationId:
     # 视频高清修复（RunningHub OpenAPI v2 AI App）
     VIDEO_ENHANCE_RUNNINGHUB_V1 = 102
 
+    # Seedance TopenRouter（火山方舟同构协议网关）。103-106 与视频高清修复让位顺延。
+    SEEDANCE_2_0_FAST_TOPENROUTER_V1 = 103
+    SEEDANCE_2_0_TOPENROUTER_V1 = 104
+    SEEDANCE_2_0_MINI_TOPENROUTER_V1 = 105
+    SEEDANCE_2_5_TOPENROUTER_V1 = 106
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1680,6 +1693,10 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_mini_huimengi_v1': DriverImplementationId.SEEDANCE_2_0_MINI_HUIMENGI_V1,
     'seedance_2_5_volcengine_v1': DriverImplementationId.SEEDANCE_2_5_VOLCENGINE_V1,
     'seedance_2_5_huimengi_v1': DriverImplementationId.SEEDANCE_2_5_HUIMENGI_V1,
+    'seedance_2_0_fast_topenrouter_v1': DriverImplementationId.SEEDANCE_2_0_FAST_TOPENROUTER_V1,
+    'seedance_2_0_topenrouter_v1': DriverImplementationId.SEEDANCE_2_0_TOPENROUTER_V1,
+    'seedance_2_0_mini_topenrouter_v1': DriverImplementationId.SEEDANCE_2_0_MINI_TOPENROUTER_V1,
+    'seedance_2_5_topenrouter_v1': DriverImplementationId.SEEDANCE_2_5_TOPENROUTER_V1,
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
     'minimax_h3_turbo_runninghub_v1': DriverImplementationId.MINIMAX_H3_TURBO_RUNNINGHUB_V1,
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
@@ -2882,6 +2899,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_OVERSEA_V1,
             DriverImplementation.SEEDANCE_2_0_FAST_KKIDC_V1,
             DriverImplementation.SEEDANCE_2_0_FAST_HUIMENGI_V1,
+            DriverImplementation.SEEDANCE_2_0_FAST_TOPENROUTER_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -2921,6 +2939,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1,
             DriverImplementation.SEEDANCE_2_0_KKIDC_V1,
             DriverImplementation.SEEDANCE_2_0_HUIMENGI_V1,
+            DriverImplementation.SEEDANCE_2_0_TOPENROUTER_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -2962,6 +2981,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1,
             DriverImplementation.SEEDANCE_2_0_MINI_KKIDC_V1,
             DriverImplementation.SEEDANCE_2_0_MINI_HUIMENGI_V1,
+            DriverImplementation.SEEDANCE_2_0_MINI_TOPENROUTER_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -2999,6 +3019,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementations=[
             DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
             DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,
+            DriverImplementation.SEEDANCE_2_5_TOPENROUTER_V1,
         ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
@@ -4426,6 +4447,62 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='huimengi 网关 Seedance 2.5 图生视频接口',
         sort_order=11040.0,
         required_config_keys=['huimengi.api_key'],
+        supports_auto_face=True,
+        supported_video_resolutions=SEEDANCE_2_5_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+
+    # ==================== TopenRouter 供应商（火山方舟同构协议网关） ====================
+    # supports_auto_face=True：用户勾选"处理人脸"时由驱动上传素材到平台素材库
+    # （Action 接口）加白并以 asset:// 引用，跳过 RunningHub 遮盖预处理（server.py 闸门据此分流）
+    ImplementationConfig(
+        name='seedance_2_0_fast_topenrouter_v1',
+        display_name='TopenRouter',
+        driver_class='Seedance20FastTopenrouterV1Driver',
+        default_computing_power={5: 238, 6: 250, 7: 262, 8: 274, 9: 285, 10: 297, 11: 309, 12: 321, 13: 333, 14: 345, 15: 357},
+        enabled=True,
+        description='TopenRouter Seedance 2.0 Fast 图生视频接口（火山方舟同构协议）',
+        sort_order=11050.0,
+        required_config_keys=['topenrouter.api_key'],
+        supports_auto_face=True,
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_0_topenrouter_v1',
+        display_name='TopenRouter',
+        driver_class='Seedance20TopenrouterV1Driver',
+        default_computing_power={5: 303, 6: 318, 7: 333, 8: 348, 9: 363, 10: 378, 11: 393, 12: 409, 13: 424, 14: 439, 15: 454},
+        enabled=True,
+        description='TopenRouter Seedance 2.0 图生视频接口（火山方舟同构协议）',
+        sort_order=11060.0,
+        required_config_keys=['topenrouter.api_key'],
+        supports_auto_face=True,
+        supported_video_resolutions=SEEDANCE_2_0_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_0_mini_topenrouter_v1',
+        display_name='TopenRouter',
+        driver_class='Seedance20MiniTopenrouterV1Driver',
+        default_computing_power={5: 152, 6: 159, 7: 167, 8: 174, 9: 182, 10: 189, 11: 197, 12: 204, 13: 212, 14: 220, 15: 227},
+        enabled=True,
+        description='TopenRouter Seedance 2.0 Mini 图生视频接口（火山方舟同构协议）',
+        sort_order=11070.0,
+        required_config_keys=['topenrouter.api_key'],
+        supports_auto_face=True,
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_5_topenrouter_v1',
+        display_name='TopenRouter',
+        driver_class='Seedance25TopenrouterV1Driver',
+        default_computing_power={5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
+        enabled=True,
+        description='TopenRouter Seedance 2.5 图生视频接口（火山方舟同构协议）',
+        sort_order=11080.0,
+        required_config_keys=['topenrouter.api_key'],
         supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_2_5_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720

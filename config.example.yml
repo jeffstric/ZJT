@@ -168,6 +168,12 @@ huimengi:
   api_key: ""  # huimengi 网关 API Key（用于 Seedance 2.0 系列视频）
   base_url: "https://api.huimengi.com"  # huimengi API 基础 URL
 
+topenrouter:
+  api_key: ""  # TopenRouter API Key（用于 Seedance 系列视频，火山方舟同构协议）
+  base_url: "https://tp-api.chinadatapay.com:8000"  # TopenRouter API 基础 URL
+  asset_api_key: ""  # 素材 Action 接口 Token（缺省回落 api_key，两者相同时无需配置）
+  model_aliases: {}  # 模型名映射 JSON（火山原生名 → 平台名），404 时在此修正
+
 pay:
   wxpay:
       #公众账号ID

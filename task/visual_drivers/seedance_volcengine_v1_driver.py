@@ -65,6 +65,16 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
     R2V_AUDIO_MAX_TOTAL_SECONDS = SEEDANCE_R2V_AUDIO_MAX_TOTAL_DURATION
     R2V_AUDIO_MAX_COUNT = 3
 
+    # 任务接口路径（火山方舟原生），兼容网关类供应商（如 TopenRouter）子类按需覆盖
+    _create_task_path = "/api/v3/contents/generations/tasks"
+    _query_task_path = "/api/v3/contents/generations/tasks"
+    # 任务状态合法枚举与状态映射钩子（网关类供应商可覆盖以支持 expired/cancelled 等扩展状态）
+    _valid_task_statuses = ("queued", "running", "succeeded", "failed")
+
+    def _map_task_status(self, status: str) -> str:
+        """查询状态到判定状态的映射（默认恒等，子类按需覆盖，如 expired → failed）"""
+        return status
+
     def __init__(self, driver_type: int, model_name: str, impl_name: str = DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1):
         """
         初始化驱动
@@ -235,7 +245,7 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             return False, f"响应缺少 'status' 字段，实际字段: {list(result.keys())}"
 
         status = result.get("status")
-        if status not in ("queued", "running", "succeeded", "failed"):
+        if status not in self._valid_task_statuses:
             return False, f"'status' 值无效: {status}"
 
         if status == "succeeded":
@@ -527,7 +537,7 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
         }
 
         return {
-            "url": f"{self._base_url}/api/v3/contents/generations/tasks",
+            "url": f"{self._base_url}{self._create_task_path}",
             "method": "POST",
             "json": payload,
             "headers": headers,
@@ -539,7 +549,7 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
         构建查询 Seedance 任务状态的请求参数
         """
         return {
-            "url": f"{self._base_url}/api/v3/contents/generations/tasks/{project_id}",
+            "url": f"{self._base_url}{self._query_task_path}/{project_id}",
             "method": "GET",
             "json": None,
             "headers": {
@@ -704,7 +714,7 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
                 }
 
             # 3. 映射状态
-            status = result.get("status")
+            status = self._map_task_status(result.get("status"))
 
             if status == "succeeded":
                 video_url = result.get("content", {}).get("video_url")

@@ -904,6 +904,22 @@ def register_all_drivers():
     except ImportError as e:
         logger.warning(f"Failed to import Seedance huimengi drivers: {e}")
 
+    # Seedance TopenRouter 网关驱动注册（火山方舟同构协议，真人素材经平台素材库加白）
+    try:
+        from .seedance_topenrouter_v1_driver import (
+            Seedance20FastTopenrouterV1Driver,
+            Seedance20TopenrouterV1Driver,
+            Seedance20MiniTopenrouterV1Driver,
+            Seedance25TopenrouterV1Driver,
+        )
+        # 注册 Seedance TopenRouter v1 版本（4 个模型：2.0 / 2.0 Fast / 2.0 Mini / 2.5）
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_FAST_TOPENROUTER_V1, Seedance20FastTopenrouterV1Driver)
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_TOPENROUTER_V1, Seedance20TopenrouterV1Driver)
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_MINI_TOPENROUTER_V1, Seedance20MiniTopenrouterV1Driver)
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_5_TOPENROUTER_V1, Seedance25TopenrouterV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import Seedance topenrouter drivers: {e}")
+
     try:
         from .qwen_multi_angle_runninghub_v1_driver import QwenMultiAngleRunninghubV1Driver
         # 注册 Qwen Multi-Angle RunningHub v1 版本

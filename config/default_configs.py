@@ -516,6 +516,41 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== TopenRouter 网关配置（火山方舟同构协议） ====================
+    {
+        'key': 'topenrouter.api_key',
+        'value_type': 'string',
+        'description': 'TopenRouter API Key（Seedance 系列视频，sk- 开头）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True,
+        'user_module_grantable': True
+    },
+    {
+        'key': 'topenrouter.base_url',
+        'value_type': 'string',
+        'description': 'TopenRouter API 基础 URL（默认 https://tp-api.chinadatapay.com:8000）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'topenrouter.model_aliases',
+        'value_type': 'string',
+        'description': 'TopenRouter 模型名映射 JSON（火山原生名 → 平台名，覆盖默认映射；平台仅明确 doubao-seedance-2.0，fast/mini/2.5 为惯例推测，404 时在此修正）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': False
+    },
+    {
+        'key': 'topenrouter.asset_api_key',
+        'value_type': 'string',
+        'description': 'TopenRouter 素材 Action 接口 Token（缺省回落 topenrouter.api_key，两者相同时无需配置）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': False
+    },
+
     # ==================== API 聚合站配置（部分兼容comfly 等中转站）====================
     {
         'key': 'api_aggregator.site_0.api_key',

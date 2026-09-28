@@ -74,6 +74,16 @@ huimengi:
   api_key: ""
   base_url: "https://api.huimengi.com"
 
+topenrouter:
+  api_key: ""
+  base_url: "https://tp-api.chinadatapay.com:8000"
+  # 素材 Action 接口 Token（缺省回落 api_key，两者相同时无需配置）
+  asset_api_key: ""
+  # 模型名映射 JSON（火山原生名 → 平台名），覆盖默认映射；平台仅明确 doubao-seedance-2.0，
+  # fast/mini/2.5 为惯例推测，404 时在此修正，例：
+  # {"doubao-seedance-2-0-fast-260128": "doubao-seedance-2.0-fast"}
+  model_aliases: {}
+
 # 适配云雾 comfly这类聚合站
 api_aggregator:
   site_0:

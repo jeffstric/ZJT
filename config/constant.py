@@ -196,6 +196,25 @@ SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT = 300
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_CONNECT_TIMEOUT = 10
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_READ_TIMEOUT = 120
 
+# ===== TopenRouter Seedance 素材 Action 接口（/v1/api/assets/?Action=...）=====
+# 素材上传后 Processing → Active 需轮询等待（官方建议间隔 ≥1s）；
+# 单素材最长等待与轮询间隔（秒），驱动提交任务前同步等待，跑在同步执行器内不阻塞事件循环。
+TOPENROUTER_ASSET_BASE_URL = "https://tp-api.chinadatapay.com:8000"
+TOPENROUTER_ASSET_POLL_INTERVAL_SECONDS = 1.5
+TOPENROUTER_ASSET_WAIT_ACTIVE_TIMEOUT_SECONDS = 120
+TOPENROUTER_ASSET_REQUEST_TIMEOUT_SECONDS = 30
+# 素材在视频生成 content 中的引用协议前缀（真人素材加白，服务端按 asset id 命中素材库）
+SEEDANCE_ASSET_URL_SCHEME = "asset://"
+# TopenRouter Seedance 模型名默认映射（火山原生名 → TopenRouter 名）。
+# 平台文档仅明确 doubao-seedance-2.0，fast/mini/2.5 为命名惯例推测，
+# 可通过动态配置 topenrouter.model_aliases（JSON）热修正，配置优先于本默认表。
+TOPENROUTER_SEEDANCE_MODEL_ALIASES = {
+    "doubao-seedance-2-0-fast-260128": "doubao-seedance-2.0-fast",
+    "doubao-seedance-2-0-260128": "doubao-seedance-2.0",
+    "doubao-seedance-2-0-mini-260615": "doubao-seedance-2.0-mini",
+    "doubao-seedance-2-5-260628": "doubao-seedance-2.5",
+}
+
 # ===== Seedance 2.5 视频编辑任务（omni_reference_task_type=edit）=====
 # 视频编辑任务的输出时长由参考视频决定（API 下发 duration=-1、ratio=adaptive），
 # 计费时长须按参考视频总时长吸附档位，而非用户输入时长。
@@ -1092,22 +1111,26 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
         DriverImplementation.SEEDANCE_2_0_FAST_KKIDC_V1,                # kkidc 网关
         DriverImplementation.SEEDANCE_2_0_FAST_HUIMENGI_V1,             # huimengi 网关
+        DriverImplementation.SEEDANCE_2_0_FAST_TOPENROUTER_V1,          # TopenRouter 网关
     ],
     DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO: [
         DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
         DriverImplementation.SEEDANCE_2_0_KKIDC_V1,                # kkidc 网关
         DriverImplementation.SEEDANCE_2_0_HUIMENGI_V1,             # huimengi 网关
+        DriverImplementation.SEEDANCE_2_0_TOPENROUTER_V1,          # TopenRouter 网关
     ],
     DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO: [
         DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
         DriverImplementation.SEEDANCE_2_0_MINI_KKIDC_V1,                # kkidc 网关
         DriverImplementation.SEEDANCE_2_0_MINI_HUIMENGI_V1,             # huimengi 网关
+        DriverImplementation.SEEDANCE_2_0_MINI_TOPENROUTER_V1,          # TopenRouter 网关
     ],
     DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO: [
-        DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,  # 火山引擎国内版
-        DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,    # huimengi 网关
+        DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,    # 火山引擎国内版
+        DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,      # huimengi 网关
+        DriverImplementation.SEEDANCE_2_5_TOPENROUTER_V1,   # TopenRouter 网关
     ],
 
     # GPT Image 相关驱动
