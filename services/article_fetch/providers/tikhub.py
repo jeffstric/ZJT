@@ -177,10 +177,16 @@ def _html_to_text(html: str) -> str:
 
 
 def _clean_text(text: str) -> str:
-    """清洗 h5 content_text 尾部常见残留：话题标签的转义实体与标签碎片。"""
+    """清洗 h5 content_text / 小红书 desc 的常见残留。
+
+    - 小红书话题标记「#xxx[话题]#」→「#xxx」（保留话题语义，去平台内部标记）
+    - 公众号尾部转义实体（\\x26quot; / &quot; 等）与残余标签
+    """
     import re
 
     text = text or ""
+    # 小红书话题：#xxx[话题]# → #xxx（xx 不含 ]；保留首尾话题的语义价值）
+    text = re.sub(r"#([^\#\[\]]{1,50})\[话题\]#", r"#\1", text)
     # 转义实体（\x26quot; / &quot; / &lt; / &gt; / &amp;）与残余标签
     text = re.sub(r"<[^>]*>", "", text)
     text = text.replace("\\x26quot;", '"').replace("&quot;", '"')
@@ -283,7 +289,7 @@ def parse_xhs_note(data: Dict[str, Any], url: str) -> Dict[str, Any]:
 
     title = note.get("title") or note.get("display_title") or ""
     author = ((note.get("user") or {}).get("nickname")) or ""
-    text = (note.get("desc") or note.get("content") or "").strip()[:ARTICLE_FETCH_MAX_TEXT_CHARS]
+    text = _clean_text((note.get("desc") or note.get("content") or "").strip()[:ARTICLE_FETCH_MAX_TEXT_CHARS])
 
     def _pick_image_url(item: Any) -> str:
         if isinstance(item, str):
