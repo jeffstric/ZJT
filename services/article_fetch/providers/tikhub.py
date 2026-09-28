@@ -290,8 +290,9 @@ def parse_xhs_note(data: Dict[str, Any], url: str) -> Dict[str, Any]:
             return item
         if not isinstance(item, dict):
             return ""
-        # original(5000 原图) → url_size_large(1440) → url(576) → url_multi_level
-        u = item.get("original") or item.get("url_size_large") or item.get("url") or ""
+        # url_size_large(1440) 优先：original(5000) 单张 1-2MB 偶发下载超时，
+        # 1440 档对视频参考图足够且下载稳定；再回退 url(576)/multi_level
+        u = item.get("url_size_large") or item.get("original") or item.get("url") or ""
         if not u and isinstance(item.get("url_multi_level"), dict):
             u = item["url_multi_level"].get("high") or item["url_multi_level"].get("medium") or ""
         # format/webp → format/jpg（小红书 CDN 参数，参考图通用性；替换失败无碍仍可用）
