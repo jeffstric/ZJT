@@ -17,12 +17,15 @@ ENV_PROVIDER = "XHS_DATA_PROVIDER"
 
 
 def _get_xhs_provider_name() -> str:
-    """供应商名：统一配置 article_fetch.xhs_provider 优先，环境变量兜底。"""
+    """供应商名：动态配置（admin 可改）优先，环境变量兜底。
+
+    用 get_dynamic_config_value（DB 优先）：admin 快速配置写 system_config 表。
+    """
     try:
-        from config.config_util import get_config_value
+        from config.config_util import get_dynamic_config_value
         from config.constant import ARTICLE_FETCH_XHS_PROVIDER
 
-        name = str(get_config_value("article_fetch", "xhs_provider", default=ARTICLE_FETCH_XHS_PROVIDER) or "").strip()
+        name = str(get_dynamic_config_value("article_fetch", "xhs_provider", default=ARTICLE_FETCH_XHS_PROVIDER) or "").strip()
         if name:
             return name
     except Exception:

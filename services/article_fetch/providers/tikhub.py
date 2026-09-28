@@ -39,11 +39,16 @@ logger = logging.getLogger(__name__)
 
 
 def get_tikhub_api_key() -> str:
-    """读取 TikHub API key：统一配置 article_fetch.tikhub_api_key 优先，环境变量兜底。"""
-    try:
-        from config.config_util import get_config_value
+    """读取 TikHub API key：动态配置（admin 后台可改）优先，环境变量兜底。
 
-        key = str(get_config_value("article_fetch", "tikhub_api_key", default="") or "").strip()
+    必须用 get_dynamic_config_value（DB 优先 + YAML 兜底）——admin 快速配置
+    写入的是 system_config 表，get_config_value 只读 YAML 永远读不到
+    （2026-09-28 事故：admin 已配 key 但兜底不生效，受限文章仍 Blocked）。
+    """
+    try:
+        from config.config_util import get_dynamic_config_value
+
+        key = str(get_dynamic_config_value("article_fetch", "tikhub_api_key", default="") or "").strip()
         if key:
             return key
     except Exception:

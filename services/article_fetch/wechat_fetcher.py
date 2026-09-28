@@ -74,13 +74,17 @@ async def fetch_wechat_article(url: str, user_id=None, include_comments: bool = 
 
 
 def _get_wechat_provider_mode() -> str:
-    """通道模式：显式配置优先；未配置时配置了 TikHub key 则 auto（自动兜底），否则 self（纯自研）。"""
+    """通道模式：显式配置优先；未配置时配置了 TikHub key 则 auto（自动兜底），否则 self（纯自研）。
+
+    用 get_dynamic_config_value（DB 优先）：admin 快速配置写 system_config 表，
+    get_config_value 只读 YAML 读不到。
+    """
     from config.constant import ARTICLE_FETCH_WECHAT_PROVIDER
 
     try:
-        from config.config_util import get_config_value
+        from config.config_util import get_dynamic_config_value
 
-        mode = str(get_config_value("article_fetch", "wechat_provider", default=ARTICLE_FETCH_WECHAT_PROVIDER) or "").strip()
+        mode = str(get_dynamic_config_value("article_fetch", "wechat_provider", default=ARTICLE_FETCH_WECHAT_PROVIDER) or "").strip()
     except Exception:
         mode = ARTICLE_FETCH_WECHAT_PROVIDER
     if mode in ("self", "auto", "tikhub"):
