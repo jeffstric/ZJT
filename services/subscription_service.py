@@ -646,14 +646,17 @@ async def process_renewals() -> None:
       4. 重试窗口耗尽：关闭订单（订阅自然过期）
       5. 签约中超时清理、签约结果对账自愈
       6. 微信侧解约未确认重试、多签约残留去重（只保留一个订阅）
-    """
-    # 微信约束：预扣费通知与申请扣款仅北京时间 7:00~22:00
-    if not _in_deduct_window():
-        logger.debug("Outside wechat deduct window (7:00-22:00), skip renewal tick")
-        return
 
-    await _create_renewal_orders()
-    await _apply_due_deductions()
+    仅「预扣费通知 / 申请扣款」受微信约束限北京时间 7:00~22:00（见
+    _create_renewal_orders / _apply_due_deductions 的 in_window 分流）；
+    查单、签约对账、超时清理、解约重试与算力补发均为只读查询或本地/内部操作，
+    7×24 执行——否则 22 点后支付的用户其首订加赠会因签约 ADD 回调延迟而
+    挂起整夜，无法及时对账补发。
+    """
+    in_window = _in_deduct_window()
+
+    await _create_renewal_orders(in_window)
+    await _apply_due_deductions(in_window)
     await _confirm_stale_orders()
     await _reconcile_pending_signs()
     await _cleanup_stale_pending_signs()
@@ -662,8 +665,12 @@ async def process_renewals() -> None:
     await process_settlement_retry()
 
 
-async def _create_renewal_orders() -> None:
-    """到期前 N 天创建续期订单；pre_notify 模式同时下发预扣费通知"""
+async def _create_renewal_orders(in_window: bool = True) -> None:
+    """到期前 N 天创建续期订单；pre_notify 模式同时下发预扣费通知。
+
+    建单为本地落库不受微信窗口限制；预扣费通知（给用户推消息）仅窗口内发送，
+    窗口外跳过、由下个窗口内 tick 凭 prenotify_sent_at 幂等补发。
+    """
     pre_notify_mode = SubscriptionConstants.DEDUCT_MODE == "pre_notify"
     due_contracts = WxPapayContractsModel.get_renewal_due_contracts(
         SubscriptionConstants.PRE_NOTIFY_LEAD_DAYS
@@ -701,6 +708,9 @@ async def _create_renewal_orders() -> None:
                 renewal = SubscriptionOrdersModel.get_latest_by_contract(contract.contract_code)
 
             if pre_notify_mode and renewal and not renewal.prenotify_sent_at and contract.contract_id:
+                if not in_window:
+                    # 微信约束：预扣费通知仅 7:00~22:00 可发；窗口外留待下个 tick 补发
+                    continue
                 plan = get_subscription_plan(contract.subscription_plan_id) or {}
                 papay = get_papay_util()
                 ok, err = await asyncio.to_thread(
@@ -726,8 +736,13 @@ def _prenotify_wait_end(prenotify_sent_at: datetime) -> datetime:
     return datetime.combine(sent.date() + timedelta(days=2), datetime.min.time())
 
 
-async def _apply_due_deductions() -> None:
-    """对到期应扣款/应重试的订单发起申请扣款；重试窗口耗尽则关闭订单"""
+async def _apply_due_deductions(in_window: bool = True) -> None:
+    """对到期应扣款/应重试的订单发起申请扣款；重试窗口耗尽则关闭订单
+
+    微信约束：申请扣款仅北京时间 7:00~22:00 可发起，窗口外整个函数跳过。
+    """
+    if not in_window:
+        return
     window_days = SubscriptionConstants.DEDUCT_RETRY_WINDOW_DAYS
     due_orders = SubscriptionOrdersModel.get_retry_due_orders()
     for order in due_orders:
@@ -880,7 +895,12 @@ async def _reconcile_pending_signs() -> None:
 
 
 async def _cleanup_stale_pending_signs() -> None:
-    """签约中超时（未完成支付+签约）的合约置为已解约，允许用户重新发起"""
+    """签约中超时（未完成支付+签约）的合约置为已解约，允许用户重新发起
+
+    排除已有已支付订单的合约：已付款但签约 ADD 回调未到/对账未决的合约由
+    _reconcile_pending_signs 负责查单收尾（可能补签约+补发首订加赠），
+    不能被本清理终止，否则加赠资格随合约终止而悬空。
+    """
     sql = """
         UPDATE wx_papay_contracts
         SET status = 2, terminated_at = NOW(),
@@ -888,9 +908,17 @@ async def _cleanup_stale_pending_signs() -> None:
             update_at = NOW()
         WHERE status = 0
           AND create_at <= DATE_SUB(NOW(), INTERVAL %s HOUR)
+          AND NOT EXISTS (
+              SELECT 1 FROM subscription_orders o
+              WHERE o.contract_code = wx_papay_contracts.contract_code
+                AND o.status = %s
+          )
     """
     try:
-        affected = execute_update(sql, (SubscriptionConstants.PENDING_SIGN_EXPIRE_HOURS,))
+        affected = execute_update(
+            sql,
+            (SubscriptionConstants.PENDING_SIGN_EXPIRE_HOURS, SubscriptionOrderStatus.PAID),
+        )
         if affected:
             logger.info(f"Cleaned {affected} stale pending sign contracts")
     except Exception:
