@@ -176,11 +176,31 @@ def _html_to_text(html: str) -> str:
     return soup.get_text("\n", strip=True)
 
 
+def _clean_text(text: str) -> str:
+    """清洗 h5 content_text 尾部常见残留：话题标签的转义实体与标签碎片。"""
+    import re
+
+    text = text or ""
+    # 转义实体（\x26quot; / &quot; / &lt; / &gt; / &amp;）与残余标签
+    text = re.sub(r"<[^>]*>", "", text)
+    text = text.replace("\\x26quot;", '"').replace("&quot;", '"')
+    text = text.replace("\\x26lt;", "<").replace("&lt;", "<")
+    text = text.replace("\\x26gt;", ">").replace("&gt;", ">")
+    text = text.replace("&amp;", "&")
+    # 收敛多余空行
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text
+
+
 def parse_wechat_article(data: Dict[str, Any], url: str) -> Dict[str, Any]:
     """TikHub 公众号详情响应 → 标题/作者/纯文本/图片清单。
 
-    响应结构随版本可能有差异（未拿到详情接口的公开 schema），做宽松多路径解析，
-    无法定位时抛 UpstreamError 便于上层看到原始样例日志。
+    h5 接口实测结构（2026-09-28 受限文章实测核对）：
+      data = {"url":..., "content": {title/nick_name/content_text/
+              picture_page_info_list[{cdn_url,...}], ...}, ...}
+    - 正文纯文本：content_text（h5 直出，免 bs4）；旧版 HTML 响应走 content + bs4 兜底
+    - 作者：content.nick_name（公众号昵称；author 字段常为空）
+    - 图片：content.picture_page_info_list[].cdn_url（过滤二维码图）
     """
     content_obj = data.get("content") if isinstance(data.get("content"), dict) else data
 
@@ -191,12 +211,15 @@ def parse_wechat_article(data: Dict[str, Any], url: str) -> Dict[str, Any]:
         or ""
     )
     author = (
-        (data.get("account") or {}).get("nickname")
+        content_obj.get("nick_name")
+        or (data.get("account") or {}).get("nickname")
         or content_obj.get("author")
         or data.get("author")
         or ""
     )
 
+    # 正文：h5 纯文本优先，HTML 兜底（bs4 清洗属同步操作，调用方在 to_thread 中执行）
+    text = (content_obj.get("content_text") or content_obj.get("content_noencode") or "").strip()
     html = (
         content_obj.get("content")
         or (data.get("article") or {}).get("content")
@@ -204,13 +227,21 @@ def parse_wechat_article(data: Dict[str, Any], url: str) -> Dict[str, Any]:
         or data.get("text")
         or ""
     )
-    text = html if "<" not in html[:200] else _html_to_text(str(html))
-    text = (text or "").strip()[:ARTICLE_FETCH_MAX_TEXT_CHARS]
+    if not text and html:
+        text = html if "<" not in html[:200] else _html_to_text(str(html))
+    text = _clean_text(text)
     if len(text) > ARTICLE_FETCH_MAX_TEXT_CHARS:
         text = text[:ARTICLE_FETCH_MAX_TEXT_CHARS] + "…（正文过长已截断）"
 
-    # 图片：img src 提取（微信图片域），或显式图片列表字段
+    # 图片：picture_page_info_list（h5 图片型文章直出，含 cdn_url/宽高/二维码标记）
     image_urls: List[str] = []
+    for item in content_obj.get("picture_page_info_list") or []:
+        if not isinstance(item, dict) or item.get("is_qr_code"):
+            continue
+        u = item.get("cdn_url") or ""
+        if u and u not in image_urls:
+            image_urls.append(u)
+    # HTML 正文内嵌图片兜底（旧版响应）
     raw_html = str(html) if html else ""
     if raw_html:
         import re
