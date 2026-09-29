@@ -25,6 +25,7 @@ from config.constant import (
 from services.article_fetch.models import (
     ArticleContent,
     ArticleFetchBlocked,
+    ArticleFetchError,
     ArticleFetchNotFound,
     ArticleFetchUpstreamError,
 )
