@@ -114,3 +114,8 @@
   color: #344054;
   line-height: 1.5;
 }
+
+/* 超语速口播行提醒 */
+.article-script-card .asc-tl-text.asc-tl-over {
+  color: #b54708;
+}

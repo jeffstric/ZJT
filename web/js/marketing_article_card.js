@@ -89,16 +89,22 @@
   function renderClip(clip, index) {
     var refs = renderRefs(clip);
     // 分秒口播时间轴（timeline 数组，信息密度载体）
+    // 语速红线：中文约 4.5 字/秒——每条超过 9 字标 ▲ 提示念不完
     var timelineHtml = '';
     if (Array.isArray(clip.timeline) && clip.timeline.length) {
       var rows = '';
+      var OVER_SPEED_CHARS = 9;
       clip.timeline.forEach(function (line, i) {
         if (!line) return;
+        var text = String(line);
+        var over = text.replace(/\s/g, '').length > OVER_SPEED_CHARS;
         rows += '<div class="asc-tl-row"><span class="asc-tl-sec">' + i + 's</span>' +
-                '<span class="asc-tl-text">' + safeEscape(line) + '</span></div>';
+                '<span class="asc-tl-text' + (over ? ' asc-tl-over' : '') + '" title="' +
+                (over ? '口播超速（>9 字/秒档），建议压缩' : '') + '">' + safeEscape(text) +
+                (over ? ' ▲' : '') + '</span></div>';
       });
       if (rows) {
-        timelineHtml = '<div class="asc-timeline"><div class="asc-tl-head">🗣 分秒口播</div>' + rows + '</div>';
+        timelineHtml = '<div class="asc-timeline"><div class="asc-tl-head">🗣 分秒口播（语速 ≈4.5 字/秒，▲=超速建议压缩）</div>' + rows + '</div>';
       }
     }
     // 覆盖的信息点下标（covered_points）
