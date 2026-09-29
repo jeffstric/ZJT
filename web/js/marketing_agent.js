@@ -414,7 +414,8 @@
                 }
 
                 const ids = [];
-                const inlineProjectIdPattern = /(?:项目ID|project[_\s-]*id)\s*[:：]\s*([A-Za-z0-9_-]+)/gi;
+                // 兼容 markdown 粗体（**项目ID**: 266）与英文键（project_id: 266）
+                const inlineProjectIdPattern = /(?:项目ID|project[_\s-]*id)\s*(?:\*\*)?\s*[:：]\s*\*{0,2}\s*([A-Za-z0-9_-]+)/gi;
                 let inlineMatch;
                 while ((inlineMatch = inlineProjectIdPattern.exec(text)) !== null) {
                     const id = inlineMatch[1];

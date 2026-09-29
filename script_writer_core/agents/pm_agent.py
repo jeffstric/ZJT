@@ -760,8 +760,9 @@ class PMAgent(BaseAgent, AskUserMixin):
             # 推送生成任务的 project_ids 到前端，前端自动轮询
             project_ids = result.get("project_ids", [])
             if project_ids:
-                # 根据技能类型区分事件
-                if skill_name == "marketing-video":
+                # 根据技能类型区分事件：视频类专家（含 article-to-video 图文转视频）
+                # 发 video_task_submitted，其余发 image_task_submitted
+                if skill_name in ("marketing-video", "article-to-video"):
                     event_type = 'video_task_submitted'
                     event_message = f'已提交 {len(project_ids)} 个视频生成任务'
                 else:
@@ -801,7 +802,7 @@ class PMAgent(BaseAgent, AskUserMixin):
             # 即使 Expert 失败，如果已提交生成任务，仍通知前端轮询
             project_ids = result.get("project_ids", [])
             if project_ids:
-                if skill_name == "marketing-video":
+                if skill_name in ("marketing-video", "article-to-video"):
                     event_type = 'video_task_submitted'
                     event_message = f'已提交 {len(project_ids)} 个视频生成任务'
                 else:
