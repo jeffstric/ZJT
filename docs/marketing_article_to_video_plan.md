@@ -150,12 +150,12 @@ async def fetch_article_content(user_id, world_id, auth_token, url: str) -> dict
 - 限流：复用每用户频次常量，超限返回明确错误文案。
 - 防捏造：Agent 只能拿到工具返回的真实图片 URL；`image_to_video` 已有 `_validate_real_media_urls` 防伪造，天然闭环。
 
-### 4.2 新增工具：`generate_marketing_video`（Seedance 2.0 系列锁定，含 2.5）
+### 4.2 新增工具：`generate_marketing_video`（Seedance 2.0 系 + MiniMax H3 全系白名单锁定）
 
 不在通用工具 `generate_text_to_video` / `image_to_video` 上做校验（影响其他链路），而是**新增专用包装工具**，内部复用其实现并强制白名单：
 
 - 文件：`enterprise/tools/marketing_video_tools.py`，在 `_register_marketing_content()` 一并注册。
-- 核心约束（v4：Seedance 2.5 纳入白名单并作为默认模型）：
+- 核心约束（v4：Seedance 2.5 纳入；v5：MiniMax H3 参考生/首尾帧纳入；2026-09-29：H3 文生版 45 纳入）：
 
 ```python
 MARKETING_ARTICLE_ALLOWED_TASK_IDS = (
@@ -163,9 +163,15 @@ MARKETING_ARTICLE_ALLOWED_TASK_IDS = (
     TaskTypeId.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,   # 22
     TaskTypeId.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,   # 31
     TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO,        # 36  ← v4 纳入
+    34, 37, 45,                                     # MiniMax H3 首尾帧/参考生/文生
 )
-MARKETING_ARTICLE_DEFAULT_TASK_ID = TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO  # 36
+# 未显式指定时按能力优先自动选型（无 hardcode 默认型号）
+MARKETING_ARTICLE_TASK_ID_PREFERENCE = (36, 23, 22, 37, 45, 31, 34)
 ```
+
+- **MiniMax H3 通道适配**（2026-09-29 会话 09a5cb93 事故修复）：H3 按输入形态拆成三个独立任务条目（34=首尾帧、37=参考生，主类均为 image_to_video；45=文生，主类 text_to_video），各绑一个 RunningHub 工作流，不能像 seedance 那样单条目双类别。包装工具在提交前做同族通道适配，杜绝 force 锁定撞底层 category 校验后被防降级防线误报"模型不可用"：
+  - 指定 34/37 且**未传参考图** → 自动落到同族文生版 45 走文生通道；45 不可用时返回"仅支持参考图输入"的明确错误；
+  - 解析出 45（用户偏好跟随）且**带参考图** → 自动落到参考生 37 走图生通道；37 不可用时丢弃参考图走文生。
 
 - 签名（**逐 clip 调用**：粒度与现有视频工具一致，失败重试、算力门、前端轮询恢复的粒度都清晰；`duration_seconds` **必填**——时长由 LLM 按内容决定，见 §4.3 时长决定规则）：
 
@@ -174,7 +180,7 @@ async def generate_marketing_video(
     user_id, world_id, auth_token,
     prompt: str,                      # 该 clip 的 Seedance 提示词（必填）
     duration_seconds: int,            # 必填：LLM 决定的时长（2.0 系 5–15，2.5 可到 30）
-    task_type: int = 36,              # 必须 ∈ 白名单，默认 SEEDANCE_2_5
+    task_type: Optional[int] = None,   # 必须 ∈ 白名单；未传时按 用户偏好(白名单内)→环境可用型号 自动选型
     ratio: str = "9:16",
     image_urls: Optional[List[str]] = None,   # 参考图（本系统 /upload/ 路径）
     count: int = 1,
