@@ -81,3 +81,24 @@ def test_empty_when_nothing_available(registry_env):
     registry_env.clear()
 
     assert build_video_duration_capabilities('55') == ''
+
+
+def test_cached_line_hits_build_once(monkeypatch, registry_env):
+    """60s TTL 缓存：同一用户连续两次取行走缓存，构建函数只执行一次。"""
+    from api import script_writer
+
+    calls = {'n': 0}
+    real_build = script_writer.build_video_duration_capabilities
+
+    def counting_build(user_id):
+        calls['n'] += 1
+        return real_build(user_id)
+
+    monkeypatch.setattr(script_writer, 'build_video_duration_capabilities', counting_build)
+    monkeypatch.setattr(script_writer, '_video_duration_caps_cache', {})
+
+    first = script_writer.get_video_duration_capabilities_line('77')
+    second = script_writer.get_video_duration_capabilities_line('77')
+
+    assert calls['n'] == 1
+    assert first == second and '36=Seedance 2.5(最长30s)' in first

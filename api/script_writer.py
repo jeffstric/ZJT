@@ -8,6 +8,7 @@ import re
 import json
 import time
 import logging
+import threading
 import uuid
 import asyncio
 from typing import Optional, Dict, Any, List
@@ -341,6 +342,27 @@ def build_video_duration_capabilities(user_id: str) -> str:
     if not entries:
         return ''
     return '、'.join(entries[tid] for tid in sorted(entries))
+
+
+# 时长能力行缓存：任务创建高频调用，未命中时 22 个模型逐个查实现方可用性
+# （每个模型内部各查一次 users 表偏好，同一用户行被重复查 N 遍）；模型可用性
+# 与偏好变化低频，60s TTL 足够新鲜（实现方启停后最长 1 分钟内生效）。
+_VIDEO_DURATION_CAPS_TTL_SECONDS = 60
+_video_duration_caps_cache: Dict[str, tuple] = {}
+_video_duration_caps_cache_lock = threading.Lock()
+
+
+def get_video_duration_capabilities_line(user_id: str) -> str:
+    """带 60s TTL 缓存的 [视频模型时长能力] 注入行（并发安全，构建在锁外）。"""
+    now = time.monotonic()
+    with _video_duration_caps_cache_lock:
+        cached = _video_duration_caps_cache.get(user_id)
+        if cached and cached[0] > now:
+            return cached[1]
+    line = build_video_duration_capabilities(user_id)
+    with _video_duration_caps_cache_lock:
+        _video_duration_caps_cache[user_id] = (now + _VIDEO_DURATION_CAPS_TTL_SECONDS, line)
+    return line
 
 
 def get_text_to_video_model_id(user_id: str, world_id: str) -> Optional[int]:
@@ -4307,11 +4329,11 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             if v_pref_parts:
                 user_message += f"\n\n[用户视频偏好] {', '.join(v_pref_parts)}"
 
-        # 视频模型时长能力（按当前用户可用实现方动态过滤）——智能体决定 clip
-        # 时长与分段数的能力依据：单 clip 优先拉满所选模型最大时长，避免拆段
-        # 导致前后语义割裂（引导规则见 article-to-video SOP §0/§2）。
+        # 视频模型时长能力（按当前用户可用实现方动态过滤，60s TTL 缓存）——智能体
+        # 决定 clip 时长与分段数的能力依据：单 clip 优先拉满所选模型最大时长，
+        # 避免拆段导致前后语义割裂（引导规则见 article-to-video SOP §0/§2）。
         # 实现方可用性查库为同步调用，放 to_thread（非阻塞红线）。
-        video_duration_caps = await asyncio.to_thread(build_video_duration_capabilities, user_id)
+        video_duration_caps = await asyncio.to_thread(get_video_duration_capabilities_line, user_id)
         if video_duration_caps:
             user_message += f"\n\n[视频模型时长能力] 可用视频模型及最长时长: {video_duration_caps}"
 
