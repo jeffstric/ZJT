@@ -830,6 +830,24 @@
             + (opts.qr && opts.tip ? '<div class="sub-qr-tip">' + opts.tip + '</div>' : '');
     }
 
+    // 二维码下方提示：首订加赠用户改为「微信支付页开关」引导动画（纯 CSS 循环），
+    // 提醒扫码后在微信支付页打开「每月自动续费」开关，否则加赠不发放、首期只到账基础算力
+    function renderRenewGuideTip(plan, upgrade, eligible) {
+        if (upgrade || !plan.first_period_bonus || !eligible) {
+            return upgrade ? '请使用微信扫码<br/>支付完成套餐升级' : '请使用微信扫码<br/>支付并确认开通自动续费';
+        }
+        return '<div class="sub-rg">'
+            + '<div class="sub-rg-title">扫码后，在微信支付页打开此开关</div>'
+            + '<div class="sub-rg-row">'
+            + '<span class="sub-rg-label">' + esc('开通智剧通' + (plan.name || '') + '每月自动续费') + '</span>'
+            + '<span class="sub-rg-switch"><i class="sub-rg-thumb"></i></span>'
+            + '<span class="sub-rg-finger">👆</span>'
+            + '</div>'
+            + '<div class="sub-rg-badge">⚡ 首期多送 ' + esc(plan.first_period_bonus) + ' 算力</div>'
+            + '</div>'
+            + '<div class="sub-rg-note">不开通自动续费，首期仅到账 ' + esc(plan.computing_power) + ' 算力</div>';
+    }
+
     function renderPayPanel(upgrade) {
         var plan = state.selectedPlan;
         if (!plan) return '';
@@ -855,7 +873,7 @@
                 qr: state.subQr,
                 error: state.subPaymentError,
                 emptyHtml: upgrade ? '勾选协议并点击右侧<br/>「升级并支付」生成二维码' : '勾选协议并点击右侧<br/>「微信支付」生成二维码',
-                tip: upgrade ? '请使用微信扫码<br/>支付完成套餐升级' : '请使用微信扫码<br/>支付并确认开通自动续费'
+                tip: renderRenewGuideTip(plan, upgrade, eligible)
             })
             + '</div>'
             + '<div class="sub-info-section">'
