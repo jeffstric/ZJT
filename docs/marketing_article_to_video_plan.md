@@ -4,6 +4,7 @@
 > - v3：小红书主方案改第三方付费 API（TikHub 主选）+ 供应商抽象。
 > - v4（本期实施范围）：**仅实现公众号抓取**；小红书只保留 `XhsProvider` 抓取抽象接口（不写实现，供应商对接留待下期）；Seedance **2.5 纳入白名单**（默认模型）；新增 §4.5 抓取成功后的端到端详细操作流程。
 > - v5：图文转视频**新建独立 skill `article-to-video`**（§4.3）；**时长由大模型按内容决定**——2.0 系 5–15s，seedance_2.5 可延长至 30s（§4.3 时长决定规则）。
+> - v6（2026-09-29）：**口播入片**——`timeline` 分秒口播从"仅展示"改为必须以引号形式写进 clip 的 `prompt`（成片有语音的唯一通道）：H3 链路提示词优化器按引号识别台词逐字保真进对白标签（`_extract_quoted_cjk_spans`），Seedance 链路 prompt 原样直发模型朗读（与本地生活视频同款范式）。此前 timeline 不参与生成导致成片无任何口播。
 > - 均附 2026-09-26 真机实测/调研结论。
 > 分支：develop_f925（基于 origin/develop 4a9dd118）
 > 关联：`docs/marketing_agent.md`、`enterprise/skills/marketing-video/SKILL.md`、`docs/backend/agent_autonomy_level.md`
@@ -232,7 +233,9 @@ async def generate_marketing_video(
       "reference_images": [
         {"index": 0, "url": "/upload/marketing_fetched/xxx.jpg"}
       ],
-      "prompt": "Seedance 分镜 prompt……",
+      "prompt": "画面描述（以 overall_style 风格短语开头）+ 引号口播（timeline 的口播逐句用“ ”包裹，注明旁白口播——成片语音的唯一来源，无引号会被 H3 优化器反幻觉规则丢弃）",
+      "timeline": ["0s 口播…", "1s 口播…"],
+      "covered_points": [0, 1],
       "negative_prompt": "可选"
     }
   ],
