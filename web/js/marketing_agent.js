@@ -3614,7 +3614,9 @@
                 if (opt === '确认生成') return 'power-approve';
                 if (opt === '取消本次生成') return 'power-reject';
                 return '';
-            }            async function loadPowerConfirmSettings() {
+            }
+
+            async function loadPowerConfirmSettings() {
                 try {
                     const resp = await fetch('/api/user/power-confirm', {
                         headers: { 'Authorization': `Bearer ${authToken.value}` }

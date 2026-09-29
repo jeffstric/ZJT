@@ -43,6 +43,12 @@ def _check_rate_limit(user_id) -> None:
     if user_id is None:
         return
     now = time.time()
+    # 顺手回收一小时未活跃用户的窗口（否则 _rate_windows 随历史用户数单调增长）
+    if len(_rate_windows) > 1024:
+        expired = [uid for uid, win in _rate_windows.items()
+                   if not win or now - win[-1] > 3600]
+        for uid in expired:
+            _rate_windows.pop(uid, None)
     window = _rate_windows.setdefault(int(user_id), deque())
     while window and now - window[0] > 3600:
         window.popleft()

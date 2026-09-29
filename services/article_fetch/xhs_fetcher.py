@@ -5,6 +5,7 @@
 未配置供应商时抛 ArticleFetchNotSupported，Agent 侧引导用户粘贴文字与图片。
 """
 
+import asyncio
 import logging
 import re
 from urllib.parse import urlparse, parse_qs
@@ -62,8 +63,6 @@ def _build_providers():
 
             class _TikhubXhsProvider:
                 async def fetch(self, url: str, user_id=None) -> ArticleContent:
-                    import asyncio
-
                     from config.constant import ARTICLE_FETCH_MAX_IMAGES
                     from services.article_fetch.image_store import download_and_store_images
                     from services.article_fetch.providers import tikhub as th

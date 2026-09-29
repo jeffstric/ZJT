@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import urlparse, unquote
 
 from curl_cffi.requests import AsyncSession
 
@@ -24,7 +25,12 @@ from config.constant import (
     ARTICLE_FETCH_IMAGE_TIMEOUT,
     ARTICLE_FETCH_WECHAT_REFERER,
     ARTICLE_FETCH_WECHAT_UA,
+    UploadPathConstants,
 )
+from config.media_file_policy import MediaFilePolicy
+from model.media_file_mapping import MediaFileEntity
+from utils.media_mapping_util import register_uploaded_file_mapping, upload_local_path
+from utils.project_path import get_project_root
 from services.article_fetch.models import ArticleImage, ArticleFetchUpstreamError
 
 logger = logging.getLogger(__name__)
@@ -50,8 +56,6 @@ _CONTENT_TYPE_EXT = {
 
 def _ext_from_url(url: str) -> str:
     """从 URL 路径推断扩展名；无扩展名时返回空串由 Content-Type 兜底。"""
-    from urllib.parse import urlparse, unquote
-
     path = unquote(urlparse(url).path)
     ext = Path(path).suffix.lower()
     return ext if ext in _ALLOWED_IMAGE_EXTS else ""
@@ -59,6 +63,35 @@ def _ext_from_url(url: str) -> str:
 
 def _ext_from_content_type(content_type: str) -> str:
     return _CONTENT_TYPE_EXT.get((content_type or "").split(";")[0].strip().lower(), ".jpg")
+
+
+def _domain_headers_for(url: str) -> dict:
+    """按 URL 主机名匹配域名专属头（后缀匹配，避免 query 参数子串误命中）。"""
+    hostname = (urlparse(url).hostname or "").lower()
+    for domain, domain_headers in _DOMAIN_HEADERS.items():
+        if hostname == domain or hostname.endswith("." + domain):
+            headers = dict(_DEFAULT_HEADERS)
+            headers.update(domain_headers)
+            return headers
+    return dict(_DEFAULT_HEADERS)
+
+
+def _persist_image(content: bytes, ext: str, user_id: Optional[int]) -> str:
+    """同步落盘 + 注册媒体映射（含同步 DB 读写与盘 IO，调用方须放 to_thread，红线 1）。"""
+    day_dir = datetime.now().strftime("%Y%m%d")
+    rel_dir = Path(UploadPathConstants.UPLOAD_ROOT) / "marketing_fetched" / day_dir
+    abs_dir = Path(get_project_root()) / rel_dir
+    abs_dir.mkdir(parents=True, exist_ok=True)
+    abs_path = abs_dir / f"{uuid.uuid4().hex}{ext}"
+    abs_path.write_bytes(content)
+    local_path = upload_local_path(str(abs_path))
+    register_uploaded_file_mapping(
+        user_id=user_id,
+        local_path=local_path,
+        entity_type=MediaFileEntity.CACHE,
+        policy_code=MediaFilePolicy.MEDIA_CACHE,
+    )
+    return local_path
 
 
 async def download_and_store_image(
@@ -72,38 +105,32 @@ async def download_and_store_image(
     超时/网络错误抛 ArticleFetchUpstreamError；单图失败即整体失败——
     参考图缺失会让后续图生视频脚本出现空洞，宁可让用户重试。
     """
-    from config.constant import UploadPathConstants
-    from utils.media_mapping_util import register_uploaded_file_mapping, upload_local_path
-    from model.media_file_mapping import MediaFileEntity
-    from config.media_file_policy import MediaFilePolicy
-    from utils.project_path import get_project_root
+    headers = _domain_headers_for(url)
 
-    headers = dict(_DEFAULT_HEADERS)
-    for domain, domain_headers in _DOMAIN_HEADERS.items():
-        if domain in url:
-            headers.update(domain_headers)
-            break
-
-    # 小红书 CDN（rednotecdn/xhscdn）偶发慢，单图重试一次（换一次 CDN 调度机会）
-    last_error: Exception = None
+    # 小红书 CDN（rednotecdn/xhscdn）偶发慢，单图重试一次（换一次 CDN 调度机会）。
+    # 以 response 是否拿到判定成败——曾用"last_error 是否为空"判定，重试成功后
+    # 仍残留首次异常导致照常 raise，重试机制完全失效（分支 review P1 实证）。
+    response = None
+    last_error: Optional[ArticleFetchUpstreamError] = None
     for attempt in (1, 2):
         try:
-            response = await asyncio.wait_for(
+            resp = await asyncio.wait_for(
                 session.get(url, headers=headers, impersonate="chrome"),
                 timeout=ARTICLE_FETCH_IMAGE_TIMEOUT,
             )
-            if response.status_code == 200:
+            if resp.status_code == 200:
+                response = resp
                 break
-            last_error = ArticleFetchUpstreamError(f"图片下载失败（HTTP {response.status_code}）")
-        except asyncio.TimeoutError as e:
+            last_error = ArticleFetchUpstreamError(f"图片下载失败（HTTP {resp.status_code}）")
+        except asyncio.TimeoutError:
             last_error = ArticleFetchUpstreamError(f"图片下载超时（{ARTICLE_FETCH_IMAGE_TIMEOUT}s）")
         except Exception as e:
             last_error = ArticleFetchUpstreamError(f"图片下载失败: {type(e).__name__}")
         if attempt == 1:
             await asyncio.sleep(1)
 
-    if isinstance(last_error, ArticleFetchUpstreamError) and last_error is not None:
-        raise last_error
+    if response is None:
+        raise last_error or ArticleFetchUpstreamError("图片下载失败")
 
     content = response.content or b""
     if len(content) == 0:
@@ -114,20 +141,8 @@ async def download_and_store_image(
         )
 
     ext = _ext_from_url(url) or _ext_from_content_type(response.headers.get("Content-Type", ""))
-    day_dir = datetime.now().strftime("%Y%m%d")
-    rel_dir = Path(UploadPathConstants.UPLOAD_ROOT) / "marketing_fetched" / day_dir
-    abs_dir = Path(get_project_root()) / rel_dir
-    abs_dir.mkdir(parents=True, exist_ok=True)
-    abs_path = abs_dir / f"{uuid.uuid4().hex}{ext}"
-    abs_path.write_bytes(content)
-
-    local_path = upload_local_path(str(abs_path))
-    register_uploaded_file_mapping(
-        user_id=user_id,
-        local_path=local_path,
-        entity_type=MediaFileEntity.CACHE,
-        policy_code=MediaFilePolicy.MEDIA_CACHE,
-    )
+    # 落盘 + 映射注册含同步 DB 读写/盘 IO，放 to_thread 避免阻塞事件循环（红线 1）
+    local_path = await asyncio.to_thread(_persist_image, content, ext, user_id)
     return ArticleImage(index=index, original_url=url, url=f"/{local_path}")
 
 
