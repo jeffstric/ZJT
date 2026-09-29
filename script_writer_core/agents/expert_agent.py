@@ -447,6 +447,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                 "generate_text_to_video",
                 "image_to_video",
                 "generate_digital_human",
+                "generate_marketing_video",  # 图文转视频包装工具（article-to-video 专家）
             ):
                 if isinstance(result, dict) and result.get("project_ids"):
                     self.pending_project_ids.extend(result["project_ids"])
