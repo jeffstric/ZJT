@@ -311,6 +311,38 @@ def set_video_preferences(user_id: str, world_id: str, prefs: Dict[str, str]):
     UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_VIDEO_PREFERENCES, prefs)
 
 
+def build_video_duration_capabilities(user_id: str) -> str:
+    """当前用户可用的视频模型及各自最长时长（[视频模型时长能力] 注入行内容）。
+
+    智能体决定 clip 时长/分段数时的能力依据（拉长优先策略见
+    enterprise/sops/sop-article-to-video.md §0/§2：单 clip 拉满所选模型最大时长，
+    避免拆段导致前后语义割裂）。实现方可用性按用户查库（同步），
+    调用方须放 asyncio.to_thread。返回空串表示无可用视频模型（不注入）。
+    """
+    from config.unified_config import UnifiedConfigRegistry, TaskCategory
+    from task.visual_drivers.driver_factory import VideoDriverFactory
+
+    entries: Dict[int, str] = {}
+    for category in (TaskCategory.TEXT_TO_VIDEO, TaskCategory.IMAGE_TO_VIDEO):
+        for cfg in UnifiedConfigRegistry.get_by_category(category):
+            if not cfg.enabled or cfg.hidden or cfg.id in entries:
+                continue
+            durations = getattr(cfg, 'supported_durations', None) or []
+            if not durations:
+                continue
+            try:
+                if VideoDriverFactory.get_implementation_for_user(cfg.id, str(user_id)) is None:
+                    continue
+            except Exception:
+                pass  # 可用性查询失败按可用纳入，与 marketing_video_tools._is_task_available 口径一致
+            variant = getattr(cfg, 'variant_label', '') or ''
+            label = f"{cfg.name}({variant})" if variant else cfg.name
+            entries[cfg.id] = f"{cfg.id}={label}(最长{max(int(d) for d in durations)}s)"
+    if not entries:
+        return ''
+    return '、'.join(entries[tid] for tid in sorted(entries))
+
+
 def get_text_to_video_model_id(user_id: str, world_id: str) -> Optional[int]:
     """获取用户在指定世界的文生视频模型 task_id"""
     pref = UserPreferencesModel.get(user_id, world_id, PREF_TYPE_TEXT_TO_VIDEO_MODEL)
@@ -4274,6 +4306,14 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 v_pref_parts.append("人脸处理: 已开启")
             if v_pref_parts:
                 user_message += f"\n\n[用户视频偏好] {', '.join(v_pref_parts)}"
+
+        # 视频模型时长能力（按当前用户可用实现方动态过滤）——智能体决定 clip
+        # 时长与分段数的能力依据：单 clip 优先拉满所选模型最大时长，避免拆段
+        # 导致前后语义割裂（引导规则见 article-to-video SOP §0/§2）。
+        # 实现方可用性查库为同步调用，放 to_thread（非阻塞红线）。
+        video_duration_caps = await asyncio.to_thread(build_video_duration_capabilities, user_id)
+        if video_duration_caps:
+            user_message += f"\n\n[视频模型时长能力] 可用视频模型及最长时长: {video_duration_caps}"
 
         # 素材输出语言指令块（显式选择 > 「自动」档按 UI locale 回落）
         material_language = resolve_material_output_language(

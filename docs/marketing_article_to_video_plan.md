@@ -7,6 +7,7 @@
 > - v6（2026-09-29）：**口播入片**——`timeline` 分秒口播从"仅展示"改为必须以引号形式写进 clip 的 `prompt`（成片有语音的唯一通道）：H3 链路提示词优化器按引号识别台词逐字保真进对白标签（`_extract_quoted_cjk_spans`），Seedance 链路 prompt 原样直发模型朗读（与本地生活视频同款范式）。此前 timeline 不参与生成导致成片无任何口播。
 > - v6.1（2026-09-29，会话 50687e18 事故）：**ask_user question 负载校验**——question 内 ```json 块无法被 json.loads 解析、或混入模型输出退化残片（`</think...>`/`<parameter name=`）时直接报错打回让 LLM 重写（不做修复式清洗）；SOP 同步 JSON 硬约束（含中文/单位的值必须加引号、禁止 `estimated_*` 等模板外字段）。此前 LLM 自造 `"estimated_consumption": 约 6 算力(...)` 无引号值导致前端确认卡渲染降级成原始 JSON，用户无按钮可点直至 5 分钟超时。
 > - v6.2（2026-09-29，会话 d4b3face 事故）：**force 锁定路径去掉 clone 家族换算**——`image_to_video` 的 `force_task_type` 分支曾做 `resolve_video_clone_task_config` 换算（H3 首尾帧 34→参考生 37），换算结果撞防降级防线被误报"指定视频模型(task_type=34)不可用"，Agent 被带偏改用 37。修复后 force 语义即锁定：用户点名 34 带图原样以 34 提交，H3 首尾帧驱动自动取参考图[0]作首帧、[1]作尾帧；clone 换算仅保留给非 force 的 UI 视频克隆/参考生快照路径。
+> - v6.3（2026-09-29）：**拉长优先 + 模型时长能力注入**——拆段导致前后语义割裂，SOP §0/§2 引导反转：首选单 clip 拉满所选模型最大时长（如 2.5 → 30s/口播约 135 字），仅口播总量超容量才拆段，取消"每 clip ≤2 信息点"机械拆段规则；任务上下文新增 `[视频模型时长能力]` 注入（api/script_writer.py `build_video_duration_capabilities`，按当前用户可用实现方动态过滤），LLM 决定时长/分段时有真实能力依据。
 > - 均附 2026-09-26 真机实测/调研结论。
 > 分支：develop_f925（基于 origin/develop 4a9dd118）
 > 关联：`docs/marketing_agent.md`、`enterprise/skills/marketing-video/SKILL.md`、`docs/backend/agent_autonomy_level.md`
