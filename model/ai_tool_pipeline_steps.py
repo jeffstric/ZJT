@@ -838,6 +838,90 @@ class PipelineStepModel:
             logger.error(f"Failed to fail orphan grid split steps {step_ids} (unexpected): {e}")
             raise
 
+    @staticmethod
+    def get_stuck_processing_steps_without_async_task(
+        timeout_seconds: int,
+        limit: int = 20,
+    ) -> List['PipelineStep']:
+        """
+        获取卡死的 PROCESSING 步骤：处理中、无 async_task_id、且 updated_at 超时。
+
+        正常步骤在 dispatch_step 写回 async_task_id（或直接转终态）前只有秒级窗口，
+        长期停留在该状态说明 dispatch 中途异常退出，属于永久孤儿（如生产 step 6759：
+        PROCESSING 无 async_task_id 挂了 15+ 天，调度器每 13s 刷一条 WARNING）。
+
+        超时判定用 DB 的 NOW() 与 timestamp 列直接比较，避免应用/数据库时区差异误判。
+
+        Args:
+            timeout_seconds: 卡死判定阈值（秒）
+            limit: 最大返回数量
+
+        Returns:
+            卡死的 PipelineStep 对象列表
+        """
+        sql = """
+            SELECT * FROM ai_tool_pipeline_steps
+            WHERE status = %s
+              AND async_task_id IS NULL
+              AND updated_at < NOW() - INTERVAL %s SECOND
+            ORDER BY created_at ASC
+            LIMIT %s
+        """
+        try:
+            results = execute_query(
+                sql,
+                (PipelineStepStatus.PROCESSING, int(timeout_seconds), int(limit)),
+                fetch_all=True,
+            )
+            return [PipelineStep(**row) for row in results] if results else []
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to get stuck processing steps: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to get stuck processing steps (unexpected): {e}")
+            raise
+
+    @staticmethod
+    def fail_processing_steps_by_ids(step_ids: List[int], error_message: str) -> int:
+        """
+        批量将指定 ID 的 PROCESSING 步骤标记为 FAILED（卡死回收用）。
+
+        幂等：只更新 status=PROCESSING 的行，并发场景下已转终态的步骤不受影响。
+
+        Args:
+            step_ids: 步骤 ID 列表
+            error_message: 失败原因（截断到 512 字符）
+
+        Returns:
+            影响的行数
+        """
+        if not step_ids:
+            return 0
+        placeholders = ",".join(["%s"] * len(step_ids))
+        truncated_msg = (error_message or "")[:512]
+        sql = f"""
+            UPDATE ai_tool_pipeline_steps
+            SET status = %s, error_message = %s
+            WHERE id IN ({placeholders}) AND status = %s
+        """
+        params = (
+            PipelineStepStatus.FAILED,
+            truncated_msg,
+            *step_ids,
+            PipelineStepStatus.PROCESSING,
+        )
+        try:
+            affected = execute_update(sql, params)
+            if affected:
+                logger.info("Recovered %s stuck PROCESSING step(s): ids=%s", affected, step_ids)
+            return affected
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to fail stuck processing steps {step_ids}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to fail stuck processing steps {step_ids} (unexpected): {e}")
+            raise
+
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `ai_tool_pipeline_steps` (

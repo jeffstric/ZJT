@@ -23,6 +23,39 @@ from script_writer_core.constant import ItemType
 
 logger = logging.getLogger(__name__)
 
+# 连续认证失败（401/403）计数：task_key -> 连续次数。
+# grid_image_tasks.auth_token 是任务创建时的快照，用户 token 失效/轮换后轮询必然 401，
+# 重试无意义；达到 GridConfig.AUTH_FAILURE_TERMINATION_LIMIT 后终止任务。
+# 进程内存态即可（重启后重新累计 3 次再终止，可接受）。
+_auth_failure_streaks: Dict[str, int] = {}
+
+
+def _is_auth_failure(exc: Exception) -> bool:
+    """判断请求异常是否为认证失败（HTTP 401/403）——重试无意义的一类错误。"""
+    return (
+        isinstance(exc, requests.HTTPError)
+        and exc.response is not None
+        and exc.response.status_code in (401, 403)
+    )
+
+
+def _terminate_task_for_auth_failure(task: Any) -> None:
+    """连续认证失败达到阈值，将任务标记为 FAILED 终态并联动下游。"""
+    limit = GridConfig.AUTH_FAILURE_TERMINATION_LIMIT
+    error_message = (
+        f"ComfyUI 认证失败：任务 token 已失效（连续 {limit} 次 401/403），停止轮询"
+    )
+    logger.error(f"任务 {task.task_key} 连续 {limit} 次认证失败，标记为终态失败")
+    GridImageTasksModel.update_status(
+        task_key=task.task_key,
+        status=GridImageTaskStatus.FAILED,
+        error_message=error_message
+    )
+    _update_task_status_file(task.item_type, task.item_name, 'failed',
+                             task.user_id, task.world_id)
+    _mark_storyboard_grid_batch_items_failed(task, f"宫格生图失败: {error_message}")
+    _auth_failure_streaks.pop(task.task_key, None)
+
 
 def _build_storyboard_grid_cells(task: Any, grid_size: int) -> list:
     """Build cell bindings for legacy first-frame grid tasks without pipeline params."""
@@ -443,11 +476,12 @@ def _parse_reference_images(value: Any) -> list:
 def _handle_task_success(task: Any, comfyui_task_data: Dict):
     """
     处理任务成功的情况
-    
+
     Args:
         task: GridImageTask对象
         comfyui_task_data: ComfyUI返回的任务数据
     """
+    _auth_failure_streaks.pop(task.task_key, None)
     try:
         results = comfyui_task_data.get('results', [])
         if not results:
@@ -798,6 +832,7 @@ def process_grid_image_tasks(app=None):
                 if task.try_count > task.max_attempts:
                     timeout_msg = f"超过最大尝试次数 {task.max_attempts}"
                     logger.error(f"任务超时: {task.task_key}, 尝试次数: {task.try_count}/{task.max_attempts}")
+                    _auth_failure_streaks.pop(task.task_key, None)
                     GridImageTasksModel.update_status(
                         task_key=task.task_key,
                         status=GridImageTaskStatus.TIMEOUT,
@@ -830,6 +865,7 @@ def process_grid_image_tasks(app=None):
                 status_url = f"{task.comfyui_base_url.rstrip('/')}/api/get-status/{task.project_id}"
                 response = requests.get(f"{status_url}?auth_token={task.auth_token}", timeout=10)
                 response.raise_for_status()
+                _auth_failure_streaks.pop(task.task_key, None)  # 轮询成功，清零认证失败计数
                 
                 status_data = response.json()
                 if 'tasks' not in status_data or not status_data['tasks']:
@@ -877,6 +913,7 @@ def process_grid_image_tasks(app=None):
                             logger.error(f"任务 {task.task_key} 重试提交失败，标记为终态失败")
                     
                     # 无法重试或重试失败，标记为终态失败
+                    _auth_failure_streaks.pop(task.task_key, None)
                     GridImageTasksModel.update_status(
                         task_key=task.task_key,
                         status=GridImageTaskStatus.FAILED,
@@ -887,7 +924,20 @@ def process_grid_image_tasks(app=None):
                     _mark_storyboard_grid_batch_items_failed(task, f"宫格生图失败: {failure_reason}")
                 
             except requests.RequestException as e:
+                if _is_auth_failure(e):
+                    # 认证失败（401/403）：token 快照已失效，重试无意义，连续达阈值即终止
+                    streak = _auth_failure_streaks.get(task.task_key, 0) + 1
+                    _auth_failure_streaks[task.task_key] = streak
+                    if streak >= GridConfig.AUTH_FAILURE_TERMINATION_LIMIT:
+                        _terminate_task_for_auth_failure(task)
+                    else:
+                        logger.warning(
+                            f"轮询ComfyUI认证失败({streak}/{GridConfig.AUTH_FAILURE_TERMINATION_LIMIT}): "
+                            f"{task.task_key}, 错误: {str(e)}"
+                        )
+                    continue
                 # 网络请求异常，记录但不更新状态（继续重试）
+                _auth_failure_streaks.pop(task.task_key, None)
                 logger.warning(f"轮询ComfyUI失败: {task.task_key}, 错误: {str(e)}")
             except Exception as e:
                 # 其他异常，标记为失败

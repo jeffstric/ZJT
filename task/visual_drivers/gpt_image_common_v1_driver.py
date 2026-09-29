@@ -159,6 +159,12 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         """
         try:
             response = requests.get(image_url, timeout=30)
+            if response.status_code in (404, 410):
+                # 源文件已被清理（upload/cache 定期清理后资产仍引用旧 URL），重试无法自愈
+                self.logger.warning(f"下载图片失败（源文件不存在）: {image_url}, status={response.status_code}")
+                raise ImageExpiredError(
+                    f"参考图片已失效（原文件可能已被清理），请重新上传或更换参考图后重试: {image_url[:80]}"
+                )
             response.raise_for_status()
 
             content_type = response.headers.get('Content-Type', 'image/jpeg')
@@ -292,6 +298,13 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                 # 下载远程图片（用 fresh URL）
                 self.logger.info(f"下载远程图片用于上传: {fresh}")
                 response = requests.get(fresh, timeout=30)
+                if response.status_code in (404, 410):
+                    # 参考图源文件已被清理（如 upload/cache 定期清理后资产仍引用旧 URL），
+                    # 重试无法自愈：按用户侧错误处理，提示重新上传，不触发系统告警
+                    self.logger.warning(f"准备图片文件失败（源文件不存在）: {fresh}, status={response.status_code}")
+                    raise ImageExpiredError(
+                        f"参考图片已失效（原文件可能已被清理），请重新上传或更换参考图后重试: {fresh[:80]}"
+                    )
                 response.raise_for_status()
 
                 # 从 URL 提取文件名

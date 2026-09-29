@@ -258,9 +258,20 @@ scripts/
 ## 调度
 
 `scheduler.py` 中注册了 `process_pipeline_steps` 定时任务（每 13 秒），负责：
+0. **回收卡死步骤**（`_recover_stuck_processing_steps`，见下节）
 1. 查询所有 PROCESSING 状态的 pipeline steps
 2. 检查关联 async_task 的状态
 3. 推进步骤和 ai_tool 的状态
+
+## 卡死步骤回收（PROCESSING 且无 async_task_id）
+
+`dispatch_step` 先把步骤置为 PROCESSING、执行后才写回 async_task_id；若进程在两者之间异常退出（如 FD 耗尽 / kill -9），该步骤将成为**永久孤儿**（PROCESSING + `async_task_id IS NULL`），调度器每 13s 扫到即刷一条 WARNING，所属 ai_tool 的阶段永久挂起（生产事故：step 6759 自 2026-09-14 挂 15+ 天，日均 ~6600 条 WARNING，详见 `docs/backend/incidents/2026-09-29-app-log-high-priority-fixes.md`）。
+
+回收机制（`task/pipeline_processor.py::_recover_stuck_processing_steps`，每轮调度开头执行）：
+
+1. `PipelineStepModel.get_stuck_processing_steps_without_async_task(timeout)` 查出超时卡死步骤——超时判定在 SQL 层 `NOW() - INTERVAL` 完成，**不受应用/数据库时区差异影响**（阈值 `PipelineConfig.STUCK_PROCESSING_WITHOUT_ASYNC_TASK_TIMEOUT_SECONDS = 3600`，单轮上限 `STUCK_PROCESSING_RECOVER_LIMIT = 20`）；
+2. `fail_processing_steps_by_ids()` 批量置 FAILED（只更新 PROCESSING 行，幂等）；
+3. 对受影响 `(ai_tool_id, stage)` 触发 `_check_ai_tool_stage_completion` 推进 ai_tool；tasks 终结与**退款**由 `visual_task._check_pipeline_stage` 在其轮询周期内自动完成，无需手工干预存量数据。
 
 ## 服务重启恢复
 
