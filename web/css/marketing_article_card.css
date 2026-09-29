@@ -84,3 +84,33 @@
   margin-right: 6px;
   vertical-align: middle;
 }
+
+/* 分秒口播时间轴 */
+.article-script-card .asc-timeline {
+  margin-top: 8px;
+  border-top: 1px dashed #e4e7ec;
+  padding-top: 8px;
+}
+.article-script-card .asc-tl-head {
+  font-size: 12px;
+  color: #667085;
+  margin-bottom: 4px;
+}
+.article-script-card .asc-tl-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+.article-script-card .asc-tl-sec {
+  flex: 0 0 34px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #175cd3;
+  font-variant-numeric: tabular-nums;
+}
+.article-script-card .asc-tl-text {
+  font-size: 13px;
+  color: #344054;
+  line-height: 1.5;
+}

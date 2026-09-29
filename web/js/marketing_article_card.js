@@ -88,15 +88,37 @@
 
   function renderClip(clip, index) {
     var refs = renderRefs(clip);
+    // 分秒口播时间轴（timeline 数组，信息密度载体）
+    var timelineHtml = '';
+    if (Array.isArray(clip.timeline) && clip.timeline.length) {
+      var rows = '';
+      clip.timeline.forEach(function (line, i) {
+        if (!line) return;
+        rows += '<div class="asc-tl-row"><span class="asc-tl-sec">' + i + 's</span>' +
+                '<span class="asc-tl-text">' + safeEscape(line) + '</span></div>';
+      });
+      if (rows) {
+        timelineHtml = '<div class="asc-timeline"><div class="asc-tl-head">🗣 分秒口播</div>' + rows + '</div>';
+      }
+    }
+    // 覆盖的信息点下标（covered_points）
+    var coveredHtml = '';
+    if (Array.isArray(clip.covered_points) && clip.covered_points.length) {
+      coveredHtml = '<span class="asc-tag">要点 ' + clip.covered_points.map(function (p) {
+        return '#' + (typeof p === 'number' ? p + 1 : safeEscape(p));
+      }).join('、') + '</span>';
+    }
     return '<div class="asc-clip">' +
       '<div class="asc-clip-head">' +
       'Clip ' + (clip.index || index + 1) +
       '<span class="asc-tag">' + safeEscape(clip.duration_seconds || '?') + 's</span>' +
       '<span class="asc-tag">' + safeEscape(clip.task_type_name || ('task_type=' + (clip.task_type || '?'))) + '</span>' +
       '<span class="asc-tag">' + clipModeLabel(clip) + '</span>' +
+      coveredHtml +
       '</div>' +
       refs +
       '<div class="asc-prompt">' + safeEscape(clip.prompt || '') + '</div>' +
+      timelineHtml +
       '</div>';
   }
 
