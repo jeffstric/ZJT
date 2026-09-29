@@ -40,6 +40,11 @@ class MockUsersModel:
     def generate_unique_invite_code():
         return 'TEST001'
 
+    @staticmethod
+    def generate_unique_nickname():
+        # 注册链路会为用户自动分配随机趣味默认昵称（model/users.py）
+        return '机智的熊猫'
+
 
 class MockLoginLogModel:
     @staticmethod

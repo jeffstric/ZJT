@@ -16,7 +16,7 @@ AskUserMixin - 向用户提问并等待回答的共享功能
 import json
 import logging
 import re
-from typing import Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 from config.unified_config import ASK_USER_MAX_CONSECUTIVE_FAILS
 
@@ -88,6 +88,50 @@ def _validate_question_payload(question: str) -> Optional[str]:
                 "合法 JSON 后重新调用 ask_user，不要在 JSON 里写任何模板未定义的字段。"
             )
     return None
+
+
+# 选项对象中可提取展示文案的字段，按优先级排列
+_OPTION_TEXT_KEYS = ("label", "option", "text", "value", "name", "title", "content")
+
+
+def _normalize_ask_options(options: Any) -> List[str]:
+    """把 LLM 返回的 options 归一化为字符串列表。
+
+    工具 schema 要求 options 为 string 数组，但模型偶尔会返回
+    {"label": ..., "description": ...} 等对象（事故：前端渲染成
+    [object Object]，用户无法作答，导致连续 5 分钟超时）。
+    这里兼容提取对象中的文案字段；取不到文案的元素丢弃，
+    归一化后为空由调用方报错让模型按正确格式重试。
+    """
+    if isinstance(options, str):
+        # 模型偶尔把整个数组塞进字符串，尝试解析
+        try:
+            options = json.loads(options)
+        except (TypeError, ValueError):
+            return []
+
+    if not isinstance(options, list):
+        return []
+
+    normalized: List[str] = []
+    for item in options:
+        text = None
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            for key in _OPTION_TEXT_KEYS:
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    text = value.strip()
+                    break
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    text = str(value)
+                    break
+        elif isinstance(item, (int, float)) and not isinstance(item, bool):
+            text = str(item)
+        if text:
+            normalized.append(text)
+    return normalized
 
 
 class AskUserMixin:
@@ -176,8 +220,15 @@ class AskUserMixin:
                            self.agent_id, payload_error[:120])
             return {"error": payload_error, "user_input": None}
 
-        if not options or not isinstance(options, list) or len(options) == 0:
-            return {"error": "options 参数不能为空，必须提供至少一个选项供用户选择"}
+        # 选项归一化（develop 16dc760c）：LLM 偶尔把 options 写成对象数组（前端
+        # 渲染成 [object Object] 导致用户无法作答、连续 5 分钟超时），兼容提取
+        # 文案字段；归一化后为空报错让模型按字符串数组格式重试。
+        options = _normalize_ask_options(options)
+        if not options:
+            return {
+                "error": "options 参数无效：必须是字符串数组且至少一项，"
+                         "例如 [\"选项一\", \"选项二\"]，不要传对象、空数组或无法解析的内容"
+            }
 
         logger.info(f"{self.agent_id}: Creating user verification request: {question}")
 

@@ -10,6 +10,7 @@
 
 - 算力充值：套餐列表、微信扫码；展示扣邀请佣金后的 `granted_computing_power`。
 - 月度订阅：套餐、入门版首期动画（29.9→18.8，328→368；系统减少动效时直接显示结果）、协议勾选、扫码签约、支付轮询、生效中管理、低档升级到高档、解约。
+- 首订加赠引导（2026-09-29）：有首订加赠资格的用户，支付面板二维码**上方**渲染「微信支付页开关」引导动画（`recharge_center.js::renderRenewGuideTip`，首页 `index.html` 内嵌面板同款，纯 CSS 循环动画 `.sub-rg-*`）：模拟手指把「开通智剧通XX版每月自动续费」开关从灰拨到绿，提示首期多送 `first_period_bonus` 算力；下方固定合规小字「不开通自动续费，首期仅到账 {computing_power} 算力」。置于上方是避免小屏用户点支付后看不到下方内容。背景：加赠需签约成功（微信支付页开关打开）才发放，仅宣称合并数字不披露条件有误导消费者风险。`prefers-reduced-motion` 下静态显示开的终态；无加赠资格/升级流程维持原文案。
 - 本地环境（`server-config.is_local`）不打开弹窗。
 - 订阅接口 `/plans`、`/status`、`/order-status` 的后端签名要求 query `auth_token`，同时带 `Authorization` 头。直充套餐列表只走请求头，不把 token 放进 URL。
 

@@ -30,6 +30,7 @@ from config.constant import (
     GEMINI_URL_FORMATS,
     ChannelLevel,
     UserStatus,
+    REMARK_MAX_LEN,
 )
 from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
 from services.system_config_batch_service import batch_update_system_configs
@@ -506,11 +507,13 @@ async def admin_get_user(
             raise HTTPException(status_code=404, detail="用户不存在")
         
         user_dict = user.to_dict()
-        
+        # 管理员备注不进 to_dict（防用户侧泄漏），仅在 admin 详情路径附加
+        user_dict['remark'] = user.remark
+
         # 添加算力信息
         power = ComputingPowerModel.get_by_user_id(user_id)
         user_dict['computing_power'] = power.computing_power if power else 0
-        
+
         return {
             "code": 0,
             "data": user_dict
@@ -519,6 +522,45 @@ async def admin_get_user(
         raise
     except Exception as e:
         logger.error(f"Failed to get user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class UpdateUserRemarkRequest(BaseModel):
+    remark: str
+
+
+@router.put("/users/{user_id}/remark")
+async def admin_update_user_remark(
+    user_id: int = Path(...),
+    request: UpdateUserRemarkRequest = None,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员设置用户备注（仅后台可见，用户侧接口不返回该字段）。传空串清除备注。"""
+    admin = await require_admin(auth_token)
+    remark = ((request.remark or '') if request is not None else '').strip()
+    if len(remark) > REMARK_MAX_LEN:
+        raise HTTPException(status_code=400, detail=f"备注不能超过 {REMARK_MAX_LEN} 个字符")
+
+    try:
+        target = await asyncio.to_thread(UsersModel.get_by_id, user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="目标用户不存在")
+
+        await asyncio.to_thread(UsersModel.update_remark, user_id, remark)
+        logger.info(f"[Admin] 用户备注变更: user={user_id} by admin={admin.id}")
+        return {
+            "code": 0,
+            "data": {
+                "target_user_id": user_id,
+                "remark": remark,
+            },
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to update remark for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

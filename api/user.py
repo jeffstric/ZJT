@@ -13,7 +13,7 @@ import logging
 from model.users import UsersModel
 from model.user_tokens import UserTokensModel
 from model.user_preferences import PREF_TYPE_POWER_CONFIRM, UserPreferencesModel
-from config.constant import PREF_WORLD_ID_GLOBAL
+from config.constant import PREF_WORLD_ID_GLOBAL, NICKNAME_MAX_LEN
 from model.implementation_power import ImplementationPowerModel
 from model.implementation_stats_cache import ImplementationStatsCacheModel
 from config.unified_config import UnifiedConfigRegistry, TaskCategory, get_implementation_id
@@ -355,3 +355,43 @@ async def delete_power_confirm(auth_token: str = Header(None, alias="Authorizati
     user_id = _require_user_id(auth_token)
     UserPreferencesModel.delete(str(user_id), PREF_WORLD_ID_GLOBAL, PREF_TYPE_POWER_CONFIRM)
     return {"code": 0, "data": _power_confirm_payload(user_id)}
+
+
+class UpdateNicknameRequest(BaseModel):
+    nickname: str
+
+
+def apply_nickname_change(user_id: int, nickname: str) -> Dict[str, str]:
+    """昵称修改的共享业务逻辑。
+
+    api/user.py 的 /api/user/nickname（社区版挂载）与 server.py 的同名路由
+    （enterprise 模块 load 失败时 api/user router 不会挂载，见 server.py 回退逻辑）
+    都调用本函数，保证两种挂载路径行为一致：空串=重置随机默认昵称，非空 ≤ NICKNAME_MAX_LEN。
+
+    Raises:
+        HTTPException: 昵称超长（400）
+    """
+    trimmed = (nickname or '').strip()
+    if trimmed and len(trimmed) > NICKNAME_MAX_LEN:
+        raise HTTPException(status_code=400, detail=f"昵称不能超过 {NICKNAME_MAX_LEN} 个字符")
+    saved = UsersModel.update_nickname(user_id, trimmed)
+    logger.info(f"Updated nickname for user {user_id}")
+    return {"nickname": saved, "display_name": saved}
+
+
+@router.put("/nickname")
+async def update_nickname(
+    request: UpdateNicknameRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+):
+    """设置当前用户昵称；传空串则清除并重新分配随机趣味默认昵称。"""
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="需要登录")
+    if auth_token.startswith("Bearer "):
+        auth_token = auth_token[7:]
+    user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, auth_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
+
+    data = await asyncio.to_thread(apply_nickname_change, user_id, request.nickname or '')
+    return {"code": 0, "data": data}
