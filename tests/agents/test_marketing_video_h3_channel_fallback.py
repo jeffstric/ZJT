@@ -199,6 +199,18 @@ def test_h3_reference_with_images_keeps_reference_channel(marketing_flow):
     assert marketing_flow['image_calls'][0]['image_mode'] == 'multi_reference'
 
 
+def test_h3_first_last_frame_with_images_keeps_task_34(marketing_flow):
+    """用户指定 34（首尾帧条目）+ 参考图：必须以 34 原样提交（d4b3face 事故回归——
+    底层 force 路径曾被 clone 家族换算篡改成 37 后撞防降级防线误报"34 不可用"，
+    marketing 层自身也不得改写 force_task_type；H3 首尾帧驱动对 multi_reference
+    输入自动取参考图[0]作首帧、[1]作尾帧）。"""
+    result = _call(marketing_flow, task_type=34, image_urls=['/upload/marketing_fetched/a.jpg'])
+
+    assert result['success'] is True
+    assert marketing_flow['image_calls'][0]['force_task_type'] == 34
+    assert marketing_flow['image_calls'][0]['task_type'] == 34
+
+
 # -----------------------------
 # 对称防线：45 带参考图 → 落到参考生 37
 # -----------------------------
