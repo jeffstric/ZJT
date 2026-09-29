@@ -785,13 +785,14 @@
   to { transform: rotate(360deg); }
 }
 
-/* ===== 引导打开「每月自动续费」开关（二维码下方，纯 CSS 循环动画，非弹窗） =====
+/* ===== 引导打开「每月自动续费」开关（二维码上方，纯 CSS 循环动画，非弹窗） =====
    模拟微信支付页的开关行：手指把开关从灰拨到绿，提示首订加赠需签约成功才发放。
-   仅首订加赠资格用户渲染（renderRenewGuideTip / index.html 内嵌面板）。 */
+   仅首订加赠资格用户渲染（renderRenewGuideTip / index.html 内嵌面板）。
+   置于二维码上方：小屏用户点支付后无需下滚即可看到 */
 .sub-rg {
   width: 196px;
   max-width: 100%;
-  margin: 12px auto 0;
+  margin: 0 auto;
   background: #fff;
   border-radius: 12px;
   padding: 9px 12px 11px;
@@ -872,11 +873,16 @@
 }
 
 .sub-rg-note {
-  margin-top: 8px;
+  margin: 8px auto 10px;
   font-size: 11px;
   line-height: 1.5;
   text-align: center;
   color: var(--muted);
+}
+
+/* recharge_center.js 中引导块的外层容器：置于二维码上方，抵消 .sub-qr-tip 的 margin-top */
+.sub-qr-head {
+  margin: 0 auto;
 }
 
 @keyframes sub-rg-track {
