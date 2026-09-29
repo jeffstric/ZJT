@@ -71,6 +71,15 @@ async def fetch_wechat_article(url: str, user_id=None, include_comments: bool = 
         await _attach_comments(article, url)
 
     await _attach_image_descriptions(article, user_id=user_id)
+
+    # 正文核心信息点提炼（best-effort）：结构化注入 Agent 上下文，
+    # script_requirements 硬指令要求脚本 prompt 承载信息点（防空泛 prompt）
+    try:
+        from services.article_fetch.key_points import extract_key_points
+
+        article.key_points = await extract_key_points(article.text, article.title)
+    except Exception as e:
+        logger.warning("[article_fetch] 要点提炼不可用（跳过）: %s", e)
     return article
 
 

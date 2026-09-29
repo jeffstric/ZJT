@@ -88,6 +88,7 @@ class ArticleContent:
     text: str                   # 纯文本正文（已截断至 ARTICLE_FETCH_MAX_TEXT_CHARS）
     images: List[ArticleImage] = field(default_factory=list)
     comments: List[ArticleComment] = field(default_factory=list)  # 仅按需抓取（第三方付费接口）
+    key_points: List[str] = field(default_factory=list)  # 正文核心信息点（LLM 提炼，脚本必须承载）
     fetched_at: float = field(default_factory=time.time)
 
     def to_llm_summary(self) -> dict:
@@ -105,6 +106,14 @@ class ArticleContent:
                 for img in self.images
             ],
         }
+        # 结构化脚本要求：核心信息点必须被脚本承载（防 Agent 写空泛 prompt）
+        if self.key_points:
+            summary["key_points"] = self.key_points
+            summary["script_requirements"] = (
+                "生成视频脚本时：每个 clip 的 prompt 必须把上述 key_points 中至少 1 个"
+                "转译为具体可视画面（技巧→动作/场景），禁止只写泛泛的氛围场景。"
+                "参考图只选 description 内容与所承载信息点相关的图。"
+            )
         if self.comments:
             summary["comment_count"] = len(self.comments)
             summary["comments"] = [
