@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/index.css" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
   <link rel="stylesheet" href="/css/announcement_center.css?v=__VERSION__" />
-  <link rel="stylesheet" href="/css/subscription.css?v=20260923a" />
+  <link rel="stylesheet" href="/css/subscription.css?v=20260929a" />
 
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
@@ -1382,6 +1382,20 @@
             <!-- 支付面板 -->
             <div class="sub-payment-panel" v-if="selectedSubPlan">
               <div class="sub-qr-section">
+                <!-- 首订加赠用户：引导动画提醒在微信支付页打开「每月自动续费」开关，否则加赠不发放；
+                     置于二维码上方，小屏用户点支付后无需下滚即可看到 -->
+                <template v-if="subQrCode && selectedSubPlan.first_period_bonus && subFirstBonusEligible">
+                  <div class="sub-rg">
+                    <div class="sub-rg-title">扫码后，在微信支付页打开此开关</div>
+                    <div class="sub-rg-row">
+                      <span class="sub-rg-label">开通智剧通{{ selectedSubPlan.name }}每月自动续费</span>
+                      <span class="sub-rg-switch"><i class="sub-rg-thumb"></i></span>
+                      <span class="sub-rg-finger">👆</span>
+                    </div>
+                    <div class="sub-rg-badge">⚡ 首期多送 {{ selectedSubPlan.first_period_bonus }} 算力</div>
+                  </div>
+                  <div class="sub-rg-note">不开通自动续费，首期仅到账 {{ selectedSubPlan.computing_power }} 算力</div>
+                </template>
                 <div class="sub-qr-box" :class="{ 'has-qr': subQrCode }">
                   <div v-if="subPaymentLoading" style="display:flex; flex-direction:column; align-items:center; gap:8px; color:#64748b; font-size:12px;">
                     <div class="loading-spinner"></div>
@@ -1393,7 +1407,7 @@
                     勾选协议并点击右侧<br/>「微信支付」生成二维码
                   </div>
                 </div>
-                <div v-if="subQrCode" class="sub-qr-tip">请使用微信扫码<br/>支付并确认开通自动续费</div>
+                <div v-if="subQrCode && !(selectedSubPlan.first_period_bonus && subFirstBonusEligible)" class="sub-qr-tip">请使用微信扫码<br/>支付并确认开通自动续费</div>
               </div>
 
               <div class="sub-info-section">

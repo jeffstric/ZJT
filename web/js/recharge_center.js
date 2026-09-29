@@ -826,8 +826,25 @@
         } else {
             inner = '<div class="rc-qr-empty">' + opts.emptyHtml + '</div>';
         }
-        return '<div class="sub-qr-box' + (opts.qr ? ' has-qr' : '') + '">' + inner + '</div>'
+        return (opts.qr && opts.head ? '<div class="sub-qr-tip sub-qr-head">' + opts.head + '</div>' : '')
+            + '<div class="sub-qr-box' + (opts.qr ? ' has-qr' : '') + '">' + inner + '</div>'
             + (opts.qr && opts.tip ? '<div class="sub-qr-tip">' + opts.tip + '</div>' : '');
+    }
+
+    // 二维码上方提示：首订加赠用户改为「微信支付页开关」引导动画（纯 CSS 循环），
+    // 提醒扫码后在微信支付页打开「每月自动续费」开关，否则加赠不发放、首期只到账基础算力。
+    // 置于二维码上方（而非下方）：小屏用户点支付后无需下滚即可看到
+    function renderRenewGuideTip(plan) {
+        return '<div class="sub-rg">'
+            + '<div class="sub-rg-title">扫码后，在微信支付页打开此开关</div>'
+            + '<div class="sub-rg-row">'
+            + '<span class="sub-rg-label">' + esc('开通智剧通' + (plan.name || '') + '每月自动续费') + '</span>'
+            + '<span class="sub-rg-switch"><i class="sub-rg-thumb"></i></span>'
+            + '<span class="sub-rg-finger">👆</span>'
+            + '</div>'
+            + '<div class="sub-rg-badge">⚡ 首期多送 ' + esc(plan.first_period_bonus) + ' 算力</div>'
+            + '</div>'
+            + '<div class="sub-rg-note">不开通自动续费，首期仅到账 ' + esc(plan.computing_power) + ' 算力</div>';
     }
 
     function renderPayPanel(upgrade) {
@@ -847,6 +864,7 @@
             ? '同意 <a href="/auto_renewal_agreement.html" target="_blank" rel="noopener">《自动续费服务协议》</a>，升级立即生效，原套餐的自动续费将自动解除'
             : '同意 <a href="/auto_renewal_agreement.html" target="_blank" rel="noopener">《自动续费服务协议》</a>，到期自动扣费，可随时取消';
         var actionLabel = state.subPaymentLoading ? '生成中...' : (upgrade ? '升级并支付' : '微信支付');
+        var renewGuide = (!upgrade && plan.first_period_bonus && eligible) ? renderRenewGuideTip(plan) : '';
         return ''
             + '<div class="sub-payment-panel">'
             + '<div class="sub-qr-section">'
@@ -855,7 +873,8 @@
                 qr: state.subQr,
                 error: state.subPaymentError,
                 emptyHtml: upgrade ? '勾选协议并点击右侧<br/>「升级并支付」生成二维码' : '勾选协议并点击右侧<br/>「微信支付」生成二维码',
-                tip: upgrade ? '请使用微信扫码<br/>支付完成套餐升级' : '请使用微信扫码<br/>支付并确认开通自动续费'
+                head: renewGuide,
+                tip: renewGuide ? '' : (upgrade ? '请使用微信扫码<br/>支付完成套餐升级' : '请使用微信扫码<br/>支付并确认开通自动续费')
             })
             + '</div>'
             + '<div class="sub-info-section">'
