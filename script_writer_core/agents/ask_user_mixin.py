@@ -14,11 +14,34 @@ AskUserMixin - 向用户提问并等待回答的共享功能
 """
 
 import logging
+import re
 from typing import Dict, Any
 
 from config.unified_config import ASK_USER_MAX_CONSECUTIVE_FAILS
 
 logger = logging.getLogger(__name__)
+
+# LLM 输出退化残片特征：question 值结束后紧跟的半截参数语法
+# （实测形态：`, "parameter name="options" string="false">`）
+_DEGRADED_TAIL_RE = re.compile(r",?\s*\"parameter name=")
+
+
+def _strip_degraded_tail(question: str) -> str:
+    """截断 question 尾部的 LLM 输出退化残片（无残片则原样返回）。"""
+    if not question:
+        return question
+    m = _DEGRADED_TAIL_RE.search(question)
+    if m:
+        cleaned = question[:m.start()].rstrip()
+        # 残片起点前的孤立收尾引号（LLM 提前闭合字符串的痕迹）一并去掉
+        if cleaned.endswith('"'):
+            cleaned = cleaned[:-1].rstrip()
+        logger.warning(
+            "[ask_user] question 含输出退化残片，已截断 %d 字符",
+            len(question) - len(cleaned),
+        )
+        return cleaned
+    return question
 
 
 class AskUserMixin:
@@ -92,6 +115,11 @@ class AskUserMixin:
 
         if not question:
             return {"error": "question 参数不能为空"}
+
+        # 清洗 LLM 输出退化残片：question 尾部偶发混入格式损坏 token（实测形如
+        # `, "parameter name="options" string="false">` ——LLM 写长转义 JSON 时输出
+        # 退化，恰好不破坏 arguments 整体 JSON 解析，残片随 question 透到前端渲染）。
+        question = _strip_degraded_tail(question)
 
         if not options or not isinstance(options, list) or len(options) == 0:
             return {"error": "options 参数不能为空，必须提供至少一个选项供用户选择"}
