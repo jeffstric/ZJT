@@ -89,14 +89,21 @@
   function renderClip(clip, index) {
     var refs = renderRefs(clip);
     // 分秒口播时间轴（timeline 数组，信息密度载体）
-    // 语速红线：中文约 4.5 字/秒——每条超过 9 字标 ▲ 提示念不完
+    // 语速红线：中文约 4.5 字/秒——每条超过 9 字标 ▲ 提示念不完。
+    // 防御性剥离（会话 3e88c1db 事故）：Agent 偶发自带秒标（"0s：xxx"与前端
+    // 下标秒标重复）或"旁白：/口播："前缀（非口播内容本身），渲染与语速
+    // 统计均基于剥离后的文本。
     var timelineHtml = '';
     if (Array.isArray(clip.timeline) && clip.timeline.length) {
       var rows = '';
       var OVER_SPEED_CHARS = 9;
       clip.timeline.forEach(function (line, i) {
         if (!line) return;
-        var text = String(line);
+        var text = String(line)
+          .replace(/^\s*\d+(?:\s*-\s*\d+)?\s*s\s*[：:]\s*/i, '')
+          .replace(/^\s*(?:旁白口播|旁白|口播)\s*[：:]\s*/, '')
+          .trim();
+        if (!text) return;
         var over = text.replace(/\s/g, '').length > OVER_SPEED_CHARS;
         rows += '<div class="asc-tl-row"><span class="asc-tl-sec">' + i + 's</span>' +
                 '<span class="asc-tl-text' + (over ? ' asc-tl-over' : '') + '" title="' +
