@@ -6,11 +6,15 @@ PROCESSING 且 async_task_id 为 NULL，调度器每 13s 刷一条 WARNING，所
 param_prepare 阶段永久挂起 15+ 天。
 
 验证点：
-1. _recover_stuck_processing_steps 会把超时步骤批量标记 FAILED 并触发阶段完成检查；
-2. 无卡死步骤时不做任何写操作；
-3. model 层新方法 get_stuck_processing_steps_without_async_task 的 SQL 参数正确
+1. _recover_stuck_processing_steps 会把超时步骤批量标记 FAILED；
+2. 回收**不得**调用 _check_ai_tool_stage_completion 抢跑推进 ai_tool——该函数的
+   失败分支只改 ai_tools 不更新 tasks/不退款，会把 ai_tool 置 FAILED 使
+   visual_task._check_pipeline_stage 分支（要求 WAITING_PARAM_PREPARE）失配，
+   退款退化为 30 次 max-retry 指数退避兜底。终态化必须留给 visual_task；
+3. 无卡死步骤时不做任何写操作；
+4. model 层新方法 get_stuck_processing_steps_without_async_task 的 SQL 参数正确
    （timeout 参数进 INTERVAL，不受时区影响）；
-4. _process_single_step 对无 async_task_id 的步骤仅告警不修改状态（回收由专门入口负责）。
+5. _process_single_step 对无 async_task_id 的步骤仅告警不修改状态（回收由专门入口负责）。
 """
 import asyncio
 import sys
@@ -42,10 +46,11 @@ class TestRecoverStuckProcessingSteps(unittest.TestCase):
     def _run(self, coro):
         return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)
 
+    @patch('task.pipeline_processor.PipelineProcessor._check_ai_tool_stage_completion')
     @patch('task.pipeline_processor.PipelineStepModel')
     @patch.object(_const.PipelineConfig, 'STUCK_PROCESSING_WITHOUT_ASYNC_TASK_TIMEOUT_SECONDS', 3600)
-    def test_recovers_stuck_steps_and_checks_completion(self, MockStepModel):
-        """超时步骤被批量置 FAILED，且对受影响 (ai_tool, stage) 触发阶段完成检查"""
+    def test_recovers_steps_without_premature_completion_check(self, MockStepModel, mock_check):
+        """超时步骤被批量置 FAILED，且不得调用 _check_ai_tool_stage_completion 抢跑"""
         from task.pipeline_processor import PipelineProcessor
 
         stuck = [_make_step(6759, 48161, 'param_prepare'),
@@ -53,9 +58,7 @@ class TestRecoverStuckProcessingSteps(unittest.TestCase):
                  _make_step(6801, 48200, 'before_finish')]
         MockStepModel.get_stuck_processing_steps_without_async_task.return_value = stuck
 
-        with patch.object(PipelineProcessor, '_check_ai_tool_stage_completion',
-                          new=MagicMock()) as mock_check:
-            recovered = self._run(PipelineProcessor._recover_stuck_processing_steps())
+        recovered = self._run(PipelineProcessor._recover_stuck_processing_steps())
 
         self.assertEqual(recovered, 3)
         # 查询参数：超时阈值来自 PipelineConfig
@@ -66,9 +69,9 @@ class TestRecoverStuckProcessingSteps(unittest.TestCase):
         fail_call = MockStepModel.fail_processing_steps_by_ids.call_args
         self.assertEqual(sorted(fail_call.args[0]), [6759, 6760, 6801])
         self.assertIn('步骤卡死回收', fail_call.kwargs['error_message'])
-        # 阶段完成检查按 (ai_tool_id, stage) 去重：3 步骤 → 2 组
-        checked = {c.args for c in mock_check.call_args_list}
-        self.assertEqual(checked, {(48161, 'param_prepare'), (48200, 'before_finish')})
+        # 关键回归断言：不抢跑 ai_tool 终态化（留给 visual_task._check_pipeline_stage
+        # 完成 ai_tool+tasks FAILED+退款，理由见函数 docstring）
+        mock_check.assert_not_called()
 
     @patch('task.pipeline_processor.PipelineStepModel')
     def test_no_stuck_steps_no_writes(self, MockStepModel):
@@ -79,20 +82,6 @@ class TestRecoverStuckProcessingSteps(unittest.TestCase):
         recovered = self._run(PipelineProcessor._recover_stuck_processing_steps())
         self.assertEqual(recovered, 0)
         MockStepModel.fail_processing_steps_by_ids.assert_not_called()
-
-    @patch('task.pipeline_processor.PipelineStepModel')
-    def test_completion_check_error_does_not_break_recovery(self, MockStepModel):
-        """单个 ai_tool 的阶段检查抛异常不影响回收结果"""
-        from task.pipeline_processor import PipelineProcessor
-
-        MockStepModel.get_stuck_processing_steps_without_async_task.return_value = [
-            _make_step(6759, 48161, 'param_prepare'),
-        ]
-        with patch.object(PipelineProcessor, '_check_ai_tool_stage_completion',
-                          side_effect=RuntimeError('boom')):
-            recovered = self._run(PipelineProcessor._recover_stuck_processing_steps())
-        self.assertEqual(recovered, 1)
-        MockStepModel.fail_processing_steps_by_ids.assert_called_once()
 
 
 class TestStuckStepModelSql(unittest.TestCase):

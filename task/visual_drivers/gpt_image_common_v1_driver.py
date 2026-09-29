@@ -180,6 +180,9 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             base64_data = base64.b64encode(response.content).decode('utf-8')
             return base64_data, mime_type
 
+        except ImageExpiredError:
+            # 用户侧错误（参考图已失效），上方已记 warning，不再记笼统 error
+            raise
         except Exception as e:
             self.logger.error(f"Failed to download image: {image_url}, error: {str(e)}")
             raise

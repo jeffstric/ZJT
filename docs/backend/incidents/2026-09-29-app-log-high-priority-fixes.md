@@ -29,7 +29,7 @@
   - `fail_processing_steps_by_ids(step_ids, error_message)`——只更新 status=PROCESSING 的行，幂等。
 - `task/pipeline_processor.py`：
   - `process_all_pending_steps` 第 0 步调用新增的 `_recover_stuck_processing_steps()`（无卡死时开销为一次走索引的查询）；
-  - 回收后对受影响 `(ai_tool_id, stage)` 触发 `_check_ai_tool_stage_completion` 推进 ai_tool；tasks 终结与**退款**由 `visual_task._check_pipeline_stage` 在其轮询周期（5s）内兜底完成；
+  - 回收只把步骤置 FAILED，**不**调用 `_check_ai_tool_stage_completion` 抢跑推进 ai_tool——该函数的失败分支只改 ai_tools 表（不更新 tasks、不退款），会把 ai_tool 置 FAILED 使 `visual_task._check_pipeline_stage` 的入口分支（要求 WAITING_PARAM_PREPARE/WAITING_BEFORE_FINISH）永远失配，退款与 tasks 终结退化为 30 次 max-retry 指数退避兜底。终态化留给 visual_task：其 5s 轮询内 `_check_pipeline_stage` 检测到步骤 FAILED 即一步完成 ai_tool/tasks FAILED + **退款**（所有带 pipeline 步骤的任务均为 TASK_TYPE_GENERATE_VIDEO，在 visual_task 轮询范围内，闭环完整）；
   - `_process_single_step` 的 WARNING 增加 `stuck_seconds` 字段，便于观察回收前进度。
 
 ### 存量数据
@@ -111,9 +111,9 @@ WHERE status = 1 AND async_task_id IS NULL
 
 ## 测试
 
-新增 3 个测试文件共 18 个用例，全部通过：
+新增 3 个测试文件共 17 个用例，全部通过：
 
-- `tests/task/test_pipeline_stuck_step_recovery.py`（6）：回收链路 / 无卡死不写 / 阶段检查异常不阻断 / SQL 参数 / 幂等语义 / 告警不改状态
+- `tests/task/test_pipeline_stuck_step_recovery.py`（5）：回收链路 / **不抢跑终态化（回归断言 `_check_ai_tool_stage_completion` 不被调用）** / 无卡死不写 / SQL 参数与时区无关 / 幂等语义 / 告警不改状态
 - `tests/task/test_grid_image_auth_failure.py`（7）：401/403 识别 / 终态写入与联动 / 计数清理 / 单次 401 不终止 / 非认证错误重置计数
 - `tests/drivers/test_gpt_image_expired_reference.py`（5）：404/410 → ImageExpiredError / 5xx 保持原语义 / submit_task 返 USER 错误且不触发 Sentry
 

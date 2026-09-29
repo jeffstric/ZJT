@@ -483,8 +483,14 @@ class PipelineProcessor:
         两者之间异常退出，该步骤将成为永久孤儿（PROCESSING + async_task_id NULL），
         所属 ai_tool 的阶段永久挂起、调度器每轮刷 WARNING（生产 step 6759 挂了 15+ 天）。
 
-        回收后触发 _check_ai_tool_stage_completion 推进 ai_tool 终态；
-        tasks 表终结与退款由 visual_task._check_pipeline_stage 在其轮询周期内兜底完成。
+        ⚠️ 只把步骤置 FAILED，**不要**在此调用 _check_ai_tool_stage_completion 推进
+        ai_tool：该函数的失败分支只改 ai_tools 表（不更新 tasks、不退款），会把
+        ai_tool 置为 FAILED，导致 visual_task 的 _check_pipeline_stage 分支
+        （要求 WAITING_PARAM_PREPARE/WAITING_BEFORE_FINISH）永远不再命中，退款与
+        tasks 终结只能退化到 30 次 max-retry 指数退避兜底。正确路径是把终态化留给
+        visual_task：其轮询周期（5s）内 _check_pipeline_stage 检测到步骤 FAILED 即
+        一步完成 ai_tool/tasks FAILED + 退款。所有带 pipeline 步骤的任务均为
+        TASK_TYPE_GENERATE_VIDEO（visual_task 轮询范围），此闭环完整。
 
         Returns:
             本轮回收的步骤数
@@ -500,8 +506,10 @@ class PipelineProcessor:
 
         step_ids = [s.id for s in stuck_steps]
         logger.error(
-            "Recovering %s stuck PROCESSING step(s) without async_task_id: ids=%s",
+            "Recovering %s stuck PROCESSING step(s) without async_task_id: ids=%s, "
+            "ai_tools=%s (ai_tool 终态化与退款由 visual_task._check_pipeline_stage 完成)",
             len(step_ids), step_ids,
+            sorted({s.ai_tool_id for s in stuck_steps}),
         )
         PipelineStepModel.fail_processing_steps_by_ids(
             step_ids,
@@ -511,17 +519,6 @@ class PipelineProcessor:
                 "且无 async_task_id（dispatch 异常中断遗留），已自动标记失败"
             ),
         )
-
-        # 推进每个受影响 ai_tool 的阶段状态（去重）
-        affected = {(s.ai_tool_id, s.stage) for s in stuck_steps}
-        for ai_tool_id, stage in affected:
-            try:
-                await PipelineProcessor._check_ai_tool_stage_completion(ai_tool_id, stage)
-            except Exception as e:
-                logger.error(
-                    f"Error checking stage completion for ai_tool {ai_tool_id} "
-                    f"after stuck step recovery: {e}", exc_info=True
-                )
         return len(step_ids)
 
     @staticmethod

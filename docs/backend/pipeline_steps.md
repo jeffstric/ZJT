@@ -271,7 +271,7 @@ scripts/
 
 1. `PipelineStepModel.get_stuck_processing_steps_without_async_task(timeout)` 查出超时卡死步骤——超时判定在 SQL 层 `NOW() - INTERVAL` 完成，**不受应用/数据库时区差异影响**（阈值 `PipelineConfig.STUCK_PROCESSING_WITHOUT_ASYNC_TASK_TIMEOUT_SECONDS = 3600`，单轮上限 `STUCK_PROCESSING_RECOVER_LIMIT = 20`）；
 2. `fail_processing_steps_by_ids()` 批量置 FAILED（只更新 PROCESSING 行，幂等）；
-3. 对受影响 `(ai_tool_id, stage)` 触发 `_check_ai_tool_stage_completion` 推进 ai_tool；tasks 终结与**退款**由 `visual_task._check_pipeline_stage` 在其轮询周期内自动完成，无需手工干预存量数据。
+3. **终态化与退款留给 visual_task**：回收不得调用 `_check_ai_tool_stage_completion` 抢跑——该函数失败分支只改 ai_tools（不更新 tasks、不退款），置 FAILED 后 `visual_task._check_pipeline_stage` 的入口分支（要求 WAITING_PARAM_PREPARE/WAITING_BEFORE_FINISH）将永远失配，退款退化为 30 次 max-retry 指数退避兜底。所有带 pipeline 步骤的任务均为 TASK_TYPE_GENERATE_VIDEO（visual_task 轮询范围），其 5s 周期内 `_check_pipeline_stage` 检测到步骤 FAILED 即一步完成 ai_tool/tasks FAILED + 退款，存量数据无需手工干预。
 
 ## 服务重启恢复
 
