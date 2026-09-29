@@ -51,18 +51,17 @@ async def fetch_wechat_article(url: str, user_id=None, include_comments: bool = 
     - auto：自研优先，Blocked/上游异常时自动走 TikHub 兜底（按次计费）
     - tikhub：全部走 TikHub（最稳，每篇 $0.01）
     include_comments=True 且配置了 TikHub 时附带精选评论（额外 $0.01/次）。
+    抓取成功后对图片做 VL 识图（best-effort），Agent 据此"看懂图片"再选参考图。
     """
     mode = _get_wechat_provider_mode()
 
     article = None
-    blocked_error = None
     if mode in ("self", "auto"):
         try:
             article = await _fetch_by_self(url, user_id=user_id)
         except (ArticleFetchBlocked, ArticleFetchUpstreamError) as e:
             if mode == "self":
                 raise
-            blocked_error = e
             logger.info("[article_fetch] 自研通道失败，尝试第三方兜底: %s", str(e)[:80])
 
     if article is None:
@@ -70,7 +69,36 @@ async def fetch_wechat_article(url: str, user_id=None, include_comments: bool = 
 
     if include_comments:
         await _attach_comments(article, url)
+
+    await _attach_image_descriptions(article, user_id=user_id)
     return article
+
+
+async def _attach_image_descriptions(article: ArticleContent, user_id=None) -> None:
+    """VL 识图：为已转存图片生成内容描述（best-effort，失败不阻断）。
+
+    让 Agent"看懂图片里是什么"再决定参考图，而不是见到图就传。
+    顺序执行控制 VL 并发；总耗时受 fetch_article_content 外层超时约束。
+    """
+    if not article.images:
+        return
+    try:
+        from services.image_describe import describe_image
+
+        for img in article.images:
+            try:
+                # user_id=None：识图走 upload 根目录白名单（workflow/<uid> 子目录
+                # 白名单不含 marketing_fetched，传 uid 会被"非法的图片路径"拒绝）
+                result = await describe_image(img.url, user_id=None, purpose="image_prompt")
+                if result.get("success") and result.get("description"):
+                    img.description = str(result["description"])[:200]
+            except Exception as e:
+                logger.debug("[article_fetch] 单图识图失败（跳过）: %s", e)
+                continue
+        described = sum(1 for i in article.images if i.description)
+        logger.info("[article_fetch] 图片识图完成: %d/%d", described, len(article.images))
+    except Exception as e:
+        logger.warning("[article_fetch] 图片识图不可用（跳过，不影响正文）: %s", e)
 
 
 def _get_wechat_provider_mode() -> str:

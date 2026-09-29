@@ -74,6 +74,7 @@ class ArticleImage:
     index: int
     original_url: str
     url: str  # /upload/marketing_fetched/... 本地路径
+    description: str = ""  # VL 识图的内容描述（可选，供 Agent 判断参考图相关性）
 
 
 @dataclass
@@ -99,7 +100,9 @@ class ArticleContent:
             "text": self.text,
             "image_count": len(self.images),
             "images": [
-                {"index": img.index, "url": img.url} for img in self.images
+                {"index": img.index, "url": img.url, "description": img.description}
+                if img.description else {"index": img.index, "url": img.url}
+                for img in self.images
             ],
         }
         if self.comments:

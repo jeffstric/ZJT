@@ -83,7 +83,7 @@ def _build_providers():
                             images = await download_and_store_images(
                                 session, parsed["image_urls"][:ARTICLE_FETCH_MAX_IMAGES], user_id=user_id
                             )
-                    return ArticleContent(
+                    article = ArticleContent(
                         source_type="xiaohongshu",
                         source_url=url,
                         title=parsed["title"],
@@ -91,6 +91,14 @@ def _build_providers():
                         text=parsed["text"],
                         images=images,
                     )
+                    # VL 识图（best-effort）：让 Agent 看懂图片再选参考图
+                    try:
+                        from services.article_fetch.wechat_fetcher import _attach_image_descriptions
+
+                        await _attach_image_descriptions(article, user_id=user_id)
+                    except Exception:
+                        pass
+                    return article
 
             providers["tikhub"] = _TikhubXhsProvider
     except Exception as e:  # 依赖缺失（httpx 等）时不注册
