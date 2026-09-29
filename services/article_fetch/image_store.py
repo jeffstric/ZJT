@@ -84,18 +84,26 @@ async def download_and_store_image(
             headers.update(domain_headers)
             break
 
-    try:
-        response = await asyncio.wait_for(
-            session.get(url, headers=headers, impersonate="chrome"),
-            timeout=ARTICLE_FETCH_IMAGE_TIMEOUT,
-        )
-    except asyncio.TimeoutError as e:
-        raise ArticleFetchUpstreamError(f"图片下载超时（{ARTICLE_FETCH_IMAGE_TIMEOUT}s）") from e
-    except Exception as e:
-        raise ArticleFetchUpstreamError(f"图片下载失败: {type(e).__name__}") from e
+    # 小红书 CDN（rednotecdn/xhscdn）偶发慢，单图重试一次（换一次 CDN 调度机会）
+    last_error: Exception = None
+    for attempt in (1, 2):
+        try:
+            response = await asyncio.wait_for(
+                session.get(url, headers=headers, impersonate="chrome"),
+                timeout=ARTICLE_FETCH_IMAGE_TIMEOUT,
+            )
+            if response.status_code == 200:
+                break
+            last_error = ArticleFetchUpstreamError(f"图片下载失败（HTTP {response.status_code}）")
+        except asyncio.TimeoutError as e:
+            last_error = ArticleFetchUpstreamError(f"图片下载超时（{ARTICLE_FETCH_IMAGE_TIMEOUT}s）")
+        except Exception as e:
+            last_error = ArticleFetchUpstreamError(f"图片下载失败: {type(e).__name__}")
+        if attempt == 1:
+            await asyncio.sleep(1)
 
-    if response.status_code != 200:
-        raise ArticleFetchUpstreamError(f"图片下载失败（HTTP {response.status_code}）")
+    if isinstance(last_error, ArticleFetchUpstreamError) and last_error is not None:
+        raise last_error
 
     content = response.content or b""
     if len(content) == 0:
