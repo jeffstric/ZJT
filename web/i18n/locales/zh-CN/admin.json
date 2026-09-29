@@ -1084,5 +1084,22 @@
   "ann_toast_published": "公告已发布",
   "ann_toast_offlined": "公告已下线",
   "ann_delete_confirm": "确认删除公告「{title}」？删除后不可恢复",
-  "ann_toast_deleted": "公告已删除"
+  "ann_toast_deleted": "公告已删除",
+  "category_article_fetch": "信息采集",
+  "category_article_fetch_desc": "企业版专属：第三方信息采集供应商，增强公众号/小红书图文抓取（不配置时公众号仍可用免费自研通道）",
+  "provider_tikhub_name": "TikHub（公众号/小红书采集）",
+  "provider_tikhub_desc": "企业版专属：第三方信息采集 API（公众号受限文章兜底、精选评论、小红书笔记抓取，图文转视频功能使用，按次计费约 $0.01/次）",
+  "provider_tikhub_impacts": "公众号受限文章, 文章评论, 小红书笔记抓取",
+  "field_api_key_placeholder_tikhub": "在 tikhub.io 注册后获取（user.tikhub.io → API Access Token）",
+  "field_api_key_help_tikhub": "可选功能：不配置时公众号抓取走系统自研免费通道；配置后可开启下方通道增强",
+  "field_wechat_provider_label": "公众号抓取通道",
+  "field_wechat_provider_help": "默认（自研优先+受限文章自动兜底）/ 自研（免费，受限文章不可得）/ 全部 TikHub（最稳，每篇约$0.01）",
+  "option_wechat_provider_default": "默认（自研优先，受限自动兜底 TikHub）",
+  "option_wechat_provider_auto": "自研优先 + TikHub 自动兜底",
+  "option_wechat_provider_tikhub": "全部走 TikHub（最稳定）",
+  "option_wechat_provider_self": "仅自研免费通道",
+  "field_xhs_provider_label": "小红书抓取通道",
+  "field_xhs_provider_help": "默认关闭；开启后营销智能体可抓取小红书笔记（需上方 API Key）",
+  "option_xhs_provider_off": "关闭（默认）",
+  "option_xhs_provider_tikhub": "启用（TikHub）"
 }

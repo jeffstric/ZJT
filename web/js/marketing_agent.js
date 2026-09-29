@@ -103,6 +103,9 @@
             let loadingSessionId = null;  // 追踪哪个 session 触发了 loading，防止跨 session 竞态清除
             const activeIntervals = new Set();  // 追踪所有活跃的 setInterval ID
             const MAX_CONSECUTIVE_TASK_ERRORS = 3;
+            // 连续错误达到上限后转入的低频轮询间隔（任务服务端仍在生成，
+            // 刷新页面后 __PENDING_TASK__ 恢复机制也会重新拉取，前端不该判死任务）
+            const TASK_ERROR_BACKOFF_INTERVAL = 30000;
             const taskErrorCounts = new Map();
             const activeGenerationPollKeys = new Set();
             const directGenerationTasks = new Map();
@@ -146,6 +149,8 @@
                 return next;
             }
 
+            // 连续轮询错误达到上限：不判死任务（服务端仍在生成、刷新后 pending 恢复会重新拉取），
+            // 气泡显示中性提示并转入低频轮询继续探测，恢复 200 即刷新回进度
             function stopTaskAfterRepeatedErrors(key, interval, msgUid, fallbackContent) {
                 if (interval) trackedClearInterval(interval);
                 if (msgUid) {
@@ -414,7 +419,8 @@
                 }
 
                 const ids = [];
-                const inlineProjectIdPattern = /(?:项目ID|project[_\s-]*id)\s*[:：]\s*([A-Za-z0-9_-]+)/gi;
+                // 兼容 markdown 粗体（**项目ID**: 266）与英文键（project_id: 266）
+                const inlineProjectIdPattern = /(?:项目ID|project[_\s-]*id)\s*(?:\*\*)?\s*[:：]\s*\*{0,2}\s*([A-Za-z0-9_-]+)/gi;
                 let inlineMatch;
                 while ((inlineMatch = inlineProjectIdPattern.exec(text)) !== null) {
                     const id = inlineMatch[1];
@@ -1641,6 +1647,12 @@
             function renderMarkdown(text) {
                 if (!text) return '';
 
+                // 图文转视频：脚本 JSON 渲染为结构化确认卡（article-to-video）
+                if (window.MarketingArticleCard) {
+                    const transformed = window.MarketingArticleCard.transformMessageText(text);
+                    if (transformed !== null) text = transformed;
+                }
+
                 // 步骤1：保护已有的 markdown 图片语法 ![alt](url)，用占位符替换
                 const imgPlaceholders = [];
                 text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, (match) => {
@@ -2677,14 +2689,19 @@
                         console.error('Agent 图片状态轮询错误:', err);
                         const failures = recordTaskError(errorKey);
                         if (failures >= MAX_CONSECUTIVE_TASK_ERRORS) {
-                            shouldContinuePolling = false;
-                            activeGenerationPollKeys.delete(pollKey);
+                            // 不判死：任务服务端仍在生成，气泡转中性提示，
+                            // 销毁当前高频 interval，按低频继续探测（恢复后照常展示）
+                            shouldContinuePolling = true;
                             stopTaskAfterRepeatedErrors(
                                 errorKey,
                                 interval,
                                 msgUid,
-                                window.t('request_timeout') || '请求超时，请稍后重试。'
+                                window.t('video_generating_progress', { done: '?', total: projectIds.length }) || '生成中…'
                             );
+                            if (interval) {
+                                trackedClearInterval(interval);
+                                interval = trackedSetInterval(checkImageStatus, TASK_ERROR_BACKOFF_INTERVAL);
+                            }
                         }
                     }
                 };
@@ -2803,14 +2820,19 @@
                         console.error('Agent 视频状态轮询错误:', err);
                         const failures = recordTaskError(errorKey);
                         if (failures >= MAX_CONSECUTIVE_TASK_ERRORS) {
-                            shouldContinuePolling = false;
-                            activeGenerationPollKeys.delete(pollKey);
+                            // 不判死：任务服务端仍在生成，气泡转中性提示，
+                            // 销毁当前高频 interval，按低频继续探测（恢复后照常展示）
+                            shouldContinuePolling = true;
                             stopTaskAfterRepeatedErrors(
                                 errorKey,
                                 interval,
                                 msgUid,
-                                window.t('request_timeout') || '请求超时，请稍后重试。'
+                                window.t('video_generating_progress', { done: '?', total: projectIds.length }) || '生成中…'
                             );
+                            if (interval) {
+                                trackedClearInterval(interval);
+                                interval = trackedSetInterval(checkStatus, TASK_ERROR_BACKOFF_INTERVAL);
+                            }
                         }
                     }
                 };
@@ -3493,7 +3515,11 @@
                     }
                     });
 
-                    // 超时处理
+                    // 超时处理：仅当从未收到任何数据时才报"请求超时"。
+                    // 长流程（图文转视频：抓取→识图→要点提炼→ask_user 挂起→逐 clip 提交）
+                    // 静默期可超过 15 分钟，但期间可能已有脚本卡/进度渲染、视频轮询已接管——
+                    // 此时超时到达应静默收尾，不能把"请求超时"误标到正常进行的任务上
+                    // （会话 c7b27012 实测：3 条视频正常出片，却弹出 3 条超时气泡）。
                     streamTimeoutId = setTimeout(() => {
                         if (streamSettled) return;
                         settleStream();
@@ -7012,6 +7038,7 @@
                 formatTime,
                 formatShortDate,
                 renderMarkdown,
+                windowSourceBadge: (window.MarketingArticleCard && window.MarketingArticleCard.sourceBadge) || null,
                 showImageModal,
                 previewMedia,
                 autoResize,

@@ -151,7 +151,7 @@ def _build_dialogue_fidelity_note(quoted_spans: list) -> str:
     listed = "\n".join(f'- "{span}"' for span in quoted_spans)
     return (
         f"原始提示词中存在以下引号包裹的 {language} 片段:\n{listed}\n"
-        f"若它们是角色说出的台词、唱出的歌词或画面中的可见文字,"
+        f"若它们是角色说出的台词、旁白/画外音口播、唱出的歌词或画面中的可见文字,"
         f"必须逐字保留在 <d> 内(语言标签写 [{language}]),严禁翻译或改写;"
         f"若它们只是动作、氛围、术语等描述性用法,则正常按英文规范转写。"
     )

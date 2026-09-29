@@ -1084,5 +1084,22 @@
   "ann_toast_published": "Announcement published",
   "ann_toast_offlined": "Announcement taken offline",
   "ann_delete_confirm": "Delete announcement \"{title}\"? This cannot be undone",
-  "ann_toast_deleted": "Announcement deleted"
+  "ann_toast_deleted": "Announcement deleted",
+  "category_article_fetch": "Content Fetch",
+  "category_article_fetch_desc": "Enterprise-only: third-party content fetching provider for WeChat MP / Xiaohongshu articles (built-in free channel still works without it)",
+  "provider_tikhub_name": "TikHub (WeChat MP / XHS Fetch)",
+  "provider_tikhub_desc": "Enterprise-only: third-party content API (WeChat restricted-article fallback, article comments, XHS note fetching; used by article-to-video; ~$0.01/request)",
+  "provider_tikhub_impacts": "WeChat restricted articles, article comments, Xiaohongshu notes",
+  "field_api_key_placeholder_tikhub": "Get it at tikhub.io (user.tikhub.io -> API Access Token)",
+  "field_api_key_help_tikhub": "Optional: without this key, WeChat articles still work via the built-in free channel",
+  "field_wechat_provider_label": "WeChat article channel",
+  "field_wechat_provider_help": "Default (built-in first, auto fallback) / built-in only (free) / TikHub for all (most stable, ~$0.01/article)",
+  "option_wechat_provider_default": "Default (built-in first, auto TikHub fallback)",
+  "option_wechat_provider_auto": "Built-in first + TikHub fallback",
+  "option_wechat_provider_tikhub": "TikHub for all (most stable)",
+  "option_wechat_provider_self": "Built-in free channel only",
+  "field_xhs_provider_label": "Xiaohongshu channel",
+  "field_xhs_provider_help": "Off by default; enable to fetch XHS notes in marketing agent (requires API key above)",
+  "option_xhs_provider_off": "Off (default)",
+  "option_xhs_provider_tikhub": "Enabled (TikHub)"
 }

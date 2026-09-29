@@ -966,6 +966,32 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== 信息采集供应商（article-to-video 图文抓取）====================
+    {
+        'key': 'article_fetch.tikhub_api_key',
+        'value_type': 'string',
+        'description': 'TikHub API Key（信息采集供应商：公众号受限文章/评论/小红书笔记，可选）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'article_fetch.wechat_provider',
+        'value_type': 'string',
+        'description': '公众号抓取通道：空=跟随key状态/self=仅自研/auto=自研优先TikHub兜底/tikhub=全部TikHub',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'article_fetch.xhs_provider',
+        'value_type': 'string',
+        'description': '小红书抓取通道：空=关闭（默认）/tikhub=启用',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== 智谱 BigModel 国内站配置 ====================
     {
         'key': 'llm.glmcn.api_key',

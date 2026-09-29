@@ -15,11 +15,80 @@ AskUserMixin - 向用户提问并等待回答的共享功能
 
 import json
 import logging
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional
 
 from config.unified_config import ASK_USER_MAX_CONSECUTIVE_FAILS
 
 logger = logging.getLogger(__name__)
+
+# LLM 输出退化残片特征：question 值结束后紧跟的半截参数语法
+# （实测形态：`, "parameter name="options" string="false">`）
+_DEGRADED_TAIL_RE = re.compile(r",?\s*\"parameter name=")
+
+# question 内嵌 ```json 代码块（ask_user 结构化确认卡负载）
+_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```")
+
+# 输出退化残片检测（比 _DEGRADED_TAIL_RE 宽，用于报错打回而非清洗）：
+# 覆盖 `</think_never_used_HASH>` 伪闭合标签与 `<parameter name=` 尖括号形态
+# （2026-09-29 会话 50687e18 实测：`, "parameter name=` 引号形态之外的漏网变体）
+_DEGRADED_FRAG_RE = re.compile(r"</think[^>]*>|<parameter\s+name=|\"\s*parameter\s+name=")
+
+
+def _strip_degraded_tail(question: str) -> str:
+    """截断 question 尾部的 LLM 输出退化残片（无残片则原样返回）。"""
+    if not question:
+        return question
+    m = _DEGRADED_TAIL_RE.search(question)
+    if m:
+        cleaned = question[:m.start()].rstrip()
+        # 残片起点前的孤立收尾引号（LLM 提前闭合字符串的痕迹）一并去掉
+        if cleaned.endswith('"'):
+            cleaned = cleaned[:-1].rstrip()
+        logger.warning(
+            "[ask_user] question 含输出退化残片，已截断 %d 字符",
+            len(question) - len(cleaned),
+        )
+        return cleaned
+    return question
+
+
+def _validate_question_payload(question: str) -> Optional[str]:
+    """校验 question 携带的结构化负载，返回错误文案（打回让 LLM 重新生成）或 None。
+
+    设计取向：不做修复式清洗——格式坏到无法解析就直接报错让模型重写，
+    避免残缺脚本导致前端确认卡渲染降级（用户面对原始 JSON 无按钮可点，
+    2026-09-29 会话 50687e18：estimated_consumption 字段值未加引号 + 尾部退化残片）。
+
+    校验两项：
+    1. 退化残片：`</think...>` 伪标签 / `<parameter name=` 半截参数语法；
+    2. ```json 代码块必须能被 json.loads 直接解析。
+    """
+    if not question:
+        return None
+    m = _DEGRADED_FRAG_RE.search(question)
+    if m:
+        return (
+            "question 中混入了模型输出退化残片（</think...> 标签或 <parameter name=...> "
+            "半截参数语法），这是你生成参数时的格式错误，不是用户能看到的内容。"
+            "请重新调用 ask_user：完整重写 question，确保以纯文本+合法 json 代码块组成，"
+            "禁止包含任何 XML/HTML 标签残片。"
+        )
+    for i, block in enumerate(_JSON_BLOCK_RE.findall(question), 1):
+        body = block.strip()
+        if not body:
+            continue
+        try:
+            json.loads(body)
+        except json.JSONDecodeError as e:
+            return (
+                f"question 中第 {i} 个 json 代码块不是合法 JSON（{e.msg}，"
+                f"第 {e.lineno} 行第 {e.colno} 列附近）。常见原因：字段值含中文/单位/括号"
+                "却没有加引号、自造了模板外的估算字段。请输出能被 JSON.parse 直接解析的"
+                "合法 JSON 后重新调用 ask_user，不要在 JSON 里写任何模板未定义的字段。"
+            )
+    return None
+
 
 # 选项对象中可提取展示文案的字段，按优先级排列
 _OPTION_TEXT_KEYS = ("label", "option", "text", "value", "name", "title", "content")
@@ -137,6 +206,23 @@ class AskUserMixin:
         if not question:
             return {"error": "question 参数不能为空"}
 
+        # 清洗 LLM 输出退化残片：question 尾部偶发混入格式损坏 token（实测形如
+        # `, "parameter name="options" string="false">` ——LLM 写长转义 JSON 时输出
+        # 退化，恰好不破坏 arguments 整体 JSON 解析，残片随 question 透到前端渲染）。
+        question = _strip_degraded_tail(question)
+
+        # 负载质量校验：清洗覆盖不了的残片新形态 + ```json 块非法 → 直接报错打回，
+        # 让 LLM 重新生成（不做修复式兜底：残缺 JSON 会让前端确认卡渲染降级成
+        # 原始文本，用户无按钮可点只能等 5 分钟超时，会话 50687e18 实测）。
+        payload_error = _validate_question_payload(question)
+        if payload_error:
+            logger.warning("%s: [ask_user] question 负载校验失败，打回重写: %s",
+                           self.agent_id, payload_error[:120])
+            return {"error": payload_error, "user_input": None}
+
+        # 选项归一化（develop 16dc760c）：LLM 偶尔把 options 写成对象数组（前端
+        # 渲染成 [object Object] 导致用户无法作答、连续 5 分钟超时），兼容提取
+        # 文案字段；归一化后为空报错让模型按字符串数组格式重试。
         options = _normalize_ask_options(options)
         if not options:
             return {

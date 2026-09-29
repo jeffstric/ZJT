@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/css/marketing_agent.css">
     <link rel="stylesheet" href="/css/subscription.css?v=20260929a">
     <link rel="stylesheet" href="/css/model_catalog.css">
+    <link rel="stylesheet" href="/css/marketing_article_card.css?v=__VERSION__">
     <script src="/js/vendor/vue.global.prod.js"></script>
     <script src="/js/vendor/axios.min.js"></script>
     <script src="/js/vendor/marked.min.js"></script>
@@ -183,7 +184,7 @@
                                     <img :src="img" style="max-height:200px;max-width:100%;border-radius:8px;cursor:zoom-in;" @click="showImageModal(img)" :alt="$t('image_alt')">
                                 </div>
                             </template>
-                            <div class="message-bubble" v-html="renderMarkdown(msg.content)"></div>
+                            <div class="message-bubble" v-html="((msg.role === 'user' && windowSourceBadge) ? windowSourceBadge(msg.content) : '') + renderMarkdown(msg.content)"></div>
                             <!-- Verification 选项按钮 -->
                             <div v-if="msg.isVerification && msg.verificationOptions && msg.verificationOptions.length > 0" style="margin-top: 10px;">
                                 <div style="display: flex; flex-wrap: wrap; gap: 8px;">
@@ -996,6 +997,7 @@
     </div>
 
     <script src="/js/sse_client.js"></script>
+    <script src="/js/marketing_article_card.js?v=__VERSION__"></script>
     <script src="/js/marketing_agent.js"></script>
 </body>
 </html>

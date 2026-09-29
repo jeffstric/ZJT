@@ -3092,6 +3092,48 @@ DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 DS_ENV_FIT_COMPRESS_TIMEOUT = 15
 DS_ENV_FIT_LLM_TIMEOUT = 60
 
+# ── 图文抓取（article_to_video，公众号/小红书 → 营销视频脚本）──
+# 公众号：mp.weixin.qq.com 服务端渲染页免登录可抓（2026-09 实测）；图片 mmbiz.qpic.cn 服务端下载无防盗链拦截，仍统一带 Referer 保险
+# 小红书：免登录纯 HTTP 不可行（WAF 按 TLS 指纹拦截 + PC web 强制登录态），本期仅保留 XhsProvider 抽象接口
+ARTICLE_FETCH_HTTP_TIMEOUT = 20              # 公众号文章页 HTTP 超时（秒）
+ARTICLE_FETCH_IMAGE_TIMEOUT = 30             # 图片下载超时（秒）
+ARTICLE_FETCH_XHS_TIMEOUT = 30               # 小红书抓取超时（秒，下期 provider 实现启用）
+ARTICLE_FETCH_XHS_MIN_INTERVAL = 10          # 同来源两次小红书抓取最小间隔（秒，下期启用）
+ARTICLE_FETCH_MAX_IMAGES = 9                 # 单篇图片上限（对齐 Seedance 2.0 多参考图上限）
+ARTICLE_FETCH_MAX_TEXT_CHARS = 8000          # 正文注入 LLM 的最大字符数
+ARTICLE_FETCH_IMAGE_MAX_BYTES = 15 * 1024 * 1024   # 单图大小上限
+ARTICLE_FETCH_RATE_LIMIT_PER_USER_HOUR = 10  # 每用户每小时抓取次数上限（进程内滑动窗口）
+ARTICLE_FETCH_ALLOWED_HOSTS = (
+    'mp.weixin.qq.com',        # 微信公众号
+    'xiaohongshu.com',         # 小红书（www./探查页）
+    'www.xiaohongshu.com',
+    'xhslink.com',             # 小红书分享短链（下期实现时先跟随跳转再校验最终域名）
+)
+ARTICLE_FETCH_WECHAT_UA = (
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+)
+# 公众号图片下载 Referer（mmbiz.qpic.cn 防盗链白名单域）
+ARTICLE_FETCH_WECHAT_REFERER = 'https://mp.weixin.qq.com/'
+# 微信内置浏览器 UA：部分受限文章仅微信内可见
+ARTICLE_FETCH_WECHAT_INAPP_UA = (
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) '
+    'Chrome/124.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.49.2600(0x28003135) XWEB/1160'
+)
+
+# ── 信息采集供应商（article_fetch 第三方通道，TikHub）──
+# 按次计费 $0.01/次；官方建议客户端超时 30s（过小会"已扣费但收不到响应"），且禁止自动重试（重试=重复扣费）
+ARTICLE_FETCH_TIKHUB_BASE_URL = 'https://api.tikhub.io'
+ARTICLE_FETCH_TIKHUB_TIMEOUT = 35            # TikHub 官方建议 30s，留 5s 网络余量
+ARTICLE_FETCH_COMMENTS_TOP_N = 10            # 评论抓取保留条数（按点赞排序取首页精选）
+# 公众号抓取通道模式（article_fetch.wechat_provider）：
+#   ''      = 跟随 TikHub key 状态（默认）：配置了 key → auto，未配置 → self（零成本现状）
+#   self    = 仅自研免登录通道（零成本，受限文章不可得）
+#   auto    = 自研优先，命中访问限制/失败时自动走 TikHub 兜底（需配置 key，按次计费）
+#   tikhub  = 全部走 TikHub（最稳，每篇 $0.01）
+ARTICLE_FETCH_WECHAT_PROVIDER = ''
+# 小红书抓取通道（article_fetch.xhs_provider）：空=未开通（默认）；tikhub=启用
+ARTICLE_FETCH_XHS_PROVIDER = ''
 
 # ============ 用户昵称/备注（model/users.py、api/user.py、api/admin.py） ============
 # 昵称长度上限（DB 列 VARCHAR(50)，用户输入按 UTF-8 字符数校验）
