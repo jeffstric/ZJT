@@ -419,8 +419,9 @@
                 }
 
                 const ids = [];
-                // 兼容 markdown 粗体（**项目ID**: 266）与英文键（project_id: 266）
-                const inlineProjectIdPattern = /(?:项目ID|project[_\s-]*id)\s*(?:\*\*)?\s*[:：]\s*\*{0,2}\s*([A-Za-z0-9_-]+)/gi;
+                // 兼容 markdown 粗体（**项目ID**: 266）、英文键（project_id: 266）
+                // 与复数形式（project_ids：12548，含中文冒号，数字人专家总结的写法）
+                const inlineProjectIdPattern = /(?:项目ID|project[_\s-]*ids?)\s*(?:\*\*)?\s*[:：]\s*\*{0,2}\s*([A-Za-z0-9_-]+)/gi;
                 let inlineMatch;
                 while ((inlineMatch = inlineProjectIdPattern.exec(text)) !== null) {
                     const id = inlineMatch[1];

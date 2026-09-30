@@ -6,18 +6,26 @@ MCP JSON生成工具集
 import json
 import os
 import re
+import time
 import logging
 import httpx
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Dict, Any, Optional, List
+from typing import Callable, Dict, Any, Optional, List, Tuple
 from datetime import datetime
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from script_writer_core.cron_task_manager import get_task_manager
 from script_writer_core.constant import ItemType
 from config.config_util import get_config, get_config_value
-from config.constant import FilePathConstants, StoryType, GridConfig, DEFAULT_TEXT_TO_IMAGE_TASK_ID
+from config.constant import (
+    FilePathConstants,
+    StoryType,
+    GridConfig,
+    DEFAULT_TEXT_TO_IMAGE_TASK_ID,
+    AGENT_CHECK_TOOL_WAIT_SECONDS,
+    AGENT_CHECK_TOOL_POLL_INTERVAL_SECONDS,
+)
 from utils.script_duration import (
     budget_tolerance_upper,
     dialogue_char_budget,
@@ -971,14 +979,63 @@ def get_task_status(user_id: str, world_id: str, auth_token: str, item_type: int
         }
 
 
+def _is_in_progress_status(result: Any) -> bool:
+    """判断状态查询工具的返回是否仍处于进行中（queued/processing/pending/running）"""
+    return (
+        isinstance(result, dict)
+        and result.get('status') in ('queued', 'processing', 'pending', 'running')
+    )
+
+
+def _wait_for_terminal_task_status(
+    refetch: Callable[[], Dict[str, Any]],
+    first_result: Dict[str, Any],
+    max_wait_seconds: Optional[int] = None,
+    poll_interval_seconds: Optional[int] = None,
+) -> Tuple[Dict[str, Any], int]:
+    """状态轮询工具内置的有界等待（check_image_status / check_reference_audio_status 共用）。
+
+    背景（事故：会话 3d07080b）：LLM 每 3~4 秒重查一次状态，而生成任务实际耗时
+    30~90 秒，高频轮询会触发 ExpertAgent 死循环保护被误杀。本 helper 让单次查询
+    在任务仍为进行中时同步等待并重查，拉长 LLM 轮询间隔。
+
+    agent 循环跑在 task_manager 的 daemon 线程（threading.Thread），此处同步
+    time.sleep 不阻塞事件循环（CI R2 只拦 async 函数内的 sleep）。
+
+    Args:
+        refetch: 重新查库并返回该工具标准 result dict 的闭包（不含 waited_seconds）
+        first_result: 首次查询已得到的结果，仍为进行中时才进入等待循环
+        max_wait_seconds: 单次调用最长等待（默认 AGENT_CHECK_TOOL_WAIT_SECONDS）
+        poll_interval_seconds: 等待期间重查间隔（默认 AGENT_CHECK_TOOL_POLL_INTERVAL_SECONDS）
+
+    Returns:
+        (最新 result, 已等待秒数)；refetch 中途抛异常时回退返回上一次 result。
+    """
+    if max_wait_seconds is None:
+        max_wait_seconds = AGENT_CHECK_TOOL_WAIT_SECONDS
+    if poll_interval_seconds is None:
+        poll_interval_seconds = AGENT_CHECK_TOOL_POLL_INTERVAL_SECONDS
+
+    result = first_result
+    waited = 0
+    while _is_in_progress_status(result) and waited < max_wait_seconds:
+        time.sleep(poll_interval_seconds)
+        waited += poll_interval_seconds
+        try:
+            result = refetch()
+        except Exception as e:
+            logger.warning(f"_wait_for_terminal_task_status refetch failed: {e}")
+            break
+    return result, waited
+
+
 def check_image_status(user_id: str, world_id: str, auth_token: str, project_id: str) -> Dict[str, Any]:
     """
-    通过 project_id 查询图片生成结果（一次性查询，非轮询）
+    通过 project_id 查询图片生成结果（任务仍生成中时会同步等待一段时间再返回）
 
-    后台 scheduler 会自动轮询 ComfyUI 状态并更新数据库，本函数直接读取数据库最终状态。
-    适用于通用生图任务（营销等场景，不绑定 item_type/item_name）。
-
-    建议在调用 generate_text_to_image 后等待一段时间再查询，确保后台有足够时间处理。
+    后台 scheduler 会自动轮询 ComfyUI 状态并更新数据库，本函数直接读取数据库状态；
+    若任务仍为 queued/processing，会在服务端同步等待并重查（最长约 20 秒），
+    尽量在单次调用内拿到终态，无需高频重复查询。
 
     Args:
         user_id: 用户ID（必填）
@@ -990,49 +1047,25 @@ def check_image_status(user_id: str, world_id: str, auth_token: str, project_id:
         Dict[str, Any]: 包含任务状态和图片URL的结果
     """
     try:
-        from model import GridImageTasksModel, GridImageTaskStatus
+        from model import GridImageTasksModel
 
-        # 构造通用任务的 task_key（格式与 generate_text_to_image 中一致）
-        task_key = f"{user_id}_0_{project_id}"
+        def _refetch() -> Dict[str, Any]:
+            task_key = f"{user_id}_0_{project_id}"
+            task = GridImageTasksModel.get_by_task_key(task_key)
+            return _build_image_status_result(task, project_id)
 
-        task = GridImageTasksModel.get_by_task_key(task_key)
-        if not task:
-            return {
-                'success': True,
-                'status': 'not_found',
-                'message': f'未找到 project_id={project_id} 对应的任务记录',
-                'project_id': project_id
-            }
+        first_task = GridImageTasksModel.get_by_task_key(f"{user_id}_0_{project_id}")
+        result = _build_image_status_result(first_task, project_id)
 
-        # 将数据库状态码转换为可读状态
-        status_map = {
-            GridImageTaskStatus.QUEUED: 'queued',
-            GridImageTaskStatus.PROCESSING: 'processing',
-            GridImageTaskStatus.COMPLETED: 'completed',
-            GridImageTaskStatus.FAILED: 'failed',
-            GridImageTaskStatus.TIMEOUT: 'timeout',
-            GridImageTaskStatus.CANCELLED: 'cancelled',
-            GridImageTaskStatus.DOWNLOAD_FAILED: 'download_failed',
-        }
-        readable_status = status_map.get(task.status, 'unknown')
-
-        result = {
-            'success': True,
-            'status': readable_status,
-            'project_id': project_id,
-            'message': f'任务状态: {readable_status}'
-        }
-
-        # 如果完成，返回图片URL
-        if task.status == GridImageTaskStatus.COMPLETED and task.result_url:
-            result['image_url'] = task.result_url
-            result['message'] = f'图片生成完成，图片URL: {task.result_url}'
-
-        # 如果失败，返回错误信息
-        if task.status in [GridImageTaskStatus.FAILED, GridImageTaskStatus.TIMEOUT,
-                           GridImageTaskStatus.DOWNLOAD_FAILED]:
-            result['error_message'] = task.error_message
-            result['message'] = f'图片生成失败: {task.error_message or "未知错误"}'
+        if _is_in_progress_status(result):
+            result, waited = _wait_for_terminal_task_status(_refetch, result)
+            if waited:
+                result['waited_seconds'] = waited
+            if _is_in_progress_status(result):
+                result['message'] = (
+                    f'任务仍在处理中（本次已等待约 {waited} 秒）。图片生成通常需要 30~120 秒，'
+                    f'请稍后再次查询，无需高频重试。'
+                )
 
         return result
 
@@ -1043,6 +1076,51 @@ def check_image_status(user_id: str, world_id: str, auth_token: str, project_id:
             'message': f"查询图片状态失败: {str(e)}",
             'project_id': project_id
         }
+
+
+def _build_image_status_result(task: Any, project_id: str) -> Dict[str, Any]:
+    """按 GridImageTasks 记录构建 check_image_status 的标准返回（task 为 None 时返回 not_found）"""
+    from model import GridImageTaskStatus
+
+    if not task:
+        return {
+            'success': True,
+            'status': 'not_found',
+            'message': f'未找到 project_id={project_id} 对应的任务记录',
+            'project_id': project_id
+        }
+
+    # 将数据库状态码转换为可读状态
+    status_map = {
+        GridImageTaskStatus.QUEUED: 'queued',
+        GridImageTaskStatus.PROCESSING: 'processing',
+        GridImageTaskStatus.COMPLETED: 'completed',
+        GridImageTaskStatus.FAILED: 'failed',
+        GridImageTaskStatus.TIMEOUT: 'timeout',
+        GridImageTaskStatus.CANCELLED: 'cancelled',
+        GridImageTaskStatus.DOWNLOAD_FAILED: 'download_failed',
+    }
+    readable_status = status_map.get(task.status, 'unknown')
+
+    result = {
+        'success': True,
+        'status': readable_status,
+        'project_id': project_id,
+        'message': f'任务状态: {readable_status}'
+    }
+
+    # 如果完成，返回图片URL
+    if task.status == GridImageTaskStatus.COMPLETED and task.result_url:
+        result['image_url'] = task.result_url
+        result['message'] = f'图片生成完成，图片URL: {task.result_url}'
+
+    # 如果失败，返回错误信息
+    if task.status in [GridImageTaskStatus.FAILED, GridImageTaskStatus.TIMEOUT,
+                       GridImageTaskStatus.DOWNLOAD_FAILED]:
+        result['error_message'] = task.error_message
+        result['message'] = f'图片生成失败: {task.error_message or "未知错误"}'
+
+    return result
 
 
 def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
@@ -3948,7 +4026,7 @@ MCP_TOOLS = [
     },
     {
         "name": "check_image_status",
-        "description": "通过 project_id 查询图片生成结果（一次性查询）。后台会自动跟踪生图进度，调用此函数直接从数据库读取最终状态和图片URL。适用于不绑定item的通用生图场景（如营销图片）。建议在 generate_text_to_image 或 edit_image 返回后等待一段时间再调用，给后台留出处理时间。",
+        "description": "通过 project_id 查询图片生成结果。后台会自动跟踪生图进度，调用此函数直接从数据库读取最终状态和图片URL。适用于不绑定item的通用生图场景（如营销图片）。若图片仍在生成中，本函数会在服务端自动等待并重查（最长约20秒）后才返回，因此无需高频重复调用；返回 processing 时稍等片刻再查即可。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -4140,7 +4218,7 @@ MCP_TOOLS = [
     },
     {
         "name": "check_reference_audio_status",
-        "description": "查询角色参考音频生成任务状态。后台 scheduler 会自动轮询 RunningHub 状态并更新数据库。",
+        "description": "查询参考音频生成任务状态。后台 scheduler 会自动轮询 RunningHub 状态并更新数据库。若音频仍在生成中（queued/processing），本函数会在服务端自动等待并重查（最长约20秒）后才返回，因此无需高频重复调用；返回 processing 时稍等片刻再查即可。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -4562,9 +4640,11 @@ def check_reference_audio_status(user_id: str, world_id: str, auth_token: str,
                                    task_id: str,
                                    character_name: Optional[str] = None) -> Dict[str, Any]:
     """
-    查询角色参考音频生成任务状态 - MCP工具函数（同步，直接查数据库）
+    查询参考音频生成任务状态 - MCP工具函数（任务仍生成中时会同步等待一段时间再返回）
 
-    后台 scheduler 会自动轮询 RunningHub 状态并更新数据库，本函数直接读取数据库中的任务状态。
+    后台 scheduler 会自动轮询 RunningHub 状态并更新数据库，本函数直接读取数据库中的任务状态；
+    若任务仍为 queued/processing，会在服务端同步等待并重查（最长约 20 秒），
+    尽量在单次调用内拿到终态，无需高频重复查询。
     task_id 为 create_and_schedule 返回的 async_tasks 表主键。
 
     Args:
@@ -4578,52 +4658,22 @@ def check_reference_audio_status(user_id: str, world_id: str, auth_token: str,
         dict: 包含任务状态和结果URL的结果
     """
     try:
-        from model import AsyncTasksModel, AsyncTaskStatus
+        def _refetch() -> Dict[str, Any]:
+            task = _fetch_reference_audio_task(task_id)
+            return _build_reference_audio_status_result(task, task_id, character_name)
 
-        # task_id 可能是 async_tasks 主键，也可能是 external_task_id（RunningHub project_id）
-        # 优先按主键（数字）查询，失败则按 external_task_id 查询
-        task = None
-        if task_id.isdigit():
-            task = AsyncTasksModel.get_by_id(int(task_id))
+        task = _fetch_reference_audio_task(task_id)
+        result = _build_reference_audio_status_result(task, task_id, character_name)
 
-        if not task:
-            task = AsyncTasksModel.get_by_external_task_id(task_id)
-        if not task:
-            return {
-                'success': True,
-                'status': 'not_found',
-                'task_id': task_id,
-                'message': f'未找到 task_id={task_id} 对应的任务记录'
-            }
-
-        # 状态映射
-        status_map = {
-            AsyncTaskStatus.QUEUED: 'queued',
-            AsyncTaskStatus.PROCESSING: 'processing',
-            AsyncTaskStatus.COMPLETED: 'completed',
-            AsyncTaskStatus.FAILED: 'failed',
-            AsyncTaskStatus.TIMEOUT: 'timeout',
-        }
-        readable_status = status_map.get(task.status, 'unknown')
-
-        result = {
-            'success': True,
-            'status': readable_status,
-            'task_id': task_id,
-            'message': f'任务状态: {readable_status}'
-        }
-
-        if task.external_task_id:
-            result['runninghub_task_id'] = task.external_task_id
-
-        if task.status == AsyncTaskStatus.COMPLETED and task.result_url:
-            result['audio_url'] = task.result_url
-            result['message'] = f'音频生成完成，音频URL: {task.result_url}'
-
-        if task.status in (AsyncTaskStatus.FAILED, AsyncTaskStatus.TIMEOUT):
-            result['success'] = False
-            result['error'] = task.error_message or '音频生成失败'
-            result['message'] = f'音频生成失败: {result["error"]}'
+        if _is_in_progress_status(result):
+            result, waited = _wait_for_terminal_task_status(_refetch, result)
+            if waited:
+                result['waited_seconds'] = waited
+            if _is_in_progress_status(result):
+                result['message'] = (
+                    f'任务仍在处理中（本次已等待约 {waited} 秒）。音频生成通常需要 30~90 秒，'
+                    f'请稍后再次查询，无需高频重试。'
+                )
 
         return result
 
@@ -4633,6 +4683,66 @@ def check_reference_audio_status(user_id: str, world_id: str, auth_token: str,
             'success': False,
             'error': f'查询音频状态失败: {str(e)}'
         }
+
+
+def _fetch_reference_audio_task(task_id: str) -> Optional[Any]:
+    """按 async_tasks 主键或 external_task_id（RunningHub project_id）查找任务记录"""
+    from model import AsyncTasksModel
+
+    # task_id 可能是 async_tasks 主键，也可能是 external_task_id（RunningHub project_id）
+    # 优先按主键（数字）查询，失败则按 external_task_id 查询
+    task = None
+    if task_id.isdigit():
+        task = AsyncTasksModel.get_by_id(int(task_id))
+
+    if not task:
+        task = AsyncTasksModel.get_by_external_task_id(task_id)
+    return task
+
+
+def _build_reference_audio_status_result(task: Optional[Any], task_id: str,
+                                          character_name: Optional[str] = None) -> Dict[str, Any]:
+    """按 async_tasks 记录构建 check_reference_audio_status 的标准返回（task 为 None 时返回 not_found）"""
+    from model import AsyncTaskStatus
+
+    if not task:
+        return {
+            'success': True,
+            'status': 'not_found',
+            'task_id': task_id,
+            'message': f'未找到 task_id={task_id} 对应的任务记录'
+        }
+
+    # 状态映射
+    status_map = {
+        AsyncTaskStatus.QUEUED: 'queued',
+        AsyncTaskStatus.PROCESSING: 'processing',
+        AsyncTaskStatus.COMPLETED: 'completed',
+        AsyncTaskStatus.FAILED: 'failed',
+        AsyncTaskStatus.TIMEOUT: 'timeout',
+    }
+    readable_status = status_map.get(task.status, 'unknown')
+
+    result = {
+        'success': True,
+        'status': readable_status,
+        'task_id': task_id,
+        'message': f'任务状态: {readable_status}'
+    }
+
+    if task.external_task_id:
+        result['runninghub_task_id'] = task.external_task_id
+
+    if task.status == AsyncTaskStatus.COMPLETED and task.result_url:
+        result['audio_url'] = task.result_url
+        result['message'] = f'音频生成完成，音频URL: {task.result_url}'
+
+    if task.status in (AsyncTaskStatus.FAILED, AsyncTaskStatus.TIMEOUT):
+        result['success'] = False
+        result['error'] = task.error_message or '音频生成失败'
+        result['message'] = f'音频生成失败: {result["error"]}'
+
+    return result
 
 
 def generate_digital_human(
@@ -4722,17 +4832,23 @@ def generate_digital_human(
             return {'success': False, 'error': '配置文件中未找到服务器地址'}
 
         # 获取数字人模型配置（digital_human 分类）
-        from config.unified_config import UnifiedConfigRegistry, TaskCategory
+        from config.unified_config import UnifiedConfigRegistry, TaskCategory, TaskTypeId
         configs = UnifiedConfigRegistry.get_by_category(TaskCategory.DIGITAL_HUMAN)
         if not configs:
             return {'success': False, 'error': '未找到可用的数字人模型配置'}
 
-        # 获取第一个启用的模型
+        # 获取启用的模型：必须优先 wan2.2 数字人（TaskTypeId.DIGITAL_HUMAN）。
+        # ⚠️ 音频语义差异（2026-09-30 确认，勿再切换为 H3 等其他数字人）：
+        #   wan2.2 的 audio_url 是「参考音频」——只用于提取音色，口播内容由 text 驱动；
+        #   MiniMax H3 / LTX2.3 等的 audio_url 是「驱动说话的音频」——音频本身即最终声音。
+        # 本链路传入的音频是按口播文本合成的通用参考音频，只有 wan2.2 的语义匹配。
+        # 未启用时回退分类下第一个启用模型（保持可用性）。
         enabled_configs = [c for c in configs if c.enabled and not c.hidden]
         if not enabled_configs:
             return {'success': False, 'error': '未找到启用的数字人模型配置'}
 
-        task_config = enabled_configs[0]
+        preferred = [c for c in enabled_configs if c.id == TaskTypeId.DIGITAL_HUMAN]
+        task_config = preferred[0] if preferred else enabled_configs[0]
         task_id = task_config.id
         model_name = task_config.name
 
@@ -4745,6 +4861,9 @@ def generate_digital_human(
             'text': text,
             'audio_url': audio_url,
             'aspect_ratio': aspect_ratio,
+            # 后端按 task_id 建对应类型的数字人任务（13=wan2.2 / 35=MiniMax H3），
+            # 必须与所选 task_config 一致，否则 model_used 与实际任务类型不符
+            'task_id': str(task_id),
             'user_id': str(user_id),
             'auth_token': auth_token
         }

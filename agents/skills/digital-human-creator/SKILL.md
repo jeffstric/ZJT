@@ -34,11 +34,11 @@ allowed-tools: ["generate_digital_human", "generate_reference_audio", "check_ref
 
 ### `check_reference_audio_status(task_id)`
 
-查询参考音频生成状态。状态为 `completed` 时，结果中包含 `audio_url`。
+查询参考音频生成状态。状态为 `completed` 时，结果中包含 `audio_url`。该工具在音频仍在生成时会自动等待并重查（单次调用最长约 20 秒）；返回 `processing` 时继续再次调用即可，这属于正常轮询，不会被判为重复操作。
 
 ### `generate_digital_human(image_url, text, audio_url, aspect_ratio)`
 
-提交数字人视频生成任务。
+提交数字人视频生成任务（使用 wan2.2 数字人模型）。wan2.2 的 `audio_url` 是**参考音频**：只用于提取音色，数字人实际说的内容由 `text` 驱动。
 
 - `image_url`：人物图片 URL，必填，必须来自对话中的真实图片 URL
 - `text`：数字人要说的文本，必填，不超过 1000 字
@@ -78,7 +78,7 @@ generate_reference_audio(
 )
 ```
 
-然后使用返回的 `task_id` 调用 `check_reference_audio_status`，直到拿到 `audio_url` 或失败。
+然后使用返回的 `task_id` 调用 `check_reference_audio_status`，直到拿到 `audio_url` 或失败。该工具单次调用会自动等待约 20 秒，音频生成通常需要 30~90 秒，返回 `processing` 属正常，继续查询直到终态，不要中途放弃。
 
 ### 步骤 3：提交数字人任务
 
