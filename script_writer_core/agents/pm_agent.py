@@ -614,6 +614,24 @@ class PMAgent(BaseAgent, AskUserMixin):
         logger.info(f"{self.agent_id}: 已加载 SOP '{sop_name}' ({len(sop_content)} 字符)")
         return {"success": True, "sop_name": sop_name, "content": sop_content}
 
+    # 产出视频类生成任务的专家清单：project_ids 必须以 video_task_submitted 推送，
+    # 前端按视频任务轮询并在完成后渲染 <video>。漏配会把视频任务当图片轮询，
+    # 任务完成后图片 URL 为空，前端误报"图片生成失败"（事故：会话 5847bc38，
+    # digital-human-creator 的数字人视频被推成 image_task_submitted，视频生成
+    # 成功但用户只看到"图片生成失败，请稍后重试"）。
+    VIDEO_GENERATION_EXPERT_SKILLS = ("marketing-video", "article-to-video", "digital-human-creator")
+
+    def _resolve_generation_task_event(self, skill_name: str, count: int) -> tuple:
+        """按专家技能类型决定推送前端的生成任务事件类型与文案
+
+        Returns:
+            (event_type, event_message)：视频类专家发 video_task_submitted，
+            其余（生图专家等）发 image_task_submitted。
+        """
+        if skill_name in self.VIDEO_GENERATION_EXPERT_SKILLS:
+            return 'video_task_submitted', f'已提交 {count} 个视频生成任务'
+        return 'image_task_submitted', f'已提交 {count} 个图片生成任务'
+
     def _handle_agent_call(
         self,
         tool_args: Dict[str, Any],
@@ -760,14 +778,7 @@ class PMAgent(BaseAgent, AskUserMixin):
             # 推送生成任务的 project_ids 到前端，前端自动轮询
             project_ids = result.get("project_ids", [])
             if project_ids:
-                # 根据技能类型区分事件：视频类专家（含 article-to-video 图文转视频）
-                # 发 video_task_submitted，其余发 image_task_submitted
-                if skill_name in ("marketing-video", "article-to-video"):
-                    event_type = 'video_task_submitted'
-                    event_message = f'已提交 {len(project_ids)} 个视频生成任务'
-                else:
-                    event_type = 'image_task_submitted'
-                    event_message = f'已提交 {len(project_ids)} 个图片生成任务'
+                event_type, event_message = self._resolve_generation_task_event(skill_name, len(project_ids))
                 self.task_manager.push_message(task.task_id, event_type, {
                     'project_ids': project_ids,
                     'message': event_message
@@ -802,12 +813,7 @@ class PMAgent(BaseAgent, AskUserMixin):
             # 即使 Expert 失败，如果已提交生成任务，仍通知前端轮询
             project_ids = result.get("project_ids", [])
             if project_ids:
-                if skill_name in ("marketing-video", "article-to-video"):
-                    event_type = 'video_task_submitted'
-                    event_message = f'已提交 {len(project_ids)} 个视频生成任务'
-                else:
-                    event_type = 'image_task_submitted'
-                    event_message = f'已提交 {len(project_ids)} 个图片生成任务'
+                event_type, event_message = self._resolve_generation_task_event(skill_name, len(project_ids))
                 self.task_manager.push_message(task.task_id, event_type, {
                     'project_ids': project_ids,
                     'message': event_message

@@ -1904,6 +1904,8 @@ async def replace_pending_task(request: Request, session_id: str):
 
     返回:
     - replaced: int, 实际替换的行数（0 表示未找到匹配的 pending 行）
+    - duplicate: bool, replaced=0 时为 True 表示会话历史里已有该批
+      project 的结果卡片，调用方应跳过追加（防重复写入）
     """
     try:
         body = await request.json()
@@ -1926,12 +1928,24 @@ async def replace_pending_task(request: Request, session_id: str):
             new_content
         )
 
+        # 未找到 pending 行时做服务端判重：会话历史里已有该批 project 的结果
+        # 卡片（如另一页签已写入、或 pending 行早已被替换），前端据此跳过追加，
+        # 防止"视频已生成"消息被重复写入
+        duplicate = False
+        if affected == 0:
+            duplicate = await asyncio.to_thread(
+                ChatMessagesModel.has_generated_result,
+                session_id,
+                project_ids
+            )
+
         if affected > 0:
             session_storage.invalidate_cache(session_id)
 
         return JSONResponse({
             'success': True,
-            'replaced': affected
+            'replaced': affected,
+            'duplicate': duplicate
         })
     except Exception as e:
         logger.error(f'替换 pending task 失败: {str(e)}')

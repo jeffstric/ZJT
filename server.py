@@ -4566,6 +4566,7 @@ async def digital_human_generate(
     image_url: str = Form(None, description="Image URL for digital human (alternative to file upload)"),
     audio_url: str = Form(None, description="Audio URL for digital human (alternative to file upload)"),
     aspect_ratio: str = Form("9:16", description="Video aspect ratio: 9:16, 16:9, 1:1, 3:2, 4:3, 2:3, 3:4"),
+    task_id: int = Form(TaskTypeId.DIGITAL_HUMAN, description="Digital human task type ID (13=wan2.2, 35=MiniMax H3)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
@@ -4580,7 +4581,16 @@ async def digital_human_generate(
                 status_code=400,
                 detail="文本内容不能超过1000个字"
             )
-        
+
+        # 数字人任务类型白名单：13=wan2.2（旧默认，兼容存量前端）、35=MiniMax H3。
+        # LTX2.3（32）走 /api/digital-human-v2（文件上传 + audio_path 字段），不在此列。
+        allowed_task_ids = {TaskTypeId.DIGITAL_HUMAN, TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3}
+        if task_id not in allowed_task_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支持的数字人任务类型: {task_id}"
+            )
+
         # Handle image (file upload or URL)
         if image is not None:
             image_url = await asyncio.to_thread(_save_uploaded_image, image)
@@ -4589,7 +4599,7 @@ async def digital_human_generate(
                 status_code=400,
                 detail="请提供图片文件或图片URL"
             )
-        
+
         # Handle audio (file upload or URL)
         if audio is not None:
             audio_url = await asyncio.to_thread(_save_uploaded_image, audio)  # Reuse the same function for audio
@@ -4598,9 +4608,9 @@ async def digital_human_generate(
                 status_code=400,
                 detail="请提供音频文件或音频URL"
             )
-        
+
         # Task type for digital human
-        task_type = TaskTypeId.DIGITAL_HUMAN
+        task_type = task_id
         task_config = TaskTypeRegistry.get(task_type)
         computing_power = task_config.get_computing_power()
         

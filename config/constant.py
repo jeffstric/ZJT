@@ -266,6 +266,22 @@ AGENT_LLM_MIN_OUTPUT_TOKENS = 4096
 # 超出后最旧图片替换为文本占位，LLM 需要时可重新调用 fetch_image_as_base64 获取。
 EXPERT_HISTORY_MAX_IMAGES = 6
 
+# ===== Agent 状态轮询工具等待与死循环豁免 =====
+# （事故：会话 3d07080b 数字人流程中，专家每 3~4 秒轮询一次 check_reference_audio_status，
+# 连续 3 次相同签名即被 ExpertAgent._check_progress 判为死循环并优雅关闭；
+# 而 RunningHub TTS 实际耗时 44 秒，音频在 agent 退出 30 秒后才完成，
+# generate_digital_human 从未提交。修复：工具内置有界等待拉长单次轮询间隔，
+# 同时 _check_progress 豁免"纯状态轮询"轮次，双保险防误杀。）
+# check_*_status 工具在任务仍为 queued/processing 时，服务端同步等待终态的最长时间（秒）。
+# agent 循环跑在 task_manager 的 daemon 线程，同步 sleep 不阻塞事件循环。
+AGENT_CHECK_TOOL_WAIT_SECONDS = 20
+# 等待期间重新查库的间隔（秒）。
+AGENT_CHECK_TOOL_POLL_INTERVAL_SECONDS = 3
+# 纯状态轮询轮次的独立豁免上限：轮询类工具 + 结果仍在进行中时不计入
+# consecutive_no_progress，改计连续轮询轮数，达到本值才判死循环。
+# 须小于相关专家的 max_iterations（数字人专家为 20）。
+AGENT_STATUS_POLL_MAX_ROUNDS = 15
+
 # 剧本创作等入口无偏好时的默认生图模型：GPT Image 2（short_key=gpt-image-2）
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = TaskTypeId.GPT_IMAGE_2_EDIT
 

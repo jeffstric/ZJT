@@ -269,7 +269,8 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - 任务完成后将结果（图片/视频 URL）渲染到消息气泡中
 - 使用 `sessionTaskRegistry` 注册表跟踪所有活跃任务，支持会话切换后恢复
 - 直接图片/视频生成使用 `directGenerationTasks` 为每次提交创建独立任务实例，实例内绑定 `type`、`project_ids`、`msgUid`、`sessionId` 和 `intervalId`。轮询只读取实例内的 `projectIds`，避免多轮对话中后提交的图片任务覆盖先提交的视频任务。
-- 直接生成任务完成后优先调用 `replacePendingTask(sessionId, task_type, project_ids, content)` 精确替换原 `__PENDING_TASK__` 历史行；只有匹配失败时才 fallback 追加 assistant 消息，且追加到任务所属的原 session。
+- 直接生成任务完成后优先调用 `replacePendingTask(sessionId, task_type, project_ids, content)` 精确替换原 `__PENDING_TASK__` 历史行；只有匹配失败时才 fallback 追加 assistant 消息，且追加到任务所属的原 session。未找到 pending 行时后端会做服务端判重（见「任务恢复机制」第 2 条），历史中已有同批 project 的结果卡片时返回 `duplicate: true`，前端跳过追加。
+- 生成结果去重（`hasGeneratedImageResult` / `hasGeneratedVideoResult`）采用「去签名 URL + 项目 ID」双重判定：CDN 结果 URL 每次轮询都会换签名（`?e=..&token=..`），比对时必须剥离 query，并同时匹配原文与 `encodeURIComponent` 编码形态（结果卡片经 `proxyDownloadUrl` 代理后 `/` 编码为 `%2F`）；URL 匹配失败时继续走 ID 兜底，不能只信 URL。`contentHasGeneratedTaskId` 覆盖 `data-publish-tool-id="{pid}"`、`data-tool-id="{pid}"`、`/{pid}_` 与 `%2F{pid}_` 等卡片形态。事故（会话 66875523）：旧实现只按 `/{pid}_` 原文匹配且 URL 精确比对，编码形态与跨轮询签名变化双双漏判，导致每次刷新页面都误判“尚无结果”、重启轮询后重复追加“视频已生成”消息。
 - 生成结果统一通过媒体类型过滤后渲染：图片结果会排除 `.mp4/.webm/.mov/.avi/.mkv`，视频结果会排除图片扩展名，避免视频 URL 被 `<img class="generated-image">` 包裹。
 - `GET /api/get-status/{project_ids}` 对 CDN 结果采用 CDN 优先策略；如果生成任务已完成但 CDN 仍处于 pending，会先返回本地 `result_url` 作为 `file_url`，并附带 `cdn_status: "pending"`，避免聊天框一直显示生成中
 - 前端轮询统一识别 `SUCCESS`/`COMPLETED`/`DONE` 等完成状态，并从 task 本身和 `results[]` 中提取 `file_url`、`result_url`、`video_url`、`image_url`、`output_url`、`download_url` 等字段
@@ -277,7 +278,7 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - 如果 `image_task_submitted` SSE 事件缺失，但专家回复中包含 `project_ids: [...]` 或 `项目ID: 744` 这类图片任务标识，前端会自动补启动图片轮询；图片轮询会绑定触发时的会话，避免切换会话后把结果写入当前对话
 - 文本兜底恢复会优先识别视频摘要，包含“视频参数”“图生视频”“文生视频”“时长”“first_last_frame”“multi_reference”等视频信号的工作总结不会再触发图片轮询，避免“图片模式 first_last_frame”被误判为图片生成任务
 - Agent 图片/视频轮询启动后均立即查询一次状态，已完成的任务可直接渲染结果，不必等待第一个轮询周期
-- 视频兜底恢复按会话绑定轮询结果，异步返回时如果用户已切换到其他会话，不会把结果写入当前对话；历史加载时会过滤空 AI 气泡和重复的视频结果，避免切换会话后重复显示
+- 视频兜底恢复按会话绑定轮询结果，异步返回时如果用户已切换到其他会话，不会把结果写入当前对话；历史加载时会过滤空 AI 气泡和重复的视频结果（`normalizeLoadedMessages` 以归一化 URL——解出代理内层 URL、解码、去签名——为去重 key，同一视频即使签名不同也只保留最早一条），避免切换会话后重复显示
 - 直接发起模式（`checkDirectGenerationStatus`）的轮询在每次 `await` 获取状态返回后，会再次校验 `currentSessionId` 是否仍等于任务实例的 `task.sessionId`：任务进行中切换会话时，旧轮询回调立即停止并清理，不再向当前（已切换的）`messages` 或全局 `imageResults/videoResults` 写入，杜绝"视频生成失败/图片生成失败"提示串到其他对话
 - `handleImageTaskSubmitted` / `handleVideoTaskSubmitted` 支持显式 `explicitSessionId` 入参；由 SSE 流派发任务时传入该流的 `streamSessionId`，使轮询与结果持久化归属发起会话，而非事件被处理时的"当前会话"
 
@@ -286,7 +287,7 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 页面刷新或切换会话时，系统通过以下机制恢复未完成的任务：
 
 1. **`__PENDING_TASK__` 标记**：后端在 `chat_messages` 表中保存 `__PENDING_TASK__:{type}:{project_ids}` 标记（`message_type='pending_task'`）。这是内部恢复用行，前端解析后标为 `_isPendingTask`，模板不渲染；切回会话时不会把 `__PENDING_TASK__` 交给 Markdown（否则两侧 `__` 会被收成加粗的 `PENDING_TASK`）
-2. **`recoverPendingTasks()`**：加载历史后先恢复 pending 轮询，再跑工作总结文本兜底，避免同一 `project_ids` 再插一条「生成中」。完成时优先替换 pending 消息（通过 `PUT /session/{id}/message/{message_id}`），替换失败则 fallback 追加新消息
+2. **`recoverPendingTasks()`**：加载历史后先恢复 pending 轮询，再跑工作总结文本兜底，避免同一 `project_ids` 再插一条「生成中」。完成时优先替换 pending 消息（通过 `PUT /session/{id}/message/{message_id}`），替换失败则 fallback 追加新消息。追加前有服务端判重兜底：`POST /session/{id}/replace-pending-task` 未找到 pending 行时，由 `ChatMessagesModel.has_generated_result` 检查会话历史中是否已含该批 project 的结果卡片（匹配 `data-publish-tool-id="{pid}"` 属性或 `{pid}_` 文件名片段），命中则返回 `duplicate: true`，前端视为已处理、跳过追加，防止跨页签双写或恢复流程重复触发时重复写入"视频已生成"消息
 3. **`sessionActiveTaskId` 注册表**：记录每个 session 的活跃 Agent task_id，切换回来时检查任务状态并重连 SSE
 4. **`directGenerationTasks` / Agent 轮询注册表**：直接生成任务在内存中按任务实例跟踪 project_ids；Agent 图片/视频轮询按 `sessionId:type:project_ids` 去重，支持会话内恢复和并发任务隔离
 5. **并发安全**：`clean-pending-tasks` 支持按 `task_type` + `project_ids` 精确清理，并发任务互不影响。轮询和 `recoverPendingTasks(sessionId)` 的 fallback 追加也必须显式传入原始 sessionId，避免用户切换会话后把上一会话的图片/视频结果写入当前会话。
@@ -716,6 +717,12 @@ Agent 模式的消息通过 PM Agent（`pm_agent.py`）处理：
 - 本地生活视频的追问应优先收集店名、主推菜品、核心卖点和参考图片，而不是默认询问通用画风。餐饮、酒旅、旅游等场景默认真实实拍；只有用户明确要求卡通、插画、二次元等特殊表达时，才继续确认非真实风格。需要提供风格选项时，应使用 `真实探店感`、`暖色食欲感`、`高级精致感`、`烟火气市井感`、`清爽干净感` 等营销语义。
 - 图生视频必须以真实上传媒体为准。用户在 `ask_user` 中选择“有参考图片”只代表意图，不代表系统已经拿到图片；只有验证回答或任务上下文中存在真实 `[图片N]（URL: ...）` 标签，或 `image_urls` 非空时，才能按图生视频委托。若 `image_urls` 为 null/空，必须提醒用户上传图片或确认改用文生视频，不得把 `https://example.com/...` 这类占位 URL 当作参考图提交。工具层的 `enterprise/tools/video_tools.py::image_to_video` 会在提交 `/api/ai-app-run-image` 前对图片 URL 做轻量级真实性校验：先拒绝示例域名占位 URL，再用短超时 HEAD 探测图片是否可访问；HEAD 不支持时退化为 Range GET 获取 1 字节，探测失败则不提交任务。
 - 数字人口播缺少用户音频时，专家应调用通用 `generate_reference_audio` 生成参考音频；数字人专家不暴露角色耦合的 `generate_character_reference_audio`
+- **数字人默认模型为 wan2.2**（2026-09-30 确认）。`generate_digital_human`（`script_writer_core/mcp_tool.py`）在 DIGITAL_HUMAN 分类下优先选 `TaskTypeId.DIGITAL_HUMAN`（id=13），并把所选 `task_id` 透传给 `/api/digital-human`（接口支持 `task_id` Form 参数，白名单 13=wan2.2 / 35=MiniMax H3，默认 13）。**⚠️ 音频语义差异，禁止默认切到 H3/LTX2.3 等其他数字人**：wan2.2 的 `audio_url` 是「参考音频」（只提取音色，口播内容由 `text` 驱动）；MiniMax H3 等的 `audio_url` 是「驱动说话的音频」（音频本身即最终声音）。本链路传入的音频是按口播文本合成的通用参考音频，只有 wan2.2 的语义匹配（曾于 2026-09-30 短暂默认 H3，当日确认语义不匹配后切回，事故会话 `10eb0496`）
+- **数字人任务必须推 `video_task_submitted`**（2026-09-30 修复，事故会话 `5847bc38`）：`pm_agent.py::_resolve_generation_task_event` 的视频类专家清单为 `marketing-video` / `article-to-video` / `digital-human-creator`。此前数字人视频被推成 `image_task_submitted`，前端按图片轮询，任务完成后拿不到图片 URL，把 pending 行替换成"图片生成失败，请稍后重试"——视频实际已生成但从未展示。前端 `extractProjectIdsFromText` 同步兼容 `project_ids：12548`（复数键 + 中文冒号）格式，SSE 事件丢失时兜底恢复也能提取到数字人总结里的 project_ids
+- **状态轮询工具内置等待与死循环豁免**（2026-09-30，事故会话 `3d07080b`：专家每 3~4 秒轮询一次 `check_reference_audio_status`，连续 3 次相同签名被 `ExpertAgent._check_progress` 误判死循环并优雅关闭，而 RunningHub TTS 44 秒后才完成，`generate_digital_human` 从未提交）。双保险修复：
+  1. `check_reference_audio_status` / `check_image_status`（`script_writer_core/mcp_tool.py::_wait_for_terminal_task_status`）在任务仍为 `queued/processing` 时服务端同步等待并重查（最长 `AGENT_CHECK_TOOL_WAIT_SECONDS`=20s，间隔 `AGENT_CHECK_TOOL_POLL_INTERVAL_SECONDS`=3s），单次调用尽量拿到终态，返回 `processing` 时附引导文案；agent 循环跑在 task_manager 的 daemon 线程，同步 sleep 不阻塞事件循环
+  2. `ExpertAgent._check_progress` 豁免"纯状态轮询"轮次（本轮全部工具为 `check_*_status`/`get_task_status` 且结果无 error、仍在进行中）：不计入 `consecutive_no_progress`，改由独立上限 `AGENT_STATUS_POLL_MAX_ROUNDS`=15 轮约束（常量见 `config/constant.py`）
+  3. 提示词同步：PM 侧（`marketing-pm/SKILL.md` 与 `sop-digital-human.md`）规定专家总结无 `project_ids`（任务未提交）时必须如实告知用户卡点并给出后续选项，严禁承诺"系统会自动处理后续流程"（前端自动轮询展示只对已提交任务生效）；数字人专家 SKILL 说明轮询工具会自动等待约 20 秒
 
 ### 用户偏好同步
 
