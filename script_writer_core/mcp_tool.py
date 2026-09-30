@@ -4745,6 +4745,67 @@ def _build_reference_audio_status_result(task: Optional[Any], task_id: str,
     return result
 
 
+def _resolve_digital_human_image_url(raw_image_url: str) -> Tuple[str, Optional[str]]:
+    """校验并解析数字人参考图片 URL，返回 (resolved_url, error)。
+
+    LLM 可能传描述性引用（"project_id:12555 的图"），也可能臆造看似合理的
+    本地路径（如 /upload/project/12555.png——事故：会话 3c746a8d，该路径格式
+    校验通过但文件不存在，任务提交 RunningHub 时下载失败，4 秒内 SYSTEM 失败）。
+    解析顺序：
+    1. 公网 URL / Windows 盘符路径：直接通过（存在性由驱动下载环节校验）
+    2. 本地路径（/ 或 upload/ 开头）：项目根下副本存在即通过；不存在则提取
+       project_id 查 ai_tools.result_url 自动纠正为真实图片地址
+    3. 描述性引用：同样走 project_id 查库解析
+    兜底解析失败时返回明确 error（error 非 None 时第一个返回值为原始输入）。
+    """
+    url = raw_image_url.strip()
+    is_local = url.startswith('/') or url.startswith('upload/')
+    is_remote = url.startswith('http://') or url.startswith('https://')
+    is_win_abs = len(url) > 2 and url[1] == ':'
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    if is_remote or is_win_abs:
+        return url, None
+
+    if is_local and os.path.exists(os.path.join(project_root, url.lstrip('/').lstrip('\\'))):
+        return url, None
+
+    # 本地路径不存在或为描述性引用：提取 project_id 查库自动纠正
+    match = re.search(r'(\d+)', url)
+    if match:
+        try:
+            from model.ai_tools import AIToolsModel
+            project_id_num = int(match.group(1))
+            record = AIToolsModel.get_by_id(project_id_num)
+            if record and record.result_url:
+                resolved = record.result_url
+                if resolved.startswith(('/upload/', 'upload/')) and not os.path.exists(
+                    os.path.join(project_root, resolved.lstrip('/').lstrip('\\'))
+                ):
+                    logger.warning(
+                        f"generate_digital_human: project {project_id_num} 的 result_url 本地不存在: {resolved}"
+                    )
+                else:
+                    logger.info(
+                        f"generate_digital_human: 自动解析 '{url}' -> project {project_id_num} -> {resolved}"
+                    )
+                    return resolved, None
+        except Exception as e:
+            logger.warning(f"generate_digital_human: 尝试解析 project_id 失败: {e}")
+
+    if not (is_local or is_remote or is_win_abs):
+        return raw_image_url, (
+            f'image_url "{url}" 不是有效的图片路径。'
+            f'请传入真实的图片URL（如 /upload/cache/.../xxx.png），而不是引用描述。'
+            f'可调用 check_image_status(project_id) 获取已生成图片的真实URL。'
+        )
+    return raw_image_url, (
+        f'image_url "{url}" 指向的本地文件不存在（LLM 不得臆造路径）。'
+        f'请调用 check_image_status(project_id) 获取已生成图片的真实URL后重试。'
+    )
+
+
 def generate_digital_human(
     user_id: str,
     world_id: str,
@@ -4780,37 +4841,12 @@ def generate_digital_human(
         if not image_url or not isinstance(image_url, str):
             return {'success': False, 'error': '图片URL不能为空且必须是字符串'}
 
-        # 校验 image_url 格式：必须是有效路径或URL
+        # 校验并解析 image_url（含 LLM 臆造路径的自动纠正，见 _resolve_digital_human_image_url）
         image_url = image_url.strip()
-        _is_valid_image_path = (
-            image_url.startswith('/') or
-            image_url.startswith('upload/') or
-            image_url.startswith('http://') or
-            image_url.startswith('https://') or
-            (len(image_url) > 2 and image_url[1] == ':')
-        )
-        if not _is_valid_image_path:
-            # 尝试从中提取 project_id 并查数据库获取真实图片 URL
-            _match = re.search(r'(\d+)', image_url)
-            _resolved = False
-            if _match:
-                try:
-                    from model.ai_tools import AIToolsModel
-                    _project_id_num = int(_match.group(1))
-                    _ai_tool_record = AIToolsModel.get_by_id(_project_id_num)
-                    if _ai_tool_record and _ai_tool_record.result_url:
-                        logger.info(f"generate_digital_human: 自动解析 '{image_url}' -> project {_project_id_num} -> {_ai_tool_record.result_url}")
-                        image_url = _ai_tool_record.result_url
-                        _resolved = True
-                except Exception as e:
-                    logger.warning(f"generate_digital_human: 尝试解析 project_id 失败: {e}")
-            if not _resolved:
-                return {
-                    'success': False,
-                    'error': f'image_url "{image_url}" 不是有效的图片路径。'
-                             f'请传入真实的图片URL（如 /upload/generated/image/774.png），'
-                             f'而不是引用描述。可调用 check_image_status 获取真实图片URL。'
-                }
+        resolved_url, resolve_error = _resolve_digital_human_image_url(image_url)
+        if resolve_error:
+            return {'success': False, 'error': resolve_error}
+        image_url = resolved_url
 
         if not text or not isinstance(text, str):
             return {'success': False, 'error': '文本内容不能为空且必须是字符串'}

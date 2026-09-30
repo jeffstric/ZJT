@@ -54,6 +54,7 @@ call_agent(
 委托要求：
 - 如果用户已经上传音频，PM 必须在任务描述中明确写出真实音频 URL，而不是只写"用户已提供参考音频"
 - 如果用户没有上传音频，专家必须调用 `generate_reference_audio` 生成通用参考音频
+- **人物图片必须写真实图片 URL**（http(s) 或对话中出现过的 `/upload/...` 路径）：用户说"用之前生成的图"时，不得只写"project_id:xxx 的图"这类引用——直接写"使用 project_id xxx 生成的图，请先调用 check_image_status(project_id) 获取真实图片 URL"，由专家查询后再提交；禁止在任务描述中编造图片路径
 - 专家必须实际调用 `generate_digital_human` 提交任务；严禁只返回"参数已准备完成，可以提交"
 - 专家返回结果必须包含非空 `project_ids`，否则视为未提交成功
 

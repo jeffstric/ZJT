@@ -291,6 +291,7 @@
         "generate_digital_human",
         "generate_reference_audio",
         "check_reference_audio_status",
+        "check_image_status",
         "get_user_computing_power",
         "ask_user"
       ],
