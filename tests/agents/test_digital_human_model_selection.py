@@ -30,7 +30,7 @@ WAN22 = _make_config(13, "wan2.2 数字人", power=12)
 H3 = _make_config(35, "MiniMax H3 数字人")
 
 
-def _run_generate_digital_human(monkeypatch, configs):
+def _run_generate_digital_human(monkeypatch, configs, image_url=None):
     monkeypatch.setattr(
         "config.unified_config.UnifiedConfigRegistry.get_by_category",
         classmethod(lambda cls, category: configs),
@@ -48,7 +48,7 @@ def _run_generate_digital_human(monkeypatch, configs):
             user_id="2",
             world_id="marketing",
             auth_token="token",
-            image_url="http://zjt-dev.perseids.cn/upload/marketing/pic/x.png",
+            image_url=image_url or "http://zjt-dev.perseids.cn/upload/marketing/pic/x.png",
             text="我是你的数字人分身",
             audio_url="http://zjt-dev.perseids.cn/upload/marketing/audio/y.wav",
             aspect_ratio="9:16",
@@ -120,3 +120,82 @@ def test_resolve_generation_task_event_classifies_digital_human_as_video():
     event, message = pm._resolve_generation_task_event("marketing-image", 3)
     assert event == "image_task_submitted"
     assert "图片" in message
+
+
+# ============ image_url 解析：LLM 臆造路径防御（事故会话 3c746a8d） ============
+
+REAL_CACHE_URL = "/upload/cache/2026-09-30/12555_20260930110102_7f3a8213.png"
+
+
+def _fake_exists_factory(existing_suffixes):
+    """构造 os.path.exists 桩：仅当路径以下列后缀之一结尾时返回 True"""
+    def fake(p):
+        return any(str(p).endswith(s) for s in existing_suffixes)
+    return fake
+
+
+def test_fabricated_local_path_auto_resolved_via_project_lookup(monkeypatch):
+    """臆造的本地路径（/upload/project/12555.png，文件不存在）必须自动纠正为
+    ai_tools.result_url 的真实图片地址，而不是放行后让任务在驱动层失败"""
+    monkeypatch.setattr("os.path.exists", _fake_exists_factory([REAL_CACHE_URL]))
+    record = SimpleNamespace(result_url=REAL_CACHE_URL)
+
+    with patch("model.ai_tools.AIToolsModel.get_by_id", return_value=record) as mock_get:
+        result, mock_post = _run_generate_digital_human(
+            monkeypatch, [WAN22], image_url="/upload/project/12555.png")
+
+    assert result["success"] is True
+    assert mock_post.call_args.kwargs["data"]["image_url"] == REAL_CACHE_URL
+    mock_get.assert_called_once_with(12555)
+
+
+def test_fabricated_local_path_unresolvable_rejected(monkeypatch):
+    """臆造路径且查库解析不到时，必须立刻报错并引导用 check_image_status，
+    不得提交注定失败的任务"""
+    monkeypatch.setattr("os.path.exists", _fake_exists_factory([]))
+
+    with patch("model.ai_tools.AIToolsModel.get_by_id", return_value=None):
+        result, _ = _run_generate_digital_human(
+            monkeypatch, [WAN22], image_url="/upload/project/12555.png")
+
+    assert result["success"] is False
+    assert "check_image_status" in result["error"]
+    assert "不存在" in result["error"]
+
+
+def test_existing_local_path_passes_through_without_lookup(monkeypatch):
+    """真实存在的本地路径直接通过，不触发查库纠正"""
+    monkeypatch.setattr("os.path.exists", _fake_exists_factory([REAL_CACHE_URL]))
+
+    with patch("model.ai_tools.AIToolsModel.get_by_id") as mock_get:
+        result, mock_post = _run_generate_digital_human(
+            monkeypatch, [WAN22], image_url=REAL_CACHE_URL)
+
+    assert result["success"] is True
+    assert mock_post.call_args.kwargs["data"]["image_url"] == REAL_CACHE_URL
+    mock_get.assert_not_called()
+
+
+def test_http_url_passes_through_without_local_check(monkeypatch):
+    """公网 URL 不做本地存在性检查（回归：保持原有直通行为）"""
+    monkeypatch.setattr("os.path.exists", _fake_exists_factory([]))
+
+    with patch("model.ai_tools.AIToolsModel.get_by_id") as mock_get:
+        result, mock_post = _run_generate_digital_human(
+            monkeypatch, [WAN22],
+            image_url="http://zjt-dev.perseids.cn/upload/marketing/pic/a.png")
+
+    assert result["success"] is True
+    assert mock_post.call_args.kwargs["data"]["image_url"] == \
+        "http://zjt-dev.perseids.cn/upload/marketing/pic/a.png"
+    mock_get.assert_not_called()
+
+
+def test_descriptive_reference_rejected_with_guidance(monkeypatch):
+    """描述性引用（"project_id:12555 的图"）解析失败时报错引导拿真实 URL"""
+    with patch("model.ai_tools.AIToolsModel.get_by_id", return_value=None):
+        result, _ = _run_generate_digital_human(
+            monkeypatch, [WAN22], image_url="project_id:12555 的图")
+
+    assert result["success"] is False
+    assert "check_image_status" in result["error"]
