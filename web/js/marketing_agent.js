@@ -257,6 +257,41 @@
                 return String(url || '').split('#')[0].split('?')[0].toLowerCase();
             }
 
+            // CDN 结果 URL 每次轮询都会换签名（?e=..&token=..），同一视频在历史
+            // 消息与本次轮询里的 URL 必然不同；去重比对必须以「去 query 的原始
+            // URL」为身份标识，并兼容 proxyDownloadUrl 编码后的 %2F 形式
+            // （事故：会话 66875523 同一视频因签名不同被重复追加展示 4 次）。
+            function stripUrlSignature(url) {
+                return String(url || '').split('#')[0].split('?')[0];
+            }
+
+            function contentIncludesMediaUrl(content, url) {
+                const base = stripUrlSignature(url);
+                if (!base) return false;
+                return content.includes(base) || content.includes(encodeURIComponent(base));
+            }
+
+            // 归一化媒体 URL 作为去重 key：解出 /api/download|proxy-image 代理
+            // 的内层真实 URL、解码、去签名。直接拿原始 src 当 key，同一视频会
+            // 因签名不同被当成不同消息。
+            function normalizeMediaUrlKey(url) {
+                let u = String(url || '').trim();
+                if (!u) return '';
+                const proxyMatch = u.match(/^\/api\/(?:download|proxy-image)\?url=([^&#]+)/i);
+                if (proxyMatch) {
+                    try { u = decodeURIComponent(proxyMatch[1]); } catch (e) { return u.toLowerCase(); }
+                    return stripUrlSignature(u).toLowerCase();
+                }
+                if (/^https?:\/\//i.test(u)) {
+                    if (/%[0-9A-Fa-f]{2}/.test(u)) {
+                        try { u = decodeURIComponent(u); } catch (e) { /* 非法编码，保留原文 */ }
+                    }
+                    return stripUrlSignature(u).toLowerCase();
+                }
+                // 同源相对路径等其余形式：整串作 key（不剥 query，避免把不同资源坍缩成同一 key）
+                return u.toLowerCase();
+            }
+
             function isImageResultUrl(url) {
                 return /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/.test(getUrlPath(url));
             }
@@ -455,7 +490,14 @@
                     || content.includes(`setModalImageInfo("${sid}"`)
                     || content.includes(`publishGeneratedResult("${sid}"`)
                     || content.includes(`publishGeneratedResult(&quot;${sid}&quot;`)
-                    || content.includes(`/${sid}_`);
+                    // 结果卡片当前 HTML 形态：发布按钮 data-publish-tool-id、
+                    // 图片卡片 data-tool-id（带引号闭合，防 1254 误配 12549）
+                    || content.includes(`data-publish-tool-id="${sid}"`)
+                    || content.includes(`data-tool-id="${sid}"`)
+                    // 文件名片段 `<pid>_<时间戳>`；代理 URL 编码后为 %2F<pid>_，
+                    // 两种形态都要匹配（只匹配 /<pid>_ 会漏掉编码形态）
+                    || content.includes(`/${sid}_`)
+                    || content.includes(`%2F${sid}_`);
             }
 
             function hasGeneratedImageResult(projectIds, imageUrls = []) {
@@ -464,9 +506,9 @@
                 return messages.value.some(msg => {
                     const content = msg?.content || '';
                     if (msg?.role !== 'ai' || !content.includes('generated-image-wrapper')) return false;
-                    if (urls.length > 0) {
-                        return urls.some(url => url && content.includes(url));
-                    }
+                    // URL 带一次性 CDN 签名（去签名比对，见 contentIncludesMediaUrl），
+                    // 匹配失败时继续走 ID 兜底，不能只信 URL
+                    if (urls.length > 0 && urls.some(url => contentIncludesMediaUrl(content, url))) return true;
                     return ids.some(id => contentHasGeneratedTaskId(content, id));
                 });
             }
@@ -489,9 +531,8 @@
                 return messages.value.some(msg => {
                     const content = msg?.content || '';
                     if (msg?.role !== 'ai' || !content.includes('<video')) return false;
-                    if (urls.length > 0) {
-                        return urls.some(url => url && content.includes(url));
-                    }
+                    // 同 hasGeneratedImageResult：URL 去签名比对，失败再走 ID 兜底
+                    if (urls.length > 0 && urls.some(url => contentIncludesMediaUrl(content, url))) return true;
                     return ids.some(id => contentHasGeneratedTaskId(content, id));
                 });
             }
@@ -518,20 +559,22 @@
                     if (msg?.role === 'ai' && content.includes('<video')) {
                         const urls = [];
                         content.replace(/<video[^>]+src=["']([^"']+)["']/gi, (match, url) => {
-                            urls.push(url);
+                            urls.push(normalizeMediaUrlKey(url));
                             return match;
                         });
-                        const key = urls.join('|') || content;
+                        // key 用归一化 URL（解代理+去签名）：同一视频多次追加时签名
+                        // 各不相同，拿原始 src 当 key 会导致去重失效、重复展示
+                        const key = urls.filter(Boolean).join('|') || content;
                         if (seenVideoUrls.has(key)) return;
                         seenVideoUrls.add(key);
                     }
                     if (msg?.role === 'ai' && content.includes('generated-image-wrapper')) {
                         const urls = [];
                         content.replace(/<img[^>]+src=["']([^"']+)["']/gi, (match, url) => {
-                            urls.push(url);
+                            urls.push(normalizeMediaUrlKey(url));
                             return match;
                         });
-                        const key = urls.join('|') || content;
+                        const key = urls.filter(Boolean).join('|') || content;
                         if (seenImageUrls.has(key)) {
                             const existingIndex = seenImageUrls.get(key);
                             const existingContent = normalizedMessages[existingIndex]?.content || '';
@@ -4138,7 +4181,9 @@
                     });
                     if (!checkAuthResponse(res)) return false;
                     const data = await res.json();
-                    return data.success && data.replaced > 0;
+                    // replaced>0：pending 行已替换；duplicate：后端判定会话历史里已有
+                    // 该批 project 的结果卡片（另一页签/恢复流程已写入），无需再追加
+                    return !!data.success && (data.replaced > 0 || data.duplicate === true);
                 } catch (e) {
                     console.error('替换 pending task 失败:', e);
                     return false;

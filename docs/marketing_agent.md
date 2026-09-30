@@ -269,7 +269,8 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - 任务完成后将结果（图片/视频 URL）渲染到消息气泡中
 - 使用 `sessionTaskRegistry` 注册表跟踪所有活跃任务，支持会话切换后恢复
 - 直接图片/视频生成使用 `directGenerationTasks` 为每次提交创建独立任务实例，实例内绑定 `type`、`project_ids`、`msgUid`、`sessionId` 和 `intervalId`。轮询只读取实例内的 `projectIds`，避免多轮对话中后提交的图片任务覆盖先提交的视频任务。
-- 直接生成任务完成后优先调用 `replacePendingTask(sessionId, task_type, project_ids, content)` 精确替换原 `__PENDING_TASK__` 历史行；只有匹配失败时才 fallback 追加 assistant 消息，且追加到任务所属的原 session。
+- 直接生成任务完成后优先调用 `replacePendingTask(sessionId, task_type, project_ids, content)` 精确替换原 `__PENDING_TASK__` 历史行；只有匹配失败时才 fallback 追加 assistant 消息，且追加到任务所属的原 session。未找到 pending 行时后端会做服务端判重（见「任务恢复机制」第 2 条），历史中已有同批 project 的结果卡片时返回 `duplicate: true`，前端跳过追加。
+- 生成结果去重（`hasGeneratedImageResult` / `hasGeneratedVideoResult`）采用「去签名 URL + 项目 ID」双重判定：CDN 结果 URL 每次轮询都会换签名（`?e=..&token=..`），比对时必须剥离 query，并同时匹配原文与 `encodeURIComponent` 编码形态（结果卡片经 `proxyDownloadUrl` 代理后 `/` 编码为 `%2F`）；URL 匹配失败时继续走 ID 兜底，不能只信 URL。`contentHasGeneratedTaskId` 覆盖 `data-publish-tool-id="{pid}"`、`data-tool-id="{pid}"`、`/{pid}_` 与 `%2F{pid}_` 等卡片形态。事故（会话 66875523）：旧实现只按 `/{pid}_` 原文匹配且 URL 精确比对，编码形态与跨轮询签名变化双双漏判，导致每次刷新页面都误判“尚无结果”、重启轮询后重复追加“视频已生成”消息。
 - 生成结果统一通过媒体类型过滤后渲染：图片结果会排除 `.mp4/.webm/.mov/.avi/.mkv`，视频结果会排除图片扩展名，避免视频 URL 被 `<img class="generated-image">` 包裹。
 - `GET /api/get-status/{project_ids}` 对 CDN 结果采用 CDN 优先策略；如果生成任务已完成但 CDN 仍处于 pending，会先返回本地 `result_url` 作为 `file_url`，并附带 `cdn_status: "pending"`，避免聊天框一直显示生成中
 - 前端轮询统一识别 `SUCCESS`/`COMPLETED`/`DONE` 等完成状态，并从 task 本身和 `results[]` 中提取 `file_url`、`result_url`、`video_url`、`image_url`、`output_url`、`download_url` 等字段
@@ -277,7 +278,7 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - 如果 `image_task_submitted` SSE 事件缺失，但专家回复中包含 `project_ids: [...]` 或 `项目ID: 744` 这类图片任务标识，前端会自动补启动图片轮询；图片轮询会绑定触发时的会话，避免切换会话后把结果写入当前对话
 - 文本兜底恢复会优先识别视频摘要，包含“视频参数”“图生视频”“文生视频”“时长”“first_last_frame”“multi_reference”等视频信号的工作总结不会再触发图片轮询，避免“图片模式 first_last_frame”被误判为图片生成任务
 - Agent 图片/视频轮询启动后均立即查询一次状态，已完成的任务可直接渲染结果，不必等待第一个轮询周期
-- 视频兜底恢复按会话绑定轮询结果，异步返回时如果用户已切换到其他会话，不会把结果写入当前对话；历史加载时会过滤空 AI 气泡和重复的视频结果，避免切换会话后重复显示
+- 视频兜底恢复按会话绑定轮询结果，异步返回时如果用户已切换到其他会话，不会把结果写入当前对话；历史加载时会过滤空 AI 气泡和重复的视频结果（`normalizeLoadedMessages` 以归一化 URL——解出代理内层 URL、解码、去签名——为去重 key，同一视频即使签名不同也只保留最早一条），避免切换会话后重复显示
 - 直接发起模式（`checkDirectGenerationStatus`）的轮询在每次 `await` 获取状态返回后，会再次校验 `currentSessionId` 是否仍等于任务实例的 `task.sessionId`：任务进行中切换会话时，旧轮询回调立即停止并清理，不再向当前（已切换的）`messages` 或全局 `imageResults/videoResults` 写入，杜绝"视频生成失败/图片生成失败"提示串到其他对话
 - `handleImageTaskSubmitted` / `handleVideoTaskSubmitted` 支持显式 `explicitSessionId` 入参；由 SSE 流派发任务时传入该流的 `streamSessionId`，使轮询与结果持久化归属发起会话，而非事件被处理时的"当前会话"
 
@@ -286,7 +287,7 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 页面刷新或切换会话时，系统通过以下机制恢复未完成的任务：
 
 1. **`__PENDING_TASK__` 标记**：后端在 `chat_messages` 表中保存 `__PENDING_TASK__:{type}:{project_ids}` 标记（`message_type='pending_task'`）。这是内部恢复用行，前端解析后标为 `_isPendingTask`，模板不渲染；切回会话时不会把 `__PENDING_TASK__` 交给 Markdown（否则两侧 `__` 会被收成加粗的 `PENDING_TASK`）
-2. **`recoverPendingTasks()`**：加载历史后先恢复 pending 轮询，再跑工作总结文本兜底，避免同一 `project_ids` 再插一条「生成中」。完成时优先替换 pending 消息（通过 `PUT /session/{id}/message/{message_id}`），替换失败则 fallback 追加新消息
+2. **`recoverPendingTasks()`**：加载历史后先恢复 pending 轮询，再跑工作总结文本兜底，避免同一 `project_ids` 再插一条「生成中」。完成时优先替换 pending 消息（通过 `PUT /session/{id}/message/{message_id}`），替换失败则 fallback 追加新消息。追加前有服务端判重兜底：`POST /session/{id}/replace-pending-task` 未找到 pending 行时，由 `ChatMessagesModel.has_generated_result` 检查会话历史中是否已含该批 project 的结果卡片（匹配 `data-publish-tool-id="{pid}"` 属性或 `{pid}_` 文件名片段），命中则返回 `duplicate: true`，前端视为已处理、跳过追加，防止跨页签双写或恢复流程重复触发时重复写入"视频已生成"消息
 3. **`sessionActiveTaskId` 注册表**：记录每个 session 的活跃 Agent task_id，切换回来时检查任务状态并重连 SSE
 4. **`directGenerationTasks` / Agent 轮询注册表**：直接生成任务在内存中按任务实例跟踪 project_ids；Agent 图片/视频轮询按 `sessionId:type:project_ids` 去重，支持会话内恢复和并发任务隔离
 5. **并发安全**：`clean-pending-tasks` 支持按 `task_type` + `project_ids` 精确清理，并发任务互不影响。轮询和 `recoverPendingTasks(sessionId)` 的 fallback 追加也必须显式传入原始 sessionId，避免用户切换会话后把上一会话的图片/视频结果写入当前会话。
