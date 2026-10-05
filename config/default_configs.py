@@ -152,7 +152,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'timeout.request_timeout',
         'value_type': 'int',
-        'description': '请求超时时间（毫秒）',
+        'description': '单次 HTTP 请求超时（秒）。库存值大于等于 1000 仍按毫秒换算，例如 10000 等于 10 秒',
         'editable': True,
         'is_sensitive': False
     },

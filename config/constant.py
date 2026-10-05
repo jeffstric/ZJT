@@ -28,6 +28,34 @@ from config.unified_config import (
 )
 
 
+# timeout.request_timeout 的配置说明单位是毫秒（默认 10000 = 10 秒）。
+# requests / httpx 的 timeout 单位是秒。大于等于该阈值时按毫秒换算，
+# 避免把 10000 直接传给 requests 后单次不返回的请求占住调度线程近 3 小时。
+# 小于阈值的值视为已经是秒（单测里的 30、同步接口的 300/600）。
+HTTP_REQUEST_TIMEOUT_MS_THRESHOLD = 1000
+HTTP_REQUEST_TIMEOUT_DEFAULT_SECONDS = 30
+
+
+def coerce_http_timeout_seconds(value, default=None) -> float:
+    """把 timeout.request_timeout 换成 HTTP 客户端需要的秒。
+
+    已入库的 10000（毫秒）会变成 10 秒；显式传入的 10、30、300 保持不变。
+    """
+    if default is None:
+        default = HTTP_REQUEST_TIMEOUT_DEFAULT_SECONDS
+    if value is None:
+        return float(default)
+    try:
+        raw = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if raw <= 0:
+        return float(default)
+    if raw >= HTTP_REQUEST_TIMEOUT_MS_THRESHOLD:
+        return raw / 1000.0
+    return raw
+
+
 # ===== 用户模块运行时 =====
 # 稳定协议与超时值由 unified_config 中的不可变配置统一维护；此处提供便于业务代码引用的别名。
 USER_MODULE_MANIFEST_SCHEMA_VERSION = USER_MODULE_RUNTIME_CONFIG.manifest_schema_version
