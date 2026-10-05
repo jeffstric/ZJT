@@ -62,7 +62,7 @@ server:
 
 # 测试超时设置（可缩短以加快测试）
 timeout:
-  request_timeout: 5000
+  request_timeout: 10
   status_check_timeout: 60
   status_check_interval: 2
 

@@ -3572,7 +3572,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 5',
         sort_order=15000.0,
         site_number=5,
-        sync_mode=False,  # 同步模式
+        sync_mode=True,  # 同步模式
         required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
     ImplementationConfig(
