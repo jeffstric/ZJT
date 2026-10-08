@@ -184,6 +184,8 @@ SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78
 
 # MiniMax H3 分辨率算力倍率（基价为 720P，480P 约为 720P 的 42%）
 MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
+# MiniMax H3 720P 按时长算力（秒 -> 算力）。视频去水印与此表共用同一对象。
+MINIMAX_H3_720P_COMPUTING_POWER = {4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13}
 
 # Seedance 2.0 Fast / Mini 仅支持 480P / 720P（不支持 1080P）
 SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS = [
@@ -1278,6 +1280,9 @@ class DriverImplementation:
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 'digital_human_minimax_h3_runninghub_v1'
 
+    # 视频去水印
+    VIDEO_WATERMARK_RUNNINGHUB_V1 = 'video_watermark_runninghub_v1'
+
     # Vidu
     VIDU_DEFAULT = 'vidu_default'
     VIDU_Q2 = 'vidu_q2'
@@ -1498,6 +1503,9 @@ class DriverImplementationId:
     GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1 = 97
     GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1 = 98
 
+    # 视频去水印
+    VIDEO_WATERMARK_RUNNINGHUB_V1 = 99
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1598,6 +1606,7 @@ IMPLEMENTATION_TO_ID = {
     'gpt_image_2_5_common_flare_site3_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE3_V1,
     'gpt_image_2_5_common_flare_site4_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1,
     'gpt_image_2_5_common_flare_site5_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1,
+    'video_watermark_runninghub_v1': DriverImplementationId.VIDEO_WATERMARK_RUNNINGHUB_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1683,6 +1692,9 @@ class DriverKey:
     DIGITAL_HUMAN = 'digital_human'
     DIGITAL_HUMAN_LTX2_3_VOICE = 'digital_human_ltx2_3_voice'
     DIGITAL_HUMAN_MINIMAX_H3 = 'digital_human_minimax_h3'
+
+    # 视频去水印
+    VIDEO_WATERMARK_REMOVE = 'video_watermark_remove'
 
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_IMAGE_EDIT = 'qwen_multi_angle_image_edit'
@@ -1876,6 +1888,7 @@ class TaskTypeId:
         'DIGITAL_HUMAN': '数字人生成',
         'DIGITAL_HUMAN_LTX2_3_VOICE': '数字人LTX2.3 With Voice',
         'DIGITAL_HUMAN_MINIMAX_H3': '数字人 MiniMax H3',
+        'VIDEO_WATERMARK_REMOVE': '视频去水印',
         'MINIMAX_H3_IMAGE_TO_VIDEO': 'MiniMax H3 图生视频',
         'MINIMAX_H3_REFERENCE_TO_VIDEO': 'MiniMax H3 参考生视频',
         'MINIMAX_H3_TEXT_TO_VIDEO': 'MiniMax H3 文生视频',
@@ -1947,6 +1960,9 @@ class TaskTypeId:
     DIGITAL_HUMAN = 13
     DIGITAL_HUMAN_LTX2_3_VOICE = 32
     DIGITAL_HUMAN_MINIMAX_H3 = 35
+
+    # 视频处理
+    VIDEO_WATERMARK_REMOVE = 49
 
 
 
@@ -3136,6 +3152,25 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementation='local_video_enhance',
         sort_order=51,
     ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.VIDEO_WATERMARK_REMOVE,
+        key='video_watermark_remove',
+        short_key='video_watermark',
+        name='视频去水印',
+        model_name='视频去水印',
+        category=TaskCategory.VISUAL_ENHANCE,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.VIDEO_WATERMARK_REMOVE,
+        implementation=DriverImplementation.VIDEO_WATERMARK_RUNNINGHUB_V1,
+        implementations=[DriverImplementation.VIDEO_WATERMARK_RUNNINGHUB_V1],
+        computing_power=0,
+        supported_ratios=[],
+        supported_durations=sorted(MINIMAX_H3_720P_COMPUTING_POWER),
+        default_duration=5,
+        # 基础接口已接入。模型选择器先隐藏，避免没有上传入口时被选中。
+        hidden=True,
+        sort_order=52,
+    ),
 
     # ==================== 音频 ====================
     UnifiedTaskConfig(
@@ -3799,7 +3834,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3RunninghubV1Driver',
-        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},
+        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,
         enabled=True,
         description='RunningHub MiniMax H3 首尾帧图生视频接口（FL2VA 音频修复版）',
         sort_order=5200.0,
@@ -3814,7 +3849,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_turbo_runninghub_v1',
         display_name='RunningHub（加速版）',
         driver_class='MinimaxH3TurboRunninghubV1Driver',
-        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},  # 复用 H3 首尾帧版算力表
+        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
         enabled=True,
         description='RunningHub MiniMax H3 图生视频加速版接口（webapp 2092199541612306434，支持首尾帧）',
         sort_order=5202.0,
@@ -3829,7 +3864,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_reference_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3ReferenceRunninghubV1Driver',
-        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},  # 复用 H3 首尾帧版算力表
+        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
         enabled=True,
         description='RunningHub MiniMax H3 参考生视频接口（多参考图，最多9张）',
         sort_order=5205.0,
@@ -3844,7 +3879,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_text_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3TextRunninghubV1Driver',
-        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},  # 复用 H3 首尾帧版算力表
+        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
         enabled=True,
         description='RunningHub MiniMax H3 文生视频接口（复用参考生工作流，素材槽位全空）',
         sort_order=5206.0,
@@ -3859,7 +3894,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='digital_human_minimax_h3_runninghub_v1',
         display_name='RunningHub',
         driver_class='DigitalHumanMinimaxH3RunninghubV1Driver',
-        default_computing_power={4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13},
+        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,
         enabled=True,
         description='RunningHub MiniMax H3 数字人接口（图片+音频+提示词）',
         sort_order=7002.0,
@@ -3871,6 +3906,16 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
             {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
         ],
         default_video_resolution=VideoResolution.P720,
+    ),
+    ImplementationConfig(
+        name='video_watermark_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='VideoWatermarkRunninghubV1Driver',
+        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,
+        enabled=True,
+        description='RunningHub 视频去水印，按时长计费，算力与 MiniMax H3 720P 一致',
+        sort_order=7100.0,
+        required_config_keys=['runninghub.api_key']
     ),
 
     # ==================== Vidu 供应商 ====================

@@ -787,7 +787,16 @@ def register_all_drivers():
         )
     except ImportError as e:
         logger.warning(f"Failed to import DigitalHumanMinimaxH3RunninghubV1Driver: {e}")
-    
+
+    try:
+        from .video_watermark_runninghub_v1_driver import VideoWatermarkRunninghubV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.VIDEO_WATERMARK_RUNNINGHUB_V1,
+            VideoWatermarkRunninghubV1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import VideoWatermarkRunninghubV1Driver: {e}")
+
     try:
         from .vidu_default_driver import ViduDefaultDriver
         # 注册 Vidu 默认驱动

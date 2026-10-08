@@ -11,7 +11,11 @@
   var TITLE_BAR_HEIGHT = 28;
   var EMPTY_GROUP_W = 400;
   var EMPTY_GROUP_H = 300;
+  var MIN_GROUP_W = 160;
+  var MIN_GROUP_H = 96;
   var DEFAULT_TITLE = '分组';
+  var RESIZE_HANDLES = ['n', 'e', 's', 'w', 'ne', 'nw', 'se', 'sw'];
+  var activeResize = null;
 
   function getCanvasEl(){
     return document.getElementById('canvas');
@@ -44,7 +48,8 @@
         '<span class="node-group-title"></span>' +
         '<input class="node-group-title-input" style="display:none" />' +
         '<button class="node-group-close" title="解散分组">\u00d7</button>' +
-      '</div>';
+      '</div>' +
+      resizeHandlesHtml();
     bindGroupElEvents(el, group);
     var canvas = getCanvasEl();
     canvas.insertBefore(el, canvas.firstChild);
@@ -99,6 +104,127 @@
       e.stopPropagation();
       startRename(groupId, titleEl, inputEl);
     });
+
+    var handles = el.querySelectorAll('.node-group-resize');
+    for(var i = 0; i < handles.length; i++){
+      handles[i].addEventListener('mousedown', function(e){
+        var handle = e.currentTarget.getAttribute('data-handle');
+        startGroupResize(groupId, handle, e);
+      });
+    }
+  }
+
+  function resizeHandlesHtml(){
+    return RESIZE_HANDLES.map(function(handle){
+      return '<div class="node-group-resize" data-handle="' + handle + '" title="' + resizeHandleTitle(handle) + '"></div>';
+    }).join('');
+  }
+
+  function resizeHandleTitle(handle){
+    if(handle === 'n' || handle === 's') return '调整高度';
+    if(handle === 'e' || handle === 'w') return '调整宽度';
+    return '调整宽高';
+  }
+
+  function resizeCursor(handle){
+    if(handle === 'n' || handle === 's') return 'ns-resize';
+    if(handle === 'e' || handle === 'w') return 'ew-resize';
+    if(handle === 'ne' || handle === 'sw') return 'nesw-resize';
+    return 'nwse-resize';
+  }
+
+  // 选中组框后拖四边改单边，拖四角同时改宽高。松手后记为手动尺寸。
+  function startGroupResize(groupId, handle, e){
+    if(e.button !== 0) return;
+    if(RESIZE_HANDLES.indexOf(handle) === -1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var g = findGroup(groupId);
+    if(!g) return;
+    selectGroup(groupId);
+    activeResize = {
+      groupId: groupId,
+      handle: handle,
+      startX: e.clientX,
+      startY: e.clientY,
+      orig: { x: g.x, y: g.y, w: g.w, h: g.h },
+      changed: false
+    };
+    state.groupResize = activeResize;
+    document.body.style.cursor = resizeCursor(handle);
+    window.addEventListener('mousemove', onGroupResizeMove);
+    window.addEventListener('mouseup', onGroupResizeUp);
+  }
+
+  function onGroupResizeMove(e){
+    if(!activeResize) return;
+    e.preventDefault();
+    var g = findGroup(activeResize.groupId);
+    if(!g) return;
+    var zoom = state.zoom || 1;
+    var dx = (e.clientX - activeResize.startX) / zoom;
+    var dy = (e.clientY - activeResize.startY) / zoom;
+    applyGroupResize(g, activeResize.handle, dx, dy, activeResize.orig);
+    activeResize.changed = g.x !== activeResize.orig.x || g.y !== activeResize.orig.y || g.w !== activeResize.orig.w || g.h !== activeResize.orig.h;
+    updateGroupEl(g);
+  }
+
+  function onGroupResizeUp(){
+    var info = activeResize;
+    activeResize = null;
+    state.groupResize = null;
+    window.removeEventListener('mousemove', onGroupResizeMove);
+    window.removeEventListener('mouseup', onGroupResizeUp);
+    document.body.style.cursor = '';
+    if(!info || !info.changed) return;
+    var g = findGroup(info.groupId);
+    if(g) g.userSized = true;
+    if(state.nodes){
+      for(var i = 0; i < state.nodes.length; i++){
+        updateNodeGroupMembership(state.nodes[i].id, { skipSave: true });
+      }
+    }
+    safeAutoSave();
+  }
+
+  function applyGroupResize(g, handle, dx, dy, orig){
+    var x = orig.x;
+    var y = orig.y;
+    var w = orig.w;
+    var h = orig.h;
+    if(handle.indexOf('e') !== -1) w = orig.w + dx;
+    if(handle.indexOf('s') !== -1) h = orig.h + dy;
+    if(handle.indexOf('w') !== -1){
+      w = orig.w - dx;
+      x = orig.x + dx;
+    }
+    if(handle.indexOf('n') !== -1){
+      h = orig.h - dy;
+      y = orig.y + dy;
+    }
+    if(w < MIN_GROUP_W){
+      if(handle.indexOf('w') !== -1) x = orig.x + orig.w - MIN_GROUP_W;
+      w = MIN_GROUP_W;
+    }
+    if(h < MIN_GROUP_H){
+      if(handle.indexOf('n') !== -1) y = orig.y + orig.h - MIN_GROUP_H;
+      h = MIN_GROUP_H;
+    }
+    if(x < 20){
+      w = w - (20 - x);
+      x = 20;
+      if(w < MIN_GROUP_W) w = MIN_GROUP_W;
+    }
+    var minY = (typeof MIN_NODE_Y === 'number') ? MIN_NODE_Y : 0;
+    if(y < minY){
+      h = h - (minY - y);
+      y = minY;
+      if(h < MIN_GROUP_H) h = MIN_GROUP_H;
+    }
+    g.x = x;
+    g.y = y;
+    g.w = w;
+    g.h = h;
   }
 
   // ─── 组整体拖动（复用 events.js 的 state.drag 传动，groupId 分支）───
@@ -124,7 +250,8 @@
         moved: false,
         groupId: g.id,
         emptyGroup: true,
-        groupOrig: { x: g.x, y: g.y }
+        userSized: !!g.userSized,
+        groupOrig: { x: g.x, y: g.y, w: g.w, h: g.h }
       };
       return;
     }
@@ -138,7 +265,9 @@
       origY: first.y,
       nodePositions: positions,
       moved: false,
-      groupId: g.id
+      groupId: g.id,
+      userSized: !!g.userSized,
+      groupOrig: { x: g.x, y: g.y, w: g.w, h: g.h }
     };
   }
 
@@ -150,7 +279,8 @@
     if(!drag || !drag.groupId) return;
     var g = findGroup(drag.groupId);
     if(!g) return;
-    if(drag.emptyGroup && drag.groupOrig){
+    // 手动拉过的框保持宽高，只跟着标题栏平移；自动包围盒的组仍按成员重算。
+    if(drag.groupOrig && (drag.emptyGroup || drag.userSized || g.userSized)){
       g.x = Math.max(20, drag.groupOrig.x + dx);
       g.y = Math.max(MIN_NODE_Y, drag.groupOrig.y + dy);
       updateGroupEl(g);
@@ -162,6 +292,8 @@
   // ─── 包围盒 ───────────────────────────
 
   function recalcGroupBounds(group){
+    // 用户拉过的框不再被成员包围盒盖掉，避免刚拉大的空框在放进节点后缩回去。
+    if(group.userSized) return false;
     if(!group.nodeIds.length) return false;
     var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for(var i = 0; i < group.nodeIds.length; i++){
@@ -192,7 +324,7 @@
   // 拖动普通节点期间组框保持静止（见 updateGroupFramesDuringDrag），
   // 因此这里直接用节点中心与组框本身的相对位置判定即可：
   // 中心在框内 = 保持/加入成员；在框外 = 脱离。重叠组取面积最小者。
-  function updateNodeGroupMembership(nodeId){
+  function updateNodeGroupMembership(nodeId, opts){
     var node = state.nodes.find(function(x){ return x.id === nodeId; });
     if(!node) return false;
     var size = getNodeSize(node);
@@ -220,7 +352,7 @@
       recalcGroupBounds(target);
       changed = true;
     }
-    if(changed) safeAutoSave();
+    if(changed && !(opts && opts.skipSave)) safeAutoSave();
     return changed;
   }
 
@@ -260,7 +392,9 @@
       id: id,
       title: opts.title || (DEFAULT_TITLE + ' ' + id),
       x: 0, y: 0, w: EMPTY_GROUP_W, h: EMPTY_GROUP_H,
-      nodeIds: members
+      nodeIds: members,
+      // 菜单新建的空框由用户决定大小；从选中节点编出来的框仍自动贴合成员。
+      userSized: members.length === 0
     };
     state.groups.push(group);
     if(members.length){
@@ -403,11 +537,12 @@
         y: (typeof gd.y === 'number') ? gd.y : 0,
         w: (typeof gd.w === 'number' && gd.w > 0) ? gd.w : EMPTY_GROUP_W,
         h: (typeof gd.h === 'number' && gd.h > 0) ? gd.h : EMPTY_GROUP_H,
-        nodeIds: memberIds
+        nodeIds: memberIds,
+        userSized: gd.userSized === true
       };
       state.groups.push(g);
       maxId = Math.max(maxId, g.id);
-      if(g.nodeIds.length) recalcGroupBounds(g);
+      if(g.nodeIds.length && !g.userSized) recalcGroupBounds(g);
       else updateGroupEl(g);
     });
     state.nextGroupId = (typeof nextGroupId === 'number' && nextGroupId > 0) ? nextGroupId : maxId + 1;

@@ -45,16 +45,6 @@
         }
         // 配置未就绪或已关闭时不弹窗（修复加载中点击绿色反馈钮仍出二维码）
         if (!feedbackQrEnabled) return;
-        const minimized = (function () {
-            try {
-                return localStorage.getItem('feedbackBtnMinimized') === 'true';
-            } catch (err) {
-                return false;
-            }
-        })();
-        if (minimized) {
-            restoreFeedbackBtn();
-        }
         const modal = document.getElementById('feedbackModal');
         if (modal) {
             modal.removeAttribute('hidden');
@@ -64,17 +54,12 @@
     }
 
     function initFeedbackBtn() {
-        let minimized = false;
+        // 默认只留问号。旧的 feedbackBtnMinimized=false 是点问号时顺手展开的，不再当作展开偏好。
         try {
-            const legacyDeleted = localStorage.getItem('feedbackBtnDeleted') === 'true';
-            const minimizedFlag = localStorage.getItem('feedbackBtnMinimized');
-            minimized = legacyDeleted || minimizedFlag === 'true';
-            if (legacyDeleted) {
-                localStorage.setItem('feedbackBtnMinimized', 'true');
-                localStorage.removeItem('feedbackBtnDeleted');
-            }
+            localStorage.setItem('feedbackBtnMinimized', 'true');
+            localStorage.removeItem('feedbackBtnDeleted');
         } catch (e) {}
-        applyFeedbackBtnState(minimized);
+        applyFeedbackBtnState(true);
     }
 
     function hideFeedbackUi() {
@@ -231,6 +216,11 @@
       addMenu.classList.toggle('show');
     });
 
+    // 画布在冒泡阶段 preventDefault 滚轮来缩放。菜单打开且高于视口时，滚轮应滚动菜单。
+    addMenu.addEventListener('wheel', (e) => {
+      e.stopPropagation();
+    }, { passive: true });
+
     document.getElementById('menuAddVideo').addEventListener('click', () => {
       const nodeId = createImageToVideoNode();
       renderMinimap();
@@ -330,6 +320,13 @@
       startNodePlacing(nodeId);
     });
 
+    document.getElementById('menuAddVideoWatermark').addEventListener('click', () => {
+      const nodeId = createVideoWatermarkNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
     document.getElementById('menuAddText').addEventListener('click', () => {
       const nodeId = createTextNode();
       renderMinimap();
@@ -394,7 +391,7 @@
 
     // 在拖动/平移/选择期间全局阻止文本选中
     document.addEventListener('selectstart', (e) => {
-      if(state.panning || state.placing || state.selecting || state.connecting || state.drag){
+      if(state.panning || state.placing || state.selecting || state.connecting || state.drag || state.groupResize){
         e.preventDefault();
       }
     });
@@ -836,8 +833,7 @@
         // 如果从图生视频节点拖拽，查找视频节点输入端口
         // 如果从剧本节点拖拽，查找分镜组节点输入端口
         // 如果从角色节点拖拽，查找视频节点输入端口
-        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'script' || fromNode.type === 'character')){
-          let nearestPort = null;
+        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark' || fromNode.type === 'script' || fromNode.type === 'character')){
           let nearestDist = 50;
           const targetType = fromNode.type === 'script' ? 'shot_group' : 'video';
           for(const targetNode of state.nodes){
@@ -860,6 +856,9 @@
         if(fromNode && fromNode.type === 'video'){
           let nearestVideoDist = 50;
           let nearestVideoRefDist = 50;
+          const registryVideoPort = typeof findNearestConnectablePort === 'function'
+            ? findNearestConnectablePort(toX, toY, 'video', 50)
+            : null;
           for(const node of state.nodes){
             const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
             if(!toEl) continue;
@@ -891,6 +890,18 @@
                 }
               }
             }
+          }
+          // 去水印等注册视频入口、对话组、图生视频参考口只吸附最近的一个
+          var videoSnapCandidates = [];
+          if(registryVideoPort) videoSnapCandidates.push({ kind: 'registered', dist: registryVideoPort.dist });
+          if(nearestVideoInputPort) videoSnapCandidates.push({ kind: 'dialogue', dist: nearestVideoDist });
+          if(nearestVideoRefPort) videoSnapCandidates.push({ kind: 'ref', dist: nearestVideoRefDist });
+          videoSnapCandidates.sort(function(a, b){ return a.dist - b.dist; });
+          var videoSnapWinner = videoSnapCandidates.length ? videoSnapCandidates[0].kind : null;
+          if(videoSnapWinner !== 'dialogue') nearestVideoInputPort = null;
+          if(videoSnapWinner !== 'ref') nearestVideoRefPort = null;
+          if(videoSnapWinner === 'registered'){
+            nearestPort = { nodeId: registryVideoPort.nodeId, x: registryVideoPort.x, y: registryVideoPort.y };
           }
         }
 
@@ -1239,8 +1250,8 @@
           }
         }
 
-        // 如果从图生视频节点拖拽，查找视频节点输入端口
-        if(fromNode && fromNode.type === 'image_to_video'){
+        // 如果从图生视频或去水印节点拖拽，查找视频节点输入端口
+        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark')){
           let nearestPort = null;
           let nearestDist = PROXIMITY_DIST;
           for(const node of state.nodes){
@@ -1268,9 +1279,12 @@
           }
         }
         
-        // 如果从视频节点拖拽，查找对话组节点和图生视频节点的视频输入端口
+        // 如果从视频节点拖拽，查找去水印、对话组和图生视频的视频输入端口
         if(fromNode && fromNode.type === 'video'){
           {
+            const registryVideoPort = typeof findNearestConnectablePort === 'function'
+              ? findNearestConnectablePort(mouseX, mouseY, 'video', PROXIMITY_DIST)
+              : null;
             let nearestVideoInputPort = null;
             let nearestVideoRefPort = null;
             let nearestVideoDist = PROXIMITY_DIST;
@@ -1302,8 +1316,28 @@
               }
             }
 
-            // 优先连接到图生视频节点的视频参考端口
-            if(nearestVideoRefPort && (!nearestVideoInputPort || nearestVideoRefDist <= nearestVideoDist)){
+            var registryDist = registryVideoPort ? registryVideoPort.dist : Infinity;
+            var dialogueDist = nearestVideoInputPort ? nearestVideoDist : Infinity;
+            var refDist = nearestVideoRefPort ? nearestVideoRefDist : Infinity;
+            // 去水印等注册入口比对话组、视频参考口更近时，走普通 connections
+            if(registryVideoPort && registryDist <= dialogueDist && registryDist <= refDist){
+              const connType = (registryVideoPort.portCfg && registryVideoPort.portCfg.connectionType) || 'connections';
+              const connArray = state[connType] || state.connections;
+              const exists = connArray.some(c => c.from === fromNode.id && c.to === registryVideoPort.nodeId);
+              const occupied = connArray.some(c => c.to === registryVideoPort.nodeId);
+              if(!exists && !occupied){
+                const connIdKey = connType === 'videoConnections' ? 'nextVideoConnId' : 'nextConnId';
+                connArray.push({
+                  id: state[connIdKey]++,
+                  from: fromNode.id,
+                  to: registryVideoPort.nodeId
+                });
+                if(registryVideoPort.portCfg && typeof registryVideoPort.portCfg.onConnect === 'function'){
+                  registryVideoPort.portCfg.onConnect(fromNode, registryVideoPort.node);
+                }
+                safeAutoSave();
+              }
+            } else if(nearestVideoRefPort && (!nearestVideoInputPort || nearestVideoRefDist <= nearestVideoDist)){
               const exists = state.videoConnections.some(c =>
                 c.from === fromNode.id && c.to === nearestVideoRefPort.nodeId && c.portType === 'video-ref'
               );
@@ -4508,26 +4542,3 @@
       stopAutoSave();
     });
 
-    // 一键生成素材按钮点击事件
-    const agentBtnMaterial = document.getElementById('agentBtnMaterial');
-    if (agentBtnMaterial) {
-      agentBtnMaterial.addEventListener('click', () => {
-        const authToken = localStorage.getItem('auth_token') || '';
-        const userId = localStorage.getItem('user_id') || '';
-        
-        if (!userId) {
-          showToast('请先登录', 'error');
-          return;
-        }
-        
-        // auth_token 已在 localStorage 中，无需通过 URL 传递
-        let url = `/script-writer?user_id=${encodeURIComponent(userId)}`;
-        
-        // 如果已选择世界，添加 world_id 参数
-        if (state.defaultWorldId) {
-          url += `&world_id=${encodeURIComponent(state.defaultWorldId)}`;
-        }
-        
-        window.location.href = url;
-      });
-    }

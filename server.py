@@ -4579,6 +4579,148 @@ async def video_enhance(
         raise HTTPException(status_code=500, detail=f"视频高清修复失败: {str(e)}")
 
 
+@app.post("/api/video-watermark-remove")
+@require_permission("video:watermark_remove")
+async def video_watermark_remove(
+    request: Request,
+    video: UploadFile = File(None, description="需要去水印的视频文件"),
+    video_url: str = Form(None, description="视频地址（与文件二选一，同时提供时使用文件）"),
+    duration_seconds: int = Form(5, description="视频时长（秒），仅支持 4-10，与 MiniMax H3 720P 算力表一致"),
+    fps: int = Form(24, description="帧率，1-120，默认 24"),
+    prompt: str = Form("", description="可选提示词，留空使用默认去水印提示词"),
+    user_id: int = Form(None, description="User ID，传入时必须与登录用户一致"),
+    auth_token: str = Form(None, description="Authentication token"),
+):
+    """
+    提交视频去水印任务。只落库并入队，RunningHub 上传与提交由驱动在调度进程完成。
+    """
+    from task.visual_drivers.video_watermark_runninghub_v1_driver import (
+        DEFAULT_PROMPT,
+        MAX_FPS,
+        MAX_PROMPT_CHARS,
+        MIN_FPS,
+    )
+
+    try:
+        state_user_id = getattr(request.state, "user_id", None)
+        if user_id is not None and state_user_id is not None and int(user_id) != int(state_user_id):
+            raise HTTPException(status_code=400, detail="用户ID不匹配")
+        effective_user_id = state_user_id or user_id
+        if not effective_user_id:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+
+        task_config = TaskTypeRegistry.get(TaskTypeId.VIDEO_WATERMARK_REMOVE)
+        if not task_config:
+            raise HTTPException(status_code=500, detail="视频去水印任务未配置")
+        if duration_seconds not in (task_config.supported_durations or []):
+            raise HTTPException(
+                status_code=400,
+                detail=f"视频时长仅支持 {list(task_config.supported_durations or [])} 秒",
+            )
+        if fps < MIN_FPS or fps > MAX_FPS:
+            raise HTTPException(status_code=400, detail=f"帧率仅支持 {MIN_FPS}-{MAX_FPS}")
+
+        prompt_text = (prompt or "").strip()
+        if len(prompt_text) > MAX_PROMPT_CHARS:
+            raise HTTPException(status_code=400, detail=f"提示词不能超过 {MAX_PROMPT_CHARS} 个字符")
+        if not prompt_text:
+            prompt_text = DEFAULT_PROMPT
+
+        if video is not None and (video.filename or ""):
+            try:
+                saved_video = await asyncio.to_thread(_save_uploaded_image, video)
+            except UploadValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        elif video_url and str(video_url).strip():
+            saved_video = str(video_url).strip()
+        else:
+            raise HTTPException(status_code=400, detail="请上传视频文件或提供视频地址")
+
+        actual_impl = await asyncio.to_thread(
+            VideoDriverFactory.get_implementation_for_user,
+            TaskTypeId.VIDEO_WATERMARK_REMOVE,
+            effective_user_id,
+        ) or task_config.implementation
+        computing_power = await asyncio.to_thread(
+            task_config.get_computing_power,
+            duration_seconds,
+            actual_impl,
+        )
+        if not computing_power or computing_power <= 0:
+            raise HTTPException(status_code=400, detail="当前时长未配置算力")
+
+        auth_token = (
+            auth_token
+            or extract_bearer_token(request.headers.get("authorization"))
+            or (request.query_params.get("auth_token") or "")
+        )
+        transaction_id = str(uuid.uuid4())
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        if CHECK_AUTH_TOKEN:
+            success, message, response_data = await async_make_perseids_request(
+                endpoint="user/check_computing_power",
+                method="GET",
+                headers=headers,
+            )
+            if not success:
+                raise HTTPException(status_code=400, detail=message)
+            user_computing_power = response_data.get("computing_power", 0)
+            user_id_from_token = response_data.get("user_id")
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"您的算力不足，需要 {computing_power} 算力，当前仅有 {user_computing_power} 算力",
+                )
+            if user_id_from_token is not None and int(user_id_from_token) != int(effective_user_id):
+                raise HTTPException(status_code=400, detail="用户ID不匹配")
+            success, message, _response_data = await async_make_perseids_request(
+                endpoint="user/calculate_computing_power",
+                method="POST",
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id,
+                },
+            )
+            if not success:
+                logger.error(f"Video watermark computing power deduction failed: {message}")
+
+        extra_config = json.dumps({"fps": fps}, ensure_ascii=False)
+        impl_id = get_implementation_id(actual_impl) if actual_impl else 0
+        ai_tool_id = await asyncio.to_thread(
+            AIToolsModel.create,
+            prompt=prompt_text,
+            user_id=effective_user_id,
+            type=TaskTypeId.VIDEO_WATERMARK_REMOVE,
+            video_path=saved_video,
+            duration=duration_seconds,
+            transaction_id=transaction_id,
+            status=AI_TOOL_STATUS_PENDING,
+            extra_config=extra_config,
+            implementation=impl_id,
+        )
+        await asyncio.to_thread(
+            TasksModel.create,
+            task_type=TASK_TYPE_GENERATE_VIDEO,
+            task_id=ai_tool_id,
+            status=TASK_STATUS_QUEUED,
+        )
+        return JSONResponse({
+            "success": True,
+            "project_id": ai_tool_id,
+            "status": "submitted",
+            "computing_power": computing_power,
+            "duration": duration_seconds,
+        })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Video watermark remove failed: {exc}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"视频去水印提交失败: {exc}")
+
+
 @app.post("/api/digital-human")
 @require_permission("digital_human:create")
 async def digital_human_generate(

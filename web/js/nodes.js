@@ -2526,6 +2526,9 @@
             panoEl._updateSourceThumbnail();
           }
         }
+        if(fromNode && fromNode.type === 'video' && toNode && typeof toNode.clearVideoInput === 'function'){
+          toNode.clearVideoInput();
+        }
       }
     }
 
