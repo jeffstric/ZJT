@@ -5913,6 +5913,7 @@
                     }
 
                     const task = result.task;
+                    const angles = task.angles || [];
                     const generatedImages = task.generated_images || [];
                     const currentIndex = task.current_angle_index;
 
@@ -5920,10 +5921,10 @@
                         if (currentIndex !== undefined && currentIndex < angles.length) {
                             const currentAngle = angles[currentIndex];
                             if (currentAngle) {
-                                statusSpan.textContent = `正在生成 ${currentAngle.label}... (${currentIndex}/${angles.length})`;
+                                statusSpan.textContent = `正在生成 ${currentAngle.label}... (${currentIndex + 1}/${angles.length})`;
                             }
                         } else {
-                            statusSpan.textContent = `处理中... (${currentIndex}/${angles.length})`;
+                            statusSpan.textContent = `处理中... (${currentIndex + 1}/${angles.length})`;
                         }
                     } else if (task.status === 2) {  // COMPLETED
                         clearInterval(multiAnglePollInterval);

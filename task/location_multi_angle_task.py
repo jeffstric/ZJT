@@ -495,9 +495,17 @@ def process_location_multi_angle_task(task_key: str) -> Dict[str, Any]:
                 'auth_token': task.auth_token or ''
             }
 
+            # require_permission 只认 Authorization 头 / ?auth_token= query，form 字段不过鉴权。
+            # 红线禁止把 token 拼进 URL，因此走 header；快照为空则不加头。
+            snapshot_token = (task.auth_token or '').strip()
+            if snapshot_token.lower().startswith('bearer '):
+                snapshot_token = snapshot_token[7:].strip()
+            headers = {'Authorization': f'Bearer {snapshot_token}'} if snapshot_token else None
+
             response = requests.post(
                 f"{comfyui_base_url}/api/image-edit",
                 data=form_data,
+                headers=headers,
                 timeout=120
             )
 

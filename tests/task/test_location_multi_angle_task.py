@@ -174,6 +174,32 @@ class TestSubmitFailureResponses(unittest.TestCase):
         self.assertEqual(kwargs["current_angle_index"], 1)
         self.assertEqual(kwargs["current_angle_retry_count"], 0)
 
+    def test_image_edit_post_sends_bearer_header(self):
+        """回环 /api/image-edit 必须带 Authorization 头，form 里的 auth_token 不过 require_permission。"""
+        task = _make_task(retry_count=0)
+        task.auth_token = "snapshot-token"
+        with patch.object(lmat.LocationMultiAngleTasksModel, "get_by_task_key", return_value=task), \
+             patch.object(lmat.LocationMultiAngleTasksModel, "update_status"), \
+             patch.object(lmat, "get_config", return_value={"server": {"host": "http://localhost:8188"}}), \
+             patch("task.mock_interceptor.is_mock_enabled", return_value=False), \
+             patch("config.unified_config.UnifiedConfigRegistry") as mock_registry, \
+             patch.object(lmat.AIToolsModel, "get_by_id", return_value=None), \
+             patch.object(lmat, "requests") as mock_requests:
+            mock_registry.get_by_key.return_value = SimpleNamespace(id=123)
+            mock_response = MagicMock()
+            mock_response.json.return_value = {
+                "status": "submitted",
+                "project_ids": ["p1"],
+            }
+            mock_requests.post.return_value = mock_response
+            result = lmat.process_location_multi_angle_task(task.task_key)
+
+        self.assertTrue(result["success"])
+        _, kwargs = mock_requests.post.call_args
+        self.assertEqual(kwargs["headers"], {"Authorization": "Bearer snapshot-token"})
+        self.assertEqual(kwargs["data"]["auth_token"], "snapshot-token")
+        self.assertIn("timeout", kwargs)
+
 
 class TestFinalizeTask(unittest.TestCase):
     """全部角度处理完毕的终态判定：零产出 FAILED，部分产出 COMPLETED 附说明。"""
