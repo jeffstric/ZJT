@@ -1082,23 +1082,36 @@ def build_storyboard_folders(scripts: list, storyboards: list, world_names: dict
     )
 
 
+def _folder_script_key(script: dict) -> str:
+    episode_number = script.get('episode_number') or 1
+    return f"{script.get('world_id')}:{episode_number}"
+
+
+def dedupe_folder_scripts(scripts: list) -> list:
+    """同一 world_id + 集数只保留 id 最小的入库剧本。"""
+    chosen = {}
+    for script in scripts:
+        key = _folder_script_key(script)
+        current = chosen.get(key)
+        script_id = int(script.get('id') or 0)
+        if current is None or script_id < int(current.get('id') or 0):
+            chosen[key] = script
+    return list(chosen.values())
+
+
 def collect_storyboard_folder_data(user_id: int, world_id: Optional[int]) -> list:
-    scripts_result = ScriptModel.list_by_user(
-        user_id=user_id,
-        page=1,
-        page_size=100,
-        order_by='episode_number',
-        order_direction='ASC',
-        world_id=world_id,
-    )
-    scripts = scripts_result.get('data', [])
+    """按已入库剧本聚合文件夹。不看 script.user_id，也不读暂存文件。"""
+    if world_id is not None:
+        world = WorldModel.get_by_id(world_id)
+        world_names = {world_id: world.name if world else ''}
+        world_ids = [world_id]
+    else:
+        # 含伪删除世界，避免已有故事板丢失世界名
+        worlds = WorldModel.list_names_for_storyboard_folders(user_id)
+        world_names = {row.get('id'): row.get('name') or '' for row in worlds}
+        world_ids = list(world_names.keys())
+    scripts = dedupe_folder_scripts(ScriptModel.list_for_folders(world_ids))
     storyboards = StoryboardModel.list_folders_by_user(user_id=user_id, world_id=world_id)
-    # visibility=all：已伪删除世界若仍有故事板，文件夹展示名仍需能解析
-    worlds_result = WorldModel.list_by_user(
-        user_id=user_id, page=1, page_size=100, visibility='all'
-    )
-    worlds = worlds_result.get('data', [])
-    world_names = {world.get('id'): world.get('name') for world in worlds}
     return build_storyboard_folders(scripts, storyboards, world_names)
 
 
