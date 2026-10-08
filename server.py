@@ -7127,6 +7127,30 @@ async def create_video_workflow(
         )
 
 
+_CLIENT_WRITE_ID_RE = re.compile(r'^[0-9A-Za-z-]{8,64}$')
+
+
+def _normalize_client_write_id(raw):
+    """本页 PUT 的 X-Write-Id。合法才落库；缺省或非法视为未带，成功写入时把列清掉。"""
+    if raw is None:
+        return None
+    text_id = str(raw).strip()
+    if _CLIENT_WRITE_ID_RE.match(text_id):
+        return text_id
+    return None
+
+
+def _cas_conflict_payload(current_hash, last_write_id):
+    return {
+        "code": 409,
+        "message": "工作流内容已被其他会话修改，本次保存被拒绝",
+        "data": {
+            "content_hash": current_hash,
+            "last_write_id": last_write_id,
+        },
+    }
+
+
 @app.put('/api/video-workflow/{workflow_id}')
 @require_permission("video_workflow:update")
 async def update_video_workflow(
@@ -7197,6 +7221,12 @@ async def update_video_workflow(
                         )
                         del update_fields['workflow_data']
 
+        # 写 id 不参与内容哈希。每次真正落库都带上：合法头记下本页 id，
+        # 缺省或非法则写成 NULL，避免旧 id 把后来的别人写入认成自己。
+        client_write_id = _normalize_client_write_id(request.headers.get('x-write-id'))
+        if update_fields:
+            update_fields['last_write_id'] = client_write_id
+
         if update_fields:
             # CAS（乐观并发控制）：客户端在 X-Base-Hash 头携带本次编辑所基于的
             # 服务端内容哈希。不一致说明内容已被其他会话/迟到请求改写，
@@ -7217,10 +7247,15 @@ async def update_video_workflow(
                 def _cas_current_hash():
                     fresh = VideoWorkflowModel.get_by_id(workflow_id)
                     if not fresh:
-                        return None, None, None
+                        return None, None, None, None
                     current, incoming = content_hashes_for_cas(fresh, update_fields)
-                    return current, getattr(fresh, 'content_version', 0), incoming
-                current_hash, expected_version, incoming_hash = await asyncio.to_thread(
+                    return (
+                        current,
+                        getattr(fresh, 'content_version', 0),
+                        incoming,
+                        getattr(fresh, 'last_write_id', None),
+                    )
+                current_hash, expected_version, incoming_hash, winner_write_id = await asyncio.to_thread(
                     _cas_current_hash
                 )
                 if current_hash is not None and current_hash != base_hash:
@@ -7232,7 +7267,10 @@ async def update_video_workflow(
                         return JSONResponse({
                             "code": 0,
                             "message": "更新成功",
-                            "data": {"content_hash": current_hash}
+                            "data": {
+                                "content_hash": current_hash,
+                                "last_write_id": winner_write_id,
+                            }
                         })
                     logger.warning(
                         f"[CAS] 拒绝更新工作流 {workflow_id}："
@@ -7240,11 +7278,7 @@ async def update_video_workflow(
                     )
                     return JSONResponse(
                         status_code=409,
-                        content={
-                            "code": 409,
-                            "message": "工作流内容已被其他会话修改，本次保存被拒绝",
-                            "data": {"content_hash": current_hash}
-                        }
+                        content=_cas_conflict_payload(current_hash, winner_write_id),
                     )
             affected = await asyncio.to_thread(
                 VideoWorkflowModel.update,
@@ -7258,9 +7292,10 @@ async def update_video_workflow(
                 def _conflict_hash():
                     fresh = VideoWorkflowModel.get_by_id(workflow_id)
                     if not fresh:
-                        return None, None
-                    return content_hashes_for_cas(fresh, update_fields)
-                current_hash, incoming_hash = await asyncio.to_thread(_conflict_hash)
+                        return None, None, None
+                    current, incoming = content_hashes_for_cas(fresh, update_fields)
+                    return current, incoming, getattr(fresh, 'last_write_id', None)
+                current_hash, incoming_hash, winner_write_id = await asyncio.to_thread(_conflict_hash)
                 if current_hash is not None and incoming_hash == current_hash:
                     logger.info(
                         f"[CAS] 工作流 {workflow_id} 版本竞争但内容未变，视为成功"
@@ -7269,7 +7304,10 @@ async def update_video_workflow(
                     return JSONResponse({
                         "code": 0,
                         "message": "更新成功",
-                        "data": {"content_hash": current_hash}
+                        "data": {
+                            "content_hash": current_hash,
+                            "last_write_id": winner_write_id,
+                        }
                     })
                 logger.warning(
                     f"[CAS] 工作流 {workflow_id} 版本竞争失败"
@@ -7277,11 +7315,7 @@ async def update_video_workflow(
                 )
                 return JSONResponse(
                     status_code=409,
-                    content={
-                        "code": 409,
-                        "message": "工作流内容已被其他会话修改，本次保存被拒绝",
-                        "data": {"content_hash": current_hash}
-                    }
+                    content=_cas_conflict_payload(current_hash, winner_write_id),
                 )
 
         # 返回写入后的最新内容哈希（未写字段时哈希即当前值），
@@ -7289,11 +7323,17 @@ async def update_video_workflow(
         # 回读 + 哈希整体放入工作线程：大 JSON 序列化不占事件循环
         def _post_update_hash():
             latest = VideoWorkflowModel.get_by_id(workflow_id)
-            return compute_content_hash(latest) if latest else None
+            if not latest:
+                return None, None
+            return compute_content_hash(latest), getattr(latest, 'last_write_id', None)
+        stored_hash, stored_write_id = await asyncio.to_thread(_post_update_hash)
         return JSONResponse({
             "code": 0,
             "message": "更新成功",
-            "data": {"content_hash": await asyncio.to_thread(_post_update_hash)}
+            "data": {
+                "content_hash": stored_hash,
+                "last_write_id": stored_write_id,
+            }
         })
     except Exception as e:
         logger.error(f"Failed to update video workflow {workflow_id}: {str(e)}")

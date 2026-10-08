@@ -613,11 +613,13 @@ describe('恢复记录 IndexedDB 分区与轮转', () => {
       workflowId: 'wf-basehash',
       userId: 'user-basehash',
       baseHash: 'hash-abc',
+      writeId: '11111111-2222-4333-8444-555555555555',
       ...WorkflowRecovery.createWriteIdentity(),
     };
     await WorkflowRecovery.saveSnapshot('payload-basehash', meta);
     const record = await WorkflowRecovery.loadSnapshot(meta);
     expect(record.baseHash).toBe('hash-abc');
+    expect(record.writeId).toBe('11111111-2222-4333-8444-555555555555');
     expect(await WorkflowRecovery.clearSnapshot(record)).toBe(true);
 
     // 无 baseHash 的存量快照：读回为 null（重放时退化为强制写，兼容旧记录）
@@ -629,6 +631,7 @@ describe('恢复记录 IndexedDB 分区与轮转', () => {
     };
     await WorkflowRecovery.saveSnapshot('payload-legacy', legacy);
     expect((await WorkflowRecovery.loadSnapshot(legacy)).baseHash).toBeNull();
+    expect((await WorkflowRecovery.loadSnapshot(legacy)).writeId).toBeNull();
     expect(await WorkflowRecovery.clearSnapshot(legacy)).toBe(true);
   });
 });

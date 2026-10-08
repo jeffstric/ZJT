@@ -126,6 +126,25 @@ class TestContentHashesForCas(unittest.TestCase):
         })
         self.assertNotEqual(current2, incoming2)
 
+    def test_last_write_id_does_not_change_hash(self):
+        """last_write_id 只标识本页写入，不参与内容哈希。"""
+        base = dict(
+            workflow_data={'nodes': [1]},
+            style='写实',
+            default_world_id=1,
+            workflow_ratio='16:9',
+        )
+        hashes = [
+            compute_content_hash(VideoWorkflow(**base, last_write_id=value))
+            for value in ('abc-write', 'xyz-write', None)
+        ]
+        self.assertEqual(len(set(hashes)), 1)
+        current, incoming = content_hashes_for_cas(
+            VideoWorkflow(**base, last_write_id='abc-write'),
+            {'last_write_id': 'xyz-write', 'style': '写实'},
+        )
+        self.assertEqual(current, incoming)
+
     def test_empty_update_fields_incoming_equals_current(self):
         wf = VideoWorkflow(workflow_data={'a': 1}, style='写实')
         current, incoming = content_hashes_for_cas(wf, {})
