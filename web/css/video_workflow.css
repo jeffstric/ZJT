@@ -1110,6 +1110,11 @@ svg.connections path.reference-line.selected{
      顶部条目会伸入顶栏区域，z 低于顶栏时条目被 world-search-trigger 遮挡无法点击 */
   z-index: 47;
 }
+/* 菜单是临时层，打开时允许盖住时间轴（z-index:100）。
+   仍低于模态（999）和左侧导览（1000）。子元素 z-index 出不了本容器的层叠上下文，所以抬的是容器。 */
+.add-btn-container:has(.add-menu.show){
+  z-index: 200;
+}
 .add-btn{
   width: 44px;
   height: 44px;
@@ -1141,9 +1146,21 @@ svg.connections path.reference-line.selected{
   border-radius: 12px;
   box-shadow: var(--shadow-md);
   min-width: 160px;
-  overflow: hidden;
+  /* 以 + 按钮为中心，限制在视口内；放不下的条目在菜单里滚动，而不是被画布裁掉 */
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 .add-menu.show{ display: block; }
+.add-menu::-webkit-scrollbar{ width: 8px; }
+.add-menu::-webkit-scrollbar-thumb{
+  background: var(--border-strong);
+  border-radius: 8px;
+}
 .add-menu-group{
   padding: 8px 0;
 }
@@ -4717,6 +4734,41 @@ html.theme-dark .audio-node-preview{
   background: rgba(239, 68, 68, 0.12);
   color: #ef4444;
 }
+.node-group-resize{
+  position: absolute;
+  z-index: 2;
+  display: none;
+  box-sizing: border-box;
+  width: 10px;
+  height: 10px;
+  background: var(--surface);
+  border: 2px solid var(--primary);
+  border-radius: 2px;
+  pointer-events: auto;
+}
+.node-group.selected .node-group-resize{
+  display: block;
+}
+.node-group-resize[data-handle="n"],
+.node-group-resize[data-handle="s"]{
+  left: 50%;
+  margin-left: -5px;
+  cursor: ns-resize;
+}
+.node-group-resize[data-handle="n"]{ top: -6px; }
+.node-group-resize[data-handle="s"]{ bottom: -6px; }
+.node-group-resize[data-handle="e"],
+.node-group-resize[data-handle="w"]{
+  top: 50%;
+  margin-top: -5px;
+  cursor: ew-resize;
+}
+.node-group-resize[data-handle="e"]{ right: -6px; }
+.node-group-resize[data-handle="w"]{ left: -6px; }
+.node-group-resize[data-handle="ne"]{ top: -6px; right: -6px; cursor: nesw-resize; }
+.node-group-resize[data-handle="nw"]{ top: -6px; left: -6px; cursor: nwse-resize; }
+.node-group-resize[data-handle="se"]{ right: -6px; bottom: -6px; cursor: nwse-resize; }
+.node-group-resize[data-handle="sw"]{ left: -6px; bottom: -6px; cursor: nesw-resize; }
 
 /* ==================== 画布右键菜单 ==================== */
 .canvas-context-menu{

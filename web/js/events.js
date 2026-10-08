@@ -45,16 +45,6 @@
         }
         // 配置未就绪或已关闭时不弹窗（修复加载中点击绿色反馈钮仍出二维码）
         if (!feedbackQrEnabled) return;
-        const minimized = (function () {
-            try {
-                return localStorage.getItem('feedbackBtnMinimized') === 'true';
-            } catch (err) {
-                return false;
-            }
-        })();
-        if (minimized) {
-            restoreFeedbackBtn();
-        }
         const modal = document.getElementById('feedbackModal');
         if (modal) {
             modal.removeAttribute('hidden');
@@ -64,17 +54,12 @@
     }
 
     function initFeedbackBtn() {
-        let minimized = false;
+        // 默认只留问号。旧的 feedbackBtnMinimized=false 是点问号时顺手展开的，不再当作展开偏好。
         try {
-            const legacyDeleted = localStorage.getItem('feedbackBtnDeleted') === 'true';
-            const minimizedFlag = localStorage.getItem('feedbackBtnMinimized');
-            minimized = legacyDeleted || minimizedFlag === 'true';
-            if (legacyDeleted) {
-                localStorage.setItem('feedbackBtnMinimized', 'true');
-                localStorage.removeItem('feedbackBtnDeleted');
-            }
+            localStorage.setItem('feedbackBtnMinimized', 'true');
+            localStorage.removeItem('feedbackBtnDeleted');
         } catch (e) {}
-        applyFeedbackBtnState(minimized);
+        applyFeedbackBtnState(true);
     }
 
     function hideFeedbackUi() {
@@ -230,6 +215,11 @@
       e.stopPropagation();
       addMenu.classList.toggle('show');
     });
+
+    // 画布在冒泡阶段 preventDefault 滚轮来缩放。菜单打开且高于视口时，滚轮应滚动菜单。
+    addMenu.addEventListener('wheel', (e) => {
+      e.stopPropagation();
+    }, { passive: true });
 
     document.getElementById('menuAddVideo').addEventListener('click', () => {
       const nodeId = createImageToVideoNode();
@@ -401,7 +391,7 @@
 
     // 在拖动/平移/选择期间全局阻止文本选中
     document.addEventListener('selectstart', (e) => {
-      if(state.panning || state.placing || state.selecting || state.connecting || state.drag){
+      if(state.panning || state.placing || state.selecting || state.connecting || state.drag || state.groupResize){
         e.preventDefault();
       }
     });
@@ -4552,26 +4542,3 @@
       stopAutoSave();
     });
 
-    // 一键生成素材按钮点击事件
-    const agentBtnMaterial = document.getElementById('agentBtnMaterial');
-    if (agentBtnMaterial) {
-      agentBtnMaterial.addEventListener('click', () => {
-        const authToken = localStorage.getItem('auth_token') || '';
-        const userId = localStorage.getItem('user_id') || '';
-        
-        if (!userId) {
-          showToast('请先登录', 'error');
-          return;
-        }
-        
-        // auth_token 已在 localStorage 中，无需通过 URL 传递
-        let url = `/script-writer?user_id=${encodeURIComponent(userId)}`;
-        
-        // 如果已选择世界，添加 world_id 参数
-        if (state.defaultWorldId) {
-          url += `&world_id=${encodeURIComponent(state.defaultWorldId)}`;
-        }
-        
-        window.location.href = url;
-      });
-    }

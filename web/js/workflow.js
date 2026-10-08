@@ -663,6 +663,7 @@
           y: g.y,
           w: g.w,
           h: g.h,
+          userSized: !!g.userSized,
           nodeIds: g.nodeIds.slice()
         })),
         nextGroupId: state.nextGroupId,
