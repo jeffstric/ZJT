@@ -4882,6 +4882,52 @@ html.theme-dark .audio-node-preview{
   background: var(--border-strong);
   border-radius: 8px;
 }
+.shortcut-wheel-mode{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--primary);
+  border-radius: 10px;
+}
+.shortcut-wheel-mode-label{
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.shortcut-wheel-mode-options{
+  display: flex;
+  gap: 8px;
+}
+.shortcut-wheel-option{
+  flex: 1;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+  cursor: pointer;
+}
+.shortcut-wheel-option:hover{
+  background: var(--hover-bg);
+}
+.shortcut-wheel-option.is-selected{
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--text);
+}
+.shortcut-wheel-mode-hint{
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
 .shortcut-section{
   display: flex;
   flex-direction: column;
@@ -5016,6 +5062,9 @@ html.theme-dark .audio-node-preview{
   }
   .shortcut-keys{
     justify-content: flex-start;
+  }
+  .shortcut-wheel-mode-options{
+    flex-direction: column;
   }
 }
 html.theme-dark #shortcutHelpModal .shortcut-keys kbd,

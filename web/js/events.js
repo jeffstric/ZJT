@@ -550,14 +550,28 @@
       }
     });
 
-    // Ctrl/Cmd + 滚轮的动作。modifierHeld 只认键盘 keydown，不认滚轮事件上的 ctrlKey。
-    // 返回 'pan'（上下平移）或 'pinch-zoom'（触控板捏合，仍缩放）。
+    // 区分键盘上真正按住的 Ctrl/Cmd，和浏览器伪造的触控板捏合。
+    // modifierHeld 只认键盘 keydown，不认滚轮事件上的 ctrlKey。
+    // 返回 'pinch-zoom'（调用方始终缩放）或 'modifier'（按当前滚轮模式决定缩放还是上下平移）。
+    // 页面缩放 110% 时，鼠标一格会变成 120/1.1，不能因此当成捏合。
     function ctrlWheelAction(e, modifierHeld){
-      if(modifierHeld) return 'pan';
-      // 未按键：deltaMode 为像素且 deltaY 不是整数，才是浏览器伪造的捏合。
-      // 不能反过来把「小数」一律当捏合。页面缩放 110% 时，鼠标一格会变成 120/1.1 这类小数。
+      if(modifierHeld) return 'modifier';
       if(e.deltaMode === 0 && typeof e.deltaY === 'number' && !Number.isInteger(e.deltaY)) return 'pinch-zoom';
-      return 'pan';
+      return 'modifier';
+    }
+
+    // mode 为 'zoom'：普通滚轮缩放，Ctrl+滚轮上下平移。
+    // 其他值（默认 'pan'）：普通滚轮上下平移，Ctrl+滚轮缩放。
+    // Shift+滚轮始终左右平移。捏合始终缩放。
+    function canvasWheelGesture(e, modifierHeld, mode){
+      var plainZooms = mode === 'zoom';
+      var isCtrl = !!(e.ctrlKey || e.metaKey);
+      if(e.shiftKey && !isCtrl) return 'pan-x';
+      if(isCtrl){
+        if(ctrlWheelAction(e, modifierHeld) === 'pinch-zoom') return 'zoom';
+        return plainZooms ? 'pan-y' : 'zoom';
+      }
+      return plainZooms ? 'zoom' : 'pan-y';
     }
 
     // 归一化滚轮增量：行/页模式换算为像素，保证不同设备平移速度一致
@@ -577,52 +591,31 @@
       if(typeof scheduleMinimapRender === 'function') scheduleMinimapRender();
     }
 
-    // 劫持鼠标滚轮（在画布区域内）：普通滚轮缩放，Shift+滚轮左右平移，Ctrl+滚轮上下平移
+    // 画布滚轮。模式来自快捷键弹窗：默认普通滚轮上下平移、Ctrl+滚轮缩放；
+    // 点「滚轮缩放画布」后对调。Shift+滚轮始终左右平移。捏合始终缩放。
     canvasContainer.addEventListener('wheel', (e) => {
-      // 仅当鼠标在画布区域内时生效
-      // 允许正常滚动页面：当前页面没有滚动条，但仍做限定
       const isCtrl = e.ctrlKey || e.metaKey;
       // ctrl + wheel：浏览器默认会缩放页面，必须阻止
       if(isCtrl){
         e.preventDefault();
       }
-
-      // Shift + 滚轮：画布左右平移
-      // 注意 Chrome 按住 Shift 时会把滚轮转换为水平滚动（deltaX 有值、deltaY 为 0），需优先取 deltaX
-      if(e.shiftKey && !isCtrl){
-        e.preventDefault();
-        const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
-        if(delta !== 0){
-          panCanvasByWheel(-normalizeWheelDelta(e, delta), 0);
-        }
-        return;
-      }
-
-      // Ctrl + 滚轮：画布上下平移
-      // 例外：触控板双指捏合没有按下 Ctrl/Cmd，但会被 Chrome/Edge 翻译成 ctrlKey=true 的 wheel。
-      // 这时仍缩放。是否按键以 wheelModifierHeld 为准，不用 deltaY 是否为整数判断。
-      if(isCtrl){
-        e.preventDefault();
-        if(ctrlWheelAction(e, wheelModifierHeld) === 'pinch-zoom'){
-          if(e.deltaY < 0) zoomIn(); else if(e.deltaY > 0) zoomOut();
-          return;
-        }
-        const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
-        if(delta !== 0){
-          panCanvasByWheel(0, -normalizeWheelDelta(e, delta));
-        }
-        return;
-      }
-
-      // 普通滚轮也作为画布缩放（用户需求）
-      // 如果未来需要支持滚动，可把此判断改成 isCtrl
+      const mode = (typeof window.getCanvasWheelMode === 'function') ? window.getCanvasWheelMode() : 'pan';
+      const gesture = canvasWheelGesture(e, wheelModifierHeld, mode);
       e.preventDefault();
-
-      if(e.deltaY < 0){
-        zoomIn();
-      } else if(e.deltaY > 0){
-        zoomOut();
+      if(gesture === 'pan-x'){
+        // Chrome 按住 Shift 时会把滚轮转换成水平滚动（deltaX 有值、deltaY 为 0）
+        const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+        if(delta !== 0) panCanvasByWheel(-normalizeWheelDelta(e, delta), 0);
+        return;
       }
+      if(gesture === 'pan-y'){
+        const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+        if(delta !== 0) panCanvasByWheel(0, -normalizeWheelDelta(e, delta));
+        return;
+      }
+      const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+      if(delta < 0) zoomIn();
+      else if(delta > 0) zoomOut();
     }, { passive: false });
 
     // 放置模式：点击画布放下节点（capture阶段优先处理）
