@@ -868,6 +868,11 @@ async def get_config_by_key(
     })
 
 
+def _wants_download_json(response_format: Optional[str]) -> bool:
+    """format=json：CDN 重签名后返回 JSON，供前端用 Authorization 头取地址。"""
+    return (response_format or "").strip().lower() == "json"
+
+
 def _extract_filename_from_url(url: str) -> Optional[str]:
     """从 URL 路径中提取文件名，若无法提取则返回 None（由调用方决定降级逻辑）"""
     url_path = urlparse(url).path
@@ -917,13 +922,18 @@ def _resolve_local_upload_path(url: str, prefix: str) -> Optional[Path]:
 async def download_image(
     request: Request,
     url: str = Query(..., description="Media URL to download"),
-    filename: str = Query(None, description="Custom filename")
+    filename: str = Query(None, description="Custom filename"),
+    response_format: Optional[str] = Query(
+        None,
+        alias="format",
+        description="json 时 CDN 重签名返回 redirect_url，不 302",
+    ),
 ):
     """
     媒体文件下载接口，支持三种模式：
     1. 本地路径 /upload/cache/ → FileResponse 直接返回
-    2. CDN 域名匹配 → 302 重定向（不占服务器带宽）
-    3. 其他外部 URL → 代理下载 StreamingResponse
+    2. CDN 域名匹配 → 302 重定向（不占服务器带宽）；format=json 时改为返回签名 URL
+    3. 其他外部 URL → 代理下载 StreamingResponse（format=json 不走代理）
     """
     try:
         # 检查是否为本地缓存文件路径（安全解析，防路径穿越）
@@ -966,12 +976,25 @@ async def download_image(
             if filename:
                 signed_url = CDNUtil.get_signed_download_url(url, attname=filename)
                 if signed_url:
+                    if _wants_download_json(response_format):
+                        return JSONResponse({
+                            "success": True,
+                            "redirect_url": signed_url,
+                        })
                     logger.info(f"[download] CDN 签名重定向: filename={filename}, signed_url={signed_url[:150]}")
                     return RedirectResponse(url=signed_url, status_code=302)
                 else:
                     logger.warning(f"[download] CDN 签名URL生成失败，降级到代理下载: url={url[:100]}")
             else:
                 logger.warning(f"[download] CDN URL但无法提取文件名，降级到代理下载: url={url[:100]}")
+
+        # format=json 只服务 CDN 重签名。本地文件与外部代理保持原响应，
+        # 但不能在 JSON 模式下把大文件拉进本次 fetch。
+        if _wants_download_json(response_format):
+            return JSONResponse({
+                "success": False,
+                "error": "该地址无法生成签名下载链接",
+            }, status_code=400)
 
         # ========== 模式3: 其他远程 URL → 代理下载 ==========
         async with httpx.AsyncClient(timeout=300.0) as client:
