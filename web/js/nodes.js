@@ -2561,6 +2561,28 @@
       }
     }
 
+    function removeLastFrameConnection(connId){
+      if(!state.lastFrameConnections) state.lastFrameConnections = [];
+      const conn = state.lastFrameConnections.find(c => c.id === connId);
+      state.lastFrameConnections = state.lastFrameConnections.filter(c => c.id !== connId);
+      if(state.selectedLastFrameConnId === connId) state.selectedLastFrameConnId = null;
+      hideConnDeleteBtn();
+      if(typeof renderAllConnections === 'function') renderAllConnections();
+
+      if(conn){
+        const toNode = state.nodes.find(n => n.id === conn.to);
+        if(toNode && toNode.type === 'shot_frame'){
+          toNode.data.lastFrameUrl = '';
+          const nodeEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+          if(nodeEl && typeof nodeEl._updateLastFrame === 'function') nodeEl._updateLastFrame();
+          if(nodeEl && typeof nodeEl._updateVideoComputingPowerDisplay === 'function'){
+            nodeEl._updateVideoComputingPowerDisplay();
+          }
+        }
+      }
+      try { safeAutoSave(); } catch(e) {}
+    }
+
     function renderConnections(tempLine, skipSizeUpdate){
       // 拖拽等高频路径通过 skipSizeUpdate 跳过画布尺寸重算（内部会遍历全部节点读取 offsetWidth），
       // 由调用方在交互结束时（mouseup / flushConnectionsRender）补偿一次
@@ -2719,6 +2741,7 @@
           e.stopPropagation();
           state.selectedConnId = null;
           state.selectedImgConnId = connId;  // 使用保存的connId
+          state.selectedLastFrameConnId = null;
           renderAllConnections();
         });
         
@@ -2833,6 +2856,7 @@
           state.selectedConnId = null;
           state.selectedImgConnId = null;
           state.selectedFirstFrameConnId = null;
+          state.selectedLastFrameConnId = null;
           state.selectedVideoConnId = conn.id;
           renderAllConnections();
         });
@@ -2938,6 +2962,7 @@
             state.selectedConnId = null;
             state.selectedImgConnId = null;
             state.selectedFirstFrameConnId = null;
+            state.selectedLastFrameConnId = null;
             state.selectedVideoConnId = null;
             state.selectedReferenceConnId = null;
             state.selectedAudioConnId = conn.id;
@@ -3035,6 +3060,7 @@
           state.selectedConnId = null;
           state.selectedImgConnId = null;
           state.selectedFirstFrameConnId = null;
+          state.selectedLastFrameConnId = null;
           state.selectedVideoConnId = null;
           state.selectedReferenceConnId = conn.id;
           renderAllConnections();
@@ -3135,6 +3161,7 @@
           e.stopPropagation();
           state.selectedConnId = null;
           state.selectedImgConnId = null;
+          state.selectedLastFrameConnId = null;
           state.selectedFirstFrameConnId = conn.id;
           renderAllConnections();
         });

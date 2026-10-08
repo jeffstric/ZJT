@@ -222,6 +222,7 @@ function connectToRegisteredImagePort(fromNode, i2vPort) {
   else if (connType === 'videoConnections') connIdKey = 'nextVideoConnId';
   else if (connType === 'referenceConnections') connIdKey = 'nextReferenceConnId';
   else if (connType === 'firstFrameConnections') connIdKey = 'nextFirstFrameConnId';
+  else if (connType === 'lastFrameConnections') connIdKey = 'nextLastFrameConnId';
   else if (connType === 'audioConnections') connIdKey = 'nextAudioConnId';
 
   connArray.push({
@@ -512,6 +513,7 @@ function bindInputPortEvents(el, node, portCfg) {
     else if (portCfg.connectionType === 'videoConnections') connIdKey = 'nextVideoConnId';
     else if (portCfg.connectionType === 'referenceConnections') connIdKey = 'nextReferenceConnId';
     else if (portCfg.connectionType === 'firstFrameConnections') connIdKey = 'nextFirstFrameConnId';
+    else if (portCfg.connectionType === 'lastFrameConnections') connIdKey = 'nextLastFrameConnId';
     else if (portCfg.connectionType === 'audioConnections') connIdKey = 'nextAudioConnId';
 
     // 创建连接

@@ -786,18 +786,24 @@
             nearestImgPort = { nodeId: registryPort.nodeId, portType: registryPort.portType, x: registryPort.x, y: registryPort.y };
           }
           
-          // 查找分镜节点的首帧端口
-          let nearestFirstFrameDist = 50;
+          // 分镜首帧/尾帧都在范围内时，吸附更近的那个
+          let nearestShotFrameDist = 50;
           for(const node of state.nodes){
             if(node.type !== 'shot_frame') continue;
             const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
             if(!toEl) continue;
-            const portEl = toEl.querySelector('.first-frame-port');
-            if(!portEl) continue;
-            const { dist, x: portX, y: portY } = getPortDistance(portEl, toX, toY);
-            if(dist < nearestFirstFrameDist){
-              nearestFirstFrameDist = dist;
-              nearestFirstFramePort = { nodeId: node.id, x: portX, y: portY };
+            const shotPorts = [
+              { kind: 'first', el: toEl.querySelector('.first-frame-port') },
+              { kind: 'last', el: toEl.querySelector('.last-frame-port') }
+            ];
+            for(const shotPort of shotPorts){
+              if(!shotPort.el) continue;
+              if(shotPort.kind === 'last' && (shotPort.el.classList.contains('disabled') || shotPort.el.offsetParent === null)) continue;
+              const { dist, x: portX, y: portY } = getPortDistance(shotPort.el, toX, toY);
+              if(dist < nearestShotFrameDist){
+                nearestShotFrameDist = dist;
+                nearestFirstFramePort = { kind: shotPort.kind, nodeId: node.id, x: portX, y: portY };
+              }
             }
           }
         }
@@ -918,11 +924,17 @@
           portEl.classList.toggle('can-connect', isNearest);
         }
         
-        // 更新首帧端口高亮状态
+        // 更新首帧/尾帧端口高亮状态（只高亮更近的那一个）
         for(const portEl of canvasEl.querySelectorAll('.first-frame-port')){
           const nodeEl = portEl.closest('.node');
           const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
-          const isNearest = nearestFirstFramePort && nearestFirstFramePort.nodeId === nodeId;
+          const isNearest = nearestFirstFramePort && nearestFirstFramePort.kind === 'first' && nearestFirstFramePort.nodeId === nodeId;
+          portEl.classList.toggle('can-connect', isNearest);
+        }
+        for(const portEl of canvasEl.querySelectorAll('.last-frame-port')){
+          const nodeEl = portEl.closest('.node');
+          const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
+          const isNearest = nearestFirstFramePort && nearestFirstFramePort.kind === 'last' && nearestFirstFramePort.nodeId === nodeId;
           portEl.classList.toggle('can-connect', isNearest);
         }
         
@@ -1127,34 +1139,51 @@
             }
           }
 
-          // 分镜节点首帧端口
+          // 分镜节点首帧/尾帧端口：取更近的可连接端口
           if(!imgConnected){
             let nearestSF = null;
             let nearestSFDist = PROXIMITY_DIST;
+            let nearestKind = null;
             for(const node of state.nodes){
               if(node.type !== 'shot_frame') continue;
               const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
               if(!toEl) continue;
-              const portEl = toEl.querySelector('.first-frame-port');
-              if(!portEl) continue;
-              const { dist } = distToPort(portEl);
-              if(dist < nearestSFDist){
-                nearestSFDist = dist;
-                nearestSF = node;
+              const shotPorts = [
+                { kind: 'first', el: toEl.querySelector('.first-frame-port') },
+                { kind: 'last', el: toEl.querySelector('.last-frame-port') }
+              ];
+              for(const shotPort of shotPorts){
+                if(!shotPort.el) continue;
+                if(shotPort.kind === 'last' && (shotPort.el.classList.contains('disabled') || shotPort.el.offsetParent === null)) continue;
+                const { dist } = distToPort(shotPort.el);
+                if(dist < nearestSFDist){
+                  nearestSFDist = dist;
+                  nearestSF = node;
+                  nearestKind = shotPort.kind;
+                }
               }
             }
             if(nearestSF && fromNode.data.url){
-              state.firstFrameConnections = state.firstFrameConnections.filter(c => c.to !== nearestSF.id);
-              state.firstFrameConnections.push({ id: state.nextFirstFrameConnId++, from: fromNode.id, to: nearestSF.id });
-              nearestSF.data.previewImageUrl = fromNode.data.url;
               const nodeEl = canvasEl.querySelector(`.node[data-node-id="${nearestSF.id}"]`);
-              if(nodeEl){
-                const img = nodeEl.querySelector('.shot-frame-preview-image');
-                const field = nodeEl.querySelector('.shot-frame-preview-field');
-                if(img){ img.src = proxyImageUrl(fromNode.data.url); img.style.display = 'block'; }
-                if(field) field.style.display = 'block';
+              if(nearestKind === 'last'){
+                if(nodeEl && typeof nodeEl._applyLastFrameFromImage === 'function'){
+                  nodeEl._applyLastFrameFromImage(fromNode);
+                }
+              } else {
+                state.firstFrameConnections = state.firstFrameConnections.filter(c => c.to !== nearestSF.id);
+                state.firstFrameConnections.push({ id: state.nextFirstFrameConnId++, from: fromNode.id, to: nearestSF.id });
+                nearestSF.data.previewImageUrl = fromNode.data.url;
+                if(nodeEl){
+                  const img = nodeEl.querySelector('.shot-frame-preview-image');
+                  const field = nodeEl.querySelector('.shot-frame-preview-field');
+                  if(img){ img.src = proxyImageUrl(fromNode.data.url); img.style.display = 'block'; }
+                  if(field) field.style.display = 'block';
+                }
+                renderFirstFrameConnections();
+                if(nodeEl && typeof nodeEl._updateVideoComputingPowerDisplay === 'function'){
+                  nodeEl._updateVideoComputingPowerDisplay();
+                }
               }
-              renderFirstFrameConnections();
             }
           }
         }

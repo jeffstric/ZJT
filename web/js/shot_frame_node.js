@@ -1,3 +1,35 @@
+    // 当前视频模型是否接受尾帧。配置未加载时按支持处理，与生视频节点一致。
+    function shotFrameModelSupportsLastFrame(node) {
+      const mode = (node && node.data && node.data.videoMode) || 'first_last_frame';
+      if (mode !== 'first_last_frame') return false;
+      const videoModel = (node.data && node.data.videoModel) || '';
+      if (window.TaskConfig && typeof window.TaskConfig.isLoaded === 'function' && window.TaskConfig.isLoaded()) {
+        const configs = window.TaskConfig.getModelConfigs() || {};
+        const config = configs[videoModel];
+        if (config && config.supports_last_frame === false) return false;
+      }
+      return true;
+    }
+
+    // 有可用尾帧时算力走 first_last_with_tail，提交给接口的 image_mode 仍是 first_last_frame。
+    function resolveShotFrameVideoImageMode(node) {
+      const mode = (node && node.data && node.data.videoMode) || 'first_last_frame';
+      if (mode !== 'first_last_frame') return mode;
+      if (!node.data || !node.data.previewImageUrl || !node.data.lastFrameUrl) return mode;
+      if (!shotFrameModelSupportsLastFrame(node)) return mode;
+      return 'first_last_with_tail';
+    }
+
+    function resolveShotFrameLastFrameUrl(node) {
+      if (!node || !node.data || !shotFrameModelSupportsLastFrame(node)) return '';
+      const saved = String(node.data.lastFrameUrl || '').trim();
+      if (saved) return saved;
+      const conn = (state.lastFrameConnections || []).find(c => c.to === node.id);
+      if (!conn) return '';
+      const fromNode = (state.nodes || []).find(n => n.id === conn.from);
+      return (fromNode && fromNode.data && fromNode.data.url) || '';
+    }
+
     function createShotFrameNode(opts){
       const id = state.nextNodeId++;
       let _activeDropdownCloseHandler = null;
@@ -98,6 +130,7 @@
           model: inheritedModel,
           drawCount: 1,
           previewImageUrl: '',
+          lastFrameUrl: '',
           videoDrawCount: 1,
           videoDuration: 5,
           videoModel: inheritedVideoModel,
@@ -159,6 +192,17 @@
                 <div class="port first-frame-port" data-i18n="shot_frame_first_frame_port:title"></div>
                 <div class="shot-frame-preview-field" style="position: relative;">
                   <img class="shot-frame-preview-image" src="${escapeHtml(node.data.previewImageUrl || '')}" style="max-width: 100%; max-height: 160px; object-fit: contain; border-radius: 6px; cursor: pointer; display: ${node.data.previewImageUrl ? 'block' : 'none'};" />
+                </div>
+              </div>
+              <div class="field field-always-visible shot-frame-last-frame-field">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <div class="label shot-frame-last-frame-label" style="margin: 0;" data-i18n="shot_frame_video_last_frame_label">${window.t ? window.t('shot_frame_video_last_frame_label') : '视频尾帧（可选）'}</div>
+                  <button class="mini-btn shot-frame-last-frame-clear" type="button" data-i18n="node_clear_btn">${window.t ? window.t('node_clear_btn') : '清除'}</button>
+                </div>
+                <div class="port last-frame-port" data-i18n="shot_frame_last_frame_port:title" title="${window.t ? window.t('shot_frame_last_frame_port') : '连接图片节点（视频尾帧）'}"></div>
+                <input class="shot-frame-last-frame-file" type="file" accept="image/*,.tif,.tiff" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
+                <div class="shot-frame-last-frame-preview-row" style="display: none; margin-top: 6px;">
+                  <img class="shot-frame-last-frame-preview" alt="" style="max-width: 100%; max-height: 120px; object-fit: contain; border-radius: 6px; cursor: pointer; display: none;" />
                 </div>
               </div>
               <div class="field field-always-visible shot-frame-image-field" style="display:${node.data.imageUrl ? 'flex' : 'none'};">
@@ -305,6 +349,11 @@
       const imageSelectorCaret = imageSelectorContainer ? imageSelectorContainer.querySelector('.gen-btn-caret') : null;
       const imageMenu = el.querySelector('.shot-frame-image-menu');
       const firstFramePort = el.querySelector('.first-frame-port');
+      const lastFramePort = el.querySelector('.last-frame-port');
+      const lastFrameFileEl = el.querySelector('.shot-frame-last-frame-file');
+      const lastFrameClearBtn = el.querySelector('.shot-frame-last-frame-clear');
+      const lastFramePreviewRow = el.querySelector('.shot-frame-last-frame-preview-row');
+      const lastFramePreviewEl = el.querySelector('.shot-frame-last-frame-preview');
       const videoDurationEl = el.querySelector('.shot-frame-video-duration');
       const videoModelEl = el.querySelector('.shot-frame-video-model');
       const resolutionField = el.querySelector('.shot-frame-video-resolution-field');
@@ -468,6 +517,76 @@
 
         // 参考音视频字段可见性（参考图模式下由模型配置决定，首帧模式同理）
         updateRefAudioVideoVisibility();
+        updateLastFrameAvailability();
+      }
+
+      function updateLastFrameAvailability() {
+        const field = el.querySelector('.shot-frame-last-frame-field');
+        if (!field) return;
+        const mode = node.data.videoMode || 'first_last_frame';
+        const isRefMode = mode === 'multi_reference';
+        field.style.display = isRefMode ? 'none' : '';
+        const supported = shotFrameModelSupportsLastFrame(node);
+        const port = el.querySelector('.last-frame-port');
+        const fileInput = el.querySelector('.shot-frame-last-frame-file');
+        const label = el.querySelector('.shot-frame-last-frame-label');
+        if (port) {
+          port.classList.toggle('disabled', !supported);
+          port.style.pointerEvents = supported ? '' : 'none';
+          port.style.opacity = supported ? '' : '0.4';
+        }
+        if (fileInput) fileInput.disabled = !supported;
+        if (label) {
+          const labelKey = supported ? 'shot_frame_video_last_frame_label' : 'shot_frame_video_last_frame_unsupported';
+          const fallback = supported ? '视频尾帧（可选）' : '视频尾帧（该模型不支持）';
+          label.setAttribute('data-i18n', labelKey);
+          label.textContent = window.t ? window.t(labelKey) : fallback;
+        }
+      }
+
+      function updateLastFrameDisplay() {
+        const url = node.data.lastFrameUrl || '';
+        if (url && lastFramePreviewEl) {
+          lastFramePreviewEl.src = proxyImageUrl(url);
+          lastFramePreviewEl.style.display = 'block';
+          if (lastFramePreviewRow) lastFramePreviewRow.style.display = 'block';
+        } else {
+          if (lastFramePreviewEl) {
+            lastFramePreviewEl.style.display = 'none';
+            lastFramePreviewEl.removeAttribute('src');
+          }
+          if (lastFramePreviewRow) lastFramePreviewRow.style.display = 'none';
+        }
+      }
+
+      function clearShotFrameLastFrame() {
+        node.data.lastFrameUrl = '';
+        if (state.lastFrameConnections) {
+          state.lastFrameConnections = state.lastFrameConnections.filter(c => c.to !== id);
+        }
+        updateLastFrameDisplay();
+        if (typeof renderAllConnections === 'function') renderAllConnections();
+        updateVideoComputingPowerDisplay();
+        safeAutoSave();
+      }
+
+      // 图片节点连到尾帧端口：一个分镜只保留一条尾帧线
+      function applyLastFrameFromImageNode(fromNode) {
+        if (!fromNode || fromNode.type !== 'image' || !fromNode.data || !fromNode.data.url) return false;
+        if (!shotFrameModelSupportsLastFrame(node)) return false;
+        if (!state.lastFrameConnections) state.lastFrameConnections = [];
+        state.lastFrameConnections = state.lastFrameConnections.filter(c => c.to !== id);
+        state.lastFrameConnections.push({
+          id: state.nextLastFrameConnId++,
+          from: fromNode.id,
+          to: id
+        });
+        node.data.lastFrameUrl = fromNode.data.url;
+        updateLastFrameDisplay();
+        if (typeof renderAllConnections === 'function') renderAllConnections();
+        updateVideoComputingPowerDisplay();
+        safeAutoSave();
+        return true;
       }
 
       // 初始化参考音视频字段可见性
@@ -553,6 +672,7 @@
             if(el._updateVideoComputingPowerDisplay) {
               try { el._updateVideoComputingPowerDisplay(); } catch(e) {}
             }
+            if(typeof renderAllConnections === 'function') renderAllConnections();
             try{ autoSaveWorkflow(); } catch(e){}
           });
         });
@@ -563,6 +683,7 @@
           updateResolutionOptions(videoModelEl.value);
           updateRefAudioVideoVisibility();
           updateProcessFaceVisibility();
+          updateLastFrameAvailability();
           safeAutoSave()
         });
 
@@ -1304,9 +1425,7 @@
         const duration = node.data.videoDuration || 10;
 
         const context = {};
-        if(node.data.videoMode) {
-          context.image_mode = node.data.videoMode;
-        }
+        context.image_mode = resolveShotFrameVideoImageMode(node);
         if(node.data.videoResolution) {
           context.resolution = node.data.videoResolution;
         }
@@ -1480,6 +1599,7 @@
                 to: id
               });
               renderFirstFrameConnections();
+              updateVideoComputingPowerDisplay();
               
               safeAutoSave()
             });
@@ -1530,6 +1650,7 @@
         updateImageSelectionMenu();
         // 刷新父分镜组宫格预览
         refreshParentShotGroupPreview();
+        updateVideoComputingPowerDisplay();
       }
 
       // 新生成的分镜图提醒：最新一批置顶到菜单最上方 + caret 角标/脉冲动画
@@ -1597,11 +1718,79 @@
             refreshParentShotGroupPreview();
             
             renderFirstFrameConnections();
+            updateVideoComputingPowerDisplay();
             safeAutoSave()
           }
         }
         state.connecting = null;
       });
+
+      if(lastFramePort){
+        lastFramePort.addEventListener('mouseup', (e) => {
+          e.stopPropagation();
+          if(lastFramePort.classList.contains('disabled')) {
+            state.connecting = null;
+            return;
+          }
+          if(state.connecting && state.connecting.fromId !== id){
+            const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
+            applyLastFrameFromImageNode(fromNode);
+          }
+          state.connecting = null;
+        });
+      }
+
+      if(lastFrameFileEl){
+        lastFrameFileEl.addEventListener('change', async () => {
+          const file = lastFrameFileEl.files && lastFrameFileEl.files[0];
+          lastFrameFileEl.value = '';
+          if(!file) return;
+          if(!shotFrameModelSupportsLastFrame(node)){
+            showToast('该模型不支持尾帧', 'warning');
+            return;
+          }
+          const previousUrl = node.data.lastFrameUrl || '';
+          if(!(window.isTiffFile && window.isTiffFile(file)) && typeof readFileAsDataUrl === 'function' && lastFramePreviewEl){
+            const localPreview = await readFileAsDataUrl(file);
+            lastFramePreviewEl.src = localPreview;
+            lastFramePreviewEl.style.display = 'block';
+            if(lastFramePreviewRow) lastFramePreviewRow.style.display = 'block';
+          }
+          const uploadedUrl = await uploadFile(file);
+          if(uploadedUrl){
+            node.data.lastFrameUrl = uploadedUrl;
+            if(state.lastFrameConnections){
+              state.lastFrameConnections = state.lastFrameConnections.filter(c => c.to !== id);
+            }
+            updateLastFrameDisplay();
+            if(typeof renderAllConnections === 'function') renderAllConnections();
+            updateVideoComputingPowerDisplay();
+            showToast(window.t ? window.t('last_frame_upload_success') : '尾帧图片上传成功', 'success');
+            safeAutoSave();
+          } else if(previousUrl){
+            node.data.lastFrameUrl = previousUrl;
+            updateLastFrameDisplay();
+          } else {
+            updateLastFrameDisplay();
+          }
+        });
+      }
+
+      if(lastFrameClearBtn){
+        lastFrameClearBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          clearShotFrameLastFrame();
+        });
+      }
+
+      if(lastFramePreviewEl){
+        lastFramePreviewEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if(node.data.lastFrameUrl){
+            openImageModal(proxyImageUrl(node.data.lastFrameUrl), window.t ? window.t('last_frame_label') : '尾帧');
+          }
+        });
+      }
 
       // 模型选择
       modelEl.addEventListener('change', () => {
@@ -1628,6 +1817,7 @@
         // 模型改变时更新时长选项
         updateVideoDurationOptions(videoModelEl.value);
         updateResolutionOptions(videoModelEl.value);
+        updateLastFrameAvailability();
         // 更新算力显示
         updateVideoComputingPowerDisplay();
         // 更新按钮显示状态
@@ -1692,13 +1882,19 @@
 
       // 初始化时更新预览图
       updatePreviewImage();
+      updateLastFrameAvailability();
+      updateLastFrameDisplay();
 
       // 暴露方法供外部调用（工作流恢复时使用）
       node.updatePreview = updatePreviewImage;
       node.notifyNewImages = notifyNewImages;
       node.updateModeUI = updateModeUI;
+      node.updateLastFrameDisplay = updateLastFrameDisplay;
+      node.updateLastFrameAvailability = updateLastFrameAvailability;
       node.populateVideoModelOptions = populateVideoModelOptions;
       node.updateShotFrameResolutionOptions = updateResolutionOptions;
+      el._updateLastFrame = updateLastFrameDisplay;
+      el._applyLastFrameFromImage = applyLastFrameFromImageNode;
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();

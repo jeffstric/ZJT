@@ -433,7 +433,9 @@
               const videoModel = node.data.videoModel || 'sora2';
               const duration = node.data.videoDuration || 10;
               const context = {};
-              if(node.data.videoMode) {
+              if(typeof resolveShotFrameVideoImageMode === 'function') {
+                context.image_mode = resolveShotFrameVideoImageMode(node);
+              } else if(node.data.videoMode) {
                 context.image_mode = node.data.videoMode;
               }
               if(node.data.videoResolution) {
@@ -575,6 +577,7 @@
         if(nodeData.url && nodeData.url.startsWith('blob:')) nodeData.url = '';
         if(nodeData.startUrl && nodeData.startUrl.startsWith('blob:')) nodeData.startUrl = '';
         if(nodeData.endUrl && nodeData.endUrl.startsWith('blob:')) nodeData.endUrl = '';
+        if(nodeData.lastFrameUrl && nodeData.lastFrameUrl.startsWith('blob:')) nodeData.lastFrameUrl = '';
         if(nodeData.videoUrl && nodeData.videoUrl.startsWith('blob:')) nodeData.videoUrl = '';  // 提取帧节点
 
         // 清理音频/视频列表中的blob URL
@@ -642,6 +645,7 @@
         nextConnId: state.nextConnId,
         nextImgConnId: state.nextImgConnId,
         nextFirstFrameConnId: state.nextFirstFrameConnId,
+        nextLastFrameConnId: state.nextLastFrameConnId,
         nextVideoConnId: state.nextVideoConnId,
         nextReferenceConnId: state.nextReferenceConnId,
         nextAudioConnId: state.nextAudioConnId,
@@ -660,6 +664,7 @@
         connections: state.connections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         imageConnections: state.imageConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType })),
         firstFrameConnections: state.firstFrameConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
+        lastFrameConnections: (state.lastFrameConnections || []).map(c => ({ id: c.id, from: c.from, to: c.to })),
         videoConnections: state.videoConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         referenceConnections: state.referenceConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         audioConnections: state.audioConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
@@ -1781,6 +1786,12 @@
         if (typeof node.updateShotFrameResolutionOptions === 'function') {
           node.updateShotFrameResolutionOptions(node.data.videoModel);
         }
+        if (typeof node.updateLastFrameAvailability === 'function') {
+          node.updateLastFrameAvailability();
+        }
+        if (el._updateVideoComputingPowerDisplay) {
+          el._updateVideoComputingPowerDisplay();
+        }
       });
       console.log('[刷新模型] 已刷新所有分镜节点的模型选择器');
     }
@@ -1856,6 +1867,7 @@
         state.connections = [];
         state.imageConnections = [];
         state.firstFrameConnections = [];
+        state.lastFrameConnections = [];
         state.videoConnections = [];
         state.referenceConnections = [];
         state.audioConnections = [];
@@ -1863,6 +1875,7 @@
         state.selectedConnId = null;
         state.selectedImgConnId = null;
         state.selectedFirstFrameConnId = null;
+        state.selectedLastFrameConnId = null;
         state.selectedVideoConnId = null;
         state.selectedReferenceConnId = null;
         state.selectedAudioConnId = null;
@@ -1927,6 +1940,7 @@
         state.nextConnId = data.nextConnId || 1;
         state.nextImgConnId = data.nextImgConnId || 1;
         state.nextFirstFrameConnId = data.nextFirstFrameConnId || 1;
+        state.nextLastFrameConnId = data.nextLastFrameConnId || 1;
         state.nextVideoConnId = data.nextVideoConnId || 1;
         state.nextReferenceConnId = data.nextReferenceConnId || 1;
         state.nextAudioConnId = data.nextAudioConnId || 1;
@@ -1950,6 +1964,10 @@
         
         if(data.firstFrameConnections && Array.isArray(data.firstFrameConnections)){
           state.firstFrameConnections = data.firstFrameConnections;
+        }
+
+        if(data.lastFrameConnections && Array.isArray(data.lastFrameConnections)){
+          state.lastFrameConnections = data.lastFrameConnections;
         }
         
         if(data.videoConnections && Array.isArray(data.videoConnections)){
@@ -2041,6 +2059,7 @@
         state.connections = [];
         state.imageConnections = [];
         state.firstFrameConnections = [];
+        state.lastFrameConnections = [];
         state.videoConnections = [];
         state.referenceConnections = [];
         state.audioConnections = [];
@@ -3720,6 +3739,9 @@
         if(node.data.previewImageUrl){
           node.data.previewImageUrl = normalizeImageUrl(node.data.previewImageUrl);
         }
+        if(node.data.lastFrameUrl){
+          node.data.lastFrameUrl = normalizeImageUrl(node.data.lastFrameUrl);
+        }
         node.title = nodeData.title || node.title;
         
         const nodeEl = document.querySelector(`.node[data-node-id="${nodeData.id}"]`);
@@ -3818,6 +3840,12 @@
           // 恢复模式相关 UI 状态
           if(node.updateModeUI) {
             node.updateModeUI();
+          }
+          if(typeof node.updateLastFrameDisplay === 'function') {
+            node.updateLastFrameDisplay();
+          }
+          if(nodeEl._updateVideoComputingPowerDisplay) {
+            nodeEl._updateVideoComputingPowerDisplay();
           }
 
           // 先更新时长选项（基于视频模型），再设置时长值

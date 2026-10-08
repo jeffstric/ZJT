@@ -2343,6 +2343,21 @@ html.theme-dark .node.image-node .image-camera-control-btn{
   box-shadow: 0 0 0 4px rgba(59,130,246,0.3);
   transform: translateY(-50%) scale(1.3);
 }
+.port.last-frame-port{
+  left: -9px;
+  transform: translateY(-50%);
+  border-color: #3b82f6;
+  background: #3b82f6;
+}
+.port.last-frame-port:hover{
+  background: #93c5fd;
+  transform: translateY(-50%) scale(1.2);
+}
+.port.last-frame-port.can-connect{
+  background: #93c5fd;
+  box-shadow: 0 0 0 4px rgba(59,130,246,0.3);
+  transform: translateY(-50%) scale(1.3);
+}
 .port.video-input-port{
   left: -9px;
   top: 120px;

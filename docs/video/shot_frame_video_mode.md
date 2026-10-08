@@ -17,6 +17,11 @@
 - 需要先点击"生成分镜图"生成分镜图（作为视频首帧）
 - 再点击"生成视频"以分镜图为首帧生成视频
 - 视频模型列表：所有 image_to_video 模型
+- 可选尾帧：第 1 列「视频首帧」下方。可以把图片节点连到尾帧端口，也可以本地上传。尾帧只参与生成视频，不改分镜图，也不进父分镜组宫格
+- 模型 `supports_last_frame === false` 时，尾帧端口和上传禁用，已填的图保留但不提交
+- 切到参考模式时隐藏尾帧区，已填内容和连线保留；切回首帧模式后恢复。参考模式下不提交尾帧
+- 有可用尾帧时，`image_urls` 为 `首帧URL,尾帧URL`，接口 `image_mode` 仍是 `first_last_frame`。算力上下文用 `first_last_with_tail`
+- 每个分镜只保留一条尾帧连线，存在 `state.lastFrameConnections`。上传尾帧会去掉这条连线。旧工作流没有该数组时视为没有尾帧
 
 ### 参考图模式
 
@@ -51,6 +56,8 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `node.data.videoMode` | `'first_last_frame'` / `'multi_reference'` | 视频生成模式 |
+| `node.data.lastFrameUrl` | string | 首帧模式下的可选尾帧 URL。空字符串表示没有尾帧 |
+| `lastFrameConnections` | `{id, from, to}[]` | 图片节点到分镜尾帧端口的连线，随工作流保存 |
 
 ## 向后兼容
 
@@ -72,15 +79,17 @@
 ## 批量生成
 
 分镜组节点的"逐个生成视频"功能已兼容混合模式：
-- 首帧模式节点：正常生成（需有首帧图片）
+- 首帧模式节点：正常生成（需有首帧图片）。该分镜如果填了可用尾帧，会一并提交
 - 参考图模式节点：独立生成（不继承分镜组的视频模型，保持自己的模型选择）
+- 「合并生成视频」仍只用宫格首帧，不带各分镜的尾帧
 
 ## 相关文件
 
-- `web/js/nodes.js` — createShotFrameNode(): 模式切换 UI
+- `web/js/shot_frame_node.js` — 模式切换、尾帧端口、上传与算力
 - `web/js/shot_frame_generator.js` — collectShotFrameRefImages(): 参考图收集
-- `web/js/shot_frame_video_generator.js` — generateShotFrameVideo(): API 分支逻辑
-- `web/js/workflow.js` — createShotFrameNodeWithData(): 模式状态恢复
+- `web/js/shot_frame_video_generator.js` — generateShotFrameVideo(): 首帧模式把尾帧拼进 image_urls
+- `web/js/workflow.js` — createShotFrameNodeWithData(): 模式与尾帧状态恢复
+- `web/js/events.js` — 图片节点拖到首帧或尾帧端口
 
 ---
 
