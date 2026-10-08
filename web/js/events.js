@@ -363,9 +363,14 @@
       state.ratio = ratioSelectEl.value;
     });
 
+    // 键盘上的 Ctrl/Cmd 是否真正按住。滚轮事件上的 ctrlKey 不可靠：
+    // 触控板捏合会被浏览器伪造成 ctrlKey=true，但不会有对应的 keydown。
+    let wheelModifierHeld = false;
+
     // Ctrl键检测：进入/退出选择模式
     window.addEventListener('keydown', (e) => {
       if(e.key === 'Control' || e.key === 'Meta'){
+        wheelModifierHeld = true;
         state.selectionMode = true;
         canvasContainer.style.cursor = 'crosshair';
       }
@@ -373,6 +378,8 @@
 
     window.addEventListener('keyup', (e) => {
       if(e.key === 'Control' || e.key === 'Meta'){
+        // keyup 时已松开的那个键不会留在 ctrlKey/metaKey 上；另一个仍按着则继续算按住
+        wheelModifierHeld = e.ctrlKey || e.metaKey;
         state.selectionMode = false;
         canvasContainer.style.cursor = 'grab';
       }
@@ -380,6 +387,7 @@
 
     // 失去焦点时重置选择模式
     window.addEventListener('blur', () => {
+      wheelModifierHeld = false;
       state.selectionMode = false;
       canvasContainer.style.cursor = 'grab';
     });
@@ -545,6 +553,16 @@
       }
     });
 
+    // Ctrl/Cmd + 滚轮的动作。modifierHeld 只认键盘 keydown，不认滚轮事件上的 ctrlKey。
+    // 返回 'pan'（上下平移）或 'pinch-zoom'（触控板捏合，仍缩放）。
+    function ctrlWheelAction(e, modifierHeld){
+      if(modifierHeld) return 'pan';
+      // 未按键：deltaMode 为像素且 deltaY 不是整数，才是浏览器伪造的捏合。
+      // 不能反过来把「小数」一律当捏合。页面缩放 110% 时，鼠标一格会变成 120/1.1 这类小数。
+      if(e.deltaMode === 0 && typeof e.deltaY === 'number' && !Number.isInteger(e.deltaY)) return 'pinch-zoom';
+      return 'pan';
+    }
+
     // 归一化滚轮增量：行/页模式换算为像素，保证不同设备平移速度一致
     function normalizeWheelDelta(e, delta){
       if(e.deltaMode === 1) return delta * 16;
@@ -584,12 +602,11 @@
       }
 
       // Ctrl + 滚轮：画布上下平移
-      // 例外：触控板双指捏合会被 Chrome/Edge 翻译成 ctrlKey=true 的 wheel 事件
-      // （deltaMode=0 且 deltaY 为连续小数，真鼠标滚轮是整数值），此时仍应缩放而非平移
+      // 例外：触控板双指捏合没有按下 Ctrl/Cmd，但会被 Chrome/Edge 翻译成 ctrlKey=true 的 wheel。
+      // 这时仍缩放。是否按键以 wheelModifierHeld 为准，不用 deltaY 是否为整数判断。
       if(isCtrl){
         e.preventDefault();
-        const isPinch = e.deltaMode === 0 && !Number.isInteger(e.deltaY);
-        if(isPinch){
+        if(ctrlWheelAction(e, wheelModifierHeld) === 'pinch-zoom'){
           if(e.deltaY < 0) zoomIn(); else if(e.deltaY > 0) zoomOut();
           return;
         }
