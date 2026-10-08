@@ -114,7 +114,7 @@
       inputPort.addEventListener('mouseup', (e) => {
         if(state.connecting && state.connecting.fromId !== id){
           const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
-          if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'character' || fromNode.type === 'digital_human')){
+          if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark' || fromNode.type === 'character' || fromNode.type === 'digital_human')){
             const exists = state.connections.some(c => c.to === id);
             if(!exists){
               state.connections.push({

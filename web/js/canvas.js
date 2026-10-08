@@ -514,6 +514,16 @@
       state.referenceConnections.filter(c => c.to === id).forEach(c => affectedNodes.add(c.to));
       state.referenceConnections = state.referenceConnections.filter(c => c.from !== id && c.to !== id);
       
+      // 删除视频节点时，清除去水印节点上保存的输入预览（保存由后面的 flushAutoSave 负责）
+      if(node && node.type === 'video'){
+        state.connections.filter(c => c.from === id).forEach(c => {
+          const targetNode = state.nodes.find(n => n.id === c.to);
+          if(targetNode && typeof targetNode.clearVideoInput === 'function'){
+            targetNode.clearVideoInput({ skipSave: true });
+          }
+        });
+      }
+
       // 删除节点
       state.nodes = state.nodes.filter(n => n.id !== id);
       state.connections = state.connections.filter(c => c.from !== id && c.to !== id);

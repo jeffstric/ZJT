@@ -20,6 +20,7 @@
   </script>
   <link rel="stylesheet" href="/css/common.css" />
   <link rel="stylesheet" href="/css/video_workflow.css" />
+  <link rel="stylesheet" href="/css/video_watermark_node.css?v=__VERSION__" />
   <link rel="stylesheet" href="/css/subscription.css?v=__VERSION__" />
   <link rel="stylesheet" href="/css/ai_tool_timeline.css?v=__VERSION__" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
@@ -182,6 +183,14 @@
                 <rect x="6" y="2" width="6" height="4" rx="1" stroke="currentColor" stroke-width="2" />
               </svg>
               <span class="add-menu-text" data-i18n="extract_frame">提取帧</span>
+            </div>
+            <div class="add-menu-item" id="menuAddVideoWatermark">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M4 16l6-6 4 4-6 6H4v-4z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                <path d="M14 6l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                <path d="M4 20h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+              <span class="add-menu-text" data-i18n="video_watermark">去水印</span>
             </div>
             <div class="add-menu-item" id="menuAddImage">
               <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -1468,6 +1477,7 @@
   <script src="/js/shot_group_node.js?v=__VERSION__"></script>
   <script src="/js/shot_frame_node.js?v=__VERSION__"></script>
   <script src="/js/extract_frame_node.js"></script>
+  <script src="/js/video_watermark_node.js?v=__VERSION__"></script>
   <script src="/js/text_node.js"></script>
   <script src="/js/text_to_speech_node.js?v=__VERSION__"></script>
   <script src="/js/digital_human_node.js"></script>

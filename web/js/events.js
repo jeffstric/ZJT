@@ -330,6 +330,13 @@
       startNodePlacing(nodeId);
     });
 
+    document.getElementById('menuAddVideoWatermark').addEventListener('click', () => {
+      const nodeId = createVideoWatermarkNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
     document.getElementById('menuAddText').addEventListener('click', () => {
       const nodeId = createTextNode();
       renderMinimap();
@@ -836,8 +843,7 @@
         // 如果从图生视频节点拖拽，查找视频节点输入端口
         // 如果从剧本节点拖拽，查找分镜组节点输入端口
         // 如果从角色节点拖拽，查找视频节点输入端口
-        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'script' || fromNode.type === 'character')){
-          let nearestPort = null;
+        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark' || fromNode.type === 'script' || fromNode.type === 'character')){
           let nearestDist = 50;
           const targetType = fromNode.type === 'script' ? 'shot_group' : 'video';
           for(const targetNode of state.nodes){
@@ -860,6 +866,9 @@
         if(fromNode && fromNode.type === 'video'){
           let nearestVideoDist = 50;
           let nearestVideoRefDist = 50;
+          const registryVideoPort = typeof findNearestConnectablePort === 'function'
+            ? findNearestConnectablePort(toX, toY, 'video', 50)
+            : null;
           for(const node of state.nodes){
             const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
             if(!toEl) continue;
@@ -891,6 +900,18 @@
                 }
               }
             }
+          }
+          // 去水印等注册视频入口、对话组、图生视频参考口只吸附最近的一个
+          var videoSnapCandidates = [];
+          if(registryVideoPort) videoSnapCandidates.push({ kind: 'registered', dist: registryVideoPort.dist });
+          if(nearestVideoInputPort) videoSnapCandidates.push({ kind: 'dialogue', dist: nearestVideoDist });
+          if(nearestVideoRefPort) videoSnapCandidates.push({ kind: 'ref', dist: nearestVideoRefDist });
+          videoSnapCandidates.sort(function(a, b){ return a.dist - b.dist; });
+          var videoSnapWinner = videoSnapCandidates.length ? videoSnapCandidates[0].kind : null;
+          if(videoSnapWinner !== 'dialogue') nearestVideoInputPort = null;
+          if(videoSnapWinner !== 'ref') nearestVideoRefPort = null;
+          if(videoSnapWinner === 'registered'){
+            nearestPort = { nodeId: registryVideoPort.nodeId, x: registryVideoPort.x, y: registryVideoPort.y };
           }
         }
 
@@ -1239,8 +1260,8 @@
           }
         }
 
-        // 如果从图生视频节点拖拽，查找视频节点输入端口
-        if(fromNode && fromNode.type === 'image_to_video'){
+        // 如果从图生视频或去水印节点拖拽，查找视频节点输入端口
+        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark')){
           let nearestPort = null;
           let nearestDist = PROXIMITY_DIST;
           for(const node of state.nodes){
@@ -1268,9 +1289,12 @@
           }
         }
         
-        // 如果从视频节点拖拽，查找对话组节点和图生视频节点的视频输入端口
+        // 如果从视频节点拖拽，查找去水印、对话组和图生视频的视频输入端口
         if(fromNode && fromNode.type === 'video'){
           {
+            const registryVideoPort = typeof findNearestConnectablePort === 'function'
+              ? findNearestConnectablePort(mouseX, mouseY, 'video', PROXIMITY_DIST)
+              : null;
             let nearestVideoInputPort = null;
             let nearestVideoRefPort = null;
             let nearestVideoDist = PROXIMITY_DIST;
@@ -1302,8 +1326,28 @@
               }
             }
 
-            // 优先连接到图生视频节点的视频参考端口
-            if(nearestVideoRefPort && (!nearestVideoInputPort || nearestVideoRefDist <= nearestVideoDist)){
+            var registryDist = registryVideoPort ? registryVideoPort.dist : Infinity;
+            var dialogueDist = nearestVideoInputPort ? nearestVideoDist : Infinity;
+            var refDist = nearestVideoRefPort ? nearestVideoRefDist : Infinity;
+            // 去水印等注册入口比对话组、视频参考口更近时，走普通 connections
+            if(registryVideoPort && registryDist <= dialogueDist && registryDist <= refDist){
+              const connType = (registryVideoPort.portCfg && registryVideoPort.portCfg.connectionType) || 'connections';
+              const connArray = state[connType] || state.connections;
+              const exists = connArray.some(c => c.from === fromNode.id && c.to === registryVideoPort.nodeId);
+              const occupied = connArray.some(c => c.to === registryVideoPort.nodeId);
+              if(!exists && !occupied){
+                const connIdKey = connType === 'videoConnections' ? 'nextVideoConnId' : 'nextConnId';
+                connArray.push({
+                  id: state[connIdKey]++,
+                  from: fromNode.id,
+                  to: registryVideoPort.nodeId
+                });
+                if(registryVideoPort.portCfg && typeof registryVideoPort.portCfg.onConnect === 'function'){
+                  registryVideoPort.portCfg.onConnect(fromNode, registryVideoPort.node);
+                }
+                safeAutoSave();
+              }
+            } else if(nearestVideoRefPort && (!nearestVideoInputPort || nearestVideoRefDist <= nearestVideoDist)){
               const exists = state.videoConnections.some(c =>
                 c.from === fromNode.id && c.to === nearestVideoRefPort.nodeId && c.portType === 'video-ref'
               );

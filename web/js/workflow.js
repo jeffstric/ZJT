@@ -137,6 +137,9 @@
           // 配置加载完成后，更新所有图生视频节点和分镜节点的算力显示
           updateAllImageToVideoNodesPower();
           updateAllShotFrameNodesPower();
+          if (typeof refreshVideoWatermarkNodesPower === 'function') {
+            refreshVideoWatermarkNodesPower();
+          }
           // 刷新所有分镜组和分镜节点的视频模型选项，修复 TaskConfig 异步加载完成前
           // 节点已创建导致使用 hardcoded fallback 值的时序竞争问题
           if (typeof refreshShotGroupNodesModels === 'function') {
@@ -178,6 +181,9 @@
               console.log('[算力配置] 已加载:', taskComputingPowerConfig);
               updateAllImageToVideoNodesPower();
               updateAllShotFrameNodesPower();
+              if (typeof refreshVideoWatermarkNodesPower === 'function') {
+                refreshVideoWatermarkNodesPower();
+              }
             }
             if(data.data.video_model_duration_options){
               videoModelDurationOptions = data.data.video_model_duration_options;

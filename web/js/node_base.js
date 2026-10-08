@@ -507,6 +507,20 @@ function bindInputPortEvents(el, node, portCfg) {
       return;
     }
 
+    if (portCfg.single) {
+      var occupied = connArray.some(function(c) { return c.to === id; });
+      if (occupied) {
+        if (typeof showToast === 'function') {
+          var occupiedText = (portCfg.occupiedToastKey && window.t)
+            ? window.t(portCfg.occupiedToastKey)
+            : '该端口已有连接';
+          showToast(occupiedText, 'warning');
+        }
+        state.connecting = null;
+        return;
+      }
+    }
+
     // 确定连接ID的key
     var connIdKey = 'nextConnId';
     if (portCfg.connectionType === 'imageConnections') connIdKey = 'nextImgConnId';
