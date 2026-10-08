@@ -783,7 +783,7 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 
 ### 图床图片签名刷新
 
-当 `server.auto_upload_to_cdn=true` 且 `server.is_local=false` 时，营销智能体页不会把图床图片的过期签名 URL 直接写死给 `<img>` 使用。`web/js/marketing_agent.js` 中的 `proxyImageUrl()` 会将外部 HTTP/HTTPS 图片包装为 `/api/proxy-image?url=...`；后端 `proxy_image` 接口识别 CDN 域名后重新生成签名并 302 到新鲜 URL，非 CDN 外链则使用异步 `httpx.AsyncClient` 代理读取，避免在 Web 接口中阻塞事件循环。视频结果走 `proxyDownloadUrl()` → `/api/download`，同样由后端重签名后 302。
+当 `server.auto_upload_to_cdn=true` 且 `server.is_local=false` 时，营销智能体页不会把图床图片的过期签名 URL 直接写死给 `<img>` 使用。`web/js/marketing_agent.js` 中的 `proxyImageUrl()` 会将外部 HTTP/HTTPS 图片包装为 `/api/proxy-image?url=...`；后端 `proxy_image` 接口识别 CDN 域名后重新生成签名并 302 到新鲜 URL，非 CDN 外链则使用异步 `httpx.AsyncClient` 代理读取，避免在 Web 接口中阻塞事件循环。视频结果播放走 `proxyDownloadUrl()` → `/api/download`，同样由后端重签名后 302。放大图的「下载」不走这颗 cookie 跳转，而调用 `web/js/download_attachment.js` 的 `downloadWithAuth`：`Authorization` 头请求 `/api/download?format=json`，再跳到返回的 CDN `redirect_url`。
 
 生成结果卡片、历史 Markdown 图片/视频、以及历史中已保存的 `generated-image` HTML 都会在渲染时经过代理。这样旧会话重新打开、图床签名超时或点击放大时，媒体仍会自动走代理刷新并显示。轮询完成时若已拿到结果 URL，`hasGeneratedImageResult` / `hasGeneratedVideoResult` 只按 URL 去重，避免把日期路径里的 `/2026` 误判成已展示的任务 ID，从而把新结果从界面删掉。
 

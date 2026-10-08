@@ -1861,26 +1861,14 @@
                 resetModalImageInfo();
             }
 
-            /**
-             * 构建下载 URL：CDN 地址直接下载（七牛 attname 参数指定文件名），本地路径走 /api/download 代理
-             */
-            function buildDownloadUrl(url, filename) {
-                if (url && url.startsWith('http')) {
-                    const separator = url.includes('?') ? '&' : '?';
-                    return `${url}${separator}attname=${encodeURIComponent(filename)}`;
-                }
-                return `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
-            }
-
             function isWechatBrowser() {
                 const ua = navigator.userAgent.toLowerCase();
                 return /micromessenger/.test(ua);
             }
 
-            function downloadModalImage() {
+            async function downloadModalImage() {
                 const img = document.getElementById('imgModalImg');
                 if (!img || !img.src) return;
-                // 从 URL 中提取文件名，默认 fallback
                 let filename = 'image.png';
                 try {
                     const urlPath = img.src.split('?')[0];
@@ -1889,21 +1877,18 @@
                     filename = 'image.png';
                 }
 
-                const downloadUrl = buildDownloadUrl(img.src, filename);
-
-                if (isWechatBrowser()) {
-                    window.open(downloadUrl, '_blank');
-                    setTimeout(() => {
-                        alert('请长按图片，然后选择"保存图片"');
-                    }, 500);
-                } else {
-                    const link = document.createElement('a');
-                    link.href = downloadUrl;
-                    link.download = filename;
-                    link.target = '_blank';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
+                try {
+                    await window.downloadWithAuth(img.src, filename, {
+                        onUnauthorized: redirectToLogin,
+                    });
+                    if (isWechatBrowser()) {
+                        setTimeout(() => {
+                            alert('请长按图片，然后选择"保存图片"');
+                        }, 500);
+                    }
+                } catch (e) {
+                    if (e && e.status === 401) return;
+                    alert((e && e.message) || '下载失败');
                 }
             }
             // 挂载到全局，供原生 HTML onclick 调用
