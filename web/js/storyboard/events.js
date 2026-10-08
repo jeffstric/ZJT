@@ -2634,13 +2634,13 @@ async function handleAction(action, target) {
                 return;
             }
             notify(t('msg_full_video_export_submitted', '完整视频导出任务已提交，正在合成并上传…'));
-            // 轮询 job → CDN 链接下载（走 /api/download 代理重签名 + 302，不占本站带宽，不开新 tab）
+            // 轮询 job → 带 Authorization 取 CDN 重签名地址再原地下载
             const deadline = Date.now() + 30 * 60 * 1000;
             while (Date.now() < deadline) {
                 await new Promise(r => setTimeout(r, 2000));
                 const job = await api.getExportJob(jobId);
                 if (job.status === 'completed' && job.download_url) {
-                    downloadAsAttachment(job.download_url, job.filename || 'storyboard_full.mp4');
+                    await downloadAsAttachment(job.download_url, job.filename || 'storyboard_full.mp4');
                     notify(t('msg_full_video_ready_downloading', '完整视频已生成，已开始下载'));
                     return;
                 }
@@ -2664,7 +2664,7 @@ async function handleAction(action, target) {
                 notify(response.error || t('msg_asset_export_failed', '素材包导出失败'));
                 return;
             }
-            downloadAsAttachment(response.download_url, response.filename || 'storyboard_assets.zip');
+            await downloadAsAttachment(response.download_url, response.filename || 'storyboard_assets.zip');
             notify(t('msg_asset_export_success', '素材包导出成功，已开始下载'));
         } catch (e) {
             notify(e.message || t('msg_asset_export_failed', '素材包导出失败'));

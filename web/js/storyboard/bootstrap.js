@@ -19,7 +19,7 @@ import state, {
 } from './state.js';
 import * as api from './api.js';
 import { handleAuthError } from './api.js';
-import { bindEvents, loadSceneAgentMessages } from './events.js?v=20260923b';
+import { bindEvents, loadSceneAgentMessages } from './events.js';
 import { renderApp } from './render.js';
 import { resumePollingTasks, pollScriptSplitTask, stopScriptSplitTaskPolling } from './polling.js';
 import { autoGenerateMissingFirstFrames } from './auto_missing_images.js';

@@ -51,7 +51,7 @@ export function handleAuthError(status, data = {}) {
     return true;
 }
 
-function authHeaders(json = true) {
+export function authHeaders(json = true) {
     const headers = {};
     if (json) headers['Content-Type'] = 'application/json';
     // 只在 userId 是有效数字时发送，避免后端 int 解析失败导致 422
