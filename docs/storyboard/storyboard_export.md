@@ -146,7 +146,7 @@ header 右侧两个按钮，**无中间弹窗**，点击即触发：
 - 未带 `format=json` 时行为不变：CDN 仍 **302** 到七牛，本地 `/upload/cache/` 与外部 URL 代理也不改。`format=json` 签不出地址时返回 400 JSON，不把大文件拉进这次 fetch
 - 401 且 `error_code=invalid_auth_token` 时走 `api.js` 的 `handleAuthError`：清理本地凭证并跳登录
 
-> 注：未采用 `web/js/pages/_utils.js::buildDownloadUrl`，因后者对 http URL 直接前端拼 `?attname=`，会破坏私有桶签名；storyboard 的 download_url 是带 `e`+`token` 的私有桶签名 URL（见 `services/storyboard_export_service.py::upload_local_file_to_cdn`），必须走后端重签名。
+> 注：独立工具页原先用 `web/js/pages/_utils.js::buildDownloadUrl` 给 http URL 直接拼 `?attname=`，会破坏私有桶签名，并且 `<a href>` 带不上 `Authorization`。这些下载已改为 `downloadWithAuth`。storyboard 的 download_url 是带 `e`+`token` 的私有桶签名 URL（见 `services/storyboard_export_service.py::upload_local_file_to_cdn`），必须走后端重签名。
 
 ## 依赖
 
