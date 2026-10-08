@@ -413,6 +413,14 @@
         <button class="modal-close" id="shortcutHelpModalClose" type="button" aria-label="关闭">×</button>
       </div>
       <div class="modal-body shortcut-help-body">
+        <div class="shortcut-wheel-mode" id="shortcutWheelMode">
+          <div class="shortcut-wheel-mode-label">请选择滚轮操作</div>
+          <div class="shortcut-wheel-mode-options" role="group" aria-label="滚轮操作">
+            <button type="button" class="shortcut-wheel-option is-selected" id="shortcutWheelModePan" aria-pressed="true">滚轮上下平移</button>
+            <button type="button" class="shortcut-wheel-option" id="shortcutWheelModeZoom" aria-pressed="false">滚轮缩放画布</button>
+          </div>
+          <div class="shortcut-wheel-mode-hint" id="shortcutWheelModeHint">当前：滚轮上下平移，Ctrl + 滚轮缩放。只有点击「滚轮缩放画布」后，滚轮才会缩放。</div>
+        </div>
         <div class="shortcut-section">
           <div class="shortcut-section-title">编辑</div>
           <div class="shortcut-row"><span class="shortcut-desc">复制选中节点（分镜 / 分镜组 / 剧本节点不支持复制）</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>C</kbd></span></span></div>
@@ -430,9 +438,9 @@
         <div class="shortcut-section">
           <div class="shortcut-section-title">画布视图</div>
           <div class="shortcut-row"><span class="shortcut-desc">放大 / 缩小</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>=</kbd></span><span class="shortcut-or">/</span><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>-</kbd></span></span></div>
-          <div class="shortcut-row"><span class="shortcut-desc">缩放画布（以鼠标位置为中心）</span><span class="shortcut-keys"><span class="shortcut-mouse">滚轮</span></span></div>
+          <div class="shortcut-row" id="shortcutWheelZoomRow"><span class="shortcut-desc">缩放画布（以鼠标位置为中心）</span><span class="shortcut-keys" id="shortcutWheelZoomKeys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><span class="shortcut-mouse">滚轮</span></span></span></div>
           <div class="shortcut-row"><span class="shortcut-desc">画布左右平移</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Shift</kbd><span class="plus">+</span><span class="shortcut-mouse">滚轮</span></span></span></div>
-          <div class="shortcut-row"><span class="shortcut-desc">画布上下平移</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><span class="shortcut-mouse">滚轮</span></span></span></div>
+          <div class="shortcut-row" id="shortcutWheelPanRow"><span class="shortcut-desc">画布上下平移</span><span class="shortcut-keys" id="shortcutWheelPanKeys"><span class="shortcut-combo"><span class="shortcut-mouse">滚轮</span></span></span></div>
           <div class="shortcut-row"><span class="shortcut-desc">框选多选节点（按住后拖拽）</span><span class="shortcut-keys"><span class="shortcut-combo"><kbd>Ctrl</kbd><span class="plus">+</span><span class="shortcut-mouse">空白处拖拽</span></span></span></div>
           <div class="shortcut-row"><span class="shortcut-desc">平移画布</span><span class="shortcut-keys"><span class="shortcut-mouse">拖动空白区域</span></span></div>
         </div>
