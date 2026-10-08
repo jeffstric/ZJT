@@ -108,6 +108,7 @@
     state.connections.forEach(add);
     state.imageConnections.forEach(add);
     state.firstFrameConnections.forEach(add);
+    if(state.lastFrameConnections) state.lastFrameConnections.forEach(add);
   }
 
   function buildGraph(){

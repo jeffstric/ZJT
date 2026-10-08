@@ -461,6 +461,23 @@
       // 清除该节点相关的首帧连接
       state.firstFrameConnections = state.firstFrameConnections.filter(c => c.from !== id && c.to !== id);
 
+      // 来源图片被删时，清掉分镜上由这条线写入的尾帧
+      if(state.lastFrameConnections && state.lastFrameConnections.length){
+        const lastConns = state.lastFrameConnections.filter(c => c.from === id);
+        for(const conn of lastConns){
+          const targetNode = state.nodes.find(n => n.id === conn.to);
+          if(targetNode && targetNode.type === 'shot_frame'){
+            targetNode.data.lastFrameUrl = '';
+            const targetEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+            if(targetEl && typeof targetEl._updateLastFrame === 'function') targetEl._updateLastFrame();
+            if(targetEl && typeof targetEl._updateVideoComputingPowerDisplay === 'function'){
+              targetEl._updateVideoComputingPowerDisplay();
+            }
+          }
+        }
+        state.lastFrameConnections = state.lastFrameConnections.filter(c => c.from !== id && c.to !== id);
+      }
+
       // 清除该节点相关的视频连接
       // 如果删除的是视频节点，需要清除连接的图生视频节点的videoUrls
       if(node && node.type === 'video') {

@@ -230,7 +230,8 @@ async function generateShotFrameVideo(nodeId, node){
         throw new Error(`未找到视频模型 ${videoModel} 对应的任务配置`);
       }
       form.append('task_id', taskId);
-      form.append('image_urls', imageUrl);
+      const lastFrameUrl = typeof resolveShotFrameLastFrameUrl === 'function' ? resolveShotFrameLastFrameUrl(node) : '';
+      form.append('image_urls', lastFrameUrl ? (imageUrl + ',' + lastFrameUrl) : imageUrl);
       form.append('image_mode', 'first_last_frame');
 
       // 添加参考音频和视频文件
