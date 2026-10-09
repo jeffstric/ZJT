@@ -135,3 +135,28 @@ def test_handle_ask_user_rejects_illegal_json_without_verification():
     assert result.get("error")
     assert result.get("user_input") is None
     assert agent.task_manager.created == []
+
+def test_non_json_fenced_blocks_are_not_validated():
+    """其他语言围栏不参与 JSON 校验（修复：(?:json)? 可选导致 python/mermaid
+    围栏也被捕获并按 JSON 打回，整卡误杀）。"""
+    question = (
+        "请确认以下方案（附技术文章里的代码片段）：\n"
+        "```python\nprint('hello')\n```\n"
+        "```text\n示意文本\n```\n"
+        "```json\n{\"type\": \"article_to_video_script\", \"clips\": []}\n```"
+    )
+    assert _validate_question_payload(question) is None
+
+
+def test_json_fence_with_leading_space_and_case_is_tolerated():
+    """``` json（围栏后带空格）与大写 JSON 围栏仍被校验。"""
+    ok = "``` json\n{\"a\": 1}\n```"
+    assert _validate_question_payload(ok) is None
+    bad = "```JSON\n{a: 1}\n```"
+    err = _validate_question_payload(bad)
+    assert err is not None and "合法 JSON" in err
+
+
+def test_unlabeled_fence_is_not_validated_as_json():
+    """无语言标签的围栏（可能是普通引用/伪代码）不按 JSON 校验。"""
+    assert _validate_question_payload("步骤：\n```\n1. 确认脚本\n2. 生成\n```") is None

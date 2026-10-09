@@ -26,8 +26,11 @@ logger = logging.getLogger(__name__)
 # （实测形态：`, "parameter name="options" string="false">`）
 _DEGRADED_TAIL_RE = re.compile(r",?\s*\"parameter name=")
 
-# question 内嵌 ```json 代码块（ask_user 结构化确认卡负载）
-_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```")
+# question 内嵌 ```json 代码块（ask_user 结构化确认卡负载）。
+# ⚠️ 只匹配显式 json 围栏：此前 (?:json)? 可选导致 python/mermaid/text 等
+# 任意语言围栏也被捕获并按 JSON 校验，合法 ask_user 被整卡打回重写。
+# 容忍围栏与语言名之间的空白（``` json）与大小写；语言名后必须换行。
+_JSON_BLOCK_RE = re.compile(r"```[\t ]*json[\t ]*\r?\n([\s\S]*?)```", re.IGNORECASE)
 
 # 输出退化残片检测（比 _DEGRADED_TAIL_RE 宽，用于报错打回而非清洗）：
 # 覆盖 `</think_never_used_HASH>` 伪闭合标签与 `<parameter name=` 尖括号形态

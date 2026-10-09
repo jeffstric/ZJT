@@ -294,3 +294,65 @@ describe('去水印节点接线', () => {
     expect(videoNode).toContain("fromNode.type === 'video_watermark'");
   });
 });
+
+describe('重载复原（红线4：submitting 落盘后重载不得卡死）', () => {
+  beforeEach(() => {
+    installCanvasStubs();
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test('submitting 落盘后重载归一为 idle，提交按钮恢复可用', () => {
+    const id = globalThis.createVideoWatermarkNodeWithData({
+      id: 50,
+      x: 0,
+      y: 0,
+      data: { status: 'submitting', statusMessage: '', prompt: '去logo', duration: 5 }
+    });
+    const { node, el } = nodeEls(id);
+    // 状态归一：submitting → idle（任务结果无法找回，让用户重新提交）
+    expect(node.data.status).toBe('idle');
+    // 按钮不再被 busy 判定禁用（修复前永久 disabled，只能删节点重建）
+    expect(el.querySelector('.watermark-submit-btn').disabled).toBe(false);
+    // 显示中断提示
+    expect(el.querySelector('.status-field').style.display).not.toBe('none');
+    expect(el.querySelector('.status').textContent).toContain('重新提交');
+  });
+
+  test('submitted 提示 30 秒后淡出，数据状态保留（#28 残留修复）', () => {
+    vi.useFakeTimers();
+    try {
+      const id = globalThis.createVideoWatermarkNodeWithData({
+        id: 51,
+        x: 0,
+        y: 0,
+        data: { status: 'submitted', statusMessage: '', duration: 5 }
+      });
+      const { node, el } = nodeEls(id);
+      expect(el.querySelector('.status-field').style.display).not.toBe('none');
+      vi.advanceTimersByTime(31000);
+      expect(el.querySelector('.status-field').style.display).toBe('none');
+      expect(el.querySelector('.status').textContent).toBe('');
+      // 仅提示淡出，数据状态不动（重载复原仍能识别已提交）
+      expect(node.data.status).toBe('submitted');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('error 状态复原行为不变', () => {
+    const id = globalThis.createVideoWatermarkNodeWithData({
+      id: 52,
+      x: 0,
+      y: 0,
+      data: { status: 'error', statusMessage: '网络错误，请稍候重试', duration: 5 }
+    });
+    const { el } = nodeEls(id);
+    expect(el.querySelector('.status-field').style.display).not.toBe('none');
+    expect(el.querySelector('.status').textContent).toContain('网络错误');
+    expect(el.querySelector('.watermark-submit-btn').disabled).toBe(false);
+  });
+});

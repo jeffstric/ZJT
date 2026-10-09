@@ -90,7 +90,7 @@
     return createNodeBase({
       type: 'video_watermark',
       cssClass: 'video-watermark-node',
-      title: function() { return textOf('video_watermark_title', '去水印'); },
+      title: function() { return textOf('video_watermark_title', '去字幕水印'); },
       defaultData: {
         videoUrl: '',
         videoName: '',
@@ -193,6 +193,20 @@
           if (!busy) {
             submitBtn.textContent = textOf('video_watermark_btn', '去除水印');
           }
+        }
+
+        // 「已提交」提示定时淡出：结果状态由下游视频节点展示，本节点提示
+        // 长期残留会误导用户（结果完成后仍显示"生成中"）
+        function fadeOutSubmittedHint() {
+          setTimeout(function() {
+            if (node.data.status !== 'submitted') return;
+            var field = el.querySelector('.status-field');
+            var hintEl = el.querySelector('.status');
+            if (field && hintEl) {
+              field.style.display = 'none';
+              hintEl.textContent = '';
+            }
+          }, 30000);
         }
 
         node.refreshPower = function() {
@@ -397,6 +411,7 @@
             node.data.statusMessage = '';
             node.data.lastProjectId = result.project_id;
             showStatus(textOf('video_watermark_submitted', '已提交，结果视频生成中'), '#22c55e');
+            fadeOutSubmittedHint();
             createResultVideoNode(result.project_id);
             showToast(textOf('video_watermark_success', '已提交去水印，结果将出现在新的视频节点'), 'success');
           } catch (error) {
@@ -466,12 +481,28 @@
 
     var statusField = el.querySelector('.status-field');
     var statusEl = el.querySelector('.status');
-    if (node.data.status === 'error' && node.data.statusMessage) {
+    if (node.data.status === 'submitting') {
+      // 红线4（工作流重载复原）：提交在途关页时，自动保存把 submitting 落了盘。
+      // 重载后无法找回该次提交的 project_id，必须归一为 idle 并提示重新提交，
+      // 否则提交按钮永久 disabled、提交入口被 status 守卫堵死，只能删节点重建
+      node.data.status = 'idle';
+      node.data.statusMessage = '';
+      if (statusField && statusEl) {
+        statusField.style.display = '';
+        setStatusEl(statusEl, textOf('video_watermark_interrupted', '上次提交已中断，结果无法找回，请重新提交'), '#f59e0b');
+      }
+      if (typeof node.refreshPower === 'function') node.refreshPower();
+    } else if (node.data.status === 'error' && node.data.statusMessage) {
       statusField.style.display = '';
       setStatusEl(statusEl, node.data.statusMessage, '#ef4444');
     } else if (node.data.status === 'submitted') {
       statusField.style.display = '';
       setStatusEl(statusEl, textOf('video_watermark_submitted', '已提交，结果视频生成中'), '#22c55e');
+      setTimeout(function() {
+        if (node.data.status !== 'submitted') return;
+        statusField.style.display = 'none';
+        statusEl.textContent = '';
+      }, 30000);
     }
   }
 

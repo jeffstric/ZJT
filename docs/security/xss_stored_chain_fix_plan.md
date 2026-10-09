@@ -285,7 +285,7 @@ MR1+MR2+MR3 合入后，审计所述「LLM 输出 → 渲染 → 拖库」链即
 - `web/js/vendor/purify.min.js` — DOMPurify 3.2.6（本地 vendor，UMD）
 - `web/js/escape.js` — HTML 转义唯一权威实现（window.escapeHtml / window.escapeHtmlAttr）
 - `web/js/security.js` — secureSanitize / secureRenderMarkdown / migrateLegacyOnclick
-- `scripts/lint_frontend_xss.py` — CI 防回归（X1 转义副本 / X2 裸 marked.parse / X3 URL token / X4 生成内容内联 onclick）
+- `scripts/lint_frontend_xss.py` — CI 防回归（X1 转义副本 / X2 裸 marked.parse / X3 URL token（含模板拼接与 `searchParams.set('auth_token', …)` 形态）/ X4 生成内容内联 onclick）
 - `web/tests/security.test.js` — 45 条用例（转义完整性、34 条 XSS payload 回归集、历史 onclick 迁移、安全降级）
 
 ### 关键改动点

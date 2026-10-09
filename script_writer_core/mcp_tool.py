@@ -25,6 +25,7 @@ from config.constant import (
     DEFAULT_TEXT_TO_IMAGE_TASK_ID,
     AGENT_CHECK_TOOL_WAIT_SECONDS,
     AGENT_CHECK_TOOL_POLL_INTERVAL_SECONDS,
+    AGENT_TASK_IN_PROGRESS_STATUSES,
 )
 from utils.script_duration import (
     budget_tolerance_upper,
@@ -980,10 +981,10 @@ def get_task_status(user_id: str, world_id: str, auth_token: str, item_type: int
 
 
 def _is_in_progress_status(result: Any) -> bool:
-    """判断状态查询工具的返回是否仍处于进行中（queued/processing/pending/running）"""
+    """判断状态查询工具的返回是否仍处于进行中（与 expert_agent 共用词汇表，见 config/constant.py）"""
     return (
         isinstance(result, dict)
-        and result.get('status') in ('queued', 'processing', 'pending', 'running')
+        and result.get('status') in AGENT_TASK_IN_PROGRESS_STATUSES
     )
 
 
@@ -4745,6 +4746,27 @@ def _build_reference_audio_status_result(task: Optional[Any], task_id: str,
     return result
 
 
+# 定向提取 project_id 的模式。禁止"路径里第一串数字"直接查库：/upload/cache/2026/x.png
+# 会把年份 2026 当 project_id，ai_tools 表早有同 id 记录时会把无关结果（可能是视频）
+# 静默换给数字人生成（2026-10-09 分支 review #5）。
+_DH_PID_PATTERNS = (
+    re.compile(r'/upload/project/(\d+)'),   # LLM 臆造形态 /upload/project/{id}.png（事故 3c746a8d）
+    re.compile(r'project_id\D{0,3}(\d+)'),  # 描述性引用 "project_id:12555 的图"
+    re.compile(r'/(\d+)_\d{6,}'),           # 缓存文件名形态 .../12555_20260930110102_hash.png
+)
+
+_DH_IMAGE_EXTS = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')
+
+
+def _extract_dh_project_id(url: str) -> Optional[int]:
+    """按定向模式提取可用于查库纠正的 project_id；提取不到返回 None（不查库）。"""
+    for pat in _DH_PID_PATTERNS:
+        m = pat.search(url)
+        if m:
+            return int(m.group(1))
+    return None
+
+
 def _resolve_digital_human_image_url(raw_image_url: str) -> Tuple[str, Optional[str]]:
     """校验并解析数字人参考图片 URL，返回 (resolved_url, error)。
 
@@ -4753,9 +4775,10 @@ def _resolve_digital_human_image_url(raw_image_url: str) -> Tuple[str, Optional[
     校验通过但文件不存在，任务提交 RunningHub 时下载失败，4 秒内 SYSTEM 失败）。
     解析顺序：
     1. 公网 URL / Windows 盘符路径：直接通过（存在性由驱动下载环节校验）
-    2. 本地路径（/ 或 upload/ 开头）：项目根下副本存在即通过；不存在则提取
-       project_id 查 ai_tools.result_url 自动纠正为真实图片地址
-    3. 描述性引用：同样走 project_id 查库解析
+    2. 本地路径（/ 或 upload/ 开头）：项目根下副本存在即通过
+    3. 不存在时按定向模式（臆造 /upload/project/{id}、project_id 引用、缓存文件名
+       前缀）提取 project_id 查 ai_tools.result_url 自动纠正；随机第一串数字（如
+       路径中的年份/序号）不用于查库，命中记录还须确属图片（扩展名校验），防静默换错图
     兜底解析失败时返回明确 error（error 非 None 时第一个返回值为原始输入）。
     """
     url = raw_image_url.strip()
@@ -4768,21 +4791,21 @@ def _resolve_digital_human_image_url(raw_image_url: str) -> Tuple[str, Optional[
     if is_remote or is_win_abs:
         return url, None
 
-    if is_local and os.path.exists(os.path.join(project_root, url.lstrip('/').lstrip('\\'))):
+    def _local_exists(rel: str) -> bool:
+        return os.path.exists(os.path.join(project_root, rel.lstrip('/').lstrip('\\')))
+
+    if is_local and _local_exists(url):
         return url, None
 
-    # 本地路径不存在或为描述性引用：提取 project_id 查库自动纠正
-    match = re.search(r'(\d+)', url)
-    if match:
+    # 本地路径不存在或为描述性引用：按定向模式提取 project_id 查库自动纠正
+    project_id_num = _extract_dh_project_id(url)
+    if project_id_num is not None:
         try:
             from model.ai_tools import AIToolsModel
-            project_id_num = int(match.group(1))
             record = AIToolsModel.get_by_id(project_id_num)
-            if record and record.result_url:
-                resolved = record.result_url
-                if resolved.startswith(('/upload/', 'upload/')) and not os.path.exists(
-                    os.path.join(project_root, resolved.lstrip('/').lstrip('\\'))
-                ):
+            resolved = getattr(record, 'result_url', None) if record else None
+            if resolved and resolved.lower().endswith(_DH_IMAGE_EXTS):
+                if resolved.startswith(('/upload/', 'upload/')) and not _local_exists(resolved):
                     logger.warning(
                         f"generate_digital_human: project {project_id_num} 的 result_url 本地不存在: {resolved}"
                     )
@@ -4791,6 +4814,11 @@ def _resolve_digital_human_image_url(raw_image_url: str) -> Tuple[str, Optional[
                         f"generate_digital_human: 自动解析 '{url}' -> project {project_id_num} -> {resolved}"
                     )
                     return resolved, None
+            elif resolved:
+                # 记录存在但 result_url 不是图片（如视频 mp4）——不得静默换图
+                logger.warning(
+                    f"generate_digital_human: project {project_id_num} 的 result_url 不是图片，拒绝自动换图: {resolved[:80]}"
+                )
         except Exception as e:
             logger.warning(f"generate_digital_human: 尝试解析 project_id 失败: {e}")
 
@@ -4884,7 +4912,21 @@ def generate_digital_human(
             return {'success': False, 'error': '未找到启用的数字人模型配置'}
 
         preferred = [c for c in enabled_configs if c.id == TaskTypeId.DIGITAL_HUMAN]
-        task_config = preferred[0] if preferred else enabled_configs[0]
+        if preferred:
+            task_config = preferred[0]
+        else:
+            # 回退候选限定 /api/digital-human 端点白名单 {13 wan2.2, 35 MiniMax H3}：
+            # 分类里还有 LTX2.3(32) 等走 /api/digital-human-v2 的实现，选它们提交必 400
+            fallback_pool = [
+                c for c in enabled_configs
+                if c.id in (TaskTypeId.DIGITAL_HUMAN, TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
+            ]
+            if not fallback_pool:
+                return {
+                    'success': False,
+                    'error': '数字人默认模型(wan2.2)未启用，且无本链路可用的已启用数字人模型（H3），请在模型管理中启用',
+                }
+            task_config = fallback_pool[0]
         task_id = task_config.id
         model_name = task_config.name
 

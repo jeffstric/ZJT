@@ -11,7 +11,11 @@ from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from model.model import ModelModel
-from config.constant import EXPERT_HISTORY_MAX_IMAGES, AGENT_STATUS_POLL_MAX_ROUNDS
+from config.constant import (
+    EXPERT_HISTORY_MAX_IMAGES,
+    AGENT_STATUS_POLL_MAX_ROUNDS,
+    AGENT_TASK_IN_PROGRESS_STATUSES,
+)
 from .output_token_budget import resolve_max_output_tokens
 
 logger = logging.getLogger(__name__)
@@ -326,10 +330,9 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                     # 计算工具签名（在执行前）
                     signature = self._compute_tool_signature(message.tool_calls)
 
-                    self._handle_tool_calls(message)
-
-                    # 获取本轮工具执行结果
-                    current_batch_results = self.outputs[-len(message.tool_calls):]
+                    # 执行工具并拿本轮结果（进展检测消费返回值；不再用 self.outputs
+                    # 切片——那里只有解析失败的残留，成功结果从不进入）
+                    current_batch_results = self._handle_tool_calls(message)
 
                     # 进展检测（传入工具名用于状态轮询豁免判定）
                     current_tool_names = [tc.function.name for tc in message.tool_calls]
@@ -372,8 +375,15 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                     return msg["content"]
         return "任务执行达到最大迭代次数，可能未完全完成"
     
-    def _handle_tool_calls(self, message):
-        """处理工具调用"""
+    def _handle_tool_calls(self, message) -> List[Any]:
+        """执行本轮所有 tool_calls 并写历史。
+
+        返回本轮工具结果列表（与 message.tool_calls 顺序一一对应，含 JSON 参数
+        解析失败的 error dict）——供主循环做进展检测。⚠️ 不要用 self.outputs
+        切片代替：outputs 只在解析失败分支追加，成功结果从不进入，切片取到的
+        是空列表或陈旧错误（曾使状态轮询豁免在生产恒不生效，见
+        tests/agents/test_expert_agent_poll_results.py）。
+        """
         tool_calls = message.tool_calls
 
         # 向前端推送工具调用事件，实时显示正在调用的函数
@@ -415,6 +425,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         # ⚠️ deferred 机制：多模态图片和用户输入延迟到所有 tool_calls 执行完毕后才注入历史
         # 这样可以确保 tool 消息的顺序正确（所有 tool 结果 → 多模态图片 → 用户输入）
         deferred_multimodal_content = []  # fetch_image_as_base64 成功时注入的多模态图片
+        batch_results: List[Any] = []  # 本轮工具结果（顺序对应 tool_calls，供进展检测）
 
         for tool_call in tool_calls:
             tool_name = tool_call.function.name
@@ -433,6 +444,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                     "timestamp": datetime.now().isoformat()
                 })
                 self.outputs.append(error_result)
+                batch_results.append(error_result)
                 self.add_to_history("tool", {
                     "tool_call_id": tool_call.id,
                     "name": tool_name,
@@ -495,6 +507,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                 "name": tool_name,
                 "content": json.dumps(result, ensure_ascii=False)
             })
+            batch_results.append(result)
 
             if deferred_image:
                 image_url, base64_data_url = deferred_image
@@ -521,7 +534,9 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         # API 工具结果消息只支持文本内容，多模态图片必须通过 user 消息注入
         if deferred_multimodal_content:
             self.add_to_history("user", deferred_multimodal_content)
-    
+
+        return batch_results
+
     def _power_confirm_session_key(self) -> Optional[str]:
         return getattr(self, "_session_id", None) or getattr(self, "task_id", None)
 
@@ -926,7 +941,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             return False
         if not all(self._is_status_poll_tool_name(n) for n in tool_names):
             return False
-        in_progress = ('queued', 'processing', 'pending', 'running')
+        in_progress = AGENT_TASK_IN_PROGRESS_STATUSES
         return all(
             isinstance(r, dict)
             and not r.get("error")

@@ -1,7 +1,9 @@
 // ============================
 // canvas_shortcuts.js - 画布快捷键说明弹窗
-// 进入画布自动打开；工具栏「快捷键」也可再打开。
-// 关闭方式：× 按钮 / 点击遮罩 / Esc。
+// 首次进入画布自动打开（用户尚未确认过滚轮操作时）；
+// 用户点选过「滚轮上下平移 / 滚轮缩放画布」任一项后记在本机，后续进入不再自动弹。
+// 工具栏「快捷键」按钮仍可随时手动打开。
+// 关闭方式：× 按钮 / 点击遮罩 / Esc。关闭不算确认，下次进入仍会提醒。
 // 滚轮模式记在本机：默认 pan（滚轮上下平移，Ctrl+滚轮缩放）。
 // 只有点「滚轮缩放画布」后才是 zoom（滚轮缩放，Ctrl+滚轮上下平移）。
 // ============================
@@ -9,6 +11,7 @@
   'use strict';
 
   var WHEEL_MODE_KEY = 'canvasWheelMode';
+  var WHEEL_MODE_ACK_KEY = 'canvasWheelModeAcked';
 
   function getCanvasWheelMode(){
     try {
@@ -16,6 +19,21 @@
     } catch (e) {
       return 'pan';
     }
+  }
+
+  // 用户是否已明确选择过滚轮操作（点击过弹窗里的任一模式按钮）
+  function hasWheelModeAck(){
+    try {
+      return !!(root.localStorage && root.localStorage.getItem(WHEEL_MODE_ACK_KEY) === '1');
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function ackWheelMode(){
+    try {
+      if(root.localStorage) root.localStorage.setItem(WHEEL_MODE_ACK_KEY, '1');
+    } catch (e) {}
   }
 
   function fillWheelKeys(container, withCtrl){
@@ -111,12 +129,15 @@
       panBtn.addEventListener('click', function(e){
         e.stopPropagation();
         setCanvasWheelMode('pan');
+        // 明确选择过滚轮操作，后续进入画布不再自动弹窗
+        ackWheelMode();
       });
     }
     if(zoomBtn){
       zoomBtn.addEventListener('click', function(e){
         e.stopPropagation();
         setCanvasWheelMode('zoom');
+        ackWheelMode();
       });
     }
     // 点击遮罩空白处关闭（点在卡片上不关）
@@ -127,8 +148,9 @@
       if(e.key === 'Escape' && modal.classList.contains('show')) close();
     });
 
-    // 每次进入画布都弹出，提醒确认滚轮操作。关掉不改变当前模式。
-    open();
+    // 首次（未确认过滚轮操作）进入画布时弹出提醒；用户点选过任一模式后
+    // 记在本机，后续进入不再自动弹。手动点「快捷键」按钮仍可打开。
+    if(!hasWheelModeAck()) open();
   }
 
   if(root.document){

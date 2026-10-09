@@ -75,12 +75,11 @@
         return headers;
     }
 
-    // /api/subscription/plans|status|order-status 的 FastAPI 签名是 Query(...) 必填，
-    // 只带 Authorization 会 422。用 searchParams 写入，避免把 token 拼进模板字符串。
-    function authUrl(path, extra) {
+    // 认证统一走 authHeaders() 的 Authorization 头（红线14：token 禁止进 URL query，
+    // query 会经 Referer/浏览器历史/服务端日志泄漏；后端已支持头兜底）。
+    // 本函数只负责拼装非敏感 query 参数（user_id / order_id 等）。
+    function apiUrl(path, extra) {
         var url = new URL(path, window.location.origin);
-        var token = authToken();
-        if (token) url.searchParams.set('auth_token', token);
         if (extra) {
             Object.keys(extra).forEach(function (key) {
                 if (extra[key] !== undefined && extra[key] !== null) {
@@ -110,7 +109,10 @@
     }
 
     function firstBonusEligible(status) {
-        return !status || status.first_bonus_eligible !== false;
+        // fail-closed（#7）：资格必须由后端显式下发 true 才展示首期价。
+        // 此前 !status || !== false 的兜底会让"status 查询失败/字段缺失"的老用户
+        // 看到 18.8+加赠，实收却按签约记录扣 29.9（展示价 != 实收价 -> 客诉）。
+        return !!(status && status.first_bonus_eligible === true);
     }
 
     function showsIntroPrice(plan, status) {
@@ -482,7 +484,7 @@
         state.plansError = '';
         if (state.open) render();
         try {
-            var resp = await fetch(authUrl('/api/subscription/plans'), { headers: authHeaders() });
+            var resp = await fetch(apiUrl('/api/subscription/plans'), { headers: authHeaders() });
             var data = await readJson(resp);
             if (data.success) {
                 state.plans = data.plans || [];
@@ -505,7 +507,7 @@
         if (busy) state.subCancelling = true;
         if (state.open) render();
         try {
-            var resp = await fetch(authUrl('/api/subscription/status', { user_id: userId() }), { headers: authHeaders() });
+            var resp = await fetch(apiUrl('/api/subscription/status', { user_id: userId() }), { headers: authHeaders() });
             var data = await readJson(resp);
             if (data.success) state.status = data.subscription || null;
         } catch (e) {
@@ -524,7 +526,7 @@
                 return;
             }
             try {
-                var resp = await fetch(authUrl('/api/subscription/order-status', {
+                var resp = await fetch(apiUrl('/api/subscription/order-status', {
                     order_id: state.subOrderId,
                     user_id: userId()
                 }), { headers: authHeaders() });

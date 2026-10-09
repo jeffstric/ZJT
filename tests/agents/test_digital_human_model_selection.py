@@ -128,9 +128,16 @@ REAL_CACHE_URL = "/upload/cache/2026-09-30/12555_20260930110102_7f3a8213.png"
 
 
 def _fake_exists_factory(existing_suffixes):
-    """构造 os.path.exists 桩：仅当路径以下列后缀之一结尾时返回 True"""
+    """构造 os.path.exists 桩：路径归一化（统一斜杠、去前导斜杠）后，
+    以下列后缀之一结尾时返回 True。归一化是必须的——实现对本地路径做
+    os.path.join(project_root, ...) 后在 Windows 下是混合分隔符绝对路径，
+    直接 endswith('/upload/...') 永远匹配不上（存量失败根因）。"""
+    def norm(s):
+        return str(s).replace('\\', '/').lstrip('/')
+    targets = [norm(s) for s in existing_suffixes]
     def fake(p):
-        return any(str(p).endswith(s) for s in existing_suffixes)
+        p = norm(p)
+        return any(p.endswith(t) for t in targets)
     return fake
 
 
@@ -199,3 +206,69 @@ def test_descriptive_reference_rejected_with_guidance(monkeypatch):
 
     assert result["success"] is False
     assert "check_image_status" in result["error"]
+
+def test_fallback_skips_ltx2_3_which_uses_v2_endpoint(monkeypatch):
+    """回退不得选中 /api/digital-human 不接受的 LTX2.3(32)（走 v2 端点，提交必 400），
+    即便它排在分类第一位；应跳过它选 H3(35)。"""
+    wan_disabled = _make_config(13, "wan2.2 数字人", enabled=False)
+    ltx = _make_config(32, "LTX2.3 数字人")
+    h3 = _make_config(35, "MiniMax H3 数字人")
+
+    result, mock_post = _run_generate_digital_human(monkeypatch, [ltx, wan_disabled, h3])
+
+    assert result["success"] is True
+    assert result["model_used"] == "MiniMax H3 数字人"
+    assert mock_post.call_args.kwargs["data"]["task_id"] == "35"
+
+
+def test_fallback_rejects_when_only_v2_models_enabled(monkeypatch):
+    """wan2.2 与 H3 均未启用、只有 LTX2.3 时应明确报错，而不是提交一个必 400 的任务。"""
+    wan_disabled = _make_config(13, "wan2.2 数字人", enabled=False)
+    ltx = _make_config(32, "LTX2.3 数字人")
+    h3_disabled = _make_config(35, "MiniMax H3 数字人", enabled=False)
+
+    result, mock_post = _run_generate_digital_human(monkeypatch, [ltx, wan_disabled, h3_disabled])
+
+    assert result["success"] is False
+    assert "启用" in result["error"]
+    mock_post.assert_not_called()
+
+def test_year_in_path_never_triggers_project_lookup(monkeypatch):
+    """路径中的年份/序号（/upload/cache/2026/abc.png 的 2026）不得被当成
+    project_id 查库——ai_tools 早有同 id 记录时会静默换成无关图片（#5）。"""
+    monkeypatch.setattr("os.path.exists", _fake_exists_factory([]))
+
+    with patch("model.ai_tools.AIToolsModel.get_by_id") as mock_get:
+        result, _ = _run_generate_digital_human(
+            monkeypatch, [WAN22], image_url="/upload/cache/2026/abc.png")
+
+    assert result["success"] is False
+    assert "不存在" in result["error"]
+    mock_get.assert_not_called()
+
+
+def test_video_result_record_not_used_as_image(monkeypatch):
+    """查库命中但 result_url 是视频（.mp4）时拒绝换图，报错引导重取真实图片 URL。"""
+    monkeypatch.setattr("os.path.exists", _fake_exists_factory([]))
+    video_record = SimpleNamespace(result_url="/upload/cache/2026-09-30/888_x.mp4")
+
+    with patch("model.ai_tools.AIToolsModel.get_by_id", return_value=video_record):
+        result, _ = _run_generate_digital_human(
+            monkeypatch, [WAN22], image_url="/upload/project/888.png")
+
+    assert result["success"] is False
+    assert "check_image_status" in result["error"]
+
+
+def test_descriptive_reference_resolved_via_directed_pattern(monkeypatch):
+    """描述性引用 "project_id:12555 的图" 按定向模式提取查库纠正。"""
+    monkeypatch.setattr("os.path.exists", _fake_exists_factory([REAL_CACHE_URL]))
+    record = SimpleNamespace(result_url=REAL_CACHE_URL)
+
+    with patch("model.ai_tools.AIToolsModel.get_by_id", return_value=record) as mock_get:
+        result, mock_post = _run_generate_digital_human(
+            monkeypatch, [WAN22], image_url="project_id:12555 的生成图")
+
+    assert result["success"] is True
+    assert mock_post.call_args.kwargs["data"]["image_url"] == REAL_CACHE_URL
+    mock_get.assert_called_once_with(12555)
