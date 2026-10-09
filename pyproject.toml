@@ -1,6 +1,6 @@
 [project]
 name = "ZJT"
-version = "2.4.5"
+version = "2.4.7"
 requires-python = "==3.10.*"
 
 [[tool.uv.index]]
