@@ -933,7 +933,8 @@ async def download_image(
     媒体文件下载接口，支持三种模式：
     1. 本地路径 /upload/cache/ → FileResponse 直接返回
     2. CDN 域名匹配 → 302 重定向（不占服务器带宽）；format=json 时改为返回签名 URL
-    3. 其他外部 URL → 代理下载 StreamingResponse（format=json 不走代理）
+    3. 其他外部 URL → 代理下载 StreamingResponse（format=json 同样降级走代理，
+       前端对非 JSON 响应按 blob 处理，避免外链下载从"能下"变"必败"）
     """
     try:
         # 检查是否为本地缓存文件路径（安全解析，防路径穿越）
@@ -988,15 +989,9 @@ async def download_image(
             else:
                 logger.warning(f"[download] CDN URL但无法提取文件名，降级到代理下载: url={url[:100]}")
 
-        # format=json 只服务 CDN 重签名。本地文件与外部代理保持原响应，
-        # 但不能在 JSON 模式下把大文件拉进本次 fetch。
-        if _wants_download_json(response_format):
-            return JSONResponse({
-                "success": False,
-                "error": "该地址无法生成签名下载链接",
-            }, status_code=400)
-
         # ========== 模式3: 其他远程 URL → 代理下载 ==========
+        # format=json 只服务 CDN 重签名；非 CDN 外链无法签名时同样落到代理流式
+        # 下载（200 + 文件流），前端 downloadWithAuth 对非 JSON 响应走 blob 兜底。
         async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.get(url)
             response.raise_for_status()

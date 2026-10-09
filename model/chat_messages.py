@@ -406,11 +406,21 @@ class ChatMessagesModel:
         id_conditions = []
         params = [session_id, '%<video%', '%generated-image-wrapper%']
         for pid in project_ids:
+            try:
+                # 强转 int：归一化前端传入的数字字符串，并杜绝 LIKE 通配符注入
+                pid = int(pid)
+            except (TypeError, ValueError):
+                continue
             spid = str(pid)
-            # \_ 转义下划线，防止 "1254_" 前缀误配 "12549_xxx"
-            id_conditions.append("(content LIKE %s OR content LIKE %s)")
+            # 前导边界（/ 或其 URL 编码 %2F）+ \_ 转义下划线：
+            # 防 "757_" 误配 "1757_xxx"、"1254_" 误配 "91254_xxx"（与前端
+            # contentHasGeneratedTaskId 的 /{sid}_ 与 %2F{sid}_ 双形态对齐）
+            id_conditions.append("(content LIKE %s OR content LIKE %s OR content LIKE %s)")
             params.append('%data-publish-tool-id="' + spid + '"%')
-            params.append('%' + spid + '\\_%')
+            params.append('%/' + spid + '\\_%')
+            params.append('%2F' + spid + '\\_%')
+        if not id_conditions:
+            return False
         sql = (
             "SELECT COUNT(*) AS cnt FROM `chat_messages` "
             "WHERE session_id = %s AND role = 'assistant' AND context_state = 'active' "

@@ -3493,6 +3493,7 @@
     
     let pollStatusTimer = null;
     let _pollStatusRunning = false;
+    let _pollLoginWarned = false;
     
     // 轮询工作流节点状态
     async function pollWorkflowNodeStatus(){
@@ -3515,6 +3516,13 @@
         const loggedIn = userId && !!localStorage.getItem('auth_token');
 
         if(!loggedIn){
+          // 缺 user_id / auth_token 时轮询静默跳过，节点会永远停在「生成中」，
+          // 不打日志无法排查（2026-10-09 水印任务排查时发现的盲区）。只警告
+          // 一次避免每 30 秒刷屏；重新登录可恢复。
+          if(!_pollLoginWarned){
+            _pollLoginWarned = true;
+            console.warn('[轮询] 登录态不完整（user_id / auth_token 缺失），已跳过节点状态轮询；重新登录后可恢复');
+          }
           return;
         }
 
@@ -3677,6 +3685,11 @@
               }
             }
           }
+        } else {
+          // HTTP 200 但业务失败（如 400 user_id is required 会被包装成
+          // code=-1）：此前完全静默，节点永远停在「生成中」且无任何线索
+          console.warn('[轮询] poll-status 返回异常(HTTP ' + response.status + '):',
+            result.message || result);
         }
       } catch(error){
         console.error('[轮询] 查询节点状态失败:', error);

@@ -81,8 +81,15 @@ describe('recharge center modal', () => {
     });
 
     function mockFetch(subscription) {
-        window.fetch = vi.fn(async (url) => {
+        window.fetch = vi.fn(async (url, opts) => {
             const u = String(url);
+            // 红线14：订阅接口认证走 Authorization 头，URL 一律不含 auth_token
+            if (u.includes('/api/subscription/')) {
+                const headers = (opts && opts.headers) || {};
+                const authz = headers.Authorization || headers.authorization || '';
+                expect(u).not.toContain('auth_token');
+                expect(authz).toContain('tok');
+            }
             if (u.includes('/api/system/server-config')) {
                 return jsonResponse({ code: 0, data: { is_local: false } });
             }
@@ -91,7 +98,6 @@ describe('recharge center modal', () => {
                 return jsonResponse({ success: true, packages: PACKAGES });
             }
             if (u.includes('/api/subscription/plans')) {
-                expect(u).toContain('auth_token=tok');
                 return jsonResponse({
                     success: true,
                     plans: [INTRO_PLAN, STANDARD_PLAN],
@@ -121,7 +127,30 @@ describe('recharge center modal', () => {
         expect(root.textContent).toContain('88');
     });
 
-    test('生效中的订阅展示管理与升级，而不是新用户套餐动画', async () => {
+    test('首期优惠 fail-closed：status 缺失/字段缺失时不展示 18.8（#7）', async () => {
+    // status 为 null（查询失败残留）
+    mockFetch(null);
+    await center.open();
+    const root1 = document.getElementById('rechargeCenterOverlay');
+    expect(root1.textContent).not.toContain('18.8');
+    expect(root1.textContent).toContain('29.9');
+    center.close();
+
+    // status 存在但无 first_bonus_eligible 字段（旧后端/降级）
+    mockFetch({ subscribed: false, status: 'none' });
+    await center.open();
+    const root2 = document.getElementById('rechargeCenterOverlay');
+    expect(root2.textContent).not.toContain('18.8');
+    center.close();
+
+    // 显式 true 才展示
+    mockFetch({ subscribed: false, status: 'none', first_bonus_eligible: true });
+    await center.open();
+    const root3 = document.getElementById('rechargeCenterOverlay');
+    expect(root3.textContent).toContain('18.8');
+  });
+
+  test('生效中的订阅展示管理与升级，而不是新用户套餐动画', async () => {
         mockFetch({
             subscribed: true,
             status: 'active',

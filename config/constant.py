@@ -309,6 +309,14 @@ AGENT_CHECK_TOOL_POLL_INTERVAL_SECONDS = 3
 # consecutive_no_progress，改计连续轮询轮数，达到本值才判死循环。
 # 须小于相关专家的 max_iterations（数字人专家为 20）。
 AGENT_STATUS_POLL_MAX_ROUNDS = 15
+# "仍在进行中"的任务状态词汇表（expert_agent._is_status_poll_round 与
+# mcp_tool._is_in_progress_status 共用）。状态文件实际写入的中间态还包括
+# retrying（ComfyUI 提交失败自动重投，task/grid_image_task.py）与
+# scheduled（定时排队，script_writer_core/cron_task_manager.py）——漏掉会被
+# 死循环检测误杀。
+AGENT_TASK_IN_PROGRESS_STATUSES = (
+    'queued', 'processing', 'pending', 'running', 'retrying', 'scheduled',
+)
 
 # 剧本创作等入口无偏好时的默认生图模型：GPT Image 2（short_key=gpt-image-2）
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = TaskTypeId.GPT_IMAGE_2_EDIT

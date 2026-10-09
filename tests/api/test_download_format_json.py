@@ -83,16 +83,43 @@ def test_default_cdn_download_still_redirects(client, monkeypatch):
     assert resp.headers["location"] == SIGNED
 
 
-def test_format_json_non_cdn_does_not_proxy_body(client, monkeypatch):
+def test_format_json_non_cdn_falls_back_to_proxy_stream(client, monkeypatch):
+    """非 CDN 外链 + format=json：无法签名时降级代理流式下载（200 + 文件流），
+    不再 400。前端 downloadWithAuth 对非 JSON 响应走 blob 兜底。"""
     _patch_cdn(monkeypatch, is_cdn=False)
+
+    class _FakeResp:
+        headers = {"content-type": "image/png"}
+        content = b"png-bytes"
+
+        def raise_for_status(self):
+            pass
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url):
+            return _FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
     resp = client.get(
         "/api/download",
         params={
-            "url": "https://example.com/not-cdn.mp4",
-            "filename": "clip.mp4",
+            "url": "https://example.com/not-cdn.png",
+            "filename": "pic.png",
             "format": "json",
         },
         headers={"Authorization": "Bearer valid-token"},
     )
-    assert resp.status_code == 400
-    assert resp.json()["success"] is False
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/png")
+    assert resp.content == b"png-bytes"
