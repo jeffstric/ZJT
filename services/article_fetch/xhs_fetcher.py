@@ -97,6 +97,15 @@ def _build_providers():
                         await _attach_image_descriptions(article, user_id=user_id)
                     except Exception:
                         pass
+
+                    # 正文核心信息点提炼（best-effort）：与公众号链路对齐（#12），
+                    # 否则 script_requirements 硬指令对小红书素材不生效，脚本 prompt 空泛
+                    try:
+                        from services.article_fetch.key_points import extract_key_points
+
+                        article.key_points = await extract_key_points(article.text, article.title)
+                    except Exception as e:
+                        logger.warning("[article_fetch] 小红书要点提炼不可用（跳过）: %s", e)
                     return article
 
             providers["tikhub"] = _TikhubXhsProvider

@@ -144,6 +144,8 @@ def test_invalid_duration_and_missing_video_are_user_errors():
     assert missing_result["error_type"] == "USER"
     assert upload_result["error_type"] == "USER"
     assert "上传" in upload_result["error"]
+    # #15：上传失败是瞬态网络错误，必须可重试（不消耗用户一次任务走退费）
+    assert upload_result["retry"] is True
     driver._send_alert.assert_not_called()
     upload_driver._send_alert.assert_not_called()
 
@@ -219,3 +221,21 @@ def test_check_status_running_and_failed():
     broken = driver.check_status("rh-1")
     assert broken["error_type"] == "SYSTEM"
     driver._send_alert.assert_called()
+
+def test_upload_transient_failure_is_retryable():
+    """#15：上传输入视频的瞬态失败应 retry=True，不再判死消耗用户任务。"""
+    driver = make_driver(FakeRunningHubStorage(success=False))
+    result = asyncio.run(driver.submit_task(make_ai_tool()))
+    assert result["success"] is False
+    assert result["error_type"] == "USER"
+    assert result["retry"] is True
+    assert "重试" in result["error"]
+
+
+def test_value_error_still_not_retryable():
+    """参数校验（ValueError，如时长越界）保持不可重试（回归保护）。"""
+    driver = make_driver()
+    result = asyncio.run(driver.submit_task(make_ai_tool(duration=3)))
+    assert result["success"] is False
+    assert result["error_type"] == "USER"
+    assert result["retry"] is False

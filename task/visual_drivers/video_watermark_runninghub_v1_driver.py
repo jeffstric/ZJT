@@ -296,9 +296,15 @@ class VideoWatermarkRunninghubV1Driver(BaseVideoDriver):
         except ImageExpiredError as exc:
             self.logger.warning(f"输入视频已过期: {exc}")
             return self._user_failure(str(exc))
-        except (ValueError, RuntimeError) as exc:
+        except ValueError as exc:
+            # 参数校验类失败（时长/帧率/提示词越界、缺视频）：用户输入问题，重试无意义
             self.logger.warning(f"Video watermark submit rejected: {exc}")
             return self._user_failure(str(exc))
+        except RuntimeError as exc:
+            # 上传输入视频到 RunningHub 的瞬态失败（5xx/网络抖动）：可重试。
+            # 修复前归入 USER 不可重试，瞬态抖动直接消耗用户一次任务走退费
+            self.logger.warning(f"Video watermark upload transient failure, will retry: {exc}")
+            return self._user_failure(f"视频上传失败，将自动重试: {exc}", retry=True)
         except Exception as exc:
             self.logger.error(f"Unexpected exception in video watermark submit_task: {exc}")
             self.logger.error(traceback.format_exc())
