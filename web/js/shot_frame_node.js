@@ -11,6 +11,14 @@
       return true;
     }
 
+    // 参考模式把尾帧当作可 @ 的参考图，不看 supports_last_frame。
+    // 首帧模式仍按模型是否接受严格尾帧来开关端口。
+    function shotFrameLastFrameInputEnabled(node) {
+      const mode = (node && node.data && node.data.videoMode) || 'first_last_frame';
+      if (mode === 'multi_reference') return true;
+      return shotFrameModelSupportsLastFrame(node);
+    }
+
     // 有可用尾帧时算力走 first_last_with_tail，提交给接口的 image_mode 仍是 first_last_frame。
     function resolveShotFrameVideoImageMode(node) {
       const mode = (node && node.data && node.data.videoMode) || 'first_last_frame';
@@ -228,6 +236,7 @@
                   <div class="label" style="margin: 0;" data-i18n="shot_frame_video_prompt_label">${window.t ? window.t('shot_frame_video_prompt_label') : '视频提示词'}</div>
                   <button class="mini-btn secondary reduce-violation-btn" type="button" style="font-size: 11px; padding: 4px 8px;" data-i18n="shot_frame_video_generation_failed_btn">${window.t ? window.t('shot_frame_video_generation_failed_btn') : '视频生成失败，请点此按钮'}</button>
                 </div>
+                <div style="font-size: 10px; color: #9ca3af; margin-bottom: 4px;" data-i18n="shot_frame_video_prompt_hint">${window.t ? window.t('shot_frame_video_prompt_hint') : '点击编辑 | 按 @ 可插入首帧图、尾帧图或角色'}</div>
                 <div class="shot-prompt-display shot-frame-video-prompt-display" style="width: 100%; flex: 1; min-height: 60px; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; cursor: pointer; background: #fafafa; line-height: 1.6; overflow-y: auto; word-break: break-all;"></div>
               </div>
             </div>
@@ -481,37 +490,10 @@
         if(hintEl) {
           const hintKey = isRefMode ? 'video_mode_hint_reference' : 'video_mode_hint_first_frame';
           hintEl.setAttribute('data-i18n', hintKey);
-          hintEl.textContent = window.t ? window.t(hintKey) : (isRefMode ? '使用角色/场景/道具参考图直接生成视频（无参考图时将回退为文生视频，实际消耗以最终调用为准）' : '先生成分镜图作为视频首帧');
+          hintEl.textContent = window.t ? window.t(hintKey) : (isRefMode ? '使用角色、场景、道具参考图生成视频。视频提示词中 @首帧图 或 @尾帧图 会把已设置的首尾帧放在参考图两端' : '先生成分镜图作为视频首帧');
         }
 
-        // 分镜模型/生成分镜图按钮降低透明度
-        const generateImageBtn = el.querySelector('.shot-frame-generate-btn');
-        const modelFieldEl = el.querySelector('.shot-frame-model')?.closest('.field');
-        if(generateImageBtn) generateImageBtn.style.opacity = isRefMode ? '0.4' : '1';
-        if(modelFieldEl) modelFieldEl.style.opacity = isRefMode ? '0.4' : '1';
-
-        // 参考模式下，图片提示词和视频首帧区域显示为灰色/禁用
-        const imagePromptFieldEl = el.querySelector('.shot-frame-image-prompt')?.closest('.field');
-        const previewFieldEl = el.querySelector('.shot-frame-preview-field');
-        const firstFramePortEl = el.querySelector('.first-frame-port');
-        const imageFieldEl = el.querySelector('.shot-frame-image-field');
-        if(imagePromptFieldEl) {
-          imagePromptFieldEl.style.opacity = isRefMode ? '0.4' : '1';
-          imagePromptFieldEl.style.pointerEvents = isRefMode ? 'none' : 'auto';
-        }
-        if(previewFieldEl) {
-          previewFieldEl.style.opacity = isRefMode ? '0.4' : '1';
-          previewFieldEl.style.pointerEvents = isRefMode ? 'none' : 'auto';
-        }
-        if(firstFramePortEl) {
-          firstFramePortEl.style.opacity = isRefMode ? '0.4' : '1';
-          firstFramePortEl.style.pointerEvents = isRefMode ? 'none' : 'auto';
-        }
-        if(imageFieldEl) {
-          imageFieldEl.style.opacity = isRefMode ? '0.4' : '1';
-          imageFieldEl.style.pointerEvents = isRefMode ? 'none' : 'auto';
-        }
-
+        // 参考模式也保留首帧图、尾帧图的输入，供视频提示词 @ 引用。
         // 参考模式下角色列表从视频提示词提取，切换模式时需刷新
         updateShotReferences();
 
@@ -523,10 +505,8 @@
       function updateLastFrameAvailability() {
         const field = el.querySelector('.shot-frame-last-frame-field');
         if (!field) return;
-        const mode = node.data.videoMode || 'first_last_frame';
-        const isRefMode = mode === 'multi_reference';
-        field.style.display = isRefMode ? 'none' : '';
-        const supported = shotFrameModelSupportsLastFrame(node);
+        field.style.display = '';
+        const supported = shotFrameLastFrameInputEnabled(node);
         const port = el.querySelector('.last-frame-port');
         const fileInput = el.querySelector('.shot-frame-last-frame-file');
         const label = el.querySelector('.shot-frame-last-frame-label');
@@ -557,6 +537,7 @@
           }
           if (lastFramePreviewRow) lastFramePreviewRow.style.display = 'none';
         }
+        if (typeof renderCharImages === 'function') renderCharImages();
       }
 
       function clearShotFrameLastFrame() {
@@ -573,7 +554,7 @@
       // 图片节点连到尾帧端口：一个分镜只保留一条尾帧线
       function applyLastFrameFromImageNode(fromNode) {
         if (!fromNode || fromNode.type !== 'image' || !fromNode.data || !fromNode.data.url) return false;
-        if (!shotFrameModelSupportsLastFrame(node)) return false;
+        if (!shotFrameLastFrameInputEnabled(node)) return false;
         if (!state.lastFrameConnections) state.lastFrameConnections = [];
         state.lastFrameConnections = state.lastFrameConnections.filter(c => c.to !== id);
         state.lastFrameConnections.push({
@@ -1091,13 +1072,40 @@
         return '/api/thumbnail?url=' + encodeURIComponent(imageUrl) + '&size=' + size;
       }
 
-      // 渲染提示词（将【【角色名】】替换为内联角色图片）
+      function appendShotFrameMentionChip(displayEl, label, imageUrl) {
+        const chip = document.createElement('span');
+        chip.className = 'shot-inline-char-chip' + (imageUrl ? '' : ' no-image');
+        chip.title = label;
+        if(imageUrl) {
+          const avatar = document.createElement('img');
+          avatar.className = 'shot-inline-char-avatar';
+          avatar.src = getThumbnailUrl(imageUrl, 40);
+          avatar.alt = label;
+          avatar.loading = 'lazy';
+          chip.appendChild(avatar);
+        } else {
+          const avatar = document.createElement('span');
+          avatar.className = 'shot-inline-char-avatar no-image';
+          avatar.textContent = '🖼';
+          chip.appendChild(avatar);
+        }
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'shot-inline-char-name';
+        nameSpan.textContent = label;
+        chip.appendChild(nameSpan);
+        chip.addEventListener('click', (e) => {
+          e.stopPropagation();
+        });
+        displayEl.appendChild(chip);
+      }
+
+      // 渲染提示词（将【【角色名】】替换为内联角色图片，@首帧图/@尾帧图替换为帧标签）
       function renderPromptWithInlineChars(displayEl, promptText) {
         if(!displayEl) return;
         displayEl.innerHTML = '';
 
         const worldChars = state.worldCharacters || [];
-        const pattern = /【【([^】]+)】】/g;
+        const pattern = /【【([^】]+)】】|@首帧图(?![\u4e00-\u9fff])|@尾帧图(?![\u4e00-\u9fff])/g;
         let lastIndex = 0;
         let match;
 
@@ -1106,6 +1114,20 @@
           if(match.index > lastIndex) {
             const textNode = document.createTextNode(promptText.substring(lastIndex, match.index));
             displayEl.appendChild(textNode);
+          }
+
+          if(match[0] === '@首帧图' || match[0] === '@尾帧图') {
+            const isFirst = match[0] === '@首帧图';
+            const frameUrl = isFirst
+              ? (node.data.previewImageUrl || '')
+              : (node.data.lastFrameUrl || '');
+            const labelKey = isFirst ? 'shot_frame_mention_first' : 'shot_frame_mention_last';
+            const label = (window.t && window.t(labelKey) && window.t(labelKey) !== labelKey)
+              ? window.t(labelKey)
+              : (isFirst ? '首帧图' : '尾帧图');
+            appendShotFrameMentionChip(displayEl, label, frameUrl);
+            lastIndex = match.index + match[0].length;
+            continue;
           }
 
           const charName = match[1].trim();
@@ -1648,6 +1670,7 @@
         
         // 更新图片选择菜单
         updateImageSelectionMenu();
+        renderCharImages();
         // 刷新父分镜组宫格预览
         refreshParentShotGroupPreview();
         updateVideoComputingPowerDisplay();

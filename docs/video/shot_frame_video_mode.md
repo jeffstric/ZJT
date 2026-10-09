@@ -5,7 +5,7 @@
 分镜节点（shot_frame）支持两种视频生成模式，允许用户根据需求灵活选择生成流程：
 
 - **首帧模式（first_last_frame）**：先生成分镜图，再以分镜图作为视频首帧生成视频（原有流程）
-- **参考图模式（multi_reference）**：跳过生成分镜图，直接收集角色/场景/道具参考图，以多参考图模式生成视频
+- **参考图模式（multi_reference）**：收集角色/场景/道具参考图，以多参考图模式生成视频。首帧图和尾帧图仍然可以设置；只有视频提示词里写了 `@首帧图` 或 `@尾帧图` 时，才会把对应图片排进参考图两端
 
 ## 模式切换
 
@@ -19,16 +19,21 @@
 - 视频模型列表：所有 image_to_video 模型
 - 可选尾帧：第 1 列「视频首帧」下方。可以把图片节点连到尾帧端口，也可以本地上传。尾帧只参与生成视频，不改分镜图，也不进父分镜组宫格
 - 模型 `supports_last_frame === false` 时，尾帧端口和上传禁用，已填的图保留但不提交
-- 切到参考模式时隐藏尾帧区，已填内容和连线保留；切回首帧模式后恢复。参考模式下不提交尾帧
-- 有可用尾帧时，`image_urls` 为 `首帧URL,尾帧URL`，接口 `image_mode` 仍是 `first_last_frame`。算力上下文用 `first_last_with_tail`
+- 参考模式不隐藏尾帧区，首帧预览、首帧端口、尾帧上传和尾帧连线都保持可用。参考模式不看模型的 `supports_last_frame`。首帧模式仍按该配置禁用尾帧端口，已填的图保留但不按严格尾帧提交
+- 有可用尾帧且当前是首帧模式时，`image_urls` 为 `首帧URL,尾帧URL`，接口 `image_mode` 仍是 `first_last_frame`。算力上下文用 `first_last_with_tail`。参考模式不走这条路径
 - 每个分镜只保留一条尾帧连线，存在 `state.lastFrameConnections`。上传尾帧会去掉这条连线。旧工作流没有该数组时视为没有尾帧
 
 ### 参考图模式
 
-- 无需生成分镜图，直接使用参考图生成视频
-- 自动从节点配置的角色、场景、道具中收集参考图
-- 调用 `/api/ai-app-run-image` 端点，`image_mode=multi_reference`
-- 若无任何参考图，自动回退到文生视频 API（`/api/ai-app-run`）
+- 可以不生成分镜图，直接使用角色、场景、道具参考图生成视频
+- 视频提示词编辑框按 `@`、`/` 或 `、` 打开下拉。已设置首帧图时置顶「首帧图」，已设置尾帧图时置顶「尾帧图」，选中后插入字面量 `@首帧图` 或 `@尾帧图`。角色仍插入 `【【角色名】】`。图片提示词的 `@` 只插入角色
+- 节点上把这两个标记画成带缩略图的标签。保存的仍是 `videoPromptText`，重新加载走原有恢复
+- 提交时若提示词含 `@首帧图` 但没有首帧图，或含 `@尾帧图` 但没有尾帧图，提示后中止，不提交
+- 被点名的首帧是参考图列表的图1，说明为「图1是首帧」；原有角色/场景/道具参考依次后移。被点名的尾帧是最后一张，说明为「图N是尾帧」。提交给接口的提示词把标记改写成对应的「图N」，并沿用原来的「图N是…」后缀。节点里保存的提示词仍是 `@首帧图` / `@尾帧图`
+- 没被 `@` 到的首帧或尾帧不加入参考图，也不改已有序号
+- 超过 `max_multi_ref_images` 时先裁掉中间的角色/场景/道具，被点名的首尾帧留在两端。名额放不下预留的首尾帧时提示并中止
+- 调用 `/api/ai-app-run-image` 端点，`image_mode` 仍是 `multi_reference`，不使用 `first_last_with_ref`
+- 若没有参考图，也没有被点名的首尾帧，自动回退到文生视频 API（`/api/ai-app-run`）
 - 视频模型列表：仅显示支持 multi_reference 且驱动已配置的模型（如 MiniMax H3 参考生视频、seedance 2.0、vidu_q2、happy_horse_r2v）
 - 无已保存模型时默认性价比档 MiniMax H3 参考生视频（`minimax_h3_r2v`），效果档为 Seedance 2.0；未配置供应商的模型不出现在新下拉中
 - 参考图数量受 `max_multi_ref_images` 配置限制
@@ -41,7 +46,7 @@
 2. **场景参考图**：从节点引用的场景中获取 reference_image
 3. **道具参考图**：从节点引用的道具中获取 reference_image
 
-数量超过当前视频模型的 `max_multi_ref_images` 时，从列表尾部裁掉，并同步截断「图N是xxx」提示词后缀。
+数量超过当前视频模型的 `max_multi_ref_images` 时，收集阶段先从列表尾部裁掉。若视频提示词点名了首帧或尾帧，提交前再按「两端留给帧、中间继续裁」重排，并把「图N是xxx」后缀的序号顺延。
 
 ## 文生视频回退
 
@@ -56,7 +61,9 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `node.data.videoMode` | `'first_last_frame'` / `'multi_reference'` | 视频生成模式 |
-| `node.data.lastFrameUrl` | string | 首帧模式下的可选尾帧 URL。空字符串表示没有尾帧 |
+| `node.data.videoPromptText` | string | 视频提示词原文。`@首帧图` / `@尾帧图` 存在这里，提交时才改写成「图N」 |
+| `node.data.previewImageUrl` | string | 视频首帧。首帧模式作为严格首帧提交；参考模式仅在提示词点名 `@首帧图` 时作为图1 |
+| `node.data.lastFrameUrl` | string | 可选尾帧 URL。空字符串表示没有尾帧。首帧模式按模型能力提交；参考模式仅在提示词点名 `@尾帧图` 时作为最后一张参考图 |
 | `lastFrameConnections` | `{id, from, to}[]` | 图片节点到分镜尾帧端口的连线，随工作流保存 |
 
 ## 向后兼容
@@ -81,15 +88,17 @@
 分镜组节点的"逐个生成视频"功能已兼容混合模式：
 - 首帧模式节点：正常生成（需有首帧图片）。该分镜如果填了可用尾帧，会一并提交
 - 参考图模式节点：独立生成（不继承分镜组的视频模型，保持自己的模型选择）
-- 「合并生成视频」仍只用宫格首帧，不带各分镜的尾帧
+- 「合并生成视频」仍只用宫格首帧，不读取各分镜视频提示词里的 `@首帧图` / `@尾帧图`，也不带各分镜的尾帧
 
 ## 相关文件
 
-- `web/js/shot_frame_node.js` — 模式切换、尾帧端口、上传与算力
+- `web/js/shot_frame_node.js` — 模式切换、尾帧端口、上传、`@首帧图` / `@尾帧图` 标签与算力
+- `web/js/nodes.js` — 视频提示词放大窗口的首尾帧下拉
 - `web/js/shot_frame_generator.js` — collectShotFrameRefImages(): 参考图收集
-- `web/js/shot_frame_video_generator.js` — generateShotFrameVideo(): 首帧模式把尾帧拼进 image_urls
+- `web/js/shot_frame_video_generator.js` — generateShotFrameVideo() 与 placeShotFrameMentionImages(): 首帧模式把尾帧拼进 image_urls；参考模式按 @ 标记重排参考图
 - `web/js/workflow.js` — createShotFrameNodeWithData(): 模式与尾帧状态恢复
 - `web/js/events.js` — 图片节点拖到首帧或尾帧端口
+- `web/tests/shot_frame_ref_mentions.test.js` — 参考图两端排序
 
 ---
 

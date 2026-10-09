@@ -58,6 +58,105 @@ async function replaceCharacterMarkers(prompt){
   return replacedPrompt;
 }
 
+// 把「图N是…」的序号整体后移。首帧占了图1时，角色/场景/道具后缀要跟着挪。
+function shiftFigureSuffix(suffix, delta) {
+  if (!suffix || !delta) return suffix || '';
+  return String(suffix).replace(/^图(\d+)/, function(_, n) {
+    return '图' + (parseInt(n, 10) + delta);
+  });
+}
+
+// 参考模式提交前，把提示词里点名的首尾帧排到参考图两端。
+// 没被 @ 到的帧不加入列表，避免把已有「图N是角色」序号打乱。
+// 返回新的 prompt / 参考图 / 后缀，不修改入参数组。
+function placeShotFrameMentionImages(prompt, referenceImageUrls, promptSuffix, firstUrl, lastUrl, maxRefImages) {
+  const text = prompt == null ? '' : String(prompt);
+  const firstRe = /@首帧图(?![\u4e00-\u9fff])/g;
+  const lastRe = /@尾帧图(?![\u4e00-\u9fff])/g;
+  const wantsFirst = firstRe.test(text);
+  firstRe.lastIndex = 0;
+  const wantsLast = lastRe.test(text);
+  lastRe.lastIndex = 0;
+  const first = String(firstUrl || '').trim();
+  const last = String(lastUrl || '').trim();
+  const urlsIn = Array.isArray(referenceImageUrls) ? referenceImageUrls.slice() : [];
+  const suffixIn = Array.isArray(promptSuffix) ? promptSuffix.slice() : [];
+  if (suffixIn.length > urlsIn.length) suffixIn.length = urlsIn.length;
+  while (suffixIn.length < urlsIn.length) suffixIn.push('');
+  if (!wantsFirst && !wantsLast) {
+    return { prompt: text, referenceImageUrls: urlsIn, promptSuffix: suffixIn, error: '' };
+  }
+  if (wantsFirst && !first) {
+    return { prompt: text, referenceImageUrls: urlsIn, promptSuffix: suffixIn, error: 'missing_first' };
+  }
+  if (wantsLast && !last) {
+    return { prompt: text, referenceImageUrls: urlsIn, promptSuffix: suffixIn, error: 'missing_last' };
+  }
+  const reserved = (wantsFirst ? 1 : 0) + (wantsLast ? 1 : 0);
+  const max = Number(maxRefImages);
+  if (max > 0 && reserved > max) {
+    return { prompt: text, referenceImageUrls: urlsIn, promptSuffix: suffixIn, error: 'over_capacity' };
+  }
+  const middleBudget = max > 0 ? max - reserved : urlsIn.length;
+  const refs = urlsIn.slice(0, middleBudget);
+  const suffixes = suffixIn.slice(0, refs.length);
+  const delta = wantsFirst ? 1 : 0;
+  const urls = [];
+  const notes = [];
+  if (wantsFirst) urls.push(first);
+  refs.forEach(function(url, i) {
+    urls.push(url);
+    const note = shiftFigureSuffix(suffixes[i], delta);
+    if (note) notes.push(note);
+  });
+  if (wantsLast) urls.push(last);
+  if (wantsFirst) notes.unshift('图1是首帧');
+  if (wantsLast) notes.push('图' + urls.length + '是尾帧');
+  let out = text.replace(firstRe, '图1');
+  out = out.replace(lastRe, '图' + urls.length);
+  return { prompt: out, referenceImageUrls: urls, promptSuffix: notes, error: '' };
+}
+
+// 参考模式不看 supports_last_frame。尾帧 URL 优先用节点上保存的，否则取尾帧连线。
+function resolveMentionLastFrameUrl(node) {
+  if (!node || !node.data) return '';
+  const saved = String(node.data.lastFrameUrl || '').trim();
+  if (saved) return saved;
+  if (typeof state === 'undefined' || !state || !Array.isArray(state.lastFrameConnections)) return '';
+  const conn = state.lastFrameConnections.find(function(c) { return c && c.to === node.id; });
+  if (!conn || !Array.isArray(state.nodes)) return '';
+  const fromNode = state.nodes.find(function(n) { return n && n.id === conn.from; });
+  return String((fromNode && fromNode.data && fromNode.data.url) || '').trim();
+}
+
+function shotFrameMentionErrorMessage(code) {
+  const fallback = {
+    missing_first: '视频提示词使用了 @首帧图，请先设置视频首帧',
+    missing_last: '视频提示词使用了 @尾帧图，请先设置视频尾帧',
+    over_capacity: '当前模型的参考图数量不够同时放入首帧和尾帧'
+  };
+  const key = {
+    missing_first: 'shot_frame_mention_missing_first',
+    missing_last: 'shot_frame_mention_missing_last',
+    over_capacity: 'shot_frame_mention_over_capacity'
+  }[code];
+  if (key && typeof window !== 'undefined' && window.t) {
+    const translated = window.t(key);
+    if (translated && translated !== key) return translated;
+  }
+  return fallback[code] || code;
+}
+
+function shotFrameMultiRefLimit(videoModel) {
+  let maxRefImages = 5;
+  if (typeof window !== 'undefined' && window.TaskConfig && typeof window.TaskConfig.isLoaded === 'function' && window.TaskConfig.isLoaded()) {
+    const configs = window.TaskConfig.getModelConfigs() || {};
+    const config = configs[videoModel];
+    if (config && config.max_multi_ref_images) maxRefImages = config.max_multi_ref_images;
+  }
+  return maxRefImages;
+}
+
 // 分镜节点生成视频功能
 async function generateShotFrameVideo(nodeId, node){
   const mode = node.data.videoMode || 'first_last_frame';
@@ -161,7 +260,28 @@ async function generateShotFrameVideo(nodeId, node){
       // === 参考图模式 ===
       // 收集角色/场景/道具参考图
       showToast('正在收集参考图...', 'info');
-      const { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node);
+      let { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node);
+
+      // @首帧图 / @尾帧图 排到参考图两端。存储的提示词不动，只改这次提交的文本。
+      const placedMentions = placeShotFrameMentionImages(
+        videoPrompt,
+        referenceImageUrls,
+        promptSuffix,
+        node.data.previewImageUrl,
+        resolveMentionLastFrameUrl(node),
+        shotFrameMultiRefLimit(videoModel)
+      );
+      if(placedMentions.error) {
+        const errorMsg = shotFrameMentionErrorMessage(placedMentions.error);
+        showToast(errorMsg, 'warning');
+        generateBtn.disabled = false;
+        generateBtn.textContent = '生成视频';
+        return;
+      }
+      videoPrompt = placedMentions.prompt;
+      referenceImageUrls = placedMentions.referenceImageUrls;
+      promptSuffix = placedMentions.promptSuffix;
+      form.set('prompt', videoPrompt);
 
       // 将 promptSuffix 追加到视频提示词
       if(promptSuffix.length > 0) {
@@ -435,4 +555,9 @@ async function generateShotFrameVideo(nodeId, node){
     generateBtn.disabled = false;
     generateBtn.textContent = '生成视频';
   }
+}
+
+if (typeof window !== 'undefined') window.placeShotFrameMentionImages = placeShotFrameMentionImages;
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { placeShotFrameMentionImages };
 }
