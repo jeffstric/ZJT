@@ -33,6 +33,8 @@
 - 没被 `@` 到的首帧或尾帧不加入参考图，也不改已有序号
 - 超过 `max_multi_ref_images` 时先裁掉中间的角色/场景/道具，被点名的首尾帧留在两端。名额放不下预留的首尾帧时提示并中止
 - 调用 `/api/ai-app-run-image` 端点，`image_mode` 仍是 `multi_reference`，不使用 `first_last_with_ref`
+- 当前模型是 MiniMax H3 参考生视频（`minimax_h3_r2v`），并且提示词含 `@首帧图` 或 `@尾帧图` 时，这次提交的 `task_id` 改为隐藏任务 `minimax_h3_kfr`（MiniMax H3 首帧参考生视频）。画面模式仍是参考模式，不切换到首帧模式，节点上保存的模型也不改。图片上限按 3 张重排。参考音频最多送 2 路，对应 `<Audio 1>` 和 `<Audio 2>`。下拉框不显示这个混合模型。其他参考模型、没有这两个标记的 H3 参考提交、以及首帧模式，都走原来选中的模型
+- 故事板全能参考使用同一对标记，由服务端 `services/storyboard_frame_mention.py` 排图并在 H3 参考模型上改交 `minimax_h3_kfr`。见 `docs/storyboard/storyboard_reference_to_video.md`
 - 若没有参考图，也没有被点名的首尾帧，自动回退到文生视频 API（`/api/ai-app-run`）
 - 视频模型列表：仅显示支持 multi_reference 且驱动已配置的模型（如 MiniMax H3 参考生视频、seedance 2.0、vidu_q2、happy_horse_r2v）
 - 无已保存模型时默认性价比档 MiniMax H3 参考生视频（`minimax_h3_r2v`），效果档为 Seedance 2.0；未配置供应商的模型不出现在新下拉中

@@ -92,8 +92,9 @@ const state = {
     videoImageMode: 'first_last_frame',
     // 视频槽位媒体：[{id, role:'first_frame'|'last_frame'|'reference', source:'scene'|'upload', url, thumbnailUrl, name, uploading}]
     videoMediaItems: [],
-    // 用户手动移除首帧后，在当前分镜内不再自动注入（切换分镜清除）
+    // 用户手动移除首帧/尾帧后，在当前分镜内不再自动注入（切换分镜清除）
     videoFirstFrameDismissedSceneId: null,
+    videoLastFrameDismissedSceneId: null,
     showVideoModePanel: false,
     // 视频生成偏好（齿轮配置，故事板级 config_json）
     videoDurationMode: 'auto', // 'auto' | number
@@ -1079,10 +1080,13 @@ export function syncVideoMediaFromScene(scene, options = {}) {
 
     if (resetUploads) {
         state.videoFirstFrameDismissedSceneId = null;
+        state.videoLastFrameDismissedSceneId = null;
     }
 
     const dismissed = state.videoFirstFrameDismissedSceneId != null
         && String(state.videoFirstFrameDismissedSceneId) === String(sceneId);
+    const lastDismissed = state.videoLastFrameDismissedSceneId != null
+        && String(state.videoLastFrameDismissedSceneId) === String(sceneId);
 
     const firstUrl = isRenderableMediaUrl(scene?.firstFrameUrl) ? String(scene.firstFrameUrl).trim() : '';
     const lastUrl = isRenderableMediaUrl(scene?.lastFrameUrl) ? String(scene.lastFrameUrl).trim() : '';
@@ -1093,9 +1097,10 @@ export function syncVideoMediaFromScene(scene, options = {}) {
         : (state.videoMediaItems || []).filter(item => item.source === 'upload');
 
     if (state.videoImageMode === 'multi_reference') {
-        uploads = uploads
-            .filter(item => item.role === 'first_frame' || item.role === 'reference')
-            .map(item => (item.role === 'last_frame' ? { ...item, role: 'reference' } : item));
+        // 参考模式保留真正的尾帧槽，不把它改写成普通参考图。
+        uploads = uploads.filter(item => (
+            item.role === 'first_frame' || item.role === 'last_frame' || item.role === 'reference'
+        ));
     } else {
         // 首尾帧：只保留 first/last 上传
         uploads = uploads.filter(item => item.role === 'first_frame' || item.role === 'last_frame');
@@ -1117,11 +1122,13 @@ export function syncVideoMediaFromScene(scene, options = {}) {
         }));
     }
 
-    if (state.videoImageMode === 'first_last_frame') {
+    // 参考模式不看 supports_last_frame，尾帧槽始终可用。首尾帧模式仍按模型能力。
+    const allowLast = state.videoImageMode === 'multi_reference' || videoModelSupportsLastFrame();
+    if (state.videoImageMode === 'first_last_frame' || state.videoImageMode === 'multi_reference') {
         const uploadedLast = uploads.find(item => item.role === 'last_frame');
-        if (uploadedLast && videoModelSupportsLastFrame()) {
+        if (uploadedLast && allowLast) {
             next.push(uploadedLast);
-        } else if (lastUrl && videoModelSupportsLastFrame() && !uploads.some(item => item.role === 'last_frame')) {
+        } else if (lastUrl && allowLast && !lastDismissed && !uploads.some(item => item.role === 'last_frame')) {
             next.push(makeVideoMediaItem({
                 role: 'last_frame',
                 source: 'scene',
@@ -1130,7 +1137,8 @@ export function syncVideoMediaFromScene(scene, options = {}) {
                 name: t('label_current_last_frame', '当前尾帧'),
             }));
         }
-    } else {
+    }
+    if (state.videoImageMode === 'multi_reference') {
         uploads.filter(item => item.role === 'reference').forEach(item => next.push(item));
     }
 
@@ -1140,12 +1148,15 @@ export function syncVideoMediaFromScene(scene, options = {}) {
     syncReferenceImagesCompat();
 }
 
-/** 仅刷新 scene 来源的首帧 URL（用户切换候选图后） */
+/** 刷新 scene 来源的首帧，并同步尾帧槽（轮询回填 lastFrameUrl 时一起更新）。 */
 export function refreshSceneFirstFrameSlot(scene) {
     if (!scene) return;
     const firstUrl = isRenderableMediaUrl(scene.firstFrameUrl) ? String(scene.firstFrameUrl).trim() : '';
+    const lastUrl = isRenderableMediaUrl(scene.lastFrameUrl) ? String(scene.lastFrameUrl).trim() : '';
     const dismissed = state.videoFirstFrameDismissedSceneId != null
         && String(state.videoFirstFrameDismissedSceneId) === String(scene.id);
+    const lastDismissed = state.videoLastFrameDismissedSceneId != null
+        && String(state.videoLastFrameDismissedSceneId) === String(scene.id);
     let items = [...(state.videoMediaItems || [])];
     const idx = items.findIndex(item => item.role === 'first_frame' && item.source === 'scene');
     if (dismissed) {
@@ -1165,8 +1176,45 @@ export function refreshSceneFirstFrameSlot(scene) {
     } else if (idx >= 0) {
         items.splice(idx, 1);
     }
+
+    const allowLast = state.videoImageMode === 'multi_reference'
+        || (state.videoImageMode === 'first_last_frame' && videoModelSupportsLastFrame());
+    const lastIdx = items.findIndex(item => item.role === 'last_frame' && item.source === 'scene');
+    if (allowLast && lastDismissed) {
+        if (lastIdx >= 0) items.splice(lastIdx, 1);
+    } else if (allowLast && lastUrl) {
+        if (lastIdx >= 0) {
+            items[lastIdx] = { ...items[lastIdx], url: lastUrl, thumbnailUrl: lastUrl };
+        } else if (!items.some(item => item.role === 'last_frame')) {
+            const firstAt = items.findIndex(item => item.role === 'first_frame');
+            items.splice(firstAt >= 0 ? firstAt + 1 : 0, 0, makeVideoMediaItem({
+                role: 'last_frame',
+                source: 'scene',
+                url: lastUrl,
+                thumbnailUrl: lastUrl,
+                name: t('label_current_last_frame', '当前尾帧'),
+            }));
+        }
+    } else if (lastIdx >= 0) {
+        items.splice(lastIdx, 1);
+    }
+    items.sort((a, b) => {
+        const order = { first_frame: 0, last_frame: 1, reference: 2 };
+        return (order[a.role] ?? 9) - (order[b.role] ?? 9);
+    });
     state.videoMediaItems = items;
     syncReferenceImagesCompat();
+}
+
+/** 当前槽位里的首帧/尾帧绝对地址。参考模式提交时两个键都要带上，空字符串表示用户清掉了该槽。 */
+export function currentVideoFrameUrls() {
+    const items = (state.videoMediaItems || []).filter(item => !item.uploading && isRenderableMediaUrl(item.url));
+    const first = items.find(item => item.role === 'first_frame');
+    const last = items.find(item => item.role === 'last_frame');
+    return {
+        frame_first_url: first ? toAbsoluteMediaUrl(first.url) : '',
+        frame_last_url: last ? toAbsoluteMediaUrl(last.url) : '',
+    };
 }
 
 export function ensureVideoImageModeSupported() {

@@ -8,7 +8,10 @@ from typing import Optional, List, Dict, Any
 
 from model import PipelineStepType, PipelineStepModel, PipelineStage, AIToolsModel
 from config.config_util import get_dynamic_config_value
-from config.constant import H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
+from config.constant import (
+    H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+    H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+)
 from config.unified_config import (
     UnifiedConfigRegistry,
     get_implementation_id,
@@ -23,7 +26,12 @@ from .image_face_mask_driver import ImageFaceMaskPipelineDriver
 from .implementation_retry_driver import ImplementationRetryPipelineDriver
 from .storyboard_grid_split_driver import StoryboardGridSplitPipelineDriver
 from .h3_prompt_optimize_driver import H3PromptOptimizePipelineDriver
-from .h3_prompt_optimize_util import resolve_h3_prompt_variant, resolve_h3_reference_asset_counts
+from .h3_prompt_optimize_util import (
+    assign_h3_keyframe_ref_pictures,
+    resolve_h3_prompt_variant,
+    resolve_h3_reference_asset_counts,
+    split_media_paths,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +82,11 @@ class PipelineDriverFactory:
     _SEEDANCE_FACE_MASK_KEYS = SEEDANCE_FACE_MASK_DRIVER_KEYS
 
     # 走 H3 提示词优化（param_prepare）的任务 DriverKey：
-    # 图生视频（I2VA/FL2VA）+ 参考生视频（Ref2VA）
+    # 图生视频（I2VA/FL2VA）+ 参考生视频（Ref2VA）+ 首帧参考混合（KFRef）
     _H3_PROMPT_OPTIMIZE_KEYS = {
         DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO,
         DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+        DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO,
     }
 
     @staticmethod
@@ -224,12 +233,12 @@ class PipelineDriverFactory:
 
     @classmethod
     def is_h3_prompt_optimize_key(cls, task_key: Optional[str]) -> bool:
-        """UnifiedTaskConfig.key 是否走 H3 提示词优化（图生视频 I2VA/FL2VA、参考生视频 Ref2VA）。"""
+        """UnifiedTaskConfig.key 是否走 H3 提示词优化（I2VA/FL2VA、Ref2VA、KFRef）。"""
         return bool(task_key) and task_key in cls._H3_PROMPT_OPTIMIZE_KEYS
 
     @classmethod
     def is_h3_prompt_optimize_type(cls, ai_tool_type: int) -> bool:
-        """任务类型是否走 MiniMax H3 提示词优化（图生视频 I2VA/FL2VA、参考生视频 Ref2VA）。"""
+        """任务类型是否走 MiniMax H3 提示词优化（I2VA/FL2VA、Ref2VA、KFRef）。"""
         task_config = UnifiedConfigRegistry.get_by_id(ai_tool_type)
         return bool(task_config and cls.is_h3_prompt_optimize_key(task_config.key))
 
@@ -268,9 +277,16 @@ class PipelineDriverFactory:
             "original_prompt": original,
             "duration": duration,
         }
-        if variant == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA:
-            # 参考资产计数，供 Ref2VA 指令声明 <picture_N>/<video_N>/<audio_N> 对应关系
+        if variant in (H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, H3_PROMPT_OPTIMIZE_VARIANT_KF_REF):
+            # 参考资产计数。Ref2VA 用来声明 <picture_N>/<video_N>/<audio_N>；
+            # KFRef 用来决定 summary 前缀里要不要写 audio reference。
             params["ref_counts"] = resolve_h3_reference_asset_counts(ai_tool)
+        if variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF:
+            # 槽位按提交原文里的「图N是首帧/尾帧」计算。此时 prompt 还没被优化改写。
+            params["keyframe_slots"] = assign_h3_keyframe_ref_pictures(
+                split_media_paths(getattr(ai_tool, "reference_images", None)),
+                original,
+            )
         if chat_model:
             params["chat_model"] = str(chat_model)
         if chat_vendor_id:

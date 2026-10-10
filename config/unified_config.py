@@ -1276,6 +1276,7 @@ class DriverImplementation:
     MINIMAX_H3_TURBO_RUNNINGHUB_V1 = 'minimax_h3_turbo_runninghub_v1'
     MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 'minimax_h3_reference_runninghub_v1'
     MINIMAX_H3_TEXT_RUNNINGHUB_V1 = 'minimax_h3_text_runninghub_v1'
+    MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1 = 'minimax_h3_keyframe_ref_runninghub_v1'
 
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 'digital_human_minimax_h3_runninghub_v1'
@@ -1506,6 +1507,9 @@ class DriverImplementationId:
     # 视频去水印
     VIDEO_WATERMARK_RUNNINGHUB_V1 = 99
 
+    # MiniMax H3 首帧参考混合生视频（参考模式点名 @首帧图/@尾帧图 时提交，不进下拉）
+    MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1 = 100
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1579,6 +1583,7 @@ IMPLEMENTATION_TO_ID = {
     'minimax_h3_turbo_runninghub_v1': DriverImplementationId.MINIMAX_H3_TURBO_RUNNINGHUB_V1,
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
     'minimax_h3_text_runninghub_v1': DriverImplementationId.MINIMAX_H3_TEXT_RUNNINGHUB_V1,
+    'minimax_h3_keyframe_ref_runninghub_v1': DriverImplementationId.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
     'wan3_video_dashscope_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_V1,
     'wan3_video_dashscope_r2v_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_R2V_V1,
@@ -1677,6 +1682,7 @@ class DriverKey:
     MINIMAX_H3_IMAGE_TO_VIDEO = 'minimax_h3_image_to_video'
     MINIMAX_H3_REFERENCE_TO_VIDEO = 'minimax_h3_reference_to_video'
     MINIMAX_H3_TEXT_TO_VIDEO = 'minimax_h3_text_to_video'
+    MINIMAX_H3_KEYFRAME_REF_TO_VIDEO = 'minimax_h3_keyframe_ref_to_video'
 
     # Wan22 相关
     WAN22_IMAGE_TO_VIDEO = 'wan22_image_to_video'
@@ -1892,6 +1898,7 @@ class TaskTypeId:
         'MINIMAX_H3_IMAGE_TO_VIDEO': 'MiniMax H3 图生视频',
         'MINIMAX_H3_REFERENCE_TO_VIDEO': 'MiniMax H3 参考生视频',
         'MINIMAX_H3_TEXT_TO_VIDEO': 'MiniMax H3 文生视频',
+        'MINIMAX_H3_KEYFRAME_REF_TO_VIDEO': 'MiniMax H3 首帧参考生视频',
         'WAN3_IMAGE_TO_VIDEO': '万相3.0 图生视频',
         'WAN3_REFERENCE_TO_VIDEO': '万相3.0 参考生视频',
         'WAN3_TEXT_TO_VIDEO': '万相3.0 文生视频',
@@ -1944,6 +1951,7 @@ class TaskTypeId:
     VIDU_Q3_IMAGE_TO_VIDEO = 43
     VIDU_Q3_REFERENCE_TO_VIDEO = 44
     MINIMAX_H3_TEXT_TO_VIDEO = 45
+    MINIMAX_H3_KEYFRAME_REF_TO_VIDEO = 50
 
 
     # 图片/视频 增强
@@ -2471,6 +2479,42 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[],  # 文生视频不需要任何图片/音频/视频输入（复用参考生工作流，素材槽位全空）
         supports_last_frame=False,
         supports_ref_audio_video=False,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: MINIMAX_H3_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO,
+        key='minimax_h3_keyframe_ref_to_video',
+        short_key='minimax_h3_kfr',
+        name='MiniMax H3 首帧参考生视频',
+        model_name='MiniMax H3',
+        variant_label='首帧参考',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO,
+        implementation=DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
+        computing_power=0,
+        supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4', '2:3', '3:2', '21:9'],
+        supported_durations=[4, 5, 6, 7, 8, 9, 10],
+        default_ratio='9:16',
+        default_duration=5,
+        default_image_mode=ImageMode.MULTI_REFERENCE,
+        sort_order=38,
+        # 画布仍是参考模式。只有提示词点名 @首帧图/@尾帧图 时，前端把 task_id 换成这个隐藏任务。
+        supported_image_modes=[ImageMode.MULTI_REFERENCE],
+        supports_last_frame=False,
+        max_multi_ref_images=3,
+        supports_ref_audio_video=True,  # 最多 2 路音频（节点 157/188）；参考视频由驱动丢弃
+        supports_voice_input=True,
+        hidden=True,
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
@@ -3883,6 +3927,21 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='RunningHub MiniMax H3 文生视频接口（复用参考生工作流，素材槽位全空）',
         sort_order=5206.0,
+        required_config_keys=['runninghub.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='minimax_h3_keyframe_ref_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='MinimaxH3KeyframeRefRunninghubV1Driver',
+        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,
+        enabled=True,
+        description='RunningHub MiniMax H3 首帧参考混合生视频（webapp 2108549232725680129，3 个图片槽 + 2 路音频）',
+        sort_order=5207.0,
         required_config_keys=['runninghub.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},

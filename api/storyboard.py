@@ -91,6 +91,11 @@ from utils.resource_access import (
     ensure_world_access,
 )
 from services.storyboard_agent_cli_service import StoryboardCliError
+from services.storyboard_frame_mention import (
+    h3_keyframe_ref_task_id,
+    prompt_has_frame_mention,
+    read_explicit_frame_url,
+)
 from services.storyboard_agent_command_service import StoryboardAgentCommandService
 from services.storyboard_batch_operation_service import (
     StoryboardBatchOperationError,
@@ -1944,6 +1949,8 @@ def _build_storyboard_agent_message(
     neighbor_contexts: Optional[Dict[str, Any]] = None,
     dialogues: Optional[List[Dict[str, Any]]] = None,
     characters: Optional[List[Dict[str, Any]]] = None,
+    frame_mention_legend: str = "",
+    video_slot_items: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     is_video = generation_target == "video"
     prompt = _scene_prompt_dict(scene)
@@ -1986,7 +1993,16 @@ def _build_storyboard_agent_message(
             target_intro = "请基于当前分镜画面提示词、视频提示词与用户要求，生成该分镜视频。"
             if image_mode == 'multi_reference':
                 mode_desc = "全能参考模式（multi_reference）：【图生视频输入图】中的全部 URL 均为参考图，按顺序用英文逗号拼接为 image_urls，image_mode 必须传 multi_reference。"
-                slot_labels = [f"- 图{idx}（参考）：{url}" for idx, url in enumerate(video_input_urls, start=1)]
+                if video_slot_items:
+                    slot_labels = []
+                    for idx, url in enumerate(video_input_urls, start=1):
+                        item = video_slot_items[idx - 1] if idx - 1 < len(video_slot_items) else {}
+                        role = str((item or {}).get("type") or "参考")
+                        name = str((item or {}).get("name") or "").strip()
+                        label = f"{role}：{name}" if name else role
+                        slot_labels.append(f"- 图{idx}（{label}）：{url}")
+                else:
+                    slot_labels = [f"- 图{idx}（参考）：{url}" for idx, url in enumerate(video_input_urls, start=1)]
             else:
                 mode_desc = (
                     "首尾帧模式（first_last_frame）：【图生视频输入图】第1张为首帧，第2张（若有）为尾帧；"
@@ -2051,6 +2067,13 @@ def _build_storyboard_agent_message(
                 else ""
             )
         )
+        if frame_mention_legend:
+            tool_instruction += (
+                " 参考图顺序已按 @首帧图 / @尾帧图 排好。"
+                "image_urls 必须按【视频输入说明】的顺序原样拼接，image_mode 仍是 multi_reference。"
+                "prompt 末尾必须原样包含这段说明，不得改写其中的「图N是首帧」或「图N是尾帧」："
+                + frame_mention_legend
+            )
     else:
         video_mode_block = ""
         target_intro = "请基于当前分镜画面提示词，与用户对话并生成/编辑该分镜首帧。"
@@ -4179,6 +4202,9 @@ async def generate_scene_video(
 
     # 图生视频 / 参考生视频
     requested_task_type = data.get('task_type')
+    # 混合模型是隐藏任务，不能写进故事板偏好或分镜齿轮。客户端即使传了 50 也按未指定处理。
+    if str(requested_task_type or '') == str(h3_keyframe_ref_task_id()):
+        requested_task_type = None
     audio_path = None
     image_mode = str(data.get('image_mode') or ImageMode.FIRST_LAST_FRAME).strip().lower()
     if image_mode not in (
@@ -4235,14 +4261,6 @@ async def generate_scene_video(
     prompt = data.get('prompt') or scene.video_prompt or ''
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
     ratio = data.get('ratio') or (sb.workflow_ratio if sb else None)
-    if image_mode in (ImageMode.MULTI_REFERENCE, ImageMode.FIRST_LAST_WITH_REF):
-        if collected_urls and legend_items:
-            prompt = cli._append_reference_prompt_suffix(prompt, legend_items)
-        prompt = append_storyboard_visual_suffix(
-            prompt,
-            style=getattr(sb, 'style', None) if sb else None,
-            composition_preference=getattr(sb, 'composition_preference', None) if sb else None,
-        )
 
     # 时长兜底刷新：TTS 完成回写 scene.duration 是 best-effort 联动，存在「音频已生成
     # 但 duration 仍是剧本拆分阶段 LLM 估算的整数秒」的窗口。视频生成据此量化时长，
@@ -4255,6 +4273,69 @@ async def generate_scene_video(
     except Exception as e:
         logger.warning(f"generate_scene_video: scene={scene_id} 兜底刷新 duration 失败: {e}")
 
+    has_frame_first, explicit_first = read_explicit_frame_url(data, 'frame_first_url')
+    has_frame_last, explicit_last = read_explicit_frame_url(data, 'frame_last_url')
+    will_apply_mentions = (
+        image_mode == ImageMode.MULTI_REFERENCE and prompt_has_frame_mention(prompt)
+    )
+    # 缺图必须在扣费和建任务之前拒绝，不能落到文生视频。
+    mention_task_id = requested_task_type
+    generation_snapshot = None
+    if will_apply_mentions and mention_task_id in (None, ''):
+        try:
+            generation_snapshot = await asyncio.to_thread(
+                _resolve_storyboard_generation_snapshot_sync,
+                sb,
+                user_id=user_id,
+                media_type=MediaGenerationType.VIDEO,
+                mode=MediaGenerationMode.REFERENCE_TO_VIDEO,
+                explicit_task_id=None,
+                profile_values={
+                    'ratio': ratio,
+                    'image_mode': image_mode,
+                    'enable_face_mask': _coerce_enable_face_mask(data.get('enable_face_mask')),
+                },
+            )
+        except (MediaGenerationPreferenceError, TypeError, ValueError) as exc:
+            error = exc.to_dict() if isinstance(exc, MediaGenerationPreferenceError) else 'task_type 必须为整数'
+            return JSONResponse(status_code=400, content={'success': False, 'error': error})
+        mention_task_id = generation_snapshot.get('task_id')
+
+    use_kfr = False
+    if will_apply_mentions:
+        def _apply_frame_mentions():
+            frame_kwargs = {}
+            if has_frame_first:
+                frame_kwargs['frame_first_url'] = explicit_first
+            if has_frame_last:
+                frame_kwargs['frame_last_url'] = explicit_last
+            return cli.apply_collected_frame_mentions(
+                prompt=prompt,
+                urls=collected_urls,
+                items=legend_items,
+                image_mode=image_mode,
+                context=scene_characters_ctx or {},
+                task_id=mention_task_id,
+                **frame_kwargs,
+            )
+
+        try:
+            prompt, collected_urls, legend_items, use_kfr = await asyncio.to_thread(_apply_frame_mentions)
+        except StoryboardCliError as exc:
+            return JSONResponse(status_code=400, content=exc.to_dict())
+        reference_images_json = (
+            json.dumps(collected_urls, ensure_ascii=False) if collected_urls else None
+        )
+
+    if image_mode in (ImageMode.MULTI_REFERENCE, ImageMode.FIRST_LAST_WITH_REF):
+        if collected_urls and legend_items:
+            prompt = cli._append_reference_prompt_suffix(prompt, legend_items)
+        prompt = append_storyboard_visual_suffix(
+            prompt,
+            style=getattr(sb, 'style', None) if sb else None,
+            composition_preference=getattr(sb, 'composition_preference', None) if sb else None,
+        )
+
     if collected_urls:
         media_mode = (
             MediaGenerationMode.IMAGE_TO_VIDEO
@@ -4264,32 +4345,51 @@ async def generate_scene_video(
         snapshot_task_id = requested_task_type
         snapshot_image_mode = image_mode
     else:
+        if will_apply_mentions:
+            return JSONResponse(status_code=400, content={
+                'success': False,
+                'error_code': 'frame_mention_missing',
+                'error': '视频提示词点名了首尾帧，但没有可用图片',
+            })
         media_mode = MediaGenerationMode.TEXT_TO_VIDEO
         snapshot_task_id = None
         snapshot_image_mode = None
-    try:
-        generation_snapshot = await asyncio.to_thread(
-            _resolve_storyboard_generation_snapshot_sync,
-            sb,
-            user_id=user_id,
-            media_type=MediaGenerationType.VIDEO,
-            mode=media_mode,
-            explicit_task_id=(
-                int(snapshot_task_id)
-                if snapshot_task_id not in (None, '')
-                else None
-            ),
-            profile_values={
-                'ratio': ratio,
-                'image_mode': snapshot_image_mode,
-                'enable_face_mask': _coerce_enable_face_mask(data.get('enable_face_mask')),
-            },
-        )
-    except (MediaGenerationPreferenceError, TypeError, ValueError) as exc:
-        error = exc.to_dict() if isinstance(exc, MediaGenerationPreferenceError) else 'task_type 必须为整数'
-        return JSONResponse(status_code=400, content={'success': False, 'error': error})
-    task_type = int(generation_snapshot['task_id'])
-    config = UnifiedConfigRegistry.get_by_id(task_type)
+    if generation_snapshot is None:
+        try:
+            generation_snapshot = await asyncio.to_thread(
+                _resolve_storyboard_generation_snapshot_sync,
+                sb,
+                user_id=user_id,
+                media_type=MediaGenerationType.VIDEO,
+                mode=media_mode,
+                explicit_task_id=(
+                    int(snapshot_task_id)
+                    if snapshot_task_id not in (None, '')
+                    else None
+                ),
+                profile_values={
+                    'ratio': ratio,
+                    'image_mode': snapshot_image_mode,
+                    'enable_face_mask': _coerce_enable_face_mask(data.get('enable_face_mask')),
+                },
+            )
+        except (MediaGenerationPreferenceError, TypeError, ValueError) as exc:
+            error = exc.to_dict() if isinstance(exc, MediaGenerationPreferenceError) else 'task_type 必须为整数'
+            return JSONResponse(status_code=400, content={'success': False, 'error': error})
+    dropdown_task_id = int(generation_snapshot['task_id'])
+    dropdown_config = UnifiedConfigRegistry.get_by_id(dropdown_task_id)
+    task_type = dropdown_task_id
+    config = dropdown_config
+    # 只改本次提交。分镜齿轮和用户偏好仍记下拉里的参考模型。image_mode 保持 multi_reference。
+    if use_kfr and collected_urls and image_mode == ImageMode.MULTI_REFERENCE:
+        task_type = h3_keyframe_ref_task_id()
+        kfr_config = UnifiedConfigRegistry.get_by_id(task_type)
+        if kfr_config is not None:
+            config = kfr_config
+        generation_snapshot = dict(generation_snapshot)
+        generation_snapshot['task_id'] = int(task_type)
+        generation_snapshot['model_key'] = getattr(config, 'key', None)
+        generation_snapshot['model_name'] = getattr(config, 'name', None)
     supported_durations = list(getattr(config, 'supported_durations', None) or []) if config else []
 
     # 角色音色注入（参考生 + 模型 supports_voice_input）：把角色 default_voice 克隆源
@@ -4344,8 +4444,8 @@ async def generate_scene_video(
     except (TypeError, ValueError):
         audio_duration = None
     snapshot = {
-        'task_id': int(task_type) if task_type is not None else None,
-        'model_key': getattr(config, 'key', None) if config else None,
+        'task_id': int(dropdown_task_id) if dropdown_task_id is not None else None,
+        'model_key': getattr(dropdown_config, 'key', None) if dropdown_config else None,
         'duration_mode': 'auto' if str(duration_mode).lower() == 'auto' else duration_mode,
         'duration_seconds': video_duration,
         'resolution': video_resolution,
@@ -4739,6 +4839,9 @@ async def scene_ai_chat(
         except (TypeError, ValueError):
             logger.warning(f"Invalid storyboard video_task_id: {raw_video_task_id!r}")
             video_task_id = None
+    if video_task_id == h3_keyframe_ref_task_id():
+        # 隐藏混合模型不能写入分镜齿轮或用户偏好。
+        video_task_id = None
     try:
         from services.storyboard_agent_cli_service import StoryboardAgentCliService
         scene_generation_context = await asyncio.to_thread(
@@ -4798,6 +4901,9 @@ async def scene_ai_chat(
     except MediaGenerationPreferenceError as exc:
         return JSONResponse(status_code=400, content={'success': False, 'error': exc.to_dict()})
     active_generation_slot = None
+    frame_mention_legend = ""
+    video_slot_items = None
+    use_h3_keyframe_ref = False
     if generation_target == 'video':
         # 时长兜底刷新：与 generate_scene_video 一致，避免拿到 LLM 估算整数时长
         # 导致视频短于真实配音。全部完成则覆盖，否则保持原值（best-effort）。
@@ -4810,15 +4916,71 @@ async def scene_ai_chat(
 
         # 视频：首尾帧只用前端槽位；全能参考自动补角色/场景/道具/画风参考图。
         video_input_urls = list(ordered_slot_urls)
+        collected_slot_items = []
         if image_mode in (ImageMode.MULTI_REFERENCE, ImageMode.FIRST_LAST_WITH_REF):
             try:
                 from services.storyboard_agent_cli_service import StoryboardAgentCliService
-                auto_urls, _auto_items = StoryboardAgentCliService()._collect_video_reference_bundle(
+                auto_urls, auto_items = StoryboardAgentCliService()._collect_video_reference_bundle(
                     scene_generation_context, image_mode, extra_urls=ordered_slot_urls,
                 )
                 video_input_urls = list(auto_urls)
+                collected_slot_items = list(auto_items)
             except Exception as e:
                 logger.warning(f"Failed to collect storyboard video reference urls: {e}")
+        is_digital_human_scene = str(scene.video_type or '') == SceneVideoType.DIGITAL_HUMAN
+        mention_source = message if prompt_has_frame_mention(message) else (getattr(scene, 'video_prompt', None) or '')
+        if (
+            not is_digital_human_scene
+            and image_mode == ImageMode.MULTI_REFERENCE
+            and prompt_has_frame_mention(mention_source)
+        ):
+            mention_task_id = video_task_id
+            if mention_task_id in (None, ''):
+                try:
+                    preview_snapshot = await asyncio.to_thread(
+                        _resolve_storyboard_generation_snapshot_sync,
+                        sb,
+                        user_id=user_id,
+                        media_type=MediaGenerationType.VIDEO,
+                        mode=MediaGenerationMode.REFERENCE_TO_VIDEO,
+                        explicit_task_id=None,
+                        profile_values={'image_mode': image_mode},
+                    )
+                except MediaGenerationPreferenceError as exc:
+                    return JSONResponse(status_code=400, content={'success': False, 'error': exc.to_dict()})
+                mention_task_id = preview_snapshot.get('task_id')
+            has_frame_first, explicit_first = read_explicit_frame_url(data, 'frame_first_url')
+            has_frame_last, explicit_last = read_explicit_frame_url(data, 'frame_last_url')
+
+            def _apply_chat_mentions():
+                from services.storyboard_agent_cli_service import StoryboardAgentCliService
+                frame_kwargs = {}
+                if has_frame_first:
+                    frame_kwargs['frame_first_url'] = explicit_first
+                if has_frame_last:
+                    frame_kwargs['frame_last_url'] = explicit_last
+                return StoryboardAgentCliService().apply_collected_frame_mentions(
+                    prompt=mention_source,
+                    urls=video_input_urls,
+                    items=collected_slot_items,
+                    image_mode=image_mode,
+                    context=scene_generation_context or {},
+                    task_id=mention_task_id,
+                    **frame_kwargs,
+                )
+
+            try:
+                _rewritten, video_input_urls, collected_slot_items, use_h3_keyframe_ref = await asyncio.to_thread(
+                    _apply_chat_mentions,
+                )
+            except StoryboardCliError as exc:
+                return JSONResponse(status_code=400, content=exc.to_dict())
+            video_slot_items = collected_slot_items
+            frame_mention_legend = build_reference_legend([
+                {"type": item.get("type") or "参考图", "name": item.get("name") or ""}
+                for item in collected_slot_items
+                if isinstance(item, dict)
+            ])
         reference_images_for_msg = list(reference_images or ([first_frame_url_for_prompt] if first_frame_url_for_prompt else []))
         reference_image_items_for_msg = list(reference_image_items or [])
         task_image_urls = video_input_urls or None
@@ -4925,6 +5087,17 @@ async def scene_ai_chat(
             generation_snapshots[slot_key] = video_snapshot
             active_generation_slot = slot_key
             video_preferences.update(video_snapshot)
+            if use_h3_keyframe_ref:
+                # 偏好和分镜齿轮已经按下拉模型保存。这里只改本次智能体快照。
+                kfr_id = h3_keyframe_ref_task_id()
+                kfr_cfg = UnifiedConfigRegistry.get_by_id(kfr_id)
+                video_snapshot = dict(video_snapshot)
+                video_snapshot['task_id'] = int(kfr_id)
+                if kfr_cfg is not None:
+                    video_snapshot['model_key'] = kfr_cfg.key
+                    video_snapshot['model_name'] = kfr_cfg.name
+                generation_snapshots[slot_key] = video_snapshot
+                video_preferences.update(video_snapshot)
     else:
         # 图片：资产参考之后依次追加当前首帧、前后首帧和用户补充图，并保持 URL/说明严格对齐。
         reference_images_for_msg, reference_image_items_for_msg = (
@@ -4990,6 +5163,8 @@ async def scene_ai_chat(
         neighbor_contexts=neighbor_contexts,
         dialogues=scene_generation_context.get("dialogues") or [],
         characters=scene_generation_context.get("characters") or [],
+        frame_mention_legend=frame_mention_legend,
+        video_slot_items=video_slot_items if frame_mention_legend else None,
     )
     conversation_history = await asyncio.to_thread(_list_storyboard_agent_messages, scene_id, True)
     await asyncio.to_thread(

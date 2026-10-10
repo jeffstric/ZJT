@@ -620,6 +620,11 @@ class StoryboardAgentCommandService:
             )
 
         if command == "generate-video":
+            frame_kwargs = {}
+            if "frame_first_url" in data:
+                frame_kwargs["frame_first_url"] = data.get("frame_first_url")
+            if "frame_last_url" in data:
+                frame_kwargs["frame_last_url"] = data.get("frame_last_url")
             return self.service.generate_video(
                 scene_id=_to_required_int(data.get("scene_id"), "scene_id"),
                 user_id=_to_required_int(data.get("user_id"), "user_id"),
@@ -637,6 +642,7 @@ class StoryboardAgentCommandService:
                 task_type=_to_int(data.get("task_type"), "task_type"),
                 resolution=data.get("resolution"),
                 enable_face_mask=_to_bool(data.get("enable_face_mask")),
+                **frame_kwargs,
             )
 
         if command == "task-status":

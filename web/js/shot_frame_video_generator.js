@@ -157,6 +157,38 @@ function shotFrameMultiRefLimit(videoModel) {
   return maxRefImages;
 }
 
+// 混合模型固定 3 个图片槽。不能用下拉里 H3 参考模型的 9 张上限，否则提示词序号会对不上。
+const H3_KEYFRAME_REF_MAX_IMAGES = 3;
+const H3_KEYFRAME_REF_SHORT_KEY = 'minimax_h3_kfr';
+
+function promptHasShotFrameMention(prompt) {
+  const text = prompt == null ? '' : String(prompt);
+  return /@首帧图(?![\u4e00-\u9fff])/.test(text) || /@尾帧图(?![\u4e00-\u9fff])/.test(text);
+}
+
+function isH3ReferenceVideoModel(videoModel) {
+  const key = String(videoModel || '');
+  return key === 'minimax_h3_r2v' || key === 'minimax_h3_reference_to_video';
+}
+
+// 只有参考模式、当前是 H3 参考模型、并且提示词点名了首帧或尾帧，才改提交混合模型。
+// 首帧模式、其他参考模型、以及没有 @ 标记的 H3 参考提交都不改。
+function shouldUseH3KeyframeRefModel(videoMode, videoModel, prompt) {
+  return videoMode === 'multi_reference'
+    && isH3ReferenceVideoModel(videoModel)
+    && promptHasShotFrameMention(prompt);
+}
+
+function resolveShotFrameReferenceSubmitModel(videoMode, videoModel, prompt) {
+  if (shouldUseH3KeyframeRefModel(videoMode, videoModel, prompt)) return H3_KEYFRAME_REF_SHORT_KEY;
+  return videoModel;
+}
+
+function shotFrameMentionImageLimit(videoMode, videoModel, prompt) {
+  if (shouldUseH3KeyframeRefModel(videoMode, videoModel, prompt)) return H3_KEYFRAME_REF_MAX_IMAGES;
+  return shotFrameMultiRefLimit(videoModel);
+}
+
 // 分镜节点生成视频功能
 async function generateShotFrameVideo(nodeId, node){
   const mode = node.data.videoMode || 'first_last_frame';
@@ -262,6 +294,8 @@ async function generateShotFrameVideo(nodeId, node){
       showToast('正在收集参考图...', 'info');
       let { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node);
 
+      // 必须在改写前提取 @ 标记。改写后标记会变成「图N」，不能再用来判断要不要换模型。
+      const useH3KeyframeRef = shouldUseH3KeyframeRefModel(mode, videoModel, videoPrompt);
       // @首帧图 / @尾帧图 排到参考图两端。存储的提示词不动，只改这次提交的文本。
       const placedMentions = placeShotFrameMentionImages(
         videoPrompt,
@@ -269,7 +303,7 @@ async function generateShotFrameVideo(nodeId, node){
         promptSuffix,
         node.data.previewImageUrl,
         resolveMentionLastFrameUrl(node),
-        shotFrameMultiRefLimit(videoModel)
+        shotFrameMentionImageLimit(mode, videoModel, videoPrompt)
       );
       if(placedMentions.error) {
         const errorMsg = shotFrameMentionErrorMessage(placedMentions.error);
@@ -299,9 +333,14 @@ async function generateShotFrameVideo(nodeId, node){
       }
 
       if(referenceImageUrls.length > 0) {
-        // 有参考图 → image_to_video + multi_reference
-        const taskId = TaskConfig.getTaskIdByKey(videoModel, 'image_to_video');
+        // 有参考图 → image_to_video + multi_reference。
+        // H3 参考模型点名了首尾帧时，task_id 换成隐藏的混合模型，画面模式仍是参考模式。
+        const submitModel = useH3KeyframeRef ? H3_KEYFRAME_REF_SHORT_KEY : videoModel;
+        const taskId = TaskConfig.getTaskIdByKey(submitModel, 'image_to_video');
         if(!taskId) {
+          if(useH3KeyframeRef) {
+            throw new Error('未找到 MiniMax H3 首帧参考混合模型 minimax_h3_kfr 的任务配置');
+          }
           throw new Error(`未找到视频模型 ${videoModel} 对应的图生视频任务配置`);
         }
         form.append('task_id', taskId);
@@ -314,8 +353,7 @@ async function generateShotFrameVideo(nodeId, node){
           form.append('face_mask_reference_urls', characterRefUrls.join(','));
         }
 
-        // 参考生 + 模型支持音色输入时，自动带入分镜角色的默认音色；
-        // grok 等不支持模型 collectVoiceReferences 返回空，不注入
+        // 音色仍按用户选中的参考模型判断。混合模型不在下拉里，不能拿它查 supports_voice_input。
         if(typeof collectVoiceReferences === 'function'){
           const voiceRefs = collectVoiceReferences(videoModel, voiceCharacters || [], '');
           if(voiceRefs.enabled){
@@ -325,7 +363,11 @@ async function generateShotFrameVideo(nodeId, node){
           }
         }
 
-        showToast(`使用 ${referenceImageUrls.length} 张参考图生成视频...`, 'info');
+        if(useH3KeyframeRef) {
+          showToast(`本次使用 MiniMax H3 首帧参考混合模型，共 ${referenceImageUrls.length} 张参考图`, 'info');
+        } else {
+          showToast(`使用 ${referenceImageUrls.length} 张参考图生成视频...`, 'info');
+        }
         res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
       } else {
         // 无参考图 → 回退 text_to_video
@@ -557,7 +599,17 @@ async function generateShotFrameVideo(nodeId, node){
   }
 }
 
-if (typeof window !== 'undefined') window.placeShotFrameMentionImages = placeShotFrameMentionImages;
+if (typeof window !== 'undefined') {
+  window.placeShotFrameMentionImages = placeShotFrameMentionImages;
+  window.shouldUseH3KeyframeRefModel = shouldUseH3KeyframeRefModel;
+  window.promptHasShotFrameMention = promptHasShotFrameMention;
+}
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { placeShotFrameMentionImages };
+  module.exports = {
+    placeShotFrameMentionImages,
+    shouldUseH3KeyframeRefModel,
+    promptHasShotFrameMention,
+    resolveShotFrameReferenceSubmitModel,
+    shotFrameMentionImageLimit
+  };
 }

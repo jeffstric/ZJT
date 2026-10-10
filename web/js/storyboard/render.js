@@ -5,6 +5,7 @@ import state, {
     videoModelSupportsLastFrame,
     getMaxVideoMediaCount,
     canAddVideoMedia,
+    currentVideoFrameUrls,
     isRenderableMediaUrl,
     getSelectedVideoModel,
     getSelectedImageToVideoModel,
@@ -1332,11 +1333,11 @@ function renderLeftSidebar(scene) {
  * - 全能参考：图1 / 图2 / …（对齐 marketing_agent 的编号展示）
  */
 function videoRoleLabel(role, mode, index = 0) {
+    if (role === 'first_frame') return i18nT('label_first_frame', '首帧');
+    if (role === 'last_frame') return i18nT('label_last_frame', '尾帧');
     if (mode === 'multi_reference') {
         return `${i18nT('label_image_short', '图')}${index + 1}`;
     }
-    if (role === 'first_frame') return i18nT('label_first_frame', '首帧');
-    if (role === 'last_frame') return i18nT('label_last_frame', '尾帧');
     return `${i18nT('label_image_short', '图')}${index + 1}`;
 }
 
@@ -1361,7 +1362,7 @@ function renderVideoModeSelector(disabled) {
         {
             value: 'multi_reference',
             title: i18nT('option_multi_reference', '全能参考'),
-            desc: i18nT('hint_multi_reference_mode', '可不生成分镜图，直接用角色/场景/道具参考图生视频；若已有分镜图则一并作为主参考'),
+            desc: i18nT('hint_multi_reference_mode', '可不生成分镜图，直接用角色/场景/道具参考图生视频；若已有分镜图则一并作为主参考。提示词中 @首帧图 或 @尾帧图 会把已设置的首尾帧放在参考图两端'),
             emoji: '🖼',
             beta: true,
         },
@@ -1419,7 +1420,7 @@ function renderMediaStack(disabled) {
         ? (videoModelSupportsLastFrame() ? i18nT('btn_upload_first_last', '上传首帧/尾帧') : i18nT('btn_upload_first_frame', '上传首帧'))
         // 空态只保留 + 按钮（与首尾帧模式同宽，避免挤窄提示词输入框），
         // 参考图的自动收集说明收纳到悬浮提示里
-        : i18nT('hint_upload_reference_with_assets', '上传参考图；不上传时将使用分镜角色/场景/道具参考图');
+        : i18nT('hint_upload_reference_with_assets', '上传参考图；不上传时将使用分镜角色/场景/道具参考图。依次填入首帧、尾帧，之后为参考图');
     const canRestore = scene
         && isRenderableMediaUrl(scene.firstFrameUrl)
         && !items.some(item => item.role === 'first_frame');
@@ -2587,6 +2588,20 @@ function renderGenerateFromScriptDialog() {
         </div>`;
 }
 
+function renderFrameMentionButtons() {
+    const videoChat = state.chatMode === 'video' || state.chatMode === 'aivideo';
+    if (!videoChat || state.videoImageMode !== 'multi_reference') return '';
+    const frames = currentVideoFrameUrls();
+    const buttons = [];
+    if (frames.frame_first_url) {
+        buttons.push(`<button type="button" data-mention-item="首帧图"><span>${escapeHtml(i18nT('label_mention_first_frame', '首帧图'))}</span></button>`);
+    }
+    if (frames.frame_last_url) {
+        buttons.push(`<button type="button" data-mention-item="尾帧图"><span>${escapeHtml(i18nT('label_mention_last_frame', '尾帧图'))}</span></button>`);
+    }
+    return buttons.join('');
+}
+
 function renderMentionPopup() {
     if (!state.showMentionPopup) return '';
     const groups = {
@@ -2595,6 +2610,7 @@ function renderMentionPopup() {
         prop: state.props,
     };
     const items = groups[state.mentionTab] || [];
+    const frameButtons = renderFrameMentionButtons();
     return `
         <div class="mention-popup">
             <div class="mention-tabs">
@@ -2603,7 +2619,8 @@ function renderMentionPopup() {
                 <button data-mention-tab="prop" class="${state.mentionTab === 'prop' ? 'active' : ''}">${i18nT('label_prop', '道具')}</button>
             </div>
             <div class="mention-list">
-                ${items.map(item => `<button data-mention-item="${escapeHtml(item.name)}">${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`}
+                ${frameButtons}
+                ${items.map(item => `<button data-mention-item="${escapeHtml(item.name)}">${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`).join('') || (frameButtons ? '' : `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`)}
             </div>
         </div>`;
 }

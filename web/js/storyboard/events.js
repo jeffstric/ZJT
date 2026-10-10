@@ -20,6 +20,7 @@ import state, {
     ensureVideoGenerationPrefsSupported,
     clampMaxGroupDurationToSplitModel,
     buildVideoSlotUrls,
+    currentVideoFrameUrls,
     buildVideoGenerationPayloadExtras,
     canAddVideoMedia,
     createVideoMediaItem,
@@ -36,6 +37,7 @@ import state, {
     appendSceneAgentMessage,
     activateSceneAgentMessages,
     getSelectedVideoTaskId,
+    getSelectedVideoModel,
     getSelectedImageTaskId,
     composeSceneImagePrompt,
     onPowerEstimateUpdated,
@@ -47,6 +49,12 @@ import state, {
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
 import { showToast, t } from './utils.js';
+import {
+    findFrameMentionError,
+    frameMentionErrorMessage,
+    promptHasFrameMention,
+    shouldUseH3KeyframeRef,
+} from './frame_mention.js';
 import { downloadAsAttachment } from './download.js';
 import { loadSceneCandidates } from './scene_candidates.js';
 import {
@@ -822,6 +830,7 @@ function resolveNextVideoUploadRole() {
     const items = state.videoMediaItems || [];
     if (state.videoImageMode === 'multi_reference') {
         if (!items.some(item => item.role === 'first_frame')) return 'first_frame';
+        if (!items.some(item => item.role === 'last_frame')) return 'last_frame';
         return 'reference';
     }
     if (!items.some(item => item.role === 'first_frame')) return 'first_frame';
@@ -864,6 +873,7 @@ async function handleReferenceFileChange(input) {
         }
         if (role === 'last_frame') {
             state.videoMediaItems = (state.videoMediaItems || []).filter(m => m.role !== 'last_frame');
+            state.videoLastFrameDismissedSceneId = null;
         }
         state.videoMediaItems = [...(state.videoMediaItems || []), item];
         state.videoMediaItems.sort((a, b) => {
@@ -894,6 +904,33 @@ async function handleReferenceFileChange(input) {
     }
     // 重置以允许重复选择同一文件
     input.value = '';
+}
+
+function activeFrameMentionPrompt(userText, scene) {
+    if (promptHasFrameMention(userText)) return userText;
+    return scene?.videoPrompt || '';
+}
+
+/** 参考模式点名首尾帧但缺图时，在创建任务之前拦住。返回 false 表示已提示。 */
+function guardFrameMentions(promptText) {
+    if (state.videoImageMode !== 'multi_reference') return true;
+    const frames = currentVideoFrameUrls();
+    const model = getSelectedVideoModel();
+    const code = findFrameMentionError({
+        imageMode: state.videoImageMode,
+        prompt: promptText,
+        firstUrl: frames.frame_first_url,
+        lastUrl: frames.frame_last_url,
+        model,
+    });
+    if (code) {
+        notify(frameMentionErrorMessage(code, t));
+        return false;
+    }
+    if (shouldUseH3KeyframeRef(state.videoImageMode, model, promptText)) {
+        showToast(t('msg_h3_keyframe_ref_route', '本次使用 MiniMax H3 首帧参考混合模型'), 'info');
+    }
+    return true;
 }
 
 async function sendStoryboardAgentMessage(current) {
@@ -945,6 +982,7 @@ async function sendStoryboardAgentMessage(current) {
         }
     }
 
+    if (!guardFrameMentions(activeFrameMentionPrompt(message, current))) return;
     startSceneAgentRun(streamSceneId);
     pushAgentMessageForScene(streamSceneId, 'user', message);
     state.inputMessage = '';
@@ -973,6 +1011,7 @@ async function sendStoryboardAgentMessage(current) {
             enable_thinking: thinking.enable_thinking,
             thinking_effort: thinking.thinking_effort,
             ...(isVideo ? { image_mode: state.videoImageMode || 'first_last_frame', ...videoExtras } : {}),
+            ...(isVideo && state.videoImageMode === 'multi_reference' ? currentVideoFrameUrls() : {}),
             ...(referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
         });
         const streamTaskId = response.task_id;
@@ -1108,6 +1147,8 @@ async function sendDirectVideo(current) {
         }
     }
 
+    if (!isDh && !guardFrameMentions(prompt)) return;
+
     // 占用 running 态（禁用发送按钮防重复提交）；toast 就近确认 + 候选区乐观占位卡即时反馈
     startSceneAgentRun(sceneId);
     const optimisticId = insertOptimisticGeneratingCandidate(sceneId, 'videos');
@@ -1142,6 +1183,7 @@ async function sendDirectVideo(current) {
             config.enable_face_mask = getEffectiveEnableFaceMask();
             const extraUrls = buildVideoSlotUrls();
             if (extraUrls.length) config.reference_image_urls = extraUrls;
+            if (imageMode === 'multi_reference') Object.assign(config, currentVideoFrameUrls());
         }
         const result = await api.generateSceneVideo(sceneId, config);
         if (result && result.success === false) {
@@ -2321,6 +2363,10 @@ async function handleAction(action, target) {
                 const scene = getCurrentScene();
                 state.videoFirstFrameDismissedSceneId = scene?.id ?? null;
             }
+            if (removed?.role === 'last_frame') {
+                const scene = getCurrentScene();
+                state.videoLastFrameDismissedSceneId = scene?.id ?? null;
+            }
             syncReferenceImagesCompat();
             rerenderAgentPanel();
         }
@@ -3032,6 +3078,7 @@ export function bindEvents() {
             } else {
                 state.videoMediaItems = [];
                 state.videoFirstFrameDismissedSceneId = null;
+                state.videoLastFrameDismissedSceneId = null;
             }
             // 直连「视频生成」模式：切分镜后文本框同步为新分镜的视频提示词
             if (state.chatMode === 'video') {
@@ -3297,6 +3344,7 @@ export function bindEvents() {
         } else {
             state.videoMediaItems = [];
             state.videoFirstFrameDismissedSceneId = null;
+            state.videoLastFrameDismissedSceneId = null;
         }
         // 直连「视频生成」模式：切分镜后文本框同步为新分镜的视频提示词（对口型分镜无文本框，置空）
         if (state.chatMode === 'video') {
@@ -3347,6 +3395,7 @@ export function bindEvents() {
             } else {
                 state.videoMediaItems = [];
                 state.videoFirstFrameDismissedSceneId = null;
+                state.videoLastFrameDismissedSceneId = null;
                 state.referenceImages = [];
             }
             // 直连「视频生成」模式：文本框预填当前分镜视频提示词（对口型分镜无文本框，置空）；
@@ -3767,8 +3816,17 @@ async function persistPromptValue(scene, type, value) {
             scene._fullPrompt = payload;
             if (scene.raw) scene.raw.prompt_json = payload;
         } else if (type === 'video') {
+            const previous = scene.videoPrompt || '';
             scene.videoPrompt = value;
             await api.updateScene(scene.id, sceneToUpdatePayload(scene));
+            // 底部发送框仍是旧视频提示词时跟着更新，否则左侧写的 @首帧图 到不了本次提交。
+            if (
+                (state.chatMode === 'video' || state.chatMode === 'aivideo')
+                && (state.inputMessage == null || state.inputMessage === '' || state.inputMessage === previous)
+            ) {
+                state.inputMessage = value;
+                rerenderAgentPanel();
+            }
         }
     } catch (e) {
         console.error(e);
@@ -3899,6 +3957,17 @@ const escapeHtml = (typeof window !== 'undefined' && typeof window.escapeHtml ==
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 
+function insertLiteralMention(textarea, token) {
+    const start = textarea.selectionStart || 0;
+    const end = textarea.selectionEnd || 0;
+    const value = textarea.value;
+    const insert = '@' + token + ' ';
+    textarea.value = value.substring(0, start) + insert + value.substring(end);
+    const pos = start + insert.length;
+    textarea.setSelectionRange(pos, pos);
+    textarea.focus();
+}
+
 function insertAssetTag(textarea, name, kind) {
     const start = textarea.selectionStart || 0;
     const end = textarea.selectionEnd || 0;
@@ -3952,7 +4021,37 @@ function showMentionDropdownForPrompt(textarea, container, promptType, scene) {
         listDiv.style.cssText = 'overflow:auto; max-height:180px; padding:4px;';
 
         const items = currentTab === 'character' ? (state.characters || []) : (state.props || []);
-        if (!items.length) {
+        if (promptType === 'video' && state.videoImageMode === 'multi_reference') {
+            const frames = currentVideoFrameUrls();
+            const frameRows = [];
+            if (frames.frame_first_url) frameRows.push({ token: '首帧图', url: frames.frame_first_url, label: t('label_mention_first_frame', '首帧图') });
+            if (frames.frame_last_url) frameRows.push({ token: '尾帧图', url: frames.frame_last_url, label: t('label_mention_last_frame', '尾帧图') });
+            frameRows.forEach((frame) => {
+                const row = document.createElement('div');
+                row.className = 'asset-dropdown-item';
+                const img = document.createElement('img');
+                img.src = getThumbnailUrl(frame.url, 20);
+                img.alt = '';
+                img.style.cssText = 'width:20px;height:20px;border-radius:3px;margin-right:6px;object-fit:cover;';
+                const span = document.createElement('span');
+                span.textContent = frame.label;
+                row.appendChild(img);
+                row.appendChild(span);
+                row.onmousedown = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    insertLiteralMention(textarea, frame.token);
+                    dropdown.remove();
+                    persistPromptValue(scene, promptType, textarea.value).catch(console.error);
+                    textarea._skipPromptBlurRerender = true;
+                    setTimeout(() => {
+                        if (textarea) textarea._skipPromptBlurRerender = false;
+                    }, 120);
+                };
+                listDiv.appendChild(row);
+            });
+        }
+        if (!items.length && !listDiv.childElementCount) {
             const emptyKind = currentTab === 'character' ? t('label_character', '角色') : t('label_prop', '道具');
             listDiv.innerHTML = `<div style="padding:8px; color:var(--muted);">${t('msg_no_items_yet', '暂无{kind}').replace('{kind}', emptyKind)}</div>`;
         } else {
