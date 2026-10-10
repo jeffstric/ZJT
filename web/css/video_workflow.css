@@ -3311,6 +3311,26 @@ html.theme-dark .camera-slider:hover {
   text-overflow: ellipsis;
 }
 
+/* 参考图悬停大图预览浮层（挂在 body 上，pointer-events 防止闪烁） */
+.shot-hover-preview {
+  position: fixed;
+  z-index: 10001;
+  width: 220px;
+  height: 220px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+}
+.shot-hover-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
 /* 内联选中标记 */
 .shot-inline-char-check {
   position: absolute;
