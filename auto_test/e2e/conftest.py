@@ -493,10 +493,16 @@ def browser_context(browser, live_auth, base_url, request, e2e_config):
     primary_phone = (
         e2e_config.get("credentials", {}).get("primary", {}) or {}
     ).get("phone", "")
+    # canvasWheelModeAcked：f9c953fa 起「首次进入画布」会自动弹出滚轮模式
+    # 确认弹窗（全屏遮罩 z-index 999，web/js/canvas_shortcuts.js:153）。
+    # e2e 每次都是全新 context（localStorage 为空）= 恒处首次态，弹窗会盖住
+    # 添加菜单，使所有经菜单建节点的用例首击只关弹窗、节点创建失败。
+    # 预置 ack 键等价于"用户已确认过滚轮操作"，不再自动弹窗。
     context.add_init_script(f"""
         localStorage.setItem('auth_token', '{live_auth.token}');
         localStorage.setItem('user_id', '{live_auth.user_id}');
         localStorage.setItem('phone', '{primary_phone}');
+        localStorage.setItem('canvasWheelModeAcked', '1');
     """)
     yield context
     if results_dir:
@@ -562,10 +568,14 @@ def editor_page(browser, live_auth, base_url):
         viewport={"width": 1280, "height": 720},
         locale="zh-CN",
     )
-    # 在页面脚本运行前注入认证信息
+    # 在页面脚本运行前注入认证信息。
+    # canvasWheelModeAcked：同 browser_context 的说明——预置 ack 避免「首次
+    # 进入画布」的滚轮模式确认弹窗（全屏遮罩）盖住添加菜单，导致经菜单建
+    # 节点的用例首击只关弹窗、节点创建失败（web/js/canvas_shortcuts.js:153）。
     context.add_init_script(f"""
         localStorage.setItem('auth_token', '{live_auth.token}');
         localStorage.setItem('user_id', '{live_auth.user_id}');
+        localStorage.setItem('canvasWheelModeAcked', '1');
     """)
     page = context.new_page()
 
