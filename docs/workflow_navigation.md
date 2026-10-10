@@ -36,13 +36,13 @@
   2. **制作工坊**（可点击跳转，带箭头指示）
 
 #### 跳转到工作流画布
-- 点击"制作工坊"步骤触发（`goToWorkflowCanvas()`）
-- 流程：
-  1. 提交当前剧本数据（`submitToDatabase()`）
-  2. 检查资产完成状态（角色至少一个有图、场景至少一个有图、道具图片）（`checkAssetsComplete()`）
-  3. 如有未完成资产，弹出确认提示（`showAssetConfirmModal()`）
-  4. 跳转到 `/video-workflow?id={workflowId}&from_world_id={worldId}&auto_load_script=true`
-  5. 如果没有关联工作流，提示并跳转到工作流列表页
+- 点击"制作工坊"步骤先弹出模式选择（`showModeSelection()`）。选画布后走 `goToWorkflowCanvas()`，选故事板后走 `goToStoryboard()`
+- 跳转**不会**调用 `submitToDatabase()`。入库只来自右上角「提交」按钮或「自动」开关
+- 画布流程：
+  1. 检查资产完成状态（角色至少一个有图、场景至少一个有图、道具图片）（`checkAssetsComplete()`）
+  2. 如有未完成资产，弹出确认提示（`showAssetConfirmModal()`）
+  3. 跳转到 `/video-workflow?id={workflowId}&from_world_id={worldId}&auto_load_script=true`
+  4. 如果没有关联工作流，提示并跳转到工作流列表页
 
 ### 3. 工作流画布 (`video_workflow.html`)
 
@@ -143,8 +143,10 @@
 ### script_writer.html
 - `checkAssetsComplete()`：检查资产完成状态（调用 `/api/check-assets-complete`）
 - `showAssetConfirmModal(hasScript, missingAssets)`：显示资产检查确认弹窗
-- `goToWorkflowCanvas()`：跳转到工作流画布
-- `submitToDatabase()`：提交当前数据到数据库
+- `showModeSelection()`：弹出制作工坊模式选择，不提交暂存
+- `goToWorkflowCanvas()`：跳转到工作流画布，不提交暂存
+- `goToStoryboard()`：跳转到故事板，不提交暂存
+- `submitToDatabase()`：仅由「提交」按钮和「自动」开关调用，把暂存写入数据库
 
 ### video_workflow.html
 - `goToScriptWriter()`：跳转到剧本创作系统（保存工作流后跳转）
