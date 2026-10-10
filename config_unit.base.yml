@@ -34,7 +34,8 @@ server:
 
 # Default timeout settings
 timeout:
-  request_timeout: 10000
+  # 秒。旧值 10000 表示毫秒，运行时会换算成 10 秒。
+  request_timeout: 10
   sync_request_timeout: 300
   status_check_timeout: 900
   status_check_interval: 10

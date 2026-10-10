@@ -244,12 +244,12 @@ class AuthService:
             require_approval = get_dynamic_config_value('user_registration', 'require_admin_approval', default=False)
             initial_status = UserStatus.PENDING if require_approval else UserStatus.NORMAL
 
-            # 创建用户（phone为None，email有值）
+            # 创建用户（phone为None，email有值）；昵称自动分配随机趣味默认名
             from model.database import execute_insert
             user_id = execute_insert(
-                """INSERT INTO users (phone, email, password_hash, status, role, secret_key, invite_code, inviter_id)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                (None, email, password_hash, initial_status, user_role, secret_key, user_invite_code, inviter_id)
+                """INSERT INTO users (phone, email, nickname, password_hash, status, role, secret_key, invite_code, inviter_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (None, email, UsersModel.generate_unique_nickname(), password_hash, initial_status, user_role, secret_key, user_invite_code, inviter_id)
             )
             
             # 删除验证码
@@ -343,9 +343,9 @@ class AuthService:
         # 创建用户
         from model.database import execute_insert
         user_id = execute_insert(
-            """INSERT INTO users (phone, password_hash, status, role, secret_key, invite_code, inviter_id)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-            (phone, password_hash, initial_status, user_role, secret_key, user_invite_code, inviter_id)
+            """INSERT INTO users (phone, nickname, password_hash, status, role, secret_key, invite_code, inviter_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+            (phone, UsersModel.generate_unique_nickname(), password_hash, initial_status, user_role, secret_key, user_invite_code, inviter_id)
         )
         
         # 删除验证码

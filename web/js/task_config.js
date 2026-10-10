@@ -146,10 +146,11 @@
    * @param {string} category 分类名称
    * @returns {Array} 任务配置列表
    */
-  function getTasksByCategory(category) {
+  function getTasksByCategory(category, options) {
+    const includeHidden = !!(options && options.includeHidden);
     const tasks = getAllTasks();
     return tasks.filter(t =>
-      !t.hidden &&
+      (includeHidden || !t.hidden) &&
       (t.category === category ||
        (t.categories && t.categories.includes(category)))
     );
@@ -422,8 +423,8 @@
    * @param {string} category 分类名称
    * @returns {Array<number>} 任务类型ID列表
    */
-  function getTaskTypeIdsByCategory(category) {
-    const tasks = getTasksByCategory(category);
+  function getTaskTypeIdsByCategory(category, options) {
+    const tasks = getTasksByCategory(category, options);
     return tasks.map(t => t.id);
   }
 
@@ -439,14 +440,16 @@
       task_type_name_map[task.id] = task.name;
     });
 
+    // 历史记录要包含隐藏任务。下拉框仍走 getTasksByCategory / getModelOptionsForCategory，继续排除 hidden。
+    const historyOptions = { includeHidden: true };
     return {
-      image_edit_types: getTaskTypeIdsByCategory('image_edit'),
-      image_to_video_types: getTaskTypeIdsByCategory('image_to_video'),
-      text_to_video_types: getTaskTypeIdsByCategory('text_to_video'),
-      text_to_image_types: getTaskTypeIdsByCategory('text_to_image'),
-      visual_enhance_types: getTaskTypeIdsByCategory('visual_enhance'),
-      audio_types: getTaskTypeIdsByCategory('audio'),
-      digital_human_types: getTaskTypeIdsByCategory('digital_human'),
+      image_edit_types: getTaskTypeIdsByCategory('image_edit', historyOptions),
+      image_to_video_types: getTaskTypeIdsByCategory('image_to_video', historyOptions),
+      text_to_video_types: getTaskTypeIdsByCategory('text_to_video', historyOptions),
+      text_to_image_types: getTaskTypeIdsByCategory('text_to_image', historyOptions),
+      visual_enhance_types: getTaskTypeIdsByCategory('visual_enhance', historyOptions),
+      audio_types: getTaskTypeIdsByCategory('audio', historyOptions),
+      digital_human_types: getTaskTypeIdsByCategory('digital_human', historyOptions),
       task_type_name_map: task_type_name_map  // 添加任务类型名称映射
     };
   }

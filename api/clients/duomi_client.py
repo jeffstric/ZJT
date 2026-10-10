@@ -4,12 +4,20 @@
 """
 import requests
 from config.config_util import get_dynamic_config_value
+from config.constant import coerce_http_timeout_seconds
 import uuid
 import time
 import json
 from utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def _http_timeout():
+    """单次 HTTP 超时（秒）。request_timeout 历史值 10000 按毫秒换算。"""
+    return coerce_http_timeout_seconds(
+        get_dynamic_config_value("timeout", "request_timeout", default=30)
+    )
 
 
 def _get_token():
@@ -81,7 +89,7 @@ def create_image_to_video(prompt, ratio="9:16", img_url=None, duration=15):
     logger.info(f"[Duomi Sora API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=_http_timeout())
         response.raise_for_status()
         result = response.json()
         logger.info(f"[Duomi Sora API] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
@@ -137,7 +145,7 @@ def create_image_to_video_veo(prompt, ratio="9:16", img_url=None, duration=8):
     logger.info(f"[Duomi Veo API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=_http_timeout())
         response.raise_for_status()
         result = response.json()
         logger.info(f"[Duomi Veo API] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
@@ -197,7 +205,7 @@ def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16
     logger.info(f"[Duomi NanoBanana API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=_http_timeout())
         response.raise_for_status()
         result = response.json()
         
@@ -264,7 +272,7 @@ def create_text_to_image(model="gemini-3-pro-image-preview", prompt="", aspect_r
     logger.info(f"[Duomi NanoBanana API] Request URL: {url} Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=_http_timeout())
         response.raise_for_status()
         result = response.json()
         
@@ -332,7 +340,7 @@ def get_ai_task_result(project_id, is_video):
         "Authorization": _get_token()
     }
     
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=_http_timeout())
     raw_result = response.json()
     logger.info(f"get_ai_task_result response: {raw_result}")
     # Normalize the response format
@@ -492,7 +500,7 @@ def create_kling_image_to_video(
     logger.info(f"[Duomi Kling API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=_http_timeout())
         response.raise_for_status()
         result = response.json()
         
@@ -555,7 +563,7 @@ def get_kling_task_status(task_id: str):
     logger.info(f"[Duomi Kling API] Task ID: {task_id}")
     
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=_http_timeout())
         response.raise_for_status()
         result = response.json()
         

@@ -107,6 +107,33 @@ def get_papay_util(plan_template_id: Optional[str] = None) -> WxPapayUtil:
     )
 
 
+def _yuan_to_fen(amount) -> int:
+    """元转分，四舍五入。int(29.9 * 100) 会截成 2989，和微信模板金额对不上。"""
+    return int(round(float(amount) * 100))
+
+
+def _is_starter_intro_charge(order, plan: Dict) -> bool:
+    """入门版首月优惠单：实付等于 first_period_price。这一期渠道不分佣。"""
+    intro = plan.get("first_period_price")
+    if intro is None or int(getattr(order, "period_index", 1) or 1) != 1:
+        return False
+    return _yuan_to_fen(order.amount) == _yuan_to_fen(intro)
+
+
+def _first_period_charge_yuan(plan: Dict, user_id: int) -> float:
+    """首期实付（元）。
+
+    套餐带 first_period_price 且用户没有历史成功签约时用优惠价；
+    已成功签约过（含其他档位、含已解约）或套餐没有优惠价时用续费价 price。
+    """
+    intro = plan.get("first_period_price")
+    if intro is None:
+        return float(plan["price"])
+    if WxPapayContractsModel.exists_signed_contract(user_id):
+        return float(plan["price"])
+    return float(intro)
+
+
 class SubscriptionServiceError(Exception):
     """订阅业务异常（message 面向用户可读）"""
 
@@ -188,7 +215,7 @@ async def create_sign_pay_order(
     if is_wechat_browser and not openid:
         raise SubscriptionServiceError("微信内订阅需要用户openid，请先进行微信授权")
 
-    # 每档套餐一个微信协议模板（固定金额），优先取套餐配置，缺省用全局兜底
+    # 每档套餐一个微信协议模板。入门版 224144 同时接受首期优惠价和后续标准价。
     template_id = plan.get("template_id")
     if not template_id:
         raise SubscriptionServiceError(
@@ -200,7 +227,8 @@ async def create_sign_pay_order(
 
     order_id = WxPapayUtil.generate_subscription_order_id()
     contract_code = WxPapayUtil.generate_contract_code()
-    total_fee = int(plan["price"] * 100)
+    charge_yuan = _first_period_charge_yuan(plan, user_id)
+    total_fee = _yuan_to_fen(charge_yuan)
     body = f"{SubscriptionConstants.BODY_PREFIX}-{plan['name']}"
 
     trade_type = "JSAPI" if is_wechat_browser else "NATIVE"
@@ -250,7 +278,7 @@ async def create_sign_pay_order(
         user_id=user_id,
         subscription_plan_id=plan["plan_id"],
         period_index=1,
-        amount=plan["price"],
+        amount=charge_yuan,
         computing_power=plan["computing_power"],
         period_start=None,
         period_end=None,
@@ -262,7 +290,8 @@ async def create_sign_pay_order(
         "order_id": order_id,
         "contract_code": contract_code,
         "payment_type": trade_type,
-        "price": plan["price"],
+        "price": charge_yuan,
+        "renewal_price": plan["price"],
         "computing_power": plan["computing_power"],
         "upgrade": bool(upgrade_from_contract_code),
     }
@@ -617,14 +646,17 @@ async def process_renewals() -> None:
       4. 重试窗口耗尽：关闭订单（订阅自然过期）
       5. 签约中超时清理、签约结果对账自愈
       6. 微信侧解约未确认重试、多签约残留去重（只保留一个订阅）
-    """
-    # 微信约束：预扣费通知与申请扣款仅北京时间 7:00~22:00
-    if not _in_deduct_window():
-        logger.debug("Outside wechat deduct window (7:00-22:00), skip renewal tick")
-        return
 
-    await _create_renewal_orders()
-    await _apply_due_deductions()
+    仅「预扣费通知 / 申请扣款」受微信约束限北京时间 7:00~22:00（见
+    _create_renewal_orders / _apply_due_deductions 的 in_window 分流）；
+    查单、签约对账、超时清理、解约重试与算力补发均为只读查询或本地/内部操作，
+    7×24 执行——否则 22 点后支付的用户其首订加赠会因签约 ADD 回调延迟而
+    挂起整夜，无法及时对账补发。
+    """
+    in_window = _in_deduct_window()
+
+    await _create_renewal_orders(in_window)
+    await _apply_due_deductions(in_window)
     await _confirm_stale_orders()
     await _reconcile_pending_signs()
     await _cleanup_stale_pending_signs()
@@ -633,8 +665,12 @@ async def process_renewals() -> None:
     await process_settlement_retry()
 
 
-async def _create_renewal_orders() -> None:
-    """到期前 N 天创建续期订单；pre_notify 模式同时下发预扣费通知"""
+async def _create_renewal_orders(in_window: bool = True) -> None:
+    """到期前 N 天创建续期订单；pre_notify 模式同时下发预扣费通知。
+
+    建单为本地落库不受微信窗口限制；预扣费通知（给用户推消息）仅窗口内发送，
+    窗口外跳过、由下个窗口内 tick 凭 prenotify_sent_at 幂等补发。
+    """
     pre_notify_mode = SubscriptionConstants.DEDUCT_MODE == "pre_notify"
     due_contracts = WxPapayContractsModel.get_renewal_due_contracts(
         SubscriptionConstants.PRE_NOTIFY_LEAD_DAYS
@@ -672,12 +708,15 @@ async def _create_renewal_orders() -> None:
                 renewal = SubscriptionOrdersModel.get_latest_by_contract(contract.contract_code)
 
             if pre_notify_mode and renewal and not renewal.prenotify_sent_at and contract.contract_id:
+                if not in_window:
+                    # 微信约束：预扣费通知仅 7:00~22:00 可发；窗口外留待下个 tick 补发
+                    continue
                 plan = get_subscription_plan(contract.subscription_plan_id) or {}
                 papay = get_papay_util()
                 ok, err = await asyncio.to_thread(
                     papay.pre_deduct_notify,
                     contract.contract_id,
-                    int(plan.get("price", 0) * 100),
+                    _yuan_to_fen(plan.get("price", 0)),
                 )
                 if ok:
                     SubscriptionOrdersModel.mark_prenotify_sent(renewal.order_id)
@@ -697,8 +736,13 @@ def _prenotify_wait_end(prenotify_sent_at: datetime) -> datetime:
     return datetime.combine(sent.date() + timedelta(days=2), datetime.min.time())
 
 
-async def _apply_due_deductions() -> None:
-    """对到期应扣款/应重试的订单发起申请扣款；重试窗口耗尽则关闭订单"""
+async def _apply_due_deductions(in_window: bool = True) -> None:
+    """对到期应扣款/应重试的订单发起申请扣款；重试窗口耗尽则关闭订单
+
+    微信约束：申请扣款仅北京时间 7:00~22:00 可发起，窗口外整个函数跳过。
+    """
+    if not in_window:
+        return
     window_days = SubscriptionConstants.DEDUCT_RETRY_WINDOW_DAYS
     due_orders = SubscriptionOrdersModel.get_retry_due_orders()
     for order in due_orders:
@@ -731,7 +775,7 @@ async def _apply_due_deductions() -> None:
             result = await asyncio.to_thread(
                 papay.apply_deduct,
                 order_id=order.order_id,
-                total_fee=int(order.amount * 100),
+                total_fee=_yuan_to_fen(order.amount),
                 body=body,
                 contract_id=contract.contract_id,
                 notify_url=_callback_url("pay-callback"),
@@ -851,7 +895,12 @@ async def _reconcile_pending_signs() -> None:
 
 
 async def _cleanup_stale_pending_signs() -> None:
-    """签约中超时（未完成支付+签约）的合约置为已解约，允许用户重新发起"""
+    """签约中超时（未完成支付+签约）的合约置为已解约，允许用户重新发起
+
+    排除已有已支付订单的合约：已付款但签约 ADD 回调未到/对账未决的合约由
+    _reconcile_pending_signs 负责查单收尾（可能补签约+补发首订加赠），
+    不能被本清理终止，否则加赠资格随合约终止而悬空。
+    """
     sql = """
         UPDATE wx_papay_contracts
         SET status = 2, terminated_at = NOW(),
@@ -859,9 +908,17 @@ async def _cleanup_stale_pending_signs() -> None:
             update_at = NOW()
         WHERE status = 0
           AND create_at <= DATE_SUB(NOW(), INTERVAL %s HOUR)
+          AND NOT EXISTS (
+              SELECT 1 FROM subscription_orders o
+              WHERE o.contract_code = wx_papay_contracts.contract_code
+                AND o.status = %s
+          )
     """
     try:
-        affected = execute_update(sql, (SubscriptionConstants.PENDING_SIGN_EXPIRE_HOURS,))
+        affected = execute_update(
+            sql,
+            (SubscriptionConstants.PENDING_SIGN_EXPIRE_HOURS, SubscriptionOrderStatus.PAID),
+        )
         if affected:
             logger.info(f"Cleaned {affected} stale pending sign contracts")
     except Exception:
@@ -957,11 +1014,18 @@ async def _settle_and_grant(order, transaction_id: str) -> bool:
 
     规则（新价目方案）：
       - 基础算力走邀请抽佣结算（commission/settle），有邀请人时按其佣金比例打折；
+      - 入门版首月优惠（实付 first_period_price）渠道不分佣，按订单上的常规算力发放；
       - 抽佣调用异常时降级为基础算力全额（宁可漏抽佣，不少发用户算力）。
     """
     plan = get_subscription_plan(order.subscription_plan_id) or {}
     base = order.computing_power
     granted = base
+    if _is_starter_intro_charge(order, plan):
+        logger.info(
+            f"Skip channel commission for starter intro order {order.order_id}, "
+            f"amount={order.amount}, grant={base}"
+        )
+        return await _grant_computing_power(order.user_id, base, transaction_id)
     try:
         settle_ok, settle_msg, settle_data = await async_make_perseids_request(
             endpoint='commission/settle',

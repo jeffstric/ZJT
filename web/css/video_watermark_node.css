@@ -1,0 +1,17 @@
+/* 去水印节点：复用 .node / .gen-btn，只补本节点自己的提示和按钮状态 */
+.video-watermark-node .watermark-submit-btn {
+  width: 100%;
+}
+.video-watermark-node .watermark-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.video-watermark-node .duration-hint {
+  margin-top: 4px;
+}
+.video-watermark-node .duration-hint.is-error {
+  color: #ef4444;
+}
+.video-watermark-node .watermark-prompt {
+  min-height: 64px;
+}

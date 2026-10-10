@@ -155,7 +155,7 @@ invalidate_dynamic_cache()
 | 前端调试 | `frontend.debug_password` | 是 |
 | 工作流 | `workflow.poll_status_interval`（秒） | 否 |
 | 测试模式 | `test_mode.enabled` | 否 |
-| 超时设置 | `timeout.request_timeout` | 否 |
+| 超时设置 | `timeout.request_timeout`（秒；大于等于 1000 的历史值按毫秒换算，10000 = 10 秒） | 否 |
 | 图片下载 | `image.enable_download` | 否 |
 | RunningHub | `runninghub.api_key` | 是 |
 | huimengi | `huimengi.api_key` | 是 |

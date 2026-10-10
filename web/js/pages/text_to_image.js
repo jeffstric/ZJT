@@ -306,7 +306,7 @@
         return /micromessenger/.test(ua);
       },
       
-      downloadImage(url, index) {
+      async downloadImage(url, index) {
         const now = new Date();
         const dateStr = now.getFullYear().toString() +
                        (now.getMonth() + 1).toString().padStart(2, '0') +
@@ -314,21 +314,16 @@
         const timeStr = now.getHours().toString().padStart(2, '0') +
                        now.getMinutes().toString().padStart(2, '0');
         const filename = `text_to_image_${dateStr}_${timeStr}_${index + 1}.png`;
-        const downloadUrl = buildDownloadUrl(url, filename);
-        
-        if (this.isWechatBrowser()) {
-          window.open(downloadUrl, '_blank');
-          setTimeout(() => {
-            alert('请长按图片，然后选择"保存图片"');
-          }, 500);
-        } else {
-          const link = document.createElement('a');
-          link.href = downloadUrl;
-          link.download = filename;
-          link.target = '_blank';
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+        try {
+          await downloadWithAuth(url, filename);
+          if (this.isWechatBrowser()) {
+            setTimeout(() => {
+              alert('请长按图片，然后选择"保存图片"');
+            }, 500);
+          }
+        } catch (e) {
+          if (e && e.status === 401) return;
+          alert((e && e.message) || '下载失败');
         }
       },
       

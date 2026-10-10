@@ -136,6 +136,21 @@ class TestPlans:
     def test_get_plan_not_found(self):
         assert get_subscription_plan(999) is None
 
+    def test_starter_intro_offer(self):
+        plan = get_subscription_plan(101)
+        assert plan["template_id"] == "224144"
+        assert plan["price"] == 29.9
+        assert plan["first_period_price"] == 18.8
+        assert plan["first_period_bonus"] == 40
+        assert plan["computing_power"] == 328
+
+
+class TestYuanToFen:
+    def test_rounds_half_up_instead_of_truncating(self):
+        from services.subscription_service import _yuan_to_fen
+        assert _yuan_to_fen(18.8) == 1880
+        assert _yuan_to_fen(29.9) == 2990
+
 
 # ==================== 等待期计算 ====================
 
@@ -712,6 +727,68 @@ class TestCreateSignPayOrderUpgrade:
             self._create(svc, 102)
         assert calls["create"] == []
 
+    def _patch_exists(self, svc, monkeypatch, signed: bool):
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "exists_signed_contract",
+            staticmethod(lambda user_id, exclude_contract_code=None: signed),
+        )
+
+    def test_starter_new_user_charges_intro_price(self, monkeypatch):
+        """无历史成功签约：模板 224144，首期 18.8 元 / 1880 分，续费价仍 29.9"""
+        from services import subscription_service as svc
+        calls = self._patch_models(svc, monkeypatch, None)
+        captured = {}
+
+        def _get_util(template_id=None):
+            util = make_util()
+            util.plan_template_id = template_id or ""
+            monkeypatch.setattr(
+                util, "create_contract_order",
+                lambda **kw: captured.update(kw) or {
+                    "return_code": "SUCCESS", "result_code": "SUCCESS",
+                    "code_url": "weixin://wxpay/abc",
+                },
+            )
+            return util
+
+        monkeypatch.setattr(svc, "get_papay_util", _get_util)
+        self._patch_exists(svc, monkeypatch, False)
+
+        result = self._create(svc, 101)
+        assert captured["total_fee"] == 1880
+        assert calls["create"][0]["amount"] == 18.8
+        assert calls["contract_created"][0]["plan_template_id"] == "224144"
+        assert result["price"] == 18.8
+        assert result["renewal_price"] == 29.9
+
+    def test_starter_returning_user_charges_renewal_price(self, monkeypatch):
+        """已有成功签约：仍用模板 224144，但首期按 29.9 元"""
+        from services import subscription_service as svc
+        calls = self._patch_models(svc, monkeypatch, None)
+        captured = {}
+
+        def _get_util(template_id=None):
+            util = make_util()
+            util.plan_template_id = template_id or ""
+            monkeypatch.setattr(
+                util, "create_contract_order",
+                lambda **kw: captured.update(kw) or {
+                    "return_code": "SUCCESS", "result_code": "SUCCESS",
+                    "code_url": "weixin://wxpay/abc",
+                },
+            )
+            return util
+
+        monkeypatch.setattr(svc, "get_papay_util", _get_util)
+        self._patch_exists(svc, monkeypatch, True)
+
+        result = self._create(svc, 101)
+        assert captured["total_fee"] == 2990
+        assert calls["create"][0]["amount"] == 29.9
+        assert calls["contract_created"][0]["plan_template_id"] == "224144"
+        assert result["price"] == 29.9
+        assert result["renewal_price"] == 29.9
+
 
 class TestUpgradePayCallback:
     def test_upgrade_settlement_terminates_source_without_bonus(self, patched_service, monkeypatch):
@@ -986,6 +1063,29 @@ class TestFirstPeriodBonusEntryPoints:
         params["sign"] = util._sign_v2(params)
         return params
 
+    def test_starter_intro_skips_commission_and_grants_40(self, patched_service, monkeypatch):
+        """18.8 首月渠道不分佣；用户仍到账 328，另发加赠 40"""
+        svc, calls = patched_service
+        self._activate_contract(svc)
+
+        async def fake_perseids(endpoint=None, **kw):
+            if endpoint == 'commission/settle':
+                calls["settle"].append(kw.get("data"))
+                return True, "ok", {"granted_computing_power": 1}
+            return True, "ok", {}
+
+        monkeypatch.setattr(svc, "async_make_perseids_request", fake_perseids)
+        order = _FakeOrder(
+            order_id="SUB_INTRO", period_index=1, subscription_plan_id=101,
+            amount=18.8, computing_power=328,
+            status=SubscriptionOrderStatus.PAID, transaction_id="4200009999",
+        )
+        assert asyncio.run(svc._settle_and_grant(order, "4200009999")) is True
+        assert calls["settle"] == []
+        assert calls["grant"] == [(1, 328, "4200009999")]
+        assert asyncio.run(svc._grant_first_period_bonus(order)) is True
+        assert calls["grant"][-1] == (1, 40, "4200009999_FIRST_BONUS")
+
     def test_add_callback_grants_pending_bonus(self, patched_service):
         """ADD 回调到达（支付已先行结算基础算力）：经回调入口补发首订加赠"""
         svc, calls = patched_service
@@ -1253,3 +1353,172 @@ class TestSingleActiveContractGuarantee:
 
         asyncio.run(svc._reconcile_pending_signs())
         assert calls["terminated"] == [("SUBC_OLD", svc.SubscriptionConstants.DEDUP_TERMINATE_REMARK)]
+
+
+# ==================== 扣费窗口作用域（窗口只限微信扣款动作，对账 7×24） ====================
+
+class TestDeductWindowScoping:
+    """微信约束的 7:00~22:00 仅作用于预扣费通知/申请扣款；
+    查单、签约对账、超时清理、算力补发等在窗口外仍须执行，
+    否则 22 点后支付的用户首订加赠会因 ADD 回调延迟挂起整夜。"""
+
+    def test_process_renewals_outside_window_still_reconciles(self, monkeypatch):
+        """窗口外 tick：仅两个微信扣款步骤收到 in_window=False，其余步骤照常执行"""
+        from services import subscription_service as svc
+
+        calls = []
+        for name in (
+            "_create_renewal_orders", "_apply_due_deductions", "_confirm_stale_orders",
+            "_reconcile_pending_signs", "_cleanup_stale_pending_signs",
+            "_retry_upgrade_terminations", "_dedup_signed_contracts",
+            "process_settlement_retry",
+        ):
+            async def fake(*args, _name=name, **kw):
+                calls.append((_name, args))
+            monkeypatch.setattr(svc, name, fake)
+        monkeypatch.setattr(svc, "_in_deduct_window", lambda: False)
+
+        asyncio.run(svc.process_renewals())
+
+        by_name = {name: args for name, args in calls}
+        assert [name for name, _ in calls] == [
+            "_create_renewal_orders", "_apply_due_deductions", "_confirm_stale_orders",
+            "_reconcile_pending_signs", "_cleanup_stale_pending_signs",
+            "_retry_upgrade_terminations", "_dedup_signed_contracts", "process_settlement_retry",
+        ]
+        # 微信扣款动作被窗口拦下
+        assert by_name["_create_renewal_orders"] == (False,)
+        assert by_name["_apply_due_deductions"] == (False,)
+        # 对账/清理/补发不受窗口限制
+        assert by_name["_reconcile_pending_signs"] == ()
+        assert by_name["_cleanup_stale_pending_signs"] == ()
+        assert by_name["process_settlement_retry"] == ()
+
+    def test_apply_due_deductions_skipped_outside_window(self, monkeypatch):
+        """窗口外不发起申请扣款：连待扣款订单都不查询"""
+        from services import subscription_service as svc
+
+        fetched = []
+        monkeypatch.setattr(
+            svc.SubscriptionOrdersModel, "get_retry_due_orders",
+            staticmethod(lambda: fetched.append(1) or []),
+        )
+
+        asyncio.run(svc._apply_due_deductions(in_window=False))
+        assert fetched == []
+
+    def test_create_renewal_orders_outside_window_skips_prenotify(self, monkeypatch):
+        """窗口外仍建续期订单（本地落库），但不下发预扣费通知，留待窗口内补发"""
+        from services import subscription_service as svc
+
+        created = {}
+        prenotify_calls = []
+        monkeypatch.setattr(svc, "get_papay_util", lambda: make_util())
+
+        class C:
+            contract_code = "SUBC1"
+            contract_id = "Wx154abc"
+            user_id = 1
+            subscription_plan_id = 102
+            current_period_end = datetime.now() + timedelta(days=2)
+
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_renewal_due_contracts",
+            staticmethod(lambda lead: [C()]),
+        )
+
+        class _Orders:
+            @staticmethod
+            def get_latest_by_contract(code):
+                class Paid:
+                    status = svc.SubscriptionOrderStatus.PAID
+                    period_index = 1
+                    period_end = datetime.now() - timedelta(days=1)
+                    prenotify_sent_at = None
+                    order_id = "SUB_OLD"
+                return Paid()
+
+            @staticmethod
+            def create(**kw):
+                created.update(kw)
+
+            @staticmethod
+            def mark_prenotify_sent(order_id):
+                prenotify_calls.append(order_id)
+
+        monkeypatch.setattr(svc, "SubscriptionOrdersModel", _Orders)
+        monkeypatch.setattr(
+            svc.WxPapayUtil, "pre_deduct_notify",
+            staticmethod(lambda *a, **kw: prenotify_calls.append("SENT") or (True, {})),
+        )
+        monkeypatch.setattr(svc.SubscriptionConstants, "DEDUCT_MODE", "pre_notify")
+
+        asyncio.run(svc._create_renewal_orders(in_window=False))
+        assert created.get("period_index") == 2  # 建单未受窗口影响
+        assert prenotify_calls == []  # 通知未发，等窗口内补发
+
+    def test_create_renewal_orders_inside_window_sends_prenotify(self, monkeypatch):
+        """窗口内 pre_notify 模式行为不变：建单 + 下发通知"""
+        from services import subscription_service as svc
+
+        prenotify_calls = []
+        monkeypatch.setattr(svc, "get_papay_util", lambda: make_util())
+
+        class C:
+            contract_code = "SUBC1"
+            contract_id = "Wx154abc"
+            user_id = 1
+            subscription_plan_id = 102
+            current_period_end = datetime.now() + timedelta(days=2)
+
+        monkeypatch.setattr(
+            svc.WxPapayContractsModel, "get_renewal_due_contracts",
+            staticmethod(lambda lead: [C()]),
+        )
+
+        class _Orders:
+            @staticmethod
+            def get_latest_by_contract(code):
+                class Paid:
+                    status = svc.SubscriptionOrderStatus.PAID
+                    period_index = 1
+                    period_end = datetime.now() - timedelta(days=1)
+                    prenotify_sent_at = None
+                    order_id = "SUB_OLD"
+                return Paid()
+
+            @staticmethod
+            def create(**kw):
+                pass
+
+            @staticmethod
+            def mark_prenotify_sent(order_id):
+                prenotify_calls.append(order_id)
+
+        monkeypatch.setattr(svc, "SubscriptionOrdersModel", _Orders)
+        monkeypatch.setattr(
+            svc.WxPapayUtil, "pre_deduct_notify",
+            staticmethod(lambda *a, **kw: prenotify_calls.append("SENT") or (True, {})),
+        )
+        monkeypatch.setattr(svc.SubscriptionConstants, "DEDUCT_MODE", "pre_notify")
+
+        asyncio.run(svc._create_renewal_orders(in_window=True))
+        assert "SENT" in prenotify_calls
+
+    def test_cleanup_excludes_paid_contracts(self, monkeypatch):
+        """超时清理不得波及已支付订单的合约（对账未决时终止会使加赠资格悬空）"""
+        from services import subscription_service as svc
+
+        captured = {}
+        monkeypatch.setattr(
+            svc, "execute_update",
+            lambda sql, params=None: captured.update(sql=sql, params=params) or 0,
+        )
+
+        asyncio.run(svc._cleanup_stale_pending_signs())
+        sql, params = captured["sql"], captured["params"]
+        assert "NOT EXISTS" in sql and "subscription_orders" in sql
+        assert params == (
+            svc.SubscriptionConstants.PENDING_SIGN_EXPIRE_HOURS,
+            SubscriptionOrderStatus.PAID,
+        )

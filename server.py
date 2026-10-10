@@ -157,6 +157,7 @@ from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_E
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
+from api.user import apply_nickname_change
 
 # 向后兼容别名（已有代码可直接使用 _前缀 名称）
 _get_user_id_from_header = get_user_id_from_header
@@ -867,6 +868,11 @@ async def get_config_by_key(
     })
 
 
+def _wants_download_json(response_format: Optional[str]) -> bool:
+    """format=json：CDN 重签名后返回 JSON，供前端用 Authorization 头取地址。"""
+    return (response_format or "").strip().lower() == "json"
+
+
 def _extract_filename_from_url(url: str) -> Optional[str]:
     """从 URL 路径中提取文件名，若无法提取则返回 None（由调用方决定降级逻辑）"""
     url_path = urlparse(url).path
@@ -916,13 +922,19 @@ def _resolve_local_upload_path(url: str, prefix: str) -> Optional[Path]:
 async def download_image(
     request: Request,
     url: str = Query(..., description="Media URL to download"),
-    filename: str = Query(None, description="Custom filename")
+    filename: str = Query(None, description="Custom filename"),
+    response_format: Optional[str] = Query(
+        None,
+        alias="format",
+        description="json 时 CDN 重签名返回 redirect_url，不 302",
+    ),
 ):
     """
     媒体文件下载接口，支持三种模式：
     1. 本地路径 /upload/cache/ → FileResponse 直接返回
-    2. CDN 域名匹配 → 302 重定向（不占服务器带宽）
-    3. 其他外部 URL → 代理下载 StreamingResponse
+    2. CDN 域名匹配 → 302 重定向（不占服务器带宽）；format=json 时改为返回签名 URL
+    3. 其他外部 URL → 代理下载 StreamingResponse（format=json 同样降级走代理，
+       前端对非 JSON 响应按 blob 处理，避免外链下载从"能下"变"必败"）
     """
     try:
         # 检查是否为本地缓存文件路径（安全解析，防路径穿越）
@@ -965,6 +977,11 @@ async def download_image(
             if filename:
                 signed_url = CDNUtil.get_signed_download_url(url, attname=filename)
                 if signed_url:
+                    if _wants_download_json(response_format):
+                        return JSONResponse({
+                            "success": True,
+                            "redirect_url": signed_url,
+                        })
                     logger.info(f"[download] CDN 签名重定向: filename={filename}, signed_url={signed_url[:150]}")
                     return RedirectResponse(url=signed_url, status_code=302)
                 else:
@@ -973,6 +990,8 @@ async def download_image(
                 logger.warning(f"[download] CDN URL但无法提取文件名，降级到代理下载: url={url[:100]}")
 
         # ========== 模式3: 其他远程 URL → 代理下载 ==========
+        # format=json 只服务 CDN 重签名；非 CDN 外链无法签名时同样落到代理流式
+        # 下载（200 + 文件流），前端 downloadWithAuth 对非 JSON 响应走 blob 兜底。
         async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.get(url)
             response.raise_for_status()
@@ -2869,32 +2888,67 @@ async def ai_app_run_image(
 @app.get('/api/user/role')
 async def get_user_role(auth_token: str = Header(None, alias="Authorization")):
     """
-    获取用户角色
+    获取用户角色（顺带返回昵称，供前台顶栏展示）
     """
     try:
         if not auth_token:
             return {"code": -1, "message": "未提供认证信息"}
-        
+
         if auth_token.startswith("Bearer "):
             auth_token = auth_token[7:]
-        
-        user_id = UserTokensModel.get_user_id_by_token(auth_token)
+
+        user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, auth_token)
         if not user_id:
             return {"code": -1, "message": "无效或已过期的认证信息"}
-        
-        user = UsersModel.get_by_id(user_id)
+
+        user = await asyncio.to_thread(UsersModel.get_by_id, user_id)
         if not user:
             return {"code": -1, "message": "用户不存在"}
-        
+
         return {
             "code": 0,
             "data": {
-                "role": user.role
+                "role": user.role,
+                "nickname": user.nickname,
+                "display_name": user.nickname or f"用户{user.id}",
             }
         }
     except Exception as e:
         logger.error(f'获取用户角色失败: {str(e)}')
         return {"code": -1, "message": "服务器错误"}
+
+
+@app.put('/api/user/nickname')
+async def update_user_nickname(
+    nickname_request: dict,
+    auth_token: str = Header(None, alias="Authorization"),
+):
+    """设置当前用户昵称；空串=清除并重新分配随机趣味默认昵称。
+
+    与 /api/user/role 同样直接定义在 server.py：enterprise 模块 load 失败时
+    api/user.py 的 router 不会挂载（见下方回退逻辑被 load 内部吞异常绕过），
+    业务逻辑复用 api.user.apply_nickname_change 保证行为一致。
+    """
+    try:
+        if not auth_token:
+            raise HTTPException(status_code=401, detail="需要登录")
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+
+        user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, auth_token)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
+
+        nickname = ''
+        if isinstance(nickname_request, dict):
+            nickname = nickname_request.get('nickname') or ''
+        data = await asyncio.to_thread(apply_nickname_change, user_id, nickname)
+        return {"code": 0, "data": data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'更新用户昵称失败: {str(e)}')
+        raise HTTPException(status_code=500, detail="服务器错误")
 
 
 @app.get('/api/user/computing_power')
@@ -3600,7 +3654,7 @@ async def register(request: RegisterRequest):
                 extra_data={'code': verify_code, 'invite_code': invite_code},
                 email=email
             )
-            
+
             if success:
                 logger.info(
                     "邮箱用户注册成功 - 邮箱: %s",
@@ -4520,6 +4574,148 @@ async def video_enhance(
         raise HTTPException(status_code=500, detail=f"视频高清修复失败: {str(e)}")
 
 
+@app.post("/api/video-watermark-remove")
+@require_permission("video:watermark_remove")
+async def video_watermark_remove(
+    request: Request,
+    video: UploadFile = File(None, description="需要去水印的视频文件"),
+    video_url: str = Form(None, description="视频地址（与文件二选一，同时提供时使用文件）"),
+    duration_seconds: int = Form(5, description="视频时长（秒），仅支持 4-10，与 MiniMax H3 720P 算力表一致"),
+    fps: int = Form(24, description="帧率，1-120，默认 24"),
+    prompt: str = Form("", description="可选提示词，留空使用默认去水印提示词"),
+    user_id: int = Form(None, description="User ID，传入时必须与登录用户一致"),
+    auth_token: str = Form(None, description="Authentication token"),
+):
+    """
+    提交视频去水印任务。只落库并入队，RunningHub 上传与提交由驱动在调度进程完成。
+    """
+    from task.visual_drivers.video_watermark_runninghub_v1_driver import (
+        DEFAULT_PROMPT,
+        MAX_FPS,
+        MAX_PROMPT_CHARS,
+        MIN_FPS,
+    )
+
+    try:
+        state_user_id = getattr(request.state, "user_id", None)
+        if user_id is not None and state_user_id is not None and int(user_id) != int(state_user_id):
+            raise HTTPException(status_code=400, detail="用户ID不匹配")
+        effective_user_id = state_user_id or user_id
+        if not effective_user_id:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+
+        task_config = TaskTypeRegistry.get(TaskTypeId.VIDEO_WATERMARK_REMOVE)
+        if not task_config:
+            raise HTTPException(status_code=500, detail="视频去水印任务未配置")
+        if duration_seconds not in (task_config.supported_durations or []):
+            raise HTTPException(
+                status_code=400,
+                detail=f"视频时长仅支持 {list(task_config.supported_durations or [])} 秒",
+            )
+        if fps < MIN_FPS or fps > MAX_FPS:
+            raise HTTPException(status_code=400, detail=f"帧率仅支持 {MIN_FPS}-{MAX_FPS}")
+
+        prompt_text = (prompt or "").strip()
+        if len(prompt_text) > MAX_PROMPT_CHARS:
+            raise HTTPException(status_code=400, detail=f"提示词不能超过 {MAX_PROMPT_CHARS} 个字符")
+        if not prompt_text:
+            prompt_text = DEFAULT_PROMPT
+
+        if video is not None and (video.filename or ""):
+            try:
+                saved_video = await asyncio.to_thread(_save_uploaded_image, video)
+            except UploadValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        elif video_url and str(video_url).strip():
+            saved_video = str(video_url).strip()
+        else:
+            raise HTTPException(status_code=400, detail="请上传视频文件或提供视频地址")
+
+        actual_impl = await asyncio.to_thread(
+            VideoDriverFactory.get_implementation_for_user,
+            TaskTypeId.VIDEO_WATERMARK_REMOVE,
+            effective_user_id,
+        ) or task_config.implementation
+        computing_power = await asyncio.to_thread(
+            task_config.get_computing_power,
+            duration_seconds,
+            actual_impl,
+        )
+        if not computing_power or computing_power <= 0:
+            raise HTTPException(status_code=400, detail="当前时长未配置算力")
+
+        auth_token = (
+            auth_token
+            or extract_bearer_token(request.headers.get("authorization"))
+            or (request.query_params.get("auth_token") or "")
+        )
+        transaction_id = str(uuid.uuid4())
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        if CHECK_AUTH_TOKEN:
+            success, message, response_data = await async_make_perseids_request(
+                endpoint="user/check_computing_power",
+                method="GET",
+                headers=headers,
+            )
+            if not success:
+                raise HTTPException(status_code=400, detail=message)
+            user_computing_power = response_data.get("computing_power", 0)
+            user_id_from_token = response_data.get("user_id")
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"您的算力不足，需要 {computing_power} 算力，当前仅有 {user_computing_power} 算力",
+                )
+            if user_id_from_token is not None and int(user_id_from_token) != int(effective_user_id):
+                raise HTTPException(status_code=400, detail="用户ID不匹配")
+            success, message, _response_data = await async_make_perseids_request(
+                endpoint="user/calculate_computing_power",
+                method="POST",
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id,
+                },
+            )
+            if not success:
+                logger.error(f"Video watermark computing power deduction failed: {message}")
+
+        extra_config = json.dumps({"fps": fps}, ensure_ascii=False)
+        impl_id = get_implementation_id(actual_impl) if actual_impl else 0
+        ai_tool_id = await asyncio.to_thread(
+            AIToolsModel.create,
+            prompt=prompt_text,
+            user_id=effective_user_id,
+            type=TaskTypeId.VIDEO_WATERMARK_REMOVE,
+            video_path=saved_video,
+            duration=duration_seconds,
+            transaction_id=transaction_id,
+            status=AI_TOOL_STATUS_PENDING,
+            extra_config=extra_config,
+            implementation=impl_id,
+        )
+        await asyncio.to_thread(
+            TasksModel.create,
+            task_type=TASK_TYPE_GENERATE_VIDEO,
+            task_id=ai_tool_id,
+            status=TASK_STATUS_QUEUED,
+        )
+        return JSONResponse({
+            "success": True,
+            "project_id": ai_tool_id,
+            "status": "submitted",
+            "computing_power": computing_power,
+            "duration": duration_seconds,
+        })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Video watermark remove failed: {exc}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"视频去水印提交失败: {exc}")
+
+
 @app.post("/api/digital-human")
 @require_permission("digital_human:create")
 async def digital_human_generate(
@@ -4530,6 +4726,7 @@ async def digital_human_generate(
     image_url: str = Form(None, description="Image URL for digital human (alternative to file upload)"),
     audio_url: str = Form(None, description="Audio URL for digital human (alternative to file upload)"),
     aspect_ratio: str = Form("9:16", description="Video aspect ratio: 9:16, 16:9, 1:1, 3:2, 4:3, 2:3, 3:4"),
+    task_id: int = Form(TaskTypeId.DIGITAL_HUMAN, description="Digital human task type ID (13=wan2.2, 35=MiniMax H3)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
@@ -4544,7 +4741,16 @@ async def digital_human_generate(
                 status_code=400,
                 detail="文本内容不能超过1000个字"
             )
-        
+
+        # 数字人任务类型白名单：13=wan2.2（旧默认，兼容存量前端）、35=MiniMax H3。
+        # LTX2.3（32）走 /api/digital-human-v2（文件上传 + audio_path 字段），不在此列。
+        allowed_task_ids = {TaskTypeId.DIGITAL_HUMAN, TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3}
+        if task_id not in allowed_task_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支持的数字人任务类型: {task_id}"
+            )
+
         # Handle image (file upload or URL)
         if image is not None:
             image_url = await asyncio.to_thread(_save_uploaded_image, image)
@@ -4553,7 +4759,7 @@ async def digital_human_generate(
                 status_code=400,
                 detail="请提供图片文件或图片URL"
             )
-        
+
         # Handle audio (file upload or URL)
         if audio is not None:
             audio_url = await asyncio.to_thread(_save_uploaded_image, audio)  # Reuse the same function for audio
@@ -4562,9 +4768,9 @@ async def digital_human_generate(
                 status_code=400,
                 detail="请提供音频文件或音频URL"
             )
-        
+
         # Task type for digital human
-        task_type = TaskTypeId.DIGITAL_HUMAN
+        task_type = task_id
         task_config = TaskTypeRegistry.get(task_type)
         computing_power = task_config.get_computing_power()
         
@@ -5182,8 +5388,8 @@ async def get_recharge_packages(
         auth_token: query 传 token（legacy 兼容，优先级低于 header）
 
     Returns:
-        List of recharge packages with computing power and pricing
-        If user has already recharged before, the first package (首充福利) will be filtered out
+        List of recharge packages with computing power and pricing.
+        0.1 元首充福利包已下线，不在 RECHARGE_PACKAGES 中，所有用户都看不到。
     """
     try:
         # token 优先取 Authorization 头；query 传参已废弃（防 URL 泄漏），仅为旧客户端兜底
@@ -5191,17 +5397,8 @@ async def get_recharge_packages(
         if not resolved_token:
             raise HTTPException(status_code=401, detail="未提供认证信息")
 
-        # 查询用户是否已经首充
-        has_completed_first_recharge = await _has_completed_first_recharge(resolved_token)
-
-        # 如果用户已经充值过，过滤掉首充福利套餐（FIRST_RECHARGE_PACKAGE_ID）
         # 用 dict(pkg) 浅拷贝每个套餐，避免污染模块级常量 RECHARGE_PACKAGES
         packages = [dict(pkg) for pkg in RECHARGE_PACKAGES]
-        if has_completed_first_recharge:
-            packages = [pkg for pkg in packages if pkg.get("package_id") != Commission.FIRST_RECHARGE_PACKAGE_ID]
-            logger.info(f"已经首充，过滤掉首充福利套餐")
-        else:
-            logger.info(f"是首充用户，显示所有套餐")
 
         # 计算扣邀请佣金后的实际到账算力（针对当前用户；社区版/无邀请人/首充=>全额）
         grants = {}
@@ -5287,6 +5484,10 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
                 detail="登录过期，请重新登录"
             )
         
+        # 0.1 元首充福利已下线：旧客户端仍可能提交 package_id=5，单独拒绝
+        if payment_request.package_id == Commission.FIRST_RECHARGE_PACKAGE_ID:
+            raise HTTPException(status_code=400, detail="该套餐已下线")
+
         # 验证套餐ID
         package_info = None
         for package in RECHARGE_PACKAGES:
@@ -5299,16 +5500,6 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
                 status_code=400,
                 detail="Invalid package ID"
             )
-
-        # 首充套餐校验：如果购买的是首充福利包且用户已首充，禁止再次购买
-        if payment_request.package_id == Commission.FIRST_RECHARGE_PACKAGE_ID:
-            has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
-            if has_completed_first_recharge:
-                logger.warning(f"User {payment_request.user_id} attempted to purchase first-charge package again")
-                raise HTTPException(
-                    status_code=400,
-                    detail="首充福利仅限首次充值，您已领取过该套餐"
-                )
         
         # 生产安全闸：商户私钥缺失时禁止发起支付/展示二维码
         # （缺失时签名降级为 mock_signature 微信必拒；验签旁路也仅限密钥齐备时可防伪造回调）
@@ -7073,6 +7264,30 @@ async def create_video_workflow(
         )
 
 
+_CLIENT_WRITE_ID_RE = re.compile(r'^[0-9A-Za-z-]{8,64}$')
+
+
+def _normalize_client_write_id(raw):
+    """本页 PUT 的 X-Write-Id。合法才落库；缺省或非法视为未带，成功写入时把列清掉。"""
+    if raw is None:
+        return None
+    text_id = str(raw).strip()
+    if _CLIENT_WRITE_ID_RE.match(text_id):
+        return text_id
+    return None
+
+
+def _cas_conflict_payload(current_hash, last_write_id):
+    return {
+        "code": 409,
+        "message": "工作流内容已被其他会话修改，本次保存被拒绝",
+        "data": {
+            "content_hash": current_hash,
+            "last_write_id": last_write_id,
+        },
+    }
+
+
 @app.put('/api/video-workflow/{workflow_id}')
 @require_permission("video_workflow:update")
 async def update_video_workflow(
@@ -7143,6 +7358,12 @@ async def update_video_workflow(
                         )
                         del update_fields['workflow_data']
 
+        # 写 id 不参与内容哈希。每次真正落库都带上：合法头记下本页 id，
+        # 缺省或非法则写成 NULL，避免旧 id 把后来的别人写入认成自己。
+        client_write_id = _normalize_client_write_id(request.headers.get('x-write-id'))
+        if update_fields:
+            update_fields['last_write_id'] = client_write_id
+
         if update_fields:
             # CAS（乐观并发控制）：客户端在 X-Base-Hash 头携带本次编辑所基于的
             # 服务端内容哈希。不一致说明内容已被其他会话/迟到请求改写，
@@ -7163,10 +7384,15 @@ async def update_video_workflow(
                 def _cas_current_hash():
                     fresh = VideoWorkflowModel.get_by_id(workflow_id)
                     if not fresh:
-                        return None, None, None
+                        return None, None, None, None
                     current, incoming = content_hashes_for_cas(fresh, update_fields)
-                    return current, getattr(fresh, 'content_version', 0), incoming
-                current_hash, expected_version, incoming_hash = await asyncio.to_thread(
+                    return (
+                        current,
+                        getattr(fresh, 'content_version', 0),
+                        incoming,
+                        getattr(fresh, 'last_write_id', None),
+                    )
+                current_hash, expected_version, incoming_hash, winner_write_id = await asyncio.to_thread(
                     _cas_current_hash
                 )
                 if current_hash is not None and current_hash != base_hash:
@@ -7178,7 +7404,10 @@ async def update_video_workflow(
                         return JSONResponse({
                             "code": 0,
                             "message": "更新成功",
-                            "data": {"content_hash": current_hash}
+                            "data": {
+                                "content_hash": current_hash,
+                                "last_write_id": winner_write_id,
+                            }
                         })
                     logger.warning(
                         f"[CAS] 拒绝更新工作流 {workflow_id}："
@@ -7186,11 +7415,7 @@ async def update_video_workflow(
                     )
                     return JSONResponse(
                         status_code=409,
-                        content={
-                            "code": 409,
-                            "message": "工作流内容已被其他会话修改，本次保存被拒绝",
-                            "data": {"content_hash": current_hash}
-                        }
+                        content=_cas_conflict_payload(current_hash, winner_write_id),
                     )
             affected = await asyncio.to_thread(
                 VideoWorkflowModel.update,
@@ -7204,9 +7429,10 @@ async def update_video_workflow(
                 def _conflict_hash():
                     fresh = VideoWorkflowModel.get_by_id(workflow_id)
                     if not fresh:
-                        return None, None
-                    return content_hashes_for_cas(fresh, update_fields)
-                current_hash, incoming_hash = await asyncio.to_thread(_conflict_hash)
+                        return None, None, None
+                    current, incoming = content_hashes_for_cas(fresh, update_fields)
+                    return current, incoming, getattr(fresh, 'last_write_id', None)
+                current_hash, incoming_hash, winner_write_id = await asyncio.to_thread(_conflict_hash)
                 if current_hash is not None and incoming_hash == current_hash:
                     logger.info(
                         f"[CAS] 工作流 {workflow_id} 版本竞争但内容未变，视为成功"
@@ -7215,7 +7441,10 @@ async def update_video_workflow(
                     return JSONResponse({
                         "code": 0,
                         "message": "更新成功",
-                        "data": {"content_hash": current_hash}
+                        "data": {
+                            "content_hash": current_hash,
+                            "last_write_id": winner_write_id,
+                        }
                     })
                 logger.warning(
                     f"[CAS] 工作流 {workflow_id} 版本竞争失败"
@@ -7223,11 +7452,7 @@ async def update_video_workflow(
                 )
                 return JSONResponse(
                     status_code=409,
-                    content={
-                        "code": 409,
-                        "message": "工作流内容已被其他会话修改，本次保存被拒绝",
-                        "data": {"content_hash": current_hash}
-                    }
+                    content=_cas_conflict_payload(current_hash, winner_write_id),
                 )
 
         # 返回写入后的最新内容哈希（未写字段时哈希即当前值），
@@ -7235,11 +7460,17 @@ async def update_video_workflow(
         # 回读 + 哈希整体放入工作线程：大 JSON 序列化不占事件循环
         def _post_update_hash():
             latest = VideoWorkflowModel.get_by_id(workflow_id)
-            return compute_content_hash(latest) if latest else None
+            if not latest:
+                return None, None
+            return compute_content_hash(latest), getattr(latest, 'last_write_id', None)
+        stored_hash, stored_write_id = await asyncio.to_thread(_post_update_hash)
         return JSONResponse({
             "code": 0,
             "message": "更新成功",
-            "data": {"content_hash": await asyncio.to_thread(_post_update_hash)}
+            "data": {
+                "content_hash": stored_hash,
+                "last_write_id": stored_write_id,
+            }
         })
     except Exception as e:
         logger.error(f"Failed to update video workflow {workflow_id}: {str(e)}")

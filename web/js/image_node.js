@@ -756,6 +756,7 @@
           .find(n => n && n.type === 'shot_frame');
         
         if(connectedShotFrameNode && node.data.url){
+          connectedShotFrameNode.data.firstFrameDismissed = false;
           connectedShotFrameNode.data.previewImageUrl = node.data.url;
           if(connectedShotFrameNode.updatePreview){
             connectedShotFrameNode.updatePreview();
@@ -1191,31 +1192,10 @@
         // 图片直接下载，不需要后端代理
         // 如果是跨域图片，使用fetch+blob方式下载
         try {
-          if(downloadUrl.startsWith('data:') || downloadUrl.startsWith('blob:') || isSameOriginUrl(downloadUrl)){
-            // data URL、blob URL 或同源图片，直接下载
-            const a = document.createElement('a');
-            a.href = downloadUrl;
-            a.download = fileName;
-            a.style.display = 'none';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-          } else {
-            // 跨域图片，使用fetch+blob方式下载
-            const response = await fetch(proxyImageUrl(downloadUrl));
-            const blob = await response.blob();
-            const blobUrl = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = blobUrl;
-            a.download = fileName;
-            a.style.display = 'none';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(blobUrl);
-          }
+          await window.downloadWithAuth(downloadUrl, fileName);
           showToast(window.t ? window.t('start_download_image') : '开始下载图片', 'success');
         } catch(error) {
+          if (error && error.status === 401) return;
           console.error('下载图片失败:', error);
           showToast(window.t ? window.t('download_image_failed') : '下载图片失败', 'error');
         }

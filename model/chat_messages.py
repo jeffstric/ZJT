@@ -394,6 +394,43 @@ class ChatMessagesModel:
         return execute_update(sql, (new_content, session_id, target_content))
 
     @staticmethod
+    def has_generated_result(session_id: str, project_ids: list) -> bool:
+        """判断会话是否已存在某批 project 的生成结果消息（图片/视频结果卡片）。
+
+        结果卡片 HTML 必然携带发布按钮属性 data-publish-tool-id="{pid}"，或代理
+        URL 里的文件名片段 "{pid}_"（URL 编码后片段仍保留）。用于轮询完成回落
+        追加前的服务端判重（跨页签双写 / 恢复流程重复触发防护）。
+        """
+        if not session_id or not project_ids:
+            return False
+        id_conditions = []
+        params = [session_id, '%<video%', '%generated-image-wrapper%']
+        for pid in project_ids:
+            try:
+                # 强转 int：归一化前端传入的数字字符串，并杜绝 LIKE 通配符注入
+                pid = int(pid)
+            except (TypeError, ValueError):
+                continue
+            spid = str(pid)
+            # 前导边界（/ 或其 URL 编码 %2F）+ \_ 转义下划线：
+            # 防 "757_" 误配 "1757_xxx"、"1254_" 误配 "91254_xxx"（与前端
+            # contentHasGeneratedTaskId 的 /{sid}_ 与 %2F{sid}_ 双形态对齐）
+            id_conditions.append("(content LIKE %s OR content LIKE %s OR content LIKE %s)")
+            params.append('%data-publish-tool-id="' + spid + '"%')
+            params.append('%/' + spid + '\\_%')
+            params.append('%2F' + spid + '\\_%')
+        if not id_conditions:
+            return False
+        sql = (
+            "SELECT COUNT(*) AS cnt FROM `chat_messages` "
+            "WHERE session_id = %s AND role = 'assistant' AND context_state = 'active' "
+            "AND (content LIKE %s OR content LIKE %s) "
+            "AND (" + " OR ".join(id_conditions) + ")"
+        )
+        row = execute_query(sql, tuple(params), fetch_one=True)
+        return bool(row and row['cnt'])
+
+    @staticmethod
     def count_for_session(session_id: str) -> int:
         """Count messages for a session"""
         row = execute_query(

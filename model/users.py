@@ -10,7 +10,12 @@ import string
 import json
 
 from utils.log_sanitizer import mask_email, mask_phone
-from config.constant import ChannelLevel
+from config.constant import (
+    ChannelLevel,
+    NICKNAME_MAX_LEN,
+    REMARK_MAX_LEN,
+    generate_default_nickname,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +77,8 @@ class User:
         self.id = kwargs.get('id')
         self.phone = kwargs.get('phone')
         self.email = kwargs.get('email')
+        self.nickname = kwargs.get('nickname')
+        self.remark = kwargs.get('remark')
         self.password_hash = kwargs.get('password_hash')
         self.status = kwargs.get('status', 1)
         self.serial_number = kwargs.get('serial_number', '')
@@ -95,11 +102,17 @@ class User:
         self.active_preference_group = kwargs.get('active_preference_group', 1)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
+        """Convert to dictionary
+
+        注意：remark（管理员备注）不在此输出——本字典会被用户侧接口复用，
+        仅 admin 接口在 list_all/详情路径单独附加，防止备注泄漏给普通用户。
+        """
         return {
             'user_id': self.id,
             'phone': self.phone,
             'email': self.email,
+            'nickname': self.nickname,
+            'display_name': self.nickname or f"用户{self.id}",
             'status': self.status,
             'serial_number': self.serial_number,
             'created_at': self.created_at.isoformat() if self.created_at else None,
@@ -221,19 +234,67 @@ class UsersModel:
         terms_agreed: int = 0,
         invite_code: Optional[str] = None,
         inviter_id: Optional[int] = None,
-        email: Optional[str] = None
+        email: Optional[str] = None,
+        nickname: Optional[str] = None
     ) -> int:
-        """创建新用户"""
+        """创建新用户；未指定昵称时自动分配随机趣味默认昵称"""
+        if not nickname:
+            nickname = UsersModel.generate_unique_nickname()
         sql = """
-            INSERT INTO users (phone, email, password_hash, role, terms_agreed, invite_code, inviter_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO users (phone, email, nickname, password_hash, role, terms_agreed, invite_code, inviter_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
         try:
-            user_id = execute_insert(sql, (phone, email, password_hash, role, terms_agreed, invite_code, inviter_id))
+            user_id = execute_insert(sql, (phone, email, nickname, password_hash, role, terms_agreed, invite_code, inviter_id))
             logger.info(f"Created user with ID: {user_id}")
             return user_id
         except Exception as e:
             logger.error(f"Failed to create user: {e}")
+            raise
+
+    @staticmethod
+    def _nickname_exists(nickname: str) -> bool:
+        sql = "SELECT 1 FROM users WHERE nickname = %s LIMIT 1"
+        try:
+            return execute_query(sql, (nickname,), fetch_one=True) is not None
+        except Exception as e:
+            logger.error(f"Failed to check nickname exists: {e}")
+            raise
+
+    @staticmethod
+    def generate_unique_nickname() -> str:
+        """生成随机趣味默认昵称并查库尽量去重（昵称不强制唯一，重试后仍撞名则接受）"""
+        for _ in range(8):
+            name = generate_default_nickname()
+            if not UsersModel._nickname_exists(name):
+                return name
+        return generate_default_nickname()
+
+    @staticmethod
+    def update_nickname(user_id: int, nickname: str) -> str:
+        """更新用户昵称（用户自助）。
+
+        Args:
+            user_id: 用户ID
+            nickname: 期望昵称；trim 后为空表示清空，自动重新分配随机默认昵称
+
+        Returns:
+            实际落库的昵称（空输入时为新生成的默认昵称）
+
+        Raises:
+            ValueError: 昵称非空但超过 NICKNAME_MAX_LEN 字符
+        """
+        trimmed = (nickname or '').strip()
+        if trimmed and len(trimmed) > NICKNAME_MAX_LEN:
+            raise ValueError(f"昵称不能超过 {NICKNAME_MAX_LEN} 个字符")
+        if not trimmed:
+            trimmed = UsersModel.generate_unique_nickname()
+        sql = "UPDATE users SET nickname = %s, updated_at = NOW() WHERE id = %s"
+        try:
+            execute_update(sql, (trimmed, user_id))
+            return trimmed
+        except Exception as e:
+            logger.error(f"Failed to update nickname for user {user_id}: {e}")
             raise
     
     @staticmethod
@@ -437,7 +498,8 @@ class UsersModel:
         params = []
         
         if keyword:
-            where_conditions.append("(phone LIKE %s OR email LIKE %s)")
+            where_conditions.append("(phone LIKE %s OR email LIKE %s OR nickname LIKE %s)")
+            params.append(f"%{keyword}%")
             params.append(f"%{keyword}%")
             params.append(f"%{keyword}%")
         
@@ -463,7 +525,7 @@ class UsersModel:
         # 获取分页数据
         offset = (page - 1) * page_size
         data_sql = f"""
-            SELECT id, phone, email, status, role, created_at, updated_at, invite_code, inviter_id, first_recharge,
+            SELECT id, phone, email, nickname, remark, status, role, created_at, updated_at, invite_code, inviter_id, first_recharge,
                    zjt_token_enabled, zjt_token_expire_at, channel_level
             FROM users
             WHERE {where_clause}
@@ -471,10 +533,15 @@ class UsersModel:
             LIMIT %s OFFSET %s
         """
         params.extend([page_size, offset])
-        
+
         try:
             results = execute_query(data_sql, tuple(params), fetch_all=True)
-            users = [User(**row).to_dict() for row in results] if results else []
+            users = []
+            for row in results or []:
+                user_dict = User(**row).to_dict()
+                # 管理员备注不进 to_dict（防用户侧泄漏），仅在 admin 列表路径附加
+                user_dict['remark'] = row.get('remark')
+                users.append(user_dict)
             
             return {
                 'total': total,
@@ -529,6 +596,29 @@ class UsersModel:
             return affected
         except Exception as e:
             logger.error(f"Failed to update user role: {e}")
+            raise
+
+    @staticmethod
+    def update_remark(user_id: int, remark: Optional[str]) -> int:
+        """更新管理员备注（仅后台接口调用；用户侧接口不返回该字段）。
+
+        Args:
+            user_id: 用户ID
+            remark: 备注内容；trim 后为空存 NULL（清除备注）
+
+        Raises:
+            ValueError: 备注超过 REMARK_MAX_LEN 字符
+        """
+        trimmed = (remark or '').strip()
+        if len(trimmed) > REMARK_MAX_LEN:
+            raise ValueError(f"备注不能超过 {REMARK_MAX_LEN} 个字符")
+        sql = "UPDATE users SET remark = %s, updated_at = NOW() WHERE id = %s"
+        try:
+            affected = execute_update(sql, (trimmed or None, user_id))
+            logger.info(f"Updated user {user_id} remark by admin")
+            return affected
+        except Exception as e:
+            logger.error(f"Failed to update remark for user {user_id}: {e}")
             raise
 
     # ==================== 实现方偏好方法 ====================
@@ -893,6 +983,8 @@ CREATE TABLE IF NOT EXISTS `users` (
   `id` int NOT NULL AUTO_INCREMENT,
   `phone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '手机号',
   `email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '邮箱',
+  `nickname` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '用户昵称（用户自定义；NULL=使用系统默认昵称）',
+  `remark` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '管理员备注（仅后台可见）',
   `password_hash` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `status` tinyint NOT NULL DEFAULT '1' COMMENT '用户状态：1-正常，0-禁用',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,

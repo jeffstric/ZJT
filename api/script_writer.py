@@ -8,6 +8,7 @@ import re
 import json
 import time
 import logging
+import threading
 import uuid
 import asyncio
 from typing import Optional, Dict, Any, List
@@ -309,6 +310,59 @@ def get_video_preferences(user_id: str, world_id: str) -> Dict[str, str]:
 def set_video_preferences(user_id: str, world_id: str, prefs: Dict[str, str]):
     """设置用户在指定世界的视频偏好"""
     UserPreferencesModel.upsert(user_id, world_id, PREF_TYPE_VIDEO_PREFERENCES, prefs)
+
+
+def build_video_duration_capabilities(user_id: str) -> str:
+    """当前用户可用的视频模型及各自最长时长（[视频模型时长能力] 注入行内容）。
+
+    智能体决定 clip 时长/分段数时的能力依据（拉长优先策略见
+    enterprise/sops/sop-article-to-video.md §0/§2：单 clip 拉满所选模型最大时长，
+    避免拆段导致前后语义割裂）。实现方可用性按用户查库（同步），
+    调用方须放 asyncio.to_thread。返回空串表示无可用视频模型（不注入）。
+    """
+    from config.unified_config import UnifiedConfigRegistry, TaskCategory
+    from task.visual_drivers.driver_factory import VideoDriverFactory
+
+    entries: Dict[int, str] = {}
+    for category in (TaskCategory.TEXT_TO_VIDEO, TaskCategory.IMAGE_TO_VIDEO):
+        for cfg in UnifiedConfigRegistry.get_by_category(category):
+            if not cfg.enabled or cfg.hidden or cfg.id in entries:
+                continue
+            durations = getattr(cfg, 'supported_durations', None) or []
+            if not durations:
+                continue
+            try:
+                if VideoDriverFactory.get_implementation_for_user(cfg.id, str(user_id)) is None:
+                    continue
+            except Exception:
+                pass  # 可用性查询失败按可用纳入，与 marketing_video_tools._is_task_available 口径一致
+            variant = getattr(cfg, 'variant_label', '') or ''
+            label = f"{cfg.name}({variant})" if variant else cfg.name
+            entries[cfg.id] = f"{cfg.id}={label}(最长{max(int(d) for d in durations)}s)"
+    if not entries:
+        return ''
+    return '、'.join(entries[tid] for tid in sorted(entries))
+
+
+# 时长能力行缓存：任务创建高频调用，未命中时 22 个模型逐个查实现方可用性
+# （每个模型内部各查一次 users 表偏好，同一用户行被重复查 N 遍）；模型可用性
+# 与偏好变化低频，60s TTL 足够新鲜（实现方启停后最长 1 分钟内生效）。
+_VIDEO_DURATION_CAPS_TTL_SECONDS = 60
+_video_duration_caps_cache: Dict[str, tuple] = {}
+_video_duration_caps_cache_lock = threading.Lock()
+
+
+def get_video_duration_capabilities_line(user_id: str) -> str:
+    """带 60s TTL 缓存的 [视频模型时长能力] 注入行（并发安全，构建在锁外）。"""
+    now = time.monotonic()
+    with _video_duration_caps_cache_lock:
+        cached = _video_duration_caps_cache.get(user_id)
+        if cached and cached[0] > now:
+            return cached[1]
+    line = build_video_duration_capabilities(user_id)
+    with _video_duration_caps_cache_lock:
+        _video_duration_caps_cache[user_id] = (now + _VIDEO_DURATION_CAPS_TTL_SECONDS, line)
+    return line
 
 
 def get_text_to_video_model_id(user_id: str, world_id: str) -> Optional[int]:
@@ -1850,6 +1904,8 @@ async def replace_pending_task(request: Request, session_id: str):
 
     返回:
     - replaced: int, 实际替换的行数（0 表示未找到匹配的 pending 行）
+    - duplicate: bool, replaced=0 时为 True 表示会话历史里已有该批
+      project 的结果卡片，调用方应跳过追加（防重复写入）
     """
     try:
         body = await request.json()
@@ -1872,12 +1928,24 @@ async def replace_pending_task(request: Request, session_id: str):
             new_content
         )
 
+        # 未找到 pending 行时做服务端判重：会话历史里已有该批 project 的结果
+        # 卡片（如另一页签已写入、或 pending 行早已被替换），前端据此跳过追加，
+        # 防止"视频已生成"消息被重复写入
+        duplicate = False
+        if affected == 0:
+            duplicate = await asyncio.to_thread(
+                ChatMessagesModel.has_generated_result,
+                session_id,
+                project_ids
+            )
+
         if affected > 0:
             session_storage.invalidate_cache(session_id)
 
         return JSONResponse({
             'success': True,
-            'replaced': affected
+            'replaced': affected,
+            'duplicate': duplicate
         })
     except Exception as e:
         logger.error(f'替换 pending task 失败: {str(e)}')
@@ -4274,6 +4342,14 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 v_pref_parts.append("人脸处理: 已开启")
             if v_pref_parts:
                 user_message += f"\n\n[用户视频偏好] {', '.join(v_pref_parts)}"
+
+        # 视频模型时长能力（按当前用户可用实现方动态过滤，60s TTL 缓存）——智能体
+        # 决定 clip 时长与分段数的能力依据：单 clip 优先拉满所选模型最大时长，
+        # 避免拆段导致前后语义割裂（引导规则见 article-to-video SOP §0/§2）。
+        # 实现方可用性查库为同步调用，放 to_thread（非阻塞红线）。
+        video_duration_caps = await asyncio.to_thread(get_video_duration_capabilities_line, user_id)
+        if video_duration_caps:
+            user_message += f"\n\n[视频模型时长能力] 可用视频模型及最长时长: {video_duration_caps}"
 
         # 素材输出语言指令块（显式选择 > 「自动」档按 UI locale 回落）
         material_language = resolve_material_output_language(

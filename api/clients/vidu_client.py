@@ -1,11 +1,19 @@
 import requests
 from config.config_util import get_dynamic_config_value
+from config.constant import coerce_http_timeout_seconds
 import json
 from utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
 BASE_URL = "https://api.vidu.cn"
+
+
+def _http_timeout():
+    """单次 HTTP 超时（秒）。request_timeout 历史值 10000 按毫秒换算。"""
+    return coerce_http_timeout_seconds(
+        get_dynamic_config_value("timeout", "request_timeout", default=30)
+    )
 
 
 def _get_api_key():
@@ -68,7 +76,7 @@ def create_vidu_image_to_video(
     logger.info(f"[Vidu API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=_http_timeout())
         response.raise_for_status()
         result = response.json()
         
@@ -137,7 +145,7 @@ def create_vidu_text_to_video(
     logger.info(f"[Vidu API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=_http_timeout())
         response.raise_for_status()
         result = response.json()
         
@@ -205,7 +213,7 @@ def create_vidu_start_end_to_video(
     logger.info(f"[Vidu API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(url, json=payload, headers=headers, timeout=_http_timeout())
         response.raise_for_status()
         result = response.json()
         
@@ -248,7 +256,7 @@ def get_vidu_task_status(task_id: str):
     logger.info(f"[Vidu API] Task ID: {task_id}")
     
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=_http_timeout())
         response.raise_for_status()
         result = response.json()
         

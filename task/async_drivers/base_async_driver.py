@@ -9,6 +9,7 @@ import logging
 import traceback
 from datetime import datetime
 import httpx
+from config.constant import coerce_http_timeout_seconds
 from utils.logger_config import DailyFileHandler
 from utils.runninghub_error import is_upstream_congested_error
 
@@ -317,6 +318,8 @@ class BaseAsyncDriver(ABC):
         api_logger.info(f"Payload: {self._mask_sensitive_payload(json)}")
 
         try:
+            # 配置里的 request_timeout 单位是毫秒，httpx 要秒。
+            timeout = coerce_http_timeout_seconds(timeout)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.request(
                     method, url, json=json, headers=headers, **kwargs

@@ -103,6 +103,9 @@ class VideoWorkflow:
         self.update_time = kwargs.get('update_time')
         # 内容乐观锁版本号（迁移 no_130 新增；迁移前的行 SELECT 不含该列，取默认 0）
         self.content_version = kwargs.get('content_version', 0)
+        # 最近一次成功写入的客户端写 id（迁移 no_144）。不参与内容哈希。
+        # 迁移前的行没有该列，取 None。
+        self.last_write_id = kwargs.get('last_write_id')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -125,6 +128,7 @@ class VideoWorkflow:
             'style_reference_image': self.style_reference_image,
             'default_world_id': self.default_world_id,
             'workflow_ratio': self.workflow_ratio,
+            'last_write_id': self.last_write_id,
             'create_time': self.create_time.isoformat() if self.create_time else None,
             'update_time': self.update_time.isoformat() if self.update_time else None
         }
@@ -382,7 +386,7 @@ class VideoWorkflowModel:
         Returns:
             Number of affected rows
         """
-        allowed_fields = ['name', 'description', 'cover_image', 'status', 'workflow_data', 'style', 'style_reference_image', 'default_world_id', 'workflow_ratio']
+        allowed_fields = ['name', 'description', 'cover_image', 'status', 'workflow_data', 'style', 'style_reference_image', 'default_world_id', 'workflow_ratio', 'last_write_id']
 
         update_fields = []
         params = []
@@ -496,6 +500,7 @@ CREATE TABLE IF NOT EXISTS `video_workflow` (
   `status` tinyint NOT NULL DEFAULT '1' COMMENT '状态: 0-禁用, 1-启用, 2-草稿',
   `workflow_data` json DEFAULT NULL COMMENT '工作流配置数据(JSON格式)',
   `content_version` int NOT NULL DEFAULT 0 COMMENT '内容乐观锁版本号：PUT 条件更新 WHERE 用，每次内容写入 +1',
+  `last_write_id` varchar(64) DEFAULT NULL COMMENT '最近一次成功写入的客户端写 id；不参与内容哈希',
   `style` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '画风',
   `style_reference_image` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '画风参考图URL',
   `workflow_ratio` varchar(10) DEFAULT NULL COMMENT '工作流宽高比: 16:9 (横屏) | 9:16 (竖屏)',

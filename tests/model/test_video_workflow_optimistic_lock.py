@@ -64,3 +64,14 @@ def test_entity_defaults_content_version_for_premigration_rows():
     from model.video_workflow import VideoWorkflow
     row = VideoWorkflow(id=1, name="n")
     assert row.content_version == 0
+    assert row.last_write_id is None
+
+
+def test_update_persists_last_write_id_including_null():
+    # 缺省或非法的 X-Write-Id 要写成 NULL，不能留下上一笔的 id
+    with patch("model.video_workflow.execute_update", return_value=1) as fake:
+        VideoWorkflowModel.update(1, name="n", last_write_id=None)
+    sql, params = _captured_sql(fake)
+    assert "last_write_id = %s" in sql
+    assert params[0] == "n"
+    assert params[1] is None

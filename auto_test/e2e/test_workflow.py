@@ -156,3 +156,46 @@ class TestWorkflowSaveCAS:
         )
         assert resp.status_code == 200, f"无 X-Base-Hash 保存应成功: {resp.status_code} {resp.text}"
         assert resp.json().get("code") == 0
+
+    def test_stale_conflict_returns_winner_write_id(self, api_client, test_workflow):
+        """P1 - 过期基线 409 回传赢下当前行的 X-Write-Id"""
+        wf_id = test_workflow["id"]
+        h1 = self._get_hash(api_client, wf_id)
+        winner = "self-write-0001"
+        resp1 = api_client.put(
+            f"/api/video-workflow/{wf_id}",
+            json={"default_world_id": 11},
+            headers={"X-Base-Hash": h1, "X-Write-Id": winner},
+        )
+        assert resp1.status_code == 200, f"带写 id 的保存失败: {resp1.status_code} {resp1.text}"
+        assert resp1.json().get("data", {}).get("last_write_id") == winner
+
+        resp2 = api_client.put(
+            f"/api/video-workflow/{wf_id}",
+            json={"default_world_id": 12},
+            headers={"X-Base-Hash": h1, "X-Write-Id": "other-write-0002"},
+        )
+        assert resp2.status_code == 409, f"过期基线应 409: {resp2.status_code} {resp2.text}"
+        data2 = resp2.json().get("data", {})
+        assert data2.get("last_write_id") == winner, f"409 应回传赢家写 id: {resp2.text}"
+        assert data2.get("content_hash")
+
+    def test_headerless_write_clears_last_write_id(self, api_client, test_workflow):
+        """P1 - 不带 X-Write-Id 的真实写入把 last_write_id 清成空"""
+        wf_id = test_workflow["id"]
+        h1 = self._get_hash(api_client, wf_id)
+        resp1 = api_client.put(
+            f"/api/video-workflow/{wf_id}",
+            json={"default_world_id": 21},
+            headers={"X-Base-Hash": h1, "X-Write-Id": "self-write-0003"},
+        )
+        assert resp1.status_code == 200, f"写入写 id 失败: {resp1.status_code} {resp1.text}"
+
+        resp2 = api_client.put(
+            f"/api/video-workflow/{wf_id}",
+            json={"name": "pytest 无写 id 强制写"},
+        )
+        assert resp2.status_code == 200, f"无写 id 强制写失败: {resp2.status_code} {resp2.text}"
+        assert resp2.json().get("data", {}).get("last_write_id") in (None, "")
+        detail = api_client.get(f"/api/video-workflow/{wf_id}").json().get("data", {})
+        assert detail.get("last_write_id") in (None, "")

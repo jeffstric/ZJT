@@ -631,8 +631,7 @@
           this.videoStatusTimer = null;
         }
       },
-      downloadVideo(url, index, isEnhanced = false) {
-          // Check if WeChat browser
+      async downloadVideo(url, index, isEnhanced = false) {
           if (this.$root.isWechatBrowser()) {
             this.$root.showWechatGuideModal = true;
             return;
@@ -646,15 +645,12 @@
                         now.getMinutes().toString().padStart(2, '0');
           const prefix = isEnhanced ? 'ai_script_video_enhanced' : 'ai_script_video';
           const filename = `${prefix}_${dateStr}_${timeStr}_${index + 1}.mp4`;
-          const downloadUrl = buildDownloadUrl(url, filename);
-
-          const link = document.createElement('a');
-          link.href = downloadUrl;
-          link.download = filename;
-          link.target = '_blank';
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+          try {
+            await downloadWithAuth(url, filename);
+          } catch (e) {
+            if (e && e.status === 401) return;
+            alert((e && e.message) || '下载失败');
+          }
         },
     },
     beforeUnmount() {

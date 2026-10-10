@@ -49,15 +49,23 @@
 }
 ```
 
-状态规则：
+状态规则（只看 `script` 表里的已入库行，按 `world_id + episode_number` 对齐；不看 `script.user_id`，不读剧本智能体暂存文件）：
 
-- `created`：剧本和故事板都存在。
-- `not_created`：剧本存在，故事板尚未创建。
-- `orphan`：故事板存在，但对应剧本缺失。
+- `created`：该世界该集有已入库剧本，且已有故事板。
+- `not_created`：该世界该集有已入库剧本，故事板尚未创建。
+- `orphan`：故事板存在，但该世界该集没有已入库剧本（只在暂存区，或剧本已删除）。
+
+同一世界同一集有多行入库剧本时，文件夹保留 `id` 最小的那一行。
+
+查询范围：
+
+- 请求带 `world_id`：只取该世界的已入库剧本。入口已做世界访问校验。
+- 请求不带 `world_id`（列表页跨世界展示）：世界范围与世界列表一致。独立空间是当前用户的世界，含伪删除；共享空间是当前可见的全部世界。再取这些世界里的全部已入库剧本。故事板仍按原规则过滤（独立空间只看当前用户的故事板）。
 
 后端实现约束：
 
 - 不新增数据库表，文件夹由 `world_id + episode_number` 临时聚合。
+- 文件夹查询使用 `ScriptModel.list_for_folders`，只取 `id / world_id / title / episode_number / update_time / create_time`，不读正文，不按 100 条截断。
 - Web 接口内的同步 DB 查询必须使用 `asyncio.to_thread()` 包装，避免阻塞事件循环。
 - 不通过 URL 传递 `auth_token`，前端从 `localStorage` 读取并通过 Header 发送。
 - `storyboard.composition_preference` 是主表字段，首次创建时从 `world.composition_preference` 继承，用于后续生成图片提示词。
