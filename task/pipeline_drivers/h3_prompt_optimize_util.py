@@ -276,10 +276,42 @@ def kfref_required_clauses(
     return clauses
 
 
+_KFREF_AUDIO_SPOKEN = (
+    "<Audio 1> is a reference audio for voice timbre, vocal identity, speaking tone, "
+    "rhythm, intonation, and lip-sync pacing."
+)
+_KFREF_AUDIO_TIMBRE_ONLY = (
+    "<Audio 1> is a voice-timbre reference only. Do not copy its words, rhythm, or pacing "
+    "into the video. Do not lip-sync to it. No character speaks."
+)
+
+
+def _kfref_audio_line(audios: int, has_dialogue: bool) -> str:
+    """有台词时保留对口型句。没台词时只锁定音色，不把样本里的话念进成片。"""
+    if audios <= 0:
+        return "没有参考音频，不要编造 <Audio N>。"
+    if has_dialogue:
+        stance = "this shot has spoken lines"
+        sentence = _KFREF_AUDIO_SPOKEN
+    else:
+        stance = "this shot has no spoken lines"
+        sentence = _KFREF_AUDIO_TIMBRE_ONLY
+    if audios >= 2:
+        count = (
+            "有 2 个参考音频。第一段写成 <Audio 1>，第二段写成 <Audio 2>。"
+            "每一段都照抄下面这一句，只改编号。"
+            "不要写 <Audio 3>，也不要写 <audio_N>。"
+        )
+    else:
+        count = "只有 1 个参考音频，写成 <Audio 1>。不要写 <Audio 2>，也不要写 <audio_2>。"
+    return f"{stance}。{count}\n{sentence}\n"
+
+
 def _build_kfref_instruction(
     keyframe_slots: Optional[Dict[str, Any]],
     ref_counts: Optional[Dict[str, int]],
     duration: float,
+    has_dialogue: bool = False,
 ) -> str:
     """按真实槽位写 KFRef 指令。原句交给大模型照抄，代码不拼进优化结果。"""
     roles = _kfref_roles(keyframe_slots, ref_counts)
@@ -316,6 +348,7 @@ def _build_kfref_instruction(
         else:
             lines.append(f"Do not mention <Picture {index}>. This slot has no image.")
     audios = min(int((ref_counts or {}).get("audios") or 0), MAX_VOICE_REFERENCE_AUDIOS)
+    audio_line = _kfref_audio_line(audios, has_dialogue)
     prefix_parts = []
     if has_keyframe:
         prefix_parts.append("keyframe completion")
@@ -325,16 +358,6 @@ def _build_kfref_instruction(
         prefix_parts.append("audio reference")
     prefix = " + ".join(prefix_parts) if prefix_parts else "reference generation"
     seconds = f"{float(duration or 5):.2f}"
-    if audios >= 2:
-        audio_line = (
-            "有 2 个参考音频。第一段写成 <Audio 1>，第二段写成 <Audio 2>。"
-            "每一段都写明它是 voice timbre、vocal identity、speaking tone、rhythm、intonation、lip-sync pacing 的参考。"
-            "不要写 <Audio 3>，也不要写 <audio_N>。"
-        )
-    elif audios == 1:
-        audio_line = "只有 1 个参考音频，写成 <Audio 1>。不要写 <Audio 2>，也不要写 <audio_2>。"
-    else:
-        audio_line = "没有参考音频，不要编造 <Audio N>。"
     has_end = any(roles.get(f"picture_{index}") == _H3_KF_ROLE_END for index in (1, 2, 3))
     # 原文常写「固定运镜」和起始姿势。大模型若把这些写进结尾，视频模型会停在首帧构图，尾帧图对不上。
     end_override = ""
@@ -422,15 +445,20 @@ def build_h3_optimize_user_message(
     keyframe_slots: Optional[Dict[str, Any]] = None,
 ) -> str:
     guide = template if template is not None else load_h3_prompt_template(variant)
+    quoted_spans = _extract_quoted_cjk_spans(original_prompt)
     if variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF:
-        instruction = _build_kfref_instruction(keyframe_slots, ref_counts, duration)
+        instruction = _build_kfref_instruction(
+            keyframe_slots,
+            ref_counts,
+            duration,
+            has_dialogue=bool(quoted_spans),
+        )
     elif variant == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA:
         instruction = _build_ref2va_instruction(ref_counts, duration)
     elif variant == H3_PROMPT_OPTIMIZE_VARIANT_FL2VA:
         instruction = _FL2VA_INSTRUCTION.format(duration=float(duration or 5))
     else:
         instruction = _I2VA_INSTRUCTION
-    quoted_spans = _extract_quoted_cjk_spans(original_prompt)
     if quoted_spans:
         instruction = f"{instruction}\n{_build_dialogue_fidelity_note(quoted_spans)}"
     else:

@@ -1,4 +1,11 @@
-const { placeShotFrameMentionImages } = require('../js/shot_frame_video_generator.js');
+const {
+  placeShotFrameMentionImages,
+  promptHasShotFrameMention,
+  buildShotFrameAutoPrompt,
+  shotFrameAutoPromptFlags,
+  ensureShotFrameMentionTokens,
+  syncShotFrameAutoPrompt
+} = require('../js/shot_frame_video_generator.js');
 
 describe('placeShotFrameMentionImages', () => {
   test('没有标记时不改提示词，也不改入参数组', () => {
@@ -105,5 +112,56 @@ describe('placeShotFrameMentionImages', () => {
     expect(result.prompt).toBe('@首帧图片之后是 图1');
     expect(result.referenceImageUrls).toEqual(['first.png']);
     expect(result.promptSuffix).toEqual(['图1是首帧']);
+  });
+});
+
+describe('参考模式只读首尾帧提示词', () => {
+  test('只有四种整句', () => {
+    expect(buildShotFrameAutoPrompt(false, false)).toBe('');
+    expect(buildShotFrameAutoPrompt(true, false)).toBe('@首帧图是首帧');
+    expect(buildShotFrameAutoPrompt(false, true)).toBe('@尾帧图是尾帧');
+    expect(buildShotFrameAutoPrompt(true, true)).toBe('@首帧图是首帧，@尾帧图是尾帧');
+  });
+
+  test('整句判断不使用正则，更长的文本不算', () => {
+    expect(shotFrameAutoPromptFlags('@首帧图是首帧')).toEqual({ wantsFirst: true, wantsLast: false });
+    expect(shotFrameAutoPromptFlags('@尾帧图是尾帧')).toEqual({ wantsFirst: false, wantsLast: true });
+    expect(shotFrameAutoPromptFlags('@首帧图是首帧，@尾帧图是尾帧')).toEqual({ wantsFirst: true, wantsLast: true });
+    expect(shotFrameAutoPromptFlags('')).toEqual({ wantsFirst: false, wantsLast: false });
+    expect(shotFrameAutoPromptFlags('@首帧图是首帧的门口')).toEqual({ wantsFirst: false, wantsLast: false });
+    expect(promptHasShotFrameMention('@首帧图是首帧')).toBe(false);
+    expect(promptHasShotFrameMention('@尾帧图是尾帧')).toBe(false);
+  });
+
+  test('字段要首帧且原文没有标记时，提交副本补一行，并排成图1是首帧', () => {
+    const prompt = ensureShotFrameMentionTokens('男人推门走进房间', 'shot.png', '');
+    expect(prompt).toBe('男人推门走进房间\n@首帧图');
+    const placed = placeShotFrameMentionImages(prompt, ['a', 'b'], ['图1是甲', '图2是乙'], 'shot.png', '', 5);
+    expect(placed.error).toBe('');
+    expect(placed.prompt).toBe('男人推门走进房间\n图1');
+    expect(placed.referenceImageUrls[0]).toBe('shot.png');
+    expect(placed.promptSuffix[0]).toBe('图1是首帧');
+  });
+
+  test('原文已有标记时不补第二次，字段为空时不补', () => {
+    expect(ensureShotFrameMentionTokens('从 @首帧图 开始', 'shot.png', 'end.png')).toBe('从 @首帧图 开始\n@尾帧图');
+    expect(ensureShotFrameMentionTokens('原文', '', '')).toBe('原文');
+    expect(ensureShotFrameMentionTokens('', 'shot.png', 'end.png')).toBe('@首帧图\n@尾帧图');
+  });
+
+  test('清除首帧后只留下尾帧句', () => {
+    const node = {
+      data: {
+        previewImageUrl: 'shot.png',
+        lastFrameUrl: 'end.png',
+        firstFrameDismissed: false
+      }
+    };
+    expect(syncShotFrameAutoPrompt(node)).toBe('@首帧图是首帧，@尾帧图是尾帧');
+    node.data.firstFrameDismissed = true;
+    node.data.previewImageUrl = '';
+    expect(syncShotFrameAutoPrompt(node)).toBe('@尾帧图是尾帧');
+    node.data.lastFrameUrl = '';
+    expect(syncShotFrameAutoPrompt(node)).toBe('');
   });
 });

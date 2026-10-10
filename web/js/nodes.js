@@ -2544,6 +2544,7 @@
         const toNode = state.nodes.find(n => n.id === conn.to);
         if(toNode && toNode.type === 'shot_frame'){
           toNode.data.previewImageUrl = '';
+          if(typeof toNode.syncFrameAutoPrompt === 'function') toNode.syncFrameAutoPrompt();
           const nodeEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
           if(nodeEl){
             const previewImageEl = nodeEl.querySelector('.shot-frame-preview-image');

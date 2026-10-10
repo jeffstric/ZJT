@@ -394,7 +394,50 @@ def test_kfref_instruction_names_second_audio_when_two_are_present():
     assert "不要写 <Audio 3>" in message
     assert "不要写 <Audio 2>" not in message
     guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
-    assert "<Audio 2> is a reference audio for voice timbre" in guide
+    assert "this shot has spoken lines" in guide
+    assert "lip-sync pacing" in guide
+    assert "this shot has no spoken lines" in guide
+    assert "voice-timbre reference only" in guide
+
+
+def test_kfref_audio_sentence_depends_on_spoken_lines():
+    slots = assign_h3_keyframe_ref_pictures(["first.png", "ref.png"], "图1是首帧。")
+    silent = build_h3_optimize_user_message(
+        "参考音频说明：音频1是角色：李卫国的音色样本，角色说话时请保持相同音色。",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        10,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 2},
+        keyframe_slots=slots,
+    )
+    assert "this shot has no spoken lines" in silent
+    assert "voice-timbre reference only" in silent
+    assert "Do not lip-sync to it." in silent
+    assert "lip-sync pacing" not in silent
+    assert "第一段写成 <Audio 1>，第二段写成 <Audio 2>。" in silent
+
+    spoken = build_h3_optimize_user_message(
+        '赵志高大声呵斥道："李保国！你看看你扫的什么地！"',
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 1},
+        keyframe_slots=slots,
+    )
+    assert "this shot has spoken lines" in spoken
+    assert "lip-sync pacing" in spoken
+    assert "voice-timbre reference only" not in spoken
+    assert "不要写 <Audio 2>" in spoken
+
+    ref2va = build_h3_optimize_user_message(
+        "参考音频说明：音频1是角色：李卫国的音色样本，角色说话时请保持相同音色。",
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 1, "videos": 0, "audios": 1},
+    )
+    assert "this shot has no spoken lines" not in ref2va
+    assert "voice-timbre reference only" not in ref2va
 
 
 def test_kfref_instruction_omits_the_unused_keyframe_sentence():

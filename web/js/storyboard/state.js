@@ -6,6 +6,7 @@ import {
     dialogueFromApi,
 } from './adapters.js';
 import { t } from './utils.js';
+import { resolveSubmitFrameUrls } from './frame_mention.js';
 
 const state = {
     storyboardId: null,
@@ -1215,6 +1216,41 @@ export function currentVideoFrameUrls() {
         frame_first_url: first ? toAbsoluteMediaUrl(first.url) : '',
         frame_last_url: last ? toAbsoluteMediaUrl(last.url) : '',
     };
+}
+
+function renderableSceneFrameUrl(scene, field) {
+    const raw = scene?.[field];
+    return isRenderableMediaUrl(raw) ? toAbsoluteMediaUrl(raw) : '';
+}
+
+/**
+ * 参考模式 @ 菜单可见的首尾帧。槽位优先；槽位空时用当前分镜的首帧图 / 尾帧图。
+ * 首帧模式不提供这两项（标记在该模式下不生效）。
+ */
+export function mentionableVideoFrameUrls() {
+    if (state.videoImageMode !== 'multi_reference') {
+        return { frame_first_url: '', frame_last_url: '' };
+    }
+    const slots = currentVideoFrameUrls();
+    const scene = getCurrentScene();
+    return {
+        frame_first_url: slots.frame_first_url || renderableSceneFrameUrl(scene, 'firstFrameUrl'),
+        frame_last_url: slots.frame_last_url || renderableSceneFrameUrl(scene, 'lastFrameUrl'),
+    };
+}
+
+/** 按即将提交的提示词解析首尾帧。点名且槽位空时补分镜图。 */
+export function submitVideoFrameUrls(promptText) {
+    const slots = currentVideoFrameUrls();
+    const scene = getCurrentScene();
+    return resolveSubmitFrameUrls({
+        imageMode: state.videoImageMode,
+        prompt: promptText,
+        slotFirst: slots.frame_first_url,
+        slotLast: slots.frame_last_url,
+        sceneFirst: renderableSceneFrameUrl(scene, 'firstFrameUrl'),
+        sceneLast: renderableSceneFrameUrl(scene, 'lastFrameUrl'),
+    });
 }
 
 export function ensureVideoImageModeSupported() {

@@ -5,7 +5,7 @@ import state, {
     videoModelSupportsLastFrame,
     getMaxVideoMediaCount,
     canAddVideoMedia,
-    currentVideoFrameUrls,
+    mentionableVideoFrameUrls,
     isRenderableMediaUrl,
     getSelectedVideoModel,
     getSelectedImageToVideoModel,
@@ -2588,18 +2588,25 @@ function renderGenerateFromScriptDialog() {
         </div>`;
 }
 
+function renderFrameMentionButton(token, url, label) {
+    const safeLabel = escapeHtml(label);
+    const thumb = escapeHtml(getThumbnailUrl(url, 28));
+    return `<button type="button" data-mention-item="${escapeHtml(token)}"><img src="${thumb}" alt=""><span>${safeLabel}</span></button>`;
+}
+
 function renderFrameMentionButtons() {
     const videoChat = state.chatMode === 'video' || state.chatMode === 'aivideo';
     if (!videoChat || state.videoImageMode !== 'multi_reference') return '';
-    const frames = currentVideoFrameUrls();
+    const frames = mentionableVideoFrameUrls();
     const buttons = [];
     if (frames.frame_first_url) {
-        buttons.push(`<button type="button" data-mention-item="首帧图"><span>${escapeHtml(i18nT('label_mention_first_frame', '首帧图'))}</span></button>`);
+        buttons.push(renderFrameMentionButton('首帧图', frames.frame_first_url, i18nT('label_mention_first_frame', '首帧图')));
     }
     if (frames.frame_last_url) {
-        buttons.push(`<button type="button" data-mention-item="尾帧图"><span>${escapeHtml(i18nT('label_mention_last_frame', '尾帧图'))}</span></button>`);
+        buttons.push(renderFrameMentionButton('尾帧图', frames.frame_last_url, i18nT('label_mention_last_frame', '尾帧图')));
     }
-    return buttons.join('');
+    if (!buttons.length) return '';
+    return `<div class="mention-frames">${buttons.join('')}</div>`;
 }
 
 function renderMentionPopup() {
@@ -2613,14 +2620,14 @@ function renderMentionPopup() {
     const frameButtons = renderFrameMentionButtons();
     return `
         <div class="mention-popup">
+            ${frameButtons}
             <div class="mention-tabs">
                 <button data-mention-tab="character" class="${state.mentionTab === 'character' ? 'active' : ''}">${i18nT('label_character', '角色')}</button>
                 <button data-mention-tab="scene" class="${state.mentionTab === 'scene' ? 'active' : ''}">${i18nT('label_scene', '场景')}</button>
                 <button data-mention-tab="prop" class="${state.mentionTab === 'prop' ? 'active' : ''}">${i18nT('label_prop', '道具')}</button>
             </div>
             <div class="mention-list">
-                ${frameButtons}
-                ${items.map(item => `<button data-mention-item="${escapeHtml(item.name)}">${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`).join('') || (frameButtons ? '' : `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`)}
+                ${items.map(item => `<button data-mention-item="${escapeHtml(item.name)}">${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`}
             </div>
         </div>`;
 }

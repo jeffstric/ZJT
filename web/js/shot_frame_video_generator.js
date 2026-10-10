@@ -166,6 +166,67 @@ function promptHasShotFrameMention(prompt) {
   return /@首帧图(?![\u4e00-\u9fff])/.test(text) || /@尾帧图(?![\u4e00-\u9fff])/.test(text);
 }
 
+function promptHasFirstFrameToken(prompt) {
+  return /@首帧图(?![\u4e00-\u9fff])/.test(prompt == null ? '' : String(prompt));
+}
+
+function promptHasLastFrameToken(prompt) {
+  return /@尾帧图(?![\u4e00-\u9fff])/.test(prompt == null ? '' : String(prompt));
+}
+
+// 参考模式只读字段的固定句子。后面紧跟汉字，现有 @ 标记认不出它们。
+const SHOT_FRAME_AUTO_FIRST = '@首帧图是首帧';
+const SHOT_FRAME_AUTO_LAST = '@尾帧图是尾帧';
+
+function buildShotFrameAutoPrompt(hasFirst, hasLast) {
+  const parts = [];
+  if (hasFirst) parts.push(SHOT_FRAME_AUTO_FIRST);
+  if (hasLast) parts.push(SHOT_FRAME_AUTO_LAST);
+  return parts.join('，');
+}
+
+// 只接受四种整句。更长的文本不算，避免误伤用户原文。
+function shotFrameAutoPromptFlags(text) {
+  const value = text == null ? '' : String(text);
+  if (value === SHOT_FRAME_AUTO_FIRST + '，' + SHOT_FRAME_AUTO_LAST) {
+    return { wantsFirst: true, wantsLast: true };
+  }
+  if (value === SHOT_FRAME_AUTO_FIRST) return { wantsFirst: true, wantsLast: false };
+  if (value === SHOT_FRAME_AUTO_LAST) return { wantsFirst: false, wantsLast: true };
+  return { wantsFirst: false, wantsLast: false };
+}
+
+// 提交副本补上不带汉字的标记。原文已有对应标记时不补第二次。不写回节点。
+function ensureShotFrameMentionTokens(prompt, firstUrl, lastUrl) {
+  let text = prompt == null ? '' : String(prompt);
+  const first = String(firstUrl || '').trim();
+  const last = String(lastUrl || '').trim();
+  if (first && !promptHasFirstFrameToken(text)) {
+    text = text.replace(/\s*$/, '');
+    text = text ? (text + '\n@首帧图') : '@首帧图';
+  }
+  if (last && !promptHasLastFrameToken(text)) {
+    text = text.replace(/\s*$/, '');
+    text = text ? (text + '\n@尾帧图') : '@尾帧图';
+  }
+  return text;
+}
+
+function shotFrameHasAutoFirst(node) {
+  if (!node || !node.data || node.data.firstFrameDismissed) return false;
+  return String(node.data.previewImageUrl || '').trim() !== '';
+}
+
+function syncShotFrameAutoPrompt(node) {
+  if (!node || !node.data) return '';
+  const text = buildShotFrameAutoPrompt(
+    shotFrameHasAutoFirst(node),
+    resolveMentionLastFrameUrl(node) !== ''
+  );
+  node.data.frameAutoPrompt = text;
+  return text;
+}
+
 function isH3ReferenceVideoModel(videoModel) {
   const key = String(videoModel || '');
   return key === 'minimax_h3_r2v' || key === 'minimax_h3_reference_to_video';
@@ -294,6 +355,18 @@ async function generateShotFrameVideo(nodeId, node){
       showToast('正在收集参考图...', 'info');
       let { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node);
 
+      // 只读字段按当前首尾帧重算。用户的 videoPromptText 不动。
+      if (typeof node.syncFrameAutoPrompt === 'function') {
+        node.syncFrameAutoPrompt();
+      } else {
+        syncShotFrameAutoPrompt(node);
+      }
+      const autoFlags = shotFrameAutoPromptFlags(node.data.frameAutoPrompt);
+      const mentionLastUrl = resolveMentionLastFrameUrl(node);
+      const autoFirstUrl = autoFlags.wantsFirst ? String(node.data.previewImageUrl || '').trim() : '';
+      const autoLastUrl = autoFlags.wantsLast ? mentionLastUrl : '';
+      videoPrompt = ensureShotFrameMentionTokens(videoPrompt, autoFirstUrl, autoLastUrl);
+
       // 必须在改写前提取 @ 标记。改写后标记会变成「图N」，不能再用来判断要不要换模型。
       const useH3KeyframeRef = shouldUseH3KeyframeRefModel(mode, videoModel, videoPrompt);
       // @首帧图 / @尾帧图 排到参考图两端。存储的提示词不动，只改这次提交的文本。
@@ -302,7 +375,7 @@ async function generateShotFrameVideo(nodeId, node){
         referenceImageUrls,
         promptSuffix,
         node.data.previewImageUrl,
-        resolveMentionLastFrameUrl(node),
+        mentionLastUrl,
         shotFrameMentionImageLimit(mode, videoModel, videoPrompt)
       );
       if(placedMentions.error) {
@@ -603,6 +676,10 @@ if (typeof window !== 'undefined') {
   window.placeShotFrameMentionImages = placeShotFrameMentionImages;
   window.shouldUseH3KeyframeRefModel = shouldUseH3KeyframeRefModel;
   window.promptHasShotFrameMention = promptHasShotFrameMention;
+  window.buildShotFrameAutoPrompt = buildShotFrameAutoPrompt;
+  window.shotFrameAutoPromptFlags = shotFrameAutoPromptFlags;
+  window.ensureShotFrameMentionTokens = ensureShotFrameMentionTokens;
+  window.syncShotFrameAutoPrompt = syncShotFrameAutoPrompt;
 }
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -610,6 +687,10 @@ if (typeof module !== 'undefined' && module.exports) {
     shouldUseH3KeyframeRefModel,
     promptHasShotFrameMention,
     resolveShotFrameReferenceSubmitModel,
-    shotFrameMentionImageLimit
+    shotFrameMentionImageLimit,
+    buildShotFrameAutoPrompt,
+    shotFrameAutoPromptFlags,
+    ensureShotFrameMentionTokens,
+    syncShotFrameAutoPrompt
   };
 }

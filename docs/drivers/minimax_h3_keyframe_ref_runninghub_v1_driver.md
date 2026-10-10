@@ -15,7 +15,7 @@
 - **实现方**：`minimax_h3_keyframe_ref_runninghub_v1`（id=100）
 - **驱动类**：`MinimaxH3KeyframeRefRunninghubV1Driver`
 - **图片**：最多 3 张，来自 `reference_images`
-- **音频**：最多 2 路，按 `audio_path` 顺序填节点 157（`<Audio 1>`）和 188（`<Audio 2>`）。fieldValue 用上传后的 fileName。没有对应音频时 fieldValue 是字符串 `None`。第 3 路及以后丢弃并记日志
+- **音频**：最多 2 路，按 `audio_path` 顺序填节点 157（`<Audio 1>`）和 188（`<Audio 2>`）。fieldValue 用上传后的 fileName。没有对应音频时 fieldValue 是字符串 `None`。第 3 路及以后丢弃并记日志。原文有引号台词时，音频句仍写 lip-sync pacing，台词放进 `<d>`。原文没有台词时，同一句改成只锁定音色：不要复制样本里的原话、节奏，也不要对口型，输出里不出现 `<d>`。音频文件仍照常上传。Ref2VA 的音频句不变
 - **参考视频**：不支持，提交时丢弃并记日志
 - **提示词优化**：`h3_prompt_optimize` 的 KFRef 变体，模板是 `task/pipeline_drivers/prompts/minimax_h3_kfref_en.txt`，不走 Ref2VA 六段结构。大模型必须按槽位逐字写出 `<Picture N> is the EXACT starting key frame at 0.00 seconds.`，以及 `<Picture N> is the EXACT ending key frame at {时长} seconds (ref_imageN).`。时长用本条任务的 `duration`（样例中的 10.00 只对 10 秒视频）。同时有首尾帧时，结束句对应 Picture 3，也就是 `ref_image3`。代码不把这两句拼进结果；校验失败会让大模型再写一次，仍失败则回退原文。节点 138 用优化后的提示词。槽位从 `extra_config.h3_prompt_optimize.original_prompt` 解析，避免优化结果丢掉「图N是首帧」
 - **查询接口**：`/task/openapi/status` + `/task/openapi/outputs`

@@ -20,7 +20,8 @@ import state, {
     ensureVideoGenerationPrefsSupported,
     clampMaxGroupDurationToSplitModel,
     buildVideoSlotUrls,
-    currentVideoFrameUrls,
+    mentionableVideoFrameUrls,
+    submitVideoFrameUrls,
     buildVideoGenerationPayloadExtras,
     canAddVideoMedia,
     createVideoMediaItem,
@@ -52,8 +53,10 @@ import { showToast, t } from './utils.js';
 import {
     findFrameMentionError,
     frameMentionErrorMessage,
+    insertChatMention,
     promptHasFrameMention,
     shouldUseH3KeyframeRef,
+    stripMentionTrigger,
 } from './frame_mention.js';
 import { downloadAsAttachment } from './download.js';
 import { loadSceneCandidates } from './scene_candidates.js';
@@ -130,6 +133,8 @@ import {
 
 let generateProgressTimer = null;
 let isTimelineHovered = false;
+/** 分镜助手输入框打开提及框时的插入位置。 */
+let chatMentionCaret = null;
 
 function notify(message) {
     window.alert(message);
@@ -911,10 +916,43 @@ function activeFrameMentionPrompt(userText, scene) {
     return scene?.videoPrompt || '';
 }
 
+function openChatMentionPopup(textarea) {
+    chatMentionCaret = textarea && typeof textarea.selectionStart === 'number'
+        ? textarea.selectionStart
+        : (state.inputMessage || '').length;
+    if (state.showMentionPopup) return;
+    state.showMentionPopup = true;
+    rerenderModals();
+}
+
+/** 中文输入法提交 @ 时 key 不是 @，从已写入的字符识别并打开提及框。 */
+function consumeChatMentionTrigger(textarea) {
+    if (!textarea) return false;
+    const stripped = stripMentionTrigger(textarea.value, textarea.selectionStart);
+    if (!stripped) return false;
+    textarea.value = stripped.value;
+    textarea.setSelectionRange(stripped.caret, stripped.caret);
+    state.inputMessage = stripped.value;
+    chatMentionCaret = stripped.caret;
+    if (!state.showMentionPopup) {
+        state.showMentionPopup = true;
+        rerenderModals();
+    }
+    return true;
+}
+
+function focusChatMentionCaret() {
+    const ta = document.getElementById('chat-textarea');
+    if (!ta || typeof chatMentionCaret !== 'number') return;
+    ta.focus();
+    const pos = Math.min(Math.max(chatMentionCaret, 0), ta.value.length);
+    ta.setSelectionRange(pos, pos);
+}
+
 /** 参考模式点名首尾帧但缺图时，在创建任务之前拦住。返回 false 表示已提示。 */
 function guardFrameMentions(promptText) {
     if (state.videoImageMode !== 'multi_reference') return true;
-    const frames = currentVideoFrameUrls();
+    const frames = submitVideoFrameUrls(promptText);
     const model = getSelectedVideoModel();
     const code = findFrameMentionError({
         imageMode: state.videoImageMode,
@@ -1011,7 +1049,7 @@ async function sendStoryboardAgentMessage(current) {
             enable_thinking: thinking.enable_thinking,
             thinking_effort: thinking.thinking_effort,
             ...(isVideo ? { image_mode: state.videoImageMode || 'first_last_frame', ...videoExtras } : {}),
-            ...(isVideo && state.videoImageMode === 'multi_reference' ? currentVideoFrameUrls() : {}),
+            ...(isVideo && state.videoImageMode === 'multi_reference' ? submitVideoFrameUrls(activeFrameMentionPrompt(message, current)) : {}),
             ...(referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
         });
         const streamTaskId = response.task_id;
@@ -1183,7 +1221,7 @@ async function sendDirectVideo(current) {
             config.enable_face_mask = getEffectiveEnableFaceMask();
             const extraUrls = buildVideoSlotUrls();
             if (extraUrls.length) config.reference_image_urls = extraUrls;
-            if (imageMode === 'multi_reference') Object.assign(config, currentVideoFrameUrls());
+            if (imageMode === 'multi_reference') Object.assign(config, submitVideoFrameUrls(prompt));
         }
         const result = await api.generateSceneVideo(sceneId, config);
         if (result && result.success === false) {
@@ -2337,6 +2375,10 @@ async function handleAction(action, target) {
     }
 
     if (action === 'mention') {
+        const ta = document.getElementById('chat-textarea');
+        chatMentionCaret = ta && typeof ta.selectionStart === 'number'
+            ? ta.selectionStart
+            : (state.inputMessage || '').length;
         state.showMentionPopup = !state.showMentionPopup;
         rerenderModals();
         return;
@@ -3212,6 +3254,7 @@ export function bindEvents() {
     document.addEventListener('input', (event) => {
         const target = event.target;
         if (target.id === 'chat-textarea') {
+            if (!event.isComposing && consumeChatMentionTrigger(target)) return;
             state.inputMessage = target.value;
         } else if (target.matches && target.matches('[data-subtitle-margin]')) {
             // 字幕左右边距滑杆：实时应用预览（数值与持久化由 change/其它逻辑处理）
@@ -3267,6 +3310,14 @@ export function bindEvents() {
         }
     });
 
+    document.addEventListener('compositionend', (event) => {
+        const target = event.target;
+        if (!target || target.id !== 'chat-textarea') return;
+        if (!consumeChatMentionTrigger(target)) {
+            state.inputMessage = target.value;
+        }
+    });
+
     document.addEventListener('mouseenter', (event) => {
         if (event.target && typeof event.target.closest === 'function' && event.target.closest('.scene-timeline-list')) {
             isTimelineHovered = true;
@@ -3287,6 +3338,17 @@ export function bindEvents() {
             return;
         }
         const target = event.target;
+        if (target.id === 'chat-textarea' && event.key === 'Escape' && state.showMentionPopup) {
+            event.preventDefault();
+            state.showMentionPopup = false;
+            rerenderModals();
+            return;
+        }
+        if (target.id === 'chat-textarea' && (event.key === '@' || event.key === '＠') && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            event.preventDefault();
+            openChatMentionPopup(target);
+            return;
+        }
         if (target.id === 'chat-textarea' && event.key === 'Enter' && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {
             event.preventDefault();
             const btn = document.querySelector('[data-action="send-ai"]');
@@ -3701,10 +3763,17 @@ export function bindEvents() {
         }
 
         const mentionItem = event.target.closest('[data-mention-item]');
-        if (mentionItem) {
-            state.inputMessage = `${state.inputMessage || ''}@${mentionItem.dataset.mentionItem} `;
+        if (mentionItem && mentionItem.dataset.mentionItem) {
+            const inserted = insertChatMention(
+                state.inputMessage,
+                chatMentionCaret,
+                mentionItem.dataset.mentionItem,
+            );
+            state.inputMessage = inserted.value;
+            chatMentionCaret = inserted.caret;
             state.showMentionPopup = false;
             rerender([Region.MODAL, Region.AGENT_PANEL]);
+            focusChatMentionCaret();
             return;
         }
 
@@ -4022,7 +4091,7 @@ function showMentionDropdownForPrompt(textarea, container, promptType, scene) {
 
         const items = currentTab === 'character' ? (state.characters || []) : (state.props || []);
         if (promptType === 'video' && state.videoImageMode === 'multi_reference') {
-            const frames = currentVideoFrameUrls();
+            const frames = mentionableVideoFrameUrls();
             const frameRows = [];
             if (frames.frame_first_url) frameRows.push({ token: '首帧图', url: frames.frame_first_url, label: t('label_mention_first_frame', '首帧图') });
             if (frames.frame_last_url) frameRows.push({ token: '尾帧图', url: frames.frame_last_url, label: t('label_mention_last_frame', '尾帧图') });

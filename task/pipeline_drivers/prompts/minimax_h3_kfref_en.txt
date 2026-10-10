@@ -10,8 +10,15 @@ For each occupied picture slot, write one paragraph in slot order. When the slot
 - An ending key frame closes the video. The video must end pixel-consistently with that picture for scene composition, camera framing, character positions, poses, spacing, props, and the environment. The closing frame must not be reinterpreted or changed. Do not treat it as a separate character-only reference whose background can be discarded; it is the target last frame. When an ending key frame exists, the shot must travel from the opening frame to that ending frame. Do not keep the opening pose, camera, or framing through the end. Do not write fixed camera, camera locked, or a held opening shot. Do not describe the ending camera size or poses in words; the ending picture defines them.
 - A reference picture locks identity, clothing, or props only. Do not inherit its background, lighting, or camera framing. It is not a starting key frame and not an ending key frame.
 
-If the slot instruction names <Audio 1>, add this paragraph: <Audio 1> is a reference audio for voice timbre, vocal identity, speaking tone, rhythm, intonation, and lip-sync pacing.
-If the slot instruction names <Audio 2>, add this paragraph: <Audio 2> is a reference audio for voice timbre, vocal identity, speaking tone, rhythm, intonation, and lip-sync pacing.
+Copy the audio paragraph given by the slot instruction. Change only the audio number.
+
+When the slot instruction says this shot has spoken lines, use:
+<Audio 1> is a reference audio for voice timbre, vocal identity, speaking tone, rhythm, intonation, and lip-sync pacing.
+
+When the slot instruction says this shot has no spoken lines, use:
+<Audio 1> is a voice-timbre reference only. Do not copy its words, rhythm, or pacing into the video. Do not lip-sync to it. No character speaks.
+
+Do not write lip-sync pacing when the slot instruction says this shot has no spoken lines.
 
 Then write the shot, starting with [Shot 1]. Before the shot, include the type prefix named in the slot instruction, such as [keyframe completion + reference generation + audio reference]. Keep only the parts that instruction lists.
 

@@ -138,6 +138,8 @@
           model: inheritedModel,
           drawCount: 1,
           previewImageUrl: '',
+          firstFrameDismissed: false,
+          frameAutoPrompt: '',
           lastFrameUrl: '',
           videoDrawCount: 1,
           videoDuration: 5,
@@ -191,10 +193,13 @@
               <div class="field field-always-visible">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                   <div class="label" style="margin: 0;" data-i18n="shot_frame_video_first_frame_label">${window.t ? window.t('shot_frame_video_first_frame_label') : '视频首帧'}</div>
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                  <button class="mini-btn shot-frame-first-frame-clear" type="button" style="display: none;" data-i18n="node_clear_btn">${window.t ? window.t('node_clear_btn') : '清除'}</button>
                   <div class="gen-container shot-frame-image-selector-container" style="display: none;">
                     <button class="mini-btn shot-frame-image-selector-btn" type="button" style="font-size: 11px; padding: 4px 8px; background: white; color: #333; border: 1px solid #ddd;" data-i18n="shot_frame_select_image_btn">${window.t ? window.t('shot_frame_select_image_btn') : '选择图片'}</button>
                     <button class="gen-btn-caret" type="button" aria-label="${window.t ? window.t('shot_frame_select_image_btn') : '选择图片'}" style="font-size: 11px; padding: 4px 6px; position: relative;">▾<span class="new-image-badge" style="display: ${node.data.hasNewImages ? 'block' : 'none'};">${node.data.hasNewImages ? (node.data.newImageCount || '') : ''}</span></button>
                     <div class="gen-menu shot-frame-image-menu"></div>
+                  </div>
                   </div>
                 </div>
                 <div class="port first-frame-port" data-i18n="shot_frame_first_frame_port:title"></div>
@@ -238,6 +243,10 @@
                 </div>
                 <div style="font-size: 10px; color: #9ca3af; margin-bottom: 4px;" data-i18n="shot_frame_video_prompt_hint">${window.t ? window.t('shot_frame_video_prompt_hint') : '点击编辑 | 按 @ 可插入首帧图、尾帧图或角色'}</div>
                 <div class="shot-prompt-display shot-frame-video-prompt-display" style="width: 100%; flex: 1; min-height: 60px; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; cursor: pointer; background: #fafafa; line-height: 1.6; overflow-y: auto; word-break: break-all;"></div>
+              </div>
+              <div class="field shot-frame-auto-prompt-field" style="display: none;">
+                <div class="label" style="margin-bottom: 4px;" data-i18n="shot_frame_auto_prompt_label">${window.t ? window.t('shot_frame_auto_prompt_label') : '首尾帧提示词'}</div>
+                <div class="shot-frame-auto-prompt" aria-readonly="true"></div>
               </div>
             </div>
             <!-- 第3列: 模型与生成 -->
@@ -490,7 +499,7 @@
         if(hintEl) {
           const hintKey = isRefMode ? 'video_mode_hint_reference' : 'video_mode_hint_first_frame';
           hintEl.setAttribute('data-i18n', hintKey);
-          hintEl.textContent = window.t ? window.t(hintKey) : (isRefMode ? '使用角色、场景、道具参考图生成视频。视频提示词中 @首帧图 或 @尾帧图 会把已设置的首尾帧放在参考图两端' : '先生成分镜图作为视频首帧');
+          hintEl.textContent = window.t ? window.t(hintKey) : (isRefMode ? '使用角色、场景、道具参考图生成视频。已设置的首尾帧显示在只读的首尾帧提示词里' : '先生成分镜图作为视频首帧');
         }
 
         // 参考模式也保留首帧图、尾帧图的输入，供视频提示词 @ 引用。
@@ -500,6 +509,22 @@
         // 参考音视频字段可见性（参考图模式下由模型配置决定，首帧模式同理）
         updateRefAudioVideoVisibility();
         updateLastFrameAvailability();
+        refreshFrameAutoPrompt();
+      }
+
+      function refreshFrameAutoPrompt() {
+        if (typeof syncShotFrameAutoPrompt === 'function') {
+          syncShotFrameAutoPrompt(node);
+        }
+        const field = el.querySelector('.shot-frame-auto-prompt-field');
+        const textEl = el.querySelector('.shot-frame-auto-prompt');
+        const firstClearBtn = el.querySelector('.shot-frame-first-frame-clear');
+        const isRef = (node.data.videoMode || 'first_last_frame') === 'multi_reference';
+        if (firstClearBtn) firstClearBtn.style.display = isRef ? '' : 'none';
+        if (!field || !textEl) return;
+        const text = String((node.data && node.data.frameAutoPrompt) || '');
+        textEl.textContent = text;
+        field.style.display = (isRef && text) ? '' : 'none';
       }
 
       function updateLastFrameAvailability() {
@@ -538,6 +563,7 @@
           if (lastFramePreviewRow) lastFramePreviewRow.style.display = 'none';
         }
         if (typeof renderCharImages === 'function') renderCharImages();
+        refreshFrameAutoPrompt();
       }
 
       function clearShotFrameLastFrame() {
@@ -548,6 +574,18 @@
         updateLastFrameDisplay();
         if (typeof renderAllConnections === 'function') renderAllConnections();
         updateVideoComputingPowerDisplay();
+        refreshFrameAutoPrompt();
+        safeAutoSave();
+      }
+
+      function clearShotFrameFirstFrame() {
+        node.data.firstFrameDismissed = true;
+        node.data.previewImageUrl = '';
+        if (previewImageEl) {
+          previewImageEl.style.display = 'none';
+          previewImageEl.removeAttribute('src');
+        }
+        updatePreviewImage();
         safeAutoSave();
       }
 
@@ -1606,6 +1644,7 @@
             
             menuItem.addEventListener('click', (e) => {
               e.stopPropagation();
+              node.data.firstFrameDismissed = false;
               node.data.previewImageUrl = imgNode.data.url;
               previewImageEl.src = proxyImageUrl(imgNode.data.url);
               previewImageEl.style.display = 'block';
@@ -1622,7 +1661,7 @@
               });
               renderFirstFrameConnections();
               updateVideoComputingPowerDisplay();
-              
+              refreshFrameAutoPrompt();
               safeAutoSave()
             });
           });
@@ -1648,9 +1687,8 @@
         const connectedImageNodes = getConnectedImageNodes();
 
         if(connectedImageNodes.length > 0){
-          // 如果分镜节点已有预览图，不自动替换
-          if(!node.data.previewImageUrl){
-            // 没有预览图时，自动选择一个
+          // 用户清除过首帧时，不从已连接的图片里自动填回来
+          if(!node.data.previewImageUrl && !node.data.firstFrameDismissed){
             const imageNode = connectedImageNodes.length === 1 
               ? connectedImageNodes[0]
               : connectedImageNodes[Math.floor(Math.random() * connectedImageNodes.length)];
@@ -1658,14 +1696,17 @@
             console.log(`[分镜节点 ${id}] 自动选择图片节点 ${imageNode.id}，URL:`, imageNode.data.url);
             node.data.previewImageUrl = imageNode.data.url;
           }
-          
-          previewImageEl.src = proxyImageUrl(node.data.previewImageUrl);
-          previewImageEl.style.display = 'block';
-          // 不再控制 previewFieldEl 的显示，保持首帧端口始终可见
+
+          if(node.data.previewImageUrl){
+            previewImageEl.src = proxyImageUrl(node.data.previewImageUrl);
+            previewImageEl.style.display = 'block';
+          } else if(previewImageEl){
+            previewImageEl.style.display = 'none';
+            previewImageEl.removeAttribute('src');
+          }
         } else {
           node.data.previewImageUrl = '';
           previewImageEl.style.display = 'none';
-          // 不再控制 previewFieldEl 的显示，保持首帧端口始终可见
         }
         
         // 更新图片选择菜单
@@ -1674,6 +1715,7 @@
         // 刷新父分镜组宫格预览
         refreshParentShotGroupPreview();
         updateVideoComputingPowerDisplay();
+        refreshFrameAutoPrompt();
       }
 
       // 新生成的分镜图提醒：最新一批置顶到菜单最上方 + caret 角标/脉冲动画
@@ -1735,6 +1777,7 @@
             });
             
             // 更新视频首帧
+            node.data.firstFrameDismissed = false;
             node.data.previewImageUrl = fromNode.data.url;
             previewImageEl.src = proxyImageUrl(fromNode.data.url);
             previewImageEl.style.display = 'block';
@@ -1742,6 +1785,7 @@
             
             renderFirstFrameConnections();
             updateVideoComputingPowerDisplay();
+            refreshFrameAutoPrompt();
             safeAutoSave()
           }
         }
@@ -1768,7 +1812,7 @@
           const file = lastFrameFileEl.files && lastFrameFileEl.files[0];
           lastFrameFileEl.value = '';
           if(!file) return;
-          if(!shotFrameModelSupportsLastFrame(node)){
+          if(!shotFrameLastFrameInputEnabled(node)){
             showToast('该模型不支持尾帧', 'warning');
             return;
           }
@@ -1803,6 +1847,14 @@
         lastFrameClearBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           clearShotFrameLastFrame();
+        });
+      }
+
+      const firstFrameClearBtn = el.querySelector('.shot-frame-first-frame-clear');
+      if(firstFrameClearBtn){
+        firstFrameClearBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          clearShotFrameFirstFrame();
         });
       }
 
@@ -1910,6 +1962,7 @@
 
       // 暴露方法供外部调用（工作流恢复时使用）
       node.updatePreview = updatePreviewImage;
+      node.syncFrameAutoPrompt = refreshFrameAutoPrompt;
       node.notifyNewImages = notifyNewImages;
       node.updateModeUI = updateModeUI;
       node.updateLastFrameDisplay = updateLastFrameDisplay;
