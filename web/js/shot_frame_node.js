@@ -1107,12 +1107,44 @@
         setTimeout(() => document.addEventListener('click', closeHandler, true), 0);
       }
 
-      // 获取缩略图URL
+      // 获取缩略图URL（默认 96：覆盖 2x/3x 高分屏下 20~28px 的显示尺寸）
       function getThumbnailUrl(imageUrl, size) {
-        size = size || 40;
+        size = size || 96;
         if(!imageUrl) return '';
         if(imageUrl.startsWith('data:') || imageUrl.startsWith('blob:')) return imageUrl;
         return '/api/thumbnail?url=' + encodeURIComponent(imageUrl) + '&size=' + size;
+      }
+
+      // 悬停浮层：展示参考图大图，便于分辨角色
+      let _hoverPreviewEl = null;
+      function hideHoverPreview() {
+        if(_hoverPreviewEl) {
+          _hoverPreviewEl.remove();
+          _hoverPreviewEl = null;
+        }
+      }
+      function attachHoverPreview(el, imageUrl) {
+        if(!imageUrl) return;
+        el.addEventListener('mouseenter', () => {
+          hideHoverPreview();
+          const preview = document.createElement('div');
+          preview.className = 'shot-hover-preview';
+          const img = document.createElement('img');
+          img.src = imageUrl;
+          preview.appendChild(img);
+          document.body.appendChild(preview);
+          _hoverPreviewEl = preview;
+          const rect = el.getBoundingClientRect();
+          const pw = 232, ph = 232;
+          let left = rect.right + 8;
+          if(left + pw > window.innerWidth - 8) left = rect.left - pw - 8;
+          if(left < 8) left = Math.max(8, (window.innerWidth - pw) / 2);
+          let top = rect.top - (ph - rect.height) / 2;
+          top = Math.min(Math.max(8, top), Math.max(8, window.innerHeight - ph - 8));
+          preview.style.left = Math.round(left) + 'px';
+          preview.style.top = Math.round(top) + 'px';
+        });
+        el.addEventListener('mouseleave', hideHoverPreview);
       }
 
       function appendShotFrameMentionChip(displayEl, label, imageUrl) {
@@ -1122,10 +1154,11 @@
         if(imageUrl) {
           const avatar = document.createElement('img');
           avatar.className = 'shot-inline-char-avatar';
-          avatar.src = getThumbnailUrl(imageUrl, 40);
+          avatar.src = getThumbnailUrl(imageUrl, 96);
           avatar.alt = label;
           avatar.loading = 'lazy';
           chip.appendChild(avatar);
+          attachHoverPreview(chip, imageUrl);
         } else {
           const avatar = document.createElement('span');
           avatar.className = 'shot-inline-char-avatar no-image';
@@ -1145,6 +1178,7 @@
       // 渲染提示词（将【【角色名】】替换为内联角色图片，@首帧图/@尾帧图替换为帧标签）
       function renderPromptWithInlineChars(displayEl, promptText) {
         if(!displayEl) return;
+        hideHoverPreview();
         displayEl.innerHTML = '';
 
         const worldChars = state.worldCharacters || [];
@@ -1196,7 +1230,7 @@
           if(imgUrl) {
             const avatar = document.createElement('img');
             avatar.className = 'shot-inline-char-avatar';
-            avatar.src = getThumbnailUrl(imgUrl, 40);
+            avatar.src = getThumbnailUrl(imgUrl, 96);
             avatar.alt = charName;
             avatar.loading = 'lazy';
             chip.appendChild(avatar);
@@ -1213,6 +1247,7 @@
             avatar.textContent = '👤';
             chip.appendChild(avatar);
           }
+          attachHoverPreview(chip, imgUrl);
 
           const nameSpan = document.createElement('span');
           nameSpan.className = 'shot-inline-char-name';
@@ -1269,6 +1304,7 @@
         // 关闭并清理 dropdown 的辅助函数
         function closeCharImgDropdown() {
           dropdown.remove();
+          hideHoverPreview();
           if(_activeCharImgCloseHandler) {
             document.removeEventListener('click', _activeCharImgCloseHandler, true);
           }
@@ -1307,7 +1343,8 @@
             if(!currentSelected || currentSelected === mainOpt.url) {
               mainItem.classList.add('selected');
             }
-            mainItem.innerHTML = `<img src="${escapeHtml(getThumbnailUrl(mainOpt.url, 40))}" style="width:16px;height:16px;object-fit:cover;border-radius:2px;margin-right:6px;vertical-align:middle;">主图（默认）`;
+            mainItem.innerHTML = `<img src="${escapeHtml(getThumbnailUrl(mainOpt.url, 96))}" style="width:28px;height:28px;object-fit:cover;border-radius:4px;margin-right:6px;vertical-align:middle;">主图（默认）`;
+            attachHoverPreview(mainItem, mainOpt.url);
             mainItem.addEventListener('click', (e) => {
               e.stopPropagation();
               if(!node.data.selectedCharRefImages) node.data.selectedCharRefImages = {};
@@ -1326,7 +1363,8 @@
             if(currentSelected === opt.url) {
               item.classList.add('selected');
             }
-            item.innerHTML = `<img src="${escapeHtml(getThumbnailUrl(opt.url, 40))}" style="width:16px;height:16px;object-fit:cover;border-radius:2px;margin-right:6px;vertical-align:middle;">${escapeHtml(opt.label || '')}`;
+            item.innerHTML = `<img src="${escapeHtml(getThumbnailUrl(opt.url, 96))}" style="width:28px;height:28px;object-fit:cover;border-radius:4px;margin-right:6px;vertical-align:middle;">${escapeHtml(opt.label || '')}`;
+            attachHoverPreview(item, opt.url);
             item.addEventListener('click', (e) => {
               e.stopPropagation();
               if(!node.data.selectedCharRefImages) node.data.selectedCharRefImages = {};

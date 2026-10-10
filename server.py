@@ -1185,7 +1185,7 @@ def _generate_thumbnail_safe(source_path: str, thumb_path: str, size: int):
         if img.mode in ('RGBA', 'P'):
             img = img.convert('RGB')
         img.thumbnail((size, size), Image.LANCZOS)
-        img.save(tmp_path, 'JPEG', quality=75)
+        img.save(tmp_path, 'JPEG', quality=85)
 
         # 原子重命名（如果目标已存在，说明其他进程已生成成功）
         os.rename(tmp_path, thumb_path)
