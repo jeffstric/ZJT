@@ -377,11 +377,11 @@ def async_submit_result(impl_label: str) -> Dict[str, Any]:
 
 ---
 
-### 5.2 通道 2：视觉同步 Driver（SyncTaskExecutor 子进程，13 个实现）
+### 5.2 通道 2：视觉同步 Driver（SyncTaskExecutor 子进程）
 
 **文件**：`task/sync_task_executor.py`
 
-**13 个 `sync_mode=True` 实现**（`config/unified_config.py` 中）：`seedream5_volcengine_v1`、`seedream5_volcengine_oversea_v1`、`gpt_image_common_site0..5_v1`（6）、`gemini_image_preview_site0..4_v1`（5）。`_execute_sync_task` 在 `ProcessPoolExecutor` 子进程内执行，**不继承主进程状态**，但 `test_mode.enabled` 来自 DB，子进程首次读取即可命中（注意 §9 缓存延迟）。
+`sync_mode=True` 的完整名单以 `config/unified_config.py` 为准。其中 `gemini_image_preview_site0..5_v1`（含 Site 5）与 `gpt_image_common_site0..5_v1`、`seedream5_volcengine_v1`、`seedream5_volcengine_oversea_v1` 都走这条通道。`_execute_sync_task` 在 `ProcessPoolExecutor` 子进程内执行，**不继承主进程状态**，但 `test_mode.enabled` 来自 DB，子进程首次读取即可命中（注意 §9 缓存延迟）。
 
 **改动**：`_execute_sync_task`（`:38` 起），在 `AIToolsModel.update(...PROCESSING)` 之后、创建 driver 之前（约 `:81` `# 调用驱动提交任务` 注释处）插入：
 
@@ -1124,7 +1124,7 @@ print("[MOCK SUMMARY]", mock_hit_summary())
 
 - `TaskCategory`（`config/unified_config.py:29-49`）是**字符串常量类非 Enum**，值为 `text_to_image`/`image_edit`/`image_to_video`/`text_to_video`/`visual_enhance`/`audio`/`digital_human`/`other`。**无 `.name`**，映射 key 必须用小写字符串值或 `TaskCategory.XXX` 常量。
 - `UnifiedTaskConfig.categories: List[str]`（`unified_config.py:315`）存在；多分类判断用 `[cfg.category] + cfg.categories`。
-- `sync_mode=True` 实现**共 13 个**（见 §5.2）。
+- `gemini_image_preview_site0..5_v1` 均为 `sync_mode=True`。完整同步实现名单以 `config/unified_config.py` 为准。
 - `download_and_cache`（`media_cache.py:192`）**不识别**本地路径，调用方须自判 `is_local_path`。
 - `location_multi_angle_task` 轮询走 **DB**（`AIToolsModel.get_by_id`），非 get-status。
 - `cron_task_manager.py:322` 轮询是**死代码**，勿拦截。

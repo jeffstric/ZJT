@@ -12,7 +12,10 @@
 阻塞调度线程：
 
 1. **无等待中的 AI 任务** → 组装提示词（`<sks> {方向} eye-level shot medium shot`）提交当前角度到
-   本机 `/api/image-edit`，记录 `ai_tool_task_id` 并等待下一周期；
+   本机 `/api/image-edit`，记录 `ai_tool_task_id` 并等待下一周期。
+   `require_permission` 不读 form 里的 `auth_token`，提交时必须带
+   `Authorization: Bearer <任务快照 token>`（快照为空则不加头）。
+   快照存在任务行里，查询接口的 `to_dict()` 不回传 `auth_token`。
 2. **有等待中的 AI 任务** → 查 `ai_tools` 表状态：
    - `COMPLETED` → 下载图片落盘、写场景暂存区、推进 `current_angle_index`；
    - `FAILED` → 跳过该角度，推进 `current_angle_index`，重置重试计数；

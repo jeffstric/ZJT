@@ -2,11 +2,11 @@
 月度订阅（充值中心-月度订阅 Tab）UI E2E 测试。
 
 通过 page.route() mock /api/subscription/* 响应，覆盖本次订阅改动的界面表现：
-  - 新用户（first_bonus_eligible=true）：首订加赠并入首期算力展示（328+200=528），
-    小字标注「之后每期 328 算力」，不再独立展示加赠角标
+  - 新用户（first_bonus_eligible=true）：入门版首月 18.8、首期算力 328+40=368，
+    小字标注「之后每期 328 算力」，并播放价格/算力强调动画
   - 新用户：套餐卡片展示「比直接购买多约 X 算力」对比角标（数据驱动，按充值包单价折算）
   - 签约未生效（sign_not_effective=true）：展示琥珀色引导横幅（区别于用户主动解约文案）
-  - 老用户（first_bonus_eligible=false）：不展示加赠标签，按每期常规算力展示
+  - 老用户（first_bonus_eligible=false）：不展示 18.8 / +40，按每期 29.9 与 328 算力展示
 
 is_local 由本文件 mock 的 /api/system/server-config 强制为 false：本地部署
 （config is_local=true）时「算力充值」按钮只 alert 提示、不打开弹窗
@@ -17,10 +17,11 @@ import json as _json
 import pytest
 
 # 与 config/subscription_config.py MONTHLY_SUBSCRIPTION_PLANS 保持一致
-# （2026-09-19 首订加赠全档翻倍：100/200/300/500 → 200/400/600/1000）
+# 入门版：首期优惠 18.8、加赠 40；续费价仍 29.9
 SUBSCRIPTION_PLANS = [
-    {"plan_id": 101, "name": "入门版", "price": 29.9, "computing_power": 328,
-     "granted_after_commission": 328, "first_period_bonus": 200, "template_id": "223101", "badge": None},
+    {"plan_id": 101, "name": "入门版", "price": 29.9, "first_period_price": 18.8,
+     "computing_power": 328, "granted_after_commission": 328, "first_period_bonus": 40,
+     "template_id": "224144", "badge": None},
     {"plan_id": 102, "name": "标准版", "price": 59.9, "computing_power": 808,
      "granted_after_commission": 808, "first_period_bonus": 400, "template_id": "223102", "badge": None},
     {"plan_id": 103, "name": "专业版", "price": 129.0, "computing_power": 2148,
@@ -101,10 +102,13 @@ class TestSubscriptionBonusDisplay:
         page = browser_context.new_page()
         _open_subscription_tab(page, base_url, STATUS_NEW_USER)
 
-        # 加赠不再独立展示，而是并入首期算力主数字
+        page.locator(".sub-plan-card.sub-intro-done").first.wait_for(timeout=8000)
         assert page.locator(".sub-plan-bonus").count() == 0, "不应再出现独立的首期加赠角标"
+        card = page.locator(".sub-plan-card").first.inner_text()
+        assert "18.8" in card
+        assert "之后 ¥29.9/月" in card
         power = page.locator(".sub-plan-power").first.inner_text()
-        assert "528" in power, "入门版首期应为 328+200=528 算力"
+        assert "368" in power, "入门版首期应为 328+40=368 算力"
         assert "首期" in power
         assert "之后每期 328 算力" in power, "小字应标注之后每期的常规到账算力"
 
@@ -123,9 +127,13 @@ class TestSubscriptionBonusDisplay:
 
         assert page.locator(".sub-plan-bonus").count() == 0, \
             "已有历史成功签约的老用户不应再看到首期加赠标签"
+        assert page.locator(".sub-intro-done").count() == 0
+        card = page.locator(".sub-plan-card").first.inner_text()
+        assert "29.9" in card
+        assert "18.8" not in card
         power = page.locator(".sub-plan-power").first.inner_text()
-        # 老用户不再享受首订加赠：按每期常规到账展示，无首期标注
         assert "328" in power
+        assert "368" not in power
         assert "首期" not in power
         assert "之后每期" not in power
 
@@ -133,9 +141,11 @@ class TestSubscriptionBonusDisplay:
         page = browser_context.new_page()
         _open_subscription_tab(page, base_url, STATUS_NEW_USER)
 
+        page.locator(".sub-plan-card.sub-intro-done").first.wait_for(timeout=8000)
         page.locator(".sub-plan-card").first.click()
         panel_text = page.locator(".sub-payment-panel").inner_text()
-        assert "首期到账 528 算力" in panel_text
+        assert "18.8" in panel_text
+        assert "首期到账 368 算力" in panel_text
         assert "之后每期 328 算力" in panel_text
 
 
@@ -148,11 +158,12 @@ class TestSubscriptionVsDirectSave:
         page = browser_context.new_page()
         _open_subscription_tab(page, base_url, STATUS_NEW_USER, recharge_packages=RECHARGE_PACKAGES)
 
+        page.locator(".sub-plan-card.sub-intro-done").first.wait_for(timeout=8000)
         badges = page.locator(".sub-plan-save")
         assert badges.count() == 4, "全部 4 档均应按充值包单价折算出更多算力"
-        # 入门版：首期 528 - round(29.9 × 88/9.9)=266 → 多约 262 算力
+        # 入门版：首期 368 - round(18.8 × 88/9.9)=167 → 多约 201 算力
         # （0.1 元首充福利包必须被排除，否则参考单价失真、角标不展示）
-        assert "比直接购买多约 262 算力" in badges.first.inner_text()
+        assert "比直接购买多约 201 算力" in badges.first.inner_text()
 
     def test_returning_user_save_badge_uses_regular_power(self, browser_context, base_url):
         page = browser_context.new_page()

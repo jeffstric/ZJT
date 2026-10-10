@@ -137,6 +137,9 @@
           // 配置加载完成后，更新所有图生视频节点和分镜节点的算力显示
           updateAllImageToVideoNodesPower();
           updateAllShotFrameNodesPower();
+          if (typeof refreshVideoWatermarkNodesPower === 'function') {
+            refreshVideoWatermarkNodesPower();
+          }
           // 刷新所有分镜组和分镜节点的视频模型选项，修复 TaskConfig 异步加载完成前
           // 节点已创建导致使用 hardcoded fallback 值的时序竞争问题
           if (typeof refreshShotGroupNodesModels === 'function') {
@@ -178,6 +181,9 @@
               console.log('[算力配置] 已加载:', taskComputingPowerConfig);
               updateAllImageToVideoNodesPower();
               updateAllShotFrameNodesPower();
+              if (typeof refreshVideoWatermarkNodesPower === 'function') {
+                refreshVideoWatermarkNodesPower();
+              }
             }
             if(data.data.video_model_duration_options){
               videoModelDurationOptions = data.data.video_model_duration_options;
@@ -433,7 +439,9 @@
               const videoModel = node.data.videoModel || 'sora2';
               const duration = node.data.videoDuration || 10;
               const context = {};
-              if(node.data.videoMode) {
+              if(typeof resolveShotFrameVideoImageMode === 'function') {
+                context.image_mode = resolveShotFrameVideoImageMode(node);
+              } else if(node.data.videoMode) {
                 context.image_mode = node.data.videoMode;
               }
               if(node.data.videoResolution) {
@@ -575,6 +583,7 @@
         if(nodeData.url && nodeData.url.startsWith('blob:')) nodeData.url = '';
         if(nodeData.startUrl && nodeData.startUrl.startsWith('blob:')) nodeData.startUrl = '';
         if(nodeData.endUrl && nodeData.endUrl.startsWith('blob:')) nodeData.endUrl = '';
+        if(nodeData.lastFrameUrl && nodeData.lastFrameUrl.startsWith('blob:')) nodeData.lastFrameUrl = '';
         if(nodeData.videoUrl && nodeData.videoUrl.startsWith('blob:')) nodeData.videoUrl = '';  // 提取帧节点
 
         // 清理音频/视频列表中的blob URL
@@ -642,6 +651,7 @@
         nextConnId: state.nextConnId,
         nextImgConnId: state.nextImgConnId,
         nextFirstFrameConnId: state.nextFirstFrameConnId,
+        nextLastFrameConnId: state.nextLastFrameConnId,
         nextVideoConnId: state.nextVideoConnId,
         nextReferenceConnId: state.nextReferenceConnId,
         nextAudioConnId: state.nextAudioConnId,
@@ -653,6 +663,7 @@
           y: g.y,
           w: g.w,
           h: g.h,
+          userSized: !!g.userSized,
           nodeIds: g.nodeIds.slice()
         })),
         nextGroupId: state.nextGroupId,
@@ -660,6 +671,7 @@
         connections: state.connections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         imageConnections: state.imageConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType })),
         firstFrameConnections: state.firstFrameConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
+        lastFrameConnections: (state.lastFrameConnections || []).map(c => ({ id: c.id, from: c.from, to: c.to })),
         videoConnections: state.videoConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         referenceConnections: state.referenceConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         audioConnections: state.audioConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
@@ -766,16 +778,20 @@
         if(useLocal){
           saveBtnSavingStart();
           const body = buildAutoSaveBody();
+          const headers = {
+            'Content-Type': 'application/json',
+            'Authorization': getAuthToken(),
+            'X-User-Id': getUserId()
+            // 不携带 X-Base-Hash：服务端跳过 CAS，强制覆盖。
+            // 对方会话下轮 poll 感知哈希漂移，其保存会被 CAS 409 拦截，
+            // 进入同样的冲突选择流程，不会被静默互覆。
+          };
+          if(typeof autoSaveState !== 'undefined' && autoSaveState.attachWriteId){
+            autoSaveState.attachWriteId(headers);
+          }
           const response = await fetch(`/api/video-workflow/${workflowId}`, {
             method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': getAuthToken(),
-              'X-User-Id': getUserId()
-              // 不携带 X-Base-Hash：服务端跳过 CAS，强制覆盖。
-              // 对方会话下轮 poll 感知哈希漂移，其保存会被 CAS 409 拦截，
-              // 进入同样的冲突选择流程，不会被静默互覆。
-            },
+            headers: headers,
             body: body
           });
           const result = await response.json();
@@ -818,6 +834,99 @@
       }
     }
 
+    // 单飞槽位的超时计时器，按 sentVersion 分开。迟到响应只清自己的，不碰下一笔。
+    const autoSaveInflightTimers = new Map();
+
+    function clearAutoSaveInflightTimer(sentVersion){
+      const timer = autoSaveInflightTimers.get(sentVersion);
+      if(timer === undefined) return;
+      clearTimeout(timer);
+      autoSaveInflightTimers.delete(sentVersion);
+    }
+
+    function armAutoSaveInflightTimer(sentVersion){
+      if(typeof autoSaveState === 'undefined' || !sentVersion) return;
+      clearAutoSaveInflightTimer(sentVersion);
+      const timeoutMs = (typeof AUTO_SAVE_INFLIGHT_TIMEOUT_MS === 'number')
+        ? AUTO_SAVE_INFLIGHT_TIMEOUT_MS
+        : 120000;
+      const timer = setTimeout(function(){
+        autoSaveInflightTimers.delete(sentVersion);
+        const released = autoSaveState.releaseForTimeout(sentVersion);
+        if(released && released.resave){
+          autoSaveWorkflow({ skipHistory: true });
+        }
+      }, timeoutMs);
+      autoSaveInflightTimers.set(sentVersion, timer);
+    }
+
+    /**
+     * 按状态机判定处理 PUT 结果。
+     * follow 为 true 时，调用方再发一笔最新正文（仍走 CAS）。
+     * 迟到响应（ignore）不滚基线、不弹冲突框。
+     */
+    async function applyWorkflowSaveResult(workflowId, body, sentVersion, result, recoveryMeta, dialog, recoveryWritePromise){
+      const stateApi = (typeof autoSaveState !== 'undefined') ? autoSaveState : null;
+      const code = result ? result.code : null;
+      const data = (result && result.data) || {};
+      const decision = stateApi
+        ? stateApi.interpretSaveResponse(sentVersion, code, data.content_hash, data.last_write_id)
+        : { action: code === 0 ? 'confirm' : (code === 409 ? 'conflict' : 'fail') };
+
+      if(decision.action === 'ignore'){
+        return { action: 'ignore', follow: false };
+      }
+
+      if(decision.action === 'confirm'){
+        let follow = false;
+        let confirmed = !stateApi;
+        if(stateApi){
+          stateApi.setConfirmedBody(workflowId, body, data.content_hash);
+          confirmed = stateApi.endSend(sentVersion, true);
+          follow = !!stateApi.takeFollowUp(sentVersion);
+        }
+        if(confirmed && recoveryMeta && typeof WorkflowRecovery !== 'undefined'){
+          if(recoveryWritePromise) await recoveryWritePromise;
+          await WorkflowRecovery.clearConfirmedSnapshot(recoveryMeta).catch(() => false);
+        }
+        return { action: 'confirm', follow: follow };
+      }
+
+      if(decision.action === 'self-heal'){
+        if(stateApi){
+          stateApi.setConfirmedHash(workflowId, data.content_hash);
+          stateApi.endSend(sentVersion, false);
+          stateApi.takeFollowUp(sentVersion);
+        }
+        return { action: 'self-heal', follow: true };
+      }
+
+      if(decision.action === 'conflict'){
+        let alreadyBlocked = false;
+        if(stateApi){
+          alreadyBlocked = !!stateApi.isConflictBlocked(workflowId);
+          stateApi.endSend(sentVersion, false);
+          if(data.content_hash) stateApi.noteServerHash(workflowId, data.content_hash);
+          stateApi.noteConflict(workflowId);
+        }
+        markSaveConflict();
+        if(dialog === 'manual' || (dialog === 'auto' && stateApi && !alreadyBlocked)){
+          const fallback = dialog === 'manual'
+            ? '工作流内容已被其他会话修改，本次保存被拒绝，请刷新页面'
+            : '工作流内容已被其他会话修改，自动保存已暂停；本地修改已保留，刷新页面后将自动恢复';
+          showToast((result && result.message) || fallback, 'warning');
+        }
+        return { action: 'conflict', follow: false };
+      }
+
+      let follow = false;
+      if(stateApi){
+        stateApi.endSend(sentVersion, false);
+        follow = !!stateApi.takeFollowUp(sentVersion);
+      }
+      return { action: 'fail', follow: follow };
+    }
+
     // 保存工作流
     async function saveWorkflow(){
       const saveBtn = document.getElementById('saveBtn');
@@ -838,8 +947,8 @@
       saveBtn.disabled = true;
       saveBtnText.textContent = '保存中...';
 
-      // 手动保存是当前最新的用户意图：取消尚未触发的防抖保存，并在下方
-      // 中止旧在途自动保存，避免旧 payload 晚到覆盖手动保存。
+      // 手动保存是当前最新的用户意图：取消尚未触发的防抖保存。
+      // 已经发出的自动保存不中止；若它还在飞，本次只排队，等它结束后再提交最新正文。
       if(typeof cancelPendingAutoSave === 'function') cancelPendingAutoSave();
 
       let sentVersion = 0;
@@ -859,12 +968,26 @@
           return;
         }
 
+        // 已有请求在网上：不 abort、不再发第二笔。记下补发，由在途请求结束后提交。
+        if(typeof autoSaveState !== 'undefined' && autoSaveState.hasStartedInFlight()){
+          autoSaveState.markDirty();
+          autoSaveState.noteResaveNeeded();
+          showToast('正在保存，完成后会提交最新内容', 'info');
+          return;
+        }
+
         const controller = new AbortController();
+        let writeId = null;
 
         if(typeof autoSaveState !== 'undefined'){
           autoSaveState.markDirty();
-          autoSaveState.abortInFlight();
-          sentVersion = autoSaveState.beginSend(controller, false);
+          const decision = autoSaveState.beginOrCoalesce(controller);
+          if(decision.action !== 'send'){
+            showToast('正在保存，完成后会提交最新内容', 'info');
+            return;
+          }
+          sentVersion = decision.sentVersion;
+          writeId = decision.writeId;
         }
 
         // CAS 基值：本次编辑所基于的服务端内容哈希（无基线时为空，不做 CAS）
@@ -878,6 +1001,7 @@
             workflowId: workflowId,
             userId: getUserId(),
             baseHash: baseHash,
+            writeId: writeId,
             ...WorkflowRecovery.createWriteIdentity()
           };
           // 用手动保存的最新 body 覆盖旧自动保存快照；否则下次打开
@@ -891,6 +1015,7 @@
           'X-User-Id': getUserId()
         };
         if(baseHash) headers['X-Base-Hash'] = baseHash;
+        if(writeId) headers['X-Write-Id'] = writeId;
 
         const responsePromise = fetch(`/api/video-workflow/${workflowId}`, {
           method: 'PUT',
@@ -901,51 +1026,35 @@
         if(typeof autoSaveState !== 'undefined'){
           autoSaveState.markRequestStarted(sentVersion);
         }
+        armAutoSaveInflightTimer(sentVersion);
         const response = await responsePromise;
+        clearAutoSaveInflightTimer(sentVersion);
 
         const result = await response.json();
-
-        if(result.code === 0){
-          // 手动保存成功：与自动保存共用去重门基线（body 同构），
-          // 并以服务端返回的最新内容哈希滚动 CAS 基值
-          if(typeof autoSaveState !== 'undefined'){
-            autoSaveState.setConfirmedBody(
-              workflowId, body, result.data && result.data.content_hash);
-          }
-          let confirmed = true;
-          if(typeof autoSaveState !== 'undefined'){
-            confirmed = autoSaveState.endSend(sentVersion, true);
-          }
-          if(confirmed && recoveryMeta && typeof WorkflowRecovery !== 'undefined'){
-            await WorkflowRecovery.clearConfirmedSnapshot(recoveryMeta).catch(() => false);
-          }
+        const outcome = await applyWorkflowSaveResult(
+          workflowId, body, sentVersion, result, recoveryMeta, 'manual', null);
+        if(outcome.action === 'confirm'){
           showToast('保存成功', 'success');
-        } else if(result.code === 409){
-          // CAS 冲突：内容已被其他会话修改。本地修改已通过恢复快照兜底，
-          // 不静默丢失；熔断自动保存避免周期性无效重试。保存按钮变黄提示
-          // 刷新页面读取最新数据（按钮点击语义切换为刷新，见 events.js）
-          if(typeof autoSaveState !== 'undefined'){
-            autoSaveState.endSend(sentVersion, false);
-            if(result.data && result.data.content_hash){
-              autoSaveState.noteServerHash(workflowId, result.data.content_hash);
-            }
-            autoSaveState.noteConflict(workflowId);
-          }
-          markSaveConflict();
-          showToast(result.message || '工作流内容已被其他会话修改，本次保存被拒绝，请刷新页面', 'warning');
-        } else {
-          if(typeof autoSaveState !== 'undefined'){
-            autoSaveState.endSend(sentVersion, false);
-          }
+        } else if(outcome.action === 'fail'){
           showToast(result.message || '保存失败', 'error');
+        } else if(outcome.action === 'ignore'){
+          console.warn('[手动保存] 响应已不是当前保存，忽略');
+        }
+        if(outcome.follow){
+          autoSaveWorkflow({ skipHistory: true });
         }
       } catch(error){
+        let follow = false;
         if(typeof autoSaveState !== 'undefined'){
+          const stillCurrent = autoSaveState.isCurrentSend(sentVersion);
           autoSaveState.endSend(sentVersion, false);
+          if(stillCurrent) follow = !!autoSaveState.takeFollowUp(sentVersion);
         }
         console.error('Save error:', error);
         showToast('保存失败: ' + error.message, 'error');
+        if(follow) autoSaveWorkflow({ skipHistory: true });
       } finally {
+        clearAutoSaveInflightTimer(sentVersion);
         saveBtnSavingEnd();
         saveBtn.disabled = false;
         // 冲突态保持黄色提示与文案，由用户点击按钮刷新页面后解除
@@ -992,31 +1101,6 @@
           ? opts.serializedBody
           : buildAutoSaveBody();
 
-        // 上传去重门：body 与服务端最近确认内容逐字节一致时跳过本次 PUT。
-        // 典型触发：poll-status 对失败/CDN PENDING 节点每轮重复返回相同的
-        // updated_nodes，前端内容实际未变却全量上传——大工作流可达十余 MB，
-        // 经 frp 转发会周期性打满 ECS 公网出带宽。基线只在 PUT 成功或
-        // loadWorkflow 成功时建立，上传失败不会记录（下次照常重传）。
-        if(typeof autoSaveState !== 'undefined'
-            && autoSaveState.isConfirmedBody(workflowId, body)){
-          // 尽力中止可能在途的旧请求（其 payload 与当前内容不同）。
-          // 注意：abort 只是降低旧 payload 落库概率的防御层，不是正确性
-          // 依据——请求已到达服务端时不可撤回；该窗口由服务端哈希感知
-          // （下轮 poll 哈希漂移 → 门失效 → 重传收敛）与 PUT CAS 兜底。
-          autoSaveState.abortInFlight();
-          autoSaveState.confirmSkipped();
-          // 清除本页此前失败/被取代发送留下的残留恢复快照：服务端已持有
-          // 当前内容，残留快照若被下次会话重放会把已撤销的内容复活
-          if(typeof WorkflowRecovery !== 'undefined'){
-            WorkflowRecovery.discardOwnSnapshot({
-              workflowId: workflowId,
-              userId: getUserId()
-            }).catch(() => false);
-          }
-          console.log('[自动保存] 内容与服务端一致，跳过上传');
-          return;
-        }
-
         // CAS 409 冲突熔断：冲突未解决前不再发 PUT——base_hash 不变必然再冲突，
         // 周期性全量重试会重新打满带宽。本地修改必须落 IndexedDB 恢复快照兜底
         // （不 PUT），避免熔断期间的编辑在浏览器崩溃时丢失。
@@ -1026,6 +1110,7 @@
         // 取过期基线则重放 CAS 必然 409 → 走放弃重放 + 清除快照路径，
         // 刷新后以服务端最新数据为准（toast 告知）。崩溃恢复场景（无他人写入）
         // 不受影响：普通快照 baseHash 本就是 confirmedHash，服务端未变则正常恢复。
+        // 熔断优先于单飞：冲突中的编辑不得再排队一笔会覆盖他人的补发。
         if(typeof autoSaveState !== 'undefined'
             && autoSaveState.isConflictBlocked(workflowId)){
           // 用户已在冲突对话框中选择「使用服务器版本」、等待刷新：
@@ -1058,18 +1143,58 @@
         const keepalive = !!opts.keepalive;
         const unload = opts.unload === true;
 
+        // 请求已经在网上：不 abort，只记一笔补发。关页补发不进这个队列，
+        // 仍走下面的 keepalive 路径（可能中止普通 fetch 并升级）。
+        if(!unload && typeof autoSaveState !== 'undefined'
+            && autoSaveState.hasStartedInFlight()){
+          autoSaveState.noteResaveNeeded();
+          return;
+        }
+
+        // 上传去重门：body 与服务端最近确认内容逐字节一致时跳过本次 PUT。
+        // 典型触发：poll-status 对失败/CDN PENDING 节点每轮重复返回相同的
+        // updated_nodes，前端内容实际未变却全量上传——大工作流可达十余 MB，
+        // 经 frp 转发会周期性打满 ECS 公网出带宽。基线只在 PUT 成功或
+        // loadWorkflow 成功时建立，上传失败不会记录（下次照常重传）。
+        // 只中止还停在写 IndexedDB、尚未 fetch 的请求。已经发出的请求不 abort。
+        if(typeof autoSaveState !== 'undefined'
+            && autoSaveState.isConfirmedBody(workflowId, body)){
+          if(unload || !autoSaveState.hasStartedInFlight()){
+            autoSaveState.abortInFlight();
+          }
+          autoSaveState.confirmSkipped();
+          // 清除本页此前失败/被取代发送留下的残留恢复快照：服务端已持有
+          // 当前内容，残留快照若被下次会话重放会把已撤销的内容复活
+          if(typeof WorkflowRecovery !== 'undefined'){
+            WorkflowRecovery.discardOwnSnapshot({
+              workflowId: workflowId,
+              userId: getUserId()
+            }).catch(() => false);
+          }
+          console.log('[自动保存] 内容与服务端一致，跳过上传');
+          return;
+        }
+
         // 实际发起 PUT 才显示保存按钮环绕 loading（门命中/冲突熔断等早退不显示）
+        const controller = new AbortController();
+        let writeId = null;
+        if(unload){
+          // 关页：维持原决策，允许中止普通 fetch 并升级为 keepalive。
+          if(typeof autoSaveState !== 'undefined'){
+            autoSaveState.abortInFlight();
+            sentVersion = autoSaveState.beginSend(controller, keepalive);
+          }
+        } else if(typeof autoSaveState !== 'undefined'){
+          const decision = autoSaveState.beginOrCoalesce(controller);
+          if(decision.action !== 'send'){
+            return;
+          }
+          sentVersion = decision.sentVersion;
+          writeId = decision.writeId;
+        }
+
         saveBtnSavingStart();
         ringStarted = true;
-
-        // 跟踪在途请求，并在发起新请求前中止本页旧请求，降低过期
-        // payload 晚到的概率。已到达服务端的请求不可撤回，由服务端
-        // X-Base-Hash CAS 与下轮 poll 的哈希感知保证收敛。
-        const controller = new AbortController();
-        if(typeof autoSaveState !== 'undefined'){
-          autoSaveState.abortInFlight();
-          sentVersion = autoSaveState.beginSend(controller, keepalive);
-        }
 
         // CAS 基值：本次编辑所基于的服务端内容哈希（无基线时为空，不做 CAS）
         const baseHash = (typeof autoSaveState !== 'undefined')
@@ -1081,6 +1206,7 @@
           workflowId: workflowId,
           userId: getUserId(),
           baseHash: baseHash,
+          writeId: writeId,
           ...WorkflowRecovery.createWriteIdentity()
         } : null;
 
@@ -1091,6 +1217,7 @@
             'X-User-Id': getUserId()
           };
         if(baseHash) requestHeaders['X-Base-Hash'] = baseHash;
+        if(writeId) requestHeaders['X-Write-Id'] = writeId;
         const requestOptions = {
             method: 'PUT',
             // 页面卸载（beforeunload）触发的保存需要 keepalive，
@@ -1127,62 +1254,38 @@
           if(typeof autoSaveState !== 'undefined'){
             autoSaveState.markRequestStarted(sentVersion);
           }
+          if(!unload) armAutoSaveInflightTimer(sentVersion);
         }
 
         const response = await responsePromise;
+        clearAutoSaveInflightTimer(sentVersion);
 
         const result = await response.json();
-
-        if(result.code === 0){
+        const outcome = await applyWorkflowSaveResult(
+          workflowId, body, sentVersion, result, recoveryMeta, 'auto', recoveryWritePromise);
+        if(outcome.action === 'confirm'){
           console.log('自动保存成功:', new Date().toLocaleTimeString(), 'defaultWorldId:', state.defaultWorldId);
-          // 服务端已确认这份 body，以响应返回的最新内容哈希滚动去重门基线
-          // 与 CAS 基值。若这是被更新发送取代的迟到 ack，服务端可能随后被
-          // 更新请求覆盖——下轮 poll 的哈希漂移会使门失效并重传收敛
-          if(typeof autoSaveState !== 'undefined'){
-            autoSaveState.setConfirmedBody(
-              workflowId, body, result.data && result.data.content_hash);
-          }
-          // 仅当"该请求是最新发送且成功"才清除恢复记录：被新请求取代的旧请求
-          // 的成功 ack（endSend 返回 false）不得清掉新请求的恢复快照——否则
-          // 新请求随后失败时，兜底记录已被误清，数据丢失
-          if(typeof autoSaveState !== 'undefined'){
-            const confirmed = autoSaveState.endSend(sentVersion, true);
-            if(confirmed && recoveryMeta && typeof WorkflowRecovery !== 'undefined'){
-              // unload 冷启动时可能在 fetch 之后异步补写快照；先等写入结束，再按
-              // snapshotId/version 条件删除，避免清理先发生后又写回陈旧记录。
-              await recoveryWritePromise;
-              await WorkflowRecovery.clearConfirmedSnapshot(recoveryMeta).catch(() => false);
-            }
-          }
-        } else if(result.code === 409){
-          // CAS 冲突：内容已被其他会话修改。保持 dirty（恢复快照已在发送前
-          // 写入，本地修改不丢），更新已知服务端哈希使去重门立即失效，
-          // 并熔断后续自动保存（不再周期性全量重试）；toast 仅首次提示
+        } else if(outcome.action === 'self-heal'){
+          console.warn('[自动保存] 上一笔本页写入已落库，按新哈希补发最新内容');
+        } else if(outcome.action === 'conflict'){
           console.warn('自动保存冲突:', result.message);
-          if(typeof autoSaveState !== 'undefined'){
-            const alreadyBlocked = autoSaveState.isConflictBlocked(workflowId);
-            autoSaveState.endSend(sentVersion, false);
-            if(result.data && result.data.content_hash){
-              autoSaveState.noteServerHash(workflowId, result.data.content_hash);
-            }
-            autoSaveState.noteConflict(workflowId);
-            if(!alreadyBlocked){
-              showToast(result.message || '工作流内容已被其他会话修改，自动保存已暂停；本地修改已保留，刷新页面后将自动恢复', 'warning');
-            }
-          }
-          markSaveConflict();
-        } else {
+        } else if(outcome.action === 'fail'){
           console.warn('自动保存失败:', result.message);
-          if(typeof autoSaveState !== 'undefined'){
-            autoSaveState.endSend(sentVersion, false);
-          }
+        }
+        if(outcome.follow && !unload){
+          autoSaveWorkflow({ skipHistory: true });
         }
       } catch(error){
         console.error('自动保存错误:', error);
+        let follow = false;
         if(typeof autoSaveState !== 'undefined'){
+          const stillCurrent = autoSaveState.isCurrentSend(sentVersion);
           autoSaveState.endSend(sentVersion, false);
+          if(stillCurrent && opts.unload !== true) follow = !!autoSaveState.takeFollowUp(sentVersion);
         }
+        if(follow) autoSaveWorkflow({ skipHistory: true });
       } finally {
+        clearAutoSaveInflightTimer(sentVersion);
         if(ringStarted) saveBtnSavingEnd();
       }
     }
@@ -1311,6 +1414,7 @@
           'X-User-Id': getUserId()
         };
         if(record.baseHash) replayHeaders['X-Base-Hash'] = record.baseHash;
+        if(record.writeId) replayHeaders['X-Write-Id'] = record.writeId;
         const response = await fetch(`/api/video-workflow/${workflowId}`, {
           method: 'PUT',
           headers: replayHeaders,
@@ -1463,13 +1567,17 @@
                 // 保存继承的画风到工作流；PUT 改变服务端内容哈希，
                 // 用响应哈希滚动基线，避免下一次保存被 CAS 误拒
                 try {
+                  const styleHeaders = {
+                    'Content-Type': 'application/json',
+                    'Authorization': getAuthToken(),
+                    'X-User-Id': getUserId()
+                  };
+                  if(typeof autoSaveState !== 'undefined' && autoSaveState.attachWriteId){
+                    autoSaveState.attachWriteId(styleHeaders);
+                  }
                   const response = await fetch(`/api/video-workflow/${workflowId}`, {
                     method: 'PUT',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'Authorization': getAuthToken(),
-                      'X-User-Id': getUserId()
-                    },
+                    headers: styleHeaders,
                     body: JSON.stringify({
                       style: state.style.name || null,
                       style_reference_image: state.style.referenceImageUrl || null,
@@ -1781,6 +1889,12 @@
         if (typeof node.updateShotFrameResolutionOptions === 'function') {
           node.updateShotFrameResolutionOptions(node.data.videoModel);
         }
+        if (typeof node.updateLastFrameAvailability === 'function') {
+          node.updateLastFrameAvailability();
+        }
+        if (el._updateVideoComputingPowerDisplay) {
+          el._updateVideoComputingPowerDisplay();
+        }
       });
       console.log('[刷新模型] 已刷新所有分镜节点的模型选择器');
     }
@@ -1856,6 +1970,7 @@
         state.connections = [];
         state.imageConnections = [];
         state.firstFrameConnections = [];
+        state.lastFrameConnections = [];
         state.videoConnections = [];
         state.referenceConnections = [];
         state.audioConnections = [];
@@ -1863,6 +1978,7 @@
         state.selectedConnId = null;
         state.selectedImgConnId = null;
         state.selectedFirstFrameConnId = null;
+        state.selectedLastFrameConnId = null;
         state.selectedVideoConnId = null;
         state.selectedReferenceConnId = null;
         state.selectedAudioConnId = null;
@@ -1927,6 +2043,7 @@
         state.nextConnId = data.nextConnId || 1;
         state.nextImgConnId = data.nextImgConnId || 1;
         state.nextFirstFrameConnId = data.nextFirstFrameConnId || 1;
+        state.nextLastFrameConnId = data.nextLastFrameConnId || 1;
         state.nextVideoConnId = data.nextVideoConnId || 1;
         state.nextReferenceConnId = data.nextReferenceConnId || 1;
         state.nextAudioConnId = data.nextAudioConnId || 1;
@@ -1951,6 +2068,17 @@
         if(data.firstFrameConnections && Array.isArray(data.firstFrameConnections)){
           state.firstFrameConnections = data.firstFrameConnections;
         }
+
+        if(data.lastFrameConnections && Array.isArray(data.lastFrameConnections)){
+          state.lastFrameConnections = data.lastFrameConnections;
+        }
+
+        // 尾帧连线比节点晚恢复。连线到位后重算只读的首尾帧提示词。
+        (state.nodes || []).forEach(function(n){
+          if(n && n.type === 'shot_frame' && typeof n.syncFrameAutoPrompt === 'function'){
+            n.syncFrameAutoPrompt();
+          }
+        });
         
         if(data.videoConnections && Array.isArray(data.videoConnections)){
           state.videoConnections = data.videoConnections;
@@ -2041,6 +2169,7 @@
         state.connections = [];
         state.imageConnections = [];
         state.firstFrameConnections = [];
+        state.lastFrameConnections = [];
         state.videoConnections = [];
         state.referenceConnections = [];
         state.audioConnections = [];
@@ -2202,13 +2331,17 @@
       styleSaveBtn.textContent = '保存中...';
       
       try {
+        const styleHeaders = {
+          'Content-Type': 'application/json',
+          'Authorization': getAuthToken(),
+          'X-User-Id': getUserId()
+        };
+        if(typeof autoSaveState !== 'undefined' && autoSaveState.attachWriteId){
+          autoSaveState.attachWriteId(styleHeaders);
+        }
         const response = await fetch(`/api/video-workflow/${workflowId}`, {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': getAuthToken(),
-            'X-User-Id': getUserId()
-          },
+          headers: styleHeaders,
           body: JSON.stringify({
             style: styleName || null,
             style_reference_image: styleImageUrl || null
@@ -3367,6 +3500,7 @@
     
     let pollStatusTimer = null;
     let _pollStatusRunning = false;
+    let _pollLoginWarned = false;
     
     // 轮询工作流节点状态
     async function pollWorkflowNodeStatus(){
@@ -3389,6 +3523,13 @@
         const loggedIn = userId && !!localStorage.getItem('auth_token');
 
         if(!loggedIn){
+          // 缺 user_id / auth_token 时轮询静默跳过，节点会永远停在「生成中」，
+          // 不打日志无法排查（2026-10-09 水印任务排查时发现的盲区）。只警告
+          // 一次避免每 30 秒刷屏；重新登录可恢复。
+          if(!_pollLoginWarned){
+            _pollLoginWarned = true;
+            console.warn('[轮询] 登录态不完整（user_id / auth_token 缺失），已跳过节点状态轮询；重新登录后可恢复');
+          }
           return;
         }
 
@@ -3551,6 +3692,11 @@
               }
             }
           }
+        } else {
+          // HTTP 200 但业务失败（如 400 user_id is required 会被包装成
+          // code=-1）：此前完全静默，节点永远停在「生成中」且无任何线索
+          console.warn('[轮询] poll-status 返回异常(HTTP ' + response.status + '):',
+            result.message || result);
         }
       } catch(error){
         console.error('[轮询] 查询节点状态失败:', error);
@@ -3640,7 +3786,8 @@
         const connectedNodes = incomingConnections.map(c => state.nodes.find(n => n.id === c.from));
         const connectedShotFrameNode = connectedNodes.find(n => n && n.type === 'shot_frame');
         
-        if(connectedShotFrameNode && !connectedShotFrameNode.data.previewImageUrl){
+        if(connectedShotFrameNode && !connectedShotFrameNode.data.previewImageUrl && !connectedShotFrameNode.data.firstFrameDismissed){
+          connectedShotFrameNode.data.firstFrameDismissed = false;
           connectedShotFrameNode.data.previewImageUrl = url;
           
           const shotFrameNodeEl = canvasEl.querySelector(`.node[data-node-id="${connectedShotFrameNode.id}"]`);
@@ -3655,6 +3802,9 @@
             if(shotFramePreviewField){
               shotFramePreviewField.style.display = 'block';
             }
+          }
+          if(typeof connectedShotFrameNode.syncFrameAutoPrompt === 'function'){
+            connectedShotFrameNode.syncFrameAutoPrompt();
           }
           
           // 刷新关联分镜组节点的宫格预览
@@ -3719,6 +3869,9 @@
         }
         if(node.data.previewImageUrl){
           node.data.previewImageUrl = normalizeImageUrl(node.data.previewImageUrl);
+        }
+        if(node.data.lastFrameUrl){
+          node.data.lastFrameUrl = normalizeImageUrl(node.data.lastFrameUrl);
         }
         node.title = nodeData.title || node.title;
         
@@ -3818,6 +3971,12 @@
           // 恢复模式相关 UI 状态
           if(node.updateModeUI) {
             node.updateModeUI();
+          }
+          if(typeof node.updateLastFrameDisplay === 'function') {
+            node.updateLastFrameDisplay();
+          }
+          if(nodeEl._updateVideoComputingPowerDisplay) {
+            nodeEl._updateVideoComputingPowerDisplay();
           }
 
           // 先更新时长选项（基于视频模型），再设置时长值

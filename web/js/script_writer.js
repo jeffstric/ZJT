@@ -26,6 +26,28 @@
         };
         const escapeHtmlAttr = window.escapeHtmlAttr;
 
+        /**
+         * ask_user 选项兼容归一化：后端理论上只下发字符串数组，但模型偶尔会返回
+         * {"label": ..., "description": ...} 等对象，直接渲染会变成 [object Object]
+         * （2026-09-26 事故）。这里统一提取可展示文案；取不到时返回空串，由调用方跳过。
+         * @param {*} option 后端 options 数组中的单个元素
+         * @returns {string}
+         */
+        const normalizeAskOption = function (option) {
+            if (typeof option === 'string') return option.trim();
+            if (option && typeof option === 'object') {
+                const keys = ['label', 'option', 'text', 'value', 'name', 'title', 'content'];
+                for (let i = 0; i < keys.length; i++) {
+                    const value = option[keys[i]];
+                    if (typeof value === 'string' && value.trim()) return value.trim();
+                    if (typeof value === 'number' && isFinite(value)) return String(value);
+                }
+                return '';
+            }
+            if (typeof option === 'number' && isFinite(option)) return String(option);
+            return '';
+        };
+
         // 角度常量类 - 统一管理多角度图片的角度定义
         const AngleKey = {
             RIGHT_90: 'right',
@@ -536,7 +558,9 @@
                             if (options.length > 0) {
                                 vHtml += `<div class="verification-options">`;
                                 options.forEach(opt => {
-                                    vHtml += `<span class="option-btn">${escapeHtml(opt)}</span>`;
+                                    const optionText = normalizeAskOption(opt);
+                                    if (!optionText) return;
+                                    vHtml += `<span class="option-btn">${escapeHtml(optionText)}</span>`;
                                 });
                                 vHtml += `</div>`;
                             }
@@ -2011,7 +2035,10 @@
                 html += `<p class="verification-click-hint">${escapeHtml(window.t ? window.t('verification_click_hint') : '请点击下方选项作答')}</p>`;
                 html += `<div class="verification-options">`;
                 verification.options.forEach((option, index) => {
-                    const escapedOption = escapeHtml(option);
+                    const optionText = normalizeAskOption(option);
+                    // 归一化后为空（模型返回了无法识别的结构）时跳过，避免出现空白/[object Object]按钮
+                    if (!optionText) return;
+                    const escapedOption = escapeHtml(optionText);
                     html += `<button type="button" class="option-btn" data-option-index="${index}">`;
                     html += `${escapedOption}</button>`;
                 });
@@ -2051,14 +2078,17 @@
                         // fromInput=false：不清理输入框草稿
                         const index = target.dataset.optionIndex;
                         const option = verification.options[index];
-                        if (option) {
-                            console.log('[VERIFICATION] 用户选择选项:', option);
+                        // 提交归一化后的文案而非原始元素：options 若为对象，原样提交会把
+                        // 整个对象存进会话记录（[object Object] 事故的一部分）
+                        const optionText = option ? normalizeAskOption(option) : '';
+                        if (optionText) {
+                            console.log('[VERIFICATION] 用户选择选项:', optionText);
                             // 提交中禁用按钮，避免重复点击
                             if (sendBtn) {
                                 sendBtn.disabled = true;
                                 sendBtn.classList.add('sending');
                             }
-                            submitVerificationAnswer(option, { fromInput: false }).finally(() => {
+                            submitVerificationAnswer(optionText, { fromInput: false }).finally(() => {
                                 // 失败仍 pending：恢复以便重试；成功保持 sending 等 AI 继续
                                 if (pendingVerificationId) {
                                     restoreSendButtonIdle();
@@ -5883,6 +5913,7 @@
                     }
 
                     const task = result.task;
+                    const angles = task.angles || [];
                     const generatedImages = task.generated_images || [];
                     const currentIndex = task.current_angle_index;
 
@@ -5890,10 +5921,10 @@
                         if (currentIndex !== undefined && currentIndex < angles.length) {
                             const currentAngle = angles[currentIndex];
                             if (currentAngle) {
-                                statusSpan.textContent = `正在生成 ${currentAngle.label}... (${currentIndex}/${angles.length})`;
+                                statusSpan.textContent = `正在生成 ${currentAngle.label}... (${currentIndex + 1}/${angles.length})`;
                             }
                         } else {
-                            statusSpan.textContent = `处理中... (${currentIndex}/${angles.length})`;
+                            statusSpan.textContent = `处理中... (${currentIndex + 1}/${angles.length})`;
                         }
                     } else if (task.status === 2) {  // COMPLETED
                         clearInterval(multiAnglePollInterval);
@@ -8067,8 +8098,16 @@
             modal.classList.remove('show');
         }
 
-        // 打开算力充值弹窗
+        // 打开算力充值弹窗（与首页相同：算力直付 + 月度订阅）
         async function handleRechargeClick() {
+            if (window.RechargeCenter && typeof window.RechargeCenter.open === 'function') {
+                await window.RechargeCenter.open({
+                    onPaid: function () {
+                        if (typeof loadComputingPower === 'function') loadComputingPower();
+                    }
+                });
+                return;
+            }
             // 检查是否本地模式
             try {
                 const response = await fetch('/api/system/server-config');
@@ -8467,8 +8506,6 @@
         }
         
         function showModeSelection() {
-            submitToDatabase().catch(e => console.warn('预提交失败:', e));
-
             let modal = document.getElementById('mode-selection-modal');
             if (!modal) {
                 modal = document.createElement('div');
@@ -8516,12 +8553,6 @@
         }
 
         async function goToStoryboard() {
-            try {
-                await submitToDatabase();
-            } catch (e) {
-                console.error('提交数据失败:', e);
-            }
-
             const assetsStatus = await checkAssetsComplete();
             const hasProblems = !assetsStatus.hasScript || assetsStatus.missingAssets.length > 0;
             if (hasProblems) {
@@ -8576,14 +8607,7 @@
                 console.log('当前世界ID:', window.currentWorldId);
             }
             
-            // 先提交当前数据
-            try {
-                await submitToDatabase();
-            } catch (e) {
-                console.error('提交数据失败:', e);
-            }
-            
-            // 检查资产完成状态
+            // 检查资产完成状态（不在跳转时提交暂存，避免协作者把未确认的数据写入共享库）
             const assetsStatus = await checkAssetsComplete();
             
             // 如果有问题（没有剧本或资产缺失图片），弹出确认提示

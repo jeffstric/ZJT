@@ -45,16 +45,6 @@
         }
         // 配置未就绪或已关闭时不弹窗（修复加载中点击绿色反馈钮仍出二维码）
         if (!feedbackQrEnabled) return;
-        const minimized = (function () {
-            try {
-                return localStorage.getItem('feedbackBtnMinimized') === 'true';
-            } catch (err) {
-                return false;
-            }
-        })();
-        if (minimized) {
-            restoreFeedbackBtn();
-        }
         const modal = document.getElementById('feedbackModal');
         if (modal) {
             modal.removeAttribute('hidden');
@@ -64,17 +54,12 @@
     }
 
     function initFeedbackBtn() {
-        let minimized = false;
+        // 默认只留问号。旧的 feedbackBtnMinimized=false 是点问号时顺手展开的，不再当作展开偏好。
         try {
-            const legacyDeleted = localStorage.getItem('feedbackBtnDeleted') === 'true';
-            const minimizedFlag = localStorage.getItem('feedbackBtnMinimized');
-            minimized = legacyDeleted || minimizedFlag === 'true';
-            if (legacyDeleted) {
-                localStorage.setItem('feedbackBtnMinimized', 'true');
-                localStorage.removeItem('feedbackBtnDeleted');
-            }
+            localStorage.setItem('feedbackBtnMinimized', 'true');
+            localStorage.removeItem('feedbackBtnDeleted');
         } catch (e) {}
-        applyFeedbackBtnState(minimized);
+        applyFeedbackBtnState(true);
     }
 
     function hideFeedbackUi() {
@@ -231,6 +216,11 @@
       addMenu.classList.toggle('show');
     });
 
+    // 画布在冒泡阶段 preventDefault 滚轮来缩放。菜单打开且高于视口时，滚轮应滚动菜单。
+    addMenu.addEventListener('wheel', (e) => {
+      e.stopPropagation();
+    }, { passive: true });
+
     document.getElementById('menuAddVideo').addEventListener('click', () => {
       const nodeId = createImageToVideoNode();
       renderMinimap();
@@ -330,6 +320,13 @@
       startNodePlacing(nodeId);
     });
 
+    document.getElementById('menuAddVideoWatermark').addEventListener('click', () => {
+      const nodeId = createVideoWatermarkNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
     document.getElementById('menuAddText').addEventListener('click', () => {
       const nodeId = createTextNode();
       renderMinimap();
@@ -363,9 +360,14 @@
       state.ratio = ratioSelectEl.value;
     });
 
+    // 键盘上的 Ctrl/Cmd 是否真正按住。滚轮事件上的 ctrlKey 不可靠：
+    // 触控板捏合会被浏览器伪造成 ctrlKey=true，但不会有对应的 keydown。
+    let wheelModifierHeld = false;
+
     // Ctrl键检测：进入/退出选择模式
     window.addEventListener('keydown', (e) => {
       if(e.key === 'Control' || e.key === 'Meta'){
+        wheelModifierHeld = true;
         state.selectionMode = true;
         canvasContainer.style.cursor = 'crosshair';
       }
@@ -373,6 +375,8 @@
 
     window.addEventListener('keyup', (e) => {
       if(e.key === 'Control' || e.key === 'Meta'){
+        // keyup 时已松开的那个键不会留在 ctrlKey/metaKey 上；另一个仍按着则继续算按住
+        wheelModifierHeld = e.ctrlKey || e.metaKey;
         state.selectionMode = false;
         canvasContainer.style.cursor = 'grab';
       }
@@ -380,13 +384,14 @@
 
     // 失去焦点时重置选择模式
     window.addEventListener('blur', () => {
+      wheelModifierHeld = false;
       state.selectionMode = false;
       canvasContainer.style.cursor = 'grab';
     });
 
     // 在拖动/平移/选择期间全局阻止文本选中
     document.addEventListener('selectstart', (e) => {
-      if(state.panning || state.placing || state.selecting || state.connecting || state.drag){
+      if(state.panning || state.placing || state.selecting || state.connecting || state.drag || state.groupResize){
         e.preventDefault();
       }
     });
@@ -545,6 +550,30 @@
       }
     });
 
+    // 区分键盘上真正按住的 Ctrl/Cmd，和浏览器伪造的触控板捏合。
+    // modifierHeld 只认键盘 keydown，不认滚轮事件上的 ctrlKey。
+    // 返回 'pinch-zoom'（调用方始终缩放）或 'modifier'（按当前滚轮模式决定缩放还是上下平移）。
+    // 页面缩放 110% 时，鼠标一格会变成 120/1.1，不能因此当成捏合。
+    function ctrlWheelAction(e, modifierHeld){
+      if(modifierHeld) return 'modifier';
+      if(e.deltaMode === 0 && typeof e.deltaY === 'number' && !Number.isInteger(e.deltaY)) return 'pinch-zoom';
+      return 'modifier';
+    }
+
+    // mode 为 'zoom'：普通滚轮缩放，Ctrl+滚轮上下平移。
+    // 其他值（默认 'pan'）：普通滚轮上下平移，Ctrl+滚轮缩放。
+    // Shift+滚轮始终左右平移。捏合始终缩放。
+    function canvasWheelGesture(e, modifierHeld, mode){
+      var plainZooms = mode === 'zoom';
+      var isCtrl = !!(e.ctrlKey || e.metaKey);
+      if(e.shiftKey && !isCtrl) return 'pan-x';
+      if(isCtrl){
+        if(ctrlWheelAction(e, modifierHeld) === 'pinch-zoom') return 'zoom';
+        return plainZooms ? 'pan-y' : 'zoom';
+      }
+      return plainZooms ? 'zoom' : 'pan-y';
+    }
+
     // 归一化滚轮增量：行/页模式换算为像素，保证不同设备平移速度一致
     function normalizeWheelDelta(e, delta){
       if(e.deltaMode === 1) return delta * 16;
@@ -562,53 +591,31 @@
       if(typeof scheduleMinimapRender === 'function') scheduleMinimapRender();
     }
 
-    // 劫持鼠标滚轮（在画布区域内）：普通滚轮缩放，Shift+滚轮左右平移，Ctrl+滚轮上下平移
+    // 画布滚轮。模式来自快捷键弹窗：默认普通滚轮上下平移、Ctrl+滚轮缩放；
+    // 点「滚轮缩放画布」后对调。Shift+滚轮始终左右平移。捏合始终缩放。
     canvasContainer.addEventListener('wheel', (e) => {
-      // 仅当鼠标在画布区域内时生效
-      // 允许正常滚动页面：当前页面没有滚动条，但仍做限定
       const isCtrl = e.ctrlKey || e.metaKey;
       // ctrl + wheel：浏览器默认会缩放页面，必须阻止
       if(isCtrl){
         e.preventDefault();
       }
-
-      // Shift + 滚轮：画布左右平移
-      // 注意 Chrome 按住 Shift 时会把滚轮转换为水平滚动（deltaX 有值、deltaY 为 0），需优先取 deltaX
-      if(e.shiftKey && !isCtrl){
-        e.preventDefault();
-        const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
-        if(delta !== 0){
-          panCanvasByWheel(-normalizeWheelDelta(e, delta), 0);
-        }
-        return;
-      }
-
-      // Ctrl + 滚轮：画布上下平移
-      // 例外：触控板双指捏合会被 Chrome/Edge 翻译成 ctrlKey=true 的 wheel 事件
-      // （deltaMode=0 且 deltaY 为连续小数，真鼠标滚轮是整数值），此时仍应缩放而非平移
-      if(isCtrl){
-        e.preventDefault();
-        const isPinch = e.deltaMode === 0 && !Number.isInteger(e.deltaY);
-        if(isPinch){
-          if(e.deltaY < 0) zoomIn(); else if(e.deltaY > 0) zoomOut();
-          return;
-        }
-        const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
-        if(delta !== 0){
-          panCanvasByWheel(0, -normalizeWheelDelta(e, delta));
-        }
-        return;
-      }
-
-      // 普通滚轮也作为画布缩放（用户需求）
-      // 如果未来需要支持滚动，可把此判断改成 isCtrl
+      const mode = (typeof window.getCanvasWheelMode === 'function') ? window.getCanvasWheelMode() : 'pan';
+      const gesture = canvasWheelGesture(e, wheelModifierHeld, mode);
       e.preventDefault();
-
-      if(e.deltaY < 0){
-        zoomIn();
-      } else if(e.deltaY > 0){
-        zoomOut();
+      if(gesture === 'pan-x'){
+        // Chrome 按住 Shift 时会把滚轮转换成水平滚动（deltaX 有值、deltaY 为 0）
+        const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+        if(delta !== 0) panCanvasByWheel(-normalizeWheelDelta(e, delta), 0);
+        return;
       }
+      if(gesture === 'pan-y'){
+        const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+        if(delta !== 0) panCanvasByWheel(0, -normalizeWheelDelta(e, delta));
+        return;
+      }
+      const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+      if(delta < 0) zoomIn();
+      else if(delta > 0) zoomOut();
     }, { passive: false });
 
     // 放置模式：点击画布放下节点（capture阶段优先处理）
@@ -769,18 +776,24 @@
             nearestImgPort = { nodeId: registryPort.nodeId, portType: registryPort.portType, x: registryPort.x, y: registryPort.y };
           }
           
-          // 查找分镜节点的首帧端口
-          let nearestFirstFrameDist = 50;
+          // 分镜首帧/尾帧都在范围内时，吸附更近的那个
+          let nearestShotFrameDist = 50;
           for(const node of state.nodes){
             if(node.type !== 'shot_frame') continue;
             const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
             if(!toEl) continue;
-            const portEl = toEl.querySelector('.first-frame-port');
-            if(!portEl) continue;
-            const { dist, x: portX, y: portY } = getPortDistance(portEl, toX, toY);
-            if(dist < nearestFirstFrameDist){
-              nearestFirstFrameDist = dist;
-              nearestFirstFramePort = { nodeId: node.id, x: portX, y: portY };
+            const shotPorts = [
+              { kind: 'first', el: toEl.querySelector('.first-frame-port') },
+              { kind: 'last', el: toEl.querySelector('.last-frame-port') }
+            ];
+            for(const shotPort of shotPorts){
+              if(!shotPort.el) continue;
+              if(shotPort.kind === 'last' && (shotPort.el.classList.contains('disabled') || shotPort.el.offsetParent === null)) continue;
+              const { dist, x: portX, y: portY } = getPortDistance(shotPort.el, toX, toY);
+              if(dist < nearestShotFrameDist){
+                nearestShotFrameDist = dist;
+                nearestFirstFramePort = { kind: shotPort.kind, nodeId: node.id, x: portX, y: portY };
+              }
             }
           }
         }
@@ -813,8 +826,7 @@
         // 如果从图生视频节点拖拽，查找视频节点输入端口
         // 如果从剧本节点拖拽，查找分镜组节点输入端口
         // 如果从角色节点拖拽，查找视频节点输入端口
-        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'script' || fromNode.type === 'character')){
-          let nearestPort = null;
+        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark' || fromNode.type === 'script' || fromNode.type === 'character')){
           let nearestDist = 50;
           const targetType = fromNode.type === 'script' ? 'shot_group' : 'video';
           for(const targetNode of state.nodes){
@@ -837,6 +849,9 @@
         if(fromNode && fromNode.type === 'video'){
           let nearestVideoDist = 50;
           let nearestVideoRefDist = 50;
+          const registryVideoPort = typeof findNearestConnectablePort === 'function'
+            ? findNearestConnectablePort(toX, toY, 'video', 50)
+            : null;
           for(const node of state.nodes){
             const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
             if(!toEl) continue;
@@ -868,6 +883,18 @@
                 }
               }
             }
+          }
+          // 去水印等注册视频入口、对话组、图生视频参考口只吸附最近的一个
+          var videoSnapCandidates = [];
+          if(registryVideoPort) videoSnapCandidates.push({ kind: 'registered', dist: registryVideoPort.dist });
+          if(nearestVideoInputPort) videoSnapCandidates.push({ kind: 'dialogue', dist: nearestVideoDist });
+          if(nearestVideoRefPort) videoSnapCandidates.push({ kind: 'ref', dist: nearestVideoRefDist });
+          videoSnapCandidates.sort(function(a, b){ return a.dist - b.dist; });
+          var videoSnapWinner = videoSnapCandidates.length ? videoSnapCandidates[0].kind : null;
+          if(videoSnapWinner !== 'dialogue') nearestVideoInputPort = null;
+          if(videoSnapWinner !== 'ref') nearestVideoRefPort = null;
+          if(videoSnapWinner === 'registered'){
+            nearestPort = { nodeId: registryVideoPort.nodeId, x: registryVideoPort.x, y: registryVideoPort.y };
           }
         }
 
@@ -901,11 +928,17 @@
           portEl.classList.toggle('can-connect', isNearest);
         }
         
-        // 更新首帧端口高亮状态
+        // 更新首帧/尾帧端口高亮状态（只高亮更近的那一个）
         for(const portEl of canvasEl.querySelectorAll('.first-frame-port')){
           const nodeEl = portEl.closest('.node');
           const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
-          const isNearest = nearestFirstFramePort && nearestFirstFramePort.nodeId === nodeId;
+          const isNearest = nearestFirstFramePort && nearestFirstFramePort.kind === 'first' && nearestFirstFramePort.nodeId === nodeId;
+          portEl.classList.toggle('can-connect', isNearest);
+        }
+        for(const portEl of canvasEl.querySelectorAll('.last-frame-port')){
+          const nodeEl = portEl.closest('.node');
+          const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
+          const isNearest = nearestFirstFramePort && nearestFirstFramePort.kind === 'last' && nearestFirstFramePort.nodeId === nodeId;
           portEl.classList.toggle('can-connect', isNearest);
         }
         
@@ -1110,34 +1143,53 @@
             }
           }
 
-          // 分镜节点首帧端口
+          // 分镜节点首帧/尾帧端口：取更近的可连接端口
           if(!imgConnected){
             let nearestSF = null;
             let nearestSFDist = PROXIMITY_DIST;
+            let nearestKind = null;
             for(const node of state.nodes){
               if(node.type !== 'shot_frame') continue;
               const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
               if(!toEl) continue;
-              const portEl = toEl.querySelector('.first-frame-port');
-              if(!portEl) continue;
-              const { dist } = distToPort(portEl);
-              if(dist < nearestSFDist){
-                nearestSFDist = dist;
-                nearestSF = node;
+              const shotPorts = [
+                { kind: 'first', el: toEl.querySelector('.first-frame-port') },
+                { kind: 'last', el: toEl.querySelector('.last-frame-port') }
+              ];
+              for(const shotPort of shotPorts){
+                if(!shotPort.el) continue;
+                if(shotPort.kind === 'last' && (shotPort.el.classList.contains('disabled') || shotPort.el.offsetParent === null)) continue;
+                const { dist } = distToPort(shotPort.el);
+                if(dist < nearestSFDist){
+                  nearestSFDist = dist;
+                  nearestSF = node;
+                  nearestKind = shotPort.kind;
+                }
               }
             }
             if(nearestSF && fromNode.data.url){
-              state.firstFrameConnections = state.firstFrameConnections.filter(c => c.to !== nearestSF.id);
-              state.firstFrameConnections.push({ id: state.nextFirstFrameConnId++, from: fromNode.id, to: nearestSF.id });
-              nearestSF.data.previewImageUrl = fromNode.data.url;
               const nodeEl = canvasEl.querySelector(`.node[data-node-id="${nearestSF.id}"]`);
-              if(nodeEl){
-                const img = nodeEl.querySelector('.shot-frame-preview-image');
-                const field = nodeEl.querySelector('.shot-frame-preview-field');
-                if(img){ img.src = proxyImageUrl(fromNode.data.url); img.style.display = 'block'; }
-                if(field) field.style.display = 'block';
+              if(nearestKind === 'last'){
+                if(nodeEl && typeof nodeEl._applyLastFrameFromImage === 'function'){
+                  nodeEl._applyLastFrameFromImage(fromNode);
+                }
+              } else {
+                state.firstFrameConnections = state.firstFrameConnections.filter(c => c.to !== nearestSF.id);
+                state.firstFrameConnections.push({ id: state.nextFirstFrameConnId++, from: fromNode.id, to: nearestSF.id });
+                nearestSF.data.firstFrameDismissed = false;
+                nearestSF.data.previewImageUrl = fromNode.data.url;
+                if(typeof nearestSF.syncFrameAutoPrompt === 'function') nearestSF.syncFrameAutoPrompt();
+                if(nodeEl){
+                  const img = nodeEl.querySelector('.shot-frame-preview-image');
+                  const field = nodeEl.querySelector('.shot-frame-preview-field');
+                  if(img){ img.src = proxyImageUrl(fromNode.data.url); img.style.display = 'block'; }
+                  if(field) field.style.display = 'block';
+                }
+                renderFirstFrameConnections();
+                if(nodeEl && typeof nodeEl._updateVideoComputingPowerDisplay === 'function'){
+                  nodeEl._updateVideoComputingPowerDisplay();
+                }
               }
-              renderFirstFrameConnections();
             }
           }
         }
@@ -1193,8 +1245,8 @@
           }
         }
 
-        // 如果从图生视频节点拖拽，查找视频节点输入端口
-        if(fromNode && fromNode.type === 'image_to_video'){
+        // 如果从图生视频或去水印节点拖拽，查找视频节点输入端口
+        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark')){
           let nearestPort = null;
           let nearestDist = PROXIMITY_DIST;
           for(const node of state.nodes){
@@ -1222,9 +1274,12 @@
           }
         }
         
-        // 如果从视频节点拖拽，查找对话组节点和图生视频节点的视频输入端口
+        // 如果从视频节点拖拽，查找去水印、对话组和图生视频的视频输入端口
         if(fromNode && fromNode.type === 'video'){
           {
+            const registryVideoPort = typeof findNearestConnectablePort === 'function'
+              ? findNearestConnectablePort(mouseX, mouseY, 'video', PROXIMITY_DIST)
+              : null;
             let nearestVideoInputPort = null;
             let nearestVideoRefPort = null;
             let nearestVideoDist = PROXIMITY_DIST;
@@ -1256,8 +1311,28 @@
               }
             }
 
-            // 优先连接到图生视频节点的视频参考端口
-            if(nearestVideoRefPort && (!nearestVideoInputPort || nearestVideoRefDist <= nearestVideoDist)){
+            var registryDist = registryVideoPort ? registryVideoPort.dist : Infinity;
+            var dialogueDist = nearestVideoInputPort ? nearestVideoDist : Infinity;
+            var refDist = nearestVideoRefPort ? nearestVideoRefDist : Infinity;
+            // 去水印等注册入口比对话组、视频参考口更近时，走普通 connections
+            if(registryVideoPort && registryDist <= dialogueDist && registryDist <= refDist){
+              const connType = (registryVideoPort.portCfg && registryVideoPort.portCfg.connectionType) || 'connections';
+              const connArray = state[connType] || state.connections;
+              const exists = connArray.some(c => c.from === fromNode.id && c.to === registryVideoPort.nodeId);
+              const occupied = connArray.some(c => c.to === registryVideoPort.nodeId);
+              if(!exists && !occupied){
+                const connIdKey = connType === 'videoConnections' ? 'nextVideoConnId' : 'nextConnId';
+                connArray.push({
+                  id: state[connIdKey]++,
+                  from: fromNode.id,
+                  to: registryVideoPort.nodeId
+                });
+                if(registryVideoPort.portCfg && typeof registryVideoPort.portCfg.onConnect === 'function'){
+                  registryVideoPort.portCfg.onConnect(fromNode, registryVideoPort.node);
+                }
+                safeAutoSave();
+              }
+            } else if(nearestVideoRefPort && (!nearestVideoInputPort || nearestVideoRefDist <= nearestVideoDist)){
               const exists = state.videoConnections.some(c =>
                 c.from === fromNode.id && c.to === nearestVideoRefPort.nodeId && c.portType === 'video-ref'
               );
@@ -4462,26 +4537,3 @@
       stopAutoSave();
     });
 
-    // 一键生成素材按钮点击事件
-    const agentBtnMaterial = document.getElementById('agentBtnMaterial');
-    if (agentBtnMaterial) {
-      agentBtnMaterial.addEventListener('click', () => {
-        const authToken = localStorage.getItem('auth_token') || '';
-        const userId = localStorage.getItem('user_id') || '';
-        
-        if (!userId) {
-          showToast('请先登录', 'error');
-          return;
-        }
-        
-        // auth_token 已在 localStorage 中，无需通过 URL 传递
-        let url = `/script-writer?user_id=${encodeURIComponent(userId)}`;
-        
-        // 如果已选择世界，添加 world_id 参数
-        if (state.defaultWorldId) {
-          url += `&world_id=${encodeURIComponent(state.defaultWorldId)}`;
-        }
-        
-        window.location.href = url;
-      });
-    }

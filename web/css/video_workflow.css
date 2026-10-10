@@ -1110,6 +1110,11 @@ svg.connections path.reference-line.selected{
      顶部条目会伸入顶栏区域，z 低于顶栏时条目被 world-search-trigger 遮挡无法点击 */
   z-index: 47;
 }
+/* 菜单是临时层，打开时允许盖住时间轴（z-index:100）。
+   仍低于模态（999）和左侧导览（1000）。子元素 z-index 出不了本容器的层叠上下文，所以抬的是容器。 */
+.add-btn-container:has(.add-menu.show){
+  z-index: 200;
+}
 .add-btn{
   width: 44px;
   height: 44px;
@@ -1141,9 +1146,21 @@ svg.connections path.reference-line.selected{
   border-radius: 12px;
   box-shadow: var(--shadow-md);
   min-width: 160px;
-  overflow: hidden;
+  /* 以 + 按钮为中心，限制在视口内；放不下的条目在菜单里滚动，而不是被画布裁掉 */
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 .add-menu.show{ display: block; }
+.add-menu::-webkit-scrollbar{ width: 8px; }
+.add-menu::-webkit-scrollbar-thumb{
+  background: var(--border-strong);
+  border-radius: 8px;
+}
 .add-menu-group{
   padding: 8px 0;
 }
@@ -2343,6 +2360,21 @@ html.theme-dark .node.image-node .image-camera-control-btn{
   box-shadow: 0 0 0 4px rgba(59,130,246,0.3);
   transform: translateY(-50%) scale(1.3);
 }
+.port.last-frame-port{
+  left: -9px;
+  transform: translateY(-50%);
+  border-color: #3b82f6;
+  background: #3b82f6;
+}
+.port.last-frame-port:hover{
+  background: #93c5fd;
+  transform: translateY(-50%) scale(1.2);
+}
+.port.last-frame-port.can-connect{
+  background: #93c5fd;
+  box-shadow: 0 0 0 4px rgba(59,130,246,0.3);
+  transform: translateY(-50%) scale(1.3);
+}
 .port.video-input-port{
   left: -9px;
   top: 120px;
@@ -3173,6 +3205,19 @@ html.theme-dark .camera-slider:hover {
   word-break: break-all;
 }
 
+.shot-frame-auto-prompt {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--surface-2, #f3f4f6);
+  color: var(--text, #333);
+  word-break: break-all;
+  user-select: text;
+}
+
 .shot-frame-video-mode-toggle {
   display: flex;
   border: 1px solid var(--border);
@@ -3264,6 +3309,26 @@ html.theme-dark .camera-slider:hover {
   max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 参考图悬停大图预览浮层（挂在 body 上，pointer-events 防止闪烁） */
+.shot-hover-preview {
+  position: fixed;
+  z-index: 10001;
+  width: 220px;
+  height: 220px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+}
+.shot-hover-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
 }
 
 /* 内联选中标记 */
@@ -4702,6 +4767,41 @@ html.theme-dark .audio-node-preview{
   background: rgba(239, 68, 68, 0.12);
   color: #ef4444;
 }
+.node-group-resize{
+  position: absolute;
+  z-index: 2;
+  display: none;
+  box-sizing: border-box;
+  width: 10px;
+  height: 10px;
+  background: var(--surface);
+  border: 2px solid var(--primary);
+  border-radius: 2px;
+  pointer-events: auto;
+}
+.node-group.selected .node-group-resize{
+  display: block;
+}
+.node-group-resize[data-handle="n"],
+.node-group-resize[data-handle="s"]{
+  left: 50%;
+  margin-left: -5px;
+  cursor: ns-resize;
+}
+.node-group-resize[data-handle="n"]{ top: -6px; }
+.node-group-resize[data-handle="s"]{ bottom: -6px; }
+.node-group-resize[data-handle="e"],
+.node-group-resize[data-handle="w"]{
+  top: 50%;
+  margin-top: -5px;
+  cursor: ew-resize;
+}
+.node-group-resize[data-handle="e"]{ right: -6px; }
+.node-group-resize[data-handle="w"]{ left: -6px; }
+.node-group-resize[data-handle="ne"]{ top: -6px; right: -6px; cursor: nesw-resize; }
+.node-group-resize[data-handle="nw"]{ top: -6px; left: -6px; cursor: nwse-resize; }
+.node-group-resize[data-handle="se"]{ right: -6px; bottom: -6px; cursor: nwse-resize; }
+.node-group-resize[data-handle="sw"]{ left: -6px; bottom: -6px; cursor: nesw-resize; }
 
 /* ==================== 画布右键菜单 ==================== */
 .canvas-context-menu{
@@ -4814,6 +4914,52 @@ html.theme-dark .audio-node-preview{
 .shortcut-help-body::-webkit-scrollbar-thumb{
   background: var(--border-strong);
   border-radius: 8px;
+}
+.shortcut-wheel-mode{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--primary);
+  border-radius: 10px;
+}
+.shortcut-wheel-mode-label{
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.shortcut-wheel-mode-options{
+  display: flex;
+  gap: 8px;
+}
+.shortcut-wheel-option{
+  flex: 1;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+  cursor: pointer;
+}
+.shortcut-wheel-option:hover{
+  background: var(--hover-bg);
+}
+.shortcut-wheel-option.is-selected{
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--text);
+}
+.shortcut-wheel-mode-hint{
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
 }
 .shortcut-section{
   display: flex;
@@ -4949,6 +5095,9 @@ html.theme-dark .audio-node-preview{
   }
   .shortcut-keys{
     justify-content: flex-start;
+  }
+  .shortcut-wheel-mode-options{
+    flex-direction: column;
   }
 }
 html.theme-dark #shortcutHelpModal .shortcut-keys kbd,

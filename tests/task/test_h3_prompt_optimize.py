@@ -6,12 +6,16 @@ from unittest.mock import patch
 from config.constant import (
     H3_PROMPT_OPTIMIZE_VARIANT_FL2VA,
     H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+    H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
     H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
 )
 from config.unified_config import DriverKey
 from task.pipeline_drivers.h3_prompt_optimize_driver import H3PromptOptimizePipelineDriver
 from task.pipeline_drivers.h3_prompt_optimize_util import (
+    assign_h3_keyframe_ref_pictures,
     build_h3_optimize_user_message,
+    h3_slot_source_prompt,
+    kfref_required_clauses,
     load_h3_prompt_template,
     merge_h3_prompt_extra_config,
     parse_storyboard_dialogue_model,
@@ -283,6 +287,270 @@ def test_resolve_prefers_chat_model(mock_config, mock_get_client, mock_configure
     assert model == 'qwen-plus'
     assert vendor_id == 5
     mock_get_client.assert_called_once_with('qwen-plus', vendor_id=5)
+
+
+def test_keyframe_ref_two_images_is_kfref_not_fl2va():
+    """两张参考图不能掉进 FL2VA，否则 Picture 2 会被写成尾帧。"""
+    tool = SimpleNamespace(
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path=None,
+        audio_path=None,
+        extra_config='{"image_mode": "multi_reference"}',
+    )
+    assert resolve_h3_prompt_variant(
+        tool, task_key=DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO
+    ) == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
+
+
+def test_assign_keyframe_ref_pictures():
+    both = assign_h3_keyframe_ref_pictures(
+        ["first.png", "ref.png", "last.png"],
+        "图1是首帧，图2是林月，图3是尾帧。",
+    )
+    assert (both["picture_1"], both["picture_2"], both["picture_3"]) == ("first.png", "ref.png", "last.png")
+    assert both["roles"] == {"picture_1": "start", "picture_2": "reference", "picture_3": "end"}
+
+    only_first = assign_h3_keyframe_ref_pictures(
+        ["first.png", "ref1.png", "ref2.png"],
+        "图1是首帧，图2是甲，图3是乙。",
+    )
+    assert (only_first["picture_1"], only_first["picture_2"], only_first["picture_3"]) == (
+        "first.png", "ref1.png", "ref2.png",
+    )
+    assert only_first["roles"]["picture_3"] == "reference"
+
+    only_last = assign_h3_keyframe_ref_pictures(
+        ["ref.png", "last.png"],
+        "图2是尾帧。",
+    )
+    assert (only_last["picture_1"], only_last["picture_2"], only_last["picture_3"]) == ("ref.png", "", "last.png")
+    assert only_last["roles"]["picture_3"] == "end"
+
+    last_only_image = assign_h3_keyframe_ref_pictures(["last.png"], "图1是尾帧。")
+    assert (last_only_image["picture_1"], last_only_image["picture_2"], last_only_image["picture_3"]) == ("", "", "last.png")
+
+    first_and_last = assign_h3_keyframe_ref_pictures(
+        ["first.png", "last.png"],
+        "图1是首帧，图2是尾帧。",
+    )
+    assert (first_and_last["picture_1"], first_and_last["picture_2"], first_and_last["picture_3"]) == (
+        "first.png", "", "last.png",
+    )
+
+    dropped = assign_h3_keyframe_ref_pictures(
+        ["first.png", "ref1.png", "ref2.png", "last.png"],
+        "图1是首帧，图4是尾帧。",
+    )
+    assert dropped["picture_2"] == "ref1.png"
+    assert dropped["picture_3"] == "last.png"
+    assert dropped["unused_urls"] == ["ref2.png"]
+
+
+def test_kfref_instruction_uses_real_slots_and_capital_picture():
+    slots = assign_h3_keyframe_ref_pictures(
+        ["first.png", "ref.png", "last.png"],
+        "图1是首帧，图3是尾帧。",
+    )
+    message = build_h3_optimize_user_message(
+        "从首帧走到尾帧",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        6,
+        template="GUIDE",
+        ref_counts={"images": 3, "videos": 1, "audios": 1},
+        keyframe_slots=slots,
+    )
+    assert "[keyframe completion + reference generation + audio reference]" in message
+    assert "<Picture 1> is the EXACT starting key frame at 0.00 seconds." in message
+    assert "<Picture 3> is the EXACT ending key frame at 6.00 seconds (ref_image3)." in message
+    picture2 = next(line for line in message.splitlines() if "<Picture 2>" in line)
+    assert "not an ending key frame" in picture2
+    assert "尾帧" not in picture2
+    assert "last frame" not in picture2.lower()
+    assert "<Audio 1>" in message
+    assert "不要写 <Audio 2>" in message
+    assert "<video_N>" in message
+    assert "不要把起始姿势写成结尾姿势" in message
+    kfref_guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
+    assert "subject_definitions:" not in kfref_guide
+    assert "mandatory keyframe sentence" in kfref_guide
+    assert "subject_definitions" in load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_REF2VA)
+
+
+def test_kfref_instruction_names_second_audio_when_two_are_present():
+    slots = assign_h3_keyframe_ref_pictures(
+        ["first.png", "ref.png", "last.png"],
+        "图1是首帧，图3是尾帧。",
+    )
+    message = build_h3_optimize_user_message(
+        "两段音色",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        10,
+        template="GUIDE",
+        ref_counts={"images": 3, "videos": 0, "audios": 3},
+        keyframe_slots=slots,
+    )
+    assert "第一段写成 <Audio 1>，第二段写成 <Audio 2>。" in message
+    assert "不要写 <Audio 3>" in message
+    assert "不要写 <Audio 2>" not in message
+    guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
+    assert "this shot has spoken lines" in guide
+    assert "lip-sync pacing" in guide
+    assert "this shot has no spoken lines" in guide
+    assert "voice-timbre reference only" in guide
+
+
+def test_kfref_audio_sentence_depends_on_spoken_lines():
+    slots = assign_h3_keyframe_ref_pictures(["first.png", "ref.png"], "图1是首帧。")
+    silent = build_h3_optimize_user_message(
+        "参考音频说明：音频1是角色：李卫国的音色样本，角色说话时请保持相同音色。",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        10,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 2},
+        keyframe_slots=slots,
+    )
+    assert "this shot has no spoken lines" in silent
+    assert "voice-timbre reference only" in silent
+    assert "Do not lip-sync to it." in silent
+    assert "lip-sync pacing" not in silent
+    assert "第一段写成 <Audio 1>，第二段写成 <Audio 2>。" in silent
+
+    spoken = build_h3_optimize_user_message(
+        '赵志高大声呵斥道："李保国！你看看你扫的什么地！"',
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 1},
+        keyframe_slots=slots,
+    )
+    assert "this shot has spoken lines" in spoken
+    assert "lip-sync pacing" in spoken
+    assert "voice-timbre reference only" not in spoken
+    assert "不要写 <Audio 2>" in spoken
+
+    ref2va = build_h3_optimize_user_message(
+        "参考音频说明：音频1是角色：李卫国的音色样本，角色说话时请保持相同音色。",
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 1, "videos": 0, "audios": 1},
+    )
+    assert "this shot has no spoken lines" not in ref2va
+    assert "voice-timbre reference only" not in ref2va
+
+
+def test_kfref_instruction_omits_the_unused_keyframe_sentence():
+    first_only = assign_h3_keyframe_ref_pictures(["first.png", "ref.png"], "图1是首帧。")
+    first_message = build_h3_optimize_user_message(
+        "只有首帧",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 0},
+        keyframe_slots=first_only,
+    )
+    assert "<Picture 1> is the EXACT starting key frame at 0.00 seconds." in first_message
+    assert "EXACT ending key frame" not in first_message
+    assert "不要把起始姿势写成结尾姿势" not in first_message
+
+    last_only = assign_h3_keyframe_ref_pictures(["ref.png", "last.png"], "图2是尾帧。")
+    last_message = build_h3_optimize_user_message(
+        "只有尾帧",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        10,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 0},
+        keyframe_slots=last_only,
+    )
+    assert "EXACT starting key frame" not in last_message
+    assert "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3)." in last_message
+
+
+def test_kfref_validator_requires_exact_keyframe_sentences():
+    slots = assign_h3_keyframe_ref_pictures(
+        ["first.png", "ref.png", "last.png"],
+        "图1是首帧，图3是尾帧。",
+    )
+    paraphrased = (
+        "subject_definitions: <Subject 1> is the woman.\n\n"
+        "summary: [keyframe completion] The shot starts on <Picture 1>.\n\n"
+        "retention_analysis: <Subject 1> (appears in [Shot 1]): fully_preserved - kept.\n\n"
+        "detailed_description: [Shot 1] ...\n\n"
+        "overall_soundscape: quiet\n\n"
+        "non_diegetic_music: N/A"
+    )
+    assert not validate_h3_optimized_prompt(
+        paraphrased,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        keyframe_slots=slots,
+        duration=10,
+    )
+    written_by_model = (
+        "<Picture 1> is the EXACT starting key frame at 0.00 seconds. "
+        "The opening frame must not be reinterpreted.\n\n"
+        "<Picture 2> is a character reference.\n\n"
+        "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3). "
+        "It is the target last frame.\n\n"
+        "[Shot 1] The supervisor speaks."
+    )
+    assert kfref_required_clauses(slots, 10) == [
+        "<Picture 1> is the EXACT starting key frame at 0.00 seconds.",
+        "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3).",
+    ]
+    assert validate_h3_optimized_prompt(
+        written_by_model,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        keyframe_slots=slots,
+        duration=10,
+    )
+    assert not validate_h3_optimized_prompt(
+        written_by_model,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        keyframe_slots=slots,
+        duration=5,
+    )
+
+
+def test_slot_source_prompt_prefers_optimizer_original():
+    extra = {
+        "original_prompt": "外层原文 图1是首帧",
+        "h3_prompt_optimize": {
+            "original_prompt": "优化前 图2是尾帧",
+            "optimized_prompt": "subject_definitions: rewritten",
+        },
+    }
+    assert h3_slot_source_prompt(extra, "当前提示词没有标记") == "优化前 图2是尾帧"
+    assert h3_slot_source_prompt({"original_prompt": "只有外层 图1是首帧"}, "fallback") == "只有外层 图1是首帧"
+    assert h3_slot_source_prompt(None, "图1是首帧") == "图1是首帧"
+
+
+@patch("task.pipeline_drivers.get_dynamic_config_value", return_value=True)
+def test_kfref_step_config_passes_slot_plan(_mock_cfg):
+    from task.pipeline_drivers import PipelineDriverFactory
+
+    tool = SimpleNamespace(
+        prompt="从图1走到图3\n\n图1是首帧，图2是林月，图3是尾帧。",
+        reference_images='["first.png", "ref.png", "last.png"]',
+        video_path="clip.mp4",
+        audio_path="voice.wav",
+        duration=6,
+        image_path=None,
+        extra_config='{"image_mode":"multi_reference"}',
+    )
+    configs = PipelineDriverFactory.build_h3_prompt_optimize_step_configs(
+        tool,
+        task_key=DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO,
+    )
+    assert len(configs) == 1
+    params = configs[0]["params"]
+    assert params["variant"] == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
+    assert params["keyframe_slots"]["roles"] == {
+        "picture_1": "start",
+        "picture_2": "reference",
+        "picture_3": "end",
+    }
+    assert params["ref_counts"]["audios"] == 1
 
 
 @patch('llm.llm_client_factory.is_llm_client_configured', side_effect=[False, True])

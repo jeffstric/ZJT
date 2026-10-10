@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 from config.config_util import get_config, get_dynamic_config_value
+from config.constant import coerce_http_timeout_seconds
 from utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -51,7 +52,9 @@ class RunningHubClient:
         self.config = get_config()
         self.host = get_dynamic_config_value("runninghub", "host", default="")
         self.api_key = api_key if api_key is not None else get_dynamic_config_value("runninghub", "api_key", default="")
-        self.request_timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
+        self.request_timeout = coerce_http_timeout_seconds(
+            get_dynamic_config_value("timeout", "request_timeout", default=30)
+        )
 
     def set_api_key(self, api_key: str):
         """
@@ -492,7 +495,9 @@ def run_ai_app_task(
     logger.info(f"[RunningHub API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
-        timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
+        timeout = coerce_http_timeout_seconds(
+            get_dynamic_config_value("timeout", "request_timeout", default=30)
+        )
         response = requests.post(
             url,
             json=payload,
@@ -710,7 +715,7 @@ def create_ltx2_image_to_video(
             url,
             json=payload,
             headers=headers,
-            timeout=config["timeout"]["request_timeout"]
+            timeout=coerce_http_timeout_seconds(config["timeout"]["request_timeout"])
         )
         response.raise_for_status()
         
@@ -861,7 +866,7 @@ def create_wan22_image_to_video(
             url,
             json=payload,
             headers=headers,
-            timeout=config["timeout"]["request_timeout"]
+            timeout=coerce_http_timeout_seconds(config["timeout"]["request_timeout"])
         )
         response.raise_for_status()
         
@@ -1006,7 +1011,7 @@ def create_digital_human(
             url,
             json=payload,
             headers=headers,
-            timeout=config["timeout"]["request_timeout"]
+            timeout=coerce_http_timeout_seconds(config["timeout"]["request_timeout"])
         )
         response.raise_for_status()
         

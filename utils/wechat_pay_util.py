@@ -9,6 +9,8 @@ import logging
 import json
 import os
 import base64
+import requests
+from config.constant import SubscriptionConstants
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.backends import default_backend
@@ -162,7 +164,6 @@ class WechatPayUtil:
         )
         
         # 4. 调用微信支付V3统一下单接口
-        import requests
         response = requests.post(
             "https://api.mch.weixin.qq.com/v3/pay/transactions/jsapi",
             headers={
@@ -170,7 +171,8 @@ class WechatPayUtil:
                 "Accept": "application/json",
                 "Content-Type": "application/json"
             },
-            json=request_body
+            json=request_body,
+            timeout=SubscriptionConstants.HTTP_TIMEOUT_SECONDS,
         )
         
         # 5. 解析返回结果，获取prepay_id
@@ -307,7 +309,6 @@ class WechatPayUtil:
         )
         
         # 3. 调用微信支付V3统一下单接口
-        import requests
         response = requests.post(
             "https://api.mch.weixin.qq.com/v3/pay/transactions/h5",
             headers={
@@ -315,7 +316,8 @@ class WechatPayUtil:
                 "Accept": "application/json",
                 "Content-Type": "application/json"
             },
-            json=request_body
+            json=request_body,
+            timeout=SubscriptionConstants.HTTP_TIMEOUT_SECONDS,
         )
         
         # 解析返回结果，获取h5_url
@@ -394,7 +396,6 @@ class WechatPayUtil:
             f'signature="{signature}"'
         )
         
-        import requests
         response = requests.post(
             "https://api.mch.weixin.qq.com/v3/pay/transactions/native",
             headers={
@@ -402,7 +403,8 @@ class WechatPayUtil:
                 "Accept": "application/json",
                 "Content-Type": "application/json"
             },
-            json=request_body
+            json=request_body,
+            timeout=SubscriptionConstants.HTTP_TIMEOUT_SECONDS,
         )
         
         result = response.json()

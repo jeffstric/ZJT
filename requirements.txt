@@ -40,3 +40,7 @@ aiohttp>=3.10.0,<4.0.0
 filelock>=3.10.0,<4.0.0
 numpy>=1.24.0,<3.0.0
 pydantic>=2.0.0,<3.0.0
+# 图文抓取（article_to_video）：curl_cffi 过 TLS 指纹 WAF，bs4/lxml 解析公众号 SSR 页
+curl_cffi>=0.7.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
