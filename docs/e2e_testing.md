@@ -389,6 +389,22 @@ auth (无依赖)
 
 注意：CAS 内容哈希只覆盖 `workflow_data`/`style`/`style_reference_image`/`default_world_id`/`workflow_ratio`（`name` 与 `viewport` 不参与），测试中推进哈希需用参与哈希的字段。
 
+## 近期功能 e2e 覆盖补充（2026-10，develop_e2e_1010）
+
+针对 `af58e2fa..ab7a42fe`（246 提交）新增功能补齐的端到端用例（共 33 个 P1，20+7+5+7+4）：
+
+| 功能 | 覆盖位置 | 说明 |
+|------|----------|------|
+| 月度订阅 API（微信委托代扣） | `test_subscription_api.py`（10 个 P1） | 套餐列表 4 档 101-104 + 登录态真实订阅状态；`/status`、`/order-status` 未登录/无效 token 401；`/cancel` 无效 token 401；`/wechat-sign-pay` 空 token 400、无效 token 401。真实签约/支付/解约依赖外部微信平台不覆盖（与 `/api/recharge/wechat-pay` 同理）。**e2e 发现产品 bug**：`/wechat-sign-pay` 缺 `except HTTPException: raise`，空 token 400 / V2 密钥缺失 503 被 `except Exception` 吞成 500，已按 `/order-status` 同模式修复（api/subscription.py） |
+| 昵称修改（NICKNAME_MAX_LEN=30） | `test_user_api.py`（4 个 P1） | 未登录/无效 token 401；设置后经 `/api/user/role` 回读；空串重置随机默认昵称（非空）；超 30 字符 400；用例结束恢复原昵称 |
+| 视频去水印提交校验 | `test_video_watermark_remove.py`（7 个 P1） | 未登录/无效 token 401；Form `user_id` 与登录身份不符 400；时长 4-10 秒之外 400；帧率 1-120 之外 400；无媒体 400；提示词超 2000 字符 400。真实提交依赖外部 RunningHub 不覆盖 |
+| 管理员渠道推广等级 / 用户备注 | `test_admin_api.py`（admin_api_021~027，7 个 P1） | 等级 0/1/2 设置回读（level=2 才 `commission_enabled`）、非法等级/缺 body 400、用户不存在 404、非管理员 403；备注设置/回读/空白串清除/超 500 字符 400/用户不存在 404/非管理员 403，且用户侧 `/api/user/role` 不返回 remark（防泄漏） |
+| 世界 Word 文档导出 | `test_script_writer_api.py`（sw_api_exp_001~005，5 个 P1） | 未登录 401；他人 token + 主账号 user_id 403（属主断言）；非数值 world_id 400（user_id 需合法以先过属主校验）；空世界 404；有文件的世界 200 + `download_url` + `.docx` 文件名（best-effort 遍历，无则 skip） |
+
+注意：外部算力平台 `check_computing_power` 拒收本地 token（401 fail-closed），但 `get_user_id_by_auth_token` 可解析本地 token——订阅 `/plans` 带本地 token 走真实状态分支（`first_bonus_eligible` 为真实值），fail-closed（防"展示加赠、实收无加赠"）分支仅在本测试环境 token 被外部拒收时可触发，不在 e2e 断言范围。
+
+注意：`test_script_writer_api`（字母序在 `test_auth` 之后）需要"他人有效 token"时**不得复用 session 级 `secondary_auth_token`**——`test_auth` 的副账号真实登录/登出已按单会话策略（`delete_by_user_id`）将其顶掉，直接复用会 401（全量首跑即踩中）。该用例改为用例内副账号 fresh 登录（同 `test_auth.py::test_logout_success` 模式）；`test_auth` 注释"之后无用例再依赖旧的次账号 token"的约定新增用例必须遵守。
+
 ## e2e 全量失败排查记录（2026-09-15）
 
 一次 `python -m pytest auto_test/e2e -v` 大面积失败（401 跳登录页 / 502）的根因与修复：
