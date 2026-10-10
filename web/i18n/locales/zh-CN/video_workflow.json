@@ -826,7 +826,7 @@
   "video_watermark_power": "预计消耗 {power} 算力",
   "video_watermark_prompt": "提示词（可选）",
   "video_watermark_prompt_placeholder": "留空使用默认去水印提示词",
-  "video_watermark_btn": "去除水印",
+  "video_watermark_btn": "去字幕 水印",
   "video_watermark_submitting": "提交中...",
   "video_watermark_submitted": "已提交，结果视频生成中",
   "video_watermark_interrupted": "上次提交已中断，结果无法找回，请重新提交",

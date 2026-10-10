@@ -131,7 +131,7 @@
             '<textarea class="watermark-prompt" rows="3" maxlength="2000" data-i18n="video_watermark_prompt_placeholder:placeholder" placeholder="留空使用默认去水印提示词"></textarea>' +
           '</div>' +
           '<div class="field field-always-visible">' +
-            '<button class="gen-btn watermark-submit-btn" type="button" data-i18n="video_watermark_btn">去除水印</button>' +
+            '<button class="gen-btn watermark-submit-btn" type="button" data-i18n="video_watermark_btn">去字幕 水印</button>' +
           '</div>' +
           '<div class="field field-always-visible status-field" style="display:none;">' +
             '<div class="gen-meta status"></div>' +
@@ -191,7 +191,7 @@
           var busy = node.data.status === 'submitting';
           submitBtn.disabled = busy || !!node.data.durationOutOfRange;
           if (!busy) {
-            submitBtn.textContent = textOf('video_watermark_btn', '去除水印');
+            submitBtn.textContent = textOf('video_watermark_btn', '去字幕 水印');
           }
         }
 

@@ -49,7 +49,7 @@
 | [分镜组节点](video/shot_group_node.md) | 分镜详情编辑、批量管理 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/FFcxdlgHaom0uYxWGAlcUERNnDh) |
 | [分镜帧节点](video/shot_frame_node.md) | 帧图片/视频生成、AI 生成、参考素材 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/LboCddmUpoGqbDxbQamc1x4mnKc) |
 | [提取帧节点](video/extract_frame_node.md) | 从视频提取首帧/尾帧 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/SpV7ddQG9oLF80xXhVIcOlZ0ndb) |
-| [去水印节点](video/video_watermark_node.md) | 视频节点输入，按 4–10 秒去除水印 | — |
+| [去字幕水印节点](video/video_watermark_node.md) | 视频节点输入，按 4–10 秒去除字幕和水印 | — |
 
 ### 语音与对话
 

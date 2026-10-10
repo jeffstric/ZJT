@@ -183,6 +183,7 @@ describe('去水印节点交互', () => {
     expect(el.querySelector('.watermark-duration').value).toBe('5');
     expect(el.querySelector('.computing-power-value').textContent).toContain('6');
     expect(el.querySelector('.watermark-submit-btn').disabled).toBe(false);
+    expect(el.querySelector('.watermark-submit-btn').textContent).toBe('去字幕 水印');
   });
 
   test('连上 6 秒视频后自动选中并更新算力', () => {
@@ -289,6 +290,9 @@ describe('去水印节点接线', () => {
     expect(html).toContain('id="menuAddVideoWatermark"');
     expect(html).toContain('/js/video_watermark_node.js');
     expect(html).toContain('/css/video_watermark_node.css');
+    const nodeJs = fs.readFileSync(path.join(root, 'js/video_watermark_node.js'), 'utf8');
+    expect(nodeJs).toContain('去字幕 水印');
+    expect(nodeJs).not.toContain('去除水印');
     expect(events).toContain('createVideoWatermarkNode');
     expect(events).toContain("fromNode.type === 'video_watermark'");
     expect(videoNode).toContain("fromNode.type === 'video_watermark'");

@@ -826,7 +826,7 @@
   "video_watermark_power": "Estimated cost: {power}",
   "video_watermark_prompt": "Prompt (optional)",
   "video_watermark_prompt_placeholder": "Leave empty to use the default watermark-removal prompt",
-  "video_watermark_btn": "Remove watermark",
+  "video_watermark_btn": "Remove subtitles & watermark",
   "video_watermark_submitting": "Submitting...",
   "video_watermark_submitted": "Submitted. The result video is generating",
   "video_watermark_interrupted": "The last submission was interrupted and its result is lost. Please submit again",
