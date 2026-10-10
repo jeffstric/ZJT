@@ -10,7 +10,7 @@
 - **实现方**：`video_watermark_runninghub_v1`（id=99）
 - **驱动类**：`VideoWatermarkRunninghubV1Driver`
 - **分类**：`VISUAL_ENHANCE`
-- **模型选择器**：`hidden=True`。不出现在图生视频等模型下拉里。画布上的「去水印」节点直接调用本接口。
+- **模型选择器**：`hidden=True`。不出现在图生视频等模型下拉里。画布上的「去字幕水印」节点直接调用本接口。
 - **权限点**：`video:watermark_remove`（当前登录即可）
 
 上游文档：<https://www.runninghub.cn/call-api/api-detail/2108118160242200577?apiType=4>
@@ -75,11 +75,11 @@
 
 ## 画布节点
 
-视频工作流「视频 → 去水印」（`web/js/video_watermark_node.js`，类型 `video_watermark`）：
+视频工作流「视频 → 去字幕水印」（`web/js/video_watermark_node.js`，类型 `video_watermark`）：
 
-1. 把视频节点的输出连到去水印节点的输入（松开在端口上，或拖到 50px 内吸附）。一个去水印节点只收一个视频。
+1. 把视频节点的输出连到去字幕水印节点的输入（松开在端口上，或拖到 50px 内吸附）。一个去字幕水印节点只收一个视频。
 2. 读到时长且四舍五入后在 4–10 秒内时，自动选中该秒数并显示算力，用户仍可改。读不到时长时由用户在 4–10 里选。超出 4–10 秒时按钮禁用，提示仅支持该范围。帧率固定 24，不在界面上改。提示词可空，空则用驱动默认提示词。
-3. 提交 `POST /api/video-watermark-remove`（`Authorization: Bearer`，表单里带已有的 `video_url`）。成功后在右侧新建视频节点，写入 `project_id`，连线 `去水印 → 视频`。成片地址由现有 `poll-status` 在 `url` 为空时回填。
+3. 提交 `POST /api/video-watermark-remove`（`Authorization: Bearer`，表单里带已有的 `video_url`）。成功后在右侧新建视频节点，写入 `project_id`，连线 `去字幕水印 → 视频`。成片地址由现有 `poll-status` 在 `url` 为空时回填。
 4. 重载走节点注册表。保存 `videoUrl`、时长、提示词、状态。提交时重新读当前连线，不只用上次记下的地址。断开连线或删掉源视频节点会清空预览。
 
 本地还在上传（`blob:`）或成片还没回来的视频不能提交。
