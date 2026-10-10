@@ -217,6 +217,11 @@ function shotFrameHasAutoFirst(node) {
   return String(node.data.previewImageUrl || '').trim() !== '';
 }
 
+// 当时确实有首帧图，才记住「不要自动填回」。没有图时点清除不能把开关记死。
+function shouldRememberShotFrameFirstDismiss(imageUrl) {
+  return String(imageUrl || '').trim() !== '';
+}
+
 function syncShotFrameAutoPrompt(node) {
   if (!node || !node.data) return '';
   const text = buildShotFrameAutoPrompt(
@@ -680,6 +685,7 @@ if (typeof window !== 'undefined') {
   window.shotFrameAutoPromptFlags = shotFrameAutoPromptFlags;
   window.ensureShotFrameMentionTokens = ensureShotFrameMentionTokens;
   window.syncShotFrameAutoPrompt = syncShotFrameAutoPrompt;
+  window.shouldRememberShotFrameFirstDismiss = shouldRememberShotFrameFirstDismiss;
 }
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -691,6 +697,7 @@ if (typeof module !== 'undefined' && module.exports) {
     buildShotFrameAutoPrompt,
     shotFrameAutoPromptFlags,
     ensureShotFrameMentionTokens,
-    syncShotFrameAutoPrompt
+    syncShotFrameAutoPrompt,
+    shouldRememberShotFrameFirstDismiss
   };
 }

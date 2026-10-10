@@ -520,7 +520,8 @@
         const textEl = el.querySelector('.shot-frame-auto-prompt');
         const firstClearBtn = el.querySelector('.shot-frame-first-frame-clear');
         const isRef = (node.data.videoMode || 'first_last_frame') === 'multi_reference';
-        if (firstClearBtn) firstClearBtn.style.display = isRef ? '' : 'none';
+        const hasPreview = String((node.data && node.data.previewImageUrl) || '').trim() !== '';
+        if (firstClearBtn) firstClearBtn.style.display = (isRef && hasPreview) ? '' : 'none';
         if (!field || !textEl) return;
         const text = String((node.data && node.data.frameAutoPrompt) || '');
         textEl.textContent = text;
@@ -579,6 +580,10 @@
       }
 
       function clearShotFrameFirstFrame() {
+        const remember = typeof shouldRememberShotFrameFirstDismiss === 'function'
+          ? shouldRememberShotFrameFirstDismiss(node.data.previewImageUrl)
+          : String(node.data.previewImageUrl || '').trim() !== '';
+        if (!remember) return;
         node.data.firstFrameDismissed = true;
         node.data.previewImageUrl = '';
         if (previewImageEl) {

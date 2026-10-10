@@ -2543,7 +2543,15 @@
       if(conn){
         const toNode = state.nodes.find(n => n.id === conn.to);
         if(toNode && toNode.type === 'shot_frame'){
+          const isRef = (toNode.data.videoMode || 'first_last_frame') === 'multi_reference';
+          const fromNode = state.nodes.find(n => n.id === conn.from);
+          const shownUrl = toNode.data.previewImageUrl || (fromNode && fromNode.data && fromNode.data.url) || '';
+          const remember = typeof shouldRememberShotFrameFirstDismiss === 'function'
+            ? shouldRememberShotFrameFirstDismiss(shownUrl)
+            : String(shownUrl || '').trim() !== '';
           toNode.data.previewImageUrl = '';
+          // 参考模式删掉首帧连线后记住，避免稍后从仍连着的图片自动填回。首帧模式仍按原逻辑填回。
+          if(isRef && remember) toNode.data.firstFrameDismissed = true;
           if(typeof toNode.syncFrameAutoPrompt === 'function') toNode.syncFrameAutoPrompt();
           const nodeEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
           if(nodeEl){

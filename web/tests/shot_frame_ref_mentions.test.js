@@ -4,7 +4,8 @@ const {
   buildShotFrameAutoPrompt,
   shotFrameAutoPromptFlags,
   ensureShotFrameMentionTokens,
-  syncShotFrameAutoPrompt
+  syncShotFrameAutoPrompt,
+  shouldRememberShotFrameFirstDismiss
 } = require('../js/shot_frame_video_generator.js');
 
 describe('placeShotFrameMentionImages', () => {
@@ -147,6 +148,13 @@ describe('参考模式只读首尾帧提示词', () => {
     expect(ensureShotFrameMentionTokens('从 @首帧图 开始', 'shot.png', 'end.png')).toBe('从 @首帧图 开始\n@尾帧图');
     expect(ensureShotFrameMentionTokens('原文', '', '')).toBe('原文');
     expect(ensureShotFrameMentionTokens('', 'shot.png', 'end.png')).toBe('@首帧图\n@尾帧图');
+  });
+
+  test('没有首帧图时不记住清除', () => {
+    expect(shouldRememberShotFrameFirstDismiss('')).toBe(false);
+    expect(shouldRememberShotFrameFirstDismiss('   ')).toBe(false);
+    expect(shouldRememberShotFrameFirstDismiss(null)).toBe(false);
+    expect(shouldRememberShotFrameFirstDismiss('shot.png')).toBe(true);
   });
 
   test('清除首帧后只留下尾帧句', () => {
