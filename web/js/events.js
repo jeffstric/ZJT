@@ -1176,7 +1176,9 @@
               } else {
                 state.firstFrameConnections = state.firstFrameConnections.filter(c => c.to !== nearestSF.id);
                 state.firstFrameConnections.push({ id: state.nextFirstFrameConnId++, from: fromNode.id, to: nearestSF.id });
+                nearestSF.data.firstFrameDismissed = false;
                 nearestSF.data.previewImageUrl = fromNode.data.url;
+                if(typeof nearestSF.syncFrameAutoPrompt === 'function') nearestSF.syncFrameAutoPrompt();
                 if(nodeEl){
                   const img = nodeEl.querySelector('.shot-frame-preview-image');
                   const field = nodeEl.querySelector('.shot-frame-preview-field');

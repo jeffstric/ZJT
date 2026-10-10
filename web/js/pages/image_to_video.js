@@ -353,6 +353,23 @@
         if (Array.isArray(ref)) return ref;
         try { return JSON.parse(ref); } catch(e) { return []; }
       },
+      parseAudioPaths(raw) {
+        if (!raw) return [];
+        if (Array.isArray(raw)) {
+          return raw.map((item) => String(item || '').trim()).filter(Boolean);
+        }
+        const text = String(raw).trim();
+        if (!text) return [];
+        if (text[0] === '[') {
+          try {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed)) {
+              return parsed.map((item) => String(item || '').trim()).filter(Boolean);
+            }
+          } catch (e) { /* 非 JSON 时按逗号分隔 */ }
+        }
+        return text.split(',').map((item) => item.trim()).filter(Boolean);
+      },
       async fetchComputingPowerConfig() {
         try {
           const response = await axios.get('/api/computing-power-config');
@@ -1501,6 +1518,15 @@
                         <a :href="img" target="_blank" class="btn secondary" style="font-size: 12px; padding: 4px 12px; text-decoration: none;">{{ $t('view_original') || '查看原图' }}</a>
                       </div>
                     </template>
+                  </div>
+                </div>
+                <div v-if="parseAudioPaths(item.audio_path).length" style="margin-top: 12px; padding: 12px; background: #0f1620; border-radius: 8px; border: 1px solid var(--border);">
+                  <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">{{ $t('reference_audio_label') || '参考音频' }}:</div>
+                  <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <div v-for="(audio, aidx) in parseAudioPaths(item.audio_path)" :key="'audio-' + aidx">
+                      <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">{{ $t('audio') || '音频' }} {{ aidx + 1 }}</div>
+                      <audio :src="audio" controls preload="metadata" style="width: 100%; max-width: 420px; height: 36px;"></audio>
+                    </div>
                   </div>
                 </div>
                 <div v-if="item.video_path" style="margin-top: 12px; padding: 12px; background: #0f1620; border-radius: 8px; border: 1px solid var(--border);">

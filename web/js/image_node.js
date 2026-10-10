@@ -756,6 +756,7 @@
           .find(n => n && n.type === 'shot_frame');
         
         if(connectedShotFrameNode && node.data.url){
+          connectedShotFrameNode.data.firstFrameDismissed = false;
           connectedShotFrameNode.data.previewImageUrl = node.data.url;
           if(connectedShotFrameNode.updatePreview){
             connectedShotFrameNode.updatePreview();

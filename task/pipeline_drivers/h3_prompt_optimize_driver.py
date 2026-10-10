@@ -97,7 +97,12 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
             try:
                 raw = await self._call_llm(original, variant, duration, step_params)
                 cleaned = strip_prompt_fences(raw)
-                if validate_h3_optimized_prompt(cleaned, variant):
+                if validate_h3_optimized_prompt(
+                    cleaned,
+                    variant,
+                    keyframe_slots=step_params.get("keyframe_slots"),
+                    duration=duration,
+                ):
                     return cleaned, False, None
                 last_error = "optimized prompt failed structure check"
             except Exception as exc:
@@ -117,7 +122,11 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": build_h3_optimize_user_message(
-                original, variant, duration, ref_counts=step_params.get("ref_counts")
+                original,
+                variant,
+                duration,
+                ref_counts=step_params.get("ref_counts"),
+                keyframe_slots=step_params.get("keyframe_slots"),
             )},
         ]
 

@@ -58,6 +58,203 @@ async function replaceCharacterMarkers(prompt){
   return replacedPrompt;
 }
 
+// 把「图N是…」的序号整体后移。首帧占了图1时，角色/场景/道具后缀要跟着挪。
+function shiftFigureSuffix(suffix, delta) {
+  if (!suffix || !delta) return suffix || '';
+  return String(suffix).replace(/^图(\d+)/, function(_, n) {
+    return '图' + (parseInt(n, 10) + delta);
+  });
+}
+
+// 参考模式提交前，把提示词里点名的首尾帧排到参考图两端。
+// 没被 @ 到的帧不加入列表，避免把已有「图N是角色」序号打乱。
+// 返回新的 prompt / 参考图 / 后缀，不修改入参数组。
+function placeShotFrameMentionImages(prompt, referenceImageUrls, promptSuffix, firstUrl, lastUrl, maxRefImages) {
+  const text = prompt == null ? '' : String(prompt);
+  const firstRe = /@首帧图(?![\u4e00-\u9fff])/g;
+  const lastRe = /@尾帧图(?![\u4e00-\u9fff])/g;
+  const wantsFirst = firstRe.test(text);
+  firstRe.lastIndex = 0;
+  const wantsLast = lastRe.test(text);
+  lastRe.lastIndex = 0;
+  const first = String(firstUrl || '').trim();
+  const last = String(lastUrl || '').trim();
+  const urlsIn = Array.isArray(referenceImageUrls) ? referenceImageUrls.slice() : [];
+  const suffixIn = Array.isArray(promptSuffix) ? promptSuffix.slice() : [];
+  if (suffixIn.length > urlsIn.length) suffixIn.length = urlsIn.length;
+  while (suffixIn.length < urlsIn.length) suffixIn.push('');
+  if (!wantsFirst && !wantsLast) {
+    return { prompt: text, referenceImageUrls: urlsIn, promptSuffix: suffixIn, error: '' };
+  }
+  if (wantsFirst && !first) {
+    return { prompt: text, referenceImageUrls: urlsIn, promptSuffix: suffixIn, error: 'missing_first' };
+  }
+  if (wantsLast && !last) {
+    return { prompt: text, referenceImageUrls: urlsIn, promptSuffix: suffixIn, error: 'missing_last' };
+  }
+  const reserved = (wantsFirst ? 1 : 0) + (wantsLast ? 1 : 0);
+  const max = Number(maxRefImages);
+  if (max > 0 && reserved > max) {
+    return { prompt: text, referenceImageUrls: urlsIn, promptSuffix: suffixIn, error: 'over_capacity' };
+  }
+  const middleBudget = max > 0 ? max - reserved : urlsIn.length;
+  const refs = urlsIn.slice(0, middleBudget);
+  const suffixes = suffixIn.slice(0, refs.length);
+  const delta = wantsFirst ? 1 : 0;
+  const urls = [];
+  const notes = [];
+  if (wantsFirst) urls.push(first);
+  refs.forEach(function(url, i) {
+    urls.push(url);
+    const note = shiftFigureSuffix(suffixes[i], delta);
+    if (note) notes.push(note);
+  });
+  if (wantsLast) urls.push(last);
+  if (wantsFirst) notes.unshift('图1是首帧');
+  if (wantsLast) notes.push('图' + urls.length + '是尾帧');
+  let out = text.replace(firstRe, '图1');
+  out = out.replace(lastRe, '图' + urls.length);
+  return { prompt: out, referenceImageUrls: urls, promptSuffix: notes, error: '' };
+}
+
+// 参考模式不看 supports_last_frame。尾帧 URL 优先用节点上保存的，否则取尾帧连线。
+function resolveMentionLastFrameUrl(node) {
+  if (!node || !node.data) return '';
+  const saved = String(node.data.lastFrameUrl || '').trim();
+  if (saved) return saved;
+  if (typeof state === 'undefined' || !state || !Array.isArray(state.lastFrameConnections)) return '';
+  const conn = state.lastFrameConnections.find(function(c) { return c && c.to === node.id; });
+  if (!conn || !Array.isArray(state.nodes)) return '';
+  const fromNode = state.nodes.find(function(n) { return n && n.id === conn.from; });
+  return String((fromNode && fromNode.data && fromNode.data.url) || '').trim();
+}
+
+function shotFrameMentionErrorMessage(code) {
+  const fallback = {
+    missing_first: '视频提示词使用了 @首帧图，请先设置视频首帧',
+    missing_last: '视频提示词使用了 @尾帧图，请先设置视频尾帧',
+    over_capacity: '当前模型的参考图数量不够同时放入首帧和尾帧'
+  };
+  const key = {
+    missing_first: 'shot_frame_mention_missing_first',
+    missing_last: 'shot_frame_mention_missing_last',
+    over_capacity: 'shot_frame_mention_over_capacity'
+  }[code];
+  if (key && typeof window !== 'undefined' && window.t) {
+    const translated = window.t(key);
+    if (translated && translated !== key) return translated;
+  }
+  return fallback[code] || code;
+}
+
+function shotFrameMultiRefLimit(videoModel) {
+  let maxRefImages = 5;
+  if (typeof window !== 'undefined' && window.TaskConfig && typeof window.TaskConfig.isLoaded === 'function' && window.TaskConfig.isLoaded()) {
+    const configs = window.TaskConfig.getModelConfigs() || {};
+    const config = configs[videoModel];
+    if (config && config.max_multi_ref_images) maxRefImages = config.max_multi_ref_images;
+  }
+  return maxRefImages;
+}
+
+// 混合模型固定 3 个图片槽。不能用下拉里 H3 参考模型的 9 张上限，否则提示词序号会对不上。
+const H3_KEYFRAME_REF_MAX_IMAGES = 3;
+const H3_KEYFRAME_REF_SHORT_KEY = 'minimax_h3_kfr';
+
+function promptHasShotFrameMention(prompt) {
+  const text = prompt == null ? '' : String(prompt);
+  return /@首帧图(?![\u4e00-\u9fff])/.test(text) || /@尾帧图(?![\u4e00-\u9fff])/.test(text);
+}
+
+function promptHasFirstFrameToken(prompt) {
+  return /@首帧图(?![\u4e00-\u9fff])/.test(prompt == null ? '' : String(prompt));
+}
+
+function promptHasLastFrameToken(prompt) {
+  return /@尾帧图(?![\u4e00-\u9fff])/.test(prompt == null ? '' : String(prompt));
+}
+
+// 参考模式只读字段的固定句子。后面紧跟汉字，现有 @ 标记认不出它们。
+const SHOT_FRAME_AUTO_FIRST = '@首帧图是首帧';
+const SHOT_FRAME_AUTO_LAST = '@尾帧图是尾帧';
+
+function buildShotFrameAutoPrompt(hasFirst, hasLast) {
+  const parts = [];
+  if (hasFirst) parts.push(SHOT_FRAME_AUTO_FIRST);
+  if (hasLast) parts.push(SHOT_FRAME_AUTO_LAST);
+  return parts.join('，');
+}
+
+// 只接受四种整句。更长的文本不算，避免误伤用户原文。
+function shotFrameAutoPromptFlags(text) {
+  const value = text == null ? '' : String(text);
+  if (value === SHOT_FRAME_AUTO_FIRST + '，' + SHOT_FRAME_AUTO_LAST) {
+    return { wantsFirst: true, wantsLast: true };
+  }
+  if (value === SHOT_FRAME_AUTO_FIRST) return { wantsFirst: true, wantsLast: false };
+  if (value === SHOT_FRAME_AUTO_LAST) return { wantsFirst: false, wantsLast: true };
+  return { wantsFirst: false, wantsLast: false };
+}
+
+// 提交副本补上不带汉字的标记。原文已有对应标记时不补第二次。不写回节点。
+function ensureShotFrameMentionTokens(prompt, firstUrl, lastUrl) {
+  let text = prompt == null ? '' : String(prompt);
+  const first = String(firstUrl || '').trim();
+  const last = String(lastUrl || '').trim();
+  if (first && !promptHasFirstFrameToken(text)) {
+    text = text.replace(/\s*$/, '');
+    text = text ? (text + '\n@首帧图') : '@首帧图';
+  }
+  if (last && !promptHasLastFrameToken(text)) {
+    text = text.replace(/\s*$/, '');
+    text = text ? (text + '\n@尾帧图') : '@尾帧图';
+  }
+  return text;
+}
+
+function shotFrameHasAutoFirst(node) {
+  if (!node || !node.data || node.data.firstFrameDismissed) return false;
+  return String(node.data.previewImageUrl || '').trim() !== '';
+}
+
+// 当时确实有首帧图，才记住「不要自动填回」。没有图时点清除不能把开关记死。
+function shouldRememberShotFrameFirstDismiss(imageUrl) {
+  return String(imageUrl || '').trim() !== '';
+}
+
+function syncShotFrameAutoPrompt(node) {
+  if (!node || !node.data) return '';
+  const text = buildShotFrameAutoPrompt(
+    shotFrameHasAutoFirst(node),
+    resolveMentionLastFrameUrl(node) !== ''
+  );
+  node.data.frameAutoPrompt = text;
+  return text;
+}
+
+function isH3ReferenceVideoModel(videoModel) {
+  const key = String(videoModel || '');
+  return key === 'minimax_h3_r2v' || key === 'minimax_h3_reference_to_video';
+}
+
+// 只有参考模式、当前是 H3 参考模型、并且提示词点名了首帧或尾帧，才改提交混合模型。
+// 首帧模式、其他参考模型、以及没有 @ 标记的 H3 参考提交都不改。
+function shouldUseH3KeyframeRefModel(videoMode, videoModel, prompt) {
+  return videoMode === 'multi_reference'
+    && isH3ReferenceVideoModel(videoModel)
+    && promptHasShotFrameMention(prompt);
+}
+
+function resolveShotFrameReferenceSubmitModel(videoMode, videoModel, prompt) {
+  if (shouldUseH3KeyframeRefModel(videoMode, videoModel, prompt)) return H3_KEYFRAME_REF_SHORT_KEY;
+  return videoModel;
+}
+
+function shotFrameMentionImageLimit(videoMode, videoModel, prompt) {
+  if (shouldUseH3KeyframeRefModel(videoMode, videoModel, prompt)) return H3_KEYFRAME_REF_MAX_IMAGES;
+  return shotFrameMultiRefLimit(videoModel);
+}
+
 // 分镜节点生成视频功能
 async function generateShotFrameVideo(nodeId, node){
   const mode = node.data.videoMode || 'first_last_frame';
@@ -161,7 +358,42 @@ async function generateShotFrameVideo(nodeId, node){
       // === 参考图模式 ===
       // 收集角色/场景/道具参考图
       showToast('正在收集参考图...', 'info');
-      const { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node);
+      let { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node);
+
+      // 只读字段按当前首尾帧重算。用户的 videoPromptText 不动。
+      if (typeof node.syncFrameAutoPrompt === 'function') {
+        node.syncFrameAutoPrompt();
+      } else {
+        syncShotFrameAutoPrompt(node);
+      }
+      const autoFlags = shotFrameAutoPromptFlags(node.data.frameAutoPrompt);
+      const mentionLastUrl = resolveMentionLastFrameUrl(node);
+      const autoFirstUrl = autoFlags.wantsFirst ? String(node.data.previewImageUrl || '').trim() : '';
+      const autoLastUrl = autoFlags.wantsLast ? mentionLastUrl : '';
+      videoPrompt = ensureShotFrameMentionTokens(videoPrompt, autoFirstUrl, autoLastUrl);
+
+      // 必须在改写前提取 @ 标记。改写后标记会变成「图N」，不能再用来判断要不要换模型。
+      const useH3KeyframeRef = shouldUseH3KeyframeRefModel(mode, videoModel, videoPrompt);
+      // @首帧图 / @尾帧图 排到参考图两端。存储的提示词不动，只改这次提交的文本。
+      const placedMentions = placeShotFrameMentionImages(
+        videoPrompt,
+        referenceImageUrls,
+        promptSuffix,
+        node.data.previewImageUrl,
+        mentionLastUrl,
+        shotFrameMentionImageLimit(mode, videoModel, videoPrompt)
+      );
+      if(placedMentions.error) {
+        const errorMsg = shotFrameMentionErrorMessage(placedMentions.error);
+        showToast(errorMsg, 'warning');
+        generateBtn.disabled = false;
+        generateBtn.textContent = '生成视频';
+        return;
+      }
+      videoPrompt = placedMentions.prompt;
+      referenceImageUrls = placedMentions.referenceImageUrls;
+      promptSuffix = placedMentions.promptSuffix;
+      form.set('prompt', videoPrompt);
 
       // 将 promptSuffix 追加到视频提示词
       if(promptSuffix.length > 0) {
@@ -179,9 +411,14 @@ async function generateShotFrameVideo(nodeId, node){
       }
 
       if(referenceImageUrls.length > 0) {
-        // 有参考图 → image_to_video + multi_reference
-        const taskId = TaskConfig.getTaskIdByKey(videoModel, 'image_to_video');
+        // 有参考图 → image_to_video + multi_reference。
+        // H3 参考模型点名了首尾帧时，task_id 换成隐藏的混合模型，画面模式仍是参考模式。
+        const submitModel = useH3KeyframeRef ? H3_KEYFRAME_REF_SHORT_KEY : videoModel;
+        const taskId = TaskConfig.getTaskIdByKey(submitModel, 'image_to_video');
         if(!taskId) {
+          if(useH3KeyframeRef) {
+            throw new Error('未找到 MiniMax H3 首帧参考混合模型 minimax_h3_kfr 的任务配置');
+          }
           throw new Error(`未找到视频模型 ${videoModel} 对应的图生视频任务配置`);
         }
         form.append('task_id', taskId);
@@ -194,8 +431,7 @@ async function generateShotFrameVideo(nodeId, node){
           form.append('face_mask_reference_urls', characterRefUrls.join(','));
         }
 
-        // 参考生 + 模型支持音色输入时，自动带入分镜角色的默认音色；
-        // grok 等不支持模型 collectVoiceReferences 返回空，不注入
+        // 音色仍按用户选中的参考模型判断。混合模型不在下拉里，不能拿它查 supports_voice_input。
         if(typeof collectVoiceReferences === 'function'){
           const voiceRefs = collectVoiceReferences(videoModel, voiceCharacters || [], '');
           if(voiceRefs.enabled){
@@ -205,7 +441,11 @@ async function generateShotFrameVideo(nodeId, node){
           }
         }
 
-        showToast(`使用 ${referenceImageUrls.length} 张参考图生成视频...`, 'info');
+        if(useH3KeyframeRef) {
+          showToast(`本次使用 MiniMax H3 首帧参考混合模型，共 ${referenceImageUrls.length} 张参考图`, 'info');
+        } else {
+          showToast(`使用 ${referenceImageUrls.length} 张参考图生成视频...`, 'info');
+        }
         res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
       } else {
         // 无参考图 → 回退 text_to_video
@@ -435,4 +675,29 @@ async function generateShotFrameVideo(nodeId, node){
     generateBtn.disabled = false;
     generateBtn.textContent = '生成视频';
   }
+}
+
+if (typeof window !== 'undefined') {
+  window.placeShotFrameMentionImages = placeShotFrameMentionImages;
+  window.shouldUseH3KeyframeRefModel = shouldUseH3KeyframeRefModel;
+  window.promptHasShotFrameMention = promptHasShotFrameMention;
+  window.buildShotFrameAutoPrompt = buildShotFrameAutoPrompt;
+  window.shotFrameAutoPromptFlags = shotFrameAutoPromptFlags;
+  window.ensureShotFrameMentionTokens = ensureShotFrameMentionTokens;
+  window.syncShotFrameAutoPrompt = syncShotFrameAutoPrompt;
+  window.shouldRememberShotFrameFirstDismiss = shouldRememberShotFrameFirstDismiss;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    placeShotFrameMentionImages,
+    shouldUseH3KeyframeRefModel,
+    promptHasShotFrameMention,
+    resolveShotFrameReferenceSubmitModel,
+    shotFrameMentionImageLimit,
+    buildShotFrameAutoPrompt,
+    shotFrameAutoPromptFlags,
+    ensureShotFrameMentionTokens,
+    syncShotFrameAutoPrompt,
+    shouldRememberShotFrameFirstDismiss
+  };
 }

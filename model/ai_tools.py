@@ -384,7 +384,7 @@ class AIToolsModel:
 
                     created_step_count = step_order
 
-                # 创建 MiniMax H3 提示词优化步骤（图生视频 I2VA/FL2VA、参考生视频 Ref2VA）。
+                # 创建 MiniMax H3 提示词优化步骤（图生视频 I2VA/FL2VA、参考生视频 Ref2VA、首帧参考 KFRef）。
                 # build_h3_prompt_optimize_step_configs 为纯函数式（只读属性 + 查 config），
                 # 事务内不发起 HTTP/IO，符合 transaction() 短事务约束。
                 import types

@@ -772,6 +772,16 @@ def register_all_drivers():
         logger.warning(f"Failed to import MinimaxH3ReferenceRunninghubV1Driver: {e}")
 
     try:
+        from .minimax_h3_keyframe_ref_runninghub_v1_driver import MinimaxH3KeyframeRefRunninghubV1Driver
+        # 注册 MiniMax H3 首帧参考混合生视频。参考模式点名 @首帧图/@尾帧图 时才提交这个任务。
+        VideoDriverFactory.register_driver(
+            DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
+            MinimaxH3KeyframeRefRunninghubV1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import MinimaxH3KeyframeRefRunninghubV1Driver: {e}")
+
+    try:
         from .minimax_h3_text_runninghub_v1_driver import MinimaxH3TextRunninghubV1Driver
         # 注册 MiniMax H3 文生视频 RunningHub v1 版本（复用参考生工作流，素材槽位全空）
         VideoDriverFactory.register_driver(DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1, MinimaxH3TextRunninghubV1Driver)

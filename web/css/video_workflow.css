@@ -3205,6 +3205,19 @@ html.theme-dark .camera-slider:hover {
   word-break: break-all;
 }
 
+.shot-frame-auto-prompt {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--surface-2, #f3f4f6);
+  color: var(--text, #333);
+  word-break: break-all;
+  user-select: text;
+}
+
 .shot-frame-video-mode-toggle {
   display: flex;
   border: 1px solid var(--border);

@@ -571,6 +571,9 @@ H3_PROMPT_OPTIMIZE_VARIANT_I2VA = "I2VA"
 H3_PROMPT_OPTIMIZE_VARIANT_FL2VA = "FL2VA"
 # 全参考（多参考图/参考视频/参考音频）生视频的提示词变体，对应官方 ref-en.txt 六段格式
 H3_PROMPT_OPTIMIZE_VARIANT_REF2VA = "Ref2VA"
+# 首帧/尾帧关键帧与参考图、参考音频混合。仍用 Ref2VA 六段模板，但槽位按实际 Picture 角色说明，
+# 不能走 FL2VA（FL2VA 会把 Picture 2 写成尾帧）。
+H3_PROMPT_OPTIMIZE_VARIANT_KF_REF = "KFRef"
 
 # [已废弃] 原双模型路由阈值（Wan2.2 / LTX2.3）。分镜对口型已统一为 MiniMax H3，不再使用。
 # 保留常量以免外部引用硬崩；新代码请勿依赖。
@@ -905,6 +908,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,  # 加速版
     ],
     DriverKey.MINIMAX_H3_TEXT_TO_VIDEO: DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 文生视频（复用参考生工作流）
+    DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO: DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,  # 参考模式下点名首尾帧时提交的混合模型
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,  # 使用 RunningHub 的数字人 v1 版本
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本

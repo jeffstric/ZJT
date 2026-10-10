@@ -2072,6 +2072,13 @@
         if(data.lastFrameConnections && Array.isArray(data.lastFrameConnections)){
           state.lastFrameConnections = data.lastFrameConnections;
         }
+
+        // 尾帧连线比节点晚恢复。连线到位后重算只读的首尾帧提示词。
+        (state.nodes || []).forEach(function(n){
+          if(n && n.type === 'shot_frame' && typeof n.syncFrameAutoPrompt === 'function'){
+            n.syncFrameAutoPrompt();
+          }
+        });
         
         if(data.videoConnections && Array.isArray(data.videoConnections)){
           state.videoConnections = data.videoConnections;
@@ -3779,7 +3786,8 @@
         const connectedNodes = incomingConnections.map(c => state.nodes.find(n => n.id === c.from));
         const connectedShotFrameNode = connectedNodes.find(n => n && n.type === 'shot_frame');
         
-        if(connectedShotFrameNode && !connectedShotFrameNode.data.previewImageUrl){
+        if(connectedShotFrameNode && !connectedShotFrameNode.data.previewImageUrl && !connectedShotFrameNode.data.firstFrameDismissed){
+          connectedShotFrameNode.data.firstFrameDismissed = false;
           connectedShotFrameNode.data.previewImageUrl = url;
           
           const shotFrameNodeEl = canvasEl.querySelector(`.node[data-node-id="${connectedShotFrameNode.id}"]`);
@@ -3794,6 +3802,9 @@
             if(shotFramePreviewField){
               shotFramePreviewField.style.display = 'block';
             }
+          }
+          if(typeof connectedShotFrameNode.syncFrameAutoPrompt === 'function'){
+            connectedShotFrameNode.syncFrameAutoPrompt();
           }
           
           // 刷新关联分镜组节点的宫格预览
