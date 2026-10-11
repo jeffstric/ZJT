@@ -255,6 +255,28 @@ const PROVIDER_DEFINITIONS = [
         testEndpoint: null
     },
     {
+        // 火山引擎语音合成（豆包语音）：TTS 快速合成 + 音色库。
+        // 凭证与方舟（volcengine.api_key）不是同一套，见 docs/audio/volcengine_tts.md
+        id: 'huoshan_tts',
+        nameKey: 'provider_huoshan_tts_name',
+        descKey: 'provider_huoshan_tts_desc',
+        category: 'multimedia',
+        icon: '🔊',
+        docUrl: 'https://console.volcengine.com/speech/new/setting/apikeys?projectName=default',
+        docUrlLabelKey: 'provider_huoshan_tts_doc_label',
+        lazyRecommended: false,
+        displayOrder: 2,
+        baseName: 'huoshan_tts',
+        isOfficialAPI: false,
+        impactsKey: 'provider_huoshan_tts_impacts',
+        fields: [
+            { id: 'app_key', labelKey: 'field_app_key_label', type: 'text', placeholderKey: 'field_app_key_placeholder', required: true, helpTextKey: 'field_app_key_help_tts' },
+            { id: 'access_key', labelKey: 'field_access_key_label', type: 'text', placeholderKey: 'field_access_key_placeholder', required: true, helpTextKey: 'field_access_key_help_tts' }
+        ],
+        configKeyMap: { app_key: 'volcengine_tts.app_key', access_key: 'volcengine_tts.access_key' },
+        testEndpoint: null
+    },
+    {
         // 阿里云百炼（多媒体）：与大模型条目 qwen 共享 llm.qwen.api_key，
         // base_url 复用大模型条目配置（生图/生视频自动追加 /api/v1）
         id: 'qwen_media',
@@ -3801,8 +3823,9 @@ const AdminApp = {
         },
 
         // 密钥类字段判定：这类字段默认覆盖毛玻璃遮罩，点击眼睛按钮才显示完整密钥
+        // （app_key/access_key 为火山语音合成凭证，同属敏感密钥）
         isSecretField(field) {
-            return !field.readOnly && (field.id === 'api_key' || field.id === 'token');
+            return !field.readOnly && ['api_key', 'token', 'app_key', 'access_key'].includes(field.id);
         },
 
         // 密钥字段是否应自动上玻璃遮罩：仅当值来自已保存配置（与打开弹窗时加载的原始值一致，
@@ -3837,13 +3860,13 @@ const AdminApp = {
             delete this.quickConfigModal.secretRevealed[this.secretStateKey(providerId, fieldId)];
         },
 
-        // 判断服务商"密钥"（api_key/token 必填字段）是否有值，
+        // 判断服务商"密钥"（api_key/token/app_key/access_key 等必填字段）是否有值，
         // 与 openQuickConfigModal 的自动选中规则互为正反：打开弹窗时必填字段有值才自动选中，
         // 保存后密钥为空则撤销选中
         isProviderKeyFilled(providerId) {
             const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
             if (!provider) return true;
-            const keyField = provider.fields.find(f => f.required && (f.id === 'api_key' || f.id === 'token'))
+            const keyField = provider.fields.find(f => f.required && ['api_key', 'token', 'app_key', 'access_key'].includes(f.id))
                 || provider.fields.find(f => f.required && !f.readOnly);
             if (!keyField) return true;
             return String(this.getFormField(providerId, keyField.id) || '').trim() !== '';
