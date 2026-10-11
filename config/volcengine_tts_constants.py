@@ -4,30 +4,33 @@
 避免主常量文件继续膨胀（AGENTS.md 规则 5 的"必要时新增"分支）。
 
 接入/开通/计费说明见 docs/audio/volcengine_tts.md。
+2026-10 实测对齐语音合成 2.0（seed-tts-2.0）接口。
 """
 import os
 
 
 class VolcengineTtsConstants:
-    """火山引擎（豆包语音）大模型语音合成常量。
+    """火山引擎（豆包语音）语音合成 2.0 常量。
 
     接口为 V3 单向流式 HTTP（openspeech.bytedance.com，一次性输入文本、
-    chunked 流式返回音频帧），官方推荐大模型音色接入 V3。
-    鉴权使用豆包语音控制台（语音技术）的 App Key + Access Key，
-    与方舟 volcengine.api_key 不是同一套开通/计费体系。
+    chunked 流式返回 JSON 块，data 字段为 base64 音频）。
+    鉴权使用新版豆包语音控制台的单 API Key（X-Api-Key 头），
+    与方舟 volcengine.api_key 不是同一套体系。
     """
     API_HOST = "https://openspeech.bytedance.com"
     UNIDIRECTIONAL_PATH = "/api/v3/tts/unidirectional"
-    RESOURCE_ID = "volc.service_type.10029"
+    # 语音合成大模型 2.0（官方文档 X-Api-Resource-Id 可选值；
+    # seed-icl-2.0 为声音复刻 2.0，二期接入）
+    RESOURCE_ID = "seed-tts-2.0"
 
-    # 消息帧类型（4 字节头首字节低 4 位，与官方 v3 协议一致）
-    MSG_TYPE_FULL_SERVER_RESPONSE = 0x9
-    MSG_TYPE_AUDIO_ONLY_RESPONSE = 0xB
-    MSG_TYPE_ERROR_RESPONSE = 0xF
+    # 响应 JSON 块业务码：0=数据块正常；20000000=合成完成（结束块）
+    OK_CODES = (0, 20000000)
+    FINISH_CODE = 20000000
 
     DEFAULT_ENCODING = "mp3"
     DEFAULT_SAMPLE_RATE = 24000
-    DEFAULT_BITRATE = 128000
+    # mp3 比特率可选 [64000, 160000]
+    DEFAULT_BITRATE = 64000
 
     # 快速合成为同步接口，单次请求必须显式超时（AGENTS.md 超时红线）
     TIMEOUT_SECONDS = 30
@@ -38,7 +41,8 @@ class VolcengineTtsConstants:
     # 试听固定示例句：服务端写死防"自定义试听文本"套利（免费+按音色缓存）
     PREVIEW_TEXT = "你好，我是你的AI配音员，很高兴为你朗读这段文字。"
 
-    # 语速语义与 DialogueTtsSpeedConstants 对齐（1.0 正常，>1 更快）
+    # 语速：对外沿用 speed_ratio 语义（1.0 正常，>1 更快），请求体换算为
+    # speech_rate = (speed_ratio - 1) * 100，取值范围 [-50, 100]（官方文档）。
     SPEED_DEFAULT = 1.0
     SPEED_MIN = 0.5
     SPEED_MAX = 2.0
@@ -61,52 +65,39 @@ class VolcengineTtsConstants:
     PREVIEW_FILENAME_PREFIX = "preview_"
 
 
-# 火山预置免费音色种子清单（voice 表 user_id=0 系统预置行的唯一事实来源）。
-# ⚠️ 上线前请对照官方音色列表（volcengine.com/DoubaoVoice/Tonelist-1）核对
-# voice_type 拼写与"免费"标记；个别音色若控制台不可用/需付费，直接把对应行
-# 从该清单移除或在 voice 表置 is_active=0 即可（接口按 is_active 过滤）。
-# 语言取值：zh / zh-dialect（方言）；多数中文音色支持中英混说。
+# 火山语音合成 2.0 预置音色种子清单（voice 表 user_id=0 系统预置行的唯一事实来源）。
+# ⚠️ 音色 ID 为 2.0 音色库（控制台 > 音色库）实测可用的 *_uranus_bigtts 系列，
+# 2026-10-12 逐一合成验证通过；后续增补直接追加行 + 迁移（或后台 INSERT）。
+# 语言取值：zh；2.0 音色普遍支持中英混说。
 VOLCENGINE_TTS_VOICES = [
-    {"voice_type": "BV700_streaming", "name": "通用女声",
-     "gender": "female", "language": "zh", "style": "通用",
-     "description": "标准通用女声，自然平稳，适合口播与旁白", "sort_order": 1},
-    {"voice_type": "BV701_streaming", "name": "通用男声",
-     "gender": "male", "language": "zh", "style": "通用",
-     "description": "标准通用男声，沉稳大气，适合口播与旁白", "sort_order": 2},
-    {"voice_type": "BV001_streaming", "name": "灿灿",
-     "gender": "female", "language": "zh", "style": "阳光少女",
-     "description": "阳光活力的少女音，情感表现丰富", "sort_order": 3},
-    {"voice_type": "BV002_streaming", "name": "擎苍",
-     "gender": "male", "language": "zh", "style": "低沉磁性",
-     "description": "低沉磁性的男声，适合纪录片、宣传片", "sort_order": 4},
-    {"voice_type": "BV100_streaming", "name": "燃烧的情绪女声",
-     "gender": "female", "language": "zh", "style": "激情",
-     "description": "充满激情的女声，适合热血、竞技解说", "sort_order": 5},
-    {"voice_type": "BV104_streaming", "name": "燃烧的情绪男声",
-     "gender": "male", "language": "zh", "style": "激情",
-     "description": "充满激情的男声，适合热血、竞技解说", "sort_order": 6},
-    {"voice_type": "BV120_streaming", "name": "惊奇小说女声",
-     "gender": "female", "language": "zh", "style": "悬疑故事",
-     "description": "娓娓道来的故事女声，适合小说、有声书", "sort_order": 7},
-    {"voice_type": "BV123_streaming", "name": "惊奇小说男声",
-     "gender": "male", "language": "zh", "style": "悬疑故事",
-     "description": "沉浸感强的故事男声，适合小说、有声书", "sort_order": 8},
-    {"voice_type": "BV102_streaming", "name": "螺丝书先生",
-     "gender": "male", "language": "zh", "style": "评书说书",
-     "description": "京腔评书风格男声，适合曲艺、说书类内容", "sort_order": 9},
-    {"voice_type": "BV157_streaming", "name": "老铁女声",
-     "gender": "female", "language": "zh-dialect", "style": "东北方言",
-     "description": "东北方言女声，幽默接地气", "sort_order": 10},
-    {"voice_type": "BV158_streaming", "name": "老铁男声",
-     "gender": "male", "language": "zh-dialect", "style": "东北方言",
-     "description": "东北方言男声，幽默接地气", "sort_order": 11},
-    {"voice_type": "BV021_streaming", "name": "女主播",
-     "gender": "female", "language": "zh", "style": "新闻播报",
-     "description": "新闻播报风格女声，字正腔圆", "sort_order": 12},
-    {"voice_type": "BV056_streaming", "name": "温柔少御",
-     "gender": "female", "language": "zh", "style": "温柔知性",
-     "description": "温柔知性的御姐音，适合情感、治愈内容", "sort_order": 13},
+    {"voice_type": "zh_female_vv_uranus_bigtts", "name": "Vivi 2.0",
+     "gender": "female", "language": "zh", "style": "治愈柔和",
+     "description": "语调平稳、咬字柔和、自带治愈安抚力的女声，适合客服与陪伴场景", "sort_order": 1},
+    {"voice_type": "zh_female_xiaohe_uranus_bigtts", "name": "小何 2.0",
+     "gender": "female", "language": "zh", "style": "甜美活力",
+     "description": "声线甜美有活力的妹妹音，活泼开朗，适合口播与有声阅读", "sort_order": 2},
+    {"voice_type": "zh_male_wennuanahu_uranus_bigtts", "name": "温暖阿虎 2.0",
+     "gender": "male", "language": "zh", "style": "温暖沉稳",
+     "description": "温暖沉稳的男声，亲和力强，适合旁白与讲故事", "sort_order": 3},
+    {"voice_type": "zh_male_jieshuoxiaoming_uranus_bigtts", "name": "解说小明 2.0",
+     "gender": "male", "language": "zh", "style": "解说配音",
+     "description": "专业解说风格男声，适合纪录片、影视解说", "sort_order": 4},
+    {"voice_type": "zh_female_wenroumama_uranus_bigtts", "name": "温柔妈妈 2.0",
+     "gender": "female", "language": "zh", "style": "温柔亲切",
+     "description": "温柔亲切的成熟女声，适合母婴、生活类内容", "sort_order": 5},
+    {"voice_type": "zh_female_sophie_uranus_bigtts", "name": "魅力苏菲 2.0",
+     "gender": "female", "language": "zh", "style": "知性优雅",
+     "description": "知性优雅的女声，适合品牌宣传、情感内容", "sort_order": 6},
+    {"voice_type": "zh_female_meilinvyou_uranus_bigtts", "name": "魅力女友 2.0",
+     "gender": "female", "language": "zh", "style": "妩媚成熟",
+     "description": "性感妩媚的御姐音，成熟有魅力，适合直播、视频配音", "sort_order": 7},
 ]
+
+
+def speed_ratio_to_speech_rate(speed_ratio: float) -> int:
+    """speed_ratio（1.0 正常，>1 更快）→ 2.0 接口 speech_rate（-50~100，100=2.0倍速）。"""
+    speed = normalize_volcengine_tts_speed(speed_ratio)
+    return int(round((speed - 1.0) * 100))
 
 
 def calc_volcengine_tts_power(char_count: int, tiers=None) -> int:

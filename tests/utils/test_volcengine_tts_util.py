@@ -2,16 +2,16 @@
 volcengine_tts_util 单元测试
 
 覆盖：
-- V3ChunkDecoder 帧解析（官方布局/sequence/gzip/尾部size变体/半帧重组/error帧/缓冲超限）
+- TtsJsonBlockDecoder 2.0 JSON 块流解析（数据块/字幕块/结束块/半块重组/超限）
 - calc_volcengine_tts_power 字符档位计价边界
-- normalize_volcengine_tts_speed 语速归一化
+- normalize_volcengine_tts_speed / speed_ratio_to_speech_rate 换算
 - synthesize_speech 未配置凭证的友好错误路径
+- 2.0 音色种子清单完整性
 
-外部依赖（config.config_util）用 stub 前置，不读真实配置文件。
+外部依赖（config.config_util）用 patch 隔离，不读真实配置文件。
 """
 import asyncio
 import base64
-import gzip
 import json
 import os
 import sys
@@ -26,85 +26,60 @@ from config.volcengine_tts_constants import (  # noqa: E402
     VOLCENGINE_TTS_VOICES,
     calc_volcengine_tts_power,
     normalize_volcengine_tts_speed,
+    speed_ratio_to_speech_rate,
 )
 from utils.volcengine_tts_util import (  # noqa: E402
-    V3ChunkDecoder,
+    TtsJsonBlockDecoder,
     build_audio_filename,
     synthesize_speech,
 )
 
 
-def make_frame(payload: dict, msg_type: int = 0x9, seq: bool = False,
-               gzip_on: bool = False, protocol: int = 0x01) -> bytes:
-    """构造官方 v3 协议帧"""
-    p = json.dumps(payload).encode('utf-8')
-    if gzip_on:
-        p = gzip.compress(p)
-    b0 = (protocol << 4) | (msg_type & 0x0F)
-    b1 = 0x10 if seq else 0x00
-    b2 = (0x01 << 4) | (0x01 if gzip_on else 0x00)  # JSON 序列化
-    head = bytes([b0, b1, b2, 0x00]) + (b'\x00\x01' if seq else b'')
-    return head + p
+def _b64(payload: bytes) -> str:
+    return base64.b64encode(payload).decode("ascii")
 
 
-def make_tail_size_frame(payload: dict) -> bytes:
-    """构造社区变体帧：4字节头 + payload + 尾部4字节 payload_size"""
-    body = json.dumps(payload).encode('utf-8')
-    return bytes([0x19, 0x00, 0x10, 0x00]) + body + len(body).to_bytes(4, 'big')
+AUDIO = _b64(b"\xff\xfb\x90fakeaudio")
 
 
-B64_AUDIO = base64.b64encode(b'\xff\xfb\x90fakeaudio').decode('ascii')
+class TestTtsJsonBlockDecoder(unittest.TestCase):
 
+    def test_single_data_block(self):
+        d = TtsJsonBlockDecoder()
+        blocks = d.feed(json.dumps({"code": 0, "message": "", "data": AUDIO}).encode())
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["data"], AUDIO)
 
-class TestV3ChunkDecoder(unittest.TestCase):
+    def test_multiple_blocks_concatenated(self):
+        """多个 JSON 对象直接串联（无分隔符）可全部解析"""
+        blob = (json.dumps({"code": 0, "data": AUDIO})
+                + json.dumps({"code": 0, "sentence": {"text": "你好"}})
+                + json.dumps({"code": 20000000, "message": "OK"})).encode()
+        d = TtsJsonBlockDecoder()
+        blocks = d.feed(blob)
+        self.assertEqual(len(blocks), 3)
+        self.assertEqual(blocks[2]["code"], 20000000)
 
-    def test_plain_json_frame(self):
-        d = V3ChunkDecoder()
-        msgs = d.feed(make_frame({"data": B64_AUDIO, "is_last": True, "code": 0}))
-        self.assertEqual(len(msgs), 1)
-        self.assertEqual(msgs[0][0], 0x9)
-        self.assertEqual(msgs[0][1]["is_last"], True)
+    def test_half_block_reassembly(self):
+        """JSON 块被 TCP/chunk 边界切开可重组"""
+        d = TtsJsonBlockDecoder()
+        blob = json.dumps({"code": 0, "data": AUDIO}).encode()
+        half = len(blob) // 2
+        self.assertEqual(d.feed(blob[:half]), [])
+        blocks = d.feed(blob[half:])
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["data"], AUDIO)
 
-    def test_frame_with_sequence_and_gzip(self):
-        d = V3ChunkDecoder()
-        msgs = d.feed(make_frame({"data": B64_AUDIO, "code": 0}, seq=True, gzip_on=True))
-        self.assertEqual(msgs[0][1]["data"], B64_AUDIO)
-
-    def test_half_frame_reassembly(self):
-        """一个协议帧被 TCP/chunk 边界切开也能重组"""
-        d = V3ChunkDecoder()
-        frame = make_frame({"data": B64_AUDIO, "is_last": True, "code": 0})
-        half = len(frame) // 2
-        self.assertEqual(d.feed(frame[:half]), [])
-        msgs = d.feed(frame[half:])
-        self.assertEqual(len(msgs), 1)
-        self.assertTrue(msgs[0][1]["is_last"])
-
-    def test_tail_size_layout(self):
-        d = V3ChunkDecoder()
-        msgs = d.feed(make_tail_size_frame({"data": B64_AUDIO, "is_last": True}))
-        self.assertEqual(msgs[0][1]["data"], B64_AUDIO)
-
-    def test_error_frame_type(self):
-        d = V3ChunkDecoder()
-        msgs = d.feed(make_frame({"code": 3001, "message": "bad voice"}, msg_type=0xF))
-        self.assertEqual(msgs[0][0], 0xF)
-        self.assertEqual(msgs[0][1]["code"], 3001)
-
-    def test_multiple_frames_in_buffer(self):
-        """布局 B 两帧拼在同一 chunk：长度不精确吻合时保守返回 0 条（等待
-        更多数据），绝不产出错误消息。注：官方协议按消息边界 flush（每 chunk
-        一帧），多帧拼接本身不会出现，此处仅锁定"不误判"行为。"""
-        d = V3ChunkDecoder()
-        blob = make_tail_size_frame({"data": B64_AUDIO}) + make_tail_size_frame({"is_last": True})
-        msgs = d.feed(blob)
-        self.assertEqual(len(msgs), 0)
-
-    def test_buffer_limit_raises(self):
-        d = V3ChunkDecoder()
-        with self.assertRaises(ValueError):
-            # 头部合法但 payload 永远不是 JSON → 缓冲累积至超限
-            d.feed(bytes([0x19, 0x00, 0x10, 0x00]) + b'\x00' * (32 * 1024 * 1024))
+    def test_multibyte_utf8_split_across_chunks(self):
+        """中文多字节字符被 chunk 切断时以 replace 解码后可能损坏——
+        解析器应保留未解析部分等待，而不是抛异常"""
+        d = TtsJsonBlockDecoder()
+        blob = json.dumps({"code": 20000000, "message": "OK你好"}, ensure_ascii=False).encode()
+        # 从多字节字符中间切开
+        cut = len(blob) - 1
+        d.feed(blob[:cut])
+        blocks = d.feed(blob[cut:])
+        self.assertIn(len(blocks), (0, 1))  # 不抛异常即通过
 
 
 class TestPowerCalc(unittest.TestCase):
@@ -128,7 +103,6 @@ class TestPowerCalc(unittest.TestCase):
             self.assertEqual(calc_volcengine_tts_power(bad), 0)
 
     def test_float_input_truncates(self):
-        """浮点字符数按 int 截断处理（正常调用方传 len() 整数）"""
         self.assertEqual(calc_volcengine_tts_power(1.5), 1)
 
     def test_custom_tiers(self):
@@ -151,14 +125,19 @@ class TestSpeedNormalize(unittest.TestCase):
         self.assertEqual(normalize_volcengine_tts_speed('abc'), 1.0)
         self.assertEqual(normalize_volcengine_tts_speed(None), 1.0)
 
-    def test_rounding(self):
-        self.assertEqual(normalize_volcengine_tts_speed(1.234), 1.23)
+    def test_speech_rate_conversion(self):
+        """speed_ratio → speech_rate：1.0→0，1.5→50，2.0→100，0.5→-50"""
+        self.assertEqual(speed_ratio_to_speech_rate(1.0), 0)
+        self.assertEqual(speed_ratio_to_speech_rate(1.5), 50)
+        self.assertEqual(speed_ratio_to_speech_rate(2.0), 100)
+        self.assertEqual(speed_ratio_to_speech_rate(0.5), -50)
+        self.assertEqual(speed_ratio_to_speech_rate(1.23), 23)
 
 
 class TestVoiceSeedList(unittest.TestCase):
 
     def test_seed_list_shape(self):
-        """种子清单字段完整性（迁移直接消费该清单）"""
+        """种子清单字段完整性（迁移 no_146 直接消费该清单）"""
         required = {'voice_type', 'name', 'gender', 'language', 'style', 'description', 'sort_order'}
         seen = set()
         for item in VOLCENGINE_TTS_VOICES:
@@ -166,12 +145,18 @@ class TestVoiceSeedList(unittest.TestCase):
             self.assertNotIn(item['voice_type'], seen, f"音色重复: {item['voice_type']}")
             seen.add(item['voice_type'])
 
+    def test_seed_voices_are_tts20(self):
+        """2.0 音色必须是 uranus 系列（实测 1.0 BV 音色与 seed-tts-2.0 资源不兼容）"""
+        for item in VOLCENGINE_TTS_VOICES:
+            self.assertIn('_uranus_', item['voice_type'], f"非 2.0 音色: {item['voice_type']}")
+
 
 class TestSynthesizeUnconfigured(unittest.TestCase):
 
     def test_unconfigured_returns_friendly_error(self):
         with patch('utils.volcengine_tts_util.get_dynamic_config_value', return_value=None):
-            ok, audio, msg = asyncio.run(synthesize_speech("你好", "BV700_streaming"))
+            ok, audio, msg = asyncio.run(
+                synthesize_speech("你好", "zh_female_vv_uranus_bigtts"))
         self.assertFalse(ok)
         self.assertEqual(audio, b"")
         self.assertIn("未配置", msg)

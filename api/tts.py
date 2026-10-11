@@ -37,9 +37,9 @@ from perseids_server.utils.permission import require_permission
 from utils.audio_duration_util import probe_audio_duration
 from utils.media_mapping_util import register_uploaded_file_mapping
 from utils.volcengine_tts_util import (
-    _is_tts_configured,
     build_audio_filename,
     get_volcengine_tts_config,
+    is_tts_configured,
     resolve_result_dir,
     synthesize_speech,
 )
@@ -175,7 +175,7 @@ async def list_voices(
         'max_text_length': VolcengineTtsConstants.MAX_TEXT_LENGTH,
         'speed_min': VolcengineTtsConstants.SPEED_MIN,
         'speed_max': VolcengineTtsConstants.SPEED_MAX,
-        'configured': _is_tts_configured(get_volcengine_tts_config()),
+        'configured': is_tts_configured(get_volcengine_tts_config()),
     })
 
 
@@ -219,7 +219,7 @@ async def synthesize(request: Request, body: TtsSynthesizeRequest):
     speed = normalize_volcengine_tts_speed(body.speed_ratio)
     success, audio_bytes, synth_message = await synthesize_speech(
         text=text,
-        voice_type=voice.voice_type,
+        speaker=voice.voice_type,
         speed_ratio=speed,
         timeout=VolcengineTtsConstants.TIMEOUT_SECONDS,
     )
@@ -310,7 +310,7 @@ async def preview_voice(request: Request, voice_id: int):
     if not await asyncio.to_thread(os.path.isfile, cached_path):
         success, audio_bytes, message = await synthesize_speech(
             text=VolcengineTtsConstants.PREVIEW_TEXT,
-            voice_type=voice.voice_type,
+            speaker=voice.voice_type,
             speed_ratio=VolcengineTtsConstants.SPEED_DEFAULT,
             timeout=VolcengineTtsConstants.PREVIEW_TIMEOUT_SECONDS,
         )
