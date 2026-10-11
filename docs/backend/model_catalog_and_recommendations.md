@@ -31,6 +31,8 @@
 
 故事板页（storyboard.html）五类生成槽位（文生图/图片编辑/文生视频/图生视频/参考生视频）2026-10 起无 localStorage 记忆（新用户）时的默认统一取该场景性价比档：`web/js/storyboard/state.js` 的 `pickRememberedTaskId` 优先选列表中 `track === 'value'` 的模型（`GET /api/storyboard/models` 每项的 `track` 由 `annotate_task_models` 标注，联动 `get_scene_recos_merged()` 热更新），再回退槽位显式 preferred（均为 value 档），最后列表第一项。此前图生视频槽位无记忆默认取列表第一项，因 LTX2.3 `sort_order=30` 分类内最小而落选 LTX2.3（文生视频落到 Grok）。已有记忆用户沿用原选择，不重置。
 
+工作流页（video_workflow.html）各视频节点（图生视频/分镜组/分镜帧/剧本节点）的默认视频模型 2026-10 起同样显式取性价比档：`findTaskByTrack(options, scene, TaskConfig.getCatalog(), 'value')` 优先（scene 按生成模式映射，多参考模式为 `video.reference_to_video`），回退 `getModelOptionsForCategory` 排序后的列表第一项。`web/js/task_config.js` 新增 `getCatalog()` 导出后端真实目录（含管理员热更新），上述调用点不再回退前端 FALLBACK 副本。营销智能体页（marketing_agent.html）图片/视频/LLM 默认此前已通过 `modelForMediaSlot`（`findTaskByTrack value`）与 `collapseLlmModels + findCollapsedByTrack('value')` 走性价比档，无需改动。
+
 ## 默认解析
 
 ```text
@@ -52,4 +54,5 @@ LLM 同一规范模型的供应商顺序：目录 `preferred_vendors` → 已配
 ## 前端
 
 `web/js/model_catalog.js` + `web/css/model_catalog.css`：折叠供应商、性价比/效果开关、系列分组。
+`web/js/task_config.js` 的 `getModelOptionsForCategory` 为每个模型项计算 `track` 并按 value→quality→其它排序，另提供 `getCatalog()` 返回 `/api/system/task-configs` 的真实目录（含管理员热更新），供各页默认选择显式命中 value 档。
 工作流节点从 `config_json` 恢复已选模型，不被推荐覆盖。

@@ -524,6 +524,15 @@
   }
 
   /**
+   * 获取场景模型目录（含性价比/效果双档推荐，后端已合并管理员热更新）
+   * 结构：{ 'video.image_to_video': { tracks: { value: {canonical,...}, quality: {...} } }, ... }
+   * 供 ModelCatalog.findTaskByTrack 等按真实目录解析默认档位，避免回退前端 FALLBACK 副本
+   */
+  function getCatalog() {
+    return taskConfigCache?.catalog || null;
+  }
+
+  /**
    * 获取供应商信息
    * @returns {Object} 供应商名称映射
    */
@@ -615,6 +624,7 @@
     isDriverAvailable,
     filterAvailableModelOptions,
     getCategories,
+    getCatalog,
     getProviders
   };
 

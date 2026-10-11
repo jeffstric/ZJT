@@ -66,6 +66,12 @@
         }
         const videoOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
         if(videoOptions.length > 0) defaultVideoModel = videoOptions[0].value;
+        // 默认优先目录「性价比」档（与下方 populate 一致）
+        if (window.ModelCatalog && videoOptions.length > 0) {
+          const catalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+          const valueHit = window.ModelCatalog.findTaskByTrack(videoOptions, 'video.image_to_video', catalog, 'value');
+          if (valueHit && valueHit.value) defaultVideoModel = valueHit.value;
+        }
       }
       
       const inheritedModel = opts && opts.model ? opts.model : defaultImageModel;
@@ -442,7 +448,8 @@
             ? window.ModelCatalog.sceneForVideoImageMode(mode)
             : 'video.image_to_video';
           if (window.ModelCatalog) {
-            const valueHit = window.ModelCatalog.findTaskByTrack(allOptions, videoScene, null, 'value');
+            const initCatalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+            const valueHit = window.ModelCatalog.findTaskByTrack(allOptions, videoScene, initCatalog, 'value');
             if (valueHit && !valueHit.disabled) firstVideoModelValue = valueHit.value;
           }
           allOptions.forEach(opt => {

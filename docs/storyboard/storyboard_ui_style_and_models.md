@@ -122,6 +122,8 @@ bootstrap 中实现优先级（仅首次无保存值时）：
 
 **存量用户**：沿用已有 localStorage 记忆（含曾被固化为 LTX2.3 的用户），**不做**存储键升级重置——区别于 2026-08 图片编辑槽位 `_v2` 那次一次性作废，本次仅影响无记忆的新用户/新浏览器。
 
+**同批联动（video_workflow.html）**：工作流页各视频节点（图生视频/分镜组/分镜帧创建路径与模式切换 populate）默认视频模型同样显式 `findTaskByTrack(..., 'value')` 优先，catalog 参数统一改传 `TaskConfig.getCatalog()`（后端真实目录，含管理员热更新；此前部分调用点传 null 回退前端 FALLBACK 副本）；多参考模式场景映射为 `video.reference_to_video`（默认 MiniMax H3 参考生视频）。营销智能体页（marketing_agent.html）默认链路（`modelForMediaSlot` / LLM `collapseLlmModels + findCollapsedByTrack('value')`）已按性价比档，无需改动。
+
 ## 4. 技术实现要点
 
 ### 后端（api/storyboard.py）
