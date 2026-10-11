@@ -154,6 +154,10 @@ async def create_subscription_sign_pay(request: Request, payload: SubscriptionSi
         return JSONResponse(result)
     except SubscriptionServiceError as e:
         raise _http_error(e)
+    except HTTPException:
+        # 空 token 400 / V2 密钥缺失 503 等需原样透出，不得被下方 500 吞掉
+        #（与 /order-status 的 404 透传同一模式）
+        raise
     except Exception as e:
         logger.error(f"Failed to create subscription sign-pay: {e}")
         logger.error(traceback.format_exc())
