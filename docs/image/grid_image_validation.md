@@ -42,7 +42,12 @@
 
 **触发条件**：严格校验失败 + 图像含至少 1 个占位格 + 至少 1 个非占位格（全占位=纯色图仍判失败）。
 
-**占位格识别**：用灰度**中位数**（而非标准差）判定。纯黑占位格 median≈0、纯白 median≈255，阈值 `VALIDATION_PLACEHOLDER_DARK_MAX=15` / `VALIDATION_PLACEHOLDER_BRIGHT_MIN=240`。中位数不受占位格里穿过的白色分割线干扰（分割线像素占比小，不影响中位数），而标准差会被分割线拉高（实测占位格 std 可达 40+），故弃用 std。
+**占位格识别**：中位数 + 极暗/极亮像素占比 **双条件**判定。中位数不受占位格里穿过的白色分割线干扰（分割线像素占比小，不影响中位数），而标准差会被分割线拉高（实测占位格 std 可达 40+），故弃用 std。
+
+- 纯黑占位格：`median ≤ VALIDATION_PLACEHOLDER_DARK_MAX(15)` **且** 极暗像素（灰度 ≤15）占比 ≥ `VALIDATION_PLACEHOLDER_DARK_RATIO_MIN(0.90)`（实测 >0.97）
+- 纯白占位格：`median ≥ VALIDATION_PLACEHOLDER_BRIGHT_MIN(240)` **且** 极亮像素（灰度 ≥240）占比 ≥ `VALIDATION_PLACEHOLDER_BRIGHT_RATIO_MIN(0.75)`（实测 ≈0.84）
+
+> 只看中位数的历史缺陷：夜景插画、暗色驾驶舱等暗色调连续单图的近黑象限 median 也可能 ≤15，会被误判成占位格进而放行旁路，把整张单图按宫格拆碎（线上事故 2026-10-11 #16195）。暗色场景格因月亮/灯光/反射面拉高分布，极暗像素占比实测仅 0.02~0.47，与真占位格（>0.97）间隔充足。
 
 **占位区免惩罚**：每条理论分割线按垂直方向 cell 边界分段。段两侧 cell 都是占位 → 该段没有分割线属正常，用理论位置兜底、不计 coverage；段内有内容 → 正常检测并统计 coverage。最终位置取有内容段的检测值（占位段贡献理论值），coverage 取有内容段的均值。全占位的线直接用理论位置视为通过。
 
@@ -68,6 +73,8 @@ ValueError: Invalid grid image: <reason>; confidence=<score>
 4. 重试耗尽后仍不通过，grid task 标记为 `FAILED`，对应的 `storyboard_image_batch_item` 标记为 `FAILED / grid_first_frame_failed`，让批量任务统计可以收敛结束。
 
 i2i 宫格重试会继续调用 `/api/image-edit`，并复用 `grid_image_tasks.reference_images`、`prompt`、`task_config_id` 和画幅；不会退化成 `/api/text-to-image`。
+
+**鉴权要求**：重试提交（`_resubmit_image_request`）必须像初次提交一样携带 `Authorization: Bearer <auth_token>` 请求头——`/api/*` 的 `require_permission` 只认 Authorization 头（form 字段的 `auth_token` 不参与鉴权），缺失时必然 401，重试额度形同虚设（线上事故 2026-10-11：单日 58 次重试 401，10+ 学员宫格任务校验失败一次即终态死亡）。
 
 ## 示例结果
 

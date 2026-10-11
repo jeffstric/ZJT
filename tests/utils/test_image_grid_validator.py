@@ -4,7 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
+
+import numpy as np
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
@@ -12,7 +14,11 @@ sys.path.insert(0, project_root)
 
 from config.constant import GridConfig
 from script_writer_core.image_grid_splitter import ImageGridSplitter
-from utils.image_grid_validator import validate_grid_image
+from utils.image_grid_validator import (
+    _build_placeholder_mask,
+    _cell_is_placeholder,
+    validate_grid_image,
+)
 
 
 class TestImageGridValidator(unittest.TestCase):
@@ -209,6 +215,69 @@ class TestImageGridValidator(unittest.TestCase):
             result = validate_grid_image(path, GridConfig.SIZE_3X3)
 
             self.assertTrue(result.is_valid, result.reason)
+
+    # ---------- 占位格判定加固（中位数 + 极暗/极亮像素占比 双条件）----------
+    # 回归：夜景插画等暗色场景的近黑象限 median ≤ 15，曾被单中位数条件误判为纯黑
+    # 占位格，进而放行占位格旁路，把一整张连续单图当宫格拆碎（线上事故 2026-10-11
+    # #16195：夜景单图过旁路通过并被切 4 块废图）。
+
+    def _draw_dark_scene_like_image(self, size: int = 1024) -> Image.Image:
+        """模拟暗色调连续单图：全图近黑底 + 每个象限一片月光亮带（占比约 30%）。
+
+        每个 cell median ≈ 10（≤15，旧中位数条件会判成占位格），但极暗像素占比
+        仅约 0.7（<0.90，新占比条件判非占位格）。
+        """
+        image = Image.new("RGB", (size, size), (10, 10, 10))
+        draw = ImageDraw.Draw(image)
+        half = size // 2
+        for row in range(2):
+            for col in range(2):
+                x0, y0 = col * half, row * half
+                # 月光/灯光亮带：从 cell 左上斜穿的宽条，灰度 80（>DARK_MAX=15）
+                draw.polygon(
+                    [(x0, y0), (x0 + half, y0 + half // 3), (x0 + half, y0 + half // 2), (x0, y0 + half // 3 + half // 8)],
+                    fill=(80, 80, 80),
+                )
+        # 模糊亮带边缘：真实夜景的明暗过渡是渐变而非直线硬边，避免亮带边缘被
+        # ridge 检测误认成宫格分割线
+        return image.filter(ImageFilter.GaussianBlur(6))
+
+    def test_dark_scene_cells_are_not_placeholder(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._save_image(self._draw_dark_scene_like_image(), tmpdir, "dark_scene.png")
+            with Image.open(path) as img:
+                rgb = img.convert("RGB")
+                rgb.thumbnail((GridConfig.VALIDATION_MAX_SCAN_SIZE, GridConfig.VALIDATION_MAX_SCAN_SIZE), Image.Resampling.LANCZOS)
+                arr = np.asarray(rgb, dtype=np.float32)
+
+            mask = _build_placeholder_mask(arr, 2, 2)
+
+            # 全图无占位格 → 占位格旁路不得触发，暗色单图仍走严格校验拦截
+            self.assertFalse(any(any(cell for cell in row) for row in mask))
+
+    def test_pure_black_cell_with_separator_lines_is_still_placeholder(self):
+        # 纯黑占位格穿白色分割线：极暗像素占比仍 >0.9，不受新占比条件影响
+        image = Image.new("RGB", (300, 300), "black")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((147, 0, 153, 300), fill="white")
+        draw.rectangle((0, 147, 300, 153), fill="white")
+        arr = np.asarray(image.convert("RGB"), dtype=np.float32)
+
+        self.assertTrue(_cell_is_placeholder(arr))
+
+    def test_pure_white_cell_with_separator_lines_is_still_placeholder(self):
+        image = Image.new("RGB", (300, 300), "white")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((147, 0, 153, 300), fill=(200, 180, 160))
+        arr = np.asarray(image.convert("RGB"), dtype=np.float32)
+
+        self.assertTrue(_cell_is_placeholder(arr))
+
+    def test_mid_tone_scene_cell_is_not_placeholder(self):
+        image = Image.new("RGB", (300, 300), (90, 95, 100))
+        arr = np.asarray(image.convert("RGB"), dtype=np.float32)
+
+        self.assertFalse(_cell_is_placeholder(arr))
 
 
 if __name__ == "__main__":
