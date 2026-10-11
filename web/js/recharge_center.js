@@ -75,12 +75,11 @@
         return headers;
     }
 
-    // /api/subscription/plans|status|order-status 的 FastAPI 签名是 Query(...) 必填，
-    // 只带 Authorization 会 422。用 searchParams 写入，避免把 token 拼进模板字符串。
-    function authUrl(path, extra) {
+    // 认证统一走 authHeaders() 的 Authorization 头（红线14：token 禁止进 URL query，
+    // query 会经 Referer/浏览器历史/服务端日志泄漏；后端已支持头兜底）。
+    // 本函数只负责拼装非敏感 query 参数（user_id / order_id 等）。
+    function apiUrl(path, extra) {
         var url = new URL(path, window.location.origin);
-        var token = authToken();
-        if (token) url.searchParams.set('auth_token', token);
         if (extra) {
             Object.keys(extra).forEach(function (key) {
                 if (extra[key] !== undefined && extra[key] !== null) {
@@ -110,7 +109,10 @@
     }
 
     function firstBonusEligible(status) {
-        return !status || status.first_bonus_eligible !== false;
+        // fail-closed（#7）：资格必须由后端显式下发 true 才展示首期价。
+        // 此前 !status || !== false 的兜底会让"status 查询失败/字段缺失"的老用户
+        // 看到 18.8+加赠，实收却按签约记录扣 29.9（展示价 != 实收价 -> 客诉）。
+        return !!(status && status.first_bonus_eligible === true);
     }
 
     function showsIntroPrice(plan, status) {
@@ -482,7 +484,7 @@
         state.plansError = '';
         if (state.open) render();
         try {
-            var resp = await fetch(authUrl('/api/subscription/plans'), { headers: authHeaders() });
+            var resp = await fetch(apiUrl('/api/subscription/plans'), { headers: authHeaders() });
             var data = await readJson(resp);
             if (data.success) {
                 state.plans = data.plans || [];
@@ -505,7 +507,7 @@
         if (busy) state.subCancelling = true;
         if (state.open) render();
         try {
-            var resp = await fetch(authUrl('/api/subscription/status', { user_id: userId() }), { headers: authHeaders() });
+            var resp = await fetch(apiUrl('/api/subscription/status', { user_id: userId() }), { headers: authHeaders() });
             var data = await readJson(resp);
             if (data.success) state.status = data.subscription || null;
         } catch (e) {
@@ -524,7 +526,7 @@
                 return;
             }
             try {
-                var resp = await fetch(authUrl('/api/subscription/order-status', {
+                var resp = await fetch(apiUrl('/api/subscription/order-status', {
                     order_id: state.subOrderId,
                     user_id: userId()
                 }), { headers: authHeaders() });
@@ -826,8 +828,25 @@
         } else {
             inner = '<div class="rc-qr-empty">' + opts.emptyHtml + '</div>';
         }
-        return '<div class="sub-qr-box' + (opts.qr ? ' has-qr' : '') + '">' + inner + '</div>'
+        return (opts.qr && opts.head ? '<div class="sub-qr-tip sub-qr-head">' + opts.head + '</div>' : '')
+            + '<div class="sub-qr-box' + (opts.qr ? ' has-qr' : '') + '">' + inner + '</div>'
             + (opts.qr && opts.tip ? '<div class="sub-qr-tip">' + opts.tip + '</div>' : '');
+    }
+
+    // 二维码上方提示：首订加赠用户改为「微信支付页开关」引导动画（纯 CSS 循环），
+    // 提醒扫码后在微信支付页打开「每月自动续费」开关，否则加赠不发放、首期只到账基础算力。
+    // 置于二维码上方（而非下方）：小屏用户点支付后无需下滚即可看到
+    function renderRenewGuideTip(plan) {
+        return '<div class="sub-rg">'
+            + '<div class="sub-rg-title">扫码后，在微信支付页打开此开关</div>'
+            + '<div class="sub-rg-row">'
+            + '<span class="sub-rg-label">' + esc('开通智剧通' + (plan.name || '') + '每月自动续费') + '</span>'
+            + '<span class="sub-rg-switch"><i class="sub-rg-thumb"></i></span>'
+            + '<span class="sub-rg-finger">👆</span>'
+            + '</div>'
+            + '<div class="sub-rg-badge">⚡ 首期多送 ' + esc(plan.first_period_bonus) + ' 算力</div>'
+            + '</div>'
+            + '<div class="sub-rg-note">不开通自动续费，首期仅到账 ' + esc(plan.computing_power) + ' 算力</div>';
     }
 
     function renderPayPanel(upgrade) {
@@ -847,6 +866,7 @@
             ? '同意 <a href="/auto_renewal_agreement.html" target="_blank" rel="noopener">《自动续费服务协议》</a>，升级立即生效，原套餐的自动续费将自动解除'
             : '同意 <a href="/auto_renewal_agreement.html" target="_blank" rel="noopener">《自动续费服务协议》</a>，到期自动扣费，可随时取消';
         var actionLabel = state.subPaymentLoading ? '生成中...' : (upgrade ? '升级并支付' : '微信支付');
+        var renewGuide = (!upgrade && plan.first_period_bonus && eligible) ? renderRenewGuideTip(plan) : '';
         return ''
             + '<div class="sub-payment-panel">'
             + '<div class="sub-qr-section">'
@@ -855,7 +875,8 @@
                 qr: state.subQr,
                 error: state.subPaymentError,
                 emptyHtml: upgrade ? '勾选协议并点击右侧<br/>「升级并支付」生成二维码' : '勾选协议并点击右侧<br/>「微信支付」生成二维码',
-                tip: upgrade ? '请使用微信扫码<br/>支付完成套餐升级' : '请使用微信扫码<br/>支付并确认开通自动续费'
+                head: renewGuide,
+                tip: renewGuide ? '' : (upgrade ? '请使用微信扫码<br/>支付完成套餐升级' : '请使用微信扫码<br/>支付并确认开通自动续费')
             })
             + '</div>'
             + '<div class="sub-info-section">'

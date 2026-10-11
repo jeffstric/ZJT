@@ -74,7 +74,7 @@ class LocationMultiAngleTask:
             'description': self.description,
             'angles': self.get_angles_list(),
             'model': self.model,
-            'auth_token': self.auth_token,
+            # auth_token 只给调度器回环生图用，轮询响应不回传
             'ai_tool_task_id': self.ai_tool_task_id,
             'status': self.status,
             'current_angle_index': self.current_angle_index,

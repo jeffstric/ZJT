@@ -276,7 +276,7 @@
         }
       },
 
-      downloadVideo(url, index) {
+      async downloadVideo(url, index) {
         if (this.$root.isWechatBrowser()) {
           this.$root.showWechatGuideModal = true;
           return;
@@ -289,8 +289,12 @@
         const timeStr = now.getHours().toString().padStart(2, '0') +
                        now.getMinutes().toString().padStart(2, '0');
         const filename = `digital_human_${dateStr}_${timeStr}_${index + 1}.mp4`;
-        const downloadUrl = buildDownloadUrl(url, filename);
-        window.open(downloadUrl, '_blank');
+        try {
+          await downloadWithAuth(url, filename);
+        } catch (e) {
+          if (e && e.status === 401) return;
+          alert((e && e.message) || '下载失败');
+        }
       },
 
       async fetchHistory(reset = true) {
@@ -377,7 +381,7 @@
         return colorMap[status] || '#888';
       },
 
-      downloadHistoryVideo(item, index) {
+      async downloadHistoryVideo(item, index) {
         if (!item || !item.result_url) {
           alert('下载链接不可用');
           return;
@@ -395,8 +399,12 @@
         const timeStr = now.getHours().toString().padStart(2, '0') +
                        now.getMinutes().toString().padStart(2, '0');
         const filename = `digital_human_history_${dateStr}_${timeStr}_${index + 1}.mp4`;
-        const downloadUrl = buildDownloadUrl(item.result_url, filename);
-        window.open(downloadUrl, '_blank');
+        try {
+          await downloadWithAuth(item.result_url, filename);
+        } catch (e) {
+          if (e && e.status === 401) return;
+          alert((e && e.message) || '下载失败');
+        }
       }
     },
     beforeUnmount() {

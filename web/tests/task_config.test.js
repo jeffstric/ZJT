@@ -312,6 +312,7 @@ describe('TaskConfig - 兼容旧格式', () => {
   test('getTaskTypeConfig 返回任务类型配置', () => {
     const result = TaskConfig.getTaskTypeConfig();
     expect(result.image_to_video_types).toContain(1); // sora2
+    expect(result.image_to_video_types).toContain(4); // hidden image_to_video，历史记录需要看到
     expect(result.image_edit_types).toContain(3); // gpt-image-2
     expect(result.task_type_name_map[1]).toBe('Sora 2');
   });

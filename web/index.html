@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/index.css" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
   <link rel="stylesheet" href="/css/announcement_center.css?v=__VERSION__" />
-  <link rel="stylesheet" href="/css/subscription.css?v=20260923a" />
+  <link rel="stylesheet" href="/css/subscription.css?v=20260929a" />
 
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
@@ -120,7 +120,7 @@
               </div>
             </div>
             <div class="user-info-wrapper">
-              <span class="user-phone clickable" @click="openInviteModal" :title="$t('invite_code')">{{ maskedPhone }}</span>
+              <span class="user-phone clickable" @click="openInviteModal" :title="maskedPhone">{{ displayName }}</span>
               <div class="computing-power-display">
                 <template v-if="checkinStatus.checkin_enabled">
                   <button class="checkin-badge" v-if="!checkinStatus.checked_in_today" @click="performCheckin" :disabled="checkinLoading" :title="$t('check_in_tip')">
@@ -462,6 +462,9 @@
 
         <!-- Tab Switcher -->
         <div class="modal-tabs">
+          <button class="modal-tab" :class="{active: userSettingsTab === 'profile'}" @click="switchToProfileTab">
+            个人资料
+          </button>
           <button class="modal-tab" :class="{active: userSettingsTab === 'preferences'}" @click="userSettingsTab = 'preferences'">
             服务商偏好
           </button>
@@ -473,8 +476,34 @@
           </button>
         </div>
 
-        <div v-if="userSettingsLoading && userSettingsTab !== 'creationDefaults'" style="padding: 40px; text-align: center; color: var(--muted);">
+        <div v-if="userSettingsLoading && userSettingsTab !== 'creationDefaults' && userSettingsTab !== 'profile'" style="padding: 40px; text-align: center; color: var(--muted);">
           加载中...
+        </div>
+
+        <!-- 个人资料 Tab：昵称（留空保存=重新随机分配） -->
+        <div v-else-if="userSettingsTab === 'profile'" style="padding: 16px;">
+          <div class="status danger" v-if="profileError" style="margin-bottom: 12px;">{{ profileError }}</div>
+          <div class="status success" v-if="profileSuccess" style="margin-bottom: 12px;">{{ profileSuccess }}</div>
+
+          <h4 style="margin-bottom: 16px; color: var(--text);">个人资料</h4>
+          <div class="settings-item">
+            <label class="label" for="profile-nickname-input">昵称</label>
+            <input
+              id="profile-nickname-input"
+              class="input"
+              type="text"
+              v-model="nicknameInput"
+              maxlength="30"
+              placeholder="留空保存将随机分配一个昵称"
+              :disabled="profileSaving"
+            >
+            <p style="font-size: 12px; color: var(--muted); margin-top: 4px;">
+              {{ nicknameInput.length }}/30；不填则使用系统随机昵称
+            </p>
+          </div>
+          <button class="btn" style="margin-top: 12px;" @click="saveNickname" :disabled="profileSaving">
+            {{ profileSaving ? '保存中...' : '保存昵称' }}
+          </button>
         </div>
 
         <!-- 创作默认偏好 Tab：剧本页/营销页新会话种子（与 CLI 智能体偏好隔离） -->
@@ -1353,6 +1382,20 @@
             <!-- 支付面板 -->
             <div class="sub-payment-panel" v-if="selectedSubPlan">
               <div class="sub-qr-section">
+                <!-- 首订加赠用户：引导动画提醒在微信支付页打开「每月自动续费」开关，否则加赠不发放；
+                     置于二维码上方，小屏用户点支付后无需下滚即可看到 -->
+                <template v-if="subQrCode && selectedSubPlan.first_period_bonus && subFirstBonusEligible">
+                  <div class="sub-rg">
+                    <div class="sub-rg-title">扫码后，在微信支付页打开此开关</div>
+                    <div class="sub-rg-row">
+                      <span class="sub-rg-label">开通智剧通{{ selectedSubPlan.name }}每月自动续费</span>
+                      <span class="sub-rg-switch"><i class="sub-rg-thumb"></i></span>
+                      <span class="sub-rg-finger">👆</span>
+                    </div>
+                    <div class="sub-rg-badge">⚡ 首期多送 {{ selectedSubPlan.first_period_bonus }} 算力</div>
+                  </div>
+                  <div class="sub-rg-note">不开通自动续费，首期仅到账 {{ selectedSubPlan.computing_power }} 算力</div>
+                </template>
                 <div class="sub-qr-box" :class="{ 'has-qr': subQrCode }">
                   <div v-if="subPaymentLoading" style="display:flex; flex-direction:column; align-items:center; gap:8px; color:#64748b; font-size:12px;">
                     <div class="loading-spinner"></div>
@@ -1364,7 +1407,7 @@
                     勾选协议并点击右侧<br/>「微信支付」生成二维码
                   </div>
                 </div>
-                <div v-if="subQrCode" class="sub-qr-tip">请使用微信扫码<br/>支付并确认开通自动续费</div>
+                <div v-if="subQrCode && !(selectedSubPlan.first_period_bonus && subFirstBonusEligible)" class="sub-qr-tip">请使用微信扫码<br/>支付并确认开通自动续费</div>
               </div>
 
               <div class="sub-info-section">
@@ -1598,17 +1641,18 @@
   <script src="/js/tiff_support.js"></script>
   <script src="/js/model_catalog.js?v=__VERSION__"></script>
   <!-- 工具函数 -->
-  <script src="/js/pages/_utils.js"></script>
+  <script src="/js/download_attachment.js?v=__VERSION__"></script>
+  <script src="/js/pages/_utils.js?v=__VERSION__"></script>
   <!-- 页面组件 -->
   <script src="/js/pages/list_page.js"></script>
-  <script src="/js/pages/digital_human.js"></script>
-  <script src="/js/pages/audio_generate.js"></script>
-  <script src="/js/pages/video_enhance.js"></script>
+  <script src="/js/pages/digital_human.js?v=__VERSION__"></script>
+  <script src="/js/pages/audio_generate.js?v=__VERSION__"></script>
+  <script src="/js/pages/video_enhance.js?v=__VERSION__"></script>
   <script src="/js/pages/image_edit.js?v=__VERSION__"></script>
-  <script src="/js/pages/text_to_image.js"></script>
+  <script src="/js/pages/text_to_image.js?v=__VERSION__"></script>
   <script src="/js/pages/image_to_video.js?v=__VERSION__"></script>
   <script src="/js/pages/ai_video_gen.js?v=__VERSION__"></script>
-  <script src="/js/pages/ai_script_gen.js"></script>
+  <script src="/js/pages/ai_script_gen.js?v=__VERSION__"></script>
   <script src="/js/pages/skill_config.js"></script>
   <!-- App 组件、路由配置 -->
   <script src="/js/index_app.js?v=20260922a"></script>

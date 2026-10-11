@@ -108,6 +108,7 @@ function clearAllConnSelections() {
   state.selectedConnId = null;
   state.selectedImgConnId = null;
   state.selectedFirstFrameConnId = null;
+  state.selectedLastFrameConnId = null;
   state.selectedVideoConnId = null;
   state.selectedReferenceConnId = null;
   state.selectedAudioConnId = null;
@@ -162,6 +163,11 @@ function renderConnectionType(cfg) {
         : cfg.toPortSelector;
       var inputPort = toEl.querySelector(toSelector);
       if (!outputPort || !inputPort) continue;
+      // 参考模式下尾帧区被隐藏，不把线画到 0,0
+      if (inputPort.classList.contains('last-frame-port')) {
+        var lastFrameField = inputPort.closest('.shot-frame-last-frame-field');
+        if (lastFrameField && lastFrameField.style.display === 'none') continue;
+      }
 
       var bezier = calcBezierPath(outputPort, inputPort);
       var group = createConnectionSvgGroup(cfg.groupClass, conn.id, bezier.pathD, cfg.datasetKey);
@@ -238,6 +244,16 @@ var CONNECTION_TYPES = {
     strokeWidth: '2',
     selectedStroke: '#1d4ed8'
   },
+  lastFrame: {
+    connections: function() { return state.lastFrameConnections || []; },
+    selectedKey: 'selectedLastFrameConnId',
+    groupClass: 'last-frame-conn-group',
+    datasetKey: 'lastFrameConnId',
+    toPortSelector: '.last-frame-port',
+    stroke: '#3b82f6',
+    strokeWidth: '2',
+    selectedStroke: '#1d4ed8'
+  },
   video: {
     connections: function() { return state.videoConnections; },
     selectedKey: 'selectedVideoConnId',
@@ -281,6 +297,7 @@ function renderAllConnections(opts) {
   renderConnections(null, opts && opts.skipSizeUpdate);
   renderConnectionType(CONNECTION_TYPES.image);
   renderConnectionType(CONNECTION_TYPES.firstFrame);
+  renderConnectionType(CONNECTION_TYPES.lastFrame);
   renderConnectionType(CONNECTION_TYPES.video);
   renderConnectionType(CONNECTION_TYPES.reference);
   renderConnectionType(CONNECTION_TYPES.audio);
@@ -463,6 +480,12 @@ function deleteSelectedConnection() {
   // 3. 首帧连接
   if (state.selectedFirstFrameConnId !== null) {
     removeFirstFrameConnection(state.selectedFirstFrameConnId);
+    return true;
+  }
+
+  // 3b. 分镜尾帧连接
+  if (state.selectedLastFrameConnId !== null) {
+    removeLastFrameConnection(state.selectedLastFrameConnId);
     return true;
   }
 

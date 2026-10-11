@@ -8,9 +8,9 @@
 
 ## 交互细节
 1. 右下角浮动按钮固定在视口上方，保持在其他元素之上。
-2. 点击浮动按钮右侧的”×”会将按钮最小化为一个很小的”?”，以减少遮挡，同时不会影响工作流画布操作。
-3. 最小化状态会在刷新页面后保持（通过 localStorage 持久化）。
-4. 点击”?”会恢复按钮并打开反馈弹窗。
+2. 入口默认就是一个很小的”?”，不显示”意见反馈”长按钮和右侧”×”，以减少遮挡。
+3. 这个状态在刷新后保持。
+4. 点击”?”直接打开反馈弹窗，按钮保持问号，不会展开成长按钮。
 5. 弹窗采用 `modal-overlay.active` 控制显示状态，点击遮罩空白处或”×”按钮即可关闭。
 6. 弹窗内容展示官方二维码，并附带”关闭”按钮，便于用户快速返回工作流画布。
 
@@ -26,7 +26,7 @@
 ### HTML 结构
 
 - **浮动按钮容器**：`.feedback-btn-wrapper#feedbackBtnWrapper`
-  - **反馈按钮**：`.feedback-btn#feedbackBtn`（显示”意见反馈”或”?”）
+  - **反馈按钮**：`.feedback-btn#feedbackBtn`（默认显示”?”）
   - **最小化按钮**：`.feedback-btn-delete#feedbackMinimizeBtn`（显示”×”）
 - **反馈弹窗**：`.modal-overlay#feedbackModal`
   - **弹窗卡片**：`.feedback-modal-card`
@@ -57,11 +57,11 @@
 | 函数 | 说明 |
 |------|------|
 | `applyFeedbackVisibilityFromServer()` | 读取 server-config；关闭时隐藏入口，开启时设置二维码 URL 并 `initFeedbackBtn` |
-| `initFeedbackBtn()` | 初始化按钮最小化状态，从 localStorage 读取 |
+| `initFeedbackBtn()` | 初始化为问号状态，并写入 `localStorage.feedbackBtnMinimized = 'true'` |
 | `applyFeedbackBtnState(isMinimized)` | 应用按钮状态（正常/最小化），更新 CSS 类和按钮文本 |
 | `minimizeFeedbackBtn()` | 最小化按钮，设置 `localStorage.feedbackBtnMinimized = 'true'` |
-| `restoreFeedbackBtn()` | 恢复按钮，设置 `localStorage.feedbackBtnMinimized = 'false'` |
-| `handleFeedbackBtnClick(e)` | 点击反馈按钮处理：如果已最小化则先恢复，然后打开反馈弹窗 |
+| `restoreFeedbackBtn()` | 恢复成长按钮，设置 `localStorage.feedbackBtnMinimized = 'false'`（当前入口不再调用） |
+| `handleFeedbackBtnClick(e)` | 点击问号打开反馈弹窗，不展开成长按钮 |
 
 ### localStorage 持久化
 
@@ -73,7 +73,6 @@
 
 ### 初始化流程
 
-1. 页面加载完成后调用 `initFeedbackBtn()`
-2. 从 localStorage 读取 `feedbackBtnMinimized` 状态
-3. 调用 `applyFeedbackBtnState()` 应用对应样式
-4. 如果处于最小化状态，按钮显示为小号”?”，隐藏”×”按钮
+1. 页面加载并确认允许显示反馈入口后调用 `initFeedbackBtn()`
+2. 一律应用最小化样式：小号”?”，隐藏”×”
+3. 写入 `localStorage.feedbackBtnMinimized = 'true'`，覆盖以前点问号时留下的展开记录

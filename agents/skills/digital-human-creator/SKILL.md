@@ -1,7 +1,7 @@
 ---
 name: digital-human-creator
 description: 数字人视频创作专家，负责让静态人物图片开口说话，支持使用用户音频或自动生成参考音频。
-allowed-tools: ["generate_digital_human", "generate_reference_audio", "check_reference_audio_status", "get_user_computing_power", "ask_user"]
+allowed-tools: ["generate_digital_human", "generate_reference_audio", "check_reference_audio_status", "check_image_status", "get_user_computing_power", "ask_user"]
 ---
 
 # 数字人视频创作专家
@@ -15,8 +15,9 @@ allowed-tools: ["generate_digital_human", "generate_reference_audio", "check_ref
 1. 生成数字人前必须先调用 `get_user_computing_power()` 查询算力。
 2. 如果对话中已有 `[音频N]（URL: ...）`，必须直接使用该真实 URL 作为 `audio_url`。
 3. 如果用户没有提供音频，优先调用 `generate_reference_audio(text, style_prompt)` 生成通用参考音频。
-4. 图片、文本、参考音频 URL 齐全后，必须立即调用 `generate_digital_human`，严禁只返回“参数已准备完成”“可以提交生成任务”。
-5. 没有调用 `generate_digital_human` 并拿到非空 `project_ids` 时，不得声称任务已提交。
+4. `image_url` 必须是对话中出现的真实图片 URL，**严禁臆造路径**（如按 project_id 拼出 `/upload/project/xxx.png` 这类编造路径）。用户说"用之前生成的图"但上下文没有真实 URL 时，先调用 `check_image_status(project_id)` 拿到真实 `image_url` 再提交。
+5. 图片、文本、参考音频 URL 齐全后，必须立即调用 `generate_digital_human`，严禁只返回“参数已准备完成”“可以提交生成任务”。
+6. 没有调用 `generate_digital_human` 并拿到非空 `project_ids` 时，不得声称任务已提交。
 
 ## 工具说明
 
@@ -34,11 +35,15 @@ allowed-tools: ["generate_digital_human", "generate_reference_audio", "check_ref
 
 ### `check_reference_audio_status(task_id)`
 
-查询参考音频生成状态。状态为 `completed` 时，结果中包含 `audio_url`。
+查询参考音频生成状态。状态为 `completed` 时，结果中包含 `audio_url`。该工具在音频仍在生成时会自动等待并重查（单次调用最长约 20 秒）；返回 `processing` 时继续再次调用即可，这属于正常轮询，不会被判为重复操作。
+
+### `check_image_status(project_id)`
+
+查询之前生成的图片任务状态。状态为 `completed` 时结果包含 `image_url`。当任务描述只给了 project_id 引用（如"使用之前生成的形象图"）而没有真实图片 URL 时，必须先用本工具拿到真实 `image_url`，再调用 `generate_digital_human`。
 
 ### `generate_digital_human(image_url, text, audio_url, aspect_ratio)`
 
-提交数字人视频生成任务。
+提交数字人视频生成任务（使用 wan2.2 数字人模型）。wan2.2 的 `audio_url` 是**参考音频**：只用于提取音色，数字人实际说的内容由 `text` 驱动。
 
 - `image_url`：人物图片 URL，必填，必须来自对话中的真实图片 URL
 - `text`：数字人要说的文本，必填，不超过 1000 字
@@ -78,7 +83,7 @@ generate_reference_audio(
 )
 ```
 
-然后使用返回的 `task_id` 调用 `check_reference_audio_status`，直到拿到 `audio_url` 或失败。
+然后使用返回的 `task_id` 调用 `check_reference_audio_status`，直到拿到 `audio_url` 或失败。该工具单次调用会自动等待约 20 秒，音频生成通常需要 30~90 秒，返回 `processing` 属正常，继续查询直到终态，不要中途放弃。
 
 ### 步骤 3：提交数字人任务
 

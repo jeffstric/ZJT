@@ -9,6 +9,7 @@ import traceback
 from datetime import datetime
 import json
 import requests
+from config.constant import coerce_http_timeout_seconds
 from .exceptions import DriverConfigError
 from utils.logger_config import DailyFileHandler
 
@@ -252,7 +253,12 @@ class BaseVideoDriver(ABC):
 
         try:
             if timeout is None:
-                timeout = getattr(self, '_timeout', 30)
+                timeout = getattr(self, '_timeout', None)
+            # 配置里的 request_timeout 单位是毫秒，requests 要秒。仅对毫秒语义来源
+            # 生效；_skip_timeout_coerce=True 的驱动（timeout.sync_request_timeout
+            # 来源，纯秒语义且可能 ×2 放大）跳过换算，防 500×2=1000 被压成 1 秒。
+            if not getattr(self, '_skip_timeout_coerce', False):
+                timeout = coerce_http_timeout_seconds(timeout)
             response = requests.request(method, url, json=json, headers=headers, timeout=timeout, **kwargs)
             response_time = datetime.now().isoformat()
 

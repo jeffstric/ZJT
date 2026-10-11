@@ -4,10 +4,11 @@
 
 // ==================== 服务商配置定义 ====================
 
-// 生图/生视频/其他合并为「多媒体」，共两类
+// 生图/生视频/其他合并为「多媒体」，信息采集（可选第三方抓取通道）单独一类
 const CATEGORY_LABELS = {
     llm: '大模型',
-    multimedia: '多媒体'
+    multimedia: '多媒体',
+    article_fetch: '信息采集'
 };
 
 /**
@@ -459,6 +460,46 @@ const PROVIDER_DEFINITIONS = [
         ],
         configKeyMap: { token: 'vidu.token' },
         testEndpoint: null
+    },
+
+    // ===== 信息采集供应商（企业版专属，可选）=====
+    // 图文转视频的第三方抓取通道：不配置时公众号走自研免登录通道（免费）；
+    // 小红书抓取、受限文章兜底、评论抓取需要配置本供应商（TikHub 按次计费约 $0.01/次）。
+    // 图文转视频整体为企业版专属（开源/工作室不支持），社区版禁用本配置卡片
+    {
+        id: 'tikhub',
+        nameKey: 'provider_tikhub_name',
+        descKey: 'provider_tikhub_desc',
+        category: 'article_fetch',
+        icon: '📥',
+        docUrl: 'https://tikhub.io',
+        lazyRecommended: false,
+        displayOrder: 30,
+        baseName: 'tikhub',
+        isOfficialAPI: false,
+        commercialOnly: true,
+        impactsKey: 'provider_tikhub_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_tikhub', required: true, helpTextKey: 'field_api_key_help_tikhub' },
+            { id: 'wechat_provider', labelKey: 'field_wechat_provider_label', type: 'select', required: false, helpTextKey: 'field_wechat_provider_help',
+              options: [
+                  { value: '', labelKey: 'option_wechat_provider_default' },
+                  { value: 'auto', labelKey: 'option_wechat_provider_auto' },
+                  { value: 'tikhub', labelKey: 'option_wechat_provider_tikhub' },
+                  { value: 'self', labelKey: 'option_wechat_provider_self' }
+              ] },
+            { id: 'xhs_provider', labelKey: 'field_xhs_provider_label', type: 'select', required: false, helpTextKey: 'field_xhs_provider_help',
+              options: [
+                  { value: '', labelKey: 'option_xhs_provider_off' },
+                  { value: 'tikhub', labelKey: 'option_xhs_provider_tikhub' }
+              ] }
+        ],
+        configKeyMap: {
+            api_key: 'article_fetch.tikhub_api_key',
+            wechat_provider: 'article_fetch.wechat_provider',
+            xhs_provider: 'article_fetch.xhs_provider'
+        },
+        testEndpoint: null
     }
 ];
 
@@ -580,6 +621,15 @@ const AdminApp = {
                 currentPower: 0,
                 amount: 0,
                 reason: '',
+                loading: false
+            },
+
+            // 用户备注编辑弹窗
+            remarkModal: {
+                show: false,
+                userId: null,
+                userName: '',
+                remark: '',
                 loading: false
             },
 
@@ -1184,14 +1234,16 @@ const AdminApp = {
             const _ = this.locale;
             return {
                 llm: this.t('category_llm'),
-                multimedia: this.t('category_multimedia')
+                multimedia: this.t('category_multimedia'),
+                article_fetch: this.t('category_article_fetch')
             };
         },
         categoryDescriptions() {
             const _ = this.locale;
             return {
                 llm: this.t('category_llm_desc'),
-                multimedia: this.t('category_multimedia_desc')
+                multimedia: this.t('category_multimedia_desc'),
+                article_fetch: this.t('category_article_fetch_desc')
             };
         },
 
@@ -2676,6 +2728,49 @@ const AdminApp = {
                 this.showToast(detail, 'error');
             } finally {
                 this.powerModal.loading = false;
+            }
+        },
+
+        // 打开用户备注编辑弹窗
+        openRemarkModal(user) {
+            this.remarkModal.userId = user.user_id;
+            this.remarkModal.userName = user.phone || user.email || user.display_name || `用户${user.user_id}`;
+            this.remarkModal.remark = user.remark || '';
+            this.remarkModal.loading = false;
+            this.remarkModal.show = true;
+        },
+
+        // 关闭用户备注编辑弹窗
+        closeRemarkModal() {
+            this.remarkModal.show = false;
+            this.remarkModal.userId = null;
+            this.remarkModal.userName = '';
+            this.remarkModal.remark = '';
+            this.remarkModal.loading = false;
+        },
+
+        // 保存用户备注（传空串即清除备注）
+        async saveUserRemark() {
+            this.remarkModal.loading = true;
+
+            try {
+                const response = await axios.put(
+                    `/api/admin/users/${this.remarkModal.userId}/remark`,
+                    { remark: this.remarkModal.remark.trim() },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_remark_saved'), 'success');
+                    this.closeRemarkModal();
+                    this.loadUsers();
+                }
+            } catch (error) {
+                console.error('Save user remark failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_operation_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.remarkModal.loading = false;
             }
         },
 

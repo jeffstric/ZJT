@@ -25,7 +25,7 @@
 
 - 状态由 `setSubmitButtonLoading(loading, { success })` 统一控制
 - `submitToDatabase()` 用 `isSubmitting` 防重入；`finally` 中才关闭 loading，保证请求未结束不会提前结束动效
-- **手动点击、自动提交、进入故事板/画布前的预提交** 均走同一函数，因此自动提交时同样会显示环绕 loading
+- **只有手动点击「提交」和「自动」开关**会调用 `submitToDatabase()`。进入制作工坊（模式选择、故事板、画布）不再预提交，避免协作者把未确认的暂存写入共享库。自动提交时同样会显示环绕 loading
 
 相关文件：`web/script_writer.html`、`web/css/script_writer.css`、`web/js/script_writer.js`
 

@@ -71,26 +71,54 @@ async def _verify_auth_token(auth_token: str, user_id: int) -> str:
     return auth_token
 
 
+def _resolve_auth_token(request: Request, auth_token: Optional[str]) -> Optional[str]:
+    """token 来源：Query 参数（存量兼容）→ Authorization 头。
+
+    红线14：auth_token 禁止拼进 URL query（Referer/浏览器历史/服务端日志泄漏），
+    新前端统一走 Authorization 头；Query 仅兼容未升级的旧客户端。
+    语义与 server.py 的 extract_bearer_token 一致（兼容裸 token 与空 Bearer）。
+    """
+    if auth_token:
+        return auth_token
+    header = (request.headers.get('authorization') or '').strip()
+    if not header or header.lower() == 'bearer':
+        return None
+    if header.lower().startswith('bearer '):
+        header = header[7:].strip()
+    return header or None
+
+
 # ==================== 客户端接口 ====================
 
 @router.get("/plans")
 @require_permission("computing:view_packages")
-async def get_subscription_plans(request: Request, auth_token: str = Query(...)):
+async def get_subscription_plans(request: Request, auth_token: Optional[str] = Query(None)):
     """获取月度订阅套餐列表（附当前用户订阅状态，前端据此展示管理入口）"""
     try:
+        token = _resolve_auth_token(request, auth_token)
         status = None
-        if auth_token:
+        if token:
             success, message, response_data = await async_make_perseids_request(
                 endpoint='user/get_user_id_by_auth_token',
                 method='POST',
-                headers={'Authorization': f'Bearer {auth_token}'}
+                headers={'Authorization': f'Bearer {token}'}
             )
             if success and response_data.get('user_id'):
                 status = subscription_service.get_subscription_status(int(response_data['user_id']))
+            else:
+                # 有 token 但校验失败（老用户登录态失效）：首期优惠资格 fail-closed。
+                # 否则前端按 eligible=true 展示 ¥18.8+加赠，实收却按签约记录扣 29.9
+                # 无加赠 → 客诉。未登录（无 token）走下方默认分支按新用户展示营销价。
+                status = {"subscribed": False, "status": "none", "first_bonus_eligible": False}
         return JSONResponse({
             "success": True,
             "plans": [dict(p) for p in MONTHLY_SUBSCRIPTION_PLANS],
-            "subscription": status or {"subscribed": False, "status": "none"},
+            "subscription": status or {
+                "subscribed": False,
+                "status": "none",
+                # 未登录视为潜在新用户，展示首期营销价；下单必经登录，届时按真实资格刷新
+                "first_bonus_eligible": True,
+            },
         })
     except Exception as e:
         logger.error(f"Failed to get subscription plans: {e}")
@@ -134,10 +162,13 @@ async def create_subscription_sign_pay(request: Request, payload: SubscriptionSi
 
 @router.get("/status")
 @require_permission("order:create")
-async def get_subscription_status(request: Request, user_id: int, auth_token: str = Query(...)):
+async def get_subscription_status(request: Request, user_id: int, auth_token: Optional[str] = Query(None)):
     """我的订阅状态：套餐、当前周期、下一扣款日、签约状态"""
     try:
-        await _verify_auth_token(auth_token, user_id)
+        token = _resolve_auth_token(request, auth_token)
+        if not token:
+            raise SubscriptionServiceError("登录已过期，请重新登录", status_code=401)
+        await _verify_auth_token(token, user_id)
         status = subscription_service.get_subscription_status(user_id)
         return JSONResponse({"success": True, "subscription": status})
     except SubscriptionServiceError as e:
@@ -154,14 +185,17 @@ async def get_subscription_order_status(
     request: Request,
     order_id: str = Query(...),
     user_id: int = Query(...),
-    auth_token: str = Query(...),
+    auth_token: Optional[str] = Query(None),
 ):
     """单笔订阅订单支付状态：Native 扫码支付后前端轮询，感知支付成功并刷新订阅状态。
 
     仅允许查询本人订单；status 见 SubscriptionOrderStatus（1=PAID 已支付）。
     """
     try:
-        await _verify_auth_token(auth_token, user_id)
+        token = _resolve_auth_token(request, auth_token)
+        if not token:
+            raise SubscriptionServiceError("登录已过期，请重新登录", status_code=401)
+        await _verify_auth_token(token, user_id)
         order = await asyncio.to_thread(SubscriptionOrdersModel.get_by_order_id, order_id)
         if not order or int(order.user_id) != int(user_id):
             raise HTTPException(status_code=404, detail="订单不存在")

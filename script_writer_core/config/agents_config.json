@@ -1,8 +1,12 @@
 {
   "pm_agent": {
-    "skills": ["script-orchestrator"],
+    "skills": [
+      "script-orchestrator"
+    ],
     "model": "gemini/gemini-3-flash-preview",
-    "allowed_expert_types": ["script"],
+    "allowed_expert_types": [
+      "script"
+    ],
     "allowed_tools": [
       "call_agent",
       "ask_user",
@@ -22,12 +26,16 @@
     "max_total_failures": 7
   },
   "marketing_pm_agent": {
-    "allowed_expert_types": ["marketing"]
+    "allowed_expert_types": [
+      "marketing"
+    ]
   },
   "expert_agents": {
     "story-writer": {
       "expert_type": "script",
-      "skills": ["story-writer"],
+      "skills": [
+        "story-writer"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "allowed_tools": [
         "create_script_json",
@@ -51,7 +59,10 @@
     },
     "character-creator": {
       "expert_type": "script",
-      "skills": ["character-creator", "character-consistency-checker"],
+      "skills": [
+        "character-creator",
+        "character-consistency-checker"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "allowed_tools": [
         "create_character_json",
@@ -64,7 +75,9 @@
     },
     "location-creator": {
       "expert_type": "script",
-      "skills": ["location-creator"],
+      "skills": [
+        "location-creator"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "allowed_tools": [
         "create_location_json",
@@ -81,7 +94,9 @@
     },
     "plot-analyzer": {
       "expert_type": "script",
-      "skills": ["plot-analyzer"],
+      "skills": [
+        "plot-analyzer"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "allowed_tools": [
         "read_world",
@@ -101,7 +116,9 @@
     },
     "content-compliance-checker": {
       "expert_type": "script",
-      "skills": ["content-compliance-checker"],
+      "skills": [
+        "content-compliance-checker"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "allowed_tools": [
         "read_world",
@@ -121,7 +138,9 @@
     },
     "asset-readiness-checker": {
       "expert_type": "script",
-      "skills": ["asset-readiness-checker"],
+      "skills": [
+        "asset-readiness-checker"
+      ],
       "model": "deepseek-v4-flash-vision-exp",
       "use_config_model": true,
       "allowed_tools": [
@@ -140,7 +159,9 @@
     },
     "novel-episode-splitter": {
       "expert_type": "script",
-      "skills": ["novel-episode-splitter"],
+      "skills": [
+        "novel-episode-splitter"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "allowed_tools": [
         "create_script_json",
@@ -159,7 +180,9 @@
     },
     "character-image-designer": {
       "expert_type": "script",
-      "skills": ["character-image-designer"],
+      "skills": [
+        "character-image-designer"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "max_iterations": 50,
       "max_consecutive_no_progress": 5,
@@ -182,7 +205,9 @@
     },
     "location-prop-image-designer": {
       "expert_type": "script",
-      "skills": ["location-prop-image-designer"],
+      "skills": [
+        "location-prop-image-designer"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "max_iterations": 50,
       "max_consecutive_no_progress": 5,
@@ -203,7 +228,9 @@
     },
     "marketing-image": {
       "expert_type": "marketing",
-      "skills": ["marketing-image"],
+      "skills": [
+        "marketing-image"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "max_iterations": 30,
       "allowed_tools": [
@@ -218,7 +245,9 @@
     },
     "storyboard-image": {
       "expert_type": "storyboard",
-      "skills": ["storyboard-image"],
+      "skills": [
+        "storyboard-image"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "max_iterations": 30,
       "allowed_tools": [
@@ -237,7 +266,9 @@
     },
     "marketing-video": {
       "expert_type": "marketing",
-      "skills": ["marketing-video"],
+      "skills": [
+        "marketing-video"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "max_iterations": 30,
       "allowed_tools": [
@@ -251,13 +282,16 @@
     },
     "digital-human-creator": {
       "expert_type": "marketing",
-      "skills": ["digital-human-creator"],
+      "skills": [
+        "digital-human-creator"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "max_iterations": 20,
       "allowed_tools": [
         "generate_digital_human",
         "generate_reference_audio",
         "check_reference_audio_status",
+        "check_image_status",
         "get_user_computing_power",
         "ask_user"
       ],
@@ -265,7 +299,9 @@
     },
     "generate-user-api-module": {
       "expert_type": "admin",
-      "skills": ["generate-user-api-module"],
+      "skills": [
+        "generate-user-api-module"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "max_iterations": 80,
       "allowed_tools": [
@@ -282,11 +318,29 @@
     },
     "image-understanding": {
       "expert_type": "marketing",
-      "skills": ["image-understanding"],
+      "skills": [
+        "image-understanding"
+      ],
       "model": "gemini/gemini-3-flash-preview",
       "allowed_tools": [
         "fetch_image_as_base64",
         "ask_user"
+      ],
+      "summary_only": true
+    },
+    "article-to-video": {
+      "expert_type": "marketing",
+      "skills": [
+        "article-to-video"
+      ],
+      "model": "gemini/gemini-3-flash-preview",
+      "max_iterations": 30,
+      "allowed_tools": [
+        "fetch_article_content",
+        "generate_marketing_video",
+        "get_user_computing_power",
+        "ask_user",
+        "load_sop"
       ],
       "summary_only": true
     }

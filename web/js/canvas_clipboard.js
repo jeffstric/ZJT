@@ -11,11 +11,12 @@
   var COPY_EXCLUDED_TYPES = ['script', 'shot_group', 'shot_frame'];
   var EXCLUDED_TIP = '分镜、分镜组、剧本节点与后端数据绑定，不支持复制';
 
-  var CONN_ARRAYS = ['connections', 'imageConnections', 'firstFrameConnections', 'videoConnections', 'referenceConnections', 'audioConnections'];
+  var CONN_ARRAYS = ['connections', 'imageConnections', 'firstFrameConnections', 'lastFrameConnections', 'videoConnections', 'referenceConnections', 'audioConnections'];
   var CONN_ID_KEYS = {
     connections: 'nextConnId',
     imageConnections: 'nextImgConnId',
     firstFrameConnections: 'nextFirstFrameConnId',
+    lastFrameConnections: 'nextLastFrameConnId',
     videoConnections: 'nextVideoConnId',
     referenceConnections: 'nextReferenceConnId',
     audioConnections: 'nextAudioConnId'

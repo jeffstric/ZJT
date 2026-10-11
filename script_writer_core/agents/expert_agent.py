@@ -11,7 +11,12 @@ from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from model.model import ModelModel
-from config.constant import AGENT_LLM_IMAGE_TOKEN_ESTIMATE, EXPERT_HISTORY_MAX_IMAGES
+from config.constant import (
+    AGENT_LLM_IMAGE_TOKEN_ESTIMATE,
+    EXPERT_HISTORY_MAX_IMAGES,
+    AGENT_STATUS_POLL_MAX_ROUNDS,
+    AGENT_TASK_IN_PROGRESS_STATUSES,
+)
 from .output_token_budget import resolve_max_output_tokens
 
 logger = logging.getLogger(__name__)
@@ -25,6 +30,10 @@ class LoopState:
     # 进展检测：连续相同工具调用签名次数
     last_tool_signature: str = ""
     consecutive_no_progress: int = 0
+
+    # 状态轮询豁免：连续"纯状态轮询（结果仍进行中）"的轮数，独立于死循环检测
+    # （事故：会话 3d07080b 数字人音频轮询 3 次被误判死循环，任务在 agent 退出后才完成）
+    consecutive_poll_rounds: int = 0
 
     # 错误检测
     consecutive_errors: int = 0
@@ -60,6 +69,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         max_consecutive_no_progress: int = 3,
         max_consecutive_errors: int = 3,
         max_total_errors: int = 7,
+        max_status_poll_rounds: int = AGENT_STATUS_POLL_MAX_ROUNDS,
         power_confirm_enabled: bool = True
     ):
         # 使用第一个技能名称作为主要标识
@@ -100,6 +110,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         self.max_consecutive_no_progress = max_consecutive_no_progress
         self.max_consecutive_errors = max_consecutive_errors
         self.max_total_errors = max_total_errors
+        self.max_status_poll_rounds = max_status_poll_rounds
         # 上次 API 调用的真实输入 tokens，用于动态收缩 max_tokens（见 output_token_budget）
         self.last_api_input_tokens = 0
 
@@ -320,13 +331,15 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                     # 计算工具签名（在执行前）
                     signature = self._compute_tool_signature(message.tool_calls)
 
-                    self._handle_tool_calls(message)
+                    # 执行工具并拿本轮结果（进展检测消费返回值；不再用 self.outputs
+                    # 切片——那里只有解析失败的残留，成功结果从不进入）
+                    current_batch_results = self._handle_tool_calls(message)
 
-                    # 获取本轮工具执行结果
-                    current_batch_results = self.outputs[-len(message.tool_calls):]
-
-                    # 进展检测
-                    should_stop, reason = self._check_progress(state, signature, current_batch_results)
+                    # 进展检测（传入工具名用于状态轮询豁免判定）
+                    current_tool_names = [tc.function.name for tc in message.tool_calls]
+                    should_stop, reason = self._check_progress(
+                        state, signature, current_batch_results, current_tool_names
+                    )
                     if should_stop:
                         logger.warning(f"{self.agent_id}: 进展检测触发停止 - {reason}")
                         self._request_graceful_shutdown(reason, state)
@@ -363,8 +376,15 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                     return msg["content"]
         return "任务执行达到最大迭代次数，可能未完全完成"
     
-    def _handle_tool_calls(self, message):
-        """处理工具调用"""
+    def _handle_tool_calls(self, message) -> List[Any]:
+        """执行本轮所有 tool_calls 并写历史。
+
+        返回本轮工具结果列表（与 message.tool_calls 顺序一一对应，含 JSON 参数
+        解析失败的 error dict）——供主循环做进展检测。⚠️ 不要用 self.outputs
+        切片代替：outputs 只在解析失败分支追加，成功结果从不进入，切片取到的
+        是空列表或陈旧错误（曾使状态轮询豁免在生产恒不生效，见
+        tests/agents/test_expert_agent_poll_results.py）。
+        """
         tool_calls = message.tool_calls
 
         # 向前端推送工具调用事件，实时显示正在调用的函数
@@ -406,6 +426,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         # ⚠️ deferred 机制：多模态图片和用户输入延迟到所有 tool_calls 执行完毕后才注入历史
         # 这样可以确保 tool 消息的顺序正确（所有 tool 结果 → 多模态图片 → 用户输入）
         deferred_multimodal_content = []  # fetch_image_as_base64 成功时注入的多模态图片
+        batch_results: List[Any] = []  # 本轮工具结果（顺序对应 tool_calls，供进展检测）
 
         for tool_call in tool_calls:
             tool_name = tool_call.function.name
@@ -424,6 +445,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                     "timestamp": datetime.now().isoformat()
                 })
                 self.outputs.append(error_result)
+                batch_results.append(error_result)
                 self.add_to_history("tool", {
                     "tool_call_id": tool_call.id,
                     "name": tool_name,
@@ -447,6 +469,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                 "generate_text_to_video",
                 "image_to_video",
                 "generate_digital_human",
+                "generate_marketing_video",  # 图文转视频包装工具（article-to-video 专家）
             ):
                 if isinstance(result, dict) and result.get("project_ids"):
                     self.pending_project_ids.extend(result["project_ids"])
@@ -485,6 +508,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                 "name": tool_name,
                 "content": json.dumps(result, ensure_ascii=False)
             })
+            batch_results.append(result)
 
             if deferred_image:
                 image_url, base64_data_url = deferred_image
@@ -511,7 +535,9 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         # API 工具结果消息只支持文本内容，多模态图片必须通过 user 消息注入
         if deferred_multimodal_content:
             self.add_to_history("user", deferred_multimodal_content)
-    
+
+        return batch_results
+
     def _power_confirm_session_key(self) -> Optional[str]:
         return getattr(self, "_session_id", None) or getattr(self, "task_id", None)
 
@@ -899,21 +925,58 @@ class ExpertAgent(BaseAgent, AskUserMixin):
 
         return "+".join(parts)
 
-    def _check_progress(self, state: LoopState, signature: str, tool_results: List[Any]) -> Tuple[bool, str]:
+    @staticmethod
+    def _is_status_poll_tool_name(tool_name: str) -> bool:
+        """按命名约定判定是否为任务状态轮询类工具（check_*_status / get_task_status）"""
+        return tool_name == "get_task_status" or (
+            tool_name.startswith("check_") and tool_name.endswith("_status")
+        )
+
+    def _is_status_poll_round(self, tool_names: List[str], tool_results: List[Any]) -> bool:
+        """判定本轮是否为"纯状态轮询且任务仍在进行中"
+
+        条件：本轮所有工具均为状态轮询类，且所有结果均无 error、status 仍为
+        queued/processing/pending/running。查询进行中的异步任务是合法等待，
+        不是死循环（事故：会话 3d07080b 音频轮询被误杀，见 config/constant.py）。
+        """
+        if not tool_names or len(tool_names) != len(tool_results):
+            return False
+        if not all(self._is_status_poll_tool_name(n) for n in tool_names):
+            return False
+        in_progress = AGENT_TASK_IN_PROGRESS_STATUSES
+        return all(
+            isinstance(r, dict)
+            and not r.get("error")
+            and r.get("status") in in_progress
+            for r in tool_results
+        )
+
+    def _check_progress(self, state: LoopState, signature: str, tool_results: List[Any],
+                        tool_names: Optional[List[str]] = None) -> Tuple[bool, str]:
         """检查是否有进展，返回 (should_stop, reason)
 
         检测逻辑:
-        1. 连续相同工具调用签名 → 无进展
-        2. 连续工具返回错误 → 卡死
-        3. 累计错误过多 → 放弃
+        1. 纯状态轮询轮（轮询类工具 + 结果仍在进行中）→ 合法等待，豁免死循环检测，
+           由独立的 max_status_poll_rounds 上限约束
+        2. 连续相同工具调用签名 → 无进展
+        3. 连续工具返回错误 → 卡死
+        4. 累计错误过多 → 放弃
         """
-        # 检查连续相同签名
-        if signature == state.last_tool_signature and signature != "__no_tool_calls__":
-            state.consecutive_no_progress += 1
-            if state.consecutive_no_progress >= self.max_consecutive_no_progress:
-                return True, f"连续{self.max_consecutive_no_progress}次执行完全相同的操作，可能陷入死循环"
-        else:
+        # 状态轮询豁免
+        if self._is_status_poll_round(tool_names or [], tool_results):
             state.consecutive_no_progress = 0
+            state.consecutive_poll_rounds += 1
+            if state.consecutive_poll_rounds >= self.max_status_poll_rounds:
+                return True, f"连续{state.consecutive_poll_rounds}轮轮询任务状态仍未完成，可能任务异常卡住"
+        else:
+            state.consecutive_poll_rounds = 0
+            # 检查连续相同签名
+            if signature == state.last_tool_signature and signature != "__no_tool_calls__":
+                state.consecutive_no_progress += 1
+                if state.consecutive_no_progress >= self.max_consecutive_no_progress:
+                    return True, f"连续{self.max_consecutive_no_progress}次执行完全相同的操作，可能陷入死循环"
+            else:
+                state.consecutive_no_progress = 0
 
         state.last_tool_signature = signature
 

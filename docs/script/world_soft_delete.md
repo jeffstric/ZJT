@@ -68,7 +68,7 @@ DELETE /api/worlds/{world_id}
 | `video_workflow` / `video_workflow_list` / index / marketing 等 | 默认列表自动不展示已删；无伪删除 UI |
 | `storyboard` 编辑页 | 无世界列表；直链 `world_id` 仍可通过 `get_by_id` 访问 |
 
-后端名称反查（`api/storyboard.py` `collect_storyboard_folder_data`）使用 `visibility=all`，避免已删世界文件夹名丢失。
+后端名称反查（`api/storyboard.py` `collect_storyboard_folder_data`）在未指定 `world_id` 时调用 `WorldModel.list_names_for_storyboard_folders`，不过滤 `is_deleted`、不分页，避免已删世界文件夹名丢失。指定 `world_id` 时用 `WorldModel.get_by_id` 取名称。
 
 ## 名称唯一性
 

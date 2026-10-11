@@ -268,7 +268,7 @@
         }
 
         // 下载按钮
-        downloadBtn.addEventListener('click', function(e) {
+        downloadBtn.addEventListener('click', async function(e) {
           e.stopPropagation();
           if (!node.data.audioUrl) {
             showToast(window.t ? window.t('tts_no_audio_error') : '没有可下载的音频', 'error');
@@ -283,18 +283,13 @@
                         now.getMinutes().toString().padStart(2, '0');
           var filename = 'audio_' + dateStr + '_' + timeStr + '.wav';
 
-          if (node.data.audioUrl.startsWith('blob:')) {
-            var link = document.createElement('a');
-            link.href = node.data.audioUrl;
-            link.download = filename;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-          } else {
-            var downloadUrl = '/api/download?url=' + encodeURIComponent(node.data.audioUrl) + '&filename=' + encodeURIComponent(filename);
-            window.open(downloadUrl, '_blank');
+          try {
+            await window.downloadWithAuth(node.data.audioUrl, filename);
+            showToast(window.t ? window.t('tts_download_start') : '开始下载', 'success');
+          } catch (err) {
+            if (err && err.status === 401) return;
+            showToast((err && err.message) || '下载失败', 'error');
           }
-          showToast(window.t ? window.t('tts_download_start') : '开始下载', 'success');
         });
       }
     }, opts);

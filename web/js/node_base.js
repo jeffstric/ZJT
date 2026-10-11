@@ -222,6 +222,7 @@ function connectToRegisteredImagePort(fromNode, i2vPort) {
   else if (connType === 'videoConnections') connIdKey = 'nextVideoConnId';
   else if (connType === 'referenceConnections') connIdKey = 'nextReferenceConnId';
   else if (connType === 'firstFrameConnections') connIdKey = 'nextFirstFrameConnId';
+  else if (connType === 'lastFrameConnections') connIdKey = 'nextLastFrameConnId';
   else if (connType === 'audioConnections') connIdKey = 'nextAudioConnId';
 
   connArray.push({
@@ -506,12 +507,27 @@ function bindInputPortEvents(el, node, portCfg) {
       return;
     }
 
+    if (portCfg.single) {
+      var occupied = connArray.some(function(c) { return c.to === id; });
+      if (occupied) {
+        if (typeof showToast === 'function') {
+          var occupiedText = (portCfg.occupiedToastKey && window.t)
+            ? window.t(portCfg.occupiedToastKey)
+            : '该端口已有连接';
+          showToast(occupiedText, 'warning');
+        }
+        state.connecting = null;
+        return;
+      }
+    }
+
     // 确定连接ID的key
     var connIdKey = 'nextConnId';
     if (portCfg.connectionType === 'imageConnections') connIdKey = 'nextImgConnId';
     else if (portCfg.connectionType === 'videoConnections') connIdKey = 'nextVideoConnId';
     else if (portCfg.connectionType === 'referenceConnections') connIdKey = 'nextReferenceConnId';
     else if (portCfg.connectionType === 'firstFrameConnections') connIdKey = 'nextFirstFrameConnId';
+    else if (portCfg.connectionType === 'lastFrameConnections') connIdKey = 'nextLastFrameConnId';
     else if (portCfg.connectionType === 'audioConnections') connIdKey = 'nextAudioConnId';
 
     // 创建连接

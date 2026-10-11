@@ -114,7 +114,7 @@
       inputPort.addEventListener('mouseup', (e) => {
         if(state.connecting && state.connecting.fromId !== id){
           const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
-          if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'character' || fromNode.type === 'digital_human')){
+          if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark' || fromNode.type === 'character' || fromNode.type === 'digital_human')){
             const exists = state.connections.some(c => c.to === id);
             if(!exists){
               state.connections.push({
@@ -236,14 +236,13 @@
         setVideoFromFile(null);
       });
 
-      downloadBtn.addEventListener('click', (e) => {
+      downloadBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         if(!node.data.url){
           showToast(window.t ? window.t('no_downloadable_video') : '没有可下载的视频', 'error');
           return;
         }
 
-        // 生成文件名
         const now = new Date();
         const dateStr = now.getFullYear().toString() +
                        (now.getMonth() + 1).toString().padStart(2, '0') +
@@ -252,10 +251,13 @@
                        now.getMinutes().toString().padStart(2, '0');
         const filename = `workflow_video_${dateStr}_${timeStr}.mp4`;
 
-        // 使用后端代理下载，绕过CORS
-        const downloadUrl = `/api/download?url=${encodeURIComponent(node.data.url)}&filename=${encodeURIComponent(filename)}`;
-        window.open(downloadUrl, '_blank');
-        showToast(window.t ? window.t('start_download') : '开始下载', 'success');
+        try {
+          await window.downloadWithAuth(node.data.url, filename);
+          showToast(window.t ? window.t('start_download') : '开始下载', 'success');
+        } catch (err) {
+          if (err && err.status === 401) return;
+          showToast((err && err.message) || '下载失败', 'error');
+        }
       });
 
       // 添加调试按钮

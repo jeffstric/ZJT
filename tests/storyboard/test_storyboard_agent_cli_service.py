@@ -2468,6 +2468,66 @@ def test_generate_video_multi_reference_appends_legend_and_style(patched_storybo
     assert "构图倾向：rule of thirds" in kwargs["prompt"]
 
 
+def test_generate_video_frame_mentions_submit_hidden_h3_keyframe_ref(patched_storyboard_cli):
+    from services.storyboard_agent_cli_service import StoryboardCliError
+
+    service = patched_storyboard_cli.module.StoryboardAgentCliService(
+        submitter=patched_storyboard_cli.submitter
+    )
+    saved = {
+        "video.reference_to_video": {
+            "task_id": 37,
+            "model_key": "minimax_h3_reference_to_video",
+            "model_name": "MiniMax H3 参考生视频",
+        }
+    }
+    result = service.generate_video(
+        scene_id=11,
+        user_id=7,
+        auth_token="token",
+        mode="image_to_video",
+        image_mode="multi_reference",
+        prompt="Walk forward @首帧图 then arrive @尾帧图.",
+        task_type=37,
+        frame_last_url="https://cdn.test/last.png",
+        generation_snapshots=saved,
+    )
+    assert result["project_ids"] == [802]
+    assert saved["video.reference_to_video"]["task_id"] == 37
+    call_name, kwargs = patched_storyboard_cli.submitter.calls[-1]
+    assert call_name == "image_to_video"
+    assert kwargs["image_mode"] == "multi_reference"
+    assert kwargs["task_type"] == 50
+    urls = [part for part in kwargs["image_urls"].split(",") if part]
+    assert urls[0] == "https://cdn.test/first.png"
+    assert urls[-1] == "https://cdn.test/last.png"
+    assert len(urls) == 3
+    assert "图1是首帧" in kwargs["prompt"]
+    assert "图3是尾帧" in kwargs["prompt"]
+    assert "@首帧图" not in kwargs["prompt"]
+    assert "@尾帧图" not in kwargs["prompt"]
+
+    before = len(patched_storyboard_cli.submitter.calls)
+    try:
+        service.generate_video(
+            scene_id=11,
+            user_id=7,
+            auth_token="token",
+            mode="image_to_video",
+            image_mode="multi_reference",
+            prompt="Arrive at @尾帧图.",
+            task_type=37,
+            generation_snapshots={
+                "video.reference_to_video": {"task_id": 37, "model_key": "minimax_h3_reference_to_video"},
+            },
+        )
+    except StoryboardCliError as exc:
+        assert exc.error_code == "frame_mention_missing_last"
+    else:
+        raise AssertionError("missing last frame should not submit")
+    assert len(patched_storyboard_cli.submitter.calls) == before
+
+
 def test_generate_video_multi_reference_falls_back_to_text_when_no_images(
     patched_storyboard_cli, monkeypatch
 ):

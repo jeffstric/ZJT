@@ -9,6 +9,7 @@
 本文件保留向后兼容的常量别名，逐步废弃中。
 """
 
+import random
 from datetime import datetime
 from typing import Union, Dict, List, Optional
 
@@ -25,6 +26,34 @@ from config.unified_config import (
     AGENT_POWER_CONFIRM_HARD_THRESHOLD,
     USER_MODULE_RUNTIME_CONFIG,
 )
+
+
+# timeout.request_timeout 的配置说明单位是毫秒（默认 10000 = 10 秒）。
+# requests / httpx 的 timeout 单位是秒。大于等于该阈值时按毫秒换算，
+# 避免把 10000 直接传给 requests 后单次不返回的请求占住调度线程近 3 小时。
+# 小于阈值的值视为已经是秒（单测里的 30、同步接口的 300/600）。
+HTTP_REQUEST_TIMEOUT_MS_THRESHOLD = 1000
+HTTP_REQUEST_TIMEOUT_DEFAULT_SECONDS = 30
+
+
+def coerce_http_timeout_seconds(value, default=None) -> float:
+    """把 timeout.request_timeout 换成 HTTP 客户端需要的秒。
+
+    已入库的 10000（毫秒）会变成 10 秒；显式传入的 10、30、300 保持不变。
+    """
+    if default is None:
+        default = HTTP_REQUEST_TIMEOUT_DEFAULT_SECONDS
+    if value is None:
+        return float(default)
+    try:
+        raw = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if raw <= 0:
+        return float(default)
+    if raw >= HTTP_REQUEST_TIMEOUT_MS_THRESHOLD:
+        return raw / 1000.0
+    return raw
 
 
 # ===== 用户模块运行时 =====
@@ -271,6 +300,30 @@ EXPERT_HISTORY_MAX_IMAGES = 6
 # 2026-09-09-asset-readiness-context-overflow.md 复核段），并非图片正常计量。
 # 估算仍取 2 倍安全系数，真实输入以 last_api_input_tokens 兜底（两者取大）。
 AGENT_LLM_IMAGE_TOKEN_ESTIMATE = 2048
+
+# ===== Agent 状态轮询工具等待与死循环豁免 =====
+# （事故：会话 3d07080b 数字人流程中，专家每 3~4 秒轮询一次 check_reference_audio_status，
+# 连续 3 次相同签名即被 ExpertAgent._check_progress 判为死循环并优雅关闭；
+# 而 RunningHub TTS 实际耗时 44 秒，音频在 agent 退出 30 秒后才完成，
+# generate_digital_human 从未提交。修复：工具内置有界等待拉长单次轮询间隔，
+# 同时 _check_progress 豁免"纯状态轮询"轮次，双保险防误杀。）
+# check_*_status 工具在任务仍为 queued/processing 时，服务端同步等待终态的最长时间（秒）。
+# agent 循环跑在 task_manager 的 daemon 线程，同步 sleep 不阻塞事件循环。
+AGENT_CHECK_TOOL_WAIT_SECONDS = 20
+# 等待期间重新查库的间隔（秒）。
+AGENT_CHECK_TOOL_POLL_INTERVAL_SECONDS = 3
+# 纯状态轮询轮次的独立豁免上限：轮询类工具 + 结果仍在进行中时不计入
+# consecutive_no_progress，改计连续轮询轮数，达到本值才判死循环。
+# 须小于相关专家的 max_iterations（数字人专家为 20）。
+AGENT_STATUS_POLL_MAX_ROUNDS = 15
+# "仍在进行中"的任务状态词汇表（expert_agent._is_status_poll_round 与
+# mcp_tool._is_in_progress_status 共用）。状态文件实际写入的中间态还包括
+# retrying（ComfyUI 提交失败自动重投，task/grid_image_task.py）与
+# scheduled（定时排队，script_writer_core/cron_task_manager.py）——漏掉会被
+# 死循环检测误杀。
+AGENT_TASK_IN_PROGRESS_STATUSES = (
+    'queued', 'processing', 'pending', 'running', 'retrying', 'scheduled',
+)
 
 # 剧本创作等入口无偏好时的默认生图模型：GPT Image 2（short_key=gpt-image-2）
 DEFAULT_TEXT_TO_IMAGE_TASK_ID = TaskTypeId.GPT_IMAGE_2_EDIT
@@ -525,6 +578,9 @@ H3_PROMPT_OPTIMIZE_VARIANT_I2VA = "I2VA"
 H3_PROMPT_OPTIMIZE_VARIANT_FL2VA = "FL2VA"
 # 全参考（多参考图/参考视频/参考音频）生视频的提示词变体，对应官方 ref-en.txt 六段格式
 H3_PROMPT_OPTIMIZE_VARIANT_REF2VA = "Ref2VA"
+# 首帧/尾帧关键帧与参考图、参考音频混合。仍用 Ref2VA 六段模板，但槽位按实际 Picture 角色说明，
+# 不能走 FL2VA（FL2VA 会把 Picture 2 写成尾帧）。
+H3_PROMPT_OPTIMIZE_VARIANT_KF_REF = "KFRef"
 
 # [已废弃] 原双模型路由阈值（Wan2.2 / LTX2.3）。分镜对口型已统一为 MiniMax H3，不再使用。
 # 保留常量以免外部引用硬崩；新代码请勿依赖。
@@ -859,10 +915,12 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,  # 加速版
     ],
     DriverKey.MINIMAX_H3_TEXT_TO_VIDEO: DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 文生视频（复用参考生工作流）
+    DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO: DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,  # 参考模式下点名首尾帧时提交的混合模型
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,  # 使用 RunningHub 的数字人 v1 版本
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本
     DriverKey.DIGITAL_HUMAN_MINIMAX_H3: DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 数字人
+    DriverKey.VIDEO_WATERMARK_REMOVE: DriverImplementation.VIDEO_WATERMARK_RUNNINGHUB_V1,  # RunningHub 视频去水印
     
     # Vidu 相关驱动
     DriverKey.VIDU_IMAGE_TO_VIDEO: DriverImplementation.VIDU_DEFAULT,         # 使用 Vidu 官方 API
@@ -3154,3 +3212,95 @@ DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 # 预览图压缩（asyncio.to_thread 执行）与 VL 请求（wait_for 整体超时 = LLM_TIMEOUT + 10）的超时（秒）
 DS_ENV_FIT_COMPRESS_TIMEOUT = 15
 DS_ENV_FIT_LLM_TIMEOUT = 60
+
+# ── 图文抓取（article_to_video，公众号/小红书 → 营销视频脚本）──
+# 公众号：mp.weixin.qq.com 服务端渲染页免登录可抓（2026-09 实测）；图片 mmbiz.qpic.cn 服务端下载无防盗链拦截，仍统一带 Referer 保险
+# 小红书：免登录纯 HTTP 不可行（WAF 按 TLS 指纹拦截 + PC web 强制登录态），本期仅保留 XhsProvider 抽象接口
+ARTICLE_FETCH_HTTP_TIMEOUT = 20              # 公众号文章页 HTTP 超时（秒）
+ARTICLE_FETCH_IMAGE_TIMEOUT = 30             # 图片下载超时（秒）
+ARTICLE_FETCH_XHS_TIMEOUT = 30               # 小红书抓取超时（秒，下期 provider 实现启用）
+ARTICLE_FETCH_XHS_MIN_INTERVAL = 10          # 同来源两次小红书抓取最小间隔（秒，下期启用）
+ARTICLE_FETCH_MAX_IMAGES = 9                 # 单篇图片上限（对齐 Seedance 2.0 多参考图上限）
+ARTICLE_FETCH_MAX_TEXT_CHARS = 8000          # 正文注入 LLM 的最大字符数
+ARTICLE_FETCH_IMAGE_MAX_BYTES = 15 * 1024 * 1024   # 单图大小上限
+ARTICLE_FETCH_RATE_LIMIT_PER_USER_HOUR = 10  # 每用户每小时抓取次数上限（进程内滑动窗口）
+ARTICLE_FETCH_ALLOWED_HOSTS = (
+    'mp.weixin.qq.com',        # 微信公众号
+    'xiaohongshu.com',         # 小红书（www./探查页）
+    'www.xiaohongshu.com',
+    'xhslink.com',             # 小红书分享短链（下期实现时先跟随跳转再校验最终域名）
+)
+ARTICLE_FETCH_WECHAT_UA = (
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+)
+# 公众号图片下载 Referer（mmbiz.qpic.cn 防盗链白名单域）
+ARTICLE_FETCH_WECHAT_REFERER = 'https://mp.weixin.qq.com/'
+# 微信内置浏览器 UA：部分受限文章仅微信内可见
+ARTICLE_FETCH_WECHAT_INAPP_UA = (
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) '
+    'Chrome/124.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.49.2600(0x28003135) XWEB/1160'
+)
+
+# ── 信息采集供应商（article_fetch 第三方通道，TikHub）──
+# 按次计费 $0.01/次；官方建议客户端超时 30s（过小会"已扣费但收不到响应"），且禁止自动重试（重试=重复扣费）
+ARTICLE_FETCH_TIKHUB_BASE_URL = 'https://api.tikhub.io'
+ARTICLE_FETCH_TIKHUB_TIMEOUT = 35            # TikHub 官方建议 30s，留 5s 网络余量
+ARTICLE_FETCH_COMMENTS_TOP_N = 10            # 评论抓取保留条数（按点赞排序取首页精选）
+# 公众号抓取通道模式（article_fetch.wechat_provider）：
+#   ''      = 跟随 TikHub key 状态（默认）：配置了 key → auto，未配置 → self（零成本现状）
+#   self    = 仅自研免登录通道（零成本，受限文章不可得）
+#   auto    = 自研优先，命中访问限制/失败时自动走 TikHub 兜底（需配置 key，按次计费）
+#   tikhub  = 全部走 TikHub（最稳，每篇 $0.01）
+ARTICLE_FETCH_WECHAT_PROVIDER = ''
+# 小红书抓取通道（article_fetch.xhs_provider）：空=未开通（默认）；tikhub=启用
+ARTICLE_FETCH_XHS_PROVIDER = ''
+
+# ============ 用户昵称/备注（model/users.py、api/user.py、api/admin.py） ============
+# 昵称长度上限（DB 列 VARCHAR(50)，用户输入按 UTF-8 字符数校验）
+NICKNAME_MAX_LEN = 30
+# 管理员备注长度上限（DB 列 VARCHAR(500)）
+REMARK_MAX_LEN = 500
+# 默认昵称（随机趣味名，如"机智的熊猫"= 形容词 + 动物，不带数字）去重尝试次数
+NICKNAME_GENERATE_MAX_ATTEMPTS = 10
+
+NICKNAME_ADJECTIVES = (
+    '机智的', '勇敢的', '快乐的', '神秘的', '温柔的', '活泼的', '安静的', '闪亮的', '可爱的', '认真的',
+    '幸运的', '甜甜的', '酷酷的', '呆萌的', '灵巧的', '热情的', '悠闲的', '可靠的', '聪慧的', '好奇的',
+    '元气的', '软软的', '毛茸茸的', '圆滚滚的', '暖乎乎的', '亮晶晶的', '笑眯眯的', '蹦蹦跳跳的', '灵动的', '乖巧的',
+    '调皮的', '憨憨的', '软萌的', '慢悠悠的', '懒洋洋的', '兴高采烈的', '无忧无虑的', '自由自在的', '神采奕奕的', '朝气蓬勃的',
+    '憨态可掬的', '古灵精怪的', '天真烂漫的', '纯真的', '善良的', '诚实的', '幽默的', '开朗的', '乐观的', '积极的',
+    '勤奋的', '细心的', '耐心的', '体贴的', '大方的', '谦虚的', '坚强的', '坚定的', '执着的', '专注的',
+    '灵敏的', '敏捷的', '轻快的', '优雅的', '从容的', '淡定的', '洒脱的', '爽朗的', '明媚的', '灿烂的',
+    '温暖的', '贴心的', '治愈的', '萌萌的', '水灵灵的', '亮闪闪的', '金灿灿的', '喜洋洋的', '美滋滋的', '暖洋洋的',
+    '静悄悄的', '轻盈的', '飘逸的', '清新的', '淡雅的', '精致的', '巧妙的', '聪明的', '睿智的', '敏锐的',
+    '爽快的', '干练的', '麻利的', '机灵的', '活跃的', '精力充沛的', '笑哈哈的', '慢性子的', '急性子的', '乐呵呵的',
+)
+NICKNAME_ANIMALS = (
+    '熊猫', '小猫', '小狗', '兔子', '狐狸', '松鼠', '海豚', '企鹅', '刺猬', '小鹿',
+    '老虎', '狮子', '考拉', '仓鼠', '水獭', '鹦鹉', '浣熊', '柴犬', '北极熊', '小熊',
+    '大象', '长颈鹿', '斑马', '河马', '猴子', '金丝猴', '树懒', '袋鼠', '白鲸', '虎鲸',
+    '海獭', '海豹', '海龟', '海星', '水母', '章鱼', '乌龟', '蜗牛', '蝴蝶', '蜜蜂',
+    '萤火虫', '蜻蜓', '瓢虫', '金鱼', '锦鲤', '金丝雀', '百灵鸟', '黄鹂', '喜鹊', '燕子',
+    '天鹅', '白鹭', '火烈鸟', '猫头鹰', '啄木鸟', '蜂鸟', '孔雀', '鸳鸯', '丹顶鹤', '白鸽',
+    '海鸥', '云雀', '麻雀', '山羊', '绵羊', '小羊', '羊驼', '骆驼', '小马', '毛驴',
+    '驯鹿', '狍子', '麋鹿', '豹子', '猎豹', '雪豹', '狼', '水豚', '旱獭', '土拨鼠',
+    '花栗鼠', '龙猫', '豚鼠', '河狸', '棕熊', '蜜獾', '穿山甲', '食蚁兽', '小熊猫', '狐猴',
+    '眼镜猴', '懒猴', '松鼠猴', '柯基', '比熊', '博美', '边牧', '金毛', '哈士奇', '萨摩耶',
+)
+
+
+def generate_default_nickname(used_names=None) -> str:
+    """生成随机趣味默认昵称（如"机智的熊猫"，形容词 + 动物，不带数字）。
+
+    纯函数、无 DB 依赖（Alembic 迁移脚本直接 import 使用）。
+    used_names 为调用方已占用的昵称集合（迁移批量回填时传入避免批内重复）；
+    运行时路径由 UsersModel 负责查库去重。组合空间 100*100=10000，
+    尝试 NICKNAME_GENERATE_MAX_ATTEMPTS 次仍撞名则直接返回（昵称不要求唯一，重复无碍）。
+    """
+    used = used_names if isinstance(used_names, set) else set()
+    for _ in range(NICKNAME_GENERATE_MAX_ATTEMPTS):
+        name = random.choice(NICKNAME_ADJECTIVES) + random.choice(NICKNAME_ANIMALS)
+        if name not in used:
+            return name
+    return random.choice(NICKNAME_ADJECTIVES) + random.choice(NICKNAME_ANIMALS)

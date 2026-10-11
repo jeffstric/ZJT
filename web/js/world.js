@@ -232,13 +232,17 @@ function handleWorldSelectionChange(worldId) {
 // 调用方若不滚动基线，下一次自动保存会携带过期 X-Base-Hash 被 CAS 409 误判为冲突。
 async function saveDefaultWorld(workflowId, worldId) {
   try {
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': getAuthToken(),
+      'X-User-Id': getUserId()
+    };
+    if(typeof autoSaveState !== 'undefined' && autoSaveState.attachWriteId){
+      autoSaveState.attachWriteId(headers);
+    }
     const response = await fetch(`/api/video-workflow/${workflowId}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': getAuthToken(),
-        'X-User-Id': getUserId()
-      },
+      headers: headers,
       body: JSON.stringify({
         default_world_id: worldId
       })
@@ -267,13 +271,17 @@ async function _saveWorldStyleToWorkflow(workflowId) {
     return;
   }
   try {
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': getAuthToken(),
+      'X-User-Id': getUserId()
+    };
+    if(typeof autoSaveState !== 'undefined' && autoSaveState.attachWriteId){
+      autoSaveState.attachWriteId(headers);
+    }
     const response = await fetch(`/api/video-workflow/${workflowId}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': getAuthToken(),
-        'X-User-Id': getUserId()
-      },
+      headers: headers,
       body: JSON.stringify({
         style: state.style.name || null,
         style_reference_image: state.style.referenceImageUrl || null,

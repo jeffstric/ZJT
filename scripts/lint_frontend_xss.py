@@ -66,7 +66,9 @@ X1_DEFINE_RE = re.compile(
     r"\bfunction\s+(?:escapeHtml|escapeHtmlSafe|escapeHtmlLocal|sanitizeHtml)\s*\("
 )
 X2_MARKED_PARSE_RE = re.compile(r"\bmarked\s*\.\s*parse\s*\(")
-X3_URL_TOKEN_RE = re.compile(r"""[?&]auth_token=\$?\{|[?&]auth_token='""")
+X3_URL_TOKEN_RE = re.compile(
+    r"""[?&]auth_token=\$?\{|[?&]auth_token='|searchParams\.set\(\s*['"]auth_token['"]\s*,"""
+)
 X4_IMODAL_ONCLICK_RE = re.compile(r"""onclick=["']document\.getElementById\('imgModal'""")
 
 

@@ -5913,6 +5913,7 @@
                     }
 
                     const task = result.task;
+                    const angles = task.angles || [];
                     const generatedImages = task.generated_images || [];
                     const currentIndex = task.current_angle_index;
 
@@ -5920,10 +5921,10 @@
                         if (currentIndex !== undefined && currentIndex < angles.length) {
                             const currentAngle = angles[currentIndex];
                             if (currentAngle) {
-                                statusSpan.textContent = `正在生成 ${currentAngle.label}... (${currentIndex}/${angles.length})`;
+                                statusSpan.textContent = `正在生成 ${currentAngle.label}... (${currentIndex + 1}/${angles.length})`;
                             }
                         } else {
-                            statusSpan.textContent = `处理中... (${currentIndex}/${angles.length})`;
+                            statusSpan.textContent = `处理中... (${currentIndex + 1}/${angles.length})`;
                         }
                     } else if (task.status === 2) {  // COMPLETED
                         clearInterval(multiAnglePollInterval);
@@ -8505,8 +8506,6 @@
         }
         
         function showModeSelection() {
-            submitToDatabase().catch(e => console.warn('预提交失败:', e));
-
             let modal = document.getElementById('mode-selection-modal');
             if (!modal) {
                 modal = document.createElement('div');
@@ -8554,12 +8553,6 @@
         }
 
         async function goToStoryboard() {
-            try {
-                await submitToDatabase();
-            } catch (e) {
-                console.error('提交数据失败:', e);
-            }
-
             const assetsStatus = await checkAssetsComplete();
             const hasProblems = !assetsStatus.hasScript || assetsStatus.missingAssets.length > 0;
             if (hasProblems) {
@@ -8614,14 +8607,7 @@
                 console.log('当前世界ID:', window.currentWorldId);
             }
             
-            // 先提交当前数据
-            try {
-                await submitToDatabase();
-            } catch (e) {
-                console.error('提交数据失败:', e);
-            }
-            
-            // 检查资产完成状态
+            // 检查资产完成状态（不在跳转时提交暂存，避免协作者把未确认的数据写入共享库）
             const assetsStatus = await checkAssetsComplete();
             
             // 如果有问题（没有剧本或资产缺失图片），弹出确认提示

@@ -1,0 +1,121 @@
+/* 图文转视频：脚本确认卡 + 链接徽标（article-to-video） */
+.article-script-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+  background: #fcfcfd;
+  padding: 12px 14px;
+  margin: 8px 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.article-script-card .asc-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: #101828;
+  margin-bottom: 4px;
+}
+.article-script-card .asc-meta {
+  color: #667085;
+  font-size: 12.5px;
+  margin-bottom: 10px;
+}
+.article-script-card .asc-clip {
+  border: 1px solid #eaecf0;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.article-script-card .asc-clip:last-child { margin-bottom: 0; }
+.article-script-card .asc-clip-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-weight: 600;
+  color: #175cd3;
+  margin-bottom: 6px;
+}
+.article-script-card .asc-tag {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #eff4ff;
+  color: #175cd3;
+  border: 1px solid #d1e0ff;
+}
+.article-script-card .asc-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+.article-script-card .asc-refs img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #eaecf0;
+  cursor: zoom-in;
+}
+.article-script-card .asc-prompt {
+  white-space: pre-wrap;
+  color: #344054;
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.article-script-card .asc-notes {
+  color: #667085;
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+.article-source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #ecfdf3;
+  color: #067647;
+  border: 1px solid #abefc6;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+/* 分秒口播时间轴 */
+.article-script-card .asc-timeline {
+  margin-top: 8px;
+  border-top: 1px dashed #e4e7ec;
+  padding-top: 8px;
+}
+.article-script-card .asc-tl-head {
+  font-size: 12px;
+  color: #667085;
+  margin-bottom: 4px;
+}
+.article-script-card .asc-tl-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+.article-script-card .asc-tl-sec {
+  flex: 0 0 34px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #175cd3;
+  font-variant-numeric: tabular-nums;
+}
+.article-script-card .asc-tl-text {
+  font-size: 13px;
+  color: #344054;
+  line-height: 1.5;
+}
+
+/* 超语速口播行提醒 */
+.article-script-card .asc-tl-text.asc-tl-over {
+  color: #b54708;
+}

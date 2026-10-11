@@ -234,20 +234,14 @@
         return `audio_${dateStr}_${timeStr}.wav`;
       },
 
-      downloadAudio(url) {
+      async downloadAudio(url) {
         if (!url) return;
         const filename = this.generateAudioFilename();
-        
-        if (url.startsWith('blob:')) {
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = filename;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-        } else {
-          const downloadUrl = buildDownloadUrl(url, filename);
-          window.open(downloadUrl, '_blank');
+        try {
+          await downloadWithAuth(url, filename);
+        } catch (e) {
+          if (e && e.status === 401) return;
+          alert((e && e.message) || '下载失败');
         }
       }
     },

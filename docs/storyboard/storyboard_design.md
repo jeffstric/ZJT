@@ -1183,10 +1183,8 @@ function showProductionModeSelector() {
 }
 
 async function goToStoryboard() {
-    // 1. 提交当前数据（复用现有逻辑）
-    try { await submitToDatabase(); } catch (e) {}
-    
-    // 2. 检查资产完成状态（复用现有逻辑）
+    // 不在跳转时提交暂存。入库只来自「提交」按钮或「自动」开关。
+    // 1. 检查资产完成状态（复用现有逻辑）
     const assetsStatus = await checkAssetsComplete();
     const hasProblems = !assetsStatus.hasScript || assetsStatus.missingAssets.length > 0;
     if (hasProblems) {
@@ -1196,10 +1194,10 @@ async function goToStoryboard() {
         if (!confirmed) return;
     }
     
-    // 3. 获取当前剧本的集数
+    // 2. 获取当前剧本的集数
     const episodeNumber = getCurrentEpisodeNumber(); // 从 script 数据中获取
     
-    // 4. 跳转到故事板页面（后端会做幂等 get-or-create）
+    // 3. 跳转到故事板页面（后端会做幂等 get-or-create）
     let url = `/storyboard?world_id=${WORLD_ID}&episode_number=${episodeNumber}`;
     if (SCRIPT_ID) url += `&script_id=${SCRIPT_ID}`;
     if (WORKFLOW_ID) url += `&workflow_id=${WORKFLOW_ID}`;

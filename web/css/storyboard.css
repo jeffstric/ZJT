@@ -4294,6 +4294,9 @@ img.card-char-avatar.is-missing {
     box-shadow: var(--shadow);
     overflow: hidden;
 }
+.mention-frames { display: grid; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); background: #fff; }
+.mention-frames button { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 6px; background: var(--panel-soft); color: var(--foreground); text-align: left; }
+.mention-frames img { width: 28px; height: 28px; border-radius: 4px; object-fit: cover; }
 .mention-tabs { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--panel-soft); padding: 4px; gap: 4px; }
 .mention-tabs button { padding: 7px; border-radius: 6px; background: transparent; color: var(--muted); }
 .mention-tabs button.active { color: var(--foreground); background: #fff; }
