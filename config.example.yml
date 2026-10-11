@@ -258,6 +258,16 @@ tts:
   api_url: "http://47.98.190.124"  # TTS API 服务地址
   upload_url: "http://47.98.190.124/result_audio/"
 
+# 火山引擎（豆包语音）大模型语音合成 - 快速合成 + 音色库
+# 鉴权是豆包语音控制台（语音技术）的凭证，与方舟 volcengine.api_key 不是同一套，
+# 需在火山控制台开通「语音合成大模型」并在应用管理创建应用获取。
+# 未配置（留空）时 /api/tts/* 合成接口返回友好错误，IndexTTS 链路不受影响。
+volcengine_tts:
+  app_key: ""       # 豆包语音控制台 App ID
+  access_key: ""    # 豆包语音控制台 Access Token
+  # resource_id: "volc.service_type.10029"  # 大模型语音合成资源 ID（默认即可）
+  # power_tiers: [[50, 1], [200, 4], [500, 10], [1000, 20], [2000, 40]]  # 字符档位算力计价（热更新可覆盖）
+
 # ASR (SenseVoice 句级转写) configuration
 # 用于故事板导出完整视频时生成"按语音时间轴逐句显示"的字幕（smart 模式）。
 # opt-in：未配置 asr 段（或 enabled 缺省）时默认关闭，导出字幕使用 block 分页模式。

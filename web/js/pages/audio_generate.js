@@ -2,6 +2,16 @@
     name: 'AudioGenerate',
     data() {
       return {
+        // 合成引擎：voice_library=火山音色库（快速合成，扣算力）；
+        // clone=参考音频克隆（IndexTTS，异步任务，免费）。默认音色库（零门槛+秒级）。
+        engine: 'voice_library',
+        // —— 音色库（火山）模式 ——
+        voiceId: null,
+        selectedVoice: null,
+        speedRatio: 1.0,
+        powerTiers: [],
+        maxTextLength: 2000,
+        // —— 克隆（IndexTTS）模式（原有字段，勿动） ——
         text: '',
         refAudioFile: null,
         emoRefAudioFile: null,
@@ -25,10 +35,23 @@
       this.authToken = localStorage.getItem('auth_token') || '';
     },
     computed: {
-      canSubmit() { 
+      // 音色库模式：文本 + 已选音色
+      canSubmitVoiceLibrary() {
+        return !!(this.text.trim() && this.voiceId && !this.loading);
+      },
+      canSubmit() {
+        if (this.engine === 'voice_library') return this.canSubmitVoiceLibrary;
         if (!this.text.trim() || this.loading) return false;
         if (this.emoControlMethod === 2 && !this.emoVecValid) return false;
         return true;
+      },
+      estimatedPower() {
+        return window.VoiceLibraryApi
+          ? window.VoiceLibraryApi.estimatePower(this.text.trim().length, this.powerTiers)
+          : 0;
+      },
+      textTooLong() {
+        return this.text.trim().length > this.maxTextLength;
       },
       emoControlOptions() {
         return [
@@ -55,6 +78,45 @@
       }
     },
     methods: {
+      // —— 音色库（火山快速合成）——
+      onVoiceSelected(voice) {
+        this.selectedVoice = voice;
+      },
+
+      async submitVoiceLibrary() {
+        if (!this.canSubmitVoiceLibrary) return;
+        const userId = localStorage.getItem('user_id');
+        if (!userId) {
+          this.error = '请先登录后再使用音频生成功能';
+          return;
+        }
+        this.loading = true;
+        this.error = '';
+        this.result = null;
+        this.clearResultAudioUrl();
+        this.audioId = null;
+        this.status = '';
+        this.clearStatusCheck();
+        try {
+          const data = await window.VoiceLibraryApi.synthesize({
+            text: this.text.trim(),
+            voice_id: this.voiceId,
+            speed_ratio: this.speedRatio,
+          });
+          this.audioId = data.audio_id;
+          this.result = { file_url: data.audio_url };
+          this.setResultAudioUrl(data.audio_url);
+          this.status = 'SUCCESS';
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || err?.message || '请求失败';
+          this.status = 'FAILED';
+        } finally {
+          this.loading = false;
+        }
+      },
+
+      // —— 克隆模式（IndexTTS，原有逻辑勿动） ——
       validateAudioDuration(file, label) {
         return new Promise((resolve) => {
           const audio = new Audio();
@@ -90,16 +152,23 @@
         this.emoRefAudioFile = valid ? file : null;
         if (!valid) e.target.value = '';
       },
-      
-      async submit() {
+
+      submit() {
+        if (this.engine === 'voice_library') {
+          return this.submitVoiceLibrary();
+        }
+        return this.submitClone();
+      },
+
+      async submitClone() {
         if (!this.canSubmit) return;
-        
+
         const userId = localStorage.getItem('user_id');
         if (!userId) {
           this.error = '请先登录后再使用音频生成功能';
           return;
         }
-        
+
         this.loading = true;
         this.error = '';
         this.result = null;
@@ -107,77 +176,77 @@
         this.audioId = null;
         this.status = '';
         this.clearStatusCheck();
-        
+
         try {
           const form = new FormData();
           form.append('text', this.text);
           form.append('user_id', userId);
           form.append('emo_control_method', this.emoControlMethod);
-          
+
           if (this.refAudioFile) {
             form.append('ref_audio', this.refAudioFile);
           }
-          
+
           if (this.emoRefType === 'file' && this.emoRefAudioFile) {
             form.append('emo_ref_audio', this.emoRefAudioFile);
           } else if (this.emoRefType === 'video_url' && this.emoRefVideoUrl) {
             form.append('emo_ref_video_url', this.emoRefVideoUrl);
           }
-          
+
           if (this.emoText) {
             form.append('emo_text', this.emoText);
           }
-          
+
           if (this.emoWeight !== null) {
             form.append('emo_weight', this.emoWeight);
           }
-          
+
           if (this.emoControlMethod === 2) {
             form.append('emo_vec', this.emoVec.join(','));
           }
-          
+
           if (this.authToken) {
             form.append('auth_token', this.authToken);
           }
-          
+
           const res = await axios.post('/api/audio-generate', form, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
-          
+
           this.audioId = res.data.audio_id;
           this.status = res.data.status || 'submitted';
-          
+
           if (this.audioId) {
             this.startStatusCheck();
           }
-          
+
         } catch (err) {
           console.error(err);
           this.error = err?.response?.data?.detail || err?.message || '请求失败';
           this.loading = false;
         }
       },
-      
+
       async checkStatus() {
         if (!this.audioId) return;
-        
+
         try {
           const authToken = localStorage.getItem('auth_token');
           const params = authToken ? { auth_token: authToken } : {};
-          
+
           const res = await axios.get(`/api/audio-status/${this.audioId}`, {
             params
           });
-          
+
           const payload = res.data;
-          
+
           if (!payload) {
             console.error('Invalid status response:', payload);
             return;
           }
-          
+
           const status = typeof payload.status === 'string' ? payload.status.toUpperCase() : payload.status;
-          
+
           if (status === 'SUCCESS' || status === 2) {
             this.result = payload.result_url ? { file_url: payload.result_url } : null;
             if (payload.result_url) {
@@ -198,45 +267,47 @@
           console.error('Status check failed:', err);
         }
       },
-      
+
       startStatusCheck() {
         this.statusInterval = setInterval(() => {
           this.checkStatus();
         }, 10000);
       },
-      
+
       clearStatusCheck() {
         if (this.statusInterval) {
           clearInterval(this.statusInterval);
           this.statusInterval = null;
         }
       },
-      
+
       setResultAudioUrl(url) {
         this.clearResultAudioUrl();
         this.resultAudioUrl = url;
       },
 
       clearResultAudioUrl() {
-        if (this.resultAudioUrl) {
+        // 仅清理 blob URL；http(s) URL 是服务器地址，revoke 无意义且误伤
+        if (this.resultAudioUrl && this.resultAudioUrl.startsWith('blob:')) {
           URL.revokeObjectURL(this.resultAudioUrl);
-          this.resultAudioUrl = '';
         }
+        this.resultAudioUrl = '';
       },
-      
-      generateAudioFilename() {
+
+      generateAudioFilename(url) {
         const now = new Date();
-        const dateStr = now.getFullYear().toString() + 
-                       (now.getMonth() + 1).toString().padStart(2, '0') + 
+        const dateStr = now.getFullYear().toString() +
+                       (now.getMonth() + 1).toString().padStart(2, '0') +
                        now.getDate().toString().padStart(2, '0');
-        const timeStr = now.getHours().toString().padStart(2, '0') + 
+        const timeStr = now.getHours().toString().padStart(2, '0') +
                        now.getMinutes().toString().padStart(2, '0');
-        return `audio_${dateStr}_${timeStr}.wav`;
+        const ext = /\.(mp3|wav|aac|ogg|m4a)(\?|$)/i.exec(url || '')?.[1] || 'mp3';
+        return `audio_${dateStr}_${timeStr}.${ext}`;
       },
 
       async downloadAudio(url) {
         if (!url) return;
-        const filename = this.generateAudioFilename();
+        const filename = this.generateAudioFilename(url);
         try {
           await downloadWithAuth(url, filename);
         } catch (e) {
@@ -251,75 +322,118 @@
     },
     template: `
       <div class="form">
+        <!-- 合成模式切换 -->
+        <div class="field">
+          <div style="display: flex; gap: 8px;">
+            <button class="btn" :style="engine === 'voice_library' ? '' : 'background: transparent; color: var(--text); border: 1px solid var(--border);'"
+              style="flex: 1;" @click="engine = 'voice_library'">{{ $t('tts_mode_voice_library') }}</button>
+            <button class="btn" :style="engine === 'clone' ? '' : 'background: transparent; color: var(--text); border: 1px solid var(--border);'"
+              style="flex: 1;" @click="engine = 'clone'">{{ $t('tts_mode_clone') }}</button>
+          </div>
+          <div class="muted" style="margin-top: 6px;">
+            {{ engine === 'voice_library' ? $t('tts_mode_voice_library_tip') : $t('tts_mode_clone_tip') }}
+          </div>
+        </div>
+
         <div class="field">
           <label class="label">{{ $t('generate_text') }} <span style="color: red;">*</span></label>
           <textarea class="input" v-model="text" :placeholder="$t('enter_text_to_speech')" rows="4"></textarea>
-        </div>
-
-        <div class="field">
-          <label class="label">{{ $t('reference_audio') }}（{{ $t('optional') }}）</label>
-          <input type="file" @change="onRefAudioFile" accept="audio/*" class="input" :disabled="loading">
-          <div class="muted" style="margin-top: 4px;">{{ $t('audio_cloning_tip') }}（{{ $t('max_20_seconds') }}）</div>
-        </div>
-
-        <div class="field">
-          <label class="label">{{ $t('emotion_control_method') }}</label>
-          <select class="input" v-model="emoControlMethod">
-            <option v-for="opt in emoControlOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
-        </div>
-
-        <div class="field" v-if="emoControlMethod === 1">
-          <label class="label">情感参考音频</label>
-          <div style="margin-bottom: 8px;">
-            <label style="display: inline-flex; align-items: center; margin-right: 16px; cursor: pointer;">
-              <input type="radio" v-model="emoRefType" value="file" style="margin-right: 4px;" :disabled="loading">
-              <span>{{ $t('upload_audio_file') }}</span>
-            </label>
-            <label style="display: inline-flex; align-items: center; cursor: pointer;">
-              <input type="radio" v-model="emoRefType" value="video_url" style="margin-right: 4px;" :disabled="loading">
-              <span>{{ $t('video_link') }}</span>
-            </label>
+          <div v-if="engine === 'voice_library'" class="muted" style="margin-top: 4px;">
+            {{ text.trim().length }} / {{ maxTextLength }} {{ textTooLong ? '· ' + $t('tts_text_too_long') : '' }}
           </div>
-          <input v-if="emoRefType === 'file'" type="file" @change="onEmoRefAudioFile" accept="audio/*" class="input" :disabled="loading">
-          <input v-if="emoRefType === 'video_url'" type="text" v-model="emoRefVideoUrl" :placeholder="$t('enter_video_url')" class="input" :disabled="loading">
-          <div class="muted" style="margin-top: 4px;" v-if="emoRefType === 'file'">{{ $t('emotion_reference_audio') }}</div>
-          <div class="muted" style="margin-top: 4px;" v-if="emoRefType === 'video_url'">{{ $t('extract_audio_auto') }}</div>
         </div>
 
-        <div class="field" v-if="emoControlMethod === 2">
-          <label class="label">{{ $t('emotion_vector_control') }}</label>
-          <div style="margin-bottom: 16px;">
-            <div v-for="(label, idx) in emoVecLabels" :key="idx" style="margin-bottom: 12px;">
-              <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                <span style="font-size: 14px;">{{ label }}</span>
-                <span style="font-size: 14px; color: var(--primary);">{{ emoVec[idx].toFixed(2) }}</span>
-              </div>
-              <input type="range" v-model.number="emoVec[idx]" min="0" max="1.5" step="0.01" style="width: 100%;" />
+        <!-- ============ 音色库（火山快速合成）模式 ============ -->
+        <template v-if="engine === 'voice_library'">
+          <div class="field">
+            <label class="label">{{ $t('tts_select_voice') }} <span style="color: red;">*</span></label>
+            <voice-picker v-model="voiceId" :loading="loading" @voice-selected="onVoiceSelected"></voice-picker>
+          </div>
+
+          <div class="field">
+            <label class="label">{{ $t('tts_speed_ratio') }} ({{ speedRatio }}x)</label>
+            <input type="range" v-model.number="speedRatio" min="0.5" max="2" step="0.1" style="width: 100%;" />
+          </div>
+
+          <div class="field">
+            <button class="btn" @click="submit" :disabled="!canSubmit || textTooLong">
+              {{ loading ? $t('generating') : $t('start_generating') }}
+            </button>
+            <div v-if="text.trim() && voiceId" class="muted" style="margin-top: 6px;">
+              <template v-if="estimatedPower > 0">{{ $t('tts_estimated_cost', { power: estimatedPower }) }}</template>
+              <template v-else>{{ $t('tts_cost_unavailable') }}</template>
             </div>
           </div>
-          <div class="muted" style="margin-top: 8px;">
-            {{ $t('emotion_sum') }}: <span :style="{color: emoVecValid ? 'var(--success)' : 'var(--danger)', fontWeight: 'bold'}">{{ emoVecSum.toFixed(2) }}</span> / 1.5
-            <span v-if="!emoVecValid" style="color: var(--danger); margin-left: 8px;">{{ $t('emotion_exceeded') }}</span>
+        </template>
+
+        <!-- ============ 参考音频克隆（IndexTTS，原有表单） ============ -->
+        <template v-else>
+          <div class="field">
+            <label class="label">{{ $t('reference_audio') }}（{{ $t('optional') }}）</label>
+            <input type="file" @change="onRefAudioFile" accept="audio/*" class="input" :disabled="loading">
+            <div class="muted" style="margin-top: 4px;">{{ $t('audio_cloning_tip') }}（{{ $t('max_20_seconds') }}）</div>
           </div>
-        </div>
 
-        <div class="field" v-if="emoControlMethod === 3">
-          <label class="label">{{ $t('description') }}</label>
-          <input class="input" v-model="emoText" :placeholder="$t('emotion_description_text')" />
-        </div>
+          <div class="field">
+            <label class="label">{{ $t('emotion_control_method') }}</label>
+            <select class="input" v-model="emoControlMethod">
+              <option v-for="opt in emoControlOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
 
-        <div class="field" v-if="emoControlMethod === 1">
-          <label class="label">{{ $t('emotion_weight') }} ({{ emoWeight }})</label>
-          <input type="range" v-model.number="emoWeight" min="0" max="1.6" step="0.1" style="width: 100%;" />
-          <div class="muted" style="margin-top: 4px;">{{ $t('emotion_strength') }}</div>
-        </div>
+          <div class="field" v-if="emoControlMethod === 1">
+            <label class="label">情感参考音频</label>
+            <div style="margin-bottom: 8px;">
+              <label style="display: inline-flex; align-items: center; margin-right: 16px; cursor: pointer;">
+                <input type="radio" v-model="emoRefType" value="file" style="margin-right: 4px;" :disabled="loading">
+                <span>{{ $t('upload_audio_file') }}</span>
+              </label>
+              <label style="display: inline-flex; align-items: center; cursor: pointer;">
+                <input type="radio" v-model="emoRefType" value="video_url" style="margin-right: 4px;" :disabled="loading">
+                <span>{{ $t('video_link') }}</span>
+              </label>
+            </div>
+            <input v-if="emoRefType === 'file'" type="file" @change="onEmoRefAudioFile" accept="audio/*" class="input" :disabled="loading">
+            <input v-if="emoRefType === 'video_url'" type="text" v-model="emoRefVideoUrl" :placeholder="$t('enter_video_url')" class="input" :disabled="loading">
+            <div class="muted" style="margin-top: 4px;" v-if="emoRefType === 'file'">{{ $t('emotion_reference_audio') }}</div>
+            <div class="muted" style="margin-top: 4px;" v-if="emoRefType === 'video_url'">{{ $t('extract_audio_auto') }}</div>
+          </div>
 
-        <div class="field">
-          <button class="btn" @click="submit" :disabled="!canSubmit">
-            {{ loading ? $t('generating') : $t('start_generating') }}
-          </button>
-        </div>
+          <div class="field" v-if="emoControlMethod === 2">
+            <label class="label">{{ $t('emotion_vector_control') }}</label>
+            <div style="margin-bottom: 16px;">
+              <div v-for="(label, idx) in emoVecLabels" :key="idx" style="margin-bottom: 12px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                  <span style="font-size: 14px;">{{ label }}</span>
+                  <span style="font-size: 14px; color: var(--primary);">{{ emoVec[idx].toFixed(2) }}</span>
+                </div>
+                <input type="range" v-model.number="emoVec[idx]" min="0" max="1.5" step="0.01" style="width: 100%;" />
+              </div>
+            </div>
+            <div class="muted" style="margin-top: 8px;">
+              {{ $t('emotion_sum') }}: <span :style="{color: emoVecValid ? 'var(--success)' : 'var(--danger)', fontWeight: 'bold'}">{{ emoVecSum.toFixed(2) }}</span> / 1.5
+              <span v-if="!emoVecValid" style="color: var(--danger); margin-left: 8px;">{{ $t('emotion_exceeded') }}</span>
+            </div>
+          </div>
+
+          <div class="field" v-if="emoControlMethod === 3">
+            <label class="label">{{ $t('description') }}</label>
+            <input class="input" v-model="emoText" :placeholder="$t('emotion_description_text')" />
+          </div>
+
+          <div class="field" v-if="emoControlMethod === 1">
+            <label class="label">{{ $t('emotion_weight') }} ({{ emoWeight }})</label>
+            <input type="range" v-model.number="emoWeight" min="0" max="1.6" step="0.1" style="width: 100%;" />
+            <div class="muted" style="margin-top: 4px;">{{ $t('emotion_strength') }}</div>
+          </div>
+
+          <div class="field">
+            <button class="btn" @click="submit" :disabled="!canSubmit">
+              {{ loading ? $t('generating') : $t('start_generating') }}
+            </button>
+            <div class="muted" style="margin-top: 6px;">{{ $t('tts_mode_clone_free') }}</div>
+          </div>
+        </template>
 
         <div v-if="statusText" class="status" :class="{'success': result, 'danger': status==='FAILED'}">
           {{ statusText }}

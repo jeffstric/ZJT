@@ -759,6 +759,17 @@
   "dialogue_video_input_port_title": "视频输入（连接视频节点作为情感参考）",
   "dialogue_output_port_title": "输出",
   "tts_login_required": "请先登录后再使用语音生成功能",
+  "tts_engine_label": "合成引擎",
+  "tts_engine_voice_library": "音色库合成（快速）",
+  "tts_engine_clone": "参考音频克隆（免费）",
+  "tts_voice_label": "选择音色",
+  "tts_voice_placeholder": "请选择音色",
+  "tts_voice_loading": "加载中...",
+  "tts_voice_load_failed": "音色库加载失败",
+  "tts_voice_required": "请先选择音色",
+  "tts_speed_label": "语速",
+  "tts_estimated_cost": "预计消耗 {power} 算力",
+  "tts_preview_failed": "试听失败",
   "tts_generating": "生成中...",
   "tts_generating_audio": "正在生成音频...",
   "tts_generate_success": "生成成功！",
@@ -921,4 +932,3 @@
   "toast_ratio_required": "请选择画幅比例",
   "toast_operation_failed": "操作失败，请稍后重试"
 }
-
