@@ -4189,7 +4189,7 @@ MCP_TOOLS = [
                 },
                 "style_prompt": {
                     "type": "string",
-                    "description": "自定义风格提示词（可选），不填则根据角色设定自动生成，强调平静、自然的语气"
+                    "description": "自定义音色描述（可选，建议按以下规范提供）。描述会直接传给 VoxCPM2 声音设计模型，需 60~100 字并依次包含五要素：①性别+年龄段（含地域口音，如有设定）②音色质感（音高/沙哑/清亮等）③个性气质 ④语速与说话方式 ⑤以'录音干净清晰，像在耳边近距离说话'收尾；语气保持平静自然（参考音频用于声音克隆）。不填则按同一规范根据角色设定自动生成"
                 },
                 "text": {
                     "type": "string",
@@ -4211,7 +4211,7 @@ MCP_TOOLS = [
                 },
                 "style_prompt": {
                     "type": "string",
-                    "description": "声音风格提示词（可选），例如：自然、平静、年轻女性声音、语速适中。不填则使用默认自然声音"
+                    "description": "音色描述（可选）。建议写 60~100 字丰富描述：性别+年龄段（含口音，如有）、音色质感、个性气质、语速与说话方式，并以'录音干净清晰，像在耳边近距离说话'收尾。过短的描述会导致音色不稳定。不填则使用默认自然声音"
                 }
             },
             "required": ["text"]
@@ -4479,7 +4479,8 @@ def _create_reference_audio_task(
 
     final_style_prompt = (
         style_prompt
-        or '声音自然清晰，语气平稳，语速适中，适合数字人口播'
+        or '一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，'
+        '录音干净清晰，像在耳边近距离说话，适合数字人口播'
     )
     final_text = (text or '').strip()
     if not final_text:
@@ -4562,7 +4563,7 @@ def generate_character_reference_audio(user_id: str, world_id: str, auth_token: 
         world_id: 世界ID（必填）
         auth_token: 认证令牌（必填）
         character_name: 角色名称（必填）
-        style_prompt: 自定义风格提示词（可选），不填则根据角色设定自动生成
+        style_prompt: 自定义音色描述（可选），建议 60~100 字并覆盖性别年龄/口音/音色质感/个性气质/语速/录音质感五要素；不填则按同一规范根据角色设定自动生成
         text: 自定义文本内容（可选），不填则根据角色设定自动生成
 
     Returns:
