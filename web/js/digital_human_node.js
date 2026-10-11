@@ -402,10 +402,7 @@
               appendVideoResolutionToForm(form, getDigitalHumanModelKey());
             }
 
-            var res = await fetch('/api/ai-app-run-image', {
-              method: 'POST',
-              body: form
-            });
+            var res = await authPostForm('/api/ai-app-run-image', form);
 
             var data = {};
             try {
@@ -425,7 +422,7 @@
             }
 
             if (!res.ok || !data.project_ids || data.project_ids.length === 0) {
-              throw new Error(_formatApiDetail(data.detail) || data.message || ('提交任务失败（HTTP ' + res.status + '）'));
+              throw new Error(_formatApiDetail(data.detail) || data.message || extractApiErrorMessage(data, res) || ('提交任务失败（HTTP ' + res.status + '）'));
             }
 
             var projectIds = data.project_ids;

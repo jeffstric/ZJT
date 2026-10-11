@@ -253,10 +253,7 @@ async function generateShotFrameImage(nodeId, node){
         form.append('auth_token', authToken);
       }
 
-      res = await fetch('/api/text-to-image', {
-        method: 'POST',
-        body: form
-      });
+      res = await authPostForm('/api/text-to-image', form);
     } else {
       // 有参考图，使用普通图片编辑API（使用用户所选模型）
       // 5.5. 根据模型限制参考图数量
@@ -295,15 +292,12 @@ async function generateShotFrameImage(nodeId, node){
         form.append('auth_token', authToken);
       }
 
-      res = await fetch('/api/image-edit', {
-        method: 'POST',
-        body: form
-      });
+      res = await authPostForm('/api/image-edit', form);
     }
-    
+
     const data = await res.json();
     if(!data.project_ids || data.project_ids.length === 0){
-      throw new Error(data.detail || data.message || '提交任务失败');
+      throw new Error(extractApiErrorMessage(data, res));
     }
     
     // 7. 保存 project_ids 并立即创建图片节点

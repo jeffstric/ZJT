@@ -84,6 +84,19 @@
   - `workflow.js`：`GET /api/computing-power-config`（驱动状态，TaskConfig 主路径与回退路径共 2 处）裸 `fetch` 无头，401 导致驱动状态/模型选项加载失败（e2e `test_node_operations.py` 模型/时长选项为空）。已补 `Authorization: Bearer`（`getAuthToken()`）。
   - `events.js`：`GET /api/config/upload`（上传大小配置）裸 `fetch` 无头。已补 `Authorization: Bearer`（`getAuthToken()`）。
 
+### 视频工作流生图/生视频提交端补齐（2026-10-11，宫格生图 401 事故）
+
+用户宫格生图一直提示"提交任务失败"的根因：`nodes.js` / `script_node.js` 等的提交请求是裸 `fetch`（`appendAuthToForm` 只把 `auth_token` 放 FormData，装饰器不读 body），完全依赖 cookie 翻译；cookie 会话失效（localStorage token 仍有效、页面看似登录态）即 401，而 401 响应体无 `detail`/`message` 字段，前端兜底文案退化为"提交任务失败"。
+
+- `api.js` 新增统一封装并导出：
+  - `authPostForm(url, form)`：带 `Authorization: Bearer <localStorage token>` 头 POST FormData（token 不拼 URL，遵守 XSS/凭据红线）；
+  - `extractApiErrorMessage(data, res)`：优先 `detail`/`message`，401 时返回"登录已过期，请保存当前内容后重新登录"。
+- 9 个文件 18 处"提交任务"裸 `fetch` 全部改走 `authPostForm`（宫格生图、分镜图、全景图、运镜控制、图片节点、镜头组视频、分镜视频、数字人）：
+  - `/api/image-edit`、`/api/text-to-image`：`nodes.js`（宫格 + 镜头组视频）、`script_node.js`（3 处宫格流程）、`shot_frame_generator.js`（2 处）、`camera_control_node.js`、`panorama_node.js`、`workflow.js`（图片节点）；
+  - `/api/ai-app-run-image`、`/api/ai-app-run`：`api.js`（2 处）、`shot_frame_video_generator.js`（3 处）、`nodes.js`（3 处镜头组视频）、`digital_human_node.js`。
+- 后端 `perseids_server/utils/auth_identity.py`：401（missing/invalid token）与 403（user_mismatch）响应体补 `detail` 字段（"登录已过期/失效，请保存当前内容后重新登录"），前端按 `data.detail` 展示，旧前端新后端组合下也不再显示含糊的"提交任务失败"。
+- 用户侧恢复方式：重新登录一次重置 cookie 即可。
+
 ### 服务端内部回环调用适配（script_writer Agent 工具）
 
 `script_writer_core/mcp_tool.py` 的 Agent 工具用 httpx 回环调用本服务受保护端点，原实现只把 `auth_token` 放 form 字段，而 `require_permission` 只认 header/query，导致鉴权真实现上线后稳定 401（典型表现：角色形象设计反复报 "401 Unauthorized" 并向用户提问）。已在 4 处 `httpx.post` 补 `Authorization: Bearer <token>` 头（token 为空则不加头，保持原行为；红线禁止 token 拼 URL，不走 query 兜底）：
@@ -115,7 +128,8 @@
 
 ## 相关测试
 
-- `tests/api/test_require_permission_auth.py`：装饰器真实现（401/注入/query 兜底/裸 token 兼容）+ 属主断言辅助。
+- `tests/api/test_require_permission_auth.py`：装饰器真实现（401/注入/query 兜底/裸 token 兼容）+ 属主断言辅助 + 401 响应体 `detail` 字段断言（2026-10-11）。
+- `web/tests/api.test.js`：`authPostForm`（Bearer 头/空 token 无头）与 `extractApiErrorMessage`（detail 优先/401 重新登录引导）单测（2026-10-11）。
 - `tests/api/test_script_writer_auth.py`：verify_auth_token 新语义（空 token 拒绝、属主不符拒绝、DB 故障 502）。
 - e2e（`auto_test/e2e/conftest.py`）自带标准 `Authorization: Bearer`，兼容。
 - e2e `test_auth.py::test_logout_success`（2026-09-15 修正）：单会话策略下 `test_login_success` 的次账号登录会顶掉 session 级 `secondary_auth_token`，故登出用例改为用例内新登录拿 fresh token 再登出。

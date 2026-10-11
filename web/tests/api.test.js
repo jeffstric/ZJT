@@ -87,3 +87,67 @@ describe('appendAuthToForm', () => {
     globalThis.getAuthToken = origGetAuthToken;
   });
 });
+
+// ── authPostForm ──
+describe('authPostForm', () => {
+  test('携带 Bearer Authorization 头 POST FormData', async () => {
+    const origFetch = globalThis.fetch;
+    const fetchCalls = [];
+    globalThis.fetch = (url, opts) => {
+      fetchCalls.push({ url, opts });
+      return Promise.resolve({ ok: true });
+    };
+    const form = new FormData();
+    await api.authPostForm('/api/image-edit', form);
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0].url).toBe('/api/image-edit');
+    expect(fetchCalls[0].opts.method).toBe('POST');
+    expect(fetchCalls[0].opts.headers['Authorization']).toBe('Bearer test_auth_token');
+    expect(fetchCalls[0].opts.body).toBe(form);
+    globalThis.fetch = origFetch;
+  });
+
+  test('无 auth_token 时不带 Authorization 头（仍可走 cookie 会话）', async () => {
+    const origGetAuthToken = globalThis.getAuthToken;
+    const origFetch = globalThis.fetch;
+    globalThis.getAuthToken = () => '';
+    const fetchCalls = [];
+    globalThis.fetch = (url, opts) => {
+      fetchCalls.push({ url, opts });
+      return Promise.resolve({ ok: true });
+    };
+    await api.authPostForm('/api/text-to-image', new FormData());
+    expect(fetchCalls[0].opts.headers).toEqual({});
+    globalThis.fetch = origFetch;
+    globalThis.getAuthToken = origGetAuthToken;
+  });
+});
+
+// ── extractApiErrorMessage ──
+describe('extractApiErrorMessage', () => {
+  test('优先返回字符串型 detail', () => {
+    expect(api.extractApiErrorMessage({ detail: '算力不足' }, { status: 400 })).toBe('算力不足');
+  });
+
+  test('其次返回字符串型 message', () => {
+    expect(api.extractApiErrorMessage({ message: '配额超限' }, { status: 429 })).toBe('配额超限');
+  });
+
+  test('401 且无 detail/message 时返回重新登录引导而非"提交任务失败"', () => {
+    const msg = api.extractApiErrorMessage(
+      { success: false, error_code: 'missing_auth_token' },
+      { status: 401 }
+    );
+    expect(msg).toContain('重新登录');
+    expect(msg).not.toBe('提交任务失败');
+  });
+
+  test('非 401 且无 detail/message 时保留原兜底文案', () => {
+    expect(api.extractApiErrorMessage({}, { status: 500 })).toBe('提交任务失败');
+  });
+
+  test('data 为空对象/无 res 时安全返回兜底文案', () => {
+    expect(api.extractApiErrorMessage({}, undefined)).toBe('提交任务失败');
+    expect(api.extractApiErrorMessage(undefined, undefined)).toBe('提交任务失败');
+  });
+});

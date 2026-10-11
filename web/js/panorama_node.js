@@ -1146,14 +1146,14 @@
           updateStatus(tr('panorama_submitting', '正在提交任务（{count}张，预计消耗 {power} 算力）...', { count: drawCount, power: totalPower || '?' }));
 
           try {
-            var res = await fetch(refImageUrl ? '/api/image-edit' : '/api/text-to-image', { method: 'POST', body: form });
+            var res = await authPostForm(refImageUrl ? '/api/image-edit' : '/api/text-to-image', form);
             if (!res.ok) {
               var errData = await res.json().catch(function() { return {}; });
-              throw new Error(errData.detail || errData.message || 'HTTP ' + res.status);
+              throw new Error(extractApiErrorMessage(errData, res));
             }
             var data = await res.json();
             if (!data.project_ids || data.project_ids.length === 0) {
-              throw new Error(data.detail || data.message || tr('panorama_submit_failed', '提交任务失败'));
+              throw new Error(extractApiErrorMessage(data, res) || tr('panorama_submit_failed', '提交任务失败'));
             }
             var projectIds = data.project_ids;
             node.data.project_ids = projectIds;

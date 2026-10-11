@@ -49,6 +49,19 @@ def test_invalid_token_rejected(monkeypatch):
     assert resp.json()['error_code'] == 'invalid_auth_token'
 
 
+def test_401_body_carries_detail_for_frontend(monkeypatch):
+    """401 响应体须带 detail：前端按 data.detail 展示文案，
+    缺失时会退化为含糊的"提交任务失败"（宫格生图 401 事故）。"""
+    client = _client(monkeypatch)
+    resp = client.get('/protected')
+    assert resp.status_code == 401
+    assert '重新登录' in resp.json()['detail']
+
+    resp = client.get('/protected', headers={'Authorization': 'Bearer wrong-token'})
+    assert resp.status_code == 401
+    assert '重新登录' in resp.json()['detail']
+
+
 def test_valid_token_injects_user_id(monkeypatch):
     resp = _client(monkeypatch).get(
         '/protected', headers={'Authorization': 'Bearer valid-token'}
