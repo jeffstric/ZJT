@@ -652,12 +652,15 @@ export function setAssets({ characters = [], locations = [], props = [] }) {
 }
 
 // 跨故事板 task_id 记忆兜底：读取 localStorage 中上一次的选择，校验仍存在于当前可用模型列表后才采用；
-// 否则优先采用指定模型，再回退到列表第一个，并把回退值同步写回 localStorage 以固化默认。
+// 无记忆（新用户/新浏览器）时优先取目录「性价比」档（track='value'，由后端 annotate_task_models 按
+// config/model_catalog.py 标注），其次指定 short_key，再回退列表第一项，并把回退值写回 localStorage 固化。
+// 只影响无记忆用户：已有 localStorage 记忆的用户沿用原选择，不做重置。
 function pickRememberedTaskId(models, storageKey, preferredModelKey = null) {
-    const preferredModel = preferredModelKey
-        ? models.find(m => m.short_key === preferredModelKey)
-            || models.find(m => m.key === preferredModelKey)
-        : null;
+    const preferredModel = models.find(m => m.track === 'value')
+        || (preferredModelKey
+            ? models.find(m => m.short_key === preferredModelKey)
+                || models.find(m => m.key === preferredModelKey)
+            : null);
     const fallback = preferredModel?.task_id ?? models[0].task_id;
     let remembered = null;
     try {

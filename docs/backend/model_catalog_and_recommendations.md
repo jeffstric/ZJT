@@ -29,6 +29,8 @@
 
 2026-08 起，`GPT_IMAGE_2_EDIT`（task_id=26）的 `sort_order` 调为 5，成为 IMAGE_EDIT / TEXT_TO_IMAGE 类目列表首项（`config/unified_config.py`），各端"取列表第一项"的默认图片编辑/文生图模型随之变为 GPT Image 2；故事板页图片编辑槽位的 localStorage 记忆键同步升级为 `storyboard_lastSelectedImageEditTaskId_v2`，旧记忆一次性作废。
 
+故事板页（storyboard.html）五类生成槽位（文生图/图片编辑/文生视频/图生视频/参考生视频）2026-10 起无 localStorage 记忆（新用户）时的默认统一取该场景性价比档：`web/js/storyboard/state.js` 的 `pickRememberedTaskId` 优先选列表中 `track === 'value'` 的模型（`GET /api/storyboard/models` 每项的 `track` 由 `annotate_task_models` 标注，联动 `get_scene_recos_merged()` 热更新），再回退槽位显式 preferred（均为 value 档），最后列表第一项。此前图生视频槽位无记忆默认取列表第一项，因 LTX2.3 `sort_order=30` 分类内最小而落选 LTX2.3（文生视频落到 Grok）。已有记忆用户沿用原选择，不重置。
+
 ## 默认解析
 
 ```text
