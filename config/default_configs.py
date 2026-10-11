@@ -449,19 +449,11 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     },
 
     # ==================== 火山引擎语音合成（豆包语音） ====================
-    # 与方舟 volcengine.api_key 不是同一套凭证，见 docs/audio/volcengine_tts.md
+    # 新版控制台单 API Key 鉴权（X-Api-Key），见 docs/audio/volcengine_tts.md
     {
-        'key': 'volcengine_tts.app_key',
+        'key': 'volcengine_tts.api_key',
         'value_type': 'string',
-        'description': '火山引擎语音合成 App ID（豆包语音控制台，TTS 快速合成+音色库）',
-        'editable': True,
-        'is_sensitive': True,
-        'quick_config': True
-    },
-    {
-        'key': 'volcengine_tts.access_key',
-        'value_type': 'string',
-        'description': '火山引擎语音合成 Access Token（豆包语音控制台）',
+        'description': '火山引擎语音合成 API Key（豆包语音控制台，TTS 快速合成+音色库）',
         'editable': True,
         'is_sensitive': True,
         'quick_config': True

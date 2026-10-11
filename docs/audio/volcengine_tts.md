@@ -16,21 +16,31 @@
 
 ## 二、开通与配置（部署前置）
 
-1. 火山控制台 → **语音技术** → 开通「语音合成大模型」→ 应用管理创建应用。
+1. 火山控制台 → **语音技术**（豆包语音，新版控制台
+   <https://console.volcengine.com/speech/new>）→ **API Key 管理** 创建 API Key
+   （⚠️ 密钥本体是 UUID 形式的字符串，`api-key-xxx` 是 key 名称，别复制错）。
    ⚠️ 这是**豆包语音控制台**的凭证，与方舟 `volcengine.api_key` **不是同一套**。
-2. 在 `config_dev.yml` / `config_prod.yml` 填写：
+2. **必须开通并授权资源**：在豆包语音控制台开通「**语音合成大模型**」服务，
+   并确保创建的 API Key 被授权访问该服务（否则调用返回
+   `403 requested resource not granted`，本服务的错误信息会原样透传）。
+3. 在 `config_dev.yml` / `config_prod.yml` 填写（或走管理后台「快速配置-多媒体」）：
 
 ```yaml
 volcengine_tts:
-  app_key: ""       # 豆包语音控制台 App ID
-  access_key: ""    # 豆包语音控制台 Access Token
+  api_key: ""       # 豆包语音控制台 API Key（UUID 密钥本体）
   # resource_id: "volc.service_type.10029"   # 默认即可
   # power_tiers: [[50, 1], [200, 4], [500, 10], [1000, 20], [2000, 40]]  # 可选热更新
 ```
 
-3. 未配置时 `/api/tts/synthesize` 返回友好错误（提示填配置），不影响其他功能。
-4. 音色需在控制台「音色列表」中可用且**免费**（通用音色如 `BV700_streaming`
+4. 未配置时 `/api/tts/synthesize` 返回友好错误（提示填配置），不影响其他功能。
+5. 音色需在控制台「音色列表」中可用且**免费**（通用音色如 `BV700_streaming`
    免费可直接用；精品音色需购买授权，见下文"音色维护"）。
+
+### 鉴权说明（2026-10 实测）
+
+新版控制台为**单 API Key 鉴权**：`X-Api-Key: {uuid}` +
+`X-Api-Resource-Id: volc.service_type.10029`。旧版 App ID + Access Token 双头
+（`X-Api-App-Key`/`X-Api-Access-Key`）保留兼容——`api_key` 未配置时回退旧双头。
 
 ## 三、计费
 

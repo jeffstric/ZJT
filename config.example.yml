@@ -259,12 +259,11 @@ tts:
   upload_url: "http://47.98.190.124/result_audio/"
 
 # 火山引擎（豆包语音）大模型语音合成 - 快速合成 + 音色库
-# 鉴权是豆包语音控制台（语音技术）的凭证，与方舟 volcengine.api_key 不是同一套，
-# 需在火山控制台开通「语音合成大模型」并在应用管理创建应用获取。
+# 新版控制台（console.volcengine.com/speech/new）为单 API Key 鉴权，
+# 在「API Key 管理」页创建（密钥本体为 UUID 形式）；需开通「语音合成大模型」服务。
 # 未配置（留空）时 /api/tts/* 合成接口返回友好错误，IndexTTS 链路不受影响。
 volcengine_tts:
-  app_key: ""       # 豆包语音控制台 App ID
-  access_key: ""    # 豆包语音控制台 Access Token
+  api_key: ""       # 豆包语音控制台 API Key（密钥本体，非 key 名称）
   # resource_id: "volc.service_type.10029"  # 大模型语音合成资源 ID（默认即可）
   # power_tiers: [[50, 1], [200, 4], [500, 10], [1000, 20], [2000, 40]]  # 字符档位算力计价（热更新可覆盖）
 

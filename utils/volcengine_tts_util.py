@@ -134,14 +134,41 @@ class V3ChunkDecoder:
 
 
 def get_volcengine_tts_config() -> Dict[str, str]:
-    """读取火山 TTS 配置（DB 优先 YAML 兜底，支持热更换 key）。"""
+    """读取火山 TTS 配置（DB 优先 YAML 兜底，支持热更换 key）。
+
+    新版控制台（console.volcengine.com/speech/new）为单 API Key 鉴权（X-Api-Key）；
+    旧版 App ID + Access Token 双头保留兼容。
+    """
     return {
+        "api_key": (get_dynamic_config_value("volcengine_tts", "api_key") or "").strip(),
         "app_key": (get_dynamic_config_value("volcengine_tts", "app_key") or "").strip(),
         "access_key": (get_dynamic_config_value("volcengine_tts", "access_key") or "").strip(),
         "resource_id": (
             get_dynamic_config_value("volcengine_tts", "resource_id")
             or VolcengineTtsConstants.RESOURCE_ID
         ),
+    }
+
+
+def _is_tts_configured(config: Dict[str, str]) -> bool:
+    if config["api_key"]:
+        return True
+    return bool(config["app_key"] and config["access_key"])
+
+
+def _build_auth_headers(config: Dict[str, str]) -> Dict[str, str]:
+    """新版单 API Key 优先；否则回退旧版 App ID + Access Token 双头。"""
+    if config["api_key"]:
+        return {
+            "X-Api-Key": config["api_key"],
+            "X-Api-Resource-Id": config["resource_id"],
+            "Content-Type": "application/json",
+        }
+    return {
+        "X-Api-App-Key": config["app_key"],
+        "X-Api-Access-Key": config["access_key"],
+        "X-Api-Resource-Id": config["resource_id"],
+        "Content-Type": "application/json",
     }
 
 
@@ -167,10 +194,10 @@ async def synthesize_speech(
         - 失败：audio_bytes 为空 bytes，message 为错误信息
     """
     config = get_volcengine_tts_config()
-    if not config["app_key"] or not config["access_key"]:
+    if not _is_tts_configured(config):
         return False, b"", (
-            "火山语音合成未配置：请在配置文件 volcengine_tts 段填写豆包语音控制台的 "
-            "app_key 与 access_key（详见 docs/audio/volcengine_tts.md）"
+            "火山语音合成未配置：请在管理后台「快速配置-多媒体-火山引擎语音合成」填写"
+            "控制台 API Key（详见 docs/audio/volcengine_tts.md）"
         )
 
     if timeout is None:
@@ -191,12 +218,7 @@ async def synthesize_speech(
             "bitrate": VolcengineTtsConstants.DEFAULT_BITRATE,
         },
     }
-    headers = {
-        "X-Api-App-Key": config["app_key"],
-        "X-Api-Access-Key": config["access_key"],
-        "X-Api-Resource-Id": config["resource_id"],
-        "Content-Type": "application/json",
-    }
+    headers = _build_auth_headers(config)
     url = VolcengineTtsConstants.API_HOST + VolcengineTtsConstants.UNIDIRECTIONAL_PATH
 
     decoder = V3ChunkDecoder()

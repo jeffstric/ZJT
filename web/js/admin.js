@@ -256,7 +256,7 @@ const PROVIDER_DEFINITIONS = [
     },
     {
         // 火山引擎语音合成（豆包语音）：TTS 快速合成 + 音色库。
-        // 凭证与方舟（volcengine.api_key）不是同一套，见 docs/audio/volcengine_tts.md
+        // 新版控制台为单 API Key 鉴权（X-Api-Key），见 docs/audio/volcengine_tts.md
         id: 'huoshan_tts',
         nameKey: 'provider_huoshan_tts_name',
         descKey: 'provider_huoshan_tts_desc',
@@ -270,10 +270,9 @@ const PROVIDER_DEFINITIONS = [
         isOfficialAPI: false,
         impactsKey: 'provider_huoshan_tts_impacts',
         fields: [
-            { id: 'app_key', labelKey: 'field_app_key_label', type: 'text', placeholderKey: 'field_app_key_placeholder', required: true, helpTextKey: 'field_app_key_help_tts' },
-            { id: 'access_key', labelKey: 'field_access_key_label', type: 'text', placeholderKey: 'field_access_key_placeholder', required: true, helpTextKey: 'field_access_key_help_tts' }
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_huoshan_tts', required: true, helpTextKey: 'field_api_key_help_huoshan_tts' }
         ],
-        configKeyMap: { app_key: 'volcengine_tts.app_key', access_key: 'volcengine_tts.access_key' },
+        configKeyMap: { api_key: 'volcengine_tts.api_key' },
         testEndpoint: null
     },
     {

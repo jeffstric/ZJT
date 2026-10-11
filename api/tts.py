@@ -37,6 +37,7 @@ from perseids_server.utils.permission import require_permission
 from utils.audio_duration_util import probe_audio_duration
 from utils.media_mapping_util import register_uploaded_file_mapping
 from utils.volcengine_tts_util import (
+    _is_tts_configured,
     build_audio_filename,
     get_volcengine_tts_config,
     resolve_result_dir,
@@ -174,7 +175,7 @@ async def list_voices(
         'max_text_length': VolcengineTtsConstants.MAX_TEXT_LENGTH,
         'speed_min': VolcengineTtsConstants.SPEED_MIN,
         'speed_max': VolcengineTtsConstants.SPEED_MAX,
-        'configured': bool(get_volcengine_tts_config()['app_key']),
+        'configured': _is_tts_configured(get_volcengine_tts_config()),
     })
 
 
