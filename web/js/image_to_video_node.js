@@ -8,11 +8,16 @@
         return translated && translated !== key ? translated : fallback;
       };
 
-      // 从后端配置获取第一个视频模型作为默认值
+      // 从后端配置获取默认视频模型：优先目录「性价比」档（与剧本/分镜组节点一致），回退列表第一项
       let defaultVideoModel = 'wan22';
       if(window.TaskConfig && window.TaskConfig.isLoaded()) {
         const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
         if(options.length > 0) defaultVideoModel = options[0].value;
+        if(window.ModelCatalog && options.length > 0) {
+          const catalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+          const valueHit = window.ModelCatalog.findTaskByTrack(options, 'video.image_to_video', catalog, 'value');
+          if (valueHit && valueHit.value) defaultVideoModel = valueHit.value;
+        }
       }
       
       const node = {

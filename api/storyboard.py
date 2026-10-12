@@ -114,6 +114,7 @@ from services.storyboard_voiceover_bootstrap_service import (
 from services.storyboard_reference_prompt_service import build_reference_legend, reference_urls
 from services.storyboard_spatial import build_spatial_prompt_context
 from services.media_generation_preference_service import (
+    MediaGenerationErrorCode,
     MediaGenerationPreferenceError,
     MediaGenerationPreferenceService,
 )
@@ -134,11 +135,31 @@ ALLOWED_DIALOGUE_UPDATE_FIELDS = {
 VALID_ASSET_TYPES = ('first_frame', 'last_frame', 'video')
 
 
-def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
+def _runtime_default_profile_sync(media_type: str, mode: str) -> Dict[str, Any]:
+    """无持久化偏好时的运行时默认槽位（不落库）。
+
+    与 default_model 同口径（目录性价比档优先，回退 sort_order 第一），
+    仅用于冻结本次任务快照，不写 user_preferences。
+    """
+    config = MediaGenerationPreferenceService.default_model(media_type, mode)
+    if config is None:
+        raise MediaGenerationPreferenceError(
+            MediaGenerationErrorCode.MODEL_REQUIRED,
+            f"没有可用于 {mode} 的媒体模型",
+        )
+    return {
+        'schema_version': 1,
+        'task_id': int(config.id),
+        'model_key': config.key,
+        'model_name': config.name,
+    }
+
+
+def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Optional[Dict[str, Any]]]:
     config_json = storyboard.to_dict().get('config_json') or {}
     if not isinstance(config_json, dict):
         config_json = {}
-    result: Dict[str, Dict[str, Any]] = {}
+    result: Dict[str, Optional[Dict[str, Any]]] = {}
     config_updates: Dict[str, int] = {}
     for media_type, modes in (
         (MediaGenerationType.IMAGE, MediaGenerationMode.IMAGE_MODES),
@@ -156,14 +177,22 @@ def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
                 )
                 raw_task_id = config_json.get(legacy_field)
 
-            # 先读 media_pref（含 enable_face_mask 等扩展字段），再按 config_json 的 task_id 覆盖模型
-            pref_profile = MediaGenerationPreferenceService.get_profile(
-                storyboard.user_id,
-                storyboard.world_id,
-                MediaGenerationSurface.STORYBOARD_UI,
-                media_type,
-                mode,
-            )
+            # 读取不落库（initialize=False）：偏好表只存用户显式选择。
+            # 事故：默认 initialize=True 会在首次 GET 时把 default_model 解析结果
+            # 固化进 user_preferences（旧口径 sort_order 第一 = LTX2.3），从此
+            # 隐身模式/新浏览器都命中该记录，前端性价比档兜底（59009cf3）被短路。
+            try:
+                pref_profile = MediaGenerationPreferenceService.get_profile(
+                    storyboard.user_id,
+                    storyboard.world_id,
+                    MediaGenerationSurface.STORYBOARD_UI,
+                    media_type,
+                    mode,
+                    initialize=False,
+                )
+            except MediaGenerationPreferenceError:
+                # 有记录但模型已下线/失效：按无记录处理，不在此处重建落库
+                pref_profile = None
             profile = dict(pref_profile) if isinstance(pref_profile, dict) else None
             if raw_task_id not in (None, ""):
                 try:
@@ -195,14 +224,6 @@ def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
                 except MediaGenerationPreferenceError:
                     # config_json 中的 task_id 失效时回退 pref
                     pass
-            if profile is None:
-                profile = MediaGenerationPreferenceService.get_profile(
-                    storyboard.user_id,
-                    storyboard.world_id,
-                    MediaGenerationSurface.STORYBOARD_UI,
-                    media_type,
-                    mode,
-                )
             # config_json 级 enableFaceMask 兜底（偏好槽未写过时）
             if (
                 media_type == MediaGenerationType.VIDEO
@@ -213,7 +234,10 @@ def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
             ):
                 profile['enable_face_mask'] = bool(config_json.get('enableFaceMask'))
             result[MediaGenerationPreferenceService.slot_key(media_type, mode)] = profile
-            config_updates[field] = int(profile['task_id'])
+            # 无偏好且 config_json 也无值的槽位保持 None：不 patch、不落库，
+            # 由前端 localStorage/目录性价比档兜底，提交路径按运行时默认解析
+            if isinstance(profile, dict) and profile.get('task_id') is not None:
+                config_updates[field] = int(profile['task_id'])
     if config_updates:
         StoryboardModel.patch_config_json(int(storyboard.id), config_updates)
     return result
@@ -230,6 +254,9 @@ def _storyboard_generation_snapshots_sync(storyboard) -> Dict[str, Dict[str, Any
     snapshots: Dict[str, Dict[str, Any]] = {}
     for slot, profile in profiles.items():
         media_type, mode = slot.split('.', 1)
+        if not isinstance(profile, dict) or profile.get('task_id') in (None, ''):
+            # 无持久化偏好：按运行时默认（目录性价比档）冻结本次任务，不落库
+            profile = _runtime_default_profile_sync(media_type, mode)
         snapshot = MediaGenerationPreferenceService.build_snapshot(
             profile,
             MediaGenerationSurface.STORYBOARD_UI,
@@ -273,9 +300,11 @@ def _resolve_storyboard_generation_snapshot_sync(
         StoryboardModel.patch_config_json(int(storyboard.id), {field: profile['task_id']})
     else:
         profiles = _storyboard_media_preferences_sync(storyboard)
-        profile = dict(
-            profiles[MediaGenerationPreferenceService.slot_key(media_type, mode)] or {}
-        )
+        slot_profile = profiles[MediaGenerationPreferenceService.slot_key(media_type, mode)]
+        if not isinstance(slot_profile, dict) or slot_profile.get('task_id') in (None, ''):
+            # 无持久化偏好：按运行时默认（目录性价比档）解析，不落库
+            slot_profile = _runtime_default_profile_sync(media_type, mode)
+        profile = dict(slot_profile)
         # 合并本轮 profile_values（如 workflow_ratio），不覆盖已解析的 task_id
         for key, value in dict(profile_values or {}).items():
             if value in (None, ''):

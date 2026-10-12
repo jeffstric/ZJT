@@ -112,6 +112,18 @@ bootstrap 中实现优先级（仅首次无保存值时）：
 - `GET /api/storyboard/models` 图生视频项返回 `needs_face_mask`，前端不依赖 `TaskConfig`。
 - `GET /api/storyboard/models` 只返回驱动可用的生图/视频/数字人任务（`VideoDriverFactory.get_driver_availability()` 为 false 的不出现）。对话模型仍走 `/api/models`，只含已配置供应商。已保存但已不可用的 task_id 由 `resolveAvailableTaskId` 回落到性价比档或列表第一项。
 
+### 3.6 新用户默认取性价比档（2026-10）
+
+**背景**：图生视频分类按 `sort_order` 升序返回（`sort_order=30` 的 LTX2.3 是分类内最小的可见启用模型），而故事板各视频槽位无记忆时的默认回退是"列表第一项"——新注册用户首次进入故事板默认选中 LTX2.3（文生视频槽位同理落到 Grok），与目录推荐（`video.image_to_video` 性价比档 MiniMax H3）相悖。
+
+**修复**：`web/js/storyboard/state.js` 的 `pickRememberedTaskId` 无 localStorage 记忆时的默认回退改为优先取列表中 `track === 'value'` 的项（`track` 标注由后端 `annotate_task_models` 按 `config/model_catalog.py` 打在每个模型项上，且经 `get_scene_recos_merged()` 联动管理员热更新），再回退各槽位显式指定的 `preferredModelKey`（均为 value 档 canonical），最后列表第一项。适用于全部五个槽位（文生图/图片编辑/文生视频/图生视频/参考生视频），其中前两类与参考生视频的既有 preferred 本就是 value 档，行为不变。
+
+**恢复优先级（不变部分）**：state 当前值（仍可用）→ localStorage 上次选择（仍可用）→ 性价比档（`track='value'`）→ 槽位 `preferredModelKey` → 列表第一项。
+
+**存量用户**：沿用已有 localStorage 记忆（含曾被固化为 LTX2.3 的用户），**不做**存储键升级重置——区别于 2026-08 图片编辑槽位 `_v2` 那次一次性作废，本次仅影响无记忆的新用户/新浏览器。
+
+**同批联动（video_workflow.html）**：工作流页各视频节点（图生视频/分镜组/分镜帧创建路径与模式切换 populate）默认视频模型同样显式 `findTaskByTrack(..., 'value')` 优先，catalog 参数统一改传 `TaskConfig.getCatalog()`（后端真实目录，含管理员热更新；此前部分调用点传 null 回退前端 FALLBACK 副本）；多参考模式场景映射为 `video.reference_to_video`（默认 MiniMax H3 参考生视频）。营销智能体页（marketing_agent.html）默认链路（`modelForMediaSlot` / LLM `collapseLlmModels + findCollapsedByTrack('value')`）已按性价比档，无需改动。
+
 ## 4. 技术实现要点
 
 ### 后端（api/storyboard.py）

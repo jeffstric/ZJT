@@ -504,7 +504,8 @@
               firstVideoModelValue = tasks[0].value || tasks[0].short_key || tasks[0].key;
             }
             if (window.ModelCatalog) {
-              const valueHit = window.ModelCatalog.findTaskByTrack(tasks, 'video.image_to_video', null, 'value');
+              const scriptCatalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+              const valueHit = window.ModelCatalog.findTaskByTrack(tasks, 'video.image_to_video', scriptCatalog, 'value');
               if (valueHit && (valueHit.value || valueHit.short_key)) {
                 firstVideoModelValue = valueHit.value || valueHit.short_key;
               }

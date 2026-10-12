@@ -19,8 +19,14 @@
         }
         const videoOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
         if(videoOptions.length > 0) defaultVideoModel = videoOptions[0].value;
+        // 默认优先目录「性价比」档（与 populate 渲染路径一致）
+        if (window.ModelCatalog && videoOptions.length > 0) {
+          const catalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+          const valueHit = window.ModelCatalog.findTaskByTrack(videoOptions, 'video.image_to_video', catalog, 'value');
+          if (valueHit && valueHit.value) defaultVideoModel = valueHit.value;
+        }
       }
-      
+
       const groupName = shotGroupData.groupName || shotGroupData.group_name || shotGroupData.group_id || '幕';
       const resolvedVideoModel = getVideoModelFromData(shotGroupData) || defaultVideoModel;
       const node = {
@@ -383,7 +389,8 @@
             ? window.ModelCatalog.sceneForVideoImageMode(shotGroupMode)
             : 'video.image_to_video';
           if (window.ModelCatalog) {
-            const valueHit = window.ModelCatalog.findTaskByTrack(options, videoScene, null, 'value');
+            const initCatalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+            const valueHit = window.ModelCatalog.findTaskByTrack(options, videoScene, initCatalog, 'value');
             if (valueHit && !valueHit.disabled) firstShotGroupVideoModelValue = valueHit.value;
           }
           options.forEach(opt => {
@@ -539,6 +546,15 @@
             return modes.includes(mode);
           });
           if(filteredOptions.length > 0) firstValue = filteredOptions[0].value;
+          // 切换默认值优先目录「性价比」档（与初始渲染 populate 一致；multi_reference 场景为参考生 value 档）
+          if (window.ModelCatalog && filteredOptions.length > 0) {
+            const switchScene = (window.ModelCatalog.sceneForVideoImageMode)
+              ? window.ModelCatalog.sceneForVideoImageMode(mode)
+              : 'video.image_to_video';
+            const switchCatalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+            const valueHit = window.ModelCatalog.findTaskByTrack(filteredOptions, switchScene, switchCatalog, 'value');
+            if (valueHit && valueHit.value) firstValue = valueHit.value;
+          }
           filteredOptions.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
