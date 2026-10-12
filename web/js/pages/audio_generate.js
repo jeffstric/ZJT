@@ -404,7 +404,7 @@
         <template v-if="engine === 'voice_library'">
           <div class="field">
             <label class="label">{{ $t('tts_select_voice') }} <span style="color: red;">*</span></label>
-            <voice-picker v-model="voiceId" :loading="loading" @voice-selected="onVoiceSelected"></voice-picker>
+            <voice-picker v-model="voiceId" :loading="loading" @voice-selected="onVoiceSelected" @tiers-loaded="powerTiers = $event"></voice-picker>
           </div>
 
           <div class="field">
@@ -417,7 +417,9 @@
               {{ loading ? $t('generating') : $t('start_generating') }}
             </button>
             <div v-if="text.trim() && voiceId" class="muted" style="margin-top: 6px;">
-              <template v-if="estimatedPower > 0">{{ $t('tts_estimated_cost', { power: estimatedPower }) }}</template>
+              <template v-if="textTooLong">{{ $t('tts_text_too_long') }}</template>
+              <template v-else-if="estimatedPower > 0">{{ $t('tts_estimated_cost', { power: estimatedPower }) }}</template>
+              <template v-else-if="powerTiers.length === 0"></template>
               <template v-else>{{ $t('tts_cost_unavailable') }}</template>
             </div>
           </div>

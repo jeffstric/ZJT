@@ -44,7 +44,7 @@
       modelValue: { type: Number, default: null },
       loading: { type: Boolean, default: false },
     },
-    emits: ['update:modelValue'],
+    emits: ['update:modelValue', 'tiers-loaded'],
     data: function () {
       return {
         voices: [],
@@ -124,6 +124,8 @@
           this.powerTiers = data.power_tiers || [];
           this.maxTextLength = data.max_text_length || 2000;
           this.configured = !!data.configured;
+          // 计价档位上抛给父页面（预计消耗展示用，避免父组件重复请求）
+          this.$emit('tiers-loaded', this.powerTiers);
         } catch (e) {
           this.loadError = (e && e.message) || '音色库加载失败';
         } finally {
