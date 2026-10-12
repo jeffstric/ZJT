@@ -895,6 +895,8 @@
   "error_connection_failed": "连接失败，请重试",
   "error_orchestrator_timeout": "请求超时。剧本编排系统需要较长时间处理，请稍后重试",
   "error_send_message_failed": "发送消息失败",
+  "status_session_recreating": "会话不可用，正在新建会话...",
+  "error_session_recreate_failed": "会话重建失败，消息已放回输入框，请稍后重试",
   "error_connection_lost": "连接中断，已尝试重连5次失败，请刷新页面",
   "error_verification_submit_failed": "验证提交失败",
   "error_please_reinput": "请重新输入",

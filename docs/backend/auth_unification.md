@@ -107,7 +107,8 @@
 1. **前后端需一起发布**：后端先上会以 401 打断旧前端（EventSource 裸连、无 header 请求）。
 2. 外部 storyboard-agent CLI/skill 不受影响：其 `/api/agent-auth/exchange` 换取的 auth_token 同存于 `user_tokens` 表，可被装饰器解析；其调用的端点不在本次改动范围。
 3. **遗留清单**（审计同族但未点名，装饰器未覆盖，仍为零鉴权或弱鉴权，后续迭代处理）：
-   - `PUT /session/{id}/title`、`GET /api/sessions`、`DELETE /api/session/{id}` 等 session 同族端点未挂装饰器（`latest-task`、`POST /session/{id}/model` 已挂 `require_permission`）；
+   - 注：`GET /api/sessions` 已挂 `require_permission("script_session:view")` 并加 `check_claimed_user_id`（2026-10-12，含无 user_id 调试路径仅限管理员；`SessionCreateRequest.user_id` 同步改为可省略，省略时以登录身份为准，见 `docs/backend/incidents/2026-10-12-script-writer-cross-user-session-404.md`）；
+   - `PUT /session/{id}/title`、`DELETE /api/session/{id}` 等 session 同族端点未挂装饰器（`latest-task`、`POST /session/{id}/model` 已挂 `require_permission`）；
    - `export-world`、`world-upload-token`、`import-world-from-cloud`、`recharge/*` 等端点未挂装饰器（部分靠 body/query 自报 user_id）；
    - 注：`upload-agent-image` / `upload-agent-audio` / `upload-agent-video` 已挂 `require_permission`（2026-09-15 确认）；前端 6 处裸 `fetch`（`marketing_agent.js` 5 处 + `marketing_inspiration.js` 1 处，原先仅把 `auth_token` 放 FormData）已补 `Authorization: Bearer` 头，否则上传 401 → `checkAuthResponse` 整页跳登录（e2e `test_marketing_agent_image_upload` 失败根因）；
    - 注：`world-files` / `characters-files` / `scripts-files` / `locations-files` / `props-files` 文件系列已在 58e459fb 挂 `require_permission`（含 GET/POST/PATCH），前端缺头问题已按上文补齐；
@@ -117,5 +118,6 @@
 
 - `tests/api/test_require_permission_auth.py`：装饰器真实现（401/注入/query 兜底/裸 token 兼容）+ 属主断言辅助。
 - `tests/api/test_script_writer_auth.py`：verify_auth_token 新语义（空 token 拒绝、属主不符拒绝、DB 故障 502）。
+- `tests/api/test_sessions_endpoint_auth.py`：`GET /api/sessions` 鉴权收紧（未登录 401、user_id 不一致 403、本人 200、调试路径仅管理员、SessionCreateRequest.user_id 可省略）。
 - e2e（`auto_test/e2e/conftest.py`）自带标准 `Authorization: Bearer`，兼容。
 - e2e `test_auth.py::test_logout_success`（2026-09-15 修正）：单会话策略下 `test_login_success` 的次账号登录会顶掉 session 级 `secondary_auth_token`，故登出用例改为用例内新登录拿 fresh token 再登出。
