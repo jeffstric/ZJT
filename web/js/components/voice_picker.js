@@ -30,7 +30,8 @@
         configured: true,
         loadError: '',
         loadingVoices: false,
-        filter: 'all',
+        filterGender: 'all',
+        filterLanguage: 'all',
         previewingId: null,
         previewAudio: null,
         previewCache: {},   // voice_id -> audio_url（后端也有缓存，这里是防连点）
@@ -38,17 +39,31 @@
       };
     },
     computed: {
+      availableLanguages: function () {
+        var seen = {};
+        var langs = [];
+        this.voices.forEach(function (v) {
+          if (!seen[v.language]) { seen[v.language] = true; langs.push(v.language); }
+        });
+        var labels = { zh: '中文', en: '英文', ja: '日语', ko: '韩语', th: '泰语',
+                       vi: '越南语', id: '印尼语', ms: '马来语', tl: '菲律宾语',
+                       pt: '葡语', es: '西语', fr: '法语', de: '德语',
+                       it: '意语', ru: '俄语', ar: '阿语' };
+        return langs.map(function (l) { return { k: l, t: labels[l] || l }; });
+      },
       filteredVoices: function () {
-        if (this.filter === 'all') return this.voices;
+        var self = this;
         return this.voices.filter(function (v) {
-          return v.gender === this.filter;
-        }, this);
+          if (self.filterGender !== 'all' && v.gender !== self.filterGender) return false;
+          if (self.filterLanguage !== 'all' && v.language !== self.filterLanguage) return false;
+          return true;
+        });
       },
       genderLabel: function () {
         return function (v) { return GENDER_LABELS[v.gender] || ''; };
       },
       langLabel: function () {
-        return function (v) { return LANGUAGE_LABELS[v.language] || ''; };
+        return function (v) { return LANGUAGE_LABELS[v.language] || v.language; };
       },
     },
     mounted: function () {
@@ -123,14 +138,19 @@
         <div v-if="loadingVoices" class="muted" style="padding: 12px 0;">音色库加载中...</div>
 
         <template v-else>
-          <div style="display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;">
+          <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; align-items: center;">
             <button v-for="opt in [{k:'all',t:'全部'},{k:'female',t:'女声'},{k:'male',t:'男声'}]"
-              :key="opt.k" class="btn secondary" style="padding: 2px 12px; font-size: 13px;"
-              :style="filter === opt.k ? 'border-color: var(--primary); color: var(--primary);' : ''"
-              @click="filter = opt.k">{{ opt.t }}</button>
+              :key="'g-' + opt.k" class="btn secondary" style="padding: 2px 12px; font-size: 13px;"
+              :style="filterGender === opt.k ? 'border-color: var(--primary); color: var(--primary);' : ''"
+              @click="filterGender = opt.k">{{ opt.t }}</button>
+            <select v-model="filterLanguage" class="input" style="width: auto; padding: 2px 8px; font-size: 13px; flex: 0 1 110px;">
+              <option value="all">全部语言</option>
+              <option v-for="l in availableLanguages" :key="l.k" :value="l.k">{{ l.t }}</option>
+            </select>
+            <span class="muted" style="font-size: 12px;">{{ filteredVoices.length }} 个音色</span>
           </div>
 
-          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-height: 320px; overflow-y: auto; padding: 2px;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-height: 380px; overflow-y: auto; padding: 2px;">
             <div v-for="v in filteredVoices" :key="v.id"
               style="border: 1px solid var(--border); border-radius: 8px; padding: 10px; cursor: pointer; position: relative;"
               :style="modelValue === v.id ? 'border-color: var(--primary); background: rgba(25,118,210,0.06);' : ''"
