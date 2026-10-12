@@ -556,7 +556,7 @@ async def _analyze_character_voice_capability(
         return {
             "can_speak_human_language": True,
             "voice_type": "human",
-            "voice_description": "平静、自然、清晰的声音",
+            "voice_description": "一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，录音干净清晰，像在耳边近距离说话",
             "sample_text": "大家好，我是角色。"
         }
 
@@ -583,7 +583,7 @@ async def _analyze_character_voice_capability(
         return {
             "can_speak_human_language": True,
             "voice_type": "human",
-            "voice_description": "平静、自然、清晰的声音",
+            "voice_description": "一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，录音干净清晰，像在耳边近距离说话",
             "sample_text": f"大家好，我是{character_data.get('name', '角色')}。"
         }
 
@@ -601,9 +601,20 @@ async def _analyze_character_voice_capability(
         "2. 如果角色是普通动物且无特殊说明→ can_speak_human_language=false\n"
         "3. 如果角色是\"修炼成精\"、\"童话故事中的xxx\"→ can_speak_human_language=true\n\n"
         "重要要求：\n"
-        "4. voice_description 必须聚焦声音特征：音色、音调、语速、年龄感、性别特征\n"
-        "   - 人类角色必须包含性别（男性/女性）和年龄感（如\"30岁左右\"、\"年轻\"等）\n"
-        "   - 示例：\"30岁左右的成熟男性，声音沉稳有力\"、\"25岁左右的年轻女性，声音清脆悦耳\"\n\n"
+        "4. voice_description（能说人话的角色）必须是一段丰富的音色人设描述，长度60~100字。"
+        "该描述会直接传给 VoxCPM2 声音设计模型，描述越具体，生成音色越稳定；"
+        "一句笼统的短描述会导致每次生成结果随机漂移。必须依次覆盖以下要素：\n"
+        "   - 人口属性：性别、年龄段（如\"六十岁左右的北方老先生\"）；"
+        "若角色设定包含地域/方言线索则明确写出（如\"说话带东北口音\"\"带粤语口音的普通话\"），没有线索则不要编造\n"
+        "   - 音色质感：音高与音色特征（如\"声音低沉浑厚、略带沙哑\"\"清亮稚嫩\"\"有磁性\"）\n"
+        "   - 个性气质：性格带来的说话感觉（如\"透着长者的沉稳和蔼\"\"俏皮灵动、爱撒娇\"\"威严不容置疑\"）\n"
+        "   - 说话风格：语速快慢、音量、说话方式（如\"语速偏慢，字字清晰像在讲往事\"\"语速轻快像闺蜜聊天\"）\n"
+        "   - 录音质感：以\"录音干净清晰，像在耳边近距离说话\"收尾，保证生成音质稳定\n"
+        "   - 总体语气保持平静自然：参考音频用于后续声音克隆，不要描述激烈起伏的情绪\n"
+        "   ✅ 合格示例：\"一位六十岁左右的北方老先生，说话带明显的东北口音，声音低沉浑厚、略带沙哑，"
+        "透着长者的沉稳和蔼，语速偏慢，字字清晰像在讲往事，录音干净清晰，像在耳边近距离说话。\"\n"
+        "   ❌ 禁止示例：\"30岁左右的成熟男性，声音沉稳有力\"（过短，缺少口音/质感/个性/语速/录音要素）\n"
+        "   - 不能说人话的动物角色：voice_description 简要描述声音特点即可（如\"小型犬的清脆叫声\"）\n\n"
         "5. sample_text 生成规则：\n"
         "   - 能说人话（人类/会说话的动物）→ 必须包含年龄和性别信息的自我介绍（20-40字）\n"
         "     * 格式参考：\"大家好，我是{角色名}，今年{年龄}岁，是一位{性别}，是{身份}。很高兴在这个故事里与你相遇。\"\n"
@@ -650,7 +661,7 @@ async def _analyze_character_voice_capability(
     return {
         "can_speak_human_language": True,
         "voice_type": "human",
-        "voice_description": "平静、自然、清晰的声音",
+        "voice_description": "一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，录音干净清晰，像在耳边近距离说话",
         "sample_text": f"大家好，我是{character_data.get('name', '角色')}。"
     }
 

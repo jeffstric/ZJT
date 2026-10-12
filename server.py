@@ -551,6 +551,10 @@ app.include_router(system_router)
 from api.media import router as media_router
 app.include_router(media_router)
 
+# 火山引擎（豆包语音）TTS 快速合成 + 音色库（见 docs/audio/volcengine_tts.md）
+from api.tts import router as tts_router
+app.include_router(tts_router)
+
 from api.marketing_publications import router as marketing_publications_router
 app.include_router(marketing_publications_router)
 

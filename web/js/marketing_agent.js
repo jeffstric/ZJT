@@ -1718,6 +1718,13 @@
                     return `\n<video src="${escapeHtml(fullUrl)}" style="max-height:160px;border-radius:8px;" controls preload="metadata"></video>\n`;
                 });
 
+                // 步骤3.5：将裸音频 URL 转换为 <audio controls> 播放器（TTS 试听等）
+                const audioUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:mp3|wav|m4a|ogg|aac|flac))(\?[^\s<>"'\]]*)?(?=[\s\n\]|,)]|$)/gi;
+                text = text.replace(audioUrlPattern, (match, base, query) => {
+                    const fullUrl = query ? base + query : base;
+                    return `\n<audio src="${escapeHtml(fullUrl)}" controls preload="none" style="width:100%;max-width:340px;height:40px;border-radius:8px;display:block;margin:6px 0;"></audio>\n`;
+                });
+
                 // 步骤4：将裸图片 URL 转换为 Markdown 图片格式
                 // 图片扩展名结尾，后面不允许紧跟非空白字符（防止吞入中文）
                 const imageUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:png|jpg|jpeg|gif|webp|svg|bmp|ico))(?=[\s\n\]|,)]|$)/gi;
@@ -1783,6 +1790,15 @@
                 html = html.replace(/(<img\b(?=[^>]*\bgenerated-image\b)(?=[^>]*\ssrc="))([^>]*?)\ssrc="([^"]*)"/gi, (_m, prefix, attrs, src) =>
                     `${prefix}${attrs} src="${proxyImageUrl(src)}"`
                 );
+
+                // 音频链接 → 内联播放器：LLM 可能把试听音频包装成 markdown 链接
+                // （[试听](xxx.mp3)），点击新窗口体验差，统一替换为 <audio controls>。
+                html = html.replace(/<a\b[^>]*href="(https?:\/\/[^"]*?\.(?:mp3|wav|m4a|ogg|aac|flac)(?:\?[^"]*)?)"[^>]*>([\s\S]*?)<\/a>/gi,
+                    (match, href, linkText) => {
+                        const label = /试听|preview|listen/i.test(linkText) ? '' :
+                            `<span style="font-size:12px;color:var(--muted);margin-right:6px;">${escapeHtml(linkText.slice(0, 30))}</span>`;
+                        return `<span style="display:inline-flex;align-items:center;margin:4px 0;">${label}<audio src="${proxyDownloadUrl(href)}" controls preload="none" style="height:36px;max-width:320px;border-radius:8px;vertical-align:middle;"></audio></span>`;
+                    });
 
                 // 兜底重新签名：<video>/<audio>/<source> 的原始 src。
                 // 同因：commit 0bf53fe 之前生成的视频/音频以已渲染 HTML 入库，src 写死的是

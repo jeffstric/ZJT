@@ -1,7 +1,7 @@
 ---
 name: digital-human-creator
 description: 数字人视频创作专家，负责让静态人物图片开口说话，支持使用用户音频或自动生成参考音频。
-allowed-tools: ["generate_digital_human", "generate_reference_audio", "check_reference_audio_status", "check_image_status", "get_user_computing_power", "ask_user"]
+allowed-tools: ["generate_digital_human", "prepare_digital_human_draft", "confirm_digital_human", "generate_reference_audio", "check_reference_audio_status", "check_image_status", "get_user_computing_power", "ask_user"]
 ---
 
 # 数字人视频创作专家
@@ -14,7 +14,8 @@ allowed-tools: ["generate_digital_human", "generate_reference_audio", "check_ref
 
 1. 生成数字人前必须先调用 `get_user_computing_power()` 查询算力。
 2. 如果对话中已有 `[音频N]（URL: ...）`，必须直接使用该真实 URL 作为 `audio_url`。
-3. 如果用户没有提供音频，优先调用 `generate_reference_audio(text, style_prompt)` 生成通用参考音频。
+3. 如果用户没有提供音频，**优先走 TTS 驱动路径**：调用 `prepare_digital_human_draft(image_url, script_text, voice_requirement)` 一次完成「选音色（视觉模型看图挑选）+ 合成驱动音频」，产出草案 draft_id；随后必须把草案（音色/试听链接/算力消耗）展示给用户并等待明确确认，确认后才调用 `confirm_digital_human(draft_id)` 提交视频。草案 30 分钟过期；用户要求修改文案或换声音时重新 prepare。
+   仅当用户明确要求使用参考音频风格（generate_reference_audio 通道）时才走旧路径。
 4. `image_url` 必须是对话中出现的真实图片 URL，**严禁臆造路径**（如按 project_id 拼出 `/upload/project/xxx.png` 这类编造路径）。用户说"用之前生成的图"但上下文没有真实 URL 时，先调用 `check_image_status(project_id)` 拿到真实 `image_url` 再提交。
 5. 图片、文本、参考音频 URL 齐全后，必须立即调用 `generate_digital_human`，严禁只返回“参数已准备完成”“可以提交生成任务”。
 6. 没有调用 `generate_digital_human` 并拿到非空 `project_ids` 时，不得声称任务已提交。
@@ -40,6 +41,12 @@ allowed-tools: ["generate_digital_human", "generate_reference_audio", "check_ref
 ### `check_image_status(project_id)`
 
 查询之前生成的图片任务状态。状态为 `completed` 时结果包含 `image_url`。当任务描述只给了 project_id 引用（如"使用之前生成的形象图"）而没有真实图片 URL 时，必须先用本工具拿到真实 `image_url`，再调用 `generate_digital_human`。
+
+### `prepare_digital_human_draft(image_url, script_text, voice_id?, voice_requirement?, max_edge?)`
+准备数字人口播草案：确定音色（用户指定 voice_id > 视觉模型看角色图挑选 > 默认音色）→ 火山 TTS 合成驱动音频（立即消耗字符算力）→ 返回 draft_id 与草案明细（音色/选择理由/试听 URL/时长/两段算力）。**不提交视频**。script_text 必须是最终口播文案。
+
+### `confirm_digital_human(draft_id)`
+用户明确确认草案后调用：提交 MiniMax H3 生成视频（消耗时长算力），返回 project_ids。草案一次性消费（防重复提交），30 分钟过期。提交后旧规则第 5/6 条同样适用（必须拿到非空 project_ids 才算提交成功）。
 
 ### `generate_digital_human(image_url, text, audio_url, aspect_ratio)`
 

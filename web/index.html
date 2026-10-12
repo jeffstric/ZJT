@@ -1639,6 +1639,9 @@
   <script src="/js/task_config.js"></script>
   <script src="/js/escape.js"></script>
   <script src="/js/tiff_support.js"></script>
+  <!-- 火山TTS音色库：共享API + Vue选择器组件（audio_generate 声音页使用） -->
+  <script src="/js/voice_library_api.js?v=20261012a"></script>
+  <script src="/js/components/voice_picker.js?v=20261012e"></script>
   <script src="/js/model_catalog.js?v=__VERSION__"></script>
   <!-- 工具函数 -->
   <script src="/js/download_attachment.js?v=__VERSION__"></script>
@@ -1646,7 +1649,7 @@
   <!-- 页面组件 -->
   <script src="/js/pages/list_page.js"></script>
   <script src="/js/pages/digital_human.js?v=__VERSION__"></script>
-  <script src="/js/pages/audio_generate.js?v=__VERSION__"></script>
+  <script src="/js/pages/audio_generate.js?v=20261012e"></script>
   <script src="/js/pages/video_enhance.js?v=__VERSION__"></script>
   <script src="/js/pages/image_edit.js?v=__VERSION__"></script>
   <script src="/js/pages/text_to_image.js?v=__VERSION__"></script>
@@ -1668,6 +1671,11 @@
   ZJTi18n.init(['common', 'index', 'video_workflow', 'marketing_agent']).then(() => {
     // 初始化完成后创建 Vue 应用
     const app = Vue.createApp(App);
+
+    // 声音页音色库选择器（火山TTS快速合成）
+    if (window.VoicePicker) {
+      app.component('voice-picker', window.VoicePicker);
+    }
 
     // 任务事件时间线弹窗（全局复用，避免在各历史组件重复实现）
     app.component('timeline-modal', {

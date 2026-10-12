@@ -4189,7 +4189,7 @@ MCP_TOOLS = [
                 },
                 "style_prompt": {
                     "type": "string",
-                    "description": "自定义风格提示词（可选），不填则根据角色设定自动生成，强调平静、自然的语气"
+                    "description": "自定义音色描述（可选，建议按以下规范提供）。描述会直接传给 VoxCPM2 声音设计模型，需 60~100 字并依次包含五要素：①性别+年龄段（含地域口音，如有设定）②音色质感（音高/沙哑/清亮等）③个性气质 ④语速与说话方式 ⑤以'录音干净清晰，像在耳边近距离说话'收尾；语气保持平静自然（参考音频用于声音克隆）。不填则按同一规范根据角色设定自动生成"
                 },
                 "text": {
                     "type": "string",
@@ -4211,7 +4211,7 @@ MCP_TOOLS = [
                 },
                 "style_prompt": {
                     "type": "string",
-                    "description": "声音风格提示词（可选），例如：自然、平静、年轻女性声音、语速适中。不填则使用默认自然声音"
+                    "description": "音色描述（可选）。建议写 60~100 字丰富描述：性别+年龄段（含口音，如有）、音色质感、个性气质、语速与说话方式，并以'录音干净清晰，像在耳边近距离说话'收尾。过短的描述会导致音色不稳定。不填则使用默认自然声音"
                 }
             },
             "required": ["text"]
@@ -4237,7 +4237,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_digital_human",
-        "description": "生成数字人视频（非阻塞）。根据人物图片、口播文本和参考音频 URL 立即提交数字人生成任务，返回 project_ids。必须传入真实 audio_url；如果用户没有提供音频，请先调用 generate_reference_audio 生成并查询到 audio_url。",
+        "description": "生成数字人视频（wan2.2 参考音色模式，非阻塞）。⚠️ 仅当用户要求'用某段音频的音色说新的文案'时使用——audio_url 只用于提取音色，口播内容由 text 驱动。若用户想让人物说某段音频（音频驱动口播），请改用 prepare_digital_human_draft + confirm_digital_human。根据人物图片、口播文本和参考音频 URL 提交任务，返回 project_ids。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -4259,6 +4259,59 @@ MCP_TOOLS = [
                 }
             },
             "required": ["image_url", "text", "audio_url"]
+        }
+    },
+    {
+        "name": "prepare_digital_human_draft",
+        "description": "准备数字人口播草案（确认制，不直接生成视频）。确定音色（VL 看角色图挑选/用户指定/默认，同时生成动作提示词）→ 用火山 TTS 合成驱动音频（立即消耗字符算力）→ 产出草案 draft_id。用户确认草案后必须调用 confirm_digital_human 提交视频生成。注意：script_text 必须是最终口播文案（用户未提供时请先自行撰写）；image_url 必须来自对话中用户上传或已生成的真实图片。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "image_url": {
+                    "type": "string",
+                    "description": "角色图片 URL（必填），必须来自对话中的真实图片 URL"
+                },
+                "script_text": {
+                    "type": "string",
+                    "description": "口播文案（必填，数字人要说的最终内容，≤2000 字）"
+                },
+                "voice_id": {
+                    "type": "integer",
+                    "description": "音色库音色 ID（可选）。用户明确指定音色时传入；未指定则由视觉模型看角色图自动挑选"
+                },
+                "voice_requirement": {
+                    "type": "string",
+                    "description": "对声音的要求描述（可选，如'成熟男性、纪录片感'），辅助视觉模型挑选"
+                },
+                "motion_prompt": {
+                    "type": "string",
+                    "description": "动作提示词（可选，默认由视觉模型看图生成）。描述人物说话情绪与镜头方式，如'角色面向镜头深情的说话，固定镜头。'。注意：不是口播内容"
+                },
+                "audio_url": {
+                    "type": "string",
+                    "description": "用户上传的驱动音频 URL（可选）。用户提供音频且想让人物说这段音频时传入（跳过 TTS）；此时不再需要音色"
+                },
+                "max_edge": {
+                    "type": "integer",
+                    "description": "视频最长边：720/1280/1920（默认 1280）",
+                    "default": 1280
+                }
+            },
+            "required": ["image_url", "script_text"]
+        }
+    },
+    {
+        "name": "confirm_digital_human",
+        "description": "确认数字人口播草案并提交 MiniMax H3 视频生成（消耗视频时长算力）。仅当用户明确确认草案后调用；草案一次性消费，提交后不可重复。生成失败或草案过期时请重新 prepare。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "draft_id": {
+                    "type": "string",
+                    "description": "prepare_digital_human_draft 返回的草案 ID"
+                }
+            },
+            "required": ["draft_id"]
         }
     },
     {
@@ -4479,7 +4532,8 @@ def _create_reference_audio_task(
 
     final_style_prompt = (
         style_prompt
-        or '声音自然清晰，语气平稳，语速适中，适合数字人口播'
+        or '一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，'
+        '录音干净清晰，像在耳边近距离说话，适合数字人口播'
     )
     final_text = (text or '').strip()
     if not final_text:
@@ -4562,7 +4616,7 @@ def generate_character_reference_audio(user_id: str, world_id: str, auth_token: 
         world_id: 世界ID（必填）
         auth_token: 认证令牌（必填）
         character_name: 角色名称（必填）
-        style_prompt: 自定义风格提示词（可选），不填则根据角色设定自动生成
+        style_prompt: 自定义音色描述（可选），建议 60~100 字并覆盖性别年龄/口音/音色质感/个性气质/语速/录音质感五要素；不填则按同一规范根据角色设定自动生成
         text: 自定义文本内容（可选），不填则根据角色设定自动生成
 
     Returns:
@@ -4832,6 +4886,12 @@ def _resolve_digital_human_image_url(raw_image_url: str) -> Tuple[str, Optional[
         f'image_url "{url}" 指向的本地文件不存在（LLM 不得臆造路径）。'
         f'请调用 check_image_status(project_id) 获取已生成图片的真实URL后重试。'
     )
+
+
+from script_writer_core.digital_human_tts_tools import (
+    prepare_digital_human_draft,
+    confirm_digital_human,
+)
 
 
 def generate_digital_human(
