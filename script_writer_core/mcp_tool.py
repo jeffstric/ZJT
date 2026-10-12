@@ -4262,6 +4262,51 @@ MCP_TOOLS = [
         }
     },
     {
+        "name": "prepare_digital_human_draft",
+        "description": "准备数字人口播草案（确认制，不直接生成视频）。确定音色（VL 看角色图挑选/用户指定/默认）→ 用火山 TTS 合成驱动音频（立即消耗字符算力）→ 产出草案 draft_id。用户确认草案后必须调用 confirm_digital_human 提交视频生成。注意：script_text 必须是最终口播文案（用户未提供时请先自行撰写）；image_url 必须来自对话中用户上传或已生成的真实图片。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "image_url": {
+                    "type": "string",
+                    "description": "角色图片 URL（必填），必须来自对话中的真实图片 URL"
+                },
+                "script_text": {
+                    "type": "string",
+                    "description": "口播文案（必填，数字人要说的最终内容，≤2000 字）"
+                },
+                "voice_id": {
+                    "type": "integer",
+                    "description": "音色库音色 ID（可选）。用户明确指定音色时传入；未指定则由视觉模型看角色图自动挑选"
+                },
+                "voice_requirement": {
+                    "type": "string",
+                    "description": "对声音的要求描述（可选，如'成熟男性、纪录片感'），辅助视觉模型挑选"
+                },
+                "max_edge": {
+                    "type": "integer",
+                    "description": "视频最长边：720/1280/1920（默认 1280）",
+                    "default": 1280
+                }
+            },
+            "required": ["image_url", "script_text"]
+        }
+    },
+    {
+        "name": "confirm_digital_human",
+        "description": "确认数字人口播草案并提交 MiniMax H3 视频生成（消耗视频时长算力）。仅当用户明确确认草案后调用；草案一次性消费，提交后不可重复。生成失败或草案过期时请重新 prepare。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "draft_id": {
+                    "type": "string",
+                    "description": "prepare_digital_human_draft 返回的草案 ID"
+                }
+            },
+            "required": ["draft_id"]
+        }
+    },
+    {
         "name": "generate_character_variant_image",
         "description": "为角色生成造型变体图（服装/造型三视角参考图）。基于角色已有主参考图(reference_image)做图片编辑（图生图），保证五官/身份一致，仅改变服装/造型。禁止用文生图生成额外形象。生成完成后自动写入角色的 reference_images 数组。注意：角色必须已存在且已有主参考图，才能生成变体图。请先调用 get_text_to_image_model_info 了解当前模型。",
         "inputSchema": {
@@ -4833,6 +4878,12 @@ def _resolve_digital_human_image_url(raw_image_url: str) -> Tuple[str, Optional[
         f'image_url "{url}" 指向的本地文件不存在（LLM 不得臆造路径）。'
         f'请调用 check_image_status(project_id) 获取已生成图片的真实URL后重试。'
     )
+
+
+from script_writer_core.digital_human_tts_tools import (
+    prepare_digital_human_draft,
+    confirm_digital_human,
+)
 
 
 def generate_digital_human(

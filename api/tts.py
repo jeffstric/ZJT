@@ -6,40 +6,27 @@
 - POST /synthesize        快速合成：计价→预检→预扣→调用火山→落盘→CDN→写 ai_audio
 - GET  /preview/{voice_id} 试听固定示例句（免费，按音色落盘缓存）
 
-计费：字符档位制预付费（与图像/视频惯例同构），
-档位默认值在 config/volcengine_tts_constants.py，可由动态配置
-volcengine_tts.power_tiers 热更新。合成失败立即按原流水退款（refund-{txn} 幂等）。
-IndexTTS 克隆链路（/api/audio-generate）不受本文件影响，保持免费。
+核心合成链路在 services/volcengine_tts_service.py（与 Agent 工具共用）。
+计费：字符档位制预付费，失败自动退款。IndexTTS 克隆链路不受影响。
 """
 import asyncio
 import logging
 import os
-import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from config.config_util import get_config, get_config_value, get_dynamic_config_value
-from config.constant import AI_AUDIO_STATUS_COMPLETED
-from config.media_file_policy import MediaFilePolicy
+from config.config_util import get_config_value, get_dynamic_config_value
 from config.volcengine_tts_constants import (
     VolcengineTtsConstants,
-    calc_volcengine_tts_power,
     normalize_volcengine_tts_speed,
 )
-from model.ai_audio import AIAudioModel
-from model.media_file_mapping import MediaFileEntity
 from model.voice import PROVIDER_VOLCENGINE, VoiceModel
-from perseids_server.client import async_make_perseids_request
 from perseids_server.utils.permission import require_permission
-from utils.audio_duration_util import probe_audio_duration
-from utils.media_mapping_util import register_uploaded_file_mapping
 from utils.volcengine_tts_util import (
-    build_audio_filename,
     get_volcengine_tts_config,
-    is_tts_configured,
     resolve_result_dir,
     synthesize_speech,
 )
@@ -74,74 +61,8 @@ def _resolve_power_tiers():
 
 def _build_public_audio_url(filename: str) -> str:
     """本地落盘文件对外 URL：{server_host}/upload/tts/volcengine/{filename}"""
-    server_host = (get_config().get("server", {}) or {}).get("host", "")
-    rel = VolcengineTtsConstants.RESULT_SUBDIR.replace(os.sep, "/")
-    return f"{str(server_host).rstrip('/')}/{rel}/{filename}"
-
-
-async def _deduct_power(auth_header: str, power: int, transaction_id: str, message: Optional[str] = None):
-    """预扣算力；无 Authorization 或 0 算力视为跳过（开源惯例）。返回 (success, message)。"""
-    if not auth_header or not power:
-        return True, None
-    try:
-        success, msg, _ = await async_make_perseids_request(
-            endpoint='user/calculate_computing_power',
-            method='POST',
-            headers={'Authorization': auth_header},
-            data={
-                'computing_power': power,
-                'behavior': 'deduct',
-                'transaction_id': transaction_id,
-                'message': message or '火山TTS语音合成',
-            },
-        )
-        return bool(success), msg
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"火山TTS预扣算力失败: {e}")
-        return False, str(e)
-
-
-async def _refund_power(auth_header: str, power: int, transaction_id: str, message: Optional[str] = None) -> None:
-    """按原流水退款（increase + refund-{txn} 幂等）。退款失败只记日志，不影响错误返回。"""
-    if not auth_header or not power:
-        return
-    try:
-        success, msg, _ = await async_make_perseids_request(
-            endpoint='user/calculate_computing_power',
-            method='POST',
-            headers={'Authorization': auth_header},
-            data={
-                'computing_power': power,
-                'behavior': 'increase',
-                'transaction_id': f'refund-{transaction_id}',
-                'message': message or '火山TTS合成失败退款',
-            },
-        )
-        if not success:
-            logger.error(f"火山TTS退款失败 txn={transaction_id} power={power}: {msg}")
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"火山TTS退款异常 txn={transaction_id} power={power}: {e}")
-
-
-async def _check_power_sufficient(auth_header: str, power: int):
-    """余额预检；无 Authorization 跳过。返回 (ok, message_or_none)。"""
-    if not auth_header or not power:
-        return True, None
-    try:
-        success, message, response_data = await async_make_perseids_request(
-            endpoint='user/check_computing_power',
-            method='GET',
-            headers={'Authorization': auth_header},
-        )
-        if not success:
-            return False, message or '算力查询失败'
-        user_power = int(response_data.get('computing_power', 0) or 0)
-        if user_power < power:
-            return False, f"您的算力不足，需要 {power} 算力，当前仅有 {user_power} 算力"
-        return True, None
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"火山TTS算力预检失败: {e}")
-        return False, str(e)
+    from services.volcengine_tts_service import build_public_audio_url
+    return build_public_audio_url(filename)
 
 
 @router.get('/voices')
@@ -182,7 +103,7 @@ async def list_voices(
         'speed_min': VolcengineTtsConstants.SPEED_MIN,
         'speed_max': VolcengineTtsConstants.SPEED_MAX,
         'allow_clone_from_voice_library': allow_clone_from_library,
-        'configured': is_tts_configured(get_volcengine_tts_config()),
+        'configured': bool(get_volcengine_tts_config()['api_key']),
     })
 
 
@@ -190,115 +111,36 @@ async def list_voices(
 @require_permission("audio:generate")
 async def synthesize(request: Request, body: TtsSynthesizeRequest):
     """快速合成：同步秒级返回 audio_url；按字符档位预扣算力，失败原路退款。"""
-    text = (body.text or '').strip()
-    if not text:
-        return JSONResponse({'success': False, 'detail': '合成文本不能为空'}, status_code=400)
-    char_count = len(text)
-    if char_count > VolcengineTtsConstants.MAX_TEXT_LENGTH:
-        return JSONResponse({
-            'success': False,
-            'detail': f"文本过长：{char_count} 字符，单次合成上限 {VolcengineTtsConstants.MAX_TEXT_LENGTH} 字符",
-        }, status_code=400)
-
-    voice = await asyncio.to_thread(VoiceModel.get_by_id, int(body.voice_id))
-    if not voice or not voice.is_active or voice.provider != PROVIDER_VOLCENGINE or not voice.voice_type:
-        return JSONResponse({'success': False, 'detail': '音色不存在或已下线，请刷新音色库'}, status_code=404)
-
-    tiers = _resolve_power_tiers()
-    power = calc_volcengine_tts_power(char_count, tiers)
-    if power <= 0:
-        return JSONResponse({
-            'success': False,
-            'detail': '语音合成计价未配置或文本超出最大档位，请联系管理员',
-        }, status_code=400)
-
-    auth_header = _normalize_authorization(request)
-
-    ok, message = await _check_power_sufficient(auth_header, power)
-    if not ok:
-        return JSONResponse({'success': False, 'detail': message}, status_code=400)
-
-    transaction_id = str(uuid.uuid4())
-    deduct_message = f"火山TTS语音合成：{voice.name}（{char_count}字）"
-    ok, message = await _deduct_power(auth_header, power, transaction_id, message=deduct_message)
-    if not ok:
-        return JSONResponse({'success': False, 'detail': message or '算力扣除失败'}, status_code=400)
-
-    speed = normalize_volcengine_tts_speed(body.speed_ratio)
-    success, audio_bytes, synth_message = await synthesize_speech(
-        text=text,
-        speaker=voice.voice_type,
-        speed_ratio=speed,
-        timeout=VolcengineTtsConstants.TIMEOUT_SECONDS,
-    )
-    if not success:
-        await _refund_power(auth_header, power, transaction_id, message=f"火山TTS合成失败退款：{voice.name}（{char_count}字）")
-        logger.error(f"火山TTS合成失败 voice={voice.voice_type} chars={char_count}: {synth_message}")
-        return JSONResponse({'success': False, 'detail': synth_message}, status_code=502)
-
-    # 落盘（同步文件写放线程池，避免阻塞事件循环）
-    result_dir = await asyncio.to_thread(resolve_result_dir)
-    filename = build_audio_filename("tts")
-    file_path = os.path.join(result_dir, filename)
-
-    def _write_file():
-        tmp_path = file_path + '.tmp'
-        with open(tmp_path, 'wb') as f:
-            f.write(audio_bytes)
-        os.replace(tmp_path, file_path)  # 原子替换，避免半文件被 CDN/播放读到
-
-    try:
-        await asyncio.to_thread(_write_file)
-    except Exception as e:  # noqa: BLE001
-        await _refund_power(auth_header, power, transaction_id, message=f"火山TTS保存失败退款：{voice.name}（{char_count}字）")
-        logger.error(f"火山TTS音频落盘失败: {e}")
-        return JSONResponse({'success': False, 'detail': '音频保存失败，已退还算力'}, status_code=500)
-
-    audio_url = _build_public_audio_url(filename)
-
-    # CDN mapping 注册（失败不影响主流程，本地直出兜底）
-    rel_path = f"{VolcengineTtsConstants.RESULT_SUBDIR.replace(os.sep, '/')}/{filename}"
-    try:
-        await asyncio.to_thread(
-            register_uploaded_file_mapping,
-            None,
-            rel_path,
-            MediaFileEntity.TTS,
-            MediaFilePolicy.NEVER_EXPIRE,
-            None,
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"火山TTS CDN 注册失败（不影响返回，本地直出兜底）: {e}")
-
-    duration = await probe_audio_duration(file_path)
+    from services.volcengine_tts_service import synthesize_speech_for_user
 
     user_id = getattr(request.state, 'user_id', None)
-    try:
-        audio_id = await asyncio.to_thread(
-            AIAudioModel.create,
-            text=text,
-            user_id=user_id,
-            transaction_id=transaction_id,
-            result_url=audio_url,
-            status=AI_AUDIO_STATUS_COMPLETED,
-            message='火山TTS快速合成成功',
-            speed=speed,
-            engine=PROVIDER_VOLCENGINE,
-            voice_id=voice.id,
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"火山TTS写入 ai_audio 历史失败（不影响返回）: {e}")
-        audio_id = None
+    result = await synthesize_speech_for_user(
+        user_id=user_id,
+        text=body.text,
+        voice_id=int(body.voice_id),
+        speed_ratio=normalize_volcengine_tts_speed(body.speed_ratio),
+        auth_header=_normalize_authorization(request),
+        message_context="火山TTS语音合成",
+    )
+    if not result['success']:
+        error = result['error'] or ''
+        if '音色不存在' in error:
+            status = 404
+        elif ('不能为空' in error or '过长' in error or '算力' in error):
+            status = 400
+        else:
+            status = 502
+        return JSONResponse({'success': False, 'detail': error}, status_code=status)
 
     return JSONResponse({
         'success': True,
-        'audio_id': audio_id,
-        'audio_url': audio_url,
-        'duration': duration,
-        'voice_id': voice.id,
-        'voice_type': voice.voice_type,
-        'char_count': char_count,
-        'computing_power': power,
+        'audio_id': result['audio_id'],
+        'audio_url': result['audio_url'],
+        'duration': result['duration'],
+        'voice_id': result['voice_id'],
+        'voice_type': result['voice_type'],
+        'char_count': result['char_count'],
+        'computing_power': result['computing_power'],
     })
 
 
@@ -309,6 +151,8 @@ async def preview_voice(request: Request, voice_id: int):
     voice = await asyncio.to_thread(VoiceModel.get_by_id, int(voice_id))
     if not voice or not voice.is_active or voice.provider != PROVIDER_VOLCENGINE or not voice.voice_type:
         return JSONResponse({'success': False, 'detail': '音色不存在或已下线'}, status_code=404)
+
+    from utils.volcengine_tts_util import resolve_result_dir, synthesize_speech
 
     result_dir = await asyncio.to_thread(resolve_result_dir)
     # voice_type 限定为音色库白名单内的火山 ID（迁移种子/运营录入），无路径分隔符风险
