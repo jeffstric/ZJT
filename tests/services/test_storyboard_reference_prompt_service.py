@@ -396,6 +396,7 @@ def test_voice_reference_capability_flag_wired_on_expected_models_only():
 
     expected = {
         "minimax_h3_r2v",
+        "minimax_h3_kfr",
         "seedance_2_0_fast",
         "seedance_2_0",
         "seedance_2_0_mini",

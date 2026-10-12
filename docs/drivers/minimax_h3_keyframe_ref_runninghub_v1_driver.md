@@ -15,9 +15,9 @@
 - **实现方**：`minimax_h3_keyframe_ref_runninghub_v1`（id=100）
 - **驱动类**：`MinimaxH3KeyframeRefRunninghubV1Driver`
 - **图片**：最多 3 张，来自 `reference_images`
-- **音频**：最多 2 路，按 `audio_path` 顺序填节点 157（`<Audio 1>`）和 188（`<Audio 2>`）。fieldValue 用上传后的 fileName。没有对应音频时 fieldValue 是字符串 `None`。第 3 路及以后丢弃并记日志。原文有引号台词时，音频句仍写 lip-sync pacing，台词放进 `<d>`。原文没有台词时，同一句改成只锁定音色：不要复制样本里的原话、节奏，也不要对口型，输出里不出现 `<d>`。音频文件仍照常上传。Ref2VA 的音频句不变
+- **音频**：最多 2 路，按 `audio_path` 顺序填节点 157（`<Audio 1>`）和 188（`<Audio 2>`）。fieldValue 用上传后的 fileName。没有对应音频时 fieldValue 是字符串 `None`。第 3 路及以后丢弃并记日志。**原文（优化前 `slot_prompt`）有引号台词时**，音频句写 lip-sync pacing，台词放进 `<d>`。**原文没有引号台词时（无对白镜头）不上传音频**：清空在上传循环之前完成，两路音频槽都填 `None`，用户手动上传的音频同样丢弃——`<Audio N>` 只有绑到要说新台词的角色身上才是音色参考，没有目标台词时连上的语音会被当成成片声音，叠在环境音上发糊。判断口径与音色注入、提示词优化共用 `has_quoted_dialogue`（引号包裹的 CJK 片段）。Ref2VA 的音频行为不变
 - **参考视频**：不支持，提交时丢弃并记日志
-- **提示词优化**：`h3_prompt_optimize` 的 KFRef 变体，模板是 `task/pipeline_drivers/prompts/minimax_h3_kfref_en.txt`，不走 Ref2VA 六段结构。大模型必须按槽位逐字写出 `<Picture N> is the EXACT starting key frame at 0.00 seconds.`，以及 `<Picture N> is the EXACT ending key frame at {时长} seconds (ref_imageN).`。时长用本条任务的 `duration`（样例中的 10.00 只对 10 秒视频）。同时有首尾帧时，结束句对应 Picture 3，也就是 `ref_image3`。代码不把这两句拼进结果；校验失败会让大模型再写一次，仍失败则回退原文。节点 138 用优化后的提示词。槽位从 `extra_config.h3_prompt_optimize.original_prompt` 解析，避免优化结果丢掉「图N是首帧」
+- **提示词优化**：`h3_prompt_optimize` 的 KFRef 变体，模板是 `task/pipeline_drivers/prompts/minimax_h3_kfref_en.txt`，不走 Ref2VA 六段结构。大模型必须按槽位逐字写出 `<Picture N> is the EXACT starting key frame at 0.00 seconds.`，以及 `<Picture N> is the EXACT ending key frame at {时长} seconds (ref_imageN).`。时长用本条任务的 `duration`（样例中的 10.00 只对 10 秒视频）。同时有首尾帧时，结束句对应 Picture 3，也就是 `ref_image3`。代码不把这两句拼进结果；校验失败会让大模型再写一次，仍失败则回退原文。无对白镜头的优化指令按 0 路音频写：类型前缀去掉 `audio reference`，音频行为「没有参考音频，不要编造 `<Audio N>`」，校验加 `forbid_audio_refs`（优化结果出现任何 `<audio` 即失败重试）。节点 138 用优化后的提示词。槽位从 `extra_config.h3_prompt_optimize.original_prompt` 解析，避免优化结果丢掉「图N是首帧」
 - **查询接口**：`/task/openapi/status` + `/task/openapi/outputs`
 - **配置**：复用 `runninghub.api_key` 和 `runninghub.host`，不新增配置键
 - **算力**：与 MiniMax H3 参考生视频相同，720P 基表，480P × 0.42
@@ -30,7 +30,7 @@
 | 只有 `@尾帧图` | 第 1 张参考，或空 | 第 2 张参考，或空 | 尾帧 |
 | 两个都有 | 首帧 | 至多 1 张参考，或空 | 尾帧 |
 
-Picture 2 不是尾帧。空图片槽的 `fieldValue` 是空字符串。空音频槽的 `fieldValue` 是字符串 `None`。多出来的中间参考、第 3 路及以后的音频会被丢掉。
+Picture 2 不是尾帧。空图片槽的 `fieldValue` 是空字符串。空音频槽的 `fieldValue` 是字符串 `None`。多出来的中间参考、第 3 路及以后的音频会被丢掉；无对白镜头（原文无引号台词）两路音频都不上传。
 
 没有这两个标记时，前端不会提交这个任务。
 

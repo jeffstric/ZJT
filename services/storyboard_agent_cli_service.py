@@ -53,6 +53,7 @@ from services.storyboard_reference_prompt_service import (
     extract_storyboard_reference_names,
     reference_urls,
 )
+from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
 from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGridService
 from services.storyboard_quality_sequence import (
     get_storyboard_quality_location_reference_coordinator,
@@ -1188,7 +1189,11 @@ class StoryboardAgentCliService:
         # 角色音色注入（参考生 + 模型 supports_voice_input）：批量补视频与单发同权，
         # 角色音色克隆源音频并入参考音频、提示词追加音色说明。在 determine_mode 与
         # 快照解析之后注入，避免改变媒体模式/槽位判定；grok 等不支持模型不注入。
-        if mode == "image_to_video":
+        # KFRef 混合模型无对白镜头（原文无引号台词）不注入，同单发生成路径口径。
+        if mode == "image_to_video" and not (
+            task_type == h3_keyframe_ref_task_id()
+            and not has_quoted_dialogue(prompt_text)
+        ):
             _config = UnifiedConfigRegistry.get_by_id(int(task_type))
             _voice_items, _ = collect_character_voice_references(
                 supports_voice_input=bool(getattr(_config, 'supports_voice_input', False)),

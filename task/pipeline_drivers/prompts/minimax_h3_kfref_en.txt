@@ -15,10 +15,7 @@ Copy the audio paragraph given by the slot instruction. Change only the audio nu
 When the slot instruction says this shot has spoken lines, use:
 <Audio 1> is a reference audio for voice timbre, vocal identity, speaking tone, rhythm, intonation, and lip-sync pacing.
 
-When the slot instruction says this shot has no spoken lines, use:
-<Audio 1> is a voice-timbre reference only. Do not copy its words, rhythm, or pacing into the video. Do not lip-sync to it. No character speaks.
-
-Do not write lip-sync pacing when the slot instruction says this shot has no spoken lines.
+When the slot instruction says there is no reference audio, do not write any <Audio N> tag at all. Do not invent an audio reference, do not invent spoken lines, and do not mention any character voice sample. Describe only the ambient and environmental sound of the shot.
 
 Then write the shot, starting with [Shot 1]. Before the shot, include the type prefix named in the slot instruction, such as [keyframe completion + reference generation + audio reference]. Keep only the parts that instruction lists.
 

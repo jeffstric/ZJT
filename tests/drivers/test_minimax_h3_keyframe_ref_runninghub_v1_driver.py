@@ -124,6 +124,8 @@ def test_two_audios_fill_both_nodes_and_extra_audio_and_video_are_dropped():
     request = asyncio.run(driver.build_create_request(make_ai_tool(
         audio_path="voice1.wav,voice2.wav",
         video_path="clip.mp4",
+        # 有引号台词的镜头维持上传音色 + lip-sync pacing 现状
+        prompt="图1是首帧，图2是林月，图3是尾帧。林月说「今天到此为止」。",
     )))
     nodes = node_map(request)
     assert nodes[("157", "audio")]["fieldValue"] == "openapi/voice1.wav"
@@ -136,12 +138,50 @@ def test_two_audios_fill_both_nodes_and_extra_audio_and_video_are_dropped():
     extra = make_driver()
     extra_request = asyncio.run(extra.build_create_request(make_ai_tool(
         audio_path="a.wav,b.wav,c.wav",
+        prompt="图1是首帧，图2是林月，图3是尾帧。林月说「今天到此为止」。",
     )))
     extra_nodes = node_map(extra_request)
     assert extra_nodes[("157", "audio")]["fieldValue"] == "openapi/a.wav"
     assert extra_nodes[("188", "audio")]["fieldValue"] == "openapi/b.wav"
     assert "c.wav" not in extra._storage.calls
     extra.logger.warning.assert_called()
+
+
+def test_no_dialogue_skips_audio_upload_and_fills_none():
+    """无对白镜头不上传音色：两个音频槽都填 None，音频文件根本不传 RunningHub。"""
+    driver = make_driver()
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        audio_path="voice1.wav,voice2.wav",
+        prompt="图1是首帧，图2是林月，图3是尾帧。无对白，只有扫帚和脚步声。",
+    )))
+    nodes = node_map(request)
+    assert nodes[("157", "audio")]["fieldValue"] == "None"
+    assert nodes[("188", "audio")]["fieldValue"] == "None"
+    assert "voice1.wav" not in driver._storage.calls
+    assert "voice2.wav" not in driver._storage.calls
+    driver.logger.info.assert_called()
+
+
+def test_no_dialogue_judgment_reads_original_prompt_not_optimized_text():
+    """台词判断以优化前原文为准：旧优化结果里残留 <Audio 1> 也不影响跳过上传。"""
+    driver = make_driver()
+    extra = {
+        "image_mode": "multi_reference",
+        "h3_prompt_optimize": {
+            "variant": "KFRef",
+            "original_prompt": "图1是首帧，图2是林月，图3是尾帧。无对白。",
+            "optimized_prompt": "[keyframe completion + audio reference] <Audio 1> legacy",
+        },
+    }
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        audio_path="voice1.wav",
+        prompt="[keyframe completion + audio reference] <Audio 1> legacy",
+        extra_config=json.dumps(extra, ensure_ascii=False),
+    )))
+    nodes = node_map(request)
+    assert nodes[("157", "audio")]["fieldValue"] == "None"
+    assert nodes[("188", "audio")]["fieldValue"] == "None"
+    assert "voice1.wav" not in driver._storage.calls
 
 
 def test_requires_at_least_one_picture():

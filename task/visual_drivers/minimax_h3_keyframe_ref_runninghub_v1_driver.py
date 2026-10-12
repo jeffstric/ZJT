@@ -10,6 +10,7 @@ webapp_id: 2108549232725680129
   - node 187 image  Picture 3：精确结束关键帧；没有尾帧时是第二张参考，或空
   - node 157 audio  Audio 1，fieldValue 取 fileName；没有音频时为字符串 None
   - node 188 audio  Audio 2，同样取 fileName；没有第二路时为字符串 None
+  - 原文（优化前）无引号台词时两路音频都不上传、都填 None：音色参考必须绑台词
   - node 138 value  优化后的提示词
   - node 132 value  时长（秒）
   - node 115 aspect_ratio / megapixels
@@ -22,6 +23,7 @@ from config.constant import MAX_VOICE_REFERENCE_AUDIOS
 from config.unified_config import TaskTypeId
 from task.pipeline_drivers.h3_prompt_optimize_util import (
     assign_h3_keyframe_ref_pictures,
+    has_quoted_dialogue,
     h3_slot_source_prompt,
 )
 from .minimax_h3_reference_runninghub_v1_driver import (
@@ -77,6 +79,16 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
                 len(audios) - MAX_VOICE_REFERENCE_AUDIOS,
             )
             audios = audios[:MAX_VOICE_REFERENCE_AUDIOS]
+        # 无对白镜头不上传音频（必须在上传循环之前清空，否则文件已传完、音频槽
+        # 仍会拿到 fileName）：<Audio N> 只有绑到要说新台词的角色身上才是音色参考，
+        # 没有目标台词时连上的语音会被当成成片声音。与音色注入、提示词优化共用
+        # 同一引号台词判断口径；含引号台词的镜头维持上传 + lip-sync pacing 不变。
+        if audios and not has_quoted_dialogue(slot_prompt):
+            self.logger.info(
+                "MiniMax H3 首帧参考混合模型镜头无对白，跳过 %s 个参考音频，音频槽填 None",
+                len(audios),
+            )
+            audios = []
         videos = self._split_reference_paths(getattr(ai_tool, "video_path", None))
         if videos:
             self.logger.warning(

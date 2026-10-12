@@ -96,6 +96,7 @@ from services.storyboard_frame_mention import (
     prompt_has_frame_mention,
     read_explicit_frame_url,
 )
+from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
 from services.storyboard_agent_command_service import StoryboardAgentCommandService
 from services.storyboard_batch_operation_service import (
     StoryboardBatchOperationError,
@@ -4426,7 +4427,17 @@ async def generate_scene_video(
     # 不支持的模型（grok 等）collect 返回空，行为不变。在 generation_snapshot 解析后
     # 注入，不扰动 IMAGE_TO_VIDEO / REFERENCE_TO_VIDEO 模式判定；参考图全空回退
     # 文生视频（media_mode=TEXT_TO_VIDEO）时不注入。
-    if scene_characters_ctx is not None and collected_urls:
+    # KFRef 混合模型无对白镜头（原文无引号台词）不注入：音频槽只要有文件就会当成
+    # 成片声音，「保持相同音色」说明也不进优化原文；KFRef 驱动侧另有同一口径兜底。
+    kfr_skip_voice_injection = (
+        task_type == h3_keyframe_ref_task_id()
+        and not has_quoted_dialogue(prompt)
+    )
+    if (
+        scene_characters_ctx is not None
+        and collected_urls
+        and not kfr_skip_voice_injection
+    ):
         voice_items, _ = collect_character_voice_references(
             supports_voice_input=bool(getattr(config, 'supports_voice_input', False)),
             characters=scene_characters_ctx.get('characters'),

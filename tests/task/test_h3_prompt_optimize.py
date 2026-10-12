@@ -15,6 +15,7 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
     assign_h3_keyframe_ref_pictures,
     build_h3_optimize_user_message,
     h3_slot_source_prompt,
+    has_quoted_dialogue,
     kfref_required_clauses,
     load_h3_prompt_template,
     merge_h3_prompt_extra_config,
@@ -353,7 +354,7 @@ def test_kfref_instruction_uses_real_slots_and_capital_picture():
         "图1是首帧，图3是尾帧。",
     )
     message = build_h3_optimize_user_message(
-        "从首帧走到尾帧",
+        "从首帧走到尾帧，林月说「快到了」",
         H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
         6,
         template="GUIDE",
@@ -383,7 +384,7 @@ def test_kfref_instruction_names_second_audio_when_two_are_present():
         "图1是首帧，图3是尾帧。",
     )
     message = build_h3_optimize_user_message(
-        "两段音色",
+        "两段音色，赵志高呵斥「李保国！」",
         H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
         10,
         template="GUIDE",
@@ -396,12 +397,18 @@ def test_kfref_instruction_names_second_audio_when_two_are_present():
     guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
     assert "this shot has spoken lines" in guide
     assert "lip-sync pacing" in guide
-    assert "this shot has no spoken lines" in guide
-    assert "voice-timbre reference only" in guide
+    # 无参考音频的模板段：不写任何 <Audio N>，只描述环境音（timbre-only 句式已删）
+    assert "there is no reference audio" in guide
+    assert "do not write any <Audio N> tag at all" in guide
+    assert "ambient and environmental sound" in guide
+    assert "voice-timbre reference only" not in guide
+    assert "No character speaks" not in guide
 
 
 def test_kfref_audio_sentence_depends_on_spoken_lines():
     slots = assign_h3_keyframe_ref_pictures(["first.png", "ref.png"], "图1是首帧。")
+    # 无对白：即使 audio_path 仍有 2 路（画布手动上传/存量任务），指令也按 0 路写，
+    # 驱动侧同一口径不会上传，提示词不得出现任何音频引用。
     silent = build_h3_optimize_user_message(
         "参考音频说明：音频1是角色：李卫国的音色样本，角色说话时请保持相同音色。",
         H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
@@ -410,11 +417,12 @@ def test_kfref_audio_sentence_depends_on_spoken_lines():
         ref_counts={"images": 2, "videos": 0, "audios": 2},
         keyframe_slots=slots,
     )
-    assert "this shot has no spoken lines" in silent
-    assert "voice-timbre reference only" in silent
-    assert "Do not lip-sync to it." in silent
+    assert "没有参考音频，不要编造 <Audio N>。" in silent
+    assert "[keyframe completion + reference generation + audio reference]" not in silent
+    assert "this shot has spoken lines" not in silent
     assert "lip-sync pacing" not in silent
-    assert "第一段写成 <Audio 1>，第二段写成 <Audio 2>。" in silent
+    assert "第一段写成 <Audio 1>" not in silent
+    assert "<Audio 1>" not in silent.replace("<Audio N>", "")
 
     spoken = build_h3_optimize_user_message(
         '赵志高大声呵斥道："李保国！你看看你扫的什么地！"',
@@ -438,6 +446,16 @@ def test_kfref_audio_sentence_depends_on_spoken_lines():
     )
     assert "this shot has no spoken lines" not in ref2va
     assert "voice-timbre reference only" not in ref2va
+
+
+def test_has_quoted_dialogue_shared_gate():
+    """音色注入、KFRef 驱动与优化共用的无对白判断口径。"""
+    assert has_quoted_dialogue("林月说「今天到此为止」。")
+    assert has_quoted_dialogue('他说："走吧"')
+    assert not has_quoted_dialogue("无对白，只有扫帚和脚步声。")
+    assert not has_quoted_dialogue("参考音频说明：音频1是角色：李卫国的音色样本，角色说话时请保持相同音色。")
+    assert not has_quoted_dialogue("")
+    assert not has_quoted_dialogue(None)  # type: ignore[arg-type]
 
 
 def test_kfref_instruction_omits_the_unused_keyframe_sentence():
@@ -509,6 +527,50 @@ def test_kfref_validator_requires_exact_keyframe_sentences():
         H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
         keyframe_slots=slots,
         duration=5,
+    )
+
+
+def test_kfref_validator_forbids_audio_refs_for_silent_shots():
+    """无对白镜头（KFRef）优化结果不得出现任何音频引用；有台词镜头不受影响。"""
+    slots = assign_h3_keyframe_ref_pictures(
+        ["first.png", "ref.png", "last.png"],
+        "图1是首帧，图3是尾帧。",
+    )
+    silent_with_audio = (
+        "<Picture 1> is the EXACT starting key frame at 0.00 seconds.\n\n"
+        "<Picture 2> is a character reference.\n\n"
+        "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3). "
+        "It is the target last frame.\n\n"
+        "<Audio 1> is a reference audio for voice timbre.\n\n"
+        "[Shot 1] Broom sweeps the ground."
+    )
+    silent_clean = (
+        "<Picture 1> is the EXACT starting key frame at 0.00 seconds.\n\n"
+        "<Picture 2> is a character reference.\n\n"
+        "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3). "
+        "It is the target last frame.\n\n"
+        "[Shot 1] Broom sweeps the ground. Ambient sound of footsteps only."
+    )
+    assert not validate_h3_optimized_prompt(
+        silent_with_audio,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        keyframe_slots=slots,
+        duration=10,
+        forbid_audio_refs=True,
+    )
+    assert validate_h3_optimized_prompt(
+        silent_clean,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        keyframe_slots=slots,
+        duration=10,
+        forbid_audio_refs=True,
+    )
+    # 有台词镜头（forbid_audio_refs=False）写 <Audio 1> 是合法的
+    assert validate_h3_optimized_prompt(
+        silent_with_audio,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        keyframe_slots=slots,
+        duration=10,
     )
 
 

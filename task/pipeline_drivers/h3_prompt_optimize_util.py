@@ -280,22 +280,19 @@ _KFREF_AUDIO_SPOKEN = (
     "<Audio 1> is a reference audio for voice timbre, vocal identity, speaking tone, "
     "rhythm, intonation, and lip-sync pacing."
 )
-_KFREF_AUDIO_TIMBRE_ONLY = (
-    "<Audio 1> is a voice-timbre reference only. Do not copy its words, rhythm, or pacing "
-    "into the video. Do not lip-sync to it. No character speaks."
-)
 
 
-def _kfref_audio_line(audios: int, has_dialogue: bool) -> str:
-    """有台词时保留对口型句。没台词时只锁定音色，不把样本里的话念进成片。"""
+def _kfref_audio_line(audios: int) -> str:
+    """有参考音频（此时必有台词）保留对口型句；无参考音频写明不要编造。
+
+    无对白镜头一律按 0 路音频下指令（调用方已强制归零）：
+    <Audio N> 只有绑到要说新台词的角色身上才是音色参考，没有目标台词时
+    连上的语音会被当成成片声音，两路人声叠环境音发糊（线上案例）。
+    """
     if audios <= 0:
         return "没有参考音频，不要编造 <Audio N>。"
-    if has_dialogue:
-        stance = "this shot has spoken lines"
-        sentence = _KFREF_AUDIO_SPOKEN
-    else:
-        stance = "this shot has no spoken lines"
-        sentence = _KFREF_AUDIO_TIMBRE_ONLY
+    stance = "this shot has spoken lines"
+    sentence = _KFREF_AUDIO_SPOKEN
     if audios >= 2:
         count = (
             "有 2 个参考音频。第一段写成 <Audio 1>，第二段写成 <Audio 2>。"
@@ -348,7 +345,11 @@ def _build_kfref_instruction(
         else:
             lines.append(f"Do not mention <Picture {index}>. This slot has no image.")
     audios = min(int((ref_counts or {}).get("audios") or 0), MAX_VOICE_REFERENCE_AUDIOS)
-    audio_line = _kfref_audio_line(audios, has_dialogue)
+    if not has_dialogue:
+        # 无对白镜头按 0 路音频下指令：音频文件也不会上传（KFRef 驱动共用同一
+        # 引号台词判断），前缀去掉 audio reference，防止模型编造 <Audio N>。
+        audios = 0
+    audio_line = _kfref_audio_line(audios)
     prefix_parts = []
     if has_keyframe:
         prefix_parts.append("keyframe completion")
@@ -396,6 +397,15 @@ def _extract_quoted_cjk_spans(text: str) -> list:
         if _CJK_RE.search(span):
             spans.append(span)
     return spans
+
+
+def has_quoted_dialogue(text: str) -> bool:
+    """原文是否含引号包裹的 CJK 台词片段。
+
+    音色注入、KFRef 驱动上传与提示词优化共用这一口径判断镜头有无对白：
+    无对白的 KFRef 镜头不上传音色文件、音频槽填 None、优化指令按 0 路音频写。
+    """
+    return bool(_extract_quoted_cjk_spans(text))
 
 
 def _detect_cjk_language(spans: list) -> str:
@@ -480,11 +490,16 @@ def validate_h3_optimized_prompt(
     *,
     keyframe_slots: Optional[Dict[str, Any]] = None,
     duration: Optional[float] = None,
+    forbid_audio_refs: bool = False,
 ) -> bool:
     prompt = strip_prompt_fences(text)
     if not prompt:
         return False
     lowered = prompt.lower()
+    # 仅在 KFRef 且原文无引号台词时开启：无对白镜头连上的语音会被当成成片声音，
+    # 优化结果不得出现任何音频引用；有台词镜头本来就要写 <Audio 1>，不能开。
+    if forbid_audio_refs and "<audio" in lowered:
+        return False
     if variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF:
         # 只接受大模型逐字写出的首尾帧原句。不在这里补句子。
         clauses = kfref_required_clauses(keyframe_slots, duration)

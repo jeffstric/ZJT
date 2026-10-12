@@ -15,12 +15,14 @@ from config.constant import (
     H3_PROMPT_OPTIMIZE_TEMPERATURE,
     H3_PROMPT_OPTIMIZE_TIMEOUT,
     H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+    H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
     LLMModel,
 )
 from model import AITool, PipelineStep
 from task.pipeline_drivers.base_pipeline_driver import BasePipelineDriver
 from task.pipeline_drivers.h3_prompt_optimize_util import (
     build_h3_optimize_user_message,
+    has_quoted_dialogue,
     merge_h3_prompt_extra_config,
     resolve_h3_prompt_variant,
     strip_prompt_fences,
@@ -92,6 +94,11 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         }
 
     async def _optimize(self, original: str, variant: str, duration: float, step_params: Dict[str, Any]) -> Tuple[str, bool, Optional[str]]:
+        # 仅 KFRef 且原文无引号台词时禁止音频引用：有台词镜头要写 <Audio 1> 对口型。
+        forbid_audio_refs = (
+            variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
+            and not has_quoted_dialogue(original)
+        )
         last_error = None
         for _ in range(2):
             try:
@@ -102,6 +109,7 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
                     variant,
                     keyframe_slots=step_params.get("keyframe_slots"),
                     duration=duration,
+                    forbid_audio_refs=forbid_audio_refs,
                 ):
                     return cleaned, False, None
                 last_error = "optimized prompt failed structure check"
