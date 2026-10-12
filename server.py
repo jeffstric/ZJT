@@ -1476,16 +1476,60 @@ def _trim_audio_if_needed(audio_path: str, max_duration: float = 20.0) -> str:
         return audio_path
 
 
+async def _download_audio_url_to_tmp(audio_url: str) -> str:
+    """
+    下载音频 URL 到本地临时目录并返回本地路径。
+
+    用于 ref_audio_url 为本服务产出的音频（如音色库预置样例 /voice_presets/*、
+    火山 TTS 结果）等场景：IndexTTS 远端服务无法访问本服务的 localhost 地址，
+    须先落盘为本地文件，由 upload_reference 上传文件内容。
+
+    Returns:
+        下载后的本地文件路径
+
+    Raises:
+        HTTPException: 下载失败或文件过大
+    """
+    audio_dir = FilePathConstants.get_tts_audio_dir(APP_DIR)
+    os.makedirs(audio_dir, exist_ok=True)
+    parsed = urlparse(audio_url)
+    ext = os.path.splitext(parsed.path)[1].lower() or ".mp3"
+    local_path = os.path.join(audio_dir, f"ref_dl_{uuid.uuid4().hex[:8]}{ext}")
+
+    def _download():
+        with httpx.stream("GET", audio_url, timeout=60, follow_redirects=True) as resp:
+            resp.raise_for_status()
+            with open(local_path, "wb") as f:
+                for chunk in resp.iter_bytes(65536):
+                    f.write(chunk)
+
+    try:
+        await asyncio.to_thread(_download)
+    except httpx.HTTPStatusError as e:
+        if os.path.exists(local_path):
+            os.remove(local_path)
+        raise HTTPException(status_code=400, detail=f"参考音频下载失败: {e.response.status_code}")
+    except Exception as e:
+        if os.path.exists(local_path):
+            os.remove(local_path)
+        raise HTTPException(status_code=400, detail=f"参考音频下载失败: {str(e)}")
+
+    if os.path.getsize(local_path) > 20 * 1024 * 1024:
+        os.remove(local_path)
+        raise HTTPException(status_code=400, detail="参考音频文件不能超过 20MB")
+    return local_path
+
+
 async def _download_and_extract_audio_from_video(video_url: str) -> str:
     """
     Download video from URL, validate size and duration, extract audio, and clean up.
-    
+
     Args:
         video_url: URL of the video to download
-        
+
     Returns:
         Path to extracted audio file
-        
+
     Raises:
         HTTPException: If video is too large, too long, or processing fails
     """
@@ -5160,7 +5204,12 @@ async def audio_generate(
         if ref_audio:
             ref_path = await asyncio.to_thread(_save_uploaded_audio, ref_audio)  # Reuse upload function for audio
         elif ref_audio_url:
-            ref_path = ref_audio_url
+            # 本服务产出的音频 URL（如音色库预置样例）：IndexTTS 远端无法访问
+            # localhost 地址，先下载为本地文件再由 upload_reference 上传文件内容
+            if "/voice_presets/" in ref_audio_url or "localhost" in ref_audio_url:
+                ref_path = await _download_audio_url_to_tmp(ref_audio_url)
+            else:
+                ref_path = ref_audio_url
         
         # Handle emotion reference audio upload
         emo_ref_path = None
