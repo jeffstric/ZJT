@@ -46,6 +46,7 @@ from config.constant import (
 )
 from api.auth_identity import resolve_authorization_user_id
 from model.user_tokens import UserTokensModel
+from model.users import UsersModel
 from perseids_server.utils.auth_identity import (
     get_auth_user_id,
     ensure_owner,
@@ -1131,7 +1132,9 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
 # ==================== 请求模型定义 ====================
 
 class SessionCreateRequest(BaseModel):
-    user_id: str
+    # user_id 可省略：省略时以登录身份为准（check_claimed_user_id 语义）。
+    # 前端不再回传 URL user_id——链接里的 user_id 可能是他人的（2026-10-12 课堂事故）。
+    user_id: Optional[str] = None
     world_id: str
     auth_token: str = ""
     model: Optional[str] = None
@@ -2798,16 +2801,26 @@ async def set_video_model(request: Request):
 
 
 @router.get('/sessions')
+@require_permission("script_session:view")
 async def list_sessions(
+    request: Request,
     user_id: Optional[str] = QueryParam(None),
     world_id: Optional[str] = QueryParam(None),
     session_type: Optional[int] = QueryParam(None)
 ):
-    """列出所有会话"""
+    """列出会话（须登录；user_id 必须与登录身份一致，防止跨用户枚举他人会话）"""
     try:
         from model.chat_sessions import ChatSessionsModel
 
         if user_id:
+            # 身份一致性校验：查询参数 user_id 与登录身份不一致时 403。
+            # 背景（2026-10-12 课堂事故）：学生打开带他人 user_id 的链接，本接口曾把
+            # 该他人的最新会话原样返回，前端复用后每次发消息都被属主断言 404，
+            # 页面始终报「发送消息失败」且无法自愈。
+            claimed_error = check_claimed_user_id(user_id, get_auth_user_id(request))
+            if claimed_error:
+                return claimed_error
+
             # 从数据库查询用户的会话
             entities = ChatSessionsModel.list_by_user(user_id, world_id, active_only=True, limit=100, session_type=session_type)
             def _extract_title(entity):
@@ -2840,6 +2853,14 @@ async def list_sessions(
                 for e in entities
             ]
         else:
+            # 无 user_id 的调试路径会列出进程内全部缓存会话（含所有用户的数据），仅限管理员访问
+            admin_user = await asyncio.to_thread(UsersModel.get_by_id, get_auth_user_id(request))
+            if not admin_user or getattr(admin_user, 'role', None) != 'admin':
+                return JSONResponse({
+                    'success': False,
+                    'error': '需要管理员权限'
+                }, status_code=403)
+
             # 列出缓存中的会话（用于调试）
             session_list = []
             cached_ids = session_storage.get_cached_sessions()
