@@ -29,9 +29,16 @@ allowed-tools: ["generate_digital_human", "prepare_digital_human_draft", "confir
 1. **严禁自行降级**：不得未经用户同意就调用 `generate_reference_audio` + `generate_digital_human`
    （wan2.2 参考音色链路）来"兜底完成"任务——该链路音频语义不同（参考音色而非驱动音频），
    且用户应知情选择。
-2. **必须通过 `ask_user` 向用户说明并提供两个选项**：
-   - 选项一：上传您自己的驱动音频（说出口播内容的录音）——提供后仍可生成 MiniMax H3 数字人；
-   - 选项二：使用参考音色模式（wan2.2）——用一段参考音频的音色，口播内容以文字驱动（音色相似度取决于模型）。
+2. **必须通过 `ask_user` 向用户说明并提供选项**（按可用性裁剪）：
+   - 选项①：上传您自己的驱动音频（说出口播内容的录音）——提供后走 MiniMax H3；
+   - 选项②（**RunningHub 已配置时提供**）：用 RunningHub 生成驱动音频——调用
+     `generate_reference_audio(script_text, style_prompt)` 按口播文案与角色气质生成音频，
+     轮询 `check_reference_audio_status` 拿到 audio_url 后作为驱动音频走 MiniMax H3
+     （生成需 1-2 分钟；完成后仍须把试听链接展示给用户确认再提交视频）；
+   - 选项③：使用参考音色模式（wan2.2）——用一段参考音频的音色，口播内容以文字驱动；
+   - 选项④：先联系管理员配置火山语音 TTS，稍后再试。
+   RunningHub 是否可用：本任务运行环境已配置 RunningHub 密钥即可用（选项②）；
+   无法确定时一并列出并注明"需要系统已配置 RunningHub"。
 3. 用户明确选择后才继续执行对应链路；用户选择联系管理员时，如实告知即可，不要继续生成。
 4. 判别方法：错误信息含「未配置」字样即为本规则触发条件；其他错误（超时/算力/内容违规等）
    按普通失败向用户转述，不适用本降级规则。
