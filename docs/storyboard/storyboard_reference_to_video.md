@@ -75,7 +75,7 @@
 
 - **注入内容**：① 参考音频——角色 `default_voice` 并入参考音频通道（seedance 走 `reference_audio` 自动上传 CDN，MiniMax H3 走 LoadAudio 槽位）；② 提示词说明——尾部追加「参考音频说明：音频N是角色：XX的音色样本，角色说话时请保持相同音色。」（与参考图图例同构，幂等追加）
 - **注入条件**（全部满足）：`multi_reference` 模式 + 模型 `supports_voice_input=True` + 角色有默认音色；无音色角色跳过，与用户手动携带音频按 URL 去重，最多注入 2 条（`MAX_VOICE_REFERENCE_AUDIOS`，受 MiniMax H3 LoadAudio 硬上限约束）
-- **KFRef 混合模型无对白镜头不注入**：本次提交切成 KFRef 隐藏任务（`minimax_h3_kfr`）且镜头原文无引号台词（`has_quoted_dialogue`，引号包裹的 CJK 片段）时，跳过音频合并与「保持相同音色」说明追加——`<Audio N>` 只有绑到要说新台词的角色身上才是音色参考，无对白时连上的语音会被当成成片声音。分镜直连（`api/storyboard.py`）与批量补视频（`storyboard_agent_cli_service`）两处同口径；KFRef 驱动侧另有同一判断兜底（画布提交/存量任务即使 `audio_path` 有值也不上传，音频槽填 `None`）。有引号台词的镜头维持注入 + lip-sync pacing 不变。Ref2VA/I2VA/FL2VA 不受影响
+- **KFRef 混合模型无对白镜头不注入**：本次提交切成 KFRef 隐藏任务（`minimax_h3_kfr`）且镜头原文无引号台词（`has_quoted_dialogue`，引号包裹的 CJK 片段）时，跳过音频合并与「保持相同音色」说明追加——`<Audio N>` 只有绑到要说新台词的角色身上才是音色参考，无对白时连上的语音会被当成成片声音。分镜直连（`api/storyboard.py`）与批量补视频（`storyboard_agent_cli_service`）两处同口径。注入侧用正则是「提交时等不了 LLM」的权宜，其误判由驱动侧读优化 LLM 的语义标记（`extra_config.h3_prompt_optimize.has_dialogue`，能识别无引号台词、排除引号店名）纠正；驱动无标记时（旧任务/优化禁用/回退原文）回退正则。有引号台词的镜头维持注入 + 绑定句（lip-sync pacing）不变。Ref2VA/I2VA/FL2VA 不受影响
 - **时长预算兜底**（seedance 系列）：角色音色源音频上传时裁到 20s（TTS 克隆需要），而火山 r2v 限制音频总时长 2.0 系列 ≤15s / 2.5 ≤30s。seedance 驱动（火山国内/海外/kkidc/huimengi）提交前按「(总上限-0.5s 余量)/条数」均分配额自动截断超长音频到临时文件（不修改角色原音频），详见 `docs/drivers/seedance_volcengine_v1_driver.md`「参考音频总时长预算与自动截断」；MiniMax H3 不受此限制
 - **不支持的模型**（grok / kling / vidu / veo3 / wan3 等默认 False）：不注入音频也不追加文字，行为零变化
 - **能力位配置**：`config/unified_config.py` `UnifiedTaskConfig.supports_voice_input`（`to_frontend_dict` 同步下发前端）；当前 True：`seedance_2_0` / `seedance_2_0_fast` / `seedance_2_0_mini` / `seedance_2_5` / `minimax_h3_r2v`

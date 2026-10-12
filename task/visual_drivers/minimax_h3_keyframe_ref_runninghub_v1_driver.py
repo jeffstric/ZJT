@@ -71,6 +71,11 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
                 f"Picture{index + 1}",
             )
 
+        # 无对白镜头不上传音频（必须在上传循环之前清空，否则文件已传完、音频槽
+        # 仍会拿到 fileName）：<Audio N> 只有绑到要说新台词的角色身上才是音色参考，
+        # 没有目标台词时连上的语音会被当成成片声音。台词有无优先取优化步骤的
+        # LLM 语义判断（extra_config.h3_prompt_optimize.has_dialogue，能识别无引号
+        # 台词、排除引号店名），旧任务/优化禁用/回退原文时回退正则引号判断。
         audios = self._split_reference_paths(getattr(ai_tool, "audio_path", None))
         if len(audios) > MAX_VOICE_REFERENCE_AUDIOS:
             self.logger.warning(
@@ -79,13 +84,13 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
                 len(audios) - MAX_VOICE_REFERENCE_AUDIOS,
             )
             audios = audios[:MAX_VOICE_REFERENCE_AUDIOS]
-        # 无对白镜头不上传音频（必须在上传循环之前清空，否则文件已传完、音频槽
-        # 仍会拿到 fileName）：<Audio N> 只有绑到要说新台词的角色身上才是音色参考，
-        # 没有目标台词时连上的语音会被当成成片声音。与音色注入、提示词优化共用
-        # 同一引号台词判断口径；含引号台词的镜头维持上传 + lip-sync pacing 不变。
-        if audios and not has_quoted_dialogue(slot_prompt):
+        _prompt_meta = extra_config.get("h3_prompt_optimize") if isinstance(extra_config, dict) else None
+        _llm_flag = _prompt_meta.get("has_dialogue") if isinstance(_prompt_meta, dict) else None
+        _has_dialogue = _llm_flag if isinstance(_llm_flag, bool) else has_quoted_dialogue(slot_prompt)
+        if audios and not _has_dialogue:
             self.logger.info(
-                "MiniMax H3 首帧参考混合模型镜头无对白，跳过 %s 个参考音频，音频槽填 None",
+                "MiniMax H3 首帧参考混合模型镜头无对白（has_dialogue=%s），跳过 %s 个参考音频，音频槽填 None",
+                _llm_flag,
                 len(audios),
             )
             audios = []
