@@ -173,7 +173,7 @@
         async function loadVoices() {
           if (!window.VoiceLibraryApi) return;
           try {
-            var data = await window.VoiceLibraryApi.listVoices({ page_size: 200 });
+            var data = await window.VoiceLibraryApi.listVoices({ page_size: 300 });
             voiceOptions = data.voices || [];
             powerTiers = data.power_tiers || [];
             var esc = window.escapeHtml || function(s) { return String(s == null ? '' : s); };
