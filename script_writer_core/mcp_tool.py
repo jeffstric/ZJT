@@ -4263,7 +4263,7 @@ MCP_TOOLS = [
     },
     {
         "name": "prepare_digital_human_draft",
-        "description": "准备数字人口播草案（确认制，不直接生成视频）。确定音色（VL 看角色图挑选/用户指定/默认）→ 用火山 TTS 合成驱动音频（立即消耗字符算力）→ 产出草案 draft_id。用户确认草案后必须调用 confirm_digital_human 提交视频生成。注意：script_text 必须是最终口播文案（用户未提供时请先自行撰写）；image_url 必须来自对话中用户上传或已生成的真实图片。",
+        "description": "准备数字人口播草案（确认制，不直接生成视频）。确定音色（VL 看角色图挑选/用户指定/默认，同时生成动作提示词）→ 用火山 TTS 合成驱动音频（立即消耗字符算力）→ 产出草案 draft_id。用户确认草案后必须调用 confirm_digital_human 提交视频生成。注意：script_text 必须是最终口播文案（用户未提供时请先自行撰写）；image_url 必须来自对话中用户上传或已生成的真实图片。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -4282,6 +4282,10 @@ MCP_TOOLS = [
                 "voice_requirement": {
                     "type": "string",
                     "description": "对声音的要求描述（可选，如'成熟男性、纪录片感'），辅助视觉模型挑选"
+                },
+                "motion_prompt": {
+                    "type": "string",
+                    "description": "动作提示词（可选，默认由视觉模型看图生成）。描述人物说话情绪与镜头方式，如'角色面向镜头深情的说话，固定镜头。'。注意：不是口播内容"
                 },
                 "audio_url": {
                     "type": "string",

@@ -86,7 +86,8 @@ class TestPickVoiceByImage(_VoiceModelMockBase):
 
     def test_valid_json_parsed(self):
         async def fake_call_vl(system, user, img, **kw):
-            return True, '{"voice_id": 2, "reason": "男性角色"}', None
+            return True, ('{"voice_id": 2, "reason": "男性角色", '
+                          '"motion_prompt": "角色面向镜头深情的说话，固定镜头。"}'), None
 
         async def fake_base64(*a, **kw):
             return True, "data:image/png;base64,xxx", None
@@ -99,6 +100,7 @@ class TestPickVoiceByImage(_VoiceModelMockBase):
 
         self.assertEqual(result["voice_id"], 2)
         self.assertEqual(result["reason"], "男性角色")
+        self.assertIn("固定镜头", result["motion_prompt"])
 
     def test_out_of_range_voice_falls_back(self):
         async def fake_call_vl(system, user, img, **kw):
@@ -179,6 +181,7 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertTrue(draft["draft_id"])
         self.assertEqual(draft["h3_duration"], 6)  # 5.2s → ceil 6
         self.assertEqual(draft["tts_computing_power"], 2)
+        self.assertIn("固定镜头", draft["motion_prompt"])
         # 草案已入库存
         self.assertIsNotNone(get_draft(draft["draft_id"]))
 
@@ -203,7 +206,14 @@ class TestConfirmTool(_VoiceModelMockBase):
             return {"success": True, "audio_url": "http://x/tts.mp3", "duration": 5,
                     "computing_power": 1, "voice_name": "v", "voice_type": "zh", "voice_id": 1}
 
-        with patch("script_writer_core.digital_human_tts_tools.synthesize_speech_for_user", fake_tts):
+        async def fake_pick(*a, **k):
+            return {"voice_id": 1, "reason": "r",
+                    "motion_prompt": "角色面向镜头深情的说话，固定镜头。"}
+
+        async def fake_candidates(lang):
+            return [{"voice_id": 1, "name": "Vivi 2.0"}]
+
+        with patch("script_writer_core.digital_human_tts_tools.synthesize_speech_for_user", fake_tts),              patch("script_writer_core.digital_human_tts_tools._pick_voice_by_image", fake_pick),              patch("script_writer_core.digital_human_tts_tools._load_voice_candidates", fake_candidates):
             result = asyncio.run(prepare_digital_human_draft(
                 user_id="1", world_id="w", auth_token="t",
                 image_url="http://x/img.png", script_text="文案",
@@ -213,6 +223,7 @@ class TestConfirmTool(_VoiceModelMockBase):
         self.assertEqual(result["draft"]["audio_url"], "http://x/user_audio.mp3")
         self.assertEqual(result["draft"]["tts_computing_power"], 0)
         self.assertIn("用户提供的驱动音频", result["draft"]["voice_selection_reason"])
+        self.assertIn("固定镜头", result["draft"]["motion_prompt"])
         self.assertEqual(tts_called, [], "提供用户音频时不应调用 TTS")
 
     def test_confirm_submits_h3(self):

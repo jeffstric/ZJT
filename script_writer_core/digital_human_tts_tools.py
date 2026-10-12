@@ -112,11 +112,16 @@ async def _pick_voice_by_image(
     user_id: Optional[int],
     voice_requirement: str = "",
 ) -> Dict[str, Any]:
-    """VL 看角色图 + 候选音色表 → 挑选最匹配音色。失败降级默认音色。"""
+    """VL 看角色图：挑选匹配音色 + 生成 H3 动作提示词。失败降级默认。
+
+    返回 {"voice_id", "reason", "motion_prompt"}。
+    """
+    default_motion = "角色面向镜头深情的说话，固定镜头。"
 
     def _fallback(reason: str) -> Dict[str, Any]:
         # 惰性查库：仅在真正需要降级时才取默认音色
-        return {"voice_id": _default_voice_id(), "reason": reason}
+        return {"voice_id": _default_voice_id(), "reason": reason,
+                "motion_prompt": default_motion}
 
     if not candidates:
         return _fallback("默认音色（候选为空）")
@@ -133,14 +138,18 @@ async def _pick_voice_by_image(
 
         import json as _json
         system_prompt = (
-            "你是短视频选角导演。根据角色图片中人物的性别、年龄段、气质与场景感，"
-            "从候选音色列表中挑选最匹配的一个。只输出 JSON："
-            '{"voice_id": <候选中的数字>, "reason": "<20字内理由>"}'
+            "你是短视频选角导演。根据角色图片完成两件事：\n"
+            "1. 从候选音色列表中挑选与人物（性别/年龄段/气质）最匹配的一个；\n"
+            "2. 为该人物撰写数字人视频的动作提示词：描述人物如何说话（情绪/表情）"
+            "与镜头方式（如固定镜头/缓慢推近），参考格式："
+            "'角色面向镜头深情的说话，固定镜头。'，30 字以内，不要出现具体台词。\n"
+            '只输出 JSON：{"voice_id": <候选中的数字>, "reason": "<20字内理由>", '
+            '"motion_prompt": "<动作提示词>"}'
         )
         requirement = f"\n用户对声音的额外要求：{voice_requirement}" if voice_requirement else ""
         user_text = (
             f"候选音色列表（JSON）：\n{_json.dumps(candidates, ensure_ascii=False)}{requirement}\n"
-            "请挑选最匹配的一个并说明理由。"
+            "请完成音色挑选与动作提示词撰写。"
         )
         v_ok, content, v_err = await call_vl(
             system_prompt, user_text, data_url,
@@ -166,7 +175,12 @@ async def _pick_voice_by_image(
         valid_ids = {c["voice_id"] for c in candidates}
         if voice_id not in valid_ids:
             return _fallback("默认音色（视觉分析返回了候选之外的音色）")
-        return {"voice_id": voice_id, "reason": str(parsed.get("reason", ""))[:60]}
+        return {
+            "voice_id": voice_id,
+            "reason": str(parsed.get("reason", ""))[:60],
+            "motion_prompt": (str(parsed.get("motion_prompt", "")).strip()[:100]
+                              or default_motion),
+        }
     except Exception as e:  # noqa: BLE001
         logger.warning(f"VL 选音色失败，降级默认音色: {e}")
         return _fallback("默认音色（视觉分析异常）")
@@ -181,6 +195,7 @@ async def prepare_digital_human_draft(
     audio_url: str = None,
     voice_id: int = None,
     voice_requirement: str = "",
+    motion_prompt: str = "",
     max_edge: int = 1280,
     aspect_ratio: str = "9:16",
 ) -> Dict[str, Any]:
@@ -190,6 +205,9 @@ async def prepare_digital_human_draft(
     直接以该音频出草案（不消耗 TTS 算力）。
 
     音色确定优先级（无 audio_url 时）：voice_id 显式指定 > VL 看角色图挑选 > 默认音色。
+    动作提示词（H3 的 text 参数，描述说话情绪与镜头方式，不是口播内容）
+    确定优先级：motion_prompt 显式指定 > VL 看角色图生成 > 默认
+    （"角色面向镜头深情的说话，固定镜头。"）。
     script_text 必须是最终口播文案；用户未提供文案时请先生成文案再调用本工具。
 
     Args:
@@ -198,6 +216,7 @@ async def prepare_digital_human_draft(
         audio_url: 用户提供的驱动音频 URL（可选；提供时跳过 TTS）
         voice_id: 音色库音色 ID（可选；给定则跳过 VL 挑选）
         voice_requirement: 对声音的要求描述（可选，如"成熟男性、纪录片感"）
+        motion_prompt: 动作提示词（可选；如"角色面向镜头深情的说话，固定镜头。"）
         max_edge: 视频最长边 720/1280/1920（默认 1280）
         aspect_ratio: 视频比例（默认 9:16），仅透传给确认信息
 
@@ -212,25 +231,30 @@ async def prepare_digital_human_draft(
         script_text = script_text.strip()
         if len(script_text) > 2000:
             return {'success': False, 'error': '口播文案不能超过 2000 字'}
+        motion_prompt = (motion_prompt or '').strip()[:200] or None
 
         # 1. 用户提供驱动音频：跳过音色选择与 TTS
         user_audio_url = (audio_url or '').strip() or None
 
-        # 2. 确定音色（无用户音频时才需要）
+        # 2. 确定音色与动作提示词（有用户音频时音色不需要，但动作提示词仍看图生成）
         selection_reason = "用户指定音色"
-        if user_audio_url:
-            voice_id = voice_id  # 无需音色（音频即成片声音）；保留用户指定值供记录
-        elif voice_id:
+        motion_from_vl = None
+        need_voice = not user_audio_url
+        need_vl_analysis = (not motion_prompt) and bool(image_url) and (need_voice or not voice_id)
+        if need_vl_analysis:
+            candidates = await asyncio.to_thread(_load_voice_candidates, "zh")
+            picked = await _pick_voice_by_image(image_url, candidates, int(user_id or 0), voice_requirement)
+            motion_from_vl = picked.get("motion_prompt")
+            if need_voice:
+                voice_id = picked["voice_id"]
+                selection_reason = f"VL 看图挑选：{picked['reason']}"
+                if not voice_id:
+                    return {'success': False, 'error': '未能确定音色（音色库为空），请联系管理员'}
+        elif need_voice and voice_id:
             voice = VoiceModel.get_by_id(int(voice_id))
             if not voice or not voice.is_active or voice.provider != 'volcengine':
                 return {'success': False, 'error': f'音色 {voice_id} 不存在或已下线'}
-        else:
-            candidates = await asyncio.to_thread(_load_voice_candidates, "zh")
-            picked = await _pick_voice_by_image(image_url, candidates, int(user_id or 0), voice_requirement)
-            voice_id = picked["voice_id"]
-            selection_reason = f"VL 看图挑选：{picked['reason']}"
-            if not voice_id:
-                return {'success': False, 'error': '未能确定音色（音色库为空），请联系管理员'}
+        motion_prompt = motion_prompt or motion_from_vl or "角色面向镜头深情的说话，固定镜头。"
 
         # 3. TTS 合成驱动音频（用户提供 audio_url 时跳过；扣字符算力；失败自动退款）
         if user_audio_url:
@@ -266,6 +290,7 @@ async def prepare_digital_human_draft(
             "voice_name": tts.get('voice_name'),
             "voice_type": tts.get('voice_type'),
             "voice_selection_reason": selection_reason if not user_audio_url else "用户提供的驱动音频",
+            "motion_prompt": motion_prompt,
             "audio_url": tts.get('audio_url'),
             "audio_duration": tts.get('duration'),
             "tts_computing_power": tts.get('computing_power'),
@@ -285,6 +310,7 @@ async def prepare_digital_human_draft(
             'message': (
                 f"数字人口播草案已就绪（draft_id: {draft_id}）。"
                 f"音色：{draft['voice_name'] or '用户音频'}（{draft['voice_selection_reason']}）；"
+                f"动作提示词：{motion_prompt}；"
                 f"音频时长 {draft['audio_duration'] or duration}s；{tts_cost_note}"
                 f"确认后生成视频将消耗 {h3_power} 算力。"
                 f"请向用户展示草案（文案/音色/试听链接 {draft['audio_url']}）并等待用户确认，"
@@ -348,7 +374,8 @@ async def confirm_digital_human(
             'audio': (audio_name, audio_bytes, 'audio/mpeg'),
         }
         data = {
-            'text': draft["script_text"][:1000],
+            # H3 的 text 是「动作/镜头提示词」（口播内容在 audio 里，勿传口播文案）
+            'text': (draft.get("motion_prompt") or "角色面向镜头深情的说话，固定镜头。")[:1000],
             'duration': str(draft["h3_duration"]),
             'max_edge': str(draft["max_edge"]),
             'start_second': '0',
