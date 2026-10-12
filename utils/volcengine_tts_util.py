@@ -183,7 +183,13 @@ async def synthesize_speech(
         return False, b"", f"火山TTS调用失败: {e}"
 
     audio_bytes = b"".join(audio_parts)
-    if not audio_bytes or not finished:
+    if not audio_bytes:
+        if finished:
+            # 火山正常结束但零音频：典型原因是外语音色配了不匹配语言的文本（实测）
+            return False, b"", (
+                "该音色未能合成此文本：非中文音色需输入对应语言的文本"
+                "（如英文音色配英文），请调整文本或更换中文音色"
+            )
         return False, b"", "火山TTS未返回完整音频（流提前结束），请重试"
     return True, audio_bytes, "success"
 

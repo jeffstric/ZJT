@@ -308,8 +308,11 @@ async def preview_voice(request: Request, voice_id: int):
     cached_path = os.path.join(result_dir, filename)
 
     if not await asyncio.to_thread(os.path.isfile, cached_path):
+        # 示例句按音色语言选择：外语音色喂中文文本会返回空音频（实测）
+        preview_text = VolcengineTtsConstants.PREVIEW_TEXT_BY_LANGUAGE.get(
+            voice.language, VolcengineTtsConstants.PREVIEW_TEXT)
         success, audio_bytes, message = await synthesize_speech(
-            text=VolcengineTtsConstants.PREVIEW_TEXT,
+            text=preview_text,
             speaker=voice.voice_type,
             speed_ratio=VolcengineTtsConstants.SPEED_DEFAULT,
             timeout=VolcengineTtsConstants.PREVIEW_TIMEOUT_SECONDS,

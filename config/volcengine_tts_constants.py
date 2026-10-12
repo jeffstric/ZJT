@@ -38,8 +38,28 @@ class VolcengineTtsConstants:
 
     # 单次合成文本上限（字符）；火山按字符计费，上限同时是计价档位终点
     MAX_TEXT_LENGTH = 2000
-    # 试听固定示例句：服务端写死防"自定义试听文本"套利（免费+按音色缓存）
+    # 试听固定示例句：服务端写死防"自定义试听文本"套利（免费+按音色缓存）。
+    # ⚠️ 必须按音色语言选择（实测英文音色喂纯中文文本会返回空音频），
+    # 缺省回退中文。key 与 voice.language 取值一致。
     PREVIEW_TEXT = "你好，我是你的AI配音员，很高兴为你朗读这段文字。"
+    PREVIEW_TEXT_BY_LANGUAGE = {
+        "zh": "你好，我是你的AI配音员，很高兴为你朗读这段文字。",
+        "en": "Hello, I am your AI narrator. It is a pleasure to read this text for you.",
+        "ja": "こんにちは、あなたのAIナレーターです。この文章を読み上げます。",
+        "ko": "안녕하세요, AI 아나운서입니다. 이 문장을 읽어 드리겠습니다.",
+        "th": "สวัสดีค่ะ ฉันเป็นผู้บรรยาย AI ยินดีที่ได้อ่านข้อความนี้ให้ฟัง",
+        "vi": "Xin chào, tôi là diễn giả AI, rất vui được đọc đoạn văn này cho bạn.",
+        "id": "Halo, saya narator AI Anda. Senang bisa membacakan teks ini untuk Anda.",
+        "ms": "Helo, saya pemberi suara AI anda. Gembira dapat membacakan teks ini.",
+        "tl": "Kumusta, ako ang iyong AI narrator. Masaya akong basahin ito para sa iyo.",
+        "pt": "Olá, eu sou o seu narrador de IA. É um prazer ler este texto para você.",
+        "es": "Hola, soy su locutor de IA. Es un placer leerle este texto.",
+        "fr": "Bonjour, je suis votre narrateur IA. C'est un plaisir de vous lire ce texte.",
+        "de": "Hallo, ich bin Ihr KI-Sprecher. Ich lese Ihnen diesen Text gerne vor.",
+        "it": "Ciao, sono il tuo narratore AI. È un piacere leggerti questo testo.",
+        "ru": "Привет, я ваш диктор ИИ. С удовольствием прочитаю вам этот текст.",
+        "ar": "مرحباً، أنا قارئ الذكاء الاصطناعي الخاص بك. سعيد بقراءة هذا النص لك.",
+    }
 
     # 语速：对外沿用 speed_ratio 语义（1.0 正常，>1 更快），请求体换算为
     # speech_rate = (speed_ratio - 1) * 100，取值范围 [-50, 100]（官方文档）。
@@ -65,77 +85,6 @@ class VolcengineTtsConstants:
     PREVIEW_FILENAME_PREFIX = "preview_"
 
 
-"""火山引擎（豆包语音）大模型语音合成专用常量。
-
-独立于 config/constant.py 维护：音色清单与计价档位会随运营持续扩充，
-避免主常量文件继续膨胀（AGENTS.md 规则 5 的"必要时新增"分支）。
-
-接入/开通/计费说明见 docs/audio/volcengine_tts.md。
-2026-10 实测对齐语音合成 2.0（seed-tts-2.0）接口。
-"""
-import os
-
-
-class VolcengineTtsConstants:
-    """火山引擎（豆包语音）语音合成 2.0 常量。
-
-    接口为 V3 单向流式 HTTP（openspeech.bytedance.com，一次性输入文本、
-    chunked 流式返回 JSON 块，data 字段为 base64 音频）。
-    鉴权使用新版豆包语音控制台的单 API Key（X-Api-Key 头），
-    与方舟 volcengine.api_key 不是同一套体系。
-    """
-    API_HOST = "https://openspeech.bytedance.com"
-    UNIDIRECTIONAL_PATH = "/api/v3/tts/unidirectional"
-    # 语音合成大模型 2.0（官方文档 X-Api-Resource-Id 可选值；
-    # seed-icl-2.0 为声音复刻 2.0，二期接入）
-    RESOURCE_ID = "seed-tts-2.0"
-
-    # 响应 JSON 块业务码：0=数据块正常；20000000=合成完成（结束块）
-    OK_CODES = (0, 20000000)
-    FINISH_CODE = 20000000
-
-    DEFAULT_ENCODING = "mp3"
-    DEFAULT_SAMPLE_RATE = 24000
-    # mp3 比特率可选 [64000, 160000]
-    DEFAULT_BITRATE = 64000
-
-    # 快速合成为同步接口，单次请求必须显式超时（AGENTS.md 超时红线）
-    TIMEOUT_SECONDS = 30
-    PREVIEW_TIMEOUT_SECONDS = 20
-
-    # 单次合成文本上限（字符）；火山按字符计费，上限同时是计价档位终点
-    MAX_TEXT_LENGTH = 2000
-    # 试听固定示例句：服务端写死防"自定义试听文本"套利（免费+按音色缓存）
-    PREVIEW_TEXT = "你好，我是你的AI配音员，很高兴为你朗读这段文字。"
-
-    # 语速：对外沿用 speed_ratio 语义（1.0 正常，>1 更快），请求体换算为
-    # speech_rate = (speed_ratio - 1) * 100，取值范围 [-50, 100]（官方文档）。
-    SPEED_DEFAULT = 1.0
-    SPEED_MIN = 0.5
-    SPEED_MAX = 2.0
-
-    # 字符档位计价：文本字符数 ≤ 档位上限 → 消耗对应整数算力（向上取整吸附，
-    # 与视频按时长吸附档位同构）。默认按 0.0008 元/字符定价（火山后付费成本约
-    # 5 元/万字符 = 0.0005 元/字符，1 算力 = 0.04 元）。运营可通过动态配置
-    # volcengine_tts.power_tiers 热更新（DB 优先、YAML 兜底），格式为
-    # [[上限字符, 算力], ...] 升序列表。
-    POWER_TIERS = [
-        (50, 1),
-        (200, 4),
-        (500, 10),
-        (1000, 20),
-        (2000, 40),
-    ]
-
-    # 本地落盘目录（相对项目根），对外 URL 为 {server_host}/upload/tts/volcengine/
-    RESULT_SUBDIR = os.path.join("upload", "tts", "volcengine")
-    PREVIEW_FILENAME_PREFIX = "preview_"
-
-
-# 火山语音合成 2.0 预置音色种子清单（voice 表 user_id=0 系统预置行的唯一事实来源）。
-# 来源：官方音色列表文档（byteplusvoice/tts-voice-list）全量 2.0 音色共 176 个，
-# 覆盖 16 种语言；中文 23 个 + 多语言代表已实测合成验证通过（2026-10-12）。
-# 后续增补直接追加行 + 迁移（或后台 INSERT voice 表）。
 VOLCENGINE_TTS_VOICES = [
     {"voice_type": "ar_female_dina_uranus_bigtts", "name": "Dina",
      "gender": "female", "language": "ar", "style": "通用",
