@@ -33,6 +33,7 @@ from config.constant import (
     TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO,
     TASK_STATUS_QUEUED, AI_TOOL_STATUS_PENDING, AI_AUDIO_STATUS_PENDING,
     AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+    H3_KFREF_IMAGE_PROMPT_NOTE_MAX_CHARS,
     StoryboardAutoGenerateConstants,
     StoryboardAudioGenerateConstants,
     StoryboardDigitalHumanConstants,
@@ -4549,6 +4550,15 @@ async def generate_scene_video(
         extra_payload['resolution'] = video_resolution
     if human_review:
         extra_payload['human_review'] = True
+    # KFRef 优化步骤的说话人绑定原料：分镜画面构成（生成分镜图所用提示词，
+    # 含人物站位/外观）。multi_reference 分支才会加载 scene_characters_ctx，
+    # 与 KFRef 的 image_mode 前置一致；批量/画布链路不携带时优化自动降级。
+    if task_type == h3_keyframe_ref_task_id() and scene_characters_ctx is not None:
+        _image_prompt_note = str(scene_characters_ctx.get('image_prompt') or '').strip()
+        if _image_prompt_note:
+            extra_payload['image_prompt_note'] = _image_prompt_note[
+                :H3_KFREF_IMAGE_PROMPT_NOTE_MAX_CHARS
+            ]
     extra_config = json.dumps(extra_payload, ensure_ascii=False)
 
     create_kwargs = dict(

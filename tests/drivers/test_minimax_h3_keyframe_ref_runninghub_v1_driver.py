@@ -144,6 +144,88 @@ def test_two_audios_fill_both_nodes_and_extra_audio_and_video_are_dropped():
     extra.logger.warning.assert_called()
 
 
+def test_no_dialogue_skips_audio_upload_and_fills_none():
+    """无对白镜头不上传音色：两个音频槽都填 None，音频文件根本不传 RunningHub。"""
+    driver = make_driver()
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        audio_path="voice1.wav,voice2.wav",
+        prompt="图1是首帧，图2是林月，图3是尾帧。无对白，只有扫帚和脚步声。",
+    )))
+    nodes = node_map(request)
+    assert nodes[("157", "audio")]["fieldValue"] == "None"
+    assert nodes[("188", "audio")]["fieldValue"] == "None"
+    assert "voice1.wav" not in driver._storage.calls
+    assert "voice2.wav" not in driver._storage.calls
+    driver.logger.info.assert_called()
+
+
+def test_no_dialogue_judgment_reads_original_prompt_not_optimized_text():
+    """台词判断以优化前原文为准：旧优化结果里残留 <Audio 1> 也不影响跳过上传。"""
+    driver = make_driver()
+    extra = {
+        "image_mode": "multi_reference",
+        "h3_prompt_optimize": {
+            "variant": "KFRef",
+            "original_prompt": "图1是首帧，图2是林月，图3是尾帧。无对白。",
+            "optimized_prompt": "[keyframe completion + audio reference] <Audio 1> legacy",
+        },
+    }
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        audio_path="voice1.wav",
+        prompt="[keyframe completion + audio reference] <Audio 1> legacy",
+        extra_config=json.dumps(extra, ensure_ascii=False),
+    )))
+    nodes = node_map(request)
+    assert nodes[("157", "audio")]["fieldValue"] == "None"
+    assert nodes[("188", "audio")]["fieldValue"] == "None"
+    assert "voice1.wav" not in driver._storage.calls
+
+
+def test_llm_dialogue_flag_overrides_regex_fallback():
+    """优化 LLM 的 has_dialogue 标记优先于正则：能纠正两类正则误判。"""
+    # 标记 false + 原文有引号「台词」（LLM 判断为店名/标语）→ 不上传
+    driver = make_driver()
+    extra = {
+        "image_mode": "multi_reference",
+        "image_prompt_note": "街角店铺",
+        "h3_prompt_optimize": {
+            "variant": "KFRef",
+            "original_prompt": "图1是首帧。招牌上写着「老王面馆」，无对白。",
+            "optimized_prompt": "[keyframe completion] ...",
+            "has_dialogue": False,
+        },
+    }
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        audio_path="voice1.wav,voice2.wav",
+        prompt="[keyframe completion] ...",
+        extra_config=json.dumps(extra, ensure_ascii=False),
+    )))
+    nodes = node_map(request)
+    assert nodes[("157", "audio")]["fieldValue"] == "None"
+    assert nodes[("188", "audio")]["fieldValue"] == "None"
+    assert "voice1.wav" not in driver._storage.calls
+
+    # 标记 true + 原文无引号（LLM 识别出无引号台词）→ 照常上传
+    spoken = make_driver()
+    spoken_extra = {
+        "image_mode": "multi_reference",
+        "h3_prompt_optimize": {
+            "variant": "KFRef",
+            "original_prompt": "图1是首帧。李卫国对赵志高说：今天到此为止。",
+            "optimized_prompt": "[keyframe completion + audio reference] ...",
+            "has_dialogue": True,
+        },
+    }
+    spoken_request = asyncio.run(spoken.build_create_request(make_ai_tool(
+        audio_path="voice1.wav,voice2.wav",
+        prompt="[keyframe completion + audio reference] ...",
+        extra_config=json.dumps(spoken_extra, ensure_ascii=False),
+    )))
+    spoken_nodes = node_map(spoken_request)
+    assert spoken_nodes[("157", "audio")]["fieldValue"] == "openapi/voice1.wav"
+    assert spoken_nodes[("188", "audio")]["fieldValue"] == "openapi/voice2.wav"
+
+
 def test_requires_at_least_one_picture():
     driver = make_driver()
     try:

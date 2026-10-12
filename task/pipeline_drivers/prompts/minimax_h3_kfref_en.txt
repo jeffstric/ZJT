@@ -10,16 +10,22 @@ For each occupied picture slot, write one paragraph in slot order. When the slot
 - An ending key frame closes the video. The video must end pixel-consistently with that picture for scene composition, camera framing, character positions, poses, spacing, props, and the environment. The closing frame must not be reinterpreted or changed. Do not treat it as a separate character-only reference whose background can be discarded; it is the target last frame. When an ending key frame exists, the shot must travel from the opening frame to that ending frame. Do not keep the opening pose, camera, or framing through the end. Do not write fixed camera, camera locked, or a held opening shot. Do not describe the ending camera size or poses in words; the ending picture defines them.
 - A reference picture locks identity, clothing, or props only. Do not inherit its background, lighting, or camera framing. It is not a starting key frame and not an ending key frame.
 
-Copy the audio paragraph given by the slot instruction. Change only the audio number.
+Audio paragraphs are conditional. First judge whether the source prompt explicitly contains lines spoken or sung by a character — quoted spans may be shop names or slogans, and unquoted text may still be dialogue; the judgement is yours. Then:
 
-When the slot instruction says this shot has spoken lines, use:
-<Audio 1> is a reference audio for voice timbre, vocal identity, speaking tone, rhythm, intonation, and lip-sync pacing.
+- If the shot has spoken lines and the slot instruction lists available reference audios, write one binding sentence per audio, each bound to its speaker, e.g.:
+<Audio 1> is the voice-timbre reference for the older man in the gray jacket on the left of <Picture 1> (S1): it provides voice timbre, vocal identity, speaking tone, rhythm, intonation, and lip-sync pacing.
+- If the shot has spoken lines but there is no available reference audio, do not write any <Audio N> tag at all. Keep the lines inside <d>; the model voices them.
+- If the shot has no spoken lines, do not write any <Audio N> tag at all. Do not invent an audio reference, do not invent spoken lines, and do not mention any character voice sample. Describe only the ambient and environmental sound of the shot.
 
-When the slot instruction says this shot has no spoken lines, use:
-<Audio 1> is a voice-timbre reference only. Do not copy its words, rhythm, or pacing into the video. Do not lip-sync to it. No character speaks.
+Speaker binding rules (apply when writing binding sentences or dialogue):
 
-Do not write lip-sync pacing when the slot instruction says this shot has no spoken lines.
+- Assign stable speaker IDs (S1), (S2) in the order characters actually speak; one person keeps the same ID across lines.
+- Use the same visual description with the ID at every line, e.g. "The older man in the gray jacket on the left of <Picture 1> (S1) shouts: <d>[Chinese] …</d>".
+- Anchor priority: the character's own reference picture (e.g. the man holding the broom in <Picture 2>) > appearance features (clothing, age, held objects) combined with position (on the left / on the right). Never use a bare position word alone.
+- Character names mean nothing to the video model; never use a name as the only anchor. Expand names into visual descriptions that uniquely locate the person in the picture.
 
-Then write the shot, starting with [Shot 1]. Before the shot, include the type prefix named in the slot instruction, such as [keyframe completion + reference generation + audio reference]. Keep only the parts that instruction lists.
+Then write the shot, starting with [Shot 1]. Before the shot, include the type prefix. Start from the base prefix named in the slot instruction and append " + audio reference" only when you wrote <Audio N> binding sentences.
 
 Do not write <video_N>. Do not write an <Audio N> tag the slot instruction does not name. Do not paraphrase a mandatory keyframe sentence.
+
+Output format: the first line must be {"has_dialogue": true} or {"has_dialogue": false} (your judgement of whether the source prompt has spoken or sung lines), then one blank line, then the final prompt as plain multi-line text — do not wrap it in JSON or code fences.

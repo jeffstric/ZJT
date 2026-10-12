@@ -211,6 +211,9 @@ REFERENCE_VIDEO_DURATION_PROBE_TIMEOUT = 10
 # 单次生成最多注入的角色音色参考音频数：受 MiniMax H3 LoadAudio 槽位硬上限（2）约束，
 # 注入侧统一截断；驱动层对超限音频另有兜底截断。
 MAX_VOICE_REFERENCE_AUDIOS = 2
+# KFRef 优化步骤携带的「分镜画面构成」原料（生成分镜图所用提示词）截断上限：
+# 说话人绑定句的外观/站位信息主要在前段，超长截断以控制优化调用 token 预算。
+H3_KFREF_IMAGE_PROMPT_NOTE_MAX_CHARS = 600
 
 # ===== Windows uv 托盘启动器 =====
 # launcher bootstrap 运行在 Web 服务启动之前；所有外部进程仍必须有硬超时，
