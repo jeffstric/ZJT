@@ -1167,5 +1167,8 @@
   "ann_level_success": "成功",
   "ann_level_warning": "警告",
   "ann_level_error": "错误",
-  "ann_view_link": "查看详情"
+  "ann_view_link": "查看详情",
+  "tts_ref_source_library": "从音色库选择",
+  "tts_ref_source_upload": "上传音频文件",
+  "tts_ref_source_library_tip": "使用所选音色的样例声音作为克隆参考（跨模型克隆效果因模型而异）；情感控制默认跟随参考音频"
 }

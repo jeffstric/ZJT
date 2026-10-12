@@ -14,6 +14,12 @@
         // —— 克隆（IndexTTS）模式（原有字段，勿动） ——
         text: '',
         refAudioFile: null,
+        // 克隆参考音频来源：upload=本地上传；library=从音色库选择（用其样例音频作克隆参考）
+        refSource: 'upload',
+        cloneVoiceId: null,
+        cloneVoices: [],
+        cloneVoicesLoading: false,
+        clonePreviewing: false,
         emoRefAudioFile: null,
         emoRefType: 'file',
         emoRefVideoUrl: '',
@@ -42,6 +48,8 @@
       canSubmit() {
         if (this.engine === 'voice_library') return this.canSubmitVoiceLibrary;
         if (!this.text.trim() || this.loading) return false;
+        // 克隆参考来源为音色库时必须已选音色
+        if (this.refSource === 'library' && !this.cloneVoiceId) return false;
         if (this.emoControlMethod === 2 && !this.emoVecValid) return false;
         return true;
       },
@@ -116,6 +124,37 @@
         }
       },
 
+      // —— 克隆模式：从音色库选择参考声音 ——
+      async fetchCloneVoices() {
+        if (this.cloneVoices.length || !window.VoiceLibraryApi) return;
+        this.cloneVoicesLoading = true;
+        try {
+          const data = await window.VoiceLibraryApi.listVoices({ page_size: 300 });
+          const locale = (window.ZJTi18n && window.ZJTi18n.getLocale) ? window.ZJTi18n.getLocale() : (localStorage.getItem('zjt_locale') || 'zh-CN');
+          const wantLang = String(locale).toLowerCase().indexOf('en') === 0 ? 'en' : 'zh';
+          const all = data.voices || [];
+          // 界面语言对应的音色排前，其余语言跟后（保持完整可选列表）
+          this.cloneVoices = all.slice().sort((a, b) => (b.language === wantLang) - (a.language === wantLang));
+        } catch (e) {
+          console.error('克隆音色列表加载失败:', e);
+        } finally {
+          this.cloneVoicesLoading = false;
+        }
+      },
+
+      async playClonePreview() {
+        if (!this.cloneVoiceId || this.clonePreviewing || !window.VoiceLibraryApi) return;
+        this.clonePreviewing = true;
+        try {
+          const data = await window.VoiceLibraryApi.previewVoice(this.cloneVoiceId);
+          if (data.audio_url) new Audio(data.audio_url).play();
+        } catch (e) {
+          alert((e && e.message) || '试听失败');
+        } finally {
+          this.clonePreviewing = false;
+        }
+      },
+
       // —— 克隆模式（IndexTTS，原有逻辑勿动） ——
       validateAudioDuration(file, label) {
         return new Promise((resolve) => {
@@ -183,7 +222,11 @@
           form.append('user_id', userId);
           form.append('emo_control_method', this.emoControlMethod);
 
-          if (this.refAudioFile) {
+          if (this.refSource === 'library' && this.cloneVoiceId) {
+            // 音色库声音作克隆参考：取该音色的样例音频 URL（服务端缓存，免费）
+            const preview = await window.VoiceLibraryApi.previewVoice(this.cloneVoiceId);
+            form.append('ref_audio_url', preview.audio_url);
+          } else if (this.refAudioFile) {
             form.append('ref_audio', this.refAudioFile);
           }
 
@@ -210,7 +253,11 @@
           }
 
           const res = await axios.post('/api/audio-generate', form, {
-            headers: { 'Content-Type': 'multipart/form-data' },
+            headers: {
+              'Content-Type': 'multipart/form-data',
+              // 权限装饰器只认 Authorization 头（FormData 里的 auth_token 是旧版遗留）
+              ...(this.authToken ? { Authorization: 'Bearer ' + this.authToken } : {}),
+            },
           });
 
           this.audioId = res.data.audio_id;
@@ -370,8 +417,33 @@
         <template v-else>
           <div class="field">
             <label class="label">{{ $t('reference_audio') }}（{{ $t('optional') }}）</label>
-            <input type="file" @change="onRefAudioFile" accept="audio/*" class="input" :disabled="loading">
-            <div class="muted" style="margin-top: 4px;">{{ $t('audio_cloning_tip') }}（{{ $t('max_20_seconds') }}）</div>
+            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+              <button type="button" class="btn secondary" style="padding: 2px 12px; font-size: 13px;"
+                :style="refSource === 'library' ? 'border-color: var(--primary); color: var(--primary);' : ''"
+                :disabled="loading" @click="refSource = 'library'; fetchCloneVoices()">{{ $t('tts_ref_source_library') }}</button>
+              <button type="button" class="btn secondary" style="padding: 2px 12px; font-size: 13px;"
+                :style="refSource === 'upload' ? 'border-color: var(--primary); color: var(--primary);' : ''"
+                :disabled="loading" @click="refSource = 'upload'">{{ $t('tts_ref_source_upload') }}</button>
+            </div>
+
+            <template v-if="refSource === 'library'">
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <select class="input" v-model="cloneVoiceId" style="flex: 1;" :disabled="loading || cloneVoicesLoading">
+                  <option :value="null">{{ cloneVoicesLoading ? $t('tts_voice_loading') : $t('tts_voice_placeholder') }}</option>
+                  <option v-for="v in cloneVoices" :key="v.id" :value="v.id">{{ v.name }}（{{ v.style }}）</option>
+                </select>
+                <button type="button" class="btn secondary" style="flex-shrink: 0; padding: 4px 10px; font-size: 13px;"
+                  :disabled="!cloneVoiceId || clonePreviewing" @click="playClonePreview">
+                  {{ clonePreviewing ? $t('tts_preview_playing') : '▶ ' + $t('tts_preview') }}
+                </button>
+              </div>
+              <div class="muted" style="margin-top: 4px;">{{ $t('tts_ref_source_library_tip') }}</div>
+            </template>
+
+            <template v-else>
+              <input type="file" @change="onRefAudioFile" accept="audio/*" class="input" :disabled="loading">
+              <div class="muted" style="margin-top: 4px;">{{ $t('audio_cloning_tip') }}（{{ $t('max_20_seconds') }}）</div>
+            </template>
           </div>
 
           <div class="field">

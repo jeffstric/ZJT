@@ -1176,5 +1176,8 @@
   "ann_level_success": "Success",
   "ann_level_warning": "Warning",
   "ann_level_error": "Error",
-  "ann_view_link": "View details"
+  "ann_view_link": "View details",
+  "tts_ref_source_library": "From Voice Library",
+  "tts_ref_source_upload": "Upload Audio File",
+  "tts_ref_source_library_tip": "Uses the selected voice's sample audio as cloning reference (cross-model results may vary)"
 }
