@@ -15,7 +15,10 @@
         text: '',
         refAudioFile: null,
         // 克隆参考音频来源：upload=本地上传；library=从音色库选择（用其样例音频作克隆参考）
+        // ⚠️ library 入口受后端 YAML 开关 allow_clone_from_voice_library 控制（默认关闭，
+        // 法律风险警示见 config.example.yml），关闭时整个入口不渲染。
         refSource: 'upload',
+        cloneFromLibraryAllowed: false,
         cloneVoiceId: null,
         cloneVoices: [],
         cloneVoicesLoading: false,
@@ -124,12 +127,19 @@
         }
       },
 
-      // —— 克隆模式：从音色库选择参考声音 ——
+      // —— 克隆模式：从音色库选择参考声音（受 YAML 开关 allow_clone_from_voice_library 控制） ——
       async fetchCloneVoices() {
         if (this.cloneVoices.length || !window.VoiceLibraryApi) return;
         this.cloneVoicesLoading = true;
         try {
           const data = await window.VoiceLibraryApi.listVoices({ page_size: 300 });
+          // 开关关闭：不拉列表、强制回退上传来源（入口已被 v-if 隐藏，双保险）
+          if (!data.allow_clone_from_voice_library) {
+            this.cloneFromLibraryAllowed = false;
+            if (this.refSource === 'library') this.refSource = 'upload';
+            return;
+          }
+          this.cloneFromLibraryAllowed = true;
           const locale = (window.ZJTi18n && window.ZJTi18n.getLocale) ? window.ZJTi18n.getLocale() : (localStorage.getItem('zjt_locale') || 'zh-CN');
           const wantLang = String(locale).toLowerCase().indexOf('en') === 0 ? 'en' : 'zh';
           const all = data.voices || [];
@@ -375,7 +385,7 @@
             <button class="btn" :style="engine === 'voice_library' ? '' : 'background: transparent; color: var(--text); border: 1px solid var(--border);'"
               style="flex: 1;" @click="engine = 'voice_library'">{{ $t('tts_mode_voice_library') }}</button>
             <button class="btn" :style="engine === 'clone' ? '' : 'background: transparent; color: var(--text); border: 1px solid var(--border);'"
-              style="flex: 1;" @click="engine = 'clone'">{{ $t('tts_mode_clone') }}</button>
+              style="flex: 1;" @click="engine = 'clone'; fetchCloneVoices()">{{ $t('tts_mode_clone') }}</button>
           </div>
           <div class="muted" style="margin-top: 6px;">
             {{ engine === 'voice_library' ? $t('tts_mode_voice_library_tip') : $t('tts_mode_clone_tip') }}
@@ -417,10 +427,12 @@
         <template v-else>
           <div class="field">
             <label class="label">{{ $t('reference_audio') }}（{{ $t('optional') }}）</label>
-            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+            <!-- 「从音色库选择」入口受后端 YAML 开关 allow_clone_from_voice_library 控制（默认关闭，
+                 法律风险警示见 config.example.yml；关闭时整个入口不渲染） -->
+            <div v-if="cloneFromLibraryAllowed" style="display: flex; gap: 8px; margin-bottom: 8px;">
               <button type="button" class="btn secondary" style="padding: 2px 12px; font-size: 13px;"
                 :style="refSource === 'library' ? 'border-color: var(--primary); color: var(--primary);' : ''"
-                :disabled="loading" @click="refSource = 'library'; fetchCloneVoices()">{{ $t('tts_ref_source_library') }}</button>
+                :disabled="loading" @click="refSource = 'library'">{{ $t('tts_ref_source_library') }}</button>
               <button type="button" class="btn secondary" style="padding: 2px 12px; font-size: 13px;"
                 :style="refSource === 'upload' ? 'border-color: var(--primary); color: var(--primary);' : ''"
                 :disabled="loading" @click="refSource = 'upload'">{{ $t('tts_ref_source_upload') }}</button>

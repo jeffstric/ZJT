@@ -21,7 +21,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from config.config_util import get_config, get_dynamic_config_value
+from config.config_util import get_config, get_config_value, get_dynamic_config_value
 from config.constant import AI_AUDIO_STATUS_COMPLETED
 from config.media_file_policy import MediaFilePolicy
 from config.volcengine_tts_constants import (
@@ -167,6 +167,10 @@ async def list_voices(
     )
     # 系统预置(user_id=0) 对所有人可见；私有音色仅属主可见
     voices = [v for v in result.get('data', []) if v.get('user_id') == 0 or v.get('user_id') == user_id]
+    # 克隆模式「从音色库选择」入口开关：仅从 YAML 配置读取（刻意不走
+    # system_config，管理后台不可改），法律风险警示见 config.example.yml。
+    allow_clone_from_library = bool(get_config_value(
+        "volcengine_tts", "allow_clone_from_voice_library", default=False))
     return JSONResponse({
         'success': True,
         'voices': voices,
@@ -175,6 +179,7 @@ async def list_voices(
         'max_text_length': VolcengineTtsConstants.MAX_TEXT_LENGTH,
         'speed_min': VolcengineTtsConstants.SPEED_MIN,
         'speed_max': VolcengineTtsConstants.SPEED_MAX,
+        'allow_clone_from_voice_library': allow_clone_from_library,
         'configured': is_tts_configured(get_volcengine_tts_config()),
     })
 
