@@ -181,6 +181,43 @@ class TestApplyResults(unittest.TestCase):
 
     @patch('task.pipeline_processor.AIToolsModel')
     @patch('task.pipeline_processor.PipelineStepModel')
+    def test_apply_h3_optimize_keeps_dialogue_flag(self, mock_step_model, mock_ai_tools_model):
+        """H3 优化步骤回写必须保留 has_dialogue 标记
+
+        execute 已把 LLM 台词标记写入 extra_config；apply_results 二次 merge
+        若不带标记，会把标记抹成 null，KFRef 驱动将永远回退正则判断。
+        """
+        import json as _json
+        from task.pipeline_processor import PipelineProcessor
+        from model import PipelineStepType
+        from model.ai_tool_pipeline_steps import PipelineStepStatus
+
+        mock_step = MagicMock()
+        mock_step.status = PipelineStepStatus.COMPLETED
+        mock_step.step_type = PipelineStepType.H3_PROMPT_OPTIMIZE
+        mock_step.get_result_data_dict.return_value = {
+            "original_prompt": "原文",
+            "optimized_prompt": "优化后",
+            "variant": "KFRef",
+            "fallback": False,
+            "has_dialogue": False,
+        }
+        mock_step_model.get_by_ai_tool_and_stage.return_value = [mock_step]
+
+        mock_ai_tool = MagicMock()
+        mock_ai_tool.id = 100
+        mock_ai_tool.extra_config = None
+
+        PipelineProcessor.apply_results(mock_ai_tool, 'param_prepare')
+
+        mock_ai_tools_model.update.assert_called_once()
+        kwargs = mock_ai_tools_model.update.call_args.kwargs
+        extra = _json.loads(kwargs["extra_config"])
+        self.assertEqual(extra["h3_prompt_optimize"]["optimized_prompt"], "优化后")
+        self.assertIs(extra["h3_prompt_optimize"]["has_dialogue"], False)
+
+    @patch('task.pipeline_processor.AIToolsModel')
+    @patch('task.pipeline_processor.PipelineStepModel')
     def test_skip_non_face_mask_steps(self, mock_step_model, mock_ai_tools_model):
         """跳过非 face_mask 步骤"""
         from task.pipeline_processor import PipelineProcessor

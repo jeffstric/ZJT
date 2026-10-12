@@ -548,7 +548,9 @@ def parse_h3_optimize_kfref_output(raw: str) -> tuple:
     flag = header.get("has_dialogue")
     if not isinstance(flag, bool):
         return None, None
-    prompt = rest.strip()
+    # LLM 可能把头之后的正文再包进 ```text 围栏；整体 strip 剥不到（首行是 JSON 头），
+    # 必须对余下部分单独剥，否则围栏随正文通过校验进最终视频提示词。
+    prompt = strip_prompt_fences(rest)
     if not prompt:
         return None, None
     return prompt, flag
