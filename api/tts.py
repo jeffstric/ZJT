@@ -79,12 +79,12 @@ def _build_public_audio_url(filename: str) -> str:
     return f"{str(server_host).rstrip('/')}/{rel}/{filename}"
 
 
-async def _deduct_power(auth_header: str, power: int, transaction_id: str):
+async def _deduct_power(auth_header: str, power: int, transaction_id: str, message: Optional[str] = None):
     """预扣算力；无 Authorization 或 0 算力视为跳过（开源惯例）。返回 (success, message)。"""
     if not auth_header or not power:
         return True, None
     try:
-        success, message, _ = await async_make_perseids_request(
+        success, msg, _ = await async_make_perseids_request(
             endpoint='user/calculate_computing_power',
             method='POST',
             headers={'Authorization': auth_header},
@@ -92,20 +92,21 @@ async def _deduct_power(auth_header: str, power: int, transaction_id: str):
                 'computing_power': power,
                 'behavior': 'deduct',
                 'transaction_id': transaction_id,
+                'message': message or '火山TTS语音合成',
             },
         )
-        return bool(success), message
+        return bool(success), msg
     except Exception as e:  # noqa: BLE001
         logger.error(f"火山TTS预扣算力失败: {e}")
         return False, str(e)
 
 
-async def _refund_power(auth_header: str, power: int, transaction_id: str) -> None:
+async def _refund_power(auth_header: str, power: int, transaction_id: str, message: Optional[str] = None) -> None:
     """按原流水退款（increase + refund-{txn} 幂等）。退款失败只记日志，不影响错误返回。"""
     if not auth_header or not power:
         return
     try:
-        success, message, _ = await async_make_perseids_request(
+        success, msg, _ = await async_make_perseids_request(
             endpoint='user/calculate_computing_power',
             method='POST',
             headers={'Authorization': auth_header},
@@ -113,10 +114,11 @@ async def _refund_power(auth_header: str, power: int, transaction_id: str) -> No
                 'computing_power': power,
                 'behavior': 'increase',
                 'transaction_id': f'refund-{transaction_id}',
+                'message': message or '火山TTS合成失败退款',
             },
         )
         if not success:
-            logger.error(f"火山TTS退款失败 txn={transaction_id} power={power}: {message}")
+            logger.error(f"火山TTS退款失败 txn={transaction_id} power={power}: {msg}")
     except Exception as e:  # noqa: BLE001
         logger.error(f"火山TTS退款异常 txn={transaction_id} power={power}: {e}")
 
@@ -217,7 +219,8 @@ async def synthesize(request: Request, body: TtsSynthesizeRequest):
         return JSONResponse({'success': False, 'detail': message}, status_code=400)
 
     transaction_id = str(uuid.uuid4())
-    ok, message = await _deduct_power(auth_header, power, transaction_id)
+    deduct_message = f"火山TTS语音合成：{voice.name}（{char_count}字）"
+    ok, message = await _deduct_power(auth_header, power, transaction_id, message=deduct_message)
     if not ok:
         return JSONResponse({'success': False, 'detail': message or '算力扣除失败'}, status_code=400)
 
@@ -229,7 +232,7 @@ async def synthesize(request: Request, body: TtsSynthesizeRequest):
         timeout=VolcengineTtsConstants.TIMEOUT_SECONDS,
     )
     if not success:
-        await _refund_power(auth_header, power, transaction_id)
+        await _refund_power(auth_header, power, transaction_id, message=f"火山TTS合成失败退款：{voice.name}（{char_count}字）")
         logger.error(f"火山TTS合成失败 voice={voice.voice_type} chars={char_count}: {synth_message}")
         return JSONResponse({'success': False, 'detail': synth_message}, status_code=502)
 
@@ -247,7 +250,7 @@ async def synthesize(request: Request, body: TtsSynthesizeRequest):
     try:
         await asyncio.to_thread(_write_file)
     except Exception as e:  # noqa: BLE001
-        await _refund_power(auth_header, power, transaction_id)
+        await _refund_power(auth_header, power, transaction_id, message=f"火山TTS保存失败退款：{voice.name}（{char_count}字）")
         logger.error(f"火山TTS音频落盘失败: {e}")
         return JSONResponse({'success': False, 'detail': '音频保存失败，已退还算力'}, status_code=500)
 
