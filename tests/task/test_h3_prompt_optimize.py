@@ -297,6 +297,10 @@ def test_parse_h3_optimize_kfref_output():
     # 额外字段忽略；围栏包裹先剥再解析
     prompt, _ = parse_h3_optimize_kfref_output('```{"has_dialogue": false, "extra": 1}\n\n' + body + "\n```")
     assert prompt == body
+    # 头后正文又被包进围栏：剥掉围栏再返回，围栏不得残留进最终提示词
+    prompt, _ = parse_h3_optimize_kfref_output('{"has_dialogue": false}\n\n```text\n' + body + "\n```")
+    assert prompt == body
+    assert "```" not in prompt
     # 各类非法格式整条拒绝：(None, None) 触发重试，两次失败回退原文
     for bad in (
         "",                                     # 空
