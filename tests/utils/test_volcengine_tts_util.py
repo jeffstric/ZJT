@@ -146,9 +146,13 @@ class TestVoiceSeedList(unittest.TestCase):
             seen.add(item['voice_type'])
 
     def test_seed_voices_are_tts20(self):
-        """2.0 音色必须是 uranus 系列（实测 1.0 BV 音色与 seed-tts-2.0 资源不兼容）"""
+        """2.0 音色必须是官方 speaker ID 格式（语言_性别_名称，多数带 uranus
+        后缀；少数官方短 ID 无后缀如 en_male_cowboy，均与 seed-tts-2.0 兼容）"""
+        import re
+        pat = re.compile(r'^[a-z]{2}_(?:female|male|child)_[a-z0-9_-]+$')
         for item in VOLCENGINE_TTS_VOICES:
-            self.assertIn('_uranus_', item['voice_type'], f"非 2.0 音色: {item['voice_type']}")
+            self.assertTrue(pat.match(item['voice_type']),
+                            f"非 2.0 音色格式: {item['voice_type']}")
 
 
 class TestSynthesizeUnconfigured(unittest.TestCase):
