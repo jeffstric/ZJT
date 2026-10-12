@@ -79,16 +79,24 @@ def _patch_tts_config(monkeypatch):
 def test_voices_returns_list_and_tiers(client, monkeypatch):
     import api.tts as tts_mod
 
-    monkeypatch.setattr(
-        tts_mod.VoiceModel, "list_all",
-        staticmethod(lambda **kw: {"total": 1, "data": [_voice_dict()]}),
-    )
+    def _fake_list_all(**kw):
+        # provider 筛选：volcengine 返回火山音色，reference_audio 返回预置音色
+        if kw.get("provider") == "reference_audio":
+            preset = _voice_dict(voice_id=50)
+            preset["provider"] = "reference_audio"
+            preset["audio_url"] = "/voice_presets/preset_001.mp3"
+            return {"total": 1, "data": [preset]}
+        return {"total": 1, "data": [_voice_dict()]}
+
+    monkeypatch.setattr(tts_mod.VoiceModel, "list_all", staticmethod(_fake_list_all))
 
     res = client.get("/api/tts/voices", headers={"Authorization": "Bearer test-token"})
     assert res.status_code == 200
     data = res.json()
     assert data["success"] is True
-    assert len(data["voices"]) == 1
+    # 合并两类：volcengine 1 + reference_audio 1
+    assert len(data["voices"]) == 2
+    assert {v["provider"] for v in data["voices"]} == {"volcengine", "reference_audio"}
     assert data["power_tiers"] and data["max_text_length"] > 0
     # 克隆开关必须透出（默认 False，法律风险控制）
     assert data["allow_clone_from_voice_library"] is False

@@ -127,22 +127,20 @@
         }
       },
 
-      // —— 克隆模式：从音色库选择参考声音（受 YAML 开关 allow_clone_from_voice_library 控制） ——
+      // —— 克隆模式：从音色库选择参考声音 ——
+      // reference_audio 预置音色（开源版自带 AI 音色）始终可选；
+      // volcengine 火山音色受 YAML 开关 allow_clone_from_voice_library 管控。
       async fetchCloneVoices() {
-        if (this.cloneVoices.length || !window.VoiceLibraryApi) return;
+        if (!window.VoiceLibraryApi) return;
         this.cloneVoicesLoading = true;
         try {
           const data = await window.VoiceLibraryApi.listVoices({ page_size: 300 });
-          // 开关关闭：不拉列表、强制回退上传来源（入口已被 v-if 隐藏，双保险）
-          if (!data.allow_clone_from_voice_library) {
-            this.cloneFromLibraryAllowed = false;
-            if (this.refSource === 'library') this.refSource = 'upload';
-            return;
-          }
-          this.cloneFromLibraryAllowed = true;
+          this.cloneFromLibraryAllowed = !!data.allow_clone_from_voice_library;
           const locale = (window.ZJTi18n && window.ZJTi18n.getLocale) ? window.ZJTi18n.getLocale() : (localStorage.getItem('zjt_locale') || 'zh-CN');
           const wantLang = String(locale).toLowerCase().indexOf('en') === 0 ? 'en' : 'zh';
-          const all = data.voices || [];
+          const all = (data.voices || []).filter(v =>
+            v.provider === 'reference_audio' ||
+            (v.provider === 'volcengine' && this.cloneFromLibraryAllowed));
           // 界面语言对应的音色排前，其余语言跟后（保持完整可选列表）
           this.cloneVoices = all.slice().sort((a, b) => (b.language === wantLang) - (a.language === wantLang));
         } catch (e) {
@@ -429,9 +427,7 @@
         <template v-else>
           <div class="field">
             <label class="label">{{ $t('reference_audio') }}（{{ $t('optional') }}）</label>
-            <!-- 「从音色库选择」入口受后端 YAML 开关 allow_clone_from_voice_library 控制（默认关闭，
-                 法律风险警示见 config.example.yml；关闭时整个入口不渲染） -->
-            <div v-if="cloneFromLibraryAllowed" style="display: flex; gap: 8px; margin-bottom: 8px;">
+            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
               <button type="button" class="btn secondary" style="padding: 2px 12px; font-size: 13px;"
                 :style="refSource === 'library' ? 'border-color: var(--primary); color: var(--primary);' : ''"
                 :disabled="loading" @click="refSource = 'library'">{{ $t('tts_ref_source_library') }}</button>
