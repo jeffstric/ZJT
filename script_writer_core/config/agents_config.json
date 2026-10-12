@@ -288,6 +288,8 @@
       "model": "gemini/gemini-3-flash-preview",
       "max_iterations": 20,
       "allowed_tools": [
+        "prepare_digital_human_draft",
+        "confirm_digital_human",
         "generate_digital_human",
         "generate_reference_audio",
         "check_reference_audio_status",

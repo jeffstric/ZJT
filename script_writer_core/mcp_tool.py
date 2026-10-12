@@ -4237,7 +4237,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_digital_human",
-        "description": "生成数字人视频（非阻塞）。根据人物图片、口播文本和参考音频 URL 立即提交数字人生成任务，返回 project_ids。必须传入真实 audio_url；如果用户没有提供音频，请先调用 generate_reference_audio 生成并查询到 audio_url。",
+        "description": "生成数字人视频（wan2.2 参考音色模式，非阻塞）。⚠️ 仅当用户要求'用某段音频的音色说新的文案'时使用——audio_url 只用于提取音色，口播内容由 text 驱动。若用户想让人物说某段音频（音频驱动口播），请改用 prepare_digital_human_draft + confirm_digital_human。根据人物图片、口播文本和参考音频 URL 提交任务，返回 project_ids。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -4282,6 +4282,10 @@ MCP_TOOLS = [
                 "voice_requirement": {
                     "type": "string",
                     "description": "对声音的要求描述（可选，如'成熟男性、纪录片感'），辅助视觉模型挑选"
+                },
+                "audio_url": {
+                    "type": "string",
+                    "description": "用户上传的驱动音频 URL（可选）。用户提供音频且想让人物说这段音频时传入（跳过 TTS）；此时不再需要音色"
                 },
                 "max_edge": {
                     "type": "integer",

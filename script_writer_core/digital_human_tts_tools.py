@@ -178,6 +178,7 @@ async def prepare_digital_human_draft(
     auth_token: str,
     image_url: str,
     script_text: str,
+    audio_url: str = None,
     voice_id: int = None,
     voice_requirement: str = "",
     max_edge: int = 1280,
@@ -185,12 +186,16 @@ async def prepare_digital_human_draft(
 ) -> Dict[str, Any]:
     """准备数字人口播草案：确定音色 → TTS 合成驱动音频 → 产出草案（不提交视频）。
 
-    音色确定优先级：voice_id 显式指定 > VL 看角色图挑选 > 默认音色。
+    用户提供驱动音频（audio_url，想让人物说这段音频）时跳过 TTS 与音色选择，
+    直接以该音频出草案（不消耗 TTS 算力）。
+
+    音色确定优先级（无 audio_url 时）：voice_id 显式指定 > VL 看角色图挑选 > 默认音色。
     script_text 必须是最终口播文案；用户未提供文案时请先生成文案再调用本工具。
 
     Args:
         image_url: 角色图片 URL（必填，须来自对话中用户上传或已生成的真实图片）
         script_text: 口播文案（必填，即数字人要说的内容，≤2000 字）
+        audio_url: 用户提供的驱动音频 URL（可选；提供时跳过 TTS）
         voice_id: 音色库音色 ID（可选；给定则跳过 VL 挑选）
         voice_requirement: 对声音的要求描述（可选，如"成熟男性、纪录片感"）
         max_edge: 视频最长边 720/1280/1920（默认 1280）
@@ -208,9 +213,14 @@ async def prepare_digital_human_draft(
         if len(script_text) > 2000:
             return {'success': False, 'error': '口播文案不能超过 2000 字'}
 
-        # 1. 确定音色
+        # 1. 用户提供驱动音频：跳过音色选择与 TTS
+        user_audio_url = (audio_url or '').strip() or None
+
+        # 2. 确定音色（无用户音频时才需要）
         selection_reason = "用户指定音色"
-        if voice_id:
+        if user_audio_url:
+            voice_id = voice_id  # 无需音色（音频即成片声音）；保留用户指定值供记录
+        elif voice_id:
             voice = VoiceModel.get_by_id(int(voice_id))
             if not voice or not voice.is_active or voice.provider != 'volcengine':
                 return {'success': False, 'error': f'音色 {voice_id} 不存在或已下线'}
@@ -222,19 +232,29 @@ async def prepare_digital_human_draft(
             if not voice_id:
                 return {'success': False, 'error': '未能确定音色（音色库为空），请联系管理员'}
 
-        # 2. TTS 合成驱动音频（扣字符算力；失败自动退款）
-        tts = await synthesize_speech_for_user(
-            user_id=int(user_id or 0),
-            text=script_text,
-            voice_id=int(voice_id),
-            auth_header=f"Bearer {auth_token}" if auth_token else "",
-            message_context="营销数字人口播",
-        )
-        if not tts.get('success'):
-            return {'success': False, 'error': f"驱动音频合成失败：{tts.get('error')}"}
+        # 3. TTS 合成驱动音频（用户提供 audio_url 时跳过；扣字符算力；失败自动退款）
+        if user_audio_url:
+            tts = {
+                'success': True, 'audio_url': user_audio_url, 'duration': None,
+                'computing_power': 0, 'voice_name': '用户提供的驱动音频',
+                'voice_type': None, 'voice_id': None,
+            }
+        else:
+            tts = await synthesize_speech_for_user(
+                user_id=int(user_id or 0),
+                text=script_text,
+                voice_id=int(voice_id),
+                auth_header=f"Bearer {auth_token}" if auth_token else "",
+                message_context="营销数字人口播",
+            )
+            if not tts.get('success'):
+                return {'success': False, 'error': f"驱动音频合成失败：{tts.get('error')}"}
 
-        # 3. 时长与 H3 算力预估
-        duration = clamp_h3_duration(float(tts.get('duration') or 4))
+        # 4. 时长与 H3 算力预估（用户音频缺时长时按文案长度粗估：约 4 字/秒，clamp 4-10）
+        est_seconds = float(tts.get('duration') or 0)
+        if not est_seconds:
+            est_seconds = max(4.0, min(10.0, len(script_text) / 4.0))
+        duration = clamp_h3_duration(est_seconds)
         task_config = TaskTypeRegistry.get(TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
         h3_power = task_config.get_computing_power(duration=duration) if task_config else 0
 
@@ -242,10 +262,10 @@ async def prepare_digital_human_draft(
             "draft_id": None,  # store 后回填
             "script_text": script_text,
             "image_url": image_url,
-            "voice_id": int(voice_id),
+            "voice_id": int(voice_id) if voice_id else None,
             "voice_name": tts.get('voice_name'),
             "voice_type": tts.get('voice_type'),
-            "voice_selection_reason": selection_reason,
+            "voice_selection_reason": selection_reason if not user_audio_url else "用户提供的驱动音频",
             "audio_url": tts.get('audio_url'),
             "audio_duration": tts.get('duration'),
             "tts_computing_power": tts.get('computing_power'),
@@ -257,14 +277,15 @@ async def prepare_digital_human_draft(
         draft_id = _store_draft(draft)
         draft["draft_id"] = draft_id
 
+        tts_cost_note = (f"已消耗 TTS 算力 {tts.get('computing_power')}；"
+                         if not user_audio_url else "驱动音频由用户提供（无 TTS 消耗）；")
         return {
             'success': True,
             'draft': draft,
             'message': (
                 f"数字人口播草案已就绪（draft_id: {draft_id}）。"
-                f"音色：{draft['voice_name']}（{selection_reason}）；"
-                f"音频时长 {tts.get('duration')}s；"
-                f"已消耗 TTS 算力 {tts.get('computing_power')}；"
+                f"音色：{draft['voice_name'] or '用户音频'}（{draft['voice_selection_reason']}）；"
+                f"音频时长 {draft['audio_duration'] or duration}s；{tts_cost_note}"
                 f"确认后生成视频将消耗 {h3_power} 算力。"
                 f"请向用户展示草案（文案/音色/试听链接 {draft['audio_url']}）并等待用户确认，"
                 f"用户确认后调用 confirm_digital_human 提交生成。"

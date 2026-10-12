@@ -194,6 +194,27 @@ class TestConfirmTool(_VoiceModelMockBase):
         self.assertFalse(result["success"])
         self.assertIn("不存在", result["error"])
 
+    def test_prepare_with_user_audio_skips_tts(self):
+        """场景2：用户提供驱动音频 → 跳过 TTS（不扣 TTS 算力）直接出草案"""
+        tts_called = []
+
+        async def fake_tts(**kw):
+            tts_called.append(1)
+            return {"success": True, "audio_url": "http://x/tts.mp3", "duration": 5,
+                    "computing_power": 1, "voice_name": "v", "voice_type": "zh", "voice_id": 1}
+
+        with patch("script_writer_core.digital_human_tts_tools.synthesize_speech_for_user", fake_tts):
+            result = asyncio.run(prepare_digital_human_draft(
+                user_id="1", world_id="w", auth_token="t",
+                image_url="http://x/img.png", script_text="文案",
+                audio_url="http://x/user_audio.mp3"))
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["draft"]["audio_url"], "http://x/user_audio.mp3")
+        self.assertEqual(result["draft"]["tts_computing_power"], 0)
+        self.assertIn("用户提供的驱动音频", result["draft"]["voice_selection_reason"])
+        self.assertEqual(tts_called, [], "提供用户音频时不应调用 TTS")
+
     def test_confirm_submits_h3(self):
         draft_id = _store_draft({
             "script_text": "测试", "image_url": "http://x/img.png",
