@@ -157,7 +157,7 @@ async def list_voices(
     result = await asyncio.to_thread(
         VoiceModel.list_all,
         page=page,
-        page_size=max(1, min(page_size, 200)),
+        page_size=max(1, min(page_size, 300)),
         user_id=None,
         provider=PROVIDER_VOLCENGINE,
         gender=gender,

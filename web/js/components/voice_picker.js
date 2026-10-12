@@ -13,7 +13,30 @@
   'use strict';
 
   var GENDER_LABELS = { female: '女声', male: '男声', child: '童声' };
-  var LANGUAGE_LABELS = { zh: '中文', 'zh-dialect': '方言', en: '英文', ja: '日语' };
+  var LANGUAGE_LABELS = { zh: '中文', 'zh-dialect': '方言', en: '英文', ja: '日语', ko: '韩语',
+                          th: '泰语', vi: '越南语', id: '印尼语', ms: '马来语', tl: '菲律宾语',
+                          pt: '葡语', es: '西语', fr: '法语', de: '德语', it: '意语', ru: '俄语', ar: '阿语' };
+  var LANGUAGE_LABELS_EN = { zh: 'Chinese', 'zh-dialect': 'Dialect', en: 'English', ja: 'Japanese', ko: 'Korean',
+                             th: 'Thai', vi: 'Vietnamese', id: 'Indonesian', ms: 'Malay', tl: 'Filipino',
+                             pt: 'Portuguese', es: 'Spanish', fr: 'French', de: 'German', it: 'Italian',
+                             ru: 'Russian', ar: 'Arabic' };
+
+  // 界面语言（右上角语言切换器）→ 音色语言筛选默认值
+  function localeToVoiceLang(locale) {
+    var l = String(locale || '').toLowerCase();
+    if (l.indexOf('zh') === 0) return 'zh';
+    if (l.indexOf('en') === 0) return 'en';
+    return 'all';
+  }
+
+  function currentLocaleVoiceLang() {
+    try {
+      if (global.ZJTi18n && global.ZJTi18n.getLocale) {
+        return localeToVoiceLang(global.ZJTi18n.getLocale());
+      }
+    } catch (e) { /* i18n 未就绪时回退 localStorage */ }
+    return localeToVoiceLang(global.localStorage && global.localStorage.getItem('zjt_locale'));
+  }
 
   var VoicePicker = {
     name: 'VoicePicker',
@@ -31,7 +54,7 @@
         loadError: '',
         loadingVoices: false,
         filterGender: 'all',
-        filterLanguage: 'all',
+        filterLanguage: currentLocaleVoiceLang(),
         previewingId: null,
         previewAudio: null,
         previewCache: {},   // voice_id -> audio_url（后端也有缓存，这里是防连点）
@@ -68,16 +91,35 @@
     },
     mounted: function () {
       this.fetchVoices();
+      // 跟随右上角语言切换器：切界面语言时音色语言筛选同步切换
+      var self = this;
+      this._localeHandler = function (payload) {
+        var lang = localeToVoiceLang(payload && payload.locale);
+        if (lang !== 'all') self.filterLanguage = lang;
+      };
+      if (global.ZJTi18n && global.ZJTi18n.on) {
+        global.ZJTi18n.on('locale-changed', this._localeHandler);
+      }
     },
     beforeUnmount: function () {
       this.stopPreview();
+      if (global.ZJTi18n && global.ZJTi18n.off && this._localeHandler) {
+        global.ZJTi18n.off('locale-changed', this._localeHandler);
+      }
     },
     methods: {
+      // 语言选项标签随界面语言：中文界面显示"中文/英文"，英文界面显示 Chinese/English
+      langOptionLabel: function (langKey) {
+        var isEn = global.ZJTi18n && global.ZJTi18n.getLocale &&
+          String(global.ZJTi18n.getLocale()).toLowerCase().indexOf('en') === 0;
+        var labels = isEn ? LANGUAGE_LABELS_EN : LANGUAGE_LABELS;
+        return labels[langKey] || langKey;
+      },
       fetchVoices: async function () {
         this.loadingVoices = true;
         this.loadError = '';
         try {
-          var data = await global.VoiceLibraryApi.listVoices({ page_size: 200 });
+          var data = await global.VoiceLibraryApi.listVoices({ page_size: 300 });
           this.voices = data.voices || [];
           this.powerTiers = data.power_tiers || [];
           this.maxTextLength = data.max_text_length || 2000;
@@ -139,15 +181,15 @@
 
         <template v-else>
           <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; align-items: center;">
-            <button v-for="opt in [{k:'all',t:'全部'},{k:'female',t:'女声'},{k:'male',t:'男声'}]"
+            <button v-for="opt in [{k:'all',t:'tts_filter_gender_all'},{k:'female',t:'tts_filter_gender_female'},{k:'male',t:'tts_filter_gender_male'}]"
               :key="'g-' + opt.k" class="btn secondary" style="padding: 2px 12px; font-size: 13px;"
               :style="filterGender === opt.k ? 'border-color: var(--primary); color: var(--primary);' : ''"
-              @click="filterGender = opt.k">{{ opt.t }}</button>
-            <select v-model="filterLanguage" class="input" style="width: auto; padding: 2px 8px; font-size: 13px; flex: 0 1 110px;">
-              <option value="all">全部语言</option>
-              <option v-for="l in availableLanguages" :key="l.k" :value="l.k">{{ l.t }}</option>
+              @click="filterGender = opt.k">{{ $t(opt.t) }}</button>
+            <select v-model="filterLanguage" class="input" style="width: auto; padding: 2px 8px; font-size: 13px; flex: 0 1 110px;" :title="$t('tts_language_filter_follow_hint')">
+              <option value="all">{{ $t('tts_filter_language_all') }}</option>
+              <option v-for="l in availableLanguages" :key="l.k" :value="l.k">{{ langOptionLabel(l.k) }}</option>
             </select>
-            <span class="muted" style="font-size: 12px;">{{ filteredVoices.length }} 个音色</span>
+            <span class="muted" style="font-size: 12px;">{{ filteredVoices.length }} {{ $t('tts_voice_count_suffix') }}</span>
           </div>
 
           <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-height: 380px; overflow-y: auto; padding: 2px;">
