@@ -3231,7 +3231,11 @@ ARTICLE_FETCH_ALLOWED_HOSTS = (
     'mp.weixin.qq.com',        # 微信公众号
     'xiaohongshu.com',         # 小红书（www./探查页）
     'www.xiaohongshu.com',
-    'xhslink.com',             # 小红书分享短链（下期实现时先跟随跳转再校验最终域名）
+    'xhslink.com',             # 小红书分享短链（先跟随跳转再校验最终域名）
+    'douyin.com',              # 抖音（www./note|video 页）
+    'www.douyin.com',
+    'v.douyin.com',            # 抖音分享短链（整链传供应商解析）
+    'iesdouyin.com',           # 抖音分享链接备用域
 )
 ARTICLE_FETCH_WECHAT_UA = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
