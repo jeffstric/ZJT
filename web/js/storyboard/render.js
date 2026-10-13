@@ -1333,11 +1333,13 @@ function renderLeftSidebar(scene) {
  * - 全能参考：图1 / 图2 / …（对齐 marketing_agent 的编号展示）
  */
 function videoRoleLabel(role, mode, index = 0) {
-    if (role === 'first_frame') return i18nT('label_first_frame', '首帧');
-    if (role === 'last_frame') return i18nT('label_last_frame', '尾帧');
+    // mode 必须先于 role 判断：参考模式槽位有意保留 first_frame/last_frame 角色
+    // （供 @首帧图/@尾帧图 路由），角标仍按编号展示
     if (mode === 'multi_reference') {
         return `${i18nT('label_image_short', '图')}${index + 1}`;
     }
+    if (role === 'first_frame') return i18nT('label_first_frame', '首帧');
+    if (role === 'last_frame') return i18nT('label_last_frame', '尾帧');
     return `${i18nT('label_image_short', '图')}${index + 1}`;
 }
 
