@@ -18,6 +18,7 @@ allowed-tools: ["generate_digital_human", "prepare_digital_human_draft", "confir
    仅当用户明确要求使用参考音频风格（generate_reference_audio 通道）时才走旧路径。
    ⚠️ TTS 未配置或合成失败时的降级规则见下方「TTS 不可用时的降级规则」——严禁自行静默切换到 wan2.2 链路。
 4. `image_url` 必须是对话中出现的真实图片 URL，**严禁臆造路径**（如按 project_id 拼出 `/upload/project/xxx.png` 这类编造路径）。用户说"用之前生成的图"但上下文没有真实 URL 时，先调用 `check_image_status(project_id)` 拿到真实 `image_url` 再提交。
+   **主动关联**：用户请求生成数字人但未附图时，检查上下文中**最近的图片生成/编辑任务**——存在已完成任务（如刚生成的角色形象/宣传图）时，**默认采用最近生成的图片**（调用 check_image_status 拿真实 URL），不要反过来问用户"请提供图片"；多张候选或明显不符时才 ask_user 让用户挑选。
 5. 图片、文本、参考音频 URL 齐全后，必须立即调用 `generate_digital_human`，严禁只返回“参数已准备完成”“可以提交生成任务”。
 6. 没有调用 `generate_digital_human` 并拿到非空 `project_ids` 时，不得声称任务已提交。
 
