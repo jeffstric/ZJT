@@ -6873,13 +6873,22 @@
             }
         }
 
+        let isSavingEditedFile = false;  // 防重入：保存请求进行中时忽略再次点击，避免重复保存与重复通知
+
         async function saveEditedFile() {
+            if (isSavingEditedFile) return;
             if (window.ScriptWriterLibrary && currentEditFile && currentEditFile.source === 'database') {
                 await window.ScriptWriterLibrary.saveLibraryAsset();
                 return;
             }
+            // closeEditModal() 会把 currentEditFile 重置为 {'',''}，必须在任何 await 之前快照，
+            // 否则并发保存时成功回调读到空值，会向智能体发出「系统通知：undefined ""」畸形消息
+            const fileType = currentEditFile.fileType;
+            const fileName = currentEditFile.fileName;
+            if (!fileType || !fileName) return;
+            isSavingEditedFile = true;
             let newContent = '';
-            
+
             if (document.getElementById('world-edit-form').style.display !== 'none') {
                 newContent = collectWorldData();
             } else if (document.getElementById('character-edit-form').style.display !== 'none') {
@@ -6893,13 +6902,13 @@
             } else if (document.getElementById('text-edit-form').style.display !== 'none') {
                 newContent = document.getElementById('edit-modal-content').value;
             }
-            
-            if (!newContent.trim()) {
-                showError(window.t ? window.t('error_file_content_empty') : '文件内容不能为空');
-                return;
-            }
-            
+
             try {
+                if (!newContent.trim()) {
+                    showError(window.t ? window.t('error_file_content_empty') : '文件内容不能为空');
+                    return;
+                }
+
                 const apiMap = {
                     'worlds': '/api/world-files',
                     'characters': '/api/characters-files',
@@ -6907,8 +6916,8 @@
                     'locations': '/api/locations-files',
                     'props': '/api/props-files'
                 };
-                
-                const response = await fetch(`${apiMap[currentEditFile.fileType]}/${encodeURIComponent(currentEditFile.fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
+
+                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({
@@ -6918,15 +6927,13 @@
                         auth_token: AUTH_TOKEN
                     })
                 });
-                
+
                 const data = await response.json();
                 if (data.success) {
-                    const fileType = currentEditFile.fileType;
-                    const fileName = currentEditFile.fileName;
                     showSuccess(window.t ? window.t('success_file_updated', {name: fileName}) : `✓ 文件已更新: ${fileName}`);
                     closeEditModal();
                     await loadFiles(fileType);
-                    
+
                     const fileTypeMap = {
                         'characters': '角色卡',
                         'locations': '场景',
@@ -6941,6 +6948,8 @@
                 }
             } catch (error) {
                 showError((window.t ? window.t('error_save_file_failed', {error: error.message}) : '保存文件失败: ' + error.message));
+            } finally {
+                isSavingEditedFile = false;
             }
         }
 
