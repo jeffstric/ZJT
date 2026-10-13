@@ -4938,10 +4938,10 @@
                     showCharacterDefaultVoicePreview(data.url);
                     showSuccess(window.t ? window.t('success_audio_uploaded') : '音频上传成功');
                 } else {
-                    showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                    showError(uploadErrorText(data.error));
                 }
             } catch (error) {
-                showError((window.t ? window.t('error_upload_failed', {error: error.message}) : '上传失败: ' + error.message));
+                showError(uploadErrorText(error.message));
             }
 
             event.target.value = '';
@@ -5064,9 +5064,8 @@
                 return;
             }
 
-            // 验证文件大小 (10MB)
-            if (file.size > 10 * 1024 * 1024) {
-                showError(window.t ? window.t('error_image_too_large') : '图片大小不能超过10MB');
+            // 验证文件大小（上限来自 server-config 动态配置）
+            if (!checkImageFileSize(file)) {
                 event.target.value = '';
                 return;
             }
@@ -5102,10 +5101,10 @@
                     labelInput.value = '';
                     showSuccess(window.t ? window.t('success_image_uploaded') : '图片上传成功');
                 } else {
-                    showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                    showError(uploadErrorText(data.error));
                 }
             } catch (error) {
-                showError((window.t ? window.t('error_upload_failed', {error: error.message}) : '上传失败: ' + error.message));
+                showError(uploadErrorText(error.message));
             }
 
             event.target.value = '';
@@ -6193,6 +6192,48 @@
             return 'front view';
         }
 
+        // 上传失败提示：透传后端具体原因（i18n 文案含 {error} 占位符），后端未返回原因时兜底“未知错误”
+        function uploadErrorText(rawError) {
+            const detail = rawError || (window.t ? window.t('error_unknown') : '未知错误');
+            return window.t ? window.t('error_upload_failed', {error: detail}) : '上传失败: ' + detail;
+        }
+
+        // 图片大小限制（MB）：从 server-config 动态获取后端配置，拉取失败时退回默认 10MB
+        let uploadImageLimitMb = 10;
+
+        async function fetchUploadImageLimit() {
+            try {
+                const response = await fetch('/api/system/server-config');
+                const result = await response.json();
+                const limitMb = result && result.data ? Number(result.data.max_image_size_mb) : NaN;
+                if (Number.isFinite(limitMb) && limitMb > 0) {
+                    uploadImageLimitMb = limitMb;
+                }
+            } catch (error) {
+                // 拉取失败保持默认限制，不阻塞上传
+            }
+        }
+
+        function formatFileSize(bytes) {
+            const mb = bytes / (1024 * 1024);
+            if (mb >= 1) return mb.toFixed(1) + 'MB';
+            return Math.max(1, Math.round(bytes / 1024)) + 'KB';
+        }
+
+        // 统一图片大小预检：超限直接提示后端配置的上限与文件实际大小，不发无效请求
+        function checkImageFileSize(file) {
+            if (file.size > uploadImageLimitMb * 1024 * 1024) {
+                const actual = formatFileSize(file.size);
+                showError(window.t
+                    ? window.t('error_image_too_large', {size: uploadImageLimitMb, actual: actual})
+                    : '图片大小不能超过' + uploadImageLimitMb + 'MB，当前文件' + actual);
+                return false;
+            }
+            return true;
+        }
+
+        fetchUploadImageLimit();
+
         function triggerImageUpload(inputId, itemType) {
             const fileInputId = inputId + '-file';
             const fileInput = document.getElementById(fileInputId);
@@ -6210,8 +6251,7 @@
                 return false;
             }
 
-            if (file.size > 10 * 1024 * 1024) {
-                showError(window.t ? window.t('error_image_too_large') : '图片大小不能超过10MB');
+            if (!checkImageFileSize(file)) {
                 return false;
             }
 
@@ -6248,10 +6288,10 @@
                     }
                     return true;
                 }
-                showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                showError(uploadErrorText(data.error));
                 return false;
             } catch (error) {
-                showError((window.t ? window.t('error_upload_failed', {error: error.message}) : '上传失败: ' + error.message));
+                showError(uploadErrorText(error.message));
                 return false;
             }
         }
@@ -6952,9 +6992,8 @@
                 return;
             }
 
-            // 验证文件大小 (10MB)
-            if (file.size > 10 * 1024 * 1024) {
-                showError(window.t ? window.t('error_image_too_large') : '图片大小不能超过10MB');
+            // 验证文件大小（上限来自 server-config 动态配置）
+            if (!checkImageFileSize(file)) {
                 event.target.value = '';
                 return;
             }
@@ -6988,10 +7027,10 @@
                     labelInput.value = '';
                     showSuccess(window.t ? window.t('success_image_uploaded') : '图片上传成功');
                 } else {
-                    showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                    showError(uploadErrorText(data.error));
                 }
             } catch (error) {
-                showError((window.t ? window.t('error_upload_failed', {error: error.message}) : '上传失败: ' + error.message));
+                showError(uploadErrorText(error.message));
             }
 
             event.target.value = '';
