@@ -42,3 +42,11 @@ voice_replace:
   uvr_base_url: "http://47.98.190.124:60001"
   vevo2_base_url: "http://47.98.190.124:60002"
   seedvc_base_url: "http://150.158.44.98:17860"
+
+
+# 火山引擎（豆包语音）大模型语音合成 - 快速合成 + 音色库
+volcengine_tts:
+  api_key: ""
+  # ⚠️ 法律风险警示：请勿开启该配置！（详见 config.example.yml 同名字段注释）
+  # 开启 = 克隆模式可用火山预置音色样例克隆（侵权+违约风险）。仅可改此文件，后台不可配。
+  allow_clone_from_voice_library: false
