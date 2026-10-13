@@ -118,6 +118,48 @@ class TestPickVoiceByImage(_VoiceModelMockBase):
         self.assertEqual(result["voice_id"], _default_vid(), "候选外音色应降级默认")
         self.assertIn("候选之外", result["reason"])
 
+    def test_gender_mismatch_auto_corrects(self):
+        """VL 输出音色与检测性别不符时，自动改选同性候选（防串音色）"""
+        candidates = [
+            {"voice_id": 1, "name": "Vivi 2.0", "gender": "female", "style": "治愈", "description": "d1"},
+            {"voice_id": 2, "name": "阿虎 2.0", "gender": "male", "style": "温暖", "description": "d2"},
+        ]
+
+        async def fake_call_vl(system, user, img, **kw):
+            return True, ('{"detected_gender": "male", "voice_id": 1, '
+                          '"reason": "看错", "motion_prompt": "固定镜头。"}'), None
+
+        async def fake_base64(*a, **kw):
+            return True, "data:x", None
+
+        with patch("script_writer_core.digital_human_tts_tools.pick_vl_model",
+                   async_fn(lambda: {"name": "vl"})),              patch("script_writer_core.digital_human_tts_tools.image_url_to_base64", fake_base64),              patch("script_writer_core.digital_human_tts_tools.call_vl", fake_call_vl):
+            result = asyncio.run(_pick_voice_by_image("http://x/img.png", candidates, 1))
+
+        # detected=male 但选了女声 → 自动改选男声候选
+        self.assertEqual(result["voice_id"], 2)
+        self.assertIn("校正", result["reason"])
+
+    def test_gender_match_keeps(self):
+        """VL 选音色性别与检测一致时保持原选择"""
+        candidates = [
+            {"voice_id": 1, "name": "Vivi 2.0", "gender": "female", "style": "治愈", "description": "d1"},
+            {"voice_id": 2, "name": "阿虎 2.0", "gender": "male", "style": "温暖", "description": "d2"},
+        ]
+
+        async def fake_call_vl(system, user, img, **kw):
+            return True, ('{"detected_gender": "female", "voice_id": 1, '
+                          '"reason": "匹配", "motion_prompt": "固定镜头。"}'), None
+
+        async def fake_base64(*a, **kw):
+            return True, "data:x", None
+
+        with patch("script_writer_core.digital_human_tts_tools.pick_vl_model",
+                   async_fn(lambda: {"name": "vl"})),              patch("script_writer_core.digital_human_tts_tools.image_url_to_base64", fake_base64),              patch("script_writer_core.digital_human_tts_tools.call_vl", fake_call_vl):
+            result = asyncio.run(_pick_voice_by_image("http://x/img.png", candidates, 1))
+
+        self.assertEqual(result["voice_id"], 1)
+
     def test_no_vl_model_falls_back(self):
         async def fake_none(*a, **k):
             return None

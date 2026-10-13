@@ -197,18 +197,21 @@ async def _pick_voice_by_image(
 
         import json as _json
         system_prompt = (
-            "你是短视频选角导演。根据角色图片完成两件事：\n"
-            "1. 从候选音色列表中挑选与人物（性别/年龄段/气质）最匹配的一个；\n"
-            "2. 为该人物撰写数字人视频的动作提示词：描述人物如何说话（情绪/表情）"
+            "你是短视频选角导演。根据角色图片完成三件事：\n"
+            "1. 判断图片中人物的性别（male=男性 / female=女性 / child=儿童）；\n"
+            "2. 只在【与该性别一致的候选音色】中，挑选与人物年龄段、气质、场景感最匹配的一个——"
+            "严禁挑选与人物性别不一致的音色（男性人物禁止选女声音色，反之亦然）；\n"
+            "3. 为该人物撰写数字人视频的动作提示词：描述人物如何说话（情绪/表情）"
             "与镜头方式（如固定镜头/缓慢推近），参考格式："
             "'角色面向镜头深情的说话，固定镜头。'，30 字以内，不要出现具体台词。\n"
-            '只输出 JSON：{"voice_id": <候选中的数字>, "reason": "<20字内理由>", '
+            '只输出 JSON：{"detected_gender": "<male|female|child>", '
+            '"voice_id": <候选中的数字>, "reason": "<20字内理由>", '
             '"motion_prompt": "<动作提示词>"}'
         )
         requirement = f"\n用户对声音的额外要求：{voice_requirement}" if voice_requirement else ""
         user_text = (
-            f"候选音色列表（JSON）：\n{_json.dumps(candidates, ensure_ascii=False)}{requirement}\n"
-            "请完成音色挑选与动作提示词撰写。"
+            f"候选音色列表（JSON，含 gender 字段）：\n{_json.dumps(candidates, ensure_ascii=False)}{requirement}\n"
+            "请完成性别判断、音色挑选与动作提示词撰写。"
         )
         v_ok, content, v_err = await call_vl(
             system_prompt, user_text, data_url,
@@ -231,9 +234,31 @@ async def _pick_voice_by_image(
             return _fallback("默认音色（视觉分析输出无法解析）")
         parsed = _json.loads(text[start:end])
         voice_id = int(parsed.get("voice_id", 0))
+        detected_gender = str(parsed.get("detected_gender", "")).strip().lower()
         valid_ids = {c["voice_id"] for c in candidates}
         if voice_id not in valid_ids:
             return _fallback("默认音色（视觉分析返回了候选之外的音色）")
+        picked_voice = next(c for c in candidates if c["voice_id"] == voice_id)
+        # 性别一致性硬校验：VL 偶发看错性别时，自动改选同性候选（防串音色）
+        if (detected_gender and picked_voice.get("gender")
+                and picked_voice["gender"] != detected_gender):
+            same_gender = [c for c in candidates if c.get("gender") == detected_gender]
+            if same_gender:
+                alt = same_gender[0]
+                logger.warning(
+                    "VL 选音色性别不一致（detected=%s, picked=%s[%s]），自动改选同性候选 %s[%s]",
+                    detected_gender, voice_id, picked_voice.get("gender"),
+                    alt["voice_id"], alt.get("gender"))
+                return {
+                    "voice_id": alt["voice_id"],
+                    "reason": f"性别校正：{str(parsed.get('reason', ''))[:40]}",
+                    "motion_prompt": (str(parsed.get("motion_prompt", "")).strip()[:100]
+                                      or default_motion),
+                }
+        logger.info(
+            "VL 选音色：voice_id=%s name=%s gender=%s detected=%s reason=%s",
+            voice_id, picked_voice.get("name"), picked_voice.get("gender"),
+            detected_gender, str(parsed.get("reason", ""))[:50])
         return {
             "voice_id": voice_id,
             "reason": str(parsed.get("reason", ""))[:60],
