@@ -119,7 +119,7 @@
         this.loadingVoices = true;
         this.loadError = '';
         try {
-          var data = await global.VoiceLibraryApi.listVoices({ page_size: 300 });
+          var data = await global.VoiceLibraryApi.listVoices({ page_size: 300, provider: 'volcengine' });
           this.voices = data.voices || [];
           this.powerTiers = data.power_tiers || [];
           this.maxTextLength = data.max_text_length || 2000;

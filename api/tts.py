@@ -18,7 +18,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from config.config_util import get_config_value, get_dynamic_config_value
+from config.config_util import get_config, get_config_value, get_dynamic_config_value
 from config.volcengine_tts_constants import (
     VolcengineTtsConstants,
     normalize_volcengine_tts_speed,
@@ -75,7 +75,13 @@ async def list_voices(
     page: int = 1,
     page_size: int = 100,
 ):
-    """音色库列表（系统预置 + 当前用户私有），附带计价档位供前端本地算预计消耗。"""
+    """音色库列表（系统预置 + 当前用户私有），附带计价档位供前端本地算预计消耗。
+
+    返回两类音色（provider 字段区分，前端按场景筛选）：
+    - volcengine：火山 TTS 音色（音色库合成模式；受 configured 影响）
+    - reference_audio：开源版自带 AI 合成预置音色（克隆参考 / H3 驱动，
+      始终可用，不受火山克隆开关管控）
+    """
     user_id = getattr(request.state, 'user_id', 0) or 0
     result = await asyncio.to_thread(
         VoiceModel.list_all,
@@ -90,6 +96,19 @@ async def list_voices(
     )
     # 系统预置(user_id=0) 对所有人可见；私有音色仅属主可见
     voices = [v for v in result.get('data', []) if v.get('user_id') == 0 or v.get('user_id') == user_id]
+    # 合并 reference_audio 预置音色（开源版自带，不受火山配置/开关管控）
+    preset_result = await asyncio.to_thread(
+        VoiceModel.list_all,
+        page=1,
+        page_size=300,
+        user_id=None,
+        provider='reference_audio',
+        gender=gender,
+        language=language,
+        only_active=True,
+        keyword=keyword,
+    )
+    voices += [v for v in preset_result.get('data', []) if v.get('user_id') == 0 or v.get('user_id') == user_id]
     # 克隆模式「从音色库选择」入口开关：仅从 YAML 配置读取（刻意不走
     # system_config，管理后台不可改），法律风险警示见 config.example.yml。
     allow_clone_from_library = bool(get_config_value(
@@ -149,7 +168,18 @@ async def synthesize(request: Request, body: TtsSynthesizeRequest):
 async def preview_voice(request: Request, voice_id: int):
     """试听：固定示例句合成（免费），按音色落盘缓存，命中缓存不再调火山。"""
     voice = await asyncio.to_thread(VoiceModel.get_by_id, int(voice_id))
-    if not voice or not voice.is_active or voice.provider != PROVIDER_VOLCENGINE or not voice.voice_type:
+    if not voice or not voice.is_active:
+        return JSONResponse({'success': False, 'detail': '音色不存在或已下线'}, status_code=404)
+
+    # reference_audio 类预置音色：自带样例音频，直接返回（不走火山合成）
+    if voice.provider == 'reference_audio' and voice.audio_url:
+        audio_url = voice.audio_url
+        if not audio_url.startswith(('http://', 'https://')):
+            server_host = (get_config().get("server", {}) or {}).get("host", "")
+            audio_url = f"{str(server_host).rstrip('/')}{audio_url}"
+        return JSONResponse({'success': True, 'audio_url': audio_url, 'voice_id': voice.id})
+
+    if voice.provider != PROVIDER_VOLCENGINE or not voice.voice_type:
         return JSONResponse({'success': False, 'detail': '音色不存在或已下线'}, status_code=404)
 
     from utils.volcengine_tts_util import resolve_result_dir, synthesize_speech

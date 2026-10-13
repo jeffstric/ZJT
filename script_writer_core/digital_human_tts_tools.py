@@ -24,6 +24,8 @@ from config.constant import TaskTypeId, TaskTypeRegistry
 from model.voice import VoiceModel
 from services.volcengine_tts_service import synthesize_speech_for_user
 from services.vl_gateway import call_vl, image_url_to_base64, pick_vl_model
+from utils.index_tts_util import generate_audio as indextts_generate_audio
+from utils.volcengine_tts_util import get_volcengine_tts_config, is_tts_configured
 
 logger_name = "digital_human_tts_tools"
 
@@ -83,10 +85,10 @@ def clamp_h3_duration(seconds: float) -> int:
     return max(4, min(10, int(math.ceil(seconds))))
 
 
-def _load_voice_candidates(language: str = "zh") -> list:
-    """加载激活的火山中文音色候选（name/gender/style/description 供 VL 挑选）"""
+def _load_voice_candidates(language: str = "zh", provider: str = "volcengine") -> list:
+    """加载激活的音色候选（name/gender/style/description 供 VL 挑选）"""
     result = VoiceModel.list_all(
-        page=1, page_size=300, user_id=None, provider="volcengine",
+        page=1, page_size=300, user_id=None, provider=provider,
         language=language, only_active=True,
     )
     return [
@@ -104,6 +106,63 @@ def _load_voice_candidates(language: str = "zh") -> list:
 def _default_voice_id() -> Optional[int]:
     voice = VoiceModel.get_by_voice_type(DEFAULT_VOICE_TYPE)
     return voice.id if voice and voice.is_active else None
+
+
+def _default_reference_voice_id() -> Optional[int]:
+    """默认预置音色（reference_audio 类第一个激活项）"""
+    result = VoiceModel.list_all(
+        page=1, page_size=1, user_id=None, provider="reference_audio",
+        language="zh", only_active=True,
+    )
+    data = result.get("data") or []
+    return data[0]["id"] if data else None
+
+
+def _resolve_preset_local_path(audio_url: str) -> str:
+    """预置音色站内相对路径（/voice_presets/x.mp3）→ 本地绝对路径"""
+    from utils.project_path import get_project_root
+    rel = audio_url.lstrip("/")
+    return os.path.join(get_project_root(), rel.replace("/", os.sep))
+
+
+async def _synthesize_via_indextts(user_id: int, text: str, ref_voice: Dict[str, Any]) -> Dict[str, Any]:
+    """用预置音色（reference_audio）作克隆参考，经自建 IndexTTS 合成驱动音频。
+
+    零火山依赖（TTS 未配置环境的降级路径）。返回与 volcengine 合成同构的 tts dict。
+    """
+    local_ref = _resolve_preset_local_path(ref_voice["audio_url"])
+    if not os.path.isfile(local_ref):
+        return {'success': False, 'error': f'预置音色音频缺失: {ref_voice["audio_url"]}',
+                'computing_power': 0, 'audio_url': None, 'duration': None,
+                'voice_name': ref_voice.get("name"), 'voice_type': None, 'voice_id': ref_voice.get("id")}
+
+    filename = f"audio_{uuid.uuid4().hex[:8]}.wav"
+    result_path = f"/home/appuser/comfyui_upload/tts/result_audio/{filename}"
+
+    ok, path_or_err = await indextts_generate_audio(
+        text=text,
+        spk_audio_path=local_ref,
+        result_path=result_path,
+        timeout=180,
+    )
+    if not ok:
+        return {'success': False, 'error': f'IndexTTS 克隆合成失败: {path_or_err}',
+                'computing_power': 0, 'audio_url': None, 'duration': None,
+                'voice_name': ref_voice.get("name"), 'voice_type': None, 'voice_id': ref_voice.get("id")}
+
+    from config.config_util import get_dynamic_config_value
+    upload_url = get_dynamic_config_value("tts", "upload_url") or ''
+    audio_url = f"{upload_url}{filename}"
+
+    from utils.audio_duration_util import probe_audio_duration
+    duration = await probe_audio_duration(audio_url)
+
+    return {
+        'success': True, 'audio_url': audio_url, 'duration': duration,
+        'computing_power': 0,  # IndexTTS 为自建服务，不计字符算力
+        'voice_name': ref_voice.get("name"), 'voice_type': ref_voice.get("audio_url"),
+        'voice_id': ref_voice.get("id"),
+    }
 
 
 async def _pick_voice_by_image(
@@ -237,12 +296,15 @@ async def prepare_digital_human_draft(
         user_audio_url = (audio_url or '').strip() or None
 
         # 2. 确定音色与动作提示词（有用户音频时音色不需要，但动作提示词仍看图生成）
+        volcengine_configured = is_tts_configured(get_volcengine_tts_config())
         selection_reason = "用户指定音色"
         motion_from_vl = None
         need_voice = not user_audio_url
         need_vl_analysis = (not motion_prompt) and bool(image_url) and (need_voice or not voice_id)
         if need_vl_analysis:
-            candidates = await asyncio.to_thread(_load_voice_candidates, "zh")
+            # 候选按可用性选择：火山已配置→火山音色；未配置→免费预置音色（IndexTTS 克隆）
+            candidate_provider = "volcengine" if volcengine_configured else "reference_audio"
+            candidates = await asyncio.to_thread(_load_voice_candidates, "zh", candidate_provider)
             picked = await _pick_voice_by_image(image_url, candidates, int(user_id or 0), voice_requirement)
             motion_from_vl = picked.get("motion_prompt")
             if need_voice:
@@ -252,17 +314,27 @@ async def prepare_digital_human_draft(
                     return {'success': False, 'error': '未能确定音色（音色库为空），请联系管理员'}
         elif need_voice and voice_id:
             voice = VoiceModel.get_by_id(int(voice_id))
-            if not voice or not voice.is_active or voice.provider != 'volcengine':
+            if not voice or not voice.is_active:
                 return {'success': False, 'error': f'音色 {voice_id} 不存在或已下线'}
+            # 用户指定了火山音色但火山未配置：引导改用预置音色
+            if voice.provider == 'volcengine' and not volcengine_configured:
+                return {'success': False,
+                        'error': '火山语音合成未配置，无法使用该音色。请改用免费预置音色（reference_audio 类）或提供驱动音频'}
         motion_prompt = motion_prompt or motion_from_vl or "角色面向镜头深情的说话，固定镜头。"
 
-        # 3. TTS 合成驱动音频（用户提供 audio_url 时跳过；扣字符算力；失败自动退款）
+        # 3. 合成驱动音频（三个引擎按音色 provider 与配置分派）
+        voice_row = VoiceModel.get_by_id(int(voice_id)) if voice_id else None
         if user_audio_url:
             tts = {
                 'success': True, 'audio_url': user_audio_url, 'duration': None,
                 'computing_power': 0, 'voice_name': '用户提供的驱动音频',
                 'voice_type': None, 'voice_id': None,
             }
+        elif voice_row and voice_row.provider == 'reference_audio' and voice_row.audio_url:
+            # 免费预置音色：经自建 IndexTTS 克隆合成（零火山依赖、零算力）
+            tts = await _synthesize_via_indextts(
+                int(user_id or 0), script_text,
+                {"id": voice_row.id, "name": voice_row.name, "audio_url": voice_row.audio_url})
         else:
             tts = await synthesize_speech_for_user(
                 user_id=int(user_id or 0),
@@ -271,8 +343,8 @@ async def prepare_digital_human_draft(
                 auth_header=f"Bearer {auth_token}" if auth_token else "",
                 message_context="营销数字人口播",
             )
-            if not tts.get('success'):
-                return {'success': False, 'error': f"驱动音频合成失败：{tts.get('error')}"}
+        if not tts.get('success'):
+            return {'success': False, 'error': f"驱动音频合成失败：{tts.get('error')}"}
 
         # 4. 时长与 H3 算力预估（用户音频缺时长时按文案长度粗估：约 4 字/秒，clamp 4-10）
         est_seconds = float(tts.get('duration') or 0)

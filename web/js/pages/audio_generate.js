@@ -23,6 +23,8 @@
         cloneVoices: [],
         cloneVoicesLoading: false,
         clonePreviewing: false,
+        cloneDropdownOpen: false,
+        cloneHoverVoice: null,
         emoRefAudioFile: null,
         emoRefType: 'file',
         emoRefVideoUrl: '',
@@ -55,6 +57,10 @@
         if (this.refSource === 'library' && !this.cloneVoiceId) return false;
         if (this.emoControlMethod === 2 && !this.emoVecValid) return false;
         return true;
+      },
+      cloneVoiceLabel() {
+        const v = this.cloneVoices.find(x => x.id === this.cloneVoiceId);
+        return v ? `${v.name}（${v.style}）` : '';
       },
       estimatedPower() {
         return window.VoiceLibraryApi
@@ -127,22 +133,20 @@
         }
       },
 
-      // —— 克隆模式：从音色库选择参考声音（受 YAML 开关 allow_clone_from_voice_library 控制） ——
+      // —— 克隆模式：从音色库选择参考声音 ——
+      // reference_audio 预置音色（开源版自带 AI 音色）始终可选；
+      // volcengine 火山音色受 YAML 开关 allow_clone_from_voice_library 管控。
       async fetchCloneVoices() {
-        if (this.cloneVoices.length || !window.VoiceLibraryApi) return;
+        if (!window.VoiceLibraryApi) return;
         this.cloneVoicesLoading = true;
         try {
           const data = await window.VoiceLibraryApi.listVoices({ page_size: 300 });
-          // 开关关闭：不拉列表、强制回退上传来源（入口已被 v-if 隐藏，双保险）
-          if (!data.allow_clone_from_voice_library) {
-            this.cloneFromLibraryAllowed = false;
-            if (this.refSource === 'library') this.refSource = 'upload';
-            return;
-          }
-          this.cloneFromLibraryAllowed = true;
+          this.cloneFromLibraryAllowed = !!data.allow_clone_from_voice_library;
           const locale = (window.ZJTi18n && window.ZJTi18n.getLocale) ? window.ZJTi18n.getLocale() : (localStorage.getItem('zjt_locale') || 'zh-CN');
           const wantLang = String(locale).toLowerCase().indexOf('en') === 0 ? 'en' : 'zh';
-          const all = data.voices || [];
+          const all = (data.voices || []).filter(v =>
+            v.provider === 'reference_audio' ||
+            (v.provider === 'volcengine' && this.cloneFromLibraryAllowed));
           // 界面语言对应的音色排前，其余语言跟后（保持完整可选列表）
           this.cloneVoices = all.slice().sort((a, b) => (b.language === wantLang) - (a.language === wantLang));
         } catch (e) {
@@ -150,6 +154,12 @@
         } finally {
           this.cloneVoicesLoading = false;
         }
+      },
+
+      selectCloneVoice(v) {
+        this.cloneVoiceId = v.id;
+        this.cloneDropdownOpen = false;
+        this.cloneHoverVoice = null;
       },
 
       async playClonePreview() {
@@ -429,9 +439,7 @@
         <template v-else>
           <div class="field">
             <label class="label">{{ $t('reference_audio') }}（{{ $t('optional') }}）</label>
-            <!-- 「从音色库选择」入口受后端 YAML 开关 allow_clone_from_voice_library 控制（默认关闭，
-                 法律风险警示见 config.example.yml；关闭时整个入口不渲染） -->
-            <div v-if="cloneFromLibraryAllowed" style="display: flex; gap: 8px; margin-bottom: 8px;">
+            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
               <button type="button" class="btn secondary" style="padding: 2px 12px; font-size: 13px;"
                 :style="refSource === 'library' ? 'border-color: var(--primary); color: var(--primary);' : ''"
                 :disabled="loading" @click="refSource = 'library'">{{ $t('tts_ref_source_library') }}</button>
@@ -442,10 +450,30 @@
 
             <template v-if="refSource === 'library'">
               <div style="display: flex; gap: 8px; align-items: center;">
-                <select class="input" v-model="cloneVoiceId" style="flex: 1;" :disabled="loading || cloneVoicesLoading">
-                  <option :value="null">{{ cloneVoicesLoading ? $t('tts_voice_loading') : $t('tts_voice_placeholder') }}</option>
-                  <option v-for="v in cloneVoices" :key="v.id" :value="v.id">{{ v.name }}（{{ v.style }}）</option>
-                </select>
+                <div style="flex: 1; position: relative;">
+                  <button type="button" class="input" style="width: 100%; text-align: left; cursor: pointer;"
+                    :disabled="loading || cloneVoicesLoading"
+                    @click="cloneDropdownOpen = !cloneDropdownOpen">
+                    {{ cloneVoiceLabel || (cloneVoicesLoading ? $t('tts_voice_loading') : $t('tts_voice_placeholder')) }} ▾
+                  </button>
+                  <div v-if="cloneDropdownOpen"
+                    style="position: absolute; top: 100%; left: 0; right: 0; z-index: 100; background: var(--bg, #1e1e1e); border: 1px solid var(--border); border-radius: 8px; margin-top: 4px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);">
+                    <div style="max-height: 280px; overflow-y: auto;">
+                      <div v-for="v in cloneVoices" :key="v.id"
+                        style="padding: 7px 12px; cursor: pointer; font-size: 14px;"
+                        :style="cloneVoiceId === v.id ? 'color: var(--primary);' : ''"
+                        @mouseenter="cloneHoverVoice = v"
+                        @mouseleave="cloneHoverVoice = null"
+                        @click="selectCloneVoice(v)">
+                        {{ v.name }}（{{ v.style }}）
+                      </div>
+                    </div>
+                    <div v-if="cloneHoverVoice"
+                      style="padding: 8px 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); line-height: 1.5;">
+                      {{ cloneHoverVoice.voice_name || cloneHoverVoice.name }}：{{ cloneHoverVoice.style }} · {{ cloneHoverVoice.description }}
+                    </div>
+                  </div>
+                </div>
                 <button type="button" class="btn secondary" style="flex-shrink: 0; padding: 4px 10px; font-size: 13px;"
                   :disabled="!cloneVoiceId || clonePreviewing" @click="playClonePreview">
                   {{ clonePreviewing ? $t('tts_preview_playing') : '▶ ' + $t('tts_preview') }}
