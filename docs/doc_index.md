@@ -129,6 +129,7 @@
 | [脚本语言同步](script/script_language_sync.md) | 多语言脚本同步 | 待补充 |
 | [SSE 断连处理](script/script_writer_sse_disconnect.md) | SSE 连接断开处理 | 待补充 |
 | [已入库资产管理](script/script_writer_asset_library.md) | 创作页查看/编辑/删除数据库资产 | 待补充 |
+| [图片上传超限明确报错](script/script_writer_upload_size_feedback.md) | 上传大小动态预检与失败原因透传（修复只显示「上传失败」） | 待补充 |
 | [AI 介入程度调查](script/ai_intervention_level_investigation.md) | 介入程度设置未生效的根因分析与接入实施记录 | 待补充 |
 | [剧本智能体优化测试](script/script_writer_skills_optimization_test.md) | 本轮技能/SOP/质检改动的测试内容 | 待补充 |
 | [分镜帧参考素材](script/shot_frame_references.md) | 参考素材收集机制 | 待补充 |
@@ -233,5 +234,6 @@
 | [短信驱动架构](短信驱动架构说明.md) | 短信服务架构 | 待补充 |
 | [数字人节点设计](superpowers/specs/2026-06-14-digital-human-node-power-and-draw-design.md) | 数字人算力与绘制设计 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/T5Cld9mDmoeX0xxAZSWcZGVsnRb) |
 | [前端改进计划](frontend_improvement_plan.md) | 前端架构优化方案 | 待补充 |
+| [故事板多语言接入](storyboard/storyboard_i18n.md) | storyboard.html 接入 i18n：渲染期 t() 求值 + 语言切换整页重渲染，750 词条 | 待补充 |
 | [开发者指南](README.md) | 开发者环境搭建与启动 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Gl6mdDADfoqhw6xGvB1cssv7nWd) |
 | [视频功能文档索引](video/README.md) | 视频功能文档索引 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/EjwJdnTK9oCvJtxanPGc1Whtnpf) |
