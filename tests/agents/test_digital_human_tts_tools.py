@@ -210,8 +210,9 @@ class TestConfirmTool(_VoiceModelMockBase):
             return {"voice_id": 1, "reason": "r",
                     "motion_prompt": "角色面向镜头深情的说话，固定镜头。"}
 
-        async def fake_candidates(lang):
-            return [{"voice_id": 1, "name": "Vivi 2.0"}]
+        async def fake_candidates(*a, **k):
+            return [{"voice_id": 1, "name": "Vivi 2.0", "provider": "reference_audio",
+                     "audio_url": "/voice_presets/preset_001.mp3"}]
 
         with patch("script_writer_core.digital_human_tts_tools.synthesize_speech_for_user", fake_tts),              patch("script_writer_core.digital_human_tts_tools._pick_voice_by_image", fake_pick),              patch("script_writer_core.digital_human_tts_tools._load_voice_candidates", fake_candidates):
             result = asyncio.run(prepare_digital_human_draft(
@@ -227,26 +228,27 @@ class TestConfirmTool(_VoiceModelMockBase):
         self.assertEqual(tts_called, [], "提供用户音频时不应调用 TTS")
 
     def test_tts_unconfigured_error_propagates(self):
-        """TTS 未配置：prepare 失败且错误信息原样透传（供 LLM 触发降级规则）"""
-        async def fake_tts(**kw):
-            return {"success": False, "error": "火山语音合成未配置，请联系管理员填写 volcengine_tts.api_key",
-                    "computing_power": 0, "audio_url": None, "duration": None,
-                    "voice_name": None, "voice_type": None, "voice_id": None}
+        """TTS 未配置的引导错误会原样透传（含「未配置」字样供 LLM 触发降级规则）；
+        失败时不产生草案。mock 查音色直接抛带标记的错误，验证透传机制本身。"""
+        marker = "RuntimeError-MARKER-未配置火山语音合成，无法使用该音色"
+        volcengine_voice = MagicMock(
+            id=9, is_active=1, provider="volcengine", name="通用女声",
+            voice_type="BV700_streaming", audio_url=None, language="zh")
 
-        async def fake_pick(*a, **k):
-            return {"voice_id": 1, "reason": "r", "motion_prompt": "固定镜头。"}
-
-        async def fake_candidates(lang):
-            return [{"voice_id": 1, "name": "Vivi 2.0"}]
-
-        with patch("script_writer_core.digital_human_tts_tools.synthesize_speech_for_user", fake_tts),              patch("script_writer_core.digital_human_tts_tools._pick_voice_by_image", fake_pick),              patch("script_writer_core.digital_human_tts_tools._load_voice_candidates", fake_candidates):
+        with patch("script_writer_core.digital_human_tts_tools.get_volcengine_tts_config",
+                   return_value={"api_key": "", "resource_id": "seed-tts-2.0"}), \
+             patch("script_writer_core.digital_human_tts_tools.is_tts_configured",
+                   lambda cfg: bool(cfg.get("api_key"))), \
+             patch("script_writer_core.digital_human_tts_tools.VoiceModel") as vm, \
+             patch("script_writer_core.digital_human_tts_tools._load_voice_candidates",
+                   return_value=[]):
+            vm.get_by_id.side_effect = RuntimeError(marker)
             result = asyncio.run(prepare_digital_human_draft(
                 user_id="1", world_id="w", auth_token="t",
-                image_url="http://x/img.png", script_text="文案"))
+                image_url="http://x/img.png", script_text="文案", voice_id=9))
 
         self.assertFalse(result["success"])
-        self.assertIn("未配置", result["error"])
-        # 失败时不产生草案
+        self.assertIn(marker, result["error"])
         self.assertEqual(len(_DRAFT_STORE), 0)
 
     def test_confirm_submits_h3(self):
