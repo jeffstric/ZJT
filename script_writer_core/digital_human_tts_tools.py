@@ -445,16 +445,32 @@ async def confirm_digital_human(
         if not base_url:
             return {'success': False, 'error': '配置文件中未找到服务器地址'}
 
-        # 下载图与音频为内存文件，multipart 转传 H3 端点
-        headers = {'Authorization': f'Bearer {auth_token}'} if auth_token else None
+        # 下载图与音频为内存文件，multipart 转传 H3 端点。
+        # ⚠️ 本服务产出的素材（/upload、/voice_presets、TTS 产物）优先直读本地文件：
+        # server.host 可能是 frp 公网映射地址，服务器自身访问不通（实测 000）。
+        from utils.image_upload_utils import try_map_url_to_local_file
+
+        async def _fetch_asset_bytes(url: str) -> bytes:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            local_path = try_map_url_to_local_file(url, get_config(), project_root)
+            if local_path and os.path.isfile(local_path):
+                with open(local_path, 'rb') as f:
+                    return f.read()
+            if url.startswith('/'):
+                # 站内相对路径：按 web 静态目录与 upload 目录兜底解析
+                for base in ('web', 'upload'):
+                    cand = os.path.join(project_root, base, url.lstrip('/')) if base == 'web' else os.path.join(project_root, url.lstrip('/'))
+                    if os.path.isfile(cand):
+                        with open(cand, 'rb') as f:
+                            return f.read()
+            async with httpx.AsyncClient(timeout=60, verify=False, trust_env=False, follow_redirects=True) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.content
+
         try:
-            async with httpx.AsyncClient(timeout=60, verify=False, trust_env=False) as client:
-                img_resp = await client.get(draft["image_url"])
-                img_resp.raise_for_status()
-                image_bytes = img_resp.content
-                audio_resp = await client.get(draft["audio_url"])
-                audio_resp.raise_for_status()
-                audio_bytes = audio_resp.content
+            image_bytes = await _fetch_asset_bytes(draft["image_url"])
+            audio_bytes = await _fetch_asset_bytes(draft["audio_url"])
         except httpx.HTTPStatusError as e:
             detail = ''
             try:
@@ -463,6 +479,9 @@ async def confirm_digital_human(
                 detail = str(e)
             logger.error(f"数字人素材下载失败: {detail}")
             return {'success': False, 'error': f'数字人素材下载失败: {detail}'}
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"数字人素材获取失败: {e}")
+            return {'success': False, 'error': f'数字人素材获取失败: {str(e)}'}
 
         image_name = "digital_human_image.png"
         audio_name = "digital_human_audio.mp3"
