@@ -3226,7 +3226,7 @@ ARTICLE_FETCH_HTTP_TIMEOUT = 20              # 公众号文章页 HTTP 超时（
 ARTICLE_FETCH_IMAGE_TIMEOUT = 30             # 图片下载超时（秒）
 ARTICLE_FETCH_XHS_TIMEOUT = 30               # 小红书抓取超时（秒，下期 provider 实现启用）
 ARTICLE_FETCH_XHS_MIN_INTERVAL = 10          # 同来源两次小红书抓取最小间隔（秒，下期启用）
-ARTICLE_FETCH_MAX_IMAGES = 9                 # 单篇图片上限（对齐 Seedance 2.0 多参考图上限）
+ARTICLE_FETCH_MAX_IMAGES = 24                # 单篇图片上限（对齐抖音图文实际上限；Agent 按 VL 识图描述选相关图作参考）
 ARTICLE_FETCH_MAX_TEXT_CHARS = 8000          # 正文注入 LLM 的最大字符数
 ARTICLE_FETCH_IMAGE_MAX_BYTES = 15 * 1024 * 1024   # 单图大小上限
 ARTICLE_FETCH_RATE_LIMIT_PER_USER_HOUR = 10  # 每用户每小时抓取次数上限（进程内滑动窗口）
@@ -3234,7 +3234,11 @@ ARTICLE_FETCH_ALLOWED_HOSTS = (
     'mp.weixin.qq.com',        # 微信公众号
     'xiaohongshu.com',         # 小红书（www./探查页）
     'www.xiaohongshu.com',
-    'xhslink.com',             # 小红书分享短链（下期实现时先跟随跳转再校验最终域名）
+    'xhslink.com',             # 小红书分享短链（先跟随跳转再校验最终域名）
+    'douyin.com',              # 抖音（www./note|video 页）
+    'www.douyin.com',
+    'v.douyin.com',            # 抖音分享短链（整链传供应商解析）
+    'iesdouyin.com',           # 抖音分享链接备用域
 )
 ARTICLE_FETCH_WECHAT_UA = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
