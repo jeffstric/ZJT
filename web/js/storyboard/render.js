@@ -2596,16 +2596,38 @@ function renderFrameMentionButton(token, url, label) {
     return `<button type="button" data-mention-item="${escapeHtml(token)}"><img src="${thumb}" alt=""><span>${safeLabel}</span></button>`;
 }
 
+/**
+ * 提及菜单里首尾帧按钮的展示名：按媒体槽顺序编号（图1/图2/…），
+ * 与左侧媒体槽角标一致。token 仍是 @首帧图/@尾帧图（服务端按标记解析）。
+ */
+export function frameMentionRowLabels() {
+    const frames = mentionableVideoFrameUrls();
+    const items = state.videoMediaItems || [];
+    const indexByUrl = (url) => items.findIndex(
+        item => String(item.url || '').trim() === String(url || '').trim(),
+    );
+    const firstIdx = frames.frame_first_url ? indexByUrl(frames.frame_first_url) : -1;
+    const lastIdx = frames.frame_last_url ? indexByUrl(frames.frame_last_url) : -1;
+    // 槽位被移除、URL 来自分镜图兜底时不在媒体栈里：按自然槽位序取默认编号
+    const lastFallback = items.some(item => item.role === 'first_frame') ? 1 : 0;
+    const num = (idx) => `${i18nT('label_image_short', '图')}${idx + 1}`;
+    return {
+        first: frames.frame_first_url ? num(firstIdx >= 0 ? firstIdx : 0) : '',
+        last: frames.frame_last_url ? num(lastIdx >= 0 ? lastIdx : lastFallback) : '',
+    };
+}
+
 function renderFrameMentionButtons() {
     const videoChat = state.chatMode === 'video' || state.chatMode === 'aivideo';
     if (!videoChat || state.videoImageMode !== 'multi_reference') return '';
     const frames = mentionableVideoFrameUrls();
+    const labels = frameMentionRowLabels();
     const buttons = [];
     if (frames.frame_first_url) {
-        buttons.push(renderFrameMentionButton('首帧图', frames.frame_first_url, i18nT('label_mention_first_frame', '首帧图')));
+        buttons.push(renderFrameMentionButton('首帧图', frames.frame_first_url, labels.first));
     }
     if (frames.frame_last_url) {
-        buttons.push(renderFrameMentionButton('尾帧图', frames.frame_last_url, i18nT('label_mention_last_frame', '尾帧图')));
+        buttons.push(renderFrameMentionButton('尾帧图', frames.frame_last_url, labels.last));
     }
     if (!buttons.length) return '';
     return `<div class="mention-frames">${buttons.join('')}</div>`;

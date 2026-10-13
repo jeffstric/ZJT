@@ -69,6 +69,7 @@ import {
     syncSequenceModeIntroCards,
     patchHeaderPower,
     isDigitalHumanScene,
+    frameMentionRowLabels,
 } from './render.js';
 import {
     REGIONS_ON_SCENE_CHANGE,
@@ -4107,9 +4108,10 @@ function showMentionDropdownForPrompt(textarea, container, promptType, scene) {
         const items = currentTab === 'character' ? (state.characters || []) : (state.props || []);
         if (promptType === 'video' && state.videoImageMode === 'multi_reference') {
             const frames = mentionableVideoFrameUrls();
+            const labels = frameMentionRowLabels();
             const frameRows = [];
-            if (frames.frame_first_url) frameRows.push({ token: '首帧图', url: frames.frame_first_url, label: t('label_mention_first_frame', '首帧图') });
-            if (frames.frame_last_url) frameRows.push({ token: '尾帧图', url: frames.frame_last_url, label: t('label_mention_last_frame', '尾帧图') });
+            if (frames.frame_first_url) frameRows.push({ token: '首帧图', url: frames.frame_first_url, label: labels.first });
+            if (frames.frame_last_url) frameRows.push({ token: '尾帧图', url: frames.frame_last_url, label: labels.last });
             frameRows.forEach((frame) => {
                 const row = document.createElement('div');
                 row.className = 'asset-dropdown-item';
