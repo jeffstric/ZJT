@@ -23,6 +23,8 @@
         cloneVoices: [],
         cloneVoicesLoading: false,
         clonePreviewing: false,
+        cloneDropdownOpen: false,
+        cloneHoverVoice: null,
         emoRefAudioFile: null,
         emoRefType: 'file',
         emoRefVideoUrl: '',
@@ -55,6 +57,10 @@
         if (this.refSource === 'library' && !this.cloneVoiceId) return false;
         if (this.emoControlMethod === 2 && !this.emoVecValid) return false;
         return true;
+      },
+      cloneVoiceLabel() {
+        const v = this.cloneVoices.find(x => x.id === this.cloneVoiceId);
+        return v ? `${v.name}（${v.style}）` : '';
       },
       estimatedPower() {
         return window.VoiceLibraryApi
@@ -148,6 +154,12 @@
         } finally {
           this.cloneVoicesLoading = false;
         }
+      },
+
+      selectCloneVoice(v) {
+        this.cloneVoiceId = v.id;
+        this.cloneDropdownOpen = false;
+        this.cloneHoverVoice = null;
       },
 
       async playClonePreview() {
@@ -438,10 +450,30 @@
 
             <template v-if="refSource === 'library'">
               <div style="display: flex; gap: 8px; align-items: center;">
-                <select class="input" v-model="cloneVoiceId" style="flex: 1;" :disabled="loading || cloneVoicesLoading">
-                  <option :value="null">{{ cloneVoicesLoading ? $t('tts_voice_loading') : $t('tts_voice_placeholder') }}</option>
-                  <option v-for="v in cloneVoices" :key="v.id" :value="v.id">{{ v.name }}（{{ v.style }}）</option>
-                </select>
+                <div style="flex: 1; position: relative;">
+                  <button type="button" class="input" style="width: 100%; text-align: left; cursor: pointer;"
+                    :disabled="loading || cloneVoicesLoading"
+                    @click="cloneDropdownOpen = !cloneDropdownOpen">
+                    {{ cloneVoiceLabel || (cloneVoicesLoading ? $t('tts_voice_loading') : $t('tts_voice_placeholder')) }} ▾
+                  </button>
+                  <div v-if="cloneDropdownOpen"
+                    style="position: absolute; top: 100%; left: 0; right: 0; z-index: 100; background: var(--bg, #1e1e1e); border: 1px solid var(--border); border-radius: 8px; margin-top: 4px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);">
+                    <div style="max-height: 280px; overflow-y: auto;">
+                      <div v-for="v in cloneVoices" :key="v.id"
+                        style="padding: 7px 12px; cursor: pointer; font-size: 14px;"
+                        :style="cloneVoiceId === v.id ? 'color: var(--primary);' : ''"
+                        @mouseenter="cloneHoverVoice = v"
+                        @mouseleave="cloneHoverVoice = null"
+                        @click="selectCloneVoice(v)">
+                        {{ v.name }}（{{ v.style }}）
+                      </div>
+                    </div>
+                    <div v-if="cloneHoverVoice"
+                      style="padding: 8px 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); line-height: 1.5;">
+                      {{ cloneHoverVoice.voice_name || cloneHoverVoice.name }}：{{ cloneHoverVoice.style }} · {{ cloneHoverVoice.description }}
+                    </div>
+                  </div>
+                </div>
                 <button type="button" class="btn secondary" style="flex-shrink: 0; padding: 4px 10px; font-size: 13px;"
                   :disabled="!cloneVoiceId || clonePreviewing" @click="playClonePreview">
                   {{ clonePreviewing ? $t('tts_preview_playing') : '▶ ' + $t('tts_preview') }}
