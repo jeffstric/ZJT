@@ -3669,11 +3669,11 @@
       },
       
       closeRechargeModal() {
+        this.showRechargePowerModal = false;
+        this.stopSubStatusPolling();
         this.stopSubPayPolling();
         this._clearIntroDealTimer();
         this.introDealPhase = '';
-        this.showRechargePowerModal = false;
-        this.stopSubStatusPolling();
         this.selectedPackage = null;
         this.paymentQrCode = '';
         this.paymentOrderId = '';
