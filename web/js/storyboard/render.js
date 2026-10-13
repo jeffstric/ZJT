@@ -58,6 +58,7 @@ import {
     updatePlayheadPosition,
     isPreviewMediaBusy,
 } from './playback.js';
+import { syncChatMentionChips } from './chat_mention_chips.js';
 import {
     SCENE_AUDIO_MODE,
     resolveSceneAudioMode,
@@ -96,6 +97,9 @@ const escapeHtml = (typeof window !== 'undefined' && typeof window.escapeHtml ==
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+const escapeHtmlAttr = (typeof window !== 'undefined' && typeof window.escapeHtmlAttr === 'function')
+    ? window.escapeHtmlAttr
+    : escapeHtml;
 
 /** Map scene.videoType to Chinese label for UI. */
 export function videoTypeLabel(videoType) {
@@ -1591,7 +1595,7 @@ function renderAiPanel() {
                     ${dhHint}
                     <div class="chat-textarea-row">
                         ${mediaStack}
-                        ${isDhDirectVideo ? '' : `<textarea id="chat-textarea" class="chat-textarea" placeholder="${isDhScene && isVideo && !isAiVideoLocked ? i18nT('placeholder_dh_video', '描述对口型表演/镜头（台词以配音为准，需先生成配音）') : placeholder}" ${effectiveDisabled}>${escapeHtml(state.inputMessage)}</textarea>`}
+                        ${isDhDirectVideo ? '' : `<div class="chat-textarea-wrap"><div class="chat-textarea-mirror" data-chat-textarea-mirror aria-hidden="true"></div><textarea id="chat-textarea" class="chat-textarea" placeholder="${isDhScene && isVideo && !isAiVideoLocked ? i18nT('placeholder_dh_video', '描述对口型表演/镜头（台词以配音为准，需先生成配音）') : placeholder}" ${effectiveDisabled}>${escapeHtml(state.inputMessage)}</textarea></div>`}
                     </div>
                     <div class="chat-toolbar">
                         <button class="tool-button" data-action="open-model-config" title="${i18nT('title_model_config_detail', '模型配置（对话模型按供应商分组，图片/视频模型按当前助手模式）')}">${icon('settings', 14)}</button>
@@ -2593,7 +2597,7 @@ function renderGenerateFromScriptDialog() {
 function renderFrameMentionButton(token, url, label) {
     const safeLabel = escapeHtml(label);
     const thumb = escapeHtml(getThumbnailUrl(url, 28));
-    return `<button type="button" data-mention-item="${escapeHtml(token)}"><img src="${thumb}" alt=""><span>${safeLabel}</span></button>`;
+    return `<button type="button" data-mention-item="${escapeHtml(token)}" data-hover-preview="${escapeHtmlAttr(url)}"><img src="${thumb}" alt=""><span>${safeLabel}</span></button>`;
 }
 
 /**
@@ -2651,7 +2655,10 @@ function renderMentionPopup() {
                 <button data-mention-tab="prop" class="${state.mentionTab === 'prop' ? 'active' : ''}">${i18nT('label_prop', '道具')}</button>
             </div>
             <div class="mention-list">
-                ${items.map(item => `<button data-mention-item="${escapeHtml(item.name)}">${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`}
+                ${items.map(item => {
+                    const preview = item.avatar || item.reference_image || '';
+                    return `<button data-mention-item="${escapeHtml(item.name)}"${preview ? ` data-hover-preview="${escapeHtmlAttr(preview)}"` : ''}>${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`;
+                }).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`}
             </div>
         </div>`;
 }
@@ -3394,7 +3401,9 @@ export function patchAgentPanel() {
     const section = document.querySelector('.ai-chat-section');
     if (!section) return false;
     const html = renderAiPanel();
-    return Boolean(replaceElWithHtml(section, html));
+    const patched = Boolean(replaceElWithHtml(section, html));
+    if (patched) syncChatMentionChips();
+    return patched;
 }
 
 /** 整块 header（含集数选择器等） */
@@ -4016,6 +4025,7 @@ function renderAppFull() {
         state.workflowRatio || '16:9'
     );
     bindPreviewCanvasObserver();
+    syncChatMentionChips();
 
     requestAnimationFrame(() => {
         savedScrolls.forEach(({ selector, prop, value }) => {
