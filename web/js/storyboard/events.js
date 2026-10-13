@@ -941,9 +941,17 @@ function consumeChatMentionTrigger(textarea) {
     return true;
 }
 
-function focusChatMentionCaret() {
+/**
+ * 提及插入后同步输入框并恢复光标。
+ * 直接写 DOM，不走 AGENT_PANEL 重绘：整段重建会把 textarea 换成无焦点的
+ * 新元素，:focus-within 的高度（168px→72px）先瞬塌再过渡回弹，视觉抖动。
+ */
+function syncChatMentionInsert(inserted) {
+    state.inputMessage = inserted.value;
+    chatMentionCaret = inserted.caret;
     const ta = document.getElementById('chat-textarea');
-    if (!ta || typeof chatMentionCaret !== 'number') return;
+    if (!ta) return;
+    ta.value = inserted.value;
     ta.focus();
     const pos = Math.min(Math.max(chatMentionCaret, 0), ta.value.length);
     ta.setSelectionRange(pos, pos);
@@ -3318,6 +3326,15 @@ export function bindEvents() {
         }
     });
 
+    // 提及弹窗按钮按下时不转移焦点（仅按钮，弹窗列表滚动条不受影响）：
+    // textarea 全程保持 ：focus-within 展开态，高度不塌陷、光标选区不丢
+    document.addEventListener('mousedown', (event) => {
+        const target = event.target;
+        if (target instanceof Element && target.closest('.mention-popup button')) {
+            event.preventDefault();
+        }
+    });
+
     document.addEventListener('mouseenter', (event) => {
         if (event.target && typeof event.target.closest === 'function' && event.target.closest('.scene-timeline-list')) {
             isTimelineHovered = true;
@@ -3769,11 +3786,9 @@ export function bindEvents() {
                 chatMentionCaret,
                 mentionItem.dataset.mentionItem,
             );
-            state.inputMessage = inserted.value;
-            chatMentionCaret = inserted.caret;
             state.showMentionPopup = false;
-            rerender([Region.MODAL, Region.AGENT_PANEL]);
-            focusChatMentionCaret();
+            rerenderModals();
+            syncChatMentionInsert(inserted);
             return;
         }
 
