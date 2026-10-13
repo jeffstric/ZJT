@@ -11,6 +11,7 @@ SOP 场景判定规则见 agents/skills/marketing-pm/sops/sop-digital-human.md�
 """
 import asyncio
 import json
+import os
 import threading
 import time
 import uuid
@@ -444,6 +445,7 @@ async def confirm_digital_human(
         base_url = server_config.get("comfyui_base_url_inner") or server_config.get("host", "")
         if not base_url:
             return {'success': False, 'error': '配置文件中未找到服务器地址'}
+        headers = {'Authorization': f'Bearer {auth_token}'} if auth_token else None
 
         # 下载图与音频为内存文件，multipart 转传 H3 端点。
         # ⚠️ 本服务产出的素材（/upload、/voice_presets、TTS 产物）优先直读本地文件：
