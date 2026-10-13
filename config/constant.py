@@ -2057,6 +2057,13 @@ class GridConfig:
     # 避免全局调度器（task.pipeline_processor）每 13s 反复 skip 刷日志。
     GRID_SPLIT_ORPHAN_CLEANUP_LIMIT = 50
 
+    # 轮询 ComfyUI 时连续认证失败（401/403）的终止阈值：
+    # grid_image_tasks.auth_token 是任务创建时的快照，用户 token 失效/轮换后轮询必然 401，
+    # 重试毫无意义。连续失败达到该次数即把任务标记为 FAILED 终态，避免每 10s 无限刷
+    # 401 WARNING（生产事故见 app.2026-09-29：任务 1337_0_50937 连续 401 共 105 次）。
+    # 3 次 × 10s 轮询间隔 ≈ 30s，足以排除 ComfyUI 侧瞬时 401 误伤（如网关抖动）。
+    AUTH_FAILURE_TERMINATION_LIMIT = 3
+
     # 分镜首帧宫格（i2i）目标分辨率映射：4宫格→2K，9宫格→4K。
     # 模型不支持目标值时，由 _pick_grid_image_size 自动降级到不超过目标的最大支持档位。
     GRID_SIZE_IMAGE_SIZE_MAP = {
@@ -2091,6 +2098,25 @@ GRID_VALID_SIZES = GridConfig.VALID_SIZES
 GRID_DEFAULT_SIZE_BY_TYPE = GridConfig.DEFAULT_SIZE_BY_TYPE
 GRID_LOCK_TIMEOUT_SECONDS = GridConfig.LOCK_TIMEOUT_SECONDS
 GRID_IMAGE_DOWNLOAD_TIMEOUT = GridConfig.IMAGE_DOWNLOAD_TIMEOUT
+
+class PipelineConfig:
+    """ai_tool_pipeline_steps 卡死步骤回收配置。
+
+    背景（生产事故 app.2026-09-14 起）：step 6759（h3_prompt_optimize）长期停留在
+    PROCESSING 且 async_task_id 为 NULL——dispatch 将状态置为 PROCESSING 后、建立
+    async_task 关联前进程异常退出，留下永久孤儿。调度器每 13s 扫到即刷一条 WARNING，
+    且所属 ai_tool 的 param_prepare 阶段永久挂起（15+ 天、日均 ~6600 条日志）。
+
+    回收策略：updated_at 超过超时阈值仍无 async_task_id 的 PROCESSING 步骤，由调度器
+    每轮开始时批量标记为 FAILED；下游 visual_task._check_pipeline_stage 检测到步骤
+    失败后会终结 ai_tool/tasks 并退款（走正常失败链路，无需特殊处理）。
+    超时判定在 SQL 层用 NOW() - INTERVAL 完成，不受应用与数据库时区差异影响。
+    """
+    # 卡死判定阈值（秒）：PROCESSING 且无 async_task_id 持续超过该时长即回收。
+    # 正常步骤 dispatch 后 13s 内就会写回 async_task_id 或转终态，1 小时余量充足。
+    STUCK_PROCESSING_WITHOUT_ASYNC_TASK_TIMEOUT_SECONDS = 3600
+    # 单轮最大回收条数，避免一次回收过多导致日志/下游处理突刺。
+    STUCK_PROCESSING_RECOVER_LIMIT = 20
 
 class LocationReferenceStatus:
     """
