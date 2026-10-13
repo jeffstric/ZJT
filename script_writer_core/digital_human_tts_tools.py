@@ -194,6 +194,17 @@ async def _pick_voice_by_image(
             remote_timeout=30, user_id=user_id,
         )
         if not ok or not data_url:
+            # 内网环境自访问 frp 公网地址不通：改用本地映射直读兜底一次
+            from utils.image_upload_utils import try_map_url_to_local_file
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            local_path = try_map_url_to_local_file(image_url, get_config(), project_root)
+            if local_path and os.path.isfile(local_path):
+                logger.warning("VL 图片远程下载失败（%s），已改用本地映射文件: %s", err, local_path)
+                ok, data_url, err = await image_url_to_base64(
+                    image_url, compress_timeout=15, allow_remote=False,
+                    remote_timeout=None, user_id=user_id, local_path=local_path,
+                )
+        if not ok or not data_url:
             return _fallback(f"默认音色（角色图读取失败：{err}）")
 
         import json as _json
